@@ -280,6 +280,7 @@ export class Context extends Internalizer {
       isEliminatingBounds: this.config.isEliminatingBounds,
       arithPropagationThreshold: this.config.arithPropagationThreshold,
       qiLazyThreshold: params.qiLazyThreshold ?? DEFAULT_CONFIG.qiLazyThreshold,
+      arrayLazyIeqDelay: this.config.arrayLazyIeqDelay,
     };
   }
 
@@ -983,6 +984,7 @@ export class Context extends Internalizer {
     this.relevancy.push();
     this.qmanager.push();
     this.fingerprints.push();
+    this.asserted?.push();
     for (const theory of this.theories) theory.pushScopeEh();
   }
 
@@ -1053,6 +1055,7 @@ export class Context extends Internalizer {
     this.unassignVars(this.scopeAssignedLimits[newLevel]);
     this.popTrail(this.scopeTrailLimits[newLevel]);
     for (const theory of this.theories) theory.popScopeEh(numScopes);
+    for (let index = 0; index < numScopes; index++) this.asserted?.pop();
     this.eqPropagationQueue = [];
     this.thEqQueue = [];
     this.thDiseqQueue = [];
@@ -1563,7 +1566,6 @@ export class Context extends Internalizer {
     if (wasConsistent && this.isInconsistent() && !asserted.isInconsistent) this.resolveConflict();
     limit.isSuspended = wasSuspended;
     this.push();
-    asserted.push();
   }
 
   pop(numScopes: number) {
@@ -1625,9 +1627,16 @@ export class Context extends Internalizer {
       this.pushScope();
       const manager = this.manager;
       const proxies = assumptions.map((assumption) => {
-        if (isValidAssumption(manager, assumption)) return assumption;
+        if (isValidAssumption(manager, assumption)) {
+          manager.incRef(assumption);
+          return assumption;
+        }
         const proxy = manager.mkFreshConst(null, SORT_BOOL);
-        asserted.assertExpr(manager.mkApp(OP_IMPLIES, [proxy, assumption], SORT_BOOL));
+        manager.incRef(proxy);
+        const implication = manager.mkApp(OP_IMPLIES, [proxy, assumption], SORT_BOOL);
+        manager.incRef(implication);
+        asserted.assertExpr(implication);
+        manager.decRef(implication);
         return proxy;
       });
       this.internalizeAssertions(asserted);
@@ -1639,6 +1648,7 @@ export class Context extends Internalizer {
         if (literal === this.trueLiteral || literal === this.falseLiteral) continue;
         this.literalAssumptions.set(literal, assumptions[index]);
       }
+      for (const proxy of proxies) manager.decRef(proxy);
     }
     this.searchLevel = this.scopeLevel;
   }

@@ -176,20 +176,18 @@ class CofactorElimTermIte {
   private cofactor(expr: number) {
     const manager = this.manager;
     const rewriter = this.cofactorRewriter;
-    const trail = new RefVector(manager);
     let curr = expr;
+    manager.incRef(curr);
     for (let condition = this.getBest(curr); condition !== -1; condition = this.getBest(curr)) {
       rewriter.setCofactorAtom(condition);
       const positive = rewriter.rewrite(curr);
-      trail.pushOwned(positive);
       const negatedCondition = manager.isNot(condition)
         ? manager.getArg(condition, 0)
         : manager.mkApp(OP_NOT, [condition], SORT_BOOL);
-      trail.push(negatedCondition);
+      manager.incRef(negatedCondition);
       rewriter.setCofactorAtom(negatedCondition);
       const negative = rewriter.rewrite(curr);
-      trail.pushOwned(negative);
-      curr =
+      const next =
         positive === negative
           ? positive
           : manager.isTrue(positive) && manager.isFalse(negative)
@@ -197,10 +195,13 @@ class CofactorElimTermIte {
             : manager.isFalse(positive) && manager.isTrue(negative)
               ? negatedCondition
               : manager.mkApp(OP_ITE, [condition, positive, negative], SORT_BOOL);
-      trail.push(curr);
+      manager.incRef(next);
+      manager.decRef(curr);
+      curr = next;
+      manager.decRef(negatedCondition);
+      manager.decRef(negative);
+      manager.decRef(positive);
     }
-    manager.incRef(curr);
-    trail.reset();
     return curr;
   }
 

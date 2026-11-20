@@ -35,6 +35,7 @@ import {
   OP_LE,
   OP_LT,
   OP_MUL,
+  OP_NOT,
   OP_POWER,
   OP_SUB,
   OP_TO_REAL,
@@ -164,6 +165,10 @@ export class Fpa2BvConverter {
     return this.manager.mkOr(args);
   }
 
+  private mkRawNot(expr: number) {
+    return this.manager.mkApp(OP_NOT, [expr], SORT_BOOL);
+  }
+
   protected mkRawIte(condition: number, thenExpr: number, elseExpr: number) {
     return this.manager.mkApp(
       OP_ITE,
@@ -258,7 +263,7 @@ export class Fpa2BvConverter {
     let result = this.manager.trueExpr;
     for (let first = 0; first < args.length; first++)
       for (let second = first + 1; second < args.length; second++) {
-        const notEq = this.manager.mkNot(this.mkEq(args[first], args[second]));
+        const notEq = this.mkRawNot(this.mkEq(args[first], args[second]));
         result = this.simpAnd(result, notEq);
       }
     return result;
@@ -751,7 +756,7 @@ export class Fpa2BvConverter {
     const oneEbits = this.num(1, ebits);
     const yExpM1 = this.bv(OP_BSUB, yExp, oneEbits);
     const xeLtYem1 = this.bvUlt(xExp, yExpM1);
-    const yeNeqZero = manager.mkNot(manager.mkEq(yExp, this.num(0, ebits)));
+    const yeNeqZero = this.mkRawNot(manager.mkEq(yExp, this.num(0, ebits)));
     const c6 = this.mkAnd(yeNeqZero, xeLtYem1);
     const a = this.unpack(x, true);
     const b = this.unpack(y, true);
@@ -794,13 +799,13 @@ export class Fpa2BvConverter {
     const ySigLeRnddSig = this.bv(OP_SLEQ, ySigExt, rnddSig);
     const ySigEqRnddSig = manager.mkEq(ySigExt, rnddSig);
     const adjCnd1 = this.mkAnd(rnddExpEqYExp, ySigLeRnddSig);
-    const adjCnd2 = this.mkAnd(rnddExpEqYExpM1, ySigLeRnddSig, manager.mkNot(ySigEqRnddSig));
-    const adjCnd3 = this.mkAnd(rnddExpEqYExpM1, ySigEqRnddSig, manager.mkNot(hugeDivIsEven));
+    const adjCnd2 = this.mkAnd(rnddExpEqYExpM1, ySigLeRnddSig, this.mkRawNot(ySigEqRnddSig));
+    const adjCnd3 = this.mkAnd(rnddExpEqYExpM1, ySigEqRnddSig, this.mkRawNot(hugeDivIsEven));
     const adjCnd = this.mkOr(adjCnd1, adjCnd2, adjCnd3);
     const rndd = this.round(sort, rneBv, rnddSgn, rnddSig, rnddExp);
     const roundedSubY = this.mkSub(sort, rneBv, rndd, y);
     const roundedAddY = this.mkAdd(sort, rneBv, rndd, y);
-    const addCnd = manager.mkNot(manager.mkEq(rnddSgn, b.sgn));
+    const addCnd = this.mkRawNot(manager.mkEq(rnddSgn, b.sgn));
     const adjusted = this.mkIte(addCnd, roundedAddY, roundedSubY);
     const v7 = this.mkIte(adjCnd, adjusted, rndd);
     const r6 = this.mkIte(c6, x, v7);
@@ -838,7 +843,7 @@ export class Fpa2BvConverter {
     this.mkIsPos(y);
     this.mkIsNeg(x);
     this.mkIsNeg(y);
-    const pnOrNpZeros = this.mkAnd(xyAreZero, manager.mkNot(manager.mkEq(xSgn, ySgn)));
+    const pnOrNpZeros = this.mkAnd(xyAreZero, this.mkRawNot(manager.mkEq(xSgn, ySgn)));
     const unspecified = this.mkMinMaxUnspecified(decl, x, y);
     const compared = isMax ? this.mkFloatGt(x, y) : this.mkFloatLt(x, y);
     const ordered = this.mkIte(compared, x, y);
@@ -926,7 +931,7 @@ export class Fpa2BvConverter {
     const xySgn = this.simpXor(xIsNeg, yIsNeg);
     const xyzSgn = this.simpXor(xySgn, zIsNeg);
     const c71 = this.simpAnd(zIsZero, xyzSgn);
-    manager.mkNot(rmIsToNeg);
+    this.mkRawNot(rmIsToNeg);
     const zeroCond = this.simpIte(rmIsToNeg, nzero, pzero);
     const v7 = this.mkIte(c71, zeroCond, z);
     const oneBit = this.num(1, 1);
@@ -1294,17 +1299,15 @@ export class Fpa2BvConverter {
   }
 
   mkIsNegative(x: number) {
-    const manager = this.manager;
     const isNan = this.mkIsNan(x);
     const isNeg = this.mkIsNeg(x);
-    return this.mkAnd(manager.mkNot(isNan), isNeg);
+    return this.mkAnd(this.mkRawNot(isNan), isNeg);
   }
 
   mkIsPositive(x: number) {
-    const manager = this.manager;
     const isNan = this.mkIsNan(x);
     const isPos = this.mkIsPos(x);
-    return this.mkAnd(manager.mkNot(isNan), isPos);
+    return this.mkAnd(this.mkRawNot(isNan), isPos);
   }
 
   mkToFp(sort: number, args: number[]) {
@@ -1461,7 +1464,7 @@ export class Fpa2BvConverter {
       manager.mkFreshConst("fpa2bv_to_fp_real_exp", manager.mkBvSort(ebits + 2)),
     );
     const rIsNan = this.mkIsNan(result);
-    this.extraAssertions.push(manager.mkNot(rIsNan));
+    this.extraAssertions.push(this.mkRawNot(rIsNan));
     const maxExp = getPowerOfTwoMinusOne(ebits - 1);
     const maxReal = Rational.of(getPowerOfTwoMinusOne(sbits) << maxExp, 1n << BigInt(sbits - 1));
     const nearestMaxReal = Rational.of(1n << maxExp, 1n << BigInt(sbits)).add(maxReal);
@@ -1493,7 +1496,7 @@ export class Fpa2BvConverter {
     const absX = mkAbs(x);
     const gapUp = this.mkRawIte(expIsZero, mkReal(minSubnormal), real(OP_DIV, absR, sigValue));
     const gapDown = this.mkRawIte(
-      this.mkOr(expIsZero, expIsOne, manager.mkNot(sigIsZero)),
+      this.mkOr(expIsZero, expIsOne, this.mkRawNot(sigIsZero)),
       gapUp,
       real(OP_DIV, gapUp, two),
     );
@@ -1506,7 +1509,7 @@ export class Fpa2BvConverter {
       inNearestRange,
       bool(OP_IMPLIES, this.mkOr(tieLo, tieHi), sigIsEven),
     );
-    const ntaCond = this.mkAnd(inNearestRange, manager.mkNot(tieHi));
+    const ntaCond = this.mkAnd(inNearestRange, this.mkRawNot(tieHi));
     const isMaxFinite = this.mkAnd(
       manager.mkEq(rExp, this.num((1n << BigInt(ebits)) - 2n, ebits)),
       manager.mkEq(rSig, this.num(getPowerOfTwoMinusOne(sbits - 1), sbits - 1)),
@@ -1533,7 +1536,7 @@ export class Fpa2BvConverter {
     );
     const rIsInf = this.mkIsInf(result);
     this.extraAssertions.push(
-      bool(OP_IMPLIES, manager.mkNot(this.mkOr(rIsNan, rIsInf)), roundingCond),
+      bool(OP_IMPLIES, this.mkRawNot(this.mkOr(rIsNan, rIsInf)), roundingCond),
     );
     const xIsPos = bool(OP_GT, x, zero);
     const xIsNeg = bool(OP_LT, x, zero);
@@ -1638,7 +1641,7 @@ export class Fpa2BvConverter {
       unspecified,
       this.mkRawIte(xIsInf, unspecified, this.mkRawIte(xIsZero, zero, value)),
     );
-    const notSpecial = manager.mkNot(this.mkOr(xIsNan, xIsInf, xIsZero));
+    const notSpecial = this.mkRawNot(this.mkOr(xIsNan, xIsInf, xIsZero));
     this.extraAssertions.push(
       manager.mkApp(
         OP_IMPLIES,
@@ -1650,7 +1653,7 @@ export class Fpa2BvConverter {
       manager.mkApp(
         OP_IMPLIES,
         [
-          this.mkAnd(notSpecial, manager.mkNot(sgnIsOne)),
+          this.mkAnd(notSpecial, this.mkRawNot(sgnIsOne)),
           manager.mkApp(OP_GT, [result, zero], SORT_BOOL),
         ],
         SORT_BOOL,
@@ -1760,7 +1763,7 @@ export class Fpa2BvConverter {
     const expBv = this.extract(ebits + sbits - 2, sbits - 1, unspecified);
     this.extraAssertions.push(manager.mkEq(expBv, this.bv(OP_BNEG, this.num(1, ebits))));
     const sigBv = this.extract(sbits - 2, 0, unspecified);
-    this.extraAssertions.push(manager.mkNot(manager.mkEq(sigBv, this.num(0, sbits - 1))));
+    this.extraAssertions.push(this.mkRawNot(manager.mkEq(sigBv, this.num(0, sbits - 1))));
     const sgnExpSig = this.joinFp(x);
     return this.simpIte(xIsNan, unspecified, sgnExpSig);
   }
@@ -1827,10 +1830,10 @@ export class Fpa2BvConverter {
     if (!isSigned) {
       const upperLimit = this.zeroExtend(3, this.bv(OP_BNEG, this.num(1, size)));
       const signInRange = this.mkOr(
-        manager.mkNot(xIsNeg),
+        this.mkRawNot(xIsNeg),
         manager.mkEq(preRounded, this.num(0, size + 3)),
       );
-      const noOverflow = manager.mkNot(overflow);
+      const noOverflow = this.mkRawNot(overflow);
       const magnitudeInRange = this.bv(OP_ULEQ, preRounded, upperLimit);
       inRange = this.mkAnd(signInRange, noOverflow, magnitudeInRange);
     } else {
@@ -1843,13 +1846,13 @@ export class Fpa2BvConverter {
         this.bv(OP_SLEQ, preRounded, this.bv(OP_BNEG, this.num(1, size + 3))),
       );
       preRounded = this.mkRawIte(xIsNeg, this.bv(OP_BNEG, preRounded), preRounded);
-      const noOverflow = manager.mkNot(overflow);
+      const noOverflow = this.mkRawNot(overflow);
       const aboveLower = this.bv(OP_SLEQ, lowerLimit, preRounded);
       const belowUpper = this.bv(OP_SLEQ, preRounded, upperLimit);
       inRange = this.mkAnd(noOverflow, aboveLower, belowUpper);
     }
     const rounded = this.extract(size - 1, 0, preRounded);
-    const result = this.mkRawIte(manager.mkNot(inRange), unspecified, rounded);
+    const result = this.mkRawIte(this.mkRawNot(inRange), unspecified, rounded);
     const withZero = this.mkRawIte(xIsZero, v2, result);
     return this.mkRawIte(c1, unspecified, withZero);
   }

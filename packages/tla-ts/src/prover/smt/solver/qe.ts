@@ -1471,7 +1471,7 @@ export const runQe = (manager: AstManager) => (goal: Goal) => {
     for (let index = 0; index < goal.forms.size; index++) {
       manager.limit.checkpoint();
       if (goal.isInconsistent) break;
-      const formula = goal.forms.items[index];
+      const formula = goal.forms.get(index);
       if (!manager.hasQuantifierFlags[formula]) continue;
       if (hasUnsupportedSort(manager, formula))
         throw new SmtUnsupportedError("quantifier elimination over arrays or datatypes");

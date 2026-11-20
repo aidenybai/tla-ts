@@ -1,5 +1,6 @@
 import { SmtInvariantError } from "../../../errors";
 import { KIND_APP, OP_ITE, OP_LT, SORT_BOOL, SORT_INT, isArithSort, type AstManager } from "./ast";
+import { assign, release } from "./expr-ref";
 import { combineHash } from "./hash";
 import { ObjHashtable, ObjMap } from "./hashtable";
 import { FuncInterp, type ProtoModel } from "./proto-model";
@@ -377,14 +378,20 @@ export class AufSolver {
 
   private addMonoExceptions(node: Node) {
     if (node.sort !== SORT_INT) return;
+    const manager = this.manager;
     const rewriter = this.rewriter;
-    const one = this.manager.mkNumeral(1n);
+    const one = assign(manager, -1, manager.mkNumeral(1n));
+    let minusOne = -1;
+    let plusOne = -1;
     for (const exception of node.getExceptions()) {
-      const minusOne = rewriter.mkSub(exception, one);
-      const plusOne = rewriter.mkAdd([exception, one]);
-      node.insert(this.manager, plusOne, 0);
-      node.insert(this.manager, minusOne, 0);
+      minusOne = assign(manager, minusOne, rewriter.mkSub(exception, one));
+      plusOne = assign(manager, plusOne, rewriter.mkAdd([exception, one]));
+      node.insert(manager, plusOne, 0);
+      node.insert(manager, minusOne, 0);
     }
+    manager.decRef(one);
+    release(manager, plusOne);
+    release(manager, minusOne);
   }
 
   private getInstantiationSetValues(node: Node) {

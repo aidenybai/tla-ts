@@ -82,7 +82,6 @@ export class SmtKernel {
     const count = Math.min(numScopes, this.scopeCount);
     if (count === 0) return;
     this.context.pop(count);
-    for (let index = 0; index < count; index++) this.asserted.pop();
     this.scopeCount -= count;
   }
 

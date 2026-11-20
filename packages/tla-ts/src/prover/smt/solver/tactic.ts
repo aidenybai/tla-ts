@@ -2,6 +2,7 @@ import {
   SmtCanceledError,
   SmtParseError,
   SmtDefaultError,
+  SmtRewriterCanceledError,
   SmtTacticError,
   SmtUnsupportedError,
 } from "../../../errors";
@@ -174,8 +175,19 @@ interface NamedTactic {
   descrs: ParamDescrs;
   isRejectingUnknown?: boolean;
   isTrackingDependencies?: boolean;
+  isCatchingRewriterCancel?: boolean;
   build: (environment: TacticEnvironment, params: TacticParams) => Tactic;
 }
+
+const catchRewriterCancel = (tactic: Tactic) =>
+  withCleanup((goal) => {
+    try {
+      return tactic(goal);
+    } catch (error) {
+      if (error instanceof SmtRewriterCanceledError) throw new SmtCanceledError();
+      throw error;
+    }
+  }, tactic.cleanup);
 
 const getDescrs = (module: string, entries: [string, number, TacticParam, boolean?][]) =>
   new Map(
@@ -538,46 +550,54 @@ const createTacticSolver = (environment: TacticEnvironment, strategy: string): A
   };
 };
 
-// Each clause gets a fresh context, where Z3 pushes a scope on one context.
-const runUnitSubsume = (environment: TacticEnvironment) => (goal: Goal) => {
+const runUnitSubsume = (environment: TacticEnvironment) => {
   const manager = environment.manager;
   const kernel = new SmtKernel(manager, {
     isMbqi: environment.isMbqi,
     mbqiMaxIterations: environment.mbqiMaxIterations,
     isFindingMacros: false,
   });
-  const trail = new RefVector(manager);
-  const clauses = goal.forms.items.map(() => manager.mkFreshConst("#clause", SORT_BOOL));
-  for (const clause of clauses) trail.push(clause);
-  kernel.push();
-  for (const [index, form] of goal.forms.items.entries()) {
-    const definition = manager.mkEq(clauses[index], form);
-    trail.push(definition);
-    kernel.assertExpr(definition);
-  }
-  kernel.push();
-  const isDeleted = clauses.map(() => false);
-  const deleted: number[] = [];
-  for (const [index, clause] of clauses.entries()) {
+  const clauses = new RefVector(manager);
+  environment.destructors.push(() => {
+    clauses.reset();
+    kernel.release();
+  });
+  return (goal: Goal) => {
+    if (goal.isProofsEnabled)
+      throw new SmtTacticError("unit-subsume-simplify does not support proof production");
+    const count = goal.forms.size;
     kernel.push();
-    for (const [other, otherClause] of clauses.entries())
-      if (other === index) {
-        const negated = manager.mkNot(clause);
-        trail.push(negated);
-        kernel.assertExpr(negated);
-      } else if (!isDeleted[other]) kernel.assertExpr(otherClause);
+    for (let index = 0; index < count; index++) {
+      if (index === clauses.size) clauses.push(manager.mkFreshConst("#clause", SORT_BOOL));
+      const definition = manager.mkEq(clauses.items[index], goal.forms.get(index));
+      manager.incRef(definition);
+      kernel.assertExpr(definition);
+      manager.decRef(definition);
+    }
     kernel.push();
-    const isUnsat = kernel.context.isInconsistent();
+    const isDeleted = Array.from({ length: count }, () => false);
+    const deleted: number[] = [];
+    for (let index = 0; index < count; index++) {
+      kernel.push();
+      for (let other = 0; other < count; other++)
+        if (other === index) {
+          const negated = manager.mkNot(clauses.items[other]);
+          manager.incRef(negated);
+          kernel.assertExpr(negated);
+          manager.decRef(negated);
+        } else if (!isDeleted[other]) kernel.assertExpr(clauses.items[other]);
+      kernel.push();
+      const isUnsat = kernel.context.isInconsistent();
+      kernel.pop(2);
+      if (!isUnsat) continue;
+      isDeleted[index] = true;
+      deleted.push(index);
+    }
+    for (const index of deleted) goal.update(index, manager.trueExpr);
+    goal.elimTrue();
     kernel.pop(2);
-    if (!isUnsat) continue;
-    isDeleted[index] = true;
-    deleted.push(index);
-  }
-  for (const index of deleted) goal.update(index, manager.trueExpr);
-  goal.elimTrue();
-  kernel.pop(2);
-  trail.reset();
-  return [goal];
+    return [goal];
+  };
 };
 
 const inPlace = (run: (goal: Goal) => void) => (goal: Goal) => {
@@ -590,7 +610,7 @@ const selectClause = (goal: Goal, isLargest: boolean) => {
   let position = -1;
   let length = 0;
   for (let index = 0; index < goal.forms.size; index++) {
-    const form = goal.forms.items[index];
+    const form = goal.forms.get(index);
     if (manager.getOp(form) !== OP_OR) continue;
     const currentLength = manager.getNumArgs(form);
     if (currentLength < 2) continue;
@@ -610,7 +630,7 @@ const runSplitClause = (isLargest: boolean) => (goal: Goal) => {
     throw new SmtTacticError("split-clause tactic failed, goal does not contain any clause");
   if (goal.isProofsEnabled) throw new SmtUnsupportedError("the proofs of split-clause");
   const dependency = goal.dependencies[position];
-  return manager.getArgs(goal.forms.items[position]).map((literal) => {
+  return manager.getArgs(goal.forms.get(position)).map((literal) => {
     const subgoal = goal.copy();
     subgoal.update(position, literal, dependency);
     subgoal.depth++;
@@ -670,7 +690,7 @@ const runNnf = (manager: AstManager, params: TacticParams) => (goal: Goal) => {
   const size = goal.forms.size;
   try {
     for (let index = 0; !goal.isInconsistent && index < size; index++) {
-      const result = nnf.apply(goal.forms.items[index], definitions);
+      const result = nnf.apply(goal.forms.get(index), definitions);
       goal.update(index, result, goal.getDependency(index));
       manager.decRef(result);
     }
@@ -829,6 +849,7 @@ const NAMED_TACTICS = new Map<string, NamedTactic>([
   [
     "simplify",
     {
+      isCatchingRewriterCancel: true,
       descrs: REWRITER_DESCRS,
       isTrackingDependencies: true,
       build: (environment, params) =>
@@ -840,6 +861,7 @@ const NAMED_TACTICS = new Map<string, NamedTactic>([
   [
     "elim-and",
     {
+      isCatchingRewriterCancel: true,
       descrs: REWRITER_DESCRS,
       isTrackingDependencies: true,
       build: (environment, params) =>
@@ -854,6 +876,7 @@ const NAMED_TACTICS = new Map<string, NamedTactic>([
   [
     "propagate-values",
     {
+      isCatchingRewriterCancel: true,
       descrs: new Map([
         ...REWRITER_DESCRS,
         ...getDescrs("", [["max_rounds", PARAM_UINT, 4, true]]),
@@ -931,6 +954,7 @@ const NAMED_TACTICS = new Map<string, NamedTactic>([
   [
     "purify-arith",
     {
+      isCatchingRewriterCancel: true,
       descrs: new Map([
         ...REWRITER_DESCRS,
         ...getDescrs("", [
@@ -1005,6 +1029,7 @@ const NAMED_TACTICS = new Map<string, NamedTactic>([
   [
     "qe-light",
     {
+      isCatchingRewriterCancel: true,
       descrs: new Map(),
       build: (environment) =>
         inPlace((goal) =>
@@ -1015,6 +1040,7 @@ const NAMED_TACTICS = new Map<string, NamedTactic>([
   [
     "solve-eqs",
     {
+      isCatchingRewriterCancel: true,
       isTrackingDependencies: true,
       // Z3 never counts the occurrences that solve_eqs_max_occs bounds, so the bound has no effect.
       descrs: getDescrs("", [
@@ -1074,6 +1100,7 @@ const NAMED_TACTICS = new Map<string, NamedTactic>([
   [
     "card2bv",
     {
+      isCatchingRewriterCancel: true,
       descrs: getDescrs("", [
         ["keep_cardinality_constraints", PARAM_BOOL, false, true],
         ["pb.solver", PARAM_SYMBOL, "solver", true],
@@ -1090,6 +1117,7 @@ const NAMED_TACTICS = new Map<string, NamedTactic>([
   [
     "normalize-bounds",
     {
+      isCatchingRewriterCancel: true,
       descrs: getDescrs("", [
         ["produce_models", PARAM_BOOL, false, true],
         ["norm_int_only", PARAM_BOOL, true, true],
@@ -1110,6 +1138,7 @@ const NAMED_TACTICS = new Map<string, NamedTactic>([
   [
     "propagate-ineqs",
     {
+      isCatchingRewriterCancel: true,
       isTrackingDependencies: true,
       descrs: getDescrs("", [["bound_max_refinements", PARAM_UINT, 16, true]]),
       build: (environment) => inPlace((goal) => propagateIneqs(environment.manager, goal)),
@@ -1118,6 +1147,7 @@ const NAMED_TACTICS = new Map<string, NamedTactic>([
   [
     "lia2pb",
     {
+      isCatchingRewriterCancel: true,
       descrs: new Map([
         ...REWRITER_DESCRS,
         ...getDescrs("", [
@@ -1230,6 +1260,7 @@ const NAMED_TACTICS = new Map<string, NamedTactic>([
   [
     "cofactor-term-ite",
     {
+      isCatchingRewriterCancel: true,
       descrs: getDescrs("", [["cofactor_equalities", PARAM_BOOL, true, true]]),
       build: (environment, params) =>
         inPlace((goal) =>
@@ -1266,6 +1297,7 @@ const NAMED_TACTICS = new Map<string, NamedTactic>([
   [
     "fix-dl-var",
     {
+      isCatchingRewriterCancel: true,
       isTrackingDependencies: true,
       descrs: REWRITER_DESCRS,
       build: (environment, params) =>
@@ -1277,6 +1309,7 @@ const NAMED_TACTICS = new Map<string, NamedTactic>([
   [
     "factor",
     {
+      isCatchingRewriterCancel: true,
       isTrackingDependencies: true,
       descrs: getDescrs("", [
         ["split_factors", PARAM_BOOL, true, true],
@@ -1293,6 +1326,7 @@ const NAMED_TACTICS = new Map<string, NamedTactic>([
   [
     "der",
     {
+      isCatchingRewriterCancel: true,
       isTrackingDependencies: true,
       descrs: new Map(),
       build: (environment) => runDer(environment.manager),
@@ -1301,6 +1335,7 @@ const NAMED_TACTICS = new Map<string, NamedTactic>([
   [
     "blast-term-ite",
     {
+      isCatchingRewriterCancel: true,
       isTrackingDependencies: true,
       descrs: new Map(),
       build: (environment) => inPlace((goal) => blastTermIte(environment.manager, goal)),
@@ -1309,6 +1344,7 @@ const NAMED_TACTICS = new Map<string, NamedTactic>([
   [
     "distribute-forall",
     {
+      isCatchingRewriterCancel: true,
       descrs: new Map(),
       isTrackingDependencies: true,
       build: (environment) => inPlace((goal) => distributeForall(environment.manager, goal)),
@@ -1366,6 +1402,7 @@ const NAMED_TACTICS = new Map<string, NamedTactic>([
   [
     "dom-simplify",
     {
+      isCatchingRewriterCancel: true,
       isTrackingDependencies: true,
       descrs: new Map(),
       build: (environment) => inPlace((goal) => domSimplify(environment.manager, goal)),
@@ -1391,6 +1428,7 @@ const NAMED_TACTICS = new Map<string, NamedTactic>([
   [
     "fpa2bv",
     {
+      isCatchingRewriterCancel: true,
       descrs: new Map(),
       isTrackingDependencies: true,
       build: (environment) => runFpa2Bv(environment.manager),
@@ -1435,6 +1473,7 @@ const NAMED_TACTICS = new Map<string, NamedTactic>([
   [
     "bit-blast",
     {
+      isCatchingRewriterCancel: true,
       descrs: getDescrs("", [
         ["max_memory", PARAM_UINT, UINT_MAX, true],
         ["max_steps", PARAM_UINT, UINT_MAX],
@@ -1456,6 +1495,7 @@ const NAMED_TACTICS = new Map<string, NamedTactic>([
   [
     "max-bv-sharing",
     {
+      isCatchingRewriterCancel: true,
       descrs: new Map(),
       isTrackingDependencies: true,
       build: (environment) => runMaxBvSharing(environment.manager),
@@ -1482,6 +1522,7 @@ const NAMED_TACTICS = new Map<string, NamedTactic>([
   [
     "bv-divrem-bounds",
     {
+      isCatchingRewriterCancel: true,
       descrs: new Map(),
       isTrackingDependencies: true,
       build: (environment) => runBvDivremBounds(environment.manager),
@@ -1498,6 +1539,7 @@ const NAMED_TACTICS = new Map<string, NamedTactic>([
   [
     "bv1-blast",
     {
+      isCatchingRewriterCancel: true,
       descrs: getDescrs("", [
         ["max_memory", PARAM_UINT, UINT_MAX, true],
         ["max_steps", PARAM_UINT, UINT_MAX],
@@ -1548,6 +1590,7 @@ const NAMED_TACTICS = new Map<string, NamedTactic>([
   [
     "smt",
     {
+      isCatchingRewriterCancel: true,
       descrs: SMT_DESCRS,
       isRejectingUnknown: false,
       isTrackingDependencies: true,
@@ -1997,6 +2040,7 @@ const compile = (
   environment: TacticEnvironment,
   sexpr: SExpr,
   isInternal: boolean,
+  made: NamedTactic[] = [],
 ): TacticBuilder => {
   if (sexpr.kind !== "list") {
     if (!isSymbol(sexpr)) throw new SmtParseError("invalid tactic, unexpected input", sexpr);
@@ -2004,13 +2048,15 @@ const compile = (
     const named = NAMED_TACTICS.get(
       sexpr.text === "smt" && environment.parameters.get("sat.euf") === "true" ? "sat" : sexpr.text,
     );
-    if (named !== undefined)
+    if (named !== undefined) {
+      made.push(named);
       return {
         descrs: named.descrs,
         isRejectingUnknown: named.isRejectingUnknown ?? true,
         isTrackingDependencies: named.isTrackingDependencies ?? false,
         build: (params) => {
-          const tactic = named.build(environment, params);
+          const built = named.build(environment, params);
+          const tactic = named.isCatchingRewriterCancel ? catchRewriterCancel(built) : built;
           if (!isInternal) return tactic;
           return withCleanup((goal) => {
             checkParams(named.descrs, params);
@@ -2018,18 +2064,21 @@ const compile = (
           }, tactic.cleanup);
         },
       };
+    }
     const strategy = LOGIC_TACTICS.get(sexpr.text);
     if (strategy !== undefined)
-      return compile(environment, createCommandReader(strategy).read() as SmtList, true);
+      return compile(environment, createCommandReader(strategy).read() as SmtList, true, made);
     if (UNPORTED_TACTICS.has(sexpr.text)) {
       const error = new SmtUnsupportedError(`the tactic ${sexpr.text}`);
-      if (!isInternal) throw error;
       return {
         descrs: new Map(),
         isRejectingUnknown: false,
         isTrackingDependencies: false,
-        build: () => () => {
-          throw error;
+        build: () => {
+          if (!isInternal) throw error;
+          return () => {
+            throw error;
+          };
         },
       };
     }
@@ -2040,7 +2089,7 @@ const compile = (
   if (!isSymbol(head)) throw new SmtParseError("invalid tactic, symbol expected", sexpr.end);
   const compileChildren = (combinator: string) => {
     checkHasArgument(sexpr, combinator);
-    return sexpr.items.slice(1).map((child) => compile(environment, child, isInternal));
+    return sexpr.items.slice(1).map((child) => compile(environment, child, isInternal, made));
   };
   switch (head.text) {
     case "then":
@@ -2096,7 +2145,7 @@ const compile = (
           "invalid try-for combinator, second argument must be an unsigned integer",
           sexpr.end,
         );
-      const child = compile(environment, sexpr.items[1], isInternal);
+      const child = compile(environment, sexpr.items[1], isInternal, made);
       return {
         ...child,
         build: (params) => {
@@ -2126,7 +2175,7 @@ const compile = (
           "invalid fail-if-branching combinator, second argument must be an unsigned integer",
           sexpr.end,
         );
-      const child = compile(environment, sexpr.items[1], isInternal);
+      const child = compile(environment, sexpr.items[1], isInternal, made);
       const threshold = bound === undefined ? 1 : Number(bound.text);
       return {
         ...mergeDescrs([child]),
@@ -2148,7 +2197,7 @@ const compile = (
           `invalid ${head.text} combinator, one argument expected`,
           sexpr.end,
         );
-      const child = compile(environment, sexpr.items[1], isInternal);
+      const child = compile(environment, sexpr.items[1], isInternal, made);
       const isSkipping = (goal: Goal) =>
         head.text === "if-no-models"
           ? goal.isModelsEnabled
@@ -2175,7 +2224,7 @@ const compile = (
           "invalid repeat combinator, second argument must be an unsigned integer",
           sexpr.end,
         );
-      const child = compile(environment, sexpr.items[1], isInternal);
+      const child = compile(environment, sexpr.items[1], isInternal, made);
       const maxDepth = bound === undefined ? UINT_MAX : Number(bound.text);
       return {
         ...mergeDescrs([child]),
@@ -2186,7 +2235,7 @@ const compile = (
     case "using-params":
     case "with": {
       checkHasArgument(sexpr, "using-params");
-      const child = compile(environment, sexpr.items[1], isInternal);
+      const child = compile(environment, sexpr.items[1], isInternal, made);
       if (sexpr.items.length === 2) return child;
       const own = getParams(child, sexpr.items, isInternal);
       return {
@@ -2205,7 +2254,7 @@ const compile = (
           "invalid skip-if-failed combinator, one argument expected",
           sexpr.end,
         );
-      const child = compile(environment, sexpr.items[1], isInternal);
+      const child = compile(environment, sexpr.items[1], isInternal, made);
       return {
         ...mergeDescrs([child]),
         build: (params) => runOrElse([child.build(params), (goal) => [goal]]),
@@ -2215,7 +2264,7 @@ const compile = (
     case "annotate": {
       if (!isInternal)
         throw new SmtParseError(`invalid tactic, unknown tactic combinator annotate`, sexpr.end);
-      const child = compile(environment, sexpr.items[1], isInternal);
+      const child = compile(environment, sexpr.items[1], isInternal, made);
       return {
         ...mergeDescrs([child]),
         build: (params) => {
@@ -2258,7 +2307,9 @@ const compile = (
           sexpr.end,
         );
       const probe = compileProbe(sexpr.items[1], isInternal);
-      const children = sexpr.items.slice(2).map((child) => compile(environment, child, isInternal));
+      const children = sexpr.items
+        .slice(2)
+        .map((child) => compile(environment, child, isInternal, made));
       return {
         ...mergeDescrs(children),
         build: (params) => runCond(probe, children[0].build(params), children[1].build(params)),
@@ -2268,7 +2319,7 @@ const compile = (
       if (sexpr.items.length !== 3)
         throw new SmtParseError("invalid when combinator, two arguments expected", sexpr.end);
       const probe = compileProbe(sexpr.items[1], isInternal);
-      const child = compile(environment, sexpr.items[2], isInternal);
+      const child = compile(environment, sexpr.items[2], isInternal, made);
       return {
         ...mergeDescrs([child]),
         build: (params) => runCond(probe, child.build(params), (goal) => [goal]),
@@ -2364,8 +2415,18 @@ export const mkIncSatPreprocess = (
     ),
   ].reduceRight((second, first) => runAndThen(first, second));
 
-export const compileTactic = (environment: TacticEnvironment, sexpr: SExpr) =>
-  compile(environment, sexpr, false);
+// sexpr2tactic makes each tactic as it reads it, so a parse error makes and frees those before it.
+export const compileTactic = (environment: TacticEnvironment, sexpr: SExpr) => {
+  const made: NamedTactic[] = [];
+  try {
+    return compile(environment, sexpr, false, made);
+  } catch (error) {
+    const start = environment.destructors.length;
+    for (const named of made) named.build(environment, new Map());
+    destroyTactics(environment.destructors.splice(start));
+    throw error;
+  }
+};
 
 export const compileInternalTactic = (environment: TacticEnvironment, text: string) =>
   compile(environment, createCommandReader(text).readSExpr(), true).build(new Map());
@@ -2505,7 +2566,11 @@ const exec = (tactic: Tactic, goal: Goal) => {
     tactic.cleanup?.();
     return goals;
   } catch (error) {
-    if (error instanceof SmtTacticError || error instanceof SmtCanceledError) tactic.cleanup?.();
+    if (
+      error instanceof SmtTacticError ||
+      (error instanceof SmtCanceledError && !(error instanceof SmtRewriterCanceledError))
+    )
+      tactic.cleanup?.();
     throw error;
   }
 };
@@ -2535,6 +2600,9 @@ export const applyTactic = (tactic: Tactic, goal: Goal) => {
   try {
     return exec(tactic, goal);
   } catch (error) {
+    // apply_tactic_cmd only catches tactic_exception, so a rewriter_exception fails the command.
+    if (error instanceof SmtRewriterCanceledError)
+      throw new SmtDefaultError(goal.manager.limit.getCancelMessage());
     if (error instanceof SmtCanceledError)
       throw new SmtTacticError(goal.manager.limit.getCancelMessage());
     throw error;

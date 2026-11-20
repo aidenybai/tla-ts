@@ -677,14 +677,20 @@ export class TheoryArray extends Theory {
   }
 
   finalCheckEh() {
-    this.finalCheckIndex++;
-    const delayed = this.finalCheckIndex % 2 === 1 ? this.assertDelayedAxioms() : FC_DONE;
+    const index = ++this.finalCheckIndex;
+    const delay = this.context.config.arrayLazyIeqDelay;
+    if (delay !== undefined && index % delay !== 0) {
+      this.assertDelayedAxioms();
+      return FC_CONTINUE;
+    }
+    const isAxiomsFirst = delay === undefined && index % 2 === 1;
+    const delayed = isAxiomsFirst ? this.assertDelayedAxioms() : FC_DONE;
     const result =
       delayed !== FC_DONE
         ? delayed
         : this.mkInterfaceEqs() > 0
           ? FC_CONTINUE
-          : this.finalCheckIndex % 2 === 1
+          : isAxiomsFirst
             ? FC_DONE
             : this.assertDelayedAxioms();
     return result === FC_DONE && this.isUnsupportedOpFound ? FC_GIVEUP : result;
