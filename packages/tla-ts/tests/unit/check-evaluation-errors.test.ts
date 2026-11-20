@@ -2117,6 +2117,26 @@ describe("evaluation errors match TLC", () => {
     expect(result.status).toBe("success");
   });
 
+  it.each([
+    ["Cardinality({D, STRING}) = 2", "success", undefined],
+    ["STRING # D", "success", undefined],
+    ["D \\notin {Int}", "success", undefined],
+    [
+      "{D, STRING, {C, 1}} = {}",
+      "assumption-violation",
+      "Attempted to compare the set {a_, 1} with the value:\nSTRING",
+    ],
+  ])(
+    "orders an overridden set after a typed model value in %s like TLC",
+    async (assumption, status, message) => {
+      const result = await checkModule(
+        `CONSTANTS C, D\nASSUME ${assumption}`,
+        "CONSTANTS C = a_ D = t_a",
+      );
+      expect([result.status, result.violation?.message]).toEqual([status, message]);
+    },
+  );
+
   it.each(['"a" \\in Nat', "1 \\in STRING", "{} \\in 1..4", "FALSE \\in Int"])(
     "rejects %s",
     async (membership) => {

@@ -1064,6 +1064,8 @@ const getSetElementsLikeTlc = (left: SetValue | MixedSetValue, right: Value) => 
 };
 
 const compareSetLikeTlc = (left: ObjectValue, right: Value, isEquality: boolean): number => {
+  // TLC's UserValue#compareTo puts STRING, Nat, Int and Seq(S) after any model value, typed or not.
+  if (isOverriddenSet(left) && isModelValue(right)) return 1;
   if (isComparedByClass(left, right)) {
     if (!isEquality) return compareValues(left, right);
     return valuesEqual(left, right) ? 0 : 1;
