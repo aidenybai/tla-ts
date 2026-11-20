@@ -1007,7 +1007,6 @@ describe("the optimizer releases what Z3 releases", () => {
         parameters: new Map(),
         hasDefinitions: () => false,
         destructors: [],
-        cleanups: [],
         inits: [],
       },
       { getBaseModel: () => null, setModel: () => {} },
@@ -1124,6 +1123,28 @@ describe("tseitin-cnf, as Z3 5.3.2 composes it", () => {
       "(goals\n(goal\n  :precision precise :depth 1)\n)",
       "(goals\n(goal\n  b0\n  :precision precise :depth 2)\n)",
       "(goals\n(goal\n  false\n  :precision precise :depth 1)\n)",
+    ]);
+  });
+
+  it("keeps the negation of true and false in a literal", () => {
+    expect(
+      run([
+        "(declare-const p Bool)",
+        "(push)",
+        "(assert (not true))",
+        "(apply tseitin-cnf)",
+        "(pop)",
+        "(push)",
+        "(assert (not false))",
+        "(apply tseitin-cnf)",
+        "(pop)",
+        "(assert (or p (not true)))",
+        "(apply tseitin-cnf)",
+      ]),
+    ).toEqual([
+      "(goals\n(goal\n  (not true)\n  :precision precise :depth 1)\n)",
+      "(goals\n(goal\n  (not false)\n  :precision precise :depth 1)\n)",
+      "(goals\n(goal\n  (or p (not true))\n  :precision precise :depth 1)\n)",
     ]);
   });
 });
@@ -2611,6 +2632,57 @@ describe("eq2bv, as Z3 5.3.2 encodes the bounded integers", () => {
 });
 
 describe("the goals of a tactic free what Z3 5.3.2 frees", () => {
+  it("keeps the formulas that a tactic replaces in the copy of the goal that or-else shares", () => {
+    expect(
+      run([
+        "(declare-const a Int)",
+        "(declare-const b Int)",
+        "(declare-const p Bool)",
+        "(assert (! (>= (* (ite (>= b b) b a) (ite (<= a b) a a)) (- (+ b a) (ite (< b b) 1 b))) :named n1))",
+        "(assert p)",
+        "(assert (! (or p p) :named n2))",
+        "(check-sat)",
+        "(check-sat)",
+        "(get-value (a b))",
+      ]),
+    ).toEqual(["sat", "sat", "((a 5)\n (b 2))"]);
+  });
+
+  it("leaves the formulas of the smt tactic to the goal alone without unsat cores", () => {
+    expect(
+      run([
+        "(declare-const x (_ BitVec 4))",
+        "(declare-const y (_ BitVec 4))",
+        "(declare-const z (_ BitVec 4))",
+        "(assert (= #x3 x))",
+        "(assert (not (or (= z (concat ((_ extract 3 2) x) ((_ extract 3 2) #x1))) (= (concat ((_ extract 3 2) y) ((_ extract 3 2) (concat ((_ extract 3 2) z) #b01))) (concat ((_ extract 3 2) #x1) ((_ extract 3 2) #x3))))))",
+        "(check-sat)",
+        "(assert (not (= #x3 (concat ((_ extract 1 0) z) ((_ extract 3 2) #x1)))))",
+        "(assert (not (or (= #x0 (concat ((_ extract 1 0) z) ((_ extract 3 2) z))) (= #x1 (concat ((_ extract 3 2) (concat #x3 ((_ extract 3 2) #x0))) #b01)))))",
+        "(check-sat)",
+        "(declare-const p Bool)",
+        "(declare-const q Bool)",
+        "(declare-const r Bool)",
+        "(assert (or p (and (not p) r) q))",
+        "(apply tseitin-cnf)",
+      ]),
+    ).toEqual([
+      "sat",
+      "sat",
+      [
+        "(goals",
+        "(goal",
+        "  (= x #x3)",
+        "  (not (= z (concat ((_ extract 3 2) x) #b00)))",
+        "  (or (not (= ((_ extract 3 2) z) #b00)) (not (= ((_ extract 3 2) y) #b00)))",
+        "  (or (not (= ((_ extract 3 2) z) #b00)) (not (= ((_ extract 1 0) z) #b00)))",
+        "  (or p q r)",
+        "  :precision precise :depth 2)",
+        ")",
+      ].join("\n"),
+    ]);
+  });
+
   it("frees the rewriter cache of propagate-values when the tactic of the first check ends", () => {
     expect(
       run([
@@ -2627,6 +2699,31 @@ describe("the goals of a tactic free what Z3 5.3.2 frees", () => {
         "(get-value (w q))",
       ]),
     ).toEqual(["sat", "sat", "((w #xd)\n (q true))"]);
+  });
+
+  it("keeps the shared terms of propagate-values until the whole tactic of apply ends", () => {
+    expect(
+      run([
+        "(declare-const x (_ BitVec 3))",
+        "(declare-const y (_ BitVec 3))",
+        "(assert (bvule (bvor (bvmul y y) x) (bvor y x)))",
+        "(assert (= x (_ bv3 3)))",
+        "(apply (and-then propagate-values bit-blast bv-divrem-bounds))",
+      ]),
+    ).toEqual([
+      [
+        "(goals",
+        "(goal",
+        "  (let ((a!1 (= (= (or (not k!0) (not k!2)) k!1) (or (not k!0) (not k!1)))))",
+        "  (let ((a!2 (not (= (or (not k!0) (not k!2)) a!1))))",
+        "    (or k!2 a!2)))",
+        "  (not k!5)",
+        "  k!3",
+        "  k!4",
+        "  :precision precise :depth 3)",
+        ")",
+      ].join("\n"),
+    ]);
   });
 
   it("frees the model converter of apply's goal, so the next bit-blast numbers its bits anew", () => {
@@ -2918,6 +3015,108 @@ describe("the goals of a tactic free what Z3 5.3.2 frees", () => {
   });
 });
 
+describe("ctx-solver-simplify, as Z3 5.3.2 keeps its kernel", () => {
+  it("makes its kernel with the tactic, even when the tactic never runs", () => {
+    expect(
+      run([
+        "(declare-const a Int)",
+        "(apply (or-else skip ctx-solver-simplify))",
+        "(get-info :rlimit)",
+      ]),
+    ).toEqual(["(goals\n(goal\n  :precision precise :depth 0)\n)", "(:rlimit 2)"]);
+  });
+
+  it("makes a new kernel after each run", () => {
+    expect(
+      run([
+        "(declare-const a Int)",
+        "(apply (then ctx-solver-simplify ctx-solver-simplify ctx-solver-simplify))",
+        "(get-info :rlimit)",
+      ]),
+    ).toEqual(["(goals\n(goal\n  :precision precise :depth 1)\n)", "(:rlimit 63)"]);
+  });
+
+  it("frees each assumption when it asserts the next one, and its names before the pop", () => {
+    expect(
+      run([
+        '(set-option :tactic.default_tactic "(then ctx-solver-simplify smt)")',
+        "(declare-fun f (Int) Int)",
+        "(declare-fun g (Int) Int)",
+        "(declare-const a Int)",
+        "(assert (forall ((x Int)) (! (<= (g x) (f (g x))) :pattern ((g x)) :weight 25)))",
+        "(assert (distinct 0 (f (g a))))",
+        "(check-sat)",
+        "(get-info :rlimit)",
+        "(check-sat)",
+        "(get-info :rlimit)",
+      ]),
+    ).toEqual(["sat", "(:rlimit 1747)", "sat", "(:rlimit 3479)"]);
+  });
+});
+
+describe("the instantiation parameters of ctx-solver-simplify, as Z3 5.3.2 reads them", () => {
+  const quantified = [
+    "(declare-fun f (Int) Int)",
+    "(declare-fun g (Int) Int)",
+    "(declare-const a Int)",
+    "(assert (forall ((x Int)) (! (<= (g x) (f (g x))) :pattern ((g x)) :weight 25)))",
+    "(assert (distinct 0 (f (g a))))",
+  ];
+  const goal = [
+    "(goals",
+    "(goal",
+    "  (forall ((x Int)) (! (<= (g x) (f (g x))) :pattern ((g x)) :weight 25))",
+    "  (distinct 0 (f (g a)))",
+    "  :precision precise :depth 1)",
+    ")",
+  ].join("\n");
+
+  it("reads the global eager threshold", () => {
+    expect(
+      run([
+        "(set-option :smt.qi.eager_threshold 50.0)",
+        ...quantified,
+        "(apply ctx-solver-simplify)",
+        "(get-info :rlimit)",
+      ]),
+    ).toEqual([goal, "(:rlimit 1638)"]);
+  });
+
+  it("reads the global cost function", () => {
+    expect(
+      run([
+        '(set-option :smt.qi.cost "15")',
+        ...quantified,
+        "(apply ctx-solver-simplify)",
+        "(get-info :rlimit)",
+      ]),
+    ).toEqual([goal, "(:rlimit 1697)"]);
+  });
+
+  it("reads the lazy threshold of using-params", () => {
+    expect(
+      run([
+        ...quantified,
+        "(apply (using-params ctx-solver-simplify :qi.lazy_threshold 100.0))",
+        "(get-info :rlimit)",
+      ]),
+    ).toEqual([goal, "(:rlimit 1697)"]);
+  });
+
+  it("reads the eager threshold of using-params only in the kernels that cleanup makes", () => {
+    expect(
+      run([
+        '(set-option :tactic.default_tactic "(then (using-params ctx-solver-simplify :qi.eager_threshold 50.0) smt)")',
+        ...quantified,
+        "(check-sat)",
+        "(get-info :rlimit)",
+        "(check-sat)",
+        "(get-info :rlimit)",
+      ]),
+    ).toEqual(["sat", "(:rlimit 1747)", "sat", "(:rlimit 3696)"]);
+  });
+});
+
 describe("tactic2solver, as Z3 5.3.2 keeps its tactic", () => {
   it("keeps the cache of lia2card's rewriter across the checks", () => {
     expect(
@@ -2933,6 +3132,52 @@ describe("tactic2solver, as Z3 5.3.2 keeps its tactic", () => {
         "(get-info :rlimit)",
       ]),
     ).toEqual(["sat", "(:rlimit 191)", "sat", "(:rlimit 357)"]);
+  });
+
+  it("keeps the propagate-values of qflia's pb tactic across the checks", () => {
+    const names = ["v0", "v1", "v2", "v3", "v4", "v5", "v6", "v7", "v8"];
+    expect(
+      run([
+        ...names.map((name) => `(declare-const ${name} Int)`),
+        ...names.map((name) => `(assert (<= 0 ${name} 1))`),
+        "(assert (or (= v1 0) (= v1 0) (= v0 0) (= v7 1)))",
+        "(assert (or (= v4 0) (= v6 0) (= v2 0)))",
+        "(assert (or (= v6 0) (= v8 0)))",
+        "(assert (or (= v6 1) (= v2 0) (= v7 1) (= v0 0)))",
+        "(assert (or (= v7 0) (= v4 0)))",
+        "(assert (or (= v7 1) (= v5 1) (= v4 0) (= v3 0)))",
+        "(assert (or (= v2 1) (= v6 0) (= v5 1) (= v8 0)))",
+        "(check-sat)",
+        "(check-sat)",
+        "(get-value (v0 v1 v2 v3 v4 v5 v6 v7 v8))",
+      ]),
+    ).toEqual([
+      "sat",
+      "sat",
+      "((v0 1)\n (v1 0)\n (v2 0)\n (v3 0)\n (v4 0)\n (v5 0)\n (v6 0)\n (v7 0)\n (v8 0))",
+    ]);
+  });
+
+  it("keeps the whole strategy of an annotated logic across the checks", () => {
+    expect(
+      run([
+        "(set-logic QF_NIA)",
+        "(declare-const v0 Int)",
+        "(declare-const v1 Int)",
+        "(declare-const v2 Int)",
+        "(declare-const v3 Int)",
+        "(assert (<= 0 v0 2))",
+        "(assert (<= 0 v1 3))",
+        "(assert (<= (+ (* v0 v3) v3) -4))",
+        "(check-sat)",
+        "(check-sat)",
+        "(get-model)",
+      ]),
+    ).toEqual([
+      "sat",
+      "sat",
+      "(\n  (define-fun v1 () Int\n    0)\n  (define-fun v0 () Int\n    2)\n  (define-fun v3 () Int\n    (- 7))\n  (define-fun v2 () Int\n    0)\n)",
+    ]);
   });
 
   it("forgets the sorts dt2bv saw in an earlier check", () => {

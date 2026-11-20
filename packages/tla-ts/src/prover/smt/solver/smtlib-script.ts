@@ -432,7 +432,6 @@ interface ScriptState {
   strategy: string | undefined;
   tactic: Tactic | undefined;
   tacticDestructors: (() => void)[];
-  tacticCleanups: (() => void)[];
   tacticInits: (() => void)[];
   tacticConverters: Goal["converters"];
   tacticModel: ProtoModel | undefined;
@@ -513,7 +512,6 @@ export const runSmtlibScript = (
       strategy: undefined,
       tactic: undefined,
       tacticDestructors: [],
-      tacticCleanups: [],
       tacticInits: [],
       tacticConverters: [],
       tacticModel: undefined,
@@ -580,7 +578,6 @@ export const runSmtlibScript = (
         parameters: settings.parameters,
         hasDefinitions: () => state.reader.hasDefinitions(),
         destructors: [],
-        cleanups: [],
         inits: [],
       },
       objectives,
@@ -640,17 +637,9 @@ export const runSmtlibScript = (
     state.optimizer = undefined;
   };
   // The port keeps answering with the smt kernel where it lacks a piece of the logic's strategy.
-  const solveWithStrategy = (strategy: string) => {
-    releaseTacticModel();
-    const goal = getGoal(state.isSolverProducingModels);
+  const checkWithStrategy = (tactic: Tactic, goal: Goal) => {
     try {
-      state.tactic ??= compileInternalTactic(
-        getTacticEnvironment(state.tacticDestructors, state.tacticCleanups, state.tacticInits),
-        strategy,
-      );
-      for (const cleanup of state.tacticCleanups) cleanup();
-      for (const init of state.tacticInits) init();
-      const checked = checkSatUsing(state.tactic, goal);
+      const checked = checkSatUsing(tactic, goal);
       if (checked.status === L_UNDEF && state.scopes.length === 0) {
         state.lastAssertions.reset();
         for (const form of goal.forms.items) state.lastAssertions.push(form);
@@ -659,17 +648,31 @@ export const runSmtlibScript = (
       decConverterRefs(state.manager, state.tacticConverters);
       state.tacticConverters = goal.converters;
       goal.converters = [];
-      goal.reset();
       checked.model?.incRef();
       state.tacticModel = checked.model;
+      tactic.cleanup?.();
       return {
         result: checked.status,
         context: undefined,
         model: checked.model,
         reasonUnknown: checked.reasonUnknown,
       };
-    } catch (error) {
+    } finally {
       goal.release();
+    }
+  };
+  // tactic2solver cleans its tactic before the goal is built and again before it is freed.
+  const solveWithStrategy = (strategy: string) => {
+    releaseTacticModel();
+    try {
+      const tactic = (state.tactic ??= compileInternalTactic(
+        getTacticEnvironment(state.tacticDestructors, state.tacticInits),
+        strategy,
+      ));
+      tactic.cleanup?.();
+      for (const init of state.tacticInits) init();
+      return checkWithStrategy(tactic, getGoal(state.isSolverProducingModels));
+    } catch (error) {
       if (!(error instanceof SmtUnsupportedError)) throw error;
       const hasQuantifiers = state.assertions.some(
         (assertion) => state.manager.hasQuantifierFlags[assertion],
@@ -898,12 +901,11 @@ export const runSmtlibScript = (
         ? undefined
         : readDefaultTactic(defaultTactic);
     const destructors: (() => void)[] = [];
-    const cleanups: (() => void)[] = [];
     const inits: (() => void)[] = [];
     const tactic =
       sexpr === undefined
         ? undefined
-        : compileTactic(getTacticEnvironment(destructors, cleanups, inits), sexpr).build(new Map());
+        : compileTactic(getTacticEnvironment(destructors, inits), sexpr).build(new Map());
     const isParallel = parameters.get("parallel.enable") === "true";
     const isFdSolver =
       !isParallel &&
@@ -917,7 +919,6 @@ export const runSmtlibScript = (
       isEuf;
     const old = detachSolver();
     state.tacticDestructors = destructors;
-    state.tacticCleanups = cleanups;
     state.tacticInits = inits;
     state.strategy = getLogicStrategy(logic, isProofsEnabled);
     state.isSolverProducingModels = settings.isProducingModels;
@@ -926,10 +927,7 @@ export const runSmtlibScript = (
       tactic ??
       (isFdSolver
         ? undefined
-        : compileInternalTactic(
-            getTacticEnvironment(destructors, cleanups, inits),
-            state.strategy,
-          ));
+        : compileInternalTactic(getTacticEnvironment(destructors, inits), state.strategy));
     state.kernel = isSatSolver ? undefined : new SmtKernel(state.manager, getKernelParams());
     state.satSolver =
       isSatSolver && !isFdSolver && parameters.get("sat.smt") !== "true"
@@ -976,7 +974,6 @@ export const runSmtlibScript = (
     state.satSolver = undefined;
     state.fdSolver = undefined;
     state.tacticDestructors = [];
-    state.tacticCleanups = [];
     state.tacticInits = [];
     state.tacticConverters = [];
     state.tacticModel = undefined;
@@ -1088,11 +1085,7 @@ export const runSmtlibScript = (
       settings.parameters.get("smt.auto_config") !== "false",
   });
   // tactic2solver gives its tactic the parameters as they are at each check.
-  const getTacticEnvironment = (
-    destructors: (() => void)[],
-    cleanups: (() => void)[],
-    inits: (() => void)[],
-  ) => ({
+  const getTacticEnvironment = (destructors: (() => void)[], inits: (() => void)[]) => ({
     manager: state.manager,
     get isMbqi() {
       return settings.isMbqi;
@@ -1110,7 +1103,6 @@ export const runSmtlibScript = (
     parameters: settings.parameters,
     hasDefinitions: () => state.reader.hasDefinitions(),
     destructors,
-    cleanups,
     inits,
   });
   const getDatalog = () => {
@@ -1489,7 +1481,7 @@ export const runSmtlibScript = (
         expectClosed(list.items[1]);
         const destructors: (() => void)[] = [];
         const inits: (() => void)[] = [];
-        const builder = compileTactic(getTacticEnvironment(destructors, [], inits), list.items[1]);
+        const builder = compileTactic(getTacticEnvironment(destructors, inits), list.items[1]);
         const tactic = builder.build(params);
         for (const init of inits) init();
         const goal = getCommandGoal(builder.isTrackingDependencies, list.end);
@@ -1551,11 +1543,19 @@ export const runSmtlibScript = (
         });
         if (list.items.length > 3)
           throw new SmtParseError("invalid command, too many arguments", list.items[3]);
+        const terms = [...assumptions, ...vars];
+        for (const expr of terms) manager.incRef(expr);
         clearCheck();
         const deadline = Date.now() + options.timeLimitMs;
         manager.limit.restart(deadline);
         manager.limit.push(settings.rlimit);
         const names = state.names.filter((name) => name !== -1);
+        const printConsequences = (result: number, consequences: RefVector) => {
+          print(getVerdict(result));
+          print("");
+          for (const consequence of consequences.items) display(consequence);
+          consequences.reset();
+        };
         try {
           const fdSolver = state.fdSolver;
           if (fdSolver !== undefined) {
@@ -1567,10 +1567,23 @@ export const runSmtlibScript = (
               reasonUnknown: fdSolver.reasonUnknown,
               isHoldingSolver: true,
             });
-            print(getVerdict(found.result));
-            print("");
-            for (const consequence of found.consequences.items) display(consequence);
-            found.consequences.reset();
+            printConsequences(found.result, found.consequences);
+            return;
+          }
+          // The combined solver answers get-consequences with its incremental solver, and stays with it.
+          state.isIncremental = true;
+          const satSolver = state.satSolver;
+          const satFound = useSatSolver((solver) => solver.getConsequences(assumptions, vars));
+          if (satSolver !== undefined && satFound !== undefined) {
+            const consequences = new RefVector(manager);
+            for (const consequence of satFound.consequences) consequences.push(consequence);
+            setCheck(satFound.result, {
+              satSolver,
+              core: satFound.result === L_FALSE ? [...satSolver.getUnsatCore()] : undefined,
+              reasonUnknown: satSolver.reasonUnknown,
+              isHoldingSolver: true,
+            });
+            printConsequences(satFound.result, consequences);
             return;
           }
           const kernel = state.kernel ?? new SmtKernel(manager, getKernelParams());
@@ -1583,10 +1596,7 @@ export const runSmtlibScript = (
             reasonUnknown: kernel.context.getLastFailureMessage(),
             isHoldingSolver: true,
           });
-          print(getVerdict(found.result));
-          print("");
-          for (const consequence of found.consequences.items) display(consequence);
-          found.consequences.reset();
+          printConsequences(found.result, found.consequences);
         } catch (error) {
           if (!(error instanceof SmtCanceledError || isStackOverflow(error))) throw error;
           const reasonUnknown = getCancelMessage(deadline);
@@ -1596,6 +1606,8 @@ export const runSmtlibScript = (
           print("");
         } finally {
           manager.limit.pop();
+          state.reader.releaseTerms();
+          for (const expr of terms) manager.decRef(expr);
         }
       },
     ],
@@ -1795,7 +1807,7 @@ export const runSmtlibScript = (
         const inits: (() => void)[] = [];
         const builder = compileTactic(
           {
-            ...getTacticEnvironment(destructors, [], inits),
+            ...getTacticEnvironment(destructors, inits),
             setup: { ...getSetup(), logic: undefined },
           },
           list.items[1],

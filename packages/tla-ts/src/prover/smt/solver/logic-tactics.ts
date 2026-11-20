@@ -19,33 +19,35 @@ const QFLIA_PREAMBLE =
   ":lia2card.max_range 1 :lia2card.max_ite_nesting 1) elim-uncnstr)";
 
 const getNoCutSmt = (seed: number) =>
-  `(using-params smt :auto_config false :smt.logic QF_LIA :arith.branch_cut_ratio 10000000 ` +
-  `:random_seed ${seed})`;
+  "(annotate (using-params smt :auto_config false :smt.logic QF_LIA " +
+  `:arith.branch_cut_ratio 10000000 :random_seed ${seed}))`;
 
 const LIA2SAT =
-  "(and-then (fail-if is-unbounded) (fail-if produce-proofs) (fail-if produce-unsat-cores) " +
-  "propagate-ineqs normalize-bounds lia2pb (using-params pb2bv :pb2bv_all_clauses_limit 8) " +
-  `(fail-if (not is-qfbv)) (using-params ${BV2SAT} :ite_extra true))`;
+  "(annotate (and-then (fail-if is-unbounded) (fail-if produce-proofs) " +
+  "(fail-if produce-unsat-cores) propagate-ineqs normalize-bounds lia2pb " +
+  "(using-params pb2bv :pb2bv_all_clauses_limit 8) (fail-if (not is-qfbv)) " +
+  `(using-params ${BV2SAT} :ite_extra true)))`;
 
 const ILP_MODEL_FINDER =
-  "(and-then (fail-if (not (and is-ilp is-unbounded))) (fail-if produce-proofs) " +
+  "(annotate (and-then (fail-if (not (and is-ilp is-unbounded))) (fail-if produce-proofs) " +
   `(fail-if produce-unsat-cores) propagate-ineqs (or-else (try-for ${getNoCutSmt(100)} 2000) ` +
   `(and-then (using-params add-bounds :add_bound_lower -16 :add_bound_upper 15) ` +
   `(try-for ${LIA2SAT} 5000)) (try-for ${getNoCutSmt(200)} 5000) (and-then ` +
   `(using-params add-bounds :add_bound_lower -32 :add_bound_upper 31) (try-for ${LIA2SAT} ` +
-  "10000))) fail-if-undecided)";
+  "10000))) fail-if-undecided))";
 
 const PB =
-  "(and-then (fail-if (not is-pb)) (fail-if produce-proofs) (fail-if produce-unsat-cores) " +
-  "(or-else (and-then (fail-if (>= num-exprs 80000)) (fail-if (not is-ilp)) " +
-  "fail-if-undecided) (and-then (using-params pb2bv :pb2bv_all_clauses_limit 8) " +
-  `(fail-if (not is-qfbv)) (using-params ${BV2SAT} :ite_extra true))))`;
+  "(annotate (and-then (fail-if (not is-pb)) (fail-if produce-proofs) " +
+  "(fail-if produce-unsat-cores) (or-else (and-then (fail-if (>= num-exprs 80000)) " +
+  "(fail-if (not is-ilp)) fail-if-undecided) (and-then " +
+  "(using-params pb2bv :pb2bv_all_clauses_limit 8) (fail-if (not is-qfbv)) " +
+  `(using-params ${BV2SAT} :ite_extra true)))))`;
 
 const BOUNDED =
-  `(and-then (fail-if is-unbounded) (or-else (try-for ${getNoCutSmt(100)} 5000) (try-for ` +
-  "(using-params smt :auto_config false :arith.branch_cut_ratio 10000000 :random_seed 200 " +
-  ":relevancy 0) 5000) " +
-  `(try-for ${getNoCutSmt(300)} 15000)) fail-if-undecided)`;
+  `(annotate (and-then (fail-if is-unbounded) (or-else (try-for ${getNoCutSmt(100)} 5000) ` +
+  "(try-for (annotate (using-params smt :auto_config false :arith.branch_cut_ratio 10000000 " +
+  ":random_seed 200 :relevancy 0)) 5000) " +
+  `(try-for ${getNoCutSmt(300)} 15000)) fail-if-undecided))`;
 
 const QFLIA =
   `(using-params (and-then ${QFLIA_PREAMBLE} (using-params simplify :arith_lhs true) ` +
@@ -323,28 +325,29 @@ export const LOGIC_TACTICS: ReadonlyMap<string, string> = new Map([
   ["default", DEFAULT],
 ]);
 
+// mk_tactic_for_logic annotates only some logics, so cleanup reaches the others' tactics.
 const LOGIC_STRATEGIES = new Map([
   ["QF_UF", "qfuf"],
   ["QF_BV", "qfbv"],
-  ["QF_IDL", "qfidl"],
-  ["QF_LIA", "qflia"],
-  ["QF_LRA", "qflra"],
-  ["QF_NIA", "qfnia"],
-  ["QF_NRA", "qfnra"],
-  ["QF_NTA", "qfnra"],
-  ["QF_AUFLIA", "qfauflia"],
-  ["QF_AUFBV", "qfaufbv"],
-  ["QF_ABV", "qfaufbv"],
-  ["QF_UFBV", "qfufbv"],
-  ["AUFLIA", "auflia"],
-  ["AUFLIRA", "auflira"],
+  ["QF_IDL", "(annotate qfidl)"],
+  ["QF_LIA", "(annotate qflia)"],
+  ["QF_LRA", "(annotate qflra)"],
+  ["QF_NIA", "(annotate qfnia)"],
+  ["QF_NRA", "(annotate qfnra)"],
+  ["QF_NTA", "(annotate qfnra)"],
+  ["QF_AUFLIA", "(annotate qfauflia)"],
+  ["QF_AUFBV", "(annotate qfaufbv)"],
+  ["QF_ABV", "(annotate qfaufbv)"],
+  ["QF_UFBV", "(annotate qfufbv)"],
+  ["AUFLIA", "(annotate auflia)"],
+  ["AUFLIRA", "(annotate auflira)"],
   ["AUFNIRA", "aufnira"],
   ["UFNIA", "ufnia"],
   ["UFLRA", "uflra"],
   ["LRA", "lra"],
   ["NRA", "nra"],
   ["LIA", "lia"],
-  ["UFBV", "ufbv"],
+  ["UFBV", "(annotate ufbv)"],
   ["BV", "bv"],
   ["QF_FP", "qffp"],
   ["QF_FPBV", "qffpbv"],
