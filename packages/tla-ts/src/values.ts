@@ -23,7 +23,7 @@ export interface ModelValue {
 interface LazySet {
   enumerated?: SetValue;
   isCached?: boolean;
-  isFingerprinted?: boolean;
+  walkFlags?: number;
 }
 
 export interface SetValue {
@@ -33,8 +33,7 @@ export interface SetValue {
   isNormalized: boolean;
   hash: number;
   fingerprint: number;
-  isFingerprinted: boolean;
-  isSelfCompared: boolean;
+  walkFlags: number;
 }
 
 export interface MixedSetValue extends LazySet {
@@ -51,8 +50,7 @@ export interface FunctionValue {
   writtenKeys: Value[] | undefined;
   functionClass: FunctionClass | undefined;
   lambdaDomain: Value | undefined;
-  isFingerprinted: boolean;
-  isSelfCompared: boolean;
+  walkFlags: number;
 }
 
 export interface IntervalValue {
@@ -141,7 +139,7 @@ export interface LazyFunctionValue {
   source?: LazyFunctionSource;
   functionClass?: FunctionClass;
   enumerated?: FunctionValue;
-  isFingerprinted?: boolean;
+  walkFlags?: number;
 }
 
 interface CountedLazyFunctionValue extends LazyFunctionValue {
@@ -541,6 +539,9 @@ const compareAny = (other: Value): never => {
   );
 };
 
+const FINGERPRINTED_FLAG = 1;
+const SELF_COMPARED_FLAG = 2;
+
 const isHashed = (value: SetValue | FunctionValue) =>
   value.fingerprint !== 0 || (value.hash !== 0 && value.hash !== UNFINGERPRINTABLE_HASH);
 
@@ -559,7 +560,7 @@ const compareWithItself = (value: Value, isEquality: boolean): boolean => {
     case "LazyFunction":
       return compareWithItself(toFiniteFunction(value), isEquality);
     case "Function": {
-      if (value.isSelfCompared || isHashed(value)) return true;
+      if ((value.walkFlags & SELF_COMPARED_FLAG) !== 0 || isHashed(value)) return true;
       if (isWrittenOrderUsed) value.writtenKeys = undefined;
       let isInnerSettled = true;
       for (const key of value.domain) {
@@ -568,17 +569,17 @@ const compareWithItself = (value: Value, isEquality: boolean): boolean => {
       for (const item of value.range) {
         isInnerSettled = compareWithItself(item, isEquality) && isInnerSettled;
       }
-      value.isSelfCompared = isInnerSettled;
+      if (isInnerSettled) value.walkFlags |= SELF_COMPARED_FLAG;
       return isInnerSettled;
     }
     case "Set": {
-      if (value.isSelfCompared || isHashed(value)) return true;
+      if ((value.walkFlags & SELF_COMPARED_FLAG) !== 0 || isHashed(value)) return true;
       value.isNormalized = true;
       let isInnerSettled = true;
       for (const element of value.elements) {
         isInnerSettled = compareWithItself(element, isEquality) && isInnerSettled;
       }
-      value.isSelfCompared = isInnerSettled;
+      if (isInnerSettled) value.walkFlags |= SELF_COMPARED_FLAG;
       return isInnerSettled;
     }
     case "Subset":
@@ -694,8 +695,7 @@ export const createSortedSet = (elements: Value[]): SetValue => ({
   isNormalized: false,
   hash: 0,
   fingerprint: 0,
-  isFingerprinted: false,
-  isSelfCompared: false,
+  walkFlags: 0,
 });
 
 export const createNormalizedSet = (elements: Value[]): SetValue => {
@@ -713,8 +713,7 @@ export const createSortedFunction = (domain: Value[], range: Value[]): FunctionV
   writtenKeys: undefined,
   functionClass: undefined,
   lambdaDomain: undefined,
-  isFingerprinted: false,
-  isSelfCompared: false,
+  walkFlags: 0,
 });
 
 export type FunctionClass = "lambda" | "tuple" | "record";
@@ -775,8 +774,9 @@ export const markFingerprinted = (value: Value): void => {
   if (value.kind === "ModelValue" || value.kind === "Interval" || value.kind === "InfiniteSet") {
     return;
   }
-  if (value.isFingerprinted) return;
-  value.isFingerprinted = true;
+  const walkFlags = value.walkFlags ?? 0;
+  if ((walkFlags & FINGERPRINTED_FLAG) !== 0) return;
+  value.walkFlags = walkFlags | FINGERPRINTED_FLAG;
   if (value.kind === "Function") {
     if (value.functionClass === "lambda") value.functionClass = undefined;
     value.domain.forEach(markFingerprinted);
