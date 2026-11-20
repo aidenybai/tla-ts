@@ -1316,9 +1316,10 @@ class IntervalElements extends Array<Value> {
   readonly interval: IntervalValue;
 
   constructor(interval: IntervalValue) {
-    super();
+    // Sized up front: pushing onto an Array subclass costs about 30 times as much per element.
+    super(Math.max(interval.high - interval.low + 1, 0));
     this.interval = interval;
-    for (let element = interval.low; element <= interval.high; element++) this.push(element);
+    for (let index = 0; index < this.length; index++) this[index] = interval.low + index;
   }
 }
 
