@@ -204,12 +204,21 @@ const recordEscoreHost = () => {
     const result = spawnSync(step[0], step.slice(1), { stdio: "inherit" });
     if (result.status !== 0) throw new Error(`${step.join(" ")} exited with ${result.status}`);
   }
+  process.env[RECORDED_HOST] = join(directory, ESCORE_HOST);
   return readFileSync(join(directory, ESCORE_HOST), "utf8");
 };
 
-// The host, recorded once a build or dev server.
+// The file of the host that this process recorded, which the build's prerender servers, which
+// load this config again, read rather than record it again.
+const RECORDED_HOST = "TLA_TS_ESCORE_HOST";
+
+// The host, recorded once a process.
 let escoreHost: string | undefined;
-const getEscoreHost = () => (escoreHost ??= recordEscoreHost());
+const getEscoreHost = () => {
+  const recorded = process.env[RECORDED_HOST];
+  escoreHost ??= recorded === undefined ? recordEscoreHost() : readFileSync(recorded, "utf8");
+  return escoreHost;
+};
 
 // The page fetches the host beside its scripts: a build writes it, and a dev server records it
 // when the page first asks.
