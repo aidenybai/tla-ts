@@ -106,6 +106,7 @@ export interface SmtConfig {
   isNnfCnf: boolean;
   isEq2Ineq: boolean;
   isFindingMacros: boolean;
+  isUsingPatternDatabase: boolean;
   isEliminatingTermIte: boolean;
   isLiftingNonGroundIte: boolean;
   isEliminatingBounds: boolean;
@@ -144,6 +145,7 @@ export const DEFAULT_CONFIG: SmtConfig = {
   isNnfCnf: true,
   isEq2Ineq: false,
   isFindingMacros: false,
+  isUsingPatternDatabase: false,
   isEliminatingTermIte: false,
   isLiftingNonGroundIte: false,
   isEliminatingBounds: false,
@@ -387,6 +389,7 @@ const setupQfAufLiaByFeatures = (config: SmtConfig, features: StaticFeatures) =>
 };
 
 const setupAufLia = (config: SmtConfig) => {
+  config.isUsingPatternDatabase = true;
   config.phaseSelection = PS_ALWAYS_FALSE;
   config.restartStrategy = RS_GEOMETRIC;
   config.restartFactor = 1.5;
