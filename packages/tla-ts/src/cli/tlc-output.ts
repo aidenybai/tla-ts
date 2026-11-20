@@ -447,6 +447,7 @@ const printViolation = (status: CheckStatus, violation: Violation, printer: Mess
   printTraceOutput(printer, violation.traceOutput);
   if (isLasso) {
     const label = violation.loopLabel;
+    // Deviation from TLC: LiveWorker#printTrace prints a cycle that ends on its first state's fingerprint as stuttering, numbered after that first state.
     if (loopStart === violation.trace.length - 1)
       print(MESSAGE_CODE.statePrint3, MESSAGE_LEVEL.state, `${loopStart + 2}: Stuttering`);
     else if (printer.isTool)
