@@ -8,7 +8,7 @@ import { useSearchPath } from "@/hooks/use-search-path";
 import { CodeEditor } from "./code-editor";
 import { CodeLine } from "@/components/code-line";
 import { Connector } from "./connector";
-import { usePlayground } from "./playground";
+import { usePlayground } from "./playground-context";
 import { Resizable } from "@/components/ui/resizable";
 
 interface PaneProps {

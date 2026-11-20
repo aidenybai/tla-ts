@@ -5,7 +5,7 @@ import { PLAYGROUND_EXAMPLES } from "@/lib/playground-examples";
 import { usePlaygroundView } from "@/lib/playground-view";
 import { useIsHydrated } from "@/hooks/use-is-hydrated";
 import { Logo } from "@/components/logo";
-import { usePlayground } from "./playground";
+import { usePlayground } from "./playground-context";
 import { RunIcon } from "@/components/run-icon";
 import { useTheme } from "@/components/theme-switcher";
 import { Button } from "@/components/ui/button";
