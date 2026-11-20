@@ -49,7 +49,7 @@ export class DynAckManager {
 
   cgConflictEh(inputFirst: number, inputSecond: number) {
     const manager = this.context.manager;
-    if (manager.decls[inputFirst] === OP_EQ) return;
+    if (manager.funcDecls[manager.decls[inputFirst]].op === OP_EQ) return;
     const isSwapped = manager.ids[inputFirst] > manager.ids[inputSecond];
     const first = isSwapped ? inputSecond : inputFirst;
     const second = isSwapped ? inputFirst : inputSecond;

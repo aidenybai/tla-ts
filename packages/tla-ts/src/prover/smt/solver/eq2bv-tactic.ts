@@ -45,7 +45,7 @@ class EqRewriter extends RewriterTpl {
   }
 
   override reduceApp(decl: number, args: number[]) {
-    if (decl !== OP_EQ) return -1;
+    if (this.manager.funcDecls[decl].op !== OP_EQ) return -1;
     const first = this.getFd(args[0], args[1]);
     const result = first === -1 ? this.getFd(args[1], args[0]) : first;
     if (result !== -1) this.manager.incRef(result);

@@ -408,7 +408,7 @@ export class Rewriter extends RewriterTpl {
       this.options.isPushingIteBv !== true
         ? core
         : core === -1
-          ? decl === OP_ITE
+          ? manager.funcDecls[decl].op === OP_ITE
             ? (this.pushIte(args[0], args[1], args[2]) ?? -1)
             : -1
           : this.isIte(core)

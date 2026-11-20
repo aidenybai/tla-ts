@@ -3,7 +3,7 @@ import { FlatLiterals } from "./flat-literals";
 import { astArrayHash, bytesHash, combineHash, getCompositeHash, mkMix, stringHash } from "./hash";
 import { ObjMap } from "./hashtable";
 import { Rational } from "./rational";
-import { grow, shrink } from "./array";
+import { grow, setAt, shrink } from "./array";
 import type { DatatypeDef } from "./datatype-decl-plugin";
 import { AlgebraicManager, Anum } from "./nlsat/algebraic";
 import type { Mpf } from "./mpf";
@@ -623,6 +623,7 @@ const SIGNATURE_DIV0 = 2;
 const SIGNATURE_MODEL_VALUE = 3;
 const SIGNATURE_NUMERAL = 4;
 const SIGNATURE_ALGEBRAIC = 5;
+const SIGNATURE_DISTINCT = 6;
 
 interface AlgebraicNumeral {
   value: Anum;
@@ -683,6 +684,9 @@ export class AstManager {
   private sortSizes: bigint[] = [2n, SORT_SIZE_INFINITE, SORT_SIZE_INFINITE];
   private arraySorts = new Map<string, number>();
   private arrayDecls = new Map<string, number>();
+  private eqDecls: (number | undefined)[] = [];
+  private iteDecls: (number | undefined)[] = [];
+  private distinctDecls: ((number | undefined)[] | undefined)[] = [];
   readonly datatypeDefs = new Map<string, DatatypeDef>();
   hasNestedRecDatatype = false;
   datatypeConstructors: number[][] = [];
@@ -923,18 +927,20 @@ export class AstManager {
 
   private getSignature(expr: number) {
     const decl = this.decls[expr];
-    if (decl === OP_NUM || this.funcDecls[decl].op === OP_BV_NUM)
-      return 8 * this.values[expr] + SIGNATURE_NUMERAL;
-    if (decl === OP_EQ) return 8 * this.sorts[this.getArg(expr, 0)] + SIGNATURE_EQ;
-    if (decl === OP_ITE) return 8 * this.sorts[expr] + SIGNATURE_ITE;
+    const funcDecl = this.funcDecls[decl];
+    const op = funcDecl.op;
+    if (decl === OP_NUM || op === OP_BV_NUM) return 8 * this.values[expr] + SIGNATURE_NUMERAL;
+    if (op === OP_EQ) return 8 * decl + SIGNATURE_EQ;
+    if (op === OP_ITE) return 8 * decl + SIGNATURE_ITE;
+    if (op === OP_DISTINCT) return 8 * decl + SIGNATURE_DISTINCT;
     if (decl === OP_DIV0 || decl === OP_IDIV0 || decl === OP_MOD0) return 8 * decl + SIGNATURE_DIV0;
     if (decl === OP_POWER0)
       return 8 * (decl + 64 * this.sorts[this.getArg(expr, 0)]) + SIGNATURE_DIV0;
     if (decl === OP_ALGEBRAIC_NUM) return 8 * this.getAlgebraicId(expr) + SIGNATURE_ALGEBRAIC;
-    if (decl === OP_DISTINCT || decl === OP_PATTERN)
+    if (decl === OP_PATTERN)
       return `${decl}:${this.mapArgs(expr, (arg) => this.sorts[arg]).join(",")}`;
-    if (this.funcDecls[decl].family === FAMILY_MODEL_VALUE) return 8 * decl + SIGNATURE_MODEL_VALUE;
-    if (UNCACHED_BV_OPS.has(this.funcDecls[decl].op)) return `bv${decl}`;
+    if (funcDecl.family === FAMILY_MODEL_VALUE) return 8 * decl + SIGNATURE_MODEL_VALUE;
+    if (UNCACHED_BV_OPS.has(op)) return `bv${decl}`;
     return null;
   }
 
@@ -959,9 +965,11 @@ export class AstManager {
       return;
     }
     const smallId = this.mkSmallId();
-    this.signatureDecls.set(key, { smallId, refCount: decl === OP_EQ || decl === OP_ITE ? 2 : 1 });
-    if (decl !== OP_NUM && this.funcDecls[decl].family === FAMILY_MODEL_VALUE)
-      this.funcDecls[decl].smallId = smallId;
+    const funcDecl = this.funcDecls[decl];
+    const isCached = funcDecl.op === OP_EQ || funcDecl.op === OP_ITE;
+    this.signatureDecls.set(key, { smallId, refCount: isCached ? 2 : 1 });
+    if (isCached || funcDecl.op === OP_DISTINCT || funcDecl.family === FAMILY_MODEL_VALUE)
+      funcDecl.smallId = smallId;
   }
 
   private releaseDecl(expr: number) {
@@ -2039,6 +2047,35 @@ export class AstManager {
     return id;
   }
 
+  // basic_decl_plugin declares = and ite once for each sort, and distinct once for each arity too.
+  private getBasicDecl(op: number, args: number[], start: number) {
+    const sort =
+      start < args.length ? this.sorts[args[op === OP_ITE ? start + 1 : start]] : SORT_BOOL;
+    if (op !== OP_DISTINCT)
+      return this.getBasicDeclAt(op === OP_EQ ? this.eqDecls : this.iteDecls, sort, op, sort);
+    const byArity = this.distinctDecls[sort] ?? [];
+    setAt(this.distinctDecls, sort, byArity);
+    return this.getBasicDeclAt(byArity, args.length - start, op, sort);
+  }
+
+  private getBasicDeclAt(decls: (number | undefined)[], index: number, op: number, sort: number) {
+    const existing = decls[index];
+    if (existing !== undefined) return existing;
+    const decl = this.funcDecls.length;
+    this.funcDecls.push({
+      name: this.funcDecls[op].name,
+      family: FAMILY_BASIC,
+      op,
+      domain: [],
+      range: op === OP_ITE ? sort : SORT_BOOL,
+      isSkolem: false,
+      smallId: -1,
+      parameters: [],
+    });
+    setAt(decls, index, decl);
+    return decl;
+  }
+
   mkApp(requestedDecl: number, args: number[], sort: number, start = 0) {
     const requested = this.funcDecls[requestedDecl];
     const decl =
@@ -2046,7 +2083,10 @@ export class AstManager {
         ? hasRealArg(this.sorts, args, start)
           ? REAL_ARITH_DECLS[requested.op]
           : INT_ARITH_DECLS[requested.op]
-        : requestedDecl;
+        : requested.family === FAMILY_BASIC &&
+            (requested.op === OP_EQ || requested.op === OP_ITE || requested.op === OP_DISTINCT)
+          ? this.getBasicDecl(requested.op, args, start)
+          : requestedDecl;
     const funcDecl = decl === requestedDecl ? requested : this.funcDecls[decl];
     if (
       decl === OP_NUM ||

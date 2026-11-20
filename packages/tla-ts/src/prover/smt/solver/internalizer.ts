@@ -353,7 +353,7 @@ export abstract class Internalizer {
       this.isDiseqTmp = manager.mkEq(first.owner, second.owner);
       manager.incRef(this.isDiseqTmp);
     }
-    const root = this.cgTable.findFor(OP_EQ, [first, second], true)?.root;
+    const root = this.cgTable.findFor(manager.decls[this.isDiseqTmp], [first, second], true)?.root;
     if (root === undefined || root === this.trueEnode) return false;
     return (
       root === this.falseEnode ||
