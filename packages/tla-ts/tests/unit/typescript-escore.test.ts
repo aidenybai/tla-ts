@@ -1540,6 +1540,46 @@ describe("compiles scripts by specializing ESCore", () => {
     },
   );
 
+  describe.runIf(Reflect.has(globalThis, "Temporal"))(
+    "formats the Temporal objects that a program computes through the host's recorded English patterns",
+    () => {
+      const getSource = (expected: string) => `
+      const date = new Temporal.PlainDate(2000, 5, [2].length);
+      let error = "none";
+      try {
+        new Intl.DateTimeFormat("en", { month: "long" }).format(date.toPlainYearMonth());
+      } catch (caught) {
+        error = (caught as Error).name;
+      }
+      const result = [
+        new Intl.DateTimeFormat("en").format(date),
+        new Intl.DateTimeFormat("en", { month: "long" }).format(date.withCalendar("gregory").toPlainYearMonth()),
+        new Intl.DateTimeFormat("en", { hour: "numeric" }).format(new Temporal.PlainTime([3].length)),
+        error,
+      ].join("|");
+      if (result !== "${expected}") throw new Error(result);
+    `;
+
+      it("agrees with Node", async () => {
+        expect(
+          (await checkScript(getSource("5/1/2000|May|1 AM|RangeError"))).message,
+        ).toBeUndefined();
+      });
+
+      it("rejects another result", async () => {
+        expect((await checkScript(getSource("5/1/2000|May|1 PM|RangeError"))).message).toContain(
+          THREW,
+        );
+      });
+
+      it("stops at a locale whose patterns the table leaves out", async () => {
+        const source =
+          'new Intl.DateTimeFormat("de").format(new Temporal.PlainDate(2000, 5, [2].length));';
+        expect((await checkScript(source)).message).toContain("tla-ts can't");
+      });
+    },
+  );
+
   describe("gives each error V8's own stack accessor", () => {
     const getSource = (expected: string) => `
       const error = new Error("m");
