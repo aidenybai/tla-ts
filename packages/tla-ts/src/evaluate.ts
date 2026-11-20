@@ -2108,6 +2108,7 @@ export const getFunctionBuilder = (
   environment: Environment,
 ) => {
   const isLazy = isKeptLazy(expression) || isRecursiveConstruction(expression);
+  const isVaryingBody = isExpressionImpure([expression.body], environment, "varying");
   const body = getEvaluator(expression.body, environment);
   const bounds = expression.bounds;
   const bound = bounds[0];
@@ -2193,7 +2194,7 @@ export const getFunctionBuilder = (
           domain.kind === "ProductSet" &&
           domain.factors.every(isReducibleSet);
     if (!isReducibleDomain) {
-      if (callStack) return createLazy(domain, context);
+      if (callStack || isVaryingBody) return createLazy(domain, context);
       try {
         return construct(domain, context);
       } catch (error) {
