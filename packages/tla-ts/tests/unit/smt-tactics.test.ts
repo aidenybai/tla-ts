@@ -3249,6 +3249,31 @@ describe("ctx-solver-simplify, as Z3 5.3.2 keeps its kernel", () => {
     ]);
   });
 
+  it("frees its fresh functions with the tactic, so later declarations reuse their ids", () => {
+    expect(
+      run([
+        "(declare-const a Int)",
+        "(declare-fun f (Int) Int)",
+        "(assert (> (f a) a))",
+        "(apply ctx-solver-simplify)",
+        "(declare-fun g (Int) Int)",
+        "(declare-fun h (Int) Int)",
+        "(declare-fun c () Int)",
+        "(declare-fun d () Int)",
+        "(assert (= (g c) (h d)))",
+        "(assert (= (g d) (h c)))",
+        "(assert (distinct (g c) (g d)))",
+        "(assert (forall ((x Int)) (>= (g x) (h x))))",
+        "(check-sat)",
+        "(get-info :rlimit)",
+      ]),
+    ).toEqual([
+      "(goals\n(goal\n  (not (<= (f a) a))\n  :precision precise :depth 1)\n)",
+      "unsat",
+      "(:rlimit 1403)",
+    ]);
+  });
+
   it("makes a new kernel after each run", () => {
     expect(
       run([
