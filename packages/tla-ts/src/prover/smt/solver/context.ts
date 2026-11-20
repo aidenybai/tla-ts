@@ -984,6 +984,7 @@ export class Context extends Internalizer {
     this.relevancy.push();
     this.qmanager.push();
     this.fingerprints.push();
+    this.asserted?.push();
     for (const theory of this.theories) theory.pushScopeEh();
   }
 
@@ -1054,6 +1055,7 @@ export class Context extends Internalizer {
     this.unassignVars(this.scopeAssignedLimits[newLevel]);
     this.popTrail(this.scopeTrailLimits[newLevel]);
     for (const theory of this.theories) theory.popScopeEh(numScopes);
+    for (let index = 0; index < numScopes; index++) this.asserted?.pop();
     this.eqPropagationQueue = [];
     this.thEqQueue = [];
     this.thDiseqQueue = [];
@@ -1564,7 +1566,6 @@ export class Context extends Internalizer {
     if (wasConsistent && this.isInconsistent() && !asserted.isInconsistent) this.resolveConflict();
     limit.isSuspended = wasSuspended;
     this.push();
-    asserted.push();
   }
 
   pop(numScopes: number) {

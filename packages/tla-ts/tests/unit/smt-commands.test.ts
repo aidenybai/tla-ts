@@ -375,6 +375,37 @@ describe("runSmtlibScript runs its commands as Z3 does", () => {
     ).toEqual(["unsat", "(+ 7 x)", "(* 2 x)", "((not p) (not q))", "unsat", "((not p) (not q))"]);
   });
 
+  it("drops the implication of an assumption that is not a literal when its search pops", () => {
+    expect(
+      run([
+        "(declare-fun x1 () Int)",
+        "(declare-fun x2 () Int)",
+        "(declare-const b0 Bool)",
+        "(check-sat-assuming (b0))",
+        "(check-sat)",
+        "(assert (! (or false (>= x1 x2) (>= x1 2)) :named n3))",
+        "(check-sat-assuming (b0 n3))",
+        "(check-sat)",
+        "(get-model)",
+      ]),
+    ).toEqual([
+      "sat",
+      "sat",
+      "sat",
+      "sat",
+      "(",
+      "  (define-fun x1 () Int",
+      "    0)",
+      "  (define-fun x2 () Int",
+      "    0)",
+      "  (define-fun n3 () Bool",
+      "    (or false (>= x1 x2) (>= x1 2)))",
+      "  (define-fun b0 () Bool",
+      "    false)",
+      ")",
+    ]);
+  });
+
   it("reports an even root of a negative number as an error of the command", () => {
     const message = "even root of negative number is not real";
     expect(

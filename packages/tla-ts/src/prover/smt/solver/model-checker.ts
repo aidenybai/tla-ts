@@ -47,7 +47,6 @@ class AuxContext {
 
   pop() {
     this.context.pop(1);
-    this.asserted.pop();
   }
 
   assert(formula: number) {
