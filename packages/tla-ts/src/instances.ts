@@ -61,11 +61,23 @@ export const withSubstitutionFrames = (expression: Expression, frames: Expressio
 const withReplacedFrames = (replacement: Expression, expression: Expression) =>
   addFrames(replacement, [...(substitutionFrames.get(expression) ?? []), expression]);
 
+export const mentionsName = (
+  expression: Expression,
+  names: ReadonlySet<string> | ReadonlyMap<string, string>,
+): boolean => {
+  const name = getReferencedName(expression);
+  return (
+    (name !== undefined && names.has(name)) ||
+    getChildren(expression).some((child) => mentionsName(child, names))
+  );
+};
+
 export const renameLocals = (
   expression: Expression,
   names: Map<string, string>,
   bound = new Set<string>(),
 ): Expression => {
+  if (!mentionsName(expression, names)) return expression;
   const mapped = mapChildren(expression, (child, childBound) =>
     renameLocals(
       child,

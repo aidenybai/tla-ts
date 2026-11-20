@@ -83,7 +83,12 @@ import {
 import { getLiveExpressions } from "./liveness-checker";
 import { prettyPrint, prettyPrintT } from "./pretty-print";
 import { parenthesizedRanges } from "./parser";
-import { getOperatorDefinition, substitutionFrames, withSubstitutionFrames } from "./instances";
+import {
+  getOperatorDefinition,
+  getSubstitutedName,
+  substitutionFrames,
+  withSubstitutionFrames,
+} from "./instances";
 import { getPossibleCounts, type CheckerRuntime } from "./runtime";
 import { createIncompleteSuccessorError, type SuccessorGenerator } from "./successors";
 import {
@@ -447,6 +452,7 @@ const getSpecification = (
       );
     });
     if (!isInitial && isConstantTrue(item, environment, "spec")) return;
+    // Deviation from TLC: SpecProcessor#processConfigSpec looks an instance's parameter up without its substitute and rejects it as "cannot be used as a spec", where tla-ts takes the substitute.
     const variableIndex =
       conjunct.kind === "Identifier" && !isLocallyResolved(conjunct)
         ? environment.variableIndex.get(conjunct.name)
@@ -585,6 +591,7 @@ const getProperties = (
     expandTemporal(definition.body, undefined, environment, isProperty).forEach((item) => {
       const conjunct = item.expression;
       if (isConstantTrue(item, environment, "property")) return;
+      // Deviation from TLC: SpecProcessor#processConfigProps looks an instance's constant up without its substitute and rejects it as "cannot be used as a property", where tla-ts checks the substitute.
       const partName = item.name ?? name;
       const withFrames = (check: Expression) =>
         withSubstitutionFrames(
@@ -610,8 +617,15 @@ const getProperties = (
           body.kind === "Identifier" && !isLocallyResolved(body)
             ? getDefinition(body.name, environment)
             : undefined;
+        const substituted = getSubstitutedName(body);
         properties.invariants.push({
-          name: operator?.name ?? (body.kind === "Identifier" ? body.name : partName),
+          name:
+            operator?.name ??
+            (substituted !== undefined
+              ? getKeyName(substituted)
+              : body.kind === "Identifier"
+                ? body.name
+                : partName),
           expression: withFrames(body),
           scope: item.scope,
         });

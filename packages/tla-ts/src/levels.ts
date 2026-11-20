@@ -1176,8 +1176,12 @@ export const createLevelAnalyzer = (context: LevelContext) => {
         return createData();
       case "EnabledVariable":
         return createData(VARIABLE_LEVEL);
-      case "Identifier":
-        return applyResolved(resolve(expression.name, scope), [], expression, scope);
+      case "Identifier": {
+        const selection = context.goalSelections?.get(expression);
+        return selection
+          ? analyzeSelected(selection, expression.name.split("!"), [], scope)
+          : applyResolved(resolve(expression.name, scope), [], expression, scope);
+      }
       case "Apply": {
         const operands = toOperands(expression.args, scope);
         checkApply(expression, operands);
@@ -1407,20 +1411,15 @@ export const createLevelAnalyzer = (context: LevelContext) => {
       case "Subexpression": {
         const selection = context.goalSelections?.get(expression);
         if (!selection) return createData();
-        const instanced =
-          selection.kind === "Lambda" ? undefined : getGoalInstanced(expression, scope);
-        return instanced
-          ? analyzeSubstituted(selection, instanced, scope)
-          : analyzeGoalSelection(
-              selection,
-              toOperands(
-                expression.selectors.flatMap((selector) =>
-                  "args" in selector ? selector.args : [],
-                ),
-                scope,
-              ),
-              scope,
-            );
+        const nameCount = expression.selectors.findIndex((selector) => selector.kind !== "Name");
+        return analyzeSelected(
+          selection,
+          expression.selectors
+            .slice(0, nameCount === -1 ? undefined : nameCount)
+            .flatMap((selector) => (selector.kind === "Name" ? [selector.name] : [])),
+          expression.selectors.flatMap((selector) => ("args" in selector ? selector.args : [])),
+          scope,
+        );
       }
     }
   };
@@ -1672,20 +1671,41 @@ export const createLevelAnalyzer = (context: LevelContext) => {
     return toOperatorLevels(definition.name, formals, data, nonLeibniz);
   };
 
-  const getGoalInstanced = (
-    expression: Expression & { kind: "Subexpression" },
+  const getGoalInstanced = (names: string[], scope: Scope): Instanced | undefined => {
+    const definition = names
+      .map((_name, index) => names.slice(0, names.length - index).join("!"))
+      .map((name) => {
+        const entry = scope.get(name);
+        return entry === undefined
+          ? context.getDefinition(name)
+          : entry.kind === "Let"
+            ? entry.definition
+            : undefined;
+      })
+      .find((candidate) => candidate !== undefined);
+    const copy = definition && (letCopies.get(definition) ?? context.instances.getCopy(definition));
+    return definition && copy && { definition, copy, params: [] };
+  };
+
+  const analyzeSelected = (
+    selection: Expression,
+    names: string[],
+    args: Expression[],
     scope: Scope,
-  ): Instanced | undefined => {
-    const nameCount = expression.selectors.findIndex((selector) => selector.kind !== "Name");
-    const names = expression.selectors
-      .slice(0, nameCount === -1 ? undefined : nameCount)
-      .flatMap((selector) => (selector.kind === "Name" ? [selector.name] : []));
-    const entry = names
-      .map((_name, index) => scope.get(names.slice(0, names.length - index).join("!")))
-      .find((candidate) => candidate?.kind === "Let");
-    if (entry?.kind !== "Let") return undefined;
-    const copy = letCopies.get(entry.definition) ?? context.instances.getCopy(entry.definition);
-    return copy && { definition: entry.definition, copy, params: [] };
+  ) => {
+    const instanced = getGoalInstanced(names, scope);
+    if (!instanced) return analyzeGoalSelection(selection, toOperands(args, scope), scope);
+    if (selection.kind !== "Lambda") return analyzeSubstituted(selection, instanced, scope);
+    const formals = instanced.copy.params;
+    return applyDefined(
+      toOperatorLevels(
+        "LAMBDA",
+        formals,
+        analyzeSubstituted(selection.body, instanced, bindFormals(scope, formals)),
+        new Set(),
+      ),
+      toOperands(args, scope),
+    );
   };
 
   const getSelectedInstance = (substituted: Expression): Instanced => {
@@ -1815,6 +1835,7 @@ export const createLevelAnalyzer = (context: LevelContext) => {
     const prior = cached ?? createPlaceholder(definition, TEMPORAL_LEVEL, 0);
     definitionLevels.set(definition, prior);
     const copy = letCopies.get(definition) ?? context.instances.getCopy(definition);
+    // Deviation from SANY: ThmOrAssumpDefNode#levelCheck assigns each weight to itself, so SANY levels I(x)!T without x, where tla-ts weighs x as for I(x)!D.
     const levels = copy
       ? analyzeInstanced(definition, copy, scope)
       : "statement" in definition

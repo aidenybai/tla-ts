@@ -139,7 +139,7 @@ const getIndex = (definition: AnyDefNode, index: number) =>
   definition.kind === "OpDef" && definition.arity < 0 ? 0 : index;
 
 const getWeight = (definition: AnyDefNode, index: number) =>
-  definition.kind === "OpDef" ? (definition.weights[getIndex(definition, index)] ?? 0) : 0;
+  definition.weights[getIndex(definition, index)] ?? 0;
 
 const getMaxLevel = (definition: AnyDefNode, index: number) =>
   definition.maxLevels[getIndex(definition, index)] ?? TEMPORAL_LEVEL;
@@ -676,6 +676,7 @@ const checkTheoremDefinition = (node: ThmOrAssumpDefNode, iteration: number, che
   if (node.levelChecked >= iteration) return node.levelCorrect;
   node.levelChecked = iteration;
   node.maxLevels = node.params.map(() => TEMPORAL_LEVEL);
+  node.weights = node.params.map(() => 0);
   // SANY allocates isLeibnizArg anew for each parameter, so only the last one starts out Leibniz.
   node.isLeibnizArg = node.params.map((_param, index) => index === node.params.length - 1);
   if (node.params.length > 0) node.isLeibniz = true;
@@ -684,6 +685,8 @@ const checkTheoremDefinition = (node: ThmOrAssumpDefNode, iteration: number, che
   node.params.forEach((param, index) => {
     const bound = node.body.levelConstraints.get(param);
     if (bound !== undefined) node.maxLevels[index] = bound;
+    // Deviation from SANY: ThmOrAssumpDefNode#levelCheck assigns each weight to itself, so SANY levels I(x)!T without x, where tla-ts weighs x as OpDefNode#levelCheck does.
+    if (node.body.levelParams.has(param)) node.weights[index] = 1;
   });
   checkDefinitionBody(node, node.params, node.body);
   return node.levelCorrect;

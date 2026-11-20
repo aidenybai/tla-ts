@@ -608,6 +608,7 @@ export interface TlcOrder {
   getDeclarationOrder: (kind: "variable" | "constant", module?: string) => string[];
   getDefinitionOrder: (module: string | undefined) => string[];
   getInstanceDeclarations: (module: string) => string[];
+  getInnerModuleOrder: (module: string | undefined) => string[];
   createDefinitionOrder: () => (name: string | undefined) => string[];
   parseModule: (source: string) => Module;
   parseFile: (source: string, name: string) => Module;
@@ -638,6 +639,13 @@ export const createTlcOrder = (source: string, loadModule: ModuleLoader): TlcOrd
         .getContext(module)
         .enumerate()
         .filter((entry) => entry.kind === "constant" || entry.kind === "variable")
+        .map((entry) => entry.name),
+    // SANY's ModuleNode#getInnerModules walks the module's Context, so inherited modules come too.
+    getInnerModuleOrder: (module) =>
+      getContexts()
+        .getContext(module)
+        .enumerate()
+        .filter((entry) => entry.kind === "module")
         .map((entry) => entry.name),
     parseModule: modules.parseText,
     parseFile: modules.parseFile,
