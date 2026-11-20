@@ -209,6 +209,308 @@ describe("level checking matches SANY", () => {
     );
   });
 
+  it.each([
+    "INSTANCE Q WITH c <- k, w <- k",
+    "N == INSTANCE Q WITH c <- k, w <- k",
+    "LOCAL INSTANCE Q WITH c <- k, w <- k",
+    "N(p) == INSTANCE Q WITH c <- {k}, w <- p",
+  ])("constrains a module by its instance %s, as SANY does", async (instance) => {
+    await expect(
+      check({
+        source: `---- MODULE M ----\nVARIABLE x\n---- MODULE Q ----\nCONSTANT c\nVARIABLE w\nA == c\n====\n---- MODULE L ----\nCONSTANT k\n${instance}\n====\nI == INSTANCE L WITH k <- x\nInit == x = 0\nNext == x' = x\n====`,
+        config: "INIT Init\nNEXT Next",
+      }),
+    ).rejects.toThrow(
+      createSanyError([
+        {
+          location: "line 12, col 1 to line 12, col 27 of module M",
+          message:
+            "Level error in instantiating module 'L':\nThe level of the expression or operator substituted for 'k' \nmust be at most 0.",
+        },
+      ]),
+    );
+  });
+
+  it.each([
+    "INSTANCE Q WITH c <- D(k)!1, w <- 1",
+    "N == INSTANCE Q WITH c <- D(k)!1, w <- 1",
+    "LOCAL INSTANCE Q WITH c <- D(k)!1, w <- 1",
+    "N(p) == INSTANCE Q WITH c <- D(k)!1, w <- p",
+  ])(
+    "constrains a module by its instance %s through the selected subexpression, as SANY does",
+    async (instance) => {
+      await expect(
+        check({
+          source: `---- MODULE M ----\nVARIABLE x\n---- MODULE Q ----\nCONSTANT c\nVARIABLE w\nA == c\n====\n---- MODULE L ----\nCONSTANT k\nD(a) == {a}\n${instance}\n====\nI == INSTANCE L WITH k <- x\nInit == x = 0\nNext == x' = x\n====`,
+          config: "INIT Init\nNEXT Next",
+        }),
+      ).rejects.toThrow(
+        createSanyError([
+          {
+            location: "line 13, col 1 to line 13, col 27 of module M",
+            message:
+              "Level error in instantiating module 'L':\nThe level of the expression or operator substituted for 'k' \nmust be at most 0.",
+          },
+        ]),
+      );
+    },
+  );
+
+  const getInstanceError = (line: number, end: number, maximum: number) => ({
+    location: `line ${line}, col 1 to line ${line}, col ${end} of module M`,
+    message: `Level error in instantiating module 'L':\nThe level of the expression or operator substituted for 'k' \nmust be at most ${maximum}.`,
+  });
+
+  it.each([
+    [
+      "a theorem",
+      "",
+      "THEOREM k' = k",
+      [
+        [12, 28, 0],
+        [13, 29, 0],
+        [14, 36, 0],
+      ],
+    ],
+    [
+      "a proof step",
+      "",
+      "THEOREM TRUE\n<1>1. k' = k\n  OBVIOUS\n<1> QED",
+      [
+        [15, 28, 0],
+        [16, 29, 0],
+        [17, 36, 0],
+      ],
+    ],
+    [
+      "a BY proof",
+      "",
+      "THEOREM TRUE\nBY k' = k",
+      [
+        [13, 28, 0],
+        [14, 29, 0],
+        [15, 36, 0],
+      ],
+    ],
+    [
+      "a proof's DEFINE",
+      "",
+      "THEOREM TRUE\n<1> DEFINE G == k'\n<1> QED",
+      [
+        [14, 28, 0],
+        [15, 29, 0],
+        [16, 36, 0],
+      ],
+    ],
+    [
+      "a proof's INSTANCE",
+      "",
+      "THEOREM TRUE\n<1> INSTANCE Q WITH c <- k, w <- k\n<1> QED",
+      [
+        [14, 28, 0],
+        [15, 29, 0],
+        [16, 36, 0],
+      ],
+    ],
+    [
+      "a proof's named INSTANCE",
+      "",
+      "THEOREM TRUE\n<1> N == INSTANCE Q WITH c <- k, w <- k\n<1> QED",
+      [
+        [14, 28, 0],
+        [15, 29, 0],
+        [16, 36, 0],
+      ],
+    ],
+    ["a WITNESS", "", "THEOREM TRUE\n<1>1. WITNESS k \\in {1}\n<1> QED", [[16, 36, 2]]],
+    [
+      "an ASSUME/PROVE step",
+      "",
+      "THEOREM TRUE\n<1>1. ASSUME NEW z PROVE z = k\n  OBVIOUS\n<1> QED",
+      [[17, 36, 2]],
+    ],
+    [
+      "a USE",
+      "",
+      "USE k' = k",
+      [
+        [13, 29, 1],
+        [14, 36, 1],
+      ],
+    ],
+    [
+      "an extended theorem",
+      "THEOREM k' = k",
+      "",
+      [
+        [15, 28, 0],
+        [16, 29, 0],
+        [17, 36, 0],
+      ],
+    ],
+    [
+      "an extended USE",
+      "USE k' = k",
+      "",
+      [
+        [16, 29, 1],
+        [17, 36, 1],
+      ],
+    ],
+    [
+      "an extended INSTANCE",
+      "INSTANCE Q WITH c <- k, w <- k",
+      "",
+      [
+        [15, 28, 0],
+        [16, 29, 0],
+        [17, 36, 0],
+      ],
+    ],
+    [
+      "an extended proof",
+      "THEOREM TRUE\n<1>1. k' = k\n  OBVIOUS\n<1> QED",
+      "",
+      [
+        [18, 28, 0],
+        [19, 29, 0],
+        [20, 36, 0],
+      ],
+    ],
+  ])("constrains a module by %s, as SANY does", async (_, extended, body, errors) => {
+    const modules = extended
+      ? `---- MODULE L0 ----\nCONSTANT k\n${extended}\n====\n---- MODULE L ----\nEXTENDS L0\n====`
+      : `---- MODULE L ----\nCONSTANT k\n${body}\n====`;
+    await expect(
+      check({
+        source: `---- MODULE M ----\nVARIABLE x\n---- MODULE Q ----\nCONSTANT c\nVARIABLE w\nA == c\n====\n${modules}\nI1 == INSTANCE L WITH k <- x\nI2 == INSTANCE L WITH k <- x'\nI3 == INSTANCE L WITH k <- [](x = 1)\nInit == x = 0\nNext == x' = x\n====`,
+        config: "INIT Init\nNEXT Next",
+      }),
+    ).rejects.toThrow(
+      createSanyError(errors.map((error) => getInstanceError(error[0], error[1], error[2]))),
+    );
+  });
+
+  it.each([
+    ["a LOCAL INSTANCE", "LOCAL INSTANCE L0", 11],
+    ["a parameterized INSTANCE", "N(p) == INSTANCE L0", 11],
+    ["a proof's INSTANCE", "THEOREM TRUE\n<1> INSTANCE L0\n<1> QED", 13],
+    ["a proof's DEFINE", "THEOREM TRUE\n<1> DEFINE N == INSTANCE L0\n<1> QED", 13],
+  ])(
+    "constrains a module through the implicit substitutes of %s, as SANY does",
+    async (_, body, line) => {
+      await expect(
+        check({
+          source: `---- MODULE M ----\nVARIABLE x\n---- MODULE L0 ----\nCONSTANT k\nTHEOREM k' = k\n====\n---- MODULE L ----\nCONSTANT k\n${body}\n====\nI1 == INSTANCE L WITH k <- x\nI2 == INSTANCE L WITH k <- x'\nI3 == INSTANCE L WITH k <- [](x = 1)\nInit == x = 0\nNext == x' = x\n====`,
+          config: "INIT Init\nNEXT Next",
+        }),
+      ).rejects.toThrow(
+        createSanyError([
+          getInstanceError(line, 28, 0),
+          getInstanceError(line + 1, 29, 0),
+          getInstanceError(line + 2, 36, 0),
+        ]),
+      );
+    },
+  );
+
+  it("constrains a module by a named assumption but keeps it constant, as SANY does", async () => {
+    await expect(
+      check({
+        source:
+          "---- MODULE M ----\nVARIABLE x\n---- MODULE L ----\nCONSTANT k\nAXIOM X == k' = k\n====\nI1 == INSTANCE L WITH k <- x\nI2 == INSTANCE L WITH k <- x'\nI3 == INSTANCE L WITH k <- [](x = 1)\nInit == x = 0\nNext == x' = x\n====",
+        config: "INIT Init\nNEXT Next",
+      }),
+    ).rejects.toThrow(
+      createSanyError([
+        {
+          location: "line 5, col 1 to line 5, col 17 of module M",
+          message:
+            "Level error: assumptions must be level 0 (Constant), \nbut this one has level 2.",
+        },
+        getInstanceError(8, 29, 1),
+        getInstanceError(9, 36, 1),
+      ]),
+    );
+  });
+
+  it("keeps an instance from substituting a temporal formula for a constant an assumption mentions, which SANY allows", async () => {
+    await expect(
+      check({
+        source:
+          "---- MODULE M ----\nVARIABLE x\n---- MODULE L ----\nCONSTANT k\nASSUME k /\\ TRUE\n====\nI == INSTANCE L WITH k <- [](x = 1)\nInit == x = 0\nNext == x' = x\n====",
+        config: "INIT Init\nNEXT Next",
+      }),
+    ).rejects.toThrow(createSanyError([getInstanceError(7, 35, 2)]));
+  });
+
+  it("constrains a module by the theorems of a LET instance in an ASSUME/PROVE, as SANY does", async () => {
+    await expect(
+      check({
+        source:
+          "---- MODULE M ----\nVARIABLE x\n---- MODULE In ----\nCONSTANT c\nVARIABLE v\nTHEOREM T == v \\in {c}\n====\n---- MODULE L ----\nCONSTANT k\nVARIABLE w\nTHEOREM ASSUME LET K == INSTANCE In WITH c <- w, v <- k IN TRUE PROVE TRUE\n====\nI == INSTANCE L WITH k <- x, w <- x\nInit == x = 0\nNext == x' = x\n====",
+        config: "INIT Init\nNEXT Next",
+      }),
+    ).rejects.toThrow(
+      createSanyError(
+        [
+          ["line 11, col 20 to line 11, col 55", "In", "c"],
+          ["line 13, col 1 to line 13, col 35", "L", "k"],
+          ["line 13, col 1 to line 13, col 35", "L", "w"],
+        ].map((error) => ({
+          location: `${error[0]} of module M`,
+          message: `Level error in instantiating module '${error[1]}':\nThe level of the expression or operator substituted for '${error[2]}' \nmust be at most 0.`,
+        })),
+      ),
+    );
+  });
+
+  it.each([
+    [
+      "with a definition",
+      "B == c\n",
+      [
+        "line 10, col 17 to line 10, col 21",
+        "line 11, col 45 to line 11, col 49",
+        "line 12, col 17 to line 12, col 21",
+      ],
+      "line 11, col 11 to line 11, col 49",
+    ],
+    [
+      "without definitions",
+      "",
+      [
+        "line 9, col 17 to line 9, col 21",
+        "line 11, col 17 to line 11, col 21",
+        "line 10, col 45 to line 10, col 49",
+      ],
+      "line 10, col 11 to line 10, col 49",
+    ],
+  ])(
+    "reports the substitute errors of a proof's LET instance of a module %s where SANY does",
+    async (_, definitions, primes, instance) => {
+      await expect(
+        check({
+          source: `---- MODULE M ----\nVARIABLE x\n---- MODULE P ----\nCONSTANT c\nVARIABLE v\n${definitions}====\nN == INSTANCE P WITH c <- 1, v <- x\nTHEOREM TRUE\n<1>1. LET D1 == (x')'\n          K == INSTANCE P WITH c <- x, v <- (x')'\n          D2 == (x')'\n      IN TRUE\n  OBVIOUS\n<1> QED\nInit == x = 0\nNext == x' = x\n====`,
+          config: "INIT Init\nNEXT Next",
+        }),
+      ).rejects.toThrow(
+        createSanyError([
+          ...primes.map((location) => ({
+            location: `${location} of module M`,
+            message:
+              "Level error in applying operator ':\nThe level of argument 1 exceeds the maximum level allowed by the operator.",
+          })),
+          {
+            location: `${instance} of module M`,
+            message:
+              "Level error in instantiating module 'P':\nThe level of the expression or operator substituted for 'c' \nmust be at most 0.",
+          },
+        ]),
+      );
+    },
+  );
+
   it("levels a LET instance's definitions through an operator parameter it substitutes like SANY", async () => {
     await expect(
       check({
@@ -1064,6 +1366,77 @@ describe("level checking matches SANY", () => {
           location: "line 9, col 1 to line 9, col 29 of module M",
           message:
             "Level error in instantiating module 'In':\nThe level of the expression or operator substituted for 'v' \nmust be at most 1.",
+        },
+      ]),
+    );
+  });
+
+  it.each([
+    [
+      "I == INSTANCE In\nJ(p) == INSTANCE In\nD == SF_I!T!t(x' = 1)\nE == (J(1)!C!c)'",
+      ["line 10, col 6 to line 10, col 21", "line 11, col 6 to line 11, col 16"],
+    ],
+    [
+      "INSTANCE In\nD == SF_T!t(x' = 1)\nE == (C!c)'",
+      ["line 9, col 6 to line 9, col 19", "line 10, col 6 to line 10, col 11"],
+    ],
+  ])(
+    "checks a label selected through an instance that substitutes nothing as level-correct, as SANY does: %s",
+    async (instances, ranges) => {
+      const exceeds = "The level of argument 1 exceeds the maximum level allowed by the operator.";
+      await expect(
+        check({
+          source: `---- MODULE M ----\nVARIABLE x\n---- MODULE In ----\nB == \\E b \\in {x'} : b\nTHEOREM T == t :: (B /\\ [](x = 1))\nC == c :: ([](x = 1))\n====\n${instances}\nInit == x = 0\nNext == x' = x\n====`,
+          config: "INIT Init\nNEXT Next",
+        }),
+      ).rejects.toThrow(
+        createSanyError([
+          {
+            location: "line 5, col 20 to line 5, col 33 of module M",
+            message: "\\land has both temporal formula and action as arguments.",
+          },
+          {
+            location: `${ranges[0]} of module M`,
+            message: `Level error in applying operator $SF:\n${exceeds}`,
+          },
+          {
+            location: `${ranges[1]} of module M`,
+            message: `Level error in applying operator ':\n${exceeds}`,
+          },
+        ]),
+      );
+    },
+  );
+
+  it("checks a label selected from a step's statement, as SANY does", async () => {
+    const exceeds = "The level of argument 1 exceeds the maximum level allowed by the operator.";
+    await expect(
+      check({
+        source:
+          "---- MODULE M ----\nVARIABLE x\nB == \\E b \\in {x'} : b\nTHEOREM TRUE\n<1>1. s :: (B /\\ [](x = 1))\n  <2>1. (<1>1!s)'\n    OBVIOUS\n  <2> QED\n<1>2. (<1>1!s)'\n  OBVIOUS\n<1> D == ENABLED (<1>1!s)\n<1>3. t :: ([](x = 1))\n  OBVIOUS\n<1> QED BY (<1>3!t)'\nInit == x = 0\nNext == x' = x\n====",
+        config: "INIT Init\nNEXT Next",
+      }),
+    ).rejects.toThrow(
+      createSanyError([
+        {
+          location: "line 5, col 13 to line 5, col 26 of module M",
+          message: "\\land has both temporal formula and action as arguments.",
+        },
+        {
+          location: "line 6, col 9 to line 6, col 17 of module M",
+          message: `Level error in applying operator ':\n${exceeds}`,
+        },
+        {
+          location: "line 9, col 7 to line 9, col 15 of module M",
+          message: `Level error in applying operator ':\n${exceeds}`,
+        },
+        {
+          location: "line 11, col 10 to line 11, col 25 of module M",
+          message: `Level error in applying operator ENABLED:\n${exceeds}`,
+        },
+        {
+          location: "line 14, col 12 to line 14, col 20 of module M",
+          message: `Level error in applying operator ':\n${exceeds}`,
         },
       ]),
     );
