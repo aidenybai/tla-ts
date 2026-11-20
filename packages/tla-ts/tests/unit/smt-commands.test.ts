@@ -422,6 +422,33 @@ describe("runSmtlibScript runs its commands as Z3 does", () => {
     ).toEqual(["sat", "sat", "sat", "unsat", "(b0 (not b0))"]);
   });
 
+  it("keeps the implication from the name of an assertion until its scope pops", () => {
+    expect(
+      run([
+        "(set-option :produce-unsat-cores true)",
+        "(declare-const v0 (_ BitVec 8))",
+        "(declare-const v1 (_ BitVec 3))",
+        "(assert (distinct v1 (bvsrem (bvshl #b000 v1) v1)))",
+        "(check-sat)",
+        "(push 1)",
+        "(assert (! (bvsge (bvudiv v0 v0) ((_ rotate_right 9) v0)) :named n10))",
+        "(check-sat)",
+        "(get-model)",
+      ]),
+    ).toEqual([
+      "sat",
+      "sat",
+      "(",
+      "  (define-fun n10 () Bool",
+      "    (bvsge (bvudiv v0 v0) ((_ rotate_right 9) v0)))",
+      "  (define-fun v1 () (_ BitVec 3)",
+      "    #b101)",
+      "  (define-fun v0 () (_ BitVec 8)",
+      "    #x1d)",
+      ")",
+    ]);
+  });
+
   it("reports an even root of a negative number as an error of the command", () => {
     const message = "even root of negative number is not real";
     expect(

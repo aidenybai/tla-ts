@@ -411,6 +411,8 @@ interface ScriptState {
   reader: SmtlibReader;
   assertions: number[];
   names: number[];
+  // tactic2solver's assertions keep the implication from each name until their scope is popped.
+  implications: number[];
   assertionTexts: string[];
   objectives: OptObjective[];
   // The objective of each soft constraint, in the order they were asserted.
@@ -495,6 +497,7 @@ export const runSmtlibScript = (
       reader: createSmtlibReader(manager, undefined, settings.parserOptions),
       assertions: [],
       names: [],
+      implications: [],
       assertionTexts: [],
       objectives: [],
       softTrail: [],
@@ -529,15 +532,10 @@ export const runSmtlibScript = (
   const display = (expr: number) => print(format(expr));
   const report = (error: SmtParseError) =>
     print(`(error "line ${error.line} column ${error.column}: ${error.message}")`);
-  const getNamedAssertions = () => {
-    const manager = state.manager;
-    const isNamed = hasNames();
-    return state.assertions.map((assertion, index) =>
-      isNamed && state.names[index] !== -1
-        ? manager.mkApp(OP_IMPLIES, [state.names[index], assertion], SORT_BOOL)
-        : assertion,
+  const getNamedAssertions = () =>
+    state.assertions.map((assertion, index) =>
+      state.implications[index] === -1 ? assertion : state.implications[index],
     );
-  };
   const getOptOptions = () => {
     const parameters = settings.parameters;
     // symba and farkas run on the infinitesimal arithmetic solver, which is not ported.
@@ -1023,16 +1021,18 @@ export const runSmtlibScript = (
   // solver_na2as asserts a named assertion as an implication from its name.
   const assertInKernel = (formula: number, name: number) => {
     const manager = state.manager;
+    const implication = name === -1 ? -1 : manager.mkApp(OP_IMPLIES, [name, formula], SORT_BOOL);
+    if (implication !== -1) manager.incRef(implication);
+    state.implications.push(implication);
     useSatSolver((solver) =>
       name === -1 ? solver.assertExpr(formula) : solver.assertNamed(formula, name),
     );
     state.fdSolver?.assertExpr(formula, name);
-    const kernel = state.kernel;
-    if (kernel === undefined) return;
-    const asserted = name === -1 ? formula : manager.mkApp(OP_IMPLIES, [name, formula], SORT_BOOL);
-    manager.incRef(asserted);
-    kernel.assertExpr(asserted);
-    manager.decRef(asserted);
+    state.kernel?.assertExpr(implication === -1 ? formula : implication);
+  };
+  const restoreImplications = (size: number) => {
+    for (const implication of state.implications.splice(size))
+      if (implication !== -1) state.manager.decRef(implication);
   };
   const checkKernel = (names: number[], extra: number[]) => {
     const kernel = state.kernel;
@@ -1689,6 +1689,7 @@ export const runSmtlibScript = (
           state.isIncremental = true;
           const scope = state.scopes[state.scopes.length - count];
           releaseTacticModel();
+          restoreImplications(scope.assertions);
           state.kernel?.pop(count);
           useSatSolver((solver) => solver.pop(count));
           state.fdSolver?.pop(count);
@@ -1723,6 +1724,7 @@ export const runSmtlibScript = (
           dropSolver(detachSolver());
           resetKernel();
         }
+        restoreImplications(0);
         restoreAssertions(0);
         state.checkedObjectives = 0;
         state.scopes = state.scopes.map((scope) => ({
