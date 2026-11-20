@@ -5499,6 +5499,72 @@ describe("name resolution matches SANY", () => {
     );
   });
 
+  it.each<[string, string, [string, string][]]>([
+    [
+      "an expression",
+      "J(p) == INSTANCE I\nZ == J(Nope)",
+      [
+        ["line 6, col 8 to line 6, col 11", "Unknown operator: `Nope'."],
+        ["line 6, col 6 to line 6, col 6", "Operator name J is incomplete."],
+      ],
+    ],
+    [
+      "a quantifier",
+      "J(p) == INSTANCE I\nZ == J(\\A q \\in {1} : Nope)",
+      [
+        ["line 6, col 23 to line 6, col 26", "Unknown operator: `Nope'."],
+        ["line 6, col 6 to line 6, col 6", "Operator name J is incomplete."],
+      ],
+    ],
+    [
+      "two arguments",
+      "J(p, r) == INSTANCE I\nZ == J(Nope, Nope2)",
+      [
+        ["line 6, col 8 to line 6, col 11", "Unknown operator: `Nope'."],
+        ["line 6, col 14 to line 6, col 18", "Unknown operator: `Nope2'."],
+        ["line 6, col 6 to line 6, col 6", "Operator name J is incomplete."],
+      ],
+    ],
+    [
+      "an operator parameter",
+      "J(P(_)) == INSTANCE I\nZ == J(Nope)",
+      [
+        ["line 6, col 8 to line 6, col 11", "Unknown operator: `Nope'."],
+        ["line 6, col 6 to line 6, col 6", "Operator name J is incomplete."],
+      ],
+    ],
+    [
+      "an operator parameter given an operator",
+      "J(P(_)) == INSTANCE I\nQ(a) == a\nZ == J(Q)",
+      [["line 7, col 6 to line 7, col 6", "Operator name J is incomplete."]],
+    ],
+    [
+      "a LET",
+      "J(p) == INSTANCE I\nZ == LET L(q) == INSTANCE I IN L(Nope)",
+      [
+        ["line 6, col 34 to line 6, col 37", "Unknown operator: `Nope'."],
+        ["line 6, col 32 to line 6, col 32", "Operator name L is incomplete."],
+      ],
+    ],
+    [
+      "a theorem",
+      "J(p) == INSTANCE I\nTHEOREM J(Nope)",
+      [
+        ["line 6, col 11 to line 6, col 14", "Unknown operator: `Nope'."],
+        ["line 6, col 9 to line 6, col 9", "Operator name J is incomplete."],
+      ],
+    ],
+  ])(
+    "reports the arguments of an instance name applied in %s before the name, like SANY",
+    async (_description, source, errors) => {
+      await expect(checkNames(`---- MODULE I ----\nK == 1\n====\n${source}`)).rejects.toThrow(
+        createSanyError(
+          errors.map((error) => ({ location: `${error[0]} of module M`, message: error[1] })),
+        ),
+      );
+    },
+  );
+
   it("accepts an instance name as a fact like SANY", async () => {
     await expect(
       checkNames(

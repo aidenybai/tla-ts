@@ -937,6 +937,11 @@ const getSymbolArity = (
       return undefined;
     }
     const range = getSpelledNameRange(expression, name);
+    if (!isOperatorArgument && expression.kind === "Apply") {
+      expression.args.forEach((arg, index) =>
+        matchArgument(arg, instance?.params?.[index] ?? 0, index, name, range, scope, unit),
+      );
+    }
     unit.errors.push({
       location: formatRange({
         ...range,
@@ -2240,16 +2245,18 @@ const resolveProof = (proof: Proof | undefined, scope: LocalName | undefined, ou
   proof.steps.reduce((current, step) => resolveStep(step, current, unit), scope);
 };
 
+export const getInstanceBinding = (instance: Instance): Binding => ({
+  kind: "Instance",
+  arity: instance.params.length,
+  params: instance.params.map((param) => param.arity),
+  range: instance.location.range,
+});
+
 const resolveLocalInstance = (instance: Instance, scope: LocalName | undefined, unit: Unit) => {
   const instanced = resolveInstance(instance, scope, unit);
   return instance.name === undefined
     ? instanced
-    : bindName(
-        instanced,
-        instance.name,
-        { kind: "Instance", arity: instance.params.length, range: instance.location.range },
-        unit,
-      );
+    : bindName(instanced, instance.name, getInstanceBinding(instance), unit);
 };
 
 const getStepGoal = (body: StepBody, location: SourceLocation): Goal | undefined => {
@@ -3000,12 +3007,7 @@ export const resolveModule = (module: Module, unit: ModuleUnit) => {
             .get(instance)
             ?.forEach((symbol, name) => bindModuleName(bindings, name, symbol, inner));
           if (instance.name !== undefined) {
-            bindModuleName(
-              bindings,
-              instance.name,
-              { kind: "Instance", arity: instance.params.length, range: instance.location.range },
-              inner,
-            );
+            bindModuleName(bindings, instance.name, getInstanceBinding(instance), inner);
           }
         }),
       ),

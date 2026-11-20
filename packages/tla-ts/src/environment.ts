@@ -64,6 +64,7 @@ import {
   getArity,
   getBoundNames,
   getFunctionArity,
+  getInstanceBinding,
   getKeyName,
   getParamArities,
   getRecursiveCount,
@@ -1219,9 +1220,7 @@ export const createEnvironment = (
     });
     const getInstanceSymbol = (instance: Instance, name: string): ModuleSymbol => ({
       key: `${name}${KEY_SEPARATOR}${scope.id}`,
-      arity: instance.params.length,
-      kind: "Instance",
-      range: instance.location.range,
+      ...getInstanceBinding(instance),
     });
     const isParameterFree = constants.length === 0 && variables.length === 0;
     const instanced = new Map<Instance, Symbols>();
