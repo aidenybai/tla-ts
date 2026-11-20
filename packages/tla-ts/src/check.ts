@@ -1775,6 +1775,7 @@ const searchStates = (
       throw toLivenessFailure(error);
     }
   };
+  // Deviation from TLC: LiveWorker#printTrace rebuilds a lasso's states with no worker id, so Trace in the next-state relation fails past the initial state with an ArrayIndexOutOfBoundsException.
   const reportLasso = (checker: LivenessChecker, lasso: Lasso) => {
     const path = [...lasso.prefix, ...lasso.cycle];
     const loopStart = lasso.prefix.length;

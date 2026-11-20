@@ -157,6 +157,30 @@ describe("TLCExt matches TLC", () => {
     expect(result.violation?.trace.map((step) => step.state.n)).toEqual([1, 2, 3, 4]);
   });
 
+  // Deviation from TLC: it prints <<0, 1>> as it rebuilds the counterexample, then fails with "Index 32767 out of bounds for length 1" and exits with 1.
+  it("reads Trace in the next-state relation as a liveness counterexample rebuilds its steps, unlike TLC", async () => {
+    const prints: string[] = [];
+    const result = await check({
+      source:
+        "---- MODULE M ----\nEXTENDS Naturals, Sequences, TLC, TLCExt\nVARIABLE x\nInit == x = 0\nNext == x < 2 /\\ x' = x + 1 /\\ PrintT(<<x, Len(Trace)>>)\nSpec == Init /\\ [][Next]_x\nLive == <>(x > 2)\n====",
+      config: "SPECIFICATION Spec\nPROPERTY Live\nCHECK_DEADLOCK FALSE",
+      onPrint: (text) => prints.push(text),
+    });
+    expect([
+      result.status,
+      result.violation?.trace.map((step) => [step.state.x, step.output]),
+      prints,
+    ]).toEqual([
+      "liveness-violation",
+      [
+        [0, ["<<0, 1>>", "<<1, 2>>"]],
+        [1, []],
+        [2, []],
+      ],
+      ["<<0, 1>>", "<<1, 2>>"],
+    ]);
+  });
+
   // Deviation from TLC: it reports 8:11-24, 8:11-20 and 8:15-19 in Constr and exits with 75.
   it("replays a failed step with a constraint that reads Trace, unlike TLC", async () => {
     const result = await check({
