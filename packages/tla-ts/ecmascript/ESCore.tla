@@ -14753,7 +14753,8 @@ AtomicsBuiltin(s, f, m, this, args, nt) ==
   CASE m = "isLockFree" ->
          LET n == ToIntegerOrInfinity(s, a1) IN IF IsAbrupt(n) THEN n
          ELSE Ok(n.s, Bool(\E size \in {1, 2, 4, 8} : Val(n).value = NumFromInt(size)))
-    [] m = "pause" -> Ok(s, Undefined)
+    \* Atomics.pause (§25.4.11), which throws at an N that is neither undefined nor integral.
+    [] m = "pause" -> IF a1 # Undefined /\ ~(IsNumber(a1) /\ NumIsIntegral(a1.value)) THEN ThrowTypeError(s) ELSE Ok(s, Undefined)
     [] m = "compareExchange" ->
          LET byteIndex == ValidateAtomicAccessOnIntegerTypedArray(s, a1, a2, TRUE) IN IF IsAbrupt(byteIndex) THEN byteIndex ELSE
          LET expected == AtomicValue(byteIndex.s, a1, a3) IN IF IsAbrupt(expected) THEN expected ELSE
