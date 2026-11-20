@@ -633,7 +633,6 @@ export const compareValues = (left: Value, right: Value): number => {
 
 const modelValues = new Map<string, ModelValue>();
 
-// TLC's member compares a typed model value only with what its search or scan reaches, so with one, membership, \cap and \ look up elements as TLC does.
 let isTypedModelValueCreated = false;
 
 export const hasTypedModelValues = () => isTypedModelValueCreated;

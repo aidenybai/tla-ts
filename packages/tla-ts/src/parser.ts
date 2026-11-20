@@ -500,7 +500,7 @@ export const getDefEntryBinder = (expression: Expression): Expression | undefine
     : undefined;
 };
 
-// MonolithSpecExtractor reads lines as BufferedReader#readLine does, from the first that `isStart` takes through the next that matches ====.*, where Java's `.` excludes \u0085, \u2028 and \u2029.
+// TLC's markers use Java's `.`, which excludes \u0085, \u2028 and \u2029, and Java's \s, which matches only ASCII whitespace.
 export const getMonolithSection = (source: string, isStart: (line: string) => boolean) => {
   const lines = source.replace(/(?:\r\n|\r|\n)$/, "").split(/\r\n|\r|\n/);
   const start = lines.findIndex(isStart);

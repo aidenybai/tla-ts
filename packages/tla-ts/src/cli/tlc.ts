@@ -143,7 +143,7 @@ const createFileDescriber = (
   };
 };
 
-// TLC matches the marker with Java's \s and trims the config as String#trim does.
+// Java's \s matches only ASCII whitespace.
 const getEmbeddedConfig = (contents: string, name: string) => {
   const marker = new RegExp(
     `^-{4,}[ \\t\\v\\f]*CONFIG[ \\t\\v\\f]+${name.replace(/\W/g, "\\$&")}[ \\t\\v\\f]*-{4,}$`,

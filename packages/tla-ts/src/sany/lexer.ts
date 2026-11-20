@@ -234,7 +234,6 @@ export const getKind = (name: string) => {
 const LITERALS = new Map(
   KINDS.flatMap((entry, kind) => entry.slice(1).map((image): [string, number] => [image, kind])),
 );
-// The lengths of the literals that start with each character, longest first.
 const LITERAL_LENGTHS = new Map(
   [...Map.groupBy(LITERALS.keys(), (image) => image[0])].map((entry): [string, number[]] => [
     entry[0],
@@ -248,7 +247,6 @@ interface TokenPattern {
   regex: RegExp;
 }
 
-// A pattern is its kind, the characters it can start with and the rest, so a token runs only the patterns that can start with its first character.
 const createPatterns = (patterns: [string, string, string][]) => {
   const tokenPatterns = patterns.map((pattern): TokenPattern => ({
     firsts: pattern[1],
