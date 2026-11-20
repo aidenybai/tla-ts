@@ -78,7 +78,12 @@ import {
   toLibraryPath,
   type JavaProperties,
 } from "./shared";
-import { compileTypeScriptFile, getNodeExit, type CompiledInput } from "./typescript";
+import {
+  compileTypeScriptFile,
+  getNodeExit,
+  isProgramPath,
+  type CompiledInput,
+} from "./typescript";
 
 const EXIT_CODES: Record<CheckStatus, number> = {
   success: EXIT_STATUS.success,
@@ -124,8 +129,6 @@ const createFileDescriber = (
   java: JavaProperties,
   metadir: string | undefined,
   version: TlcVersion,
-  // The file SANY names for the root module when it has no file of its own.
-  rootFile?: string,
 ) => {
   const temporary = java.temporaryDirectory ?? tmpdir();
   const temporaryDirectory = existsSync(temporary) ? realpathSync(temporary) : resolve(temporary);
@@ -133,12 +136,8 @@ const createFileDescriber = (
   const jar = getToolsJar(java);
   return (name: string, origin: SanyModuleOrigin) => {
     const fileName = `${name}.tla`;
-    if (origin === "file" && rootFile && name === basename(specPath, ".tla")) return rootFile;
     const file = origin === "file" ? findModuleFile(directories, name) : undefined;
     if (file !== undefined) return realpathSync(file);
-    // A module that the compiler gives a TypeScript file, such as JavaScript, has no file, so
-    // SANY parses it as it would a standard module.
-    if (origin === "file" && rootFile) return join(libraryDirectory, fileName);
     if (origin === "file") return realpathSync(specPath);
     if (version === "1.7.4") return join(temporaryDirectory, fileName);
     if (origin === "root file") {
@@ -309,12 +308,12 @@ const checkSpec = async (
       const given = configPath.endsWith(".tla")
         ? getEmbeddedConfig(contents, configPath.replaceAll(".tla", ""))
         : contents;
-      // A spec of prepared modules keeps the constants that its own config assigns, which its
-      // runtime reads, under the config -config names.
+      // A compiled spec keeps the constants that its own config assigns, which its runtime reads,
+      // under the config -config names.
       const kept =
-        compiled?.isPrepared === true
-          ? compiled.config.split("\n").filter((line) => line.startsWith("CONSTANT"))
-          : [];
+        compiled === undefined
+          ? []
+          : compiled.config.split("\n").filter((line) => line.startsWith("CONSTANT"));
       return parseConfig([given, ...kept].join("\n"), version);
     } catch (error) {
       if (!(error instanceof TlaConfigError)) throw error;
@@ -368,28 +367,20 @@ const checkSpec = async (
     );
   }
   const rootSource = compiled && printModule(compiled.source);
-  // A spec compiled on ESCore is checked from its prepared modules, which SANY's report can't parse
-  // from their texts, so its report is the line of the file it compiles.
-  if (compiled?.isPrepared === true) {
+  // A compiled spec is checked from its prepared modules, which SANY's report can't parse from
+  // their texts, so its report is the line of the file it compiles.
+  if (compiled !== undefined) {
     console.log(`Parsing file ${resolve(compiled.path)}`);
   }
   const sany =
-    compiled?.isPrepared === true
+    compiled !== undefined
       ? undefined
       : getSanyReport(
           specPath,
           reportMissingFile ? reportMissingModules174(loadModule, reportMissingFile) : loadModule,
           {
             fileName: specName,
-            rootSource,
-            describeFile: createFileDescriber(
-              specPath,
-              directories,
-              java,
-              args.metadir,
-              version,
-              compiled && resolve(compiled.path),
-            ),
+            describeFile: createFileDescriber(specPath, directories, java, args.metadir, version),
             version,
             rootExtendees: [
               ...getOperatorModules("postcondition"),
@@ -458,12 +449,9 @@ const checkSpec = async (
       version,
       onProgress: (progress) => printCheckProgress(printer, progress, timing, directory),
       onPrint: userFile === undefined ? undefined : (text) => appendFileSync(userFile, `${text}\n`),
-      // A compiled spec is checked as the module the compiler built, unless -inv adds to its text,
-      // and a spec of prepared modules from its text, whose strings the check ranks with theirs.
-      source:
-        compiled && !compiled.isPrepared && invariants.source === source
-          ? compiled.source
-          : invariants.source,
+      // A compiled spec is checked from its text, whose strings the check ranks with those of its
+      // prepared modules.
+      source: invariants.source,
       config,
       onPause: () => readSync(0, Buffer.alloc(1)),
       loadModule,
@@ -593,13 +581,13 @@ export const checkSpecs = async (args: string[], java: JavaProperties) => {
     .map((input) => ({
       ...input,
       path:
-        input.isGlobbed || /\.(tla|cfg|tsx?)$/.test(input.path)
+        input.isGlobbed || /\.(tla|cfg)$/.test(input.path) || isProgramPath(input.path)
           ? input.path.replace(/\.cfg$/, ".tla")
           : `${input.path}.tla`,
     }))
     .filter(
       (input) =>
-        /\.tsx?$/.test(input.path) ||
+        isProgramPath(input.path) ||
         (input.path.endsWith(".tla") &&
           (!input.isGlobbed || isConfigured || existsSync(input.path.replace(/\.tla$/, ".cfg")))),
     )
@@ -629,7 +617,7 @@ export const checkSpecs = async (args: string[], java: JavaProperties) => {
     });
     exitCodes.push(
       await reportErrors(async () => {
-        const isTypeScript = /\.tsx?$/.test(path);
+        const isTypeScript = isProgramPath(path);
         // Deviation from TLC: TLC checks one spec, so tla-ts names each of several it checks,
         // before a TypeScript file compiles, so a stop names the file it comes from.
         if (paths.length > 1) {

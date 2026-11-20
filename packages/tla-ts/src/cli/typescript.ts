@@ -14,6 +14,7 @@ import {
   UNSETTLED_AWAIT_EXIT_CODE,
   UNSETTLED_AWAIT_WARNING,
 } from "../exit-codes";
+import { getEscoreRuntime } from "../compile";
 import { parseModule } from "../parser";
 
 // A spec tla-ts compiled from the TypeScript file at path. specPath is where its module would be
@@ -26,10 +27,11 @@ export interface CompiledInput {
   loadModule: (name: string) => string | undefined;
   preparedModules: PreparedModule[];
   isScript: boolean;
-  // Whether the check takes the spec's modules prepared, as ESCore's runtime is.
-  isPrepared: boolean;
   notes: string[];
 }
+
+// Whether a path names a file that Node runs, TypeScript or JavaScript, which tla-ts compiles.
+export const isProgramPath = (path: string) => /\.(?:[cm]?[jt]s|[jt]sx)$/.test(path);
 
 // The escapes of a string that TLC prints.
 const TLC_ESCAPES = new Map([
@@ -97,18 +99,19 @@ Init ==
 Next == UNCHANGED programDone`;
 };
 
-// A TypeScript file compiled by specializing ESCore, which TLA_TS_ESCORE asks for: a script with
-// the steps above, and a model as escore-models compiles one. Node says where a script's throw
-// statement threw by the file's URL, as it runs a TypeScript file, and an ES module's at its own
-// code, but for a throw in a function, which a timer might have called.
-const compileEscoreFile = async (path: string): Promise<CompiledInput> => {
+// A TypeScript or JavaScript file compiled by specializing ESCore: a script with the steps above,
+// and a model as compileModelToEscore compiles one. Node says where a script's throw statement
+// threw by the file's URL, as it runs a TypeScript file, and an ES module's at its own code, but
+// for a throw in a function, which a timer might have called.
+export const compileTypeScriptFile = async (path: string): Promise<CompiledInput> => {
+  // The TypeScript compiler takes a while to load, so only a TypeScript or JavaScript input loads
+  // it.
   const ts = (await import("@typescript/typescript6")).default;
   const { compileToEscore } = await import("../typescript/spec/compile");
   const { compileModelToEscore } = await import("../typescript/spec/model");
-  const { prepareRuntime } = await import("../typescript/spec/prepare");
   const { isScript } = await import("../typescript/context");
   const { getNodeLocation, isEsModule } = await import("../typescript/exceptions");
-  const runtime = prepareRuntime(join(import.meta.dirname, "../../ecmascript"));
+  const runtime = await getEscoreRuntime();
   const source = readFileSync(path, "utf8");
   const sourceFile = ts.createSourceFile(path, source, ts.ScriptTarget.ESNext, true);
   const isModule = isEsModule(sourceFile);
@@ -163,29 +166,6 @@ const compileEscoreFile = async (path: string): Promise<CompiledInput> => {
     loadModule: spec.loadModule,
     preparedModules: spec.preparedModules,
     isScript: isScriptFile,
-    isPrepared: true,
     notes: model?.notes ?? [],
-  };
-};
-
-export const compileTypeScriptFile = async (path: string): Promise<CompiledInput> => {
-  if (process.env.TLA_TS_ESCORE !== undefined) return compileEscoreFile(path);
-  // The TypeScript compiler takes a while to load, so only a TypeScript input loads it.
-  const compiled = (await import("../typescript/compile")).compile(
-    readFileSync(path, "utf8"),
-    path,
-    undefined,
-    true,
-  );
-  return {
-    path,
-    specPath: join(dirname(path), `${compiled.name}.tla`),
-    source: compiled.source,
-    config: compiled.config,
-    loadModule: compiled.loadModule,
-    preparedModules: compiled.preparedModules,
-    isScript: compiled.isScript,
-    isPrepared: false,
-    notes: compiled.notes,
   };
 };
