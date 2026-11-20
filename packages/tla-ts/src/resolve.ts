@@ -1929,7 +1929,8 @@ const isSubexpressionReported = (
       });
       return true;
     }
-    if (isUnknown && !isInstance) {
+    // SANY's unnamed INSTANCE imports an instance's J!T without J itself.
+    if (isUnknown && !isInstance && symbolIndex === -1) {
       unit.errors.push({
         location: formatRange({ module: range.module, start: range.start, end: lastRange.end }),
         message: `Unknown operator: \`${resolveSynonym(names.join("!"))}'.`,

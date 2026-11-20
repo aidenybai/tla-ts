@@ -1469,6 +1469,21 @@ describe("name resolution matches SANY", () => {
       ],
     ],
     [
+      "---- MODULE L2 ----\nTHEOREM T2 == ASSUME NEW q PROVE q\n====\n---- MODULE L1 ----\nJ1 == INSTANCE L2\n====\nINSTANCE L1\nE == J1!T2!: /\\ J1!T2!1 /\\ J1!T2!2\nF == J1!G!1",
+      [
+        ["line 9, col 6 to line 9, col 12", "Selected ASSUME/PROVE instead of expression."],
+        [
+          "line 9, col 17 to line 9, col 23",
+          "Selected a NEW declaration as an expression or operator.",
+        ],
+        [
+          "line 9, col 34 to line 9, col 34",
+          "Accessing ASSUME/PROVE clause within the scope of a declaration\n from outside that declaration's scope.",
+        ],
+        ["line 10, col 6 to line 10, col 9", "Unknown operator: `J1!G'."],
+      ],
+    ],
+    [
       "THEOREM T == t :: (T!t)\nD == t :: Undefined\nE == T!1 /\\ D!1 /\\ T!1!1\nTHEOREM U == u :: (U!1)\nF == U!1",
       [
         ["line 2, col 20 to line 2, col 22", "Unknown operator: `T!t'."],
