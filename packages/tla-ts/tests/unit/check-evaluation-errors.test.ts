@@ -3578,6 +3578,203 @@ describe("evaluation errors match TLC", () => {
     expect(result.failure?.fingerprint?.reason).toBe(COMPARE_REASON);
   });
 
+  it.each([
+    [
+      'x\' = x /\\ ~(((1..2) \\cup SUBSET {1, "a"}) \\subseteq {})',
+      COMPARE_REASON,
+      [
+        "Line 5, column 9 to line 5, column 63 in M",
+        "Line 5, column 9 to line 5, column 14 in M",
+        "Line 5, column 19 to line 5, column 63 in M",
+        "Line 5, column 21 to line 5, column 62 in M",
+        "Line 5, column 22 to line 5, column 48 in M",
+        "Line 5, column 34 to line 5, column 48 in M",
+        "Line 5, column 41 to line 5, column 48 in M",
+      ],
+    ],
+    [
+      'x\' = x /\\ ~(((1..2) \\cup [{1, "a"} -> {1}]) \\subseteq {})',
+      COMPARE_REASON,
+      [
+        "Line 5, column 9 to line 5, column 65 in M",
+        "Line 5, column 9 to line 5, column 14 in M",
+        "Line 5, column 19 to line 5, column 65 in M",
+        "Line 5, column 21 to line 5, column 64 in M",
+        "Line 5, column 22 to line 5, column 50 in M",
+        "Line 5, column 34 to line 5, column 50 in M",
+        "Line 5, column 35 to line 5, column 42 in M",
+      ],
+    ],
+    [
+      'x\' = x /\\ ~(((1..2) \\cup [a : SUBSET {1, "a"}]) \\subseteq {})',
+      COMPARE_REASON,
+      [
+        "Line 5, column 9 to line 5, column 69 in M",
+        "Line 5, column 9 to line 5, column 14 in M",
+        "Line 5, column 19 to line 5, column 69 in M",
+        "Line 5, column 21 to line 5, column 68 in M",
+        "Line 5, column 22 to line 5, column 54 in M",
+        "Line 5, column 34 to line 5, column 54 in M",
+        "Line 5, column 39 to line 5, column 53 in M",
+        "Line 5, column 46 to line 5, column 53 in M",
+      ],
+    ],
+    [
+      'x\' = x /\\ ((((1..2) \\cup SUBSET {1, "a"}) \\X {1}) # ({} \\X {1}))',
+      COMPARE_REASON,
+      [
+        "Line 5, column 9 to line 5, column 72 in M",
+        "Line 5, column 9 to line 5, column 14 in M",
+        "Line 5, column 20 to line 5, column 71 in M",
+        "Line 5, column 21 to line 5, column 56 in M",
+        "Line 5, column 22 to line 5, column 48 in M",
+        "Line 5, column 34 to line 5, column 48 in M",
+        "Line 5, column 41 to line 5, column 48 in M",
+      ],
+    ],
+    [
+      'x\' = x /\\ ([{1} -> ((1..2) \\cup SUBSET {1, "a"})] # [{1} -> {}])',
+      COMPARE_REASON,
+      [
+        "Line 5, column 9 to line 5, column 72 in M",
+        "Line 5, column 9 to line 5, column 14 in M",
+        "Line 5, column 20 to line 5, column 71 in M",
+        "Line 5, column 20 to line 5, column 57 in M",
+        "Line 5, column 29 to line 5, column 55 in M",
+        "Line 5, column 41 to line 5, column 55 in M",
+        "Line 5, column 48 to line 5, column 55 in M",
+      ],
+    ],
+    [
+      'x\' = x /\\ ([a : ((1..2) \\cup [{1, "a"} -> {1}])] # [a : {}])',
+      COMPARE_REASON,
+      [
+        "Line 5, column 9 to line 5, column 68 in M",
+        "Line 5, column 9 to line 5, column 14 in M",
+        "Line 5, column 20 to line 5, column 67 in M",
+        "Line 5, column 20 to line 5, column 56 in M",
+        "Line 5, column 26 to line 5, column 54 in M",
+        "Line 5, column 38 to line 5, column 54 in M",
+        "Line 5, column 39 to line 5, column 46 in M",
+      ],
+    ],
+  ])(
+    "opens both operands of S \\cup T before it streams either, as TLC's elements() does: %s",
+    async (next, reason, callStack) => {
+      const result = await checkSetBound(next, "TRUE");
+      expect(result.failure?.message).toBe(getRuntimeException(reason));
+      expect(formatCallStackLines(result)).toEqual(callStack);
+      expect(result.failure?.fingerprint?.reason).toBe(reason);
+    },
+  );
+
+  it.each([
+    [
+      'x\' = x /\\ \\A e \\in ((1..20) \\cup SUBSET {1, "a"}) : TRUE',
+      COMPARE_REASON,
+      [
+        "Line 5, column 9 to line 5, column 64 in M",
+        "Line 5, column 9 to line 5, column 14 in M",
+        "Line 5, column 19 to line 5, column 64 in M",
+        "Line 5, column 29 to line 5, column 56 in M",
+        "Line 5, column 42 to line 5, column 56 in M",
+        "Line 5, column 49 to line 5, column 56 in M",
+      ],
+    ],
+    [
+      'x\' = x /\\ \\A e \\in ((1..20) \\cup [{1, "a"} -> {1}]) : TRUE',
+      COMPARE_REASON,
+      [
+        "Line 5, column 9 to line 5, column 66 in M",
+        "Line 5, column 9 to line 5, column 14 in M",
+        "Line 5, column 19 to line 5, column 66 in M",
+        "Line 5, column 29 to line 5, column 58 in M",
+        "Line 5, column 42 to line 5, column 58 in M",
+        "Line 5, column 43 to line 5, column 50 in M",
+      ],
+    ],
+    [
+      'x\' = x /\\ \\A e \\in ((1..20) \\cup ({1} \\X {1, "a"})) : TRUE',
+      COMPARE_REASON,
+      [
+        "Line 5, column 9 to line 5, column 66 in M",
+        "Line 5, column 9 to line 5, column 14 in M",
+        "Line 5, column 19 to line 5, column 66 in M",
+        "Line 5, column 29 to line 5, column 58 in M",
+        "Line 5, column 43 to line 5, column 57 in M",
+        "Line 5, column 50 to line 5, column 57 in M",
+      ],
+    ],
+    [
+      'x\' = CHOOSE e \\in ((1..20) \\cup SUBSET {1, "a"}) : TRUE',
+      COMPARE_REASON,
+      [
+        "Line 5, column 9 to line 5, column 63 in M",
+        "Line 5, column 14 to line 5, column 63 in M",
+        "Line 5, column 28 to line 5, column 55 in M",
+        "Line 5, column 41 to line 5, column 55 in M",
+        "Line 5, column 48 to line 5, column 55 in M",
+      ],
+    ],
+    [
+      'x\' = x /\\ \\A e \\in ((1..5) \\cup ((6..12) \\cup SUBSET {1, "a"})) : TRUE',
+      COMPARE_REASON,
+      [
+        "Line 5, column 9 to line 5, column 78 in M",
+        "Line 5, column 9 to line 5, column 14 in M",
+        "Line 5, column 19 to line 5, column 78 in M",
+        "Line 5, column 29 to line 5, column 70 in M",
+        "Line 5, column 42 to line 5, column 69 in M",
+        "Line 5, column 55 to line 5, column 69 in M",
+        "Line 5, column 62 to line 5, column 69 in M",
+      ],
+    ],
+    [
+      'x\' = x /\\ \\A e \\in ((1..20) \\cup {t \\in SUBSET {1, "a"} : TRUE}) : TRUE',
+      COMPARE_REASON,
+      [
+        "Line 5, column 9 to line 5, column 79 in M",
+        "Line 5, column 9 to line 5, column 14 in M",
+        "Line 5, column 19 to line 5, column 79 in M",
+        "Line 5, column 29 to line 5, column 71 in M",
+        "Line 5, column 49 to line 5, column 63 in M",
+        "Line 5, column 56 to line 5, column 63 in M",
+      ],
+    ],
+    [
+      'x\' = x /\\ \\A e \\in ((1..20) \\cup [{1} -> SUBSET {1, "a"}]) : TRUE',
+      COMPARE_REASON,
+      [
+        "Line 5, column 9 to line 5, column 73 in M",
+        "Line 5, column 9 to line 5, column 14 in M",
+        "Line 5, column 19 to line 5, column 73 in M",
+        "Line 5, column 29 to line 5, column 65 in M",
+        "Line 5, column 42 to line 5, column 65 in M",
+        "Line 5, column 50 to line 5, column 64 in M",
+        "Line 5, column 57 to line 5, column 64 in M",
+      ],
+    ],
+    [
+      "x' = x /\\ \\A e \\in ((1..20) \\cup SUBSET Nat) : TRUE",
+      "Attempted to compute the number of elements in the overridden value Nat.",
+      [
+        "Line 5, column 9 to line 5, column 59 in M",
+        "Line 5, column 9 to line 5, column 14 in M",
+        "Line 5, column 19 to line 5, column 59 in M",
+        "Line 5, column 29 to line 5, column 51 in M",
+        "Line 5, column 42 to line 5, column 51 in M",
+      ],
+    ],
+  ])(
+    "opens both operands of S \\cup T before it collects them past -maxSetSize, as TLC's elements() does: %s",
+    async (next, reason, callStack) => {
+      const result = await checkSetBound(next, "TRUE");
+      expect(result.failure?.message).toBe(getRuntimeException(reason));
+      expect(formatCallStackLines(result)).toEqual(callStack);
+      expect(result.failure?.fingerprint?.reason).toBe(reason);
+    },
+  );
+
   it("streams S into UNION S past -maxSetSize, as TLC's UnionValue does", async () => {
     const result = await checkSetBound(
       "x' = Cardinality(UNION (SUBSET {1} \\cup (SUBSET {2} \\cup (SUBSET {1} \\cup (SUBSET {2} \\cup (SUBSET {1} \\cup SUBSET {2}))))))",
