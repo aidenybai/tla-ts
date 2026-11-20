@@ -232,7 +232,6 @@ export const createTraceBuilder = (context: TraceContext) => {
       );
     const loopPosition = loopStart ?? 0;
     const isLasso = known === 0 && !is174;
-    // TLCTrace#printTrace aliases the states it rebuilt from fingerprints, then rebuilds each known state and aliases it. LiveWorker#printTrace aliases the prefix to the loop, then aliases each state once it rebuilds the next.
     const rebuiltFirst = isLasso ? Math.min(loopPosition + 1, steps.length) : rebuilt;
     const aliasLag = isLasso ? 1 : 0;
     const isAliasedInTurn = (known > 0 || isLasso) && alias !== undefined;
@@ -363,7 +362,6 @@ export const createTraceBuilder = (context: TraceContext) => {
     return successor;
   };
   const getPathStates = (path: number[], nextFailure: string) => {
-    // TLC rebuilds each state of a trace once, so finding the states first leaves the registers as they were.
     const registers = new Map(runtime.registers);
     const namedRegisters = new Map(runtime.namedRegisters);
     const properties = new Map(runtime.properties);
