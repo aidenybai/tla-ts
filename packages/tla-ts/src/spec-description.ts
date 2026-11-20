@@ -42,7 +42,7 @@ import {
   TEMPORAL_LEVEL,
   VARIABLE_LEVEL,
 } from "./levels";
-import { bindLetDefinitions, getLevel } from "./liveness";
+import { bindLetDefinitions, getLevelBound } from "./liveness";
 import { EMPTY_STATE } from "./runtime";
 import {
   createRecord,
@@ -553,7 +553,7 @@ const describeSpecification = (
     : frames;
   if (called && called.params.length === 0) {
     if (
-      getLevel(called.body, called.scope, environment) === VARIABLE_LEVEL &&
+      getLevelBound(called.body, called.scope, environment) === VARIABLE_LEVEL &&
       (!substitutionFrame || isVariableBound(called.body, environment, new Set()))
     ) {
       const name = isLocallyResolved(expression) ? undefined : getOperatorName(expression);
@@ -590,7 +590,7 @@ const describeSpecification = (
     description.temporals.push(createConjunct(UNNAMED_ACTION, expression, scope));
     return;
   }
-  const level = getLevel(expression, scope, environment);
+  const level = getLevelBound(expression, scope, environment);
   // SpecProcessor#processConfigSpec drops a name whose value is TRUE, though it keeps a formula such as 1 = 1.
   if (
     expression.kind === "Identifier" &&
@@ -647,14 +647,14 @@ const describeProperty = (
     const inner = expression.expression;
     if (inner.kind === "BoxAction") {
       description.impliedActions.push(createAction(configName, inner));
-    } else if (getLevel(inner, scope, environment) < ACTION_LEVEL) {
+    } else if (getLevelBound(inner, scope, environment) < ACTION_LEVEL) {
       description.invariants.push(createAction(configName, inner));
     } else {
       description.impliedTemporals.push(createAction(configName, expression));
     }
     return;
   }
-  const level = getLevel(expression, scope, environment);
+  const level = getLevelBound(expression, scope, environment);
   if (level <= VARIABLE_LEVEL) {
     description.impliedInits.push(createAction(configName, expression));
   } else if (level === TEMPORAL_LEVEL) {

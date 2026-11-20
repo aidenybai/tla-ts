@@ -135,6 +135,7 @@ interface LevelContext {
   // SANY keeps each node's first level check, though a label checked again, here or in a module it sees, is level-correct.
   checkedNodes?: WeakMap<Expression, boolean>;
   goalSelections?: WeakMap<Expression, Expression>;
+  statementLevels?: Map<Expression | AssumeProve, LevelData>;
 }
 
 export interface InstanceLevelCheck {
@@ -638,6 +639,7 @@ export const createLevelAnalyzer = (context: LevelContext) => {
   const lambdaLevels = new Map<Expression, OperatorLevels>();
   const selectionLevels = new Map<Expression, LevelData>();
   const checkedNodes = context.checkedNodes ?? new WeakMap<Expression, boolean>();
+  const statementLevels = context.statementLevels ?? new Map<Expression | AssumeProve, LevelData>();
   let labelChecks = 0;
   const errors: CodedSanyError[] = [];
   const messages: LevelMessage[] = [];
@@ -1404,8 +1406,12 @@ export const createLevelAnalyzer = (context: LevelContext) => {
       }
       case "Subexpression": {
         const selection = context.goalSelections?.get(expression);
-        return selection
-          ? analyzeGoalSelection(
+        if (!selection) return createData();
+        const instanced =
+          selection.kind === "Lambda" ? undefined : getGoalInstanced(expression, scope);
+        return instanced
+          ? analyzeSubstituted(selection, instanced, scope)
+          : analyzeGoalSelection(
               selection,
               toOperands(
                 expression.selectors.flatMap((selector) =>
@@ -1414,8 +1420,7 @@ export const createLevelAnalyzer = (context: LevelContext) => {
                 scope,
               ),
               scope,
-            )
-          : createData();
+            );
       }
     }
   };
@@ -1667,6 +1672,22 @@ export const createLevelAnalyzer = (context: LevelContext) => {
     return toOperatorLevels(definition.name, formals, data, nonLeibniz);
   };
 
+  const getGoalInstanced = (
+    expression: Expression & { kind: "Subexpression" },
+    scope: Scope,
+  ): Instanced | undefined => {
+    const nameCount = expression.selectors.findIndex((selector) => selector.kind !== "Name");
+    const names = expression.selectors
+      .slice(0, nameCount === -1 ? undefined : nameCount)
+      .flatMap((selector) => (selector.kind === "Name" ? [selector.name] : []));
+    const entry = names
+      .map((_name, index) => scope.get(names.slice(0, names.length - index).join("!")))
+      .find((candidate) => candidate?.kind === "Let");
+    if (entry?.kind !== "Let") return undefined;
+    const copy = letCopies.get(entry.definition) ?? context.instances.getCopy(entry.definition);
+    return copy && { definition: entry.definition, copy, params: [] };
+  };
+
   const getSelectedInstance = (substituted: Expression): Instanced => {
     const selected = context.instances.getSelectedDefinition(substituted);
     const copy =
@@ -1775,6 +1796,17 @@ export const createLevelAnalyzer = (context: LevelContext) => {
 
   const staleDefinitions = new Set<Definition>();
 
+  const analyzeStatement = (statement: Expression | AssumeProve): LevelData => {
+    const cached = statementLevels.get(statement);
+    if (cached) return cached;
+    const data =
+      statement.kind === "AssumeProve"
+        ? analyzeAssumeProve(statement, new Map(), analyzer)
+        : analyze(statement, new Map());
+    statementLevels.set(statement, data);
+    return data;
+  };
+
   const analyzeDefinition = (definition: Definition, scope: Scope): OperatorLevels => {
     const members = definition.isRecursive && context.recursiveSections.get(definition);
     if (members && !definitionLevels.has(definition)) checkRecursiveSection(members);
@@ -1785,12 +1817,14 @@ export const createLevelAnalyzer = (context: LevelContext) => {
     const copy = letCopies.get(definition) ?? context.instances.getCopy(definition);
     const levels = copy
       ? analyzeInstanced(definition, copy, scope)
-      : analyzeOperator(
-          definition.name,
-          getFormals(definition),
-          getDefinitionBody(definition),
-          scope,
-        );
+      : "statement" in definition
+        ? toOperatorLevels(definition.name, [], analyzeStatement(definition.statement), new Set())
+        : analyzeOperator(
+            definition.name,
+            getFormals(definition),
+            getDefinitionBody(definition),
+            scope,
+          );
     const merged = {
       ...levels,
       level: Math.max(prior.level, levels.level),
@@ -1851,11 +1885,12 @@ export const createLevelAnalyzer = (context: LevelContext) => {
     members.forEach(recheck);
   };
 
-  return {
+  const analyzer = {
     analyze,
     analyzeDefinition,
     analyzeInstance,
     analyzeOriginal,
+    analyzeStatement,
     checkPrimedArguments,
     checkRecursiveSection,
     constants: context.constants,
@@ -1863,6 +1898,7 @@ export const createLevelAnalyzer = (context: LevelContext) => {
     toOperand,
     errors,
   };
+  return analyzer;
 };
 
 export type LevelAnalyzer = ReturnType<typeof createLevelAnalyzer>;
@@ -2083,12 +2119,7 @@ export const createProofChecker = (
     getFactData,
     analyzeTheorem: (theorem: Theorem) => {
       const data = createData();
-      mergeLevels(
-        data,
-        theorem.statement.kind === "AssumeProve"
-          ? analyzeAssumeProve(theorem.statement, new Map(), analyzer)
-          : analyzer.analyze(theorem.statement, new Map()),
-      );
+      mergeLevels(data, analyzer.analyzeStatement(theorem.statement));
       checkTheoremProof(theorem, data);
       return data;
     },
@@ -2103,17 +2134,8 @@ export const checkModuleLevels = (
 ) => {
   const analyzer = createLevelAnalyzer(context);
   const proofs = createProofChecker(analyzer, context.instances, module.name);
-  const statementLevels = new Map<Expression | AssumeProve, number>();
-  const getStatementLevel = (statement: Expression | AssumeProve) => {
-    const cached = statementLevels.get(statement);
-    if (cached !== undefined) return cached;
-    const level =
-      statement.kind === "AssumeProve"
-        ? analyzeAssumeProve(statement, new Map(), analyzer).level
-        : analyzer.analyze(statement, new Map()).level;
-    statementLevels.set(statement, level);
-    return level;
-  };
+  const getStatementLevel = (statement: Expression | AssumeProve) =>
+    analyzer.analyzeStatement(statement).level;
   const statements = [
     ...module.theorems,
     ...module.assumptions.map((assumption) => ({
