@@ -132,7 +132,6 @@ interface LevelContext {
   // SANY keeps each node's first level check, though a label checked again, here or in a module it sees, is level-correct.
   checkedNodes?: WeakMap<Expression, boolean>;
   goalSelections?: WeakMap<Expression, Expression>;
-  // An instance's copy renames a bound name that a substitute mentions, and a selection binds it under that name.
   originalNames?: Map<string, string>;
 }
 
@@ -218,7 +217,6 @@ const renameArgumentParam = (key: string, rename: (name: string) => string) => {
   };
 };
 
-// An instance's copy of a definition takes the instance's parameters, then the definition's, renamed apart.
 const getFormalRenamer = (formals: OperatorParam[], sourceFormals: OperatorParam[]) => {
   const prefix = formals.length - sourceFormals.length;
   const renamed = new Map(
@@ -1537,7 +1535,6 @@ export const createLevelAnalyzer = (context: LevelContext) => {
     });
   };
 
-  // SANY's SubstInNode#levelCheck: the instanced body's levels, raised by the substitutes for its level params.
   const applySubstitutes = (
     body: SubstitutedBody,
     operands: Map<string, Operand>,
@@ -1649,7 +1646,6 @@ export const createLevelAnalyzer = (context: LevelContext) => {
     return { definition, copy, params: selected.params };
   };
 
-  // SANY selects into the instanced module itself and wraps the original it selects in a SubstInNode.
   const analyzeSubstituted = (target: Expression, instanced: Instanced, scope: Scope) => {
     const copy = instanced.copy;
     // SANY level-checks the instanced module before the selection, so the original keeps that check.
@@ -1686,7 +1682,7 @@ export const createLevelAnalyzer = (context: LevelContext) => {
     );
   };
 
-  // A copy keeps its original's location, though not always its kind. Only a selection's LAMBDA shares its location, with the application of it.
+  // A selection's LAMBDA shares its location with the application of it.
   const findOriginal = (
     expression: Expression,
     target: Expression,
@@ -1737,7 +1733,6 @@ export const createLevelAnalyzer = (context: LevelContext) => {
   const analyzeOriginal = (definition: Definition, target: Expression): LevelData => {
     const found = findInDefinition(definition, target, new Map(), undefined);
     if (!found) {
-      // Substitution binds some substitutes in a LET of its own, and a substitute's copy carries the parameter it replaces as its last mark.
       const original =
         target.kind === "Let" && !target.location.range
           ? target.body
