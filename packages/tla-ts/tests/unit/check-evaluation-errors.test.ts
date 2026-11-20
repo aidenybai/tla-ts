@@ -4108,6 +4108,70 @@ describe("evaluation errors match TLC", () => {
     },
   );
 
+  const OVERRIDDEN_UNION_REASON =
+    'Attempted to compare overridden value Nat with non-overridden value:\n{"a", "b"}';
+  const NON_RECORD_REASON =
+    "Attempted to check if non-record\n{}\nis in the set of records:\n{[a |-> 1, b |-> 1], [a |-> 2, b |-> 1]}";
+
+  it.each([
+    [
+      'x\' = x /\\ \\E e \\in {1} \\X UNION {{"a", "b"}, Nat} : TRUE',
+      OVERRIDDEN_UNION_REASON,
+      [
+        "Line 5, column 9 to line 5, column 64 in M",
+        "Line 5, column 9 to line 5, column 14 in M",
+        "Line 5, column 19 to line 5, column 64 in M",
+        "Line 5, column 28 to line 5, column 57 in M",
+        "Line 5, column 35 to line 5, column 57 in M",
+        "Line 5, column 41 to line 5, column 57 in M",
+      ],
+    ],
+    [
+      'x\' = x /\\ \\E e \\in [a : UNION {{"a", "b"}, Nat}] : TRUE',
+      OVERRIDDEN_UNION_REASON,
+      [
+        "Line 5, column 9 to line 5, column 63 in M",
+        "Line 5, column 9 to line 5, column 14 in M",
+        "Line 5, column 19 to line 5, column 63 in M",
+        "Line 5, column 28 to line 5, column 56 in M",
+        "Line 5, column 33 to line 5, column 55 in M",
+        "Line 5, column 39 to line 5, column 55 in M",
+      ],
+    ],
+    [
+      "x' = x /\\ [a : (SUBSET {x} \\ [a : {1, 2}, b : {1}])] # [{1} -> {1}]",
+      NON_RECORD_REASON,
+      [
+        "Line 5, column 9 to line 5, column 75 in M",
+        "Line 5, column 9 to line 5, column 14 in M",
+        "Line 5, column 19 to line 5, column 75 in M",
+        "Line 5, column 19 to line 5, column 60 in M",
+        "Line 5, column 25 to line 5, column 58 in M",
+        "Line 5, column 38 to line 5, column 58 in M",
+      ],
+    ],
+    [
+      "x' = x /\\ \\E e \\in [a : (SUBSET {x} \\ [a : {1, 2}, b : {1}])] : TRUE",
+      NON_RECORD_REASON,
+      [
+        "Line 5, column 9 to line 5, column 76 in M",
+        "Line 5, column 9 to line 5, column 14 in M",
+        "Line 5, column 19 to line 5, column 76 in M",
+        "Line 5, column 28 to line 5, column 69 in M",
+        "Line 5, column 34 to line 5, column 67 in M",
+        "Line 5, column 47 to line 5, column 67 in M",
+      ],
+    ],
+  ])(
+    "frames a component whose emptiness check fails, as TLC's Value#isEmpty does: %s",
+    async (next, reason, callStack) => {
+      const result = await checkSetBound(next, "TRUE");
+      expect(result.failure?.message).toBe(getRuntimeException(reason));
+      expect(formatCallStackLines(result)).toEqual(callStack);
+      expect(result.failure?.fingerprint?.reason).toBe(reason);
+    },
+  );
+
   const SET_EQUALITY_REASON = "Attempted to check equality of the set {1} with the value:\n1";
 
   it.each([

@@ -2512,6 +2512,25 @@ export const isEmptySet = (value: Value): boolean => {
     case "Subset":
     case "SequenceSet":
       return false;
+  }
+  const sets = setTrace.sets;
+  if (sets === undefined) return isEmptyComposite(value);
+  sets.push(value);
+  const isEmpty = isEmptyComposite(value);
+  sets.pop();
+  return isEmpty;
+};
+
+const isEmptyComposite = (
+  value:
+    | ProductSetValue
+    | RecordSetValue
+    | FunctionSetValue
+    | UnionValue
+    | SetOperationValue
+    | FilteredSetValue,
+): boolean => {
+  switch (value.kind) {
     case "ProductSet":
       return value.factors.some(isEmptySet);
     case "RecordSet":
