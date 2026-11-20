@@ -1681,7 +1681,7 @@ const getComponentElements = (
   return lists;
 };
 
-const enumerateSetOperation = (value: SetOperationValue, isMembershipFramed: boolean) => {
+const enumerateSetOperation = (value: SetOperationValue) => {
   if (value.operator === "\\cap" && !isTlcEnumerable(value.left) && !isTlcEnumerable(value.right)) {
     throw new TlaEvaluationError(
       `Attempted to enumerate S \\cap T when neither S:\n${prettyPrint(formatValue(value.left))}\nnor T:\n${prettyPrint(formatValue(value.right))}\nis enumerable`,
@@ -1698,13 +1698,11 @@ const enumerateSetOperation = (value: SetOperationValue, isMembershipFramed: boo
   const isLeftEnumerated = value.operator === "\\" || isTlcEnumerable(value.left);
   const enumerated = isLeftEnumerated ? value.left : value.right;
   const other = isLeftEnumerated ? value.right : value.left;
-  const sets = setTrace.sets;
   const kept: Value[] = [];
   const keep = (element: Value) => {
-    if (!isMembershipFramed) sets?.pop();
-    const isElement = isElementOf(element, other);
-    if (!isMembershipFramed) sets?.push(value);
-    if (isElement === (value.operator === "\\cap")) addBoundedElement(kept, element);
+    if (isElementOf(element, other) === (value.operator === "\\cap")) {
+      addBoundedElement(kept, element);
+    }
     return false;
   };
   if (typeof enumerated === "object" && enumerated.kind === "Interval")
@@ -1840,7 +1838,7 @@ const enumerateSet = (
       return toFiniteSet(createEnumeratedSet(elements)).elements;
     }
     case "SetOperation":
-      return enumerateSetOperation(value, true);
+      return enumerateSetOperation(value);
     case "InfiniteSet":
     case "SequenceSet":
       throw new TlaEvaluationError(
@@ -1903,6 +1901,13 @@ const openStream = (value: Value): void => {
     case "SetOperation":
       if (value.operator === "\\" && !isTlcEnumerable(value.left)) toFiniteSet(value);
       if (
+        value.operator === "\\cap" &&
+        !isTlcEnumerable(value.left) &&
+        !isTlcEnumerable(value.right)
+      ) {
+        toFiniteSet(value);
+      }
+      if (
         value.operator === "\\cup" &&
         (!isTlcEnumerable(value.left) || !isTlcEnumerable(value.right))
       ) {
@@ -1938,12 +1943,14 @@ export const getNormalizedSetElements = (value: Value, isBounded: boolean) => {
   if (typeof value !== "object" || value.kind !== "SetOperation" || value.enumerated) {
     return isBounded ? toFiniteSet(value).elements : getUnboundedElements(value);
   }
-  // TLC's toSetEnum tests membership outside the frame of S \ T and S \cap T, which their normalize keeps.
-  const elements =
-    value.operator === "\\cup"
-      ? toFiniteSet(createEnumeratedSet(callTracedMethod(value, () => listUnionLikeTlc(value))))
-          .elements
-      : callTracedMethod(value, () => enumerateSetOperation(value, false));
+  // TLC frames the set as its elements() opens the stream, but not as toSetEnum collects it.
+  const sets = setTrace.sets;
+  if (sets) {
+    sets.push(value);
+    openStream(value);
+    sets.pop();
+  }
+  const elements = enumerateSetOperation(value);
   value.enumerated = createSortedSet(elements);
   return elements;
 };

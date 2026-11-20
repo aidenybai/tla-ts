@@ -3244,6 +3244,64 @@ describe("evaluation errors match TLC", () => {
     },
   );
 
+  const BOUND_EXCEPTION =
+    "TLC threw an unexpected exception.\nThis was probably caused by an error in the spec or model.\nSee the User Output or TLC Console for clues to what happened.\nThe exception was a util.WrongInvocationException\n: Attempted to construct a set with too many elements (>10).";
+  const EQUALITY_EXCEPTION =
+    "TLC threw an unexpected exception.\nThis was probably caused by an error in the spec or model.\nSee the User Output or TLC Console for clues to what happened.\nThe exception was a java.lang.RuntimeException\n: Attempted to check equality of the set {} with the value:\n1";
+
+  it.each([
+    [
+      "x' = x /\\ \\A e \\in ((SUBSET {1, 2} \\ {{}}) \\cup SUBSET (1..3)) : TRUE",
+      BOUND_EXCEPTION,
+      [],
+    ],
+    ["x' = x /\\ \\A e \\in (SUBSET (1..4) \\ {{}}) : TRUE", BOUND_EXCEPTION, []],
+    [
+      "x' = Cardinality(CHOOSE e \\in (SUBSET (1..4) \\cap SUBSET (1..4)) : TRUE)",
+      BOUND_EXCEPTION,
+      [],
+    ],
+    [
+      "x' = x /\\ \\A e \\in ({s \\in SUBSET (1..2) : s = 1} \\ {{}}) : TRUE",
+      EQUALITY_EXCEPTION,
+      [
+        "Line 5, column 9 to line 5, column 72 in M",
+        "Line 5, column 9 to line 5, column 14 in M",
+        "Line 5, column 19 to line 5, column 72 in M",
+        "Line 5, column 52 to line 5, column 56 in M",
+      ],
+    ],
+    [
+      "x' = Cardinality(CHOOSE e \\in ({s \\in SUBSET (1..2) : s = 1} \\cup SUBSET {}) : TRUE)",
+      EQUALITY_EXCEPTION,
+      [
+        "Line 5, column 9 to line 5, column 92 in M",
+        "Line 5, column 14 to line 5, column 92 in M",
+        "Line 5, column 26 to line 5, column 91 in M",
+        "Line 5, column 63 to line 5, column 67 in M",
+      ],
+    ],
+    [
+      "x' = x /\\ \\A e \\in (Nat \\cap Int) : TRUE",
+      "TLC threw an unexpected exception.\nThis was probably caused by an error in the spec or model.\nSee the User Output or TLC Console for clues to what happened.\nThe exception was a java.lang.RuntimeException\n: Attempted to enumerate S \\cap T when neither S:\nNat\nnor T:\nInt\nis enumerable",
+      [
+        "Line 5, column 9 to line 5, column 48 in M",
+        "Line 5, column 9 to line 5, column 14 in M",
+        "Line 5, column 19 to line 5, column 48 in M",
+        "Line 5, column 29 to line 5, column 40 in M",
+      ],
+      "Attempted to enumerate S \\cap T when neither S:\nNat\nnor T:\nInt\nis enumerable",
+    ],
+  ])(
+    "frames a set operation for a quantifier or CHOOSE only as TLC's elements() opens it: %s",
+    async (next, message, callStack, reason?: string) => {
+      const result = await checkSetBound(next, "TRUE");
+      expect(result.failure?.message).toBe(message);
+      expect(formatCallStackLines(result)).toEqual(callStack);
+      expect(result.failure?.fingerprint?.reason).toBe(reason);
+    },
+  );
+
   it.each([
     ["x' \\in [a : {f \\in [1..2 -> 1..4] : TRUE}]", 273, 17],
     ["x' = [f \\in [1..2 -> 1..4] |-> 1]", 3, 2],
