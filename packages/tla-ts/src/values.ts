@@ -745,13 +745,15 @@ export const getFunctionClass = (value: Value) =>
     ? value.functionClass
     : undefined;
 
+const isObservedLambda = (value: Value) =>
+  typeof value === "object" &&
+  value.kind === "LazyFunction" &&
+  value.isApplicationObserved &&
+  value.enumerated === undefined;
+
 // TLC's TupleValue converts the other side with toTuple, which applies a lazy function again on every comparison.
 const isTupleAgainstObservedLambda = (left: FunctionValue, right: Value) =>
-  left.functionClass === "tuple" &&
-  typeof right === "object" &&
-  right.kind === "LazyFunction" &&
-  right.isApplicationObserved &&
-  right.enumerated === undefined;
+  left.functionClass === "tuple" && isObservedLambda(right);
 
 export const markLambdaFunction = <FunctionLike extends FunctionValue | LazyFunctionValue>(
   functionValue: FunctionLike,
@@ -2866,7 +2868,8 @@ const isElementOfAnySet = (element: Value, set: Value): boolean => {
   switch (set.kind) {
     case "Set":
       cacheSet(element);
-      return isTypedModelValueCreated
+      // TLC's ValueVec#search makes the element the receiver of a sorted set's comparisons, and each member the receiver of an unsorted one's.
+      return isTypedModelValueCreated || isObservedLambda(element)
         ? isInSortedSetLikeTlc(element, set)
         : computeLikeTlcOnFailure(isInSortedSet, isInSortedSetLikeTlc, element, set);
     case "MixedSet":

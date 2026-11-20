@@ -1227,6 +1227,43 @@ ASSUME TLCFP(a) = -887695703
     ]);
   });
 
+  it.each([
+    [
+      "LET F == [n \\in UNION {1..1, {3}} |-> Print(n, n)] IN F \\in {<<1, 2>>}",
+      ["1  1", "1  1", "3  3", "FALSE"],
+    ],
+    [
+      "LET F == [n \\in UNION {1..1, {3}} |-> Print(n, n)] IN F \\in {<<3>>, <<1, 2>>}",
+      ["1  1", "1  1", "3  3", "FALSE"],
+    ],
+    [
+      "LET F == [n \\in UNION {1..1, {2}} |-> Print(n, n)] IN F \\in {<<1, 2>>} /\\ F \\in {<<1, 2>>}",
+      ["1  1", "2  2", "1  1", "2  2", "TRUE"],
+    ],
+    [
+      "LET F == [n \\in UNION {1..1, {3}} |-> Print(n, n)] IN F \\notin {<<3>>} \\cup {<<1, 2>>}",
+      ["1  1", "1  1", "3  3", "TRUE"],
+    ],
+  ])(
+    "compares each member of an unsorted set with a lazy function, as TLC's ValueVec#search does, in %s",
+    async (expression, printed) => {
+      expect((await checkLazyTuple(expression)).printed).toEqual(printed);
+    },
+  );
+
+  it.each([["{<<1, 2>>}"], ["{<<1, 2>>, <<3>>}"]])(
+    "compares a lazy function with the members of the sorted set %s, as TLC's ValueVec#search does",
+    async (set) => {
+      const printed: string[] = [];
+      await check({
+        source: `---- MODULE M ----\nEXTENDS Integers, Sequences, TLC\nVARIABLE x\nInit == x = ${set}\nNext == x' = x /\\ PrintT(LET F == [n \\in UNION {1..1, {3}} |-> Print(n, n)] IN F \\notin x)\n====`,
+        config: "INIT Init\nNEXT Next\nCHECK_DEADLOCK FALSE",
+        onPrint: (text) => printed.push(text),
+      });
+      expect(printed).toEqual(["1  1", "3  3", "TRUE"]);
+    },
+  );
+
   it("implements the TLCExt operators", async () => {
     const results = await Promise.all(
       ["Extensions", "ExtensionsShort"].map((name) => checkFixture("runtime", "Extensions", name)),
