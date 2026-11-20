@@ -906,6 +906,52 @@ ASSUME TLCFP(a) = -887695703
     expect(result.status).toBe("success");
   });
 
+  it("evaluates a constant definition with a Json operator once as it starts, as TLC does", async () => {
+    const printed: string[] = [];
+    const files = new Map<string, string>();
+    await check({
+      source:
+        '---- MODULE M ----\nEXTENDS Naturals, TLC, Json\nVARIABLE x\nJ == ToJson(<<PrintT("j")>>)\nA == ToJsonArray(<<PrintT("a")>>)\nO == ToJsonObject([k |-> PrintT("o")])\nS == JsonSerialize("s.json", <<PrintT("s")>>)\nN == ndJsonSerialize("n.json", <<PrintT("n")>>)\nD == JsonDeserialize("s.json")\nE == ndJsonDeserialize("n.json")\nInit == x = 0\nNext == x < 2 /\\ PrintT(<<J, A, O, S, N, D, E>>) /\\ x\' = x + 1\n====',
+      config: "INIT Init\nNEXT Next\nCHECK_DEADLOCK FALSE",
+      onPrint: (text) => printed.push(text),
+      readFile: (path) => files.get(path),
+      writeFile: (path, content) => files.set(path, String(content)),
+    });
+    const tuple = '<<"[true]", "[true]", "{\\"k\\":true}", TRUE, TRUE, <<TRUE>>, <<TRUE>>>>';
+    expect(printed).toEqual(['"j"', '"a"', '"o"', '"s"', '"n"', tuple, tuple]);
+  });
+
+  it("evaluates a constant definition with IOUtils' Serialize once as it starts, as TLC does", async () => {
+    const printed: string[] = [];
+    await check({
+      source:
+        '---- MODULE M ----\nEXTENDS Naturals, TLC, IOUtils\nVARIABLE x\nW == Serialize(<<PrintT("w")>>, "w.json", [format |-> "NDJSON", charset |-> "UTF-8", openOptions |-> <<"WRITE", "CREATE", "APPEND">>])\nInit == x = 0\nNext == x < 2 /\\ PrintT(W) /\\ x\' = x + 1\n====',
+      config: "INIT Init\nNEXT Next\nCHECK_DEADLOCK FALSE",
+      onPrint: (text) => printed.push(text),
+      loadModule: (name) =>
+        name === "IOUtils"
+          ? "---- MODULE IOUtils ----\nLOCAL INSTANCE Integers\nSerialize(value, dest, options) ==\n  CHOOSE r \\in [exitValue : Int, stdout : STRING, stderr : STRING] : TRUE\n===="
+          : undefined,
+      readFile: () => undefined,
+      writeFile: () => {},
+    });
+    expect(printed).toEqual(['"w"', "TRUE", "TRUE"]);
+  });
+
+  it("reads and writes a file again at each reference to a LET definition, as TLC does", async () => {
+    const printed: string[] = [];
+    const files = new Map<string, string>();
+    await check({
+      source:
+        '---- MODULE M ----\nEXTENDS Naturals, TLC, Json\nVARIABLE x\nInit == x = 0 /\\ JsonSerialize("f.json", <<0>>)\nNext == /\\ x < 2\n        /\\ LET d == JsonDeserialize("f.json")\n               w == JsonSerialize("f.json", <<x>>)\n           IN /\\ w\n              /\\ PrintT(d)\n              /\\ JsonSerialize("f.json", <<99>>)\n              /\\ PrintT(d)\n              /\\ w\n              /\\ PrintT(JsonDeserialize("f.json"))\n        /\\ x\' = x + 1\n====',
+      config: "INIT Init\nNEXT Next\nCHECK_DEADLOCK FALSE",
+      onPrint: (text) => printed.push(text),
+      readFile: (path) => files.get(path),
+      writeFile: (path, content) => files.set(path, String(content)),
+    });
+    expect(printed).toEqual(["<<0>>", "<<99>>", "<<0>>", "<<1>>", "<<99>>", "<<1>>"]);
+  });
+
   it("implements the TLCExt operators", async () => {
     const results = await Promise.all(
       ["Extensions", "ExtensionsShort"].map((name) => checkFixture("runtime", "Extensions", name)),
