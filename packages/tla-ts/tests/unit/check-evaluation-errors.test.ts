@@ -1834,6 +1834,28 @@ describe("evaluation errors match TLC", () => {
     ]);
   });
 
+  it("stops at an empty set of functions, records or tuples TLC compares with itself", async () => {
+    const statuses = await Promise.all(
+      [
+        'ASSUME LET F == [{} -> {1, "a"}] IN F = F',
+        'ASSUME LET F == [{1, "a"} -> {}] IN F = F',
+        'ASSUME LET F == [a : {}, b : {1, "a"}] IN F = F',
+        'ASSUME LET F == [b : {1, "a"}, a : {}] IN F = F',
+        'ASSUME LET F == {} \\X {1, "a"} IN F = F',
+        'ASSUME LET F == {1, "a"} \\X {} IN F = F',
+        'ASSUME LET F == <<[{} -> {1, "a"}]>> IN F = F',
+        'ASSUME LET F == [{1, "a"} -> {}] IN {F} = {F}',
+        'ASSUME LET F == [{} -> {1, "a"}] IN F \\in {F}',
+        'ASSUME LET F == [{} -> {1, "a"}] IN F # F => FALSE',
+        'ASSUME LET F == [{} -> {1, "a"}] IN Cardinality({F, F}) = 1',
+        'ASSUME LET F == [{1, "a"} -> {}] IN Cardinality({F, F}) = 1',
+      ].map(
+        async (assumption) => (await checkModule(`ASSUME 1 \\in {1, "a"}\n${assumption}`)).status,
+      ),
+    );
+    expect(statuses).toEqual(Array(12).fill("success"));
+  });
+
   it("sorts a TLCEval argument only outside an instance that substitutes", async () => {
     const inner =
       '---- MODULE Inner ----\nEXTENDS TLC\nCONSTANT K\nMixed == 1 \\in TLCEval({1, "a"})\n====';

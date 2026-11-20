@@ -566,11 +566,14 @@ const normalizeMixedSets = (value: Value): void => {
     case "Subset":
       return normalizeMixedSets(value.base);
     case "FunctionSet":
+      if (isEmptySet(value.domain) || isEmptySet(value.range)) return;
       normalizeMixedSets(value.domain);
       return normalizeMixedSets(value.range);
     case "RecordSet":
+      if (isEmptySet(value)) return;
       return value.sets.forEach(normalizeMixedSets);
     case "ProductSet":
+      if (isEmptySet(value)) return;
       return value.factors.forEach(normalizeMixedSets);
   }
 };
