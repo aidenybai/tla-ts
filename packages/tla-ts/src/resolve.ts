@@ -332,7 +332,9 @@ const getVisibleDefinition = (name: string, unit: Unit) => {
     (definition.isRecursive
       ? binding?.isPending === true || isSameRange(binding?.range, definition.location.range)
       : definition !== unit.self &&
-        isBefore(definition.location, unit.location) &&
+        // A theorem binds its name at its own location before its proof, where SANY's theorem node is in scope.
+        (isBefore(definition.location, unit.location) ||
+          unit.bindings.get(name)?.position === definition.location) &&
         (binding === undefined || !isBefore(binding.position, definition.location)));
   return isVisible ? definition : undefined;
 };

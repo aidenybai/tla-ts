@@ -307,6 +307,20 @@ describe("name resolution matches SANY", () => {
     },
   );
 
+  it.each([
+    ["a conjunction", "THEOREM T == TRUE\nPROOF BY T /\\ TRUE"],
+    ["an argument", "F(a) == a\nTHEOREM T == TRUE\nPROOF BY F(T)"],
+    ["a step", "F(a) == a\nTHEOREM T == TRUE\n<1>1. F(T)\n  OBVIOUS\n<1> QED BY <1>1"],
+    ["a DEFINE step", "F(a) == a\nTHEOREM T == TRUE\n<1> DEFINE G == F(T)\n<1> QED BY G"],
+    ["a USE step", "F(a) == a\nTHEOREM T == TRUE\n<1> USE F(T)\n<1> QED"],
+    [
+      "an instance a DEFINE step names",
+      "---- MODULE Inner ----\nOp(a) == TRUE\n====\nTHEOREM T == TRUE\n<1> DEFINE h == INSTANCE Inner\n<1> QED BY h!Op(T)",
+    ],
+  ])("reads a theorem's name in %s of its own proof, like SANY", async (_title, source) => {
+    expect((await checkNames(source)).status).toBe("success");
+  });
+
   const theorem = (steps: string[]) => `THEOREM T == TRUE\n${steps.join("\n")}\n<1> QED`;
 
   it.each([
