@@ -1564,7 +1564,10 @@ export const getLazySubsets = (value: Value): Value[] | undefined => {
   if (typeof value !== "object" || value.kind !== "Subset" || isOverriddenSet(value.base)) {
     return undefined;
   }
+  const sets = setTrace.sets;
+  sets?.push(value);
   const base = toFiniteSet(value.base).elements;
+  sets?.pop();
   if (base.length <= MAXIMUM_BUILT_SUBSET_BASE) return undefined;
   let cursorIndex = -1;
   let indices = [0];
