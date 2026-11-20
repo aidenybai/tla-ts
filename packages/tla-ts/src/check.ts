@@ -1206,7 +1206,7 @@ const searchStates = (
   // Deviation from TLC: under -continue, TLC reports failing to rebuild the violating step as a failure of the invariant.
   const getViolationTrace = (index: number, successor: Successor) =>
     options.isContinued
-      ? traces.getTrace(index, successor, { isPrintedOnly: true })
+      ? traces.getTrace(index, successor, { isPrintedOnly: true, isCurrentKept: true })
       : traces.getTrace(index, successor, { isRebuildFailureKept: true });
   const visitSuccessor = (
     index: number,

@@ -4097,7 +4097,7 @@ const compileStep = (
       );
       return {
         type: createBool(),
-        emit: () => (checks.length === 0 ? "true" : checks.join(" && ")),
+        emit: () => (checks.length === 0 ? "true" : `(${checks.join(" && ")} || H.deopt())`),
       };
     });
     return () =>
@@ -4253,7 +4253,8 @@ const compileStep = (
       const checks = indexes
         .filter((index) => primed[index] !== undefined)
         .map((index) => `H.same(${primed[index]}, v${index})`);
-      return () => (checks.length === 0 ? tail() : `if (${checks.join(" && ")}) { ${tail()} }`);
+      return () =>
+        checks.length === 0 ? tail() : `if (${checks.join(" && ")}) { ${tail()} } else H.deopt();`;
     }
     default:
       break;
