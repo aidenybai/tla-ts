@@ -22,6 +22,7 @@ interface TraceOptions {
   isPrintedOnly?: boolean;
   isCurrentKept?: boolean;
   isRebuildFailureKept?: boolean;
+  isSuccessorWritten?: boolean;
 }
 
 interface RebuiltState {
@@ -57,6 +58,7 @@ interface TraceContext {
   actions: (string | undefined)[];
   depths: number[];
   tracedSteps: WeakMap<TraceStep, TracedStep>;
+  isTraceRebuilt: boolean;
   captureOutput: <Result>(rebuild: () => Result) => { result: Result; lines: OutputLine[] };
   forEachInitialState: (onState: (state: Value[]) => void) => void;
   findUncoveredInitialState: (isMatch: (state: Value[]) => boolean) => Value[] | undefined;
@@ -221,7 +223,7 @@ export const createTraceBuilder = (context: TraceContext) => {
     // TLC's TLCStateRandom reseeds only for another state, so TLC rebuilds the step to a known successor drawing on from where the search stopped, unless it rebuilt a step before it.
     const findTraceAction = (position: number) =>
       findPositionAction(position, known === 2 && position === last && last === 1 && !is174);
-    const getAlias = (name: string, position: number) =>
+    const getAlias = (name: string, position: number, isPathRebuilt = false) =>
       getAliasState(
         name,
         steps[position].state,
@@ -229,7 +231,10 @@ export const createTraceBuilder = (context: TraceContext) => {
         position + 1,
         // Deviation from TLC: TLCTrace#printTrace gives the ALIAS an empty Trace when the trace is an initial state and its successor.
         // Deviation from TLC: LiveWorker#printTrace leaves each state of a lasso's prefix out of the Trace its ALIAS reads.
-        () => steps.slice(0, position + 1).map((inner) => inner.state),
+        () => {
+          if (isPathRebuilt) rebuildPath(path[position - 1]);
+          return steps.slice(0, position + 1).map((inner) => inner.state);
+        },
       );
     const loopPosition = loopStart ?? 0;
     const isLasso = known === 0 && !is174;
@@ -261,8 +266,18 @@ export const createTraceBuilder = (context: TraceContext) => {
     const failed = stepActions[last].result.error;
     const traceFailure = failed && getTraceFailure(failed, outputs[last]);
     const printed = traceFailure ? steps.slice(0, last) : steps;
-    const getAliases = () =>
-      alias === undefined ? [] : printed.map((_step, position) => getAlias(alias, position));
+    // Deviation from TLC: Worker#doPostCondition rebuilds the states it doesn't read from the trace file with no worker id, so Trace in their alias fails with an ArrayIndexOutOfBoundsException.
+    const writtenEnd = known === 2 && !traceOptions.isSuccessorWritten ? last - 1 : last;
+    const getAliases = (isPostcondition = false) =>
+      alias === undefined
+        ? []
+        : printed.map((_step, position) =>
+            getAlias(
+              alias,
+              position,
+              isPostcondition && context.isTraceRebuilt && position > 0 && position < writtenEnd,
+            ),
+          );
     const aliases = isAliasedInTurn
       ? [
           ...prefixAliases,
@@ -298,7 +313,7 @@ export const createTraceBuilder = (context: TraceContext) => {
         ].flat()
       : [];
     // TLC's Worker#doPostCondition evaluates the alias of each state again after it rebuilds the trace.
-    const postconditionAliases = isRebuiltAgain && !traceFailure ? getAliases() : [];
+    const postconditionAliases = isRebuiltAgain && !traceFailure ? getAliases(true) : [];
     const prefixOutput = isLasso
       ? [
           initialOutput,
