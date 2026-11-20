@@ -3024,15 +3024,24 @@ const isElementOfAnySet = (element: Value, set: Value): boolean => {
         elements.every((item, index) => isElementOf(item, set.factors[index]))
       );
     }
-    case "FilteredSet":
+    case "FilteredSet": {
+      const depth = setTrace.sets?.length ?? 0;
       try {
         return isElementOf(element, set.base) && set.test(element, true);
       } catch (error) {
-        if (!(error instanceof TlaEvaluationError) || !isEvalException(error)) throw error;
+        // TLC's SetPredValue#member catches an EvalException, but not the FingerprintException a base with a source turns it into.
+        if (
+          !(error instanceof TlaEvaluationError) ||
+          !isEvalException(error) ||
+          isFingerprintedSince(depth)
+        ) {
+          throw error;
+        }
         throw new TlaEvaluationError(
           `Cannot decide if element:\n${prettyPrint(formatValue(element))}\n is element of:\n${prettyPrint(formatValue(set.base))}\nand satisfies the predicate ${set.source?.predicate}`,
         );
       }
+    }
     case "Union": {
       if (!isTlcEnumerable(set.base)) {
         throw new TlaEvaluationError(

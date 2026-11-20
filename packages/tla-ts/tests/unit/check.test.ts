@@ -5581,6 +5581,10 @@ describe("check without code generation from strings", () => {
       "a predicate's UNCHANGED that fails to compare a variable with its successor",
       "VARIABLE x\nInit == x = 0\nNext == x' = {1} /\\ ~UNCHANGED x\nInv == TRUE",
     ],
+    [
+      "a filter's membership whose base fails after framing the failure",
+      "EXTENDS Naturals\nVARIABLE x\nInit == x = 0\nNext == x' = x /\\ <<1, x>> \\notin {e \\in ({} \\cup Nat) : e # x}\nInv == TRUE",
+    ],
   ])("checks %s like it does with code generation", async (_title, body) => {
     const options = {
       source: `---- MODULE M ----\n${body}\n====`,

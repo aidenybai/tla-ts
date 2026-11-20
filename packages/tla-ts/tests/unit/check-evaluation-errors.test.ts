@@ -4591,6 +4591,44 @@ describe("evaluation errors match TLC", () => {
     },
   );
 
+  const NAT_MEMBER_REASON = "Attempted to check if the value:\n<<1, 0>>\nis an element of Nat.";
+
+  it.each([
+    [
+      "<<1, x>> \\notin {e \\in ({} \\cup Nat) : e # x}",
+      "line 5, col 58 to line 5, col 62",
+      [
+        "Line 5, column 9 to line 5, column 63 in M",
+        "Line 5, column 9 to line 5, column 14 in M",
+        "Line 5, column 19 to line 5, column 63 in M",
+        "Line 5, column 43 to line 5, column 53 in M",
+      ],
+    ],
+    [
+      "\\E s \\in {{e \\in ({} \\cup Nat) : e # x}} : <<1, x>> \\in s",
+      "line 5, col 52 to line 5, col 56",
+      [
+        "Line 5, column 9 to line 5, column 75 in M",
+        "Line 5, column 9 to line 5, column 14 in M",
+        "Line 5, column 19 to line 5, column 75 in M",
+        "Line 5, column 62 to line 5, column 75 in M",
+        "Line 5, column 37 to line 5, column 47 in M",
+      ],
+    ],
+  ])(
+    "reports the base's failure under a filter's membership once the base frames it, as TLC's SetPredValue#member catches only an EvalException: x' = x /\\ %s",
+    async (comparison, predicate, callStack) => {
+      const result = await checkComparison(comparison);
+      expect(result.failure?.message).toBe(
+        getRuntimeException(
+          `Cannot decide if element:\n<<1, 0>>\n is element of:\nNat\nand satisfies the predicate ${predicate} of module M`,
+        ),
+      );
+      expect(formatCallStackLines(result)).toEqual(callStack);
+      expect(result.failure?.fingerprint?.reason).toBe(NAT_MEMBER_REASON);
+    },
+  );
+
   const PRINTING_FILTER = 'LET Bad == {s \\in SUBSET {1, 2} : PrintT(<<"b", s>>) /\\ s # 1} IN';
   const UNEXPANDED_FILTER_REASON =
     "Attempted to check equality of the set {{s \\in {{}, {1}, {2}, {1, 2}} : <expression line 5, col 53 to line 5, col 79 of module M> }} with the value:\nSTRING";
