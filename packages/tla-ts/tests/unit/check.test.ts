@@ -4607,6 +4607,26 @@ describe("initial predicate and next-state relation match TLC", () => {
     expect([result.generatedStates, result.distinctStates]).toEqual([9, 2]);
   });
 
+  it("takes each element of S for x' \\in S as it streams S, as TLC's getNextStates does", async () => {
+    const printed: string[] = [];
+    await check({
+      source:
+        '---- MODULE M ----\nEXTENDS TLC\nVARIABLE x\nInit == x = {}\nNext == x = {} /\\ x\' \\in {s \\in SUBSET {1, 2} : PrintT(<<"f", s>>)} /\\ PrintT(<<"n", x\'>>)\n====',
+      config: "INIT Init\nNEXT Next\nCHECK_DEADLOCK FALSE",
+      onPrint: (text) => printed.push(text),
+    });
+    expect(printed).toEqual([
+      '<<"f", {}>>',
+      '<<"n", {}>>',
+      '<<"f", {1}>>',
+      '<<"n", {1}>>',
+      '<<"f", {2}>>',
+      '<<"n", {2}>>',
+      '<<"f", {1, 2}>>',
+      '<<"n", {1, 2}>>',
+    ]);
+  });
+
   it("keeps a set operation lazy unless TLC can reduce both sets", async () => {
     const getCounts = async (set: string) => {
       const result = await checkBody(
