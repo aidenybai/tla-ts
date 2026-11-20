@@ -109,7 +109,7 @@ interface StateGraphProps {
   className?: string;
 }
 
-export const StateGraph = (props: StateGraphProps) => {
+const StateGraphRoot = (props: StateGraphProps) => {
   const scrollRef = useRef<HTMLDivElement>(null);
   const graph = useMemo(
     () => getGraphRows(props.search, props.limit ?? Infinity),
@@ -226,7 +226,7 @@ const SKELETON_ROWS = [
 ];
 
 // A chain of states with bars for its text, drawn with the sizes of the real rows.
-export const StateGraphSkeleton = () => (
+const StateGraphSkeleton = () => (
   <ol aria-hidden className="flex flex-col items-start">
     {SKELETON_ROWS.map((row, index) => (
       <li key={index} className="flex flex-col items-start">
@@ -246,3 +246,8 @@ export const StateGraphSkeleton = () => (
     ))}
   </ol>
 );
+
+export const StateGraph = {
+  Root: StateGraphRoot,
+  Skeleton: StateGraphSkeleton,
+};

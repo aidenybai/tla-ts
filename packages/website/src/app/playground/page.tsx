@@ -1,31 +1,18 @@
-import { PlaygroundRoot, PlaygroundWorkspace } from "@/components/playground/playground";
-import {
-  PlaygroundFiles,
-  PlaygroundHeader,
-  PlaygroundRun,
-  PlaygroundSettings,
-} from "@/components/playground/playground-header";
-import {
-  PlaygroundArrows,
-  PlaygroundOutput,
-  PlaygroundPanes,
-  PlaygroundSource,
-} from "@/components/playground/playground-panes";
-import { PlaygroundResult } from "@/components/playground/playground-result";
+import { Playground } from "@/components/playground/playground";
 
 const Page = () => (
-  <PlaygroundRoot>
-    <PlaygroundHeader>
-      <PlaygroundSettings />
-      <PlaygroundFiles />
-      <PlaygroundRun />
-    </PlaygroundHeader>
-    <PlaygroundWorkspace>
-      <PlaygroundResult />
-      <PlaygroundArrows />
-      <PlaygroundPanes source={<PlaygroundSource />} output={<PlaygroundOutput />} />
-    </PlaygroundWorkspace>
-  </PlaygroundRoot>
+  <Playground.Root>
+    <Playground.Header>
+      <Playground.Settings />
+      <Playground.Files />
+      <Playground.Run />
+    </Playground.Header>
+    <Playground.Workspace>
+      <Playground.Result />
+      <Playground.Arrows />
+      <Playground.Panes source={<Playground.Source />} output={<Playground.Output />} />
+    </Playground.Workspace>
+  </Playground.Root>
 );
 
 export default Page;

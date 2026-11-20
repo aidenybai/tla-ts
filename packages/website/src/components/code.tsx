@@ -11,7 +11,7 @@ import { CopyButton } from "./copy-button";
 import { RunIcon } from "./run-icon";
 import { SearchCell } from "./search-cell";
 import { Button } from "@/components/ui/button";
-import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
+import { Tooltip } from "@/components/ui/tooltip";
 
 const NO_HIGHLIGHTS = {};
 const NO_PATH: SearchState[] = [];
@@ -42,7 +42,7 @@ interface RootProps {
   children: ReactNode;
 }
 
-export const CodeRoot = (props: RootProps) => {
+const CodeRoot = (props: RootProps) => {
   const isMultiline = props.source.lines.length > 1;
   return (
     <codeContext.PartsContext
@@ -70,7 +70,7 @@ export const CodeRoot = (props: RootProps) => {
   );
 };
 
-export const CodeContent = () => {
+const CodeContent = () => {
   const code = codeContext.useParts();
   const contentRef = useRef<HTMLElement>(null);
   const activeLine = code.path.at(0)?.line ?? code.activeLine;
@@ -119,7 +119,7 @@ interface FooterProps {
   children: ReactNode;
 }
 
-export const CodeFooter = (props: FooterProps) => (
+const CodeFooter = (props: FooterProps) => (
   <div className="relative z-10 -mr-4 -mb-4 -ml-4 flex w-[calc(100%+2rem)] shrink-0 bg-card items-center gap-1.5 border-t py-2 pr-2.5 pl-4 text-sm">
     {props.children}
   </div>
@@ -129,7 +129,7 @@ interface ActionsProps {
   children: ReactNode;
 }
 
-export const CodeActions = (props: ActionsProps) => {
+const CodeActions = (props: ActionsProps) => {
   const code = codeContext.useParts();
   return (
     <div
@@ -149,12 +149,12 @@ interface RunProps {
   onRun: () => void;
 }
 
-export const CodeRun = (props: RunProps) => {
+const CodeRun = (props: RunProps) => {
   const isHydrated = useIsHydrated();
   const label = props.isRunning ? "Running" : props.isDone ? "Run again" : "Run";
   return (
-    <Tooltip>
-      <TooltipTrigger
+    <Tooltip.Root>
+      <Tooltip.Trigger
         closeOnClick={false}
         render={
           <Button
@@ -168,19 +168,19 @@ export const CodeRun = (props: RunProps) => {
         }
       >
         <RunIcon isRunning={props.isRunning} isDone={props.isDone} />
-      </TooltipTrigger>
-      <TooltipContent>{label}</TooltipContent>
-    </Tooltip>
+      </Tooltip.Trigger>
+      <Tooltip.Content>{label}</Tooltip.Content>
+    </Tooltip.Root>
   );
 };
 
-export const CodeCopy = () => <CopyButton text={codeContext.useParts().source.code} />;
+const CodeCopy = () => <CopyButton text={codeContext.useParts().source.code} />;
 
 export const Code = {
   Root: CodeRoot,
   Content: CodeContent,
-  Actions: CodeActions,
   Footer: CodeFooter,
+  Actions: CodeActions,
   Run: CodeRun,
   Copy: CodeCopy,
 };

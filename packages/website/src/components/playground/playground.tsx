@@ -1,121 +1,30 @@
-import { useEffect, useMemo, useRef, type ReactNode } from "react";
-import outlines from "virtual:outlines";
-import { createPartsContext } from "@/lib/utils";
-import { getHighlightColors } from "@/lib/highlight-colors";
-import { getLineMarks } from "@/lib/line-marks";
-import type { Mark } from "@/lib/site-data";
-import { useCompile } from "@/hooks/use-compile";
+import type { ReactNode } from "react";
 import { useIsHydrated } from "@/hooks/use-is-hydrated";
-import { useMediaQuery } from "@/hooks/use-media-query";
-import { usePlaygroundFile } from "@/hooks/use-playground-file";
 import { usePlaygroundView } from "@/lib/playground-view";
-import { useRun } from "@/hooks/use-run";
-
-const NO_MARKS: Mark[] = [];
+import { playgroundContext, usePlayground, usePlaygroundState } from "./playground-context";
+import {
+  PlaygroundFiles,
+  PlaygroundHeader,
+  PlaygroundRun,
+  PlaygroundSettings,
+} from "./playground-header";
+import {
+  PlaygroundArrows,
+  PlaygroundOutput,
+  PlaygroundPanes,
+  PlaygroundSource,
+} from "./playground-panes";
+import { PlaygroundResult } from "./playground-result";
 
 // Runs as the page is parsed, before React loads. The page is built with one file, so a link to
 // another hides the built one.
 const SHARED_SCRIPT = `if (/[#&](file|code)=/.test(location.hash)) document.documentElement.dataset.shared = "";`;
 
-const usePlaygroundState = () => {
-  const file = usePlaygroundFile();
-  const compiler = useCompile(file.source, file.fileName);
-  const runner = useRun(true);
-  const isWide = useMediaQuery("(min-width: 48rem)");
-  const workspaceRef = useRef<HTMLElement>(null);
-  const runButtonRef = useRef<HTMLButtonElement>(null);
-
-  const compilation = compiler.compilation;
-  const isMapped = !compiler.isCompiling && compiler.error === undefined;
-  const sourceMarks = (isMapped && compilation?.sourceMarks) || NO_MARKS;
-  const outputMarks = (isMapped && compilation?.outputMarks) || NO_MARKS;
-  // Until the first compilation lands, the output is the outline of what it will hold.
-  const isSkeleton = compiler.tla === undefined && compiler.error === undefined;
-  const outlineText = outlines[file.fileName] ?? file.source;
-  const outline = useMemo(
-    () =>
-      outlineText
-        .split("\n")
-        .map((line) => line.split("\t").map((content) => ({ content, style: {} }))),
-    [outlineText],
-  );
-  const outputLineMarks = useMemo(
-    () => getLineMarks((compilation?.tla ?? outlineText).split("\n"), outputMarks),
-    [compilation, outlineText, outputMarks],
-  );
-  const colors = useMemo(
-    () => getHighlightColors(outputMarks.map((mark) => mark.name)),
-    [outputMarks],
-  );
-
-  const result = compiler.isCompiling || compiler.error ? undefined : runner.result;
-  const canRun =
-    !runner.isRunning && compilation !== undefined && !compiler.isCompiling && !compiler.error;
-  const run = () => {
-    if (!canRun) return;
-    usePlaygroundView.getState().setIsResultShown(true);
-    runner.run({
-      source: compilation.tla,
-      config: compilation.config,
-      modules: compilation.modules,
-      isSearchShown: true,
-    });
-  };
-  const discardRun = () => {
-    runner.stop();
-    runner.reset();
-  };
-  useEffect(() => {
-    const handleShortcut = (event: KeyboardEvent) => {
-      if (!(event.metaKey || event.ctrlKey) || (event.key !== "Enter" && event.key !== "b")) return;
-      event.preventDefault();
-      if (event.key === "Enter") run();
-      else usePlaygroundView.setState((view) => ({ isResultShown: !view.isResultShown }));
-    };
-    addEventListener("keydown", handleShortcut);
-    return () => removeEventListener("keydown", handleShortcut);
-  });
-
-  return {
-    fileName: file.fileName,
-    source: file.source,
-    sourceTokens: compiler.tokens,
-    sourceMarks,
-    setSource: (source: string) => {
-      discardRun();
-      file.edit(source);
-    },
-    selectExample: (fileName: string) => {
-      discardRun();
-      file.select(fileName);
-    },
-    startCompiler: compiler.start,
-    isSkeleton,
-    outputLines: compiler.tla?.lines ?? (isSkeleton ? outline : []),
-    outputLineMarks,
-    isOutputStale: compiler.tla !== undefined && (compiler.isCompiling || Boolean(compiler.error)),
-    error: compiler.error,
-    colors,
-    isWide,
-    isRunning: runner.isRunning,
-    result,
-    canRun,
-    run,
-    workspaceRef,
-    runButtonRef,
-  };
-};
-
-const playgroundContext =
-  createPartsContext<ReturnType<typeof usePlaygroundState>>("Playground.Root");
-
-export const usePlayground = playgroundContext.useParts;
-
 interface PartProps {
   children: ReactNode;
 }
 
-export const PlaygroundRoot = (props: PartProps) => {
+const PlaygroundRoot = (props: PartProps) => {
   const isHydrated = useIsHydrated();
   return (
     <playgroundContext.PartsContext value={usePlaygroundState()}>
@@ -127,7 +36,7 @@ export const PlaygroundRoot = (props: PartProps) => {
   );
 };
 
-export const PlaygroundWorkspace = (props: PartProps) => {
+const PlaygroundWorkspace = (props: PartProps) => {
   const playground = usePlayground();
   const isHoveringName = usePlaygroundView((view) => view.hoveredName !== undefined);
   return (
@@ -139,4 +48,18 @@ export const PlaygroundWorkspace = (props: PartProps) => {
       {props.children}
     </main>
   );
+};
+
+export const Playground = {
+  Root: PlaygroundRoot,
+  Header: PlaygroundHeader,
+  Settings: PlaygroundSettings,
+  Files: PlaygroundFiles,
+  Run: PlaygroundRun,
+  Workspace: PlaygroundWorkspace,
+  Result: PlaygroundResult,
+  Arrows: PlaygroundArrows,
+  Panes: PlaygroundPanes,
+  Source: PlaygroundSource,
+  Output: PlaygroundOutput,
 };

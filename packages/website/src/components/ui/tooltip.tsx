@@ -3,11 +3,11 @@ import { cn } from "cn";
 
 const DELAY_MS = 500;
 
-export const Tooltip = (props: TooltipPrimitive.Root.Props) => (
+const TooltipRoot = (props: TooltipPrimitive.Root.Props) => (
   <TooltipPrimitive.Root data-slot="tooltip" {...props} />
 );
 
-export const TooltipTrigger = (props: TooltipPrimitive.Trigger.Props) => (
+const TooltipTrigger = (props: TooltipPrimitive.Trigger.Props) => (
   <TooltipPrimitive.Trigger data-slot="tooltip-trigger" delay={DELAY_MS} {...props} />
 );
 
@@ -15,7 +15,7 @@ interface ContentProps extends Omit<TooltipPrimitive.Popup.Props, "className"> {
   className?: string;
 }
 
-export const TooltipContent = (props: ContentProps) => {
+const TooltipContent = (props: ContentProps) => {
   const { className, ...popupProps } = props;
   return (
     <TooltipPrimitive.Portal>
@@ -31,4 +31,10 @@ export const TooltipContent = (props: ContentProps) => {
       </TooltipPrimitive.Positioner>
     </TooltipPrimitive.Portal>
   );
+};
+
+export const Tooltip = {
+  Root: TooltipRoot,
+  Trigger: TooltipTrigger,
+  Content: TooltipContent,
 };

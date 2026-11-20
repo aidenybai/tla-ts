@@ -8,8 +8,8 @@ import { useSearchPath } from "@/hooks/use-search-path";
 import { CodeEditor } from "./code-editor";
 import { CodeLine } from "@/components/code-line";
 import { Connector } from "./connector";
-import { usePlayground } from "./playground";
-import { ResizableHandle, ResizablePanel, ResizablePanelGroup } from "@/components/ui/resizable";
+import { usePlayground } from "./playground-context";
+import { Resizable } from "@/components/ui/resizable";
 
 interface PaneProps {
   name: string;
@@ -156,15 +156,15 @@ export const PlaygroundPanes = (props: PanesProps) => {
   const playground = usePlayground();
   const isHydrated = useIsHydrated();
   return isHydrated ? (
-    <ResizablePanelGroup orientation={playground.isWide ? "horizontal" : "vertical"}>
-      <ResizablePanel defaultSize="50%" minSize="20%">
+    <Resizable.Group orientation={playground.isWide ? "horizontal" : "vertical"}>
+      <Resizable.Panel defaultSize="50%" minSize="20%">
         {props.source}
-      </ResizablePanel>
-      <ResizableHandle />
-      <ResizablePanel defaultSize="50%" minSize="20%">
+      </Resizable.Panel>
+      <Resizable.Handle />
+      <Resizable.Panel defaultSize="50%" minSize="20%">
         {props.output}
-      </ResizablePanel>
-    </ResizablePanelGroup>
+      </Resizable.Panel>
+    </Resizable.Group>
   ) : (
     <div className="flex size-full max-md:flex-col">
       <div className="min-h-0 min-w-0 flex-1">{props.source}</div>
