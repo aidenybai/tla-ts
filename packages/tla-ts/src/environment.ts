@@ -360,6 +360,8 @@ export const createEnvironment = (
   const warnings: SanyError[] = [];
   const instanceCopies = new WeakMap<Definition, InstanceCopy>();
   const letInstances = new Map<string, LetInstance>();
+  // SANY's Generator marks a module instantiated for a LET or proof step's INSTANCE too.
+  const locallyInstantiated = new Set<string>();
   const recursiveSections = new WeakMap<Definition, SectionMember[]>();
   const checkedNodes = new WeakMap<Expression, boolean>();
   const statementLevels = new Map<Expression | AssumeProve, LevelData>();
@@ -1365,6 +1367,7 @@ export const createEnvironment = (
       imported: visible,
       linkTheorem: getLinkedDefinition,
       getInstance: (instance) => {
+        locallyInstantiated.add(instance.module);
         const nested = getLetModule(instance);
         const standardSymbols = nested ? undefined : getStandardSymbols(instance.module);
         if (standardSymbols) {
@@ -1884,9 +1887,10 @@ export const createEnvironment = (
     }
   });
   if (runtime.version !== "1.7.4") runtime.isStarted = true;
-  const instantiated = new Set(
-    linkOrder.flatMap((linked) => linked.module.instances.map((instance) => instance.module)),
-  );
+  const instantiated = new Set([
+    ...linkOrder.flatMap((linked) => linked.module.instances.map((instance) => instance.module)),
+    ...locallyInstantiated,
+  ]);
   const isProcessedAtStartup = (linked: LinkedModule) =>
     !instantiated.has(linked.module.name) || linked.declarations.length === 0;
   // TLC's SpecProcessor#processConstantDefns takes a module's definitions, then its inner modules' in turn. It skips a file module whole, but an inner module only for its own definitions.

@@ -149,9 +149,19 @@ describe("INSTANCE matches TLC", () => {
       "I == INSTANCE N WITH c <- 1",
       ["N1"],
     ],
+    [
+      "nothing of a module that only a LET instances with a parameter",
+      "D == LET K == INSTANCE N WITH c <- 1 IN K!N1",
+      [],
+    ],
+    [
+      "nothing of a module that only a proof step instances with a parameter",
+      "THEOREM TRUE\n<1>1. INSTANCE N WITH c <- 1\n<1>2. QED",
+      [],
+    ],
   ])("evaluates %s at startup, as TLC does", async (_name, lines, expected) => {
     const prints: string[] = [];
-    await check({
+    const result = await check({
       source: `---- MODULE M ----\nEXTENDS TLC\nVARIABLE x\n${lines}\nInit == x = 0\nNext == UNCHANGED x\n====`,
       config: "INIT Init\nNEXT Next",
       loadModule: (name) =>
@@ -160,7 +170,7 @@ describe("INSTANCE matches TLC", () => {
           : undefined,
       onPrint: (text) => prints.push(text),
     });
-    expect(prints).toEqual(expected.map((text) => `"${text}"`));
+    expect([result.status, prints]).toEqual(["success", expected.map((text) => `"${text}"`)]);
   });
 
   it("reports violations through instantiated operators", async () => {
