@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vite-plus/test";
-import { parseModule, TlaSyntaxError, type Module } from "../../src";
+import { check, parseModule, TlaSyntaxError, type Module } from "../../src";
 
 const SOURCE = `---- MODULE Ranges ----
 EXTENDS Naturals, TLC
@@ -158,6 +158,15 @@ describe("parseModule reads operators like SANY", () => {
       });
     },
   );
+
+  it("reads {a, e \\in S} and {<<a, e>> \\in S} as set enumerations, which SANY rejects", async () => {
+    const result = await check({
+      source:
+        "---- MODULE M ----\na == TRUE\ne == FALSE\nS == {TRUE}\nASSUME {a, e \\in S} = {TRUE, FALSE}\nASSUME {a, e, a \\in S} = {TRUE, FALSE}\nASSUME {<<a, e>> \\in {<<TRUE, FALSE>>}} = {TRUE}\nASSUME {<<1, 2>> \\in {}} = {FALSE}\n====",
+      config: "",
+    });
+    expect(result.status).toBe("success");
+  });
 
   it.each(['"a\\qb"', '"a\\ b"', '"a\rb"'])(
     "rejects the string %j that SANY's lexer stops in",

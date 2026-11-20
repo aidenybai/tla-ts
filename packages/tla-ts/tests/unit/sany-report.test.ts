@@ -452,6 +452,14 @@ Spec == Init /\\ [][Next]_x
     );
   });
 
+  it.each(["{a, e \\in S}", "{a, e, a \\in S}", "{<<1, 2>> \\in S}", "{<<a, e>> \\in S}"])(
+    "reads %s as a set enumeration, which SANY's lookahead reads as a bound",
+    (set) => {
+      const report = getReport({ M: `---- MODULE M ----\nCONSTANTS a, e, S\nX == ${set}\n====\n` });
+      expect(report.isFailed).toBe(false);
+    },
+  );
+
   it("reports DEF clause entries of bracketed, quantified and infix shapes as SANY does", () => {
     const report = getReport({
       M: "---- MODULE M ----\nA == 1\nB == 2\nTHEOREM TRUE BY DEF CASE A -> 1 [] OTHER -> 2, [a |-> 1], [a : {}], A\nTHEOREM TRUE BY DEF [v \\in {} |-> 1], \\A v, w \\in {} : TRUE, A\nTHEOREM TRUE BY DEF LET Q == 1 IN Q, A \\X B, A /\\ B, {A \\/ B}, A\nTHEOREM TRUE BY DEF [A EXCEPT ![1] = 2], [A -> B], {A : v \\in {}}, WF_A(B), A\nTHEOREM TRUE BY DEF /\\ A\n                    /\\ B\n====\n",

@@ -1186,6 +1186,7 @@ const parse = (
         }
         cursor = checkpoint;
       }
+      // Deviation from SANY: TLAplusParser#matchFcnConst reads an identifier list or a tuple before \in as a bound, so SANY rejects {a, e \in S} and {<<1, 2>> \in S} and reports <<a, e>> in {<<a, e>> \in S} as an N_IdentifierTuple; tla-ts reads each as a set enumeration, as the grammar does.
       const first =
         peek().kind === "Identifier" && isAt("\\in", 1) ? parseSetMembership() : parseExpression();
       if (accept(":")) {
