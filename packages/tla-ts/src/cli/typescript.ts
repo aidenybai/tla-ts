@@ -147,9 +147,7 @@ export const compileTypeScriptFile = async (path: string): Promise<CompiledInput
   };
   collectAwaits(sourceFile);
   const unsettledText =
-    awaits.length === 1
-      ? `${UNSETTLED_AWAIT_WARNING}${getNodeLocation(awaits[0])}`
-      : undefined;
+    awaits.length === 1 ? `${UNSETTLED_AWAIT_WARNING}${getNodeLocation(awaits[0])}` : undefined;
   const isScriptFile = isScript(sourceFile);
   const model = isScriptFile ? undefined : compileModelToEscore(source, path, runtime);
   const spec =
