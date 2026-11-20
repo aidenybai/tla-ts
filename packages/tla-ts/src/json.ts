@@ -1,7 +1,7 @@
 import {
   createModuleArgumentError,
   defineLazyOperator,
-  defineStateOperator,
+  defineOperator,
   getJavaClassName,
   getThunk,
   getValue,
@@ -224,23 +224,23 @@ const readText = (files: FileSystem, path: string) => {
 
 export const createJsonOperators = (files: FileSystem): Builtin[] => [
   overrideWithJava(
-    defineStateOperator("ToJson", 1, (args) => rankString(toJson(getValue(args, 0, "ToJson")))),
+    defineOperator("ToJson", 1, (args) => rankString(toJson(getValue(args, 0, "ToJson")))),
     "public static tlc2.value.impl.StringValue tlc2.module.Json.toJson(tlc2.value.IValue) throws java.io.IOException",
   ),
   overrideWithJava(
-    defineStateOperator("ToJsonArray", 1, (args) =>
+    defineOperator("ToJsonArray", 1, (args) =>
       rankString(toJsonArray(getValue(args, 0, "ToJsonArray"))),
     ),
     "public static tlc2.value.impl.StringValue tlc2.module.Json.toJsonArray(tlc2.value.IValue) throws java.io.IOException",
   ),
   overrideWithJava(
-    defineStateOperator("ToJsonObject", 1, (args) =>
+    defineOperator("ToJsonObject", 1, (args) =>
       rankString(toJsonObject(getValue(args, 0, "ToJsonObject"))),
     ),
     "public static tlc2.value.impl.StringValue tlc2.module.Json.toJsonObject(tlc2.value.IValue) throws java.io.IOException",
   ),
   overrideWithJava(
-    defineStateOperator("JsonSerialize", 2, (args) => {
+    defineOperator("JsonSerialize", 2, (args) => {
       const path = getPath(getValue(args, 0, "JsonSerialize"));
       const value = getValue(args, 1, "JsonSerialize");
       if (!getSequenceElements(value) && !toRecord(value)) {
@@ -253,7 +253,7 @@ export const createJsonOperators = (files: FileSystem): Builtin[] => [
     "public static synchronized tlc2.value.impl.BoolValue tlc2.module.Json.serialize(tlc2.value.impl.StringValue,tlc2.value.impl.Value) throws java.io.IOException",
   ),
   overrideWithJava(
-    defineStateOperator("ndJsonSerialize", 2, (args) => {
+    defineOperator("ndJsonSerialize", 2, (args) => {
       const path = getPath(getValue(args, 0, "ndJsonSerialize"));
       const value = getValue(args, 1, "ndJsonSerialize");
       const elements = getSequenceElements(value);
@@ -267,13 +267,13 @@ export const createJsonOperators = (files: FileSystem): Builtin[] => [
     "public static synchronized tlc2.value.impl.BoolValue tlc2.module.Json.ndSerialize(tlc2.value.impl.StringValue,tlc2.value.impl.Value) throws java.io.IOException",
   ),
   overrideWithJava(
-    defineStateOperator("JsonDeserialize", 1, (args) =>
+    defineOperator("JsonDeserialize", 1, (args) =>
       fromJson(readJson(readText(files, getPath(getValue(args, 0, "JsonDeserialize"))))),
     ),
     "public static tlc2.value.IValue tlc2.module.Json.deserialize(tlc2.value.impl.StringValue) throws java.io.IOException",
   ),
   overrideWithJava(
-    defineStateOperator("ndJsonDeserialize", 1, (args) =>
+    defineOperator("ndJsonDeserialize", 1, (args) =>
       createTuple(
         readText(files, getPath(getValue(args, 0, "ndJsonDeserialize")))
           .split(/\r\n|\r|\n/)
@@ -291,33 +291,37 @@ export const createIoUtilsOperators = (
   evaluateReplaced: (name: string, args: BuiltinArgument[], context: Context | undefined) => Value,
 ): Builtin[] => [
   overrideWithJava(
-    defineLazyOperator("Serialize", 3, (args, context) => {
-      const third = getThunk(args, 2, "Serialize")();
-      const options = toRecord(third);
-      if (!options) throw createModuleArgumentError("third", "ndJsonSerialize", "sequence", third);
-      if (getStringOption(options, "format") !== "NDJSON") {
-        return evaluateReplaced("Serialize", args, context);
-      }
-      const payload = getThunk(args, 0, "Serialize")();
-      const elements = getSequenceElements(payload);
-      if (!elements) throw createModuleArgumentError("first", "Serialize", "sequence", payload);
-      const path = getThunk(args, 1, "Serialize")();
-      if (typeof path !== "string") {
-        throw createModuleArgumentError("second", "ndJsonSerialize", "sequence", path);
-      }
-      const openOptions = applyFunction(options, "openOptions");
-      if (getJavaClassName(openOptions) !== "TupleValue") {
-        throw createClassCastError(openOptions, "TupleValue");
-      }
-      const charset = getStringOption(options, "charset");
-      const names = toFiniteFunction(openOptions).range.map((option) => {
-        if (typeof option !== "string") throw createClassCastError(option, "StringValue");
-        return option;
-      });
-      checkCharset(charset);
-      writeWithOptions(files, path, names, toNdJson(elements));
-      return true;
-    }),
+    {
+      ...defineLazyOperator("Serialize", 3, (args, context) => {
+        const third = getThunk(args, 2, "Serialize")();
+        const options = toRecord(third);
+        if (!options)
+          throw createModuleArgumentError("third", "ndJsonSerialize", "sequence", third);
+        if (getStringOption(options, "format") !== "NDJSON") {
+          return evaluateReplaced("Serialize", args, context);
+        }
+        const payload = getThunk(args, 0, "Serialize")();
+        const elements = getSequenceElements(payload);
+        if (!elements) throw createModuleArgumentError("first", "Serialize", "sequence", payload);
+        const path = getThunk(args, 1, "Serialize")();
+        if (typeof path !== "string") {
+          throw createModuleArgumentError("second", "ndJsonSerialize", "sequence", path);
+        }
+        const openOptions = applyFunction(options, "openOptions");
+        if (getJavaClassName(openOptions) !== "TupleValue") {
+          throw createClassCastError(openOptions, "TupleValue");
+        }
+        const charset = getStringOption(options, "charset");
+        const names = toFiniteFunction(openOptions).range.map((option) => {
+          if (typeof option !== "string") throw createClassCastError(option, "StringValue");
+          return option;
+        });
+        checkCharset(charset);
+        writeWithOptions(files, path, names, toNdJson(elements));
+        return true;
+      }),
+      isStateLevel: false,
+    },
     "public static synchronized tlc2.value.impl.Value tlc2.module.Json.textSerialize(tlc2.tool.impl.Tool,tla2sany.semantic.ExprOrOpArgNode[],tlc2.util.Context,tlc2.tool.TLCState,tlc2.tool.TLCState,int,tlc2.tool.coverage.CostModel)",
   ),
 ];

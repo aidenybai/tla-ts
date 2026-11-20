@@ -74,6 +74,11 @@ const IMPURE_BUILTINS = new Set([
   "RandomElement",
   "TLCGet",
   "TLCSet",
+  "JsonSerialize",
+  "ndJsonSerialize",
+  "JsonDeserialize",
+  "ndJsonDeserialize",
+  "Serialize",
 ]);
 
 const STREAMED_BUILTINS = new Set(["UNION", "\\cup"]);
