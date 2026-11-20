@@ -331,8 +331,14 @@ const compareFunctions = (left: FunctionValue, right: FunctionValue) => {
   }
   if (leftDomain !== rightDomain) {
     for (let index = 0; index < leftDomain.length; index++) {
-      const keyComparison = compareValues(leftDomain[index], rightDomain[index]);
-      if (keyComparison !== 0) return keyComparison;
+      const leftKey = leftDomain[index];
+      const rightKey = rightDomain[index];
+      const keyComparison = compareValues(leftKey, rightKey);
+      if (keyComparison === 0) continue;
+      // TLC compares a model value key with a tuple's or record's keys as an integer or a string, which fails.
+      return isModelValue(leftKey) === isModelValue(rightKey)
+        ? keyComparison
+        : compareLikeTlc(left, right);
     }
   }
   const leftRange = left.range;

@@ -2072,6 +2072,51 @@ describe("evaluation errors match TLC", () => {
     },
   );
 
+  it.each([
+    [
+      "<<C, D>> # (C :> 1) @@ (D :> 2)",
+      "CONSTANTS C = zz D = m3",
+      "Attempted to compare an integer with non-integer:\nzz.",
+    ],
+    [
+      "[i \\in 1..2 |-> i] # (C :> 1) @@ (D :> 2)",
+      "CONSTANTS C = m1 D = m2",
+      "Attempted to compare an integer with non-integer:\nm1.",
+    ],
+    [
+      "[a |-> 1, b |-> 2] # (C :> 1) @@ (D :> 2)",
+      "CONSTANTS C = m1 D = m2",
+      "Attempted to check equality of record:\n[a |-> 1, b |-> 2]\nwith non-record\n(m1 :> 1 @@ m2 :> 2)",
+    ],
+    [
+      "Cardinality({<<1, 2>>, (C :> 1) @@ (D :> 2)}) = 2",
+      "CONSTANTS C = m1 D = m2",
+      getJavaError(
+        "value.impl.IntValue tlc2.module.FiniteSets.Cardinality(tlc2.value.impl.Value)",
+        "Attempted to compare integer with non-integer\nm1.",
+      ),
+    ],
+    [
+      "Cardinality({(C :> 1) @@ (D :> 2), <<1, 2>>}) = 2",
+      "CONSTANTS C = m1 D = m2",
+      getJavaError(
+        "value.impl.IntValue tlc2.module.FiniteSets.Cardinality(tlc2.value.impl.Value)",
+        "Attempted to compare integer with non-integer:\nm1.",
+      ),
+    ],
+  ])("compares the model value keys in %s like TLC", async (assumption, config, message) => {
+    const result = await checkModule(`CONSTANTS C, D\nASSUME ${assumption}`, config);
+    expect([result.status, result.violation?.message]).toEqual(["assumption-violation", message]);
+  });
+
+  it("compares a function of a set of integers with model value keys like TLC", async () => {
+    const result = await checkModule(
+      "CONSTANTS C, D\nASSUME [i \\in {1, 2} |-> i] # (C :> 1) @@ (D :> 2)",
+      "CONSTANTS C = m1 D = m2",
+    );
+    expect(result.status).toBe("success");
+  });
+
   it.each(['"a" \\in Nat', "1 \\in STRING", "{} \\in 1..4", "FALSE \\in Int"])(
     "rejects %s",
     async (membership) => {
