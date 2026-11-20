@@ -1529,6 +1529,17 @@ export const analyzeAssumeProve = (
   return data;
 };
 
+// SANY's NEW symbols of a theorem or an ASSUME/PROVE step are visible in its proof, and those of a SUFFICES after it.
+const addNewSymbols = (statement: Expression | AssumeProve, scope: Scope) => {
+  if (statement.kind !== "AssumeProve") return scope;
+  statement.assumptions.forEach((assumption) => {
+    if (assumption.kind !== "NewSymbol") return;
+    const level = NEW_SYMBOL_LEVELS[assumption.level];
+    scope.set(assumption.name, { kind: "Formal", arity: assumption.arity, level });
+  });
+  return scope;
+};
+
 export const checkModuleLevels = (
   module: Module,
   context: LevelContext,
@@ -1559,6 +1570,7 @@ export const checkModuleLevels = (
     facts.forEach((fact) => {
       if (fact.kind !== "ModuleFact") analyzer.analyze(fact, scope);
     });
+  const stepLevels = new Map<ProofStep, number>();
   // Deviation from SANY: TheoremNode#levelCheck reads the level field of its assertion, which LabelNode never sets, so
   // SANY skips these checks for a labeled temporal theorem or step; tla-ts checks them.
   const checkTemporalGoal = (proof: Proof | undefined): SanyError[] =>
@@ -1566,19 +1578,19 @@ export const checkModuleLevels = (
       ? []
       : proof.steps.flatMap((step) => {
           const location = formatRange(step.statement);
-          const isConstant = () => getStepLevel(step, new Map()) === 0;
+          const isConstant = stepLevels.get(step) === CONSTANT_LEVEL;
           if (
             step.body.kind === "Have" ||
             step.body.kind === "Take" ||
             step.body.kind === "Witness"
           ) {
-            return isConstant()
+            return isConstant
               ? []
               : [{ location, message: "Non-constant TAKE, WITNESS, or HAVE for temporal goal." }];
           }
           if (step.body.kind === "Case") {
             return [
-              ...(isConstant()
+              ...(isConstant
                 ? []
                 : [{ location, message: "Non-constant CASE for temporal goal." }]),
               ...checkTemporalGoal(step.proof),
@@ -1603,7 +1615,9 @@ export const checkModuleLevels = (
           analyzer.analyzeDefinition(definition, inner);
         });
       }
-      const isTemporal = getStepLevel(step, inner) === TEMPORAL_LEVEL;
+      const level = getStepLevel(step, inner);
+      stepLevels.set(step, level);
+      const isTemporal = level === TEMPORAL_LEVEL;
       const pickErrors =
         body.kind === "Pick" && body.bounds.length > 0 && isTemporal
           ? body.bounds
@@ -1619,12 +1633,20 @@ export const checkModuleLevels = (
                   : [],
               )
           : [];
-      return [
+      const isSuffices = body.kind === "Assert" && body.isSuffices;
+      const errors = [
         ...analyzer.errors.splice(0),
-        ...checkProof(step.proof, inner),
+        ...checkProof(
+          step.proof,
+          body.kind === "Assert" && !isSuffices
+            ? addNewSymbols(body.statement, new Map(inner))
+            : inner,
+        ),
         ...pickErrors,
         ...(step.proof?.kind === "Steps" && isTemporal ? checkTemporalGoal(step.proof) : []),
       ];
+      if (isSuffices) addNewSymbols(body.statement, inner);
+      return errors;
     });
   };
   const statementLevels = new Map<Expression | AssumeProve, number>();
@@ -1711,9 +1733,8 @@ export const checkModuleLevels = (
               const level = getStatementLevel(theorem.statement);
               reported.push(
                 ...analyzer.errors.splice(0),
-                ...checkProof(theorem.proof, new Map()),
+                ...checkProof(theorem.proof, addNewSymbols(theorem.statement, new Map())),
                 ...(level === TEMPORAL_LEVEL ? checkTemporalGoal(theorem.proof) : []),
-                ...analyzer.errors.splice(0),
               );
             },
           })),
