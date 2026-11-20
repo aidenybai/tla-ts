@@ -231,7 +231,32 @@ describe("level checking matches SANY", () => {
     );
   });
 
-  const getInstanceError = (line: number, end: number, maximum: number) => ({
+  it.each([
+    "INSTANCE Q WITH c <- D(k)!1, w <- 1",
+    "N == INSTANCE Q WITH c <- D(k)!1, w <- 1",
+    "LOCAL INSTANCE Q WITH c <- D(k)!1, w <- 1",
+    "N(p) == INSTANCE Q WITH c <- D(k)!1, w <- p",
+  ])(
+    "constrains a module by its instance %s through the selected subexpression, as SANY does",
+    async (instance) => {
+      await expect(
+        check({
+          source: `---- MODULE M ----\nVARIABLE x\n---- MODULE Q ----\nCONSTANT c\nVARIABLE w\nA == c\n====\n---- MODULE L ----\nCONSTANT k\nD(a) == {a}\n${instance}\n====\nI == INSTANCE L WITH k <- x\nInit == x = 0\nNext == x' = x\n====`,
+          config: "INIT Init\nNEXT Next",
+        }),
+      ).rejects.toThrow(
+        createSanyError([
+          {
+            location: "line 13, col 1 to line 13, col 27 of module M",
+            message:
+              "Level error in instantiating module 'L':\nThe level of the expression or operator substituted for 'k' \nmust be at most 0.",
+          },
+        ]),
+      );
+    },
+  );
+
+  const getInstanceError =(line: number, end: number, maximum: number) => ({
     location: `line ${line}, col 1 to line ${line}, col ${end} of module M`,
     message: `Level error in instantiating module 'L':\nThe level of the expression or operator substituted for 'k' \nmust be at most ${maximum}.`,
   });

@@ -354,8 +354,8 @@ export const createEnvironment = (
   const checkedLabels = new WeakSet<Expression>();
   const resolvedSubstitutions = new WeakMap<Instance, Map<string, Expression>>();
   const getInstanceSubstitute = (instance: Instance, name: string): Expression =>
-    instance.substitutions.find((substitution) => substitution.name === name)?.expression ??
-    resolvedSubstitutions.get(instance)?.get(name) ?? {
+    resolvedSubstitutions.get(instance)?.get(name) ??
+    instance.substitutions.find((substitution) => substitution.name === name)?.expression ?? {
       kind: "Identifier",
       name,
       location: instance.location,
