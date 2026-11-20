@@ -841,7 +841,6 @@ RECURSIVE DeleteIndices(_, _, _, _, _)
 RECURSIVE CreateArrayIterator(_, _, _)
 RECURSIVE ArrayIteratorNext(_, _)
 RECURSIVE ArrayIteratorResume(_, _)
-RECURSIVE ArrayIteratorStep(_, _)
 RECURSIVE ArrayIteratorBuiltin(_, _, _, _, _, _)
 RECURSIVE ProxyCreate(_, _, _)
 RECURSIVE ProxyTrap(_, _, _)
@@ -11213,8 +11212,9 @@ DeleteIndices(s, o, k, bound, dir) ==
   IF ~NumEqual(i, k) THEN DeleteIndices(s, o, i, bound, dir)
   ELSE LET d == DeletePropertyOrThrow(s, o, Index(k)) IN
        IF IsAbrupt(d) THEN d ELSE DeleteIndices(d.s, o, NumAdd(k, NumFromInt(dir)), bound, dir)
-\* CreateArrayIterator (§23.1.5.1). The closure's state lives in the slots: the object iterated,
-\* the next index, the kind, and the generator state "suspended", "executing", or "completed".
+\* CreateArrayIterator (§23.1.5.1). The iterator's state lives in the slots: the object iterated,
+\* the next index, the kind, and whether it's done, as V8 keeps it (ArrayIteratorPrototypeNext),
+\* where the spec runs a generator's closure.
 CreateArrayIterator(s, array, kind) ==
   LET a == Alloc(s, MakeObject(Intrinsic(s, "ArrayIteratorPrototype"), "arrayIterator",
                                [iterated |-> array, next |-> PosZero, kind |-> kind, state |-> "suspended"]))
@@ -11223,30 +11223,26 @@ CreateArrayIterator(s, array, kind) ==
 ArrayIteratorNext(s, this) ==
   LET r == ArrayIteratorResume(s, this) IN
   IF IsAbrupt(r) THEN r ELSE CreateIterResultObject(r.s, Val(r).value, Val(r).done)
-\* GeneratorResume of the closure, which completes when it returns or throws, as [done, value]
-\* rather than the iterator result object, which IteratorStepValue need not allocate.
+\* A step of the iterator, as [done, value] rather than the iterator result object, which
+\* IteratorStepValue need not allocate. As V8's, it moves the next index on before it reads the
+\* value, and a throw leaves it as it was, where the spec's closure completes: as a typed array's
+\* bounds or an object's length throw, which a later step may read again.
 ArrayIteratorResume(s, this) ==
   IF ~IsObject(this) \/ O(s, this).class # "arrayIterator" THEN ThrowTypeError(s)
   ELSE LET slots == O(s, this).slots IN
-  IF slots.state = "executing" THEN ThrowTypeError(s)
-  ELSE IF slots.state = "completed" THEN Ok(s, [done |-> TRUE, value |-> Undefined])
-  ELSE LET r == ArrayIteratorStep(SetO(s, this, [O(s, this) EXCEPT !.slots.state = "executing"]), slots)
-           isDone == IsAbrupt(r) \/ Val(r) = Empty
-           s1 == SetO(r.s, this, [O(r.s, this) EXCEPT !.slots.state = IF isDone THEN "completed" ELSE "suspended",
-                                                     !.slots.next = IF isDone THEN @ ELSE NumAdd(@, OneNum)])
-       IN IF IsAbrupt(r) THEN Abrupt(s1, r.c)
-          ELSE Ok(s1, [done |-> isDone, value |-> IF isDone THEN Undefined ELSE Val(r)])
-\* One run of the closure of CreateArrayIterator: the value it yields, or Empty when it returns.
-ArrayIteratorStep(s, slots) ==
-  LET len == IF ~IsTypedArray(s, slots.iterated) THEN LengthOfArrayLike(s, slots.iterated)
-             ELSE LET bounds == ValidateTypedArrayBounds(s, slots.iterated) IN
-                  IF IsAbrupt(bounds) THEN bounds ELSE Ok(bounds.s, IntV(Val(bounds)))
+  IF slots.state = "completed" THEN Ok(s, [done |-> TRUE, value |-> Undefined])
+  ELSE LET len == IF ~IsTypedArray(s, slots.iterated) THEN LengthOfArrayLike(s, slots.iterated)
+                  ELSE LET bounds == ValidateTypedArrayBounds(s, slots.iterated) IN
+                       IF IsAbrupt(bounds) THEN bounds ELSE Ok(bounds.s, IntV(Val(bounds)))
   IN IF IsAbrupt(len) THEN len
-  ELSE IF ~NumLess(slots.next, Val(len).value) THEN Ok(len.s, Empty)
-  ELSE IF slots.kind = "key" THEN Ok(len.s, Num(slots.next))
-  ELSE LET v == Get(len.s, slots.iterated, Index(slots.next)) IN IF IsAbrupt(v) THEN v
-  ELSE IF slots.kind = "value" THEN v
-  ELSE CreateArrayFromList(v.s, <<Num(slots.next), Val(v)>>)
+  ELSE IF ~NumLess(slots.next, Val(len).value)
+  THEN Ok(SetO(len.s, this, [O(len.s, this) EXCEPT !.slots.state = "completed"]), [done |-> TRUE, value |-> Undefined])
+  ELSE LET moved == SetO(len.s, this, [O(len.s, this) EXCEPT !.slots.next = NumAdd(@, OneNum)]) IN
+  IF slots.kind = "key" THEN Ok(moved, [done |-> FALSE, value |-> Num(slots.next)])
+  ELSE LET v == Get(moved, slots.iterated, Index(slots.next)) IN
+  IF IsAbrupt(v) THEN v
+  ELSE IF slots.kind = "value" THEN Ok(v.s, [done |-> FALSE, value |-> Val(v)])
+  ELSE LET entry == CreateArrayFromList(v.s, <<Num(slots.next), Val(v)>>) IN Ok(entry.s, [done |-> FALSE, value |-> Val(entry)])
 ArrayIteratorBuiltin(s, f, m, this, args, nt) == ArrayIteratorNext(s, this)
 \* Proxy exotic objects (§10.5). A Proxy object has class "proxy" and slots:
 \*   target, handler  [[ProxyTarget]] and [[ProxyHandler]], both Null once revoked

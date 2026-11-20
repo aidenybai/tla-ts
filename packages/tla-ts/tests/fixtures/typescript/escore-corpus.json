@@ -15310,14 +15310,12 @@
       "source": "\n      const rab = new ArrayBuffer(3, { maxByteLength: 4 });\n      const fixed = new Uint8Array(rab, 0, 3);\n      fixed[0] = 9;\n      const values = fixed.values();\n      let log = \"\";\n      rab.resize(2);\n      try {\n        Array.from(values);\n      } catch (error) {\n        log += error instanceof TypeError ? \"a\" : \"other\";\n      }\n      try {\n        Array.from(values);\n      } catch (error) {\n        log += error instanceof TypeError ? \"b\" : \"other\";\n      }\n      rab.resize(3);\n      const listed = Array.from(values);\n      const again = Array.from(values);\n      log += listed.join(\"\") + again.length;\n      if (log !== \"ab9000\") throw new Error(log);\n    ",
       "runs": [
         {
-          "name": "agrees with Node",
-          "wrong": "conformance: an array iterator over a typed array out of bounds"
+          "name": "agrees with Node"
         },
         {
           "name": "rejects an iterator that its first steps leave done",
           "replace": ["900", ""],
-          "thrown": "ab9000",
-          "wrong": "conformance: an array iterator over a typed array out of bounds"
+          "thrown": "ab9000"
         }
       ]
     },
@@ -21062,14 +21060,12 @@
       "source": "\n      const rab = new ArrayBuffer(3, { maxByteLength: 4 });\n      const fixed = new Uint8Array(rab, 0, 3);\n      fixed[1] = 7;\n      let log = \"\";\n      const keys = Array.prototype.keys.call(fixed);\n      const values = Array.prototype.values.call(fixed);\n      const entries = fixed.entries();\n      const first = values.next();\n      log += first.value;\n      rab.resize(2);\n      try {\n        Array.from(keys);\n      } catch (error) {\n        log += error instanceof TypeError ? \"k\" : \"other\";\n      }\n      try {\n        values.next();\n      } catch (error) {\n        log += error instanceof TypeError ? \"v\" : \"other\";\n      }\n      try {\n        entries.next();\n      } catch (error) {\n        log += error instanceof TypeError ? \"e\" : \"other\";\n      }\n      rab.resize(3);\n      const second = values.next();\n      const third = entries.next();\n      log += second.value;\n      log += JSON.stringify(third.value);\n      if (log !== \"0kve7[0,0]\") throw new Error(log);\n    ",
       "runs": [
         {
-          "name": "agrees with Node",
-          "wrong": "conformance: an array iterator over a typed array out of bounds"
+          "name": "agrees with Node"
         },
         {
           "name": "rejects an iterator that a throw moves on",
           "replace": ["e7", "e0"],
-          "thrown": "0kve7[0,0]",
-          "wrong": "conformance: an array iterator over a typed array out of bounds"
+          "thrown": "0kve7[0,0]"
         }
       ]
     },
