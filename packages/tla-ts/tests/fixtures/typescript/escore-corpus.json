@@ -7189,8 +7189,7 @@
         {
           "name": "changes the case of a code point that a surrogate pair makes",
           "source": "\n      const high = \"\ud801\";\n      const low = \"\udc28\";\n      if ((high + low + \"x\").toUpperCase() !== \"\\u{10400}X\" || high.toUpperCase() !== high) {\n        throw new Error(\"pair\");\n      }\n    ",
-          "thrown": "pair",
-          "wrong": "conformance: case mapping or code point iteration outside ASCII"
+          "thrown": "pair"
         },
         {
           "name": "pads a string at its start or end",
@@ -7203,8 +7202,7 @@
         {
           "name": "reads a string's code units outside ASCII and iterates its code points",
           "source": "\n      const text = \"é😀\ude00a\";\n      if (text.length !== 5 || text.charCodeAt(0) !== 233 || text.charCodeAt(2) !== 0xde00) {\n        throw new Error(\"units\");\n      }\n      if (text.codePointAt(1) !== 0x1f600 || text.codePointAt(3) !== 0xde00) {\n        throw new Error(\"points\");\n      }\n      const points = [...text];\n      const visited: string[] = [];\n      for (const point of text) visited.push(point);\n      if (points.length !== 4 || points[1] !== \"😀\" || visited.join(\"|\") !== \"é|😀|\ude00|a\") {\n        throw new Error(\"iterate\");\n      }\n      if (text.split(\"\").length !== 5 || String.fromCodePoint(0x1f600, 233) !== \"😀é\") {\n        throw new Error(\"split\");\n      }\n      if (!(\"z\" < \"é\") || !(\"😀\" < \"￿\") || \"é\" < \"e\") throw new Error(\"order\");\n    ",
-          "thrown": "points",
-          "wrong": "conformance: case mapping or code point iteration outside ASCII"
+          "thrown": "points"
         },
         {
           "name": "encodes and escapes characters outside ASCII",

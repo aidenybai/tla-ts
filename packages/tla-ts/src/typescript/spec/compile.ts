@@ -552,7 +552,9 @@ export const compileToEscore = (
   isModule = false,
   model: EscoreSteps = { steps: SCRIPT_STEPS, entries: [] },
 ): EscoreSpec => {
-  const files = loadFiles(source, fileName, isModule);
+  // Node reads a program's file as UTF-8, where a lone surrogate, which a string in memory may
+  // hold, is U+FFFD.
+  const files = loadFiles(source.toWellFormed(), fileName, isModule);
   const program = specialize(files, new Set([...runtime.internalKeys, ...model.entries]));
   // The runtime's setTimeout gives a script undefined where Node gives a Timeout, so a script may
   // only call it as a statement.
