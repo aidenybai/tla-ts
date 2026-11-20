@@ -113,7 +113,22 @@ const toJsonArray = (value: Value) => {
   throw createUnsupportedError(value);
 };
 
-const toNdJson = (elements: Value[]) => elements.map((element) => `${toJson(element)}\n`).join("");
+const toNdJsonLine = (element: Value) => `${toJson(element)}\n`;
+
+// TLC's Json and IOUtils writers open the file before they convert the value, and closing a writer keeps the lines it
+// converted before a failure.
+const writeConverted = (
+  write: (text: string) => void,
+  elements: Value[],
+  toText: (element: Value) => string,
+) => {
+  const texts: string[] = [];
+  try {
+    elements.forEach((element) => texts.push(toText(element)));
+  } finally {
+    write(texts.join(""));
+  }
+};
 
 const toJsonObject = (value: Value) => {
   const className = getJavaClassName(value);
@@ -186,9 +201,8 @@ const getJavaExceptionClass = (error: TlaEvaluationError) => {
     : "util.Assert$TLCRuntimeException";
 };
 
-// textSerialize opens the file before it converts the payload, and closing the writer keeps the lines it converted
-// before a failure, which it rethrows as a RuntimeException. Files.newBufferedWriter writes the text over the start
-// of a file that it neither truncates nor appends to.
+// textSerialize rethrows a failure to convert the payload as a RuntimeException. Files.newBufferedWriter writes the
+// text over the start of a file that it neither truncates nor appends to.
 const serializeWithOptions = (
   files: FileSystem,
   path: string,
@@ -229,15 +243,12 @@ const serializeWithOptions = (
           ? existing + text
           : text + existing.slice(text.length),
     );
-  const lines: string[] = [];
   try {
-    elements.forEach((element) => lines.push(`${toJson(element)}\n`));
+    writeConverted(write, elements, toNdJsonLine);
   } catch (error) {
     if (!(error instanceof TlaEvaluationError)) throw error;
-    write(lines.join(""));
     throw new TlaEvaluationError(`${getJavaExceptionClass(error)}: ${error.message}`);
   }
-  write(lines.join(""));
 };
 
 const makeParentDirectory = (files: FileSystem, path: string) => {
@@ -276,7 +287,7 @@ export const createJsonOperators = (files: FileSystem): Builtin[] => [
         throw createModuleArgumentError("second", "JsonSerialize", "sequence or record", value);
       }
       makeParentDirectory(files, path);
-      files.writeFile?.(path, toJson(value));
+      writeConverted((text) => files.writeFile?.(path, text), [value], toJson);
       return true;
     }),
     "public static synchronized tlc2.value.impl.BoolValue tlc2.module.Json.serialize(tlc2.value.impl.StringValue,tlc2.value.impl.Value) throws java.io.IOException",
@@ -290,7 +301,7 @@ export const createJsonOperators = (files: FileSystem): Builtin[] => [
         throw createModuleArgumentError("second", "ndJsonSerialize", "sequence", value);
       }
       makeParentDirectory(files, path);
-      files.writeFile?.(path, toNdJson(elements));
+      writeConverted((text) => files.writeFile?.(path, text), elements, toNdJsonLine);
       return true;
     }),
     "public static synchronized tlc2.value.impl.BoolValue tlc2.module.Json.ndSerialize(tlc2.value.impl.StringValue,tlc2.value.impl.Value) throws java.io.IOException",

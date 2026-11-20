@@ -1088,6 +1088,25 @@ ASSUME TLCFP(a) = -887695703
     expect(printed).toEqual(["<<0>>", "<<10>>", "<<0>>", "<<11>>"]);
   });
 
+  it.each([
+    ['JsonSerialize("old.json", <<[s \\in SUBSET {1} |-> 1 \\div 0]>>)', "old.json", ""],
+    ['ndJsonSerialize("old.json", <<1, [s \\in SUBSET {1} |-> 1 \\div 0], 2>>)', "old.json", "1\n"],
+    ['JsonSerialize("s.json", [a |-> Nat])', "s.json", ""],
+    ['ndJsonSerialize("s.json", <<[a |-> 1], {<<>>, 0}>>)', "s.json", '{"a":1}\n'],
+  ])(
+    "opens the file before %s converts the value, and keeps the lines it converted, as TLC does",
+    async (expression, path, contents) => {
+      const files = new Map([["old.json", "abcdefghij\n"]]);
+      const result = await check({
+        source: `---- MODULE M ----\nEXTENDS Naturals, TLC, Json\nVARIABLE x\nInit == x = 0 /\\ ${expression}\nNext == x' = x\n====`,
+        config: "INIT Init\nNEXT Next",
+        readFile: (path) => files.get(path),
+        writeFile: (path, content) => files.set(path, String(content)),
+      });
+      expect([result.status, files.get(path)]).toEqual(["error", contents]);
+    },
+  );
+
   it("implements the TLCExt operators", async () => {
     const results = await Promise.all(
       ["Extensions", "ExtensionsShort"].map((name) => checkFixture("runtime", "Extensions", name)),
