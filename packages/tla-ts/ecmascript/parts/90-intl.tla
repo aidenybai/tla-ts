@@ -805,6 +805,30 @@ DurationFormatMethod(s, m, df, args) ==
       answer == IntlAnswer(f.s, "DurationFormat", config, "formatToParts", <<<<"duration", [i \in 1..10 |-> TIUnits(Val(f)[i])]>>>>)
   IN IF IsAbrupt(answer) THEN answer ELSE IntlResult(answer.s, method, Val(answer))
 
+\* String.prototype.localeCompare (ECMA-402 §19.1.1): the compare of a new Intl.Collator.
+IntlLocaleCompare(s, x, y, locales, options) ==
+  LET c == IntlConstruct(s, "Collator", Intrinsic(s, "IntlCollator"), locales, options) IN IF IsAbrupt(c) THEN c ELSE
+  LET answer == IntlAnswer(c.s, "Collator", IntlConstructedConfig(c.s, Val(c), "Collator"), "compare", <<x, y>>) IN
+  IF IsAbrupt(answer) THEN answer ELSE IntlResult(answer.s, "compare", Val(answer))
+
+\* TransformCase (ECMA-402 §19.1.2) of a string's units in the locales given: as ESCore's case
+\* mapping in the host's default locale, where it isn't one that tailors case, and else what
+\* HostIntl answers.
+IntlTransformCase(s, m, units, locales, isTailored) ==
+  LET requested == CanonicalizeLocaleList(s, locales) IN IF IsAbrupt(requested) THEN requested
+  ELSE IF Val(requested) = <<>> THEN
+    IF isTailored THEN Unsupported(requested.s, N("Unsupported: a locale whose case mappings the host tailors"))
+    ELSE Ok(requested.s, Str(IF m = "toLocaleLowerCase" THEN ToLowercase(units) ELSE ToUppercase(units)))
+  ELSE LET answer == IntlAnswer(requested.s, "String", <<Val(requested)>>, m, <<units>>) IN
+       IF IsAbrupt(answer) THEN answer ELSE IntlResult(answer.s, m, Val(answer))
+
+\* %Intl%.[[FallbackSymbol]], which the realm makes the first time Intl reads it.
+IntlFallbackSymbol(s) ==
+  LET intl == Intrinsic(s, "Intl") IN
+  IF "fallback" \in DOMAIN O(s, intl).slots THEN [s |-> s, v |-> O(s, intl).slots.fallback]
+  ELSE LET made == NewSymbol(s, Str(N("IntlLegacyConstructedSymbol"))) IN
+       [s |-> SetSlots(made.s, intl, [fallback |-> made.v]), v |-> made.v]
+
 IntlIntrinsics ==
   <<
      IntrinsicObject("Intl", "ObjectPrototype", "ordinary", [none |-> TRUE]),

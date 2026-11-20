@@ -784,6 +784,7 @@ RECURSIVE SetElements(_, _, _, _)
 RECURSIVE ReadThrough(_, _, _, _, _, _)
 RECURSIVE FillFrom(_, _, _, _, _)
 RECURSIVE IncludesFrom(_, _, _, _, _)
+RECURSIVE LocaleArguments(_)
 RECURSIVE JoinFrom(_, _, _, _, _, _, _)
 RECURSIVE FindViaPredicate(_, _, _, _, _, _)
 RECURSIVE FindFrom(_, _, _, _, _, _, _)
@@ -1295,7 +1296,7 @@ RECURSIVE StoreFrom(_, _, _, _, _)
 RECURSIVE TypedArrayElements(_, _, _)
 RECURSIVE StrictIndexFrom(_, _, _, _, _, _)
 RECURSIVE JoinElements(_, _, _, _, _)
-RECURSIVE LocaleJoin(_, _, _, _, _)
+RECURSIVE LocaleJoin(_, _, _, _, _, _)
 RECURSIVE CopyBytesUp(_, _, _, _, _, _)
 RECURSIVE CompareTypedArrayElements(_, _, _, _)
 RECURSIVE SortElements(_, _, _)
@@ -1940,6 +1941,9 @@ RECURSIVE DurationUnit(_, _, _, _, _)
 RECURSIVE DurationUnitOptionsFrom(_, _, _, _, _, _)
 RECURSIVE DurationFormatConstruct(_, _, _, _)
 RECURSIVE DurationFormatMethod(_, _, _, _)
+RECURSIVE IntlLocaleCompare(_, _, _, _, _)
+RECURSIVE IntlTransformCase(_, _, _, _, _)
+RECURSIVE IntlFallbackSymbol(_)
 RECURSIVE IntlBuiltin(_, _, _, _, _, _)
 RECURSIVE Unsupported(_, _)
 RECURSIVE CallBuiltin(_, _, _, _, _, _)
@@ -10093,6 +10097,10 @@ StringMethod(s, units, m, args) ==
                          [] OTHER -> NumToSmallInt(NumToIntegerOrInfinity(x))
          IN Ok(n.s, IntV(IF maxStart < 0 THEN -1 ELSE StringLastIndexOf(units, Val(search).value, start)))
     [] m = "isWellFormed" -> Ok(s, Bool(IsStringWellFormedUnicode(units, 0)))
+    \* ECMA-402 §19.1.1, where the host has Intl.
+    [] m = "localeCompare" /\ HostIntl(<<"none">>).found # "none" ->
+         LET that == ToStr(s, a1) IN IF IsAbrupt(that) THEN that
+         ELSE IntlLocaleCompare(that.s, units, Val(that).value, Arg(args, 2), Arg(args, 3))
     [] m = "localeCompare" ->
          LET that == ToStr(s, a1) IN IF IsAbrupt(that) THEN that ELSE
          LET x == Normalize(units, "NFC")
@@ -10713,7 +10721,7 @@ ArrayMethod(s, o, len, m, args) ==
     \* Array.prototype.join (§23.1.3.18).
     [] m = "join" ->
          LET sep == IF Arg(args, 1) = Undefined THEN Ok(s, SV(",")) ELSE ToStr(s, Arg(args, 1)) IN
-         IF IsAbrupt(sep) THEN sep ELSE JoinFrom(sep.s, o, len, PosZero, Val(sep).value, <<>>, FALSE)
+         IF IsAbrupt(sep) THEN sep ELSE JoinFrom(sep.s, o, len, PosZero, Val(sep).value, <<>>, Empty)
     \* Array.prototype.lastIndexOf (§23.1.3.20).
     [] m = "lastIndexOf" ->
          IF NumIsZero(len) THEN Ok(s, IntV(-1))
@@ -10806,8 +10814,8 @@ ArrayMethod(s, o, len, m, args) ==
                  [] OTHER -> Ok(al.s, o)
          IN IF IsAbrupt(moved) THEN moved ELSE
             LET w == SetElements(moved.s, o, items, start) IN IF IsAbrupt(w) THEN w ELSE SetLength(w.s, o, newLen, Val(a))
-    \* Array.prototype.toLocaleString (§23.1.3.32), with "," as the list separator.
-    [] m = "toLocaleString" -> JoinFrom(s, o, len, PosZero, N(","), <<>>, TRUE)
+    \* Array.prototype.toLocaleString (§23.1.3.32, ECMA-402 §19.5.1), with "," as the list separator.
+    [] m = "toLocaleString" -> JoinFrom(s, o, len, PosZero, N(","), <<>>, LocaleArguments(args))
     \* Array.prototype.toReversed (§23.1.3.33).
     [] m = "toReversed" ->
          LET a == ArrayCreateLength(s, len) IN IF IsAbrupt(a) THEN a ELSE
@@ -10875,16 +10883,20 @@ IncludesFrom(s, o, k, len, target) ==
   ELSE LET v == Get(s, o, Index(k)) IN IF IsAbrupt(v) THEN v
   ELSE IF SameValueZero(target, Val(v)) THEN Ok(v.s, True)
   ELSE IncludesFrom(v.s, o, NumAdd(k, OneNum), len, target)
-\* JoinIndexedProperties: the loop of Array.prototype.join, or of toLocaleString when isLocale.
-JoinFrom(s, o, len, k, sep, acc, isLocale) ==
+\* The arguments that toLocaleString passes each element's: ECMA-402's locales and options where
+\* the host has Intl, else none.
+LocaleArguments(args) == IF HostIntl(<<"none">>).found = "none" THEN <<>> ELSE <<Arg(args, 1), Arg(args, 2)>>
+\* JoinIndexedProperties: the loop of Array.prototype.join, or of toLocaleString, which passes each
+\* element's toLocaleString the arguments locale, where they aren't Empty.
+JoinFrom(s, o, len, k, sep, acc, locale) ==
   IF ~NumLess(k, len) THEN Ok(s, Str(acc))
   ELSE LET e == Get(s, o, Index(k)) IN IF IsAbrupt(e) THEN e ELSE
        LET next == IF IsNullish(Val(e)) THEN Ok(e.s, EmptyStr)
-                   ELSE IF ~isLocale THEN ToStr(e.s, Val(e))
-                   ELSE LET r == Invoke(e.s, Val(e), SV("toLocaleString"), <<>>) IN IF IsAbrupt(r) THEN r ELSE ToStr(r.s, Val(r))
+                   ELSE IF locale = Empty THEN ToStr(e.s, Val(e))
+                   ELSE LET r == Invoke(e.s, Val(e), SV("toLocaleString"), locale) IN IF IsAbrupt(r) THEN r ELSE ToStr(r.s, Val(r))
        IN IF IsAbrupt(next) THEN next
           ELSE JoinFrom(next.s, o, len, NumAdd(k, OneNum), sep,
-                        (IF NumIsZero(k) THEN acc ELSE acc \o sep) \o Val(next).value, isLocale)
+                        (IF NumIsZero(k) THEN acc ELSE acc \o sep) \o Val(next).value, locale)
 \* FindViaPredicate (§23.1.3.12.1), returning [index, value].
 FindViaPredicate(s, o, len, dir, predicate, thisArg) ==
   IF ~IsCallable(s, predicate) THEN ThrowTypeError(s)
@@ -15302,14 +15314,14 @@ JoinElements(s, ta, k, len, separator) ==
        IN (IF k > 0 THEN separator ELSE <<>>) \o (IF e = Undefined THEN <<>> ELSE PrimitiveToUnits(e)) \o
           JoinElements(s, ta, k + 1, len, separator)
 \* JoinIndexedProperties with the method "toLocaleString", and "," as the list separator.
-LocaleJoin(s, ta, k, len, acc) ==
+LocaleJoin(s, ta, k, len, acc, args) ==
   IF k >= len THEN Ok(s, Str(acc))
   ELSE LET prefix == IF k > 0 THEN acc \o N(",") ELSE acc
            e == TypedArrayGetElement(s, ta, NumFromInt(k))
-       IN IF e = Undefined THEN LocaleJoin(s, ta, k + 1, len, prefix)
-          ELSE LET r == Invoke(s, e, SV("toLocaleString"), <<>>) IN IF IsAbrupt(r) THEN r ELSE
+       IN IF e = Undefined THEN LocaleJoin(s, ta, k + 1, len, prefix, args)
+          ELSE LET r == Invoke(s, e, SV("toLocaleString"), args) IN IF IsAbrupt(r) THEN r ELSE
                LET str == ToStr(r.s, Val(r)) IN IF IsAbrupt(str) THEN str
-               ELSE LocaleJoin(str.s, ta, k + 1, len, prefix \o Val(str).value)
+               ELSE LocaleJoin(str.s, ta, k + 1, len, prefix \o Val(str).value, args)
 \* Copies count bytes one at a time upward, as slice does between two TypedArrays of a type. That
 \* copies them all at once unless the target starts within the bytes still to copy.
 CopyBytesUp(s, from, fromIndex, to, toIndex, count) ==
@@ -15448,7 +15460,7 @@ TypedArrayMethod(s, ta, len, m, args) ==
          LET r == TypedArrayCreateSameType(s, ta, len) IN IF IsAbrupt(r) THEN r ELSE
          LET sorted == SortElements(r.s, TypedArrayElements(r.s, ta, len), a1) IN IF IsAbrupt(sorted) THEN sorted
          ELSE Ok(StoreElements(sorted.s, Val(r), Val(sorted), 0), Val(r))
-    [] m = "toLocaleString" -> LocaleJoin(s, ta, 0, len, <<>>)
+    [] m = "toLocaleString" -> LocaleJoin(s, ta, 0, len, <<>>, LocaleArguments(args))
     [] m = "toReversed" ->
          LET r == TypedArrayCreateSameType(s, ta, len) IN IF IsAbrupt(r) THEN r
          ELSE Ok(StoreElements(r.s, Val(r), [i \in 1..len |-> TypedArrayGetElement(r.s, ta, NumFromInt(len - i))], 0), Val(r))
@@ -20747,6 +20759,27 @@ DurationFormatMethod(s, m, df, args) ==
   LET method == IF m = "DurationFormat.format" THEN "format" ELSE "formatToParts"
       answer == IntlAnswer(f.s, "DurationFormat", config, "formatToParts", <<<<"duration", [i \in 1..10 |-> TIUnits(Val(f)[i])]>>>>)
   IN IF IsAbrupt(answer) THEN answer ELSE IntlResult(answer.s, method, Val(answer))
+\* String.prototype.localeCompare (ECMA-402 §19.1.1): the compare of a new Intl.Collator.
+IntlLocaleCompare(s, x, y, locales, options) ==
+  LET c == IntlConstruct(s, "Collator", Intrinsic(s, "IntlCollator"), locales, options) IN IF IsAbrupt(c) THEN c ELSE
+  LET answer == IntlAnswer(c.s, "Collator", IntlConstructedConfig(c.s, Val(c), "Collator"), "compare", <<x, y>>) IN
+  IF IsAbrupt(answer) THEN answer ELSE IntlResult(answer.s, "compare", Val(answer))
+\* TransformCase (ECMA-402 §19.1.2) of a string's units in the locales given: as ESCore's case
+\* mapping in the host's default locale, where it isn't one that tailors case, and else what
+\* HostIntl answers.
+IntlTransformCase(s, m, units, locales, isTailored) ==
+  LET requested == CanonicalizeLocaleList(s, locales) IN IF IsAbrupt(requested) THEN requested
+  ELSE IF Val(requested) = <<>> THEN
+    IF isTailored THEN Unsupported(requested.s, N("Unsupported: a locale whose case mappings the host tailors"))
+    ELSE Ok(requested.s, Str(IF m = "toLocaleLowerCase" THEN ToLowercase(units) ELSE ToUppercase(units)))
+  ELSE LET answer == IntlAnswer(requested.s, "String", <<Val(requested)>>, m, <<units>>) IN
+       IF IsAbrupt(answer) THEN answer ELSE IntlResult(answer.s, m, Val(answer))
+\* %Intl%.[[FallbackSymbol]], which the realm makes the first time Intl reads it.
+IntlFallbackSymbol(s) ==
+  LET intl == Intrinsic(s, "Intl") IN
+  IF "fallback" \in DOMAIN O(s, intl).slots THEN [s |-> s, v |-> O(s, intl).slots.fallback]
+  ELSE LET made == NewSymbol(s, Str(N("IntlLegacyConstructedSymbol"))) IN
+       [s |-> SetSlots(made.s, intl, [fallback |-> made.v]), v |-> made.v]
 \* Intl's functions. Where a method unwraps its receiver first, an object that inherits from the
 \* constructor's prototype, through which it would read %Intl%.[[FallbackSymbol]], stops.
 IntlBuiltin(s, f, m, this, args, nt) ==

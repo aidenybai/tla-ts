@@ -103,7 +103,7 @@ const GATED_GROUPS = [
 const EXTRA_TRIGGERS = new Map([
   ["83-regexp", ["match", "matchAll", "replace", "replaceAll", "search", "split"]],
   ["81-iterator.tla", ["values", "keys", "entries"]],
-  ["90-intl.tla", ["toLocaleString", "localeCompare"]],
+  ["90-intl.tla", ["toLocaleString", "localeCompare", "toLocaleLowerCase", "toLocaleUpperCase"]],
   ["89", ["DurationFormat"]],
 ]);
 
@@ -308,9 +308,20 @@ export const assembleRuntime = (
   );
 };
 
+// The locale-sensitive methods that ESCore runs as ECMA-402 does, through HostIntl: those that
+// format a Number or a BigInt or compare strings, and those that call their elements' or their own.
+const LOCALE_FORMATTING = [
+  ["Number", "toLocaleString"],
+  ["BigInt", "toLocaleString"],
+  ["Array", "toLocaleString"],
+  ["TypedArray", "toLocaleString"],
+  ["Object", "toLocaleString"],
+  ["String", "localeCompare"],
+];
+
 // A program's CallBuiltin, which runs the built-ins of the families given and stops at the others
 // and at the methods in stoppedMethods, but for Temporal's, which format through HostDateFormat,
-// and the toLocaleString of a Number and of a BigInt, which format through HostIntl.
+// and those of LOCALE_FORMATTING.
 export const getCallBuiltin = (
   name: string,
   families: readonly Family[],
@@ -323,7 +334,7 @@ export const getCallBuiltin = (
       .map((family) => `"${family.name}"`)
       .join(
         ", ",
-      )}} /\\ id \\notin {<<"Number", "toLocaleString">>, <<"BigInt", "toLocaleString">>} THEN Assert(FALSE, "tla-ts can't run a built-in whose result depends on the host's locale") ELSE`,
+      )}} /\\ id \\notin {${LOCALE_FORMATTING.map((pair) => `<<"${pair[0]}", "${pair[1]}">>`).join(", ")}} THEN Assert(FALSE, "tla-ts can't run a built-in whose result depends on the host's locale") ELSE`,
     ...families.map(
       (family, index) =>
         `  ${index === 0 ? "CASE" : "  []"} id[1] = "${family.name}" -> ${family.name}Builtin(s, f, id[2], this, args, nt)`,

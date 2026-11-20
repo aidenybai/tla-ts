@@ -953,7 +953,8 @@ const TAILORED_CASING = new Set(["az", "el", "hy", "lt", "tr"]);
 const HOST_PATCHES = [
   { name: "ParseDate", from: "ParseDate(u) ==", to: "ParseSpecDate(u) ==" },
   // ESCore runs toLocaleLowerCase and toLocaleUpperCase as toLowerCase and toUpperCase, which the
-  // host does too in its default locale, unless that locale tailors case, and in no locale given.
+  // host does too in its default locale, unless that locale tailors case, and in the locales given
+  // as HostIntl answers.
   {
     name: "StringProperties",
     from: `SV("toLocaleLowerCase"), "String", "toLowerCase", 0),\n     M("StringPrototype", SV("toLocaleUpperCase"), "String", "toUpperCase", 0)`,
@@ -963,7 +964,9 @@ const HOST_PATCHES = [
     name: "StringMethod",
     from: `    [] m = "toLowerCase" ->`,
     to: `    [] m \\in {"toLocaleLowerCase", "toLocaleUpperCase"} ->
-         IF Arg(args, 1) # Undefined \\/ ${TAILORED_CASING.has(new Intl.Locale(new Intl.DateTimeFormat().resolvedOptions().locale).language) ? "TRUE" : "FALSE"} THEN Unsupported(s, <<>>)
+         LET isTailored == ${TAILORED_CASING.has(new Intl.Locale(new Intl.DateTimeFormat().resolvedOptions().locale).language) ? "TRUE" : "FALSE"} IN
+         IF Arg(args, 1) # Undefined THEN IntlTransformCase(s, m, units, Arg(args, 1), isTailored)
+         ELSE IF isTailored THEN Unsupported(s, <<>>)
          ELSE Ok(s, Str(IF m = "toLocaleLowerCase" THEN ToLowercase(units) ELSE ToUppercase(units)))
     [] m = "toLowerCase" ->`,
   },

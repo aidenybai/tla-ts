@@ -1338,6 +1338,37 @@ describe("compiles scripts by specializing ESCore", () => {
     });
   });
 
+  describe.runIf(Reflect.has(globalThis, "Temporal"))(
+    "runs the locale-sensitive methods of arrays and strings as ECMA-402 does",
+    () => {
+      const getSource = (expected: string) => `
+      const lengths = [{ toLocaleString: (...args: unknown[]) => String(args.length) }].toLocaleString();
+      const result = [
+        [1234.5, 6].toLocaleString("de-DE"),
+        new Int8Array([7]).toLocaleString("en"),
+        lengths,
+        "a".localeCompare("B", "en"),
+        "i".toLocaleUpperCase("tr"),
+        "I".toLocaleLowerCase("en"),
+      ].join("|");
+      if (result !== "${expected}") throw new Error(result);
+    `;
+
+      it("agrees with Node", async () => {
+        expect((await checkScript(getSource("1.234,5,6|7|2|-1|İ|i"))).message).toBeUndefined();
+      });
+
+      it("rejects another result", async () => {
+        expect((await checkScript(getSource("1.234,5,6|7|0|-1|İ|i"))).message).toContain(THREW);
+      });
+
+      it("stops at a case mapping of a string that the program doesn't write", async () => {
+        const source = 'String.fromCharCode(105).toLocaleUpperCase("tr");';
+        expect((await checkScript(source)).message).toContain("tla-ts can't");
+      });
+    },
+  );
+
   describe("gives each error V8's own stack accessor", () => {
     const getSource = (expected: string) => `
       const error = new Error("m");

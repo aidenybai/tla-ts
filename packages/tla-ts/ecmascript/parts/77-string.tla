@@ -178,6 +178,10 @@ StringMethod(s, units, m, args) ==
                          [] OTHER -> NumToSmallInt(NumToIntegerOrInfinity(x))
          IN Ok(n.s, IntV(IF maxStart < 0 THEN -1 ELSE StringLastIndexOf(units, Val(search).value, start)))
     [] m = "isWellFormed" -> Ok(s, Bool(IsStringWellFormedUnicode(units, 0)))
+    \* ECMA-402 §19.1.1, where the host has Intl.
+    [] m = "localeCompare" /\ HostIntl(<<"none">>).found # "none" ->
+         LET that == ToStr(s, a1) IN IF IsAbrupt(that) THEN that
+         ELSE IntlLocaleCompare(that.s, units, Val(that).value, Arg(args, 2), Arg(args, 3))
     [] m = "localeCompare" ->
          LET that == ToStr(s, a1) IN IF IsAbrupt(that) THEN that ELSE
          LET x == Normalize(units, "NFC")

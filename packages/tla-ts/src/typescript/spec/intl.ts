@@ -7,7 +7,7 @@ type Validator = (value: unknown) => boolean;
 // arguments, as test262's tests and most programs write them.
 interface Literals {
   strings: Set<string>;
-  // The strings that are a call's arguments or an array literal's elements.
+  // The strings that are a call's arguments, an array literal's elements, or a method's receiver.
   arguments: Set<string>;
   // Each number by its key, which tells -0 from 0.
   numbers: Map<string, number>;
@@ -280,6 +280,7 @@ const getLiterals = (sourceFiles: readonly ts.SourceFile[]) => {
       if (duration !== undefined) literals.durations.set(duration, node.text);
       if (
         ts.isArrayLiteralExpression(node.parent) ||
+        (ts.isPropertyAccessExpression(node.parent) && node.parent.expression === node) ||
         ((ts.isCallExpression(node.parent) || ts.isNewExpression(node.parent)) &&
           node.parent.arguments?.includes(node))
       ) {
@@ -320,7 +321,8 @@ const getLiterals = (sourceFiles: readonly ts.SourceFile[]) => {
         );
         if (time !== undefined) literals.times.add(time);
       }
-      const locales = node.arguments?.[0];
+      // localeCompare's locales follow the string it compares.
+      const locales = node.arguments?.[name === "localeCompare" ? 1 : 0];
       const named = literals.locales.get(name) ?? [undefined];
       literals.locales.set(name, named);
       const temporal = getTemporal(node);
@@ -1058,7 +1060,10 @@ export const getHostIntl = (sourceFiles: readonly ts.SourceFile[], words: Readon
   const services = SERVICES.filter((service) =>
     [service.name, ...service.callers].some((word) => words.has(word)),
   );
-  const literals = getLiterals(services.length === 0 && !words.has("Locale") ? [] : sourceFiles);
+  const isNamed = ["Locale", "toLocaleLowerCase", "toLocaleUpperCase"].some((word) =>
+    words.has(word),
+  );
+  const literals = getLiterals(services.length === 0 && !isNamed ? [] : sourceFiles);
   for (const service of services) {
     if (service.name === "NumberFormat") {
       for (const text of literals.strings) {
@@ -1133,6 +1138,28 @@ export const getHostIntl = (sourceFiles: readonly ts.SourceFile[], words: Readon
   }
   if (words.has("Locale")) {
     for (const [key, answer] of getLocaleEntries(literals)) entries.set(key, answer);
+  }
+  for (const method of ["toLocaleLowerCase", "toLocaleUpperCase"]) {
+    if (!words.has(method)) continue;
+    const named = getLocaleCandidates(
+      { name: method, callers: [] } as unknown as Service,
+      literals,
+    );
+    for (const locales of named) {
+      const requested = getCanonical(locales);
+      if (requested === undefined || requested.length === 0) continue;
+      for (const text of [...literals.strings].filter((string) => string.length <= 200)) {
+        const answer = getValue(
+          Reflect.apply(Reflect.get(String.prototype, method), text, [locales]),
+        );
+        if (answer !== undefined && entries.size <= MOST_ENTRIES) {
+          entries.set(
+            `<<"String", <<<<${requested.map(getUnitsOf).join(", ")}>>>>, "${method}", <<${getUnitsOf(text)}>>>>`,
+            answer,
+          );
+        }
+      }
+    }
   }
   if (words.has("supportedValuesOf")) {
     for (const key of [
