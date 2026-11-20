@@ -916,7 +916,14 @@ ASSUME \A v \in Pool :
   /\ PoolCallbacks(v, LAMBDA x, i : IF i = PoolInt(1) THEN PoolBail ELSE [type |-> "boolean", value |-> i = PoolInt(0)])
 ASSUME \A c \in PoolSets, o \in PoolSets, m \in PoolSetMethods : LSetMethod(c, m, o) = PlainLSetMethod(c, m, o)
 ASSUME \A r \in PoolResults : LValue(r) = PlainLValue(r)
-ASSUME \A list \in PoolLists : LArray(list) = PlainLArray(list)`;
+ASSUME \A list \in PoolLists : LArray(list) = PlainLArray(list)
+RECURSIVE PlainSetToSeq(_)
+PlainSetToSeq(set) == IF set = {} THEN <<>> ELSE LET x == CHOOSE x \in set : TRUE IN <<x>> \o PlainSetToSeq(set \ {x})
+ASSUME \A t \in {"", "a", "ab\n", "Z~ \t", "\\\""} : StringUnits(t) = [i \in 1..Len(t) |-> CharacterUnits[SubSeq(t, i, i)]]
+ASSUME \A x \in SUBSET {"m1", "c1", "b"} : SetToSeq(x) = PlainSetToSeq(x)
+ASSUME \A x \in {{3, 1, -2}, 1..4} : SetToSeq(x) = PlainSetToSeq(x)
+ASSUME SetToSeq({{2}, {}, {1, 0}}) = PlainSetToSeq({{2}, {}, {1, 0}})
+ASSUME SetToSeq({<<1>>, <<>>, <<0, 1>>}) = PlainSetToSeq({<<1>>, <<>>, <<0, 1>>})`;
 
     it("agrees with the TLA+ on every argument of the pool", async () => {
       const result = await checkModel(source, "spec.ts", "operators", undefined, operators);

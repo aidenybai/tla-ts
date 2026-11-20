@@ -4,6 +4,7 @@ import {
   createSortedFunction,
   createTuple,
   getSequenceElements,
+  isNormalizedSet,
   setFunctionClass,
   type FunctionValue,
   updateFunction,
@@ -222,12 +223,10 @@ const getRelative = (value: Value, length: number, fallback: number) => {
 const isOperator = (value: BuiltinArgument): value is OperatorValue =>
   typeof value === "object" && value.kind === "Operator";
 
-export const createEscoreNativeOperators = (callReplaced: CallReplaced): Builtin[] => {
-  const define = (
-    name: string,
-    arity: number,
-    evaluate: (args: BuiltinArgument[]) => Value | undefined,
-  ): Builtin => ({
+// An operator that runs natively, or through its TLA+ where evaluate gives undefined.
+const createDefine =
+  (callReplaced: CallReplaced) =>
+  (name: string, arity: number, evaluate: (args: BuiltinArgument[]) => Value | undefined): Builtin => ({
     kind: "Builtin",
     name,
     arity,
@@ -235,6 +234,34 @@ export const createEscoreNativeOperators = (callReplaced: CallReplaced): Builtin
     evaluateUnary: undefined,
     evaluateBinary: undefined,
   });
+
+// The code units that StringUnits gives the characters a TLA+ string can hold.
+const isStringCharacter = (code: number) =>
+  (code >= 32 && code <= 126) || code === 9 || code === 10 || code === 12 || code === 13;
+
+// The operators of an ESCore program's module that convert TLA+ values to ESCore's: StringUnits,
+// a string's code units, and a model's SetToSeq, a set's elements in the order CHOOSE takes them,
+// which for a normalized set is the order it holds them in.
+export const createEscoreProgramOperators = (callReplaced: CallReplaced): Builtin[] => {
+  const define = createDefine(callReplaced);
+  return [
+    define("StringUnits", 1, (args) => {
+      const text = args[0];
+      if (typeof text !== "string") return undefined;
+      const codes = [...text].map((character) => character.charCodeAt(0));
+      return codes.every(isStringCharacter) ? createTuple(codes) : undefined;
+    }),
+    define("SetToSeq", 1, (args) => {
+      const set = args[0];
+      return typeof set === "object" && set.kind === "Set" && isNormalizedSet(set)
+        ? createTuple(set.elements)
+        : undefined;
+    }),
+  ];
+};
+
+export const createEscoreNativeOperators = (callReplaced: CallReplaced): Builtin[] => {
+  const define = createDefine(callReplaced);
   // An operator of values, which falls back where an argument is an operator.
   const defineValues = (
     name: string,
