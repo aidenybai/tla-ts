@@ -230,26 +230,32 @@ export const createTraceBuilder = (context: TraceContext) => {
         // Deviation from TLC: LiveWorker#printTrace leaves each state of a lasso's prefix out of the Trace its ALIAS reads.
         () => steps.slice(0, position + 1).map((inner) => inner.state),
       );
+    const loopPosition = loopStart ?? 0;
+    const isLasso = known === 0 && !is174;
+    // TLCTrace#printTrace aliases the states it rebuilt from fingerprints, then rebuilds each known state and aliases it. LiveWorker#printTrace aliases the prefix to the loop, then aliases each state once it rebuilds the next.
+    const rebuiltFirst = isLasso ? Math.min(loopPosition + 1, steps.length) : rebuilt;
+    const aliasLag = isLasso ? 1 : 0;
+    const isAliasedInTurn = (known > 0 || isLasso) && alias !== undefined;
     const prefixActions = steps
-      .slice(0, rebuilt)
+      .slice(0, rebuiltFirst)
       .map((_step, position) => findTraceAction(position));
     const seedOutput =
       isPrintFingerprinted && rebuilt > 1
         ? getViewOutput(steps[rebuilt - 2].state, rebuilt - 1, true)
         : [];
-    // TLC's TLCTrace#printTrace aliases the states it rebuilt from fingerprints, then rebuilds each known state and aliases it in turn.
-    const isAliasedInTurn = known > 0 && alias !== undefined;
     const prefixAliases = isAliasedInTurn
-      ? prefixActions.map((_step, position) => getAlias(alias, position))
+      ? prefixActions.slice(aliasLag).map((_step, position) => getAlias(alias, position))
       : [];
-    const knownActions = steps.slice(rebuilt).map((_step, offset) => {
-      const step = findTraceAction(rebuilt + offset);
+    const knownActions = steps.slice(rebuiltFirst).map((_step, offset) => {
+      const position = rebuiltFirst + offset;
+      const step = findTraceAction(position);
       return {
         ...step,
         aliased:
-          isAliasedInTurn && !step.result.error ? getAlias(alias, rebuilt + offset) : undefined,
+          isAliasedInTurn && !step.result.error ? getAlias(alias, position - aliasLag) : undefined,
       };
     });
+    const lastAliases = isAliasedInTurn && aliasLag > 0 ? [getAlias(alias, last)] : [];
     const stepActions = [...prefixActions, ...knownActions];
     const outputs = stepActions.map((step) => step.lines);
     const failed = stepActions[last].result.error;
@@ -258,7 +264,11 @@ export const createTraceBuilder = (context: TraceContext) => {
     const getAliases = () =>
       alias === undefined ? [] : printed.map((_step, position) => getAlias(alias, position));
     const aliases = isAliasedInTurn
-      ? [...prefixAliases, ...knownActions.flatMap((step) => (step.aliased ? [step.aliased] : []))]
+      ? [
+          ...prefixAliases,
+          ...knownActions.flatMap((step) => (step.aliased ? [step.aliased] : [])),
+          ...lastAliases,
+        ]
       : getAliases();
     const getAliasOutput = (position: number) => aliases[position]?.lines ?? [];
     const viewOutputs = printed.map((step, position) => ({
@@ -289,21 +299,19 @@ export const createTraceBuilder = (context: TraceContext) => {
       : [];
     // TLC's Worker#doPostCondition evaluates the alias of each state again after it rebuilds the trace.
     const postconditionAliases = isRebuiltAgain && !traceFailure ? getAliases() : [];
-    const loopPosition = loopStart ?? 0;
-    const prefixOutput =
-      known === 0 && !is174
-        ? [
-            initialOutput,
-            ...outputs.slice(1, loopPosition + 1),
-            ...aliases.slice(0, loopPosition).map((aliased) => aliased.lines),
-            ...outputs
-              .slice(loopPosition + 1)
-              .flatMap((lines, offset) => [lines, getAliasOutput(loopPosition + offset)]),
-            getAliasOutput(last),
-          ].flat()
-        : rebuilt > 0
-          ? [initialOutput, ...outputs.slice(1, rebuilt), seedOutput].flat()
-          : [];
+    const prefixOutput = isLasso
+      ? [
+          initialOutput,
+          ...outputs.slice(1, loopPosition + 1),
+          ...aliases.slice(0, loopPosition).map((aliased) => aliased.lines),
+          ...outputs
+            .slice(loopPosition + 1)
+            .flatMap((lines, offset) => [lines, getAliasOutput(loopPosition + offset)]),
+          getAliasOutput(last),
+        ].flat()
+      : rebuilt > 0
+        ? [initialOutput, ...outputs.slice(1, rebuilt), seedOutput].flat()
+        : [];
     return {
       trace: printed.map((step, position) => {
         const action = stepActions[position].result.action;

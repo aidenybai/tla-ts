@@ -109,6 +109,28 @@ describe("ALIAS matches TLC", () => {
     },
   );
 
+  it.each([
+    ["(x + 1) % 3", 0, ["1", "2", "2"]],
+    ["IF x = 3 THEN 1 ELSE x + 1", 1, ["1", "2", "3", "3"]],
+  ])(
+    "aliases each state of a lasso to x' = %s once it rebuilds the next, as TLC's LiveWorker#printTrace does",
+    async (successor, loopStart, registers) => {
+      const getLasso = async (maxSetSize: number | undefined) => {
+        const result = await check({
+          source: `---- MODULE M ----\nEXTENDS Naturals, TLC\nVARIABLE x\nInit == x = 0 /\\ TLCSet(1, 0)\nNext == x' = (${successor}) /\\ TLCSet(1, TLCGet(1) + 1)\nSpec == Init /\\ [][Next]_x /\\ WF_x(Next)\nProp == <>[](x = 0)\nAlias == [x |-> x, register |-> TLCGet(1)]\n====`,
+          config: "SPECIFICATION Spec\nPROPERTY Prop\nALIAS Alias",
+          maxSetSize,
+        });
+        return [
+          result.violation?.loopStart,
+          result.violation?.trace.map((step) => formatValue(step.state.register)),
+        ];
+      };
+      expect(await getLasso(undefined)).toEqual([loopStart, registers]);
+      expect(await getLasso(1_000_000)).toEqual([loopStart, registers]);
+    },
+  );
+
   it("adds _ALIASEvalError to the state when the alias fails", async () => {
     const next = "Next == x < 1 /\\ x' = x + 1\nArgument(n) == [n |-> n]\nConstant == [c |-> 1]";
     expect(
