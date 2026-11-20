@@ -4,6 +4,7 @@ import { EXIT_STATUS } from "./exit-codes";
 import { prettyPrint } from "./pretty-print";
 import {
   applyFunction,
+  createFunction,
   createRecord,
   createSet,
   createSortedFunction,
@@ -229,6 +230,11 @@ const slotRefs = (object: Value, realm: Realm, refs: number[]) => {
   } else if (objectClass === "cell" && getDomain(slots).join() === "reject,resolve") {
     maybeRef(get(slots, "resolve"), realm, refs);
     maybeRef(get(slots, "reject"), realm, refs);
+  } else if (objectClass === "weakMap" || objectClass === "weakSet" || objectClass === "weakRef") {
+    // A weak collection's entries refer to objects only where the walk reaches their keys.
+  } else if (objectClass === "finalizationRegistry" && getList(get(slots, "cells")).length === 0) {
+    // A registry holds no cell, as the runtime stops where a program registers a target.
+    objectRef(get(slots, "cleanupCallback"), realm, refs);
   } else if (objectClass === "builtin" && isPlainBuiltin(slots)) {
     if (isCellBuiltin(slots)) objectRef(get(slots, "data"), realm, refs);
   } else if (
@@ -386,19 +392,52 @@ const canonicalStateOf = (state: Value, initial: Value): Value => {
   const order: number[] = [];
   let objectCount = 0;
   let environmentCount = 0;
-  for (let head = 0; head < queue.length; head++) {
-    const node = queue[head];
-    if (numbers.has(node)) continue;
-    if (node > 0) {
-      objectCount++;
-      numbers.set(node, realm.objects + objectCount);
-      objectRefs(heapGet(objs, node), realm, queue);
-    } else {
-      environmentCount++;
-      numbers.set(node, realm.environments + environmentCount);
-      environmentRefs(heapGet(envs, -node), realm, queue);
+  const walk = (walked: number[]) => {
+    for (let head = 0; head < walked.length; head++) {
+      const node = walked[head];
+      if (numbers.has(node)) continue;
+      if (node > 0) {
+        objectCount++;
+        numbers.set(node, realm.objects + objectCount);
+        objectRefs(heapGet(objs, node), realm, walked);
+      } else {
+        environmentCount++;
+        numbers.set(node, realm.environments + environmentCount);
+        environmentRefs(heapGet(envs, -node), realm, walked);
+      }
+      order.push(node);
     }
-    order.push(node);
+  };
+  walk(queue);
+  // A weak collection's key that the walk reached, which a step can still read the entry by, and
+  // its new number.
+  const getWeakKeyNumber = (key: Value) => {
+    if (getString(key, "type") !== "object") stop("a weak collection keyed by a symbol");
+    const id = getNumber(key, "id");
+    return id <= realm.objects ? id : numbers.get(id);
+  };
+  // The walk again from the objects that the values of the walked WeakMaps' reached entries refer
+  // to, by the walk's order of the WeakMaps and each one's keys by their new numbers, until it
+  // reaches no more.
+  for (;;) {
+    const more: number[] = [];
+    order
+      .filter((node) => node > 0)
+      .forEach((node) => {
+        const object = heapGet(objs, node);
+        if (getString(object, "class") !== "weakMap") return;
+        const data = toFiniteFunction(get(get(object, "slots"), "weakMapData"));
+        data.domain
+          .flatMap((key, position) => {
+            const number = getWeakKeyNumber(key);
+            return number === undefined ? [] : [{ number, value: data.range[position] }];
+          })
+          .sort((left, right) => left.number - right.number)
+          .forEach((entry) => maybeRef(entry.value, realm, more));
+      });
+    const fresh = more.filter((node) => !numbers.has(node));
+    if (fresh.length === 0) break;
+    walk(fresh);
   }
   const getNew = (node: number) => {
     const number = numbers.get(node);
@@ -468,6 +507,37 @@ const canonicalStateOf = (state: Value, initial: Value): Value => {
               getList(inner)
                 .filter((entry) => !isModelValue(entry, "Empty"))
                 .map(renameMaybe),
+            ),
+        });
+      case "weakMap":
+        return except(slots, {
+          weakMapData: (inner) => {
+            const data = toFiniteFunction(inner);
+            return createFunction(
+              data.domain.flatMap((key, position): [Value, Value][] =>
+                getWeakKeyNumber(key) === undefined
+                  ? []
+                  : [[renameValue(key), renameMaybe(data.range[position])]],
+              ),
+            );
+          },
+        });
+      case "weakRef":
+        return except(slots, {
+          weakRefTarget: (target) =>
+            getWeakKeyNumber(target) === undefined
+              ? stop("a WeakRef whose target nothing else reaches")
+              : renameValue(target),
+        });
+      case "finalizationRegistry":
+        return except(slots, { cleanupCallback: renameValue });
+      case "weakSet":
+        return except(slots, {
+          weakSetData: (inner) =>
+            createSet(
+              toFiniteSet(inner)
+                .elements.filter((key) => getWeakKeyNumber(key) !== undefined)
+                .map(renameValue),
             ),
         });
       case "promise":

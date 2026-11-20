@@ -48,6 +48,9 @@ SlotRefs(o, r) ==
     [] o.class = "map" ->
          ConcatMap(o.slots.mapData, LAMBDA e : IF e = Empty THEN <<>> ELSE MaybeRef(e.key, r) \o MaybeRef(e.value, r))
     [] o.class = "set" -> ValueRefs(o.slots.setData, r)
+    [] o.class \in {"weakMap", "weakSet", "weakRef"} -> <<>>
+    \* A registry holds no cell, as the runtime stops where a program registers a target.
+    [] o.class = "finalizationRegistry" /\ o.slots.cells = <<>> -> ObjectRef(o.slots.cleanupCallback, r)
     [] o.class = "proxy" -> MaybeRef(o.slots.target, r) \o MaybeRef(o.slots.handler, r)
     [] o.class = "promise" ->
          IF o.slots.state = "pending" THEN ModelStop("a pending promise") ELSE MaybeRef(o.slots.result, r)
@@ -109,6 +112,29 @@ CanonicalWalk(s, queue, walk, r) ==
                               objects |-> walk.objects + (IF isObject THEN 1 ELSE 0),
                               environments |-> walk.environments + (IF isObject THEN 0 ELSE 1)],
                              r)
+\* Whether the walk reached an object that a WeakMap or a WeakSet holds as a key, which a step can
+\* still read the entry by. An entry whose key nothing else reaches no code can read once the step
+\* ends, so the canonical form drops it, as the host's collector may.
+IsWeakKeyReached(k, number, r) ==
+  IF k.type # "object" THEN ModelStop("a weak collection keyed by a symbol")
+  ELSE k.id <= r.objects \/ k.id \in DOMAIN number
+WeakKeyNumber(k, number, r) == IF k.id <= r.objects THEN k.id ELSE number[k.id]
+\* The objects that the values of the walked WeakMaps' reached entries refer to, by the walk's order
+\* of the WeakMaps and each one's keys by their new numbers.
+WeakEntryRefs(s, walk, r) ==
+  ConcatMap(SelectSeq(walk.order, LAMBDA n : n > 0), LAMBDA n :
+    LET o == HeapGet(s.objs, n) IN
+    IF o.class # "weakMap" THEN <<>>
+    ELSE LET data == o.slots.weakMapData
+             keys == {k \in DOMAIN data : IsWeakKeyReached(k, walk.number, r)}
+         IN ConcatMap(SortInts({WeakKeyNumber(k, walk.number, r) : k \in keys}), LAMBDA i :
+              MaybeRef(data[CHOOSE k \in keys : WeakKeyNumber(k, walk.number, r) = i], r)))
+\* The walk, then again from the objects that the reached entries of its WeakMaps refer to, until
+\* it reaches no more.
+RECURSIVE CanonicalClosure(_, _, _)
+CanonicalClosure(s, walk, r) ==
+  LET more == SelectSeq(WeakEntryRefs(s, walk, r), LAMBDA n : n \notin DOMAIN walk.number)
+  IN IF more = <<>> THEN walk ELSE CanonicalClosure(s, CanonicalWalk(s, more, walk, r), r)
 RenameValue(v, number, r) == IF v.type = "object" /\ v.id > r.objects THEN Obj(number[v.id]) ELSE v
 RenameMaybe(v, number, r) == IF v = Absent \/ v = Empty THEN v ELSE RenameValue(v, number, r)
 RenameEnvironment(e, number, r) == IF e > r.environments THEN number[-e] ELSE e
@@ -138,6 +164,20 @@ RenameSlots(o, number, r) ==
          [o.slots EXCEPT !.mapData = LET kept == SelectSeq(@, LAMBDA e : e # Empty)
                                      IN [i \in DOMAIN kept |-> [key |-> RenameMaybe(kept[i].key, number, r), value |-> RenameMaybe(kept[i].value, number, r)]]]
     [] o.class = "set" -> [o.slots EXCEPT !.setData = RenameValues(SelectSeq(@, LAMBDA e : e # Empty), number, r)]
+    [] o.class = "weakMap" ->
+         LET data == o.slots.weakMapData
+             keys == {k \in DOMAIN data : IsWeakKeyReached(k, number, r)}
+         IN [o.slots EXCEPT !.weakMapData =
+               [k \in {RenameValue(x, number, r) : x \in keys} |->
+                  RenameMaybe(data[CHOOSE x \in keys : RenameValue(x, number, r) = k], number, r)]]
+    [] o.class = "weakRef" ->
+         IF IsWeakKeyReached(o.slots.weakRefTarget, number, r)
+         THEN [o.slots EXCEPT !.weakRefTarget = RenameValue(@, number, r)]
+         ELSE ModelStop("a WeakRef whose target nothing else reaches")
+    [] o.class = "finalizationRegistry" -> [o.slots EXCEPT !.cleanupCallback = RenameValue(@, number, r)]
+    [] o.class = "weakSet" ->
+         [o.slots EXCEPT !.weakSetData =
+            {RenameValue(x, number, r) : x \in {k \in @ : IsWeakKeyReached(k, number, r)}}]
     [] o.class = "proxy" -> [o.slots EXCEPT !.target = RenameMaybe(@, number, r), !.handler = RenameMaybe(@, number, r)]
     [] o.class = "promise" -> [o.slots EXCEPT !.result = RenameMaybe(@, number, r)]
     [] o.class = "cell" ->
@@ -188,7 +228,7 @@ CanonicalStateOf(s, initial) ==
                \o ConcatMap(changed, LAMBDA i : ObjectRefs(HeapGet(s.objs, i), r))
                \o ConcatMap(SortInts(DOMAIN s.templates), LAMBDA k : ObjectRef(s.templates[k], r))
                \o ConcatMap(s.modules, LAMBDA m : ModuleRefs(m, r))
-      walk == CanonicalWalk(s, roots, [number |-> <<>>, order |-> <<>>, objects |-> 0, environments |-> 0], r)
+      walk == CanonicalClosure(s, CanonicalWalk(s, roots, [number |-> <<>>, order |-> <<>>, objects |-> 0, environments |-> 0], r), r)
       number == walk.number
       objects == SelectSeq(walk.order, LAMBDA n : n > 0)
       environments == SelectSeq(walk.order, LAMBDA n : n < 0)

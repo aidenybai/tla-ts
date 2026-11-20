@@ -179,6 +179,61 @@ describe("checks a module's exported functions as a model on ESCore", () => {
     });
   });
 
+  // A WeakMap in the state keeps the entries whose keys a step can still read, and drops the rest,
+  // as the host's collector may, so a step that adds an entry no code can read leaves the state as
+  // it was, as bippy's cache of component frames does.
+  describe("keeps the entries of a WeakMap that a step can read", () => {
+    const getSource = (operator: string) =>
+      `const keys = [{}, {}];\nconst cache = new WeakMap<object, number>();\nlet count = 0;\nexport const tick = () => {\n  cache.set({}, count);\n  if (count < 2) {\n    cache.set(keys[count], count);\n    count += 1;\n  }\n};\nexport const isCached = () =>\n  count ${operator} 2 && keys.slice(0, count).every((key, index) => cache.get(key) === index);\n`;
+
+    it("agrees with Node", async () => {
+      expect(getCounts(await checkModel(getSource("<=")))).toEqual(["success", 3, 4]);
+    });
+
+    it("rejects another result", async () => {
+      expect(getCounts(await checkModel(getSource("<")))).toEqual(["invariant-violation", 3, 3]);
+    });
+
+    it("numbers the state natively as ESCanonical does", async () => {
+      expect(getCounts(await checkModel(getSource("<="), "spec.ts", "compared"))).toEqual([
+        "success",
+        3,
+        4,
+      ]);
+    });
+  });
+
+  // A WeakRef in the state keeps its target where a step can still reach it, and a
+  // FinalizationRegistry its callback, as bippy's registry of fibers does. A target that nothing
+  // else reaches the host may collect at any time after the step, which a check can't tell, so it
+  // stops, as it does where a program registers a target.
+  describe("keeps the WeakRefs whose targets a step reaches, and a FinalizationRegistry", () => {
+    const getSource = (operator: string, target = "fibers[count]") =>
+      `const fibers = [{ id: 1 }, { id: 2 }];\nconst registry = new FinalizationRegistry<number>(() => {});\nconst refs: WeakRef<object>[] = [];\nlet count = 0;\nexport const tick = () => {\n  if (count < 2) {\n    refs.push(new WeakRef(${target}));\n    count += 1;\n  }\n};\nexport const isHeld = () =>\n  count ${operator} 2 &&\n  registry instanceof FinalizationRegistry &&\n  refs.every((ref, index) => ref.deref() === fibers[index]);\n`;
+
+    it("agrees with Node", async () => {
+      expect(getCounts(await checkModel(getSource("<=")))).toEqual(["deadlock", 3, 3]);
+    });
+
+    it("rejects another result", async () => {
+      expect(getCounts(await checkModel(getSource("<")))).toEqual(["invariant-violation", 3, 3]);
+    });
+
+    it("numbers the state natively as ESCanonical does", async () => {
+      expect(getCounts(await checkModel(getSource("<="), "spec.ts", "compared"))).toEqual([
+        "deadlock",
+        3,
+        3,
+      ]);
+    });
+
+    it("stops where a WeakRef's target is an object nothing else reaches", async () => {
+      expect((await checkModel(getSource("<=", "{}"))).message).toContain(
+        "tla-ts can't keep a WeakRef whose target nothing else reaches",
+      );
+    });
+  });
+
   // A function that ESCore's runtime names an operator after, as Effect's SchemaGetter exports
   // BigInt, gets a name of its own in the spec, which still calls it.
   describe("checks a function named as one of the runtime's operators", () => {

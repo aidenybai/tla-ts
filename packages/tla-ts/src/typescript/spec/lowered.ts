@@ -120,6 +120,9 @@ const TLA_WORDS = new Set(
 // undefined where the module's top level does more than declare them and functions, as it must
 // for ModelBase to be the same in every state: no initializer reads a binding that the initial
 // state chooses or calls a function the module declares.
+// The classes whose objects hold others weakly, which no lowered value holds.
+const WEAK_CLASSES = new Set(["WeakMap", "WeakSet", "WeakRef", "FinalizationRegistry"]);
+
 export const getLoweredBindings = (file: ts.SourceFile, chosen: ReadonlySet<string>) => {
   const functions = new Set<string>();
   const bindings: { name: string; initializer: ts.Expression | undefined }[] = [];
@@ -150,11 +153,12 @@ export const getLoweredBindings = (file: ts.SourceFile, chosen: ReadonlySet<stri
       }
     }
   }
-  // An error a module keeps holds the calls that made it, which no lowered value does, so a
-  // module that names an error or catches one keeps its state on the heap.
+  // An error a module keeps holds the calls that made it, and a weak collection holds objects that
+  // only their identities reach, which no lowered value does, so a module that names an error or
+  // a weak collection, or catches an error, keeps its state on the heap.
   const isErring = (node: ts.Node): boolean =>
     ts.isCatchClause(node) ||
-    (ts.isIdentifier(node) && node.text.endsWith("Error")) ||
+    (ts.isIdentifier(node) && (node.text.endsWith("Error") || WEAK_CLASSES.has(node.text))) ||
     (ts.forEachChild(node, isErring) ?? false);
   if (isErring(file)) return undefined;
   const isReading = (node: ts.Node): boolean =>
