@@ -2212,6 +2212,73 @@ describe("level checking matches SANY", () => {
     },
   );
 
+  const getAssumptionError = (level: number) =>
+    `Level error: assumptions must be level 0 (Constant), \nbut this one has level ${level}.`;
+  it.each([
+    [
+      "NL0 == INSTANCE P WITH e <- x, v <- x",
+      "line 10, col 1 to line 10, col 37",
+      getInstantiationError("e", 0),
+    ],
+    [
+      "D == LET K == INSTANCE P WITH e <- x, v <- x IN TRUE",
+      "line 10, col 10 to line 10, col 44",
+      getInstantiationError("e", 0),
+    ],
+    [
+      "THEOREM TRUE\n<1> INSTANCE P WITH e <- x, v <- x\n<1> QED",
+      "line 11, col 5 to line 11, col 34",
+      getInstantiationError("e", 0),
+    ],
+    ["ASSUME x = 1", "line 10, col 1 to line 10, col 12", getAssumptionError(1)],
+    ["D == x = 1\nASSUME D", "line 11, col 1 to line 11, col 8", getAssumptionError(1)],
+  ])(
+    "levels an enclosing module's variable in a nested module's %j, as SANY does",
+    async (definitions, location, message) => {
+      await expect(
+        check({
+          source: `---- MODULE M ----\nVARIABLE x\n---- MODULE P ----\nCONSTANT c, e\nVARIABLE v\nTHEOREM PT == ASSUME e = e PROVE c = e\n====\n---- MODULE L ----\nCONSTANT c\n${definitions}\n====\nI3 == INSTANCE L WITH c <- 1\nInit == x = 0\nNext == x' = x\n====`,
+          config: "INIT Init\nNEXT Next",
+        }),
+      ).rejects.toThrow(createSanyError([{ location: `${location} of module M`, message }]));
+    },
+  );
+
+  it.each([
+    [
+      "CONSTANT e\nVARIABLE v\nTHEOREM PT == ASSUME e = e PROVE c = e",
+      "c",
+      "NL0 == INSTANCE P WITH v <- 1, e <- 1",
+      "c <- x",
+      28,
+      getSubstitutedError("c", 0),
+    ],
+    [
+      "VARIABLE v\nLOCAL Be == e = e",
+      "c, e",
+      "NL0 == INSTANCE P WITH v <- 1",
+      "c <- 1, e <- x",
+      36,
+      getSubstitutedError("e", 0),
+    ],
+  ])(
+    "constrains the enclosing constants that the instanced %j reads, as SANY does",
+    async (nested, constants, definitions, substitutions, end, message) => {
+      await expect(
+        check({
+          source: `---- MODULE M ----\nVARIABLE x\nI3 == INSTANCE L WITH ${substitutions}\nInit == x = 0\nNext == x' = x\n====`,
+          config: "INIT Init\nNEXT Next",
+          loadModule: (name) =>
+            name === "L"
+              ? `---- MODULE L ----\nCONSTANT ${constants}\n---- MODULE P ----\n${nested}\n====\n${definitions}\n====`
+              : undefined,
+        }),
+      ).rejects.toThrow(
+        createSanyError([{ location: `line 3, col 1 to line 3, col ${end} of module M`, message }]),
+      );
+    },
+  );
+
   it("checks a label selected from a step's statement, as SANY does", async () => {
     const exceeds = "The level of argument 1 exceeds the maximum level allowed by the operator.";
     await expect(

@@ -109,7 +109,11 @@ import {
   type LetInstance,
   type SectionMember,
 } from "./levels";
-import { createInstanceChecker, type KeyedDeclaration } from "./substitution-levels";
+import {
+  createInstanceChecker,
+  type EnclosingDeclarations,
+  type KeyedDeclaration,
+} from "./substitution-levels";
 import { formatPrompt, isEvalException } from "./tlc/messages";
 import { createDefinitionFacts } from "./dependencies";
 import { createTlcOrder, type TlcOrder } from "./tlc/order";
@@ -192,6 +196,7 @@ export interface LinkedModule {
   module: Module;
   constants: KeyedDeclaration[];
   variables: string[];
+  enclosing: EnclosingDeclarations;
   variableLocations: SourceLocation[];
   declarations: KeyedDeclaration[];
   visible: Symbols;
@@ -416,6 +421,7 @@ export const createEnvironment = (
       return {
         constants: linked.constants,
         variables: linked.variables,
+        enclosing: linked.enclosing,
         getDefinitions: () => [
           ...new Set(
             [...linked.visible.values()].flatMap((symbol) =>
@@ -1661,6 +1667,17 @@ export const createEnvironment = (
       module,
       constants,
       variables,
+      // SANY levels a nested module's references to its enclosing modules' declarations as declarations.
+      enclosing: {
+        constants: new Map(
+          [...scope.symbols.values()].flatMap((symbol): [string, number][] =>
+            symbol.kind === "Constant" ? [[symbol.key, symbol.arity]] : [],
+          ),
+        ),
+        variables: [...scope.symbols.values()].flatMap((symbol) =>
+          symbol.kind === "Variable" ? [symbol.key] : [],
+        ),
+      },
       variableLocations,
       declarations: [
         ...declarations
@@ -1686,8 +1703,11 @@ export const createEnvironment = (
         module,
         {
           module: module.name,
-          constants: new Map(constants.map((constant) => [constant.key, constant.arity])),
-          variables: new Set(variables),
+          constants: new Map([
+            ...linked.enclosing.constants,
+            ...constants.map((constant): [string, number] => [constant.key, constant.arity]),
+          ]),
+          variables: new Set([...linked.enclosing.variables, ...variables]),
           getDefinition: (symbol) => getLinkedDefinition(visible.get(symbol)?.key ?? symbol),
           getQualifiedName: (symbol) => qualifiedNames.get(visible.get(symbol)?.key ?? symbol),
           instances: instanceLevels.instances,

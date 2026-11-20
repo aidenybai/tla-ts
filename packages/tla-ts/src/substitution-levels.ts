@@ -38,9 +38,15 @@ export interface KeyedDeclaration extends Declaration {
   key: string;
 }
 
+export interface EnclosingDeclarations {
+  constants: Map<string, number>;
+  variables: string[];
+}
+
 interface ModuleContext {
   constants: KeyedDeclaration[];
   variables: string[];
+  enclosing: EnclosingDeclarations;
   getDefinitions: () => Definition[];
   assumptions: Expression[];
   theorems: Theorem[];
@@ -86,8 +92,11 @@ export const createInstanceChecker = (
     const cached = analyzers.get(name);
     if (cached) return cached;
     const module = getModule(name);
-    const constants = new Map(module.constants.map((constant) => [constant.key, constant.arity]));
-    const variables = new Set(module.variables);
+    const constants = new Map([
+      ...module.enclosing.constants,
+      ...module.constants.map((constant): [string, number] => [constant.key, constant.arity]),
+    ]);
+    const variables = new Set([...module.enclosing.variables, ...module.variables]);
     const analyzer: ModuleAnalyzer = {
       constants,
       variables,
