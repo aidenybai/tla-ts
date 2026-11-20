@@ -259,6 +259,28 @@ describe("the setup of the smt kernel", () => {
       ]),
     ).toEqual(["sat", "(:rlimit 432)", "sat", "(:rlimit 561)"]);
   });
+
+  it("delays the interface equalities of arrays to every fourth final check under AUFLIRA", () => {
+    expect(
+      run([
+        "(set-logic AUFLIRA)",
+        "(declare-const a Int)",
+        "(declare-const b Int)",
+        "(declare-const c Int)",
+        "(declare-const r Real)",
+        "(declare-const s Real)",
+        "(declare-const q Bool)",
+        "(declare-fun f (Int) Int)",
+        "(assert (= a (ite (<= r s) (f 0) b)))",
+        "(assert (= a c))",
+        "(assert (< (abs a) (f 1)))",
+        "(check-sat-assuming (q))",
+        "(get-info :rlimit)",
+        "(check-sat)",
+        "(get-value (a))",
+      ]),
+    ).toEqual(["sat", "(:rlimit 385)", "sat", "((a (- 11798)))"]);
+  });
 });
 
 describe("a distinct of more than two arguments", () => {

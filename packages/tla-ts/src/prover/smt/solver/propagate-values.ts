@@ -87,7 +87,7 @@ export class PropagateValuesTactic {
     occs.compute(goal.forms.items);
     let isModified = false;
     const process = (index: number) => {
-      const current = goal.forms.items[index];
+      const current = goal.forms.get(index);
       const isRewriting = substitution.size !== 0;
       const rewritten = isRewriting ? rewriter.rewrite(current) : current;
       if (rewritten !== current) isModified = true;

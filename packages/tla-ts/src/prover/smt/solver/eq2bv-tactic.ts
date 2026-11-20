@@ -94,7 +94,7 @@ export const createEq2BvTactic = (manager: AstManager) => (goal: Goal) => {
   const hasEq = new Set<number>();
   const converter: BvModelConverter = { bvToInt: new Map(), vars: [], values: [] };
   for (let index = 0; index < goal.forms.size; index++)
-    bounds.add(goal.forms.items[index], goal.getDependency(index));
+    bounds.add(goal.forms.get(index), goal.getDependency(index));
   if (bounds.isInconsistent() || goal.isProofsEnabled) {
     goal.depth++;
     return [goal];
@@ -171,7 +171,7 @@ export const createEq2BvTactic = (manager: AstManager) => (goal: Goal) => {
   }
   const rewriter = new EqRewriter(manager, fd);
   for (let index = 0; !goal.isInconsistent && index < goal.forms.size; index++) {
-    const form = goal.forms.items[index];
+    const form = goal.forms.get(index);
     const variable = getBoundVar(form);
     if (variable !== -1 && !hasEq.has(variable)) {
       const upper = bounds.uppers.get(variable);

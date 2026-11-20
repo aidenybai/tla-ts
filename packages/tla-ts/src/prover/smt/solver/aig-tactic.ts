@@ -24,7 +24,7 @@ export const createAigTactic =
     };
     const forms = new RefVector(manager);
     for (let index = 0; index < goal.forms.size; index++) {
-      const form = goal.forms.items[index];
+      const form = goal.forms.get(index);
       const dependency = goal.getDependency(index);
       if (dependency === undefined) {
         forms.push(form);

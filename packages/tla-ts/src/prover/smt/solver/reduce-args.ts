@@ -203,7 +203,7 @@ const reduce = (manager: AstManager, goal: Goal) => {
   const rewriter = new ReduceArgsRewriter(manager, declToArgs);
   const end = goal.forms.size;
   for (let index = 0; index < end && !goal.isInconsistent; index++) {
-    const rewritten = rewriter.rewrite(goal.forms.items[index]);
+    const rewritten = rewriter.rewrite(goal.forms.get(index));
     goal.update(index, rewritten);
     manager.decRef(rewritten);
   }

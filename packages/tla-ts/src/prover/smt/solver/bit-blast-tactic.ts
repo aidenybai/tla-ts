@@ -577,7 +577,7 @@ export const runBitBlast =
     let isChanged = false;
     const size = goal.forms.size;
     for (let index = 0; index < size && !goal.isInconsistent; index++) {
-      const form = goal.forms.items[index];
+      const form = goal.forms.get(index);
       const next = rewriter.rewrite(form);
       release(manager, rewritten);
       rewritten = next;

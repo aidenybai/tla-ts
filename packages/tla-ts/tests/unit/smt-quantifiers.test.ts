@@ -202,6 +202,96 @@ describe("the model finder, as Z3 5.3.2 cleans up its instantiation sets", () =>
       ]),
     ).toEqual(["sat", "(:rlimit 1301)", "sat", "(:rlimit 2581)"]);
   });
+
+  it("frees the bound the quantifier analyzer makes before it adds one to it", () => {
+    expect(
+      run([
+        "(set-option :auto_config false)",
+        "(set-option :smt.mbqi true)",
+        "(declare-fun f (Int) Int)",
+        "(assert (forall ((x0 Int) (x1 Int)) (<= x1 (f 2))))",
+        "(check-sat)",
+        "(get-info :rlimit)",
+      ]),
+    ).toEqual(["unsat", "(:rlimit 378)"]);
+  });
+
+  it("counts the steps that rename the variables of a macro candidate", () => {
+    expect(
+      run([
+        "(set-option :auto_config false)",
+        "(set-option :smt.mbqi true)",
+        "(declare-fun g (Int Int) Int)",
+        "(declare-const a Int)",
+        "(assert (forall ((x Int) (y Int)) (or (= (+ x 1) a) (<= y x) (= (g x y) 0))))",
+        "(assert (= (g 1 0) 1))",
+        "(check-sat)",
+        "(get-info :rlimit)",
+      ]),
+    ).toEqual(["sat", "(:rlimit 588)"]);
+  });
+
+  it("instantiates a variable that indexes an array with the indices of the array's selects", () => {
+    expect(
+      run([
+        "(set-option :auto_config false)",
+        "(set-option :smt.mbqi true)",
+        "(declare-fun p (Int) Bool)",
+        "(declare-fun A () (Array Int Int))",
+        "(assert (forall ((x Int)) (or (p x) (> (select A x) 0))))",
+        "(assert (not (p 2)))",
+        "(assert (< (select A 5) 0))",
+        "(check-sat)",
+        "(get-info :rlimit)",
+        "(get-model)",
+      ]),
+    ).toEqual([
+      "sat",
+      "(:rlimit 686)",
+      "(",
+      "  (define-fun A () (Array Int Int)",
+      "    (store ((as const (Array Int Int)) (- 1)) 2 1))",
+      "  (define-fun p ((x!0 Int)) Bool",
+      "    (not (= x!0 2)))",
+      ")",
+    ]);
+  });
+
+  it("interprets an array as a lambda of the default weight", () => {
+    expect(
+      run([
+        "(set-option :auto_config false)",
+        "(set-option :smt.mbqi true)",
+        "(declare-fun p (Int) Bool)",
+        "(declare-fun A () (Array Int Int))",
+        "(declare-fun B () (Array Int Bool))",
+        "(assert (forall ((x Int)) (or (p x) (> (select A x) 0) (select B x))))",
+        "(assert (not (p 2)))",
+        "(assert (not (p 7)))",
+        "(assert (< (select A 5) 0))",
+        "(assert (not (select B 4)))",
+        "(check-sat)",
+        "(get-info :rlimit)",
+        "(get-model)",
+      ]),
+    ).toEqual([
+      "sat",
+      "(:rlimit 1702)",
+      "(",
+      "  (define-fun B () (Array Int Bool)",
+      "    ((as const (Array Int Bool)) false))",
+      "  (define-fun A () (Array Int Int)",
+      "    (lambda ((x!1 Int))",
+      "  (let ((a!1 (ite (and (not (= x!1 2)) (= x!1 4)) 11798 (ite (= x!1 2) 1 3))))",
+      "  (let ((a!2 (ite (and (not (= x!1 2)) (not (= x!1 4)) (not (= x!1 5)))",
+      "                  8856",
+      "                  a!1)))",
+      "    (ite (and (not (= x!1 2)) (not (= x!1 4)) (= x!1 5)) (- 1) a!2)))))",
+      "  (define-fun p ((x!0 Int)) Bool",
+      "    (and (not (= x!0 2)) (not (= x!0 4)) (= x!0 5)))",
+      ")",
+    ]);
+  });
 });
 
 describe("e-matching, as Z3 5.3.2 counts its steps", () => {
