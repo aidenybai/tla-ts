@@ -3053,4 +3053,74 @@ describe("evaluation errors match TLC", () => {
       "(<<0, 1>> :> [a |-> 1, b |-> 2])",
     ]);
   });
+
+  const checkSetBound = (next: string, invariant: string) =>
+    check({
+      source: `---- MODULE M ----\nEXTENDS Integers, FiniteSets\nVARIABLE x\nInit == x = 0\nNext == ${next}\nInv == ${invariant}\n====`,
+      config: "INIT Init\nNEXT Next\nINVARIANT Inv",
+      maxSetSize: 10,
+    });
+
+  it.each([
+    [
+      "\\E f \\in [1..2 -> 1..4] : x' = f",
+      "TRUE",
+      "TLC threw an unexpected exception.\nThis was probably caused by an error in the spec or model.\nSee the User Output or TLC Console for clues to what happened.\nThe exception was a util.WrongInvocationException\n: Attempted to construct a set with too many elements (>10).",
+      [],
+      undefined,
+    ],
+    [
+      "x' = x",
+      "\\A r \\in [a : 1..4, b : 1..4] : r.a > 0",
+      "Attempted to construct a set with too many elements (>10).",
+      [],
+      undefined,
+    ],
+    [
+      "x' = x",
+      "[a : 1..4, b : 1..4] # {}",
+      "Attempted to construct a set with too many elements (>10).",
+      [
+        "Line 4, column 9 to line 4, column 13 in M",
+        "Line 6, column 8 to line 6, column 32 in M",
+        "Line 6, column 8 to line 6, column 27 in M",
+      ],
+      "Attempted to construct a set with too many elements (>10).",
+    ],
+    [
+      "x' = x",
+      "Cardinality({p \\in (1..4) \\X (1..4) : TRUE}) > 0",
+      "Attempted to apply the operator overridden by the Java method\npublic static tlc2.value.impl.IntValue tlc2.module.FiniteSets.Cardinality(tlc2.value.impl.Value),\nbut it produced the following error:\nAttempted to construct a set with too many elements (>10).",
+      [
+        "Line 4, column 9 to line 4, column 13 in M",
+        "Line 6, column 8 to line 6, column 55 in M",
+        "Line 6, column 8 to line 6, column 51 in M",
+      ],
+      undefined,
+    ],
+  ])(
+    "bounds the sets TLC's toSetEnum collects by -maxSetSize and pops the frames it doesn't fingerprint: %s, %s",
+    async (next, invariant, message, callStack, reason) => {
+      const result = await checkSetBound(next, invariant);
+      expect(result.failure?.message).toBe(message);
+      expect(formatCallStackLines(result)).toEqual(callStack);
+      expect(result.failure?.fingerprint?.reason).toBe(reason);
+      expect(result.failure?.exitCode).toBe(75);
+    },
+  );
+
+  it.each([
+    ["x' \\in [a : {f \\in [1..2 -> 1..4] : TRUE}]", 273, 17],
+    ["x' = [f \\in [1..2 -> 1..4] |-> 1]", 3, 2],
+  ])(
+    "streams the sets TLC's elements() enumerates past -maxSetSize: %s",
+    async (next, generated, distinct) => {
+      const result = await checkSetBound(next, "TRUE");
+      expect([result.status, result.generatedStates, result.distinctStates]).toEqual([
+        "success",
+        generated,
+        distinct,
+      ]);
+    },
+  );
 });
