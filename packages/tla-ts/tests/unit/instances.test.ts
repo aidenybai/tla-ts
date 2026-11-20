@@ -189,6 +189,16 @@ describe("INSTANCE matches TLC", () => {
       "---- MODULE W ----\nEXTENDS N\n====\nI == INSTANCE N WITH c <- 1",
       ["N1", "P1"],
     ],
+    [
+      "a LET whose instance's definitions don't read a variable's substitute",
+      '---- MODULE P ----\nVARIABLE v\nN2(a) == PrintT(a)\n====\nI == INSTANCE P WITH v <- x\nD == LET K == INSTANCE P WITH v <- x IN K!N2("D")',
+      ["D"],
+    ],
+    [
+      "no LET whose instance's definition reads a variable's substitute",
+      '---- MODULE P ----\nVARIABLE v\nN2(a) == PrintT(a)\nFv == v\n====\nI == INSTANCE P WITH v <- x\nD == LET K == INSTANCE P WITH v <- x IN K!N2("D")',
+      [],
+    ],
   ])("evaluates %s at startup, as TLC does", async (_name, lines, expected) => {
     const prints: string[] = [];
     const result = await check({

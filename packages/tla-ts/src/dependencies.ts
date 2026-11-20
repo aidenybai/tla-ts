@@ -7,6 +7,7 @@ import {
   type Expression,
 } from "./ast";
 import type { Environment } from "./evaluate";
+import { isSubstitutionDefinition } from "./instances";
 import { ACTION_LEVEL, CONSTANT_LEVEL, TEMPORAL_LEVEL, VARIABLE_LEVEL } from "./levels";
 
 interface DefinitionNames extends Pick<
@@ -115,7 +116,12 @@ const collectLocalFacts = (
     return undefined;
   };
   const contexts = new Map<Expression, number>();
-  const visit = (node: Expression, isLevelCounted: boolean, isOperatorArgument: boolean) => {
+  const visit = (
+    node: Expression,
+    isLevelCounted: boolean,
+    isOperatorArgument: boolean,
+    substitutes: ReadonlyMap<string, Expression>,
+  ) => {
     const kind = node.kind;
     if (kind === "Selection") {
       const seen = contexts.get(node.expression) ?? 0;
@@ -190,11 +196,35 @@ const collectLocalFacts = (
         }
       }
     }
-    getChildren(node).forEach((child) =>
-      visit(child, isInnerLevelCounted, isOperatorArgument || kind === "Lambda"),
+    const substitute =
+      name !== undefined && isLocallyResolved(node) ? substitutes.get(name) : undefined;
+    if (substitute) visit(substitute, isInnerLevelCounted, isOperatorArgument, substitutes);
+    // TLC's SubstInNode binds a LET instance's substitute lazily, so its level counts only where the instanced definition reads it.
+    const letSubstitutes = kind === "Let" ? node.definitions.filter(isSubstitutionDefinition) : [];
+    const innerSubstitutes =
+      letSubstitutes.length === 0
+        ? substitutes
+        : new Map([
+            ...substitutes,
+            ...letSubstitutes.map((definition): [string, Expression] => [
+              definition.name,
+              definition.body,
+            ]),
+          ]);
+    const children =
+      kind === "Let" && letSubstitutes.length > 0
+        ? [
+            ...node.definitions
+              .filter((definition) => !letSubstitutes.includes(definition))
+              .flatMap(getDefinitionExpressions),
+            node.body,
+          ]
+        : getChildren(node);
+    children.forEach((child) =>
+      visit(child, isInnerLevelCounted, isOperatorArgument || kind === "Lambda", innerSubstitutes),
     );
   };
-  expressions.forEach((expression) => visit(expression, true, false));
+  expressions.forEach((expression) => visit(expression, true, false, new Map()));
   return { row, edges };
 };
 
