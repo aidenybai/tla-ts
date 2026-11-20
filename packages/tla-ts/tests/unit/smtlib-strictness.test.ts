@@ -530,6 +530,46 @@ describe("messages of the reader, as Z3 5.3.2 prints them", () => {
     ]);
   });
 
+  it("checks the parameters of smt as the sat tactic's under sat.euf", () => {
+    expect(
+      run([
+        "(set-option :sat.euf true)",
+        "(declare-fun f (Int) Int)",
+        "(declare-const a Int)",
+        "(assert (forall ((x Int)) (! (<= (f x) x) :pattern ((f x)))))",
+        "(assert (< a (f 3)))",
+        "(check-sat-using (using-params smt :qi.eager_threshold 50.0))",
+        "(check-sat-using (using-params smt :mbqi false))",
+        "(check-sat-using (using-params smt :restart.fast false))",
+      ]),
+    ).toEqual([
+      '(error "line 6 column 55: invalid using-params combinator, unknown parameter qi.eager_threshold")',
+      '(error "line 7 column 41: invalid using-params combinator, unknown parameter mbqi")',
+      "sat",
+    ]);
+  });
+
+  it("rejects a parameter the sat tactic lacks and takes its euf", () => {
+    expect(
+      run([
+        "(declare-fun f (Int) Int)",
+        "(declare-const a Int)",
+        "(declare-const b Int)",
+        "(assert (= (f a) 3))",
+        "(assert (not (= (f b) 3)))",
+        "(check-sat-using (using-params sat :bogus 1))",
+        "(check-sat-using sat)",
+        "(check-sat-using (using-params sat :euf true))",
+        "(get-value (a b))",
+      ]),
+    ).toEqual([
+      '(error "line 6 column 42: invalid using-params combinator, unknown parameter bogus")',
+      "unknown",
+      "sat",
+      "((a 21238)\n (b 2437))",
+    ]);
+  });
+
   it("takes a whole decimal as a probe constant and rejects any other decimal", () => {
     expect(
       run([

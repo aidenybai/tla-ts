@@ -1,4 +1,5 @@
 import { OP_AND, OP_NOT, OP_OR, SORT_BOOL, type AstManager } from "./ast";
+import { ExprParray } from "./parray";
 import type { ProtoModel } from "./proto-model";
 import { RefVector } from "./ref-vector";
 
@@ -95,7 +96,7 @@ export const decConverterRefs = (manager: AstManager, converters: Goal["converte
 };
 
 export class Goal {
-  readonly forms: RefVector;
+  readonly forms: ExprParray;
   // Kept only while unsat cores are enabled.
   dependencies: (Dependency | undefined)[] = [];
   isInconsistent = false;
@@ -110,7 +111,7 @@ export class Goal {
   reasonUnknown = "";
 
   constructor(readonly manager: AstManager) {
-    this.forms = new RefVector(manager);
+    this.forms = new ExprParray(manager);
   }
 
   copy() {
@@ -121,8 +122,7 @@ export class Goal {
 
   copyFrom(source: Goal) {
     if (source === this) return;
-    this.forms.reset();
-    for (const form of source.forms.items) this.forms.push(form);
+    this.forms.copyFrom(source.forms);
     this.dependencies = [...source.dependencies];
     this.depth = Math.max(this.depth, source.depth);
     this.isInconsistent = source.isInconsistent;
