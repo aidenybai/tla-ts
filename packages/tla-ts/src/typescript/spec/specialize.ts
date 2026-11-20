@@ -951,8 +951,20 @@ export const specialize = (
 
   // A node's source text, as its file's number and the range of the file's text it spans, which
   // SourceUnits makes code units of when a program reads it.
-  const getSourceText = (node: ts.Node) =>
-    `<<${fileNumbers.get(node.getSourceFile())}, ${node.getStart() + 1}, ${node.getEnd()}>>`;
+  // A node's source text, which for a static class element is its MethodDefinition's, from the
+  // token after static.
+  const getSourceText = (node: ts.Node) => {
+    const tokens = node
+      .getChildren()
+      .flatMap((child) =>
+        child.kind === ts.SyntaxKind.SyntaxList ? child.getChildren() : [child],
+      );
+    const staticIndex = ts.isClassElement(node)
+      ? tokens.findIndex((token) => token.kind === ts.SyntaxKind.StaticKeyword)
+      : -1;
+    const start = staticIndex === -1 ? node.getStart() : tokens[staticIndex + 1].getStart();
+    return `<<${fileNumbers.get(node.getSourceFile())}, ${start + 1}, ${node.getEnd()}>>`;
+  };
 
   // A function's code record, which the module evaluates once, as it has no parameters.
   // A bare code runs without the environment that a call makes for it (OrdinaryCallRun).

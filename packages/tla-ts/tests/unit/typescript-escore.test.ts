@@ -2293,6 +2293,48 @@ describe("compiles scripts by specializing ESCore", () => {
     }, 600_000);
   });
 
+  describe("gives a static method's source text from the token after static", () => {
+    const getSource = (expected: string) => `
+      class A {
+        static m() { return 1; }
+        static async n() {}
+        static /* c */ get g() { return 1; }
+        static *gen() {}
+        m2() {}
+        static async *ag() {}
+        static #p() {}
+        static pm() { return A.#p; }
+      }
+      const getter = Object.getOwnPropertyDescriptor(A, "g")?.get;
+      const result = [A.m, A.n, getter, A.gen, A.prototype.m2, A.ag, A.pm()].map(String).join("|");
+      if (result !== "${expected}") throw new Error(result);
+    `;
+
+    it("agrees with Node", async () => {
+      expect(
+        (
+          await checkScript(
+            getSource(
+              "m() { return 1; }|async n() {}|get g() { return 1; }|*gen() {}|m2() {}|async *ag() {}|#p() {}",
+            ),
+          )
+        ).message,
+      ).toBeUndefined();
+    });
+
+    it("rejects another result", async () => {
+      expect(
+        (
+          await checkScript(
+            getSource(
+              "static m() { return 1; }|async n() {}|get g() { return 1; }|*gen() {}|m2() {}|async *ag() {}|#p() {}",
+            ),
+          )
+        ).message,
+      ).toContain(THREW);
+    });
+  });
+
   describe("runs a script of thousands of statements and global vars", () => {
     const getSource = (expected: number) => `
       let count = 0;
