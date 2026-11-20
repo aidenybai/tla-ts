@@ -1684,10 +1684,18 @@ const getUnboundedElements = (value: Value): Value[] => {
   return set.elements;
 };
 
+// TLC streams SUBSET S into a product it collects, so the product fails past -maxSetSize before SUBSET S overflows.
+const getCollectedComponent = (set: Value) => {
+  const subsets = getLazySubsets(set);
+  return subsets !== undefined && subsets.length > getMaximumSetSize()
+    ? subsets
+    : getUnboundedElements(set);
+};
+
 const enumerateSet = (
   value: Value,
   isBounded = true,
-  getElements = getUnboundedElements,
+  getElements = isBounded ? getCollectedComponent : getUnboundedElements,
 ): Value[] => {
   if (typeof value !== "object")
     throw new TlaEvaluationError(`Expected a set but found ${formatValue(value)}`);

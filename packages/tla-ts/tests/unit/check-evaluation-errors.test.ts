@@ -3154,6 +3154,31 @@ describe("evaluation errors match TLC", () => {
     },
   );
 
+  it.each([
+    [
+      "\\A r \\in [a : SUBSET (1..40)] : TRUE",
+      "Attempted to construct a set with too many elements (>1000000).",
+    ],
+    [
+      "\\A f \\in [{1} -> SUBSET (1..40)] : TRUE",
+      "Attempted to construct a set with too many elements (>1000000).",
+    ],
+    [
+      "\\A r \\in [a : SUBSET (1..40), b : Nat] : TRUE",
+      "Attempted to enumerate a set of the form [l1 : v1, ..., ln : vn],\nbut can't enumerate the value of the `b' field:\nNat",
+    ],
+    [
+      "\\A r \\in {1} \\X (SUBSET (1..40)) \\X Nat : TRUE",
+      "Attempted to enumerate a set of the form s1 \\X s2 ... \\X sn,\nbut can't enumerate s2:\nNat",
+    ],
+  ])(
+    "streams SUBSET S into a product TLC collects, which fails before SUBSET S overflows: %s",
+    async (assumption, message) => {
+      const result = await checkModule(`ASSUME ${assumption}`);
+      expect([result.status, result.violation?.message]).toEqual(["assumption-violation", message]);
+    },
+  );
+
   it("sizes the domain of a recursive function as TLC's FcnLambdaValue#toFcnRcd does, which bounds a filter by -maxSetSize", async () => {
     const result = await check({
       source:
