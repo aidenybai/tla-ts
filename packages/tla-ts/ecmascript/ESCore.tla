@@ -18373,13 +18373,13 @@ TemporalToLocaleString(s, kind, slots, locales, options, text) ==
                  [] kind = "PlainTime" -> [date |-> [year |-> 1970, month |-> 1, day |-> 1], time |-> slots.time]
                  [] kind = "PlainDateTime" -> slots.dateTime
                  [] OTHER -> [date |-> slots.date, time |-> MidnightTimeRecord]
-  IN CASE kind \notin {"PlainTime", "Instant"} /\ slots.calendar \notin {ISO8601, N("gregory")} ->
-            Unsupported(read.s, N("Unsupported: a calendar the host's table leaves out"))
-       [] values.dayPeriod # Empty \/ values.timeZoneName # Empty ->
+  IN CASE values.dayPeriod # Empty \/ values.timeZoneName # Empty ->
             Unsupported(read.s, N("Unsupported: a dayPeriod or timeZoneName option"))
        [] values.formatMatcher = N("basic") -> Unsupported(read.s, N("Unsupported: the basic format matcher"))
        [] format.found = "error" -> ThrowError(read.s, format.error)
        [] format.found # "format" -> Unsupported(read.s, N("Unsupported: options the host's table leaves out"))
+       \* A calendar other than English's, the Gregorian, and ISO 8601 isn't the formatter's.
+       [] kind \notin {"PlainTime", "Instant"} /\ slots.calendar \notin {ISO8601, N("gregory")} -> ThrowError(read.s, "RangeError")
        [] Val(zoneText) # Undefined /\ ~format.isZoned -> Unsupported(read.s, N("Unsupported: a time zone option"))
        [] kind # "PlainTime" /\ (local.date.year < 1583 \/ local.date.year > 9999) ->
             Unsupported(read.s, N("Unsupported: a date that Node writes in the Julian calendar"))
