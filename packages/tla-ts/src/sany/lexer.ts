@@ -234,56 +234,87 @@ export const getKind = (name: string) => {
 const LITERALS = new Map(
   KINDS.flatMap((entry, kind) => entry.slice(1).map((image): [string, number] => [image, kind])),
 );
-const LONGEST_LITERAL = Math.max(...[...LITERALS.keys()].map((image) => image.length));
-const LITERAL_LENGTHS = Array.from(
-  { length: LONGEST_LITERAL },
-  (_value, index) => LONGEST_LITERAL - index,
+// The lengths of the literals that start with each character, longest first.
+const LITERAL_LENGTHS = new Map(
+  [...Map.groupBy(LITERALS.keys(), (image) => image[0])].map((entry): [string, number[]] => [
+    entry[0],
+    [...new Set(entry[1].map((image) => image.length))].sort((left, right) => right - left),
+  ]),
 );
 
-const BEGIN_MODULE = /----+ *MODULE/y;
-const IDENTIFIER_PATTERNS = [
-  /_\w*[A-Za-z]\w*/y,
-  /[0-9]\w*[A-Za-z]\w*/y,
-  /[WS](?:[a-zA-EG-Z_0-9]\w*)?/y,
-  /[WS]F(?:[A-Za-z0-9]\w*)?/y,
-  /[a-zA-RT-VX-Z]\w*/y,
-  /@|ℕ|ℤ|ℝ/y,
-];
-const getJunctionPatterns = (junction: string) =>
-  [/[0-9][A-Za-z0-9]*/, /[WS][a-zA-EG-Z0-9][A-Za-z0-9]*/, /[a-zA-RT-VX-Z][A-Za-z0-9]*/].map(
-    (prefix) => new RegExp(`${prefix.source}${junction}`, "y"),
+interface TokenPattern {
+  firsts: string;
+  kind: number;
+  regex: RegExp;
+}
+
+// A pattern is its kind, the characters it can start with and the rest, so a token runs only the patterns that can start with its first character.
+const createPatterns = (patterns: [string, string, string][]) => {
+  const tokenPatterns = patterns.map((pattern): TokenPattern => ({
+    firsts: pattern[1],
+    kind: getKind(pattern[0]),
+    regex: new RegExp(`[${pattern[1].replace(/[\\\]^-]/g, "\\$&")}]${pattern[2]}`, "y"),
+  }));
+  return new Map(
+    [...new Set(patterns.flatMap((pattern) => [...pattern[1]]))].map(
+      (first): [string, TokenPattern[]] => [
+        first,
+        tokenPatterns.filter((pattern) => pattern.firsts.includes(first)),
+      ],
+    ),
   );
-const BAND_PATTERNS = getJunctionPatterns(String.raw`\.\/\\`);
-const BOR_PATTERNS = getJunctionPatterns(String.raw`\.\\\/`);
-const STEP = String.raw`<(?:[0-9]+|\+|\*)>`;
+};
 
-const SPEC_PATTERNS: [string, RegExp[]][] = [
-  ["_BM0", [BEGIN_MODULE]],
-  ["SEPARATOR", [/----+/y]],
-  ["END_MODULE", [/====+/y]],
-  ["NUMBER_LITERAL", [/[0-9]+|\\[oO][0-7]+|\\[bB][01]+|\\[hH][0-9a-fA-F]+/y]],
-  ["STRING_LITERAL", [/"(?:[^"\n\r\\]|\\[ntrf\\"])*"/y]],
-  ["BAND", BAND_PATTERNS],
-  ["BOR", BOR_PATTERNS],
-  ["IDENTIFIER", IDENTIFIER_PATTERNS],
-  ["ProofStepLexeme", [/<[0-9]+>\w+/y]],
-  ["ProofImplicitStepLexeme", [/<[+*]>[A-Za-z0-9]+/y]],
-  ["ProofStepDotLexeme", [new RegExp(String.raw`${STEP}\w+\.+`, "y")]],
-  ["BareLevelLexeme", [new RegExp(STEP, "y")]],
-  ["UnnumberedStepLexeme", [new RegExp(String.raw`${STEP}(?:\*\.*|-\.*|\.+)`, "y")]],
+const DIGITS = "0123456789";
+const UPPERCASE = "ABCDEFGHIJKLMNOPQRSTUVWXYZ";
+const LETTERS_BUT_SW = `${UPPERCASE}${UPPERCASE.toLowerCase()}`.replace(/[SW]/g, "");
+const BEGIN_MODULE = "---+ *MODULE";
+const IDENTIFIER_PATTERNS: [string, string, string][] = [
+  ["IDENTIFIER", "_", String.raw`\w*[A-Za-z]\w*`],
+  ["IDENTIFIER", DIGITS, String.raw`\w*[A-Za-z]\w*`],
+  ["IDENTIFIER", "WS", String.raw`(?:[a-zA-EG-Z_0-9]\w*)?`],
+  ["IDENTIFIER", "WS", String.raw`F(?:[A-Za-z0-9]\w*)?`],
+  ["IDENTIFIER", LETTERS_BUT_SW, String.raw`\w*`],
+  ["IDENTIFIER", "@ℕℤℝ", ""],
 ];
+const getJunctionPatterns = (kind: string, junction: string): [string, string, string][] => [
+  [kind, DIGITS, `[A-Za-z0-9]*${junction}`],
+  [kind, "WS", `[a-zA-EG-Z0-9][A-Za-z0-9]*${junction}`],
+  [kind, LETTERS_BUT_SW, `[A-Za-z0-9]*${junction}`],
+];
+const BAND_PATTERNS = getJunctionPatterns("BAND", String.raw`\.\/\\`);
+const BOR_PATTERNS = getJunctionPatterns("BOR", String.raw`\.\\\/`);
+const STEP = String.raw`(?:[0-9]+|\+|\*)>`;
 
-const DEFAULT_PATTERNS: [string, RegExp[]][] = [
-  ["BEGIN_PRAGMA", [/--->/y]],
-  ["_BM1", [BEGIN_MODULE]],
-];
-const PRAGMA_PATTERNS: [string, RegExp[]][] = [
-  ["NUMBER", [/[0-9]+/y]],
-  ["_BM2", [BEGIN_MODULE]],
-  ["BAND", BAND_PATTERNS],
-  ["BOR", BOR_PATTERNS],
-  ["IDENTIFIER", IDENTIFIER_PATTERNS],
-];
+const SPEC_PATTERNS = createPatterns([
+  ["_BM0", "-", BEGIN_MODULE],
+  ["SEPARATOR", "-", "---+"],
+  ["END_MODULE", "=", "===+"],
+  ["NUMBER_LITERAL", DIGITS, "[0-9]*"],
+  ["NUMBER_LITERAL", "\\", "[oO][0-7]+"],
+  ["NUMBER_LITERAL", "\\", "[bB][01]+"],
+  ["NUMBER_LITERAL", "\\", "[hH][0-9a-fA-F]+"],
+  ["STRING_LITERAL", '"', String.raw`(?:[^"\n\r\\]|\\[ntrf\\"])*"`],
+  ...BAND_PATTERNS,
+  ...BOR_PATTERNS,
+  ...IDENTIFIER_PATTERNS,
+  ["ProofStepLexeme", "<", String.raw`[0-9]+>\w+`],
+  ["ProofImplicitStepLexeme", "<", String.raw`[+*]>[A-Za-z0-9]+`],
+  ["ProofStepDotLexeme", "<", String.raw`${STEP}\w+\.+`],
+  ["BareLevelLexeme", "<", STEP],
+  ["UnnumberedStepLexeme", "<", String.raw`${STEP}(?:\*\.*|-\.*|\.+)`],
+]);
+const DEFAULT_PATTERNS = createPatterns([
+  ["BEGIN_PRAGMA", "-", "-->"],
+  ["_BM1", "-", BEGIN_MODULE],
+]);
+const PRAGMA_PATTERNS = createPatterns([
+  ["NUMBER", DIGITS, "[0-9]*"],
+  ["_BM2", "-", BEGIN_MODULE],
+  ...BAND_PATTERNS,
+  ...BOR_PATTERNS,
+  ...IDENTIFIER_PATTERNS,
+]);
 
 const getMatchLength = (pattern: RegExp, source: string, offset: number) => {
   pattern.lastIndex = offset;
@@ -300,16 +331,16 @@ const getLongerMatch = (best: TokenMatch, match: TokenMatch) =>
     ? match
     : best;
 
-const matchPatterns = (patterns: [string, RegExp[]][], source: string, offset: number) =>
-  patterns
+const matchPatterns = (patterns: Map<string, TokenPattern[]>, source: string, offset: number) =>
+  (patterns.get(source[offset]) ?? [])
     .map((pattern) => ({
-      kind: getKind(pattern[0]),
-      length: Math.max(...pattern[1].map((regex) => getMatchLength(regex, source, offset))),
+      kind: pattern.kind,
+      length: getMatchLength(pattern.regex, source, offset),
     }))
     .reduce(getLongerMatch, { kind: -1, length: 0 });
 
 const matchSpecToken = (source: string, offset: number) => {
-  const literalLength = LITERAL_LENGTHS.find((length) =>
+  const literalLength = LITERAL_LENGTHS.get(source[offset])?.find((length) =>
     LITERALS.has(source.slice(offset, offset + length)),
   );
   const pattern = matchPatterns(SPEC_PATTERNS, source, offset);
@@ -439,7 +470,7 @@ export const createSanyLexer = (source: string, startMode = "DEFAULT") => {
     nextOffset = offset;
     return chainStart === source.length ? undefined : getLexicalError(chainStart, offset, "");
   };
-  const getSkippingToken = (patterns: [string, RegExp[]][]): SanyToken => {
+  const getSkippingToken = (patterns: Map<string, TokenPattern[]>): SanyToken => {
     while (nextOffset < source.length) {
       const match = matchPatterns(patterns, source, nextOffset);
       if (match.length > 0) {
