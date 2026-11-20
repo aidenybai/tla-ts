@@ -11,6 +11,28 @@ const checkModule = (body: string, config: string) =>
     config: `INIT Init\nNEXT Next\n${config}`,
   });
 
+const checkRegisterAlias = (
+  setup: string,
+  invariant: string,
+  config: string,
+  maxSetSize: number | undefined,
+) =>
+  check({
+    source: `---- MODULE M ----\nEXTENDS Naturals, TLC\nVARIABLE x\n${setup}\nNext == x < 3 /\\ x' = x + 1 /\\ TLCSet(1, TLCGet(1) + 1)\nInv == ${invariant}\nAlias == [x |-> x, register |-> TLCGet(1)]\n====`,
+    config: `INIT Init\nNEXT Next\nALIAS Alias\n${config}`,
+    maxSetSize,
+  });
+
+const getAliasRegisters = async (
+  setup: string,
+  invariant: string,
+  config: string,
+  maxSetSize: number | undefined,
+) =>
+  (await checkRegisterAlias(setup, invariant, config, maxSetSize)).violation?.trace.map((step) =>
+    formatValue(step.state.register),
+  );
+
 const formatTrace = (trace: TraceStep[] | undefined) =>
   (trace ?? []).map((step) =>
     Object.entries(step.state).map(([name, value]) => `${name} = ${formatValue(value)}`),
@@ -55,6 +77,37 @@ describe("ALIAS matches TLC", () => {
       ["a = 0", "b = TRUE"],
     ]);
   });
+
+  it.each([
+    [
+      "an invariant",
+      "Init == x = 0 /\\ TLCSet(1, 0)",
+      "x < 3",
+      "INVARIANT Inv",
+      ["1", "1", "2", "3"],
+    ],
+    ["a deadlock", "Init == x = 0 /\\ TLCSet(1, 0)", "TRUE", "", ["2", "2", "2", "3"]],
+    [
+      "an initial state's successor",
+      "Init == x = 0 /\\ TLCSet(1, 0)",
+      "x < 1",
+      "INVARIANT Inv",
+      ["1", "2"],
+    ],
+    [
+      "an invariant after ASSUME sets the register",
+      "ASSUME TLCSet(1, 0)\nInit == x = 0",
+      "x < 3",
+      "INVARIANT Inv",
+      ["4", "4", "5", "6"],
+    ],
+  ])(
+    "aliases each state of a trace for %s as TLC's TLCTrace#printTrace rebuilds it, so the alias reads the registers set by then",
+    async (_name, setup, invariant, config, registers) => {
+      expect(await getAliasRegisters(setup, invariant, config, undefined)).toEqual(registers);
+      expect(await getAliasRegisters(setup, invariant, config, 1_000_000)).toEqual(registers);
+    },
+  );
 
   it("adds _ALIASEvalError to the state when the alias fails", async () => {
     const next = "Next == x < 1 /\\ x' = x + 1\nArgument(n) == [n |-> n]\nConstant == [c |-> 1]";
