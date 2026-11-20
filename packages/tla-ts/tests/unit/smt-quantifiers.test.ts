@@ -294,6 +294,26 @@ describe("the model finder, as Z3 5.3.2 cleans up its instantiation sets", () =>
   });
 });
 
+describe("the model finder, as Z3 5.3.2 reads a recursive function", () => {
+  it("treats a call with a ground recursion argument as uninterpreted", () => {
+    expect(
+      run([
+        "(declare-datatypes ((L 0)) (((nil) (cons (hd Int) (tl L)))))",
+        "(declare-sort U 0)",
+        "(declare-fun val (U) Int)",
+        "(define-fun-rec mem ((u U) (l L)) Bool (ite ((_ is nil) l) false (or (= (val u) (hd l)) (mem u (tl l)))))",
+        "(declare-const a U)",
+        "(declare-const b U)",
+        "(declare-const c U)",
+        "(assert (distinct (val a) (val b) (val c)))",
+        "(assert (forall ((x U)) (mem x (cons 1 (cons 2 nil)))))",
+        "(check-sat)",
+        "(get-info :rlimit)",
+      ]),
+    ).toEqual(["unsat", "(:rlimit 5028)"]);
+  });
+});
+
 describe("e-matching, as Z3 5.3.2 counts its steps", () => {
   it("counts the steps of the matcher and of the instantiation queue", () => {
     const lines = [
