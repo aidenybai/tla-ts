@@ -1,4 +1,7 @@
 import { check, formatValue, parseModule, TlaError, type CheckResult, type Value } from "tla-ts";
+import type { CompileResponse } from "./compile-worker";
+import type { EscoreHost } from "../../tla-ts/src/typescript/spec/prepare";
+import type { EscoreRequest } from "./escore-worker";
 import { getErrorResult } from "./run-error";
 import { getSearch, type Search } from "./search";
 
@@ -50,21 +53,31 @@ const getStateText = (state: Record<string, Value>) =>
     .map(([name, value]) => `${name} = ${formatValue(value)}`)
     .join(", ");
 
-// On ESCore, the worker prepares ESCore's runtime as it loads, and parses TypeScript's declaration
-// files, and a run compiles its TypeScript file again, since its prepared modules don't travel
-// between workers.
-const escore = __TLA_TS_ESCORE__
-  ? Promise.all([
-      import("./escore").then((loaded) => loaded.loadEscoreRuntime()),
-      import("virtual:typescript-libraries"),
-      import("../../tla-ts/src/typescript/program"),
-      import("../../tla-ts/src/typescript/spec/api"),
-    ]).then(([runtime, libraries, program, api]) => ({
-      runtime,
-      library: program.createLibrary(libraries.default),
-      compile: api.compileEscore,
-    }))
+// On ESCore, the worker compiles as well as checks: it prepares ESCore's runtime from the host that
+// the build recorded, the realm of the Node that built the site, which it fetches as it starts,
+// while it loads the compiler, and parses TypeScript's declaration files, for every compile and
+// run. A run compiles its TypeScript file again, which costs less than keeping the specs it
+// compiled.
+const host: Promise<EscoreHost> | undefined = __TLA_TS_ESCORE__
+  ? fetch(new URL(`${import.meta.env.BASE_URL}escore-host.json`, import.meta.url)).then(
+      (response) => response.json(),
+    )
   : undefined;
+const escore =
+  host === undefined
+    ? undefined
+    : Promise.all([
+        import("./escore"),
+        import("virtual:typescript-libraries"),
+        import("../../tla-ts/src/typescript/program"),
+        import("../../tla-ts/src/typescript/spec/api"),
+        import("../../tla-ts/src/typescript/spec/prepare"),
+      ]).then(async ([loaded, libraries, program, api, prepare]) => ({
+        library: program.createLibrary(libraries.default),
+        runtime: prepare.prepareHostRuntime(await host),
+        compile: api.compileEscore,
+        getCompilation: loaded.getEscoreCompilation,
+      }));
 
 // The spec that a run checks, and the text of the module that the page shows of it, whose lines a
 // result marks: on ESCore, the module of the program's code.
@@ -130,9 +143,32 @@ const getCheckResult = async (request: RunRequest): Promise<RunResult> => {
   };
 };
 
-self.onmessage = async (event: MessageEvent<RunRequest>) => {
+const getCompiled = async (source: string, fileName: string): Promise<CompileResponse> => {
+  const loaded = await escore;
+  if (loaded === undefined)
+    return { source, fileName, error: "This site compiles in its own worker" };
   try {
-    self.postMessage(await getCheckResult(event.data));
+    return {
+      source,
+      fileName,
+      compilation: loaded.getCompilation(source, fileName, loaded.runtime, loaded.library),
+    };
+  } catch (error) {
+    if (!(error instanceof TlaError)) throw error;
+    return { source, fileName, error: error.message };
+  }
+};
+
+self.onmessage = async (event: MessageEvent<EscoreRequest>) => {
+  const request = event.data;
+  if ("compile" in request) {
+    self.postMessage({
+      compiled: await getCompiled(request.compile.source, request.compile.fileName),
+    });
+    return;
+  }
+  try {
+    self.postMessage(await getCheckResult(request));
   } catch (error) {
     if (!(error instanceof TlaError)) throw error;
     self.postMessage(getErrorResult(error.message));

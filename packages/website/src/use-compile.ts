@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { compilations, initial } from "virtual:compilations";
 import type { CompileRequest, CompileResponse } from "./compile-worker";
+import { compileOnEscore, listenToCompiles } from "./escore-worker";
 import type { createHighlighter } from "./highlighter";
 
 interface CompileState {
@@ -17,25 +18,33 @@ export const useCompile = (source: string, fileName: string) => {
   const [precompiled, setPrecompiled] = useState(() => new Map([[initial.fileName, initial]]));
   const [isStarted, setIsStarted] = useState(false);
   const [highlight, setHighlight] = useState<Awaited<ReturnType<typeof createHighlighter>>>();
-  const workerRef = useRef<Worker | undefined>(undefined);
+  const workerRef = useRef<Pick<Worker, "postMessage"> | undefined>(undefined);
   const built = precompiled.get(fileName);
   const isEdited =
     compilations[fileName] === undefined || (built !== undefined && built.source !== source);
 
   useEffect(() => {
     if (!isStarted) return;
-    const worker = new Worker(new URL("./compile-worker.ts", import.meta.url), { type: "module" });
     const receive = (response: CompileResponse) =>
       setState((previous) => ({
         response,
         compiled: response.compilation ? response : previous.compiled,
       }));
+    const loadHighlighter = () =>
+      void import("./highlighter")
+        .then((loaded) => loaded.createHighlighter())
+        .then((nextHighlight) => setHighlight(() => nextHighlight));
+    // On ESCore, the worker that checks compiles too.
+    if (__TLA_TS_ESCORE__) {
+      workerRef.current = { postMessage: compileOnEscore };
+      loadHighlighter();
+      return listenToCompiles(receive);
+    }
+    const worker = new Worker(new URL("./compile-worker.ts", import.meta.url), { type: "module" });
     worker.onmessage = (event: MessageEvent<CompileResponse>) => receive(event.data);
     worker.onerror = (event) => receive({ source: "", fileName: "", error: event.message });
     workerRef.current = worker;
-    void import("./highlighter")
-      .then((loaded) => loaded.createHighlighter())
-      .then((nextHighlight) => setHighlight(() => nextHighlight));
+    loadHighlighter();
     return () => worker.terminate();
   }, [isStarted]);
 
