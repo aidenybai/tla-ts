@@ -11,27 +11,19 @@ const checkModule = (body: string, config: string) =>
     config: `INIT Init\nNEXT Next\n${config}`,
   });
 
-const checkRegisterAlias = (
-  setup: string,
-  invariant: string,
-  config: string,
-  maxSetSize: number | undefined,
-) =>
-  check({
-    source: `---- MODULE M ----\nEXTENDS Naturals, TLC\nVARIABLE x\n${setup}\nNext == x < 3 /\\ x' = x + 1 /\\ TLCSet(1, TLCGet(1) + 1)\nInv == ${invariant}\nAlias == [x |-> x, register |-> TLCGet(1)]\n====`,
-    config: `INIT Init\nNEXT Next\nALIAS Alias\n${config}`,
-    maxSetSize,
-  });
-
 const getAliasRegisters = async (
   setup: string,
   invariant: string,
   config: string,
   maxSetSize: number | undefined,
 ) =>
-  (await checkRegisterAlias(setup, invariant, config, maxSetSize)).violation?.trace.map((step) =>
-    formatValue(step.state.register),
-  );
+  (
+    await check({
+      source: `---- MODULE M ----\nEXTENDS Naturals, TLC\nVARIABLE x\n${setup}\nNext == x < 3 /\\ x' = x + 1 /\\ TLCSet(1, TLCGet(1) + 1)\nInv == ${invariant}\nAlias == [x |-> x, register |-> TLCGet(1)]\n====`,
+      config: `INIT Init\nNEXT Next\nALIAS Alias\n${config}`,
+      maxSetSize,
+    })
+  ).violation?.trace.map((step) => formatValue(step.state.register));
 
 const formatTrace = (trace: TraceStep[] | undefined) =>
   (trace ?? []).map((step) =>

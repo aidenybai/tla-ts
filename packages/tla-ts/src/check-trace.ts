@@ -232,7 +232,7 @@ export const createTraceBuilder = (context: TraceContext) => {
       );
     const loopPosition = loopStart ?? 0;
     const isLasso = known === 0 && !is174;
-    const rebuiltFirst = isLasso ? Math.min(loopPosition + 1, steps.length) : rebuilt;
+    const rebuiltFirst = isLasso ? loopPosition + 1 : rebuilt;
     const aliasLag = isLasso ? 1 : 0;
     const isAliasedInTurn = (known > 0 || isLasso) && alias !== undefined;
     const prefixActions = steps
@@ -254,7 +254,7 @@ export const createTraceBuilder = (context: TraceContext) => {
           isAliasedInTurn && !step.result.error ? getAlias(alias, position - aliasLag) : undefined,
       };
     });
-    const lastAliases = isAliasedInTurn && aliasLag > 0 ? [getAlias(alias, last)] : [];
+    const lastAliases = isAliasedInTurn && isLasso ? [getAlias(alias, last)] : [];
     const stepActions = [...prefixActions, ...knownActions];
     const outputs = stepActions.map((step) => step.lines);
     const failed = stepActions[last].result.error;
