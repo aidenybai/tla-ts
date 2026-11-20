@@ -3675,69 +3675,68 @@ const toPrintedFunction = (value: LazyFunctionValue) => {
 };
 
 export const formatNormalizedCopies = (values: Value[]) => {
-  const writtenFunctions: [FunctionValue, Value[]][] = [];
-  const copiedFunctions: LazyFunctionValue[] = [];
   // TLC prints a deep copy, which copies functions but shares sets, so a set and the functions inside it stay normalized and cached.
-  const normalize = (value: Value, isWrittenOrderKept: boolean, isCopied: boolean): void => {
-    if (typeof value !== "object") return;
-    const normalizeInner = (inner: Value) => normalize(inner, isWrittenOrderKept, false);
+  const copy = (value: Value, isWrittenOrderKept: boolean, isCopied: boolean): Value => {
+    if (typeof value !== "object") return value;
+    const normalizeInner = (inner: Value) => {
+      copy(inner, isWrittenOrderKept, false);
+    };
     switch (value.kind) {
       case "Set":
         value.elements.forEach(normalizeInner);
         value.isNormalized = true;
-        return;
+        return value;
       case "MixedSet":
         value.elements.forEach(normalizeInner);
         toFiniteSet(value);
-        return;
-      case "Function": {
-        const isRangeWrittenOrderKept = isWrittenOrderKept || getFunctionClass(value) === "lambda";
-        value.range.forEach((inner) => normalize(inner, isRangeWrittenOrderKept, isCopied));
-        if (isWrittenOrderKept || value.writtenKeys === undefined) return;
-        if (isCopied) writtenFunctions.push([value, value.writtenKeys]);
-        value.writtenKeys = undefined;
-        return;
-      }
+        return value;
+      case "Function":
+        return copyFunction(value, isWrittenOrderKept, isCopied);
       case "LazyFunction":
-        if (value.enumerated) return normalize(value.enumerated, true, isCopied);
-        if (isCopied) copiedFunctions.push(value);
+        if (value.enumerated) {
+          const enumerated = copyFunction(value.enumerated, true, isCopied);
+          return isCopied ? { ...value, enumerated } : value;
+        }
         normalizeInner(value.domain);
-        return;
+        return isCopied ? { ...value } : value;
       case "SetOperation":
         normalizeInner(value.left);
         normalizeInner(value.right);
-        return;
+        return value;
       case "FunctionSet":
         normalizeInner(value.domain);
         normalizeInner(value.range);
-        return;
+        return value;
       case "RecordSet":
         value.sets.forEach(normalizeInner);
-        return;
+        return value;
       case "ProductSet":
         value.factors.forEach(normalizeInner);
-        return;
+        return value;
       case "Subset":
       case "Union":
       case "FilteredSet":
       case "SequenceSet":
         normalizeInner(value.base);
-        return;
+        return value;
       default:
-        return;
+        return value;
     }
   };
-  try {
-    values.forEach((value) => normalize(value, false, true));
-    return values.map((value) => formatValue(value, true, true));
-  } finally {
-    copiedFunctions.forEach((copied) => {
-      copied.enumerated = undefined;
-    });
-    writtenFunctions.forEach((entry) => {
-      entry[0].writtenKeys = entry[1];
-    });
-  }
+  const copyFunction = (
+    value: FunctionValue,
+    isWrittenOrderKept: boolean,
+    isCopied: boolean,
+  ): FunctionValue => {
+    const isRangeWrittenOrderKept = isWrittenOrderKept || getFunctionClass(value) === "lambda";
+    const range = value.range.map((inner) => copy(inner, isRangeWrittenOrderKept, isCopied));
+    const writtenKeys = isWrittenOrderKept ? value.writtenKeys : undefined;
+    if (isCopied) return { ...value, range, writtenKeys };
+    value.writtenKeys = writtenKeys;
+    return value;
+  };
+  const copies = values.map((value) => copy(value, false, true));
+  return copies.map((value) => formatValue(value, true, true));
 };
 
 export const formatValue = (value: Value, isStrict = false, isNormalized = false): string => {
