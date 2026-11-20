@@ -77,6 +77,55 @@ const DEFINITIONS = [
   CASE k.type = "symbol" -> SymbolDescriptiveString(s, k).value
     [] k.type \\in {"string", "number", "boolean", "undefined", "null"} /\\ k # HostTime -> PrimitiveToUnits(k)
     [] OTHER -> Empty`,
+  // V8's object in a message: an array as [object Array], an object of Object.prototype as
+  // #<Object>, and one of no prototype as [object Object], or Empty for another.
+  `ObjectDisplay(s, o) ==
+  CASE O(s, o).class = "array" /\\ O(s, o).proto = Intrinsic(s, "ArrayPrototype") -> N("[object Array]")
+    [] O(s, o).class = "ordinary" /\\ O(s, o).proto = Intrinsic(s, "ObjectPrototype") -> N("#<Object>")
+    [] O(s, o).class = "ordinary" /\\ O(s, o).proto = Null -> N("[object Object]")
+    [] OTHER -> Empty`,
+  // Whether no object on a prototype chain of plain objects and arrays holds the key k.
+  `NoneOnChain(s, p, k) ==
+  p = Null \\/ (O(s, p).class \\in {"ordinary", "array", "immutableProto"} /\\ OrdinaryGetOwnProperty(O(s, p), k) = Absent /\\ NoneOnChain(s, O(s, p).proto, k))`,
+  // The TypeError of a strict write of k to o that [[Set]] refused, with V8's message where its
+  // cause is the object's own: a read-only property, a getter without a setter, or an object
+  // that takes no new property.
+  `SetFailure(s, o, k) ==
+  IF ~IsObject(o) \\/ O(s, o).class \\notin {"ordinary", "array"} \\/ MessageKey(s, k) = Empty THEN ThrowTypeError(s)
+  ELSE LET own == OrdinaryGetOwnProperty(O(s, o), k)
+           display == ObjectDisplay(s, o)
+       IN CASE own = Absent /\\ ~O(s, o).ext /\\ NoneOnChain(s, O(s, o).proto, k) ->
+                 ThrowMessage(s, "TypeError", N("Cannot add property ") \\o MessageKey(s, k) \\o N(", object is not extensible"))
+            [] own # Absent /\\ own.writable = False /\\ display # Empty ->
+                 ThrowMessage(s, "TypeError", N("Cannot assign to read only property '") \\o MessageKey(s, k) \\o N("' of object '") \\o display \\o N("'"))
+            [] own # Absent /\\ IsAccessorDescriptor(own) /\\ own.set = Undefined /\\ display # Empty ->
+                 ThrowMessage(s, "TypeError", N("Cannot set property ") \\o MessageKey(s, k) \\o N(" of ") \\o display \\o N(" which has only a getter"))
+            [] OTHER -> ThrowTypeError(s)`,
+  // The TypeError of Object.defineProperty that [[DefineOwnProperty]] refused on a plain object.
+  `DefineFailure(s, o, k) ==
+  IF ~IsObject(o) \\/ O(s, o).class # "ordinary" \\/ MessageKey(s, k) = Empty THEN ThrowTypeError(s)
+  ELSE IF OrdinaryGetOwnProperty(O(s, o), k) = Absent
+  THEN IF O(s, o).ext THEN ThrowTypeError(s) ELSE ThrowMessage(s, "TypeError", N("Cannot define property ") \\o MessageKey(s, k) \\o N(", object is not extensible"))
+  ELSE ThrowMessage(s, "TypeError", N("Cannot redefine property: ") \\o MessageKey(s, k))`,
+  // GetIterator of a value that V8 names by its text where it isn't iterable.
+  `GetIteratorNamed(s, v, text) ==
+  IF IsNullish(v) THEN ThrowMessage(s, "TypeError", text \\o N(" is not iterable"))
+  ELSE LET f == GetValueProperty(s, v, SymIterator) IN
+  IF IsAbrupt(f) THEN f
+  ELSE IF ~IsCallable(f.s, Val(f)) THEN ThrowMessage(f.s, "TypeError", text \\o N(" is not iterable"))
+  ELSE LET it == Call(f.s, Val(f), v, <<>>) IN
+  IF IsAbrupt(it) THEN it
+  ELSE IF ~IsObject(Val(it)) THEN ThrowMessage(it.s, "TypeError", N("Result of the Symbol.iterator method is not an object"))
+  ELSE LET next == Get(it.s, Val(it), SV("next")) IN
+       IF IsAbrupt(next) THEN next ELSE Ok(next.s, JsIterator(Val(it), Val(next)))`,
+  // GetIterator of a call's spread argument, where V8 names no text but for a nullish value.
+  `GetIteratorSpread(s, v) ==
+  IF IsNullish(v) THEN GetIterator(s, v, "sync")
+  ELSE LET f == GetValueProperty(s, v, SymIterator) IN
+  IF IsAbrupt(f) THEN f
+  ELSE IF ~IsCallable(f.s, Val(f)) THEN ThrowMessage(f.s, "TypeError", N("Spread syntax requires ...iterable[Symbol.iterator] to be a function"))
+  ELSE GetIteratorFromMethod(f.s, v, Val(f))`,
+  `IsIntegralNumber(v) == v.type = "number" /\\ v # HostTime /\\ NumIsFinite(v.value) /\\ NumIsIntegral(v.value)`,
   `BeforeInitialization(name) == N("Cannot access '") \\o name \\o N("' before initialization")`,
   // An error's own stack accessor, as V8 gives each error one, of the two functions that the realm
   // keeps in the slots of %Error.prototype%.
@@ -1625,6 +1674,82 @@ const MESSAGE_PATCHES: { name: string; from: string; to: string; isEvery?: boole
          IF IsNullish(a1) THEN ThrowTypeError(s)`,
     to: `[] m = "setPrototypeOf" ->
          IF IsNullish(a1) THEN ThrowMessage(s, "TypeError", N("Object.setPrototypeOf called on null or undefined"))`,
+  },
+  {
+    name: "PutValue",
+    from: `ELSE IF Val(r) = False /\\ v.strict THEN ThrowTypeError(r.s)`,
+    to: `ELSE IF Val(r) = False /\\ v.strict THEN SetFailure(r.s, Val(base), Val(k))`,
+  },
+  {
+    name: "Set",
+    from: `ELSE IF Val(r) = False /\\ throw THEN ThrowTypeError(r.s)`,
+    to: `ELSE IF Val(r) = False /\\ throw THEN SetFailure(r.s, v, k)`,
+  },
+  {
+    name: "ObjectBuiltin",
+    from: `LET r == DefinePropertyOrThrow(d.s, a1, Val(k), Val(d)) IN`,
+    to: `LET r == LET defined == DefineOwnProperty(d.s, a1, Val(k), Val(d)) IN
+                   IF IsAbrupt(defined) \\/ Val(defined) = True THEN defined ELSE DefineFailure(defined.s, a1, Val(k)) IN`,
+  },
+  {
+    name: "ForInOfHeadThen",
+    from: `  ELSE LET it == GetIterator(r.s, Val(r), IF loop.iterationKind = "async-iterate" THEN "async" ELSE "sync") IN`,
+    to: `  ELSE LET it == IF loop.iterationKind = "iterate" /\\ "text" \\in DOMAIN loop /\\ loop.text # Empty
+                 THEN GetIteratorNamed(r.s, Val(r), loop.text)
+                 ELSE GetIterator(r.s, Val(r), IF loop.iterationKind = "async-iterate" THEN "async" ELSE "sync") IN`,
+  },
+  {
+    name: "InitializeTypedArrayFromArrayBuffer",
+    from: `  IN IF IsAbrupt(off) THEN off
+     ELSE IF ~NumIsZero(NumRemainder(Val(off).value, NumFromInt(size))) THEN ThrowError(off.s, "RangeError")`,
+    to: `  IN IF IsAbrupt(off) /\\ IsIntegralNumber(byteOffset) THEN ThrowMessage(s, "RangeError", N("Start offset ") \\o NumToString(byteOffset.value) \\o N(" is outside the bounds of the buffer"))
+     ELSE IF IsAbrupt(off) THEN off
+     ELSE IF ~NumIsZero(NumRemainder(Val(off).value, NumFromInt(size))) THEN ThrowMessage(off.s, "RangeError", N("start offset of ") \\o TypedArrayNameUnits(O(s, ta).slots.name) \\o N(" should be a multiple of ") \\o IntUnits(size))`,
+  },
+  {
+    name: "InitializeTypedArrayFromArrayBuffer",
+    from: `     IF IsAbrupt(newLength) THEN newLength`,
+    to: `     IF IsAbrupt(newLength) /\\ IsIntegralNumber(length) THEN ThrowMessage(off.s, "RangeError", N("Invalid typed array length: ") \\o NumToString(length.value))
+     ELSE IF IsAbrupt(newLength) THEN newLength`,
+  },
+  {
+    name: "InitializeTypedArrayFromArrayBuffer",
+    from: `          IN IF NumLess(NumFromInt(bufferByteLength), offset) THEN ThrowError(t, "RangeError")`,
+    to: `          IN IF NumLess(NumFromInt(bufferByteLength), offset) THEN ThrowMessage(t, "RangeError", N("Start offset ") \\o NumToString(offset) \\o N(" is outside the bounds of the buffer"))`,
+  },
+  {
+    name: "InitializeTypedArrayFromArrayBuffer",
+    from: `               IF bufferByteLength % size # 0 THEN ThrowError(t, "RangeError")`,
+    to: `               IF bufferByteLength % size # 0 THEN ThrowMessage(t, "RangeError", N("byte length of ") \\o TypedArrayNameUnits(O(s, ta).slots.name) \\o N(" should be a multiple of ") \\o IntUnits(size))`,
+  },
+  {
+    name: "InitializeTypedArrayFromArrayBuffer",
+    from: `                     NumToSmallInt(offset) + NumToSmallInt(Val(newLength).value) * size > bufferByteLength
+             THEN ThrowError(t, "RangeError")`,
+    to: `                     NumToSmallInt(offset) + NumToSmallInt(Val(newLength).value) * size > bufferByteLength
+             THEN ThrowMessage(t, "RangeError", N("Invalid typed array length: ") \\o NumToString(Val(newLength).value))`,
+  },
+  {
+    name: "TypedArrayConstruct",
+    from: `  ELSE LET n == ToIndex(s, args[1]) IN IF IsAbrupt(n) THEN n ELSE`,
+    to: `  ELSE LET n == ToIndex(s, args[1]) IN
+       IF IsAbrupt(n) /\\ IsIntegralNumber(args[1]) THEN ThrowMessage(s, "RangeError", N("Invalid typed array length: ") \\o NumToString(args[1].value))
+       ELSE IF IsAbrupt(n) THEN n ELSE`,
+  },
+  {
+    name: "TypedArrayBuiltin",
+    from: `         ELSE IF NumLess(Val(offset).value, PosZero) THEN ThrowError(offset.s, "RangeError")`,
+    to: `         ELSE IF NumLess(Val(offset).value, PosZero) THEN ThrowMessage(offset.s, "RangeError", N("offset is out of bounds"))`,
+  },
+  {
+    name: "SetTypedArrayFromTypedArray",
+    from: `  THEN ThrowError(sourceLength.s, "RangeError")`,
+    to: `  THEN ThrowMessage(sourceLength.s, "RangeError", N("offset is out of bounds"))`,
+  },
+  {
+    name: "SetTypedArrayFromArrayLike",
+    from: `  THEN ThrowError(sourceLength.s, "RangeError")`,
+    to: `  THEN ThrowMessage(sourceLength.s, "RangeError", N("offset is out of bounds"))`,
   },
 ];
 

@@ -933,9 +933,15 @@ export const specialize = (
   // The call or new of a callee that V8 names by its source text where the callee isn't callable,
   // as a name or a chain of property names, and otherwise the call that ESCore's message leaves
   // to the host.
+  // The text that V8 prints of an expression in a message, a name or a chain of property names,
+  // or undefined for another.
+  const getPrintedText = (node: ts.Expression) =>
+    /^[A-Za-z_$][\w$]*(?:\.[A-Za-z_$][\w$]*)*$/.test(node.getText()) &&
+    !/^super\b/.test(node.getText())
+      ? node.getText()
+      : undefined;
   const getNamedCall = (callee: ts.Expression, call: string, args: string) =>
-    /^[A-Za-z_$][\w$]*(?:\.[A-Za-z_$][\w$]*)*$/.test(callee.getText()) &&
-    !/\?\.|^super\b/.test(callee.getText())
+    getPrintedText(callee) !== undefined
       ? `${call === "CallArgumentsAt" ? "CallNamedAt" : "NewNamedAt"}(${args}, ${getUnits(callee.getText())})`
       : `${call}(${args})`;
 
@@ -1167,7 +1173,7 @@ export const specialize = (
       if (ts.isSpreadElement(argument)) {
         steps.push(
           `LET ${name} == ${value(argument.expression, scope)(state, "ctx")} IN IF IsAbrupt(${name}) THEN ${name} ELSE`,
-          `LET ${name}i == GetIterator(${name}.s, Val(${name}), "sync") IN IF IsAbrupt(${name}i) THEN ${name}i ELSE`,
+          `LET ${name}i == GetIteratorSpread(${name}.s, Val(${name})) IN IF IsAbrupt(${name}i) THEN ${name}i ELSE`,
           `LET ${name}l == IteratorToList(${name}i.s, Val(${name}i), <<>>) IN IF IsAbrupt(${name}l) THEN ${name}l ELSE`,
         );
         values.push(`Val(${name}l)`);
@@ -1802,7 +1808,7 @@ export const specialize = (
       if (ts.isSpreadElement(element)) {
         steps.push(
           `LET ${name} == ${value(element.expression, scope)(state, "ctx")} IN IF IsAbrupt(${name}) THEN ${name} ELSE`,
-          `LET ${name}i == GetIterator(${name}.s, Val(${name}), "sync") IN IF IsAbrupt(${name}i) THEN ${name}i ELSE`,
+          `LET ${name}i == ${getPrintedText(element.expression) === undefined ? `GetIterator(${name}.s, Val(${name}), "sync")` : `GetIteratorNamed(${name}.s, Val(${name}), ${getUnits(getPrintedText(element.expression) ?? "")})`} IN IF IsAbrupt(${name}i) THEN ${name}i ELSE`,
           `LET ${name}p == SpreadIntoArray(${name}i.s, Val(a), Val(${name}i), ${index}) IN IF IsAbrupt(${name}p) THEN ${name}p ELSE`,
         );
         state = `${name}p.s`;
@@ -2824,7 +2830,7 @@ export const specialize = (
         : `LET env == NewDeclarativeEnvironment(s, ctx.lex) IN ${expression(`BlockBindNames(env.s, env.e, ${getSequence(tdz.map(getUnits))}, FALSE)`, "WithLex(ctx, env.e)")}`;
     return defineCode(
       "ForInOf",
-      `BreakTargetThen(ForInOfHeadThen(ctx, [id |-> ${id}, labels |-> ${labelSet}, lets |-> <<>>, it |-> Empty, iterationKind |-> "${isEnumerate ? "enumerate" : isAwait ? "async-iterate" : "iterate"}", iteratorKind |-> "${isAwait ? "async" : "sync"}"], ${head}))`,
+      `BreakTargetThen(ForInOfHeadThen(ctx, [id |-> ${id}, labels |-> ${labelSet}, lets |-> <<>>, it |-> Empty, iterationKind |-> "${isEnumerate ? "enumerate" : isAwait ? "async-iterate" : "iterate"}", iteratorKind |-> "${isAwait ? "async" : "sync"}", text |-> ${isEnumerate || isAwait || getPrintedText(node.expression) === undefined ? "Empty" : getUnits(getPrintedText(node.expression) ?? "")}], ${head}))`,
     );
   };
 

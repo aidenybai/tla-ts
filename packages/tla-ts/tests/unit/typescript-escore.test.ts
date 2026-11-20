@@ -1656,6 +1656,51 @@ const result = [
     });
   });
 
+  describe("throws V8's message for a refused write, an iteration, and a typed array's bounds", () => {
+    const getSource = (expected: string) => `
+const read = (run: () => unknown) => {
+  try {
+    run();
+    return "none";
+  } catch (error) {
+    return (error as Error).message;
+  }
+};
+type Loose = Record<string | symbol, unknown>;
+const frozen = Object.freeze({ a: 1 }) as Loose;
+const closed = Object.preventExtensions({}) as Loose;
+const getter = { get a() { return 1; } } as Loose;
+const number = 5 as unknown as number[];
+const result = [
+  read(() => { frozen.a = 2; }),
+  read(() => { closed.b = 1; }),
+  read(() => { getter.a = 2; }),
+  read(() => { (Object.freeze([]) as number[]).push(1); }),
+  read(() => Object.defineProperty(frozen, "a", { value: 2 })),
+  read(() => [...number]),
+  read(() => { for (const item of number) void item; }),
+  read(() => Math.max(...number)),
+  read(() => new Uint8Array(new ArrayBuffer(4), 8)),
+  read(() => new Int32Array(new ArrayBuffer(4), 2)),
+  read(() => new Uint8Array(4).set([1], -1)),
+  read(() => new Uint8Array(-1)),
+].join("|");
+      if (result !== ${JSON.stringify(expected)}) throw new Error(result);
+    `;
+    const expected =
+      "Cannot assign to read only property 'a' of object '#<Object>'|Cannot add property b, object is not extensible|Cannot set property a of #<Object> which has only a getter|Cannot add property 0, object is not extensible|Cannot redefine property: a|number is not iterable|number is not iterable|Spread syntax requires ...iterable[Symbol.iterator] to be a function|Start offset 8 is outside the bounds of the buffer|start offset of Int32Array should be a multiple of 4|offset is out of bounds|Invalid typed array length: -1";
+
+    it("agrees with Node", async () => {
+      expect((await checkScript(getSource(expected))).message).toBeUndefined();
+    });
+
+    it("rejects another result", async () => {
+      expect(
+        (await checkScript(getSource(expected.replace("number is", "5 is")))).message,
+      ).toContain(THREW);
+    });
+  });
+
   describe("names a callee that isn't callable by its text, as V8 does", () => {
     const getSource = (expected: string) => `
 const read = (run: () => unknown) => {
