@@ -319,7 +319,6 @@ export const compileTypeScriptFile = async (path: string): Promise<CompiledInput
     model !== undefined && !model.isScript
       ? model
       : compileToEscore(source, path, runtime, true, {
-          isNodeEntry: true,
           steps: getEscoreScriptSteps(siteLocations, unsettledText, url, lines),
           entries: [],
         });

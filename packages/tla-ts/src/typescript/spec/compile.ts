@@ -43,9 +43,6 @@ export interface EscoreSteps {
   // Whether the host loads every file of code as an ES module, as test262's does, rather than as
   // Node does.
   isModuleHost?: boolean;
-  // Whether the entry runs as Node runs a file, as the ES module or the CommonJS module that its
-  // format makes it, rather than as the module or the script that the compile asks for.
-  isNodeEntry?: boolean;
 }
 
 interface CodeDefinition {
@@ -243,7 +240,7 @@ const loadFiles = (
   source: string,
   fileName: string,
   isModule: boolean,
-  host: Pick<EscoreSteps, "isModuleHost" | "isNodeEntry">,
+  host: Pick<EscoreSteps, "isModuleHost">,
 ): ProgramFile[] => {
   // Whether the host loads a file as an ES module or as CommonJS (see getModuleFormat).
   const getKind = (path: string, text: string): ProgramFile["kind"] =>
@@ -338,12 +335,16 @@ const loadFiles = (
       });
       continue;
     }
+    // A module entry that no file holds runs as an ES module, as no package's type or syntax
+    // makes it CommonJS for Node.
     const kind =
-      path !== entry || host.isNodeEntry === true
+      path !== entry
         ? getKind(path, text)
         : isScript
           ? "script"
-          : "module";
+          : ts.sys.fileExists(entry)
+            ? getKind(path, text)
+            : "module";
     const written = getSpecifiers(
       ts.createSourceFile(path, text, ts.ScriptTarget.ESNext, true),
       kind,

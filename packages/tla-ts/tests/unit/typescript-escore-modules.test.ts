@@ -90,7 +90,11 @@ const checkEntry = (files: Record<string, string>, entry: string) => {
   Object.entries(files).forEach((file) => writeFileSync(join(directory, file[0]), file[1]));
   const node = spawnSync(process.execPath, [join(directory, entry)], { encoding: "utf8" }).status;
   return new Promise<ModuleResult & { node: number | null }>((resolve) => {
-    worker.postMessage({ id: pending.length, path: join(directory, entry), isModule: true });
+    worker.postMessage({
+      id: pending.length,
+      path: join(directory, entry),
+      isModule: true,
+    });
     pending.push((result) => resolve({ ...result, node }));
   });
 };
@@ -1024,5 +1028,29 @@ describe("loads each kind of file as Node does", () => {
       "main.js",
     );
     expect([result.node, result.message]).toEqual([1, undefined]);
+  });
+
+  // Node runs a file of no module syntax, in a package that names no type, as CommonJS, in the
+  // function it wraps a module's code in, with Node's globals.
+  describe("runs a TypeScript file of no module syntax as CommonJS", () => {
+    const getFiles = (expected: string) => ({
+      "main.ts": `const kinds: string = [typeof process, typeof performance, typeof crypto, typeof Buffer, typeof require, typeof module, typeof __filename, this === module.exports].join();\nif (kinds !== "${expected}") throw new Error(kinds);\n`,
+    });
+
+    it("agrees with Node", async () => {
+      const result = await checkEntry(
+        getFiles("object,object,object,function,function,object,string,true"),
+        "main.ts",
+      );
+      expect([result.node, result.message]).toEqual([0, undefined]);
+    });
+
+    it("rejects another result", async () => {
+      const result = await checkEntry(
+        getFiles("undefined,undefined,undefined,undefined,undefined,undefined,undefined,false"),
+        "main.ts",
+      );
+      expect([result.node, result.message]).toEqual([1, expect.stringContaining(THREW)]);
+    });
   });
 });
