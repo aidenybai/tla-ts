@@ -952,6 +952,20 @@ ASSUME TLCFP(a) = -887695703
     expect(printed).toEqual(["<<0>>", "<<99>>", "<<0>>", "<<1>>", "<<99>>", "<<1>>"]);
   });
 
+  it("keeps the value JsonDeserialize read as TLC starts after the file changes, as TLC does", async () => {
+    const printed: string[] = [];
+    const files = new Map<string, string>();
+    await check({
+      source:
+        '---- MODULE M ----\nEXTENDS Naturals, TLC, Json\nVARIABLE x\nW == JsonSerialize("f.json", <<0>>)\nD == JsonDeserialize("f.json")\nInit == x = 0 /\\ W\nNext == x < 2 /\\ JsonSerialize("f.json", <<x + 10>>) /\\ PrintT(D) /\\ PrintT(JsonDeserialize("f.json")) /\\ x\' = x + 1\n====',
+      config: "INIT Init\nNEXT Next\nCHECK_DEADLOCK FALSE",
+      onPrint: (text) => printed.push(text),
+      readFile: (path) => files.get(path),
+      writeFile: (path, content) => files.set(path, String(content)),
+    });
+    expect(printed).toEqual(["<<0>>", "<<10>>", "<<0>>", "<<11>>"]);
+  });
+
   it("implements the TLCExt operators", async () => {
     const results = await Promise.all(
       ["Extensions", "ExtensionsShort"].map((name) => checkFixture("runtime", "Extensions", name)),
