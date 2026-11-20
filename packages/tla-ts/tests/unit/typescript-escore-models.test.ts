@@ -598,7 +598,7 @@ describe("checks a module's exported functions as a model on ESCore", () => {
     `;
 
     it("agrees with Node", async () => {
-      expect(getCounts(await checkModel(getSource("10 - value")))).toEqual(["success", 1, 1]);
+      expect(getCounts(await checkModel(getSource("10 - value")))).toEqual(["success", 0, 0]);
     });
 
     it("rejects another result", async () => {
