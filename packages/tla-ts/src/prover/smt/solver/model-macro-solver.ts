@@ -16,10 +16,11 @@ import {
   type AstManager,
   QUANTIFIER_FORALL,
 } from "./ast";
+import { assign, release } from "./expr-ref";
 import { FuncInterp, type ProtoModel } from "./proto-model";
 import { Rational } from "./rational";
 import type { Rewriter } from "./rewriter";
-import { replaceFreeVars } from "./var-subst";
+import { VarSubst } from "./var-subst";
 
 export interface CondMacro {
   decl: number;
@@ -89,18 +90,30 @@ const isQuasiMacroHead = (manager: AstManager, expr: number, numDecls: number) =
   return found.size === numDecls;
 };
 
-export const normalizeMacroDef = (manager: AstManager, head: number, expr: number) => {
-  const mapping = new Map<number, number>();
-  for (let index = 0; index < manager.getNumArgs(head); index++)
-    mapping.set(manager.values[manager.getArg(head, index)], index);
-  return [...mapping].every((entry) => entry[0] === entry[1])
-    ? expr
-    : replaceFreeVars(manager, expr, (variable, index, shift) => {
-        const target = mapping.get(index);
-        return target === undefined
-          ? variable
-          : manager.mkVar(target + shift, manager.sorts[variable]);
-      });
+// Z3's normalize_expr renames the variables with a var_subst, whose steps count toward the
+// resource limit. The caller owns the result.
+export const normalizeMacroDef = (
+  manager: AstManager,
+  head: number,
+  numDecls: number,
+  expr: number,
+) => {
+  const args = manager.getArgs(head);
+  if (args.every((arg, index) => manager.values[arg] === index)) return assign(manager, -1, expr);
+  const mapping = Array.from({ length: numDecls }, () => -1);
+  args.forEach((arg, index) => {
+    const varIndex = manager.values[arg];
+    mapping[numDecls - varIndex - 1] = assign(
+      manager,
+      -1,
+      varIndex === index ? arg : manager.mkVar(index, manager.sorts[arg]),
+    );
+  });
+  const subst = new VarSubst(manager, true);
+  const result = subst.apply(expr, mapping);
+  subst.release();
+  for (const entry of mapping) release(manager, entry);
+  return result;
 };
 
 const getHintHeadVars = (manager: AstManager, expr: number) => {
@@ -221,13 +234,21 @@ const collectCandidates = (manager: AstManager, rewriter: Rewriter, quantifier: 
     if (cond !== null) manager.decRef(cond);
   };
 
-  const insertMacro = (head: number, def: number, cond: number | null, isHint: boolean) =>
+  const insertMacro = (
+    head: number,
+    numDecls: number,
+    def: number,
+    cond: number | null,
+    isHint: boolean,
+  ) =>
     scope(() => {
-      const normDef = normalizeMacroDef(manager, head, def);
+      const normDef = normalizeMacroDef(manager, head, numDecls, def);
       const normCond =
-        cond !== null ? normalizeMacroDef(manager, head, cond) : isHint ? null : manager.trueExpr;
-      manager.incRef(normDef);
-      if (normCond !== null) manager.incRef(normCond);
+        cond !== null
+          ? normalizeMacroDef(manager, head, numDecls, cond)
+          : isHint
+            ? null
+            : assign(manager, -1, manager.trueExpr);
       candidates.push({
         decl: manager.decls[head],
         def: normDef,
@@ -246,7 +267,7 @@ const collectCandidates = (manager: AstManager, rewriter: Rewriter, quantifier: 
     isHint: boolean,
   ) => {
     if (isMacroHead(manager, head, manager.getNumArgs(head))) {
-      insertMacro(head, def, cond, isHint);
+      insertMacro(head, numDecls, def, cond, isHint);
       return;
     }
     const converted = manager.withTemporaries(
@@ -271,6 +292,7 @@ const collectCandidates = (manager: AstManager, rewriter: Rewriter, quantifier: 
         return {
           extraCond,
           newHead: manager.mkApp(manager.decls[head], newArgs, manager.sorts[head]),
+          numDecls: nextVarIndex,
         };
       },
       (result) =>
@@ -284,7 +306,7 @@ const collectCandidates = (manager: AstManager, rewriter: Rewriter, quantifier: 
           ? extraCond
           : manager.withTemporaries(() => mkAnd([cond, extraCond]));
     if (newCond === extraCond && extraCond !== null) manager.incRef(extraCond);
-    insertMacro(converted.newHead, def, newCond, isHint);
+    insertMacro(converted.newHead, converted.numDecls, def, newCond, isHint);
     if (newCond !== null) manager.decRef(newCond);
     if (extraCond !== null) manager.decRef(extraCond);
     manager.decRef(converted.newHead);

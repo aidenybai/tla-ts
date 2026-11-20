@@ -215,6 +215,21 @@ describe("the model finder, as Z3 5.3.2 cleans up its instantiation sets", () =>
       ]),
     ).toEqual(["unsat", "(:rlimit 378)"]);
   });
+
+  it("counts the steps that rename the variables of a macro candidate", () => {
+    expect(
+      run([
+        "(set-option :auto_config false)",
+        "(set-option :smt.mbqi true)",
+        "(declare-fun g (Int Int) Int)",
+        "(declare-const a Int)",
+        "(assert (forall ((x Int) (y Int)) (or (= (+ x 1) a) (<= y x) (= (g x y) 0))))",
+        "(assert (= (g 1 0) 1))",
+        "(check-sat)",
+        "(get-info :rlimit)",
+      ]),
+    ).toEqual(["sat", "(:rlimit 588)"]);
+  });
 });
 
 describe("e-matching, as Z3 5.3.2 counts its steps", () => {
