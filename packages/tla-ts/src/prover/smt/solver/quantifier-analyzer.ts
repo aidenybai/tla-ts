@@ -40,10 +40,6 @@ const isSameQInfo = (first: QInfo, second: QInfo) =>
 const getQInfoExpr = (info: QInfo) =>
   "term" in info ? info.term : "offset" in info ? info.offset : -1;
 
-const isSameSelect = (manager: AstManager, first: number, second: number) =>
-  manager.decls[first] === manager.decls[second] &&
-  manager.sorts[manager.getArg(first, 0)] === manager.sorts[manager.getArg(second, 0)];
-
 const getArrayFuncDecl = (manager: AstManager, solver: AufSolver, array: number) => {
   const value = solver.eval(array, false);
   return value !== null && manager.getOp(value) === OP_AS_ARRAY
@@ -137,10 +133,11 @@ export class QuantifierInfo {
           solver.getUvar(flatQ, info.varIndex).setMonoProj();
           break;
         case "select_var": {
-          const arrays = this.getAufArrays(this.manager.getArg(info.select, 0));
+          const arrays: Enode[] = [];
+          this.getAufArrays(this.manager.getArg(info.select, 0), arrays);
           const node = solver.getUvar(flatQ, info.varIndex);
-          for (const array of arrays) {
-            const decl = getArrayFuncDecl(this.manager, solver, array.owner);
+          for (let index = 0; index < arrays.length; index++) {
+            const decl = getArrayFuncDecl(this.manager, solver, arrays[index].owner);
             if (decl !== undefined) node.merge(solver.getAFI(decl, info.argIndex - 1));
           }
           break;
@@ -149,19 +146,26 @@ export class QuantifierInfo {
     }
   }
 
-  private getAufArrays(array: number): Enode[] {
+  private getAufArrays(array: number, arrays: Enode[]) {
     const manager = this.manager;
     const context = this.context;
     if (manager.isGroundApp(array)) {
-      const enode = context.isEInternalized(array) ? context.getEnode(array) : undefined;
-      return enode !== undefined && context.isRelevant(enode.owner) ? [enode] : [];
+      const enode = context.getEnode(array);
+      if (enode !== undefined && context.isRelevant(enode.owner)) arrays.push(enode);
+      return;
     }
-    if (manager.kinds[array] !== KIND_APP) return [];
-    return this.getAufArrays(manager.getArg(array, 0)).flatMap((nested) =>
-      nested.parents.filter(
-        (parent) => context.isRelevant(parent.owner) && isSameSelect(manager, parent.owner, array),
-      ),
-    );
+    if (manager.kinds[array] !== KIND_APP) return;
+    const nestedArrays: Enode[] = [];
+    this.getAufArrays(manager.getArg(array, 0), nestedArrays);
+    const decl = manager.decls[array];
+    for (let index = 0; index < nestedArrays.length; index++) {
+      const parents = nestedArrays[index].parents;
+      for (let parentIndex = 0; parentIndex < parents.length; parentIndex++) {
+        const parent = parents[parentIndex];
+        if (context.isRelevant(parent.owner) && manager.decls[parent.owner] === decl)
+          arrays.push(parent);
+      }
+    }
   }
 
   private populateFVar(node: Node, decl: number, argIndex: number) {
@@ -215,21 +219,25 @@ export class QuantifierInfo {
         case "x_gle_t":
           solver.getUvar(flatQ, info.varIndex).insert(manager, info.term, 0);
           break;
-        case "select_var":
-          for (const array of this.getAufArrays(manager.getArg(info.select, 0))) {
-            const decl = getArrayFuncDecl(manager, solver, array.owner);
+        case "select_var": {
+          const arrays: Enode[] = [];
+          this.getAufArrays(manager.getArg(info.select, 0), arrays);
+          const selectDecl = manager.decls[info.select];
+          for (let index = 0; index < arrays.length; index++) {
+            const decl = getArrayFuncDecl(manager, solver, arrays[index].owner);
             if (decl === undefined) continue;
             const aFI = solver.getAFI(decl, info.argIndex - 1);
-            for (const parent of array.parents)
-              if (
-                context.isRelevant(parent.owner) &&
-                isSameSelect(manager, parent.owner, info.select)
-              ) {
+            const parents = arrays[index].parents;
+            for (let parentIndex = 0; parentIndex < parents.length; parentIndex++) {
+              const parent = parents[parentIndex];
+              if (context.isRelevant(parent.owner) && manager.decls[parent.owner] === selectDecl) {
                 const arg = parent.getArg(info.argIndex);
                 aFI.insert(manager, arg.owner, context.getGeneration(arg));
               }
+            }
           }
           break;
+        }
         default:
           break;
       }
