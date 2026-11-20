@@ -305,7 +305,6 @@ export const expandTemporal = (
   if (expression.kind === "Identifier") {
     const binding = isLocallyResolved(expression) ? lookupScope(scope, expression.name) : undefined;
     if (binding?.kind === "Thunk" && !binding.isReleased) {
-      // TLC names a formula by the last definition it unfolds, and a substitute's binding isn't one.
       return expand(
         binding.expression,
         binding.scope,

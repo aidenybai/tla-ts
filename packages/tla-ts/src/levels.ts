@@ -1177,7 +1177,6 @@ export const createLevelAnalyzer = (context: LevelContext) => {
       case "EnabledVariable":
         return createData(VARIABLE_LEVEL);
       case "Identifier": {
-        // The parser keeps a selection by names alone, such as K!QT!lab, as one identifier.
         const selection = context.goalSelections?.get(expression);
         return selection
           ? analyzeSelected(selection, expression.name.split("!"), [], scope)
@@ -1836,7 +1835,7 @@ export const createLevelAnalyzer = (context: LevelContext) => {
     const prior = cached ?? createPlaceholder(definition, TEMPORAL_LEVEL, 0);
     definitionLevels.set(definition, prior);
     const copy = letCopies.get(definition) ?? context.instances.getCopy(definition);
-    // Deviation from SANY: ThmOrAssumpDefNode#levelCheck assigns each weight to itself, so SANY levels a theorem through a parameterized instance, I(x)!T, without its argument. tla-ts weighs the argument as for a definition.
+    // Deviation from SANY: ThmOrAssumpDefNode#levelCheck assigns each weight to itself, so SANY levels I(x)!T without x, where tla-ts weighs x as for I(x)!D.
     const levels = copy
       ? analyzeInstanced(definition, copy, scope)
       : "statement" in definition

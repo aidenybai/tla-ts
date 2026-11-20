@@ -2711,7 +2711,7 @@ describe("level checking matches SANY", () => {
     },
   );
 
-  // SANY reports only the definition's row: ThmOrAssumpDefNode#levelCheck never sets a theorem's weights.
+  // Deviation from SANY: it reports only the first row, since ThmOrAssumpDefNode#levelCheck never sets a theorem's weights.
   it.each([
     ["D == c = 1", "ASSUME I(x)!D", "line 8, col 1 to line 8, col 13"],
     ["THEOREM T == ASSUME c = 1 PROVE TRUE", "ASSUME I(x)!T", "line 8, col 1 to line 8, col 13"],

@@ -452,7 +452,7 @@ const getSpecification = (
       );
     });
     if (!isInitial && isConstantTrue(item, environment, "spec")) return;
-    // Deviation from TLC: SpecProcessor#processConfigSpec looks a conjunct's operator up without the substitutions it collected, so it rejects a conjunct that is an instance's constant, such as WF_x(Next) passed for one, as "The operator c, which equals <c's declaration>, cannot be used as a spec". tla-ts takes the substitute, as TLC takes the same formula written without the instance.
+    // Deviation from TLC: SpecProcessor#processConfigSpec looks an instance's parameter up without its substitute and rejects it as "cannot be used as a spec", where tla-ts takes the substitute.
     const variableIndex =
       conjunct.kind === "Identifier" && !isLocallyResolved(conjunct)
         ? environment.variableIndex.get(conjunct.name)
@@ -591,7 +591,7 @@ const getProperties = (
     expandTemporal(definition.body, undefined, environment, isProperty).forEach((item) => {
       const conjunct = item.expression;
       if (isConstantTrue(item, environment, "property")) return;
-      // Deviation from TLC: SpecProcessor#processConfigProps looks a conjunct's operator up without the substitutions it collected, so it rejects a conjunct that is an instance's constant, such as I!D with D == c, as "The operator c, which equals <c's declaration>, cannot be used as a property". tla-ts checks the substitute, as TLC checks the same formula written without the instance.
+      // Deviation from TLC: SpecProcessor#processConfigProps looks an instance's constant up without its substitute and rejects it as "cannot be used as a property", where tla-ts checks the substitute.
       const partName = item.name ?? name;
       const withFrames = (check: Expression) =>
         withSubstitutionFrames(
@@ -617,16 +617,15 @@ const getProperties = (
           body.kind === "Identifier" && !isLocallyResolved(body)
             ? getDefinition(body.name, environment)
             : undefined;
-        // TLC names the invariant by the parameter a substitute replaces.
         const substituted = getSubstitutedName(body);
         properties.invariants.push({
           name:
             operator?.name ??
-            (substituted === undefined
-              ? body.kind === "Identifier"
+            (substituted !== undefined
+              ? getKeyName(substituted)
+              : body.kind === "Identifier"
                 ? body.name
-                : partName
-              : getKeyName(substituted)),
+                : partName),
           expression: withFrames(body),
           scope: item.scope,
         });

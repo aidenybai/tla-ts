@@ -432,7 +432,7 @@ describe("INSTANCE matches TLC", () => {
     },
   );
 
-  // TLC checks [](x \in {0, 1}), [](x = 0) and x = 1 written without the instance this way.
+  // Deviation from TLC: it rejects each row, though it checks [](x \in {0, 1}), [](x = 0) and x = 1 written without the instance this way.
   it.each([
     ["[](x \\in {0, 1})", "success", undefined],
     ["[](x = 0)", "invariant-violation", "I!D"],
@@ -450,7 +450,7 @@ describe("INSTANCE matches TLC", () => {
     },
   );
 
-  // TLC checks Init /\ [][Next]_x /\ WF_x(Next) written without the instance this way.
+  // Deviation from TLC: it rejects the spec, though it checks Init /\ [][Next]_x /\ WF_x(Next) written without the instance this way.
   it("takes fairness that is the constant c <- WF_x(Next) of an instance, which TLC rejects as 'The operator c ... cannot be used as a spec'", async () => {
     const result = await check({
       source:
