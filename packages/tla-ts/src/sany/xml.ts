@@ -322,7 +322,7 @@ const splitLines = (text: string) => {
   return lines;
 };
 
-const trimJava = (text: string) => text.replace(/^[\0-\x20]+|[\0-\x20]+$/g, "");
+export const trimJava = (text: string) => text.replace(/^[\0-\x20]+|[\0-\x20]+$/g, "");
 
 const TRAILING_WHITESPACE =
   // eslint-disable-next-line no-control-regex

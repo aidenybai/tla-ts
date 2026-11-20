@@ -25,7 +25,7 @@ import {
 } from "../errors";
 import { EXIT_STATUS } from "../exit-codes";
 import { check } from "../parallel";
-import { extractModule, parseModule } from "../parser";
+import { extractModule, getMonolithSection, parseModule } from "../parser";
 import { simulate } from "../simulate";
 import type { CliSettings } from "../search";
 import { getDotHeader, type StateDump } from "../state-graph";
@@ -35,6 +35,7 @@ import {
   SANY_STANDARD_MODULES,
 } from "../sany/modules";
 import { getSanyReport, type SanyModuleOrigin } from "../sany/report";
+import { trimJava } from "../sany/xml";
 import { getTlcFingerprint } from "../tlc/fingerprint";
 import type { TlcVersion } from "../tlc/version";
 import {
@@ -142,17 +143,13 @@ const createFileDescriber = (
   };
 };
 
+// TLC matches the marker with Java's \s and trims the config as String#trim does.
 const getEmbeddedConfig = (contents: string, name: string) => {
-  const lines = contents.split(/\r?\n/);
-  const start = lines.findIndex(
-    (line) => line.match(/^-----*\s*CONFIG\s+(\S+?)\s*-----*$/)?.[1] === name,
+  const marker = new RegExp(
+    `^-{4,}[ \\t\\v\\f]*CONFIG[ \\t\\v\\f]+${name.replace(/\W/g, "\\$&")}[ \\t\\v\\f]*-{4,}$`,
   );
-  if (start === -1) return "\n";
-  const end = lines.findIndex((line, index) => index > start && line.startsWith("===="));
-  return `${lines
-    .slice(start + 1, end === -1 ? undefined : end)
-    .join("\n")
-    .trim()}\n`;
+  const section = getMonolithSection(contents, (line) => marker.test(line));
+  return `${trimJava(section?.lines.slice(1, section.isEnded ? -1 : undefined).join("\n") ?? "")}\n`;
 };
 
 const getJavaPath = (path: string) => path.replace(/\/+/g, "/").replace(/(.)\/$/, "$1");
