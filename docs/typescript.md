@@ -1,6 +1,47 @@
-# Check TypeScript
+# Check TypeScript and JavaScript
 
-tla-ts checks a TypeScript file as it checks a TLA+ spec. It compiles the file to a TLA+ spec and config in memory, and model checks every reachable state. It writes no files.
+tla-ts runs a TypeScript or JavaScript file as Node runs it and model checks every state the file reaches. It compiles the file to a TLA+ spec by specializing ESCore, a TLA+ port of the ECMAScript semantics of [engine262](https://github.com/engine262/engine262), and checks the spec in memory. It writes no files.
+
+```shell
+npx tla-ts bank.ts
+```
+
+## What runs
+
+tla-ts runs a file as Node does:
+
+- It strips the types and doesn't type check the file, so a file with type errors runs. It reads types only to build a model's frame, as [Models](#models) describes.
+- It takes the file kinds that Node runs: `.ts`, `.mts`, `.cts`, `.js`, `.mjs`, and `.cjs`. A `.tsx` or `.jsx` file stops, since tla-ts doesn't run JSX yet.
+- It loads a file as an ES module or as CommonJS as Node does, by its extension, its `package.json`'s `type`, and its syntax.
+- It loads the files that a script imports or requires, as Node resolves them.
+
+A file that exports no function is a script. A file that exports a function is a model.
+
+## Scripts
+
+tla-ts runs a script's top level, then the jobs it queued, then its timers. The check passes where the script runs to its end, and fails where it leaves an exception or a rejected promise uncaught.
+
+```ts
+// total.ts
+const total = [1, 2, 3].reduce((sum, item) => sum + item, 0);
+if (total !== 7) throw `total is ${total}`;
+```
+
+The CLI exits with the code that Node exits with, and writes what Node writes to stderr:
+
+```
+file:///work/total.ts:2
+if (total !== 7) throw `total is ${total}`;
+                 ^
+total is 6
+(Use `node --trace-uncaught ...` to show where the exception was thrown)
+```
+
+It does so for a thrown primitive, for an unhandled rejection, and for a top-level `await` that never settles, where it exits with 13. An uncaught `Error` object stops the check with `tla-ts can't print what Node prints for this uncaught exception`, since V8 writes the error's stack.
+
+## Models
+
+A model is a file whose exported functions are the steps of a state machine:
 
 ```ts
 // bank.ts
@@ -16,202 +57,105 @@ export const transfer = (from: Account, to: Account, amount: 1 | 2 | 3) => {
 export const noOverdraft = () => balances.alice >= 0 && balances.bob >= 0;
 ```
 
-```shell
-npx tla-ts bank.ts
-```
-
 ```
 Error: Invariant noOverdraft is violated.
 Error: The behavior up to this point is:
 State 1: <Initial predicate>
 balances = [alice |-> 10, bob |-> 10]
 
-State 2: <transfer("bob","alice",2) line 8, col 3 to line 8, col 80 of module Bank>
+State 2: <transfer("bob","alice",2) line 558, col 31 to line 558, col 90 of module ProgramCode>
 balances = [alice |-> 12, bob |-> 8]
 …
-State 5: <transfer("bob","alice",3) line 8, col 3 to line 8, col 80 of module Bank>
+State 5: <transfer("bob","alice",3) line 558, col 31 to line 558, col 90 of module ProgramCode>
 balances = [alice |-> 21, bob |-> -1]
 ```
 
 Add `if (balances[from] < amount) return;` at the top of `transfer`, and all 21 reachable states pass.
 
-## The spec tla-ts checks
+The module's top level runs once to make the initial state. Each step calls an exported function, then runs the jobs and timers that the call leaves. A state is the program's heap and bindings after a step. The lines and columns in a trace are in the compiled module `ProgramCode`, not in the file.
 
-tla-ts names the module after the file, so `bank.ts` compiles to the module `Bank` and `die-hard.ts` to `DieHard`. TLC's output names that module, and the lines and columns in a trace are in the compiled spec, not the TypeScript file. A `Bank.tla` or `Bank.cfg` beside `bank.ts` stays as it is, and tla-ts doesn't read it.
+A model that imports other files stops the compile, since tla-ts can't check one yet.
 
-Pass TypeScript and TLA+ files in one command, as in `npx tla-ts bank.ts Spec.tla`. TLC's options, such as `-workers` and `-deadlock`, apply to both. `-config` replaces the config tla-ts compiles.
+### The model's frame
 
-## How TypeScript maps to TLA+
+TypeScript's type checker gives the model's frame: which bindings are state, which values each parameter takes, and which function is an action or a check.
 
-A file's top-level declarations become the spec:
+| TypeScript                                                                            | In the model                                            |
+| ------------------------------------------------------------------------------------- | ------------------------------------------------------- |
+| A top-level `let` or `var`                                                            | A state variable                                        |
+| A top-level `const` of a literal or a new collection that a function changes in place | A state variable                                        |
+| `let bit: 0 \| 1;`, with no initializer                                               | A state variable that starts at every value of its type |
+| An exported function that writes state or returns nothing                             | An action                                               |
+| An exported function without parameters that returns a boolean                        | An invariant                                            |
+| Any other exported function that returns                                              | A check that calls it with every argument               |
+| A parameter, such as `(proc: Proc)`                                                   | Every value of its type                                 |
 
-| TypeScript                                     | TLA+                                              |
-| ---------------------------------------------- | ------------------------------------------------- |
-| `let count = 0;`                               | A variable that starts at 0                       |
-| `let bit: 0 \| 1;`                             | A variable that starts at every value of its type |
-| `const N = 3;`, or a function you don't export | A definition                                      |
-| An exported function that changes state        | An action, which `Next` chooses from              |
-| An exported function that returns a boolean    | An invariant                                      |
-| Any other exported function that returns       | A check that calls it with every argument         |
-| A parameter, such as `(proc: Proc)`            | `\E proc \in Proc`, every value of its type       |
-| `if (busy) return;` before any change          | A condition that disables the action              |
+An exported function is a function declaration, or an exported `const` of an arrow function or a function expression. An async function or a generator isn't one.
 
-A file doesn't need state or invariants. tla-ts calls each exported function that returns a value with every argument its parameter types allow, and TLC reports a `throw`, a `!` on a missing value, or an index out of range. A boolean function with parameters is called the same way, since it can't hold in a state by itself. A check that reads no state becomes an `ASSUME`, which TLC evaluates once. A check that reads state becomes an invariant.
+A call that writes nothing that existed before it takes no step. An invariant fails where its call returns other than `true`. A check fails where its call throws. A check that reads no state is an assumption, which TLC checks once before the search, and a check that reads state is an invariant.
 
-```ts
-// clamp.ts
-export const clamp = (value: number, low: number, high: number) => {
-  if (low > high) throw new Error("low is above high");
-  return Math.min(Math.max(value, low), high);
-};
-```
+The name of each state variable and exported function must be a TLA+ name, which TLA+'s keywords and the model's own names, such as `Init`, `Next`, and `vars`, aren't. Otherwise the compile stops with a `TlaTypeScriptError`.
 
-```
-Error: Evaluating assumption line 25, col 8 to line 25, col 12 of module Clamp failed.
-The first argument of Assert evaluated to FALSE; the second argument was:
-"low is above high"
-```
+### Values of a type
 
-An action runs its statements in order, as TypeScript does. A read after an assignment sees the new value. Each path through the action that changes state is one possible step, and a path that changes nothing disables the action.
+TLC tries every value of a parameter's type, so each type has a finite set of values:
 
-```ts
-type Proc = "p1" | "p2" | "p3";
+| TypeScript type                | Values                                            |
+| ------------------------------ | ------------------------------------------------- |
+| `"a" \| "b"`, `1 \| 2`, enums  | Each literal                                      |
+| `boolean`, `null`, `undefined` | `true` and `false`, `null`, `undefined`           |
+| `{ x: 0 \| 1; y: boolean }`    | Every object of those properties                  |
+| `[0 \| 1, boolean]`            | Every array of those elements                     |
+| `Set<T>`                       | A `Set` of every subset of `T`'s values           |
+| `Map<K, V>`                    | A `Map` of every partial function from `K` to `V` |
+| `number`                       | The integers from -3 to 3                         |
+| `string`                       | `""`, `"a"`, and `"b"`                            |
+| `T[]`                          | Every array of `T`s up to 3 long                  |
 
-let owner: Proc | null = null;
-let waiting = new Set<Proc>();
+The bounds on `number`, `string`, and arrays keep the search finite, so a check covers only those values. Use a union of literals, such as `0 | 1 | 2`, to check other values. A union of values that TLC can't compare, such as a string and a number, stops the compile.
 
-export const request = (proc: Proc) => {
-  if (owner === proc) return;
-  waiting.add(proc);
-};
+Other types have no finite set of values: a function, a class's instances, an object with an optional property, a tuple with optional or rest elements, and a type that holds itself. tla-ts calls no exported function with a parameter of such a type, and prints a line naming it, such as `tla-ts calls no run: its parameter step takes values it can't list`. It also calls no exported function without parameters whose every call throws.
 
-export const acquire = (proc: Proc) => {
-  if (!waiting.has(proc) || owner !== null) return;
-  waiting.delete(proc);
-  owner = proc;
-};
+A parameter of any type works where the action starts with a guard such as `if (!pending.has(message)) return;`, and `pending` is a `Set`. The step then chooses the parameter from the set as it holds in the state. A later guard's set may use a parameter that an earlier guard chose, as in `if (!getMoves(from).has(to)) return;`.
 
-export const release = () => {
-  if (owner === null) return;
-  owner = null;
-};
+### What a trace shows
 
-export const isExclusive = () => owner === null || !waiting.has(owner);
-```
+A trace shows each state variable as a TLA+ value:
 
-### Finite types
+| JavaScript                  | TLA+                                           |
+| --------------------------- | ---------------------------------------------- |
+| Integers, strings, booleans | Integers, strings, `TRUE` and `FALSE`          |
+| Other numbers               | The string that `String` gives                 |
+| `null`, `undefined`         | `Null` and `Undefined`                         |
+| Arrays                      | Sequences, with `Undefined` for a hole         |
+| `Set`, `Map`                | Sets, and functions from keys to values        |
+| A function                  | `[function \|-> name]`                         |
+| Another object              | A record of its enumerable own data properties |
 
-TLC tries every value of a parameter's type, so tla-ts gives each type a finite set of values:
-
-| TypeScript type                | Values                                  |
-| ------------------------------ | --------------------------------------- |
-| `"a" \| "b"`, `1 \| 2`, enums  | Each literal                            |
-| `boolean`, `null`, `undefined` | `true` and `false`, `null`, `undefined` |
-| `{ x: 0 \| 1; y: boolean }`    | Every record of those fields            |
-| `[0 \| 1, boolean]`            | Every tuple of those elements           |
-| `Set<T>`                       | Every subset of `T`'s values            |
-| `Map<K, V>`                    | Every partial function from `K` to `V`  |
-| `number`                       | The integers from -3 to 3               |
-| `string`                       | `""`, `"a"`, and `"b"`                  |
-| `T[]`                          | Every array of `T`s up to 3 long        |
-
-The bounds on `number`, `string`, and arrays keep the search finite, so a check covers only those values. Use a union of literals, such as `0 | 1 | 2`, to check other values. tla-ts calls no exported function with a parameter of any other type that has no end, such as a function, and prints a line naming it, such as `tla-ts calls no run: its parameter step takes values it can't list`. Node runs only a module's top level, so the check still covers the top level and the other exports. tla-ts also calls no exported function without parameters whose every call throws. A parameter of any type works when the action starts with a guard such as `if (!pending.has(message)) return;`. tla-ts then chooses the parameter from that set. A later guard's set may use a parameter an earlier guard chose, as in `if (!getMoves(from).has(to)) return;`.
-
-### Values
-
-| TypeScript                              | TLA+                                           |
-| --------------------------------------- | ---------------------------------------------- |
-| Integers, strings, booleans             | Integers, strings, `TRUE` and `FALSE`          |
-| `null`, `undefined`                     | The model values `Null` and `Undefined`        |
-| `{ a: 1, b: x }`, `{ ...r, a: 2 }`      | Records, `[r EXCEPT !.a = 2]`                  |
-| `[a, b]`, `xs[i]`, `xs.length`          | Sequences, `xs[i + 1]`, `Len(xs)`              |
-| `new Set([a, b])`, `s.has(x)`, `s.size` | Sets, `x \in s`, `Cardinality(s)`              |
-| `new Map([[k, v]])`, `m.get(k)!`        | Functions, `m[k]`                              |
-| `Record<K, V>`, `r[k]`                  | Records, `r[k]`, or functions for numeric keys |
-
-`===` compares values, not references, so two sets with the same elements are equal, and a `Set` of arrays or objects keeps one copy of equal elements. Sets keep no order.
-
-### Operations
-
-- **Numbers**: `+`, `-`, `*`, `**`, `%`, comparisons, `Math.floor(a / b)`, `Math.trunc(a / b)`, `Math.min`, `Math.max`, and `Math.abs`. `%` keeps JavaScript's sign. Write division with `Math.floor` or `Math.trunc`.
-- **Strings**: `+`, template literals, `length`, `===`, and `!==`. TLA+ strings have no order, so `<` and `>` don't take strings.
-- **Arrays**: `at`, `includes`, `indexOf`, `slice`, `concat`, `with`, `toReversed`, `map`, `filter`, `every`, `some`, `find`, `findIndex`, spreads, `Array.from({ length: n }, (_, i) => …)`, and `Array(n).fill(v)`.
-- **Sets**: `has`, `union`, `intersection`, `difference`, `symmetricDifference`, `isSubsetOf`, `isSupersetOf`, and `isDisjointFrom`. `[...s]` and `s.values()` take `every`, `some`, `filter`, `map`, and `find`. `find` on a set returns an arbitrary match that is the same on every call.
-- **Maps and records**: `get`, `has`, `size`, `keys()`, `values()`, `entries()`, `Object.keys`, `Object.values`, `Object.entries`, and `new Map(s.values().map((k) => [k, v]))` or `Object.fromEntries(…)` to build one from a set.
-- **Changes in actions**: assignments to variables and their fields, destructuring such as `[a, b] = [b, a]`, `++`, `--`, `+=`, `-=`, `*=`, `push`, `pop`, `shift`, `unshift`, `add`, `delete`, `set`, and `clear`. Changes reach through lookups, as in `held.get(proc)!.add(fork)`. `const head = queue.shift()!` reads the first element and removes it.
-- **Control flow**: `if`, `else`, `switch`, `return`, `?:`, `const` and `let` locals, and local arrow functions. Use `map`, `filter`, `every`, `some`, or a parameter in place of loops.
-- **Output**: `console.log`, `console.error`, `console.warn`, `console.info`, and `console.debug` print the values they take, as [what console prints](#what-console-prints) describes. `console.assert(condition, message)` and `throw new Error(message)` stop the check with an error.
-
-### What console prints
-
-`console.log`, `console.error`, `console.warn`, `console.info`, and `console.debug` print with TLC's `PrintT`, not as Node does. Each call writes the TLA+ form of the values it takes to stdout:
-
-- A string prints in double quotes, so `console.log("text")` prints `"text"`.
-- Two or more values print as one tuple, so `console.log("count", 0)` prints `<<"count", 0>>`.
-- `true`, `undefined`, and `null` print as `TRUE`, `Undefined`, and `Null`.
-- An object prints as a record, such as `[balance |-> 1, owner |-> "alice"]`, or as a reference, such as `(Ref :> 3)`.
-- `console.error`, `console.warn`, `console.info`, and `console.debug` write to stdout, not stderr.
-
-TLC prints each time it evaluates a call, so a call in an action prints once for each state that the action runs from. When TLC reports an error, it evaluates the states of the trace again to print them. The calls in those states then print again.
-
-### Helpers and imports
-
-A function you don't export becomes a TLA+ operator, and it may call itself. An action may call a helper that changes state, and tla-ts inlines that helper. Pass a helper by name where a callback goes, as in `procs.values().some(isWaiting)`.
-
-Import types from anywhere, and constants and functions from other TypeScript files. tla-ts compiles what you import into the spec.
-
-### Calls tla-ts can't compile
-
-A call that tla-ts can't compile returns any value of its type. Examples are a function from a package that ships only compiled JavaScript, `Math.random()`, and `new Date().getTime()`. An action runs once for each value, and a check must pass for each value. A check that passes then holds whatever the call returns. A failure may come from a value that the real call never returns.
-
-```ts
-import { fetchPrice } from "./prices"; // declared in prices.d.ts
-
-let total = 0;
-
-export const add = (item: "apple" | "pear") => {
-  if (total > 4) return;
-  total += fetchPrice(item);
-};
-```
-
-The compiled spec names each such call in a comment:
-
-```tla
-\* cart.ts:7:12 fetchPrice(item) isn't compiled, so fetchPrice is any value of its type
-add(item) ==
-  \E fetchPrice \in -3..3 :
-    /\ ~(total > 4)
-    /\ total' = total + fetchPrice
-```
-
-The call must be directly in an exported function. tla-ts chooses one value each time the function runs, so a call in a callback or a helper, which can run more than once, is still an error.
+An accessor, a symbol, a BigInt, and an object that holds itself stop the check.
 
 ### Properties, fairness, and options
 
 JSDoc tags cover what TypeScript has no syntax for:
 
-| Tag                    | On                             | Meaning                                            |
-| ---------------------- | ------------------------------ | -------------------------------------------------- |
-| `@fair`, `@strongFair` | An action                      | Weak or strong fairness, for each parameter value  |
-| `@initially`           | A boolean function             | Start only in states where it holds                |
-| `@eventually`          | A boolean function             | It holds at some point                             |
-| `@alwaysEventually`    | A boolean function             | It holds infinitely often                          |
-| `@eventuallyAlways`    | A boolean function             | It holds forever from some point                   |
-| `@leadsTo other`       | A boolean function             | Whenever it holds, `other` holds later             |
-| `@always`              | A boolean function of `before` | Every step satisfies it                            |
-| `@constraint`          | A boolean function             | Don't explore past states that fail it             |
-| `@actionConstraint`    | A boolean function of `before` | Don't take steps that fail it                      |
-| `@view`                | A function                     | Count states as equal when it returns equal values |
-| `@assume`              | A boolean function             | Check it once before the search                    |
-| `@postcondition`       | A boolean function             | Check it after the search                          |
-| `@symmetric`           | A union of strings             | Check one state of each permutation of its values  |
-| `@terminating`         | A boolean function             | Stopping where it holds isn't a deadlock           |
-| `@noDeadlock`          | The first statement            | Allow states where no action can run               |
+| Tag                    | On                             | Meaning                                                                        |
+| ---------------------- | ------------------------------ | ------------------------------------------------------------------------------ |
+| `@fair`, `@strongFair` | An action                      | Weak or strong fairness, for each parameter value                              |
+| `@initially`           | A boolean function             | Start only in states where it holds                                            |
+| `@eventually`          | A boolean function             | It holds at some point                                                         |
+| `@alwaysEventually`    | A boolean function             | It holds infinitely often                                                      |
+| `@eventuallyAlways`    | A boolean function             | It holds forever from some point                                               |
+| `@leadsTo other`       | A boolean function             | Whenever it holds, `other` holds later                                         |
+| `@always`              | A boolean function of `before` | Every step satisfies it                                                        |
+| `@constraint`          | A boolean function             | Don't explore past states that fail it                                         |
+| `@actionConstraint`    | A boolean function of `before` | Don't take steps that fail it                                                  |
+| `@view`                | A function                     | Count states as equal when it returns equal values                             |
+| `@assume`              | A boolean function             | Check it once before the search, or in the initial states where it reads state |
+| `@postcondition`       | A boolean function             | Check it after the search                                                      |
+| `@terminating`         | A boolean function             | Stopping where it holds isn't a deadlock                                       |
+| `@noDeadlock`          | The first statement            | Allow states where no action can run                                           |
 
-A function that takes `before` reads the state before the step from it, and the variables themselves hold the state after the step.
-
-Parameters of a temporal property hold for every value of their type. `@leadsTo` passes them to the target.
+A function that takes `before` reads the state before the step from it, an object of the state variables' values, and the variables themselves hold the state after the step. Parameters of a temporal property hold for every value of their type, and `@leadsTo` passes them to the target. A misspelled tag, such as `@fiar`, stops the compile. `@symmetric` stops it too, since tla-ts can't check a symmetric model yet.
 
 ```ts
 /** @always */
@@ -221,12 +165,21 @@ export const neverDecreases = (before: { count: number }) => count >= before.cou
 export const isWaiting = (proc: Proc) => waiting.has(proc);
 ```
 
-## Errors
+A model whose every action only counts a state variable up or down by one, and which checks nothing, stops the compile, since its states never end.
 
-tla-ts runs a file as Node runs it: it strips the types and doesn't type check the file, so a file with type errors still runs. It reads the types only for a model's frame, such as the values a parameter takes.
+## Files with other specs
 
-tla-ts stops with a `TlaTypeScriptError` where Node rejects the file, with the `SyntaxError` Node throws, and where it can't run what the file does exactly, with a message that says what tla-ts can't do.
+Pass TypeScript, JavaScript, and TLA+ files in one command, as in `npx tla-ts bank.ts Spec.tla`. TLC's options, such as `-workers` and `-deadlock`, apply to all of them. `-config` replaces the config that tla-ts compiles. A `Bank.tla` or `Bank.cfg` beside `bank.ts` stays as it is, and tla-ts doesn't read it.
 
-```
-TlaTypeScriptError: spec.js:2:8 tla-ts can't run eval
-```
+## Errors and stops
+
+tla-ts stops with a `TlaTypeScriptError` in two cases:
+
+- Node rejects the file. The message is the `SyntaxError` of the file's early error, as in `TlaTypeScriptError: spec.js:2:8 SyntaxError: 'delete' cannot be called on an identifier in strict mode.`
+- tla-ts can't run what the file does exactly. The message says what it can't do, as in `TlaTypeScriptError: spec.js:1:15 tla-ts can't run eval`. tla-ts never runs `eval` or `Function`.
+
+A check also stops where a step reaches what tla-ts can't run exactly, with an `Assert` whose message starts with `tla-ts can't`.
+
+ESCore's runtime starts its realm once a process. The package's build holds the realm prepared. From the sources, starting it takes a deeper stack than Node's default, as with `node --stack-size=4000`. Otherwise tla-ts throws a `TlaError` that says `tla-ts can't start ESCore's realm`.
+
+`compile` runs in Node only, since ESCore's host runs on Node's `vm`. In a browser, it throws a `TlaTypeScriptError`.
