@@ -72,7 +72,7 @@ balances = [alice |-> 21, bob |-> -1]
 
 Add `if (balances[from] < amount) return;` at the top of `transfer`, and all 21 reachable states pass.
 
-The module's top level runs once to make the initial state. Each step calls an exported function, then runs the jobs and timers that the call leaves. A state is the program's heap and bindings after a step. The lines and columns in a trace are in the compiled module `ProgramCode`, not in the file.
+The module's top level runs once to make the initial state. A model without state runs it as an assumption, so a throw there is an `assumption-violation`. Each step calls an exported function, then runs the jobs and timers that the call leaves. A state is the program's heap and bindings after a step. The lines and columns in a trace are in the compiled module `ProgramCode`, not in the file.
 
 A model that imports other files stops the compile, since tla-ts can't check one yet.
 
