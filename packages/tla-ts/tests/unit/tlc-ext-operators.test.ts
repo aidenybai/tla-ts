@@ -1,7 +1,7 @@
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { describe, expect, it } from "vite-plus/test";
-import { check } from "../../src";
+import { check, TlaConfigError } from "../../src";
 import { runCliWith } from "./cli-harness";
 
 const DIRECTORY = join(import.meta.dirname, "../fixtures/tlc-ext");
@@ -104,6 +104,40 @@ describe("TLCExt operators match TLC", () => {
       ),
     );
     expect(results.map((result) => result.status)).toEqual(["success", "assumption-violation"]);
+  });
+
+  it.each(['AssertError("wrong", Head(<<>>))', "TLCCache(FALSE, {})"])(
+    "evaluates a constant invariant of %s as it starts, as TLC does",
+    async (expression) => {
+      await expect(
+        check({
+          source: `---- MODULE M ----\nEXTENDS Integers, Sequences, TLC, TLCExt\nVARIABLE x\nInv == ${expression}\nInit == x = 0\nNext == x < 2 /\\ x' = x + 1\n====`,
+          config: "INIT Init\nNEXT Next\nINVARIANT Inv",
+        }),
+      ).rejects.toThrow(new TlaConfigError("The invariant of Inv is equal to FALSE"));
+    },
+  );
+
+  it("reads the register each time a constant definition calls TLCGetOrDefault, where TLC keeps the default it read as it started", async () => {
+    const printed: string[] = [];
+    await check({
+      source:
+        "---- MODULE M ----\nEXTENDS Naturals, TLC, TLCExt\nVARIABLE x\nC == TLCGetOrDefault(1, 0)\nInit == x = 0\nNext == x < 2 /\\ TLCSet(1, x + 5) /\\ PrintT(C) /\\ x' = x + 1\n====",
+      config: "INIT Init\nNEXT Next\nCHECK_DEADLOCK FALSE",
+      onPrint: (text) => printed.push(text),
+    });
+    expect(printed).toEqual(["5", "6"]);
+  });
+
+  it("sets a named register each time a constant definition calls TLCSet, where TLC drops the write as it starts", async () => {
+    const printed: string[] = [];
+    await check({
+      source:
+        '---- MODULE M ----\nEXTENDS Naturals, TLC, TLCExt\nVARIABLE x\nC == TLCSet("s:k", 7)\nInit == x = 0 /\\ C\nNext == x < 2 /\\ PrintT(TLCGetOrDefault("s:k", 0)) /\\ x\' = x + 1\n====',
+      config: "INIT Init\nNEXT Next\nCHECK_DEADLOCK FALSE",
+      onPrint: (text) => printed.push(text),
+    });
+    expect(printed).toEqual(["7", "7"]);
   });
 
   it("stops checking when TLCGetAndSet sets the exit key", async () => {
