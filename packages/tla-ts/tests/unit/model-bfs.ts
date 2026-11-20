@@ -234,7 +234,7 @@ const copy = (
     throw new Error("The search can't copy a function or an instance of a class");
   }
   const made: Record<string, unknown> | unknown[] =
-    kind === "Array" ? new Array((target as unknown[]).length) : {};
+    kind === "Array" ? Object.assign([], { length: (target as unknown[]).length }) : {};
   copies.set(target, made);
   Object.keys(target).forEach((key) => {
     (made as Record<string, unknown>)[key] = copy(
