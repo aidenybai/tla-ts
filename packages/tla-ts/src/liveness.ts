@@ -118,14 +118,17 @@ export const getLevel = (
   scope: Scope | undefined,
   environment: Environment,
   shadowed = new Set<string>(),
-  visiting = new Set<object>(),
+  bindingLevels = new Map<object, number>(),
   isLevelBound = false,
 ): number => {
+  // Specs.getLevel reads each level parameter of an expression once, however often it occurs, and
+  // Tool.getLevelBound reads each definition once.
   const getBodyLevel = (binding: object, body: Expression, bodyScope: Scope | undefined) => {
-    if (visiting.has(binding)) return CONSTANT_LEVEL;
-    visiting.add(binding);
-    const level = getLevel(body, bodyScope, environment, new Set(), visiting, isLevelBound);
-    if (!isLevelBound) visiting.delete(binding);
+    const known = bindingLevels.get(binding);
+    if (known !== undefined) return isLevelBound ? CONSTANT_LEVEL : known;
+    bindingLevels.set(binding, CONSTANT_LEVEL);
+    const level = getLevel(body, bodyScope, environment, new Set(), bindingLevels, isLevelBound);
+    bindingLevels.set(binding, level);
     return level;
   };
   const getBindingLevel = (name: string) => {
@@ -174,7 +177,7 @@ export const getLevel = (
           scope,
           environment,
           bound.length === 0 ? shadowed : new Set([...shadowed, ...bound]),
-          visiting,
+          bindingLevels,
           isLevelBound,
         ),
       );
@@ -207,7 +210,7 @@ export const getLevel = (
       if (expression.operator === "\\cdot") return ACTION_LEVEL;
       const operatorLevel = getNameLevel(expression.operator, expression);
       const argumentLevels = expression.args.map((argument) =>
-        getLevel(argument, scope, environment, shadowed, visiting, isLevelBound),
+        getLevel(argument, scope, environment, shadowed, bindingLevels, isLevelBound),
       );
       const level = Math.max(operatorLevel, ...argumentLevels);
       const operator =
@@ -232,7 +235,7 @@ export const getLevelBound = (
   expression: Expression,
   scope: Scope | undefined,
   environment: Environment,
-) => getLevel(expression, scope, environment, new Set(), new Set(), true);
+) => getLevel(expression, scope, environment, new Set(), new Map(), true);
 
 const getUnrolledElements = (bounds: Bound[], context: Context) => {
   try {
