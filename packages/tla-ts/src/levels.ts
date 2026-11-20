@@ -294,9 +294,12 @@ const getFormals = (definition: Definition) =>
   definition.kind === "Operator" ? definition.params : [];
 
 // A selection of a label wraps the expression an instance substitutes in the LETs around the label.
-const isSubstituted = (expression: Expression): boolean =>
-  substitutionFrames.has(expression) ||
-  (expression.kind === "Let" && isSubstituted(expression.body));
+const getSubstituted = (expression: Expression): Expression | undefined =>
+  substitutionFrames.has(expression)
+    ? expression
+    : expression.kind === "Let"
+      ? getSubstituted(expression.body)
+      : undefined;
 
 const getDefinitionBody = (definition: Definition): Expression =>
   definition.kind === "Function"
@@ -1232,12 +1235,15 @@ export const createLevelAnalyzer = (context: LevelContext) => {
         if (known) return checkedLabels.has(selected) ? { ...known, isCorrect: true } : known;
         const reported = errors.length;
         const pending = messages.length;
-        const data = analyze(selected, scope);
-        // SANY level-checks an instanced module before the INSTANCE and reports an error of a substitution there.
-        if (isSubstituted(selected)) {
+        const analyzed = analyze(selected, scope);
+        // SANY level-checks an instanced module before the INSTANCE, so it reports an error of a substitution there and
+        // finds a label of the module level-correct.
+        const substituted = getSubstituted(selected);
+        if (substituted) {
           errors.splice(reported);
           messages.splice(pending);
         }
+        const data = substituted?.kind === "Label" ? { ...analyzed, isCorrect: true } : analyzed;
         selectionLevels.set(selected, data);
         return data;
       }
