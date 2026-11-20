@@ -179,13 +179,13 @@ export const createModuleConverter = (
     location: Locus,
     argumentCounts?: number[],
   ): Expr => {
-    const names = name.split("!");
-    if (names.length === 1 && name.startsWith("<")) {
+    if (name.startsWith("<") && !name.includes("!")) {
       const operator = at({ kind: "Opaque", name }, { location });
       return at({ kind: "Bang", expression: operator, selectors: [] }, { location });
     }
     const builtin = BUILTINS.get(name);
     if (builtin && args.length === 0) return at({ kind: "Internal", builtin }, { location });
+    const names = name.split("!");
     if (names.length === 1) {
       const operator = at({ kind: "Opaque", name }, { location });
       return args.length === 0 ? operator : at({ kind: "Apply", operator, args }, { location });
