@@ -3880,6 +3880,85 @@ describe("evaluation errors match TLC", () => {
     },
   );
 
+  const PRINTED_FILTER = "{t \\in (1..3) \\X {0} : PrintT(t)}";
+  const PRINTED_PASS = ["<<1, 0>>", "<<1, 0>>", "<<2, 0>>", "<<3, 0>>"];
+  const PRINTED_RESETS = [
+    "<<1, 0>>",
+    "<<1, 0>>",
+    "<<1, 0>>",
+    "<<2, 0>>",
+    "<<1, 0>>",
+    "<<2, 0>>",
+    "<<2, 0>>",
+    "<<1, 0>>",
+  ];
+  const PRINTED_LATE_MATCH = [
+    "<<1, 0>>",
+    "<<2, 0>>",
+    "<<3, 0>>",
+    "<<1, 0>>",
+    "<<2, 0>>",
+    "<<3, 0>>",
+  ];
+
+  it.each([
+    [`x' = Cardinality((1..2) \\cup [{1} -> ${PRINTED_FILTER}])`, PRINTED_PASS, PRINTED_PASS],
+    [`x' = Cardinality((1..2) \\cup [a : ${PRINTED_FILTER}])`, PRINTED_PASS, PRINTED_PASS],
+    [
+      `x' = x /\\ ~(((1..2) \\cup [{1} -> ${PRINTED_FILTER}]) \\subseteq {})`,
+      PRINTED_PASS.slice(0, 2),
+      undefined,
+    ],
+    [
+      `(TLCGet("level") = 1 /\\ x' \\in ((1..2) \\cup [{1} -> ${PRINTED_FILTER}])) \\/ (TLCGet("level") > 1 /\\ UNCHANGED x)`,
+      PRINTED_PASS,
+      undefined,
+    ],
+    [
+      "x' = Cardinality((1..2) \\cup [{1, 2} -> {t \\in (1..2) \\X {0} : PrintT(t)}])",
+      PRINTED_RESETS,
+      PRINTED_RESETS,
+    ],
+    [
+      "x' = Cardinality((1..2) \\cup [{1} -> {t \\in (1..3) \\X {0} : PrintT(t) /\\ t[1] = 3}])",
+      PRINTED_LATE_MATCH,
+      PRINTED_LATE_MATCH,
+    ],
+    [
+      `x' = x /\\ \\E e \\in ({t \\in (1..2) \\X {0} : PrintT(t)} \\cup [{1} -> {u \\in (4..5) \\X {0} : PrintT(u)}]) : FALSE`,
+      ["<<4, 0>>", "<<4, 0>>", "<<1, 0>>", "<<2, 0>>", "<<5, 0>>"],
+      undefined,
+    ],
+  ])(
+    "evaluates a filter under an operand of S \\cup T as TLC's enumerators do: %s",
+    async (next, printed, traceOutput) => {
+      const lines: string[] = [];
+      const result = await check({
+        source: `---- MODULE M ----\nEXTENDS Integers, FiniteSets, TLC\nVARIABLE x\nInit == x = 0\nNext == ${next}\n====`,
+        config: "INIT Init\nNEXT Next",
+        onPrint: (text) => lines.push(text),
+      });
+      expect([lines, result.failure?.traceOutput]).toEqual([printed, traceOutput]);
+    },
+  );
+
+  it("normalizes [S -> T] after it streams a component S \\cup T, as TLC's toSetEnum does", async () => {
+    const result = await check({
+      source:
+        "---- MODULE M ----\nEXTENDS Integers\nVARIABLE x\nInit == x = 0\nNext == x' = x /\\ \\E e \\in [{1, 2} -> {9} \\cup {t \\in (1..2) \\X {0} : t[1] > 0}] : FALSE\n====",
+      config: "INIT Init\nNEXT Next",
+    });
+    expect([result.failure?.message, result.failure?.fingerprint]).toEqual([
+      getRuntimeException("Attempted to compare the function <<1, 0>> with the value:\n9"),
+      undefined,
+    ]);
+    expect(formatCallStackLines(result)).toEqual([
+      "Line 5, column 9 to line 5, column 88 in M",
+      "Line 5, column 9 to line 5, column 14 in M",
+      "Line 5, column 19 to line 5, column 88 in M",
+    ]);
+  });
+
   const SET_EQUALITY_REASON = "Attempted to check equality of the set {1} with the value:\n1";
 
   it.each([
