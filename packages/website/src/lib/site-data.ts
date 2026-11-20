@@ -52,9 +52,15 @@ export interface TableBlock {
   rows: string[][];
 }
 
-export type ReferenceBlock = HeadingBlock | ParagraphBlock | CodeBlock | TableBlock;
+export interface CompareBlock {
+  kind: "compare";
+  typescript: Source;
+  tla: Source;
+}
 
-export interface ReferenceSection {
+export type ContentBlock = HeadingBlock | ParagraphBlock | CodeBlock | TableBlock | CompareBlock;
+
+export interface ContentSection {
   title: string;
-  blocks: ReferenceBlock[];
+  blocks: ContentBlock[];
 }

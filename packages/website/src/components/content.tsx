@@ -1,5 +1,4 @@
-import { reference } from "virtual:site-data";
-import type { ReferenceBlock } from "@/lib/site-data";
+import type { ContentBlock, ContentSection } from "@/lib/site-data";
 import { Code } from "./code";
 import { Section } from "./section";
 import { InlineCode } from "@/components/ui/inline-code";
@@ -17,7 +16,7 @@ const Text = (props: TextProps) =>
     );
 
 interface BlockProps {
-  block: ReferenceBlock;
+  block: ContentBlock;
 }
 
 const Block = (props: BlockProps) => {
@@ -44,6 +43,23 @@ const Block = (props: BlockProps) => {
           <Code.Copy />
         </Code.Actions>
       </Code.Root>
+    );
+  }
+  if (block.kind === "compare") {
+    return (
+      <div className="grid gap-x-3 gap-y-1.5 sm:grid-cols-2 lg:-mx-8">
+        {[
+          { label: "TypeScript", source: block.typescript },
+          { label: "TLA+", source: block.tla },
+        ].map((side) => (
+          <figure key={side.label} className="flex min-w-0 flex-col gap-1.5">
+            <figcaption className="text-xs text-faint">{side.label}</figcaption>
+            <Code.Root source={side.source}>
+              <Code.Content />
+            </Code.Root>
+          </figure>
+        ))}
+      </div>
     );
   }
   return (
@@ -77,8 +93,12 @@ const Block = (props: BlockProps) => {
   );
 };
 
-export const Reference = () =>
-  reference.map((section) => (
+interface ContentProps {
+  sections: ContentSection[];
+}
+
+export const Content = (props: ContentProps) =>
+  props.sections.map((section) => (
     <Section.Root key={section.title}>
       <Section.Title>{section.title}</Section.Title>
       {section.blocks
