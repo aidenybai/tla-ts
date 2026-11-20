@@ -680,19 +680,32 @@ export const compileModelToEscore = (
       throw new TlaTypeScriptError(`tla-ts can't tell which parameter of ${action} ${bound} is`);
     }
     const guard = getGuard(action, parameter);
+    // A parameter that the guard reads converts from its domain, or, where an earlier guard that
+    // reads no parameter chose it, is the element of that guard's set that shows as its value.
     const read = guard.parameters.map((name) => {
       const index = exported.get(action)?.parameters.indexOf(name) ?? -1;
-      return { bound: parameters[index], converter: boundConverters.get(`${action} ${index}`) };
+      const choice = guardChoices.get(`${action} ${index}`);
+      return {
+        bound: parameters[index],
+        converter: boundConverters.get(`${action} ${index}`),
+        choice: choice?.parameters.length === 0 ? choice : undefined,
+      };
     });
-    if (read.some((entry) => entry.converter === undefined)) {
+    if (read.some((entry) => entry.converter === undefined && entry.choice === undefined)) {
       throw new TlaTypeScriptError(
         `tla-ts can't pass the parameters that ${action}'s guard reads to ESCore yet`,
       );
     }
+    const getRead = (entry: (typeof read)[number], index: number) => {
+      const previous = index === 0 ? getState("a[1]") : `e${index}.s`;
+      return entry.choice === undefined
+        ? `e${index + 1} == ${entry.converter}(${previous}, a[${index + 2}])`
+        : `c${index + 1} == GuardElements(${previous}, ${getUnits(entry.choice.name)}, <<>>)\n      e${index + 1} == [s |-> c${index + 1}.state, v |-> CHOOSE e \\in c${index + 1}.elements : Shown(c${index + 1}.state, e, 0) = a[${index + 2}]]`;
+    };
     const operator = define(
       "GuardDomain",
       (name) =>
-        `${name}(a) ==\n  LET ${read.map((entry, index) => `e${index + 1} == ${entry.converter}(${index === 0 ? getState("a[1]") : `e${index}.s`}, a[${index + 2}])`).join("\n      ")}${read.length === 0 ? "" : "\n     "} g == GuardElements(${read.length === 0 ? getState("a[1]") : `e${read.length}.s`}, ${getUnits(guard.name)}, <<${read.map((_, index) => `e${index + 1}.v`).join(", ")}>>)\n  IN {Shown(g.state, e, 0) : e \\in g.elements}`,
+        `${name}(a) ==\n  LET ${read.map(getRead).join("\n      ")}${read.length === 0 ? "" : "\n     "} g == GuardElements(${read.length === 0 ? getState("a[1]") : `e${read.length}.s`}, ${getUnits(guard.name)}, <<${read.map((_, index) => `e${index + 1}.v`).join(", ")}>>)\n  IN {Shown(g.state, e, 0) : e \\in g.elements}`,
     );
     guardChoices.set(`${action} ${position}`, guard);
     return {
