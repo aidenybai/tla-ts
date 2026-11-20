@@ -6514,6 +6514,33 @@ describe("name resolution matches SANY", () => {
         ],
       ],
     ],
+    [
+      "LET and proof instances",
+      "---- MODULE Inner ----\nCONSTANT c\nL == 1 ++ 2\nTHEOREM T == 1 ++ 2\n====\nI0 == INSTANCE Inner WITH c <- 1\nD == LET K == INSTANCE Inner WITH c <- 1 IN TRUE\nTHEOREM ASSUME NEW CONSTANT y PROVE LET K == INSTANCE Inner WITH c <- y IN TRUE\nTHEOREM TRUE\n<1> N == INSTANCE Inner WITH c <- 1\n<1>1. LET K == INSTANCE Inner WITH c <- 1 IN TRUE\n  OBVIOUS\n<1> INSTANCE Inner WITH c <- 1\n<1> QED",
+      [
+        [
+          "line 4, col 8 to line 4, col 9",
+          "Could not find declaration or definition of symbol '++'.",
+        ],
+        ["line 4, col 6 to line 4, col 11", "Couldn't resolve infix operator symbol `++'."],
+        [
+          "line 5, col 16 to line 5, col 17",
+          "Could not find declaration or definition of symbol '++'.",
+        ],
+        ["line 5, col 14 to line 5, col 19", "Couldn't resolve infix operator symbol `++'."],
+        ...[
+          "line 7, col 1 to line 7, col 32",
+          "line 8, col 10 to line 8, col 40",
+          "line 9, col 41 to line 9, col 71",
+          "line 11, col 5 to line 11, col 35",
+          "line 12, col 11 to line 12, col 41",
+          "line 14, col 5 to line 14, col 30",
+        ].flatMap((location) => [
+          [location, "Substitution error, probably due to error \nin module being instantiated."],
+          [location, "Substitution error, probably due to error in module being instantiated."],
+        ]),
+      ],
+    ],
   ])("reports a body SANY fails to generate in %s", async (_description, source, errors) => {
     await expect(checkNames(source)).rejects.toThrow(
       createSanyError(

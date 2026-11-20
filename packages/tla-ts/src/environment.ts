@@ -660,6 +660,34 @@ export const createEnvironment = (
     });
   };
 
+  // SANY substitutes into the bodies of a module with parameters, or of any module a named instance substitutes for.
+  const isSubstituted = (
+    instance: Instance,
+    linked: LinkedModule,
+    substitutionCount: number,
+    key: string,
+  ) =>
+    instance.name === undefined
+      ? linked.declarations.length > 0 && parameterized.get(key) === true
+      : substitutionCount > 0;
+
+  const getSubstitutionErrors = (
+    instance: Instance,
+    linked: LinkedModule,
+    substitutionCount: number,
+  ): SanyError[] => {
+    const range = instance.location.range;
+    if (!range) return [];
+    const failed = [...linked.exported.values()].filter(
+      (symbol) =>
+        unresolvedBodyKeys.has(symbol.key) &&
+        isSubstituted(instance, linked, substitutionCount, symbol.key),
+    );
+    return SUBSTITUTION_ERRORS.filter((error) =>
+      failed.some((symbol) => symbol.kind === error.kind),
+    ).map((error) => ({ location: formatRange(range), message: error.message }));
+  };
+
   const instantiate = (
     instance: Instance,
     module: Module,
@@ -687,24 +715,11 @@ export const createEnvironment = (
       module.name,
       unit,
     );
-    // SANY substitutes into the bodies of a module with parameters, or of any module a named instance substitutes for.
-    const isSubstituted = (key: string) =>
-      instance.name === undefined
-        ? declarations.length > 0 && parameterized.get(key) === true
-        : substitutions.size > 0;
-    const range = instance.location.range;
-    if (range) {
-      const failed = [...linked.exported.values()].filter(
-        (symbol) => unresolvedBodyKeys.has(symbol.key) && isSubstituted(symbol.key),
-      );
-      unit.reports.push({
-        location: instance.location,
-        errors: SUBSTITUTION_ERRORS.filter((error) =>
-          failed.some((symbol) => symbol.kind === error.kind),
-        ).map((error) => ({ location: formatRange(range), message: error.message })),
-        warnings: [],
-      });
-    }
+    unit.reports.push({
+      location: instance.location,
+      errors: getSubstitutionErrors(instance, linked, substitutions.size),
+      warnings: [],
+    });
     const params = instance.params.map((param) => ({ ...param, name: `${param.name}${suffix}` }));
     params.forEach((param) => instanceParams.add(param));
     const replacements = new Map(
@@ -812,7 +827,12 @@ export const createEnvironment = (
             ? addOwnArgumentsAlias(symbol, name, params, module.name, instance.location)
             : instantiation.getQualifiedKey(key);
       setInstanceNames(copy, name);
-      if (unresolvedBodyKeys.has(key) && !isSubstituted(key)) unresolvedBodyKeys.add(copy);
+      if (
+        unresolvedBodyKeys.has(key) &&
+        !isSubstituted(instance, linked, substitutions.size, key)
+      ) {
+        unresolvedBodyKeys.add(copy);
+      }
       return copy;
     });
   };
@@ -1284,6 +1304,7 @@ export const createEnvironment = (
             declarations: [],
             symbols: getStandardInstanceSymbols(instance, standardSymbols, (symbol) => symbol.key),
             instancer: parsed.name,
+            getSubstitutionErrors: () => [],
           };
         }
         const linked = nested ?? getLinkedModule(instance.module, parsed.name);
@@ -1296,6 +1317,8 @@ export const createEnvironment = (
             (symbol) => symbol.key,
           ),
           instancer: parsed.name,
+          getSubstitutionErrors: (substitutionCount) =>
+            getSubstitutionErrors(instance, linked, substitutionCount),
         };
       },
       bound,
