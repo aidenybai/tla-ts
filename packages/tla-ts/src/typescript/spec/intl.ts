@@ -82,7 +82,7 @@ const DIGITS = {
 };
 
 const MOST_BAGS_PER_LITERAL = 256;
-const MOST_ENTRIES = 2500;
+const MOST_ENTRIES = 5000;
 const TABLE_SIZE = 200;
 
 const getNumberKey = (value: number) => (Object.is(value, -0) ? "-0" : String(value));
