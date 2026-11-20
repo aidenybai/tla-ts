@@ -1,4 +1,5 @@
 import { check, formatValue, parseModule, TlaError, type CheckResult, type Value } from "tla-ts";
+import { TlaTypeScriptError } from "../../tla-ts/src/errors";
 import { getErrorResult } from "./run-error";
 import { getSearch, type Search } from "./search";
 
@@ -49,6 +50,11 @@ const getStateText = (state: Record<string, Value>) =>
     .join(", ");
 
 const getCheckResult = async (request: RunRequest): Promise<RunResult> => {
+  // A program compiled by specializing ESCore runs on ESCore's runtime, which its host prepares on
+  // Node's vm.
+  if (request.modules?.ProgramCode !== undefined) {
+    throw new TlaTypeScriptError("tla-ts can't check a TypeScript program in a browser yet");
+  }
   const source = request.source;
   const config = request.config;
   const graphs: string[] = [];
