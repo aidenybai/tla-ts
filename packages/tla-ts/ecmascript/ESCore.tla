@@ -763,14 +763,12 @@ RECURSIVE ArrayFrom(_, _, _, _, _)
 RECURSIVE ArrayFromIterator(_, _, _, _, _, _)
 RECURSIVE ArrayFromArrayLike(_, _, _, _, _, _, _)
 RECURSIVE ArrayFromAsync(_, _, _, _, _)
-RECURSIVE FromAsyncReturn(_, _, _)
-RECURSIVE FromAsyncIterator(_, _, _)
-RECURSIVE FromAsyncNextThen(_, _, _)
-RECURSIVE FromAsyncMappedThen(_, _, _)
-RECURSIVE FromAsyncDefineThen(_, _, _)
-RECURSIVE FromAsyncArrayLike(_, _, _)
-RECURSIVE FromAsyncValueThen(_, _, _)
-RECURSIVE FromAsyncStoreThen(_, _, _)
+RECURSIVE FromAsyncStart(_, _, _, _, _, _)
+RECURSIVE FromAsyncBegin(_, _)
+RECURSIVE FromAsyncRun(_, _)
+RECURSIVE FromAsyncAwait(_, _, _, _)
+RECURSIVE FromAsyncClose(_, _)
+RECURSIVE FromAsyncSteps(_, _)
 RECURSIVE ArraySpeciesCreate(_, _, _)
 RECURSIVE ArrayCreateLength(_, _)
 RECURSIVE FillArray(_, _, _)
@@ -10362,12 +10360,13 @@ IsCasedAfter(cps, i) ==
 ArrayBuiltin(s, f, m, this, args, nt) ==
   CASE m = "constructor" -> ArrayConstructor(s, f, args, nt)
     [] m = "from" -> ArrayFrom(s, this, Arg(args, 1), Arg(args, 2), Arg(args, 3))
-    \* Array.fromAsync (§23.1.2.2) is a built-in async function: its closure runs as an async
-    \* function's body would, settling a new promise.
-    [] m = "fromAsync" ->
-         LET cap == NewPromiseCapability(s, Intrinsic(s, "Promise"))
-             settled == AsyncFunctionStep(Val(cap), ArrayFromAsync(cap.s, this, Arg(args, 1), Arg(args, 2), Arg(args, 3)))
-         IN Ok(settled.s, Val(cap).promise)
+    [] m = "fromAsync" -> ArrayFromAsync(s, this, Arg(args, 1), Arg(args, 2), Arg(args, 3))
+    \* The functions that go on with Array.fromAsync's steps where a value that it awaits settles.
+    [] m = "fromAsyncFulfilled" -> FromAsyncRun(SetSlots(s, O(s, f).slots.data, [awaited |-> Arg(args, 1)]), O(s, f).slots.data)
+    [] m = "fromAsyncRejected" ->
+         LET fa == O(s, f).slots.data IN
+         FromAsyncRun(SetSlots(s, fa, [step |-> IF Slots(s, fa).kind = "iterable" THEN "close" ELSE "reject",
+                                       error |-> Arg(args, 1)]), fa)
     [] m = "isArray" -> IsArray(s, Arg(args, 1))
     \* Array.of (§23.1.2.3).
     [] m = "of" ->
@@ -10452,67 +10451,105 @@ ArrayFromArrayLike(s, a, arrayLike, k, len, mapfn, thisArg) ==
        IF IsAbrupt(mapped) THEN mapped ELSE
        LET d == CreateDataPropertyOrThrow(mapped.s, a, Index(k), Val(mapped)) IN
        IF IsAbrupt(d) THEN d ELSE ArrayFromArrayLike(d.s, a, arrayLike, NumAdd(k, OneNum), len, mapfn, thisArg)
-\* The fromAsyncClosure of Array.fromAsync, which returns the array with a return completion.
+\* Array.fromAsync (§23.1.2.2), as V8 runs it (array-from-async.tq): a state machine in a cell,
+\* whose step runs until it awaits a value, through PromiseResolve and the functions that go on
+\* where the value settles, or settles the promise that it gives. Where a step throws or a value it
+\* awaits rejects, an iterator's return runs and its result is awaited before the promise rejects,
+\* even where next threw; where getting or calling return throws, the promise stays pending.
 ArrayFromAsync(s, c, items, mapper, thisArg) ==
+  LET cap == NewPromiseCapability(s, Intrinsic(s, "Promise"))
+      r == FromAsyncStart(cap.s, c, items, mapper, thisArg, Val(cap).promise)
+  IN IF IsAbrupt(r) THEN Ok(RejectPromise(r.s, Val(cap).promise, r.c.value), Val(cap).promise)
+     ELSE Ok(r.s, Val(cap).promise)
+FromAsyncStart(s, c, items, mapper, thisArg, promise) ==
   IF mapper # Undefined /\ ~IsCallable(s, mapper) THEN ThrowTypeError(s)
   ELSE LET usingAsync == GetMethod(s, items, SymAsyncIterator) IN
   IF IsAbrupt(usingAsync) THEN usingAsync
   ELSE LET usingSync == IF Val(usingAsync) # Undefined THEN Ok(usingAsync.s, Undefined) ELSE GetMethod(usingAsync.s, items, SymIterator) IN
   IF IsAbrupt(usingSync) THEN usingSync
-  ELSE IF Val(usingAsync) # Undefined \/ Val(usingSync) # Undefined THEN
+  ELSE LET base == [promise |-> promise, mapper |-> mapper, thisArg |-> thisArg, index |-> PosZero, awaited |-> Undefined,
+                    value |-> Undefined, mapped |-> Undefined, error |-> Undefined] IN
+  IF Val(usingAsync) # Undefined \/ Val(usingSync) # Undefined THEN
     LET it == IF Val(usingAsync) # Undefined THEN GetIteratorFromMethod(usingSync.s, items, Val(usingAsync))
               ELSE LET sync == GetIteratorFromMethod(usingSync.s, items, Val(usingSync)) IN
                    IF IsAbrupt(sync) THEN sync ELSE CreateAsyncFromSyncIterator(sync.s, Val(sync))
     IN IF IsAbrupt(it) THEN it ELSE
     LET a == IF IsConstructor(it.s, c) THEN Construct(it.s, c, <<>>, c) ELSE ArrayCreate(it.s, 0, Intrinsic(it.s, "ArrayPrototype")) IN
     IF IsAbrupt(a) THEN a
-    ELSE FromAsyncIterator(a.s, [a |-> Val(a), it |-> Val(it), mapper |-> mapper, thisArg |-> thisArg], PosZero)
+    ELSE FromAsyncBegin(a.s, base @@
+                             [kind |-> "iterable", step |-> "next", iterator |-> Val(it).iterator, next |-> Val(it).next, a |-> Val(a)])
   ELSE
-    LET arrayLike == ToObject(usingSync.s, items)
-        len == LengthOfArrayLike(arrayLike.s, Val(arrayLike))
-    IN IF IsAbrupt(len) THEN len ELSE
+    LET arrayLike == ToObject(usingSync.s, items) IN IF IsAbrupt(arrayLike) THEN arrayLike ELSE
+    LET len == LengthOfArrayLike(arrayLike.s, Val(arrayLike)) IN IF IsAbrupt(len) THEN len ELSE
     LET a == IF IsConstructor(len.s, c) THEN Construct(len.s, c, <<Val(len)>>, c) ELSE ArrayCreateLength(len.s, Val(len).value) IN
     IF IsAbrupt(a) THEN a
-    ELSE FromAsyncArrayLike(a.s, [a |-> Val(a), arrayLike |-> Val(arrayLike), len |-> Val(len).value, mapper |-> mapper, thisArg |-> thisArg], PosZero)
-FromAsyncReturn(s, a, len) == LET l == SetLength(s, a, len, a) IN IF IsAbrupt(l) THEN l ELSE Abrupt(l.s, Completion("return", a, Empty))
-\* The loop of the fromAsyncClosure over iterator st.it, from index k.
-FromAsyncIterator(s, st, k) ==
-  IF ~NumLess(k, MaxSafeInteger) THEN LET e == ThrowTypeError(s) IN AsyncIteratorClose(e.s, st.it, e.c)
-  ELSE LET next == Call(s, st.it.next, st.it.iterator, <<>>) IN
-       FromAsyncNextThen(st, k, IF IsAbrupt(next) THEN next ELSE Await(next.s, Val(next)))
-FromAsyncNextThen(st, k, r) ==
-  IF IsSuspended(r) THEN Pass(r, "FromAsyncNextThen", <<st, k>>) ELSE
-  IF IsAbrupt(r) THEN r
-  ELSE IF ~IsObject(Val(r)) THEN ThrowTypeError(r.s)
-  ELSE LET done == IteratorComplete(r.s, Val(r)) IN IF IsAbrupt(done) THEN done
-  ELSE IF Val(done) THEN FromAsyncReturn(done.s, st.a, k)
-  ELSE LET v == Get(done.s, Val(r), SV("value")) IN IF IsAbrupt(v) THEN v
-  ELSE IF st.mapper = Undefined THEN FromAsyncDefineThen(st, k, v)
-  ELSE LET mapped == Call(v.s, st.mapper, st.thisArg, <<Val(v), Num(k)>>) IN
-       IF IsAbrupt(mapped) THEN AsyncIteratorClose(mapped.s, st.it, mapped.c)
-       ELSE FromAsyncMappedThen(st, k, Await(mapped.s, Val(mapped)))
-FromAsyncMappedThen(st, k, r) ==
-  IF IsSuspended(r) THEN Pass(r, "FromAsyncMappedThen", <<st, k>>) ELSE IF IsAbrupt(r) THEN AsyncIteratorClose(r.s, st.it, r.c) ELSE FromAsyncDefineThen(st, k, r)
-FromAsyncDefineThen(st, k, r) ==
-  IF IsSuspended(r) THEN Pass(r, "FromAsyncDefineThen", <<st, k>>) ELSE
-  LET d == CreateDataPropertyOrThrow(r.s, st.a, Index(k), Val(r)) IN
-  IF IsAbrupt(d) THEN AsyncIteratorClose(d.s, st.it, d.c) ELSE FromAsyncIterator(d.s, st, NumAdd(k, OneNum))
-\* The loop of the fromAsyncClosure over the array-like st.arrayLike, from index k.
-FromAsyncArrayLike(s, st, k) ==
-  IF ~NumLess(k, st.len) THEN FromAsyncReturn(s, st.a, st.len)
-  ELSE LET v == Get(s, st.arrayLike, Index(k)) IN
-       FromAsyncValueThen(st, k, IF IsAbrupt(v) THEN v ELSE Await(v.s, Val(v)))
-FromAsyncValueThen(st, k, r) ==
-  IF IsSuspended(r) THEN Pass(r, "FromAsyncValueThen", <<st, k>>) ELSE
-  IF IsAbrupt(r) THEN r
-  ELSE IF st.mapper = Undefined THEN FromAsyncStoreThen(st, k, r)
-  ELSE LET mapped == Call(r.s, st.mapper, st.thisArg, <<Val(r), Num(k)>>) IN
-       FromAsyncStoreThen(st, k, IF IsAbrupt(mapped) THEN mapped ELSE Await(mapped.s, Val(mapped)))
-FromAsyncStoreThen(st, k, r) ==
-  IF IsSuspended(r) THEN Pass(r, "FromAsyncStoreThen", <<st, k>>) ELSE
-  IF IsAbrupt(r) THEN r
-  ELSE LET d == CreateDataPropertyOrThrow(r.s, st.a, Index(k), Val(r)) IN
-       IF IsAbrupt(d) THEN d ELSE FromAsyncArrayLike(d.s, st, NumAdd(k, OneNum))
+    ELSE FromAsyncBegin(a.s, base @@ [kind |-> "arrayLike", step |-> "get", arrayLike |-> Val(arrayLike),
+                                       len |-> Val(len).value, a |-> Val(a)])
+FromAsyncBegin(s, slots) ==
+  LET cell == AllocCell(s, slots)
+      fulfilled == CreateBuiltinFunction(cell.s, <<"Array", "fromAsyncFulfilled">>, 1, <<>>, cell.v)
+      rejected == CreateBuiltinFunction(fulfilled.s, <<"Array", "fromAsyncRejected">>, 1, <<>>, cell.v)
+  IN FromAsyncRun(SetSlots(rejected.s, cell.v, [onFulfilled |-> Val(fulfilled), onRejected |-> Val(rejected)]), cell.v)
+\* Runs the steps of the machine fa from its step, where a throw closes its iterator.
+FromAsyncRun(s, fa) ==
+  LET r == FromAsyncSteps(s, fa) IN
+  IF ~IsAbrupt(r) THEN r
+  ELSE LET s1 == SetSlots(r.s, fa, [error |-> r.c.value]) IN
+       IF Slots(s1, fa).kind = "arrayLike" THEN Ok(RejectPromise(s1, Slots(s1, fa).promise, r.c.value), Undefined)
+       ELSE LET closed == FromAsyncClose(s1, fa) IN
+            IF closed.reject THEN Ok(RejectPromise(closed.s, Slots(closed.s, fa).promise, r.c.value), Undefined)
+            ELSE Ok(closed.s, Undefined)
+\* Awaits value: the machine goes on at step where it settles.
+FromAsyncAwait(s, fa, step, value) ==
+  LET s1 == SetSlots(s, fa, [step |-> step])
+      p == PromiseResolve(s1, Intrinsic(s1, "Promise"), value)
+  IN IF IsAbrupt(p) THEN p
+     ELSE LET t == AddPromiseReactions(p.s, Val(p), Slots(p.s, fa).onFulfilled, Slots(p.s, fa).onRejected, Empty) IN
+          Ok(t.s, Undefined)
+\* The iterator's return, whose result the machine awaits with step "reject": reject is whether the
+\* promise rejects now, as where the iterator has none. A throw is swallowed.
+FromAsyncClose(s, fa) ==
+  LET it == Slots(s, fa).iterator
+      method == Get(s, it, SV("return"))
+  IN IF IsAbrupt(method) THEN [s |-> method.s, reject |-> FALSE]
+     ELSE IF Val(method) \in {Undefined, Null} THEN [s |-> method.s, reject |-> TRUE]
+     ELSE LET inner == Call(method.s, Val(method), it, <<>>) IN
+          IF IsAbrupt(inner) THEN [s |-> inner.s, reject |-> FALSE]
+          ELSE [s |-> FromAsyncAwait(inner.s, fa, "reject", Val(inner)).s, reject |-> FALSE]
+FromAsyncSteps(s, fa) ==
+  LET st == Slots(s, fa) IN
+  CASE st.step = "next" ->
+         LET next == Call(s, st.next, st.iterator, <<>>) IN
+         IF IsAbrupt(next) THEN next ELSE FromAsyncAwait(next.s, fa, "check", Val(next))
+    [] st.step = "check" ->
+         IF ~IsObject(st.awaited) THEN ThrowTypeError(s) ELSE
+         LET done == IteratorComplete(s, st.awaited) IN IF IsAbrupt(done) THEN done
+         ELSE IF Val(done) THEN FromAsyncSteps(SetSlots(done.s, fa, [step |-> "done"]), fa)
+         ELSE LET v == Get(done.s, st.awaited, SV("value")) IN IF IsAbrupt(v) THEN v
+         ELSE IF st.mapper # Undefined THEN FromAsyncSteps(SetSlots(v.s, fa, [step |-> "map", value |-> Val(v)]), fa)
+         ELSE FromAsyncSteps(SetSlots(v.s, fa, [step |-> "add", mapped |-> Val(v)]), fa)
+    [] st.step = "map" ->
+         LET r == Call(s, st.mapper, st.thisArg, <<st.value, Num(st.index)>>) IN
+         IF IsAbrupt(r) THEN r ELSE FromAsyncAwait(r.s, fa, "mapped", Val(r))
+    [] st.step = "mapped" -> FromAsyncSteps(SetSlots(s, fa, [step |-> "add", mapped |-> st.awaited]), fa)
+    [] st.step = "add" ->
+         LET d == CreateDataPropertyOrThrow(s, st.a, Index(st.index), st.mapped) IN IF IsAbrupt(d) THEN d
+         ELSE FromAsyncSteps(SetSlots(d.s, fa, [step |-> IF st.kind = "iterable" THEN "next" ELSE "get",
+                                                index |-> NumAdd(st.index, OneNum)]), fa)
+    [] st.step = "get" ->
+         IF ~NumLess(st.index, st.len) THEN FromAsyncSteps(SetSlots(s, fa, [step |-> "done"]), fa)
+         ELSE LET v == Get(s, st.arrayLike, Index(st.index)) IN IF IsAbrupt(v) THEN v ELSE FromAsyncAwait(v.s, fa, "value", Val(v))
+    [] st.step = "value" ->
+         IF st.mapper = Undefined THEN FromAsyncSteps(SetSlots(s, fa, [step |-> "add", mapped |-> st.awaited]), fa)
+         ELSE LET r == Call(s, st.mapper, st.thisArg, <<st.awaited, Num(st.index)>>) IN
+              IF IsAbrupt(r) THEN r ELSE FromAsyncAwait(r.s, fa, "mapped", Val(r))
+    [] st.step = "done" ->
+         LET l == Set(s, st.a, SV("length"), Num(st.index), TRUE) IN IF IsAbrupt(l) THEN l
+         ELSE ResolvePromiseWith(l.s, st.promise, st.a)
+    [] st.step = "close" ->
+         LET closed == FromAsyncClose(SetSlots(s, fa, [step |-> "reject"]), fa) IN
+         IF closed.reject THEN FromAsyncSteps(closed.s, fa) ELSE Ok(closed.s, Undefined)
+    [] st.step = "reject" -> Ok(RejectPromise(s, st.promise, st.error), Undefined)
 \* ArraySpeciesCreate (§10.4.2.3). This port has one realm, so step 5's realm check never applies.
 ArraySpeciesCreate(s, o, length) ==
   LET len == NumAdd(length, PosZero)
@@ -20483,11 +20520,6 @@ ResumeFrame(frame, r) ==
     [] frame.step = "DefineElementThen" -> DefineElementThen(frame.args[1], r)
     [] frame.step = "ClassBindingThen" -> ClassBindingThen(frame.args[1], frame.args[2], r)
     [] frame.step = "SuperCallThen" -> SuperCallThen(frame.args[1], frame.args[2], frame.args[3], r)
-    [] frame.step = "FromAsyncNextThen" -> FromAsyncNextThen(frame.args[1], frame.args[2], r)
-    [] frame.step = "FromAsyncMappedThen" -> FromAsyncMappedThen(frame.args[1], frame.args[2], r)
-    [] frame.step = "FromAsyncDefineThen" -> FromAsyncDefineThen(frame.args[1], frame.args[2], r)
-    [] frame.step = "FromAsyncValueThen" -> FromAsyncValueThen(frame.args[1], frame.args[2], r)
-    [] frame.step = "FromAsyncStoreThen" -> FromAsyncStoreThen(frame.args[1], frame.args[2], r)
     [] frame.step = "DisposeThen" -> DisposeThen(frame.args[1], r)
     [] frame.step = "DisposedThen" -> DisposedThen(frame.args[1], r)
     [] frame.step = "DisposeAwaitedThen" -> DisposeAwaitedThen(frame.args[1], frame.args[2], frame.args[3], frame.args[4], r)
