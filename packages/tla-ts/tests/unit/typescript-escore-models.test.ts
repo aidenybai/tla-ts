@@ -85,7 +85,7 @@ const worker = new Worker(
         status: result.status,
         distinct: result.distinctStates,
         generated: result.generatedStates,
-        message: result.failure?.message,
+        message: result.failure?.message ?? result.violation?.message,
         trace: result.violation?.trace.map((step) =>
           Object.fromEntries(Object.entries(step.state).map((entry) => [entry[0], loaded.formatValue(entry[1])])),
         ),
@@ -560,6 +560,49 @@ describe("checks a module's exported functions as a model on ESCore", () => {
       `);
       expect(result.status).not.toBe("stopped");
       expect(result.status).not.toBe("invariant-violation");
+    });
+  });
+
+  describe("checks an assumption of a lowered model in its lowered start state", () => {
+    const getSource = (floor: number) => `
+      let count = 0;
+      export const step = () => {
+        count = 1 - count;
+      };
+      /** @assume */
+      export const isLikeJavaScript = () =>
+        Math.trunc(-7 / 2) === -3 && Math.floor(-7 / 2) === ${floor} && \`\${"a"}-\${1}\` === "a-1";
+    `;
+
+    it("agrees with Node", async () => {
+      expect(getCounts(await checkModel(getSource(-4)))).toEqual(["success", 2, 3]);
+    });
+
+    it("rejects another result", async () => {
+      expect((await checkModel(getSource(-3))).status).toBe("assumption-violation");
+    });
+  });
+
+  describe("calls a check that today's compiler names apart from a result in its body", () => {
+    const getSource = (expected: string) => `
+      const flip = function (body: (a: number, b: number) => number) {
+        const held = body;
+        return (a: number, b: number) => held(b, a);
+      };
+      export const minus = flip((self: number, that: number) => self - that);
+      export const run = (value: 1 | 2) => {
+        const result = minus(value, 10);
+        if (result !== ${expected}) throw new Error("result " + result);
+        return result;
+      };
+    `;
+
+    it("agrees with Node", async () => {
+      expect(getCounts(await checkModel(getSource("10 - value")))).toEqual(["success", 1, 1]);
+    });
+
+    it("rejects another result", async () => {
+      expect((await checkModel(getSource("value - 10"))).message).toContain('"result 9"');
     });
   });
 });

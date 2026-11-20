@@ -23093,8 +23093,7 @@
         {
           "name": "matches JavaScript's remainder, division, and strings",
           "source": "\n      let count = 0;\n      export const step = () => {\n        count = 1 - count;\n      };\n      /** @assume */\n      export const isLikeJavaScript = () =>\n        -7 % 3 === -1 &&\n        7 % -3 === 1 &&\n        Math.trunc(-7 / 2) === -3 &&\n        Math.floor(-7 / 2) === -4 &&\n        `${\"a\"}-${1}` === \"a-1\";\n    ",
-          "status": "success",
-          "wrong": "models: ESCore's check of this model gives another status, count, or message than today's compiler's, and which is right is unverified"
+          "status": "success"
         }
       ]
     },
@@ -23130,8 +23129,7 @@
         {
           "name": "reports a throw for some argument of a function that reads no state",
           "status": "assumption-violation",
-          "failure": ["\"low is above high\""],
-          "wrong": "models: ESCore's check of this model gives another status, count, or message than today's compiler's, and which is right is unverified"
+          "failure": ["\"low is above high\""]
         },
         {
           "name": "sorts, reverses, and splices an array that a model holds (1)",
@@ -23172,8 +23170,7 @@
         {
           "name": "calls a check with every value of the call's type",
           "status": "assumption-violation",
-          "failure": ["\"no people\""],
-          "wrong": "models: ESCore's check of this model gives another status, count, or message than today's compiler's, and which is right is unverified"
+          "failure": ["\"no people\""]
         },
         {
           "name": "chooses any value of the call's type in an action",
@@ -23701,12 +23698,7 @@
       "source": "\n      const flip = function (body: (a: number, b: number) => number) {\n        const held = body;\n        return (a: number, b: number) => held(b, a);\n      };\n      export const minus = flip((self: number, that: number) => self - that);\n      export const run = (value: 1 | 2) => {\n        const result = minus(value, 10);\n        if (result !== value - 10) throw new Error(\"result \" + result);\n        return result;\n      };\n    ",
       "runs": [
         { "name": "rejects the arguments unflipped", "status": "error", "failure": ["result 9"] },
-        {
-          "name": "agrees with Node",
-          "replace": ["value - 10", "10 - value"],
-          "status": "success",
-          "wrong": "models: ESCore's check of this model gives another status, count, or message than today's compiler's, and which is right is unverified"
-        }
+        { "name": "agrees with Node", "replace": ["value - 10", "10 - value"], "status": "success" }
       ]
     },
     {
@@ -23879,11 +23871,7 @@
       "name": "BigInts > holds on the heap a typed array's constructor that a module reads",
       "source": "\n      const Native = Uint8Array as { readonly BYTES_PER_ELEMENT: number; readonly length: number };\n      const result = [Native.BYTES_PER_ELEMENT, Native.length, Native === Uint8Array].join();\n      if (result !== \"1,3,true\") throw new Error(\"result \" + result);\n      export const width = (count: 1 | 2) => count * Native.BYTES_PER_ELEMENT;\n    ",
       "runs": [
-        {
-          "name": "agrees with Node",
-          "status": "success",
-          "wrong": "models: ESCore's check of this model gives another status, count, or message than today's compiler's, and which is right is unverified"
-        },
+        { "name": "agrees with Node", "status": "success" },
         {
           "name": "rejects another length",
           "replace": ["3", "0"],

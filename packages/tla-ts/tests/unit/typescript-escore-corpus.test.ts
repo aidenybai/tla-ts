@@ -155,7 +155,7 @@ parentPort.on("message", async (spec) => {
     parentPort.postMessage({
       id: spec.id,
       status: result.status,
-      message: result.failure?.message,
+      message: result.failure?.message ?? result.violation?.message,
       distinct: result.distinctStates,
       generated: result.generatedStates,
       trace: result.violation?.trace.map((step) =>
