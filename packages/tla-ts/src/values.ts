@@ -413,6 +413,10 @@ export const setStringOrder = (texts: Iterable<string>) => {
   Object.assign(stringOrder, createStringOrder());
   modelValues.clear();
   isTypedModelValueCreated = false;
+  isWrittenOrderUsed = false;
+  hasMixedSet = false;
+  hasLambda = false;
+  hasStreamedSet = false;
   for (const text of texts) rankString(text);
 };
 

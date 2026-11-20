@@ -1822,6 +1822,18 @@ describe("evaluation errors match TLC", () => {
     ]);
   });
 
+  it("starts a check without the values an earlier check made", async () => {
+    const earlier = await checkModule(
+      'CONSTANT C\nASSUME \\E s \\in {{1, "a"}} : C \\notin {1}',
+      "CONSTANT C = t_a",
+    );
+    const later = await checkModule("ASSUME LET D == [{} -> {[n \\in Nat |-> n]}] IN D = D");
+    expect([earlier.violation?.message, later.status]).toEqual([
+      "Attempted to check equality of the typed model value t_a and the non-model value\n1",
+      "success",
+    ]);
+  });
+
   it("sorts a TLCEval argument only outside an instance that substitutes", async () => {
     const inner =
       '---- MODULE Inner ----\nEXTENDS TLC\nCONSTANT K\nMixed == 1 \\in TLCEval({1, "a"})\n====';
