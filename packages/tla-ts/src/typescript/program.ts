@@ -235,6 +235,13 @@ const getProjectOptions = (options: ts.CompilerOptions): ts.CompilerOptions => (
   ignoreDeprecations: "6.0",
 });
 
+// The options of the project of the nearest tsconfig.json that holds the file at path, with those
+// that tla-ts needs, or undefined where no project holds it.
+export const getProjectCompilerOptions = (path: string) => {
+  const project = getProject(path);
+  return project === undefined ? undefined : getProjectOptions(project.options);
+};
+
 // The text of a file as tla-ts runs it: a file of JSX's with each JSX expression the call that
 // TypeScript emits for it, by the options of its project, as createProgram reads it (see
 // rewriteJsx), and any other file's as it is.

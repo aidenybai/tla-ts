@@ -188,7 +188,7 @@ describe("checks a module's exported functions as a model on ESCore", () => {
       "export const flip = (value: 0 | 1) => (value === 0 ? 1 : 0);\n",
     );
     const check = (body: string) => {
-      const source = `import { flip } from "./flip";\n${body}`;
+      const source = `import { flip } from "./flip.ts";\n${body}`;
       writeFileSync(join(directory, "model.ts"), source);
       return checkModel(source, join(directory, "model.ts"));
     };
@@ -231,7 +231,7 @@ describe("checks a module's exported functions as a model on ESCore", () => {
       });
 
       it("numbers the state natively as ESCanonical does", async () => {
-        const source = `import { flip } from "./flip";\n${getBody("<=")}`;
+        const source = `import { flip } from "./flip.ts";\n${getBody("<=")}`;
         writeFileSync(join(directory, "compared.ts"), source);
         expect(
           getCounts(await checkModel(source, join(directory, "compared.ts"), "compared")),
@@ -272,7 +272,7 @@ describe("checks a module's exported functions as a model on ESCore", () => {
     describe("keeps a class whose constructor is the default one", () => {
       writeFileSync(join(directory, "box.ts"), "export class Box {\n  size = 1;\n}\n");
       const getSource = (operator: string) =>
-        `import { Box } from "./box";\nlet made = 0;\nlet last: Box | undefined = undefined;\nexport const make = () => {\n  if (made < 2) {\n    last = new Box();\n    made += last.size;\n  }\n};\nexport const isSmall = () => made ${operator} 2;\n`;
+        `import { Box } from "./box.ts";\nlet made = 0;\nlet last: Box | undefined = undefined;\nexport const make = () => {\n  if (made < 2) {\n    last = new Box();\n    made += last.size;\n  }\n};\nexport const isSmall = () => made ${operator} 2;\n`;
       const checkBox = (operator: string, mode: "canonical" | "compared" = "canonical") => {
         const source = getSource(operator);
         writeFileSync(join(directory, "boxes.ts"), source);

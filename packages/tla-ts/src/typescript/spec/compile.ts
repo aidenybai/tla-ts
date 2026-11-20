@@ -1,8 +1,8 @@
 import ts from "@typescript/typescript6";
 import { TlaTypeScriptError } from "../../errors";
-import { createJavaScriptFile, isCommonJsFile } from "../common-js";
 import { rejectEarlyErrors } from "../early-errors";
-import { createFileResolver, getJsxText } from "../program";
+import { getJsxText } from "../program";
+import { createModuleResolver, getModuleFormat } from "./resolve";
 import type { PreparedModule } from "../../tlc/order";
 import { foldNames, getCallBuiltin, HOOKS } from "./library";
 import { CONFIG, type EscoreRuntime, ROOT, SCRIPT_STEPS } from "./prepare";
@@ -40,6 +40,12 @@ export interface EscoreSteps {
   entries: readonly string[];
   // The text of other modules the steps extend, whose reads of the runtime the spec keeps.
   reads?: string;
+  // Whether the host loads every file of code as an ES module, as test262's does, rather than as
+  // Node does.
+  isModuleHost?: boolean;
+  // Whether the entry runs as Node runs a file, as the ES module or the CommonJS module that its
+  // format makes it, rather than as the module or the script that the compile asks for.
+  isNodeEntry?: boolean;
 }
 
 interface CodeDefinition {
@@ -213,18 +219,6 @@ const getSpecifiers = (sourceFile: ts.SourceFile, kind: ProgramFile["kind"]) => 
 // The function that Node wraps a CommonJS module's code in, as its loader writes it.
 const WRAPPER = ["(function (exports, require, module, __filename, __dirname) { ", "\n});"];
 
-// Whether Node loads a file as an ES module or as CommonJS: TypeScript's code as a module, as
-// tla-ts compiles it, unless it's a .cts file, and JavaScript as its extension, its package's type,
-// or its syntax tells.
-const getKind = (path: string, text: string): ProgramFile["kind"] =>
-  /\.[cm]?tsx?$/.test(path)
-    ? path.endsWith(".cts")
-      ? "commonjs"
-      : "module"
-    : isCommonJsFile(createJavaScriptFile(path, text, ts.ScriptTarget.ESNext))
-      ? "commonjs"
-      : "module";
-
 // Whether JSON.parse reads a text, as Node's does where it loads a JSON file.
 const isJson = (text: string) => {
   try {
@@ -245,7 +239,15 @@ const getWrapperNames = (names: ReadonlySet<string>) => [
 // A program's files: the script, or the module and each file that its imports and requires load,
 // as the model's resolver finds them, each once, by path. A require of a file that Node reads as
 // other than code, such as JSON, loads none.
-const loadFiles = (source: string, fileName: string, isModule: boolean): ProgramFile[] => {
+const loadFiles = (
+  source: string,
+  fileName: string,
+  isModule: boolean,
+  host: Pick<EscoreSteps, "isModuleHost" | "isNodeEntry">,
+): ProgramFile[] => {
+  // Whether the host loads a file as an ES module or as CommonJS (see getModuleFormat).
+  const getKind = (path: string, text: string): ProgramFile["kind"] =>
+    host.isModuleHost === true ? "module" : getModuleFormat(path, text);
   // A script loads modules only where it calls import().
   const isScript = !isModule;
   if (isScript && !/\bimport\s*\(/.test(source)) {
@@ -266,7 +268,16 @@ const loadFiles = (source: string, fileName: string, isModule: boolean): Program
       },
     ];
   }
-  const resolve = createFileResolver(fileName);
+  const resolveModule = createModuleResolver(fileName);
+  // The file that a literal of a file's code loads: a require's in CommonJS's mode.
+  const resolve = (literal: ts.StringLiteralLike) =>
+    resolveModule(
+      literal.text,
+      literal.getSourceFile().fileName,
+      ts.isCallExpression(literal.parent) &&
+        ts.isIdentifier(literal.parent.expression) &&
+        literal.parent.expression.text === "require",
+    );
   const getRealPath = (path: string) => ts.sys.realpath?.(ts.sys.resolvePath(path)) ?? path;
   const entry = ts.sys.fileExists(fileName) ? getRealPath(fileName) : fileName;
   // Each file's number, by its path, in the order the program finds them.
@@ -327,7 +338,12 @@ const loadFiles = (source: string, fileName: string, isModule: boolean): Program
       });
       continue;
     }
-    const kind = isScript && path === entry ? "script" : getKind(path, text);
+    const kind =
+      path !== entry || host.isNodeEntry === true
+        ? getKind(path, text)
+        : isScript
+          ? "script"
+          : "module";
     const written = getSpecifiers(
       ts.createSourceFile(path, text, ts.ScriptTarget.ESNext, true),
       kind,
@@ -437,7 +453,7 @@ export const compileToEscore = (
   isModule = false,
   model: EscoreSteps = { steps: SCRIPT_STEPS, entries: [] },
 ): EscoreSpec => {
-  const files = loadFiles(source, fileName, isModule);
+  const files = loadFiles(source, fileName, isModule, model);
   const program = specialize(files, new Set([...runtime.internalKeys, ...model.entries]));
   // The runtime's setTimeout gives a script undefined where Node gives a Timeout, so a script may
   // only call it as a statement.

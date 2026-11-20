@@ -1,3 +1,4 @@
+import { spawnSync } from "node:child_process";
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
@@ -78,6 +79,19 @@ const checkModules = (files: Record<string, string>, isModule = true) => {
   return new Promise<ModuleResult>((resolve) => {
     worker.postMessage({ id: pending.length, path: join(directory, "main.js"), isModule });
     pending.push(resolve);
+  });
+};
+
+// Writes a program's files into a directory of their own, and checks the program from entry, as
+// Node runs it, with the status that Node exits with.
+const checkEntry = (files: Record<string, string>, entry: string) => {
+  const directory = mkdtempSync(join(tmpdir(), "escore-kinds-"));
+  directories.push(directory);
+  Object.entries(files).forEach((file) => writeFileSync(join(directory, file[0]), file[1]));
+  const node = spawnSync(process.execPath, [join(directory, entry)], { encoding: "utf8" }).status;
+  return new Promise<ModuleResult & { node: number | null }>((resolve) => {
+    worker.postMessage({ id: pending.length, path: join(directory, entry), isModule: true });
+    pending.push((result) => resolve({ ...result, node }));
   });
 };
 
@@ -931,5 +945,84 @@ describe("compiles CommonJS modules as Node loads them", () => {
     expect((await checkModules(getFiles("log.push(module.id);", "."))).message).toContain(
       "tla-ts can't use a CommonJS module's module",
     );
+  });
+});
+
+// Each kind of file loads as Node loads it: .mts and .mjs as ES modules, .cts and .cjs as
+// CommonJS, and .ts and .js as the package.json beside them says, whose types Node strips.
+describe("loads each kind of file as Node does", () => {
+  const LIBRARIES = ["ts", "mts", "cts", "js", "mjs", "cjs"];
+  const isModuleKind = (extension: string, type: string) =>
+    extension.startsWith("m") || (!extension.startsWith("c") && type === "module");
+  // A library of each kind, named by its extension, which exports its extension and, in
+  // TypeScript, a typed value.
+  const getLibrary = (extension: string, type: string) => {
+    const annotation = extension.endsWith("ts") ? ": string" : "";
+    const value = `const kind${annotation} = "${extension}";`;
+    return isModuleKind(extension, type)
+      ? `${value}\nexport { kind };\nexport const where = typeof import.meta.url;\n`
+      : `${value}\nexports.kind = kind;\nexports.where = typeof __filename;\n`;
+  };
+  // An entry of a kind that loads every library, as an import or a require, and throws unless
+  // what they export, joined, is what's expected.
+  const getEntry = (extension: string, type: string, expected: string) => {
+    const isModule = isModuleKind(extension, type);
+    const loads = LIBRARIES.map((library, index) =>
+      isModule
+        ? `import { kind as kind${index}, where as where${index} } from "./${library}.${library}";`
+        : `const { kind: kind${index}, where: where${index} } = require("./${library}.${library}");`,
+    );
+    const values = LIBRARIES.map((_, index) => `kind${index} + where${index}`).join(", ");
+    const self = isModule ? "typeof import.meta.filename" : "typeof __dirname";
+    return `${loads.join("\n")}\nconst result = [${values}, ${self}].join();\nif (result !== "${expected}") throw new Error(result);\n`;
+  };
+  const getFiles = (entry: string, type: string, expected: string) => ({
+    "package.json": `{ "type": "${type}" }`,
+    ...Object.fromEntries(
+      LIBRARIES.map((library) => [`${library}.${library}`, getLibrary(library, type)]),
+    ),
+    [`main.${entry}`]: getEntry(entry, type, expected),
+  });
+  const EXPECTED = [...LIBRARIES.map((library) => `${library}string`), "string"].join();
+
+  describe.each(["module", "commonjs"])("in a package of type %s", (type) => {
+    describe.each(LIBRARIES)("from an entry of .%s", (entry) => {
+      it("agrees with Node", async () => {
+        const result = await checkEntry(getFiles(entry, type, EXPECTED), `main.${entry}`);
+        expect([result.node, result.message]).toEqual([0, undefined]);
+      });
+
+      it("rejects another result", async () => {
+        const result = await checkEntry(getFiles(entry, type, "wrong"), `main.${entry}`);
+        expect([result.node, result.message]).toEqual([1, expect.stringContaining(THREW)]);
+      });
+    });
+  });
+
+  // Deviation from Node: TypeScript resolves an import of a .js file to the TypeScript file of its
+  // name, which Node doesn't find, and which TypeScript takes even beside the .js file.
+  it("resolves an import of a .js file to its TypeScript as TypeScript does", async () => {
+    const result = await checkEntry(
+      {
+        "package.json": '{ "type": "module" }',
+        "lib.ts": 'export const kind: string = "ts";',
+        "main.ts": 'import { kind } from "./lib.js";\nif (kind !== "ts") throw new Error(kind);\n',
+      },
+      "main.ts",
+    );
+    expect([result.node, result.message]).toEqual([1, undefined]);
+  });
+
+  it("resolves an import of a .js file beside a TypeScript file of its name to that", async () => {
+    const result = await checkEntry(
+      {
+        "package.json": '{ "type": "module" }',
+        "lib.ts": 'export const kind: string = "ts";',
+        "lib.js": 'export const kind = "js";',
+        "main.js": 'import { kind } from "./lib.js";\nif (kind !== "ts") throw new Error(kind);\n',
+      },
+      "main.js",
+    );
+    expect([result.node, result.message]).toEqual([1, undefined]);
   });
 });

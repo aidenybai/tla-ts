@@ -246,7 +246,7 @@ export const compileTypeScriptFile = async (path: string): Promise<CompiledInput
   const { compileToEscore } = await import("../typescript/spec/compile");
   const { compileModelToEscore } = await import("../typescript/spec/model");
   const { isScript } = await import("../typescript/context");
-  const { isEsModule } = await import("../typescript/exceptions");
+  const { getModuleFormat } = await import("../typescript/spec/resolve");
   const { getJsxText } = await import("../typescript/program");
   const { stripTypes } = await import("../typescript/spec/strip-types");
   const runtime = await getEscoreRuntime();
@@ -259,7 +259,13 @@ export const compileTypeScriptFile = async (path: string): Promise<CompiledInput
     ? stripTypes(ts.createSourceFile(path, text, ts.ScriptTarget.ESNext, true, ts.ScriptKind.TS))
     : text;
   const lines = code.split(/\r\n|[\n\r\u2028\u2029]/);
-  const url = pathToFileURL(realpathSync(path)).href;
+  // Node runs a file as an ES module or as CommonJS, as TypeScript and the file's syntax tell, and
+  // names it by its URL, but a CommonJS file of JavaScript by its path.
+  const isModule = getModuleFormat(path, source) === "module";
+  const url =
+    isModule || /\.[cm]?tsx?$/.test(path)
+      ? pathToFileURL(realpathSync(path)).href
+      : realpathSync(path);
   // Where Node says code is: the file's URL and the line, then the line, with a caret under the
   // node, whose padding has a tab where the line's UTF-8 has one (GetErrorSource of
   // src/node_errors.cc).
@@ -273,7 +279,6 @@ export const compileTypeScriptFile = async (path: string): Promise<CompiledInput
     // A TLA+ string holds only the characters that Node's text then has.
     return /^[\t\n\x20-\x7e]*$/.test(location) ? location : undefined;
   };
-  const isModule = isEsModule(sourceFile);
   const throws: ThrowStatement[] = [];
   const collect = (node: Node): void => {
     if (ts.isThrowStatement(node)) throws.push(node);
@@ -313,7 +318,8 @@ export const compileTypeScriptFile = async (path: string): Promise<CompiledInput
   const spec =
     model !== undefined && !model.isScript
       ? model
-      : compileToEscore(source, path, runtime, isModule, {
+      : compileToEscore(source, path, runtime, true, {
+          isNodeEntry: true,
           steps: getEscoreScriptSteps(siteLocations, unsettledText, url, lines),
           entries: [],
         });

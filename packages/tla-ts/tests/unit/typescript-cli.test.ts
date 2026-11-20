@@ -401,6 +401,38 @@ describe("the CLI with TypeScript files", () => {
     expect(wrong.stderr).toContain("Error: seen 14");
   });
 
+  // Node runs each kind of file: .mts and .mjs as ES modules, .cts and .cjs as CommonJS, and .ts
+  // and .js, in a package that names no type, by their syntax.
+  it.each(["ts", "mts", "cts", "js", "mjs", "cjs"])(
+    "exits with Node's code and stderr where a .%s file leaves an error uncaught",
+    (extension) => {
+      const directory = copyFixtures("passing");
+      const annotation = extension.endsWith("ts") ? ": number" : "";
+      const getScript = (limit: number) =>
+        `const total${annotation} = [1].length;\nif (total !== ${limit}) throw new RangeError("total " + total);\n`;
+      writeFileSync(join(directory, `uncaught.${extension}`), getScript(2));
+      const result = runCli(directory, [`uncaught.${extension}`]);
+      expect(getExit(result)).toEqual(getExit(runNode(directory, `uncaught.${extension}`)));
+      expect(result.status).toBe(1);
+      writeFileSync(join(directory, `caught.${extension}`), getScript(1));
+      expect(getExit(runCli(directory, [`caught.${extension}`]))).toEqual([0, ""]);
+    },
+  );
+
+  // Node runs no JSX, which compiles as TypeScript emits it, by the project's settings, or by
+  // React's automatic runtime without a project, here by the factory its pragma names.
+  it("checks a .jsx file as TypeScript emits it", () => {
+    const directory = copyFixtures("passing");
+    const getScript = (expected: string) =>
+      `/** @jsxRuntime classic */\n/** @jsx h */\nconst h = (type, props, ...children) => type + "(" + children.join(",") + ")";\nconst view = <p>{1}<b>x</b></p>;\nif (view !== "${expected}") throw new Error(view);\n`;
+    writeFileSync(join(directory, "view.jsx"), getScript("p(1,b(x))"));
+    expect(getExit(runCli(directory, ["view.jsx"]))).toEqual([0, ""]);
+    writeFileSync(join(directory, "wrong.jsx"), getScript("p(b(x))"));
+    const wrong = runCli(directory, ["wrong.jsx"]);
+    expect(wrong.status).toBe(1);
+    expect(wrong.stderr).toContain("Error: p(1,b(x))");
+  });
+
   it("exits with Node's warning where a module's top-level await never settles", () => {
     const directory = copyFixtures("passing");
     const script =
