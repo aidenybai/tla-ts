@@ -415,6 +415,7 @@ interface Instantiation {
     reservedKey?: string,
   ) => string;
   createName: (name: string) => string;
+  originalNames: Map<string, string>;
   frame?: Expression;
   isLocal?: boolean;
 }
@@ -494,6 +495,7 @@ const createRenamer = (rewrite: Rewrite) => {
     if (!rewrite.substitutedNames.has(name)) return name;
     const fresh = renamed.get(name) ?? rewrite.instantiation.createName(name);
     renamed.set(name, fresh);
+    rewrite.instantiation.originalNames.set(fresh, name);
     return fresh;
   };
 };

@@ -1513,6 +1513,247 @@ describe("level checking matches SANY", () => {
     },
   );
 
+  const primed =
+    "Level error in applying operator ':\nThe level of argument 1 exceeds the maximum level allowed by the operator.";
+  const getSubstitutedError = (name: string, maximum: number) =>
+    `Level error in instantiating module 'L':\nThe level of the expression or operator substituted for '${name}' \nmust be at most ${maximum}.`;
+  const nestedError =
+    "Level error in instantiating module 'P':\nThe level of the expression or operator substituted for 'd' \nmust be at most 2.";
+  it.each([
+    [
+      "CONSTANT c\nTHEOREM T == ASSUME TRUE PROVE {c} = {1}",
+      "c <- [](x = 1)",
+      "E == (I3!T!2)'",
+      "",
+      [
+        ["line 8, col 6 to line 8, col 14", primed],
+        ["line 7, col 1 to line 7, col 36", getSubstitutedError("c", 2)],
+      ],
+    ],
+    [
+      "CONSTANT c\nTHEOREM T == ({c} = {1}) /\\ TRUE",
+      "c <- [](x = 1)",
+      "E == (I3!T!1)'",
+      "",
+      [
+        ["line 8, col 6 to line 8, col 14", primed],
+        ["line 7, col 1 to line 7, col 36", getSubstitutedError("c", 2)],
+      ],
+    ],
+    [
+      "CONSTANT c\nTHEOREM T == ASSUME TRUE PROVE {c} = {1}",
+      "c <- <>(x = 1)",
+      "E == (I3!T!2)'",
+      "",
+      [
+        ["line 8, col 6 to line 8, col 14", primed],
+        ["line 7, col 1 to line 7, col 36", getSubstitutedError("c", 2)],
+      ],
+    ],
+    [
+      "CONSTANT c\nTHEOREM T == ASSUME TRUE PROVE {c} = {1}",
+      "c <- [](x = 1)",
+      "E == ENABLED I3!T!2",
+      "",
+      [
+        [
+          "line 8, col 6 to line 8, col 19",
+          "Level error in applying operator ENABLED:\nThe level of argument 1 exceeds the maximum level allowed by the operator.",
+        ],
+        ["line 7, col 1 to line 7, col 36", getSubstitutedError("c", 2)],
+      ],
+    ],
+    [
+      "CONSTANT c\nTHEOREM T == ASSUME TRUE PROVE {c} = {1}",
+      "c <- [](x = 1)",
+      "E == (I3!T!2)'",
+      "---- MODULE P ----\nCONSTANT c\nB == {c}\n====\nN == INSTANCE P WITH c <- 1\n",
+      [
+        ["line 13, col 6 to line 13, col 14", primed],
+        ["line 12, col 1 to line 12, col 36", getSubstitutedError("c", 2)],
+      ],
+    ],
+    [
+      "VARIABLE y\nTHEOREM T == ASSUME TRUE PROVE (y')' = y",
+      "y <- x",
+      "E == (I3!T!2)'",
+      "",
+      [["line 5, col 32 to line 5, col 36", primed]],
+    ],
+    [
+      "VARIABLE y\nTHEOREM T == ASSUME TRUE PROVE {y} = {1}",
+      "y <- [](x = 1)",
+      "E == (I3!T!2)'",
+      "",
+      [
+        ["line 8, col 6 to line 8, col 14", primed],
+        ["line 7, col 1 to line 7, col 36", getSubstitutedError("y", 1)],
+        ["line 7, col 1 to line 7, col 36", getSubstitutedError("y", 2)],
+      ],
+    ],
+    [
+      "VARIABLE y\nTHEOREM T == ASSUME (y')' = y PROVE {y} = {1}",
+      "y <- [](x = 1)",
+      "E == (I3!T!2)'",
+      "",
+      [
+        ["line 5, col 21 to line 5, col 25", primed],
+        ["line 8, col 6 to line 8, col 14", primed],
+        ["line 7, col 1 to line 7, col 36", getSubstitutedError("y", 1)],
+      ],
+    ],
+    [
+      "CONSTANT c\nVARIABLE y\nBad == (y')'\nTHEOREM T == ASSUME TRUE PROVE {c} = {1}",
+      "c <- [](x = 1), y <- x",
+      "E == (I3!T!2)'",
+      "",
+      [
+        ["line 6, col 8 to line 6, col 12", primed],
+        ["line 10, col 6 to line 10, col 14", primed],
+        ["line 9, col 1 to line 9, col 44", getSubstitutedError("c", 0)],
+      ],
+    ],
+    [
+      "CONSTANT c\nTHEOREM T == ASSUME TRUE PROVE ({c} = {1}) /\\ (c = 1)",
+      "c <- [](x = 1)",
+      "E == (I3!T!2!2)'",
+      "",
+      [
+        ["line 8, col 6 to line 8, col 16", primed],
+        ["line 7, col 1 to line 7, col 36", getSubstitutedError("c", 2)],
+      ],
+    ],
+    [
+      "CONSTANT c\nTHEOREM T == ASSUME TRUE PROVE \\A y \\in {c} : y = 1",
+      "c <- [](x = 1)",
+      "E == (I3!T!2)'",
+      "",
+      [
+        ["line 8, col 6 to line 8, col 14", primed],
+        ["line 7, col 1 to line 7, col 36", getSubstitutedError("c", 2)],
+      ],
+    ],
+    [
+      "CONSTANT c\nTHEOREM T == ASSUME TRUE PROVE LET Q == {c} IN Q = {1}",
+      "c <- [](x = 1)",
+      "E == (I3!T!2)'",
+      "",
+      [
+        ["line 8, col 6 to line 8, col 14", primed],
+        ["line 7, col 1 to line 7, col 36", getSubstitutedError("c", 2)],
+      ],
+    ],
+    [
+      "CONSTANT c\nA(p) == {p} = {1}\nTHEOREM T == ASSUME TRUE PROVE A(c)",
+      "c <- [](x = 1)",
+      "E == (I3!T!2)'",
+      "",
+      [
+        ["line 9, col 6 to line 9, col 14", primed],
+        ["line 8, col 1 to line 8, col 36", getSubstitutedError("c", 2)],
+      ],
+    ],
+    [
+      "CONSTANT c\nVARIABLE y\nK == INSTANCE P WITH d <- [](y = 1)\nTHEOREM T == ASSUME TRUE PROVE K!B!1",
+      "c <- 1, y <- x",
+      "E == (I3!T!2)'",
+      "---- MODULE P ----\nCONSTANT d\nB == {d} = {1}\n====\n",
+      [
+        ["line 10, col 1 to line 10, col 35", nestedError],
+        ["line 14, col 6 to line 14, col 14", primed],
+      ],
+    ],
+    [
+      "CONSTANT c\nVARIABLE y\nK == INSTANCE P WITH d <- [](y = 1)\nTHEOREM T == ASSUME TRUE PROVE K!B!1 \\/ TRUE",
+      "c <- 1, y <- x",
+      "E == (I3!T!2)'",
+      "---- MODULE P ----\nCONSTANT d\nB == {d} = {1}\n====\n",
+      [
+        ["line 10, col 1 to line 10, col 35", nestedError],
+        ["line 14, col 6 to line 14, col 14", primed],
+      ],
+    ],
+    [
+      "CONSTANT c\nTHEOREM T == ASSUME TRUE PROVE LET K == INSTANCE P WITH c <- c IN K!B = {1}",
+      "c <- [](x = 1)",
+      "E == (I3!T!2)'",
+      "---- MODULE P ----\nCONSTANT c\nB == {c}\n====\nN == INSTANCE P WITH c <- 1\n",
+      [
+        ["line 13, col 6 to line 13, col 14", primed],
+        ["line 12, col 1 to line 12, col 36", getSubstitutedError("c", 2)],
+      ],
+    ],
+    [
+      "CONSTANT c\nVARIABLE w\nK == INSTANCE P WITH d <- c",
+      "c <- [](x = 1), w <- x",
+      "E == (I3!K!B!1)'",
+      "---- MODULE P ----\nCONSTANT d\nB == {d} = {1}\n====\n",
+      [
+        ["line 13, col 6 to line 13, col 16", primed],
+        ["line 12, col 1 to line 12, col 44", getSubstitutedError("c", 0)],
+      ],
+    ],
+    [
+      "CONSTANT c\nVARIABLE w\nK == INSTANCE P WITH d <- [](w = 1)",
+      "c <- 1, w <- x",
+      "E == (I3!K!B!1)'",
+      "---- MODULE P ----\nCONSTANT d\nB == {d} = {1}\n====\n",
+      [
+        ["line 10, col 1 to line 10, col 35", nestedError],
+        ["line 13, col 6 to line 13, col 16", primed],
+      ],
+    ],
+  ])(
+    "levels a selection through an instance from its instanced original and the substitutes, as SANY does: %s",
+    async (instanced, substitution, use, preamble, errors) => {
+      await expect(
+        check({
+          source: `---- MODULE M ----\nVARIABLE x\n${preamble}---- MODULE L ----\n${instanced}\n====\nI3 == INSTANCE L WITH ${substitution}\n${use}\nInit == x = 0\nNext == x' = x\n====`,
+          config: "INIT Init\nNEXT Next",
+        }),
+      ).rejects.toThrow(
+        createSanyError(
+          errors.map((error) => ({ location: `${error[0]} of module M`, message: error[1] })),
+        ),
+      );
+    },
+  );
+
+  it.each([
+    [
+      "CONSTANT c\nDef == \\A y \\in {1} : <<y, c>> = <<1, 1>>",
+      "E == (I3!Def!(y')!1)'",
+      "line 8, col 6 to line 8, col 21",
+    ],
+    [
+      "CONSTANT c\nDef == \\E y \\in {1} : <<y, c>> = <<1, 1>>",
+      "E == (I3!Def!(y')!1)'",
+      "line 8, col 6 to line 8, col 21",
+    ],
+    [
+      "CONSTANT c\nDef == {<<y, c>> : y \\in {1}}",
+      "E == (I3!Def!(y'))'",
+      "line 8, col 6 to line 8, col 19",
+    ],
+    [
+      "CONSTANT c\nDef == \\A y \\in {1} : lab(y) :: <<y, c>> = <<1, 1>>",
+      "E == (I3!Def!lab(y')!1)'",
+      "line 8, col 6 to line 8, col 24",
+    ],
+  ])(
+    "levels a selection through an instance by the names it binds, which the copy renames apart from a substitute, as SANY does: %s",
+    async (instanced, use, location) => {
+      await expect(
+        check({
+          source: `---- MODULE M ----\n---- MODULE L ----\n${instanced}\n====\nVARIABLE y\nI3 == INSTANCE L WITH c <- y\n${use}\nInit == y = 0\nNext == y' = y\n====`,
+          config: "INIT Init\nNEXT Next",
+        }),
+      ).rejects.toThrow(
+        createSanyError([{ location: `${location} of module M`, message: primed }]),
+      );
+    },
+  );
+
   it("checks a label selected from a step's statement, as SANY does", async () => {
     const exceeds = "The level of argument 1 exceeds the maximum level allowed by the operator.";
     await expect(

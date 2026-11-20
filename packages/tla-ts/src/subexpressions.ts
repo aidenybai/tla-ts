@@ -47,6 +47,7 @@ import {
   nullSelections,
   operandApplications,
   operatorSelectionErrors,
+  selectedDefinitions,
   selectionErrors,
   selectionArguments,
   selections,
@@ -702,13 +703,17 @@ const selectSubexpression = (
       ? (substitutionFrames.get(definition.body) ?? [])
       : [],
   );
+  const framed = withSubstitutionFrames(current.kind === "Lambda" ? current.body : current, frames);
+  if (substitutionFrames.has(framed)) {
+    selectedDefinitions.set(framed, {
+      definition: entered[0],
+      params: selection.params.map((param) => param.name),
+    });
+  }
   const body =
     current.kind === "Lambda"
-      ? {
-          ...current,
-          body: wrapLets(withSubstitutionFrames(current.body, frames), selection.lets, location),
-        }
-      : wrapLets(withSubstitutionFrames(current, frames), selection.lets, location);
+      ? { ...current, body: wrapLets(framed, selection.lets, location) }
+      : wrapLets(framed, selection.lets, location);
   const share = (expression: Expression): Expression => ({
     kind: "Selection",
     expression,

@@ -346,6 +346,7 @@ export const createEnvironment = (
     });
   let copyCount = 0;
   const createName = (name: string) => `${name}#${copyCount++}`;
+  const originalNames = new Map<string, string>();
   const instanceChecks: InstanceLevelCheck[] = [];
   const semanticErrors: SanyError[] = [];
   const warnings: SanyError[] = [];
@@ -446,6 +447,7 @@ export const createEnvironment = (
       getSubstitutes: getInstanceSubstitutes,
     },
     recursiveSections,
+    originalNames,
   );
   const instanceActions = new Map<string, InstanceAction>();
   const instanceNames = new Map<string, string>();
@@ -805,6 +807,7 @@ export const createEnvironment = (
         return key;
       },
       createName,
+      originalNames,
       frame,
     });
     const setInstanceNames = (copy: string, name: string) => {
@@ -1086,6 +1089,7 @@ export const createEnvironment = (
         return key;
       },
       createName,
+      originalNames,
       isLocal: true,
     });
     if (frame) {
@@ -1395,7 +1399,11 @@ export const createEnvironment = (
         const symbol = visible.get(name);
         const definition =
           symbol && !builtinAliases.has(symbol.key) ? getLinkedDefinition(symbol.key) : undefined;
-        return definition ? { ...definition, name } : scope.getDefinition(name);
+        if (!definition) return scope.getDefinition(name);
+        const named = { ...definition, name };
+        const copy = instanceCopies.get(definition);
+        if (copy) instanceCopies.set(named, copy);
+        return named;
       },
       (name) => {
         const symbol = visible.get(name);
@@ -1645,6 +1653,7 @@ export const createEnvironment = (
           recursiveSections,
           checkedLabels,
           goalSelections,
+          originalNames,
         },
         instanceChecks.splice(firstCheck),
         warnings,

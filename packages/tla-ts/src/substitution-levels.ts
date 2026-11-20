@@ -78,8 +78,9 @@ const getMaxLevel = (operator: OperatorLevels, index: number) =>
 
 export const createInstanceChecker = (
   getModule: (name: string) => ModuleContext,
-  copies: Omit<InstanceLevels, "getInstanced" | "getModuleLevels">,
+  copies: Omit<InstanceLevels, "getInstanced" | "getOriginal" | "getModuleLevels">,
   recursiveSections: WeakMap<Definition, SectionMember[]>,
+  originalNames: Map<string, string>,
 ) => {
   const analyzers = new Map<string, ModuleAnalyzer>();
   const getModuleAnalyzer = (name: string) => {
@@ -99,6 +100,7 @@ export const createInstanceChecker = (
         getQualifiedName: module.getQualifiedName,
         instances,
         recursiveSections,
+        originalNames,
       }),
     };
     analyzers.set(name, analyzer);
@@ -183,6 +185,7 @@ export const createInstanceChecker = (
       ...getModuleLevels(copy.module),
       source: getAnalyzer(copy.module).analyzeDefinition(copy.source, new Map()),
     }),
+    getOriginal: (copy, target) => getAnalyzer(copy.module).analyzeOriginal(copy.source, target),
     getModuleLevels,
   };
 
