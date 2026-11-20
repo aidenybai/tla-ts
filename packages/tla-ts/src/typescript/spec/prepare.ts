@@ -205,6 +205,14 @@ const prepareModules = (texts: readonly (readonly [string, string])[]): Prepared
     () => {},
   ).specification;
   evaluateStartupDefinitions(started.startupDefinitions, started.environment);
+  // TLC swallows what a definition throws as it starts, a stack overflow included, which would leave
+  // the realm without its value.
+  const initial = started.startupDefinitions.find((definition) => definition.name === "InitialState");
+  if (initial === undefined || getStartupValue(initial, started.environment) === undefined) {
+    throw new TlaError(
+      "tla-ts can't start ESCore's realm, whose evaluation ran out of stack: run Node with a deeper stack, as with --stack-size=4000",
+    );
+  }
   // The strings of the values, some of which only evaluating them makes, keep their order in a
   // check that ranks every string the runtime ranked as it started before any of a program's.
   const strings = getRankedStrings();

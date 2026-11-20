@@ -29,15 +29,6 @@ const build = spawnSync(
   { cwd: PACKAGE_DIRECTORY, stdio: ["ignore", "ignore", "inherit"] },
 );
 if (build.status !== 0) process.exit(build.status ?? 1);
-const graph = spawnSync(
-  process.execPath,
-  ["scripts/prelude-graph.ts", OUT_DIRECTORY, "--if-present"],
-  {
-    cwd: PACKAGE_DIRECTORY,
-    stdio: ["ignore", "ignore", "inherit"],
-  },
-);
-if (graph.status !== 0) process.exit(graph.status ?? 1);
 // ESCore's runtime is prepared on the host that runs the bundles, as its realm is the host's.
 const runtimeGraph = spawnSync(
   "node",

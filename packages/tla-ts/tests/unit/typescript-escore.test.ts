@@ -1641,4 +1641,41 @@ describe("compiles scripts by specializing ESCore", () => {
       });
     });
   });
+
+  // TLC swallows what a definition throws as it starts, a stack overflow included, which would
+  // leave ESCore's realm without its value.
+  it("stops with a named error where the realm's evaluation runs out of stack", async () => {
+    const shallow = new Worker(
+      `const { register } = require("node:module");
+      const { parentPort, workerData } = require("node:worker_threads");
+      // HACK: Node strips the types of tla-ts's sources, whose imports leave out the extension.
+      register("data:text/javascript," + encodeURIComponent(\`export const resolve = (specifier, context, next) =>
+        next(specifier, context).catch((error) => (specifier.startsWith(".") ? next(specifier + ".ts", context) : Promise.reject(error)));\`));
+      import(workerData.source + "/typescript/spec/prepare.ts").then((prepare) => {
+        try {
+          prepare.prepareRuntime(workerData.directory);
+          parentPort.postMessage({ name: undefined, message: undefined });
+        } catch (error) {
+          parentPort.postMessage({ name: error.name, message: error.message });
+        }
+      });`,
+      {
+        eval: true,
+        workerData: {
+          source: pathToFileURL(join(import.meta.dirname, "../../src")).href,
+          directory: join(import.meta.dirname, "../../ecmascript"),
+        },
+        resourceLimits: { stackSizeMb: 1 },
+      },
+    );
+    const thrown = await new Promise<{ name?: string; message?: string }>((resolve) =>
+      shallow.once("message", resolve),
+    );
+    await shallow.terminate();
+    expect(thrown).toEqual({
+      name: "TlaError",
+      message:
+        "tla-ts can't start ESCore's realm, whose evaluation ran out of stack: run Node with a deeper stack, as with --stack-size=4000",
+    });
+  }, 300_000);
 });
