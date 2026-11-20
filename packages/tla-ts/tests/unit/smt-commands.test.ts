@@ -2761,3 +2761,42 @@ describe("pop, as Z3 5.3.2 frees the declarations of a scope", () => {
     ).toEqual(["unsat", "(:rlimit 603)"]);
   });
 });
+
+describe(":global-declarations, as Z3 5.3.2 keeps declarations through a pop", () => {
+  it("keeps the functions, datatypes and named terms of a popped scope", () => {
+    expect(
+      run([
+        "(get-option :global-decls)",
+        "(set-option :global-declarations true)",
+        "(get-option :global-declarations)",
+        "(declare-const x Int)",
+        "(push 1)",
+        "(declare-datatypes ((P 0)) (((mk (fst Int)))))",
+        "(declare-fun a () Int)",
+        "(assert (! (> x 0) :named n))",
+        "(pop 1)",
+        "(declare-const p P)",
+        "(assert (= (fst p) a))",
+        "(assert (not n))",
+        "(check-sat)",
+      ]),
+    ).toEqual(["false", "true", "sat"]);
+  });
+
+  it("cannot be set once the solver is initialized", () => {
+    expect(
+      run([
+        "(push 1)",
+        "(set-option :global-declarations true)",
+        "(declare-fun a () Int)",
+        "(pop 1)",
+        "(assert (= a 1))",
+        "(check-sat)",
+      ]),
+    ).toEqual([
+      "(error \"line 2 column 33: error setting ':global-decls', option value cannot be modified after initialization\")",
+      '(error "line 5 column 11: unknown constant a")',
+      "sat",
+    ]);
+  });
+});

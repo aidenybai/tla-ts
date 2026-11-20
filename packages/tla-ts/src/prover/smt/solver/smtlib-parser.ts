@@ -135,9 +135,10 @@ import { UpolynomialManager } from "./nlsat/upolynomial";
 
 export interface ParserOptions {
   isIgnoringBadPatterns: boolean;
+  isGlobalDecls: boolean;
 }
 
-const DEFAULT_PARSER_OPTIONS: ParserOptions = { isIgnoringBadPatterns: true };
+const DEFAULT_PARSER_OPTIONS: ParserOptions = { isIgnoringBadPatterns: true, isGlobalDecls: false };
 
 // Z3 counts the columns of the first line from 1 and of the others from 0.
 export interface SmtToken {
@@ -1024,13 +1025,23 @@ export const createSmtlibReader = (
   const scopedFuncs: number[] = [];
   const scopedFuncStarts: number[] = [];
 
+  // With global declarations, Z3 keeps every declaration through a pop.
+  const pushUndo = (restore: () => void) => {
+    if (!options.isGlobalDecls) undo.push(restore);
+  };
+
   const declare = <Value>(names: Map<string, Value>, name: string, value: Value) => {
     const previous = names.get(name);
-    undo.push(() => {
+    pushUndo(() => {
       if (previous === undefined) names.delete(name);
       else names.set(name, previous);
     });
     names.set(name, value);
+  };
+
+  const declareFunc = (name: string, decls: readonly number[], decl: number) => {
+    declare(funcs, name, [...decls, decl]);
+    if (!options.isGlobalDecls) scopedFuncs.push(decl);
   };
 
   const insertMacro = (name: string, macro: Macro) => {
@@ -1079,8 +1090,7 @@ export const createSmtlibReader = (
         `invalid declaration, ${funcDecl.domain.length === 0 ? "constant" : "function"} '${name}' (with the given signature) already declared`,
         at,
       );
-    declare(funcs, name, [...existing, decl]);
-    scopedFuncs.push(decl);
+    declareFunc(name, existing, decl);
   };
 
   const insertDatatypeDecls = (sort: number, at: SExpr) => {
@@ -1099,7 +1109,7 @@ export const createSmtlibReader = (
     if (parameters.every((parameter) => manager.getTypeParameterIndex(parameter) === -1))
       insertDatatypeDecls(sort, at);
     notifiedSorts.add(sort);
-    undo.push(() => notifiedSorts.delete(sort));
+    pushUndo(() => notifiedSorts.delete(sort));
   };
 
   const getDatatypeInstance = (decl: DatatypeSortDecl, parameters: number[], at: SExpr) => {
@@ -3110,7 +3120,7 @@ export const createSmtlibReader = (
   const commitDatatypes = (defs: DatatypeDef[], end: SExpr) => {
     const sorts = mkDatatypes(manager, defs);
     if (typeof sorts === "string") throw new SmtParseError(sorts, end);
-    for (const def of defs) undo.push(() => removeDatatype(manager, def.name));
+    for (const def of defs) pushUndo(() => removeDatatype(manager, def.name));
     defs.forEach((def, index) => {
       if (def.parameters.length === 0) insertDatatypeDecls(sorts[index], end);
     });
@@ -3306,8 +3316,7 @@ export const createSmtlibReader = (
     const decl = manager.mkRecFuncDecl(name, domain, manager.sorts[body]);
     for (const reversedVar of reversedVars) manager.decRef(reversedVar);
     setRecFunDefinition(manager, manager.recFunDefs.get(decl)!, true, body);
-    declare(funcs, name, [...(funcs.get(name) ?? []), decl]);
-    scopedFuncs.push(decl);
+    declareFunc(name, funcs.get(name) ?? [], decl);
   };
 
   const declareCommand = (list: SmtList) => {
@@ -3470,8 +3479,7 @@ export const createSmtlibReader = (
         extra ?? list.end,
       );
     }
-    declare(funcs, symbol.text, [...existing, decl]);
-    scopedFuncs.push(decl);
+    declareFunc(symbol.text, existing, decl);
     expectEnd(
       extra,
       name === "declare-fun"
