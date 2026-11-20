@@ -1940,6 +1940,15 @@ ASSUME TLCFP(a) = -887695703
     expect([result.status, prints, warned]).toEqual(["success", ["4"], ["Inv"]]);
   });
 
+  it("tests membership in a set definition with a [Mod] value against the value, as TLC does", async () => {
+    const result = await check({
+      source:
+        "---- MODULE M ----\nVARIABLE x\nDef == [a : {1, 2}]\nInit == x = [a |-> 1]\nNext == x' = x\nInv == x \\in Def\n====",
+      config: "CONSTANT Def = [M] {}\nINVARIANT Inv\nINIT Init\nNEXT Next",
+    });
+    expect([result.status, result.violation?.name]).toEqual(["invariant-violation", "Inv"]);
+  });
+
   it("evaluates a constraint a [Mod] value gives a literal body, where TLC throws a ClassCastException", async () => {
     const results = await Promise.all(
       [
