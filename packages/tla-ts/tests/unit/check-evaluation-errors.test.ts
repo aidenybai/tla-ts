@@ -3775,6 +3775,76 @@ describe("evaluation errors match TLC", () => {
     },
   );
 
+  it.each([
+    [
+      "x' \\in ([Nat -> {1}] \\ {})",
+      "Attempted to enumerate a set of the form [D -> R],but the domain D:\nNat\ncannot be enumerated.",
+      [
+        "Line 5, column 9 to line 5, column 34 in M",
+        "Line 5, column 17 to line 5, column 33 in M",
+        "Line 5, column 17 to line 5, column 28 in M",
+      ],
+    ],
+    [
+      "x' \\in ([{1} -> Nat] \\ {})",
+      "Attempted to enumerate a set of the form [D -> R],but the range R:\nNat\ncannot be enumerated.",
+      [
+        "Line 5, column 9 to line 5, column 34 in M",
+        "Line 5, column 17 to line 5, column 33 in M",
+        "Line 5, column 17 to line 5, column 28 in M",
+      ],
+    ],
+    [
+      "x' \\in ([a : Nat] \\ {})",
+      "Attempted to enumerate a set of the form [l1 : v1, ..., ln : vn],\nbut can't enumerate the value of the `a' field:\nNat",
+      [
+        "Line 5, column 9 to line 5, column 31 in M",
+        "Line 5, column 17 to line 5, column 30 in M",
+        "Line 5, column 17 to line 5, column 25 in M",
+      ],
+    ],
+    [
+      "x' \\in ((Nat \\X {1}) \\ {})",
+      "Attempted to enumerate a set of the form s1 \\X s2 ... \\X sn,\nbut can't enumerate s0:\nNat",
+      [
+        "Line 5, column 9 to line 5, column 34 in M",
+        "Line 5, column 17 to line 5, column 33 in M",
+        "Line 5, column 18 to line 5, column 27 in M",
+      ],
+    ],
+    [
+      "x' = x /\\ \\E e \\in ([{1} -> Nat] \\ {}) : TRUE",
+      "Attempted to enumerate a set of the form [D -> R],but the range R:\nNat\ncannot be enumerated.",
+      [
+        "Line 5, column 9 to line 5, column 53 in M",
+        "Line 5, column 9 to line 5, column 14 in M",
+        "Line 5, column 19 to line 5, column 53 in M",
+        "Line 5, column 29 to line 5, column 45 in M",
+        "Line 5, column 29 to line 5, column 40 in M",
+      ],
+    ],
+    [
+      "x' = x /\\ ~(((1..2) \\cup ({1} \\X Nat)) \\subseteq {})",
+      "Attempted to enumerate a set of the form s1 \\X s2 ... \\X sn,\nbut can't enumerate s1:\nNat",
+      [
+        "Line 5, column 9 to line 5, column 60 in M",
+        "Line 5, column 9 to line 5, column 14 in M",
+        "Line 5, column 19 to line 5, column 60 in M",
+        "Line 5, column 21 to line 5, column 59 in M",
+        "Line 5, column 22 to line 5, column 45 in M",
+        "Line 5, column 35 to line 5, column 44 in M",
+      ],
+    ],
+  ])(
+    "frames a component that can't be enumerated as TLC's elements() opens the set: %s",
+    async (next, reason, callStack) => {
+      const result = await checkSetBound(next, "TRUE");
+      expect(result.failure?.message).toBe(getRuntimeException(reason));
+      expect(formatCallStackLines(result)).toEqual(callStack);
+      expect(result.failure?.fingerprint?.reason).toBe(reason);
+    },
+  );
+
   it("streams S into UNION S past -maxSetSize, as TLC's UnionValue does", async () => {
     const result = await checkSetBound(
       "x' = Cardinality(UNION (SUBSET {1} \\cup (SUBSET {2} \\cup (SUBSET {1} \\cup (SUBSET {2} \\cup (SUBSET {1} \\cup SUBSET {2}))))))",

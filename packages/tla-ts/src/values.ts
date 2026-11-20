@@ -1681,15 +1681,25 @@ const getSubsetBase = (value: SubsetValue) => {
   return toFiniteSet(value.base).elements;
 };
 
+const describeUnenumerableFunctionSet = (part: string, set: Value) =>
+  `Attempted to enumerate a set of the form [D -> R],but the ${part}:\n${prettyPrint(formatValue(set))}\ncannot be enumerated.`;
+
+const describeUnenumerableComponent = (value: RecordSetValue | ProductSetValue, index: number) =>
+  value.kind === "RecordSet"
+    ? `Attempted to enumerate a set of the form [l1 : v1, ..., ln : vn],\nbut can't enumerate the value of the \`${value.names[index]}' field:\n${prettyPrint(formatValue(value.sets[index]))}`
+    : `Attempted to enumerate a set of the form s1 \\X s2 ... \\X sn,\nbut can't enumerate s${index}:\n${prettyPrint(formatValue(value.factors[index]))}`;
+
 const getComponentElements = (
-  sets: Value[],
+  value: RecordSetValue | ProductSetValue,
   getElements: (set: Value) => Value[],
-  describeUnenumerable: (set: Value, index: number) => string,
 ) => {
+  const sets = value.kind === "RecordSet" ? value.sets : value.factors;
   const lists: Value[][] = [];
   for (let index = 0; index < sets.length; index++) {
     const set = sets[index];
-    if (isOverriddenSet(set)) throw new TlaEvaluationError(describeUnenumerable(set, index));
+    if (isOverriddenSet(set)) {
+      throw new TlaEvaluationError(describeUnenumerableComponent(value, index));
+    }
     const elements = getElements(set);
     if (elements.length === 0) return [[]];
     lists.push(elements);
@@ -1790,15 +1800,11 @@ const enumerateSet = (
     case "FunctionSet": {
       if (!isVersion174 && isEmptySet(value)) return [];
       if (isOverriddenSet(value.domain)) {
-        throw new TlaEvaluationError(
-          `Attempted to enumerate a set of the form [D -> R],but the domain D:\n${prettyPrint(formatValue(value.domain))}\ncannot be enumerated.`,
-        );
+        throw new TlaEvaluationError(describeUnenumerableFunctionSet("domain D", value.domain));
       }
       const domain = getFunctionDomain(value.domain);
       if ((domain.length > 0 || isVersion174) && isOverriddenSet(value.range)) {
-        throw new TlaEvaluationError(
-          `Attempted to enumerate a set of the form [D -> R],but the range R:\n${prettyPrint(formatValue(value.range))}\ncannot be enumerated.`,
-        );
+        throw new TlaEvaluationError(describeUnenumerableFunctionSet("range R", value.range));
       }
       const range = domain.length === 0 ? [] : getElements(value.range);
       return getCartesianProduct(
@@ -1808,24 +1814,14 @@ const enumerateSet = (
     }
     case "RecordSet": {
       if (!isVersion174 && isEmptySet(value)) return [];
-      const fields = getComponentElements(
-        value.sets,
-        getElements,
-        (set, index) =>
-          `Attempted to enumerate a set of the form [l1 : v1, ..., ln : vn],\nbut can't enumerate the value of the \`${value.names[index]}' field:\n${prettyPrint(formatValue(set))}`,
-      );
+      const fields = getComponentElements(value, getElements);
       return getCartesianProduct(fields, isBounded).map((combination) =>
         createRecord(value.names.map((name, index): [string, Value] => [name, combination[index]])),
       );
     }
     case "ProductSet": {
       if (!isVersion174 && isEmptySet(value)) return [];
-      const factors = getComponentElements(
-        value.factors,
-        getElements,
-        (factor, index) =>
-          `Attempted to enumerate a set of the form s1 \\X s2 ... \\X sn,\nbut can't enumerate s${index}:\n${prettyPrint(formatValue(factor))}`,
-      );
+      const factors = getComponentElements(value, getElements);
       return getCartesianProduct(factors, isBounded).map(createTuple);
     }
     case "FilteredSet": {
@@ -1962,16 +1958,30 @@ const openCombinedStream = (
       }
       return;
     }
-    case "FunctionSet":
+    case "FunctionSet": {
       if (value.enumerated || isEmptySet(value)) return;
-      openOperandStream(value.domain, true);
-      if (!isEmptySet(value.domain)) openOperandStream(value.range, true);
+      const domain = value.domain;
+      openOperandStream(domain, true);
+      if (isOverriddenSet(domain)) {
+        throw new TlaEvaluationError(describeUnenumerableFunctionSet("domain D", domain));
+      }
+      if (isEmptySet(domain)) return;
+      if (isOverriddenSet(value.range)) {
+        throw new TlaEvaluationError(describeUnenumerableFunctionSet("range R", value.range));
+      }
+      openOperandStream(value.range, true);
       return;
+    }
     case "RecordSet":
     case "ProductSet": {
       if (value.enumerated || isEmptySet(value)) return;
       const sets = value.kind === "RecordSet" ? value.sets : value.factors;
-      for (let index = 0; index < sets.length; index++) openOperandStream(sets[index], true);
+      for (let index = 0; index < sets.length; index++) {
+        if (isOverriddenSet(sets[index])) {
+          throw new TlaEvaluationError(describeUnenumerableComponent(value, index));
+        }
+        openOperandStream(sets[index], true);
+      }
     }
   }
 };
