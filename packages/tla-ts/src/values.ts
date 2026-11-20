@@ -1903,14 +1903,14 @@ const openStream = (value: Value): void => {
       return;
     case "FilteredSet":
       if (!isTlcEnumerable(value.base)) toFiniteSet(value);
-      return openStream(value.base);
+      return openOperandStream(value.base);
     case "Union":
       if (!isEnumeratedSet(value.base) && isTlcEnumerable(value.base)) {
-        return openStream(value.base);
+        return openOperandStream(value.base);
       }
       getUnionSets(value)
         .slice(0, 1)
-        .forEach((set) => openStream(getUnionSet(set, 0, value)));
+        .forEach((set) => openOperandStream(getUnionSet(set, 0, value)));
       return;
     case "SetOperation":
       if (value.operator === "\\" && !isTlcEnumerable(value.left)) toFiniteSet(value);
@@ -1927,10 +1927,38 @@ const openStream = (value: Value): void => {
       ) {
         toFiniteSet(value);
       }
-      if (value.operator !== "\\cap" || isTlcEnumerable(value.left)) openStream(value.left);
-      else openStream(value.right);
-      if (value.operator === "\\cup") openStream(value.right);
+      if (value.operator !== "\\cap" || isTlcEnumerable(value.left)) openOperandStream(value.left);
+      else openOperandStream(value.right);
+      if (value.operator === "\\cup") openOperandStream(value.right);
   }
+};
+
+// TLC's elements() opens SUBSET S, [S -> T], [a : S] and S \X T inside the frames of the sets that stream them.
+const openEnumeratedStream = (value: Value) => {
+  if (typeof value !== "object" || isCachedSet(value)) return;
+  switch (value.kind) {
+    case "Subset":
+      if (!value.enumerated) getSubsetBase(value);
+      return;
+    case "FunctionSet":
+      if (value.enumerated || isEmptySet(value)) return;
+      openOperandStream(value.domain);
+      if (!isEmptySet(value.domain)) openOperandStream(value.range);
+      return;
+    case "RecordSet":
+    case "ProductSet":
+      if (value.enumerated || isEmptySet(value)) return;
+      (value.kind === "RecordSet" ? value.sets : value.factors).forEach(openOperandStream);
+  }
+};
+
+const openOperandStream = (value: Value) => {
+  const sets = setTrace.sets;
+  if (sets === undefined) return openStream(value);
+  sets.push(value);
+  openStream(value);
+  openEnumeratedStream(value);
+  sets.pop();
 };
 
 const listUnionLikeTlc = (union: SetOperationValue) => {
@@ -1962,12 +1990,7 @@ export const getNormalizedSetElements = (value: Value, isBounded: boolean) => {
     return isBounded ? toFiniteSet(value).elements : getUnboundedElements(value);
   }
   // TLC frames the set as its elements() opens the stream, but not as toSetEnum collects it.
-  const sets = setTrace.sets;
-  if (sets) {
-    sets.push(value);
-    openStream(value);
-    sets.pop();
-  }
+  if (setTrace.sets) openOperandStream(value);
   const elements = value.kind === "Union" ? enumerateSet(value) : enumerateSetOperation(value);
   value.enumerated = createSortedSet(elements);
   return elements;

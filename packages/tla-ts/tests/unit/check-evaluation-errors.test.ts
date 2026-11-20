@@ -3349,6 +3349,102 @@ describe("evaluation errors match TLC", () => {
 
   it.each([
     [
+      'x\' \\in ({1} \\cup SUBSET {1, "a"})',
+      [
+        "Line 5, column 9 to line 5, column 41 in M",
+        "Line 5, column 17 to line 5, column 40 in M",
+        "Line 5, column 26 to line 5, column 40 in M",
+        "Line 5, column 33 to line 5, column 40 in M",
+      ],
+    ],
+    [
+      'x\' \\in (({1} \\X {1, "a"}) \\ {})',
+      [
+        "Line 5, column 9 to line 5, column 39 in M",
+        "Line 5, column 17 to line 5, column 38 in M",
+        "Line 5, column 18 to line 5, column 32 in M",
+        "Line 5, column 25 to line 5, column 32 in M",
+      ],
+    ],
+    [
+      'x\' \\in ([{1} -> {1, "a"}] \\ {})',
+      [
+        "Line 5, column 9 to line 5, column 39 in M",
+        "Line 5, column 17 to line 5, column 38 in M",
+        "Line 5, column 17 to line 5, column 33 in M",
+        "Line 5, column 25 to line 5, column 32 in M",
+      ],
+    ],
+    [
+      'x\' \\in ([a : {1, "a"}] \\ {})',
+      [
+        "Line 5, column 9 to line 5, column 36 in M",
+        "Line 5, column 17 to line 5, column 35 in M",
+        "Line 5, column 17 to line 5, column 30 in M",
+        "Line 5, column 22 to line 5, column 29 in M",
+      ],
+    ],
+    [
+      'x\' \\in ({s \\in SUBSET {1, "a"} : TRUE} \\ {})',
+      [
+        "Line 5, column 9 to line 5, column 52 in M",
+        "Line 5, column 17 to line 5, column 51 in M",
+        "Line 5, column 24 to line 5, column 38 in M",
+        "Line 5, column 31 to line 5, column 38 in M",
+      ],
+    ],
+    [
+      'x\' \\in ((SUBSET {1, "a"} \\cup {}) \\ {})',
+      [
+        "Line 5, column 9 to line 5, column 47 in M",
+        "Line 5, column 17 to line 5, column 46 in M",
+        "Line 5, column 18 to line 5, column 40 in M",
+        "Line 5, column 25 to line 5, column 32 in M",
+      ],
+    ],
+    [
+      'x\' = x /\\ \\A e \\in (SUBSET {1, "a"} \\ {}) : TRUE',
+      [
+        "Line 5, column 9 to line 5, column 56 in M",
+        "Line 5, column 9 to line 5, column 14 in M",
+        "Line 5, column 19 to line 5, column 56 in M",
+        "Line 5, column 29 to line 5, column 48 in M",
+        "Line 5, column 29 to line 5, column 43 in M",
+        "Line 5, column 36 to line 5, column 43 in M",
+      ],
+    ],
+    [
+      'x\' = CHOOSE e \\in UNION {SUBSET {1, "a"}} : TRUE',
+      [
+        "Line 5, column 9 to line 5, column 56 in M",
+        "Line 5, column 14 to line 5, column 56 in M",
+        "Line 5, column 27 to line 5, column 49 in M",
+        "Line 5, column 34 to line 5, column 48 in M",
+        "Line 5, column 41 to line 5, column 48 in M",
+      ],
+    ],
+  ])(
+    "frames the operands that TLC's elements() opens for a set operation or UNION: %s",
+    async (next, callStack) => {
+      const result = await checkSetBound(next, "TRUE");
+      expect(formatCallStackLines(result)).toEqual(callStack);
+      expect(result.failure?.fingerprint?.reason).toBe(
+        'Attempted to compare string "a" with non-string:\n1',
+      );
+    },
+  );
+
+  it("opens no operand of an empty S \\X T, as TLC's elements() does", async () => {
+    const result = await checkSetBound("x' \\in (({1, \"a\"} \\X {}) \\ {}) \\/ x' = 1", "TRUE");
+    expect([result.status, result.generatedStates, result.distinctStates]).toEqual([
+      "success",
+      3,
+      2,
+    ]);
+  });
+
+  it.each([
+    [
       'x\' = CHOOSE e \\in SUBSET {1, "a"} : TRUE',
       [
         "Line 5, column 9 to line 5, column 48 in M",
