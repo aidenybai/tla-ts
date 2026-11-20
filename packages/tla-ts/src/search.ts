@@ -73,7 +73,13 @@ import {
   TEMPORAL_LEVEL,
   VARIABLE_LEVEL,
 } from "./levels";
-import { expandTemporal, getLevel, type ScopedExpression, type TemporalProperty } from "./liveness";
+import {
+  expandTemporal,
+  getLevel,
+  getLevelBound,
+  type ScopedExpression,
+  type TemporalProperty,
+} from "./liveness";
 import { getLiveExpressions } from "./liveness-checker";
 import { prettyPrint, prettyPrintT } from "./pretty-print";
 import { parenthesizedRanges } from "./parser";
@@ -437,7 +443,7 @@ const getSpecification = (
       const expanded = getDefinition(getRootKey(name, environment), environment);
       return (
         expanded?.kind === "Operator" &&
-        getLevel(expanded.body, undefined, environment) === VARIABLE_LEVEL
+        getLevelBound(expanded.body, undefined, environment) === VARIABLE_LEVEL
       );
     });
     if (!isInitial && isConstantTrue(item, environment, "spec")) return;
@@ -502,7 +508,7 @@ const getSpecification = (
         EXIT_STATUS.error,
       );
     }
-    const level = getLevel(conjunct, item.scope, environment);
+    const level = getLevelBound(conjunct, item.scope, environment);
     if (level === TEMPORAL_LEVEL) {
       if (property === undefined || !item.path.includes(property)) isUntaggedFound = true;
       temporals.push(item);
@@ -597,7 +603,7 @@ const getProperties = (
       }
       if (
         conjunct.kind === "Always" &&
-        getLevel(conjunct.expression, item.scope, environment) <= VARIABLE_LEVEL
+        getLevelBound(conjunct.expression, item.scope, environment) <= VARIABLE_LEVEL
       ) {
         const body = conjunct.expression;
         const operator =
@@ -611,7 +617,7 @@ const getProperties = (
         });
         return;
       }
-      const level = getLevel(conjunct, item.scope, environment);
+      const level = getLevelBound(conjunct, item.scope, environment);
       if (level < ACTION_LEVEL) {
         properties.initialPredicates.push({
           name: partName,

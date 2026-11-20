@@ -4635,6 +4635,71 @@ describe("initial predicate and next-state relation match TLC", () => {
     expect(warned).toEqual(expected);
   });
 
+  it.each(["P == [](LET A == x' = x IN x = 0)", "F(p) == x = 0\nP == [](F(x'))"])(
+    "checks %j as a temporal property, as TLC's level bound counts what the formula leaves out",
+    async (definitions) => {
+      const result = await check({
+        source: `---- MODULE M ----\nEXTENDS Naturals\nVARIABLE x\nInit == x = 0\nNext == x' = (x + 1) % 2\n${definitions}\n====`,
+        config: "INIT Init\nNEXT Next\nPROPERTY P",
+      });
+      expect([result.status, result.generatedStates, result.distinctStates]).toEqual([
+        "property-violation",
+        3,
+        2,
+      ]);
+    },
+  );
+
+  it.each([
+    [
+      "P == ~~(LET A == x' = x IN x = 0)",
+      "INIT Init\nNEXT Next\nPROPERTY P",
+      "The formula P at line 6, col 6 to line 6, col 33 of module M is an action-level formula (i.e., it contains no temporal operators). Only temporal-level (or state-level) formulas are allowed under PROPERTY or PROPERTIES. To check that action P holds in *every* step of the behavior, define a temporal property: Let A be the formula at line 6, col 6 to line 6, col 33 of module M; rewrite A as [][A]_v, where v is a state function (typically the tuple of variables) (compare page 90 of Specifying Systems at https://lamport.azurewebsites.net/tla/book.html).",
+    ],
+    [
+      "Spec == Init /\\ [][Next]_x /\\ ~~(LET A == x' = x IN x = 0)",
+      "SPECIFICATION Spec",
+      "TLC cannot handle this conjunct of the spec:\nline 6, col 31 to line 6, col 58 of module M",
+    ],
+    [
+      "F(p) == TRUE\nSpec == Init /\\ [][Next]_x /\\ ~~F(x')",
+      "SPECIFICATION Spec",
+      "TLC cannot handle this conjunct of the spec:\nline 7, col 31 to line 7, col 37 of module M",
+    ],
+  ])("rejects %j at the level TLC bounds it by", async (definitions, config, message) => {
+    await expect(
+      check({
+        source: `---- MODULE M ----\nEXTENDS Naturals\nVARIABLE x\nInit == x = 0\nNext == x' = (x + 1) % 2\n${definitions}\n====`,
+        config,
+      }),
+    ).rejects.toThrow(new TlaConfigError(message));
+  });
+
+  it("takes an atom of a temporal property to the level TLC bounds its LET by", async () => {
+    await expect(
+      check({
+        source:
+          "---- MODULE M ----\nEXTENDS Naturals\nVARIABLE x\nInit == x = 0\nNext == x' = (x + 1) % 2\nP == <>((LET A == x' = x IN 1) = 2)\n====",
+        config: "INIT Init\nNEXT Next\nPROPERTY P",
+      }),
+    ).rejects.toThrow(
+      new TlaEvaluationError(
+        "Temporal formulas containing actions must be of forms <>[]A or []<>A.",
+      ),
+    );
+  });
+
+  it('describes a property in TLCGet("spec") at the level TLC bounds its LET by', async () => {
+    const prints: string[] = [];
+    await check({
+      source:
+        '---- MODULE M ----\nEXTENDS Naturals, TLC, FiniteSets\nVARIABLE x\nInit == x = 0\nNext == x\' = (x + 1) % 2\nP == [](LET A == x\' = x IN x \\in {0, 1})\nInv == PrintT(<<Cardinality(TLCGet("spec").invariants), Cardinality(TLCGet("spec").impliedtemporals)>>)\n====',
+      config: "INIT Init\nNEXT Next\nPROPERTY P\nINVARIANT Inv",
+      onPrint: (text) => prints.push(text),
+    });
+    expect(prints).toEqual(["<<1, 1>>", "<<1, 1>>"]);
+  });
+
   it("rejects an invariant that is not a state predicate", async () => {
     await expect(
       checkBody(

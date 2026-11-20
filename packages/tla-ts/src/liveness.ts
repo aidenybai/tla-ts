@@ -194,16 +194,18 @@ export const getLevel = (
       return TEMPORAL_LEVEL;
     case "UnboundedQuantifier":
       return expression.isTemporal ? TEMPORAL_LEVEL : getChildrenLevel(expression);
-    // SANY's LetInNode takes its body's level, so a definition the body leaves out adds nothing.
+    // TLC's level bound counts a LET's definitions, though SANY levels a LET by its body.
     case "Let":
-      return getLevel(
-        expression.body,
-        bindLetDefinitions(expression, scope, environment),
-        environment,
-        shadowed,
-        visiting,
-        isLevelBound,
-      );
+      return isLevelBound
+        ? getChildrenLevel(expression)
+        : getLevel(
+            expression.body,
+            bindLetDefinitions(expression, scope, environment),
+            environment,
+            shadowed,
+            visiting,
+            isLevelBound,
+          );
     case "Identifier":
       return getNameLevel(expression.name, expression);
     case "OperatorReference":
@@ -236,7 +238,7 @@ export const getLevel = (
   }
 };
 
-const getLevelBound = (
+export const getLevelBound = (
   expression: Expression,
   scope: Scope | undefined,
   environment: Environment,
