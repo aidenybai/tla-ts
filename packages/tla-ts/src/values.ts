@@ -552,8 +552,9 @@ const compareWithItself = (value: Value, isEquality: boolean): boolean => {
   switch (value.kind) {
     case "ModelValue":
     case "Interval":
-    case "SequenceSet":
       return true;
+    case "SequenceSet":
+      return compareWithItself(value.base, false);
     case "InfiniteSet":
       if (value === ANY_SET) compareAny(value);
       return true;

@@ -1881,6 +1881,27 @@ describe("evaluation errors match TLC", () => {
     ]);
   });
 
+  it("compares the base of a Seq(S) TLC compares with itself", async () => {
+    const messages = await Promise.all(
+      [
+        "ASSUME LET Q == Seq({[n \\in Nat |-> n]}) IN Q = Q",
+        "ASSUME LET Q == <<Seq({[n \\in Nat |-> n]})>> IN Q = Q",
+        "ASSUME LET Q == Seq({[n \\in Nat |-> n]}) IN Q \\in {Q}",
+        "ASSUME LET Q == Seq({[n \\in Nat |-> n]}) IN Q # Q => FALSE",
+        'ASSUME LET Q == {Seq({1, "a"})} IN Q = Q',
+        'ASSUME LET Q == Seq(SUBSET {1, "a"}) IN Q = Q',
+        'ASSUME LET Q == Seq([a : {}, b : {1, "a"}]) IN Q = Q',
+        "ASSUME LET Q == Seq(Nat) IN Q = Q",
+      ].map(async (assumption) => (await checkModule(assumption)).violation?.message),
+    );
+    expect(messages).toEqual([
+      ...Array(4).fill("Attempted to compute the number of elements in the overridden value Nat."),
+      ...Array(2).fill('Attempted to compare string "a" with non-string:\n1'),
+      undefined,
+      undefined,
+    ]);
+  });
+
   it("sorts a TLCEval argument only outside an instance that substitutes", async () => {
     const inner =
       '---- MODULE Inner ----\nEXTENDS TLC\nCONSTANT K\nMixed == 1 \\in TLCEval({1, "a"})\n====';
