@@ -2150,28 +2150,27 @@ export const getHostCalendars = (text: string, words: ReadonlySet<string>) => {
 // The program's HostLocale: for each string it writes that may be a locale tag, the host's default
 // locale, and each string of the host's Intl answers (answers), which the program may pass back,
 // and each one's canonical form, what the host's Intl gives of it, where the program names Intl or a
-// method that reads it. Any other tag stops, which the host may hold data of, as does every tag of a
-// host whose realm was recorded.
+// method that reads it, as the host answers it, or a recorded realm recorded it for its tags. Any
+// other tag stops, which the host may hold data of.
 export const getHostLocale = (
   text: string,
   words: ReadonlySet<string>,
   answers: ReadonlySet<string>,
   realm: HostRealm,
 ) => {
-  const getLocale = realm.getLocale;
-  if (
-    !["Intl", "toLocaleString", "localeCompare"].some((word) => words.has(word)) ||
-    getLocale === undefined
-  )
+  if (!["Intl", "toLocaleString", "localeCompare"].some((word) => words.has(word)))
     return `HostLocale(tag) == [found |-> "unknown"]`;
-  const tags = new Set([
-    ...[...text.matchAll(/["'`]([A-Za-z0-9_-]{1,60})["'`]/g)].map((match) => match[1]),
-    realm.locale,
-    ...[...answers].filter((answer) => /^[A-Za-z0-9-]{2,60}$/.test(answer)),
-  ]);
+  const recorded = new Map(realm.recordedLocales.map((entry) => [entry.tag, entry]));
+  const tags = [
+    ...new Set([
+      ...[...text.matchAll(/["'`]([A-Za-z0-9_-]{1,60})["'`]/g)].map((match) => match[1]),
+      realm.locale,
+      ...[...answers].filter((answer) => /^[A-Za-z0-9-]{2,60}$/.test(answer)),
+    ]),
+  ].filter((tag) => realm.getLocale !== undefined || recorded.has(tag));
   const entries = new Map<string, string>();
   for (const tag of tags) {
-    const locale = getLocale(tag);
+    const locale = realm.getLocale === undefined ? recorded.get(tag)?.locale : realm.getLocale(tag);
     if (locale === undefined) {
       entries.set(tag, `[found |-> "invalid"]`);
       continue;

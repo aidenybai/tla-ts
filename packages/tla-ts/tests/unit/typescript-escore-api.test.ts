@@ -275,22 +275,32 @@ describe("compile on ESCore from a recorded realm as from Node's", () => {
     });
   });
 
-  describe("stop where the program asks the host about a locale tag", () => {
-    const getSource = (expected: number) =>
-      `const supported = Intl.Collator.supportedLocalesOf(["en-US"]);\nif (supported.length !== ${expected}) throw new Error(String(supported));\n`;
+  describe("answer a locale tag that the realm recorded, and stop at another", () => {
+    const getSource = (tag: string, expected: number) =>
+      `const supported = Intl.Collator.supportedLocalesOf(["${tag}"]);\nif (supported.length !== ${expected}) throw new Error(String(supported));\n`;
 
     it("agrees with Node", async () => {
-      expect(runNode({ "locale.ts": getSource(1) }, "locale.ts").status).toBe(0);
-      expect(await getOutcome(getSource(1), "locale.ts")).toMatchObject({ status: "success" });
-      expect(getFailure(await getOutcome(getSource(1), "locale.ts", true))).toContain(
+      expect(runNode({ "locale.ts": getSource("en-US", 1) }, "locale.ts").status).toBe(0);
+      expect(await getOutcome(getSource("en-US", 1), "locale.ts", true)).toMatchObject({
+        status: "success",
+      });
+      expect(runNode({ "locale.ts": getSource("fy-NL", 1) }, "locale.ts").status).toBe(0);
+      expect(await getOutcome(getSource("fy-NL", 1), "locale.ts")).toMatchObject({
+        status: "success",
+      });
+      expect(getFailure(await getOutcome(getSource("fy-NL", 1), "locale.ts", true))).toContain(
         "tla-ts can't",
       );
     });
 
     it("rejects another result", async () => {
-      expect(runNode({ "locale.ts": getSource(0) }, "locale.ts").stderr).toContain("Error: en-US");
-      expect(getFailure(await getOutcome(getSource(0), "locale.ts"))).toContain('"en-US"');
-      expect(getFailure(await getOutcome(getSource(0), "locale.ts", true))).toContain(
+      expect(runNode({ "locale.ts": getSource("en-US", 0) }, "locale.ts").stderr).toContain(
+        "Error: en-US",
+      );
+      expect(getFailure(await getOutcome(getSource("en-US", 0), "locale.ts", true))).toContain(
+        '"en-US"',
+      );
+      expect(getFailure(await getOutcome(getSource("fy-NL", 0), "locale.ts", true))).toContain(
         "tla-ts can't",
       );
     });

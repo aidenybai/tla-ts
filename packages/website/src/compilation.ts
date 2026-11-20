@@ -1,5 +1,10 @@
 import type { Mark, Source, Token } from "./site-data";
 
+// The lines of a file's output that the playground's page is built with, a screen's worth: ESCore's
+// code of a program runs to hundreds of lines, whose spans would make the page slow to load, so
+// the rest render once the page has hydrated, and an outline holds no more.
+export const BUILT_OUTPUT_LINES = 60;
+
 export interface Compilation {
   name: string;
   tla: string;

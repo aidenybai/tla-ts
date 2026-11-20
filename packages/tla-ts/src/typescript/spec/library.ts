@@ -122,32 +122,25 @@ const EXTRA_TRIGGERS = new Map([
 // methods a program calls without naming any global.
 const ITERATOR_PROTOTYPES = new Set(["IteratorPrototype", "AsyncIteratorPrototype"]);
 
-// ESCore's texts: ESCore.tla, its parts by file name, and the modules it extends by name, which a
-// host without ESCore's directory, such as a browser, is given.
+// What ESCore's parts give a library: the group of each definition that a part defines, the
+// words that reach each gated group, and the realm's properties with a string key, by the intrinsic
+// that holds each, as the property tables list them.
+export interface PartTables {
+  groups: [name: string, group: string][];
+  triggers: [group: string, words: string[]][];
+  properties: { owner: string; key: string }[];
+}
+
+// ESCore's texts that a library reads: ESCore.tla, the tables of its parts, and the modules it
+// extends by name, which a host without ESCore's directory, such as a browser, is given.
 export interface EscoreFiles {
   core: string;
-  parts: [name: string, text: string][];
+  tables: PartTables;
   modules: [name: string, text: string][];
 }
 
-export const readEscoreFiles = (directory: string): EscoreFiles => {
-  const files = process.getBuiltinModule("node:fs");
-  const path = process.getBuiltinModule("node:path");
-  const read = (...names: string[]) => files.readFileSync(path.join(directory, ...names), "utf8");
-  return {
-    core: read("ESCore.tla"),
-    parts: files
-      .readdirSync(path.join(directory, "parts"))
-      .filter((name) => name.endsWith(".tla"))
-      .map((name) => [name, read("parts", name)]),
-    modules: ["ESNumber", "ESBigNat"].map((name) => [name, read(`${name}.tla`)]),
-  };
-};
-
-export const createLibrary = (files: EscoreFiles): Library => {
-  const core = files.core;
-  const body = core.slice(core.lastIndexOf("\nRECURSIVE "), core.lastIndexOf("\n===="));
-  const parts = files.parts.map((part) => ({ group: getGroup(part[0]), text: part[1] }));
+const getPartTables = (files: [name: string, text: string][]): PartTables => {
+  const parts = files.map((part) => ({ group: getGroup(part[0]), text: part[1] }));
   const groupOf = new Map(
     parts.flatMap((part) =>
       splitDefinitions(part.text).flatMap((definition) => {
@@ -189,6 +182,55 @@ export const createLibrary = (files: EscoreFiles): Library => {
       }
     }
   }
+  return {
+    groups: [...groupOf],
+    triggers: [...triggers].map((entry) => [entry[0], [...entry[1]]]),
+    properties: parts.flatMap((part) => [
+      ...[...part.text.matchAll(/\b(?:M|G|V|L)\("([A-Za-z0-9_]+)", SV\("([^"]+)"\)/g)].map(
+        (match) => ({
+          owner: match[1],
+          key: match[2],
+        }),
+      ),
+      ...[...part.text.matchAll(/GlobalLink\("[A-Za-z0-9_]+", N\("([^"]+)"\)\)/g)].map((match) => ({
+        owner: "GlobalObject",
+        key: match[1],
+      })),
+      // The globals that a table of names links: the native errors and the typed arrays.
+      ...[
+        ...part.text.matchAll(
+          /^(?:NativeErrors|[A-Z][A-Za-z0-9]*Names) ==\n?((?:.*\n)*?)(?=^\S)/gm,
+        ),
+      ].flatMap((table) =>
+        [...table[1].matchAll(/"([A-Z][A-Za-z0-9]*(?:Error|Array))"/g)].map((match) => ({
+          owner: "GlobalObject",
+          key: match[1],
+        })),
+      ),
+    ]),
+  };
+};
+
+export const readEscoreFiles = (directory: string): EscoreFiles => {
+  const files = process.getBuiltinModule("node:fs");
+  const path = process.getBuiltinModule("node:path");
+  const read = (...names: string[]) => files.readFileSync(path.join(directory, ...names), "utf8");
+  return {
+    core: read("ESCore.tla"),
+    tables: getPartTables(
+      files
+        .readdirSync(path.join(directory, "parts"))
+        .filter((name) => name.endsWith(".tla"))
+        .map((name) => [name, read("parts", name)]),
+    ),
+    modules: ["ESNumber", "ESBigNat"].map((name) => [name, read(`${name}.tla`)]),
+  };
+};
+
+export const createLibrary = (files: EscoreFiles): Library => {
+  const core = files.core;
+  const body = core.slice(core.lastIndexOf("\nRECURSIVE "), core.lastIndexOf("\n===="));
+  const groupOf = new Map(files.tables.groups);
   const definitions = new Map<string, Definition>();
   const order: string[] = [];
   for (const text of splitDefinitions(body.slice(body.indexOf("\n", 1)))) {
@@ -205,27 +247,6 @@ export const createLibrary = (files: EscoreFiles): Library => {
     order.push(match[1]);
   }
   const modules = new Map(files.modules);
-  const properties = parts.flatMap((part) => [
-    ...[...part.text.matchAll(/\b(?:M|G|V|L)\("([A-Za-z0-9_]+)", SV\("([^"]+)"\)/g)].map(
-      (match) => ({
-        owner: match[1],
-        key: match[2],
-      }),
-    ),
-    ...[...part.text.matchAll(/GlobalLink\("[A-Za-z0-9_]+", N\("([^"]+)"\)\)/g)].map((match) => ({
-      owner: "GlobalObject",
-      key: match[1],
-    })),
-    // The globals that a table of names links: the native errors and the typed arrays.
-    ...[
-      ...part.text.matchAll(/^(?:NativeErrors|[A-Z][A-Za-z0-9]*Names) ==\n?((?:.*\n)*?)(?=^\S)/gm),
-    ].flatMap((table) =>
-      [...table[1].matchAll(/"([A-Z][A-Za-z0-9]*(?:Error|Array))"/g)].map((match) => ({
-        owner: "GlobalObject",
-        key: match[1],
-      })),
-    ),
-  ]);
   return {
     definitions,
     order,
@@ -233,7 +254,7 @@ export const createLibrary = (files: EscoreFiles): Library => {
       name: match[1],
       group: groupOf.get(`${match[1]}Builtin`) ?? "",
     })),
-    triggers,
+    triggers: new Map(files.tables.triggers.map((entry) => [entry[0], new Set(entry[1])])),
     internalKeys: new Set(
       [...definitions.values()]
         .filter((definition) => !definition.name.endsWith("Properties"))
@@ -241,7 +262,7 @@ export const createLibrary = (files: EscoreFiles): Library => {
           [...definition.text.matchAll(/\b(?:SV|N)\("([^"]+)"\)/g)].map((match) => match[1]),
         ),
     ),
-    properties,
+    properties: files.tables.properties,
     modules,
   };
 };

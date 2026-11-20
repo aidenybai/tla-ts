@@ -1,4 +1,4 @@
-import { Playground } from "./components/parts";
+import { Playground } from "./components/playground-parts";
 
 export const PlaygroundPage = () => (
   <Playground.Root>
