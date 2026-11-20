@@ -48,9 +48,11 @@ export const useCompile = (source: string, fileName: string) => {
     return () => worker.terminate();
   }, [isStarted]);
 
+  const isBuilt = built?.source === source;
+  // A file that the site built needs no compile.
   useEffect(() => {
-    workerRef.current?.postMessage({ source, fileName } satisfies CompileRequest);
-  }, [source, fileName, isStarted]);
+    if (!isBuilt) workerRef.current?.postMessage({ source, fileName } satisfies CompileRequest);
+  }, [source, fileName, isStarted, isBuilt]);
 
   // The compiler and the highlighter are large downloads. A page that loaded fast fetches them
   // at once. A slow one waits until they are needed, so they do not hold up the page or a run.
@@ -64,7 +66,6 @@ export const useCompile = (source: string, fileName: string) => {
     );
   }, [fileName]);
 
-  const isBuilt = built?.source === source;
   // An edit keeps the last output on screen until its own lands. Another file's does not.
   const compilation =
     !isBuilt && state.compiled?.fileName === fileName
