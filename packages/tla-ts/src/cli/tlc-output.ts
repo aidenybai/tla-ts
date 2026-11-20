@@ -19,7 +19,7 @@ import type {
   Violation,
 } from "../check";
 import type { DepthFirstOutput } from "../dfid";
-import { TlaAliasFormatError, TlaEvaluationError, UNEXPECTED_EXCEPTION } from "../errors";
+import { TlaAliasFormatError, TlaEvaluationError } from "../errors";
 import { EXIT_STATUS, setExitCode } from "../exit-codes";
 import type { SimulationOutput, SimulationStatistics } from "../simulate";
 import {
@@ -35,6 +35,7 @@ import {
   formatInnerMessage,
   formatNestedMessage,
   formatTlcDuration,
+  getUnexpectedPrefix,
   MESSAGE_CODE,
   MESSAGE_LEVEL,
   type MessagePrinter,
@@ -535,7 +536,7 @@ export const printResult = (result: CheckResult, printer: MessagePrinter, timing
         } catch (error) {
           if (!(error instanceof TlaEvaluationError)) throw error;
           throw setExitCode(
-            new TlaEvaluationError(`${UNEXPECTED_EXCEPTION}${error.message}`),
+            new TlaEvaluationError(`${getUnexpectedPrefix(error)}${error.message}`),
             EXIT_STATUS.error,
           );
         }

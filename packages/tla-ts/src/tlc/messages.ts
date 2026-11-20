@@ -429,6 +429,11 @@ export const isHeadedError = (error: Error) => headedErrors.has(error);
 
 const WRONG_INVOCATION_EXCEPTION = getUnexpectedException("util.WrongInvocationException");
 
+// The exception TLC names for an error it didn't expect: its ValueVec throws a
+// WrongInvocationException where a set grows past the bound.
+export const getUnexpectedPrefix = (error: TlaEvaluationError) =>
+  error instanceof TlaSetBoundError ? WRONG_INVOCATION_EXCEPTION : UNEXPECTED_EXCEPTION;
+
 const UNEXPECTED_HEADLINE = UNEXPECTED_EXCEPTION.slice(0, UNEXPECTED_EXCEPTION.indexOf("\n"));
 
 const WRAPPED_EVAL_EXCEPTION = `${UNEXPECTED_EXCEPTION}tlc2.tool.EvalException: `;
@@ -501,9 +506,7 @@ export const getFailureMessage = (
   }
   const isUnexpected =
     isNextState && !message.startsWith(UNEXPECTED_HEADLINE) && !(error instanceof TlaUncodedError);
-  const exception =
-    error instanceof TlaSetBoundError ? WRONG_INVOCATION_EXCEPTION : UNEXPECTED_EXCEPTION;
-  const prefix = isUnexpected ? exception : "";
+  const prefix = isUnexpected ? getUnexpectedPrefix(error) : "";
   return {
     code: MESSAGE_CODE.general,
     message: `${prefix}${message}`,

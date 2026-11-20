@@ -1525,19 +1525,20 @@ const getEmptiness = (value: Value): boolean | undefined => {
   }
 };
 
-const getCartesianProduct = (lists: Value[][]) => {
+// Visits each combination of one element from each list, the last list's varying fastest, until
+// visit accepts one.
+const someCombination = (lists: Value[][], visit: (combination: Value[]) => boolean) => {
   const total = lists.reduce((product, list) => product * list.length, 1);
-  const combinations: Value[][] = [];
   const positions = lists.map(() => 0);
   for (let count = 0; count < total; count++) {
-    combinations.push(lists.map((list, index) => list[positions[index]]));
+    if (visit(lists.map((list, index) => list[positions[index]]))) return true;
     for (let index = lists.length - 1; index >= 0; index--) {
       positions[index]++;
       if (positions[index] < lists[index].length) break;
       positions[index] = 0;
     }
   }
-  return combinations;
+  return false;
 };
 
 const advanceCombination = (indices: number[], length: number) => {
@@ -1613,6 +1614,54 @@ const getComponentElements = (
   return lists;
 };
 
+// Visits each element of a set of functions, records or tuples, in the order TLC's Enumerator
+// gives them, until visit accepts one.
+const someProductElement = (
+  value: FunctionSetValue | RecordSetValue | ProductSetValue,
+  getElements: (set: Value) => Value[],
+  visit: (element: Value) => boolean,
+): boolean => {
+  if (!isVersion174 && isEmptySet(value)) return false;
+  if (value.kind === "FunctionSet") {
+    if (isOverriddenSet(value.domain)) {
+      throw new TlaEvaluationError(
+        `Attempted to enumerate a set of the form [D -> R],but the domain D:\n${formatValue(value.domain)}\ncannot be enumerated.`,
+      );
+    }
+    const domain = getFunctionDomain(value.domain);
+    if ((domain.length > 0 || isVersion174) && isOverriddenSet(value.range)) {
+      throw new TlaEvaluationError(
+        `Attempted to enumerate a set of the form [D -> R],but the range R:\n${formatValue(value.range)}\ncannot be enumerated.`,
+      );
+    }
+    const range = domain.length === 0 ? [] : getElements(value.range);
+    return someCombination(
+      domain.map(() => range),
+      (combination) => visit(createSortedFunction(domain, combination)),
+    );
+  }
+  if (value.kind === "RecordSet") {
+    const fields = getComponentElements(
+      value.sets,
+      getElements,
+      (set, index) =>
+        `Attempted to enumerate a set of the form [l1 : v1, ..., ln : vn],\nbut can't enumerate the value of the \`${value.names[index]}' field:\n${formatValue(set)}`,
+    );
+    return someCombination(fields, (combination) =>
+      visit(
+        createRecord(value.names.map((name, index): [string, Value] => [name, combination[index]])),
+      ),
+    );
+  }
+  const factors = getComponentElements(
+    value.factors,
+    getElements,
+    (factor, index) =>
+      `Attempted to enumerate a set of the form s1 \\X s2 ... \\X sn,\nbut can't enumerate s${index}:\n${formatValue(factor)}`,
+  );
+  return someCombination(factors, (combination) => visit(createTuple(combination)));
+};
+
 const enumerateSet = (
   value: Value,
   getElements = (set: Value) => toFiniteSet(set).elements,
@@ -1642,45 +1691,16 @@ const enumerateSet = (
       }
       return getSortedSubsets(base);
     }
-    case "FunctionSet": {
-      if (!isVersion174 && isEmptySet(value)) return [];
-      if (isOverriddenSet(value.domain)) {
-        throw new TlaEvaluationError(
-          `Attempted to enumerate a set of the form [D -> R],but the domain D:\n${formatValue(value.domain)}\ncannot be enumerated.`,
-        );
-      }
-      const domain = getFunctionDomain(value.domain);
-      if ((domain.length > 0 || isVersion174) && isOverriddenSet(value.range)) {
-        throw new TlaEvaluationError(
-          `Attempted to enumerate a set of the form [D -> R],but the range R:\n${formatValue(value.range)}\ncannot be enumerated.`,
-        );
-      }
-      const range = domain.length === 0 ? [] : getElements(value.range);
-      return getCartesianProduct(domain.map(() => range)).map((combination): Value =>
-        createSortedFunction(domain, combination),
-      );
-    }
-    case "RecordSet": {
-      if (!isVersion174 && isEmptySet(value)) return [];
-      const fields = getComponentElements(
-        value.sets,
-        getElements,
-        (set, index) =>
-          `Attempted to enumerate a set of the form [l1 : v1, ..., ln : vn],\nbut can't enumerate the value of the \`${value.names[index]}' field:\n${formatValue(set)}`,
-      );
-      return getCartesianProduct(fields).map((combination) =>
-        createRecord(value.names.map((name, index): [string, Value] => [name, combination[index]])),
-      );
-    }
+    case "FunctionSet":
+    case "RecordSet":
     case "ProductSet": {
-      if (!isVersion174 && isEmptySet(value)) return [];
-      const factors = getComponentElements(
-        value.factors,
-        getElements,
-        (factor, index) =>
-          `Attempted to enumerate a set of the form s1 \\X s2 ... \\X sn,\nbut can't enumerate s${index}:\n${formatValue(factor)}`,
-      );
-      return getCartesianProduct(factors).map(createTuple);
+      // TLC's ValueVec fails as it adds the element past the bound.
+      const elements: Value[] = [];
+      someProductElement(value, getElements, (element) => {
+        addBoundedElement(elements, element);
+        return false;
+      });
+      return elements;
     }
     case "FilteredSet":
       if (!isSetValue(value.base) || isOverriddenSet(value.base)) {
@@ -1688,11 +1708,16 @@ const enumerateSet = (
           `Attempted to enumerate { x \\in S : p(x) } when S:\n${formatValue(value.base)}\nis not enumerable`,
         );
       }
-      return toFiniteSet(
-        createEnumeratedSet(
-          getStreamedElements(value.base).filter((element) => value.test(element, false)),
-        ),
-      ).elements;
+      {
+        // TLC's Enumerator tests each element of the base as it streams it, and its ValueVec keeps
+        // those that pass up to the bound.
+        const kept: Value[] = [];
+        someStreamedElement(value.base, (element) => {
+          if (value.test(element, false)) addBoundedElement(kept, element);
+          return false;
+        });
+        return toFiniteSet(createEnumeratedSet(kept)).elements;
+      }
     case "Union": {
       const elements: Value[] = [];
       getUnionSets(value).forEach((set, index) => {
@@ -1746,6 +1771,17 @@ const enumerateSet = (
   }
 };
 
+// TLC's toSetEnum adds each element to a ValueVec outside the methods that report a failing set as
+// the head of a fingerprint stack, so a set that grows past the bound isn't one.
+const enumerateBounded = (value: Value, sets: Value[] | undefined) => {
+  try {
+    return enumerateSet(value);
+  } catch (error) {
+    if (error instanceof TlaSetBoundError) sets?.pop();
+    throw error;
+  }
+};
+
 export const toFiniteSet = (value: Value): SetValue => {
   if (typeof value === "object" && value.kind === "Set") return value;
   if (typeof value === "object" && value.kind === "Interval") {
@@ -1755,7 +1791,7 @@ export const toFiniteSet = (value: Value): SetValue => {
   if (lazy?.enumerated) return lazy.enumerated;
   const sets = setTrace.sets;
   sets?.push(value);
-  const elements = enumerateSet(value);
+  const elements = enumerateBounded(value, sets);
   sets?.pop();
   const isSorted =
     typeof value === "object" &&
@@ -1921,9 +1957,14 @@ const someElementOfStream = (value: ObjectValue, visit: (element: Value) => bool
       (element) => value.test(element, false) && visit(element),
     );
   }
-  const components = getCombinedSets(value);
-  if (components?.some(isStreamedApart)) {
-    return enumerateSet(value, getStreamedElements).some(visit);
+  // TLC's Enumerator gives a set of functions, records or tuples one element at a time.
+  if (value.kind === "FunctionSet" || value.kind === "RecordSet" || value.kind === "ProductSet") {
+    const isApart = getCombinedSets(value)?.some(isStreamedApart) ?? false;
+    return someProductElement(
+      value,
+      isApart ? getStreamedElements : (set) => toFiniteSet(set).elements,
+      visit,
+    );
   }
   if (value.kind !== "SetOperation") return toFiniteSet(value).elements.some(visit);
   if (value.operator === "\\cup") {
@@ -2784,6 +2825,18 @@ const fingerprintValue = (value: Value): void => {
   const functionValue = toFiniteFunction(value);
   functionValue.domain.forEach(fingerprintValue);
   functionValue.range.forEach(fingerprintValue);
+};
+
+// The error that streaming a set's elements raises, which is how TLC reads the set a filter
+// selects from rather than fingerprinting it.
+export const getStreamError = (value: Value) => {
+  try {
+    someStreamedElement(value, () => false);
+    return undefined;
+  } catch (error) {
+    if (!(error instanceof TlaEvaluationError)) throw error;
+    return error;
+  }
 };
 
 export const getFingerprintError = (value: Value) => {
