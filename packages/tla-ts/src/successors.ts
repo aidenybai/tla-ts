@@ -1305,6 +1305,7 @@ export const forEachSuccessor = (
   scope?: Scope,
   generator?: JavaRandom,
   onUnsatisfied?: Run["onUnsatisfied"],
+  action?: string,
 ) => {
   const run: Run = {
     environment,
@@ -1320,7 +1321,7 @@ export const forEachSuccessor = (
     run,
     scope,
     getEmptyState(environment),
-    undefined,
+    action,
     false,
     (partial, action) => {
       if (run.isStopped) return;

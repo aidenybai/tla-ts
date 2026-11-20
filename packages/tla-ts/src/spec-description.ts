@@ -15,6 +15,7 @@ import { formatRange, TlaError, TlaEvaluationError, UNEXPECTED_EXCEPTION } from 
 import {
   bindDefinitions,
   getLetSites,
+  getReevaluatedDefinitions,
   bindOperatorArguments,
   describeNode,
   evaluate,
@@ -169,21 +170,27 @@ const getThunk = (expression: Expression, scope: Scope | undefined) => {
   return binding?.kind === "Thunk" ? binding : undefined;
 };
 
+// The definitions of a LET that an action or initial predicate splits through, bound as a step binds
+// them: a definition TLC evaluates again at each reference stays an operator.
+const bindLet = (
+  expression: Expression & { kind: "Let" },
+  scope: Scope | undefined,
+  environment: Environment,
+) =>
+  bindDefinitions(
+    expression.definitions,
+    getConstantContext(environment, scope),
+    getReevaluatedDefinitions(expression.definitions, environment),
+    getLetSites(expression.definitions),
+  );
+
 const unwrapBinding = (
   expression: Expression,
   scope: Scope | undefined,
   environment: Environment,
 ) => {
   if (expression.kind === "Let") {
-    return {
-      expression: expression.body,
-      scope: bindDefinitions(
-        expression.definitions,
-        getConstantContext(environment, scope),
-        undefined,
-        getLetSites(expression.definitions),
-      ),
-    };
+    return { expression: expression.body, scope: bindLet(expression, scope, environment) };
   }
   const thunk = getThunk(expression, scope);
   return thunk && { expression: thunk.expression, scope: thunk.scope };
@@ -204,6 +211,10 @@ const getParameters = (closure: Closure | undefined, scope: Scope | undefined) =
     const binding = lookupScope(scope, param.name);
     return binding?.kind === "Value" ? [[param.name, binding.value]] : [];
   });
+
+// The operator whose body an action splits from, which names a step that calls no other.
+export const getStepName = (action: SpecAction) =>
+  action.name === UNNAMED_ACTION ? undefined : action.name;
 
 const tryCollect = <Result>(collect: () => Result, fallback: () => Result) => {
   try {
@@ -274,12 +285,7 @@ const getActions = (
     case "Let":
       return getActions(
         expression.body,
-        bindDefinitions(
-          expression.definitions,
-          getConstantContext(environment, scope),
-          undefined,
-          getLetSites(expression.definitions),
-        ),
+        bindLet(expression, scope, environment),
         closure,
         environment,
         instanceActions,

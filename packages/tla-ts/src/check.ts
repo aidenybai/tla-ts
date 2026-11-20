@@ -71,6 +71,7 @@ import {
   getActionLabel,
   getActionSignature,
   getSpecDescription,
+  getStepName,
   getSpecificationValue,
   toActionValue,
   type SpecAction,
@@ -1312,17 +1313,6 @@ const searchStates = (options: CheckOptions, stateWriter: StateWriter | undefine
       }
       return successorCount;
     }
-    if (!isNamingEdges) {
-      return forEachSuccessor(
-        next,
-        state,
-        environment,
-        (successor) => onSuccessor(successor, undefined),
-        spec.scope,
-        undefined,
-        onUnsatisfied,
-      );
-    }
     let isStopped = false;
     return nextActions.reduce((count, action) => {
       if (isStopped) return count;
@@ -1339,6 +1329,7 @@ const searchStates = (options: CheckOptions, stateWriter: StateWriter | undefine
           action.scope,
           undefined,
           onUnsatisfied && ((successor, conjunct) => onUnsatisfied(successor, conjunct, action)),
+          getStepName(action),
         )
       );
     }, 0);

@@ -1642,7 +1642,7 @@ describe("initial predicate and next-state relation match TLC", () => {
   const checkPrints = async (variables: string, init: string, next: string, invariant = "TRUE") => {
     const printed: string[] = [];
     const result = await check({
-      source: `---- MODULE M ----\nEXTENDS Naturals, TLC\nVARIABLE ${variables}\nBoth(a) == a /\\ a\nOuter(b) == Both(b = TRUE)\nInit == ${init}\nNext == ${next}\nInv == ${invariant}\n====`,
+      source: `---- MODULE M ----\nEXTENDS Naturals, TLC\nVARIABLE ${variables}\nBoth(a) == a /\\ a\nOuter(b) == Both(b = TRUE)\nG(a) == IF a THEN x ELSE x\nInit == ${init}\nNext == ${next}\nInv == ${invariant}\n====`,
       config: "INIT Init\nNEXT Next\nINVARIANT Inv",
       onPrint: (text) => printed.push(text),
     });
@@ -1693,6 +1693,43 @@ describe("initial predicate and next-state relation match TLC", () => {
       [['"init"'], ["0"], ["1"]],
       ['"init"', "0", "1"],
     ]);
+  });
+
+  it.each([
+    ["x = 0", 'LET F(c) == (x\' = IF c THEN x ELSE x) /\\ c IN F(PrintT("f"))', ['"f"']],
+    ["x = 0", 'LET F(c) == (x\' = G(c)) /\\ c IN F(PrintT("g"))', ['"g"']],
+    ["x = 0", 'LET F(c) == c /\\ (x\' = IF c THEN x ELSE x) IN F(PrintT("h"))', ['"h"']],
+    ["x \\in {0, 1}", 'LET F(c) == c /\\ c /\\ x\' = x IN F(PrintT("q"))', ['"q"']],
+    ["x = 0", "\\E i \\in {1} : LET F(c) == c /\\ c /\\ x' = x IN F(PrintT(i))", ["1"]],
+    [
+      "x = 0",
+      "LET F(c) == ENABLED (x' = IF c THEN x ELSE x) /\\ c /\\ x' = x IN F(PrintT(\"e\"))",
+      ['"e"'],
+    ],
+    ["x = 0", 'LET F(c) == c /\\ c /\\ x\' = x IN x = 0 /\\ F(PrintT("q"))', ['"q"', '"q"']],
+    ["x \\in {0, 1}", "LET F(c) == (x' = IF c THEN x ELSE x) /\\ c IN F(PrintT(x))", ["0", "1"]],
+    [
+      "x \\in {0, 1}",
+      "LET F(c) == c /\\ (x' = IF c THEN x ELSE x) IN F(PrintT(x))",
+      ["0", "0", "1", "1"],
+    ],
+    ["x = 0", 'LET d == PrintT("d") IN (x\' = IF d THEN x ELSE x) /\\ d', ['"d"', '"d"']],
+  ])(
+    "prints from an argument of a next-state action with Init %s and Next %s as often as TLC",
+    async (init, next, expected) => {
+      const checked = await checkPrints("x", init, next);
+      expect([checked.result.status, checked.printed]).toEqual(["success", expected]);
+    },
+  );
+
+  it("prints a constant argument of a next-state action once as TLC does when it finds a violation", async () => {
+    const checked = await checkPrints(
+      "x",
+      "x = 0",
+      'LET F(c) == c /\\ c /\\ x\' = x + 1 IN F(PrintT("w"))',
+      "x < 2",
+    );
+    expect([checked.result.status, checked.printed]).toEqual(["invariant-violation", ['"w"']]);
   });
 });
 
