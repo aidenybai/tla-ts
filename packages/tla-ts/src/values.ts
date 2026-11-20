@@ -34,6 +34,7 @@ export interface SetValue {
   hash: number;
   fingerprint: number;
   isFingerprinted: boolean;
+  isSelfCompared: boolean;
 }
 
 export interface MixedSetValue extends LazySet {
@@ -51,6 +52,7 @@ export interface FunctionValue {
   functionClass: FunctionClass | undefined;
   lambdaDomain: Value | undefined;
   isFingerprinted: boolean;
+  isSelfCompared: boolean;
 }
 
 export interface IntervalValue {
@@ -297,14 +299,6 @@ export const createWrittenRecord = (
     writtenNames,
   );
 
-const forgetWrittenOrder = (value: Value): void => {
-  if (typeof value !== "object" || (value.kind !== "Function" && value.kind !== "Set")) return;
-  if (value.hash !== 0 || value.fingerprint !== 0) return;
-  if (value.kind === "Set") return value.elements.forEach(forgetWrittenOrder);
-  value.writtenKeys = undefined;
-  value.range.forEach(forgetWrittenOrder);
-};
-
 // TLC's SetOfRcdsValue#member, SetOfFcnsValue#member and FcnRcdValue#toRcd normalize the record or function they check in place.
 const forgetOwnWrittenOrder = (value: Value) => {
   if (isWrittenOrderUsed && typeof value === "object" && value.kind === "Function") {
@@ -414,7 +408,6 @@ export const setStringOrder = (texts: Iterable<string>) => {
   modelValues.clear();
   isTypedModelValueCreated = false;
   isWrittenOrderUsed = false;
-  hasMixedSet = false;
   hasLambda = false;
   hasStreamedSet = false;
   for (const text of texts) rankString(text);
@@ -548,46 +541,70 @@ const compareAny = (other: Value): never => {
   );
 };
 
-let hasMixedSet = false;
+const isHashed = (value: SetValue | FunctionValue) =>
+  value.fingerprint !== 0 || (value.hash !== 0 && value.hash !== UNFINGERPRINTABLE_HASH);
 
-const normalizeMixedSets = (value: Value): void => {
-  if (typeof value !== "object") return;
+// TLC's equals and compareTo walk a value compared with itself, sorting its sets and evaluating its lazy functions; equals stops at an empty set of functions, records or tuples, and compareTo enumerates such a set.
+// Returns whether a second walk would change nothing. A set or function marks that, so comparing it with itself again costs nothing.
+const compareWithItself = (value: Value, isEquality: boolean): boolean => {
+  if (typeof value !== "object") return true;
   switch (value.kind) {
-    case "MixedSet":
-      toFiniteSet(value);
-      return;
-    case "Set":
-      return value.elements.forEach(normalizeMixedSets);
+    case "ModelValue":
+    case "Interval":
+    case "SequenceSet":
+      return true;
+    case "InfiniteSet":
+      if (value === ANY_SET) compareAny(value);
+      return true;
     case "LazyFunction":
-      return normalizeMixedSets(toFiniteFunction(value));
-    case "Function":
-      value.domain.forEach(normalizeMixedSets);
-      return value.range.forEach(normalizeMixedSets);
+      return compareWithItself(toFiniteFunction(value), isEquality);
+    case "Function": {
+      if (value.isSelfCompared || isHashed(value)) return true;
+      if (isWrittenOrderUsed) value.writtenKeys = undefined;
+      let isInnerSettled = true;
+      for (const key of value.domain) {
+        isInnerSettled = compareWithItself(key, isEquality) && isInnerSettled;
+      }
+      for (const item of value.range) {
+        isInnerSettled = compareWithItself(item, isEquality) && isInnerSettled;
+      }
+      value.isSelfCompared = isInnerSettled;
+      return isInnerSettled;
+    }
+    case "Set": {
+      if (value.isSelfCompared || isHashed(value)) return true;
+      value.isNormalized = true;
+      let isInnerSettled = true;
+      for (const element of value.elements) {
+        isInnerSettled = compareWithItself(element, isEquality) && isInnerSettled;
+      }
+      value.isSelfCompared = isInnerSettled;
+      return isInnerSettled;
+    }
     case "Subset":
-      return normalizeMixedSets(value.base);
+      return compareWithItself(value.base, isEquality);
     case "FunctionSet":
-      if (isEmptySet(value.domain) || isEmptySet(value.range)) return;
-      normalizeMixedSets(value.domain);
-      return normalizeMixedSets(value.range);
+      if (!isEquality) break;
+      if (isEmptySet(value.domain) || isEmptySet(value.range)) return false;
+      compareWithItself(value.domain, isEquality);
+      compareWithItself(value.range, isEquality);
+      return false;
     case "RecordSet":
-      if (isEmptySet(value)) return;
-      return value.sets.forEach(normalizeMixedSets);
     case "ProductSet":
-      if (isEmptySet(value)) return;
-      return value.factors.forEach(normalizeMixedSets);
+      if (!isEquality) break;
+      if (isEmptySet(value)) return false;
+      for (const part of value.kind === "RecordSet" ? value.sets : value.factors) {
+        compareWithItself(part, isEquality);
+      }
+      return false;
   }
-};
-
-const compareWithItself = (value: Value) => {
-  if (isWrittenOrderUsed) forgetWrittenOrder(value);
-  if (value === ANY_SET) compareAny(value);
-  if (typeof value === "object" && value.kind === "LazyFunction") toFiniteFunction(value);
-  if (hasMixedSet) normalizeMixedSets(value);
+  compareWithItself(toFiniteSet(value), isEquality);
+  return false;
 };
 
 export const compareValues = (left: Value, right: Value): number => {
   if (left === right) {
-    compareWithItself(left);
+    compareWithItself(left, false);
     return 0;
   }
   if (typeof left === "object" && typeof right === "object") {
@@ -678,6 +695,7 @@ export const createSortedSet = (elements: Value[]): SetValue => ({
   hash: 0,
   fingerprint: 0,
   isFingerprinted: false,
+  isSelfCompared: false,
 });
 
 export const createNormalizedSet = (elements: Value[]): SetValue => {
@@ -696,6 +714,7 @@ export const createSortedFunction = (domain: Value[], range: Value[]): FunctionV
   functionClass: undefined,
   lambdaDomain: undefined,
   isFingerprinted: false,
+  isSelfCompared: false,
 });
 
 export type FunctionClass = "lambda" | "tuple" | "record";
@@ -773,7 +792,7 @@ export const markFingerprinted = (value: Value): void => {
 export const valuesEqual = (left: Value, right: Value): boolean => {
   cacheSet(left);
   if (left === right) {
-    compareWithItself(left);
+    compareWithItself(left, true);
     return true;
   }
   if (typeof left !== "object" || typeof right !== "object") {
@@ -1240,10 +1259,7 @@ export const createEnumeratedSet = (elements: Value[]): SetValue | MixedSetValue
   try {
     const set = computeLikeTlcOnFailure<Value[], undefined, SetValue | MixedSetValue>(
       createSet,
-      (mixed) => {
-        hasMixedSet = true;
-        return { kind: "MixedSet", elements: mixed };
-      },
+      (mixed) => ({ kind: "MixedSet", elements: mixed }),
       elements,
       undefined,
     );

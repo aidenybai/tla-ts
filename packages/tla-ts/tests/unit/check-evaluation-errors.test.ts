@@ -1856,6 +1856,31 @@ describe("evaluation errors match TLC", () => {
     expect(statuses).toEqual(Array(12).fill("success"));
   });
 
+  it("evaluates a function over Nat in a value TLC compares with itself", async () => {
+    const messages = await Promise.all(
+      [
+        "ASSUME LET D == <<[n \\in Nat |-> n]>> IN D = D",
+        "ASSUME LET D == <<1, [n \\in Nat |-> n]>> IN D = D",
+        "ASSUME LET D == {[n \\in Nat |-> n]} IN D = D",
+        "ASSUME LET D == [a |-> [n \\in Nat |-> n]] IN D = D",
+        "ASSUME LET D == [k \\in {1, 2} |-> [n \\in Nat |-> n]] IN D = D",
+        "ASSUME LET D == <<[n \\in Nat |-> n]>> IN D \\in {D}",
+        "ASSUME LET D == <<[n \\in Nat |-> n]>> IN D # D => FALSE",
+        "ASSUME LET D == <<{n \\in Nat : n > 2}>> IN D = D",
+        "ASSUME LET D == <<[n \\in Nat |-> n]>> IN Cardinality({D, D}) = 1",
+      ].map(async (assumption) => (await checkModule(assumption)).violation?.message),
+    );
+    const message = "Attempted to compute the number of elements in the overridden value Nat.";
+    expect(messages).toEqual([
+      ...Array(7).fill(message),
+      "Attempted to enumerate { x \\in S : p(x) } when S:\nNat\nis not enumerable",
+      getJavaError(
+        "value.impl.IntValue tlc2.module.FiniteSets.Cardinality(tlc2.value.impl.Value)",
+        message,
+      ),
+    ]);
+  });
+
   it("sorts a TLCEval argument only outside an instance that substitutes", async () => {
     const inner =
       '---- MODULE Inner ----\nEXTENDS TLC\nCONSTANT K\nMixed == 1 \\in TLCEval({1, "a"})\n====';
