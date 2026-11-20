@@ -20,7 +20,13 @@ import {
 import { formatRange, type CodedSanyError, type SanyError } from "./errors";
 import { forEachChild, substitutionFrames } from "./instances";
 import { parenthesizedRanges } from "./parser";
-import { collectSemanticErrors, getBoundNames, getPatternNames, isBefore } from "./resolve";
+import {
+  collectSemanticErrors,
+  compareLocations,
+  getBoundNames,
+  getPatternNames,
+  isBefore,
+} from "./resolve";
 import { resolveSynonym } from "./tlc/jar-data";
 import { STANDARD_LEVELS } from "./standard-definitions";
 
@@ -966,29 +972,48 @@ export const createLevelAnalyzer = (context: LevelContext) => {
       }),
     );
     const inner = createLetScope(expression, scope);
-    const instanceDefinitions =
-      expression.instances?.flatMap((instance) =>
-        context.instances.getLetInstance(instance)
-          ? []
-          : addInstanceDefinitions(context.instances, instance, inner),
-      ) ?? [];
+    const instanceUnits = expression.instances?.flatMap((instance) =>
+      context.instances.getLetInstance(instance)
+        ? []
+        : [
+            {
+              location: instance.location,
+              definitions: addInstanceDefinitions(context.instances, instance, inner),
+            },
+          ],
+    );
     if (expression.recursive) {
       getRecursiveSections(scope, expression).forEach((section) =>
         checkRecursiveSection(section.members),
       );
     }
-    const definitions = [...expression.definitions, ...instanceDefinitions].map((definition) =>
-      analyzeDefinition(definition, inner),
-    );
+    const definitions = (
+      instanceUnits?.length
+        ? [
+            ...expression.definitions.map((definition) => ({
+              location: definition.location,
+              definitions: [definition],
+            })),
+            ...instanceUnits,
+          ]
+            .toSorted((left, right) => compareLocations(left.location, right.location))
+            .flatMap((unit) => unit.definitions)
+        : expression.definitions
+    ).map((definition) => analyzeDefinition(definition, inner));
     const body = analyze(expression.body, inner);
     const instancer = context.module;
     const instanceErrors =
       instancer === undefined
         ? []
-        : expression.instances?.flatMap((instance) =>
-            context.instances.checkInstantiation(instance, instancer, inner),
-          );
-    instanceErrors?.forEach((error) => errors.push(error));
+        : expression.instances?.flatMap((instance) => {
+            const substitutes = context.instances.getLetInstance(instance)
+              ? undefined
+              : context.instances.getSubstitutes(instance);
+            if (substitutes) getSubstitutes(substitutes, inner);
+            const instantiation = context.instances.checkInstantiation(instance, instancer, inner);
+            instantiation.forEach((error) => errors.push(error));
+            return instantiation;
+          });
     const data = {
       level: body.level,
       isCorrect:

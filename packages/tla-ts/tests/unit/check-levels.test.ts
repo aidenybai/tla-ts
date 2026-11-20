@@ -455,6 +455,44 @@ describe("level checking matches SANY", () => {
     );
   });
 
+  it.each([
+    [
+      "with a definition",
+      "B == c\n",
+      ["line 10, col 17 to line 10, col 21", "line 11, col 45 to line 11, col 49", "line 12, col 17 to line 12, col 21"],
+      "line 11, col 11 to line 11, col 49",
+    ],
+    [
+      "without definitions",
+      "",
+      ["line 9, col 17 to line 9, col 21", "line 11, col 17 to line 11, col 21", "line 10, col 45 to line 10, col 49"],
+      "line 10, col 11 to line 10, col 49",
+    ],
+  ])(
+    "reports the substitute errors of a proof's LET instance of a module %s where SANY does",
+    async (_, definitions, primes, instance) => {
+      await expect(
+        check({
+          source: `---- MODULE M ----\nVARIABLE x\n---- MODULE P ----\nCONSTANT c\nVARIABLE v\n${definitions}====\nN == INSTANCE P WITH c <- 1, v <- x\nTHEOREM TRUE\n<1>1. LET D1 == (x')'\n          K == INSTANCE P WITH c <- x, v <- (x')'\n          D2 == (x')'\n      IN TRUE\n  OBVIOUS\n<1> QED\nInit == x = 0\nNext == x' = x\n====`,
+          config: "INIT Init\nNEXT Next",
+        }),
+      ).rejects.toThrow(
+        createSanyError([
+          ...primes.map((location) => ({
+            location: `${location} of module M`,
+            message:
+              "Level error in applying operator ':\nThe level of argument 1 exceeds the maximum level allowed by the operator.",
+          })),
+          {
+            location: `${instance} of module M`,
+            message:
+              "Level error in instantiating module 'P':\nThe level of the expression or operator substituted for 'c' \nmust be at most 0.",
+          },
+        ]),
+      );
+    },
+  );
+
   it("levels a LET instance's definitions through an operator parameter it substitutes like SANY", async () => {
     await expect(
       check({
