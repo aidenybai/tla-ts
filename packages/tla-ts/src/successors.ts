@@ -70,6 +70,7 @@ import {
   isEqualLikeTlc,
   isFunctionValue,
   isTlcEnumerable,
+  someStreamedElement,
   type Value,
 } from "./values";
 
@@ -464,8 +465,8 @@ const compileMembership = (
         : `In computing ${getComputation(run)}, the right side of \\IN is not enumerable.`;
       throw createRunError(run, `${message}\n${describeRange(expression)}`);
     }
-    const elements = getStreamedElements(value);
     if (run.generator) {
+      const elements = getStreamedElements(value);
       for (const element of getRandomSubset(
         elements.length,
         value,
@@ -475,10 +476,27 @@ const compileMembership = (
         onComplete(assign(partial, index, element), action);
         if (run.generator.kept > 0 || run.isStopped) return;
       }
+      for (let position = 0; position < elements.length && !run.isStopped; position++) {
+        onComplete(assign(partial, index, elements[position]), action);
+      }
+      return;
     }
-    for (let position = 0; position < elements.length && !run.isStopped; position++) {
-      onComplete(assign(partial, index, elements[position]), action);
+    if (typeof value === "object" && value.kind === "Set") {
+      for (let position = 0; position < value.elements.length && !run.isStopped; position++) {
+        onComplete(assign(partial, index, value.elements[position]), action);
+      }
+      return;
     }
+    if (typeof value === "object" && value.kind === "Interval") {
+      for (let element = value.low; element <= value.high && !run.isStopped; element++) {
+        onComplete(assign(partial, index, element), action);
+      }
+      return;
+    }
+    someStreamedElement(value, (element) => {
+      if (!run.isStopped) onComplete(assign(partial, index, element), action);
+      return run.isStopped;
+    });
   };
 };
 

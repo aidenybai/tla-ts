@@ -1221,8 +1221,20 @@ export const normalizeShallowly = (value: Value): void => {
   }
 };
 
+const isUnenumeratedSet = (value: Value): value is ConvertibleSetValue =>
+  typeof value === "object" && isLazySet(value) && value.enumerated === undefined;
+
+// TLC's SetEnumValue#equals enumerates the right side before it sorts a set literal on the left.
+const isFailingLikeTlc = (left: Value, right: Value) =>
+  typeof left === "object" &&
+  isSetValue(left) &&
+  !isModelValue(right) &&
+  (isComparedByClass(left, right) ||
+    (isSetValue(right) &&
+      (isUnenumeratedSet(left) ? left.kind !== "MixedSet" : isUnenumeratedSet(right))));
+
 export const isEqualLikeTlc = (left: Value, right: Value) =>
-  computeLikeTlcOnFailure(valuesEqual, equalsLikeTlc, left, right);
+  computeLikeTlcOnFailure(valuesEqual, equalsLikeTlc, left, right, isFailingLikeTlc);
 
 // TLC's ValueVec#sort compares each element with the ones before it, which orders what lazy elements evaluate.
 const isStrictlySorted = (elements: Value[]) => {
@@ -1908,12 +1920,15 @@ const listUnionLikeTlc = (union: SetOperationValue) => {
   openStream(union.left);
   openStream(union.right);
   if (isBeyondSetBound(union.left)) throw new TlaSetBoundError(getSetBoundMessage());
-  const left = getStreamedElements(union.left);
-  const right = isBeyondSetBound(union.right) ? undefined : getStreamedElements(union.right);
-  if (!right || left.length + right.length > getMaximumSetSize()) {
-    throw new TlaSetBoundError(getSetBoundMessage());
-  }
-  return [...left, ...right];
+  const elements: Value[] = [];
+  const add = (element: Value) => {
+    addBoundedElement(elements, element);
+    return false;
+  };
+  someStreamedElement(union.left, add);
+  if (isBeyondSetBound(union.right)) throw new TlaSetBoundError(getSetBoundMessage());
+  someStreamedElement(union.right, add);
+  return elements;
 };
 
 export const getNormalizedSetElements = (value: Value, isBounded: boolean) => {
@@ -2309,6 +2324,7 @@ export const computeLikeTlcOnFailure = <Left, Right, Result>(
   computeLikeTlc: (left: Left, right: Right, error: TlaEvaluationError) => Result,
   left: Left,
   right: Right,
+  isFailingLikeTlc?: (left: Left, right: Right) => boolean,
 ): Result => {
   const sets = setTrace.sets;
   const callStack = setTrace.callStack;
@@ -2317,7 +2333,7 @@ export const computeLikeTlcOnFailure = <Left, Right, Result>(
   try {
     return compute(left, right);
   } catch (error) {
-    if (!(error instanceof TlaEvaluationError)) throw error;
+    if (!(error instanceof TlaEvaluationError) || isFailingLikeTlc?.(left, right)) throw error;
     if (sets) sets.length = depth;
     if (callStack && trace) {
       callStack.expressions.length = trace.length;
