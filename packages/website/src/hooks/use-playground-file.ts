@@ -1,5 +1,5 @@
 import { useLayoutEffect, useState } from "react";
-import { PLAYGROUND_EXAMPLES } from "./playground-examples";
+import { PLAYGROUND_EXAMPLES } from "@/lib/playground-examples";
 
 // The file in the editor: an example, or the code a link carries in its hash.
 export const usePlaygroundFile = () => {

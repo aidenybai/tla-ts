@@ -7,11 +7,8 @@ declare module "virtual:site-data" {
 }
 
 declare module "virtual:compilations" {
-  export const initial: import("@/app/playground/compilation").Precompiled;
-  export const compilations: Record<
-    string,
-    () => Promise<import("@/app/playground/compilation").Precompiled>
-  >;
+  export const initial: import("@/lib/compilation").Precompiled;
+  export const compilations: Record<string, () => Promise<import("@/lib/compilation").Precompiled>>;
 }
 
 declare module "virtual:outlines" {

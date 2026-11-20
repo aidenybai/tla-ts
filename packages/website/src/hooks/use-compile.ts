@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { compilations, initial } from "virtual:compilations";
-import type { CompileRequest, CompileResponse } from "./compile-worker";
+import type { CompileRequest, CompileResponse } from "@/lib/compile-worker";
 import type { createHighlighter } from "@/lib/highlighter";
 
 interface CompileState {
@@ -24,7 +24,9 @@ export const useCompile = (source: string, fileName: string) => {
 
   useEffect(() => {
     if (!isStarted) return;
-    const worker = new Worker(new URL("./compile-worker.ts", import.meta.url), { type: "module" });
+    const worker = new Worker(new URL("../lib/compile-worker.ts", import.meta.url), {
+      type: "module",
+    });
     const receive = (response: CompileResponse) =>
       setState((previous) => ({
         response,

@@ -1,8 +1,8 @@
 import { CaretDown, GearSix } from "@phosphor-icons/react";
 import type { ReactNode } from "react";
 import { cn } from "cn";
-import { PLAYGROUND_EXAMPLES } from "./playground-examples";
-import { usePlaygroundView } from "./playground-view";
+import { PLAYGROUND_EXAMPLES } from "@/lib/playground-examples";
+import { usePlaygroundView } from "@/lib/playground-view";
 import { useIsHydrated } from "@/hooks/use-is-hydrated";
 import { Logo } from "@/components/logo";
 import { usePlayground } from "./playground";

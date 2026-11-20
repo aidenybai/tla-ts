@@ -2,18 +2,18 @@ import { ArrowUpRight } from "@phosphor-icons/react";
 import { Fragment, useEffect, useState, type ReactNode } from "react";
 import { cn } from "cn";
 import { createPartsContext } from "@/lib/utils";
-import { EXAMPLES } from "./examples";
+import { EXAMPLES } from "@/lib/examples";
 import type { RunResult } from "@/lib/run-worker";
 import type { SearchState } from "@/lib/search";
 import { useRun } from "@/hooks/use-run";
 import { useSearchPath } from "@/hooks/use-search-path";
-import { StateGraph } from "@/components/state-graph";
-import { CodeActions, CodeContent, CodeFooter, CodeRoot, CodeRun } from "@/components/code";
+import { StateGraph } from "./state-graph";
+import { CodeActions, CodeContent, CodeFooter, CodeRoot, CodeRun } from "./code";
 import { Button } from "@/components/ui/button";
 import { buttonVariants } from "@/components/ui/button-variants";
 import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
-import { Verdict } from "@/components/verdict";
+import { Verdict } from "./verdict";
 
 interface ExampleState {
   example: (typeof EXAMPLES)[number];

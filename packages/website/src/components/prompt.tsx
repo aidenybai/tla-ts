@@ -1,4 +1,4 @@
-import { CopyButton } from "@/components/copy-button";
+import { CopyButton } from "./copy-button";
 
 interface PromptProps {
   text: string;

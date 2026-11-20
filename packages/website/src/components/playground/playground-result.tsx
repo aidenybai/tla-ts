@@ -1,4 +1,4 @@
-import { usePlaygroundView } from "./playground-view";
+import { usePlaygroundView } from "@/lib/playground-view";
 import { getStateNames, type SearchState } from "@/lib/search";
 import { useSearchPath } from "@/hooks/use-search-path";
 import { usePlayground } from "./playground";

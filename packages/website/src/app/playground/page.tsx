@@ -1,17 +1,17 @@
-import { PlaygroundRoot, PlaygroundWorkspace } from "./playground";
+import { PlaygroundRoot, PlaygroundWorkspace } from "@/components/playground/playground";
 import {
   PlaygroundFiles,
   PlaygroundHeader,
   PlaygroundRun,
   PlaygroundSettings,
-} from "./playground-header";
+} from "@/components/playground/playground-header";
 import {
   PlaygroundArrows,
   PlaygroundOutput,
   PlaygroundPanes,
   PlaygroundSource,
-} from "./playground-panes";
-import { PlaygroundResult } from "./playground-result";
+} from "@/components/playground/playground-panes";
+import { PlaygroundResult } from "@/components/playground/playground-result";
 
 const Page = () => (
   <PlaygroundRoot>

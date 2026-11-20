@@ -8,7 +8,7 @@ import { createServer, defineConfig, type Plugin } from "vite-plus";
 import { printModule } from "../tla-ts/src/printer";
 import { compile } from "../tla-ts/src/typescript/compile";
 import { printRegions } from "../tla-ts/src/typescript/regions";
-import { getCompilation, type Precompiled } from "./src/app/playground/compilation";
+import { getCompilation, type Precompiled } from "./src/lib/compilation";
 import { createHighlighter } from "./src/lib/highlighter";
 import { LOGO_PATH } from "./src/lib/logo";
 import { getPageFile } from "./src/router";

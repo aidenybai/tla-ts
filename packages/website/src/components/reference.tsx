@@ -1,6 +1,6 @@
 import { reference } from "virtual:site-data";
 import type { ReferenceBlock } from "@/lib/site-data";
-import { CodeActions, CodeContent, CodeCopy, CodeRoot } from "@/components/code";
+import { CodeActions, CodeContent, CodeCopy, CodeRoot } from "./code";
 import { SectionRoot, SectionTitle } from "./section";
 import { InlineCode } from "@/components/ui/inline-code";
 

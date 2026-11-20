@@ -1,6 +1,6 @@
 import type { ComponentType } from "react";
 import { createRoot, hydrateRoot } from "react-dom/client";
-import Layout from "./app/layout";
+import Layout from "@/app/layout";
 import { getPageFile } from "./router";
 import "./app/globals.css";
 

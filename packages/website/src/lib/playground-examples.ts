@@ -1,5 +1,5 @@
 const sources = import.meta.glob<string>(
-  ["../../examples/*.ts", "../../../../tla-ts/tests/fixtures/typescript/examples/two-phase/*.ts"],
+  ["../examples/*.ts", "../../../tla-ts/tests/fixtures/typescript/examples/two-phase/*.ts"],
   { query: "?raw", import: "default", eager: true },
 );
 

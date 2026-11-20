@@ -1,7 +1,7 @@
 import { useState, type PointerEvent } from "react";
 import { TextMorph } from "torph/react";
 import { cn } from "cn";
-import { getTest262Percent, getTest262Share, TEST262_RUNS } from "./test262";
+import { getTest262Percent, getTest262Share, TEST262_RUNS } from "@/lib/test262";
 
 const TICK_PERCENT = 20;
 const MORPH_MS = 300;

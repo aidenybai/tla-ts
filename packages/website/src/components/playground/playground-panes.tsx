@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useRef, type ReactNode } from "react";
 import { cn } from "cn";
-import { getLineHoveredName } from "./line-marks";
-import { usePlaygroundView } from "./playground-view";
+import { getLineHoveredName } from "@/lib/line-marks";
+import { usePlaygroundView } from "@/lib/playground-view";
 import { getStateNames } from "@/lib/search";
 import { useIsHydrated } from "@/hooks/use-is-hydrated";
 import { useSearchPath } from "@/hooks/use-search-path";

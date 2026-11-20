@@ -2,13 +2,13 @@ import { useEffect, useMemo, useRef, type ReactNode } from "react";
 import outlines from "virtual:outlines";
 import { createPartsContext } from "@/lib/utils";
 import { getHighlightColors } from "@/lib/highlight-colors";
-import { getLineMarks } from "./line-marks";
+import { getLineMarks } from "@/lib/line-marks";
 import type { Mark } from "@/lib/site-data";
-import { useCompile } from "./use-compile";
+import { useCompile } from "@/hooks/use-compile";
 import { useIsHydrated } from "@/hooks/use-is-hydrated";
 import { useMediaQuery } from "@/hooks/use-media-query";
-import { usePlaygroundFile } from "./use-playground-file";
-import { usePlaygroundView } from "./playground-view";
+import { usePlaygroundFile } from "@/hooks/use-playground-file";
+import { usePlaygroundView } from "@/lib/playground-view";
 import { useRun } from "@/hooks/use-run";
 
 const NO_MARKS: Mark[] = [];
