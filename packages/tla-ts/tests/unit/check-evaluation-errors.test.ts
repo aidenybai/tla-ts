@@ -3845,6 +3845,41 @@ describe("evaluation errors match TLC", () => {
     },
   );
 
+  const INTERVAL_SIZE_REASON =
+    "Size of interval value exceeds the maximum representable size (32bits): 0..2147483647.";
+
+  it.each([
+    [
+      "x' = x /\\ ~(((1..2) \\cup SUBSET (0..2147483647)) \\subseteq {})",
+      [
+        "Line 5, column 9 to line 5, column 70 in M",
+        "Line 5, column 9 to line 5, column 14 in M",
+        "Line 5, column 19 to line 5, column 70 in M",
+        "Line 5, column 21 to line 5, column 69 in M",
+        "Line 5, column 22 to line 5, column 55 in M",
+        "Line 5, column 34 to line 5, column 55 in M",
+      ],
+    ],
+    [
+      "x' = x /\\ \\A e \\in (SUBSET (0..2147483647) \\ {}) : TRUE",
+      [
+        "Line 5, column 9 to line 5, column 63 in M",
+        "Line 5, column 9 to line 5, column 14 in M",
+        "Line 5, column 19 to line 5, column 63 in M",
+        "Line 5, column 29 to line 5, column 55 in M",
+        "Line 5, column 29 to line 5, column 50 in M",
+      ],
+    ],
+  ])(
+    "sizes the interval under SUBSET S as TLC's elements() opens it: %s",
+    async (next, callStack) => {
+      const result = await checkSetBound(next, "TRUE");
+      expect(result.failure?.message).toBe(getRuntimeException(INTERVAL_SIZE_REASON));
+      expect(formatCallStackLines(result)).toEqual(callStack);
+      expect(result.failure?.fingerprint?.reason).toBe(INTERVAL_SIZE_REASON);
+    },
+  );
+
   const SET_EQUALITY_REASON = "Attempted to check equality of the set {1} with the value:\n1";
 
   it.each([

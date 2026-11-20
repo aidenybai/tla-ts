@@ -1944,12 +1944,12 @@ const openCombinedStream = (
   switch (value.kind) {
     case "Subset": {
       const base = value.base;
-      if (
-        !value.enumerated &&
-        (typeof base !== "object" || (base.kind !== "Set" && base.kind !== "Interval"))
-      ) {
-        getSubsetBase(value);
+      if (value.enumerated || (typeof base === "object" && base.kind === "Set")) return;
+      if (typeof base === "object" && base.kind === "Interval") {
+        getCardinality(base);
+        return;
       }
+      getSubsetBase(value);
       return;
     }
     case "FunctionSet": {
