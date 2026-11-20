@@ -201,7 +201,7 @@ const compareSorts = (manager: AstManager, first: number, second: number): numbe
   return 0;
 };
 
-// Deviation from Z3: the port shares one declaration among these; Z3 has one per value or sort.
+// The port shares one declaration among these, where Z3 has one for each value or sort.
 const isSharedDecl = (manager: AstManager, expr: number) => {
   const decl = manager.funcDecls[manager.decls[expr]];
   return (
