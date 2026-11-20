@@ -2,7 +2,11 @@ import { spawnSync } from "node:child_process";
 import { join } from "node:path";
 
 const PACKAGE_DIRECTORY = join(import.meta.dirname, "..");
-const OUT_DIRECTORY = join(PACKAGE_DIRECTORY, ".scripts");
+// `--build <directory>` builds the script into that directory, with the graphs it reads written in,
+// and runs nothing, for runs that start the bundle themselves, with the node on the PATH.
+const buildIndex = process.argv.indexOf("--build");
+const buildDirectory = buildIndex === -1 ? undefined : process.argv[buildIndex + 1];
+const OUT_DIRECTORY = join(PACKAGE_DIRECTORY, buildDirectory ?? ".scripts");
 
 const WORKER_ENTRIES = [
   "src/parallel-worker.ts",
@@ -46,6 +50,7 @@ const runtimeGraph = spawnSync(
 );
 if (runtimeGraph.status !== 0) process.exit(runtimeGraph.status ?? 1);
 
+if (buildDirectory !== undefined) process.exit(0);
 const run = spawnSync("node", [join(OUT_DIRECTORY, `${name}.js`), ...process.argv.slice(3)], {
   stdio: "inherit",
 });
