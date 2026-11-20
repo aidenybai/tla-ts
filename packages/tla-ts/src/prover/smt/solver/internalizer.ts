@@ -3,6 +3,7 @@ import {
   AstManager,
   FAMILY_BASIC,
   FAMILY_USER,
+  isDeclared,
   KIND_APP,
   KIND_QUANTIFIER,
   OP_ADD,
@@ -45,6 +46,7 @@ import {
   UnitResolutionJustification,
 } from "./enode";
 import { isCommutativeDecl } from "./euf/egraph";
+import { ObjMap } from "./hashtable";
 import { L_FALSE, L_TRUE, L_UNDEF } from "./lbool";
 import {
   BoolVar,
@@ -131,6 +133,9 @@ export abstract class Internalizer {
   readonly relevancy: RelevancyPropagator;
   readonly caseSplitQueue: CaseSplitQueue;
   readonly cgTable = new CgTable();
+  // cg_table::set_func_decl_id: the table holds the declaration of each application it reads
+  // until the context is released.
+  private readonly cgDecls = new ObjMap<true>((decl) => this.manager.getDeclHash(decl));
   private stickyGenerations = new StickyGenerations();
   abstract getTheory(family: number): Theory | undefined;
   abstract readonly qmanager: DefaultQuantifierManager;
@@ -334,7 +339,18 @@ export abstract class Internalizer {
     return this.exprToEnode[expr] !== undefined;
   }
 
+  private holdCgDecl(decl: number) {
+    if (!isDeclared(this.manager.funcDecls[decl]) || this.cgDecls.has(decl)) return;
+    this.cgDecls.set(decl, true);
+    this.manager.incDeclRef(decl);
+  }
+
+  protected releaseCgDecls() {
+    for (const decl of this.cgDecls.keys()) this.manager.decDeclRef(decl);
+  }
+
   findCongruent(decl: number, args: Enode[]) {
+    this.holdCgDecl(decl);
     return this.cgTable.findFor(
       decl,
       args,
@@ -619,6 +635,7 @@ export abstract class Internalizer {
         );
         this.pushEq(node, this.trueEnode, AXIOM_EQ_JUSTIFICATION);
       } else if (isCgcEnabled) {
+        this.holdCgDecl(decl);
         const congruent = this.cgTable.insert(node);
         if (congruent !== node) {
           node.cg = congruent;

@@ -252,6 +252,7 @@ export class Context extends Internalizer {
     if (state.kind === "proto" || state.kind === "final") state.generated.model.decRef();
     this.dynAck.release();
     this.conflictResolution.lemmaAtoms.reset();
+    this.releaseCgDecls();
     for (const theory of this.theories) theory.release();
     this.rewriter.release();
     asserted.release();

@@ -2717,3 +2717,33 @@ describe("reset-assertions, as Z3 5.3.2 frees the solver", () => {
     ]);
   });
 });
+
+const POPPED_CHECK = [
+  "(declare-fun g (Int) Int)",
+  "(declare-fun h (Int) Int)",
+  "(declare-fun c () Int)",
+  "(declare-fun d () Int)",
+  "(assert (= (g c) (h d)))",
+  "(assert (= (g d) (h c)))",
+  "(assert (distinct (g c) (g d)))",
+  "(assert (forall ((x Int)) (! (>= (g x) (h x)) :pattern ((g x)))))",
+  "(assert (forall ((x Int)) (! (<= (h x) (+ (g x) 1)) :pattern ((h x)))))",
+  "(check-sat)",
+  "(get-info :rlimit)",
+];
+
+describe("pop, as Z3 5.3.2 frees the declarations of a scope", () => {
+  it("keeps a declaration that the congruence table read until the solver is freed", () => {
+    expect(
+      run([
+        "(declare-fun a () (Array Int Bool))",
+        "(declare-fun b () (Array Bool Int))",
+        "(push 1)",
+        "(assert (= (select b (select a 0)) 2))",
+        "(check-sat)",
+        "(pop 1)",
+        ...POPPED_CHECK,
+      ]),
+    ).toEqual(["sat", "unsat", "(:rlimit 638)"]);
+  });
+});

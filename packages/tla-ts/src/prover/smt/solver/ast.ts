@@ -648,7 +648,7 @@ const hasOwnDeclHash = (family: number) =>
   family === FAMILY_RECFUN;
 
 // The declarations that Z3 makes once and counts references to, rather than on each use.
-const isDeclared = (funcDecl: FuncDecl) =>
+export const isDeclared = (funcDecl: FuncDecl) =>
   funcDecl.family === FAMILY_USER ||
   funcDecl.family === FAMILY_RECFUN ||
   funcDecl.family === FAMILY_ARRAY ||
