@@ -548,6 +548,12 @@ export const compileToEscore = (
           text: `HostFileLocation(file) ==\n  CASE ${files.map((file, index) => `file = ${index + 1} -> ${getHostFileLocation(file)}`).join("\n    [] ")}`,
         },
         {
+          name: "HostFilePath",
+          arity: 1,
+          // The path of the file that the host loaded each module from, which import.meta gives.
+          text: `HostFilePath(file) ==\n  CASE ${files.map((file, index) => `file = ${index + 1} -> ${file.kind === "module" ? getUnitsOf(resolve(file.path)) : "Empty"}`).join("\n    [] ")}`,
+        },
+        {
           name: "HostDefaultStackTraceLimit",
           arity: 1,
           // A script, whose realm lacks the host's Error.stackTraceLimit, has Node's default.

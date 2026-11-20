@@ -246,6 +246,7 @@ export const HOOKS = new Map([
   ["ResumeCode", "args, r"],
   ["HostTimeZone", "key"],
   ["HostFileLocation", "file"],
+  ["HostFilePath", "file"],
   ["HostEntryFrames", "file"],
   ["HostDefaultStackTraceLimit", "file"],
   ["HostDateFormat", "key"],

@@ -423,13 +423,30 @@ const DEFINITIONS = [
            ELSE DefinePropertyOrThrow(value.s, Intrinsic(s, p.owner), Str(p.name), DataDesc(Val(value), p.writable, p.enumerable, p.configurable))
   IN IF IsAbrupt(d) THEN d ELSE DefineHostWith(d.s, handler, Tail(properties))`,
   // import.meta of module m, as Node gives it: an object without a prototype whose dirname,
-  // filename, resolve, and url, which the runtime leaves out, are accessors that stop, and whose
-  // main tells whether m is the entry, the module the host loaded first.
+  // filename, and url are where the host loaded m from, whose resolve, which the runtime leaves
+  // out, stops, and whose main tells whether m is the entry, the module the host loaded first. Of a
+  // module the host gives no file of, the properties but main are accessors that stop.
   `ImportMeta(s, m) ==
   LET o == OrdinaryObjectCreate(s, Null)
-      stop == CreateBuiltinFunction(o.s, <<"Module", "hostStop">>, 0, <<>>, N("import.meta"))
-      d == DefineMetaProperties(stop.s, Val(o), Val(stop), <<N("dirname"), N("filename"), N("main"), N("resolve"), N("url")>>, m = 1)
-  IN IF IsAbrupt(d) THEN d ELSE Ok(d.s, Val(o))`,
+      file == ModuleAt(s, m).node.file
+      path == HostFilePath(file)
+      url == HostFileLocation(file)
+      slash == {i \\in DOMAIN path : path[i] = 47 /\\ \\A j \\in DOMAIN path : path[j] = 47 => j <= i}
+      directory == IF slash = {} THEN N(".") ELSE LET i == CHOOSE i \\in slash : TRUE IN IF i = 1 THEN N("/") ELSE SubSeq(path, 1, i - 1)
+  IN IF path = Empty \\/ url = Empty THEN
+       LET stop == CreateBuiltinFunction(o.s, <<"Module", "hostStop">>, 0, <<>>, N("import.meta"))
+           d == DefineMetaProperties(stop.s, Val(o), Val(stop), <<N("dirname"), N("filename"), N("main"), N("resolve"), N("url")>>, m = 1)
+       IN IF IsAbrupt(d) THEN d ELSE Ok(d.s, Val(o))
+     ELSE
+       LET resolve == CreateBuiltinFunction(o.s, <<"Module", "hostStop">>, 1, N("resolve"), N("import.meta.resolve"))
+           d == DefineDataProperties(resolve.s, Val(o),
+                  <<<<N("dirname"), Str(directory)>>, <<N("filename"), Str(path)>>, <<N("main"), Bool(m = 1)>>,
+                    <<N("resolve"), Val(resolve)>>, <<N("url"), Str(url)>>>>)
+       IN IF IsAbrupt(d) THEN d ELSE Ok(d.s, Val(o))`,
+  `DefineDataProperties(s, o, pairs) ==
+  IF pairs = <<>> THEN Ok(s, Empty) ELSE
+  LET d == DefinePropertyOrThrow(s, o, Str(Head(pairs)[1]), DataDesc(Head(pairs)[2], TRUE, TRUE, TRUE))
+  IN IF IsAbrupt(d) THEN d ELSE DefineDataProperties(d.s, o, Tail(pairs))`,
   `DefineMetaProperties(s, o, stop, names, isMain) ==
   IF names = <<>> THEN Ok(s, Empty) ELSE
   LET d == DefinePropertyOrThrow(s, o, Str(Head(names)),

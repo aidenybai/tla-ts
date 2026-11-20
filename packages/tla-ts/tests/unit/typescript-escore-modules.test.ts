@@ -239,10 +239,32 @@ describe("compiles modules by specializing ESCore", () => {
       ).toContain(THREW);
     });
 
-    it("stops at its url, which the runtime leaves out", async () => {
-      expect((await checkModules({ "main.js": "import.meta.url;" })).message).toContain(
-        "tla-ts can't run the host's import.meta",
-      );
+    describe("gives the url, the filename, and the directory of the module's file", () => {
+      const getWhere = (expected: string) => ({
+        "main.js": getMain(
+          `const meta = import.meta;
+          const log = [meta.url === "file://" + meta.filename, meta.dirname + "/main.js" === meta.filename, typeof meta.resolve, meta.resolve.name, meta.resolve.length, Object.getOwnPropertyDescriptor(meta, "url").writable];`,
+          expected,
+        ),
+      });
+
+      it("agrees with Node", async () => {
+        expect(
+          (await checkModules(getWhere("true,true,function,resolve,1,true"))).message,
+        ).toBeUndefined();
+      });
+
+      it("rejects another result", async () => {
+        expect(
+          (await checkModules(getWhere("true,false,function,resolve,1,true"))).message,
+        ).toContain(THREW);
+      });
+    });
+
+    it("stops at a call of resolve, which the runtime leaves out", async () => {
+      expect(
+        (await checkModules({ "main.js": 'import.meta.resolve("./main.js");' })).message,
+      ).toContain("tla-ts can't");
     });
   });
 
