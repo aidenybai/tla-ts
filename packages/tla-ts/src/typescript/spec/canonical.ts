@@ -27,13 +27,15 @@ ElementRefs(e, r) ==
       ELSE IF e.decorators # <<>> \/ e.extra # Empty THEN ModelStop("a decorated class element")
       ELSE MaybeRef(e.init, r) \o ConcatMap(e.initializers, LAMBDA x : MaybeRef(x, r)))
 ValueRefs(seq, r) == ConcatMap(seq, LAMBDA x : MaybeRef(x, r))
-\* The classes whose slots hold no object or environment, but an ordinary object's initializers.
-PlainClasses == {"ordinary", "array", "error", "boolean", "number", "string", "date", "bigint", "symbol", "namespace"}
+\* The classes whose slots hold no object or environment, but an ordinary object's initializers. A
+\* RegExp's hold its source, its flags, and its compiled pattern.
+PlainClasses == {"ordinary", "array", "error", "boolean", "number", "string", "date", "bigint", "symbol", "namespace", "regexp"}
 \* The built-in functions whose data is the cell of a promise's resolving functions or capability.
 CellBuiltins == {<<"Promise", "resolveFunction">>, <<"Promise", "rejectFunction">>, <<"Promise", "capabilityExecutor">>}
 BuiltinSlots == {"id", "constructor", "data", "realm", "initialName"}
-\* The built-in functions whose data is a name, which refers to nothing: the host's that stop.
-NamedBuiltins == {<<"Module", "hostStop">>, <<"Module", "hostQuietConstructor">>}
+\* The built-in functions whose data refers to nothing: the host's that stop, whose data is a name,
+\* and the RegExp constructor, whose data is the strings of its last match, as RegExp.$1 reads.
+NamedBuiltins == {<<"Module", "hostStop">>, <<"Module", "hostQuietConstructor">>, <<"RegExp", "constructor">>}
 \* The slots of a class's default constructor, a built-in that holds the class's elements.
 DefaultConstructorSlots == BuiltinSlots \cup {"ctorKind", "sourceText", "privateMethods", "fields", "initializers"}
 SlotRefs(o, r) ==

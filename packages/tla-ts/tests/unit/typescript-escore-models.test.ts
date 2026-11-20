@@ -234,6 +234,29 @@ describe("checks a module's exported functions as a model on ESCore", () => {
     });
   });
 
+  // A RegExp in the state keeps its pattern, and its lastIndex as a step leaves it, as a module's
+  // constant pattern does.
+  describe("keeps a RegExp that a step uses", () => {
+    const getSource = (operator: string) =>
+      `const pattern = /a/g;\nlet count = 0;\nexport const tick = () => {\n  if (count < 2 && pattern.test("aa")) count += 1;\n};\nexport const isSmall = () => count ${operator} 2 && pattern.lastIndex === count;\n`;
+
+    it("agrees with Node", async () => {
+      expect(getCounts(await checkModel(getSource("<=")))).toEqual(["deadlock", 3, 3]);
+    });
+
+    it("rejects another result", async () => {
+      expect(getCounts(await checkModel(getSource("<")))).toEqual(["invariant-violation", 3, 3]);
+    });
+
+    it("numbers the state natively as ESCanonical does", async () => {
+      expect(getCounts(await checkModel(getSource("<="), "spec.ts", "compared"))).toEqual([
+        "deadlock",
+        3,
+        3,
+      ]);
+    });
+  });
+
   // A function that ESCore's runtime names an operator after, as Effect's SchemaGetter exports
   // BigInt, gets a name of its own in the spec, which still calls it.
   describe("checks a function named as one of the runtime's operators", () => {

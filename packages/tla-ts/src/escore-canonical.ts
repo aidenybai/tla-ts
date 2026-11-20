@@ -148,6 +148,7 @@ const PLAIN_CLASSES = new Set([
   "bigint",
   "symbol",
   "namespace",
+  "regexp",
 ]);
 
 // The built-in functions whose data is the cell of a promise's resolving functions or capability.
@@ -180,13 +181,14 @@ const isDefaultConstructor = (slots: Value) => {
   return id.length === 2 && id[0] === "Class" && id[1] === "default";
 };
 
-// The built-in functions whose data is a name, which refers to nothing: the host's that stop.
+// The built-in functions whose data refers to nothing: the host's that stop, whose data is a name,
+// and the RegExp constructor, whose data is the strings of its last match, as RegExp.$1 reads.
 const isNamedBuiltin = (slots: Value) => {
   const id = getList(get(slots, "id"));
   return (
     id.length === 2 &&
-    id[0] === "Module" &&
-    (id[1] === "hostStop" || id[1] === "hostQuietConstructor")
+    ((id[0] === "Module" && (id[1] === "hostStop" || id[1] === "hostQuietConstructor")) ||
+      (id[0] === "RegExp" && id[1] === "constructor"))
   );
 };
 
