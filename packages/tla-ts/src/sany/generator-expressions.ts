@@ -12,6 +12,7 @@ import {
   isAbsent,
   type LabelNode,
   type LetInNode,
+  type LevelNode,
   type OpApplNode,
   type OpArgNode,
   type OpDeclNode,
@@ -962,7 +963,30 @@ export const generateExpression = (
         location,
       );
     case "Label":
-      return generateLabel(generation, expression);
+      return generateLabel(
+        generation,
+        expression.name,
+        location,
+        () => generateExpression(generation, expression.body),
+        () => {
+          const paramIndexes = findNameTokens(
+            generation.file,
+            getExpressionSpan(generation.file, expression).start,
+            getExpressionSpan(generation.file, expression.body).start,
+            expression.params,
+          );
+          return expression.params.map((name, index) => {
+            const symbol = resolveSymbol(generation.contexts, name);
+            if (symbol?.kind === "FormalParam") return symbol;
+            const paramLocation = getTokenLocation(generation.file, paramIndexes[index]);
+            generation.addError(
+              paramLocation,
+              `Illegal parameter ${name} of label \`${expression.name}'.`,
+            );
+            return createFormalParam(generation, name, 0, paramLocation, false);
+          });
+        },
+      );
     case "Subexpression":
       return generateSelectorExpression(generation, expression);
     case "Selection":
@@ -1016,11 +1040,13 @@ const createNullLabel = (generation: ModuleGeneration): LabelNode => {
   };
 };
 
-const generateLabel = (
+export const generateLabel = (
   generation: ModuleGeneration,
-  expression: Expression & { kind: "Label" },
+  name: string,
+  location: SanyLocation,
+  generateBody: () => LevelNode,
+  generateParams: () => FormalParamNode[] = () => [],
 ): LabelNode | OpApplNode => {
-  const location = getLocation(generation.file, expression);
   const scope = generation.labelScopes.at(-1);
   if (scope === undefined) {
     generation.addError(location, "Label not in definition or proof step.");
@@ -1042,29 +1068,17 @@ const generateLabel = (
     return createNullLabel(generation);
   }
   pushLabelScope(generation);
-  const body = generateExpression(generation, expression.body);
+  const body = generateBody();
   const labels = popLabels(generation);
-  const paramIndexes = findNameTokens(
-    generation.file,
-    getExpressionSpan(generation.file, expression).start,
-    getExpressionSpan(generation.file, expression.body).start,
-    expression.params,
-  );
-  const params = expression.params.map((name, index) => {
-    const symbol = resolveSymbol(generation.contexts, name);
-    if (symbol?.kind === "FormalParam") return symbol;
-    const paramLocation = getTokenLocation(generation.file, paramIndexes[index]);
-    generation.addError(paramLocation, `Illegal parameter ${name} of label \`${expression.name}'.`);
-    return createFormalParam(generation, name, 0, paramLocation, false);
-  });
+  const params = generateParams();
   const label: LabelNode = {
     ...createLevelFields(generation.getId()),
     kind: "Label",
-    name: expression.name,
+    name,
     params,
     body,
     labels,
-    isAssumeProve: false,
+    isAssumeProve: body.kind === "AssumeProve",
     location,
   };
   const named = new Set<FormalParamNode>();

@@ -490,8 +490,10 @@ export const createEnvironment = (
     loading.pop();
     linking.pop();
     const duplicate = nested.find((module) => closure.has(module.name));
-    const loaded = duplicate && linkedModules.get(duplicate.name);
-    const redefinition = loaded && getModuleRedefinition(duplicate, loaded.module);
+    const loaded =
+      duplicate &&
+      (linkedModules.get(duplicate.name)?.module ?? loadModule(duplicate.name, parsed.name));
+    const redefinition = loaded && getModuleRedefinition(duplicate, loaded);
     if (duplicate && !redefinition) throw createModuleRedefinedError(duplicate);
     [...errors, ...(redefinition ? [redefinition] : [])].forEach((error) => {
       if (!semanticErrors.some((other) => isSameSanyError(other, error))) {

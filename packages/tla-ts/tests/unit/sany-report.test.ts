@@ -452,6 +452,14 @@ Spec == Init /\\ [][Next]_x
     );
   });
 
+  it.each(["{a, e \\in S}", "{a, e, a \\in S}", "{<<1, 2>> \\in S}", "{<<a, e>> \\in S}"])(
+    "reads %s as a set enumeration, which SANY's lookahead reads as a bound",
+    (set) => {
+      const report = getReport({ M: `---- MODULE M ----\nCONSTANTS a, e, S\nX == ${set}\n====\n` });
+      expect(report.isFailed).toBe(false);
+    },
+  );
+
   it("reports DEF clause entries of bracketed, quantified and infix shapes as SANY does", () => {
     const report = getReport({
       M: "---- MODULE M ----\nA == 1\nB == 2\nTHEOREM TRUE BY DEF CASE A -> 1 [] OTHER -> 2, [a |-> 1], [a : {}], A\nTHEOREM TRUE BY DEF [v \\in {} |-> 1], \\A v, w \\in {} : TRUE, A\nTHEOREM TRUE BY DEF LET Q == 1 IN Q, A \\X B, A /\\ B, {A \\/ B}, A\nTHEOREM TRUE BY DEF [A EXCEPT ![1] = 2], [A -> B], {A : v \\in {}}, WF_A(B), A\nTHEOREM TRUE BY DEF /\\ A\n                    /\\ B\n====\n",
@@ -801,6 +809,53 @@ Spec == Init /\\ [][Next]_x
     });
   });
 
+  it("loads the modules that LETs, substitutions, proofs and inner modules instantiate as SANY does", () => {
+    const leaves = Object.fromEntries(
+      ["A", "C", "D", "E", "F", "G", "H"].map((name) => [
+        name,
+        `---- MODULE ${name} ----\nK == TRUE\n====\n`,
+      ]),
+    );
+    const report = getReport(
+      {
+        M: "---- MODULE M ----\n---- MODULE Inner ----\nTHEOREM TRUE\n<1> N == INSTANCE A\n<1> QED\n====\nI == INSTANCE P WITH q <- LET N == INSTANCE C IN N!K\nASSUME LET N == INSTANCE D IN N!K\nUSE LET N == INSTANCE E IN N!K\nTHEOREM ASSUME NEW v \\in LET N == INSTANCE F IN {N!K} PROVE TRUE\n<1>1. PICK w \\in LET N == INSTANCE G IN {N!K} : TRUE\n<1> QED BY LET N == INSTANCE H IN N!K\n====\n",
+        P: "---- MODULE P ----\nCONSTANT q\nK == q\n====\n",
+        ...leaves,
+      },
+      { describeFile: (name) => `${name}.tla` },
+    );
+    const order = ["P", "C", "D", "E", "F", "G", "H", "A"];
+    expect(report).toEqual({
+      text: joinLines([
+        ...["M", ...order].map((name) => `Parsing file ${name}.tla`),
+        ...[...order, "M"].map((name) => `Semantic processing of module ${name}`),
+        ...[...order, "M"].map((name) => `Linting of module ${name}`),
+      ]),
+      isFailed: false,
+    });
+  });
+
+  it("loads the modules that a LET instantiates in source order as SANY does", () => {
+    const order = ["Q", "R", "S"];
+    const report = getReport(
+      {
+        L: "---- MODULE L ----\nX == LET A == LET N == INSTANCE Q IN N!K\n         M == INSTANCE R\n         B == LET N == INSTANCE S IN N!K\n     IN TRUE\n====\n",
+        ...Object.fromEntries(
+          order.map((name) => [name, `---- MODULE ${name} ----\nK == TRUE\n====\n`]),
+        ),
+      },
+      { describeFile: (name) => `${name}.tla` },
+    );
+    expect(report).toEqual({
+      text: joinLines([
+        ...["L", ...order].map((name) => `Parsing file ${name}.tla`),
+        ...[...order, "L"].map((name) => `Semantic processing of module ${name}`),
+        ...[...order, "L"].map((name) => `Linting of module ${name}`),
+      ]),
+      isFailed: false,
+    });
+  });
+
   it("reports an unresolved infix operator twice", () => {
     const report = getReport({ Infix: "---- MODULE Infix ----\nVARIABLE x\nOp == x @@ x\n====\n" });
     expect(report.isFailed).toBe(true);
@@ -1034,6 +1089,15 @@ Spec == Init /\\ [][Next]_x
     const report = getReport({
       M: "---- MODULE M ----\n---- MODULE Inner ----\nK == 1\n====\nD == LET N == INSTANCE Inner IN N!K\n====\n",
     });
+    expect(report).toEqual({ text: "", isFailed: false });
+  });
+
+  it.each([
+    "f[v \\in LET N == 1 IN {N}] == v",
+    "D == LET f[v \\in {LET N == 1 IN N}] == v IN f[1]",
+    "THEOREM TRUE\n<1> DEFINE f[v \\in [a : LET N == 1 IN {N}]] == v\n<1> QED",
+  ])("accepts a function definition with a LET in its bounds in %j, which SANY rejects", (unit) => {
+    const report = getReport({ M: `---- MODULE M ----\n${unit}\n====\n` });
     expect(report).toEqual({ text: "", isFailed: false });
   });
 
@@ -1364,6 +1428,24 @@ Spec == Init /\\ [][Next]_x
     },
   );
 
+  it("ends a CASE at the []PROVE after it as SANY does", () => {
+    const getTheoremReport = (statement: string) =>
+      getReport({ M: `---- MODULE M ----\nVARIABLE x\nTHEOREM T == ${statement}\n====\n` });
+    expect(getTheoremReport("[]ASSUME CASE x = 1 -> TRUE [] x = 2 -> TRUE []PROVE TRUE")).toEqual({
+      text: "",
+      isFailed: false,
+    });
+    const report = getTheoremReport("ASSUME CASE x = 1 -> TRUE []PROVE TRUE");
+    expect(report.isFailed).toBe(true);
+    expect(report.text).toContain(
+      joinLines([
+        "line 3, col 14 to line 3, col 19 of module M",
+        "",
+        "ASSUME matched by []PROVE instead of PROVE",
+      ]),
+    );
+  });
+
   it("reports a []ASSUME matched by PROVE in an ASSUME's scope with both errors as SANY does", () => {
     const report = getReport({
       Box: "---- MODULE Box ----\nTHEOREM T == ASSUME NEW J PROVE TRUE\n<1>1 []ASSUME TRUE PROVE TRUE\n<1> QED\n====\n",
@@ -1402,6 +1484,74 @@ Spec == Init /\\ [][Next]_x
     const report = getReport({ M: `---- MODULE M ----\nCONSTANT S\n${unit}\n====\n` });
     expect(report.isFailed).toBe(true);
     expect(report.text).toContain(`\n\n${error}\n`);
+  });
+
+  it.each([
+    "THEOREM T == ASSUME a :: ASSUME 1 = 1 PROVE 2 = 2 PROVE TRUE\nX == T!a!2",
+    "THEOREM T == ASSUME a :: ASSUME TRUE PROVE TRUE PROVE TRUE\nX == T!a!1",
+    "THEOREM T == ASSUME a :: ASSUME TRUE PROVE b :: TRUE PROVE TRUE\nX == T!a!b",
+    "THEOREM T == ASSUME a :: ASSUME TRUE PROVE TRUE PROVE TRUE\nTHEOREM U == TRUE\nPROOF BY T!a",
+    "THEOREM T == ASSUME ASSUME a :: ASSUME TRUE PROVE TRUE PROVE TRUE PROVE TRUE\nTHEOREM U == TRUE\nPROOF BY T!a",
+  ])("selects through the labeled nested ASSUME/PROVE in %j as SANY does", (source) => {
+    expect(getReport({ M: `---- MODULE M ----\n${source}\n====\n` }).isFailed).toBe(false);
+  });
+
+  const labeled = "a :: ASSUME TRUE PROVE TRUE";
+  it.each([
+    [
+      `THEOREM T == ASSUME a :: TRUE, ${labeled} PROVE TRUE`,
+      "line 2, col 32 to line 2, col 58",
+      "Duplicate label `a'.",
+    ],
+    [
+      `THEOREM T == ASSUME ${labeled} PROVE a :: TRUE`,
+      "line 2, col 55 to line 2, col 63",
+      "Duplicate label `a'.",
+    ],
+    [
+      `THEOREM T == ASSUME ${labeled} PROVE TRUE\nX == T!1`,
+      "line 3, col 6 to line 3, col 8",
+      "ASSUME/PROVE used where an expression is required.",
+    ],
+    [
+      "THEOREM T == ASSUME a :: ASSUME b :: ASSUME TRUE PROVE TRUE PROVE TRUE PROVE TRUE\nX == T!a!b",
+      "line 3, col 6 to line 3, col 10",
+      "ASSUME/PROVE used where an expression is required.",
+    ],
+    [
+      `THEOREM T == TRUE\n<1>1. ASSUME ${labeled} PROVE TRUE\n  OBVIOUS\n<1>2. <1>1!a\n  OBVIOUS\n<1> QED`,
+      "line 5, col 7 to line 5, col 12",
+      "ASSUME/PROVE used where an expression is required.",
+    ],
+    [
+      "THEOREM T == ASSUME a :: ASSUME TRUE PROVE b :: TRUE PROVE TRUE\nX == T!b",
+      "line 3, col 8 to line 3, col 8",
+      "Cannot find label `b'.",
+    ],
+    [
+      `THEOREM T == ASSUME ${labeled} PROVE TRUE\nX == T!a!3`,
+      "line 3, col 10 to line 3, col 10",
+      "Nonexistent operand specified by `argument selector 3'.",
+    ],
+    [
+      `THEOREM T == ASSUME ${labeled} PROVE TRUE\nX == T!a!:`,
+      "line 3, col 10 to line 3, col 10",
+      "`!:' can be used only after a name and either at the end after an\noperator name or before an operator name.",
+    ],
+    [
+      "THEOREM T == ASSUME a :: ASSUME NEW y, b :: ASSUME TRUE PROVE TRUE PROVE TRUE PROVE TRUE",
+      "line 2, col 40 to line 2, col 66",
+      "Label not allowed within scope of declaration in nested ASSUME/PROVE.",
+    ],
+    [
+      "THEOREM T == ASSUME NEW x, a :: ASSUME x = 1 PROVE TRUE PROVE TRUE\nTHEOREM U == TRUE\nPROOF BY T!a",
+      "line 4, col 12 to line 4, col 12",
+      "Accessing subexpression labeled `a' of ASSUME/PROVE clause within the scope of a declaration\n from outside that declaration's scope.",
+    ],
+  ])("checks the labeled nested ASSUME/PROVE in %j as SANY does", (source, location, message) => {
+    expect(getReport({ M: `---- MODULE M ----\n${source}\n====\n` }).text).toContain(
+      joinLines(["*** Errors: 1", "", `${location} of module M`, "", message]),
+    );
   });
 
   it("fails a selection into a failed definition through an instance as SANY does without one", () => {

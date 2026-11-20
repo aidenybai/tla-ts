@@ -788,7 +788,12 @@ export const createLevelAnalyzer = (context: LevelContext) => {
     if (expression.kind === "Lambda") {
       const operator =
         lambdaLevels.get(expression) ??
-        analyzeOperator("LAMBDA", toFormals(expression.params), expression.body, scope);
+        analyzeOperator(
+          expression.operator ?? "LAMBDA",
+          toFormals(expression.params),
+          expression.body,
+          scope,
+        );
       lambdaLevels.set(expression, operator);
       return { kind: "Operator", data: operator };
     }
