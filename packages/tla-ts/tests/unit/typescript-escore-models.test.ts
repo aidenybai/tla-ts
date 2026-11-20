@@ -292,6 +292,20 @@ describe("checks a module's exported functions as a model on ESCore", () => {
       });
     });
 
+    // A function that a cast gives, and one that a list of the module's names exports.
+    describe("calls a function that a cast gives or a list exports", () => {
+      const getBody = (operator: string) =>
+        `const Undone = ((value: 0 | 1) => flip(${operator}) === value) as (value: 0 | 1) => boolean;\nexport { Undone };\n`;
+
+      it("agrees with Node", async () => {
+        expect(getCounts(await check(getBody("flip(value)")))).toEqual(["success", 1, 1]);
+      });
+
+      it("rejects another result", async () => {
+        expect(getCounts(await check(getBody("value")))).toEqual(["invariant-violation", 1, 1]);
+      });
+    });
+
     it("calls none of the functions whose parameters take values it can't list", async () => {
       expect(
         getCounts(

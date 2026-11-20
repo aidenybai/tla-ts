@@ -278,10 +278,31 @@ export const compileModelToEscore = (
       node: ts.FunctionLikeDeclaration;
     }
   >();
-  const getFunction = (node: ts.Node | undefined) =>
-    node !== undefined && (ts.isArrowFunction(node) || ts.isFunctionExpression(node))
-      ? node
-      : undefined;
+  // A function that a declaration's initializer gives, through parentheses and casts.
+  const getFunction = (node: ts.Node | undefined): ts.FunctionLikeDeclaration | undefined =>
+    node === undefined
+      ? undefined
+      : ts.isArrowFunction(node) || ts.isFunctionExpression(node)
+        ? node
+        : ts.isParenthesizedExpression(node) ||
+            ts.isAsExpression(node) ||
+            ts.isSatisfiesExpression(node) ||
+            ts.isNonNullExpression(node)
+          ? getFunction(node.expression)
+          : undefined;
+  // The local names that the module exports in a list of its own.
+  const listed = new Set(
+    file.statements.flatMap((statement) =>
+      ts.isExportDeclaration(statement) &&
+      statement.moduleSpecifier === undefined &&
+      statement.exportClause !== undefined &&
+      ts.isNamedExports(statement.exportClause)
+        ? statement.exportClause.elements.map(
+            (element) => element.propertyName?.getText() ?? element.name.text,
+          )
+        : [],
+    ),
+  );
   const getTags = (node: ts.Node) =>
     new Map(
       ts
@@ -297,7 +318,11 @@ export const compileModelToEscore = (
       (ts.getModifiers(statement) ?? []).some(
         (modifier) => modifier.kind === ts.SyntaxKind.ExportKeyword,
       );
-    if (ts.isFunctionDeclaration(statement) && statement.name !== undefined && isExported) {
+    if (
+      ts.isFunctionDeclaration(statement) &&
+      statement.name !== undefined &&
+      (isExported || listed.has(statement.name.text))
+    ) {
       exported.set(statement.name.text, {
         parameters: statement.parameters.map((parameter) => parameter.name.getText()),
         types: statement.parameters.map((parameter) => parameter.type),
@@ -305,10 +330,14 @@ export const compileModelToEscore = (
         node: statement,
       });
     }
-    if (ts.isVariableStatement(statement) && isExported) {
+    if (ts.isVariableStatement(statement)) {
       for (const declaration of statement.declarationList.declarations) {
         const fn = getFunction(declaration.initializer);
-        if (fn !== undefined && ts.isIdentifier(declaration.name)) {
+        if (
+          fn !== undefined &&
+          ts.isIdentifier(declaration.name) &&
+          (isExported || listed.has(declaration.name.text))
+        ) {
           exported.set(declaration.name.text, {
             parameters: fn.parameters.map((parameter) => parameter.name.getText()),
             types: fn.parameters.map((parameter) => parameter.type),
@@ -321,7 +350,10 @@ export const compileModelToEscore = (
   }
   bindings.forEach((binding, name) => {
     const found = exported.get(binding);
-    if (found !== undefined) exported.set(name, found);
+    if (found === undefined) {
+      throw new TlaTypeScriptError(`tla-ts can't find the exported function ${binding}`);
+    }
+    exported.set(name, found);
   });
   const steps: string[] = [];
   const appended: string[] = [];
