@@ -105,7 +105,7 @@ const TEMPORAL_OPERATORS = new Set(["~>", "-+->"]);
 const definitionThunks = new WeakSet<Thunk>();
 
 // TLC names a reference by the definition it named in the module it was written in.
-const getReferenceName = (reference: Expression, key: string, environment: Environment) => {
+export const getReferenceName = (reference: Expression, key: string, environment: Environment) => {
   const written = writtenKeys.get(reference);
   return written === undefined
     ? environment.instanceNames.get(key)

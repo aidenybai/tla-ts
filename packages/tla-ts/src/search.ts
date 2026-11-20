@@ -73,6 +73,7 @@ import {
   expandTemporal,
   getLevel,
   getLevelBound,
+  getReferenceName,
   getSanyLevel,
   type ScopedExpression,
   type TemporalProperty,
@@ -614,19 +615,19 @@ const getProperties = (
         getLevelBound(conjunct.expression, item.scope, environment) <= VARIABLE_LEVEL
       ) {
         const body = conjunct.expression;
-        const operator =
-          body.kind === "Identifier" && !isLocallyResolved(body)
-            ? getDefinition(body.name, environment)
-            : undefined;
         const substituted = getSubstitutedName(body);
+        // TLC names the invariant by the operator under the box, as the module it is written in names it.
         properties.invariants.push({
           name:
-            operator?.name ??
-            (substituted !== undefined
+            substituted !== undefined
               ? getKeyName(substituted)
               : body.kind === "Identifier"
-                ? body.name
-                : partName),
+                ? (getReferenceName(body, body.name, environment) ??
+                  (isLocallyResolved(body)
+                    ? undefined
+                    : getDefinition(body.name, environment)?.name) ??
+                  body.name)
+                : partName,
           expression: withFrames(body),
           scope: item.scope,
         });

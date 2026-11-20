@@ -580,6 +580,32 @@ describe("INSTANCE matches TLC", () => {
   );
 
   it.each([
+    ["I == INSTANCE L WITH v <- (x = 0)\nProp == [](I!Dv)", "I!Dv"],
+    ["I == INSTANCE L2 WITH w <- (x = 0)\nProp == I!B2", "J!Dv"],
+    ["Prop == LET K == INSTANCE L2 WITH w <- (x = 0) IN K!B2", "J!Dv"],
+    ["One == x = 0\nI == INSTANCE L WITH v <- One\nProp == I!Wv", "v"],
+    ["I == INSTANCE C\nProp == [](I!Cv)", "I!Cv"],
+  ])(
+    "names the invariant in %j by the operator under the box, as its module names it, as TLC does",
+    async (definitions, name) => {
+      const modules = new Map([
+        ["L", "---- MODULE L ----\nVARIABLE v\nDv == v\nWv == [](v)\n===="],
+        [
+          "L2",
+          "---- MODULE L2 ----\nVARIABLE w\nJ == INSTANCE L WITH v <- w\nB2 == [](J!Dv)\n====",
+        ],
+        ["C", "---- MODULE C ----\nCv == 1 = 2\n===="],
+      ]);
+      const result = await check({
+        source: `---- MODULE M ----\nEXTENDS Naturals\nVARIABLE x\nInit == x = 0\nNext == x' = (x + 1) % 2\n${definitions}\n====`,
+        config: "INIT Init\nNEXT Next\nPROPERTY Prop",
+        loadModule: (module) => modules.get(module),
+      });
+      expect(result.violation?.name).toBe(name);
+    },
+  );
+
+  it.each([
     ["v <- (x = 1 /\\ x >= 0)", "I!Dv", undefined, "I!Dv"],
     ["v <- (\\A k \\in {1} : x = k)", "I!Dv", undefined, "I!Dv"],
     ["v <- One", "I!Dv", undefined, "I!Dv"],
