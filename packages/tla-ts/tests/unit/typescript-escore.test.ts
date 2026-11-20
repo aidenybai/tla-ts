@@ -466,6 +466,72 @@ describe("compiles scripts by specializing ESCore", () => {
     });
   });
 
+  describe("calls a sort comparator on the pairs that V8's TimSort compares, in its order", () => {
+    const getSource = (expected: string) => `
+      const log: string[] = [];
+      const sortLogged = (items: number[]) =>
+        items
+          .slice()
+          .sort((a, b) => {
+            log.push(\`\${a}\${b}\`);
+            return a - b;
+          })
+          .join("");
+      const holey = [2, undefined, 1, , 3];
+      const result = [
+        sortLogged([5, 4, 3, 1, 2, 3]),
+        log.splice(0).join(" "),
+        sortLogged([3, 1, 4, 1, 5, 9, 2, 6]),
+        log.splice(0).join(" "),
+        holey
+          .sort((a, b) => {
+            log.push(\`\${a}\${b}\`);
+            return (b as number) - (a as number);
+          })
+          .join(),
+        log.splice(0).join(" "),
+        Array.from({ length: 70 }, (_, index) => 70 - index).sort((a, b) => {
+          log.push("");
+          return a - b;
+        })[0],
+        log.splice(0).length,
+      ].join("|");
+      if (result !== "${expected}") throw new Error(result);
+    `;
+    const expected =
+      "123345|45 35 34 14 13 24 23 21 33 35 34|11234569|13 41 43 13 11 53 54 93 95 24 21 23 63 65 69|3,2,1,,|12 31 32|1|69";
+
+    it("agrees with Node", async () => {
+      expect((await checkScript(getSource(expected))).message).toBeUndefined();
+    });
+
+    it("rejects another result", async () => {
+      expect((await checkScript(getSource(expected.replace("45 35", "45 34")))).message).toContain(
+        THREW,
+      );
+    });
+
+    const getMerged = (expected: string) => `
+      let calls = 0;
+      let hash = 0;
+      const sorted = Array.from({ length: 150 }, (_, index) => (index * 37) % 101).sort((a, b) => {
+        calls += 1;
+        hash = (hash * 31 + a * 1009 + b) % 1000000007;
+        return a - b;
+      });
+      const result = calls + ":" + hash + ":" + sorted.slice(0, 5).join(",");
+      if (result !== "${expected}") throw new Error(result);
+    `;
+
+    it("agrees with Node where TimSort merges runs", async () => {
+      expect((await checkScript(getMerged("889:821657304:0,0,1,2,2"))).message).toBeUndefined();
+    }, 600_000);
+
+    it("rejects another result where TimSort merges runs", async () => {
+      expect((await checkScript(getMerged("888:821657304:0,0,1,2,2"))).message).toContain(THREW);
+    }, 600_000);
+  });
+
   describe("compares values of different types as unequal", () => {
     const getSource = (expected: string) => `
       const values: unknown[] = [null, true, "", 0];

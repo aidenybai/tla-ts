@@ -591,23 +591,231 @@ SortIndexedProperties(s, o, len, comparefn, skipHoles) ==
   LET items == IF ~skipHoles THEN ReadThrough(s, o, PosZero, len, 1, <<>>)
                ELSE LET r == VisitPresent(s, o, PosZero, len, 1, "collect", [items |-> <<>>]) IN
                     IF IsAbrupt(r) THEN r ELSE Ok(r.s, Val(r).st.items)
-  IN IF IsAbrupt(items) THEN items ELSE MergeSort(items.s, Val(items), comparefn)
+  IN IF IsAbrupt(items) THEN items ELSE SortItems(items.s, Val(items), comparefn)
 
-\* The sort itself is implementation-defined; this one is a stable merge sort.
-MergeSort(s, items, comparefn) ==
-  IF Len(items) <= 1 THEN Ok(s, items)
-  ELSE LET half == Len(items) \div 2
-           left == MergeSort(s, SubSeq(items, 1, half), comparefn)
-       IN IF IsAbrupt(left) THEN left ELSE
-          LET right == MergeSort(left.s, SubSeq(items, half + 1, Len(items)), comparefn) IN
-          IF IsAbrupt(right) THEN right ELSE MergeSorted(right.s, Val(left), Val(right), comparefn, <<>>)
-MergeSorted(s, xs, ys, comparefn, acc) ==
-  IF xs = <<>> THEN Ok(s, acc \o ys)
-  ELSE IF ys = <<>> THEN Ok(s, acc \o xs)
-  ELSE LET c == CompareArrayElements(s, Head(ys), Head(xs), comparefn) IN
+\* The sort itself is implementation-defined; this one is V8's (array-sort.tq, after CPython's
+\* listsort), as Node 26 calls a comparator: it sorts the values other than undefined, and puts
+\* undefined after them. Fewer than 8 values it inserts each after the first by binary search; more
+\* it sorts by TimSort.
+SortItems(s, items, comparefn) ==
+  LET defined == SelectSeq(items, LAMBDA v : v # Undefined)
+      undefineds == [i \in 1..(Len(items) - Len(defined)) |-> Undefined]
+      sorted == CASE Len(defined) < 2 -> Ok(s, defined)
+                  [] Len(defined) < 8 -> TsInsertionSort(s, defined, comparefn, 0, 1, Len(defined))
+                  [] OTHER -> TsMain(s, comparefn, [w |-> defined, runs |-> <<>>, mg |-> 7], 0, Len(defined),
+                                     TsMinRun(Len(defined), 0))
+  IN IF IsAbrupt(sorted) THEN sorted ELSE Ok(sorted.s, Val(sorted) \o undefineds)
+
+\* TimSort's steps, on a work array w that they index from 0 as V8 does, with the pending runs, each
+\* [base, length], and minGallop, mg. TsLess is whether the comparator orders x before y.
+TsLess(s, x, y, f) ==
+  LET c == CompareArrayElements(s, x, y, f) IN IF IsAbrupt(c) THEN c ELSE Ok(c.s, NumLess(Val(c).value, PosZero))
+TsSet(w, i, v) == [w EXCEPT ![i + 1] = v]
+\* Copies count values of src from srcPos to dst at dstPos, as memmove does within one array.
+TsCopy(src, srcPos, dst, dstPos, count) ==
+  [j \in DOMAIN dst |-> IF j - 1 >= dstPos /\ j - 1 < dstPos + count THEN src[j - dstPos + srcPos] ELSE dst[j]]
+\* ComputeMinRunLength.
+TsMinRun(n, r) == IF n >= 64 THEN TsMinRun(n \div 2, IF n % 2 = 1 THEN 1 ELSE r) ELSE n + r
+
+\* BinaryInsertionSort of w from low to before high, whose values from low to before start are sorted.
+TsInsertionSort(s, w, f, low, start, high) ==
+  IF start >= high THEN Ok(s, w)
+  ELSE LET pivot == w[start + 1]
+           left == TsInsertionPlace(s, w, f, pivot, low, start)
+       IN IF IsAbrupt(left) THEN left
+          ELSE TsInsertionSort(left.s,
+                 [j \in DOMAIN w |-> IF j - 1 = Val(left) THEN pivot
+                                     ELSE IF j - 1 > Val(left) /\ j - 1 <= start THEN w[j - 1] ELSE w[j]],
+                 f, low, start + 1, high)
+TsInsertionPlace(s, w, f, pivot, left, right) ==
+  IF left >= right THEN Ok(s, left)
+  ELSE LET mid == left + (right - left) \div 2
+           c == TsLess(s, pivot, w[mid + 1], f)
+       IN IF IsAbrupt(c) THEN c
+          ELSE IF Val(c) THEN TsInsertionPlace(c.s, w, f, pivot, left, mid)
+          ELSE TsInsertionPlace(c.s, w, f, pivot, mid + 1, right)
+
+\* CountAndMakeRun from low to before high: [w, length], the run made ascending.
+TsCountRun(s, w, f, low, high) ==
+  IF low + 1 = high THEN Ok(s, [w |-> w, length |-> 1])
+  ELSE LET c == TsLess(s, w[low + 2], w[low + 1], f) IN
+       IF IsAbrupt(c) THEN c ELSE TsRunFrom(c.s, w, f, low, high, Val(c), low + 2)
+TsRunFrom(s, w, f, low, high, isDescending, idx) ==
+  IF idx >= high THEN Ok(s, TsRunMade(w, low, idx - low, isDescending))
+  ELSE LET c == TsLess(s, w[idx + 1], w[idx], f) IN
        IF IsAbrupt(c) THEN c
-       ELSE IF NumLess(Val(c).value, PosZero) THEN MergeSorted(c.s, xs, Tail(ys), comparefn, Append(acc, Head(ys)))
-       ELSE MergeSorted(c.s, Tail(xs), ys, comparefn, Append(acc, Head(xs)))
+       ELSE IF Val(c) = isDescending THEN TsRunFrom(c.s, w, f, low, high, isDescending, idx + 1)
+       ELSE Ok(c.s, TsRunMade(w, low, idx - low, isDescending))
+TsRunMade(w, low, length, isDescending) ==
+  [w |-> IF ~isDescending THEN w
+         ELSE [j \in DOMAIN w |-> IF j - 1 >= low /\ j - 1 < low + length THEN w[low + length - (j - 1 - low)] ELSE w[j]],
+   length |-> length]
+
+\* GallopLeft (~isRight) and GallopRight (isRight) of key in a from base, of length values, from hint.
+TsCompareAt(s, f, a, key, i, isRight) == IF isRight THEN TsLess(s, key, a[i + 1], f) ELSE TsLess(s, a[i + 1], key, f)
+TsGallop(s, f, a, key, base, length, hint, isRight) ==
+  LET first == TsCompareAt(s, f, a, key, base + hint, isRight) IN
+  IF IsAbrupt(first) THEN first
+  ELSE TsGallopOut(first.s, f, a, key, base, length, hint, isRight, Val(first) = isRight, 0, 1)
+\* The exponential search away from hint, toward lower offsets where goesLeft.
+TsGallopOut(s, f, a, key, base, length, hint, isRight, goesLeft, lastOfs, offset) ==
+  LET maxOfs == IF goesLeft THEN hint + 1 ELSE length - hint IN
+  IF offset >= maxOfs THEN TsGallopIn(s, f, a, key, base, isRight, TsGallopLow(hint, goesLeft, lastOfs, maxOfs),
+                                      TsGallopHigh(hint, goesLeft, lastOfs, maxOfs))
+  ELSE LET c == TsCompareAt(s, f, a, key, IF goesLeft THEN base + hint - offset ELSE base + hint + offset, isRight) IN
+       IF IsAbrupt(c) THEN c
+       ELSE IF (IF isRight THEN Val(c) # goesLeft ELSE Val(c) = goesLeft)
+       THEN TsGallopIn(c.s, f, a, key, base, isRight, TsGallopLow(hint, goesLeft, lastOfs, offset),
+                       TsGallopHigh(hint, goesLeft, lastOfs, offset))
+       ELSE TsGallopOut(c.s, f, a, key, base, length, hint, isRight, goesLeft, offset, 2 * offset + 1)
+TsGallopLow(hint, goesLeft, lastOfs, offset) == (IF goesLeft THEN hint - offset ELSE lastOfs + hint) + 1
+TsGallopHigh(hint, goesLeft, lastOfs, offset) == IF goesLeft THEN hint - lastOfs ELSE offset + hint
+\* The binary search between lo and hi.
+TsGallopIn(s, f, a, key, base, isRight, lo, hi) ==
+  IF lo >= hi THEN Ok(s, hi)
+  ELSE LET m == lo + (hi - lo) \div 2
+           c == TsCompareAt(s, f, a, key, base + m, isRight)
+       IN IF IsAbrupt(c) THEN c
+          ELSE IF Val(c) = isRight THEN TsGallopIn(c.s, f, a, key, base, isRight, lo, m)
+          ELSE TsGallopIn(c.s, f, a, key, base, isRight, m + 1, hi)
+
+\* MergeAt of the pending runs i and i + 1, from 0.
+TsMergeAt(s, f, st, i) ==
+  LET baseA0 == st.runs[i + 1].base
+      lengthA0 == st.runs[i + 1].length
+      baseB == st.runs[i + 2].base
+      lengthB0 == st.runs[i + 2].length
+      runs == SubSeq(st.runs, 1, i) \o <<[base |-> baseA0, length |-> lengthA0 + lengthB0]>> \o SubSeq(st.runs, i + 3, Len(st.runs))
+      k == TsGallop(s, f, st.w, st.w[baseB + 1], baseA0, lengthA0, 0, TRUE)
+  IN IF IsAbrupt(k) THEN k ELSE
+     LET baseA == baseA0 + Val(k)
+         lengthA == lengthA0 - Val(k)
+     IN IF lengthA = 0 THEN Ok(k.s, [st EXCEPT !.runs = runs]) ELSE
+     LET lengthB == TsGallop(k.s, f, st.w, st.w[baseA + lengthA], baseB, lengthB0, lengthB0 - 1, FALSE) IN
+     IF IsAbrupt(lengthB) THEN lengthB
+     ELSE IF Val(lengthB) = 0 THEN Ok(lengthB.s, [st EXCEPT !.runs = runs]) ELSE
+     LET merged == IF lengthA <= Val(lengthB) THEN TsMergeLow(lengthB.s, f, st.w, st.mg, baseA, lengthA, baseB, Val(lengthB))
+                   ELSE TsMergeHigh(lengthB.s, f, st.w, st.mg, baseA, lengthA, baseB, Val(lengthB))
+     IN IF IsAbrupt(merged) THEN merged ELSE Ok(merged.s, [w |-> Val(merged).w, runs |-> runs, mg |-> Val(merged).mg])
+
+\* MergeLow: a merge state of w, the copy temp of run A, the cursors dest, ct into temp, and cb, the
+\* lengths la and lb left, the minGallop that the sort state holds, mg, and the merge's own, lmg.
+TsMergeLow(s, f, w, mg, baseA, lengthA, baseB, lengthB) ==
+  LET m == [w |-> TsSet(w, baseA, w[baseB + 1]), temp |-> SubSeq(w, baseA + 1, baseA + lengthA), dest |-> baseA + 1,
+            ct |-> 0, cb |-> baseB + 1, la |-> lengthA, lb |-> lengthB - 1, mg |-> mg, lmg |-> mg]
+  IN IF m.lb = 0 THEN Ok(s, TsLowSucceed(m)) ELSE IF m.la = 1 THEN Ok(s, TsLowCopyB(m)) ELSE TsLowOne(s, f, m, 0, 0)
+TsLowSucceed(m) == [w |-> IF m.la > 0 THEN TsCopy(m.temp, m.ct, m.w, m.dest, m.la) ELSE m.w, mg |-> m.mg]
+TsLowCopyB(m) == [w |-> TsSet(TsCopy(m.w, m.cb, m.w, m.dest, m.lb), m.dest + m.lb, m.temp[m.ct + 1]), mg |-> m.mg]
+TsLowFromB(m) == [m EXCEPT !.w = TsSet(m.w, m.dest, m.w[m.cb + 1]), !.dest = @ + 1, !.cb = @ + 1, !.lb = @ - 1]
+TsLowFromA(m) == [m EXCEPT !.w = TsSet(m.w, m.dest, m.temp[m.ct + 1]), !.dest = @ + 1, !.ct = @ + 1, !.la = @ - 1]
+\* One pair at a time, until one run wins lmg times in a row.
+TsLowOne(s, f, m, winsA, winsB) ==
+  LET c == TsLess(s, m.w[m.cb + 1], m.temp[m.ct + 1], f) IN
+  IF IsAbrupt(c) THEN c
+  ELSE IF Val(c) THEN
+    LET n == TsLowFromB(m) IN
+    IF n.lb = 0 THEN Ok(c.s, TsLowSucceed(n))
+    ELSE IF winsB + 1 >= n.lmg THEN TsLowGallop(c.s, f, [n EXCEPT !.lmg = @ + 1], 0, winsB + 1, TRUE)
+    ELSE TsLowOne(c.s, f, n, 0, winsB + 1)
+  ELSE
+    LET n == TsLowFromA(m) IN
+    IF n.la = 1 THEN Ok(c.s, TsLowCopyB(n))
+    ELSE IF winsA + 1 >= n.lmg THEN TsLowGallop(c.s, f, [n EXCEPT !.lmg = @ + 1], winsA + 1, 0, TRUE)
+    ELSE TsLowOne(c.s, f, n, winsA + 1, 0)
+\* Galloping, while either run wins at least kMinGallopWins (7) at once.
+TsLowGallop(s, f, m, winsA, winsB, isFirst) ==
+  IF ~(winsA >= 7 \/ winsB >= 7 \/ isFirst) THEN TsLowOne(s, f, [m EXCEPT !.lmg = @ + 1, !.mg = m.lmg + 1], 0, 0) ELSE
+  LET m1 == [m EXCEPT !.lmg = IF m.lmg - 1 < 1 THEN 1 ELSE m.lmg - 1, !.mg = IF m.lmg - 1 < 1 THEN 1 ELSE m.lmg - 1]
+      ka == TsGallop(s, f, m1.temp, m1.w[m1.cb + 1], m1.ct, m1.la, 0, TRUE)
+  IN IF IsAbrupt(ka) THEN ka ELSE
+  LET a == Val(ka)
+      m2 == IF a > 0 THEN [m1 EXCEPT !.w = TsCopy(m1.temp, m1.ct, m1.w, m1.dest, a), !.dest = @ + a, !.ct = @ + a, !.la = @ - a] ELSE m1
+  IN IF a > 0 /\ m2.la = 1 THEN Ok(ka.s, TsLowCopyB(m2))
+     ELSE IF a > 0 /\ m2.la = 0 THEN Ok(ka.s, TsLowSucceed(m2)) ELSE
+     LET m3 == TsLowFromB(m2) IN
+     IF m3.lb = 0 THEN Ok(ka.s, TsLowSucceed(m3)) ELSE
+     LET kb == TsGallop(ka.s, f, m3.w, m3.temp[m3.ct + 1], m3.cb, m3.lb, 0, FALSE) IN
+     IF IsAbrupt(kb) THEN kb ELSE
+     LET b == Val(kb)
+         m4 == IF b > 0 THEN [m3 EXCEPT !.w = TsCopy(m3.w, m3.cb, m3.w, m3.dest, b), !.dest = @ + b, !.cb = @ + b, !.lb = @ - b] ELSE m3
+     IN IF b > 0 /\ m4.lb = 0 THEN Ok(kb.s, TsLowSucceed(m4)) ELSE
+     LET m5 == TsLowFromA(m4) IN
+     IF m5.la = 1 THEN Ok(kb.s, TsLowCopyB(m5)) ELSE TsLowGallop(kb.s, f, m5, a, b, FALSE)
+
+\* MergeHigh, from the ends of the runs: temp is the copy of run B, and ca the cursor into run A.
+TsMergeHigh(s, f, w, mg, baseA, lengthA, baseB, lengthB) ==
+  LET m == [w |-> TsSet(w, baseB + lengthB - 1, w[baseA + lengthA]), temp |-> SubSeq(w, baseB + 1, baseB + lengthB),
+            dest |-> baseB + lengthB - 2, ct |-> lengthB - 1, ca |-> baseA + lengthA - 2, la |-> lengthA - 1,
+            lb |-> lengthB, mg |-> mg, lmg |-> mg, baseA |-> baseA]
+  IN IF m.la = 0 THEN Ok(s, TsHighSucceed(m)) ELSE IF m.lb = 1 THEN Ok(s, TsHighCopyA(m)) ELSE TsHighOne(s, f, m, 0, 0)
+TsHighSucceed(m) == [w |-> IF m.lb > 0 THEN TsCopy(m.temp, 0, m.w, m.dest - (m.lb - 1), m.lb) ELSE m.w, mg |-> m.mg]
+TsHighCopyA(m) ==
+  [w |-> TsSet(TsCopy(m.w, m.ca - m.la + 1, m.w, m.dest - m.la + 1, m.la), m.dest - m.la, m.temp[m.ct + 1]), mg |-> m.mg]
+TsHighFromA(m) == [m EXCEPT !.w = TsSet(m.w, m.dest, m.w[m.ca + 1]), !.dest = @ - 1, !.ca = @ - 1, !.la = @ - 1]
+TsHighFromB(m) == [m EXCEPT !.w = TsSet(m.w, m.dest, m.temp[m.ct + 1]), !.dest = @ - 1, !.ct = @ - 1, !.lb = @ - 1]
+TsHighOne(s, f, m, winsA, winsB) ==
+  LET c == TsLess(s, m.temp[m.ct + 1], m.w[m.ca + 1], f) IN
+  IF IsAbrupt(c) THEN c
+  ELSE IF Val(c) THEN
+    LET n == TsHighFromA(m) IN
+    IF n.la = 0 THEN Ok(c.s, TsHighSucceed(n))
+    ELSE IF winsA + 1 >= n.lmg THEN TsHighGallop(c.s, f, [n EXCEPT !.lmg = @ + 1], winsA + 1, 0, TRUE)
+    ELSE TsHighOne(c.s, f, n, winsA + 1, 0)
+  ELSE
+    LET n == TsHighFromB(m) IN
+    IF n.lb = 1 THEN Ok(c.s, TsHighCopyA(n))
+    ELSE IF winsB + 1 >= n.lmg THEN TsHighGallop(c.s, f, [n EXCEPT !.lmg = @ + 1], 0, winsB + 1, TRUE)
+    ELSE TsHighOne(c.s, f, n, 0, winsB + 1)
+TsHighGallop(s, f, m, winsA, winsB, isFirst) ==
+  IF ~(winsA >= 7 \/ winsB >= 7 \/ isFirst) THEN TsHighOne(s, f, [m EXCEPT !.lmg = @ + 1, !.mg = m.lmg + 1], 0, 0) ELSE
+  LET m1 == [m EXCEPT !.lmg = IF m.lmg - 1 < 1 THEN 1 ELSE m.lmg - 1, !.mg = IF m.lmg - 1 < 1 THEN 1 ELSE m.lmg - 1]
+      kr == TsGallop(s, f, m1.w, m1.temp[m1.ct + 1], m1.baseA, m1.la, m1.la - 1, TRUE)
+  IN IF IsAbrupt(kr) THEN kr ELSE
+  LET a == m1.la - Val(kr)
+      m2 == IF a > 0 THEN [m1 EXCEPT !.w = TsCopy(m1.w, m1.ca - a + 1, m1.w, m1.dest - a + 1, a), !.dest = @ - a,
+                                     !.ca = @ - a, !.la = @ - a] ELSE m1
+  IN IF a > 0 /\ m2.la = 0 THEN Ok(kr.s, TsHighSucceed(m2)) ELSE
+     LET m3 == TsHighFromB(m2) IN
+     IF m3.lb = 1 THEN Ok(kr.s, TsHighCopyA(m3)) ELSE
+     LET kl == TsGallop(kr.s, f, m3.temp, m3.w[m3.ca + 1], 0, m3.lb, m3.lb - 1, FALSE) IN
+     IF IsAbrupt(kl) THEN kl ELSE
+     LET b == m3.lb - Val(kl)
+         m4 == IF b > 0 THEN [m3 EXCEPT !.w = TsCopy(m3.temp, m3.ct - b + 1, m3.w, m3.dest - b + 1, b), !.dest = @ - b,
+                                        !.ct = @ - b, !.lb = @ - b] ELSE m3
+     IN IF b > 0 /\ m4.lb = 1 THEN Ok(kl.s, TsHighCopyA(m4))
+        ELSE IF b > 0 /\ m4.lb = 0 THEN Ok(kl.s, TsHighSucceed(m4)) ELSE
+        LET m5 == TsHighFromA(m4) IN
+        IF m5.la = 0 THEN Ok(kl.s, TsHighSucceed(m5)) ELSE TsHighGallop(kl.s, f, m5, a, b, FALSE)
+
+\* MergeCollapse and MergeForceCollapse.
+TsRunLength(runs, i) == runs[i + 1].length
+TsInvariant(runs, n) == n < 2 \/ TsRunLength(runs, n - 2) > TsRunLength(runs, n - 1) + TsRunLength(runs, n)
+TsCollapse(s, f, st) ==
+  IF Len(st.runs) <= 1 THEN Ok(s, st) ELSE
+  LET n == Len(st.runs) - 2 IN
+  IF ~TsInvariant(st.runs, n + 1) \/ ~TsInvariant(st.runs, n) THEN
+    LET r == TsMergeAt(s, f, st, IF TsRunLength(st.runs, n - 1) < TsRunLength(st.runs, n + 1) THEN n - 1 ELSE n) IN
+    IF IsAbrupt(r) THEN r ELSE TsCollapse(r.s, f, Val(r))
+  ELSE IF TsRunLength(st.runs, n) <= TsRunLength(st.runs, n + 1) THEN
+    LET r == TsMergeAt(s, f, st, n) IN IF IsAbrupt(r) THEN r ELSE TsCollapse(r.s, f, Val(r))
+  ELSE Ok(s, st)
+TsForceCollapse(s, f, st) ==
+  IF Len(st.runs) <= 1 THEN Ok(s, st.w) ELSE
+  LET n == Len(st.runs) - 2
+      r == TsMergeAt(s, f, st, IF n > 0 /\ TsRunLength(st.runs, n - 1) < TsRunLength(st.runs, n + 1) THEN n - 1 ELSE n)
+  IN IF IsAbrupt(r) THEN r ELSE TsForceCollapse(r.s, f, Val(r))
+
+\* ArrayTimSortImpl from low, with remaining values left.
+TsMain(s, f, st, low, remaining, minRun) ==
+  IF remaining = 0 THEN TsForceCollapse(s, f, st) ELSE
+  LET run == TsCountRun(s, st.w, f, low, low + remaining) IN
+  IF IsAbrupt(run) THEN run ELSE
+  LET runLength == IF Val(run).length >= minRun THEN Val(run).length ELSE IF minRun < remaining THEN minRun ELSE remaining
+      extended == TsInsertionSort(run.s, Val(run).w, f, low, low + Val(run).length, low + runLength)
+  IN IF IsAbrupt(extended) THEN extended ELSE
+  LET collapsed == TsCollapse(extended.s, f, [st EXCEPT !.w = Val(extended), !.runs = Append(@, [base |-> low, length |-> runLength])]) IN
+  IF IsAbrupt(collapsed) THEN collapsed
+  ELSE TsMain(collapsed.s, f, Val(collapsed), low + runLength, remaining - runLength, minRun)
 
 \* CompareArrayElements (§23.1.3.30.2).
 CompareArrayElements(s, x, y, comparefn) ==
