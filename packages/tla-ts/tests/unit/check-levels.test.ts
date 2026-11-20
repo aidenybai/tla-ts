@@ -1069,6 +1069,40 @@ describe("level checking matches SANY", () => {
     );
   });
 
+  it("checks a label selected from a step's statement, as SANY does", async () => {
+    const exceeds = "The level of argument 1 exceeds the maximum level allowed by the operator.";
+    await expect(
+      check({
+        source:
+          "---- MODULE M ----\nVARIABLE x\nB == \\E b \\in {x'} : b\nTHEOREM TRUE\n<1>1. s :: (B /\\ [](x = 1))\n  <2>1. (<1>1!s)'\n    OBVIOUS\n  <2> QED\n<1>2. (<1>1!s)'\n  OBVIOUS\n<1> D == ENABLED (<1>1!s)\n<1>3. t :: ([](x = 1))\n  OBVIOUS\n<1> QED BY (<1>3!t)'\nInit == x = 0\nNext == x' = x\n====",
+        config: "INIT Init\nNEXT Next",
+      }),
+    ).rejects.toThrow(
+      createSanyError([
+        {
+          location: "line 5, col 13 to line 5, col 26 of module M",
+          message: "\\land has both temporal formula and action as arguments.",
+        },
+        {
+          location: "line 6, col 9 to line 6, col 17 of module M",
+          message: `Level error in applying operator ':\n${exceeds}`,
+        },
+        {
+          location: "line 9, col 7 to line 9, col 15 of module M",
+          message: `Level error in applying operator ':\n${exceeds}`,
+        },
+        {
+          location: "line 11, col 10 to line 11, col 25 of module M",
+          message: `Level error in applying operator ENABLED:\n${exceeds}`,
+        },
+        {
+          location: "line 14, col 12 to line 14, col 20 of module M",
+          message: `Level error in applying operator ':\n${exceeds}`,
+        },
+      ]),
+    );
+  });
+
   it("reports no level error inside an expression selected through an instance, as SANY does", async () => {
     await expect(
       check({

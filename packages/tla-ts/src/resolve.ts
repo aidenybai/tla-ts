@@ -611,6 +611,12 @@ const findClauseLabel = (
 const getLabelBody = (expression: Expression): Expression =>
   expression.kind === "Label" ? getLabelBody(expression.body) : expression;
 
+// A selection subexpressions.ts resolved sits in LETs with no source range, which SANY doesn't have.
+const getSelectedBody = (expression: Expression): Expression =>
+  expression.kind === "Let" && !expression.location.range
+    ? getSelectedBody(expression.body)
+    : getLabelBody(expression);
+
 const getOperandName = (operand: number | "<<" | ">>") =>
   typeof operand === "number" ? `argument selector ${operand}` : operand;
 
@@ -728,7 +734,7 @@ const checkSelection = (
     }
     if (node.kind === "NewSymbol") return node;
     if (node.kind !== "AssumeProve") {
-      const expression = getLabelBody(node);
+      const expression = getSelectedBody(node);
       if (unresolvedExpressions.has(expression)) {
         return report(
           index,
