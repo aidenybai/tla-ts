@@ -413,7 +413,7 @@ const compileConjunction = (
           if (assigned === undefined) {
             unchanged ??= current.slice();
             unchanged[variable.index] = state[variable.index];
-          } else if (!isEqualLikeTlc(assigned, state[variable.index])) {
+          } else if (!isEqualLikeTlc(state[variable.index], assigned)) {
             warnChangedUnchanged(run.environment, variable.index, variable.expression);
             return;
           }
@@ -634,7 +634,7 @@ const compileUnchanged = (expression: Expression, environment: Environment): Run
         onComplete(assign(partial, index, value), action);
         return;
       }
-      if (!isEqualLikeTlc(assigned, value)) {
+      if (!isEqualLikeTlc(value, assigned)) {
         warnChangedUnchanged(run.environment, index, expression);
         return;
       }

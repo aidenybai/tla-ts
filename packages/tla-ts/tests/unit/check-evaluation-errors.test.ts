@@ -529,6 +529,91 @@ describe("evaluation errors match TLC", () => {
 
   it.each([
     [
+      "VARIABLE x\nInit == x = 0\nNext == x' = {1} /\\ UNCHANGED x",
+      "{1}",
+      [
+        "Line 5, column 9 to line 5, column 31 in M",
+        "Line 5, column 9 to line 5, column 16 in M",
+        "Line 5, column 21 to line 5, column 31 in M",
+      ],
+    ],
+    [
+      "VARIABLES x, y\nInit == x = 0 /\\ y = 0\nNext == x' = {1} /\\ UNCHANGED x /\\ y' = 0",
+      "{1}",
+      [
+        "Line 5, column 9 to line 5, column 41 in M",
+        "Line 5, column 9 to line 5, column 31 in M",
+        "Line 5, column 9 to line 5, column 16 in M",
+        "Line 5, column 21 to line 5, column 31 in M",
+        "Line 5, column 31 to line 5, column 31 in M",
+      ],
+    ],
+    [
+      "VARIABLES x, y\nInit == x = 0 /\\ y = 0\nNext == LET U(v) == UNCHANGED v IN x' = {1} /\\ U(x) /\\ y' = 0",
+      "{1}",
+      [
+        "Line 5, column 36 to line 5, column 61 in M",
+        "Line 5, column 36 to line 5, column 51 in M",
+        "Line 5, column 36 to line 5, column 43 in M",
+        "Line 5, column 48 to line 5, column 51 in M",
+        "Line 5, column 21 to line 5, column 31 in M",
+        "Line 5, column 31 to line 5, column 31 in M",
+      ],
+    ],
+    [
+      "VARIABLES x, y\nInit == x = 0 /\\ y = 0\nNext == x' = {1} /\\ UNCHANGED <<y, x>> /\\ y' = 0",
+      "{1}",
+      [
+        "Line 5, column 9 to line 5, column 48 in M",
+        "Line 5, column 9 to line 5, column 38 in M",
+        "Line 5, column 9 to line 5, column 16 in M",
+        "Line 5, column 21 to line 5, column 38 in M",
+        "Line 5, column 31 to line 5, column 38 in M",
+        "Line 5, column 33 to line 5, column 33 in M",
+        "Line 5, column 36 to line 5, column 36 in M",
+      ],
+    ],
+    [
+      "VARIABLES x, y\nInit == x = 0 /\\ y = 0\nNext == x' = \"a\" /\\ y' = 0 /\\ UNCHANGED x",
+      '"a"',
+      [
+        "Line 5, column 9 to line 5, column 41 in M",
+        "Line 5, column 9 to line 5, column 26 in M",
+        "Line 5, column 9 to line 5, column 16 in M",
+        "Line 5, column 21 to line 5, column 26 in M",
+        "Line 5, column 31 to line 5, column 41 in M",
+      ],
+    ],
+    [
+      "VARIABLES x, y\nInit == x = {0} /\\ y = 0\nNext == x' = {{\"a\"}} /\\ UNCHANGED x /\\ y' = 0",
+      '{"a"}',
+      [
+        "Line 5, column 9 to line 5, column 45 in M",
+        "Line 5, column 9 to line 5, column 35 in M",
+        "Line 5, column 9 to line 5, column 20 in M",
+        "Line 5, column 25 to line 5, column 35 in M",
+        "Line 5, column 35 to line 5, column 35 in M",
+      ],
+    ],
+  ])(
+    "compares a variable's value with its successor's under UNCHANGED, as TLC's Tool#processUnchangedImplVar calls val0.equals(val1): %s",
+    async (definitions, successor, callStack) => {
+      const result = await check({
+        source: `---- MODULE M ----\nEXTENDS Integers, FiniteSets, TLC\n${definitions}\n====`,
+        config: "INIT Init\nNEXT Next",
+      });
+      expect(result.failure?.message).toBe(
+        getRuntimeException(
+          `Attempted to check equality of integer 0 with non-integer:\n${successor}`,
+        ),
+      );
+      expect(formatCallStackLines(result)).toEqual(callStack);
+      expect(result.failure?.fingerprint).toBeUndefined();
+    },
+  );
+
+  it.each([
+    [
       "UNCHANGED of a tuple with an impure element",
       "LET m == <<x, RandomElement({y})>> IN (y' = y /\\ UNCHANGED m)",
       0,

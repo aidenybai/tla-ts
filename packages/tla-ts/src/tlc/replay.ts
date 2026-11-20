@@ -349,7 +349,7 @@ export const findChangedVariable = (
 ) =>
   variables.find((variable) => {
     const assigned = partial[variable.index];
-    return assigned !== undefined && !isEqualLikeTlc(assigned, current[variable.index]);
+    return assigned !== undefined && !isEqualLikeTlc(current[variable.index], assigned);
   });
 
 export const isAssignedShortcut = (replay: Pick<Replay, "environment" | "isInit" | "isEnabled">) =>
@@ -1049,7 +1049,10 @@ const visitUnchanged = (
         : replay.current?.[index];
       if (value === undefined) return false;
       const assigned = partial[index];
-      if (assigned !== undefined && !isEqualLikeTlc(assigned, value)) {
+      if (
+        assigned !== undefined &&
+        !(replay.isEnabled ? isEqualLikeTlc(assigned, value) : isEqualLikeTlc(value, assigned))
+      ) {
         warnChangedUnchanged(replay.environment, index, expression);
         return false;
       }
