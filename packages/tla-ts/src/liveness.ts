@@ -37,7 +37,7 @@ import {
   type Thunk,
 } from "./evaluate";
 import { letDefinitions } from "./coverage";
-import { getSubstitutedName, mapChildren, substitutionFrames } from "./instances";
+import { getSubstitutedName, mapChildren, substitutionFrames, writtenKeys } from "./instances";
 import { getKeyName } from "./resolve";
 import {
   ACTION_LEVEL,
@@ -103,6 +103,14 @@ export const createTautologyError = () =>
 const TEMPORAL_OPERATORS = new Set(["~>", "-+->"]);
 
 const definitionThunks = new WeakSet<Thunk>();
+
+// TLC names a reference by the definition it named in the module it was written in.
+const getReferenceName = (reference: Expression, key: string, environment: Environment) => {
+  const written = writtenKeys.get(reference);
+  return written === undefined
+    ? environment.instanceNames.get(key)
+    : (environment.instanceNames.get(written) ?? getDefinition(written, environment)?.name);
+};
 
 const recursiveLetBodies = new WeakSet<Expression>();
 
@@ -342,16 +350,21 @@ export const expandTemporal = (
       theorem,
     },
   ];
-  // An instanced body reaches the theorem SANY copied it from, and a direct reference the one its INSTANCE made.
-  const getTheoremReference = (key: string): TheoremReference | undefined => {
+  // An instanced body reaches the theorem its module named, and a direct reference the one its INSTANCE made.
+  const getTheoremReference = (
+    reference: Expression,
+    key: string,
+  ): TheoremReference | undefined => {
     const range = environment.theorems.get(key);
     if (!range) return undefined;
+    const written = writtenKeys.get(reference);
     const original = getDefinition(key, environment);
     return {
-      name:
-        (!expansion.isSubstituted && environment.instanceNames.get(key)) ||
-        (original?.name ?? getKeyName(key)),
-      range: (expansion.isSubstituted && original?.location.range) || range,
+      name: getReferenceName(reference, key, environment) ?? original?.name ?? getKeyName(key),
+      range:
+        (written !== undefined && environment.theorems.get(written)) ||
+        (expansion.isSubstituted && original?.location.range) ||
+        range,
     };
   };
   if (expression.kind === "And") {
@@ -373,14 +386,16 @@ export const expandTemporal = (
       return expand(
         binding.expression,
         binding.scope,
-        definitionThunks.has(binding) && !isSubstitute ? expression.name : expansion.name,
+        definitionThunks.has(binding) && !isSubstitute
+          ? (getReferenceName(expression, expression.name, environment) ?? expression.name)
+          : expansion.name,
       );
     }
     const operator = binding?.kind === "Operator" ? binding.operator : undefined;
     if (operator?.kind === "Closure" && operator.params.length === 0) {
       return expand(operator.body, operator.scope, isSubstitute ? expansion.name : expression.name);
     }
-    const theorem = binding ? undefined : getTheoremReference(expression.name);
+    const theorem = binding ? undefined : getTheoremReference(expression, expression.name);
     if (theorem) return getLeaf(theorem);
     const definition = environment.constants.has(expression.name)
       ? undefined
@@ -398,8 +413,7 @@ export const expandTemporal = (
       return expand(
         definition.body,
         undefined,
-        (!expansion.isSubstituted && environment.instanceNames.get(expression.name)) ||
-          definition.name,
+        getReferenceName(expression, expression.name, environment) ?? definition.name,
         new Set([...expansion.expanding, definition]),
         definition,
       );
@@ -411,7 +425,7 @@ export const expandTemporal = (
     const theorem =
       applied?.kind === "Operator" &&
       applied.params.every((param) => environment.instanceParams.has(param))
-        ? getTheoremReference(expression.operator)
+        ? getTheoremReference(expression, expression.operator)
         : undefined;
     if (theorem) return getLeaf(theorem);
   }
@@ -437,9 +451,10 @@ export const expandTemporal = (
       return expand(
         operator.body,
         bindOperatorArguments(operator, expression.args, context),
-        expansion.isSubstituted && definition
-          ? definition.name
-          : (environment.instanceNames.get(expression.operator) ?? getKeyName(expression.operator)),
+        getReferenceName(expression, expression.operator, environment) ??
+          (expansion.isSubstituted && definition
+            ? definition.name
+            : getKeyName(expression.operator)),
         expansion.expanding,
         definition,
       );

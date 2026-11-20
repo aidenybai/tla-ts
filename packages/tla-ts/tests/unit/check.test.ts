@@ -4989,6 +4989,8 @@ describe("initial predicate and next-state relation match TLC", () => {
   const theoremBase =
     "---- MODULE Base ----\nVARIABLE v\nTHEOREM Baz == v \\in {0, 1}\nTHEOREM Foo == ASSUME v = 0 PROVE v \\in {0, 1}\nQ == Baz\n====\n";
   const theoremChain = "---- MODULE L2 ----\nVARIABLE w\nJ == INSTANCE Base WITH v <- w\n====\n";
+  const theoremLink =
+    "---- MODULE L3 ----\nVARIABLE w\nJ == INSTANCE Base WITH v <- w\nR == J!Baz\n====\n";
   it.each([
     [
       "THEOREM T == x \\in {0, 1}\nP == T",
@@ -5029,6 +5031,16 @@ describe("initial predicate and next-state relation match TLC", () => {
       `${theoremBase}${theoremChain}I == INSTANCE L2 WITH w <- x\nP == I!J!Baz /\\ [](x \\in {0, 1})`,
       "INIT Init\nNEXT Next\nPROPERTY P",
       "The operator I!J!Baz, which equals line 16, col 1 to line 16, col 28 of module M,\ncannot be used as a property",
+    ],
+    [
+      `${theoremBase}${theoremLink}I == INSTANCE L3 WITH w <- x\nP == I!R /\\ [](x \\in {0, 1})`,
+      "INIT Init\nNEXT Next\nPROPERTY P",
+      "The operator J!Baz, which equals line 14, col 1 to line 14, col 30 of module M,\ncannot be used as a property",
+    ],
+    [
+      `${theoremBase}${theoremLink}I == INSTANCE L3 WITH w <- x\nP == I!J!Q /\\ [](x \\in {0, 1})`,
+      "INIT Init\nNEXT Next\nPROPERTY P",
+      "The operator Baz, which equals line 8, col 1 to line 8, col 27 of module M,\ncannot be used as a property",
     ],
     [
       `${theoremBase}I(p) == INSTANCE Base WITH v <- p\nP == I(x)!Q /\\ [](x \\in {0, 1})`,

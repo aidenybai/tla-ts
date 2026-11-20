@@ -40,12 +40,22 @@ export const frameSubstitutions = new WeakMap<Expression, () => Substitution[]>(
 
 export const substitutedExpressions = new WeakMap<Expression, Substitution>();
 
+// SANY's instanced body keeps the original's references, so each copy of a reference keeps the key it was written with.
+export const writtenKeys = new WeakMap<Expression, string>();
+
+const withWrittenKey = (copy: Expression, expression: Expression, key: string) => {
+  writtenKeys.set(copy, writtenKeys.get(expression) ?? key);
+  return copy;
+};
+
 export const isSubstitutionDefinition = (definition: Definition) =>
   substitutedExpressions.has(definition.body) && !substitutionFrames.has(definition.body);
 
 const addFrames = (expression: Expression, frames: Expression[]) => {
   const copy = { ...expression };
   if (contextualApplications.has(expression)) contextualApplications.add(copy);
+  const written = writtenKeys.get(expression);
+  if (written !== undefined) writtenKeys.set(copy, written);
   substitutionFrames.set(copy, [...frames, ...(substitutionFrames.get(expression) ?? [])]);
   return copy;
 };
@@ -452,16 +462,15 @@ const getSubstitutionName = (name: string) => `${name}${SUBSTITUTION_SUFFIX}`;
 
 export const getSubstitutedName = (expression: Expression) => {
   const isLocal = expression.kind === "Identifier" && isLocallyResolved(expression);
-  if (isLocal && expression.name.endsWith(SUBSTITUTION_SUFFIX)) {
-    return expression.name.slice(0, -SUBSTITUTION_SUFFIX.length);
-  }
   const substitution = substitutedExpressions.get(expression);
-  // A LET instance substitutes a local definition, so only the frames of its reference record the declaration it replaced.
-  if (substitution ? substitution.replacement === expression : !isLocal) return undefined;
-  const occurrence = substitutionFrames
-    .get(expression)
-    ?.find((frame) => !frameSubstitutions.has(frame));
-  return occurrence?.kind === "Identifier" ? occurrence.name : undefined;
+  // The first declaration a substitute replaced is the one SANY's body names. A LET instance substitutes a local definition, so only the frames of its reference record it.
+  const occurrence = (substitution ? substitution.replacement !== expression : isLocal)
+    ? substitutionFrames.get(expression)?.find((frame) => !frameSubstitutions.has(frame))
+    : undefined;
+  if (occurrence?.kind === "Identifier") return occurrence.name;
+  return isLocal && expression.name.endsWith(SUBSTITUTION_SUFFIX)
+    ? expression.name.slice(0, -SUBSTITUTION_SUFFIX.length)
+    : undefined;
 };
 
 const isVariableAlias = (expression: Expression): boolean =>
@@ -773,7 +782,9 @@ const substituteExpression = (
     }
     const copy = getCopy(rewrite, expression.name);
     if (copy === undefined) return expression;
-    if (params.length === 0) return { ...expression, name: copy, resolution };
+    if (params.length === 0) {
+      return withWrittenKey({ ...expression, name: copy, resolution }, expression, expression.name);
+    }
     const definition = instantiation.getDefinition(expression.name);
     if (definition && getArity(definition) > 0) {
       return getInstanceOperator(
@@ -784,13 +795,17 @@ const substituteExpression = (
         resolution,
       );
     }
-    return {
-      kind: "Apply",
-      operator: copy,
-      args: createLocalArguments(params, expression.location),
-      location: expression.location,
-      resolution,
-    };
+    return withWrittenKey(
+      {
+        kind: "Apply",
+        operator: copy,
+        args: createLocalArguments(params, expression.location),
+        location: expression.location,
+        resolution,
+      },
+      expression,
+      expression.name,
+    );
   }
   if (expression.kind === "Apply" && isFree(expression.operator)) {
     const args = expression.args.map(recurse);
@@ -850,12 +865,16 @@ const substituteExpression = (
     }
     const copy = getCopy(rewrite, expression.operator);
     if (copy === undefined) return markContextual({ ...expression, args });
-    return {
-      ...expression,
-      operator: copy,
-      args: [...createLocalArguments(params, expression.location), ...args],
-      resolution,
-    };
+    return withWrittenKey(
+      {
+        ...expression,
+        operator: copy,
+        args: [...createLocalArguments(params, expression.location), ...args],
+        resolution,
+      },
+      expression,
+      expression.operator,
+    );
   }
   if (expression.kind === "OperatorReference" && isFree(expression.operator)) {
     const replacement = instantiation.substitutions.get(expression.operator);
