@@ -159,6 +159,11 @@ const emptyExpressions = new WeakSet<Expression>();
 
 export const isUnresolved = (expression: Expression) => unresolvedExpressions.has(expression);
 
+export const copyResolution = (expression: Expression, copy: Expression) => {
+  if (unresolvedExpressions.has(expression)) unresolvedExpressions.add(copy);
+  if (emptyExpressions.has(expression)) emptyExpressions.add(copy);
+};
+
 // SANY's failed selection is an operator application with no operands.
 const isEmptyExpression = (expression: Expression): boolean =>
   emptyExpressions.has(expression) || findNullError(nullSelections.get(expression)) !== undefined;

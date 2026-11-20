@@ -17,6 +17,7 @@ import {
 } from "./ast";
 import { TlaSyntaxError } from "./errors";
 import {
+  copyResolution,
   getArity,
   getBoundNames,
   getKeyName,
@@ -46,6 +47,7 @@ export const withSubstitutionFrames = (expression: Expression, frames: Expressio
   if (frames.length === 0) return expression;
   const copy = { ...expression };
   if (contextualApplications.has(expression)) contextualApplications.add(copy);
+  copyResolution(expression, copy);
   substitutionFrames.set(copy, [...frames, ...(substitutionFrames.get(expression) ?? [])]);
   return copy;
 };
@@ -671,6 +673,7 @@ const substitute = (
   const substituted = substituteExpression(expression, rewrite, bound);
   if (rewrite.mode === "Enabled") rewrite.instantiation.enabledSubstitutions.add(substituted);
   if (syntheticIdentifiers.has(expression)) syntheticIdentifiers.add(substituted);
+  copyResolution(expression, substituted);
   const substitution = substitutedExpressions.get(expression);
   if (!substitution || substituted === expression || substitutedExpressions.has(substituted)) {
     return substituted;

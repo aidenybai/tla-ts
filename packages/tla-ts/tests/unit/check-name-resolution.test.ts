@@ -1484,6 +1484,18 @@ describe("name resolution matches SANY", () => {
       ],
     ],
     [
+      "---- MODULE In ----\nCONSTANT k\nD5 == (D5!1)\n====\nI == INSTANCE In WITH k <- 1\nJ(p) == INSTANCE In WITH k <- p\nE == I!D5!2\nF == J(TRUE)!D5!2",
+      [
+        ["line 4, col 8 to line 4, col 9", "Unknown operator: `D5'."],
+        ...["line 8, col 11 to line 8, col 11", "line 9, col 17 to line 9, col 17"].map(
+          (location) => [
+            location,
+            "Choosing operand `argument selector 2' of subexpression with no operands.",
+          ],
+        ),
+      ],
+    ],
+    [
       "THEOREM T == t :: (T!t)\nD == t :: Undefined\nE == T!1 /\\ D!1 /\\ T!1!1\nTHEOREM U == u :: (U!1)\nF == U!1",
       [
         ["line 2, col 20 to line 2, col 22", "Unknown operator: `T!t'."],
