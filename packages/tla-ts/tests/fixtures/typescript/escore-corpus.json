@@ -17572,8 +17572,7 @@
         },
         {
           "name": "stops at a string that V8 reads with its legacy parser",
-          "source": "\n        const holder: { [key: string]: unknown } = {};\n        if (Date.parse(\"Thu, 01 Jan 0099 00:00:00 GMT\") !== 915148800000) throw new Error(\"year\");\n      ",
-          "wrong": "conformance: Date.parse reads a string that V8's legacy parser reads otherwise"
+          "source": "\n        const holder: { [key: string]: unknown } = {};\n        if (Date.parse(\"Thu, 01 Jan 0099 00:00:00 GMT\") !== 915148800000) throw new Error(\"year\");\n      "
         }
       ]
     },
