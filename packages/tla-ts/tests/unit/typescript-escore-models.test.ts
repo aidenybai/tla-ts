@@ -489,48 +489,67 @@ describe("checks a module's exported functions as a model on ESCore", () => {
   });
 
   // TypeScript's type of a parameter gives the values that a step passes it, as docs/typescript.md
-  // lists them: the model counts the distinct values it saw.
+  // lists them. A step keeps the key of the value it was passed, so the model has one state for
+  // each value besides the initial one, and an invariant holds where each key is one that the
+  // list gives.
   describe("passes a parameter every value of its type", () => {
-    const getSource = (type: string, bound: number) => `
-      const key = (value: unknown) =>
-        JSON.stringify(value, (_, inner) =>
-          inner instanceof Set ? ["set", ...[...inner].sort()] : inner instanceof Map ? ["map", ...[...inner].sort()] : inner,
-        );
-      let seen = new Set<string>();
+    const key = (value: unknown) =>
+      JSON.stringify(value, (_, inner) =>
+        inner instanceof Set
+          ? ["set", ...[...inner].sort()]
+          : inner instanceof Map
+            ? ["map", ...[...inner].sort()]
+            : inner,
+      );
+    const getSource = (type: string, values: unknown[]) => `
+      const key = ${key.toString()};
+      const listed = new Set<string>(${JSON.stringify(values.map(key))});
+      let last = "";
       export const see = (value: ${type}) => {
-        if (seen.has(key(value))) return;
-        seen.add(key(value));
+        last = key(value);
       };
-      export const isBounded = () => seen.size <= ${bound};
+      export const isListed = () => last === "" || listed.has(last);
     `;
+    const TYPES: [string, unknown[]][] = [
+      ["boolean", [false, true]],
+      ['"a" | "b" | null', ["a", "b", null]],
+      ["number", [-3, -2, -1, 0, 1, 2, 3]],
+      ["string", ["", "a", "b"]],
+      [
+        "[0 | 1, boolean]",
+        [
+          [0, false],
+          [0, true],
+          [1, false],
+          [1, true],
+        ],
+      ],
+      [
+        "{ a: 0 | 1; b: true }",
+        [
+          { a: 0, b: true },
+          { a: 1, b: true },
+        ],
+      ],
+      ["true[]", [[], [true], [true, true], [true, true, true]]],
+      ["Set<0 | 1>", [new Set(), new Set([0]), new Set([1]), new Set([0, 1])]],
+      ['Map<"a", 0 | 1>', [new Map(), new Map([["a", 0]]), new Map([["a", 1]])]],
+    ];
 
-    it.each([
-      ["boolean", 2],
-      ['"a" | "b" | null', 3],
-      ["number", 7],
-      ["string", 3],
-      ["[0 | 1, boolean]", 4],
-      ["{ a: 0 | 1; b: true }", 2],
-      ["true[]", 4],
-      ["Set<0 | 1>", 4],
-      ['Map<"a", 0 | 1>', 3],
-    ])("passes each value of %s, of which there are %i", async (type, count) => {
-      expect((await checkModel(getSource(type, count))).status).not.toBe("invariant-violation");
+    it.each(TYPES)("passes each value of %s", async (type, values) => {
+      const result = await checkModel(getSource(type, values));
+      expect(result.status).not.toBe("invariant-violation");
+      expect(result.distinct).toBe(values.length + 1);
     });
 
-    it.each([
-      ["boolean", 2],
-      ['"a" | "b" | null', 3],
-      ["number", 7],
-      ["string", 3],
-      ["[0 | 1, boolean]", 4],
-      ["{ a: 0 | 1; b: true }", 2],
-      ["true[]", 4],
-      ["Set<0 | 1>", 4],
-      ['Map<"a", 0 | 1>', 3],
-    ])("rejects fewer values of %s than %i", async (type, count) => {
-      expect((await checkModel(getSource(type, count - 1))).status).toBe("invariant-violation");
-    });
+    it.each(TYPES)(
+      "rejects a list of the values of %s that leaves one out",
+      async (type, values) => {
+        expect((await checkModel(getSource(type, values.slice(1)))).status).toBe(
+          "invariant-violation",
+        );
+      },
+    );
 
     it("checks the other functions where a parameter's type has values it can't list", async () => {
       const result = await checkModel(`
