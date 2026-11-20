@@ -175,7 +175,7 @@ Pass TypeScript, JavaScript, and TLA+ files in one command, as in `npx tla-ts ba
 
 tla-ts stops with a `TlaTypeScriptError` in two cases:
 
-- Node rejects the file. The message is the `SyntaxError` of the file's early error, as in `TlaTypeScriptError: spec.js:2:8 SyntaxError: 'delete' cannot be called on an identifier in strict mode.`
+- Node rejects the file. tla-ts parses the file's JavaScript with V8, as Node does as it loads it, without running it, and the message is V8's `SyntaxError`, as in `TlaTypeScriptError: spec.js:2:1 SyntaxError: Delete of an unqualified identifier in strict mode.` Where no Node is at hand, TypeScript's checks of the file stand in for V8's.
 - tla-ts can't run what the file does exactly. The message says what it can't do, as in `TlaTypeScriptError: spec.js:1:15 tla-ts can't run eval`. tla-ts never runs `eval` or `Function`.
 
 A check also stops where a step reaches what tla-ts can't run exactly, with an `Assert` whose message starts with `tla-ts can't`.

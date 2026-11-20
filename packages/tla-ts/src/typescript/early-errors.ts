@@ -275,9 +275,70 @@ const rejectGrammarErrors = (sourceFile: ts.SourceFile) => {
   }
 };
 
-// Rejects programs that JavaScript rejects as it parses, where TypeScript's parser accepts them, and
-// stops at a let that a line break follows, which TypeScript's parser reads as a declaration.
+// V8's parse of a file's JavaScript, as Node parses it as it loads the file, which runs nothing of
+// it: the SyntaxError it throws and its line, or none where it accepts the file, or undefined where
+// no Node is at hand, as in a browser. A module parses through Node's loader, as vm parses modules
+// only under a flag.
+const getNodeParse = (sourceFile: ts.SourceFile) => {
+  const host = globalThis.process;
+  const vm = host?.getBuiltinModule?.("node:vm");
+  if (vm === undefined || host.versions.bun !== undefined) return undefined;
+  if (sourceFile.impliedNodeFormat !== ts.ModuleKind.ESNext) {
+    try {
+      new vm.Script(sourceFile.text, { filename: sourceFile.fileName });
+      return { error: undefined };
+    } catch (error) {
+      if (!(error instanceof SyntaxError)) throw error;
+      const line = /:(\d+)$/.exec(error.stack?.split("\n")[0] ?? "")?.[1];
+      return { error: { message: error.message, line: Number(line ?? 1) } };
+    }
+  }
+  const run = host
+    .getBuiltinModule("node:child_process")
+    .spawnSync(host.execPath, ["--input-type=module", "--check"], {
+      input: sourceFile.text,
+      encoding: "utf8",
+    });
+  if (run.status === 0) return { error: undefined };
+  const lines = run.stderr.split("\n");
+  const message = lines.find((line) => line.startsWith("SyntaxError: "));
+  const line = /:(\d+)$/.exec(lines.find((inner) => /:\d+$/.test(inner)) ?? "")?.[1];
+  return message === undefined
+    ? undefined
+    : { error: { message: message.slice("SyntaxError: ".length), line: Number(line ?? 1) } };
+};
+
+// Rejects programs that JavaScript rejects as it parses, as V8 does where Node is at hand and else
+// where TypeScript's parser accepts them, and stops at a let that a line break follows, which
+// TypeScript's parser reads as a declaration.
 export const rejectEarlyErrors = (sourceFile: ts.SourceFile) => {
+  const parse = getNodeParse(sourceFile);
+  if (parse === undefined) {
+    rejectTypeScriptEarlyErrors(sourceFile);
+    return;
+  }
+  if (parse.error !== undefined) {
+    reject(
+      parse.error.message,
+      getNodeAt(
+        sourceFile,
+        sourceFile.getPositionOfLineAndCharacter(
+          Math.min(parse.error.line, sourceFile.getLineStarts().length) - 1,
+          0,
+        ),
+      ),
+    );
+  }
+  const visit = (node: ts.Node): void => {
+    rejectLexicalWithBody(node);
+    ts.forEachChild(node, visit);
+  };
+  visit(sourceFile);
+};
+
+// Rejects what JavaScript rejects as it parses where TypeScript's parser accepts it, as tla-ts's own
+// checks and TypeScript's find it.
+const rejectTypeScriptEarlyErrors = (sourceFile: ts.SourceFile) => {
   // A module's imports and top-level functions are lexical declarations too, which no other
   // declaration repeats.
   if (isModuleFile(sourceFile)) {

@@ -1,5 +1,7 @@
 import { join } from "node:path";
 import { pathToFileURL } from "node:url";
+import { spawnSync } from "node:child_process";
+import { stripTypeScriptTypes } from "node:module";
 import { runInNewContext, Script } from "node:vm";
 import { Worker } from "node:worker_threads";
 import { afterAll, beforeAll, describe, expect, it } from "vite-plus/test";
@@ -1842,11 +1844,11 @@ describe("compiles scripts by specializing ESCore", () => {
     const getSource = (statement: string) =>
       `"use strict";\nconst box = { total: 1 };\nlet total = 1;\n${statement};\nif (total !== 1) throw new Error("total");\n`;
 
-    describe("an early error that tla-ts's own checks find", () => {
+    describe("an assignment to eval in strict mode", () => {
       it("agrees with Node", async () => {
         expect(() => new Script(getSource("eval = 2"))).toThrow(SyntaxError);
         expect((await checkScript(getSource("eval = 2"), false)).message).toContain(
-          "SyntaxError: Unexpected eval in strict mode",
+          "SyntaxError: Unexpected eval or arguments in strict mode",
         );
       });
 
@@ -1856,17 +1858,174 @@ describe("compiles scripts by specializing ESCore", () => {
       });
     });
 
-    describe("an early error that TypeScript's checks of plain JavaScript find", () => {
+    describe("a delete of a name in strict mode", () => {
       it("agrees with Node", async () => {
         expect(() => new Script(getSource("delete total"))).toThrow(SyntaxError);
         expect((await checkScript(getSource("delete total"), false)).message).toContain(
-          "SyntaxError: 'delete' cannot be called on an identifier in strict mode",
+          "SyntaxError: Delete of an unqualified identifier in strict mode.",
         );
       });
 
       it("rejects another result", async () => {
         expect(() => runInNewContext(getSource("delete box.total"))).not.toThrow();
         expect((await checkScript(getSource("delete box.total"), false)).message).toBeUndefined();
+      });
+    });
+
+    // Node's verdict on a script's or a module's syntax, as it loads it: whether it strips its
+    // types and parses it.
+    const isNodeParsed = (source: string, isModule: boolean) => {
+      try {
+        const stripped = stripTypeScriptTypes(source);
+        if (isModule) {
+          return (
+            spawnSync(process.execPath, ["--input-type=module", "--check"], { input: stripped })
+              .status === 0
+          );
+        }
+        new Script(stripped);
+        return true;
+      } catch (error) {
+        if (!(error instanceof SyntaxError)) throw error;
+        return false;
+      }
+    };
+
+    // The programs that today's compiler's tests rejected as SyntaxErrors, each a script or a
+    // module, which V8's parse rejects as Node loads them.
+    const REJECTED: [string, string, boolean][] = [
+      ["a malformed regular expression", "const pattern = /[$$]/v;", false],
+      [
+        "a var that redeclares a function in its block",
+        "{\n  function step() {}\n  var step = 1;\n}",
+        false,
+      ],
+      [
+        "a function that redeclares a catch parameter",
+        "try {} catch (error) {\n  function error() {}\n}",
+        false,
+      ],
+      [
+        "two functions with one name in a block in strict mode",
+        '"use strict";\n{\n  function step() {}\n  function step() {}\n}',
+        false,
+      ],
+      [
+        "a generator and a function with one name in a block",
+        "{\n  function* step() {}\n  function step() {}\n}",
+        false,
+      ],
+      [
+        "a function as an if's branch in strict mode",
+        '"use strict";\nif (true) function step() {}',
+        false,
+      ],
+      [
+        "a labelled function as the body of a loop",
+        "while (false) label: function step() {}",
+        false,
+      ],
+      ["an arrow that names a parameter twice", "const step = (a: number, a: number) => a;", false],
+      [
+        "a function that names a parameter twice in strict mode",
+        '"use strict";\nfunction step(a: number, a: number) {\n  return a;\n}',
+        false,
+      ],
+      ["a class as the body of an if", "if (true) class Step {}", false],
+      ["a function as the body of a loop", "while (false) function step() {}", false],
+      [
+        "a private name in a pattern",
+        "class Box {\n  #size = 1;\n  read() {\n    const { #size: size } = this;\n  }\n}",
+        false,
+      ],
+      ["an escape in new.target", "function make() {\n  return new.t\\u0061rget;\n}", false],
+      [
+        "assigning arguments in strict mode",
+        '"use strict";\nfunction make() {\n  [arguments] = [[]];\n}',
+        false,
+      ],
+      [
+        "an export name with a lone surrogate",
+        'function step() {}\nexport { step as "\\uD83D" };',
+        true,
+      ],
+      ["an import call that -= assigns", "import('') -= 1;", false],
+      ["an import call that **= assigns", "(import('')) **= 1;", false],
+      ["an import call that ++ increments", "import('')++;", false],
+      ["an import call that -- decrements", "--import('');", false],
+      ["a named back reference to a missing group", "var pattern = /(?<a>.)\\k<b>/u;", false],
+      [
+        "await in an arrow's parameters",
+        "export {};\nasync () => { (a = await/r/g) => {}; };",
+        true,
+      ],
+      ["await as a rest parameter", "export {};\nasync (a = (...await) => {}) => {};", true],
+      ["an undeclared private name", "export {};\nclass C { x = this.#foo; }", true],
+      ["arguments in a field", "export {};\nvar C = class { x = () => arguments; };", true],
+      ["arguments in a static block", "export {};\nclass C { static { arguments; } }", true],
+      ["super's private name", "export {};\nclass C { #x() {} m() { super.#x(); } }", true],
+      [
+        "a private name in a class's heritage",
+        "export {};\nvar C = class extends class { x = this.#foo; } { #foo; };",
+        true,
+      ],
+      ["a module's repeated function", "export {};\nfunction x() {}\nfunction x() {}", true],
+      ["an import of eval", 'export {};\nimport eval from "./missing.js";', true],
+      [
+        "an import of arguments",
+        'export {};\nimport { x as arguments } from "./missing.js";',
+        true,
+      ],
+      [
+        "an import's repeated attribute",
+        'export {};\nimport x from "./missing.json" with { type: "json", type: "json" };',
+        true,
+      ],
+      [
+        "a labelled function as a with statement's body",
+        "with ({}) label: function step() {}",
+        false,
+      ],
+      ["a let as a with statement's body", "with ({}) let x = 1;", false],
+      ["a let pattern as a with statement's body", "with ({}) let\n[x] = [1];", false],
+      ["a with statement in strict mode", '"use strict";\nwith ({}) {}', false],
+    ];
+
+    describe.each(REJECTED)("rejects %s, as V8's parse does", (_, source, isModule) => {
+      it("agrees with Node", async () => {
+        expect(isNodeParsed(source, isModule)).toBe(false);
+        const result = isModule ? await checkModule(source) : await checkScript(source, false);
+        expect(result.message).toContain("SyntaxError: ");
+      });
+    });
+
+    describe("runs a module that V8's parse accepts", () => {
+      const getSource = (expected: number) =>
+        `export {};\nvar box = { await: 1 };\nbox.await = box.await + 1;\nif (box.await !== ${expected}) throw new Error("seen " + box.await);\n`;
+
+      it("agrees with Node", async () => {
+        expect(isNodeParsed(getSource(2), true)).toBe(true);
+        expect((await checkModule(getSource(2))).message).toBeUndefined();
+      });
+
+      it("rejects another result", async () => {
+        expect((await checkModule(getSource(3))).message).toContain(THREW);
+      });
+    });
+
+    describe("runs a script that V8's parse accepts", () => {
+      const getSource = (expected: number) =>
+        `function make() {\n  function step() { return 1; }\n  var step = 2;\n  return step;\n}\nif (make() !== ${expected}) throw new Error("make");\n`;
+
+      it("agrees with Node", async () => {
+        expect(isNodeParsed(getSource(2), false)).toBe(true);
+        expect(() => runInNewContext(getSource(2))).not.toThrow();
+        expect((await checkScript(getSource(2), false)).message).toBeUndefined();
+      });
+
+      it("rejects another result", async () => {
+        expect(() => runInNewContext(getSource(1))).toThrow("make");
+        expect((await checkScript(getSource(1), false)).message).toContain(THREW);
       });
     });
 
