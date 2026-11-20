@@ -643,6 +643,73 @@ describe("evaluation errors match TLC", () => {
 
   it.each([
     [
+      "x' = {1} /\\ ~UNCHANGED <<x, x>>",
+      "{1}",
+      [
+        "Line 5, column 9 to line 5, column 39 in M",
+        "Line 5, column 9 to line 5, column 16 in M",
+        "Line 5, column 21 to line 5, column 39 in M",
+        "Line 5, column 22 to line 5, column 39 in M",
+        "Line 5, column 32 to line 5, column 39 in M",
+      ],
+    ],
+    [
+      'x\' = "a" /\\ ~UNCHANGED {x}',
+      '"a"',
+      [
+        "Line 5, column 9 to line 5, column 34 in M",
+        "Line 5, column 9 to line 5, column 16 in M",
+        "Line 5, column 21 to line 5, column 34 in M",
+        "Line 5, column 22 to line 5, column 34 in M",
+        "Line 5, column 32 to line 5, column 34 in M",
+      ],
+    ],
+    [
+      'x\' = "a" /\\ UNCHANGED {x}',
+      '"a"',
+      [
+        "Line 5, column 9 to line 5, column 33 in M",
+        "Line 5, column 9 to line 5, column 16 in M",
+        "Line 5, column 21 to line 5, column 33 in M",
+        "Line 5, column 31 to line 5, column 33 in M",
+      ],
+    ],
+    [
+      "x' = {1} /\\ UNCHANGED <<x, x>>",
+      "{1}",
+      [
+        "Line 5, column 9 to line 5, column 38 in M",
+        "Line 5, column 9 to line 5, column 16 in M",
+        "Line 5, column 21 to line 5, column 38 in M",
+        "Line 5, column 31 to line 5, column 38 in M",
+      ],
+    ],
+    [
+      "x' = <<1>> /\\ UNCHANGED <<x>>",
+      "<<1>>",
+      [
+        "Line 5, column 9 to line 5, column 37 in M",
+        "Line 5, column 9 to line 5, column 18 in M",
+        "Line 5, column 23 to line 5, column 37 in M",
+        "Line 5, column 33 to line 5, column 37 in M",
+      ],
+    ],
+  ])(
+    "frames the value a predicate's UNCHANGED compares with its successor's, as TLC's equals heads the FingerprintException with it: %s",
+    async (next, successor, callStack) => {
+      const reason = `Attempted to check equality of integer 0 with non-integer:\n${successor}`;
+      const result = await check({
+        source: `---- MODULE M ----\nEXTENDS Integers, FiniteSets, TLC\nVARIABLE x\nInit == x = 0\nNext == ${next}\n====`,
+        config: "INIT Init\nNEXT Next",
+      });
+      expect(result.failure?.message).toBe(getRuntimeException(reason));
+      expect(formatCallStackLines(result)).toEqual(callStack);
+      expect(result.failure?.fingerprint?.reason).toBe(reason);
+    },
+  );
+
+  it.each([
+    [
       "UNCHANGED of a tuple with an impure element",
       "LET m == <<x, RandomElement({y})>> IN (y' = y /\\ UNCHANGED m)",
       0,

@@ -844,7 +844,7 @@ export const valuesEqual = (left: Value, right: Value): boolean => {
     return isModelValue(left) && isModelValue(right) && left.name === right.name;
   }
   if (left.kind === "Subset" && right.kind === "Subset")
-    return isComponentEqual(left.base, right.base);
+    return isReceiverEqual(left.base, right.base);
   if (left.kind === "FunctionSet" && right.kind === "FunctionSet") {
     const isUnit = isEmptySet(left.domain);
     const isOtherUnit = isEmptySet(right.domain);
@@ -852,7 +852,7 @@ export const valuesEqual = (left: Value, right: Value): boolean => {
     const isEmpty = isEmptySet(left.range);
     const isOtherEmpty = isEmptySet(right.range);
     if (isEmpty || isOtherEmpty) return isEmpty === isOtherEmpty;
-    return isComponentEqual(left.domain, right.domain) && isComponentEqual(left.range, right.range);
+    return isReceiverEqual(left.domain, right.domain) && isReceiverEqual(left.range, right.range);
   }
   if (left.kind === "RecordSet" && right.kind === "RecordSet") {
     if (isEmptySet(left)) return isEmptySet(right);
@@ -866,7 +866,7 @@ export const valuesEqual = (left: Value, right: Value): boolean => {
       left.names.length === right.names.length &&
       getFields(left).every(
         (field, index) =>
-          field[0] === otherFields[index][0] && isComponentEqual(field[1], otherFields[index][1]),
+          field[0] === otherFields[index][0] && isReceiverEqual(field[1], otherFields[index][1]),
       )
     );
   }
@@ -875,7 +875,7 @@ export const valuesEqual = (left: Value, right: Value): boolean => {
     if (isEmptySet(right)) return false;
     return (
       left.factors.length === right.factors.length &&
-      left.factors.every((factor, index) => isComponentEqual(factor, right.factors[index]))
+      left.factors.every((factor, index) => isReceiverEqual(factor, right.factors[index]))
     );
   }
   const isInfiniteComparison =
@@ -1283,8 +1283,14 @@ const isFailingLikeTlc = (left: Value, right: Value) =>
 export const isEqualLikeTlc = (left: Value, right: Value) =>
   computeLikeTlcOnFailure(valuesEqual, equalsLikeTlc, left, right, isFailingLikeTlc);
 
-const isComponentEqual = (left: Value, right: Value) =>
-  callTracedMethod(left, () => isEqualLikeTlc(left, right));
+export const isReceiverEqual = (left: Value, right: Value) => {
+  const sets = setTrace.sets;
+  if (sets === undefined) return isEqualLikeTlc(left, right);
+  sets.push(left);
+  const isEqual = isEqualLikeTlc(left, right);
+  sets.pop();
+  return isEqual;
+};
 
 // TLC's ValueVec#sort compares each element with the ones before it, which orders what lazy elements evaluate.
 const isStrictlySorted = (elements: Value[]) => {
@@ -2977,7 +2983,7 @@ const isElementOfAnySet = (element: Value, set: Value): boolean => {
       const low = getIntervalLow(element, functionValue.domain);
       const isDomain =
         low === undefined
-          ? isComponentEqual(set.domain, createSortedSet(functionValue.domain))
+          ? isReceiverEqual(set.domain, createSortedSet(functionValue.domain))
           : isEqualLikeTlc(
               { kind: "Interval", low, high: low + functionValue.domain.length - 1 },
               set.domain,

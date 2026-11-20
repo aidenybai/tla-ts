@@ -100,7 +100,7 @@ import {
   getSequenceElements,
   isElementOf,
   isEnumerable,
-  isEqualLikeTlc,
+  isReceiverEqual,
   isFunctionValue,
   isOverriddenSet,
   markLambdaFunction,
@@ -1454,11 +1454,11 @@ const evaluateWithNextState = (
 const compileUnchanged = (evaluator: Evaluator, coverage: Coverage | undefined): Evaluator =>
   coverage
     ? (context) =>
-        isEqualLikeTlc(
+        isReceiverEqual(
           evaluateWithNextState(coverage, "empty", evaluator, context),
           evaluateWithNextState(coverage, "primed", evaluator, toNextContext(context)),
         )
-    : (context) => isEqualLikeTlc(evaluator(context), evaluator(toNextContext(context)));
+    : (context) => isReceiverEqual(evaluator(context), evaluator(toNextContext(context)));
 
 const traceEvaluator =
   (
