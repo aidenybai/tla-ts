@@ -52,6 +52,9 @@ export interface FunctionValue {
   lambdaDomain: Value | undefined;
   // VALUE_FINGERPRINTED and VALUE_ORDER_FORGOTTEN bits.
   flags: number;
+  // The position of the one value whose records may keep their written order, where it joined a
+  // function whose values had all forgotten theirs, or -1.
+  orderedPosition: number;
 }
 
 export interface IntervalValue {
@@ -300,6 +303,7 @@ const forgetWrittenOrder = (value: Value): void => {
   value.flags |= VALUE_ORDER_FORGOTTEN;
   if (value.kind === "Set") return value.elements.forEach(forgetWrittenOrder);
   value.writtenKeys = undefined;
+  if (value.orderedPosition !== -1) return forgetWrittenOrder(value.range[value.orderedPosition]);
   value.range.forEach(forgetWrittenOrder);
 };
 
@@ -627,6 +631,7 @@ export const createSortedFunction = (domain: Value[], range: Value[]): FunctionV
   functionClass: undefined,
   lambdaDomain: undefined,
   flags: 0,
+  orderedPosition: -1,
 });
 
 export type FunctionClass = "lambda" | "tuple" | "record";
@@ -1362,6 +1367,13 @@ export const combineFunctions = (left: FunctionValue, right: FunctionValue): Fun
     return createWrittenFunction([...leftPairs, ...addedPairs]);
   }
   const combined = createSortedFunction(merged[0], merged[1]);
+  if (
+    left.domain.length === 1 &&
+    dropped.size === 0 &&
+    (right.flags & VALUE_ORDER_FORGOTTEN) !== 0
+  ) {
+    combined.orderedPosition = combined.domain.indexOf(left.domain[0]);
+  }
   return keys.every((key, index) => key === combined.domain[index])
     ? combined
     : setWrittenOrder(combined, keys);
@@ -2826,6 +2838,7 @@ export const updateFunction = (
   );
   updated.writtenKeys = finite.writtenKeys;
   updated.lambdaDomain = finite.lambdaDomain;
+  if ((finite.flags & VALUE_ORDER_FORGOTTEN) !== 0) updated.orderedPosition = position;
   if (finite.hash !== 0 && finite.hash !== UNFINGERPRINTABLE_HASH) {
     const nextHash = getValueHash(next);
     if (nextHash !== UNFINGERPRINTABLE_HASH) {
