@@ -435,8 +435,15 @@ export interface NewSymbol {
   location: SourceLocation;
 }
 
+// The label of `a :: ASSUME ... PROVE ...` in an assumption list, located from its name to the PROVE expression's end.
+export interface AssumeProveLabel {
+  name: string;
+  location: SourceLocation;
+}
+
 export interface AssumeProve {
   kind: "AssumeProve";
+  label?: AssumeProveLabel;
   assumptions: (Expression | NewSymbol | AssumeProve)[];
   conclusion: Expression;
   location: SourceLocation;
@@ -676,9 +683,17 @@ export const getAssumeProveExpression = (assumeProve: AssumeProve): Expression =
     args: clauses.map((clause) =>
       clause.kind === "NewSymbol"
         ? { kind: "Identifier", name: NEW_DECLARATION, location: clause.location }
-        : clause.kind === "AssumeProve"
-          ? getAssumeProveExpression(clause)
-          : clause,
+        : clause.kind === "AssumeProve" && clause.label
+          ? {
+              kind: "Label",
+              name: clause.label.name,
+              params: [],
+              body: getAssumeProveExpression(clause),
+              location: clause.label.location,
+            }
+          : clause.kind === "AssumeProve"
+            ? getAssumeProveExpression(clause)
+            : clause,
     ),
     location: assumeProve.location,
   };

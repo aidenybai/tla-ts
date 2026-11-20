@@ -79,6 +79,7 @@ import {
   findNameOrKeyword,
   generateBounds,
   generateExpression,
+  generateLabel,
   generateSelector,
   generateWithParams,
 } from "./generator-expressions";
@@ -259,11 +260,18 @@ const generateAssumeProve = (
   const assumptions = assumeProve.assumptions.map((assumption, index): LevelNode => {
     const isNew = assumption.kind === "NewSymbol";
     const node =
-      assumption.kind === "AssumeProve"
-        ? generateAssumeProve(generation, assumption, depth + 1)
-        : isNew
-          ? generateNewSymbol(generation, assumption)
-          : generateExpression(generation, assumption);
+      assumption.kind === "AssumeProve" && assumption.label
+        ? generateLabel(
+            generation,
+            assumption.label.name,
+            getUnitLocation(generation.file, assumption.label.location),
+            () => generateAssumeProve(generation, assumption, depth + 1),
+          )
+        : assumption.kind === "AssumeProve"
+          ? generateAssumeProve(generation, assumption, depth + 1)
+          : isNew
+            ? generateNewSymbol(generation, assumption)
+            : generateExpression(generation, assumption);
     generation.assumeProveState.depth = depth;
     if (isNew) generation.assumeProveState.isDeclared[depth] = true;
     scope.isDeclaredBefore.push(scope.isDeclaredBefore[index] || isNew);

@@ -1404,6 +1404,74 @@ Spec == Init /\\ [][Next]_x
     expect(report.text).toContain(`\n\n${error}\n`);
   });
 
+  it.each([
+    "THEOREM T == ASSUME a :: ASSUME 1 = 1 PROVE 2 = 2 PROVE TRUE\nX == T!a!2",
+    "THEOREM T == ASSUME a :: ASSUME TRUE PROVE TRUE PROVE TRUE\nX == T!a!1",
+    "THEOREM T == ASSUME a :: ASSUME TRUE PROVE b :: TRUE PROVE TRUE\nX == T!a!b",
+    "THEOREM T == ASSUME a :: ASSUME TRUE PROVE TRUE PROVE TRUE\nTHEOREM U == TRUE\nPROOF BY T!a",
+    "THEOREM T == ASSUME ASSUME a :: ASSUME TRUE PROVE TRUE PROVE TRUE PROVE TRUE\nTHEOREM U == TRUE\nPROOF BY T!a",
+  ])("selects through the labeled nested ASSUME/PROVE in %j as SANY does", (source) => {
+    expect(getReport({ M: `---- MODULE M ----\n${source}\n====\n` }).isFailed).toBe(false);
+  });
+
+  const labeled = "a :: ASSUME TRUE PROVE TRUE";
+  it.each([
+    [
+      `THEOREM T == ASSUME a :: TRUE, ${labeled} PROVE TRUE`,
+      "line 2, col 32 to line 2, col 58",
+      "Duplicate label `a'.",
+    ],
+    [
+      `THEOREM T == ASSUME ${labeled} PROVE a :: TRUE`,
+      "line 2, col 55 to line 2, col 63",
+      "Duplicate label `a'.",
+    ],
+    [
+      `THEOREM T == ASSUME ${labeled} PROVE TRUE\nX == T!1`,
+      "line 3, col 6 to line 3, col 8",
+      "ASSUME/PROVE used where an expression is required.",
+    ],
+    [
+      "THEOREM T == ASSUME a :: ASSUME b :: ASSUME TRUE PROVE TRUE PROVE TRUE PROVE TRUE\nX == T!a!b",
+      "line 3, col 6 to line 3, col 10",
+      "ASSUME/PROVE used where an expression is required.",
+    ],
+    [
+      `THEOREM T == TRUE\n<1>1. ASSUME ${labeled} PROVE TRUE\n  OBVIOUS\n<1>2. <1>1!a\n  OBVIOUS\n<1> QED`,
+      "line 5, col 7 to line 5, col 12",
+      "ASSUME/PROVE used where an expression is required.",
+    ],
+    [
+      "THEOREM T == ASSUME a :: ASSUME TRUE PROVE b :: TRUE PROVE TRUE\nX == T!b",
+      "line 3, col 8 to line 3, col 8",
+      "Cannot find label `b'.",
+    ],
+    [
+      `THEOREM T == ASSUME ${labeled} PROVE TRUE\nX == T!a!3`,
+      "line 3, col 10 to line 3, col 10",
+      "Nonexistent operand specified by `argument selector 3'.",
+    ],
+    [
+      `THEOREM T == ASSUME ${labeled} PROVE TRUE\nX == T!a!:`,
+      "line 3, col 10 to line 3, col 10",
+      "`!:' can be used only after a name and either at the end after an\noperator name or before an operator name.",
+    ],
+    [
+      "THEOREM T == ASSUME a :: ASSUME NEW y, b :: ASSUME TRUE PROVE TRUE PROVE TRUE PROVE TRUE",
+      "line 2, col 40 to line 2, col 66",
+      "Label not allowed within scope of declaration in nested ASSUME/PROVE.",
+    ],
+    [
+      "THEOREM T == ASSUME NEW x, a :: ASSUME x = 1 PROVE TRUE PROVE TRUE\nTHEOREM U == TRUE\nPROOF BY T!a",
+      "line 4, col 12 to line 4, col 12",
+      "Accessing subexpression labeled `a' of ASSUME/PROVE clause within the scope of a declaration\n from outside that declaration's scope.",
+    ],
+  ])("checks the labeled nested ASSUME/PROVE in %j as SANY does", (source, location, message) => {
+    expect(getReport({ M: `---- MODULE M ----\n${source}\n====\n` }).text).toContain(
+      joinLines(["*** Errors: 1", "", `${location} of module M`, "", message]),
+    );
+  });
+
   it("fails a selection into a failed definition through an instance as SANY does without one", () => {
     const error =
       "Subexpression selection failed, probably due to an error in the selected expression.";

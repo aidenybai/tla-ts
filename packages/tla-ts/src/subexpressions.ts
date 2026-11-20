@@ -333,10 +333,12 @@ const selectSubexpression = (
   };
 
   const isLeftToResolver = (selector: Selector | undefined) => {
-    if (!current || !isAssumeProve(current)) return false;
+    // A labeled ASSUME/PROVE in an assumption list is a label around the ASSUME/PROVE.
+    const node = current?.kind === "Label" ? current.body : current;
+    if (!node || !isAssumeProve(node)) return false;
     if (selector === undefined) return true;
     if (selector.kind === "Colon") return false;
-    const clauses = getChildren(current);
+    const clauses = getChildren(node);
     const index =
       selector.kind === "Operand" ? getOperandIndex(selector.operand, clauses.length) : -1;
     return isNewDeclaration(clauses.at(-1)) && (index === -1 || index === clauses.length - 1);

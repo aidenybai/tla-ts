@@ -2351,8 +2351,14 @@ const parse = (
 
   const parseHypothesis = () => {
     if (peek().kind === "Identifier" && isAt("::", 1) && isAt("ASSUME", 2)) {
+      const start = cursor;
+      const name = advance();
       advance();
-      advance();
+      const assumeProve = parseAssumeProve();
+      return {
+        ...assumeProve,
+        label: withRange({ name: name.text, location: getLocation(name) }, start),
+      };
     }
     if (isAt("ASSUME")) return parseAssumeProve();
     if (peek().kind === "Keyword" && NEW_SYMBOL_STARTS.has(peek().text))

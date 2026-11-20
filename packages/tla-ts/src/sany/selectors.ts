@@ -665,7 +665,10 @@ export const createSelectorResolver =
       }
     }
     if (!isFact) {
-      if (current.kind === "ThmOrAssumpDef" && current.body.kind === "AssumeProve")
+      if (
+        (current.kind === "ThmOrAssumpDef" && current.body.kind === "AssumeProve") ||
+        (current.kind === "Label" && current.isAssumeProve)
+      )
         return generator.addError(location, "ASSUME/PROVE used where an expression is required.");
       if (current.kind === "ThmOrAssumpDef" && current.body.kind === "OpAppl") {
         const step = PROOF_STEP_OPERATORS.get(current.body.operator.name);
