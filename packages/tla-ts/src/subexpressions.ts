@@ -496,7 +496,7 @@ const selectSubexpression = (
     current = enterScopes(current);
     if (current.kind === "Label") {
       current = current.body;
-      // SANY checks the body of a label it passes against the selector before it, then the body against the selector.
+      // SANY checks the body of a label it passes against the selector before it.
       checkNull(
         current,
         `An unexpected null node specified by '${getSelectorName(selectors[selectorIndex - 1])}'.\nThis is probably due to a previous error.`,

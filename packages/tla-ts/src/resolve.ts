@@ -1934,7 +1934,6 @@ const isSubexpressionReported = (
       });
       return true;
     }
-    // SANY's unnamed INSTANCE imports an instance's J!T without J itself.
     if (isUnknown && !isInstance && symbolIndex === -1) {
       unit.errors.push({
         location: formatRange({ module: range.module, start: range.start, end: lastRange.end }),

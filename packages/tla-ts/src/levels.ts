@@ -73,7 +73,6 @@ export interface InstanceLevels {
 }
 
 interface LevelContext {
-  // The module whose LET instances to check, which TLC's analyzers of root definitions leave out as they only read levels.
   module?: string;
   constants: Map<string, number>;
   variables: Set<string>;
@@ -293,7 +292,6 @@ const toFormals = (names: string[]) => names.map((name) => ({ name, arity: 0 }))
 const getFormals = (definition: Definition) =>
   definition.kind === "Operator" ? definition.params : [];
 
-// A selection of a label wraps the expression an instance substitutes in the LETs around the label.
 const getSubstituted = (expression: Expression): Expression | undefined =>
   substitutionFrames.has(expression)
     ? expression
@@ -943,7 +941,6 @@ export const createLevelAnalyzer = (context: LevelContext) => {
       }),
     );
     const inner = createLetScope(expression, scope);
-    // tla-ts expands only the LET instances outside proofs and ASSUME/PROVEs into definitions.
     expression.instances?.forEach((instance) => {
       if (!context.instances.getLetInstance(instance)) {
         addInstanceDefinitions(context.instances, instance, inner);
@@ -1236,8 +1233,7 @@ export const createLevelAnalyzer = (context: LevelContext) => {
         const reported = errors.length;
         const pending = messages.length;
         const analyzed = analyze(selected, scope);
-        // SANY level-checks an instanced module before the INSTANCE, so it reports an error of a substitution there and
-        // finds a label of the module level-correct.
+        // SANY level-checks an instanced module itself, so it reports these errors there and finds its labels correct.
         const substituted = getSubstituted(selected);
         if (substituted) {
           errors.splice(reported);
@@ -1573,7 +1569,6 @@ export const analyzeAssumeProve = (
   return data;
 };
 
-// SANY's NEW symbols of a theorem or an ASSUME/PROVE step are visible in its proof, and those of a SUFFICES after it.
 const addNewSymbols = (statement: Expression | AssumeProve, scope: Scope) => {
   if (statement.kind !== "AssumeProve") return scope;
   statement.assumptions.forEach((assumption) => {
@@ -1615,8 +1610,7 @@ export const checkModuleLevels = (
       if (fact.kind !== "ModuleFact") analyzer.analyze(fact, scope);
     });
   const stepLevels = new Map<ProofStep, number>();
-  // Deviation from SANY: TheoremNode#levelCheck reads the level field of its assertion, which LabelNode never sets, so
-  // SANY skips these checks for a labeled temporal theorem or step; tla-ts checks them.
+  // Deviation from SANY: SANY reads a LabelNode's unset level field here, so it skips the proof of a labeled temporal goal.
   const checkTemporalGoal = (proof: Proof | undefined): SanyError[] =>
     proof?.kind !== "Steps"
       ? []

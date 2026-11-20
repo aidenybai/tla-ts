@@ -269,7 +269,6 @@ const getSubstitutions = (instances: Instance[]) =>
     instance.substitutions.map((substitution) => substitution.expression),
   );
 
-// SANY substitutes each declaration an INSTANCE leaves out with the symbol of the same name.
 const getSubstitute = (instance: Instance, name: string): Expression =>
   instance.substitutions.find((substitution) => substitution.name === name)?.expression ?? {
     kind: "Identifier",
@@ -389,7 +388,6 @@ export const createEnvironment = (
       getLetInstance: (instance) =>
         instance.location.range && letInstances.get(formatRange(instance.location.range)),
       checkInstantiation: (instance, instancer, scope) => {
-        // A standard module, which declares nothing, is never linked.
         const linked = checkedModules.get(instance.module);
         if (!linked) return [];
         return instanceLevels.checkInstance({
