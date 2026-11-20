@@ -281,10 +281,25 @@ const getGraph = (library: Library, realm: HostRealm) => {
   return encodeGraph(graph);
 };
 
+// The Node whose realm a recorded host holds, the project's reference, which .node-version pins.
+const REFERENCE_NODE = "26";
+
+// The realm of the host that runs this process, which only the reference Node records, so that a
+// recorded host is the same wherever it's recorded.
+const recordReferenceRealm = (library: Library) => {
+  const version = globalThis.process?.versions.node ?? "";
+  if (version.split(".")[0] !== REFERENCE_NODE) {
+    throw new TlaError(
+      `tla-ts can't record the host on Node ${version}; it needs Node ${REFERENCE_NODE}`,
+    );
+  }
+  return recordHostRealm(library);
+};
+
 // The graph of the runtime of ESCore's directory for the realm of the host that runs this process.
 export const getRuntimeGraph = (directory: string) => {
   const library = createLibrary(readEscoreFiles(directory));
-  return getGraph(library, recordHostRealm(library));
+  return getGraph(library, recordReferenceRealm(library));
 };
 
 // The host that a browser prepares ESCore's runtime from, as this process records it: ESCore's
@@ -293,7 +308,7 @@ export const getRuntimeGraph = (directory: string) => {
 export const recordEscoreHost = (directory: string): EscoreHost => {
   const files = readEscoreFiles(directory);
   const library = createLibrary(files);
-  const realm = recordHostRealm(library);
+  const realm = recordReferenceRealm(library);
   return { files, realm, graph: getGraph(library, realm) };
 };
 
