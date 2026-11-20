@@ -358,6 +358,7 @@ export const createEnvironment = (
   const instanceCopies = new WeakMap<Definition, InstanceCopy>();
   const letInstances = new Map<string, LetInstance>();
   const recursiveSections = new WeakMap<Definition, SectionMember[]>();
+  const checkedLabels = new WeakSet<Expression>();
   const createInstanceCopy = (
     sourceKey: string,
     module: string,
@@ -1620,6 +1621,7 @@ export const createEnvironment = (
           getQualifiedName: (symbol) => qualifiedNames.get(visible.get(symbol)?.key ?? symbol),
           instances: instanceLevels.instances,
           recursiveSections,
+          checkedLabels,
         },
         instanceChecks.splice(firstCheck),
         warnings,

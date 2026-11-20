@@ -80,6 +80,8 @@ interface LevelContext {
   getQualifiedName?: (name: string) => string | undefined;
   instances: InstanceLevels;
   recursiveSections: WeakMap<Definition, SectionMember[]>;
+  // SANY's LabelNode#levelCheck is true for a label it level-checked before, in this module or one it sees.
+  checkedLabels?: WeakSet<Expression>;
 }
 
 export interface InstanceLevelCheck {
@@ -555,8 +557,7 @@ export const createLevelAnalyzer = (context: LevelContext) => {
   // SANY level-checks a LAMBDA once, so a recursive section's second pass keeps its first levels.
   const lambdaLevels = new Map<Expression, OperatorLevels>();
   const selectionLevels = new Map<Expression, LevelData>();
-  // SANY's LabelNode#levelCheck is true for a label it level-checked before.
-  const checkedLabels = new WeakSet<Expression>();
+  const checkedLabels = context.checkedLabels ?? new WeakSet<Expression>();
   const errors: CodedSanyError[] = [];
   const messages: LevelMessage[] = [];
 

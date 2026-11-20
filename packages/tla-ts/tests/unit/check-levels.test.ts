@@ -1069,6 +1069,43 @@ describe("level checking matches SANY", () => {
     );
   });
 
+  it.each([
+    [
+      "I == INSTANCE In\nJ(p) == INSTANCE In\nD == SF_I!T!t(x' = 1)\nE == (J(1)!C!c)'",
+      ["line 10, col 6 to line 10, col 21", "line 11, col 6 to line 11, col 16"],
+    ],
+    [
+      "INSTANCE In\nD == SF_T!t(x' = 1)\nE == (C!c)'",
+      ["line 9, col 6 to line 9, col 19", "line 10, col 6 to line 10, col 11"],
+    ],
+  ])(
+    "checks a label selected through an instance that substitutes nothing as level-correct, as SANY does: %s",
+    async (instances, ranges) => {
+      const exceeds = "The level of argument 1 exceeds the maximum level allowed by the operator.";
+      await expect(
+        check({
+          source: `---- MODULE M ----\nVARIABLE x\n---- MODULE In ----\nB == \\E b \\in {x'} : b\nTHEOREM T == t :: (B /\\ [](x = 1))\nC == c :: ([](x = 1))\n====\n${instances}\nInit == x = 0\nNext == x' = x\n====`,
+          config: "INIT Init\nNEXT Next",
+        }),
+      ).rejects.toThrow(
+        createSanyError([
+          {
+            location: "line 5, col 20 to line 5, col 33 of module M",
+            message: "\\land has both temporal formula and action as arguments.",
+          },
+          {
+            location: `${ranges[0]} of module M`,
+            message: `Level error in applying operator $SF:\n${exceeds}`,
+          },
+          {
+            location: `${ranges[1]} of module M`,
+            message: `Level error in applying operator ':\n${exceeds}`,
+          },
+        ]),
+      );
+    },
+  );
+
   it("checks a label selected from a step's statement, as SANY does", async () => {
     const exceeds = "The level of argument 1 exceeds the maximum level allowed by the operator.";
     await expect(
