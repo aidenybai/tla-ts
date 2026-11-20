@@ -2076,6 +2076,22 @@ describe("compiles scripts by specializing ESCore", () => {
     }, 600_000);
   });
 
+  describe("joins an array of thousands of elements", () => {
+    const getSource = (expected: string) => `
+      const list = [${Array.from({ length: 5000 }, (_, index) => index % 7).join(", ")}];
+      const result = [list.join("-").length, list.join().slice(-9)].join();
+      if (result !== "${expected}") throw new Error(result);
+    `;
+
+    it("agrees with Node", async () => {
+      expect((await checkScript(getSource("9999,4,5,6,0,1"))).message).toBeUndefined();
+    }, 600_000);
+
+    it("rejects another result", async () => {
+      expect((await checkScript(getSource("9999,4,5,6,0,2"))).message).toContain(THREW);
+    }, 600_000);
+  });
+
   describe("runs a script of thousands of statements and global vars", () => {
     const getSource = (expected: number) => `
       let count = 0;

@@ -569,9 +569,14 @@ IncludesFrom(s, o, k, len, target) ==
   ELSE IncludesFrom(v.s, o, NumAdd(k, OneNum), len, target)
 
 \* JoinIndexedProperties: the loop of Array.prototype.join, or of toLocaleString when isLocale,
-\* which passes each element's toLocaleString localeArgs.
+\* which passes each element's toLocaleString localeArgs. More than 64 elements join in halves, so
+\* that thousands of them nest log n deep rather than n.
 JoinFrom(s, o, len, k, sep, acc, isLocale, localeArgs) ==
   IF ~NumLess(k, len) THEN Ok(s, Str(acc))
+  ELSE IF NumFitsInt(len) /\ NumToInt(len) - NumToInt(k) > 64 THEN
+       LET middle == NumFromInt((NumToInt(k) + NumToInt(len)) \div 2)
+           first == JoinFrom(s, o, middle, k, sep, acc, isLocale, localeArgs)
+       IN IF IsAbrupt(first) THEN first ELSE JoinFrom(first.s, o, len, middle, sep, Val(first).value, isLocale, localeArgs)
   ELSE LET e == Get(s, o, Index(k)) IN IF IsAbrupt(e) THEN e ELSE
        LET next == IF IsNullish(Val(e)) THEN Ok(e.s, EmptyStr)
                    ELSE IF ~isLocale THEN ToStr(e.s, Val(e))
