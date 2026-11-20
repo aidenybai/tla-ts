@@ -2837,14 +2837,19 @@ const markTrace = (): TraceMark | undefined => {
   };
 };
 
-const resetTrace = (mark: TraceMark | undefined) => {
+// TLC drops the FingerprintException of an exception it swallows, while its CallStackTool stays frozen where the exception left it.
+const dropFingerprint = (mark: TraceMark | undefined) => {
   if (mark === undefined) return;
   if (setTrace.sets) setTrace.sets.length = mark.depth;
+  if (setTrace.callStack) setTrace.callStack.fingerprint = mark.fingerprint;
+};
+
+const resetTrace = (mark: TraceMark | undefined) => {
+  dropFingerprint(mark);
   const callStack = setTrace.callStack;
-  if (!callStack) return;
+  if (mark === undefined || !callStack) return;
   callStack.expressions.length = mark.length;
   callStack.isFrozen = mark.isFrozen;
-  callStack.fingerprint = mark.fingerprint;
 };
 
 export const computeLikeTlcOnFailure = <Left, Right, Result>(
@@ -3689,7 +3694,7 @@ const getExpandedLazySet = (value: LazySetValue, isStrict: boolean) => {
     return expandLazySet(value);
   } catch (error) {
     if (!(error instanceof TlaEvaluationError)) throw error;
-    resetTrace(mark);
+    dropFingerprint(mark);
     return undefined;
   }
 };
@@ -3730,7 +3735,7 @@ const toPrintedFunction = (value: LazyFunctionValue) => {
     return toFiniteFunction(value);
   } catch (error) {
     if (!(error instanceof TlaEvaluationError) && !isStackOverflow(error)) throw error;
-    resetTrace(mark);
+    dropFingerprint(mark);
     return undefined;
   }
 };

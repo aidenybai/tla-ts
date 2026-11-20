@@ -4424,6 +4424,19 @@ describe("evaluation errors match TLC", () => {
     expect([printed, result.failure?.traceOutput]).toEqual([['<<"b", {}>>'], ['<<"b", {}>>']]);
   });
 
+  it("keeps the call stack frozen at a failure an error message swallows, as TLC's CallStackTool does", async () => {
+    const result = await checkComparison(`${PRINTING_FILTER} {Bad} = STRING`);
+    expect(result.failure?.fingerprint?.reason).toBe(UNEXPANDED_FILTER_REASON);
+    expect(formatCallStackLines(result)).toEqual([
+      "Line 5, column 9 to line 5, column 98 in M",
+      "Line 5, column 9 to line 5, column 14 in M",
+      "Line 5, column 19 to line 5, column 98 in M",
+      "Line 5, column 85 to line 5, column 98 in M",
+      "Line 5, column 53 to line 5, column 79 in M",
+      "Line 5, column 75 to line 5, column 79 in M",
+    ]);
+  });
+
   const SET_EQUALITY_REASON = "Attempted to check equality of the set {1} with the value:\n1";
 
   it.each([
