@@ -164,6 +164,21 @@ describe("checks a module's exported functions as a model on ESCore", () => {
     });
   });
 
+  // A parameter whose type has more values than TLC puts in a set, as the compiled glob that
+  // Effect's internal glob module matches, takes values tla-ts can't list, and the rest still run.
+  describe("calls no function whose parameter has more values than TLC lists", () => {
+    const getSource = (thrown: number) =>
+      `export const isCode = (codes: [number, number, number, number, number, number, number, number]) => codes.length === 8;\nexport const twice = (n: 0 | 1) => {\n  if ((n as number) === ${thrown}) throw new Error("thrown");\n  return n * 2;\n};\n`;
+
+    it("agrees with Node", async () => {
+      expect(getCounts(await checkModel(getSource(2)))).toEqual(["success", 1, 1]);
+    });
+
+    it("rejects another result", async () => {
+      expect((await checkModel(getSource(1))).status).toBe("assumption-violation");
+    });
+  });
+
   // A function that ESCore's runtime names an operator after, as Effect's SchemaGetter exports
   // BigInt, gets a name of its own in the spec, which still calls it.
   describe("checks a function named as one of the runtime's operators", () => {

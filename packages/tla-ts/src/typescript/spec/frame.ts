@@ -2,6 +2,7 @@ import ts from "@typescript/typescript6";
 import { TlaTypeScriptError } from "../../errors";
 import { KEYWORDS } from "../../lexer";
 import { parseModule } from "../../parser";
+import { getSetBound } from "../../values";
 import { formatString } from "../../printer";
 import { type FunctionNode, getFunction, isPlain, skipCasts } from "../context";
 import { createNames } from "../names";
@@ -31,6 +32,12 @@ interface Parameter {
 }
 
 // Why a type has no finite set of values.
+// A finite type's values as a TLA+ set, and how many it has.
+interface Domain {
+  text: string;
+  size: number;
+}
+
 interface Infinite {
   message: string;
   // Whether TLC can't compare the values, which tla-ts could list.
@@ -246,6 +253,8 @@ const isNumericKey = (key: string) => /^-?\d+$/.test(key);
 const isFieldName = (key: string) => /^\w*[A-Za-z]\w*$/.test(key) && !KEYWORDS.has(key);
 
 const isInfinite = (domain: string | Infinite): domain is Infinite => typeof domain !== "string";
+
+const isUnlisted = (domain: Domain | Infinite): domain is Infinite => "message" in domain;
 
 // The checker gives type arguments only of type references, which the public API can't detect.
 const isTypeReference = (type: ts.Type): type is ts.TypeReference =>
@@ -512,10 +521,10 @@ export const frameModel = (
 
   // The first type that has no end, or the domains of every type.
   const findDomains = (types: readonly ts.Type[], path: readonly ts.Type[]) =>
-    types.reduce<string[] | Infinite>((domains, type) => {
+    types.reduce<Domain[] | Infinite>((domains, type) => {
       if (!Array.isArray(domains)) return domains;
-      const domain = findDomain(type, path);
-      return isInfinite(domain) ? domain : [...domains, domain];
+      const domain = findSizedDomain(type, path);
+      return isUnlisted(domain) ? domain : [...domains, domain];
     }, []);
   const getLiteral = (type: ts.Type): string | undefined => {
     if (type.isStringLiteral()) return formatString(type.value);
@@ -613,14 +622,15 @@ export const frameModel = (
   const getInfinite = (type: ts.Type, reason: string): Infinite => ({
     message: `${checker.typeToString(type)} isn't finite: ${reason}`,
   });
-  // The set of every value that a finite type allows, which TLC enumerates, as TLA+. outer holds
-  // the types around this one, so a type that holds itself, such as a tree, has no end.
-  const findDomain = (type: ts.Type, outer: readonly ts.Type[] = []): string | Infinite => {
+  // The set of every value that a finite type allows, which TLC enumerates, as TLA+, with how many
+  // values it has. outer holds the types around this one, so a type that holds itself, such as a
+  // tree, has no end.
+  const findSizedDomain = (type: ts.Type, outer: readonly ts.Type[]): Domain | Infinite => {
     if (outer.includes(type)) {
       return { message: `${checker.typeToString(type)} holds itself, so it has no end` };
     }
     const path = [...outer, type];
-    if (type.flags & ts.TypeFlags.Boolean) return "BOOLEAN";
+    if (type.flags & ts.TypeFlags.Boolean) return { text: "BOOLEAN", size: 2 };
     if (type.isUnion()) {
       const literalTypes = type.types
         .filter((member) => getLiteral(member) !== undefined)
@@ -639,14 +649,20 @@ export const frameModel = (
         };
       }
       const enumerated = literalTypes.flatMap((member) => getLiteral(member) ?? []);
-      return [...(enumerated.length > 0 ? [`{${enumerated.join(", ")}}`] : []), ...others]
-        .map((domain) => `(${domain})`)
-        .join(" \\cup ");
+      return {
+        text: [
+          ...(enumerated.length > 0 ? [`{${enumerated.join(", ")}}`] : []),
+          ...others.map((other) => other.text),
+        ]
+          .map((domain) => `(${domain})`)
+          .join(" \\cup "),
+        size: others.reduce((size, other) => size + other.size, enumerated.length),
+      };
     }
     const literal = getLiteral(type);
-    if (literal !== undefined) return `{${literal}}`;
-    if (type.flags & ts.TypeFlags.Number) return "-3..3";
-    if (type.flags & ts.TypeFlags.String) return '{"", "a", "b"}';
+    if (literal !== undefined) return { text: `{${literal}}`, size: 1 };
+    if (type.flags & ts.TypeFlags.Number) return { text: "-3..3", size: 7 };
+    if (type.flags & ts.TypeFlags.String) return { text: '{"", "a", "b"}', size: 3 };
     // A subclass's instances are objects, which no domain lists.
     if (
       ((isSetType(type) || isMapType(type)) && getCollectionType(type) === type) ||
@@ -657,10 +673,15 @@ export const frameModel = (
         path,
       );
       if (!Array.isArray(elements)) return elements;
-      if (isSetType(type)) return `SUBSET (${elements[0]})`;
+      if (isSetType(type)) {
+        return { text: `SUBSET (${elements[0].text})`, size: 2 ** elements[0].size };
+      }
       if (isMapType(type)) {
         const keys = names.getFresh("keys");
-        return `UNION {[${keys} -> (${elements[1]})] : ${keys} \\in SUBSET (${elements[0]})}`;
+        return {
+          text: `UNION {[${keys} -> (${elements[1].text})] : ${keys} \\in SUBSET (${elements[0].text})}`,
+          size: (1 + elements[1].size) ** elements[0].size,
+        };
       }
       const isFixed =
         isTypeReference(type) &&
@@ -670,16 +691,25 @@ export const frameModel = (
       if (!isFixed) {
         return getInfinite(type, "tuples with optional or rest elements can have any length");
       }
-      if (elements.length === 0) return "{<<>>}";
-      if (elements.length > 1) return elements.map((element) => `(${element})`).join(" \\X ");
+      const size = elements.reduce((product, element) => product * element.size, 1);
+      if (elements.length === 0) return { text: "{<<>>}", size };
+      if (elements.length > 1) {
+        return { text: elements.map((element) => `(${element.text})`).join(" \\X "), size };
+      }
       const element = names.getFresh("element");
-      return `{<<${element}>> : ${element} \\in (${elements[0]})}`;
+      return { text: `{<<${element}>> : ${element} \\in (${elements[0].text})}`, size };
     }
     if (checker.isArrayType(type) && isTypeReference(type)) {
-      const element = findDomain(checker.getTypeArguments(type)[0], path);
-      if (isInfinite(element)) return element;
+      const element = findSizedDomain(checker.getTypeArguments(type)[0], path);
+      if (isUnlisted(element)) return element;
       const length = names.getFresh("length");
-      return `UNION {[1..${length} -> (${element})] : ${length} \\in 0..${MAX_ARRAY_LENGTH}}`;
+      return {
+        text: `UNION {[1..${length} -> (${element.text})] : ${length} \\in 0..${MAX_ARRAY_LENGTH}}`,
+        size: Array.from(
+          { length: MAX_ARRAY_LENGTH + 1 },
+          (_, count) => element.size ** count,
+        ).reduce((sum, count) => sum + count),
+      };
     }
     const properties = type.getProperties();
     const isRecord =
@@ -705,18 +735,34 @@ export const frameModel = (
     const keys = properties.map((property) => property.name);
     const unnamed = keys.find((key) => !isNumericKey(key) && !isFieldName(key));
     if (unnamed !== undefined) return getInfinite(type, `TLA+ can't name the field ${unnamed}`);
+    const size = fields.reduce((product, field) => product * field.size, 1);
     if (!keys.some(isNumericKey)) {
-      return `[${keys.map((key, position) => `${key} : (${fields[position]})`).join(", ")}]`;
+      return {
+        text: `[${keys.map((key, position) => `${key} : (${fields[position].text})`).join(", ")}]`,
+        size,
+      };
     }
     if (!keys.every(isNumericKey) || fieldTypes.some((fieldType) => fieldType !== fieldTypes[0])) {
       return {
         message: `${checker.typeToString(type)} has numeric keys, so every key must be a number with the same value type`,
       };
     }
-    return `[{${keys
-      .map(Number)
-      .sort((left, right) => left - right)
-      .join(", ")}} -> (${fields[0]})]`;
+    return {
+      text: `[{${keys
+        .map(Number)
+        .sort((left, right) => left - right)
+        .join(", ")}} -> (${fields[0].text})]`,
+      size,
+    };
+  };
+  // The domain of a type, which TLC lists only where it has at most as many values as TLC puts in a
+  // set.
+  const findDomain = (type: ts.Type): string | Infinite => {
+    const domain = findSizedDomain(type, []);
+    if (isUnlisted(domain)) return domain;
+    return domain.size > getSetBound()
+      ? getInfinite(type, `it has more than ${getSetBound()} values, which TLC lists at most`)
+      : domain.text;
   };
   const getType = (node: ts.ParameterDeclaration | ts.VariableDeclaration) =>
     checker.getTypeAtLocation(node.name);
