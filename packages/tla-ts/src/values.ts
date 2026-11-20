@@ -3810,8 +3810,12 @@ export const formatValue = (value: Value, isStrict = false, isNormalized = false
     case "SetOperation":
     case "FilteredSet":
     case "Union": {
+      const sets = setTrace.sets;
+      sets?.push(value);
       const expanded = printing.isExpanded ? getExpandedLazySet(value, isStrict) : undefined;
-      return expanded ? format(expanded) : formatLazySet(value, isStrict);
+      const formatted = expanded ? format(expanded) : formatLazySet(value, isStrict);
+      sets?.pop();
+      return formatted;
     }
 
     case "SequenceSet":

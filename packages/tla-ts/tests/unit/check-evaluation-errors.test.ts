@@ -4172,6 +4172,57 @@ describe("evaluation errors match TLC", () => {
     },
   );
 
+  it.each([
+    [
+      'x\' = x /\\ [a |-> x] \\notin SUBSET [{1} -> UNION {{1, "a"}, Nat}]',
+      [
+        "Line 5, column 9 to line 5, column 72 in M",
+        "Line 5, column 9 to line 5, column 14 in M",
+        "Line 5, column 19 to line 5, column 72 in M",
+        "Line 5, column 36 to line 5, column 72 in M",
+        "Line 5, column 43 to line 5, column 72 in M",
+        "Line 5, column 51 to line 5, column 71 in M",
+        "Line 5, column 57 to line 5, column 71 in M",
+        "Line 5, column 58 to line 5, column 65 in M",
+      ],
+    ],
+    [
+      'x\' = x /\\ [a |-> 1] \\notin SUBSET [a : UNION {{1, "a"}, Nat}]',
+      [
+        "Line 5, column 9 to line 5, column 69 in M",
+        "Line 5, column 9 to line 5, column 14 in M",
+        "Line 5, column 19 to line 5, column 69 in M",
+        "Line 5, column 36 to line 5, column 69 in M",
+        "Line 5, column 43 to line 5, column 69 in M",
+        "Line 5, column 48 to line 5, column 68 in M",
+        "Line 5, column 54 to line 5, column 68 in M",
+        "Line 5, column 55 to line 5, column 62 in M",
+      ],
+    ],
+    [
+      'x\' = x /\\ 1 \\notin SUBSET ({1} \\X UNION {{1, "a"}, Nat})',
+      [
+        "Line 5, column 9 to line 5, column 64 in M",
+        "Line 5, column 9 to line 5, column 14 in M",
+        "Line 5, column 19 to line 5, column 64 in M",
+        "Line 5, column 28 to line 5, column 64 in M",
+        "Line 5, column 36 to line 5, column 63 in M",
+        "Line 5, column 43 to line 5, column 63 in M",
+        "Line 5, column 49 to line 5, column 63 in M",
+        "Line 5, column 50 to line 5, column 57 in M",
+      ],
+    ],
+  ])(
+    "frames each set an error message prints while printing it fails, as TLC's toString does: %s",
+    async (next, callStack) => {
+      const reason = 'Attempted to compare string "a" with non-string:\n1';
+      const result = await checkSetBound(next, "TRUE");
+      expect(result.failure?.message).toBe(getRuntimeException(reason));
+      expect(formatCallStackLines(result)).toEqual(callStack);
+      expect(result.failure?.fingerprint?.reason).toBe(reason);
+    },
+  );
+
   const SET_EQUALITY_REASON = "Attempted to check equality of the set {1} with the value:\n1";
 
   it.each([
