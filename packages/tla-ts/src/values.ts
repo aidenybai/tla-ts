@@ -32,7 +32,7 @@ export interface SetValue {
   writtenElements: Value[] | undefined;
   hash: number;
   fingerprint: number;
-  // VALUE_NORMALIZED, VALUE_FINGERPRINTED and VALUE_ORDER_FORGOTTEN bits.
+  // VALUE_NORMALIZED, VALUE_FINGERPRINTED, VALUE_ORDER_FORGOTTEN and VALUE_DEEPLY_NORMALIZED bits.
   flags: number;
 }
 
@@ -50,7 +50,7 @@ export interface FunctionValue {
   writtenKeys: Value[] | undefined;
   functionClass: FunctionClass | undefined;
   lambdaDomain: Value | undefined;
-  // VALUE_FINGERPRINTED and VALUE_ORDER_FORGOTTEN bits.
+  // VALUE_FINGERPRINTED, VALUE_ORDER_FORGOTTEN and VALUE_DEEPLY_NORMALIZED bits.
   flags: number;
 }
 
@@ -186,6 +186,8 @@ const VALUE_NORMALIZED = 1;
 const VALUE_FINGERPRINTED = 2;
 // A value none of whose records keep the order their fields were written in.
 const VALUE_ORDER_FORGOTTEN = 4;
+// A set or function that markNormalized walked, every set within which TLC has normalized.
+const VALUE_DEEPLY_NORMALIZED = 8;
 
 export const isNormalizedSet = (set: SetValue) => (set.flags & VALUE_NORMALIZED) !== 0;
 
@@ -1094,13 +1096,16 @@ export const getWrittenElements = (set: SetValue | MixedSetValue) =>
     ? set.elements
     : (set.writtenElements ?? set.elements);
 
+// A value that markNormalized walked once, as the constants that share the runtime's heap do, it
+// doesn't walk again.
 export const markNormalized = (value: Value): void => {
   if (typeof value !== "object") return;
-  if (value.kind === "Set") {
-    value.flags |= VALUE_NORMALIZED;
+  if (value.kind === "Set" && (value.flags & VALUE_DEEPLY_NORMALIZED) === 0) {
+    value.flags |= VALUE_NORMALIZED | VALUE_DEEPLY_NORMALIZED;
     value.elements.forEach(markNormalized);
   }
-  if (value.kind === "Function") {
+  if (value.kind === "Function" && (value.flags & VALUE_DEEPLY_NORMALIZED) === 0) {
+    value.flags |= VALUE_DEEPLY_NORMALIZED;
     value.domain.forEach(markNormalized);
     value.range.forEach(markNormalized);
   }
