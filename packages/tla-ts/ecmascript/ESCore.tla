@@ -1947,6 +1947,7 @@ RECURSIVE DurationFormatMethod(_, _, _, _)
 RECURSIVE IntlLocaleCompare(_, _, _, _, _)
 RECURSIVE IntlTransformCase(_, _, _, _, _)
 RECURSIVE IntlFallbackSymbol(_)
+RECURSIVE DateToLocaleString(_, _, _, _, _)
 RECURSIVE IntlBuiltin(_, _, _, _, _, _)
 RECURSIVE Unsupported(_, _)
 RECURSIVE CallBuiltin(_, _, _, _, _, _)
@@ -13246,6 +13247,11 @@ DateBuiltin(s, f, m, this, args, nt) ==
     [] m = "setTime" ->
          LET t == ThisTimeValue(s, this) IN IF IsAbrupt(t) THEN t ELSE
          LET n == ToNumber(t.s, Arg(args, 1)) IN IF IsAbrupt(n) THEN n ELSE SetDateValue(n.s, this, TimeClip(Val(n).value))
+    \* ECMA-402 §20.4.1 to §20.4.3, where the host has Intl.
+    [] m \in {"toLocaleDateString", "toLocaleString", "toLocaleTimeString"} /\ HostIntl(<<"none">>).found # "none" ->
+         LET t == ThisTimeValue(s, this) IN IF IsAbrupt(t) THEN t
+         ELSE IF NumIsNaN(Val(t).value) THEN Ok(t.s, Str(N("Invalid Date")))
+         ELSE DateToLocaleString(t.s, m, Val(t).value, Arg(args, 1), Arg(args, 2))
     \* Date.prototype.toDateString (§21.4.4.35), toString (§21.4.4.41), toTimeString (§21.4.4.42),
     \* toUTCString (§21.4.4.43), and toLocaleDateString, toLocaleString, and toLocaleTimeString
     \* (§21.4.4.38 to §21.4.4.40), which are toString as engine262 has them.
@@ -20817,6 +20823,13 @@ IntlFallbackSymbol(s) ==
   IF "fallback" \in DOMAIN O(s, intl).slots THEN [s |-> s, v |-> O(s, intl).slots.fallback]
   ELSE LET made == NewSymbol(s, Str(N("IntlLegacyConstructedSymbol"))) IN
        [s |-> SetSlots(made.s, intl, [fallback |-> made.v]), v |-> made.v]
+\* Date.prototype.toLocaleString, toLocaleDateString, and toLocaleTimeString (ECMA-402 §20.4) of a
+\* time value that isn't NaN: CreateDateTimeFormat of the locales and the options, which reads them
+\* as Intl.DateTimeFormat does, and the format that HostIntl answers for it.
+DateToLocaleString(s, m, t, locales, options) ==
+  LET d == IntlConstruct(s, "DateTimeFormat", Intrinsic(s, "IntlDateTimeFormat"), locales, options) IN IF IsAbrupt(d) THEN d ELSE
+  LET answer == IntlAnswer(d.s, "Date", DateTimeFormatConfig(d.s, Val(d)), m, <<IntlNumberKey(IntlTimeClip(t))>>) IN
+  IF IsAbrupt(answer) THEN answer ELSE IntlResult(answer.s, m, Val(answer))
 \* Intl's functions. Where a method unwraps its receiver first, an object that inherits from the
 \* constructor's prototype, through which it would read %Intl%.[[FallbackSymbol]], stops.
 IntlBuiltin(s, f, m, this, args, nt) ==

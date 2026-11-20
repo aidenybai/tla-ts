@@ -510,9 +510,9 @@ describe("compiles scripts by specializing ESCore", () => {
     });
 
     it("stops at a locale-sensitive method and at a date string outside ECMA-262's formats", async () => {
-      expect((await checkScript("new Date(0).toLocaleString();")).message).toContain(
-        "tla-ts can't",
-      );
+      expect(
+        (await checkScript('new Date("abcd".length * 1000).toLocaleString("de-DE");')).message,
+      ).toContain("tla-ts can't");
       expect((await checkScript('Date.parse("Thu Jan 01 1970");')).message).toContain(
         "tla-ts can't",
       );
@@ -1437,6 +1437,41 @@ describe("compiles scripts by specializing ESCore", () => {
 
       it("stops at a locale that the program joins of parts", async () => {
         const source = 'new Intl.NumberFormat(["d", "e"].join("")).format(1);';
+        expect((await checkScript(source)).message).toContain("tla-ts can't");
+      });
+    },
+  );
+
+  describe.runIf(Reflect.has(globalThis, "Temporal"))(
+    "gives Date's locale strings through Intl.DateTimeFormat",
+    () => {
+      const getSource = (expected: string) => `
+      const date = new Date(0);
+      const result = [
+        date.toLocaleString("en-US", { timeZone: "UTC" }),
+        date.toLocaleDateString("en-US", { month: "long" }),
+        date.toLocaleTimeString("en-US", { hour: "numeric" }),
+        new Date(Number.NaN).toLocaleString("en-US"),
+      ].join("|");
+      if (result !== "${expected}") throw new Error(result);
+    `;
+
+      it("agrees with Node", async () => {
+        expect(
+          (await checkScript(getSource("1/1/1970, 12:00:00 AM|January|12 AM|Invalid Date")))
+            .message,
+        ).toBeUndefined();
+      });
+
+      it("rejects another result", async () => {
+        expect(
+          (await checkScript(getSource("1/1/1970, 12:00:00 PM|January|12 AM|Invalid Date")))
+            .message,
+        ).toContain(THREW);
+      });
+
+      it("stops at a time value that the program doesn't write", async () => {
+        const source = 'new Date("abcd".length * 1000).toLocaleString("en-US");';
         expect((await checkScript(source)).message).toContain("tla-ts can't");
       });
     },

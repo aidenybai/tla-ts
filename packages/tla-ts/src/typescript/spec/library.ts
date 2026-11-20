@@ -104,7 +104,17 @@ const GATED_GROUPS = [
 const EXTRA_TRIGGERS = new Map([
   ["83-regexp", ["match", "matchAll", "replace", "replaceAll", "search", "split"]],
   ["81-iterator.tla", ["values", "keys", "entries"]],
-  ["90-intl.tla", ["toLocaleString", "localeCompare", "toLocaleLowerCase", "toLocaleUpperCase"]],
+  [
+    "90-intl.tla",
+    [
+      "toLocaleString",
+      "toLocaleDateString",
+      "toLocaleTimeString",
+      "localeCompare",
+      "toLocaleLowerCase",
+      "toLocaleUpperCase",
+    ],
+  ],
   ["89", ["DurationFormat", "DateTimeFormat"]],
   ["82-date.tla", ["DateTimeFormat"]],
 ]);
@@ -311,7 +321,8 @@ export const assembleRuntime = (
 };
 
 // The locale-sensitive methods that ESCore runs as ECMA-402 does, through HostIntl: those that
-// format a Number or a BigInt or compare strings, and those that call their elements' or their own.
+// format a Number, a BigInt, or a Date or compare strings, and those that call their elements' or
+// their own.
 const LOCALE_FORMATTING = [
   ["Number", "toLocaleString"],
   ["BigInt", "toLocaleString"],
@@ -319,6 +330,9 @@ const LOCALE_FORMATTING = [
   ["TypedArray", "toLocaleString"],
   ["Object", "toLocaleString"],
   ["String", "localeCompare"],
+  ["Date", "toLocaleString"],
+  ["Date", "toLocaleDateString"],
+  ["Date", "toLocaleTimeString"],
 ];
 
 // A program's CallBuiltin, which runs the built-ins of the families given and stops at the others

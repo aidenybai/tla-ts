@@ -360,6 +360,11 @@ DateBuiltin(s, f, m, this, args, nt) ==
     [] m = "setTime" ->
          LET t == ThisTimeValue(s, this) IN IF IsAbrupt(t) THEN t ELSE
          LET n == ToNumber(t.s, Arg(args, 1)) IN IF IsAbrupt(n) THEN n ELSE SetDateValue(n.s, this, TimeClip(Val(n).value))
+    \* ECMA-402 §20.4.1 to §20.4.3, where the host has Intl.
+    [] m \in {"toLocaleDateString", "toLocaleString", "toLocaleTimeString"} /\ HostIntl(<<"none">>).found # "none" ->
+         LET t == ThisTimeValue(s, this) IN IF IsAbrupt(t) THEN t
+         ELSE IF NumIsNaN(Val(t).value) THEN Ok(t.s, Str(N("Invalid Date")))
+         ELSE DateToLocaleString(t.s, m, Val(t).value, Arg(args, 1), Arg(args, 2))
     \* Date.prototype.toDateString (§21.4.4.35), toString (§21.4.4.41), toTimeString (§21.4.4.42),
     \* toUTCString (§21.4.4.43), and toLocaleDateString, toLocaleString, and toLocaleTimeString
     \* (§21.4.4.38 to §21.4.4.40), which are toString as engine262 has them.

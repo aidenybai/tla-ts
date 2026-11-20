@@ -973,6 +973,55 @@ const getTemporalEntries = (literals: Literals) => {
   return entries;
 };
 
+// The entries of Date's toLocaleString, toLocaleDateString, and toLocaleTimeString of the time
+// values that the program's literals make, for each of its locales and option bags, keyed as
+// ESCore's DateToLocaleString keys them, where the host's time zone is ESCore's, UTC.
+const DATE_METHODS = ["toLocaleString", "toLocaleDateString", "toLocaleTimeString"];
+const getDateEntries = (literals: Literals, words: ReadonlySet<string>) => {
+  const entries = new Map<string, string>();
+  const service = SERVICES.find((candidate) => candidate.name === "DateTimeFormat");
+  const methods = DATE_METHODS.filter((method) => words.has(method));
+  if (
+    service === undefined ||
+    methods.length === 0 ||
+    !words.has("Date") ||
+    new Intl.DateTimeFormat().resolvedOptions().timeZone !== "UTC"
+  ) {
+    return entries;
+  }
+  const times = [...new Set([...getNumbers(literals), ...literals.times].map(getTimeClip))].filter(
+    (time) => !Number.isNaN(time),
+  );
+  const bags = getBags(service, literals);
+  for (const method of methods) {
+    for (const locales of getLocaleCandidates(
+      { ...service, name: method, callers: [] },
+      literals,
+    )) {
+      const requested = getCanonical(locales);
+      if (requested === undefined) continue;
+      for (const bag of bags) {
+        const read = getRead(service, bag);
+        if (read === undefined) continue;
+        for (const time of times) {
+          const answer = getAnswer(() =>
+            getValue(
+              Reflect.apply(Reflect.get(Date.prototype, method), new Date(time), [locales, bag]),
+            ),
+          );
+          if (answer !== undefined && entries.size <= MOST_ENTRIES) {
+            entries.set(
+              `<<"Date", <<<<${requested.map(getUnitsOf).join(", ")}>>, ${read}>>, "${method}", <<${getNumberArgument(time)}>>>>`,
+              answer,
+            );
+          }
+        }
+      }
+    }
+  }
+  return entries;
+};
+
 const LOCALE_OPTIONS: Record<string, Validator> = {
   language: isStringLike,
   script: isStringLike,
@@ -1099,9 +1148,13 @@ export const getHostIntl = (sourceFiles: readonly ts.SourceFile[], words: Readon
   const services = SERVICES.filter((service) =>
     [service.name, ...service.callers].some((word) => words.has(word)),
   );
-  const isNamed = ["Locale", "toLocaleLowerCase", "toLocaleUpperCase"].some((word) =>
-    words.has(word),
-  );
+  const isNamed = [
+    "Locale",
+    "toLocaleLowerCase",
+    "toLocaleUpperCase",
+    "toLocaleDateString",
+    "toLocaleTimeString",
+  ].some((word) => words.has(word));
   const literals = getLiterals(services.length === 0 && !isNamed ? [] : sourceFiles);
   for (const service of services) {
     if (service.name === "NumberFormat") {
@@ -1200,6 +1253,7 @@ export const getHostIntl = (sourceFiles: readonly ts.SourceFile[], words: Readon
       }
     }
   }
+  for (const [key, answer] of getDateEntries(literals, words)) entries.set(key, answer);
   if (words.has("supportedValuesOf")) {
     for (const key of [
       "calendar",

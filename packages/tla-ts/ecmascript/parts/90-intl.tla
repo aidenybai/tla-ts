@@ -864,6 +864,14 @@ IntlFallbackSymbol(s) ==
   ELSE LET made == NewSymbol(s, Str(N("IntlLegacyConstructedSymbol"))) IN
        [s |-> SetSlots(made.s, intl, [fallback |-> made.v]), v |-> made.v]
 
+\* Date.prototype.toLocaleString, toLocaleDateString, and toLocaleTimeString (ECMA-402 §20.4) of a
+\* time value that isn't NaN: CreateDateTimeFormat of the locales and the options, which reads them
+\* as Intl.DateTimeFormat does, and the format that HostIntl answers for it.
+DateToLocaleString(s, m, t, locales, options) ==
+  LET d == IntlConstruct(s, "DateTimeFormat", Intrinsic(s, "IntlDateTimeFormat"), locales, options) IN IF IsAbrupt(d) THEN d ELSE
+  LET answer == IntlAnswer(d.s, "Date", DateTimeFormatConfig(d.s, Val(d)), m, <<IntlNumberKey(IntlTimeClip(t))>>) IN
+  IF IsAbrupt(answer) THEN answer ELSE IntlResult(answer.s, m, Val(answer))
+
 IntlIntrinsics ==
   <<
      IntrinsicObject("Intl", "ObjectPrototype", "ordinary", [none |-> TRUE]),
