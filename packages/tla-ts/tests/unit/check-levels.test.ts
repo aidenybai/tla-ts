@@ -871,6 +871,222 @@ describe("level checking matches SANY", () => {
     );
   });
 
+  it("checks the proof of a labeled temporal theorem or step, which SANY skips", async () => {
+    await expect(
+      check({
+        source:
+          "---- MODULE M ----\nVARIABLE x\nTHEOREM T == t :: [](x = 0)\n<1>1. HAVE x = 1\n<1>2. CASE x = 1\n  <2>1. TAKE y \\in {x}\n  <2> QED\n<1>3. s :: [](x = 0)\n  <2>1. WITNESS x \\in {1}\n  <2> QED\n<1> QED\nInit == x = 0\nNext == x' = x\n====",
+        config: "INIT Init\nNEXT Next",
+      }),
+    ).rejects.toThrow(
+      createSanyError(
+        [
+          [
+            "line 9, col 9 to line 9, col 25",
+            "Non-constant TAKE, WITNESS, or HAVE for temporal goal.",
+          ],
+          [
+            "line 4, col 7 to line 4, col 16",
+            "Non-constant TAKE, WITNESS, or HAVE for temporal goal.",
+          ],
+          ["line 5, col 7 to line 5, col 16", "Non-constant CASE for temporal goal."],
+          [
+            "line 6, col 9 to line 6, col 22",
+            "Non-constant TAKE, WITNESS, or HAVE for temporal goal.",
+          ],
+        ].map(([location, message]) => ({ location: `${location} of module M`, message })),
+      ),
+    );
+  });
+
+  it("checks a proof with the NEW symbols and definitions in scope, as SANY does", async () => {
+    await expect(
+      check({
+        source:
+          "---- MODULE M ----\nVARIABLE x\nTHEOREM ASSUME NEW ACTION a PROVE TRUE\n<1>1. a' = 1\n  OBVIOUS\n<1>2. ASSUME NEW ACTION b PROVE TRUE\n  <2>1. b' = 1\n    OBVIOUS\n  <2> QED\n<1>3. SUFFICES ASSUME NEW ACTION c PROVE TRUE\n  OBVIOUS\n<1>4. c' = 1\n  OBVIOUS\n<1> QED\nTHEOREM ASSUME NEW VARIABLE v PROVE [](x = 0)\n<1> DEFINE D == x\n<1>1. HAVE v = 1\n<1>2. CASE D = 1\n<1> QED\nInit == x = 0\nNext == x' = x\n====",
+        config: "INIT Init\nNEXT Next",
+      }),
+    ).rejects.toThrow(
+      createSanyError(
+        [
+          ...[
+            "line 4, col 7 to line 4, col 8",
+            "line 7, col 9 to line 7, col 10",
+            "line 12, col 7 to line 12, col 8",
+          ].map((location) => [
+            location,
+            "Level error in applying operator ':\nThe level of argument 1 exceeds the maximum level allowed by the operator.",
+          ]),
+          [
+            "line 17, col 7 to line 17, col 16",
+            "Non-constant TAKE, WITNESS, or HAVE for temporal goal.",
+          ],
+          ["line 18, col 7 to line 18, col 16", "Non-constant CASE for temporal goal."],
+        ].map(([location, message]) => ({ location: `${location} of module M`, message })),
+      ),
+    );
+  });
+
+  it("checks an INSTANCE step in place and a proof's instance definitions after its steps, as SANY does", async () => {
+    const prime =
+      "Level error in applying operator ':\nThe level of argument 1 exceeds the maximum level allowed by the operator.";
+    const constant =
+      "Level error in instantiating module 'Inner':\nThe level of the expression or operator substituted for 'c' \nmust be at most 0.";
+    await expect(
+      check({
+        source:
+          "---- MODULE M ----\nVARIABLE x\n---- MODULE Inner ----\nCONSTANT c\nVARIABLE z\nIZ == z\n====\nI0 == INSTANCE Inner WITH c <- 1, z <- x\nTHEOREM ASSUME NEW VARIABLE y PROVE TRUE\n<1> N == INSTANCE Inner WITH c <- y, z <- (x')'\n<1>1. (x')' = 1\n  OBVIOUS\n<1> INSTANCE Inner WITH c <- x, z <- (x')'\n<1>2. (x')' = 1\n  OBVIOUS\n<1> QED\nInit == x = 0\nNext == x' = x\n====",
+        config: "INIT Init\nNEXT Next",
+      }),
+    ).rejects.toThrow(
+      createSanyError(
+        [
+          ["line 11, col 7 to line 11, col 11", prime],
+          ["line 13, col 38 to line 13, col 42", prime],
+          ["line 13, col 5 to line 13, col 42", constant],
+          ["line 14, col 7 to line 14, col 11", prime],
+          ["line 10, col 43 to line 10, col 47", prime],
+          ["line 10, col 5 to line 10, col 47", constant],
+        ].map(([location, message]) => ({ location: `${location} of module M`, message })),
+      ),
+    );
+  });
+
+  it("checks a LET instance in an ASSUME/PROVE or a proof step with the NEW symbols in scope, as SANY does", async () => {
+    await expect(
+      check({
+        source:
+          "---- MODULE M ----\nVARIABLE x\n---- MODULE Inner ----\nCONSTANT c\nVARIABLE z\nIZ == z\n====\nI0 == INSTANCE Inner WITH c <- 1, z <- x\nTHEOREM ASSUME NEW VARIABLE y PROVE LET N == INSTANCE Inner WITH c <- y, z <- x IN TRUE\nTHEOREM TRUE\n<1>1. LET N == INSTANCE Inner WITH c <- x, z <- x IN TRUE\n  OBVIOUS\n<1> QED\nTHEOREM ASSUME NEW VARIABLE w PROVE TRUE\n<1>1. LET N == INSTANCE Inner WITH c <- w, z <- x IN TRUE\n  OBVIOUS\n<1> QED\nTHEOREM U == LET N == INSTANCE Inner WITH c <- x, z <- x IN TRUE\nInit == x = 0\nNext == x' = x\n====",
+        config: "INIT Init\nNEXT Next",
+      }),
+    ).rejects.toThrow(
+      createSanyError(
+        [
+          "line 18, col 18 to line 18, col 56",
+          "line 9, col 41 to line 9, col 79",
+          "line 11, col 11 to line 11, col 49",
+          "line 15, col 11 to line 15, col 49",
+        ].map((location) => ({
+          location: `${location} of module M`,
+          message:
+            "Level error in instantiating module 'Inner':\nThe level of the expression or operator substituted for 'c' \nmust be at most 0.",
+        })),
+      ),
+    );
+  });
+
+  it("gives the definitions that a proof or a LET in a proof instantiates their levels, as SANY does", async () => {
+    await expect(
+      check({
+        source:
+          "---- MODULE M ----\nVARIABLE x\n---- MODULE Inner ----\nCONSTANT c\nVARIABLE z\nIZ == z'\nIC(a) == <<c, a>>\n====\nI0 == INSTANCE Inner WITH c <- 1, z <- x\nTHEOREM ASSUME NEW CONSTANT y PROVE TRUE\n<1> N == INSTANCE Inner WITH c <- y, z <- x\n<1>1. (N!IZ)' = 1\n  OBVIOUS\n<1>2. N!IC(x')' = 1\n  OBVIOUS\n<1> INSTANCE Inner WITH c <- 1, z <- x\n<1>3. (IZ)' = 1\n  OBVIOUS\n<1>4. LET K == INSTANCE Inner WITH c <- y, z <- x IN (K!IZ)' = 1\n  OBVIOUS\n<1> QED\nInit == x = 0\nNext == x' = x\n====",
+        config: "INIT Init\nNEXT Next",
+      }),
+    ).rejects.toThrow(
+      createSanyError(
+        [
+          "line 12, col 7 to line 12, col 13",
+          "line 14, col 7 to line 14, col 15",
+          "line 17, col 7 to line 17, col 11",
+          "line 19, col 54 to line 19, col 60",
+        ].map((location) => ({
+          location: `${location} of module M`,
+          message:
+            "Level error in applying operator ':\nThe level of argument 1 exceeds the maximum level allowed by the operator.",
+        })),
+      ),
+    );
+  });
+
+  it("reports a level error inside a theorem where a definition before it selects it, as SANY does", async () => {
+    await expect(
+      check({
+        source:
+          "---- MODULE M ----\nVARIABLE x\nB == \\E b \\in {x'} : b\nTHEOREM T == t :: (B /\\ [](x = 1))\nD == T!t /\\ (x' = 1 /\\ [](x = 1))\nInit == x = 0\nNext == x' = x\n====",
+        config: "INIT Init\nNEXT Next",
+      }),
+    ).rejects.toThrow(
+      createSanyError(
+        ["line 4, col 20 to line 4, col 33", "line 5, col 14 to line 5, col 32"].map(
+          (location) => ({
+            location: `${location} of module M`,
+            message: "\\land has both temporal formula and action as arguments.",
+          }),
+        ),
+      ),
+    );
+  });
+
+  it("checks a label it checked before as level-correct, as SANY does", async () => {
+    const sfError =
+      "Level error in applying operator $SF:\nThe level of argument 1 exceeds the maximum level allowed by the operator.";
+    await expect(
+      check({
+        source:
+          "---- MODULE M ----\nVARIABLE x\nB == \\E b \\in {x'} : b\nTHEOREM T == t :: (B /\\ [](x = 1))\n<1>1. SF_T!t(x' = 1)\n  OBVIOUS\n<1> QED\nD == SF_T!t(x' = 1)\nD2 == SF_T!t(x' = 1)\nInit == x = 0\nNext == x' = x\n====",
+        config: "INIT Init\nNEXT Next",
+      }),
+    ).rejects.toThrow(
+      createSanyError([
+        {
+          location: "line 4, col 20 to line 4, col 33 of module M",
+          message: "\\land has both temporal formula and action as arguments.",
+        },
+        { location: "line 9, col 7 to line 9, col 20 of module M", message: sfError },
+        { location: "line 5, col 7 to line 5, col 20 of module M", message: sfError },
+      ]),
+    );
+  });
+
+  it("checks a label selected through an instance as level-correct, as SANY does", async () => {
+    const exceeds = "The level of argument 1 exceeds the maximum level allowed by the operator.";
+    await expect(
+      check({
+        source:
+          "---- MODULE M ----\nVARIABLE x\n---- MODULE In ----\nVARIABLE v\nB == \\E b \\in {v'} : b\nTHEOREM T == t :: (B /\\ [](v = 1))\nC == c :: ([](v = 1))\n====\nI == INSTANCE In WITH v <- x'\nD == SF_I!T!t(x' = 1)\nE == (I!C!c)'\nInit == x = 0\nNext == x' = x\n====",
+        config: "INIT Init\nNEXT Next",
+      }),
+    ).rejects.toThrow(
+      createSanyError([
+        {
+          location: "line 6, col 20 to line 6, col 33 of module M",
+          message: "\\land has both temporal formula and action as arguments.",
+        },
+        {
+          location: "line 10, col 6 to line 10, col 21 of module M",
+          message: `Level error in applying operator $SF:\n${exceeds}`,
+        },
+        {
+          location: "line 11, col 6 to line 11, col 13 of module M",
+          message: `Level error in applying operator ':\n${exceeds}`,
+        },
+        {
+          location: "line 9, col 1 to line 9, col 29 of module M",
+          message:
+            "Level error in instantiating module 'In':\nThe level of the expression or operator substituted for 'v' \nmust be at most 1.",
+        },
+      ]),
+    );
+  });
+
+  it("reports no level error inside an expression selected through an instance, as SANY does", async () => {
+    await expect(
+      check({
+        source:
+          "---- MODULE M ----\nVARIABLE x\n---- MODULE In ----\nVARIABLE v\nT == t :: (v' = 1)\nTHEOREM U == u :: (v' = 1)\n====\nI == INSTANCE In WITH v <- x'\nE == I!T!t\nF == I!U!u\nInit == x = 0\nNext == x' = x\n====",
+        config: "INIT Init\nNEXT Next",
+      }),
+    ).rejects.toThrow(
+      createSanyError([
+        {
+          location: "line 8, col 1 to line 8, col 29 of module M",
+          message:
+            "Level error in instantiating module 'In':\nThe level of the expression or operator substituted for 'v' \nmust be at most 1.",
+        },
+      ]),
+    );
+  });
+
   it("reports an error in instantiating a module before a constant the configuration leaves out, like TLC", async () => {
     await expect(
       check({

@@ -1125,6 +1125,7 @@ const checkLevel = (node: SemanticNode, iteration: number, check: LevelCheck): b
           addError(check, range.location, "Non-constant bound of temporal PICK.");
         });
       }
+      // Deviation from SANY: SANY reads a LabelNode's unset level field here, so it skips the proof of a labeled temporal goal.
       if (body.level === TEMPORAL_LEVEL) checkTemporalProof(node.proof, check);
       return isCorrect;
     }

@@ -17,7 +17,7 @@ import {
   type SourceRange,
 } from "./ast";
 import { formatRange, type CodedSanyError, type SanyError } from "./errors";
-import { forEachChild } from "./instances";
+import { forEachChild, substitutionFrames } from "./instances";
 import { parenthesizedRanges } from "./parser";
 import { collectSemanticErrors, getBoundNames, getPatternNames, isBefore } from "./resolve";
 import { resolveSynonym } from "./tlc/jar-data";
@@ -62,16 +62,18 @@ export interface InstancedDefinition {
 export interface LetInstance extends InstanceSubstitutes {
   copies: Map<string, InstanceCopy>;
   getArgParams: () => Set<string>;
-  check: () => SanyError[];
 }
 
 export interface InstanceLevels {
   getCopy: (definition: Definition) => InstanceCopy | undefined;
   getLetInstance: (instance: Instance) => LetInstance | undefined;
   getInstanced: (copy: InstanceCopy) => InstancedDefinition;
+  checkInstantiation: (instance: Instance, instancer: string, scope: Scope) => SanyError[];
+  getInstanceDefinitions: (instance: Instance) => Definition[];
 }
 
 interface LevelContext {
+  module?: string;
   constants: Map<string, number>;
   variables: Set<string>;
   getDefinition: (name: string) => Definition | undefined;
@@ -290,6 +292,13 @@ const toFormals = (names: string[]) => names.map((name) => ({ name, arity: 0 }))
 const getFormals = (definition: Definition) =>
   definition.kind === "Operator" ? definition.params : [];
 
+const getSubstituted = (expression: Expression): Expression | undefined =>
+  substitutionFrames.has(expression)
+    ? expression
+    : expression.kind === "Let"
+      ? getSubstituted(expression.body)
+      : undefined;
+
 const getDefinitionBody = (definition: Definition): Expression =>
   definition.kind === "Function"
     ? {
@@ -352,6 +361,11 @@ const toOperatorLevels = (
   });
   return levels;
 };
+
+const addInstanceDefinitions = (instances: InstanceLevels, instance: Instance, scope: Scope) =>
+  instances
+    .getInstanceDefinitions(instance)
+    .forEach((definition) => scope.set(definition.name, { kind: "Let", definition, scope }));
 
 const createLetScope = (expression: LetExpression, scope: Scope) => {
   const inner: Scope = new Map(scope);
@@ -541,6 +555,8 @@ export const createLevelAnalyzer = (context: LevelContext) => {
   // SANY level-checks a LAMBDA once, so a recursive section's second pass keeps its first levels.
   const lambdaLevels = new Map<Expression, OperatorLevels>();
   const selectionLevels = new Map<Expression, LevelData>();
+  // SANY's LabelNode#levelCheck is true for a label it level-checked before.
+  const checkedLabels = new WeakSet<Expression>();
   const errors: CodedSanyError[] = [];
   const messages: LevelMessage[] = [];
 
@@ -925,6 +941,11 @@ export const createLevelAnalyzer = (context: LevelContext) => {
       }),
     );
     const inner = createLetScope(expression, scope);
+    expression.instances?.forEach((instance) => {
+      if (!context.instances.getLetInstance(instance)) {
+        addInstanceDefinitions(context.instances, instance, inner);
+      }
+    });
     if (expression.recursive) {
       getRecursiveSections(scope, expression).forEach((section) =>
         checkRecursiveSection(section.members),
@@ -934,7 +955,13 @@ export const createLevelAnalyzer = (context: LevelContext) => {
       analyzeDefinition(definition, inner),
     );
     const body = analyze(expression.body, inner);
-    const instanceErrors = instances?.flatMap((instance) => instance.check());
+    const instancer = context.module;
+    const instanceErrors =
+      instancer === undefined
+        ? []
+        : expression.instances?.flatMap((instance) =>
+            context.instances.checkInstantiation(instance, instancer, inner),
+          );
     instanceErrors?.forEach((error) => errors.push(error));
     const data = {
       level: body.level,
@@ -1193,13 +1220,26 @@ export const createLevelAnalyzer = (context: LevelContext) => {
           [expression.subscript, expression.action],
           scope,
         );
-      case "Label":
-        return analyze(expression.body, scope);
+      case "Label": {
+        const data = analyze(expression.body, scope);
+        if (checkedLabels.has(expression)) return { ...data, isCorrect: true };
+        checkedLabels.add(expression);
+        return data;
+      }
       case "Selection": {
         const selected = expression.expression;
         const known = selectionLevels.get(selected);
-        if (known) return known;
-        const data = analyze(selected, scope);
+        if (known) return checkedLabels.has(selected) ? { ...known, isCorrect: true } : known;
+        const reported = errors.length;
+        const pending = messages.length;
+        const analyzed = analyze(selected, scope);
+        // SANY level-checks an instanced module itself, so it reports these errors there and finds its labels correct.
+        const substituted = getSubstituted(selected);
+        if (substituted) {
+          errors.splice(reported);
+          messages.splice(pending);
+        }
+        const data = substituted?.kind === "Label" ? { ...analyzed, isCorrect: true } : analyzed;
         selectionLevels.set(selected, data);
         return data;
       }
@@ -1529,6 +1569,16 @@ export const analyzeAssumeProve = (
   return data;
 };
 
+const addNewSymbols = (statement: Expression | AssumeProve, scope: Scope) => {
+  if (statement.kind !== "AssumeProve") return scope;
+  statement.assumptions.forEach((assumption) => {
+    if (assumption.kind !== "NewSymbol") return;
+    const level = NEW_SYMBOL_LEVELS[assumption.level];
+    scope.set(assumption.name, { kind: "Formal", arity: assumption.arity, level });
+  });
+  return scope;
+};
+
 export const checkModuleLevels = (
   module: Module,
   context: LevelContext,
@@ -1559,24 +1609,26 @@ export const checkModuleLevels = (
     facts.forEach((fact) => {
       if (fact.kind !== "ModuleFact") analyzer.analyze(fact, scope);
     });
+  const stepLevels = new Map<ProofStep, number>();
+  // Deviation from SANY: SANY reads a LabelNode's unset level field here, so it skips the proof of a labeled temporal goal.
   const checkTemporalGoal = (proof: Proof | undefined): SanyError[] =>
     proof?.kind !== "Steps"
       ? []
       : proof.steps.flatMap((step) => {
           const location = formatRange(step.statement);
-          const isConstant = () => getStepLevel(step, new Map()) === 0;
+          const isConstant = stepLevels.get(step) === CONSTANT_LEVEL;
           if (
             step.body.kind === "Have" ||
             step.body.kind === "Take" ||
             step.body.kind === "Witness"
           ) {
-            return isConstant()
+            return isConstant
               ? []
               : [{ location, message: "Non-constant TAKE, WITNESS, or HAVE for temporal goal." }];
           }
           if (step.body.kind === "Case") {
             return [
-              ...(isConstant()
+              ...(isConstant
                 ? []
                 : [{ location, message: "Non-constant CASE for temporal goal." }]),
               ...checkTemporalGoal(step.proof),
@@ -1591,17 +1643,35 @@ export const checkModuleLevels = (
     }
     if (proof?.kind !== "Steps") return [];
     const inner = new Map(scope);
-    return proof.steps.flatMap((step) => {
+    const checkInstance = (instance: Instance) => {
+      instance.substitutions.forEach((substitution) =>
+        analyzer.toOperand(substitution.expression, inner),
+      );
+      return [
+        ...analyzer.errors.splice(0),
+        ...context.instances.checkInstantiation(instance, module.name, inner),
+      ];
+    };
+    // SANY's NonLeafProofNode#levelCheck checks the instances of a proof's definitions after its steps.
+    const definedInstances: Instance[] = [];
+    const errors = proof.steps.flatMap((step) => {
       const body = step.body;
       if (body.kind === "Use" || body.kind === "Hide") checkFacts(body.facts, inner);
+      if (body.kind === "Instance") addInstanceDefinitions(context.instances, body, inner);
       if (body.kind === "Define") {
         body.definitions.forEach((definition) => {
-          if (definition.kind === "Instance") return;
+          if (definition.kind === "Instance") {
+            definedInstances.push(definition);
+            addInstanceDefinitions(context.instances, definition, inner);
+            return;
+          }
           inner.set(definition.name, { kind: "Let", definition, scope: inner });
           analyzer.analyzeDefinition(definition, inner);
         });
       }
-      const isTemporal = getStepLevel(step, inner) === TEMPORAL_LEVEL;
+      const level = getStepLevel(step, inner);
+      stepLevels.set(step, level);
+      const isTemporal = level === TEMPORAL_LEVEL;
       const pickErrors =
         body.kind === "Pick" && body.bounds.length > 0 && isTemporal
           ? body.bounds
@@ -1617,13 +1687,23 @@ export const checkModuleLevels = (
                   : [],
               )
           : [];
-      return [
+      const isSuffices = body.kind === "Assert" && body.isSuffices;
+      const stepErrors = [
         ...analyzer.errors.splice(0),
-        ...checkProof(step.proof, inner),
+        ...(body.kind === "Instance" ? checkInstance(body) : []),
+        ...checkProof(
+          step.proof,
+          body.kind === "Assert" && !isSuffices
+            ? addNewSymbols(body.statement, new Map(inner))
+            : inner,
+        ),
         ...pickErrors,
         ...(step.proof?.kind === "Steps" && isTemporal ? checkTemporalGoal(step.proof) : []),
       ];
+      if (isSuffices) addNewSymbols(body.statement, inner);
+      return stepErrors;
     });
+    return [...errors, ...definedInstances.flatMap(checkInstance)];
   };
   const statementLevels = new Map<Expression | AssumeProve, number>();
   const getStatementLevel = (statement: Expression | AssumeProve) => {
@@ -1709,9 +1789,8 @@ export const checkModuleLevels = (
               const level = getStatementLevel(theorem.statement);
               reported.push(
                 ...analyzer.errors.splice(0),
-                ...checkProof(theorem.proof, new Map()),
+                ...checkProof(theorem.proof, addNewSymbols(theorem.statement, new Map())),
                 ...(level === TEMPORAL_LEVEL ? checkTemporalGoal(theorem.proof) : []),
-                ...analyzer.errors.splice(0),
               );
             },
           })),

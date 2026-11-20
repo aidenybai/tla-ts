@@ -1101,6 +1101,31 @@ Spec == Init /\\ [][Next]_x
     expect(report).toEqual({ text: "", isFailed: false });
   });
 
+  it("checks the proof of a labeled temporal theorem or step, which SANY skips", () => {
+    const report = getReport({
+      M: "---- MODULE M ----\nVARIABLE x\nTHEOREM T == t :: [](x = 0)\n<1>1. HAVE x = 1\n<1>2. s :: [](x = 0)\n  <2>1. CASE x = 1\n    OBVIOUS\n  <2> QED\n<1> QED\n====\n",
+    });
+    expect(report).toEqual({
+      text: joinLines([
+        "Semantic errors:",
+        "",
+        "*** Errors: 2",
+        "",
+        "line 6, col 9 to line 6, col 18 of module M",
+        "",
+        "Non-constant CASE for temporal goal.",
+        "",
+        "",
+        "line 4, col 7 to line 4, col 16 of module M",
+        "",
+        "Non-constant TAKE, WITNESS, or HAVE for temporal goal.",
+        "",
+        "",
+      ]),
+      isFailed: true,
+    });
+  });
+
   it("accepts a definition after a field named THEOREM, AXIOM or DOMAIN, which SANY rejects", () => {
     const report = getReport({
       M: "---- MODULE M ----\nr == [a |-> 1]\nF == r.THEOREM\nG == [r EXCEPT !.AXIOM = 1]\nH == r.DOMAIN\nI == 1\n====\n",
