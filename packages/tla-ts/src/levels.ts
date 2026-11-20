@@ -1404,8 +1404,13 @@ export const createLevelAnalyzer = (context: LevelContext) => {
       }
       case "Subexpression": {
         const selection = context.goalSelections?.get(expression);
-        return selection
-          ? analyzeGoalSelection(
+        if (!selection) return createData();
+        const instanced =
+          selection.kind === "Lambda" ? undefined : getGoalInstanced(expression, scope);
+        // SANY selects a clause of an instanced theorem through the instance's substitutions.
+        return instanced
+          ? analyzeSubstituted(selection, instanced, scope)
+          : analyzeGoalSelection(
               selection,
               toOperands(
                 expression.selectors.flatMap((selector) =>
@@ -1414,8 +1419,7 @@ export const createLevelAnalyzer = (context: LevelContext) => {
                 scope,
               ),
               scope,
-            )
-          : createData();
+            );
       }
     }
   };
@@ -1665,6 +1669,22 @@ export const createLevelAnalyzer = (context: LevelContext) => {
       );
     }
     return toOperatorLevels(definition.name, formals, data, nonLeibniz);
+  };
+
+  const getGoalInstanced = (
+    expression: Expression & { kind: "Subexpression" },
+    scope: Scope,
+  ): Instanced | undefined => {
+    const nameCount = expression.selectors.findIndex((selector) => selector.kind !== "Name");
+    const names = expression.selectors
+      .slice(0, nameCount === -1 ? undefined : nameCount)
+      .flatMap((selector) => (selector.kind === "Name" ? [selector.name] : []));
+    const entry = names
+      .map((_name, index) => scope.get(names.slice(0, names.length - index).join("!")))
+      .find((candidate) => candidate?.kind === "Let");
+    if (entry?.kind !== "Let") return undefined;
+    const copy = letCopies.get(entry.definition) ?? context.instances.getCopy(entry.definition);
+    return copy && { definition: entry.definition, copy, params: [] };
   };
 
   const getSelectedInstance = (substituted: Expression): Instanced => {
