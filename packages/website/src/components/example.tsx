@@ -170,7 +170,8 @@ export const ExampleSource = () => {
       highlights={state.example.highlights}
       onMorphEnd={state.finishMorph}
     >
-      <CodeContent />
+      {/* A new example is other code, not this code in another language, so it does not morph. */}
+      <CodeContent key={state.example.fileName} />
       <CodeActions>
         <Tooltip>
           <TooltipTrigger
