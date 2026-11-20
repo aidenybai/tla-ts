@@ -1844,6 +1844,31 @@ describe("level checking matches SANY", () => {
     },
   );
 
+  it.each([
+    ["\\A y : l(y) :: (y' = q)", "T!l(x')", "line 4, col 7 to line 4, col 13"],
+    ["\\A y : (y' = q)", "T!2!(x')", "line 4, col 7 to line 4, col 14"],
+    ["\\A y : l(y) :: (ENABLED (y' = q))", "T!l(x')", "line 4, col 7 to line 4, col 13"],
+    ["\\A y : l(y) :: (y = q)", "(T!l([](x = 1)))'", "line 4, col 8 to line 4, col 21"],
+  ])(
+    "reports a level error in applying a proof's selection of its goal's clause to arguments, as SANY does: %s",
+    async (clause, step, location) => {
+      await expect(
+        check({
+          source: `---- MODULE M ----\nVARIABLE x\nTHEOREM T == ASSUME NEW CONSTANT q, ${clause} PROVE TRUE\n<1>1. ${step}\n  OBVIOUS\n<1> QED\nInit == x = 0\nNext == x' = x\n====`,
+          config: "INIT Init\nNEXT Next",
+        }),
+      ).rejects.toThrow(
+        createSanyError([
+          {
+            location: `${location} of module M`,
+            message:
+              "Level error in applying operator LAMBDA:\nThe level of argument 1 exceeds the maximum level allowed by the operator.",
+          },
+        ]),
+      );
+    },
+  );
+
   it("checks a label selected from a step's statement, as SANY does", async () => {
     const exceeds = "The level of argument 1 exceeds the maximum level allowed by the operator.";
     await expect(

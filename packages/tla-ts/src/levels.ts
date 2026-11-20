@@ -926,10 +926,9 @@ export const createLevelAnalyzer = (context: LevelContext) => {
     const reported = errors.length;
     const pending = messages.length;
     const operand = toOperand(selection, scope);
-    const data = operand.kind === "Operator" ? applyDefined(operand.data, operands) : operand.data;
     errors.splice(reported);
     messages.splice(pending);
-    return data;
+    return operand.kind === "Operator" ? applyDefined(operand.data, operands) : operand.data;
   };
 
   const applyBuiltin = (
