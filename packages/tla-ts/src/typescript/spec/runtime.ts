@@ -529,7 +529,11 @@ const DEFINITIONS = [
   IF ~IsString(id) \\/ id.value \\notin DOMAIN ModuleNode(referrer).targets
   THEN Assert(FALSE, "tla-ts can't require a module other than a file that a string names")
   ELSE RequireFile(s, ModuleNode(referrer).targets[id.value])`,
-  `Unsupported(s, what) == Assert(FALSE, "tla-ts can't run a part of ECMAScript that ESCore leaves out")`,
+  // A part of ECMAScript that ESCore leaves out, by the reason that ESCore gives after
+  // "Unsupported: ", or none.
+  `Unsupported(s, what) ==
+  Assert(FALSE, IF Len(what) <= 13 THEN "tla-ts can't run a part of ECMAScript that ESCore leaves out"
+                ELSE "tla-ts can't model " \\o UnitsText(SubSeq(what, 14, Len(what))))`,
 ];
 
 // The characters that a TLA+ string can hold, as a string spells each, by code unit.

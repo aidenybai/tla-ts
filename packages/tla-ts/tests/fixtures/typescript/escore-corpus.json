@@ -5984,18 +5984,18 @@
           "name": "throws the TypeError of an Intl getter on another kind of object (2)",
           "source": "\n      const holder: { [key: string]: unknown } = {};\n      const descriptor = Object.getOwnPropertyDescriptor(Intl.NumberFormat.prototype, \"format\")!;\n      let name = \"none\";\n      try {\n        descriptor.get!.call(new Intl.NumberFormat());\n      } catch (error) {\n        name = (error as Error).name;\n      }\n      if (name !== \"TypeError\") throw new Error(name);\n    ",
           "thrown": "none",
-          "stop": "tla-ts can't run a part of ECMAScript that ESCore leaves out"
+          "stop": "tla-ts can't model an Intl constructor, which reads locale data"
         },
         {
           "name": "constructs Intl's objects of literal locales and options (1)",
           "source": "\n      const holder: { [key: string]: unknown } = {};\n      const names = new Intl.DisplayNames(undefined, { type: \"language\" });\n      const locale = new Intl.Locale(\"en-Latn\");\n      const format = new Intl.NumberFormat([\"de-DE\", \"en\"], { maximumFractionDigits: 100 });\n      const result = [\n        Object.getPrototypeOf(names) === Intl.DisplayNames.prototype,\n        Object.prototype.toString.call(locale),\n        typeof format.format,\n      ].join(\",\");\n      if (result !== \"true,[object Intl.Locale],function\") throw new Error(result);\n    ",
-          "stop": "tla-ts can't run a part of ECMAScript that ESCore leaves out"
+          "stop": "tla-ts can't model an Intl constructor, which reads locale data"
         },
         {
           "name": "constructs Intl's objects of literal locales and options (2)",
           "source": "\n      const holder: { [key: string]: unknown } = {};\n      const names = new Intl.DisplayNames(undefined, { type: \"language\" });\n      const locale = new Intl.Locale(\"en-Latn\");\n      const format = new Intl.NumberFormat([\"de-DE\", \"en\"], { maximumFractionDigits: 100 });\n      const result = [\n        Object.getPrototypeOf(names) === Intl.DisplayNames.prototype,\n        Object.prototype.toString.call(locale),\n        typeof format.format,\n      ].join(\",\");\n      if (result !== \"true,[object Object],function\") throw new Error(result);\n    ",
           "thrown": "true,[object Intl.Locale],function",
-          "stop": "tla-ts can't run a part of ECMAScript that ESCore leaves out"
+          "stop": "tla-ts can't model an Intl constructor, which reads locale data"
         },
         {
           "name": "reads the prototypes of the iterators that strings, maps, sets, and regexps make (1)",
@@ -7768,13 +7768,13 @@
         {
           "name": "constructs Intl's objects without locales or options (1)",
           "source": "\n      const holder: { [key: string]: unknown } = {};\n      const collator = new Intl.Collator();\n      const format = Intl.NumberFormat(undefined, undefined);\n      const segmenter = new Intl.Segmenter([]);\n      const result = [\n        Object.getPrototypeOf(collator) === Intl.Collator.prototype,\n        Object.isExtensible(collator),\n        Object.prototype.toString.call(format),\n        Object.getPrototypeOf(segmenter) === Intl.Segmenter.prototype,\n        Object.keys(collator).length,\n      ].join(\",\");\n      if (result !== \"true,true,[object Intl.NumberFormat],true,0\") throw new Error(result);\n    ",
-          "stop": "tla-ts can't run a part of ECMAScript that ESCore leaves out"
+          "stop": "tla-ts can't model an Intl constructor, which reads locale data"
         },
         {
           "name": "constructs Intl's objects without locales or options (2)",
           "source": "\n      const holder: { [key: string]: unknown } = {};\n      const collator = new Intl.Collator();\n      const format = Intl.NumberFormat(undefined, undefined);\n      const segmenter = new Intl.Segmenter([]);\n      const result = [\n        Object.getPrototypeOf(collator) === Intl.Collator.prototype,\n        Object.isExtensible(collator),\n        Object.prototype.toString.call(format),\n        Object.getPrototypeOf(segmenter) === Intl.Segmenter.prototype,\n        Object.keys(collator).length,\n      ].join(\",\");\n      if (result !== \"true,true,[object Object],true,0\") throw new Error(result);\n    ",
           "thrown": "true,true,[object Intl.NumberFormat],true,0",
-          "stop": "tla-ts can't run a part of ECMAScript that ESCore leaves out"
+          "stop": "tla-ts can't model an Intl constructor, which reads locale data"
         },
         {
           "name": "throws the TypeError of an Intl method on another kind of object (1)",
@@ -7784,7 +7784,7 @@
           "name": "throws the TypeError of an Intl method on another kind of object (2)",
           "source": "\n      const holder: { [key: string]: unknown } = {};\n      const format = Intl.RelativeTimeFormat.prototype.format;\n      const names: string[] = [];\n      const run = (callback: () => unknown) => {\n        try {\n          callback();\n          names.push(\"none\");\n        } catch (error) {\n          names.push((error as Error).name);\n        }\n      };\n      run(() => format.call(new Intl.RelativeTimeFormat(), 1, \"day\"));\n      if (names.join() !== \"TypeError\") throw new Error(names.join());\n    ",
           "thrown": "none",
-          "stop": "tla-ts can't run a part of ECMAScript that ESCore leaves out"
+          "stop": "tla-ts can't model an Intl object's method, which reads locale data"
         },
         {
           "name": "throws the error of Intl's literal locales and options that a constructor rejects (1)",
@@ -7793,18 +7793,18 @@
         {
           "name": "throws the error of Intl's literal locales and options that a constructor rejects (2)",
           "source": "\n      const holder: { [key: string]: unknown } = {};\n      const make = () => new Intl.NumberFormat(undefined, { maximumFractionDigits: 101 });\n      let name = \"none\";\n      try {\n        make();\n      } catch (error) {\n        name = (error as Error).name;\n      }\n      if (name !== \"RangeError\") throw new Error(name);\n    ",
-          "stop": "tla-ts can't run a part of ECMAScript that ESCore leaves out"
+          "stop": "tla-ts can't model an Intl constructor, which reads locale data"
         },
         {
           "name": "throws the error of Intl's literal locales and options that a constructor rejects (3)",
           "source": "\n      const holder: { [key: string]: unknown } = {};\n      const make = () => new Intl.NumberFormat(\"en\", { style: \"currency\" });\n      let name = \"none\";\n      try {\n        make();\n      } catch (error) {\n        name = (error as Error).name;\n      }\n      if (name !== \"TypeError\") throw new Error(name);\n    ",
-          "stop": "tla-ts can't run a part of ECMAScript that ESCore leaves out"
+          "stop": "tla-ts can't model an Intl constructor, which reads locale data"
         },
         {
           "name": "throws the error of Intl's literal locales and options that a constructor rejects (4)",
           "source": "\n      const holder: { [key: string]: unknown } = {};\n      const make = () => new Intl.NumberFormat(\"en\", { style: \"currency\" });\n      let name = \"none\";\n      try {\n        make();\n      } catch (error) {\n        name = (error as Error).name;\n      }\n      if (name !== \"none\") throw new Error(name);\n    ",
           "thrown": "TypeError",
-          "stop": "tla-ts can't run a part of ECMAScript that ESCore leaves out"
+          "stop": "tla-ts can't model an Intl constructor, which reads locale data"
         },
         {
           "name": "flattens an array whose elements are all arrays, or none of them",
@@ -9499,13 +9499,13 @@
         {
           "name": "reads the function that a Collator's compare gives, bound to the Collator (1)",
           "source": "\n      const holder: { [key: string]: unknown } = {};\n      const collator = new Intl.Collator();\n      const compare = collator.compare;\n      const result = [\n        compare.length,\n        compare === collator.compare,\n        compare === new Intl.Collator().compare,\n        Object.getOwnPropertyNames(compare).join(\"|\"),\n        Object.getPrototypeOf(compare) === Function.prototype,\n      ].join(\",\");\n      if (result !== \"2,true,false,length|name,true\") throw new Error(result);\n    ",
-          "stop": "tla-ts can't run a part of ECMAScript that ESCore leaves out"
+          "stop": "tla-ts can't model an Intl object's method, which reads locale data"
         },
         {
           "name": "reads the function that a Collator's compare gives, bound to the Collator (2)",
           "source": "\n      const holder: { [key: string]: unknown } = {};\n      const collator = new Intl.Collator();\n      const compare = collator.compare;\n      const result = [\n        compare.length,\n        compare === collator.compare,\n        compare === new Intl.Collator().compare,\n        Object.getOwnPropertyNames(compare).join(\"|\"),\n        Object.getPrototypeOf(compare) === Function.prototype,\n      ].join(\",\");\n      if (result !== \"2,true,true,length|name,true\") throw new Error(result);\n    ",
           "thrown": "2,true,false,length|name,true",
-          "stop": "tla-ts can't run a part of ECMAScript that ESCore leaves out"
+          "stop": "tla-ts can't model an Intl object's method, which reads locale data"
         },
         {
           "name": "gives the empty array of Intl's functions that read locales, or the error they throw (1)",
@@ -16957,7 +16957,7 @@
           "name": "stops at a calendar that Node takes",
           "source": "\n        const date = new Temporal.PlainDate(2000, 1, 1, \"chinese\");\n        if (date.year !== 2000) throw new Error(\"year \" + date.year);\n      ",
           "thrown": "year 1999",
-          "stop": "tla-ts can't run a part of ECMAScript that ESCore leaves out"
+          "stop": "tla-ts can't model the chinese and dangi calendars"
         },
         { "name": "agrees with Node", "replace": ["= \"none", "= \"RangeError"] }
       ]
@@ -16974,7 +16974,7 @@
         {
           "name": "stops at a named time zone that it has no table of",
           "source": "\n        const zoned = new Temporal.ZonedDateTime(0n, \"Asia/Taipei\");\n        if (zoned.hour !== 8) throw new Error(\"hour \" + zoned.hour);\n      ",
-          "stop": "tla-ts can't run a part of ECMAScript that ESCore leaves out"
+          "stop": "tla-ts can't model a time zone that the host's table leaves out"
         },
         { "name": "agrees with Node", "replace": ["T3", "T2"] }
       ]
@@ -17658,12 +17658,12 @@
         {
           "name": "rejects options that a later call shares",
           "thrown": "seen locale type style,short,false,true,en-US,upper",
-          "stop": "tla-ts can't run a part of ECMAScript that ESCore leaves out"
+          "stop": "tla-ts can't model an Intl object's method, which reads locale data"
         },
         {
           "name": "agrees with Node",
           "replace": [",tru", ",fals"],
-          "stop": "tla-ts can't run a part of ECMAScript that ESCore leaves out"
+          "stop": "tla-ts can't model an Intl object's method, which reads locale data"
         }
       ]
     },
@@ -19134,7 +19134,7 @@
         {
           "name": "stops in another locale",
           "source": "const text = new Temporal.PlainDate(2024, 12, 26).toLocaleString(\"de\");",
-          "stop": "tla-ts can't run a part of ECMAScript that ESCore leaves out"
+          "stop": "tla-ts can't model a locale other than English"
         },
         { "name": "agrees with Node", "replace": ["26/12", "12/26"] }
       ]
@@ -19549,15 +19549,12 @@
       "isModule": false,
       "source": "\n      const dtf = new Intl.DateTimeFormat(\"en\");\n      const fractional = new Intl.DateTimeFormat(\"en\", {\n        minute: \"numeric\",\n        second: \"numeric\",\n        fractionalSecondDigits: 2,\n      });\n      const timed = new Intl.DateTimeFormat(undefined, {\n        hour: \"numeric\",\n        minute: \"numeric\",\n        second: \"numeric\",\n      });\n      const period = new Intl.DateTimeFormat(\"en\", { dayPeriod: \"narrow\" });\n      const inputs = [\n        new Date(2019, 7, 10, 1, 2, 3, 234),\n        new Date(2017, 11, 12, 12, 30),\n        new Date(2017, 11, 12, 22),\n      ];\n      let thrown = \"none\";\n      try {\n        timed.format(NaN);\n      } catch (error) {\n        thrown = error instanceof RangeError ? \"range\" : \"other\";\n      }\n      const seen = [\n        dtf.format(0),\n        fractional.format(inputs[0]),\n        timed.format(-0.9),\n        timed.format(13 * 3600000 + 5),\n        period.format(inputs[1]),\n        period.format(inputs[2]),\n        thrown,\n      ].join(\"|\");\n      if (seen !== \"1/1/1970|02:03.23|12:00:00 AM|1:00:00 PM|n|at night|range\") throw new Error(\"seen \" + seen);\n    ",
       "runs": [
-        {
-          "name": "agrees with Node",
-          "stop": "tla-ts can't run a part of ECMAScript that ESCore leaves out"
-        },
+        { "name": "agrees with Node", "stop": "tla-ts can't model an object that Intl unwraps" },
         {
           "name": "rejects noon's long day period where the narrow one is n",
           "replace": ["|n", "|noon"],
           "thrown": "seen 1/1/1970|02:03.23|12:00:00 AM|1:00:00 PM|n|at night|range",
-          "stop": "tla-ts can't run a part of ECMAScript that ESCore leaves out"
+          "stop": "tla-ts can't model an object that Intl unwraps"
         }
       ]
     },

@@ -1686,6 +1686,17 @@ const result = [read(() => box.f()), read(() => box.inner.g()), read(() => value
     });
   });
 
+  describe("names the part of ECMAScript that ESCore leaves out where it stops", () => {
+    it("stops at Atomics.wait with no agent to notify it", async () => {
+      const result = await checkScript(
+        "Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0);",
+      );
+      expect(result.message).toContain(
+        "tla-ts can't model Atomics.wait with no agent to notify it",
+      );
+    });
+  });
+
   describe("stops where a program reads what the host picks at random or reads from its clock", () => {
     const RANDOM = "tla-ts can't run Math.random, whose value the host picks at random";
     const CLOCK = "tla-ts can't read the host's clock, whose time each run reads anew";
