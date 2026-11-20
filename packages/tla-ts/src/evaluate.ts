@@ -1417,7 +1417,7 @@ const compileTailStep = (
   if (expression.kind !== "Apply") return undefined;
   const operator = operators.get(expression.operator);
   const entered = operator === undefined ? undefined : entries.get(operator);
-  if (expression.operator !== name && entered === undefined) return undefined;
+  if (getKeyName(expression.operator) !== name && entered === undefined) return undefined;
   return {
     kind: "Call",
     expression,
