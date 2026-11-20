@@ -980,6 +980,21 @@ describe("the floating-point conversions round as Z3 does", () => {
   });
 });
 
+describe("fpa2bv, as Z3 5.3.2 builds its terms", () => {
+  it("keeps the negation of true and false", () => {
+    expect(
+      run([
+        "(declare-const p Bool)",
+        "(assert (or p (fp.isNegative (_ NaN 2 3))))",
+        "(assert (or p (fp.isPositive (fp #b0 #b11 #b01))))",
+        "(apply fpa2bv)",
+      ]),
+    ).toEqual([
+      "(goals\n(goal\n  (or p (and (not true) false))\n  (or p (and (not true) true))\n  :precision precise :depth 1)\n)",
+    ]);
+  });
+});
+
 describe("the optimizer releases what Z3 releases", () => {
   // optsmt::add rewrites with a local th_rewriter, whose cache dies with it.
   it("keeps no term of the objective rewriter's cache", () => {
