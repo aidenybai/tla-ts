@@ -247,7 +247,9 @@ interface TokenPattern {
   regex: RegExp;
 }
 
-const createPatterns = (patterns: [string, string, string][]) => {
+type PatternSource = [kind: string, firsts: string, rest: string];
+
+const createPatterns = (patterns: PatternSource[]) => {
   const tokenPatterns = patterns.map((pattern): TokenPattern => ({
     firsts: pattern[1],
     kind: getKind(pattern[0]),
@@ -267,7 +269,7 @@ const DIGITS = "0123456789";
 const UPPERCASE = "ABCDEFGHIJKLMNOPQRSTUVWXYZ";
 const LETTERS_BUT_SW = `${UPPERCASE}${UPPERCASE.toLowerCase()}`.replace(/[SW]/g, "");
 const BEGIN_MODULE = "---+ *MODULE";
-const IDENTIFIER_PATTERNS: [string, string, string][] = [
+const IDENTIFIER_PATTERNS: PatternSource[] = [
   ["IDENTIFIER", "_", String.raw`\w*[A-Za-z]\w*`],
   ["IDENTIFIER", DIGITS, String.raw`\w*[A-Za-z]\w*`],
   ["IDENTIFIER", "WS", String.raw`(?:[a-zA-EG-Z_0-9]\w*)?`],
@@ -275,7 +277,7 @@ const IDENTIFIER_PATTERNS: [string, string, string][] = [
   ["IDENTIFIER", LETTERS_BUT_SW, String.raw`\w*`],
   ["IDENTIFIER", "@ℕℤℝ", ""],
 ];
-const getJunctionPatterns = (kind: string, junction: string): [string, string, string][] => [
+const getJunctionPatterns = (kind: string, junction: string): PatternSource[] => [
   [kind, DIGITS, `[A-Za-z0-9]*${junction}`],
   [kind, "WS", `[a-zA-EG-Z0-9][A-Za-z0-9]*${junction}`],
   [kind, LETTERS_BUT_SW, `[A-Za-z0-9]*${junction}`],
