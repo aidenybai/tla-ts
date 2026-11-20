@@ -13,6 +13,7 @@ import { ACTION_LEVEL, CONSTANT_LEVEL, TEMPORAL_LEVEL, VARIABLE_LEVEL } from "./
 interface DefinitionNames extends Pick<
   Environment,
   | "definitions"
+  | "theorems"
   | "substitutions"
   | "constants"
   | "bodyValues"
@@ -90,7 +91,7 @@ interface Edge {
   callee: Definition;
   isOverridden: boolean;
   isLevelCounted: boolean;
-  isOperatorArgument: boolean;
+  isBoundCounted: boolean;
 }
 
 const collectLocalFacts = (
@@ -169,12 +170,15 @@ const collectLocalFacts = (
           callee: definition,
           isOverridden,
           isLevelCounted: isInnerLevelCounted,
-          isOperatorArgument:
+          // TLC's getLevelBound reads neither an operator argument's body nor a theorem's.
+          isBoundCounted: !(
             isOperatorArgument ||
             kind === "OperatorReference" ||
             (kind === "Identifier" &&
               definition.kind === "Operator" &&
-              definition.params.length > 0),
+              definition.params.length > 0) ||
+            environment.theorems.has(target)
+          ),
         });
       } else {
         const builtin = environment.builtins.get(target);
@@ -330,9 +334,7 @@ export const createDefinitionFacts = (environment: DefinitionNames): DefinitionF
   const levels = closeRows(local, words, levelEdges, TEMPORAL_LEVEL_FLAGS);
   const startupEdges = edges.map(
     (own) =>
-      new Int32Array(
-        own.filter((edge) => !edge.isOverridden && !edge.isOperatorArgument).map(getId),
-      ),
+      new Int32Array(own.filter((edge) => !edge.isOverridden && edge.isBoundCounted).map(getId)),
   );
   const startup = closeRows(local, words, startupEdges, ABOVE_CONSTANT_BOUND);
   const purityEdges = edges.map(
@@ -377,7 +379,7 @@ const getExpressionsRow = (expressions: Expression[], environment: Environment) 
     const callee = getRow(edge.callee, environment);
     if (!edge.isOverridden) {
       row[0] |= callee[0] & READ_MASK;
-      if (!edge.isOperatorArgument) row[0] |= callee[0] & ABOVE_CONSTANT_BOUND;
+      if (edge.isBoundCounted) row[0] |= callee[0] & ABOVE_CONSTANT_BOUND;
       if (edge.isLevelCounted) row[0] |= callee[0] & TEMPORAL_LEVEL_FLAGS;
       for (let word = 1; word < words; word++) row[word] |= callee[word];
     }

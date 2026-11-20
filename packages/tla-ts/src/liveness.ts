@@ -178,6 +178,8 @@ export const getLevel = (
     if (environment.variableIndex.has(name)) return VARIABLE_LEVEL;
     if (environment.constants.has(name)) return CONSTANT_LEVEL;
     const definition = getDefinition(name, environment);
+    // TLC's getLevelBound counts a theorem's arguments but not its body.
+    if (definition && isLevelBound && environment.theorems.has(name)) return CONSTANT_LEVEL;
     if (definition && isLevelBound) {
       return Math.max(
         ...getDefinitionExpressions(definition).map((item) => getBodyLevel(item, item, undefined)),

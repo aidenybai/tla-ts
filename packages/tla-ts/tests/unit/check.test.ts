@@ -5050,6 +5050,16 @@ describe("initial predicate and next-state relation match TLC", () => {
       "SPECIFICATION Spec",
       "The operator T, which equals line 6, col 1 to line 6, col 29 of module M,\ncannot be used as a spec",
     ],
+    [
+      "THEOREM T == x \\in {0, 1}\nInit2 == T\nSpec == Init2 /\\ [][Next]_x",
+      "SPECIFICATION Spec",
+      "The operator T, which equals line 6, col 1 to line 6, col 25 of module M,\ncannot be used as a spec",
+    ],
+    [
+      `${theoremBase}I == INSTANCE Base WITH v <- x\nR == I!Foo\nSpec == Init /\\ [][Next]_x /\\ R`,
+      "SPECIFICATION Spec",
+      "The operator I!Foo, which equals line 12, col 1 to line 12, col 30 of module M,\ncannot be used as a spec",
+    ],
   ])("rejects the theorem that %j reaches, as TLC does", async (definitions, config, message) => {
     await expect(check({ source: getTwoStateSource(definitions), config })).rejects.toThrow(
       new TlaConfigError(message),
@@ -5116,6 +5126,38 @@ describe("initial predicate and next-state relation match TLC", () => {
     expect(result.violation?.trace[0].state._ALIASEvalError).toBe(
       "The alias T specified in the configuration file\nis not defined in the specification.",
     );
+  });
+
+  it("checks in the initial state a property that reaches an action-level theorem, as TLC's level bound skips it", async () => {
+    const result = await check({
+      source: getTwoStateSource("THEOREM T2 == x' = x\nP == ~T2"),
+      config: "INIT Init\nNEXT Next\nPROPERTY P",
+    });
+    expect([result.status, result.failure?.message]).toEqual([
+      "error",
+      "In evaluation, the identifier x is either undefined or not an operator.\nline 6, col 15 to line 6, col 15 of module M",
+    ]);
+  });
+
+  it.each(["THEOREM T == x \\in {0, 1}\nC == T", "THEOREM T2 == x' = x\nC == T2"])(
+    "substitutes the definition in %j for a constant, as TLC's level bound skips its theorem",
+    async (definitions) => {
+      const result = await check({
+        source: getTwoStateSource(`CONSTANT c\n${definitions}`),
+        config: "INIT Init\nNEXT Next\nCONSTANT c <- C",
+      });
+      expect(result.status).toBe("success");
+    },
+  );
+
+  it("evaluates at startup a definition that reaches a theorem, as TLC's level bound skips it", async () => {
+    const prints: string[] = [];
+    await check({
+      source: `---- MODULE M ----\nEXTENDS Naturals, TLC\nVARIABLE x\nInit == x = 0\nNext == x' = (x + 1) % 2\nTHEOREM T == x \\in {0, 1}\nC == PrintT("c") /\\ T\n====`,
+      config: "INIT Init\nNEXT Next",
+      onPrint: (text) => prints.push(text),
+    });
+    expect(prints).toEqual(['"c"']);
   });
 
   it("takes an atom of a temporal property to the level TLC bounds its LET by", async () => {

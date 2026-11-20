@@ -1833,6 +1833,7 @@ export const createEnvironment = (
   );
   const facts = createDefinitionFacts({
     definitions,
+    theorems,
     substitutions,
     constants,
     bodyValues,
@@ -1865,7 +1866,8 @@ export const createEnvironment = (
     recursiveSections,
   };
   const analyzer = createLevelAnalyzer({
-    constants: new Map([...constants.keys()].map((key) => [key, 0])),
+    // TLC's getLevelBound counts a theorem's arguments but not its body.
+    constants: new Map([...constants.keys(), ...theorems.keys()].map((key) => [key, 0])),
     variables: new Set([
       ...variables,
       ...["TLCGet", "Trace", "CounterExample"].filter((name) => builtins.has(name)),
