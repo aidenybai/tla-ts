@@ -90,6 +90,13 @@ const worker = new Worker(
           : spec.mode === "lowered"
             ? escore + "(a)"
             : line,
+      // A native guard's domain is ESCore's, and in the lowered mode the domain is ESCore's alone.
+      ).replace(/^  IF n\\.type # "bail" (.*) THEN (\\{.*\\}) ELSE (\\w+)\\(a\\)$/gm, (line, test, native, escore) =>
+        spec.mode === "native"
+          ? "  LET domain == " + escore + "(a) IN IF n.type # \\"bail\\" " + test + " THEN IF domain = " + native + " THEN domain ELSE Assert(FALSE, \\"the native call differs from ESCore's\\") ELSE domain"
+          : spec.mode === "lowered"
+            ? "  " + escore + "(a)"
+            : line,
       // A lowered model's lowered converters check that each gives what lowering the objects of
       // its converter gives.
       ).replace(/^LowerConvert(\\d+)\\(x\\) == (.*)$/gm, (line, number, body) =>
@@ -673,10 +680,18 @@ describe("checks a module's exported functions as a model on ESCore", () => {
       export const isShort = () => queue.length <= 2;
     `;
 
-    it("gives what ESCore gives in every call, as TLC counts", async () => {
+    it("gives what ESCore gives in every call and every guard, as TLC counts", async () => {
       const counts = ["deadlock", 18, 22];
       expect(getCounts(await checkModel(source, "spec.ts", "native"))).toEqual(counts);
       expect(getCounts(await checkModel(source, "spec.ts", "compared"))).toEqual(counts);
+    });
+
+    it("tells a union that puts the other Set's elements first", async () => {
+      const result = await checkModel(source, "spec.ts", "native", [
+        'm = "union" -> LSet(a \\o SelectSeq(b, LAMBDA e : ~LHas(a, e)))',
+        'm = "union" -> LSet(SelectSeq(b, LAMBDA e : ~LHas(a, e)) \\o a)',
+      ]);
+      expect(result.message).toContain("the native call differs from ESCore's");
     }, 120_000);
 
     it("tells a subset test that leaves out a Set of the same size", async () => {

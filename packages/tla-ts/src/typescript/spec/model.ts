@@ -219,6 +219,15 @@ interface Application {
   args: string[];
 }
 
+interface Guard {
+  // The function the module gets appended that gives the set a guard chooses a parameter from.
+  name: string;
+  // The parameters of the action that the guard reads, which the function takes in order.
+  parameters: string[];
+  // The native operator that gives the set, if the lowered model has one.
+  native: string | undefined;
+}
+
 interface Converter {
   // The definition of an operator of a state and a TLA+ value of the domain, which gives the state
   // and the JavaScript value that the value stands for.
@@ -659,7 +668,27 @@ export const compileModelToEscore = (
     const name = `$tlaTsGuard${appended.length}`;
     appended.push(`const ${name} = (${parameters.join(", ")}) => ${set.getText()};`);
     entries.add(name);
-    return { name, parameters };
+    // A lowered model evaluates the set natively, as the function does, where it can.
+    return { name, parameters, native: native?.getExpressionOperator(set, parameters) };
+  };
+  // The native call of an action's guard in the lowered state model, with the parameters it reads
+  // of the values given, converted and lowered, or undefined.
+  const getNativeGuardCall = (
+    action: string,
+    guard: Guard,
+    model: string,
+    values: (index: number) => string,
+  ) => {
+    const parameters = exported.get(action)?.parameters ?? [];
+    const args = guard.parameters.map((name) => {
+      const index = parameters.indexOf(name);
+      const converter = boundConverters.get(`${action} ${index}`);
+      const lowering = converter === undefined ? undefined : lowerings.get(converter);
+      return lowering === undefined ? undefined : `${lowering}(${values(index)})`;
+    });
+    return guard.native === undefined || args.some((arg) => arg === undefined)
+      ? undefined
+      : `${guard.native}(${[model, "FALSE", ...args].join(", ")})`;
   };
   // An expression of today's spec with the parts that read today's state variables in their
   // place: the set a guard chooses a parameter from, which the module's function gives. The names
@@ -769,11 +798,25 @@ export const compileModelToEscore = (
         `tla-ts can't pass the parameters that ${action}'s guard reads to ESCore yet`,
       );
     }
-    const operator = define(
+    const escore = define(
       "GuardDomain",
       (name) =>
         `${name}(a) ==\n  LET ${read.map((entry, index) => `e${index + 1} == ${entry.converter}(${index === 0 ? getState("a[1]") : `e${index}.s`}, a[${index + 2}])`).join("\n      ")}${read.length === 0 ? "" : "\n     "} g == GuardElements(${read.length === 0 ? getState("a[1]") : `e${read.length}.s`}, ${getUnits(guard.name)}, <<${read.map((_, index) => `e${index + 1}.v`).join(", ")}>>)\n  IN {Shown(g.state, e, 0) : e \\in g.elements}`,
     );
+    // A Set of primitives that the guard gives natively shows its elements as ESCore's do, which
+    // no state's objects decide.
+    const nativeGuard = getNativeGuardCall(action, guard, "a[1]", (index) => {
+      const at = guard.parameters.indexOf(exported.get(action)?.parameters[index] ?? "");
+      return `a[${at + 2}]`;
+    });
+    const operator =
+      nativeGuard === undefined
+        ? escore
+        : define(
+            "NativeGuardDomain",
+            (name) =>
+              `${name}(a) ==\n  LET n == ${nativeGuard} IN\n  IF n.type # "bail" /\\ n.v.type = "lset" /\\ LPrimitives(n.v) THEN {Shown(ModelBase, e, 0) : e \\in Range(n.v.elems)} ELSE ${escore}(a)`,
+          );
     guardChoices.set(`${action} ${position}`, guard);
     return {
       kind: "Apply",
@@ -799,7 +842,7 @@ export const compileModelToEscore = (
   // The converter of each action's parameter by "action position", from the domain today's Next
   // chooses it from, and the guards that choose a parameter from a set instead.
   const boundConverters = new Map<string, string>();
-  const guardChoices = new Map<string, { name: string; parameters: string[] }>();
+  const guardChoices = new Map<string, Guard>();
   const rewriteBound = (bound: Bound, application: Application | undefined): Bound => {
     if (bound.pattern.kind !== "Name" || application === undefined) {
       throw new TlaTypeScriptError("tla-ts can't bind these parameters on ESCore yet");
@@ -866,23 +909,38 @@ export const compileModelToEscore = (
   const native = lowered === undefined ? undefined : getNativeFunctions(file, lowered);
   // The native call of a function in the lowered state model, with the arguments of the values
   // given, converted and lowered, or undefined where the function runs on ESCore only.
-  const getNativeCall = (name: string, model: string, values: (index: number) => string) => {
+  // A call of one function with another's arguments, as a property's target takes its own.
+  const getNativeCall = (
+    name: string,
+    model: string,
+    values: (index: number) => string,
+    argumentsOf = name,
+  ) => {
     const operator = native?.getOperator(name);
-    const parameters = exported.get(name)?.parameters ?? [];
-    const converters = parameters.map((_, index) =>
-      guardChoices.has(`${name} ${index}`) ? undefined : boundConverters.get(`${name} ${index}`),
-    );
-    return operator === undefined || converters.some((converter) => converter === undefined)
-      ? undefined
-      : `${operator}(${[
-          model,
-          "FALSE",
-          ...converters.map((converter, index) =>
-            converter !== undefined && lowerings.get(converter) !== undefined
-              ? `${lowerings.get(converter)}(${values(index)})`
-              : `LowerConverted(${converter}(ModelBase, ${values(index)}))`,
-          ),
-        ].join(", ")})`;
+    const parameters = exported.get(argumentsOf)?.parameters ?? [];
+    // A parameter that a guard chooses is the element of the guard's native Set that shows as the
+    // value given, and the call bails where the guard bails or no element does.
+    const args = parameters.map((_, index) => {
+      const guard = guardChoices.get(`${argumentsOf} ${index}`);
+      const converter = boundConverters.get(`${argumentsOf} ${index}`);
+      if (guard !== undefined) {
+        const call = getNativeGuardCall(argumentsOf, guard, model, values);
+        return call === undefined
+          ? undefined
+          : `LET g == ${call} IN IF g.type = "bail" \\/ g.v.type # "lset" \\/ ~LPrimitives(g.v) \\/ ~\\E e \\in Range(g.v.elems) : Shown(ModelBase, e, 0) = ${values(index)} THEN LBail ELSE CHOOSE e \\in Range(g.v.elems) : Shown(ModelBase, e, 0) = ${values(index)}`;
+      }
+      return converter === undefined
+        ? undefined
+        : lowerings.get(converter) !== undefined
+          ? `${lowerings.get(converter)}(${values(index)})`
+          : `LowerConverted(${converter}(ModelBase, ${values(index)}))`;
+    });
+    if (operator === undefined || args.some((arg) => arg === undefined)) return undefined;
+    const names = args.map((_, index) => `nva${index + 1}`);
+    const call = `${operator}(${[model, "FALSE", ...names].join(", ")})`;
+    return args.length === 0
+      ? call
+      : `(LET ${args.map((arg, index) => `${names[index]} == ${arg}`).join("\n      ")}\n  IN IF ${names.map((name) => `${name}.type = "bail"`).join(" \\/ ")} THEN LBail ELSE ${call})`;
   };
   // A step's or a check's arguments, converted in turn from a[1], the state, with the
   // parameters' values from a[2] on.
@@ -1027,15 +1085,16 @@ export const compileModelToEscore = (
       (operatorName) =>
         `${operatorName}(a) ==\n  LET before == ${lowered === undefined ? `BeforeOf(a[2], a[1], <<${shownNames.map(getUnits).join(", ")}>>)` : `MaterializeValue(ModelState(a[2]), LObj(<<${shownNames.map(getUnits).join(", ")}>>, <<${shownNames.map((shownName) => `a[1].${shownName}`).join(", ")}>>))`}\n  IN HoldsOf(before.s, ${getUnits(name)}, <<before.v>>)`,
     );
-    const nativeOperator =
-      exported.get(name)?.parameters.length === 1 ? native?.getOperator(name) : undefined;
+    // A function of no parameters, which ignores the state before, runs on the state after alone.
+    const arity = exported.get(name)?.parameters.length;
+    const nativeOperator = arity === 0 || arity === 1 ? native?.getOperator(name) : undefined;
     const checked =
       nativeOperator === undefined
         ? operator
         : define(
             "NativeStepCheck",
             (operatorName) =>
-              `${operatorName}(a) ==\n  LET n == ${nativeOperator}(a[2], FALSE, LObj(<<${shownNames.map(getUnits).join(", ")}>>, <<${shownNames.map((shownName) => `a[1].${shownName}`).join(", ")}>>)) IN\n  IF n.type = "bail" THEN ${operator}(a) ELSE n.v = True`,
+              `${operatorName}(a) ==\n  LET n == ${nativeOperator}(a[2], FALSE${arity === 0 ? "" : `, LObj(<<${shownNames.map(getUnits).join(", ")}>>, <<${shownNames.map((shownName) => `a[1].${shownName}`).join(", ")}>>)`}) IN\n  IF n.type = "bail" THEN ${operator}(a) ELSE n.v = True`,
           );
     return `ApplyTo(${checked}, <<${variable}, ${variable}'>>)`;
   };
@@ -1062,11 +1121,20 @@ export const compileModelToEscore = (
     else if (tags.has("leadsTo")) {
       const target = tags.get("leadsTo")?.split(/\s/)[0] ?? "";
       entries.add(target);
-      const operator = define(
+      const escore = define(
         "Target",
         (operatorName) =>
           `${operatorName}(a) ==\n  LET converted == ${getArguments(name, getState("a[1]"), (index) => `a[${index + 2}]`).replaceAll("\n", "\n      ")}\n  IN HoldsOf(converted.s, ${getUnits(target)}, converted.args)`,
       );
+      const targetCall = getNativeCall(target, "a[1]", (index) => `a[${index + 2}]`, name);
+      const operator =
+        targetCall === undefined
+          ? escore
+          : define(
+              "NativeTarget",
+              (operatorName) =>
+                `${operatorName}(a) ==\n  LET n == ${targetCall} IN\n  IF n.type = "bail" THEN ${escore}(a) ELSE n.v = True`,
+            );
       steps.push(
         `${name} == ${quantify(bounds, `(${predicate}) ~> ApplyTo(${operator}, <<${variable}${names.map((bound) => `, ${bound}`).join("")}>>)`)}`,
       );

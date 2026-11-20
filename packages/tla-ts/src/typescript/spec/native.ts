@@ -305,6 +305,9 @@ export interface NativeFunctions {
   definitions: string[];
   // The operator that runs a module function natively, Native(m, w, p1, ..., pn), if it can.
   getOperator: (name: string) => string | undefined;
+  // The operator that evaluates an expression of the module natively, as a function of the
+  // parameters named would, Native(m, w, p1, ..., pn), if it can.
+  getExpressionOperator: (node: ts.Expression, parameters: string[]) => string | undefined;
 }
 
 // The native operators of a lowered model's module functions, by the module's top-level
@@ -1235,8 +1238,28 @@ export const getNativeFunctions = (
     return done;
   };
 
+  const getExpressionOperator = (node: ts.Expression, parameters: string[]) => {
+    const params = parameters.map(() => fresh("p"));
+    const scope: Scope = {
+      m: "m",
+      w: "w",
+      body: node,
+      fresh: new Set(),
+      locals: new Map(parameters.map((parameter, index) => [parameter, params[index]])),
+    };
+    const value = compileExpression(node, scope);
+    if (value === undefined) return undefined;
+    const operator = fresh("Native");
+    const v = fresh("v");
+    definitions.push(
+      `${operator}(${["m", "w", ...params].join(", ")}) ==\n  LET ${v} == ${value.text} IN IF ${v}.type = "bail" THEN LBail ELSE ${result("m", "w", v)}`,
+    );
+    return operator;
+  };
+
   return {
     definitions,
     getOperator: (name) => compileFunction(name)?.operator,
+    getExpressionOperator,
   };
 };
