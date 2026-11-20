@@ -23820,7 +23820,7 @@
           "name": "chooses any value of a function that only a declaration file declares",
           "status": "invariant-violation",
           "trace": [{ "total": "0" }, { "total": "-3" }],
-          "stop": "tla-ts can't compile a module as a script"
+          "stop": "tla-ts can't load the module ./prices"
         }
       ]
     },
