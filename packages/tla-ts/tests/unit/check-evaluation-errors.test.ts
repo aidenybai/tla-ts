@@ -1098,6 +1098,17 @@ describe("evaluation errors match TLC", () => {
     );
   });
 
+  it("names the return type of a synchronized Java override applied to no arguments, like TLC", async () => {
+    const getError = (method: string, result: string) =>
+      `Attempted to apply the operator overridden by the Java method\npublic static synchronized tlc2.value.impl.${result} tlc2.module.TLCExt.${method}(tlc2.value.impl.Value),\nbut it produced the following error:\nhandle's method type (IValue[])${result} but found ()Value`;
+    const none = "CONSTANT N\nASSUME PrintT(N)";
+    const cases = [
+      ["TLC, TLCExt", none, "N <- TLCFP", getError("tlcFingerprint", "IntValue")],
+      ["TLC, TLCExt", none, "N <- TLCModelValue", getError("tlcModelValue", "Value")],
+    ];
+    expect(await getOverrideMessages(cases)).toEqual(cases.map((item) => item[3]));
+  });
+
   it.each([
     ["1.7.4" as const, "Append(v, s)"],
     [undefined, "Append(s, v)"],

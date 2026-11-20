@@ -230,7 +230,7 @@ export const checkJavaArity = (builtin: Builtin, signature: string): Builtin => 
   signature,
   evaluate: (args, context) => {
     if (args.length === builtin.arity) return builtin.evaluate(args, context);
-    const result = signature.split(" ")[2].split(".").pop();
+    const result = /(\w+) \S+\(/.exec(signature)?.[1];
     if (builtin.arity === 0) {
       throw createJavaOverrideError(
         signature,
