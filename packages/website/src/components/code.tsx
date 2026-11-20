@@ -11,6 +11,7 @@ import { CopyButton } from "./copy-button";
 import { RunIcon } from "./run-icon";
 import { SearchCell } from "./search-cell";
 import { Button } from "./ui/button";
+import { Tooltip, TooltipContent, TooltipTrigger } from "./ui/tooltip";
 
 const NO_HIGHLIGHTS = {};
 const NO_PATH: SearchState[] = [];
@@ -150,17 +151,26 @@ interface RunProps {
 
 export const CodeRun = (props: RunProps) => {
   const isHydrated = useIsHydrated();
+  const label = props.isRunning ? "Running" : props.isDone ? "Run again" : "Run";
   return (
-    <Button
-      variant={props.isDone || props.isRunning ? "outline" : "success"}
-      size="icon"
-      aria-label={props.isRunning ? "Running" : props.isDone ? "Run again" : "Run"}
-      disabled={!isHydrated}
-      aria-disabled={props.isRunning}
-      onClick={() => !props.isRunning && props.onRun()}
-    >
-      <RunIcon isRunning={props.isRunning} isDone={props.isDone} />
-    </Button>
+    <Tooltip>
+      <TooltipTrigger
+        closeOnClick={false}
+        render={
+          <Button
+            variant={props.isDone || props.isRunning ? "outline" : "success"}
+            size="icon"
+            aria-label={label}
+            disabled={!isHydrated}
+            aria-disabled={props.isRunning}
+            onClick={() => !props.isRunning && props.onRun()}
+          />
+        }
+      >
+        <RunIcon isRunning={props.isRunning} isDone={props.isDone} />
+      </TooltipTrigger>
+      <TooltipContent>{label}</TooltipContent>
+    </Tooltip>
   );
 };
 
