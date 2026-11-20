@@ -889,8 +889,7 @@ const checkReference = (
     const selector = selectors[nameLength - 1];
     if (selector.kind !== "Name") return undefined;
     name = nameLength === 1 ? selector.name : `${name}!${selector.name}`;
-    const goal =
-      (nameLength === 1 ? lookupLocal(scope, name)?.goal : undefined) ?? getGoal(name, unit);
+    const goal = lookupLocal(scope, name)?.goal ?? getGoal(name, unit);
     if (goal) {
       const node = checkSelection(expression, selectors, nameLength, goal, unit, use);
       if (!node) emptyExpressions.add(expression);
@@ -1241,10 +1240,13 @@ const resolveDefinitions = (
       functionArity: getFunctionArity(definition),
     };
     if (isInstantiated(definition)) {
+      const instanced = lookupLocal(current, definition.name);
       return {
         ...local,
         params: getParamArities(definition),
-        functionArity: lookupLocal(current, definition.name)?.functionArity,
+        functionArity: instanced?.functionArity,
+        goal: instanced?.goal,
+        isSubstituted: instanced?.isSubstituted,
       };
     }
     if (isKey(definition.name)) return { ...local, params: getParamArities(definition) };
@@ -1896,7 +1898,8 @@ const isSubexpressionReported = (
   const symbolIndex = names.findIndex(
     (_name, index) =>
       index > 0 &&
-      (findSymbol(names.slice(0, index + 1).join("!"), unit)?.kind ?? "Instance") !== "Instance",
+      (findBinding(names.slice(0, index + 1).join("!"), scope, unit)?.kind ?? "Instance") !==
+        "Instance",
   );
   const isInstance =
     names.length > 1 &&
@@ -1911,7 +1914,7 @@ const isSubexpressionReported = (
     return true;
   }
   const name = names.slice(0, symbolIndex + 1).join("!");
-  const symbol = symbolIndex > 0 ? findSymbol(name, unit) : undefined;
+  const symbol = symbolIndex > 0 ? findBinding(name, scope, unit) : undefined;
   const argumentCount = expression.selectors
     .slice(0, symbolIndex + 1)
     .flatMap((selector) => ("args" in selector ? selector.args : [])).length;
