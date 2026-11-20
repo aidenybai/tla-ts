@@ -698,6 +698,27 @@ describe("INSTANCE matches TLC", () => {
     },
   );
 
+  it.each([undefined, 1_000_000])(
+    "keeps a primed variable of an instance in its ENABLED apart from the outer variable of the same name, as TLC's Context.lookup does (maxSetSize %s)",
+    async (maxSetSize) => {
+      const result = await check({
+        source:
+          "---- MODULE M ----\nEXTENDS Integers\nVARIABLE c\nInit == c \\in 0..2\nNext == UNCHANGED c\nH == INSTANCE Hi WITH c <- 1 - c\nInv == H!Can\n====",
+        config: "INIT Init\nNEXT Next\nINVARIANT Inv",
+        maxSetSize,
+        loadModule: (name) =>
+          name === "Hi"
+            ? "---- MODULE Hi ----\nEXTENDS Integers\nVARIABLE c\nA == LET k == c IN k' = k + 1 /\\ k' > k\nCan == ENABLED A\n===="
+            : undefined,
+      });
+      expect([result.status, result.generatedStates, result.distinctStates]).toEqual([
+        "success",
+        6,
+        3,
+      ]);
+    },
+  );
+
   it.each([
     [
       "A == c' = c + 1 /\\ UNCHANGED (LET k == <<d>> IN k)\nCan == ENABLED <<A>>_<<c, d>>",

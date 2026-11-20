@@ -259,9 +259,7 @@ const mentionsName = (expression: Expression, names: Set<string>): boolean => {
 
 const getVariableIndex = (variables: string[], declared: string[]) => {
   const index = new Map(variables.map((name, position) => [name, position]));
-  new Set(declared).forEach((name) =>
-    index.set(getEnabledVariableName(name), index.get(name) ?? index.size),
-  );
+  new Set(declared).forEach((name) => index.set(getEnabledVariableName(name), index.size));
   return index;
 };
 
