@@ -439,6 +439,37 @@ const BUILTIN_DECLS: [string, number, number, number][] = [
   ["acos-u", FAMILY_ARITH, OP_U_ACOS, SORT_REAL],
 ];
 
+// arith_decl_plugin declares these once for Int and once for Real arguments. Each entry is the
+// declaration BUILTIN_DECLS lacks, with its range, its small id and whether it takes Reals.
+const SORTED_ARITH_DECLS: [string, number, number, number, boolean][] = [
+  ["<=", OP_LE, SORT_BOOL, 13, true],
+  [">=", OP_GE, SORT_BOOL, 14, true],
+  ["<", OP_LT, SORT_BOOL, 15, true],
+  [">", OP_GT, SORT_BOOL, 16, true],
+  ["+", OP_ADD, SORT_REAL, 21, true],
+  ["-", OP_SUB, SORT_REAL, 22, true],
+  ["*", OP_MUL, SORT_REAL, 23, true],
+  ["-", OP_UMINUS, SORT_REAL, 25, true],
+  ["to_real", OP_TO_REAL, SORT_REAL, 44, true],
+  ["to_int", OP_TO_INT, SORT_INT, 46, false],
+  ["^", OP_POWER, SORT_REAL, 49, true],
+  ["abs", OP_ABS, SORT_REAL, 51, true],
+];
+
+const INT_ARITH_DECLS = new Int32Array(BUILTIN_DECLS.length).fill(-1);
+const REAL_ARITH_DECLS = new Int32Array(BUILTIN_DECLS.length).fill(-1);
+SORTED_ARITH_DECLS.forEach((entry, index) => {
+  const decl = BUILTIN_DECLS.length + index;
+  INT_ARITH_DECLS[entry[1]] = entry[4] ? entry[1] : decl;
+  REAL_ARITH_DECLS[entry[1]] = entry[4] ? decl : entry[1];
+});
+
+const hasRealArg = (sorts: Int32Array, args: number[], start: number) => {
+  for (let index = start; index < args.length; index++)
+    if (sorts[args[index]] === SORT_REAL) return true;
+  return false;
+};
+
 const Z3_BASIC_FAMILY = 0;
 const Z3_LABEL_FAMILY = 1;
 const Z3_PATTERN_FAMILY = 2;
@@ -746,6 +777,17 @@ export class AstManager {
         range: builtin[3],
         isSkolem: false,
         smallId: Z3_SMALL_IDS.get(builtin[2]) ?? -1,
+        parameters: [],
+      });
+    for (const entry of SORTED_ARITH_DECLS)
+      this.funcDecls.push({
+        name: entry[0],
+        family: FAMILY_ARITH,
+        op: entry[1],
+        domain: [],
+        range: entry[2],
+        isSkolem: false,
+        smallId: entry[3],
         parameters: [],
       });
     // Each has one signature in Z3, and a model's tables hash its declaration as a user's.
@@ -1997,8 +2039,15 @@ export class AstManager {
     return id;
   }
 
-  mkApp(decl: number, args: number[], sort: number, start = 0) {
-    const funcDecl = this.funcDecls[decl];
+  mkApp(requestedDecl: number, args: number[], sort: number, start = 0) {
+    const requested = this.funcDecls[requestedDecl];
+    const decl =
+      requested.family === FAMILY_ARITH && REAL_ARITH_DECLS[requested.op] !== -1
+        ? hasRealArg(this.sorts, args, start)
+          ? REAL_ARITH_DECLS[requested.op]
+          : INT_ARITH_DECLS[requested.op]
+        : requestedDecl;
+    const funcDecl = decl === requestedDecl ? requested : this.funcDecls[decl];
     if (
       decl === OP_NUM ||
       decl === OP_ALGEBRAIC_NUM ||

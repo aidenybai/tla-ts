@@ -365,6 +365,24 @@ describe("e-matching, as Z3 5.3.2 counts its steps", () => {
     expect(getOutput("20.0000001")).toEqual(["unsat", "(:rlimit 661)"]);
     expect(getOutput("18446744073709551616")).toEqual(["unsat", "(:rlimit 641)"]);
   });
+
+  it("keeps a real sum out of the code tree of an integer sum", () => {
+    expect(
+      run([
+        "(set-option :auto_config false)",
+        "(set-option :smt.mbqi true)",
+        "(declare-fun p (Int) Bool)",
+        "(declare-fun a () Int)",
+        "(declare-fun b () Int)",
+        "(declare-fun x () Real)",
+        "(assert (<= a x))",
+        "(assert (forall ((x0 Int)) (p (+ 1 x0))))",
+        "(assert (=> (<= b x) (>= 2 b)))",
+        "(check-sat)",
+        "(get-info :rlimit)",
+      ]),
+    ).toEqual(["sat", "(:rlimit 848)"]);
+  });
 });
 
 const getThresholdScript = (options: string[], check: string, query = "(get-info :rlimit)") => [
