@@ -1092,7 +1092,6 @@ export const createEnvironment = (
             location,
             resolution: LOCAL_RESOLUTION,
           };
-    // An expression substitute is leveled through its substitution definition, where its selections resolve. An operator substitute stays as written, since SANY checks the levels of its arguments.
     const substitutes = {
       params: instance.params,
       substitutions: new Map(
@@ -1668,7 +1667,6 @@ export const createEnvironment = (
       module,
       constants,
       variables,
-      // SANY levels a nested module's references to its enclosing modules' declarations as declarations.
       enclosing: {
         constants: new Map(
           [...scope.symbols.values()].flatMap((symbol): [string, number][] =>

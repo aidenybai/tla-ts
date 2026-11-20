@@ -1407,7 +1407,6 @@ export const createLevelAnalyzer = (context: LevelContext) => {
         if (!selection) return createData();
         const instanced =
           selection.kind === "Lambda" ? undefined : getGoalInstanced(expression, scope);
-        // SANY selects a clause of an instanced theorem through the instance's substitutions.
         return instanced
           ? analyzeSubstituted(selection, instanced, scope)
           : analyzeGoalSelection(
