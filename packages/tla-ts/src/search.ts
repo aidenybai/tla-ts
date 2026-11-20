@@ -706,7 +706,7 @@ const getPossiblePredicates = (names: string[], environment: Environment) =>
     }
     getConfigDefinition("possible", name, environment);
     const possible = createNamedIdentifier(name, environment);
-    if (getLevel(possible.expression, undefined, environment) === TEMPORAL_LEVEL) {
+    if (getSanyLevel(possible.expression, undefined, environment) === TEMPORAL_LEVEL) {
       throw new TlaConfigError(
         `The possible of ${name} is equal to a temporal formula; only state- and action-level predicates are supported`,
       );
@@ -1363,7 +1363,7 @@ export const createSearch = (
     return { ...property, unchanged };
   });
   const isActionPossible = (item: NamedExpression) =>
-    getLevel(item.expression, undefined, environment) >= ACTION_LEVEL;
+    getSanyLevel(item.expression, undefined, environment) >= ACTION_LEVEL;
   const statePossible = possible.filter((item) => !isActionPossible(item));
   const actionPossible = possible.filter(isActionPossible);
   const runtime = environment.runtime;
