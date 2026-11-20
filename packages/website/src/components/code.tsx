@@ -4,14 +4,14 @@ import { createPartsContext } from "@/lib/utils";
 import type { LineNote } from "../run-worker";
 import type { Search, SearchState } from "../search";
 import type { Source } from "../site-data";
-import { useCopy } from "../use-copy";
 import { useIsHydrated } from "../use-is-hydrated";
 import { useTokenMorph } from "../use-token-morph";
 import { CodeLine } from "./code-line";
-import { CopyIcon } from "./copy-icon";
+import { CopyButton } from "./copy-button";
 import { RunIcon } from "./run-icon";
 import { SearchCell } from "./search-cell";
 import { Button } from "./ui/button";
+import { Tooltip, TooltipContent, TooltipTrigger } from "./ui/tooltip";
 
 const NO_HIGHLIGHTS = {};
 const NO_PATH: SearchState[] = [];
@@ -151,25 +151,27 @@ interface RunProps {
 
 export const CodeRun = (props: RunProps) => {
   const isHydrated = useIsHydrated();
+  const label = props.isRunning ? "Running" : props.isDone ? "Run again" : "Run";
   return (
-    <Button
-      variant={props.isDone || props.isRunning ? "outline" : "success"}
-      size="icon"
-      aria-label={props.isRunning ? "Running" : props.isDone ? "Run again" : "Run"}
-      disabled={!isHydrated}
-      aria-disabled={props.isRunning}
-      onClick={() => !props.isRunning && props.onRun()}
-    >
-      <RunIcon isRunning={props.isRunning} isDone={props.isDone} />
-    </Button>
+    <Tooltip>
+      <TooltipTrigger
+        closeOnClick={false}
+        render={
+          <Button
+            variant={props.isDone || props.isRunning ? "outline" : "success"}
+            size="icon"
+            aria-label={label}
+            disabled={!isHydrated}
+            aria-disabled={props.isRunning}
+            onClick={() => !props.isRunning && props.onRun()}
+          />
+        }
+      >
+        <RunIcon isRunning={props.isRunning} isDone={props.isDone} />
+      </TooltipTrigger>
+      <TooltipContent>{label}</TooltipContent>
+    </Tooltip>
   );
 };
 
-export const CodeCopy = () => {
-  const copy = useCopy(codeContext.useParts().source.code);
-  return (
-    <Button size="icon" aria-label={copy.isCopied ? "Copied" : "Copy"} onClick={copy.copy}>
-      <CopyIcon isCopied={copy.isCopied} />
-    </Button>
-  );
-};
+export const CodeCopy = () => <CopyButton text={codeContext.useParts().source.code} />;

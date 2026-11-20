@@ -124,7 +124,7 @@ export const compileTypeScriptFile = async (path: string): Promise<CompiledInput
   const siteTexts = new Map(
     throws.flatMap((statement, index) =>
       !isModule
-        ? [[index + 1, `\n${getNodeLocation(statement, true)}\n`] as const]
+        ? [[index + 1, `\n${getNodeLocation(statement, false)}\n`] as const]
         : ts.findAncestor(statement, ts.isFunctionLike) === undefined
           ? [[index + 1, `\n${MODULE_UNCAUGHT_LOCATION}\n`] as const]
           : [],

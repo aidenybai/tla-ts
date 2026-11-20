@@ -1,5 +1,5 @@
 import { ArrowUpRight } from "@phosphor-icons/react";
-import { Fragment, useState, type ReactNode } from "react";
+import { Fragment, useEffect, useState, type ReactNode } from "react";
 import { cn } from "cn";
 import { createPartsContext } from "@/lib/utils";
 import { EXAMPLES } from "../example";
@@ -52,6 +52,22 @@ export const ExampleRoot = (props: RootProps) => {
     isSearchShown: true,
     typescript: { source: example.typescript.code, fileName: example.fileName },
   };
+  const run = () => {
+    setHasRun(true);
+    if (isCompiled && runner.result === undefined) return runner.run(request);
+    runner.reset();
+    setPhase(isCompiled ? "rewinding" : "compiling");
+    setIsCompiled(!isCompiled);
+  };
+  useEffect(() => {
+    const handleShortcut = (event: KeyboardEvent) => {
+      if (!(event.metaKey || event.ctrlKey) || event.key !== "Enter") return;
+      event.preventDefault();
+      if (!isRunning) run();
+    };
+    addEventListener("keydown", handleShortcut);
+    return () => removeEventListener("keydown", handleShortcut);
+  });
   return (
     <exampleContext.PartsContext
       value={{
@@ -68,13 +84,7 @@ export const ExampleRoot = (props: RootProps) => {
         result,
         path,
         hoverState: setHoveredStateId,
-        run: () => {
-          setHasRun(true);
-          if (isCompiled && runner.result === undefined) return runner.run(request);
-          runner.reset();
-          setPhase(isCompiled ? "rewinding" : "compiling");
-          setIsCompiled(!isCompiled);
-        },
+        run,
         finishMorph: () => {
           if (phase === "rewinding") {
             setPhase("compiling");
@@ -161,7 +171,8 @@ export const ExampleSource = () => {
       highlights={state.example.highlights}
       onMorphEnd={state.finishMorph}
     >
-      <CodeContent />
+      {/* A new example is other code, not this code in another language, so it does not morph. */}
+      <CodeContent key={state.example.fileName} />
       <CodeActions>
         <Tooltip>
           <TooltipTrigger
