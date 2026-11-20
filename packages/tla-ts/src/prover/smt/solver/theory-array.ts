@@ -162,7 +162,6 @@ export class TheoryArray extends Theory {
     this.sortsTrail.push(sort);
   }
 
-  // restore_sorts: the skolems of each sort go from the last sort registered.
   private restoreSorts(limit: number) {
     for (let index = this.sortsTrail.length - 1; index >= limit; index--) {
       const sort = this.sortsTrail[index];

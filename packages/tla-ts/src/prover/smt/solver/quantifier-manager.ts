@@ -111,7 +111,6 @@ export class DefaultQuantifierManager {
     return this.qiQueue.hasWork() || (this.isActive && this.mam.hasWork());
   }
 
-  // default_qm_plugin::propagate: without relevancy, e-matching reads each new enode here.
   propagate() {
     if (this.isActive) {
       this.mam.match();

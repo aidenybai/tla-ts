@@ -72,7 +72,6 @@ const isDecreasingArg = (
   return true;
 };
 
-// recfun_rewriter::is_recfun_with_ground_recursion_args
 export const isRecFunWithGroundRecursionArgs = (manager: AstManager, expr: number) => {
   const decl = manager.decls[expr];
   if (!isDefinedApp(manager, expr) || !manager.recFunDefs.has(decl)) return false;

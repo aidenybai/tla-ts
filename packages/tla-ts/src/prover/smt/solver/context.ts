@@ -223,7 +223,6 @@ export class Context extends Internalizer {
   private asserted: AssertedFormulas | undefined;
   macros: MacroManager | undefined;
   hasQuantifiers = false;
-  // m_relevancy_lvl, which relevancy_lvl bounds by the level smt_params reads.
   private contextRelevancyLevel: number;
 
   constructor(
@@ -299,7 +298,6 @@ export class Context extends Internalizer {
     this.relevancy.isEnabled = this.relevancyLevel > 0;
   }
 
-  // setup_context, once the context is set up: the context keeps the lower level.
   keepRelevancyLevel() {
     this.contextRelevancyLevel = this.relevancyLevel;
   }

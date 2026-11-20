@@ -133,8 +133,6 @@ export abstract class Internalizer {
   readonly relevancy: RelevancyPropagator;
   readonly caseSplitQueue: CaseSplitQueue;
   readonly cgTable = new CgTable();
-  // cg_table::set_func_decl_id: the table holds the declaration of each application it reads
-  // until the context is released.
   private readonly cgDecls = new ObjMap<true>((decl) => this.manager.getDeclHash(decl));
   private stickyGenerations = new StickyGenerations();
   abstract getTheory(family: number): Theory | undefined;

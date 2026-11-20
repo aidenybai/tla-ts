@@ -171,10 +171,9 @@ interface TacticBuilder {
   build: (params: TacticParams) => Tactic;
 }
 
-// frames: the buffers of the combinators being read. unported: a tactic the port lacks.
 interface CompileState {
   frames: TacticBuilder[][];
-  unported: SmtUnsupportedError | undefined;
+  unportedError: SmtUnsupportedError | undefined;
 }
 
 interface NamedTactic {
@@ -2053,7 +2052,7 @@ const compile = (
   environment: TacticEnvironment,
   sexpr: SExpr,
   isInternal: boolean,
-  state: CompileState = { frames: [], unported: undefined },
+  state: CompileState = { frames: [], unportedError: undefined },
 ): TacticBuilder => {
   const frames = state.frames;
   if (sexpr.kind !== "list") {
@@ -2083,7 +2082,7 @@ const compile = (
       return compile(environment, createCommandReader(strategy).read() as SmtList, true, state);
     if (UNPORTED_TACTICS.has(sexpr.text)) {
       const error = new SmtUnsupportedError(`the tactic ${sexpr.text}`);
-      if (!isInternal) state.unported ??= error;
+      if (!isInternal) state.unportedError ??= error;
       return {
         descrs: new Map(),
         isRejectingUnknown: false,
@@ -2102,7 +2101,6 @@ const compile = (
     checkHasArgument(sexpr, combinator);
     return compileFrame(sexpr.items.slice(1));
   };
-  // A tactic_ref_buffer holds the children read so far.
   const compileFrame = (children: SExpr[]) => {
     const frame: TacticBuilder[] = [];
     frames.push(frame);
@@ -2434,11 +2432,9 @@ export const mkIncSatPreprocess = (
     ),
   ].reduceRight((second, first) => runAndThen(first, second));
 
-// sexpr2tactic makes each tactic as it reads it, so a parse error makes those before it, then
-// frees the buffers from the innermost out, each from its first tactic to its last. Making a
-// tactic the port lacks changes nothing in Z3, so only a tactic that parses needs them all.
+// Z3 makes each tactic as it reads it, so a parse error frees those read so far, innermost first.
 export const compileTactic = (environment: TacticEnvironment, sexpr: SExpr) => {
-  const state: CompileState = { frames: [], unported: undefined };
+  const state: CompileState = { frames: [], unportedError: undefined };
   const builder = (() => {
     try {
       return compile(environment, sexpr, false, state);
@@ -2455,7 +2451,7 @@ export const compileTactic = (environment: TacticEnvironment, sexpr: SExpr) => {
       throw error;
     }
   })();
-  if (state.unported !== undefined) throw state.unported;
+  if (state.unportedError !== undefined) throw state.unportedError;
   return builder;
 };
 

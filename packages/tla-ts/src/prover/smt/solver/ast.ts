@@ -439,29 +439,27 @@ const BUILTIN_DECLS: [string, number, number, number][] = [
   ["acos-u", FAMILY_ARITH, OP_U_ACOS, SORT_REAL],
 ];
 
-// arith_decl_plugin declares these once for Int and once for Real arguments. Each entry is the
-// declaration BUILTIN_DECLS lacks, with its range, its small id and whether it takes Reals.
-const SORTED_ARITH_DECLS: [string, number, number, number, boolean][] = [
-  ["<=", OP_LE, SORT_BOOL, 13, true],
-  [">=", OP_GE, SORT_BOOL, 14, true],
-  ["<", OP_LT, SORT_BOOL, 15, true],
-  [">", OP_GT, SORT_BOOL, 16, true],
-  ["+", OP_ADD, SORT_REAL, 21, true],
-  ["-", OP_SUB, SORT_REAL, 22, true],
-  ["*", OP_MUL, SORT_REAL, 23, true],
-  ["-", OP_UMINUS, SORT_REAL, 25, true],
-  ["to_real", OP_TO_REAL, SORT_REAL, 44, true],
-  ["to_int", OP_TO_INT, SORT_INT, 46, false],
-  ["^", OP_POWER, SORT_REAL, 49, true],
-  ["abs", OP_ABS, SORT_REAL, 51, true],
+const SORTED_ARITH_DECLS: [string, number, number, number, number][] = [
+  ["<=", OP_LE, SORT_BOOL, 13, SORT_REAL],
+  [">=", OP_GE, SORT_BOOL, 14, SORT_REAL],
+  ["<", OP_LT, SORT_BOOL, 15, SORT_REAL],
+  [">", OP_GT, SORT_BOOL, 16, SORT_REAL],
+  ["+", OP_ADD, SORT_REAL, 21, SORT_REAL],
+  ["-", OP_SUB, SORT_REAL, 22, SORT_REAL],
+  ["*", OP_MUL, SORT_REAL, 23, SORT_REAL],
+  ["-", OP_UMINUS, SORT_REAL, 25, SORT_REAL],
+  ["to_real", OP_TO_REAL, SORT_REAL, 44, SORT_REAL],
+  ["to_int", OP_TO_INT, SORT_INT, 46, SORT_INT],
+  ["^", OP_POWER, SORT_REAL, 49, SORT_REAL],
+  ["abs", OP_ABS, SORT_REAL, 51, SORT_REAL],
 ];
 
 const INT_ARITH_DECLS = new Int32Array(BUILTIN_DECLS.length).fill(-1);
 const REAL_ARITH_DECLS = new Int32Array(BUILTIN_DECLS.length).fill(-1);
 SORTED_ARITH_DECLS.forEach((entry, index) => {
   const decl = BUILTIN_DECLS.length + index;
-  INT_ARITH_DECLS[entry[1]] = entry[4] ? entry[1] : decl;
-  REAL_ARITH_DECLS[entry[1]] = entry[4] ? decl : entry[1];
+  INT_ARITH_DECLS[entry[1]] = entry[4] === SORT_REAL ? entry[1] : decl;
+  REAL_ARITH_DECLS[entry[1]] = entry[4] === SORT_REAL ? decl : entry[1];
 });
 
 const hasRealArg = (sorts: Int32Array, args: number[], start: number) => {
@@ -1601,7 +1599,6 @@ export class AstManager {
     const key = `${op}:${parameters.join(",")}:${domain.join(",")}`;
     const existing = this.arrayDecls.get(key);
     if (existing !== undefined) {
-      // array_decl_plugin caches none of these, so Z3 makes one anew once its last reference is gone.
       if (this.deletedDecls.delete(existing)) this.funcDecls[existing].smallId = this.mkSmallId();
       return existing;
     }
@@ -2053,7 +2050,6 @@ export class AstManager {
     return id;
   }
 
-  // basic_decl_plugin declares = and ite once for each sort, and distinct once for each arity too.
   private getBasicDecl(op: number, args: number[], start: number) {
     const sort =
       start < args.length ? this.sorts[args[op === OP_ITE ? start + 1 : start]] : SORT_BOOL;

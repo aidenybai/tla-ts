@@ -1025,7 +1025,6 @@ export const createSmtlibReader = (
   const scopedFuncs: number[] = [];
   const scopedFuncStarts: number[] = [];
 
-  // With global declarations, Z3 keeps every declaration through a pop.
   const pushUndo = (restore: () => void) => {
     if (!options.isGlobalDecls) undo.push(restore);
   };
@@ -3518,7 +3517,7 @@ export const createSmtlibReader = (
   const pop = (count: number) => {
     releasePending();
     const funcStart = scopedFuncStarts.splice(scopedFuncStarts.length - count)[0];
-    // cmd_context::restore_func_decls releases the declarations in the order they were made.
+    // Z3 frees a popped scope's declarations in the order they were made, not in reverse.
     for (const decl of scopedFuncs.splice(funcStart)) {
       manager.eraseRecFunDef(decl);
       if (manager.funcDecls[decl].family === FAMILY_USER) manager.decDeclRef(decl);
