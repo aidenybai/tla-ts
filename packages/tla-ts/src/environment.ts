@@ -1197,8 +1197,7 @@ export const createEnvironment = (
   // which name TLC's operators wherever they come.
   const runtimeVariableName = new RegExp(`\\b(?:${runtimeVariables.join("|")})\\b`);
   const isPreparedLevelsLinked =
-    runtimeVariables.length === 0 ||
-    preparedTexts.every((text) => !runtimeVariableName.test(text));
+    runtimeVariables.length === 0 || preparedTexts.every((text) => !runtimeVariableName.test(text));
   const getPreparedLevels = (name: string) =>
     isPreparedLevelsLinked ? preparedLevels.get(name) : undefined;
   const analyzer = createLevelAnalyzer({
