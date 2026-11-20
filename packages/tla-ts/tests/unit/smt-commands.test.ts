@@ -2361,6 +2361,25 @@ describe("runSmtlibScript runs its commands as Z3 does", () => {
       ")",
     ]);
   });
+
+  it("frees the ids of select and store with their last terms, so later declarations reuse them", () => {
+    expect(
+      run([
+        "(declare-fun A () (Array Int Int))",
+        "(simplify (store A 1 (select A 0)))",
+        "(declare-fun g (Int) Int)",
+        "(declare-fun h (Int) Int)",
+        "(declare-fun c () Int)",
+        "(declare-fun d () Int)",
+        "(assert (= (g c) (h d)))",
+        "(assert (= (g d) (h c)))",
+        "(assert (distinct (g c) (g d)))",
+        "(assert (forall ((x Int)) (>= (g x) (h x))))",
+        "(check-sat)",
+        "(get-info :rlimit)",
+      ]),
+    ).toEqual(["(store A 1 (select A 0))", "unsat", "(:rlimit 713)"]);
+  });
 });
 
 describe("reset-assertions, as Z3 5.3.2 frees the solver", () => {

@@ -651,6 +651,7 @@ const hasOwnDeclHash = (family: number) =>
 const isDeclared = (funcDecl: FuncDecl) =>
   funcDecl.family === FAMILY_USER ||
   funcDecl.family === FAMILY_RECFUN ||
+  funcDecl.family === FAMILY_ARRAY ||
   funcDecl.op === OP_PB_AUX_BOOL;
 
 export class AstManager {
@@ -1599,7 +1600,11 @@ export class AstManager {
   mkArrayDecl(op: number, name: string, parameters: number[], domain: number[], range: number) {
     const key = `${op}:${parameters.join(",")}:${domain.join(",")}`;
     const existing = this.arrayDecls.get(key);
-    if (existing !== undefined) return existing;
+    if (existing !== undefined) {
+      // array_decl_plugin caches none of these, so Z3 makes one anew once its last reference is gone.
+      if (this.deletedDecls.delete(existing)) this.funcDecls[existing].smallId = this.mkSmallId();
+      return existing;
+    }
     const parameterHashes = parameters.map((parameter) =>
       op === OP_CONST_ARRAY
         ? this.sortHashes[parameter]
@@ -1617,6 +1622,7 @@ export class AstManager {
       parameters,
       getInfoHash(Z3_ARRAY_FAMILY, op - ARRAY_OP_BASE, parameterHashes),
     );
+    this.declRefCounts[decl] = 0;
     this.arrayDecls.set(key, decl);
     return decl;
   }
