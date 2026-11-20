@@ -534,6 +534,26 @@ describe("INSTANCE matches TLC", () => {
   );
 
   it.each([
+    ["v <- (x = 1)", "K!Dv", "K!Dv"],
+    ["v <- (x = 0)", "K!Ev", "v"],
+    ["v <- x", "K!Gv", "G"],
+    ["v <- FALSE", "K!Dv", "K!Dv"],
+  ])(
+    "names a property that reaches the substitute in a LET instance's %s through %s as TLC does",
+    async (substitution, property, name) => {
+      const result = await check({
+        source: `---- MODULE M ----\nEXTENDS Naturals\nVARIABLE x\nInit == x = 0\nNext == x' = (x + 1) % 2\nProp == LET K == INSTANCE L WITH ${substitution} IN ${property}\n====`,
+        config: "INIT Init\nNEXT Next\nPROPERTY Prop",
+        loadModule: (module) =>
+          module === "L"
+            ? "---- MODULE L ----\nVARIABLE v\nDv == v\nEv == [](v)\nGv == LET G == v = 0 IN [](G)\n===="
+            : undefined,
+      });
+      expect(result.violation?.name).toBe(name);
+    },
+  );
+
+  it.each([
     ["v <- (x = 1 /\\ x >= 0)", "I!Dv", undefined, "I!Dv"],
     ["v <- (\\A k \\in {1} : x = k)", "I!Dv", undefined, "I!Dv"],
     ["v <- One", "I!Dv", undefined, "I!Dv"],

@@ -451,15 +451,13 @@ const SUBSTITUTION_SUFFIX = "@SUBSTITUTION";
 const getSubstitutionName = (name: string) => `${name}${SUBSTITUTION_SUFFIX}`;
 
 export const getSubstitutedName = (expression: Expression) => {
-  if (
-    expression.kind === "Identifier" &&
-    isLocallyResolved(expression) &&
-    expression.name.endsWith(SUBSTITUTION_SUFFIX)
-  ) {
+  const isLocal = expression.kind === "Identifier" && isLocallyResolved(expression);
+  if (isLocal && expression.name.endsWith(SUBSTITUTION_SUFFIX)) {
     return expression.name.slice(0, -SUBSTITUTION_SUFFIX.length);
   }
   const substitution = substitutedExpressions.get(expression);
-  if (!substitution || substitution.replacement === expression) return undefined;
+  // A LET instance substitutes a local definition, so only the frames of its reference record the declaration it replaced.
+  if (substitution ? substitution.replacement === expression : !isLocal) return undefined;
   const occurrence = substitutionFrames
     .get(expression)
     ?.find((frame) => !frameSubstitutions.has(frame));

@@ -368,8 +368,10 @@ const createTheoremError = (theorem: TheoremReference, usage: string) =>
 
 const isConstantTrue = (item: ScopedExpression, environment: Environment, usage: string) => {
   const conjunct = item.expression;
+  // SpecProcessor#processConfigProps looks up no VARIABLE, so it checks a substitute for one whatever its value.
   if (
     conjunct.kind !== "Identifier" ||
+    getSubstitutedName(conjunct) !== undefined ||
     getLevel(conjunct, item.scope, environment) > CONSTANT_LEVEL
   ) {
     return false;
