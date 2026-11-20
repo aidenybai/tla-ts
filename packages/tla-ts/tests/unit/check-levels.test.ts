@@ -2555,6 +2555,49 @@ describe("level checking matches SANY", () => {
     },
   );
 
+  it.each([
+    [
+      "<1> K == INSTANCE P WITH e <- [](x = 1)\n<1>1. ENABLED (K!J!QT!1)",
+      [
+        ["line 5, col 7 to line 5, col 24", "ENABLED"],
+        ["line 4, col 5 to line 4, col 39", "P"],
+      ],
+    ],
+    [
+      "<1> INSTANCE P WITH e <- [](x = 1)\n<1>1. ENABLED (J!QT!1)",
+      [
+        ["line 4, col 5 to line 4, col 34", "P"],
+        ["line 5, col 7 to line 5, col 22", "ENABLED"],
+      ],
+    ],
+  ])(
+    "levels a clause selected through a proof step's instance in %j, as SANY does",
+    async (lines, expected) => {
+      await expect(
+        check({
+          source: `---- MODULE M ----\nVARIABLE x\nTHEOREM TRUE\n${lines}\n<1> QED\nInit == x = 0\nNext == x' = x\n====`,
+          config: "INIT Init\nNEXT Next",
+          loadModule: (name) =>
+            name === "P"
+              ? "---- MODULE P ----\nCONSTANT e\nJ == INSTANCE Q WITH f <- e\n===="
+              : name === "Q"
+                ? "---- MODULE Q ----\nCONSTANT f\nTHEOREM QT == ASSUME f = f, lab :: (f # 1) PROVE TRUE\nTHEOREM NT == ASSUME NEW y, f = y PROVE f = f\n===="
+                : undefined,
+        }),
+      ).rejects.toThrow(
+        createSanyError(
+          expected.map((error) => ({
+            location: `${error[0]} of module M`,
+            message:
+              error[1] === "P"
+                ? "Level error in instantiating module 'P':\nThe level of the expression or operator substituted for 'e' \nmust be at most 2."
+                : `Level error in applying operator ${error[1]}:\nThe level of argument 1 exceeds the maximum level allowed by the operator.`,
+          })),
+        ),
+      );
+    },
+  );
+
   it("levels an assumption that reaches an instance's substitute selecting a theorem's clause, as SANY does", async () => {
     await expect(
       check({

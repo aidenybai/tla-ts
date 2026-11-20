@@ -398,7 +398,7 @@ export const createEnvironment = (
     module: string,
     substitutes: InstanceSubstitutes,
   ): InstanceCopy | undefined => {
-    const source = definitions.get(sourceKey);
+    const source = getLinkedDefinition(sourceKey);
     return source && { ...substitutes, source, module };
   };
   const getInstanceSubstitutes = (instance: Instance) => {
