@@ -23,12 +23,11 @@ import {
   createFunction,
   createSet,
   createTuple,
+  combineFunctions,
   createWrittenFunction,
   formatNormalizedCopies,
   formatValue,
   getSequenceElements,
-  getWrittenPairs,
-  isEqualLikeTlc,
   isFunctionValue,
   toFiniteFunction,
   toFiniteSet,
@@ -209,11 +208,7 @@ export const createTlcOperators = (
     const right = isFunctionValue(rightValue) ? toFiniteFunction(rightValue) : undefined;
     if (!left) throw createModuleArgumentError("first", "@@", "function", leftValue);
     if (!right) throw createModuleArgumentError("second", "@@", "function", rightValue);
-    const leftPairs = getWrittenPairs(left);
-    const addedPairs = getWrittenPairs(right).filter(
-      (pair) => !leftPairs.some((leftPair) => isEqualLikeTlc(pair[0], leftPair[0])),
-    );
-    return createWrittenFunction([...leftPairs, ...addedPairs]);
+    return combineFunctions(left, right);
   }),
   defineOperator("ToString", 1, (args) =>
     rankString(formatValue(getValue(args, 0, "ToString"), true)),

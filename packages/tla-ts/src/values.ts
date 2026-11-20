@@ -1293,6 +1293,97 @@ export const createFunction = (pairs: [Value, Value][]): FunctionValue => {
   return createSortedFunction(domain, range);
 };
 
+// A key that holds no written order, so comparing it forgets none: TLC compares such keys without
+// anything observable but the result.
+const isOrderless = (value: Value): boolean =>
+  typeof value !== "object" ||
+  (value.kind === "Function" &&
+    ((value.flags & VALUE_ORDER_FORGOTTEN) !== 0 ||
+      (value.writtenKeys === undefined &&
+        value.domain.every(isOrderless) &&
+        value.range.every(isOrderless))));
+
+// The keys and values of two sorted domains, merged by searching the longer for each key of the
+// shorter, or undefined where two keys compare equal.
+const mergeSorted = (
+  domain: Value[],
+  range: Value[],
+  otherDomain: Value[],
+  otherRange: Value[],
+): [Value[], Value[]] | undefined => {
+  const isOtherShorter = otherDomain.length <= domain.length;
+  const longKeys = isOtherShorter ? domain : otherDomain;
+  const longValues = isOtherShorter ? range : otherRange;
+  const shortKeys = isOtherShorter ? otherDomain : domain;
+  const shortValues = isOtherShorter ? otherRange : range;
+  const mergedKeys: Value[] = [];
+  const mergedValues: Value[] = [];
+  let taken = 0;
+  const takeUntil = (position: number) => {
+    for (; taken < position; taken++) {
+      mergedKeys.push(longKeys[taken]);
+      mergedValues.push(longValues[taken]);
+    }
+  };
+  for (let index = 0; index < shortKeys.length; index++) {
+    const key = shortKeys[index];
+    let low = taken;
+    let high = longKeys.length;
+    while (low < high) {
+      const middle = (low + high) >> 1;
+      const comparison = compareValues(longKeys[middle], key);
+      if (comparison === 0) return undefined;
+      if (comparison < 0) low = middle + 1;
+      else high = middle;
+    }
+    takeUntil(low);
+    mergedKeys.push(key);
+    mergedValues.push(shortValues[index]);
+  }
+  takeUntil(longKeys.length);
+  return [mergedKeys, mergedValues];
+};
+
+// f @@ g as TLC's CombineFcn: f's pairs, then those of g whose keys equal none of f's, written in
+// that order. The keys sort by merging the sorted domains where comparing them forgets nothing and
+// can't fail, and by sorting every pair otherwise.
+export const combineFunctions = (left: FunctionValue, right: FunctionValue): FunctionValue => {
+  const leftKeys = getWrittenKeys(left);
+  const rightKeys = getWrittenKeys(right);
+  const dropped = new Set<Value>();
+  rightKeys.forEach((key) => {
+    if (leftKeys.some((leftKey) => isEqualLikeTlc(key, leftKey))) dropped.add(key);
+  });
+  const keys = [...leftKeys, ...rightKeys.filter((key) => !dropped.has(key))];
+  const merged = mergeCombined(left, right, dropped);
+  if (!merged) {
+    const leftPairs = getWrittenPairs(left);
+    const addedPairs = getWrittenPairs(right).filter((pair) => !dropped.has(pair[0]));
+    return createWrittenFunction([...leftPairs, ...addedPairs]);
+  }
+  const combined = createSortedFunction(merged[0], merged[1]);
+  return keys.every((key, index) => key === combined.domain[index])
+    ? combined
+    : setWrittenOrder(combined, keys);
+};
+
+const mergeCombined = (left: FunctionValue, right: FunctionValue, dropped: Set<Value>) => {
+  const addedDomain =
+    dropped.size === 0 ? right.domain : right.domain.filter((key) => !dropped.has(key));
+  const addedRange =
+    dropped.size === 0
+      ? right.range
+      : right.range.filter((_, index) => !dropped.has(right.domain[index]));
+  if (!left.domain.every(isOrderless) || !addedDomain.every(isOrderless)) return undefined;
+  try {
+    return mergeSorted(left.domain, left.range, addedDomain, addedRange);
+  } catch (error) {
+    // Sorting every pair reports whatever comparison fails as it always has.
+    if (error instanceof TlaEvaluationError) return undefined;
+    throw error;
+  }
+};
+
 export const createWrittenFunction = (pairs: [Value, Value][]) => {
   const functionValue = createFunction(pairs);
   const isWrittenSorted =
