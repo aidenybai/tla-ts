@@ -551,46 +551,55 @@ const createTacticSolver = (environment: TacticEnvironment, strategy: string): A
   };
 };
 
-// Each clause gets a fresh context, where Z3 pushes a scope on one context.
-const runUnitSubsume = (environment: TacticEnvironment) => (goal: Goal) => {
+// unit_subsumption_tactic makes its context and keeps its clause constants for every run.
+const runUnitSubsume = (environment: TacticEnvironment) => {
   const manager = environment.manager;
   const kernel = new SmtKernel(manager, {
     isMbqi: environment.isMbqi,
     mbqiMaxIterations: environment.mbqiMaxIterations,
     isFindingMacros: false,
   });
-  const trail = new RefVector(manager);
-  const clauses = goal.forms.items.map(() => manager.mkFreshConst("#clause", SORT_BOOL));
-  for (const clause of clauses) trail.push(clause);
-  kernel.push();
-  for (const [index, form] of goal.forms.items.entries()) {
-    const definition = manager.mkEq(clauses[index], form);
-    trail.push(definition);
-    kernel.assertExpr(definition);
-  }
-  kernel.push();
-  const isDeleted = clauses.map(() => false);
-  const deleted: number[] = [];
-  for (const [index, clause] of clauses.entries()) {
+  const clauses = new RefVector(manager);
+  environment.destructors.push(() => {
+    clauses.reset();
+    kernel.release();
+  });
+  return (goal: Goal) => {
+    if (goal.isProofsEnabled)
+      throw new SmtTacticError("unit-subsume-simplify does not support proof production");
+    const count = goal.forms.size;
     kernel.push();
-    for (const [other, otherClause] of clauses.entries())
-      if (other === index) {
-        const negated = manager.mkNot(clause);
-        trail.push(negated);
-        kernel.assertExpr(negated);
-      } else if (!isDeleted[other]) kernel.assertExpr(otherClause);
+    for (let index = 0; index < count; index++) {
+      if (index === clauses.size) clauses.push(manager.mkFreshConst("#clause", SORT_BOOL));
+      const definition = manager.mkEq(clauses.items[index], goal.forms.get(index));
+      manager.incRef(definition);
+      kernel.assertExpr(definition);
+      manager.decRef(definition);
+    }
     kernel.push();
-    const isUnsat = kernel.context.isInconsistent();
+    const isDeleted = Array.from({ length: count }, () => false);
+    const deleted: number[] = [];
+    for (let index = 0; index < count; index++) {
+      kernel.push();
+      for (let other = 0; other < count; other++)
+        if (other === index) {
+          const negated = manager.mkNot(clauses.items[other]);
+          manager.incRef(negated);
+          kernel.assertExpr(negated);
+          manager.decRef(negated);
+        } else if (!isDeleted[other]) kernel.assertExpr(clauses.items[other]);
+      kernel.push();
+      const isUnsat = kernel.context.isInconsistent();
+      kernel.pop(2);
+      if (!isUnsat) continue;
+      isDeleted[index] = true;
+      deleted.push(index);
+    }
+    for (const index of deleted) goal.update(index, manager.trueExpr);
+    goal.elimTrue();
     kernel.pop(2);
-    if (!isUnsat) continue;
-    isDeleted[index] = true;
-    deleted.push(index);
-  }
-  for (const index of deleted) goal.update(index, manager.trueExpr);
-  goal.elimTrue();
-  kernel.pop(2);
-  trail.reset();
-  return [goal];
+    return [goal];
+  };
 };
 
 const inPlace = (run: (goal: Goal) => void) => (goal: Goal) => {

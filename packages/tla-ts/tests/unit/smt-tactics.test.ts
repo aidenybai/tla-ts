@@ -3162,6 +3162,64 @@ describe("the goals of a tactic free what Z3 5.3.2 frees", () => {
   });
 });
 
+describe("unit-subsume-simplify, as Z3 5.3.2 keeps its context", () => {
+  it("makes its context with the tactic, even when the tactic never runs", () => {
+    expect(
+      run([
+        "(declare-const a Int)",
+        "(apply (or-else skip unit-subsume-simplify))",
+        "(get-info :rlimit)",
+      ]),
+    ).toEqual(["(goals\n(goal\n  :precision precise :depth 0)\n)", "(:rlimit 2)"]);
+  });
+
+  it("keeps its clause constants from one goal to the next", () => {
+    expect(
+      run([
+        "(declare-const p Bool)",
+        "(declare-const q Bool)",
+        "(declare-const a Int)",
+        "(declare-const b Int)",
+        "(assert (or p q))",
+        "(assert (or p (not q)))",
+        "(assert (> (ite q a b) 0))",
+        "(apply (then split-clause unit-subsume-simplify elim-term-ite))",
+        "(get-info :rlimit)",
+      ]),
+    ).toEqual([
+      [
+        "(goals",
+        "(goal",
+        "  p",
+        "  (> k!3 0)",
+        "  (or (not q) (= k!3 a))",
+        "  (or q (= k!3 b))",
+        "  :precision precise :depth 2)",
+        "(goal",
+        "  q",
+        "  (or p (not q))",
+        "  (> k!4 0)",
+        "  (or (not q) (= k!4 a))",
+        "  (or q (= k!4 b))",
+        "  :precision precise :depth 2)",
+        ")",
+      ].join("\n"),
+      "(:rlimit 728)",
+    ]);
+  });
+
+  it("fails on a goal with proofs", () => {
+    expect(
+      run([
+        "(set-option :produce-proofs true)",
+        "(declare-const p Bool)",
+        "(assert p)",
+        "(apply unit-subsume-simplify)",
+      ]),
+    ).toEqual(['(error "tactic failed: unit-subsume-simplify does not support proof production")']);
+  });
+});
+
 describe("ctx-solver-simplify, as Z3 5.3.2 keeps its kernel", () => {
   it("makes its kernel with the tactic, even when the tactic never runs", () => {
     expect(
