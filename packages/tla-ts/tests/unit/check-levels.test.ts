@@ -952,6 +952,29 @@ describe("level checking matches SANY", () => {
     );
   });
 
+  it("checks a LET instance in an ASSUME/PROVE or a proof step with the NEW symbols in scope, as SANY does", async () => {
+    await expect(
+      check({
+        source:
+          "---- MODULE M ----\nVARIABLE x\n---- MODULE Inner ----\nCONSTANT c\nVARIABLE z\nIZ == z\n====\nI0 == INSTANCE Inner WITH c <- 1, z <- x\nTHEOREM ASSUME NEW VARIABLE y PROVE LET N == INSTANCE Inner WITH c <- y, z <- x IN TRUE\nTHEOREM TRUE\n<1>1. LET N == INSTANCE Inner WITH c <- x, z <- x IN TRUE\n  OBVIOUS\n<1> QED\nTHEOREM ASSUME NEW VARIABLE w PROVE TRUE\n<1>1. LET N == INSTANCE Inner WITH c <- w, z <- x IN TRUE\n  OBVIOUS\n<1> QED\nTHEOREM U == LET N == INSTANCE Inner WITH c <- x, z <- x IN TRUE\nInit == x = 0\nNext == x' = x\n====",
+        config: "INIT Init\nNEXT Next",
+      }),
+    ).rejects.toThrow(
+      createSanyError(
+        [
+          "line 18, col 18 to line 18, col 56",
+          "line 9, col 41 to line 9, col 79",
+          "line 11, col 11 to line 11, col 49",
+          "line 15, col 11 to line 15, col 49",
+        ].map((location) => ({
+          location: `${location} of module M`,
+          message:
+            "Level error in instantiating module 'Inner':\nThe level of the expression or operator substituted for 'c' \nmust be at most 0.",
+        })),
+      ),
+    );
+  });
+
   it("reports an error in instantiating a module before a constant the configuration leaves out, like TLC", async () => {
     await expect(
       check({

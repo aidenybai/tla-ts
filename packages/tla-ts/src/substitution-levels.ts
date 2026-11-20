@@ -80,6 +80,7 @@ export const createInstanceChecker = (
       constants,
       variables,
       analyzer: createLevelAnalyzer({
+        module: name,
         constants,
         variables,
         getDefinition: module.getDefinition,

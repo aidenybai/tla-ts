@@ -62,7 +62,6 @@ export interface InstancedDefinition {
 export interface LetInstance extends InstanceSubstitutes {
   copies: Map<string, InstanceCopy>;
   getArgParams: () => Set<string>;
-  check: () => SanyError[];
 }
 
 export interface InstanceLevels {
@@ -73,6 +72,8 @@ export interface InstanceLevels {
 }
 
 interface LevelContext {
+  // The module whose LET instances to check, which TLC's analyzers of root definitions leave out as they only read levels.
+  module?: string;
   constants: Map<string, number>;
   variables: Set<string>;
   getDefinition: (name: string) => Definition | undefined;
@@ -935,7 +936,13 @@ export const createLevelAnalyzer = (context: LevelContext) => {
       analyzeDefinition(definition, inner),
     );
     const body = analyze(expression.body, inner);
-    const instanceErrors = instances?.flatMap((instance) => instance.check());
+    const instancer = context.module;
+    const instanceErrors =
+      instancer === undefined
+        ? []
+        : expression.instances?.flatMap((instance) =>
+            context.instances.checkInstantiation(instance, instancer, inner),
+          );
     instanceErrors?.forEach((error) => errors.push(error));
     const data = {
       level: body.level,

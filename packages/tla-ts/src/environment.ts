@@ -106,7 +106,6 @@ import {
   type InstanceLevelCheck,
   type InstanceSubstitutes,
   type LetInstance,
-  type Scope,
   type SectionMember,
 } from "./levels";
 import { createInstanceChecker, type KeyedDeclaration } from "./substitution-levels";
@@ -961,19 +960,6 @@ export const createEnvironment = (
         name: declaration.name,
         location,
       };
-    const letScope: Scope = new Map();
-    lets.forEach((definition) =>
-      letScope.set(definition.name, { kind: "Let", definition, scope: letScope }),
-    );
-    const instanceCheck = {
-      module: instance.module,
-      instancer,
-      scope: letScope,
-      substitutions: new Map(
-        declarations.map((declaration) => [declaration.name, getReplacement(declaration)]),
-      ),
-      location,
-    };
     const instanceParamNames = new Set(instance.params.map((param) => param.name));
     const isParameterDependent = (declaration: OperatorParam) =>
       mentionsName(getReplacement(declaration), instanceParamNames);
@@ -1087,7 +1073,6 @@ export const createEnvironment = (
           declarations.map((declaration) => [declaration.key, getReplacement(declaration)]),
         ),
         getArgParams: () => instanceLevels.getArgParams(instance.module),
-        check: () => instanceLevels.checkInstance(instanceCheck),
       });
     }
     return [...substitutionDefinitions, ...copies, ...exported];
@@ -1583,6 +1568,7 @@ export const createEnvironment = (
       checkModuleLevels(
         module,
         {
+          module: module.name,
           constants: new Map(constants.map((constant) => [constant.key, constant.arity])),
           variables: new Set(variables),
           getDefinition: (symbol) => getLinkedDefinition(visible.get(symbol)?.key ?? symbol),
