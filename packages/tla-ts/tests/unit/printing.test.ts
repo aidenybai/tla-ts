@@ -92,6 +92,23 @@ describe("printing matches TLC", () => {
     ).toEqual(["{{}, {1}, {2}, {1, 2}}  {1}", "<<>>"]);
   });
 
+  it.each([
+    [
+      "[{1} -> {s \\in SUBSET (1..3) : PrintT(s) /\\ s = {1, 2}}] = [{2} -> {}]",
+      ["{}", "{1}", "{2}", "{3}", "{1, 2}", "FALSE"],
+    ],
+    [
+      "[a : {s \\in SUBSET (1..3) : PrintT(s) /\\ s = {2}}] = [a : {}]",
+      ["{}", "{1}", "{2}", "FALSE"],
+    ],
+    ["{s \\in SUBSET (1..2) : PrintT(s)} \\X {} = {}", ["{}", "TRUE"]],
+  ])(
+    "streams a set filter to its first element, as TLC's Value#isEmpty does, in %s",
+    async (expression, printed) => {
+      expect((await checkPrinting(`ASSUME PrintT(${expression})`)).printed).toEqual(printed);
+    },
+  );
+
   it("expands small sets in error messages", async () => {
     expect((await checkPrinting("ASSUME 1 \\in SUBSET {1}")).result.violation?.message).toContain(
       "{{}, {1}}",

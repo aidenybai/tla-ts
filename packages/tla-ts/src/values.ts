@@ -2007,6 +2007,8 @@ const someElementOfStream = (value: ObjectValue, visit: (element: Value) => bool
   });
 };
 
+const isAnyElement = () => true;
+
 export const isEmptySet = (value: Value): boolean => {
   if (typeof value !== "object" || !isSetValue(value)) {
     setTrace.sets?.push(value);
@@ -2035,7 +2037,7 @@ export const isEmptySet = (value: Value): boolean => {
     case "Union":
       return getUnionSets(value).every((set, index) => isEmptySet(getUnionSet(set, index, value)));
     default:
-      return getUnboundedElements(value).length === 0;
+      return !someStreamedElement(value, isAnyElement);
   }
 };
 
