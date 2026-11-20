@@ -284,14 +284,20 @@ const isMapType = (type: ts.Type) =>
 // each parameter of an exported function takes, which function is an action, an invariant, or a
 // property its tag names, and the config that checks them. It's a spec whose definitions name
 // the module's functions, which compileModelToEscore calls on ESCore. A program with type errors
-// still has a frame, as Node still runs it.
-export const frameModel = (source: string, fileName: string, library?: Library) => {
+// still has a frame, as Node still runs it. Its names avoid reserved, the names of the runtime that
+// the spec extends.
+export const frameModel = (
+  source: string,
+  fileName: string,
+  library?: Library,
+  reserved: ReadonlySet<string> = new Set(),
+) => {
   const program = createProgram(source, fileName.replaceAll("\\", "/"), library);
   const sourceFile = program.sourceFile;
   const checker = program.checker;
   // The names of the exported functions and their parameters, which the model's code defines and
   // binds beside its own, and of the state variables, which only name the fields of its records.
-  const names = createNames(MODEL_NAMES);
+  const names = createNames(new Set([...MODEL_NAMES, ...reserved]));
   const fieldNames = createNames(new Set());
   const getSymbol = (node: ts.Node) =>
     ts.isShorthandPropertyAssignment(node.parent) && node.parent.name === node

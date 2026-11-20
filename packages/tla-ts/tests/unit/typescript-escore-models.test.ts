@@ -164,6 +164,21 @@ describe("checks a module's exported functions as a model on ESCore", () => {
     });
   });
 
+  // A function that ESCore's runtime names an operator after, as Effect's SchemaGetter exports
+  // BigInt, gets a name of its own in the spec, which still calls it.
+  describe("checks a function named as one of the runtime's operators", () => {
+    const getSource = (thrown: number) =>
+      `export function BigInt(n: 0 | 1) {\n  if ((n as number) === ${thrown}) throw new Error("thrown");\n  return n;\n}\n`;
+
+    it("agrees with Node", async () => {
+      expect((await checkModel(getSource(2))).status).toBe("success");
+    });
+
+    it("rejects another result", async () => {
+      expect((await checkModel(getSource(1))).status).toBe("assumption-violation");
+    });
+  });
+
   // A step settles the jobs that its program queues, which a program that names then only in a
   // comment queues none of.
   describe("settles a step of a program that queues no jobs", () => {

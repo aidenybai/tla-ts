@@ -257,7 +257,7 @@ export const compileModelToEscore = (
         statement.moduleSpecifier !== undefined &&
         !statement.isTypeOnly),
   );
-  const today = frameModel(source, fileName, library);
+  const today = frameModel(source, fileName, library, runtime.names);
   if (today.isScript) return { isScript: true, notes: today.notes };
   const module = today.source;
   const config = parseConfig(today.config);
