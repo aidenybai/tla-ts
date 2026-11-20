@@ -213,6 +213,86 @@ describe("name resolution matches SANY", () => {
   });
 
   it.each([
+    ["WF_Id(x)(Next)", "success"],
+    ["SF_I(1)!B(x)(Next)", "success"],
+    ["WF_Id(1)(Next)", "liveness-violation"],
+  ])(
+    "applies the fairness subscript in %s to its arguments, like TLC",
+    async (fairness, status) => {
+      const result = await check({
+        source: `---- MODULE M ----\nEXTENDS Naturals\nVARIABLE x\n---- MODULE Inner ----\nB(p) == <<p>>\n====\nI(q) == INSTANCE Inner\nId(v) == v\nNext == x' = (x + 1) % 3\nSpec == x = 0 /\\ [][Next]_x /\\ ${fairness}\nProp == <>(x = 2)\n====\n`,
+        config: "SPECIFICATION Spec\nPROPERTY Prop",
+      });
+      expect([result.status, result.generatedStates, result.distinctStates]).toEqual([
+        status,
+        4,
+        3,
+      ]);
+    },
+  );
+
+  it.each([
+    ["an unknown argument", "C == WF_Op(Nope)(y' = 1)", 5, 12, 15, "Unknown operator: `Nope'."],
+    [
+      "too many arguments",
+      "C == WF_Op(1, 2)(y' = 1)",
+      5,
+      11,
+      16,
+      "The operator Op requires 1 arguments.",
+    ],
+    [
+      "an action-level argument",
+      "C == SF_Op(y')(y' = 1)",
+      5,
+      6,
+      22,
+      "Level error in applying operator $SF:\nThe level of argument 1 exceeds the maximum level allowed by the operator.",
+    ],
+    [
+      "arguments to a variable",
+      "C == WF_y(y)(y' = 1)",
+      5,
+      10,
+      12,
+      "The operator y requires 0 arguments.",
+    ],
+    [
+      "too many arguments to an instance's operator",
+      "---- MODULE Inner ----\nEXTENDS Naturals\nVARIABLE z\nB(q) == z + q\n====\nI(p) == INSTANCE Inner WITH z <- y\nC == WF_I(1)!B(1, 2)(y' = 1)",
+      11,
+      15,
+      20,
+      "The operator I!B requires 1 arguments.",
+    ],
+    [
+      "an action-level argument to an instance's operator",
+      "---- MODULE Inner ----\nEXTENDS Naturals\nVARIABLE z\nB(q) == z + q\n====\nI(p) == INSTANCE Inner WITH z <- y\nC == WF_I(1)!B(y')(y' = 1)",
+      11,
+      6,
+      26,
+      "Level error in applying operator $WF:\nThe level of argument 1 exceeds the maximum level allowed by the operator.",
+    ],
+  ])(
+    "reports %s in a fairness subscript applied before a parenthesized action, like SANY",
+    async (_title, definition, line, start, end, message) => {
+      await expect(
+        checkNames(`EXTENDS Naturals\nVARIABLE y\nOp(a) == a\n${definition}`),
+      ).rejects.toMatchObject({
+        sany: {
+          errors: [
+            {
+              location: `line ${line}, col ${start} to line ${line}, col ${end} of module M`,
+              message,
+            },
+          ],
+          warnings: [],
+        },
+      });
+    },
+  );
+
+  it.each([
     ["a bound variable before a definition of that name", "F == \\E B \\in {1} : TRUE\nB == 1"],
     [
       "sibling quantifiers with one name",

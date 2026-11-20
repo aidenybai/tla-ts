@@ -816,7 +816,9 @@ const parse = (
     return bounds.flat();
   };
 
-  const parseSubscript = (): { subscript: Expression; lastArgs: Expression[] } => {
+  const parseSubscript = (
+    isFairness: boolean,
+  ): { subscript: Expression; lastArgs: Expression[] } => {
     const token = peek();
     if (isTlapm && BUILTIN_CONSTANTS.has(token.text)) {
       const start = cursor;
@@ -844,22 +846,28 @@ const parse = (
         advance();
         elementArgs.push(parseElement(true));
       }
-      const prefixArgs = elementArgs.slice(0, -1);
+      const lastArgs = elementArgs[elementArgs.length - 1];
+      // SANY's FairnessExpr applies the subscript to its last arguments when a parenthesized action follows them.
+      const isHooked = isFairness && !isTlapm && lastArgs.length > 0 && isAt("(");
+      const appliedArgs = isHooked ? elementArgs : [...elementArgs.slice(0, -1), []];
+      const argumentCounts = appliedArgs.map((args) => args.length);
       const location = getLocation(token);
-      location.range = { ...getRange(start), end: selectorRanges[selectorRanges.length - 1].end };
+      location.range = isHooked
+        ? getRange(start)
+        : { ...getRange(start), end: selectorRanges[selectorRanges.length - 1].end };
       const name = names.join("!");
-      const subscript: Expression = prefixArgs.every((args) => args.length === 0)
+      const subscript: Expression = argumentCounts.every((count) => count === 0)
         ? { kind: "Identifier", name, location }
         : {
             kind: "Apply",
             operator: name,
-            args: prefixArgs.flat(),
-            argumentCounts: [...prefixArgs.map((args) => args.length), 0],
-            argumentsRange: location.range,
+            args: appliedArgs.flat(),
+            ...(argumentCounts.slice(0, -1).some((count) => count > 0) && { argumentCounts }),
+            argumentsRange: isHooked ? lastArgumentsRange : location.range,
             selectorRanges,
             location,
           };
-      return { subscript, lastArgs: elementArgs[elementArgs.length - 1] };
+      return { subscript, lastArgs: isHooked ? [] : lastArgs };
     }
     if (isAt("<<") || isAt("(") || isAt("{") || isAt("[") || isTlapmAtom) {
       const start = cursor;
@@ -1115,7 +1123,7 @@ const parse = (
       return {
         kind: "BoxAction",
         action: expression,
-        subscript: parseSubscript().subscript,
+        subscript: parseSubscript(false).subscript,
         location,
       };
     });
@@ -1170,7 +1178,7 @@ const parse = (
       return {
         kind: "AngleAction",
         action: elements[0],
-        subscript: commit(parseSubscript).subscript,
+        subscript: commit(() => parseSubscript(false)).subscript,
         location,
       };
     }
@@ -1470,7 +1478,7 @@ const parse = (
       }
       case "WF_":
       case "SF_": {
-        const subscript = parseSubscript();
+        const subscript = parseSubscript(true);
         const action =
           !isAt("(") && subscript.lastArgs.length === 1
             ? subscript.lastArgs[0]
