@@ -14,7 +14,7 @@ import {
 } from "../ast";
 import { TlaMissingModuleError, TlaSanyFatalError, TlaSyntaxError } from "../errors";
 import { parseSanyModule } from "../parser";
-import { isBefore } from "../resolve";
+import { compareLocations, isBefore } from "../resolve";
 import { createBuiltins } from "./builtins";
 import { getSany174LexicalError } from "./lexer";
 import { getSanyParseError } from "./parse-error";
@@ -100,7 +100,10 @@ const addInstances = (instances: Instance[], instance: Instance) => {
 
 const addLetInstances = (instances: Instance[], expression: Expression) => {
   if (expression.kind === "Let") {
-    expression.instances?.forEach((instance) => addInstances(instances, instance));
+    [...expression.definitions, ...(expression.instances ?? [])]
+      .sort((left, right) => compareLocations(left.location, right.location))
+      .forEach((definition) => addDefinitionInstances(instances, definition));
+    return addLetInstances(instances, expression.body);
   }
   const children = getChildren(expression);
   for (let index = 0; index < children.length; index++) {

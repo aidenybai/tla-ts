@@ -835,6 +835,27 @@ Spec == Init /\\ [][Next]_x
     });
   });
 
+  it("loads the modules that a LET instantiates in source order as SANY does", () => {
+    const order = ["Q", "R", "S"];
+    const report = getReport(
+      {
+        L: "---- MODULE L ----\nX == LET A == LET N == INSTANCE Q IN N!K\n         M == INSTANCE R\n         B == LET N == INSTANCE S IN N!K\n     IN TRUE\n====\n",
+        ...Object.fromEntries(
+          order.map((name) => [name, `---- MODULE ${name} ----\nK == TRUE\n====\n`]),
+        ),
+      },
+      { describeFile: (name) => `${name}.tla` },
+    );
+    expect(report).toEqual({
+      text: joinLines([
+        ...["L", ...order].map((name) => `Parsing file ${name}.tla`),
+        ...[...order, "L"].map((name) => `Semantic processing of module ${name}`),
+        ...[...order, "L"].map((name) => `Linting of module ${name}`),
+      ]),
+      isFailed: false,
+    });
+  });
+
   it("reports an unresolved infix operator twice", () => {
     const report = getReport({ Infix: "---- MODULE Infix ----\nVARIABLE x\nOp == x @@ x\n====\n" });
     expect(report.isFailed).toBe(true);
