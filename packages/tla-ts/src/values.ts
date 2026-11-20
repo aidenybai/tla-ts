@@ -1269,6 +1269,9 @@ const isFailingLikeTlc = (left: Value, right: Value) =>
 export const isEqualLikeTlc = (left: Value, right: Value) =>
   computeLikeTlcOnFailure(valuesEqual, equalsLikeTlc, left, right, isFailingLikeTlc);
 
+const isComponentEqual = (left: Value, right: Value) =>
+  callTracedMethod(left, () => isEqualLikeTlc(left, right));
+
 // TLC's ValueVec#sort compares each element with the ones before it, which orders what lazy elements evaluate.
 const isStrictlySorted = (elements: Value[]) => {
   for (let index = 1; index < elements.length; index++) {
@@ -2915,7 +2918,7 @@ const isElementOfAnySet = (element: Value, set: Value): boolean => {
       const low = getIntervalLow(element, functionValue.domain);
       const isDomain =
         low === undefined
-          ? isEqualLikeTlc(set.domain, createSortedSet(functionValue.domain))
+          ? isComponentEqual(set.domain, createSortedSet(functionValue.domain))
           : isEqualLikeTlc(
               { kind: "Interval", low, high: low + functionValue.domain.length - 1 },
               set.domain,
