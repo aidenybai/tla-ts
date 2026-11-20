@@ -92,7 +92,7 @@ TypeScript's type checker gives the model's frame: which bindings are state, whi
 
 An exported function is a function declaration, or an exported `const` of an arrow function or a function expression. An async function or a generator isn't one.
 
-A call that writes nothing that existed before it takes no step. An invariant fails where its call returns other than `true`. A check fails where its call throws. A check that reads no state is an assumption, which TLC checks once before the search, and a check that reads state is an invariant.
+A call that writes nothing that existed before it takes no step. An invariant fails where its call returns other than `true`. A check fails where its call throws. A check that reads no state is an assumption, which TLC checks once before the search, so a throw in it is an `assumption-violation`. A check that reads state is an invariant, so a throw in it fails the check where the state is reached.
 
 The name of each state variable and exported function must be a TLA+ name, which TLA+'s keywords and the model's own names, such as `Init`, `Next`, and `vars`, aren't. Otherwise the compile stops with a `TlaTypeScriptError`.
 

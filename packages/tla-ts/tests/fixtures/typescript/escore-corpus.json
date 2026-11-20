@@ -23292,7 +23292,7 @@
           "source": "\n          /** @symmetric */\n          type Proc = \"p1\" | \"p2\";\n          let busy = new Set<Proc>();\n          export const start = (proc: Proc) => {\n            busy.add(proc);\n          };\n        ",
           "status": "success",
           "distinct": 3,
-          "stop": "tla-ts can't pass a value of {p1, p2} to an ESCore model yet"
+          "stop": "tla-ts can't check a symmetric model on ESCore yet"
         },
         {
           "name": "checks assumptions before the search",
@@ -23543,7 +23543,8 @@
         {
           "name": "rejects a copy of the array",
           "source": "\n      interface Box {\n        items: number[];\n      }\n      const make = (size: number): Box => {\n        const box: Box = { items: [] };\n        const view = box.items;\n        for (let index = 0; index < size; index++) view.push(index);\n        return box;\n      };\n      export const count = (size: 0 | 1 | 2) => {\n        const made = make(size);\n        if (made.items.length === 2) throw new Error(\"count \" + size);\n        return made.items.length;\n      };\n    ",
-          "status": "error",
+          "status": "assumption-violation",
+          "correction": "A check that calls a function and reads no state is an ASSUME, so a throw in it fails the assumption. Today's compiler made it an invariant only because its heap held the objects, which ESCore has no notion of.",
           "failure": ["count 2"]
         }
       ]
