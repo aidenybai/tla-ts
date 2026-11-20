@@ -2786,6 +2786,35 @@ export const setTrace: { sets: Value[] | undefined; callStack?: TracedCallStack 
   sets: undefined,
 };
 
+interface TraceMark {
+  depth: number;
+  length: number;
+  isFrozen: boolean;
+  fingerprint: unknown;
+}
+
+const markTrace = (): TraceMark | undefined => {
+  const sets = setTrace.sets;
+  const callStack = setTrace.callStack;
+  if (sets === undefined && callStack === undefined) return undefined;
+  return {
+    depth: sets?.length ?? 0,
+    length: callStack?.expressions.length ?? 0,
+    isFrozen: callStack?.isFrozen ?? false,
+    fingerprint: callStack?.fingerprint,
+  };
+};
+
+const resetTrace = (mark: TraceMark | undefined) => {
+  if (mark === undefined) return;
+  if (setTrace.sets) setTrace.sets.length = mark.depth;
+  const callStack = setTrace.callStack;
+  if (!callStack) return;
+  callStack.expressions.length = mark.length;
+  callStack.isFrozen = mark.isFrozen;
+  callStack.fingerprint = mark.fingerprint;
+};
+
 export const computeLikeTlcOnFailure = <Left, Right, Result>(
   compute: (left: Left, right: Right) => Result,
   computeLikeTlc: (left: Left, right: Right, error: TlaEvaluationError) => Result,
@@ -2793,20 +2822,12 @@ export const computeLikeTlcOnFailure = <Left, Right, Result>(
   right: Right,
   isFailingLikeTlc?: (left: Left, right: Right) => boolean,
 ): Result => {
-  const sets = setTrace.sets;
-  const callStack = setTrace.callStack;
-  const depth = sets?.length ?? 0;
-  const trace = callStack && { ...callStack, length: callStack.expressions.length };
+  const mark = markTrace();
   try {
     return compute(left, right);
   } catch (error) {
     if (!(error instanceof TlaEvaluationError) || isFailingLikeTlc?.(left, right)) throw error;
-    if (sets) sets.length = depth;
-    if (callStack && trace) {
-      callStack.expressions.length = trace.length;
-      callStack.isFrozen = trace.isFrozen;
-      callStack.fingerprint = trace.fingerprint;
-    }
+    resetTrace(mark);
     return computeLikeTlc(left, right, error);
   }
 };
@@ -3631,11 +3652,13 @@ const getExpandedLazySet = (value: LazySetValue, isStrict: boolean) => {
     return expandLazySet(value);
   }
   if (!isEnumerable(value)) return undefined;
+  const mark = markTrace();
   try {
     return expandLazySet(value);
   } catch (error) {
-    if (error instanceof TlaEvaluationError) return undefined;
-    throw error;
+    if (!(error instanceof TlaEvaluationError)) throw error;
+    resetTrace(mark);
+    return undefined;
   }
 };
 
@@ -3670,11 +3693,13 @@ const isFieldName = (name: string) =>
 
 const toPrintedFunction = (value: LazyFunctionValue) => {
   if (!isEnumerable(value.domain)) return undefined;
+  const mark = markTrace();
   try {
     return toFiniteFunction(value);
   } catch (error) {
-    if (error instanceof TlaEvaluationError || isStackOverflow(error)) return undefined;
-    throw error;
+    if (!(error instanceof TlaEvaluationError) && !isStackOverflow(error)) throw error;
+    resetTrace(mark);
+    return undefined;
   }
 };
 

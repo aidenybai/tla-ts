@@ -4077,6 +4077,37 @@ describe("evaluation errors match TLC", () => {
     },
   );
 
+  it.each([
+    [
+      "x' = x /\\ <<0, 1>> \\in [a : ([a : 0..x, b : Nat] \\cap [{x} -> {}])]",
+      "Attempted to check if non-record\n<<0, 1>>\nis in the set of records:\n[a: [a: 0..0, b: Nat] \\cap {}]",
+      [
+        "Line 5, column 9 to line 5, column 75 in M",
+        "Line 5, column 9 to line 5, column 14 in M",
+        "Line 5, column 19 to line 5, column 75 in M",
+        "Line 5, column 32 to line 5, column 75 in M",
+      ],
+    ],
+    [
+      'x\' = x /\\ <<1, x>> \\notin SUBSET ([a : {"a", "b"}, b : {"a", "b"}] \\ {x, 1})',
+      'Attempted to check if the non-enumerable value\n<<1, 0>>\nis element of\nSUBSET {[a |-> "a", b |-> "a"], [a |-> "a", b |-> "b"], [a |-> "b", b |-> "a"], [a |-> "b", b |-> "b"]} \\ {0, 1}',
+      [
+        "Line 5, column 9 to line 5, column 84 in M",
+        "Line 5, column 9 to line 5, column 14 in M",
+        "Line 5, column 19 to line 5, column 84 in M",
+        "Line 5, column 35 to line 5, column 84 in M",
+      ],
+    ],
+  ])(
+    "drops the frames of a set that fails to expand as an error message prints it, as TLC's toString swallows the failure: %s",
+    async (next, reason, callStack) => {
+      const result = await checkSetBound(next, "TRUE");
+      expect(result.failure?.message).toBe(getRuntimeException(reason));
+      expect(formatCallStackLines(result)).toEqual(callStack);
+      expect(result.failure?.fingerprint?.reason).toBe(reason);
+    },
+  );
+
   const SET_EQUALITY_REASON = "Attempted to check equality of the set {1} with the value:\n1";
 
   it.each([
