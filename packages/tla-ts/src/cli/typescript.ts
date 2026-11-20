@@ -15,6 +15,7 @@ import {
   UNSETTLED_AWAIT_WARNING,
 } from "../exit-codes";
 import { getEscoreRuntime } from "../compile";
+import { TlaStrippingError } from "../errors";
 import { parseModule } from "../parser";
 import { foldNames } from "../typescript/spec/library";
 
@@ -239,7 +240,7 @@ Next == UNCHANGED programDone`;
 // and a model as compileModelToEscore compiles one. Node says where a script's throw statement
 // threw by the file's URL, as it runs a TypeScript file, and an ES module's at its own code, but
 // for a throw in a function, which a timer might have called.
-export const compileTypeScriptFile = async (path: string): Promise<CompiledInput> => {
+const compileEscoreEntry = async (path: string): Promise<CompiledInput> => {
   // The TypeScript compiler takes a while to load, so only a TypeScript or JavaScript input loads
   // it.
   const ts = (await import("@typescript/typescript6")).default;
@@ -333,3 +334,61 @@ export const compileTypeScriptFile = async (path: string): Promise<CompiledInput
     notes: model?.notes ?? [],
   };
 };
+
+// Where Node's type stripping rejects the syntax of a file that it loads as CommonJS, the spec of a
+// program that fails as Node does, with Node's SyntaxError: where the file's code is, with the
+// line before and the line after, a caret under each character of the syntax, and the error's
+// code. A file that Node loads as an ES module fails in Node's own code, whose place in Node's
+// text tla-ts can't tell, and the error stops there, as does one at syntax across lines.
+const compileRejection = async (path: string, error: TlaStrippingError) => {
+  const ts = (await import("@typescript/typescript6")).default;
+  const { compileToEscore } = await import("../typescript/spec/compile");
+  const text = readFileSync(path, "utf8");
+  const sourceFile = ts.createSourceFile(path, text, ts.ScriptTarget.ESNext, true);
+  const start = sourceFile.getLineAndCharacterOfPosition(error.start);
+  const end = sourceFile.getLineAndCharacterOfPosition(error.end);
+  const lines = text.split(/\r\n|[\n\r\u2028\u2029]/);
+  const isModule =
+    ts.getImpliedNodeFormatForFile(path, undefined, ts.sys, {
+      moduleResolution: ts.ModuleResolutionKind.NodeNext,
+    }) === ts.ModuleKind.ESNext;
+  const shown = [
+    ...(start.line > 0 ? [lines[start.line - 1]] : []),
+    lines[start.line],
+    `${lines[start.line].slice(0, start.character).replace(/[^\t]/g, " ")}${"^".repeat(end.character - start.character)}`,
+    ...(start.line + 2 < lines.length || (lines[start.line + 1] ?? "") !== ""
+      ? [lines[start.line + 1]]
+      : []),
+  ];
+  const message = `${pathToFileURL(realpathSync(path)).href}:${start.line + 1}\n${shown.join("\n")}\n\nSyntaxError [${error.code}]: ${error.reason} {\n  code: '${error.code}'\n}`;
+  if (
+    isModule ||
+    realpathSync(error.fileName) !== realpathSync(path) ||
+    start.line !== end.line ||
+    !/^[\t\n\x20-\x7e]*$/.test(message)
+  ) {
+    throw error;
+  }
+  const spec = compileToEscore("", path, await getEscoreRuntime(), false, {
+    steps: `VARIABLE programDone\nInit == Assert(FALSE, ${JSON.stringify(message)}) /\\ programDone = TRUE\nNext == UNCHANGED programDone`,
+    entries: [],
+  });
+  return {
+    path,
+    specPath: join(dirname(path), `${spec.name}.tla`),
+    source: parseModule(spec.source),
+    config: spec.config,
+    loadModule: spec.loadModule,
+    preparedModules: spec.preparedModules,
+    isScript: true,
+    isPrepared: true,
+    notes: [],
+  };
+};
+
+// A TypeScript or JavaScript file compiled by specializing ESCore (see compileEscoreEntry), or,
+// where Node's type stripping rejects it, a program that fails as Node does.
+export const compileTypeScriptFile = (path: string): Promise<CompiledInput> =>
+  compileEscoreEntry(path).catch((error: unknown) =>
+    error instanceof TlaStrippingError ? compileRejection(path, error) : Promise.reject(error),
+  );

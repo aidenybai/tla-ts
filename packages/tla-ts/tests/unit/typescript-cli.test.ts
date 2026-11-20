@@ -419,6 +419,20 @@ describe("the CLI with TypeScript files", () => {
     },
   );
 
+  // Node's type stripping rejects syntax that it can't strip, which it runs in JavaScript.
+  it.each([
+    ["a with statement", "const o = { a: 1 };\nlet x = 2;\n  with (o) { a; }\nx++;\n"],
+    ["a function that an if declares", "let x = 1;\nif (x) function f() {}\n"],
+  ])("exits with Node's code and stderr where TypeScript holds %s", (_, code) => {
+    const directory = copyFixtures("passing");
+    writeFileSync(join(directory, "rejected.ts"), code);
+    const result = runCli(directory, ["rejected.ts"]);
+    expect(getExit(result)).toEqual(getExit(runNode(directory, "rejected.ts")));
+    expect(result.status).toBe(1);
+    writeFileSync(join(directory, "accepted.js"), code);
+    expect(getExit(runCli(directory, ["accepted.js"]))).toEqual([0, ""]);
+  });
+
   // Node runs no JSX, which compiles as TypeScript emits it, by the project's settings, or by
   // React's automatic runtime without a project, here by the factory its pragma names.
   it("checks a .jsx file as TypeScript emits it", () => {

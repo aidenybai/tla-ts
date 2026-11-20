@@ -1053,4 +1053,32 @@ describe("loads each kind of file as Node does", () => {
       expect([result.node, result.message]).toEqual([1, expect.stringContaining(THREW)]);
     });
   });
+
+  // Node's type stripping rejects syntax that it can't strip, which JavaScript runs.
+  describe.each([
+    [
+      "a with statement",
+      "const o = { a: 1 };\nwith (o) { a; }\n",
+      "The 'with' statement is not supported",
+    ],
+    [
+      "a function that an if declares",
+      "if (Date.now() > 0) function f() {}\n",
+      "Declaration is not allowed",
+    ],
+  ])("rejects %s in TypeScript as Node does", (_, code, message) => {
+    it("agrees with Node", async () => {
+      const result = await checkEntry({ "main.js": code }, "main.js");
+      expect([result.node, result.message]).toEqual([0, undefined]);
+    });
+
+    it("rejects another result", async () => {
+      const result = await checkEntry({ "main.ts": code }, "main.ts");
+      expect([result.node, result.status, result.message]).toEqual([
+        1,
+        "stopped",
+        expect.stringContaining(message),
+      ]);
+    });
+  });
 });
