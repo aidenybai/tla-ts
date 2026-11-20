@@ -257,6 +257,28 @@ describe("checks a module's exported functions as a model on ESCore", () => {
     });
   });
 
+  // A typed array in the state keeps the ArrayBuffer it views, as a module's constant bytes do.
+  describe("keeps a typed array that a step writes", () => {
+    const getSource = (operator: string) =>
+      `const bytes = new Uint8Array(2);\nlet count = 0;\nexport const tick = () => {\n  if (count < 2) {\n    bytes[count] = 1;\n    count += 1;\n  }\n};\nexport const isSmall = () => count ${operator} 2 && bytes[0] + bytes[1] === count;\n`;
+
+    it("agrees with Node", async () => {
+      expect(getCounts(await checkModel(getSource("<=")))).toEqual(["deadlock", 3, 3]);
+    });
+
+    it("rejects another result", async () => {
+      expect(getCounts(await checkModel(getSource("<")))).toEqual(["invariant-violation", 3, 3]);
+    });
+
+    it("numbers the state natively as ESCanonical does", async () => {
+      expect(getCounts(await checkModel(getSource("<="), "spec.ts", "compared"))).toEqual([
+        "deadlock",
+        3,
+        3,
+      ]);
+    });
+  });
+
   // A function that ESCore's runtime names an operator after, as Effect's SchemaGetter exports
   // BigInt, gets a name of its own in the spec, which still calls it.
   describe("checks a function named as one of the runtime's operators", () => {
@@ -402,6 +424,29 @@ describe("checks a module's exported functions as a model on ESCore", () => {
         expect(getCounts(await checkModel(source, join(directory, "host.ts"), "compared"))).toEqual(
           ["deadlock", 3, 3],
         );
+      });
+    });
+
+    // The host's console and process, which a module reads, hold built-ins whose data is a value,
+    // such as console.createTask's function that runs a task, as bippy's core module reads them.
+    describe("keeps the host's console and process", () => {
+      const getBody = (operator: string) =>
+        `let count = 0;\nconst host = [console, process];\nexport const tick = () => {\n  if (count < 2 && typeof host[0].log === "function") count += flip(0);\n};\nexport const isSmall = () => count ${operator} 2;\n`;
+
+      it("agrees with Node", async () => {
+        expect(getCounts(await check(getBody("<=")))).toEqual(["deadlock", 3, 3]);
+      });
+
+      it("rejects another result", async () => {
+        expect(getCounts(await check(getBody("<")))).toEqual(["invariant-violation", 3, 3]);
+      });
+
+      it("numbers the state natively as ESCanonical does", async () => {
+        const source = `import { flip } from "./flip.ts";\n${getBody("<=")}`;
+        writeFileSync(join(directory, "console.ts"), source);
+        expect(
+          getCounts(await checkModel(source, join(directory, "console.ts"), "compared")),
+        ).toEqual(["deadlock", 3, 3]);
       });
     });
 

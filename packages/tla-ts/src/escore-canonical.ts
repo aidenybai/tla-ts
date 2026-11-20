@@ -149,10 +149,27 @@ const PLAIN_CLASSES = new Set([
   "symbol",
   "namespace",
   "regexp",
+  "arrayBuffer",
 ]);
 
-// The built-in functions whose data is the cell of a promise's resolving functions or capability.
-const CELL_BUILTINS = new Set(["resolveFunction", "rejectFunction", "capabilityExecutor"]);
+// The classes that view an ArrayBuffer, which their slots' buffer holds.
+const VIEW_CLASSES = new Set(["typedArray", "dataView"]);
+
+// The built-in functions whose data is a value: the cell of a promise's resolving functions or
+// capability, and the host's: process.getBuiltinModule's proxy of async_hooks, console.createTask's
+// function that runs a task, the getter of a global's value, and the traps of the proxies that
+// stand for process.hrtime, an AsyncResource, and a TextEncoder, of the value each one reads.
+const OBJECT_DATA_BUILTINS = new Set([
+  "Promise resolveFunction",
+  "Promise rejectFunction",
+  "Promise capabilityExecutor",
+  "Module getBuiltinModule",
+  "Module createTask",
+  "Module hostGlobal",
+  "Module hrtimeGet",
+  "Module asyncResourceGet",
+  "Module textEncoderGet",
+]);
 
 const BUILTIN_SLOTS = ["constructor", "data", "id", "initialName", "realm"];
 
@@ -161,10 +178,12 @@ const getDomain = (record: Value) =>
     .domain.map((key) => String(key))
     .sort();
 
-const isCellBuiltin = (slots: Value) => {
-  const id = getList(get(slots, "id"));
-  return id.length === 2 && id[0] === "Promise" && CELL_BUILTINS.has(String(id[1]));
-};
+const isObjectDataBuiltin = (slots: Value) =>
+  OBJECT_DATA_BUILTINS.has(getList(get(slots, "id")).map(String).join(" "));
+
+// The host's AsyncResource constructor, whose data is a record of the functions run and destroy.
+const isAsyncResourceBuiltin = (slots: Value) =>
+  getList(get(slots, "id")).map(String).join(" ") === "Module asyncResource";
 
 // The slots of a class's default constructor, a built-in that holds the class's elements.
 const DEFAULT_CONSTRUCTOR_SLOTS = [
@@ -194,7 +213,10 @@ const isNamedBuiltin = (slots: Value) => {
 
 const isPlainBuiltin = (slots: Value) =>
   getDomain(slots).join() === BUILTIN_SLOTS.join() &&
-  (isCellBuiltin(slots) || isNamedBuiltin(slots) || isModelValue(get(slots, "data"), "Empty"));
+  (isObjectDataBuiltin(slots) ||
+    isAsyncResourceBuiltin(slots) ||
+    isNamedBuiltin(slots) ||
+    isModelValue(get(slots, "data"), "Empty"));
 
 const slotRefs = (object: Value, realm: Realm, refs: number[]) => {
   const objectClass = getString(object, "class");
@@ -221,6 +243,8 @@ const slotRefs = (object: Value, realm: Realm, refs: number[]) => {
     });
   } else if (objectClass === "set") {
     values(get(slots, "setData"));
+  } else if (VIEW_CLASSES.has(objectClass)) {
+    maybeRef(get(slots, "buffer"), realm, refs);
   } else if (objectClass === "proxy") {
     maybeRef(get(slots, "target"), realm, refs);
     maybeRef(get(slots, "handler"), realm, refs);
@@ -238,7 +262,11 @@ const slotRefs = (object: Value, realm: Realm, refs: number[]) => {
     // A registry holds no cell, as the runtime stops where a program registers a target.
     objectRef(get(slots, "cleanupCallback"), realm, refs);
   } else if (objectClass === "builtin" && isPlainBuiltin(slots)) {
-    if (isCellBuiltin(slots)) objectRef(get(slots, "data"), realm, refs);
+    if (isObjectDataBuiltin(slots)) objectRef(get(slots, "data"), realm, refs);
+    if (isAsyncResourceBuiltin(slots)) {
+      objectRef(get(get(slots, "data"), "run"), realm, refs);
+      objectRef(get(get(slots, "data"), "destroy"), realm, refs);
+    }
   } else if (
     objectClass === "builtin" &&
     isDefaultConstructor(slots) &&
@@ -477,6 +505,7 @@ const canonicalStateOf = (state: Value, initial: Value): Value => {
         trace: () => createRecord([["dropped", true]]),
       });
     }
+    if (VIEW_CLASSES.has(objectClass)) return except(slots, { buffer: renameMaybe });
     switch (objectClass) {
       case "function":
         return except(slots, {
@@ -553,9 +582,13 @@ const canonicalStateOf = (state: Value, initial: Value): Value => {
               privateMethods: renameElements,
               initializers: (inner) => (isModelValue(inner, "Empty") ? inner : renameValues(inner)),
             })
-          : isCellBuiltin(slots)
+          : isObjectDataBuiltin(slots)
             ? except(slots, { data: renameValue })
-            : slots;
+            : isAsyncResourceBuiltin(slots)
+              ? except(slots, {
+                  data: (data) => except(data, { run: renameValue, destroy: renameValue }),
+                })
+              : slots;
       default:
         return except(slots, { target: renameMaybe, handler: renameMaybe });
     }

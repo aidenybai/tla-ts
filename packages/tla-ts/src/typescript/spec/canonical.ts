@@ -28,10 +28,20 @@ ElementRefs(e, r) ==
       ELSE MaybeRef(e.init, r) \o ConcatMap(e.initializers, LAMBDA x : MaybeRef(x, r)))
 ValueRefs(seq, r) == ConcatMap(seq, LAMBDA x : MaybeRef(x, r))
 \* The classes whose slots hold no object or environment, but an ordinary object's initializers. A
-\* RegExp's hold its source, its flags, and its compiled pattern.
-PlainClasses == {"ordinary", "array", "error", "boolean", "number", "string", "date", "bigint", "symbol", "namespace", "regexp"}
-\* The built-in functions whose data is the cell of a promise's resolving functions or capability.
-CellBuiltins == {<<"Promise", "resolveFunction">>, <<"Promise", "rejectFunction">>, <<"Promise", "capabilityExecutor">>}
+\* RegExp's hold its source, its flags, and its compiled pattern, and an ArrayBuffer's its bytes.
+PlainClasses == {"ordinary", "array", "error", "boolean", "number", "string", "date", "bigint", "symbol", "namespace", "regexp", "arrayBuffer"}
+\* The classes that view an ArrayBuffer, which their slots' buffer holds.
+ViewClasses == {"typedArray", "dataView"}
+\* The built-in functions whose data is a value: the cell of a promise's resolving functions or
+\* capability, and the host's: process.getBuiltinModule's proxy of async_hooks, console.createTask's
+\* function that runs a task, the getter of a global's value, and the traps of the proxies that
+\* stand for process.hrtime, an AsyncResource, and a TextEncoder, of the value each one reads.
+ObjectDataBuiltins ==
+  {<<"Promise", "resolveFunction">>, <<"Promise", "rejectFunction">>, <<"Promise", "capabilityExecutor">>,
+   <<"Module", "getBuiltinModule">>, <<"Module", "createTask">>, <<"Module", "hostGlobal">>,
+   <<"Module", "hrtimeGet">>, <<"Module", "asyncResourceGet">>, <<"Module", "textEncoderGet">>}
+\* The host's AsyncResource constructor, whose data is a record of the functions run and destroy.
+AsyncResourceBuiltin == <<"Module", "asyncResource">>
 BuiltinSlots == {"id", "constructor", "data", "realm", "initialName"}
 \* The built-in functions whose data refers to nothing: the host's that stop, whose data is a name,
 \* and the RegExp constructor, whose data is the strings of its last match, as RegExp.$1 reads.
@@ -50,6 +60,7 @@ SlotRefs(o, r) ==
     [] o.class = "map" ->
          ConcatMap(o.slots.mapData, LAMBDA e : IF e = Empty THEN <<>> ELSE MaybeRef(e.key, r) \o MaybeRef(e.value, r))
     [] o.class = "set" -> ValueRefs(o.slots.setData, r)
+    [] o.class \in ViewClasses -> MaybeRef(o.slots.buffer, r)
     [] o.class \in {"weakMap", "weakSet", "weakRef"} -> <<>>
     \* A registry holds no cell, as the runtime stops where a program registers a target.
     [] o.class = "finalizationRegistry" /\ o.slots.cells = <<>> -> ObjectRef(o.slots.cleanupCallback, r)
@@ -58,7 +69,9 @@ SlotRefs(o, r) ==
          IF o.slots.state = "pending" THEN ModelStop("a pending promise") ELSE MaybeRef(o.slots.result, r)
     [] o.class = "cell" /\ DOMAIN o.slots = {"promise"} -> MaybeRef(o.slots.promise, r)
     [] o.class = "cell" /\ DOMAIN o.slots = {"resolve", "reject"} -> MaybeRef(o.slots.resolve, r) \o MaybeRef(o.slots.reject, r)
-    [] o.class = "builtin" /\ DOMAIN o.slots = BuiltinSlots /\ o.slots.id \in CellBuiltins -> ObjectRef(o.slots.data, r)
+    [] o.class = "builtin" /\ DOMAIN o.slots = BuiltinSlots /\ o.slots.id \in ObjectDataBuiltins -> ObjectRef(o.slots.data, r)
+    [] o.class = "builtin" /\ DOMAIN o.slots = BuiltinSlots /\ o.slots.id = AsyncResourceBuiltin ->
+         ObjectRef(o.slots.data.run, r) \o ObjectRef(o.slots.data.destroy, r)
     [] o.class = "builtin" /\ DOMAIN o.slots = BuiltinSlots /\ (o.slots.data = Empty \/ o.slots.id \in NamedBuiltins) -> <<>>
     [] o.class = "builtin" /\ DOMAIN o.slots = DefaultConstructorSlots /\ o.slots.id = <<"Class", "default">> ->
          ConcatMap(o.slots.fields, LAMBDA e : ElementRefs(e, r))
@@ -172,6 +185,7 @@ RenameSlots(o, number, r) ==
          IN [o.slots EXCEPT !.weakMapData =
                [k \in {RenameValue(x, number, r) : x \in keys} |->
                   RenameMaybe(data[CHOOSE x \in keys : RenameValue(x, number, r) = k], number, r)]]
+    [] o.class \in ViewClasses -> [o.slots EXCEPT !.buffer = RenameMaybe(@, number, r)]
     [] o.class = "weakRef" ->
          IF IsWeakKeyReached(o.slots.weakRefTarget, number, r)
          THEN [o.slots EXCEPT !.weakRefTarget = RenameValue(@, number, r)]
@@ -188,7 +202,11 @@ RenameSlots(o, number, r) ==
     [] o.class = "builtin" /\ o.slots.id = <<"Class", "default">> /\ "fields" \in DOMAIN o.slots ->
          [o.slots EXCEPT !.fields = RenameElements(@, number, r), !.privateMethods = RenameElements(@, number, r),
                          !.initializers = IF @ = Empty THEN @ ELSE RenameValues(@, number, r)]
-    [] o.class = "builtin" -> IF o.slots.id \in CellBuiltins THEN [o.slots EXCEPT !.data = RenameValue(@, number, r)] ELSE o.slots
+    [] o.class = "builtin" ->
+         CASE o.slots.id \in ObjectDataBuiltins -> [o.slots EXCEPT !.data = RenameValue(@, number, r)]
+           [] o.slots.id = AsyncResourceBuiltin ->
+                [o.slots EXCEPT !.data.run = RenameValue(@, number, r), !.data.destroy = RenameValue(@, number, r)]
+           [] OTHER -> o.slots
 RenameObject(o, number, r) ==
   [o EXCEPT !.proto = RenameMaybe(@, number, r),
             !.props = [b \in {c \in DOMAIN @ : DOMAIN @[c] # {}} |-> [k \in DOMAIN @[b] |-> RenameDescriptor(@[b][k], number, r)]],

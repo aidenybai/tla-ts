@@ -116,9 +116,30 @@ const TLA_WORDS = new Set(
   ),
 );
 
-// The classes whose objects no lowered value holds: those that hold others weakly, and RegExp, whose
-// compiled pattern no lowered value has.
-const HEAP_CLASSES = new Set(["WeakMap", "WeakSet", "WeakRef", "FinalizationRegistry", "RegExp"]);
+// The classes whose objects no lowered value holds: those that hold others weakly, RegExp, whose
+// compiled pattern no lowered value has, and the buffers and their views, whose bytes none has.
+const HEAP_CLASSES = new Set([
+  "WeakMap",
+  "WeakSet",
+  "WeakRef",
+  "FinalizationRegistry",
+  "RegExp",
+  "ArrayBuffer",
+  "SharedArrayBuffer",
+  "DataView",
+  "Int8Array",
+  "Uint8Array",
+  "Uint8ClampedArray",
+  "Int16Array",
+  "Uint16Array",
+  "Int32Array",
+  "Uint32Array",
+  "Float16Array",
+  "Float32Array",
+  "Float64Array",
+  "BigInt64Array",
+  "BigUint64Array",
+]);
 
 // The module-level bindings a model's state lowers, in the order the module declares them, or
 // undefined where the module's top level does more than declare them and functions, as it must
@@ -154,10 +175,9 @@ export const getLoweredBindings = (file: ts.SourceFile, chosen: ReadonlySet<stri
       }
     }
   }
-  // An error a module keeps holds the calls that made it, a weak collection holds objects that only
-  // their identities reach, and a RegExp its compiled pattern, which no lowered value does, so a
-  // module that names an error or such a class, writes a RegExp, or catches an error, keeps its
-  // state on the heap.
+  // An error a module keeps holds the calls that made it, and the objects of the classes above what
+  // no lowered value does, so a module that names an error or such a class, writes a RegExp, or
+  // catches an error, keeps its state on the heap.
   const isErring = (node: ts.Node): boolean =>
     ts.isCatchClause(node) ||
     ts.isRegularExpressionLiteral(node) ||
