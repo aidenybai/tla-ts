@@ -1493,6 +1493,10 @@ const getUnionSets = (
   return getElements(value.base);
 };
 
+// TLC's UnionValue streams S into UNION S, so -maxSetSize doesn't bound S.
+const getUnionBase = (base: Value) =>
+  typeof base === "object" && base.kind === "Set" ? base.elements : getStreamedElements(base);
+
 const getUnionSet = (set: Value, index: number, union: UnionValue) => {
   if (isTlcEnumerable(set)) return set;
   throw new TlaEvaluationError(
@@ -1840,7 +1844,7 @@ const enumerateSet = (
     }
     case "Union": {
       const elements: Value[] = [];
-      getUnionSets(value).forEach((set, index) => {
+      getUnionSets(value, getUnionBase).forEach((set, index) => {
         const unionSet = getUnionSet(set, index, value);
         if (isBeyondSetBound(unionSet)) throw new TlaSetBoundError(getSetBoundMessage());
         getStreamedElements(unionSet).forEach((element) => addBoundedElement(elements, element));
@@ -2051,7 +2055,7 @@ const isStreamedApart = (value: Value): boolean => {
 
 const someElementOfStream = (value: ObjectValue, visit: (element: Value) => boolean): boolean => {
   if (value.kind === "Union") {
-    return getUnionSets(value, getStreamedElements).some((set, index) =>
+    return getUnionSets(value, getUnionBase).some((set, index) =>
       someStreamedElement(getUnionSet(set, index, value), visit),
     );
   }

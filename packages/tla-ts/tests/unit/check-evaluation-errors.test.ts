@@ -3401,6 +3401,41 @@ describe("evaluation errors match TLC", () => {
     );
   });
 
+  it("streams S into UNION S past -maxSetSize, as TLC's UnionValue does", async () => {
+    const result = await checkSetBound(
+      "x' = Cardinality(UNION (SUBSET {1} \\cup (SUBSET {2} \\cup (SUBSET {1} \\cup (SUBSET {2} \\cup (SUBSET {1} \\cup SUBSET {2}))))))",
+      "TRUE",
+    );
+    expect([result.status, result.generatedStates, result.distinctStates]).toEqual([
+      "success",
+      3,
+      2,
+    ]);
+  });
+
+  it.each([
+    [
+      "x' = x /\\ {UNION (SUBSET (1..3) \\cup SUBSET (1..3))} # {0}",
+      [
+        "Line 5, column 9 to line 5, column 66 in M",
+        "Line 5, column 9 to line 5, column 14 in M",
+        "Line 5, column 19 to line 5, column 66 in M",
+        "Line 5, column 19 to line 5, column 60 in M",
+        "Line 5, column 20 to line 5, column 59 in M",
+      ],
+      "Attempted to construct a set with too many elements (>10).",
+    ],
+    ["x' = x /\\ \\A e \\in UNION (SUBSET (1..3) \\cup SUBSET (1..3)) : TRUE", [], undefined],
+  ])(
+    "fails UNION S past -maxSetSize as TLC's UnionValue collects it: %s",
+    async (next, callStack, reason) => {
+      const result = await checkSetBound(next, "TRUE");
+      expect(result.failure?.message).toBe(BOUND_EXCEPTION);
+      expect(formatCallStackLines(result)).toEqual(callStack);
+      expect(result.failure?.fingerprint?.reason).toBe(reason);
+    },
+  );
+
   it.each([
     ["x' \\in [a : {f \\in [1..2 -> 1..4] : TRUE}]", 273, 17],
     ["x' = [f \\in [1..2 -> 1..4] |-> 1]", 3, 2],
