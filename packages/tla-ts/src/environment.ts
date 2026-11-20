@@ -1188,9 +1188,11 @@ export const createEnvironment = (
     const extended: LinkedModule[] = [];
     const getKey = (item: { name: string }) => `${item.name}${KEY_SEPARATOR}${scope.id}`;
     const extendedConstants: KeyedDeclaration[] = [];
+    // SANY's nested module doesn't declare a name its enclosing module already binds.
     const declaredVariables = parsed.variables.filter(
       (variable, index) =>
-        parsed.variables.findIndex((other) => other.name === variable.name) === index,
+        parsed.variables.findIndex((other) => other.name === variable.name) === index &&
+        !scope.symbols.has(variable.name),
     );
     const variables = declaredVariables.map((variable) => variable.name);
     const variableLocations = declaredVariables.map((variable) => variable.location);
@@ -1224,8 +1226,10 @@ export const createEnvironment = (
     });
     const constants = [
       ...parsed.constants
-        .filter((constant) =>
-          extendedConstants.every((existing) => existing.name !== constant.name),
+        .filter(
+          (constant) =>
+            extendedConstants.every((existing) => existing.name !== constant.name) &&
+            !scope.symbols.has(constant.name),
         )
         .map((constant) => ({ ...constant, key: getKey(constant) })),
       ...extendedConstants,

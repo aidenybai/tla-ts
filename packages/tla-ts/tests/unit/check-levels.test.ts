@@ -1408,6 +1408,61 @@ describe("level checking matches SANY", () => {
     },
   );
 
+  it.each([
+    [
+      "VARIABLE x, v\n---- MODULE In ----\nVARIABLE v\nTHEOREM T == t :: ((v' = 1) /\\ [](v = 1))",
+      [
+        "line 5, col 20 to line 5, col 40",
+        "line 8, col 6 to line 8, col 21",
+        "line 4, col 10 to line 4, col 10",
+        "v",
+        "line 2, col 13 to line 2, col 13",
+      ],
+    ],
+    [
+      "VARIABLE x\nCONSTANT k\n---- MODULE In ----\nCONSTANT k\nTHEOREM T == t :: ((k' = 1) /\\ []TRUE)",
+      [
+        "line 6, col 20 to line 6, col 37",
+        "line 9, col 6 to line 9, col 21",
+        "line 5, col 10 to line 5, col 10",
+        "k",
+        "line 3, col 10 to line 3, col 10",
+      ],
+    ],
+  ])(
+    "checks a label selected through an instance of a module that only redeclares its enclosing module's names as level-correct, as SANY does: %s",
+    async (modules, expected) => {
+      await expect(
+        check({
+          source: `---- MODULE M ----\n${modules}\n====\nI == INSTANCE In\nD == SF_I!T!t(x' = 1)\nInit == x = 0\nNext == x' = x\n====`,
+          config: "INIT Init\nNEXT Next",
+        }),
+      ).rejects.toThrow(
+        createSanyError(
+          [
+            {
+              location: `${expected[0]} of module M`,
+              message: "\\land has both temporal formula and action as arguments.",
+            },
+            {
+              location: `${expected[1]} of module M`,
+              message:
+                "Level error in applying operator $SF:\nThe level of argument 1 exceeds the maximum level allowed by the operator.",
+            },
+          ],
+          false,
+          undefined,
+          [
+            {
+              location: `${expected[2]} of module M`,
+              message: `Multiple declarations or definitions for symbol ${expected[3]}.  \nThis duplicates the one at ${expected[4]} of module M.`,
+            },
+          ],
+        ),
+      );
+    },
+  );
+
   it("checks a label selected from a step's statement, as SANY does", async () => {
     const exceeds = "The level of argument 1 exceeds the maximum level allowed by the operator.";
     await expect(
