@@ -1901,14 +1901,14 @@ const openStream = (value: Value, isEager: boolean): void => {
     case "FilteredSet":
       if (!isTlcEnumerable(value.base)) toFiniteSet(value);
       return openOperandStream(value.base, isEager);
-    case "Union":
+    case "Union": {
       if (!isEnumeratedSet(value.base) && isTlcEnumerable(value.base)) {
         return openOperandStream(value.base, isEager);
       }
-      getUnionSets(value)
-        .slice(0, 1)
-        .forEach((set) => openOperandStream(getUnionSet(set, 0, value), isEager));
+      const unionSets = getUnionSets(value);
+      if (unionSets.length > 0) openOperandStream(getUnionSet(unionSets[0], 0, value), isEager);
       return;
+    }
     case "SetOperation":
       if (value.operator === "\\" && !isTlcEnumerable(value.left)) toFiniteSet(value);
       if (
@@ -1918,13 +1918,8 @@ const openStream = (value: Value, isEager: boolean): void => {
       ) {
         toFiniteSet(value);
       }
-      if (
-        value.operator === "\\cup" &&
-        (!isTlcEnumerable(value.left) || !isTlcEnumerable(value.right))
-      ) {
-        toFiniteSet(value);
-      }
       if (value.operator === "\\cup") {
+        if (!isTlcEnumerable(value.left) || !isTlcEnumerable(value.right)) toFiniteSet(value);
         openOperandStream(value.left, true);
         openOperandStream(value.right, true);
         return;
@@ -1964,7 +1959,7 @@ const openCombinedStream = (
       if (isOverriddenSet(domain)) {
         throw new TlaEvaluationError(describeUnenumerableFunctionSet("domain D", domain));
       }
-      if (typeof domain === "object" && isLazySet(domain)) getFunctionDomain(domain);
+      if (typeof domain === "object" && isLazySet(domain)) toFiniteSet(domain);
       if (isEmptySet(domain)) return;
       if (isOverriddenSet(value.range)) {
         throw new TlaEvaluationError(describeUnenumerableFunctionSet("range R", value.range));
