@@ -218,6 +218,7 @@ export const createTlcExtOperators = (runtime: CheckerRuntime): Builtin[] => {
       }),
       isStateLevel: false,
     },
+    // Deviation from TLC: TLCExt#tlcGetOrDefault lacks TLCGet's minLevel = 1, so TLC evaluates a constant definition that calls it as it starts and keeps the default.
     defineStateOperator(
       "TLCGetOrDefault",
       2,
