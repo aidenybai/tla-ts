@@ -2486,6 +2486,32 @@ describe("level checking matches SANY", () => {
     },
   );
 
+  it.each([
+    ["ASSUME NEW z, c = 1 PROVE z = z", "INSTANCE L WITH c <- x\nASSUME T", 8],
+    ["ASSUME NEW z, NEW w, c = 1 PROVE TRUE", "INSTANCE L WITH c <- x\nASSUME T", 8],
+    ["ASSUME NEW z PROVE c = 1", "INSTANCE L WITH c <- x\nASSUME T", 8],
+    ["ASSUME NEW z, ASSUME c = 1 PROVE TRUE PROVE TRUE", "INSTANCE L WITH c <- x\nASSUME T", 8],
+    ["ASSUME NEW z \\in {c}, z = 1 PROVE TRUE", "INSTANCE L WITH c <- x\nASSUME T", 8],
+    ["ASSUME NEW z, c = 1 PROVE z = z", "I == INSTANCE L WITH c <- x\nASSUME I!T", 10],
+  ])(
+    "levels every clause of the theorem %j, those after a NEW included, when %j reaches it, as SANY does",
+    async (statement, lines, end) => {
+      await expect(
+        check({
+          source: `---- MODULE M ----\nVARIABLE x\n---- MODULE L ----\nCONSTANT c\nTHEOREM T == ${statement}\n====\n${lines}\nInit == x = 0\nNext == x' = x\n====`,
+          config: "INIT Init\nNEXT Next",
+        }),
+      ).rejects.toThrow(
+        createSanyError([
+          {
+            location: `line 8, col 1 to line 8, col ${end} of module M`,
+            message: getAssumptionError(1),
+          },
+        ]),
+      );
+    },
+  );
+
   it("checks a label selected from a step's statement, as SANY does", async () => {
     const exceeds = "The level of argument 1 exceeds the maximum level allowed by the operator.";
     await expect(

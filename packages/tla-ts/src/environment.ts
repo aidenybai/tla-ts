@@ -2,6 +2,7 @@ import {
   getChildren,
   getDefinitionExpressions,
   getReferencedName,
+  type AssumeProve,
   type Assumption,
   type Declaration,
   type Definition,
@@ -107,6 +108,7 @@ import {
   type InstanceLevelCheck,
   type InstanceSubstitutes,
   type LetInstance,
+  type LevelData,
   type SectionMember,
 } from "./levels";
 import { createInstanceChecker, type KeyedDeclaration } from "./substitution-levels";
@@ -368,6 +370,7 @@ export const createEnvironment = (
   const letInstances = new Map<string, LetInstance>();
   const recursiveSections = new WeakMap<Definition, SectionMember[]>();
   const checkedNodes = new WeakMap<Expression, boolean>();
+  const statementLevels = new Map<Expression | AssumeProve, LevelData>();
   const resolvedSubstitutions = new WeakMap<Instance, Map<string, Expression>>();
   // Each place that resolves an instance's selections, such as a theorem and its ASSUME/PROVE clause, copies the instance.
   const getInstanceKey = (instance: Instance) =>
@@ -1648,12 +1651,14 @@ export const createEnvironment = (
       const key = getKey(theorem);
       parameterized.set(key, !isParameterFree);
       const body = subexpressions.getAssumeProve(theorem.name);
-      if (body) {
+      const statement = theorem.goal.statement;
+      if (body && statement.kind === "AssumeProve") {
         definitions.set(key, {
           kind: "Operator",
           name: theorem.name,
           params: [],
           body,
+          statement,
           isLocal: false,
           isRecursive: false,
           location: theorem.location,
@@ -1718,6 +1723,7 @@ export const createEnvironment = (
           recursiveSections,
           checkedNodes,
           goalSelections,
+          statementLevels,
         },
         instanceChecks.splice(firstCheck),
         warnings,
