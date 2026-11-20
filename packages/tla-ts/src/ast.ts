@@ -435,7 +435,7 @@ export interface NewSymbol {
   location: SourceLocation;
 }
 
-export interface AssumeProveLabel {
+interface AssumeProveLabel {
   name: string;
   location: SourceLocation;
 }
