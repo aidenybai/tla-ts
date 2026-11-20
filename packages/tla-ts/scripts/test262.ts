@@ -4262,8 +4262,15 @@ const compileForEscore = (
   const error = transpiled.diagnostics?.find(
     (diagnostic) => diagnostic.category === ts.DiagnosticCategory.Error,
   );
+  // TypeScript's error, with its code, so that a test that TypeScript rejects runs as JavaScript.
   if (error !== undefined) {
-    throw new TlaTypeScriptError(ts.flattenDiagnosticMessageText(error.messageText, "\n"));
+    throw new TlaTypeScriptError(
+      ts.formatDiagnostics([error], {
+        getCanonicalFileName: (fileName) => fileName,
+        getCurrentDirectory: () => "",
+        getNewLine: () => "\n",
+      }),
+    );
   }
   if (existsSync(path)) writeFileSync(path, transpiled.outputText);
   return compileToEscore(transpiled.outputText, path, runtime, isModule);
