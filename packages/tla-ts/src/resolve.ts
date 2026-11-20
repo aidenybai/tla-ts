@@ -2221,12 +2221,35 @@ const resolveNewSymbol = (symbol: NewSymbol, scope: LocalName | undefined, unit:
   );
 };
 
+// SANY's Generator#generateAssumeProve declares S_InAssume in the scope of an ordinary ASSUME's assumptions, as for NEW.
+const IN_ASSUME = "$$InAssume";
+
 const resolveAssumeProve = (
   assumeProve: AssumeProve,
   scope: LocalName | undefined,
   unit: Unit,
   isNested = false,
 ): LocalName | undefined => {
+  const isBoxed = assumeProve.isBoxed === true;
+  const range = assumeProve.location.range;
+  const report = (message: string) => {
+    if (!range) return;
+    const end = { ...range.start, column: range.start.column + (isBoxed ? 7 : 5) };
+    unit.errors.push({ location: formatRange({ ...range, end }), message });
+  };
+  if (isBoxed !== (assumeProve.isProveBoxed === true)) {
+    report(
+      isBoxed
+        ? "[]ASSUME matched by PROVE instead of []PROVE"
+        : "ASSUME matched by []PROVE instead of PROVE",
+    );
+  }
+  if (isBoxed && lookupLocal(scope, IN_ASSUME)) {
+    report("[]ASSUME used within the scope of an ordinary ASSUME's assumptions");
+  }
+  const assumeScope: LocalName | undefined = isBoxed
+    ? scope
+    : { name: IN_ASSUME, kind: "Constant", arity: 0, parent: scope };
   const assumed = assumeProve.assumptions.reduce(
     (current, assumption) => {
       if (assumption.kind === "NewSymbol") {
@@ -2250,7 +2273,7 @@ const resolveAssumeProve = (
       }
       return current;
     },
-    { scope, unit },
+    { scope: assumeScope, unit },
   );
   resolveExpression(assumeProve.conclusion, assumed.scope, assumed.unit);
   return assumed.scope;

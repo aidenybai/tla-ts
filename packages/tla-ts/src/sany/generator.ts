@@ -34,13 +34,7 @@ import {
   VARIABLE_DECL_KIND,
 } from "./nodes";
 import { createSelectorResolver } from "./selectors";
-import {
-  createSourceFile,
-  getPreComments,
-  getTokenIndex,
-  getUnboxedSource,
-  type SourceFile,
-} from "./source";
+import { createSourceFile, getPreComments, getTokenIndex, type SourceFile } from "./source";
 import {
   createFormalParam,
   createNullNode,
@@ -261,7 +255,7 @@ export const generateSanySpecification = (
     // HACK: the parser's errors are not SANY's, so a module that fails to parse gets the report of
     // SANY's parser, or the parser's own where SANY's parser would accept the module.
     try {
-      return parseSanyModule(getUnboxedSource(text));
+      return parseSanyModule(text);
     } catch (error) {
       if (!(error instanceof TlaSyntaxError)) throw error;
       throw getParseFailure(getSanyParseError(text) ?? `***Parse Error***\n${error.message}`);

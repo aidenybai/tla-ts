@@ -4800,6 +4800,60 @@ describe("name resolution matches SANY", () => {
     },
   );
 
+  const boxed = "[]ASSUME TRUE []PROVE TRUE";
+  const inAssume = "[]ASSUME used within the scope of an ordinary ASSUME's assumptions";
+
+  it.each([
+    `THEOREM T == ${boxed}\nX == T!1`,
+    "THEOREM []ASSUME NEW VARIABLE v, v = 1 []PROVE v' = 1",
+    `THEOREM T == []ASSUME ${boxed}, ASSUME TRUE PROVE TRUE, ${boxed} []PROVE TRUE`,
+    `THEOREM T == []ASSUME a :: ${boxed} []PROVE TRUE\nX == T!a!1`,
+    `THEOREM TRUE\n<1>1. ${boxed}\n  OBVIOUS\n<1>2. SUFFICES ${boxed}\n  OBVIOUS\n<1> QED`,
+    `THEOREM TRUE\n<1>1. ASSUME TRUE PROVE TRUE\n  OBVIOUS\n<1>2. ${boxed}\n  OBVIOUS\n<1> QED`,
+    `THEOREM TRUE\n<1>1. SUFFICES ASSUME TRUE PROVE TRUE\n  <2>1. ${boxed}\n    OBVIOUS\n  <2> QED\n<1> QED`,
+  ])("reads the []ASSUME and []PROVE in %j like SANY", async (unit) => {
+    const result = await check({ source: `---- MODULE M ----\n${unit}\n====`, config: "" });
+    expect(result.status).toBe("success");
+  });
+
+  it.each([
+    [
+      "THEOREM T == []ASSUME x = 1 PROVE x = 1",
+      [["line 3, col 14 to line 3, col 21", "[]ASSUME matched by PROVE instead of []PROVE"]],
+    ],
+    [
+      "THEOREM T == ASSUME x = 1 []PROVE x = 1",
+      [["line 3, col 14 to line 3, col 19", "ASSUME matched by []PROVE instead of PROVE"]],
+    ],
+    [
+      "THEOREM T == ASSUME x = 1, []ASSUME x = 2 []PROVE x = 2 PROVE x = 1",
+      [["line 3, col 28 to line 3, col 35", inAssume]],
+    ],
+    [
+      "THEOREM T == []ASSUME a :: []ASSUME x = 1 []PROVE x = 1 []PROVE x = 1\nX == T!a",
+      [["line 4, col 6 to line 4, col 8", "ASSUME/PROVE used where an expression is required."]],
+    ],
+    [
+      `THEOREM TRUE\n<1>1. SUFFICES ASSUME TRUE PROVE TRUE\n  OBVIOUS\n<1>2. ${boxed}\n  OBVIOUS\n<1> QED`,
+      [["line 6, col 7 to line 6, col 14", inAssume]],
+    ],
+    [
+      "THEOREM ASSUME NEW c PROVE TRUE\n<1>1. []ASSUME c PROVE c\n  OBVIOUS\n<1> QED",
+      [
+        ["line 4, col 7 to line 4, col 14", "[]ASSUME matched by PROVE instead of []PROVE"],
+        ["line 4, col 7 to line 4, col 14", inAssume],
+      ],
+    ],
+  ])("checks the []ASSUME in %j like SANY", async (unit, errors) => {
+    await expect(
+      check({ source: `---- MODULE M ----\nVARIABLE x\n${unit}\n====`, config: "" }),
+    ).rejects.toThrow(
+      createSanyError(
+        errors.map((error) => ({ location: `${error[0]} of module M`, message: error[1] })),
+      ),
+    );
+  });
+
   it("reports DEF clause entries of bracketed, quantified and infix shapes like SANY", async () => {
     await expect(
       check({

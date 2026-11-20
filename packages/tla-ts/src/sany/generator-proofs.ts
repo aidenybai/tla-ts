@@ -40,12 +40,10 @@ import {
 import { getSelectorItems, isGeneralId } from "./selectors";
 import {
   findNameTokens,
-  getExpressionSpan,
   getRangeSpan,
   getSpanLocation,
   getTokenIndex,
   getTokenLocation,
-  isBoxToken,
   type TokenSpan,
 } from "./source";
 import {
@@ -218,16 +216,12 @@ const generateAssumeProve = (
   goal?: { isSuffices: boolean },
 ): AssumeProveNode => {
   const span = getUnitSpan(generation.file, assumeProve.location);
-  const isBoxed = isBoxToken(generation.file, span.start - 1);
-  const conclusionStart = getExpressionSpan(generation.file, assumeProve.conclusion).start;
-  const proveIndex = generation.file.tokens.findLastIndex(
-    (token, index) => index < conclusionStart && token.kind === "Keyword" && token.text === "PROVE",
-  );
+  const isBoxed = assumeProve.isBoxed === true;
   const assumeLocation = getSpanLocation(generation.file, {
-    start: isBoxed ? span.start - 1 : span.start,
-    end: span.start,
+    start: span.start,
+    end: isBoxed ? span.start + 1 : span.start,
   });
-  if (isBoxed !== isBoxToken(generation.file, proveIndex - 1)) {
+  if (isBoxed !== (assumeProve.isProveBoxed === true)) {
     generation.addError(
       assumeLocation,
       isBoxed
@@ -289,10 +283,7 @@ const generateAssumeProve = (
     goal: conclusion,
     isSuffices: scope.isSuffices,
     isBoxed,
-    location: getSpanLocation(generation.file, {
-      start: isBoxed ? span.start - 1 : span.start,
-      end: span.end,
-    }),
+    location: getSpanLocation(generation.file, span),
   };
   generation.assumeProveScopes.set(node, scope);
   return node;
