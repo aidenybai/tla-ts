@@ -553,8 +553,13 @@ ReadThrough(s, o, k, count, dir, acc) ==
   ELSE LET v == Get(s, o, Index(k)) IN
        IF IsAbrupt(v) THEN v ELSE ReadThrough(v.s, o, NumAdd(k, NumFromInt(dir)), NumSub(count, OneNum), dir, Append(acc, Val(v)))
 
+\* More than 64 indices fill in halves, so that thousands of them nest log n deep rather than n.
 FillFrom(s, o, k, final, value) ==
   IF ~NumLess(k, final) THEN Ok(s, o)
+  ELSE IF NumFitsInt(final) /\ NumToInt(final) - NumToInt(k) > 64 THEN
+       LET middle == NumFromInt((NumToInt(k) + NumToInt(final)) \div 2)
+           first == FillFrom(s, o, k, middle, value)
+       IN IF IsAbrupt(first) THEN first ELSE FillFrom(first.s, o, middle, final, value)
   ELSE LET w == Set(s, o, Index(k), value, TRUE) IN
        IF IsAbrupt(w) THEN w ELSE FillFrom(w.s, o, NumAdd(k, OneNum), final, value)
 
