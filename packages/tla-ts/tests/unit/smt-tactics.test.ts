@@ -3215,6 +3215,39 @@ describe("unit-subsume-simplify, as Z3 5.3.2 keeps its context", () => {
     ]);
   });
 
+  it("propagates in its context at the smt.relevancy level", () => {
+    expect(
+      run([
+        "(set-option :smt.relevancy 1)",
+        "(declare-fun f (Int) Int)",
+        "(declare-fun g (Int) Int)",
+        "(declare-const p Bool)",
+        "(declare-const q Bool)",
+        "(declare-const a Int)",
+        "(declare-const b Int)",
+        "(assert (forall ((x Int)) (! (> (f x) (g x)) :pattern ((f x)))))",
+        "(assert (forall ((x Int)) (! (> (g x) x) :pattern ((g x)))))",
+        "(assert (or (> (f a) a) p))",
+        "(assert (or q (< (f b) b) (> (g a) 0)))",
+        "(assert (or (and (> a 0) (< b 0)) q (= (f a) (g b))))",
+        "(apply unit-subsume-simplify)",
+        "(get-info :rlimit)",
+      ]),
+    ).toEqual([
+      [
+        "(goals",
+        "(goal",
+        "  (forall ((x Int)) (! (> (f x) (g x)) :pattern ((f x))))",
+        "  (forall ((x Int)) (! (> (g x) x) :pattern ((g x))))",
+        "  (or q (< (f b) b) (> (g a) 0))",
+        "  (or (and (> a 0) (< b 0)) q (= (f a) (g b)))",
+        "  :precision precise :depth 0)",
+        ")",
+      ].join("\n"),
+      "(:rlimit 1861)",
+    ]);
+  });
+
   it("makes its context with the tactic, even when the tactic never runs", () => {
     expect(
       run([

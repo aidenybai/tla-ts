@@ -567,6 +567,7 @@ const runUnitSubsume = (environment: TacticEnvironment) => {
     isMbqi: environment.isMbqi,
     mbqiMaxIterations: environment.mbqiMaxIterations,
     isFindingMacros: environment.isFindingMacros,
+    relevancyLevel: Number(getParameter(environment, "smt.relevancy", "2")),
   });
   const clauses = new RefVector(manager);
   environment.destructors.push(() => {
