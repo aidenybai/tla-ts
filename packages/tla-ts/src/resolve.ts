@@ -751,16 +751,9 @@ const checkSelection = (
         state.isGoal = false;
         continue;
       }
-      const sets = binder?.sets;
       const operands =
         unit.goalOperands.get(expression) ??
-        (expression.kind === "Identifier"
-          ? []
-          : sets
-            ? sets.length > 0
-              ? sets
-              : undefined
-            : getOperands(expression));
+        (expression.kind === "Identifier" ? [] : (binder?.sets ?? getOperands(expression)));
       if (!operands) return node;
       const isExcept = expression.kind === "Except";
       const position = getPosition(isExcept ? expression.updates.length + 1 : operands.length);

@@ -4776,6 +4776,30 @@ describe("name resolution matches SANY", () => {
     },
   );
 
+  it.each([
+    ["\\E b : k + 1", 1],
+    ["\\AA b : k + 1", 2],
+    ["CHOOSE b : k + 1", 1],
+    ["\\EE b, d : k + 1", 1],
+  ])(
+    "reports an operand of the step %s, which has no bound set, like SANY",
+    async (quantified, operand) => {
+      await expect(
+        check({
+          source: `---- MODULE M ----\nEXTENDS Naturals\nCONSTANT k\nTHEOREM TRUE\n<1>1. ${quantified}\n  OBVIOUS\n<1>2. <1>1!${operand}\n  OBVIOUS\n<1> QED\n====`,
+          config: "",
+        }),
+      ).rejects.toThrow(
+        createSanyError([
+          {
+            location: "line 7, col 12 to line 7, col 12 of module M",
+            message: `Nonexistent operand specified by \`argument selector ${operand}'.`,
+          },
+        ]),
+      );
+    },
+  );
+
   it("reports DEF clause entries of bracketed, quantified and infix shapes like SANY", async () => {
     await expect(
       check({
