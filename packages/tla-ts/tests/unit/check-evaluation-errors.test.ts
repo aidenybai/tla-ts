@@ -2027,6 +2027,51 @@ describe("evaluation errors match TLC", () => {
     expect(result.status).toBe("success");
   });
 
+  it.each([
+    [
+      "S \\cap T",
+      "CONSTANTS S, T\nASSUME S \\cap T = {}",
+      "CONSTANTS S = {__x, __y} T = {m1, {m2}}",
+      "Attempted to compare the typed model value __x and non-model value\n{m2}",
+    ],
+    [
+      "T \\cap S",
+      "CONSTANTS S, T\nASSUME T \\cap S = {}",
+      "CONSTANTS S = {__x, __y} T = {m1, {m2}}",
+      "Attempted to compare the typed model value __y and the non-model value\n{m2}",
+    ],
+    [
+      "a normalized set",
+      "CONSTANTS T, C\nASSUME C \\notin T",
+      "CONSTANTS C = __x T = {m1, {m2}}",
+      "Attempted to compare the typed model value __x and non-model value\n{m2}",
+    ],
+    [
+      "S \\ T",
+      "CONSTANTS S, D, E\nASSUME S \\ {D, E} = S",
+      "CONSTANTS S = {t_a, m1} D = m1 E = 1",
+      "Attempted to check equality of the typed model value t_a and the non-model value\n1",
+    ],
+    [
+      "a set of integers",
+      "CONSTANTS C, D\nASSUME 6 \\in {C, D, 5, 6, 7}",
+      "CONSTANTS C = t_a D = m2",
+      "Attempted to check equality of typed model value t_a and non-model value\n6",
+    ],
+    [
+      "a union",
+      "CONSTANTS C, D, E, F\nASSUME C \\notin {D, E} \\cup {F}",
+      "CONSTANTS C = x_1 D = m1 E = m2 F = t_a",
+      "Attempted to check equality of the differently-typed model values t_a and x_1",
+    ],
+  ])(
+    "compares the elements of %s with a typed model value like TLC",
+    async (_name, body, config, message) => {
+      const result = await checkModule(body, config);
+      expect([result.status, result.violation?.message]).toEqual(["assumption-violation", message]);
+    },
+  );
+
   it.each(['"a" \\in Nat', "1 \\in STRING", "{} \\in 1..4", "FALSE \\in Int"])(
     "rejects %s",
     async (membership) => {

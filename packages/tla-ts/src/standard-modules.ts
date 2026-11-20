@@ -44,6 +44,7 @@ import {
   getDomain,
   getFunctionClass,
   getSortedIntersection,
+  hasTypedModelValues,
   someStreamedElement,
   isElementOf,
   getSequenceElements,
@@ -230,6 +231,7 @@ export const CORE_OPERATORS: Builtin[] = [
         !isMixedSet(left) &&
         !isMixedSet(right) &&
         !isFilteredByInterval &&
+        (operator === "\\cup" || !hasTypedModelValues()) &&
         !isBeyondSetBound(left) &&
         !isBeyondSetBound(right)
       ) {

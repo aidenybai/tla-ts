@@ -406,6 +406,7 @@ const stringOrder = createStringOrder();
 export const setStringOrder = (texts: Iterable<string>) => {
   Object.assign(stringOrder, createStringOrder());
   modelValues.clear();
+  isTypedModelValueCreated = false;
   for (const text of texts) rankString(text);
 };
 
@@ -626,6 +627,11 @@ export const compareValues = (left: Value, right: Value): number => {
 
 const modelValues = new Map<string, ModelValue>();
 
+// TLC's member compares a typed model value only with what its search or scan reaches, so with one, membership, \cap and \ look up elements as TLC does.
+let isTypedModelValueCreated = false;
+
+export const hasTypedModelValues = () => isTypedModelValueCreated;
+
 const MAXIMUM_MODEL_VALUES = 32768;
 
 export const createModelValue = (name: string): ModelValue => {
@@ -636,10 +642,12 @@ export const createModelValue = (name: string): ModelValue => {
       `TLC supports at most ${MAXIMUM_MODEL_VALUES} model values, but model value ${name} exceeds this limit.`,
     );
   }
+  const type = name.length > 2 && name[1] === "_" ? name[0] : undefined;
+  if (type !== undefined) isTypedModelValueCreated = true;
   const value: ModelValue = {
     kind: "ModelValue",
     name,
-    type: name.length > 2 && name[1] === "_" ? name[0] : undefined,
+    type,
     rank: getStringRank(name),
     hash: finalizeHash(combineHash(hashString(name), 0x6d)),
     fingerprint: finalizeFingerprint(fingerprintString(name) ^ 0x3c),
@@ -2264,7 +2272,7 @@ const isModelValueMember = (modelValue: ModelValue, set: Value) => {
 // The common cases stay small enough for V8 to inline.
 const isElementOfSet = (element: Value, set: Value): boolean => {
   if (typeof element === "number" && typeof set === "object") {
-    if (set.kind === "Set")
+    if (set.kind === "Set" && !isTypedModelValueCreated)
       return isIntegerInSortedSet(element, set) ?? isElementOfAnySet(element, set);
     if (set.kind === "Interval") return element >= set.low && element <= set.high;
   }
@@ -2276,7 +2284,9 @@ const isElementOfAnySet = (element: Value, set: Value): boolean => {
   switch (set.kind) {
     case "Set":
       cacheSet(element);
-      return computeLikeTlcOnFailure(isInSortedSet, isInSortedSetLikeTlc, element, set);
+      return isTypedModelValueCreated
+        ? isInSortedSetLikeTlc(element, set)
+        : computeLikeTlcOnFailure(isInSortedSet, isInSortedSetLikeTlc, element, set);
     case "MixedSet":
       return set.enumerated
         ? searchLikeTlc(element, set.enumerated.elements).isFound
