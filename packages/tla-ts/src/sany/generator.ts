@@ -1,11 +1,16 @@
 import type { TlcVersion } from "../tlc/version";
 import {
   type AssumeProve,
+  type Definition,
   type Expression,
+  type Fact,
   getChildren,
+  getDefinitionExpressions,
   type Instance,
   type Module,
+  type NewSymbol,
   type Proof,
+  type StepBody,
 } from "../ast";
 import { TlaMissingModuleError, TlaSanyFatalError, TlaSyntaxError } from "../errors";
 import { parseSanyModule } from "../parser";
@@ -92,30 +97,66 @@ interface UnresolvedName {
 const getKindName = (symbol: SymbolNode) =>
   symbol.kind === "OpDef" || symbol.kind === "FormalParam" ? "definition" : "declaration";
 
+// SANY's ParseUnit#getInstances walks every unit of every module for INSTANCEs, including those in substitutions and proofs.
+const getInstances = (instance: Instance): Instance[] => [
+  instance,
+  ...instance.substitutions.flatMap((substitution) => getLetInstances(substitution.expression)),
+];
+
 const getLetInstances = (expression: Expression): Instance[] => [
-  ...(expression.kind === "Let" ? (expression.instances ?? []) : []),
+  ...(expression.kind === "Let" ? (expression.instances ?? []).flatMap(getInstances) : []),
   ...getChildren(expression).flatMap(getLetInstances),
 ];
 
-const getStatementInstances = (statement: Expression | AssumeProve): Instance[] =>
-  statement.kind === "AssumeProve"
-    ? [...statement.assumptions, statement.conclusion].flatMap((part) =>
-        part.kind === "NewSymbol" ? [] : getStatementInstances(part),
-      )
-    : getLetInstances(statement);
+const getDefinitionInstances = (definition: Definition | Instance) =>
+  definition.kind === "Instance"
+    ? getInstances(definition)
+    : getDefinitionExpressions(definition).flatMap(getLetInstances);
 
-const getProofInstances = (proof: Proof | undefined): Instance[] =>
-  proof?.kind !== "Steps"
-    ? []
-    : proof.steps.flatMap((step) => [
-        ...(step.body.kind === "Instance" ? [step.body] : []),
-        ...(step.body.kind === "Define"
-          ? step.body.definitions.flatMap((definition) =>
-              definition.kind === "Instance" ? [definition] : [],
-            )
-          : []),
-        ...getProofInstances(step.proof),
-      ]);
+const getFactInstances = (use: { facts: Fact[]; defs: Fact[] }) =>
+  [...use.facts, ...use.defs].flatMap((fact) =>
+    fact.kind === "ModuleFact" ? [] : getLetInstances(fact),
+  );
+
+const getStatementInstances = (statement: Expression | AssumeProve | NewSymbol): Instance[] => {
+  if (statement.kind === "NewSymbol") return statement.set ? getLetInstances(statement.set) : [];
+  if (statement.kind !== "AssumeProve") return getLetInstances(statement);
+  return [...statement.assumptions, statement.conclusion].flatMap(getStatementInstances);
+};
+
+const getStepInstances = (body: StepBody): Instance[] => {
+  switch (body.kind) {
+    case "Use":
+    case "Hide":
+      return getFactInstances(body);
+    case "Instance":
+      return getInstances(body);
+    case "Define":
+      return body.definitions.flatMap(getDefinitionInstances);
+    case "Have":
+    case "Case":
+      return getLetInstances(body.expression);
+    case "Witness":
+      return body.expressions.flatMap(getLetInstances);
+    case "Take":
+      return body.bounds.flatMap((bound) => getLetInstances(bound.set));
+    case "Pick":
+      return [...body.bounds.map((bound) => bound.set), body.body].flatMap(getLetInstances);
+    case "Assert":
+      return getStatementInstances(body.statement);
+    case "Qed":
+      return [];
+  }
+};
+
+const getProofInstances = (proof: Proof | undefined): Instance[] => {
+  if (proof?.kind === "By") return getFactInstances(proof);
+  if (proof?.kind !== "Steps") return [];
+  return proof.steps.flatMap((step) => [
+    ...getStepInstances(step.body),
+    ...getProofInstances(step.proof),
+  ]);
+};
 
 const isInternalInstance = (module: Module, instance: Instance) => {
   const seen = new Set<string>();
@@ -136,7 +177,6 @@ const getDependencies = (module: Module) => {
   const instancees: string[] = [];
   const importers = new Map<string, string>();
   const visit = (current: Module, context: Map<string, Module>) => {
-    const isRoot = current === module;
     const addImports = (names: string[], imports: string[]) =>
       names.forEach((name) => {
         imports.push(name);
@@ -145,15 +185,16 @@ const getDependencies = (module: Module) => {
     const isExternal = (name: string) => !context.has(name);
     addImports(current.extends.filter(isExternal), extendees);
     const instances = current.units.flatMap((unit) => {
-      if (unit.kind === "Instance") return [unit.instance];
-      if (unit.kind === "Definition") return getLetInstances(unit.definition.body);
-      if (unit.kind === "Theorem" && isRoot) {
+      if (unit.kind === "Instance") return getInstances(unit.instance);
+      if (unit.kind === "Definition") return getDefinitionInstances(unit.definition);
+      if (unit.kind === "Theorem") {
         return [
           ...getStatementInstances(unit.theorem.statement),
           ...getProofInstances(unit.theorem.proof),
         ];
       }
-      if (unit.kind === "Assumption" && isRoot) return getLetInstances(unit.assumption.expression);
+      if (unit.kind === "Assumption") return getLetInstances(unit.assumption.expression);
+      if (unit.kind === "Use") return getFactInstances(unit.use);
       return [];
     });
     addImports(

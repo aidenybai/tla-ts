@@ -809,6 +809,32 @@ Spec == Init /\\ [][Next]_x
     });
   });
 
+  it("loads the modules that LETs, substitutions, proofs and inner modules instantiate as SANY does", () => {
+    const leaves = Object.fromEntries(
+      ["A", "C", "D", "E", "F", "G", "H"].map((name) => [
+        name,
+        `---- MODULE ${name} ----\nK == TRUE\n====\n`,
+      ]),
+    );
+    const report = getReport(
+      {
+        M: "---- MODULE M ----\n---- MODULE Inner ----\nTHEOREM TRUE\n<1> N == INSTANCE A\n<1> QED\n====\nI == INSTANCE P WITH q <- LET N == INSTANCE C IN N!K\nASSUME LET N == INSTANCE D IN N!K\nUSE LET N == INSTANCE E IN N!K\nTHEOREM ASSUME NEW v \\in LET N == INSTANCE F IN {N!K} PROVE TRUE\n<1>1. PICK w \\in LET N == INSTANCE G IN {N!K} : TRUE\n<1> QED BY LET N == INSTANCE H IN N!K\n====\n",
+        P: "---- MODULE P ----\nCONSTANT q\nK == q\n====\n",
+        ...leaves,
+      },
+      { describeFile: (name) => `${name}.tla` },
+    );
+    const order = ["P", "C", "D", "E", "F", "G", "H", "A"];
+    expect(report).toEqual({
+      text: joinLines([
+        ...["M", ...order].map((name) => `Parsing file ${name}.tla`),
+        ...[...order, "M"].map((name) => `Semantic processing of module ${name}`),
+        ...[...order, "M"].map((name) => `Linting of module ${name}`),
+      ]),
+      isFailed: false,
+    });
+  });
+
   it("reports an unresolved infix operator twice", () => {
     const report = getReport({ Infix: "---- MODULE Infix ----\nVARIABLE x\nOp == x @@ x\n====\n" });
     expect(report.isFailed).toBe(true);
