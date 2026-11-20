@@ -4499,6 +4499,40 @@ const runJavaScriptScriptTest = async (
   }));
 };
 
+// A test whose source, its built strings written out, runs to a million characters, as the
+// property escapes' do, runs in a process of its own with the heap that Node gives this one, where
+// running out of it stops the test rather than the run.
+const LARGE_SOURCE = 1_000_000;
+const OUTCOMES: Outcome[] = ["pass", "wrong", "untranslatable", "skipped"];
+const IS_OWN_PROCESS = process.env.TLA_TS_OWN_PROCESS !== undefined;
+
+const runInOwnProcess = (id: string): TestRun => {
+  const run = spawnSync(process.execPath, [...process.execArgv, process.argv[1], "--verbose", id], {
+    encoding: "utf8",
+    env: { ...process.env, TLA_TS_OWN_PROCESS: "1" },
+    maxBuffer: 1 << 26,
+  });
+  const words = run.stdout
+    .split("\n")
+    .map((text) => text.split(" "))
+    .find((line) => line[1] === id);
+  const outcome = OUTCOMES.find((candidate) => candidate.toUpperCase() === words?.[0]);
+  if (words !== undefined && outcome !== undefined) {
+    return { id, outcome, reason: words.slice(2).join(" ") };
+  }
+  return run.stderr.includes("heap out of memory")
+    ? {
+        id,
+        outcome: "untranslatable",
+        reason: "tla-ts can't run this test within the heap that Node gives it",
+      }
+    : {
+        id,
+        outcome: "wrong",
+        reason: `the test's process failed: ${getFirstLine(run.stderr || `exit ${run.status}`)}`,
+      };
+};
+
 const runTest = async (path: string): Promise<TestRun> => {
   const id = relative(TEST262_DIRECTORY, path);
   const read = readFileSync(path, "utf8");
@@ -4509,6 +4543,9 @@ const runTest = async (path: string): Promise<TestRun> => {
   const source = BUILT_STRING.test(read) ? writeBuiltStrings(read) : read;
   if (source === undefined) {
     return { id, outcome: "skipped", reason: "a buildString call of other than literal arrays" };
+  }
+  if (ESCORE !== undefined && source.length > LARGE_SOURCE && !IS_OWN_PROCESS) {
+    return runInOwnProcess(id);
   }
   const isImporting = hasImportCall(source);
   const isLinked =
