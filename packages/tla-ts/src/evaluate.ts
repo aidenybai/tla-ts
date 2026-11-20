@@ -974,6 +974,16 @@ const isStateWithin = (state: State | undefined, cached: State | undefined) => {
   }
 };
 
+// forceThunk keeps this code inline, since V8 runs it up to 2% slower on LetInv when it calls a helper.
+const evaluateCoveredThunk = (thunk: Thunk, context: Context, coverage: Coverage) => {
+  const node = coverage.current === -1 ? undefined : coverage.values.get(thunk);
+  return node === undefined
+    ? evaluate(thunk.expression, withScope(context, thunk.scope))
+    : runAtCoverageNode(coverage, node, () =>
+        evaluate(thunk.expression, withScope(context, thunk.scope)),
+      );
+};
+
 const forceThunk = (thunk: Thunk, context: Context) => {
   const cache = thunk.cache;
   const isCached =
@@ -1716,7 +1726,20 @@ const compileIdentifier = (
       throw createUndefinedError(name, expression);
     };
   }
-  return (context) => evaluateLocalIdentifier(name, expression, context);
+  const coverage = environment.coverage;
+  if (!coverage) return (context) => evaluateLocalIdentifier(name, expression, context);
+  // TLC's Tool#evalAppl evaluates a LazyValue afresh where it reads it primed, and LazyValue#getValue reuses a value only under the EvalControl it computed it under.
+  return (context) => {
+    const binding = lookupScope(context.scope, name);
+    if (binding?.kind !== "Thunk" || binding.isReleased) {
+      return evaluateLocalIdentifier(name, expression, context);
+    }
+    if (coverage.nextState === "primed") return evaluateCoveredThunk(binding, context, coverage);
+    if (coverage.cachedInEnabled.get(binding) !== coverage.isEnabled) binding.cache = undefined;
+    const value = forceThunk(binding, context);
+    coverage.cachedInEnabled.set(binding, coverage.isEnabled);
+    return value;
+  };
 };
 
 export const isValueArgument = (argument: Expression, environment: Environment) => {

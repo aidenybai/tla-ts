@@ -268,6 +268,7 @@ export const checkDepthFirst = (options: DepthFirstOptions): number => {
   const computeInitialStates = (): number => {
     const generated: (Value | undefined)[][] = [];
     const addGenerated = (state: (Value | undefined)[]) => {
+      if (generated.length === getSetBound()) throw new TlaTooManyStatesError();
       generated.push(state);
       return false;
     };

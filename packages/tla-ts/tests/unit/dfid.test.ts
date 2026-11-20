@@ -37,6 +37,26 @@ it("generates every successor of an action past an incomplete one, as TLC's Tool
   });
 });
 
+it("collects the initial states in a StateVec that -maxSetSize bounds, as TLC's DFIDModelChecker does", () => {
+  const outputs: DepthFirstOutput[] = [];
+  const exitCode = checkDepthFirst({
+    source:
+      "---- MODULE M ----\nEXTENDS Naturals\nVARIABLE x\nInit == x \\in 1..3\nNext == x' = x\n====",
+    config: "INIT Init\nNEXT Next",
+    maxDepth: 2,
+    maxSetSize: 2,
+    isTool: true,
+    onOutput: (output) => outputs.push(output),
+  });
+  const messages = outputs.flatMap((output) => (output.kind === "message" ? [output] : []));
+  expect(exitCode).toBe(75);
+  expect(messages.map((message) => message.code)).toEqual([1000, 2103, 2206, 2204]);
+  expect(messages[0].toolMessage).toBe(
+    "TLC threw an unexpected exception.\nThis was probably caused by an error in the spec or model.\nThe error occurred when TLC was computing initial states.\nThe exception was a java.lang.RuntimeException\n: @!@!@STARTMSG 2172:0 @!@!@\nToo many possible next states for the last state in the trace.\n@!@!@ENDMSG 2172 @!@!@",
+  );
+  expect(messages.at(-1)?.message).toBe("0 states generated, 0 distinct states found.");
+});
+
 it("starts the random generator over from the seed at each level, as TLC's new DFIDWorker does", () => {
   const prints: string[] = [];
   checkDepthFirst({
