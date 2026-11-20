@@ -236,4 +236,31 @@ describe("prepare ESCore's runtime from a recorded host as from Node's realm", (
       ).toContain("tla-ts can't tell the host's local time, whose time zone isn't UTC");
     });
   });
+
+  // Node warns where code reads localStorage without --localstorage-file, as it does in every run
+  // of the CLI that records Node's realm by reading each global, so tla-ts reads only its
+  // descriptor, and a program that reads it stops.
+  describe("record Node's realm without reading localStorage", () => {
+    it("prints no warning", () => {
+      const result = spawnSync(
+        process.execPath,
+        [
+          "-e",
+          `${REGISTER}
+          Promise.all([import(${JSON.stringify(`${source}/typescript/spec/library.ts`)}), import(${JSON.stringify(`${source}/typescript/spec/realm.ts`)})])
+            .then(([library, realm]) => realm.recordHostRealm(library.createLibrary(library.readEscoreFiles(${JSON.stringify(directory)}))))
+            .then(() => console.log("recorded"));`,
+        ],
+        { encoding: "utf8" },
+      );
+      expect(result.stdout).toBe("recorded\n");
+      expect(result.stderr).not.toContain("localStorage");
+    });
+
+    it("stops where a program reads it", async () => {
+      const text = "const storage = typeof localStorage;\nexport {};\n";
+      expect(runNode(text, "storage.mts").stderr).toContain("ExperimentalWarning: localStorage");
+      expect((await live.getOutcome(text, "storage.mts")).message).toContain("tla-ts can't");
+    });
+  });
 });
