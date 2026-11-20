@@ -1545,6 +1545,16 @@ ASSUME TLCFP(a) = -887695703
     expect(result.status).toBe("success");
   });
 
+  it("takes the symmetry a [Mod] <- gives, where TLC takes the symmetry's own body", async () => {
+    const result = await check({
+      source:
+        "---- MODULE M ----\nEXTENDS TLC\nCONSTANTS A, B\nVARIABLE x\nPerms == Permutations(A)\nDef == Permutations(B)\nInit == x \\in A\nNext == x' = x\n====",
+      config:
+        "CONSTANT A = {a1, a2}\nCONSTANT B = {b1, b2}\nCONSTANT Def <- [M] Perms\nSYMMETRY Def\nINIT Init\nNEXT Next",
+    });
+    expect([result.status, result.distinctStates]).toEqual(["success", 1]);
+  });
+
   it.each([
     [
       "{(a :> b)[b]}",
