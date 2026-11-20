@@ -210,6 +210,45 @@ describe("checks a module's exported functions as a model on ESCore", () => {
     });
   });
 
+  describe("stops where an action counts on forever and the model checks nothing", () => {
+    const ENDLESS = "tla-ts can't check a model whose states never end";
+
+    it.each([
+      [
+        "in a for-in over an object literal with a key",
+        "() => { for (const key in { a: 1 }) count++; }",
+      ],
+      ["by a defaulted parameter of literals", "(amount: 1 | 2 = 1) => { count += amount; }"],
+    ])("counting %s", async (_title, action) => {
+      const result = await checkModel(`let count = 0;\nexport const step = ${action};\n`);
+      expect([result.status, result.message]).toEqual([
+        "stopped",
+        expect.stringContaining(ENDLESS),
+      ]);
+    });
+
+    it.each([
+      [
+        "a for-in over an object literal without a key",
+        "() => { for (const key in {}) count++; }",
+        1,
+      ],
+      [
+        "a guard that bounds a for-in",
+        "() => { if (count < 2) for (const key in { a: 1 }) count++; }",
+        3,
+      ],
+      [
+        "a guard that bounds a parameter's count",
+        "(amount: 1 | 2 = 1) => { if (count < 4) count += amount; }",
+        6,
+      ],
+    ])("checks the model where %s", async (_title, action, distinct) => {
+      const result = await checkModel(`let count = 0;\nexport const step = ${action};\n`);
+      expect([result.status, result.distinct]).toEqual(["deadlock", distinct]);
+    });
+  });
+
   describe("runs a step that reads a binding of the module's declarations", () => {
     const getSource = (declaration: string) => `
       ${declaration}

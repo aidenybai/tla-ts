@@ -1005,7 +1005,7 @@ export const frameModel = (source: string, fileName: string, library?: Library) 
     throw new TlaTypeScriptError("Tag only one function @view");
   }
   // A state variable that a whole number that its declaration gives starts at.
-  rejectEndlessCount(sourceFile, called, sections, (target) => {
+  rejectEndlessCount(sourceFile, checker, called, sections, (target) => {
     const symbol = ts.isIdentifier(target) ? getSymbol(target) : undefined;
     const declaration = symbol?.valueDeclaration;
     const initializer =
@@ -1061,10 +1061,39 @@ export const frameModel = (source: string, fileName: string, library?: Library) 
   };
 };
 
-// The state variable that a statement counts up or down by one, from a whole number that its
-// declaration gives.
-const getCounted = (statement: ts.Statement, isState: (target: ts.Expression) => boolean) => {
+// The state variable that a statement counts up or down by a whole number, from a whole number
+// that its declaration gives, at each run: a step of one, a step of a literal, or a step of a value
+// of a union of whole literals of one sign. A for-in over an object literal with a key runs its body
+// at least once.
+const getCounted = (
+  statement: ts.Statement,
+  isState: (target: ts.Expression) => boolean,
+  getLiterals: (node: ts.Node) => ts.Type[] | undefined,
+): ts.Expression | undefined => {
+  if (ts.isForInStatement(statement)) {
+    const body = ts.isBlock(statement.statement)
+      ? statement.statement.statements
+      : [statement.statement];
+    const counted = body.map((inner) => getCounted(inner, isState, getLiterals));
+    const object = statement.expression;
+    const hasKey =
+      ts.isObjectLiteralExpression(object) &&
+      object.properties.some(
+        (property) =>
+          ts.isShorthandPropertyAssignment(property) ||
+          (ts.isPropertyAssignment(property) &&
+            !ts.isComputedPropertyName(property.name) &&
+            property.name.text !== "__proto__"),
+      );
+    return hasKey && counted.length > 0 && !counted.includes(undefined) ? counted[0] : undefined;
+  }
   const expression = ts.isExpressionStatement(statement) ? statement.expression : undefined;
+  const steps =
+    expression !== undefined && ts.isBinaryExpression(expression)
+      ? getLiterals(expression.right)?.map((type) =>
+          type.isNumberLiteral() && Number.isSafeInteger(type.value) ? type.value : 0,
+        )
+      : undefined;
   const target =
     expression !== undefined &&
     (ts.isPrefixUnaryExpression(expression) || ts.isPostfixUnaryExpression(expression)) &&
@@ -1075,8 +1104,8 @@ const getCounted = (statement: ts.Statement, isState: (target: ts.Expression) =>
           ts.isBinaryExpression(expression) &&
           (expression.operatorToken.kind === ts.SyntaxKind.PlusEqualsToken ||
             expression.operatorToken.kind === ts.SyntaxKind.MinusEqualsToken) &&
-          ts.isNumericLiteral(expression.right) &&
-          Number(expression.right.text) === 1
+          steps !== undefined &&
+          (steps.every((step) => step > 0) || steps.every((step) => step < 0))
         ? expression.left
         : undefined;
   return target !== undefined && isState(target) ? target : undefined;
@@ -1087,6 +1116,7 @@ const getCounted = (statement: ts.Statement, isState: (target: ts.Expression) =>
 // until memory runs out.
 const rejectEndlessCount = (
   sourceFile: ts.SourceFile,
+  checker: ts.TypeChecker,
   called: readonly Exported[],
   sections: ReadonlyMap<string, string[]>,
   isState: (target: ts.Expression) => boolean,
@@ -1110,13 +1140,24 @@ const rejectEndlessCount = (
   ) {
     return;
   }
-  // An action with parameters may have none to take, which leaves it disabled.
+  // The values of a type that is a union of literals, which TLC takes each of.
+  const getLiterals = (node: ts.Node) => {
+    const type = checker.getTypeAtLocation(node);
+    const types = type.isUnion() ? type.types : [type];
+    return types.every(
+      (inner) => inner.isLiteral() || (inner.flags & ts.TypeFlags.BooleanLiteral) !== 0,
+    )
+      ? types
+      : undefined;
+  };
+  // An action with a parameter of another type may have none to take, which leaves it disabled.
   const counts = called.map((definition) =>
-    definition.node.parameters.length > 0
+    !definition.node.parameters.every((parameter) => getLiterals(parameter.name) !== undefined)
       ? [undefined]
-      : ts.isBlock(definition.body)
-        ? definition.body.statements.map((statement) => getCounted(statement, isState))
-        : [getCounted(ts.factory.createExpressionStatement(definition.body), isState)],
+      : (ts.isBlock(definition.body)
+          ? definition.body.statements
+          : [ts.factory.createExpressionStatement(definition.body)]
+        ).map((statement) => getCounted(statement, isState, getLiterals)),
   );
   const counted = counts.flat().at(0);
   if (counted === undefined || counts.some((count) => count.includes(undefined))) return;

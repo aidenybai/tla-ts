@@ -94,6 +94,8 @@ An exported function is a function declaration, or an exported `const` of an arr
 
 A call that writes nothing that existed before it takes no step. An invariant fails where its call returns other than `true`. A check fails where its call throws. A check that reads no state is an assumption, which TLC checks once before the search, so a throw in it is an `assumption-violation`. A check that reads state is an invariant, so a throw in it fails the check where the state is reached.
 
+A collection that a helper changes in place through its parameter, as `add(line, lengths)` changes `lengths`, isn't a state variable, though the state holds it, so the check counts its states but a trace doesn't show it.
+
 The name of each state variable and exported function must be a TLA+ name, which TLA+'s keywords and the model's own names, such as `Init`, `Next`, and `vars`, aren't. Otherwise the compile stops with a `TlaTypeScriptError`.
 
 ### Values of a type
@@ -165,7 +167,7 @@ export const neverDecreases = (before: { count: number }) => count >= before.cou
 export const isWaiting = (proc: Proc) => waiting.has(proc);
 ```
 
-A model whose every action only counts a state variable up or down by one, and which checks nothing, stops the compile, since its states never end.
+A model whose every action only counts a state variable up or down, and which checks nothing, stops the compile, since its states never end. An action counts where each of its statements adds or subtracts a whole literal, or a parameter whose type is a union of whole literals of one sign, or does so in a `for...in` over an object literal with a key.
 
 ## Files with other specs
 
