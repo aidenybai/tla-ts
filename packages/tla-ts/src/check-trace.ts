@@ -144,7 +144,7 @@ export const createTraceBuilder = (context: TraceContext) => {
       if (error) throw error;
       return isSameValue(value, successor[position]);
     });
-  // Deviation from TLC: Tool#getState collects a step's successors in a StateVec that -maxSetSize bounds, so TLC fails to print a trace past a state with more successors.
+  // Deviation from TLC: Tool#getState bounds a step's successors by -maxSetSize, so TLC can't print a trace past a state with more.
   const findStepAction = (
     index: number,
     previous: Value[],

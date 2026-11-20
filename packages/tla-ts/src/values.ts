@@ -1530,7 +1530,7 @@ const getEmptiness = (value: Value): boolean | undefined => {
 const getCartesianProduct = (lists: Value[][], isBounded: boolean) => {
   const total = lists.reduce((product, list) => product * list.length, 1);
   if (isBounded && total > getMaximumSetSize()) {
-    // TLC's toSetEnum doesn't catch the -maxSetSize failure, so it leaves the set that toFiniteSet traced.
+    // TLC's toSetEnum doesn't catch the -maxSetSize failure, so the set it enumerates adds no frame.
     setTrace.sets?.pop();
     throw new TlaSetBoundError(getSetBoundMessage());
   }

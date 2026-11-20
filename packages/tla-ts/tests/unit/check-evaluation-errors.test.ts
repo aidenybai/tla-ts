@@ -2360,7 +2360,7 @@ describe("evaluation errors match TLC", () => {
     ]);
   });
 
-  // Deviation from TLC: TLC fails with "Too many possible next states for the last state in the trace." as it rebuilds the step from x = 1.
+  // Deviation from TLC: TLC prints "Too many possible next states for the last state in the trace." after x = 1.
   it("rebuilds a step from a state with more successors than -maxSetSize, where TLC's Tool#getState fails", async () => {
     const result = await check({
       source:
