@@ -226,7 +226,11 @@ const isOperator = (value: BuiltinArgument): value is OperatorValue =>
 // An operator that runs natively, or through its TLA+ where evaluate gives undefined.
 const createDefine =
   (callReplaced: CallReplaced) =>
-  (name: string, arity: number, evaluate: (args: BuiltinArgument[]) => Value | undefined): Builtin => ({
+  (
+    name: string,
+    arity: number,
+    evaluate: (args: BuiltinArgument[]) => Value | undefined,
+  ): Builtin => ({
     kind: "Builtin",
     name,
     arity,
