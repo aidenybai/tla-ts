@@ -1017,6 +1017,27 @@ describe("level checking matches SANY", () => {
     );
   });
 
+  it("checks a label it checked before as level-correct, as SANY does", async () => {
+    const sfError =
+      "Level error in applying operator $SF:\nThe level of argument 1 exceeds the maximum level allowed by the operator.";
+    await expect(
+      check({
+        source:
+          "---- MODULE M ----\nVARIABLE x\nB == \\E b \\in {x'} : b\nTHEOREM T == t :: (B /\\ [](x = 1))\n<1>1. SF_T!t(x' = 1)\n  OBVIOUS\n<1> QED\nD == SF_T!t(x' = 1)\nD2 == SF_T!t(x' = 1)\nInit == x = 0\nNext == x' = x\n====",
+        config: "INIT Init\nNEXT Next",
+      }),
+    ).rejects.toThrow(
+      createSanyError([
+        {
+          location: "line 4, col 20 to line 4, col 33 of module M",
+          message: "\\land has both temporal formula and action as arguments.",
+        },
+        { location: "line 9, col 7 to line 9, col 20 of module M", message: sfError },
+        { location: "line 5, col 7 to line 5, col 20 of module M", message: sfError },
+      ]),
+    );
+  });
+
   it("reports no level error inside an expression selected through an instance, as SANY does", async () => {
     await expect(
       check({

@@ -554,6 +554,8 @@ export const createLevelAnalyzer = (context: LevelContext) => {
   // SANY level-checks a LAMBDA once, so a recursive section's second pass keeps its first levels.
   const lambdaLevels = new Map<Expression, OperatorLevels>();
   const selectionLevels = new Map<Expression, LevelData>();
+  // SANY's LabelNode#levelCheck is true for a label it level-checked before.
+  const checkedLabels = new WeakSet<Expression>();
   const errors: CodedSanyError[] = [];
   const messages: LevelMessage[] = [];
 
@@ -1218,12 +1220,16 @@ export const createLevelAnalyzer = (context: LevelContext) => {
           [expression.subscript, expression.action],
           scope,
         );
-      case "Label":
-        return analyze(expression.body, scope);
+      case "Label": {
+        const data = analyze(expression.body, scope);
+        if (checkedLabels.has(expression)) return { ...data, isCorrect: true };
+        checkedLabels.add(expression);
+        return data;
+      }
       case "Selection": {
         const selected = expression.expression;
         const known = selectionLevels.get(selected);
-        if (known) return known;
+        if (known) return checkedLabels.has(selected) ? { ...known, isCorrect: true } : known;
         const reported = errors.length;
         const pending = messages.length;
         const data = analyze(selected, scope);
