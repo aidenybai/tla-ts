@@ -72,6 +72,25 @@ describe("printing matches TLC", () => {
     expect(formatValue(result.violation?.trace[0].state.b ?? false)).toBe(text);
   });
 
+  it("evaluates a body that prints at each application of a function over a domain TLC can't reduce, as TLC's FcnLambdaValue does", async () => {
+    expect(
+      (
+        await checkPrinting(
+          'VARIABLE x\nF == [s \\in SUBSET {1} |-> PrintT(<<"g", s>>)]\nInit == x = 0\nNext == x = 0 /\\ x\' = 1 /\\ PrintT(DOMAIN F) /\\ PrintT(F[{1}] /\\ F[{1}]) /\\ LET G == [s \\in SUBSET {x} |-> PrintT(<<"l", s>>)] IN PrintT(G[{}] /\\ G[{}])',
+          "INIT Init\nNEXT Next\nCHECK_DEADLOCK FALSE",
+        )
+      ).printed,
+    ).toEqual([
+      "{{}, {1}}",
+      '<<"g", {1}>>',
+      '<<"g", {1}>>',
+      "TRUE",
+      '<<"l", {}>>',
+      '<<"l", {}>>',
+      "TRUE",
+    ]);
+  });
+
   it.each([
     [
       "(Print(0, [x \\in {0, 2} |-> -x]))[6] = 0",
@@ -154,6 +173,112 @@ describe("printing matches TLC", () => {
       ]);
     },
   );
+
+  it.each([
+    [
+      "{s \\in SUBSET {1, 2} : PrintT(s)} = 1",
+      ["{}", "{1}", "{2}", "{1, 2}"],
+      "Attempted to check equality of the set {{}, {1}, {2}, {1, 2}} with the value:\n1",
+      undefined,
+    ],
+    [
+      "SUBSET {s \\in SUBSET {1, 2} : PrintT(s) /\\ s # 1} = SUBSET {}",
+      ["{}"],
+      "Attempted to check equality of the set {} with the value:\n1",
+      undefined,
+    ],
+    [
+      "{s \\in SUBSET {1, 2} : PrintT(s) /\\ s # 1} = {}",
+      ["{}"],
+      "Attempted to check equality of the set {} with the value:\n1",
+      undefined,
+    ],
+    [
+      '{1, "a"} = {s \\in SUBSET {1} : PrintT(s)}',
+      ["{}", "{1}"],
+      'Attempted to compare string "a" with non-string:\n1',
+      undefined,
+    ],
+    [
+      "{1} = {s \\in SUBSET {1, 2} : PrintT(s) /\\ s # 1}",
+      ["{}"],
+      "Attempted to check equality of the set {} with the value:\n1",
+      undefined,
+    ],
+    [
+      "<<1>> = {s \\in SUBSET {1} : PrintT(s)}",
+      ["{}", "{1}"],
+      "Attempted to check equality of the function <<1>> with the value:\n{{}, {1}}",
+      undefined,
+    ],
+    [
+      '{1} = {"a"}',
+      [],
+      'Attempted to check equality of integer 1 with non-integer:\n"a"',
+      undefined,
+    ],
+    [
+      "{s \\in SUBSET {1} : PrintT(s)} = {1, 2}",
+      ["{}", "{1}"],
+      "Attempted to check equality of the set {} with the value:\n1",
+      undefined,
+    ],
+    [
+      "Nat = {{s \\in SUBSET {1, 2} : PrintT(s) /\\ s # 1}}",
+      ["{}"],
+      "Attempted to compare overridden value Nat with non-overridden value:\n{{s \\in {{}, {1}, {2}, {1, 2}} : <expression line 3, col 38 to line 3, col 55 of module M> }}",
+      undefined,
+    ],
+    [
+      "Nat = <<{s \\in SUBSET {1, 2} : PrintT(s) /\\ s # 1}>>",
+      ["{}"],
+      "Attempted to compare overridden value Nat with non-overridden value:\n<<{s \\in {{}, {1}, {2}, {1, 2}} : <expression line 3, col 39 to line 3, col 56 of module M> }>>",
+      undefined,
+    ],
+    [
+      "(SUBSET (1..5) \\ {s \\in SUBSET (1..5) : Cardinality(s) <= 1 /\\ PrintT(s)}) = {}",
+      ["{}", "{1}", "{2}", "{3}", "{4}", "{5}"],
+      "Attempted to construct a set with too many elements (>10).",
+      10,
+    ],
+  ])(
+    "runs the predicates of %s as TLC's equals does before it fails",
+    async (expression, printed, message, maxSetSize) => {
+      const lines: string[] = [];
+      const result = await check({
+        source: `---- MODULE M ----\nEXTENDS Naturals, FiniteSets, TLC\nASSUME ${expression}\n====`,
+        config: "",
+        maxSetSize,
+        onPrint: (text) => lines.push(text),
+      });
+      expect([lines, result.violation?.message]).toEqual([printed, message]);
+    },
+  );
+
+  it("finds Nat unequal to a typed model value, as TLC's UserValue#compareTo does", async () => {
+    const printed: string[] = [];
+    await check({
+      source: "---- MODULE M ----\nEXTENDS Naturals, TLC\nCONSTANT C\nASSUME PrintT(Nat = C)\n====",
+      config: "CONSTANT C = a_b",
+      onPrint: (text) => printed.push(text),
+    });
+    expect(printed).toEqual(["FALSE"]);
+  });
+
+  it("fails S \\cup T at the element past the bound as it streams T, as TLC's ValueVec does", async () => {
+    const lines: string[] = [];
+    const result = await check({
+      source:
+        "---- MODULE M ----\nEXTENDS Naturals, TLC\nASSUME (SUBSET (1..5) \\cup {s \\in SUBSET (1..2) : PrintT(s)}) = {}\n====",
+      config: "",
+      maxSetSize: 33,
+      onPrint: (text) => lines.push(text),
+    });
+    expect([lines, result.violation?.message]).toEqual([
+      ["{}", "{1}"],
+      "Attempted to construct a set with too many elements (>33).",
+    ]);
+  });
 
   it("streams SUBSET S into a filter without sizing SUBSET S, as TLC's SubsetValue#elements does", async () => {
     expect(

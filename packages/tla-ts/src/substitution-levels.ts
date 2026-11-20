@@ -1,15 +1,26 @@
-import type { Declaration, Definition, Expression, SourceLocation, Theorem } from "./ast";
+import type {
+  Declaration,
+  Definition,
+  Expression,
+  Instance,
+  SourceLocation,
+  Theorem,
+  UseOrHide,
+} from "./ast";
 import { formatRange, type SanyError } from "./errors";
 import {
-  ACTION_LEVEL,
-  analyzeAssumeProve,
+  analyzeAssumption,
   createLevelAnalyzer,
+  createProofChecker,
   getArgumentKey,
   parseArgumentParamKey,
   putArgConstraint,
   putConstraint,
   TEMPORAL_LEVEL,
   type InstanceLevels,
+  type LevelAnalyzer,
+  type LevelData,
+  type ModuleLevels,
   type OperatorLevels,
   type Scope,
   type SectionMember,
@@ -30,24 +41,21 @@ export interface KeyedDeclaration extends Declaration {
 interface ModuleContext {
   constants: KeyedDeclaration[];
   variables: string[];
+  levelConstants: Map<string, number>;
+  levelVariables: Set<string>;
   getDefinitions: () => Definition[];
   assumptions: Expression[];
   theorems: Theorem[];
+  instances: Instance[];
+  uses: UseOrHide[];
+  extended: string[];
   getDefinition: (name: string) => Definition | undefined;
   getQualifiedName: (name: string) => string | undefined;
 }
 
-interface ModuleLevels {
-  isConstant: boolean;
-  constraints: Map<string, number>;
-  argConstraints: Map<string, number>;
-  argParams: Set<string>;
-}
-
-interface ModuleAnalyzer {
-  constants: Map<string, number>;
-  variables: Set<string>;
-  analyzer: ReturnType<typeof createLevelAnalyzer>;
+interface TopLevel {
+  theorems: LevelData[];
+  nodes: LevelData[];
 }
 
 interface Substituted {
@@ -66,45 +74,51 @@ const getMaxLevel = (operator: OperatorLevels, index: number) =>
 
 export const createInstanceChecker = (
   getModule: (name: string) => ModuleContext,
-  copies: Omit<InstanceLevels, "getInstanced">,
+  copies: Omit<InstanceLevels, "getInstanced" | "getOriginal" | "getModuleLevels">,
   recursiveSections: WeakMap<Definition, SectionMember[]>,
+  goalSelections: WeakMap<Expression, Expression>,
 ) => {
-  const analyzers = new Map<string, ModuleAnalyzer>();
-  const getModuleAnalyzer = (name: string) => {
+  const analyzers = new Map<string, LevelAnalyzer>();
+  const getAnalyzer = (name: string) => {
     const cached = analyzers.get(name);
     if (cached) return cached;
     const module = getModule(name);
-    const constants = new Map(module.constants.map((constant) => [constant.key, constant.arity]));
-    const variables = new Set(module.variables);
-    const analyzer: ModuleAnalyzer = {
-      constants,
-      variables,
-      analyzer: createLevelAnalyzer({
-        module: name,
-        constants,
-        variables,
-        getDefinition: module.getDefinition,
-        getQualifiedName: module.getQualifiedName,
-        instances,
-        recursiveSections,
-      }),
-    };
+    const analyzer = createLevelAnalyzer({
+      module: name,
+      constants: module.levelConstants,
+      variables: module.levelVariables,
+      getDefinition: module.getDefinition,
+      getQualifiedName: module.getQualifiedName,
+      instances,
+      recursiveSections,
+      goalSelections,
+    });
     analyzers.set(name, analyzer);
     return analyzer;
   };
-  const getAnalyzer = (name: string) => getModuleAnalyzer(name).analyzer;
 
-  const instances: InstanceLevels = {
-    ...copies,
-    getInstanced: (copy) => {
-      const module = getModuleAnalyzer(copy.module);
-      return {
-        source: module.analyzer.analyzeDefinition(copy.source, new Map()),
-        constants: module.constants,
-        variables: module.variables,
-        isConstant: getModuleLevels(copy.module).isConstant,
-      };
-    },
+  const getTopLevel = (name: string): TopLevel => {
+    const module = getModule(name);
+    const analyzer = getAnalyzer(name);
+    const proofs = createProofChecker(analyzer, instances, name);
+    const extended = module.extended.map(getTopLevel);
+    return {
+      theorems: [
+        ...extended.flatMap((other) => other.theorems),
+        ...module.theorems.map(proofs.analyzeTheorem),
+      ],
+      nodes: [
+        ...extended.flatMap((other) => other.nodes),
+        ...module.assumptions.map((assumption) => analyzeAssumption(assumption, analyzer)),
+        ...module.instances.flatMap((instance) => {
+          const substitutes = instances.getSubstitutes(instance);
+          return substitutes
+            ? [analyzer.analyzeInstance(substitutes, getModuleLevels(instance.module), new Map())]
+            : [];
+        }),
+        ...module.uses.map((use) => proofs.getFactData(use.facts, new Map())),
+      ],
+    };
   };
 
   const moduleLevels = new Map<string, ModuleLevels>();
@@ -116,9 +130,13 @@ export const createInstanceChecker = (
     const definitions = module
       .getDefinitions()
       .map((definition) => analyzer.analyzeDefinition(definition, new Map()));
+    const topLevel = getTopLevel(name);
     const levels: ModuleLevels = {
       isConstant:
-        module.variables.length === 0 && definitions.every((definition) => definition.level === 0),
+        module.variables.length === 0 &&
+        [...definitions, ...topLevel.theorems].every((data) => data.level === 0),
+      constants: module.levelConstants,
+      variables: module.levelVariables,
       constraints: new Map(),
       argConstraints: new Map(),
       argParams: new Set(),
@@ -127,7 +145,7 @@ export const createInstanceChecker = (
       module.constants.forEach((constant) => putConstraint(levels.constraints, constant.key, 0));
     }
     const addLevels = (
-      data: Omit<ModuleLevels, "isConstant">,
+      data: Pick<ModuleLevels, "constraints" | "argConstraints" | "argParams">,
       isKept: (operator: string, param: string) => boolean,
     ) => {
       data.constraints.forEach((value, key) => putConstraint(levels.constraints, key, value));
@@ -144,24 +162,19 @@ export const createInstanceChecker = (
         definition.formals.every((formal) => formal.name !== operator && formal.name !== param),
       ),
     );
-    const addAssumedLevels = (data: ReturnType<typeof analyzeAssumeProve>) => {
-      addLevels(data, () => true);
-      module.constants.forEach((constant) => {
-        if (data.params.has(constant.key)) {
-          putConstraint(levels.constraints, constant.key, ACTION_LEVEL);
-        }
-      });
-    };
-    module.assumptions.forEach((assumption) =>
-      addAssumedLevels(analyzer.analyze(assumption, new Map())),
-    );
-    module.theorems.forEach((theorem) =>
-      theorem.statement.kind === "AssumeProve"
-        ? addAssumedLevels(analyzeAssumeProve(theorem.statement, new Map(), analyzer))
-        : addLevels(analyzer.analyze(theorem.statement, new Map()), () => true),
-    );
+    [...topLevel.theorems, ...topLevel.nodes].forEach((data) => addLevels(data, () => true));
     moduleLevels.set(name, levels);
     return levels;
+  };
+
+  const instances: InstanceLevels = {
+    ...copies,
+    getInstanced: (copy) => ({
+      ...getModuleLevels(copy.module),
+      source: getAnalyzer(copy.module).analyzeDefinition(copy.source, new Map()),
+    }),
+    getOriginal: (copy, target) => getAnalyzer(copy.module).analyzeOriginal(copy.source, target),
+    getModuleLevels,
   };
 
   const checkInstance = (check: InstanceCheck) => {
@@ -187,9 +200,10 @@ export const createInstanceChecker = (
         maximumLevel: 1,
       })),
     ];
-    const substituted = declarations.flatMap((declaration): Substituted[] => {
-      const expression = check.substitutions.get(declaration.name);
-      if (!expression) return [];
+    const substituted = [...check.substitutions].flatMap((entry): Substituted[] => {
+      const declaration = declarations.find((item) => item.name === entry[0]);
+      if (!declaration) return [];
+      const expression = entry[1];
       if (declaration.arity === 0) {
         const data = analyzer.analyze(expression, check.scope);
         return [

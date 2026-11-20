@@ -809,12 +809,14 @@ const createLazyFunction = (
   source: LazyFunctionSource | undefined,
   boundTupleLengths: (number | undefined)[] | undefined,
   costModel: CostModel | undefined,
+  isApplicationObserved: boolean,
 ) => {
   const self: LazyFunctionValue = {
     kind: "LazyFunction",
     domain,
     source,
     boundTupleLengths,
+    isApplicationObserved,
     apply: (argument) => compute(argument, self),
   };
   return costModel ? Object.assign(self, { costModel }) : self;
@@ -834,6 +836,7 @@ const createRecursiveFunction = (
   definition: FunctionDefinition,
   context: Context,
   domain: Value,
+  isVaryingBody: boolean,
 ): RebindableLazyFunction => {
   const compute = (argument: Value, self: Value) =>
     evaluate(
@@ -861,6 +864,7 @@ const createRecursiveFunction = (
     ),
     getBoundTupleLengths(definition.bounds),
     getRecursiveCostModel(coverage, node),
+    isVaryingBody || coverage !== undefined,
   );
   keepLambda({
     value: functionValue,
@@ -875,6 +879,7 @@ const createRecursiveFunction = (
         definition,
         { ...context, environment: tracing },
         functionValue.domain,
+        isVaryingBody,
       );
       rebound.enumerated = functionValue.enumerated;
       return rebound;
@@ -913,8 +918,14 @@ const compileDefinitionBody = (definition: Definition, environment: Environment)
   if (definition.kind !== "Function") return getEntryEvaluator(definition.body, environment);
   const construction = getFunctionConstruction(definition);
   if (!definition.isSelfReferential) return getEntryEvaluator(construction, environment);
+  const isVaryingBody = isExpressionImpure([definition.body], environment, "varying");
   const evaluator: Evaluator = (context) =>
-    createRecursiveFunction(definition, context, getBoundsDomain(definition.bounds, context));
+    createRecursiveFunction(
+      definition,
+      context,
+      getBoundsDomain(definition.bounds, context),
+      isVaryingBody,
+    );
   const coverage = environment.coverage;
   return coverage ? countEvaluator(construction, evaluator, coverage) : evaluator;
 };
@@ -2108,6 +2119,7 @@ export const getFunctionBuilder = (
   environment: Environment,
 ) => {
   const isLazy = isKeptLazy(expression) || isRecursiveConstruction(expression);
+  const isVaryingBody = isExpressionImpure([expression.body], environment, "varying");
   const body = getEvaluator(expression.body, environment);
   const bounds = expression.bounds;
   const bound = bounds[0];
@@ -2154,6 +2166,7 @@ export const getFunctionBuilder = (
   const boundTupleLengths = getBoundTupleLengths(bounds);
   const bodyNames = getScopeNames(expression.body);
   const coverage = environment.coverage;
+  const isApplicationObserved = isVaryingBody || coverage !== undefined;
   const name = expression.definition?.isSelfReferential ? expression.definition.name : undefined;
   const createLazy = (domain: Value, context: Context) => {
     const outer = trimScope(context.scope, bodyNames);
@@ -2176,6 +2189,7 @@ export const getFunctionBuilder = (
       getLazyFunctionSource(template, bounds, domain),
       boundTupleLengths,
       name === undefined ? undefined : getRecursiveCostModel(coverage, node),
+      isApplicationObserved,
     );
     if (name !== undefined) scope = bindSelf(outer, name, value);
     const functionValue = keepLambda({ value, bounds, body: expression.body, scope, compute });
@@ -2193,7 +2207,7 @@ export const getFunctionBuilder = (
           domain.kind === "ProductSet" &&
           domain.factors.every(isReducibleSet);
     if (!isReducibleDomain) {
-      if (callStack) return createLazy(domain, context);
+      if (callStack || isVaryingBody) return createLazy(domain, context);
       try {
         return construct(domain, context);
       } catch (error) {

@@ -36,7 +36,7 @@ import {
   type Thunk,
 } from "./evaluate";
 import { letDefinitions } from "./coverage";
-import { mapChildren, substitutionFrames } from "./instances";
+import { getSubstitutedName, mapChildren, substitutionFrames } from "./instances";
 import { getKeyName } from "./resolve";
 import { ACTION_LEVEL, CONSTANT_LEVEL, TEMPORAL_LEVEL, VARIABLE_LEVEL } from "./levels";
 import { isEnabled } from "./successors";
@@ -194,6 +194,18 @@ export const getLevel = (
       return TEMPORAL_LEVEL;
     case "UnboundedQuantifier":
       return expression.isTemporal ? TEMPORAL_LEVEL : getChildrenLevel(expression);
+    // TLC's level bound counts a LET's definitions, though SANY levels a LET by its body.
+    case "Let":
+      return isLevelBound
+        ? getChildrenLevel(expression)
+        : getLevel(
+            expression.body,
+            bindLetDefinitions(expression, scope, environment),
+            environment,
+            shadowed,
+            visiting,
+            isLevelBound,
+          );
     case "Identifier":
       return getNameLevel(expression.name, expression);
     case "OperatorReference":
@@ -226,7 +238,7 @@ export const getLevel = (
   }
 };
 
-const getLevelBound = (
+export const getLevelBound = (
   expression: Expression,
   scope: Scope | undefined,
   environment: Environment,
@@ -291,17 +303,24 @@ export const expandTemporal = (
     return expand(expression.body, bindLetDefinitions(expression, scope, environment));
   }
   if (expression.kind === "Identifier") {
+    const isSubstitute = getSubstitutedName(expression) !== undefined;
+    // TLC never takes a VARIABLE's substitute apart, and SANY keeps one at most state-level.
+    if (isSubstitute && getLevelBound(expression, scope, environment) <= VARIABLE_LEVEL) {
+      return [
+        { expression, scope, name: expansion.name, path: expansion.path, frames: expansion.frames },
+      ];
+    }
     const binding = isLocallyResolved(expression) ? lookupScope(scope, expression.name) : undefined;
     if (binding?.kind === "Thunk" && !binding.isReleased) {
       return expand(
         binding.expression,
         binding.scope,
-        definitionThunks.has(binding) ? expression.name : expansion.name,
+        definitionThunks.has(binding) && !isSubstitute ? expression.name : expansion.name,
       );
     }
     const operator = binding?.kind === "Operator" ? binding.operator : undefined;
     if (operator?.kind === "Closure" && operator.params.length === 0) {
-      return expand(operator.body, operator.scope, expression.name);
+      return expand(operator.body, operator.scope, isSubstitute ? expansion.name : expression.name);
     }
     const definition = environment.constants.has(expression.name)
       ? undefined

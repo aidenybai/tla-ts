@@ -55,6 +55,7 @@ import {
   generatedArgumentCounts,
   type NullSelection,
   type SelectionArguments,
+  type SubexpressionRecords,
 } from "./resolve";
 
 type Lookup = (name: string) => Definition | undefined;
@@ -286,6 +287,7 @@ const selectSubexpression = (
   selectors: Selector[],
   lookup: Lookup,
   getStandardDefinition: Lookup,
+  records: SubexpressionRecords,
   reference: Expression & SelectingName,
   isOperator: boolean,
 ): Expression => {
@@ -702,13 +704,17 @@ const selectSubexpression = (
       ? (substitutionFrames.get(definition.body) ?? [])
       : [],
   );
+  const framed = withSubstitutionFrames(current.kind === "Lambda" ? current.body : current, frames);
+  if (substitutionFrames.has(framed)) {
+    records.selectedDefinitions.set(framed, {
+      definition: entered[0],
+      params: selection.params.map((param) => param.name),
+    });
+  }
   const body =
     current.kind === "Lambda"
-      ? {
-          ...current,
-          body: wrapLets(withSubstitutionFrames(current.body, frames), selection.lets, location),
-        }
-      : wrapLets(withSubstitutionFrames(current, frames), selection.lets, location);
+      ? { ...current, body: wrapLets(framed, selection.lets, location) }
+      : wrapLets(framed, selection.lets, location);
   const share = (expression: Expression): Expression => ({
     kind: "Selection",
     expression,
@@ -752,6 +758,7 @@ const resolveSubexpressions = (
   expression: Expression,
   lookup: Lookup,
   getStandardDefinition: Lookup,
+  records: SubexpressionRecords,
   isGoal: (name: string) => boolean,
   isOperator = false,
 ): Expression => {
@@ -768,20 +775,26 @@ const resolveSubexpressions = (
     expression.definitions.forEach((definition) =>
       resolved.push(
         resolveDefinition(definition, (child) =>
-          resolveSubexpressions(child, local, getStandardDefinition, isLocalGoal),
+          resolveSubexpressions(child, local, getStandardDefinition, records, isLocalGoal),
         ),
       ),
     );
     const mapped = {
       ...expression,
       definitions: resolved,
-      body: resolveSubexpressions(expression.body, local, getStandardDefinition, isLocalGoal),
+      body: resolveSubexpressions(
+        expression.body,
+        local,
+        getStandardDefinition,
+        records,
+        isLocalGoal,
+      ),
     };
     return mapped.instances
       ? {
           ...mapped,
           instances: mapped.instances.map((instance) =>
-            resolveInstance(instance, local, getStandardDefinition, isLocalGoal),
+            resolveInstance(instance, local, getStandardDefinition, records, isLocalGoal),
           ),
         }
       : mapped;
@@ -792,6 +805,7 @@ const resolveSubexpressions = (
         arg,
         lookup,
         getStandardDefinition,
+        records,
         isGoal,
         params !== undefined && params[index]?.arity !== 0,
       ),
@@ -834,7 +848,7 @@ const resolveSubexpressions = (
             ),
           }
         : mapChildren(expression, (child) =>
-            resolveSubexpressions(child, lookup, getStandardDefinition, isGoal),
+            resolveSubexpressions(child, lookup, getStandardDefinition, records, isGoal),
           );
   const children = getChildren(expression);
   const mapped = getChildren(rebuilt).every((child, index) => child === children[index])
@@ -885,6 +899,7 @@ const resolveSubexpressions = (
     selectors,
     lookup,
     getStandardDefinition,
+    records,
     mapped,
     isOperator,
   );
@@ -900,26 +915,42 @@ const resolveInstance = (
   instance: Instance,
   lookup: Lookup,
   getStandardDefinition: Lookup,
+  records: SubexpressionRecords,
   isGoal: (name: string) => boolean,
-): Instance => ({
-  ...instance,
-  substitutions: instance.substitutions.map((substitution) => ({
+): Instance => {
+  const substitutions = instance.substitutions.map((substitution) => ({
     ...substitution,
     expression: resolveSubexpressions(
       substitution.expression,
       lookup,
       getStandardDefinition,
+      records,
       isGoal,
       true,
     ),
-  })),
-});
+  }));
+  if (
+    substitutions.every(
+      (substitution, index) => substitution.expression === instance.substitutions[index].expression,
+    )
+  ) {
+    return instance;
+  }
+  const resolved = { ...instance, substitutions };
+  records.instanceReferences.set(resolved, records.instanceReferences.get(instance) ?? instance);
+  return resolved;
+};
 
-export const resolveInstanceSubexpressions = (instance: Instance, module: Module): Instance =>
+export const resolveInstanceSubexpressions = (
+  instance: Instance,
+  module: Module,
+  records: SubexpressionRecords,
+): Instance =>
   resolveInstance(
     instance,
     (name) => module.definitions.find((definition) => definition.name === name),
     () => undefined,
+    records,
     () => false,
   );
 
@@ -928,6 +959,7 @@ export const createModuleSubexpressions = (
   expand: ((expression: Expression) => Expression) | undefined,
   getAvailable: Lookup,
   getStandardDefinition: Lookup,
+  records: SubexpressionRecords,
   isBoundBefore: (name: string, location: SourceLocation) => boolean,
 ) => {
   const createLookup = (definitions: Definition[]): Lookup => {
@@ -1009,12 +1041,13 @@ export const createModuleSubexpressions = (
       expression,
       getVisibleLookup(definitionLookup, location),
       getStandardDefinition,
+      records,
       () => false,
     );
   const createProofResolver = (lookup: Lookup) => {
     const isProofGoal = (name: string) => goals.has(name) || !lookup(name);
     const resolveInProof = (expression: Expression) =>
-      resolveSubexpressions(expression, lookup, getStandardDefinition, isProofGoal);
+      resolveSubexpressions(expression, lookup, getStandardDefinition, records, isProofGoal);
     const resolveFacts = (facts: Fact[]) => {
       const resolved = facts.map((fact) =>
         fact.kind === "ModuleFact" ? fact : resolveInProof(fact),
@@ -1029,6 +1062,7 @@ export const createModuleSubexpressions = (
           def,
           lookup,
           getStandardDefinition,
+          records,
           isProofGoal,
           true,
         );
@@ -1056,7 +1090,7 @@ export const createModuleSubexpressions = (
         case "Hide":
           return { ...body, facts: resolveFacts(body.facts), defs: resolveDefs(body.defs) };
         case "Instance":
-          return resolveInstance(body, lookup, getStandardDefinition, isProofGoal);
+          return resolveInstance(body, lookup, getStandardDefinition, records, isProofGoal);
         case "Define": {
           const defined: Definition[] = [];
           const local = createProofResolver(
@@ -1070,6 +1104,7 @@ export const createModuleSubexpressions = (
                   definition,
                   local.lookup,
                   getStandardDefinition,
+                  records,
                   local.isProofGoal,
                 );
               }
@@ -1099,15 +1134,30 @@ export const createModuleSubexpressions = (
         return { ...proof, facts: resolveFacts(proof.facts), defs: resolveDefs(proof.defs) };
       }
       if (proof?.kind !== "Steps") return proof;
-      let resolver = { lookup, resolveStep, resolveProof };
+      const statements = new Map<string, Definition>();
+      let resolver = createProofResolver((name) => statements.get(name) ?? lookup(name));
       return {
         ...proof,
         steps: proof.steps.map((step) => {
-          const resolved = {
-            ...step,
-            body: resolver.resolveStep(step.body),
-            proof: resolver.resolveProof(step.proof),
-          };
+          const body = resolver.resolveStep(step.body);
+          if (
+            step.name !== undefined &&
+            body.kind === "Assert" &&
+            !body.isSuffices &&
+            body.statement.kind !== "AssumeProve" &&
+            !containsReference(body.statement)
+          ) {
+            statements.set(step.name, {
+              kind: "Operator",
+              name: step.name,
+              params: [],
+              body: body.statement,
+              isLocal: true,
+              isRecursive: false,
+              location: step.location,
+            });
+          }
+          const resolved = { ...step, body, proof: resolver.resolveProof(step.proof) };
           if (resolved.body.kind === "Define") {
             const definitions = resolved.body.definitions.flatMap((definition) =>
               definition.kind === "Instance" ? [] : [definition],

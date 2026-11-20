@@ -1484,6 +1484,32 @@ describe("name resolution matches SANY", () => {
       ],
     ],
     [
+      "EXTENDS Naturals\n---- MODULE In ----\nCONSTANT c\nTHEOREM T == t :: (c = 1)\nTHEOREM U == ASSUME NEW y PROVE y = c\n====\nI0 == INSTANCE In WITH c <- 1\nD == LET K == INSTANCE In WITH c <- 1 IN K!U!1\nTHEOREM ASSUME NEW e PROVE LET K == INSTANCE In WITH c <- e IN K!T!1 /\\ K!U!:\nTHEOREM TRUE\n<1> K == INSTANCE In WITH c <- 1\n<1>1. K!T!: /\\ K!U!1\n  OBVIOUS\n<1> QED",
+      [
+        [
+          "line 9, col 42 to line 9, col 46",
+          "Selected a NEW declaration as an expression or operator.",
+        ],
+        ["line 10, col 73 to line 10, col 77", "Selected ASSUME/PROVE instead of expression."],
+        [
+          "line 13, col 16 to line 13, col 20",
+          "Selected a NEW declaration as an expression or operator.",
+        ],
+      ],
+    ],
+    [
+      "THEOREM TRUE\n<1>1. s :: (LET a == 1 IN a = 1)\n  OBVIOUS\n<1>2. <1>1!2 /\\ <1>1!s!1 /\\ <1>1!s!2\n  OBVIOUS\n<1>3. LET b == 1 IN b = 1\n  OBVIOUS\n<1>4. <1>3!1 /\\ <1>3!>> /\\ <1>3!1!3\n  OBVIOUS\n<1> QED",
+      [
+        ["line 5, col 12 to line 5, col 12", "A LET/IN expression has only one operand."],
+        ["line 5, col 36 to line 5, col 36", "A LET/IN expression has only one operand."],
+        ["line 9, col 22 to line 9, col 23", "A LET/IN expression has only one operand."],
+        [
+          "line 9, col 35 to line 9, col 35",
+          "Nonexistent operand specified by `argument selector 3'.",
+        ],
+      ],
+    ],
+    [
       "VARIABLE z\n---- MODULE Inner ----\nCONSTANT c\nVARIABLE y\na \\star b == c\nD(p) == y\nE == c\n====\nI == INSTANCE Inner WITH c <- z, y <- z\nU == I!\\star(1, 2)!1\nV == I!D(1)!1\nW == I!E!1",
       [
         [
@@ -1909,6 +1935,53 @@ describe("name resolution matches SANY", () => {
           errors.map((error) => ({
             location: error[0].startsWith("In module") ? error[0] : `${error[0]} of module M`,
             message: error[1],
+          })),
+        ),
+      );
+    },
+  );
+
+  it.each([
+    [
+      "---- MODULE P ----\nCONSTANT ba, ab\nVARIABLE v\n====\nK == INSTANCE P",
+      6,
+      [
+        "Substitution missing for symbol v declared at line 4, col 10 to line 4, col 10 of module M \nand instantiated in module M.",
+        "Substitution missing for symbol ab declared at line 3, col 14 to line 3, col 15 of module M \nand instantiated in module M.",
+        "Substitution missing for symbol ba declared at line 3, col 10 to line 3, col 11 of module M \nand instantiated in module M.",
+      ],
+    ],
+    [
+      "---- MODULE P ----\nCONSTANT c, d\n====\nK == INSTANCE P",
+      5,
+      [
+        "Substitution missing for symbol d declared at line 3, col 13 to line 3, col 13 of module M \nand instantiated in module M.",
+        "Substitution missing for symbol c declared at line 3, col 10 to line 3, col 10 of module M \nand instantiated in module M.",
+      ],
+    ],
+    [
+      "---- MODULE P ----\nCONSTANT Foo, Bar, Baz\n====\nFoo(a) == a\nBar(a) == a\nBaz(a) == a\nK == INSTANCE P",
+      8,
+      ["Bar", "Baz", "Foo"].map(
+        (name) =>
+          `Wrong number of arguments (0) given to operator '${name}', \nwhich requires 1 arguments.`,
+      ),
+    ],
+    [
+      "---- MODULE P ----\nCONSTANT c(_), d(_)\n====\nc == 1\nd == 2\nK == INSTANCE P",
+      7,
+      ["d", "c"].map(
+        (name) => `An operator must be substituted for symbol '${name}', and it must have arity 1.`,
+      ),
+    ],
+  ])(
+    "reports the errors of the instance in %j in the order of the instanced module's symbol table, as SANY does",
+    async (source, line, messages) => {
+      await expect(checkNames(source)).rejects.toThrow(
+        createSanyError(
+          messages.map((message) => ({
+            location: `line ${line}, col 1 to line ${line}, col 15 of module M`,
+            message,
           })),
         ),
       );

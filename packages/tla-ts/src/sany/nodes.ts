@@ -121,6 +121,7 @@ export interface ThmOrAssumpDefNode extends LevelFields {
   isLeibniz: boolean;
   opLevelCond: boolean[][][];
   maxLevels: number[];
+  weights: number[];
   minMaxLevel: number[][];
 }
 

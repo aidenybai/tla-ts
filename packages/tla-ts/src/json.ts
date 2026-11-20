@@ -1,17 +1,18 @@
 import {
   createModuleArgumentError,
   defineLazyOperator,
-  defineStateOperator,
+  defineOperator,
   getJavaClassName,
   getThunk,
   getValue,
   isOutOfRange,
   overrideWithJava,
 } from "./builtins";
-import { TlaEvaluationError, TlaUnsupportedError } from "./errors";
+import { TlaEvaluationError, TlaSetBoundError, TlaUnsupportedError } from "./errors";
 import type { Builtin, BuiltinArgument, Context } from "./evaluate";
 import { trimJava } from "./java-string";
 import { readJson, type JsonElement } from "./json-reader";
+import { isEvalException } from "./tlc/messages";
 import {
   applyFunction,
   createRecord,
@@ -112,7 +113,21 @@ const toJsonArray = (value: Value) => {
   throw createUnsupportedError(value);
 };
 
-const toNdJson = (elements: Value[]) => elements.map((element) => `${toJson(element)}\n`).join("");
+const toNdJsonLine = (element: Value) => `${toJson(element)}\n`;
+
+// TLC opens the file before it converts the value, and closing the writer keeps the lines converted before a failure.
+const writeConverted = (
+  write: (text: string) => void,
+  elements: Value[],
+  toText: (element: Value) => string,
+) => {
+  const texts: string[] = [];
+  try {
+    elements.forEach((element) => texts.push(toText(element)));
+  } finally {
+    write(texts.join(""));
+  }
+};
 
 const toJsonObject = (value: Value) => {
   const className = getJavaClassName(value);
@@ -174,8 +189,24 @@ const checkCharset = (charset: string) => {
   );
 };
 
+const LOCATION_SUFFIX = /\nline \d+, col \d+ to line \d+, col \d+ of module \S+$/;
+
+const getJavaExceptionClass = (error: TlaEvaluationError) => {
+  if (error instanceof TlaSetBoundError) return "util.WrongInvocationException";
+  if (isEvalException(error)) return "tlc2.tool.EvalException";
+  if (error.message.startsWith("Cannot convert value:")) return "java.io.IOException";
+  return LOCATION_SUFFIX.test(error.message)
+    ? "util.Assert$TLCDetailedRuntimeException"
+    : "util.Assert$TLCRuntimeException";
+};
+
 // Files.newBufferedWriter writes the text over the start of a file that it neither truncates nor appends to.
-const writeWithOptions = (files: FileSystem, path: string, names: string[], text: string) => {
+const serializeWithOptions = (
+  files: FileSystem,
+  path: string,
+  names: string[],
+  elements: Value[],
+) => {
   const unknown = names.find((name) => !OPEN_OPTIONS.has(name));
   if (unknown !== undefined) {
     throw new TlaEvaluationError(
@@ -201,14 +232,21 @@ const writeWithOptions = (files: FileSystem, path: string, names: string[], text
   if (existing !== undefined && options.has("CREATE_NEW")) {
     throw new TlaEvaluationError(`java.nio.file.FileAlreadyExistsException: ${path}`);
   }
-  if (existing === undefined || options.has("TRUNCATE_EXISTING")) {
-    files.writeFile?.(path, text);
-    return;
+  const write = (text: string) =>
+    files.writeFile?.(
+      path,
+      existing === undefined || options.has("TRUNCATE_EXISTING")
+        ? text
+        : options.has("APPEND")
+          ? existing + text
+          : text + existing.slice(text.length),
+    );
+  try {
+    writeConverted(write, elements, toNdJsonLine);
+  } catch (error) {
+    if (!(error instanceof TlaEvaluationError)) throw error;
+    throw new TlaEvaluationError(`${getJavaExceptionClass(error)}: ${error.message}`);
   }
-  files.writeFile?.(
-    path,
-    options.has("APPEND") ? existing + text : text + existing.slice(text.length),
-  );
 };
 
 const makeParentDirectory = (files: FileSystem, path: string) => {
@@ -224,36 +262,36 @@ const readText = (files: FileSystem, path: string) => {
 
 export const createJsonOperators = (files: FileSystem): Builtin[] => [
   overrideWithJava(
-    defineStateOperator("ToJson", 1, (args) => rankString(toJson(getValue(args, 0, "ToJson")))),
+    defineOperator("ToJson", 1, (args) => rankString(toJson(getValue(args, 0, "ToJson")))),
     "public static tlc2.value.impl.StringValue tlc2.module.Json.toJson(tlc2.value.IValue) throws java.io.IOException",
   ),
   overrideWithJava(
-    defineStateOperator("ToJsonArray", 1, (args) =>
+    defineOperator("ToJsonArray", 1, (args) =>
       rankString(toJsonArray(getValue(args, 0, "ToJsonArray"))),
     ),
     "public static tlc2.value.impl.StringValue tlc2.module.Json.toJsonArray(tlc2.value.IValue) throws java.io.IOException",
   ),
   overrideWithJava(
-    defineStateOperator("ToJsonObject", 1, (args) =>
+    defineOperator("ToJsonObject", 1, (args) =>
       rankString(toJsonObject(getValue(args, 0, "ToJsonObject"))),
     ),
     "public static tlc2.value.impl.StringValue tlc2.module.Json.toJsonObject(tlc2.value.IValue) throws java.io.IOException",
   ),
   overrideWithJava(
-    defineStateOperator("JsonSerialize", 2, (args) => {
+    defineOperator("JsonSerialize", 2, (args) => {
       const path = getPath(getValue(args, 0, "JsonSerialize"));
       const value = getValue(args, 1, "JsonSerialize");
       if (!getSequenceElements(value) && !toRecord(value)) {
         throw createModuleArgumentError("second", "JsonSerialize", "sequence or record", value);
       }
       makeParentDirectory(files, path);
-      files.writeFile?.(path, toJson(value));
+      writeConverted((text) => files.writeFile?.(path, text), [value], toJson);
       return true;
     }),
     "public static synchronized tlc2.value.impl.BoolValue tlc2.module.Json.serialize(tlc2.value.impl.StringValue,tlc2.value.impl.Value) throws java.io.IOException",
   ),
   overrideWithJava(
-    defineStateOperator("ndJsonSerialize", 2, (args) => {
+    defineOperator("ndJsonSerialize", 2, (args) => {
       const path = getPath(getValue(args, 0, "ndJsonSerialize"));
       const value = getValue(args, 1, "ndJsonSerialize");
       const elements = getSequenceElements(value);
@@ -261,19 +299,19 @@ export const createJsonOperators = (files: FileSystem): Builtin[] => [
         throw createModuleArgumentError("second", "ndJsonSerialize", "sequence", value);
       }
       makeParentDirectory(files, path);
-      files.writeFile?.(path, toNdJson(elements));
+      writeConverted((text) => files.writeFile?.(path, text), elements, toNdJsonLine);
       return true;
     }),
     "public static synchronized tlc2.value.impl.BoolValue tlc2.module.Json.ndSerialize(tlc2.value.impl.StringValue,tlc2.value.impl.Value) throws java.io.IOException",
   ),
   overrideWithJava(
-    defineStateOperator("JsonDeserialize", 1, (args) =>
+    defineOperator("JsonDeserialize", 1, (args) =>
       fromJson(readJson(readText(files, getPath(getValue(args, 0, "JsonDeserialize"))))),
     ),
     "public static tlc2.value.IValue tlc2.module.Json.deserialize(tlc2.value.impl.StringValue) throws java.io.IOException",
   ),
   overrideWithJava(
-    defineStateOperator("ndJsonDeserialize", 1, (args) =>
+    defineOperator("ndJsonDeserialize", 1, (args) =>
       createTuple(
         readText(files, getPath(getValue(args, 0, "ndJsonDeserialize")))
           .split(/\r\n|\r|\n/)
@@ -291,33 +329,37 @@ export const createIoUtilsOperators = (
   evaluateReplaced: (name: string, args: BuiltinArgument[], context: Context | undefined) => Value,
 ): Builtin[] => [
   overrideWithJava(
-    defineLazyOperator("Serialize", 3, (args, context) => {
-      const third = getThunk(args, 2, "Serialize")();
-      const options = toRecord(third);
-      if (!options) throw createModuleArgumentError("third", "ndJsonSerialize", "sequence", third);
-      if (getStringOption(options, "format") !== "NDJSON") {
-        return evaluateReplaced("Serialize", args, context);
-      }
-      const payload = getThunk(args, 0, "Serialize")();
-      const elements = getSequenceElements(payload);
-      if (!elements) throw createModuleArgumentError("first", "Serialize", "sequence", payload);
-      const path = getThunk(args, 1, "Serialize")();
-      if (typeof path !== "string") {
-        throw createModuleArgumentError("second", "ndJsonSerialize", "sequence", path);
-      }
-      const openOptions = applyFunction(options, "openOptions");
-      if (getJavaClassName(openOptions) !== "TupleValue") {
-        throw createClassCastError(openOptions, "TupleValue");
-      }
-      const charset = getStringOption(options, "charset");
-      const names = toFiniteFunction(openOptions).range.map((option) => {
-        if (typeof option !== "string") throw createClassCastError(option, "StringValue");
-        return option;
-      });
-      checkCharset(charset);
-      writeWithOptions(files, path, names, toNdJson(elements));
-      return true;
-    }),
+    {
+      ...defineLazyOperator("Serialize", 3, (args, context) => {
+        const third = getThunk(args, 2, "Serialize")();
+        const options = toRecord(third);
+        if (!options)
+          throw createModuleArgumentError("third", "ndJsonSerialize", "sequence", third);
+        if (getStringOption(options, "format") !== "NDJSON") {
+          return evaluateReplaced("Serialize", args, context);
+        }
+        const payload = getThunk(args, 0, "Serialize")();
+        const elements = getSequenceElements(payload);
+        if (!elements) throw createModuleArgumentError("first", "Serialize", "sequence", payload);
+        const path = getThunk(args, 1, "Serialize")();
+        if (typeof path !== "string") {
+          throw createModuleArgumentError("second", "ndJsonSerialize", "sequence", path);
+        }
+        const openOptions = applyFunction(options, "openOptions");
+        if (getJavaClassName(openOptions) !== "TupleValue") {
+          throw createClassCastError(openOptions, "TupleValue");
+        }
+        const charset = getStringOption(options, "charset");
+        const names = toFiniteFunction(openOptions).range.map((option) => {
+          if (typeof option !== "string") throw createClassCastError(option, "StringValue");
+          return option;
+        });
+        checkCharset(charset);
+        serializeWithOptions(files, path, names, elements);
+        return true;
+      }),
+      isStateLevel: false,
+    },
     "public static synchronized tlc2.value.impl.Value tlc2.module.Json.textSerialize(tlc2.tool.impl.Tool,tla2sany.semantic.ExprOrOpArgNode[],tlc2.util.Context,tlc2.tool.TLCState,tlc2.tool.TLCState,int,tlc2.tool.coverage.CostModel)",
   ),
 ];

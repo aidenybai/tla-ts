@@ -73,11 +73,22 @@ import {
   TEMPORAL_LEVEL,
   VARIABLE_LEVEL,
 } from "./levels";
-import { expandTemporal, getLevel, type ScopedExpression, type TemporalProperty } from "./liveness";
+import {
+  expandTemporal,
+  getLevel,
+  getLevelBound,
+  type ScopedExpression,
+  type TemporalProperty,
+} from "./liveness";
 import { getLiveExpressions } from "./liveness-checker";
 import { prettyPrint, prettyPrintT } from "./pretty-print";
 import { parenthesizedRanges } from "./parser";
-import { getOperatorDefinition, substitutionFrames, withSubstitutionFrames } from "./instances";
+import {
+  getOperatorDefinition,
+  getSubstitutedName,
+  substitutionFrames,
+  withSubstitutionFrames,
+} from "./instances";
 import { getPossibleCounts, type CheckerRuntime } from "./runtime";
 import { createIncompleteSuccessorError, type SuccessorGenerator } from "./successors";
 import {
@@ -437,10 +448,11 @@ const getSpecification = (
       const expanded = getDefinition(getRootKey(name, environment), environment);
       return (
         expanded?.kind === "Operator" &&
-        getLevel(expanded.body, undefined, environment) === VARIABLE_LEVEL
+        getLevelBound(expanded.body, undefined, environment) === VARIABLE_LEVEL
       );
     });
     if (!isInitial && isConstantTrue(item, environment, "spec")) return;
+    // Deviation from TLC: SpecProcessor#processConfigSpec looks an instance's parameter up without its substitute and rejects it as "cannot be used as a spec", where tla-ts takes the substitute.
     const variableIndex =
       conjunct.kind === "Identifier" && !isLocallyResolved(conjunct)
         ? environment.variableIndex.get(conjunct.name)
@@ -502,7 +514,7 @@ const getSpecification = (
         EXIT_STATUS.error,
       );
     }
-    const level = getLevel(conjunct, item.scope, environment);
+    const level = getLevelBound(conjunct, item.scope, environment);
     if (level === TEMPORAL_LEVEL) {
       if (property === undefined || !item.path.includes(property)) isUntaggedFound = true;
       temporals.push(item);
@@ -579,6 +591,7 @@ const getProperties = (
     expandTemporal(definition.body, undefined, environment, isProperty).forEach((item) => {
       const conjunct = item.expression;
       if (isConstantTrue(item, environment, "property")) return;
+      // Deviation from TLC: SpecProcessor#processConfigProps looks an instance's constant up without its substitute and rejects it as "cannot be used as a property", where tla-ts checks the substitute.
       const partName = item.name ?? name;
       const withFrames = (check: Expression) =>
         withSubstitutionFrames(
@@ -597,21 +610,28 @@ const getProperties = (
       }
       if (
         conjunct.kind === "Always" &&
-        getLevel(conjunct.expression, item.scope, environment) <= VARIABLE_LEVEL
+        getLevelBound(conjunct.expression, item.scope, environment) <= VARIABLE_LEVEL
       ) {
         const body = conjunct.expression;
         const operator =
           body.kind === "Identifier" && !isLocallyResolved(body)
             ? getDefinition(body.name, environment)
             : undefined;
+        const substituted = getSubstitutedName(body);
         properties.invariants.push({
-          name: operator?.name ?? (body.kind === "Identifier" ? body.name : partName),
+          name:
+            operator?.name ??
+            (substituted !== undefined
+              ? getKeyName(substituted)
+              : body.kind === "Identifier"
+                ? body.name
+                : partName),
           expression: withFrames(body),
           scope: item.scope,
         });
         return;
       }
-      const level = getLevel(conjunct, item.scope, environment);
+      const level = getLevelBound(conjunct, item.scope, environment);
       if (level < ACTION_LEVEL) {
         properties.initialPredicates.push({
           name: partName,

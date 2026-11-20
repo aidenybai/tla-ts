@@ -328,6 +328,26 @@ describe("evaluation errors match TLC", () => {
     expect(ranges?.at(-1)).toBe("34-41");
   });
 
+  it.each([
+    ["{{}} # {0}", ["39-48", "39-42", "40-41"]],
+    ["{{{}}} # {{0}}", ["39-52", "39-44", "40-43", "41-42"]],
+    ["<<<<{}>>>> = <<<<0>>>>", ["39-60", "39-48", "41-46", "43-44"]],
+    ["[a |-> {}] # [a |-> 0]", ["39-60", "39-48", "46-47"]],
+  ])(
+    "fingerprints each element of %s that fails to compare, as TLC's equals does",
+    async (comparison, frames) => {
+      const result = await check({
+        source: `---- MODULE M ----\nEXTENDS Integers, FiniteSets, TLC\nVARIABLE x\nInit == x = 0\nNext == x < 2 /\\ x' = x + 1 /\\ PrintT(${comparison})\n====`,
+        config: "INIT Init\nNEXT Next\nCHECK_DEADLOCK FALSE",
+      });
+      const ranges = result.failure?.callStack?.map((expression) => {
+        const range = expression.location.range;
+        return range && `${range.start.column}-${range.end.column}`;
+      });
+      expect([...new Set(ranges)].slice(5)).toEqual(frames);
+    },
+  );
+
   it("records each prefix of a chain of infix conjunctions as TLC nests them", async () => {
     const result = await check({
       source:
@@ -3221,6 +3241,294 @@ describe("evaluation errors match TLC", () => {
       expect(formatCallStackLines(result)).toEqual(callStack);
       expect(result.failure?.fingerprint?.reason).toBe(reason);
       expect(result.failure?.exitCode).toBe(75);
+    },
+  );
+
+  const BOUND_EXCEPTION =
+    "TLC threw an unexpected exception.\nThis was probably caused by an error in the spec or model.\nSee the User Output or TLC Console for clues to what happened.\nThe exception was a util.WrongInvocationException\n: Attempted to construct a set with too many elements (>10).";
+  const EQUALITY_EXCEPTION =
+    "TLC threw an unexpected exception.\nThis was probably caused by an error in the spec or model.\nSee the User Output or TLC Console for clues to what happened.\nThe exception was a java.lang.RuntimeException\n: Attempted to check equality of the set {} with the value:\n1";
+
+  it.each([
+    [
+      "x' = x /\\ \\A e \\in ((SUBSET {1, 2} \\ {{}}) \\cup SUBSET (1..3)) : TRUE",
+      BOUND_EXCEPTION,
+      [],
+    ],
+    ["x' = x /\\ \\A e \\in (SUBSET (1..4) \\ {{}}) : TRUE", BOUND_EXCEPTION, []],
+    [
+      "x' = Cardinality(CHOOSE e \\in (SUBSET (1..4) \\cap SUBSET (1..4)) : TRUE)",
+      BOUND_EXCEPTION,
+      [],
+    ],
+    [
+      "x' = x /\\ \\A e \\in ({s \\in SUBSET (1..2) : s = 1} \\ {{}}) : TRUE",
+      EQUALITY_EXCEPTION,
+      [
+        "Line 5, column 9 to line 5, column 72 in M",
+        "Line 5, column 9 to line 5, column 14 in M",
+        "Line 5, column 19 to line 5, column 72 in M",
+        "Line 5, column 52 to line 5, column 56 in M",
+      ],
+    ],
+    [
+      "x' = Cardinality(CHOOSE e \\in ({s \\in SUBSET (1..2) : s = 1} \\cup SUBSET {}) : TRUE)",
+      EQUALITY_EXCEPTION,
+      [
+        "Line 5, column 9 to line 5, column 92 in M",
+        "Line 5, column 14 to line 5, column 92 in M",
+        "Line 5, column 26 to line 5, column 91 in M",
+        "Line 5, column 63 to line 5, column 67 in M",
+      ],
+    ],
+    [
+      "x' = x /\\ \\A e \\in (Nat \\cap Int) : TRUE",
+      "TLC threw an unexpected exception.\nThis was probably caused by an error in the spec or model.\nSee the User Output or TLC Console for clues to what happened.\nThe exception was a java.lang.RuntimeException\n: Attempted to enumerate S \\cap T when neither S:\nNat\nnor T:\nInt\nis enumerable",
+      [
+        "Line 5, column 9 to line 5, column 48 in M",
+        "Line 5, column 9 to line 5, column 14 in M",
+        "Line 5, column 19 to line 5, column 48 in M",
+        "Line 5, column 29 to line 5, column 40 in M",
+      ],
+      "Attempted to enumerate S \\cap T when neither S:\nNat\nnor T:\nInt\nis enumerable",
+    ],
+  ])(
+    "frames a set operation for a quantifier or CHOOSE only as TLC's elements() opens it: %s",
+    async (next, message, callStack, reason?: string) => {
+      const result = await checkSetBound(next, "TRUE");
+      expect(result.failure?.message).toBe(message);
+      expect(formatCallStackLines(result)).toEqual(callStack);
+      expect(result.failure?.fingerprint?.reason).toBe(reason);
+    },
+  );
+
+  it.each([
+    [
+      "x' = x /\\ \\E e \\in (({s \\in SUBSET (1..2) : s = 1} \\cup SUBSET {}) \\ {{}}) : TRUE",
+      [
+        "Line 5, column 9 to line 5, column 89 in M",
+        "Line 5, column 9 to line 5, column 14 in M",
+        "Line 5, column 19 to line 5, column 89 in M",
+        "Line 5, column 53 to line 5, column 57 in M",
+      ],
+    ],
+    [
+      "x' \\in (({s \\in SUBSET (1..2) : s = 1} \\cup SUBSET {}) \\ {{}})",
+      ["Line 5, column 9 to line 5, column 70 in M", "Line 5, column 41 to line 5, column 45 in M"],
+    ],
+    [
+      "x' \\in UNION {{s \\in SUBSET (1..2) : s = 1}}",
+      ["Line 5, column 9 to line 5, column 52 in M", "Line 5, column 46 to line 5, column 50 in M"],
+    ],
+    [
+      "x' = x /\\ \\A e \\in UNION {{s \\in SUBSET (1..2) : s = 1}} : TRUE",
+      [
+        "Line 5, column 9 to line 5, column 71 in M",
+        "Line 5, column 9 to line 5, column 14 in M",
+        "Line 5, column 19 to line 5, column 71 in M",
+        "Line 5, column 58 to line 5, column 62 in M",
+      ],
+    ],
+    [
+      "x' = CHOOSE e \\in UNION {{s \\in SUBSET (1..2) : s = 1}} : TRUE",
+      [
+        "Line 5, column 9 to line 5, column 70 in M",
+        "Line 5, column 14 to line 5, column 70 in M",
+        "Line 5, column 57 to line 5, column 61 in M",
+      ],
+    ],
+  ])(
+    "streams UNION S and a set operation outside their frames, as TLC's nextElement does: %s",
+    async (next, callStack) => {
+      const result = await checkSetBound(next, "TRUE");
+      expect(result.failure?.message).toBe(EQUALITY_EXCEPTION);
+      expect(formatCallStackLines(result)).toEqual(callStack);
+      expect(result.failure?.fingerprint).toBeUndefined();
+    },
+  );
+
+  it.each([
+    [
+      'x\' \\in ({1} \\cup SUBSET {1, "a"})',
+      [
+        "Line 5, column 9 to line 5, column 41 in M",
+        "Line 5, column 17 to line 5, column 40 in M",
+        "Line 5, column 26 to line 5, column 40 in M",
+        "Line 5, column 33 to line 5, column 40 in M",
+      ],
+    ],
+    [
+      'x\' \\in (({1} \\X {1, "a"}) \\ {})',
+      [
+        "Line 5, column 9 to line 5, column 39 in M",
+        "Line 5, column 17 to line 5, column 38 in M",
+        "Line 5, column 18 to line 5, column 32 in M",
+        "Line 5, column 25 to line 5, column 32 in M",
+      ],
+    ],
+    [
+      'x\' \\in ([{1} -> {1, "a"}] \\ {})',
+      [
+        "Line 5, column 9 to line 5, column 39 in M",
+        "Line 5, column 17 to line 5, column 38 in M",
+        "Line 5, column 17 to line 5, column 33 in M",
+        "Line 5, column 25 to line 5, column 32 in M",
+      ],
+    ],
+    [
+      'x\' \\in ([a : {1, "a"}] \\ {})',
+      [
+        "Line 5, column 9 to line 5, column 36 in M",
+        "Line 5, column 17 to line 5, column 35 in M",
+        "Line 5, column 17 to line 5, column 30 in M",
+        "Line 5, column 22 to line 5, column 29 in M",
+      ],
+    ],
+    [
+      'x\' \\in ({s \\in SUBSET {1, "a"} : TRUE} \\ {})',
+      [
+        "Line 5, column 9 to line 5, column 52 in M",
+        "Line 5, column 17 to line 5, column 51 in M",
+        "Line 5, column 24 to line 5, column 38 in M",
+        "Line 5, column 31 to line 5, column 38 in M",
+      ],
+    ],
+    [
+      'x\' \\in ((SUBSET {1, "a"} \\cup {}) \\ {})',
+      [
+        "Line 5, column 9 to line 5, column 47 in M",
+        "Line 5, column 17 to line 5, column 46 in M",
+        "Line 5, column 18 to line 5, column 40 in M",
+        "Line 5, column 25 to line 5, column 32 in M",
+      ],
+    ],
+    [
+      'x\' = x /\\ \\A e \\in (SUBSET {1, "a"} \\ {}) : TRUE',
+      [
+        "Line 5, column 9 to line 5, column 56 in M",
+        "Line 5, column 9 to line 5, column 14 in M",
+        "Line 5, column 19 to line 5, column 56 in M",
+        "Line 5, column 29 to line 5, column 48 in M",
+        "Line 5, column 29 to line 5, column 43 in M",
+        "Line 5, column 36 to line 5, column 43 in M",
+      ],
+    ],
+    [
+      'x\' = CHOOSE e \\in UNION {SUBSET {1, "a"}} : TRUE',
+      [
+        "Line 5, column 9 to line 5, column 56 in M",
+        "Line 5, column 14 to line 5, column 56 in M",
+        "Line 5, column 27 to line 5, column 49 in M",
+        "Line 5, column 34 to line 5, column 48 in M",
+        "Line 5, column 41 to line 5, column 48 in M",
+      ],
+    ],
+  ])(
+    "frames the operands that TLC's elements() opens for a set operation or UNION: %s",
+    async (next, callStack) => {
+      const result = await checkSetBound(next, "TRUE");
+      expect(formatCallStackLines(result)).toEqual(callStack);
+      expect(result.failure?.fingerprint?.reason).toBe(
+        'Attempted to compare string "a" with non-string:\n1',
+      );
+    },
+  );
+
+  it("opens no operand of an empty S \\X T, as TLC's elements() does", async () => {
+    const result = await checkSetBound("x' \\in (({1, \"a\"} \\X {}) \\ {}) \\/ x' = 1", "TRUE");
+    expect([result.status, result.generatedStates, result.distinctStates]).toEqual([
+      "success",
+      3,
+      2,
+    ]);
+  });
+
+  it.each([
+    [
+      'x\' = CHOOSE e \\in SUBSET {1, "a"} : TRUE',
+      [
+        "Line 5, column 9 to line 5, column 48 in M",
+        "Line 5, column 14 to line 5, column 48 in M",
+        "Line 5, column 27 to line 5, column 41 in M",
+        "Line 5, column 34 to line 5, column 41 in M",
+      ],
+    ],
+    [
+      'x\' = CHOOSE e \\in [{1, "a"} -> {0}] : TRUE',
+      [
+        "Line 5, column 9 to line 5, column 50 in M",
+        "Line 5, column 14 to line 5, column 50 in M",
+        "Line 5, column 27 to line 5, column 43 in M",
+        "Line 5, column 28 to line 5, column 35 in M",
+      ],
+    ],
+    [
+      'x\' = CHOOSE e \\in ({1, "a"} \\X {0}) : TRUE',
+      [
+        "Line 5, column 9 to line 5, column 50 in M",
+        "Line 5, column 14 to line 5, column 50 in M",
+        "Line 5, column 28 to line 5, column 42 in M",
+        "Line 5, column 28 to line 5, column 35 in M",
+      ],
+    ],
+    [
+      'x\' = CHOOSE e \\in [a : {1, "a"}] : TRUE',
+      [
+        "Line 5, column 9 to line 5, column 47 in M",
+        "Line 5, column 14 to line 5, column 47 in M",
+        "Line 5, column 27 to line 5, column 40 in M",
+        "Line 5, column 32 to line 5, column 39 in M",
+      ],
+    ],
+    [
+      'x\' = CHOOSE e \\in (SUBSET {1} \\ {1, "a"}) : TRUE',
+      [
+        "Line 5, column 9 to line 5, column 56 in M",
+        "Line 5, column 14 to line 5, column 56 in M",
+        "Line 5, column 28 to line 5, column 48 in M",
+        "Line 5, column 41 to line 5, column 48 in M",
+      ],
+    ],
+  ])("fingerprints the domain of CHOOSE as TLC's normalize does: %s", async (next, callStack) => {
+    const result = await checkSetBound(next, "TRUE");
+    expect(formatCallStackLines(result)).toEqual(callStack);
+    expect(result.failure?.fingerprint?.reason).toBe(
+      'Attempted to compare string "a" with non-string:\n1',
+    );
+  });
+
+  it("streams S into UNION S past -maxSetSize, as TLC's UnionValue does", async () => {
+    const result = await checkSetBound(
+      "x' = Cardinality(UNION (SUBSET {1} \\cup (SUBSET {2} \\cup (SUBSET {1} \\cup (SUBSET {2} \\cup (SUBSET {1} \\cup SUBSET {2}))))))",
+      "TRUE",
+    );
+    expect([result.status, result.generatedStates, result.distinctStates]).toEqual([
+      "success",
+      3,
+      2,
+    ]);
+  });
+
+  it.each([
+    [
+      "x' = x /\\ {UNION (SUBSET (1..3) \\cup SUBSET (1..3))} # {0}",
+      [
+        "Line 5, column 9 to line 5, column 66 in M",
+        "Line 5, column 9 to line 5, column 14 in M",
+        "Line 5, column 19 to line 5, column 66 in M",
+        "Line 5, column 19 to line 5, column 60 in M",
+        "Line 5, column 20 to line 5, column 59 in M",
+      ],
+      "Attempted to construct a set with too many elements (>10).",
+    ],
+    ["x' = x /\\ \\A e \\in UNION (SUBSET (1..3) \\cup SUBSET (1..3)) : TRUE", [], undefined],
+  ])(
+    "fails UNION S past -maxSetSize as TLC's UnionValue collects it: %s",
+    async (next, callStack, reason) => {
+      const result = await checkSetBound(next, "TRUE");
+      expect(result.failure?.message).toBe(BOUND_EXCEPTION);
+      expect(formatCallStackLines(result)).toEqual(callStack);
+      expect(result.failure?.fingerprint?.reason).toBe(reason);
     },
   );
 
