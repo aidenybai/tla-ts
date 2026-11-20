@@ -115,8 +115,8 @@ type Conjunct = { expression: Expression } & (
 
 const getContext = (run: Run, scope: Scope | undefined, partial: State) =>
   run.isInit
-    ? { environment: run.environment, scope, state: partial, next: undefined }
-    : { environment: run.environment, scope, state: run.current, next: partial };
+    ? { environment: run.environment, scope, state: partial, next: undefined, isNaming: true }
+    : { environment: run.environment, scope, state: run.current, next: partial, isNaming: true };
 
 const assign = (partial: State, index: number, value: Value) => {
   const copy = partial.slice();
@@ -1333,6 +1333,7 @@ export const forEachSuccessor = (
   generator?: SuccessorGenerator,
   onUnsatisfied?: Run["onUnsatisfied"],
   onIncomplete?: (state: State, action: string | undefined) => void,
+  action?: string,
 ) => {
   const run: Run = {
     environment,
@@ -1348,7 +1349,7 @@ export const forEachSuccessor = (
     run,
     scope,
     getEmptyState(environment),
-    undefined,
+    action,
     false,
     (partial, action) => {
       if (run.isStopped) return;

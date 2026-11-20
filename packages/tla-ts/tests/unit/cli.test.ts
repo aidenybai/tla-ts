@@ -636,6 +636,101 @@ describe("the CLI reports results like TLC", () => {
     expect(getSteadyLines(result.stdout)).toEqual([...lines, ""]);
   });
 
+  it.each([
+    [
+      "SetBoundRecords",
+      75,
+      [
+        "Starting... (_)",
+        "Computing initial states...",
+        "Error: Attempted to construct a set with too many elements (>100).",
+        "While working on the initial state:",
+        "x = [a: 1..11, b: 1..10]",
+        "",
+        "Error: TLC was unable to fingerprint.",
+        "",
+        "Fingerprint Stack Trace:",
+        "0) line 4, col 13 to line 4, col 34 of module SetBoundRecords",
+        "",
+        "Reason:",
+        "Attempted to construct a set with too many elements (>100).",
+        "1 states generated, 0 distinct states found, 0 states left on queue.",
+        "The depth of the complete state graph search is 1.",
+        "Finished in _ at (_)",
+      ],
+    ],
+    [
+      "SetBoundFilter",
+      75,
+      [
+        "Starting... (_)",
+        "Computing initial states...",
+        "Error: Attempted to construct a set with too many elements (>100).",
+        "While working on the initial state:",
+        "x = {r \\in [a: 1..11, b: 1..10] : <expression line 4, col 45 to line 4, col 48 of module SetBoundFilter> }",
+        "",
+        "Error: The error occurred when TLC was evaluating the nested",
+        "expressions at the following positions:",
+        "    The error call stack is empty.",
+        "",
+        "1 states generated, 0 distinct states found, 0 states left on queue.",
+        "The depth of the complete state graph search is 1.",
+        "Finished in _ at (_)",
+      ],
+    ],
+    [
+      "SetBoundSelection",
+      0,
+      [
+        "Starting... (_)",
+        "Computing initial states...",
+        "Finished computing initial states: 1 distinct state generated at _.",
+        "Model checking completed. No error has been found.",
+        "  Estimates of the probability that TLC did not check all reachable states",
+        "  because two distinct states had the same fingerprint:",
+        "  calculated (optimistic):  val = 5.4E-20",
+        "2 states generated, 1 distinct states found, 0 states left on queue.",
+        "The depth of the complete state graph search is 1.",
+        "The average outdegree of the complete state graph is 0 (minimum is 0, the maximum 0 and the 95th percentile is 0).",
+        "Finished in _ at (_)",
+      ],
+    ],
+    [
+      "SetBoundQuantifier",
+      75,
+      [
+        "Starting... (_)",
+        "Computing initial states...",
+        "Error: Attempted to construct a set with too many elements (>100).",
+        "Error: The error occurred when TLC was evaluating the nested",
+        "expressions at the following positions:",
+        "    The error call stack is empty.",
+        "",
+        "0 states generated, 0 distinct states found, 0 states left on queue.",
+        "The depth of the complete state graph search is 0.",
+        "Finished in _ at (_)",
+      ],
+    ],
+    [
+      "SetBoundUnion",
+      255,
+      [
+        "Starting... (_)",
+        "Computing initial states...",
+        "Error: TLC threw an unexpected exception.",
+        "This was probably caused by an error in the spec or model.",
+        "See the User Output or TLC Console for clues to what happened.",
+        "The exception was a util.WrongInvocationException",
+        ": Attempted to construct a set with too many elements (>100).",
+        "Finished in _ at (_)",
+      ],
+    ],
+  ] as const)("stops %s at TLC's set bound as TLC does", (name, code, lines) => {
+    const result = runCli("set-bound", name, ["-maxSetSize", "100"]);
+    expect(result.status).toBe(code);
+    expect(getSteadyLines(result.stdout)).toEqual([...lines, ""]);
+  });
+
   it("names no temporal property when the counterexample a VIEW merges satisfies them all", () => {
     const result = runCli("cli-output", "ViewLasso");
     expect(result.status).toBe(13);

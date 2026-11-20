@@ -149,6 +149,7 @@ const createGeneratedHelpers = () => ({
     state: context.state,
     next: context.next,
     isKeepLazy: context.isKeepLazy,
+    isPrimed: context.isPrimed,
   }),
 });
 
@@ -514,7 +515,8 @@ const generateExpression = (generator: Generator, expression: Expression, frame:
         expression: expression.expression,
         location: expression.location,
       });
-      return `equal(${primed}, ${generate(expression.expression)})`;
+      // TLC's verifyUnchanged evaluates the expression in the current state first.
+      return `equal(${generate(expression.expression)}, ${primed})`;
     }
     case "Forall":
     case "Exists":

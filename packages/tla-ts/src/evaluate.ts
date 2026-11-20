@@ -183,6 +183,9 @@ export interface Thunk {
   isStreamed: boolean;
   isRebuilt: boolean;
   isReleased?: boolean;
+  // Whether a step or a replay of one bound the thunk, so it may run the thunk's expression again in
+  // its scope rather than read the cached value.
+  isNamed?: boolean;
 }
 
 type Binding =
@@ -285,6 +288,10 @@ export interface Context {
   state: State | undefined;
   next: State | undefined;
   isKeepLazy?: boolean;
+  // Whether a step or a replay of one binds the thunks of this context, which it may run by name.
+  isNaming?: boolean;
+  // Whether the context evaluates a primed expression, which TLC evaluates with no next state.
+  isPrimed?: boolean;
 }
 
 export type Evaluator = (context: Context) => Value;
@@ -484,6 +491,7 @@ export const toKeepLazyContext = (context: Context): Context =>
         state: context.state,
         next: context.next,
         isKeepLazy: true,
+        isPrimed: context.isPrimed,
       };
 
 const withScope = (context: Context, scope: Scope | undefined): Context => ({
@@ -492,6 +500,7 @@ const withScope = (context: Context, scope: Scope | undefined): Context => ({
   state: context.state,
   next: context.next,
   isKeepLazy: context.isKeepLazy,
+  isPrimed: context.isPrimed,
 });
 
 export const expectBoolean = (value: Value, description: string) => {
@@ -1023,9 +1032,16 @@ const evaluateCoveredThunk = (thunk: Thunk, context: Context, coverage: Coverage
       );
 };
 
+const isUnassigned = (state: State | undefined) =>
+  state === undefined || state.every((value) => value === undefined);
+
 const forceThunk = (thunk: Thunk, context: Context) => {
   const cache = thunk.cache;
+  // Under a prime TLC evaluates with no next state, where a LazyValue neither reads nor keeps its
+  // cache (Tool.eval). A released thunk keeps the value that holds in every state.
+  const isUncached = context.isPrimed === true && !thunk.isReleased;
   const isCached =
+    !isUncached &&
     cache !== undefined &&
     isStateWithin(context.state, thunk.state) &&
     isStateWithin(context.next, thunk.next) &&
@@ -1051,16 +1067,19 @@ const forceThunk = (thunk: Thunk, context: Context) => {
             withScope(context, thunk.scope),
           )
         : evaluate(thunk.expression, withScope(context, thunk.scope));
+  if (isUncached) return value;
   if (!thunk.isStreamed || isSettledValue(value)) {
     thunk.cache = value;
     thunk.state = context.state;
     thunk.next = context.next;
   }
+  // A value cached where no variable is assigned holds in every state, so forcing the thunk never
+  // reads its scope again. A step may still run a thunk it bound by name.
   if (
     thunk.cache !== undefined &&
-    thunk.state === undefined &&
-    thunk.next === undefined &&
-    !thunk.isRebuilt
+    !thunk.isRebuilt &&
+    ((thunk.state === undefined && thunk.next === undefined) ||
+      (!thunk.isNamed && isUnassigned(thunk.state) && isUnassigned(thunk.next)))
   ) {
     thunk.scope = undefined;
     thunk.isReleased = true;
@@ -1209,6 +1228,7 @@ const createThunk = (
   cache: undefined,
   isStreamed: false,
   isRebuilt: false,
+  isNamed: context.isNaming === true,
 });
 
 export const findGlobalName = (name: string, environment: Environment): GlobalName | undefined => {
@@ -1613,6 +1633,7 @@ export const bindDefinitions = (
           isRebuilt:
             (definition.kind === "Operator" || !definition.isSelfReferential) &&
             reevaluated?.isFunctionRebuilt === true,
+          isNamed: context.isNaming === true,
         };
   }
   const coverage = context.environment.coverage;
@@ -1698,6 +1719,7 @@ export const toNextContext = (context: Context): Context => ({
   state: context.next,
   next: undefined,
   isKeepLazy: context.isKeepLazy,
+  isPrimed: true,
 });
 
 const evaluateWithNextState = (
@@ -2138,6 +2160,7 @@ const compileClosureCall = (
       state: context.state,
       next: context.next,
       isKeepLazy: context.isKeepLazy,
+      isPrimed: context.isPrimed,
     });
   };
 };

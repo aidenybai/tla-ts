@@ -274,6 +274,10 @@ const getParameters = (closure: Closure | undefined, scope: Scope | undefined) =
     return binding?.kind === "Value" ? [[param.name, binding.value]] : [];
   });
 
+// The operator whose body an action splits from, which names a step that calls no other.
+export const getStepName = (action: SpecAction) =>
+  action.name === UNNAMED_ACTION ? undefined : action.name;
+
 const tryCollect = <Result>(collect: () => Result, fallback: () => Result) => {
   try {
     return collect();

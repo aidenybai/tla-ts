@@ -79,6 +79,7 @@ import {
   getActionLabel,
   getActionSignature,
   getSpecDescription,
+  getStepName,
   getSpecificationValue,
   toActionValue,
   type SpecAction,
@@ -1567,6 +1568,8 @@ const searchStates = (
           action.scope,
           undefined,
           onUnsatisfied && ((successor, conjunct) => onUnsatisfied(successor, conjunct, action)),
+          undefined,
+          getStepName(action),
         )
       );
     }, 0);

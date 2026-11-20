@@ -4908,6 +4908,146 @@ describe("initial predicate and next-state relation match TLC", () => {
     );
     expect([result.generatedStates, result.distinctStates]).toEqual(counts);
   });
+
+  const checkPrints = async (variables: string, init: string, next: string, invariant = "TRUE") => {
+    const printed: string[] = [];
+    const result = await check({
+      source: `---- MODULE M ----\nEXTENDS Naturals, TLC\nVARIABLE ${variables}\nBoth(a) == a /\\ a\nOuter(b) == Both(b = TRUE)\nG(a) == IF a THEN x ELSE x\nInit == ${init}\nNext == ${next}\nInv == ${invariant}\n====`,
+      config: "INIT Init\nNEXT Next\nINVARIANT Inv",
+      onPrint: (text) => printed.push(text),
+    });
+    return { result, printed };
+  };
+
+  it.each([
+    ["x", 'x = IF Outer(PrintT("init")) THEN 0 ELSE 1', "UNCHANGED x", ['"init"']],
+    ["x", 'x \\in {1, 2} /\\ Outer(PrintT("init"))', "UNCHANGED x", ['"init"', '"init"']],
+    [
+      "x, y",
+      "x \\in {1, 2} /\\ y = IF Outer(PrintT(x)) THEN 0 ELSE 1",
+      "UNCHANGED <<x, y>>",
+      ["1", "2"],
+    ],
+    ["x", "x \\in {1, 2}", 'x\' = IF Outer(PrintT("next")) THEN x ELSE x', ['"next"', '"next"']],
+    ["x", "x \\in {1, 2}", "x' = IF Outer(PrintT(x)) THEN x ELSE x", ["1", "2"]],
+    [
+      "x, y",
+      'y = (LET d == PrintT("d") IN IF Outer(d) THEN {e \\in 1..3 : Outer(d)} ELSE {}) /\\ x \\in {0, 1}',
+      'x\' = (x + 1) % 3 /\\ UNCHANGED y /\\ 2 \\in {e \\in y : Outer(LET c == PrintT("c") IN c)}',
+      ['"d"', ...Array<string>(9).fill('"c"')],
+    ],
+  ])(
+    "prints from an operator argument a definition forces with Init %s as often as TLC",
+    async (variables, init, next, expected) => {
+      const checked = await checkPrints(variables, init, next);
+      expect([checked.result.status, checked.printed]).toEqual(["success", expected]);
+    },
+  );
+
+  it("prints from an operator argument again as TLC does when it replays a violation", async () => {
+    const checked = await checkPrints(
+      "x",
+      'x = IF Outer(PrintT("init")) THEN 0 ELSE 1',
+      "x' = IF Outer(PrintT(x)) THEN x + 1 ELSE x",
+      "x < 2",
+    );
+    const violation = checked.result.violation;
+    expect([
+      checked.result.status,
+      checked.printed,
+      violation?.trace.map((step) => step.output),
+      violation?.traceOutput,
+    ]).toEqual([
+      "invariant-violation",
+      ['"init"', "0", "1"],
+      [['"init"'], ["0"], ["1"]],
+      ['"init"', "0", "1"],
+    ]);
+  });
+
+  it.each([
+    ["x = 0", 'LET F(c) == (x\' = IF c THEN x ELSE x) /\\ c IN F(PrintT("f"))', ['"f"']],
+    ["x = 0", 'LET F(c) == (x\' = G(c)) /\\ c IN F(PrintT("g"))', ['"g"']],
+    ["x = 0", 'LET F(c) == c /\\ (x\' = IF c THEN x ELSE x) IN F(PrintT("h"))', ['"h"']],
+    ["x \\in {0, 1}", 'LET F(c) == c /\\ c /\\ x\' = x IN F(PrintT("q"))', ['"q"']],
+    ["x = 0", "\\E i \\in {1} : LET F(c) == c /\\ c /\\ x' = x IN F(PrintT(i))", ["1"]],
+    [
+      "x = 0",
+      "LET F(c) == ENABLED (x' = IF c THEN x ELSE x) /\\ c /\\ x' = x IN F(PrintT(\"e\"))",
+      ['"e"'],
+    ],
+    ["x = 0", 'LET F(c) == c /\\ c /\\ x\' = x IN x = 0 /\\ F(PrintT("q"))', ['"q"', '"q"']],
+    ["x \\in {0, 1}", "LET F(c) == (x' = IF c THEN x ELSE x) /\\ c IN F(PrintT(x))", ["0", "1"]],
+    [
+      "x \\in {0, 1}",
+      "LET F(c) == c /\\ (x' = IF c THEN x ELSE x) IN F(PrintT(x))",
+      ["0", "0", "1", "1"],
+    ],
+    ["x = 0", 'LET d == PrintT("d") IN (x\' = IF d THEN x ELSE x) /\\ d', ['"d"', '"d"']],
+  ])(
+    "prints from an argument of a next-state action with Init %s and Next %s as often as TLC",
+    async (init, next, expected) => {
+      const checked = await checkPrints("x", init, next);
+      expect([checked.result.status, checked.printed]).toEqual(["success", expected]);
+    },
+  );
+
+  it("prints a constant argument of a next-state action once as TLC does when it finds a violation", async () => {
+    const checked = await checkPrints(
+      "x",
+      "x = 0",
+      'LET F(c) == c /\\ c /\\ x\' = x + 1 IN F(PrintT("w"))',
+      "x < 2",
+    );
+    expect([checked.result.status, checked.printed]).toEqual(["invariant-violation", ['"w"']]);
+  });
+
+  const printsU = 'IF PrintT("u") THEN x ELSE x';
+  const printsV = 'PrintT(<<"v", x>>)';
+
+  it.each([
+    ["(x' = x) /\\ UNCHANGED c", printsU, ['"u"', '"u"']],
+    ["(x' = IF c = x THEN x ELSE x) /\\ UNCHANGED c", printsU, ['"u"', '"u"']],
+    ["(x' = x) /\\ UNCHANGED c /\\ UNCHANGED c", printsU, ['"u"', '"u"', '"u"']],
+    ["(x' = x) /\\ UNCHANGED <<c, c>>", printsU, ['"u"', '"u"', '"u"']],
+    [
+      "(x' = IF c THEN (x + 1) % 2 ELSE x) /\\ c' /\\ c'",
+      printsV,
+      ['<<"v", 0>>', '<<"v", 1>>', '<<"v", 1>>', '<<"v", 1>>', '<<"v", 0>>', '<<"v", 0>>'],
+    ],
+    [
+      "(x' = (x + 1) % 2) /\\ UNCHANGED c",
+      printsV,
+      ['<<"v", 0>>', '<<"v", 1>>', '<<"v", 1>>', '<<"v", 0>>'],
+    ],
+  ])(
+    "prints from an argument that %s evaluates in the next state as often and in the order TLC does",
+    async (body, argument, expected) => {
+      const checked = await checkPrints("x", "x = 0", `LET F(c) == ${body} IN F(${argument})`);
+      expect([checked.result.status, checked.printed]).toEqual(["success", expected]);
+    },
+  );
+
+  it("prints from an argument that UNCHANGED evaluates again as TLC does when it replays a violation", async () => {
+    const checked = await checkPrints(
+      "x",
+      "x = 0",
+      `LET F(c) == (x' = (x + 1) % 3) /\\ UNCHANGED c IN F(${printsV})`,
+      "x < 2",
+    );
+    const violation = checked.result.violation;
+    expect([
+      checked.result.status,
+      checked.printed,
+      violation?.trace.map((step) => step.output),
+      violation?.traceOutput,
+    ]).toEqual([
+      "invariant-violation",
+      ['<<"v", 0>>', '<<"v", 1>>', '<<"v", 1>>', '<<"v", 2>>'],
+      [[], ['<<"v", 0>>', '<<"v", 1>>'], ['<<"v", 1>>', '<<"v", 2>>']],
+      ['<<"v", 0>>', '<<"v", 1>>', '<<"v", 1>>', '<<"v", 2>>'],
+    ]);
+  });
 });
 
 describe("check without code generation from strings", () => {
