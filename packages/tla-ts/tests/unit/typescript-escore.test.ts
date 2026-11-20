@@ -1855,18 +1855,52 @@ describe("compiles scripts by specializing ESCore", () => {
     });
   });
 
-  describe("stops at a static method named constructor, which TypeScript parses as a constructor", () => {
-    it("stops rather than make the static method the class's constructor", async () => {
-      const source = `
-        const C = class {
-          static constructor() {}
-          constructor() {}
-        };
-        if (C.prototype.constructor !== C) throw new Error("constructor");
-      `;
-      expect((await checkScript(source)).message).toContain(
-        "tla-ts can't compile a static method named constructor",
-      );
+  describe("defines a static method named constructor, which TypeScript parses as a constructor", () => {
+    const getSource = (expected: string) => `
+      const A = class {
+        static constructor() { return 1; }
+        x = 0;
+        constructor() { this.x = 2; }
+      } as unknown as { new (): { x: number }; constructor(): number; prototype: object };
+      const B = class {
+        constructor() {}
+        static constructor(value: number) { return value * 2; }
+      } as unknown as { constructor(value: number): number };
+      const result = [
+        A.constructor(),
+        new A().x,
+        Object.getOwnPropertyNames(A).join(),
+        A.constructor.name,
+        (A.prototype as { constructor: unknown }).constructor === A,
+        B.constructor(4),
+        String(A.constructor),
+        Object.getOwnPropertyDescriptor(A, "constructor")?.enumerable,
+      ].join();
+      if (result !== "${expected}") throw new Error(result);
+    `;
+
+    it("agrees with Node", async () => {
+      expect(
+        (
+          await checkScript(
+            getSource(
+              "1,2,length,name,prototype,constructor,constructor,true,8,constructor() { return 1; },false",
+            ),
+          )
+        ).message,
+      ).toBeUndefined();
+    });
+
+    it("rejects another result", async () => {
+      expect(
+        (
+          await checkScript(
+            getSource(
+              "1,2,length,name,prototype,constructor,constructor,false,8,constructor() { return 1; },false",
+            ),
+          )
+        ).message,
+      ).toContain(THREW);
     });
   });
 
