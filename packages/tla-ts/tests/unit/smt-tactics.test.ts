@@ -3173,6 +3173,24 @@ describe("ctx-solver-simplify, as Z3 5.3.2 keeps its kernel", () => {
     ).toEqual(["(goals\n(goal\n  :precision precise :depth 0)\n)", "(:rlimit 2)"]);
   });
 
+  it("makes its kernel as the tactic is read, even when the rest of the tactic fails to parse", () => {
+    expect(
+      run([
+        "(declare-const a Int)",
+        "(assert (> a 0))",
+        "(apply (then ctx-solver-simplify foo))",
+        "(get-info :rlimit)",
+        '(apply (using-params ctx-solver-simplify :qi.cost "(+ weight 30)"))',
+        "(get-info :rlimit)",
+      ]),
+    ).toEqual([
+      '(error "line 3 column 33: invalid tactic, unknown tactic foo")',
+      "(:rlimit 9)",
+      '(error "line 5 column 66: invalid using-params combinator, unsupported parameter kind")',
+      "(:rlimit 10)",
+    ]);
+  });
+
   it("makes a new kernel after each run", () => {
     expect(
       run([
