@@ -179,8 +179,11 @@ describe("checks a module's exported functions as a model on ESCore", () => {
     });
   });
 
-  // A model that imports a file runs as an ES module, with the module it imports beside it.
+  // A model that imports a file runs as an ES module, with the module it imports beside it. A
+  // model without state checks only that its functions' calls return, as today's spec does, which
+  // fails as an assumption where one throws.
   describe("checks the exported functions of a model that imports a file", () => {
+    const STOPPED_ASSUMPTION = ["assumption-violation", 0, 0];
     const directory = mkdtempSync(join(tmpdir(), "tla-ts-escore-plan-"));
     afterAll(() => rmSync(directory, { recursive: true, force: true }));
     writeFileSync(
@@ -196,7 +199,9 @@ describe("checks a module's exported functions as a model on ESCore", () => {
     it("agrees with Node", async () => {
       expect(
         getCounts(
-          await check("export const isUndone = (value: 0 | 1) => flip(flip(value)) === value;\n"),
+          await check(
+            'export const undo = (value: 0 | 1) => {\n  if (flip(flip(value)) !== value) throw new Error("undone");\n  return value;\n};\n',
+          ),
         ),
       ).toEqual(["success", 1, 1]);
     });
@@ -204,16 +209,18 @@ describe("checks a module's exported functions as a model on ESCore", () => {
     it("rejects another result", async () => {
       expect(
         getCounts(
-          await check("export const isUndone = (value: 0 | 1) => flip(value) === value;\n"),
+          await check(
+            'export const undo = (value: 0 | 1) => {\n  if (flip(value) !== value) throw new Error("undone");\n  return value;\n};\n',
+          ),
         ),
-      ).toEqual(["invariant-violation", 1, 1]);
+      ).toEqual(STOPPED_ASSUMPTION);
     });
 
     it("fails where a call that only returns throws for a value it takes", async () => {
       const result = await check(
         'export const twice = (value: 0 | 1 | 2) => {\n  if (value === 2) throw new RangeError("two");\n  return flip(flip(value));\n};\n',
       );
-      expect(result.message).toContain('"two"');
+      expect(getCounts(result)).toEqual(STOPPED_ASSUMPTION);
     });
 
     // The module records and the module's environment stay in the state, which the canonical
@@ -242,28 +249,28 @@ describe("checks a module's exported functions as a model on ESCore", () => {
     // A parameter of a literal's type or undefined takes each value of its set, by the set it's in.
     describe("passes a value of a union with undefined", () => {
       const getBody = (bound: number) =>
-        `export const isShort = (text: "a" | "bb" | undefined) => flip(0) === 1 && (text === undefined || text.length < ${bound});\n`;
+        `export const short = (text: "a" | "bb" | undefined) => {\n  if (flip(0) !== 1 || (text !== undefined && text.length >= ${bound})) throw new Error("long");\n  return text;\n};\n`;
 
       it("agrees with Node", async () => {
         expect(getCounts(await check(getBody(3)))).toEqual(["success", 1, 1]);
       });
 
       it("rejects another result", async () => {
-        expect(getCounts(await check(getBody(2)))).toEqual(["invariant-violation", 1, 1]);
+        expect(getCounts(await check(getBody(2)))).toEqual(STOPPED_ASSUMPTION);
       });
     });
 
     // A function whose name a definition of the spec may take, as ESCore's do, gets one of its own.
     describe("calls a function whose name TLA+ takes another for", () => {
       const getBody = (operator: string) =>
-        `export const Undone = (value: 0 | 1) => flip(${operator}) === value;\nexport const heap = () => flip(1);\n`;
+        `export const Undone = (value: 0 | 1) => {\n  if (flip(${operator}) !== value) throw new Error("undone");\n  return value;\n};\nexport const heap = () => flip(1);\n`;
 
       it("agrees with Node", async () => {
         expect(getCounts(await check(getBody("flip(value)")))).toEqual(["success", 1, 1]);
       });
 
       it("rejects another result", async () => {
-        expect(getCounts(await check(getBody("value")))).toEqual(["invariant-violation", 1, 1]);
+        expect(getCounts(await check(getBody("value")))).toEqual(STOPPED_ASSUMPTION);
       });
     });
 
@@ -295,14 +302,14 @@ describe("checks a module's exported functions as a model on ESCore", () => {
     // A function that a cast gives, and one that a list of the module's names exports.
     describe("calls a function that a cast gives or a list exports", () => {
       const getBody = (operator: string) =>
-        `const Undone = ((value: 0 | 1) => flip(${operator}) === value) as (value: 0 | 1) => boolean;\nexport { Undone };\n`;
+        `const Undone = ((value: 0 | 1) => {\n  if (flip(${operator}) !== value) throw new Error("undone");\n  return value;\n}) as (value: 0 | 1) => number;\nexport { Undone };\n`;
 
       it("agrees with Node", async () => {
         expect(getCounts(await check(getBody("flip(value)")))).toEqual(["success", 1, 1]);
       });
 
       it("rejects another result", async () => {
-        expect(getCounts(await check(getBody("value")))).toEqual(["invariant-violation", 1, 1]);
+        expect(getCounts(await check(getBody("value")))).toEqual(STOPPED_ASSUMPTION);
       });
     });
 
