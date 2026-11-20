@@ -2759,14 +2759,18 @@ export const resolveSubstitutions = (
     instance,
     declarations,
     instancer,
+    // SANY doesn't declare a parameter whose name is taken, so a CONSTANT of that name is substituted by the earlier symbol.
     instance.params.reduce<LocalName | undefined>(
-      (parent, param) => ({
-        name: param.name,
-        arity: param.arity,
-        kind: "Parameter",
-        range: param.location?.range,
-        parent,
-      }),
+      (parent, param) =>
+        imported.has(param.name) || lookupLocal(parent, param.name)
+          ? parent
+          : {
+              name: param.name,
+              arity: param.arity,
+              kind: "Parameter",
+              range: param.location?.range,
+              parent,
+            },
       undefined,
     ),
     {

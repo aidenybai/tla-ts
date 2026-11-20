@@ -2870,6 +2870,23 @@ describe("name resolution matches SANY", () => {
       [],
     ],
     [
+      "an instance parameter named like an operator, which a CONSTANT then takes",
+      "---- MODULE C ----\nCONSTANT S\n====\nS(a) == a\ny(S) == INSTANCE C\nz(S) == INSTANCE C WITH S <- 1",
+      [6, 7].flatMap((line) => [
+        {
+          location: `line ${line}, col 3 to line ${line}, col 3 of module M`,
+          message:
+            "Multiply-defined symbol 'S': this definition or declaration conflicts \nwith the one at line 5, col 1 to line 5, col 9 of module M.",
+        },
+        {
+          location: `line ${line}, col 1 to line ${line}, col ${line === 6 ? 18 : 30} of module M`,
+          message:
+            "Wrong number of arguments (0) given to operator 'S', \nwhich requires 1 arguments.",
+        },
+      ]),
+      [],
+    ],
+    [
       "labels inside the arguments of a rejected application",
       "H(a) == a\nOp(P(_)) == P(1, lab:: 2)\nG == H(1, lab:: 2) /\\ Undef(other:: 3) /\\ H(kept:: 1)!Nope\nA == G!lab\nB == G!other\nC == Op(Op(Op))!lab\nD == G!kept\nTHEOREM TRUE\n<1>1. H(1, lab:: 2) /\\ H(kept:: 1)!Nope /\\ H(lost:: 1, 2)!1\n  <2> QED BY <1>1!lab, <1>1!kept, <1>1!lost\n<1> QED",
       [
