@@ -19,33 +19,35 @@ const QFLIA_PREAMBLE =
   ":lia2card.max_range 1 :lia2card.max_ite_nesting 1) elim-uncnstr)";
 
 const getNoCutSmt = (seed: number) =>
-  `(using-params smt :auto_config false :smt.logic QF_LIA :arith.branch_cut_ratio 10000000 ` +
-  `:random_seed ${seed})`;
+  "(annotate (using-params smt :auto_config false :smt.logic QF_LIA " +
+  `:arith.branch_cut_ratio 10000000 :random_seed ${seed}))`;
 
 const LIA2SAT =
-  "(and-then (fail-if is-unbounded) (fail-if produce-proofs) (fail-if produce-unsat-cores) " +
-  "propagate-ineqs normalize-bounds lia2pb (using-params pb2bv :pb2bv_all_clauses_limit 8) " +
-  `(fail-if (not is-qfbv)) (using-params ${BV2SAT} :ite_extra true))`;
+  "(annotate (and-then (fail-if is-unbounded) (fail-if produce-proofs) " +
+  "(fail-if produce-unsat-cores) propagate-ineqs normalize-bounds lia2pb " +
+  "(using-params pb2bv :pb2bv_all_clauses_limit 8) (fail-if (not is-qfbv)) " +
+  `(using-params ${BV2SAT} :ite_extra true)))`;
 
 const ILP_MODEL_FINDER =
-  "(and-then (fail-if (not (and is-ilp is-unbounded))) (fail-if produce-proofs) " +
+  "(annotate (and-then (fail-if (not (and is-ilp is-unbounded))) (fail-if produce-proofs) " +
   `(fail-if produce-unsat-cores) propagate-ineqs (or-else (try-for ${getNoCutSmt(100)} 2000) ` +
   `(and-then (using-params add-bounds :add_bound_lower -16 :add_bound_upper 15) ` +
   `(try-for ${LIA2SAT} 5000)) (try-for ${getNoCutSmt(200)} 5000) (and-then ` +
   `(using-params add-bounds :add_bound_lower -32 :add_bound_upper 31) (try-for ${LIA2SAT} ` +
-  "10000))) fail-if-undecided)";
+  "10000))) fail-if-undecided))";
 
 const PB =
-  "(and-then (fail-if (not is-pb)) (fail-if produce-proofs) (fail-if produce-unsat-cores) " +
-  "(or-else (and-then (fail-if (>= num-exprs 80000)) (fail-if (not is-ilp)) " +
-  "fail-if-undecided) (and-then (using-params pb2bv :pb2bv_all_clauses_limit 8) " +
-  `(fail-if (not is-qfbv)) (using-params ${BV2SAT} :ite_extra true))))`;
+  "(annotate (and-then (fail-if (not is-pb)) (fail-if produce-proofs) " +
+  "(fail-if produce-unsat-cores) (or-else (and-then (fail-if (>= num-exprs 80000)) " +
+  "(fail-if (not is-ilp)) fail-if-undecided) (and-then " +
+  "(using-params pb2bv :pb2bv_all_clauses_limit 8) (fail-if (not is-qfbv)) " +
+  `(using-params ${BV2SAT} :ite_extra true)))))`;
 
 const BOUNDED =
-  `(and-then (fail-if is-unbounded) (or-else (try-for ${getNoCutSmt(100)} 5000) (try-for ` +
-  "(using-params smt :auto_config false :arith.branch_cut_ratio 10000000 :random_seed 200 " +
-  ":relevancy 0) 5000) " +
-  `(try-for ${getNoCutSmt(300)} 15000)) fail-if-undecided)`;
+  `(annotate (and-then (fail-if is-unbounded) (or-else (try-for ${getNoCutSmt(100)} 5000) ` +
+  "(try-for (annotate (using-params smt :auto_config false :arith.branch_cut_ratio 10000000 " +
+  ":random_seed 200 :relevancy 0)) 5000) " +
+  `(try-for ${getNoCutSmt(300)} 15000)) fail-if-undecided))`;
 
 const QFLIA =
   `(using-params (and-then ${QFLIA_PREAMBLE} (using-params simplify :arith_lhs true) ` +

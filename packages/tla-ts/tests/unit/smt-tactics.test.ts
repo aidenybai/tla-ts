@@ -3134,6 +3134,31 @@ describe("tactic2solver, as Z3 5.3.2 keeps its tactic", () => {
     ).toEqual(["sat", "(:rlimit 191)", "sat", "(:rlimit 357)"]);
   });
 
+  it("keeps the propagate-values of QF_LIA's pb tactic across the checks", () => {
+    const names = ["v0", "v1", "v2", "v3", "v4", "v5", "v6", "v7", "v8"];
+    expect(
+      run([
+        "(set-logic QF_LIA)",
+        ...names.map((name) => `(declare-const ${name} Int)`),
+        ...names.map((name) => `(assert (<= 0 ${name} 1))`),
+        "(assert (or (= v1 0) (= v1 0) (= v0 0) (= v7 1)))",
+        "(assert (or (= v4 0) (= v6 0) (= v2 0)))",
+        "(assert (or (= v6 0) (= v8 0)))",
+        "(assert (or (= v6 1) (= v2 0) (= v7 1) (= v0 0)))",
+        "(assert (or (= v7 0) (= v4 0)))",
+        "(assert (or (= v7 1) (= v5 1) (= v4 0) (= v3 0)))",
+        "(assert (or (= v2 1) (= v6 0) (= v5 1) (= v8 0)))",
+        "(check-sat)",
+        "(check-sat)",
+        "(get-value (v0 v1 v2 v3 v4 v5 v6 v7 v8))",
+      ]),
+    ).toEqual([
+      "sat",
+      "sat",
+      "((v0 1)\n (v1 0)\n (v2 0)\n (v3 0)\n (v4 0)\n (v5 0)\n (v6 0)\n (v7 0)\n (v8 0))",
+    ]);
+  });
+
   it("forgets the sorts dt2bv saw in an earlier check", () => {
     expect(
       run([

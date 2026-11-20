@@ -2215,6 +2215,19 @@ const compile = (
         build: (params) => runOrElse([child.build(params), (goal) => [goal]]),
       };
     }
+    // annotate_tactical never passes cleanup on to its child.
+    case "annotate": {
+      if (!isInternal)
+        throw new SmtParseError(`invalid tactic, unknown tactic combinator annotate`, sexpr.end);
+      const child = compile(environment, sexpr.items[1], isInternal);
+      return {
+        ...mergeDescrs([child]),
+        build: (params) => {
+          const tactic = child.build(params);
+          return (goal) => tactic(goal);
+        },
+      };
+    }
     case "lazy": {
       if (!isInternal)
         throw new SmtParseError(`invalid tactic, unknown tactic combinator lazy`, sexpr.end);
