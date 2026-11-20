@@ -8,7 +8,7 @@ import react from "@vitejs/plugin-react";
 import { createServer, defineConfig, type Plugin } from "vite-plus";
 import { parseModule } from "../tla-ts/src/parser";
 import { type EscoreRuntime, prepareHostRuntime } from "../tla-ts/src/typescript/spec/prepare";
-import type { Precompiled } from "./src/compilation";
+import { BUILT_OUTPUT_LINES, type Precompiled } from "./src/compilation";
 import { getEscoreCompilation } from "./src/escore";
 import { createHighlighter } from "./src/highlighter";
 import { LOGO_PATH } from "./src/logo";
@@ -78,6 +78,7 @@ const getOutline = (path: string, highlight: Awaited<ReturnType<typeof createHig
         )
         .join("\t"),
     )
+    .slice(0, BUILT_OUTPUT_LINES)
     .join("\n");
 
 const getBenchmarks = (): Benchmark[] => {

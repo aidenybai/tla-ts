@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useRef, type ReactNode } from "react";
 import outlines from "virtual:outlines";
 import { createPartsContext } from "@/lib/utils";
+import { BUILT_OUTPUT_LINES } from "../compilation";
 import { getHighlightColors } from "../highlight-colors";
 import { getLineMarks } from "../line-marks";
 import type { Mark } from "../site-data";
@@ -24,6 +25,7 @@ const usePlaygroundState = () => {
   const isWide = useMediaQuery("(min-width: 48rem)");
   const workspaceRef = useRef<HTMLElement>(null);
   const runButtonRef = useRef<HTMLButtonElement>(null);
+  const isHydrated = useIsHydrated();
 
   const compilation = compiler.compilation;
   const isMapped = !compiler.isCompiling && compiler.error === undefined;
@@ -92,7 +94,10 @@ const usePlaygroundState = () => {
     },
     startCompiler: compiler.start,
     isSkeleton,
-    outputLines: compiler.tla?.lines ?? (isSkeleton ? outline : []),
+    outputLines: (compiler.tla?.lines ?? (isSkeleton ? outline : [])).slice(
+      0,
+      isHydrated ? undefined : BUILT_OUTPUT_LINES,
+    ),
     outputLineMarks,
     isOutputStale: compiler.tla !== undefined && (compiler.isCompiling || Boolean(compiler.error)),
     error: compiler.error,
