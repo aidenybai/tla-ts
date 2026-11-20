@@ -1878,7 +1878,7 @@ export const runSmtlibScript = (
               : [
                   manager.mkOr(
                     goals.map((goal) =>
-                      goal.forms.size === 1 ? goal.forms.items[0] : manager.mkAnd(goal.forms.items),
+                      goal.forms.size === 1 ? goal.forms.get(0) : manager.mkAnd(goal.forms.items),
                     ),
                   ),
                 ];

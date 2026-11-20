@@ -590,7 +590,7 @@ const selectClause = (goal: Goal, isLargest: boolean) => {
   let position = -1;
   let length = 0;
   for (let index = 0; index < goal.forms.size; index++) {
-    const form = goal.forms.items[index];
+    const form = goal.forms.get(index);
     if (manager.getOp(form) !== OP_OR) continue;
     const currentLength = manager.getNumArgs(form);
     if (currentLength < 2) continue;
@@ -610,7 +610,7 @@ const runSplitClause = (isLargest: boolean) => (goal: Goal) => {
     throw new SmtTacticError("split-clause tactic failed, goal does not contain any clause");
   if (goal.isProofsEnabled) throw new SmtUnsupportedError("the proofs of split-clause");
   const dependency = goal.dependencies[position];
-  return manager.getArgs(goal.forms.items[position]).map((literal) => {
+  return manager.getArgs(goal.forms.get(position)).map((literal) => {
     const subgoal = goal.copy();
     subgoal.update(position, literal, dependency);
     subgoal.depth++;
@@ -670,7 +670,7 @@ const runNnf = (manager: AstManager, params: TacticParams) => (goal: Goal) => {
   const size = goal.forms.size;
   try {
     for (let index = 0; !goal.isInconsistent && index < size; index++) {
-      const result = nnf.apply(goal.forms.items[index], definitions);
+      const result = nnf.apply(goal.forms.get(index), definitions);
       goal.update(index, result, goal.getDependency(index));
       manager.decRef(result);
     }

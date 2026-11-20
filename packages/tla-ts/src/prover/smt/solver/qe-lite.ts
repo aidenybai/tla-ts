@@ -354,7 +354,7 @@ export const applyQeLite = (manager: AstManager, goal: Goal) => {
     let formula = -1;
     const size = goal.forms.size;
     for (let index = 0; index < size && !goal.isInconsistent; index++) {
-      const form = goal.forms.items[index];
+      const form = goal.forms.get(index);
       dep = assign(manager, dep, form);
       if (manager.hasQuantifierFlags[form]) {
         formula = assign(manager, formula, form);

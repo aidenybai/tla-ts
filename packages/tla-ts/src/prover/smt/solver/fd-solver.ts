@@ -78,7 +78,7 @@ class SolverFormulas extends Goal {
     const pinned = new RefVector(manager);
     let kept = qhead;
     for (let index = qhead; index < forms.size; index++) {
-      const form = forms.items[index];
+      const form = forms.get(index);
       const dependency = this.dependencies[index];
       pinned.push(form);
       if (seen.has(form)) continue;
@@ -122,7 +122,7 @@ class FdState extends DependentExprState {
   declare readonly goal: SolverFormulas;
 
   override get(index: number) {
-    return this.goal.forms.items[index];
+    return this.goal.forms.get(index);
   }
 }
 
@@ -202,7 +202,7 @@ class ModelTrail {
     if (qhead === fmls.forms.size && assumptions.size === 0) return;
     const freeVars = new Set<number>();
     for (let index = qhead; index < fmls.forms.size; index++)
-      addVars(manager, fmls.forms.items[index], freeVars);
+      addVars(manager, fmls.forms.get(index), freeVars);
     for (const assumption of assumptions.items) addVars(manager, assumption, freeVars);
     if (!this.entries.some((entry) => entry.def !== -1 && freeVars.has(entry.decl))) return;
     for (const entry of this.entries) {
@@ -211,7 +211,7 @@ class ModelTrail {
       const replacer = new MacroReplacer(manager, entry.decl, entry.def);
       // Deviation from Z3: macro_replacer returns the rewrite of a named formula's last name, which drops the formula.
       for (let index = qhead; index < fmls.forms.size; index++) {
-        const form = fmls.forms.items[index];
+        const form = fmls.forms.get(index);
         const replaced = replacer.rewrite(form);
         replacer.reset();
         if (replaced !== form) fmls.update(index, replaced, fmls.getDependency(index));
@@ -307,7 +307,7 @@ class BoundedInt2BvSimplifier {
     const manager = this.manager;
     const fmls = state.goal;
     const bounds = this.bounds[this.bounds.length - 1];
-    state.forEachIndex((index) => collectBounds(manager, bounds, fmls.forms.items[index]));
+    state.forEachIndex((index) => collectBounds(manager, bounds, fmls.forms.get(index)));
     const substitution = new ExprSafeReplace(manager);
     try {
       for (const scopeBounds of this.bounds)
@@ -317,7 +317,7 @@ class BoundedInt2BvSimplifier {
         let result = -1;
         try {
           state.forEachIndex((index) => {
-            const form = fmls.forms.items[index];
+            const form = fmls.forms.get(index);
             replaced = assignOwned(manager, replaced, substitution.apply(form));
             result = assignOwned(manager, result, this.rewriter.rewrite(replaced));
             if (result !== form) fmls.update(index, result, fmls.getDependency(index));
@@ -383,7 +383,7 @@ class Enum2BvSimplifier {
     let result = -1;
     try {
       state.forEachIndex((index) => {
-        const form = fmls.forms.items[index];
+        const form = fmls.forms.get(index);
         result = assignOwned(manager, result, rewriter.rewrite(form));
         if (result !== form) fmls.update(index, result, fmls.getDependency(index));
       });
@@ -651,8 +651,8 @@ export class FdSolver {
     this.converter = converter;
     for (let index = qhead; index < fmls.forms.size; index++) {
       const names = getDependencyValues(fmls.getDependency(index));
-      if (names.length === 0) this.solver.assertExpr(fmls.forms.items[index]);
-      else this.solver.assertNamed(fmls.forms.items[index], manager.mkAnd(names));
+      if (names.length === 0) this.solver.assertExpr(fmls.forms.get(index));
+      else this.solver.assertNamed(fmls.forms.get(index), manager.mkAnd(names));
     }
     return flushed;
   }

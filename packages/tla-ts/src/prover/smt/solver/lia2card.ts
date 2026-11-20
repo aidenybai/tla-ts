@@ -254,7 +254,7 @@ export const createLia2Card = (
       }
       for (let index = 0; !goal.isInconsistent && index < goal.forms.size; index++) {
         manager.limit.checkpoint();
-        const replaced = replace.apply(goal.forms.items[index]);
+        const replaced = replace.apply(goal.forms.get(index));
         const rewritten = rewriter.rewrite(replaced);
         manager.decRef(replaced);
         goal.update(index, rewritten, goal.getDependency(index));

@@ -2663,6 +2663,45 @@ describe("the goals of a tactic free what Z3 5.3.2 frees", () => {
     ).toEqual(["sat", "sat", "((a 5)\n (b 2))"]);
   });
 
+  it("reroots the formulas that or-else restores at the first long read, as Z3 reads them", () => {
+    expect(
+      run([
+        ...["x0", "x1", "x2", "x3", "x4", "x5", "x6", "x7"].map(
+          (name) => `(declare-const ${name} Int)`,
+        ),
+        "(declare-const p Bool)",
+        "(declare-const r Bool)",
+        "(assert (and (and (< x6 0) p) (>= x5 x2)))",
+        "(assert (and (< x4 x5) (and (>= 1 x7) (<= x3 x3))))",
+        "(assert (<= x0 x1))",
+        "(assert (<= x2 x6))",
+        "(assert (and r (< x7 (>= x6 x1))))",
+        "(assert (or (<= x5 (ite true x6 x6)) (< x5 (- x0 x2))))",
+        "(assert (< x6 x3))",
+        "(apply (or-else (then nnf fail) simplify))",
+      ]),
+    ).toEqual([
+      [
+        "(goals",
+        "(goal",
+        "  (not (<= 0 x6))",
+        "  p",
+        "  (>= x5 x2)",
+        "  (not (<= x5 x4))",
+        "  (>= 1 x7)",
+        "  (<= x0 x1)",
+        "  (<= x2 x6)",
+        "  r",
+        "  (not (<= (ite (>= x6 x1) 1 0) x7))",
+        "  (let ((a!1 (not (<= (+ x0 (* (- 1) x2)) x5))))",
+        "    (or (<= x5 x6) a!1))",
+        "  (not (<= x3 x6))",
+        "  :precision precise :depth 1)",
+        ")",
+      ].join("\n"),
+    ]);
+  });
+
   it("leaves the formulas of the smt tactic to the goal alone without unsat cores", () => {
     expect(
       run([

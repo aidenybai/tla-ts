@@ -569,7 +569,7 @@ export const purifyArith = (manager: AstManager, goal: Goal, options: PurifyOpti
   const rewriter = new PurifyRewriter(manager, state);
   const pin = (expr: number) => state.pin(expr);
   for (let index = 0; !goal.isInconsistent && index < goal.forms.size; index++) {
-    const rewritten = rewriter.engine.rewrite(goal.forms.items[index]);
+    const rewritten = rewriter.engine.rewrite(goal.forms.get(index));
     goal.update(index, rewritten, goal.getDependency(index));
     manager.decRef(rewritten);
   }
