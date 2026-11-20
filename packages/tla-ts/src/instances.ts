@@ -13,6 +13,7 @@ import {
   type OperatorDefinition,
   type OperatorParam,
   type SourceLocation,
+  type SourceRange,
   type Theorem,
 } from "./ast";
 import { TlaSyntaxError } from "./errors";
@@ -122,8 +123,13 @@ const sourceNames = new WeakMap<Definition, string>();
 export const getSourceName = (definition: Definition) =>
   sourceNames.get(definition) ?? definition.name;
 
-const withSourceName = (definition: Definition, source: Definition) => {
+// A LET instance's theorem is a LET definition, so each copy of its LET keeps the range of its INSTANCE.
+export const letTheorems = new WeakMap<Definition, SourceRange>();
+
+const withSource = (definition: Definition, source: Definition) => {
   if (getSourceName(source) !== definition.name) sourceNames.set(definition, getSourceName(source));
+  const theorem = letTheorems.get(source);
+  if (theorem) letTheorems.set(definition, theorem);
   return definition;
 };
 
@@ -131,7 +137,7 @@ export const mapDefinition = (
   definition: Definition,
   map: (child: Expression, bound: string[]) => Expression,
 ): Definition =>
-  withSourceName(
+  withSource(
     definition.kind === "Function"
       ? {
           ...definition,
@@ -570,7 +576,7 @@ const renameNames = (
       return {
         ...expression,
         definitions: expression.definitions.map((definition) =>
-          withSourceName(
+          withSource(
             { ...renameParams(definition, rename), name: rename(definition.name) },
             definition,
           ),

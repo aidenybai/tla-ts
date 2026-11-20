@@ -36,10 +36,11 @@ import {
   type Scope,
   type Thunk,
 } from "./evaluate";
-import { letDefinitions } from "./coverage";
+import { getLetDefinition, letDefinitions } from "./coverage";
 import {
   getSubstitutedName,
   getSubstitutedOccurrence,
+  letTheorems,
   mapChildren,
   substitutionFrames,
   writtenKeys,
@@ -361,7 +362,11 @@ export const expandTemporal = (
     reference: Expression,
     key: string,
   ): TheoremReference | undefined => {
-    const range = environment.theorems.get(key);
+    const isLocal = isLocallyResolved(reference);
+    const letDefinition = isLocal ? getLetDefinition(key, scope) : undefined;
+    const range = isLocal
+      ? letDefinition && letTheorems.get(letDefinition)
+      : environment.theorems.get(key);
     if (!range) return undefined;
     const written = writtenKeys.get(reference);
     const original = getDefinition(key, environment);
@@ -391,6 +396,8 @@ export const expandTemporal = (
       return getLeaf();
     }
     const binding = isLocallyResolved(expression) ? lookupScope(scope, expression.name) : undefined;
+    const theorem = getTheoremReference(expression, expression.name);
+    if (theorem) return getLeaf(theorem);
     if (binding?.kind === "Thunk" && !binding.isReleased) {
       return expand(
         binding.expression,
@@ -404,8 +411,6 @@ export const expandTemporal = (
     if (operator?.kind === "Closure" && operator.params.length === 0) {
       return expand(operator.body, operator.scope, isSubstitute ? expansion.name : expression.name);
     }
-    const theorem = binding ? undefined : getTheoremReference(expression, expression.name);
-    if (theorem) return getLeaf(theorem);
     const definition = environment.constants.has(expression.name)
       ? undefined
       : getDefinition(expression.name, environment);
@@ -429,13 +434,8 @@ export const expandTemporal = (
     }
   }
   // A parameterized INSTANCE passes its parameters to each theorem it copies, which SANY's body names with none.
-  if (expression.kind === "Apply" && expansion.isSubstituted && !isLocallyResolved(expression)) {
-    const applied = getDefinition(expression.operator, environment);
-    const theorem =
-      applied?.kind === "Operator" &&
-      applied.params.every((param) => environment.instanceParams.has(param))
-        ? getTheoremReference(expression, expression.operator)
-        : undefined;
+  if (expression.kind === "Apply" && writtenKeys.has(expression)) {
+    const theorem = getTheoremReference(expression, expression.operator);
     if (theorem) return getLeaf(theorem);
   }
   const context = getConstantContext(environment, scope);

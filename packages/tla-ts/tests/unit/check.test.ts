@@ -4991,6 +4991,8 @@ describe("initial predicate and next-state relation match TLC", () => {
   const theoremChain = "---- MODULE L2 ----\nVARIABLE w\nJ == INSTANCE Base WITH v <- w\n====\n";
   const theoremLink =
     "---- MODULE L3 ----\nVARIABLE w\nJ == INSTANCE Base WITH v <- w\nR == J!Baz\n====\n";
+  // SANY loads an inner module that only a LET instance names a second time, so Base also has a top-level INSTANCE.
+  const letBase = `${theoremBase}JB == INSTANCE Base WITH v <- x\n`;
   it.each([
     [
       "THEOREM T == x \\in {0, 1}\nP == T",
@@ -5072,6 +5074,51 @@ describe("initial predicate and next-state relation match TLC", () => {
       "SPECIFICATION Spec",
       "The operator I!Foo, which equals line 12, col 1 to line 12, col 30 of module M,\ncannot be used as a spec",
     ],
+    [
+      `${letBase}P == LET K == INSTANCE Base WITH v <- x IN K!Baz`,
+      "INIT Init\nNEXT Next\nPROPERTY P",
+      "The operator K!Baz, which equals line 13, col 10 to line 13, col 39 of module M,\ncannot be used as a property",
+    ],
+    [
+      `${letBase}P == LET K == INSTANCE Base WITH v <- x IN K!Q`,
+      "INIT Init\nNEXT Next\nPROPERTY P",
+      "The operator Baz, which equals line 8, col 1 to line 8, col 27 of module M,\ncannot be used as a property",
+    ],
+    [
+      `${letBase}P == LET K == INSTANCE Base WITH v <- x IN K!Foo`,
+      "INIT Init\nNEXT Next\nPROPERTY P",
+      "The operator K!Foo, which equals line 13, col 10 to line 13, col 39 of module M,\ncannot be used as a property",
+    ],
+    [
+      `${letBase}P == LET K(p) == INSTANCE Base WITH v <- p IN K(x)!Q`,
+      "INIT Init\nNEXT Next\nPROPERTY P",
+      "The operator Baz, which equals line 8, col 1 to line 8, col 27 of module M,\ncannot be used as a property",
+    ],
+    [
+      `${letBase}${theoremLink}JL == INSTANCE L3 WITH w <- x\nP == LET K == INSTANCE L3 WITH w <- x IN K!R`,
+      "INIT Init\nNEXT Next\nPROPERTY P",
+      "The operator J!Baz, which equals line 15, col 1 to line 15, col 30 of module M,\ncannot be used as a property",
+    ],
+    [
+      `${letBase}${theoremLink}JL == INSTANCE L3 WITH w <- x\nP == LET K == INSTANCE L3 WITH w <- x IN K!J!Baz`,
+      "INIT Init\nNEXT Next\nPROPERTY P",
+      "The operator K!J!Baz, which equals line 19, col 10 to line 19, col 37 of module M,\ncannot be used as a property",
+    ],
+    [
+      `${letBase}P == LET K == INSTANCE Base WITH v <- x IN \\A k \\in {1} : K!Baz`,
+      "INIT Init\nNEXT Next\nPROPERTY P",
+      "The operator K!Baz, which equals line 13, col 10 to line 13, col 39 of module M,\ncannot be used as a property",
+    ],
+    [
+      `${letBase}Spec == Init /\\ [][Next]_x /\\ LET K == INSTANCE Base WITH v <- x IN K!Baz`,
+      "SPECIFICATION Spec",
+      "The operator K!Baz, which equals line 13, col 35 to line 13, col 64 of module M,\ncannot be used as a spec",
+    ],
+    [
+      `${letBase}Spec == LET K == INSTANCE Base WITH v <- x IN Init /\\ [][Next]_x /\\ K!Q`,
+      "SPECIFICATION Spec",
+      "The operator Baz, which equals line 8, col 1 to line 8, col 27 of module M,\ncannot be used as a spec",
+    ],
   ])("rejects the theorem that %j reaches, as TLC does", async (definitions, config, message) => {
     await expect(check({ source: getTwoStateSource(definitions), config })).rejects.toThrow(
       new TlaConfigError(message),
@@ -5110,6 +5157,22 @@ describe("initial predicate and next-state relation match TLC", () => {
     [
       "---- MODULE B2 ----\nTHEOREM Baz2 == TRUE\n====\nI2 == INSTANCE B2\nP == I2!Baz2",
       "INIT Init\nNEXT Next\nPROPERTY P",
+    ],
+    [
+      `${letBase}P == LET K(p) == INSTANCE Base WITH v <- p IN K(x)!Baz`,
+      "INIT Init\nNEXT Next\nPROPERTY P",
+    ],
+    [
+      `${letBase}P == LET K == INSTANCE Base WITH v <- x IN [](K!Baz)`,
+      "INIT Init\nNEXT Next\nPROPERTY P",
+    ],
+    [
+      `${letBase}P == LET K == INSTANCE Base WITH v <- x IN K!Baz \\/ FALSE`,
+      "INIT Init\nNEXT Next\nPROPERTY P",
+    ],
+    [
+      `${letBase}P == LET K == INSTANCE Base WITH v <- x IN K!Baz`,
+      "INIT Init\nNEXT Next\nINVARIANT P",
     ],
   ])("checks the theorem that %j evaluates, as TLC does", async (definitions, config) => {
     expect((await check({ source: getTwoStateSource(definitions), config })).status).toBe(

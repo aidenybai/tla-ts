@@ -49,6 +49,7 @@ import {
   getEnabledVariableName,
   getLetInstanceExpansion,
   getOperatorDefinition,
+  letTheorems,
   mentionsName,
   renameLocals,
   substitutedExpressions,
@@ -1136,7 +1137,10 @@ export const createEnvironment = (
             ? { ...definition, name: key }
             : createLocalFunction(definition, key);
         copies.push(copy);
-        if (theorems.has(source)) theorems.set(key, getInstanceRange(instance));
+        if (theorems.has(source)) {
+          theorems.set(key, getInstanceRange(instance));
+          letTheorems.set(copy, getInstanceRange(instance));
+        }
         const instanceCopy = createInstanceCopy(source, instance.module, substitutes);
         if (instanceCopy) localCopies.set(key, instanceCopy);
         return key;
@@ -1171,11 +1175,13 @@ export const createEnvironment = (
             definition.kind === "Operator" ? definition : createLocalFunction(definition, name);
           const instanceCopy = localCopies.get(key);
           if (copy && instanceCopy) localCopies.set(name, instanceCopy);
-          return {
+          const exportedDefinition = {
             ...operator,
             name,
             body: withSubstitutionFrames(operator.body, frame ? [frame] : []),
           };
+          if (theorems.has(key)) letTheorems.set(exportedDefinition, getInstanceRange(instance));
+          return exportedDefinition;
         }
         const ownParams = createArgumentParams(entry[1].arity, entry[1].params);
         return createLocalAlias(name, key, [...instance.params, ...ownParams], ownParams, location);
