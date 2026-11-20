@@ -1054,6 +1054,12 @@ RECURSIVE RxContinue(_, _, _)
 RECURSIVE RxSequence(_, _, _, _, _)
 RECURSIVE RxMatchAlternatives(_, _, _, _, _)
 RECURSIVE RxRepeatMatcher(_, _, _, _, _, _, _, _, _)
+RECURSIVE RxRepeatSet(_, _, _, _, _, _, _)
+RECURSIVE RxSetAt(_, _, _, _)
+RECURSIVE RxSetRun(_, _, _, _, _)
+RECURSIVE RxAdvanced(_, _, _)
+RECURSIVE RxContinueDown(_, _, _, _, _, _)
+RECURSIVE RxContinueUp(_, _, _, _, _, _)
 RECURSIVE RxSetFound(_, _, _)
 RECURSIVE RxIsWordChar(_, _, _)
 RECURSIVE RxBackreference(_, _, _, _)
@@ -1148,6 +1154,7 @@ RECURSIVE RegExpBuiltinExec(_, _, _)
 RECURSIVE LegacyRegExpStatic(_, _)
 RECURSIVE UpdateLegacyRegExpStatics(_, _, _, _, _, _)
 RECURSIVE RxExecFrom(_, _, _, _, _, _)
+RECURSIVE RxExecFirst(_, _, _, _, _, _)
 RECURSIVE RxMatchResult(_, _, _, _, _)
 RECURSIVE GetMatchString(_, _)
 RECURSIVE RxGroupsObject(_, _, _, _)
@@ -13357,9 +13364,51 @@ RxRepeatMatcher(env, m, min, max, greedy, x, k, parenIndex, parenCount) ==
       xr == IF parenCount = 0 THEN x
             ELSE [x EXCEPT !.cap = [i \in DOMAIN @ |-> IF i > parenIndex /\ i <= parenIndex + parenCount THEN None ELSE @[i]]]
   IN CASE max = 0 -> RxContinue(env, k, x)
+       [] m.t = "set" -> RxRepeatSet(env, m, min, max, greedy, x, k)
        [] min # 0 -> RxMatch(env, m, xr, d)
        [] ~greedy -> LET z == RxContinue(env, k, x) IN IF z # MatchFailure THEN z ELSE RxMatch(env, m, xr, d)
        [] OTHER -> LET z == RxMatch(env, m, xr, d) IN IF z # MatchFailure THEN z ELSE RxContinue(env, k, x)
+\* RepeatMatcher of a CharacterSetMatcher, which matches one character or none and holds no
+\* groups, so that its iterations match the run of characters it matches from x, as far as max.
+\* Each count of them from the run's length down to min, or up from min when not greedy, is then a
+\* state the continuation runs from, as RepeatMatcher's backtracking tries them. The run and the
+\* counts are searched in halves, so that the depth of the search grows with the logarithm of
+\* the input's length rather than with the length itself.
+RxRepeatSet(env, m, min, max, greedy, x, k) ==
+  LET available == IF m.dir THEN env.len - x.e ELSE x.e
+      limit == IF max = RxInfinity \/ max > available THEN available ELSE max
+      run == RxSetRun(env, m, x.e, 0, limit)
+  IN IF run < min THEN MatchFailure
+     ELSE IF greedy THEN RxContinueDown(env, k, x, m.dir, min, run) ELSE RxContinueUp(env, k, x, m.dir, min, run)
+\* Whether the set matcher m matches the character j after e, or before it when matching backward.
+RxSetAt(env, m, e, j) ==
+  RxSetFound(m.cs, m.cm, env.in[IF m.dir THEN e + j + 1 ELSE e - j]) # m.invert
+\* How many of the characters lo to hi - 1 after e m matches, from lo up to the first it doesn't.
+RxSetRun(env, m, e, lo, hi) ==
+  CASE lo >= hi -> 0
+    [] hi - lo = 1 -> IF RxSetAt(env, m, e, lo) THEN 1 ELSE 0
+    [] OTHER ->
+         LET mid == (lo + hi) \div 2
+             left == RxSetRun(env, m, e, lo, mid)
+         IN IF left < mid - lo THEN left ELSE left + RxSetRun(env, m, e, mid, hi)
+\* The state j characters on from x.
+RxAdvanced(x, dir, j) == [x EXCEPT !.e = IF dir THEN @ + j ELSE @ - j]
+\* The continuation's result from the first of the counts hi down to lo that it matches from.
+RxContinueDown(env, k, x, dir, lo, hi) ==
+  CASE lo > hi -> MatchFailure
+    [] lo = hi -> RxContinue(env, k, RxAdvanced(x, dir, lo))
+    [] OTHER ->
+         LET mid == (lo + hi) \div 2
+             upper == RxContinueDown(env, k, x, dir, mid + 1, hi)
+         IN IF upper # MatchFailure THEN upper ELSE RxContinueDown(env, k, x, dir, lo, mid)
+\* The continuation's result from the first of the counts lo up to hi that it matches from.
+RxContinueUp(env, k, x, dir, lo, hi) ==
+  CASE lo > hi -> MatchFailure
+    [] lo = hi -> RxContinue(env, k, RxAdvanced(x, dir, lo))
+    [] OTHER ->
+         LET mid == (lo + hi) \div 2
+             lower == RxContinueUp(env, k, x, dir, lo, mid)
+         IN IF lower # MatchFailure THEN lower ELSE RxContinueUp(env, k, x, dir, mid + 1, hi)
 \* Whether CharacterSetMatcher finds a member of A that canonicalizes to the character c does.
 RxSetFound(cs, cm, c) == IF ~cm.ic THEN RxIn(cs, c) ELSE \E a \in RxPreimage(cm, RxCanonicalize(cm, c)) : RxIn(cs, a)
 \* IsWordChar (§22.2.2.9.2).
@@ -13970,12 +14019,25 @@ UpdateLegacyRegExpStatics(s, R, units, start, end, captures) ==
                               leftContext |-> SubSeq(units, 1, start), rightContext |-> SubSeq(units, end + 1, Len(units)),
                               parens |-> [i \in 1..9 |-> Capture(i)]]])
 \* The first index at or after lastIndex where the pattern matches, with its MatchState, or None.
+\* After lastIndex, AdvanceStringIndex steps to each next character of the input in turn.
 RxExecFrom(o, units, input, fullUnicode, sticky, lastIndex) ==
   IF lastIndex > Len(units) THEN None ELSE
-  LET r == RxRun(o.matcher, input.chars, RxInputIndex(units, fullUnicode, lastIndex), Len(o.groups)) IN
-  CASE r # MatchFailure -> [index |-> lastIndex, r |-> r]
-    [] sticky -> None
-    [] OTHER -> RxExecFrom(o, units, input, fullUnicode, sticky, RxAdvanceIndex(units, lastIndex, fullUnicode))
+  LET first == RxInputIndex(units, fullUnicode, lastIndex)
+      r == RxRun(o.matcher, input.chars, first, Len(o.groups))
+  IN CASE r # MatchFailure -> [index |-> lastIndex, r |-> r]
+       [] sticky -> None
+       [] OTHER -> RxExecFirst(o, units, input, fullUnicode, first + 1, Len(input.chars))
+\* The first character from lo to hi where the pattern matches, searched in halves so that the
+\* depth of the search grows with the logarithm of the input's length.
+RxExecFirst(o, units, input, fullUnicode, lo, hi) ==
+  CASE lo > hi -> None
+    [] lo = hi ->
+         LET r == RxRun(o.matcher, input.chars, lo, Len(o.groups)) IN
+         IF r = MatchFailure THEN None ELSE [index |-> GetStringIndex(units, input, fullUnicode, lo), r |-> r]
+    [] OTHER ->
+         LET mid == (lo + hi) \div 2
+             left == RxExecFirst(o, units, input, fullUnicode, lo, mid)
+         IN IF left # None THEN left ELSE RxExecFirst(o, units, input, fullUnicode, mid + 1, hi)
 \* The match array of RegExpBuiltinExec from the Match Records of the match and of each capture.
 RxMatchResult(s, o, S, match, captures) ==
   LET values == [i \in DOMAIN captures |-> GetMatchString(S, captures[i])]

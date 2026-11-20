@@ -361,6 +361,42 @@ describe("compiles scripts by specializing ESCore", () => {
     });
   });
 
+  describe("repeats a character class and searches a long string as RepeatMatcher does", () => {
+    const getSource = (expected: string) => `
+      const run = "a".repeat(30000);
+      const result = [
+        /^\\p{L}+$/u.test(run),
+        /^\\P{L}+$/u.test(run),
+        /a+b/.test(run.slice(0, 200)),
+        /a+?a$/.exec(run)?.[0].length,
+        /(?<=a{3})b/.exec(run + "b")?.index,
+        /a{2,5}?/.exec(run)?.[0].length,
+        /[^a]/u.exec(run + "😀")?.index,
+        /b|a$/u.exec(run)?.index,
+        /^a*a{199}$/.test(run.slice(0, 200)),
+        "aab".replace(/a*?b/, "-"),
+        /(?<!a+)b/.test("ab"),
+        /x*/.exec("y")?.[0].length,
+        /\\p{Lu}{2,}/u.exec("aBCd")?.[0],
+      ].join();
+      if (result !== "${expected}") throw new Error(result);
+    `;
+
+    it("agrees with Node", async () => {
+      expect(
+        (await checkScript(getSource("true,false,false,30000,30000,2,30000,29999,true,-,false,0,BC")))
+          .message,
+      ).toBeUndefined();
+    }, 600_000);
+
+    it("rejects another result", async () => {
+      expect(
+        (await checkScript(getSource("true,false,false,30000,30000,2,30000,29999,true,-,false,0,B")))
+          .message,
+      ).toContain(THREW);
+    }, 600_000);
+  });
+
   describe("compares values of different types as unequal", () => {
     const getSource = (expected: string) => `
       const values: unknown[] = [null, true, "", 0];
