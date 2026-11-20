@@ -19,7 +19,7 @@ import { compileToEscore } from "../src/typescript/spec/compile";
 import { type EscoreRuntime, prepareRuntime } from "../src/typescript/spec/prepare";
 import { CONFORMANCE_DIRECTORY, listTest262Files, TEST262_DIRECTORY } from "./corpora";
 
-type Outcome = "pass" | "wrong" | "untranslatable" | "skipped";
+type Outcome = "pass" | "wrong" | "untranslatable" | "skipped" | "out-of-memory";
 
 interface TestRun {
   id: string;
@@ -4501,9 +4501,9 @@ const runJavaScriptScriptTest = async (
 
 // A test whose source, its built strings written out, runs to a million characters, as the
 // property escapes' do, runs in a process of its own with the heap that Node gives this one, where
-// running out of it stops the test rather than the run.
+// running out of it is a failure of the test of its own kind rather than the run's.
 const LARGE_SOURCE = 1_000_000;
-const OUTCOMES: Outcome[] = ["pass", "wrong", "untranslatable", "skipped"];
+const OUTCOMES: Outcome[] = ["pass", "wrong", "untranslatable", "skipped", "out-of-memory"];
 const IS_OWN_PROCESS = process.env.TLA_TS_OWN_PROCESS !== undefined;
 
 const runInOwnProcess = (id: string): TestRun => {
@@ -4521,11 +4521,7 @@ const runInOwnProcess = (id: string): TestRun => {
     return { id, outcome, reason: words.slice(2).join(" ") };
   }
   return run.stderr.includes("heap out of memory")
-    ? {
-        id,
-        outcome: "untranslatable",
-        reason: "tla-ts can't run this test within the heap that Node gives it",
-      }
+    ? { id, outcome: "out-of-memory", reason: "" }
     : {
         id,
         outcome: "wrong",
@@ -4649,7 +4645,7 @@ const runs: TestRun[] = [];
 for (const path of paths) {
   const run = await runTest(path);
   runs.push(run);
-  if (isVerbose || run.outcome === "wrong") {
+  if (isVerbose || run.outcome === "wrong" || run.outcome === "out-of-memory") {
     console.log(`${run.outcome.toUpperCase()} ${run.id}${run.reason ? ` ${run.reason}` : ""}`);
   }
 }
@@ -4671,4 +4667,6 @@ for (const outcome of ["untranslatable", "skipped"]) {
     .slice(0, 10)
     .forEach((entry) => console.log(`  ${entry.count} ${entry.key}`));
 }
-process.exit(runs.some((run) => run.outcome === "wrong") ? 1 : 0);
+process.exit(
+  runs.some((run) => run.outcome === "wrong" || run.outcome === "out-of-memory") ? 1 : 0,
+);
