@@ -175,7 +175,6 @@ interface NamedTactic {
   descrs: ParamDescrs;
   isRejectingUnknown?: boolean;
   isTrackingDependencies?: boolean;
-  // The tactic catches rewriter_exception and throws it again as a tactic_exception.
   isCatchingRewriterCancel?: boolean;
   build: (environment: TacticEnvironment, params: TacticParams) => Tactic;
 }
@@ -551,7 +550,6 @@ const createTacticSolver = (environment: TacticEnvironment, strategy: string): A
   };
 };
 
-// unit_subsumption_tactic makes its context and keeps its clause constants for every run.
 const runUnitSubsume = (environment: TacticEnvironment) => {
   const manager = environment.manager;
   const kernel = new SmtKernel(manager, {
@@ -2038,7 +2036,6 @@ const buildFirstToLast = (
   return built.map((child) => child.tactic);
 };
 
-// The named tactics read so far go to made, in the order sexpr2tactic makes them.
 const compile = (
   environment: TacticEnvironment,
   sexpr: SExpr,
@@ -2418,8 +2415,7 @@ export const mkIncSatPreprocess = (
     ),
   ].reduceRight((second, first) => runAndThen(first, second));
 
-// sexpr2tactic makes each tactic as it reads it, so a tactic that fails to parse makes and frees
-// the tactics before the error.
+// sexpr2tactic makes each tactic as it reads it, so a parse error makes and frees those before it.
 export const compileTactic = (environment: TacticEnvironment, sexpr: SExpr) => {
   const made: NamedTactic[] = [];
   try {

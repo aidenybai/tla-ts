@@ -679,8 +679,6 @@ export class TheoryArray extends Theory {
   finalCheckEh() {
     const index = ++this.finalCheckIndex;
     const delay = this.context.config.arrayLazyIeqDelay;
-    // Lazy interface equalities wait for every delay-th final check, and the checks between only
-    // assert the delayed axioms and continue.
     if (delay !== undefined && index % delay !== 0) {
       this.assertDelayedAxioms();
       return FC_CONTINUE;

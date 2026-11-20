@@ -40,7 +40,6 @@ const isSameQInfo = (first: QInfo, second: QInfo) =>
 const getQInfoExpr = (info: QInfo) =>
   "term" in info ? info.term : "offset" in info ? info.offset : -1;
 
-// The selects of every array sort share one declaration here, where Z3 has one per sort.
 const isSameSelect = (manager: AstManager, first: number, second: number) =>
   manager.decls[first] === manager.decls[second] &&
   manager.sorts[manager.getArg(first, 0)] === manager.sorts[manager.getArg(second, 0)];
@@ -150,7 +149,6 @@ export class QuantifierInfo {
     }
   }
 
-  // Z3's get_auf_arrays: the relevant enodes that the array of a select can stand for.
   private getAufArrays(array: number): Enode[] {
     const manager = this.manager;
     const context = this.context;
@@ -334,7 +332,6 @@ export class QuantifierAnalyzer {
       } else return undefined;
     }
     if (variable === undefined) return undefined;
-    // The caller owns the term, which Z3 keeps in an expr_ref until the caller's scope ends.
     const term = assign(manager, -1, args.length === 1 ? args[0] : this.rewriter.mkAdd(args));
     return { variable, term, isInverted };
   }
@@ -463,8 +460,7 @@ export class QuantifierAnalyzer {
     }
   }
 
-  // Z3's is_auf_select checks every argument, the array too, so a select of a select over a
-  // variable never passes.
+  // As in Z3, the array must be ground too, so a select of a select over a variable never passes.
   private isAufSelect(expr: number): boolean {
     const manager = this.manager;
     if (manager.getOp(expr) !== OP_SELECT) return false;

@@ -1626,8 +1626,6 @@ export class Context extends Internalizer {
       this.delInactiveLemmas();
       this.pushScope();
       const manager = this.manager;
-      // asm2proxy holds each proxy until the assumptions are internalized, and each implication
-      // lives until the rewriter has asserted it.
       const proxies = assumptions.map((assumption) => {
         if (isValidAssumption(manager, assumption)) {
           manager.incRef(assumption);

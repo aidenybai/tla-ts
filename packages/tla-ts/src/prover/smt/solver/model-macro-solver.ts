@@ -90,8 +90,6 @@ const isQuasiMacroHead = (manager: AstManager, expr: number, numDecls: number) =
   return found.size === numDecls;
 };
 
-// Z3's normalize_expr renames the variables with a var_subst, whose steps count toward the
-// resource limit. The caller owns the result.
 export const normalizeMacroDef = (
   manager: AstManager,
   head: number,

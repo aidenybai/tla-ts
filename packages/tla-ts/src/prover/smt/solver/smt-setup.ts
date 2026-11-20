@@ -113,7 +113,6 @@ export interface SmtConfig {
   arithPropagationThreshold: number;
   isArithBoundPropagating: boolean;
   qiLazyThreshold: number;
-  // array_lazy_ieq_delay while array_lazy_ieq is on.
   arrayLazyIeqDelay: number | undefined;
 }
 

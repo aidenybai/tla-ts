@@ -381,7 +381,6 @@ export class AufSolver {
     const manager = this.manager;
     const rewriter = this.rewriter;
     const one = assign(manager, -1, manager.mkNumeral(1n));
-    // Z3 keeps e - 1 and e + 1 in two expr_refs, so each new pair replaces the last after it is made.
     let minusOne = -1;
     let plusOne = -1;
     for (const exception of node.getExceptions()) {

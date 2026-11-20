@@ -411,7 +411,6 @@ interface ScriptState {
   reader: SmtlibReader;
   assertions: number[];
   names: number[];
-  // tactic2solver's assertions keep the implication from each name until their scope is popped.
   implications: number[];
   assertionTexts: string[];
   objectives: OptObjective[];
