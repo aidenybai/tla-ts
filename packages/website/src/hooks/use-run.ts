@@ -1,9 +1,9 @@
 import { useEffect, useRef, useState } from "react";
-import { getErrorResult } from "./run-error";
-import type { RunRequest, RunResult } from "./run-worker";
+import { getErrorResult } from "@/lib/run-error";
+import type { RunRequest, RunResult } from "@/lib/run-worker";
 
 const createWorker = () =>
-  new Worker(new URL("./run-worker.ts", import.meta.url), { type: "module" });
+  new Worker(new URL("../lib/run-worker.ts", import.meta.url), { type: "module" });
 
 export const useRun = (isWarm = false) => {
   const [result, setResult] = useState<RunResult | undefined>(undefined);

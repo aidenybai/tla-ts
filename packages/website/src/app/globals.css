@@ -2,7 +2,7 @@
 @import "allo-font/friendly";
 @import "@fontsource-variable/geist-mono";
 @import "@fontsource/caveat/600.css";
-@import "./generated/fonts.css";
+@import "../generated/fonts.css";
 
 @custom-variant dark (&:where(.dark, .dark *));
 

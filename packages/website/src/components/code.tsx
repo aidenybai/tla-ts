@@ -1,17 +1,17 @@
 import { useRef, type ReactNode } from "react";
 import { cn } from "cn";
 import { createPartsContext } from "@/lib/utils";
-import type { LineNote } from "../run-worker";
-import type { Search, SearchState } from "../search";
-import type { Source } from "../site-data";
-import { useIsHydrated } from "../use-is-hydrated";
-import { useTokenMorph } from "../use-token-morph";
+import type { LineNote } from "@/lib/run-worker";
+import type { Search, SearchState } from "@/lib/search";
+import type { Source } from "@/lib/site-data";
+import { useIsHydrated } from "@/hooks/use-is-hydrated";
+import { useTokenMorph } from "@/hooks/use-token-morph";
 import { CodeLine } from "./code-line";
 import { CopyButton } from "./copy-button";
 import { RunIcon } from "./run-icon";
 import { SearchCell } from "./search-cell";
-import { Button } from "./ui/button";
-import { Tooltip, TooltipContent, TooltipTrigger } from "./ui/tooltip";
+import { Button } from "@/components/ui/button";
+import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 
 const NO_HIGHLIGHTS = {};
 const NO_PATH: SearchState[] = [];
@@ -175,3 +175,12 @@ export const CodeRun = (props: RunProps) => {
 };
 
 export const CodeCopy = () => <CopyButton text={codeContext.useParts().source.code} />;
+
+export const Code = {
+  Root: CodeRoot,
+  Content: CodeContent,
+  Actions: CodeActions,
+  Footer: CodeFooter,
+  Run: CodeRun,
+  Copy: CodeCopy,
+};

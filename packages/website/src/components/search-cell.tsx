@@ -1,7 +1,7 @@
 import { X } from "@phosphor-icons/react";
 import { memo } from "react";
 import { cn } from "cn";
-import type { Search, SearchState } from "../search";
+import type { Search, SearchState } from "@/lib/search";
 
 const STEP_DELAY_MS = 80;
 const VALUES = /"[^"]*"|\b(?:TRUE|FALSE)\b|-?\b\d+\b|[^"\d\-TF]+|./g;

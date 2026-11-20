@@ -1,4 +1,4 @@
-import runs from "../../tla-ts/tests/conformance/test262-runs.json";
+import runs from "../../../tla-ts/tests/conformance/test262-runs.json";
 
 interface Test262Run {
   passed: number;

@@ -8,10 +8,16 @@ import { createServer, defineConfig, type Plugin } from "vite-plus";
 import { printModule } from "../tla-ts/src/printer";
 import { compile } from "../tla-ts/src/typescript/compile";
 import { printRegions } from "../tla-ts/src/typescript/regions";
-import { getCompilation, type Precompiled } from "./src/compilation";
-import { createHighlighter } from "./src/highlighter";
-import { LOGO_PATH } from "./src/logo";
-import type { Benchmark, CompiledExample, ReferenceBlock, ReferenceSection } from "./src/site-data";
+import { getCompilation, type Precompiled } from "./src/app/playground/compilation";
+import { createHighlighter } from "./src/lib/highlighter";
+import { LOGO_PATH } from "./src/lib/logo";
+import { getPageFile } from "./src/router";
+import type {
+  Benchmark,
+  CompiledExample,
+  ReferenceBlock,
+  ReferenceSection,
+} from "./src/lib/site-data";
 
 const SITE_DATA = "virtual:site-data";
 const README_URL = new URL("../../README.md", import.meta.url);
@@ -279,16 +285,24 @@ const pages = (): Plugin => ({
       });
       const prerender = await server.ssrLoadModule("/src/prerender.tsx");
       await server.close();
-      const content = context.filename.endsWith("/playground.html")
-        ? prerender.getPlaygroundHtml()
-        : prerender.getAppHtml();
+      const route = context.path.replace(/(?:index)?\.html$/, "");
+      const pageFile = getPageFile(route).slice(1);
+      const page = Object.values(context.bundle ?? {}).find(
+        (chunk) => chunk.type === "chunk" && chunk.facadeModuleId?.endsWith(pageFile),
+      );
+      // The entry imports the route's page by its path, so the page's chunks are named here to
+      // load beside the entry, not after it.
+      const preloads = (page?.type === "chunk" ? [page.fileName, ...page.imports] : [])
+        .map((fileName) => `<link rel="modulepreload" crossorigin href="/${fileName}">`)
+        .join("");
       return html
+        .replace("</head>", `${preloads}</head>`)
         .replace(STYLESHEET, (link, fileName) => {
           const styles = context.bundle?.[fileName];
           // The styles ride in the HTML, so the first paint does not wait on a second request.
           return styles?.type === "asset" ? `<style>${styles.source}</style>` : link;
         })
-        .replace(EMPTY_ROOT, `<div id="root">${content}</div>`);
+        .replace(EMPTY_ROOT, `<div id="root">${prerender.getHtml(route)}</div>`);
     },
   },
 });

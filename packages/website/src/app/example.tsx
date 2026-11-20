@@ -2,18 +2,18 @@ import { ArrowUpRight } from "@phosphor-icons/react";
 import { Fragment, useEffect, useState, type ReactNode } from "react";
 import { cn } from "cn";
 import { createPartsContext } from "@/lib/utils";
-import { EXAMPLES } from "../example";
-import type { RunResult } from "../run-worker";
-import type { SearchState } from "../search";
-import { useRun } from "../use-run";
-import { useSearchPath } from "../use-search-path";
-import { StateGraph } from "./state-graph";
-import { CodeActions, CodeContent, CodeFooter, CodeRoot, CodeRun } from "./code";
-import { Button } from "./ui/button";
-import { buttonVariants } from "./ui/button-variants";
-import { ToggleGroup, ToggleGroupItem } from "./ui/toggle-group";
-import { Tooltip, TooltipContent, TooltipTrigger } from "./ui/tooltip";
-import { Verdict } from "./verdict";
+import { EXAMPLES } from "./examples";
+import type { RunResult } from "@/lib/run-worker";
+import type { SearchState } from "@/lib/search";
+import { useRun } from "@/hooks/use-run";
+import { useSearchPath } from "@/hooks/use-search-path";
+import { StateGraph } from "@/components/state-graph";
+import { CodeActions, CodeContent, CodeFooter, CodeRoot, CodeRun } from "@/components/code";
+import { Button } from "@/components/ui/button";
+import { buttonVariants } from "@/components/ui/button-variants";
+import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group";
+import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
+import { Verdict } from "@/components/verdict";
 
 interface ExampleState {
   example: (typeof EXAMPLES)[number];
@@ -230,4 +230,12 @@ export const ExampleGraph = () => {
       </div>
     )
   );
+};
+
+export const Example = {
+  Root: ExampleRoot,
+  Description: ExampleDescription,
+  Source: ExampleSource,
+  Graph: ExampleGraph,
+  Hint: ExampleHint,
 };

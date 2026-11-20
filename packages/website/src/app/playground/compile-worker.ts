@@ -1,6 +1,6 @@
 import { TlaError } from "tla-ts";
 import libraries from "virtual:typescript-libraries";
-import { createLibrary } from "../../tla-ts/src/typescript/program";
+import { createLibrary } from "../../../../tla-ts/src/typescript/program";
 import { getCompilation, type Compilation } from "./compilation";
 
 export interface CompileRequest {

@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { compilations, initial } from "virtual:compilations";
 import type { CompileRequest, CompileResponse } from "./compile-worker";
-import type { createHighlighter } from "./highlighter";
+import type { createHighlighter } from "@/lib/highlighter";
 
 interface CompileState {
   response: CompileResponse | undefined;
@@ -33,7 +33,7 @@ export const useCompile = (source: string, fileName: string) => {
     worker.onmessage = (event: MessageEvent<CompileResponse>) => receive(event.data);
     worker.onerror = (event) => receive({ source: "", fileName: "", error: event.message });
     workerRef.current = worker;
-    void import("./highlighter")
+    void import("@/lib/highlighter")
       .then((loaded) => loaded.createHighlighter())
       .then((nextHighlight) => setHighlight(() => nextHighlight));
     return () => worker.terminate();

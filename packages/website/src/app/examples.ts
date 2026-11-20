@@ -1,5 +1,5 @@
 import { examples } from "virtual:site-data";
-import { getHighlightColors } from "./highlight-colors";
+import { getHighlightColors } from "@/lib/highlight-colors";
 
 const LABELS: Record<string, { article: string; label: string }> = {
   "likes.ts": { article: "a", label: "like button" },

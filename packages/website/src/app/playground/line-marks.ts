@@ -1,4 +1,4 @@
-import type { Mark } from "./site-data";
+import type { Mark } from "@/lib/site-data";
 
 const NO_MARKS: Mark[] = [];
 

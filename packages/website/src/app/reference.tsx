@@ -1,8 +1,8 @@
 import { reference } from "virtual:site-data";
-import type { ReferenceBlock } from "../site-data";
-import { CodeActions, CodeContent, CodeCopy, CodeRoot } from "./code";
+import type { ReferenceBlock } from "@/lib/site-data";
+import { CodeActions, CodeContent, CodeCopy, CodeRoot } from "@/components/code";
 import { SectionRoot, SectionTitle } from "./section";
-import { InlineCode } from "./ui/inline-code";
+import { InlineCode } from "@/components/ui/inline-code";
 
 interface TextProps {
   text: string;

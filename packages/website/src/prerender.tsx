@@ -1,18 +1,18 @@
+import type { ComponentType } from "react";
 import { renderToString } from "react-dom/server";
-import { App } from "./app";
-import { Providers } from "./components/providers";
-import { PlaygroundPage } from "./playground-page";
+import Layout from "./app/layout";
+import { getPageFile } from "./router";
 
-export const getAppHtml = () =>
-  renderToString(
-    <Providers>
-      <App />
-    </Providers>,
-  );
+const pages = import.meta.glob<ComponentType>("./app/**/page.tsx", {
+  import: "default",
+  eager: true,
+});
 
-export const getPlaygroundHtml = () =>
-  renderToString(
-    <Providers>
-      <PlaygroundPage />
-    </Providers>,
+export const getHtml = (route: string) => {
+  const Page = pages[getPageFile(route)];
+  return renderToString(
+    <Layout>
+      <Page />
+    </Layout>,
   );
+};

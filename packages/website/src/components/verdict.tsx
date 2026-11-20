@@ -1,6 +1,6 @@
 import { Check, X } from "@phosphor-icons/react";
 import { cn } from "cn";
-import type { RunResult } from "../run-worker";
+import type { RunResult } from "@/lib/run-worker";
 
 interface VerdictProps {
   result: RunResult;

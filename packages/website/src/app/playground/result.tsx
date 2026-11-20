@@ -1,7 +1,7 @@
 import { X } from "@phosphor-icons/react";
 import type { ReactNode } from "react";
 import { cn } from "cn";
-import { Button } from "./ui/button";
+import { Button } from "@/components/ui/button";
 
 interface ResultRootProps {
   isOpen: boolean;

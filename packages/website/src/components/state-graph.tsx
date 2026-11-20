@@ -1,8 +1,8 @@
 import { useVirtualizer } from "@tanstack/react-virtual";
 import { memo, useEffect, useMemo, useRef, useState } from "react";
 import { cn } from "cn";
-import type { Search, SearchState } from "../search";
-import { getGraphRows, type GraphRow } from "../graph-rows";
+import type { Search, SearchState } from "@/lib/search";
+import { getGraphRows, type GraphRow } from "@/lib/graph-rows";
 
 const ROW_HEIGHT_PX = 46;
 const LINK_HEIGHT_PX = 24;

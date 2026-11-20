@@ -1,10 +1,10 @@
-import { usePlaygroundView } from "../playground-view";
-import { getStateNames, type SearchState } from "../search";
-import { useSearchPath } from "../use-search-path";
+import { usePlaygroundView } from "./playground-view";
+import { getStateNames, type SearchState } from "@/lib/search";
+import { useSearchPath } from "@/hooks/use-search-path";
 import { usePlayground } from "./playground";
 import { ResultBody, ResultHeader, ResultRoot, ResultSection, ResultSkeleton } from "./result";
-import { StateGraph, StateGraphSkeleton } from "./state-graph";
-import { Verdict } from "./verdict";
+import { StateGraph, StateGraphSkeleton } from "@/components/state-graph";
+import { Verdict } from "@/components/verdict";
 
 // The sidebar a run opens: its verdict, then the states it reached or the steps to the failure.
 export const PlaygroundResult = () => {

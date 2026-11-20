@@ -28,3 +28,8 @@ export const SectionTitle = (props: TitleProps) => {
     </h2>
   );
 };
+
+export const Section = {
+  Root: SectionRoot,
+  Title: SectionTitle,
+};
