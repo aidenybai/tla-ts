@@ -4313,6 +4313,56 @@ describe("evaluation errors match TLC", () => {
     },
   );
 
+  const RECORD_SET_ORDER_REASON = 'Attempted to compare integer 0 with non-integer:\n"a"';
+
+  it.each([
+    [
+      'x\' = x /\\ \\E e \\in UNION {[a : {"a", "b"}], [a : {x, 1}]} : TRUE',
+      RECORD_SET_ORDER_REASON,
+      [
+        "Line 5, column 9 to line 5, column 72 in M",
+        "Line 5, column 9 to line 5, column 14 in M",
+        "Line 5, column 19 to line 5, column 72 in M",
+        "Line 5, column 28 to line 5, column 65 in M",
+        "Line 5, column 34 to line 5, column 65 in M",
+        "Line 5, column 53 to line 5, column 64 in M",
+      ],
+      RECORD_SET_ORDER_REASON,
+    ],
+    [
+      'x\' = x /\\ UNION {[a : {"a", "b"}], [a : {x, 1}]} # {}',
+      RECORD_SET_ORDER_REASON,
+      [
+        "Line 5, column 9 to line 5, column 61 in M",
+        "Line 5, column 9 to line 5, column 14 in M",
+        "Line 5, column 19 to line 5, column 61 in M",
+        "Line 5, column 19 to line 5, column 56 in M",
+        "Line 5, column 25 to line 5, column 56 in M",
+        "Line 5, column 44 to line 5, column 55 in M",
+      ],
+      RECORD_SET_ORDER_REASON,
+    ],
+    [
+      'x\' = x /\\ Cardinality(UNION {[a : {"a"}], [a : {x}]}) = 2',
+      `Attempted to apply the operator overridden by the Java method\npublic static tlc2.value.impl.IntValue tlc2.module.FiniteSets.Cardinality(tlc2.value.impl.Value),\nbut it produced the following error:\n${RECORD_SET_ORDER_REASON}`,
+      [
+        "Line 5, column 9 to line 5, column 65 in M",
+        "Line 5, column 9 to line 5, column 14 in M",
+        "Line 5, column 19 to line 5, column 65 in M",
+        "Line 5, column 19 to line 5, column 61 in M",
+      ],
+      undefined,
+    ],
+  ])(
+    "orders two sets of records by their elements, as TLC's SetOfRcdsValue#compareTo does: %s",
+    async (next, reason, callStack, fingerprintReason) => {
+      const result = await checkSetBound(next, "TRUE");
+      expect(result.failure?.message).toBe(getRuntimeException(reason));
+      expect(formatCallStackLines(result)).toEqual(callStack);
+      expect(result.failure?.fingerprint?.reason).toBe(fingerprintReason);
+    },
+  );
+
   const SET_EQUALITY_REASON = "Attempted to check equality of the set {1} with the value:\n1";
 
   it.each([

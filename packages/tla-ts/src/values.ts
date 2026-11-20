@@ -1123,6 +1123,13 @@ const getSetElementsLikeTlc = (left: SetValue | MixedSetValue, right: Value) => 
 const compareSetLikeTlc = (left: ObjectValue, right: Value, isEquality: boolean): number => {
   // TLC's UserValue#compareTo puts STRING, Nat, Int and Seq(S) after any model value, typed or not.
   if (isOverriddenSet(left) && isModelValue(right)) return 1;
+  // TLC's SetOfFcnsValue, SetOfRcdsValue and SetOfTuplesValue compare their elements, though they test equality by component.
+  if (
+    !isEquality &&
+    (left.kind === "FunctionSet" || left.kind === "RecordSet" || left.kind === "ProductSet")
+  ) {
+    return compareSetLikeTlc(toFiniteSet(left), right, false);
+  }
   if (isComparedByClass(left, right)) {
     if (!isEquality) return compareValues(left, right);
     return valuesEqual(left, right) ? 0 : 1;
