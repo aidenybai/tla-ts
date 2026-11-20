@@ -1749,8 +1749,8 @@ const getUnboundedElements = (value: Value): Value[] => {
   ) {
     return toFiniteSet(value).elements;
   }
-  const sets = setTrace.sets;
-  sets?.push(value);
+  // TLC's toSetEnum frames the set only as its elements() opens it.
+  if (setTrace.sets) openOperandStream(value, false);
   const isOuterSorting = isSortingLiteral;
   isSortingLiteral = false;
   let elements: Value[];
@@ -1759,7 +1759,6 @@ const getUnboundedElements = (value: Value): Value[] => {
   } finally {
     isSortingLiteral = isOuterSorting;
   }
-  sets?.pop();
   const set = value.kind === "RecordSet" ? createSet(elements) : createSortedSet(elements);
   if (elements.length <= getMaximumSetSize()) value.enumerated = set;
   return set.elements;
@@ -1965,6 +1964,7 @@ const openCombinedStream = (
       if (isOverriddenSet(domain)) {
         throw new TlaEvaluationError(describeUnenumerableFunctionSet("domain D", domain));
       }
+      if (typeof domain === "object" && isLazySet(domain)) getFunctionDomain(domain);
       if (isEmptySet(domain)) return;
       if (isOverriddenSet(value.range)) {
         throw new TlaEvaluationError(describeUnenumerableFunctionSet("range R", value.range));
@@ -2032,22 +2032,9 @@ export const someStreamedElement = (value: Value, visit: (element: Value) => boo
   if (typeof value !== "object" || isCachedSet(value)) {
     return toFiniteSet(value).elements.some(visit);
   }
-  const sets = setTrace.sets;
-  sets?.push(value);
-  openStream(value, false);
-  // TLC frames UNION S, S \cup T, S \ T and S \cap T as their elements() opens the stream, but not as it streams them.
-  if (value.kind === "Union" || value.kind === "SetOperation") {
-    sets?.pop();
-    return someElementOfStream(value, visit);
-  }
-  const isFound = someElementOfStream(value, (element) => {
-    sets?.pop();
-    const isAccepted = visit(element);
-    sets?.push(value);
-    return isAccepted;
-  });
-  sets?.pop();
-  return isFound;
+  // TLC frames a set as its elements() opens the stream, but not as it streams it.
+  openOperandStream(value, false);
+  return someElementOfStream(value, visit);
 };
 
 export const getStreamedElements = (value: Value) => {

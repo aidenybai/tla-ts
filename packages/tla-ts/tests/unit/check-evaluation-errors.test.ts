@@ -3845,6 +3845,75 @@ describe("evaluation errors match TLC", () => {
     },
   );
 
+  const SET_EQUALITY_REASON = "Attempted to check equality of the set {1} with the value:\n1";
+
+  it.each([
+    [
+      "x' \\in (({1} \\X {s \\in SUBSET (1..2) : s = {} \\/ s = 1}) \\ {})",
+      [
+        "Line 5, column 9 to line 5, column 70 in M",
+        "Line 5, column 48 to line 5, column 62 in M",
+        "Line 5, column 58 to line 5, column 62 in M",
+      ],
+      undefined,
+    ],
+    [
+      "x' \\in (([a : {s \\in SUBSET (1..2) : s = {} \\/ s = 1}]) \\cup {})",
+      [
+        "Line 5, column 9 to line 5, column 72 in M",
+        "Line 5, column 46 to line 5, column 60 in M",
+        "Line 5, column 56 to line 5, column 60 in M",
+      ],
+      undefined,
+    ],
+    [
+      "x' \\in ([{1} -> {s \\in SUBSET (1..2) : s = {} \\/ s = 1}] \\ {})",
+      [
+        "Line 5, column 9 to line 5, column 70 in M",
+        "Line 5, column 48 to line 5, column 62 in M",
+        "Line 5, column 58 to line 5, column 62 in M",
+      ],
+      undefined,
+    ],
+    [
+      "x' \\in ({1} \\X {s \\in SUBSET (1..2) : s = {} \\/ s = 1})",
+      [
+        "Line 5, column 9 to line 5, column 63 in M",
+        "Line 5, column 47 to line 5, column 61 in M",
+        "Line 5, column 57 to line 5, column 61 in M",
+      ],
+      undefined,
+    ],
+    [
+      "x' = x /\\ \\E e \\in {t \\in ({1} \\X {s \\in SUBSET (1..2) : s = {} \\/ s = 1}) : TRUE} : TRUE",
+      [
+        "Line 5, column 9 to line 5, column 97 in M",
+        "Line 5, column 9 to line 5, column 14 in M",
+        "Line 5, column 19 to line 5, column 97 in M",
+        "Line 5, column 66 to line 5, column 80 in M",
+        "Line 5, column 76 to line 5, column 80 in M",
+      ],
+      undefined,
+    ],
+    [
+      "x' \\in [{s \\in SUBSET (1..2) : s = {} \\/ s = 1} -> {1}]",
+      [
+        "Line 5, column 9 to line 5, column 63 in M",
+        "Line 5, column 40 to line 5, column 54 in M",
+        "Line 5, column 50 to line 5, column 54 in M",
+      ],
+      SET_EQUALITY_REASON,
+    ],
+  ])(
+    "streams [S -> T], [a : S] and S \\X T outside their frames, as TLC's nextElement does: %s",
+    async (next, callStack, reason) => {
+      const result = await checkSetBound(next, "TRUE");
+      expect(result.failure?.message).toBe(getRuntimeException(SET_EQUALITY_REASON));
+      expect(formatCallStackLines(result)).toEqual(callStack);
+      expect(result.failure?.fingerprint?.reason).toBe(reason);
+    },
+  );
+
   it("streams S into UNION S past -maxSetSize, as TLC's UnionValue does", async () => {
     const result = await checkSetBound(
       "x' = Cardinality(UNION (SUBSET {1} \\cup (SUBSET {2} \\cup (SUBSET {1} \\cup (SUBSET {2} \\cup (SUBSET {1} \\cup SUBSET {2}))))))",
