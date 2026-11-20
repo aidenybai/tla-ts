@@ -880,6 +880,14 @@ PoolResults == {PoolBail, [type |-> "ok", m |-> 0, w |-> FALSE, v |-> PoolInt(1)
 PoolIndices == {[type |-> "undefined"], PoolInt(-5), PoolInt(-1), PoolInt(0), PoolInt(1), PoolInt(5),
   PoolNumber("nan", FALSE, 0, <<>>, 0), PoolNumber("fin", FALSE, 0, <<1>>, -1), [type |-> "string", value |-> <<48>>]}
 PoolLists == {<<>>, <<PoolInt(1)>>, <<PoolBail>>, <<PoolInt(1), PoolBail>>, <<[type |-> "null"], PoolInt(3)>>}
+PoolSets == {[type |-> "lset", elems |-> <<>>], [type |-> "lset", elems |-> <<PoolInt(1)>>],
+  [type |-> "lset", elems |-> <<PoolInt(2), PoolInt(1)>>],
+  [type |-> "lset", elems |-> <<[type |-> "string", value |-> <<97>>], PoolInt(1), [type |-> "null"]>>],
+  [type |-> "lset", elems |-> <<PoolNumber("nan", FALSE, 0, <<>>, 0), PoolInt(0)>>],
+  [type |-> "lset", elems |-> <<PoolNumber("nzero", TRUE, 0, <<>>, 0)>>],
+  [type |-> "lset", elems |-> <<[type |-> "larray", elems |-> <<>>]>>], [type |-> "larray", elems |-> <<>>]}
+PoolSetMethods == {"union", "intersection", "difference", "symmetricDifference", "isSubsetOf",
+  "isSupersetOf", "isDisjointFrom", "has"}
 PoolCallbacks(c, F(_, _)) ==
   /\ c.type = "larray" => LResults(c.elems, F) = PlainLResults(c.elems, F)
   /\ LEvery(c, F) = PlainLEvery(c, F)
@@ -906,6 +914,7 @@ ASSUME \A v \in Pool :
   /\ PoolCallbacks(v, LAMBDA x, i : i)
   /\ PoolCallbacks(v, LAMBDA x, i : PoolBail)
   /\ PoolCallbacks(v, LAMBDA x, i : IF i = PoolInt(1) THEN PoolBail ELSE [type |-> "boolean", value |-> i = PoolInt(0)])
+ASSUME \A c \in PoolSets, o \in PoolSets, m \in PoolSetMethods : LSetMethod(c, m, o) = PlainLSetMethod(c, m, o)
 ASSUME \A r \in PoolResults : LValue(r) = PlainLValue(r)
 ASSUME \A list \in PoolLists : LArray(list) = PlainLArray(list)`;
 
@@ -921,6 +930,17 @@ ASSUME \A list \in PoolLists : LArray(list) = PlainLArray(list)`;
         "spec.ts",
         "operators",
         ["[] OTHER -> PlainLBail\nPlainLIsIndex", '[] OTHER -> [type |-> "other"]\nPlainLIsIndex'],
+        operators,
+      );
+      expect(result.status).toBe("assumption-violation");
+    });
+
+    it("tells a Set method whose TLA+ gives another result", async () => {
+      const result = await checkModel(
+        source,
+        "spec.ts",
+        "operators",
+        ['[] m = "isDisjointFrom" -> Bool(~\\E', '[] m = "isDisjointFrom" -> Bool(\\E'],
         operators,
       );
       expect(result.status).toBe("assumption-violation");
