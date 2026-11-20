@@ -1,5 +1,5 @@
 import ts from "@typescript/typescript6";
-import { TlaTypeScriptError } from "../../errors";
+import { TlaStrippingError, TlaTypeScriptError } from "../../errors";
 import { rejectEarlyErrors } from "../early-errors";
 import { getJsxText } from "../program";
 import { createModuleResolver, getModuleFormat } from "./resolve";
@@ -163,6 +163,12 @@ const transpile = (source: string, fileName: string, isModule: boolean, wrapper 
   return `${wrapper[0]}${code}${wrapper[1]}`;
 };
 
+// A file of Node's wrapper, whose name wrapped records.
+const wrap = (sourceFile: ts.SourceFile, wrapped: Set<string>) => {
+  wrapped.add(sourceFile.fileName);
+  return sourceFile;
+};
+
 const parse = (code: string, fileName: string, isModule: boolean) => {
   const name = fileName.replace(/\.[cm]?tsx?$/, ".js");
   const options: ts.CreateSourceFileOptions = {
@@ -216,6 +222,31 @@ const getSpecifiers = (sourceFile: ts.SourceFile, kind: ProgramFile["kind"]) => 
 // The function that Node wraps a CommonJS module's code in, as its loader writes it.
 const WRAPPER = ["(function (exports, require, module, __filename, __dirname) { ", "\n});"];
 
+// Runs compile, whose stops name where they are in the code that tla-ts parses, as the file's own
+// code places them: the entry by the name the compile gives it, and a file that Node wraps, as
+// CommonJS, at its own columns, which the wrapper, of the parsed names in wrapped, moves on its
+// first line.
+const atSourceLocations = <T>(fileName: string, compile: (wrapped: Set<string>) => T): T => {
+  const wrapped = new Set<string>();
+  try {
+    return compile(wrapped);
+  } catch (error) {
+    // Node's stripping of a file's types reads the file's own code, which its error points into.
+    const found =
+      error instanceof TlaTypeScriptError && !(error instanceof TlaStrippingError)
+        ? /^(.+?):(\d+):(\d+) ([^]*)$/.exec(error.message)
+        : null;
+    if (found === null) throw error;
+    const entry = fileName.replace(/\.[cm]?tsx?$/, ".js");
+    const isEntry = ts.sys?.fileExists(fileName) === true && found[1] === resolve(entry);
+    const column =
+      Number(found[2]) === 1 && wrapped.has(found[1])
+        ? Number(found[3]) - WRAPPER[0].length
+        : Number(found[3]);
+    throw new TlaTypeScriptError(`${isEntry ? entry : found[1]}:${found[2]}:${column} ${found[4]}`);
+  }
+};
+
 // Whether JSON.parse reads a text, as Node's does where it loads a JSON file.
 const isJson = (text: string) => {
   try {
@@ -241,6 +272,8 @@ const loadFiles = (
   fileName: string,
   isModule: boolean,
   host: Pick<EscoreSteps, "isModuleHost">,
+  // The names of the parsed files that Node's wrapper holds the code of.
+  wrapped: Set<string>,
 ): ProgramFile[] => {
   // Whether the host loads a file as an ES module or as CommonJS (see getModuleFormat).
   const getKind = (path: string, text: string): ProgramFile["kind"] =>
@@ -353,7 +386,7 @@ const loadFiles = (
     const code = text.replace(/^#!.*/, (line) => " ".repeat(line.length));
     const sourceFile =
       kind === "commonjs"
-        ? parse(transpile(code, path, false, WRAPPER), path, false)
+        ? wrap(parse(transpile(code, path, false, WRAPPER), path, false), wrapped)
         : parse(transpile(code, path, kind !== "script"), path, kind !== "script");
     // Node runs nothing of a program whose entry it fails to parse, and loads none of the requests
     // of another file that it fails to parse.
@@ -454,8 +487,13 @@ export const compileToEscore = (
   isModule = false,
   model: EscoreSteps = { steps: SCRIPT_STEPS, entries: [] },
 ): EscoreSpec => {
-  const files = loadFiles(source, fileName, isModule, model);
-  const program = specialize(files, new Set([...runtime.internalKeys, ...model.entries]));
+  const { files, program } = atSourceLocations(fileName, (wrapped) => {
+    const loaded = loadFiles(source, fileName, isModule, model, wrapped);
+    return {
+      files: loaded,
+      program: specialize(loaded, new Set([...runtime.internalKeys, ...model.entries])),
+    };
+  });
   // The runtime's setTimeout gives a script undefined where Node gives a Timeout, so a script may
   // only call it as a statement.
   const findTimerValue = (node: ts.Node): ts.Node | undefined =>
