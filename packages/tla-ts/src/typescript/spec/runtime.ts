@@ -102,8 +102,19 @@ const DEFINITIONS = [
                               DataDesc(Intrinsic(s, "ArrayProto_values"), TRUE, FALSE, TRUE))
       withCallee == PutProp(withIterator, SV("callee"), DataDesc(f, TRUE, FALSE, TRUE))
   IN Alloc(s, withCallee)`,
-  // The realm's tables, folded in halves so that building the realm nests log n deep, not n.
-  `AddRealmProperties(s, ps) == AddRealmPropertiesIn(s, ps, 1, Len(ps))`,
+  // The realm's tables, folded in halves so that building the realm nests log n deep, not n, and
+  // with each built-in's keys then in the order of the host's.
+  `AddRealmProperties(s, ps) == OrderRealmKeys(AddRealmPropertiesIn(s, ps, 1, Len(ps)), 1)`,
+  // V8 creates the properties of its built-ins in an order of its own, which their own keys give.
+  // Each built-in that HostKeyOrders lists has the keys it lists first, in that order, and then
+  // its others.
+  `OrderRealmKeys(s, i) ==
+  IF i > Len(HostKeyOrders) THEN s
+  ELSE LET order == HostKeyOrders[i].keys
+           v == Intrinsic(s, HostKeyOrders[i].name)
+           keys == O(s, v).keys
+       IN OrderRealmKeys(SetO(s, v, [O(s, v) EXCEPT !.keys = SelectSeq(order, LAMBDA k : k \\in Range(keys)) \\o
+                                                        SelectSeq(keys, LAMBDA k : k \\notin Range(order))]), i + 1)`,
   `AddRealmPropertiesIn(s, ps, lo, hi) ==
   IF lo > hi THEN s
   ELSE IF lo = hi THEN AddRealmProperty(s, ps[lo])
@@ -1540,6 +1551,37 @@ export const getLocalDefinitions = (library: Library): GeneratedDefinition[] => 
   },
 ];
 
+// The order of the keys of each of the realm's built-ins that the host has, as the host's own keys
+// give it: its strings, then the well-known symbols that ESCore numbers.
+const getHostKeyOrders = (library: Library) => {
+  const symbols = [
+    ...(/WellKnownSymbols ==([^>]*)>>/.exec(library.definitions.get("WellKnownSymbols")?.text ?? "")?.[1] ?? "")
+      .matchAll(/"([^"]+)"/g),
+  ].map((match) => match[1]);
+  const owners = [
+    ...new Set([
+      "GlobalObject",
+      ...library.properties.map((property) => property.owner),
+      ...[...library.definitions.values()].flatMap((definition) =>
+        [...definition.text.matchAll(/\b(?:IntrinsicObject|Ctor)\("([A-Za-z0-9_]+)"/g)].map(
+          (match) => match[1],
+        ),
+      ),
+    ]),
+  ];
+  const entries = owners.flatMap((owner) => {
+    const object = getHostObject(owner);
+    if (object === undefined) return [];
+    const keys = Reflect.ownKeys(object).flatMap((key) => {
+      if (typeof key === "string") return [`Str(${getUnitsOf(key)})`];
+      const index = symbols.indexOf(key.description ?? "");
+      return index === -1 ? [] : [`Sym(${index + 1})`];
+    });
+    return [`[name |-> "${owner}", keys |-> <<${keys.join(", ")}>>]`];
+  });
+  return `HostKeyOrders == <<${entries.join(",\n  ")}>>`;
+};
+
 export const getRealmDefinitions = (library: Library): GeneratedDefinition[] => {
   const all = library.definitions.get("RealmProperties")?.text ?? "";
   // Node has no Error.prototype.stack: each error has its own stack accessor, whose functions the
@@ -1548,6 +1590,7 @@ export const getRealmDefinitions = (library: Library): GeneratedDefinition[] => 
     .filter((property) => property.owner !== "ErrorPrototype" || property.key !== "stack")
     .map((property) => `<<"${property.owner}", Str(${getUnitsOf(property.key)})>>`);
   return [
+    { name: "HostKeyOrders", arity: 0, text: getHostKeyOrders(library) },
     {
       name: "HostRealmProperties",
       arity: 0,

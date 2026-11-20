@@ -16802,8 +16802,7 @@
       "runs": [
         {
           "name": "rejects the members that Node 24 has",
-          "thrown": "seen true,length name prototype from concat,true,false,16",
-          "wrong": "conformance: the built-ins' own keys come in another order than V8's"
+          "thrown": "seen true,length name prototype from concat,true,false,16"
         },
         {
           "name": "stops at the value of a member that tla-ts doesn't model",
@@ -16814,8 +16813,7 @@
           "replace": [
             "false,length name prototype from,false,true,3",
             "true,length name prototype from concat,true,false,1"
-          ],
-          "wrong": "conformance: the built-ins' own keys come in another order than V8's"
+          ]
         }
       ]
     },
@@ -21598,14 +21596,12 @@
       "source": "\n      const seen = [\n        typeof Temporal,\n        Temporal.Duration.length,\n        Temporal.PlainDate.name,\n        Temporal.Duration.prototype[Symbol.toStringTag],\n        Object.getOwnPropertyNames(Temporal).join(\"|\"),\n        typeof Object.getOwnPropertyDescriptor(Temporal.Duration.prototype, \"years\")!.get,\n        Object.getOwnPropertyNames(Date.prototype).includes(\"toTemporalInstant\"),\n      ].join();\n      if (seen !== \"object,0,PlainDate,Temporal.Duration,Now|PlainDate|PlainTime|PlainDateTime|ZonedDateTime|Duration|Instant|PlainYearMonth|PlainMonthDay,function,true\") throw new Error(\"seen \" + seen);\n    ",
       "runs": [
         {
-          "name": "agrees with Node",
-          "wrong": "conformance: the built-ins' own keys come in another order than V8's"
+          "name": "agrees with Node"
         },
         {
           "name": "rejects a Temporal without its PlainDate",
           "replace": ["Date|Plain", ""],
-          "thrown": "seen object,0,PlainDate,Temporal.Duration,Now|PlainDate|PlainTime|PlainDateTime|ZonedDateTime|Duration|Instant|PlainYearMonth|PlainMonthDay,function,true",
-          "wrong": "conformance: the built-ins' own keys come in another order than V8's"
+          "thrown": "seen object,0,PlainDate,Temporal.Duration,Now|PlainDate|PlainTime|PlainDateTime|ZonedDateTime|Duration|Instant|PlainYearMonth|PlainMonthDay,function,true"
         }
       ]
     },
