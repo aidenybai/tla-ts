@@ -561,7 +561,7 @@ const runUnitSubsume = (environment: TacticEnvironment) => {
   const kernel = new SmtKernel(manager, {
     isMbqi: environment.isMbqi,
     mbqiMaxIterations: environment.mbqiMaxIterations,
-    isFindingMacros: false,
+    isFindingMacros: environment.isFindingMacros,
   });
   const clauses = new RefVector(manager);
   environment.destructors.push(() => {

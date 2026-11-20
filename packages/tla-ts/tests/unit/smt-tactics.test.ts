@@ -3196,6 +3196,25 @@ describe("the goals of a tactic free what Z3 5.3.2 frees", () => {
 });
 
 describe("unit-subsume-simplify, as Z3 5.3.2 keeps its context", () => {
+  it("finds macros in its context when smt.macro_finder is set", () => {
+    expect(
+      run([
+        "(set-option :smt.macro_finder true)",
+        "(declare-fun f (Int) Int)",
+        "(declare-const p Bool)",
+        "(declare-const q Bool)",
+        "(assert (forall ((x Int)) (> (f (+ x 1)) 0)))",
+        "(assert (or (> (f 5) 0) p))",
+        "(assert (or q (> (f 7) 0) p))",
+        "(apply unit-subsume-simplify)",
+        "(get-info :rlimit)",
+      ]),
+    ).toEqual([
+      "(goals\n(goal\n  (forall ((x Int)) (> (f (+ x 1)) 0))\n  (or (> (f 5) 0) p)\n  (or q (> (f 7) 0) p)\n  :precision precise :depth 0)\n)",
+      "(:rlimit 784)",
+    ]);
+  });
+
   it("makes its context with the tactic, even when the tactic never runs", () => {
     expect(
       run([
