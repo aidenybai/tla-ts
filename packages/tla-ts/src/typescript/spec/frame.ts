@@ -759,6 +759,30 @@ export const frameModel = (source: string, fileName: string, library?: Library) 
     }
     return chosen;
   };
+  // Whether a finite type's set of values is all its values, not the bounds that a number, a
+  // string, or an array takes.
+  const isExact = (type: ts.Type): boolean => {
+    if (type.isUnion()) return type.types.every(isExact);
+    if (getLiteral(type) !== undefined || type.flags & ts.TypeFlags.Boolean) return true;
+    if (type.flags & (ts.TypeFlags.Number | ts.TypeFlags.String) || checker.isArrayType(type)) {
+      return false;
+    }
+    const typeArguments = isTypeReference(type) ? checker.getTypeArguments(type) : [];
+    if (isSetType(type) || isMapType(type) || checker.isTupleType(type)) {
+      return typeArguments.every(isExact);
+    }
+    return type.getProperties().every((property) => isExact(checker.getTypeOfSymbol(property)));
+  };
+  // The parameters that a step chooses from its guards' sets in the state: those whose types have
+  // no exact finite set of values. A parameter of such a type takes each value of its type, as a
+  // value outside the guard's set makes a call that writes nothing, which is no step.
+  const readStateGuards = (definition: Exported, parameters: Parameter[]) =>
+    new Map(
+      [...readGuards(definition, parameters)].filter((entry) => {
+        const type = getType(entry[0].node);
+        return isInfinite(findDomain(type)) || !isExact(type);
+      }),
+    );
   // Whether an exported function is an action: one that changes state or returns nothing.
   const isStepExport = (definition: Exported) => {
     if (writesState(definition.body, new Set())) return true;
@@ -826,7 +850,7 @@ export const frameModel = (source: string, fileName: string, library?: Library) 
   // parameter ranges over its type, or over the set that a guard chooses it from.
   const translateStep = (definition: Exported) => {
     const parameters = declareParameters(definition);
-    const chosen = readGuards(definition, parameters);
+    const chosen = readStateGuards(definition, parameters);
     const head =
       parameters.length === 0
         ? definition.name
@@ -886,12 +910,11 @@ export const frameModel = (source: string, fileName: string, library?: Library) 
   // argument, in every state when it reads state and once before the search otherwise.
   const translateCall = (definition: Exported) => {
     const parameters = declareParameters(definition);
-    const result = names.getFresh("result");
     predicates.push(
       `${definition.name} == ${quantify(
         "\\A",
         parameters.map((parameter) => `${parameter.tla} \\in ${getDomain(parameter.node)}`),
-        `LET ${result} == TRUE IN ${result} = ${result}`,
+        "LET result == TRUE IN result = result",
       )}`,
     );
     list(

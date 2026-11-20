@@ -283,7 +283,9 @@ const getNodeParse = (sourceFile: ts.SourceFile) => {
   const host = globalThis.process;
   const vm = host?.getBuiltinModule?.("node:vm");
   if (vm === undefined || host.versions.bun !== undefined) return undefined;
-  if (sourceFile.impliedNodeFormat !== ts.ModuleKind.ESNext) {
+  // A file of import and export declarations parses as a module, as a model's file does, which
+  // its compile reads as a script.
+  if (sourceFile.impliedNodeFormat !== ts.ModuleKind.ESNext && !ts.isExternalModule(sourceFile)) {
     try {
       new vm.Script(sourceFile.text, { filename: sourceFile.fileName });
       return { error: undefined };
