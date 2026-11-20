@@ -2335,8 +2335,7 @@ export const createUnsortedCopy = (set: SetValue, added: Value[]): SetValue => {
 const getFunctionSequenceElements = (functionValue: FunctionValue) =>
   functionValue.domain.every((key, index) => key === index + 1) ? functionValue.range : undefined;
 
-// TLC's FcnLambdaValue#toTuple applies the function at 1, 2, ... until a key of its domain breaks the run, and keeps
-// none of what it applied.
+// TLC's FcnLambdaValue#toTuple applies the function at 1, 2, ... until a key breaks the run, and caches nothing.
 const getLazySequenceElements = (value: LazyFunctionValue) => {
   if (value.boundTupleLengths !== undefined) return undefined;
   if (!isSetValue(value.domain) || isOverriddenSet(value.domain)) {

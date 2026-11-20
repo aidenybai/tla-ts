@@ -115,8 +115,7 @@ const toJsonArray = (value: Value) => {
 
 const toNdJsonLine = (element: Value) => `${toJson(element)}\n`;
 
-// TLC's Json and IOUtils writers open the file before they convert the value, and closing a writer keeps the lines it
-// converted before a failure.
+// TLC opens the file before it converts the value, and closing the writer keeps the lines converted before a failure.
 const writeConverted = (
   write: (text: string) => void,
   elements: Value[],
@@ -201,8 +200,7 @@ const getJavaExceptionClass = (error: TlaEvaluationError) => {
     : "util.Assert$TLCRuntimeException";
 };
 
-// textSerialize rethrows a failure to convert the payload as a RuntimeException. Files.newBufferedWriter writes the
-// text over the start of a file that it neither truncates nor appends to.
+// Files.newBufferedWriter writes the text over the start of a file that it neither truncates nor appends to.
 const serializeWithOptions = (
   files: FileSystem,
   path: string,
