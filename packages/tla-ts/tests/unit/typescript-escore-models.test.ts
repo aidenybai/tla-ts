@@ -734,6 +734,72 @@ describe("checks a module's exported functions as a model on ESCore", () => {
     });
   });
 
+  describe("takes no step on a call that writes nothing, as today's compiler and Node's runs do", () => {
+    const fairness = (tag: string) => `
+      /** @noDeadlock */
+      let x: 0 | 1 = 0;
+      let y: 0 | 1 = 0;
+      ${tag}
+      export const work = () => {
+        if (x === 1) y = 1;
+      };
+      /** @fair */
+      export const spin = () => {
+        x = x === 0 ? 1 : 0;
+      };
+      /** @eventually */
+      export const isWorked = () => y === 1;
+    `;
+
+    it("deadlocks where the only call writes nothing, and steps where it writes what it holds", async () => {
+      const written = (body: string) => `
+        let x = 0;
+        export const step = () => {
+          ${body}
+        };
+        export const isSmall = () => x <= 2;
+      `;
+      expect(getCounts(await checkModel(written("if (x < 2) x += 1;")))).toEqual([
+        "deadlock",
+        3,
+        3,
+      ]);
+      expect(getCounts(await checkModel(written("if (x < 2) x += 1; else x = x;")))).toEqual([
+        "success",
+        3,
+        4,
+      ]);
+    });
+
+    it("needs strong fairness for a call that writes in every other state", async () => {
+      expect(getCounts(await checkModel(fairness("/** @fair */")))).toEqual([
+        "liveness-violation",
+        4,
+        7,
+      ]);
+      expect(getCounts(await checkModel(fairness("/** @strongFair */")))).toEqual([
+        "success",
+        4,
+        7,
+      ]);
+    });
+
+    it("tells a step that a call writing nothing takes", async () => {
+      const source = `
+        let x = 0;
+        export const step = () => {
+          if (x < 2) x += 1;
+        };
+        export const isSmall = () => x <= 2;
+      `;
+      const result = await checkModel(source, "spec.ts", "canonical", [
+        "IF n.w THEN {n.m} ELSE {}",
+        "IF n.w THEN {n.m} ELSE {a[1]}",
+      ]);
+      expect(getCounts(result)).toEqual(["success", 3, 4]);
+    });
+  });
+
   describe("runs ESNative's operators natively, as their TLA+ runs them", () => {
     // A model that lowers its state, whose module ESNative the checks read.
     const source = `
