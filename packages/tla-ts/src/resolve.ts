@@ -332,7 +332,6 @@ const getVisibleDefinition = (name: string, unit: Unit) => {
     (definition.isRecursive
       ? binding?.isPending === true || isSameRange(binding?.range, definition.location.range)
       : definition !== unit.self &&
-        // A theorem binds its name at its own location before its proof, where SANY's theorem node is in scope.
         (isBefore(definition.location, unit.location) ||
           unit.bindings.get(name)?.position === definition.location) &&
         (binding === undefined || !isBefore(binding.position, definition.location)));
@@ -595,7 +594,6 @@ const findClauseLabel = (
   isForbidden: boolean,
 ): LabelExpression | AssumeProve | undefined => {
   if (isForbidden) return undefined;
-  // A labeled ASSUME/PROVE keeps the labels inside it to itself, as SANY's LabelNode does.
   if (clause.kind === "AssumeProve" && clause.label)
     return clause.label.name === name ? clause : undefined;
   if (clause.kind === "AssumeProve") return findAssumeProveLabel(clause, name);

@@ -435,7 +435,6 @@ export interface NewSymbol {
   location: SourceLocation;
 }
 
-// The label of `a :: ASSUME ... PROVE ...` in an assumption list, located from its name to the PROVE expression's end.
 export interface AssumeProveLabel {
   name: string;
   location: SourceLocation;

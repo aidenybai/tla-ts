@@ -1040,7 +1040,6 @@ const createNullLabel = (generation: ModuleGeneration): LabelNode => {
   };
 };
 
-// SANY generates the body first, so its errors come before the parameters'.
 export const generateLabel = (
   generation: ModuleGeneration,
   name: string,

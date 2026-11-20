@@ -333,7 +333,6 @@ const selectSubexpression = (
   };
 
   const isLeftToResolver = (selector: Selector | undefined) => {
-    // A labeled ASSUME/PROVE in an assumption list is a label around the ASSUME/PROVE.
     const node = current?.kind === "Label" ? current.body : current;
     if (!node || !isAssumeProve(node)) return false;
     if (selector === undefined) return true;
