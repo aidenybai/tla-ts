@@ -184,6 +184,8 @@ Wall time on 8 workers, also including startup. Each time is the median of 3 run
 
 ## Development
 
+The toolchain needs Node 26. vite-plus runs the version in `.node-version` once you enable its managed mode with `vp env on node`.
+
 ```shell
 pnpm install
 pnpm test
