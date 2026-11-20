@@ -974,6 +974,16 @@ const isStateWithin = (state: State | undefined, cached: State | undefined) => {
   }
 };
 
+const evaluateThunk = (thunk: Thunk, context: Context) => {
+  const coverage = context.environment.coverage;
+  const node = coverage?.current === -1 ? undefined : coverage?.values.get(thunk);
+  return coverage && node !== undefined
+    ? runAtCoverageNode(coverage, node, () =>
+        evaluate(thunk.expression, withScope(context, thunk.scope)),
+      )
+    : evaluate(thunk.expression, withScope(context, thunk.scope));
+};
+
 const forceThunk = (thunk: Thunk, context: Context) => {
   const cache = thunk.cache;
   const isCached =
@@ -988,14 +998,7 @@ const forceThunk = (thunk: Thunk, context: Context) => {
       cache.kind === "LazyFunction"
     );
   if (isCached) return cache;
-  const coverage = context.environment.coverage;
-  const node = coverage?.current === -1 ? undefined : coverage?.values.get(thunk);
-  const value =
-    coverage && node !== undefined
-      ? runAtCoverageNode(coverage, node, () =>
-          evaluate(thunk.expression, withScope(context, thunk.scope)),
-        )
-      : evaluate(thunk.expression, withScope(context, thunk.scope));
+  const value = evaluateThunk(thunk, context);
   if (!thunk.isStreamed || isSettledValue(value)) {
     thunk.cache = value;
     thunk.state = context.state;
@@ -1716,7 +1719,20 @@ const compileIdentifier = (
       throw createUndefinedError(name, expression);
     };
   }
-  return (context) => evaluateLocalIdentifier(name, expression, context);
+  const coverage = environment.coverage;
+  if (!coverage) return (context) => evaluateLocalIdentifier(name, expression, context);
+  // TLC's Tool#evalAppl evaluates a LazyValue afresh where it reads it primed, and LazyValue#getValue reuses a value only under the EvalControl it computed it under.
+  return (context) => {
+    const binding = lookupScope(context.scope, name);
+    if (binding?.kind !== "Thunk" || binding.isReleased) {
+      return evaluateLocalIdentifier(name, expression, context);
+    }
+    if (coverage.nextState === "primed") return evaluateThunk(binding, context);
+    if (coverage.cachedInEnabled.get(binding) !== coverage.isEnabled) binding.cache = undefined;
+    const value = forceThunk(binding, context);
+    coverage.cachedInEnabled.set(binding, coverage.isEnabled);
+    return value;
+  };
 };
 
 export const isValueArgument = (argument: Expression, environment: Environment) => {

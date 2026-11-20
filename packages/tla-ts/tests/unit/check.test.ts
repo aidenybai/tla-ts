@@ -2161,6 +2161,43 @@ ASSUME TLCFP(a) = -887695703
     ]);
   });
 
+  it.each([
+    [
+      "read primed",
+      "VARIABLES c\nInit == c \\in 0..2\nNext == UNCHANGED c\nA == LET k == c IN k' = k + 1 /\\ k' > k\nInv == ENABLED A",
+      [
+        "line 7, col 8 to line 7, col 16 of module M: 3",
+        "|line 6, col 15 to line 6, col 15 of module M: 6",
+        "|line 6, col 20 to line 6, col 39 of module M: 3",
+      ],
+    ],
+    [
+      "bound outside it",
+      "VARIABLES c\nInit == c = 0\nNext == c < 3 /\\ c' = c + 1\nInv == LET k == c IN k >= 0 /\\ k < 5 /\\ ENABLED (c' = k + 1 /\\ k' > k)",
+      [
+        "line 6, col 17 to line 6, col 17 of module M: 12",
+        "line 6, col 22 to line 6, col 70 of module M: 4",
+      ],
+    ],
+    [
+      "read again outside it",
+      "VARIABLES c\nInit == c = 0\nNext == c < 3 /\\ c' = c + 1\nInv == LET k == c IN ENABLED (c' = k + 1 /\\ k' > k) /\\ k >= 0 /\\ ENABLED (c' = k + 2) /\\ ENABLED (c' = k + 3)",
+      [
+        "line 6, col 17 to line 6, col 17 of module M: 16",
+        "line 6, col 22 to line 6, col 109 of module M: 4",
+      ],
+    ],
+  ])(
+    "counts a LET definition under ENABLED %s as TLC's LazyValue caches it, afresh where primed and only under the EvalControl it cached it under",
+    async (_name, definitions, expected) => {
+      const lines = await getCoverageLines(
+        `---- MODULE M ----\nEXTENDS Integers\n${definitions}\n====`,
+        "INIT Init\nNEXT Next\nINVARIANT Inv\nCHECK_DEADLOCK FALSE",
+      );
+      expect(lines?.at(-1)).toEqual(expected);
+    },
+  );
+
   it("counts the LET definition that UNCHANGED keeps under ENABLED, as TLC's Tool#enabledUnchanged evaluates the expression", async () => {
     const lines = await getCoverageLines(
       "---- MODULE M ----\nEXTENDS Integers\nVARIABLES x, y\nInit == x = 0 /\\ y = 0\nNext == x' = 1 - x /\\ UNCHANGED y\nInv == ENABLED (y' = y /\\ LET w == x IN UNCHANGED w)\n====",

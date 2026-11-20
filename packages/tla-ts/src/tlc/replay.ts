@@ -1142,6 +1142,9 @@ export const replayEnabled = (
   const replay = createReplay(environment, "enabled", state, found, found);
   const callStack = replay.callStack;
   const depth = callStack?.expressions.length ?? 0;
+  const coverage = replay.coverage;
+  const isOuterEnabled = coverage?.isEnabled ?? false;
+  if (coverage) coverage.isEnabled = true;
   try {
     if (expression.kind === "AngleAction" && expression.location === expression.action.location) {
       const changed = createItem("Changed", expression.subscript, scope, node, undefined);
@@ -1157,6 +1160,8 @@ export const replayEnabled = (
       callStack.isFrozen = false;
     }
     return true;
+  } finally {
+    if (coverage) coverage.isEnabled = isOuterEnabled;
   }
 };
 
