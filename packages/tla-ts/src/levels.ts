@@ -107,7 +107,7 @@ interface FoundOriginal {
 export interface LetInstance extends InstanceSubstitutes {
   copies: Map<string, InstanceCopy>;
   getArgParams: () => Set<string>;
-  getSubstitutionDefinitions: () => Definition[];
+  getSubstitutionNames: () => string[];
   substitutesCheck: InstanceLevelCheck["substitutesCheck"];
 }
 
@@ -1064,15 +1064,14 @@ export const createLevelAnalyzer = (context: LevelContext) => {
     }
     const substituted = new Map(
       entered.instances?.flatMap((instance) =>
-        instance
-          .getSubstitutionDefinitions()
-          .map((definition): [Definition, LetInstance] => [definition, instance]),
+        instance.getSubstitutionNames().map((name): [string, LetInstance] => [name, instance]),
       ),
     );
     const analyzeSubstitutes = (instance: LetInstance) =>
-      instance
-        .getSubstitutionDefinitions()
-        .map((definition) => analyzeDefinition(definition, entered.inner));
+      instance.getSubstitutionNames().flatMap((name) => {
+        const definition = expression.definitions.find((item) => item.name === name);
+        return definition ? [analyzeDefinition(definition, entered.inner)] : [];
+      });
     const checked = new Set<LetInstance>();
     const ownDefinitions = (
       entered.instanceUnits?.length
@@ -1087,7 +1086,7 @@ export const createLevelAnalyzer = (context: LevelContext) => {
             .flatMap((unit) => unit.definitions)
         : expression.definitions
     ).flatMap((definition) => {
-      const instance = substituted.get(definition);
+      const instance = substituted.get(definition.name);
       if (!instance) return [analyzeDefinition(definition, entered.inner)];
       if (instance.substitutesCheck === "Instance" || checked.has(instance)) return [];
       checked.add(instance);

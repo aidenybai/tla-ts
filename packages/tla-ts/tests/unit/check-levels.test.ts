@@ -2116,6 +2116,52 @@ describe("level checking matches SANY", () => {
     },
   );
 
+  it.each([
+    [
+      "CONSTANT c\nVARIABLE v",
+      "E == TRUE /\\ TRUE\nD == LET D1 == (x')'\n          K == INSTANCE P WITH v <- (x')', c <- (x'')'\n          D2 == E!1\n      IN TRUE",
+      [
+        "line 10, col 16 to line 10, col 20",
+        "line 11, col 37 to line 11, col 41",
+        "line 11, col 50 to line 11, col 52",
+      ],
+    ],
+    [
+      "CONSTANT c\nVARIABLE v\nB == c",
+      "D == LET D1 == (x')'\n          K == INSTANCE P WITH v <- (x')', c <- (x'')'\n          D2 == (x')'\n      IN K!B",
+      [
+        "line 10, col 16 to line 10, col 20",
+        "line 11, col 37 to line 11, col 41",
+        "line 11, col 50 to line 11, col 52",
+        "line 12, col 17 to line 12, col 21",
+      ],
+    ],
+    [
+      "CONSTANT c\nVARIABLE v\nB == c",
+      "D == LET K == INSTANCE P WITH v <- (x')', c <- (x'')'\n          K2 == INSTANCE P WITH c <- (x')', v <- (x'')'\n      IN K!B",
+      [
+        "line 10, col 36 to line 10, col 40",
+        "line 10, col 49 to line 10, col 51",
+        "line 11, col 38 to line 11, col 42",
+        "line 11, col 51 to line 11, col 53",
+      ],
+    ],
+  ])(
+    "level-checks a LET instance's substitutes in SANY's order where the LET holds a selection: %s",
+    async (instancee, definitions, locations) => {
+      await expect(
+        check({
+          source: `---- MODULE M ----\nEXTENDS Naturals\nVARIABLE x\n---- MODULE P ----\n${instancee}\n====\nN == INSTANCE P WITH c <- 1, v <- x\n${definitions}\nInit == x = 0\nNext == x' = x\n====`,
+          config: "INIT Init\nNEXT Next",
+        }),
+      ).rejects.toThrow(
+        createSanyError(
+          locations.map((location) => ({ location: `${location} of module M`, message: primed })),
+        ),
+      );
+    },
+  );
+
   it("checks a label selected from a step's statement, as SANY does", async () => {
     const exceeds = "The level of argument 1 exceeds the maximum level allowed by the operator.";
     await expect(

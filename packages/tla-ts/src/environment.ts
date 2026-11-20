@@ -1163,9 +1163,9 @@ export const createEnvironment = (
         ),
         getArgParams: () => instanceLevels.getArgParams(instance.module),
         // Names resolve after the expansion, and with them the order of the substitutions.
-        getSubstitutionDefinitions: () =>
+        getSubstitutionNames: () =>
           getSubstitutedDeclarations(instance, declarations).map(
-            (declaration) => substitutionDefinitions[declarations.indexOf(declaration)],
+            (declaration) => `${declaration.name}${suffix}`,
           ),
         substitutesCheck: getSubstitutesCheck(linked.exported),
       });
