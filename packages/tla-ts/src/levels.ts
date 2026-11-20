@@ -69,6 +69,7 @@ export interface InstanceLevels {
   getCopy: (definition: Definition) => InstanceCopy | undefined;
   getLetInstance: (instance: Instance) => LetInstance | undefined;
   getInstanced: (copy: InstanceCopy) => InstancedDefinition;
+  checkInstantiation: (instance: Instance, instancer: string, scope: Scope) => SanyError[];
 }
 
 interface LevelContext {
@@ -1605,12 +1606,26 @@ export const checkModuleLevels = (
     }
     if (proof?.kind !== "Steps") return [];
     const inner = new Map(scope);
-    return proof.steps.flatMap((step) => {
+    const checkInstance = (instance: Instance) => {
+      instance.substitutions.forEach((substitution) =>
+        analyzer.toOperand(substitution.expression, inner),
+      );
+      return [
+        ...analyzer.errors.splice(0),
+        ...context.instances.checkInstantiation(instance, module.name, inner),
+      ];
+    };
+    // SANY's NonLeafProofNode#levelCheck checks the instances of a proof's definitions after its steps.
+    const definedInstances: Instance[] = [];
+    const errors = proof.steps.flatMap((step) => {
       const body = step.body;
       if (body.kind === "Use" || body.kind === "Hide") checkFacts(body.facts, inner);
       if (body.kind === "Define") {
         body.definitions.forEach((definition) => {
-          if (definition.kind === "Instance") return;
+          if (definition.kind === "Instance") {
+            definedInstances.push(definition);
+            return;
+          }
           inner.set(definition.name, { kind: "Let", definition, scope: inner });
           analyzer.analyzeDefinition(definition, inner);
         });
@@ -1634,8 +1649,9 @@ export const checkModuleLevels = (
               )
           : [];
       const isSuffices = body.kind === "Assert" && body.isSuffices;
-      const errors = [
+      const stepErrors = [
         ...analyzer.errors.splice(0),
+        ...(body.kind === "Instance" ? checkInstance(body) : []),
         ...checkProof(
           step.proof,
           body.kind === "Assert" && !isSuffices
@@ -1646,8 +1662,9 @@ export const checkModuleLevels = (
         ...(step.proof?.kind === "Steps" && isTemporal ? checkTemporalGoal(step.proof) : []),
       ];
       if (isSuffices) addNewSymbols(body.statement, inner);
-      return errors;
+      return stepErrors;
     });
+    return [...errors, ...definedInstances.flatMap(checkInstance)];
   };
   const statementLevels = new Map<Expression | AssumeProve, number>();
   const getStatementLevel = (statement: Expression | AssumeProve) => {

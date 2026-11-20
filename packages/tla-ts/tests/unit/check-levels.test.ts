@@ -927,6 +927,31 @@ describe("level checking matches SANY", () => {
     );
   });
 
+  it("checks an INSTANCE step in place and a proof's instance definitions after its steps, as SANY does", async () => {
+    const prime =
+      "Level error in applying operator ':\nThe level of argument 1 exceeds the maximum level allowed by the operator.";
+    const constant =
+      "Level error in instantiating module 'Inner':\nThe level of the expression or operator substituted for 'c' \nmust be at most 0.";
+    await expect(
+      check({
+        source:
+          "---- MODULE M ----\nVARIABLE x\n---- MODULE Inner ----\nCONSTANT c\nVARIABLE z\nIZ == z\n====\nI0 == INSTANCE Inner WITH c <- 1, z <- x\nTHEOREM ASSUME NEW VARIABLE y PROVE TRUE\n<1> N == INSTANCE Inner WITH c <- y, z <- (x')'\n<1>1. (x')' = 1\n  OBVIOUS\n<1> INSTANCE Inner WITH c <- x, z <- (x')'\n<1>2. (x')' = 1\n  OBVIOUS\n<1> QED\nInit == x = 0\nNext == x' = x\n====",
+        config: "INIT Init\nNEXT Next",
+      }),
+    ).rejects.toThrow(
+      createSanyError(
+        [
+          ["line 11, col 7 to line 11, col 11", prime],
+          ["line 13, col 38 to line 13, col 42", prime],
+          ["line 13, col 5 to line 13, col 42", constant],
+          ["line 14, col 7 to line 14, col 11", prime],
+          ["line 10, col 43 to line 10, col 47", prime],
+          ["line 10, col 5 to line 10, col 47", constant],
+        ].map(([location, message]) => ({ location: `${location} of module M`, message })),
+      ),
+    );
+  });
+
   it("reports an error in instantiating a module before a constant the configuration leaves out, like TLC", async () => {
     await expect(
       check({

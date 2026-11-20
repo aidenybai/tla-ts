@@ -106,6 +106,7 @@ import {
   type InstanceLevelCheck,
   type InstanceSubstitutes,
   type LetInstance,
+  type Scope,
   type SectionMember,
 } from "./levels";
 import { createInstanceChecker, type KeyedDeclaration } from "./substitution-levels";
@@ -380,6 +381,33 @@ export const createEnvironment = (
       getCopy: (definition) => instanceCopies.get(definition),
       getLetInstance: (instance) =>
         instance.location.range && letInstances.get(formatRange(instance.location.range)),
+      checkInstantiation: (instance, instancer, scope) => {
+        // A standard module, which declares nothing, is never linked.
+        const linked = checkedModules.get(instance.module);
+        if (!linked) return [];
+        const substitutions = new Map(
+          instance.substitutions.map((substitution) => [
+            substitution.name,
+            substitution.expression,
+          ]),
+        );
+        return instanceLevels.checkInstance({
+          module: instance.module,
+          instancer,
+          scope,
+          substitutions: new Map(
+            linked.declarations.map((declaration): [string, Expression] => [
+              declaration.name,
+              substitutions.get(declaration.name) ?? {
+                kind: "Identifier",
+                name: declaration.name,
+                location: instance.location,
+              },
+            ]),
+          ),
+          location: instance.location,
+        });
+      },
     },
     recursiveSections,
   );
@@ -674,7 +702,7 @@ export const createEnvironment = (
         instanceLevels.checkInstance({
           module: instance.module,
           instancer: module.name,
-          lets: [],
+          scope: new Map(),
           substitutions,
           location: instance.location,
         }),
@@ -933,10 +961,14 @@ export const createEnvironment = (
         name: declaration.name,
         location,
       };
+    const letScope: Scope = new Map();
+    lets.forEach((definition) =>
+      letScope.set(definition.name, { kind: "Let", definition, scope: letScope }),
+    );
     const instanceCheck = {
       module: instance.module,
       instancer,
-      lets,
+      scope: letScope,
       substitutions: new Map(
         declarations.map((declaration) => [declaration.name, getReplacement(declaration)]),
       ),

@@ -18,7 +18,7 @@ import {
 interface InstanceCheck {
   module: string;
   instancer: string;
-  lets: Definition[];
+  scope: Scope;
   substitutions: Map<string, Expression>;
   location: SourceLocation;
 }
@@ -177,10 +177,6 @@ export const createInstanceChecker = (
     const instancee = getModule(check.module);
     const levels = getModuleLevels(check.module);
     const analyzer = getAnalyzer(check.instancer);
-    const scope: Scope = new Map();
-    check.lets.forEach((definition) =>
-      scope.set(definition.name, { kind: "Let", definition, scope }),
-    );
     const declarations = [
       ...instancee.constants.map((constant) => ({ ...constant, maximumLevel: 0 })),
       ...instancee.variables.map((variable) => ({
@@ -194,7 +190,7 @@ export const createInstanceChecker = (
       const expression = check.substitutions.get(declaration.name);
       if (!expression) return [];
       if (declaration.arity === 0) {
-        const data = analyzer.analyze(expression, scope);
+        const data = analyzer.analyze(expression, check.scope);
         return [
           {
             ...declaration,
@@ -205,7 +201,7 @@ export const createInstanceChecker = (
           },
         ];
       }
-      const operand = analyzer.toOperand(expression, scope);
+      const operand = analyzer.toOperand(expression, check.scope);
       const operator = operand.kind === "Operator" ? operand.data : undefined;
       return [
         {
