@@ -4363,10 +4363,11 @@ describe("evaluation errors match TLC", () => {
     },
   );
 
-  const checkComparison = (comparison: string) =>
+  const checkComparison = (comparison: string, onPrint?: (text: string) => void) =>
     check({
       source: `---- MODULE M ----\nEXTENDS Integers, FiniteSets, TLC\nVARIABLE x\nInit == x = 0\nNext == x' = x /\\ ${comparison}\nInv == TRUE\n====`,
       config: "INIT Init\nNEXT Next\nINVARIANT Inv",
+      onPrint,
     });
 
   it("orders two SUBSET S by their bases without enumerating them, as TLC's SubsetValue#compareTo does", async () => {
@@ -4408,6 +4409,20 @@ describe("evaluation errors match TLC", () => {
       expect(result.failure?.fingerprint?.reason).toBe(reason);
     },
   );
+
+  const PRINTING_FILTER = 'LET Bad == {s \\in SUBSET {1, 2} : PrintT(<<"b", s>>) /\\ s # 1} IN';
+  const UNEXPANDED_FILTER_REASON =
+    "Attempted to check equality of the set {{s \\in {{}, {1}, {2}, {1, 2}} : <expression line 5, col 53 to line 5, col 79 of module M> }} with the value:\nSTRING";
+
+  it("prints a set it compares with STRING as TLC's toString does, which leaves a filter that fails unexpanded", async () => {
+    const printed: string[] = [];
+    const result = await checkComparison(`${PRINTING_FILTER} {Bad} = STRING`, (text) =>
+      printed.push(text),
+    );
+    expect(result.failure?.message).toBe(getRuntimeException(UNEXPANDED_FILTER_REASON));
+    expect(result.failure?.fingerprint?.reason).toBe(UNEXPANDED_FILTER_REASON);
+    expect([printed, result.failure?.traceOutput]).toEqual([['<<"b", {}>>'], ['<<"b", {}>>']]);
+  });
 
   const SET_EQUALITY_REASON = "Attempted to check equality of the set {1} with the value:\n1";
 

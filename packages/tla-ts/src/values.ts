@@ -511,7 +511,7 @@ const isOverriddenComparison = (left: Value, right: Value) =>
 const createComparisonError = (left: Value, right: Value) =>
   new TlaEvaluationError(
     isOverriddenSet(left)
-      ? `Attempted to compare overridden value ${prettyPrint(formatValue(left, true))} with non-overridden value:\n${prettyPrint(formatValue(right))}`
+      ? `Attempted to compare overridden value ${prettyPrint(formatValue(left))} with non-overridden value:\n${prettyPrint(formatValue(right))}`
       : `Attempted to compare ${describeKind(left)} ${formatValue(left)} with ${describeKind(right)} ${formatValue(right)}`,
   );
 
@@ -522,7 +522,7 @@ const compareOverriddenSets = (
 ) => {
   if (!isOverriddenSet(left)) {
     throw new TlaEvaluationError(
-      `Attempted to ${verb} the set ${prettyPrint(formatValue(isEnumerable(left) ? toFiniteSet(left) : left, true))} with the value:\n${prettyPrint(formatValue(right, true))}`,
+      `Attempted to ${verb} the set ${prettyPrint(formatValue(toFiniteSet(left)))} with the value:\n${prettyPrint(formatValue(right))}`,
     );
   }
   if (!isOverriddenSet(right)) throw createComparisonError(left, right);
@@ -533,7 +533,7 @@ const compareOverriddenSets = (
     return leftName === "Nat" ? -1 : 1;
   }
   throw new TlaModuleError(
-    `Attempted to compare ${prettyPrint(formatValue(left, true))} with the value\n${prettyPrint(formatValue(right, true))}`,
+    `Attempted to compare ${prettyPrint(formatValue(left))} with the value\n${prettyPrint(formatValue(right))}`,
   );
 };
 
