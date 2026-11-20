@@ -2360,6 +2360,29 @@ describe("evaluation errors match TLC", () => {
     ]);
   });
 
+  // Deviation from TLC: TLC fails with "Too many possible next states for the last state in the trace." as it rebuilds the step from x = 1.
+  it("rebuilds a step from a state with more successors than -maxSetSize, where TLC's Tool#getState fails", async () => {
+    const result = await check({
+      source:
+        "---- MODULE M ----\nEXTENDS Integers\nVARIABLES x, y\nInit == x = 0 /\\ y = 0\nNext == x < 3 /\\ x' = x + 1 /\\ y' \\in [{1, 2} -> SUBSET (1..(x + 1))]\nInv == x < 3\n====",
+      config: "INIT Init\nNEXT Next\nINVARIANT Inv\nCHECK_DEADLOCK FALSE",
+      maxSetSize: 10,
+    });
+    expect([
+      result.status,
+      result.violation?.trace.map(
+        (step) => `${formatValue(step.state.x)} ${formatValue(step.state.y)}`,
+      ),
+      result.violation?.traceFailure,
+      [result.generatedStates, result.distinctStates, result.queuedStates],
+    ]).toEqual([
+      "invariant-violation",
+      ["0 0", "1 <<{}, {}>>", "2 <<{}, {}>>", "3 <<{}, {}>>"],
+      undefined,
+      [70, 22, 15],
+    ]);
+  });
+
   it("records where the liveness check of a state fails after a successor of it is left incomplete, like TLC", async () => {
     const result = await check({
       source:
