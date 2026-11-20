@@ -109,6 +109,7 @@ interface LevelContext {
   recursiveSections: WeakMap<Definition, SectionMember[]>;
   // SANY's LabelNode#levelCheck is true for a label it level-checked before, in this module or one it sees.
   checkedLabels?: WeakSet<Expression>;
+  goalSelections?: WeakMap<Expression, Expression>;
 }
 
 export interface InstanceLevelCheck {
@@ -125,7 +126,8 @@ export type Scope = Map<string, ScopeEntry>;
 
 type Resolved =
   | { kind: "Declared"; name: string; level: number; arity: number }
-  | { kind: "Defined"; levels: OperatorLevels };
+  | { kind: "Defined"; levels: OperatorLevels }
+  | { kind: "Unknown"; name: string };
 
 export interface SectionMember {
   definition: Definition;
@@ -613,7 +615,7 @@ export const createLevelAnalyzer = (context: LevelContext) => {
     }
     const signature = CORE_SIGNATURES.get(name) ?? STANDARD_LEVELS.get(name);
     if (signature) return { kind: "Defined", levels: signature };
-    return { kind: "Declared", name, level: 0, arity: 0 };
+    return { kind: "Unknown", name };
   };
 
   const applyDeclared = (name: string, level: number, operands: Operand[]) => {
@@ -871,6 +873,17 @@ export const createLevelAnalyzer = (context: LevelContext) => {
   const toOperands = (expressions: Expression[], scope: Scope) =>
     expressions.map((expression) => toOperand(expression, scope));
 
+  // SANY level-checks a goal's clause with the goal, so selecting it in the proof reports nothing new.
+  const analyzeGoalSelection = (selection: Expression, operands: Operand[], scope: Scope) => {
+    const reported = errors.length;
+    const pending = messages.length;
+    const operand = toOperand(selection, scope);
+    const data = operand.kind === "Operator" ? applyDefined(operand.data, operands) : operand.data;
+    errors.splice(reported);
+    messages.splice(pending);
+    return data;
+  };
+
   const applyBuiltin = (
     operator: OperatorLevels,
     expressions: Expression[],
@@ -895,10 +908,19 @@ export const createLevelAnalyzer = (context: LevelContext) => {
     return data;
   };
 
-  const applyResolved = (resolved: Resolved, operands: Operand[]) =>
-    resolved.kind === "Declared"
-      ? applyDeclared(resolved.name, resolved.level, operands)
-      : applyDefined(resolved.levels, operands);
+  const applyResolved = (
+    resolved: Resolved,
+    operands: Operand[],
+    reference: Expression,
+    scope: Scope,
+  ) => {
+    if (resolved.kind === "Defined") return applyDefined(resolved.levels, operands);
+    if (resolved.kind === "Declared") return applyDeclared(resolved.name, resolved.level, operands);
+    const selection = context.goalSelections?.get(reference);
+    return selection
+      ? analyzeGoalSelection(selection, operands, scope)
+      : applyDeclared(resolved.name, 0, operands);
+  };
 
   const checkJunction = (levels: number[], name: string) => {
     if (isMixed(levels)) {
@@ -1066,11 +1088,11 @@ export const createLevelAnalyzer = (context: LevelContext) => {
       case "EnabledVariable":
         return createData(VARIABLE_LEVEL);
       case "Identifier":
-        return applyResolved(resolve(expression.name, scope), []);
+        return applyResolved(resolve(expression.name, scope), [], expression, scope);
       case "Apply": {
         const operands = toOperands(expression.args, scope);
         checkApply(expression, operands);
-        return applyResolved(resolve(expression.operator, scope), operands);
+        return applyResolved(resolve(expression.operator, scope), operands, expression, scope);
       }
       case "OperatorReference":
       case "Lambda":
@@ -1294,8 +1316,21 @@ export const createLevelAnalyzer = (context: LevelContext) => {
         selectionLevels.set(selected, data);
         return data;
       }
-      case "Subexpression":
-        return createData();
+      case "Subexpression": {
+        const selection = context.goalSelections?.get(expression);
+        return selection
+          ? analyzeGoalSelection(
+              selection,
+              toOperands(
+                expression.selectors.flatMap((selector) =>
+                  "args" in selector ? selector.args : [],
+                ),
+                scope,
+              ),
+              scope,
+            )
+          : createData();
+      }
     }
   };
 
@@ -1309,7 +1344,7 @@ export const createLevelAnalyzer = (context: LevelContext) => {
       getNonLeibnizNames(child, childScope, isChildNonLeibniz, names);
     const visitOperator = (name: string, args: Expression[]) => {
       const resolved = resolve(name, scope);
-      if (resolved.kind === "Declared") {
+      if (resolved.kind !== "Defined") {
         if (isNonLeibniz) names.add(name);
         args.forEach((arg) => visit(arg));
         return;

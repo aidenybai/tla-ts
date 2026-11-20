@@ -313,6 +313,7 @@ export const createEnvironment = (
   const substitutedDefinitions = new Set<Definition>();
   const enabledSubstitutions = new WeakSet<Expression>();
   const goalOperands = new WeakMap<Expression, Expression[]>();
+  const goalSelections = new WeakMap<Expression, Expression>();
   const instanceParams = new Set<OperatorParam>();
   const builtins = new Map<string, Builtin>(
     CORE_OPERATORS.map((operator) => [operator.name, operator]),
@@ -1360,6 +1361,7 @@ export const createEnvironment = (
       reports,
       warnings: scope.warnings,
       goalOperands,
+      goalSelections,
       recursiveCount: scope.recursiveCount,
       nestedRecursion: [...nestedRecursion.values()],
     });
@@ -1642,6 +1644,7 @@ export const createEnvironment = (
           instances: instanceLevels.instances,
           recursiveSections,
           checkedLabels,
+          goalSelections,
         },
         instanceChecks.splice(firstCheck),
         warnings,

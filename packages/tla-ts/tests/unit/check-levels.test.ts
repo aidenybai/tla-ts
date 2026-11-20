@@ -1463,6 +1463,56 @@ describe("level checking matches SANY", () => {
     },
   );
 
+  it.each([
+    [
+      "THEOREM T == ASSUME NEW CONSTANT q, (<>q) /\\ TRUE PROVE TRUE\n<1>1. T!2!1 \\/ (v' = v)\n  OBVIOUS\n<1> QED",
+      "line 4, col 7 to line 4, col 23",
+      "\\lor",
+    ],
+    [
+      "THEOREM T == ASSUME NEW CONSTANT q, l :: (<>q) PROVE TRUE\n<1>1. T!l \\/ (v' = v)\n  OBVIOUS\n<1> QED",
+      "line 4, col 7 to line 4, col 21",
+      "\\lor",
+    ],
+    [
+      "THEOREM T == ASSUME NEW CONSTANT q, \\A y : l(y) :: <>(y = q) PROVE TRUE\n<1>1. T!l(1) \\/ (v' = v)\n  OBVIOUS\n<1> QED",
+      "line 4, col 7 to line 4, col 24",
+      "\\lor",
+    ],
+    [
+      "THEOREM TRUE\n<1>1. ASSUME NEW CONSTANT r, <>r PROVE TRUE\n  <2>1. <1>1!2 \\/ (v' = v)\n    OBVIOUS\n  <2> QED\n<1> QED",
+      "line 5, col 9 to line 5, col 26",
+      "\\lor",
+    ],
+    [
+      "THEOREM T == ASSUME NEW CONSTANT q, \\A y : <>(y = q) PROVE TRUE\n<1>1. T!2!(1) \\/ (v' = v)\n  OBVIOUS\n<1> QED",
+      "line 4, col 7 to line 4, col 25",
+      "\\lor",
+    ],
+    [
+      "THEOREM T == ASSUME NEW CONSTANT q, (x' /\\ []x) PROVE TRUE\n<1>1. T!2 \\/ TRUE\n  OBVIOUS\n<1> QED",
+      "line 3, col 38 to line 3, col 46",
+      "\\land",
+    ],
+  ])(
+    "levels a selection of a goal's clause in its proof as the clause, as SANY does: %s",
+    async (theorem, location, operator) => {
+      await expect(
+        check({
+          source: `---- MODULE M ----\nVARIABLE v, x\n${theorem}\nInit == v = 0 /\\ x = 0\nNext == v' = v /\\ x' = x\n====`,
+          config: "INIT Init\nNEXT Next",
+        }),
+      ).rejects.toThrow(
+        createSanyError([
+          {
+            location: `${location} of module M`,
+            message: `${operator} has both temporal formula and action as arguments.`,
+          },
+        ]),
+      );
+    },
+  );
+
   it("checks a label selected from a step's statement, as SANY does", async () => {
     const exceeds = "The level of argument 1 exceeds the maximum level allowed by the operator.";
     await expect(
