@@ -361,6 +361,43 @@ describe("compiles scripts by specializing ESCore", () => {
     });
   });
 
+  describe("holds a long string of runs of consecutive code points as the runs", () => {
+    const literal = `${[
+      ...Array.from({ length: 5000 }, (_, index) => 0x4e00 + index),
+      ...Array.from({ length: 3000 }, (_, index) => 0x1f000 + index),
+    ]
+      .map((codePoint) => `\\u{${codePoint.toString(16)}}`)
+      .join("")}\\uD800\\uDBFF`;
+    const getSource = (expected: string) => `
+      const literal = "${literal}";
+      let built = "";
+      for (let code = 0x4e00; code < 0x4e00 + 5000; code++) built += String.fromCharCode(code);
+      const result = [
+        literal.length,
+        literal.charCodeAt(4999),
+        literal.charCodeAt(5000),
+        literal.charCodeAt(5001),
+        literal.codePointAt(5000 + 2 * 2999),
+        literal.charCodeAt(literal.length - 1),
+        literal.slice(0, 5000) === built,
+        /^\\p{Script=Han}+/u.exec(literal)?.[0].length,
+      ].join();
+      if (result !== "${expected}") throw new Error(result);
+    `;
+
+    it("agrees with Node", async () => {
+      expect(
+        (await checkScript(getSource("11002,24967,55356,56320,129975,56319,true,5000"))).message,
+      ).toBeUndefined();
+    }, 600_000);
+
+    it("rejects another result", async () => {
+      expect(
+        (await checkScript(getSource("11002,24967,55356,56320,129975,56320,true,5000"))).message,
+      ).toContain(THREW);
+    }, 600_000);
+  });
+
   describe("repeats a character class and searches a long string as RepeatMatcher does", () => {
     const getSource = (expected: string) => `
       const run = "a".repeat(30000);

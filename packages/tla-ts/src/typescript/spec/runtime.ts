@@ -891,6 +891,20 @@ export const RUNTIME_DEFINITIONS: GeneratedDefinition[] = [
   ...STACK_DEFINITIONS,
   // The code units of a TLA+ string's characters.
   `StringUnits(t) == [i \\in 1..Len(t) |-> CharacterUnits[SubSeq(t, i, i)]]`,
+  // The code units of runs of consecutive code points, the ith from starts[i] to the code unit
+  // ends[i], each code point below 65536 one code unit and each from there a surrogate pair.
+  `CodeUnitsOfRuns(starts, ends) ==
+  [k \\in 1..ends[Len(ends)] |->
+     LET i == RunOfUnit(ends, k, 1, Len(ends))
+         offset == k - 1 - (IF i = 1 THEN 0 ELSE ends[i - 1])
+     IN IF starts[i] < 65536 THEN starts[i] + offset
+        ELSE LET c == starts[i] + (offset \\div 2) - 65536 IN
+             IF (offset % 2) = 0 THEN 55296 + (c \\div 1024) ELSE 56320 + (c % 1024)]`,
+  // The run of ends that holds the code unit k: the first that ends at or after it.
+  `RunOfUnit(ends, k, lo, hi) ==
+  IF lo = hi THEN lo
+  ELSE LET mid == (lo + hi) \\div 2 IN
+       IF ends[mid] >= k THEN RunOfUnit(ends, k, lo, mid) ELSE RunOfUnit(ends, k, mid + 1, hi)`,
   // The code unit of each character that a TLA+ string can hold.
   `CharacterUnits ==
   LET characters == <<${[...CHARACTERS.values()].map((character) => `"${character}"`).join(", ")}>>

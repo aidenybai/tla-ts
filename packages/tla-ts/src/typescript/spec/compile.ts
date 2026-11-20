@@ -56,6 +56,37 @@ const getStringUnits = (sequence: string) => {
   return text === undefined ? undefined : `StringUnits(${text})`;
 };
 
+// A long sequence of code units as runs of consecutive code points, the first of each and the code
+// unit where each ends, which CodeUnitsOfRuns makes the units of as a function: a few numbers that
+// TLA+ reads in place of a tuple of millions, as a string of every character of a Unicode property
+// holds. Each run's code points are all below 65536 or all from there, so that each takes one code
+// unit or two; a surrogate pair is one code point and a lone surrogate one code unit, which the
+// runs encode back to the units they came from.
+const getUnitRuns = (sequence: string) => {
+  const units = (sequence.match(/\d+/g) ?? []).map(Number);
+  if (units.length < 4096 || units.some((unit) => unit > 0xffff)) return undefined;
+  const starts: number[] = [];
+  const ends: number[] = [];
+  let index = 0;
+  let previous = -2;
+  while (index < units.length) {
+    const unit = units[index];
+    const next = units[index + 1];
+    const isPair = unit >= 0xd800 && unit <= 0xdbff && next >= 0xdc00 && next <= 0xdfff;
+    const codePoint = isPair ? (unit - 0xd800) * 1024 + (next - 0xdc00) + 0x10000 : unit;
+    index += isPair ? 2 : 1;
+    if (codePoint === previous + 1 && codePoint !== 0x10000) ends[ends.length - 1] = index;
+    else {
+      starts.push(codePoint);
+      ends.push(index);
+    }
+    previous = codePoint;
+  }
+  return starts.length * 16 > units.length
+    ? undefined
+    : `CodeUnitsOfRuns(<<${starts.join(", ")}>>, <<${ends.join(", ")}>>)`;
+};
+
 const compact = (definitions: readonly CodeDefinition[]) => {
   const merged = new Map<string, string>();
   const firsts = new Map<string, string>();
@@ -95,7 +126,7 @@ const compact = (definitions: readonly CodeDefinition[]) => {
     ...[...sequences].map((entry) => ({
       name: entry[1],
       arity: 0,
-      text: `${entry[1]} == ${getStringUnits(entry[0]) ?? entry[0]}`,
+      text: `${entry[1]} == ${getStringUnits(entry[0]) ?? getUnitRuns(entry[0]) ?? entry[0]}`,
     })),
     ...kept,
   ];
