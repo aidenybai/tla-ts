@@ -949,8 +949,35 @@ export const LOCALE_METHODS = [
 // toLocaleUpperCase differ from toLowerCase and toUpperCase.
 const TAILORED_CASING = new Set(["az", "el", "hy", "lt", "tr"]);
 
+// The host's local time is UTC's where its default time zone is UTC, whose name V8 writes after a
+// date's offset in the host's default locale. In another time zone a compiled spec stops at local
+// time, which ESCore keeps as UTC's.
+const isUtcHost = new Intl.DateTimeFormat().resolvedOptions().timeZone === "UTC";
+const HOST_ZONE_NAME = / \(.*\)$/.exec(new Date(0).toString())?.[0] ?? "";
+const LOCAL_TIME_STOP = `Assert(FALSE, "tla-ts can't tell the host's local time, whose time zone isn't UTC")`;
+
 const HOST_PATCHES = [
   { name: "ParseDate", from: "ParseDate(u) ==", to: "ParseSpecDate(u) ==" },
+  {
+    name: "LocalTime",
+    from: "LocalTime(t) == t",
+    to: `LocalTime(t) == ${isUtcHost ? "t" : LOCAL_TIME_STOP}`,
+  },
+  {
+    name: "UTC",
+    from: "UTC(t) == IF NumIsFinite(t) THEN t ELSE NaN",
+    to: isUtcHost ? "UTC(t) == IF NumIsFinite(t) THEN t ELSE NaN" : `UTC(t) == ${LOCAL_TIME_STOP}`,
+  },
+  {
+    name: "TimeZoneString",
+    from: `N("+0000")`,
+    to: `N("+0000") \\o <<${Array.from(HOST_ZONE_NAME, (character) => character.charCodeAt(0)).join(", ")}>>`,
+  },
+  {
+    name: "TemporalNowBuiltin",
+    from: `CASE m = "timeZoneId" -> Ok(s, Str(UTCTimeZone.id))`,
+    to: `CASE m = "timeZoneId" -> ${isUtcHost ? "Ok(s, Str(UTCTimeZone.id))" : LOCAL_TIME_STOP}`,
+  },
   // ESCore runs toLocaleLowerCase and toLocaleUpperCase as toLowerCase and toUpperCase, which the
   // host does too in its default locale, unless that locale tailors case, and in no locale given.
   {

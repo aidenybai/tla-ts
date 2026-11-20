@@ -1544,6 +1544,41 @@ describe("compiles scripts by specializing ESCore", () => {
     });
   });
 
+  describe("keeps a date's local time as a host in UTC does", () => {
+    const getSource = (expected: string) => `
+      const day = new Date(86400000);
+      const result = [String(day), day.toTimeString(), day.getHours(), day.getTimezoneOffset(), new Date(1970, 0, 2).getTime()].join();
+      if (result !== "${expected}") throw new Error(result);
+    `;
+
+    it("agrees with Node", async () => {
+      const expected =
+        "Fri Jan 02 1970 00:00:00 GMT+0000 (Coordinated Universal Time),00:00:00 GMT+0000 (Coordinated Universal Time),0,0,86400000";
+      expect((await checkScript(getSource(expected))).message).toBeUndefined();
+    });
+
+    it("rejects another result", async () => {
+      const expected = "Fri Jan 02 1970 00:00:00 GMT+0000,00:00:00 GMT+0000,0,0,86400000";
+      expect((await checkScript(getSource(expected))).message).toContain(THREW);
+    });
+
+    describe.runIf(Reflect.has(globalThis, "Temporal"))("gives the host's time zone", () => {
+      it("agrees with Node", async () => {
+        expect(
+          (await checkScript('if (Temporal.Now.timeZoneId() !== "UTC") throw new Error();'))
+            .message,
+        ).toBeUndefined();
+      });
+
+      it("rejects another result", async () => {
+        expect(
+          (await checkScript('if (Temporal.Now.timeZoneId() !== "Etc/UTC") throw new Error();'))
+            .message,
+        ).toContain(THREW);
+      });
+    });
+  });
+
   describe("stops at a call to a function that its script names nowhere else", () => {
     it("runs a script that never calls it", async () => {
       expect(
