@@ -202,6 +202,19 @@ describe("the model finder, as Z3 5.3.2 cleans up its instantiation sets", () =>
       ]),
     ).toEqual(["sat", "(:rlimit 1301)", "sat", "(:rlimit 2581)"]);
   });
+
+  it("frees the bound the quantifier analyzer makes before it adds one to it", () => {
+    expect(
+      run([
+        "(set-option :auto_config false)",
+        "(set-option :smt.mbqi true)",
+        "(declare-fun f (Int) Int)",
+        "(assert (forall ((x0 Int) (x1 Int)) (<= x1 (f 2))))",
+        "(check-sat)",
+        "(get-info :rlimit)",
+      ]),
+    ).toEqual(["unsat", "(:rlimit 378)"]);
+  });
 });
 
 describe("e-matching, as Z3 5.3.2 counts its steps", () => {

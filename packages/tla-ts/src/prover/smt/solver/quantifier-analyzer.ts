@@ -17,6 +17,7 @@ import {
   type AstManager,
 } from "./ast";
 import type { Context } from "./context";
+import { assign, release } from "./expr-ref";
 import { collectMacroCandidates, releaseCondMacros } from "./model-macro-solver";
 import { pullQuant } from "./pull-quant";
 import { Rational } from "./rational";
@@ -31,6 +32,9 @@ type QInfo =
 
 const isSameQInfo = (first: QInfo, second: QInfo) =>
   JSON.stringify(first) === JSON.stringify(second);
+
+const getQInfoExpr = (info: QInfo) =>
+  "term" in info ? info.term : "offset" in info ? info.offset : -1;
 
 const mkVarPair = (kind: "x_eq_y" | "x_neq_y" | "x_leq_y", first: number, second: number): QInfo =>
   first > second ? { kind, first: second, second: first } : { kind, first, second };
@@ -59,6 +63,7 @@ export class QuantifierInfo {
   }
 
   release() {
+    for (const info of this.qinfos) release(this.manager, getQInfoExpr(info));
     this.resetTheOne();
     releaseCondMacros(this.manager, this.condMacros);
     this.manager.decRef(this.flatQ);
@@ -74,6 +79,7 @@ export class QuantifierInfo {
       this.checkpoint();
       if (isSameQInfo(other, info)) return;
     }
+    assign(this.manager, -1, getQInfoExpr(info));
     this.qinfos.push(info);
   }
 
@@ -145,11 +151,9 @@ export class QuantifierInfo {
             for (const enode of context.enodesOf(info.decl))
               if (context.isRelevant(enode.owner)) {
                 const arg = enode.getArg(info.argIndex);
-                sJ.insert(
-                  manager,
-                  solver.rewriter.mkSub(arg.owner, info.offset),
-                  context.getGeneration(arg),
-                );
+                const shifted = assign(manager, -1, solver.rewriter.mkSub(arg.owner, info.offset));
+                sJ.insert(manager, shifted, context.getGeneration(arg));
+                manager.decRef(shifted);
               }
           } else {
             this.populateFVar(aFI, info.decl, info.argIndex);
@@ -188,12 +192,16 @@ export class QuantifierInfo {
   }
 
   private copyInstances(rewriter: Rewriter, from: Node, to: Node, offset: number, isPlus: boolean) {
-    for (const entry of from.getInstantiationSet().elems)
-      to.insert(
-        this.manager,
+    const manager = this.manager;
+    for (const entry of from.getInstantiationSet().elems) {
+      const shifted = assign(
+        manager,
+        -1,
         isPlus ? rewriter.mkAdd([entry[0], offset]) : rewriter.mkSub(entry[0], offset),
-        entry[1],
       );
+      to.insert(manager, shifted, entry[1]);
+      manager.decRef(shifted);
+    }
   }
 
   getMacroBasedInstSet(varIndex: number, evaluate: Evaluate) {
@@ -270,38 +278,43 @@ export class QuantifierAnalyzer {
       } else return undefined;
     }
     if (variable === undefined) return undefined;
-    const term = args.length === 1 ? args[0] : this.rewriter.mkAdd(args);
+    // The caller owns the term, which Z3 keeps in an expr_ref until the caller's scope ends.
+    const term = assign(manager, -1, args.length === 1 ? args[0] : this.rewriter.mkAdd(args));
     return { variable, term, isInverted };
   }
 
-  private mkAdd(first: number, second: number) {
-    return this.rewriter.mkAdd([first, second]);
-  }
-
   private isVarAndGround(lhs: number, rhs: number) {
-    if (this.isVar(lhs) && this.manager.isGroundApp(rhs))
-      return { variable: lhs, term: rhs, isInverted: false };
-    if (this.isVar(rhs) && this.manager.isGroundApp(lhs))
-      return { variable: rhs, term: lhs, isInverted: false };
+    const manager = this.manager;
+    if (this.isVar(lhs) && manager.isGroundApp(rhs))
+      return { variable: lhs, term: assign(manager, -1, rhs), isInverted: false };
+    if (this.isVar(rhs) && manager.isGroundApp(lhs))
+      return { variable: rhs, term: assign(manager, -1, lhs), isInverted: false };
     const left = this.isVarPlusGround(lhs);
-    if (left !== undefined && this.manager.isGroundApp(rhs))
-      return {
-        variable: left.variable,
-        term: left.isInverted
-          ? this.rewriter.mkSub(left.term, rhs)
-          : this.rewriter.mkSub(rhs, left.term),
-        isInverted: left.isInverted,
-      };
+    if (left !== undefined && manager.isGroundApp(rhs)) {
+      const term = assign(
+        manager,
+        -1,
+        left.isInverted ? this.rewriter.mkSub(left.term, rhs) : this.rewriter.mkSub(rhs, left.term),
+      );
+      manager.decRef(left.term);
+      return { variable: left.variable, term, isInverted: left.isInverted };
+    }
     const right = this.isVarPlusGround(rhs);
-    if (right !== undefined && this.manager.isGroundApp(lhs))
-      return {
-        variable: right.variable,
-        term: right.isInverted
-          ? this.rewriter.mkSub(right.term, lhs)
-          : this.rewriter.mkSub(lhs, right.term),
-        isInverted: right.isInverted,
-      };
-    return undefined;
+    if (left !== undefined) manager.decRef(left.term);
+    if (right === undefined) return undefined;
+    if (!manager.isGroundApp(lhs)) {
+      manager.decRef(right.term);
+      return undefined;
+    }
+    const term = assign(
+      manager,
+      -1,
+      right.isInverted
+        ? this.rewriter.mkSub(right.term, lhs)
+        : this.rewriter.mkSub(lhs, right.term),
+    );
+    manager.decRef(right.term);
+    return { variable: right.variable, term, isInverted: right.isInverted };
   }
 
   private isVarMinusVar(expr: number) {
@@ -341,11 +354,19 @@ export class QuantifierAnalyzer {
     if (found === undefined) return undefined;
     if (isNegated) return { variable: found.variable, term: found.term };
     const isLe = (manager.getOp(atom) === OP_LE) !== found.isInverted;
-    const one = manager.mkNumeralOfSort(Rational.one, manager.sorts[found.term]);
-    return {
-      variable: found.variable,
-      term: isLe ? this.mkAdd(found.term, one) : this.rewriter.mkSub(found.term, one),
-    };
+    const one = assign(
+      manager,
+      -1,
+      manager.mkNumeralOfSort(Rational.one, manager.sorts[found.term]),
+    );
+    const term = assign(
+      manager,
+      -1,
+      isLe ? this.rewriter.mkAdd([found.term, one]) : this.rewriter.mkSub(found.term, one),
+    );
+    manager.decRef(one);
+    manager.decRef(found.term);
+    return { variable: found.variable, term };
   }
 
   private visitFormula(expr: number, polarity: Polarity) {
@@ -373,7 +394,7 @@ export class QuantifierAnalyzer {
         continue;
       }
       const found = this.isVarPlusGround(arg);
-      if (found !== undefined && !found.isInverted) {
+      if (found !== undefined && !found.isInverted)
         info.insertQInfo({
           kind: "f_var_plus_offset",
           decl,
@@ -381,9 +402,8 @@ export class QuantifierAnalyzer {
           varIndex: manager.values[found.variable],
           offset: found.term,
         });
-        continue;
-      }
-      this.visitTerm(arg);
+      else this.visitTerm(arg);
+      if (found !== undefined) manager.decRef(found.term);
     }
   }
 
@@ -432,6 +452,7 @@ export class QuantifierAnalyzer {
         varIndex: manager.values[xEqT.variable],
         term: xEqT.term,
       });
+      manager.decRef(xEqT.term);
       return;
     }
     const xEqY = isEq
@@ -462,6 +483,7 @@ export class QuantifierAnalyzer {
         varIndex: manager.values[xGleT.variable],
         term: xGleT.term,
       });
+      manager.decRef(xGleT.term);
       return;
     }
     this.processApp(atom);
