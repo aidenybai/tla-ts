@@ -266,7 +266,12 @@ const compilations = (): Plugin => ({
       source,
       typescript: highlight(source, "typescript").lines,
       compilation,
-      tla: highlight(compilation.tla, "tlaplus"),
+      // ESCore's code of a program runs to hundreds of lines, which the site ships as plain text
+      // rather than with the styles of each token that highlighting gives.
+      tla: {
+        code: compilation.tla,
+        lines: compilation.tla.split("\n").map((content) => [{ content, style: {} }]),
+      },
     } satisfies Precompiled)};`;
   },
 });
