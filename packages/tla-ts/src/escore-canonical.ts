@@ -179,9 +179,19 @@ const isDefaultConstructor = (slots: Value) => {
   return id.length === 2 && id[0] === "Class" && id[1] === "default";
 };
 
+// The built-in functions whose data is a name, which refers to nothing: the host's that stop.
+const isNamedBuiltin = (slots: Value) => {
+  const id = getList(get(slots, "id"));
+  return (
+    id.length === 2 &&
+    id[0] === "Module" &&
+    (id[1] === "hostStop" || id[1] === "hostQuietConstructor")
+  );
+};
+
 const isPlainBuiltin = (slots: Value) =>
   getDomain(slots).join() === BUILTIN_SLOTS.join() &&
-  (isCellBuiltin(slots) || isModelValue(get(slots, "data"), "Empty"));
+  (isCellBuiltin(slots) || isNamedBuiltin(slots) || isModelValue(get(slots, "data"), "Empty"));
 
 const slotRefs = (object: Value, realm: Realm, refs: number[]) => {
   const objectClass = getString(object, "class");

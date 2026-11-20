@@ -274,6 +274,29 @@ describe("checks a module's exported functions as a model on ESCore", () => {
       });
     });
 
+    // A global of the host that ESCore lacks is a built-in that stops where a program calls it,
+    // which the state keeps, as it refers to nothing.
+    describe("keeps the host's globals that stop where a program calls them", () => {
+      const getBody = (operator: string) =>
+        `let count = 0;\nconst later = typeof setImmediate;\nexport const tick = () => {\n  if (count < 2 && later === "function") count += flip(0);\n};\nexport const isSmall = () => count ${operator} 2;\n`;
+
+      it("agrees with Node", async () => {
+        expect(getCounts(await check(getBody("<=")))).toEqual(["deadlock", 3, 3]);
+      });
+
+      it("rejects another result", async () => {
+        expect(getCounts(await check(getBody("<")))).toEqual(["invariant-violation", 3, 3]);
+      });
+
+      it("numbers the state natively as ESCanonical does", async () => {
+        const source = `import { flip } from "./flip.ts";\n${getBody("<=")}`;
+        writeFileSync(join(directory, "host.ts"), source);
+        expect(getCounts(await checkModel(source, join(directory, "host.ts"), "compared"))).toEqual(
+          ["deadlock", 3, 3],
+        );
+      });
+    });
+
     // A class without a constructor of its own has a built-in one, which holds the class's
     // fields, and which the canonical form numbers natively and in TLA+ alike.
     describe("keeps a class whose constructor is the default one", () => {

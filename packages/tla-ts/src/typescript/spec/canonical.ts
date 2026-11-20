@@ -32,6 +32,8 @@ PlainClasses == {"ordinary", "array", "error", "boolean", "number", "string", "d
 \* The built-in functions whose data is the cell of a promise's resolving functions or capability.
 CellBuiltins == {<<"Promise", "resolveFunction">>, <<"Promise", "rejectFunction">>, <<"Promise", "capabilityExecutor">>}
 BuiltinSlots == {"id", "constructor", "data", "realm", "initialName"}
+\* The built-in functions whose data is a name, which refers to nothing: the host's that stop.
+NamedBuiltins == {<<"Module", "hostStop">>, <<"Module", "hostQuietConstructor">>}
 \* The slots of a class's default constructor, a built-in that holds the class's elements.
 DefaultConstructorSlots == BuiltinSlots \cup {"ctorKind", "sourceText", "privateMethods", "fields", "initializers"}
 SlotRefs(o, r) ==
@@ -52,7 +54,7 @@ SlotRefs(o, r) ==
     [] o.class = "cell" /\ DOMAIN o.slots = {"promise"} -> MaybeRef(o.slots.promise, r)
     [] o.class = "cell" /\ DOMAIN o.slots = {"resolve", "reject"} -> MaybeRef(o.slots.resolve, r) \o MaybeRef(o.slots.reject, r)
     [] o.class = "builtin" /\ DOMAIN o.slots = BuiltinSlots /\ o.slots.id \in CellBuiltins -> ObjectRef(o.slots.data, r)
-    [] o.class = "builtin" /\ DOMAIN o.slots = BuiltinSlots /\ o.slots.data = Empty -> <<>>
+    [] o.class = "builtin" /\ DOMAIN o.slots = BuiltinSlots /\ (o.slots.data = Empty \/ o.slots.id \in NamedBuiltins) -> <<>>
     [] o.class = "builtin" /\ DOMAIN o.slots = DefaultConstructorSlots /\ o.slots.id = <<"Class", "default">> ->
          ConcatMap(o.slots.fields, LAMBDA e : ElementRefs(e, r))
          \o ConcatMap(o.slots.privateMethods, LAMBDA e : ElementRefs(e, r))
