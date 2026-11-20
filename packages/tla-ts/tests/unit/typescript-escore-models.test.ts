@@ -308,9 +308,7 @@ describe("checks a module's exported functions as a model on ESCore", () => {
     it("throws where a declare binds nothing, as Node does", async () => {
       const result = await checkModel(getSource("declare const pending: Set<number>;"));
       expect([result.status, result.distinct]).toEqual(["error", 1]);
-      expect(result.message).toContain(
-        "tla-ts can't read the message that Node writes for an error it throws",
-      );
+      expect(result.message).toContain('"pending is not defined"');
     });
 
     it("takes the step where the module binds it", async () => {
