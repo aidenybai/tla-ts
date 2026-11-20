@@ -1653,8 +1653,6 @@ const enumerateSetOperation = (value: SetOperationValue, isMembershipFramed: boo
   return toFiniteSet(createEnumeratedSet(kept)).elements;
 };
 
-const getBoundedElements = (set: Value) => toFiniteSet(set).elements;
-
 // TLC's elements() streams [S -> T], [l : S], S \X T and set filters past -maxSetSize, which bounds only toSetEnum.
 const getUnboundedElements = (value: Value): Value[] => {
   if (
@@ -1686,7 +1684,7 @@ const getUnboundedElements = (value: Value): Value[] => {
 const enumerateSet = (
   value: Value,
   isBounded = true,
-  getElements = isBounded ? getBoundedElements : getUnboundedElements,
+  getElements = getUnboundedElements,
 ): Value[] => {
   if (typeof value !== "object")
     throw new TlaEvaluationError(`Expected a set but found ${formatValue(value)}`);

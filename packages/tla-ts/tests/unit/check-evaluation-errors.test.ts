@@ -3098,6 +3098,20 @@ describe("evaluation errors match TLC", () => {
       ],
       undefined,
     ],
+    [
+      "x' = x",
+      "\\A t \\in (1..2) \\X [a : 1..3, b : 1..4] : TRUE",
+      "Attempted to construct a set with too many elements (>10).",
+      [],
+      undefined,
+    ],
+    [
+      "x' = x",
+      "\\A f \\in [{1} -> {r \\in [a : 1..4, b : 1..4] : r.a < 4}] : TRUE",
+      "Attempted to construct a set with too many elements (>10).",
+      [],
+      undefined,
+    ],
   ])(
     "bounds the sets TLC's toSetEnum collects by -maxSetSize and pops the frames it doesn't fingerprint: %s, %s",
     async (next, invariant, message, callStack, reason) => {
