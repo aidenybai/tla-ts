@@ -465,38 +465,38 @@ const compileMembership = (
         : `In computing ${getComputation(run)}, the right side of \\IN is not enumerable.`;
       throw createRunError(run, `${message}\n${describeRange(expression)}`);
     }
-    if (!run.generator && typeof value === "object" && value.kind === "Set") {
+    if (run.generator) {
+      const elements = getStreamedElements(value);
+      for (const element of getRandomSubset(
+        elements.length,
+        value,
+        run.environment.runtime.getRandom(),
+        run.environment.runtime.version,
+      )) {
+        onComplete(assign(partial, index, element), action);
+        if (run.generator.kept > 0 || run.isStopped) return;
+      }
+      for (let position = 0; position < elements.length && !run.isStopped; position++) {
+        onComplete(assign(partial, index, elements[position]), action);
+      }
+      return;
+    }
+    if (typeof value === "object" && value.kind === "Set") {
       for (let position = 0; position < value.elements.length && !run.isStopped; position++) {
         onComplete(assign(partial, index, value.elements[position]), action);
       }
       return;
     }
-    if (!run.generator && typeof value === "object" && value.kind === "Interval") {
+    if (typeof value === "object" && value.kind === "Interval") {
       for (let element = value.low; element <= value.high && !run.isStopped; element++) {
         onComplete(assign(partial, index, element), action);
       }
       return;
     }
-    if (!run.generator) {
-      someStreamedElement(value, (element) => {
-        if (!run.isStopped) onComplete(assign(partial, index, element), action);
-        return run.isStopped;
-      });
-      return;
-    }
-    const elements = getStreamedElements(value);
-    for (const element of getRandomSubset(
-      elements.length,
-      value,
-      run.environment.runtime.getRandom(),
-      run.environment.runtime.version,
-    )) {
-      onComplete(assign(partial, index, element), action);
-      if (run.generator.kept > 0 || run.isStopped) return;
-    }
-    for (let position = 0; position < elements.length && !run.isStopped; position++) {
-      onComplete(assign(partial, index, elements[position]), action);
-    }
+    someStreamedElement(value, (element) => {
+      if (!run.isStopped) onComplete(assign(partial, index, element), action);
+      return run.isStopped;
+    });
   };
 };
 
