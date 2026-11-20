@@ -487,4 +487,60 @@ describe("checks a module's exported functions as a model on ESCore", () => {
       expect(result.message).toContain("the native call differs from ESCore's");
     });
   });
+
+  // TypeScript's type of a parameter gives the values that a step passes it, as docs/typescript.md
+  // lists them: the model counts the distinct values it saw.
+  describe("passes a parameter every value of its type", () => {
+    const getSource = (type: string, bound: number) => `
+      const key = (value: unknown) =>
+        JSON.stringify(value, (_, inner) =>
+          inner instanceof Set ? ["set", ...[...inner].sort()] : inner instanceof Map ? ["map", ...[...inner].sort()] : inner,
+        );
+      let seen = new Set<string>();
+      export const see = (value: ${type}) => {
+        if (seen.has(key(value))) return;
+        seen.add(key(value));
+      };
+      export const isBounded = () => seen.size <= ${bound};
+    `;
+
+    it.each([
+      ["boolean", 2],
+      ['"a" | "b" | null', 3],
+      ["number", 7],
+      ["string", 3],
+      ["[0 | 1, boolean]", 4],
+      ["{ a: 0 | 1; b: true }", 2],
+      ["true[]", 4],
+      ["Set<0 | 1>", 4],
+      ['Map<"a", 0 | 1>', 3],
+    ])("passes each value of %s, of which there are %i", async (type, count) => {
+      expect((await checkModel(getSource(type, count))).status).not.toBe("invariant-violation");
+    });
+
+    it.each([
+      ["boolean", 2],
+      ['"a" | "b" | null', 3],
+      ["number", 7],
+      ["string", 3],
+      ["[0 | 1, boolean]", 4],
+      ["{ a: 0 | 1; b: true }", 2],
+      ["true[]", 4],
+      ["Set<0 | 1>", 4],
+      ['Map<"a", 0 | 1>', 3],
+    ])("rejects fewer values of %s than %i", async (type, count) => {
+      expect((await checkModel(getSource(type, count - 1))).status).toBe("invariant-violation");
+    });
+
+    it("checks the other functions where a parameter's type has values it can't list", async () => {
+      const result = await checkModel(`
+        let count = 0;
+        export const run = (step: () => void) => { step(); count++; };
+        export const increment = () => { if (count < 2) count++; };
+        export const isBounded = () => count <= 2;
+      `);
+      expect(result.status).not.toBe("stopped");
+      expect(result.status).not.toBe("invariant-violation");
+    });
+  });
 });

@@ -1,0 +1,1097 @@
+import ts from "@typescript/typescript6";
+import { TlaTypeScriptError } from "../../errors";
+import { KEYWORDS } from "../../lexer";
+import { parseModule } from "../../parser";
+import { formatString } from "../../printer";
+import { type FunctionNode, getFunction, isPlain, skipCasts } from "../context";
+import { createNames } from "../names";
+import { createProgram, type Library } from "../program";
+
+// A state variable of a model, which a trace shows by its binding's name.
+export interface StateVariable {
+  name: string;
+}
+
+interface Declared {
+  name: string;
+  declaration: ts.FunctionDeclaration | ts.VariableDeclaration;
+  identifier: ts.Identifier;
+}
+
+interface Exported extends Declared {
+  node: FunctionNode;
+  body: ts.ConciseBody;
+  tags: Map<string, string>;
+}
+
+interface Parameter {
+  node: ts.ParameterDeclaration;
+  name: string;
+  symbol: ts.Symbol | undefined;
+}
+
+// Why a type has no finite set of values.
+interface Infinite {
+  message: string;
+  // Whether TLC can't compare the values, which tla-ts could list.
+  isIncomparable?: boolean;
+}
+
+// What TLC compares in a value of a finite type: a primitive's kind, or a set's elements, or a
+// function's keys and values, as a tuple, an array, a record, or a map is a function. Undefined and
+// null are model values, which TLC compares with any value.
+interface Shape {
+  kind: "model" | "boolean" | "number" | "string" | "set" | "function";
+  keys?: Shape;
+  values?: ReadonlyMap<string, Shape>;
+  rest?: Shape;
+}
+
+const TEMPORAL_TAGS = new Map([
+  ["eventually", (value: string) => `<>(${value})`],
+  ["alwaysEventually", (value: string) => `[]<>(${value})`],
+  ["eventuallyAlways", (value: string) => `<>[](${value})`],
+]);
+
+// The tags whose functions become named predicates, by the section of the config that lists them.
+const PREDICATE_TAGS = new Map([
+  ["constraint", "CONSTRAINTS"],
+  ["actionConstraint", "ACTION_CONSTRAINTS"],
+  ["view", "VIEW"],
+  ["postcondition", "POSTCONDITIONS"],
+  ["assume", "ASSUME"],
+]);
+
+// The tags that make an exported function a property of the spec rather than an action.
+const VALUE_TAGS = new Set([
+  ...TEMPORAL_TAGS.keys(),
+  ...PREDICATE_TAGS.keys(),
+  "initially",
+  "always",
+  "leadsTo",
+  "terminating",
+]);
+
+const KNOWN_TAGS = new Set([...VALUE_TAGS, "fair", "strongFair", "symmetric", "noDeadlock"]);
+
+// The methods that change the array, set, or map they're called on.
+const MUTATING_METHODS = new Set([
+  "push",
+  "unshift",
+  "pop",
+  "shift",
+  "add",
+  "delete",
+  "clear",
+  "set",
+  "getOrInsert",
+  "getOrInsertComputed",
+  "sort",
+  "reverse",
+  "fill",
+  "copyWithin",
+  "splice",
+]);
+
+const MAX_ARRAY_LENGTH = 3;
+
+// The names that the model's own definitions and variables take, which no TypeScript name may.
+// A bound whose set a guard in the module's function gives, which a step reads in its state.
+const GUARDED = "GuardedSet";
+
+const MODEL_NAMES = new Set(["heap", "model", GUARDED]);
+
+// Whether one typo, as an insertion, a deletion, a substitution, or a swap of two adjacent
+// characters, turns one name into the other.
+const isOneTypoApart = (name: string, other: string) => {
+  const [shorter, longer] = name.length <= other.length ? [name, other] : [other, name];
+  const start = [...shorter].findIndex((character, index) => character !== longer[index]);
+  if (start === -1) return longer.length - shorter.length === 1;
+  if (longer.length - shorter.length === 1) return shorter.slice(start) === longer.slice(start + 1);
+  return (
+    longer.length === shorter.length &&
+    (shorter.slice(start + 1) === longer.slice(start + 1) ||
+      (shorter[start] === longer[start + 1] &&
+        shorter[start + 1] === longer[start] &&
+        shorter.slice(start + 2) === longer.slice(start + 2)))
+  );
+};
+
+// A tag that tla-ts doesn't know is documentation, such as @since or TSDoc's @typeParam, unless
+// it's a typo of one that it knows.
+const getTags = (node: ts.Node) =>
+  new Map(
+    ts.getJSDocTags(node).flatMap((tag): [string, string][] => {
+      const name = tag.tagName.text;
+      if (!KNOWN_TAGS.has(name)) {
+        if ([...KNOWN_TAGS].some((known) => isOneTypoApart(name, known))) {
+          throw new TlaTypeScriptError(`Unknown tag: @${name}`, tag);
+        }
+        return [];
+      }
+      return [[name, ts.getTextOfJSDocComment(tag.comment)?.trim() ?? ""]];
+    }),
+  );
+
+const getBoundNames = (name: ts.BindingName): ts.Identifier[] =>
+  ts.isIdentifier(name)
+    ? [name]
+    : name.elements.flatMap((element) =>
+        ts.isOmittedExpression(element) ? [] : getBoundNames(element.name),
+      );
+
+const getRoot = (node: ts.Expression): ts.Expression =>
+  ts.isPropertyAccessExpression(node) ||
+  ts.isElementAccessExpression(node) ||
+  ts.isParenthesizedExpression(node) ||
+  ts.isNonNullExpression(node)
+    ? getRoot(node.expression)
+    : node;
+
+// What an assignment, an increment, or a method that changes its receiver in place writes.
+const getWritten = (node: ts.Node) => {
+  if (
+    ts.isBinaryExpression(node) &&
+    node.operatorToken.kind >= ts.SyntaxKind.FirstAssignment &&
+    node.operatorToken.kind <= ts.SyntaxKind.LastAssignment
+  ) {
+    return node.left;
+  }
+  if (
+    (ts.isPostfixUnaryExpression(node) || ts.isPrefixUnaryExpression(node)) &&
+    (node.operator === ts.SyntaxKind.PlusPlusToken ||
+      node.operator === ts.SyntaxKind.MinusMinusToken)
+  ) {
+    return node.operand;
+  }
+  // A method that changes an array literal changes only the array that the literal makes.
+  return ts.isCallExpression(node) &&
+    ts.isPropertyAccessExpression(node.expression) &&
+    MUTATING_METHODS.has(node.expression.name.text) &&
+    !ts.isArrayLiteralExpression(skipCasts(node.expression.expression))
+    ? node.expression.expression
+    : undefined;
+};
+
+// The variables or other root expressions that an assignment target writes, as a destructuring
+// target writes each of its elements.
+const getWrittenRoots = (target: ts.Expression): ts.Expression[] => {
+  if (ts.isArrayLiteralExpression(target)) return target.elements.flatMap(getWrittenRoots);
+  if (ts.isObjectLiteralExpression(target)) {
+    return target.properties.flatMap((property) =>
+      ts.isPropertyAssignment(property)
+        ? getWrittenRoots(property.initializer)
+        : ts.isShorthandPropertyAssignment(property)
+          ? [property.name]
+          : ts.isSpreadAssignment(property)
+            ? getWrittenRoots(property.expression)
+            : [],
+    );
+  }
+  if (ts.isSpreadElement(target)) return getWrittenRoots(target.expression);
+  return [getRoot(target)];
+};
+
+const isBareReturn = (statement: ts.Statement): boolean =>
+  ts.isReturnStatement(statement)
+    ? statement.expression === undefined
+    : ts.isBlock(statement) &&
+      statement.statements.length === 1 &&
+      isBareReturn(statement.statements[0]);
+
+// Whether every call of a function throws, or never returns: a function that isn't async or a
+// generator, whose body returns nowhere and ends in a throw.
+const isAlwaysThrowing = (node: FunctionNode) => {
+  const body = node.body;
+  const isReturning = (inner: ts.Node): boolean =>
+    ts.isReturnStatement(inner) ||
+    (!ts.isFunctionLike(inner) && (ts.forEachChild(inner, isReturning) ?? false));
+  return (
+    body !== undefined &&
+    ts.isBlock(body) &&
+    isPlain(node) &&
+    body.statements.length > 0 &&
+    ts.isThrowStatement(body.statements[body.statements.length - 1]) &&
+    !isReturning(body)
+  );
+};
+
+// A value that evaluating can't throw or change.
+const isInertValue = (argument: ts.Expression): boolean =>
+  ts.isLiteralExpression(argument) ||
+  ts.isIdentifier(argument) ||
+  ts.isFunctionExpression(argument) ||
+  ts.isArrowFunction(argument) ||
+  [ts.SyntaxKind.NullKeyword, ts.SyntaxKind.TrueKeyword, ts.SyntaxKind.FalseKeyword].includes(
+    argument.kind,
+  ) ||
+  (ts.isPrefixUnaryExpression(argument) &&
+    argument.operator === ts.SyntaxKind.MinusToken &&
+    (ts.isNumericLiteral(argument.operand) || ts.isBigIntLiteral(argument.operand))) ||
+  (ts.isArrayLiteralExpression(argument) && argument.elements.every(isInertValue)) ||
+  (ts.isObjectLiteralExpression(argument) &&
+    argument.properties.every(
+      (property) =>
+        ts.isPropertyAssignment(property) &&
+        !ts.isComputedPropertyName(property.name) &&
+        isInertValue(property.initializer),
+    ));
+
+// A junction of items, as a bulleted list of each on its own line, or one item alone.
+const junction = (bullet: string, items: readonly string[]) =>
+  items.length === 1 ? items[0] : items.map((item) => `\n  ${bullet} ${item}`).join("");
+
+const isNumericKey = (key: string) => /^-?\d+$/.test(key);
+
+const isFieldName = (key: string) => /^\w*[A-Za-z]\w*$/.test(key) && !KEYWORDS.has(key);
+
+const isInfinite = (domain: string | Infinite): domain is Infinite => typeof domain !== "string";
+
+// The checker gives type arguments only of type references, which the public API can't detect.
+const isTypeReference = (type: ts.Type): type is ts.TypeReference =>
+  (type.flags & ts.TypeFlags.Object) !== 0 &&
+  ((type as ts.ObjectType).objectFlags & ts.ObjectFlags.Reference) !== 0;
+
+const getTypeName = (type: ts.Type) => type.getSymbol()?.getName() ?? "";
+
+const isSetType = (type: ts.Type) => ["Set", "ReadonlySet"].includes(getTypeName(type));
+
+const isMapType = (type: ts.Type) => ["Map", "ReadonlyMap"].includes(getTypeName(type));
+
+// The frame of a model that tla-ts checks on ESCore, which TypeScript's types give: the state
+// variables, the set of values that each state variable without an initializer starts at and
+// each parameter of an exported function takes, which function is an action, an invariant, or a
+// property its tag names, and the config that checks them. It's a spec whose definitions name
+// the module's functions, which compileModelToEscore calls on ESCore. A program with type errors
+// still has a frame, as Node still runs it.
+export const frameModel = (source: string, fileName: string, library?: Library) => {
+  const program = createProgram(source, fileName.replaceAll("\\", "/"), library);
+  const sourceFile = program.sourceFile;
+  const checker = program.checker;
+  // The names of the exported functions and their parameters, which the model's code defines and
+  // binds beside its own, and of the state variables, which only name the fields of its records.
+  const names = createNames(MODEL_NAMES);
+  const fieldNames = createNames(new Set());
+  const getSymbol = (node: ts.Node) =>
+    ts.isShorthandPropertyAssignment(node.parent) && node.parent.name === node
+      ? checker.getShorthandAssignmentValueSymbol(node.parent)
+      : checker.getSymbolAtLocation(node);
+  // The declaration of a function or a constant at the module's top level, which a call or a read
+  // of the symbol runs.
+  const getTopLevelDeclaration = (symbol: ts.Symbol | undefined) => {
+    const declaration =
+      symbol?.declarations?.find(
+        (candidate) => ts.isFunctionDeclaration(candidate) && candidate.body !== undefined,
+      ) ?? symbol?.valueDeclaration;
+    if (declaration === undefined || declaration.getSourceFile() !== sourceFile) return undefined;
+    if (ts.isFunctionDeclaration(declaration) && ts.isSourceFile(declaration.parent)) {
+      return declaration;
+    }
+    return ts.isVariableDeclaration(declaration) &&
+      ts.isVariableStatement(declaration.parent.parent) &&
+      ts.isSourceFile(declaration.parent.parent.parent) &&
+      (declaration.parent.flags & ts.NodeFlags.Const) !== 0
+      ? declaration
+      : undefined;
+  };
+  const tags = new Map<ts.Node, Map<string, string>>(
+    sourceFile.statements.map((statement) => [statement, getTags(statement)]),
+  );
+  if ([...tags].some((entry) => entry[1].has("symmetric"))) {
+    throw new TlaTypeScriptError("tla-ts can't check a symmetric model on ESCore yet");
+  }
+  // The functions and the variables that the module's statements declare.
+  const declarations = sourceFile.statements.flatMap((statement): Declared[] => {
+    if (ts.isFunctionDeclaration(statement) && statement.body !== undefined) {
+      if (statement.name === undefined) {
+        throw new TlaTypeScriptError("Name this function", statement);
+      }
+      return [{ name: statement.name.text, declaration: statement, identifier: statement.name }];
+    }
+    if (
+      !ts.isVariableStatement(statement) ||
+      (ts.getCombinedModifierFlags(statement.declarationList.declarations[0]) &
+        ts.ModifierFlags.Ambient) !==
+        0
+    ) {
+      return [];
+    }
+    return statement.declarationList.declarations.flatMap((declaration) =>
+      getBoundNames(declaration.name).map((identifier) => ({
+        name: identifier.text,
+        declaration,
+        identifier,
+      })),
+    );
+  });
+  // A const whose object a write changes in place holds a new value after it, as a let does, where
+  // a literal or a new collection makes the object.
+  const isLiteralObject = (symbol: ts.Symbol) => {
+    const declaration = symbol.valueDeclaration;
+    const initializer =
+      declaration !== undefined &&
+      ts.isVariableDeclaration(declaration) &&
+      declaration.initializer !== undefined
+        ? skipCasts(declaration.initializer)
+        : undefined;
+    const constructed =
+      initializer !== undefined && ts.isNewExpression(initializer)
+        ? getSymbol(initializer.expression)
+        : undefined;
+    return (
+      initializer !== undefined &&
+      (ts.isObjectLiteralExpression(initializer) ||
+        ts.isArrayLiteralExpression(initializer) ||
+        (constructed !== undefined &&
+          ["Map", "Set", "Array"].includes(constructed.name) &&
+          (constructed.declarations ?? []).every((inner) =>
+            inner.getSourceFile().isDeclarationFile,
+          )))
+    );
+  };
+  const changed = new Set<ts.Symbol>();
+  const findChanged = (node: ts.Node): void => {
+    const written = getWritten(node);
+    if (written !== undefined) {
+      getWrittenRoots(written).forEach((root) => {
+        const symbol = ts.isIdentifier(root) ? getSymbol(root) : undefined;
+        if (symbol !== undefined && isLiteralObject(symbol)) changed.add(symbol);
+      });
+    }
+    ts.forEachChild(node, findChanged);
+  };
+  findChanged(sourceFile);
+  // A let is a state variable, and so is a const whose value a write changes in place. A variable
+  // that holds a function or a class is the module's code, not its state.
+  const isLet = (declared: Declared) => {
+    const declaration = declared.declaration;
+    const symbol = getSymbol(declared.identifier);
+    const initializer =
+      ts.isVariableDeclaration(declaration) && declaration.initializer !== undefined
+        ? skipCasts(declaration.initializer)
+        : undefined;
+    return (
+      ts.isVariableDeclaration(declaration) &&
+      ((declaration.parent.flags & ts.NodeFlags.Const) === 0 ||
+        !ts.isIdentifier(declaration.name) ||
+        (symbol !== undefined && changed.has(symbol))) &&
+      !(
+        initializer !== undefined &&
+        (ts.isArrowFunction(initializer) ||
+          ts.isFunctionExpression(initializer) ||
+          ts.isClassExpression(initializer))
+      )
+    );
+  };
+  // ESCore reads a state variable and calls an exported function by its binding's name, which
+  // TLA+ must take too.
+  const getName = (declared: Declared, kind: string) => {
+    const name = (kind === "state variable" ? fieldNames : names).getFresh(declared.name);
+    if (name !== declared.name) {
+      throw new TlaTypeScriptError(
+        `tla-ts can't name the ${kind} ${declared.name} in TLA+, which takes the name for its own`,
+        declared.identifier,
+      );
+    }
+    return name;
+  };
+  const variables = declarations.filter(isLet).map((declared) => {
+    const symbol = getSymbol(declared.identifier);
+    if (symbol === undefined) {
+      throw new TlaTypeScriptError(
+        `tla-ts can't name the state variable ${declared.name}`,
+        declared.declaration,
+      );
+    }
+    return { name: getName(declared, "state variable"), symbol, declared };
+  });
+  const stateSymbols = new Set(variables.map((variable) => variable.symbol));
+  // Whether a function assigns a state variable, directly or through a function it calls.
+  const writesState = (node: ts.Node, visited: Set<ts.Node>): boolean => {
+    const written = getWritten(node);
+    if (
+      written !== undefined &&
+      getWrittenRoots(written).some((root) => {
+        const symbol = ts.isIdentifier(root) ? getSymbol(root) : undefined;
+        return symbol !== undefined && stateSymbols.has(symbol);
+      })
+    ) {
+      return true;
+    }
+    if (ts.isCallExpression(node)) {
+      const helper = getTopLevelDeclaration(getSymbol(node.expression));
+      if (helper !== undefined && !visited.has(helper)) {
+        visited.add(helper);
+        if (writesState(helper, visited)) return true;
+      }
+    }
+    return ts.forEachChild(node, (child) => writesState(child, visited) || undefined) ?? false;
+  };
+  // Whether a function reads a state variable, directly or through a declaration it reads.
+  const readsState = (node: ts.Node, visited: Set<ts.Node>): boolean => {
+    if (ts.isIdentifier(node)) {
+      const symbol = getSymbol(node);
+      if (symbol !== undefined && stateSymbols.has(symbol)) return true;
+      const declaration = getTopLevelDeclaration(symbol);
+      if (declaration !== undefined && !visited.has(declaration)) {
+        visited.add(declaration);
+        if (readsState(declaration, visited)) return true;
+      }
+    }
+    return ts.forEachChild(node, (child) => readsState(child, visited) || undefined) ?? false;
+  };
+  const helpers = declarations.filter((declared) => !isLet(declared));
+  // The local bindings that the module's export lists export, as export { local as name } does.
+  const listed = new Set(
+    sourceFile.statements.flatMap((statement) =>
+      ts.isExportDeclaration(statement) &&
+      !statement.isTypeOnly &&
+      statement.moduleSpecifier === undefined &&
+      statement.exportClause !== undefined &&
+      ts.isNamedExports(statement.exportClause)
+        ? statement.exportClause.elements.flatMap((element) => {
+            const local = element.isTypeOnly
+              ? undefined
+              : checker.getExportSpecifierLocalTargetSymbol(element);
+            return local === undefined ? [] : [local];
+          })
+        : [],
+    ),
+  );
+  const exported = helpers.flatMap((declared): Exported[] => {
+    const declaration = declared.declaration;
+    const node = getFunction(declaration);
+    const symbol = getSymbol(declared.identifier);
+    const statement = ts.isVariableDeclaration(declaration)
+      ? declaration.parent.parent
+      : declaration;
+    const isExported =
+      (ts.getCombinedModifierFlags(declaration) & ts.ModifierFlags.Export) !== 0 ||
+      (symbol !== undefined && listed.has(symbol));
+    return isExported && node?.body !== undefined
+      ? [{ ...declared, node, body: node.body, tags: tags.get(statement) ?? new Map() }]
+      : [];
+  });
+  exported.forEach((definition) => getName(definition, "exported function"));
+  const getTag = (definition: Exported) =>
+    [...definition.tags.keys()].find((candidate) => VALUE_TAGS.has(candidate));
+
+  // The first type that has no end, or the domains of every type.
+  const findDomains = (types: readonly ts.Type[], path: readonly ts.Type[]) =>
+    types.reduce<string[] | Infinite>((domains, type) => {
+      if (!Array.isArray(domains)) return domains;
+      const domain = findDomain(type, path);
+      return isInfinite(domain) ? domain : [...domains, domain];
+    }, []);
+  const getLiteral = (type: ts.Type): string | undefined => {
+    if (type.isStringLiteral()) return formatString(type.value);
+    if (type.isNumberLiteral()) return Number.isInteger(type.value) ? String(type.value) : undefined;
+    if (type.flags & ts.TypeFlags.BooleanLiteral) {
+      return checker.typeToString(type) === "true" ? "TRUE" : "FALSE";
+    }
+    if (type.flags & ts.TypeFlags.Null) return "Null";
+    if (type.flags & (ts.TypeFlags.Undefined | ts.TypeFlags.Void)) return "Undefined";
+    return undefined;
+  };
+  const getShape = (type: ts.Type): Shape | undefined => {
+    if (type.isUnion()) {
+      return type.types
+        .map(getShape)
+        .reduce((left, right) => left && right && unifyShapes(left, right));
+    }
+    if (type.flags & (ts.TypeFlags.Undefined | ts.TypeFlags.Void | ts.TypeFlags.Null)) {
+      return { kind: "model" };
+    }
+    if (type.flags & ts.TypeFlags.BooleanLike) return { kind: "boolean" };
+    if (type.flags & ts.TypeFlags.NumberLike) return { kind: "number" };
+    if (type.flags & ts.TypeFlags.StringLike) return { kind: "string" };
+    const typeArguments = isTypeReference(type) ? checker.getTypeArguments(type) : [];
+    if (isSetType(type)) {
+      const rest = getShape(typeArguments[0]);
+      return rest && { kind: "set", rest };
+    }
+    if (isMapType(type)) {
+      const [keys, rest] = typeArguments.map(getShape);
+      return keys && rest && { kind: "function", keys, rest };
+    }
+    if (checker.isArrayType(type)) {
+      const rest = getShape(typeArguments[0]);
+      return rest && { kind: "function", keys: { kind: "number" }, rest };
+    }
+    const properties = checker.isTupleType(type)
+      ? typeArguments.map((inner, position) => ({ key: String(position), type: inner }))
+      : type.getProperties().map((property) => ({
+          key: property.name,
+          type: checker.getTypeOfSymbol(property),
+        }));
+    const shapes = properties.map((property) => getShape(property.type));
+    if (shapes.some((shape) => shape === undefined)) return undefined;
+    return {
+      kind: "function",
+      keys: {
+        kind:
+          checker.isTupleType(type) || properties.every((property) => isNumericKey(property.key))
+            ? "number"
+            : "string",
+      },
+      values: new Map(
+        properties.flatMap((property, position) => {
+          const shape = shapes[position];
+          return shape === undefined ? [] : [[property.key, shape] as const];
+        }),
+      ),
+    };
+  };
+  // The shape of the values of two shapes, or undefined where TLC would compare values of
+  // different kinds, such as a string with a number, which it can't.
+  const unifyShapes = (left: Shape, right: Shape): Shape | undefined => {
+    if (left.kind === "model") return right;
+    if (right.kind === "model") return left;
+    if (left.kind !== right.kind) return undefined;
+    if (left.kind !== "set" && left.kind !== "function") return left;
+    const unifyPart = (leftPart: Shape | undefined, rightPart: Shape | undefined) =>
+      leftPart === undefined || rightPart === undefined
+        ? { shape: leftPart ?? rightPart }
+        : { shape: unifyShapes(leftPart, rightPart), isConflict: true };
+    const keys = unifyPart(left.keys, right.keys);
+    const rest = unifyPart(left.rest, right.rest);
+    const fields = [...new Set([...(left.values?.keys() ?? []), ...(right.values?.keys() ?? [])])];
+    const values = fields.map((field) => ({
+      field,
+      ...unifyPart(left.values?.get(field) ?? left.rest, right.values?.get(field) ?? right.rest),
+    }));
+    return [keys, rest, ...values].some(
+      (part) => part.isConflict === true && part.shape === undefined,
+    )
+      ? undefined
+      : {
+          kind: left.kind,
+          keys: keys.shape,
+          rest: rest.shape,
+          values: new Map(
+            values.flatMap((value) =>
+              value.shape === undefined ? [] : [[value.field, value.shape] as const],
+            ),
+          ),
+        };
+  };
+  const getInfinite = (type: ts.Type, reason: string): Infinite => ({
+    message: `${checker.typeToString(type)} isn't finite: ${reason}`,
+  });
+  // The set of every value that a finite type allows, which TLC enumerates, as TLA+. outer holds
+  // the types around this one, so a type that holds itself, such as a tree, has no end.
+  const findDomain = (type: ts.Type, outer: readonly ts.Type[] = []): string | Infinite => {
+    if (outer.includes(type)) {
+      return { message: `${checker.typeToString(type)} holds itself, so it has no end` };
+    }
+    const path = [...outer, type];
+    if (type.flags & ts.TypeFlags.Boolean) return "BOOLEAN";
+    if (type.isUnion()) {
+      const literalTypes = type.types
+        .filter((member) => getLiteral(member) !== undefined)
+        .toSorted((left, right) =>
+          left.isNumberLiteral() && right.isNumberLiteral() ? left.value - right.value : 0,
+        );
+      const others = findDomains(
+        type.types.filter((member) => !literalTypes.includes(member)),
+        path,
+      );
+      if (!Array.isArray(others)) return others;
+      if (getShape(type) === undefined) {
+        return {
+          message: `${checker.typeToString(type)} mixes values that TLC can't compare, such as a string and a number`,
+          isIncomparable: true,
+        };
+      }
+      const enumerated = literalTypes.flatMap((member) => getLiteral(member) ?? []);
+      return [...(enumerated.length > 0 ? [`{${enumerated.join(", ")}}`] : []), ...others]
+        .map((domain) => `(${domain})`)
+        .join(" \\cup ");
+    }
+    const literal = getLiteral(type);
+    if (literal !== undefined) return `{${literal}}`;
+    if (type.flags & ts.TypeFlags.Number) return "-3..3";
+    if (type.flags & ts.TypeFlags.String) return '{"", "a", "b"}';
+    if (isSetType(type) || isMapType(type) || checker.isTupleType(type)) {
+      const elements = findDomains(isTypeReference(type) ? checker.getTypeArguments(type) : [], path);
+      if (!Array.isArray(elements)) return elements;
+      if (isSetType(type)) return `SUBSET (${elements[0]})`;
+      if (isMapType(type)) {
+        const keys = names.getFresh("keys");
+        return `UNION {[${keys} -> (${elements[1]})] : ${keys} \\in SUBSET (${elements[0]})}`;
+      }
+      const isFixed =
+        isTypeReference(type) &&
+        (type.target as ts.TupleType).elementFlags.every(
+          (flags) => (flags & ts.ElementFlags.Required) !== 0,
+        );
+      if (!isFixed) {
+        return getInfinite(type, "tuples with optional or rest elements can have any length");
+      }
+      if (elements.length === 0) return "{<<>>}";
+      if (elements.length > 1) return elements.map((element) => `(${element})`).join(" \\X ");
+      const element = names.getFresh("element");
+      return `{<<${element}>> : ${element} \\in (${elements[0]})}`;
+    }
+    if (checker.isArrayType(type) && isTypeReference(type)) {
+      const element = findDomain(checker.getTypeArguments(type)[0], path);
+      if (isInfinite(element)) return element;
+      const length = names.getFresh("length");
+      return `UNION {[1..${length} -> (${element})] : ${length} \\in 0..${MAX_ARRAY_LENGTH}}`;
+    }
+    const properties = type.getProperties();
+    const isRecord =
+      type.flags & ts.TypeFlags.Object &&
+      type.getCallSignatures().length === 0 &&
+      checker.getIndexInfosOfType(type).length === 0 &&
+      properties.length > 0;
+    if (!isRecord) {
+      return getInfinite(type, "use a union of literals, or records, tuples, and sets of them");
+    }
+    // A class's instances are objects that its constructor makes, which no record stands for.
+    const declaration = type.getSymbol()?.valueDeclaration;
+    if (declaration !== undefined && ts.isClassLike(declaration)) {
+      return getInfinite(type, "tla-ts can't list the instances of a class");
+    }
+    const optional = properties.find((property) => property.flags & ts.SymbolFlags.Optional);
+    if (optional !== undefined) {
+      return getInfinite(type, `the optional field ${optional.name} may be missing`);
+    }
+    const fieldTypes = properties.map((property) => checker.getTypeOfSymbol(property));
+    const fields = findDomains(fieldTypes, path);
+    if (!Array.isArray(fields)) return fields;
+    const keys = properties.map((property) => property.name);
+    const unnamed = keys.find((key) => !isNumericKey(key) && !isFieldName(key));
+    if (unnamed !== undefined) return getInfinite(type, `TLA+ can't name the field ${unnamed}`);
+    if (!keys.some(isNumericKey)) {
+      return `[${keys.map((key, position) => `${key} : (${fields[position]})`).join(", ")}]`;
+    }
+    if (!keys.every(isNumericKey) || fieldTypes.some((fieldType) => fieldType !== fieldTypes[0])) {
+      return {
+        message: `${checker.typeToString(type)} has numeric keys, so every key must be a number with the same value type`,
+      };
+    }
+    return `[{${keys
+      .map(Number)
+      .sort((left, right) => left - right)
+      .join(", ")}} -> (${fields[0]})]`;
+  };
+  const getType = (node: ts.ParameterDeclaration | ts.VariableDeclaration) =>
+    checker.getTypeAtLocation(node.name);
+  // The values that a parameter of an exported function, or a variable with no initializer, ranges
+  // over, which TLC lists.
+  const getDomain = (node: ts.ParameterDeclaration | ts.VariableDeclaration) => {
+    const domain = findDomain(getType(node));
+    if (!isInfinite(domain)) return domain;
+    const name = ts.isIdentifier(node.name) ? node.name.text : undefined;
+    if (name === undefined) throw new TlaTypeScriptError(domain.message, node);
+    throw new TlaTypeScriptError(
+      ts.isParameter(node)
+        ? `tla-ts can't choose every value of the parameter ${name}: ${domain.message}. Give ${name} a finite type, such as a union of literals, or records and tuples of them, or call the function from a script instead`
+        : `tla-ts can't start ${name} at every value of its type: ${domain.message}. Give ${name} an initializer`,
+      node,
+    );
+  };
+  const getParameters = (definition: Exported): Parameter[] =>
+    definition.node.parameters.map((node) => ({
+      node,
+      name: node.name.getText(),
+      symbol: ts.isIdentifier(node.name) ? getSymbol(node.name) : undefined,
+    }));
+  // A leading `if (!set.has(parameter)) return;` chooses the parameter from that set, as
+  // `\E parameter \in set` does, so TLC doesn't enumerate the parameter's whole type. The set may
+  // use parameters that earlier guards chose, as in \E a \in A : \E b \in B(a).
+  const getGuard = (
+    statement: ts.Statement,
+    parameters: Parameter[],
+    chosen: ReadonlySet<Parameter>,
+  ) => {
+    if (
+      !ts.isIfStatement(statement) ||
+      statement.elseStatement !== undefined ||
+      !isBareReturn(statement.thenStatement) ||
+      !ts.isPrefixUnaryExpression(statement.expression) ||
+      statement.expression.operator !== ts.SyntaxKind.ExclamationToken
+    ) {
+      return undefined;
+    }
+    const operand = statement.expression.operand;
+    const call = ts.isParenthesizedExpression(operand) ? operand.expression : operand;
+    if (
+      !ts.isCallExpression(call) ||
+      !ts.isPropertyAccessExpression(call.expression) ||
+      call.expression.name.text !== "has" ||
+      call.arguments.length !== 1
+    ) {
+      return undefined;
+    }
+    const findUsed = (node: ts.Node): Parameter[] => [
+      ...parameters.filter(
+        (parameter) => ts.isIdentifier(node) && parameter.symbol === getSymbol(node),
+      ),
+      ...node.getChildren().flatMap(findUsed),
+    ];
+    const argument = call.arguments[0];
+    const parameter = parameters.find(
+      (candidate) => candidate.symbol !== undefined && candidate.symbol === getSymbol(argument),
+    );
+    const set = call.expression.expression;
+    const used = findUsed(set);
+    return parameter === undefined ||
+      chosen.has(parameter) ||
+      !used.every((candidate) => chosen.has(candidate)) ||
+      !isSetType(checker.getTypeAtLocation(set))
+      ? undefined
+      : { parameter, isDependent: used.length > 0 };
+  };
+  // The parameters that a step's leading guards choose, with whether each one's set uses others.
+  const readGuards = (definition: Exported, parameters: Parameter[]) => {
+    const statements = ts.isBlock(definition.body) ? definition.body.statements : [];
+    const chosen = new Map<Parameter, boolean>();
+    for (const statement of statements) {
+      const guard = getGuard(statement, parameters, new Set(chosen.keys()));
+      if (guard === undefined) break;
+      chosen.set(guard.parameter, guard.isDependent);
+    }
+    return chosen;
+  };
+  // Whether an exported function is an action: one that changes state or returns nothing.
+  const isStepExport = (definition: Exported) => {
+    if (writesState(definition.body, new Set())) return true;
+    const returnType = checker.getSignatureFromDeclaration(definition.node)?.getReturnType();
+    return (
+      returnType === undefined ||
+      (returnType.flags & (ts.TypeFlags.Void | ts.TypeFlags.Undefined)) !== 0
+    );
+  };
+  // Why the model calls no exported function: Node runs only a module's top level, so an export
+  // runs only where TLC can choose its arguments, which it can't where a parameter takes values
+  // that tla-ts can't list, and where a call of it may return.
+  const getUncalledReason = (definition: Exported) => {
+    if (getTag(definition) !== undefined) return undefined;
+    const parameters = getParameters(definition);
+    const guarded = isStepExport(definition) ? readGuards(definition, parameters) : new Map();
+    const unlisted = parameters.find((parameter) => {
+      const domain = findDomain(getType(parameter.node));
+      return !guarded.has(parameter) && isInfinite(domain) && domain.isIncomparable !== true;
+    });
+    if (unlisted !== undefined) {
+      return `its parameter ${unlisted.name} takes values it can't list`;
+    }
+    return definition.node.parameters.length === 0 && isAlwaysThrowing(definition.node)
+      ? "every call of it throws"
+      : undefined;
+  };
+  const notes: string[] = [];
+  const called = exported.filter((definition) => {
+    const reason = getUncalledReason(definition);
+    if (reason !== undefined) notes.push(`tla-ts calls no ${definition.name}: ${reason}`);
+    return reason === undefined;
+  });
+  const init: string[] = [];
+  const next: string[] = [];
+  const fairness: string[] = [];
+  const predicates: string[] = [];
+  const sections = new Map<string, string[]>(
+    [
+      "INVARIANTS",
+      "PROPERTIES",
+      "CONSTRAINTS",
+      "ACTION_CONSTRAINTS",
+      "VIEW",
+      "POSTCONDITIONS",
+      "ASSUME",
+    ].map((section) => [section, []]),
+  );
+  const list = (section: string, name: string) => sections.get(section)?.push(name);
+  // A state variable starts at its initializer, or at every value of its type without one.
+  variables.forEach((variable) => {
+    const declaration = variable.declared.declaration;
+    if (ts.isVariableDeclaration(declaration) && declaration.initializer === undefined) {
+      init.push(`${variable.name} \\in ${getDomain(declaration)}`);
+    }
+  });
+  const quantify = (quantifier: string, bounds: string[], body: string) =>
+    bounds.length === 0 ? body : `${quantifier} ${bounds.join(", ")} : ${body}`;
+  const declareParameters = (definition: Exported) =>
+    getParameters(definition).map((parameter) => ({
+      ...parameter,
+      tla: names.getFresh(parameter.name),
+    }));
+  // An exported function that changes state, as an action and its disjunct of Next. Each
+  // parameter ranges over its type, or over the set that a guard chooses it from.
+  const translateStep = (definition: Exported) => {
+    const parameters = declareParameters(definition);
+    const chosen = readGuards(definition, parameters);
+    const head =
+      parameters.length === 0
+        ? definition.name
+        : `${definition.name}(${parameters.map((parameter) => parameter.tla).join(", ")})`;
+    const kind = definition.tags.has("strongFair")
+      ? "SF_vars"
+      : definition.tags.has("fair")
+        ? "WF_vars"
+        : undefined;
+    if (parameters.length === 0) {
+      next.push(head);
+      if (kind !== undefined) fairness.push(`${kind}(${head})`);
+      return;
+    }
+    const domains = parameters.map((parameter) =>
+      chosen.has(parameter) ? GUARDED : getDomain(parameter.node),
+    );
+    const independent = parameters.flatMap((parameter, index) =>
+      chosen.get(parameter) === true ? [] : [`${parameter.tla} \\in ${domains[index]}`],
+    );
+    // Guards run in order, so each dependent parameter is chosen after the ones its set uses.
+    const step = quantify(
+      "\\E",
+      independent,
+      [...chosen]
+        .filter((entry) => entry[1])
+        .reduceRight(
+          (inner, entry) =>
+            `\\E ${parameters.find((parameter) => parameter === entry[0])?.tla} \\in ${GUARDED} : ${inner}`,
+          head,
+        ),
+    );
+    next.push(step);
+    if (kind === undefined) return;
+    // Fairness holds for each parameter value when every parameter has a finite type, with the
+    // guards that chose parameters kept inside the action.
+    const typeDomains = parameters.map((parameter, index) =>
+      chosen.has(parameter) ? findDomain(getType(parameter.node)) : domains[index],
+    );
+    const finite = typeDomains.flatMap((domain) => (isInfinite(domain) ? [] : [domain]));
+    if (finite.length < typeDomains.length) {
+      fairness.push(`${kind}(${step})`);
+      return;
+    }
+    const conditions = parameters.flatMap((parameter) =>
+      chosen.has(parameter) ? [`${parameter.tla} \\in ${GUARDED}`] : [],
+    );
+    fairness.push(
+      quantify(
+        "\\A",
+        parameters.map((parameter, index) => `${parameter.tla} \\in ${finite[index]}`),
+        `${kind}(${[...conditions, head].join(" /\\ ")})`,
+      ),
+    );
+  };
+  // An exported function that returns a value without asserting it, which TLC calls with every
+  // argument, in every state when it reads state and once before the search otherwise.
+  const translateCall = (definition: Exported) => {
+    const parameters = declareParameters(definition);
+    const result = names.getFresh("result");
+    predicates.push(
+      `${definition.name} == ${quantify(
+        "\\A",
+        parameters.map((parameter) => `${parameter.tla} \\in ${getDomain(parameter.node)}`),
+        `LET ${result} == TRUE IN ${result} = ${result}`,
+      )}`,
+    );
+    list(
+      readsState(definition.declaration, new Set([definition.declaration]))
+        ? "INVARIANTS"
+        : "ASSUME",
+      definition.name,
+    );
+  };
+  const translateProperty = (definition: Exported, tag: string) => {
+    const node = definition.node;
+    const hasPreviousState = tag === "always" || tag === "actionConstraint";
+    // A temporal property's parameters hold for every value, as in \A p \in P : []<>Eats(p).
+    const isQuantified = TEMPORAL_TAGS.has(tag) || tag === "leadsTo";
+    if (!hasPreviousState && !isQuantified && node.parameters.length > 0) {
+      throw new TlaTypeScriptError(`@${tag} functions can't take parameters`, node.parameters[0]);
+    }
+    if (
+      hasPreviousState &&
+      (node.parameters.length > 1 ||
+        (node.parameters.length === 1 && !ts.isIdentifier(node.parameters[0].name)))
+    ) {
+      throw new TlaTypeScriptError(
+        "Take the state before the step as one parameter",
+        node.parameters[0],
+      );
+    }
+    const bounds = isQuantified
+      ? declareParameters(definition).map(
+          (parameter) => `${parameter.tla} \\in ${getDomain(parameter.node)}`,
+        )
+      : [];
+    const define = (body: string) => predicates.push(`${definition.name} == ${body}`);
+    const operator = TEMPORAL_TAGS.get(tag);
+    if (operator !== undefined) {
+      define(quantify("\\A", bounds, operator("TRUE")));
+      list("PROPERTIES", definition.name);
+    }
+    if (tag === "leadsTo") {
+      const target = (definition.tags.get("leadsTo") ?? "").split(/\s/)[0];
+      if (!helpers.some((declared) => declared.name === target)) {
+        throw new TlaTypeScriptError(`@leadsTo names an unknown function: ${target}`, node);
+      }
+      define(quantify("\\A", bounds, "TRUE ~> TRUE"));
+      list("PROPERTIES", definition.name);
+    }
+    if (tag === "always") {
+      define(node.parameters.length === 0 ? "[](TRUE)" : "[][TRUE]_vars");
+      list("PROPERTIES", definition.name);
+    }
+    // An end state takes a step that changes nothing, as PlusCal's Terminating does.
+    if (tag === "terminating") {
+      define("TRUE");
+      next.push(`${definition.name} /\\ UNCHANGED vars`);
+    }
+    const section = PREDICATE_TAGS.get(tag);
+    if (section !== undefined) {
+      define("TRUE");
+      // An assumption that reads the state holds in the initial states instead, before the search
+      // goes on.
+      list(
+        section === "ASSUME" && readsState(definition.declaration, new Set([definition.declaration]))
+          ? "INVARIANTS"
+          : section,
+        definition.name,
+      );
+    }
+  };
+  // An exported function is a property if a tag says so, an action if it changes state, and an
+  // invariant if it returns a boolean.
+  called.forEach((definition) => {
+    const tag = getTag(definition);
+    if (tag !== undefined) return translateProperty(definition, tag);
+    if (isStepExport(definition)) return translateStep(definition);
+    const returnType = checker.getSignatureFromDeclaration(definition.node)?.getReturnType();
+    if (
+      definition.node.parameters.length > 0 ||
+      returnType === undefined ||
+      (returnType.flags & ts.TypeFlags.BooleanLike) === 0
+    ) {
+      return translateCall(definition);
+    }
+    predicates.push(`${definition.name} == TRUE`);
+    list("INVARIANTS", definition.name);
+  });
+  if ((sections.get("VIEW") ?? []).length > 1) {
+    throw new TlaTypeScriptError("Tag only one function @view");
+  }
+  // A state variable that a whole number that its declaration gives starts at.
+  rejectEndlessCount(sourceFile, called, sections, (target) => {
+    const symbol = ts.isIdentifier(target) ? getSymbol(target) : undefined;
+    const declaration = symbol?.valueDeclaration;
+    const initializer =
+      declaration !== undefined && ts.isVariableDeclaration(declaration)
+        ? declaration.initializer
+        : undefined;
+    const start =
+      initializer !== undefined &&
+      ts.isPrefixUnaryExpression(initializer) &&
+      initializer.operator === ts.SyntaxKind.MinusToken
+        ? initializer.operand
+        : initializer;
+    return (
+      symbol !== undefined &&
+      stateSymbols.has(symbol) &&
+      start !== undefined &&
+      ts.isNumericLiteral(start) &&
+      Number.isSafeInteger(Number(start.text))
+    );
+  });
+  const isGuarded = next.some((step) => step.includes(GUARDED));
+  const stateNames = variables.map((variable) => variable.name);
+  const text = [
+    "---- MODULE Frame ----",
+    ...([...stateNames, ...(isGuarded ? [GUARDED] : [])].length === 0
+      ? []
+      : [`VARIABLES ${[...stateNames, ...(isGuarded ? [GUARDED] : [])].join(", ")}`]),
+    `vars == <<${stateNames.join(", ")}>>`,
+    `Init == ${junction("/\\", ["TRUE", ...init])}`,
+    `Next == ${next.length === 0 ? "FALSE" : junction("\\/", next)}`,
+    `Spec == ${junction("/\\", ["Init", "[][Next]_vars", ...fairness])}`,
+    ...predicates,
+    ...(sections.get("ASSUME") ?? []).map((name) => `ASSUME ${name}`),
+    "====",
+  ].join("\n");
+  const config = [
+    "SPECIFICATION Spec",
+    ...[...sections].flatMap((entry) =>
+      entry[0] === "ASSUME" || entry[1].length === 0 ? [] : [entry[0], ...entry[1].map((name) => `  ${name}`)],
+    ),
+    ...([...tags.values()].some((statementTags) => statementTags.has("noDeadlock"))
+      ? ["CHECK_DEADLOCK FALSE"]
+      : []),
+  ].join("\n");
+  return {
+    isScript: called.length === 0,
+    source: parseModule(text),
+    config,
+    variables: stateNames.map((name): StateVariable => ({ name })),
+    notes,
+  };
+};
+
+// The state variable that a statement counts up or down by one, from a whole number that its
+// declaration gives.
+const getCounted = (statement: ts.Statement, isState: (target: ts.Expression) => boolean) => {
+  const expression = ts.isExpressionStatement(statement) ? statement.expression : undefined;
+  const target =
+    expression !== undefined &&
+    (ts.isPrefixUnaryExpression(expression) || ts.isPostfixUnaryExpression(expression)) &&
+    (expression.operator === ts.SyntaxKind.PlusPlusToken ||
+      expression.operator === ts.SyntaxKind.MinusMinusToken)
+      ? expression.operand
+      : expression !== undefined &&
+          ts.isBinaryExpression(expression) &&
+          (expression.operatorToken.kind === ts.SyntaxKind.PlusEqualsToken ||
+            expression.operatorToken.kind === ts.SyntaxKind.MinusEqualsToken) &&
+          ts.isNumericLiteral(expression.right) &&
+          Number(expression.right.text) === 1
+        ? expression.left
+        : undefined;
+  return target !== undefined && isState(target) ? target : undefined;
+};
+
+// Where every action only counts state variables, and the model checks nothing, nothing can fail,
+// and an action that counts reaches a new state at each step, so the check would visit states
+// until memory runs out.
+const rejectEndlessCount = (
+  sourceFile: ts.SourceFile,
+  called: readonly Exported[],
+  sections: ReadonlyMap<string, string[]>,
+  isState: (target: ts.Expression) => boolean,
+) => {
+  // A declaration runs nothing, as a string as a statement, such as a "use strict" directive, does.
+  const isInertStatement = (statement: ts.Statement) =>
+    ts.isFunctionDeclaration(statement) ||
+    ts.isTypeAliasDeclaration(statement) ||
+    ts.isInterfaceDeclaration(statement) ||
+    ts.isImportDeclaration(statement) ||
+    ts.isExportDeclaration(statement) ||
+    (ts.isExpressionStatement(statement) && ts.isStringLiteral(statement.expression)) ||
+    (ts.isVariableStatement(statement) &&
+      statement.declarationList.declarations.every(
+        (declaration) =>
+          declaration.initializer === undefined || isInertValue(declaration.initializer),
+      ));
+  if (
+    [...sections.values()].some((names) => names.length > 0) ||
+    !sourceFile.statements.every(isInertStatement)
+  ) {
+    return;
+  }
+  // An action with parameters may have none to take, which leaves it disabled.
+  const counts = called.map((definition) =>
+    definition.node.parameters.length > 0
+      ? [undefined]
+      : ts.isBlock(definition.body)
+        ? definition.body.statements.map((statement) => getCounted(statement, isState))
+        : [getCounted(ts.factory.createExpressionStatement(definition.body), isState)],
+  );
+  const counted = counts.flat().at(0);
+  if (counted === undefined || counts.some((count) => count.includes(undefined))) return;
+  throw new TlaTypeScriptError(
+    `tla-ts can't check a model whose states never end: an action counts ${counted.getText()} on at each step, and the model checks nothing that could stop it`,
+    counted,
+  );
+};

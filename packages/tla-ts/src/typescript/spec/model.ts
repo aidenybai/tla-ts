@@ -3,13 +3,12 @@ import type { Bound, Definition, Expression, OperatorDefinition } from "../../as
 import { parseConfig } from "../../config";
 import { TlaTypeScriptError } from "../../errors";
 import { printDefinition } from "../../printer";
-import { compile } from "../compile";
-import type { StateVariable } from "../emit";
 import type { Library } from "../program";
 import { CANONICAL_MODULE } from "./canonical";
 import { getLoweredBindings, LOWERED_DEFINITIONS } from "./lowered";
 import { getNativeFunctions, NATIVE_DEFINITIONS } from "./native";
 import { compileToEscore, type EscoreSpec } from "./compile";
+import { frameModel, type StateVariable } from "./frame";
 import { foldNames } from "./library";
 import type { EscoreRuntime } from "./prepare";
 
@@ -240,7 +239,7 @@ export const compileModelToEscore = (
   // Whether the state may lower out of ESCore's heap, which a test turns off to check the heap.
   isLowerable = true,
 ): EscoreModel => {
-  const today = compile(source, fileName, library);
+  const today = frameModel(source, fileName, library);
   if (today.isScript) {
     throw new TlaTypeScriptError("tla-ts compiles a script, not a model, to ESCore this way");
   }

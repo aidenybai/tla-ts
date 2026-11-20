@@ -78,7 +78,7 @@ import {
   isLiteralValue,
   rejectRunningModules,
 } from "./namespaces";
-import { createProgram, isTypeImport, type Library } from "./program";
+import { createCheckedProgram, isTypeImport, type Library } from "./program";
 import { findResolverHolders } from "./promises";
 import {
   getJsonPath,
@@ -367,7 +367,7 @@ export const compile = (
   scripts: readonly string[] = [],
 ): CompiledSpec => {
   const path = fileName.replaceAll("\\", "/");
-  const program = createProgram(source, path, library, scripts);
+  const program = createCheckedProgram(source, path, library, scripts);
   const context = createContext(
     program.checker,
     program.files,

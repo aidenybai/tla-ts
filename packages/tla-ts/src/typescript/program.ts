@@ -404,10 +404,64 @@ export const createFileResolver = (path: string) => {
     );
 };
 
+// TypeScript's program of a model's file and the files it imports, whose checker gives the types
+// of their code. A file with type errors still runs, as Node runs it, so nothing here rejects one.
+export const createProgram = (source: string, path: string, library: Library = DEFAULT_LIBRARY) => {
+  const libraries = library.texts;
+  const project = libraries === undefined ? getProject(path) : undefined;
+  const options = project === undefined ? COMPILER_OPTIONS : getProjectOptions(project.options);
+  const host =
+    libraries === undefined ? ts.createCompilerHost(options) : createLibraryHost(libraries);
+  const programHost: ts.CompilerHost & SourceRedirectingHost = {
+    ...host,
+    // A project that references others compiles their code, as an editor does, rather than the
+    // declarations that building them would write.
+    useSourceOfProjectReferenceRedirect: () => true,
+    getSourceFile: (fileName, languageVersion) => {
+      if (fileName === JSON_DECLARATIONS.path) {
+        return ts.createSourceFile(fileName, JSON_DECLARATIONS.text, languageVersion);
+      }
+      if (fileName === path) return createFile(path, source, languageVersion);
+      const file = library.files.get(fileName) ?? host.getSourceFile(fileName, languageVersion);
+      return file === undefined || file.isDeclarationFile
+        ? file
+        : createFile(fileName, file.text, languageVersion);
+    },
+    fileExists: (fileName) => fileName === path || host.fileExists(fileName),
+    readFile: (fileName) => (fileName === path ? source : host.readFile(fileName)),
+    resolveModuleNameLiterals:
+      libraries === undefined
+        ? (literals, containingFile, redirectedReference, resolutionOptions, containingSourceFile) =>
+            literals.map(
+              (literal) =>
+                resolveLiteral(
+                  literal,
+                  containingFile,
+                  containingSourceFile,
+                  true,
+                  resolutionOptions,
+                  host,
+                  redirectedReference,
+                ).module,
+            )
+        : undefined,
+  };
+  const program = ts.createProgram({
+    rootNames: [path, JSON_DECLARATIONS.path],
+    // TypeScript parses JSX as it is, which only its types read.
+    options: { ...options, jsx: ts.JsxEmit.Preserve, jsxImportSource: undefined },
+    projectReferences: project?.projectReferences,
+    host: programHost,
+  });
+  const sourceFile = program.getSourceFile(path);
+  if (sourceFile === undefined) throw new TlaTypeScriptError(`Can't read ${path}`);
+  return { sourceFile, checker: program.getTypeChecker() };
+};
+
 // Type checks a model, with the files it imports, and throws their type errors. A file of a project
 // on disk type checks with the project's options, and where it needs them, as in an editor, the
 // globals that the project's other files declare, such as those of a types package one references.
-export const createProgram = (
+export const createCheckedProgram = (
   source: string,
   path: string,
   library: Library = DEFAULT_LIBRARY,
