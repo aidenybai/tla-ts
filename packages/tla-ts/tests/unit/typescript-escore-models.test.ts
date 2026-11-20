@@ -632,6 +632,62 @@ describe("checks a module's exported functions as a model on ESCore", () => {
     });
   });
 
+  describe("runs a Set's methods of another Set, new Set and iterators natively, as ESCore does", () => {
+    const source = `
+      type Key = "a" | "b";
+      const keys = new Set<Key>(["a", "b"]);
+      let seen = new Set<Key>();
+      let queue: [Key, number][] = [];
+      let counts: Record<Key, number> = { a: 0, b: 0 };
+
+      const total = (rest: Set<Key>): number => {
+        const first = rest.values().find(() => true);
+        return first === undefined ? 0 : counts[first] + total(rest.difference(new Set([first])));
+      };
+
+      export const take = (key: Key) => {
+        if (!keys.difference(seen).has(key)) return;
+        const next = seen.union(new Set([key]));
+        seen = next;
+        queue.push([key, counts[key]]);
+      };
+
+      export const serve = () => {
+        if (queue.length === 0 || counts[queue[0][0]] >= 1) return;
+        const head = queue[0];
+        queue.shift();
+        counts[head[0]] += 1;
+        seen = seen.difference(new Set([head[0]]));
+      };
+
+      export const isBounded = () =>
+        total(keys) <= 2 &&
+        Object.values(counts).every((count) => count <= 1) &&
+        new Set(keys.values().filter((key) => seen.has(key))).size === seen.intersection(keys).size &&
+        seen.isSubsetOf(keys) &&
+        keys.isSupersetOf(seen) &&
+        (seen.size === 0 || !seen.isDisjointFrom(keys)) &&
+        seen.symmetricDifference(keys).size + seen.size === 2;
+
+      /** @always */
+      export const isShort = () => queue.length <= 2;
+    `;
+
+    it("gives what ESCore gives in every call, as TLC counts", async () => {
+      const counts = ["deadlock", 18, 22];
+      expect(getCounts(await checkModel(source, "spec.ts", "native"))).toEqual(counts);
+      expect(getCounts(await checkModel(source, "spec.ts", "compared"))).toEqual(counts);
+    }, 120_000);
+
+    it("tells a subset test that leaves out a Set of the same size", async () => {
+      const result = await checkModel(source, "spec.ts", "native", [
+        '[] m = "isSubsetOf" -> Bool(Len(a) <= Len(b)',
+        '[] m = "isSubsetOf" -> Bool(Len(a) < Len(b)',
+      ]);
+      expect(result.message).toContain("the native call differs from ESCore's");
+    }, 120_000);
+  });
+
   describe("runs ESNative's operators natively, as their TLA+ runs them", () => {
     // A model that lowers its state, whose module ESNative the checks read.
     const source = `
