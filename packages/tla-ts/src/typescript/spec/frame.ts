@@ -385,10 +385,12 @@ export const frameModel = (
           )))
     );
   };
+  // The objects that a function's write changes in place, which a step may run. A write that the
+  // module's top level makes runs once, as the module loads.
   const changed = new Set<ts.Symbol>();
   const findChanged = (node: ts.Node): void => {
     const written = getWritten(node);
-    if (written !== undefined) {
+    if (written !== undefined && ts.findAncestor(node, ts.isFunctionLike) !== undefined) {
       getWrittenRoots(written).forEach((root) => {
         const symbol = ts.isIdentifier(root) ? getSymbol(root) : undefined;
         if (symbol !== undefined && isLiteralObject(symbol)) changed.add(symbol);
