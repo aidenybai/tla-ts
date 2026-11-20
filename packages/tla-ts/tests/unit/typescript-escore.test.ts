@@ -1854,6 +1854,28 @@ if (view !== "${expected}") throw new Error(view);
     });
   });
 
+  // A .jsx file is JavaScript with JSX, which compiles as a .tsx file does.
+  describe("runs a file of JavaScript's JSX as the calls that TypeScript emits for it", () => {
+    const getSource = (expected: string) => `/** @jsxRuntime classic */
+/** @jsx h */
+const h = (type, props, ...children) => \`\${type}(\${props === null ? "" : Object.keys(props).join("+")}:\${children.join(",")})\`;
+const view = <p id="a">{1}<b>x</b></p>;
+if (view !== "${expected}") throw new Error(view);
+`;
+
+    it("agrees with Node", async () => {
+      expect(
+        (await checkScript(getSource("p(id:1,b(:x))"), false, "", "spec.jsx")).message,
+      ).toBeUndefined();
+    });
+
+    it("rejects another result", async () => {
+      expect(
+        (await checkScript(getSource("p(id:b(:x))"), false, "", "spec.jsx")).message,
+      ).toContain(THREW);
+    });
+  });
+
   describe("checks the names and levels of a program's code", () => {
     it("rejects a definition that names an unknown operator", async () => {
       expect(

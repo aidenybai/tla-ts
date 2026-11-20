@@ -1,7 +1,7 @@
 import ts from "@typescript/typescript6";
 import { TlaTypeScriptError } from "../errors";
 import { createJavaScriptFile, isJavaScriptFile, resolveModule } from "./common-js";
-import { isJsxFile, rewriteJsx } from "./jsx";
+import { rewriteJsx } from "./jsx";
 
 const COMPILER_OPTIONS: ts.CompilerOptions = {
   strict: true,
@@ -239,7 +239,7 @@ const getProjectOptions = (options: ts.CompilerOptions): ts.CompilerOptions => (
 // TypeScript emits for it, by the options of its project, as createProgram reads it (see
 // rewriteJsx), and any other file's as it is.
 export const getJsxText = (path: string, text: string) => {
-  if (!isJsxFile(path)) return text;
+  if (!/\.[jt]sx$/.test(path)) return text;
   const project = getProject(path);
   const options =
     project === undefined
