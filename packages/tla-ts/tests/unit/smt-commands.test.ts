@@ -375,6 +375,80 @@ describe("runSmtlibScript runs its commands as Z3 does", () => {
     ).toEqual(["unsat", "(+ 7 x)", "(* 2 x)", "((not p) (not q))", "unsat", "((not p) (not q))"]);
   });
 
+  it("drops the implication of an assumption that is not a literal when its search pops", () => {
+    expect(
+      run([
+        "(declare-fun x1 () Int)",
+        "(declare-fun x2 () Int)",
+        "(declare-const b0 Bool)",
+        "(check-sat-assuming (b0))",
+        "(check-sat)",
+        "(assert (! (or false (>= x1 x2) (>= x1 2)) :named n3))",
+        "(check-sat-assuming (b0 n3))",
+        "(check-sat)",
+        "(get-model)",
+      ]),
+    ).toEqual([
+      "sat",
+      "sat",
+      "sat",
+      "sat",
+      "(",
+      "  (define-fun x1 () Int",
+      "    0)",
+      "  (define-fun x2 () Int",
+      "    0)",
+      "  (define-fun n3 () Bool",
+      "    (or false (>= x1 x2) (>= x1 2)))",
+      "  (define-fun b0 () Bool",
+      "    false)",
+      ")",
+    ]);
+  });
+
+  it("frees the implication of an assumption that is not a literal once it is asserted", () => {
+    expect(
+      run([
+        "(set-option :produce-unsat-cores true)",
+        "(declare-fun x1 () Int)",
+        "(declare-const b0 Bool)",
+        "(assert (! (<= (abs 6) x1) :named n0))",
+        "(check-sat)",
+        "(check-sat-assuming (n0))",
+        "(check-sat)",
+        "(check-sat-assuming (n0 b0 (not b0)))",
+        "(get-unsat-core)",
+      ]),
+    ).toEqual(["sat", "sat", "sat", "unsat", "(b0 (not b0))"]);
+  });
+
+  it("keeps the implication from the name of an assertion until its scope pops", () => {
+    expect(
+      run([
+        "(set-option :produce-unsat-cores true)",
+        "(declare-const v0 (_ BitVec 8))",
+        "(declare-const v1 (_ BitVec 3))",
+        "(assert (distinct v1 (bvsrem (bvshl #b000 v1) v1)))",
+        "(check-sat)",
+        "(push 1)",
+        "(assert (! (bvsge (bvudiv v0 v0) ((_ rotate_right 9) v0)) :named n10))",
+        "(check-sat)",
+        "(get-model)",
+      ]),
+    ).toEqual([
+      "sat",
+      "sat",
+      "(",
+      "  (define-fun n10 () Bool",
+      "    (bvsge (bvudiv v0 v0) ((_ rotate_right 9) v0)))",
+      "  (define-fun v1 () (_ BitVec 3)",
+      "    #b101)",
+      "  (define-fun v0 () (_ BitVec 8)",
+      "    #x1d)",
+      ")",
+    ]);
+  });
+
   it("reports an even root of a negative number as an error of the command", () => {
     const message = "even root of negative number is not real";
     expect(

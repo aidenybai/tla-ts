@@ -473,7 +473,7 @@ export const tseitinCnf = (manager: AstManager, goal: Goal) => {
   try {
     for (let index = 0; index < goal.forms.size; index++) {
       dependency = goal.getDependency(index);
-      process(goal.forms.items[index]);
+      process(goal.forms.get(index));
     }
   } catch (error) {
     pinned.reset();

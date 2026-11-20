@@ -42,7 +42,7 @@ export const normalizeBounds = (
   const rewriter = new Rewriter(manager, options);
   rewriter.setSubstitution(substitution);
   for (let index = 0; !goal.isInconsistent && index < goal.forms.size; index++) {
-    const rewritten = rewriter.rewrite(goal.forms.items[index]);
+    const rewritten = rewriter.rewrite(goal.forms.get(index));
     goal.update(index, rewritten, goal.getDependency(index));
     manager.decRef(rewritten);
   }

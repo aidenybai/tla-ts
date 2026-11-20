@@ -283,7 +283,7 @@ export class FuncInterp {
         body,
         patterns: [],
         noPatterns: [],
-        weight: 0,
+        weight: 1,
         qid: "",
       });
       manager.decRef(body);

@@ -282,7 +282,7 @@ export const runEnum2Bv = (
   let rewritten = -1;
   try {
     forEachIndex((index) => {
-      const next = rewriter.rewrite(goal.forms.items[index]);
+      const next = rewriter.rewrite(goal.forms.get(index));
       release(manager, rewritten);
       rewritten = next;
       goal.update(index, rewritten, goal.getDependency(index));

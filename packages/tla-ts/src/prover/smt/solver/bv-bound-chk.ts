@@ -489,7 +489,7 @@ export class BvBoundChkTactic {
     let rewritten = -1;
     const size = goal.forms.size;
     for (let index = 0; index < size && !goal.isInconsistent; index++) {
-      const next = rewriter.rewrite(goal.forms.items[index]);
+      const next = rewriter.rewrite(goal.forms.get(index));
       release(manager, rewritten);
       rewritten = next;
       goal.update(index, rewritten);

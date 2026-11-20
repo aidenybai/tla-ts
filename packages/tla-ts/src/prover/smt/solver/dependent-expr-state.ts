@@ -12,7 +12,7 @@ export class DependentExprState {
   ) {}
 
   get(index: number) {
-    const form = this.goal.forms.items[index];
+    const form = this.goal.forms.get(index);
     this.manager.incRef(form);
     if (this.held !== -1) this.manager.decRef(this.held);
     this.held = form;
