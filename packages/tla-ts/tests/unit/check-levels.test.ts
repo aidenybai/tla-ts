@@ -231,6 +231,161 @@ describe("level checking matches SANY", () => {
     );
   });
 
+  const getInstanceError = (line: number, end: number, maximum: number) => ({
+    location: `line ${line}, col 1 to line ${line}, col ${end} of module M`,
+    message: `Level error in instantiating module 'L':\nThe level of the expression or operator substituted for 'k' \nmust be at most ${maximum}.`,
+  });
+
+  it.each([
+    [
+      "a theorem",
+      "",
+      "THEOREM k' = k",
+      [
+        [12, 28, 0],
+        [13, 29, 0],
+        [14, 36, 0],
+      ],
+    ],
+    [
+      "a proof step",
+      "",
+      "THEOREM TRUE\n<1>1. k' = k\n  OBVIOUS\n<1> QED",
+      [
+        [15, 28, 0],
+        [16, 29, 0],
+        [17, 36, 0],
+      ],
+    ],
+    [
+      "a BY proof",
+      "",
+      "THEOREM TRUE\nBY k' = k",
+      [
+        [13, 28, 0],
+        [14, 29, 0],
+        [15, 36, 0],
+      ],
+    ],
+    [
+      "a proof's DEFINE",
+      "",
+      "THEOREM TRUE\n<1> DEFINE G == k'\n<1> QED",
+      [
+        [14, 28, 0],
+        [15, 29, 0],
+        [16, 36, 0],
+      ],
+    ],
+    [
+      "a proof's INSTANCE",
+      "",
+      "THEOREM TRUE\n<1> INSTANCE Q WITH c <- k, w <- k\n<1> QED",
+      [
+        [14, 28, 0],
+        [15, 29, 0],
+        [16, 36, 0],
+      ],
+    ],
+    [
+      "a proof's named INSTANCE",
+      "",
+      "THEOREM TRUE\n<1> N == INSTANCE Q WITH c <- k, w <- k\n<1> QED",
+      [
+        [14, 28, 0],
+        [15, 29, 0],
+        [16, 36, 0],
+      ],
+    ],
+    ["a WITNESS", "", "THEOREM TRUE\n<1>1. WITNESS k \\in {1}\n<1> QED", [[16, 36, 2]]],
+    [
+      "an ASSUME/PROVE step",
+      "",
+      "THEOREM TRUE\n<1>1. ASSUME NEW z PROVE z = k\n  OBVIOUS\n<1> QED",
+      [[17, 36, 2]],
+    ],
+    [
+      "a USE",
+      "",
+      "USE k' = k",
+      [
+        [13, 29, 1],
+        [14, 36, 1],
+      ],
+    ],
+    [
+      "an extended theorem",
+      "THEOREM k' = k",
+      "",
+      [
+        [15, 28, 0],
+        [16, 29, 0],
+        [17, 36, 0],
+      ],
+    ],
+    [
+      "an extended USE",
+      "USE k' = k",
+      "",
+      [
+        [16, 29, 1],
+        [17, 36, 1],
+      ],
+    ],
+    [
+      "an extended INSTANCE",
+      "INSTANCE Q WITH c <- k, w <- k",
+      "",
+      [
+        [15, 28, 0],
+        [16, 29, 0],
+        [17, 36, 0],
+      ],
+    ],
+    [
+      "an extended proof",
+      "THEOREM TRUE\n<1>1. k' = k\n  OBVIOUS\n<1> QED",
+      "",
+      [
+        [18, 28, 0],
+        [19, 29, 0],
+        [20, 36, 0],
+      ],
+    ],
+  ])("constrains a module by %s, as SANY does", async (_, extended, body, errors) => {
+    const modules = extended
+      ? `---- MODULE L0 ----\nCONSTANT k\n${extended}\n====\n---- MODULE L ----\nEXTENDS L0\n====`
+      : `---- MODULE L ----\nCONSTANT k\n${body}\n====`;
+    await expect(
+      check({
+        source: `---- MODULE M ----\nVARIABLE x\n---- MODULE Q ----\nCONSTANT c\nVARIABLE w\nA == c\n====\n${modules}\nI1 == INSTANCE L WITH k <- x\nI2 == INSTANCE L WITH k <- x'\nI3 == INSTANCE L WITH k <- [](x = 1)\nInit == x = 0\nNext == x' = x\n====`,
+        config: "INIT Init\nNEXT Next",
+      }),
+    ).rejects.toThrow(
+      createSanyError(errors.map((error) => getInstanceError(error[0], error[1], error[2]))),
+    );
+  });
+
+  it("constrains a module by a named assumption but keeps it constant, as SANY does", async () => {
+    await expect(
+      check({
+        source:
+          "---- MODULE M ----\nVARIABLE x\n---- MODULE L ----\nCONSTANT k\nAXIOM X == k' = k\n====\nI1 == INSTANCE L WITH k <- x\nI2 == INSTANCE L WITH k <- x'\nI3 == INSTANCE L WITH k <- [](x = 1)\nInit == x = 0\nNext == x' = x\n====",
+        config: "INIT Init\nNEXT Next",
+      }),
+    ).rejects.toThrow(
+      createSanyError([
+        {
+          location: "line 5, col 1 to line 5, col 17 of module M",
+          message:
+            "Level error: assumptions must be level 0 (Constant), \nbut this one has level 2.",
+        },
+        getInstanceError(8, 29, 1),
+        getInstanceError(9, 36, 1),
+      ]),
+    );
+  });
+
   it("constrains a module by the theorems of a LET instance in an ASSUME/PROVE, as SANY does", async () => {
     await expect(
       check({

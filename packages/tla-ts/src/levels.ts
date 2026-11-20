@@ -15,6 +15,7 @@ import {
   type ProofStep,
   type SourceLocation,
   type SourceRange,
+  type Theorem,
 } from "./ast";
 import { formatRange, type CodedSanyError, type SanyError } from "./errors";
 import { forEachChild, substitutionFrames } from "./instances";
@@ -23,7 +24,7 @@ import { collectSemanticErrors, getBoundNames, getPatternNames, isBefore } from 
 import { resolveSynonym } from "./tlc/jar-data";
 import { STANDARD_LEVELS } from "./standard-definitions";
 
-interface LevelData {
+export interface LevelData {
   level: number;
   isCorrect: boolean;
   params: Set<string>;
@@ -89,6 +90,7 @@ export interface InstanceLevels {
   checkInstantiation: (instance: Instance, instancer: string, scope: Scope) => SanyError[];
   getInstanceDefinitions: (instance: Instance) => Definition[];
   getSubstitutes: (instance: Instance) => InstanceSubstitutes | undefined;
+  getModuleLevels: (module: string) => ModuleLevels;
 }
 
 interface LevelContext {
@@ -1608,19 +1610,35 @@ export const createLevelAnalyzer = (context: LevelContext) => {
     analyzeInstance,
     checkPrimedArguments,
     checkRecursiveSection,
+    constants: context.constants,
     getSubstitutes,
     toOperand,
     errors,
   };
 };
 
+type LevelAnalyzer = ReturnType<typeof createLevelAnalyzer>;
+
+const mergeLevels = (data: LevelData, part: LevelData) => {
+  data.level = Math.max(data.level, part.level);
+  part.params.forEach((param) => data.params.add(param));
+  mergeConstraints(data, part);
+};
+
+// SANY limits the constants an assumption or an ASSUME/PROVE mentions to action level.
+const constrainConstants = (data: LevelData, analyzer: LevelAnalyzer) =>
+  data.params.forEach((param) => {
+    if (analyzer.constants.has(param)) putConstraint(data.constraints, param, ACTION_LEVEL);
+  });
+
 export const analyzeAssumeProve = (
   assumeProve: AssumeProve,
   scope: Scope,
-  analyzer: ReturnType<typeof createLevelAnalyzer>,
+  analyzer: LevelAnalyzer,
 ): LevelData => {
   const inner = new Map(scope);
-  const parts = assumeProve.assumptions.flatMap((assumption) => {
+  const data = createData();
+  assumeProve.assumptions.forEach((assumption) => {
     if (assumption.kind === "NewSymbol") {
       const set = assumption.set && analyzer.analyze(assumption.set, inner);
       const range = assumption.location.range;
@@ -1632,20 +1650,25 @@ export const analyzeAssumeProve = (
       }
       const level = NEW_SYMBOL_LEVELS[assumption.level];
       inner.set(assumption.name, { kind: "Formal", arity: assumption.arity, level });
-      return [set ?? createData(level)];
+      mergeLevels(data, set ?? createData(level));
+      return;
     }
-    return [
+    mergeLevels(
+      data,
       assumption.kind === "AssumeProve"
         ? analyzeAssumeProve(assumption, inner, analyzer)
         : analyzer.analyze(assumption, inner),
-    ];
+    );
   });
-  parts.push(analyzer.analyze(assumeProve.conclusion, inner));
-  const data = createData(Math.max(...parts.map((part) => part.level)));
-  parts.forEach((part) => {
-    part.params.forEach((param) => data.params.add(param));
-    mergeConstraints(data, part);
-  });
+  mergeLevels(data, analyzer.analyze(assumeProve.conclusion, inner));
+  constrainConstants(data, analyzer);
+  return data;
+};
+
+export const analyzeAssumption = (expression: Expression, analyzer: LevelAnalyzer) => {
+  const data = createData();
+  mergeLevels(data, analyzer.analyze(expression, new Map()));
+  constrainConstants(data, analyzer);
   return data;
 };
 
@@ -1659,36 +1682,43 @@ const addNewSymbols = (statement: Expression | AssumeProve, scope: Scope) => {
   return scope;
 };
 
-export const checkModuleLevels = (
-  module: Module,
-  context: LevelContext,
-  instances: InstanceLevelCheck[],
-  warnings: SanyError[],
+export const createProofChecker = (
+  analyzer: LevelAnalyzer,
+  instances: InstanceLevels,
+  instancer: string,
 ) => {
-  const analyzer = createLevelAnalyzer(context);
-  const getLevel = (expressions: Expression[], scope: Scope) =>
-    Math.max(0, ...expressions.map((expression) => analyzer.analyze(expression, scope).level));
-  const getStepLevel = (step: ProofStep, scope: Scope) => {
+  const getData = (expressions: Expression[], scope: Scope) => {
+    const data = createData();
+    expressions.forEach((expression) => mergeLevels(data, analyzer.analyze(expression, scope)));
+    return data;
+  };
+  const getStepData = (step: ProofStep, scope: Scope) => {
     const body = step.body;
-    if (body.kind === "Have" || body.kind === "Case") return getLevel([body.expression], scope);
-    if (body.kind === "Witness") return getLevel(body.expressions, scope);
+    if (body.kind === "Have" || body.kind === "Case") return getData([body.expression], scope);
+    if (body.kind === "Witness") {
+      const data = getData(body.expressions, scope);
+      // SANY's $Witness takes arguments of at most action level.
+      data.params.forEach((param) => putConstraint(data.constraints, param, ACTION_LEVEL));
+      return data;
+    }
     if (body.kind === "Take")
-      return getLevel(
+      return getData(
         body.bounds.map((bound) => bound.set),
         scope,
       );
     if (body.kind === "Pick") {
-      return getLevel([body.body, ...body.bounds.map((bound) => bound.set)], scope);
+      return getData([body.body, ...body.bounds.map((bound) => bound.set)], scope);
     }
-    if (body.kind !== "Assert") return 0;
+    if (body.kind !== "Assert") return createData();
     return body.statement.kind === "AssumeProve"
-      ? analyzeAssumeProve(body.statement, scope, analyzer).level
-      : getLevel([body.statement], scope);
+      ? analyzeAssumeProve(body.statement, scope, analyzer)
+      : getData([body.statement], scope);
   };
-  const checkFacts = (facts: Fact[], scope: Scope) =>
-    facts.forEach((fact) => {
-      if (fact.kind !== "ModuleFact") analyzer.analyze(fact, scope);
-    });
+  const getFactData = (facts: Fact[], scope: Scope) =>
+    getData(
+      facts.flatMap((fact) => (fact.kind === "ModuleFact" ? [] : [fact])),
+      scope,
+    );
   const stepLevels = new Map<ProofStep, number>();
   // Deviation from SANY: SANY reads a LabelNode's unset level field here, so it skips the proof of a labeled temporal goal.
   const checkTemporalGoal = (proof: Proof | undefined): SanyError[] =>
@@ -1716,9 +1746,9 @@ export const checkModuleLevels = (
           }
           return step.body.kind === "Qed" ? checkTemporalGoal(step.proof) : [];
         });
-  const checkProof = (proof: Proof | undefined, scope: Scope): SanyError[] => {
+  const checkProof = (proof: Proof | undefined, scope: Scope, data: LevelData): SanyError[] => {
     if (proof?.kind === "By") {
-      checkFacts(proof.facts, scope);
+      mergeLevels(data, getFactData(proof.facts, scope));
       return analyzer.errors.splice(0);
     }
     if (proof?.kind !== "Steps") return [];
@@ -1727,35 +1757,47 @@ export const checkModuleLevels = (
       instance.substitutions.forEach((substitution) =>
         analyzer.toOperand(substitution.expression, inner),
       );
-      return [
+      const errors = [
         ...analyzer.errors.splice(0),
-        ...context.instances.checkInstantiation(instance, module.name, inner),
+        ...instances.checkInstantiation(instance, instancer, inner),
       ];
+      const substitutes = instances.getSubstitutes(instance);
+      if (substitutes) {
+        mergeLevels(
+          data,
+          analyzer.analyzeInstance(substitutes, instances.getModuleLevels(instance.module), inner),
+        );
+        analyzer.errors.splice(0);
+      }
+      return errors;
     };
     // SANY's NonLeafProofNode#levelCheck checks the instances of a proof's definitions after its steps.
     const definedInstances: Instance[] = [];
     const errors = proof.steps.flatMap((step) => {
       const body = step.body;
-      if (body.kind === "Use" || body.kind === "Hide") checkFacts(body.facts, inner);
-      if (body.kind === "Instance") addInstanceDefinitions(context.instances, body, inner);
+      if (body.kind === "Use" || body.kind === "Hide") {
+        mergeLevels(data, getFactData(body.facts, inner));
+      }
+      if (body.kind === "Instance") addInstanceDefinitions(instances, body, inner);
       if (body.kind === "Define") {
         body.definitions.forEach((definition) => {
           if (definition.kind === "Instance") {
             definedInstances.push(definition);
-            addInstanceDefinitions(context.instances, definition, inner);
+            addInstanceDefinitions(instances, definition, inner);
             return;
           }
           inner.set(definition.name, { kind: "Let", definition, scope: inner });
-          analyzer.analyzeDefinition(definition, inner);
+          mergeLevels(data, analyzer.analyzeDefinition(definition, inner));
         });
       }
-      const level = getStepLevel(step, inner);
-      stepLevels.set(step, level);
-      const isTemporal = level === TEMPORAL_LEVEL;
+      const stepData = getStepData(step, inner);
+      mergeLevels(data, stepData);
+      stepLevels.set(step, stepData.level);
+      const isTemporal = stepData.level === TEMPORAL_LEVEL;
       const pickErrors =
         body.kind === "Pick" && body.bounds.length > 0 && isTemporal
           ? body.bounds
-              .filter((bound) => getLevel([bound.set], inner) !== 0)
+              .filter((bound) => getData([bound.set], inner).level !== 0)
               .flatMap((bound) =>
                 bound.set.location.range
                   ? [
@@ -1776,6 +1818,7 @@ export const checkModuleLevels = (
           body.kind === "Assert" && !isSuffices
             ? addNewSymbols(body.statement, new Map(inner))
             : inner,
+          data,
         ),
         ...pickErrors,
         ...(step.proof?.kind === "Steps" && isTemporal ? checkTemporalGoal(step.proof) : []),
@@ -1785,6 +1828,34 @@ export const checkModuleLevels = (
     });
     return [...errors, ...definedInstances.flatMap(checkInstance)];
   };
+  const checkTheoremProof = (theorem: Theorem, data: LevelData) =>
+    checkProof(theorem.proof, addNewSymbols(theorem.statement, new Map()), data);
+  return {
+    checkTemporalGoal,
+    checkTheoremProof,
+    getFactData,
+    analyzeTheorem: (theorem: Theorem) => {
+      const data = createData();
+      mergeLevels(
+        data,
+        theorem.statement.kind === "AssumeProve"
+          ? analyzeAssumeProve(theorem.statement, new Map(), analyzer)
+          : analyzer.analyze(theorem.statement, new Map()),
+      );
+      checkTheoremProof(theorem, data);
+      return data;
+    },
+  };
+};
+
+export const checkModuleLevels = (
+  module: Module,
+  context: LevelContext,
+  instances: InstanceLevelCheck[],
+  warnings: SanyError[],
+) => {
+  const analyzer = createLevelAnalyzer(context);
+  const proofs = createProofChecker(analyzer, context.instances, module.name);
   const statementLevels = new Map<Expression | AssumeProve, number>();
   const getStatementLevel = (statement: Expression | AssumeProve) => {
     const cached = statementLevels.get(statement);
@@ -1869,13 +1940,13 @@ export const checkModuleLevels = (
               const level = getStatementLevel(theorem.statement);
               reported.push(
                 ...analyzer.errors.splice(0),
-                ...checkProof(theorem.proof, addNewSymbols(theorem.statement, new Map())),
-                ...(level === TEMPORAL_LEVEL ? checkTemporalGoal(theorem.proof) : []),
+                ...proofs.checkTheoremProof(theorem, createData()),
+                ...(level === TEMPORAL_LEVEL ? proofs.checkTemporalGoal(theorem.proof) : []),
               );
             },
           })),
           ...module.uses.map((use) =>
-            createCheck(use.location, () => checkFacts(use.facts, new Map())),
+            createCheck(use.location, () => proofs.getFactData(use.facts, new Map())),
           ),
           ...instances.map((instance) => ({
             location: instance.location,

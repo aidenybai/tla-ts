@@ -389,12 +389,16 @@ export const createEnvironment = (
         variables: linked.variables,
         getDefinitions: () => [
           ...new Set(
-            [...linked.visible.values()].flatMap((symbol) => getLinkedDefinition(symbol.key) ?? []),
+            [...linked.visible.values()].flatMap((symbol) =>
+              symbol.kind === "Theorem" ? [] : (getLinkedDefinition(symbol.key) ?? []),
+            ),
           ),
         ],
         assumptions: linked.module.assumptions.map((assumption) => assumption.expression),
         theorems: linked.module.theorems,
         instances: linked.module.instances,
+        uses: linked.module.uses,
+        extended: linked.extended.map((extended) => extended.module.name),
         getDefinition: (symbol) => getLinkedDefinition(linked.visible.get(symbol)?.key ?? symbol),
         getQualifiedName: (symbol) => qualifiedNames.get(linked.visible.get(symbol)?.key ?? symbol),
       };
