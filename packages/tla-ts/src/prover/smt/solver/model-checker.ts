@@ -23,7 +23,7 @@ class AuxContext {
   private asserted: AssertedFormulas;
 
   // init_aux_context copies the kernel's smt_params and theories, so the context has a model
-  // finder too, though it never sees a quantifier.
+  // finder too, though it never sees a quantifier. It names no logic, so the setup adds every theory.
   constructor(parent: Context) {
     this.asserted = new AssertedFormulas(parent.manager);
     this.context = new Context(parent.manager, {
@@ -34,7 +34,11 @@ class AuxContext {
     });
     this.context.config = { ...parent.config, relevancyLevel: 0 };
     for (const theory of parent.theories) this.context.registerFamily(theory.id);
-    this.context.setupContext(parent.setup, false, this.asserted);
+    this.context.setupContext(
+      parent.setup === undefined ? undefined : { ...parent.setup, logic: undefined },
+      false,
+      this.asserted,
+    );
   }
 
   release() {

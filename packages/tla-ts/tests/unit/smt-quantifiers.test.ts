@@ -592,6 +592,33 @@ describe("the model checker, as Z3 5.3.2 counts its steps", () => {
       ]),
     ).toEqual(["sat", "(:rlimit 362)"]);
   });
+
+  it("sets up its context with every theory, whatever the logic", () => {
+    expect(
+      run([
+        "(set-logic AUFLIRA)",
+        "(set-option :smt.qi.max_multi_patterns 3)",
+        "(set-option :smt.array.extensional false)",
+        "(declare-fun f (Int) Int)",
+        "(declare-fun g (Int Int) Int)",
+        "(declare-fun p (Int) Bool)",
+        "(declare-fun A () (Array Int Int))",
+        "(declare-fun B () (Array Int Int))",
+        "(declare-fun a () Int)",
+        "(declare-fun b () Int)",
+        "(declare-fun c () Int)",
+        "(declare-fun r (Int) Real)",
+        "(declare-fun x () Real)",
+        "(assert (forall ((x0 Int)) (! (=> (and (<= (r (* 1 c)) (+ x (to_real c))) (< (+ 3 x0) (+ c x0))) (=> (> x0 b) (< (r (g a c)) (+ x (to_real b))))) :weight 0 :qid ax0)))",
+        "(assert (forall ((x0 Int)) (! (p (+ b c)) :weight 0 :qid ax1)))",
+        "(assert (forall ((x0 Int)) (<= (r (+ b x0)) (+ x (to_real c)))))",
+        "(assert (or (and (< (+ b 3) c) (= (r (f b)) (+ x (to_real c)))) (and (p c) (< (r c) (+ x (to_real 2))))))",
+        "(assert (or (=> (<= (f 1) (f 0)) (p (+ a b))) (or (>= (+ c b) (+ b a)) (> (f a) (f c)))))",
+        "(check-sat)",
+        "(get-info :rlimit)",
+      ]),
+    ).toEqual(["sat", "(:rlimit 4128)"]);
+  });
 });
 
 describe("the preprocessing setup_AUFLIA turns on, as Z3 5.3.2 runs it", () => {
