@@ -4223,6 +4223,96 @@ describe("evaluation errors match TLC", () => {
     },
   );
 
+  const INTEGER_REASON = 'Attempted to compare integer 1 with non-integer:\n"a"';
+  const STRING_REASON = 'Attempted to compare string "a" with non-string:\n1';
+
+  it.each([
+    [
+      'Seq({1}) = Seq({"a"})',
+      INTEGER_REASON,
+      [
+        "Line 5, column 9 to line 5, column 39 in M",
+        "Line 5, column 9 to line 5, column 14 in M",
+        "Line 5, column 19 to line 5, column 39 in M",
+        "Line 5, column 23 to line 5, column 25 in M",
+      ],
+    ],
+    [
+      'Seq({x}) = Seq({"a"})',
+      'Attempted to compare integer 0 with non-integer:\n"a"',
+      [
+        "Line 5, column 9 to line 5, column 39 in M",
+        "Line 5, column 9 to line 5, column 14 in M",
+        "Line 5, column 19 to line 5, column 39 in M",
+        "Line 5, column 23 to line 5, column 25 in M",
+      ],
+    ],
+    [
+      '{Seq({1}), Seq({"a"})} # {}',
+      STRING_REASON,
+      [
+        "Line 5, column 9 to line 5, column 45 in M",
+        "Line 5, column 9 to line 5, column 14 in M",
+        "Line 5, column 19 to line 5, column 45 in M",
+        "Line 5, column 19 to line 5, column 40 in M",
+        "Line 5, column 34 to line 5, column 38 in M",
+      ],
+    ],
+    [
+      'Seq({1}) \\in {Seq({"a"})}',
+      STRING_REASON,
+      [
+        "Line 5, column 9 to line 5, column 43 in M",
+        "Line 5, column 9 to line 5, column 14 in M",
+        "Line 5, column 19 to line 5, column 43 in M",
+        "Line 5, column 32 to line 5, column 43 in M",
+        "Line 5, column 37 to line 5, column 41 in M",
+      ],
+    ],
+    [
+      'Seq(Seq({1})) = Seq(Seq({"a"}))',
+      INTEGER_REASON,
+      [
+        "Line 5, column 9 to line 5, column 49 in M",
+        "Line 5, column 9 to line 5, column 14 in M",
+        "Line 5, column 19 to line 5, column 49 in M",
+        "Line 5, column 27 to line 5, column 29 in M",
+      ],
+    ],
+    [
+      "Seq({1}) = Seq(Nat)",
+      "Attempted to compare the set {1} with the value:\nNat",
+      [
+        "Line 5, column 9 to line 5, column 37 in M",
+        "Line 5, column 9 to line 5, column 14 in M",
+        "Line 5, column 19 to line 5, column 37 in M",
+        "Line 5, column 23 to line 5, column 25 in M",
+      ],
+    ],
+    [
+      '<<Seq({1})>> # <<Seq({"a"})>>',
+      INTEGER_REASON,
+      [
+        "Line 5, column 9 to line 5, column 47 in M",
+        "Line 5, column 9 to line 5, column 14 in M",
+        "Line 5, column 19 to line 5, column 47 in M",
+        "Line 5, column 19 to line 5, column 30 in M",
+        "Line 5, column 25 to line 5, column 27 in M",
+      ],
+    ],
+  ])(
+    "compares the ranges of two Seq(S), as TLC's Sequences#compareTo does: x' = x /\\ %s",
+    async (comparison, reason, callStack) => {
+      const result = await check({
+        source: `---- MODULE M ----\nEXTENDS Integers, Sequences, FiniteSets, TLC\nVARIABLE x\nInit == x = 0\nNext == x' = x /\\ ${comparison}\nInv == TRUE\n====`,
+        config: "INIT Init\nNEXT Next\nINVARIANT Inv",
+      });
+      expect(result.failure?.message).toBe(getRuntimeException(reason));
+      expect(formatCallStackLines(result)).toEqual(callStack);
+      expect(result.failure?.fingerprint?.reason).toBe(reason);
+    },
+  );
+
   const SET_EQUALITY_REASON = "Attempted to check equality of the set {1} with the value:\n1";
 
   it.each([

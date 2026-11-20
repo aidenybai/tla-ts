@@ -640,6 +640,9 @@ export const compareValues = (left: Value, right: Value): number => {
       return leftKind === "ModelValue" ? -1 : 1;
     }
     if (left === ANY_SET || right === ANY_SET) return compareAny(left === ANY_SET ? right : left);
+    if (leftKind === "SequenceSet" && rightKind === "SequenceSet") {
+      return callTracedMethod(left.base, () => compareLikeTlc(left.base, right.base));
+    }
     if (isSetValue(left) && isSetValue(right) && isOverriddenComparison(left, right)) {
       return compareOverriddenSets(left, right, "compare");
     }
@@ -882,7 +885,7 @@ export const valuesEqual = (left: Value, right: Value): boolean => {
       const elements = toFiniteSet(left);
       if (!isOverriddenSet(right)) return compareSets(elements, toFiniteSet(right)) === 0;
     }
-    return getValueKey(left) === getValueKey(right);
+    return compareValues(left, right) === 0;
   }
   if (left.kind === "Function" && isTupleAgainstObservedLambda(left, right)) {
     return compareFunctionLikeTlc(left, right, true) === 0;
