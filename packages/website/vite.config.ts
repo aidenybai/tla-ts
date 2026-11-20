@@ -6,13 +6,9 @@ import tailwindcss from "@tailwindcss/vite";
 import typescript from "@typescript/typescript6";
 import react from "@vitejs/plugin-react";
 import { createServer, defineConfig, type Plugin } from "vite-plus";
-import { writeGraph } from "../tla-ts/scripts/write-graph";
-import { printModule } from "../tla-ts/src/printer";
-import { compile } from "../tla-ts/src/typescript/compile";
-import { getPreludeGraph, prepareJavaScriptModule } from "../tla-ts/src/typescript/javascript";
-import { printRegions } from "../tla-ts/src/typescript/regions";
-import { type EscoreRuntime, prepareRuntime } from "../tla-ts/src/typescript/spec/prepare";
-import { getCompilation, type Precompiled } from "./src/compilation";
+import { parseModule } from "../tla-ts/src/parser";
+import { type EscoreRuntime, prepareHostRuntime } from "../tla-ts/src/typescript/spec/prepare";
+import type { Precompiled } from "./src/compilation";
 import { getEscoreCompilation } from "./src/escore";
 import { createHighlighter } from "./src/highlighter";
 import { LOGO_PATH } from "./src/logo";
@@ -33,28 +29,34 @@ const GENERATED_NAMES = new Set(["vars", "Init", "Next", "Spec"]);
 const BENCHMARK_ROW =
   /^\| (?:\[(?<linked>[^\]]+)\]\([^)]*\)|(?<plain>[^|[]+?)) +\|[^|]*\| +(?<tlc>[\d.]+) s \| +(?<tlaTs>[\d.]+) s \| +(?<speedup>[\d.]+×) \|$/;
 
+// ESCore's runtime, which the build prepares once, from the host it records, for the files it
+// compiles ahead of time.
+let escoreRuntime: EscoreRuntime | undefined;
+const getEscoreRuntime = () => (escoreRuntime ??= prepareHostRuntime(JSON.parse(getEscoreHost())));
+
+const compileOnEscore = (source: string, fileName: string) =>
+  getEscoreCompilation(source, fileName, getEscoreRuntime());
+
 const getExample = (
   path: string,
   highlight: Awaited<ReturnType<typeof createHighlighter>>,
 ): CompiledExample => {
   const typescript = readFileSync(path, "utf8").trim();
   const fileName = path.slice(path.lastIndexOf("/") + 1);
-  const compiled = compile(typescript, fileName);
+  const compiled = compileOnEscore(typescript, fileName);
+  const module = parseModule(compiled.tla);
+  // The names of the program's code that its TypeScript names too.
+  const words = new Set(typescript.match(/\w+/g));
   return {
     fileName,
     name: compiled.name,
     config: compiled.config,
-    modules: Object.fromEntries(
-      compiled.source.extends.flatMap((name) => {
-        const text = compiled.loadModule(name);
-        return text === undefined ? [] : [[name, text]];
-      }),
-    ),
+    modules: compiled.modules,
     typescript: highlight(typescript, "typescript"),
-    tla: highlight(printModule(compiled.source).trim(), "tlaplus"),
-    highlightNames: [...compiled.source.variables, ...compiled.source.definitions]
+    tla: highlight(compiled.tla, "tlaplus"),
+    highlightNames: [...module.variables, ...module.definitions]
       .map((declared) => declared.name)
-      .filter((name) => !GENERATED_NAMES.has(name)),
+      .filter((name) => words.has(name) && !GENERATED_NAMES.has(name)),
   };
 };
 
@@ -63,9 +65,7 @@ const getExample = (
 // where the outline was.
 const getOutline = (path: string, highlight: Awaited<ReturnType<typeof createHighlighter>>) =>
   highlight(
-    printRegions(
-      compile(readFileSync(path, "utf8").trim(), path.slice(path.lastIndexOf("/") + 1)),
-    ).text.trimEnd(),
+    compileOnEscore(readFileSync(path, "utf8").trim(), path.slice(path.lastIndexOf("/") + 1)).tla,
     "tlaplus",
   )
     .lines.map((tokens) =>
@@ -174,12 +174,7 @@ const outlines = (): Plugin => ({
   },
 });
 
-// TLA_TS_ESCORE builds a site that checks TypeScript by specializing ESCore.
-const IS_ESCORE = process.env.TLA_TS_ESCORE !== undefined;
 const ESCORE_DIRECTORY = fileURLToPath(new URL("../tla-ts/ecmascript", import.meta.url));
-
-// ESCore's runtime, which the build prepares once for the files it compiles ahead of time.
-let escoreRuntime: EscoreRuntime | undefined;
 
 const ESCORE_HOST = "escore-host.json";
 
@@ -212,34 +207,22 @@ const recordEscoreHost = () => {
   return readFileSync(join(directory, ESCORE_HOST), "utf8");
 };
 
+// The host, recorded once a build or dev server.
+let escoreHost: string | undefined;
+const getEscoreHost = () => (escoreHost ??= recordEscoreHost());
+
 // The page fetches the host beside its scripts: a build writes it, and a dev server records it
 // when the page first asks.
-const escoreHost = (): Plugin => ({
+const hostFile = (): Plugin => ({
   name: "escore-host",
-  apply: () => IS_ESCORE,
   configureServer(server) {
-    let host: string | undefined;
     server.middlewares.use(`/${ESCORE_HOST}`, (_request, response) => {
-      host ??= recordEscoreHost();
       response.setHeader("Content-Type", "application/json");
-      response.end(host);
+      response.end(getEscoreHost());
     });
   },
   generateBundle() {
-    this.emitFile({ type: "asset", fileName: ESCORE_HOST, source: recordEscoreHost() });
-  },
-});
-
-// The JavaScript module that today's compiler prepares, which a model on ESCore reads, written into
-// the worker's bundles as tla-ts's build writes it into its own, so that the worker reads the
-// module rather than prepares it.
-const preludeGraph = (): Plugin => ({
-  name: "prelude-graph",
-  apply: (_config, env) => IS_ESCORE && env.command === "build",
-  writeBundle(options) {
-    writeGraph([join(options.dir ?? "dist", "assets")], "prelude", () =>
-      getPreludeGraph(prepareJavaScriptModule()),
-    );
+    this.emitFile({ type: "asset", fileName: ESCORE_HOST, source: getEscoreHost() });
   },
 });
 
@@ -277,13 +260,7 @@ const compilations = (): Plugin => ({
     this.addWatchFile(path);
     const highlight = await createHighlighter();
     const source = readFileSync(path, "utf8").trim();
-    const compilation = IS_ESCORE
-      ? getEscoreCompilation(
-          source,
-          getFileName(path),
-          (escoreRuntime ??= prepareRuntime(ESCORE_DIRECTORY)),
-        )
-      : getCompilation(source, getFileName(path));
+    const compilation = compileOnEscore(source, getFileName(path));
     return `export default ${JSON.stringify({
       fileName: getFileName(path),
       source,
@@ -382,13 +359,9 @@ export default defineConfig({
     compilations(),
     typescriptLibraries(),
     logoFiles(),
-    escoreHost(),
-    preludeGraph(),
+    hostFile(),
     pages(),
   ],
-  // A build that TLA_TS_ESCORE names gives its page the switch too, as a constant, so that a build
-  // without it leaves ESCore out.
-  define: { __TLA_TS_ESCORE__: JSON.stringify(IS_ESCORE) },
   build: {
     rollupOptions: {
       input: [

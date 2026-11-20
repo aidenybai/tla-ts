@@ -1,7 +1,3 @@
-// Whether the site checks TypeScript by specializing ESCore, which a build that TLA_TS_ESCORE
-// names asks for.
-declare const __TLA_TS_ESCORE__: boolean;
-
 declare module "virtual:site-data" {
   export const examples: import("./site-data").CompiledExample[];
   export const benchmarks: import("./site-data").Benchmark[];

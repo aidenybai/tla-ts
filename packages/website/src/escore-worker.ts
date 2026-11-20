@@ -1,14 +1,26 @@
-import type { CompileRequest, CompileResponse } from "./compile-worker";
+import type { Compilation } from "./compilation";
 import { getErrorResult } from "./run-error";
 import type { RunRequest, RunResult } from "./run-worker";
 
-// What the page asks the worker on ESCore, which compiles as well as checks.
+export interface CompileRequest {
+  source: string;
+  fileName: string;
+}
+
+export interface CompileResponse {
+  source: string;
+  fileName: string;
+  compilation?: Compilation;
+  error?: string;
+}
+
+// What the page asks the worker, which compiles as well as checks.
 export type EscoreRequest = RunRequest | { compile: CompileRequest };
 
 // What the worker answers: a compile's response, or a run's result.
 export type EscoreResponse = RunResult | { compiled: CompileResponse };
 
-// On ESCore, one worker compiles and checks, so the page loads TypeScript's compiler, fetches the
+// One worker compiles and checks, so the page loads TypeScript's compiler, fetches the
 // host, and prepares ESCore's runtime once, and keeps the runtime between runs. A run that the page
 // stops ends the worker, and the next request starts another.
 let worker: Worker | undefined;

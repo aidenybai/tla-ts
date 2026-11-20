@@ -1,7 +1,11 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { compilations, initial } from "virtual:compilations";
-import type { CompileRequest, CompileResponse } from "./compile-worker";
-import { compileOnEscore, listenToCompiles } from "./escore-worker";
+import {
+  type CompileRequest,
+  type CompileResponse,
+  compileOnEscore,
+  listenToCompiles,
+} from "./escore-worker";
 import type { createHighlighter } from "./highlighter";
 
 interface CompileState {
@@ -34,18 +38,10 @@ export const useCompile = (source: string, fileName: string) => {
       void import("./highlighter")
         .then((loaded) => loaded.createHighlighter())
         .then((nextHighlight) => setHighlight(() => nextHighlight));
-    // On ESCore, the worker that checks compiles too.
-    if (__TLA_TS_ESCORE__) {
-      workerRef.current = { postMessage: compileOnEscore };
-      loadHighlighter();
-      return listenToCompiles(receive);
-    }
-    const worker = new Worker(new URL("./compile-worker.ts", import.meta.url), { type: "module" });
-    worker.onmessage = (event: MessageEvent<CompileResponse>) => receive(event.data);
-    worker.onerror = (event) => receive({ source: "", fileName: "", error: event.message });
-    workerRef.current = worker;
+    // The worker that checks compiles too.
+    workerRef.current = { postMessage: compileOnEscore };
     loadHighlighter();
-    return () => worker.terminate();
+    return listenToCompiles(receive);
   }, [isStarted]);
 
   const isBuilt = built?.source === source;
