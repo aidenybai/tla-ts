@@ -2512,6 +2512,68 @@ describe("level checking matches SANY", () => {
     },
   );
 
+  it.each([
+    [
+      "THEOREM TM == ASSUME (x = 1)' PROVE TRUE\nN == INSTANCE P WITH e <- TM!1\nEM == (N!Be)'",
+      "line 5, col 7 to line 5, col 13",
+    ],
+    [
+      "THEOREM TM == ASSUME (x = 1)' PROVE TRUE\nINSTANCE P WITH e <- TM!1\nEM == Be'",
+      "line 5, col 7 to line 5, col 9",
+    ],
+    [
+      "THEOREM TM == ASSUME (x = 1)' PROVE TRUE\nN(q) == INSTANCE P WITH e <- TM!1\nEM == (N(1)!Be)'",
+      "line 5, col 7 to line 5, col 16",
+    ],
+    [
+      "THEOREM TM == ASSUME (x = 1)' PROVE TRUE\nN == INSTANCE P WITH e <- ~TM!1\nEM == (N!Be)'",
+      "line 5, col 7 to line 5, col 13",
+    ],
+    [
+      "---- MODULE Q ----\nCONSTANT c\nTHEOREM TQ == ASSUME c = 1 PROVE c = 1\nSQ == <<c = 1, 2>>\nNQ1 == INSTANCE P WITH e <- TQ!1\n====\nI3 == INSTANCE Q WITH c <- (x = 1)'\nEM == (I3!NQ1!Be)'",
+      "line 10, col 7 to line 10, col 18",
+    ],
+  ])(
+    "levels an instance's substitute that selects a theorem's clause in %j, as SANY does",
+    async (lines, range) => {
+      await expect(
+        check({
+          source: `---- MODULE M ----\nVARIABLE x\n${lines}\nInit == x = 0\nNext == x' = x\n====`,
+          config: "INIT Init\nNEXT Next",
+          loadModule: (name) =>
+            name === "P" ? "---- MODULE P ----\nCONSTANT e\nBe == e = e\n====" : undefined,
+        }),
+      ).rejects.toThrow(
+        createSanyError([
+          {
+            location: `${range} of module M`,
+            message:
+              "Level error in applying operator ':\nThe level of argument 1 exceeds the maximum level allowed by the operator.",
+          },
+        ]),
+      );
+    },
+  );
+
+  it("levels an assumption that reaches an instance's substitute selecting a theorem's clause, as SANY does", async () => {
+    await expect(
+      check({
+        source:
+          "---- MODULE M ----\nVARIABLE x\nTHEOREM TM == ASSUME (x = 1)' PROVE TRUE\nN == INSTANCE P WITH e <- TM!1\nASSUME N!Be\nInit == x = 0\nNext == x' = x\n====",
+        config: "INIT Init\nNEXT Next",
+        loadModule: (name) =>
+          name === "P" ? "---- MODULE P ----\nCONSTANT e\nBe == e = e\n====" : undefined,
+      }),
+    ).rejects.toThrow(
+      createSanyError([
+        {
+          location: "line 5, col 1 to line 5, col 11 of module M",
+          message: getAssumptionError(2),
+        },
+      ]),
+    );
+  });
+
   it("checks a label selected from a step's statement, as SANY does", async () => {
     const exceeds = "The level of argument 1 exceeds the maximum level allowed by the operator.";
     await expect(

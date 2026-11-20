@@ -783,7 +783,13 @@ export const createEnvironment = (
     const params = instance.params.map((param) => ({ ...param, name: `${param.name}${suffix}` }));
     params.forEach((param) => instanceParams.add(param));
     const replacements = new Map(
-      [...substitutions].map((entry) => [entry[0], renameLocals(entry[1], renamed)]),
+      [...substitutions].map((entry) => [
+        entry[0],
+        // Resolution records a substitute's goal selections on its own nodes, so only a substitute that names a parameter is copied.
+        mentionsName(entry[1], new Set(renamed.keys()))
+          ? renameLocals(entry[1], renamed)
+          : entry[1],
+      ]),
     );
     const substitutes = {
       params,
