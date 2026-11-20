@@ -10,6 +10,8 @@ let rmState: Record<RM, "working" | "prepared" | "committed" | "aborted"> = {
   r3: "working",
 };
 let tmState: "init" | "committed" | "aborted" = "init";
+// A collection keeps its elements in the order they were added, so each holds them sorted, as
+// TLA+'s sets hold no order.
 let tmPrepared = new Set<RM>();
 // The messages sent, by a key of each, as TLA+'s set of records holds each record once.
 let msgs = new Map<string, Message>();
@@ -18,12 +20,16 @@ const getKey = (message: Message) =>
   message.type === "Prepared" ? `Prepared ${message.rm}` : message.type;
 
 const send = (message: Message) => {
-  msgs.set(getKey(message), message);
+  msgs = new Map(
+    [...msgs, [getKey(message), message] as const].sort((left, right) =>
+      left[0] < right[0] ? -1 : 1,
+    ),
+  );
 };
 
 export const tmRcvPrepared = (rm: RM) => {
   if (tmState !== "init" || !msgs.has(getKey({ type: "Prepared", rm }))) return;
-  tmPrepared.add(rm);
+  tmPrepared = new Set([...tmPrepared, rm].sort());
 };
 
 export const tmCommit = () => {
