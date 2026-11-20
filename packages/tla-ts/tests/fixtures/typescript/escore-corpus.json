@@ -19217,25 +19217,21 @@
       "source": "\n      \"use strict\";\n      var log = \"\";\n      var bump = 1;\n      var key = { toString: function () { log += \"k|\"; bump += 1; return \"a\"; } };\n      var frozen = Object.freeze({ a: 1 });\n      var thrown = \"none\";\n      try {\n        frozen[key] += bump;\n      } catch (error) {\n        thrown = error.constructor.name;\n      }\n      var open = { a: 1 };\n      open[key] += bump;\n      var result = [thrown, frozen.a, open.a, log].join();\n      if (result !== \"TypeError,1,5,k|k|k|k|\") throw new Error(\"result \" + result);\n    ",
       "runs": [
         {
-          "name": "reads its value after the first conversion and throws where it can't write (1)",
-          "wrong": "conformance: a compound assignment to an object key converts the key in another order than V8"
+          "name": "reads its value after the first conversion and throws where it can't write (1)"
         },
         {
           "name": "reads its value after the first conversion and throws where it can't write (2)",
           "replace": ["5", "4"],
-          "thrown": "result TypeError,1,5,k|k|k|k|",
-          "wrong": "conformance: a compound assignment to an object key converts the key in another order than V8"
+          "thrown": "result TypeError,1,5,k|k|k|k|"
         },
         {
           "name": "agrees with Node",
-          "source": "\n      var log = \"\";\n      var n = 0;\n      var key = { toString: function () { n += 1; log += \"key\" + n + \"|\"; return n === 1 ? \"a\" : \"b\"; } };\n      var obj = { a: 1, b: 10 };\n      var rhs = 5;\n      obj[key] += rhs;\n      var other = { [Symbol.toPrimitive]: function (hint) { log += hint + \"|\"; return \"c\"; } };\n      obj.c = 2;\n      obj[other] *= 3;\n      var bad = { toString: function () { throw new RangeError(\"x\"); } };\n      var thrown = \"none\";\n      try {\n        obj[bad] -= 1;\n      } catch (error) {\n        thrown = error.constructor.name;\n      }\n      var result = [obj.a, obj.b, obj.c, Object.keys(obj).join(\"|\"), thrown, log].join();\n      if (result !== \"1,6,6,a|b|c,RangeError,key1|key2|string|string|\") throw new Error(\"result \" + result);\n    ",
-          "wrong": "conformance: a compound assignment to an object key converts the key in another order than V8"
+          "source": "\n      var log = \"\";\n      var n = 0;\n      var key = { toString: function () { n += 1; log += \"key\" + n + \"|\"; return n === 1 ? \"a\" : \"b\"; } };\n      var obj = { a: 1, b: 10 };\n      var rhs = 5;\n      obj[key] += rhs;\n      var other = { [Symbol.toPrimitive]: function (hint) { log += hint + \"|\"; return \"c\"; } };\n      obj.c = 2;\n      obj[other] *= 3;\n      var bad = { toString: function () { throw new RangeError(\"x\"); } };\n      var thrown = \"none\";\n      try {\n        obj[bad] -= 1;\n      } catch (error) {\n        thrown = error.constructor.name;\n      }\n      var result = [obj.a, obj.b, obj.c, Object.keys(obj).join(\"|\"), thrown, log].join();\n      if (result !== \"1,6,6,a|b|c,RangeError,key1|key2|string|string|\") throw new Error(\"result \" + result);\n    "
         },
         {
           "name": "rejects another result",
           "source": "\n      var log = \"\";\n      var n = 0;\n      var key = { toString: function () { n += 1; log += \"key\" + n + \"|\"; return n === 1 ? \"a\" : \"b\"; } };\n      var obj = { a: 1, b: 10 };\n      var rhs = 5;\n      obj[key] += rhs;\n      var other = { [Symbol.toPrimitive]: function (hint) { log += hint + \"|\"; return \"c\"; } };\n      obj.c = 2;\n      obj[other] *= 3;\n      var bad = { toString: function () { throw new RangeError(\"x\"); } };\n      var thrown = \"none\";\n      try {\n        obj[bad] -= 1;\n      } catch (error) {\n        thrown = error.constructor.name;\n      }\n      var result = [obj.a, obj.b, obj.c, Object.keys(obj).join(\"|\"), thrown, log].join();\n      if (result !== \"1,15,6,a|b|c,RangeError,key1|key2|string|string|\") throw new Error(\"result \" + result);\n    ",
-          "thrown": "result 1,6,6,a|b|c,RangeError,key1|key2|string|string|",
-          "wrong": "conformance: a compound assignment to an object key converts the key in another order than V8"
+          "thrown": "result 1,6,6,a|b|c,RangeError,key1|key2|string|string|"
         }
       ]
     },
@@ -19261,13 +19257,11 @@
       "runs": [
         {
           "name": "rejects another result",
-          "thrown": "result 6,RangeError,SyntaxError,key1|rhs|key2|key3|",
-          "wrong": "conformance: a compound assignment to an object key converts the key in another order than V8"
+          "thrown": "result 6,RangeError,SyntaxError,key1|rhs|key2|key3|"
         },
         {
           "name": "agrees with Node",
-          "replace": ["105", "6"],
-          "wrong": "conformance: a compound assignment to an object key converts the key in another order than V8"
+          "replace": ["105", "6"]
         }
       ]
     },
@@ -22638,14 +22632,12 @@
       "source": "\n      var log = \"\";\n      function DummyError() {}\n      var first = \"ok\";\n      var nullBase = null;\n      var throwingProp = function () {\n        log += \"prop|\";\n        throw new DummyError();\n      };\n      var expr = function () {\n        log += \"expr|\";\n        return 1;\n      };\n      try {\n        nullBase[throwingProp()] /= expr();\n      } catch (error) {\n        first = error instanceof DummyError ? \"dummy\" : error.constructor.name;\n      }\n      var second = \"ok\";\n      var undefinedBase = undefined;\n      var keyObject = { toString: function () { log += \"key|\"; return \"p\"; } };\n      try {\n        undefinedBase[keyObject] /= expr();\n      } catch (error) {\n        second = error.constructor.name;\n      }\n      var base = { p: 6 };\n      var makeKey = function () {\n        log += \"call|\";\n        return keyObject;\n      };\n      base[makeKey()] -= 2;\n      var result = [first, second, base.p, log].join();\n      if (result !== \"dummy,TypeError,4,prop|call|key|key|\") throw new Error(\"result \" + result);\n    ",
       "runs": [
         {
-          "name": "agrees with Node",
-          "wrong": "conformance: a compound assignment to an object key converts the key in another order than V8"
+          "name": "agrees with Node"
         },
         {
           "name": "rejects another result",
           "replace": [",prop|", ",prop|key|"],
-          "thrown": "result dummy,TypeError,4,prop|call|key|key|",
-          "wrong": "conformance: a compound assignment to an object key converts the key in another order than V8"
+          "thrown": "result dummy,TypeError,4,prop|call|key|key|"
         }
       ]
     },

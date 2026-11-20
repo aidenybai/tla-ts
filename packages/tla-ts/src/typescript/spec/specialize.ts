@@ -1707,18 +1707,19 @@ export const specialize = (
     if (operator === ts.SyntaxKind.EqualsToken) {
       return defineCode("Assign", `${head} PutValueThen(Val(t), ${assigned("t.s", "ctx")})`);
     }
-    const old = `LET ref == ToKeyedReference(t.s, Val(t)) IN IF IsAbrupt(ref) THEN ref ELSE LET old == GetValue(ref.s, Val(ref)) IN IF IsAbrupt(old) THEN old ELSE`;
+    // GetValue and PutValue each convert the key, as V8 does (§13.15.2).
+    const old = `LET old == GetValue(t.s, Val(t)) IN IF IsAbrupt(old) THEN old ELSE`;
     const test = LOGICAL_TESTS.get(operator);
     if (test !== undefined) {
       return defineCode(
         "Assign",
-        `${head} ${old} IF ${test("Val(old)")} THEN old ELSE PutValueThen(Val(ref), ${assigned("old.s", "ctx")})`,
+        `${head} ${old} IF ${test("Val(old)")} THEN old ELSE PutValueThen(Val(t), ${assigned("old.s", "ctx")})`,
       );
     }
     const right = value(node.right, scope);
     return defineCode(
       "Assign",
-      `${head} ${old} CompoundThen(Val(ref), Val(old), "${COMPOUND_OPERATORS.get(operator)}", ${right("old.s", "ctx")})`,
+      `${head} ${old} CompoundThen(Val(t), Val(old), "${COMPOUND_OPERATORS.get(operator)}", ${right("old.s", "ctx")})`,
     );
   };
 

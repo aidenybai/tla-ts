@@ -251,7 +251,6 @@ RECURSIVE IsPropertyReference(_)
 RECURSIVE IsUnresolvableReference(_)
 RECURSIVE GetThisValue(_)
 RECURSIVE GetValue(_, _)
-RECURSIVE ToKeyedReference(_, _)
 RECURSIVE PutValue(_, _, _)
 RECURSIVE InitializeReferencedBinding(_, _, _)
 RECURSIVE Context(_, _, _, _)
@@ -6635,13 +6634,6 @@ GetValue(s, v) ==
     ELSE LET k == IF IsPropertyKey(v.name) THEN Ok(base.s, v.name) ELSE ToPropertyKey(base.s, v.name) IN
          IF IsAbrupt(k) THEN k ELSE GetV(k.s, Val(base), Val(k), GetThisValue(v))
   ELSE GetBindingValue(s, v.base.env, v.name.value, v.strict)
-\* Step 3.c of GetValue, which stores the property key it converts in the reference, for an
-\* operator that puts a value to the reference after getting it. A nullish base throws first.
-ToKeyedReference(s, v) ==
-  IF v.type # "reference" \/ ~IsPropertyReference(v) \/ IsNullish(v.base) \/ v.name.type = "private" \/
-     IsPropertyKey(v.name)
-  THEN Ok(s, v)
-  ELSE LET k == ToPropertyKey(s, v.name) IN IF IsAbrupt(k) THEN k ELSE Ok(k.s, [v EXCEPT !.name = Val(k)])
 PutValue(s, v, w) ==
   IF v.type # "reference" THEN ThrowError(s, "ReferenceError")
   ELSE IF IsUnresolvableReference(v) THEN
@@ -7609,9 +7601,7 @@ UpdateThen(n, r) ==
   IF IsSuspended(r) THEN Pass(r, "UpdateThen", <<n>>) ELSE
   IF IsAbrupt(r) THEN r ELSE
   IF Val(r).type # "reference" THEN ThrowError(r.s, "ReferenceError") ELSE
-  LET ref == ToKeyedReference(r.s, Val(r)) IN
-  IF IsAbrupt(ref) THEN ref ELSE
-  LET old == GetValue(ref.s, Val(ref)) IN
+  LET old == GetValue(r.s, Val(r)) IN
   IF IsAbrupt(old) THEN old ELSE
   LET num == ToNumeric(old.s, Val(old)) IN
   IF IsAbrupt(num) THEN num ELSE
@@ -7619,7 +7609,7 @@ UpdateThen(n, r) ==
       new == IF IsNumber(v)
              THEN Num(IF n.operator = "++" THEN NumAdd(v.value, NumFromInt(1)) ELSE NumSub(v.value, NumFromInt(1)))
              ELSE BigInt(IF n.operator = "++" THEN BigIntAdd(v.value, BigIntFromInt(1)) ELSE BigIntSub(v.value, BigIntFromInt(1)))
-      p == PutValue(num.s, Val(ref), new)
+      p == PutValue(num.s, Val(r), new)
   IN IF IsAbrupt(p) THEN p ELSE Ok(p.s, IF Has(n.LeftHandSideExpression) THEN v ELSE new)
 \* Unary operators (§13.5).
 EvaluateUnaryExpression(s, ctx, n) ==
@@ -7798,17 +7788,15 @@ AssignmentTargetThen(ctx, n, target) ==
   IF Val(target).type # "reference" THEN ThrowError(target.s, "ReferenceError") ELSE
   LET op == n.AssignmentOperator IN
   IF op = "=" THEN PutValueThen(Val(target), EvaluateAssigned(target.s, ctx, n)) ELSE
-  LET ref == ToKeyedReference(target.s, Val(target)) IN
-  IF IsAbrupt(ref) THEN ref ELSE
-  LET old == GetValue(ref.s, Val(ref)) IN
+  LET old == GetValue(target.s, Val(target)) IN
   IF IsAbrupt(old) THEN old
   ELSE IF op \in {"&&=", "||=", "??="} THEN
     IF (CASE op = "&&=" -> ~ToBooleanValue(Val(old))
           [] op = "||=" -> ToBooleanValue(Val(old))
           [] op = "??=" -> ~IsNullish(Val(old)))
     THEN old
-    ELSE PutValueThen(Val(ref), EvaluateAssigned(old.s, ctx, n))
-  ELSE CompoundThen(Val(ref), Val(old), SubSeq(op, 1, Len(op) - 1), EvaluateValue(old.s, ctx, n.AssignmentExpression))
+    ELSE PutValueThen(Val(target), EvaluateAssigned(old.s, ctx, n))
+  ELSE CompoundThen(Val(target), Val(old), SubSeq(op, 1, Len(op) - 1), EvaluateValue(old.s, ctx, n.AssignmentExpression))
 \* Assigns the value r gives to the reference, which is the assignment's value.
 PutValueThen(ref, r) ==
   IF IsSuspended(r) THEN Pass(r, "PutValueThen", <<ref>>) ELSE
