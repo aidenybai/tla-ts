@@ -1,5 +1,5 @@
-// Ported from Z3 (src/math/lp/nex_creator.h, src/math/lp/nex_creator.cpp), MIT license, see z3-license.txt.
 import { Rational } from "../rational";
+import { UnorderedUintMap } from "./containers";
 import {
   type Nex,
   type NexMul,
@@ -25,8 +25,8 @@ interface MapEntry<Value> {
 }
 
 export class NexCreator {
-  readonly occurencesMap = new Map<number, Occ>();
-  readonly powers = new Map<number, number>();
+  readonly occurencesMap = new UnorderedUintMap<Occ>();
+  readonly powers = new UnorderedUintMap<number>();
   private activeVarsWeights: number[] = [];
 
   setNumberOfVars(count: number) {

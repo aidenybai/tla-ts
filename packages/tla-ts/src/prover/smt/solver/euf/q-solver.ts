@@ -1,5 +1,3 @@
-// Ported from Z3 (src/sat/smt/q_solver.h, src/sat/smt/q_solver.cpp), MIT license, see
-// z3-license.txt.
 import {
   KIND_QUANTIFIER,
   OP_AND,
@@ -38,10 +36,10 @@ export class QSolver extends ThSolver {
   private expanded: RefVector;
   private der: DerRewriter;
 
-  constructor(ctx: EufSolver) {
+  constructor(ctx: EufSolver, parameters: ReadonlyMap<string, string>) {
     super(ctx, "quant", FAMILY_QUANT);
     this.mbqi = new Mbqi(ctx, this);
-    this.ematch = new Ematch(ctx, this);
+    this.ematch = new Ematch(ctx, this, parameters);
     this.expanded = new RefVector(ctx.manager);
     this.der = new DerRewriter(ctx.manager);
   }

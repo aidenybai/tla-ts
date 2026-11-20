@@ -15,6 +15,7 @@ import type {
   CheckStatus,
   InitialStates,
   SearchStatistics,
+  TraceFailure,
   TraceStep,
   Violation,
 } from "../check";
@@ -39,7 +40,7 @@ import {
   MESSAGE_LEVEL,
   type MessagePrinter,
 } from "../tlc/messages";
-import { formatState } from "../values";
+import { formatState, getDiffBase } from "../values";
 import type { TlcArguments } from "./tlc-arguments";
 
 const printInitialStatesProgress = (printer: MessagePrinter, count: number) =>
@@ -65,10 +66,11 @@ const getInitialViolationHeadline = (
 
 const printTraceOutput = (printer: MessagePrinter, lines: OutputLine[] | undefined) =>
   lines?.forEach((line) => {
-    if (typeof line === "string") return console.log(line);
+    if (typeof line === "string") return printer.printOutput(line);
     if (line.kind === "initial-states-progress") {
       return printInitialStatesProgress(printer, line.count);
     }
+    if (line.kind === "warning") return printer.print(line.code, MESSAGE_LEVEL.warning, line.text);
     const headline = getInitialViolationHeadline(line.status, line.name);
     printer.print(
       headline.code,
@@ -97,6 +99,7 @@ const printTrace = (
   printer: MessagePrinter,
   trace: TraceStep[],
   mode: keyof typeof TRACE_MODES,
+  levels?: number[],
 ) => {
   const heading = TRACE_MODES[mode].heading;
   const isRebuiltAfterHeading = mode === "counter-example" && printer.version === "1.7.4";
@@ -104,6 +107,7 @@ const printTrace = (
   try {
     trace.forEach((step, index) => {
       if (index > 0 || isRebuiltAfterHeading) printTraceOutput(printer, step.output);
+      printTraceOutput(printer, step.aliasOutput);
       const isDiffed =
         printer.isDiffTrace &&
         index > 0 &&
@@ -111,7 +115,7 @@ const printTrace = (
       printer.print(
         MESSAGE_CODE.statePrint2,
         MESSAGE_LEVEL.state,
-        `${index + 1}: <${step.label ?? step.action ?? "Initial predicate"}>\n${formatState(step.state, isDiffed ? trace[index - 1].state : undefined)}`,
+        `${levels?.[index] ?? index + 1}: <${step.label ?? step.action ?? "Initial predicate"}>\n${formatState(step.state, isDiffed ? getDiffBase(step.state, trace[index - 1].state) : undefined)}`,
       );
     });
   } catch (error) {
@@ -320,11 +324,10 @@ export const printCheckProgress = (
       timing.livenessStartTime = Date.now();
       if (progress.isComplete) printProgress(printer, progress.statistics);
       const branches = progress.branches > 1 ? `${progress.branches} branches of ` : "";
-      const states = progress.branches * progress.states;
       print(
         MESSAGE_CODE.checkingTemporal,
         MESSAGE_LEVEL.none,
-        `Checking ${branches}temporal properties for the ${progress.isComplete ? "complete" : "current"} state space with ${states} total distinct states at (${formatTlcDate(new Date())})`,
+        `Checking ${branches}temporal properties for the ${progress.isComplete ? "complete" : "current"} state space with ${progress.states} total distinct states at (${formatTlcDate(new Date())})`,
       );
       return;
     }
@@ -356,11 +359,21 @@ const printLivenessEnd = (printer: MessagePrinter, timing: Timing) => {
 
 const printPostcondition = (printer: MessagePrinter, postcondition: Postcondition | undefined) => {
   if (!postcondition) return;
-  if (postcondition.counts) console.log(postcondition.counts);
+  if (postcondition.counts) printer.printOutput(postcondition.counts);
   printer.print(
     postcondition.code,
     MESSAGE_LEVEL.error,
     formatInnerMessage(postcondition.code, postcondition.message, printer.isTool),
+  );
+};
+
+const printTraceFailure = (printer: MessagePrinter, traceFailure: TraceFailure | undefined) => {
+  if (!traceFailure) return;
+  printTraceOutput(printer, traceFailure.output);
+  printer.print(
+    traceFailure.code,
+    MESSAGE_LEVEL.error,
+    printer.isTool ? traceFailure.toolMessage : traceFailure.message,
   );
 };
 
@@ -371,6 +384,7 @@ const printViolation = (status: CheckStatus, violation: Violation, printer: Mess
   const isInitial =
     loopStart === undefined &&
     violation.trace.length === 1 &&
+    !violation.traceFailure &&
     (status === "invariant-violation" || status === "liveness-violation");
   const temporal = {
     code: MESSAGE_CODE.temporalPropertyViolated,
@@ -417,7 +431,8 @@ const printViolation = (status: CheckStatus, violation: Violation, printer: Mess
   const isCounterExample = isProperty || isLasso;
   const isRebuiltFirst = isCounterExample && printer.version !== "1.7.4";
   if (isRebuiltFirst) printTraceOutput(printer, violation.trace[0]?.output);
-  if (violation.counts) console.log(violation.counts);
+  if (violation.counts) printer.printOutput(violation.counts);
+  if (isInitial) printTraceOutput(printer, violation.trace[0].aliasOutput);
   if (headline) {
     const text = isInitial
       ? `${headline.text}\n${formatState(violation.trace[0].state)}`
@@ -428,6 +443,7 @@ const printViolation = (status: CheckStatus, violation: Violation, printer: Mess
     if (!isCounterExample) printTraceOutput(printer, violation.trace[0]?.output);
     printTrace(printer, violation.trace, isCounterExample ? "counter-example" : "error-trace");
   }
+  printTraceFailure(printer, violation.traceFailure);
   printTraceOutput(printer, violation.traceOutput);
   if (isLasso) {
     const label = violation.loopLabel;
@@ -473,7 +489,11 @@ const printSuccess = (printer: MessagePrinter, optimistic: number, actual: numbe
     ].join("\n"),
   );
 
-export const printDepthFirst = (printer: MessagePrinter, output: DepthFirstOutput) => {
+export const printDepthFirst = (
+  printer: MessagePrinter,
+  output: DepthFirstOutput,
+  startTime: number,
+) => {
   switch (output.kind) {
     case "message":
       printer.print(
@@ -481,6 +501,9 @@ export const printDepthFirst = (printer: MessagePrinter, output: DepthFirstOutpu
         output.isError ? MESSAGE_LEVEL.error : MESSAGE_LEVEL.none,
         printer.isTool ? output.toolMessage : output.message,
       );
+      return;
+    case "coverage":
+      printCoverage(printer, output.coverage, startTime);
       return;
     case "behavior":
       output.states.forEach((state, index) =>
@@ -547,14 +570,7 @@ export const printResult = (result: CheckResult, printer: MessagePrinter, timing
     );
     printTraceOutput(printer, failure.trace[0]?.output);
     printTrace(printer, failure.trace, "error-trace");
-    const traceFailure = failure.traceFailure;
-    if (traceFailure) {
-      print(
-        traceFailure.code,
-        MESSAGE_LEVEL.error,
-        printer.isTool ? traceFailure.toolMessage : traceFailure.message,
-      );
-    }
+    printTraceFailure(printer, failure.traceFailure);
     printTraceOutput(printer, failure.traceOutput);
     printPostcondition(printer, failure.postcondition);
     if (!failure.isCallStackFirst) printCallStack();
@@ -609,9 +625,9 @@ export const printCommandLineError = (isTool: boolean, version: TlcVersion, mess
   return 1;
 };
 
-// Deviation from TLC: tla-ts keeps its fingerprints and its queue of states in memory.
+// TLC prints the JVM's default direct memory limit and its default fingerprint set and state queue.
 export const printStartupBanner = (printer: MessagePrinter, args: TlcArguments) => {
-  const workers = `${args.workers} worker${args.workers === 1 ? "" : "s"} on ${availableParallelism()} cores with ${Math.floor(getHeapStatistics().heap_size_limit / 1024 / 1024)}MB heap and 0MB offheap memory [pid: ${process.pid}] (${type()} ${release()} ${arch()}, Node.js ${process.versions.node} ${process.arch.endsWith("64") ? 64 : 32}bit`;
+  const workers = `${args.workers} worker${args.workers === 1 ? "" : "s"} on ${availableParallelism()} cores with ${Math.floor(getHeapStatistics().heap_size_limit / 1024 / 1024)}MB heap and 64MB offheap memory [pid: ${process.pid}] (${type()} ${release()} ${arch()}, Node.js ${process.versions.node} ${process.arch.endsWith("64") ? 64 : 32}bit`;
   if (args.mode === "model-check" && args.dfidDepth !== undefined) {
     printer.print(
       MESSAGE_CODE.depthFirstModelChecking,
@@ -624,7 +640,7 @@ export const printStartupBanner = (printer: MessagePrinter, args: TlcArguments) 
     printer.print(
       MESSAGE_CODE.modelChecking,
       MESSAGE_LEVEL.none,
-      `Running breadth-first search Model-Checking with fp ${args.fingerprintIndex} and seed ${args.seed} with ${workers}, MemFPSet, MemStateQueue).`,
+      `Running breadth-first search Model-Checking with fp ${args.fingerprintIndex} and seed ${args.seed} with ${workers}, MSBDiskFPSet, DiskStateQueue).`,
     );
     return;
   }
@@ -635,7 +651,11 @@ export const printStartupBanner = (printer: MessagePrinter, args: TlcArguments) 
   );
 };
 
-export const printSimulation = (printer: MessagePrinter, output: SimulationOutput) => {
+export const printSimulation = (
+  printer: MessagePrinter,
+  output: SimulationOutput,
+  startTime: number,
+) => {
   const print = printer.print;
   switch (output.kind) {
     case "message":
@@ -645,10 +665,13 @@ export const printSimulation = (printer: MessagePrinter, output: SimulationOutpu
         printer.isTool ? output.toolMessage : output.message,
       );
       return;
+    case "coverage":
+      printCoverage(printer, output.coverage, startTime);
+      return;
     case "behavior": {
       const last = output.trace[output.trace.length - 1];
       if (!output.isLastStateOnly) {
-        printTrace(printer, output.trace, "simulation");
+        printTrace(printer, output.trace, "simulation", output.levels);
         return;
       }
       print(MESSAGE_CODE.errorState, MESSAGE_LEVEL.none, "The error state is:\n");

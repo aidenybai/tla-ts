@@ -10,7 +10,7 @@ import {
   type TestMetadata,
 } from "./test-file";
 
-export const GENERATED_DIRECTORY = join(SUITE_DIRECTORY, "tlc/generated");
+const GENERATED_DIRECTORY = join(SUITE_DIRECTORY, "tlc/generated");
 export const MODULES = "Integers, Sequences, FiniteSets, Bags, TLC";
 
 export interface NamedValue {

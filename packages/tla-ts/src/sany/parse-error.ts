@@ -133,7 +133,7 @@ interface ParserState {
   lastOperator: Operator | undefined;
   proofLevels: number[];
   isTerminalProof: boolean;
-  isFairnessHooked: boolean;
+  fairnessHook: SyntaxNode | undefined;
   isFairnessParenthesized: boolean[];
   report: string | undefined;
 }
@@ -1478,7 +1478,7 @@ const PRODUCTIONS: Record<string, Production> = {
     choice(
       sequence("<BANG>", "NoOpExtension"),
       action((state) => {
-        state.isFairnessHooked = state.token.kind === getKind("RBR");
+        state.fairnessHook = state.frames.at(-1)?.heirs.find((heir) => heir.kind === "OpArgs");
       }),
     ),
   ]),
@@ -1489,7 +1489,7 @@ const PRODUCTIONS: Record<string, Production> = {
     "Fairness Expression",
     [
       action((state) => {
-        state.isFairnessHooked = false;
+        state.fairnessHook = undefined;
         state.isFairnessParenthesized.push(false);
       }),
       choice("<WF>", "<SF>"),
@@ -1504,10 +1504,18 @@ const PRODUCTIONS: Record<string, Production> = {
         }),
       ),
     ],
-    (frame, state) =>
-      state.isFairnessParenthesized.pop() || state.isFairnessHooked
-        ? undefined
-        : `Ill-structured fairness expression at line ${frame.heirs[0].first.beginLine}, column ${frame.heirs[0].first.beginColumn}`,
+    (frame, state) => {
+      const token = frame.heirs[0].first;
+      if (state.isFairnessParenthesized.pop()) return;
+      if (state.fairnessHook === undefined) {
+        return `Ill-structured fairness expression at line ${token.beginLine}, column ${token.beginColumn}`;
+      }
+      if (state.fairnessHook.heirs.length !== 3) {
+        state.pushedErrors.push(
+          `Error in fairness expression at ${token.beginLine}: ${token.beginColumn}\n`,
+        );
+      }
+    },
   ),
   IfThenElse: production("IF THEN ELSE", [
     "<IF>",
@@ -2044,8 +2052,11 @@ export const getSanyParseError = (source: string) => {
   const state: ParserState = {
     readToken: () => {
       const token = readToken();
-      if (typeof token !== "string") return token;
-      state.lexicalError ??= token;
+      if ("kind" in token) return token;
+      state.lexicalError ??=
+        token.message.includes("EOF") && token.beginLine !== token.endLine
+          ? `Lexical {error: EOF reached, possibly open comment starting around line ${token.beginLine}`
+          : token.message;
       return { ...start, next: undefined };
     },
     lexicalError: undefined,
@@ -2069,7 +2080,7 @@ export const getSanyParseError = (source: string) => {
     lastOperator: undefined,
     proofLevels: [],
     isTerminalProof: false,
-    isFairnessHooked: false,
+    fairnessHook: undefined,
     isFairnessParenthesized: [],
     report: undefined,
   };

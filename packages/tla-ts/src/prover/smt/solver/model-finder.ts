@@ -1,4 +1,3 @@
-// Ported from Z3 (src/smt/smt_model_finder.cpp), MIT license, see z3-license.txt.
 import { OP_OR, SORT_BOOL, type AstManager } from "./ast";
 import type { Context } from "./context";
 import { L_TRUE } from "./lbool";
@@ -38,6 +37,13 @@ export class ModelFinder {
     this.quantifiers.push(quantifier);
     new QuantifierAnalyzer(this.manager, this.rewriter, info).analyze();
     return info;
+  }
+
+  release() {
+    for (const quantifier of this.quantifiers) this.q2info.get(quantifier)?.release();
+    this.aufSolver.release();
+    this.macroRewriter.release();
+    this.rewriter.release();
   }
 
   pushScope() {

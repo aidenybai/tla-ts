@@ -1,4 +1,3 @@
-// Ported from Z3 (src/smt/dyn_ack.cpp), MIT license, see z3-license.txt.
 import { OP_EQ } from "./ast";
 import { CLS_TH_LEMMA } from "./clause";
 import type { Context } from "./context";
@@ -25,6 +24,10 @@ export class DynAckManager {
   private instantiated = new Set<string>();
 
   constructor(private readonly context: Context) {}
+
+  release() {
+    this.resetAppPairs();
+  }
 
   private resetAppPairs() {
     const manager = this.context.manager;

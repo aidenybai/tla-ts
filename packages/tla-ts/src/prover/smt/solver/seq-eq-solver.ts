@@ -1,4 +1,3 @@
-// Ported from Z3 (src/ast/seq/seq_eq_solver.cpp), MIT license, see z3-license.txt.
 import { SmtUnsupportedError } from "../../../errors";
 import {
   type AstManager,
@@ -28,7 +27,7 @@ export interface SeqLength {
   value: Rational;
 }
 
-export interface SeqEqSolverHost {
+interface SeqEqSolverHost {
   addConsequence(isUsingDeps: boolean, clause: number[]): void;
   addSolution(variable: number, term: number): void;
   expr2rep(expr: number): number;
@@ -42,7 +41,7 @@ export interface BinaryEq {
   y: number;
 }
 
-export interface TernaryEq {
+interface TernaryEq {
   x: number;
   xs: number[];
   y1: number;

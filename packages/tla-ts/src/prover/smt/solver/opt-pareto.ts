@@ -1,5 +1,3 @@
-// Ported from Z3 (src/opt/opt_pareto.cpp, src/opt/opt_pareto_solver.cpp), MIT license, see
-// z3-license.txt.
 import { SmtTacticError } from "../../../errors";
 import {
   type AstManager,
@@ -29,7 +27,9 @@ import { goal2nlsat } from "./goal2nlsat";
 import { L_FALSE, L_TRUE, L_UNDEF } from "./lbool";
 import { NlsatSolver } from "./nlsat/solver";
 import { getModelValueBound } from "./opt-solver";
+import { mkPbGe, mkPbLe } from "./pb-rewriter";
 import { ProtoModel } from "./proto-model";
+import { Rational } from "./rational";
 import { RefVector } from "./ref-vector";
 import { compileInternalTactic, type TacticEnvironment } from "./tactic";
 
@@ -55,6 +55,9 @@ const REUSABLE_OPS = new Set([
 export interface ParetoObjective {
   term: number;
   isMax: boolean;
+  isMaxsmt: boolean;
+  terms: readonly number[];
+  weights: readonly Rational[];
 }
 
 export const canReuseNlsatSolver = (manager: AstManager, terms: readonly number[]) => {
@@ -240,6 +243,20 @@ export const giaPareto = (
     return bound === undefined ? -1 : pin(manager.mkRealNumeral(bound));
   };
   const mkCmp = (isGe: boolean, model: ProtoModel, objective: ParetoObjective) => {
+    if (objective.isMaxsmt) {
+      let bound = Rational.zero;
+      for (const [index, term] of objective.terms.entries()) {
+        const value = model.eval(term, true);
+        if (value === manager.trueExpr) bound = bound.add(objective.weights[index]);
+        manager.decRef(value);
+      }
+      const terms = [...objective.terms];
+      return pin(
+        isGe
+          ? mkPbGe(manager, objective.weights, terms, bound)
+          : mkPbLe(manager, objective.weights, terms, bound),
+      );
+    }
     const isGreater = objective.isMax ? isGe : !isGe;
     const evaluated = model.eval(objective.term, true);
     pin(evaluated);

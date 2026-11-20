@@ -1,4 +1,3 @@
-// Ported from Z3 (src/tactic/arith/lia2pb_tactic.cpp), MIT license, see z3-license.txt.
 import { SmtTacticError } from "../../../errors";
 import {
   type AstManager,
@@ -150,6 +149,6 @@ export const lia2pb = (manager: AstManager, goal: Goal, options: Lia2PbOptions) 
   }
   rewriter.release();
   goal.depth++;
-  goal.addDefinitions(definitions);
+  if (goal.isModelsEnabled) goal.addDefinitions(definitions);
   terms.reset();
 };

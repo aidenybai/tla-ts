@@ -1,6 +1,3 @@
-// Ported from Z3 (src/sat/smt/pb_constraint.h, src/sat/smt/pb_constraint.cpp,
-// src/sat/smt/pb_card.h, src/sat/smt/pb_card.cpp, src/sat/smt/pb_pb.h, src/sat/smt/pb_pb.cpp),
-// MIT license, see z3-license.txt.
 import { L_FALSE } from "../lbool";
 import { NULL_LITERAL } from "./clause";
 import { WATCH_EXT_CONSTRAINT, type WatchList } from "./watch-list";
@@ -34,6 +31,13 @@ export abstract class Constraint {
 
   get size() {
     return this.lits.length;
+  }
+
+  getMaxVar() {
+    let maxVar = this.lit === NULL_LITERAL ? 0 : this.lit >> 1;
+    for (let index = 0; index < this.lits.length; index++)
+      maxVar = Math.max(maxVar, this.lits[index] >> 1);
+    return maxVar;
   }
 
   getCoeff(_index: number) {

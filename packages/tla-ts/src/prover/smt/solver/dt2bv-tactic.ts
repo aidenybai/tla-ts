@@ -1,5 +1,3 @@
-// Ported from Z3 (src/tactic/bv/dt2bv_tactic.cpp, src/ast/rewriter/enum2bv_rewriter.cpp), MIT
-// license, see z3-license.txt.
 import { SmtTacticError } from "../../../errors";
 import {
   type AstManager,
@@ -20,7 +18,6 @@ import { mkBvApp } from "./bv-decl-plugin";
 import {
   getConstructorIndex,
   getDatatypeConstructors,
-  getDatatypeDef,
   getNumConstructors,
   getRecognizerConstructor,
 } from "./datatype-decl-plugin";
@@ -30,12 +27,15 @@ import { ObjMap } from "./hashtable";
 import { RefVector } from "./ref-vector";
 import { RewriterTpl } from "./rewriter-tpl";
 
-const isEnumSort = (manager: AstManager, sort: number) =>
-  manager.isDatatypeSort(sort) &&
-  (getDatatypeDef(manager, sort)?.constructors.every(
-    (constructor) => constructor.accessors.length === 0,
-  ) ??
-    false);
+// Deviation from Z3: Z3 5.3.2 takes a failed datatype for an empty enumeration and crashes.
+const isEnumSort = (manager: AstManager, sort: number) => {
+  if (!manager.isDatatypeSort(sort)) return false;
+  const constructors = getDatatypeConstructors(manager, sort);
+  return (
+    constructors.length > 0 &&
+    constructors.every((constructor) => manager.funcDecls[constructor].domain.length === 0)
+  );
+};
 
 const getEnumBvSize = (manager: AstManager, sort: number) => {
   const numConstructors = getNumConstructors(manager, sort);
@@ -53,12 +53,13 @@ const constrainDomain = (manager: AstManager, bounds: RefVector, expr: number, s
     bounds.push(mkBvApp(manager, OP_ULEQ, [expr, mkEnumValue(manager, domainSize - 1, sort)]));
 };
 
-class Enum2BvRewriter extends RewriterTpl {
+export class Enum2BvRewriter extends RewriterTpl {
   readonly enumIndexes: ObjMap<number>;
   readonly enumConsts: number[] = [];
   readonly enumBvs: number[] = [];
   readonly enumDefs: RefVector;
   readonly bounds: RefVector;
+  private readonly enumConstsLimits: number[] = [];
 
   // Without fd sorts, every enumeration sort is finite-domain.
   constructor(
@@ -183,6 +184,25 @@ class Enum2BvRewriter extends RewriterTpl {
     return result;
   }
 
+  push() {
+    this.enumConstsLimits.push(this.enumConsts.length);
+  }
+
+  pop(numScopes: number) {
+    const manager = this.manager;
+    if (numScopes > 0) {
+      const size = this.enumConstsLimits.length - numScopes;
+      const limit = this.enumConstsLimits[size];
+      for (let index = this.enumConsts.length - 1; index >= limit; index--)
+        this.enumIndexes.delete(this.enumConsts[index]);
+      this.enumConstsLimits.length = size;
+      for (const decl of this.enumConsts.splice(limit)) manager.decDeclRef(decl);
+      this.enumDefs.shrink(limit);
+      for (const decl of this.enumBvs.splice(limit)) manager.decDeclRef(decl);
+    }
+    this.reset();
+  }
+
   // ~imp: the rewriter goes before the vectors.
   release() {
     const manager = this.manager;
@@ -201,7 +221,7 @@ export const createDt2BvTactic = (manager: AstManager) => {
   const argsCannotBeFd = (expr: number) => {
     for (const arg of manager.getArgs(expr)) if (isFd(arg)) nonFdSorts.add(manager.sorts[arg]);
   };
-  return (goal: Goal) => {
+  const run = (goal: Goal) => {
     const visited = new Set<number>();
     const todo = [...goal.forms.items];
     for (let expr = todo.pop(); expr !== undefined; expr = todo.pop()) {
@@ -230,33 +250,56 @@ export const createDt2BvTactic = (manager: AstManager) => {
       else argsCannotBeFd(expr);
     }
     for (const sort of nonFdSorts) fdSorts.delete(sort);
-    if (fdSorts.size > 0) runEnum2Bv(manager, goal, fdSorts);
+    if (fdSorts.size > 0)
+      runEnum2Bv(
+        manager,
+        goal,
+        (visit) => {
+          const size = goal.forms.size;
+          for (let index = 0; index < size && !goal.isInconsistent; index++) visit(index);
+        },
+        fdSorts,
+      );
     goal.depth++;
     return [goal];
   };
+  return {
+    run,
+    cleanup: () => {
+      fdSorts.clear();
+      nonFdSorts.clear();
+    },
+  };
 };
 
-export const runEnum2Bv = (manager: AstManager, goal: Goal, fdSorts?: Set<number>) => {
+export const runEnum2Bv = (
+  manager: AstManager,
+  goal: Goal,
+  forEachIndex: (visit: (index: number) => void) => void,
+  fdSorts?: Set<number>,
+) => {
   const rewriter = new Enum2BvRewriter(manager, fdSorts);
   let rewritten = -1;
-  const size = goal.forms.size;
-  for (let index = 0; index < size && !goal.isInconsistent; index++) {
-    const next = rewriter.rewrite(goal.forms.items[index]);
+  try {
+    forEachIndex((index) => {
+      const next = rewriter.rewrite(goal.forms.items[index]);
+      release(manager, rewritten);
+      rewritten = next;
+      goal.update(index, rewritten, goal.getDependency(index));
+    });
+    const bounds = new RefVector(manager);
+    for (const bound of rewriter.bounds.items) bounds.push(bound);
+    rewriter.bounds.reset();
+    for (const bound of bounds.items) goal.assert(bound);
+    const definitions: Definition[] = [];
+    for (const entry of rewriter.enumIndexes)
+      definitions.push({ decl: rewriter.enumBvs[entry[1]], def: -1 });
+    for (const entry of rewriter.enumIndexes)
+      definitions.push({ decl: entry[0], def: rewriter.enumDefs.items[entry[1]] });
+    if (definitions.length > 0) goal.addDefinitions(definitions);
+    bounds.reset();
+  } finally {
     release(manager, rewritten);
-    rewritten = next;
-    goal.update(index, rewritten);
+    rewriter.release();
   }
-  const bounds = new RefVector(manager);
-  for (const bound of rewriter.bounds.items) bounds.push(bound);
-  rewriter.bounds.reset();
-  for (const bound of bounds.items) goal.assert(bound);
-  const definitions: Definition[] = [];
-  for (const entry of rewriter.enumIndexes)
-    definitions.push({ decl: rewriter.enumBvs[entry[1]], def: -1 });
-  for (const entry of rewriter.enumIndexes)
-    definitions.push({ decl: entry[0], def: rewriter.enumDefs.items[entry[1]] });
-  if (definitions.length > 0) goal.addDefinitions(definitions);
-  bounds.reset();
-  release(manager, rewritten);
-  rewriter.release();
 };

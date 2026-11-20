@@ -1,4 +1,3 @@
-// Ported from Z3 (src/nlsat/nlsat_evaluator.cpp), MIT license, see z3-license.txt.
 import type { Anum, AlgebraicManager } from "./algebraic";
 import { type IntervalSet, IntervalSetManager } from "./interval-set";
 import type { Polynomial, PolynomialManager } from "./polynomial";

@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vite-plus/test";
 import { check, formatValue } from "../../src";
+import type { OutputLine } from "../../src/check";
 import { checkFixture } from "./check-harness";
 
 const checkWithSeed = (name: string, seed: bigint) =>
@@ -116,6 +117,233 @@ describe("random choices match TLC run with -fp 0 and the same -seed", () => {
     const result = await checkWithSeed("RandomLet", 1n);
     expect(result.violation?.trace.map((step) => step.state.alpha)).toEqual([
       0, 100, 77, 50, 66, 68, 12,
+    ]);
+  });
+
+  it("draws again at each reference to a LET definition of an initial predicate that TLC takes from the spec", async () => {
+    const result = await check({
+      source:
+        "---- MODULE M ----\nEXTENDS Integers, TLC\nVARIABLES x, y\nInit == LET r == RandomElement(1..1000) IN x = r /\\ y = r\nSpec == Init /\\ [][UNCHANGED <<x, y>>]_<<x, y>>\nInv == x = 0\n====",
+      config: "SPECIFICATION Spec\nINVARIANT Inv",
+      seed: 4n,
+    });
+    expect(result.violation?.trace.map((step) => [step.state.x, step.state.y])).toEqual([
+      [731, 919],
+    ]);
+  });
+
+  it("draws again at each reference to a LET definition of an action as it rebuilds a trace", async () => {
+    const result = await check({
+      source:
+        "---- MODULE M ----\nEXTENDS Integers, TLC\nVARIABLES x, n\nInit == x = 0 /\\ n = 0\nA == LET r == RandomElement(1..1000) IN n' = n + 1 /\\ x' = r + r\nNext == A\nInv == n < 2\n====",
+      config: "INIT Init\nNEXT Next\nINVARIANT Inv",
+      seed: 4n,
+    });
+    expect(result.violation?.trace.map((step) => [step.label, step.state.x])).toEqual([
+      [undefined, 0],
+      ["A line 5, col 41 to line 5, col 64 of module M", 1655],
+      ["A line 5, col 41 to line 5, col 64 of module M", 763],
+    ]);
+  });
+
+  // Deviation from TLC: TLC draws on from where the search stopped, finds no step and throws a NullPointerException.
+  it("draws again from the seed of the state it found the error in as it rebuilds the step", async () => {
+    const result = await check({
+      source:
+        "---- MODULE M ----\nEXTENDS Integers, TLC\nVARIABLE x\nInit == x = 0\nA == x' = RandomElement(1..1000)\nB == x' = RandomElement(1..1000)\nNext == A \\/ B\nInv == x = 0\n====",
+      config: "INIT Init\nNEXT Next\nINVARIANT Inv",
+      seed: 4n,
+    });
+    expect(result.violation?.trace.map((step) => [step.label, step.state.x])).toEqual([
+      [undefined, 0],
+      ["A line 5, col 6 to line 5, col 32 of module M", 773],
+    ]);
+  });
+
+  it("draws on from where the search stopped as it rebuilds a step from an initial state, as TLC's TLCStateRandom does", async () => {
+    const outputs: string[] = [];
+    const result = await check({
+      source:
+        "---- MODULE M ----\nEXTENDS Integers, TLC\nVARIABLE x\nInit == x = 0\nA == PrintT(RandomElement(1..1000)) /\\ x' = 1\nNext == A\nInv == x = 0\n====",
+      config: "INIT Init\nNEXT Next\nINVARIANT Inv",
+      seed: 4n,
+      onPrint: (line) => outputs.push(line),
+    });
+    expect([
+      outputs,
+      result.violation?.trace.map((step) => step.output ?? []),
+      result.violation?.traceOutput,
+    ]).toEqual([["773"], [[], ["379"]], ["273"]]);
+  });
+
+  // Deviation from TLC: TLC draws on from where printing the trace stopped, misses the last step, evaluates B and skips the postcondition.
+  it("draws again from the seed of the state it found the error in once the rebuild for the postcondition misses the step", async () => {
+    const result = await check({
+      source:
+        "---- MODULE M ----\nEXTENDS Integers, FiniteSets, TLC, TLCExt\nVARIABLES x, n\nInit == x = 0 /\\ n = 0\nA == n' = n + 1 /\\ x' = RandomElement(1..1000)\nB == PrintT(<<\"B\", n>>) /\\ FALSE\nNext == A \\/ B\nInv == n < 2\nPost == PrintT(Cardinality(CounterExample.state))\n====",
+      config: "INIT Init\nNEXT Next\nINVARIANT Inv\nPOSTCONDITION Post",
+      seed: 4n,
+      onPrint: () => {},
+    });
+    expect([result.violation?.traceOutput, result.violation?.postconditionOutput]).toEqual([
+      ['<<"B", 1>>'],
+      ["3"],
+    ]);
+  });
+
+  // Deviation from TLC: TLC misses the initial state, skips the rest of the rebuild and skips the postcondition.
+  it("rebuilds the trace and checks the postcondition once the rebuild for it draws a different random initial state", async () => {
+    const result = await check({
+      source:
+        '---- MODULE M ----\nEXTENDS Naturals, TLC, TLCExt\nVARIABLE x\nInit == x = RandomElement(1..1000) /\\ PrintT(x)\nNext == x\' = x + 1 /\\ PrintT(<<"next", x>>)\nInv == x < 734\nPost == PrintT(DOMAIN CounterExample)\n====',
+      config: "INIT Init\nNEXT Next\nINVARIANT Inv\nPOSTCONDITION Post",
+      seed: 4n,
+      onPrint: () => {},
+    });
+    expect([result.violation?.traceOutput, result.violation?.postconditionOutput]).toEqual([
+      ["493", '<<"next", 731>>', '<<"next", 732>>', '<<"next", 733>>'],
+      ['{"action", "state"}'],
+    ]);
+  });
+
+  it.each([
+    [
+      "an invariant",
+      "Next == x' = x + 1\nInv == x < 734",
+      "INIT Init\nNEXT Next\nINVARIANT Inv",
+      "invariant-violation",
+      ["493"],
+    ],
+    [
+      "an invariant with a VIEW",
+      "Next == x' = x + 1\nInv == x < 734\nV == x",
+      "INIT Init\nNEXT Next\nINVARIANT Inv\nVIEW V",
+      "invariant-violation",
+      ["493"],
+    ],
+    [
+      "an action property",
+      "Next == x' = x + 1\nAct == [][x' < 734]_x",
+      "INIT Init\nNEXT Next\nPROPERTY Act",
+      "liveness-violation",
+      ["493"],
+    ],
+    ["a deadlock", "Next == x < 734 /\\ x' = x + 1", "INIT Init\nNEXT Next", "deadlock", ["493"]],
+    [
+      "a deadlock with an ALIAS",
+      "Next == x < 734 /\\ x' = x + 1\nA == [x |-> x]",
+      "INIT Init\nNEXT Next\nALIAS A",
+      "deadlock",
+      ["984"],
+    ],
+    [
+      "a temporal property",
+      "Next == x < 734 /\\ x' = x + 1\nSpec == Init /\\ [][Next]_x\nProp == <>(x > 2000)",
+      "SPECIFICATION Spec\nPROPERTY Prop\nCHECK_DEADLOCK FALSE",
+      "liveness-violation",
+      [],
+    ],
+  ])(
+    "draws for a random initial state with no state current as it prints the trace of %s, then from the state it last rebuilt or aliased, as TLC does",
+    async (_title, definitions, config, status, traceOutput) => {
+      const result = await check({
+        source: `---- MODULE M ----\nEXTENDS Naturals, TLC\nVARIABLE x\nInit == x = RandomElement(1..1000) /\\ PrintT(x)\n${definitions}\n====`,
+        config,
+        seed: 4n,
+        onPrint: () => {},
+      });
+      expect([
+        result.status,
+        result.violation?.trace[0].output,
+        result.violation?.traceOutput,
+      ]).toEqual([status, ["731"], traceOutput]);
+    },
+  );
+
+  it.each([
+    ["FALSE", "731"],
+    ["RandomElement(1..2) = 3", "882"],
+  ])(
+    "draws for a random initial state that deadlocks on from the worker's random as it rebuilds the state for the postcondition, as TLC does after Next == %s",
+    async (condition, traceOutput) => {
+      const result = await check({
+        source: `---- MODULE M ----\nEXTENDS Naturals, TLC\nVARIABLE x\nInit == x = RandomElement(1..1000) /\\ PrintT(x)\nNext == ${condition} /\\ x' = x\n====`,
+        config: "INIT Init\nNEXT Next",
+        seed: 4n,
+        onPrint: () => {},
+      });
+      expect([result.status, result.violation?.traceOutput]).toEqual(["deadlock", [traceOutput]]);
+    },
+  );
+
+  it("draws for a random initial state from the state it expands as it prints the trace under -continue, as TLC does", async () => {
+    const outputs: OutputLine[][] = [];
+    await check({
+      source:
+        "---- MODULE M ----\nEXTENDS Naturals, TLC\nVARIABLE x\nInit == x = RandomElement(1..1000) /\\ PrintT(x)\nNext == x < 736 /\\ x' = x + 1\nInv == x < 734\n====",
+      config: "INIT Init\nNEXT Next\nINVARIANT Inv\nCHECK_DEADLOCK FALSE",
+      seed: 4n,
+      isContinued: true,
+      onPrint: () => {},
+      onProgress: (progress) => {
+        if (progress.kind === "violation") outputs.push(progress.violation.trace[0].output ?? []);
+      },
+    });
+    expect(outputs[0]).toEqual(["493"]);
+  });
+
+  it("draws once for a constant TLCEval in the next-state relation", async () => {
+    const result = await check({
+      source:
+        "---- MODULE M ----\nEXTENDS Integers, TLC\nVARIABLE x, n\nInit == x = 0 /\\ n = 0\nNext == n < 3 /\\ n' = n + 1 /\\ x' = TLCEval(RandomElement(1..1000))\n====",
+      config: "INIT Init\nNEXT Next",
+      seed: 4n,
+    });
+    expect(result.violation?.trace.map((step) => step.state.x)).toEqual([0, 794, 794, 794]);
+  });
+
+  it.each([
+    [
+      "Next == \\E v \\in RandomSubset(1, 10..19) : y' = v % 4 /\\ PrintT(<<y, v>>)",
+      ["<<0, 19>>", "<<1, 19>>", "<<2, 19>>", "<<3, 19>>"],
+    ],
+    [
+      "A(v) == y' = v % 4 /\\ PrintT(<<y, v>>)\nNext == A(RandomElement(10..19))",
+      ["<<0, 17>>", "<<1, 17>>", "<<2, 17>>", "<<3, 17>>"],
+    ],
+    ['Next == \\E v \\in (IF PrintT("domain") THEN 0..1 ELSE {}) : y\' = v', ['"domain"']],
+  ])(
+    "evaluates the bound or argument TLC splits the next-state relation on once: %s",
+    async (next, outputs) => {
+      const printed: string[] = [];
+      const result = await check({
+        source: `---- MODULE M ----\nEXTENDS Naturals, TLC, Randomization\nVARIABLE y\nInit == y \\in 0..3\n${next}\n====`,
+        config: "INIT Init\nNEXT Next\nCHECK_DEADLOCK FALSE",
+        seed: 4n,
+        onPrint: (line) => printed.push(line),
+      });
+      expect([result.status, printed]).toEqual(["success", outputs]);
+    },
+  );
+
+  it("draws again from the seed of each state it rebuilds for a lasso, as TLC does", async () => {
+    const result = await check({
+      source:
+        "---- MODULE M ----\nEXTENDS Integers, TLC\nCONSTANTS Proc\nVARIABLES y\nA0(p) == y' = RandomElement(0..2)\nNext == \\E p \\in Proc : A0(p)\nSpec == y = 0 /\\ [][Next]_y\nProp == <>(y = 5)\n====",
+      config: "CONSTANT Proc = {p1, p2}\nSPECIFICATION Spec\nPROPERTY Prop",
+      seed: 4n,
+    });
+    expect([
+      result.status,
+      result.violation?.trace.map((step) => [step.label, step.state.y]),
+      result.violation?.loopStart,
+    ]).toEqual([
+      "liveness-violation",
+      [
+        [undefined, 0],
+        ["A0(p2) line 5, col 10 to line 5, col 33 of module M", 1],
+      ],
+      1,
     ]);
   });
 

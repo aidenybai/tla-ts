@@ -1,5 +1,3 @@
-// Ported from Z3 (src/solver/parallel_tactical.cpp, src/smt/smt_solver.cpp), MIT license, see
-// z3-license.txt.
 import { SmtTacticError } from "../../../errors";
 import { type AstManager, OP_AND, OP_EQ, OP_ITE, OP_OR } from "./ast";
 import { mkNot } from "./ast-util";
@@ -115,7 +113,7 @@ class ParallelSolver {
       this.context.maxConflicts = this.threadsMaxConflicts;
       const result = this.kernel.check([...this.assumptions, ...cube]);
       if (result === L_TRUE) {
-        this.setSat(this.context.getModel());
+        this.setSat(this.context.getSatModel());
         return false;
       }
       if (result === L_FALSE) {

@@ -1,4 +1,3 @@
-// Ported from Z3 (src/ast/act_cache.cpp, src/util/chashtable.h), MIT license, see z3-license.txt.
 import type { AstManager } from "./ast";
 import { shrink } from "./array";
 

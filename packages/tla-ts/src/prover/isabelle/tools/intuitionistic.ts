@@ -1,5 +1,3 @@
-// Ported from Isabelle2025's Tools/intuitionistic.ML and Pure/Isar/context_rules.ML. Copyright (c) 1986-2025 University of Cambridge, Technische Universitaet Muenchen, and contributors, see LICENSE.
-
 import { remdupsRl } from "../pure/drule";
 import { selectGoal } from "../pure/goal";
 import { unifyTermNet } from "../pure/net";

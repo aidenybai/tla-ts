@@ -1,4 +1,3 @@
-// Ported from Z3 (src/muz/transforms/dl_mk_bit_blast.cpp), MIT license, see z3-license.txt.
 import { type AstManager, FAMILY_USER, getSymbolName, OP_MKBV, SORT_BOOL } from "../ast";
 import { BitBlasterRewriter } from "../bit-blast-tactic";
 import { type Rewrite, RewriterTpl } from "../rewriter-tpl";

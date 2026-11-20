@@ -1,13 +1,22 @@
-// Ported from Z3 (src/smt/qi_queue.cpp, src/smt/smt_checker.cpp), MIT license, see z3-license.txt.
+import { SmtUnsupportedError } from "../../../errors";
 import { KIND_APP, KIND_VAR, OP_AND, OP_EQ, OP_FALSE, OP_ITE, OP_NOT, OP_OR, OP_TRUE } from "./ast";
 import type { Context } from "./context";
 import type { Enode } from "./enode";
+import { Rational } from "./rational";
 import { RefVector } from "./ref-vector";
 import { VarSubst } from "./var-subst";
 import { setAt, shrink } from "./array";
 
 const EAGER_COST_THRESHOLD = 10;
-const LAZY_COST_THRESHOLD = 20;
+
+const getConstantCost = (text: string | undefined) => {
+  if (text === undefined || text === "(+ weight generation)") return undefined;
+  if (!/^[0-9]+(\.[0-9]+)?$/.test(text)) throw new SmtUnsupportedError(`the qi.cost ${text}`);
+  return Rational.fromDecimal(text);
+};
+
+// Z3 costs a numeral as the float quotient of its int64 numerator and denominator.
+const getFloat = (value: bigint) => Math.fround(Number(BigInt.asIntN(64, value)));
 
 interface Entry {
   quantifier: number;
@@ -203,12 +212,27 @@ export class QiQueue {
   private instanceNext: number[] = [];
   private bindingOwners: number[] = [];
   private lemmas: RefVector;
+  private costExprs: number[];
+  private constantCost: number | undefined;
+  private eagerCostThreshold: number;
   numInstances = 0;
 
   constructor(private context: Context) {
+    const manager = context.manager;
+    // qi_queue::setup reads the eager threshold before the setup tunes the parameters.
+    this.eagerCostThreshold = context.params.qiEagerThreshold ?? EAGER_COST_THRESHOLD;
     this.checker = new Checker(context);
-    this.subst = new VarSubst(context.manager, true);
-    this.lemmas = new RefVector(context.manager);
+    const constantCost = getConstantCost(context.params.qiCost);
+    this.costExprs = manager.mkQiCostExprs(constantCost);
+    this.constantCost =
+      constantCost === undefined
+        ? undefined
+        : Math.fround(getFloat(constantCost.num) / getFloat(constantCost.den));
+    for (const expr of this.costExprs) manager.incRef(expr);
+    // smt.qi.new_gen is the variable cost, so the queue holds that variable twice.
+    manager.incRef(this.costExprs[0]);
+    this.subst = new VarSubst(manager, true);
+    this.lemmas = new RefVector(manager);
   }
 
   private getInstance(quantifier: number, bindings: number[]) {
@@ -247,28 +271,27 @@ export class QiQueue {
     this.newEntries.push({
       quantifier,
       bindings,
-      cost: weight + generation,
+      cost: this.constantCost ?? weight + generation,
       generation,
       isInstantiated: false,
     });
   }
 
   instantiate() {
+    const context = this.context;
     const entries = this.newEntries;
     this.newEntries = [];
     let sinceLastCheck = 0;
     for (const entry of entries) {
-      if (entry.cost <= EAGER_COST_THRESHOLD) this.instantiateEntry(entry);
+      if (context.checkCanceled()) break;
+      if (entry.cost <= this.eagerCostThreshold) this.instantiateEntry(entry);
       else if (
-        this.checker.isUnsat(
-          this.context.manager.getQuantifier(entry.quantifier).body,
-          entry.bindings,
-        )
+        this.checker.isUnsat(context.manager.getQuantifier(entry.quantifier).body, entry.bindings)
       )
         this.instantiateEntry(entry);
       else this.delayedEntries.push(entry);
       if (sinceLastCheck++ > 100) {
-        if (this.context.checkCanceled()) break;
+        if (context.isResourceLimitExceeded()) break;
         sinceLastCheck = 0;
       }
     }
@@ -309,11 +332,10 @@ export class QiQueue {
     let result = true;
     for (let index = 0; index < this.delayedEntries.length; index++) {
       const entry = this.delayedEntries[index];
-      if (entry.isInstantiated || entry.cost > LAZY_COST_THRESHOLD) continue;
+      if (entry.isInstantiated || entry.cost > this.context.config.qiLazyThreshold) continue;
       result = false;
       this.instantiatedTrail.push(index);
       this.instantiateEntry(entry);
-      if (this.context.checkCanceled()) break;
     }
     return result;
   }
@@ -333,6 +355,17 @@ export class QiQueue {
     this.lemmas.shrink(this.scopes[offset + 2]);
     this.newEntries = [];
     shrink(this.scopes, offset);
+  }
+
+  release() {
+    const manager = this.context.manager;
+    const costExprs = this.costExprs;
+    this.lemmas.reset();
+    this.initSearchEh();
+    this.subst.release();
+    for (let index = 0; index < costExprs.length - 1; index++) manager.decRef(costExprs[index]);
+    manager.decRef(costExprs[0]);
+    manager.decRef(costExprs[costExprs.length - 1]);
   }
 
   initSearchEh() {

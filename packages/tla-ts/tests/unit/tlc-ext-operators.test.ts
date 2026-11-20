@@ -2,6 +2,7 @@ import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { describe, expect, it } from "vite-plus/test";
 import { check } from "../../src";
+import { runCliWith } from "./cli-harness";
 
 const DIRECTORY = join(import.meta.dirname, "../fixtures/tlc-ext");
 
@@ -70,6 +71,16 @@ describe("TLCExt operators match TLC", () => {
     );
   });
 
+  it("names the action of each successor it asks about in a depth-first search", () => {
+    const ask = (line: number) =>
+      `Extend behavior of length 1 with a "Next" step [<Action line ${line}, col 12 to line ${line}, col 45 of module PickAsk>]? (Yes/no/explored/states/diff):`;
+    const result = runCliWith("tlc-ext", ["-dfid", "2", "PickAsk.tla"], "y\nn\n");
+    expect(result.stdout.split("\n").filter((line) => line.startsWith("Extend"))).toEqual([
+      ask(8),
+      ask(9),
+    ]);
+  });
+
   it("requires a string literal as the message of AssertError", async () => {
     const result = await checkModule(
       'Message == "x"\nASSUME AssertError(Message, 1 \\div 0)\nInit == x = 0\nNext == x\' = x',
@@ -102,5 +113,13 @@ describe("TLCExt operators match TLC", () => {
     );
     expect(result.status).toBe("success");
     expect([result.generatedStates, result.distinctStates, result.queuedStates]).toEqual([4, 4, 1]);
+  });
+
+  it("evaluates a function definition of the root module that TLCEvalDefinition names", async () => {
+    const result = await checkModule(
+      'f[n \\in {1, 2}] == n * 2\nInit == x = TLCEvalDefinition("f")\nNext == UNCHANGED x\nInv == x = <<2, 4>>',
+      "INIT Init\nNEXT Next\nINVARIANT Inv",
+    );
+    expect(result.status).toBe("success");
   });
 });

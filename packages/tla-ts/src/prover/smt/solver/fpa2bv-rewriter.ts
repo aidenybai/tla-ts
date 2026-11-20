@@ -1,4 +1,3 @@
-// Ported from Z3 (src/ast/fpa/fpa2bv_rewriter.cpp), MIT license, see z3-license.txt.
 import { SmtUnsupportedError } from "../../../errors";
 import {
   type AstManager,
@@ -215,6 +214,7 @@ export class Fpa2BvRewriter extends RewriterTpl {
           isSwapped ? args[1] : args[2],
         );
       }
+      // Deviation from Z3: mk_sub hands mk_add a rounding mode under bv2rm, so fpa2bv fails on fp.sub.
       case OP_FPA_SUB:
         return converter.mkSub(sort, getRm(), args[1], args[2]);
       case OP_FPA_NEG:

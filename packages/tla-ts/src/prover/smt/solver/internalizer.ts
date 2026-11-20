@@ -1,4 +1,3 @@
-// Ported from Z3 (src/smt/smt_context.h, src/smt/smt_internalizer.cpp), MIT license, see z3-license.txt.
 import { SmtInvariantError, SmtUnsupportedError } from "../../../errors";
 import {
   AstManager,
@@ -14,6 +13,7 @@ import {
   OP_BOR,
   OP_BXNOR,
   OP_BXOR,
+  OP_DISTINCT,
   OP_EQ,
   OP_IMPLIES,
   OP_ITE,
@@ -169,11 +169,11 @@ export abstract class Internalizer {
   enodes: Enode[] = [];
   protected decl2enodes = new Map<number, Enode[]>();
   trueEnode: Enode;
-  private isDiseqTmp = -1;
+  protected isDiseqTmp = -1;
   falseEnode: Enode;
   protected generation = 0;
   protected cachedGeneration = new Map<number, number>();
-  private randomSeed = 0;
+  protected randomSeed = 0;
   isSearching = false;
   config = DEFAULT_CONFIG;
 
@@ -222,7 +222,7 @@ export abstract class Internalizer {
   }
 
   pushEq(lhs: Enode, rhs: Enode, justification: EqJustification) {
-    this.eqPropagationQueue.push({ lhs, rhs, justification });
+    if (lhs.root !== rhs.root) this.eqPropagationQueue.push({ lhs, rhs, justification });
   }
 
   getRandomValue() {
@@ -667,9 +667,9 @@ export abstract class Internalizer {
     }
     node.isMergeTf = true;
     const value = this.assignment[mkLiteral(boolVar)];
-    if (value === L_TRUE && node.root !== this.trueEnode.root)
+    if (value === L_TRUE)
       this.pushEq(node, this.trueEnode, { kind: "equation", literal: mkLiteral(boolVar) });
-    else if (value === L_FALSE && node.root !== this.falseEnode.root)
+    else if (value === L_FALSE)
       this.pushEq(node, this.falseEnode, { kind: "equation", literal: mkLiteral(boolVar, true) });
   }
 
@@ -807,6 +807,10 @@ export abstract class Internalizer {
       }
       this.markAsRelevant(expr);
     } else {
+      if (manager.getOp(expr) === OP_DISTINCT && manager.getNumArgs(expr) > 32)
+        throw new SmtUnsupportedError(
+          "a distinct of more than 32 arguments, which Z3 asserts by fresh values",
+        );
       this.internalizeRec(expr, true);
       const literal = this.getLiteral(expr);
       if (literal === this.falseLiteral) this.setConflict("axiom", null);
@@ -862,6 +866,7 @@ export abstract class Internalizer {
     const op = manager.getOp(expr);
     if (op === OP_EQ && !manager.isBool(manager.getArg(expr, 0)))
       this.internalizeEq(expr, isGateContext);
+    else if (op === OP_DISTINCT) this.internalizeDistinct(expr, isGateContext);
     else if (manager.kinds[expr] === KIND_APP && this.internalizeTheoryAtom(expr, isGateContext))
       return;
     else if (manager.kinds[expr] === KIND_QUANTIFIER) this.internalizeQuantifier(expr);
@@ -877,6 +882,36 @@ export abstract class Internalizer {
       expr,
       boolVar,
     );
+  }
+
+  private internalizeDistinct(expr: number, isGateContext: boolean) {
+    const manager = this.manager;
+    const boolVar = this.mkBoolVar(expr);
+    const literal = mkLiteral(boolVar);
+    const numArgs = manager.getNumArgs(expr);
+    const disequalities: number[] = [];
+    for (let left = 0; left < numArgs - 1; left++)
+      for (let right = left + 1; right < numArgs; right++)
+        disequalities.push(
+          manager.mkApp(
+            OP_NOT,
+            [manager.mkEq(manager.getArg(expr, left), manager.getArg(expr, right))],
+            SORT_BOOL,
+          ),
+        );
+    const definition = manager.mkAnd(disequalities);
+    this.internalizeRec(definition, true);
+    const definitionLiteral = this.getLiteral(definition);
+    this.mkGateClause(negate(literal), definitionLiteral);
+    this.mkGateClause(literal, negate(definitionLiteral));
+    this.relevancy.addDependency(
+      expr,
+      manager.isNot(definition) ? manager.getArg(definition, 0) : definition,
+    );
+    if (isGateContext) return;
+    this.mkEnode(expr, true, true, false);
+    this.setEnodeFlag(boolVar, true);
+    if (this.assignment[literal] !== L_UNDEF) this.propagateBoolVarEnode(boolVar);
   }
 
   private internalizeTheoryAtom(expr: number, isGateContext: boolean) {

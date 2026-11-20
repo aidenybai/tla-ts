@@ -1,7 +1,9 @@
 import { describe, expect, it } from "vite-plus/test";
 import { SmtCanceledError } from "../../src/errors";
+import { AstManager, SORT_BOOL } from "../../src/prover/smt/solver/ast";
 import { L_UNDEF } from "../../src/prover/smt/solver/lbool";
 import { ResourceLimit } from "../../src/prover/smt/solver/rlimit";
+import { IncSatSolver } from "../../src/prover/smt/solver/sat/inc-sat-solver";
 import { Solver } from "../../src/prover/smt/solver/sat/solver";
 import { runSmtlibScript } from "../../src/prover/smt/solver/smtlib-script";
 
@@ -116,6 +118,22 @@ describe("sat2goal", () => {
     );
   });
 
+  it("frees the terms of its conversions once the incremental solver is released", () => {
+    const manager = new AstManager(new ResourceLimit(Infinity));
+    const [p, q, r] = [0, 1, 2].map(() => manager.mkFreshConst(null, SORT_BOOL));
+    for (const atom of [p, q, r]) manager.incRef(atom);
+    const negations = [p, q, r].map((atom) => manager.mkNot(atom));
+    const solver = new IncSatSolver(manager, new Map());
+    solver.assertExpr(manager.mkOr([p, q]));
+    solver.check();
+    solver.assertExpr(manager.mkOr([negations[0], r]));
+    solver.check();
+    const converted = [...solver.getAssertions()];
+    expect(converted.length).toBe(2);
+    solver.release();
+    expect([...converted, ...negations].filter((expr) => manager.ids[expr] !== -1)).toEqual([]);
+  });
+
   it("adds the equalities of the egraph in sat.euf mode", () => {
     expect(
       run([
@@ -153,6 +171,133 @@ describe("sat2goal", () => {
         "  :precision precise :depth 1)",
         ")",
       ].join("\n"),
+    );
+  });
+
+  it("keeps the atoms of popped variables until their variables are reused, as flush_smc does", () => {
+    expect(
+      run([
+        "(set-logic QF_BV)",
+        "(declare-const x (_ BitVec 4))",
+        "(declare-const y (_ BitVec 4))",
+        "(push 1)",
+        "(assert (bvsge (bvadd #x8 x) (bvsub #b0011 y)))",
+        "(check-sat)",
+        "(pop 1)",
+        "(assert (= x (bvadd y (bvashr y #x4))))",
+        "(check-sat)",
+        "(get-value (x y))",
+      ]),
+    ).toBe(["sat", "sat", "((x #x8)", " (y #x9))"].join("\n"));
+  });
+
+  it("keeps the shared terms of its propagate-values across a pop, until it preprocesses again", () => {
+    expect(
+      run([
+        "(set-logic QF_BV)",
+        "(declare-const x (_ BitVec 4))",
+        "(declare-const z (_ BitVec 4))",
+        "(push 1)",
+        "(assert (bvsge #b0011 (bvsub #b0111 z)))",
+        "(assert (bvsge x z))",
+        "(check-sat)",
+        "(pop 1)",
+        "(assert (bvsge #b0001 (bvurem x #b0101)))",
+        "(check-sat)",
+        "(get-value (x))",
+      ]),
+    ).toBe(["sat", "sat", "((x #xa))"].join("\n"));
+  });
+
+  it("keeps the substitution of its propagate-values across a pop, until it preprocesses again", () => {
+    expect(
+      run([
+        "(set-logic QF_BV)",
+        "(declare-const x (_ BitVec 4))",
+        "(declare-const y (_ BitVec 4))",
+        "(declare-const z (_ BitVec 4))",
+        "(declare-const w (_ BitVec 4))",
+        "(assert (or (bvult x (bvudiv #x0 z)) (bvsge y (bvudiv #x2 #x2))))",
+        "(push 1)",
+        "(assert (= w #xa))",
+        "(assert (= w #x8))",
+        "(check-sat)",
+        "(pop 1)",
+        "(push 1)",
+        "(assert (bvslt (bvlshr #x1 z) (bvurem x #x6)))",
+        "(check-sat)",
+        "(pop 1)",
+        "(check-sat)",
+        "(get-value (z))",
+      ]),
+    ).toBe(["unsat", "sat", "sat", "((z #x7))"].join("\n"));
+  });
+
+  it("keeps the rewriter cache of its propagate-values across a pop, until it preprocesses again", () => {
+    expect(
+      run([
+        "(set-logic QF_BV)",
+        "(declare-const x (_ BitVec 4))",
+        "(declare-const y (_ BitVec 4))",
+        "(declare-const z (_ BitVec 4))",
+        "(declare-const w (_ BitVec 4))",
+        "(declare-const p Bool)",
+        "(push 1)",
+        "(assert p)",
+        "(assert (bvult (ite p #xd z) #xa))",
+        "(check-sat)",
+        "(pop 1)",
+        "(push 1)",
+        "(assert (= (bvurem w (bvurem #x9 y)) (bvxor (bvneg #xf) w)))",
+        "(check-sat)",
+        "(pop 1)",
+        "(assert (bvugt y #x0))",
+        "(assert (= x (bvlshr x y)))",
+        "(check-sat)",
+        "(get-value (x y))",
+      ]),
+    ).toBe(["unsat", "sat", "sat", "((x #x0)", " (y #xa))"].join("\n"));
+  });
+
+  it("frees the equation that names a dependency and the clause of a tracked formula", () => {
+    expect(
+      run([
+        "(set-logic QF_BV)",
+        "(declare-const x (_ BitVec 3))",
+        "(declare-const y (_ BitVec 3))",
+        "(declare-const z (_ BitVec 3))",
+        "(assert (bvule (bvneg (bvmul y x)) z))",
+        "(assert (bvult (bvurem (bvneg (_ bv1 3)) (bvsdiv y x)) z))",
+        "(get-consequences ((bvule (bvurem x (_ bv5 3)) x)) ())",
+        "(assert (= z (_ bv5 3)))",
+        "(check-sat)",
+        "(get-value (x y z))",
+      ]),
+    ).toBe(["unknown", "", "sat", "((x #b110)", " (y #b101)", " (z #b101))"].join("\n"));
+  });
+
+  it("frees the state of its propagate-values at the start of get-consequences", () => {
+    expect(
+      run([
+        "(set-logic QF_FD)",
+        "(declare-const x (_ BitVec 3))",
+        "(declare-const y (_ BitVec 3))",
+        "(declare-const z (_ BitVec 3))",
+        "(declare-const p Bool)",
+        "(assert (bvule z (bvsdiv (_ bv0 3) y)))",
+        "(get-consequences () (x p y z))",
+        "(push 1)",
+        "(assert (= z (_ bv2 3)))",
+        "(assert (bvsge (bvsub z (bvadd x (_ bv7 3))) (bvurem (bvneg y) (bvlshr z x))))",
+        "(check-sat)",
+        "(pop 1)",
+        "(get-consequences (p) (z p x))",
+        "(assert (bvult z (bvsdiv (bvadd y x) z)))",
+        "(check-sat)",
+        "(get-value (x y z))",
+      ]),
+    ).toBe(
+      ["sat", "", "sat", "sat", "", "sat", "((x #b100)", " (y #b000)", " (z #b011))"].join("\n"),
     );
   });
 });
@@ -200,5 +345,144 @@ describe("sat solver", () => {
     solver.userPop(1);
     expect(solver.value(second)).toBe(1);
     expect(limit.isSuspended).toBe(false);
+  });
+
+  it("makes a model for each command that asks for one, which the command frees", () => {
+    expect(
+      run([
+        "(set-logic QF_BV)",
+        "(set-option :produce-models true)",
+        "(declare-const v0 (_ BitVec 8))",
+        "(declare-const v1 (_ BitVec 8))",
+        "(declare-const p0 Bool)",
+        "(declare-const p1 Bool)",
+        "(assert (bvsge (bvmul (bvxor v0 v1) (bvadd v0 v0)) (bvudiv (_ bv53 8) (_ bv213 8))))",
+        "(assert (bvult (bvmul (bvand (_ bv196 8) v0) (bvor v1 v1)) (bvmul (_ bv185 8) v0)))",
+        "(assert p1)",
+        "(assert (and p1 (bvult (bvudiv (bvmul (_ bv49 8) (_ bv3 8)) v1) (bvadd v0 v1))))",
+        "(check-sat-assuming (p0))",
+        "(get-value ((bvand (bvxor (_ bv26 8) (_ bv163 8)) (bvshl v0 v0))))",
+        "(check-sat-assuming (p0))",
+        "(get-value ((bvmul (bvshl (_ bv118 8) (_ bv166 8)) (bvurem v0 v1))))",
+        "(assert (or (bvult (bvlshr (bvsub v1 v0) (bvudiv v0 v1)) (_ bv228 8)) (= (bvshl (bvand v1 (_ bv14 8)) (bvurem v0 (_ bv174 8))) v0)))",
+        "(get-info :rlimit)",
+        "(push 1)",
+        "(check-sat)",
+        "(get-model)",
+        "(get-info :rlimit)",
+      ]),
+    ).toBe(
+      [
+        "sat",
+        "(((bvand (bvxor (_ bv26 8) (_ bv163 8)) (bvshl v0 v0)) #x00))",
+        "sat",
+        "(((bvmul (bvshl (_ bv118 8) (_ bv166 8)) (bvurem v0 v1)) #x00))",
+        "(:rlimit 6566)",
+        "sat",
+        "(",
+        "  (define-fun p1 () Bool",
+        "    true)",
+        "  (define-fun p0 () Bool",
+        "    true)",
+        "  (define-fun v0 () (_ BitVec 8)",
+        "    #x7f)",
+        "  (define-fun v1 () (_ BitVec 8)",
+        "    #xb2)",
+        ")",
+        "(:rlimit 11385)",
+      ].join("\n"),
+    );
+  });
+
+  it("drops the cardinality constraints over the variables of a popped scope", () => {
+    expect(
+      run([
+        "(set-option :tactic.default_tactic sat)",
+        "(declare-const a Bool)",
+        "(declare-const b Bool)",
+        "(declare-const c Bool)",
+        "(declare-const d Bool)",
+        "(declare-const e Bool)",
+        "(declare-const f Bool)",
+        "(declare-const g Bool)",
+        "(assert ((_ at-least 1) a b))",
+        "(push 1)",
+        "(assert ((_ pbeq 2 1 1 1) a c d))",
+        "(check-sat)",
+        "(pop 1)",
+        "(push 1)",
+        "(assert (not a))",
+        "(assert (and e (not f) g))",
+        "(check-sat)",
+      ]),
+    ).toBe("sat\nsat");
+  });
+
+  it("keeps the cardinality constraints of a user scope to that scope", () => {
+    const getScript = (constraint: string) => [
+      "(set-option :tactic.default_tactic sat)",
+      "(declare-const a Bool)",
+      "(declare-const b Bool)",
+      "(declare-const c Bool)",
+      "(declare-const d Bool)",
+      "(assert ((_ at-most 3) a b c d))",
+      "(check-sat)",
+      "(push 1)",
+      `(assert ${constraint})`,
+      "(check-sat)",
+      "(pop 1)",
+      "(assert a)",
+      "(assert b)",
+      "(check-sat)",
+    ];
+    expect(run(getScript("((_ at-most 1) a b c d)"))).toBe("sat\nsat\nsat");
+    expect(run(getScript("((_ pbeq 1 1 1 1 1) a b c d)"))).toBe("sat\nsat\nsat");
+  });
+
+  it("drops a pseudo-Boolean equality of nine literals with its user scope, where Z3 keeps it", () => {
+    expect(
+      run([
+        "(set-option :tactic.default_tactic sat)",
+        ...["a", "b", "c", "d", "e", "f", "g", "h", "i"].map(
+          (name) => `(declare-const ${name} Bool)`,
+        ),
+        "(assert ((_ at-most 8) a b c d e f g h i))",
+        "(check-sat)",
+        "(push 1)",
+        "(assert ((_ pbeq 1 1 1 1 1 1 1 1 1 1) a b c d e f g h i))",
+        "(check-sat)",
+        "(pop 1)",
+        "(assert a)",
+        "(assert b)",
+        "(check-sat)",
+      ]),
+    ).toBe("sat\nsat\nsat");
+  });
+
+  it("declares each function it gives up on in the reason", () => {
+    expect(
+      run([
+        "(set-logic QF_FD)",
+        "(declare-sort U 0)",
+        "(declare-fun a_rather_long_predicate_name_that_goes_on_and_on (U U U U (_ BitVec 8) U U U U U U U) Bool)",
+        "(declare-const u U)",
+        "(declare-const v U)",
+        "(declare-const b (_ BitVec 8))",
+        "(assert (a_rather_long_predicate_name_that_goes_on_and_on u u u u b u u u u u u u))",
+        "(assert (or (= u v) (= v u)))",
+        "(check-sat)",
+        "(get-info :reason-unknown)",
+      ]),
+    ).toBe(
+      [
+        "unknown",
+        '(:reason-unknown "(sat.giveup interpreted functions sent to SAT solver (declare-fun a_rather_long_predicate_name_that_goes_on_and_on',
+        "             (U U U U (_ BitVec 8) U U U U U U U)",
+        "             Bool)",
+        "(declare-fun = (U U) Bool)",
+        "(declare-fun = (U U) Bool)",
+        ')")',
+      ].join("\n"),
+    );
   });
 });

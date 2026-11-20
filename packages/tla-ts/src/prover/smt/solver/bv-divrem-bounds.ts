@@ -1,5 +1,3 @@
-// Ported from Z3 (src/tactic/bv/bv_divrem_bounds_tactic.h, src/ast/simplifiers/bv_divrem_bounds.cpp,
-// src/ast/bv_decl_plugin.cpp), MIT license, see z3-license.txt.
 import {
   type AstManager,
   KIND_APP,

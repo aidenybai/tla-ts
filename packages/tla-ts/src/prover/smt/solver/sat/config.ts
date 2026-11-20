@@ -1,6 +1,3 @@
-// Ported from Z3 (src/sat/sat_config.h, src/sat/sat_config.cpp, src/params/sat_params.pyg,
-// src/sat/sat_simplifier_params.pyg, src/sat/sat_asymm_branch_params.pyg,
-// src/sat/sat_scc_params.pyg), MIT license, see z3-license.txt.
 import { SmtTacticError } from "../../../../errors";
 import { UINT_MAX } from "./clause";
 
@@ -14,7 +11,7 @@ export const PS_RANDOM = 6;
 export const RS_GEOMETRIC = 0;
 export const RS_LUBY = 1;
 export const RS_EMA = 2;
-export const RS_STATIC = 3;
+const RS_STATIC = 3;
 
 export const GC_DYN_PSM = 0;
 export const GC_PSM = 1;

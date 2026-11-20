@@ -11,8 +11,17 @@ import { ACTION_LEVEL, CONSTANT_LEVEL, TEMPORAL_LEVEL, VARIABLE_LEVEL } from "./
 
 interface DefinitionNames extends Pick<
   Environment,
-  "definitions" | "substitutions" | "constants" | "variableIndex" | "builtins" | "variables"
+  | "definitions"
+  | "substitutions"
+  | "constants"
+  | "bodyValues"
+  | "variableIndex"
+  | "builtins"
+  | "variables"
 > {}
+
+const getFactExpressions = (definition: Definition, environment: DefinitionNames) =>
+  environment.bodyValues.has(definition.body) ? [] : getDefinitionExpressions(definition);
 
 export interface DefinitionFacts {
   ids: Map<Definition, number>;
@@ -32,6 +41,8 @@ const VARIABLE_LEVEL_FLAGS = 32;
 const ACTION_LEVEL_FLAGS = VARIABLE_LEVEL_FLAGS | 64;
 const TEMPORAL_LEVEL_FLAGS = ACTION_LEVEL_FLAGS | 128;
 const RANDOM = 256;
+const ABOVE_CONSTANT_BOUND = 512;
+const TLC_EVAL = 1024;
 
 const ACTION_KINDS = new Set<Expression["kind"]>([
   "Prime",
@@ -51,6 +62,7 @@ const NONCONSTANT_KINDS = new Set<Expression["kind"]>([
   ...ACTION_KINDS,
   ...TEMPORAL_KINDS,
   "Enabled",
+  "EnabledVariable",
 ]);
 
 const TEMPORAL_OPERATORS = new Set(["~>", "-+->"]);
@@ -69,12 +81,7 @@ const IMPURE_BUILTINS = new Set([
 
 const STREAMED_BUILTINS = new Set(["UNION", "\\cup"]);
 
-const RANDOM_BUILTINS = new Set([
-  "RandomSubset",
-  "RandomSetOfSubsets",
-  "TestRandomSetOfSubsets",
-  "RandomSubsetSet",
-]);
+const RANDOM_BUILTINS = new Set(["RandomSubset", "RandomSetOfSubsets", "RandomSubsetSet"]);
 
 const isImpureBuiltin = (name: string, environment: DefinitionNames) =>
   IMPURE_BUILTINS.has(name) || environment.builtins.get(name)?.isStateLevel === true;
@@ -85,6 +92,7 @@ interface Edge {
   callee: Definition;
   isOverridden: boolean;
   isLevelCounted: boolean;
+  isOperatorArgument: boolean;
   // The innermost LET definition around the reference, or -1.
   owner: number;
 }
@@ -115,7 +123,7 @@ const collectLocalFacts = (
     if (ACTION_KINDS.has(kind) || (kind === "Apply" && node.operator === "\\cdot")) {
       return ACTION_LEVEL_FLAGS;
     }
-    if (kind === "Enabled") return VARIABLE_LEVEL_FLAGS;
+    if (kind === "Enabled" || kind === "EnabledVariable") return VARIABLE_LEVEL_FLAGS;
     if (
       TEMPORAL_KINDS.has(kind) ||
       (kind === "UnboundedQuantifier" && node.isTemporal === true) ||
@@ -125,20 +133,34 @@ const collectLocalFacts = (
     }
     return undefined;
   };
-  const visit = (node: Expression, isLevelCounted: boolean) => {
+  const contexts = new Map<Expression, number>();
+  const visit = (node: Expression, isLevelCounted: boolean, isOperatorArgument: boolean) => {
     const kind = node.kind;
+    if (kind === "Selection") {
+      const seen = contexts.get(node.expression) ?? 0;
+      const context = isLevelCounted ? (isOperatorArgument ? 1 : 2) : isOperatorArgument ? 4 : 8;
+      if ((seen & context) !== 0) return;
+      contexts.set(node.expression, seen | context);
+    }
+    // TLC's getLevelBound takes an operator argument for a constant.
+    const nonconstantFlags = isOperatorArgument ? NONCONSTANT : NONCONSTANT | ABOVE_CONSTANT_BOUND;
     if (
       NONCONSTANT_KINDS.has(kind) ||
       (kind === "UnboundedQuantifier" && node.isTemporal === true) ||
       (kind === "Apply" && NONCONSTANT_OPERATORS.has(node.operator))
     ) {
-      row[0] |= NONCONSTANT;
+      row[0] |= nonconstantFlags;
     }
     if (NONCONSTANT_KINDS.has(kind)) row[0] |= READS_IMPURE;
     const ownLevelFlags = getOwnLevelFlags(node);
     if (isLevelCounted && ownLevelFlags !== undefined) row[0] |= ownLevelFlags;
     const isInnerLevelCounted = isLevelCounted && ownLevelFlags === undefined;
     const name = getReferencedName(node);
+    // TLC's getLevelBound takes a parameter named like a variable for that variable.
+    if (name !== undefined && isLocallyResolved(node) && environment.variableIndex.has(name)) {
+      if (!isOperatorArgument) row[0] |= ABOVE_CONSTANT_BOUND;
+      if (isInnerLevelCounted) row[0] |= VARIABLE_LEVEL_FLAGS;
+    }
     if (name !== undefined && !isLocallyResolved(node)) {
       const target = environment.substitutions.get(name) ?? name;
       const definition = environment.definitions.get(target);
@@ -146,10 +168,10 @@ const collectLocalFacts = (
       const variableIndex = environment.variableIndex.get(name);
       if (
         variableIndex !== undefined ||
-        environment.builtins.get(name)?.isStateLevel ||
+        environment.builtins.get(target)?.isStateLevel ||
         (definition && environment.variableIndex.has(definition.name))
       ) {
-        row[0] |= NONCONSTANT;
+        row[0] |= nonconstantFlags;
       }
       if (variableIndex !== undefined) {
         if (isInnerLevelCounted) row[0] |= VARIABLE_LEVEL_FLAGS;
@@ -161,23 +183,30 @@ const collectLocalFacts = (
           callee: definition,
           isOverridden,
           isLevelCounted: isInnerLevelCounted,
+          isOperatorArgument:
+            isOperatorArgument ||
+            kind === "OperatorReference" ||
+            (kind === "Identifier" &&
+              definition.kind === "Operator" &&
+              definition.params.length > 0),
           owner,
         });
       } else {
         // Reading the level of the state being checked shows nothing and reads the same again.
         const isLevelRead =
-          name === "TLCGet" &&
+          target === "TLCGet" &&
           node.kind === "Apply" &&
           node.args.length === 1 &&
           node.args[0].kind === "String" &&
           node.args[0].value === "level";
-        if (isImpureBuiltin(name, environment)) {
-          addEffects(IMPURE | (name === "Assert" || isLevelRead ? 0 : REPEATED_EFFECT));
+        if (isImpureBuiltin(target, environment)) {
+          addEffects(IMPURE | (target === "Assert" || isLevelRead ? 0 : REPEATED_EFFECT));
         }
-        if (STREAMED_BUILTINS.has(name)) addEffects(STREAMED);
-        if (RANDOM_BUILTINS.has(name)) addEffects(RANDOM);
-        if (!isOverridden && isImpureBuiltin(target, environment)) row[0] |= READS_IMPURE;
         const builtin = environment.builtins.get(target);
+        if (STREAMED_BUILTINS.has(target)) addEffects(STREAMED);
+        if (builtin && RANDOM_BUILTINS.has(builtin.name)) addEffects(RANDOM);
+        if (target === "TLCEval") addEffects(TLC_EVAL);
+        if (!isOverridden && isImpureBuiltin(target, environment)) row[0] |= READS_IMPURE;
         if (
           isInnerLevelCounted &&
           !isOverridden &&
@@ -190,7 +219,9 @@ const collectLocalFacts = (
       }
     }
     if (node.kind !== "Let" || !lets) {
-      getChildren(node).forEach((child) => visit(child, isInnerLevelCounted));
+      getChildren(node).forEach((child) =>
+        visit(child, isInnerLevelCounted, isOperatorArgument || kind === "Lambda"),
+      );
       return;
     }
     const outer = owner;
@@ -198,12 +229,14 @@ const collectLocalFacts = (
       owner = lets.parents.push(outer) - 1;
       lets.effects.push(0);
       lets.numbers.set(definition, owner);
-      getDefinitionExpressions(definition).forEach((child) => visit(child, isInnerLevelCounted));
+      getDefinitionExpressions(definition).forEach((child) =>
+        visit(child, isInnerLevelCounted, isOperatorArgument),
+      );
       owner = outer;
     });
-    visit(node.body, isInnerLevelCounted);
+    visit(node.body, isInnerLevelCounted, isOperatorArgument);
   };
-  expressions.forEach((expression) => visit(expression, true));
+  expressions.forEach((expression) => visit(expression, true, false));
   return { row, edges };
 };
 
@@ -215,17 +248,31 @@ export const isWideString = (text: string) => WIDE_CHARACTER.test(text);
 
 export const isDeserializer = (name: string) => DESERIALIZERS.has(name);
 
-const isWideExpression = (expression: Expression): boolean =>
-  (expression.kind === "String" && isWideString(expression.value)) ||
-  (expression.kind === "Apply" && isDeserializer(expression.operator)) ||
-  getChildren(expression).some(isWideExpression);
+const isWideExpression = (expression: Expression, checked: Set<Expression>): boolean => {
+  if (expression.kind === "Selection") {
+    if (checked.has(expression.expression)) return false;
+    checked.add(expression.expression);
+  }
+  return (
+    (expression.kind === "String" && isWideString(expression.value)) ||
+    (expression.kind === "Apply" && isDeserializer(expression.operator)) ||
+    getChildren(expression).some((child) => isWideExpression(child, checked))
+  );
+};
 
 // Whether a definition holds a string with a character above U+00FF or reads a deserializer, for
 // which TLC fingerprints strings by the low byte of each character.
-export const isWideDefinition = (definition: Definition) =>
-  isWideExpression(definition.body) ||
+export const isWideDefinition = (definition: Definition, checked: Set<Expression>) =>
+  isWideExpression(definition.body, checked) ||
   (definition.kind === "Function" &&
-    definition.bounds.some((bound) => isWideExpression(bound.set)));
+    definition.bounds.some((bound) => isWideExpression(bound.set, checked)));
+
+const OVERRIDDEN_EDGE = 1;
+const LEVEL_EDGE = 2;
+const OPERATOR_ARGUMENT_EDGE = 4;
+
+const getEdgeFlags = (edge: Edge) =>
+  (edge.isLevelCounted ? LEVEL_EDGE : 0) | (edge.isOperatorArgument ? OPERATOR_ARGUMENT_EDGE : 0);
 
 // What a definition of a prepared module shows of itself: its own row of facts, the names it reads
 // in place of the definitions they resolve to, and its LET definitions, numbered from 0, so that a
@@ -234,7 +281,8 @@ export const isWideDefinition = (definition: Definition) =>
 export interface PreparedFacts {
   row: Uint32Array;
   names: string[];
-  isLevelCounted: Uint8Array;
+  // The LEVEL_EDGE and OPERATOR_ARGUMENT_EDGE bits of each reference.
+  edgeFlags: Uint8Array;
   owners: Int32Array;
   lets: Definition[];
   letParents: Int32Array;
@@ -248,16 +296,21 @@ export const getPreparedFacts = (
   words: number,
 ): PreparedFacts => {
   const lets: LetColumns = { numbers: new Map(), parents: [], effects: [] };
-  const local = collectLocalFacts(getDefinitionExpressions(definition), environment, words, lets);
+  const local = collectLocalFacts(
+    getFactExpressions(definition, environment),
+    environment,
+    words,
+    lets,
+  );
   return {
     row: local.row,
     names: local.edges.map((edge) => edge.name),
-    isLevelCounted: Uint8Array.from(local.edges, (edge) => (edge.isLevelCounted ? 1 : 0)),
+    edgeFlags: Uint8Array.from(local.edges, getEdgeFlags),
     owners: Int32Array.from(local.edges, (edge) => edge.owner),
     lets: [...lets.numbers.keys()],
     letParents: Int32Array.from(lets.parents),
     letEffects: Uint32Array.from(lets.effects),
-    isWide: isWideDefinition(definition),
+    isWide: isWideDefinition(definition, new Set()),
   };
 };
 
@@ -268,12 +321,7 @@ const readPreparedFacts = (
   prepared: PreparedFacts,
   environment: DefinitionNames,
   lets: LetColumns,
-  addEdge: (
-    callee: Definition,
-    isOverridden: boolean,
-    isLevelCounted: boolean,
-    owner: number,
-  ) => void,
+  addEdge: (callee: Definition, flags: number, owner: number) => void,
 ) => {
   const base = lets.parents.length;
   prepared.lets.forEach((definition, index) => {
@@ -287,8 +335,7 @@ const readPreparedFacts = (
     const owner = prepared.owners[index];
     addEdge(
       callee,
-      environment.constants.has(name),
-      prepared.isLevelCounted[index] === 1,
+      prepared.edgeFlags[index] | (environment.constants.has(name) ? OVERRIDDEN_EDGE : 0),
       owner === -1 ? -1 : base + owner,
     );
   });
@@ -369,10 +416,7 @@ const closeRows = (local: Uint32Array, words: number, edges: EdgeLists, mask: nu
   return closed;
 };
 
-const PURITY_MASK = IMPURE | REPEATED_EFFECT | STREAMED | RANDOM;
-
-const OVERRIDDEN_EDGE = 1;
-const LEVEL_EDGE = 2;
+const PURITY_MASK = IMPURE | REPEATED_EFFECT | STREAMED | RANDOM | TLC_EVAL;
 
 // The local row of a definition, whose edges go to addEdge.
 const collectEdges = (
@@ -380,23 +424,28 @@ const collectEdges = (
   environment: DefinitionNames,
   words: number,
   lets: LetColumns,
-  addEdge: (
-    callee: Definition,
-    isOverridden: boolean,
-    isLevelCounted: boolean,
-    owner: number,
-  ) => void,
+  addEdge: (callee: Definition, flags: number, owner: number) => void,
 ) => {
-  const facts = collectLocalFacts(getDefinitionExpressions(definition), environment, words, lets);
+  const facts = collectLocalFacts(
+    getFactExpressions(definition, environment),
+    environment,
+    words,
+    lets,
+  );
   facts.edges.forEach((edge) =>
-    addEdge(edge.callee, edge.isOverridden, edge.isLevelCounted, edge.owner),
+    addEdge(
+      edge.callee,
+      getEdgeFlags(edge) | (edge.isOverridden ? OVERRIDDEN_EDGE : 0),
+      edge.owner,
+    ),
   );
   return facts.row;
 };
 const READ_MASK = NONCONSTANT | READS_IMPURE;
+const STARTUP_MASK = NONCONSTANT | ABOVE_CONSTANT_BOUND;
 
 const isEvaluatedOnce = (definition: Definition, flags: number) =>
-  definition.kind === "Operator" && definition.params.length === 0 && (flags & NONCONSTANT) === 0;
+  definition.kind === "Operator" && definition.params.length === 0 && (flags & STARTUP_MASK) === 0;
 
 export const createDefinitionFacts = (
   environment: DefinitionNames,
@@ -409,19 +458,15 @@ export const createDefinitionFacts = (
   const localImpurity = new Uint32Array(definitions.length * words);
   const lets: LetColumns = { numbers: new Map(), parents: [], effects: [] };
   // Each reference from a definition, from edgeStarts[id] on: the callee's id, whether a constant
-  // overrides it and it counts toward the level, and the LET definition around it.
+  // overrides it, it counts toward the level and it is an operator argument, and the LET definition
+  // around it.
   const edgeStarts = new Int32Array(definitions.length + 1);
   const callees: number[] = [];
   const edgeFlags: number[] = [];
   const owners: number[] = [];
-  const addEdge = (
-    callee: Definition,
-    isOverridden: boolean,
-    isLevelCounted: boolean,
-    owner: number,
-  ) => {
+  const addEdge = (callee: Definition, flags: number, owner: number) => {
     callees.push(ids.get(callee) ?? -1);
-    edgeFlags.push((isOverridden ? OVERRIDDEN_EDGE : 0) | (isLevelCounted ? LEVEL_EDGE : 0));
+    edgeFlags.push(flags);
     owners.push(owner);
   };
   definitions.forEach((definition, id) => {
@@ -457,20 +502,31 @@ export const createDefinitionFacts = (
   const levels = closeRows(
     local,
     words,
-    getEdgeLists((edge) => edgeFlags[edge] === LEVEL_EDGE),
+    getEdgeLists((edge) => (edgeFlags[edge] & (OVERRIDDEN_EDGE | LEVEL_EDGE)) === LEVEL_EDGE),
     TEMPORAL_LEVEL_FLAGS,
+  );
+  const startup = closeRows(
+    local,
+    words,
+    getEdgeLists((edge) => (edgeFlags[edge] & (OVERRIDDEN_EDGE | OPERATOR_ARGUMENT_EDGE)) === 0),
+    ABOVE_CONSTANT_BOUND,
   );
   const purity = closeRows(
     localImpurity,
     words,
     getEdgeLists(
-      (edge) => !isEvaluatedOnce(definitions[callees[edge]], reads[callees[edge] * words]),
+      (edge) =>
+        !isEvaluatedOnce(
+          definitions[callees[edge]],
+          reads[callees[edge] * words] | startup[callees[edge] * words],
+        ),
     ),
     PURITY_MASK,
   );
   const rows = reads.map((word, position) =>
     position % words === 0
       ? (word & READ_MASK) |
+        (startup[position] & ABOVE_CONSTANT_BOUND) |
         (levels[position] & TEMPORAL_LEVEL_FLAGS) |
         (purity[position] & PURITY_MASK)
       : word,
@@ -501,7 +557,7 @@ const getRow = (definition: Definition, environment: Environment): Uint32Array =
   const facts = environment.facts;
   const id = facts.ids.get(definition);
   return id === undefined
-    ? getExpressionsRow(getDefinitionExpressions(definition), environment)
+    ? getExpressionsRow(getFactExpressions(definition, environment), environment)
     : facts.rows.subarray(id * facts.words, (id + 1) * facts.words);
 };
 
@@ -513,6 +569,7 @@ const getExpressionsRow = (expressions: Expression[], environment: Environment) 
     const callee = getRow(edge.callee, environment);
     if (!edge.isOverridden) {
       row[0] |= callee[0] & READ_MASK;
+      if (!edge.isOperatorArgument) row[0] |= callee[0] & ABOVE_CONSTANT_BOUND;
       if (edge.isLevelCounted) row[0] |= callee[0] & TEMPORAL_LEVEL_FLAGS;
       for (let word = 1; word < words; word++) row[word] |= callee[word];
     }
@@ -522,7 +579,10 @@ const getExpressionsRow = (expressions: Expression[], environment: Environment) 
 };
 
 export const isConstantLevel = (definition: Definition, environment: Environment) =>
-  (getRow(definition, environment)[0] & NONCONSTANT) === 0;
+  (getRow(definition, environment)[0] & STARTUP_MASK) === 0;
+
+export const isEvaluatedAtStartup = (definition: Definition, environment: Environment) =>
+  (getRow(definition, environment)[0] & ABOVE_CONSTANT_BOUND) === 0;
 
 const EFFECT_FLAGS = {
   any: IMPURE,
@@ -530,6 +590,7 @@ const EFFECT_FLAGS = {
   streamed: STREAMED,
   // What a second evaluation shows: output again, or other random draws.
   replayed: REPEATED_EFFECT | RANDOM,
+  varying: IMPURE | RANDOM,
 };
 
 export const isExpressionImpure = (
@@ -546,6 +607,9 @@ export const isImpureDefinition = (
   ((environment.facts.letEffects.get(definition) ?? getRow(definition, environment)[0]) &
     EFFECT_FLAGS[effect]) !==
   0;
+
+export const isTlcEvalReached = (expression: Expression, environment: Environment) =>
+  (getExpressionsRow([expression], environment)[0] & TLC_EVAL) !== 0;
 
 export const getDefinitionLevel = (definition: Definition, environment: Environment) => {
   const flags = getRow(definition, environment)[0] & TEMPORAL_LEVEL_FLAGS;

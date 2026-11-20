@@ -1,5 +1,5 @@
-// Ported from Z3 (src/tactic/goal.cpp), MIT license, see z3-license.txt.
 import { OP_AND, OP_NOT, OP_OR, SORT_BOOL, type AstManager } from "./ast";
+import { ExprParray } from "./parray";
 import type { ProtoModel } from "./proto-model";
 import { RefVector } from "./ref-vector";
 
@@ -21,7 +21,6 @@ export const joinDependencies = (
       ? first
       : { value: -1, children: [first, second] };
 
-// Breadth first and once per node, so a value that two leaves hold is listed twice.
 export const getDependencyValues = (dependency: Dependency | undefined) => {
   if (dependency === undefined) return [];
   const todo = [dependency];
@@ -36,7 +35,7 @@ export const getDependencyValues = (dependency: Dependency | undefined) => {
         todo.push(child);
       }
   }
-  return values;
+  return [...new Set(values)];
 };
 
 interface Polarized {
@@ -44,7 +43,7 @@ interface Polarized {
   isPositive: boolean;
 }
 
-export const PRECISE = 0;
+const PRECISE = 0;
 export const UNDER = 1;
 export const OVER = 2;
 const UNDER_OVER = 3;
@@ -62,18 +61,42 @@ export interface Definition {
 
 interface HiddenDecl {
   decl: number;
+  refs: number;
 }
 
 interface Definitions {
   definitions: Definition[];
+  refs: number;
 }
 
 interface ModelConversion {
   convert: (model: ProtoModel) => ProtoModel;
+  release: () => void;
+  refs: number;
 }
 
+export const incConverterRefs = (converters: Goal["converters"]) => {
+  for (const converter of converters) converter.refs++;
+};
+
+// concat_model_converter frees its second converter before its first.
+export const decConverterRefs = (manager: AstManager, converters: Goal["converters"]) => {
+  for (let index = converters.length - 1; index >= 0; index--) {
+    const converter = converters[index];
+    converter.refs--;
+    if (converter.refs > 0) continue;
+    if ("convert" in converter) converter.release();
+    else if ("definitions" in converter)
+      for (const definition of converter.definitions) {
+        if (definition.def !== -1) manager.decRef(definition.def);
+        manager.decDeclRef(definition.decl);
+      }
+    else manager.decDeclRef(converter.decl);
+  }
+};
+
 export class Goal {
-  readonly forms: RefVector;
+  readonly forms: ExprParray;
   // Kept only while unsat cores are enabled.
   dependencies: (Dependency | undefined)[] = [];
   isInconsistent = false;
@@ -82,10 +105,13 @@ export class Goal {
   converters: (HiddenDecl | Definitions | ModelConversion)[] = [];
   model: ProtoModel | undefined;
   isProofsEnabled = false;
+  isModelsEnabled = true;
   isCoresEnabled = false;
+  // As in Z3, it isn't copied with the goal.
+  reasonUnknown = "";
 
   constructor(readonly manager: AstManager) {
-    this.forms = new RefVector(manager);
+    this.forms = new ExprParray(manager);
   }
 
   copy() {
@@ -96,14 +122,16 @@ export class Goal {
 
   copyFrom(source: Goal) {
     if (source === this) return;
-    this.forms.reset();
-    for (const form of source.forms.items) this.forms.push(form);
+    this.forms.copyFrom(source.forms);
     this.dependencies = [...source.dependencies];
     this.depth = Math.max(this.depth, source.depth);
     this.isInconsistent = source.isInconsistent;
     this.precision = getPrecisionUnion(source.precision, this.precision);
+    incConverterRefs(source.converters);
+    decConverterRefs(this.manager, this.converters);
     this.converters = source.converters;
     this.isProofsEnabled = source.isProofsEnabled;
+    this.isModelsEnabled = source.isModelsEnabled;
     this.isCoresEnabled = source.isCoresEnabled;
   }
 
@@ -119,13 +147,23 @@ export class Goal {
     this.precision = PRECISE;
   }
 
+  releaseConverters() {
+    decConverterRefs(this.manager, this.converters);
+    this.converters = [];
+  }
+
+  release() {
+    this.reset();
+    this.releaseConverters();
+  }
+
   updatePrecision(precision: number) {
     this.precision = getPrecisionUnion(this.precision, precision);
   }
 
   addConverter(decl: number) {
     this.manager.incDeclRef(decl);
-    this.converters = [...this.converters, { decl }];
+    this.converters = [...this.converters, { decl, refs: 1 }];
   }
 
   addDefinitions(definitions: Definition[]) {
@@ -133,11 +171,11 @@ export class Goal {
       this.manager.incDeclRef(definition.decl);
       if (definition.def !== -1) this.manager.incRef(definition.def);
     }
-    this.converters = [...this.converters, { definitions }];
+    this.converters = [...this.converters, { definitions, refs: 1 }];
   }
 
-  addModelConversion(convert: (model: ProtoModel) => ProtoModel) {
-    this.converters = [...this.converters, { convert }];
+  addModelConversion(convert: (model: ProtoModel) => ProtoModel, release: () => void) {
+    this.converters = [...this.converters, { convert, release, refs: 1 }];
   }
 
   getDependency(index: number) {

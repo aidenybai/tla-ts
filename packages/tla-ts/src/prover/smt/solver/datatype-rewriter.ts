@@ -1,12 +1,13 @@
-// Ported from Z3 (src/ast/rewriter/datatype_rewriter.cpp), MIT license, see z3-license.txt.
 import {
   type AstManager,
   KIND_APP,
+  OP_AND,
   OP_DT_ACCESSOR,
   OP_DT_CONSTRUCTOR,
   OP_DT_IS,
   OP_DT_RECOGNISER,
   OP_DT_UPDATE_FIELD,
+  SORT_BOOL,
 } from "./ast";
 import {
   getAccessorConstructor,
@@ -79,5 +80,6 @@ export const mkDatatypeEqCore = (
     return undefined;
   if (manager.decls[lhs] !== manager.decls[rhs]) return manager.falseExpr;
   const eqs = manager.mapArgs(lhs, (arg, index) => manager.mkEq(arg, manager.getArg(rhs, index)));
-  return { expr: manager.mkAnd(eqs), depth: 2 };
+  // Z3 makes the conjunction even of one or no equalities, which costs the rewriter more steps.
+  return { expr: manager.mkApp(OP_AND, eqs, SORT_BOOL), depth: 2 };
 };

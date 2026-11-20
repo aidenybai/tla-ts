@@ -1,6 +1,3 @@
-// Ported from Z3 (src/ast/rewriter/bit_blaster/bit_blaster_rewriter.cpp,
-// src/tactic/bv/bit_blaster_tactic.cpp, src/tactic/bv/bit_blaster_model_converter.cpp), MIT
-// license, see z3-license.txt.
 import { SmtTacticError } from "../../../errors";
 import {
   type AstManager,
@@ -91,6 +88,8 @@ export class BitBlasterRewriter extends RewriterTpl {
   readonly keys: number[] = [];
   readonly values: RefVector;
   readonly newbits: number[] = [];
+  private keyLimits: number[] = [];
+  private newbitLimits: number[] = [];
 
   constructor(
     manager: AstManager,
@@ -124,6 +123,30 @@ export class BitBlasterRewriter extends RewriterTpl {
 
   getConstBits(decl: number) {
     return this.const2bits.get(decl);
+  }
+
+  getNumScopes() {
+    return this.keyLimits.length;
+  }
+
+  push() {
+    this.keyLimits.push(this.keys.length);
+    this.newbitLimits.push(this.newbits.length);
+  }
+
+  pop(numScopes: number) {
+    if (numScopes === 0) return;
+    const manager = this.manager;
+    const size = this.keyLimits.length - numScopes;
+    const keyLimit = this.keyLimits[size];
+    for (const decl of this.keys.splice(keyLimit)) {
+      this.const2bits.delete(decl);
+      manager.decDeclRef(decl);
+    }
+    this.values.shrink(keyLimit);
+    this.keyLimits.length = size;
+    for (const decl of this.newbits.splice(this.newbitLimits[size])) manager.decDeclRef(decl);
+    this.newbitLimits.length = size;
   }
 
   private mkConst(decl: number) {
@@ -560,9 +583,9 @@ export const runBitBlast =
       rewritten = next;
       if (form === rewritten) continue;
       isChanged = true;
-      goal.update(index, rewritten);
+      goal.update(index, rewritten, goal.getDependency(index));
     }
-    if (isChanged && rewriter.keys.length > keyPos) {
+    if (isChanged && goal.isModelsEnabled && rewriter.keys.length > keyPos) {
       const const2bits = new ObjMap<number>((decl) => manager.getDeclHash(decl));
       for (let index = keyPos; index < rewriter.keys.length; index++)
         const2bits.set(rewriter.keys[index], rewriter.values.items[index]);
@@ -572,8 +595,16 @@ export const runBitBlast =
         manager.incRef(entry[1]);
         consts.push({ decl: entry[0], bits: entry[1] });
       }
-      for (const decl of rewriter.newbits) manager.incDeclRef(decl);
-      goal.addModelConversion((model) => convertModel(manager, consts, model));
+      const newbits = [...rewriter.newbits];
+      for (const decl of newbits) manager.incDeclRef(decl);
+      goal.addModelConversion(
+        (model) => convertModel(manager, consts, model),
+        () => {
+          for (const decl of newbits) manager.decDeclRef(decl);
+          for (const entry of consts) manager.decRef(entry.bits);
+          for (const entry of consts) manager.decDeclRef(entry.decl);
+        },
+      );
     }
     goal.depth++;
     rewriter.cleanup();

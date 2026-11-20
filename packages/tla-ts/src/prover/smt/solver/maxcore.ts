@@ -1,5 +1,4 @@
-// Ported from Z3 (src/opt/maxcore.cpp), MIT license, see z3-license.txt. Only the maxres strategy
-// with Z3's default parameters is ported.
+// Only the maxres strategy with Z3's default parameters is ported.
 import { OP_AND, OP_EQ, OP_IMPLIES, OP_OR, SORT_BOOL } from "./ast";
 import { mkNot } from "./ast-util";
 import { L_FALSE, L_TRUE, L_UNDEF } from "./lbool";
@@ -275,10 +274,11 @@ export class Maxcore extends MaxsmtSolverBase {
     const upper = this.getCost(model);
     if (upper.compare(this.upper) > 0) return;
     if (!this.context.verifyModel(this.index, model, upper)) return;
+    const numAssertions = this.solver.getNumAssertions();
     this.model = model;
     this.context.modelUpdated(model);
     for (const soft of this.soft) soft.value = this.isTrueIn(model, soft.expr) ? L_TRUE : L_UNDEF;
-    this.upper = upper;
+    if (numAssertions === this.solver.getNumAssertions()) this.upper = upper;
   }
 
   private removeSoft(core: readonly number[]) {

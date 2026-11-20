@@ -12,6 +12,8 @@ export const UNEXPECTED_EXCEPTION = getUnexpectedException("java.lang.RuntimeExc
 
 export const UNEXPECTED_EVAL_EXCEPTION = getUnexpectedException("tlc2.tool.EvalException");
 
+export const WRONG_INVOCATION_EXCEPTION = getUnexpectedException("util.WrongInvocationException");
+
 // V8 words an overflow of the stack without the period that JavaScriptCore, which Bun runs on,
 // ends it with.
 export const isStackOverflow = (error: unknown) =>
@@ -36,6 +38,11 @@ export interface SyntaxFailure {
 export interface SanyError {
   location: string;
   message: string;
+}
+
+// SANY drops an error it already has only when the codes match too, so two errors can share text.
+export interface CodedSanyError extends SanyError {
+  code?: string;
 }
 
 interface SanyReport {
@@ -330,6 +337,13 @@ export class SmtTacticError extends TlaError {
   constructor(message: string) {
     super(message);
     this.name = "SmtTacticError";
+  }
+}
+
+export class SmtDefaultError extends TlaError {
+  constructor(message: string) {
+    super(message);
+    this.name = "SmtDefaultError";
   }
 }
 

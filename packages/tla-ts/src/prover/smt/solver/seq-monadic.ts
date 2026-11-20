@@ -1,5 +1,3 @@
-// Ported from Z3 (src/ast/seq/seq_monadic.cpp, src/ast/seq/seq_monadic.h), MIT license, see
-// z3-license.txt.
 import {
   type AstManager,
   KIND_APP,
@@ -37,15 +35,15 @@ import {
   ViewWitness,
 } from "./seq-view-witness";
 
-export const ORIENTATION_FORWARD = 0;
-export const ORIENTATION_REVERSED = 1;
+const ORIENTATION_FORWARD = 0;
+const ORIENTATION_REVERSED = 1;
 export const ORIENTATION_RETRY = 2;
 
 const LIVE_STATE_CAP = 1 << 12;
 const COFACTOR_CACHE_CAP = 1 << 16;
 const LENGTH_CONSTRAINING_KEY = 2 ** 40;
 
-export interface Memberships {
+interface Memberships {
   terms: number[];
   regexes: number[];
   deps: number[];
@@ -135,8 +133,10 @@ export class Monadic {
     this.pins.push(regex);
     this.pins.push(element);
     this.pins.pushOwned(derivative);
-    if (!this.derivativeCache.has(regex)) this.derivativeCache.set(regex, new Map());
-    this.derivativeCache.get(regex)!.set(element, derivative);
+    const derivatives = this.derivativeCache.get(regex);
+    if (derivatives === undefined)
+      this.derivativeCache.set(regex, new Map([[element, derivative]]));
+    else derivatives.set(element, derivative);
     return derivative;
   }
 

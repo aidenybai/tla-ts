@@ -10,6 +10,7 @@ import type {
   UseOrHide,
 } from "../ast";
 import { TlaSyntaxError } from "../errors";
+import { defEntryErrors, getAtSteps, getDefEntryBinder } from "../parser";
 import { createLevelFields } from "./builtins";
 import {
   addToContext,
@@ -39,14 +40,10 @@ import {
 import { getSelectorItems, isGeneralId } from "./selectors";
 import {
   findNameTokens,
-  getExpressionSpan,
   getRangeSpan,
   getSpanLocation,
   getTokenIndex,
   getTokenLocation,
-  isBoxToken,
-  isToken,
-  type SourceFile,
   type TokenSpan,
 } from "./source";
 import {
@@ -66,10 +63,9 @@ import {
   pushLabelScope,
   resolveModule,
   resolveName,
-  resolveSynonym,
   withContext,
 } from "./generation";
-import { getOperandSpan, reportDefEntry } from "./generator-def-entries";
+import { resolveSynonym } from "../tlc/jar-data";
 import {
   generateInstance,
   getOperatorSpan,
@@ -81,6 +77,7 @@ import {
   findNameOrKeyword,
   generateBounds,
   generateExpression,
+  generateLabel,
   generateSelector,
   generateWithParams,
 } from "./generator-expressions";
@@ -108,9 +105,11 @@ const getFactModules = (generation: ModuleGeneration, fact: Fact & { kind: "Modu
 const generateFacts = (generation: ModuleGeneration, facts: Fact[]) =>
   facts.flatMap((fact): FactNode[] => {
     if (fact.kind === "ModuleFact") return getFactModules(generation, fact);
-    const items = getSelectorItems(fact);
+    const reference: Expression =
+      fact.kind === "ExceptAt" ? { kind: "Identifier", name: "@", location: fact.location } : fact;
+    const items = getSelectorItems(reference);
     if (items === undefined || !isGeneralId(items)) return [generateExpression(generation, fact)];
-    const node = generateSelector(generation, fact, 0, true, false);
+    const node = generateSelector(generation, reference, 0, true, false);
     if (node.kind === "ThmOrAssumpDef") throw new TlaSyntaxError("Expected a fact");
     return [node];
   });
@@ -118,23 +117,26 @@ const generateFacts = (generation: ModuleGeneration, facts: Fact[]) =>
 const generateDefs = (generation: ModuleGeneration, defs: Fact[]) =>
   defs.flatMap((fact): UseOrHideNode["defs"] => {
     if (fact.kind === "ModuleFact") return getFactModules(generation, fact);
-    if (reportDefEntry(generation, fact)) return [];
+    const entryErrors = defEntryErrors.get(fact) ?? [];
+    entryErrors.forEach((error) => generation.addError(error.location, error.message));
+    if (entryErrors.length > 0) return [];
+    const location = getLocation(generation.file, fact);
+    // Deviation from SANY: Generator#genIdToSelector throws an internal error on the arguments of a name after a prefix, as in DEF A!B(1); tla-ts passes them to the selector, which rejects them.
     const symbol = generateSelector(
       generation,
-      fact.kind === "OperatorReference"
-        ? { kind: "Identifier", name: fact.operator, location: fact.location }
-        : fact,
+      getDefEntryBinder(fact) ??
+        (fact.kind === "OperatorReference"
+          ? { kind: "Identifier", name: fact.operator, location: fact.location }
+          : fact),
       -1,
       false,
       true,
+      location,
     );
     const isDefinition =
       symbol.kind === "OpDef" || (symbol.kind === "ThmOrAssumpDef" && !symbol.name.startsWith("<"));
     if (!isDefinition) {
-      generation.addError(
-        getLocation(generation.file, fact),
-        "DEF clause entry should describe a defined operator.",
-      );
+      generation.addError(location, "DEF clause entry should describe a defined operator.");
       return [];
     }
     return [symbol];
@@ -157,6 +159,7 @@ export const generateUseOrHide = (generation: ModuleGeneration, use: UseOrHide):
   if (facts.length + defs.length === 0)
     generation.addError(location, "Empty USE or HIDE statement.");
   if (use.kind === "Hide") {
+    // Deviation from SANY: UseOrHideNode#factCheck crashes on a fact whose operator Generator#generateExpression could not resolve, where tla-ts reports it like a null node.
     facts
       .filter((fact) => fact.kind === "OpAppl" && fact.operator.kind !== "ThmOrAssumpDef")
       .forEach((fact) =>
@@ -213,16 +216,12 @@ const generateAssumeProve = (
   goal?: { isSuffices: boolean },
 ): AssumeProveNode => {
   const span = getUnitSpan(generation.file, assumeProve.location);
-  const isBoxed = isBoxToken(generation.file, span.start - 1);
-  const conclusionStart = getExpressionSpan(generation.file, assumeProve.conclusion).start;
-  const proveIndex = generation.file.tokens.findLastIndex(
-    (token, index) => index < conclusionStart && token.kind === "Keyword" && token.text === "PROVE",
-  );
+  const isBoxed = assumeProve.isBoxed === true;
   const assumeLocation = getSpanLocation(generation.file, {
-    start: isBoxed ? span.start - 1 : span.start,
-    end: span.start,
+    start: span.start,
+    end: isBoxed ? span.start + 1 : span.start,
   });
-  if (isBoxed !== isBoxToken(generation.file, proveIndex - 1)) {
+  if (isBoxed !== (assumeProve.isProveBoxed === true)) {
     generation.addError(
       assumeLocation,
       isBoxed
@@ -255,11 +254,18 @@ const generateAssumeProve = (
   const assumptions = assumeProve.assumptions.map((assumption, index): LevelNode => {
     const isNew = assumption.kind === "NewSymbol";
     const node =
-      assumption.kind === "AssumeProve"
-        ? generateAssumeProve(generation, assumption, depth + 1)
-        : isNew
-          ? generateNewSymbol(generation, assumption)
-          : generateExpression(generation, assumption);
+      assumption.kind === "AssumeProve" && assumption.label
+        ? generateLabel(
+            generation,
+            assumption.label.name,
+            getUnitLocation(generation.file, assumption.label.location),
+            () => generateAssumeProve(generation, assumption, depth + 1),
+          )
+        : assumption.kind === "AssumeProve"
+          ? generateAssumeProve(generation, assumption, depth + 1)
+          : isNew
+            ? generateNewSymbol(generation, assumption)
+            : generateExpression(generation, assumption);
     generation.assumeProveState.depth = depth;
     if (isNew) generation.assumeProveState.isDeclared[depth] = true;
     scope.isDeclaredBefore.push(scope.isDeclaredBefore[index] || isNew);
@@ -277,10 +283,7 @@ const generateAssumeProve = (
     goal: conclusion,
     isSuffices: scope.isSuffices,
     isBoxed,
-    location: getSpanLocation(generation.file, {
-      start: isBoxed ? span.start - 1 : span.start,
-      end: span.end,
-    }),
+    location: getSpanLocation(generation.file, span),
   };
   generation.assumeProveScopes.set(node, scope);
   return node;
@@ -395,15 +398,6 @@ const generateStepBody = (
   return undefined;
 };
 
-const isInfixExpression = (file: SourceFile, expression: Expression) => {
-  if ((expression.kind === "And" || expression.kind === "Or") && !expression.isBulleted)
-    return true;
-  if (expression.kind !== "Apply" || expression.args.length !== 2) return false;
-  const left = getOperandSpan(file, expression.args[0]);
-  const start = getExpressionSpan(file, expression).start;
-  return left.start === start && !isToken(file, left.end + 1, "(");
-};
-
 const generateProof = (
   generation: ModuleGeneration,
   proof: Proof,
@@ -413,6 +407,7 @@ const generateProof = (
   generation.contexts.push(proofContext);
   const instances: InstanceNode[] = [];
   const sufficesContexts: Context[] = [];
+  const atSteps = getAtSteps(proof.steps);
   let previousRight: ExprOrOpArgNode | undefined;
   const generateOtherStep = (
     body: ProofStep["body"],
@@ -504,31 +499,27 @@ const generateProof = (
           getSpanLocation(generation.file, bodySpan),
         );
       }
-      const isAtStep =
-        previousRight !== undefined &&
-        statement.kind === "Apply" &&
-        isInfixExpression(generation.file, statement) &&
-        statement.args[0].kind === "ExceptAt";
+      const atStep = atSteps.get(step);
+      const isAtStep = atStep !== undefined && previousRight !== undefined;
       // SANY generates an @ step's right side before the $Nop that stands for its @.
-      const atRight = isAtStep ? generateExpression(generation, statement.args[1]) : undefined;
+      const atRight = isAtStep ? generateExpression(generation, atStep.right) : undefined;
       const expression = isAtStep
         ? createOpAppl(
             generation,
-            resolveName(generation, statement.operator, getLocation(generation.file, statement)),
+            resolveName(generation, atStep.operator, getLocation(generation.file, statement)),
             [
               applyBuiltin(
                 generation,
                 "$Nop",
                 [previousRight],
-                getLocation(generation.file, statement.args[0]),
+                getLocation(generation.file, atStep.at),
               ),
               atRight,
             ],
             getLocation(generation.file, statement),
           )
         : generateExpression(generation, statement);
-      const right = expression.kind === "OpAppl" ? expression.operands[1] : undefined;
-      previousRight = isInfixExpression(generation.file, statement) ? right : undefined;
+      previousRight = expression.kind === "OpAppl" ? expression.operands[1] : undefined;
       return expression;
     };
     const stepBody =

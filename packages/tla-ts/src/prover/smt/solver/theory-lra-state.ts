@@ -1,7 +1,7 @@
-// Ported from Z3 (src/smt/theory_lra.cpp), MIT license, see z3-license.txt.
 import { FAMILY_ARITH } from "./ast";
 import type { Context } from "./context";
 import { LarSolver } from "./lp/lar-solver";
+import { DEFAULT_HAMMER_PERIOD } from "./lp/lp-settings";
 import { Theory } from "./theory";
 
 export abstract class TheoryLraState extends Theory {
@@ -10,7 +10,15 @@ export abstract class TheoryLraState extends Theory {
 
   constructor(context: Context) {
     super(context, FAMILY_ARITH);
-    this.solver = new LarSolver(() => context.checkCanceled());
+    this.solver = new LarSolver((cost) => context.checkCanceled(cost));
+    this.updateParams();
+  }
+
+  updateParams() {
+    this.solver.settings.updateParams(
+      this.context.params.intHammerPeriod ?? DEFAULT_HAMMER_PERIOD,
+      this.context.params.isArithPropagatingEqs ?? true,
+    );
   }
 
   protected isIntExpr(expr: number) {

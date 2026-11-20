@@ -1,4 +1,3 @@
-// Ported from Z3 (src/smt/theory_lra.cpp), MIT license, see z3-license.txt.
 import { OP_DIV, OP_DIV0, OP_IDIV, OP_IDIV0, OP_MOD, OP_MOD0, OP_POWER0, OP_REM } from "./ast";
 import type { Enode } from "./enode";
 import type { ProtoModel } from "./proto-model";

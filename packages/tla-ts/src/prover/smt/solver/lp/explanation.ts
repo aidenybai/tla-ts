@@ -1,4 +1,3 @@
-// Ported from Z3 (src/math/lp/explanation.h), MIT license, see z3-license.txt.
 import { getIdentityHash, ObjMap } from "../hashtable";
 import { Rational } from "../rational";
 import { type Dependency, linearize } from "./dependency";

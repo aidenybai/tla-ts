@@ -6,19 +6,19 @@ import {
   type SourceLocation,
 } from "../ast";
 import type { ConfigValue, ModelConfig } from "../config";
-import { createMissingModuleError } from "../errors";
+import { createMissingModuleError, createSanyError, TlaSyntaxError } from "../errors";
 import { getJavaHashCode } from "../java-hash";
 import type { OperatorLevels } from "../levels";
 import { tokenize, type Token } from "../lexer";
 import { extractModule, parseModule, parseModuleTokens } from "../parser";
 import { isBefore } from "../resolve";
 import { SANY_STANDARD_MODULES } from "../sany/modules";
+import { getSanyParseError } from "../sany/parse-error";
 import {
   SANY_BUILTINS,
   SANY_NODE_NAMES,
   SANY_OPERATOR_SYNONYMS,
   TLC_MODULE_SOURCES,
-  TLC_RUNTIME_STRINGS,
   TLC_STARTUP_STRINGS,
 } from "./jar-data";
 import type { Value } from "../values";
@@ -219,7 +219,7 @@ const getModuleReferences = (
         continue;
       }
       if (tokens[index - 1]?.text === ".") continue;
-      if (token.text === "EXTENDS") {
+      if (token.text === "EXTENDS" && tokens[index - 3]?.text === "MODULE") {
         const names = getDeclarations(tokens, index + 1);
         references.extends.push(...names);
         names.forEach((name) => allExtends.add(name));
@@ -320,6 +320,26 @@ const createModuleSet = (
   const rootText = typeof source === "string" ? source : undefined;
   const files = new Map<string, ModuleFile>();
   const nestedModules = new Map<string, ParsedModule>();
+  // TLC reports a file that fails to parse as SANY's parse error in the module it names.
+  const parseWithSanyError = (getModule: () => Module, text: string, name: string) => {
+    try {
+      return getModule();
+    } catch (error) {
+      if (!(error instanceof TlaSyntaxError)) throw error;
+      const parseError = getSanyParseError(text);
+      if (parseError === undefined) throw error;
+      throw createSanyError(
+        [
+          {
+            location: `In module ${name}`,
+            message: `Could not parse module ${name} from file ${name}.tla`,
+          },
+        ],
+        true,
+        parseError,
+      );
+    }
+  };
   const getFile = (name: string | undefined) => {
     const cached = files.get(name ?? "");
     if (cached) return cached;
@@ -356,7 +376,10 @@ const createModuleSet = (
     const file = {
       tokens,
       ...range,
-      getModule: moduleText.getModule,
+      getModule:
+        preparedModule || name === undefined || text === undefined
+          ? moduleText.getModule
+          : () => parseWithSanyError(moduleText.getModule, text, name),
       text,
       loaded,
       texts: preparedModule?.texts,
@@ -381,6 +404,12 @@ const createModuleSet = (
     getModule: (name: string | undefined, text: string) => {
       const file = getFile(name);
       return file.text === text ? file.getModule() : readModuleText(text).getModule();
+    },
+    parseFile: (text: string, name: string) => {
+      const file = getFile(name);
+      return file.text === text
+        ? file.getModule()
+        : parseWithSanyError(readModuleText(text).getModule, text, name);
     },
     getLoadedSource: (name: string) => getFile(name).loaded,
   };
@@ -570,6 +599,8 @@ const getStringOrder = (
   getParsed: ModuleSet,
   source: string | Module,
   config: ModelConfig,
+  runtimeModules: string[],
+  rootExtendees: string[],
 ): string[] => {
   const order = new Set<string>();
   const intern = (text: string) => {
@@ -651,11 +682,14 @@ const getStringOrder = (
   const dependencies = new Map<string | undefined, string[]>();
   // Without source text, only string literals are interned, unlike TLC reading the text.
   if (typeof source !== "string") SANY_NODE_NAMES.forEach(intern);
+  getParsed(undefined).getModule();
   getParsedTexts(getUnitTokens(undefined)).forEach((text, index) => {
     if (index === 3) SANY_NODE_NAMES.forEach(intern);
     intern(text);
   });
   const rootReferences = getUnitReferences(undefined);
+  rootReferences.extends.push(...rootExtendees);
+  rootExtendees.forEach((name) => rootReferences.allExtends.add(name));
   while (true) {
     const found =
       findExtension(rootReferences, new Set()) ?? findInstantiation(rootReferences, new Set());
@@ -669,6 +703,7 @@ const getStringOrder = (
       const importer = module.unit ?? getModuleName(getParsed(undefined).tokens);
       throw createMissingModuleError(name, importer);
     }
+    getParsed(name).getModule();
     getUnitParsedTexts(name).forEach(intern);
   }
   SEMANTIC_PRELUDE.forEach(intern);
@@ -689,15 +724,34 @@ const getStringOrder = (
     getUnitStrings(name).forEach(intern);
   };
   analyze(undefined);
-  TLC_RUNTIME_STRINGS.forEach(intern);
+  runtimeModules.forEach((name) => {
+    const tokens = getUnitTokens(name);
+    getParsedTexts(tokens).forEach(intern);
+    tokens.forEach((token) => {
+      if (token.kind === "String") intern(token.text);
+    });
+  });
   return [...order];
 };
 
+export const getHashtableOrder = (names: string[]) => {
+  const table = createSymbolTable();
+  names.forEach((name) => table.put(createEntry(name, "definition", false)));
+  return table.enumerate().map((entry) => entry.name);
+};
+
 export interface TlcOrder {
-  getStringOrder: (config: ModelConfig) => string[];
-  getDeclarationOrder: (kind: "variable" | "constant") => string[];
+  getStringOrder: (
+    config: ModelConfig,
+    runtimeModules: string[],
+    rootExtendees: string[],
+  ) => string[];
+  getDeclarationOrder: (kind: "variable" | "constant", module?: string) => string[];
+  getDefinitionOrder: (module: string | undefined) => string[];
+  getInstanceDeclarations: (module: string) => string[];
   createDefinitionOrder: () => (name: string | undefined) => string[];
   getModule: (name: string | undefined, source: string) => Module;
+  parseFile: (source: string, name: string) => Module;
   getLoadedSource: (name: string) => string | undefined;
   getPreparedModule: (name: string) => PreparedModule | undefined;
 }
@@ -712,15 +766,28 @@ export const createTlcOrder = (
   let contexts: ReturnType<typeof createContexts> | undefined;
   const getContexts = () => (contexts ??= createContexts(getParsed));
   return {
-    getStringOrder: (config) => getStringOrder(getParsed, source, config),
-    getDeclarationOrder: (kind) =>
+    getStringOrder: (config, runtimeModules, rootExtendees) =>
+      getStringOrder(getParsed, source, config, runtimeModules, rootExtendees),
+    getDeclarationOrder: (kind, module) =>
       getContexts()
-        .getContext(undefined)
+        .getContext(module)
         .enumerate()
         .filter((entry) => entry.kind === kind)
         .map((entry) => entry.name)
         .reverse(),
+    getDefinitionOrder: (module) =>
+      getContexts()
+        .getContext(module)
+        .inserted.filter((entry) => entry.kind === "definition")
+        .map((entry) => entry.name),
+    getInstanceDeclarations: (module) =>
+      getContexts()
+        .getContext(module)
+        .enumerate()
+        .filter((entry) => entry.kind === "constant" || entry.kind === "variable")
+        .map((entry) => entry.name),
     getModule: modules.getModule,
+    parseFile: modules.parseFile,
     getLoadedSource: modules.getLoadedSource,
     getPreparedModule: (name) => prepared.find((item) => item.name === name),
     createDefinitionOrder: () => {

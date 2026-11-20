@@ -1,4 +1,3 @@
-// Ported from Z3 (src/tactic/arith/diff_neq_tactic.cpp), MIT license, see z3-license.txt.
 import { SmtCanceledError, SmtTacticError } from "../../../errors";
 import { type AstManager, OP_ADD, OP_EQ, OP_GE, OP_LE, SORT_INT } from "./ast";
 import type { Goal } from "./goal";
@@ -152,8 +151,7 @@ class DiffNeq {
   }
 
   private resolveConflict() {
-    while (this.stack.length > 0) {
-      const value = this.stack.pop() as number;
+    for (let value = this.stack.pop(); value !== undefined; value = this.stack.pop()) {
       const next = this.chooseValue(this.stack.length, value + 1);
       if (next !== -1) {
         this.stack.push(next);
@@ -195,12 +193,17 @@ export const diffNeq = (manager: AstManager, goal: Goal, maxK: number) => {
   const solver = new DiffNeq(manager, maxK);
   solver.compile(goal);
   if (solver.search()) {
-    const model = solver.mkModel();
-    model.incRef();
-    goal.addModelConversion((converted) => {
-      for (const [decl, value] of model.constInterps) converted.registerConst(decl, value);
-      return converted;
-    });
+    if (goal.isModelsEnabled) {
+      const model = solver.mkModel();
+      model.incRef();
+      goal.addModelConversion(
+        (converted) => {
+          for (const [decl, value] of model.constInterps) converted.registerConst(decl, value);
+          return converted;
+        },
+        () => model.decRef(),
+      );
+    }
     goal.reset();
   } else goal.assert(manager.falseExpr);
   goal.depth++;

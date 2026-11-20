@@ -1,4 +1,3 @@
-// Ported from Z3 (src/ast/rewriter/inj_axiom.cpp), MIT license, see z3-license.txt.
 import {
   FAMILY_USER,
   KIND_APP,

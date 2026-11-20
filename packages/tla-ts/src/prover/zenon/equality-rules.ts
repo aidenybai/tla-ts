@@ -1,11 +1,10 @@
-// Ported from Zenon's prove.ml, as shipped in tlapm. Copyright 2002 INRIA, see LICENSE.
-
 import { TlaZenonError } from "../../errors";
 import {
   isApp,
   isNegatedRelation,
   isRelation,
   isMeta,
+  preunify,
   type Expr,
   type NegatedRelationExpr,
   type NotExpr,
@@ -204,6 +203,29 @@ export const addReflexivity: SearchRule = (context, queue, formula, goalness) =>
   if (right.kind === "meta")
     return [makeInstance(exprs, queue, right.args[0], left, goalness), false];
   return [queue, false];
+};
+
+export const addPreunification: SearchRule = (context, queue, formula, goalness) => {
+  const matches =
+    formula.kind === "not" && formula.args[0].kind === "app"
+      ? context.index.getPositive(formula.args[0].symbol)
+      : formula.kind === "app"
+        ? context.index.getNegative(formula.symbol)
+        : undefined;
+  if (matches === undefined) return [queue, false];
+  let current = queue;
+  for (let matchIndex = matches.length - 1; matchIndex >= 0; matchIndex--) {
+    const pairs = preunify(matches[matchIndex], formula);
+    for (let pairIndex = 0; pairIndex < pairs.length; pairIndex++)
+      current = makeInstance(
+        context.exprs,
+        current,
+        pairs[pairIndex][0],
+        pairs[pairIndex][1],
+        Math.min(goalness, context.index.getGoalness(matches[matchIndex])),
+      );
+  }
+  return [current, false];
 };
 
 export const addCongruence: SearchRule = (context, queue, formula, goalness) => {

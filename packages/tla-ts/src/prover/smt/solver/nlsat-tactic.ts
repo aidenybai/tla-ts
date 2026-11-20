@@ -1,4 +1,3 @@
-// Ported from Z3 (src/nlsat/tactic/nlsat_tactic.cpp), MIT license, see z3-license.txt.
 import { SmtTacticError, SmtUnsupportedError } from "../../../errors";
 import { type AstManager, FAMILY_ARITH, KIND_APP, OP_ATAN2, OP_PI, SORT_INT } from "./ast";
 import type { Goal } from "./goal";
@@ -31,7 +30,7 @@ const mkModel = (
   t2x: ReadonlyMap<number, number>,
   a2b: ReadonlyMap<number, number>,
 ) => {
-  const model = new ProtoModel(manager);
+  const model = new ProtoModel(manager).mkModel();
   for (const [term, variable] of t2x) {
     if (!manager.isUninterpretedConst(term)) continue;
     const value = solver.getValue(variable);

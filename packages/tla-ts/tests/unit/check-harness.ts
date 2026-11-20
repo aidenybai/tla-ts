@@ -28,6 +28,16 @@ export const checkModule = (body: string, config = "") =>
     config: `${config}\nINIT Init\nNEXT Next`,
   });
 
+export const formatCallStackLines = (result: Awaited<ReturnType<typeof check>>) =>
+  result.failure?.callStack
+    ?.filter((expression, index, stack) => expression !== stack[index - 1])
+    .map((expression) => {
+      const range = expression.location.range;
+      return range
+        ? `Line ${range.start.line}, column ${range.start.column} to line ${range.end.line}, column ${range.end.column} in ${range.module}`
+        : "";
+    });
+
 export const checkSteps = (definitions: string, config: string, version?: TlcVersion) =>
   check({
     source: `---- MODULE M ----\nEXTENDS Integers, TLC\nVARIABLE x\nInit == x = 0\nNext == x < 3 /\\ x' = x + 1\n${definitions}\n====`,

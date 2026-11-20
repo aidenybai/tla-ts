@@ -78,6 +78,7 @@ describe("typed tier matches TLC", () => {
     ["BagDifferences", 41],
     ["SparseSequences", 1063],
     ["LateSparseSequences", 1063],
+    ["SparseConstructions", 11],
     ["RecursiveOperators", 441],
     ["GameOfLife", 1024],
     ["LoopArguments", 31],
@@ -298,6 +299,48 @@ describe("typed tier matches TLC", () => {
     expect(await getCounts(false)).toEqual(expected);
   });
 
+  it.each([
+    ["c < 3 /\\ c' = c + 1", 4],
+    ["c' \\in {1, 2} /\\ c' > 1", 5],
+  ])(
+    "takes ENABLED %s through an instance that keeps its variable for the instancing module's, as TLC does",
+    async (action, states) => {
+      const results = await Promise.all(
+        [undefined, INTERPRETED_SET_SIZE].map((maxSetSize) =>
+          check({
+            source:
+              "---- MODULE G ----\nEXTENDS Integers\nVARIABLE c\nINSTANCE Hi\nInit == c = 0\nNext == Can /\\ c < 4 /\\ c' = c + 1\n====",
+            config: "INIT Init\nNEXT Next\nCHECK_DEADLOCK FALSE",
+            maxSetSize,
+            loadModule: (name) =>
+              name === "Hi"
+                ? `---- MODULE Hi ----\nEXTENDS Integers\nVARIABLES c\nA == ${action}\nCan == ENABLED A\n====`
+                : undefined,
+          }),
+        ),
+      );
+      expect(
+        results.map((result) => [result.status, result.generatedStates, result.distinctStates]),
+      ).toEqual([
+        ["success", states, states],
+        ["success", states, states],
+      ]);
+    },
+  );
+
+  it("checks a spec that has no initial state to give a record its fields, as TLC does", async () => {
+    const result = await check({
+      source:
+        "---- MODULE E ----\nEXTENDS Integers\nVARIABLES x, z\nInit == x = 0 /\\ z = [a |-> 0] /\\ x /= 0\nNext == x' = x /\\ z' = [z EXCEPT !.a = 1]\n====",
+      config: "INIT Init\nNEXT Next",
+    });
+    expect([result.status, result.generatedStates, result.distinctStates]).toEqual([
+      "success",
+      0,
+      0,
+    ]);
+  });
+
   it("draws a random constant definition once, as TLC run with -fp 0 -seed 4 does", async () => {
     const results = await Promise.all(
       [undefined, INTERPRETED_SET_SIZE].map((maxSetSize) =>
@@ -346,6 +389,51 @@ describe("typed tier matches TLC", () => {
     expect(await getLines(true)).toEqual(['"x"  TRUE']);
     expect(await getLines(false)).toEqual(['"x"  TRUE']);
   });
+
+  it("tries each disjunct of a step ENABLED needs once every variable is assigned, as TLC's Tool#enabled does", async () => {
+    const results = await Promise.all(
+      [undefined, INTERPRETED_SET_SIZE].map((maxSetSize) =>
+        check({
+          source:
+            '---- MODULE E ----\nEXTENDS Integers, TLC\nVARIABLE x\nA == UNCHANGED x /\\ (x < 2 \\/ Assert(x < 0, "bound"))\nSpec == x = 0 /\\ [][A]_x /\\ WF_x(A)\nProp == []<>(x < 3)\n====',
+          config: "SPECIFICATION Spec\nPROPERTY Prop",
+          maxSetSize,
+        }),
+      ),
+    );
+    expect(results.map((result) => [result.failure?.message, result.failure?.exitCode])).toEqual(
+      Array.from({ length: 2 }, () => [
+        'The first argument of Assert evaluated to FALSE; the second argument was:\n"bound"',
+        14,
+      ]),
+    );
+  });
+
+  it.each([
+    ["before", "y' = 1 /\\ UNCHANGED y /\\ x' = x", "line 5, col 29 to line 5, col 29 of module M"],
+    ["after", "y' = 1 /\\ x' = x /\\ UNCHANGED y", "line 5, col 39 to line 5, col 39 of module M"],
+  ])(
+    "warns about a variable UNCHANGED keeps that the step changes %s it assigns every variable, as the interpreter does",
+    async (_title, next, location) => {
+      const getWarnings = async (maxSetSize: number | undefined) => {
+        const warnings: string[] = [];
+        await check({
+          source: `---- MODULE M ----\nEXTENDS Integers\nVARIABLES x, y\nInit == x = 0 /\\ y = 0\nNext == ${next}\n====`,
+          config: "INIT Init\nNEXT Next\nCHECK_DEADLOCK FALSE",
+          maxSetSize,
+          onProgress: (progress) => {
+            if (progress.kind === "warning") warnings.push(progress.text);
+          },
+        });
+        return warnings;
+      };
+      const expected = [
+        `The variable y was changed while it is specified as UNCHANGED at\n${location}`,
+      ];
+      expect(await getWarnings(undefined)).toEqual(expected);
+      expect(await getWarnings(INTERPRETED_SET_SIZE)).toEqual(expected);
+    },
+  );
 
   it("branches on the right side of => only with warnings off, like TLC", async () => {
     const results = await Promise.all([

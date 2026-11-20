@@ -1,5 +1,4 @@
-// Ported from Z3 (src/opt/opt_context.cpp, src/opt/opt_value.cpp), MIT license, see
-// z3-license.txt. MaxSMT runs on the SMT core.
+// MaxSMT runs on the SMT core.
 import { SmtUnsupportedError } from "../../../errors";
 import {
   type AstManager,
@@ -26,7 +25,13 @@ import { L_FALSE, L_TRUE, L_UNDEF } from "./lbool";
 import type { MaxsatContext, MaxsatParams, MaxsatSolver } from "./maxsmt-base";
 import { Maxsmt } from "./maxsmt";
 import { isInNraFragment } from "./opt-nlsat";
-import { canReuseNlsatSolver, giaPareto, ParetoNlsatSolver, type ParetoSolver } from "./opt-pareto";
+import {
+  canReuseNlsatSolver,
+  giaPareto,
+  ParetoNlsatSolver,
+  type ParetoObjective,
+  type ParetoSolver,
+} from "./opt-pareto";
 import type { ProtoModel } from "./proto-model";
 import { Rational } from "./rational";
 import { RefVector } from "./ref-vector";
@@ -35,7 +40,12 @@ import { InfEps } from "./inf-eps";
 import { getModelValueBound, OptParetoSolver, OptSolver } from "./opt-solver";
 import { ObjectiveValue } from "./opt-value";
 import { Optsmt, type OptsmtParams } from "./optsmt";
-import { compileInternalTactic, convertModel, type TacticEnvironment } from "./tactic";
+import {
+  compileInternalTactic,
+  convertModel,
+  destroyTactics,
+  type TacticEnvironment,
+} from "./tactic";
 
 const NORMALIZER =
   "(and-then (using-params simplify :som true) propagate-values solve-eqs simplify)";
@@ -132,12 +142,13 @@ export class OptContext {
   private boxIndex = -1;
   private pareto: ParetoSolver | null = null;
   private internal: Objective[] = [];
-  private normalized: { term: number; isMax: boolean }[] = [];
+  private normalized: ParetoObjective[] = [];
   private normalizedGoal: Goal | null = null;
   private normalizedTerms: RefVector;
   private hiddenDecls: number[] = [];
   private optSolver: OptSolver | null = null;
   private satSolver: IncSatSolver | null = null;
+  private satModels: ProtoModel[] = [];
   private optsmt: Optsmt | null = null;
   private rawModel: ProtoModel | null = null;
   private fixedModels = new Map<ProtoModel, ProtoModel>();
@@ -226,6 +237,11 @@ export class OptContext {
     return pareto;
   }
 
+  getReasonUnknown() {
+    if (this.reasonUnknown !== "") return this.reasonUnknown;
+    return (this.satSolver ?? this.optSolver)?.reasonUnknown ?? "unknown";
+  }
+
   optimize(hard: readonly number[], options: OptOptions) {
     if (this.pareto !== null) return this.executePareto();
     if (this.boxIndex !== -1) {
@@ -248,8 +264,10 @@ export class OptContext {
     const solver: MaxsatSolver = {
       assertExpr: (expr) => getSolver().assertExpr(expr),
       checkSat: (assumptions) => getSolver().check(assumptions),
-      getModel: () => getSolver().getModel(),
+      getModel: () =>
+        this.satSolver === null ? optSolver.getModel() : this.getSatModel(this.satSolver),
       getUnsatCore: () => getSolver().getUnsatCore(),
+      getNumAssertions: () => getSolver().getAssertions().length,
       findMutexes: (vars) => ({ status: L_TRUE, mutexes: getSolver().findMutexes(vars) }),
     };
     return {
@@ -344,7 +362,12 @@ export class OptContext {
     const checkSolver = this.satSolver ?? solver;
     for (const form of hard) checkSolver.assertExpr(form);
     const checked = checkSolver.check();
-    this.rawModel = checked === L_FALSE ? null : checkSolver.getModel();
+    this.rawModel =
+      checked === L_FALSE
+        ? null
+        : this.satSolver === null
+          ? solver.getModel()
+          : this.getSatModel(this.satSolver);
     const status = checked !== L_FALSE && this.rawModel === null ? L_UNDEF : checked;
     if (status !== L_TRUE) {
       this.setModel(this.rawModel);
@@ -354,8 +377,6 @@ export class OptContext {
     this.updateBound(optsmt, true);
     const count = this.internal.length;
     if (count > 1 && options.priority === "pareto") {
-      if (this.internal.some((objective) => objective.type === O_MAXSMT))
-        throw new SmtUnsupportedError("pareto optimization of soft constraints");
       this.pareto = this.mkParetoSolver(solver, hard, options);
       return this.executePareto();
     }
@@ -695,6 +716,9 @@ export class OptContext {
     this.normalized = this.internal.map((objective) => ({
       term: objective.term,
       isMax: objective.type === O_MAXIMIZE,
+      isMaxsmt: objective.type === O_MAXSMT,
+      terms: objective.terms,
+      weights: objective.weights,
     }));
     result.forms.reset();
     return normalizedHard;
@@ -705,13 +729,14 @@ export class OptContext {
     const maxsmt = objective?.maxsmt;
     if (maxsmt !== null && maxsmt !== undefined)
       return new ObjectiveValue(InfEps.of(isLower ? maxsmt.getLower() : maxsmt.getUpper()));
+    // Z3 reads the bounds of a solver it never set up, as when the hard constraints are false, as 0.
+    if (objective?.type === O_MAXSMT)
+      return new ObjectiveValue(InfEps.of(this.adjust(index, Rational.zero)));
     const isMax = this.objectives[index].type === O_MAXIMIZE;
     const optsmt = this.optsmt;
     const value =
       optsmt === null || objective === undefined
-        ? isLower === isMax
-          ? ObjectiveValue.minusInfinity
-          : ObjectiveValue.infinity
+        ? new ObjectiveValue(InfEps.of(Rational.zero))
         : (isLower === isMax ? optsmt.lower : optsmt.upper)[objective.index];
     return isMax ? value : value.negated(this.manager.am);
   }
@@ -777,12 +802,21 @@ export class OptContext {
     for (const fixed of this.fixedModels.values()) fixed.decRef();
     this.fixedModels.clear();
     this.hiddenDecls = [];
+    destroyTactics(this.environment.destructors);
     this.normalizedGoal = null;
     this.normalizedTerms.reset();
     this.normalized = [];
     this.optSolver?.release();
     this.optSolver = null;
+    for (const model of this.satModels) model.decRef();
+    this.satModels = [];
     this.satSolver?.release();
     this.satSolver = null;
+  }
+
+  private getSatModel(solver: IncSatSolver) {
+    const model = solver.getModel();
+    if (model !== null) this.satModels.push(model);
+    return model;
   }
 }

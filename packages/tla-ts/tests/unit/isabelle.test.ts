@@ -2,6 +2,9 @@ import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { describe, expect, it } from "vite-plus/test";
 import { decideIsabelle } from "../../src/prover/isabelle/decide";
+import { parseTheory } from "../../src/prover/isabelle/isar/theory";
+import { runTheory } from "../../src/prover/isabelle/isar/toplevel";
+import { loadLogic } from "../../src/prover/isabelle/tla/logic";
 
 const DIRECTORY = join(import.meta.dirname, "../fixtures/isabelle");
 
@@ -42,6 +45,18 @@ describe("decideIsabelle gives Isabelle's verdict on tlapm's theories", () => {
   it("answers unknown when the simplifier runs out of stack", () => {
     expect(decide(readTheory("Paxos-109"))).toBe("unknown");
   }, 30_000);
+});
+
+describe("the simplifier", () => {
+  it("rewrites with an endless simpset until the time limit", () => {
+    const theory = parseTheory(`theory T imports Constant begin
+lemma fixes a b c assumes h1: "a = b" and h2: "b = a" shows "a = c" by (simp add: h1 h2)
+end
+`);
+    expect(() => runTheory(loadLogic(), theory, { deadline: Date.now() + 500 })).toThrow(
+      "Interrupt",
+    );
+  });
 });
 
 describe("decideIsabelle doesn't prove what doesn't follow", () => {

@@ -1,4 +1,3 @@
-// Ported from Z3 (src/math/lp/numeric_pair.h), MIT license, see z3-license.txt.
 import { Rational } from "../rational";
 
 export class Impq {

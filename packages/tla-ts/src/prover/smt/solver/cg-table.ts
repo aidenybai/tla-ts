@@ -1,5 +1,3 @@
-// Ported from Z3 (src/smt/smt_cg_table.h, src/smt/smt_cg_table.cpp, src/ast/euf/euf_etable.h,
-// src/ast/euf/euf_etable.cpp), MIT license, see z3-license.txt.
 import { CONGRUENCE_JUSTIFICATIONS, type Enode } from "./enode";
 
 // The smt enode and the euf enode share the congruence table.

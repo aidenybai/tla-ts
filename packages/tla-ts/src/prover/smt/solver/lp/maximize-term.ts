@@ -1,6 +1,3 @@
-// Ported from Z3 (maximize_term and its helpers in src/math/lp/lar_solver.cpp, and the tableau part
-// of src/math/lp/lp_primal_core_solver.h, src/math/lp/lp_primal_core_solver_def.h,
-// src/math/lp/lp_primal_core_solver_tableau_def.h), MIT license, see z3-license.txt.
 import { Rational } from "../rational";
 import {
   COLUMN_BOXED,

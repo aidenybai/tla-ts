@@ -1,4 +1,3 @@
-// Ported from Z3 (src/ast/rewriter/rewriter.h, rewriter.cpp, rewriter_def.h), MIT license, see z3-license.txt.
 import { ActCache } from "./act-cache";
 import { KIND_APP, KIND_QUANTIFIER, KIND_VAR, OP_ITE, type AstManager } from "./ast";
 import { grow, shrink } from "./array";
@@ -122,13 +121,14 @@ class RewriterCore {
     this.scopes = [];
   }
 
-  protected releaseCaches() {
+  protected releaseCore() {
     for (const cache of this.caches) cache.reset();
+    this.numFrames = 0;
+    this.shrinkResults(0);
   }
 
   protected cleanupCore() {
-    this.releaseCaches();
-    this.shrinkResults(0);
+    this.releaseCore();
     this.caches = [new ActCache(this.manager, this.manager.getNumAsts())];
     this.frames = [];
     this.numFrames = 0;
@@ -248,7 +248,7 @@ abstract class VarShifterCore extends RewriterCore {
   }
 
   release() {
-    this.releaseCaches();
+    this.releaseCore();
   }
 }
 
@@ -390,7 +390,7 @@ class RewriterEngine extends SubstCore {
     this.setLastResult(-1);
     this.invShifter.release();
     this.shifter.release();
-    this.releaseCaches();
+    this.releaseCore();
   }
 
   rewrite(expr: number): number {
@@ -860,7 +860,7 @@ export class BetaReducer extends SubstCore {
   release() {
     this.setLastResult(-1);
     this.shifter.release();
-    this.releaseCaches();
+    this.releaseCore();
   }
 
   rewrite(expr: number): number {

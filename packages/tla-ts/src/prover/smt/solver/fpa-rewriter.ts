@@ -1,4 +1,3 @@
-// Ported from Z3 (src/ast/rewriter/fpa_rewriter.cpp), MIT license, see z3-license.txt.
 import {
   type AstManager,
   OP_EXTRACT,
@@ -404,8 +403,7 @@ const mkIsInfOfInt = (
           ? mkCompare(OP_LE, -threshold)
           : manager.falseExpr;
   }
-  // Deviation from Z3: Z3 gives up from an exponent width of 34. From 31, MAX_FINITE is a numeral of
-  // 2^30 bits, more than a BigInt holds, so those widths give up too.
+  // Deviation from Z3: it runs out of memory from an exponent width of 31, so this gives up as Z3 does from 34.
   if (ebits > 30) return -1;
   const maxFinite = mpfToRational(mkMaxValue(ebits, sbits, false)).num;
   const halfUlp = 1n << BigInt(maxExp - sbits);

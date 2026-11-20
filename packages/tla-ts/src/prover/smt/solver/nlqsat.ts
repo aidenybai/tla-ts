@@ -1,5 +1,5 @@
-// Ported from Z3 (src/qe/nlqsat.cpp), MIT license, see z3-license.txt. Z3 registers only the
-// satisfiability mode as a tactic, so the elimination mode of mk_nlqe_tactic is not ported.
+// Z3 registers only the satisfiability mode as a tactic, so the elimination mode of mk_nlqe_tactic
+// is not ported.
 import { SmtTacticError } from "../../../errors";
 import {
   type AstManager,
@@ -429,7 +429,7 @@ class Nlqsat {
 
   private mkModel() {
     const manager = this.manager;
-    const model = new ProtoModel(manager);
+    const model = new ProtoModel(manager).mkModel();
     for (const [term, variable] of this.t2x) {
       if (!manager.isUninterpretedConst(term) || !this.freeVars.has(term)) continue;
       const value = this.rmodel0[variable] ?? new Anum(Rational.zero);
@@ -463,6 +463,7 @@ class Nlqsat {
       goal.assert(manager.falseExpr);
       return [goal];
     }
+    if (!goal.isModelsEnabled) return [goal];
     goal.model = this.mkModel();
     if (this.divs.length > 0) goal.addDefinitions([{ decl: OP_DIV0, def: this.getDiv0Body() }]);
     return [goal];

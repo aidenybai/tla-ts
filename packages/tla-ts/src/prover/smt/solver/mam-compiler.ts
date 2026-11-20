@@ -1,4 +1,3 @@
-// Ported from Z3 (src/smt/mam.cpp), MIT license, see z3-license.txt.
 import { KIND_VAR, type AstManager } from "./ast";
 import type { Enode } from "./enode";
 
@@ -73,7 +72,7 @@ export interface MamEnode<E> {
 }
 
 // The context that undoes a compiler's updates of shared code trees.
-export interface CompilerContext {
+interface CompilerContext {
   readonly manager: AstManager;
   pushTrail(undo: () => void): void;
 }

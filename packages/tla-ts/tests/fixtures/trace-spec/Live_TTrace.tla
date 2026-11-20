@@ -39,6 +39,9 @@ _next ==
     \*     LET J == INSTANCE Json
     \*         IN J!JsonSerialize("te.json", _TETrace)
 
+
+_view ==
+    <<x, IF TLCGet("level") = _TTraceLassoEnd + 1 THEN _TTraceLassoStart ELSE TLCGet("level")>>
 =============================================================================
 
  Note that you can extract this module `Live_TEExpression`
@@ -132,6 +135,9 @@ INIT
 
 NEXT
     _next
+
+VIEW
+    _view
 
 CONSTANT
     _TETrace <- _trace

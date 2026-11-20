@@ -1,6 +1,3 @@
-// Ported from Z3 (src/sat/sat_clause.h, src/sat/sat_clause.cpp), MIT license, see
-// z3-license.txt.
-
 export const NULL_LITERAL = -2;
 export const NULL_BOOL_VAR = -1;
 export const UINT_MAX = 4294967295;

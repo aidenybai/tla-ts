@@ -1,9 +1,11 @@
 import type { BoundPattern, Expression } from "./ast";
 import type { Substitution } from "./config";
 import { TlaConfigError, TlaEvaluationError, UNEXPECTED_EXCEPTION } from "./errors";
-import { EXIT_STATUS, setExitCode } from "./exit-codes";
-import { MESSAGE_CODE } from "./tlc/messages";
-import { evaluate, type Environment } from "./evaluate";
+import { EXIT_STATUS, getMessageExitStatus, setExitCode } from "./exit-codes";
+import { getCodedMessage, MESSAGE_CODE, withUnexpectedException } from "./tlc/messages";
+import { evaluate, getBuiltin, getDefinition, getRootKey, type Environment } from "./evaluate";
+import { parenthesizedRanges } from "./parser";
+import { getKeyName } from "./resolve";
 import {
   compareValues,
   createFunction,
@@ -11,6 +13,7 @@ import {
   createSortedFunction,
   createSortedSet,
   isEnumerable,
+  isEnumeratedSet,
   isFunctionValue,
   isModelValue,
   isSetValue,
@@ -24,7 +27,7 @@ export type Images = Map<string, ModelValue>;
 
 const getPermutationKey = (permutation: Images) =>
   [...permutation]
-    .map(([name, image]) => `${name}>${image.name}`)
+    .map((entry) => `${entry[0]}>${entry[1].name}`)
     .sort()
     .join(",");
 
@@ -57,36 +60,41 @@ const toImages = (value: Value) => {
 
 const getBoundImage = (pattern: BoundPattern, set: Expression | undefined) => {
   const names = pattern.kind === "Name" ? pattern.name : `<<${pattern.names.join(",")}>>`;
-  return set ? `${names}\\in${getExpressionImage(set)}` : names;
+  return set ? `${names}\\in${getOperandImage(set)}` : names;
 };
 
 const getExpressionImage = (expression: Expression): string => {
-  if (expression.kind === "Identifier") return expression.name;
+  if (expression.kind === "Identifier") return getKeyName(expression.name);
   if (expression.kind === "Number") return expression.text ?? String(expression.value);
   if (expression.kind === "SetEnumeration") {
-    return `{${expression.elements.map(getExpressionImage).join(",")}}`;
+    return `{${expression.elements.map(getOperandImage).join(",")}}`;
   }
   if (expression.kind === "Choose") {
-    return `CHOOSE${getBoundImage(expression.pattern, expression.set)}:${getExpressionImage(expression.body)}`;
+    return `CHOOSE${getBoundImage(expression.pattern, expression.set)}:${getOperandImage(expression.body)}`;
   }
   if (expression.kind === "Tuple")
-    return `<<${expression.elements.map(getExpressionImage).join(",")}>>`;
+    return `<<${expression.elements.map(getOperandImage).join(",")}>>`;
   if (expression.kind === "Record") {
     const fields = expression.fields.map(
-      (field) => `${field.name}|->${getExpressionImage(field.value)}`,
+      (field) => `${field.name}|->${getOperandImage(field.value)}`,
     );
     return `[${fields.join(",")}]`;
   }
   if (expression.kind === "FunctionConstruction") {
     const bounds = expression.bounds.map((bound) => getBoundImage(bound.pattern, bound.set));
-    return `[${bounds.join(",")}|->${getExpressionImage(expression.body)}]`;
+    return `[${bounds.join(",")}|->${getOperandImage(expression.body)}]`;
   }
   if (expression.kind !== "Apply") return "";
-  const args = expression.args.map(getExpressionImage);
-  return /^[A-Za-z_]/.test(expression.operator)
-    ? `${expression.operator}(${args.join(",")})`
-    : args.join(expression.operator);
+  const args = expression.args.map(getOperandImage);
+  const operator = getKeyName(expression.operator);
+  return /^[A-Za-z_]/.test(operator) ? `${operator}(${args.join(",")})` : args.join(operator);
 };
+
+// SANY gives a parenthesized expression the syntax node inside the parentheses, so only an operand keeps them.
+const getOperandImage = (expression: Expression) =>
+  parenthesizedRanges.has(expression)
+    ? `(${getExpressionImage(expression)})`
+    : getExpressionImage(expression);
 
 const isPermutations = (
   expression: Expression,
@@ -100,22 +108,37 @@ export const getSymmetryGroup = (
   environment: Environment,
   substitutions: Substitution[],
 ): Images[] | undefined => {
-  const definition = environment.definitions.get(name);
-  if (definition === undefined && !environment.constants.has(name)) {
+  const key = getRootKey(name, environment);
+  // Deviation from TLC: TLC ignores a [Mod] <- of the symmetry, or throws a ClassCastException for a literal body.
+  const definition = getDefinition(key, environment);
+  if (
+    definition === undefined &&
+    !environment.constants.has(key) &&
+    getBuiltin(key, environment) === undefined
+  ) {
     throw new TlaConfigError(
       `The symmetry function ${name} specified in the configuration file\nis not defined in the specification.`,
     );
   }
-  if (definition?.kind !== "Operator" || definition.params.length > 0) {
+  if (environment.constants.has(key) || definition?.kind !== "Operator") {
     throw createSymmetryError(`The symmetry function ${name} must specify a set of permutations.`);
   }
   const evaluateConstant = (expression: Expression) =>
     evaluate(expression, { environment, scope: undefined, state: undefined, next: undefined });
-  const value = evaluateConstant(definition.body);
-  if (!isSetValue(value) || !isEnumerable(value)) {
+  const value = (() => {
+    try {
+      return withUnexpectedException(() => evaluateConstant(definition.body));
+    } catch (error) {
+      const coded =
+        error instanceof TlaEvaluationError ? getCodedMessage(error.message) : undefined;
+      throw setExitCode(error, coded ? getMessageExitStatus(coded.code) : EXIT_STATUS.error);
+    }
+  })();
+  if (!isEnumeratedSet(value)) {
     throw createSymmetryError("The symmetry operator must specify a set of functions.");
   }
   const elements = toFiniteSet(value).elements;
+  // Deviation from TLC: Tool#getSymmetryPerms asks for each value to be a FcnRcdValue, so it rejects a tuple, a record and a function it keeps lazy.
   if (!elements.every(isFunctionValue)) {
     throw createSymmetryError("The symmetry values must be function records.");
   }
@@ -130,7 +153,9 @@ export const getSymmetryGroup = (
   const warnSmallSets = (offenders: Expression[]) => {
     if (offenders.length === 0) return;
     const names = offenders.map((offender) => {
-      const image = getExpressionImage(isPermutations(offender) ? offender.args[0] : offender);
+      const image = isPermutations(offender)
+        ? getOperandImage(offender.args[0])
+        : getExpressionImage(offender);
       return configNames.get(image) ?? image;
     });
     const isPlural = offenders.length > 1;
@@ -139,6 +164,7 @@ export const getSymmetryGroup = (
       `The set${isPlural ? "s" : ""} ${names.join(", and ")} ${isPlural ? "have" : "has"} been defined to be a symmetry set but contain${isPlural ? "" : "s"} less than two elements.`,
     );
   };
+  // Deviation from TLC: MVPerms#permutationSubgroup sizes a util.Set one below the number of permutations, which throws for fewer than two.
   if (permutedSets.length >= elements.length) {
     warnSmallSets(permutedSets);
     return undefined;
@@ -169,7 +195,9 @@ export const getSymmetryGroup = (
     permutedSets.filter((node) => {
       if (!isPermutations(node)) return false;
       const operand = node.args[0];
-      if (operand.kind !== "Identifier" || substitutedNames.has(operand.name)) return false;
+      if (operand.kind !== "Identifier" || substitutedNames.has(getKeyName(operand.name))) {
+        return false;
+      }
       const set = evaluateConstant(operand);
       return (
         typeof set === "object" &&

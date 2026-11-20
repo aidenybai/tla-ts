@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vite-plus/test";
-import { AstManager, OP_BADD, OP_BSUB } from "../../src/prover/smt/solver/ast";
+import { AstManager, OP_BADD, OP_BSUB, SORT_INT } from "../../src/prover/smt/solver/ast";
 import { mkBvApp } from "../../src/prover/smt/solver/bv-decl-plugin";
 import { Egraph } from "../../src/prover/smt/solver/euf/egraph";
 import { ResourceLimit } from "../../src/prover/smt/solver/rlimit";
@@ -34,6 +34,34 @@ describe("the e-graph of sat.euf", () => {
     pair.egraph.explainEq(reasons, pair.first, pair.second);
     pair.egraph.endExplain();
     expect(reasons.toSorted()).toEqual([7, 9]);
+  });
+
+  it("gives a node back its own theory variable when a replacement is undone, unlike Z3", () => {
+    const manager = new AstManager(new ResourceLimit(Infinity));
+    const egraph = new Egraph(manager);
+    const [nodeX, nodeY, nodeZ] = [0, 1, 2].map(() =>
+      egraph.mk(manager.mkFreshConst(null, SORT_INT), 0, []),
+    );
+    const theory = 1;
+    egraph.addThVar(nodeX, 0, theory);
+    egraph.addThVar(nodeY, 1, theory);
+    egraph.addThVar(nodeZ, 3, theory);
+    egraph.pushScope();
+    egraph.merge(nodeX, nodeY, 0);
+    egraph.propagate();
+    expect(nodeX.root).toBe(nodeY);
+    egraph.pushScope();
+    egraph.addThVar(nodeX, 2, theory);
+    egraph.popScopes(2);
+    expect(nodeX.getThVar(theory)).toBe(0);
+    egraph.merge(nodeX, nodeZ, 0);
+    egraph.propagate();
+    const equalities: number[][] = [];
+    for (; egraph.hasThEq(); egraph.nextThEq()) {
+      const equality = egraph.getThEq();
+      equalities.push([equality.v1, equality.v2]);
+    }
+    expect(equalities).toEqual([[3, 0]]);
   });
 
   it("finds Z3's model when a congruence needs commutativity", () => {
@@ -120,6 +148,224 @@ describe("the setup of the smt kernel", () => {
       ].join("\n"),
     );
   });
+
+  it("turns off bound propagation for QF_LIA clauses of at most two literals with large coefficients", () => {
+    expect(
+      run([
+        "(set-logic QF_LIA)",
+        "(declare-const x0 Int)",
+        "(declare-const x1 Int)",
+        "(declare-const x2 Int)",
+        "(declare-const x3 Int)",
+        "(declare-const x4 Int)",
+        "(assert (> (+ (* -85063 x4) (* -20559 x0) (* -48732 x1)) -70725))",
+        "(assert (>= (* -1719 x4) 13988))",
+        "(assert (>= (+ (* -80993 x1) (* 16607 x0)) -199070))",
+        "(assert (or (>= (* -21740 x1) -48321) (<= (+ (* -25806 x1) (* 39163 x4)) -10633)))",
+        "(assert (< (* -43497 x2) 116203))",
+        "(assert (or (> (+ (* 40117 x2) (* 41392 x0) (* -63075 x1)) 169449) (< (* 2998 x0) 11966)))",
+        "(assert (>= (+ (* -59353 x2) (* -23714 x3)) -137599))",
+        "(assert (or (< (+ (* 60667 x2) (* -77302 x4)) -44883) (< (* -27327 x3) 68896)))",
+        "(check-sat)",
+        "(get-model)",
+      ]).join("\n"),
+    ).toBe(
+      [
+        "sat",
+        "(",
+        "  (define-fun x4 () Int",
+        "    (- 9))",
+        "  (define-fun x1 () Int",
+        "    3)",
+        "  (define-fun x2 () Int",
+        "    3)",
+        "  (define-fun x0 () Int",
+        "    6)",
+        "  (define-fun x3 () Int",
+        "    (- 2))",
+        ")",
+      ].join("\n"),
+    );
+  });
+
+  it("counts a step for each bound that the LP solver implies", () => {
+    expect(
+      run([
+        "(declare-const x Int)",
+        "(declare-const y Int)",
+        "(declare-const z Int)",
+        "(assert (and (<= (+ (* 2 x) y) 3) (>= x 1) (or (>= y 2) (>= z 5)) (or (<= y 0) (<= z 1))))",
+        "(check-sat)",
+        "(get-info :rlimit)",
+      ]),
+    ).toEqual(["sat", "(:rlimit 430)"]);
+  });
+
+  it("counts a step again once the random update of a shared variable finds its freedom interval", () => {
+    expect(
+      run([
+        "(set-logic QF_UFLIA)",
+        "(declare-const x0 Int)",
+        "(declare-const x1 Int)",
+        "(declare-fun f (Int) Int)",
+        "(assert (<= -1 x0))",
+        "(assert (= (f (+ x1 1)) x0))",
+        "(assert (not (= (f x1) (f x0))))",
+        "(assert (<= (+ x0 x1) 1))",
+        "(check-sat)",
+        "(get-info :rlimit)",
+      ]),
+    ).toEqual(["sat", "(:rlimit 325)"]);
+  });
+
+  it("keeps nnf_cnf and propagates equalities in lp again when a set-option rereads the parameters", () => {
+    expect(
+      run([
+        "(set-logic QF_LIA)",
+        "(declare-const x Int)",
+        "(declare-const y Int)",
+        "(declare-const z Int)",
+        "(assert (and (<= (+ (* 2 x) y) 7) (>= x 1) (or (>= y 2) (>= z 5)) (or (<= y 0) (<= z 1)) (< (+ x z) 4)))",
+        "(push 1)",
+        "(check-sat)",
+        "(get-info :rlimit)",
+        "(set-option :pp.max_depth 10)",
+        "(assert (> y -5))",
+        "(check-sat)",
+        "(get-info :rlimit)",
+      ]),
+    ).toEqual(["sat", "(:rlimit 209)", "sat", "(:rlimit 261)"]);
+    expect(
+      run([
+        "(set-logic QF_LIA)",
+        "(declare-const x0 Int)",
+        "(declare-const x1 Int)",
+        "(declare-const x2 Int)",
+        "(assert (< (* -1 x2) 13))",
+        "(assert (<= x0 13))",
+        "(assert (>= (+ (* -9 x1) (* -9 x0)) 14))",
+        "(assert (or (> (+ (* 6 x1) (* 7 x0)) -5) (= (* 4 x0) -1)))",
+        "(assert (or (>= (+ (* -7 x2) (* -1 x1)) -6) (> (+ (* -8 x0) x1) 6)))",
+        "(assert (or (> x0 12) (<= (* -3 x1) -1)))",
+        "(assert (>= (* -2 x1) -4))",
+        "(assert (< (* 6 x2) 19))",
+        "(push 1)",
+        "(check-sat)",
+        "(get-info :rlimit)",
+        "(set-option :pp.max_depth 10)",
+        "(assert (or (> (+ (* -5 x2) (* 3 x0)) -17) (>= (* -5 x2) 6)))",
+        "(check-sat)",
+        "(get-info :rlimit)",
+      ]),
+    ).toEqual(["sat", "(:rlimit 432)", "sat", "(:rlimit 561)"]);
+  });
+});
+
+describe("a distinct of more than two arguments", () => {
+  const declareConsts = (sort: string, names: string[]) =>
+    names.map((name) => `(declare-const ${name} ${sort})`);
+
+  it("stays a distinct when the kernel asserts it", () => {
+    expect(
+      run([
+        "(declare-sort U 0)",
+        ...declareConsts("U", ["a0", "a1", "a2", "a3", "a4"]),
+        "(assert (not (distinct a2 a3 a0 a4)))",
+        "(get-info :rlimit)",
+        "(assert (distinct a1 a2 a3))",
+        "(get-info :rlimit)",
+      ]),
+    ).toEqual(["(:rlimit 6)", "(:rlimit 9)"]);
+  });
+
+  it("stays a distinct when a tactic other than simplify rewrites it", () => {
+    expect(
+      run([
+        ...declareConsts("Int", ["a", "b", "c"]),
+        "(declare-const p Bool)",
+        "(assert p)",
+        "(assert (or (distinct a b c) (not p)))",
+        "(apply propagate-values)",
+      ]),
+    ).toEqual([
+      ["(goals", "(goal", "  p", "  (distinct a b c)", "  :precision precise :depth 1)", ")"].join(
+        "\n",
+      ),
+    ]);
+  });
+
+  it("stays a distinct when qe-light rewrites it", () => {
+    expect(
+      run([
+        ...declareConsts("Int", ["a", "b", "c"]),
+        "(assert (exists ((x Int)) (and (= x a) (distinct x b c))))",
+        "(apply qe-light)",
+      ]),
+    ).toEqual([
+      ["(goals", "(goal", "  (distinct a b c)", "  :precision precise :depth 1)", ")"].join("\n"),
+    ]);
+  });
+
+  it("is blasted by propagate-values under its parameter blast_distinct", () => {
+    expect(
+      run([
+        ...declareConsts("Int", ["a", "b", "c"]),
+        "(declare-const p Bool)",
+        "(assert p)",
+        "(assert (or (distinct a b c) (not p)))",
+        "(apply (using-params propagate-values :blast_distinct true))",
+      ]),
+    ).toEqual([
+      [
+        "(goals",
+        "(goal",
+        "  p",
+        "  (not (= a b))",
+        "  (not (= a c))",
+        "  (not (= b c))",
+        "  :precision precise :depth 1)",
+        ")",
+      ].join("\n"),
+    ]);
+  });
+
+  it("is defined in the kernel by its disequalities, as internalize_distinct does", () => {
+    const check = (lines: string[]) => run([...lines, "(check-sat)", "(get-info :rlimit)"]);
+    const names = Array.from({ length: 32 }, (_value, index) => `a${index}`);
+    expect(
+      check([
+        "(declare-sort U 0)",
+        ...declareConsts("U", ["a", "b", "c"]),
+        "(assert (distinct a b c))",
+      ]),
+    ).toEqual(["sat", "(:rlimit 77)"]);
+    expect(
+      check([
+        "(declare-sort U 0)",
+        ...declareConsts("U", ["a", "b", "c", "d"]),
+        "(assert (distinct a b c d))",
+      ]),
+    ).toEqual(["sat", "(:rlimit 85)"]);
+    expect(check(["(declare-fun f (Int) Int)", "(assert (distinct (f 1) (f 2) (f 3)))"])).toEqual([
+      "sat",
+      "(:rlimit 122)",
+    ]);
+    expect(
+      check([
+        "(declare-sort U 0)",
+        ...declareConsts("U", ["a", "b", "c"]),
+        "(declare-fun f (U) Int)",
+        "(assert (distinct (f a) (f b) (f c)))",
+      ]),
+    ).toEqual(["sat", "(:rlimit 161)"]);
+    expect(
+      check([
+        "(declare-sort U 0)",
+        ...declareConsts("U", names),
+        `(assert (distinct ${names.join(" ")}))`,
+      ]),
+    ).toEqual(["sat", "(:rlimit 1121)"]);
+  });
 });
 
 describe("regular expressions", () => {
@@ -167,5 +413,103 @@ describe("regular expressions", () => {
       "(error \"line 10 column 51: Unexpected number of arguments to 're.none' 0 arguments expected 1 given\")",
       "sat",
     ]);
+  });
+});
+
+describe("algebraic datatypes", () => {
+  it("rewrites each term that it enumerates for a fresh value of a mutually recursive datatype", () => {
+    expect(
+      run([
+        "(declare-datatypes ((A 0) (B 0)) (((a0) (a1 (ab B))) ((b0) (b1 (ba A)))))",
+        "(declare-const x B)",
+        "(assert (not (= x b0)))",
+        "(check-sat)",
+        "(get-info :rlimit)",
+        "(get-model)",
+      ]),
+    ).toEqual([
+      "sat",
+      "(:rlimit 132)",
+      ["(", "  (define-fun x () B", "    (b1 a0))", ")"].join("\n"),
+    ]);
+  });
+
+  it("rewrites an equality of two constructor applications through a conjunction of one equality", () => {
+    expect(
+      run([
+        "(declare-datatypes ((B 0)) (((b0) (b1 (ba Int)))))",
+        "(declare-const y Int)",
+        "(declare-const z Int)",
+        "(assert (= (b1 y) (b1 z)))",
+        "(get-info :rlimit)",
+        "(check-sat)",
+        "(get-info :rlimit)",
+      ]),
+    ).toEqual(["(:rlimit 12)", "sat", "(:rlimit 56)"]);
+  });
+});
+
+describe("theory_bv, as Z3 5.3.2 bit-blasts its terms", () => {
+  it("frees the negation mk_not_core makes of an equality's left side", () => {
+    expect(
+      run([
+        "(declare-const x (_ BitVec 8))",
+        "(declare-const y (_ BitVec 8))",
+        "(push)",
+        "(assert (= (bvmul x y) #x00))",
+        "(check-sat)",
+        "(pop)",
+        "(assert (bvult (bvmul x y) #x10))",
+        "(check-sat)",
+        "(get-info :rlimit)",
+      ]),
+    ).toEqual(["sat", "sat", "(:rlimit 1854)"]);
+  });
+
+  it("bit-blasts the assertions after one that internalizes to a conflict", () => {
+    expect(
+      run([
+        "(declare-const x (_ BitVec 1))",
+        "(push 1)",
+        "(assert (bvslt (bvsdiv x #b1) x))",
+        "(assert (= (bvshl x x) #b1))",
+        "(check-sat)",
+        "(get-info :rlimit)",
+      ]),
+    ).toEqual(["unsat", "(:rlimit 95)"]);
+  });
+
+  it("frees the negation mk_not_core makes in the simplifiers before bit-blasting", () => {
+    expect(
+      run([
+        "(set-logic QF_BV)",
+        "(declare-const v0 (_ BitVec 8))",
+        "(declare-const v1 (_ BitVec 8))",
+        "(declare-const v2 (_ BitVec 8))",
+        "(declare-const p0 Bool)",
+        "(declare-const p1 Bool)",
+        "(assert (= v2 (bvmul v0 (_ bv175 8))))",
+        "(assert (= v0 (bvadd v1 (_ bv150 8))))",
+        "(push 1)",
+        "(assert (bvult v2 (bvsub v1 (_ bv122 8))))",
+        "(assert (and p0 (distinct (bvand (bvudiv v1 v2) (bvmul v2 v0)) (bvadd v1 v0))))",
+        "(check-sat-assuming (p1))",
+        "(get-value (v0 v1 v2))",
+      ]),
+    ).toEqual(["sat", "((v0 #x9d)\n (v1 #x07)\n (v2 #x53))"]);
+  });
+
+  it("frees the negation mk_le replaces before the one mk_not_core makes for it", () => {
+    expect(
+      run([
+        "(declare-const x (_ BitVec 4))",
+        "(declare-const y (_ BitVec 4))",
+        "(assert (bvult y #b0100))",
+        "(assert (bvslt (bvurem (bvnot x) x) x))",
+        "(assert (bvule y (bvsmod (bvor x y) (bvsmod x x))))",
+        "(check-sat)",
+        "(get-value (x y))",
+      ]),
+    ).toEqual(["sat", "((x #x3)\n (y #x0))"]);
   });
 });

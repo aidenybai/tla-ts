@@ -1,5 +1,3 @@
-// Ported from Isabelle2025's Pure/variable.ML. Copyright (c) 1986-2025 University of Cambridge, Technische Universitaet Muenchen, and contributors, see LICENSE.
-
 import { variantList } from "./name";
 import { addFreeNames, addVars, mkFree } from "./term";
 import { generalize, instantiate, type Thm } from "./thm";

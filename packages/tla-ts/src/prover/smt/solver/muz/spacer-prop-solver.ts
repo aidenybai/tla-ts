@@ -1,5 +1,4 @@
-// Ported from Z3 (src/muz/spacer/spacer_prop_solver.cpp, src/muz/spacer/spacer_iuc_solver.cpp),
-// MIT license, see z3-license.txt. Cores are subset cores: the port has no proofs to interpolate.
+// Cores are subset cores: the port has no proofs to interpolate.
 import { MBQI_MAX_ITERATIONS } from "../context";
 import { type AstManager, KIND_APP, SORT_BOOL } from "../ast";
 import { flattenAndVector } from "../ast-util";
@@ -129,7 +128,7 @@ export class IucSolver {
     const result = kernel.check(this.assumptions);
     this.lastModel = undefined;
     if (result === L_TRUE) {
-      this.lastModel = kernel.context.getModel();
+      this.lastModel = kernel.context.getSatModel();
       this.lastModel.incRef();
     }
     this.lastCore = result === L_FALSE ? [...kernel.context.unsatCore] : [];

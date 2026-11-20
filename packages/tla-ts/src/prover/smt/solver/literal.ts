@@ -1,4 +1,3 @@
-// Ported from Z3 (src/smt/smt_literal.h, src/smt/smt_types.h), MIT license, see z3-license.txt.
 declare const boolVarBrand: unique symbol;
 declare const literalBrand: unique symbol;
 

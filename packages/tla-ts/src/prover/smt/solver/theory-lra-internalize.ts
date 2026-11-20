@@ -1,4 +1,3 @@
-// Ported from Z3 (src/smt/theory_lra.cpp), MIT license, see z3-license.txt.
 import {
   FAMILY_ARITH,
   KIND_APP,
@@ -87,10 +86,16 @@ export abstract class TheoryLraInternalize extends TheoryLraAxioms {
 
   init() {
     const manager = this.manager;
+    this.solver.settings.isPropagatingEqs = this.context.config.isArithPropagatingEqs;
     this.oneVar = this.addConst(manager.mkNumeral(1n));
     this.realOneVar = this.addConst(manager.mkRealNumeral(Rational.one));
     this.zeroVar = this.addConst(manager.mkNumeral(0n));
     this.realZeroVar = this.addConst(manager.mkRealNumeral(Rational.zero));
+    this.solver.settings.setRandomSeed(this.context.params.randomSeed ?? 0);
+  }
+
+  override release() {
+    for (const terms of this.internalizeStates) terms.reset();
   }
 
   private addConst(expr: number) {
@@ -241,8 +246,16 @@ export abstract class TheoryLraInternalize extends TheoryLraAxioms {
     nla.isRelevant = (lpVar) =>
       this.context.isRelevant(this.getExpr(this.solver.getExternal(lpVar)));
     nla.grobner.updateParams();
+    nla.addMulDefHook = (vars) => this.addMulDef(vars);
     this.nla = nla;
     return nla;
+  }
+
+  private addMulDef(vars: readonly number[]) {
+    const isInt = vars.every((lpVar) => this.isIntVar(this.solver.getExternal(lpVar)));
+    const product = this.manager.mkFreshConst("mul!", isInt ? SORT_INT : SORT_REAL);
+    this.mkEnode(product);
+    return this.registerVar(this.mkVar(product));
   }
 
   private registerDivision(quotient: number, remainder: number): Division {

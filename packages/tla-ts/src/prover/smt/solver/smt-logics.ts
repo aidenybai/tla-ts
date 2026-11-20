@@ -1,4 +1,3 @@
-// Ported from Z3 (src/solver/smt_logics.cpp), MIT license, see z3-license.txt.
 const isAllLogic = (logic: string) => logic === "ALL" || logic === "HO_ALL";
 
 const isFfLogic = (logic: string) => logic === "QF_FF" || logic === "QF_FFA";

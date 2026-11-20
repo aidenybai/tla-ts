@@ -127,3 +127,335 @@ describe("a quantifier keeps what Z3 5.3.2 keeps", () => {
     ]);
   });
 });
+
+describe("the model finder, as Z3 5.3.2 cleans up its instantiation sets", () => {
+  it("keeps a term whose value is a string", () => {
+    expect(
+      run([
+        "(declare-fun g (String) String)",
+        "(declare-const s String)",
+        '(assert (= (g s) "c"))',
+        "(assert (forall ((x String)) (not (= (g x) x))))",
+        "(check-sat)",
+        "(get-model)",
+      ]),
+    ).toEqual([
+      "sat",
+      "(",
+      "  (define-fun s () String",
+      '    "")',
+      "  (define-fun g ((x!0 String)) String",
+      '    (ite (= x!0 "") "c"',
+      '      ""))',
+      ")",
+    ]);
+  });
+
+  it("counts the steps of the quantifier analyzer", () => {
+    expect(
+      run([
+        "(declare-fun f (Int) Int)",
+        "(declare-fun p (Int) Bool)",
+        "(assert (forall ((x Int)) (and (p x) (or (p (f x)) (= (f x) x)))))",
+        "(push)",
+        "(get-info :rlimit)",
+      ]),
+    ).toEqual(["(:rlimit 174)"]);
+    expect(
+      run([
+        "(declare-fun f (Int) Int)",
+        "(declare-fun g (Int) Int)",
+        "(assert (forall ((x Int) (y Int)) (or (= (f x) (g y)) (= (f y) (g x)) (= (f x) (f y)))))",
+        "(push)",
+        "(get-info :rlimit)",
+      ]),
+    ).toEqual(["(:rlimit 185)"]);
+  });
+
+  it("makes the model finder with smt.mbqi off", () => {
+    const lines = ["(set-option :smt.mbqi false)", "(declare-const x Int)", "(assert (> x 0))"];
+    expect(run([...lines, "(push)", "(get-info :rlimit)"])).toEqual(["(:rlimit 50)"]);
+    expect(run([...lines, "(check-sat-using smt)", "(get-info :rlimit)"])).toEqual([
+      "sat",
+      "(:rlimit 65)",
+    ]);
+  });
+
+  it("frees the instantiation sets of a quantifier's macro", () => {
+    expect(
+      run([
+        "(set-option :auto_config false)",
+        "(declare-sort U 0)",
+        "(declare-fun f (U) U)",
+        "(declare-fun g (U) U)",
+        "(declare-fun h (U U) U)",
+        "(declare-fun p (U) Bool)",
+        "(declare-const c1 U)",
+        "(declare-const c3 U)",
+        "(assert (forall ((x U)) (p x)))",
+        "(assert (forall ((x U) (y U)) (! (= x (h y x)) :pattern ((f x) (g y)) :qid q2)))",
+        "(assert (p (h c3 (g c1))))",
+        "(check-sat)",
+        "(get-info :rlimit)",
+        "(check-sat)",
+        "(get-info :rlimit)",
+      ]),
+    ).toEqual(["sat", "(:rlimit 1301)", "sat", "(:rlimit 2581)"]);
+  });
+});
+
+describe("e-matching, as Z3 5.3.2 counts its steps", () => {
+  it("counts the steps of the matcher and of the instantiation queue", () => {
+    const lines = [
+      "(declare-fun f (Int) Int)",
+      "(declare-const a Int)",
+      "(declare-const b Int)",
+      "(assert (forall ((x Int)) (! (> (f x) x) :pattern ((f x)))))",
+      "(assert (= (f a) b))",
+      "(assert (< b a))",
+      "(check-sat)",
+      "(get-info :rlimit)",
+    ];
+    expect(run(["(set-option :smt.mbqi false)", ...lines])).toEqual(["unsat", "(:rlimit 469)"]);
+    expect(run(["(set-option :smt.mbqi false)", "(push)", ...lines])).toEqual([
+      "unsat",
+      "(:rlimit 296)",
+    ]);
+  });
+
+  it("reads no cancel flag between the lazy instances of a final check", () => {
+    expect(
+      run([
+        "(set-option :auto_config false)",
+        "(set-option :smt.mbqi false)",
+        "(declare-fun f (Int) Int)",
+        "(declare-fun p (Int) Bool)",
+        "(declare-const c0 Int)",
+        "(assert (forall ((x Int)) (p (f (f x)))))",
+        "(assert (= c0 0))",
+        "(assert (not (= c0 (f 0))))",
+        "(check-sat)",
+        "(get-info :rlimit)",
+      ]),
+    ).toEqual(["unknown", "(:rlimit 981)"]);
+  });
+
+  it("costs each instance 0 under the qi.cost of the AUFLIA tactic", () => {
+    expect(
+      run([
+        "(set-logic AUFLIA)",
+        "(declare-fun f (Int) Int)",
+        "(declare-fun g (Int) Int)",
+        "(declare-const a Int)",
+        "(declare-const b Int)",
+        "(assert (forall ((x Int)) (! (> (f x) (g x)) :pattern ((f x)) :weight 20)))",
+        "(assert (= (g a) (f b)))",
+        "(assert (> (g b) (f a)))",
+        "(check-sat)",
+        "(get-info :rlimit)",
+      ]),
+    ).toEqual(["unsat", "(:rlimit 593)"]);
+  });
+
+  it("reads a qi.cost numeral as a float quotient of int64s", () => {
+    const getOutput = (cost: string) =>
+      run([
+        `(set-option :smt.qi.cost "${cost}")`,
+        "(declare-fun f (Int) Int)",
+        "(declare-fun g (Int) Int)",
+        "(declare-const a Int)",
+        "(declare-const b Int)",
+        "(assert (forall ((x Int)) (! (> (f x) (g x)) :pattern ((f x)) :weight 20)))",
+        "(assert (= (g a) (f b)))",
+        "(assert (> (g b) (f a)))",
+        "(check-sat)",
+        "(get-info :rlimit)",
+      ]);
+    expect(getOutput("10.00000001")).toEqual(["unsat", "(:rlimit 641)"]);
+    expect(getOutput("20.0000001")).toEqual(["unsat", "(:rlimit 661)"]);
+    expect(getOutput("18446744073709551616")).toEqual(["unsat", "(:rlimit 641)"]);
+  });
+});
+
+const getThresholdScript = (options: string[], check: string, query = "(get-info :rlimit)") => [
+  ...options,
+  "(declare-fun f (Int) Int)",
+  "(declare-fun g (Int) Int)",
+  "(declare-fun h (Int) Int)",
+  "(declare-const a Int)",
+  "(declare-const b Int)",
+  "(declare-const c Int)",
+  "(assert (forall ((x Int)) (! (= (h x) (h (h x))) :pattern ((h x)) :weight 25 :qid q0)))",
+  "(assert (forall ((x Int)) (! (<= (g x) (g (h x))) :pattern ((g x)) :weight 25)))",
+  "(assert (forall ((x Int)) (! (<= (f x) (f x)) :pattern ((f x)) :weight 25)))",
+  "(assert (> (f (g 0)) (f (g c))))",
+  "(assert (> a c))",
+  check,
+  query,
+];
+
+describe("the instantiation thresholds, as Z3 5.3.2 reads them", () => {
+  it("instantiates eagerly up to smt.qi.eager_threshold", () => {
+    expect(
+      run(
+        getThresholdScript(
+          ["(set-logic UFLIA)", "(set-option :smt.qi.eager_threshold 50.0)"],
+          "(check-sat)",
+        ),
+      ),
+    ).toEqual(["sat", "(:rlimit 3299)"]);
+  });
+
+  it("reads qi.eager_threshold as a parameter of the smt tactic", () => {
+    expect(
+      run(getThresholdScript([], "(check-sat-using (using-params smt :qi.eager_threshold 50.0))")),
+    ).toEqual(["sat", "(:rlimit 3118)"]);
+  });
+
+  it("instantiates at the final check up to smt.qi.lazy_threshold", () => {
+    expect(
+      run(
+        getThresholdScript(
+          ["(set-option :auto_config false)", "(set-option :smt.qi.lazy_threshold 100.0)"],
+          "(check-sat)",
+        ),
+      ),
+    ).toEqual(["sat", "(:rlimit 3276)"]);
+  });
+
+  it("instantiates eagerly up to smt.qi.eager_threshold in sat.euf", () => {
+    expect(
+      run(
+        getThresholdScript(
+          ["(set-option :sat.euf true)", "(set-option :smt.qi.eager_threshold 50.0)"],
+          "(check-sat)",
+          "(get-value ((g c)))",
+        ),
+      ),
+    ).toEqual(["sat", "(((g c) (- 50015)))"]);
+  });
+
+  it("instantiates at the final check up to smt.qi.lazy_threshold in sat.euf", () => {
+    expect(
+      run(
+        getThresholdScript(
+          ["(set-option :sat.euf true)", "(set-option :smt.qi.lazy_threshold 100.0)"],
+          "(check-sat)",
+          "(get-value ((g c)))",
+        ),
+      ),
+    ).toEqual(["sat", "(((g c) (- 93511)))"]);
+  });
+
+  it("puts the lazy threshold back to 20 in setup_AUFLIA", () => {
+    expect(
+      run([
+        "(set-logic UFLIA)",
+        "(set-option :smt.qi.lazy_threshold 100.0)",
+        "(declare-fun f (Int) Int)",
+        "(declare-fun g (Int) Int)",
+        "(declare-const a Int)",
+        "(assert (forall ((x Int)) (! (<= (g x) (f (g x))) :pattern ((g x)) :weight 25)))",
+        "(assert (distinct 0 (f (g a))))",
+        "(check-sat)",
+        "(get-info :rlimit)",
+      ]),
+    ).toEqual(["sat", "(:rlimit 473)"]);
+  });
+});
+
+describe("the model checker, as Z3 5.3.2 counts its steps", () => {
+  it("pushes its context as the kernel does", () => {
+    expect(
+      run([
+        "(declare-fun f (Int) Int)",
+        "(declare-fun g (Int) Int)",
+        "(declare-fun h (Int Int) Int)",
+        "(declare-fun p (Int) Bool)",
+        "(declare-const c0 Int)",
+        "(declare-const c1 Int)",
+        "(declare-const c2 Int)",
+        "(assert (forall ((x Int)) (! (p (f x)) :pattern ((f x)) :weight 4)))",
+        "(assert (p (g 0)))",
+        "(assert (= 1 c1))",
+        "(check-sat)",
+        "(get-info :rlimit)",
+      ]),
+    ).toEqual(["sat", "(:rlimit 356)"]);
+  });
+
+  it("leaves the quantifiers out of validate_model", () => {
+    expect(
+      run([
+        "(declare-fun f (Int) Int)",
+        "(assert (forall ((x Int)) (= (f x) x)))",
+        "(check-sat)",
+        "(get-info :rlimit)",
+      ]),
+    ).toEqual(["sat", "(:rlimit 187)"]);
+  });
+
+  it("makes its context on a check that finds no quantifier relevant", () => {
+    expect(
+      run([
+        "(declare-fun f (Int) Int)",
+        "(declare-const a Int)",
+        "(assert (or (> a 3) (forall ((x Int)) (> (f x) x))))",
+        "(check-sat)",
+        "(get-info :rlimit)",
+      ]),
+    ).toEqual(["sat", "(:rlimit 362)"]);
+  });
+});
+
+describe("the preprocessing setup_AUFLIA turns on, as Z3 5.3.2 runs it", () => {
+  it("lifts the one term if-then-else out of each application with a bound variable", () => {
+    expect(
+      run([
+        "(declare-fun f (Int) Int)",
+        "(declare-fun g (Int) Int)",
+        "(declare-const a Int)",
+        "(assert (forall ((w Int)) (= (g w) (+ (f w) (ite (> a 2) 1 w)))))",
+        "(assert (> a 0))",
+        "(check-sat)",
+        "(get-model)",
+      ]),
+    ).toEqual([
+      "sat",
+      "(",
+      "  (define-fun a () Int",
+      "    3)",
+      "  (define-fun f ((x!0 Int)) Int",
+      "    (- 1))",
+      "  (define-fun g ((x!0 Int)) Int",
+      "    0)",
+      ")",
+    ]);
+  });
+
+  it("drops the bounds on a variable that occurs in nothing else, as elim_bounds does", () => {
+    expect(
+      run([
+        "(declare-fun f (Int) Int)",
+        "(declare-const a Int)",
+        "(declare-const b Int)",
+        "(assert (> a b))",
+        "(assert (forall ((x Int)) (or (<= x 3) (> (f a) (+ b 5)))))",
+        "(assert (< (f b) 10))",
+        "(check-sat)",
+        "(get-model)",
+      ]),
+    ).toEqual([
+      "sat",
+      "(",
+      "  (define-fun b () Int",
+      "    0)",
+      "  (define-fun a () Int",
+      "    1)",
+      "  (define-fun f ((x!0 Int)) Int",
+      "    (ite (= x!0 0) 0",
+      "      6))",
+      ")",
+    ]);
+  });
+});

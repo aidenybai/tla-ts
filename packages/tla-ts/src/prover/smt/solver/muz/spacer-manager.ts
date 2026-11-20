@@ -1,5 +1,3 @@
-// Ported from Z3 (src/muz/spacer/spacer_manager.cpp, src/muz/spacer/spacer_sym_mux.cpp), MIT
-// license, see z3-license.txt.
 import { type AstManager, getSymbolName, KIND_APP } from "../ast";
 import { RewriterTpl } from "../rewriter-tpl";
 import { pin } from "./spacer-util";

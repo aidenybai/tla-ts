@@ -1,4 +1,3 @@
-// Ported from Z3 (src/ast/ast.h, src/ast/ast.cpp), MIT license, see z3-license.txt.
 import { SmtInvariantError } from "../../../errors";
 import { FlatLiterals } from "./flat-literals";
 import { astArrayHash, bytesHash, combineHash, getCompositeHash, mkMix, stringHash } from "./hash";
@@ -37,6 +36,9 @@ export const FAMILY_LABEL = 11;
 export const FAMILY_PB = 12;
 export const FAMILY_RECFUN = 13;
 export const FAMILY_POLY = 14;
+export const FAMILY_DATALOG_RELATION = 15;
+export const FAMILY_FF = 16;
+export const FAMILY_SPECIAL_RELATIONS = 17;
 
 export const OP_TRUE = 0;
 export const OP_FALSE = 1;
@@ -299,7 +301,6 @@ export const OP_INTERNAL_STRING_STRIDOF = SEQ_OP_BASE + 64;
 export const OP_INTERNAL_STRING_POWER = SEQ_OP_BASE + 65;
 export const OP_INTERNAL_REGEXP_EMPTY = SEQ_OP_BASE + 66;
 export const OP_INTERNAL_REGEXP_FULL_CHAR = SEQ_OP_BASE + 67;
-export const OP_RE_IS_NULLABLE = SEQ_OP_BASE + 68;
 export const OP_SEQ_SKOLEM = SEQ_OP_BASE + 69;
 const CHAR_OP_BASE = 600;
 export const OP_CHAR_CONST = CHAR_OP_BASE;
@@ -317,6 +318,7 @@ export const OP_AT_LEAST_K = PB_OP_BASE + 1;
 export const OP_PB_LE = PB_OP_BASE + 2;
 export const OP_PB_GE = PB_OP_BASE + 3;
 export const OP_PB_EQ = PB_OP_BASE + 4;
+export const OP_PB_AUX_BOOL = PB_OP_BASE + 5;
 const RECFUN_OP_BASE = 900;
 export const OP_FUN_DEFINED = RECFUN_OP_BASE;
 export const OP_FUN_CASE_PRED = RECFUN_OP_BASE + 1;
@@ -558,9 +560,11 @@ const Z3_SMALL_IDS = new Map([
   [OP_U_ACOS, 71],
 ]);
 
-const FIRST_DECLARED_SMALL_ID = 143;
+const FIRST_FREE_SMALL_ID = 142;
 
-const FIRST_FREE_ID = 22;
+const NUM_QI_COST_VARS = 15;
+const QI_COST_GENERATION = 6;
+const QI_COST_WEIGHT = 8;
 const MAX_SMALL_NUM_TO_CACHE = 16;
 const NUM_FINITE_SET_PLUGIN_SORTS = 7;
 
@@ -612,7 +616,10 @@ const hasOwnDeclHash = (family: number) =>
   family === FAMILY_RECFUN;
 
 // The declarations that Z3 makes once and counts references to, rather than on each use.
-const isDeclaredFamily = (family: number) => family === FAMILY_USER || family === FAMILY_RECFUN;
+const isDeclared = (funcDecl: FuncDecl) =>
+  funcDecl.family === FAMILY_USER ||
+  funcDecl.family === FAMILY_RECFUN ||
+  funcDecl.op === OP_PB_AUX_BOOL;
 
 export class AstManager {
   private numNodes = 0;
@@ -675,6 +682,7 @@ export class AstManager {
   private charSort = -1;
   private stringSort = -1;
   private reglanSort = -1;
+  private isSeqPluginInitialized = false;
   private seqSorts = new Map<string, number>();
   private seqDecls = new Map<string, number>();
   private stringValues: number[][] = [];
@@ -693,12 +701,11 @@ export class AstManager {
   private appHandles = new Int32Array(1024).fill(-1);
   private appHashes = new Int32Array(1024);
   private numApps = 0;
-  private nextSmallId = FIRST_DECLARED_SMALL_ID;
+  private nextSmallId = FIRST_FREE_SMALL_ID;
   private freeSmallIds: number[] = [];
-  private numDecls = FIRST_DECLARED_SMALL_ID;
+  private numDecls = FIRST_FREE_SMALL_ID;
   private signatureDecls = new Map<number | string, SignatureDecl>();
   private declRefCounts: number[] = [];
-  readonly macros = new ObjMap<number>((decl) => this.declHashes[decl]);
   // The recfun plugin's definitions by declaration, and their cases by case predicate.
   readonly recFunDefs = new ObjMap<RecFunDef>((decl) => this.declHashes[decl]);
   readonly recFunCases = new Map<number, RecFunCase>();
@@ -722,6 +729,7 @@ export class AstManager {
   readonly falseExpr: number;
   readonly piExpr: number;
   readonly eulerExpr: number;
+  private startupExprs: number[];
   isHiDiv0 = true;
   maxChar = 196607;
   charBits = 18;
@@ -740,6 +748,17 @@ export class AstManager {
         smallId: Z3_SMALL_IDS.get(builtin[2]) ?? -1,
         parameters: [],
       });
+    // Each has one signature in Z3, and a model's tables hash its declaration as a user's.
+    for (const entry of Z3_BUILTINS)
+      if (entry[0] === OP_DIV0 || entry[0] === OP_IDIV0 || entry[0] === OP_MOD0) {
+        const range = this.funcDecls[entry[0]].range;
+        this.declHashes[entry[0]] = this.getFuncDeclHash(
+          entry[1][0],
+          [range, range],
+          range,
+          getInfoHash(Z3_ARITH_FAMILY, entry[1][1], []),
+        );
+      }
     this.trueExpr = this.mkApp(OP_TRUE, [], SORT_BOOL);
     this.falseExpr = this.mkApp(OP_FALSE, [], SORT_BOOL);
     this.incRef(this.trueExpr);
@@ -748,7 +767,9 @@ export class AstManager {
     this.eulerExpr = this.mkApp(OP_E, [], SORT_REAL);
     this.incRef(this.piExpr);
     this.incRef(this.eulerExpr);
-    this.nextId = FIRST_FREE_ID;
+    // Z3 makes its first smt solver before any declared term, so the manager makes its terms first.
+    this.startupExprs = [this.mkBvNumeral(0n, 1), ...this.mkQiCostExprs()];
+    for (const expr of this.startupExprs) this.incRef(expr);
   }
 
   getRefCount(expr: number) {
@@ -756,7 +777,7 @@ export class AstManager {
   }
 
   getNumAsts() {
-    return this.numLive + FIRST_FREE_ID - 4 + this.numDecls;
+    return this.numLive + 1 + this.numDecls;
   }
 
   private getSignatureDecl(key: number | string) {
@@ -779,27 +800,29 @@ export class AstManager {
     this.numDecls--;
   }
 
-  mkMacro(name: string, expr: number) {
-    const decl = this.funcDecls.length;
-    this.declHashes[decl] = this.getFuncDeclHash(
-      name,
-      [],
-      this.sorts[expr],
-      getInfoHash(Z3_RECFUN_FAMILY, 0, [0]),
+  // Last to first, so the next expressions take the ids in order, as if Z3 never made them.
+  dropStartupExprs() {
+    for (const expr of this.startupExprs.reverse()) this.decRef(expr);
+    this.startupExprs = [];
+  }
+
+  mkQiCostExprs(cost?: Rational) {
+    const vars = Array.from({ length: NUM_QI_COST_VARS }, (_value, index) =>
+      this.mkVar(index, SORT_REAL),
     );
-    this.funcDecls.push({
-      name,
-      family: FAMILY_USER,
-      op: OP_UNINTERPRETED,
-      domain: [],
-      range: this.sorts[expr],
-      isSkolem: false,
-      smallId: this.mkSmallId(),
-      parameters: [],
-    });
-    this.declRefCounts[decl] = 1;
-    this.mkSmallId();
-    this.macros.set(decl, expr);
+    return [
+      ...vars,
+      cost === undefined
+        ? this.mkApp(OP_ADD, [vars[QI_COST_WEIGHT], vars[QI_COST_GENERATION]], SORT_REAL)
+        : this.mkNumeralOfSort(cost, SORT_REAL),
+    ];
+  }
+
+  eraseRecFunDef(decl: number) {
+    const def = this.recFunDefs.get(decl);
+    if (def === undefined) return;
+    for (const recFunCase of def.cases) this.recFunCases.delete(recFunCase.pred);
+    this.recFunDefs.delete(decl);
   }
 
   // recfun::def: the declaration of a defined function, which the definition holds.
@@ -882,7 +905,7 @@ export class AstManager {
 
   private holdDecl(expr: number) {
     const decl = this.decls[expr];
-    if (isDeclaredFamily(this.funcDecls[decl].family)) {
+    if (isDeclared(this.funcDecls[decl])) {
       this.incDeclRef(decl);
       return;
     }
@@ -901,7 +924,7 @@ export class AstManager {
 
   private releaseDecl(expr: number) {
     const decl = this.decls[expr];
-    if (isDeclaredFamily(this.funcDecls[decl].family)) {
+    if (isDeclared(this.funcDecls[decl])) {
       this.declRefCounts[decl]--;
       if (this.declRefCounts[decl] > 0) return -1;
       this.deletedDecls.add(decl);
@@ -966,6 +989,10 @@ export class AstManager {
     return result;
   }
 
+  get isHoldingTemporaries() {
+    return this.temporariesMark !== -1;
+  }
+
   beginTemporaries() {
     const outer = this.temporariesMark;
     this.temporariesMark = this.temporaries.length;
@@ -984,9 +1011,11 @@ export class AstManager {
   withoutTemporaries<T>(body: () => T) {
     const outer = this.temporariesMark;
     this.temporariesMark = -1;
-    const result = body();
-    this.temporariesMark = outer;
-    return result;
+    try {
+      return body();
+    } finally {
+      this.temporariesMark = outer;
+    }
   }
 
   releaseLater(expr: number) {
@@ -1100,20 +1129,6 @@ export class AstManager {
       this.algebraicNumerals[this.values[expr]].id = this.mkAlgebraicId();
     this.registerNode(expr);
     return expr;
-  }
-
-  mkSort(name: SmtSymbol) {
-    const sort = this.addSort(
-      getSymbolName(name),
-      FAMILY_USER,
-      [],
-      combineHash(
-        getSymbolHash(name),
-        getInfoHash(Z3_USER_SORT_FAMILY, this.getUserSortKind(name), []),
-      ),
-    );
-    this.mkSmallId();
-    return sort;
   }
 
   mkBvSort(width: number) {
@@ -1291,7 +1306,7 @@ export class AstManager {
     return this.sortNames.length - 1;
   }
 
-  // Z3 makes the Char, String and RegLan sorts at startup, so they take no small id.
+  // Z3 makes the Char and String sorts at startup, so they take no small id.
   mkCharSort() {
     if (this.charSort === -1)
       this.charSort = this.addSort(
@@ -1316,8 +1331,18 @@ export class AstManager {
     return this.stringSort;
   }
 
+  initSeqPlugin() {
+    if (this.isSeqPluginInitialized) return;
+    this.isSeqPluginInitialized = true;
+    const element = this.mkTypeParameter(0);
+    this.mkReSort(this.mkSeqSort(element));
+    this.mkReSort(this.mkStringSort());
+    this.mkArraySort([element, SORT_BOOL]);
+  }
+
   mkSeqSort(element: number) {
     if (element === this.mkCharSort()) return this.mkStringSort();
+    this.initSeqPlugin();
     const key = `s${element}`;
     const existing = this.seqSorts.get(key);
     if (existing !== undefined) return existing;
@@ -1336,6 +1361,7 @@ export class AstManager {
   }
 
   mkReSort(seq: number) {
+    this.initSeqPlugin();
     const isReglan = seq === this.mkStringSort();
     if (isReglan && this.reglanSort !== -1) return this.reglanSort;
     const key = `r${seq}`;
@@ -1350,11 +1376,9 @@ export class AstManager {
         getInfoHash(Z3_SEQ_FAMILY, Z3_RE_SORT, [this.sortHashes[seq]]),
       ),
     );
+    this.mkSmallId();
     if (isReglan) this.reglanSort = sort;
-    else {
-      this.mkSmallId();
-      this.seqSorts.set(key, sort);
-    }
+    else this.seqSorts.set(key, sort);
     return sort;
   }
 
@@ -1630,8 +1654,9 @@ export class AstManager {
     parameterHashes: number[],
     domain: number[],
     range: number,
+    z3Parameters: (number | string)[] = parameters,
   ) {
-    const key = `${op}:${name}:${parameters.join(",")}:${domain.join(",")}:${range}`;
+    const key = `${op}:${name}:${z3Parameters.join(",")}:${domain.join(",")}:${range}`;
     const existing = this.datatypeDecls.get(key);
     if (existing !== undefined) return existing;
     const decl = this.addDecl(
@@ -1733,7 +1758,7 @@ export class AstManager {
       throw new SmtInvariantError(`the operator ${op} has no Z3 declaration`);
     const argSort = op === OP_ITE ? this.sorts[args[1]] : this.sorts[args[0]];
     const arity = builtin[2] === -1 ? args.length : builtin[2];
-    const domain = Array.from({ length: arity }, (_, index) =>
+    const domain = Array.from({ length: arity }, (_value, index) =>
       op === OP_PATTERN
         ? this.sorts[args[index]]
         : op === OP_ITE && index === 0
@@ -1872,6 +1897,20 @@ export class AstManager {
     const decl = this.mkFuncDecl(name, domain, range, isSkolem);
     this.declRefCounts[decl] = 0;
     return decl;
+  }
+
+  mkPbAuxBool() {
+    const decl = this.addDecl(
+      this.mkFreshVarName("pb"),
+      FAMILY_PB,
+      OP_PB_AUX_BOOL,
+      [],
+      SORT_BOOL,
+      [],
+      getInfoHash(Z3_PB_FAMILY, OP_PB_AUX_BOOL - PB_OP_BASE, []),
+    );
+    this.declRefCounts[decl] = 0;
+    return this.mkApp(decl, [], SORT_BOOL);
   }
 
   mkFreshVarName(prefix: string | null) {
@@ -2052,7 +2091,7 @@ export class AstManager {
   }
 
   get am() {
-    this.algebraicManager ??= new AlgebraicManager();
+    this.algebraicManager ??= new AlgebraicManager(this.limit);
     return this.algebraicManager;
   }
 

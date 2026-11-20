@@ -1,5 +1,3 @@
-// Ported from Z3 (src/math/lp/nla_backoff.h), MIT license, see z3-license.txt.
-
 export class Backoff {
   private delay = 0;
 

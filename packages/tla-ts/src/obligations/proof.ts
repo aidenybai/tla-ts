@@ -1,5 +1,3 @@
-// A port of tlapm's proof IR (P_t).
-
 import type { Bound, Defn, Expr, Locus, Sequent } from "./expression";
 import type { OldMethod } from "./pragma";
 

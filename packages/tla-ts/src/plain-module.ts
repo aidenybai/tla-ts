@@ -1,15 +1,26 @@
-import type { Bound, Expression, Module } from "./ast";
+import { isRecursiveConstruction, type Bound, type Expression, type Module } from "./ast";
 import {
+  AND_LEVELS,
   APPLY_LEVELS,
-  CHOOSE_LEVELS,
-  FUNCTION_LEVELS,
+  BOUNDED_CHOOSE_LEVELS,
+  CASE_LEVELS,
+  EXCEPT_LEVELS,
+  EXISTS_LEVELS,
+  FCN_CONSTRUCTOR_LEVELS,
+  FORALL_LEVELS,
   getMaxLevel,
   getWeight,
-  JUNCTION_LEVELS,
+  IF_LEVELS,
   type OperatorLevels,
+  OR_LEVELS,
+  RCD_CONSTRUCTOR_LEVELS,
   SELECT_LEVELS,
-  SET_LEVELS,
+  SET_ENUMERATE_LEVELS,
+  SET_OF_ALL_LEVELS,
+  SUBSET_OF_LEVELS,
   TEMPORAL_LEVEL,
+  TUPLE_LEVELS,
+  UNBOUNDED_CHOOSE_LEVELS,
 } from "./levels";
 import { isDeserializer, isWideString } from "./dependencies";
 import { LOCAL_RESOLUTION, type Symbols } from "./resolve";
@@ -98,12 +109,12 @@ export const checkPlainModule = (
   // The params of a callee's own levels, with its constraints on them, as the walk's bits.
   const getCalleeParams = (callee: OperatorLevels) => {
     let params = 0;
-    for (const param of callee.params ?? []) {
+    for (const param of callee.params) {
       const bit = getBit(param);
       if (bit === undefined) return undefined;
       params |= 1 << bit;
     }
-    for (const [name, level] of callee.constraints ?? []) {
+    for (const [name, level] of callee.constraints) {
       const bit = getBit(name);
       if (bit === undefined) return undefined;
       maxima[bit] = Math.min(maxima[bit], level);
@@ -114,11 +125,12 @@ export const checkPlainModule = (
   // parameter whose level depends on another's.
   const isPlainCallee = (callee: OperatorLevels) =>
     callee.level === 0 &&
+    callee.isCorrect &&
     callee.formals.every((formal) => formal.arity === 0) &&
     callee.nonLeibniz.size === 0 &&
     callee.conditions.size === 0 &&
-    callee.argConstraints === undefined &&
-    callee.argParams === undefined;
+    callee.argConstraints.size === 0 &&
+    callee.argParams.size === 0;
   // The levels of a global name of the given arity, or the bit of a constant that it names.
   const resolveGlobal = (
     name: string,
@@ -139,7 +151,7 @@ export const checkPlainModule = (
     if (resolved === undefined) return undefined;
     if (resolved !== "declared") return isPlainCallee(resolved) ? resolved : undefined;
     if (arity > 0) return undefined;
-    const bit = getBit(name);
+    const bit = getBit(symbol.key);
     return bit === undefined ? undefined : { bit };
   };
   // The params of an application of callee to expressions: those of each expression of weight 1,
@@ -208,11 +220,15 @@ export const checkPlainModule = (
       }
       case "And":
       case "Or":
-        return walkAll(expression.operands, JUNCTION_LEVELS, isInExcept);
+        return walkAll(
+          expression.operands,
+          expression.kind === "And" ? AND_LEVELS : OR_LEVELS,
+          isInExcept,
+        );
       case "If":
         return walkAll(
           [expression.condition, expression.consequent, expression.alternative],
-          JUNCTION_LEVELS,
+          IF_LEVELS,
           isInExcept,
         );
       case "Case":
@@ -221,7 +237,7 @@ export const checkPlainModule = (
             ...expression.arms.flatMap((arm) => [arm.condition, arm.body]),
             ...(expression.other ? [expression.other] : []),
           ],
-          JUNCTION_LEVELS,
+          CASE_LEVELS,
           isInExcept,
         );
       case "Let": {
@@ -238,7 +254,7 @@ export const checkPlainModule = (
       case "Forall":
       case "Exists":
         return walkBound(
-          JUNCTION_LEVELS,
+          expression.kind === "Forall" ? FORALL_LEVELS : EXISTS_LEVELS,
           [expression.body],
           expression.bounds.map((bound) => bound.set),
           getNames(expression.bounds),
@@ -246,18 +262,19 @@ export const checkPlainModule = (
         );
       case "Choose":
         return walkBound(
-          CHOOSE_LEVELS,
+          expression.set ? BOUNDED_CHOOSE_LEVELS : UNBOUNDED_CHOOSE_LEVELS,
           [expression.body],
           expression.set ? [expression.set] : [],
           getNames([{ pattern: expression.pattern, set: expression.body }]),
           isInExcept,
         );
       case "SetEnumeration":
+        return walkAll(expression.elements, SET_ENUMERATE_LEVELS, isInExcept);
       case "Tuple":
-        return walkAll(expression.elements, SET_LEVELS, isInExcept);
+        return walkAll(expression.elements, TUPLE_LEVELS, isInExcept);
       case "SetFilter":
         return walkBound(
-          SET_LEVELS,
+          SUBSET_OF_LEVELS,
           [expression.predicate],
           [expression.bound.set],
           getNames([expression.bound]),
@@ -265,17 +282,17 @@ export const checkPlainModule = (
         );
       case "SetMap":
         return walkBound(
-          SET_LEVELS,
+          SET_OF_ALL_LEVELS,
           [expression.expression],
           expression.bounds.map((bound) => bound.set),
           getNames(expression.bounds),
           isInExcept,
         );
       case "FunctionConstruction":
-        return expression.isRecursive
+        return isRecursiveConstruction(expression)
           ? undefined
           : walkBound(
-              FUNCTION_LEVELS,
+              FCN_CONSTRUCTOR_LEVELS,
               [expression.body],
               expression.bounds.map((bound) => bound.set),
               getNames(expression.bounds),
@@ -284,13 +301,13 @@ export const checkPlainModule = (
       case "Record":
         return walkAll(
           expression.fields.map((field) => field.value),
-          FUNCTION_LEVELS,
+          RCD_CONSTRUCTOR_LEVELS,
           isInExcept,
         );
       case "Except": {
         let params = walk(expression.function, isInExcept);
         if (params === undefined) return undefined;
-        constrain(params, getMaxLevel(SET_LEVELS, 0));
+        constrain(params, getMaxLevel(EXCEPT_LEVELS, 0));
         for (const update of expression.updates) {
           const operands = [
             ...update.path.flatMap((step) =>
@@ -301,7 +318,7 @@ export const checkPlainModule = (
           for (const operand of operands) {
             if (operand === undefined) return undefined;
             params |= operand;
-            constrain(operand, getMaxLevel(SET_LEVELS, 0));
+            constrain(operand, getMaxLevel(EXCEPT_LEVELS, 0));
           }
         }
         return params;
@@ -312,7 +329,7 @@ export const checkPlainModule = (
         const args =
           expression.args.length === 1
             ? walk(expression.args[0], isInExcept)
-            : walkAll(expression.args, SET_LEVELS, isInExcept);
+            : walkAll(expression.args, TUPLE_LEVELS, isInExcept);
         if (fn === undefined || args === undefined) return undefined;
         constrain(fn, getMaxLevel(APPLY_LEVELS, 0));
         constrain(args, getMaxLevel(APPLY_LEVELS, 1));
@@ -357,10 +374,11 @@ export const checkPlainModule = (
     );
     const definitionLevels: OperatorLevels = {
       level: 0,
-      params: params.length > 0 ? new Set(params) : undefined,
-      constraints: constraints.length > 0 ? new Map(constraints) : undefined,
-      argConstraints: undefined,
-      argParams: undefined,
+      isCorrect: true,
+      params: new Set(params),
+      constraints: new Map(constraints),
+      argConstraints: new Map(),
+      argParams: new Set(),
       name: definition.name,
       formals: definition.params,
       maxLevels: formalBits.map((bit) => maxima[bit]),

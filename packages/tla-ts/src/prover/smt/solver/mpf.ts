@@ -1,4 +1,3 @@
-// Ported from Z3 (src/util/mpf.h, src/util/mpf.cpp), MIT license, see z3-license.txt.
 import { Rational } from "./rational";
 
 export const MPF_ROUND_NEAREST_TEVEN = 0;
@@ -45,9 +44,9 @@ const getRoot = (value: bigint) => {
   return low * low === value ? { root: low, isExact: true } : { root: low + 1n, isExact: false };
 };
 
-export const mkBotExp = (ebits: number) => -(2 ** (ebits - 1) - 1);
+const mkBotExp = (ebits: number) => -(2 ** (ebits - 1) - 1);
 
-export const mkTopExp = (ebits: number) => 2 ** (ebits - 1);
+const mkTopExp = (ebits: number) => 2 ** (ebits - 1);
 
 export const mkMinExp = (ebits: number) => mkBotExp(ebits) + 1;
 
@@ -98,8 +97,6 @@ const isNinf = (value: Mpf) => value.sign && isInf(value);
 export const isPzero = (value: Mpf) => !value.sign && isZero(value);
 
 export const isNeg = (value: Mpf) => value.sign && !isNan(value);
-
-export const isPos = (value: Mpf) => !value.sign && !isNan(value);
 
 export const isDenormal = (value: Mpf) => !isZero(value) && hasBotExp(value);
 

@@ -1,5 +1,4 @@
-// Ported from Z3 (src/ast/datatype_decl_plugin.cpp), MIT license, see z3-license.txt.
-import { SmtInvariantError } from "../../../errors";
+import { SmtDefaultError, SmtInvariantError } from "../../../errors";
 import {
   type AstManager,
   OP_DT_ACCESSOR,
@@ -328,7 +327,7 @@ const computeSizeFunctions = (manager: AstManager, names: string[]) => {
   }
 };
 
-const resetDeclarations = (manager: AstManager) => {
+export const resetDatatypePlugin = (manager: AstManager) => {
   manager.datatypeConstructors = [];
   manager.constructorAccessors = [];
   manager.constructorRecognizers = [];
@@ -338,7 +337,7 @@ const resetDeclarations = (manager: AstManager) => {
 
 export const removeDatatype = (manager: AstManager, name: string) => {
   manager.datatypeDefs.delete(name);
-  resetDeclarations(manager);
+  resetDatatypePlugin(manager);
 };
 
 export const mkDatatypeDef = (
@@ -358,7 +357,7 @@ export const mkDatatypeDef = (
 
 export const mkDatatypes = (manager: AstManager, defs: DatatypeDef[]): number[] | string => {
   for (const def of defs) {
-    if (manager.datatypeDefs.has(def.name)) resetDeclarations(manager);
+    if (manager.datatypeDefs.has(def.name)) resetDatatypePlugin(manager);
     manager.datatypeDefs.set(def.name, def);
   }
   const sorts = defs.map((def) => instantiateDef(manager, def, []));
@@ -410,13 +409,19 @@ export const instantiateAccessor = (
     [getSymbolHash(accessor.name), getSymbolHash(constructor.name)],
     [sort],
     substituteSort(manager, accessor.range, def.parameters, manager.getSortParameters(sort)),
+    [accessor.name, constructor.name],
   );
 };
 
 export const getDatatypeConstructors = (manager: AstManager, sort: number) => {
   const existing = manager.datatypeConstructors[sort];
   if (existing !== undefined) return existing;
-  const def = getDef(manager, sort);
+  const def = getDatatypeDef(manager, sort);
+  if (def === undefined) {
+    // Z3 caches the empty list before it raises, so a later call gets no constructors.
+    manager.datatypeConstructors[sort] = [];
+    throw new SmtDefaultError("datatype constructors have not been created");
+  }
   const parameters = manager.getSortParameters(sort);
   const constructors = def.constructors.map((constructor, index) =>
     manager.mkDatatypeDecl(
@@ -428,6 +433,7 @@ export const getDatatypeConstructors = (manager: AstManager, sort: number) => {
         substituteSort(manager, accessor.range, def.parameters, parameters),
       ),
       instantiateDef(manager, def, parameters),
+      [constructor.name],
     ),
   );
   manager.datatypeConstructors[sort] = constructors;
@@ -569,5 +575,8 @@ const getNonRecConstructorCore = (
   return result === -1 ? { constructor: -1, depth: 0 } : remember(result, minDepth);
 };
 
-export const getNonRecConstructor = (manager: AstManager, sort: number) =>
-  getNonRecConstructorCore(manager, sort, [sort]).constructor;
+export const getNonRecConstructor = (manager: AstManager, sort: number) => {
+  const constructor = getNonRecConstructorCore(manager, sort, [sort]).constructor;
+  if (constructor === -1) throw new SmtDefaultError("constructor not available");
+  return constructor;
+};

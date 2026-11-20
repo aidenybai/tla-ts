@@ -3,6 +3,7 @@
 import {
   getChildren,
   isLocallyResolved,
+  isRecursiveConstruction,
   type ApplyExpression,
   type Bound,
   type Definition,
@@ -29,6 +30,7 @@ import {
   findGlobalName,
   getDefinition,
   getStartupValue,
+  isUniformPredicate,
   type Environment,
   type Scope,
 } from "./evaluate";
@@ -107,8 +109,7 @@ interface TupType {
 interface SeqType {
   kind: "Seq";
   element: Type;
-  // The sparse function a sequence becomes when it meets one in the sparse pass.
-  target?: MapType;
+  target?: SeqType | MapType;
 }
 
 // A record of several shapes starts with the position of its shape.
@@ -194,6 +195,7 @@ interface CodeBinding {
     getScope: () => TierScope;
     isNext: boolean;
   };
+  isSelf?: boolean;
 }
 
 interface OperatorBinding {
@@ -529,6 +531,7 @@ const unify = (left: Type, right: Type): void => {
     return unify(leftType.values, rightType.values);
   }
   if (leftType.kind === "Seq" && rightType.kind === "Seq") {
+    rightType.target = leftType;
     return unify(leftType.element, rightType.element);
   }
   if (leftType.kind === "Set" && rightType.kind === "Set") {
@@ -608,6 +611,7 @@ const closeType = (type: Type, path: Type[] = []): Type => {
   const resolved = resolveType(type);
   // A function built lazily is only applied, never compared or stored.
   if (resolved.kind === "Lambda") return unsupported();
+  if (resolved.kind === "Rec" && resolved.shapes.length === 0) return unsupported();
   if (resolved.kind === "Var") {
     const integer = createInt();
     resolved.target = integer;
@@ -960,7 +964,7 @@ const createValueReader = (type: Type, plains: Plains): ((plain: Plain) => Value
 const getRecordShapes = (resolved: RecType) =>
   resolved.shapes.map((names) => {
     const order = names
-      .map((_, index) => index)
+      .map((_value, index) => index)
       .sort((left, right) => compareValues(names[left], names[right]));
     return {
       names: order.map((index) => names[index]),
@@ -1317,11 +1321,11 @@ const getIndexCode = (program: Program, type: FnType, code: string) => {
   }
   const rows = keys.map((key) => (Array.isArray(key) ? key : [key]));
   const isBoxed = rows.every((row) => row.length === rows[0].length && row.every(Number.isInteger));
-  const columns = rows[0].map((_, column) => {
+  const columns = rows[0].map((_value, column) => {
     const values = rows.map((row) => Number(row[column]));
     return { low: Math.min(...values), size: Math.max(...values) - Math.min(...values) + 1 };
   });
-  const strides = columns.map((_, column) =>
+  const strides = columns.map((_value, column) =>
     columns.slice(column + 1).reduce((product, next) => product * next.size, 1),
   );
   if (!isBoxed || strides[0] * columns[0].size > MAXIMUM_BITMAP) {
@@ -1406,7 +1410,8 @@ interface Frame {
   isLevelKnown?: boolean;
 }
 
-const getVariableCodes = (program: Program) => program.variableTypes.map((_, index) => `v${index}`);
+const getVariableCodes = (program: Program) =>
+  program.variableTypes.map((_value, index) => `v${index}`);
 
 // An expression primed as a whole reads every variable in the next state, where priming again is an
 // error. A variable the action hasn't assigned yet has no value there, and TLC fails on it.
@@ -1434,8 +1439,8 @@ const getDeclarations = (definitions: LazyDefinition[]) =>
     .map((item) => `let ${item.name}; const ${item.name}f = () => ${item.value.emit()};`)
     .join(" ");
 
-const isBuiltin = (program: Program, frame: Frame, operator: string, name: string) =>
-  operator === name && !frame.scope.has(name) && !program.environment.definitions.has(name);
+const isBuiltin = (frame: Frame, operator: string, name: string) =>
+  operator === name && !frame.scope.has(name);
 
 const bindCode = (scope: TierScope, name: string, type: Type, code: string) =>
   withBinding(scope, name, {
@@ -1592,7 +1597,7 @@ const getOperatorArgument = (
 ): OperatorBinding => {
   // An operator such as \cap applies as an expression that applies it, so a builtin compiles as one.
   if (arg.kind === "OperatorReference") {
-    const names = Array.from({ length: arity }, (_, index) => `#${index}`);
+    const names = Array.from({ length: arity }, (_value, index) => `#${index}`);
     return {
       kind: "Operator",
       definition: {
@@ -1818,7 +1823,7 @@ const compileBound = (
       },
     };
   }
-  if (setExpression.kind === "Apply" && isBuiltin(program, frame, setExpression.operator, "..")) {
+  if (setExpression.kind === "Apply" && isBuiltin(frame, setExpression.operator, "..")) {
     const [low, high] = setExpression.args.map((arg) =>
       expectInt(compileValue(program, arg, frame)),
     );
@@ -1830,10 +1835,7 @@ const compileBound = (
       },
     };
   }
-  if (
-    setExpression.kind === "Apply" &&
-    isBuiltin(program, frame, setExpression.operator, "SUBSET")
-  ) {
+  if (setExpression.kind === "Apply" && isBuiltin(frame, setExpression.operator, "SUBSET")) {
     const base = compileValue(program, setExpression.args[0], frame);
     getSetElement(base);
     return {
@@ -1849,7 +1851,7 @@ const compileBound = (
   const isInterval =
     setExpression.kind === "FunctionSet" &&
     setExpression.domain.kind === "Apply" &&
-    isBuiltin(program, frame, setExpression.domain.operator, "..");
+    isBuiltin(frame, setExpression.domain.operator, "..");
   // A domain that isn't constant, such as DOMAIN s, has sequences for functions only where it's an
   // interval 1..n.
   if (
@@ -2102,13 +2104,14 @@ const getDefinitionBody = (program: Program, expression: Expression, frame: Fram
   const global = findGlobalName(expression.name, program.environment);
   return global?.kind === "Definition" &&
     global.definition.kind === "Operator" &&
-    global.definition.params.length === 0
+    global.definition.params.length === 0 &&
+    !program.environment.bodyValues.has(global.definition.body)
     ? global.definition.body
     : undefined;
 };
 
-const isUnion = (program: Program, expression: Expression & { kind: "Apply" }, frame: Frame) =>
-  expression.args.length === 2 && isBuiltin(program, frame, expression.operator, "\\cup");
+const isUnion = (expression: Expression & { kind: "Apply" }, frame: Frame) =>
+  expression.args.length === 2 && isBuiltin(frame, expression.operator, "\\cup");
 
 const getApplied = (program: Program, expression: Expression, frame: Frame) =>
   expression.kind === "Apply" && !frame.scope.has(expression.operator)
@@ -2120,13 +2123,13 @@ const isStructural = (program: Program, expression: Expression, frame: Frame): b
   const body =
     getDefinitionBody(program, expression, frame) ?? getApplied(program, expression, frame)?.body;
   if (body) return isStructural(program, body, { ...frame, scope: new Map() });
-  if (expression.kind === "Apply" && isUnion(program, expression, frame)) {
+  if (expression.kind === "Apply" && isUnion(expression, frame)) {
     return expression.args.some((set) => isStructural(program, set, frame));
   }
   if (
     expression.kind === "Apply" &&
     expression.args.length === 2 &&
-    isBuiltin(program, frame, expression.operator, "\\")
+    isBuiltin(frame, expression.operator, "\\")
   ) {
     return (
       isStructural(program, expression.args[0], frame) &&
@@ -2153,7 +2156,7 @@ const compileMembership = (
     !isConstantExpression(program, setExpression.domain, frame.scope)
   ) {
     const domain = setExpression.domain;
-    if (domain.kind !== "Apply" || !isBuiltin(program, frame, domain.operator, "..")) {
+    if (domain.kind !== "Apply" || !isBuiltin(frame, domain.operator, "..")) {
       return unsupported();
     }
     const [low, high] = domain.args.map((arg) => expectInt(compileValue(program, arg, frame)));
@@ -2240,7 +2243,7 @@ const compileMembership = (
   const sets =
     setExpression.kind !== "Apply"
       ? undefined
-      : isUnion(program, setExpression, frame) &&
+      : isUnion(setExpression, frame) &&
           (isStructural(program, setExpression, frame) ||
             setExpression.args.some((set) => {
               if (!isConstantExpression(program, set, frame.scope)) return false;
@@ -2249,7 +2252,7 @@ const compileMembership = (
             }))
         ? setExpression.args
         : setExpression.args.length === 1 &&
-            isBuiltin(program, frame, setExpression.operator, "UNION") &&
+            isBuiltin(frame, setExpression.operator, "UNION") &&
             setExpression.args[0].kind === "SetEnumeration"
           ? setExpression.args[0].elements
           : undefined;
@@ -2270,7 +2273,7 @@ const compileMembership = (
   if (
     setExpression.kind === "Apply" &&
     setExpression.args.length === 2 &&
-    isBuiltin(program, frame, setExpression.operator, "\\")
+    isBuiltin(frame, setExpression.operator, "\\")
   ) {
     const [kept, removed] = setExpression.args;
     const isInfinite = () => {
@@ -2718,7 +2721,7 @@ const getFunctionExpansion = (
     const isExpanded =
       definition.params.length === 0 &&
       construction.kind === "FunctionConstruction" &&
-      !construction.isRecursive &&
+      !isRecursiveConstruction(construction) &&
       construction.bounds.length === 1 &&
       construction.bounds[0].pattern.kind === "Name";
     return isExpanded
@@ -2901,7 +2904,7 @@ const compileBuiltin = (
     : undefined;
   if (global?.kind === "Value") return compileConstant(program, global.value);
   // TLC's TLCEval enumerates its argument, which the tier's values already are.
-  if (args.length === 1 && isBuiltin(program, frame, operator, "TLCEval")) {
+  if (args.length === 1 && isBuiltin(frame, operator, "TLCEval")) {
     return compileValue(program, args[0], frame);
   }
   if (args.length === 2 && (operator === "\\in" || operator === "\\notin")) {
@@ -3082,9 +3085,7 @@ const compileBuiltin = (
     };
   }
   const isSubSeq = (arg: Expression): arg is ApplyExpression =>
-    arg.kind === "Apply" &&
-    arg.args.length === 3 &&
-    isBuiltin(program, frame, arg.operator, "SubSeq");
+    arg.kind === "Apply" && arg.args.length === 3 && isBuiltin(frame, arg.operator, "SubSeq");
   // Two subsequences are equal when their elements are, which the tier compares where they are.
   if ((operator === "=" || operator === "#" || operator === "/=") && args.every(isSubSeq)) {
     const element = createVar();
@@ -3323,15 +3324,24 @@ const compileBuiltin = (
 };
 
 const compileValue = (program: Program, expression: Expression, frame: Frame): Compiled => {
+  const bodyValue = program.environment.bodyValues.get(expression);
+  if (bodyValue !== undefined) return compileConstant(program, bodyValue);
   switch (expression.kind) {
+    case "Selection":
+      return compileValue(program, expression.expression, frame);
     case "Number":
       return expression.value <= MAXIMUM_INTEGER
         ? { type: createInt(), emit: () => String(expression.value) }
         : unsupported();
     case "String":
       return compileConstant(program, expression.value);
-    case "Identifier":
+    case "Identifier": {
+      const binding = frame.scope.get(expression.name);
+      if (expression.resolution?.isSelf && (binding?.kind !== "Code" || !binding.isSelf)) {
+        return unsupported();
+      }
       return compileIdentifier(program, expression.name, frame);
+    }
     case "Apply": {
       // TLCGet("level") reads the level of the state that a constraint or an invariant checks.
       const [key] = expression.args;
@@ -3483,13 +3493,16 @@ const compileValue = (program: Program, expression: Expression, frame: Frame): C
         compileValue(program, expression.predicate, { ...frame, scope: bounds.scope }),
       );
       const result = getName(program, "r");
+      const stop = isUniformPredicate(expression, program.environment)
+        ? ` else return ${result};`
+        : "";
       const type: SetType = { kind: "Set", element: loop.element };
       return {
         type,
         emit: () =>
           isMask(type, program.plains)
-            ? `(() => { let ${result} = 0; ${bounds.getHeaders()} { if (${predicate.emit()}) ${result} |= H.bit(${loop.name}); } return ${result}; })()`
-            : `(() => { const ${result} = []; ${bounds.getHeaders()} { if (${predicate.emit()}) ${result}.push(${loop.name}); } return ${result}; })()`,
+            ? `(() => { let ${result} = 0; ${bounds.getHeaders()} { if (${predicate.emit()}) ${result} |= H.bit(${loop.name});${stop} } return ${result}; })()`
+            : `(() => { const ${result} = []; ${bounds.getHeaders()} { if (${predicate.emit()}) ${result}.push(${loop.name});${stop} } return ${result}; })()`,
       };
     }
     case "SetMap": {
@@ -3641,7 +3654,7 @@ const compileValue = (program: Program, expression: Expression, frame: Frame): C
       if (expression.bounds.length !== 1) return unsupported();
       const bound = expression.bounds[0];
       const pattern = bound.pattern;
-      if (expression.isRecursive) {
+      if (isRecursiveConstruction(expression)) {
         return pattern.kind === "Name"
           ? compileLambda(program, createLambda(), pattern.name, bound.set, expression.body, frame)
           : unsupported();
@@ -3803,20 +3816,22 @@ const bindFunction = (
   if (definition.bounds.length !== 1 || bound.pattern.kind !== "Name") return unsupported();
   const name = getName(program, "l");
   const type = createLambda();
-  const inner: TierScope = withBinding(frame.scope, definition.name, {
+  const getBinding = (isSelf: boolean): CodeBinding => ({
     kind: "Code",
     compiled: { type, emit: () => getLazyCode(name) },
     source: undefined,
-    function: { definition, type, getScope: () => inner, isNext: frame.isNext },
+    function: { definition, type, getScope: () => body, isNext: frame.isNext },
+    isSelf,
   });
+  const body = withBinding(frame.scope, definition.name, getBinding(true));
   names.push({
     name,
     value: compileLambda(program, type, bound.pattern.name, bound.set, definition.body, {
       ...frame,
-      scope: inner,
+      scope: body,
     }),
   });
-  return inner;
+  return withBinding(frame.scope, definition.name, getBinding(false));
 };
 
 // Binds the definitions of a LET, each compiled where the LET is.
@@ -3892,11 +3907,7 @@ const compileSequenceConstruction = (
       };
     }
     const [low, high] = set.args;
-    if (
-      !isBuiltin(program, frame, set.operator, "..") ||
-      low.kind !== "Number" ||
-      low.value !== 1
-    ) {
+    if (!isBuiltin(frame, set.operator, "..") || low.kind !== "Number" || low.value !== 1) {
       return undefined;
     }
     const end = expectInt(compileValue(program, high, frame));
@@ -4051,6 +4062,8 @@ const compileWays = (program: Program, expression: Expression, frame: Frame): Co
     compileWays(program, inner, { ...frame, scope });
   const counted = (emit: () => string): Compiled => ({ type: createInt(), emit });
   switch (expression.kind) {
+    case "Selection":
+      return getWays(expression.expression, frame.scope);
     case "Or": {
       const operands = expression.operands.map((operand) => getWays(operand, frame.scope));
       return counted(() => `(${operands.map((operand) => operand.emit()).join(" + ")})`);
@@ -4171,8 +4184,12 @@ const compileStep = (
     if (!isEnabled && primed.some((code) => code === undefined)) return () => "H.deopt();";
     return () => getEmitCode(primed);
   }
-  // With warnings on, TLC evaluates what is left once every variable is assigned, without branching.
-  if (program.environment.runtime.isWarningEnabled && primed.every((code) => code !== undefined)) {
+  // With warnings on, TLC evaluates what is left of a step once every variable is assigned, without branching, but not under ENABLED.
+  if (
+    !isEnabled &&
+    program.environment.runtime.isWarningEnabled &&
+    primed.every((code) => code !== undefined)
+  ) {
     const guards = pending.map((item) => {
       if (item.expression.kind !== "Unchanged") {
         return expectBool(
@@ -4189,7 +4206,7 @@ const compileStep = (
       );
       return {
         type: createBool(),
-        emit: () => (checks.length === 0 ? "true" : checks.join(" && ")),
+        emit: () => (checks.length === 0 ? "true" : `(${checks.join(" && ")} || H.deopt())`),
       };
     });
     return () =>
@@ -4210,6 +4227,8 @@ const compileStep = (
       ? unsupported()
       : continueWith(scope, [body], [...first.inlining, definition]);
   switch (expression.kind) {
+    case "Selection":
+      return continueWith(first.scope, [expression.expression]);
     case "And":
       return continueWith(first.scope, expression.operands);
     case "Or": {
@@ -4378,7 +4397,8 @@ const compileStep = (
       const checks = indexes
         .filter((index) => primed[index] !== undefined)
         .map((index) => `H.same(${primed[index]}, v${index})`);
-      return () => (checks.length === 0 ? tail() : `if (${checks.join(" && ")}) { ${tail()} }`);
+      return () =>
+        checks.length === 0 ? tail() : `if (${checks.join(" && ")}) { ${tail()} } else H.deopt();`;
     }
     default:
       break;
@@ -4775,7 +4795,9 @@ const getSelections = (count: number) => {
 };
 
 const getBits = (mask: number) =>
-  Array.from({ length: MASK_BITS }, (_, bit) => bit).filter((bit) => (mask & (1 << bit)) !== 0);
+  Array.from({ length: MASK_BITS }, (_value, bit) => bit).filter(
+    (bit) => (mask & (1 << bit)) !== 0,
+  );
 
 const advanceOdometer = (positions: number[], base: number) => {
   for (let index = positions.length - 1; index >= 0; index--) {
@@ -4894,7 +4916,7 @@ const HELPERS = {
   sortMap: (compare: Comparer, keys: Plain[], values: Plain[]) => {
     if (keys.length > MAXIMUM_INSERTION_SORT) {
       const order = keys
-        .map((_, index) => index)
+        .map((_value, index) => index)
         .sort((left, right) => compare(keys[left], keys[right]));
       return [order.map((index) => keys[index]), order.map((index) => values[index])];
     }
@@ -4986,7 +5008,7 @@ const HELPERS = {
   interval: (low: number, high: number) =>
     high - low + 1 > getMaximumSetSize()
       ? deopt()
-      : Array.from({ length: Math.max(0, high - low + 1) }, (_, index) => low + index),
+      : Array.from({ length: Math.max(0, high - low + 1) }, (_value, index) => low + index),
   index: (index: Int32Array, offset: number) =>
     offset >= 0 && offset < index.length ? index[offset] : -1,
   has: (mask: number, element: number) =>
@@ -5057,7 +5079,7 @@ const HELPERS = {
     map[0].every((key, index) => key === index + 1) ? map[1] : deopt(),
   toSequenceMask: (map: [number, Plain[]]) =>
     map[0] === HELPERS.range(1, map[1].length) ? map[1] : deopt(),
-  fromSequence: (values: Plain[]) => [values.map((_, index) => index + 1), values],
+  fromSequence: (values: Plain[]) => [values.map((_value, index) => index + 1), values],
   fromSequenceMask: (values: Plain[]) => [HELPERS.range(1, values.length), values],
   lookupScanned: (compare: Comparer, map: Plain[][], key: Plain) => {
     const index = findScannedKey(compare, map[0], key);
@@ -5423,7 +5445,7 @@ const getKeyWriter = (
     case "Fn": {
       const positions = isPermuted && getMovedPositions(images, resolved.domain);
       if (!positions) {
-        return `{ const ${name} = ${code}; ${resolved.domain.map((_, index) => getInner(resolved.range, `${name}[${index}]`)).join(" ")} }`;
+        return `{ const ${name} = ${code}; ${resolved.domain.map((_value, index) => getInner(resolved.range, `${name}[${index}]`)).join(" ")} }`;
       }
       const base = program.indexes.length;
       program.indexes.push(
@@ -5436,7 +5458,7 @@ const getKeyWriter = (
         }),
       );
       const sources = getName(program, "s");
-      return `{ const ${name} = ${code}; const ${sources} = D[${base} + G]; ${resolved.domain.map((_, index) => getInner(resolved.range, `${name}[${sources}[${index}]]`)).join(" ")} }`;
+      return `{ const ${name} = ${code}; const ${sources} = D[${base} + G]; ${resolved.domain.map((_value, index) => getInner(resolved.range, `${name}[${sources}[${index}]]`)).join(" ")} }`;
     }
     case "Tup":
       return `{ const ${name} = ${code}; ${getParts(resolved)
@@ -5754,21 +5776,21 @@ const getSignatureCode = (
       return `{ const ${record} = ${code}; switch (${record}[0]) { ${cases.join(" ")} } }`;
     }
     case "Fn": {
-      const fn = getName(program, "f");
+      const functionValue = getName(program, "f");
       const weight = getWeight();
       const keys = resolved.domain.flatMap((key, position) => {
         const id =
           typeof key === "object" && key.kind === "ModelValue"
             ? program.plains.ids.get(key)
             : undefined;
-        const value = getScalarCode(resolved.range, `${fn}[${position}]`);
+        const value = getScalarCode(resolved.range, `${functionValue}[${position}]`);
         return id === undefined || value === undefined
           ? []
           : [`Z[${id}] += Math.imul(Math.imul(${weight}, ${scale}), ${value});`];
       });
-      const values = getLoop(resolved.range, fn);
+      const values = getLoop(resolved.range, functionValue);
       if (keys.length === 0 && values === undefined) return undefined;
-      return `{ const ${fn} = ${code}; ${keys.join(" ")} ${values ?? ""} }`;
+      return `{ const ${functionValue} = ${code}; ${keys.join(" ")} ${values ?? ""} }`;
     }
     case "Map": {
       const parts = [
@@ -5903,7 +5925,7 @@ const compileSpec = (
     return () => (unchanged ? `!(${unchanged.emit()}) && (${action.emit()})` : action.emit());
   });
   program.variableTypes.forEach((type) => closeType(type));
-  const parameters = program.variableTypes.map((_, index) => `v${index}`).join(", ");
+  const parameters = program.variableTypes.map((_value, index) => `v${index}`).join(", ");
   const unpack = `const [${parameters}] = state;`;
   // A state predicate reads the state through the variables it unpacks, so it holds of a successor
   // with its parent's values of those.
@@ -5952,7 +5974,7 @@ const compileSpec = (
   const keyOrder = check.view
     ? [...new Set(getProjectedVariables(program, check.view, new Map()))]
     : program.variableTypes
-        .map((_, index) => index)
+        .map((_value, index) => index)
         .sort((left, right) => getKeyCost(left) - getKeyCost(right));
   const getKeyWriters = (isPermuted: boolean) =>
     keyOrder.map((index) =>
@@ -6006,7 +6028,7 @@ const compileSpec = (
         let c = 0;
         let k = -1;
         compare: { ${imageComparisons.map((item, position) => `${item.build} c = ${item.comparison}; if (c > 0) continue images; if (c < 0) { k = ${position}; ${item.choose} break compare; }`).join(" ")} }
-        switch (k) { ${imageComparisons.map((_, position) => `case ${position}: ${imageComparisons[position + 1]?.note ?? ""}`).join(" ")} }
+        switch (k) { ${imageComparisons.map((_value, position) => `case ${position}: ${imageComparisons[position + 1]?.note ?? ""}`).join(" ")} }
       }
       ${imageComparisons.map((item) => item.build).join(" ")}`;
   const viewKeyCode = `${smallestCode} ${viewWriters.join(" ")}`;
@@ -6051,7 +6073,7 @@ const compileSpec = (
   const values = program.plains.values;
   const ranks = new Int32Array(values.length);
   values
-    .map((_, id) => id)
+    .map((_value, id) => id)
     .sort((left, right) => compareAtoms(values[left], values[right]))
     .forEach((id, rank) => {
       ranks[id] = rank;
@@ -6088,7 +6110,7 @@ const compileSpec = (
       X[0] = i;
       ${readers.map((reader, index) => `const value${index} = ${reader}; X[${index + 1}] = i;`).join(" ")}
       cursor.position = (i + 3) & ~3;
-      E = [${readers.map((_, index) => `value${index}`).join(", ")}];
+      E = [${readers.map((_value, index) => `value${index}`).join(", ")}];
       return E;
     },
     writeKey: (state, arena) => {
@@ -6117,7 +6139,9 @@ const compileSpec = (
   // A key is the smallest image among those whose sums of moved atoms, in a fixed order of the
   // atoms, are smallest. Which images those are depends only on the state, so its orbit shares it.
   const moved = Int32Array.from(
-    program.plains.values.flatMap((_, id) => (atoms.some((table) => table[id] !== id) ? [id] : [])),
+    program.plains.values.flatMap((_value, id) =>
+      atoms.some((table) => table[id] !== id) ? [id] : [],
+    ),
   );
   const preimages = [
     moved,
@@ -6215,7 +6239,7 @@ const MINIMUM_SORTED_IMAGES = 24;
 const getFullOrbits = (preimages: Int32Array[]): Orbits | undefined => {
   if (preimages.length < MINIMUM_SORTED_IMAGES) return undefined;
   const moved = preimages[0];
-  const roots = Int32Array.from({ length: Math.max(0, ...moved) + 1 }, (_, atom) => atom);
+  const roots = Int32Array.from({ length: Math.max(0, ...moved) + 1 }, (_value, atom) => atom);
   const findRoot = (atom: number): number =>
     roots[atom] === atom ? atom : (roots[atom] = findRoot(roots[atom]));
   preimages.forEach((preimage) =>
@@ -6230,7 +6254,8 @@ const getFullOrbits = (preimages: Int32Array[]): Orbits | undefined => {
     starts[index + 1] = starts[index] + orbit.length;
   });
   const count = orbits.reduce(
-    (product, orbit) => orbit.reduce((factorial, _, index) => factorial * (index + 1), product),
+    (product, orbit) =>
+      orbit.reduce((factorial, _value, index) => factorial * (index + 1), product),
     1,
   );
   if (count !== preimages.length) return undefined;
@@ -6545,7 +6570,7 @@ const search = (environment: Environment, check: TypedCheck, plains: Plains): Ty
       {
         getFingerprint: (successor) => liveFingerprints.data[successor.index],
         // The successors of a state the search expanded are all stored.
-        getSuccessors: (index, state) => {
+        forEachActionSuccessors: (index, state, onSuccessors) => {
           const successors: LiveSuccessor<Plain[]>[] = [];
           program.level.value = getDepth(index) + 1;
           compiled.next(state, (successor) => {
@@ -6554,7 +6579,7 @@ const search = (environment: Environment, check: TypedCheck, plains: Plains): Ty
             const index = findState(false);
             successors.push({ index: index === -1 ? deopt() : index, state: successor });
           });
-          return successors;
+          onSuccessors(successors);
         },
       },
       environment.runtime.version !== "1.7.4",

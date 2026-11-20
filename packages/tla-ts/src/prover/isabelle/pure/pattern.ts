@@ -1,5 +1,3 @@
-// Ported from Isabelle2025's Pure/pattern.ML and Pure/more_pattern.ML. Copyright (c) 1986-2025 University of Cambridge, Technische Universitaet Muenchen, and contributors, see LICENSE.
-
 import { TlaIsabelleError } from "../../../errors";
 import { aeconv, genvar, headNorm, lookup, lookup1, update, type Envir, type TEnv } from "./envir";
 import type { Binder } from "./logic";

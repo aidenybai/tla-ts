@@ -1,5 +1,3 @@
-// Ported from Isabelle2025's Pure/General/seq.ML. Copyright (c) 1986-2025 University of Cambridge, Technische Universitaet Muenchen, and contributors, see LICENSE.
-
 export type Cell<Item> = readonly [Item, Seq<Item>] | undefined;
 
 type Step<Item> = Cell<Item> | Seq<Item>;

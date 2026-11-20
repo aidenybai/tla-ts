@@ -1,4 +1,4 @@
-// Ported from Z3 (src/smt/smt_context.cpp), MIT license, see z3-license.txt.
+import { SmtCanceledError, SmtDefaultError, SmtInvariantError } from "../../../errors";
 import type { AssertedFormulas } from "./asserted-formulas";
 import {
   AstManager,
@@ -7,13 +7,16 @@ import {
   FAMILY_BASIC,
   FAMILY_BV,
   FAMILY_CHAR,
+  FAMILY_DATALOG_RELATION,
   FAMILY_DATATYPE,
+  FAMILY_FF,
   FAMILY_FINITE_SET,
   FAMILY_FPA,
   FAMILY_PB,
   FAMILY_POLY,
   FAMILY_RECFUN,
   FAMILY_SEQ,
+  FAMILY_SPECIAL_RELATIONS,
   KIND_APP,
   KIND_QUANTIFIER,
   KIND_VAR,
@@ -66,9 +69,11 @@ import { TheoryDatatype } from "./theory-datatype";
 import { TheoryFiniteSet } from "./theory-finite-set";
 import { TheoryPb } from "./theory-pb";
 import { TheoryPolymorphism } from "./theory-polymorphism";
+import { TheoryWithoutTerms } from "./theory-without-terms";
 import { TheoryLra } from "./theory-lra";
 import { shrink } from "./array";
 import {
+  DEFAULT_CONFIG,
   getSmtConfig,
   PS_ALWAYS_FALSE,
   PS_CACHING_CONSERVATIVE,
@@ -78,6 +83,7 @@ import {
   RS_LUBY,
   type SmtSetup,
 } from "./smt-setup";
+import type { KernelParams } from "./solver";
 
 const ACTIVITY_LIMIT = 1e100;
 const INV_ACTIVITY_LIMIT = 1e-100;
@@ -130,6 +136,15 @@ const THEORY_MAKERS = new Map<number, (context: Context) => Theory>([
   [FAMILY_FINITE_SET, (context) => new TheoryFiniteSet(context)],
   [FAMILY_POLY, (context) => new TheoryPolymorphism(context)],
   [FAMILY_PB, (context) => new TheoryPb(context)],
+  [
+    FAMILY_DATALOG_RELATION,
+    (context) => new TheoryWithoutTerms(context, FAMILY_DATALOG_RELATION, "datalog"),
+  ],
+  [FAMILY_FF, (context) => new TheoryWithoutTerms(context, FAMILY_FF, "finite-field")],
+  [
+    FAMILY_SPECIAL_RELATIONS,
+    (context) => new TheoryWithoutTerms(context, FAMILY_SPECIAL_RELATIONS, "unknown"),
+  ],
 ]);
 
 // get_luby
@@ -153,6 +168,12 @@ export interface SmtParams {
   isMbqi: boolean;
   mbqiMaxIterations: number;
   relevancyLevel: 0 | 2;
+  randomSeed?: number;
+  intHammerPeriod?: number;
+  isArithPropagatingEqs?: boolean;
+  qiCost?: string;
+  qiEagerThreshold?: number;
+  qiLazyThreshold?: number;
   // The model checker's auxiliary context pretends every array operation is supported.
   isArrayFakeSupport?: boolean;
 }
@@ -171,6 +192,7 @@ export class Context extends Internalizer {
   private scopeAuxClauseLimits: number[] = [];
   private scopeTrailLimits: number[] = [];
   private baseScopeLemmaLimits: number[] = [];
+  private isBaseScopeInconsistent: boolean[] = [];
   private atomPropagationQueue: Literal[] = [];
   private thEqQueue: number[] = [];
   private thDiseqQueue: number[] = [];
@@ -192,6 +214,8 @@ export class Context extends Internalizer {
   private r1ParentGenerations = new Map<Enode, number>();
   private erasedGenerations = new Map<Enode, number>();
   private lastSearchFailure: SearchFailure = FAILURE_OK;
+  // As in Z3, a new search doesn't reset it.
+  reasonUnknown = "unknown";
   private hasCaseSplit = true;
   private incompleteTheories: Theory[] = [];
   private modelState: ModelState = { kind: "none" };
@@ -204,7 +228,59 @@ export class Context extends Internalizer {
     readonly params: SmtParams,
   ) {
     super(manager, params.relevancyLevel > 0);
-    this.qmanager = new DefaultQuantifierManager(this, params.isMbqi);
+    this.qmanager = new DefaultQuantifierManager(this);
+    this.config = {
+      ...DEFAULT_CONFIG,
+      isArithPropagatingEqs: params.isArithPropagatingEqs ?? true,
+      qiLazyThreshold: params.qiLazyThreshold ?? DEFAULT_CONFIG.qiLazyThreshold,
+    };
+  }
+
+  release(asserted: AssertedFormulas) {
+    const manager = this.manager;
+    const state = this.modelState;
+    this.relevancy.release();
+    if (state.kind !== "none") state.generated.model.decRef();
+    this.deleteClauses(this.auxClauses, 0);
+    this.deleteClauses(this.lemmas, 0);
+    this.popTrail(0);
+    this.qmanager.release();
+    if (this.isDiseqTmp !== -1) manager.decRef(this.isDiseqTmp);
+    asserted.finalize();
+    for (const assumption of this.unsatCore) manager.decRef(assumption);
+    if (state.kind === "final") state.model.decRef();
+    if (state.kind === "proto" || state.kind === "final") state.generated.model.decRef();
+    this.dynAck.release();
+    this.conflictResolution.lemmaAtoms.reset();
+    for (const theory of this.theories) theory.release();
+    this.rewriter.release();
+    asserted.release();
+  }
+
+  // As in Z3, rereading the parameters drops the setup's tuning of what smt_params reads, but relevancy stays lower.
+  updateParams(params: KernelParams) {
+    this.params.isMbqi = params.isMbqi;
+    this.params.mbqiMaxIterations = params.mbqiMaxIterations;
+    this.params.randomSeed = params.randomSeed;
+    this.params.intHammerPeriod = params.intHammerPeriod;
+    this.params.isArithPropagatingEqs = params.isArithPropagatingEqs;
+    this.params.qiCost = params.qiCost;
+    this.params.qiEagerThreshold = params.qiEagerThreshold;
+    this.params.qiLazyThreshold = params.qiLazyThreshold;
+    this.arith?.updateParams();
+    this.config = {
+      ...DEFAULT_CONFIG,
+      isArithPropagatingEqs: params.isArithPropagatingEqs ?? true,
+      theories: this.config.theories,
+      isFindingMacros: params.isFindingMacros,
+      isNnfCnf: this.config.isNnfCnf,
+      isRestartAdaptive: this.config.isRestartAdaptive,
+      randomInitialActivity: this.config.randomInitialActivity,
+      isEliminatingTermIte: this.config.isEliminatingTermIte,
+      isEliminatingBounds: this.config.isEliminatingBounds,
+      arithPropagationThreshold: this.config.arithPropagationThreshold,
+      qiLazyThreshold: params.qiLazyThreshold ?? DEFAULT_CONFIG.qiLazyThreshold,
+    };
   }
 
   // setup_context and setup_components. The setup's theories come in its order, then setup_card's.
@@ -213,6 +289,7 @@ export class Context extends Internalizer {
     isUsingStaticFeatures: boolean,
     asserted: AssertedFormulas,
   ) {
+    if (this.isInconsistent() || asserted.isInconsistent) return false;
     const config = getSmtConfig(
       this.manager,
       setup,
@@ -222,11 +299,13 @@ export class Context extends Internalizer {
     );
     this.setup = setup;
     this.config = config;
+    this.randomSeed = this.params.randomSeed ?? 0;
     if (config.relevancyLevel !== undefined) this.relevancy.isEnabled = config.relevancyLevel > 0;
     for (const family of config.theories)
       if (family !== FAMILY_POLY || this.manager.hasTypeVars) this.registerFamily(family);
     this.registerFamily(FAMILY_PB);
     asserted.setup(config);
+    return true;
   }
 
   // register_plugin keeps the theory a family already has.
@@ -244,8 +323,10 @@ export class Context extends Internalizer {
     return family < 0 ? undefined : this.theoryByFamily[family];
   }
 
-  checkCanceled() {
-    return !this.manager.limit.inc();
+  checkCanceled(cost = 1) {
+    if (this.manager.limit.inc(cost)) return false;
+    this.lastSearchFailure = FAILURE_CANCELED;
+    return true;
   }
 
   assign(literal: Literal, justification: BJustification, isDecision = false) {
@@ -716,8 +797,7 @@ export class Context extends Internalizer {
       }
       parent.cg = congruent;
       this.mergeCgcGenerations(parent, parentGeneration, congruent);
-      if (congruent.root !== parent.root)
-        this.pushEq(parent, congruent, getCongruenceJustification(parent, congruent));
+      this.pushEq(parent, congruent, getCongruenceJustification(parent, congruent));
     }
     this.r1ParentGenerations.clear();
   }
@@ -962,11 +1042,12 @@ export class Context extends Internalizer {
     this.cacheGeneration(newLevel, visited);
     this.qmanager.pop(numScopes);
     this.fingerprints.pop(numScopes);
+    if (newLevel >= this.baseLevel || !this.isBaseScopeInconsistent[newLevel]) this.conflict = null;
     if (newLevel < this.baseLevel) {
       this.deleteClauses(this.lemmas, this.baseScopeLemmaLimits[newLevel]);
       shrink(this.baseScopeLemmaLimits, newLevel);
+      shrink(this.isBaseScopeInconsistent, newLevel);
     }
-    this.conflict = null;
     this.deleteClauses(this.auxClauses, this.scopeAuxClauseLimits[newLevel]);
     this.relevancy.pop(numScopes);
     this.unassignVars(this.scopeAssignedLimits[newLevel]);
@@ -1192,7 +1273,7 @@ export class Context extends Internalizer {
       const theory = this.theories[this.finalCheckIndex];
       const check = theory === undefined ? qmanager.finalCheckEh(true) : theory.finalCheckEh(level);
       if (theory !== undefined) maxLevel = Math.max(maxLevel, theory.numFinalCheckLevels());
-      const isCanceled = theory === this.arith && this.checkCanceled();
+      const isCanceled = theory !== undefined && this.checkCanceled();
       if (isCanceled) failure = FAILURE_CANCELED;
       else if (theory !== undefined && check === FC_GIVEUP) {
         failure = FAILURE_THEORY;
@@ -1245,7 +1326,7 @@ export class Context extends Internalizer {
   }
 
   // Z3's resource_limits_exceeded reads the cancel flag twice while searching.
-  private isResourceLimitExceeded() {
+  isResourceLimitExceeded() {
     if (this.isSearching && (this.lastSearchFailure !== FAILURE_OK || this.checkCanceled()))
       return true;
     return this.checkCanceled();
@@ -1260,6 +1341,9 @@ export class Context extends Internalizer {
   }
 
   private mkProtoModel() {
+    const failure = this.lastSearchFailure;
+    if (this.hasCaseSplits() || failure === FAILURE_CANCELED || failure === FAILURE_NUM_CONFLICTS)
+      return undefined;
     if (this.modelState.kind !== "none") this.modelState.generated.model.decRef();
     const generated = mkModel(this);
     generated.model.incRef();
@@ -1278,7 +1362,7 @@ export class Context extends Internalizer {
     if (this.lastSearchFailure === FAILURE_QUANTIFIERS) return "(incomplete quantifiers)";
     if (this.lastSearchFailure === FAILURE_THEORY)
       return `(incomplete (theory${this.incompleteTheories.map((theory) => ` ${theory.name}`).join("")}))`;
-    return "unknown";
+    return this.reasonUnknown;
   }
 
   private hasCaseSplits() {
@@ -1302,14 +1386,24 @@ export class Context extends Internalizer {
   }
 
   getModel() {
+    if (this.isInconsistent()) return undefined;
     if (this.modelState.kind === "final") return this.modelState.model;
+    if (!this.manager.limit.inc()) return undefined;
     const generated =
       this.modelState.kind === "proto" ? this.modelState.generated : this.mkProtoModel();
+    if (generated === undefined) return undefined;
     const model = generated.model.mkModel();
     model.addRecFuns();
     model.incRef();
     this.modelState = { kind: "final", generated, model };
     return model;
+  }
+
+  getSatModel() {
+    const model = this.getModel();
+    if (model !== undefined) return model;
+    if (this.manager.limit.isExhausted()) throw new SmtCanceledError();
+    throw new SmtInvariantError("a sat answer without a model");
   }
 
   validateModel(model: ProtoModel) {
@@ -1319,7 +1413,7 @@ export class Context extends Internalizer {
       if (!this.isRelevant(atom)) continue;
       const expr = isNegated(literal) ? manager.mkNot(atom) : atom;
       manager.incRef(expr);
-      const value = manager.isGround(expr) ? model.eval(expr, false) : -1;
+      const value = manager.isGroundApp(expr) ? model.eval(expr, false) : -1;
       if (value !== -1) manager.decRef(value);
       manager.decRef(expr);
       if (value === manager.falseExpr) return false;
@@ -1341,7 +1435,10 @@ export class Context extends Internalizer {
       )
         return status;
       const generated = this.mkProtoModel();
-      if (qmanager.checkModel(generated.model, generated.root2value) !== CHECK_MODEL_RESTART)
+      if (
+        generated === undefined ||
+        qmanager.checkModel(generated.model, generated.root2value) !== CHECK_MODEL_RESTART
+      )
         return status;
       this.lastSearchFailure = FAILURE_OK;
       status = L_UNDEF;
@@ -1351,9 +1448,10 @@ export class Context extends Internalizer {
     if (status === L_TRUE && qmanager.quantifiers.length === 0) return L_TRUE;
     if (status === L_TRUE) {
       const generated = this.mkProtoModel();
-      const result = qmanager.isModelBased()
-        ? qmanager.checkModel(generated.model, generated.root2value)
-        : CHECK_MODEL_UNKNOWN;
+      const result =
+        generated !== undefined && qmanager.isModelBased()
+          ? qmanager.checkModel(generated.model, generated.root2value)
+          : CHECK_MODEL_UNKNOWN;
       if (result === CHECK_MODEL_SAT) return L_TRUE;
       if (result === CHECK_MODEL_UNKNOWN) {
         this.lastSearchFailure = FAILURE_QUANTIFIERS;
@@ -1449,8 +1547,23 @@ export class Context extends Internalizer {
     this.popToBaseLevel();
     this.pushScope();
     this.baseScopeLemmaLimits.push(this.lemmas.length);
+    this.isBaseScopeInconsistent.push(this.isInconsistent());
     this.baseLevel++;
     this.searchLevel++;
+  }
+
+  internalizeAndPush(asserted: AssertedFormulas) {
+    const wasConsistent = !this.isInconsistent();
+    this.internalizeAssertions(asserted);
+    const limit = this.manager.limit;
+    if (!limit.inc()) throw new SmtDefaultError("push canceled");
+    const wasSuspended = limit.isSuspended;
+    limit.isSuspended = true;
+    if (!this.isInconsistent()) this.propagate();
+    if (wasConsistent && this.isInconsistent() && !asserted.isInconsistent) this.resolveConflict();
+    limit.isSuspended = wasSuspended;
+    this.push();
+    asserted.push();
   }
 
   pop(numScopes: number) {
@@ -1482,15 +1595,23 @@ export class Context extends Internalizer {
     this.asserted = asserted;
     this.macros = asserted.macros;
     this.hasQuantifiers = asserted.hasQuantifiers;
-    const formulas = asserted.reduce();
+    if (this.checkCanceled()) return;
+    asserted.reduce();
+    if (this.checkCanceled()) return;
     if (asserted.isInconsistent) {
       this.setConflict("axiom", null);
       return;
     }
-    for (const formula of formulas) {
-      if (this.isInconsistent()) break;
-      this.internalizeAssertion(formula, 0);
+    const formulas = asserted.getFormulas();
+    const size = asserted.getNumFormulas();
+    for (let qhead = asserted.getQhead(); qhead < size; qhead++) {
+      if (this.checkCanceled()) {
+        asserted.commit(qhead);
+        return;
+      }
+      this.internalizeAssertion(formulas[qhead], 0);
     }
+    asserted.commit();
   }
 
   initAssumptions(assumptions: number[], asserted: AssertedFormulas) {
@@ -1499,7 +1620,7 @@ export class Context extends Internalizer {
     this.unsatCore = [];
     if (assumptions.length > 0) {
       this.propagate();
-      if (this.isInconsistent()) return;
+      if (this.isInconsistent() || this.checkCanceled()) return;
       this.delInactiveLemmas();
       this.pushScope();
       const manager = this.manager;
@@ -1599,10 +1720,12 @@ export class Context extends Internalizer {
   }
 
   search() {
+    if (this.asserted?.isInconsistent && !this.isInconsistent()) this.setConflict("axiom", null);
     if (this.isInconsistent()) {
       this.resolveConflict();
       return L_FALSE;
     }
+    if (this.checkCanceled()) return L_UNDEF;
     this.resetModel();
     for (const theory of this.theories) theory.initSearchEh();
     this.qmanager.initSearchEh();
@@ -1622,13 +1745,9 @@ export class Context extends Internalizer {
     this.isSearching = true;
     const currentLevel = this.scopeLevel;
     let result: number | undefined;
-    while (result === undefined) {
-      const status = this.boundedSearch();
-      result =
-        status !== L_FALSE && this.checkCanceled() ? L_UNDEF : this.restart(status, currentLevel);
-    }
+    while (result === undefined) result = this.restart(this.boundedSearch(), currentLevel);
     this.isSearching = false;
-    return result;
+    return result === L_TRUE && this.checkCanceled() ? L_UNDEF : result;
   }
 
   getNumConflicts() {

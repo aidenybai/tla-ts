@@ -1,5 +1,3 @@
-// Ported from Isabelle2025's Provers/hypsubst.ML. Copyright (c) 1986-2025 University of Cambridge, Technische Universitaet Muenchen, and contributors, see LICENSE.
-
 import { isIsabelleError, TlaIsabelleError } from "../../../errors";
 import { asmRl, compIncr, revcutRl, thinRl, zeroVarIndexes } from "../pure/drule";
 import { aeconv, etaContract } from "../pure/envir";
@@ -247,9 +245,9 @@ const instSubstTac = (context: HypsubstContext, isLeft: boolean, rule: Thm): Goa
       chosen.kind === "Bound"
         ? substBounds(
             [
-              ...Array.from({ length: chosen.index }, (_, position) => mkBound(position + 1)),
+              ...Array.from({ length: chosen.index }, (_value, position) => mkBound(position + 1)),
               mkBound(0),
-              ...Array.from({ length: params.length - chosen.index - 1 }, (_, position) =>
+              ...Array.from({ length: params.length - chosen.index - 1 }, (_value, position) =>
                 mkBound(chosen.index + 2 + position),
               ),
             ],

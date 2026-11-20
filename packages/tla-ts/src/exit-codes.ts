@@ -1,7 +1,8 @@
-import type { LivenessChecker } from "./liveness-checker";
+import type { LivenessChecker, LivenessChecks } from "./liveness-checker";
 
 export const EXIT_STATUS = {
   success: 0,
+  abort: 1,
   assumptionViolation: 10,
   deadlock: 11,
   safetyViolation: 12,
@@ -35,13 +36,13 @@ export const TRACE_UNCAUGHT_HINT =
 
 const MESSAGE_EXIT_STATUSES = new Map<number, number>([
   ...[
-    ...Array.from({ length: 24 }, (_, index) => 2222 + index),
+    ...Array.from({ length: 24 }, (_value, index) => 2222 + index),
     2272,
     2273,
     2274,
     2280,
     2281,
-    ...Array.from({ length: 7 }, (_, index) => 5001 + index),
+    ...Array.from({ length: 7 }, (_value, index) => 5001 + index),
   ].map((code): [number, number] => [code, EXIT_STATUS.configParseError]),
   [2253, EXIT_STATUS.livenessEvaluationFailure],
   [2109, EXIT_STATUS.specEvaluationFailure],
@@ -79,7 +80,7 @@ export const setExitCode = <Thrown>(error: Thrown, code: number) => {
 
 export const getExitCode = (error: Error) => exitCodes.get(error);
 
-const withErrorExitCode = <Result>(run: () => Result) => {
+export const withErrorExitCode = <Result>(run: () => Result) => {
   try {
     return run();
   } catch (error) {
@@ -87,21 +88,35 @@ const withErrorExitCode = <Result>(run: () => Result) => {
   }
 };
 
+const withCheckerExitCode = (checker: LivenessChecker): LivenessChecker => ({
+  branches: checker.branches,
+  solutions: checker.solutions,
+  addInitialState: checker.addInitialState,
+  addState: (index, state, successors, tracing) =>
+    withErrorExitCode(() => checker.addState(index, state, successors, tracing)),
+  storeState: checker.storeState,
+  getStateCounts: checker.getStateCounts,
+  findViolation: () => withErrorExitCode(() => checker.findViolation()),
+  getViolatedProperties: (path, cycleStart) =>
+    withErrorExitCode(() => checker.getViolatedProperties(path, cycleStart)),
+});
+
 export const withLivenessExitCode = (
   create: () => LivenessChecker | undefined,
 ): LivenessChecker | undefined => {
   const checker = withErrorExitCode(create);
+  return checker && withCheckerExitCode(checker);
+};
+
+export const withLivenessChecksExitCode = (
+  create: () => LivenessChecks | undefined,
+): LivenessChecks | undefined => {
+  const checks = withErrorExitCode(create);
   return (
-    checker && {
-      branches: checker.branches,
-      solutions: checker.solutions,
-      addInitialState: (index, state, tracing) =>
-        withErrorExitCode(() => checker.addInitialState(index, state, tracing)),
-      addState: (index, state, successors, tracing) =>
-        withErrorExitCode(() => checker.addState(index, state, successors, tracing)),
-      findViolation: () => withErrorExitCode(() => checker.findViolation()),
-      getViolatedProperties: (path, cycleStart) =>
-        withErrorExitCode(() => checker.getViolatedProperties(path, cycleStart)),
+    checks && {
+      solutions: checks.solutions,
+      findTraceViolation: (trace, fingerprints) =>
+        withErrorExitCode(() => checks.findTraceViolation(trace, fingerprints)),
     }
   );
 };

@@ -1,5 +1,3 @@
-// Ported from Z3 (src/ast/simplifiers/solve_eqs.cpp, src/ast/simplifiers/extract_eqs.cpp,
-// src/ast/simplifiers/solve_context_eqs.cpp), MIT license, see z3-license.txt.
 import { SmtUnsupportedError } from "../../../errors";
 import {
   type AstManager,
@@ -31,15 +29,16 @@ import {
 } from "./ast";
 import { BoundManager } from "./bound-manager";
 import { mkBvApp } from "./bv-decl-plugin";
-import type { Definition, Goal } from "./goal";
+import { type Definition, type Dependency, type Goal, joinDependencies } from "./goal";
 import { ObjMap } from "./hashtable";
 import { Rational } from "./rational";
 import { getSubterms } from "./recfun-decl-plugin";
 import { RefVector } from "./ref-vector";
 import { Rewriter, type RewriterOptions } from "./rewriter";
 import { RewriterTpl } from "./rewriter-tpl";
+import { DependentExprState, finishSimplifier } from "./dependent-expr-state";
 
-export interface SolveEqsOptions {
+interface SolveEqsOptions {
   isTheorySolver: boolean;
   isIteSolver: boolean;
   isContextSolve: boolean;
@@ -51,6 +50,7 @@ interface DependentEq {
   orig: number;
   variable: number;
   term: number;
+  dependency: Dependency | undefined;
 }
 
 interface Signed {
@@ -78,6 +78,37 @@ export class SubstReplacer extends RewriterTpl {
   }
 }
 
+// default_expr_replacer empties its cache after a rewrite that used a dependency.
+class DependentSubstReplacer extends SubstReplacer {
+  dependency: Dependency | undefined = undefined;
+  private usedDependency: Dependency | undefined = undefined;
+
+  constructor(
+    manager: AstManager,
+    substitution: ObjMap<number>,
+    private dependencies: Map<number, Dependency>,
+  ) {
+    super(manager, substitution);
+  }
+
+  override getSubst(expr: number) {
+    const result = super.getSubst(expr);
+    if (result !== undefined && this.dependencies.size > 0)
+      this.usedDependency = joinDependencies(this.usedDependency, this.dependencies.get(expr));
+    return result;
+  }
+
+  replace(expr: number) {
+    const result = this.rewrite(expr);
+    this.dependency = this.usedDependency;
+    if (this.dependency !== undefined) {
+      this.reset();
+      this.usedDependency = undefined;
+    }
+    return result;
+  }
+}
+
 const getModInverse = (value: bigint, modulus: bigint) => {
   let [oldRemainder, remainder] = [((value % modulus) + modulus) % modulus, modulus];
   let [oldCoefficient, coefficient] = [1n, 0n];
@@ -92,6 +123,7 @@ const getModInverse = (value: bigint, modulus: bigint) => {
 export class SolveEqs {
   private pinned: RefVector;
   private eqTerms: RefVector;
+  private oldForms: RefVector;
   private nonzero = new Set<number>();
   private bounds: BoundManager;
   private isAllowingBool = true;
@@ -101,6 +133,7 @@ export class SolveEqs {
   private id2level: number[] = [];
   private substIds: number[] = [];
   private substitution: ObjMap<number>;
+  private substDependencies = new Map<number, Dependency>();
   private definitions: Definition[] = [];
   private containsV = new Set<number>();
   private unsafeVars = new Set<number>();
@@ -109,6 +142,7 @@ export class SolveEqs {
   private orPositive = new Set<number>();
   private orNegative = new Set<number>();
   private rewriter: Rewriter;
+  private state: DependentExprState;
 
   constructor(
     private manager: AstManager,
@@ -117,27 +151,20 @@ export class SolveEqs {
   ) {
     this.pinned = new RefVector(manager);
     this.eqTerms = new RefVector(manager);
+    this.oldForms = new RefVector(manager);
     this.bounds = new BoundManager(manager);
     this.substitution = new ObjMap((expr) => manager.hashes[expr]);
     this.rewriter = new Rewriter(manager, options.rewriter);
+    this.state = new DependentExprState(manager, goal);
   }
 
-  private pin(expr: number) {
-    this.eqTerms.push(expr);
-    return expr;
-  }
-
-  private mkApp(op: number, args: number[], sort: number) {
-    return this.pin(this.manager.mkApp(op, args, sort));
-  }
-
-  private mkMul(args: number[], sort: number) {
-    return args.length === 1 ? args[0] : this.mkApp(OP_MUL, args, sort);
+  private mkMul(args: number[]) {
+    return args.length === 1 ? args[0] : this.manager.mkApp(OP_MUL, args, SORT_REAL);
   }
 
   private push(eqs: DependentEq[], orig: number, variable: number, term: number) {
     this.eqTerms.push(term);
-    eqs.push({ orig, variable, term });
+    eqs.push({ orig, variable, term, dependency: undefined });
   }
 
   private isConst(expr: number) {
@@ -243,8 +270,8 @@ export class SolveEqs {
           other === index
             ? term
             : isBv
-              ? this.pin(mkBvApp(manager, OP_BSUB, [term, arg]))
-              : this.mkApp(OP_SUB, [term, arg], manager.sorts[rhs]),
+              ? mkBvApp(manager, OP_BSUB, [term, arg])
+              : manager.mkApp(OP_SUB, [term, arg], manager.sorts[rhs]),
         rhs,
       );
   }
@@ -275,14 +302,14 @@ export class SolveEqs {
               eqs,
               orig,
               variable,
-              this.mkApp(OP_UMINUS, [this.mkSubTerm(x, index, y)], manager.sorts[y]),
+              manager.mkApp(OP_UMINUS, [this.mkSubTerm(x, index, y)], manager.sorts[y]),
             );
           else if (isReal && !value.isZero())
             this.push(
               eqs,
               orig,
               variable,
-              this.mkApp(OP_DIV, [this.mkSubTerm(x, index, y), coefficient], SORT_REAL),
+              manager.mkApp(OP_DIV, [this.mkSubTerm(x, index, y), coefficient], SORT_REAL),
             );
           continue;
         }
@@ -297,14 +324,9 @@ export class SolveEqs {
           )
         )
           continue;
-        const others = factors.filter((_, otherIndex) => otherIndex !== factorIndex);
+        const others = factors.filter((_value, otherIndex) => otherIndex !== factorIndex);
         const term = this.mkSubTerm(x, index, y);
-        this.push(
-          eqs,
-          orig,
-          factor,
-          this.mkApp(OP_DIV, [term, this.mkMul(others, SORT_REAL)], SORT_REAL),
-        );
+        this.push(eqs, orig, factor, manager.mkApp(OP_DIV, [term, this.mkMul(others)], SORT_REAL));
       }
     }
   }
@@ -314,10 +336,16 @@ export class SolveEqs {
     if (!this.options.isEliminatingMod || manager.getOp(x) !== OP_MOD) return;
     const [dividend, divisor] = manager.getArgs(x);
     if (!manager.isNumeral(divisor) || !manager.getRationalValue(divisor).isPositive()) return;
-    const fresh = this.pin(manager.mkFreshConst("mod", SORT_INT));
-    const term = this.mkApp(OP_ADD, [this.mkApp(OP_MUL, [divisor, fresh], SORT_INT), y], SORT_INT);
+    const fresh = manager.mkFreshConst("mod", SORT_INT);
+    const term = manager.mkApp(
+      OP_ADD,
+      [manager.mkApp(OP_MUL, [divisor, fresh], SORT_INT), y],
+      SORT_INT,
+    );
+    manager.incRef(term);
     if (this.isConst(dividend)) this.push(eqs, orig, dividend, term);
     else this.solveArithEq(orig, dividend, term, eqs);
+    manager.decRef(term);
   }
 
   private solveArithMul(orig: number, x: number, y: number, eqs: DependentEq[]) {
@@ -330,13 +358,8 @@ export class SolveEqs {
         !factors.every((other, otherIndex) => otherIndex === index || this.isNonzeroFactor(other))
       )
         continue;
-      const others = factors.filter((_, otherIndex) => otherIndex !== index);
-      this.push(
-        eqs,
-        orig,
-        factor,
-        this.mkApp(OP_DIV, [y, this.mkMul(others, SORT_REAL)], SORT_REAL),
-      );
+      const others = factors.filter((_value, otherIndex) => otherIndex !== index);
+      this.push(eqs, orig, factor, manager.mkApp(OP_DIV, [y, this.mkMul(others)], SORT_REAL));
     }
   }
 
@@ -390,11 +413,14 @@ export class SolveEqs {
     if (!manager.isBvNumeral(coefficient) || !this.isConst(variable)) return undefined;
     const value = manager.getBvNumeralValue(coefficient);
     if (value % 2n === 0n) return undefined;
-    const width = manager.getBvSize(manager.sorts[variable]);
-    return {
-      variable,
-      inverse: manager.mkBvNumeral(getModInverse(value, 1n << BigInt(width)), width),
-    };
+    return { variable, value };
+  }
+
+  private mkInverseMul(odd: { variable: number; value: bigint }, term: number) {
+    const manager = this.manager;
+    const width = manager.getBvSize(manager.sorts[odd.variable]);
+    const inverse = manager.mkBvNumeral(getModInverse(odd.value, 1n << BigInt(width)), width);
+    return mkBvApp(manager, OP_BMUL, [inverse, term]);
   }
 
   private solveBvEq(orig: number, x: number, y: number, eqs: DependentEq[]) {
@@ -407,22 +433,10 @@ export class SolveEqs {
         }
         const odd = this.getOddCoefficient(arg);
         if (odd === undefined) continue;
-        const term = this.mkSubTerm(x, index, y);
-        this.push(
-          eqs,
-          orig,
-          odd.variable,
-          this.pin(mkBvApp(manager, OP_BMUL, [this.pin(odd.inverse), term])),
-        );
+        this.push(eqs, orig, odd.variable, this.mkInverseMul(odd, this.mkSubTerm(x, index, y)));
       }
     const odd = this.getOddCoefficient(x);
-    if (odd !== undefined)
-      this.push(
-        eqs,
-        orig,
-        odd.variable,
-        this.pin(mkBvApp(manager, OP_BMUL, [this.pin(odd.inverse), y])),
-      );
+    if (odd !== undefined) this.push(eqs, orig, odd.variable, this.mkInverseMul(odd, y));
   }
 
   private getBvEqs(form: number, eqs: DependentEq[]) {
@@ -438,8 +452,7 @@ export class SolveEqs {
     const manager = this.manager;
     const visited = new Set<number>();
     const todo = [root];
-    while (todo.length > 0) {
-      const expr = todo.pop() as number;
+    for (let expr = todo.pop(); expr !== undefined; expr = todo.pop()) {
       if (visited.has(expr)) continue;
       visited.add(expr);
       if (isMatch(expr)) return true;
@@ -516,29 +529,55 @@ export class SolveEqs {
     }
   }
 
+  private setDependencies(eqs: DependentEq[], start: number, index: number) {
+    if (!this.goal.isCoresEnabled) return;
+    const dependency = this.goal.getDependency(index);
+    for (let current = start; current < eqs.length; current++) eqs[current].dependency = dependency;
+  }
+
   private getEqs() {
     const eqs: DependentEq[] = [];
-    const forms = this.goal.forms.items;
-    if (!this.goal.isProofsEnabled) for (const form of forms) this.getArithEqs(form, eqs);
-    for (const form of forms) this.getBasicEqs(form, eqs);
+    const state = this.state;
+    const extract = (getFormEqs: (form: number, eqs: DependentEq[]) => void) =>
+      state.forEachIndex((index) => {
+        const start = eqs.length;
+        getFormEqs(state.get(index), eqs);
+        this.setDependencies(eqs, start, index);
+      });
+    if (!this.goal.isProofsEnabled) extract((form) => this.getArithEqs(form, eqs));
+    extract((form) => this.getBasicEqs(form, eqs));
     if (!this.goal.isProofsEnabled) {
-      for (const form of forms) this.getBvEqs(form, eqs);
-      for (const form of forms) this.checkArrayEqs(form);
+      extract((form) => this.getBvEqs(form, eqs));
+      state.forEachIndex((index) => this.checkArrayEqs(state.get(index)));
+      // ff_extract_eq finds no equations without finite fields, but its pass still counts steps.
+      state.forEachIndex(() => {});
     }
     return eqs;
+  }
+
+  private resetNext() {
+    for (let index = 0; index < this.next.length; index++) {
+      const eqs = this.next[index];
+      for (let eqIndex = 0; eqIndex < eqs.length; eqIndex++) this.manager.decRef(eqs[eqIndex].term);
+    }
+    this.next = [];
   }
 
   private extractDepGraph(eqs: DependentEq[]) {
     this.var2id.clear();
     this.id2var = [];
+    this.resetNext();
     for (const eq of eqs) {
       if (this.var2id.has(eq.variable) || !this.canBeVar(eq.variable)) continue;
       this.var2id.set(eq.variable, this.id2var.length);
       this.id2var.push(eq.variable);
     }
     this.next = this.id2var.map(() => []);
-    for (const eq of eqs)
-      if (this.canBeVar(eq.variable)) this.next[this.var2id.get(eq.variable) as number].push(eq);
+    for (const eq of eqs) {
+      if (!this.canBeVar(eq.variable)) continue;
+      this.manager.incRef(eq.term);
+      this.next[this.var2id.get(eq.variable) as number].push(eq);
+    }
   }
 
   private extractSubst() {
@@ -547,6 +586,7 @@ export class SolveEqs {
     this.id2level = this.id2var.map(() => Infinity);
     this.substIds = [];
     this.substitution = new ObjMap((expr) => manager.hashes[expr]);
+    this.substDependencies.clear();
     let initLevel = 2 ** 32 - 1;
     const todo: number[] = [];
     for (let id = 0; id < size; id++) {
@@ -555,8 +595,7 @@ export class SolveEqs {
       initLevel -= size + 1;
       let currLevel = initLevel;
       todo.push(id);
-      while (todo.length > 0) {
-        const next = todo.pop() as number;
+      for (let next = todo.pop(); next !== undefined; next = todo.pop()) {
         if (this.id2level[next] !== Infinity) continue;
         this.id2level[next] = currLevel++;
         for (const eq of this.next[next]) {
@@ -564,8 +603,7 @@ export class SolveEqs {
           let isSafe = true;
           const visited = new Set<number>();
           const stack = [eq.term];
-          while (stack.length > 0) {
-            const expr = stack.pop() as number;
+          for (let expr = stack.pop(); expr !== undefined; expr = stack.pop()) {
             if (visited.has(expr)) continue;
             visited.add(expr);
             if (manager.kinds[expr] === KIND_APP) manager.pushArgs(expr, stack);
@@ -583,6 +621,8 @@ export class SolveEqs {
             todo.length = todoSize;
             continue;
           }
+          manager.incRef(eq.term);
+          manager.decRef(this.next[next][0].term);
           this.next[next][0] = eq;
           this.substIds.push(next);
           break;
@@ -594,34 +634,43 @@ export class SolveEqs {
   private normalize() {
     if (this.substIds.length === 0) return;
     const manager = this.manager;
-    const replacer = new SubstReplacer(manager, this.substitution);
+    const replacer = new DependentSubstReplacer(manager, this.substitution, this.substDependencies);
     this.substIds.sort((first, second) => this.id2level[second] - this.id2level[first]);
     for (const id of this.substIds) {
-      manager.limit.checkpoint();
+      if (!manager.limit.inc()) break;
       const eq = this.next[id][0];
-      const definition = replacer.rewrite(eq.term);
+      const definition = replacer.replace(eq.term);
       this.pinned.pushOwned(definition);
       manager.incRef(eq.variable);
       this.pinned.pushOwned(eq.variable);
       this.substitution.set(eq.variable, definition);
+      const dependency = joinDependencies(eq.dependency, replacer.dependency);
+      if (dependency !== undefined) this.substDependencies.set(eq.variable, dependency);
     }
     replacer.release();
   }
 
   private applySubst() {
-    if (this.substIds.length === 0) return;
     const manager = this.manager;
-    const replacer = new SubstReplacer(manager, this.substitution);
+    if (!manager.limit.inc() || this.substIds.length === 0) return;
+    const replacer = new DependentSubstReplacer(manager, this.substitution, this.substDependencies);
     const goal = this.goal;
-    const size = goal.forms.size;
-    for (let index = 0; index < size && !goal.isInconsistent; index++) {
-      const form = goal.forms.items[index];
-      const replaced = replacer.rewrite(form);
+    const state = this.state;
+    state.forEachIndex((index) => {
+      const form = state.get(index);
+      const replaced = replacer.replace(form);
       const simplified = this.rewriter.rewrite(replaced);
       manager.decRef(replaced);
-      if (simplified !== form) goal.update(index, simplified);
+      if (simplified !== form) {
+        this.oldForms.push(form);
+        goal.update(
+          index,
+          simplified,
+          joinDependencies(goal.getDependency(index), replacer.dependency),
+        );
+      }
       manager.decRef(simplified);
-    }
+    });
     replacer.release();
   }
 
@@ -643,6 +692,7 @@ export class SolveEqs {
         .filter((def) => !def.isMacro && def.rhs !== -1)
         .flatMap((def) => getSubterms(manager, def.rhs)),
     );
+    this.oldForms.reset();
     this.eqTerms.reset();
     const eqs = getEqs();
     this.extractDepGraph(eqs);
@@ -659,18 +709,21 @@ export class SolveEqs {
         this.markPositive(form);
         this.bounds.add(form);
       }
-    for (let count = 0; count < 20; count++) {
+    const limit = this.manager.limit;
+    let count = 0;
+    do {
       this.runRound(() => this.getEqs());
-      if (this.substIds.length === 0) break;
-      this.manager.limit.checkpoint();
-    }
-    if (this.options.isContextSolve && !goal.isProofsEnabled)
+      count++;
+    } while (this.substIds.length > 0 && count < 20 && limit.inc());
+    if (limit.inc() && this.options.isContextSolve && !goal.isProofsEnabled) {
       this.runRound(() => this.collectNestedEqualities());
+      if (this.substitution.size > 0)
+        for (let index = 0; index < this.oldForms.size; index++)
+          this.pinned.push(this.oldForms.items[index]);
+    }
     this.eqTerms.reset();
-    goal.elimTrue();
-    goal.elimRedundancies();
-    goal.depth++;
-    if (this.definitions.length > 0) goal.addDefinitions(this.definitions);
+    this.oldForms.reset();
+    finishSimplifier(goal, this.definitions);
   }
 
   private markPositive(form: number) {
@@ -739,8 +792,7 @@ export class SolveEqs {
   private containsConjunctively(form: number, isNegated: boolean, eq: number, conjuncts: Signed[]) {
     const manager = this.manager;
     const todo: Signed[] = [{ isNegated, expr: form }];
-    while (todo.length > 0) {
-      const item = todo.pop() as Signed;
+    for (let item = todo.pop(); item !== undefined; item = todo.pop()) {
       if (!item.isNegated && item.expr === eq) return true;
       const marks = item.isNegated ? this.andNegative : this.andPositive;
       if (marks.has(item.expr)) continue;
@@ -760,8 +812,7 @@ export class SolveEqs {
   private isDisjunctivelySafe(depth: number, root: number, isNegated: boolean, eq: number) {
     const manager = this.manager;
     const todo: Signed[] = [{ isNegated, expr: root }];
-    while (todo.length > 0) {
-      const item = todo.pop() as Signed;
+    for (let item = todo.pop(); item !== undefined; item = todo.pop()) {
       const marks = item.isNegated ? this.orNegative : this.orPositive;
       if (marks.has(item.expr)) continue;
       marks.add(item.expr);
@@ -864,7 +915,11 @@ export class SolveEqs {
     const forms = this.goal.forms.items;
     const visited = new Set<number>();
     const collected: DependentEq[] = [];
-    for (const form of forms) this.collectNestedIn(form, visited, collected);
+    for (let index = 0; index < forms.length; index++) {
+      const start = collected.length;
+      this.collectNestedIn(forms[index], visited, collected);
+      this.setDependencies(collected, start, index);
+    }
     if (collected.length === 0) return collected;
     const eqs = collected
       .map((eq, index) => ({ eq, index }))
@@ -880,8 +935,7 @@ export class SolveEqs {
       const seen = new Set<number>();
       for (const index of order) {
         const todo = [forms[index]];
-        while (todo.length > 0) {
-          const expr = todo.pop() as number;
+        for (let expr = todo.pop(); expr !== undefined; expr = todo.pop()) {
           if (seen.has(expr)) continue;
           seen.add(expr);
           occurrence.set(expr, index);
@@ -895,11 +949,11 @@ export class SolveEqs {
     };
     record(
       firstOccurrence,
-      forms.map((_, index) => index),
+      forms.map((_value, index) => index),
     );
     record(
       lastOccurrence,
-      forms.map((_, index) => forms.length - 1 - index),
+      forms.map((_value, index) => forms.length - 1 - index),
     );
     const kept: DependentEq[] = [];
     let lastVar = -1;
@@ -924,8 +978,10 @@ export class SolveEqs {
   }
 
   release() {
+    this.eqTerms.reset();
+    this.resetNext();
     this.rewriter.release();
     this.pinned.reset();
-    this.eqTerms.reset();
+    this.state.release();
   }
 }

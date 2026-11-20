@@ -1,5 +1,3 @@
-// Ported from Z3 (src/util/var_queue.h, src/util/heap.h), MIT license, see z3-license.txt.
-
 export class VarQueue {
   private values: number[] = [-1];
   private indices: number[] = [];

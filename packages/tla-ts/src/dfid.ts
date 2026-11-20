@@ -1,21 +1,26 @@
 import type { Expression } from "./ast";
 import type { CheckOptions } from "./check";
+import type { CoverageOutput } from "./coverage";
 import {
   getErrorExitCode,
   getUnexpectedException,
   isStackOverflow,
   TlaEvaluationError,
-  TlaIncompleteSuccessorError,
   TlaStackOverflowError,
   TlaTooManyStatesError,
   TlaUnsupportedError,
 } from "./errors";
-import { createTracingEnvironment } from "./evaluate";
+import { createTracingEnvironment, type State } from "./evaluate";
 import { EXIT_STATUS, getMessageExitStatus, withLivenessExitCode } from "./exit-codes";
 import { createLivenessChecker } from "./liveness-checker";
-import { getIncompleteSuccessorMessage, prepareSearch, reportAssumptionViolation } from "./search";
-import type { SpecAction } from "./spec-description";
-import { forEachInitialState, forEachSuccessor } from "./successors";
+import {
+  addActionCoverage,
+  getIncompleteSuccessorMessage,
+  prepareSearch,
+  reportAssumptionViolation,
+} from "./search";
+import { createLivenessDump, createStateWriter } from "./state-graph";
+import { forEachInitialState, forEachSuccessor, getSuccessors, type Successor } from "./successors";
 import {
   formatNestedMessage,
   formatTlcDate,
@@ -26,9 +31,10 @@ import {
   withUnexpectedException,
 } from "./tlc/messages";
 import { getTlcFingerprint } from "./tlc/fingerprint";
-import { replaySuccessors } from "./tlc/replay";
+import { createJavaRandom } from "./tlc/random";
+import { replayInitialStates, replaySuccessors, walkSuccessors } from "./tlc/replay";
 import { getOptimisticProbability, getActualProbability } from "./tlc/summary";
-import { createModelValue, formatState, getSetBound, type Value } from "./values";
+import { createModelValue, formatState, getSetBound, isSameValue, type Value } from "./values";
 
 export interface DepthFirstOptions extends CheckOptions {
   maxDepth: number;
@@ -39,6 +45,7 @@ export type DepthFirstOutput =
   | { kind: "message"; code: number; isError: boolean; message: string; toolMessage: string }
   | { kind: "behavior"; states: Record<string, Value>[]; isInvariant: boolean }
   | { kind: "nested-expressions"; callStack: Expression[] }
+  | CoverageOutput
   | { kind: "success"; optimistic: number; actual: number };
 
 interface StateEntry {
@@ -118,21 +125,28 @@ export const checkDepthFirst = (options: DepthFirstOptions): number => {
   if (!search) {
     throw new TlaUnsupportedError("tla-ts can't search a specification without variables");
   }
+  const description = prepared.getDescription();
   const message = (code: number, text: string, toolText = text, isError = true) =>
     output({ kind: "message", code, isError, message: text, toolMessage: toolText });
   const temporalProperties = search.properties.liveness;
   if (temporalProperties.length > 0) {
     options.onProgress?.({
       kind: "liveness-initializing",
-      isSymmetric: search.isSymmetric,
+      isSymmetric: config.symmetry !== undefined,
       isConstrained: search.isConstrained,
     });
     const branches = withLivenessExitCode(() =>
       withUnexpectedException(() =>
-        createLivenessChecker(temporalProperties, search.spec.temporals, environment, {
-          getFingerprint: () => 0,
-          getSuccessors: () => [],
-        }),
+        createLivenessChecker(
+          temporalProperties,
+          search.spec.temporals,
+          environment,
+          { getFingerprint: () => 0, forEachActionSuccessors: () => {} },
+          // TLC opens the liveness dump, which it never closes, before it refuses to check liveness.
+          options.dump?.dot
+            ? createLivenessDump(options.dump, options.writeFile, options.version).createWriter
+            : undefined,
+        ),
       ),
     )?.branches;
     if (branches) options.onProgress?.({ kind: "liveness-prepared", branches });
@@ -151,6 +165,13 @@ export const checkDepthFirst = (options: DepthFirstOptions): number => {
     );
     return EXIT_STATUS.error;
   }
+  const stateWriter =
+    options.dump && createStateWriter(options.dump, options.writeFile, options.version);
+  // Deviation from TLC: it returns without closing the writer after a failed assumption or initial state, which loses what it buffered.
+  const closeDump = (status: number) => {
+    stateWriter?.close();
+    return status;
+  };
   runtime.generatedStates = -1;
   runtime.distinctStates = -1;
   runtime.initialStates = -1;
@@ -162,9 +183,18 @@ export const checkDepthFirst = (options: DepthFirstOptions): number => {
     environment,
     message,
   );
-  if (assumptionStatus !== undefined) return assumptionStatus;
+  if (assumptionStatus !== undefined) return closeDump(assumptionStatus);
 
-  const nextActions = prepared.getDescription().actions;
+  const nextActions = description.actions;
+  const coverage = prepared.coverage;
+  const covered = coverage && addActionCoverage(coverage, environment, description);
+  // Deviation from TLC: TLCExt#pickSuccessor casts the DFID checker to ModelChecker and fails, so tla-ts asks as model checking does.
+  runtime.getSuccessorAction = (state, next) =>
+    nextActions.find((action) =>
+      getSuccessors(action.expression, state, environment, action.scope).some((successor) =>
+        successor.state.every((value, index) => isSameValue(value, next[index])),
+      ),
+    );
   const statuses = new Map<bigint, number>();
   const fingerprintSet = { level: 1, leveled: 0, buckets: INITIAL_BUCKETS };
   const setStatus = (fingerprint: bigint, status: number) => {
@@ -204,6 +234,8 @@ export const checkDepthFirst = (options: DepthFirstOptions): number => {
   const toRecord = (state: (Value | undefined)[]) =>
     search.toRecord(state.map((value) => value ?? createModelValue("null")));
   const printSummary = () => {
+    const report = nextActions.length > 0 ? prepared.getCoverage() : undefined;
+    if (report) output({ kind: "coverage", coverage: report });
     const counts = `${generatedCount} states generated, ${statuses.size} distinct states found`;
     if (isTool) {
       message(
@@ -236,11 +268,18 @@ export const checkDepthFirst = (options: DepthFirstOptions): number => {
   const computeInitialStates = (): number => {
     const generated: (Value | undefined)[][] = [];
     const addGenerated = (state: (Value | undefined)[]) => {
+      if (generated.length === getSetBound()) throw new TlaTooManyStatesError();
       generated.push(state);
       return false;
     };
     const init = search.spec.init;
-    if (init) forEachInitialState(init, environment, addGenerated, search.spec.scope, addGenerated);
+    if (covered) {
+      replayInitialStates(covered.inits, environment, addGenerated, (partial) =>
+        addGenerated([...partial]),
+      );
+    } else if (init) {
+      forEachInitialState(init, environment, addGenerated, search.spec.scope, addGenerated);
+    }
     generatedCount = generated.length;
     for (const state of generated) {
       if (!state.every((value) => value !== undefined)) {
@@ -255,22 +294,30 @@ export const checkDepthFirst = (options: DepthFirstOptions): number => {
       const isInModel = search.satisfiesConstraints(state);
       const fingerprint = isInModel ? runtime.getFingerprint(state) : 0n;
       const status = isInModel ? setStatus(fingerprint, 0) : 0;
-      if (isInModel && status === 0) initialEntries.push({ state, fingerprint });
       if (status !== 0) continue;
+      if (isInModel) {
+        initialEntries.push({ state, fingerprint });
+        stateWriter?.writeInitialState(search.getGraphState(state, fingerprint, 1, isTool));
+      }
       const alias = () =>
         config.alias === undefined
           ? search.toRecord(state)
           : search.evaluateAlias(config.alias, state, state, isTool);
-      const violated = isContinued
-        ? search.getViolatedInvariants(state)
-        : [search.findViolatedInvariant(state)].filter((invariant) => invariant !== undefined);
-      for (const invariant of violated) {
+      const reportInvariant = (name: string) =>
         message(
           MESSAGE_CODE.invariantViolatedInitial,
-          `Invariant ${invariant.name} is violated by the initial state:\n${formatState(alias())}`,
+          `Invariant ${name} is violated by the initial state:\n${formatState(alias())}`,
         );
-        if (!isContinued) return MESSAGE_CODE.invariantViolatedInitial;
-        checker.continuedCode = MESSAGE_CODE.invariantViolatedInitial;
+      if (isContinued) {
+        search.forEachViolatedInvariant(state, (invariant) => {
+          reportInvariant(invariant.name);
+          checker.continuedCode = MESSAGE_CODE.invariantViolatedInitial;
+        });
+      }
+      const violated = isContinued ? undefined : search.findViolatedInvariant(state);
+      if (violated) {
+        reportInvariant(violated.name);
+        return MESSAGE_CODE.invariantViolatedInitial;
       }
       const predicate = search.findFailedInitialPredicate(state);
       if (predicate) {
@@ -284,25 +331,56 @@ export const checkDepthFirst = (options: DepthFirstOptions): number => {
     return NO_ERROR;
   };
 
-  const getActionSuccessors = (action: SpecAction, state: Value[]) => {
-    const successors: Value[][] = [];
-    try {
+  let actionSuccessors: Value[][] = [];
+  let incompleteSuccessor: State | undefined;
+  let actionSuccessorCount = 0;
+  const addActionSuccessor = (successor: Value[]) => {
+    actionSuccessorCount++;
+    if (incompleteSuccessor) return false;
+    if (actionSuccessors.length === getSetBound()) throw new TlaTooManyStatesError();
+    actionSuccessors.push(successor);
+    return false;
+  };
+  const visitActionSuccessor = (successor: Successor) => addActionSuccessor(successor.state);
+  const addIncompleteSuccessor = (partial: State) => {
+    actionSuccessorCount++;
+    incompleteSuccessor ??= [...partial];
+    return true;
+  };
+  // TLC's Tool#getNextStates generates every successor of the action before DFIDWorker finds an incomplete one.
+  const getActionSuccessors = (index: number, state: Value[]) => {
+    const action = nextActions[index];
+    const coveredAction = covered?.actions[index];
+    actionSuccessors = [];
+    incompleteSuccessor = undefined;
+    actionSuccessorCount = 0;
+    if (coverage && coveredAction) {
+      walkSuccessors(
+        coveredAction,
+        coveredAction.node,
+        state,
+        environment,
+        addActionSuccessor,
+        addIncompleteSuccessor,
+      );
+      coverage.primary[coveredAction.node] += actionSuccessorCount;
+    } else {
       forEachSuccessor(
         action.expression,
         state,
         environment,
-        (successor) => {
-          if (successors.length === getSetBound()) throw new TlaTooManyStatesError();
-          successors.push(successor.state);
-          return false;
-        },
+        visitActionSuccessor,
         action.scope,
+        undefined,
+        undefined,
+        addIncompleteSuccessor,
       );
-      return { successors, incomplete: undefined };
-    } catch (error) {
-      if (!(error instanceof TlaIncompleteSuccessorError)) throw error;
-      return { successors, incomplete: error };
     }
+    return {
+      successors: actionSuccessors,
+      incomplete: incompleteSuccessor,
+      count: actionSuccessorCount,
+    };
   };
 
   const findCheckFailure = (state: Value[], successor: Value[], isNew: boolean) => {
@@ -334,6 +412,11 @@ export const checkDepthFirst = (options: DepthFirstOptions): number => {
   };
   const stack: StateEntry[] = [];
   const successorStack: StateEntry[][] = [];
+  // Deviation from TLC: DFIDModelChecker sets no current state, so TLCExt#getTrace throws a NullPointerException past an initial state.
+  runtime.getBehavior = (state) => [
+    ...stack.slice(0, (levels.get(state) ?? 1) - 1).map((entry) => entry.state),
+    state,
+  ];
   const printTrace = (
     code: number,
     text: string,
@@ -356,6 +439,7 @@ export const checkDepthFirst = (options: DepthFirstOptions): number => {
   const expandState = (depth: number, isLeaf: boolean, successors: StateEntry[]) => {
     const entry = stack[depth];
     const state = entry.state;
+    const source = stateWriter && search.getGraphState(state, entry.fingerprint, depth + 1, isTool);
     let isDeadlocked = true;
     let isAllDone = true;
     let isNoLeaf = true;
@@ -368,12 +452,12 @@ export const checkDepthFirst = (options: DepthFirstOptions): number => {
     };
     currentState = state;
     try {
-      for (const action of nextActions) {
-        const next = getActionSuccessors(action, state);
+      for (let index = 0; index < nextActions.length; index++) {
+        const action = nextActions[index];
+        const next = getActionSuccessors(index, state);
         const incomplete = next.incomplete;
-        const count = next.successors.length + (incomplete ? 1 : 0);
-        generatedCount += count;
-        isDeadlocked &&= count === 0;
+        generatedCount += next.count;
+        isDeadlocked &&= next.count === 0;
         for (const successor of next.successors) {
           processedSuccessor = successor;
           levels.set(successor, depth + 2);
@@ -385,6 +469,13 @@ export const checkDepthFirst = (options: DepthFirstOptions): number => {
           if (isInModel) {
             isAllDone &&= (status & DONE) === DONE;
             isNoLeaf &&= !isLeafStatus(status);
+            if (source) {
+              stateWriter?.writeUnlabeledSuccessor(
+                source,
+                search.getGraphState(successor, fingerprint, depth + 2, isTool),
+                status !== 0,
+              );
+            }
             if (!isCompleted(status)) {
               if (successors.length === getSetBound()) throw new TlaTooManyStatesError();
               successors.push({ state: successor, fingerprint });
@@ -399,11 +490,13 @@ export const checkDepthFirst = (options: DepthFirstOptions): number => {
           if (failure) return report(failure.code, failure.text, !failure.isViolated);
         }
         if (incomplete) {
-          processedSuccessor = incomplete.state;
+          processedSuccessor = incomplete;
           return report(
             MESSAGE_CODE.incompleteSuccessor,
             getIncompleteSuccessorMessage(
-              incomplete.variables,
+              environment.variables.filter(
+                (_variable, position) => incomplete[position] === undefined,
+              ),
               action.name,
               nextActions.length,
               options.version,
@@ -509,20 +602,29 @@ export const checkDepthFirst = (options: DepthFirstOptions): number => {
   };
   const replayExpansion = (entry: StateEntry) => {
     const tracing = createTracingEnvironment(environment);
+    const level = runtime.getLevel(entry.state);
+    const source =
+      stateWriter && search.getGraphState(entry.state, entry.fingerprint, level, isTool);
     try {
-      const isPassed = nextActions.every((action) => {
+      const isPassed = (covered?.actions ?? nextActions).every((action) => {
         const successors: Value[][] = [];
         replaySuccessors([action], entry.state, tracing, (successor) => successors.push(successor));
         generatedCount += successors.length;
         return successors.every(
           (successor) =>
             successor.every((value) => value !== undefined) &&
-            search.checkReplayedSuccessor(
-              entry.state,
-              successor,
-              tracing,
-              () => setStatus(runtime.getFingerprint(successor), 0) === 0,
-            ),
+            search.checkReplayedSuccessor(entry.state, successor, tracing, () => {
+              const fingerprint = runtime.getFingerprint(successor);
+              const isNew = setStatus(fingerprint, 0) === 0;
+              if (source) {
+                stateWriter?.writeUnlabeledSuccessor(
+                  source,
+                  search.getGraphState(successor, fingerprint, level + 1, isTool),
+                  !isNew,
+                );
+              }
+              return isNew;
+            }),
         );
       });
       if (isPassed) return;
@@ -537,7 +639,7 @@ export const checkDepthFirst = (options: DepthFirstOptions): number => {
     const status = [code, checker.errorCode, checker.continuedCode].find(
       (candidate) => candidate !== NO_ERROR,
     );
-    return status === undefined ? EXIT_STATUS.success : getMessageExitStatus(status);
+    return closeDump(status === undefined ? EXIT_STATUS.success : getMessageExitStatus(status));
   };
   const tryInitialStates = () => {
     try {
@@ -575,9 +677,11 @@ export const checkDepthFirst = (options: DepthFirstOptions): number => {
       );
     }
     printSummary();
-    return isReplayFailed ? EXIT_STATUS.specEvaluationFailure : getErrorExitCode(inner);
+    return closeDump(isReplayFailed ? EXIT_STATUS.specEvaluationFailure : getErrorExitCode(inner));
   }
-  if (initialFailure.code !== NO_ERROR) return getMessageExitStatus(initialFailure.code);
+  if (initialFailure.code !== NO_ERROR) {
+    return closeDump(getMessageExitStatus(initialFailure.code));
+  }
   message(
     MESSAGE_CODE.depthFirstInitGenerated,
     `Finished computing initial states: ${generatedCount} states generated, with ${initialEntries.length} of them distinct.`,
@@ -608,6 +712,9 @@ export const checkDepthFirst = (options: DepthFirstOptions): number => {
     );
     fingerprintSet.level++;
     fingerprintSet.leveled = LEVELED - fingerprintSet.leveled;
+    // TLC starts a new DFIDWorker thread for each level, whose generator for random values starts over from the seed.
+    const random = createJavaRandom(runtime.seed);
+    runtime.getRandom = () => random;
     searchLevel(level);
     checker.isDone = false;
     levelCode = checker.isKeepingCallStack ? NO_ERROR : checker.errorCode;

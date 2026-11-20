@@ -1,4 +1,3 @@
-// Ported from Z3 (src/ast/ast_lt.cpp, src/util/symbol.cpp), MIT license, see z3-license.txt.
 import {
   FAMILY_ARRAY,
   FAMILY_BV,
@@ -251,7 +250,7 @@ const compareDecls = (manager: AstManager, first: number, second: number) => {
   return compareSorts(manager, firstKey.range, secondKey.range);
 };
 
-export const compareAsts = (manager: AstManager, first: number, second: number): number => {
+const compareAsts = (manager: AstManager, first: number, second: number): number => {
   if (first === second) return 0;
   const byKind = compareValues(manager.kinds[first], manager.kinds[second]);
   if (byKind !== 0) return byKind;

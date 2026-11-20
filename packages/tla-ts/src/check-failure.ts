@@ -1,5 +1,12 @@
 import type { Expression } from "./ast";
-import { getErrorExitCode, isStackOverflow, TlaEvaluationError, TlaModuleError } from "./errors";
+import type { OutputLine, TraceFailure } from "./check";
+import {
+  getErrorExitCode,
+  isStackOverflow,
+  TlaEvaluationError,
+  TlaModuleError,
+  UNEXPECTED_EVAL_EXCEPTION,
+} from "./errors";
 import {
   createTracingEnvironment,
   type CallStack,
@@ -7,8 +14,18 @@ import {
   type FingerprintFailure,
 } from "./evaluate";
 import { EXIT_STATUS, getExitCode, getMessageExitStatus } from "./exit-codes";
-import { getCodedMessage, type FailureMessage } from "./tlc/messages";
+import { getCodedMessage, getFailureMessage, isEvalException } from "./tlc/messages";
 import { getFingerprintError, getHeldValues, markFingerprinted, type Value } from "./values";
+
+export const getTraceFailure = (error: TlaEvaluationError, output: OutputLine[]): TraceFailure => ({
+  ...getFailureMessage(
+    isEvalException(error)
+      ? new TlaEvaluationError(`${UNEXPECTED_EVAL_EXCEPTION}${error.message}`)
+      : error,
+    true,
+  ),
+  output,
+});
 
 export interface ReplayFailure {
   callStack: Expression[];
@@ -24,16 +41,15 @@ export interface FailureOptions {
   callStack?: Expression[];
   fingerprint?: FingerprintFailure;
   replayError?: TlaEvaluationError;
-  traceFailure?: FailureMessage;
+  traceFailure?: TraceFailure;
 }
 
 const getInitialExitCode = (error: TlaEvaluationError) => {
   const coded = getCodedMessage(error.message);
-  return coded &&
-    !coded.isEvalException &&
-    getMessageExitStatus(coded.code) === EXIT_STATUS.configParseError
-    ? EXIT_STATUS.configParseError
-    : getErrorExitCode(error);
+  return (
+    getExitCode(error) ??
+    (coded && !isEvalException(error) ? getMessageExitStatus(coded.code) : EXIT_STATUS.error)
+  );
 };
 
 const getReplayExitCode = (error: TlaEvaluationError): number => {
@@ -41,6 +57,9 @@ const getReplayExitCode = (error: TlaEvaluationError): number => {
   if (inner instanceof TlaEvaluationError) return getReplayExitCode(inner);
   return error instanceof TlaModuleError ? error.exitCode : EXIT_STATUS.specEvaluationFailure;
 };
+
+const getCodeExitCode = (error: TlaEvaluationError) =>
+  getExitCode(error) ?? (error instanceof TlaModuleError ? error.exitCode : EXIT_STATUS.error);
 
 export const getFailureExitCode = (
   error: TlaEvaluationError,
@@ -53,12 +72,11 @@ export const getFailureExitCode = (
       if (isReplayed) return EXIT_STATUS.specEvaluationFailure;
       return is174 ? EXIT_STATUS.success : getInitialExitCode(error);
     case "behavior-graph":
-      return (
-        getExitCode(error) ?? (error instanceof TlaModuleError ? error.exitCode : EXIT_STATUS.error)
-      );
+      return getCodeExitCode(error);
     case "liveness":
-      return getErrorExitCode(error);
+      return error instanceof TlaModuleError ? error.exitCode : getErrorExitCode(error);
     default:
+      if (!isReplayed && failureOptions.phase === "next" && !is174) return getCodeExitCode(error);
       if (!isReplayed) return getErrorExitCode(error);
       return failureOptions.fingerprint
         ? EXIT_STATUS.specEvaluationFailure

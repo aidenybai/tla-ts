@@ -1,5 +1,3 @@
-// Ported from Z3 (src/tactic/core/cofactor_elim_term_ite.cpp,
-// src/tactic/core/cofactor_term_ite_tactic.h), MIT license, see z3-license.txt.
 import {
   type AstManager,
   FAMILY_ARITH,
@@ -20,6 +18,7 @@ import { ObjMap } from "./hashtable";
 import { RefVector } from "./ref-vector";
 import { Rewriter, type RewriterOptions } from "./rewriter";
 import { RewriterTpl } from "./rewriter-tpl";
+import { runSimplifier } from "./dependent-expr-state";
 
 const SIMPLIFIED_FAMILIES = [
   FAMILY_BASIC,
@@ -48,6 +47,10 @@ class CofactorRewriter extends RewriterTpl {
 
   isRewritingPatterns() {
     return false;
+  }
+
+  checkMaxSteps() {
+    this.manager.limit.checkpoint();
   }
 
   setCofactorAtom(expr: number) {
@@ -123,16 +126,30 @@ class CofactorElimTermIte {
     const manager = this.manager;
     const occs = new ObjMap<number>((key) => manager.hashes[key]);
     const visited = new Set<number>();
-    const todo = [expr];
-    for (let curr = todo.pop(); curr !== undefined; curr = todo.pop()) {
-      if (manager.kinds[curr] !== KIND_APP) continue;
-      const args = manager.getArgs(curr);
-      if (this.isTermIte(curr)) occs.set(args[0], (occs.get(args[0]) ?? 0) + 1);
-      for (let index = args.length - 1; index >= 0; index--) {
-        const arg = args[index];
+    const frames = [expr];
+    const childIndexes = [0];
+    while (frames.length > 0) {
+      manager.limit.checkpoint();
+      const top = frames.length - 1;
+      const curr = frames[top];
+      const numArgs = manager.kinds[curr] === KIND_APP ? manager.getNumArgs(curr) : 0;
+      const isTermIte = this.isTermIte(curr);
+      let isPushed = false;
+      while (!isPushed && childIndexes[top] < numArgs) {
+        const arg = manager.getArg(curr, childIndexes[top]);
+        if (childIndexes[top] === 0 && isTermIte) occs.set(arg, (occs.get(arg) ?? 0) + 1);
+        childIndexes[top]++;
         if (visited.has(arg)) continue;
         visited.add(arg);
-        if (manager.kinds[arg] === KIND_APP && manager.getNumArgs(arg) > 0) todo.push(arg);
+        if (manager.kinds[arg] === KIND_APP && manager.getNumArgs(arg) > 0) {
+          frames.push(arg);
+          childIndexes.push(0);
+          isPushed = true;
+        }
+      }
+      if (!isPushed) {
+        frames.pop();
+        childIndexes.pop();
       }
     }
     let best = -1;
@@ -202,6 +219,7 @@ class CofactorElimTermIte {
     const manager = this.manager;
     const frames = [{ expr: root, isFirst: true }];
     while (frames.length > 0) {
+      manager.limit.checkpoint();
       const frame = frames[frames.length - 1];
       const expr = frame.expr;
       if (manager.kinds[expr] !== KIND_APP) {
@@ -262,19 +280,14 @@ export const cofactorTermIte = (
   goal: Goal,
   options: RewriterOptions,
   isCofactoringEqualities: boolean,
-) => {
-  if (!goal.isProofsEnabled) {
-    const size = goal.forms.size;
-    for (let index = 0; index < size && !goal.isInconsistent; index++) {
-      const eliminator = new CofactorElimTermIte(manager, options, isCofactoringEqualities);
-      const form = goal.forms.items[index];
-      const result = eliminator.apply(form);
-      if (result !== form) goal.update(index, result);
-      manager.decRef(result);
-      eliminator.release();
-    }
-  }
-  goal.elimTrue();
-  goal.elimRedundancies();
-  goal.depth++;
-};
+) =>
+  runSimplifier(goal, false, (state) => ({
+    reduce: () =>
+      state.rewriteEach((form) => {
+        const eliminator = new CofactorElimTermIte(manager, options, isCofactoringEqualities);
+        const result = eliminator.apply(form);
+        eliminator.release();
+        return result;
+      }),
+    release: () => {},
+  }));

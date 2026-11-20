@@ -1,5 +1,3 @@
-// Ported from Z3 (src/ast/rewriter/seq_derive.cpp, src/ast/rewriter/bool_rewriter.cpp), MIT
-// license, see z3-license.txt.
 import { mkArrayApp } from "./array-decl-plugin";
 import {
   type AstManager,
@@ -65,7 +63,7 @@ import {
 import { type ReRewriter, getResultExpr } from "./seq-re-rewriter";
 
 export const DERIVATIVE_ANTIMIROV = 0;
-export const DERIVATIVE_BRZOZOWSKI = 1;
+const DERIVATIVE_BRZOZOWSKI = 1;
 export const TRANSITION_BRZOZOWSKI = 0;
 export const TRANSITION_LIGHT_ANTIMIROV = 1;
 
@@ -1244,12 +1242,9 @@ export class Derive {
   }
 
   derivativeCofactors(regex: number, result: RefVector) {
-    const manager = this.manager;
-    const elementSort = manager.getSeqElementSort(manager.getReSeqSort(manager.sorts[regex]));
-    const element = manager.mkVar(0, elementSort);
-    const derivative = this.derive(DERIVATIVE_BRZOZOWSKI, element, regex);
-    // Deviation from Z3: a cached derivative leaves m_ele null there, which stops the pruning.
-    this.getCofactors(element, derivative, result);
+    const derivative = this.deriveSymbolic(DERIVATIVE_BRZOZOWSKI, regex);
+    // Like Z3, a cached derivative whose lookup reset the op caches leaves the element unset, which stops the interval pruning.
+    this.getCofactors(this.element, derivative, result);
   }
 
   lightAntDerivativeCofactors(regex: number, result: RefVector) {

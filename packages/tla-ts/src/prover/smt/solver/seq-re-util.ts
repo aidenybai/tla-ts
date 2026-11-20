@@ -1,5 +1,3 @@
-// Ported from Z3 (src/ast/seq_decl_plugin.cpp, src/ast/char_decl_plugin.cpp,
-// src/util/len_abs.cpp), MIT license, see z3-license.txt.
 import { SmtUnsupportedError } from "../../../errors";
 import {
   type AstManager,
@@ -59,7 +57,7 @@ export interface LenAbs {
   residues: bigint;
 }
 
-export interface ReInfo extends LenAbs {
+interface ReInfo extends LenAbs {
   isKnown: boolean;
   isInterpreted: boolean;
   nullable: number;

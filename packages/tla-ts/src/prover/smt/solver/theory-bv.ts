@@ -1,5 +1,3 @@
-// Ported from Z3 (src/smt/theory_bv.h, src/smt/theory_bv.cpp, src/util/union_find.h), MIT license,
-// see z3-license.txt.
 import { SmtInvariantError, SmtUnsupportedError } from "../../../errors";
 import {
   FAMILY_BV,
@@ -77,6 +75,7 @@ import {
   TRUE_LITERAL,
 } from "./literal";
 import { UnionFind } from "./lp/union-find";
+import type { ProtoModel } from "./proto-model";
 import { Rewriter, TACTIC_REWRITER_OPTIONS } from "./rewriter";
 import { Theory } from "./theory";
 
@@ -249,6 +248,7 @@ export class TheoryBv extends Theory {
   private propQueue: number[] = [];
   private mergeAux: [number[], number[]] = [[], []];
   private bv2ints: Enode[] = [];
+  private model: ProtoModel | undefined;
 
   constructor(context: Context) {
     super(context, FAMILY_BV);
@@ -288,7 +288,7 @@ export class TheoryBv extends Theory {
     const isRelevant = context.isRelevant(owner);
     const bits = this.bits[thVar];
     bits.length = 0;
-    const bitExprs = Array.from({ length: this.getBvSize(thVar) }, (_, index) =>
+    const bitExprs = Array.from({ length: this.getBvSize(thVar) }, (_value, index) =>
       mkBvApp(this.manager, OP_BIT2BOOL, [owner], [index]),
     );
     context.internalizeAll(bitExprs, true);
@@ -580,7 +580,7 @@ export class TheoryBv extends Theory {
     const numArgs = node.numArgs;
     const parameters = this.manager.funcDecls[this.manager.decls[term]].parameters;
     if (!isAssociative) {
-      const args = Array.from({ length: numArgs }, (_, index) => this.getArgBits(node, index));
+      const args = Array.from({ length: numArgs }, (_value, index) => this.getArgBits(node, index));
       const bits: number[] = [];
       blast(this.blaster, args, parameters[0], bits);
       this.initBits(node, bits);
@@ -1195,8 +1195,16 @@ export class TheoryBv extends Theory {
     this.dropAll(clause);
   }
 
+  initModel(model: ProtoModel) {
+    this.model = model;
+  }
+
   mkValue(node: Enode) {
+    const model = this.model;
+    if (model === undefined) throw new SmtInvariantError("the model was not initialized");
     const thVar = this.getThVar(node);
-    return this.manager.mkBvNumeral(this.getFixedValue(thVar).value, this.getBvSize(thVar));
+    const value = this.manager.mkBvNumeral(this.getFixedValue(thVar).value, this.getBvSize(thVar));
+    model.registerValue(value);
+    return value;
   }
 }

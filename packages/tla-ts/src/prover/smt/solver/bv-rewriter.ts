@@ -1,5 +1,3 @@
-// Ported from Z3 (src/ast/rewriter/bv_rewriter.cpp, mk_extract_proc.cpp), MIT license, see
-// z3-license.txt.
 import { isAstLess } from "./ast-lt";
 import {
   type AstManager,
@@ -102,7 +100,7 @@ export const DEFAULT_BV_OPTIONS: Omit<BvRewriterOptions, "isHiDiv0"> = {
   isSplitConcatEq: false,
 };
 
-export interface BoolRewrites {
+interface BoolRewrites {
   mkEq: (left: number, right: number) => number;
   mkIte: (condition: number, thenExpr: number, elseExpr: number) => number;
 }

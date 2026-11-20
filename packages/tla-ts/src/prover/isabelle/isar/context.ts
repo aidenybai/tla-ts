@@ -1,7 +1,3 @@
-// Ported from Isabelle2025's Pure/Isar/proof_context.ML, Pure/variable.ML and Pure/assumption.ML.
-// Copyright (c) 1986-2025 University of Cambridge, Technische Universitaet Muenchen, and
-// contributors, see LICENSE.
-
 import { TlaIsabelleError } from "../../../errors";
 import { protectD } from "../pure/drule";
 import { above, betaNorm, emptyEnvir, normTerm, type Envir } from "../pure/envir";

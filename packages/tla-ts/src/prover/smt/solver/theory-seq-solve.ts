@@ -1,5 +1,3 @@
-// Ported from Z3 (src/smt/theory_seq.cpp, src/smt/seq_eq_solver.cpp, src/smt/seq_ne_solver.cpp),
-// MIT license, see z3-license.txt.
 import {
   OP_ADD,
   OP_EQ,
@@ -32,7 +30,7 @@ import { getConcat, mkSeqApp } from "./seq-decl-plugin";
 import type { EqPair } from "./seq-rewriter";
 import { type DecomposedEq, type DepEq, type Ne, TheorySeqState } from "./theory-seq-state";
 
-export interface DepState {
+interface DepState {
   dep: Dependency;
   isChanged: boolean;
 }

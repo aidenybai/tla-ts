@@ -1,5 +1,3 @@
-// Ported from Z3 (src/smt/smt_consequences.cpp, src/smt/smt_solver.cpp), MIT license, see
-// z3-license.txt.
 import { SmtUnsupportedError } from "../../../errors";
 import { KIND_APP, OP_DT_IS, OP_DT_RECOGNISER, OP_EQ, OP_IMPLIES, OP_NOT, SORT_BOOL } from "./ast";
 import { BinJustification, CLS_AUX } from "./clause";
@@ -241,7 +239,7 @@ class ConsequenceFinder {
       const result = kernel.check(assumptions);
       if (result !== L_TRUE) return result;
       if (context.qmanager.hasQuantifiers()) return L_UNDEF;
-      const model = context.getModel();
+      const model = context.getSatModel();
       for (const variable of vars) {
         const value = model.eval(variable, false);
         trail.pushOwned(value);

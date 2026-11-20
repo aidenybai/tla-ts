@@ -405,6 +405,27 @@ EXTENDS Naturals, Sequences, FiniteSets , TLC
     );
   });
 
+  it("reports each fairness subscript applied to more than one argument with no action after it", () => {
+    expect(
+      getSanyParseError(
+        "---- MODULE M ----\nOp(a, b) == a\nC == WF_Op(1, 2) /\\ SF_Op(1, 2, 3)\nD == WF_Op\n====\n",
+      ),
+    ).toBe(
+      `Error in fairness expression at 3: 6\n\nError in fairness expression at 3: 21\n\n${formatParseError(
+        [
+          "Ill-structured fairness expression at line 4, column 6",
+          "",
+          "Residual stack trace follows:",
+          "ExtendableExpr starting at line 4, column 6.",
+          "Expression starting at line 4, column 6.",
+          "Definition starting at line 4, column 1.",
+          "Module body starting at line 2, column 1.",
+          "Module definition starting at line 1, column 1.",
+        ],
+      )}`,
+    );
+  });
+
   it("reports nothing for a module whose error SANY finds after parsing", () => {
     expect(getSanyParseError("---- MODULE Infix ----\nVARIABLE x\nOp == x @@ x\n====\n")).toBe(
       undefined,

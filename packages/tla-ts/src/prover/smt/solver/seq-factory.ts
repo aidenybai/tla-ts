@@ -1,4 +1,3 @@
-// Ported from Z3 (src/model/seq_factory.h, src/model/char_factory.h), MIT license, see z3-license.txt.
 import { SmtUnsupportedError } from "../../../errors";
 import { type AstManager, OP_SEQ_TO_RE, OP_SEQ_UNIT } from "./ast";
 import { mkConcatOf, mkSeqApp } from "./seq-decl-plugin";

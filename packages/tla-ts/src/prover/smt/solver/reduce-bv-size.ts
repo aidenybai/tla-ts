@@ -1,4 +1,3 @@
-// Ported from Z3 (src/tactic/bv/bv_size_reduction_tactic.cpp), MIT license, see z3-license.txt.
 import { SmtTacticError } from "../../../errors";
 import { type AstManager, OP_CONCAT, OP_SIGN_EXT, OP_SLEQ } from "./ast";
 import { mkBvApp } from "./bv-decl-plugin";

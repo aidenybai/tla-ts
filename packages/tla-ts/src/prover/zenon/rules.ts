@@ -1,9 +1,8 @@
-// Ported from Zenon's prove.ml, as shipped in tlapm. Copyright 2002 INRIA, see LICENSE.
-
 import type { Relations } from "./eqrel";
 import {
   addCongruence,
   addMatches,
+  addPreunification,
   addReflexivity,
   addStringEqualities,
   addSymmetricMatches,
@@ -59,7 +58,6 @@ const addExtensions: SearchRule = (context, queue, formula, goalness) => {
   return [insertAll(queue, result.nodes), result.isStopped];
 };
 
-// Deviation from Zenon: newnodes_preunif is left out because it never adds a node.
 const RULES: SearchRule[] = [
   addAbsurd,
   addClosure,
@@ -72,6 +70,7 @@ const RULES: SearchRule[] = [
   addGamma,
   addUnfold,
   addReflexivity,
+  addPreunification,
   addCongruence,
   addTransitivity,
   addSymmetricMatches,

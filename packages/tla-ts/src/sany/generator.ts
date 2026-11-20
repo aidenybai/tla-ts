@@ -1,15 +1,20 @@
 import type { TlcVersion } from "../tlc/version";
 import {
   type AssumeProve,
+  type Definition,
   type Expression,
+  type Fact,
   getChildren,
+  getDefinitionExpressions,
   type Instance,
   type Module,
+  type NewSymbol,
   type Proof,
+  type StepBody,
 } from "../ast";
 import { TlaMissingModuleError, TlaSanyFatalError, TlaSyntaxError } from "../errors";
 import { parseSanyModule } from "../parser";
-import { isBefore } from "../resolve";
+import { compareLocations, isBefore } from "../resolve";
 import { createBuiltins } from "./builtins";
 import { getSany174LexicalError } from "./lexer";
 import { getSanyParseError } from "./parse-error";
@@ -29,13 +34,7 @@ import {
   VARIABLE_DECL_KIND,
 } from "./nodes";
 import { createSelectorResolver } from "./selectors";
-import {
-  createSourceFile,
-  getPreComments,
-  getTokenIndex,
-  getUnboxedSource,
-  type SourceFile,
-} from "./source";
+import { createSourceFile, getPreComments, getTokenIndex, type SourceFile } from "./source";
 import {
   createFormalParam,
   createNullNode,
@@ -51,8 +50,8 @@ import {
   type ModuleGeneration,
   resolveModule,
   resolveSymbol,
-  resolveSynonym,
 } from "./generation";
+import { resolveSynonym } from "../tlc/jar-data";
 import {
   checkForUndefinedRecursiveOps,
   checkRecursiveSection,
@@ -92,30 +91,90 @@ interface UnresolvedName {
 const getKindName = (symbol: SymbolNode) =>
   symbol.kind === "OpDef" || symbol.kind === "FormalParam" ? "definition" : "declaration";
 
-const getLetInstances = (expression: Expression): Instance[] => [
-  ...(expression.kind === "Let" ? (expression.instances ?? []) : []),
-  ...getChildren(expression).flatMap(getLetInstances),
-];
+const addInstances = (instances: Instance[], instance: Instance) => {
+  instances.push(instance);
+  instance.substitutions.forEach((substitution) =>
+    addLetInstances(instances, substitution.expression),
+  );
+};
 
-const getStatementInstances = (statement: Expression | AssumeProve): Instance[] =>
-  statement.kind === "AssumeProve"
-    ? [...statement.assumptions, statement.conclusion].flatMap((part) =>
-        part.kind === "NewSymbol" ? [] : getStatementInstances(part),
-      )
-    : getLetInstances(statement);
+const addLetInstances = (instances: Instance[], expression: Expression) => {
+  if (expression.kind === "Let") {
+    [...expression.definitions, ...(expression.instances ?? [])]
+      .sort((left, right) => compareLocations(left.location, right.location))
+      .forEach((definition) => addDefinitionInstances(instances, definition));
+    return addLetInstances(instances, expression.body);
+  }
+  const children = getChildren(expression);
+  for (let index = 0; index < children.length; index++) {
+    addLetInstances(instances, children[index]);
+  }
+};
 
-const getProofInstances = (proof: Proof | undefined): Instance[] =>
-  proof?.kind !== "Steps"
-    ? []
-    : proof.steps.flatMap((step) => [
-        ...(step.body.kind === "Instance" ? [step.body] : []),
-        ...(step.body.kind === "Define"
-          ? step.body.definitions.flatMap((definition) =>
-              definition.kind === "Instance" ? [definition] : [],
-            )
-          : []),
-        ...getProofInstances(step.proof),
-      ]);
+const addDefinitionInstances = (instances: Instance[], definition: Definition | Instance) => {
+  if (definition.kind === "Instance") return addInstances(instances, definition);
+  getDefinitionExpressions(definition).forEach((expression) =>
+    addLetInstances(instances, expression),
+  );
+};
+
+const addFactInstances = (instances: Instance[], use: { facts: Fact[]; defs: Fact[] }) => {
+  const addFact = (fact: Fact) => {
+    if (fact.kind !== "ModuleFact") addLetInstances(instances, fact);
+  };
+  use.facts.forEach(addFact);
+  use.defs.forEach(addFact);
+};
+
+const addStatementInstances = (
+  instances: Instance[],
+  statement: Expression | AssumeProve | NewSymbol,
+) => {
+  if (statement.kind === "NewSymbol") {
+    if (statement.set) addLetInstances(instances, statement.set);
+    return;
+  }
+  if (statement.kind !== "AssumeProve") return addLetInstances(instances, statement);
+  statement.assumptions.forEach((assumption) => addStatementInstances(instances, assumption));
+  addStatementInstances(instances, statement.conclusion);
+};
+
+const addStepInstances = (instances: Instance[], body: StepBody) => {
+  switch (body.kind) {
+    case "Use":
+    case "Hide":
+      return addFactInstances(instances, body);
+    case "Instance":
+      return addInstances(instances, body);
+    case "Define":
+      return body.definitions.forEach((definition) =>
+        addDefinitionInstances(instances, definition),
+      );
+    case "Have":
+    case "Case":
+      return addLetInstances(instances, body.expression);
+    case "Witness":
+      return body.expressions.forEach((expression) => addLetInstances(instances, expression));
+    case "Take":
+      return body.bounds.forEach((bound) => addLetInstances(instances, bound.set));
+    case "Pick":
+      body.bounds.forEach((bound) => addLetInstances(instances, bound.set));
+      return addLetInstances(instances, body.body);
+    case "Assert":
+      return addStatementInstances(instances, body.statement);
+    case "Qed":
+      return;
+  }
+};
+
+const addProofInstances = (instances: Instance[], proof: Proof | undefined) => {
+  if (proof?.kind === "By") return addFactInstances(instances, proof);
+  if (proof?.kind !== "Steps") return;
+  proof.steps.forEach((step) => {
+    addStepInstances(instances, step.body);
+    addProofInstances(instances, step.proof);
+  });
+};
 
 const isInternalInstance = (module: Module, instance: Instance) => {
   const seen = new Set<string>();
@@ -125,6 +184,7 @@ const isInternalInstance = (module: Module, instance: Instance) => {
       return seen.has(instance.module);
     }
   }
+  // Deviation from SANY: SpecObj#instanceResolvesToInternalModule reads only top-level INSTANCEs, so SANY loads an inner module that only a LET instantiates a second time and rejects it as multiply defined.
   return module.modules.some(
     (inner) => inner.name === instance.module && isBefore(inner.location, instance.location),
   );
@@ -135,7 +195,6 @@ const getDependencies = (module: Module) => {
   const instancees: string[] = [];
   const importers = new Map<string, string>();
   const visit = (current: Module, context: Map<string, Module>) => {
-    const isRoot = current === module;
     const addImports = (names: string[], imports: string[]) =>
       names.forEach((name) => {
         imports.push(name);
@@ -143,17 +202,16 @@ const getDependencies = (module: Module) => {
       });
     const isExternal = (name: string) => !context.has(name);
     addImports(current.extends.filter(isExternal), extendees);
-    const instances = current.units.flatMap((unit) => {
-      if (unit.kind === "Instance") return [unit.instance];
-      if (unit.kind === "Definition") return getLetInstances(unit.definition.body);
-      if (unit.kind === "Theorem" && isRoot) {
-        return [
-          ...getStatementInstances(unit.theorem.statement),
-          ...getProofInstances(unit.theorem.proof),
-        ];
+    const instances: Instance[] = [];
+    current.units.forEach((unit) => {
+      if (unit.kind === "Instance") return addInstances(instances, unit.instance);
+      if (unit.kind === "Definition") return addDefinitionInstances(instances, unit.definition);
+      if (unit.kind === "Theorem") {
+        addStatementInstances(instances, unit.theorem.statement);
+        return addProofInstances(instances, unit.theorem.proof);
       }
-      if (unit.kind === "Assumption" && isRoot) return getLetInstances(unit.assumption.expression);
-      return [];
+      if (unit.kind === "Assumption") return addLetInstances(instances, unit.assumption.expression);
+      if (unit.kind === "Use") addFactInstances(instances, unit.use);
     });
     addImports(
       instances
@@ -219,7 +277,7 @@ export const generateSanySpecification = (
     // HACK: the parser's errors are not SANY's, so a module that fails to parse gets the report of
     // SANY's parser, or the parser's own where SANY's parser would accept the module.
     try {
-      return parseSanyModule(getUnboxedSource(text));
+      return parseSanyModule(text);
     } catch (error) {
       if (!(error instanceof TlaSyntaxError)) throw error;
       throw getParseFailure(getSanyParseError(text) ?? `***Parse Error***\n${error.message}`);
@@ -314,12 +372,15 @@ export const generateSanySpecification = (
   };
   loadSpecification(rootName);
   calculateDependencies(rootName, rootSource);
+  const assumeProveScopes: ModuleGeneration["assumeProveScopes"] = new WeakMap();
+  const labelGoals: ModuleGeneration["labelGoals"] = new WeakMap();
 
   const generateModule = (
     ast: Module,
     file: SourceFile,
     parent: ModuleNode | undefined,
     contexts: Context[],
+    recursion = { sectionCount: 0, unresolvedCount: [0], unresolvedSum: 0 },
   ): ModuleNode => {
     const currentModule: ModuleNode = {
       kind: "Module",
@@ -351,9 +412,7 @@ export const generateSanySpecification = (
       contexts,
       currentModule,
       curLevel: 0,
-      unresolvedCount: [0],
-      unresolvedSum: 0,
-      recursiveSectionCount: 0,
+      recursion,
       functions: [],
       exceptStack: [],
       exceptSpecStack: [],
@@ -365,8 +424,8 @@ export const generateSanySpecification = (
         goal: undefined,
         goalClause: 0,
       },
-      assumeProveScopes: new WeakMap(),
-      labelGoals: new WeakMap(),
+      assumeProveScopes,
+      labelGoals,
       recursiveDeclarations: [],
       selectorToNode: createSelectorResolver({
         version: options.version,
@@ -502,10 +561,14 @@ export const generateSanySpecification = (
           break;
         case "Module": {
           checkRecursiveSection(generation, unit.module.location, "A MODULE ");
-          const inner = generateModule(unit.module, file, currentModule, [
-            ...contexts,
-            createContext(),
-          ]);
+          const inner = generateModule(
+            unit.module,
+            file,
+            currentModule,
+            [...contexts, createContext()],
+            generation.recursion,
+          );
+          currentModule.opDefsInRecursiveSection.push(...inner.opDefsInRecursiveSection);
           const binding = resolveModule(generation, inner.name);
           if (binding === undefined) addToContext(getTopContext(contexts), inner);
           else if (binding !== inner) {

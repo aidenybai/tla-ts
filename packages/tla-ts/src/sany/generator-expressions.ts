@@ -12,6 +12,7 @@ import {
   isAbsent,
   type LabelNode,
   type LetInNode,
+  type LevelNode,
   type OpApplNode,
   type OpArgNode,
   type OpDeclNode,
@@ -27,7 +28,9 @@ import {
   getArgumentSpan,
   getExpressionSpan,
   getMatchingIndex,
+  getParenthesizedSpan,
   getPreComments,
+  getRangeSpan,
   getSpanLocation,
   getTokenIndex,
   getTokenLocation,
@@ -48,11 +51,10 @@ import {
   type ModuleGeneration,
   popLabels,
   pushLabelScope,
-  resolveName,
   resolveSymbol,
-  resolveSynonym,
   withContext,
 } from "./generation";
+import { resolveSynonym } from "../tlc/jar-data";
 import { getOperandSpan } from "./generator-def-entries";
 import {
   checkForUndefinedRecursiveOps,
@@ -93,18 +95,6 @@ const isOperatorArgument = (argument: Expression) => {
   return OPERATOR_ARGUMENT_KINDS.has(argument.kind) || (items !== undefined && isGeneralId(items));
 };
 
-const POSTFIX_OPERATOR_TEXTS = new Set(["'", "^+", "^*", "^#"]);
-
-const getOperatorNodeKind = (
-  expression: Expression & { kind: "OperatorReference" | "Lambda" },
-  text: string,
-) => {
-  if (POSTFIX_OPERATOR_TEXTS.has(text)) return "N_GenPostfixOp";
-  return expression.kind === "Lambda" || text === "~" || text === "-."
-    ? "N_GenNonExpPrefixOp"
-    : "N_GenInfixOp";
-};
-
 const locateSelectorItems = (file: SourceFile, items: SelectorItem[], span: TokenSpan) => {
   let cursor = span.start;
   return items.map((item): SelectorItem => {
@@ -135,6 +125,7 @@ export const generateSelector = (
   expectedArity: number,
   isFact: boolean,
   isDef: boolean,
+  location = getLocation(generation.file, expression),
 ) => {
   const items = getSelectorItems(expression);
   if (items === undefined) throw new TlaSyntaxError(`Expected a name, found ${expression.kind}`);
@@ -143,7 +134,7 @@ export const generateSelector = (
     expectedArity,
     isFact,
     isDef,
-    getLocation(generation.file, expression),
+    location,
   );
 };
 
@@ -244,22 +235,33 @@ const getOperatorArgumentName = (file: SourceFile, argument: Expression) =>
       ? argument.body.operator
       : file.tokens[getTokenIndex(file, argument.location)].text;
 
+const resolveOperatorArgument = (
+  generation: ModuleGeneration,
+  argument: Expression,
+  location: SanyLocation,
+) => {
+  const name = getOperatorArgumentName(generation.file, argument);
+  const symbol = resolveSymbol(generation.contexts, resolveSynonym(name));
+  if (symbol !== undefined) return createOpArg(generation, symbol, location);
+  generation.addError(location, `Could not find declaration or definition of symbol '${name}'.`);
+  return createNullNode(generation);
+};
+
 export const generateOperatorArgument = (
   generation: ModuleGeneration,
   argument: Expression,
   target: OpDeclNode,
 ): OpArgNode | OpApplNode => {
-  const location = getLocation(generation.file, argument);
-  if (argument.kind === "Lambda") {
+  const span = getExpressionSpan(generation.file, argument);
+  const parenthesizedSpan = getParenthesizedSpan(generation.file, span);
+  const location = getSpanLocation(generation.file, parenthesizedSpan);
+  const isParenthesized = parenthesizedSpan !== span;
+  if (argument.kind === "Lambda" && !isParenthesized) {
     if (argument.location.range !== undefined && argument.operator === undefined)
       return createOpArg(generation, generateLambda(generation, argument), location);
-    return createOpArg(
-      generation,
-      resolveName(generation, getOperatorArgumentName(generation.file, argument), location),
-      location,
-    );
+    return resolveOperatorArgument(generation, argument, location);
   }
-  if (!isOperatorArgument(argument)) {
+  if (isParenthesized || !isOperatorArgument(argument)) {
     generation.addError(
       location,
       `Arity ${target.arity} operator (not an expression) is expected \nto substitute for CONSTANT '${target.name}'.`,
@@ -267,7 +269,7 @@ export const generateOperatorArgument = (
     return createNullNode(generation);
   }
   if (argument.kind === "OperatorReference") {
-    return createOpArg(generation, resolveName(generation, argument.operator, location), location);
+    return resolveOperatorArgument(generation, argument, location);
   }
   const node = generateSelector(generation, argument, target.arity, false, false);
   if (node.kind === "OpArg" || (node.kind === "OpAppl" && node.nullKind !== undefined)) return node;
@@ -283,10 +285,13 @@ export const generateArgument = (
   argument: Expression,
   operatorLocation: SanyLocation,
 ): ExprOrOpArgNode => {
-  const isDefinition =
+  const params =
     operator.kind === "OpDef" &&
-    (operator.defKind === "UserDefined" || operator.defKind === "ModuleInstance");
-  const expectedArity = isDefinition ? (operator.params?.[index]?.arity ?? 0) : 0;
+    (operator.defKind === "UserDefined" || operator.defKind === "ModuleInstance")
+      ? (operator.params ?? [])
+      : undefined;
+  if (params !== undefined && params.length <= index) return createNullNode(generation);
+  const expectedArity = params?.[index]?.arity ?? 0;
   if (expectedArity === 0) return generateExpression(generation, argument);
   const span = getExpressionSpan(generation.file, argument);
   const location = getSpanLocation(generation.file, span);
@@ -433,14 +438,13 @@ const generateExcept = (
         return createString(generation, step.name, getTokenLocation(generation.file, nameIndex));
       }
       const open = findToken(generation.file, pathCursor, span.end, "[");
-      const close = getMatchingIndex(generation.file, open);
-      pathCursor = close + 1;
+      pathCursor = getMatchingIndex(generation.file, open) + 1;
       if (step.args.length === 1) return generateExpression(generation, step.args[0]);
       return applyBuiltin(
         generation,
         "$Tuple",
         step.args.map((innerArgument) => generateExpression(generation, innerArgument)),
-        getSpanLocation(generation.file, { start: open, end: close }),
+        getSpanLocation(generation.file, getRangeSpan(generation.file, step.tupleRange)),
       );
     });
     const sequence = applyBuiltin(generation, "$Seq", components, specLocation);
@@ -495,35 +499,6 @@ const generateRecordFields = (
   return record;
 };
 
-const getTokenPosition = (file: SourceFile, index: number) => ({
-  line: file.tokens[index].line,
-  column: file.tokens[index].column,
-});
-
-const getRecursiveDeclarations = (file: SourceFile, start: number) => {
-  const declarations: Declaration[] = [];
-  let index = start;
-  while (file.tokens[index]?.kind === "Identifier") {
-    const end = isToken(file, index + 1, "(") ? getMatchingIndex(file, index + 1) : index;
-    const arity = file.tokens.slice(index + 1, end).filter((token) => token.text === "_").length;
-    declarations.push({
-      name: file.tokens[index].text,
-      arity,
-      location: {
-        ...getTokenPosition(file, index),
-        range: {
-          module: file.name,
-          start: getTokenPosition(file, index),
-          end: getTokenPosition(file, end),
-        },
-      },
-    });
-    if (!isToken(file, end + 1, ",")) break;
-    index = end + 2;
-  }
-  return declarations;
-};
-
 const getLetUnits = (file: SourceFile, expression: Expression & { kind: "Let" }) => {
   const units = [
     ...expression.definitions.map((definition) => ({
@@ -537,16 +512,22 @@ const getLetUnits = (file: SourceFile, expression: Expression & { kind: "Let" })
   ];
   const letStart = getExpressionSpan(file, expression).start;
   const bodyStart = getOperandSpan(file, expression.body).start;
-  const recursives: { unit: LetUnit; span: TokenSpan }[] = [];
+  const recursiveIndexes: number[] = [];
   for (let index = letStart + 1; index < bodyStart; index++) {
     const isInUnit = units.some((entry) => entry.span.start <= index && index <= entry.span.end);
-    if (isToken(file, index, "RECURSIVE") && !isInUnit) {
-      recursives.push({
-        unit: { kind: "Recursive", declarations: getRecursiveDeclarations(file, index + 1) },
-        span: { start: index, end: index },
-      });
-    }
+    if (isToken(file, index, "RECURSIVE") && !isInUnit) recursiveIndexes.push(index);
   }
+  const recursives = recursiveIndexes.map((start, position) => {
+    const end = recursiveIndexes[position + 1] ?? bodyStart;
+    const declarations = (expression.recursive ?? []).filter((declaration) => {
+      const index = getTokenIndex(file, declaration.location);
+      return start < index && index < end;
+    });
+    return {
+      unit: { kind: "Recursive", declarations } satisfies LetUnit,
+      span: { start, end: start },
+    };
+  });
   return [...units, ...recursives]
     .toSorted((first, second) => first.span.start - second.span.start)
     .map((entry) => entry.unit);
@@ -559,7 +540,7 @@ const generateLet = (
   const context = createContext();
   return withContext(generation, context, () => {
     generation.curLevel++;
-    generation.unresolvedCount[generation.curLevel] = 0;
+    generation.recursion.unresolvedCount[generation.curLevel] = 0;
     const opDefs: (OpDefNode | ThmOrAssumpDefNode)[] = [];
     const instances: InstanceNode[] = [];
     getLetUnits(generation.file, expression).forEach((unit) => {
@@ -722,13 +703,17 @@ export const generateExpression = (
       return { ...createNullNode(generation), nullKind: "absent" };
     case "OperatorReference":
     case "Lambda": {
-      const text =
-        generation.file.tokens[getExpressionSpan(generation.file, expression).start].text;
+      const token = generation.file.tokens[getExpressionSpan(generation.file, expression).start];
+      const name = expression.operator ?? token.text;
+      // Deviation from SANY: Generator#generateExpression names its internal node kind here, where tla-ts words it as for a name.
+      const symbol = resolveSymbol(generation.contexts, resolveSynonym(name));
       generation.addError(
         location,
-        text === "LAMBDA"
+        token.text === "LAMBDA"
           ? "LAMBDA expression used where an expression is required."
-          : `Unsupported expression type \`${getOperatorNodeKind(expression, text)}'.`,
+          : symbol === undefined
+            ? `Could not find declaration or definition of symbol '${token.spelling ?? name}'.`
+            : `The operator ${resolveSynonym(name)} requires ${getSymbolArity(symbol)} arguments.`,
       );
       return { ...createNullNode(generation), nullKind: "absent" };
     }
@@ -881,6 +866,8 @@ export const generateExpression = (
       return generateRecordFields(generation, "$SetOfRcds", expression);
     case "Except":
       return generateExcept(generation, expression);
+    case "EnabledVariable":
+      throw new TlaSyntaxError("Expected an expression");
     case "ExceptAt": {
       const except = generation.exceptStack[generation.exceptStack.length - 1];
       const component = generation.exceptSpecStack[generation.exceptSpecStack.length - 1];
@@ -976,9 +963,34 @@ export const generateExpression = (
         location,
       );
     case "Label":
-      return generateLabel(generation, expression);
+      return generateLabel(
+        generation,
+        expression.name,
+        location,
+        () => generateExpression(generation, expression.body),
+        () => {
+          const paramIndexes = findNameTokens(
+            generation.file,
+            getExpressionSpan(generation.file, expression).start,
+            getExpressionSpan(generation.file, expression.body).start,
+            expression.params,
+          );
+          return expression.params.map((name, index) => {
+            const symbol = resolveSymbol(generation.contexts, name);
+            if (symbol?.kind === "FormalParam") return symbol;
+            const paramLocation = getTokenLocation(generation.file, paramIndexes[index]);
+            generation.addError(
+              paramLocation,
+              `Illegal parameter ${name} of label \`${expression.name}'.`,
+            );
+            return createFormalParam(generation, name, 0, paramLocation, false);
+          });
+        },
+      );
     case "Subexpression":
       return generateSelectorExpression(generation, expression);
+    case "Selection":
+      return generateExpression(generation, expression.expression);
   }
 };
 
@@ -1014,15 +1026,31 @@ const generateBoundsWithRanges = (
   };
 };
 
-const generateLabel = (
+const createNullLabel = (generation: ModuleGeneration): LabelNode => {
+  const body = createNullNode(generation);
+  return {
+    ...createLevelFields(body.id),
+    kind: "Label",
+    name: "nullLabelNode",
+    params: [],
+    body,
+    labels: new Map(),
+    isAssumeProve: false,
+    location: body.location,
+  };
+};
+
+export const generateLabel = (
   generation: ModuleGeneration,
-  expression: Expression & { kind: "Label" },
+  name: string,
+  location: SanyLocation,
+  generateBody: () => LevelNode,
+  generateParams: () => FormalParamNode[] = () => [],
 ): LabelNode | OpApplNode => {
-  const location = getLocation(generation.file, expression);
   const scope = generation.labelScopes.at(-1);
   if (scope === undefined) {
     generation.addError(location, "Label not in definition or proof step.");
-    return createNullNode(generation);
+    return createNullLabel(generation);
   }
   if (
     generation.assumeProveState.isDeclared
@@ -1033,36 +1061,24 @@ const generateLabel = (
       location,
       "Label not allowed within scope of declaration in nested ASSUME/PROVE.",
     );
-    return createNullNode(generation);
+    return createNullLabel(generation);
   }
   if (generation.exceptStack.length > 0 && generation.exceptSpecStack.length > 0) {
     generation.addError(location, "Labels inside EXCEPT clauses are not yet implemented.");
-    return createNullNode(generation);
+    return createNullLabel(generation);
   }
   pushLabelScope(generation);
-  const body = generateExpression(generation, expression.body);
+  const body = generateBody();
   const labels = popLabels(generation);
-  const paramIndexes = findNameTokens(
-    generation.file,
-    getExpressionSpan(generation.file, expression).start,
-    getExpressionSpan(generation.file, expression.body).start,
-    expression.params,
-  );
-  const params = expression.params.map((name, index) => {
-    const symbol = resolveSymbol(generation.contexts, name);
-    if (symbol?.kind === "FormalParam") return symbol;
-    const paramLocation = getTokenLocation(generation.file, paramIndexes[index]);
-    generation.addError(paramLocation, `Illegal parameter ${name} of label \`${expression.name}'.`);
-    return createFormalParam(generation, name, 0, paramLocation, false);
-  });
+  const params = generateParams();
   const label: LabelNode = {
     ...createLevelFields(generation.getId()),
     kind: "Label",
-    name: expression.name,
+    name,
     params,
     body,
     labels,
-    isAssumeProve: false,
+    isAssumeProve: body.kind === "AssumeProve",
     location,
   };
   const named = new Set<FormalParamNode>();

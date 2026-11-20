@@ -2,6 +2,7 @@ import { ESCORE_CANONICAL_OPERATORS } from "./escore-canonical";
 import { createEscoreNativeOperators, createEscoreProgramOperators } from "./escore-native";
 import { TlaEvaluationError, TlaModuleError, TlaSetBoundError } from "./errors";
 import {
+  checkJavaArity,
   createModuleArgumentError,
   createOverflowError,
   defineArithmetic,
@@ -20,8 +21,9 @@ import {
   overrideWithJava,
 } from "./builtins";
 import type { Builtin, BuiltinArgument, Context } from "./evaluate";
+import { prettyPrint } from "./pretty-print";
 import type { CheckerRuntime } from "./runtime";
-import { createBagsOperators } from "./bags";
+import { BAGS_OPERATORS } from "./bags";
 import { createIoUtilsOperators, createJsonOperators, type FileSystem } from "./json";
 import { createTlcTraceOperators } from "./tlc/value-stream";
 import { createRandomizationOperators, createRandomSubsetSet } from "./randomization";
@@ -42,13 +44,14 @@ import {
   formatValue,
   getCardinality,
   getDomain,
+  getFunctionClass,
   getSortedIntersection,
+  hasTypedModelValues,
   someStreamedElement,
   isElementOf,
   getSequenceElements,
   isEmptySet,
   isEnumerable,
-  isNormalizedSet,
   setNormalized,
   isFiniteSet,
   isFunctionValue,
@@ -62,6 +65,7 @@ import {
   getSortedUnion,
   getValueKey,
   getWrittenElements,
+  isNormalizedSet,
   isEqualLikeTlc,
   createEnumeratedSet,
   createNormalizedSet,
@@ -98,7 +102,7 @@ type ReducibleSet = SetValue | MixedSetValue | IntervalValue;
 const isMixedSet = (value: Value) => typeof value === "object" && value.kind === "MixedSet";
 
 const isNormalizedReducible = (set: ReducibleSet) =>
-  set.kind === "Interval" || (set.kind === "Set" && isNormalizedSet(set));
+  set.kind === "Interval" || isNormalizedSet(set);
 
 const combineReducible = (
   operator: SetOperationValue["operator"],
@@ -127,6 +131,43 @@ const combineReducible = (
   return createEnumeratedSet(union);
 };
 
+const isIntervalInSortedSet = (interval: IntervalValue, set: SetValue) => {
+  const elements = set.elements;
+  let low = 0;
+  let high = elements.length;
+  while (low < high) {
+    const middle = (low + high) >> 1;
+    const probe = elements[middle];
+    if (typeof probe !== "number") return undefined;
+    if (probe < interval.low) low = middle + 1;
+    else high = middle;
+  }
+  for (let element = interval.low; element <= interval.high; element++, low++) {
+    if (low === elements.length) return false;
+    const probe = elements[low];
+    if (probe !== element) return typeof probe === "number" ? false : undefined;
+  }
+  return true;
+};
+
+const isIntervalSubset = (left: IntervalValue, right: Value) => {
+  const isWithin =
+    typeof right === "object" &&
+    right.kind === "Interval" &&
+    right.low <= left.low &&
+    right.high >= left.high;
+  if (isWithin) return true;
+  const isContained =
+    typeof right === "object" && right.kind === "Set"
+      ? isIntervalInSortedSet(left, right)
+      : undefined;
+  if (isContained !== undefined) return isContained;
+  for (let element = left.low; element <= left.high; element++) {
+    if (!isElementOf(element, right)) return false;
+  }
+  return true;
+};
+
 const defineShortCircuit = (
   name: string,
   compute: (left: boolean, right: () => boolean) => boolean,
@@ -144,7 +185,10 @@ export const CORE_OPERATORS: Builtin[] = [
   defineConstant("TRUE", true),
   defineConstant("FALSE", false),
   defineConstant("BOOLEAN", BOOLEAN_SET),
-  defineConstant("STRING", { kind: "InfiniteSet", name: "STRING" }),
+  overrideWithJava(
+    defineConstant("STRING", { kind: "InfiniteSet", name: "STRING" }),
+    "public static tlc2.value.impl.Value tlc2.module.Strings.STRING()",
+  ),
   defineBinary("=", isEqualLikeTlc),
   defineBinary("#", (left, right) => !isEqualLikeTlc(left, right)),
   defineOperator("~", 1, (args) => !getBoolean(args, 0, "~")),
@@ -161,6 +205,7 @@ export const CORE_OPERATORS: Builtin[] = [
     (args) => !isElementOf(getValue(args, 0, "\\notin"), getValue(args, 1, "\\notin")),
   ),
   defineBinary("\\subseteq", (left, right) => {
+    if (typeof left === "object" && left.kind === "Interval") return isIntervalSubset(left, right);
     if (!isSetValue(left)) {
       throw new TlaEvaluationError(`\\subseteq expects a set but received ${formatValue(left)}`);
     }
@@ -171,18 +216,6 @@ export const CORE_OPERATORS: Builtin[] = [
       right.kind === "Subset" &&
       isEnumerable(left.base);
     if (isPowerSets) return isSubsetOf(toFiniteSet(left.base).elements, right.base);
-    if (typeof left === "object" && left.kind === "Interval") {
-      const isWithin =
-        typeof right === "object" &&
-        right.kind === "Interval" &&
-        right.low <= left.low &&
-        right.high >= left.high;
-      if (isWithin) return true;
-      for (let element = left.low; element <= left.high; element++) {
-        if (!isElementOf(element, right)) return false;
-      }
-      return true;
-    }
     return !someStreamedElement(left, (element) => !isElementOf(element, right));
   }),
   ...SET_OPERATORS.map((operator) =>
@@ -201,6 +234,7 @@ export const CORE_OPERATORS: Builtin[] = [
         !isMixedSet(left) &&
         !isMixedSet(right) &&
         !isFilteredByInterval &&
+        (operator === "\\cup" || !hasTypedModelValues()) &&
         !isBeyondSetBound(left) &&
         !isBeyondSetBound(right)
       ) {
@@ -317,12 +351,14 @@ const createArithmeticOperators = (module: string) => {
       }
       return ((left % right) + right) % right;
     }),
-    defineOperator("..", 2, (args) => {
-      const low = getValue(args, 0, "..");
-      // TLC's MethodHandle casts the last argument first.
-      const high = getJavaInteger(getValue(args, 1, ".."), dotDotSignature);
-      return { kind: "Interval", low: getJavaInteger(low, dotDotSignature), high };
-    }),
+    checkJavaArity(
+      defineBinary("..", (low, high) => {
+        // TLC's MethodHandle casts the last argument first.
+        const highNumber = getJavaInteger(high, dotDotSignature);
+        return { kind: "Interval", low: getJavaInteger(low, dotDotSignature), high: highNumber };
+      }),
+      dotDotSignature,
+    ),
   ];
 };
 
@@ -360,27 +396,36 @@ const createComparisonOperators = (module: string) => {
   ];
 };
 
+const NAT = { kind: "InfiniteSet", name: "Nat" } as const;
+
 const NATURALS_OPERATORS = [
-  defineConstant("Nat", { kind: "InfiniteSet", name: "Nat" }),
+  overrideWithJava(defineConstant("Nat", NAT), getJavaSignature("Naturals", "Nat", "Value", 0)),
   ...NATURALS_ARITHMETIC,
   ...createComparisonOperators("Naturals"),
 ];
 
 const INTEGERS_OPERATORS = [
-  defineConstant("Int", { kind: "InfiniteSet", name: "Int" }),
+  overrideWithJava(defineConstant("Nat", NAT), getJavaSignature("Integers", "Nat", "Value", 0)),
+  overrideWithJava(
+    defineConstant("Int", { kind: "InfiniteSet", name: "Int" }),
+    getJavaSignature("Integers", "Int", "Value", 0),
+  ),
   ...INTEGERS_ARITHMETIC,
   ...createComparisonOperators("Integers"),
-  defineOperator("-.", 1, (args) => {
-    const value = getJavaInteger(getValue(args, 0, "-"), NEG_SIGNATURE);
-    if (isOutOfRange(-value)) throw createOverflowError(`-${value}`);
-    return -value;
-  }),
+  checkJavaArity(
+    defineOperator("-.", 1, (args) => {
+      const value = getJavaInteger(getValue(args, 0, "-"), NEG_SIGNATURE);
+      if (isOutOfRange(-value)) throw createOverflowError(`-${value}`);
+      return -value;
+    }),
+    NEG_SIGNATURE,
+  ),
 ];
 
 const getSequenceArgument = (args: BuiltinArgument[], index: number, message: string) => {
   const value = getValue(args, index, message);
   const elements = getSequenceElements(value);
-  if (!elements) throw new TlaModuleError(`${message}\n${formatValue(value)}`);
+  if (!elements) throw new TlaModuleError(`${message}\n${prettyPrint(formatValue(value))}`);
   return elements;
 };
 
@@ -429,12 +474,19 @@ const createSequencesOperators = (version: TlcVersion) =>
       const left = getSequenceOrString(args, 0, getEvaluatingMessage("s \\o t", "sequence"));
       if (typeof left !== "string") {
         const right = getSequenceArgument(args, 1, getEvaluatingMessage("t \\o s", "sequence"));
+        const kept =
+          left.length === 0
+            ? getValue(args, 1, "\\o")
+            : right.length === 0
+              ? getValue(args, 0, "\\o")
+              : undefined;
+        if (kept !== undefined && getFunctionClass(kept) === "tuple") return kept;
         return createTuple([...left, ...right]);
       }
       const right = getValue(args, 1, "\\o");
       if (typeof right !== "string") {
         throw new TlaModuleError(
-          `${getEvaluatingMessage("t \\o s", "string")}\n${formatValue(right)}`,
+          `${getEvaluatingMessage("t \\o s", "string")}\n${prettyPrint(formatValue(right))}`,
         );
       }
       return rankString(left + right);
@@ -474,7 +526,7 @@ const createSequencesOperators = (version: TlcVersion) =>
             : undefined;
       if (outOfDomain) {
         throw new TlaModuleError(
-          `The ${outOfDomain.position} argument of SubSeq must be in the domain of its first argument:\n${formatValue(getValue(args, 0, "SubSeq"))}\n, but instead it is\n${outOfDomain.value}`,
+          `The ${outOfDomain.position} argument of SubSeq must be in the domain of its first argument:\n${prettyPrint(formatValue(getValue(args, 0, "SubSeq")))}\n, but instead it is\n${outOfDomain.value}`,
         );
       }
       return sliceSequence(sequence, start - 1, end);
@@ -507,7 +559,7 @@ const createFiniteSetsOperators = (version: TlcVersion) =>
         (typeof set === "object" && (set.kind === "InfiniteSet" || set.kind === "SequenceSet"))
       ) {
         throw new TlaModuleError(
-          `Attempted to compute cardinality of the value\n${formatValue(set)}`,
+          `Attempted to compute cardinality of the value\n${prettyPrint(formatValue(set))}`,
         );
       }
       return getCardinality(set, version);
@@ -520,7 +572,7 @@ const TRANSITIVE_CLOSURE_OPERATORS = [
       const relation = getValue(args, 0, "Warshall");
       if (!isSetValue(relation) || isOverriddenSet(relation)) {
         throw new TlaModuleError(
-          `Applying TransitiveClosure to the following value,\nwhich is not an enumerable set:\n${formatValue(relation)}`,
+          `Applying TransitiveClosure to the following value,\nwhich is not an enumerable set:\n${prettyPrint(formatValue(relation))}`,
         );
       }
       // TLC sizes the relation, which normalizes it.
@@ -540,7 +592,7 @@ const TRANSITIVE_CLOSURE_OPERATORS = [
         const ends = getSequenceElements(edge);
         if (ends?.length !== 2) {
           throw new TlaModuleError(
-            `Attempted to apply TransitiveClosure to a set containing\nthe following value:\n${formatValue(edge)}`,
+            `Attempted to apply TransitiveClosure to a set containing\nthe following value:\n${prettyPrint(formatValue(edge))}`,
           );
         }
         return [getNodeIndex(ends[0]), getNodeIndex(ends[1])];
@@ -574,18 +626,24 @@ export const getJavaOverrides = (
   print: (text: string) => void,
   runtime: CheckerRuntime,
   files: FileSystem,
-  builtins: ReadonlyMap<string, Builtin>,
   evaluateReplaced: (name: string, args: BuiltinArgument[], context: Context | undefined) => Value,
 ) => {
   if (name === "TransitiveClosure") return TRANSITIVE_CLOSURE_OPERATORS;
   if (name === "ESCanonical") return ESCORE_CANONICAL_OPERATORS;
   if (name === "ESNative") return createEscoreNativeOperators(evaluateReplaced);
   if (name === "ProgramCode") return createEscoreProgramOperators(evaluateReplaced);
-  if (name === "AnySet") return [defineConstant("ANY", ANY_SET)];
+  if (name === "AnySet") {
+    return [
+      overrideWithJava(
+        defineConstant("ANY", ANY_SET),
+        "public static tlc2.value.impl.Value tlc2.module.AnySet.ANY()",
+      ),
+    ];
+  }
   if (name === "IOUtils") return createIoUtilsOperators(files, evaluateReplaced);
   if (name === "_TLCTrace") return createTlcTraceOperators(files);
   if (!getSanyStandardModules(runtime.version).has(name)) return undefined;
-  const operators = getStandardOperators(name, print, runtime, files, builtins);
+  const operators = getStandardOperators(name, print, runtime, files);
   return name === "Randomization" && operators
     ? [...operators, createRandomSubsetSet(runtime)]
     : operators;
@@ -596,10 +654,8 @@ export const STANDARD_DEPENDENCIES = new Map([
   ["Sequences", ["Naturals"]],
   ["FiniteSets", ["Naturals", "Sequences"]],
   ["TLC", ["Naturals", "Sequences", "FiniteSets"]],
-  ["Randomization", ["Naturals", "FiniteSets", "Sequences"]],
   ["_Possible", ["TLC", "TLCExt", "Naturals", "Sequences", "FiniteSets", "Integers"]],
   ["Json", ["Sequences", "FiniteSets", "TLC", "Naturals"]],
-  ["Bags", ["Naturals"]],
   ["TLCExt", ["TLC", "Integers", "Naturals", "Sequences", "FiniteSets"]],
 ]);
 
@@ -610,7 +666,6 @@ export const getStandardOperators = (
   print: (text: string) => void,
   runtime: CheckerRuntime,
   files: FileSystem,
-  builtins: ReadonlyMap<string, Builtin>,
 ): Builtin[] | undefined => {
   switch (name) {
     case "Naturals":
@@ -630,9 +685,9 @@ export const getStandardOperators = (
     case "Json":
       return createJsonOperators(files);
     case "Bags":
-      return withJavaMethods("Bags", createBagsOperators(builtins));
+      return withJavaMethods("Bags", BAGS_OPERATORS);
     case "TLCExt":
-      return withJavaMethods("TLCExt", createTlcExtOperators(print, runtime));
+      return withJavaMethods("TLCExt", createTlcExtOperators(runtime));
     default:
       return undefined;
   }

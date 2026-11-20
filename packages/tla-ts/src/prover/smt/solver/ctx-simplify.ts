@@ -1,4 +1,3 @@
-// Ported from Z3 (src/tactic/core/ctx_simplify_tactic.cpp, src/ast/num_occurs.cpp, src/tactic/goal_num_occurs.cpp), MIT license, see z3-license.txt.
 import { KIND_APP, OP_AND, OP_EQ, OP_ITE, OP_OR, type AstManager } from "./ast";
 import type { Goal } from "./goal";
 import { RefVector } from "./ref-vector";
@@ -51,9 +50,15 @@ class CtxSimplifier {
     const manager = this.manager;
     this.depth = 0;
     const result = this.simplify(goal.forms.items[index]);
-    if (isAsserted && !manager.isTrue(result) && !manager.isFalse(result))
+    const dependency = goal.getDependency(index);
+    if (
+      isAsserted &&
+      !manager.isTrue(result) &&
+      !manager.isFalse(result) &&
+      dependency === undefined
+    )
       this.assertExpr(result, false);
-    goal.update(index, result);
+    goal.update(index, result, dependency);
     manager.decRef(result);
   }
 
@@ -75,8 +80,7 @@ class CtxSimplifier {
     for (const form of goal.forms.items) {
       this.pinned.push(form);
       visit(form);
-      while (stack.length > 0) {
-        const expr = stack.pop() as number;
+      for (let expr = stack.pop(); expr !== undefined; expr = stack.pop()) {
         if (manager.kinds[expr] !== KIND_APP) continue;
         for (let index = manager.getNumArgs(expr) - 1; index >= 0; index--)
           visit(manager.getArg(expr, index));

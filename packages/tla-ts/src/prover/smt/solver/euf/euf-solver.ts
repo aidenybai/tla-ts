@@ -1,6 +1,3 @@
-// Ported from Z3 (src/sat/smt/euf_solver.h, src/sat/smt/euf_solver.cpp,
-// src/sat/smt/euf_internalize.cpp, src/sat/smt/euf_model.cpp, src/util/top_sort.h), MIT license,
-// see z3-license.txt.
 import { SmtInvariantError, SmtUnsupportedError } from "../../../../errors";
 import {
   type AstManager,
@@ -468,8 +465,7 @@ export class EufSolver implements SatExtension {
     let generation = 0;
     const visited = new Set<number>();
     const todo = [expr];
-    while (todo.length > 0) {
-      const current = todo.pop() as number;
+    for (let current = todo.pop(); current !== undefined; current = todo.pop()) {
       if (visited.has(current)) continue;
       visited.add(current);
       const node = this.egraph.find(current);

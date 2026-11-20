@@ -1,5 +1,3 @@
-// Ported from Z3 (src/ast/euf/euf_egraph.h, src/ast/euf/euf_egraph.cpp, src/ast/euf/euf_enode.h,
-// src/ast/euf/euf_enode.cpp, src/ast/euf/euf_justification.h), MIT license, see z3-license.txt.
 import {
   type AstManager,
   OP_ADD,
@@ -25,8 +23,8 @@ export const NULL_THEORY_VAR = -1;
 export const NULL_BOOL_VAR = -1;
 
 const J_AXIOM = 0;
-export const J_CONGRUENCE = 1;
-export const J_EXTERNAL = 2;
+const J_CONGRUENCE = 1;
+const J_EXTERNAL = 2;
 
 export interface Justification {
   readonly kind: number;
@@ -34,7 +32,7 @@ export interface Justification {
   readonly external: number;
 }
 
-export const AXIOM: Justification = {
+const AXIOM: Justification = {
   kind: J_AXIOM,
   isCommutative: false,
   external: 0,
@@ -492,7 +490,7 @@ export class Egraph {
     }
     const rootVar = root.getThVar(id);
     node.replaceThVar(thVar, id);
-    // Deviation from Z3: the undo restores the variable of the node; Z3 records that of the root.
+    // Deviation from Z3: the undo gives the node back its own variable, where Z3 gives it the root's and later equates the wrong terms.
     this.updates.push({
       tag: U_REPLACE_TH_VAR,
       r1: node,
@@ -522,12 +520,6 @@ export class Egraph {
     if (isEnabled === node.isCgcEnabled) return;
     this.toggleCgcEnabled(node, false);
     this.push(U_TOGGLE_CGC, node);
-  }
-
-  setRelevant(node: Enode) {
-    if (node.isRelevant) return;
-    node.isRelevant = true;
-    this.push(U_SET_RELEVANT, node);
   }
 
   private toggleCgcEnabled(node: Enode, isBacktracking: boolean) {

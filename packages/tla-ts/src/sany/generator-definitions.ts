@@ -60,10 +60,10 @@ import {
   popLabels,
   pushLabelScope,
   resolveSymbol,
-  resolveSynonym,
   setRecursionFields,
   withContext,
 } from "./generation";
+import { resolveSynonym } from "../tlc/jar-data";
 import {
   findNameOrKeyword,
   generateBounds,
@@ -123,6 +123,7 @@ export const processOperator = (
     const params = getParams(generation, definition, paramsSpan, true);
     const existing = resolveSymbol(generation.contexts, name);
     if (existing?.kind === "OpDef" && existing.inRecursive && !existing.isDefined) {
+      // Deviation from SANY: Generator#processOperator compares only the last parameter's arity with the RECURSIVE declaration's.
       const isMatching =
         existing.params?.length === params.length && params.every((param) => param.arity === 0);
       if (existing.letInLevel !== generation.curLevel) {
@@ -187,9 +188,10 @@ const endOpDefNode = (
   node.body = body;
   node.location = location;
   node.preComments = preComments;
+  // Deviation from SANY: Generator#endOpDefNode throws WrongInvocationException once unresolvedSum is negative, as after an inner module's checkForUndefinedRecursiveOps subtracted the outer module's open RECURSIVE operators.
   if (node.inRecursive) {
-    generation.unresolvedCount[generation.curLevel]--;
-    generation.unresolvedSum--;
+    generation.recursion.unresolvedCount[generation.curLevel]--;
+    generation.recursion.unresolvedSum--;
   }
 };
 
@@ -273,9 +275,10 @@ export const processFunction = (
 };
 
 export const processRecursive = (generation: ModuleGeneration, declarations: Declaration[]) => {
-  if (generation.unresolvedSum === 0) generation.recursiveSectionCount++;
-  generation.unresolvedCount[generation.curLevel] += declarations.length;
-  generation.unresolvedSum += declarations.length;
+  const recursion = generation.recursion;
+  if (recursion.unresolvedSum === 0) recursion.sectionCount++;
+  recursion.unresolvedCount[generation.curLevel] += declarations.length;
+  recursion.unresolvedSum += declarations.length;
   declarations.forEach((declaration) => {
     const span = getDeclarationSpan(generation.file, declaration);
     // The OpDeclNode buildParameter makes of the declaration to read its name and arity.
@@ -290,7 +293,7 @@ export const processRecursive = (generation: ModuleGeneration, declarations: Dec
       isDefined: false,
       inRecursive: true,
       inRecursiveSection: true,
-      recursiveSection: generation.recursiveSectionCount,
+      recursiveSection: recursion.sectionCount,
       letInLevel: generation.curLevel,
     });
     addSymbol(generation, node);
@@ -300,7 +303,8 @@ export const processRecursive = (generation: ModuleGeneration, declarations: Dec
 };
 
 export const checkForUndefinedRecursiveOps = (generation: ModuleGeneration) => {
-  if (generation.unresolvedCount[generation.curLevel] === 0) return;
+  const recursion = generation.recursion;
+  if (recursion.unresolvedCount[generation.curLevel] <= 0) return;
   generation.recursiveDeclarations
     .filter((node) => node.letInLevel === generation.curLevel && !node.isDefined)
     .forEach((node) =>
@@ -309,7 +313,7 @@ export const checkForUndefinedRecursiveOps = (generation: ModuleGeneration) => {
         `Symbol ${node.name} declared in RECURSIVE statement but not defined.`,
       ),
     );
-  generation.unresolvedSum -= generation.unresolvedCount[generation.curLevel];
+  recursion.unresolvedSum -= recursion.unresolvedCount[generation.curLevel];
 };
 
 const processSubstitutions = (
@@ -356,6 +360,7 @@ const processSubstitutions = (
     if (targetIndex !== -1) {
       cursor = getExpressionSpan(generation.file, substitution.expression).end + 1;
     }
+    // Deviation from SANY: Generator#generateSubst looks a target up as spelled, so it rejects `<= <- G` for a CONSTANT _ <= _.
     const target = getContextSymbol(instanceeContext, resolveSynonym(substitution.name));
     if (target?.kind !== "OpDecl") {
       generation.addError(
@@ -394,6 +399,8 @@ const processSubstitutions = (
   return substs;
 };
 
+const SUBST_IN_ERROR = "Substitution error, probably due to error \nin module being instantiated.";
+
 export const createSubstIn = (
   generation: ModuleGeneration,
   kind: "SubstIn" | "APSubstIn",
@@ -407,7 +414,7 @@ export const createSubstIn = (
     generation.addError(
       location,
       kind === "SubstIn"
-        ? "Substitution error, probably due to error \nin module being instantiated."
+        ? SUBST_IN_ERROR
         : "Substitution error, probably due to error in module being instantiated.",
     );
   }
@@ -420,6 +427,18 @@ export const createSubstIn = (
     instantiatedModule,
     location,
   };
+};
+
+const substituteBody = (
+  generation: ModuleGeneration,
+  substs: Subst[],
+  body: ExprNode | undefined,
+  instantiatedModule: ModuleNode,
+  location: SanyLocation,
+) => {
+  if (body) return createSubstIn(generation, "SubstIn", substs, body, instantiatedModule, location);
+  generation.addError(location, SUBST_IN_ERROR);
+  return undefined;
 };
 
 export const processModuleDefinition = (
@@ -456,15 +475,8 @@ export const processModuleDefinition = (
             name: qualifiedName,
             params,
             body:
-              substs.length > 0 && symbol.body
-                ? createSubstIn(
-                    generation,
-                    "SubstIn",
-                    substs,
-                    symbol.body,
-                    instanceeModule,
-                    location,
-                  )
+              substs.length > 0
+                ? substituteBody(generation, substs, symbol.body, instanceeModule, location)
                 : symbol.body,
             isLocal: instance.isLocal,
             location,
@@ -581,8 +593,7 @@ export const generateInstance = (
           : reuseSymbol(generation, symbol)
         : copyFrom(
             generation.currentModule,
-            symbol.body &&
-              createSubstIn(generation, "SubstIn", substs, symbol.body, instanceeModule, location),
+            substituteBody(generation, substs, symbol.body, instanceeModule, location),
           );
     generation.currentModule.definitions.push(node);
     setRecursionFields(generation, node);
@@ -678,7 +689,7 @@ export const checkRecursiveSection = (
   location: SourceLocation,
   type: string,
 ) => {
-  if (generation.unresolvedSum === 0) return;
+  if (generation.recursion.unresolvedSum <= 0) return;
   generation.addError(
     getUnitLocation(generation.file, location),
     `${type} may not appear within a recursive definition section.`,

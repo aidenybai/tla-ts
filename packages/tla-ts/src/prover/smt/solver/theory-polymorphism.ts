@@ -1,7 +1,6 @@
-// Ported from Z3 (src/smt/theory_polymorphism.h), MIT license, see z3-license.txt. The port parses
-// no polymorphic axioms, so the theory never has instances to assert. It still assumes a fresh
-// constant whenever formulas were asserted since its last assumption, which takes a fresh name and
-// a Boolean variable as Z3's does.
+// The port parses no polymorphic axioms, so the theory never has instances to assert. It still
+// assumes a fresh constant whenever formulas were asserted since its last assumption, which takes a
+// fresh name and a Boolean variable as Z3's does.
 import { FAMILY_POLY, SORT_BOOL } from "./ast";
 import type { Context } from "./context";
 import { Theory } from "./theory";
@@ -55,5 +54,9 @@ export class TheoryPolymorphism extends Theory {
 
   override shouldResearch(unsatCore: readonly number[]) {
     return unsatCore.includes(this.assumption);
+  }
+
+  override release() {
+    if (this.assumption !== -1) this.manager.decRef(this.assumption);
   }
 }

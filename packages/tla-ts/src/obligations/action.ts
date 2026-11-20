@@ -1,5 +1,3 @@
-// A port of tlapm's Expr.Action.
-
 import { TlapmBugError, TlaProverError } from "../errors";
 import type { Anonymizer } from "./anonymize";
 import { bumpBy, normalizeApply, shift, substituteExpr, type Substitution } from "./substitution";

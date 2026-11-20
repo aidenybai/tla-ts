@@ -1,5 +1,3 @@
-// Ported from Z3 (src/sat/smt/array_solver.h, src/sat/smt/array_solver.cpp,
-// src/sat/smt/array_internalize.cpp), MIT license, see z3-license.txt.
 import { mkArrayDecl } from "../array-decl-plugin";
 import {
   FAMILY_ARRAY,
@@ -34,7 +32,7 @@ export interface AxiomRecord {
   readonly select: Enode | null;
 }
 
-export interface VarData {
+interface VarData {
   isPropUpward: boolean;
   hasDefault: boolean;
   readonly lambdas: Enode[];

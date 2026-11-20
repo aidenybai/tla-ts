@@ -1,5 +1,3 @@
-// Ported from Z3 (src/sat/smt/bv_ackerman.h, src/sat/smt/bv_ackerman.cpp, src/util/dlist.h), MIT
-// license, see z3-license.txt.
 import type { BvInternalize } from "./bv-internalize";
 
 const UINT_MAX = 0xffffffff;

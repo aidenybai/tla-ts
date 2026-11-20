@@ -82,6 +82,33 @@ describe("check with workers matches TLC", () => {
     expect(printed).toEqual(['"start"']);
   });
 
+  it("ranks the strings that constant definitions create before those TLC interns as it creates the checker", async () => {
+    const printed: string[] = [];
+    await tlaTs.check({
+      source:
+        '---- MODULE R1 ----\nEXTENDS TLC, Sequences, Naturals\nVARIABLE x\nS == {"st" \\o "ate", "ac" \\o "tion"}\nT == {"lo" \\o "cation", "na" \\o "me"}\nASSUME PrintT(<<S, T>>)\nASSUME PrintT({"tag" \\o "s", "ta" \\o "g", "dur" \\o "ation"})\nInit == x \\in 0..3\nNext == x\' = (x + 1) % 4\n====',
+      config: "INIT Init\nNEXT Next",
+      workers: 2,
+      onPrint: (text) => printed.push(text),
+    });
+    expect(printed).toEqual([
+      '<<{"state", "action"}, {"location", "name"}>>',
+      '{"tag", "duration", "tags"}',
+    ]);
+  });
+
+  it("ranks the strings that splitting the next-state relation creates before those TLC interns as it creates the checker", async () => {
+    const printed: string[] = [];
+    await tlaTs.check({
+      source:
+        '---- MODULE Q1 ----\nEXTENDS TLC, Naturals, Sequences\nVARIABLE x\nInit == x = 0\nNext == \\E s \\in {"zz" \\o "z"} : x\' = (x + 1) % 2\nASSUME PrintT({"zz" \\o "z", "dur" \\o "ation"})\n====',
+      config: "INIT Init\nNEXT Next",
+      workers: 2,
+      onPrint: (text) => printed.push(text),
+    });
+    expect(printed).toEqual(['{"zzz", "duration"}']);
+  });
+
   it("reports the string the search orders as it checks again on the calling thread", async () => {
     const ordered: string[] = [];
     const result = await tlaTs.check({

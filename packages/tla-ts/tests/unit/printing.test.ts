@@ -72,9 +72,174 @@ describe("printing matches TLC", () => {
     expect(formatValue(result.violation?.trace[0].state.b ?? false)).toBe(text);
   });
 
+  it.each([
+    [
+      "(Print(0, [x \\in {0, 2} |-> -x]))[6] = 0",
+      "In applying the function\n(0 :> 0 @@ 2 :> -2),\nthe first argument is:\n6\nwhich is not in its domain.\n",
+    ],
+    [
+      "LET f == [x \\in {0, 2} |-> -x] IN PrintT({f}) /\\ f[6] = 0",
+      "Attempted to apply function:\n(0 :> 0 @@ 2 :> -2)\nto argument 6, which is not in the domain of the function.",
+    ],
+  ])("prints a copy of a lazy function, but not of a set, in %s", async (expression, message) => {
+    expect((await checkPrinting(`ASSUME ${expression}`)).result.violation?.message).toBe(message);
+  });
+
+  it("evaluates each bound set of a function constructor once", async () => {
+    expect(
+      (await checkPrinting("ASSUME PrintT([m \\in {}, n \\in Print(SUBSET {1, 2}, {1}) |-> 0])"))
+        .printed,
+    ).toEqual(["{{}, {1}, {2}, {1, 2}}  {1}", "<<>>"]);
+  });
+
   it("expands small sets in error messages", async () => {
     expect((await checkPrinting("ASSUME 1 \\in SUBSET {1}")).result.violation?.message).toContain(
       "{{}, {1}}",
+    );
+  });
+
+  it("orders a record's fields before PrintT fails to compare it", async () => {
+    const result = (await checkPrinting("F(s) == s\nASSUME PrintT({[a |-> 1, s |-> 2], 3})"))
+      .result;
+    expect(result.violation?.message).toBe(
+      "Attempted to apply the operator overridden by the Java method\npublic static tlc2.value.impl.Value tlc2.module.TLC.PrintT(tlc2.value.impl.Value),\nbut it produced the following error:\nAttempted to compare integer 3 with non-integer:\n[s |-> 2, a |-> 1]",
+    );
+  });
+
+  it("sorts the records of a constant definition, which TLC normalizes at startup", async () => {
+    const body =
+      "F(a) == a\nR == [b |-> 1, a |-> 2]\nASSUME PrintT(<<ToString(R), ToString(F(R)), ToString([b |-> 1, a |-> 2])>>)";
+    expect((await checkPrinting(body)).printed).toEqual([
+      '<<"[a |-> 2, b |-> 1]", "[a |-> 2, b |-> 1]", "[b |-> 1, a |-> 2]">>',
+    ]);
+  });
+
+  it("keeps the records inside a set sorted once PrintT prints them, as TLC sorts the set it shares in place", async () => {
+    const body = [
+      "yy == 0",
+      "zz == 0",
+      "ASSUME LET S == {[zz |-> 1, yy |-> 2]} IN PrintT(ToString(S)) /\\ PrintT(S) /\\ PrintT(ToString(S))",
+      "ASSUME LET T == <<[zz |-> 1, yy |-> 2]>> IN PrintT(T) /\\ PrintT(ToString(T))",
+      "ASSUME LET U == <<{[zz |-> 1, yy |-> 2]}>> IN PrintT(U) /\\ PrintT(ToString(U))",
+      "ASSUME LET W == {<<[zz |-> 1, yy |-> 2]>>} IN PrintT(W) /\\ PrintT(ToString(W))",
+      "ASSUME LET X == [k \\in {1} |-> {[zz |-> 1, yy |-> 2]}] IN PrintT(X) /\\ PrintT(ToString(X))",
+      "ASSUME LET Y == {[k \\in {1} |-> [zz |-> 1, yy |-> 2]]} IN PrintT(Y) /\\ PrintT(ToString(Y))",
+      "ASSUME LET Z == {[zz |-> 1, yy |-> 2]} IN Print(Z, TRUE) /\\ PrintT(ToString(Z))",
+    ].join("\n");
+    expect((await checkPrinting(body)).printed).toEqual([
+      '"{[zz |-> 1, yy |-> 2]}"',
+      "{[yy |-> 2, zz |-> 1]}",
+      '"{[yy |-> 2, zz |-> 1]}"',
+      "<<[yy |-> 2, zz |-> 1]>>",
+      '"<<[zz |-> 1, yy |-> 2]>>"',
+      "<<{[yy |-> 2, zz |-> 1]}>>",
+      '"<<{[yy |-> 2, zz |-> 1]}>>"',
+      "{<<[yy |-> 2, zz |-> 1]>>}",
+      '"{<<[yy |-> 2, zz |-> 1]>>}"',
+      "<<{[yy |-> 2, zz |-> 1]}>>",
+      '"<<{[yy |-> 2, zz |-> 1]}>>"',
+      "{<<[yy |-> 2, zz |-> 1]>>}",
+      '"{<<[yy |-> 2, zz |-> 1]>>}"',
+      "{[yy |-> 2, zz |-> 1]}  TRUE",
+      '"{[yy |-> 2, zz |-> 1]}"',
+    ]);
+  });
+
+  it.each([
+    ["{F(1), F(2), F(3)}", ["2  0", "1  0", "3  0"]],
+    ["{F(4), F(2), F(1), F(3), F(5)}", ["2  0", "4  0", "1  0", "3  0", "5  0"]],
+    ["{F(k) : k \\in {5, 3, 1, 4, 2}}", ["2  0", "1  0", "3  0", "4  0", "5  0"]],
+  ])(
+    "evaluates the recursive functions of %s in the order TLC's sort compares them",
+    async (set, expected) => {
+      const run = await checkPrinting(
+        `VARIABLE x\nF(c) == LET r[n \\in 0..0] == IF n = 0 THEN Print(c, n) ELSE r[n - 1] IN r\nInit == x \\in ${set}\nNext == UNCHANGED x`,
+        "INIT Init\nNEXT Next",
+      );
+      expect(run.printed).toEqual(expected);
+    },
+  );
+
+  it.each([
+    ["x = (F(2) \\in {F(1), F(3), F(4)})", ["1  1", "2  2", "3  3", "4  4"]],
+    ["x \\in {F(2), F(1)} \\ {F(3)}", ["3  3", "2  2", "1  1"]],
+    ["x \\in {F(1), F(3)} \\cup {F(2)}", ["1  1", "2  2", "3  3"]],
+    ["x \\in {F(k) : k \\in 1..3} \\cup {F(0)}", ["1  1", "0  0", "2  2", "3  3"]],
+    ["x \\in UNION {{F(1)}, {F(2)}}", ["1  1", "2  2"]],
+    ["x = ({F(1), {k \\in SUBSET {1} : k = {1 \\div 0}}} = {})", []],
+  ])(
+    "evaluates the recursive functions of a set in %s as TLC does, which sorts the set only once it needs it sorted",
+    async (init, expected) => {
+      const run = await checkPrinting(
+        `VARIABLE x\nF(c) == LET r[n \\in 0..0] == IF n = 0 THEN Print(c, c) ELSE r[n - 1] IN r\nInit == ${init}\nNext == UNCHANGED x`,
+        "INIT Init\nNEXT Next",
+      );
+      expect(run.printed).toEqual(expected);
+    },
+  );
+
+  it.each([
+    [
+      "x = {F(2), F(1)}",
+      'x\' = x /\\ "a" \\in x',
+      'Attempted to compare string "a" with non-string:\n(0 :> 2)',
+    ],
+    [
+      "x = 0",
+      'x\' = 1 /\\ LET S == {F(2), F(1)} IN Print(S, TRUE) /\\ "a" \\in S',
+      'Attempted to compare string "a" with non-string:\n(0 :> 2)',
+    ],
+    ["x = {1, 2}", 'x\' = x /\\ "a" \\in x', 'Attempted to compare string "a" with non-string:\n2'],
+    [
+      "x = 0",
+      'x\' = 1 /\\ LET S == {[a |-> 2], [a |-> 1]} IN PrintT(S) /\\ "a" \\in S',
+      'Attempted to compare string "a" with non-string:\n[a |-> 2]',
+    ],
+    [
+      "x = 0",
+      'x\' = 1 /\\ "a" \\in {2, 1}',
+      'Attempted to check equality of integer 2 with non-integer:\n"a"',
+    ],
+    [
+      "x = {F(2), F(1)}",
+      'x\' = x /\\ x \\ {"a"} = {}',
+      'Attempted to check equality of string "a" with non-string:\n(0 :> 1)',
+    ],
+    [
+      "x = {[a |-> 2], [a |-> 1]}",
+      'x\' = x /\\ x \\ {"a"} = {}',
+      'Attempted to check equality of string "a" with non-string:\n[a |-> 1]',
+    ],
+    [
+      "x = 0",
+      'x\' = 1 /\\ {[a |-> 2], [a |-> 1]} \\ {"a"} = {}',
+      'Attempted to check equality of string "a" with non-string:\n[a |-> 2]',
+    ],
+    [
+      "x = <<{}>>",
+      "x' = [x EXCEPT ![1] = {2, 1}] /\\ \"a\" \\in x'[1]",
+      'Attempted to check equality of integer 2 with non-integer:\n"a"',
+    ],
+  ])(
+    "searches the set in %s, %s as TLC does, which sorts a set literal in place as it fingerprints or prints it",
+    async (init, next, message) => {
+      const run = await checkPrinting(
+        `VARIABLE x\nF(c) == LET r[n \\in 0..0] == IF n = 0 THEN c ELSE r[n - 1] IN r\nInit == ${init}\nNext == ${next}`,
+        "INIT Init\nNEXT Next",
+      );
+      expect(run.result.failure?.message).toBe(
+        `TLC threw an unexpected exception.\nThis was probably caused by an error in the spec or model.\nSee the User Output or TLC Console for clues to what happened.\nThe exception was a java.lang.RuntimeException\n: ${message}`,
+      );
+    },
+  );
+
+  it("searches a set literal that EXCEPT stores as sorted once TLC fingerprints the function", async () => {
+    const run = await checkPrinting(
+      'VARIABLE x\nInit == x = <<{}>>\nNext == x\' = [x EXCEPT ![1] = {2, 1}]\nInv == "a" \\notin x[1]',
+      "INIT Init\nNEXT Next\nINVARIANT Inv",
+    );
+    expect(run.result.failure?.message).toBe(
+      'Evaluating invariant Inv failed.\nAttempted to compare string "a" with non-string:\n2',
     );
   });
 });
@@ -106,6 +271,29 @@ describe("line breaking matches TLC's pretty printer", () => {
     ],
   ])("prints %s across lines", async (expression, text) => {
     expect((await checkPrinting(`ASSUME PrintT(${expression})`)).printed).toEqual([text]);
+  });
+
+  const FUNCTION_LINES = Array.from(
+    { length: 9 },
+    (_value, index) => `${index + 1} :> ${index + 1}000`,
+  );
+  const FUNCTION_TEXT = `( 0 :> 0 @@\n  ${FUNCTION_LINES.join(" @@\n  ")} )`;
+
+  it.each([
+    [
+      "SortSeq([a : {1, 2}, b : BOOLEAN], LAMBDA u, w : TRUE) = <<>>",
+      "The first argument of SortSeq should be a natural number, but instead it is:\n{ [a |-> 1, b |-> FALSE],\n  [a |-> 1, b |-> TRUE],\n  [a |-> 2, b |-> FALSE],\n  [a |-> 2, b |-> TRUE] }",
+    ],
+    [
+      "[n \\in 0..9 |-> n * 1000] = {}",
+      `Attempted to check equality of the function ${FUNCTION_TEXT} with the value:\n{}`,
+    ],
+    [
+      "1 \\in [n \\in 0..9 |-> n * 1000]",
+      `Attempted to check if the value:\n1\nis an element of the function ${FUNCTION_TEXT}`,
+    ],
+  ])("breaks the value in the error of %s", async (expression, message) => {
+    expect((await checkPrinting(`ASSUME ${expression}`)).result.violation?.message).toBe(message);
   });
 
   it("breaks the value in a failed Assert", async () => {
@@ -148,6 +336,8 @@ describe("functions over infinite domains print like TLC", () => {
       "f[n \\in Nat] == IF n = 0 THEN 0 ELSE f[n - 1]\nASSUME PrintT(f)",
       "[n \\in Nat |-> <expression line 3, col 17 to line 3, col 45 of module M>]",
     ],
+    ["ASSUME PrintT([n \\in Nat |-> 100])", "[n \\in Nat |-> <expression 100>]"],
+    ["ASSUME PrintT([n \\in Nat |-> \\h1F])", "[n \\in Nat |-> <expression \\h1F>]"],
     [
       "ASSUME PrintT(ToString([n \\in Nat \\ {1} |-> n]))",
       '"[n \\\\in Nat \\\\ {1} |-> <expression line 3, col 45 to line 3, col 45 of module M>]"',

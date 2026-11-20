@@ -1,8 +1,6 @@
-// Ported from Z3 (src/nlsat/nlsat_transcendentals.h, src/nlsat/nlsat_transcendentals.cpp), MIT
-// license, see z3-license.txt.
 import { getLcm, Rational } from "../rational";
 import { Anum } from "./algebraic";
-import { NULL_VAR } from "./polynomial";
+import { NULL_VAR, PolynomialRef } from "./polynomial";
 import type { NlsatSolver } from "./solver";
 import {
   getAtanTaylorBracket,
@@ -51,8 +49,11 @@ export class NlsatTranscendentals {
   }
 
   private mkBoundLiteral(variable: number, kind: "LT" | "GT", bound: Rational) {
-    const polynomial = this.solver.pm.mkLinear([bound.den], [variable], -bound.num);
-    return this.solver.mkIneqLiteral(kind, [polynomial], [false]);
+    const p = new PolynomialRef(this.solver.pm);
+    p.set(this.solver.pm.mkLinear([bound.den], [variable], -bound.num));
+    const literal = this.solver.mkIneqLiteral(kind, [p.get()], [false]);
+    p.reset();
+    return literal;
   }
 
   // first * firstCoeff + second * secondCoeff kind bound.
@@ -65,12 +66,17 @@ export class NlsatTranscendentals {
     bound: Rational,
   ) {
     const den = Rational.of(getLcm(firstCoeff.den, getLcm(secondCoeff.den, bound.den)));
-    const polynomial = this.solver.pm.mkLinear(
-      [firstCoeff.mul(den).num, secondCoeff.mul(den).num],
-      [first, second],
-      bound.mul(den).neg().num,
+    const p = new PolynomialRef(this.solver.pm);
+    p.set(
+      this.solver.pm.mkLinear(
+        [firstCoeff.mul(den).num, secondCoeff.mul(den).num],
+        [first, second],
+        bound.mul(den).neg().num,
+      ),
     );
-    return this.solver.mkIneqLiteral(kind, [polynomial], [false]);
+    const literal = this.solver.mkIneqLiteral(kind, [p.get()], [false]);
+    p.reset();
+    return literal;
   }
 
   private mkClause(literals: readonly number[]) {
@@ -162,16 +168,32 @@ export class NlsatTranscendentals {
 
   private addIdentityAxiom(kind: "sin" | "sinh" | "tanh", first: number, second: number) {
     const pm = this.solver.pm;
-    const firstSquare = pm.mul(pm.mkVar(first), pm.mkVar(first));
-    const secondSquare = pm.mul(pm.mkVar(second), pm.mkVar(second));
-    const one = pm.mkConst(1n);
-    const equation =
+    const v1 = new PolynomialRef(pm);
+    const v2 = new PolynomialRef(pm);
+    const v1sq = new PolynomialRef(pm);
+    const v2sq = new PolynomialRef(pm);
+    const eq = new PolynomialRef(pm);
+    const product = new PolynomialRef(pm);
+    const difference = new PolynomialRef(pm);
+    v1.set(pm.mkVar(first));
+    v2.set(pm.mkVar(second));
+    v1sq.set(pm.mul(v1.get(), v1.get()));
+    v2sq.set(pm.mul(v2.get(), v2.get()));
+    if (kind === "tanh") product.set(pm.mul(v1sq.get(), v2sq.get()));
+    difference.set(
       kind === "sin"
-        ? pm.sub(pm.add(firstSquare, secondSquare), one)
-        : kind === "sinh"
-          ? pm.sub(pm.sub(firstSquare, secondSquare), one)
-          : pm.sub(pm.sub(firstSquare, pm.mul(firstSquare, secondSquare)), one);
-    this.mkClause([this.solver.mkIneqLiteral("EQ", [equation], [false])]);
+        ? pm.add(v1sq.get(), v2sq.get())
+        : pm.sub(v1sq.get(), kind === "sinh" ? v2sq.get() : product.get()),
+    );
+    eq.set(pm.sub(difference.get(), pm.one));
+    difference.reset();
+    product.reset();
+    this.mkClause([this.solver.mkIneqLiteral("EQ", [eq.get()], [false])]);
+    eq.reset();
+    v2sq.reset();
+    v1sq.reset();
+    v2.reset();
+    v1.reset();
   }
 
   // Exact Taylor brackets: exp, log and atan are increasing where their series apply, and the

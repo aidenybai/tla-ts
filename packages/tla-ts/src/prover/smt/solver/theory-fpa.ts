@@ -1,4 +1,3 @@
-// Ported from Z3 (src/smt/theory_fpa.cpp), MIT license, see z3-license.txt.
 import { SmtInvariantError } from "../../../errors";
 import {
   type AstManager,
@@ -49,7 +48,7 @@ const CONVERTED_OPS = new Set([
 export const mkFpaConversion = (manager: AstManager) => {
   const theoryRewriter = new Rewriter(manager, {
     isEliminatingAnd: false,
-    arith: { ...TACTIC_ARITH_OPTIONS, isArithIneqLhs: true },
+    arith: { ...TACTIC_ARITH_OPTIONS, isArithLhs: true },
     isRewritingPatterns: true,
   });
   const simp = new Rewriter(manager, {

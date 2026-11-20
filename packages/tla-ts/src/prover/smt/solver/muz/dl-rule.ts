@@ -1,5 +1,3 @@
-// Ported from Z3 (src/muz/base/dl_rule.cpp, src/muz/base/bind_variables.cpp), MIT license, see
-// z3-license.txt.
 import { SmtTacticError, SmtUnsupportedError } from "../../../../errors";
 import {
   type AstManager,
@@ -49,7 +47,7 @@ export class Rule {
     readonly isNegated: boolean[],
     readonly uninterpretedSize: number,
     readonly positiveSize: number,
-    readonly name: string,
+    readonly name: string | undefined,
   ) {}
 
   getDecl(manager: AstManager) {
@@ -66,9 +64,8 @@ export class Rule {
     return false;
   }
 
-  // symbol::str of the name, where the empty name is the null symbol.
   getNameText() {
-    return this.name === "" ? "<null>" : this.name;
+    return this.name ?? "<null>";
   }
 
   display(context: DatalogContext) {
@@ -227,20 +224,20 @@ export class RuleManager {
     return expr;
   }
 
-  mkRule(fml: number, rules: RuleSet, name = "") {
+  mkRule(fml: number, rules: RuleSet, name?: string) {
     const bound = this.context.bindVars(fml, true);
     if (this.manager.hasLabelFlags[bound]) throw new SmtUnsupportedError("labels in Horn rules");
     this.mkRuleCore(bound, rules, name);
   }
 
-  private mkRuleCore(fml: number, rules: RuleSet, name: string) {
+  private mkRuleCore(fml: number, rules: RuleSet, name: string | undefined) {
     this.hnf.setName(name);
     const fmls = this.hnf.apply(fml);
     for (const predicate of this.hnf.freshPredicates) this.context.registerPredicate(predicate);
     for (const horn of fmls) this.mkHornRule(horn, rules, name);
   }
 
-  private mkHornRule(fml: number, rules: RuleSet, name: string) {
+  private mkHornRule(fml: number, rules: RuleSet, name: string | undefined) {
     const manager = this.manager;
     const body: number[] = [];
     const extracted = this.extractHorn(fml, body);
@@ -309,7 +306,7 @@ export class RuleManager {
     head: number,
     tail: readonly number[],
     isNegated: readonly boolean[],
-    name = "",
+    name?: string,
     isNormalizing = true,
   ) {
     const manager = this.manager;
@@ -384,7 +381,7 @@ export class RuleManager {
     return mkForall(
       manager,
       sorts,
-      sorts.map((_, index) => getVarName(index)),
+      sorts.map((_value, index) => getVarName(index)),
       matrix,
     );
   }
@@ -481,7 +478,7 @@ export class RuleManager {
     const preQuant = this.pin(varSubst.apply(unboundTail, subst));
     varSubst.release();
     sorts.reverse();
-    const names = sorts.map((_, index) => String(sorts.length - 1 - index));
+    const names = sorts.map((_value, index) => String(sorts.length - 1 - index));
     const quantified = this.pin(mkExists(manager, sorts, names, preQuant));
     let fixed = isTryingQe ? this.pin(simplifyQuantifiers(manager, quantified)) : quantified;
     if (manager.kinds[fixed] !== KIND_APP) fixed = this.pin(manager.mkEq(fixed, manager.trueExpr));

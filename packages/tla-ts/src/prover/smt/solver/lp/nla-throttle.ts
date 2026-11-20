@@ -1,4 +1,3 @@
-// Ported from Z3 (src/math/lp/nla_throttle.h, src/math/lp/nla_throttle.cpp), MIT license, see z3-license.txt.
 import type { Rational } from "../rational";
 import type { LarSolver } from "./lar-solver";
 import type { LpStats } from "./lp-settings";

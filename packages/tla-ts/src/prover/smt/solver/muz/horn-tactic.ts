@@ -1,5 +1,3 @@
-// Ported from Z3 (src/muz/fp/horn_tactic.cpp, src/muz/fp/dl_register_engine.cpp), MIT license,
-// see z3-license.txt.
 import { SmtTacticError, SmtUnsupportedError } from "../../../../errors";
 import {
   type AstManager,
@@ -19,7 +17,7 @@ import { L_FALSE, L_TRUE } from "../lbool";
 import { RefVector } from "../ref-vector";
 import type { RewriterOptions } from "../rewriter";
 import { getFreeVarSorts } from "../var-subst";
-import { DatalogContext, ENGINE_SPACER, FpParams } from "./dl-context";
+import { DatalogContext, ENGINE_DATALOG, ENGINE_SPACER, FpParams } from "./dl-context";
 import { mkForall, mkPp } from "./dl-rule";
 import { SpacerDlInterface } from "./spacer-dl-interface";
 
@@ -29,6 +27,19 @@ export const createDatalogContext = (
   rewriterOptions: RewriterOptions,
 ) =>
   new DatalogContext(manager, new FpParams(parameters), rewriterOptions, (context, engine) => {
+    if (engine === ENGINE_DATALOG)
+      return {
+        // rel_context::query checks the rules with the query's before the saturation the port lacks.
+        query: (query) => {
+          context.ruleManager.mkQuery(query, context.getRules());
+          context.ensureClosed();
+          context.getRules();
+          throw new SmtUnsupportedError("the datalog engine");
+        },
+        getModel: () => {
+          throw new SmtUnsupportedError("the datalog engine");
+        },
+      };
     if (engine !== ENGINE_SPACER) throw new SmtUnsupportedError("the bmc engine");
     return new SpacerDlInterface(context);
   });
@@ -140,7 +151,7 @@ class HornTactic {
     );
     if (sorts.length === 0) return formula;
     sorts.reverse();
-    const names = sorts.map((_, index) => String(sorts.length - index - 1));
+    const names = sorts.map((_value, index) => String(sorts.length - index - 1));
     const result = mkForall(manager, sorts, names, formula);
     manager.incRef(result);
     return result;
@@ -183,11 +194,15 @@ class HornTactic {
       goal.reset();
       // model2model_converter: the interpretations go to the goal's model in table order.
       const found = context.getModel();
-      goal.addModelConversion((model) => {
-        for (const [decl, value] of found.constInterps) model.registerConst(decl, value);
-        for (const [decl, interp] of found.funcInterps) model.registerFunc(decl, interp.copy());
-        return model;
-      });
+      found.incRef();
+      goal.addModelConversion(
+        (model) => {
+          for (const [decl, value] of found.constInterps) model.registerConst(decl, value);
+          for (const [decl, interp] of found.funcInterps) model.registerFunc(decl, interp.copy());
+          return model;
+        },
+        () => found.decRef(),
+      );
     }
     return [goal];
   }

@@ -1,4 +1,3 @@
-// Ported from Z3 (src/math/simplex/model_based_opt.cpp), MIT license, see z3-license.txt.
 import { SmtInvariantError } from "../../../errors";
 import { getEuclideanDiv, getEuclideanMod, getGcd, getLcm, Rational } from "./rational";
 
@@ -29,7 +28,7 @@ export const DEF_ADD = 0;
 export const DEF_MUL = 1;
 export const DEF_DIV = 2;
 export const DEF_CONST = 3;
-export const DEF_VAR = 4;
+const DEF_VAR = 4;
 
 interface AddDef {
   readonly kind: typeof DEF_ADD;

@@ -1,4 +1,3 @@
-// Ported from Z3 (src/tactic/arith/normalize_bounds_tactic.cpp), MIT license, see z3-license.txt.
 import { type AstManager, OP_ADD, SORT_INT } from "./ast";
 import { BoundManager } from "./bound-manager";
 import type { Definition, Goal } from "./goal";
@@ -44,11 +43,11 @@ export const normalizeBounds = (
   rewriter.setSubstitution(substitution);
   for (let index = 0; !goal.isInconsistent && index < goal.forms.size; index++) {
     const rewritten = rewriter.rewrite(goal.forms.items[index]);
-    goal.update(index, rewritten);
+    goal.update(index, rewritten, goal.getDependency(index));
     manager.decRef(rewritten);
   }
   rewriter.release();
-  goal.addDefinitions(definitions);
+  if (goal.isModelsEnabled) goal.addDefinitions(definitions);
   terms.reset();
   goal.depth++;
 };

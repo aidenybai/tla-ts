@@ -1,4 +1,3 @@
-// Ported from Z3 (src/tactic/arith/fix_dl_var_tactic.cpp), MIT license, see z3-license.txt.
 import {
   type AstManager,
   FAMILY_ARITH,
@@ -98,8 +97,7 @@ class TargetFinder {
     if (this.isArithApp(expr)) return this.processArith(expr, false);
     this.todo.push(expr);
     this.visited.add(expr);
-    while (this.todo.length > 0) {
-      const current = this.todo.pop() as number;
+    for (let current = this.todo.pop(); current !== undefined; current = this.todo.pop()) {
       const isProcessed =
         manager.kinds[current] !== KIND_APP
           ? false
@@ -134,7 +132,7 @@ export const fixDlVar = (manager: AstManager, goal: Goal, options: RewriterOptio
   if (variable === -1) return;
   const zero = manager.mkNumeralOfSort(Rational.zero, manager.sorts[variable]);
   manager.incRef(zero);
-  goal.addDefinitions([{ decl: manager.decls[variable], def: zero }]);
+  if (goal.isModelsEnabled) goal.addDefinitions([{ decl: manager.decls[variable], def: zero }]);
   const rewriter = new Rewriter(manager, options);
   rewriter.setSubstitution(new Map([[variable, zero]]));
   const size = goal.forms.size;
