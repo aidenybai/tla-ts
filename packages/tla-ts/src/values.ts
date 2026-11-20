@@ -2010,31 +2010,23 @@ const listUnionLikeTlc = (union: SetOperationValue) => {
 
 export const getNormalizedSetElements = (value: Value, isBounded: boolean) => {
   if (
-    setTrace.sets &&
-    isBounded &&
-    typeof value === "object" &&
-    (value.kind === "FunctionSet" || value.kind === "RecordSet" || value.kind === "ProductSet") &&
-    !value.enumerated
-  ) {
-    // TLC's toSetEnum frames [S -> T], [a : S] and S \X T only as their elements() opens them.
-    openOperandStream(value, false);
-    const elements = enumerateSet(value);
-    const set = value.kind === "RecordSet" ? createSet(elements) : createSortedSet(elements);
-    value.enumerated = set;
-    return set.elements;
-  }
-  if (
     typeof value !== "object" ||
-    (value.kind !== "SetOperation" && value.kind !== "Union") ||
+    (value.kind !== "SetOperation" &&
+      value.kind !== "Union" &&
+      (!isBounded ||
+        (value.kind !== "FunctionSet" &&
+          value.kind !== "RecordSet" &&
+          value.kind !== "ProductSet"))) ||
     value.enumerated
   ) {
     return isBounded ? toFiniteSet(value).elements : getUnboundedElements(value);
   }
   // TLC frames the set as its elements() opens the stream, but not as toSetEnum collects it.
   if (setTrace.sets) openOperandStream(value, false);
-  const elements = value.kind === "Union" ? enumerateSet(value) : enumerateSetOperation(value);
-  value.enumerated = createSortedSet(elements);
-  return elements;
+  const elements = enumerateSet(value);
+  const set = value.kind === "RecordSet" ? createSet(elements) : createSortedSet(elements);
+  value.enumerated = set;
+  return set.elements;
 };
 
 export const someStreamedElement = (value: Value, visit: (element: Value) => boolean): boolean => {
