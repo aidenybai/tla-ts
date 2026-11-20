@@ -300,10 +300,15 @@ DateUTCSetters ==
 \* A setter converts its first argument and the others present, and then returns NaN for a NaN
 \* time value, except setFullYear and setUTCFullYear, which start from +0. The new time keeps the
 \* fields no argument replaces: MakeDay of the old year, month, and date is Day(t), and MakeTime of
-\* the old hours to milliseconds is TimeWithinDay(t), as the spec's steps use.
+\* the old hours to milliseconds is TimeWithinDay(t), as the spec's steps use. V8 reads the time
+\* value of setFullYear and setUTCFullYear after it converts the year, where the spec reads it first.
 DateSet(s, this, fields, args, isUTC) ==
-  LET t == ThisTimeValue(s, this) IN IF IsAbrupt(t) THEN t ELSE
-  LET n == DateToNumbers(t.s, DateArgs(args, Len(fields)), <<>>) IN IF IsAbrupt(n) THEN n ELSE
+  LET first == ThisTimeValue(s, this) IN IF IsAbrupt(first) THEN first ELSE
+  LET year == IF fields[1] = "year" THEN DateToNumbers(first.s, DateArgs(args, 1), <<>>) ELSE Ok(first.s, <<>>) IN
+  IF IsAbrupt(year) THEN year ELSE
+  LET t == IF fields[1] = "year" THEN ThisTimeValue(year.s, this) ELSE first
+      n == DateToNumbers(year.s, SubSeq(DateArgs(args, Len(fields)), Len(Val(year)) + 1, Len(DateArgs(args, Len(fields)))), Val(year))
+  IN IF IsAbrupt(n) THEN n ELSE
   LET tv == Val(t).value IN
   IF NumIsNaN(tv) /\ fields[1] # "year" THEN Ok(n.s, Num(NaN))
   ELSE

@@ -16830,13 +16830,11 @@
       "runs": [
         {
           "name": "rejects the time value that the conversions leave, as Node 24 reads it",
-          "thrown": "seen NaN,259200000,60000,60000,-62130240000000,-62130240000000",
-          "wrong": "conformance: a Date setter converts its arguments in another order than V8"
+          "thrown": "seen NaN,259200000,60000,60000,-62130240000000,-62130240000000"
         },
         {
           "name": "agrees with Node",
-          "replace": ["262920000,262920000,NaN,NaN", "NaN,259200000,60000,60000"],
-          "wrong": "conformance: a Date setter converts its arguments in another order than V8"
+          "replace": ["262920000,262920000,NaN,NaN", "NaN,259200000,60000,60000"]
         }
       ]
     },
