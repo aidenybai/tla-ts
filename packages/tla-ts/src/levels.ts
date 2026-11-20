@@ -107,7 +107,8 @@ interface FoundOriginal {
 export interface LetInstance extends InstanceSubstitutes {
   copies: Map<string, InstanceCopy>;
   getArgParams: () => Set<string>;
-  deferredSubstitutes: Definition[];
+  getSubstitutionDefinitions: () => Definition[];
+  substitutesCheck: InstanceLevelCheck["substitutesCheck"];
 }
 
 export interface InstanceLevels {
@@ -1061,9 +1062,18 @@ export const createLevelAnalyzer = (context: LevelContext) => {
         checkRecursiveSection(section.members),
       );
     }
-    const deferred = new Set(
-      entered.instances?.flatMap((instance) => instance.deferredSubstitutes),
+    const substituted = new Map(
+      entered.instances?.flatMap((instance) =>
+        instance
+          .getSubstitutionDefinitions()
+          .map((definition): [Definition, LetInstance] => [definition, instance]),
+      ),
     );
+    const analyzeSubstitutes = (instance: LetInstance) =>
+      instance
+        .getSubstitutionDefinitions()
+        .map((definition) => analyzeDefinition(definition, entered.inner));
+    const checked = new Set<LetInstance>();
     const ownDefinitions = (
       entered.instanceUnits?.length
         ? [
@@ -1076,17 +1086,19 @@ export const createLevelAnalyzer = (context: LevelContext) => {
             .toSorted((left, right) => compareLocations(left.location, right.location))
             .flatMap((unit) => unit.definitions)
         : expression.definitions
-    )
-      .filter((definition) => !deferred.has(definition))
-      .map((definition) => analyzeDefinition(definition, entered.inner));
+    ).flatMap((definition) => {
+      const instance = substituted.get(definition);
+      if (!instance) return [analyzeDefinition(definition, entered.inner)];
+      if (instance.substitutesCheck === "Instance" || checked.has(instance)) return [];
+      checked.add(instance);
+      return analyzeSubstitutes(instance);
+    });
     const body = analyze(expression.body, entered.inner);
     const instancer = context.module;
     const instanceChecks = (expression.instances ?? []).map((instance) => {
       const letInstance = context.instances.getLetInstance(instance);
       const substitutes =
-        letInstance?.deferredSubstitutes.map((definition) =>
-          analyzeDefinition(definition, entered.inner),
-        ) ?? [];
+        letInstance?.substitutesCheck === "Instance" ? analyzeSubstitutes(letInstance) : [];
       if (instancer === undefined) return { substitutes, errors: [] };
       const instanceSubstitutes = letInstance
         ? undefined

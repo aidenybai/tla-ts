@@ -1971,6 +1971,118 @@ describe("level checking matches SANY", () => {
     },
   );
 
+  const getInstantiationError = (name: string, maximum: number) =>
+    `Level error in instantiating module 'P':\nThe level of the expression or operator substituted for '${name}' \nmust be at most ${maximum}.`;
+  it.each([
+    [
+      "CONSTANT c\nVARIABLE v\nB == c",
+      "c <- 1, v <- x",
+      "D == LET D1 == (x')'\n          K == INSTANCE P WITH v <- (x')', c <- (x'')'\n          D2 == (x')'\n      IN TRUE",
+      [
+        ["line 10, col 16 to line 10, col 20", primed],
+        ["line 11, col 37 to line 11, col 41", primed],
+        ["line 11, col 50 to line 11, col 52", primed],
+        ["line 12, col 17 to line 12, col 21", primed],
+      ],
+    ],
+    [
+      "CONSTANT c\nVARIABLE v",
+      "c <- 1, v <- x",
+      "D == LET D1 == (x')'\n          K == INSTANCE P WITH v <- (x')', c <- (x'')'\n          D2 == (x')'\n      IN TRUE",
+      [
+        ["line 9, col 16 to line 9, col 20", primed],
+        ["line 11, col 17 to line 11, col 21", primed],
+        ["line 10, col 37 to line 10, col 41", primed],
+        ["line 10, col 50 to line 10, col 52", primed],
+      ],
+    ],
+    [
+      "CONSTANT c\nVARIABLE v\nB == c",
+      "c <- 1, v <- x",
+      "D1 == (x')'\nK == INSTANCE P WITH v <- (x')', c <- (x'')'\nD2 == (x')'",
+      [
+        ["line 10, col 7 to line 10, col 11", primed],
+        ["line 11, col 27 to line 11, col 31", primed],
+        ["line 11, col 40 to line 11, col 42", primed],
+        ["line 12, col 7 to line 12, col 11", primed],
+      ],
+    ],
+    [
+      "CONSTANT c\nVARIABLE v\nB == c",
+      "c <- 1, v <- x",
+      "VARIABLE v\nK == INSTANCE P WITH c <- (x'')', v <- (x')'",
+      [
+        ["line 11, col 40 to line 11, col 44", primed],
+        ["line 11, col 28 to line 11, col 30", primed],
+      ],
+    ],
+    [
+      "CONSTANT c\nVARIABLE v\nCONSTANT d\nB == c",
+      "c <- 1, v <- x, d <- 1",
+      "K == INSTANCE P WITH v <- x', d <- x', c <- x'",
+      [
+        ["line 11, col 1 to line 11, col 46", getInstantiationError("v", 1)],
+        ["line 11, col 1 to line 11, col 46", getInstantiationError("d", 0)],
+        ["line 11, col 1 to line 11, col 46", getInstantiationError("c", 0)],
+      ],
+    ],
+    [
+      "CONSTANT c\nVARIABLE v\nCONSTANT d\nB == c",
+      "c <- 1, v <- x, d <- 1",
+      "VARIABLE c\nK == INSTANCE P WITH v <- x', d <- x'",
+      [
+        ["line 12, col 1 to line 12, col 37", getInstantiationError("c", 0)],
+        ["line 12, col 1 to line 12, col 37", getInstantiationError("v", 1)],
+        ["line 12, col 1 to line 12, col 37", getInstantiationError("d", 0)],
+      ],
+    ],
+    [
+      "CONSTANT c\nVARIABLE v\nCONSTANT d\nB == c",
+      "c <- 1, v <- x, d <- 1",
+      "VARIABLE d\nK == INSTANCE P WITH v <- x', c <- x'",
+      [
+        ["line 12, col 1 to line 12, col 37", getInstantiationError("d", 0)],
+        ["line 12, col 1 to line 12, col 37", getInstantiationError("v", 1)],
+        ["line 12, col 1 to line 12, col 37", getInstantiationError("c", 0)],
+      ],
+    ],
+    [
+      "CONSTANT c\nVARIABLE v\nCONSTANT d",
+      "c <- 1, v <- x, d <- 1",
+      "D == LET D1 == (x')'\n          K == INSTANCE P WITH v <- x', d <- x', c <- x'\n          D2 == (x')'\n      IN TRUE",
+      [
+        ["line 10, col 16 to line 10, col 20", primed],
+        ["line 12, col 17 to line 12, col 21", primed],
+        ["line 11, col 11 to line 11, col 56", getInstantiationError("v", 1)],
+        ["line 11, col 11 to line 11, col 56", getInstantiationError("d", 0)],
+        ["line 11, col 11 to line 11, col 56", getInstantiationError("c", 0)],
+      ],
+    ],
+    [
+      "CONSTANT c\nVARIABLE v\nCONSTANT d\nB == c",
+      "c <- 1, v <- x, d <- 1",
+      "K(d) == INSTANCE P WITH v <- x', c <- x'",
+      [
+        ["line 11, col 1 to line 11, col 40", getInstantiationError("v", 1)],
+        ["line 11, col 1 to line 11, col 40", getInstantiationError("c", 0)],
+      ],
+    ],
+  ])(
+    "level-checks an instance's substitutes in SANY's order, the ones the instancer resolves first and then the others as written: %s",
+    async (instancee, substitution, definitions, errors) => {
+      await expect(
+        check({
+          source: `---- MODULE M ----\nEXTENDS Naturals\nVARIABLE x\n---- MODULE P ----\n${instancee}\n====\nN == INSTANCE P WITH ${substitution}\n${definitions}\nInit == x = 0\nNext == x' = x\n====`,
+          config: "INIT Init\nNEXT Next",
+        }),
+      ).rejects.toThrow(
+        createSanyError(
+          errors.map((error) => ({ location: `${error[0]} of module M`, message: error[1] })),
+        ),
+      );
+    },
+  );
+
   it("checks a label selected from a step's statement, as SANY does", async () => {
     const exceeds = "The level of argument 1 exceeds the maximum level allowed by the operator.";
     await expect(

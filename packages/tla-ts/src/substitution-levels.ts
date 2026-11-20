@@ -212,9 +212,10 @@ export const createInstanceChecker = (
         maximumLevel: 1,
       })),
     ];
-    const substituted = declarations.flatMap((declaration): Substituted[] => {
-      const expression = check.substitutions.get(declaration.name);
-      if (!expression) return [];
+    const substituted = [...check.substitutions].flatMap((entry): Substituted[] => {
+      const declaration = declarations.find((item) => item.name === entry[0]);
+      if (!declaration) return [];
+      const expression = entry[1];
       if (declaration.arity === 0) {
         const data = analyzer.analyze(expression, check.scope);
         return [

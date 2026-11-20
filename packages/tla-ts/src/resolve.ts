@@ -2822,7 +2822,14 @@ const checkSubstitutions = (
         });
       }
     });
-  return substitutions;
+  // SANY orders the declarations the instancer resolves first, then the other explicit substitutions as written.
+  const getOrder = (name: string) => {
+    const index = implicit.findIndex((item) => item.declaration.name === name);
+    return index === -1 ? implicit.length : index;
+  };
+  return new Map(
+    [...substitutions].toSorted((left, right) => getOrder(left[0]) - getOrder(right[0])),
+  );
 };
 
 const resolveInstance = (instance: Instance, scope: LocalName | undefined, unit: Unit) => {

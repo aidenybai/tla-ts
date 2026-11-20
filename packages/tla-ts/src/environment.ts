@@ -371,6 +371,17 @@ export const createEnvironment = (
       name,
       location: instance.location,
     };
+  const getSubstitutedDeclarations = <Item extends Declaration>(
+    instance: Instance,
+    declarations: Item[],
+  ) => {
+    const names = [...(resolvedSubstitutions.get(instance)?.keys() ?? [])];
+    const getOrder = (declaration: Item) => {
+      const index = names.indexOf(declaration.name);
+      return index === -1 ? names.length : index;
+    };
+    return declarations.toSorted((left, right) => getOrder(left) - getOrder(right));
+  };
   const createInstanceCopy = (
     sourceKey: string,
     module: string,
@@ -385,7 +396,7 @@ export const createEnvironment = (
       linked && {
         params: instance.params,
         substitutions: new Map(
-          linked.declarations.map((declaration) => [
+          getSubstitutedDeclarations(instance, linked.declarations).map((declaration) => [
             declaration.key,
             getInstanceSubstitute(instance, declaration.name),
           ]),
@@ -428,7 +439,7 @@ export const createEnvironment = (
           instancer,
           scope,
           substitutions: new Map(
-            linked.declarations.map((declaration) => [
+            getSubstitutedDeclarations(instance, linked.declarations).map((declaration) => [
               declaration.name,
               getInstanceSubstitute(instance, declaration.name),
             ]),
@@ -754,10 +765,12 @@ export const createEnvironment = (
     const substitutes = {
       params,
       substitutions: new Map(
-        declarations.flatMap((declaration): [string, Expression][] => {
-          const replacement = replacements.get(declaration.name);
-          return replacement ? [[declaration.key, replacement]] : [];
-        }),
+        getSubstitutedDeclarations(instance, declarations).flatMap(
+          (declaration): [string, Expression][] => {
+            const replacement = replacements.get(declaration.name);
+            return replacement ? [[declaration.key, replacement]] : [];
+          },
+        ),
       ),
     };
     instanceChecks.push({
@@ -1146,8 +1159,12 @@ export const createEnvironment = (
           declarations.map((declaration) => [declaration.key, getReplacement(declaration)]),
         ),
         getArgParams: () => instanceLevels.getArgParams(instance.module),
-        deferredSubstitutes:
-          getSubstitutesCheck(linked.exported) === "Instance" ? substitutionDefinitions : [],
+        // Names resolve after the expansion, and with them the order of the substitutions.
+        getSubstitutionDefinitions: () =>
+          getSubstitutedDeclarations(instance, declarations).map(
+            (declaration) => substitutionDefinitions[declarations.indexOf(declaration)],
+          ),
+        substitutesCheck: getSubstitutesCheck(linked.exported),
       });
     }
     return [...substitutionDefinitions, ...copies, ...exported];
