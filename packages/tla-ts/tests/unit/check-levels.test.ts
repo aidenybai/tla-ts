@@ -998,6 +998,43 @@ describe("level checking matches SANY", () => {
     );
   });
 
+  it("reports a level error inside a theorem where a definition before it selects it, as SANY does", async () => {
+    await expect(
+      check({
+        source:
+          "---- MODULE M ----\nVARIABLE x\nB == \\E b \\in {x'} : b\nTHEOREM T == t :: (B /\\ [](x = 1))\nD == T!t /\\ (x' = 1 /\\ [](x = 1))\nInit == x = 0\nNext == x' = x\n====",
+        config: "INIT Init\nNEXT Next",
+      }),
+    ).rejects.toThrow(
+      createSanyError(
+        ["line 4, col 20 to line 4, col 33", "line 5, col 14 to line 5, col 32"].map(
+          (location) => ({
+            location: `${location} of module M`,
+            message: "\\land has both temporal formula and action as arguments.",
+          }),
+        ),
+      ),
+    );
+  });
+
+  it("reports no level error inside an expression selected through an instance, as SANY does", async () => {
+    await expect(
+      check({
+        source:
+          "---- MODULE M ----\nVARIABLE x\n---- MODULE In ----\nVARIABLE v\nT == t :: (v' = 1)\nTHEOREM U == u :: (v' = 1)\n====\nI == INSTANCE In WITH v <- x'\nE == I!T!t\nF == I!U!u\nInit == x = 0\nNext == x' = x\n====",
+        config: "INIT Init\nNEXT Next",
+      }),
+    ).rejects.toThrow(
+      createSanyError([
+        {
+          location: "line 8, col 1 to line 8, col 29 of module M",
+          message:
+            "Level error in instantiating module 'In':\nThe level of the expression or operator substituted for 'v' \nmust be at most 1.",
+        },
+      ]),
+    );
+  });
+
   it("reports an error in instantiating a module before a constant the configuration leaves out, like TLC", async () => {
     await expect(
       check({

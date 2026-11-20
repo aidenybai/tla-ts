@@ -17,7 +17,7 @@ import {
   type SourceRange,
 } from "./ast";
 import { formatRange, type CodedSanyError, type SanyError } from "./errors";
-import { forEachChild } from "./instances";
+import { forEachChild, substitutionFrames } from "./instances";
 import { parenthesizedRanges } from "./parser";
 import { collectSemanticErrors, getBoundNames, getPatternNames, isBefore } from "./resolve";
 import { resolveSynonym } from "./tlc/jar-data";
@@ -292,6 +292,11 @@ const toFormals = (names: string[]) => names.map((name) => ({ name, arity: 0 }))
 
 const getFormals = (definition: Definition) =>
   definition.kind === "Operator" ? definition.params : [];
+
+// A selection of a label wraps the expression an instance substitutes in the LETs around the label.
+const isSubstituted = (expression: Expression): boolean =>
+  substitutionFrames.has(expression) ||
+  (expression.kind === "Let" && isSubstituted(expression.body));
 
 const getDefinitionBody = (definition: Definition): Expression =>
   definition.kind === "Function"
@@ -1219,7 +1224,14 @@ export const createLevelAnalyzer = (context: LevelContext) => {
         const selected = expression.expression;
         const known = selectionLevels.get(selected);
         if (known) return known;
+        const reported = errors.length;
+        const pending = messages.length;
         const data = analyze(selected, scope);
+        // SANY level-checks an instanced module before the INSTANCE and reports an error of a substitution there.
+        if (isSubstituted(selected)) {
+          errors.splice(reported);
+          messages.splice(pending);
+        }
         selectionLevels.set(selected, data);
         return data;
       }
