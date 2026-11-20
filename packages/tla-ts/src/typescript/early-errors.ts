@@ -252,10 +252,17 @@ const rejectGrammarErrors = (sourceFile: ts.SourceFile) => {
       alwaysStrict: false,
       ignoreDeprecations: "6.0",
     },
+    // A host of the one file, which needs no file system, so that a browser checks the file too.
     host: {
-      ...ts.createCompilerHost({}),
       getSourceFile: (fileName) => (fileName === GRAMMAR_PATH ? file : undefined),
       fileExists: (fileName) => fileName === GRAMMAR_PATH,
+      readFile: () => undefined,
+      getDefaultLibFileName: () => "lib.d.ts",
+      writeFile: () => {},
+      getCurrentDirectory: () => "/",
+      getCanonicalFileName: (fileName) => fileName,
+      useCaseSensitiveFileNames: () => true,
+      getNewLine: () => "\n",
     },
   });
   const diagnostic = program
