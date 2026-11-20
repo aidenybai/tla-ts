@@ -185,6 +185,7 @@ export const getLevel = (
     case "AngleAction":
       return ACTION_LEVEL;
     case "Enabled":
+    case "EnabledVariable":
       return VARIABLE_LEVEL;
     case "Always":
     case "Eventually":

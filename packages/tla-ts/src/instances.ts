@@ -134,6 +134,8 @@ export const mapChildren = (
       return { ...expression, args: expression.args.map(mapUnbound) };
     case "Lambda":
       return { ...expression, body: map(expression.body, expression.params) };
+    case "EnabledVariable":
+      return { ...expression, substitution: mapUnbound(expression.substitution) };
     case "And":
     case "Or":
       return { ...expression, operands: expression.operands.map(mapUnbound) };
@@ -291,6 +293,8 @@ export const forEachChild = (
       return visitAll(expression.args, visit);
     case "Lambda":
       return visit(expression.body, expression.params);
+    case "EnabledVariable":
+      return visit(expression.substitution, NO_NAMES);
     case "And":
     case "Or":
       return visitAll(expression.operands, visit);
@@ -390,7 +394,8 @@ export const forEachChild = (
 interface Instantiation {
   params: OperatorParam[];
   substitutions: Map<string, Expression>;
-  variables: Set<string>;
+  substitutedVariables: Set<string>;
+  enabledSubstitutions: WeakSet<Expression>;
   getDefinition: (key: string) => Definition | undefined;
   getOuterDefinition: (key: string) => Definition | undefined;
   isParameterized: (key: string) => boolean;
@@ -562,28 +567,7 @@ const isVariable = (expression: Expression, rewrite: Rewrite, bound: Map<string,
   expression.kind === "Identifier" &&
   !bound.has(expression.name) &&
   !isLocallyResolved(expression) &&
-  rewrite.instantiation.variables.has(expression.name);
-
-const getUnchangedVariables = (
-  expression: Expression,
-  rewrite: Rewrite,
-  bound: Map<string, string>,
-): string[] | undefined => {
-  if (expression.kind === "Tuple") {
-    const names = expression.elements.map((element) =>
-      getUnchangedVariables(element, rewrite, bound),
-    );
-    return names.every((element) => element !== undefined) ? names.flat() : undefined;
-  }
-  if (expression.kind !== "Identifier") return undefined;
-  if (isVariable(expression, rewrite, bound)) return [expression.name];
-  const definition = isLocallyResolved(expression)
-    ? undefined
-    : rewrite.instantiation.getDefinition(expression.name);
-  return definition?.kind === "Operator" && definition.params.length === 0
-    ? getUnchangedVariables(definition.body, rewrite, new Map())
-    : undefined;
-};
+  rewrite.instantiation.substitutedVariables.has(expression.name);
 
 const substituteInEnabled = (
   expression: Expression,
@@ -629,30 +613,7 @@ const substituteInEnabled = (
       location,
     };
   }
-  if (expression.kind !== "Unchanged") return undefined;
-  const names = getUnchangedVariables(expression.expression, rewrite, bound);
-  if (names === undefined) return undefined;
-  return {
-    kind: "And",
-    operands: names.map((name) => ({
-      kind: "Apply",
-      operator: "=",
-      args: [
-        {
-          kind: "Prime",
-          expression: {
-            kind: "Identifier",
-            name: getEnabledVariableName(name),
-            location: expression.location,
-          },
-          location: expression.location,
-        },
-        substitute({ kind: "Identifier", name, location: expression.location }, rewrite, bound),
-      ],
-      location: expression.location,
-    })),
-    location: expression.location,
-  };
+  return undefined;
 };
 
 export const createLocalIdentifier = (name: string, location: SourceLocation): Expression => ({
@@ -731,6 +692,7 @@ const substitute = (
   bound: Map<string, string>,
 ): Expression => {
   const substituted = substituteExpression(expression, rewrite, bound);
+  if (rewrite.mode === "Enabled") rewrite.instantiation.enabledSubstitutions.add(substituted);
   if (syntheticIdentifiers.has(expression)) syntheticIdentifiers.add(substituted);
   const substitution = substitutedExpressions.get(expression);
   if (!substitution || substituted === expression || substitutedExpressions.has(substituted)) {
@@ -793,7 +755,14 @@ const substituteExpression = (
       const copy = withReplacedFrames(replacement, expression);
       const substitution = substitutedExpressions.get(replacement);
       if (substitution) substitutedExpressions.set(copy, substitution);
-      return copy;
+      return rewrite.mode === "Enabled" && instantiation.substitutedVariables.has(expression.name)
+        ? {
+            kind: "EnabledVariable",
+            name: getEnabledVariableName(expression.name),
+            substitution: copy,
+            location: expression.location,
+          }
+        : copy;
     }
     if (replacement && bindings) {
       const name = getSubstitutionName(expression.name);
