@@ -2711,6 +2711,46 @@ describe("level checking matches SANY", () => {
     },
   );
 
+  // SANY reports only the definition's row: ThmOrAssumpDefNode#levelCheck never sets a theorem's weights.
+  it.each([
+    ["D == c = 1", "ASSUME I(x)!D", "line 8, col 1 to line 8, col 13"],
+    ["THEOREM T == ASSUME c = 1 PROVE TRUE", "ASSUME I(x)!T", "line 8, col 1 to line 8, col 13"],
+    ["THEOREM T == c = 1", "ASSUME I(x)!T", "line 8, col 1 to line 8, col 13"],
+    [
+      "THEOREM T == ASSUME NEW z, c = 1 PROVE z = z",
+      "ASSUME I(x)!T",
+      "line 8, col 1 to line 8, col 13",
+    ],
+    [
+      "THEOREM T == ASSUME c = 1, NEW z PROVE z = z",
+      "ASSUME I(x)!T",
+      "line 8, col 1 to line 8, col 13",
+    ],
+    [
+      "THEOREM T == ASSUME c = 1 PROVE TRUE",
+      "D == I(x)!T\nASSUME D",
+      "line 9, col 1 to line 9, col 8",
+    ],
+  ])(
+    "levels %j applied through a parameterized instance by its argument in %j",
+    async (lines, use, range) => {
+      await expect(
+        check({
+          source: `---- MODULE M ----\nVARIABLE x\n---- MODULE L ----\nCONSTANT c\n${lines}\n====\nI(p) == INSTANCE L WITH c <- p\n${use}\nInit == x = 0\nNext == x' = x\n====`,
+          config: "INIT Init\nNEXT Next",
+        }),
+      ).rejects.toThrow(
+        createSanyError([
+          {
+            location: `${range} of module M`,
+            message:
+              "Level error: assumptions must be level 0 (Constant), \nbut this one has level 1.",
+          },
+        ]),
+      );
+    },
+  );
+
   it("levels an assumption that reaches an instance's substitute selecting a theorem's clause, as SANY does", async () => {
     await expect(
       check({

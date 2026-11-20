@@ -138,8 +138,12 @@ const isAnyDef = (symbol: SymbolNode): symbol is AnyDefNode =>
 const getIndex = (definition: AnyDefNode, index: number) =>
   definition.kind === "OpDef" && definition.arity < 0 ? 0 : index;
 
-const getWeight = (definition: AnyDefNode, index: number) =>
-  definition.kind === "OpDef" ? (definition.weights[getIndex(definition, index)] ?? 0) : 0;
+const getWeight = (definition: AnyDefNode, index: number) => {
+  if (definition.kind === "OpDef") return definition.weights[getIndex(definition, index)] ?? 0;
+  // Deviation from SANY: ThmOrAssumpDefNode#levelCheck assigns each weight to itself, so every weight stays 0 and SANY levels I(x)!T without its argument.
+  const param = definition.params[index];
+  return param !== undefined && definition.body.levelParams.has(param) ? 1 : 0;
+};
 
 const getMaxLevel = (definition: AnyDefNode, index: number) =>
   definition.maxLevels[getIndex(definition, index)] ?? TEMPORAL_LEVEL;
