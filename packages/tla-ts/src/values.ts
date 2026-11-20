@@ -837,7 +837,8 @@ export const valuesEqual = (left: Value, right: Value): boolean => {
     checkModelValueTypes(left, right, true);
     return isModelValue(left) && isModelValue(right) && left.name === right.name;
   }
-  if (left.kind === "Subset" && right.kind === "Subset") return valuesEqual(left.base, right.base);
+  if (left.kind === "Subset" && right.kind === "Subset")
+    return isComponentEqual(left.base, right.base);
   if (left.kind === "FunctionSet" && right.kind === "FunctionSet") {
     const isUnit = isEmptySet(left.domain);
     const isOtherUnit = isEmptySet(right.domain);
@@ -845,7 +846,7 @@ export const valuesEqual = (left: Value, right: Value): boolean => {
     const isEmpty = isEmptySet(left.range);
     const isOtherEmpty = isEmptySet(right.range);
     if (isEmpty || isOtherEmpty) return isEmpty === isOtherEmpty;
-    return valuesEqual(left.domain, right.domain) && valuesEqual(left.range, right.range);
+    return isComponentEqual(left.domain, right.domain) && isComponentEqual(left.range, right.range);
   }
   if (left.kind === "RecordSet" && right.kind === "RecordSet") {
     if (isEmptySet(left)) return isEmptySet(right);
@@ -859,7 +860,7 @@ export const valuesEqual = (left: Value, right: Value): boolean => {
       left.names.length === right.names.length &&
       getFields(left).every(
         (field, index) =>
-          field[0] === otherFields[index][0] && valuesEqual(field[1], otherFields[index][1]),
+          field[0] === otherFields[index][0] && isComponentEqual(field[1], otherFields[index][1]),
       )
     );
   }
@@ -868,7 +869,7 @@ export const valuesEqual = (left: Value, right: Value): boolean => {
     if (isEmptySet(right)) return false;
     return (
       left.factors.length === right.factors.length &&
-      left.factors.every((factor, index) => valuesEqual(factor, right.factors[index]))
+      left.factors.every((factor, index) => isComponentEqual(factor, right.factors[index]))
     );
   }
   const isInfiniteComparison =

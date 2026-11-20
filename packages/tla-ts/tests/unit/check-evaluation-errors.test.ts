@@ -4015,6 +4015,68 @@ describe("evaluation errors match TLC", () => {
     },
   );
 
+  it.each([
+    [
+      'x\' = x /\\ [{x} -> {1}] # [{"a"} -> {1}]',
+      [
+        "Line 5, column 9 to line 5, column 47 in M",
+        "Line 5, column 9 to line 5, column 14 in M",
+        "Line 5, column 19 to line 5, column 47 in M",
+        "Line 5, column 19 to line 5, column 30 in M",
+        "Line 5, column 20 to line 5, column 22 in M",
+      ],
+    ],
+    [
+      'x\' = x /\\ [{1} -> {x}] # [{1} -> {"a"}]',
+      [
+        "Line 5, column 9 to line 5, column 47 in M",
+        "Line 5, column 9 to line 5, column 14 in M",
+        "Line 5, column 19 to line 5, column 47 in M",
+        "Line 5, column 19 to line 5, column 30 in M",
+        "Line 5, column 27 to line 5, column 29 in M",
+      ],
+    ],
+    [
+      'x\' = x /\\ [a : {x}] # [a : {"a"}]',
+      [
+        "Line 5, column 9 to line 5, column 41 in M",
+        "Line 5, column 9 to line 5, column 14 in M",
+        "Line 5, column 19 to line 5, column 41 in M",
+        "Line 5, column 19 to line 5, column 27 in M",
+        "Line 5, column 24 to line 5, column 26 in M",
+      ],
+    ],
+    [
+      'x\' = x /\\ {x} \\X {1} # {"a"} \\X {1}',
+      [
+        "Line 5, column 9 to line 5, column 43 in M",
+        "Line 5, column 9 to line 5, column 14 in M",
+        "Line 5, column 19 to line 5, column 43 in M",
+        "Line 5, column 19 to line 5, column 28 in M",
+        "Line 5, column 19 to line 5, column 21 in M",
+      ],
+    ],
+    [
+      'x\' = x /\\ SUBSET {x} # SUBSET {"a"}',
+      [
+        "Line 5, column 9 to line 5, column 43 in M",
+        "Line 5, column 9 to line 5, column 14 in M",
+        "Line 5, column 19 to line 5, column 43 in M",
+        "Line 5, column 19 to line 5, column 28 in M",
+        "Line 5, column 26 to line 5, column 28 in M",
+      ],
+    ],
+  ])(
+    "compares and frames each component of two [S -> T], [a : S], S \\X T or SUBSET S as TLC's equals does: %s",
+    async (next, callStack) => {
+      const reason = 'Attempted to check equality of integer 0 with non-integer:\n"a"';
+      const result = await checkSetBound(next, "TRUE");
+      expect(result.failure?.message).toBe(getRuntimeException(reason));
+      expect(formatCallStackLines(result)).toEqual(callStack);
+      expect(result.failure?.fingerprint?.reason).toBe(reason);
+    },
+  );
+
   const SET_EQUALITY_REASON = "Attempted to check equality of the set {1} with the value:\n1";
 
   it.each([
