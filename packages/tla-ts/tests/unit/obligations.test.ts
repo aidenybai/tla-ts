@@ -27,4 +27,21 @@ describe("proof obligations match tlapm", () => {
       "ASSUME NEW VARIABLE x\nPROVE  @ = x\n",
     ]);
   });
+
+  it("prints and selects the label of a nested ASSUME/PROVE", () => {
+    const texts = getTexts(
+      [
+        "CONSTANT c",
+        "THEOREM T == ASSUME a :: ASSUME c = 1 PROVE c > 0 PROVE TRUE",
+        "  OBVIOUS",
+        "THEOREM U == TRUE",
+        "  BY T!a",
+      ].join("\n"),
+    );
+    expect(texts).toEqual([
+      "ASSUME NEW CONSTANT c,\n       a::ASSUME c = 1 \n          PROVE  c > 0 \nPROVE  TRUE\n",
+      "ASSUME NEW CONSTANT c,\n       ASSUME c = 1 \n       PROVE  c > 0 \nPROVE  TRUE\n",
+      "ASSUME NEW CONSTANT c\nPROVE  ASSUME c = 1 \n       PROVE  c > 0\n",
+    ]);
+  });
 });
