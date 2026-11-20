@@ -3960,6 +3960,38 @@ ASSUME TLCFP(a) = -887695703
   );
 
   it.each([
+    ["T11", "v' = v", "d' = d", ["||line 9, col 18 to line 9, col 18 of module T11: 3"]],
+    [
+      "M1",
+      "UNCHANGED v",
+      "Op(d)",
+      [
+        "||line 8, col 6 to line 8, col 15 of module M1: 3",
+        "||line 7, col 10 to line 7, col 20 of module M1: 3",
+        "||line 8, col 23 to line 8, col 23 of module M1: 3",
+      ],
+    ],
+    ["M3", "v' = v", "Op(d)", ["||line 9, col 18 to line 9, col 18 of module M3: 3"]],
+  ])(
+    "counts the subscript of an instance's <<A>>_v under ENABLED twice at its own location, as TLC's Tool#enabled checks it CHANGED: %s",
+    async (name, kept, keep, lines) => {
+      const result = await check({
+        source: `---- MODULE ${name} ----\nEXTENDS Integers\nVARIABLES x, y\n---- MODULE Hi ----\nEXTENDS Integers\nVARIABLES c, d\nOp(v) == ${kept}\nA == c' = c + 1 /\\ ${keep}\nCan == ENABLED <<A>>_<<c, d>>\n====\nInit == x = 0 /\\ y = 0\nNext == x < 2 /\\ x' = x + 1 /\\ UNCHANGED y\nH == INSTANCE Hi WITH c <- x, d <- y\nInv == H!Can\n====`,
+        config: "INIT Init\nNEXT Next\nINVARIANT Inv\nCHECK_DEADLOCK FALSE",
+        coverage: 1,
+      });
+      expect(formatCoverage(result)?.at(-1)).toEqual([
+        `line 14, col 8 to line 14, col 12 of module ${name}: 3`,
+        `|line 13, col 28 to line 13, col 28 of module ${name}: 3`,
+        `|line 13, col 36 to line 13, col 36 of module ${name}: 3`,
+        `|line 9, col 8 to line 9, col 29 of module ${name}: 3`,
+        ...lines,
+        `||line 9, col 22 to line 9, col 29 of module ${name}: 6`,
+      ]);
+    },
+  );
+
+  it.each([
     ["P2", "Prop == []H!CanFlip", "PROPERTY Prop", "line 14, col 11 to line 14, col 19"],
     ["P4", "Inv == H!CanFlip", "INVARIANT Inv", "line 14, col 8 to line 14, col 16"],
   ])(
