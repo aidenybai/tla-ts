@@ -9,6 +9,7 @@ import {
   getSymbolHash,
   FAMILY_ARITH,
   FAMILY_BASIC,
+  FAMILY_USER,
   KIND_APP,
   KIND_QUANTIFIER,
   KIND_VAR,
@@ -3470,6 +3471,7 @@ export const createSmtlibReader = (
       );
     }
     declare(funcs, symbol.text, [...existing, decl]);
+    scopedFuncs.push(decl);
     expectEnd(
       extra,
       name === "declare-fun"
@@ -3508,7 +3510,11 @@ export const createSmtlibReader = (
   const pop = (count: number) => {
     releasePending();
     const funcStart = scopedFuncStarts.splice(scopedFuncStarts.length - count)[0];
-    for (const decl of scopedFuncs.splice(funcStart)) manager.eraseRecFunDef(decl);
+    // cmd_context::restore_func_decls releases the declarations in the order they were made.
+    for (const decl of scopedFuncs.splice(funcStart)) {
+      manager.eraseRecFunDef(decl);
+      if (manager.funcDecls[decl].family === FAMILY_USER) manager.decDeclRef(decl);
+    }
     const start = scopeStarts.splice(scopeStarts.length - count)[0];
     for (const restore of undo.splice(start).reverse()) restore();
     // cmd_context::pop resets the plugin through its datatype handler.

@@ -2746,4 +2746,18 @@ describe("pop, as Z3 5.3.2 frees the declarations of a scope", () => {
       ]),
     ).toEqual(["sat", "unsat", "(:rlimit 638)"]);
   });
+
+  it("frees the declarations of the scopes it pops in the order they were made", () => {
+    expect(
+      run([
+        "(push 1)",
+        "(declare-fun e () Int)",
+        "(push 1)",
+        "(declare-fun k (Int) Int)",
+        "(pop 2)",
+        "(push 1)",
+        ...POPPED_CHECK,
+      ]),
+    ).toEqual(["unsat", "(:rlimit 603)"]);
+  });
 });
