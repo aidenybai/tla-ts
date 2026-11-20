@@ -149,6 +149,21 @@ describe("check matches TLC", () => {
     );
   });
 
+  it.each([
+    [
+      "FALSE",
+      "assumption-violation",
+      'The first argument of Assert evaluated to FALSE; the second argument was:\n"count 2"',
+    ],
+    ["TRUE", "success", undefined],
+  ])(
+    "reports the message of an Assert to %s that an assumption evaluates as TLC does",
+    async (condition, status, message) => {
+      const result = await checkModule(`Check == Assert(${condition}, "count 2")\nASSUME Check`);
+      expect([result.status, result.violation?.message]).toEqual([status, message]);
+    },
+  );
+
   it("compares power sets through their bases", async () => {
     expect((await checkModule("ASSUME SUBSET (1..23) \\subseteq SUBSET (1..42)")).status).toBe(
       "success",
