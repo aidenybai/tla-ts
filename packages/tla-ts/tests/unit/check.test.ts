@@ -5180,6 +5180,36 @@ describe("initial predicate and next-state relation match TLC", () => {
     );
   });
 
+  const literalBase =
+    "---- MODULE B7 ----\nCONSTANT c\nTHEOREM Cz == c = 1\n====\nJ7 == INSTANCE B7 WITH c <- 1\n";
+
+  // Deviation from TLC: SpecProcessor#processConstants visits a module's own theorems but not an INSTANCE's copies, so a literal substitute that only the copies reach has no value. Evaluating one fails with a NullPointerException, which startup swallows before it rejects the property as "The operator J7!Cz ... cannot be used as a property".
+  it.each([
+    ["P == J7!Cz", "INIT Init\nNEXT Next\nPROPERTY P"],
+    ["P == LET K == INSTANCE B7 WITH c <- 1 IN K!Cz", "INIT Init\nNEXT Next\nPROPERTY P"],
+    ["ASSUME J7!Cz", "INIT Init\nNEXT Next"],
+    ["P == J7!Cz", "INIT Init\nNEXT Next\nINVARIANT P"],
+  ])(
+    "evaluates the theorem that %j reaches with its literal substitute, where TLC fails with a NullPointerException",
+    async (definitions, config) => {
+      const result = await check({
+        source: getTwoStateSource(`${literalBase}${definitions}`),
+        config,
+      });
+      expect(result.status).toBe("success");
+    },
+  );
+
+  // Deviation from TLC: as above, TLC rejects P as "The operator K!Cz ... cannot be used as a property".
+  it("evaluates at startup a property that reaches a theorem with a literal substitute, where TLC fails with a NullPointerException", async () => {
+    await expect(
+      check({
+        source: getTwoStateSource(`${literalBase}P == LET K == INSTANCE B7 WITH c <- 2 IN K!Cz`),
+        config: "INIT Init\nNEXT Next\nPROPERTY P",
+      }),
+    ).rejects.toThrow(new TlaConfigError("The property of P is equal to FALSE"));
+  });
+
   it("takes a theorem that a <- substitutes for undefined, as TLC does", async () => {
     await expect(
       check({
