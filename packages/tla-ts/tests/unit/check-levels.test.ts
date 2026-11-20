@@ -2556,6 +2556,50 @@ describe("level checking matches SANY", () => {
   );
 
   it.each([
+    ["e <- (TM!1 /\\ q)\nEM == (N(1)!Be)'", "line 5, col 7 to line 5, col 16"],
+    ["e <- IF q THEN TM!1 ELSE TRUE\nEM == (N(TRUE)!Be)'", "line 5, col 7 to line 5, col 19"],
+  ])(
+    "levels a substitute that names the instance's parameter and selects a theorem's clause in %j, as SANY does",
+    async (lines, range) => {
+      await expect(
+        check({
+          source: `---- MODULE M ----\nVARIABLE x\nTHEOREM TM == ASSUME (x = 1)' PROVE TRUE\nN(q) == INSTANCE P WITH ${lines}\nInit == x = 0\nNext == x' = x\n====`,
+          config: "INIT Init\nNEXT Next",
+          loadModule: (name) =>
+            name === "P" ? "---- MODULE P ----\nCONSTANT e\nBe == e = e\n====" : undefined,
+        }),
+      ).rejects.toThrow(
+        createSanyError([
+          {
+            location: `${range} of module M`,
+            message:
+              "Level error in applying operator ':\nThe level of argument 1 exceeds the maximum level allowed by the operator.",
+          },
+        ]),
+      );
+    },
+  );
+
+  it("levels an assumption whose substitute names the instance's parameter and selects a theorem's clause, as SANY does", async () => {
+    await expect(
+      check({
+        source:
+          "---- MODULE M ----\nVARIABLE x\nTHEOREM TM == ASSUME (x = 1)' PROVE TRUE\nN(q) == INSTANCE P WITH e <- <<TM!1, q>>\nASSUME N(1)!Be\nInit == x = 0\nNext == x' = x\n====",
+        config: "INIT Init\nNEXT Next",
+        loadModule: (name) =>
+          name === "P" ? "---- MODULE P ----\nCONSTANT e\nBe == e = e\n====" : undefined,
+      }),
+    ).rejects.toThrow(
+      createSanyError([
+        {
+          location: "line 5, col 1 to line 5, col 14 of module M",
+          message: getAssumptionError(2),
+        },
+      ]),
+    );
+  });
+
+  it.each([
     [
       "<1> K == INSTANCE P WITH e <- [](x = 1)\n<1>1. ENABLED (K!J!QT!1)",
       [

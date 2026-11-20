@@ -1,7 +1,6 @@
 import {
   getChildren,
   getDefinitionExpressions,
-  getReferencedName,
   type AssumeProve,
   type Assumption,
   type Declaration,
@@ -50,6 +49,7 @@ import {
   getEnabledVariableName,
   getLetInstanceExpansion,
   getOperatorDefinition,
+  mentionsName,
   renameLocals,
   substitutedExpressions,
   withInstanceParams,
@@ -260,14 +260,6 @@ const getSubstitutionFrame = (instance: Instance): Expression => {
     name: instance.name ?? instance.module,
     location: { ...range.start, range },
   };
-};
-
-const mentionsName = (expression: Expression, names: Set<string>): boolean => {
-  const name = getReferencedName(expression);
-  return (
-    (name !== undefined && names.has(name)) ||
-    getChildren(expression).some((child) => mentionsName(child, names))
-  );
 };
 
 const getVariableIndex = (variables: string[], declared: string[]) => {
@@ -783,12 +775,7 @@ export const createEnvironment = (
     const params = instance.params.map((param) => ({ ...param, name: `${param.name}${suffix}` }));
     params.forEach((param) => instanceParams.add(param));
     const replacements = new Map(
-      [...substitutions].map((entry) => [
-        entry[0],
-        mentionsName(entry[1], new Set(renamed.keys()))
-          ? renameLocals(entry[1], renamed)
-          : entry[1],
-      ]),
+      [...substitutions].map((entry) => [entry[0], renameLocals(entry[1], renamed)]),
     );
     const substitutes = {
       params,
