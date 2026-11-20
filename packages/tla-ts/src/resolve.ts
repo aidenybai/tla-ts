@@ -24,7 +24,7 @@ import {
   type UseOrHide,
 } from "./ast";
 import { formatRange, TlaSyntaxError, type CodedSanyError, type SanyError } from "./errors";
-import { defEntryErrors, getDefEntryBinder, parenthesizedRanges } from "./parser";
+import { defEntryErrors, getAtSteps, getDefEntryBinder, parenthesizedRanges } from "./parser";
 import { formatSanyLocation } from "./sany/nodes";
 import { resolveSynonym } from "./tlc/jar-data";
 
@@ -96,6 +96,7 @@ interface Unit {
   hasLabelScope: boolean;
   isLabelForbidden: boolean;
   isInExcept: boolean;
+  stepAt?: Expression;
   labelParams: string[];
   labels: Set<string>;
   isGenerated: boolean;
@@ -1599,7 +1600,7 @@ const resolveExpression = (
     case "String":
       return;
     case "ExceptAt":
-      if (!unit.isInExcept && expression.location.range) {
+      if (!unit.isInExcept && expression !== unit.stepAt && expression.location.range) {
         emptyExpressions.add(expression);
         unit.errors.push({
           location: formatRange(expression.location.range),
@@ -2242,7 +2243,11 @@ const resolveProof = (proof: Proof | undefined, scope: LocalName | undefined, ou
   const unit = outer.hasLabelScope ? { ...outer, hasLabelScope: false } : outer;
   if (proof?.kind === "By") checkUseOrHide(proof, scope, unit);
   if (proof?.kind !== "Steps") return;
-  proof.steps.reduce((current, step) => resolveStep(step, current, unit), scope);
+  const atSteps = getAtSteps(proof.steps);
+  proof.steps.reduce(
+    (current, step) => resolveStep(step, current, unit, atSteps.get(step)?.at),
+    scope,
+  );
 };
 
 export const getInstanceBinding = (instance: Instance): Binding => ({
@@ -2305,6 +2310,7 @@ const resolveStep = (
   step: ProofStep,
   scope: LocalName | undefined,
   unit: Unit,
+  stepAt: Expression | undefined,
 ): LocalName | undefined => {
   const body = step.body;
   const stepUnit =
@@ -2343,7 +2349,7 @@ const resolveStep = (
         );
   switch (body.kind) {
     case "Assert": {
-      const assumed = resolveStatement(body.statement, scope, stepUnit);
+      const assumed = resolveStatement(body.statement, scope, { ...stepUnit, stepAt });
       const assertion = {
         statement: body.statement,
         isSuffices: body.isSuffices,

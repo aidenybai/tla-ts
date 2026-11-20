@@ -292,6 +292,96 @@ describe("name resolution matches SANY", () => {
     },
   );
 
+  const theorem = (steps: string[]) => `THEOREM T == TRUE\n${steps.join("\n")}\n<1> QED`;
+
+  it.each([
+    [
+      "a chain of infix steps",
+      theorem([
+        "<1>1. 1 = 1 OBVIOUS",
+        "<1>2. @ = 1 OBVIOUS",
+        "<1>3. @ /\\ TRUE OBVIOUS",
+        "<1>4. @ \\/ TRUE OBVIOUS",
+      ]),
+    ],
+    [
+      "a step after a SUFFICES step",
+      theorem([
+        "<1>1. TRUE /\\ TRUE OBVIOUS",
+        "<1> SUFFICES 2 = 2 OBVIOUS",
+        "<1>2. @ \\in {TRUE} OBVIOUS",
+      ]),
+    ],
+    [
+      "a step after a HAVE step (VoteProof)",
+      "LEMMA L == TRUE => (1 = 1)\n<1> HAVE TRUE\n<1>2. 1 = 1\n  BY DEF L\n<1>3. @ = L!2!2\n  BY DEF L\n<1>4. QED\n  BY <1>2, <1>3",
+    ],
+    [
+      "a step after a step with a proof",
+      theorem(["<1>1. 1 = 1", "  <2>1. 2 = 2 OBVIOUS", "  <2> QED", "<1>2. @ = 1 OBVIOUS"]),
+    ],
+  ])(
+    "reads an @ that starts %s as the previous step's right side, like SANY",
+    async (_title, source) => {
+      expect((await checkNames(source)).status).toBe("success");
+    },
+  );
+
+  const undefinedAt = (line: number, column: number) => ({
+    location: `line ${line}, col ${column} to line ${line}, col ${column} of module M`,
+    message: "@ used where its meaning is not defined.",
+  });
+
+  it.each([
+    [
+      "after a HAVE step",
+      theorem(["<1>1. 1 = 1 OBVIOUS", "<1> HAVE TRUE", "<1>2. @ = 1 OBVIOUS"]),
+      [undefinedAt(5, 7)],
+    ],
+    [
+      "at the start of a proof, or on the right",
+      theorem(["<1>1. 1 = 1", "  <2>1. @ = 1 OBVIOUS", "  <2> QED", "<1>2. @ = @ OBVIOUS"]),
+      [undefinedAt(4, 9), undefinedAt(6, 11)],
+    ],
+    [
+      "in parentheses",
+      theorem(["<1>1. 1 = 1 OBVIOUS", "<1>2. (@) = 1 OBVIOUS"]),
+      [undefinedAt(4, 8)],
+    ],
+    [
+      "after an ASSUME/PROVE step",
+      theorem(["<1>1. ASSUME TRUE PROVE 1 = 1 OBVIOUS", "<1>2. @ = 1 OBVIOUS"]),
+      [undefinedAt(4, 7)],
+    ],
+    [
+      "after a bulleted list",
+      theorem(["<1>1. /\\ 1 = 1\n      /\\ TRUE OBVIOUS", "<1>2. @ = 1 OBVIOUS"]),
+      [undefinedAt(5, 7)],
+    ],
+    [
+      "in the first of two conjunctions",
+      theorem(["<1>1. 1 = 1 OBVIOUS", "<1>2. @ /\\ TRUE /\\ TRUE OBVIOUS"]),
+      [undefinedAt(4, 7)],
+    ],
+    [
+      "in a SUFFICES step",
+      theorem(["<1>1. 1 = 1 OBVIOUS", "<1>2. SUFFICES @ = 1 OBVIOUS"]),
+      [undefinedAt(4, 16)],
+    ],
+    [
+      "before an unknown operator",
+      theorem(["<1>1. 1 = 1 OBVIOUS", "<1>2. @ = Nope OBVIOUS"]),
+      [
+        {
+          location: "line 4, col 11 to line 4, col 14 of module M",
+          message: "Unknown operator: `Nope'.",
+        },
+      ],
+    ],
+  ])("reports a step's @ %s like SANY", async (_title, source, errors) => {
+    await expect(checkNames(source)).rejects.toMatchObject({ sany: { errors, warnings: [] } });
+  });
+
   it.each([
     ["a bound variable before a definition of that name", "F == \\E B \\in {1} : TRUE\nB == 1"],
     [

@@ -500,6 +500,40 @@ export const getDefEntryBinder = (expression: Expression): Expression | undefine
     : undefined;
 };
 
+interface AtStep {
+  operator: string;
+  at: Expression;
+  right: Expression;
+}
+
+// SANY's @-steps: an assertion whose infix expression has a bare @ for its left side, after an assertion with an infix
+// expression, reads the @ as that expression's right side. SUFFICES steps keep the previous assertion.
+export const getAtSteps = (steps: ProofStep[]) => {
+  const atSteps = new Map<ProofStep, AtStep>();
+  steps.reduce((isPreviousInfix, step) => {
+    const body = step.body;
+    if (body.kind !== "Assert" || body.statement.kind === "AssumeProve") return false;
+    if (body.isSuffices) return isPreviousInfix;
+    const statement = body.statement;
+    const infix = parenthesizedRanges.has(statement)
+      ? undefined
+      : statement.kind === "Apply" && statement.args.length === 2 && !statement.argumentsRange
+        ? { operator: statement.operator, operands: statement.args }
+        : (statement.kind === "And" || statement.kind === "Or") && !statement.isBulleted
+          ? {
+              operator: statement.kind === "And" ? "\\land" : "\\lor",
+              operands: statement.operands,
+            }
+          : undefined;
+    const at = infix?.operands.length === 2 ? infix.operands[0] : undefined;
+    if (isPreviousInfix && infix && at?.kind === "ExceptAt" && !parenthesizedRanges.has(at)) {
+      atSteps.set(step, { operator: infix.operator, at, right: infix.operands[1] });
+    }
+    return infix !== undefined;
+  }, false);
+  return atSteps;
+};
+
 // TLC's markers use Java's `.`, which excludes \u0085, \u2028 and \u2029, and Java's \s, which matches only ASCII whitespace.
 export const getMonolithSection = (source: string, isStart: (line: string) => boolean) => {
   const lines = source.replace(/(?:\r\n|\r|\n)$/, "").split(/\r\n|\r|\n/);
