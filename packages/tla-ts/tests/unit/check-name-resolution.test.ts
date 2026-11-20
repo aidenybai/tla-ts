@@ -71,6 +71,81 @@ describe("name resolution matches SANY", () => {
     );
   });
 
+  it.each<[string, string, Record<string, string>, [string, string][]]>([
+    [
+      "every module's semantic errors",
+      "EXTENDS A, B\nZ == Nope3",
+      { A: "X == Nope1", B: "EXTENDS A\nY == Nope2" },
+      [
+        ["line 2, col 6 to line 2, col 10 of module A", "Unknown operator: `Nope1'."],
+        ["line 3, col 6 to line 3, col 10 of module B", "Unknown operator: `Nope2'."],
+        ["line 3, col 6 to line 3, col 10 of module M", "Unknown operator: `Nope3'."],
+      ],
+    ],
+    [
+      "a module's level errors, and no level errors after a module's errors",
+      "EXTENDS A, B\nVARIABLE w\nASSUME w = 1",
+      { A: "VARIABLE v\nASSUME v = 1", B: "Y == Nope2" },
+      [
+        [
+          "line 3, col 1 to line 3, col 12 of module A",
+          "Level error: assumptions must be level 0 (Constant), \nbut this one has level 1.",
+        ],
+        ["line 2, col 6 to line 2, col 10 of module B", "Unknown operator: `Nope2'."],
+      ],
+    ],
+    [
+      "a module redefinition after a module's errors",
+      "CONSTANT F\nINSTANCE A\nI == INSTANCE Inner2\n---- MODULE Inner2 ----\nD == F\n====\nJ == INSTANCE Inner2",
+      { A: "F(a) == a\nH == 1" },
+      [
+        ["line 2, col 6 to line 2, col 6 of module Inner2", "Unknown operator: `F'."],
+        [
+          "line 2, col 1 to line 2, col 9 of module A",
+          "Multiply-defined symbol 'F': this definition or declaration conflicts \nwith the one at line 2, col 10 to line 2, col 10 of module M.",
+        ],
+        [
+          "line 5, col 1 to line 7, col 4 of module M",
+          "Multiply-defined module 'Inner2': this definition or declaration conflicts \nwith the one at line 1, col 1 to line 3, col 4 of module Inner2.",
+        ],
+      ],
+    ],
+    [
+      "an error that two modules make once",
+      "EXTENDS B, C, Naturals\nZ == Nope3",
+      { B: "EXTENDS C, Naturals", C: "CONSTANT Nat" },
+      [
+        [
+          "line 14, col 1 to line 14, col 16 of module Naturals",
+          "The definition of 'Nat' conflicts with \nits declaration at line 2, col 10 to line 2, col 12 of module C.",
+        ],
+        ["line 3, col 6 to line 3, col 10 of module M", "Unknown operator: `Nope3'."],
+      ],
+    ],
+    [
+      "the errors after an instance of a module with an unknown operator",
+      "INSTANCE A WITH G <- {1}\nZ == Nope3",
+      { A: "VARIABLE G\nK == Nope(G(1))" },
+      [
+        ["line 3, col 6 to line 3, col 9 of module A", "Unknown operator: `Nope'."],
+        ["line 3, col 6 to line 3, col 10 of module M", "Unknown operator: `Nope3'."],
+      ],
+    ],
+  ])("reports %s like SANY", async (_title, source, modules, errors) => {
+    await expect(
+      check({
+        source: `---- MODULE M ----\n${source}\n====`,
+        config: "",
+        loadModule: (name) =>
+          modules[name] === undefined
+            ? undefined
+            : `---- MODULE ${name} ----\n${modules[name]}\n====`,
+      }),
+    ).rejects.toMatchObject({
+      sany: { errors: errors.map((error) => ({ location: error[0], message: error[1] })) },
+    });
+  });
+
   it.each([
     ["an operator from a module that is not extended", "EXTENDS Naturals\nf == 1 :> 2"],
     ["an operator that a standard module only instantiates locally", "EXTENDS TLC\nf == 1 + 1"],
@@ -135,6 +210,176 @@ describe("name resolution matches SANY", () => {
       4,
       3,
     ]);
+  });
+
+  it.each([
+    ["WF_Id(x)(Next)", "success"],
+    ["SF_I(1)!B(x)(Next)", "success"],
+    ["WF_Id(1)(Next)", "liveness-violation"],
+  ])(
+    "applies the fairness subscript in %s to its arguments, like TLC",
+    async (fairness, status) => {
+      const result = await check({
+        source: `---- MODULE M ----\nEXTENDS Naturals\nVARIABLE x\n---- MODULE Inner ----\nB(p) == <<p>>\n====\nI(q) == INSTANCE Inner\nId(v) == v\nNext == x' = (x + 1) % 3\nSpec == x = 0 /\\ [][Next]_x /\\ ${fairness}\nProp == <>(x = 2)\n====\n`,
+        config: "SPECIFICATION Spec\nPROPERTY Prop",
+      });
+      expect([result.status, result.generatedStates, result.distinctStates]).toEqual([
+        status,
+        4,
+        3,
+      ]);
+    },
+  );
+
+  it.each([
+    ["an unknown argument", "C == WF_Op(Nope)(y' = 1)", 5, 12, 15, "Unknown operator: `Nope'."],
+    [
+      "too many arguments",
+      "C == WF_Op(1, 2)(y' = 1)",
+      5,
+      11,
+      16,
+      "The operator Op requires 1 arguments.",
+    ],
+    [
+      "an action-level argument",
+      "C == SF_Op(y')(y' = 1)",
+      5,
+      6,
+      22,
+      "Level error in applying operator $SF:\nThe level of argument 1 exceeds the maximum level allowed by the operator.",
+    ],
+    [
+      "arguments to a variable",
+      "C == WF_y(y)(y' = 1)",
+      5,
+      10,
+      12,
+      "The operator y requires 0 arguments.",
+    ],
+    [
+      "too many arguments to an instance's operator",
+      "---- MODULE Inner ----\nEXTENDS Naturals\nVARIABLE z\nB(q) == z + q\n====\nI(p) == INSTANCE Inner WITH z <- y\nC == WF_I(1)!B(1, 2)(y' = 1)",
+      11,
+      15,
+      20,
+      "The operator I!B requires 1 arguments.",
+    ],
+    [
+      "an action-level argument to an instance's operator",
+      "---- MODULE Inner ----\nEXTENDS Naturals\nVARIABLE z\nB(q) == z + q\n====\nI(p) == INSTANCE Inner WITH z <- y\nC == WF_I(1)!B(y')(y' = 1)",
+      11,
+      6,
+      26,
+      "Level error in applying operator $WF:\nThe level of argument 1 exceeds the maximum level allowed by the operator.",
+    ],
+  ])(
+    "reports %s in a fairness subscript applied before a parenthesized action, like SANY",
+    async (_title, definition, line, start, end, message) => {
+      await expect(
+        checkNames(`EXTENDS Naturals\nVARIABLE y\nOp(a) == a\n${definition}`),
+      ).rejects.toMatchObject({
+        sany: {
+          errors: [
+            {
+              location: `line ${line}, col ${start} to line ${line}, col ${end} of module M`,
+              message,
+            },
+          ],
+          warnings: [],
+        },
+      });
+    },
+  );
+
+  const theorem = (steps: string[]) => `THEOREM T == TRUE\n${steps.join("\n")}\n<1> QED`;
+
+  it.each([
+    [
+      "a chain of infix steps",
+      theorem([
+        "<1>1. 1 = 1 OBVIOUS",
+        "<1>2. @ = 1 OBVIOUS",
+        "<1>3. @ /\\ TRUE OBVIOUS",
+        "<1>4. @ \\/ TRUE OBVIOUS",
+      ]),
+    ],
+    [
+      "a step after a SUFFICES step",
+      theorem([
+        "<1>1. TRUE /\\ TRUE OBVIOUS",
+        "<1> SUFFICES 2 = 2 OBVIOUS",
+        "<1>2. @ \\in {TRUE} OBVIOUS",
+      ]),
+    ],
+    [
+      "a step after a HAVE step (VoteProof)",
+      "LEMMA L == TRUE => (1 = 1)\n<1> HAVE TRUE\n<1>2. 1 = 1\n  BY DEF L\n<1>3. @ = L!2!2\n  BY DEF L\n<1>4. QED\n  BY <1>2, <1>3",
+    ],
+    [
+      "a step after a step with a proof",
+      theorem(["<1>1. 1 = 1", "  <2>1. 2 = 2 OBVIOUS", "  <2> QED", "<1>2. @ = 1 OBVIOUS"]),
+    ],
+  ])(
+    "reads an @ that starts %s as the previous step's right side, like SANY",
+    async (_title, source) => {
+      expect((await checkNames(source)).status).toBe("success");
+    },
+  );
+
+  const undefinedAt = (line: number, column: number) => ({
+    location: `line ${line}, col ${column} to line ${line}, col ${column} of module M`,
+    message: "@ used where its meaning is not defined.",
+  });
+
+  it.each([
+    [
+      "after a HAVE step",
+      theorem(["<1>1. 1 = 1 OBVIOUS", "<1> HAVE TRUE", "<1>2. @ = 1 OBVIOUS"]),
+      [undefinedAt(5, 7)],
+    ],
+    [
+      "at the start of a proof, or on the right",
+      theorem(["<1>1. 1 = 1", "  <2>1. @ = 1 OBVIOUS", "  <2> QED", "<1>2. @ = @ OBVIOUS"]),
+      [undefinedAt(4, 9), undefinedAt(6, 11)],
+    ],
+    [
+      "in parentheses",
+      theorem(["<1>1. 1 = 1 OBVIOUS", "<1>2. (@) = 1 OBVIOUS"]),
+      [undefinedAt(4, 8)],
+    ],
+    [
+      "after an ASSUME/PROVE step",
+      theorem(["<1>1. ASSUME TRUE PROVE 1 = 1 OBVIOUS", "<1>2. @ = 1 OBVIOUS"]),
+      [undefinedAt(4, 7)],
+    ],
+    [
+      "after a bulleted list",
+      theorem(["<1>1. /\\ 1 = 1\n      /\\ TRUE OBVIOUS", "<1>2. @ = 1 OBVIOUS"]),
+      [undefinedAt(5, 7)],
+    ],
+    [
+      "in the first of two conjunctions",
+      theorem(["<1>1. 1 = 1 OBVIOUS", "<1>2. @ /\\ TRUE /\\ TRUE OBVIOUS"]),
+      [undefinedAt(4, 7)],
+    ],
+    [
+      "in a SUFFICES step",
+      theorem(["<1>1. 1 = 1 OBVIOUS", "<1>2. SUFFICES @ = 1 OBVIOUS"]),
+      [undefinedAt(4, 16)],
+    ],
+    [
+      "before an unknown operator",
+      theorem(["<1>1. 1 = 1 OBVIOUS", "<1>2. @ = Nope OBVIOUS"]),
+      [
+        {
+          location: "line 4, col 11 to line 4, col 14 of module M",
+          message: "Unknown operator: `Nope'.",
+        },
+      ],
+    ],
+  ])("reports a step's @ %s like SANY", async (_title, source, errors) => {
+    await expect(checkNames(source)).rejects.toMatchObject({ sany: { errors, warnings: [] } });
   });
 
   it.each([
@@ -2795,6 +3040,23 @@ describe("name resolution matches SANY", () => {
       [],
     ],
     [
+      "an instance parameter named like an operator, which a CONSTANT then takes",
+      "---- MODULE C ----\nCONSTANT S\n====\nS(a) == a\ny(S) == INSTANCE C\nz(S) == INSTANCE C WITH S <- 1",
+      [6, 7].flatMap((line) => [
+        {
+          location: `line ${line}, col 3 to line ${line}, col 3 of module M`,
+          message:
+            "Multiply-defined symbol 'S': this definition or declaration conflicts \nwith the one at line 5, col 1 to line 5, col 9 of module M.",
+        },
+        {
+          location: `line ${line}, col 1 to line ${line}, col ${line === 6 ? 18 : 30} of module M`,
+          message:
+            "Wrong number of arguments (0) given to operator 'S', \nwhich requires 1 arguments.",
+        },
+      ]),
+      [],
+    ],
+    [
       "labels inside the arguments of a rejected application",
       "H(a) == a\nOp(P(_)) == P(1, lab:: 2)\nG == H(1, lab:: 2) /\\ Undef(other:: 3) /\\ H(kept:: 1)!Nope\nA == G!lab\nB == G!other\nC == Op(Op(Op))!lab\nD == G!kept\nTHEOREM TRUE\n<1>1. H(1, lab:: 2) /\\ H(kept:: 1)!Nope /\\ H(lost:: 1, 2)!1\n  <2> QED BY <1>1!lab, <1>1!kept, <1>1!lost\n<1> QED",
       [
@@ -4064,6 +4326,74 @@ describe("name resolution matches SANY", () => {
           },
         ],
       },
+    });
+  });
+
+  describe("an instance that substitutes a RECURSIVE operator before its definition", () => {
+    const MODULES = new Map([
+      ["A", "CONSTANT C\nD == C"],
+      ["B", "RECURSIVE F\nCONSTANT F\nF == 1\nG == F"],
+      ["H", "EXTENDS Naturals\nCONSTANT K(_)\nE == K(2)"],
+    ]);
+    const checkRecursive = (source: string) =>
+      check({
+        source: `---- MODULE M ----\nEXTENDS Naturals\n${source}\nVARIABLE x\nInit == x = 0\nNext == x' = x\n====`,
+        config: "INIT Init\nNEXT Next",
+        loadModule: (name) => {
+          const module = MODULES.get(name);
+          return module && `---- MODULE ${name} ----\n${module}\n====`;
+        },
+      });
+
+    it.each([
+      ["explicitly", "RECURSIVE F\nI == INSTANCE A WITH C <- F\nF == 1\nASSUME I!D = 1"],
+      ["implicitly", "RECURSIVE C\nI == INSTANCE A\nC == 1\nASSUME I!D = 1"],
+      [
+        "for an operator constant",
+        "RECURSIVE F(_)\nI == INSTANCE H WITH K <- F\nF(n) == n + 1\nASSUME I!E = 3",
+      ],
+      ["in an unnamed instance", "RECURSIVE F\nINSTANCE A WITH C <- F\nF == 1\nASSUME D = 1"],
+      [
+        "in an instance with parameters",
+        "RECURSIVE F(_)\nI(n) == INSTANCE A WITH C <- F(n)\nF(n) == n\nASSUME I(1)!D = 1",
+      ],
+    ])("substitutes the operator %s like SANY", async (_title, source) => {
+      expect((await checkRecursive(source)).status).toBe("success");
+    });
+
+    it.each<[string, string, [string, string][]]>([
+      [
+        "an operator nothing defines",
+        "RECURSIVE F\nI == INSTANCE A WITH C <- F",
+        [
+          [
+            "line 5, col 1 to line 5, col 10 of module M",
+            "A VARIABLE declaration may not appear within a recursive definition section.",
+          ],
+          [
+            "line 3, col 11 to line 3, col 11 of module M",
+            "Symbol F declared in RECURSIVE statement but not defined.",
+          ],
+        ],
+      ],
+      [
+        "a module that declares a constant named like the operator",
+        "N == INSTANCE B\nZ == N!G",
+        [
+          [
+            "line 3, col 1 to line 3, col 10 of module B",
+            "A declaration may not appear within a recursive definition section.",
+          ],
+          [
+            "line 3, col 10 to line 3, col 10 of module B",
+            "Multiply-defined symbol 'F': this definition or declaration conflicts \nwith the one at line 2, col 11 to line 2, col 11 of module B.",
+          ],
+        ],
+      ],
+    ])("reports only SANY's errors for %s", async (_title, source, errors) => {
+      await expect(checkRecursive(source)).rejects.toMatchObject({
+        sany: { errors: errors.map((error) => ({ location: error[0], message: error[1] })) },
+      });
     });
   });
 
@@ -5355,6 +5685,72 @@ describe("name resolution matches SANY", () => {
       ]),
     );
   });
+
+  it.each<[string, string, [string, string][]]>([
+    [
+      "an expression",
+      "J(p) == INSTANCE I\nZ == J(Nope)",
+      [
+        ["line 6, col 8 to line 6, col 11", "Unknown operator: `Nope'."],
+        ["line 6, col 6 to line 6, col 6", "Operator name J is incomplete."],
+      ],
+    ],
+    [
+      "a quantifier",
+      "J(p) == INSTANCE I\nZ == J(\\A q \\in {1} : Nope)",
+      [
+        ["line 6, col 23 to line 6, col 26", "Unknown operator: `Nope'."],
+        ["line 6, col 6 to line 6, col 6", "Operator name J is incomplete."],
+      ],
+    ],
+    [
+      "two arguments",
+      "J(p, r) == INSTANCE I\nZ == J(Nope, Nope2)",
+      [
+        ["line 6, col 8 to line 6, col 11", "Unknown operator: `Nope'."],
+        ["line 6, col 14 to line 6, col 18", "Unknown operator: `Nope2'."],
+        ["line 6, col 6 to line 6, col 6", "Operator name J is incomplete."],
+      ],
+    ],
+    [
+      "an operator parameter",
+      "J(P(_)) == INSTANCE I\nZ == J(Nope)",
+      [
+        ["line 6, col 8 to line 6, col 11", "Unknown operator: `Nope'."],
+        ["line 6, col 6 to line 6, col 6", "Operator name J is incomplete."],
+      ],
+    ],
+    [
+      "an operator parameter given an operator",
+      "J(P(_)) == INSTANCE I\nQ(a) == a\nZ == J(Q)",
+      [["line 7, col 6 to line 7, col 6", "Operator name J is incomplete."]],
+    ],
+    [
+      "a LET",
+      "J(p) == INSTANCE I\nZ == LET L(q) == INSTANCE I IN L(Nope)",
+      [
+        ["line 6, col 34 to line 6, col 37", "Unknown operator: `Nope'."],
+        ["line 6, col 32 to line 6, col 32", "Operator name L is incomplete."],
+      ],
+    ],
+    [
+      "a theorem",
+      "J(p) == INSTANCE I\nTHEOREM J(Nope)",
+      [
+        ["line 6, col 11 to line 6, col 14", "Unknown operator: `Nope'."],
+        ["line 6, col 9 to line 6, col 9", "Operator name J is incomplete."],
+      ],
+    ],
+  ])(
+    "reports the arguments of an instance name applied in %s before the name, like SANY",
+    async (_description, source, errors) => {
+      await expect(checkNames(`---- MODULE I ----\nK == 1\n====\n${source}`)).rejects.toThrow(
+        createSanyError(
+          errors.map((error) => ({ location: `${error[0]} of module M`, message: error[1] })),
+        ),
+      );
+    },
+  );
 
   it("accepts an instance name as a fact like SANY", async () => {
     await expect(

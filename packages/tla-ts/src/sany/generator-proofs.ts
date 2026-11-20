@@ -10,7 +10,7 @@ import type {
   UseOrHide,
 } from "../ast";
 import { TlaSyntaxError } from "../errors";
-import { defEntryErrors, getDefEntryBinder } from "../parser";
+import { defEntryErrors, getAtSteps, getDefEntryBinder } from "../parser";
 import { createLevelFields } from "./builtins";
 import {
   addToContext,
@@ -46,8 +46,6 @@ import {
   getTokenIndex,
   getTokenLocation,
   isBoxToken,
-  isToken,
-  type SourceFile,
   type TokenSpan,
 } from "./source";
 import {
@@ -70,7 +68,6 @@ import {
   withContext,
 } from "./generation";
 import { resolveSynonym } from "../tlc/jar-data";
-import { getOperandSpan } from "./generator-def-entries";
 import {
   generateInstance,
   getOperatorSpan,
@@ -402,15 +399,6 @@ const generateStepBody = (
   return undefined;
 };
 
-const isInfixExpression = (file: SourceFile, expression: Expression) => {
-  if ((expression.kind === "And" || expression.kind === "Or") && !expression.isBulleted)
-    return true;
-  if (expression.kind !== "Apply" || expression.args.length !== 2) return false;
-  const left = getOperandSpan(file, expression.args[0]);
-  const start = getExpressionSpan(file, expression).start;
-  return left.start === start && !isToken(file, left.end + 1, "(");
-};
-
 const generateProof = (
   generation: ModuleGeneration,
   proof: Proof,
@@ -420,6 +408,7 @@ const generateProof = (
   generation.contexts.push(proofContext);
   const instances: InstanceNode[] = [];
   const sufficesContexts: Context[] = [];
+  const atSteps = getAtSteps(proof.steps);
   let previousRight: ExprOrOpArgNode | undefined;
   const generateOtherStep = (
     body: ProofStep["body"],
@@ -511,31 +500,27 @@ const generateProof = (
           getSpanLocation(generation.file, bodySpan),
         );
       }
-      const isAtStep =
-        previousRight !== undefined &&
-        statement.kind === "Apply" &&
-        isInfixExpression(generation.file, statement) &&
-        statement.args[0].kind === "ExceptAt";
+      const atStep = atSteps.get(step);
+      const isAtStep = atStep !== undefined && previousRight !== undefined;
       // SANY generates an @ step's right side before the $Nop that stands for its @.
-      const atRight = isAtStep ? generateExpression(generation, statement.args[1]) : undefined;
+      const atRight = isAtStep ? generateExpression(generation, atStep.right) : undefined;
       const expression = isAtStep
         ? createOpAppl(
             generation,
-            resolveName(generation, statement.operator, getLocation(generation.file, statement)),
+            resolveName(generation, atStep.operator, getLocation(generation.file, statement)),
             [
               applyBuiltin(
                 generation,
                 "$Nop",
                 [previousRight],
-                getLocation(generation.file, statement.args[0]),
+                getLocation(generation.file, atStep.at),
               ),
               atRight,
             ],
             getLocation(generation.file, statement),
           )
         : generateExpression(generation, statement);
-      const right = expression.kind === "OpAppl" ? expression.operands[1] : undefined;
-      previousRight = isInfixExpression(generation.file, statement) ? right : undefined;
+      previousRight = expression.kind === "OpAppl" ? expression.operands[1] : undefined;
       return expression;
     };
     const stepBody =

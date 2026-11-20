@@ -64,6 +64,7 @@ import {
   getArity,
   getBoundNames,
   getFunctionArity,
+  getInstanceBinding,
   getKeyName,
   getParamArities,
   getRecursiveCount,
@@ -345,6 +346,7 @@ export const createEnvironment = (
   let copyCount = 0;
   const createName = (name: string) => `${name}#${copyCount++}`;
   const instanceChecks: InstanceLevelCheck[] = [];
+  const semanticErrors: SanyError[] = [];
   const warnings: SanyError[] = [];
   const instanceCopies = new WeakMap<Definition, InstanceCopy>();
   const letInstances = new Map<string, LetInstance>();
@@ -487,29 +489,34 @@ export const createEnvironment = (
     });
     loading.pop();
     linking.pop();
-    if (errors.length > 0) throw createSanyError(errors, false, undefined, warnings);
     const duplicate = nested.find((module) => closure.has(module.name));
     const loaded = duplicate && linkedModules.get(duplicate.name);
     const redefinition = loaded && getModuleRedefinition(duplicate, loaded.module);
-    if (redefinition) throw createSanyError([redefinition], false, undefined, warnings);
-    if (duplicate) throw createModuleRedefinedError(duplicate);
+    if (duplicate && !redefinition) throw createModuleRedefinedError(duplicate);
+    [...errors, ...(redefinition ? [redefinition] : [])].forEach((error) => {
+      if (!semanticErrors.some((other) => isSameSanyError(other, error))) {
+        semanticErrors.push(error);
+      }
+    });
     // SANY's Errors#addMessage drops a message it already has, such as an instantiated body's.
-    const levelErrors = [
-      ...collectSemanticErrors(
-        levelChecks.flatMap((check) => check.sections),
-        warnings,
-      ),
-      ...levelChecks.flatMap((check) => check.check(check !== levelChecks.at(-1))),
-    ].filter(
-      (error, index, all) => all.findIndex((other) => isSameSanyError(other, error)) === index,
-    );
-    if (levelErrors.length > 0) {
-      throw createSanyError(
-        levelErrors.map((error) => ({ location: error.location, message: error.message })),
-        false,
-        undefined,
-        warnings,
+    if (semanticErrors.length === 0) {
+      semanticErrors.push(
+        ...[
+          ...collectSemanticErrors(
+            levelChecks.flatMap((check) => check.sections),
+            warnings,
+          ),
+          ...levelChecks.flatMap((check) => check.check(check !== levelChecks.at(-1))),
+        ]
+          .filter(
+            (error, index, all) =>
+              all.findIndex((other) => isSameSanyError(other, error)) === index,
+          )
+          .map((error) => ({ location: error.location, message: error.message })),
       );
+    }
+    if (linking.length === 0 && semanticErrors.length > 0) {
+      throw createSanyError(semanticErrors, false, undefined, warnings);
     }
     return { linked, closure };
   };
@@ -1201,11 +1208,16 @@ export const createEnvironment = (
         functionArity: getFunctionArity(definition),
       };
     };
+    const getRecursiveSymbol = (declaration: Declaration): ModuleSymbol => ({
+      key: getKey(declaration),
+      arity: declaration.arity,
+      params: Array(declaration.arity).fill(0),
+      kind: "Definition",
+      range: declaration.location.range,
+    });
     const getInstanceSymbol = (instance: Instance, name: string): ModuleSymbol => ({
       key: `${name}${KEY_SEPARATOR}${scope.id}`,
-      arity: instance.params.length,
-      kind: "Instance",
-      range: instance.location.range,
+      ...getInstanceBinding(instance),
     });
     const isParameterFree = constants.length === 0 && variables.length === 0;
     const instanced = new Map<Instance, Symbols>();
@@ -1272,6 +1284,14 @@ export const createEnvironment = (
       if (symbolsBefore.has(name)) return;
       symbolsBefore.set(name, symbol);
       boundLocations.set(name, location);
+    };
+    const pendingRecursive = new Set<string>();
+    const bindDefinitionBefore = (definition: Definition, location: SourceLocation) => {
+      if (!pendingRecursive.delete(definition.name)) {
+        bindBefore(definition.name, getDefinitionSymbol(definition), location);
+        return;
+      }
+      symbolsBefore.set(definition.name, getDefinitionSymbol(definition));
     };
     const isBoundBefore = (name: string, location: SourceLocation) => {
       const boundLocation = boundLocations.get(name);
@@ -1342,7 +1362,7 @@ export const createEnvironment = (
       const linked = linkModule(nested, {
         id: `${scope.id}/${nested.name}`,
         isHidden: scope.isHidden,
-        symbols: symbolsBefore,
+        symbols: new Map([...symbolsBefore].filter((entry) => !pendingRecursive.has(entry[0]))),
         recursiveCount: getRecursiveCount(
           scope.recursiveCount,
           counted,
@@ -1365,7 +1385,7 @@ export const createEnvironment = (
           ...(recursiveDefinitions.get(definition.name) ?? []),
           definition,
         ]);
-        bindBefore(definition.name, getDefinitionSymbol(definition), nested.location);
+        bindDefinitionBefore(definition, nested.location);
       });
     };
     const instancingUnit = getUnit(parsed);
@@ -1375,10 +1395,16 @@ export const createEnvironment = (
         link: () =>
           bindBefore(declaration.name, getDeclarationSymbol(declaration), declaration.location),
       })),
+      ...recursiveDeclarations.map((declaration) => ({
+        location: declaration.location,
+        link: () => {
+          if (!symbolsBefore.has(declaration.name)) pendingRecursive.add(declaration.name);
+          bindBefore(declaration.name, getRecursiveSymbol(declaration), declaration.location);
+        },
+      })),
       ...parsed.definitions.filter(isDefining).map((definition) => ({
         location: definition.location,
-        link: () =>
-          bindBefore(definition.name, getDefinitionSymbol(definition), definition.location),
+        link: () => bindDefinitionBefore(definition, definition.location),
       })),
       ...parsed.theorems.map((theorem) => ({
         location: theorem.location,
@@ -1464,13 +1490,7 @@ export const createEnvironment = (
       if (!definition.isLocal) exported.set(definition.name, symbol);
     });
     resolved.boundRecursive.forEach((declaration) => {
-      const symbol: ModuleSymbol = {
-        key: getKey(declaration),
-        arity: declaration.arity,
-        params: Array(declaration.arity).fill(0),
-        kind: "Definition",
-        range: declaration.location.range,
-      };
+      const symbol = getRecursiveSymbol(declaration);
       parameterized.set(symbol.key, !isParameterFree);
       unresolvedBodyKeys.add(symbol.key);
       visible.set(declaration.name, symbol);

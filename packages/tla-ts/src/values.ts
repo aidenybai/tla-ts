@@ -23,7 +23,7 @@ export interface ModelValue {
 interface LazySet {
   enumerated?: SetValue;
   isCached?: boolean;
-  isFingerprinted?: boolean;
+  walkFlags?: number;
 }
 
 export interface SetValue {
@@ -33,7 +33,7 @@ export interface SetValue {
   isNormalized: boolean;
   hash: number;
   fingerprint: number;
-  isFingerprinted: boolean;
+  walkFlags: number;
 }
 
 export interface MixedSetValue extends LazySet {
@@ -50,7 +50,7 @@ export interface FunctionValue {
   writtenKeys: Value[] | undefined;
   functionClass: FunctionClass | undefined;
   lambdaDomain: Value | undefined;
-  isFingerprinted: boolean;
+  walkFlags: number;
 }
 
 export interface IntervalValue {
@@ -139,7 +139,7 @@ export interface LazyFunctionValue {
   source?: LazyFunctionSource;
   functionClass?: FunctionClass;
   enumerated?: FunctionValue;
-  isFingerprinted?: boolean;
+  walkFlags?: number;
 }
 
 interface CountedLazyFunctionValue extends LazyFunctionValue {
@@ -297,15 +297,7 @@ export const createWrittenRecord = (
     writtenNames,
   );
 
-const forgetWrittenOrder = (value: Value): void => {
-  if (typeof value !== "object" || (value.kind !== "Function" && value.kind !== "Set")) return;
-  if (value.hash !== 0 || value.fingerprint !== 0) return;
-  if (value.kind === "Set") return value.elements.forEach(forgetWrittenOrder);
-  value.writtenKeys = undefined;
-  value.range.forEach(forgetWrittenOrder);
-};
-
-// TLC's SetOfRcdsValue#member and SetOfFcnsValue#member normalize the record or function they check in place.
+// TLC's SetOfRcdsValue#member, SetOfFcnsValue#member and FcnRcdValue#toRcd normalize the record or function they check in place.
 const forgetOwnWrittenOrder = (value: Value) => {
   if (isWrittenOrderUsed && typeof value === "object" && value.kind === "Function") {
     value.writtenKeys = undefined;
@@ -414,7 +406,6 @@ export const setStringOrder = (texts: Iterable<string>) => {
   modelValues.clear();
   isTypedModelValueCreated = false;
   isWrittenOrderUsed = false;
-  hasMixedSet = false;
   hasLambda = false;
   hasStreamedSet = false;
   for (const text of texts) rankString(text);
@@ -548,43 +539,78 @@ const compareAny = (other: Value): never => {
   );
 };
 
-let hasMixedSet = false;
+const FINGERPRINTED_FLAG = 1;
+const SELF_COMPARED_FLAG = 2;
 
-const normalizeMixedSets = (value: Value): void => {
-  if (typeof value !== "object") return;
+const isHashed = (value: SetValue | FunctionValue) =>
+  value.fingerprint !== 0 || (value.hash !== 0 && value.hash !== UNFINGERPRINTABLE_HASH);
+
+// TLC's equals and compareTo walk a value compared with itself, sorting its sets and evaluating its lazy functions; equals stops at an empty set of functions, records or tuples, and compareTo enumerates such a set.
+const compareWithItself = (value: Value, isEquality: boolean): boolean => {
+  if (typeof value !== "object") return true;
   switch (value.kind) {
-    case "MixedSet":
-      toFiniteSet(value);
-      return;
-    case "Set":
-      return value.elements.forEach(normalizeMixedSets);
+    case "ModelValue":
+    case "Interval":
+      return true;
+    case "SequenceSet":
+      return compareWithItself(value.base, false);
+    case "InfiniteSet":
+      if (value === ANY_SET) compareAny(value);
+      return true;
     case "LazyFunction":
-      return normalizeMixedSets(toFiniteFunction(value));
-    case "Function":
-      value.domain.forEach(normalizeMixedSets);
-      return value.range.forEach(normalizeMixedSets);
+      return compareWithItself(toFiniteFunction(value), isEquality);
+    case "Function": {
+      if ((value.walkFlags & SELF_COMPARED_FLAG) !== 0 || isHashed(value)) return true;
+      if (isWrittenOrderUsed) value.writtenKeys = undefined;
+      const domain = value.domain;
+      const range = value.range;
+      let isInnerSettled = true;
+      for (let index = 0; index < domain.length; index++) {
+        isInnerSettled = compareWithItself(domain[index], isEquality) && isInnerSettled;
+      }
+      for (let index = 0; index < range.length; index++) {
+        isInnerSettled = compareWithItself(range[index], isEquality) && isInnerSettled;
+      }
+      if (isInnerSettled) value.walkFlags |= SELF_COMPARED_FLAG;
+      return isInnerSettled;
+    }
+    case "Set": {
+      if ((value.walkFlags & SELF_COMPARED_FLAG) !== 0 || isHashed(value)) return true;
+      value.isNormalized = true;
+      const elements = value.elements;
+      let isInnerSettled = true;
+      for (let index = 0; index < elements.length; index++) {
+        isInnerSettled = compareWithItself(elements[index], isEquality) && isInnerSettled;
+      }
+      if (isInnerSettled) value.walkFlags |= SELF_COMPARED_FLAG;
+      return isInnerSettled;
+    }
     case "Subset":
-      return normalizeMixedSets(value.base);
+      return compareWithItself(value.base, isEquality);
     case "FunctionSet":
-      normalizeMixedSets(value.domain);
-      return normalizeMixedSets(value.range);
+      if (!isEquality) break;
+      if (isEmptySet(value.domain) || isEmptySet(value.range)) return false;
+      compareWithItself(value.domain, isEquality);
+      compareWithItself(value.range, isEquality);
+      return false;
     case "RecordSet":
-      return value.sets.forEach(normalizeMixedSets);
-    case "ProductSet":
-      return value.factors.forEach(normalizeMixedSets);
+    case "ProductSet": {
+      if (!isEquality) break;
+      if (isEmptySet(value)) return false;
+      const parts = value.kind === "RecordSet" ? value.sets : value.factors;
+      for (let index = 0; index < parts.length; index++) {
+        compareWithItself(parts[index], isEquality);
+      }
+      return false;
+    }
   }
-};
-
-const compareWithItself = (value: Value) => {
-  if (isWrittenOrderUsed) forgetWrittenOrder(value);
-  if (value === ANY_SET) compareAny(value);
-  if (typeof value === "object" && value.kind === "LazyFunction") toFiniteFunction(value);
-  if (hasMixedSet) normalizeMixedSets(value);
+  compareWithItself(toFiniteSet(value), isEquality);
+  return false;
 };
 
 export const compareValues = (left: Value, right: Value): number => {
   if (left === right) {
-    compareWithItself(left);
+    compareWithItself(left, false);
     return 0;
   }
   if (typeof left === "object" && typeof right === "object") {
@@ -674,7 +700,7 @@ export const createSortedSet = (elements: Value[]): SetValue => ({
   isNormalized: false,
   hash: 0,
   fingerprint: 0,
-  isFingerprinted: false,
+  walkFlags: 0,
 });
 
 export const createNormalizedSet = (elements: Value[]): SetValue => {
@@ -692,7 +718,7 @@ export const createSortedFunction = (domain: Value[], range: Value[]): FunctionV
   writtenKeys: undefined,
   functionClass: undefined,
   lambdaDomain: undefined,
-  isFingerprinted: false,
+  walkFlags: 0,
 });
 
 export type FunctionClass = "lambda" | "tuple" | "record";
@@ -753,8 +779,9 @@ export const markFingerprinted = (value: Value): void => {
   if (value.kind === "ModelValue" || value.kind === "Interval" || value.kind === "InfiniteSet") {
     return;
   }
-  if (value.isFingerprinted) return;
-  value.isFingerprinted = true;
+  const walkFlags = value.walkFlags ?? 0;
+  if ((walkFlags & FINGERPRINTED_FLAG) !== 0) return;
+  value.walkFlags = walkFlags | FINGERPRINTED_FLAG;
   if (value.kind === "Function") {
     if (value.functionClass === "lambda") value.functionClass = undefined;
     value.domain.forEach(markFingerprinted);
@@ -770,7 +797,7 @@ export const markFingerprinted = (value: Value): void => {
 export const valuesEqual = (left: Value, right: Value): boolean => {
   cacheSet(left);
   if (left === right) {
-    compareWithItself(left);
+    compareWithItself(left, true);
     return true;
   }
   if (typeof left !== "object" || typeof right !== "object") {
@@ -936,6 +963,7 @@ const toTlcFunction = (value: Value) => {
 
 const toTlcRecord = (value: Value) => {
   if (!isFunctionValue(value)) return undefined;
+  forgetOwnWrittenOrder(value);
   const functionValue = toFiniteFunction(value);
   return isRecordDomain(functionValue.domain) ? functionValue : undefined;
 };
@@ -1236,10 +1264,7 @@ export const createEnumeratedSet = (elements: Value[]): SetValue | MixedSetValue
   try {
     const set = computeLikeTlcOnFailure<Value[], undefined, SetValue | MixedSetValue>(
       createSet,
-      (mixed) => {
-        hasMixedSet = true;
-        return { kind: "MixedSet", elements: mixed };
-      },
+      (mixed) => ({ kind: "MixedSet", elements: mixed }),
       elements,
       undefined,
     );
