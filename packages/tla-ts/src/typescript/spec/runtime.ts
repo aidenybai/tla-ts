@@ -965,6 +965,21 @@ const TAILORED_CASING = new Set(["az", "el", "hy", "lt", "tr"]);
 
 const HOST_PATCHES = [
   { name: "ParseDate", from: "ParseDate(u) ==", to: "ParseSpecDate(u) ==" },
+  // V8 keeps RegExp's legacy static properties as strings, empty ones before any match, for any
+  // receiver and after a subclass's match too, where the legacy RegExp features proposal, as
+  // ESCore has it, throws.
+  {
+    name: "RegExpBuiltin",
+    from: `IF ~SameValue(this, Intrinsic(s, "RegExp")) \\/ value = Empty THEN ThrowTypeError(s) ELSE Ok(s, Str(value))`,
+    to: `IF ~SameValue(this, Intrinsic(s, "RegExp")) \\/ value = Empty THEN Assert(FALSE, "tla-ts can't read a legacy static property of RegExp where V8 keeps a value that ESCore leaves out") ELSE Ok(s, Str(value))`,
+  },
+  {
+    name: "RegExpBuiltin",
+    from: `[] m = "legacySetInput" ->
+         IF ~SameValue(this, Intrinsic(s, "RegExp")) THEN ThrowTypeError(s) ELSE`,
+    to: `[] m = "legacySetInput" ->
+         IF ~SameValue(this, Intrinsic(s, "RegExp")) THEN Assert(FALSE, "tla-ts can't set RegExp.input on another receiver, as V8 does") ELSE`,
+  },
   // ESCore runs toLocaleLowerCase and toLocaleUpperCase as toLowerCase and toUpperCase, which the
   // host does too in its default locale, unless that locale tailors case, and in no locale given.
   {
@@ -1319,15 +1334,19 @@ const HOST_PATCHES = [
 ];
 
 export const getHostDefinitions = (library: Library): GeneratedDefinition[] => [
-  ...HOST_PATCHES.map((patch) => {
-    const definition = library.definitions.get(patch.name);
-    if (definition === undefined || !definition.text.includes(patch.from)) {
-      throw new TlaError(`ESCore's ${patch.name} no longer reads as the compiled spec patches it`);
-    }
+  // Each definition with its patches applied in turn.
+  ...[...new Set(HOST_PATCHES.map((patch) => patch.name))].map((name) => {
+    const definition = library.definitions.get(name);
+    const text = HOST_PATCHES.filter((patch) => patch.name === name).reduce((current, patch) => {
+      if (!current.includes(patch.from)) {
+        throw new TlaError(`ESCore's ${name} no longer reads as the compiled spec patches it`);
+      }
+      return current.replace(patch.from, patch.to);
+    }, definition?.text ?? "");
     return {
-      name: patch.name === "ParseDate" ? "ParseSpecDate" : patch.name,
-      arity: definition.arity,
-      text: definition.text.replace(patch.from, patch.to),
+      name: name === "ParseDate" ? "ParseSpecDate" : name,
+      arity: definition?.arity ?? 0,
+      text,
     };
   }),
   {

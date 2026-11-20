@@ -440,6 +440,32 @@ describe("compiles scripts by specializing ESCore", () => {
     }, 600_000);
   });
 
+  describe("reads RegExp's legacy static properties after a match, and stops where V8 differs", () => {
+    const getSource = (expected: string) => `
+      /(b)(c)?/.exec("abd");
+      const legacy = RegExp as unknown as Record<string, string>;
+      const result = ["$1", "$2", "lastMatch", "leftContext", "rightContext", "input", "lastParen"]
+        .map((key) => legacy[key])
+        .join("|");
+      if (result !== "${expected}") throw new Error(result);
+    `;
+
+    it("agrees with Node", async () => {
+      expect((await checkScript(getSource("b||b|a|d|abd|"))).message).toBeUndefined();
+    });
+
+    it("rejects another result", async () => {
+      expect((await checkScript(getSource("b||b|a|d|abd|c"))).message).toContain(THREW);
+    });
+
+    it("stops where V8 reads an empty string before any match", async () => {
+      expect(
+        (await checkScript("const first = (RegExp as unknown as Record<string, string>).$1;"))
+          .message,
+      ).toContain("tla-ts can't read a legacy static property of RegExp");
+    });
+  });
+
   describe("compares values of different types as unequal", () => {
     const getSource = (expected: string) => `
       const values: unknown[] = [null, true, "", 0];
