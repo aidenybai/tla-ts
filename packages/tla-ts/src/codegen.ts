@@ -149,7 +149,9 @@ let generatedHelpers: ReturnType<typeof createGeneratedHelpers> | undefined;
 let isCodeGenerationAllowed: boolean | undefined;
 
 // Hosts such as Cloudflare Workers, or a page whose CSP lacks 'unsafe-eval', throw an EvalError.
-const MAX_PARAMETERS = 65_534;
+// The most values a generated function takes as its parameters, which the call that makes it
+// spreads on the stack: far below the 65,534 that a function can take.
+const MAX_PARAMETERS = 10_000;
 
 const getIsCodeGenerationAllowed = () => {
   try {
@@ -551,8 +553,8 @@ export const generateEvaluator = (
   };
   const body = generateExpression(generator, expression, frame);
   generatedHelpers ??= createGeneratedHelpers();
-  // A function takes at most 65,534 parameters, which an expression with more values than that,
-  // such as a tuple of a long string's code units, would need; the interpreter evaluates it.
+  // An expression that reads more values than that, such as a tuple of a long string's code
+  // units, the interpreter evaluates.
   if (Object.keys(generatedHelpers).length + generator.references.length > MAX_PARAMETERS) {
     return undefined;
   }
