@@ -2180,6 +2180,38 @@ describe("level checking matches SANY", () => {
     },
   );
 
+  it.each([
+    ["S2L(w)!1", 52],
+    ["SL!1", 48],
+    ["RW!lab", 50],
+    ["S3(w)!lb!1", 54],
+  ])(
+    "constrains what a LET instance's selection substitutes for a constant mentions, as SANY does: %s",
+    async (substitute, end) => {
+      await expect(
+        check({
+          source: `---- MODULE M ----\nVARIABLE x\n---- MODULE L ----\nCONSTANT c\nVARIABLE w\nS2L(p) == <<p, 2>>\nSL == <<w, 2>>\nRW == lab :: w\nS3(p) == lb :: <<p, 2>>\nDL == LET K == INSTANCE P WITH e <- ${substitute}, v <- w IN TRUE\n====\nI3 == INSTANCE L WITH c <- 1, w <- x\nInit == x = 0\nNext == x' = x\n====`,
+          config: "INIT Init\nNEXT Next",
+          loadModule: (name) =>
+            name === "P"
+              ? "---- MODULE P ----\nCONSTANT c, e\nVARIABLE v\nTHEOREM PT == ASSUME e = e PROVE c = e\n===="
+              : undefined,
+        }),
+      ).rejects.toThrow(
+        createSanyError([
+          {
+            location: `line 10, col 11 to line 10, col ${end} of module M`,
+            message: getInstantiationError("e", 0),
+          },
+          {
+            location: "line 12, col 1 to line 12, col 36 of module M",
+            message: getSubstitutedError("w", 0),
+          },
+        ]),
+      );
+    },
+  );
+
   it("checks a label selected from a step's statement, as SANY does", async () => {
     const exceeds = "The level of argument 1 exceeds the maximum level allowed by the operator.";
     await expect(

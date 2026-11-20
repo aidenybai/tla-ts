@@ -1085,12 +1085,14 @@ export const createEnvironment = (
             location,
             resolution: LOCAL_RESOLUTION,
           };
+    // An expression substitute is leveled through its substitution definition, where its selections resolve. An operator substitute stays as written, since SANY checks the levels of its arguments.
     const substitutes = {
       params: instance.params,
       substitutions: new Map(
         declarations.map((declaration): [string, Expression] => [
           declaration.key,
-          explicitSubstitutions.get(declaration.name) ?? createLocalSubstitution(declaration),
+          (declaration.arity > 0 ? explicitSubstitutions.get(declaration.name) : undefined) ??
+            createLocalSubstitution(declaration),
         ]),
       ),
     };
