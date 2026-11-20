@@ -484,11 +484,15 @@ const selectSubexpression = (
     if (selector.kind === "Colon") return;
     const range = reference.selectorRanges?.[selectorIndex];
     const noOperands = `Choosing operand \`${getSelectorName(selector)}' of subexpression with no operands.`;
+    checkNull(
+      current,
+      "Subexpression selection failed, probably due to an error in the selected expression.",
+    );
+    checkNull(current, noOperands, true);
     if (selectionErrors.has(current)) {
       report(range, noOperands);
       return;
     }
-    if (selections.has(current)) checkNull(current, noOperands, true);
     current = enterScopes(current);
     if (current.kind === "Label") {
       current = current.body;
@@ -670,17 +674,6 @@ const selectSubexpression = (
       return reference;
     }
     if (isLeftToResolver(selector)) return reference;
-    if (selector.kind !== "Colon") {
-      checkNull(
-        current,
-        "Subexpression selection failed, probably due to an error in the selected expression.",
-      );
-      checkNull(
-        current,
-        `Choosing operand \`${getSelectorName(selector)}' of subexpression with no operands.`,
-        true,
-      );
-    }
     selectOperand(selector);
     checkNull(
       current,

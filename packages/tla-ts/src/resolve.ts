@@ -159,6 +159,11 @@ const emptyExpressions = new WeakSet<Expression>();
 
 export const isUnresolved = (expression: Expression) => unresolvedExpressions.has(expression);
 
+export const copyResolution = (expression: Expression, copy: Expression) => {
+  if (unresolvedExpressions.has(expression)) unresolvedExpressions.add(copy);
+  if (emptyExpressions.has(expression)) emptyExpressions.add(copy);
+};
+
 // SANY's failed selection is an operator application with no operands.
 const isEmptyExpression = (expression: Expression): boolean =>
   emptyExpressions.has(expression) || findNullError(nullSelections.get(expression)) !== undefined;
@@ -1929,7 +1934,7 @@ const isSubexpressionReported = (
       });
       return true;
     }
-    if (isUnknown && !isInstance) {
+    if (isUnknown && !isInstance && symbolIndex === -1) {
       unit.errors.push({
         location: formatRange({ module: range.module, start: range.start, end: lastRange.end }),
         message: `Unknown operator: \`${resolveSynonym(names.join("!"))}'.`,
@@ -2499,6 +2504,7 @@ interface InstancedModule {
   declarations: Declaration[];
   symbols: Symbols;
   instancer: string;
+  getSubstitutionErrors: (substitutionCount: number) => SanyError[];
 }
 
 export interface ModuleReport {
@@ -2787,13 +2793,14 @@ const checkSubstitutions = (
 
 const resolveInstance = (instance: Instance, scope: LocalName | undefined, unit: Unit) => {
   const instanced = unit.getInstance(instance);
-  checkSubstitutions(
+  const substitutions = checkSubstitutions(
     instance,
     instanced.declarations,
     instanced.instancer,
     bindParams(scope, instance.params, unit),
     unit,
   );
+  unit.errors.push(...instanced.getSubstitutionErrors(substitutions.size));
   return [...instanced.symbols].reduce(
     (parent, entry) => bindName(parent, entry[0], entry[1], unit),
     scope,
