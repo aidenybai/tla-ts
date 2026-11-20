@@ -13811,6 +13811,7 @@ RxRun(matcher, input, index, groupCount) ==
 \*           units or None, and the path of Disjunction alternatives the group is in
 \*   path    the alternatives the parser is in, as <<start of the Disjunction, alternative>> pairs
 \*   decs    the numbers of the DecimalEscapes, and refs the GroupNames of \k escapes
+\*   singles the code points that are a whole ClassString of a ClassStringDisjunction
 \*   err     whether the parser found a Syntax Error
 \* Each parse operator returns [p, n]: the state after it and the node it parsed. A parsed character
 \* is its CharacterValue (§22.2.1.8). Outside UnicodeMode, it parses the grammar of §B.1.2.
@@ -13856,10 +13857,10 @@ ParsePattern(units, u, v) ==
                /\ i < j /\ p.groups[i].name # None /\ p.groups[i].name = p.groups[j].name
                /\ RxMightBothParticipate(p.groups[i].path, p.groups[j].path)
      THEN [ok |-> FALSE]
-     ELSE [ok |-> TRUE, pattern |-> [d |-> d.n, groups |-> p.groups]]
+     ELSE [ok |-> TRUE, pattern |-> [d |-> d.n, groups |-> p.groups, singles |-> p.singles]]
 RxParse(units, u, v, named, captures) ==
   RxDisjunction([src |-> units, pos |-> 0, u |-> u \/ v, v |-> v, named |-> named, captures |-> captures,
-                 groups |-> <<>>, path |-> <<>>, decs |-> <<>>, refs |-> <<>>, err |-> FALSE])
+                 groups |-> <<>>, path |-> <<>>, decs |-> <<>>, refs |-> <<>>, singles |-> {}, err |-> FALSE])
 \* MightBothParticipate (§22.2.1.3): two groups can't both participate in a match only when they are
 \* in different alternatives of one Disjunction.
 RxMightBothParticipate(x, y) ==
@@ -14189,7 +14190,10 @@ RxClassSetOperand(p) ==
       class == IF RxIsAt(p, N("\\")) THEN RxCharacterClassEscape(RxSkip(p, 1)) ELSE RxNode(p, None)
       c == RxClassSetCharacter(p)
   IN CASE RxIsAt(p, N("[")) -> RxBracketed(p, "nested")
-       [] RxIsAt(p, N("\\q{")) -> IF strings.p.err THEN strings ELSE RxClose(strings.p, N("}"), [t |-> "strings", strs |-> strings.n])
+       [] RxIsAt(p, N("\\q{")) ->
+            IF strings.p.err THEN strings
+            ELSE RxClose([strings.p EXCEPT !.singles = @ \cup {strings.n[i][1] : i \in {j \in DOMAIN strings.n : Len(strings.n[j]) = 1}}],
+                         N("}"), [t |-> "strings", strs |-> strings.n])
        [] RxIsAt(p, N("\\q")) -> RxError(p)
        [] class.p.err \/ class.n # None -> class
        [] c.p.err -> c
@@ -14257,6 +14261,11 @@ RegExpInitialize(s, obj, pattern, flags) ==
       parsed == ParsePattern(Val(p).value, 117 \in Range(units), 118 \in Range(units))
   IN IF ~(Range(units) \subseteq Range(N("dgimsuvy"))) \/ Cardinality(Range(units)) # Len(units) THEN ThrowError(f.s, "SyntaxError")
      ELSE IF ~parsed.ok THEN ThrowError(f.s, "SyntaxError")
+     \* V8 folds a ClassString of one code point under the i flag and then matches only the folded
+     \* code point, so /[\q{a}]/iv doesn't match "A", where the spec matches every case of it.
+     ELSE IF /\ 105 \in Range(units) /\ 118 \in Range(units)
+             /\ \E c \in parsed.pattern.singles : RxScfPreimage(RxScf(c)) # {RxScf(c)}
+     THEN Unsupported(f.s, N("Unsupported: a ClassString of one code point with a case under the i and v flags"))
      ELSE LET rer == [ic |-> 105 \in Range(units), multiline |-> 109 \in Range(units), dotAll |-> 115 \in Range(units),
                       u |-> 117 \in Range(units), v |-> 118 \in Range(units), groups |-> parsed.pattern.groups]
               t == SetO(f.s, obj, [O(f.s, obj) EXCEPT !.slots.source = Val(p).value, !.slots.flags = units,
