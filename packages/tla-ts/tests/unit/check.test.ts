@@ -4619,6 +4619,22 @@ describe("initial predicate and next-state relation match TLC", () => {
     expect(warned).toEqual(["P"]);
   });
 
+  it.each([
+    ["P == LET A == x' = x IN x \\in {0, 1}", ["P"]],
+    ["P == LET A(p) == p' = p IN x \\in {0, 1}", ["P"]],
+    ["P == LET A == x IN TRUE", []],
+  ])("levels the property %j by its LET's body, as TLC does", async (definition, expected) => {
+    const warned: string[] = [];
+    await check({
+      source: `---- MODULE M ----\nVARIABLE x\nInit == x = 0\nNext == x' = x\n${definition}\n====`,
+      config: "INIT Init\nNEXT Next\nPROPERTY P",
+      onProgress: (progress) => {
+        if (progress.kind === "state-level-property") warned.push(progress.name);
+      },
+    });
+    expect(warned).toEqual(expected);
+  });
+
   it("rejects an invariant that is not a state predicate", async () => {
     await expect(
       checkBody(
