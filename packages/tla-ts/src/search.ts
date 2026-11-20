@@ -83,7 +83,12 @@ import {
 import { getLiveExpressions } from "./liveness-checker";
 import { prettyPrint, prettyPrintT } from "./pretty-print";
 import { parenthesizedRanges } from "./parser";
-import { getOperatorDefinition, substitutionFrames, withSubstitutionFrames } from "./instances";
+import {
+  getOperatorDefinition,
+  getSubstitutedName,
+  substitutionFrames,
+  withSubstitutionFrames,
+} from "./instances";
 import { getPossibleCounts, type CheckerRuntime } from "./runtime";
 import { createIncompleteSuccessorError, type SuccessorGenerator } from "./successors";
 import {
@@ -610,8 +615,16 @@ const getProperties = (
           body.kind === "Identifier" && !isLocallyResolved(body)
             ? getDefinition(body.name, environment)
             : undefined;
+        // TLC names the invariant by the parameter a substitute replaces.
+        const substituted = getSubstitutedName(body);
         properties.invariants.push({
-          name: operator?.name ?? (body.kind === "Identifier" ? body.name : partName),
+          name:
+            operator?.name ??
+            (substituted === undefined
+              ? body.kind === "Identifier"
+                ? body.name
+                : partName
+              : getKeyName(substituted)),
           expression: withFrames(body),
           scope: item.scope,
         });

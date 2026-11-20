@@ -36,7 +36,7 @@ import {
   type Thunk,
 } from "./evaluate";
 import { letDefinitions } from "./coverage";
-import { mapChildren, substitutionFrames } from "./instances";
+import { getSubstitutedName, mapChildren, substitutionFrames } from "./instances";
 import { getKeyName } from "./resolve";
 import { ACTION_LEVEL, CONSTANT_LEVEL, TEMPORAL_LEVEL, VARIABLE_LEVEL } from "./levels";
 import { isEnabled } from "./successors";
@@ -305,10 +305,13 @@ export const expandTemporal = (
   if (expression.kind === "Identifier") {
     const binding = isLocallyResolved(expression) ? lookupScope(scope, expression.name) : undefined;
     if (binding?.kind === "Thunk" && !binding.isReleased) {
+      // TLC names a formula by the last definition it unfolds, and a substitute's binding isn't one.
       return expand(
         binding.expression,
         binding.scope,
-        definitionThunks.has(binding) ? expression.name : expansion.name,
+        definitionThunks.has(binding) && getSubstitutedName(expression) === undefined
+          ? expression.name
+          : expansion.name,
       );
     }
     const operator = binding?.kind === "Operator" ? binding.operator : undefined;

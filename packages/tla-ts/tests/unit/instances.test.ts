@@ -414,6 +414,25 @@ describe("INSTANCE matches TLC", () => {
   });
 
   it.each([
+    ["v <- (x = 1)", "I!Dv", "I!Dv"],
+    ["v <- (x = 0)", "I!Ev", "v"],
+    ["v <- x", "I!Gv", "G"],
+  ])(
+    "names a property that reaches the substitute in %s through %s as TLC does",
+    async (substitution, property, name) => {
+      const result = await check({
+        source: `---- MODULE M ----\nEXTENDS Naturals\nVARIABLE x\nInit == x = 0\nNext == x' = (x + 1) % 2\nI == INSTANCE L WITH ${substitution}\nProp == ${property}\n====`,
+        config: "INIT Init\nNEXT Next\nPROPERTY Prop",
+        loadModule: (module) =>
+          module === "L"
+            ? "---- MODULE L ----\nVARIABLE v\nDv == v\nEv == [](v)\nGv == LET G == v = 0 IN [](G)\n===="
+            : undefined,
+      });
+      expect(result.violation?.name).toBe(name);
+    },
+  );
+
+  it.each([
     ["F == FALSE", "I!F", "The spec is trivially false because I!F is false."],
     ["G == 3", "I!G", "The operator I!G, which equals 3,\ncannot be used as a spec"],
   ])(
