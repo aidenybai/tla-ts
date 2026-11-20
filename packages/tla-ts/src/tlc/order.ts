@@ -453,7 +453,7 @@ const createContexts = (getParsed: ModuleSet) => {
     const table = createSymbolTable();
     contexts.set(name ?? "", table);
     const unit = getParsed(name);
-    // SANY's SymbolTable copies the builtins into a file module's context, while an inner module's context starts empty.
+    // SANY copies the builtins into a file module's context, but an inner module's context starts empty.
     if (!unit.isNested) {
       SANY_BUILTINS.toReversed().forEach((builtin) =>
         table.put(createEntry(builtin, "builtin", false)),

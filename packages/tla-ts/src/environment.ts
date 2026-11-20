@@ -684,7 +684,7 @@ export const createEnvironment = (
     return linked;
   };
 
-  // SANY's Generator#processSubst substitutes for, arity-checks and reports missing the instanced module's declarations in its symbol table's order.
+  // SANY substitutes for, arity-checks and reports missing an instanced module's declarations in its symbol table's hash order.
   const getSymbolTableOrdered = (module: string, declarations: KeyedDeclaration[]) => {
     const names = order.getInstanceDeclarations(module);
     return declarations.toSorted(

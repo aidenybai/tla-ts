@@ -135,7 +135,6 @@ interface LevelContext {
   // SANY keeps each node's first level check, though a label checked again, here or in a module it sees, is level-correct.
   checkedNodes?: WeakMap<Expression, boolean>;
   goalSelections?: WeakMap<Expression, Expression>;
-  // SANY levels a theorem's or assumption's statement once, and the theorem's definition reads that level.
   statementLevels?: Map<Expression | AssumeProve, LevelData>;
 }
 
