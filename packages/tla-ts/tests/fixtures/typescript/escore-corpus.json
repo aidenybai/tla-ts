@@ -14576,8 +14576,7 @@
         },
         {
           "name": "stops where a script asks whether an inextensible typed array with elements is sealed",
-          "source": "if (!Object.isSealed(Object.preventExtensions(new Int8Array(2)))) throw new Error(\"sealed\");",
-          "wrong": "conformance: Object.isSealed of an inextensible typed array with elements"
+          "source": "if (!Object.isSealed(Object.preventExtensions(new Int8Array(2)))) throw new Error(\"sealed\");"
         }
       ]
     },

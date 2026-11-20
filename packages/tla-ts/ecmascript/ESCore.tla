@@ -6286,7 +6286,12 @@ TestIntegrityLevel(s, v, level) ==
   IF IsAbrupt(e) THEN e
   ELSE IF Val(e) = True THEN Ok(e.s, False)
   ELSE LET ks == OwnPropertyKeys(e.s, v) IN
-  IF IsAbrupt(ks) THEN ks ELSE TestIntegrityKeys(ks.s, v, Val(ks), level)
+  IF IsAbrupt(ks) THEN ks
+  \* V8 tests a typed array's properties but its elements, which leave it sealed but not frozen.
+  ELSE IF O(ks.s, v).class = "typedArray" THEN
+    LET named == SelectSeq(Val(ks), LAMBDA k : ~IsTypedArrayKey(k)) IN
+    IF level = "frozen" /\ Len(named) < Len(Val(ks)) THEN Ok(ks.s, False) ELSE TestIntegrityKeys(ks.s, v, named, level)
+  ELSE TestIntegrityKeys(ks.s, v, Val(ks), level)
 TestIntegrityKeys(s, v, ks, level) ==
   IF ks = <<>> THEN Ok(s, True)
   ELSE LET cur == GetOwnProperty(s, v, Head(ks)) IN
