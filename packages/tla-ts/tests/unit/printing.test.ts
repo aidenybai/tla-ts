@@ -92,6 +92,50 @@ describe("printing matches TLC", () => {
     ).toEqual(["{{}, {1}, {2}, {1, 2}}  {1}", "<<>>"]);
   });
 
+  it.each([
+    [
+      "[{1} -> {s \\in SUBSET (1..3) : PrintT(s) /\\ s = {1, 2}}] = [{2} -> {}]",
+      ["{}", "{1}", "{2}", "{3}", "{1, 2}", "FALSE"],
+    ],
+    [
+      "[a : {s \\in SUBSET (1..3) : PrintT(s) /\\ s = {2}}] = [a : {}]",
+      ["{}", "{1}", "{2}", "FALSE"],
+    ],
+    ["{s \\in SUBSET (1..2) : PrintT(s)} \\X {} = {}", ["{}", "TRUE"]],
+  ])(
+    "streams a set filter to its first element, as TLC's Value#isEmpty does, in %s",
+    async (expression, printed) => {
+      expect((await checkPrinting(`ASSUME PrintT(${expression})`)).printed).toEqual(printed);
+    },
+  );
+
+  it("tests each element of a filter's base as it streams the base, as TLC's SetPredValue enumerator does", async () => {
+    expect(
+      (
+        await checkPrinting(
+          'ASSUME PrintT({x \\in {y \\in SUBSET {1, 2} : PrintT(<<"in", y>>)} : PrintT(<<"out", x>>)})',
+        )
+      ).printed,
+    ).toEqual([
+      '<<"in", {}>>',
+      '<<"out", {}>>',
+      '<<"in", {1}>>',
+      '<<"out", {1}>>',
+      '<<"in", {2}>>',
+      '<<"out", {2}>>',
+      '<<"in", {1, 2}>>',
+      '<<"out", {1, 2}>>',
+      "{{}, {1}, {2}, {1, 2}}",
+    ]);
+  });
+
+  it("streams SUBSET S into a filter without sizing SUBSET S, as TLC's SubsetValue#elements does", async () => {
+    expect(
+      (await checkPrinting("ASSUME PrintT([{1} -> {s \\in SUBSET (1..40) : TRUE}] = [{2} -> {}])"))
+        .printed,
+    ).toEqual(["FALSE"]);
+  });
+
   it("expands small sets in error messages", async () => {
     expect((await checkPrinting("ASSUME 1 \\in SUBSET {1}")).result.violation?.message).toContain(
       "{{}, {1}}",
