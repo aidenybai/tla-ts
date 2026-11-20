@@ -361,7 +361,6 @@ const getConjuncts = (expression: Expression, environment: Environment): Express
   return [expression];
 };
 
-// SpecProcessor#processConfigSpec and #processConfigProps take apart only an OpDefNode, and a theorem is not one.
 const createTheoremError = (theorem: TheoremReference, usage: string) =>
   new TlaConfigError(
     `The operator ${theorem.name}, which equals ${formatRange(theorem.range)},\ncannot be used as a ${usage}`,

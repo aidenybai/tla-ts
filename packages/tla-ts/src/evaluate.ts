@@ -181,7 +181,6 @@ export interface Scope {
 export interface Environment {
   runtime: CheckerRuntime;
   definitions: Map<string, Definition>;
-  // The range of each theorem's and assumption's node in SANY: its statement, or the INSTANCE that copies it.
   theorems: Map<string, SourceRange>;
   rootKeys: Map<string, string>;
   builtins: Map<string, Builtin>;
