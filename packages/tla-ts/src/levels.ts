@@ -17,8 +17,8 @@ import {
   type SourceRange,
   type Theorem,
 } from "./ast";
-import { formatRange, type CodedSanyError, type SanyError } from "./errors";
-import { forEachChild, substitutionFrames } from "./instances";
+import { formatRange, TlaSyntaxError, type CodedSanyError, type SanyError } from "./errors";
+import { forEachChild, frameSubstitutions, substitutionFrames } from "./instances";
 import { parenthesizedRanges } from "./parser";
 import {
   collectSemanticErrors,
@@ -26,6 +26,8 @@ import {
   getBoundNames,
   getPatternNames,
   isBefore,
+  SELECTION_NAME,
+  type SelectedDefinition,
 } from "./resolve";
 import { resolveSynonym } from "./tlc/jar-data";
 import { STANDARD_LEVELS } from "./standard-definitions";
@@ -84,15 +86,38 @@ interface SubstitutedSource {
   argParams: ArgumentParam[];
 }
 
+interface SubstitutedBody extends SubstitutedSource {
+  level: number;
+  isCorrect: boolean;
+  params: string[];
+}
+
+interface Instanced {
+  definition: Definition;
+  copy: InstanceCopy;
+  params: string[];
+}
+
+interface FoundOriginal {
+  expression: Expression;
+  scope: Scope;
+  instanced: Instanced | undefined;
+}
+
 export interface LetInstance extends InstanceSubstitutes {
   copies: Map<string, InstanceCopy>;
   getArgParams: () => Set<string>;
+  getSubstitutionNames: () => string[];
+  substitutesCheck: InstanceLevelCheck["substitutesCheck"];
 }
 
 export interface InstanceLevels {
   getCopy: (definition: Definition) => InstanceCopy | undefined;
+  getSelectedDefinition: (expression: Expression) => SelectedDefinition | undefined;
+  getOriginalName: (name: string) => string | undefined;
   getLetInstance: (instance: Instance) => LetInstance | undefined;
   getInstanced: (copy: InstanceCopy) => InstancedDefinition;
+  getOriginal: (copy: InstanceCopy, target: Expression) => LevelData;
   checkInstantiation: (instance: Instance, instancer: string, scope: Scope) => SanyError[];
   getInstanceDefinitions: (instance: Instance) => Definition[];
   getSubstitutes: (instance: Instance) => InstanceSubstitutes | undefined;
@@ -107,14 +132,16 @@ interface LevelContext {
   getQualifiedName?: (name: string) => string | undefined;
   instances: InstanceLevels;
   recursiveSections: WeakMap<Definition, SectionMember[]>;
-  // SANY's LabelNode#levelCheck is true for a label it level-checked before, in this module or one it sees.
-  checkedLabels?: WeakSet<Expression>;
+  // SANY keeps each node's first level check, though a label checked again, here or in a module it sees, is level-correct.
+  checkedNodes?: WeakMap<Expression, boolean>;
+  goalSelections?: WeakMap<Expression, Expression>;
 }
 
 export interface InstanceLevelCheck {
   location: SourceLocation;
   check: () => SanyError[];
   substitutes: InstanceSubstitutes;
+  substitutesCheck: "Definition" | "Theorem" | "Instance";
 }
 
 type ScopeEntry =
@@ -125,7 +152,8 @@ export type Scope = Map<string, ScopeEntry>;
 
 type Resolved =
   | { kind: "Declared"; name: string; level: number; arity: number }
-  | { kind: "Defined"; levels: OperatorLevels };
+  | { kind: "Defined"; levels: OperatorLevels }
+  | { kind: "Unknown"; name: string };
 
 export interface SectionMember {
   definition: Definition;
@@ -181,6 +209,23 @@ const getArgumentParamKey = (operator: string, index: number, param: string) =>
 export const parseArgumentParamKey = (key: string) => {
   const parts = key.split(SEPARATOR);
   return { operator: parts[0], index: Number(parts[1]), param: parts[2] };
+};
+
+const renameArgumentParam = (key: string, rename: (name: string) => string) => {
+  const parameter = parseArgumentParamKey(key);
+  return {
+    operator: rename(parameter.operator),
+    index: parameter.index,
+    param: rename(parameter.param),
+  };
+};
+
+const getFormalRenamer = (formals: OperatorParam[], sourceFormals: OperatorParam[]) => {
+  const prefix = formals.length - sourceFormals.length;
+  const renamed = new Map(
+    sourceFormals.map((formal, index) => [formal.name, formals[prefix + index].name]),
+  );
+  return (name: string) => renamed.get(name) ?? name;
 };
 
 const getConditionKey = (operator: number, operand: number, argument: number) =>
@@ -327,6 +372,11 @@ const getSubstituted = (expression: Expression): Expression | undefined =>
     : expression.kind === "Let"
       ? getSubstituted(expression.body)
       : undefined;
+
+const getMissingOriginalError = (expression: Expression) =>
+  new TlaSyntaxError(
+    `Cannot find the instanced original of a selection at line ${expression.location.line}, column ${expression.location.column}`,
+  );
 
 const getDefinitionBody = (definition: Definition): Expression =>
   definition.kind === "Function"
@@ -587,7 +637,8 @@ export const createLevelAnalyzer = (context: LevelContext) => {
   // SANY level-checks a LAMBDA once, so a recursive section's second pass keeps its first levels.
   const lambdaLevels = new Map<Expression, OperatorLevels>();
   const selectionLevels = new Map<Expression, LevelData>();
-  const checkedLabels = context.checkedLabels ?? new WeakSet<Expression>();
+  const checkedNodes = context.checkedNodes ?? new WeakMap<Expression, boolean>();
+  let labelChecks = 0;
   const errors: CodedSanyError[] = [];
   const messages: LevelMessage[] = [];
 
@@ -613,7 +664,7 @@ export const createLevelAnalyzer = (context: LevelContext) => {
     }
     const signature = CORE_SIGNATURES.get(name) ?? STANDARD_LEVELS.get(name);
     if (signature) return { kind: "Defined", levels: signature };
-    return { kind: "Declared", name, level: 0, arity: 0 };
+    return { kind: "Unknown", name };
   };
 
   const applyDeclared = (name: string, level: number, operands: Operand[]) => {
@@ -871,6 +922,16 @@ export const createLevelAnalyzer = (context: LevelContext) => {
   const toOperands = (expressions: Expression[], scope: Scope) =>
     expressions.map((expression) => toOperand(expression, scope));
 
+  // SANY level-checks a goal's clause with the goal, so selecting it in the proof reports nothing new.
+  const analyzeGoalSelection = (selection: Expression, operands: Operand[], scope: Scope) => {
+    const reported = errors.length;
+    const pending = messages.length;
+    const operand = toOperand(selection, scope);
+    errors.splice(reported);
+    messages.splice(pending);
+    return operand.kind === "Operator" ? applyDefined(operand.data, operands) : operand.data;
+  };
+
   const applyBuiltin = (
     operator: OperatorLevels,
     expressions: Expression[],
@@ -895,10 +956,19 @@ export const createLevelAnalyzer = (context: LevelContext) => {
     return data;
   };
 
-  const applyResolved = (resolved: Resolved, operands: Operand[]) =>
-    resolved.kind === "Declared"
-      ? applyDeclared(resolved.name, resolved.level, operands)
-      : applyDefined(resolved.levels, operands);
+  const applyResolved = (
+    resolved: Resolved,
+    operands: Operand[],
+    reference: Expression,
+    scope: Scope,
+  ) => {
+    if (resolved.kind === "Defined") return applyDefined(resolved.levels, operands);
+    if (resolved.kind === "Declared") return applyDeclared(resolved.name, resolved.level, operands);
+    const selection = context.goalSelections?.get(reference);
+    return selection
+      ? analyzeGoalSelection(selection, operands, scope)
+      : applyDeclared(resolved.name, 0, operands);
+  };
 
   const checkJunction = (levels: number[], name: string) => {
     if (isMixed(levels)) {
@@ -961,7 +1031,7 @@ export const createLevelAnalyzer = (context: LevelContext) => {
     });
   };
 
-  const analyzeLet = (expression: LetExpression, scope: Scope) => {
+  const enterLet = (expression: LetExpression, scope: Scope) => {
     const instances = expression.instances?.flatMap(
       (instance) => context.instances.getLetInstance(instance) ?? [],
     );
@@ -982,51 +1052,85 @@ export const createLevelAnalyzer = (context: LevelContext) => {
             },
           ],
     );
+    return { instances, inner, instanceUnits };
+  };
+
+  const analyzeLet = (expression: LetExpression, scope: Scope) => {
+    const entered = enterLet(expression, scope);
     if (expression.recursive) {
       getRecursiveSections(scope, expression).forEach((section) =>
         checkRecursiveSection(section.members),
       );
     }
-    const definitions = (
-      instanceUnits?.length
+    const substituted = new Map(
+      entered.instances?.flatMap((instance) =>
+        instance.getSubstitutionNames().map((name): [string, LetInstance] => [name, instance]),
+      ),
+    );
+    const analyzeSubstitutes = (instance: LetInstance) =>
+      instance.getSubstitutionNames().map((name) => {
+        const definition = expression.definitions.find((item) => item.name === name);
+        if (!definition)
+          throw new TlaSyntaxError(`Cannot find the LET instance's substitute ${name}`);
+        return analyzeDefinition(definition, entered.inner);
+      });
+    const checked = new Set<LetInstance>();
+    const ownDefinitions = (
+      entered.instanceUnits?.length
         ? [
             ...expression.definitions.map((definition) => ({
               location: definition.location,
               definitions: [definition],
             })),
-            ...instanceUnits,
+            ...entered.instanceUnits,
           ]
             .toSorted((left, right) => compareLocations(left.location, right.location))
             .flatMap((unit) => unit.definitions)
         : expression.definitions
-    ).map((definition) => analyzeDefinition(definition, inner));
-    const body = analyze(expression.body, inner);
+    ).flatMap((definition) => {
+      const instance = substituted.get(definition.name);
+      if (!instance) return [analyzeDefinition(definition, entered.inner)];
+      if (instance.substitutesCheck === "Instance" || checked.has(instance)) return [];
+      checked.add(instance);
+      return analyzeSubstitutes(instance);
+    });
+    const body = analyze(expression.body, entered.inner);
     const instancer = context.module;
-    const instanceErrors =
-      instancer === undefined
-        ? []
-        : expression.instances?.flatMap((instance) => {
-            const substitutes = context.instances.getLetInstance(instance)
-              ? undefined
-              : context.instances.getSubstitutes(instance);
-            if (substitutes) getSubstitutes(substitutes, inner);
-            const instantiation = context.instances.checkInstantiation(instance, instancer, inner);
-            instantiation.forEach((error) => errors.push(error));
-            return instantiation;
-          });
+    const instanceChecks = (expression.instances ?? []).map((instance) => {
+      const letInstance = context.instances.getLetInstance(instance);
+      const substitutes =
+        letInstance?.substitutesCheck === "Instance" ? analyzeSubstitutes(letInstance) : [];
+      if (instancer === undefined) return { substitutes, errors: [] };
+      const instanceSubstitutes = letInstance
+        ? undefined
+        : context.instances.getSubstitutes(instance);
+      if (instanceSubstitutes) getSubstitutes(instanceSubstitutes, entered.inner);
+      const instantiation = context.instances.checkInstantiation(
+        instance,
+        instancer,
+        entered.inner,
+      );
+      instantiation.forEach((error) => errors.push(error));
+      return { substitutes, errors: instantiation };
+    });
+    const definitions = [
+      ...ownDefinitions,
+      ...instanceChecks.flatMap((check) => check.substitutes),
+    ];
     const data = {
       level: body.level,
       isCorrect:
         body.isCorrect &&
-        definitions.every((levels) => levels.isCorrect) &&
-        (instanceErrors?.length ?? 0) === 0,
+        // SANY applies a selection's LAMBDA, and an application's level-correctness leaves out its operator's.
+        definitions.every((levels) => levels.isCorrect || levels.name === SELECTION_NAME) &&
+        instanceChecks.every((check) => check.errors.length === 0),
       params: new Set(body.params),
       constraints: new Map(body.constraints),
       argConstraints: new Map(body.argConstraints),
       argParams: new Set(body.argParams),
     };
-    instances?.forEach((instance) =>
-      getInstanceArgParams(instance, inner).forEach((key) => data.argParams.add(key)),
+    entered.instances?.forEach((instance) =>
+      getInstanceArgParams(instance, entered.inner).forEach((key) => data.argParams.add(key)),
     );
     definitions.forEach((levels) => mergeConstraints(data, levels));
     return data;
@@ -1053,7 +1157,12 @@ export const createLevelAnalyzer = (context: LevelContext) => {
 
   const analyze = (expression: Expression, scope: Scope) => {
     const start = messages.length;
-    return reportSince(start, expression.location.range, analyzeNode(expression, scope));
+    const labels = labelChecks;
+    const data = reportSince(start, expression.location.range, analyzeNode(expression, scope));
+    if (labelChecks === labels || expression.kind === "Label") return data;
+    const isCorrect = checkedNodes.get(expression);
+    if (isCorrect === undefined) checkedNodes.set(expression, data.isCorrect);
+    return isCorrect === undefined || isCorrect === data.isCorrect ? data : { ...data, isCorrect };
   };
 
   const analyzeNode = (expression: Expression, scope: Scope): LevelData => {
@@ -1066,11 +1175,11 @@ export const createLevelAnalyzer = (context: LevelContext) => {
       case "EnabledVariable":
         return createData(VARIABLE_LEVEL);
       case "Identifier":
-        return applyResolved(resolve(expression.name, scope), []);
+        return applyResolved(resolve(expression.name, scope), [], expression, scope);
       case "Apply": {
         const operands = toOperands(expression.args, scope);
         checkApply(expression, operands);
-        return applyResolved(resolve(expression.operator, scope), operands);
+        return applyResolved(resolve(expression.operator, scope), operands, expression, scope);
       }
       case "OperatorReference":
       case "Lambda":
@@ -1272,30 +1381,42 @@ export const createLevelAnalyzer = (context: LevelContext) => {
           scope,
         );
       case "Label": {
+        labelChecks++;
         const data = analyze(expression.body, scope);
-        if (checkedLabels.has(expression)) return { ...data, isCorrect: true };
-        checkedLabels.add(expression);
+        if (checkedNodes.has(expression)) return { ...data, isCorrect: true };
+        checkedNodes.set(expression, true);
         return data;
       }
       case "Selection": {
         const selected = expression.expression;
         const known = selectionLevels.get(selected);
-        if (known) return checkedLabels.has(selected) ? { ...known, isCorrect: true } : known;
-        const reported = errors.length;
-        const pending = messages.length;
-        const analyzed = analyze(selected, scope);
-        // SANY level-checks an instanced module itself, so it reports these errors there and finds its labels correct.
-        const substituted = getSubstituted(selected);
-        if (substituted) {
-          errors.splice(reported);
-          messages.splice(pending);
+        if (known) {
+          return selected.kind === "Label" && checkedNodes.has(selected)
+            ? { ...known, isCorrect: true }
+            : known;
         }
-        const data = substituted?.kind === "Label" ? { ...analyzed, isCorrect: true } : analyzed;
+        const substituted = getSubstituted(selected);
+        const data = substituted
+          ? analyzeSubstituted(substituted, getSelectedInstance(substituted), scope)
+          : analyze(selected, scope);
         selectionLevels.set(selected, data);
         return data;
       }
-      case "Subexpression":
-        return createData();
+      case "Subexpression": {
+        const selection = context.goalSelections?.get(expression);
+        return selection
+          ? analyzeGoalSelection(
+              selection,
+              toOperands(
+                expression.selectors.flatMap((selector) =>
+                  "args" in selector ? selector.args : [],
+                ),
+                scope,
+              ),
+              scope,
+            )
+          : createData();
+      }
     }
   };
 
@@ -1309,7 +1430,7 @@ export const createLevelAnalyzer = (context: LevelContext) => {
       getNonLeibnizNames(child, childScope, isChildNonLeibniz, names);
     const visitOperator = (name: string, args: Expression[]) => {
       const resolved = resolve(name, scope);
-      if (resolved.kind === "Declared") {
+      if (resolved.kind !== "Defined") {
         if (isNonLeibniz) names.add(name);
         args.forEach((arg) => visit(arg));
         return;
@@ -1443,6 +1564,23 @@ export const createLevelAnalyzer = (context: LevelContext) => {
     });
   };
 
+  const applySubstitutes = (
+    body: SubstitutedBody,
+    operands: Map<string, Operand>,
+    instanced: ModuleLevels,
+  ) => {
+    const data = createData(
+      Math.max(body.level, ...body.params.map((param) => operands.get(param)?.data.level ?? 0)),
+    );
+    data.isCorrect =
+      body.isCorrect && [...operands.values()].every((operand) => operand.data.isCorrect);
+    body.params.forEach((param) =>
+      (operands.get(param)?.data.params ?? [param]).forEach((name) => data.params.add(name)),
+    );
+    addSubstitutedLevels(data, body, operands, instanced);
+    return data;
+  };
+
   const analyzeInstance = (
     substitutes: InstanceSubstitutes,
     instanced: ModuleLevels,
@@ -1481,43 +1619,13 @@ export const createLevelAnalyzer = (context: LevelContext) => {
     const source = instanced.source;
     const formals = getFormals(definition);
     const prefix = formals.length - source.formals.length;
-    const names = source.formals.map((_formal, index) => formals[prefix + index].name);
-    const renamed = new Map(source.formals.map((formal, index) => [formal.name, names[index]]));
-    const rename = (name: string) => renamed.get(name) ?? name;
-    const operands = getSubstitutes(copy, scope);
-    const getParams = (param: string) => operands.get(param)?.data.params ?? [param];
-    const params = [
-      ...source.params,
-      ...names.filter((_name, index) => source.weights[index] === 1),
-    ];
-    const argParams = [
-      ...[...source.argParams].map((key) => {
-        const parameter = parseArgumentParamKey(key);
-        return {
-          operator: rename(parameter.operator),
-          index: parameter.index,
-          param: rename(parameter.param),
-        };
-      }),
-      ...names.flatMap((operator, operatorIndex) =>
-        names.flatMap((param, paramIndex) =>
-          Array.from({ length: source.formals[operatorIndex].arity }, (_value, index) => index)
-            .filter((index) =>
-              source.conditions.has(getConditionKey(operatorIndex, paramIndex, index)),
-            )
-            .map((index) => ({ operator, index, param })),
-        ),
-      ),
-    ];
-    const data = createData(
-      Math.max(source.level, ...params.map((param) => operands.get(param)?.data.level ?? 0)),
-    );
-    data.isCorrect =
-      source.isCorrect && [...operands.values()].every((operand) => operand.data.isCorrect);
-    params.forEach((param) => getParams(param).forEach((name) => data.params.add(name)));
-    addSubstitutedLevels(
-      data,
+    const rename = getFormalRenamer(formals, source.formals);
+    const names = source.formals.map((formal) => rename(formal.name));
+    const data = applySubstitutes(
       {
+        level: source.level,
+        isCorrect: source.isCorrect,
+        params: [...source.params, ...names.filter((_name, index) => source.weights[index] === 1)],
         constraints: [
           ...source.constraints,
           ...names.map((name, index): [string, number] => [name, source.maxLevels[index]]),
@@ -1531,9 +1639,20 @@ export const createLevelAnalyzer = (context: LevelContext) => {
             ]),
           ),
         ],
-        argParams,
+        argParams: [
+          ...[...source.argParams].map((key) => renameArgumentParam(key, rename)),
+          ...names.flatMap((operator, operatorIndex) =>
+            names.flatMap((param, paramIndex) =>
+              Array.from({ length: source.formals[operatorIndex].arity }, (_value, index) => index)
+                .filter((index) =>
+                  source.conditions.has(getConditionKey(operatorIndex, paramIndex, index)),
+                )
+                .map((index) => ({ operator, index, param })),
+            ),
+          ),
+        ],
       },
-      operands,
+      getSubstitutes(copy, scope),
       instanced,
     );
     const nonLeibniz = new Set(names.filter((_name, index) => source.nonLeibniz.has(index)));
@@ -1546,6 +1665,112 @@ export const createLevelAnalyzer = (context: LevelContext) => {
       );
     }
     return toOperatorLevels(definition.name, formals, data, nonLeibniz);
+  };
+
+  const getSelectedInstance = (substituted: Expression): Instanced => {
+    const selected = context.instances.getSelectedDefinition(substituted);
+    const copy =
+      selected &&
+      (letCopies.get(selected.definition) ?? context.instances.getCopy(selected.definition));
+    if (!selected || !copy) throw getMissingOriginalError(substituted);
+    return { definition: selected.definition, copy, params: selected.params };
+  };
+
+  const analyzeSubstituted = (target: Expression, instanced: Instanced, scope: Scope) => {
+    const copy = instanced.copy;
+    // SANY level-checks the instanced module before the selection, so the original keeps that check.
+    const instancedLevels = context.instances.getModuleLevels(copy.module);
+    const original = context.instances.getOriginal(copy, target);
+    const renamed = new Map(
+      instanced.params.flatMap((param): [string, string][] => {
+        const name = context.instances.getOriginalName(param);
+        return name === undefined ? [] : [[name, param]];
+      }),
+    );
+    const renameFormal = getFormalRenamer(
+      getFormals(instanced.definition),
+      getFormals(copy.source),
+    );
+    const rename = (name: string) => renamed.get(name) ?? renameFormal(name);
+    return applySubstitutes(
+      {
+        level: original.level,
+        isCorrect: original.isCorrect,
+        params: [...original.params].map(rename),
+        constraints: [...original.constraints].map((entry): [string, number] => [
+          rename(entry[0]),
+          entry[1],
+        ]),
+        argConstraints: [...original.argConstraints].map((entry): [string, number] => {
+          const parameter = parseArgumentParamKey(entry[0]);
+          return [getArgumentKey(rename(parameter.operator), parameter.index), entry[1]];
+        }),
+        argParams: [...original.argParams].map((key) => renameArgumentParam(key, rename)),
+      },
+      getSubstitutes(copy, scope),
+      instancedLevels,
+    );
+  };
+
+  // A selection's LAMBDA shares its location with the application of it.
+  const findOriginal = (
+    expression: Expression,
+    target: Expression,
+    scope: Scope,
+    instanced: Instanced | undefined,
+  ): FoundOriginal | undefined => {
+    if (
+      expression.location === target.location &&
+      (expression.kind !== "Lambda" || target.kind === "Lambda")
+    ) {
+      return { expression, scope, instanced };
+    }
+    if (expression.kind === "Let") {
+      const entered = enterLet(expression, scope);
+      for (const definition of [
+        ...expression.definitions,
+        ...(entered.instanceUnits?.flatMap((unit) => unit.definitions) ?? []),
+      ]) {
+        const found = findInDefinition(definition, target, entered.inner, instanced);
+        if (found) return found;
+      }
+      return findOriginal(expression.body, target, entered.inner, instanced);
+    }
+    let found: FoundOriginal | undefined;
+    forEachChild(expression, (child, bound) => {
+      found ??= findOriginal(child, target, bindFormals(scope, toFormals(bound)), instanced);
+    });
+    return found;
+  };
+
+  const findInDefinition = (
+    definition: Definition,
+    target: Expression,
+    scope: Scope,
+    instanced: Instanced | undefined,
+  ) => {
+    const copy = letCopies.get(definition) ?? context.instances.getCopy(definition);
+    return findOriginal(
+      getDefinitionBody(definition),
+      target,
+      bindFormals(scope, getFormals(definition)),
+      copy ? { definition, copy, params: [] } : instanced,
+    );
+  };
+
+  const analyzeOriginal = (definition: Definition, target: Expression): LevelData => {
+    const found = findInDefinition(definition, target, new Map(), undefined);
+    if (!found) {
+      const original =
+        target.kind === "Let" && !target.location.range
+          ? target.body
+          : substitutionFrames.get(target)?.findLast((frame) => !frameSubstitutions.has(frame));
+      if (!original) throw getMissingOriginalError(target);
+      return analyzeOriginal(definition, original);
+    }
+    return found.instanced
+      ? analyzeSubstituted(found.expression, found.instanced, found.scope)
+      : analyze(found.expression, found.scope);
   };
 
   const staleDefinitions = new Set<Definition>();
@@ -1630,6 +1855,7 @@ export const createLevelAnalyzer = (context: LevelContext) => {
     analyze,
     analyzeDefinition,
     analyzeInstance,
+    analyzeOriginal,
     checkPrimedArguments,
     checkRecursiveSection,
     constants: context.constants,
@@ -1909,6 +2135,14 @@ export const checkModuleLevels = (
       reported.push(...analyzer.errors.splice(0));
     },
   });
+  const getSubstitutesChecks = (substitutesCheck: InstanceLevelCheck["substitutesCheck"]) =>
+    instances
+      .filter((instance) => instance.substitutesCheck === substitutesCheck)
+      .map((instance) =>
+        createCheck(instance.location, () =>
+          analyzer.getSubstitutes(instance.substitutes, new Map()),
+        ),
+      );
   return {
     sections: sections.map((section) =>
       createCheck(section.location, () => analyzer.checkRecursiveSection(section.members)),
@@ -1929,17 +2163,16 @@ export const checkModuleLevels = (
                 analyzer.analyzeDefinition(definition, new Map()),
               ),
             ),
-          ...instances.map((instance) =>
-            createCheck(instance.location, () =>
-              analyzer.getSubstitutes(instance.substitutes, new Map()),
-            ),
-          ),
+          ...getSubstitutesChecks("Definition"),
         ],
-        statements
-          .filter((statement) => statement.name !== undefined)
-          .map((statement) =>
-            createCheck(statement.location, () => getStatementLevel(statement.statement)),
-          ),
+        [
+          ...statements
+            .filter((statement) => statement.name !== undefined)
+            .map((statement) =>
+              createCheck(statement.location, () => getStatementLevel(statement.statement)),
+            ),
+          ...getSubstitutesChecks("Theorem"),
+        ],
         [
           ...module.assumptions.map((assumption) => ({
             location: assumption.location,
@@ -1971,7 +2204,12 @@ export const checkModuleLevels = (
           ),
           ...instances.map((instance) => ({
             location: instance.location,
-            check: (reported: SanyError[]) => reported.push(...instance.check()),
+            check: (reported: SanyError[]) => {
+              if (instance.substitutesCheck === "Instance") {
+                analyzer.getSubstitutes(instance.substitutes, new Map());
+              }
+              reported.push(...analyzer.errors.splice(0), ...instance.check());
+            },
           })),
         ],
       ].flatMap((units) => collectSemanticErrors(units, warnings)),

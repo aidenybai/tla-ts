@@ -78,7 +78,7 @@ const getMaxLevel = (operator: OperatorLevels, index: number) =>
 
 export const createInstanceChecker = (
   getModule: (name: string) => ModuleContext,
-  copies: Omit<InstanceLevels, "getInstanced" | "getModuleLevels">,
+  copies: Omit<InstanceLevels, "getInstanced" | "getOriginal" | "getModuleLevels">,
   recursiveSections: WeakMap<Definition, SectionMember[]>,
 ) => {
   const analyzers = new Map<string, ModuleAnalyzer>();
@@ -183,6 +183,7 @@ export const createInstanceChecker = (
       ...getModuleLevels(copy.module),
       source: getAnalyzer(copy.module).analyzeDefinition(copy.source, new Map()),
     }),
+    getOriginal: (copy, target) => getAnalyzer(copy.module).analyzeOriginal(copy.source, target),
     getModuleLevels,
   };
 
@@ -209,9 +210,10 @@ export const createInstanceChecker = (
         maximumLevel: 1,
       })),
     ];
-    const substituted = declarations.flatMap((declaration): Substituted[] => {
-      const expression = check.substitutions.get(declaration.name);
-      if (!expression) return [];
+    const substituted = [...check.substitutions].flatMap((entry): Substituted[] => {
+      const declaration = declarations.find((item) => item.name === entry[0]);
+      if (!declaration) return [];
+      const expression = entry[1];
       if (declaration.arity === 0) {
         const data = analyzer.analyze(expression, check.scope);
         return [
