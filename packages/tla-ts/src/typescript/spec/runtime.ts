@@ -83,6 +83,14 @@ const DEFINITIONS = [
                [] e.kind = "getter" -> AccessorDesc(e.get, Absent, enumerable, TRUE)
                [] OTHER -> AccessorDesc(Absent, e.set, enumerable, TRUE))
   IN IF IsAbrupt(d) THEN d ELSE Ok(d.s, e)`,
+  // DefineElementOn of each of a class's methods in order, in halves, so that thousands of them
+  // nest log n deep rather than n.
+  `DefineElementsOn(s, home, elements) ==
+  CASE elements = <<>> -> Ok(s, Empty)
+    [] Len(elements) = 1 -> DefineElementOn(home, Ok(s, elements[1]), FALSE)
+    [] OTHER ->
+         LET first == DefineElementsOn(s, home, SubSeq(elements, 1, Len(elements) \\div 2)) IN
+         IF IsAbrupt(first) THEN first ELSE DefineElementsOn(first.s, home, SubSeq(elements, Len(elements) \\div 2 + 1, Len(elements)))`,
   `ClassParents(s, superclass) ==
   IF superclass = Null THEN Ok(s, [proto |-> Null, ctor |-> Intrinsic(s, "FunctionPrototype")])
   ELSE IF ~IsConstructor(s, superclass) THEN ThrowTypeError(s)

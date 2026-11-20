@@ -2151,6 +2151,38 @@ describe("compiles scripts by specializing ESCore", () => {
     }, 600_000);
   });
 
+  describe("defines a class of thousands of elements", () => {
+    const body = Array.from(
+      { length: 1000 },
+      (_, index) =>
+        `f${index} = ${index}; #p${index} = ${index * 2}; m${index}() { return this.#p${index}; } static s${index}() { return ${index * 3}; }`,
+    ).join("\n");
+    const getSource = (expected: string) => `
+      class C {
+        ${body}
+        static ready = 0;
+        static { C.ready = 7; }
+        get g() { return this.#p999 + this.f999; }
+      }
+      const c = new C() as unknown as Record<string, () => number>;
+      const methods = C as unknown as Record<string, () => number>;
+      const result = [C.ready, c.f0, c.f999, c.m500(), methods.s999(), c.g, Object.keys(c).length, Object.getOwnPropertyNames(C.prototype).length].join();
+      if (result !== "${expected}") throw new Error(result);
+    `;
+
+    it("agrees with Node", async () => {
+      expect(
+        (await checkScript(getSource("7,0,999,1000,2997,2997,1000,1002"))).message,
+      ).toBeUndefined();
+    }, 600_000);
+
+    it("rejects another result", async () => {
+      expect((await checkScript(getSource("7,0,999,1000,2997,2997,1000,1001"))).message).toContain(
+        THREW,
+      );
+    }, 600_000);
+  });
+
   describe("runs a script of thousands of statements and global vars", () => {
     const getSource = (expected: number) => `
       let count = 0;
