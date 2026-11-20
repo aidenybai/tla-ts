@@ -2354,7 +2354,8 @@ export const specialize = (
     )?.types[0]?.expression;
     // TypeScript parses a static method named constructor as a constructor.
     const staticConstructor = node.members.find(
-      (member) => ts.isConstructorDeclaration(member) && hasModifier(member, ts.SyntaxKind.StaticKeyword),
+      (member) =>
+        ts.isConstructorDeclaration(member) && hasModifier(member, ts.SyntaxKind.StaticKeyword),
     );
     if (staticConstructor !== undefined) {
       throw new TlaTypeScriptError(

@@ -78,7 +78,12 @@ const compact = (definitions: readonly CodeDefinition[]) => {
         : // The parts of a long sequence are split rather than matched by a repeated group,
           // whose backtracking runs out of stack.
           rename(definition.text).replace(/<<[\d, ]+>>/g, (sequence) => {
-            if (!sequence.slice(2, -2).split(", ").every((part) => /^\d+$/.test(part))) {
+            if (
+              !sequence
+                .slice(2, -2)
+                .split(", ")
+                .every((part) => /^\d+$/.test(part))
+            ) {
               return sequence;
             }
             const name = sequences.get(sequence) ?? `Units${sequences.size + 1}`;

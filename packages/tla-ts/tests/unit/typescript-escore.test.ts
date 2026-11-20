@@ -384,15 +384,21 @@ describe("compiles scripts by specializing ESCore", () => {
 
     it("agrees with Node", async () => {
       expect(
-        (await checkScript(getSource("true,false,false,30000,30000,2,30000,29999,true,-,false,0,BC")))
-          .message,
+        (
+          await checkScript(
+            getSource("true,false,false,30000,30000,2,30000,29999,true,-,false,0,BC"),
+          )
+        ).message,
       ).toBeUndefined();
     }, 600_000);
 
     it("rejects another result", async () => {
       expect(
-        (await checkScript(getSource("true,false,false,30000,30000,2,30000,29999,true,-,false,0,B")))
-          .message,
+        (
+          await checkScript(
+            getSource("true,false,false,30000,30000,2,30000,29999,true,-,false,0,B"),
+          )
+        ).message,
       ).toContain(THREW);
     }, 600_000);
   });
