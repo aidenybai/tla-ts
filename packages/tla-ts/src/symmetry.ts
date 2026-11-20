@@ -1,9 +1,9 @@
 import type { BoundPattern, Expression } from "./ast";
 import type { Substitution } from "./config";
 import { TlaConfigError, TlaEvaluationError, UNEXPECTED_EXCEPTION } from "./errors";
-import { EXIT_STATUS, setExitCode, withErrorExitCode } from "./exit-codes";
-import { MESSAGE_CODE, withUnexpectedException } from "./tlc/messages";
-import { evaluate, getRootKey, type Environment } from "./evaluate";
+import { EXIT_STATUS, getMessageExitStatus, setExitCode } from "./exit-codes";
+import { getCodedMessage, MESSAGE_CODE, withUnexpectedException } from "./tlc/messages";
+import { evaluate, getBuiltin, getDefinition, getRootKey, type Environment } from "./evaluate";
 import { parenthesizedRanges } from "./parser";
 import { getKeyName } from "./resolve";
 import {
@@ -109,20 +109,31 @@ export const getSymmetryGroup = (
   substitutions: Substitution[],
 ): Images[] | undefined => {
   const key = getRootKey(name, environment);
-  const definition = environment.definitions.get(key);
-  if (definition === undefined && !environment.constants.has(key)) {
+  // Deviation from TLC: TLC ignores a [Mod] <- of the symmetry, or throws a ClassCastException for a literal body.
+  const definition = getDefinition(key, environment);
+  if (
+    definition === undefined &&
+    !environment.constants.has(key) &&
+    getBuiltin(key, environment) === undefined
+  ) {
     throw new TlaConfigError(
       `The symmetry function ${name} specified in the configuration file\nis not defined in the specification.`,
     );
   }
-  if (definition?.kind !== "Operator" || definition.params.length > 0) {
+  if (environment.constants.has(key) || definition?.kind !== "Operator") {
     throw createSymmetryError(`The symmetry function ${name} must specify a set of permutations.`);
   }
   const evaluateConstant = (expression: Expression) =>
     evaluate(expression, { environment, scope: undefined, state: undefined, next: undefined });
-  const value = withErrorExitCode(() =>
-    withUnexpectedException(() => evaluateConstant(definition.body)),
-  );
+  const value = (() => {
+    try {
+      return withUnexpectedException(() => evaluateConstant(definition.body));
+    } catch (error) {
+      const coded =
+        error instanceof TlaEvaluationError ? getCodedMessage(error.message) : undefined;
+      throw setExitCode(error, coded ? getMessageExitStatus(coded.code) : EXIT_STATUS.error);
+    }
+  })();
   if (!isEnumeratedSet(value)) {
     throw createSymmetryError("The symmetry operator must specify a set of functions.");
   }

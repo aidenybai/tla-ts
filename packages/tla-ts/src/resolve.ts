@@ -2174,8 +2174,12 @@ const checkUseOrHide = (
   });
   const range = statement.location.range;
   if (factCount + defCount === 0 && range) {
+    const location = formatRange(range);
+    if (!statement.isOnly && statement.facts.length + statement.defs.length === 0) {
+      unit.errors.push({ location, message: "Empty BY, USE, or HIDE" });
+    }
     unit.errors.push({
-      location: formatRange(range),
+      location,
       message: statement.kind === "By" ? "Empty BY" : "Empty USE or HIDE statement.",
     });
   }

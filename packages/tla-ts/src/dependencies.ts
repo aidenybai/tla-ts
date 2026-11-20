@@ -11,8 +11,17 @@ import { ACTION_LEVEL, CONSTANT_LEVEL, TEMPORAL_LEVEL, VARIABLE_LEVEL } from "./
 
 interface DefinitionNames extends Pick<
   Environment,
-  "definitions" | "substitutions" | "constants" | "variableIndex" | "builtins" | "variables"
+  | "definitions"
+  | "substitutions"
+  | "constants"
+  | "bodyValues"
+  | "variableIndex"
+  | "builtins"
+  | "variables"
 > {}
+
+const getFactExpressions = (definition: Definition, environment: DefinitionNames) =>
+  environment.bodyValues.has(definition.body) ? [] : getDefinitionExpressions(definition);
 
 export interface DefinitionFacts {
   ids: Map<Definition, number>;
@@ -268,7 +277,11 @@ export const createDefinitionFacts = (environment: DefinitionNames): DefinitionF
   const local = new Uint32Array(definitions.length * words);
   const localImpurity = new Uint32Array(definitions.length * words);
   const edges = definitions.map((definition, id) => {
-    const facts = collectLocalFacts(getDefinitionExpressions(definition), environment, words);
+    const facts = collectLocalFacts(
+      getFactExpressions(definition, environment),
+      environment,
+      words,
+    );
     local.set(facts.row, id * words);
     localImpurity[id * words] = facts.row[0] & PURITY_MASK;
     return facts.edges;
@@ -320,7 +333,7 @@ const getRow = (definition: Definition, environment: Environment): Uint32Array =
   const facts = environment.facts;
   const id = facts.ids.get(definition);
   return id === undefined
-    ? getExpressionsRow(getDefinitionExpressions(definition), environment)
+    ? getExpressionsRow(getFactExpressions(definition, environment), environment)
     : facts.rows.subarray(id * facts.words, (id + 1) * facts.words);
 };
 

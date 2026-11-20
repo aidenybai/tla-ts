@@ -277,7 +277,7 @@ describe("e-matching, as Z3 5.3.2 counts its steps", () => {
   });
 });
 
-const getThresholdScript = (options: string[], check: string) => [
+const getThresholdScript = (options: string[], check: string, query = "(get-info :rlimit)") => [
   ...options,
   "(declare-fun f (Int) Int)",
   "(declare-fun g (Int) Int)",
@@ -291,7 +291,7 @@ const getThresholdScript = (options: string[], check: string) => [
   "(assert (> (f (g 0)) (f (g c))))",
   "(assert (> a c))",
   check,
-  "(get-info :rlimit)",
+  query,
 ];
 
 describe("the instantiation thresholds, as Z3 5.3.2 reads them", () => {
@@ -321,6 +321,30 @@ describe("the instantiation thresholds, as Z3 5.3.2 reads them", () => {
         ),
       ),
     ).toEqual(["sat", "(:rlimit 3276)"]);
+  });
+
+  it("instantiates eagerly up to smt.qi.eager_threshold in sat.euf", () => {
+    expect(
+      run(
+        getThresholdScript(
+          ["(set-option :sat.euf true)", "(set-option :smt.qi.eager_threshold 50.0)"],
+          "(check-sat)",
+          "(get-value ((g c)))",
+        ),
+      ),
+    ).toEqual(["sat", "(((g c) (- 50015)))"]);
+  });
+
+  it("instantiates at the final check up to smt.qi.lazy_threshold in sat.euf", () => {
+    expect(
+      run(
+        getThresholdScript(
+          ["(set-option :sat.euf true)", "(set-option :smt.qi.lazy_threshold 100.0)"],
+          "(check-sat)",
+          "(get-value ((g c)))",
+        ),
+      ),
+    ).toEqual(["sat", "(((g c) (- 93511)))"]);
   });
 
   it("puts the lazy threshold back to 20 in setup_AUFLIA", () => {

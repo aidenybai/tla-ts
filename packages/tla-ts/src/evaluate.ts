@@ -141,6 +141,7 @@ export interface Builtin {
   isLevelConstant?: boolean;
   isActionLevel?: boolean;
   isLazy?: boolean;
+  signature?: string;
 }
 
 export interface Closure {
@@ -182,6 +183,7 @@ export interface Environment {
   rootKeys: Map<string, string>;
   builtins: Map<string, Builtin>;
   constants: Map<string, Value>;
+  bodyValues: WeakMap<Expression, Value>;
   substitutions: Map<string, string>;
   instanceNames: Map<string, string>;
   variables: string[];
@@ -509,6 +511,9 @@ export const expectBooleanBody = (value: Value, expression: Expression) => {
 
 export const getDefinition = (name: string, environment: Environment) =>
   environment.definitions.get(environment.substitutions.get(name) ?? name);
+
+export const getBuiltin = (name: string, environment: Environment) =>
+  environment.builtins.get(environment.substitutions.get(name) ?? name);
 
 // Deviation from TLC: SpecProcessor#processModuleOverrides puts a standard module's Java override over a root definition of the same name.
 export const getRootKey = (name: string, environment: Environment) =>
@@ -1138,7 +1143,7 @@ export const findGlobalName = (name: string, environment: Environment): GlobalNa
   const definition = environment.definitions.get(name);
   if (definition) return { kind: "Definition", definition };
   const builtin = environment.builtins.get(name);
-  if (builtin && builtin.arity === 0 && !builtin.isStateLevel) {
+  if (builtin && builtin.arity === 0 && !builtin.isStateLevel && !builtin.isLazy) {
     return { kind: "Value", value: builtin.evaluate([]) };
   }
   return undefined;
@@ -2494,6 +2499,8 @@ const compileRecord = (recordFields: RecordField[], environment: Environment): E
 };
 
 const compile = (expression: Expression, environment: Environment): Evaluator => {
+  const bodyValue = environment.bodyValues.get(expression);
+  if (bodyValue !== undefined) return () => bodyValue;
   const getChildEvaluator = (node: Expression) => getEvaluator(node, environment);
   switch (expression.kind) {
     case "Number": {

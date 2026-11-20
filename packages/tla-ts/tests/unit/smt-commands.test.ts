@@ -1377,6 +1377,60 @@ describe("runSmtlibScript runs its commands as Z3 does", () => {
     ).toEqual(["unknown", ""]);
   });
 
+  it("answers get-consequences under QF_BV with the incremental sat solver", () => {
+    expect(
+      run([
+        "(set-logic QF_BV)",
+        "(declare-const x (_ BitVec 3))",
+        "(declare-const y (_ BitVec 3))",
+        "(declare-const p Bool)",
+        "(get-consequences ((bvule y x)) (x))",
+        "(get-info :reason-unknown)",
+        "(get-consequences (p) (p x))",
+      ]),
+    ).toEqual([
+      "unknown",
+      "",
+      '(:reason-unknown "(sat.giveup interpreted functions sent to SAT solver (declare-fun bvule ((_ BitVec 3) (_ BitVec 3)) Bool)',
+      ')")',
+      "sat",
+      "",
+    ]);
+  });
+
+  it("checks with the incremental sat solver after get-consequences under QF_BV", () => {
+    expect(
+      run([
+        "(set-logic QF_BV)",
+        "(declare-const x (_ BitVec 4))",
+        "(declare-const y (_ BitVec 4))",
+        "(assert (bvult (bvmul x y) #x5))",
+        "(assert (bvult #x3 (bvadd x y)))",
+        "(get-consequences () ())",
+        "(check-sat)",
+        "(get-value (x y))",
+      ]),
+    ).toEqual(["sat", "", "sat", "((x #x4)", " (y #x1))"]);
+  });
+
+  it("holds the terms of get-consequences until the command ends", () => {
+    expect(
+      run([
+        "(set-logic QF_BV)",
+        "(declare-const x (_ BitVec 4))",
+        "(declare-const y (_ BitVec 4))",
+        "(declare-const p Bool)",
+        "(declare-const q Bool)",
+        "(get-consequences ((bvsle x (bvadd x x))) (y))",
+        "(assert (bvsge (bvadd x x) (bvmul y x)))",
+        "(check-sat)",
+        "(get-consequences () (x p q))",
+        "(check-sat)",
+        "(get-value (x y))",
+      ]),
+    ).toEqual(["unknown", "", "sat", "unknown", "", "sat", "((x #xf)", " (y #x7))"]);
+  });
+
   it("runs the commands after a check that timed out", () => {
     expect(
       run(
@@ -2188,6 +2242,20 @@ describe("runSmtlibScript runs its commands as Z3 does", () => {
         "(get-unsat-core)",
       ]),
     ).toEqual(["sat", "57", "unsat", "(s t v u)"]);
+  });
+
+  it("frees the terms of the local context simplification when it replaces them", () => {
+    expect(
+      run([
+        "(declare-const a Bool)",
+        "(declare-const b Bool)",
+        "(declare-const c Bool)",
+        "(declare-const d Bool)",
+        "(declare-const e Bool)",
+        "(simplify (or false (ite (not (= b b)) d (not (= c b))) (and a (not b)) b) :local_ctx true)",
+        "(simplify (or (ite (not (= (not b) d)) a a) (and (ite b c b) (not d)) (and b (not c)) e) :local_ctx true)",
+      ]),
+    ).toEqual(["(or c (and a (not b)) b)", "(or a (and b (not c)) e (and b c (not d)))"]);
   });
 
   it("frees the terms of get-value after it prints them, in their order, as parse_get_value does", () => {

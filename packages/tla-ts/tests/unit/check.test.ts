@@ -1516,6 +1516,45 @@ ASSUME TLCFP(a) = -887695703
     }
   });
 
+  it("evaluates the definition a <- gives a symmetry, and the body of one with parameters, like TLC", async () => {
+    const statuses = await Promise.all(
+      [
+        [
+          "CONSTANTS A, N\nPerms == Permutations(A)",
+          "CONSTANT A = {a1, a2} N <- Perms\nSYMMETRY N",
+        ],
+        [
+          "CONSTANT A\nPerms == Permutations(A)\nDef == 3",
+          "CONSTANT A = {a1, a2} Def <- Perms\nSYMMETRY Def",
+        ],
+      ].map(async (item) => (await checkModule(item[0], item[1])).status),
+    );
+    expect(statuses).toEqual(["success", "success"]);
+    await expect(checkModule("P(S) == Permutations(S)", "SYMMETRY P")).rejects.toThrow(
+      new TlaEvaluationError(
+        "In evaluation, the identifier S is either undefined or not an operator.\nline 6, col 22 to line 6, col 22 of module M",
+      ),
+    );
+  });
+
+  it("evaluates the definition a [Mod] <- gives a symmetry, where TLC throws a ClassCastException", async () => {
+    const result = await checkModule(
+      "CONSTANT A\nPerms == Permutations(A)\nDef == 3",
+      "CONSTANT A = {a1, a2} Def <- [M] Perms\nSYMMETRY Def",
+    );
+    expect(result.status).toBe("success");
+  });
+
+  it("takes the symmetry a [Mod] <- gives, where TLC takes the symmetry's own body", async () => {
+    const result = await check({
+      source:
+        "---- MODULE M ----\nEXTENDS TLC\nCONSTANTS A, B\nVARIABLE x\nPerms == Permutations(A)\nDef == Permutations(B)\nInit == x \\in A\nNext == x' = x\n====",
+      config:
+        "CONSTANT A = {a1, a2}\nCONSTANT B = {b1, b2}\nCONSTANT Def <- [M] Perms\nSYMMETRY Def\nINIT Init\nNEXT Next",
+    });
+    expect([result.status, result.distinctStates]).toEqual(["success", 1]);
+  });
+
   it.each([
     [
       "{(a :> b)[b]}",
@@ -1620,6 +1659,8 @@ ASSUME TLCFP(a) = -887695703
       ],
       ["CONSTANTS Zeta, Alpha, Mid, N", "CONSTANT Mid = 1", "Zeta"],
       ["CONSTANTS N, Procs, Values, Acceptors, Quorums", "CONSTANT Procs = 1", "Quorums"],
+      ["CONSTANTS N, B\nOp(a) == a\nDef == 3", "CONSTANT N = 1 Op <- Def", "B"],
+      ["CONSTANT N", "CONSTANT Nat(1) = [Naturals] 1 Nat(1, 2) = [Naturals] 2", "N"],
     ];
     for (const [body, config, name] of cases) {
       await expect(checkModule(body, config)).rejects.toThrow(
@@ -1628,6 +1669,313 @@ ASSUME TLCFP(a) = -887695703
         ),
       );
     }
+  });
+
+  it("looks for a reused <- target only among the same module's <-, as TLC does", async () => {
+    const result = await check({
+      source:
+        "---- MODULE M ----\nEXTENDS Naturals\nCONSTANT N\nVARIABLE x\nDef == 3\nOther == 4\nI == INSTANCE Sub\nInit == x = 0\nNext == x' = x\nASSUME N = 3 /\\ I!Def = 4\n====",
+      config: "INIT Init\nNEXT Next\nCONSTANT N <- Def Def <- [Sub] Other",
+      loadModule: (name) =>
+        name === "Sub" ? "---- MODULE Sub ----\nDef == 1\nSubOp(a) == a\n====" : undefined,
+    });
+    expect(result.status).toBe("success");
+  });
+
+  it("accepts only a constant or a definition on the left of <-, as TLC does", async () => {
+    const cases = [
+      ["Def == 3\nTHEOREM T == TRUE", "T"],
+      ["Def == 3", "TRUE"],
+      ["Def == 3\nASSUME TRUE", "BOOLEAN"],
+    ];
+    for (const [body, name] of cases) {
+      await expect(checkModule(body, `CONSTANT ${name} <- Def`)).rejects.toThrow(
+        new TlaConfigError(
+          `In the configuration file, the identifier ${name} does not appear in the specification.`,
+        ),
+      );
+    }
+  });
+
+  it("reports the first wrong <- in TLC's order", async () => {
+    const cases = [
+      [
+        "CONSTANT N\nOp == 1",
+        "CONSTANT Op <- Nope N <- Nope2",
+        "The configuration file substitutes for N with the undefined identifier Nope2.",
+      ],
+      [
+        "Def2 == 1\nDef == 2",
+        "CONSTANT Def <- Nope Def2 <- Nope2",
+        "The configuration file substitutes for Def2 with the undefined identifier Nope2.",
+      ],
+      [
+        "Def == 1",
+        "CONSTANT Q1 <- Def Q2 <- Def Q3 <- Def",
+        "In the configuration file, the identifier Q3 does not appear in the specification.",
+      ],
+      [
+        "CONSTANT F(_)\nDef == 3\nOp(a) == a",
+        "CONSTANT F <- Def Op <- Nope",
+        "The configuration file substitutes for Op with the undefined identifier Nope.",
+      ],
+      [
+        "Def == 1",
+        "CONSTANT Def <- [Nope1] Def Def <- [Nope2] Def Def <- [Nope3] Def",
+        "In the configuration file, the module name Nope3 is not a module in the specification.",
+      ],
+    ];
+    for (const [body, config, message] of cases) {
+      await expect(checkModule(body, config)).rejects.toThrow(new TlaConfigError(message));
+    }
+  });
+
+  it("counts a function definition as taking no arguments in <-, as TLC does", async () => {
+    const cases = [
+      ["CONSTANT F(_)\nf[n \\in {1}] == n\nASSUME TRUE", "F"],
+      ["Op(a) == a\nf[n \\in {1}] == n\nASSUME TRUE", "Op"],
+    ];
+    for (const [body, name] of cases) {
+      await expect(checkModule(body, `CONSTANT ${name} <- f`)).rejects.toThrow(
+        new TlaConfigError(
+          `The configuration file substitutes for ${name} with f of different number of arguments.`,
+        ),
+      );
+    }
+  });
+
+  it("ignores a value for a name the module doesn't declare, as TLC does", async () => {
+    const cases = [
+      ["CONSTANT N\nASSUME N = 1", "CONSTANT Foo = 1 N <- Foo", "N"],
+      ["CONSTANT F(_)\nASSUME F(1) = 1", "CONSTANT Foo(1) = 1 F <- Foo", "F"],
+    ];
+    for (const [body, config, name] of cases) {
+      await expect(checkModule(body, config)).rejects.toThrow(
+        new TlaConfigError(
+          `The configuration file substitutes for ${name} with the undefined identifier Foo.`,
+        ),
+      );
+    }
+  });
+
+  it("substitutes the value the configuration assigns a definition, with no check of its arity, as TLC does", async () => {
+    const statuses = await Promise.all(
+      [
+        ["CONSTANT F(_)\nDef == 3\nASSUME F(1) = 7", "CONSTANT F <- Def Def = 7"],
+        ["Op(a) == a\nDef == 3\nASSUME Op(1) = 7", "CONSTANT Op <- Def Def = 7"],
+        ["CONSTANT N\nOp(a) == a\nASSUME N = 7", "CONSTANT N <- Op Op = 7"],
+      ].map(async (item) => (await checkModule(item[0], item[1])).status),
+    );
+    expect(statuses).toEqual(["success", "success", "success"]);
+  });
+
+  it("normalizes the value of each constant after the checks of <-, in TLC's order", async () => {
+    const getCompareError = (string: string, other: number) =>
+      new TlaEvaluationError(
+        `${UNEXPECTED_EXCEPTION}Attempted to compare string "${string}" with non-string:\n${other}`,
+      );
+    const cases = [
+      [
+        "CONSTANTS N, B",
+        'CONSTANT N = {1, "a"} B <- Nope',
+        new TlaConfigError(
+          "The configuration file substitutes for B with the undefined identifier Nope.",
+        ),
+      ],
+      [
+        "CONSTANTS N, B",
+        'CONSTANT N = {1, "a"}',
+        new TlaConfigError(
+          "The constant parameter B is not assigned a value by the configuration file.",
+        ),
+      ],
+      [
+        "CONSTANTS N, B\nOp(a) == a",
+        'CONSTANT N = {1, "a"} B <- Op',
+        new TlaConfigError(
+          "The configuration file substitutes for B with Op of different number of arguments.",
+        ),
+      ],
+      ["CONSTANTS N, B\nOp(a) == a", 'CONSTANT B = {1, "a"} N <- Op', getCompareError("a", 1)],
+      ["CONSTANTS N, B", 'CONSTANT N = {1, "a"} B = {2, "b"}', getCompareError("b", 2)],
+      [
+        "CONSTANTS A, B\nDef == 3",
+        'CONSTANT Def = {1, "a"} A <- Def B = {2, "b"}',
+        getCompareError("a", 1),
+      ],
+      [
+        "CONSTANTS B, A\nDef == 3",
+        'CONSTANT Def = {1, "a"} B <- Def A = {2, "b"}',
+        getCompareError("b", 2),
+      ],
+      [
+        "CONSTANT N(_)\nDef(a) == a",
+        'CONSTANT Def(1) = {1, "a"} N <- Def',
+        getCompareError("a", 1),
+      ],
+      [
+        "CONSTANTS B, A(_)\nDef(a) == a",
+        'CONSTANT Def(1) = {1, "a"} A <- Def B = {2, "b"}',
+        getCompareError("a", 1),
+      ],
+    ] as const;
+    for (const [body, config, error] of cases) {
+      await expect(checkModule(body, config)).rejects.toThrow(error);
+    }
+    const statuses = await Promise.all(
+      [
+        ["CONSTANT N\nASSUME N = 2", 'CONSTANT N = {1, "a"}\nCONSTANT N = 2'],
+        ["CONSTANT N\nDef == 3\nASSUME N = 3", 'CONSTANT N = {1, "a"} N <- Def'],
+      ].map(async (item) => (await checkModule(item[0], item[1])).status),
+    );
+    expect(statuses).toEqual(["success", "success"]);
+    await expect(
+      check({
+        source:
+          "---- MODULE M ----\nEXTENDS Zed\nCONSTANT C\nVARIABLE x\nInit == x = 0\nNext == x' = x\n====",
+        config: 'INIT Init\nNEXT Next\nCONSTANT C = {1, "a"} Z = {2, "b"}',
+        loadModule: (name) =>
+          name === "Zed" ? "---- MODULE Zed ----\nCONSTANT Z\n====" : undefined,
+      }),
+    ).rejects.toThrow(getCompareError("b", 2));
+  });
+
+  it("keeps the value the configuration assigns a definition as written, as TLC does", async () => {
+    const statuses = await Promise.all(
+      [
+        ["Def == 3", 'CONSTANT Def = {1, "a"}'],
+        ["Op(a) == a", 'CONSTANT Op = {1, "a"}'],
+        ["Op(a) == a", 'CONSTANT Op(1) = {1, "a"}'],
+        ["Op == 3\nDef == 4", 'CONSTANT Def = {1, "a"} Op <- Def'],
+        ["Op(a) == 0\nDef(a) == a", 'CONSTANT Def(1) = {1, "a"} Op <- Def'],
+      ].map(async (item) => (await checkModule(item[0], item[1])).status),
+    );
+    expect(statuses).toEqual(["success", "success", "success", "success", "success"]);
+    const messages = await Promise.all(
+      [
+        ["Def == 3\nASSUME PrintT(Def)", 'CONSTANT Def = {1, "a"}'],
+        ["Op(a) == a\nASSUME PrintT(Op(1))", 'CONSTANT Op(1) = {1, "a"}'],
+      ].map(async (item) => (await checkModule(item[0], item[1])).violation?.message),
+    );
+    expect(messages).toEqual(
+      Array(2).fill(
+        'Attempted to apply the operator overridden by the Java method\npublic static tlc2.value.impl.Value tlc2.module.TLC.PrintT(tlc2.value.impl.Value),\nbut it produced the following error:\nAttempted to compare string "a" with non-string:\n1',
+      ),
+    );
+  });
+
+  it("applies a [Mod] value to a definition of the root module, as TLC does", async () => {
+    const statuses = await Promise.all(
+      [
+        ["Def == 3\nASSUME Def = 4", "CONSTANT Def = [M] 4"],
+        ["Def == 3 + 0\nASSUME Def = 4", "CONSTANT Def = [M] 4"],
+        ["Def(a) == 3\nASSUME Def(1) = 4", "CONSTANT Def = [M] 4"],
+        ["CONSTANT N\nDef == 3\nASSUME N = 4", "CONSTANT Def = [M] 4 N <- Def"],
+        ['CONSTANT N\nDef == "s"\nASSUME N = 4', "CONSTANT Def = [M] 4 N <- Def"],
+      ].map(async (item) => (await checkModule(item[0], item[1])).status),
+    );
+    expect(statuses).toEqual(Array(5).fill("success"));
+  });
+
+  it("gives a <- the [Mod] value of its target whatever the body, where TLC keeps it only for a literal", async () => {
+    const result = await checkModule(
+      "CONSTANT N\nDef == 3 + 0\nASSUME N = 4",
+      "CONSTANT Def = [M] 4 N <- Def",
+    );
+    expect(result.status).toBe("success");
+    const invariant = await checkModule(
+      "NonLit == x = 0",
+      "CONSTANT NonLit = [M] FALSE\nINVARIANT NonLit",
+    );
+    expect([invariant.status, invariant.violation?.name]).toEqual([
+      "invariant-violation",
+      "NonLit",
+    ]);
+  });
+
+  it("treats a definition with a [Mod] value as a definition under each name of the configuration, as TLC does", async () => {
+    const invariants = await Promise.all(
+      [
+        ["Def == 3", "CONSTANT Def = [M] FALSE\nINVARIANT Def", "Def"],
+        ["CONSTANT N\nDef == 3", "CONSTANT Def = [M] FALSE N <- Def\nINVARIANT N", "N"],
+      ].map(async (item) => {
+        const result = await checkModule(item[0], item[1]);
+        return [result.status, result.violation?.name, result.violation?.trace.length];
+      }),
+    );
+    expect(invariants).toEqual([
+      ["invariant-violation", "Def", 1],
+      ["invariant-violation", "N", 1],
+    ]);
+    const postcondition = await checkModule(
+      "Def == 3",
+      "CONSTANT Def = [M] FALSE\nPOSTCONDITION Def",
+    );
+    expect(postcondition.violation?.postcondition).toEqual({
+      name: "Def",
+      code: 2404,
+      message: "Postcondition Def at 3 is false.",
+    });
+    expect((await checkModule("Def == 3", "CONSTANT Def = [M] 4\nVIEW Def")).status).toBe(
+      "success",
+    );
+    await expect(checkModule("Def == 3", "CONSTANT Def = [M] 4\nSYMMETRY Def")).rejects.toThrow(
+      new TlaEvaluationError(
+        `${UNEXPECTED_EXCEPTION}The symmetry operator must specify a set of functions.`,
+      ),
+    );
+    const init = await check({
+      source:
+        "---- MODULE M ----\nEXTENDS Integers, Sequences, FiniteSets, TLC\nCONSTANTS A, N\nVARIABLE x\nInit == x = 0\nNext == x' = x\nSpec == Init /\\ [][Next]_x\nPerms == Permutations(A)\nDef == 3\n====",
+      config: "CONSTANT A = {a1, a2}\nCONSTANT N = 1\nCONSTANT Def = [M] 4\nINIT Def\nNEXT Next",
+    });
+    expect([init.failure?.message, formatCallStackLines(init)]).toEqual([
+      "The init state relation is not a boolean expression.\n3",
+      ["Line 9, column 8 to line 9, column 8 in M"],
+    ]);
+  });
+
+  it("evaluates at startup a definition that reads one with a [Mod] value, as TLC does", async () => {
+    const prints: string[] = [];
+    const warned: string[] = [];
+    const result = await check({
+      source:
+        "---- MODULE M ----\nEXTENDS Integers, TLC\nVARIABLE x\nInit == x = 0\nNext == x' = x\nDef == x\nInv == PrintT(Def)\n====",
+      config: "CONSTANT Def = [M] 4\nINVARIANT Inv\nINIT Init\nNEXT Next",
+      onPrint: (text) => prints.push(text),
+      onProgress: (event) => {
+        if (event.kind === "constant-level-invariant") warned.push(event.name);
+      },
+    });
+    expect([result.status, prints, warned]).toEqual(["success", ["4"], ["Inv"]]);
+  });
+
+  it("tests membership in a set definition with a [Mod] value against the value, as TLC does", async () => {
+    const result = await check({
+      source:
+        "---- MODULE M ----\nVARIABLE x\nDef == [a : {1, 2}]\nInit == x = [a |-> 1]\nNext == x' = x\nInv == x \\in Def\n====",
+      config: "CONSTANT Def = [M] {}\nINVARIANT Inv\nINIT Init\nNEXT Next",
+    });
+    expect([result.status, result.violation?.name]).toEqual(["invariant-violation", "Inv"]);
+  });
+
+  it("evaluates a constraint a [Mod] value gives a literal body, where TLC throws a ClassCastException", async () => {
+    const results = await Promise.all(
+      [
+        "CONSTANT Def = [M] FALSE\nCONSTRAINT Def",
+        "CONSTANT Def = [M] FALSE\nACTION_CONSTRAINT Def",
+        "CONSTANT Def = [M] FALSE\nINVARIANT Def\nCONSTRAINT Def",
+      ].map(async (config) => (await checkModule("Def == 3", config)).status),
+    );
+    expect(results).toEqual(["success", "success", "invariant-violation"]);
+  });
+
+  it("reports a table's set that mixes types as the unexpected exception TLC throws", async () => {
+    await expect(checkModule("CONSTANT F(_)", 'CONSTANT F(1) = {1, "a"}')).rejects.toThrow(
+      new TlaEvaluationError(
+        `${UNEXPECTED_EXCEPTION}Attempted to compare string "a" with non-string:\n1`,
+      ),
+    );
   });
 
   it("names why a state-level substitute failed like TLC", async () => {
@@ -4014,6 +4362,51 @@ describe("initial predicate and next-state relation match TLC", () => {
     await expect(
       checkBody("VARIABLE x\nInit == x = 0\nNext == TRUE", "INIT Init\nNEXT Next"),
     ).rejects.toThrow(/The next state action Next cannot be a constant/);
+  });
+
+  it("reads a name of the configuration as TLC's defns holds TRUE, FALSE, BOOLEAN and the Java overrides", async () => {
+    const statuses = await Promise.all(
+      ["INVARIANT TRUE", "PROPERTY TRUE", "CONSTRAINT TRUE"].map(
+        async (config) => (await checkModule("", config)).status,
+      ),
+    );
+    expect(statuses).toEqual(["success", "success", "success"]);
+    const cases = [
+      ["INVARIANT BOOLEAN", "The invariant of BOOLEAN is equal to {FALSE, TRUE}"],
+      [
+        "ACTION_CONSTRAINT STRING",
+        "The action constraint of STRING is equal to <Java Method: public static tlc2.value.impl.Value tlc2.module.Strings.STRING()>",
+      ],
+      ["VIEW BOOLEAN", "The view function BOOLEAN cannot be a constant."],
+    ];
+    for (const item of cases) {
+      await expect(checkModule("", item[0])).rejects.toThrow(new TlaConfigError(item[1]));
+    }
+    await expect(checkModule("", "POSTCONDITION TRUE")).rejects.toThrow(
+      new TlaEvaluationError("The post condition TRUE cannot be a constant."),
+    );
+    await expect(
+      check({
+        source:
+          "---- MODULE M ----\nEXTENDS Naturals, TLC\nVARIABLE x\nInit == x = 0\nNext == x' = x\n====",
+        config: "SPECIFICATION Nat",
+      }),
+    ).rejects.toThrow(
+      new TlaConfigError(
+        "The value of Nat is equal to <Java Method: public static tlc2.value.impl.Value tlc2.module.Naturals.Nat()>",
+      ),
+    );
+    const symmetries = [
+      ["", "SYMMETRY FALSE", "FALSE"],
+      ["CONSTANT N", "CONSTANT N <- TRUE\nSYMMETRY N", "N"],
+    ];
+    for (const item of symmetries) {
+      await expect(checkModule(item[0], item[1])).rejects.toThrow(
+        new TlaEvaluationError(
+          `${UNEXPECTED_EXCEPTION}The symmetry function ${item[2]} must specify a set of permutations.`,
+        ),
+      );
+    }
   });
 
   it("takes a constant next-state action that TLC fails to compute for an operator", async () => {

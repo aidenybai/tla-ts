@@ -60,7 +60,7 @@ export class IncSatSolver {
   private readonly satConverter: Sat2GoalConverter;
   private isInternalizedConverted = false;
   private readonly internalized: RefVector;
-  // Z3 frees what the propagate-values of its preprocessing holds only when it preprocesses again.
+  // Z3 frees what the propagate-values of its preprocessing holds only when it resets the preprocessing.
   private readonly propagator: PropagateValuesTactic;
   private hasUninterpreted = false;
   private subgoals: Goal[] = [];
@@ -341,6 +341,7 @@ export class IncSatSolver {
 
   getConsequences(assumptions: readonly number[], vars: readonly number[]) {
     const manager = this.manager;
+    this.propagator.cleanup();
     this.getBitBlaster();
     this.dep2asm = new Map();
     this.solver.popToBaseLevel();

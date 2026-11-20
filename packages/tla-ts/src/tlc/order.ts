@@ -587,13 +587,20 @@ const getStringOrder = (
   return [...order];
 };
 
+export const getHashtableOrder = (names: string[]) => {
+  const table = createSymbolTable();
+  names.forEach((name) => table.put(createEntry(name, "definition", false)));
+  return table.enumerate().map((entry) => entry.name);
+};
+
 export interface TlcOrder {
   getStringOrder: (
     config: ModelConfig,
     runtimeModules: string[],
     rootExtendees: string[],
   ) => string[];
-  getDeclarationOrder: (kind: "variable" | "constant") => string[];
+  getDeclarationOrder: (kind: "variable" | "constant", module?: string) => string[];
+  getDefinitionOrder: (module: string | undefined) => string[];
   getInstanceDeclarations: (module: string) => string[];
   createDefinitionOrder: () => (name: string | undefined) => string[];
   parseModule: (source: string) => Module;
@@ -608,13 +615,18 @@ export const createTlcOrder = (source: string, loadModule: ModuleLoader): TlcOrd
   return {
     getStringOrder: (config, runtimeModules, rootExtendees) =>
       getStringOrder(getParsed, config, runtimeModules, rootExtendees),
-    getDeclarationOrder: (kind) =>
+    getDeclarationOrder: (kind, module) =>
       getContexts()
-        .getContext(undefined)
+        .getContext(module)
         .enumerate()
         .filter((entry) => entry.kind === kind)
         .map((entry) => entry.name)
         .reverse(),
+    getDefinitionOrder: (module) =>
+      getContexts()
+        .getContext(module)
+        .inserted.filter((entry) => entry.kind === "definition")
+        .map((entry) => entry.name),
     getInstanceDeclarations: (module) =>
       getContexts()
         .getContext(module)

@@ -1,6 +1,7 @@
 import { KIND_VAR, OP_DISTINCT, OP_EQ, QUANTIFIER_EXISTS, QUANTIFIER_FORALL } from "../ast";
 import { flattenOrVector, mkNot } from "../ast-util";
 import { PatternInferenceRw } from "../asserted-formulas";
+import { getDoubleParameter } from "../gparams";
 import { L_FALSE, L_TRUE, L_UNDEF } from "../lbool";
 import { DefinedNames, Nnf } from "../nnf";
 import { PatternInference } from "../pattern-inference";
@@ -286,9 +287,6 @@ class Eval {
   }
 }
 
-const EAGER_COST_THRESHOLD = 10;
-const LAZY_COST_THRESHOLD = 20;
-
 interface QueueEntry {
   readonly binding: Binding;
   readonly cost: number;
@@ -300,12 +298,16 @@ class Queue {
   private newEntries: QueueEntry[] = [];
   private delayedEntries: QueueEntry[] = [];
   private subst: VarSubst;
+  private readonly eagerCostThreshold: number;
 
+  // queue::setup reads the eager threshold once, and lazy_propagate reads the lazy one each time.
   constructor(
     private ematch: Ematch,
     private ctx: EufSolver,
+    private readonly parameters: ReadonlyMap<string, string>,
   ) {
     this.subst = new VarSubst(ctx.manager, true);
+    this.eagerCostThreshold = getDoubleParameter(parameters, "smt.qi.eager_threshold") ?? 10;
   }
 
   insert(binding: Binding) {
@@ -345,7 +347,7 @@ class Queue {
     for (const entry of this.newEntries) {
       if (!manager.limit.inc()) break;
       const binding = entry.binding;
-      if (entry.cost <= EAGER_COST_THRESHOLD) this.instantiate(entry);
+      if (entry.cost <= this.eagerCostThreshold) this.instantiate(entry);
       else if (this.ematch.evaluate(binding.nodes, binding.clause) === L_FALSE)
         this.instantiate(entry);
       else {
@@ -359,10 +361,11 @@ class Queue {
 
   lazyPropagate() {
     if (this.delayedEntries.length === 0) return false;
+    const lazyCostThreshold = getDoubleParameter(this.parameters, "smt.qi.lazy_threshold") ?? 20;
     let isInstantiated = false;
     for (let index = 0; index < this.delayedEntries.length; index++) {
       const entry = this.delayedEntries[index];
-      if (entry.isInstantiated || entry.cost > LAZY_COST_THRESHOLD) continue;
+      if (entry.isInstantiated || entry.cost > lazyCostThreshold) continue;
       isInstantiated = true;
       this.ctx.trail.push(() => (this.delayedEntries[index].isInstantiated = false));
       this.instantiate(entry);
@@ -397,10 +400,11 @@ export class Ematch {
   constructor(
     private ctx: EufSolver,
     private qs: QSolver,
+    parameters: ReadonlyMap<string, string>,
   ) {
     const manager = ctx.manager;
     this.eval = new Eval(ctx);
-    this.queue = new Queue(this, ctx);
+    this.queue = new Queue(this, ctx, parameters);
     this.inferPatterns = new PatternInferenceRw(manager, new PatternInference(manager));
     this.names = new DefinedNames(manager);
     this.nnf = new Nnf(manager, this.names);
