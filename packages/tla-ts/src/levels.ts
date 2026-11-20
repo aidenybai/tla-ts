@@ -114,6 +114,7 @@ export interface LetInstance extends InstanceSubstitutes {
 export interface InstanceLevels {
   getCopy: (definition: Definition) => InstanceCopy | undefined;
   getSelectedDefinition: (expression: Expression) => SelectedDefinition | undefined;
+  getOriginalName: (name: string) => string | undefined;
   getLetInstance: (instance: Instance) => LetInstance | undefined;
   getInstanced: (copy: InstanceCopy) => InstancedDefinition;
   getOriginal: (copy: InstanceCopy, target: Expression) => LevelData;
@@ -134,7 +135,6 @@ interface LevelContext {
   // SANY keeps each node's first level check, though a label checked again, here or in a module it sees, is level-correct.
   checkedNodes?: WeakMap<Expression, boolean>;
   goalSelections?: WeakMap<Expression, Expression>;
-  originalNames?: Map<string, string>;
 }
 
 export interface InstanceLevelCheck {
@@ -1683,7 +1683,7 @@ export const createLevelAnalyzer = (context: LevelContext) => {
     const original = context.instances.getOriginal(copy, target);
     const renamed = new Map(
       instanced.params.flatMap((param): [string, string][] => {
-        const name = context.originalNames?.get(param);
+        const name = context.instances.getOriginalName(param);
         return name === undefined ? [] : [[name, param]];
       }),
     );

@@ -436,6 +436,7 @@ export const createEnvironment = (
       getCopy: (definition) => instanceCopies.get(definition),
       getSelectedDefinition: (expression) =>
         subexpressionRecords.selectedDefinitions.get(expression),
+      getOriginalName: (name) => originalNames.get(name),
       getLetInstance: (instance) =>
         instance.location.range && letInstances.get(formatRange(instance.location.range)),
       checkInstantiation: (instance, instancer, scope) => {
@@ -475,7 +476,6 @@ export const createEnvironment = (
       getSubstitutes: getInstanceSubstitutes,
     },
     recursiveSections,
-    originalNames,
   );
   const instanceActions = new Map<string, InstanceAction>();
   const instanceNames = new Map<string, string>();
@@ -1692,7 +1692,6 @@ export const createEnvironment = (
           recursiveSections,
           checkedNodes,
           goalSelections,
-          originalNames,
         },
         instanceChecks.splice(firstCheck),
         warnings,
