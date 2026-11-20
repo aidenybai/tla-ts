@@ -120,7 +120,7 @@ export class Enum2BvRewriter extends RewriterTpl {
   reduceApp(decl: number, args: number[]) {
     const manager = this.manager;
     const op = manager.funcDecls[decl].op;
-    if (decl === OP_EQ) {
+    if (op === OP_EQ) {
       const first = this.reduceArg(args[0]);
       const second = first === -1 ? -1 : this.reduceArg(args[1]);
       if (second !== -1) {
@@ -128,7 +128,7 @@ export class Enum2BvRewriter extends RewriterTpl {
         manager.incRef(result);
         return result;
       }
-    } else if (decl === OP_DISTINCT) {
+    } else if (op === OP_DISTINCT) {
       const reduced: number[] = [];
       for (const arg of args) {
         const reducedArg = this.reduceArg(arg);
@@ -238,9 +238,8 @@ export const createDt2BvTactic = (manager: AstManager) => {
         continue;
       }
       manager.pushArgs(expr, todo);
-      const decl = manager.decls[expr];
-      const op = manager.funcDecls[decl].op;
-      if (decl === OP_EQ || decl === OP_DISTINCT) continue;
+      const op = manager.funcDecls[manager.decls[expr]].op;
+      if (op === OP_EQ || op === OP_DISTINCT) continue;
       if ((op === OP_DT_RECOGNISER || op === OP_DT_IS) && isFd(manager.getArg(expr, 0)))
         fdSorts.add(manager.sorts[manager.getArg(expr, 0)]);
       else if (isFd(expr) && manager.getNumArgs(expr) > 0) {

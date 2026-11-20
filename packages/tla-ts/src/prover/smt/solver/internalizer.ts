@@ -3,6 +3,7 @@ import {
   AstManager,
   FAMILY_BASIC,
   FAMILY_USER,
+  isDeclared,
   KIND_APP,
   KIND_QUANTIFIER,
   OP_ADD,
@@ -45,6 +46,7 @@ import {
   UnitResolutionJustification,
 } from "./enode";
 import { isCommutativeDecl } from "./euf/egraph";
+import { ObjMap } from "./hashtable";
 import { L_FALSE, L_TRUE, L_UNDEF } from "./lbool";
 import {
   BoolVar,
@@ -131,6 +133,7 @@ export abstract class Internalizer {
   readonly relevancy: RelevancyPropagator;
   readonly caseSplitQueue: CaseSplitQueue;
   readonly cgTable = new CgTable();
+  private readonly cgDecls = new ObjMap<true>((decl) => this.manager.getDeclHash(decl));
   private stickyGenerations = new StickyGenerations();
   abstract getTheory(family: number): Theory | undefined;
   abstract readonly qmanager: DefaultQuantifierManager;
@@ -179,7 +182,8 @@ export abstract class Internalizer {
 
   constructor(
     readonly manager: AstManager,
-    isRelevancyEnabled: boolean,
+    protected relevancyLevel: number,
+    isDelayingNewCaseSplits: boolean,
   ) {
     this.rewriter = new Rewriter(manager, KERNEL_REWRITER_OPTIONS);
     this.relevancy = new RelevancyPropagator(
@@ -189,7 +193,7 @@ export abstract class Internalizer {
         findEnode: (expr) => this.exprToEnode[expr],
         relevantEh: (expr) => this.relevantEh(expr),
       },
-      isRelevancyEnabled,
+      relevancyLevel > 0,
     );
     this.caseSplitQueue = new CaseSplitQueue(
       {
@@ -199,7 +203,7 @@ export abstract class Internalizer {
         getNumBoolVars: () => this.numBoolVars,
         isUnassigned: (boolVar) => this.assignment[mkLiteral(boolVar)] === L_UNDEF,
       },
-      isRelevancyEnabled,
+      isDelayingNewCaseSplits,
     );
     this.mkBoolVar(manager.trueExpr);
     this.assignment[0] = L_TRUE;
@@ -334,7 +338,18 @@ export abstract class Internalizer {
     return this.exprToEnode[expr] !== undefined;
   }
 
+  private holdCgDecl(decl: number) {
+    if (!isDeclared(this.manager.funcDecls[decl]) || this.cgDecls.has(decl)) return;
+    this.cgDecls.set(decl, true);
+    this.manager.incDeclRef(decl);
+  }
+
+  protected releaseCgDecls() {
+    for (const decl of this.cgDecls.keys()) this.manager.decDeclRef(decl);
+  }
+
   findCongruent(decl: number, args: Enode[]) {
+    this.holdCgDecl(decl);
     return this.cgTable.findFor(
       decl,
       args,
@@ -353,7 +368,7 @@ export abstract class Internalizer {
       this.isDiseqTmp = manager.mkEq(first.owner, second.owner);
       manager.incRef(this.isDiseqTmp);
     }
-    const root = this.cgTable.findFor(OP_EQ, [first, second], true)?.root;
+    const root = this.cgTable.findFor(manager.decls[this.isDiseqTmp], [first, second], true)?.root;
     if (root === undefined || root === this.trueEnode) return false;
     return (
       root === this.falseEnode ||
@@ -619,6 +634,7 @@ export abstract class Internalizer {
         );
         this.pushEq(node, this.trueEnode, AXIOM_EQ_JUSTIFICATION);
       } else if (isCgcEnabled) {
+        this.holdCgDecl(decl);
         const congruent = this.cgTable.insert(node);
         if (congruent !== node) {
           node.cg = congruent;
@@ -1245,7 +1261,7 @@ export abstract class Internalizer {
   }
 
   private isUsingBinaryClauseOpt(first: Literal, second: Literal, isLemma: boolean) {
-    if (isLemma && this.relevancy.isEnabled) return false;
+    if (isLemma && this.relevancyLevel >= 2) return false;
     if (this.baseLevel > 0) return false;
     if (!isLemma && this.scopeLevel > 0) return false;
     return this.getInternLevel(getVar(first)) === 0 && this.getInternLevel(getVar(second)) === 0;

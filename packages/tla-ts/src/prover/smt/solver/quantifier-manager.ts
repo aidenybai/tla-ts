@@ -18,6 +18,7 @@ export class DefaultQuantifierManager {
   private lazyMam: Mam;
   private isActive = false;
   private lazyMatchingIndex = 0;
+  private newEnodeQhead = 0;
   private finder: ModelFinder;
   private checker: ModelChecker;
 
@@ -111,7 +112,24 @@ export class DefaultQuantifierManager {
   }
 
   propagate() {
-    if (this.isActive) this.mam.match();
+    if (this.isActive) {
+      this.mam.match();
+      const enodes = this.context.enodes;
+      if (
+        !this.context.relevancy.isEnabled &&
+        this.quantifiers.length > 0 &&
+        enodes.length > this.newEnodeQhead
+      ) {
+        const saved = this.newEnodeQhead;
+        this.context.pushTrail(() => {
+          this.newEnodeQhead = saved;
+        });
+        for (; this.newEnodeQhead < enodes.length; this.newEnodeQhead++) {
+          this.mam.relevantEh(enodes[this.newEnodeQhead], false);
+          this.lazyMam.relevantEh(enodes[this.newEnodeQhead], true);
+        }
+      }
+    }
     this.qiQueue.instantiate();
   }
 

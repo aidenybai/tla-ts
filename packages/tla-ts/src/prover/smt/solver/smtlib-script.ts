@@ -481,7 +481,7 @@ export const runSmtlibScript = (
     encoding: UNICODE_ENCODING,
     rlimit: 0,
     printOptions: { ...DEFAULT_PRINT_OPTIONS },
-    parserOptions: { isIgnoringBadPatterns: true },
+    parserOptions: { isIgnoringBadPatterns: true, isGlobalDecls: false },
     // Z3 keeps set-info's :status across reset.
     status: L_UNDEF,
   };
@@ -708,6 +708,7 @@ export const runSmtlibScript = (
     isMbqi: settings.isMbqi || (!isSetUp && isMbqiByLogic(getSetup())),
     mbqiMaxIterations: settings.mbqiMaxIterations,
     isFindingMacros: settings.isFindingMacros,
+    relevancyLevel: Number(settings.parameters.get("smt.relevancy") ?? "2"),
     isCoreMinimizing: settings.parameters.get("smt.core.minimize") === "true",
     setup: getSetup(),
     intHammerPeriod: getHammerPeriod(settings.parameters),
@@ -2223,6 +2224,14 @@ export const runSmtlibScript = (
             );
           settings.isInteractive = isTrue;
         }
+        if (keyword === ":global-decls" || keyword === ":global-declarations") {
+          if (state.isProofsEnabled !== undefined)
+            throw new SmtParseError(
+              "error setting ':global-decls', option value cannot be modified after initialization",
+              value ?? list.end,
+            );
+          settings.parserOptions.isGlobalDecls = isTrue;
+        }
         if (keyword === ":diagnostic-output-channel")
           settings.isDiagnosticOnStdout = value?.kind === "string" && value.text === "stdout";
         if (keyword === ":int-real-coercions" && !isTrue)
@@ -2309,6 +2318,8 @@ export const runSmtlibScript = (
           [":produce-unsat-assumptions", settings.isProducingUnsatAssumptions],
           [":interactive-mode", settings.isInteractive],
           [":produce-assertions", settings.isInteractive],
+          [":global-decls", settings.parserOptions.isGlobalDecls],
+          [":global-declarations", settings.parserOptions.isGlobalDecls],
           [":int-real-coercions", true],
           [":error-behavior", settings.isExitingOnError ? "immediate-exit" : "continued-execution"],
         ]);
