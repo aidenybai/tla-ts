@@ -294,6 +294,36 @@ describe("checks a module's exported functions as a model on ESCore", () => {
     });
   });
 
+  // A model with state and no action takes no step, so TLC checks no deadlock of it, as a deadlock
+  // there tells nothing, as of a library module whose functions tla-ts calls none of as actions.
+  describe("checks no deadlock of a model with state and no action", () => {
+    const getSource = (operator: string) =>
+      `let count = 0;\nexport const isSmall = () => count ${operator} 0;\n`;
+
+    it("agrees with Node", async () => {
+      expect(getCounts(await checkModel(getSource("<=")))).toEqual(["success", 1, 1]);
+    });
+
+    it("rejects another result", async () => {
+      expect(getCounts(await checkModel(getSource("<")))).toEqual(["invariant-violation", 1, 1]);
+    });
+  });
+
+  // A model with an action keeps the check, even where no call of it ever writes, as a deadlock
+  // there is a finding: no step can run.
+  describe("checks the deadlock of a model whose action never writes", () => {
+    const getSource = (bound: number) =>
+      `let count = 0;\nexport const tick = (n: 0 | 1) => {\n  if (n > ${bound} && count < 1) count += 1;\n};\nexport const isSmall = () => count <= 1;\n`;
+
+    it("agrees with Node", async () => {
+      expect(getCounts(await checkModel(getSource(1)))).toEqual(["deadlock", 1, 1]);
+    });
+
+    it("rejects another result", async () => {
+      expect(getCounts(await checkModel(getSource(0)))).toEqual(["deadlock", 2, 2]);
+    });
+  });
+
   // A step settles the jobs that its program queues, which a program that names then only in a
   // comment queues none of.
   describe("settles a step of a program that queues no jobs", () => {

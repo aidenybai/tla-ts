@@ -1262,9 +1262,10 @@ export const compileModelToEscore = (
     ...config.actionConstraints.map((name) => `ACTION_CONSTRAINT ${name}`),
     ...config.postconditions.map((name) => `POSTCONDITION ${name}`),
     ...(view === undefined ? [] : [`VIEW ${view}`]),
-    // A model without state variables or actions has one state, which TLC checks no deadlock of,
-    // as it checks none where a spec has no variables.
-    ...(config.checkDeadlock && !isStateless ? [] : ["CHECK_DEADLOCK FALSE"]),
+    // A model without actions takes no step, so its every state is a deadlock that tells nothing,
+    // and TLC checks none, as it checks none where a spec has no variables. A model with actions
+    // keeps the check, even where none is ever enabled, as a deadlock there is a finding.
+    ...(config.checkDeadlock && actions.length > 0 ? [] : ["CHECK_DEADLOCK FALSE"]),
     "ALIAS ModelAlias",
     "",
   ];
