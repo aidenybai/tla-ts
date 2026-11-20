@@ -12711,7 +12711,7 @@
         {
           "name": "agrees with Node on run,0,1,loop,loop,for where a function returns and loops leave",
           "thrown": "Expected ';', got 'ident'",
-          "stop": "tla-ts can't compile a using declaration to ESCore yet"
+          "wrong": "realcode: Node's type stripping rejects this syntax in a .ts file, where ESCore's runs it"
         },
         {
           "name": "agrees with Node on body,c,b,a",
@@ -12722,7 +12722,7 @@
           "name": "rejects the expectation run,0,1,for,loop,loop",
           "replace": ["loop,loop,for", "for,loop,loop"],
           "thrown": "Expected ';', got 'ident'",
-          "stop": "tla-ts can't compile a using declaration to ESCore yet"
+          "wrong": "realcode: Node's type stripping rejects this syntax in a .ts file, where ESCore's runs it"
         },
         {
           "name": "rejects the expectation body,a,b,c",
