@@ -702,7 +702,10 @@ DateTimeFormatMethod(s, m, dtf, args) ==
          IF Arg(args, 1) = Undefined \/ Arg(args, 2) = Undefined THEN ThrowTypeError(s) ELSE
          LET x == DateTimeFormattableKey(s, Arg(args, 1)) IN IF IsAbrupt(x) THEN x ELSE
          LET y == DateTimeFormattableKey(x.s, Arg(args, 2)) IN IF IsAbrupt(y) THEN y
-         ELSE IF \E key \in {Val(x), Val(y)} : key[1] = "number" /\ key[2] = N("NaN") THEN ThrowError(y.s, "RangeError") ELSE
+         \* Where both are time values, as a Temporal object and another value of another kind throw a
+         \* TypeError first.
+         ELSE IF Val(x)[1] = "number" /\ Val(y)[1] = "number" /\ N("NaN") \in {Val(x)[2], Val(y)[2]}
+         THEN ThrowError(y.s, "RangeError") ELSE
          LET method == IF m = "DateTimeFormat.formatRange" THEN "formatRange" ELSE "formatRangeToParts"
              answer == IntlAnswer(y.s, "DateTimeFormat", config, "formatRangeToParts", <<Val(x), Val(y)>>)
          IN IF IsAbrupt(answer) THEN answer ELSE IntlResult(answer.s, method, Val(answer))

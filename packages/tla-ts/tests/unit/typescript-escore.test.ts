@@ -1506,6 +1506,40 @@ describe("compiles scripts by specializing ESCore", () => {
     },
   );
 
+  describe.runIf(Reflect.has(globalThis, "Temporal"))(
+    "throws a range's TypeError for a Temporal object and a time value before its RangeError",
+    () => {
+      const getSource = (expected: string) => `
+      const format = new Intl.DateTimeFormat("en");
+      let errors = "";
+      for (const run of [
+        () => format.formatRange({ valueOf: () => Number.NaN }, new Temporal.PlainDate(1970, 1, 1)),
+        () => format.formatRange(Number.NaN, 0),
+      ]) {
+        try {
+          run();
+        } catch (error) {
+          errors += (error as Error).name + ";";
+        }
+      }
+      if (errors !== "${expected}") throw new Error(errors);
+    `;
+
+      it("agrees with Node", async () => {
+        expect((await checkScript(getSource("TypeError;RangeError;"))).message).toBeUndefined();
+      });
+
+      it("rejects another result", async () => {
+        expect((await checkScript(getSource("RangeError;RangeError;"))).message).toContain(THREW);
+      });
+
+      it("stops at a range of time values that the program doesn't write", async () => {
+        const source = 'new Intl.DateTimeFormat("de").formatRange(0, "abcd".length * 1000);';
+        expect((await checkScript(source)).message).toContain("tla-ts can't");
+      });
+    },
+  );
+
   describe("gives each error V8's own stack accessor", () => {
     const getSource = (expected: string) => `
       const error = new Error("m");

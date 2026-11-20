@@ -865,9 +865,10 @@ const SERVICES: Service[] = [
       // ESCore's local time zone is UTC, which the host's must be for a format without one.
       if (new Intl.DateTimeFormat().resolvedOptions().timeZone !== "UTC") return new Map();
       const values = [
-        ...[...new Set([...getNumbers(literals), ...literals.times].map(getTimeClip))]
-          .filter((time) => !Number.isNaN(time))
-          .map((time) => ({ key: getNumberArgument(time), value: time as unknown })),
+        // NaN, which a range with a Temporal object meets after its TypeError.
+        ...[...new Set([...getNumbers(literals), ...literals.times].map(getTimeClip))].map(
+          (time) => ({ key: getNumberArgument(time), value: time as unknown }),
+        ),
         ...[...literals.temporals].map(([key, value]) => ({ key, value: value as unknown })),
       ];
       if (words.has("format") || words.has("formatToParts")) {
@@ -1266,13 +1267,9 @@ export const getHostIntl = (sourceFiles: readonly ts.SourceFile[], words: Readon
       config,
       answers: service.getMethods(object as never, literals, words),
     }));
-    if (
-      entries.size + methods.reduce((total, method) => total + method.answers.size, 0) >
-      MOST_ENTRIES
-    ) {
-      continue;
-    }
+    // The answers of each object, in the order of its literals, while the table holds them.
     for (const method of methods) {
+      if (entries.size + method.answers.size > MOST_ENTRIES) continue;
       for (const [key, answer] of method.answers) {
         if (answer !== undefined) {
           entries.set(`<<"${service.name}", ${method.config}, ${key}>>`, answer);
