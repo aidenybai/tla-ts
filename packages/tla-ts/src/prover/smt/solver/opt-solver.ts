@@ -63,7 +63,6 @@ export class OptSolver {
     this.kernel = new SmtKernel(manager, {
       ...params,
       relevancyLevel: 0,
-      isDelayingNewCaseSplits: false,
       setup: params.setup && { ...params.setup, isArithAutoConfigSimplex: true },
     });
     this.kernel.context.registerFamily(FAMILY_PB);

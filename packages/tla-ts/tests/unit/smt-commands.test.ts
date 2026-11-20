@@ -2800,3 +2800,22 @@ describe(":global-declarations, as Z3 5.3.2 keeps declarations through a pop", (
     ]);
   });
 });
+
+describe("opt, as Z3 5.3.2 sets up its solver", () => {
+  it("delays the case splits a search makes", () => {
+    expect(
+      run([
+        "(set-logic QF_LIA)",
+        "(declare-const x0 Int)",
+        "(declare-fun x1 () Int)",
+        "(declare-const b0 Bool)",
+        "(assert (= (>= (abs x1) (- x0)) (=> (<= (div x0 1) x0) (= (- x0) x0))))",
+        "(assert b0)",
+        "(minimize 6)",
+        "(assert-soft (not (and (>= (ite (distinct (div x0 2) (+ x0 x0 x0)) 0 x0) x1) (> (mod 4 5) (div x0 (- 2))) (<= (abs x0) (div x1 3)))) :weight 10)",
+        "(check-sat)",
+        "(eval (= (>= 0 (abs x0)) (xor (<= 5 (+ x0 x1 6)) b0)))",
+      ]),
+    ).toEqual(["sat", "false"]);
+  });
+});
