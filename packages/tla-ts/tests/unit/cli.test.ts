@@ -1,4 +1,4 @@
-import { mkdtempSync, readFileSync, realpathSync, rmSync } from "node:fs";
+import { mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it } from "vite-plus/test";
@@ -1925,5 +1925,93 @@ describe("the CLI reports an ACTION_CONSTRAINT that is not a boolean like TLC", 
       "The exception was a java.lang.RuntimeException",
       `: ${expected}`,
     ]);
+  });
+});
+
+describe("the CLI reads a monolith's configs and modules like TLC", () => {
+  const getModule = (isExtendingB: boolean) => [
+    "---- MODULE M ----",
+    `EXTENDS Naturals, TLC${isExtendingB ? ", B" : ""}`,
+    "VARIABLE x",
+    ...(isExtendingB ? ['ASSUME PrintT(<<"B", Bv>>)'] : []),
+    "Init == x = 0",
+    "Init2 == x = 1",
+    "Next == x < 2 /\\ x' = x + 1",
+    "Inv2 == x < 1",
+    "====",
+  ];
+  const config = ["INIT Init2", "NEXT Next", "CHECK_DEADLOCK FALSE"];
+  const module = getModule(false);
+  const embedded = (lines: string[], separator = "\n") => ({
+    "M.tla": [...module, "---- CONFIG M ----", ...lines, "===="].join(separator),
+  });
+  const success = "Model checking completed. No error has been found.";
+
+  it.each([
+    ["lines that end with CR", embedded(config, "\r"), ["-config", "M.tla"], 0, success],
+    [
+      "a control character, which String#trim drops",
+      embedded([...config.slice(0, 2), "CHECK_DEADLOCK FALSE\u0001"]),
+      ["-config", "M.tla"],
+      0,
+      success,
+    ],
+    [
+      "a byte order mark, which String#trim keeps",
+      embedded([`\ufeff${config[0]}`, ...config.slice(1)]),
+      ["-config", "M.tla"],
+      151,
+      'Lexical error at line 1, column 1.  Encountered: "\\ufeff" (65279), after : ""',
+    ],
+    [
+      "a no-break space in the marker, which Java's \\s doesn't match",
+      { "M.tla": [...module, "---- CONFIG M\u00a0----", ...config, "===="].join("\n") },
+      ["-config", "M.tla"],
+      151,
+      "The configuration file did not specify the initial state predicate.",
+    ],
+    [
+      "an end marker followed by U+2028, which Java's . doesn't match",
+      embedded([...config, "====\u2028", "INVARIANT Inv2"]),
+      ["-config", "M.tla"],
+      151,
+      "TLC found an error in the configuration file at line 4\nIt was expecting a keyword, but did not find it.",
+    ],
+    [
+      "a name that ends with a dash",
+      {
+        "M.tla": module.join("\n"),
+        "M-.tla": ["---- CONFIG M-----", ...config, "===="].join("\n"),
+      },
+      ["-config", "M-.tla"],
+      0,
+      success,
+    ],
+    [
+      "a module in lines that end with CR",
+      {
+        "M.tla": [...getModule(true), "---- MODULE B ----", 'Bv == "mono"', "===="].join("\r"),
+        "M.cfg": config.join("\n"),
+      },
+      [],
+      0,
+      '<<"B", "mono">>',
+    ],
+    [
+      "a module whose marker has a no-break space",
+      {
+        "M.tla": [...getModule(true), "---- MODULE B\u00a0----", 'Bv == "mono"', "===="].join("\n"),
+        "M.cfg": config.join("\n"),
+      },
+      [],
+      150,
+      "Cannot find source file for module B imported in module M.",
+    ],
+  ])("%s", (_name, files, args, status, line) => {
+    const directory = mkdtempSync(join(tmpdir(), "monolith-"));
+    Object.entries(files).forEach((entry) => writeFileSync(join(directory, entry[0]), entry[1]));
+    const result = runCliWith(directory, [...args, "M.tla"]);
+    rmSync(directory, { recursive: true });
+    expect([result.status, result.stdout]).toEqual([status, expect.stringContaining(line)]);
   });
 });

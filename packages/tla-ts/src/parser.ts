@@ -500,14 +500,23 @@ export const getDefEntryBinder = (expression: Expression): Expression | undefine
     : undefined;
 };
 
-export const extractModule = (source: string, name: string) => {
-  const lines = source.replace(/\r?\n$/, "").split(/\r?\n/);
-  const start = lines.findIndex(
-    (line) => /^-{4,}\s*MODULE\s+(\w+)\s*-{3,}$/.exec(line)?.[1] === name,
-  );
+// TLC's markers use Java's `.`, which excludes \u0085, \u2028 and \u2029, and Java's \s, which matches only ASCII whitespace.
+export const getMonolithSection = (source: string, isStart: (line: string) => boolean) => {
+  const lines = source.replace(/(?:\r\n|\r|\n)$/, "").split(/\r\n|\r|\n/);
+  const start = lines.findIndex(isStart);
   if (start === -1) return undefined;
-  const end = lines.findIndex((line, index) => index > start && line.startsWith("===="));
-  return `${lines.slice(start, end === -1 ? undefined : end + 1).join("\n")}\n`;
+  const end = lines.findIndex(
+    (line, index) => index > start && /^====[^\u0085\u2028\u2029]*$/.test(line),
+  );
+  return { lines: lines.slice(start, end === -1 ? undefined : end + 1), isEnded: end !== -1 };
+};
+
+export const extractModule = (source: string, name: string) => {
+  const section = getMonolithSection(
+    source,
+    (line) => /^-{4,}[ \t\v\f]*MODULE[ \t\v\f]+(\w+)[ \t\v\f]*-{3,}$/.exec(line)?.[1] === name,
+  );
+  return section && `${section.lines.join("\n")}\n`;
 };
 
 type ParseMode = "tlc" | "tlapm" | "sany";

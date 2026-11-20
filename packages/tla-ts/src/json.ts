@@ -10,6 +10,7 @@ import {
 } from "./builtins";
 import { TlaEvaluationError, TlaUnsupportedError } from "./errors";
 import type { Builtin, BuiltinArgument, Context } from "./evaluate";
+import { trimJava } from "./java-string";
 import { readJson, type JsonElement } from "./json-reader";
 import {
   applyFunction,
@@ -276,8 +277,7 @@ export const createJsonOperators = (files: FileSystem): Builtin[] => [
       createTuple(
         readText(files, getPath(getValue(args, 0, "ndJsonDeserialize")))
           .split(/\r\n|\r|\n/)
-          // Java's String#trim strips every character up to the space.
-          .map((line) => line.replace(/^[^!-\uffff]+|[^!-\uffff]+$/g, ""))
+          .map(trimJava)
           .filter((line) => line !== "")
           .map((line) => fromJson(readJson(line))),
       ),

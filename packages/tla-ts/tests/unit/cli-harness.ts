@@ -1,6 +1,6 @@
 import { spawnSync } from "node:child_process";
 import { readdirSync, rmSync } from "node:fs";
-import { join } from "node:path";
+import { join, resolve } from "node:path";
 import { afterAll } from "vite-plus/test";
 import { FIXTURES } from "./check-harness";
 
@@ -15,7 +15,7 @@ afterAll(() =>
 );
 
 export const runCliWith = (directory: string, args: string[], input?: string) =>
-  spawnSync("bun", [CLI, ...args], { cwd: join(FIXTURES, directory), encoding: "utf8", input });
+  spawnSync("bun", [CLI, ...args], { cwd: resolve(FIXTURES, directory), encoding: "utf8", input });
 
 export const getToolSequence = (output: string) =>
   output
