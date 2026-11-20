@@ -712,7 +712,7 @@ describe("compiles CommonJS modules as Node loads them", () => {
   });
 
   describe("stops at the module object and require only where the code uses more of them", () => {
-    const main = `function load() { return module[("require" + Math.random()).slice(0, 7)]("timers"); }
+    const main = `function load() { return module[("require" + log.length).slice(0, 7)]("timers"); }
       log.push(typeof module, typeof require, typeof load, require("./counter.js").next());`;
 
     it("agrees with Node", async () => {

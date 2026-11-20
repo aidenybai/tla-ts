@@ -1579,6 +1579,178 @@ describe("compiles scripts by specializing ESCore", () => {
     });
   });
 
+  describe("stops where a program reads what the host picks at random or reads from its clock", () => {
+    const RANDOM = "tla-ts can't run Math.random, whose value the host picks at random";
+    const CLOCK = "tla-ts can't read the host's clock, whose time each run reads anew";
+
+    it("stops at Math.random, which Node's runs of this script throw at about half of the time", async () => {
+      const result = await checkScript('if (Math.random() >= 0.5) throw new Error("high");');
+      expect(result.message).toContain(RANDOM);
+    });
+
+    it.each([
+      ["Date.now", "Date.now() % 2 === 0"],
+      ["the time of a Date that new Date makes", "new Date().getTime() % 2 === 0"],
+      ["Date called as a function", 'Date().includes(":00 ")'],
+    ])("stops at %s, which reads the time of the run", async (_, condition) => {
+      const result = await checkScript(`if (${condition}) throw new Error("even");`);
+      expect(result.message).toContain(CLOCK);
+    });
+
+    describe("runs a program that names Math.random and the time without reading either", () => {
+      const getSource = (expected: string) => `
+        const pick = () => Math.random();
+        const now = new Date();
+        const day = new Date(86400000);
+        const result = [typeof pick, now instanceof Date, Object.prototype.toString.call(now), day.getUTCDate(), day.toISOString(), Date.UTC(1970, 0, 2)].join();
+        if (result !== "${expected}") throw new Error(result);
+      `;
+
+      it("agrees with Node", async () => {
+        expect(
+          (
+            await checkScript(
+              getSource("function,true,[object Date],2,1970-01-02T00:00:00.000Z,86400000"),
+            )
+          ).message,
+        ).toBeUndefined();
+      });
+
+      it("rejects another result", async () => {
+        expect(
+          (
+            await checkScript(
+              getSource("function,true,[object Date],2,1970-01-02T00:00:00.000Z,86400001"),
+            )
+          ).message,
+        ).toContain(THREW);
+      });
+    });
+
+    it.runIf(Reflect.has(globalThis, "Temporal"))(
+      "stops at Temporal.Now.instant, which reads the time of the run",
+      async () => {
+        const result = await checkScript(
+          "if (Temporal.Now.instant().epochMilliseconds % 2 === 0) throw new Error();",
+        );
+        expect(result.message).toContain(CLOCK);
+      },
+    );
+
+    it("stops at a WeakRef's target after the job that kept it, which Node may collect", async () => {
+      const result = await checkModule(`
+        const ref = new WeakRef({});
+        setTimeout(() => {
+          if (ref.deref() === undefined) throw new Error("collected");
+        });
+      `);
+      expect(result.message).toContain(
+        "tla-ts can't tell whether the host collected a WeakRef's target after the job that kept it",
+      );
+    });
+
+    describe("reads a WeakRef's target in the job that keeps it", () => {
+      const getSource = (expected: string) => `
+        const target = { label: "kept" };
+        const ref = new WeakRef(target);
+        const result = [ref.deref() === target, ref.deref()?.label].join();
+        if (result !== "${expected}") throw new Error(result);
+      `;
+
+      it("agrees with Node", async () => {
+        expect((await checkScript(getSource("true,kept"))).message).toBeUndefined();
+      });
+
+      it("rejects another result", async () => {
+        expect((await checkScript(getSource("false,kept"))).message).toContain(THREW);
+      });
+    });
+
+    it("stops where a registry holds a target, whose collection runs its callback", async () => {
+      const result = await checkScript(`
+        const registry = new FinalizationRegistry(() => {
+          throw new Error("collected");
+        });
+        registry.register({}, "held");
+      `);
+      expect(result.message).toContain(
+        "tla-ts can't tell when the host collects a registered target, which runs the registry's callback",
+      );
+    });
+
+    describe("throws the TypeError of a registry's register that holds no target", () => {
+      const getSource = (expected: string) => `
+        const registry = new FinalizationRegistry(() => {});
+        let kind = "none";
+        try {
+          registry.register(1 as unknown as object, "held");
+        } catch (error) {
+          kind = (error as Error).constructor.name;
+        }
+        const result = [kind, registry.unregister({})].join();
+        if (result !== "${expected}") throw new Error(result);
+      `;
+
+      it("agrees with Node", async () => {
+        expect((await checkScript(getSource("TypeError,false"))).message).toBeUndefined();
+      });
+
+      it("rejects another result", async () => {
+        expect((await checkScript(getSource("none,false"))).message).toContain(THREW);
+      });
+    });
+
+    it("stops where an Atomics.waitAsync's timeout runs a reaction, which Node may exit before", async () => {
+      const result = await checkModule(`
+        const shared = new Int32Array(new SharedArrayBuffer(4));
+        Atomics.waitAsync(shared, 0, 0, 10).value.then((value) => {
+          throw new Error(String(value));
+        });
+      `);
+      expect(result.message).toContain(
+        "tla-ts can't tell whether the host times out this wait, which it may leave as it exits",
+      );
+    });
+
+    it("stops where a notify wakes an Atomics.waitAsync, whose promise Node resolves in a task", async () => {
+      const result = await checkModule(`
+        const shared = new Int32Array(new SharedArrayBuffer(4));
+        let seen = "none";
+        Atomics.waitAsync(shared, 0, 0).value.then((value) => {
+          seen = value;
+        });
+        Atomics.notify(shared, 0);
+        await Promise.resolve();
+        if (seen !== "none") throw new Error(seen);
+      `);
+      expect(result.message).toContain(
+        "tla-ts can't tell when the host resolves a wait that a notify wakes, which it does in a task of its own",
+      );
+    });
+
+    describe("runs an Atomics.waitAsync that times out at once or finds another value", () => {
+      const getSource = (expected: string) => `
+        const shared = new Int32Array(new SharedArrayBuffer(4));
+        const first = Atomics.waitAsync(shared, 0, 0, 0);
+        const second = Atomics.waitAsync(shared, 0, 1, 10);
+        const result = [first.async, first.value, second.async, second.value, Atomics.notify(shared, 0)].join();
+        if (result !== "${expected}") throw new Error(result);
+      `;
+
+      it("agrees with Node", async () => {
+        expect(
+          (await checkModule(getSource("false,timed-out,false,not-equal,0"))).message,
+        ).toBeUndefined();
+      });
+
+      it("rejects another result", async () => {
+        expect((await checkModule(getSource("false,timed-out,false,ok,0"))).message).toContain(
+          THREW,
+        );
+      });
+    });
+  });
+
   describe("stops at a call to a function that its script names nowhere else", () => {
     it("runs a script that never calls it", async () => {
       expect(

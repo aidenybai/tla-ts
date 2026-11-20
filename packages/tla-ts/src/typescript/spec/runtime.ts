@@ -955,6 +955,10 @@ const TAILORED_CASING = new Set(["az", "el", "hy", "lt", "tr"]);
 const isUtcHost = new Intl.DateTimeFormat().resolvedOptions().timeZone === "UTC";
 const HOST_ZONE_NAME = / \(.*\)$/.exec(new Date(0).toString())?.[0] ?? "";
 const LOCAL_TIME_STOP = `Assert(FALSE, "tla-ts can't tell the host's local time, whose time zone isn't UTC")`;
+const CLOCK_STOP = `Assert(FALSE, "tla-ts can't read the host's clock, whose time each run reads anew")`;
+// The time value of a Date that new Date() makes, which a compiled spec stops at only where the
+// program reads it.
+const CLOCK_TIME = `[type |-> "clock"]`;
 
 const HOST_PATCHES = [
   { name: "ParseDate", from: "ParseDate(u) ==", to: "ParseSpecDate(u) ==" },
@@ -977,6 +981,70 @@ const HOST_PATCHES = [
     name: "TemporalNowBuiltin",
     from: `CASE m = "timeZoneId" -> Ok(s, Str(UTCTimeZone.id))`,
     to: `CASE m = "timeZoneId" -> ${isUtcHost ? "Ok(s, Str(UTCTimeZone.id))" : LOCAL_TIME_STOP}`,
+  },
+  // What the host picks at random or reads from its clock differs from run to run, so a compiled
+  // spec stops where a program reads it: Math.random, and the current time that Date and
+  // Temporal.Now read, which a Date that new Date() makes holds until a program reads it.
+  {
+    name: "MathBuiltin",
+    from: `[] m = "random" -> MathRandom(s)`,
+    to: `[] m = "random" -> Assert(FALSE, "tla-ts can't run Math.random, whose value the host picks at random")`,
+  },
+  {
+    name: "DateConstructor",
+    from: `IF nt = Undefined THEN Ok(Tick(s), Str(ToDateString(SystemTime(s))))
+  ELSE
+    LET tv ==
+          CASE Len(args) = 0 -> Ok(Tick(s), Num(SystemTime(s)))`,
+    to: `IF nt = Undefined THEN ${CLOCK_STOP}
+  ELSE
+    LET tv ==
+          CASE Len(args) = 0 -> Ok(s, ${CLOCK_TIME})`,
+  },
+  {
+    name: "ThisTimeValue",
+    from: `THEN Ok(s, O(s, v).slots.data)`,
+    to: `THEN IF O(s, v).slots.data = ${CLOCK_TIME} THEN ${CLOCK_STOP} ELSE Ok(s, O(s, v).slots.data)`,
+  },
+  {
+    name: "DateBuiltin",
+    from: `[] m = "now" -> Ok(Tick(s), Num(SystemTime(s)))`,
+    to: `[] m = "now" -> ${CLOCK_STOP}`,
+  },
+  { name: "SystemUTCEpochNanoseconds", from: "TIMul(TI(s.clock), TI(1000000))", to: CLOCK_STOP },
+  // A WeakRef keeps its target through the job that made or last dereferenced it, the main job for
+  // a compiled spec, after which the host may collect a target that nothing else reaches, and run
+  // a registry's callback for a target it collects, at a time no run fixes.
+  {
+    name: "WeakRefBuiltin",
+    from: `ELSE Ok(s, O(s, this).slots.weakRefTarget)`,
+    to: `ELSE IF s.task.kind # "main" THEN Assert(FALSE, "tla-ts can't tell whether the host collected a WeakRef's target after the job that kept it")
+                  ELSE Ok(s, O(s, this).slots.weakRefTarget)`,
+  },
+  {
+    name: "FinalizationRegistryBuiltin",
+    from: `ELSE Ok(SetO(s, this, [O(s, this) EXCEPT !.slots.cells =
+                   Append(@, [target |-> a1, heldValue |-> Arg(args, 2),
+                              unregisterToken |-> IF token = Undefined THEN Empty ELSE token])]), Undefined)`,
+    to: `ELSE Assert(FALSE, "tla-ts can't tell when the host collects a registered target, which runs the registry's callback")`,
+  },
+  // Node resolves the promise of an Atomics.waitAsync that a notify wakes in a task of its own,
+  // after the jobs, at no fixed place among its timers, where ESCore's notify resolves it at once.
+  // It times a wait out on V8's clock, apart from its timers, and exits without timing it out where
+  // nothing else keeps it running, so a compiled spec stops where a timeout would run the
+  // promise's reactions, or where the host's timers wait too.
+  {
+    name: "NotifyWaiters",
+    from: `  IN [s |-> ResolveWaiters(`,
+    to: `  IN IF woken # <<>> THEN Assert(FALSE, "tla-ts can't tell when the host resolves a wait that a notify wakes, which it does in a task of its own") ELSE
+     [s |-> ResolveWaiters(`,
+  },
+  {
+    name: "TimeOutWaiter",
+    from: `  IN ResolveWaiters(`,
+    to: `  IN IF s.timers # <<>> \\/ O(s, w.capability.promise).slots.fulfillReactions # <<>>
+     THEN Assert(FALSE, "tla-ts can't tell whether the host times out this wait, which it may leave as it exits")
+     ELSE ResolveWaiters(`,
   },
   // ESCore runs toLocaleLowerCase and toLocaleUpperCase as toLowerCase and toUpperCase, which the
   // host does too in its default locale, unless that locale tailors case, and in no locale given.
