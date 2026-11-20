@@ -55,8 +55,10 @@ import {
   getStartupValue,
   expectBoolean,
   expectBooleanBody,
+  getBuiltin,
   getDefinition,
   getRootKey,
+  type Builtin,
   type Context,
   type Environment,
   type Scope,
@@ -229,17 +231,29 @@ const getConfigOperator = (kind: string, name: string, environment: Environment)
   return definition;
 };
 
-const isLiteralDefinition = (definition: Definition) =>
-  definition.body.kind === "Number" || definition.body.kind === "String";
+const hasBodyValue = (definition: Definition, environment: Environment) =>
+  definition.body.kind === "Number" ||
+  definition.body.kind === "String" ||
+  environment.bodyValues.has(definition.body);
 
 const getConstantValue = (key: string, definition: Definition, environment: Environment) => {
   if (environment.constants.has(key)) return environment.constants.get(key);
-  return isLiteralDefinition(definition) ? undefined : getStartupValue(definition, environment);
+  return hasBodyValue(definition, environment)
+    ? undefined
+    : getStartupValue(definition, environment);
 };
+
+const getValueBuiltin = (key: string, environment: Environment) =>
+  environment.constants.has(key) ? undefined : getBuiltin(key, environment);
+
+const formatBuiltin = (builtin: Builtin) =>
+  builtin.signature === undefined
+    ? formatValue(builtin.evaluate([]))
+    : `<Java Method: ${builtin.signature}>`;
 
 const getConfigDefinition = (kind: string, name: string, environment: Environment) => {
   const key = getRootKey(name, environment);
-  if (environment.constants.has(key)) {
+  if (environment.constants.has(key) || getBuiltin(key, environment)) {
     throw new TlaConfigError(`The ${kind} ${name} cannot be a constant.`);
   }
   const definition = getConfigOperator(kind, name, environment);
@@ -251,6 +265,11 @@ const getConfigDefinition = (kind: string, name: string, environment: Environmen
 
 const getConfigPredicate = (kind: string, name: string, environment: Environment) => {
   const key = getRootKey(name, environment);
+  const builtin = getValueBuiltin(key, environment);
+  if (builtin) {
+    if (builtin.signature === undefined && builtin.evaluate([]) === true) return undefined;
+    throw new TlaConfigError(`The ${kind} of ${name} is equal to ${formatBuiltin(builtin)}`);
+  }
   const definition = environment.constants.has(key)
     ? undefined
     : getConfigOperator(kind, name, environment);
@@ -390,6 +409,12 @@ const getSpecification = (
   const nextActions: ScopedExpression[] = [];
   const temporals: ScopedExpression[] = [];
   const specificationKey = getRootKey(config.specification, environment);
+  const builtin = getValueBuiltin(specificationKey, environment);
+  if (builtin) {
+    throw new TlaConfigError(
+      `The value of ${config.specification} is equal to ${formatBuiltin(builtin)}`,
+    );
+  }
   const value = environment.constants.has(specificationKey)
     ? environment.constants.get(specificationKey)
     : getConstantValue(
@@ -1217,6 +1242,7 @@ export const createSearch = (
   const invariantPredicates = [
     ...new Map(invariants.map((invariant) => [invariant.predicate, invariant])).values(),
   ];
+  // Deviation from TLC: a constraint whose literal body has a [Mod] value throws a ClassCastException.
   const namedConstraints = getNamedExpressions(
     "constraint",
     [...config.constraints, ...getModuleOperators("constraint").map((operator) => operator.name)],
@@ -1745,7 +1771,11 @@ export const createSearch = (
       const modulePostconditions = getModuleOperators("postcondition");
       const rejection = config.postconditions
         .map((name) => {
-          const definition = getDefinition(getRootKey(name, environment), environment);
+          const key = getRootKey(name, environment);
+          const definition = getDefinition(key, environment);
+          if (environment.constants.has(key) || getBuiltin(key, environment)) {
+            return `The post condition ${name} cannot be a constant.`;
+          }
           if (!definition) {
             return `The post condition ${name} specified in the configuration file\nis not defined in the specification.`;
           }
@@ -1753,7 +1783,7 @@ export const createSearch = (
             return `TLC requires post condition not to take any argument, but one was given: ${name}`;
           }
           const isConstant =
-            !isLiteralDefinition(definition) &&
+            !hasBodyValue(definition, environment) &&
             getStartupValue(definition, environment) !== undefined;
           return isConstant ? `The post condition ${name} cannot be a constant.` : undefined;
         })

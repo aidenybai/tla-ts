@@ -537,10 +537,38 @@ const compareAny = (other: Value): never => {
   );
 };
 
+let hasMixedSet = false;
+
+const normalizeMixedSets = (value: Value): void => {
+  if (typeof value !== "object") return;
+  switch (value.kind) {
+    case "MixedSet":
+      toFiniteSet(value);
+      return;
+    case "Set":
+      return value.elements.forEach(normalizeMixedSets);
+    case "LazyFunction":
+      return normalizeMixedSets(toFiniteFunction(value));
+    case "Function":
+      value.domain.forEach(normalizeMixedSets);
+      return value.range.forEach(normalizeMixedSets);
+    case "Subset":
+      return normalizeMixedSets(value.base);
+    case "FunctionSet":
+      normalizeMixedSets(value.domain);
+      return normalizeMixedSets(value.range);
+    case "RecordSet":
+      return value.sets.forEach(normalizeMixedSets);
+    case "ProductSet":
+      return value.factors.forEach(normalizeMixedSets);
+  }
+};
+
 const compareWithItself = (value: Value) => {
   if (isWrittenOrderUsed) forgetWrittenOrder(value);
   if (value === ANY_SET) compareAny(value);
   if (typeof value === "object" && value.kind === "LazyFunction") toFiniteFunction(value);
+  if (hasMixedSet) normalizeMixedSets(value);
 };
 
 export const compareValues = (left: Value, right: Value): number => {
@@ -1189,7 +1217,10 @@ export const createEnumeratedSet = (elements: Value[]): SetValue | MixedSetValue
   try {
     const set = computeLikeTlcOnFailure<Value[], undefined, SetValue | MixedSetValue>(
       createSet,
-      (mixed) => ({ kind: "MixedSet", elements: mixed }),
+      (mixed) => {
+        hasMixedSet = true;
+        return { kind: "MixedSet", elements: mixed };
+      },
       elements,
       undefined,
     );

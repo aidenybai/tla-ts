@@ -10,7 +10,7 @@ import { STACK_OVERFLOW_MESSAGE, UNEXPECTED_EXCEPTION } from "../../src/errors";
 import { getExitCode } from "../../src/exit-codes";
 import { getOutDegreeSummary } from "../../src/tlc/summary";
 import type { TlcVersion } from "../../src/tlc/version";
-import { checkModule, checkSteps } from "./check-harness";
+import { checkModule, checkSteps, formatCallStackLines } from "./check-harness";
 
 const getFailureSummary = (result: CheckResult) => [
   result.status,
@@ -18,6 +18,24 @@ const getFailureSummary = (result: CheckResult) => [
   [result.generatedStates, result.distinctStates, result.queuedStates, result.depth],
   result.failure?.exitCode,
 ];
+
+const ALL_MODULES = "Integers, Sequences, FiniteSets, TLC, Bags, Json";
+
+const getJavaError = (signature: string, message: string) =>
+  `Attempted to apply the operator overridden by the Java method\npublic static tlc2.${signature},\nbut it produced the following error:\n${message}`;
+
+const getOverrideMessages = (cases: string[][]) =>
+  Promise.all(
+    cases.map(
+      async (item) =>
+        (
+          await check({
+            source: `---- MODULE M ----\nEXTENDS ${item[0]}\n${item[1]}\nVARIABLE x\nInit == x = 0\nNext == x' = x\n====`,
+            config: `INIT Init\nNEXT Next\nCONSTANT ${item[2]}`,
+          })
+        ).violation?.message,
+    ),
+  );
 
 describe("evaluation errors match TLC", () => {
   it.each([
@@ -1106,6 +1124,160 @@ describe("evaluation errors match TLC", () => {
     expect(messages).toEqual(cases.map((item) => item[1]));
   });
 
+  it("fails a Java override of no arguments that a <- applies to some, like TLC", async () => {
+    const getError = (signature: string) =>
+      getJavaError(
+        `value.impl.Value tlc2.module.${signature}()`,
+        "cannot convert MethodHandle()Value to (Value[])Value",
+      );
+    const one = "CONSTANT F(_)\nASSUME PrintT(F(1))";
+    const cases = [
+      ["Naturals, TLC", one, "F <- Nat", getError("Naturals.Nat")],
+      [ALL_MODULES, one, "F <- Int", getError("Integers.Int")],
+      [
+        "Integers, Sequences, FiniteSets, TLC",
+        "Op(a) == a\nASSUME PrintT(Op(1))",
+        "Op <- STRING",
+        getError("Strings.STRING"),
+      ],
+      [ALL_MODULES, one, "F <- EmptyBag", getError("Bags.EmptyBag")],
+      [
+        ALL_MODULES,
+        "CONSTANT F(_)\nASSUME PrintT(F(1) = 1)",
+        "F <- JavaTime",
+        getError("TLC.JavaTime"),
+      ],
+      [ALL_MODULES, one, "F <- Any", getError("TLC.Any")],
+      [
+        ALL_MODULES,
+        "CONSTANT F(_)\nAp(Op(_)) == Op(1)\nASSUME PrintT(Ap(F))",
+        "F <- Nat",
+        getError("Integers.Nat"),
+      ],
+    ];
+    expect(await getOverrideMessages(cases)).toEqual(cases.map((item) => item[3]));
+  });
+
+  it("checks the number of arguments an arithmetic Java override gets from a <-, like TLC", async () => {
+    const integers = "tlc2.value.impl.IntValue,tlc2.value.impl.IntValue";
+    const one = "CONSTANT F(_)\nASSUME PrintT(F(1))";
+    const cases = [
+      [
+        "Naturals, TLC",
+        one,
+        "F <- +",
+        getJavaError(
+          `value.impl.IntValue tlc2.module.Naturals.Plus(${integers})`,
+          "array is not of length 2",
+        ),
+      ],
+      [
+        "Naturals, TLC",
+        one,
+        "F <- ..",
+        getJavaError(
+          `value.impl.IntervalValue tlc2.module.Naturals.DotDot(${integers})`,
+          "array is not of length 2",
+        ),
+      ],
+      [
+        "Integers, TLC",
+        "CONSTANT F(_, _)\nASSUME PrintT(F(1, 2))",
+        "F <- -.",
+        getJavaError(
+          "value.impl.IntValue tlc2.module.Integers.Neg(tlc2.value.impl.IntValue)",
+          "array is not of length 1",
+        ),
+      ],
+    ];
+    expect(await getOverrideMessages(cases)).toEqual(cases.map((item) => item[3]));
+  });
+
+  it("applies the Java override that a <- gives a name of no arguments to none, like TLC", async () => {
+    const getError = (signature: string, result: string) =>
+      getJavaError(signature, `handle's method type (IValue[])${result} but found ()Value`);
+    const none = "CONSTANT N\nASSUME PrintT(N)";
+    const value = "tlc2.value.impl.Value";
+    const len = `value.impl.IntValue tlc2.module.Sequences.Len(${value})`;
+    const cases = [
+      [ALL_MODULES, none, "N <- Len", getError(len, "IntValue")],
+      [
+        ALL_MODULES,
+        none,
+        "N <- Head",
+        getError(`value.impl.Value tlc2.module.Sequences.Head(${value})`, "Value"),
+      ],
+      [
+        ALL_MODULES,
+        none,
+        "N <- IsFiniteSet",
+        getError(`value.IBoolValue tlc2.module.FiniteSets.IsFiniteSet(${value})`, "IBoolValue"),
+      ],
+      [
+        ALL_MODULES,
+        none,
+        "N <- ToJson",
+        getError(
+          "value.impl.StringValue tlc2.module.Json.toJson(tlc2.value.IValue) throws java.io.IOException",
+          "StringValue",
+        ),
+      ],
+      [
+        ALL_MODULES,
+        none,
+        "N <- JsonDeserialize",
+        getError(
+          "value.IValue tlc2.module.Json.deserialize(tlc2.value.impl.StringValue) throws java.io.IOException",
+          "IValue",
+        ),
+      ],
+      [
+        ALL_MODULES,
+        none,
+        "N <- ..",
+        getError(
+          "value.impl.IntervalValue tlc2.module.Integers.DotDot(tlc2.value.impl.IntValue,tlc2.value.impl.IntValue)",
+          "IntervalValue",
+        ),
+      ],
+      [
+        ALL_MODULES,
+        none,
+        "N <- >",
+        getError(`value.impl.BoolValue tlc2.module.Integers.GT(${value},${value})`, "BoolValue"),
+      ],
+      [
+        "Integers, Sequences, FiniteSets, TLC",
+        "Op == 1\nASSUME PrintT(Op)",
+        "Op <- Len",
+        getError(len, "IntValue"),
+      ],
+    ];
+    expect(await getOverrideMessages(cases)).toEqual(cases.map((item) => item[3]));
+    const result = await check({
+      source: `---- MODULE M ----\nEXTENDS ${ALL_MODULES}\nCONSTANT N\nVARIABLE x\nInit == x = N\nNext == x' = x\n====`,
+      config: "INIT Init\nNEXT Next\nCONSTANT N <- Len",
+    });
+    expect([result.failure?.message, formatCallStackLines(result)]).toEqual([
+      getError(len, "IntValue"),
+      ["Line 5, column 9 to line 5, column 13 in M", "Line 5, column 13 to line 5, column 13 in M"],
+    ]);
+    expect((await checkModule("CONSTANT N\nASSUME TRUE", "CONSTANT N <- Len")).status).toBe(
+      "success",
+    );
+  });
+
+  it("names the return type of a synchronized Java override applied to no arguments, like TLC", async () => {
+    const getError = (method: string, result: string) =>
+      `Attempted to apply the operator overridden by the Java method\npublic static synchronized tlc2.value.impl.${result} tlc2.module.TLCExt.${method}(tlc2.value.impl.Value),\nbut it produced the following error:\nhandle's method type (IValue[])${result} but found ()Value`;
+    const none = "CONSTANT N\nASSUME PrintT(N)";
+    const cases = [
+      ["TLC, TLCExt", none, "N <- TLCFP", getError("tlcFingerprint", "IntValue")],
+      ["TLC, TLCExt", none, "N <- TLCModelValue", getError("tlcModelValue", "Value")],
+    ];
+    expect(await getOverrideMessages(cases)).toEqual(cases.map((item) => item[3]));
+  });
+
   it.each([
     ["1.7.4" as const, "Append(v, s)"],
     [undefined, "Append(s, v)"],
@@ -1623,6 +1795,31 @@ describe("evaluation errors match TLC", () => {
       onPrint: (text) => prints.push(text),
     });
     expect(prints.slice(1)).toEqual(['"<<[fld2 |-> 2, fld1 |-> 1]>>"']);
+  });
+
+  it("fails on a set that mixes types in a value TLC compares with itself", async () => {
+    const messages = await Promise.all(
+      [
+        ['ASSUME PrintT(LET D == <<{1, "a"}>> IN D = D)', ""],
+        ['ASSUME PrintT(LET D == [a |-> {1, "a"}] IN D = D)', ""],
+        ['ASSUME PrintT(LET D == {{1, "a"}} IN D = D)', ""],
+        ['ASSUME PrintT(LET D == SUBSET {1, "a"} IN D = D)', ""],
+        ['ASSUME PrintT(LET D == [{1, "a"} -> {1}] IN D = D)', ""],
+        ['ASSUME PrintT(LET D == {1, "a"} \\X {1} IN D = D)', ""],
+        ['ASSUME PrintT(LET D == {1, "a"} IN D \\in {D})', ""],
+        ['D == {1, "a"}\nASSUME PrintT(D = D)', ""],
+        ["Def == 3\nASSUME PrintT(Def = Def)", 'CONSTANT Def = {{1, "a"}}'],
+        ['ASSUME PrintT(LET D == {1, "a"} IN Cardinality({D, D}))', ""],
+      ].map(async (item) => (await checkModule(item[0], item[1])).violation?.message),
+    );
+    const message = 'Attempted to compare string "a" with non-string:\n1';
+    expect(messages).toEqual([
+      ...Array(9).fill(message),
+      getJavaError(
+        "value.impl.IntValue tlc2.module.FiniteSets.Cardinality(tlc2.value.impl.Value)",
+        message,
+      ),
+    ]);
   });
 
   it("sorts a TLCEval argument only outside an instance that substitutes", async () => {

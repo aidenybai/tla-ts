@@ -2043,7 +2043,8 @@ const getDefinitionBody = (program: Program, expression: Expression, frame: Fram
   const global = findGlobalName(expression.name, program.environment);
   return global?.kind === "Definition" &&
     global.definition.kind === "Operator" &&
-    global.definition.params.length === 0
+    global.definition.params.length === 0 &&
+    !program.environment.bodyValues.has(global.definition.body)
     ? global.definition.body
     : undefined;
 };
@@ -3258,6 +3259,8 @@ const compileBuiltin = (
 };
 
 const compileValue = (program: Program, expression: Expression, frame: Frame): Compiled => {
+  const bodyValue = program.environment.bodyValues.get(expression);
+  if (bodyValue !== undefined) return compileConstant(program, bodyValue);
   switch (expression.kind) {
     case "Selection":
       return compileValue(program, expression.expression, frame);

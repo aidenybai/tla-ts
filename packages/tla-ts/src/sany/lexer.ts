@@ -380,10 +380,16 @@ const getTokenPrefix = (source: string, offset: number) => {
   );
 };
 
-export const createSanyLexer = (source: string) => {
+interface SanyLexicalError {
+  message: string;
+  beginLine: number;
+  endLine: number;
+}
+
+export const createSanyLexer = (source: string, startMode = "DEFAULT") => {
   const positions = getPositions(source);
   let nextOffset = 0;
-  let mode = "DEFAULT";
+  let mode = startMode;
   const createToken = (kind: number, start: number, length: number): SanyToken => ({
     kind,
     image: source.slice(start, start + length),
@@ -392,17 +398,17 @@ export const createSanyLexer = (source: string) => {
     next: undefined,
   });
   const createEndOfFile = () => createToken(getKind("EOF"), source.length - 1, 0);
-  const getLexicalError = (start: number, end: number, after: string) => {
+  const getLexicalError = (start: number, end: number, after: string): SanyLexicalError => {
     const index = end - 1;
     const line = positions.lines[index];
     const column = positions.columns[index];
-    if (end < source.length) return formatLexicalError(line, column, source[index], after);
-    if (positions.lines[start] !== line) {
-      return `Lexical {error: EOF reached, possibly open comment starting around line ${positions.lines[start]}`;
-    }
-    return source[index] === "\n" || source[index] === "\r"
-      ? formatLexicalError(line + 1, 0, undefined, after)
-      : formatLexicalError(line, column + 1, undefined, after);
+    const message =
+      end < source.length
+        ? formatLexicalError(line, column, source[index], after)
+        : source[index] === "\n" || source[index] === "\r"
+          ? formatLexicalError(line + 1, 0, undefined, after)
+          : formatLexicalError(line, column + 1, undefined, after);
+    return { message, beginLine: positions.lines[start], endLine: line };
   };
   const skipComment = () => {
     const start = nextOffset;
@@ -447,7 +453,7 @@ export const createSanyLexer = (source: string) => {
     }
     return createEndOfFile();
   };
-  const getNextToken = (): SanyToken | string => {
+  const getNextToken = (): SanyToken | SanyLexicalError => {
     if (mode === "DEFAULT") return getSkippingToken(DEFAULT_PATTERNS);
     if (mode === "PRAGMA") return getSkippingToken(PRAGMA_PATTERNS);
     while (nextOffset < source.length) {
@@ -495,7 +501,7 @@ export const escapeLexeme = (text: string) =>
       (character === "\0" ? "" : `\\u${character.charCodeAt(0).toString(16).padStart(4, "0")}`),
   );
 
-export const formatLexicalError = (
+const formatLexicalError = (
   line: number,
   column: number,
   character: string | undefined,
@@ -507,7 +513,7 @@ export const getSany174LexicalError = (source: string) => {
   const readToken = createSanyLexer(source);
   for (
     let token = readToken();
-    typeof token !== "string" && token.kind !== getKind("EOF");
+    "kind" in token && token.kind !== getKind("EOF");
     token = readToken()
   ) {
     const index = token.image.split("").findIndex((character) => {

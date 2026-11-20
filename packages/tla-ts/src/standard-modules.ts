@@ -1,5 +1,6 @@
 import { TlaEvaluationError, TlaModuleError, TlaSetBoundError } from "./errors";
 import {
+  checkJavaArity,
   createModuleArgumentError,
   createOverflowError,
   defineArithmetic,
@@ -180,7 +181,10 @@ export const CORE_OPERATORS: Builtin[] = [
   defineConstant("TRUE", true),
   defineConstant("FALSE", false),
   defineConstant("BOOLEAN", BOOLEAN_SET),
-  defineConstant("STRING", { kind: "InfiniteSet", name: "STRING" }),
+  overrideWithJava(
+    defineConstant("STRING", { kind: "InfiniteSet", name: "STRING" }),
+    "public static tlc2.value.impl.Value tlc2.module.Strings.STRING()",
+  ),
   defineBinary("=", isEqualLikeTlc),
   defineBinary("#", (left, right) => !isEqualLikeTlc(left, right)),
   defineOperator("~", 1, (args) => !getBoolean(args, 0, "~")),
@@ -342,11 +346,14 @@ const createArithmeticOperators = (module: string) => {
       }
       return ((left % right) + right) % right;
     }),
-    defineBinary("..", (low, high) => {
-      // TLC's MethodHandle casts the last argument first.
-      const highNumber = getJavaInteger(high, dotDotSignature);
-      return { kind: "Interval", low: getJavaInteger(low, dotDotSignature), high: highNumber };
-    }),
+    checkJavaArity(
+      defineBinary("..", (low, high) => {
+        // TLC's MethodHandle casts the last argument first.
+        const highNumber = getJavaInteger(high, dotDotSignature);
+        return { kind: "Interval", low: getJavaInteger(low, dotDotSignature), high: highNumber };
+      }),
+      dotDotSignature,
+    ),
   ];
 };
 
@@ -384,21 +391,30 @@ const createComparisonOperators = (module: string) => {
   ];
 };
 
+const NAT = { kind: "InfiniteSet", name: "Nat" } as const;
+
 const NATURALS_OPERATORS = [
-  defineConstant("Nat", { kind: "InfiniteSet", name: "Nat" }),
+  overrideWithJava(defineConstant("Nat", NAT), getJavaSignature("Naturals", "Nat", "Value", 0)),
   ...NATURALS_ARITHMETIC,
   ...createComparisonOperators("Naturals"),
 ];
 
 const INTEGERS_OPERATORS = [
-  defineConstant("Int", { kind: "InfiniteSet", name: "Int" }),
+  overrideWithJava(defineConstant("Nat", NAT), getJavaSignature("Integers", "Nat", "Value", 0)),
+  overrideWithJava(
+    defineConstant("Int", { kind: "InfiniteSet", name: "Int" }),
+    getJavaSignature("Integers", "Int", "Value", 0),
+  ),
   ...INTEGERS_ARITHMETIC,
   ...createComparisonOperators("Integers"),
-  defineOperator("-.", 1, (args) => {
-    const value = getJavaInteger(getValue(args, 0, "-"), NEG_SIGNATURE);
-    if (isOutOfRange(-value)) throw createOverflowError(`-${value}`);
-    return -value;
-  }),
+  checkJavaArity(
+    defineOperator("-.", 1, (args) => {
+      const value = getJavaInteger(getValue(args, 0, "-"), NEG_SIGNATURE);
+      if (isOutOfRange(-value)) throw createOverflowError(`-${value}`);
+      return -value;
+    }),
+    NEG_SIGNATURE,
+  ),
 ];
 
 const getSequenceArgument = (args: BuiltinArgument[], index: number, message: string) => {
@@ -608,7 +624,14 @@ export const getJavaOverrides = (
   evaluateReplaced: (name: string, args: BuiltinArgument[], context: Context | undefined) => Value,
 ) => {
   if (name === "TransitiveClosure") return TRANSITIVE_CLOSURE_OPERATORS;
-  if (name === "AnySet") return [defineConstant("ANY", ANY_SET)];
+  if (name === "AnySet") {
+    return [
+      overrideWithJava(
+        defineConstant("ANY", ANY_SET),
+        "public static tlc2.value.impl.Value tlc2.module.AnySet.ANY()",
+      ),
+    ];
+  }
   if (name === "IOUtils") return createIoUtilsOperators(files, evaluateReplaced);
   if (name === "_TLCTrace") return createTlcTraceOperators(files);
   if (!getSanyStandardModules(runtime.version).has(name)) return undefined;

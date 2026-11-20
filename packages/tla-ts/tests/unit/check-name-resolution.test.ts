@@ -4067,6 +4067,25 @@ describe("name resolution matches SANY", () => {
     });
   });
 
+  it("reports a USE or HIDE with only its keyword twice, like SANY", async () => {
+    await expect(
+      check({
+        source: "---- MODULE M ----\nUSE\nTHEOREM TRUE\n<1>1. HIDE\n<1>2. USE ONLY\n<1> QED\n====",
+        config: "",
+      }),
+    ).rejects.toThrow(
+      createSanyError(
+        [
+          ["line 2, col 1 to line 2, col 3", "Empty BY, USE, or HIDE"],
+          ["line 2, col 1 to line 2, col 3", "Empty USE or HIDE statement."],
+          ["line 4, col 7 to line 4, col 10", "Empty BY, USE, or HIDE"],
+          ["line 4, col 7 to line 4, col 10", "Empty USE or HIDE statement."],
+          ["line 5, col 7 to line 5, col 14", "Empty USE or HIDE statement."],
+        ].map((entry) => ({ location: `${entry[0]} of module M`, message: entry[1] })),
+      ),
+    );
+  });
+
   it("reports DEF clause entries that name no definition like SANY", async () => {
     await expect(
       check({
