@@ -360,7 +360,6 @@ export const createEnvironment = (
   const warnings: SanyError[] = [];
   const instanceCopies = new WeakMap<Definition, InstanceCopy>();
   const letInstances = new Map<string, LetInstance>();
-  // SANY's Generator marks a module instantiated for a LET or proof step's INSTANCE too.
   const locallyInstantiated = new Set<string>();
   const recursiveSections = new WeakMap<Definition, SectionMember[]>();
   const checkedNodes = new WeakMap<Expression, boolean>();
