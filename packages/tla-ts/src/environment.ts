@@ -673,7 +673,7 @@ export const createEnvironment = (
     instance: Instance,
     linked: LinkedModule,
     substitutionCount: number,
-  ): SanyError[] => {
+  ) => {
     const range = instance.location.range;
     if (!range) return [];
     const failed = [...linked.exported.values()].filter(
