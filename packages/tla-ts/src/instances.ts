@@ -395,6 +395,7 @@ interface Instantiation {
   params: OperatorParam[];
   substitutions: Map<string, Expression>;
   variables: Set<string>;
+  enabledSubstitutions: WeakSet<Expression>;
   getDefinition: (key: string) => Definition | undefined;
   getOuterDefinition: (key: string) => Definition | undefined;
   isParameterized: (key: string) => boolean;
@@ -560,9 +561,6 @@ const renameNames = (
 
 export const getEnabledVariableName = (name: string) => `${name}@ENABLED`;
 
-// What an instance's ENABLED substitutes, where UNCHANGED evaluates what it keeps, as TLC's Tool#enabledUnchanged does.
-export const enabledExpressions = new WeakSet<Expression>();
-
 const getMode = (rewrite: Rewrite, mode: RewriteMode) => rewrite.modes.get(mode) ?? rewrite;
 
 const isVariable = (expression: Expression, rewrite: Rewrite, bound: Map<string, string>) =>
@@ -694,7 +692,7 @@ const substitute = (
   bound: Map<string, string>,
 ): Expression => {
   const substituted = substituteExpression(expression, rewrite, bound);
-  if (rewrite.mode === "Enabled") enabledExpressions.add(substituted);
+  if (rewrite.mode === "Enabled") rewrite.instantiation.enabledSubstitutions.add(substituted);
   if (syntheticIdentifiers.has(expression)) syntheticIdentifiers.add(substituted);
   const substitution = substitutedExpressions.get(expression);
   if (!substitution || substituted === expression || substitutedExpressions.has(substituted)) {

@@ -312,6 +312,7 @@ export const createEnvironment = (
   const unresolvedBodyKeys = new Set<string>();
   const copySources = new Map<string, CopySource>();
   const substitutedDefinitions = new Set<Definition>();
+  const enabledSubstitutions = new WeakSet<Expression>();
   const goalOperands = new WeakMap<Expression, Expression[]>();
   const instanceParams = new Set<OperatorParam>();
   const builtins = new Map<string, Builtin>(
@@ -688,6 +689,7 @@ export const createEnvironment = (
       params,
       substitutions: substitutes.substitutions,
       variables: new Set(linked.variables),
+      enabledSubstitutions,
       getDefinition: getLinkedDefinition,
       getOuterDefinition: (key) =>
         module.definitions.find((definition) => unit.getKey(definition) === key),
@@ -975,6 +977,7 @@ export const createEnvironment = (
         ]),
       ),
       variables: new Set(linked.variables),
+      enabledSubstitutions,
       getDefinition: getLinkedDefinition,
       getOuterDefinition: () => undefined,
       isParameterized: (key) => parameterized.get(key) === true,
@@ -1646,6 +1649,7 @@ export const createEnvironment = (
     startupValues: Array.from({ length: facts.ids.size }, (): Value | undefined => undefined),
     tlcEvalValues: new WeakMap(),
     substitutedDefinitions,
+    enabledSubstitutions,
     instanceParams,
     evaluators: new WeakMap(),
     entryEvaluators: new WeakMap(),

@@ -44,7 +44,7 @@ import {
   type Scope,
   type State,
 } from "./evaluate";
-import { enabledExpressions, forEachChild } from "./instances";
+import { forEachChild } from "./instances";
 import { getRandomSubset, nextPrime, type JavaRandom } from "./tlc/random";
 import {
   bindUnchangedApplication,
@@ -645,7 +645,9 @@ const compileUnchanged = (expression: Expression, environment: Environment): Run
       onComplete,
     );
   };
-  return enabledExpressions.has(expression) ? compileEnabledUnchanged(expression, runner) : runner;
+  return environment.enabledSubstitutions.has(expression)
+    ? compileEnabledUnchanged(expression, runner)
+    : runner;
 };
 
 const compileCall = (

@@ -190,6 +190,7 @@ export interface Environment {
   startupValues: (Value | undefined)[];
   tlcEvalValues: WeakMap<Expression, Value>;
   substitutedDefinitions: Set<Definition>;
+  enabledSubstitutions: WeakSet<Expression>;
   instanceParams: Set<OperatorParam>;
   evaluators: WeakMap<Expression, Evaluator>;
   entryEvaluators: WeakMap<Expression, Evaluator>;
