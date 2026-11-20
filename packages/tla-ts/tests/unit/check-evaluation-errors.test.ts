@@ -3348,6 +3348,60 @@ describe("evaluation errors match TLC", () => {
   );
 
   it.each([
+    [
+      'x\' = CHOOSE e \\in SUBSET {1, "a"} : TRUE',
+      [
+        "Line 5, column 9 to line 5, column 48 in M",
+        "Line 5, column 14 to line 5, column 48 in M",
+        "Line 5, column 27 to line 5, column 41 in M",
+        "Line 5, column 34 to line 5, column 41 in M",
+      ],
+    ],
+    [
+      'x\' = CHOOSE e \\in [{1, "a"} -> {0}] : TRUE',
+      [
+        "Line 5, column 9 to line 5, column 50 in M",
+        "Line 5, column 14 to line 5, column 50 in M",
+        "Line 5, column 27 to line 5, column 43 in M",
+        "Line 5, column 28 to line 5, column 35 in M",
+      ],
+    ],
+    [
+      'x\' = CHOOSE e \\in ({1, "a"} \\X {0}) : TRUE',
+      [
+        "Line 5, column 9 to line 5, column 50 in M",
+        "Line 5, column 14 to line 5, column 50 in M",
+        "Line 5, column 28 to line 5, column 42 in M",
+        "Line 5, column 28 to line 5, column 35 in M",
+      ],
+    ],
+    [
+      'x\' = CHOOSE e \\in [a : {1, "a"}] : TRUE',
+      [
+        "Line 5, column 9 to line 5, column 47 in M",
+        "Line 5, column 14 to line 5, column 47 in M",
+        "Line 5, column 27 to line 5, column 40 in M",
+        "Line 5, column 32 to line 5, column 39 in M",
+      ],
+    ],
+    [
+      'x\' = CHOOSE e \\in (SUBSET {1} \\ {1, "a"}) : TRUE',
+      [
+        "Line 5, column 9 to line 5, column 56 in M",
+        "Line 5, column 14 to line 5, column 56 in M",
+        "Line 5, column 28 to line 5, column 48 in M",
+        "Line 5, column 41 to line 5, column 48 in M",
+      ],
+    ],
+  ])("fingerprints the domain of CHOOSE as TLC's normalize does: %s", async (next, callStack) => {
+    const result = await checkSetBound(next, "TRUE");
+    expect(formatCallStackLines(result)).toEqual(callStack);
+    expect(result.failure?.fingerprint?.reason).toBe(
+      'Attempted to compare string "a" with non-string:\n1',
+    );
+  });
+
+  it.each([
     ["x' \\in [a : {f \\in [1..2 -> 1..4] : TRUE}]", 273, 17],
     ["x' = [f \\in [1..2 -> 1..4] |-> 1]", 3, 2],
     [

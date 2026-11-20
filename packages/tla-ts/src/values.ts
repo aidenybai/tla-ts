@@ -1200,28 +1200,38 @@ export const markNormalized = (value: Value): void => {
 
 export const normalizeShallowly = (value: Value): void => {
   if (typeof value !== "object" || isCachedSet(value)) return;
+  if (value.kind === "Set") {
+    value.isNormalized = true;
+    return;
+  }
+  if (value.kind === "MixedSet") {
+    toFiniteSet(value);
+    return;
+  }
+  const sets = setTrace.sets;
+  sets?.push(value);
   switch (value.kind) {
-    case "Set":
-      value.isNormalized = true;
-      return;
-    case "MixedSet":
-      toFiniteSet(value);
-      return;
     case "FilteredSet":
     case "Subset":
-      return normalizeShallowly(value.base);
+      normalizeShallowly(value.base);
+      break;
     case "SetOperation":
-      if (value.operator === "\\cup") return;
-      normalizeShallowly(value.left);
-      return normalizeShallowly(value.right);
+      if (value.operator !== "\\cup") {
+        normalizeShallowly(value.left);
+        normalizeShallowly(value.right);
+      }
+      break;
     case "FunctionSet":
       normalizeShallowly(value.domain);
-      return normalizeShallowly(value.range);
+      normalizeShallowly(value.range);
+      break;
     case "RecordSet":
-      return value.sets.forEach(normalizeShallowly);
+      value.sets.forEach(normalizeShallowly);
+      break;
     case "ProductSet":
-      return value.factors.forEach(normalizeShallowly);
+      value.factors.forEach(normalizeShallowly);
   }
+  sets?.pop();
 };
 
 const isUnenumeratedSet = (value: Value): value is ConvertibleSetValue =>
