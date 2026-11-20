@@ -23134,8 +23134,7 @@
         {
           "name": "reports a throw for some argument of a function that reads no state",
           "status": "assumption-violation",
-          "failure": ["\"low is above high\""],
-          "wrong": "models: ESCore's check of this model gives another status, count, or message than today's compiler's, and which is right is unverified"
+          "failure": ["\"low is above high\""]
         },
         {
           "name": "sorts, reverses, and splices an array that a model holds (1)",
@@ -23176,8 +23175,7 @@
         {
           "name": "calls a check with every value of the call's type",
           "status": "assumption-violation",
-          "failure": ["\"no people\""],
-          "wrong": "models: ESCore's check of this model gives another status, count, or message than today's compiler's, and which is right is unverified"
+          "failure": ["\"no people\""]
         },
         {
           "name": "chooses any value of the call's type in an action",
