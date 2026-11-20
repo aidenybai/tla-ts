@@ -249,13 +249,16 @@ const createLocalFunction = (definition: FunctionDefinition, key: string): Defin
   isLocal: true,
 });
 
-const getSubstitutionFrame = (instance: Instance): Expression => {
-  const range = instance.definitionRange
+const getInstanceRange = (instance: Instance): SourceRange =>
+  instance.definitionRange
     ? {
         ...instance.definitionRange,
         start: { line: instance.location.line, column: instance.location.column },
       }
     : instance.instanceRange;
+
+const getSubstitutionFrame = (instance: Instance): Expression => {
+  const range = getInstanceRange(instance);
   return {
     kind: "Identifier",
     name: instance.name ?? instance.module,
@@ -307,6 +310,7 @@ export const createEnvironment = (
   const order = options.order ?? createTlcOrder(options.source, options.loadModule);
   const root = order.parseModule(options.source);
   const definitions = new Map<string, Definition>();
+  const theorems = new Map<string, SourceRange>();
   const unlinkedTheorems = new Map<string, () => void>();
   const getLinkedDefinition = (key: string) => {
     unlinkedTheorems.get(key)?.();
@@ -837,6 +841,7 @@ export const createEnvironment = (
         const key = reservedKey ?? createName(`${name}@${module.name}`);
         const definition = create(key);
         definitions.set(key, definition);
+        if (theorems.has(source)) theorems.set(key, getInstanceRange(instance));
         const copy = createInstanceCopy(source, instance.module, substitutes);
         if (copy) instanceCopies.set(definition, copy);
         if (declarations.length > 0) substitutedDefinitions.add(definition);
@@ -1126,6 +1131,7 @@ export const createEnvironment = (
             ? { ...definition, name: key }
             : createLocalFunction(definition, key);
         copies.push(copy);
+        if (theorems.has(source)) theorems.set(key, getInstanceRange(instance));
         const instanceCopy = createInstanceCopy(source, instance.module, substitutes);
         if (instanceCopy) localCopies.set(key, instanceCopy);
         return key;
@@ -1634,6 +1640,7 @@ export const createEnvironment = (
       const symbol = getDefinitionSymbol(definition);
       visible.set(definition.name, symbol);
       if (!definition.isLocal) exported.set(definition.name, symbol);
+      if (symbol.kind === "Theorem" && symbol.range) theorems.set(symbol.key, symbol.range);
     });
     resolved.boundRecursive.forEach((declaration) => {
       const symbol = getRecursiveSymbol(declaration);
@@ -1666,6 +1673,7 @@ export const createEnvironment = (
         range: theorem.location.range,
         goal: theorem.goal,
       };
+      if (symbol.range) theorems.set(key, symbol.range);
       visible.set(theorem.name, symbol);
       exported.set(theorem.name, symbol);
     });
@@ -1835,6 +1843,7 @@ export const createEnvironment = (
   const environment: Environment = {
     runtime,
     definitions,
+    theorems,
     rootKeys,
     builtins,
     constants,

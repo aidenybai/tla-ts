@@ -56,6 +56,7 @@ import {
   expectBoolean,
   expectBooleanBody,
   getBuiltin,
+  getConfigNameDefinition,
   getDefinition,
   getRootKey,
   type Builtin,
@@ -75,6 +76,7 @@ import {
   getSanyLevel,
   type ScopedExpression,
   type TemporalProperty,
+  type TheoremReference,
 } from "./liveness";
 import { getLiveExpressions } from "./liveness-checker";
 import { prettyPrint, prettyPrintT } from "./pretty-print";
@@ -222,7 +224,7 @@ const createNamedIdentifier = (name: string, environment: Environment): NamedExp
 const UNNAMED_ARGUMENT_KINDS = new Set(["name", "property"]);
 
 const getConfigOperator = (kind: string, name: string, environment: Environment) => {
-  const definition = getDefinition(getRootKey(name, environment), environment);
+  const definition = getConfigNameDefinition(getRootKey(name, environment), environment);
   if (!definition) {
     throw new TlaConfigError(
       `The ${kind} ${name} specified in the configuration file\nis not defined in the specification.`,
@@ -359,6 +361,12 @@ const getConjuncts = (expression: Expression, environment: Environment): Express
   return [expression];
 };
 
+// SpecProcessor#processConfigSpec and #processConfigProps take apart only an OpDefNode, and a theorem is not one.
+const createTheoremError = (theorem: TheoremReference, usage: string) =>
+  new TlaConfigError(
+    `The operator ${theorem.name}, which equals ${formatRange(theorem.range)},\ncannot be used as a ${usage}`,
+  );
+
 const isConstantTrue = (item: ScopedExpression, environment: Environment, usage: string) => {
   const conjunct = item.expression;
   if (
@@ -441,6 +449,7 @@ const getSpecification = (
         getLevelBound(expanded.body, undefined, environment) === VARIABLE_LEVEL
       );
     });
+    if (!isInitial && item.theorem) throw createTheoremError(item.theorem, "spec");
     if (!isInitial && isConstantTrue(item, environment, "spec")) return;
     // Deviation from TLC: SpecProcessor#processConfigSpec looks an instance's parameter up without its substitute and rejects it as "cannot be used as a spec", where tla-ts takes the substitute.
     const variableIndex =
@@ -580,6 +589,7 @@ const getProperties = (
     const isProperty = environment.runtime.version !== "1.7.4";
     expandTemporal(definition.body, undefined, environment, isProperty).forEach((item) => {
       const conjunct = item.expression;
+      if (item.theorem) throw createTheoremError(item.theorem, "property");
       if (isConstantTrue(item, environment, "property")) return;
       // Deviation from TLC: SpecProcessor#processConfigProps looks an instance's constant up without its substitute and rejects it as "cannot be used as a property", where tla-ts checks the substitute.
       const partName = item.name ?? name;
@@ -1782,7 +1792,7 @@ export const createSearch = (
       const rejection = config.postconditions
         .map((name) => {
           const key = getRootKey(name, environment);
-          const definition = getDefinition(key, environment);
+          const definition = getConfigNameDefinition(key, environment);
           if (environment.constants.has(key) || getBuiltin(key, environment)) {
             return `The post condition ${name} cannot be a constant.`;
           }
