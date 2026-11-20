@@ -253,11 +253,10 @@ const prepareModules = (texts: readonly (readonly [string, string])[]): Prepared
   });
 };
 
-// The prepared modules as a graph holds them, with the texts they were prepared from and each
-// value a plain copy.
+// The prepared modules as a graph holds them, each value a plain copy, without their tokens, which
+// lexing a module's text makes faster than the graph reads them.
 interface PreparedGraph {
-  texts: string[];
-  modules: (Omit<PreparedModule, "values"> & { values: Map<Definition, unknown> })[];
+  modules: (Omit<PreparedModule, "tokens" | "values"> & { values: Map<Definition, unknown> })[];
 }
 
 // The graph of the modules of the runtime of ESCore's texts for a realm, prepared, which a build
@@ -269,10 +268,14 @@ const getGraph = (library: Library, realm: HostRealm) => {
   const plain = getPlainValues(entries.flat().map((entry) => entry[1]));
   let position = 0;
   const graph: PreparedGraph = {
-    texts: texts.map((entry) => entry[1]),
     modules: modules.map((prepared, index) => ({
-      ...prepared,
+      name: prepared.name,
+      text: prepared.text,
+      module: prepared.module,
+      levels: prepared.levels,
+      texts: prepared.texts,
       values: new Map(entries[index].map((entry) => [entry[0], plain[position++]])),
+      facts: prepared.facts,
     })),
   };
   return encodeGraph(graph);
@@ -314,7 +317,10 @@ const readPreparedModules = (
 ): PreparedModule[] | undefined => {
   if (encoded === undefined) return undefined;
   const graph = decodeGraph(encoded) as PreparedGraph;
-  if (graph.texts.length !== texts.length || graph.texts.some((text, i) => text !== texts[i])) {
+  if (
+    graph.modules.length !== texts.length ||
+    graph.modules.some((prepared, index) => prepared.text !== texts[index])
+  ) {
     return undefined;
   }
   const entries = graph.modules.map((prepared) => [...prepared.values]);
@@ -322,6 +328,7 @@ const readPreparedModules = (
   let position = 0;
   return graph.modules.map((prepared, index) => ({
     ...prepared,
+    tokens: tokenize(prepared.text),
     values: new Map(entries[index].map((entry) => [entry[0], values[position++]])),
   }));
 };
