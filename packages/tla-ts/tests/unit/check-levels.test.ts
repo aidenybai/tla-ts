@@ -2609,6 +2609,108 @@ describe("level checking matches SANY", () => {
     },
   );
 
+  it.each([
+    [
+      "N == INSTANCE P WITH e <- [](x = 1)\nTHEOREM T == ASSUME TRUE PROVE ENABLED (N!PT!1)",
+      [
+        ["line 5, col 32 to line 5, col 47", "ENABLED"],
+        ["line 4, col 1 to line 4, col 35", "P", "e"],
+      ],
+    ],
+    [
+      "N == INSTANCE P WITH e <- [](x = 1)\nTHEOREM T == ASSUME TRUE PROVE ENABLED (N!PT!lab)",
+      [
+        ["line 5, col 32 to line 5, col 49", "ENABLED"],
+        ["line 4, col 1 to line 4, col 35", "P", "e"],
+      ],
+    ],
+    [
+      "N == INSTANCE P WITH e <- [](x = 1)\nTHEOREM T == ASSUME ENABLED (N!PT!1) PROVE TRUE",
+      [
+        ["line 5, col 21 to line 5, col 36", "ENABLED"],
+        ["line 4, col 1 to line 4, col 35", "P", "e"],
+      ],
+    ],
+    [
+      "INSTANCE P WITH e <- [](x = 1)\nTHEOREM T == ASSUME TRUE PROVE ENABLED (PT!1)",
+      [
+        ["line 5, col 32 to line 5, col 45", "ENABLED"],
+        ["line 4, col 1 to line 4, col 30", "P", "e"],
+      ],
+    ],
+    [
+      "N(q) == INSTANCE P WITH e <- q\nTHEOREM T == ASSUME TRUE PROVE ENABLED (N([](x = 1))!PT!1)",
+      [["line 5, col 41 to line 5, col 57", "LAMBDA"]],
+    ],
+  ])(
+    "levels a theorem's clause selected through a module's instance in %j, as SANY does",
+    async (lines, expected) => {
+      await expect(
+        check({
+          source: `---- MODULE M ----\nVARIABLE x\nCONSTANT c\n${lines}\nInit == x = 0\nNext == x' = x\n====`,
+          config: "INIT Init\nNEXT Next",
+          loadModule: (name) =>
+            name === "P"
+              ? "---- MODULE P ----\nCONSTANT c, e\nTHEOREM PT == ASSUME e = e, lab :: (e # 1) PROVE c = e\n===="
+              : undefined,
+        }),
+      ).rejects.toThrow(
+        createSanyError(
+          expected.map((error) => ({
+            location: `${error[0]} of module M`,
+            message:
+              error.length === 3
+                ? `Level error in instantiating module '${error[1]}':\nThe level of the expression or operator substituted for '${error[2]}' \nmust be at most 2.`
+                : `Level error in applying operator ${error[1]}:\nThe level of argument 1 exceeds the maximum level allowed by the operator.`,
+          })),
+        ),
+      );
+    },
+  );
+
+  it.each([
+    [
+      "INSTANCE L WITH c <- x\nASSUME T",
+      [
+        [
+          "line 9, col 1 to line 9, col 8",
+          "Level error: assumptions must be level 0 (Constant), \nbut this one has level 1.",
+        ],
+      ],
+    ],
+    [
+      "INSTANCE L WITH c <- [](x = 1)\nD == ENABLED T",
+      [
+        [
+          "line 9, col 6 to line 9, col 14",
+          "Level error in applying operator ENABLED:\nThe level of argument 1 exceeds the maximum level allowed by the operator.",
+        ],
+        [
+          "line 8, col 1 to line 8, col 30",
+          "Level error in instantiating module 'L':\nThe level of the expression or operator substituted for 'c' \nmust be at most 2.",
+        ],
+      ],
+    ],
+  ])(
+    "levels a theorem that selects a clause through its module's instance when %j reaches it, as SANY does",
+    async (lines, expected) => {
+      await expect(
+        check({
+          source: `---- MODULE M ----\nVARIABLE x\n---- MODULE L ----\nCONSTANT c\nN == INSTANCE P WITH e <- c\nTHEOREM T == ASSUME TRUE PROVE N!PT!1\n====\n${lines}\nInit == x = 0\nNext == x' = x\n====`,
+          config: "INIT Init\nNEXT Next",
+          loadModule: (name) =>
+            name === "P"
+              ? "---- MODULE P ----\nCONSTANT c, e\nTHEOREM PT == ASSUME e = e, lab :: (e # 1) PROVE c = e\n===="
+              : undefined,
+        }),
+      ).rejects.toThrow(
+        createSanyError(
+          expected.map((error) => ({ location: `${error[0]} of module M`, message: error[1] })),
+        ),
+      );
+    },
+  );
+
   it("levels an assumption that reaches an instance's substitute selecting a theorem's clause, as SANY does", async () => {
     await expect(
       check({

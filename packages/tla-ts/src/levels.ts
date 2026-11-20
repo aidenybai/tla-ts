@@ -1673,12 +1673,19 @@ export const createLevelAnalyzer = (context: LevelContext) => {
   };
 
   const getGoalInstanced = (names: string[], scope: Scope): Instanced | undefined => {
-    const entry = names
-      .map((_name, index) => scope.get(names.slice(0, names.length - index).join("!")))
-      .find((candidate) => candidate?.kind === "Let");
-    if (entry?.kind !== "Let") return undefined;
-    const copy = letCopies.get(entry.definition) ?? context.instances.getCopy(entry.definition);
-    return copy && { definition: entry.definition, copy, params: [] };
+    const definition = names
+      .map((_name, index) => names.slice(0, names.length - index).join("!"))
+      .map((name) => {
+        const entry = scope.get(name);
+        return entry === undefined
+          ? context.getDefinition(name)
+          : entry.kind === "Let"
+            ? entry.definition
+            : undefined;
+      })
+      .find((candidate) => candidate !== undefined);
+    const copy = definition && (letCopies.get(definition) ?? context.instances.getCopy(definition));
+    return definition && copy && { definition, copy, params: [] };
   };
 
   const analyzeSelected = (
