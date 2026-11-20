@@ -1626,10 +1626,19 @@ export class Context extends Internalizer {
       this.delInactiveLemmas();
       this.pushScope();
       const manager = this.manager;
+      // asm2proxy holds each proxy until the assumptions are internalized, and each implication
+      // lives until the rewriter has asserted it.
       const proxies = assumptions.map((assumption) => {
-        if (isValidAssumption(manager, assumption)) return assumption;
+        if (isValidAssumption(manager, assumption)) {
+          manager.incRef(assumption);
+          return assumption;
+        }
         const proxy = manager.mkFreshConst(null, SORT_BOOL);
-        asserted.assertExpr(manager.mkApp(OP_IMPLIES, [proxy, assumption], SORT_BOOL));
+        manager.incRef(proxy);
+        const implication = manager.mkApp(OP_IMPLIES, [proxy, assumption], SORT_BOOL);
+        manager.incRef(implication);
+        asserted.assertExpr(implication);
+        manager.decRef(implication);
         return proxy;
       });
       this.internalizeAssertions(asserted);
@@ -1641,6 +1650,7 @@ export class Context extends Internalizer {
         if (literal === this.trueLiteral || literal === this.falseLiteral) continue;
         this.literalAssumptions.set(literal, assumptions[index]);
       }
+      for (const proxy of proxies) manager.decRef(proxy);
     }
     this.searchLevel = this.scopeLevel;
   }
