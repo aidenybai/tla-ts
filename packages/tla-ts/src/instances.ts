@@ -394,7 +394,7 @@ export const forEachChild = (
 interface Instantiation {
   params: OperatorParam[];
   substitutions: Map<string, Expression>;
-  variables: Set<string>;
+  substitutedVariables: Set<string>;
   enabledSubstitutions: WeakSet<Expression>;
   getDefinition: (key: string) => Definition | undefined;
   getOuterDefinition: (key: string) => Definition | undefined;
@@ -567,7 +567,7 @@ const isVariable = (expression: Expression, rewrite: Rewrite, bound: Map<string,
   expression.kind === "Identifier" &&
   !bound.has(expression.name) &&
   !isLocallyResolved(expression) &&
-  rewrite.instantiation.variables.has(expression.name);
+  rewrite.instantiation.substitutedVariables.has(expression.name);
 
 const substituteInEnabled = (
   expression: Expression,
@@ -755,7 +755,7 @@ const substituteExpression = (
       const copy = withReplacedFrames(replacement, expression);
       const substitution = substitutedExpressions.get(replacement);
       if (substitution) substitutedExpressions.set(copy, substitution);
-      return rewrite.mode === "Enabled" && instantiation.variables.has(expression.name)
+      return rewrite.mode === "Enabled" && instantiation.substitutedVariables.has(expression.name)
         ? {
             kind: "EnabledVariable",
             name: getEnabledVariableName(expression.name),

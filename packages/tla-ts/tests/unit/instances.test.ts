@@ -698,6 +698,47 @@ describe("INSTANCE matches TLC", () => {
     },
   );
 
+  it.each([
+    [
+      "swaps the names of two variables",
+      "A == c = 0 /\\ c' = 1 /\\ d' = d",
+      "VARIABLES c, d\nInit == c = 0 /\\ d \\in 0..1\nNext == UNCHANGED <<c, d>>\nH == INSTANCE Hi WITH c <- d, d <- c",
+      ["invariant-violation", [{ c: 0, d: 1 }]],
+    ],
+    [
+      "substitutes a definition of the same name",
+      "A == LET k == c IN k' = k + 1 /\\ d' = d /\\ k' > k",
+      "VARIABLES x, d\nc == 1 - x\nInit == x \\in 0..2 /\\ d = 0\nNext == UNCHANGED <<x, d>>\nH == INSTANCE Hi",
+      ["success", undefined],
+    ],
+    [
+      "keeps one variable and substitutes it for the other",
+      "A == LET k == d IN c' = c + 1 /\\ k' = k + 1 /\\ k' > c'",
+      "VARIABLES c, d\nInit == c \\in 0..2 /\\ d = 0\nNext == UNCHANGED <<c, d>>\nH == INSTANCE Hi WITH c <- c, d <- c",
+      ["invariant-violation", [{ c: 0, d: 0 }]],
+    ],
+  ])(
+    "binds a variable in an instance's ENABLED where the instance %s, as TLC's Context.lookup does",
+    async (_label, action, outer, outcome) => {
+      const results = await Promise.all(
+        [undefined, 1_000_000].map((maxSetSize) =>
+          check({
+            source: `---- MODULE M ----\nEXTENDS Integers\n${outer}\nInv == H!Can\n====`,
+            config: "INIT Init\nNEXT Next\nINVARIANT Inv",
+            maxSetSize,
+            loadModule: (name) =>
+              name === "Hi"
+                ? `---- MODULE Hi ----\nEXTENDS Integers\nVARIABLES c, d\n${action}\nCan == ENABLED A\n====`
+                : undefined,
+          }),
+        ),
+      );
+      expect(
+        results.map((result) => [result.status, result.violation?.trace.map((step) => step.state)]),
+      ).toEqual([outcome, outcome]);
+    },
+  );
+
   it.each([undefined, 1_000_000])(
     "keeps a primed variable of an instance in its ENABLED apart from the outer variable of the same name, as TLC's Context.lookup does (maxSetSize %s)",
     async (maxSetSize) => {

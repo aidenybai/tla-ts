@@ -686,7 +686,16 @@ export const createEnvironment = (
     const instantiation = createInstantiation({
       params,
       substitutions: substitutes.substitutions,
-      variables: new Set(linked.variables),
+      substitutedVariables: new Set(
+        linked.variables.filter((name) => {
+          const replacement = substitutions.get(name);
+          return !(
+            replacement?.kind === "Identifier" &&
+            replacement.name === name &&
+            resolved.get(name)?.kind === "Variable"
+          );
+        }),
+      ),
       enabledSubstitutions,
       getDefinition: getLinkedDefinition,
       getOuterDefinition: (key) =>
@@ -974,7 +983,7 @@ export const createEnvironment = (
           createLocalSubstitution(declaration),
         ]),
       ),
-      variables: new Set(linked.variables),
+      substitutedVariables: new Set(linked.variables),
       enabledSubstitutions,
       getDefinition: getLinkedDefinition,
       getOuterDefinition: () => undefined,
