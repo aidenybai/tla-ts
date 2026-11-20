@@ -562,12 +562,14 @@ const compareWithItself = (value: Value, isEquality: boolean): boolean => {
     case "Function": {
       if ((value.walkFlags & SELF_COMPARED_FLAG) !== 0 || isHashed(value)) return true;
       if (isWrittenOrderUsed) value.writtenKeys = undefined;
+      const domain = value.domain;
+      const range = value.range;
       let isInnerSettled = true;
-      for (const key of value.domain) {
-        isInnerSettled = compareWithItself(key, isEquality) && isInnerSettled;
+      for (let index = 0; index < domain.length; index++) {
+        isInnerSettled = compareWithItself(domain[index], isEquality) && isInnerSettled;
       }
-      for (const item of value.range) {
-        isInnerSettled = compareWithItself(item, isEquality) && isInnerSettled;
+      for (let index = 0; index < range.length; index++) {
+        isInnerSettled = compareWithItself(range[index], isEquality) && isInnerSettled;
       }
       if (isInnerSettled) value.walkFlags |= SELF_COMPARED_FLAG;
       return isInnerSettled;
@@ -575,9 +577,10 @@ const compareWithItself = (value: Value, isEquality: boolean): boolean => {
     case "Set": {
       if ((value.walkFlags & SELF_COMPARED_FLAG) !== 0 || isHashed(value)) return true;
       value.isNormalized = true;
+      const elements = value.elements;
       let isInnerSettled = true;
-      for (const element of value.elements) {
-        isInnerSettled = compareWithItself(element, isEquality) && isInnerSettled;
+      for (let index = 0; index < elements.length; index++) {
+        isInnerSettled = compareWithItself(elements[index], isEquality) && isInnerSettled;
       }
       if (isInnerSettled) value.walkFlags |= SELF_COMPARED_FLAG;
       return isInnerSettled;
@@ -591,13 +594,15 @@ const compareWithItself = (value: Value, isEquality: boolean): boolean => {
       compareWithItself(value.range, isEquality);
       return false;
     case "RecordSet":
-    case "ProductSet":
+    case "ProductSet": {
       if (!isEquality) break;
       if (isEmptySet(value)) return false;
-      for (const part of value.kind === "RecordSet" ? value.sets : value.factors) {
-        compareWithItself(part, isEquality);
+      const parts = value.kind === "RecordSet" ? value.sets : value.factors;
+      for (let index = 0; index < parts.length; index++) {
+        compareWithItself(parts[index], isEquality);
       }
       return false;
+    }
   }
   compareWithItself(toFiniteSet(value), isEquality);
   return false;
