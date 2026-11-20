@@ -1627,6 +1627,45 @@ describe("compiles scripts by specializing ESCore", () => {
       });
     });
 
+    describe("keeps the time Date.now gives where a program only stores, passes, and returns it", () => {
+      const getSource = (expected: string) => `
+        const time = Date.now();
+        const box = { time };
+        const pass = (value: number) => value;
+        const day = new Date(pass(time));
+        const result = [typeof time, typeof box.time, [time].length, day instanceof Date, typeof new Date(Date.now())].join();
+        if (result !== "${expected}") throw new Error(result);
+      `;
+
+      it("agrees with Node", async () => {
+        expect(
+          (await checkScript(getSource("number,number,1,true,object"))).message,
+        ).toBeUndefined();
+      });
+
+      it("rejects another result", async () => {
+        expect((await checkScript(getSource("number,number,1,false,object"))).message).toContain(
+          THREW,
+        );
+      });
+    });
+
+    it.each([
+      ["a comparison", "Date.now() > 0"],
+      ["arithmetic", "Date.now() + 1 === 0"],
+      ["an increment", "(() => { let time = Date.now(); time++; return time === 0; })()"],
+      ["a string", '`${Date.now()}` === ""'],
+      ["a branch", "Date.now() ? false : true"],
+      ["an equality", "Date.now() === Date.now()"],
+      ["JSON", 'JSON.stringify([Date.now()]) === "[0]"'],
+      ["a property key", '({ [Date.now()]: 1 }).hasOwnProperty("0")'],
+      ["Number.isInteger", "!Number.isInteger(Date.now())"],
+      ["a Date's time value", "new Date(Date.now()).getTime() === 0"],
+    ])("stops where %s reads the time Date.now gives", async (_, condition) => {
+      const result = await checkScript(`if (${condition}) throw new Error("read");`);
+      expect(result.message).toContain(CLOCK);
+    });
+
     it.runIf(Reflect.has(globalThis, "Temporal"))(
       "stops at Temporal.Now.instant, which reads the time of the run",
       async () => {

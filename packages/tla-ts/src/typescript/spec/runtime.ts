@@ -31,7 +31,7 @@ const DEFINITIONS = [
   IF IsAbrupt(ref) THEN ref ELSE
   LET old == GetValue(ref.s, Val(ref)) IN
   IF IsAbrupt(old) THEN old ELSE
-  LET num == IF IsNumber(Val(old)) THEN old ELSE ToNumeric(old.s, Val(old)) IN
+  LET num == IF IsNumber(Val(old)) /\\ Val(old) # HostTime THEN old ELSE ToNumeric(old.s, Val(old)) IN
   IF IsAbrupt(num) THEN num ELSE
   LET v == Val(num)
       new == IF IsNumber(v)
@@ -956,9 +956,33 @@ const isUtcHost = new Intl.DateTimeFormat().resolvedOptions().timeZone === "UTC"
 const HOST_ZONE_NAME = / \(.*\)$/.exec(new Date(0).toString())?.[0] ?? "";
 const LOCAL_TIME_STOP = `Assert(FALSE, "tla-ts can't tell the host's local time, whose time zone isn't UTC")`;
 const CLOCK_STOP = `Assert(FALSE, "tla-ts can't read the host's clock, whose time each run reads anew")`;
-// The time value of a Date that new Date() makes, which a compiled spec stops at only where the
-// program reads it.
-const CLOCK_TIME = `[type |-> "clock"]`;
+// What Date.now gives, and the time value of a Date that new Date() makes: a Number without a
+// value, HostTime, which a program may store, pass, and return, as its outcome is then the same at
+// every time, and at whose first reading a compiled spec stops. These operations read a Number's
+// value, each from the values that it takes: the conversions, comparisons, and arithmetic, and
+// the built-ins that read a Number argument without converting it.
+const HOST_TIME_READERS = [
+  ["ToBooleanValue", "<<v>>"],
+  ["PrimitiveToNumber", "<<v>>"],
+  ["PrimitiveToUnits", "<<v>>"],
+  ["SameValue", "<<x, y>>"],
+  ["SameValueZero", "<<x, y>>"],
+  ["IsStrictlyEqual", "<<x, y>>"],
+  ["IsLooselyEqual", "<<x, y>>"],
+  ["IsLessThanPrimitive", "<<px, py>>"],
+  ["ApplyStringOrNumericBinaryOperator", "<<lval, rval>>"],
+  ["NumericBinary", "<<lval, rval>>"],
+  ["RelationalRightThen", "<<lv, Val(r)>>"],
+  ["ThisNumberValue", "<<v>>"],
+  ["CanonicalizeKeyedCollectionKey", "<<key>>"],
+  ["JSONStringify", "<<space>>"],
+  ["IncludesMethod", "<<search, skipped>>"],
+  ["NumberBuiltin", "args"],
+  ["ArrayConstructor", "args"],
+  ["TypedArrayCreateFromConstructor", "argList"],
+  ["CreateHelper", "args"],
+  ["BigIntBuiltin", "args"],
+];
 
 const HOST_PATCHES = [
   { name: "ParseDate", from: "ParseDate(u) ==", to: "ParseSpecDate(u) ==" },
@@ -983,8 +1007,8 @@ const HOST_PATCHES = [
     to: `CASE m = "timeZoneId" -> ${isUtcHost ? "Ok(s, Str(UTCTimeZone.id))" : LOCAL_TIME_STOP}`,
   },
   // What the host picks at random or reads from its clock differs from run to run, so a compiled
-  // spec stops where a program reads it: Math.random, and the current time that Date and
-  // Temporal.Now read, which a Date that new Date() makes holds until a program reads it.
+  // spec stops where a program reads it: Math.random, the time that Date.now gives and a Date that
+  // new Date() makes holds, Date called as a function, and Temporal.Now's clock.
   {
     name: "MathBuiltin",
     from: `[] m = "random" -> MathRandom(s)`,
@@ -999,19 +1023,26 @@ const HOST_PATCHES = [
     to: `IF nt = Undefined THEN ${CLOCK_STOP}
   ELSE
     LET tv ==
-          CASE Len(args) = 0 -> Ok(s, ${CLOCK_TIME})`,
+          CASE Len(args) = 0 \\/ (Len(args) = 1 /\\ args[1] = HostTime) -> Ok(s, HostTime)`,
   },
   {
     name: "ThisTimeValue",
     from: `THEN Ok(s, O(s, v).slots.data)`,
-    to: `THEN IF O(s, v).slots.data = ${CLOCK_TIME} THEN ${CLOCK_STOP} ELSE Ok(s, O(s, v).slots.data)`,
+    to: `THEN IF O(s, v).slots.data = HostTime THEN ${CLOCK_STOP} ELSE Ok(s, O(s, v).slots.data)`,
   },
   {
     name: "DateBuiltin",
     from: `[] m = "now" -> Ok(Tick(s), Num(SystemTime(s)))`,
-    to: `[] m = "now" -> ${CLOCK_STOP}`,
+    to: `[] m = "now" -> Ok(s, HostTime)`,
   },
   { name: "SystemUTCEpochNanoseconds", from: "TIMul(TI(s.clock), TI(1000000))", to: CLOCK_STOP },
+  // JSON.stringify writes a Number that it serializes by its value.
+  {
+    name: "SerializeJSONProperty",
+    from: "[] IsNumber(v) -> Ok(t,",
+    to: `[] v = HostTime -> ${CLOCK_STOP}
+       [] IsNumber(v) -> Ok(t,`,
+  },
   // A WeakRef keeps its target through the job that made or last dereferenced it, the main job for
   // a compiled spec, after which the host may collect a target that nothing else reaches, and run
   // a registry's callback for a target it collects, at a time no run fixes.
@@ -1399,26 +1430,48 @@ const HOST_PATCHES = [
   },
 ];
 
-export const getHostDefinitions = (library: Library): GeneratedDefinition[] => [
-  ...HOST_PATCHES.map((patch) => {
-    const definition = library.definitions.get(patch.name);
-    if (definition === undefined || !definition.text.includes(patch.from)) {
-      throw new TlaError(`ESCore's ${patch.name} no longer reads as the compiled spec patches it`);
-    }
-    return {
-      name: patch.name === "ParseDate" ? "ParseSpecDate" : patch.name,
-      arity: definition.arity,
-      text: definition.text.replace(patch.from, patch.to),
-    };
-  }),
-  {
-    name: "ParseDate",
-    arity: 1,
-    text: `ParseDate(u) ==
+export const getHostDefinitions = (library: Library): GeneratedDefinition[] =>
+  [
+    `HostTime == [type |-> "number", host |-> "clock"]`,
+    `HostTimeIn(values) == \\E i \\in DOMAIN values : values[i] = HostTime`,
+    ...HOST_TIME_READERS.map((reader) => {
+      const definition = library.definitions.get(reader[0]);
+      if (definition === undefined || !definition.text.startsWith(`${reader[0]}(`)) {
+        throw new TlaError(`ESCore's ${reader[0]} no longer reads as the compiled spec patches it`);
+      }
+      return `${definition.text.replace(" ==", ` ==\n  IF HostTimeIn(${reader[1]}) THEN ${CLOCK_STOP} ELSE`)}`;
+    }),
+  ]
+    .map((text) => {
+      const header = /^([A-Z][A-Za-z0-9_]*)(?:\((.*?)\))?\s*==/.exec(text);
+      return {
+        name: header?.[1] ?? "",
+        arity: header?.[2] === undefined ? 0 : header[2].split(",").length,
+        text,
+      };
+    })
+    .concat([
+      ...HOST_PATCHES.map((patch) => {
+        const definition = library.definitions.get(patch.name);
+        if (definition === undefined || !definition.text.includes(patch.from)) {
+          throw new TlaError(
+            `ESCore's ${patch.name} no longer reads as the compiled spec patches it`,
+          );
+        }
+        return {
+          name: patch.name === "ParseDate" ? "ParseSpecDate" : patch.name,
+          arity: definition.arity,
+          text: definition.text.replace(patch.from, patch.to),
+        };
+      }),
+      {
+        name: "ParseDate",
+        arity: 1,
+        text: `ParseDate(u) ==
   LET t == ParseSpecDate(u) IN
   IF t = NaN THEN Assert(FALSE, "tla-ts can't tell whether the host reads this date string") ELSE t`,
-  },
-];
+      },
+    ]);
 
 // The host whose behavior a compiled spec models is the one that compiles it, running a script in
 // a new context of its virtual machine, as the reference a program runs on: the global object of
