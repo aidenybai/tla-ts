@@ -209,6 +209,27 @@ describe("level checking matches SANY", () => {
     );
   });
 
+  it("constrains a module by the theorems of a LET instance in an ASSUME/PROVE, as SANY does", async () => {
+    await expect(
+      check({
+        source:
+          "---- MODULE M ----\nVARIABLE x\n---- MODULE In ----\nCONSTANT c\nVARIABLE v\nTHEOREM T == v \\in {c}\n====\n---- MODULE L ----\nCONSTANT k\nVARIABLE w\nTHEOREM ASSUME LET K == INSTANCE In WITH c <- w, v <- k IN TRUE PROVE TRUE\n====\nI == INSTANCE L WITH k <- x, w <- x\nInit == x = 0\nNext == x' = x\n====",
+        config: "INIT Init\nNEXT Next",
+      }),
+    ).rejects.toThrow(
+      createSanyError(
+        [
+          ["line 11, col 20 to line 11, col 55", "In", "c"],
+          ["line 13, col 1 to line 13, col 35", "L", "k"],
+          ["line 13, col 1 to line 13, col 35", "L", "w"],
+        ].map((error) => ({
+          location: `${error[0]} of module M`,
+          message: `Level error in instantiating module '${error[1]}':\nThe level of the expression or operator substituted for '${error[2]}' \nmust be at most 0.`,
+        })),
+      ),
+    );
+  });
+
   it("levels a LET instance's definitions through an operator parameter it substitutes like SANY", async () => {
     await expect(
       check({

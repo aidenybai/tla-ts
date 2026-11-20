@@ -364,10 +364,13 @@ const toOperatorLevels = (
   return levels;
 };
 
-const addInstanceDefinitions = (instances: InstanceLevels, instance: Instance, scope: Scope) =>
-  instances
-    .getInstanceDefinitions(instance)
-    .forEach((definition) => scope.set(definition.name, { kind: "Let", definition, scope }));
+const addInstanceDefinitions = (instances: InstanceLevels, instance: Instance, scope: Scope) => {
+  const definitions = instances.getInstanceDefinitions(instance);
+  definitions.forEach((definition) =>
+    scope.set(definition.name, { kind: "Let", definition, scope }),
+  );
+  return definitions;
+};
 
 const createLetScope = (expression: LetExpression, scope: Scope) => {
   const inner: Scope = new Map(scope);
@@ -942,17 +945,19 @@ export const createLevelAnalyzer = (context: LevelContext) => {
       }),
     );
     const inner = createLetScope(expression, scope);
-    expression.instances?.forEach((instance) => {
-      if (!context.instances.getLetInstance(instance)) {
-        addInstanceDefinitions(context.instances, instance, inner);
-      }
-    });
+    // tla-ts expands only the LET instances outside proofs and ASSUME/PROVEs into definitions.
+    const instanceDefinitions =
+      expression.instances?.flatMap((instance) =>
+        context.instances.getLetInstance(instance)
+          ? []
+          : addInstanceDefinitions(context.instances, instance, inner),
+      ) ?? [];
     if (expression.recursive) {
       getRecursiveSections(scope, expression).forEach((section) =>
         checkRecursiveSection(section.members),
       );
     }
-    const definitions = expression.definitions.map((definition) =>
+    const definitions = [...expression.definitions, ...instanceDefinitions].map((definition) =>
       analyzeDefinition(definition, inner),
     );
     const body = analyze(expression.body, inner);

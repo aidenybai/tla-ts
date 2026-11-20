@@ -418,7 +418,7 @@ export const createEnvironment = (
         };
         return [...linked.exported].flatMap((entry) => {
           const copy =
-            entry[1].kind === "Definition"
+            entry[1].kind === "Definition" || entry[1].kind === "Theorem"
               ? createInstanceCopy(entry[1].key, instance.module, substitutes)
               : undefined;
           if (!copy) return [];
