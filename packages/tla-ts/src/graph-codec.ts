@@ -185,6 +185,16 @@ export const decodeGraph = (encoded: EncodedGraph): unknown => {
   const templates = shapes.map((keys): object =>
     JSON.parse(`{${keys.map((key) => `${JSON.stringify(key)}:0`).join(",")}}`),
   );
+  // A function of each shape that makes an object that no other object shares, reading its values
+  // in its keys' order, which a literal makes with its keys in place, faster than a copy of the
+  // template that each key then fills.
+  const makers = shapes.map(
+    (keys) =>
+      new Function(
+        "read",
+        `return {${keys.map((key) => `[${JSON.stringify(key)}]: read()`).join(", ")}};`,
+      ) as (read: () => unknown) => object,
+  );
   const shared: unknown[] = [];
   let position = 0;
   const next = () => {
@@ -259,9 +269,10 @@ export const decodeGraph = (encoded: EncodedGraph): unknown => {
       }
       case OBJECT: {
         const shape = next();
+        if (!isShared) return makers[shape](read);
         const keys = shapes[shape];
         const object: Record<string, unknown> = { ...templates[shape] };
-        if (isShared) shared.push(object);
+        shared.push(object);
         for (const key of keys) object[key] = read();
         return object;
       }
