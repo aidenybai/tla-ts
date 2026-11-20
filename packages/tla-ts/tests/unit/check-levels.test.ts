@@ -2560,15 +2560,26 @@ describe("level checking matches SANY", () => {
       "<1> K == INSTANCE P WITH e <- [](x = 1)\n<1>1. ENABLED (K!J!QT!1)",
       [
         ["line 5, col 7 to line 5, col 24", "ENABLED"],
-        ["line 4, col 5 to line 4, col 39", "P"],
+        ["line 4, col 5 to line 4, col 39", "P", "e"],
       ],
     ],
     [
       "<1> INSTANCE P WITH e <- [](x = 1)\n<1>1. ENABLED (J!QT!1)",
       [
-        ["line 4, col 5 to line 4, col 34", "P"],
+        ["line 4, col 5 to line 4, col 34", "P", "e"],
         ["line 5, col 7 to line 5, col 22", "ENABLED"],
       ],
+    ],
+    [
+      "<1> K == INSTANCE Q WITH f <- [](x = 1)\n<1>1. ENABLED (K!QT!lab)",
+      [
+        ["line 5, col 7 to line 5, col 24", "ENABLED"],
+        ["line 4, col 5 to line 4, col 39", "Q", "f"],
+      ],
+    ],
+    [
+      "<1> K(pp) == INSTANCE Q WITH f <- pp\n<1>1. ENABLED (K([](x = 1))!QT!1)",
+      [["line 5, col 16 to line 5, col 32", "LAMBDA"]],
     ],
   ])(
     "levels a clause selected through a proof step's instance in %j, as SANY does",
@@ -2589,8 +2600,8 @@ describe("level checking matches SANY", () => {
           expected.map((error) => ({
             location: `${error[0]} of module M`,
             message:
-              error[1] === "P"
-                ? "Level error in instantiating module 'P':\nThe level of the expression or operator substituted for 'e' \nmust be at most 2."
+              error.length === 3
+                ? `Level error in instantiating module '${error[1]}':\nThe level of the expression or operator substituted for '${error[2]}' \nmust be at most 2.`
                 : `Level error in applying operator ${error[1]}:\nThe level of argument 1 exceeds the maximum level allowed by the operator.`,
           })),
         ),
