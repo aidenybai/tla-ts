@@ -2354,9 +2354,8 @@ const parse = (
       const start = cursor;
       const name = advance();
       advance();
-      const assumeProve = parseAssumeProve();
       return {
-        ...assumeProve,
+        ...parseAssumeProve(),
         label: withRange({ name: name.text, location: getLocation(name) }, start),
       };
     }
