@@ -439,22 +439,25 @@ export const expandTemporal = (
     if (theorem) return getLeaf(theorem);
   }
   const context = getConstantContext(environment, scope);
-  if (
-    expression.kind === "Apply" &&
-    environment.runtime.version !== "1.7.4" &&
-    (isProperty || getLevel(expression, scope, environment) === TEMPORAL_LEVEL)
-  ) {
+  // SpecProcessor#processConfigSpec and #processConfigProps take apart an application of a parameterized definition whatever its level.
+  if (expression.kind === "Apply" && environment.runtime.version !== "1.7.4") {
     const operator = resolveApplyOperator(expression, context);
     const definition = isLocallyResolved(expression)
       ? undefined
       : getDefinition(expression.operator, environment);
+    // SANY sets getInRecursive only on the definition a RECURSIVE declaration names, and an INSTANCE's copy is a new one, which a LET reaches through its instance's `!`.
+    const isRecursive = definition
+      ? definition.isRecursive && !environment.substitutedDefinitions.has(definition)
+      : isLocallyResolved(expression) &&
+        getLetDefinition(expression.operator, scope)?.isRecursive === true &&
+        !expression.operator.includes("!");
     const isOwnArgumentFree =
       operator?.kind === "Closure" &&
       operator.params.every((param) => environment.instanceParams.has(param));
     const isExpandable =
       operator?.kind === "Closure" &&
       operator.params.length === expression.args.length &&
-      !definition?.isRecursive &&
+      !isRecursive &&
       (!expansion.isSubstituted || isOwnArgumentFree);
     if (isExpandable) {
       return expand(

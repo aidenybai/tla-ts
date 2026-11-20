@@ -5075,6 +5075,21 @@ describe("initial predicate and next-state relation match TLC", () => {
       "The operator I!Foo, which equals line 12, col 1 to line 12, col 30 of module M,\ncannot be used as a spec",
     ],
     [
+      `${theoremBase}I(p) == INSTANCE Base WITH v <- p\nSpec == Init /\\ [][Next]_x /\\ I(x)!Q`,
+      "SPECIFICATION Spec",
+      "The operator Baz, which equals line 8, col 1 to line 8, col 27 of module M,\ncannot be used as a spec",
+    ],
+    [
+      `${theoremBase}I(p) == INSTANCE Base WITH v <- p\nF(q) == I(q)!Q\nSpec == Init /\\ [][Next]_x /\\ F(x)`,
+      "SPECIFICATION Spec",
+      "The operator Baz, which equals line 8, col 1 to line 8, col 27 of module M,\ncannot be used as a spec",
+    ],
+    [
+      "THEOREM T == x \\in {0, 1}\nF(p) == T /\\ p = 0\nSpec == Init /\\ [][Next]_x /\\ F(x)",
+      "SPECIFICATION Spec",
+      "The operator T, which equals line 6, col 1 to line 6, col 25 of module M,\ncannot be used as a spec",
+    ],
+    [
       `${letBase}P == LET K == INSTANCE Base WITH v <- x IN K!Baz`,
       "INIT Init\nNEXT Next\nPROPERTY P",
       "The operator K!Baz, which equals line 13, col 10 to line 13, col 39 of module M,\ncannot be used as a property",
@@ -5179,6 +5194,85 @@ describe("initial predicate and next-state relation match TLC", () => {
       "success",
     );
   });
+
+  const loopBase =
+    "---- MODULE R ----\nVARIABLE z\nRECURSIVE Ev(_)\nEv(n) == IF n = 0 THEN z = 1 ELSE Ev(n - 1)\n====\n";
+  const falseBase =
+    "---- MODULE R ----\nVARIABLE z\nRECURSIVE Ev(_)\nEv(n) == z = n /\\ FALSE\n====\n";
+
+  it.each([
+    ["F(p) == p = 0 /\\ FALSE\nSpec == Init /\\ [][Next]_x /\\ F(x)", "FALSE"],
+    ["F(p) == FALSE\nSpec == Init /\\ [][Next]_x /\\ F(x)", "FALSE"],
+    [`${falseBase}INSTANCE R WITH z <- x\nSpec == Init /\\ [][Next]_x /\\ Ev(0)`, "FALSE"],
+    [
+      `${falseBase}I == INSTANCE R WITH z <- x\nSpec == LET J == INSTANCE R WITH z <- x IN Init /\\ [][Next]_x /\\ J!Ev(0)`,
+      "FALSE",
+    ],
+    [`${falseBase}I == INSTANCE R WITH z <- x\nSpec == Init /\\ [][Next]_x /\\ I!Ev(0)`, "FALSE"],
+    ["Spec == LET F(p) == p = 0 /\\ FALSE IN Init /\\ [][Next]_x /\\ F(x)", "FALSE"],
+    ["F(p) == p = 0\nG(q) == F(q) /\\ FALSE\nSpec == Init /\\ [][Next]_x /\\ G(x)", "FALSE"],
+    ["H(Op(_)) == Op(x)\nSpec == Init /\\ [][Next]_x /\\ H(LAMBDA p : p = 0 /\\ FALSE)", "FALSE"],
+    ["G(p) == p = 0 /\\ FALSE\nH(Op(_)) == Op(x)\nSpec == Init /\\ [][Next]_x /\\ H(G)", "FALSE"],
+    ["C == FALSE\nF(p) == p = 0 /\\ C\nSpec == Init /\\ [][Next]_x /\\ F(x)", "C"],
+  ])(
+    "takes apart the state-level application in %j of the spec, as TLC does",
+    async (definitions, name) => {
+      await expect(
+        check({ source: getTwoStateSource(definitions), config: "SPECIFICATION Spec" }),
+      ).rejects.toThrow(
+        new TlaConfigError(`The spec is trivially false because ${name} is false.`),
+      );
+    },
+  );
+
+  it.each([
+    "RECURSIVE R(_)\nR(p) == p = 0 /\\ FALSE\nSpec == Init /\\ [][Next]_x /\\ R(x)",
+    "Spec == LET RECURSIVE R(_)\n            R(p) == p = 0 /\\ FALSE\n        IN Init /\\ [][Next]_x /\\ R(x)",
+    "F(p) == p = 0 /\\ FALSE\nS == F(x)\nSpec == Init /\\ [][Next]_x /\\ S",
+  ])(
+    "takes the conjunct in %j of the spec whole as an initial predicate, as TLC does",
+    async (definitions) => {
+      const result = await check({
+        source: getTwoStateSource(definitions),
+        config: "SPECIFICATION Spec",
+      });
+      expect([result.status, result.distinctStates]).toEqual(["success", 0]);
+    },
+  );
+
+  it.each([
+    ["P == LET RECURSIVE R(_)\n         R(n) == x \\in {0, 1} /\\ FALSE\n     IN R(1)", "P"],
+    [
+      "P == LET RECURSIVE R(_)\n         R(n) == x = 1\n     IN R(1) /\\ [](x \\in {0, 1})",
+      "line 8, col 9 to line 8, col 12 of module M",
+    ],
+  ])(
+    "names the property in %j without taking its RECURSIVE operator apart, as TLC does",
+    async (definitions, name) => {
+      const result = await check({
+        source: getTwoStateSource(definitions),
+        config: "INIT Init\nNEXT Next\nPROPERTY P",
+      });
+      expect(result.violation?.name).toBe(name);
+    },
+  );
+
+  it.each([
+    [`${loopBase}INSTANCE R WITH z <- x\nP == Ev(1) /\\ [](x \\in {0, 1})`, "Ev"],
+    [
+      `${loopBase}I == INSTANCE R WITH z <- x\nP == LET J == INSTANCE R WITH z <- x IN J!Ev(1) /\\ [](x \\in {0, 1})`,
+      "J!Ev",
+    ],
+  ])(
+    "names the property in %j by the INSTANCE's copy of a RECURSIVE operator it takes apart, as TLC does",
+    async (definitions, name) => {
+      const result = await check({
+        source: getTwoStateSource(definitions),
+        config: "INIT Init\nNEXT Next\nPROPERTY P",
+      });
+      expect(result.violation?.name).toBe(name);
+    },
+  );
 
   const literalBase =
     "---- MODULE B7 ----\nCONSTANT c\nTHEOREM Cz == c = 1\n====\nJ7 == INSTANCE B7 WITH c <- 1\n";
