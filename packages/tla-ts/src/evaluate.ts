@@ -246,6 +246,8 @@ export interface Context {
   isKeepLazy?: boolean;
   // Whether a step or a replay of one binds the thunks of this context, which it may run by name.
   isNaming?: boolean;
+  // Whether the context evaluates a primed expression, which TLC evaluates with no next state.
+  isPrimed?: boolean;
 }
 
 export type Evaluator = (context: Context) => Value;
@@ -435,6 +437,7 @@ export const toKeepLazyContext = (context: Context): Context =>
         state: context.state,
         next: context.next,
         isKeepLazy: true,
+        isPrimed: context.isPrimed,
       };
 
 const withScope = (context: Context, scope: Scope | undefined): Context => ({
@@ -443,6 +446,7 @@ const withScope = (context: Context, scope: Scope | undefined): Context => ({
   state: context.state,
   next: context.next,
   isKeepLazy: context.isKeepLazy,
+  isPrimed: context.isPrimed,
 });
 
 export const expectBoolean = (value: Value, description: string) => {
@@ -884,7 +888,11 @@ const isUnassigned = (state: State | undefined) =>
 
 const forceThunk = (thunk: Thunk, context: Context) => {
   const cache = thunk.cache;
+  // Under a prime TLC evaluates with no next state, where a LazyValue neither reads nor keeps its
+  // cache (Tool.eval). A released thunk keeps the value that holds in every state.
+  const isUncached = context.isPrimed === true && !thunk.isReleased;
   const isCached =
+    !isUncached &&
     cache !== undefined &&
     isStateWithin(context.state, thunk.state) &&
     isStateWithin(context.next, thunk.next);
@@ -903,6 +911,7 @@ const forceThunk = (thunk: Thunk, context: Context) => {
             withScope(context, thunk.scope),
           )
         : evaluate(thunk.expression, withScope(context, thunk.scope));
+  if (isUncached) return value;
   if (!thunk.isStreamed || isSettledValue(value)) {
     thunk.cache = value;
     thunk.state = context.state;
@@ -1510,6 +1519,7 @@ export const toNextContext = (context: Context): Context => ({
   state: context.next,
   next: undefined,
   isKeepLazy: context.isKeepLazy,
+  isPrimed: true,
 });
 
 const compileUnchanged =
@@ -1804,6 +1814,7 @@ const compileClosureCall = (
       state: context.state,
       next: context.next,
       isKeepLazy: context.isKeepLazy,
+      isPrimed: context.isPrimed,
     });
   };
 };

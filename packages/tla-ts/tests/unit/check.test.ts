@@ -1731,6 +1731,53 @@ describe("initial predicate and next-state relation match TLC", () => {
     );
     expect([checked.result.status, checked.printed]).toEqual(["invariant-violation", ['"w"']]);
   });
+
+  const printsU = 'IF PrintT("u") THEN x ELSE x';
+  const printsV = 'PrintT(<<"v", x>>)';
+
+  it.each([
+    ["(x' = x) /\\ UNCHANGED c", printsU, ['"u"', '"u"']],
+    ["(x' = IF c = x THEN x ELSE x) /\\ UNCHANGED c", printsU, ['"u"', '"u"']],
+    ["(x' = x) /\\ UNCHANGED c /\\ UNCHANGED c", printsU, ['"u"', '"u"', '"u"']],
+    ["(x' = x) /\\ UNCHANGED <<c, c>>", printsU, ['"u"', '"u"', '"u"']],
+    [
+      "(x' = IF c THEN (x + 1) % 2 ELSE x) /\\ c' /\\ c'",
+      printsV,
+      ['<<"v", 0>>', '<<"v", 1>>', '<<"v", 1>>', '<<"v", 1>>', '<<"v", 0>>', '<<"v", 0>>'],
+    ],
+    [
+      "(x' = (x + 1) % 2) /\\ UNCHANGED c",
+      printsV,
+      ['<<"v", 0>>', '<<"v", 1>>', '<<"v", 1>>', '<<"v", 0>>'],
+    ],
+  ])(
+    "prints from an argument that %s evaluates in the next state as often and in the order TLC does",
+    async (body, argument, expected) => {
+      const checked = await checkPrints("x", "x = 0", `LET F(c) == ${body} IN F(${argument})`);
+      expect([checked.result.status, checked.printed]).toEqual(["success", expected]);
+    },
+  );
+
+  it("prints from an argument that UNCHANGED evaluates again as TLC does when it replays a violation", async () => {
+    const checked = await checkPrints(
+      "x",
+      "x = 0",
+      `LET F(c) == (x' = (x + 1) % 3) /\\ UNCHANGED c IN F(${printsV})`,
+      "x < 2",
+    );
+    const violation = checked.result.violation;
+    expect([
+      checked.result.status,
+      checked.printed,
+      violation?.trace.map((step) => step.output),
+      violation?.traceOutput,
+    ]).toEqual([
+      "invariant-violation",
+      ['<<"v", 0>>', '<<"v", 1>>', '<<"v", 1>>', '<<"v", 2>>'],
+      [[], ['<<"v", 0>>', '<<"v", 1>>'], ['<<"v", 1>>', '<<"v", 2>>']],
+      ['<<"v", 0>>', '<<"v", 1>>', '<<"v", 1>>', '<<"v", 2>>'],
+    ]);
+  });
 });
 
 describe("check without code generation from strings", () => {
