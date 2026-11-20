@@ -390,11 +390,16 @@ export const formatInnerMessage = (code: number, text: string, isTool: boolean) 
   return `${text.slice(0, end)}${formatNestedMessage(text.slice(end), isTool)}`;
 };
 
+const JAVA_EXCEPTION_PREFIX =
+  /^(?:tlc2\.tool\.EvalException|util\.Assert\$TLC(?:Detailed)?RuntimeException): /;
+
 export const formatNestedMessage = (text: string, isTool: boolean): string => {
-  const code = isTool ? getCodedMessage(text)?.code : undefined;
+  const prefix = JAVA_EXCEPTION_PREFIX.exec(text)?.[0] ?? "";
+  const inner = text.slice(prefix.length);
+  const code = isTool ? getCodedMessage(inner)?.code : undefined;
   return code === undefined
     ? text
-    : `@!@!@STARTMSG ${code}:${MESSAGE_LEVEL.none} @!@!@\n${formatInnerMessage(code, text, isTool)}\n@!@!@ENDMSG ${code} @!@!@`;
+    : `${prefix}@!@!@STARTMSG ${code}:${MESSAGE_LEVEL.none} @!@!@\n${formatInnerMessage(code, inner, isTool)}\n@!@!@ENDMSG ${code} @!@!@`;
 };
 
 export const zeroPad = (value: number, length = 2) => String(value).padStart(length, "0");

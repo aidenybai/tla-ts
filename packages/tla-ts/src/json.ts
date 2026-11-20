@@ -8,10 +8,11 @@ import {
   isOutOfRange,
   overrideWithJava,
 } from "./builtins";
-import { TlaEvaluationError, TlaUnsupportedError } from "./errors";
+import { TlaEvaluationError, TlaSetBoundError, TlaUnsupportedError } from "./errors";
 import type { Builtin, BuiltinArgument, Context } from "./evaluate";
 import { trimJava } from "./java-string";
 import { readJson, type JsonElement } from "./json-reader";
+import { isEvalException } from "./tlc/messages";
 import {
   applyFunction,
   createRecord,
@@ -174,8 +175,26 @@ const checkCharset = (charset: string) => {
   );
 };
 
-// Files.newBufferedWriter writes the text over the start of a file that it neither truncates nor appends to.
-const writeWithOptions = (files: FileSystem, path: string, names: string[], text: string) => {
+const LOCATION_SUFFIX = /\nline \d+, col \d+ to line \d+, col \d+ of module \S+$/;
+
+const getJavaExceptionClass = (error: TlaEvaluationError) => {
+  if (error instanceof TlaSetBoundError) return "util.WrongInvocationException";
+  if (isEvalException(error)) return "tlc2.tool.EvalException";
+  if (error.message.startsWith("Cannot convert value:")) return "java.io.IOException";
+  return LOCATION_SUFFIX.test(error.message)
+    ? "util.Assert$TLCDetailedRuntimeException"
+    : "util.Assert$TLCRuntimeException";
+};
+
+// textSerialize opens the file before it converts the payload, and closing the writer keeps the lines it converted
+// before a failure, which it rethrows as a RuntimeException. Files.newBufferedWriter writes the text over the start
+// of a file that it neither truncates nor appends to.
+const serializeWithOptions = (
+  files: FileSystem,
+  path: string,
+  names: string[],
+  elements: Value[],
+) => {
   const unknown = names.find((name) => !OPEN_OPTIONS.has(name));
   if (unknown !== undefined) {
     throw new TlaEvaluationError(
@@ -201,14 +220,24 @@ const writeWithOptions = (files: FileSystem, path: string, names: string[], text
   if (existing !== undefined && options.has("CREATE_NEW")) {
     throw new TlaEvaluationError(`java.nio.file.FileAlreadyExistsException: ${path}`);
   }
-  if (existing === undefined || options.has("TRUNCATE_EXISTING")) {
-    files.writeFile?.(path, text);
-    return;
+  const write = (text: string) =>
+    files.writeFile?.(
+      path,
+      existing === undefined || options.has("TRUNCATE_EXISTING")
+        ? text
+        : options.has("APPEND")
+          ? existing + text
+          : text + existing.slice(text.length),
+    );
+  const lines: string[] = [];
+  try {
+    elements.forEach((element) => lines.push(`${toJson(element)}\n`));
+  } catch (error) {
+    if (!(error instanceof TlaEvaluationError)) throw error;
+    write(lines.join(""));
+    throw new TlaEvaluationError(`${getJavaExceptionClass(error)}: ${error.message}`);
   }
-  files.writeFile?.(
-    path,
-    options.has("APPEND") ? existing + text : text + existing.slice(text.length),
-  );
+  write(lines.join(""));
 };
 
 const makeParentDirectory = (files: FileSystem, path: string) => {
@@ -317,7 +346,7 @@ export const createIoUtilsOperators = (
           return option;
         });
         checkCharset(charset);
-        writeWithOptions(files, path, names, toNdJson(elements));
+        serializeWithOptions(files, path, names, elements);
         return true;
       }),
       isStateLevel: false,
