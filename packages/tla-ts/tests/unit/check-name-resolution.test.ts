@@ -414,6 +414,21 @@ describe("name resolution matches SANY", () => {
         ["line 3, col 1 to line 3, col 11", "Empty USE or HIDE statement."],
       ],
     ],
+    ...[
+      [`THEOREM T == ASSUME ${labeled} PROVE TRUE\nHIDE T!a`, "line 3, col 6 to line 3, col 8"],
+      [
+        `THEOREM T == TRUE\n<1>1. ASSUME ${labeled} PROVE TRUE\n  OBVIOUS\n<1> HIDE <1>1!a\n<1> QED`,
+        "line 5, col 10 to line 5, col 15",
+      ],
+    ].map((entry): [string, [string, string][]] => [
+      entry[0],
+      [
+        [
+          entry[1],
+          "The only expression allowed as a fact in a HIDE is \nthe name of a theorem, assumption, or step.",
+        ],
+      ],
+    ]),
   ])("checks the labeled nested ASSUME/PROVE in %j like SANY", async (source, errors) => {
     await expect(
       check({ source: `---- MODULE M ----\n${source}\n====`, config: "" }),

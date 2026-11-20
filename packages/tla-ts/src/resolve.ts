@@ -2000,9 +2000,9 @@ const checkFact = (fact: Fact, reference: Fact, scope: LocalName | undefined, un
   if (isInstanceArityReported(fact, scope, unit)) return hidden;
   const selected = checkReference(fact, scope, unit, "Fact");
   if (selected) {
-    const kind = selected.node?.kind;
-    if (kind === undefined) return BUILTIN_LOCATION;
-    return kind === "AssumeProve" || kind === "NewSymbol"
+    const node = selected.node;
+    if (node === undefined) return BUILTIN_LOCATION;
+    return (node.kind === "AssumeProve" && node.label === undefined) || node.kind === "NewSymbol"
       ? undefined
       : fact.location.range && formatRange(fact.location.range);
   }
