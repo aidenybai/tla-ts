@@ -2439,6 +2439,29 @@ describe("evaluation errors match TLC", () => {
     ]);
   });
 
+  // Deviation from TLC: TLC prints "Too many possible next states for the last state in the trace." after x = 1.
+  it("rebuilds a step from a state with more successors than -maxSetSize, where TLC's Tool#getState fails", async () => {
+    const result = await check({
+      source:
+        "---- MODULE M ----\nEXTENDS Integers\nVARIABLES x, y\nInit == x = 0 /\\ y = 0\nNext == x < 3 /\\ x' = x + 1 /\\ y' \\in [{1, 2} -> SUBSET (1..(x + 1))]\nInv == x < 3\n====",
+      config: "INIT Init\nNEXT Next\nINVARIANT Inv\nCHECK_DEADLOCK FALSE",
+      maxSetSize: 10,
+    });
+    expect([
+      result.status,
+      result.violation?.trace.map(
+        (step) => `${formatValue(step.state.x)} ${formatValue(step.state.y)}`,
+      ),
+      result.violation?.traceFailure,
+      [result.generatedStates, result.distinctStates, result.queuedStates],
+    ]).toEqual([
+      "invariant-violation",
+      ["0 0", "1 <<{}, {}>>", "2 <<{}, {}>>", "3 <<{}, {}>>"],
+      undefined,
+      [70, 22, 15],
+    ]);
+  });
+
   it("records where the liveness check of a state fails after a successor of it is left incomplete, like TLC", async () => {
     const result = await check({
       source:
@@ -3107,6 +3130,151 @@ describe("evaluation errors match TLC", () => {
       "(0 :> [b |-> 2, a |-> 1])",
       "({} :> [a |-> 1, b |-> 2] @@ {0} :> [a |-> 1, b |-> 2])",
       "(<<0, 1>> :> [a |-> 1, b |-> 2])",
+    ]);
+  });
+
+  const checkSetBound = (next: string, invariant: string) =>
+    check({
+      source: `---- MODULE M ----\nEXTENDS Integers, FiniteSets\nVARIABLE x\nInit == x = 0\nNext == ${next}\nInv == ${invariant}\n====`,
+      config: "INIT Init\nNEXT Next\nINVARIANT Inv",
+      maxSetSize: 10,
+    });
+
+  it.each([
+    [
+      "\\E f \\in [1..2 -> 1..4] : x' = f",
+      "TRUE",
+      "TLC threw an unexpected exception.\nThis was probably caused by an error in the spec or model.\nSee the User Output or TLC Console for clues to what happened.\nThe exception was a util.WrongInvocationException\n: Attempted to construct a set with too many elements (>10).",
+      [],
+      undefined,
+    ],
+    [
+      "x' = x",
+      "\\A r \\in [a : 1..4, b : 1..4] : r.a > 0",
+      "Attempted to construct a set with too many elements (>10).",
+      [],
+      undefined,
+    ],
+    [
+      "x' = x",
+      "[a : 1..4, b : 1..4] # {}",
+      "Attempted to construct a set with too many elements (>10).",
+      [
+        "Line 4, column 9 to line 4, column 13 in M",
+        "Line 6, column 8 to line 6, column 32 in M",
+        "Line 6, column 8 to line 6, column 27 in M",
+      ],
+      "Attempted to construct a set with too many elements (>10).",
+    ],
+    [
+      "x' = x",
+      "Cardinality({p \\in (1..4) \\X (1..4) : TRUE}) > 0",
+      "Attempted to apply the operator overridden by the Java method\npublic static tlc2.value.impl.IntValue tlc2.module.FiniteSets.Cardinality(tlc2.value.impl.Value),\nbut it produced the following error:\nAttempted to construct a set with too many elements (>10).",
+      [
+        "Line 4, column 9 to line 4, column 13 in M",
+        "Line 6, column 8 to line 6, column 55 in M",
+        "Line 6, column 8 to line 6, column 51 in M",
+      ],
+      undefined,
+    ],
+    [
+      "x' = x",
+      "\\A t \\in (1..2) \\X [a : 1..3, b : 1..4] : TRUE",
+      "Attempted to construct a set with too many elements (>10).",
+      [],
+      undefined,
+    ],
+    [
+      "x' = x",
+      "\\A f \\in [{1} -> {r \\in [a : 1..4, b : 1..4] : r.a < 4}] : TRUE",
+      "Attempted to construct a set with too many elements (>10).",
+      [],
+      undefined,
+    ],
+    [
+      "x' = x",
+      "\\A s \\in SUBSET [a : 1..3, b : 1..4] : TRUE",
+      "Attempted to construct a set with too many elements (>10).",
+      [
+        "Line 4, column 9 to line 4, column 13 in M",
+        "Line 6, column 8 to line 6, column 50 in M",
+        "Line 6, column 17 to line 6, column 43 in M",
+      ],
+      "Attempted to construct a set with too many elements (>10).",
+    ],
+  ])(
+    "bounds the sets TLC's toSetEnum collects by -maxSetSize and pops the frames it doesn't fingerprint: %s, %s",
+    async (next, invariant, message, callStack, reason) => {
+      const result = await checkSetBound(next, invariant);
+      expect(result.failure?.message).toBe(message);
+      expect(formatCallStackLines(result)).toEqual(callStack);
+      expect(result.failure?.fingerprint?.reason).toBe(reason);
+      expect(result.failure?.exitCode).toBe(75);
+    },
+  );
+
+  it.each([
+    ["x' \\in [a : {f \\in [1..2 -> 1..4] : TRUE}]", 273, 17],
+    ["x' = [f \\in [1..2 -> 1..4] |-> 1]", 3, 2],
+    [
+      "x' = LET F[r \\in [a : 1..4, b : 1..4]] == IF r.a = 1 THEN 1 ELSE F[[a |-> 1, b |-> r.b]] IN F",
+      3,
+      2,
+    ],
+  ])(
+    "streams the sets TLC's elements() enumerates past -maxSetSize: %s",
+    async (next, generated, distinct) => {
+      const result = await checkSetBound(next, "TRUE");
+      expect([result.status, result.generatedStates, result.distinctStates]).toEqual([
+        "success",
+        generated,
+        distinct,
+      ]);
+    },
+  );
+
+  it.each([
+    [
+      "\\A r \\in [a : SUBSET (1..40)] : TRUE",
+      "Attempted to construct a set with too many elements (>1000000).",
+    ],
+    [
+      "\\A f \\in [{1} -> SUBSET (1..40)] : TRUE",
+      "Attempted to construct a set with too many elements (>1000000).",
+    ],
+    [
+      "\\A r \\in [a : SUBSET (1..40), b : Nat] : TRUE",
+      "Attempted to enumerate a set of the form [l1 : v1, ..., ln : vn],\nbut can't enumerate the value of the `b' field:\nNat",
+    ],
+    [
+      "\\A r \\in {1} \\X (SUBSET (1..40)) \\X Nat : TRUE",
+      "Attempted to enumerate a set of the form s1 \\X s2 ... \\X sn,\nbut can't enumerate s2:\nNat",
+    ],
+  ])(
+    "streams SUBSET S into a product TLC collects, which fails before SUBSET S overflows: %s",
+    async (assumption, message) => {
+      const result = await checkModule(`ASSUME ${assumption}`);
+      expect([result.status, result.violation?.message]).toEqual(["assumption-violation", message]);
+    },
+  );
+
+  it("sizes the domain of a recursive function as TLC's FcnLambdaValue#toFcnRcd does, which bounds a filter by -maxSetSize", async () => {
+    const result = await check({
+      source:
+        "---- MODULE M ----\nEXTENDS Integers, FiniteSets\nVARIABLE x\nF[r \\in {s \\in [a : 1..4, b : 1..4] : TRUE}] == IF r.a = 1 THEN 1 ELSE F[[a |-> 1, b |-> r.b]]\nInit == x = 0\nNext == x' = F\n====",
+      config: "INIT Init\nNEXT Next",
+      maxSetSize: 10,
+    });
+    expect([
+      result.failure?.message,
+      formatCallStackLines(result),
+      result.failure?.fingerprint,
+      [result.generatedStates, result.distinctStates],
+    ]).toEqual([
+      "TLC threw an unexpected exception.\nThis was probably caused by an error in the spec or model.\nSee the User Output or TLC Console for clues to what happened.\nThe exception was a util.WrongInvocationException\n: Attempted to construct a set with too many elements (>10).",
+      [],
+      undefined,
+      [2, 1],
     ]);
   });
 });

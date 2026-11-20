@@ -547,10 +547,15 @@ const checkEnumerable = (set: Value, expression: Expression, version: TlcVersion
   }
 };
 
-const getEnumeratedElements = (set: Value, expression: Expression, version: TlcVersion) => {
+const getEnumeratedElements = (
+  set: Value,
+  expression: Expression,
+  version: TlcVersion,
+  isBounded = true,
+) => {
   checkEnumerable(set, expression, version);
   if (typeof set === "object" && set.kind === "Interval") return getIntervalElements(set);
-  return getLazySubsets(set) ?? getNormalizedSetElements(set);
+  return getLazySubsets(set) ?? getNormalizedSetElements(set, isBounded);
 };
 
 export const getContextElements = (set: Value, expression: Expression, version: TlcVersion) => {
@@ -568,8 +573,12 @@ const getKeptInterval = (set: Value) => {
 export const getQuantifierElements = (set: Value, expression: Expression, version: TlcVersion) =>
   getKeptInterval(set) ?? getContextElements(set, expression, version);
 
-const getNormalizedElements = (set: Value, expression: Expression, version: TlcVersion) =>
-  getKeptInterval(set) ?? getEnumeratedElements(set, expression, version);
+const getNormalizedElements = (
+  set: Value,
+  expression: Expression,
+  version: TlcVersion,
+  isBounded = true,
+) => getKeptInterval(set) ?? getEnumeratedElements(set, expression, version, isBounded);
 
 const someElement = (
   elements: ReturnType<typeof getQuantifierElements>,
@@ -1454,10 +1463,6 @@ const traceEvaluator =
       }
       return value;
     } catch (error) {
-      if (error instanceof TlaSetBoundError && !callStack.isFrozen) {
-        callStack.expressions.length = 0;
-        callStack.isFrozen = true;
-      }
       const failed = error instanceof Error ? callStack.failures.get(error) : undefined;
       if (error instanceof Error) callStack.failures.set(error, expression);
       const receiver = getReceiver(expression, callStack.values);
@@ -1494,7 +1499,10 @@ export const freezeCallStack = (
     const source = typeof item === "object" ? callStack.sources.get(item) : undefined;
     return source ? [source] : [];
   });
-  if (sources.length > 0 && error instanceof TlaEvaluationError) {
+  const isFingerprinted = sources.length > 0 && error instanceof TlaEvaluationError;
+  // TLC's CallStackTool doesn't catch the WrongInvocationException of -maxSetSize, so it pops the frames.
+  if (!isFingerprinted && error instanceof TlaSetBoundError) return;
+  if (isFingerprinted) {
     if (!callStack.isFrozen) callStack.expressions.push(...sources);
     const inner = callStack.fingerprint;
     callStack.fingerprint = {
@@ -2115,7 +2123,7 @@ export const getFunctionBuilder = (
         forEachElement(domain, evaluateAt);
         return createLazy(domain, context);
       }
-      const keys = getFunctionDomain(domain);
+      const keys = getFunctionDomain(domain, false);
       const functionValue = createSortedFunction(keys, keys.map(evaluateAt));
       if (isReducibleSet(domain)) return functionValue;
       functionValue.lambdaDomain = domain;
@@ -2129,6 +2137,7 @@ export const getFunctionBuilder = (
           : domain,
         set,
         context.environment.runtime.version,
+        false,
       ),
     );
     forEachBoundElement(bounds, sets, context.scope, (scope) => {

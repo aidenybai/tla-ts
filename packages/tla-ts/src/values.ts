@@ -1427,8 +1427,8 @@ const isIntervalDomain = (domain: Value[]) =>
       domain === longIntervalDomains.get(domain.length)?.deref())) ||
   intervalArrays.has(domain);
 
-export const getFunctionDomain = (set: Value): Value[] => {
-  const elements = toFiniteSet(set).elements;
+export const getFunctionDomain = (set: Value, isBounded = true): Value[] => {
+  const elements = isBounded ? toFiniteSet(set).elements : getUnboundedElements(set);
   return isIntervalDomain(elements) && !(typeof set === "object" && set.kind === "Interval")
     ? [...elements]
     : elements;
@@ -1552,8 +1552,13 @@ const getEmptiness = (value: Value): boolean | undefined => {
   }
 };
 
-const getCartesianProduct = (lists: Value[][]) => {
+const getCartesianProduct = (lists: Value[][], isBounded: boolean) => {
   const total = lists.reduce((product, list) => product * list.length, 1);
+  if (isBounded && total > getMaximumSetSize()) {
+    // TLC's toSetEnum doesn't catch the -maxSetSize failure, so the set it enumerates adds no frame.
+    setTrace.sets?.pop();
+    throw new TlaSetBoundError(getSetBoundMessage());
+  }
   const combinations: Value[][] = [];
   const positions = lists.map(() => 0);
   for (let count = 0; count < total; count++) {
@@ -1584,7 +1589,10 @@ export const getLazySubsets = (value: Value): Value[] | undefined => {
   if (typeof value !== "object" || value.kind !== "Subset" || isOverriddenSet(value.base)) {
     return undefined;
   }
+  const sets = setTrace.sets;
+  sets?.push(value);
   const base = toFiniteSet(value.base).elements;
+  sets?.pop();
   if (base.length <= MAXIMUM_BUILT_SUBSET_BASE) return undefined;
   let cursorIndex = -1;
   let indices = [0];
@@ -1673,9 +1681,46 @@ const enumerateSetOperation = (value: SetOperationValue, isMembershipFramed: boo
   return toFiniteSet(createEnumeratedSet(kept)).elements;
 };
 
+// TLC's elements() streams [S -> T], [l : S], S \X T and set filters past -maxSetSize, which bounds only toSetEnum.
+const getUnboundedElements = (value: Value): Value[] => {
+  if (
+    typeof value !== "object" ||
+    (value.kind !== "FunctionSet" &&
+      value.kind !== "RecordSet" &&
+      value.kind !== "ProductSet" &&
+      value.kind !== "FilteredSet") ||
+    value.enumerated
+  ) {
+    return toFiniteSet(value).elements;
+  }
+  const sets = setTrace.sets;
+  sets?.push(value);
+  const isOuterSorting = isSortingLiteral;
+  isSortingLiteral = false;
+  let elements: Value[];
+  try {
+    elements = enumerateSet(value, false);
+  } finally {
+    isSortingLiteral = isOuterSorting;
+  }
+  sets?.pop();
+  const set = value.kind === "RecordSet" ? createSet(elements) : createSortedSet(elements);
+  if (elements.length <= getMaximumSetSize()) value.enumerated = set;
+  return set.elements;
+};
+
+// TLC streams SUBSET S into a product it collects, so the product fails past -maxSetSize before SUBSET S overflows.
+const getCollectedComponent = (set: Value) => {
+  const subsets = getLazySubsets(set);
+  return subsets !== undefined && subsets.length > getMaximumSetSize()
+    ? subsets
+    : getUnboundedElements(set);
+};
+
 const enumerateSet = (
   value: Value,
-  getElements = (set: Value) => toFiniteSet(set).elements,
+  isBounded = true,
+  getElements = isBounded ? getCollectedComponent : getUnboundedElements,
 ): Value[] => {
   if (typeof value !== "object")
     throw new TlaEvaluationError(`Expected a set but found ${formatValue(value)}`);
@@ -1716,9 +1761,10 @@ const enumerateSet = (
         );
       }
       const range = domain.length === 0 ? [] : getElements(value.range);
-      return getCartesianProduct(domain.map(() => range)).map((combination): Value =>
-        createSortedFunction(domain, combination),
-      );
+      return getCartesianProduct(
+        domain.map(() => range),
+        isBounded,
+      ).map((combination): Value => createSortedFunction(domain, combination));
     }
     case "RecordSet": {
       if (!isVersion174 && isEmptySet(value)) return [];
@@ -1728,7 +1774,7 @@ const enumerateSet = (
         (set, index) =>
           `Attempted to enumerate a set of the form [l1 : v1, ..., ln : vn],\nbut can't enumerate the value of the \`${value.names[index]}' field:\n${prettyPrint(formatValue(set))}`,
       );
-      return getCartesianProduct(fields).map((combination) =>
+      return getCartesianProduct(fields, isBounded).map((combination) =>
         createRecord(value.names.map((name, index): [string, Value] => [name, combination[index]])),
       );
     }
@@ -1740,21 +1786,24 @@ const enumerateSet = (
         (factor, index) =>
           `Attempted to enumerate a set of the form s1 \\X s2 ... \\X sn,\nbut can't enumerate s${index}:\n${prettyPrint(formatValue(factor))}`,
       );
-      return getCartesianProduct(factors).map(createTuple);
+      return getCartesianProduct(factors, isBounded).map(createTuple);
     }
-    case "FilteredSet":
+    case "FilteredSet": {
       if (!isSetValue(value.base) || isOverriddenSet(value.base)) {
         throw new TlaEvaluationError(
           `Attempted to enumerate { x \\in S : p(x) } when S:\n${prettyPrint(formatValue(value.base))}\nis not enumerable`,
         );
       }
-      return toFiniteSet(
-        createEnumeratedSet(
-          getStreamedElements(value.base).filter(
-            value.startPass?.(true) ?? ((element) => value.test(element, false)),
-          ),
-        ),
-      ).elements;
+      const test = value.startPass?.(true) ?? ((element: Value) => value.test(element, false));
+      const kept: Value[] = [];
+      const elements = getStreamedElements(value.base);
+      for (let index = 0; index < elements.length; index++) {
+        if (!test(elements[index])) continue;
+        if (isBounded) addBoundedElement(kept, elements[index]);
+        else kept.push(elements[index]);
+      }
+      return toFiniteSet(createEnumeratedSet(kept)).elements;
+    }
     case "Union": {
       const elements: Value[] = [];
       getUnionSets(value).forEach((set, index) => {
@@ -1856,9 +1905,9 @@ const listUnionLikeTlc = (union: SetOperationValue) => {
   return [...left, ...right];
 };
 
-export const getNormalizedSetElements = (value: Value) => {
+export const getNormalizedSetElements = (value: Value, isBounded: boolean) => {
   if (typeof value !== "object" || value.kind !== "SetOperation" || value.enumerated) {
-    return toFiniteSet(value).elements;
+    return isBounded ? toFiniteSet(value).elements : getUnboundedElements(value);
   }
   // TLC's toSetEnum tests membership outside the frame of S \ T and S \cap T, which their normalize keeps.
   const elements =
@@ -1961,9 +2010,9 @@ const someElementOfStream = (value: ObjectValue, visit: (element: Value) => bool
   }
   const components = getCombinedSets(value);
   if (components?.some(isStreamedApart)) {
-    return enumerateSet(value, getStreamedElements).some(visit);
+    return enumerateSet(value, false, getStreamedElements).some(visit);
   }
-  if (value.kind !== "SetOperation") return toFiniteSet(value).elements.some(visit);
+  if (value.kind !== "SetOperation") return getUnboundedElements(value).some(visit);
   if (value.operator === "\\cup") {
     return !isTlcEnumerable(value.left) || !isTlcEnumerable(value.right)
       ? toFiniteSet(value).elements.some(visit)
@@ -2011,7 +2060,7 @@ export const isEmptySet = (value: Value): boolean => {
     case "Union":
       return getUnionSets(value).every((set, index) => isEmptySet(getUnionSet(set, index, value)));
     default:
-      return toFiniteSet(value).elements.length === 0;
+      return getUnboundedElements(value).length === 0;
   }
 };
 
@@ -2493,11 +2542,12 @@ export const toFiniteFunction = (value: Value): FunctionValue => {
   if (typeof value === "object" && value.kind === "LazyFunction") {
     if (value.enumerated) return value.enumerated;
     if (isSortingLiteral) throw new TlaEvaluationError("The set literal holds a lazy function");
-    if (!isEnumerable(value.domain)) getCardinality(value.domain);
+    // TLC's FcnLambdaValue#toFcnRcd sizes its domain, which enumerates a filter under -maxSetSize, and then streams it.
+    getCardinality(value.domain);
     if (!isSetValue(value.domain)) {
       throw new TlaEvaluationError("The domains of formal parameters must be enumerable.");
     }
-    const domain = getFunctionDomain(value.domain);
+    const domain = getFunctionDomain(value.domain, false);
     value.enumerated = createSortedFunction(
       domain,
       isLazyFunctionCopy(value)
