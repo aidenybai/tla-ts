@@ -1042,6 +1042,7 @@ const searchStates = (
     livenessSource: -1,
     rebuilt: undefined,
   };
+  const isTraceRebuilt = coverage !== undefined || search.isTraceRebuildShown;
   const traces = createTraceBuilder({
     config,
     options,
@@ -1055,6 +1056,7 @@ const searchStates = (
     actions,
     depths,
     tracedSteps,
+    isTraceRebuilt,
     captureOutput,
     forEachInitialState: forEachSpecInitialState,
     findUncoveredInitialState,
@@ -1089,7 +1091,6 @@ const searchStates = (
       findStateIndex(seenStates, getStateHash(unstoredFingerprint), unstoredFingerprint) === -1;
     return isWritten ? current.index : parents[current.index];
   };
-  const isTraceRebuilt = coverage !== undefined || search.isTraceRebuildShown;
   runtime.getBehavior = (state) => {
     const index =
       state === current.candidate
@@ -1204,10 +1205,10 @@ const searchStates = (
     };
   };
   // Deviation from TLC: under -continue, TLC reports failing to rebuild the violating step as a failure of the invariant.
-  const getViolationTrace = (index: number, successor: Successor) =>
+  const getViolationTrace = (index: number, successor: Successor, isSuccessorWritten: boolean) =>
     options.isContinued
       ? traces.getTrace(index, successor, { isPrintedOnly: true, isCurrentKept: true })
-      : traces.getTrace(index, successor, { isRebuildFailureKept: true });
+      : traces.getTrace(index, successor, { isRebuildFailureKept: true, isSuccessorWritten });
   const visitSuccessor = (
     index: number,
     successor: Successor,
@@ -1266,7 +1267,7 @@ const searchStates = (
         const violated = search.findViolatedInvariant(successor.state, state);
         const violation = violated && {
           name: violated.name,
-          ...getViolationTrace(index, successor),
+          ...getViolationTrace(index, successor, isNew),
         };
         if (violation && !options.isContinued) {
           return withOutDegrees(reportViolation("invariant-violation", violation));
@@ -1288,7 +1289,7 @@ const searchStates = (
     const violatedProperty = search.findViolatedActionProperty(state, successor.state);
     const propertyViolation = violatedProperty && {
       name: violatedProperty.name,
-      ...getViolationTrace(index, successor),
+      ...getViolationTrace(index, successor, isNew),
     };
     if (propertyViolation && !options.isContinued) {
       return withOutDegrees(reportViolation("liveness-violation", propertyViolation));
@@ -1913,13 +1914,17 @@ const searchStates = (
       adoptTypedSearch(typed);
       Object.assign(current, { index: parent.index, candidate: undefined, isExpanding: true });
       if (violating && violated) {
-        lookUpSuccessor(states[parent.index], violating.successor);
+        const found = lookUpSuccessor(states[parent.index], violating.successor);
         current.candidate = violating.successor.state;
         current.candidateLevel = depths[parent.index] + 1;
         return withOutDegrees(
           reportViolation(violatedInvariant ? "invariant-violation" : "liveness-violation", {
             name: violated.name,
-            ...getViolationTrace(parent.index, violating.successor),
+            ...getViolationTrace(
+              parent.index,
+              violating.successor,
+              found.isInModel && !found.isSeen,
+            ),
           }),
         );
       }

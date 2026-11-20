@@ -157,6 +157,54 @@ describe("TLCExt matches TLC", () => {
     expect(result.violation?.trace.map((step) => step.state.n)).toEqual([1, 2, 3, 4]);
   });
 
+  it.each([
+    [
+      "a successor it has written",
+      "Inv == x < 4",
+      "",
+      [
+        '"init"',
+        '<<"next", 0>>',
+        '<<"next", 1>>',
+        '<<"next", 2>>',
+        '<<"next", 3>>',
+        '"init"',
+        '"init"',
+        '<<"next", 0>>',
+        '"init"',
+        '<<"next", 0>>',
+        '<<"next", 1>>',
+      ],
+    ],
+    [
+      "a successor a constraint excludes",
+      "Inv == x < 3\nConstr == x < 3",
+      "CONSTRAINT Constr",
+      ['"init"', '<<"next", 0>>', '<<"next", 1>>', '<<"next", 2>>', '"init"'],
+    ],
+  ])(
+    "rebuilds the path for Trace in the ALIAS that Worker#doPostCondition evaluates after an invariant fails at %s",
+    async (_successor, invariant, config, traceOutput) => {
+      const result = await check({
+        source: `---- MODULE M ----\nEXTENDS Naturals, Sequences, TLC, TLCExt\nVARIABLE x\nInit == x = 0 /\\ PrintT("init")\nNext == x' = x + 1 /\\ PrintT(<<"next", x>>)\n${invariant}\nAlias == [x |-> x, n |-> Len(Trace)]\n====`,
+        config: `INIT Init\nNEXT Next\nINVARIANT Inv\nALIAS Alias\n${config}`,
+      });
+      expect(result.violation?.traceOutput).toEqual(traceOutput);
+    },
+  );
+
+  // Deviation from TLC: it prints [x |-> 4, _ALIASEvalError |-> "…Index 32767 out of bounds for length 1…"] for the last state.
+  it("gives the postcondition the alias of the last state, which reads Trace, unlike TLC", async () => {
+    const result = await check({
+      source:
+        "---- MODULE M ----\nEXTENDS Naturals, Sequences, TLC, TLCExt\nVARIABLE x\nInit == x = 0\nNext == x' = x + 1\nInv == x < 2\nAlias == [x |-> x, n |-> Len(Trace)]\nPost == PrintT(CounterExample.state)\n====",
+      config: "INIT Init\nNEXT Next\nINVARIANT Inv\nALIAS Alias\nPOSTCONDITION Post",
+    });
+    expect(result.violation?.postconditionOutput).toEqual([
+      "{ <<1, [x |-> 0, n |-> 1]>>,\n  <<2, [x |-> 1, n |-> 2]>>,\n  <<3, [x |-> 2, n |-> 3]>> }",
+    ]);
+  });
+
   // Deviation from TLC: it prints <<0, 1>> as it rebuilds the counterexample, then fails with "Index 32767 out of bounds for length 1" and exits with 1.
   it("reads Trace in the next-state relation as a liveness counterexample rebuilds its steps, unlike TLC", async () => {
     const prints: string[] = [];
