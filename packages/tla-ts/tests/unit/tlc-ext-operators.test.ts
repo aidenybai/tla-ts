@@ -1,7 +1,7 @@
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { describe, expect, it } from "vite-plus/test";
-import { check } from "../../src";
+import { check, TlaConfigError } from "../../src";
 import { runCliWith } from "./cli-harness";
 
 const DIRECTORY = join(import.meta.dirname, "../fixtures/tlc-ext");
@@ -105,6 +105,18 @@ describe("TLCExt operators match TLC", () => {
     );
     expect(results.map((result) => result.status)).toEqual(["success", "assumption-violation"]);
   });
+
+  it.each(['AssertError("wrong", Head(<<>>))', "TLCCache(FALSE, {})"])(
+    "evaluates a constant invariant of %s as it starts, as TLC does",
+    async (expression) => {
+      await expect(
+        check({
+          source: `---- MODULE M ----\nEXTENDS Integers, Sequences, TLC, TLCExt\nVARIABLE x\nInv == ${expression}\nInit == x = 0\nNext == x < 2 /\\ x' = x + 1\n====`,
+          config: "INIT Init\nNEXT Next\nINVARIANT Inv",
+        }),
+      ).rejects.toThrow(new TlaConfigError("The invariant of Inv is equal to FALSE"));
+    },
+  );
 
   it("stops checking when TLCGetAndSet sets the exit key", async () => {
     const result = await checkModule(
