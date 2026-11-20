@@ -1151,15 +1151,19 @@ export const compileModelToEscore = (
     ts.isVariableStatement(statement) ? statement.declarationList.declarations : [],
   );
   // A module that imports none runs as a strict script, whose top-level declarations the steps
-  // read by name, so its declarations lose their export keywords.
+  // read by name, so its declarations lose their export keywords and its export lists go.
   const exports = file.statements.flatMap((statement) =>
-    !isModule && ts.canHaveModifiers(statement)
-      ? (ts.getModifiers(statement) ?? []).flatMap((modifier) =>
-          modifier.kind === ts.SyntaxKind.ExportKeyword
-            ? [{ start: modifier.getStart(), end: modifier.getEnd(), text: "" }]
-            : [],
-        )
-      : [],
+    isModule
+      ? []
+      : ts.isExportDeclaration(statement) && statement.moduleSpecifier === undefined
+        ? [{ start: statement.getStart(), end: statement.getEnd(), text: "" }]
+        : ts.canHaveModifiers(statement)
+          ? (ts.getModifiers(statement) ?? []).flatMap((modifier) =>
+              modifier.kind === ts.SyntaxKind.ExportKeyword
+                ? [{ start: modifier.getStart(), end: modifier.getEnd(), text: "" }]
+                : [],
+            )
+          : [],
   );
   const replaced = (lowered === undefined ? choose : [])
     .map((choice, index) => {
