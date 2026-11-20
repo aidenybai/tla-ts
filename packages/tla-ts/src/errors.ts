@@ -426,7 +426,7 @@ export class TlaStrippingError extends TlaTypeScriptError {
   start: number;
   end: number;
   constructor(code: string, reason: string, node: ts.Node, start: number, end: number) {
-    super(reason, node);
+    super(`SyntaxError [${code}]: ${reason}`, node);
     this.name = "TlaStrippingError";
     this.code = code;
     this.reason = reason;

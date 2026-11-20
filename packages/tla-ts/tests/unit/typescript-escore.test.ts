@@ -2049,11 +2049,13 @@ if (view !== "${expected}") throw new Error(view);
       ["a with statement in strict mode", '"use strict";\nwith ({}) {}', false],
     ];
 
+    // Of a TypeScript file, Node's type stripping rejects a with statement and a function as an
+    // if's branch before V8 parses it, with its own SyntaxError.
     describe.each(REJECTED)("rejects %s, as V8's parse does", (_, source, isModule) => {
       it("agrees with Node", async () => {
         expect(isNodeParsed(source, isModule)).toBe(false);
         const result = isModule ? await checkModule(source) : await checkScript(source, false);
-        expect(result.message).toContain("SyntaxError: ");
+        expect(result.message).toMatch(/SyntaxError(?: \[ERR_INVALID_TYPESCRIPT_SYNTAX\])?: /);
       });
     });
 

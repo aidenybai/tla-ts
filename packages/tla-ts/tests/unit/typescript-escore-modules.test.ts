@@ -1063,7 +1063,7 @@ describe("loads each kind of file as Node does", () => {
     ],
     [
       "a function that an if declares",
-      "if (Date.now() > 0) function f() {}\n",
+      "const x = 1;\nif (x) function f() {}\n",
       "Declaration is not allowed",
     ],
   ])("rejects %s in TypeScript as Node does", (_, code, message) => {
