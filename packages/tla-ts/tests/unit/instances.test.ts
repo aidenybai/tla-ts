@@ -159,6 +159,36 @@ describe("INSTANCE matches TLC", () => {
       "THEOREM TRUE\n<1>1. INSTANCE N WITH c <- 1\n<1>2. QED",
       [],
     ],
+    [
+      "what an inner module EXTENDS when it visits that module",
+      '---- MODULE U ----\nUA == PrintT("UA")\n====\n---- MODULE V ----\nEXTENDS U\nVA == PrintT("VA")\n====',
+      ["UA", "VA"],
+    ],
+    [
+      "what an inner module EXTENDS through another",
+      '---- MODULE U ----\nUA == PrintT("UA")\n====\n---- MODULE V ----\nEXTENDS U\nVA == PrintT("VA")\n====\n---- MODULE W ----\nEXTENDS V\nWA == PrintT("WA")\n====',
+      ["UA", "VA", "WA"],
+    ],
+    [
+      "a failing inner definition again in each module that EXTENDS it",
+      '---- MODULE U ----\nUX == PrintT("UX") /\\ (CHOOSE n \\in {} : TRUE)\n====\n---- MODULE V ----\nEXTENDS U\nVA == PrintT("VA")\n====',
+      ["UX", "VA", "UX"],
+    ],
+    [
+      "a failing file definition again in each module that EXTENDS it",
+      "---- MODULE W ----\nEXTENDS F\n====",
+      ["FX", "FX"],
+    ],
+    [
+      "no inherited definition of a module instanced with a parameter",
+      '---- MODULE U ----\nCONSTANT u\nUA == PrintT("UA")\n====\n---- MODULE V ----\nEXTENDS U\nVA == PrintT("VA")\n====\nI == INSTANCE U WITH u <- 1',
+      ["UA", "VA"],
+    ],
+    [
+      "the inner modules but not the definitions an inner module EXTENDS from a module instanced with a parameter",
+      "---- MODULE W ----\nEXTENDS N\n====\nI == INSTANCE N WITH c <- 1",
+      ["N1", "P1"],
+    ],
   ])("evaluates %s at startup, as TLC does", async (_name, lines, expected) => {
     const prints: string[] = [];
     const result = await check({
@@ -167,7 +197,9 @@ describe("INSTANCE matches TLC", () => {
       loadModule: (name) =>
         name === "N"
           ? '---- MODULE N ----\nEXTENDS TLC\nCONSTANT c\nN1 == PrintT("N1")\n---- MODULE P ----\nP1 == PrintT("P1")\n====\n===='
-          : undefined,
+          : name === "F"
+            ? '---- MODULE F ----\nEXTENDS TLC\nFX == PrintT("FX") /\\ (CHOOSE n \\in {} : TRUE)\n===='
+            : undefined,
       onPrint: (text) => prints.push(text),
     });
     expect([result.status, prints]).toEqual(["success", expected.map((text) => `"${text}"`)]);

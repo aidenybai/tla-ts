@@ -1893,35 +1893,47 @@ export const createEnvironment = (
   ]);
   const isProcessedAtStartup = (linked: LinkedModule) =>
     !instantiated.has(linked.module.name) || linked.declarations.length === 0;
-  // TLC's SpecProcessor#processConstantDefns takes a module's definitions, then its inner modules' in turn. It skips a file module whole, but an inner module only for its own definitions.
+  const getModuleName = (linked: LinkedModule) =>
+    linked === linkedRoot ? undefined : linked.module.name;
   const getStartupModules = (linked: LinkedModule): LinkedModule[] => [
     linked,
-    ...order
-      .getInnerModuleOrder(linked === linkedRoot ? undefined : linked.module.name)
-      .flatMap((name) => {
-        const nested = linked.modules.get(name);
-        return nested ? getStartupModules(nested) : [];
-      }),
+    ...order.getInnerModuleOrder(getModuleName(linked)).flatMap((name) => {
+      const nested = linked.modules.get(name);
+      return nested ? getStartupModules(nested) : [];
+    }),
   ];
   const nestedModules = new Set(linkOrder.flatMap((linked) => [...linked.modules.values()]));
-  const getDefinitionOrder = order.createDefinitionOrder();
+  const getDefinitionKey = (linked: LinkedModule, name: string) =>
+    linked.visible.get(name)?.key ?? name;
+  const getOwnDefinitionOrder = order.createDefinitionOrder();
+  const origins = new Map(
+    linkOrder.flatMap((linked) =>
+      getOwnDefinitionOrder(getModuleName(linked)).map((name) => [
+        getDefinitionKey(linked, name),
+        linked,
+      ]),
+    ),
+  );
   return {
     environment,
     assumptions,
     variableLocations: linkedRoot.variableLocations,
     instanceActions,
+    // TLC's SpecProcessor#processConstantDefns walks a module's whole context, inherited definitions too, and skips each by the module it comes from.
     startupDefinitions: linkOrder
       .filter((linked) => !nestedModules.has(linked) && isProcessedAtStartup(linked))
       .flatMap(getStartupModules)
-      .filter(isProcessedAtStartup)
       .flatMap((linked) =>
-        getDefinitionOrder(linked === linkedRoot ? undefined : linked.module.name).flatMap(
-          (name) => {
-            const key = linked.visible.get(name)?.key ?? name;
-            const definition = definitions.get(key);
-            return definition && !constants.has(key) && !substitutions.has(key) ? [definition] : [];
-          },
-        ),
+        order.getDefinitionOrder(getModuleName(linked)).flatMap((name) => {
+          const key = getDefinitionKey(linked, name);
+          const definition = definitions.get(key);
+          return definition &&
+            isProcessedAtStartup(origins.get(key) ?? linked) &&
+            !constants.has(key) &&
+            !substitutions.has(key)
+            ? [definition]
+            : [];
+        }),
       ),
     javaOverrides: linkOrder.flatMap((linked) => javaOverrides.get(linked.module.name) ?? []),
     moduleOperators,
