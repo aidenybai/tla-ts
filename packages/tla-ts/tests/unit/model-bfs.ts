@@ -555,6 +555,10 @@ export const exploreModel = async (source: string, fileName: string): Promise<Ex
     if (!assumptions.every((name) => module[name]() !== false)) {
       return { status: "assumption-violation", generatedStates: 0, distinctStates: 0, depth: 0 };
     }
+    // A spec without variables has no states, so TLC checks only its assumptions.
+    if (names.length === 0 && steps.length === 0) {
+      return { status: "success", generatedStates: 0, distinctStates: 0, depth: 0 };
+    }
     if (!initially.every((name) => module[name]() === true)) continue;
     generated += 1;
     const state = copy(module.__tlaTsGet(), targets);
