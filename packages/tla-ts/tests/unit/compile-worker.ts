@@ -58,16 +58,17 @@ export const compileAndCheck = (
   fileName: string,
   libraries?: ReadonlyMap<string, string>,
 ) => {
-  worker ??= new Worker(WORKER, {
-    eval: true,
-    workerData: { source: pathToFileURL(join(import.meta.dirname, "../../src")).href },
-    resourceLimits: { stackSizeMb: 256 },
-  })
-    .on("message", (response: { id: number; checked: Checked }) =>
+  const started =
+    worker ??
+    new Worker(WORKER, {
+      eval: true,
+      workerData: { source: pathToFileURL(join(import.meta.dirname, "../../src")).href },
+      resourceLimits: { stackSizeMb: 256 },
+    }).on("message", (response: { id: number; checked: Checked }) =>
       pending[response.id](response.checked),
-    )
-    .unref();
-  const started = worker;
+    );
+  if (worker === undefined) started.unref();
+  worker = started;
   return new Promise<Checked>((resolve) => {
     started.postMessage({ id: pending.length, source, fileName, libraries });
     pending.push(resolve);
