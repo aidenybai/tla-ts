@@ -275,7 +275,7 @@ export const compileModelToEscore = (
       parameters: string[];
       types: (ts.TypeNode | undefined)[];
       tags: Map<string, string>;
-      node: ts.FunctionLikeDeclaration;
+      node: ts.FunctionLikeDeclaration | ts.FunctionTypeNode;
     }
   >();
   // A function that a declaration's initializer gives, through parentheses and casts.
@@ -332,7 +332,14 @@ export const compileModelToEscore = (
     }
     if (ts.isVariableStatement(statement)) {
       for (const declaration of statement.declarationList.declarations) {
-        const fn = getFunction(declaration.initializer);
+        // A const whose type names a function that its initializer gives from elsewhere.
+        const fn =
+          getFunction(declaration.initializer) ??
+          (declaration.initializer !== undefined &&
+          declaration.type !== undefined &&
+          ts.isFunctionTypeNode(declaration.type)
+            ? declaration.type
+            : undefined);
         if (
           fn !== undefined &&
           ts.isIdentifier(declaration.name) &&
@@ -583,7 +590,10 @@ export const compileModelToEscore = (
   // module gets appended, which returns the set from the parameters its guard reads.
   const getGuard = (action: string, parameter: string) => {
     const definition = exported.get(action);
-    const body = definition?.node.body;
+    const body =
+      definition === undefined || ts.isFunctionTypeNode(definition.node)
+        ? undefined
+        : definition.node.body;
     const statement =
       body !== undefined && ts.isBlock(body)
         ? body.statements.find(

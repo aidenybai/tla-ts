@@ -20,7 +20,7 @@ interface Declared {
 }
 
 interface Exported extends Declared {
-  node: FunctionNode;
+  node: FunctionNode | ts.FunctionTypeNode;
   body: ts.ConciseBody;
   tags: Map<string, string>;
 }
@@ -506,8 +506,16 @@ export const frameModel = (
     const isExported =
       (ts.getCombinedModifierFlags(declaration) & ts.ModifierFlags.Export) !== 0 ||
       (symbol !== undefined && listed.has(symbol));
-    return isExported && node?.body !== undefined
-      ? [{ ...declared, node, body: node.body, tags: tags.get(statement) ?? new Map() }]
+    if (!isExported) return [];
+    if (node?.body !== undefined) {
+      return [{ ...declared, node, body: node.body, tags: tags.get(statement) ?? new Map() }];
+    }
+    // A const whose type names a function, which its initializer gives from elsewhere, as another
+    // module's function does, runs as a call of what the initializer gives.
+    const initializer = ts.isVariableDeclaration(declaration) ? declaration.initializer : undefined;
+    const type = ts.isVariableDeclaration(declaration) ? declaration.type : undefined;
+    return initializer !== undefined && type !== undefined && ts.isFunctionTypeNode(type)
+      ? [{ ...declared, node: type, body: initializer, tags: tags.get(statement) ?? new Map() }]
       : [];
   });
   // An exported function whose name TLA+ takes for its own gets a name of its own, which a step
@@ -892,7 +900,9 @@ export const frameModel = (
     if (unlisted !== undefined) {
       return `its parameter ${unlisted.name} takes values it can't list`;
     }
-    return definition.node.parameters.length === 0 && isAlwaysThrowing(definition.node)
+    return definition.node.parameters.length === 0 &&
+      !ts.isFunctionTypeNode(definition.node) &&
+      isAlwaysThrowing(definition.node)
       ? "every call of it throws"
       : undefined;
   };
