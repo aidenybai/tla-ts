@@ -254,6 +254,70 @@ describe("checks a module's exported functions as a model on ESCore", () => {
     });
   });
 
+  describe("stops where an action counts on forever and the model checks nothing", () => {
+    const ENDLESS = "tla-ts can't check a model whose states never end";
+
+    it.each([
+      [
+        "in a for-in over an object literal with a key",
+        "() => { for (const key in { a: 1 }) count++; }",
+      ],
+      ["by a defaulted parameter of literals", "(amount: 1 | 2 = 1) => { count += amount; }"],
+    ])("counting %s", async (_title, action) => {
+      const result = await checkModel(`let count = 0;\nexport const step = ${action};\n`);
+      expect([result.status, result.message]).toEqual([
+        "stopped",
+        expect.stringContaining(ENDLESS),
+      ]);
+    });
+
+    it.each([
+      [
+        "a for-in over an object literal without a key",
+        "() => { for (const key in {}) count++; }",
+        1,
+      ],
+      [
+        "a guard that bounds a for-in",
+        "() => { if (count < 2) for (const key in { a: 1 }) count++; }",
+        3,
+      ],
+      [
+        "a guard that bounds a parameter's count",
+        "(amount: 1 | 2 = 1) => { if (count < 4) count += amount; }",
+        6,
+      ],
+    ])("checks the model where %s", async (_title, action, distinct) => {
+      const result = await checkModel(`let count = 0;\nexport const step = ${action};\n`);
+      expect([result.status, result.distinct]).toEqual(["deadlock", distinct]);
+    });
+  });
+
+  describe("runs a step that reads a binding of the module's declarations", () => {
+    const getSource = (declaration: string) => `
+      ${declaration}
+      let seen = new Set<number>();
+      export const take = () => {
+        if (seen.size > 0) return;
+        pending.add(1);
+        seen = new Set(pending);
+      };
+    `;
+
+    it("throws where a declare binds nothing, as Node does", async () => {
+      const result = await checkModel(getSource("declare const pending: Set<number>;"));
+      expect([result.status, result.distinct]).toEqual(["error", 1]);
+      expect(result.message).toContain(
+        "tla-ts can't read the message that Node writes for an error it throws",
+      );
+    });
+
+    it("takes the step where the module binds it", async () => {
+      const result = await checkModel(getSource("const pending = new Set<number>();"));
+      expect([result.status, result.distinct]).toEqual(["deadlock", 2]);
+    });
+  });
+
   describe("keeps one state for errors that differ only in the calls that made them", () => {
     const getSource = (message: string, isRead = false) => `
       let last: Error | undefined = undefined;

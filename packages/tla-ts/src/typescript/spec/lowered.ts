@@ -131,9 +131,15 @@ export const getLoweredBindings = (file: ts.SourceFile, chosen: ReadonlySet<stri
       continue;
     }
     if (ts.isTypeAliasDeclaration(statement) || ts.isInterfaceDeclaration(statement)) continue;
+    // A declare binds nothing when the module runs, so the module's state stays on the heap, where
+    // reading the binding throws as in Node.
     if (
       !ts.isVariableStatement(statement) ||
-      (statement.declarationList.flags & ts.NodeFlags.BlockScoped) === 0
+      (statement.declarationList.flags & ts.NodeFlags.BlockScoped) === 0 ||
+      (ts
+        .getModifiers(statement)
+        ?.some((modifier) => modifier.kind === ts.SyntaxKind.DeclareKeyword) ??
+        false)
     ) {
       return undefined;
     }
