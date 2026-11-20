@@ -2149,6 +2149,17 @@ describe("evaluation errors match TLC", () => {
     },
   );
 
+  it("prints a function in the order TLC sorts it in as it checks it against a record", async () => {
+    const result = await checkModule(
+      "CONSTANTS C, D\nASSUME (D :> 1) @@ (C :> 2) \\in {[a |-> 1, b |-> 2], <<1, 2>>}",
+      'CONSTANTS C = Mb D = "s"',
+    );
+    expect([result.status, result.violation?.message]).toEqual([
+      "assumption-violation",
+      'Attempted to check equality of record:\n[a |-> 1, b |-> 2]\nwith non-record\n(Mb :> 2 @@ "s" :> 1)',
+    ]);
+  });
+
   it.each(['"a" \\in Nat', "1 \\in STRING", "{} \\in 1..4", "FALSE \\in Int"])(
     "rejects %s",
     async (membership) => {

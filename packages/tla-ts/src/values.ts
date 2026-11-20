@@ -305,7 +305,7 @@ const forgetWrittenOrder = (value: Value): void => {
   value.range.forEach(forgetWrittenOrder);
 };
 
-// TLC's SetOfRcdsValue#member and SetOfFcnsValue#member normalize the record or function they check in place.
+// TLC's SetOfRcdsValue#member, SetOfFcnsValue#member and FcnRcdValue#toRcd normalize the record or function they check in place.
 const forgetOwnWrittenOrder = (value: Value) => {
   if (isWrittenOrderUsed && typeof value === "object" && value.kind === "Function") {
     value.writtenKeys = undefined;
@@ -936,6 +936,7 @@ const toTlcFunction = (value: Value) => {
 
 const toTlcRecord = (value: Value) => {
   if (!isFunctionValue(value)) return undefined;
+  forgetOwnWrittenOrder(value);
   const functionValue = toFiniteFunction(value);
   return isRecordDomain(functionValue.domain) ? functionValue : undefined;
 };
