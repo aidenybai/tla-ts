@@ -1822,6 +1822,18 @@ describe("evaluation errors match TLC", () => {
     ]);
   });
 
+  it("starts a check without the values an earlier check made", async () => {
+    const earlier = await checkModule(
+      'CONSTANT C\nASSUME \\E s \\in {{1, "a"}} : C \\notin {1}',
+      "CONSTANT C = t_a",
+    );
+    const later = await checkModule("ASSUME LET D == [{} -> {[n \\in Nat |-> n]}] IN D = D");
+    expect([earlier.violation?.message, later.status]).toEqual([
+      "Attempted to check equality of the typed model value t_a and the non-model value\n1",
+      "success",
+    ]);
+  });
+
   it("sorts a TLCEval argument only outside an instance that substitutes", async () => {
     const inner =
       '---- MODULE Inner ----\nEXTENDS TLC\nCONSTANT K\nMixed == 1 \\in TLCEval({1, "a"})\n====';
@@ -2026,6 +2038,116 @@ describe("evaluation errors match TLC", () => {
     );
     expect(result.status).toBe("success");
   });
+
+  it.each([
+    [
+      "S \\cap T",
+      "CONSTANTS S, T\nASSUME S \\cap T = {}",
+      "CONSTANTS S = {__x, __y} T = {m1, {m2}}",
+      "Attempted to compare the typed model value __x and non-model value\n{m2}",
+    ],
+    [
+      "T \\cap S",
+      "CONSTANTS S, T\nASSUME T \\cap S = {}",
+      "CONSTANTS S = {__x, __y} T = {m1, {m2}}",
+      "Attempted to compare the typed model value __y and the non-model value\n{m2}",
+    ],
+    [
+      "a normalized set",
+      "CONSTANTS T, C\nASSUME C \\notin T",
+      "CONSTANTS C = __x T = {m1, {m2}}",
+      "Attempted to compare the typed model value __x and non-model value\n{m2}",
+    ],
+    [
+      "S \\ T",
+      "CONSTANTS S, D, E\nASSUME S \\ {D, E} = S",
+      "CONSTANTS S = {t_a, m1} D = m1 E = 1",
+      "Attempted to check equality of the typed model value t_a and the non-model value\n1",
+    ],
+    [
+      "a set of integers",
+      "CONSTANTS C, D\nASSUME 6 \\in {C, D, 5, 6, 7}",
+      "CONSTANTS C = t_a D = m2",
+      "Attempted to check equality of typed model value t_a and non-model value\n6",
+    ],
+    [
+      "a union",
+      "CONSTANTS C, D, E, F\nASSUME C \\notin {D, E} \\cup {F}",
+      "CONSTANTS C = x_1 D = m1 E = m2 F = t_a",
+      "Attempted to check equality of the differently-typed model values t_a and x_1",
+    ],
+  ])(
+    "compares the elements of %s with a typed model value like TLC",
+    async (_name, body, config, message) => {
+      const result = await checkModule(body, config);
+      expect([result.status, result.violation?.message]).toEqual(["assumption-violation", message]);
+    },
+  );
+
+  it.each([
+    [
+      "<<C, D>> # (C :> 1) @@ (D :> 2)",
+      "CONSTANTS C = zz D = m3",
+      "Attempted to compare an integer with non-integer:\nzz.",
+    ],
+    [
+      "[i \\in 1..2 |-> i] # (C :> 1) @@ (D :> 2)",
+      "CONSTANTS C = m1 D = m2",
+      "Attempted to compare an integer with non-integer:\nm1.",
+    ],
+    [
+      "[a |-> 1, b |-> 2] # (C :> 1) @@ (D :> 2)",
+      "CONSTANTS C = m1 D = m2",
+      "Attempted to check equality of record:\n[a |-> 1, b |-> 2]\nwith non-record\n(m1 :> 1 @@ m2 :> 2)",
+    ],
+    [
+      "Cardinality({<<1, 2>>, (C :> 1) @@ (D :> 2)}) = 2",
+      "CONSTANTS C = m1 D = m2",
+      getJavaError(
+        "value.impl.IntValue tlc2.module.FiniteSets.Cardinality(tlc2.value.impl.Value)",
+        "Attempted to compare integer with non-integer\nm1.",
+      ),
+    ],
+    [
+      "Cardinality({(C :> 1) @@ (D :> 2), <<1, 2>>}) = 2",
+      "CONSTANTS C = m1 D = m2",
+      getJavaError(
+        "value.impl.IntValue tlc2.module.FiniteSets.Cardinality(tlc2.value.impl.Value)",
+        "Attempted to compare integer with non-integer:\nm1.",
+      ),
+    ],
+  ])("compares the model value keys in %s like TLC", async (assumption, config, message) => {
+    const result = await checkModule(`CONSTANTS C, D\nASSUME ${assumption}`, config);
+    expect([result.status, result.violation?.message]).toEqual(["assumption-violation", message]);
+  });
+
+  it("compares a function of a set of integers with model value keys like TLC", async () => {
+    const result = await checkModule(
+      "CONSTANTS C, D\nASSUME [i \\in {1, 2} |-> i] # (C :> 1) @@ (D :> 2)",
+      "CONSTANTS C = m1 D = m2",
+    );
+    expect(result.status).toBe("success");
+  });
+
+  it.each([
+    ["Cardinality({D, STRING}) = 2", "success", undefined],
+    ["STRING # D", "success", undefined],
+    ["D \\notin {Int}", "success", undefined],
+    [
+      "{D, STRING, {C, 1}} = {}",
+      "assumption-violation",
+      "Attempted to compare the set {a_, 1} with the value:\nSTRING",
+    ],
+  ])(
+    "orders an overridden set after a typed model value in %s like TLC",
+    async (assumption, status, message) => {
+      const result = await checkModule(
+        `CONSTANTS C, D\nASSUME ${assumption}`,
+        "CONSTANTS C = a_ D = t_a",
+      );
+      expect([result.status, result.violation?.message]).toEqual([status, message]);
+    },
+  );
 
   it.each(['"a" \\in Nat', "1 \\in STRING", "{} \\in 1..4", "FALSE \\in Int"])(
     "rejects %s",

@@ -331,8 +331,14 @@ const compareFunctions = (left: FunctionValue, right: FunctionValue) => {
   }
   if (leftDomain !== rightDomain) {
     for (let index = 0; index < leftDomain.length; index++) {
-      const keyComparison = compareValues(leftDomain[index], rightDomain[index]);
-      if (keyComparison !== 0) return keyComparison;
+      const leftKey = leftDomain[index];
+      const rightKey = rightDomain[index];
+      const keyComparison = compareValues(leftKey, rightKey);
+      if (keyComparison === 0) continue;
+      // TLC compares a model value key with a tuple's or record's keys as an integer or a string, which fails.
+      return isModelValue(leftKey) === isModelValue(rightKey)
+        ? keyComparison
+        : compareLikeTlc(left, right);
     }
   }
   const leftRange = left.range;
@@ -406,6 +412,11 @@ const stringOrder = createStringOrder();
 export const setStringOrder = (texts: Iterable<string>) => {
   Object.assign(stringOrder, createStringOrder());
   modelValues.clear();
+  isTypedModelValueCreated = false;
+  isWrittenOrderUsed = false;
+  hasMixedSet = false;
+  hasLambda = false;
+  hasStreamedSet = false;
   for (const text of texts) rankString(text);
 };
 
@@ -626,6 +637,10 @@ export const compareValues = (left: Value, right: Value): number => {
 
 const modelValues = new Map<string, ModelValue>();
 
+let isTypedModelValueCreated = false;
+
+export const hasTypedModelValues = () => isTypedModelValueCreated;
+
 const MAXIMUM_MODEL_VALUES = 32768;
 
 export const createModelValue = (name: string): ModelValue => {
@@ -636,10 +651,12 @@ export const createModelValue = (name: string): ModelValue => {
       `TLC supports at most ${MAXIMUM_MODEL_VALUES} model values, but model value ${name} exceeds this limit.`,
     );
   }
+  const type = name.length > 2 && name[1] === "_" ? name[0] : undefined;
+  if (type !== undefined) isTypedModelValueCreated = true;
   const value: ModelValue = {
     kind: "ModelValue",
     name,
-    type: name.length > 2 && name[1] === "_" ? name[0] : undefined,
+    type,
     rank: getStringRank(name),
     hash: finalizeHash(combineHash(hashString(name), 0x6d)),
     fingerprint: finalizeFingerprint(fingerprintString(name) ^ 0x3c),
@@ -1050,6 +1067,8 @@ const getSetElementsLikeTlc = (left: SetValue | MixedSetValue, right: Value) => 
 };
 
 const compareSetLikeTlc = (left: ObjectValue, right: Value, isEquality: boolean): number => {
+  // TLC's UserValue#compareTo puts STRING, Nat, Int and Seq(S) after any model value, typed or not.
+  if (isOverriddenSet(left) && isModelValue(right)) return 1;
   if (isComparedByClass(left, right)) {
     if (!isEquality) return compareValues(left, right);
     return valuesEqual(left, right) ? 0 : 1;
@@ -2264,7 +2283,7 @@ const isModelValueMember = (modelValue: ModelValue, set: Value) => {
 // The common cases stay small enough for V8 to inline.
 const isElementOfSet = (element: Value, set: Value): boolean => {
   if (typeof element === "number" && typeof set === "object") {
-    if (set.kind === "Set")
+    if (set.kind === "Set" && !isTypedModelValueCreated)
       return isIntegerInSortedSet(element, set) ?? isElementOfAnySet(element, set);
     if (set.kind === "Interval") return element >= set.low && element <= set.high;
   }
@@ -2276,7 +2295,9 @@ const isElementOfAnySet = (element: Value, set: Value): boolean => {
   switch (set.kind) {
     case "Set":
       cacheSet(element);
-      return computeLikeTlcOnFailure(isInSortedSet, isInSortedSetLikeTlc, element, set);
+      return isTypedModelValueCreated
+        ? isInSortedSetLikeTlc(element, set)
+        : computeLikeTlcOnFailure(isInSortedSet, isInSortedSetLikeTlc, element, set);
     case "MixedSet":
       return set.enumerated
         ? searchLikeTlc(element, set.enumerated.elements).isFound
