@@ -3303,6 +3303,51 @@ describe("evaluation errors match TLC", () => {
   );
 
   it.each([
+    [
+      "x' = x /\\ \\E e \\in (({s \\in SUBSET (1..2) : s = 1} \\cup SUBSET {}) \\ {{}}) : TRUE",
+      [
+        "Line 5, column 9 to line 5, column 89 in M",
+        "Line 5, column 9 to line 5, column 14 in M",
+        "Line 5, column 19 to line 5, column 89 in M",
+        "Line 5, column 53 to line 5, column 57 in M",
+      ],
+    ],
+    [
+      "x' \\in (({s \\in SUBSET (1..2) : s = 1} \\cup SUBSET {}) \\ {{}})",
+      ["Line 5, column 9 to line 5, column 70 in M", "Line 5, column 41 to line 5, column 45 in M"],
+    ],
+    [
+      "x' \\in UNION {{s \\in SUBSET (1..2) : s = 1}}",
+      ["Line 5, column 9 to line 5, column 52 in M", "Line 5, column 46 to line 5, column 50 in M"],
+    ],
+    [
+      "x' = x /\\ \\A e \\in UNION {{s \\in SUBSET (1..2) : s = 1}} : TRUE",
+      [
+        "Line 5, column 9 to line 5, column 71 in M",
+        "Line 5, column 9 to line 5, column 14 in M",
+        "Line 5, column 19 to line 5, column 71 in M",
+        "Line 5, column 58 to line 5, column 62 in M",
+      ],
+    ],
+    [
+      "x' = CHOOSE e \\in UNION {{s \\in SUBSET (1..2) : s = 1}} : TRUE",
+      [
+        "Line 5, column 9 to line 5, column 70 in M",
+        "Line 5, column 14 to line 5, column 70 in M",
+        "Line 5, column 57 to line 5, column 61 in M",
+      ],
+    ],
+  ])(
+    "streams UNION S and a set operation outside their frames, as TLC's nextElement does: %s",
+    async (next, callStack) => {
+      const result = await checkSetBound(next, "TRUE");
+      expect(result.failure?.message).toBe(EQUALITY_EXCEPTION);
+      expect(formatCallStackLines(result)).toEqual(callStack);
+      expect(result.failure?.fingerprint).toBeUndefined();
+    },
+  );
+
+  it.each([
     ["x' \\in [a : {f \\in [1..2 -> 1..4] : TRUE}]", 273, 17],
     ["x' = [f \\in [1..2 -> 1..4] |-> 1]", 3, 2],
     [

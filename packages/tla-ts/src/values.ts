@@ -1940,7 +1940,11 @@ const listUnionLikeTlc = (union: SetOperationValue) => {
 };
 
 export const getNormalizedSetElements = (value: Value, isBounded: boolean) => {
-  if (typeof value !== "object" || value.kind !== "SetOperation" || value.enumerated) {
+  if (
+    typeof value !== "object" ||
+    (value.kind !== "SetOperation" && value.kind !== "Union") ||
+    value.enumerated
+  ) {
     return isBounded ? toFiniteSet(value).elements : getUnboundedElements(value);
   }
   // TLC frames the set as its elements() opens the stream, but not as toSetEnum collects it.
@@ -1950,7 +1954,7 @@ export const getNormalizedSetElements = (value: Value, isBounded: boolean) => {
     openStream(value);
     sets.pop();
   }
-  const elements = enumerateSetOperation(value);
+  const elements = value.kind === "Union" ? enumerateSet(value) : enumerateSetOperation(value);
   value.enumerated = createSortedSet(elements);
   return elements;
 };
@@ -1962,6 +1966,11 @@ export const someStreamedElement = (value: Value, visit: (element: Value) => boo
   const sets = setTrace.sets;
   sets?.push(value);
   openStream(value);
+  // TLC frames UNION S, S \cup T, S \ T and S \cap T as their elements() opens the stream, but not as it streams them.
+  if (value.kind === "Union" || value.kind === "SetOperation") {
+    sets?.pop();
+    return someElementOfStream(value, visit);
+  }
   const isFound = someElementOfStream(value, (element) => {
     sets?.pop();
     const isAccepted = visit(element);
@@ -2065,14 +2074,10 @@ const someElementOfStream = (value: ObjectValue, visit: (element: Value) => bool
   const enumerated = isLeftEnumerated ? value.left : value.right;
   const other = isLeftEnumerated ? value.right : value.left;
   if (!isTlcEnumerable(enumerated)) return toFiniteSet(value).elements.some(visit);
-  const sets = setTrace.sets;
-  return someStreamedElement(enumerated, (element) => {
-    // TLC's Enumerator#nextElement tests membership outside the frame of the set operation.
-    sets?.pop();
-    const isElement = isElementOf(element, other);
-    sets?.push(value);
-    return isElement === (value.operator === "\\cap") && visit(element);
-  });
+  return someStreamedElement(
+    enumerated,
+    (element) => isElementOf(element, other) === (value.operator === "\\cap") && visit(element),
+  );
 };
 
 const isAnyElement = () => true;
