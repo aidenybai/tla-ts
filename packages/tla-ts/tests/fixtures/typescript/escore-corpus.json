@@ -23275,8 +23275,7 @@
           "name": "reduces states with a symmetric type (2)",
           "source": "\n          /** @symmetric */\n          type Proc = \"p1\" | \"p2\";\n          let busy = new Set<Proc>();\n          export const start = (proc: Proc) => {\n            busy.add(proc);\n          };\n        ",
           "status": "success",
-          "distinct": 3,
-          "stop": "tla-ts can't check a symmetric model on ESCore yet"
+          "distinct": 3
         },
         {
           "name": "checks assumptions before the search",

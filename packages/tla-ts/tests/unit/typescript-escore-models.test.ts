@@ -3,6 +3,7 @@ import { join } from "node:path";
 import { pathToFileURL } from "node:url";
 import { Worker } from "node:worker_threads";
 import { afterAll, beforeAll, describe, expect, it } from "vite-plus/test";
+import { check } from "../../src";
 
 interface ModelResult {
   status: string;
@@ -603,6 +604,62 @@ describe("checks a module's exported functions as a model on ESCore", () => {
 
     it("rejects another result", async () => {
       expect((await checkModel(getSource("value - 10"))).message).toContain('"result 9"');
+    });
+  });
+
+  describe("checks the port of SimpleAllocator.tla under its symmetry as tla-ts checks the original", () => {
+    const directory = join(import.meta.dirname, "../fixtures/typescript/simple-allocator");
+    const path = join(directory, "simple-allocator.ts");
+    const source = readFileSync(path, "utf8");
+
+    it("finds the original's states, one for each permutation of clients and resources", async () => {
+      const original = await check({
+        source: readFileSync(join(directory, "SimpleAllocator.tla"), "utf8"),
+        config: readFileSync(join(directory, "SimpleAllocator.cfg"), "utf8"),
+      });
+      expect([original.status, original.distinctStates, original.generatedStates]).toEqual([
+        "success",
+        50,
+        226,
+      ]);
+      expect(getCounts(await checkModel(source, path))).toEqual(["success", 50, 226]);
+    });
+
+    it("finds the violation of ResourceMutex where a client takes a resource another holds", async () => {
+      const result = await checkModel(source.replace(" || !given.isDisjointFrom(taken)", ""), path);
+      expect(result.message).toContain('"two clients hold a resource"');
+    });
+
+    it.each([
+      [
+        "names a value",
+        "if (unsat[c].size",
+        'if (c === "c1" || unsat[c].size',
+        'names the value "c1"',
+      ],
+      [
+        "reads a value's text",
+        "if (unsat[c].size",
+        "if (c.length > 2 || unsat[c].size",
+        "reads a property",
+      ],
+      [
+        "iterates a Set",
+        "  taken = taken.union(given);",
+        "  for (const r of given) taken.add(r);",
+        "iterates",
+      ],
+      ["destructures a Set", "  taken = taken.union(given);", "  const [r] = given;", "iterates"],
+      [
+        "calls a function that reads text",
+        "if (unsat[c].size",
+        "if (Number(c) === 0 || unsat[c].size",
+        "calls a function",
+      ],
+    ])("stops where the program %s, which tells the values apart", async (_, from, to, reason) => {
+      const result = await checkModel(source.replace(from, to), path);
+      expect(result.status).toBe("stopped");
+      expect(result.message).toContain(`tla-ts can't check a symmetric model that ${reason}`);
     });
   });
 });

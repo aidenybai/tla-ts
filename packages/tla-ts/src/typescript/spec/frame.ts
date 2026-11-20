@@ -297,9 +297,7 @@ export const frameModel = (source: string, fileName: string, library?: Library) 
   const tags = new Map<ts.Node, Map<string, string>>(
     sourceFile.statements.map((statement) => [statement, getTags(statement)]),
   );
-  if ([...tags].some((entry) => entry[1].has("symmetric"))) {
-    throw new TlaTypeScriptError("tla-ts can't check a symmetric model on ESCore yet");
-  }
+  const symmetric = getSymmetricSets(sourceFile, tags, checker);
   // The functions and the variables that the module's statements declare.
   const declarations = sourceFile.statements.flatMap((statement): Declared[] => {
     if (ts.isFunctionDeclaration(statement) && statement.body !== undefined) {
@@ -1058,7 +1056,255 @@ export const frameModel = (source: string, fileName: string, library?: Library) 
     config,
     variables: stateNames.map((name): StateVariable => ({ name })),
     notes,
+    symmetric,
   };
+};
+
+// The methods that a symmetric model may call, none of which reads an order or a text.
+const SYMMETRIC_METHODS = new Set([
+  "add",
+  "clear",
+  "delete",
+  "difference",
+  "get",
+  "has",
+  "includes",
+  "intersection",
+  "isDisjointFrom",
+  "isSubsetOf",
+  "isSupersetOf",
+  "pop",
+  "push",
+  "set",
+  "symmetricDifference",
+  "union",
+]);
+
+// The binary operators that a symmetric model may apply to a value that may be a string: those
+// that only test a value's identity or truthiness, or bind it.
+const SYMMETRIC_OPERATORS = new Set([
+  ts.SyntaxKind.EqualsEqualsEqualsToken,
+  ts.SyntaxKind.ExclamationEqualsEqualsToken,
+  ts.SyntaxKind.AmpersandAmpersandToken,
+  ts.SyntaxKind.BarBarToken,
+  ts.SyntaxKind.QuestionQuestionToken,
+  ts.SyntaxKind.EqualsToken,
+  ts.SyntaxKind.CommaToken,
+]);
+
+// The values of each @symmetric type, a union of strings that the model's states may permute, as
+// TLC's SYMMETRY does: the model asserts that a permutation of each type's values maps each
+// behavior to another, which tla-ts takes from the tag, as TLC takes SYMMETRY. Where the code
+// might tell the values apart, it stops, and where unsure it stops too: see docs/typescript.md.
+const getSymmetricSets = (
+  sourceFile: ts.SourceFile,
+  tags: ReadonlyMap<ts.Node, Map<string, string>>,
+  checker: ts.TypeChecker,
+) => {
+  const stop = (node: ts.Node, what: string) => {
+    throw new TlaTypeScriptError(`tla-ts can't check a symmetric model ${what}`, node);
+  };
+  const sets = sourceFile.statements.flatMap((statement) => {
+    if (tags.get(statement)?.has("symmetric") !== true) return [];
+    if (!ts.isTypeAliasDeclaration(statement)) return stop(statement, "whose tag isn't on a type");
+    const members = ts.isUnionTypeNode(statement.type) ? statement.type.types : [statement.type];
+    // A value that isn't a name, or that names a property of every object, reads otherwise as a
+    // key or a number.
+    const values = members.map((member) =>
+      ts.isLiteralTypeNode(member) &&
+      ts.isStringLiteral(member.literal) &&
+      /^[A-Za-z_$][\w$]*$/.test(member.literal.text) &&
+      !(member.literal.text in Object.prototype)
+        ? member.literal.text
+        : stop(member, "whose symmetric type isn't a union of names that no object has"),
+    );
+    return values.length < 2 ? stop(statement, "whose symmetric type has one value") : [values];
+  });
+  if (sets.length === 0) return sets;
+  const named = new Set(sets.flat());
+  if (named.size !== sets.flat().length) stop(sourceFile, "whose symmetric types share a value");
+  // A type that may hold a string that no literal type gives, or any value.
+  const isWide = (type: ts.Type) =>
+    (type.isUnion() ? type.types : [type]).some(
+      (inner) =>
+        (inner.flags &
+          (ts.TypeFlags.String |
+            ts.TypeFlags.TemplateLiteral |
+            ts.TypeFlags.StringMapping |
+            ts.TypeFlags.Any |
+            ts.TypeFlags.Unknown |
+            ts.TypeFlags.TypeVariable |
+            ts.TypeFlags.Index |
+            ts.TypeFlags.Conditional |
+            ts.TypeFlags.Substitution)) !==
+          0 ||
+        ((inner.flags & ts.TypeFlags.Object) !== 0 &&
+          (inner.getSymbol()?.name === "Object" ||
+            (checker.getPropertiesOfType(inner).length === 0 &&
+              inner.getCallSignatures().length === 0))),
+    );
+  const isStringy = (node: ts.Expression) => {
+    const type = checker.getTypeAtLocation(node);
+    return (
+      isWide(type) ||
+      (type.isUnion() ? type.types : [type]).some(
+        (inner) => (inner.flags & ts.TypeFlags.StringLiteral) !== 0,
+      )
+    );
+  };
+  // An object that a string indexes otherwise than by its own keys.
+  const isIndexed = (node: ts.Expression) => {
+    const type = checker.getTypeAtLocation(node);
+    return (
+      isStringy(node) ||
+      checker.isArrayLikeType(type) ||
+      checker.getIndexInfoOfType(type, ts.IndexKind.Number) !== undefined ||
+      type.getCallSignatures().length > 0
+    );
+  };
+  // A module-level object literal whose keys are every value of a symmetric type, each with the
+  // same initializer that reads nothing and calls nothing but a Set's or Map's constructor,
+  // makes a symmetric value.
+  const isInert = (node: ts.Expression): boolean =>
+    ts.isNumericLiteral(node) ||
+    (ts.isStringLiteral(node) && !named.has(node.text)) ||
+    node.kind === ts.SyntaxKind.TrueKeyword ||
+    node.kind === ts.SyntaxKind.FalseKeyword ||
+    node.kind === ts.SyntaxKind.NullKeyword ||
+    (ts.isIdentifier(node) && node.text === "undefined") ||
+    (ts.isArrayLiteralExpression(node) && node.elements.length === 0) ||
+    (ts.isObjectLiteralExpression(node) && node.properties.length === 0) ||
+    (ts.isNewExpression(node) &&
+      ts.isIdentifier(node.expression) &&
+      (node.expression.text === "Set" || node.expression.text === "Map") &&
+      (node.arguments ?? []).length === 0);
+  const isSymmetricLiteral = (node: ts.ObjectLiteralExpression) => {
+    const keys = node.properties.map((property) =>
+      ts.isPropertyAssignment(property) &&
+      (ts.isIdentifier(property.name) || ts.isStringLiteral(property.name)) &&
+      isInert(property.initializer)
+        ? property.name.text
+        : undefined,
+    );
+    const texts = node.properties.map((property) =>
+      ts.isPropertyAssignment(property) ? property.initializer.getText() : undefined,
+    );
+    return sets.some(
+      (values) =>
+        keys.length === values.length &&
+        values.every((value) => keys.includes(value)) &&
+        texts.every((text) => text !== undefined && text === texts[0]),
+    );
+  };
+  const isNameOf = (node: ts.Identifier) =>
+    ts.isPropertyAccessExpression(node.parent) ||
+    ts.isPropertyAssignment(node.parent) ||
+    ts.isShorthandPropertyAssignment(node.parent) ||
+    ts.isBindingElement(node.parent) ||
+    ts.isMethodDeclaration(node.parent) ||
+    ts.isPropertyDeclaration(node.parent) ||
+    ts.isGetAccessorDeclaration(node.parent) ||
+    ts.isSetAccessorDeclaration(node.parent) ||
+    ts.isEnumMember(node.parent);
+  // A function that the module declares, whose body the checks read too.
+  const isModuleFunction = (node: ts.Expression) =>
+    ts.isIdentifier(node) &&
+    (checker.getSymbolAtLocation(node)?.declarations ?? []).some(
+      (declaration) =>
+        declaration.getSourceFile() === sourceFile &&
+        (ts.isFunctionDeclaration(declaration) ||
+          (ts.isVariableDeclaration(declaration) &&
+            (declaration.parent.flags & ts.NodeFlags.Const) !== 0 &&
+            declaration.initializer !== undefined &&
+            (ts.isArrowFunction(declaration.initializer) ||
+              ts.isFunctionExpression(declaration.initializer)))),
+    );
+  // A method of a Set, a Map, or an array that reads no order or text.
+  const isSymmetricMethod = (node: ts.Expression) => {
+    if (!ts.isPropertyAccessExpression(node) || !SYMMETRIC_METHODS.has(node.name.text)) {
+      return false;
+    }
+    const type = checker.getTypeAtLocation(node.expression);
+    return (type.isUnion() ? type.types : [type]).every((inner) =>
+      ["Set", "ReadonlySet", "Map", "ReadonlyMap", "Array", "ReadonlyArray"].includes(
+        inner.getSymbol()?.name ?? "",
+      ),
+    );
+  };
+  const visit = (node: ts.Node, isTopLevel: boolean): void => {
+    if (ts.isTypeNode(node) || ts.isTypeAliasDeclaration(node) || ts.isInterfaceDeclaration(node)) {
+      return;
+    }
+    if (ts.isObjectLiteralExpression(node) && isTopLevel && isSymmetricLiteral(node)) {
+      return;
+    }
+    if (
+      (ts.isStringLiteral(node) || ts.isNoSubstitutionTemplateLiteral(node)) &&
+      named.has(node.text)
+    ) {
+      stop(node, `that names the value "${node.text}" of a symmetric type`);
+    }
+    if (ts.isIdentifier(node) && named.has(node.text) && isNameOf(node)) {
+      stop(node, `that names the value "${node.text}" of a symmetric type`);
+    }
+    if (ts.isExpression(node) && isWide(checker.getTypeAtLocation(node))) {
+      stop(node, "with a value that may be any string");
+    }
+    if (
+      ts.isForInStatement(node) ||
+      ts.isForOfStatement(node) ||
+      ts.isSpreadElement(node) ||
+      ts.isSpreadAssignment(node) ||
+      ts.isArrayBindingPattern(node) ||
+      (ts.isBinaryExpression(node) &&
+        node.operatorToken.kind === ts.SyntaxKind.EqualsToken &&
+        ts.isArrayLiteralExpression(node.left)) ||
+      (ts.isYieldExpression(node) && node.asteriskToken !== undefined) ||
+      ts.isTemplateExpression(node) ||
+      ts.isTaggedTemplateExpression(node)
+    ) {
+      stop(node, "that iterates, spreads, or formats a value");
+    }
+    if (
+      ts.isBinaryExpression(node) &&
+      !SYMMETRIC_OPERATORS.has(node.operatorToken.kind) &&
+      (isStringy(node.left) || isStringy(node.right))
+    ) {
+      stop(node, "that compares, converts, or joins a value that may be a string");
+    }
+    if (
+      (ts.isPrefixUnaryExpression(node) || ts.isPostfixUnaryExpression(node)) &&
+      node.operator !== ts.SyntaxKind.ExclamationToken &&
+      isStringy(node.operand)
+    ) {
+      stop(node, "that converts a value that may be a string");
+    }
+    if (
+      (ts.isPropertyAccessExpression(node) && isStringy(node.expression)) ||
+      (ts.isElementAccessExpression(node) &&
+        isStringy(node.argumentExpression) &&
+        isIndexed(node.expression))
+    ) {
+      stop(node, "that reads a property of a value by a string that may name it otherwise");
+    }
+    if (
+      (ts.isCallExpression(node) &&
+        !isModuleFunction(node.expression) &&
+        !isSymmetricMethod(node.expression)) ||
+      (ts.isNewExpression(node) &&
+        !(
+          ts.isIdentifier(node.expression) &&
+          (node.expression.text === "Set" || node.expression.text === "Map")
+        ))
+    ) {
+      stop(node, "that calls a function that may read an order or a text");
+    }
+    ts.forEachChild(node, (child) =>
+      visit(child, isTopLevel && !ts.isFunctionLike(child) && !ts.isClassLike(child)),
+    );
+  };
+  sourceFile.statements.forEach((statement) => visit(statement, true));
+  return sets;
 };
 
 // The state variable that a statement counts up or down by one, from a whole number that its
