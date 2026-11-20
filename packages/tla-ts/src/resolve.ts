@@ -181,7 +181,7 @@ const isKey = (name: string) => {
 export const getKeyName = (key: string) =>
   isKey(key) ? key.slice(0, key.lastIndexOf(KEY_SEPARATOR)) : key;
 
-const CORE_SYMBOLS: Symbols = new Map([
+export const CORE_SYMBOLS: Symbols = new Map([
   ...["~>", "-+->", "\\cdot", "\\X"].map((name): [string, ModuleSymbol] => [
     name,
     { key: name, arity: 2, kind: "Builtin" },
@@ -2450,6 +2450,8 @@ export interface ModuleUnit {
   reports: ModuleReport[];
   warnings: SanyError[];
   goalOperands: WeakMap<Expression, Expression[]>;
+  recursiveCount: RecursiveCount;
+  nestedRecursion: NestedRecursion[];
 }
 
 export const MODULE_START: SourceLocation = { line: 0, column: 0 };
@@ -2461,6 +2463,89 @@ export const isTheoremDefinition = (module: Module, definition: Definition) =>
       item.location.line === definition.location.line &&
       item.location.column === definition.location.column,
   );
+
+export interface RecursiveDeclaration {
+  declaration: Declaration;
+  isTaken: boolean;
+}
+
+export interface RecursiveCount {
+  declarations: RecursiveDeclaration[];
+  closed: number;
+}
+
+export interface NestedRecursion {
+  location: SourceLocation;
+  definitions: Definition[];
+  declarations: Declaration[];
+  closed: number;
+}
+
+export const getRecursiveDefinitions = (
+  module: Module,
+  declarations: Declaration[],
+  definitions: Definition[],
+) => {
+  const names = new Set(declarations.map((declaration) => declaration.name));
+  return Map.groupBy(
+    definitions.filter(
+      (definition) => names.has(definition.name) && !isTheoremDefinition(module, definition),
+    ),
+    (definition) => definition.name,
+  );
+};
+
+// SANY counts a RECURSIVE declaration whose name is taken, and nothing defines it.
+const getOpenRecursive = (
+  declarations: RecursiveDeclaration[],
+  definitions: Map<string, Definition[]>,
+  location: SourceLocation,
+) =>
+  declarations.filter(
+    (declared) =>
+      isBefore(declared.declaration.location, location) &&
+      (declared.isTaken ||
+        definitions
+          .get(declared.declaration.name)
+          ?.some(
+            (definition) =>
+              isBefore(declared.declaration.location, definition.location) &&
+              isBefore(definition.location, location) &&
+              (definition.kind === "Operator" || declared.declaration.arity === 0),
+          ) !== true),
+  );
+
+// SANY shares its RECURSIVE counter with inner modules: their undefined declarations stay counted, and each module's end takes the count off the sum that flags a section.
+export const getRecursiveCount = (
+  start: RecursiveCount,
+  declarations: RecursiveDeclaration[],
+  nested: NestedRecursion[],
+  definitions: Map<string, Definition[]>,
+  location: SourceLocation,
+): RecursiveCount => ({
+  declarations: getOpenRecursive(
+    [
+      ...start.declarations,
+      ...declarations,
+      ...nested.flatMap((item) =>
+        item.declarations.map((declaration) => ({ declaration, isTaken: true })),
+      ),
+    ],
+    definitions,
+    location,
+  ),
+  closed: nested.findLast((item) => isBefore(item.location, location))?.closed ?? start.closed,
+});
+
+const getRecursiveBinding = (declaration: Declaration, key: string): ModuleBinding => ({
+  key,
+  kind: "Definition",
+  arity: declaration.arity,
+  params: Array(declaration.arity).fill(0),
+  range: declaration.location.range,
+  position: declaration.location,
+  isPending: true,
+});
 
 const getDeclarationSymbol = (
   declaration: Declaration,
@@ -2740,7 +2825,31 @@ export const resolveModule = (module: Module, unit: ModuleUnit) => {
     ]),
   );
   const recursive = new Set<Binding>();
-  const declarations: { declaration: Declaration; binding: ModuleBinding | undefined }[] = [];
+  const outerBindings = new Map(
+    unit.recursiveCount.declarations
+      .filter((declared) => !declared.isTaken)
+      .map((declared) => [
+        declared.declaration.name,
+        getRecursiveBinding(declared.declaration, unit.getKey(declared.declaration)),
+      ]),
+  );
+  outerBindings.forEach((binding, name) => {
+    bindings.set(name, binding);
+    recursive.add(binding);
+  });
+  const nestedDefinitions = unit.nestedRecursion.flatMap((item) => item.definitions);
+  const recursiveDeclarations = module.units.flatMap((item) =>
+    item.kind === "Recursive" ? item.declarations : [],
+  );
+  const recursiveDefinitions = getRecursiveDefinitions(
+    module,
+    [
+      ...unit.recursiveCount.declarations.map((declared) => declared.declaration),
+      ...recursiveDeclarations,
+    ],
+    [...module.definitions, ...nestedDefinitions],
+  );
+  const declarations: RecursiveDeclaration[] = [];
   const createCheck = (
     location: SourceLocation,
     self: Definition | undefined,
@@ -2783,6 +2892,7 @@ export const resolveModule = (module: Module, unit: ModuleUnit) => {
         ),
       ),
     );
+  const end = module.location.range?.end ?? module.location;
   const semanticErrors = collectSemanticErrors(
     [
       ...module.units.flatMap((item): SemanticUnit[] => {
@@ -2806,9 +2916,14 @@ export const resolveModule = (module: Module, unit: ModuleUnit) => {
           {
             location: section.location,
             check: (errors) => {
-              if (
-                declarations.some((declared) => !declared.binding || declared.binding.isPending)
-              ) {
+              const count = getRecursiveCount(
+                unit.recursiveCount,
+                declarations,
+                unit.nestedRecursion,
+                recursiveDefinitions,
+                section.location,
+              );
+              if (count.declarations.length > count.closed) {
                 errors.push({
                   location: formatRange(range),
                   message: `${section.type} may not appear within a recursive definition section.`,
@@ -2830,33 +2945,34 @@ export const resolveModule = (module: Module, unit: ModuleUnit) => {
           warnings.push(...report.warnings);
         },
       })),
+      ...nestedDefinitions.map((definition) => ({
+        location: definition.location,
+        check: () => {
+          const binding = bindings.get(definition.name);
+          if (!binding?.isPending) return;
+          binding.isPending = false;
+          binding.range = definition.location.range;
+          if (definition.kind === "Operator") binding.params = getParamArities(definition);
+        },
+      })),
       ...bindDeclarations(module.constants, "Constant"),
       ...bindDeclarations(module.variables, "Variable"),
-      ...module.units
-        .flatMap((item) => (item.kind === "Recursive" ? item.declarations : []))
-        .map((declaration) =>
-          createCheck(declaration.location, undefined, false, (inner) => {
-            const binding: ModuleBinding = {
-              kind: "Definition",
-              arity: declaration.arity,
-              params: Array(declaration.arity).fill(0),
-              range: declaration.location.range,
-              position: declaration.location,
-              isPending: true,
-            };
-            const isBound = isBindable(
-              declaration.name,
-              bindings.get(declaration.name),
-              binding,
-              inner,
-            );
-            if (isBound) {
-              bindings.set(declaration.name, binding);
-              recursive.add(binding);
-            }
-            declarations.push({ declaration, binding: isBound ? binding : undefined });
-          }),
-        ),
+      ...recursiveDeclarations.map((declaration) =>
+        createCheck(declaration.location, undefined, false, (inner) => {
+          const binding = getRecursiveBinding(declaration, unit.getKey(declaration));
+          const isBound = isBindable(
+            declaration.name,
+            bindings.get(declaration.name),
+            binding,
+            inner,
+          );
+          if (isBound) {
+            bindings.set(declaration.name, binding);
+            recursive.add(binding);
+          }
+          declarations.push({ declaration, isTaken: !isBound });
+        }),
+      ),
       ...module.definitions.map((definition) =>
         createCheck(definition.location, definition, true, (inner) => {
           if (isTheoremDefinition(module, definition)) {
@@ -2912,11 +3028,11 @@ export const resolveModule = (module: Module, unit: ModuleUnit) => {
         ),
       ),
       {
-        location: module.location.range?.end ?? module.location,
+        location: end,
         check: (errors: SanyError[]) =>
-          declarations.forEach((item) => {
+          getOpenRecursive(declarations, recursiveDefinitions, end).forEach((item) => {
             const range = item.declaration.location.range;
-            if (range && (!item.binding || item.binding.isPending)) {
+            if (range) {
               errors.push({
                 location: formatRange(range),
                 message: `Symbol ${resolveSynonym(item.declaration.name)} declared in RECURSIVE statement but not defined.`,
@@ -2927,11 +3043,23 @@ export const resolveModule = (module: Module, unit: ModuleUnit) => {
     ],
     unit.warnings,
   );
+  const endCount = getRecursiveCount(
+    unit.recursiveCount,
+    declarations,
+    unit.nestedRecursion,
+    recursiveDefinitions,
+    end,
+  );
   return {
     errors: semanticErrors,
-    boundDefinitions: module.definitions.filter((definition) =>
-      isSameRange(bindings.get(definition.name)?.range, definition.location.range),
+    boundDefinitions: module.definitions.filter(
+      (definition) =>
+        !outerBindings.has(definition.name) &&
+        isSameRange(bindings.get(definition.name)?.range, definition.location.range),
     ),
+    boundRecursive: declarations
+      .filter((item) => !item.isTaken && bindings.get(item.declaration.name)?.isPending === true)
+      .map((item) => item.declaration),
     boundTheorems: module.theorems.flatMap((theorem) => {
       if (theorem.name === undefined) return [];
       const binding = bindings.get(theorem.name);
@@ -2939,5 +3067,15 @@ export const resolveModule = (module: Module, unit: ModuleUnit) => {
         ? [{ name: theorem.name, location: theorem.location, goal: binding.goal }]
         : [];
     }),
+    recursion: {
+      location: module.location,
+      definitions: [...module.definitions, ...nestedDefinitions].filter((definition) =>
+        isSameRange(outerBindings.get(definition.name)?.range, definition.location.range),
+      ),
+      declarations: endCount.declarations
+        .filter((item) => !unit.recursiveCount.declarations.includes(item))
+        .map((item) => item.declaration),
+      closed: endCount.closed + endCount.declarations.length,
+    },
   };
 };

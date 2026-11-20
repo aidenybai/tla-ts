@@ -20,6 +20,7 @@ interface TraceOptions {
   known?: number;
   incomplete?: State;
   isPrintedOnly?: boolean;
+  isCurrentKept?: boolean;
   isRebuildFailureKept?: boolean;
 }
 
@@ -112,12 +113,13 @@ export const createTraceBuilder = (context: TraceContext) => {
       isSameState(fingerprintState, stored)
     );
   };
-  const rebuildInitialState = (index: number) => {
-    let isFound = false;
-    context.forEachInitialState((state) => {
-      isFound ||= hasFingerprint(state, index);
+  const rebuildInitialState = (index: number, currentState: Value[] | undefined) =>
+    runtime.runWithCurrentState(currentState, () => {
+      let isFound = false;
+      context.forEachInitialState((state) => {
+        isFound ||= hasFingerprint(state, index);
+      });
     });
-  };
   const rebuildFrom = (state: Value[], level: number) => {
     current.rebuilt = { state, level };
     runtime.reseedRandom();
@@ -178,7 +180,15 @@ export const createTraceBuilder = (context: TraceContext) => {
     const isRebuiltAgain = known > 0 && !is174 && !traceOptions.isPrintedOnly && steps.length > 1;
     const initialOutput =
       known === 0 || (steps.length > 1 && (rebuilt > 0 || is174))
-        ? runtime.runWithNewRandom(() => captureOutput(() => rebuildInitialState(path[0])).lines)
+        ? runtime.runWithNewRandom(
+            () =>
+              captureOutput(() =>
+                rebuildInitialState(
+                  path[0],
+                  traceOptions.isCurrentKept ? runtime.getCurrentState() : undefined,
+                ),
+              ).lines,
+          )
         : [];
     const last = steps.length - 1;
     const isPrintFingerprinted =
@@ -238,6 +248,8 @@ export const createTraceBuilder = (context: TraceContext) => {
                 traceOptions.incomplete ??
                 steps[loopStart ?? position].state,
               position + 1,
+              // Deviation from TLC: TLCTrace#printTrace gives the ALIAS an empty Trace when the trace is an initial state and its successor.
+              // Deviation from TLC: LiveWorker#printTrace leaves each state of a lasso's prefix out of the Trace its ALIAS reads.
               () => steps.slice(0, position + 1).map((inner) => inner.state),
             ),
           );
@@ -253,11 +265,14 @@ export const createTraceBuilder = (context: TraceContext) => {
           ? getViewOutput(step.state, position + 1)
           : [],
     }));
+    // TLCTrace#printTrace leaves current the last state it aliases, else the state it rebuilds the last one from.
+    // Deviation from TLC: Worker#doPostCondition misses a random initial state drawn from this seed and skips the postcondition.
+    const seedPosition = alias === undefined ? last - 1 : last;
     const rebuiltOutput = isRebuiltAgain
       ? [
-          getViewOutput(steps[last - 1].state, last, true),
+          getViewOutput(steps[seedPosition].state, seedPosition + 1, true),
           ...runtime.runWithNewRandom(() => [
-            captureOutput(() => rebuildInitialState(path[0])).lines,
+            captureOutput(() => rebuildInitialState(path[0], steps[seedPosition].state)).lines,
             ...steps
               .slice(1, last)
               .map((_step, position) => findPositionAction(position + 1).lines),
@@ -333,31 +348,56 @@ export const createTraceBuilder = (context: TraceContext) => {
     current.rebuilt = rebuilt;
     return successor;
   };
-  const getPathStates = (path: number[], nextFailure: string) => {
-    const initial = captureOutput(() =>
-      isReducing || isImpure(environment)
-        ? context.findUncoveredInitialState((state) => hasFingerprint(state, path[0]))
-        : states[path[0]],
-    ).result;
-    if (!initial) throw new TlaEvaluationError(INITIAL_RECOVERY_FAILURE);
-    const steps: Successor[] = [{ state: initial, action: undefined }];
-    for (let position = 1; position < path.length; position++) {
-      const previous = steps[position - 1].state;
-      if (path[position - 1] === path[position]) {
-        steps.push({ state: previous, action: "Stuttering" });
-        continue;
+  const getPathStates = (path: number[], nextFailure: string) =>
+    runtime.runWithNewRandom(() => {
+      const initial = captureOutput(() =>
+        isReducing || isImpure(environment)
+          ? runtime.runWithCurrentState(undefined, () =>
+              context.findUncoveredInitialState((state) => hasFingerprint(state, path[0])),
+            )
+          : states[path[0]],
+      ).result;
+      if (!initial) throw new TlaEvaluationError(INITIAL_RECOVERY_FAILURE);
+      const steps: Successor[] = [{ state: initial, action: undefined }];
+      for (let position = 1; position < path.length; position++) {
+        const previous = steps[position - 1].state;
+        if (path[position - 1] === path[position]) {
+          steps.push({ state: previous, action: "Stuttering" });
+          continue;
+        }
+        const successor = findSuccessorWithFingerprint(
+          previous,
+          path[position - 1],
+          path[position],
+        );
+        if (!successor) throw new TlaEvaluationError(nextFailure);
+        steps.push(successor);
       }
-      const successor = findSuccessorWithFingerprint(previous, path[position - 1], path[position]);
-      if (!successor) throw new TlaEvaluationError(nextFailure);
-      steps.push(successor);
-    }
-    return steps;
-  };
-  const getTrace = (index: number, lastSuccessor?: Successor, traceOptions: TraceOptions = {}) => {
+      return steps;
+    });
+  const getIndexPath = (index: number) => {
     const path: number[] = [];
     for (let position = index; position !== -1; position = context.parents[position]) {
       path.unshift(position);
     }
+    return path;
+  };
+  // TLCExt#getTrace rebuilds the path from fingerprints, which evaluates Init and the actions again.
+  // Deviation from TLC: TLCExt#getTrace leaves a rebuilt state current, so later draws and Trace in the same step start from it.
+  // Deviation from TLC: TLCExt#getTrace draws for the initial state from the current state's seed, so it misses a random one and throws a NullPointerException.
+  const rebuildPath = (index: number) => {
+    const path = getIndexPath(index);
+    if (path.length === 0) return;
+    runtime.runWithNewRandom(() => {
+      rebuildInitialState(path[0], runtime.getCurrentState());
+      for (let position = 1; position < path.length; position++) {
+        const source = path[position - 1];
+        findStepAction(source, states[source], context.fingerprintStates[path[position]], false);
+      }
+    });
+  };
+  const getTrace = (index: number, lastSuccessor?: Successor, traceOptions: TraceOptions = {}) => {
+    const path = getIndexPath(index);
     const steps =
       isReducing && path.length > 1
         ? getPathStates(path, INITIAL_RECOVERY_FAILURE)
@@ -382,7 +422,10 @@ export const createTraceBuilder = (context: TraceContext) => {
     const traceOutput =
       is174 || traceOptions.isPrintedOnly
         ? []
-        : [...getViewOutput(state, 1), ...captureOutput(() => rebuildInitialState(index)).lines];
+        : [
+            ...getViewOutput(state, 1),
+            ...captureOutput(() => rebuildInitialState(index, undefined)).lines,
+          ];
     const step = {
       action: undefined,
       label: undefined,
@@ -424,5 +467,6 @@ export const createTraceBuilder = (context: TraceContext) => {
     getStateTrace,
     getIncompleteStep,
     getPathSteps,
+    rebuildPath,
   };
 };

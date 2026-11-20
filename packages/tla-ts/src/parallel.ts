@@ -25,6 +25,7 @@ import {
   reportInitialStatesProgress,
   reportStartup,
 } from "./search";
+import { getSpecDescription } from "./spec-description";
 import { getInitialStates } from "./successors";
 import { getFingerprintDistance, OUT_DEGREE_BUCKETS } from "./tlc/summary";
 import { createStateEncoder, type EncodedStates } from "./transfer";
@@ -151,6 +152,8 @@ export const check = async (options: CheckOptions): Promise<CheckResult> => {
     [],
     specification.runtimeInvariants,
   );
+  // Tool's constructor describes the specification before TLC creates the checker.
+  getSpecDescription(config, environment, specification.instanceActions);
   if (findAssumptionViolation(specification.assumptions, environment)) return fallBack();
   if (
     !search ||

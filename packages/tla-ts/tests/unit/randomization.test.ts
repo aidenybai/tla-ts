@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vite-plus/test";
 import { check, formatValue } from "../../src";
+import type { OutputLine } from "../../src/check";
 import { checkFixture } from "./check-harness";
 
 const checkWithSeed = (name: string, seed: bigint) =>
@@ -188,6 +189,107 @@ describe("random choices match TLC run with -fp 0 and the same -seed", () => {
       ['<<"B", 1>>'],
       ["3"],
     ]);
+  });
+
+  // Deviation from TLC: TLC misses the initial state, skips the rest of the rebuild and skips the postcondition.
+  it("rebuilds the trace and checks the postcondition once the rebuild for it draws a different random initial state", async () => {
+    const result = await check({
+      source:
+        '---- MODULE M ----\nEXTENDS Naturals, TLC, TLCExt\nVARIABLE x\nInit == x = RandomElement(1..1000) /\\ PrintT(x)\nNext == x\' = x + 1 /\\ PrintT(<<"next", x>>)\nInv == x < 734\nPost == PrintT(DOMAIN CounterExample)\n====',
+      config: "INIT Init\nNEXT Next\nINVARIANT Inv\nPOSTCONDITION Post",
+      seed: 4n,
+      onPrint: () => {},
+    });
+    expect([result.violation?.traceOutput, result.violation?.postconditionOutput]).toEqual([
+      ["493", '<<"next", 731>>', '<<"next", 732>>', '<<"next", 733>>'],
+      ['{"action", "state"}'],
+    ]);
+  });
+
+  it.each([
+    [
+      "an invariant",
+      "Next == x' = x + 1\nInv == x < 734",
+      "INIT Init\nNEXT Next\nINVARIANT Inv",
+      "invariant-violation",
+      ["493"],
+    ],
+    [
+      "an invariant with a VIEW",
+      "Next == x' = x + 1\nInv == x < 734\nV == x",
+      "INIT Init\nNEXT Next\nINVARIANT Inv\nVIEW V",
+      "invariant-violation",
+      ["493"],
+    ],
+    [
+      "an action property",
+      "Next == x' = x + 1\nAct == [][x' < 734]_x",
+      "INIT Init\nNEXT Next\nPROPERTY Act",
+      "liveness-violation",
+      ["493"],
+    ],
+    ["a deadlock", "Next == x < 734 /\\ x' = x + 1", "INIT Init\nNEXT Next", "deadlock", ["493"]],
+    [
+      "a deadlock with an ALIAS",
+      "Next == x < 734 /\\ x' = x + 1\nA == [x |-> x]",
+      "INIT Init\nNEXT Next\nALIAS A",
+      "deadlock",
+      ["984"],
+    ],
+    [
+      "a temporal property",
+      "Next == x < 734 /\\ x' = x + 1\nSpec == Init /\\ [][Next]_x\nProp == <>(x > 2000)",
+      "SPECIFICATION Spec\nPROPERTY Prop\nCHECK_DEADLOCK FALSE",
+      "liveness-violation",
+      [],
+    ],
+  ])(
+    "draws for a random initial state with no state current as it prints the trace of %s, then from the state it last rebuilt or aliased, as TLC does",
+    async (_title, definitions, config, status, traceOutput) => {
+      const result = await check({
+        source: `---- MODULE M ----\nEXTENDS Naturals, TLC\nVARIABLE x\nInit == x = RandomElement(1..1000) /\\ PrintT(x)\n${definitions}\n====`,
+        config,
+        seed: 4n,
+        onPrint: () => {},
+      });
+      expect([
+        result.status,
+        result.violation?.trace[0].output,
+        result.violation?.traceOutput,
+      ]).toEqual([status, ["731"], traceOutput]);
+    },
+  );
+
+  it.each([
+    ["FALSE", "731"],
+    ["RandomElement(1..2) = 3", "882"],
+  ])(
+    "draws for a random initial state that deadlocks on from the worker's random as it rebuilds the state for the postcondition, as TLC does after Next == %s",
+    async (condition, traceOutput) => {
+      const result = await check({
+        source: `---- MODULE M ----\nEXTENDS Naturals, TLC\nVARIABLE x\nInit == x = RandomElement(1..1000) /\\ PrintT(x)\nNext == ${condition} /\\ x' = x\n====`,
+        config: "INIT Init\nNEXT Next",
+        seed: 4n,
+        onPrint: () => {},
+      });
+      expect([result.status, result.violation?.traceOutput]).toEqual(["deadlock", [traceOutput]]);
+    },
+  );
+
+  it("draws for a random initial state from the state it expands as it prints the trace under -continue, as TLC does", async () => {
+    const outputs: OutputLine[][] = [];
+    await check({
+      source:
+        "---- MODULE M ----\nEXTENDS Naturals, TLC\nVARIABLE x\nInit == x = RandomElement(1..1000) /\\ PrintT(x)\nNext == x < 736 /\\ x' = x + 1\nInv == x < 734\n====",
+      config: "INIT Init\nNEXT Next\nINVARIANT Inv\nCHECK_DEADLOCK FALSE",
+      seed: 4n,
+      isContinued: true,
+      onPrint: () => {},
+      onProgress: (progress) => {
+        if (progress.kind === "violation") outputs.push(progress.violation.trace[0].output ?? []);
+      },
+    });
+    expect(outputs[0]).toEqual(["493"]);
   });
 
   it("draws once for a constant TLCEval in the next-state relation", async () => {

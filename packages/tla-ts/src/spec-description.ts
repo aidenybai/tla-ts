@@ -1,4 +1,3 @@
-import { isEvaluatedAtStartup } from "./dependencies";
 import {
   getAssumeProveBody,
   getChildren,
@@ -28,18 +27,33 @@ import {
   forEachBinding,
   getDefinition,
   getRootKey,
+  getStartupValue,
   lookupScope,
   resolveGlobalOperator,
   type Closure,
   type Environment,
   type Scope,
 } from "./evaluate";
-import { ACTION_LEVEL, CONSTANT_LEVEL, TEMPORAL_LEVEL, VARIABLE_LEVEL } from "./levels";
+import {
+  ACTION_LEVEL,
+  CONSTANT_LEVEL,
+  createBoundScope,
+  createLevelAnalyzer,
+  TEMPORAL_LEVEL,
+  VARIABLE_LEVEL,
+} from "./levels";
 import { bindLetDefinitions, getLevel } from "./liveness";
 import { EMPTY_STATE } from "./runtime";
-import { createRecord, createSet, createTuple, formatValue, type Value } from "./values";
+import {
+  createRecord,
+  createSet,
+  createTuple,
+  formatValue,
+  rankString,
+  type Value,
+} from "./values";
 import { LITERAL_KINDS } from "./tlc/replay";
-import { resolveSynonym } from "./tlc/jar-data";
+import { resolveSynonym, TLC_RUNTIME_STRINGS } from "./tlc/jar-data";
 import { getSanyStandardModules } from "./sany/modules";
 import { parseModule } from "./parser";
 import { getStandardModule } from "./standard-definitions";
@@ -130,6 +144,27 @@ const getSplitContext = (environment: Environment, scope: Scope | undefined) => 
   next: undefined,
 });
 
+// Tool#getActionsAppl reads the level SANY gives each argument, which is constant for TLCGet.
+const hasConstantArguments = (
+  args: Expression[],
+  scope: Scope | undefined,
+  environment: Environment,
+) => {
+  const bindings: [string, Definition | undefined][] = [];
+  for (let node = scope; node; node = node.parent) {
+    bindings.unshift([node.name, letDefinitions.get(node)]);
+  }
+  const analyzer = createLevelAnalyzer({
+    constants: new Map([...environment.constants.keys()].map((key) => [key, 0])),
+    variables: new Set(environment.variables),
+    getDefinition: (name) => environment.definitions.get(name),
+    instances: environment.instances,
+    recursiveSections: environment.recursiveSections,
+  });
+  const boundScope = createBoundScope(bindings);
+  return args.every((arg) => analyzer.analyze(arg, boundScope).level === CONSTANT_LEVEL);
+};
+
 const getOperatorName = (expression: Expression) =>
   expression.kind === "Identifier"
     ? expression.name
@@ -186,21 +221,10 @@ const resolveClosure = (
   return operator?.kind === "Closure" ? operator : undefined;
 };
 
-const isEvaluable = (expression: Expression, environment: Environment) => {
-  try {
-    evaluate(expression, getConstantContext(environment, undefined));
-    return true;
-  } catch (error) {
-    if (error instanceof TlaError) return false;
-    throw error;
-  }
-};
-
 const isStartupValue = (definition: Definition | undefined, environment: Environment) =>
   definition?.kind === "Operator" &&
   definition.params.length === 0 &&
-  isEvaluatedAtStartup(definition, environment) &&
-  isEvaluable(definition.body, environment);
+  getStartupValue(definition, environment) !== undefined;
 
 const isConstantValue = (definition: Definition | undefined, environment: Environment) =>
   definition?.kind === "Operator" &&
@@ -274,9 +298,7 @@ const getInstanceActions = (
     return [{ ...instanceAction, parameters: [], expression: called.body, scope: called.scope }];
   }
   if (!called) return [{ ...instanceAction, parameters: [], expression, scope }];
-  if (args.some((arg) => getLevel(arg, scope, environment) !== CONSTANT_LEVEL)) {
-    return callAction();
-  }
+  if (!hasConstantArguments(args, scope, environment)) return callAction();
   return tryCollect(() => {
     const values = args.map((arg) => evaluate(arg, getSplitContext(environment, scope)));
     return [
@@ -428,9 +450,7 @@ const getActions = (
     },
   ];
   if (isConstantDefinition(called, environment)) return callAction();
-  if (args.some((arg) => getLevel(arg, scope, environment) !== CONSTANT_LEVEL)) {
-    return callAction();
-  }
+  if (!hasConstantArguments(args, scope, environment)) return callAction();
   return tryCollect(() => {
     const boundScope = args.reduce<Scope | undefined>(
       (current, arg, index) => ({
@@ -510,12 +530,23 @@ const describeSpecification = (
     ...createAction(name, withSubstitutionFrames(conjunct, frames), conjunctScope),
     location: substitutionFrame?.location ?? conjunct.location,
   });
-  const unwrapped = unwrapBinding(expression, scope, environment);
+  const letDefinition = getLetDefinition(expression, scope);
+  const thunk = letDefinition?.kind === "Operator" ? getThunk(expression, scope) : undefined;
+  const unwrapped = thunk ? undefined : unwrapBinding(expression, scope, environment);
   if (unwrapped) {
     recurse(unwrapped.expression, unwrapped.scope);
     return;
   }
-  const called = resolveClosure(expression, scope, environment);
+  const called: Closure | undefined =
+    letDefinition && thunk
+      ? {
+          kind: "Closure",
+          name: letDefinition.name,
+          params: [],
+          body: thunk.expression,
+          scope: thunk.scope,
+        }
+      : resolveClosure(expression, scope, environment);
   if (called && isConstantDefinition(called, environment)) return;
   const calledFrames = called
     ? [...frames, ...(substitutionFrames.get(called.body) ?? [])]
@@ -529,7 +560,7 @@ const describeSpecification = (
       description.inits.push({
         ...createConjunct(called.name, called.body, called.scope),
         ...(name === undefined
-          ? undefined
+          ? getDefinitionRanges(letDefinition)
           : substitutionFrame
             ? getDefinitionRanges(getDefinition(name, environment))
             : instanceActions.get(name)),
@@ -560,6 +591,14 @@ const describeSpecification = (
     return;
   }
   const level = getLevel(expression, scope, environment);
+  // SpecProcessor#processConfigSpec drops a name whose value is TRUE, though it keeps a formula such as 1 = 1.
+  if (
+    expression.kind === "Identifier" &&
+    level === CONSTANT_LEVEL &&
+    evaluate(expression, getConstantContext(environment, scope)) === true
+  ) {
+    return;
+  }
   if (level <= VARIABLE_LEVEL) {
     description.inits.push(createConjunct(UNNAMED_ACTION, expression, scope));
   } else if (level === TEMPORAL_LEVEL) {
@@ -687,6 +726,8 @@ export const getSpecDescription = (
       ),
     );
   }
+  // TLC creates the checker, which interns these, once Tool's constructor has split the next-state relation.
+  TLC_RUNTIME_STRINGS.forEach(rankString);
   return description;
 };
 

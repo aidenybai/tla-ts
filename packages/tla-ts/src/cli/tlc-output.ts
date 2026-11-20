@@ -40,7 +40,7 @@ import {
   MESSAGE_LEVEL,
   type MessagePrinter,
 } from "../tlc/messages";
-import { formatState } from "../values";
+import { formatState, getDiffBase } from "../values";
 import type { TlcArguments } from "./tlc-arguments";
 
 const printInitialStatesProgress = (printer: MessagePrinter, count: number) =>
@@ -115,7 +115,7 @@ const printTrace = (
       printer.print(
         MESSAGE_CODE.statePrint2,
         MESSAGE_LEVEL.state,
-        `${levels?.[index] ?? index + 1}: <${step.label ?? step.action ?? "Initial predicate"}>\n${formatState(step.state, isDiffed ? trace[index - 1].state : undefined)}`,
+        `${levels?.[index] ?? index + 1}: <${step.label ?? step.action ?? "Initial predicate"}>\n${formatState(step.state, isDiffed ? getDiffBase(step.state, trace[index - 1].state) : undefined)}`,
       );
     });
   } catch (error) {

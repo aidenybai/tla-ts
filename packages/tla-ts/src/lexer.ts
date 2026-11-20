@@ -494,7 +494,7 @@ export const tokenize = (source: string, isTlapm = false): Token[] => {
   const tokens: Token[] = [];
   // Each name is one string object, so looking a name up in a scope compares pointers.
   const names = new Map<string, string>();
-  const prefixLines = source.slice(0, headerMatch.index).split("\n");
+  const prefixLines = source.slice(0, headerMatch.index).split(/\r\n?|\n/);
   let index = headerMatch.index;
   let line = prefixLines.length;
   let lineStart = headerMatch.index - prefixLines[prefixLines.length - 1].length;
@@ -528,7 +528,11 @@ export const tokenize = (source: string, isTlapm = false): Token[] => {
   };
   const advanceOver = (length: number) => {
     for (let offset = 0; offset < length; offset++) {
-      if (source.charCodeAt(index) === CODE_NEWLINE) {
+      const code = source.charCodeAt(index);
+      if (
+        code === CODE_NEWLINE ||
+        (code === CODE_RETURN && source.charCodeAt(index + 1) !== CODE_NEWLINE)
+      ) {
         line++;
         lineStart = index + 1;
       }
@@ -633,7 +637,7 @@ export const tokenize = (source: string, isTlapm = false): Token[] => {
       if (digitsEnd === wordEnd) {
         const fractionEnd =
           source.charCodeAt(wordEnd) === CODE_DOT ? skipClass(source, wordEnd + 1, DIGIT) : wordEnd;
-        const isDecimal = fractionEnd > wordEnd + 1;
+        const isDecimal = isTlapm && fractionEnd > wordEnd + 1;
         const number = isDecimal ? source.slice(index, fractionEnd) : word;
         pushToken(isDecimal ? "Decimal" : "Number", number, number.length);
         continue;

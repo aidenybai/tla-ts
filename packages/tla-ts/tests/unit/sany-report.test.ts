@@ -186,6 +186,30 @@ Spec == Init /\\ [][Next]_x
     );
   });
 
+  it("ends a line at a lone CR as SANY does", () => {
+    const report = getReport({
+      M: "---- MODULE M ----\rVARIABLE x\rA == y\rB ==\r  /\\ x = 1\r  /\\ z\r====\r",
+    });
+    expect(report.text).toBe(
+      joinLines([
+        "Semantic errors:",
+        "",
+        "*** Errors: 2",
+        "",
+        ...[
+          ["line 3, col 6 to line 3, col 6", "y"],
+          ["line 6, col 6 to line 6, col 6", "z"],
+        ].flatMap((error) => [
+          `${error[0]} of module M`,
+          "",
+          `Unknown operator: \`${error[1]}'.`,
+          "",
+          "",
+        ]),
+      ]),
+    );
+  });
+
   it("passes an operator whose definition has fewer parameters than its RECURSIVE declaration, where SANY crashes", () => {
     const report = getReport({
       M: "---- MODULE M ----\nRECURSIVE R(_, _)\nR == 1\nL(P(_, _)) == 1\nA == L(R)\n====\n",
@@ -382,6 +406,49 @@ Spec == Init /\\ [][Next]_x
           ["line 7, col 55 to line 7, col 66", DEF_ERROR],
         ].flatMap((error) => [`${error[0]} of module M`, "", error[1], "", ""]),
       ]),
+    );
+  });
+
+  it("reads a decimal's point and parts as separate tokens, as SANY does", () => {
+    const DEF_ERRORS = ["Unexpected token found.", "Need name or step number here, not `.'."];
+    const report = getReport({
+      M: "---- MODULE M ----\nVARIABLE x\nA == 1\nTHEOREM TRUE BY DEF 12 . 50, A\nTHEOREM TRUE BY DEF 1\n  .2, A\nB == 1.(* c *)2 + 1.5x\n====\n",
+    });
+    expect(report.text).toBe(
+      joinLines([
+        "Semantic errors:",
+        "",
+        "*** Errors: 8",
+        "",
+        ...[
+          ...DEF_ERRORS.map((message) => ["line 4, col 24 to line 4, col 24", message]),
+          [
+            "line 4, col 21 to line 4, col 27",
+            "DEF clause entry should describe a defined operator.",
+          ],
+          ...DEF_ERRORS.map((message) => ["line 6, col 3 to line 6, col 3", message]),
+          [
+            "line 5, col 21 to line 6, col 4",
+            "DEF clause entry should describe a defined operator.",
+          ],
+          [
+            "line 7, col 17 to line 7, col 17",
+            "Could not find declaration or definition of symbol '+'.",
+          ],
+          ["line 7, col 6 to line 7, col 22", "Couldn't resolve infix operator symbol `+'."],
+        ].flatMap((error) => [`${error[0]} of module M`, "", error[1], "", ""]),
+      ]),
+    );
+  });
+
+  it.each([
+    ["\\b1.1", "\\b1", 6],
+    ["1 . \\h1F", "\\h1F", 10],
+  ])("rejects the decimal %s with a based part, where SANY crashes", (decimal, part, column) => {
+    const report = getReport({ M: `---- MODULE M ----\nA == ${decimal}\n====\n` });
+    expect(report.isFailed).toBe(true);
+    expect(report.text).toContain(
+      `***Parse Error***\nExpected decimal digits but found ${part} at line 2, column ${column}\n`,
     );
   });
 
@@ -1040,6 +1107,37 @@ Spec == Init /\\ [][Next]_x
         "line 2, col 11 to line 2, col 14 of module M",
         "",
         "Symbol F declared in RECURSIVE statement but not defined.",
+        "",
+        "",
+      ]),
+    );
+  });
+
+  it("reports an instance's substitution into a RECURSIVE operator that nothing defines like SANY", () => {
+    const report = getReport({
+      M: "---- MODULE M ----\n---- MODULE A ----\nCONSTANT c\nRECURSIVE G\n====\nI == INSTANCE A WITH c <- 1\nINSTANCE A WITH c <- 2\n====\n",
+    });
+    expect(report.text).toBe(
+      joinLines([
+        "Semantic errors:",
+        "",
+        "*** Errors: 3",
+        "",
+        "line 4, col 11 to line 4, col 11 of module M",
+        "",
+        "Symbol G declared in RECURSIVE statement but not defined.",
+        "",
+        "",
+        "line 6, col 1 to line 6, col 27 of module M",
+        "",
+        "Substitution error, probably due to error ",
+        "in module being instantiated.",
+        "",
+        "",
+        "line 7, col 1 to line 7, col 22 of module M",
+        "",
+        "Substitution error, probably due to error ",
+        "in module being instantiated.",
         "",
         "",
       ]),

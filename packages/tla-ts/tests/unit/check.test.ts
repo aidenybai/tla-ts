@@ -303,6 +303,41 @@ describe("check matches TLC", () => {
     ]);
   });
 
+  it.each([
+    [
+      "with",
+      'VARIABLE x\nInit == x = 0\nNever == \\E i \\in (IF PrintT("split") THEN {} ELSE {1}) : TRUE\nNext == (x < 2 /\\ x\' = x + 1) \\/ Never',
+      "INIT Init\nNEXT Next\nCHECK_DEADLOCK FALSE",
+    ],
+    [
+      "without",
+      'Next == \\E i \\in (IF PrintT("split") THEN {1} ELSE {}) : TRUE\nSpec == [][Next]_<<>>',
+      "SPECIFICATION Spec",
+    ],
+  ])(
+    "splits a next-state relation %s variables by the value of a constant definition, as TLC's Tool looks it up",
+    async (_kind, definitions, config) => {
+      const printed: string[] = [];
+      await check({
+        source: `---- MODULE M ----\nEXTENDS Naturals, TLC\n${definitions}\n====`,
+        config,
+        onPrint: (text) => printed.push(text),
+      });
+      expect(printed).toEqual(['"split"']);
+    },
+  );
+
+  it("splits the next-state relation of a specification without variables before it checks the assumptions, as TLC's Tool does", async () => {
+    const printed: string[] = [];
+    await check({
+      source:
+        '---- MODULE M ----\nEXTENDS TLC\nNext == \\E i \\in {PrintT(<<"split", TLCGet("level")>>)} : TRUE\nSpec == [][Next]_<<>>\nASSUME PrintT("assume")\n====',
+      config: "SPECIFICATION Spec",
+      onPrint: (text) => printed.push(text),
+    });
+    expect(printed).toEqual(['<<"split", 1>>', '"assume"']);
+  });
+
   it("runs only the PlusCal actions whose label guard matches, with TLC's counts", async () => {
     const result = await check({
       source: [
@@ -772,6 +807,42 @@ ASSUME TLCFP(a) = -887695703
     const result = await checkFixture("strings", "RuntimeStrings");
     expect([result.generatedStates, result.distinctStates, result.depth]).toEqual([115, 97, 6]);
   });
+
+  it("ranks the strings that constant definitions create before those TLC interns as it creates the checker", async () => {
+    const printed: string[] = [];
+    await check({
+      source:
+        '---- MODULE R1 ----\nEXTENDS TLC, Sequences\nVARIABLE x\nS == {"st" \\o "ate", "ac" \\o "tion"}\nT == {"lo" \\o "cation", "na" \\o "me"}\nASSUME PrintT(<<S, T>>)\nASSUME PrintT({"tag" \\o "s", "ta" \\o "g", "dur" \\o "ation"})\nInit == x = 0\nNext == UNCHANGED x\n====',
+      config: "INIT Init\nNEXT Next",
+      onPrint: (text) => printed.push(text),
+    });
+    expect(printed).toEqual([
+      '<<{"state", "action"}, {"location", "name"}>>',
+      '{"tag", "duration", "tags"}',
+    ]);
+  });
+
+  it.each([
+    [
+      "A(p) == x < 2 /\\ x' = x + 1 /\\ PrintT(p)\nNext == A(CounterExample)",
+      ["[state |-> {}, action |-> {}]", "[state |-> {}, action |-> {}]"],
+    ],
+    [
+      'Next == \\E s \\in {"zz" \\o "q"} : x\' = (x + 1) % 3\nASSUME PrintT({"zz" \\o "q", "ac" \\o "tion"})',
+      ['{"zzq", "action"}'],
+    ],
+  ])(
+    "ranks the strings that splitting %s creates before those TLC interns as it creates the checker",
+    async (definitions, prints) => {
+      const printed: string[] = [];
+      await check({
+        source: `---- MODULE M ----\nEXTENDS Naturals, TLC, TLCExt, Sequences\nVARIABLE x\nInit == x = 0\n${definitions}\n====`,
+        config: "INIT Init\nNEXT Next\nCHECK_DEADLOCK FALSE",
+        onPrint: (text) => printed.push(text),
+      });
+      expect(printed).toEqual(prints);
+    },
+  );
 
   it("does not carry one check's string order into the next", async () => {
     const earlier = await checkModule(
@@ -1649,6 +1720,46 @@ ASSUME TLCFP(a) = -887695703
     ]).toEqual([[[], ["2"]], ["3"]]);
   });
 
+  it("evaluates the body of a constant postcondition from another module again after the search, as TLC's ParameterizedSpecObj does", async () => {
+    const printed: string[] = [];
+    const result = await check({
+      source:
+        "---- MODULE M ----\nEXTENDS Naturals, TLC\nVARIABLE x\nInit == x = 0\nNext == x < 2 /\\ x' = x + 1\n====",
+      config: "INIT Init\nNEXT Next",
+      loadModule: (name) =>
+        name === "Extra"
+          ? '---- MODULE Extra ----\nEXTENDS TLC\nP == PrintT(<<"zeta", "eta">>)\n===='
+          : undefined,
+      moduleOperators: [{ kind: "postcondition", module: "Extra", operator: "P" }],
+      onPrint: (text) => printed.push(text),
+    });
+    expect([result.status, printed, result.violation?.postconditionOutput]).toEqual([
+      "deadlock",
+      ['<<"zeta", "eta">>'],
+      ['<<"zeta", "eta">>'],
+    ]);
+  });
+
+  it("evaluates the function a postcondition from another module defines again after the search, as TLC's ParameterizedSpecObj does", async () => {
+    const printed: string[] = [];
+    const result = await check({
+      source:
+        "---- MODULE M ----\nEXTENDS Naturals, TLC\nVARIABLE x\nInit == x = 0\nNext == x < 2 /\\ x' = x + 1\n====",
+      config: "INIT Init\nNEXT Next\nCHECK_DEADLOCK FALSE",
+      loadModule: (name) =>
+        name === "Extra"
+          ? '---- MODULE Extra ----\nEXTENDS TLC\nP[i \\in {PrintT("dom")}] == TRUE\n===='
+          : undefined,
+      moduleOperators: [{ kind: "postcondition", module: "Extra", operator: "P" }],
+      onPrint: (text) => printed.push(text),
+    });
+    expect([result.status, printed, result.violation?.message]).toEqual([
+      "postcondition-violation",
+      ['"dom"', '"dom"'],
+      "Evaluating postcondition P at line 3, col 1 to line 3, col 32 of module Extra failed.\nTLC expected a boolean value, but did not find one. line 3, col 1 to line 3, col 32 of module Extra",
+    ]);
+  });
+
   it("rebuilds the step to a successor under a VIEW once, as TLC's TLCTrace#printTrace does", async () => {
     const result = await check({
       source:
@@ -1699,6 +1810,19 @@ ASSUME TLCFP(a) = -887695703
       "||line 4, col 15 to line 4, col 19 of module M: 3",
       "||line 4, col 24 to line 4, col 42 of module M: 3",
       "||line 4, col 47 to line 4, col 57 of module M: 3",
+    ]);
+  });
+
+  it("counts the LET definition that UNCHANGED keeps under ENABLED, as TLC's Tool#enabledUnchanged evaluates the expression", async () => {
+    const lines = await getCoverageLines(
+      "---- MODULE M ----\nEXTENDS Integers\nVARIABLES x, y\nInit == x = 0 /\\ y = 0\nNext == x' = 1 - x /\\ UNCHANGED y\nInv == ENABLED (y' = y /\\ LET w == x IN UNCHANGED w)\n====",
+      "INIT Init\nNEXT Next\nINVARIANT Inv",
+    );
+    expect(lines?.at(-1)).toEqual([
+      "line 6, col 8 to line 6, col 52 of module M: 2",
+      "|line 6, col 17 to line 6, col 22 of module M: 2",
+      "|line 6, col 36 to line 6, col 36 of module M: 2",
+      "|line 6, col 41 to line 6, col 51 of module M: 2",
     ]);
   });
 
@@ -3196,6 +3320,68 @@ ASSUME TLCFP(a) = -887695703
     ]);
   });
 
+  it.each([
+    [
+      "LET I2 == Init IN I2",
+      "I2",
+      "6, col 13 to line 6, col 14",
+      "6,\n          beginColumn |-> 19,\n          endLine |-> 6,\n          endColumn |-> 22",
+    ],
+    [
+      "LET I2 == Init IN LET I3 == I2 IN I3",
+      "I3",
+      "6, col 31 to line 6, col 32",
+      "6,\n          beginColumn |-> 37,\n          endLine |-> 6,\n          endColumn |-> 38",
+    ],
+    [
+      "LET I2 == x = 0 /\\ y = 0 IN I2",
+      "I2",
+      "6, col 13 to line 6, col 14",
+      "6,\n          beginColumn |-> 19,\n          endLine |-> 6,\n          endColumn |-> 32",
+    ],
+  ])(
+    "takes the initial predicate of Spec == %s /\\ [][Next]_<<x, y>> whole and names it by the LET definition, as TLC's SpecProcessor does",
+    async (init, name, range, location) => {
+      const source = `---- MODULE M ----\nEXTENDS Integers, TLC\nVARIABLES x, y\nInit == x = 0 /\\ y \\in {0, 1}\nNext == x < 3 /\\ x' = x + 1 /\\ y' = y\nSpec == ${init} /\\ [][Next]_<<x, y>>\nASSUME PrintT(TLCGet("spec").inits)\n====`;
+      const printed: string[] = [];
+      await check({ source, config: "SPECIFICATION Spec", onPrint: (text) => printed.push(text) });
+      const result = await check({
+        source,
+        config: "SPECIFICATION Spec",
+        coverage: 1,
+        onPrint: () => {},
+      });
+      expect([printed, result.coverage?.relations[0].label]).toEqual([
+        [
+          `{ [ name |-> "${name}",\n    location |->\n        [ beginLine |-> ${location},\n          module |-> "M" ] ] }`,
+        ],
+        `${name} line ${range} of module M`,
+      ]);
+    },
+  );
+
+  it.each([
+    ["TRUE /\\ Init", ""],
+    ["C /\\ Init", ""],
+    [
+      "(1 = 1) /\\ TRUE /\\ Init",
+      ',\n  [ name |-> "UnnamedAction",\n    location |->\n        [ beginLine |-> 6,\n          beginColumn |-> 10,\n          endLine |-> 6,\n          endColumn |-> 14,\n          module |-> "M" ] ]',
+    ],
+  ])(
+    "leaves out of the initial predicates of Spec == %s /\\ [][x' = 1 - x]_x a name whose value is TRUE, as TLC's SpecProcessor does",
+    async (init, unnamed) => {
+      const printed: string[] = [];
+      await check({
+        source: `---- MODULE M ----\nEXTENDS Integers, TLC\nCONSTANT C\nVARIABLE x\nInit == x = 0\nSpec == ${init} /\\ [][x' = 1 - x]_x\nASSUME PrintT(TLCGet("spec").inits)\n====`,
+        config: "CONSTANT C = TRUE\nSPECIFICATION Spec",
+        onPrint: (text) => printed.push(text),
+      });
+      expect(printed).toEqual([
+        `{ [ name |-> "Init",\n    location |->\n        [ beginLine |-> 5,\n          beginColumn |-> 9,\n          endLine |-> 5,\n          endColumn |-> 13,\n          module |-> "M" ] ]${unnamed} }`,
+      ]);
+    },
+  );
+
   it("counts a recursive function of an instance of an instance at its definition once", async () => {
     const lines = await getCoverageLines(
       "---- MODULE G ----\nEXTENDS Naturals\nVARIABLES x, y\n---- MODULE Inner ----\nEXTENDS Naturals\nCONSTANT K\nVARIABLES a, b\nD == \\E e \\in {0, K % 4} : a' = e /\\ b' = b\nRf[n \\in 0..2] == IF n = 0 THEN K ELSE Rf[n - 1] + (a % 2)\n====\n---- MODULE Mid ----\nEXTENDS Naturals\nCONSTANT L\nVARIABLES p, q\nII == INSTANCE Inner WITH K <- L + 1, a <- p, b <- q\n====\nMd == INSTANCE Mid WITH L <- 1, p <- x, q <- y\nInit == x = 0 /\\ y = 0\nNext == Md!II!D\nInv == Md!II!Rf[2] > 0\n====",
@@ -3624,6 +3810,10 @@ describe("rejecting literals matches TLC", () => {
 
   it.each([
     ["an evaluated decimal", "EXTENDS Reals\nVARIABLE x\nInit == x = 1.5"],
+    [
+      "a decimal with a comment around its point",
+      "EXTENDS Reals\nVARIABLE x\nInit == x = 1 .(* c *) 5",
+    ],
     ["a decimal that is never evaluated", "VARIABLE x\nHalf == 1.5\nInit == x = 0"],
     ["a decimal in an unused LET", "VARIABLE x\nF == LET h == 1.5 IN 0\nInit == x = 0"],
     ["a decimal in an unnamed theorem", "VARIABLE x\nTHEOREM 1.5 = 1.5\nInit == x = 0"],

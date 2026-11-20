@@ -75,7 +75,7 @@ import { expandTemporal, getLevel, type ScopedExpression, type TemporalProperty 
 import { getLiveExpressions } from "./liveness-checker";
 import { prettyPrint, prettyPrintT } from "./pretty-print";
 import { parenthesizedRanges } from "./parser";
-import { substitutionFrames, withSubstitutionFrames } from "./instances";
+import { getOperatorDefinition, substitutionFrames, withSubstitutionFrames } from "./instances";
 import { getPossibleCounts, type CheckerRuntime } from "./runtime";
 import { createIncompleteSuccessorError, type SuccessorGenerator } from "./successors";
 import {
@@ -109,6 +109,7 @@ import {
   isFunctionValue,
   isUpdatedElementOf,
   markNormalized,
+  setAliasedState,
   setAliasName,
   setStringOrder,
   setValueOptions,
@@ -648,7 +649,7 @@ const getNamedExpressions = (
 // SANY locates a parenthesized body at the expression inside the parentheses.
 const getBodyRange = (name: string, environment: Environment) => {
   const definition = getDefinition(name, environment);
-  if (definition?.kind !== "Operator") return undefined;
+  if (definition?.kind !== "Operator") return definition?.location.range;
   return parenthesizedRanges.has(definition.body)
     ? (definition.body.location.range ?? definition.bodyRange)
     : definition.bodyRange;
@@ -788,6 +789,7 @@ export interface Search {
   isSymmetric: boolean;
   isConstrained: boolean;
   isNextReplayed: boolean;
+  isTraceRebuildShown: boolean;
   getTypedChecks: (liveness: Solution[] | undefined) =>
     | {
         init: Expression;
@@ -1477,8 +1479,10 @@ export const createSearch = (
       };
     }
   };
-  const evaluateAlias: Search["evaluateAlias"] = (alias, state, next, isTool) =>
-    getAliasRecord(alias, state, next, isTool) ?? getStateRecord(state);
+  const evaluateAlias: Search["evaluateAlias"] = (alias, state, next, isTool) => {
+    const record = getAliasRecord(alias, state, next, isTool);
+    return record ? setAliasedState(record, () => getStateRecord(state)) : getStateRecord(state);
+  };
   const scopeExpressions = getScopeExpressions(spec.scope);
   return {
     properties,
@@ -1500,6 +1504,18 @@ export const createSearch = (
       spec.next !== undefined &&
       (scopeExpressions === undefined ||
         isExpressionImpure([spec.next, ...scopeExpressions], environment, "replayed")),
+    isTraceRebuildShown:
+      scopeExpressions === undefined ||
+      isExpressionImpure(
+        [
+          ...(spec.init ? [spec.init] : []),
+          ...(spec.next ? [spec.next] : []),
+          ...(view ? [view.expression] : []),
+          ...scopeExpressions,
+        ],
+        environment,
+        "replayed",
+      ),
     getTypedChecks: (liveness) => {
       const isInterpreted =
         coverage !== undefined ||
@@ -1747,12 +1763,13 @@ export const createSearch = (
         throw setExitCode(new TlaEvaluationError(rejection), EXIT_STATUS.configParseError);
       }
       const findViolation = (name: string, key: string) => {
+        const definition = getDefinition(key, environment);
+        const body = definition && getOperatorDefinition(definition).body;
         const failure = getConstantFailure(
-          (context) => holdsLikeTlc(createIdentifier(key), context),
+          (context) => holdsLikeTlc(body ?? createIdentifier(key), context),
           environment,
         );
         if (!failure) return undefined;
-        const body = getDefinition(key, environment)?.body;
         const range = getBodyRange(key, environment);
         const location = range
           ? ` at ${body?.kind === "Number" ? describeNode(body) : formatRange(range)}`

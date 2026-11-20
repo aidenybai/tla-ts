@@ -506,6 +506,8 @@ const searchStates = (
   const findViolatedAssumption = () =>
     findAssumptionViolation(specification.assumptions, environment);
   if (!search) {
+    // Tool's constructor describes the specification before TLC creates the checker.
+    getDescription();
     runtime.isStarted = true;
     const assumptionViolation = findViolatedAssumption();
     if (assumptionViolation) return createResult("assumption-violation", assumptionViolation);
@@ -680,6 +682,7 @@ const searchStates = (
       if (deferred.length > 0) throw deferred[0];
     });
   };
+  // Deviation from TLC: ModelChecker's main-thread replay throws a NullPointerException in TLCExt#getTrace, so TLC blames a constraint that reads Trace.
   const replayNext = (index: number) =>
     getReplayFailure(environment, (tracing) => {
       const state = states[index];
@@ -1077,8 +1080,24 @@ const searchStates = (
     exploredFingerprintStates.push(fingerprintState);
     runtime.distinctStates++;
   };
+  // TLCExt#getTrace rebuilds through the expanded state only for a successor Worker has written, before its invariants.
+  const getTracedParent = (state: Value[], index: number) => {
+    if (index !== -1) return parents[index];
+    if (state !== current.candidate || current.index === -1) return -1;
+    const isWritten =
+      unstoredFingerprint !== undefined &&
+      findStateIndex(seenStates, getStateHash(unstoredFingerprint), unstoredFingerprint) === -1;
+    return isWritten ? current.index : parents[current.index];
+  };
+  const isTraceRebuilt = coverage !== undefined || search.isTraceRebuildShown;
   runtime.getBehavior = (state) => {
-    const index = state === current.candidate ? -1 : states.indexOf(state);
+    const index =
+      state === current.candidate
+        ? -1
+        : current.isExpanding && state === current.rebuilt?.state
+          ? current.index
+          : states.indexOf(state);
+    if (isTraceRebuilt) traces.rebuildPath(getTracedParent(state, index));
     return index === -1 ? [...getPath(current.index), state] : getPath(index);
   };
   runtime.getCurrentState = () =>
@@ -1187,7 +1206,7 @@ const searchStates = (
   // Deviation from TLC: under -continue, TLC reports failing to rebuild the violating step as a failure of the invariant.
   const getViolationTrace = (index: number, successor: Successor) =>
     options.isContinued
-      ? traces.getTrace(index, successor, { isPrintedOnly: true })
+      ? traces.getTrace(index, successor, { isPrintedOnly: true, isCurrentKept: true })
       : traces.getTrace(index, successor, { isRebuildFailureKept: true });
   const visitSuccessor = (
     index: number,

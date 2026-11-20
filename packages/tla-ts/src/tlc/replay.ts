@@ -1,6 +1,6 @@
 import { isAssumeProve, type Expression, type SourceLocation } from "../ast";
 import { getKindString } from "../builtins";
-import { TlaEvaluationError, TlaUncodedError } from "../errors";
+import { TlaEvaluationError, TlaUnassignedError, TlaUncodedError } from "../errors";
 import { EXIT_STATUS, setExitCode } from "../exit-codes";
 import { isConstantLevel } from "../dependencies";
 import {
@@ -12,7 +12,6 @@ import {
   exitFrames,
   getCoverageNode,
   getEnteredFrames,
-  getSubstitutionNode,
   runAtCoverageNode,
   type Coverage,
 } from "../coverage";
@@ -26,6 +25,7 @@ import {
   forEachBoundElement,
   freezeCallStack,
   getContextElements,
+  getDefinition,
   getLazyFunction,
   getQuantifierElements,
   mapBoundSets,
@@ -169,6 +169,18 @@ const getNamedOccurrence = (expression: Expression, frames: Expression[]) => {
     : undefined;
 };
 
+const bindLetDefinitions = (
+  environment: Environment,
+  expression: Expression & { kind: "Let" },
+  scope: Scope | undefined,
+) =>
+  bindDefinitions(expression.definitions, {
+    environment,
+    scope,
+    state: undefined,
+    next: undefined,
+  });
+
 const getVariable = (
   environment: Environment,
   expression: Expression,
@@ -178,16 +190,24 @@ const getVariable = (
   const occurrence = frames && getNamedOccurrence(expression, frames);
   if (occurrence?.kind === "Identifier") return environment.variableIndex.get(occurrence.name);
   if (expression.kind === "Label") return getVariable(environment, expression.body, scope, frames);
+  if (expression.kind === "Let") {
+    return getVariable(
+      environment,
+      expression.body,
+      bindLetDefinitions(environment, expression, scope),
+      frames,
+    );
+  }
   const name = getIdentifierName(expression);
   if (name === undefined) return undefined;
   const binding = lookupScope(scope, name);
   if (binding?.kind === "Thunk") {
     return getVariable(environment, binding.expression, binding.scope, frames);
   }
-  if (binding) return undefined;
-  const index = environment.variableIndex.get(name);
+  if (binding?.kind === "Value") return undefined;
+  const index = binding ? undefined : environment.variableIndex.get(name);
   if (index !== undefined) return index;
-  const operator = resolveGlobalOperator(name, environment);
+  const operator = binding ? binding.operator : resolveGlobalOperator(name, environment);
   return operator?.kind === "Closure" && operator.params.length === 0
     ? getVariable(environment, operator.body, operator.scope, frames)
     : undefined;
@@ -205,14 +225,22 @@ const getPrimedVariable = (
   if (expression.kind === "Label") {
     return getPrimedVariable(environment, expression.body, scope, frames);
   }
+  if (expression.kind === "Let") {
+    return getPrimedVariable(
+      environment,
+      expression.body,
+      bindLetDefinitions(environment, expression, scope),
+      frames,
+    );
+  }
   const name = getIdentifierName(expression);
   if (name === undefined) return undefined;
   const binding = lookupScope(scope, name);
   if (binding?.kind === "Thunk") {
     return getPrimedVariable(environment, binding.expression, binding.scope, frames);
   }
-  if (binding) return undefined;
-  const operator = resolveGlobalOperator(name, environment);
+  if (binding?.kind === "Value") return undefined;
+  const operator = binding ? binding.operator : resolveGlobalOperator(name, environment);
   return operator?.kind === "Closure" && operator.params.length === 0
     ? getPrimedVariable(environment, operator.body, operator.scope, frames)
     : undefined;
@@ -276,6 +304,49 @@ export const holdsValue = (run: RunKind, expression: Expression, value: Value, i
     : createRunError(run, message);
 };
 
+export const getZeroArityBody = (name: string, environment: Environment) => {
+  if (environment.constants.has(name)) return undefined;
+  const definition = getDefinition(name, environment);
+  return definition?.kind === "Operator" && definition.params.length === 0 ? definition : undefined;
+};
+
+export interface UnchangedVariable {
+  index: number;
+  expression: Expression;
+}
+
+export const getUnchangedVariables = (
+  expression: Expression,
+  environment: Environment,
+  visited = new Set<string>(),
+  written = expression,
+): UnchangedVariable[] | undefined => {
+  if (expression.kind === "Tuple") {
+    const variables = expression.elements.map((element) =>
+      getUnchangedVariables(element, environment, visited),
+    );
+    return variables.every((item) => item !== undefined) ? variables.flat() : undefined;
+  }
+  if (expression.kind !== "Identifier" || visited.has(expression.name)) return undefined;
+  const index = environment.variableIndex.get(expression.name);
+  if (index !== undefined) return [{ index, expression: written }];
+  const definition = getZeroArityBody(expression.name, environment);
+  if (!definition) return undefined;
+  visited.add(expression.name);
+  return getUnchangedVariables(definition.body, environment, visited, written);
+};
+
+// Deviation from TLC: Tool#getNextStates0 takes its all-assigned path when warnings are on, though its comment says off, so it evaluates UNCHANGED as a boolean and doesn't warn.
+export const findChangedVariable = (
+  variables: UnchangedVariable[],
+  partial: State,
+  current: Value[],
+) =>
+  variables.find((variable) => {
+    const assigned = partial[variable.index];
+    return assigned !== undefined && !isEqualLikeTlc(assigned, current[variable.index]);
+  });
+
 export const isAssignedShortcut = (replay: Pick<Replay, "environment" | "isInit" | "isEnabled">) =>
   !replay.isEnabled && (replay.isInit || replay.environment.runtime.isWarningEnabled);
 
@@ -322,28 +393,37 @@ const proceedItems = (
   return isChanged(replay, items, partial) && proceed(replay, items.rest, partial, items.node);
 };
 
+const evaluateInPartial = (
+  replay: Replay,
+  node: number,
+  expression: Expression,
+  scope: Scope | undefined,
+  partial: State,
+) => {
+  try {
+    return evaluateAt(replay, node, expression, {
+      environment: replay.environment,
+      scope,
+      state: partial,
+      next: undefined,
+    });
+  } catch (error) {
+    if (replay.isEnabled && error instanceof TlaUnassignedError) return error;
+    throw error;
+  }
+};
+
 const isChanged = (replay: Replay, item: ActionItem, partial: State) => {
-  const environment = replay.environment;
   const before = evaluateAt(replay, item.node, item.expression, {
-    environment,
+    environment: replay.environment,
     scope: item.scope,
     state: replay.current,
     next: undefined,
   });
-  const after = (() => {
-    try {
-      return evaluateAt(replay, item.node, item.expression, {
-        environment,
-        scope: item.scope,
-        state: partial,
-        next: undefined,
-      });
-    } catch (error) {
-      throw replay.isEnabled
-        ? toUnspecifiedSubscriptError(error, environment.runtime.version)
-        : error;
-    }
-  })();
+  const after = evaluateInPartial(replay, item.node, item.expression, item.scope, partial);
+  if (after instanceof TlaUnassignedError) {
+    throw toUnspecifiedSubscriptError(after, replay.environment.runtime.version);
+  }
   try {
     return !isEqualLikeTlc(before, after);
   } catch (error) {
@@ -374,6 +454,12 @@ const proceedAssigned = (
     if (!isHeld) {
       const coverage = replay.coverage;
       if (coverage && replay.isInit) coverage.secondary[coverage.roots[node]]++;
+      const current = replay.current;
+      if (current && item.kind === "Predicate" && item.expression.kind === "Unchanged") {
+        const variables = getUnchangedVariables(item.expression.expression, replay.environment);
+        const changed = variables && findChangedVariable(variables, partial, current);
+        if (changed) warnChangedUnchanged(replay.environment, changed.index, changed.expression);
+      }
       return false;
     }
   }
@@ -914,6 +1000,24 @@ export const warnChangedUnchanged = (
     `The variable ${environment.variables[index]} was changed while it is specified as UNCHANGED at\n${describeRange(expression)}`,
   );
 
+// Deviation from TLC: Tool#enabledUnchanged fails on a variable the step leaves unassigned in an application, whose body tla-ts keeps unchanged instead.
+export const bindUnchangedApplication = (
+  expression: Expression,
+  context: Context,
+  error: TlaUnassignedError,
+) => {
+  const operator =
+    expression.kind === "Apply" ? resolveApplyOperator(expression, context) : undefined;
+  if (
+    expression.kind !== "Apply" ||
+    operator?.kind !== "Closure" ||
+    operator.params.length !== expression.args.length
+  ) {
+    throw toUnspecifiedSubscriptError(error, context.environment.runtime.version);
+  }
+  return { body: operator.body, scope: bindOperatorArguments(operator, expression.args, context) };
+};
+
 const visitUnchanged = (
   replay: Replay,
   expression: Expression,
@@ -929,11 +1033,12 @@ const visitUnchanged = (
       const value = replay.current?.[index];
       if (value === undefined) return false;
       if (replay.isEnabled && replay.coverage) {
-        countCoverage(replay.coverage, node);
-        const substitution = substitutedExpressions.get(expression);
-        if (substitution && substitution.replacement !== expression) {
-          countCoverage(replay.coverage, getSubstitutionNode(replay.coverage, substitution));
-        }
+        evaluateAt(replay, node, expression, {
+          environment: replay.environment,
+          scope,
+          state: replay.current,
+          next: undefined,
+        });
       }
       const assigned = partial[index];
       if (assigned !== undefined && !isEqualLikeTlc(assigned, value)) {
@@ -957,42 +1062,39 @@ const visitUnchanged = (
         return visitUnchanged(replay, binding.expression, items, binding.scope, partial, node);
       }
       const operator = binding
-        ? undefined
+        ? binding.kind === "Operator"
+          ? binding.operator
+          : undefined
         : resolveGlobalOperator(expression.name, replay.environment);
       // Deviation from TLC: Tool#processUnchanged takes the SubstInNode of an instance's definition for an expression and fails on an unassigned variable.
       if (operator?.kind === "Closure" && operator.params.length === 0) {
         return visitUnchanged(replay, operator.body, items, operator.scope, partial, node);
       }
     }
-    // Deviation from TLC: Tool#enabledUnchanged evaluates the application in the partial next state and fails on an unassigned variable.
-    if (replay.isEnabled && expression.kind === "Apply") {
-      const context = getContext(replay, scope, partial);
-      const operator = resolveApplyOperator(expression, context);
-      if (operator?.kind === "Closure" && operator.params.length === expression.args.length) {
-        return visitUnchanged(
-          replay,
-          operator.body,
-          items,
-          bindOperatorArguments(operator, expression.args, context),
-          partial,
-          node,
-        );
-      }
-    }
-    const environment = replay.environment;
     const before = evaluateAt(replay, node, expression, {
-      environment,
+      environment: replay.environment,
       scope,
       state: replay.current,
       next: undefined,
     });
-    const after = evaluateAt(replay, node, expression, {
-      environment,
-      scope,
-      state: partial,
-      next: undefined,
-    });
-    return isEqualLikeTlc(before, after) && proceed(replay, items, partial, node);
+    const callStack = replay.callStack;
+    const depth = callStack?.expressions.length ?? 0;
+    const fingerprint = callStack?.fingerprint;
+    const after = evaluateInPartial(replay, node, expression, scope, partial);
+    if (!(after instanceof TlaUnassignedError)) {
+      return isEqualLikeTlc(before, after) && proceed(replay, items, partial, node);
+    }
+    const application = bindUnchangedApplication(
+      expression,
+      getContext(replay, scope, partial),
+      after,
+    );
+    if (callStack) {
+      callStack.expressions.length = depth;
+      callStack.isFrozen = false;
+      callStack.fingerprint = fingerprint;
+    }
+    return visitUnchanged(replay, application.body, items, application.scope, partial, node);
   });
 
 const createReplay = (

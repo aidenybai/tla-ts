@@ -8,7 +8,12 @@ import {
 } from "./ast";
 import { getKindString } from "./builtins";
 import { getReadVariables } from "./dependencies";
-import { TlaEvaluationError, TlaIllegalStateError, TlaIncompleteSuccessorError } from "./errors";
+import {
+  TlaEvaluationError,
+  TlaIllegalStateError,
+  TlaIncompleteSuccessorError,
+  TlaUnassignedError,
+} from "./errors";
 import { EXIT_STATUS, setExitCode } from "./exit-codes";
 import {
   describeLocation,
@@ -42,7 +47,9 @@ import {
 import { forEachChild } from "./instances";
 import { getRandomSubset, nextPrime, type JavaRandom } from "./tlc/random";
 import {
+  bindUnchangedApplication,
   createRunError,
+  findChangedVariable,
   getCaseGuardMessage,
   getCaseOtherMessage,
   getComputation,
@@ -50,10 +57,13 @@ import {
   getIfConditionMessage,
   getImpliesConditionMessage,
   getRelationMessage,
+  getUnchangedVariables,
+  getZeroArityBody,
   holdsValue,
   isAssignedShortcut,
   replayEnabled,
   warnChangedUnchanged,
+  type UnchangedVariable,
 } from "./tlc/replay";
 import {
   getStreamedElements,
@@ -119,6 +129,15 @@ const assign = (partial: State, index: number, value: Value) => {
 const holds = (run: Run, expression: Expression, context: Context) =>
   holdsValue(run, expression, evaluate(expression, context));
 
+const holdsUnchanged = (run: Run, unchanged: Expression, context: Context) => {
+  try {
+    return holds(run, unchanged, context);
+  } catch (error) {
+    if (run.isEnabled && error instanceof TlaUnassignedError) return error;
+    throw error;
+  }
+};
+
 const evaluateCached = (
   evaluators: (Evaluator | undefined)[],
   index: number,
@@ -144,12 +163,6 @@ const getRunner = (expression: Expression, environment: Environment, isInit: boo
     : deterministic;
   runners.set(expression, runner);
   return runner;
-};
-
-const getZeroArityBody = (name: string, environment: Environment) => {
-  if (environment.constants.has(name)) return undefined;
-  const definition = getDefinition(name, environment);
-  return definition?.kind === "Operator" && definition.params.length === 0 ? definition : undefined;
 };
 
 const getStaticVariableIndex = (
@@ -204,31 +217,6 @@ const isPossiblyAssignable = (target: Expression, isInit: boolean) =>
   target.kind === "Let" ||
   (target.kind === "Identifier" && (isInit || isLocallyResolved(target))) ||
   (!isInit && target.kind === "Prime");
-
-interface UnchangedVariable {
-  index: number;
-  expression: Expression;
-}
-
-const getUnchangedVariables = (
-  expression: Expression,
-  environment: Environment,
-  visited = new Set<string>(),
-): UnchangedVariable[] | undefined => {
-  if (expression.kind === "Tuple") {
-    const variables = expression.elements.map((element) =>
-      getUnchangedVariables(element, environment, visited),
-    );
-    return variables.every((item) => item !== undefined) ? variables.flat() : undefined;
-  }
-  if (expression.kind !== "Identifier" || visited.has(expression.name)) return undefined;
-  const index = environment.variableIndex.get(expression.name);
-  if (index !== undefined) return [{ index, expression }];
-  const definition = getZeroArityBody(expression.name, environment);
-  if (!definition) return undefined;
-  visited.add(expression.name);
-  return getUnchangedVariables(definition.body, environment, visited);
-};
 
 const ACTION_KINDS = new Set([
   "Label",
@@ -376,10 +364,7 @@ const compileConjunction = (
           const state = run.current;
           const changed =
             state && conjunct.kind === "Unchanged"
-              ? conjunct.variables.find((variable) => {
-                  const assigned = current[variable.index];
-                  return assigned !== undefined && !isEqualLikeTlc(assigned, state[variable.index]);
-                })
+              ? findChangedVariable(conjunct.variables, current, state)
               : undefined;
           if (changed) {
             warnChangedUnchanged(run.environment, changed.index, changed.expression);
@@ -578,6 +563,22 @@ const compileUnchanged = (expression: Expression, environment: Environment): Run
     return compileConjunction([unchanged], environment, false);
   if (expression.kind === "Tuple") return getRunner(unchanged, environment, false);
   return (run, scope, partial, action, isFixed, onComplete) => {
+    const index = getRuntimeVariableIndex(expression, scope, partial, run, false);
+    if (index !== undefined) {
+      const value = run.current?.[index];
+      if (value === undefined) return;
+      const assigned = partial[index];
+      if (assigned === undefined) {
+        onComplete(assign(partial, index, value), action);
+        return;
+      }
+      if (!isEqualLikeTlc(assigned, value)) {
+        warnChangedUnchanged(run.environment, index, expression);
+        return;
+      }
+      onComplete(partial, action);
+      return;
+    }
     const binding =
       expression.kind === "Identifier" ? lookupScope(scope, expression.name) : undefined;
     if (binding?.kind === "Thunk" && !binding.isReleased) {
@@ -591,22 +592,33 @@ const compileUnchanged = (expression: Expression, environment: Environment): Run
       );
       return;
     }
-    const context = getContext(run, scope, partial);
-    if (run.isEnabled && expression.kind === "Apply") {
-      const operator = resolveApplyOperator(expression, context);
-      if (operator?.kind === "Closure" && operator.params.length === expression.args.length) {
-        getRunner(getUnchangedWrapper(operator.body), environment, false)(
-          run,
-          bindOperatorArguments(operator, expression.args, context),
-          partial,
-          action,
-          isFixed,
-          onComplete,
-        );
-        return;
-      }
+    const local = binding?.kind === "Operator" ? binding.operator : undefined;
+    if (local?.kind === "Closure" && local.params.length === 0) {
+      getRunner(getUnchangedWrapper(local.body), environment, false)(
+        run,
+        local.scope,
+        partial,
+        action,
+        isFixed,
+        onComplete,
+      );
+      return;
     }
-    if (holds(run, unchanged, context)) onComplete(partial, action);
+    const context = getContext(run, scope, partial);
+    const isHeld = holdsUnchanged(run, unchanged, context);
+    if (!(isHeld instanceof TlaUnassignedError)) {
+      if (isHeld) onComplete(partial, action);
+      return;
+    }
+    const application = bindUnchangedApplication(expression, context, isHeld);
+    getRunner(getUnchangedWrapper(application.body), environment, false)(
+      run,
+      application.scope,
+      partial,
+      action,
+      isFixed,
+      onComplete,
+    );
   };
 };
 
@@ -1093,18 +1105,13 @@ const compileAction = (
         expression: expression.subscript,
         location: expression.subscript.location,
       };
-      const isUnchanged = (run: Run, scope: Scope | undefined, nextPartial: State) => {
-        try {
-          return holds(run, unchanged, getContext(run, scope, nextPartial));
-        } catch (error) {
-          throw run.isEnabled
-            ? toUnspecifiedSubscriptError(error, environment.runtime.version)
-            : error;
-        }
-      };
       return (run, scope, partial, action, isFixed, onComplete) =>
         body(run, scope, partial, action, isFixed, (nextPartial, nextAction) => {
-          if (!isUnchanged(run, scope, nextPartial)) onComplete(nextPartial, nextAction);
+          const isHeld = holdsUnchanged(run, unchanged, getContext(run, scope, nextPartial));
+          if (isHeld instanceof TlaUnassignedError) {
+            throw toUnspecifiedSubscriptError(isHeld, run.environment.runtime.version);
+          }
+          if (!isHeld) onComplete(nextPartial, nextAction);
         });
     }
     case "BoxAction":

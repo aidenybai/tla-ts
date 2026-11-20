@@ -16,6 +16,7 @@ export interface CheckerRuntime {
   getRandom: () => JavaRandom;
   reseedRandom: () => void;
   runWithNewRandom: <Result>(evaluate: () => Result) => Result;
+  runWithCurrentState: <Result>(state: Value[] | undefined, evaluate: () => Result) => Result;
   getSimulationValue:
     | ((key: string, state: (Value | undefined)[] | undefined) => Value | undefined)
     | undefined;
@@ -53,6 +54,8 @@ export const createRuntime = (checkDeadlock: boolean, seed = 0n): CheckerRuntime
   let workerRandom = createJavaRandom(seed);
   let seededState: Value[] | undefined;
   let isStartup = false;
+  let isWorkerStateSet = false;
+  let workerState: Value[] | undefined;
   const runtime: CheckerRuntime = {
     getLevel: () => 0,
     getBehavior: () => [],
@@ -68,8 +71,10 @@ export const createRuntime = (checkDeadlock: boolean, seed = 0n): CheckerRuntime
     getFingerprint: getTlcFingerprint,
     getSimulationValue: undefined,
     getRandom: () => {
-      const state = isStartup ? undefined : runtime.getCurrentState();
-      if (state === undefined) return startupRandom;
+      if (isStartup) return startupRandom;
+      const state = isWorkerStateSet ? workerState : runtime.getCurrentState();
+      // A worker without a current state, as AbstractChecker#setErrState leaves it, draws on from its random unseeded.
+      if (state === undefined) return isWorkerStateSet ? workerRandom : startupRandom;
       if (state !== seededState) {
         workerRandom.setSeed(runtime.getFingerprint(state) ^ BigInt.asUintN(64, seed));
         seededState = state;
@@ -89,6 +94,18 @@ export const createRuntime = (checkDeadlock: boolean, seed = 0n): CheckerRuntime
       } finally {
         workerRandom = random;
         seededState = state;
+      }
+    },
+    runWithCurrentState: (state, evaluate) => {
+      const wasWorkerStateSet = isWorkerStateSet;
+      const previous = workerState;
+      isWorkerStateSet = true;
+      workerState = state;
+      try {
+        return evaluate();
+      } finally {
+        isWorkerStateSet = wasWorkerStateSet;
+        workerState = previous;
       }
     },
     evaluateAtStartup: (evaluate) => {
