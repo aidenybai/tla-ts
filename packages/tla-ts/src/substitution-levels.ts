@@ -18,6 +18,7 @@ import {
   putConstraint,
   TEMPORAL_LEVEL,
   type InstanceLevels,
+  type LevelAnalyzer,
   type LevelData,
   type ModuleLevels,
   type OperatorLevels,
@@ -58,7 +59,7 @@ interface TopLevel {
 interface ModuleAnalyzer {
   constants: Map<string, number>;
   variables: Set<string>;
-  analyzer: ReturnType<typeof createLevelAnalyzer>;
+  analyzer: LevelAnalyzer;
 }
 
 interface Substituted {

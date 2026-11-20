@@ -1639,7 +1639,7 @@ export const createLevelAnalyzer = (context: LevelContext) => {
   };
 };
 
-type LevelAnalyzer = ReturnType<typeof createLevelAnalyzer>;
+export type LevelAnalyzer = ReturnType<typeof createLevelAnalyzer>;
 
 const mergeLevels = (data: LevelData, part: LevelData) => {
   data.level = Math.max(data.level, part.level);
