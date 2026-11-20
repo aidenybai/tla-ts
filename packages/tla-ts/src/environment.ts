@@ -2,6 +2,7 @@ import {
   getChildren,
   getDefinitionExpressions,
   getReferencedName,
+  type AssumeProve,
   type Assumption,
   type Declaration,
   type Definition,
@@ -107,6 +108,7 @@ import {
   type InstanceLevelCheck,
   type InstanceSubstitutes,
   type LetInstance,
+  type LevelData,
   type SectionMember,
 } from "./levels";
 import { createInstanceChecker, type KeyedDeclaration } from "./substitution-levels";
@@ -192,6 +194,8 @@ export interface LinkedModule {
   module: Module;
   constants: KeyedDeclaration[];
   variables: string[];
+  levelConstants: Map<string, number>;
+  levelVariables: Set<string>;
   variableLocations: SourceLocation[];
   declarations: KeyedDeclaration[];
   visible: Symbols;
@@ -366,6 +370,7 @@ export const createEnvironment = (
   const letInstances = new Map<string, LetInstance>();
   const recursiveSections = new WeakMap<Definition, SectionMember[]>();
   const checkedNodes = new WeakMap<Expression, boolean>();
+  const statementLevels = new Map<Expression | AssumeProve, LevelData>();
   const resolvedSubstitutions = new WeakMap<Instance, Map<string, Expression>>();
   // Each place that resolves an instance's selections, such as a theorem and its ASSUME/PROVE clause, copies the instance.
   const getInstanceKey = (instance: Instance) =>
@@ -416,6 +421,8 @@ export const createEnvironment = (
       return {
         constants: linked.constants,
         variables: linked.variables,
+        levelConstants: linked.levelConstants,
+        levelVariables: linked.levelVariables,
         getDefinitions: () => [
           ...new Set(
             [...linked.visible.values()].flatMap((symbol) =>
@@ -476,6 +483,7 @@ export const createEnvironment = (
       getSubstitutes: getInstanceSubstitutes,
     },
     recursiveSections,
+    goalSelections,
   );
   const instanceActions = new Map<string, InstanceAction>();
   const instanceNames = new Map<string, string>();
@@ -676,6 +684,14 @@ export const createEnvironment = (
     return linked;
   };
 
+  // SANY substitutes for, arity-checks and reports missing an instanced module's declarations in its symbol table's hash order.
+  const getSymbolTableOrdered = (module: string, declarations: KeyedDeclaration[]) => {
+    const names = order.getInstanceDeclarations(module);
+    return declarations.toSorted(
+      (left, right) => names.indexOf(left.name) - names.indexOf(right.name),
+    );
+  };
+
   // SANY infers a substitution for each declaration the instancing module resolves, in the order of the instanced module's symbol table, and appends the others.
   const setFrameSubstitutions = (
     frame: Expression,
@@ -753,7 +769,7 @@ export const createEnvironment = (
     const renamed = new Map(instance.params.map((param) => [param.name, `${param.name}${suffix}`]));
     const substitutions = resolveSubstitutions(
       resolveInstanceSubexpressions(instance, module, subexpressionRecords),
-      declarations,
+      getSymbolTableOrdered(instance.module, declarations),
       resolved,
       module.name,
       unit,
@@ -1090,7 +1106,8 @@ export const createEnvironment = (
       substitutions: new Map(
         declarations.map((declaration): [string, Expression] => [
           declaration.key,
-          explicitSubstitutions.get(declaration.name) ?? createLocalSubstitution(declaration),
+          (declaration.arity > 0 ? explicitSubstitutions.get(declaration.name) : undefined) ??
+            createLocalSubstitution(declaration),
         ]),
       ),
     };
@@ -1369,7 +1386,7 @@ export const createEnvironment = (
         }
         const linked = nested ?? getLinkedModule(instance.module, parsed.name);
         return {
-          declarations: linked.declarations,
+          declarations: getSymbolTableOrdered(instance.module, linked.declarations),
           symbols: getInstanceSymbols(
             instance,
             linked.exported,
@@ -1634,12 +1651,14 @@ export const createEnvironment = (
       const key = getKey(theorem);
       parameterized.set(key, !isParameterFree);
       const body = subexpressions.getAssumeProve(theorem.name);
-      if (body) {
+      const statement = theorem.goal.statement;
+      if (body && statement.kind === "AssumeProve") {
         definitions.set(key, {
           kind: "Operator",
           name: theorem.name,
           params: [],
           body,
+          statement,
           isLocal: false,
           isRecursive: false,
           location: theorem.location,
@@ -1659,6 +1678,18 @@ export const createEnvironment = (
       module,
       constants,
       variables,
+      levelConstants: new Map([
+        ...[...scope.symbols.values()].flatMap((symbol): [string, number][] =>
+          symbol.kind === "Constant" ? [[symbol.key, symbol.arity]] : [],
+        ),
+        ...constants.map((constant): [string, number] => [constant.key, constant.arity]),
+      ]),
+      levelVariables: new Set([
+        ...[...scope.symbols.values()].flatMap((symbol) =>
+          symbol.kind === "Variable" ? [symbol.key] : [],
+        ),
+        ...variables,
+      ]),
       variableLocations,
       declarations: [
         ...declarations
@@ -1684,14 +1715,15 @@ export const createEnvironment = (
         module,
         {
           module: module.name,
-          constants: new Map(constants.map((constant) => [constant.key, constant.arity])),
-          variables: new Set(variables),
+          constants: linked.levelConstants,
+          variables: linked.levelVariables,
           getDefinition: (symbol) => getLinkedDefinition(visible.get(symbol)?.key ?? symbol),
           getQualifiedName: (symbol) => qualifiedNames.get(visible.get(symbol)?.key ?? symbol),
           instances: instanceLevels.instances,
           recursiveSections,
           checkedNodes,
           goalSelections,
+          statementLevels,
         },
         instanceChecks.splice(firstCheck),
         warnings,

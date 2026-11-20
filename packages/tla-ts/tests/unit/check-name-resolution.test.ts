@@ -1941,6 +1941,53 @@ describe("name resolution matches SANY", () => {
     },
   );
 
+  it.each([
+    [
+      "---- MODULE P ----\nCONSTANT ba, ab\nVARIABLE v\n====\nK == INSTANCE P",
+      6,
+      [
+        "Substitution missing for symbol v declared at line 4, col 10 to line 4, col 10 of module M \nand instantiated in module M.",
+        "Substitution missing for symbol ab declared at line 3, col 14 to line 3, col 15 of module M \nand instantiated in module M.",
+        "Substitution missing for symbol ba declared at line 3, col 10 to line 3, col 11 of module M \nand instantiated in module M.",
+      ],
+    ],
+    [
+      "---- MODULE P ----\nCONSTANT c, d\n====\nK == INSTANCE P",
+      5,
+      [
+        "Substitution missing for symbol d declared at line 3, col 13 to line 3, col 13 of module M \nand instantiated in module M.",
+        "Substitution missing for symbol c declared at line 3, col 10 to line 3, col 10 of module M \nand instantiated in module M.",
+      ],
+    ],
+    [
+      "---- MODULE P ----\nCONSTANT Foo, Bar, Baz\n====\nFoo(a) == a\nBar(a) == a\nBaz(a) == a\nK == INSTANCE P",
+      8,
+      ["Bar", "Baz", "Foo"].map(
+        (name) =>
+          `Wrong number of arguments (0) given to operator '${name}', \nwhich requires 1 arguments.`,
+      ),
+    ],
+    [
+      "---- MODULE P ----\nCONSTANT c(_), d(_)\n====\nc == 1\nd == 2\nK == INSTANCE P",
+      7,
+      ["d", "c"].map(
+        (name) => `An operator must be substituted for symbol '${name}', and it must have arity 1.`,
+      ),
+    ],
+  ])(
+    "reports the errors of the instance in %j in the order of the instanced module's symbol table, as SANY does",
+    async (source, line, messages) => {
+      await expect(checkNames(source)).rejects.toThrow(
+        createSanyError(
+          messages.map((message) => ({
+            location: `line ${line}, col 1 to line ${line}, col 15 of module M`,
+            message,
+          })),
+        ),
+      );
+    },
+  );
+
   it.each<[string, [string, string][]]>([
     [
       "EXTENDS Naturals\nH(a, b) == a + b\nD == H(1, 2)\nOp0(P0(_), a1) == P0(a1)\nf == Op0(D!1, 1)",
