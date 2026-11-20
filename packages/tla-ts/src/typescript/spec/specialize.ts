@@ -16,6 +16,12 @@ interface Code {
   (state: string, context: string): string;
 }
 
+// TLA+ text of ArrayAccumulation into an array from an index, in a state and the context ctx,
+// whose result is a record [s, c] with the next index.
+interface ElementsCode {
+  (state: string, array: string, index: string): string;
+}
+
 interface Scope {
   isStrict: boolean;
   // The code ids of the functions that the scope's code is in, outermost first.
@@ -1809,44 +1815,73 @@ export const specialize = (
   };
 
   // Array initializers (§13.2.4).
-  const arrayLiteral = (node: ts.ArrayLiteralExpression, scope: Scope): Code => {
-    const steps = [`LET a == ArrayCreate(s, 0, Intrinsic(s, "ArrayPrototype")) IN`];
-    let state = "a.s";
-    let index = "0";
-    let staticIndex: number | undefined = 0;
-    node.elements.forEach((element, position) => {
-      const name = `e${position + 1}`;
-      if (ts.isOmittedExpression(element)) {
+  const arrayLiteral = (node: ts.ArrayLiteralExpression, scope: Scope): Code =>
+    defineCode(
+      "Array",
+      `LET a == ArrayCreate(s, 0, Intrinsic(s, "ArrayPrototype")) IN\n  ArrayLiteralThen(Val(a), ${arrayElements(node.elements, scope, 0)("a.s", "Val(a)", "0")})`,
+    );
+
+  // ArrayAccumulation (§13.2.4.1) of the elements into array from index, whose result is the next
+  // index. start is the index when it's known before the code runs. A list of more than 64 runs as
+  // its halves, each a list, so that thousands of elements nest log n deep rather than n.
+  const arrayElements = (
+    elements: readonly ts.Expression[],
+    scope: Scope,
+    start: number | undefined,
+  ): ElementsCode => {
+    if (elements.length > 64) {
+      const middle = Math.ceil(elements.length / 2);
+      const first = arrayElements(elements.slice(0, middle), scope, start);
+      const rest = arrayElements(
+        elements.slice(middle),
+        scope,
+        start === undefined || elements.slice(0, middle).some(ts.isSpreadElement)
+          ? undefined
+          : start + middle,
+      );
+      const name = define(
+        "Elements",
+        ["s", "ctx", "array", "i"],
+        `LET q == ${first("s", "array", "i")} IN IF IsAbrupt(q) THEN q ELSE ${rest("q.s", "array", "Val(q)")}`,
+      );
+      return (state, array, index) => `${name}(${state}, ctx, ${array}, ${index})`;
+    }
+    return (initialState, array, initialIndex) => {
+      const steps: string[] = [];
+      let state = initialState;
+      let staticIndex = start;
+      let index = start === undefined ? initialIndex : String(start);
+      elements.forEach((element, position) => {
+        const name = `e${position + 1}`;
+        if (ts.isOmittedExpression(element)) {
+          index = staticIndex === undefined ? `${index} + 1` : String(staticIndex + 1);
+          staticIndex = staticIndex === undefined ? undefined : staticIndex + 1;
+          return;
+        }
+        if (ts.isSpreadElement(element)) {
+          steps.push(
+            `LET ${name} == ${value(element.expression, scope)(state, "ctx")} IN IF IsAbrupt(${name}) THEN ${name} ELSE`,
+            `LET ${name}i == ${getPrintedText(element.expression) === undefined ? `GetIterator(${name}.s, Val(${name}), "sync")` : `GetIteratorNamed(${name}.s, Val(${name}), ${getUnits(getPrintedText(element.expression) ?? "")})`} IN IF IsAbrupt(${name}i) THEN ${name}i ELSE`,
+            `LET ${name}p == SpreadIntoArray(${name}i.s, ${array}, Val(${name}i), ${index}) IN IF IsAbrupt(${name}p) THEN ${name}p ELSE`,
+          );
+          state = `${name}p.s`;
+          index = `Val(${name}p)`;
+          staticIndex = undefined;
+          return;
+        }
+        const key =
+          staticIndex === undefined
+            ? `Str(NumToString(NumFromInt(${index})))`
+            : getStr(String(staticIndex));
+        steps.push(
+          `LET ${name} == ArrayElementResult(${array}, ${key}, ${value(element, scope)(state, "ctx")}) IN IF IsAbrupt(${name}) THEN ${name} ELSE`,
+        );
+        state = `${name}.s`;
         index = staticIndex === undefined ? `${index} + 1` : String(staticIndex + 1);
         staticIndex = staticIndex === undefined ? undefined : staticIndex + 1;
-        return;
-      }
-      if (ts.isSpreadElement(element)) {
-        steps.push(
-          `LET ${name} == ${value(element.expression, scope)(state, "ctx")} IN IF IsAbrupt(${name}) THEN ${name} ELSE`,
-          `LET ${name}i == ${getPrintedText(element.expression) === undefined ? `GetIterator(${name}.s, Val(${name}), "sync")` : `GetIteratorNamed(${name}.s, Val(${name}), ${getUnits(getPrintedText(element.expression) ?? "")})`} IN IF IsAbrupt(${name}i) THEN ${name}i ELSE`,
-          `LET ${name}p == SpreadIntoArray(${name}i.s, Val(a), Val(${name}i), ${index}) IN IF IsAbrupt(${name}p) THEN ${name}p ELSE`,
-        );
-        state = `${name}p.s`;
-        index = `Val(${name}p)`;
-        staticIndex = undefined;
-        return;
-      }
-      const key =
-        staticIndex === undefined
-          ? `Str(NumToString(NumFromInt(${index})))`
-          : getStr(String(staticIndex));
-      steps.push(
-        `LET ${name} == ArrayElementResult(Val(a), ${key}, ${value(element, scope)(state, "ctx")}) IN IF IsAbrupt(${name}) THEN ${name} ELSE`,
-      );
-      state = `${name}.s`;
-      index = staticIndex === undefined ? `${index} + 1` : String(staticIndex + 1);
-      staticIndex = staticIndex === undefined ? undefined : staticIndex + 1;
-    });
-    return defineCode(
-      "Array",
-      `${steps.join("\n  ")}\n  ArrayLiteralThen(Val(a), Ok(${state}, ${index}))`,
-    );
+      });
+      return [...steps, `Ok(${state}, ${index})`].join("\n  ");
+    };
   };
 
   // Object initializers (§13.2.5).
@@ -2431,10 +2466,7 @@ export const specialize = (
       `    s3 == SetO(s2, F, [O(s2, F) EXCEPT !.slots = [ctorKind |-> "${heritage === undefined ? "base" : "derived"}", sourceText |-> ${getSourceText(node)}] @@ @])`,
       `    s4 == CreateMethodProperty(s3, Val(proto), SV("constructor"), F).s IN`,
     ];
-    let state = "s4";
-    const records: { name: string; isStatic: boolean; kind: "method" | "field" | "staticBlock" }[] =
-      [];
-    elements.forEach((element, index) => {
+    const records = elements.map((element, index) => {
       const isStatic =
         ts.isClassStaticBlockDeclaration(element) ||
         (ts.canHaveModifiers(element) &&
@@ -2443,56 +2475,97 @@ export const specialize = (
             ?.some((modifier) => modifier.kind === ts.SyntaxKind.StaticKeyword) ??
             false));
       const home = isStatic ? "F" : "Val(proto)";
-      const recordName = `c${index + 1}`;
-      const element_ =
+      const name = `Val(els)[${index + 1}]`;
+      if (
         ts.isMethodDeclaration(element) ||
         ts.isGetAccessorDeclaration(element) ||
         ts.isSetAccessorDeclaration(element)
-          ? { kind: "method" as const, text: classElement(element, scope)(state, "cctx", home) }
-          : ts.isPropertyDeclaration(element)
-            ? { kind: "field" as const, text: classField(element, scope)(state, "cctx", home) }
-            : ts.isClassStaticBlockDeclaration(element)
-              ? {
-                  kind: "staticBlock" as const,
-                  text: `LET f == CodeFunctionCreate(${state}, Intrinsic(${state}, "FunctionPrototype"), ${functionCode({ node: element, parameters: [], body: element.body, kind: "staticBlock" }, scope)}, FALSE, cctx.lex, cctx.priv) IN Ok(MakeMethod(f.s, f.v, F), [kind |-> "staticBlock", body |-> f.v])`,
-                }
-              : undefined;
-      if (element_ === undefined)
-        throw new TlaTypeScriptError(
-          "tla-ts can't compile this class element to ESCore yet",
-          element,
+      ) {
+        const code = classElement(element, scope);
+        return {
+          name,
+          isStatic,
+          kind: "method",
+          getText: (state: string) => code(state, "cctx", home),
+        };
+      }
+      if (ts.isPropertyDeclaration(element)) {
+        const code = classField(element, scope);
+        return {
+          name,
+          isStatic,
+          kind: "field",
+          getText: (state: string) => code(state, "cctx", home),
+        };
+      }
+      if (ts.isClassStaticBlockDeclaration(element)) {
+        const code = functionCode(
+          { node: element, parameters: [], body: element.body, kind: "staticBlock" },
+          scope,
         );
-      steps.push(
-        `LET ${recordName} == ${element_.text} IN IF IsAbrupt(${recordName}) THEN ${recordName} ELSE`,
+        return {
+          name,
+          isStatic,
+          kind: "staticBlock",
+          getText: (state: string) =>
+            `LET f == CodeFunctionCreate(${state}, Intrinsic(${state}, "FunctionPrototype"), ${code}, FALSE, cctx.lex, cctx.priv) IN Ok(MakeMethod(f.s, f.v, F), [kind |-> "staticBlock", body |-> f.v])`,
+        };
+      }
+      throw new TlaTypeScriptError(
+        "tla-ts can't compile this class element to ESCore yet",
+        element,
       );
-      state = `${recordName}.s`;
-      records.push({ name: recordName, isStatic, kind: element_.kind });
     });
+    const getRecords = (list: typeof records) => getSequence(list.map((record) => record.name));
     // The methods, getters, and setters, static ones first, as DecorateElements defines them.
     const methods = records.filter((record) => record.kind === "method");
-    [
-      ...methods.filter((record) => record.isStatic),
-      ...methods.filter((record) => !record.isStatic),
-    ].forEach((record) => {
-      steps.push(
-        `LET ${record.name}d == DefineElementOn(${record.isStatic ? "F" : "Val(proto)"}, Ok(${state}, Val(${record.name})), FALSE) IN IF IsAbrupt(${record.name}d) THEN ${record.name}d ELSE`,
-      );
-      state = `${record.name}d.s`;
-    });
+    steps.push(
+      `LET els == ${classElements(records.map((record) => record.getText))("s4")} IN IF IsAbrupt(els) THEN els ELSE`,
+      `LET ds == DefineElementsOn(els.s, F, ${getRecords(methods.filter((record) => record.isStatic))}) IN IF IsAbrupt(ds) THEN ds ELSE`,
+      `LET di == DefineElementsOn(ds.s, Val(proto), ${getRecords(methods.filter((record) => !record.isStatic))}) IN IF IsAbrupt(di) THEN di ELSE`,
+    );
+    const state = "di.s";
     const instanceFields = records.filter((record) => record.kind === "field" && !record.isStatic);
     const statics = records.filter((record) => record.kind !== "method" && record.isStatic);
-    const getRecords = (list: typeof records) =>
-      getSequence(list.map((record) => `Val(${record.name})`));
     // The private methods and accessors go on each instance as it's made, and the static ones on
     // the class now (§15.7.14 steps 30-34).
     steps.push(
       `LET sf == SetO(${state}, F, [O(${state}, F) EXCEPT !.slots = [privateMethods |-> PrivateMethodsOf(${getRecords(methods.filter((record) => !record.isStatic))}, <<>>), fields |-> ${getRecords(instanceFields)}, initializers |-> Empty] @@ @]) IN`,
       `LET sm == AddPrivateMethods(sf, F, PrivateMethodsOf(${getRecords(methods.filter((record) => record.isStatic))}, <<>>)) IN IF IsAbrupt(sm) THEN sm ELSE`,
       `LET sb == ${binding === undefined ? "sm.s" : `InitializeBinding(sm.s, env.e, ${getUnits(binding)}, F).s`} IN`,
-      `LET st == StaticElementsEvaluation(sb, F, ${getSequence(statics.map((record) => `Val(${record.name})`))}) IN IF IsAbrupt(st) THEN st ELSE Ok(st.s, F)`,
+      `LET st == StaticElementsEvaluation(sb, F, ${getRecords(statics)}) IN IF IsAbrupt(st) THEN st ELSE Ok(st.s, F)`,
     );
     const name = define("Class", ["s", "ctx", "name"], steps.join("\n  "));
     return (current, context, className_) => `${name}(${current}, ${context}, ${className_})`;
+  };
+
+  // The records of a class's elements in order, from ClassElementEvaluation (§15.7.14 step 26),
+  // as the value of the result, in the class's cctx with its constructor F and prototype proto. A
+  // list of more than 64 runs as its halves, each a list, so that thousands of elements nest log n
+  // deep rather than n.
+  const classElements = (elements: ((state: string) => string)[]): ((state: string) => string) => {
+    if (elements.length > 64) {
+      const middle = Math.ceil(elements.length / 2);
+      const first = classElements(elements.slice(0, middle));
+      const rest = classElements(elements.slice(middle));
+      const name = define(
+        "ClassElements",
+        ["s", "cctx", "F", "proto"],
+        `LET q == ${first("s")} IN IF IsAbrupt(q) THEN q ELSE LET r == ${rest("q.s")} IN IF IsAbrupt(r) THEN r ELSE Ok(r.s, Val(q) \\o Val(r))`,
+      );
+      return (state) => `${name}(${state}, cctx, F, proto)`;
+    }
+    return (initial) => {
+      const steps = elements.map(
+        (getText, index) =>
+          `LET c${index + 1} == ${getText(index === 0 ? initial : `c${index}.s`)} IN IF IsAbrupt(c${index + 1}) THEN c${index + 1} ELSE`,
+      );
+      const state = elements.length === 0 ? initial : `c${elements.length}.s`;
+      return [
+        ...steps,
+        `Ok(${state}, ${getSequence(elements.map((_, index) => `Val(c${index + 1})`))})`,
+      ].join("\n  ");
+    };
   };
 
   // The completion of a statement (§14).

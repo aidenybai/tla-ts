@@ -595,6 +595,7 @@ const compileProgram = (program: string, path: string, isModule: boolean) => {
   const error = transpiled.diagnostics?.find(
     (diagnostic) => diagnostic.category === ts.DiagnosticCategory.Error,
   );
+  // TypeScript's error, with its code, so that a test that TypeScript rejects runs as JavaScript.
   if (error !== undefined) {
     throw new TlaTypeScriptError(
       `error TS${error.code}: ${ts.flattenDiagnosticMessageText(error.messageText, "\n")}`,

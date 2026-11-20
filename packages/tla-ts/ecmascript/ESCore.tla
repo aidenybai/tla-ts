@@ -559,6 +559,7 @@ RECURSIVE DefineMethodProperty(_, _, _, _, _)
 RECURSIVE MethodDefinitionEvaluation(_, _, _, _, _)
 RECURSIVE MethodDefinitionThen(_, _, _, _)
 RECURSIVE NewPrivateEnvironment(_, _, _)
+RECURSIVE FirstIndexes(_, _, _)
 RECURSIVE ResolvePrivateIdentifier(_, _, _)
 RECURSIVE ResolvePrivateIn(_, _)
 RECURSIVE PrivateElementFind(_, _, _)
@@ -1094,6 +1095,15 @@ RECURSIVE RxSetRun(_, _, _, _, _)
 RECURSIVE RxAdvanced(_, _, _)
 RECURSIVE RxContinueDown(_, _, _, _, _, _)
 RECURSIVE RxContinueUp(_, _, _, _, _, _)
+RECURSIVE RxStringsLeaf(_, _, _, _, _, _)
+RECURSIVE RxStringsTables(_, _, _, _, _)
+RECURSIVE RxStringsRun(_, _, _, _, _)
+RECURSIVE RxStringsDrive(_, _, _, _, _, _, _, _)
+RECURSIVE RxStringsSearch(_, _, _, _, _, _, _, _)
+RECURSIVE RxStringsStep(_, _, _, _, _, _, _)
+RECURSIVE RxStringsFrame(_, _, _, _)
+RECURSIVE RxStringsEnds(_, _, _, _)
+RECURSIVE RxStringsKey(_, _, _, _)
 RECURSIVE RxSetFound(_, _, _)
 RECURSIVE RxIsWordChar(_, _, _)
 RECURSIVE RxBackreference(_, _, _, _)
@@ -3357,6 +3367,7 @@ URIUnescaped == Range(N("ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz012
 URIReserved == Range(N(";/?:@&=+$,#"))
 EscapeUnescaped == Range(N("ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789_@*+-./"))
 JSONFail == [ok |-> FALSE]
+SubstitutionUnitsLimit == 2 ^ 22
 UnicodeCombiningClasses ==
   <<
     <<768, 788, 230>>, <<789, 789, 232>>, <<790, 793, 220>>, <<794, 794, 232>>, <<795, 795, 216>>, <<796, 800, 220>>, <<801, 802, 202>>, <<803, 806, 220>>,
@@ -5660,7 +5671,11 @@ IndexOf(seq, x) ==
   IN IF found = {} THEN 0 ELSE CHOOSE i \in found : \A j \in found : i <= j
 Remove(seq, x) == SelectSeq(seq, LAMBDA y : y # x)
 Concat(seqs) == FoldLeftSeq(seqs)
-FoldLeftSeq(seqs) == IF seqs = <<>> THEN <<>> ELSE Head(seqs) \o FoldLeftSeq(Tail(seqs))
+\* In halves, so that thousands of sequences nest log n deep rather than n.
+FoldLeftSeq(seqs) ==
+  CASE seqs = <<>> -> <<>>
+    [] Len(seqs) = 1 -> seqs[1]
+    [] OTHER -> FoldLeftSeq(SubSeq(seqs, 1, Len(seqs) \div 2)) \o FoldLeftSeq(SubSeq(seqs, Len(seqs) \div 2 + 1, Len(seqs)))
 Repeat(x, n) == [i \in 1..n |-> x]
 \* A heap of records, indexed from 1, in pages of HeapPageSize. Changing a record copies its page and
 \* the list of pages, about n / HeapPageSize + HeapPageSize entries, rather than all n.
@@ -8829,13 +8844,16 @@ MethodDefinitionThen(obj, n, enumerable, m) ==
 \* Private environments (§9.2) are values: [outer, names] with names from a private identifier's
 \* name to its Private Name. A Private Name is [type |-> "private", id, description].
 NewPrivateEnvironment(s, outer, names) ==
-  LET ids == [i \in 1..Len(names) |-> s.privateCount + i]
-      distinct == Dedupe(names)
-  IN [s |-> [s EXCEPT !.privateCount = @ + Len(distinct)],
+  LET first == IF names = <<>> THEN <<>> ELSE FirstIndexes(names, 1, Len(names))
+  IN [s |-> [s EXCEPT !.privateCount = @ + Len(names)],
       env |-> [outer |-> outer,
-               names |-> [name \in Range(distinct) |->
-                            [type |-> "private", id |-> s.privateCount + IndexOf(distinct, name),
-                             description |-> <<35>> \o name]]]]
+               names |-> [name \in DOMAIN first |->
+                            [type |-> "private", id |-> s.privateCount + first[name], description |-> <<35>> \o name]]]]
+\* The index in seq of each of its values first from lo to hi, in halves, so that thousands of them
+\* nest log n deep rather than n.
+FirstIndexes(seq, lo, hi) ==
+  IF lo = hi THEN seq[lo] :> lo
+  ELSE FirstIndexes(seq, lo, (lo + hi) \div 2) @@ FirstIndexes(seq, (lo + hi) \div 2 + 1, hi)
 ResolvePrivateIdentifier(s, ctx, name) == ResolvePrivateIn(ctx.priv, name)
 ResolvePrivateIn(env, name) ==
   IF name \in DOMAIN env.names THEN env.names[name] ELSE ResolvePrivateIn(env.outer, name)
@@ -9297,7 +9315,7 @@ SuperCallThen(thisEnv, func, newTarget, args) ==
 \*   globalEnv     the index of the current realm's global environment
 \*   realmId       the index of the current realm in realms
 \*   realms        each realm's [intrinsics, globalEnv], the first the one the host starts with
-\*   privateCount  the number of Private Names made so far
+\*   privateCount  a bound on the ids of the Private Names made so far
 \*   symbolRegistry  the GlobalSymbolRegistry of Symbol.for (§20.4.2.2)
 \*   jobs          the pending jobs, as [kind, ...] records
 \*   out           the lines print wrote
@@ -9944,8 +9962,14 @@ JSONStringify(s, value, replacer, space) ==
       state == [replacer |-> IF IsCallable(s, replacer) THEN replacer ELSE Undefined,
                 list |-> Val(list), gap |-> gap, stack |-> <<>>, indent |-> <<>>]
   IN SerializeJSONProperty(c.s, state, EmptyStr, Val(wrapper))
+\* More than 64 of the replacer's elements run in halves, so that thousands of them nest log n deep
+\* rather than n.
 JSONPropertyList(s, replacer, len, k, list) ==
   IF ~NumLess(k, len) THEN Ok(s, list)
+  ELSE IF NumFitsInt(len) /\ NumToInt(len) - NumToInt(k) > 64 THEN
+       LET middle == NumFromInt((NumToInt(k) + NumToInt(len)) \div 2)
+           first == JSONPropertyList(s, replacer, middle, k, list)
+       IN IF IsAbrupt(first) THEN first ELSE JSONPropertyList(first.s, replacer, len, middle, Val(first))
   ELSE LET v == Get(s, replacer, Index(k)) IN IF IsAbrupt(v) THEN v ELSE
        LET x == Val(v)
            item == CASE IsString(x) -> Ok(v.s, x)
@@ -10014,8 +10038,13 @@ SerializeJSONObject(s, state, stepback, value) ==
   IF IsAbrupt(keys) THEN keys ELSE
   LET partial == SerializeJSONMembers(keys.s, state, value, Val(keys), <<>>) IN
   IF IsAbrupt(partial) THEN partial ELSE Ok(partial.s, Str(JSONJoin(state, stepback, 123, 125, Val(partial))))
+\* More than 64 keys run in halves, so that thousands of them nest log n deep rather than n.
 SerializeJSONMembers(s, state, value, keys, partial) ==
   IF keys = <<>> THEN Ok(s, partial)
+  ELSE IF Len(keys) > 64 THEN
+       LET first == SerializeJSONMembers(s, state, value, SubSeq(keys, 1, Len(keys) \div 2), partial) IN
+       IF IsAbrupt(first) THEN first
+       ELSE SerializeJSONMembers(first.s, state, value, SubSeq(keys, Len(keys) \div 2 + 1, Len(keys)), Val(first))
   ELSE LET str == SerializeJSONProperty(s, state, Head(keys), value) IN IF IsAbrupt(str) THEN str
        ELSE SerializeJSONMembers(str.s, state, value, Tail(keys),
               IF Val(str) = Undefined THEN partial
@@ -10026,8 +10055,13 @@ SerializeJSONArray(s, state, stepback, value) ==
   LET len == LengthOfArrayLike(s, value) IN IF IsAbrupt(len) THEN len ELSE
   LET partial == SerializeJSONElements(len.s, state, value, Val(len).value, PosZero, <<>>) IN
   IF IsAbrupt(partial) THEN partial ELSE Ok(partial.s, Str(JSONJoin(state, stepback, 91, 93, Val(partial))))
+\* More than 64 elements run in halves, so that thousands of them nest log n deep rather than n.
 SerializeJSONElements(s, state, value, len, i, partial) ==
   IF ~NumLess(i, len) THEN Ok(s, partial)
+  ELSE IF NumFitsInt(len) /\ NumToInt(len) - NumToInt(i) > 64 THEN
+       LET middle == NumFromInt((NumToInt(i) + NumToInt(len)) \div 2)
+           first == SerializeJSONElements(s, state, value, middle, i, partial)
+       IN IF IsAbrupt(first) THEN first ELSE SerializeJSONElements(first.s, state, value, len, middle, Val(first))
   ELSE LET str == SerializeJSONProperty(s, state, Index(i), value) IN IF IsAbrupt(str) THEN str
        ELSE SerializeJSONElements(str.s, state, value, len, NumAdd(i, OneNum),
               Append(partial, IF Val(str) = Undefined THEN N("null") ELSE Val(str).value))
@@ -10310,12 +10344,17 @@ ReplaceAt(s, units, search, positions, replaceValue, endOfLastMatch, acc) ==
        IN IF IsAbrupt(replacement) THEN replacement
           ELSE ReplaceAt(replacement.s, units, search, Tail(positions), replaceValue, p + Len(search),
                          acc \o SubSeq(units, endOfLastMatch + 1, p) \o Val(replacement).value)
+\* The most code units of a string that a replacement builds, past which tla-ts can't hold the
+\* string in the default heap, well short of V8's limit of 2^29 - 24, past which Node throws a
+\* RangeError: a template of n captures makes n copies of a long capture at once.
 \* GetSubstitution (§22.1.3.19.1) over the rest of the template, appending to acc. captures holds
 \* String values or Undefined, and namedCaptures is an object or Undefined.
 GetSubstitution(s, matched, str, position, captures, namedCaptures, rest, acc) ==
   IF rest = <<>> THEN Ok(s, Str(acc))
   ELSE LET Next(n, replacement) ==
-             GetSubstitution(s, matched, str, position, captures, namedCaptures, SubSeq(rest, n + 1, Len(rest)), acc \o replacement)
+             IF Len(acc) + Len(replacement) > SubstitutionUnitsLimit
+             THEN Unsupported(s, N("Unsupported: a replacement longer than tla-ts holds"))
+             ELSE GetSubstitution(s, matched, str, position, captures, namedCaptures, SubSeq(rest, n + 1, Len(rest)), acc \o replacement)
            c == IF Len(rest) >= 2 /\ rest[1] = 36 THEN rest[2] ELSE 0
        IN CASE c = 36 -> Next(2, <<36>>)
             [] c = 96 -> Next(2, SubSeq(str, 1, position))
@@ -10965,9 +11004,14 @@ IncludesFrom(s, o, k, len, target) ==
 \* the host has Intl, else none.
 LocaleArguments(args) == IF HostIntl(<<"none">>).found = "none" THEN <<>> ELSE <<Arg(args, 1), Arg(args, 2)>>
 \* JoinIndexedProperties: the loop of Array.prototype.join, or of toLocaleString, which passes each
-\* element's toLocaleString the arguments locale, where they aren't Empty.
+\* element's toLocaleString the arguments locale, where they aren't Empty. More than 64 elements
+\* join in halves, so that thousands of them nest log n deep rather than n.
 JoinFrom(s, o, len, k, sep, acc, locale) ==
   IF ~NumLess(k, len) THEN Ok(s, Str(acc))
+  ELSE IF NumFitsInt(len) /\ NumToInt(len) - NumToInt(k) > 64 THEN
+       LET middle == NumFromInt((NumToInt(k) + NumToInt(len)) \div 2)
+           first == JoinFrom(s, o, middle, k, sep, acc, locale)
+       IN IF IsAbrupt(first) THEN first ELSE JoinFrom(first.s, o, len, middle, sep, Val(first).value, locale)
   ELSE LET e == Get(s, o, Index(k)) IN IF IsAbrupt(e) THEN e ELSE
        LET next == IF IsNullish(Val(e)) THEN Ok(e.s, EmptyStr)
                    ELSE IF locale = Empty THEN ToStr(e.s, Val(e))
@@ -13802,6 +13846,11 @@ RxRepeatMatcher(env, m, min, max, greedy, x, k, parenIndex, parenCount) ==
             ELSE [x EXCEPT !.cap = [i \in DOMAIN @ |-> IF i > parenIndex /\ i <= parenIndex + parenCount THEN None ELSE @[i]]]
   IN CASE max = 0 -> RxContinue(env, k, x)
        [] m.t = "set" -> RxRepeatSet(env, m, min, max, greedy, x, k)
+       [] m.t = "strings" /\ m.dir /\ ~m.hasEmpty /\ greedy ->
+            LET leaf == RxStringsLeaf(env, m, min, max, x, k) IN
+            IF leaf # MatchFailure THEN leaf
+            ELSE RxStringsDrive(env, m, min, max, x, k,
+                                [stack |-> <<RxStringsFrame(env, m, x.e, 0)>>, seen |-> {}, done |-> FALSE, result |-> MatchFailure], 1)
        [] min # 0 -> RxMatch(env, m, xr, d)
        [] ~greedy -> LET z == RxContinue(env, k, x) IN IF z # MatchFailure THEN z ELSE RxMatch(env, m, xr, d)
        [] OTHER -> LET z == RxMatch(env, m, xr, d) IN IF z # MatchFailure THEN z ELSE RxContinue(env, k, x)
@@ -13846,6 +13895,68 @@ RxContinueUp(env, k, x, dir, lo, hi) ==
          LET mid == (lo + hi) \div 2
              lower == RxContinueUp(env, k, x, dir, lo, mid)
          IN IF lower # MatchFailure THEN lower ELSE RxContinueUp(env, k, x, dir, mid + 1, hi)
+\* The first state that a greedy RepeatMatcher of a matcher of strings reaches, whose backtracking
+\* goes on from there where it fails: each iteration takes the first string that matches, the
+\* longest, as far as max, or to where none does, and the continuation runs from there. The
+\* iterations are searched by doubling, as a table of where the first string that matches at each
+\* character ends, so that the depth of the search grows with the logarithm of the input's length
+\* rather than with the number of iterations.
+RxStringsLeaf(env, m, min, max, x, k) ==
+  LET limit == IF max = RxInfinity THEN env.len - x.e + 1 ELSE max
+      first == [e \in x.e..env.len |-> LET ends == RxStringsEnds(env, m, e, 1) IN IF ends = <<>> THEN -1 ELSE ends[1]]
+      tables == RxStringsTables(first, x.e, env.len, limit, <<first>>)
+      run == RxStringsRun(tables, Len(tables), x.e, 0, limit)
+  IN IF run.count < min THEN MatchFailure ELSE RxContinue(env, k, [x EXCEPT !.e = run.e])
+\* The tables of where 1, 2, 4, ... iterations end, from each character from lo to hi, while the
+\* last is below limit.
+RxStringsTables(table, lo, hi, limit, acc) ==
+  IF 2 ^ Len(acc) > limit THEN acc
+  ELSE LET next == [e \in lo..hi |-> IF table[e] = -1 THEN -1 ELSE table[table[e]]] IN
+       RxStringsTables(next, lo, hi, limit, Append(acc, next))
+\* The iterations from e that the tables from the jth take, as far as limit: [e, count].
+RxStringsRun(tables, j, e, count, limit) ==
+  IF j = 0 THEN [e |-> e, count |-> count]
+  ELSE IF count + 2 ^ (j - 1) <= limit /\ tables[j][e] # -1
+  THEN RxStringsRun(tables, j - 1, tables[j][e], count + 2 ^ (j - 1), limit)
+  ELSE RxStringsRun(tables, j - 1, e, count, limit)
+\* The backtracking of a greedy RepeatMatcher of a matcher of strings, where its first state fails,
+\* as a search of the iterations depth first, with the frames of the iterations it's in on a stack:
+\* each frame [e, c, ends, i] is the iteration that starts at e after c of them, where the strings
+\* of m that match there end, longest first, and the next of them to go on from. Once a frame's
+\* iterations have all failed, the continuation runs from its e, as RepeatMatcher does when c is
+\* at least min. m holds no groups, so an iteration's result depends only on where it starts and on
+\* the count, and the search goes on from each of these once. It runs as many steps as n, doubling
+\* n until it's done, each time in halves, so that its depth grows with the logarithm of the
+\* number of steps rather than with the number of iterations.
+RxStringsDrive(env, m, min, max, x, k, search, n) ==
+  LET next == RxStringsSearch(env, m, min, max, x, k, search, n) IN
+  IF next.done THEN next.result ELSE RxStringsDrive(env, m, min, max, x, k, next, 2 * n)
+RxStringsSearch(env, m, min, max, x, k, search, n) ==
+  CASE search.done -> search
+    [] n = 1 -> RxStringsStep(env, m, min, max, x, k, search)
+    [] OTHER ->
+         RxStringsSearch(env, m, min, max, x, k, RxStringsSearch(env, m, min, max, x, k, search, n \div 2), n - n \div 2)
+RxStringsStep(env, m, min, max, x, k, search) ==
+  LET top == Len(search.stack)
+      f == search.stack[top]
+  IN IF f.c < max /\ f.i <= Len(f.ends) THEN
+       LET stack == [search.stack EXCEPT ![top].i = f.i + 1] IN
+       IF RxStringsKey(min, max, f.ends[f.i], f.c + 1) \in search.seen THEN [search EXCEPT !.stack = stack]
+       ELSE [search EXCEPT !.stack = Append(stack, RxStringsFrame(env, m, f.ends[f.i], f.c + 1))]
+     ELSE LET r == IF f.c >= min THEN RxContinue(env, k, [x EXCEPT !.e = f.e]) ELSE MatchFailure IN
+          IF r # MatchFailure \/ top = 1 THEN [search EXCEPT !.done = TRUE, !.result = r]
+          ELSE [search EXCEPT !.stack = SubSeq(@, 1, top - 1), !.seen = @ \cup {RxStringsKey(min, max, f.e, f.c)}]
+RxStringsFrame(env, m, e, c) == [e |-> e, c |-> c, ends |-> RxStringsEnds(env, m, e, 1), i |-> 1]
+\* Where the strings of m from its ith length that match at e end, longest first.
+RxStringsEnds(env, m, e, i) ==
+  IF i > Len(m.byLength) THEN
+    IF e < env.len /\ RxSetFound(m.singles, m.cm, env.in[e + 1]) THEN <<e + 1>> ELSE <<>>
+  ELSE LET length == m.byLength[i][1] IN
+       (IF e + length <= env.len /\ RxCanonicalizeString(m.cm, SubSeq(env.in, e + 1, e + length)) \in m.byLength[i][2]
+        THEN <<e + length>> ELSE <<>>) \o RxStringsEnds(env, m, e, i + 1)
+\* The iterations from e after c of them go on as those after any other count past min do, when
+\* max is infinite.
+RxStringsKey(min, max, e, c) == <<e, IF max = RxInfinity /\ c > min THEN min ELSE c>>
 \* Whether CharacterSetMatcher finds a member of A that canonicalizes to the character c does.
 RxSetFound(cs, cm, c) == IF ~cm.ic THEN RxIn(cs, c) ELSE \E a \in RxPreimage(cm, RxCanonicalize(cm, c)) : RxIn(cs, a)
 \* IsWordChar (§22.2.2.9.2).
@@ -13891,6 +14002,7 @@ RxRun(matcher, input, index, groupCount) ==
 \*           units or None, and the path of Disjunction alternatives the group is in
 \*   path    the alternatives the parser is in, as <<start of the Disjunction, alternative>> pairs
 \*   decs    the numbers of the DecimalEscapes, and refs the GroupNames of \k escapes
+\*   singles the code points that are a whole ClassString of a ClassStringDisjunction
 \*   err     whether the parser found a Syntax Error
 \* Each parse operator returns [p, n]: the state after it and the node it parsed. A parsed character
 \* is its CharacterValue (§22.2.1.8). Outside UnicodeMode, it parses the grammar of §B.1.2.
@@ -13936,10 +14048,10 @@ ParsePattern(units, u, v) ==
                /\ i < j /\ p.groups[i].name # None /\ p.groups[i].name = p.groups[j].name
                /\ RxMightBothParticipate(p.groups[i].path, p.groups[j].path)
      THEN [ok |-> FALSE]
-     ELSE [ok |-> TRUE, pattern |-> [d |-> d.n, groups |-> p.groups]]
+     ELSE [ok |-> TRUE, pattern |-> [d |-> d.n, groups |-> p.groups, singles |-> p.singles]]
 RxParse(units, u, v, named, captures) ==
   RxDisjunction([src |-> units, pos |-> 0, u |-> u \/ v, v |-> v, named |-> named, captures |-> captures,
-                 groups |-> <<>>, path |-> <<>>, decs |-> <<>>, refs |-> <<>>, err |-> FALSE])
+                 groups |-> <<>>, path |-> <<>>, decs |-> <<>>, refs |-> <<>>, singles |-> {}, err |-> FALSE])
 \* MightBothParticipate (§22.2.1.3): two groups can't both participate in a match only when they are
 \* in different alternatives of one Disjunction.
 RxMightBothParticipate(x, y) ==
@@ -14269,7 +14381,10 @@ RxClassSetOperand(p) ==
       class == IF RxIsAt(p, N("\\")) THEN RxCharacterClassEscape(RxSkip(p, 1)) ELSE RxNode(p, None)
       c == RxClassSetCharacter(p)
   IN CASE RxIsAt(p, N("[")) -> RxBracketed(p, "nested")
-       [] RxIsAt(p, N("\\q{")) -> IF strings.p.err THEN strings ELSE RxClose(strings.p, N("}"), [t |-> "strings", strs |-> strings.n])
+       [] RxIsAt(p, N("\\q{")) ->
+            IF strings.p.err THEN strings
+            ELSE RxClose([strings.p EXCEPT !.singles = @ \cup {strings.n[i][1] : i \in {j \in DOMAIN strings.n : Len(strings.n[j]) = 1}}],
+                         N("}"), [t |-> "strings", strs |-> strings.n])
        [] RxIsAt(p, N("\\q")) -> RxError(p)
        [] class.p.err \/ class.n # None -> class
        [] c.p.err -> c
@@ -14337,6 +14452,11 @@ RegExpInitialize(s, obj, pattern, flags) ==
       parsed == ParsePattern(Val(p).value, 117 \in Range(units), 118 \in Range(units))
   IN IF ~(Range(units) \subseteq Range(N("dgimsuvy"))) \/ Cardinality(Range(units)) # Len(units) THEN ThrowError(f.s, "SyntaxError")
      ELSE IF ~parsed.ok THEN ThrowError(f.s, "SyntaxError")
+     \* V8 folds a ClassString of one code point under the i flag and then matches only the folded
+     \* code point, so /[\q{a}]/iv doesn't match "A", where the spec matches every case of it.
+     ELSE IF /\ 105 \in Range(units) /\ 118 \in Range(units)
+             /\ \E c \in parsed.pattern.singles : RxScfPreimage(RxScf(c)) # {RxScf(c)}
+     THEN Unsupported(f.s, N("Unsupported: a ClassString of one code point with a case under the i and v flags"))
      ELSE LET rer == [ic |-> 105 \in Range(units), multiline |-> 109 \in Range(units), dotAll |-> 115 \in Range(units),
                       u |-> 117 \in Range(units), v |-> 118 \in Range(units), groups |-> parsed.pattern.groups]
               t == SetO(f.s, obj, [O(f.s, obj) EXCEPT !.slots.source = Val(p).value, !.slots.flags = units,

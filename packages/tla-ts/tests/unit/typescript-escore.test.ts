@@ -443,6 +443,87 @@ describe("compiles scripts by specializing ESCore", () => {
     }, 600_000);
   });
 
+  describe("repeats a class of strings over a long string as RepeatMatcher does", () => {
+    const getSource = (expected: string) => `
+      const result = [
+        /^[\\q{ab|c}]+$/v.test("ab".repeat(4000) + "c"),
+        /^[\\q{abc|ab|a}]+$/v.exec("abcab")?.[0],
+        /^[\\q{ab|a}]+b$/v.exec("ab")?.[0],
+        /[\\q{ab|a}]{2}/v.exec("aab")?.[0],
+        /[\\q{xy|x}]{2,3}/v.exec("xyxyxyx")?.[0],
+        /^\\p{RGI_Emoji}+$/v.test("😀👍🏽".repeat(1000)),
+        /[\\q{ab|a}]+?/v.exec("abab")?.[0],
+        /^[\\q{aa|1}]+$/iv.test("aA1".repeat(2000)),
+        /^[\\q{ab|c}]+$/v.test("ab".repeat(4000) + "d"),
+        /[\\q{ab|a}]*c/v.exec("abaabc")?.[0],
+        /^[\\q{abc|ab|a}]{2,4}c$/v.exec("abcabcabc")?.[0],
+        /^(?:[\\q{ab|a}]{3})+$/v.test("abaab"),
+      ].join();
+      if (result !== "${expected}") throw new Error(result);
+    `;
+
+    it("agrees with Node", async () => {
+      expect(
+        (
+          await checkScript(
+            getSource("true,abcab,ab,aab,xyxyxy,true,ab,true,false,abaabc,abcabcabc,true"),
+          )
+        ).message,
+      ).toBeUndefined();
+    }, 600_000);
+
+    it("rejects another result", async () => {
+      expect(
+        (
+          await checkScript(
+            getSource("true,abcab,ab,aab,xyxyxy,true,ab,true,false,abaabc,abcabc,true"),
+          )
+        ).message,
+      ).toContain(THREW);
+    }, 600_000);
+  });
+
+  describe("stops at a ClassString of one code point with a case under the i and v flags", () => {
+    const getSource = (expected: string) => `
+      const result = [/^[\\q{1|ab}]+$/iv.test("1aB"), /[\\q{a}]/v.test("A")].join();
+      if (result !== "${expected}") throw new Error(result);
+    `;
+
+    it("agrees with Node", async () => {
+      expect((await checkScript(getSource("true,false"))).message).toBeUndefined();
+    });
+
+    it("rejects another result", async () => {
+      expect((await checkScript(getSource("true,true"))).message).toContain(THREW);
+    });
+
+    it("stops where V8 matches only the folded code point", async () => {
+      expect((await checkScript('/[\\q{a}]/iv.test("A");')).message).toContain("tla-ts can't");
+    });
+  });
+
+  describe("substitutes a replacement's captures, and stops at one longer than tla-ts holds", () => {
+    const getSource = (expected: string) => `
+      const x = "ab".repeat(1 << 15);
+      const result = [x.replace(/(.+)/, "$1-$1-$1").length, "abc".replace(/(b)/, "[$1$&$\`$']")].join();
+      if (result !== "${expected}") throw new Error(result);
+    `;
+
+    it("agrees with Node", async () => {
+      expect((await checkScript(getSource("196610,a[bbac]c"))).message).toBeUndefined();
+    }, 600_000);
+
+    it("rejects another result", async () => {
+      expect((await checkScript(getSource("196610,a[bbac]"))).message).toContain(THREW);
+    }, 600_000);
+
+    it("stops at a replacement of millions of code units", async () => {
+      expect(
+        (await checkScript('"ab".repeat(1 << 15).replace(/(.+)/, "$1".repeat(65));')).message,
+      ).toContain("tla-ts can't");
+    }, 600_000);
+  });
+
   describe("reads RegExp's legacy static properties after a match, and stops where V8 differs", () => {
     const getSource = (expected: string) => `
       /(b)(c)?/.exec("abd");
@@ -2874,6 +2955,107 @@ const result = [read(() => box.f()), read(() => box.inner.g()), read(() => value
           .message,
       ).toContain("tla-ts can't call a function that its script names nowhere else");
     });
+  });
+
+  describe("runs an array literal of thousands of elements", () => {
+    const elements = Array.from({ length: 5000 }, (_, index) =>
+      index === 2500 ? '...["x", "y"]' : index === 100 ? "" : String(index % 10),
+    ).join(", ");
+    const getSource = (expected: string) => `
+      const list = [${elements}];
+      const result = [list.length, list[99], 100 in list, list[2500], list[2501], list[2502], list[4999]].join();
+      if (result !== "${expected}") throw new Error(result);
+    `;
+
+    it("agrees with Node", async () => {
+      expect((await checkScript(getSource("5001,9,false,x,y,1,8"))).message).toBeUndefined();
+    }, 600_000);
+
+    it("rejects another result", async () => {
+      expect((await checkScript(getSource("5001,9,false,x,y,2,8"))).message).toContain(THREW);
+    }, 600_000);
+  });
+
+  describe("joins an array of thousands of elements", () => {
+    const getSource = (expected: string) => `
+      const list = [${Array.from({ length: 5000 }, (_, index) => index % 7).join(", ")}];
+      const result = [list.join("-").length, list.join().slice(-9)].join();
+      if (result !== "${expected}") throw new Error(result);
+    `;
+
+    it("agrees with Node", async () => {
+      expect((await checkScript(getSource("9999,4,5,6,0,1"))).message).toBeUndefined();
+    }, 600_000);
+
+    it("rejects another result", async () => {
+      expect((await checkScript(getSource("9999,4,5,6,0,2"))).message).toContain(THREW);
+    }, 600_000);
+  });
+
+  describe("defines a class of thousands of elements", () => {
+    const body = Array.from(
+      { length: 1000 },
+      (_, index) =>
+        `f${index} = ${index}; #p${index} = ${index * 2}; m${index}() { return this.#p${index}; } static s${index}() { return ${index * 3}; }`,
+    ).join("\n");
+    const getSource = (expected: string) => `
+      class C {
+        ${body}
+        static ready = 0;
+        static { C.ready = 7; }
+        get g() { return this.#p999 + this.f999; }
+      }
+      const c = new C() as unknown as Record<string, () => number>;
+      const methods = C as unknown as Record<string, () => number>;
+      const result = [C.ready, c.f0, c.f999, c.m500(), methods.s999(), c.g, Object.keys(c).length, Object.getOwnPropertyNames(C.prototype).length].join();
+      if (result !== "${expected}") throw new Error(result);
+    `;
+
+    it("agrees with Node", async () => {
+      expect(
+        (await checkScript(getSource("7,0,999,1000,2997,2997,1000,1002"))).message,
+      ).toBeUndefined();
+    }, 600_000);
+
+    it("rejects another result", async () => {
+      expect((await checkScript(getSource("7,0,999,1000,2997,2997,1000,1001"))).message).toContain(
+        THREW,
+      );
+    }, 600_000);
+  });
+
+  describe("serializes thousands of keys, elements, and replacer names to JSON", () => {
+    const getSource = (expected: string) => `
+      const replacer: number[] = [];
+      for (let index = 0; index < 4096; index++) replacer.push(index);
+      const list: (number | undefined)[] = [];
+      for (let index = 0; index < 3000; index++) list.push(index % 3 === 0 ? undefined : index);
+      const wide: Record<string, number> = {};
+      for (let index = 0; index < 3000; index++) wide["k" + index] = index;
+      const result = [
+        JSON.stringify({ foopy: "FAIL", "4093": 17 }, replacer),
+        JSON.stringify(list).length,
+        JSON.stringify(list, null, 1).length,
+        JSON.stringify(wide).length,
+        JSON.stringify(wide).slice(-12),
+        JSON.stringify(list).slice(0, 12),
+      ].join();
+      if (result !== '${expected}') throw new Error(result);
+    `;
+
+    it("agrees with Node", async () => {
+      expect(
+        (await checkScript(getSource('{"4093":17},14263,20264,36781,k2999":2999},[null,1,2,nu')))
+          .message,
+      ).toBeUndefined();
+    }, 600_000);
+
+    it("rejects another result", async () => {
+      expect(
+        (await checkScript(getSource('{"4093":17},14263,20264,36782,k2999":2999},[null,1,2,nu')))
+          .message,
+      ).toContain(THREW);
+    }, 600_000);
   });
 
   describe("runs a script of thousands of statements and global vars", () => {
