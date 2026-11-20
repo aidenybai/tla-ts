@@ -1919,12 +1919,15 @@ const listUnionLikeTlc = (union: SetOperationValue) => {
   openStream(union.left);
   openStream(union.right);
   if (isBeyondSetBound(union.left)) throw new TlaSetBoundError(getSetBoundMessage());
-  const left = getStreamedElements(union.left);
-  const right = isBeyondSetBound(union.right) ? undefined : getStreamedElements(union.right);
-  if (!right || left.length + right.length > getMaximumSetSize()) {
-    throw new TlaSetBoundError(getSetBoundMessage());
-  }
-  return [...left, ...right];
+  const elements: Value[] = [];
+  const add = (element: Value) => {
+    addBoundedElement(elements, element);
+    return false;
+  };
+  someStreamedElement(union.left, add);
+  if (isBeyondSetBound(union.right)) throw new TlaSetBoundError(getSetBoundMessage());
+  someStreamedElement(union.right, add);
+  return elements;
 };
 
 export const getNormalizedSetElements = (value: Value, isBounded: boolean) => {

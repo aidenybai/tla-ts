@@ -234,6 +234,21 @@ describe("printing matches TLC", () => {
     expect(printed).toEqual(["FALSE"]);
   });
 
+  it("fails S \\cup T at the element past the bound as it streams T, as TLC's ValueVec does", async () => {
+    const lines: string[] = [];
+    const result = await check({
+      source:
+        "---- MODULE M ----\nEXTENDS Naturals, TLC\nASSUME (SUBSET (1..5) \\cup {s \\in SUBSET (1..2) : PrintT(s)}) = {}\n====",
+      config: "",
+      maxSetSize: 33,
+      onPrint: (text) => lines.push(text),
+    });
+    expect([lines, result.violation?.message]).toEqual([
+      ["{}", "{1}"],
+      "Attempted to construct a set with too many elements (>33).",
+    ]);
+  });
+
   it("streams SUBSET S into a filter without sizing SUBSET S, as TLC's SubsetValue#elements does", async () => {
     expect(
       (await checkPrinting("ASSUME PrintT([{1} -> {s \\in SUBSET (1..40) : TRUE}] = [{2} -> {}])"))
