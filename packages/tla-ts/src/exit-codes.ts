@@ -21,12 +21,12 @@ export const UNSETTLED_AWAIT_EXIT_CODE = 13;
 export const UNSETTLED_AWAIT_WARNING = "Detected unsettled top-level await at ";
 // Node's exit status for a script that throws or rejects with what nothing handles.
 export const UNCAUGHT_EXCEPTION_EXIT_CODE = 1;
-// Where Node says that an ES module threw, and that a promise rejected with what nothing handles,
+// Where Node 26 says that an ES module threw, and that a promise rejected with what nothing handles,
 // both in its own code, and what it prints after a primitive that nothing catches.
 export const MODULE_UNCAUGHT_LOCATION =
-  "node:internal/modules/run_main:107\n    triggerUncaughtException(\n    ^";
+  "node:internal/modules/run_main:111\n    triggerUncaughtException(\n    ^";
 export const UNHANDLED_REJECTION_LOCATION =
-  "node:internal/process/promises:392\n      new UnhandledPromiseRejection(reason);\n      ^";
+  "node:internal/process/promises:322\n      new UnhandledPromiseRejection(reason);\n      ^";
 export const UNHANDLED_REJECTION_PREFIX =
   "UnhandledPromiseRejection: This error originated either by throwing inside of an async function without a catch block, or by rejecting a promise which was not handled with .catch(). The promise rejected with the reason ";
 export const UNHANDLED_REJECTION_SUFFIX = ". {\n  code: 'ERR_UNHANDLED_REJECTION'\n}";
