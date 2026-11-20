@@ -328,6 +328,26 @@ describe("evaluation errors match TLC", () => {
     expect(ranges?.at(-1)).toBe("34-41");
   });
 
+  it.each([
+    ["{{}} # {0}", ["39-48", "39-42", "40-41"]],
+    ["{{{}}} # {{0}}", ["39-52", "39-44", "40-43", "41-42"]],
+    ["<<<<{}>>>> = <<<<0>>>>", ["39-60", "39-48", "41-46", "43-44"]],
+    ["[a |-> {}] # [a |-> 0]", ["39-60", "39-48", "46-47"]],
+  ])(
+    "fingerprints each element of %s that fails to compare, as TLC's equals does",
+    async (comparison, frames) => {
+      const result = await check({
+        source: `---- MODULE M ----\nEXTENDS Integers, FiniteSets, TLC\nVARIABLE x\nInit == x = 0\nNext == x < 2 /\\ x' = x + 1 /\\ PrintT(${comparison})\n====`,
+        config: "INIT Init\nNEXT Next\nCHECK_DEADLOCK FALSE",
+      });
+      const ranges = result.failure?.callStack?.map((expression) => {
+        const range = expression.location.range;
+        return range && `${range.start.column}-${range.end.column}`;
+      });
+      expect([...new Set(ranges)].slice(5)).toEqual(frames);
+    },
+  );
+
   it("records each prefix of a chain of infix conjunctions as TLC nests them", async () => {
     const result = await check({
       source:

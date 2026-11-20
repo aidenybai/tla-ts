@@ -1035,8 +1035,11 @@ const compareTlcFunctions = (
 };
 
 const compareElementsLikeTlc = (left: Value[], right: Value[], isEquality: boolean) => {
+  const sets = setTrace.sets;
   for (let index = 0; index < left.length; index++) {
+    sets?.push(left[index]);
     const comparison = compareOrEqualLikeTlc(left[index], right[index], isEquality);
+    sets?.pop();
     if (comparison !== 0) return comparison;
   }
   return 0;
