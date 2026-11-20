@@ -27,6 +27,15 @@ register("data:text/javascript," + encodeURIComponent(\`export const resolve = (
 const loading = import(workerData.source + "/index.ts");
 parentPort.on("message", async (request) => {
   const index = await loading;
+  if (request.isExplored) {
+    const search = await import(workerData.tests + "/model-bfs.ts");
+    try {
+      parentPort.postMessage({ id: request.id, checked: await search.exploreModel(request.source, request.fileName) });
+    } catch (error) {
+      parentPort.postMessage({ id: request.id, checked: { error: error.message } });
+    }
+    return;
+  }
   try {
     const spec = await index.compile({ source: request.source, fileName: request.fileName, libraries: request.libraries });
     const result = await index.check({ ...spec, onPrint: () => {} });
@@ -51,28 +60,40 @@ parentPort.on("message", async (request) => {
 const pending: ((checked: Checked) => void)[] = [];
 let worker: Worker | undefined;
 
-// Compiles a file with the public compile, with TypeScript's declaration files where libraries
-// gives them, and checks the spec.
-export const compileAndCheck = (
-  source: string,
-  fileName: string,
-  libraries?: ReadonlyMap<string, string>,
-) => {
+const getWorker = () => {
   const started =
     worker ??
     new Worker(WORKER, {
       eval: true,
-      workerData: { source: pathToFileURL(join(import.meta.dirname, "../../src")).href },
+      workerData: {
+        source: pathToFileURL(join(import.meta.dirname, "../../src")).href,
+        tests: pathToFileURL(import.meta.dirname).href,
+      },
       resourceLimits: { stackSizeMb: 256 },
     }).on("message", (response: { id: number; checked: Checked }) =>
       pending[response.id](response.checked),
     );
   if (worker === undefined) started.unref();
   worker = started;
-  return new Promise<Checked>((resolve) => {
-    started.postMessage({ id: pending.length, source, fileName, libraries });
+  return started;
+};
+
+const post = (request: object) =>
+  new Promise<Checked>((resolve) => {
+    getWorker().postMessage({ ...request, id: pending.length });
     pending.push(resolve);
   });
-};
+
+// Compiles a file with the public compile, with TypeScript's declaration files where libraries
+// gives them, and checks the spec.
+export const compileAndCheck = (
+  source: string,
+  fileName: string,
+  libraries?: ReadonlyMap<string, string>,
+) => post({ source, fileName, libraries });
+
+// Searches a model's states in Node, as model-bfs.ts does.
+export const exploreInNode = (source: string, fileName: string) =>
+  post({ source, fileName, isExplored: true });
 
 afterAll(() => worker?.terminate());

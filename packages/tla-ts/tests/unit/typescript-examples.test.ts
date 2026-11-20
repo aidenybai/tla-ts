@@ -1,26 +1,21 @@
 import { existsSync, readdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
-import { check, type CheckResult } from "../../src";
+import { check } from "../../src";
 import { describe, expect, it } from "vite-plus/test";
-import { compileAndCheck } from "./compile-worker";
+import { type Checked, compileAndCheck, exploreInNode } from "./compile-worker";
 
 const EXAMPLES = join(import.meta.dirname, "../fixtures/typescript/examples");
 
-// The ports whose checks on ESCore generate fewer states than TLC does for the original, with the
-// same distinct states, depth, and verdict, as they do with today's frame too.
-const FEWER_GENERATED = new Map([
-  ["ewd840", "generates 1,817 states where TLC generates 2,001"],
-  ["single-lane-bridge", "generates 624 states where TLC generates 777"],
-]);
-
-const getSummary = (result: CheckResult) => ({
-  status: result.status,
-  generatedStates: result.generatedStates,
-  distinctStates: result.distinctStates,
-  depth: result.depth,
-  traceLength: result.violation?.trace.length,
+const getCounts = (checked: Checked) => ({
+  status: checked.status,
+  generatedStates: checked.generatedStates,
+  distinctStates: checked.distinctStates,
+  depth: checked.depth,
 });
 
+// Each port checks as Node runs it, as a search of its states in Node finds them, and as its
+// original checks, but for the states generated: a call that writes nothing is no step, where an
+// action of the original may be enabled and leave the state as it was.
 describe("ports of tlaplus/Examples check like the originals", () => {
   for (const name of readdirSync(EXAMPLES).sort()) {
     const directory = join(EXAMPLES, name);
@@ -28,10 +23,8 @@ describe("ports of tlaplus/Examples check like the originals", () => {
     const model = files.find((file) => file.endsWith(".ts"));
     const config = files.find((file) => file.endsWith(".cfg"));
     if (model === undefined || config === undefined) continue;
-    const reason = FEWER_GENERATED.get(name);
-    // Skipped until ESCore's model generates the states that TLC does, as FEWER_GENERATED says.
-    (reason === undefined ? it : it.skip)(
-      reason === undefined ? name : `${name}, which ${reason}`,
+    it(
+      name,
       async () => {
         const original = await check({
           source: readFileSync(join(directory, config.replace(/\.cfg$/, ".tla")), "utf8"),
@@ -42,17 +35,25 @@ describe("ports of tlaplus/Examples check like the originals", () => {
           },
         });
         const path = join(directory, model);
-        const ported = await compileAndCheck(readFileSync(path, "utf8"), path);
+        const source = readFileSync(path, "utf8");
+        const ported = await compileAndCheck(source, path);
+        const explored = await exploreInNode(source, path);
         expect(original.failure?.message).toBeUndefined();
         expect(ported.error).toBeUndefined();
         expect(ported.failure).toBeUndefined();
+        expect(explored.error).toBeUndefined();
+        expect(getCounts(ported)).toEqual(getCounts(explored));
         expect({
           status: ported.status,
-          generatedStates: ported.generatedStates,
           distinctStates: ported.distinctStates,
           depth: ported.depth,
           traceLength: ported.traceLength,
-        }).toEqual(getSummary(original));
+        }).toEqual({
+          status: original.status,
+          distinctStates: original.distinctStates,
+          depth: original.depth,
+          traceLength: original.violation?.trace.length,
+        });
       },
       900_000,
     );
