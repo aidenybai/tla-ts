@@ -512,4 +512,50 @@ describe("the CLI with TypeScript files", () => {
       );
     });
   });
+
+  // The CLI runs an entry as Node loads the path it's given: a .cjs file, or a .js file that no
+  // package types, in Node's CommonJS wrapper, a .js file with module syntax as a module, as Node
+  // 26 detects it, and a .js file in a package of "type": "module" as a module.
+  describe.each([
+    [
+      "a CommonJS entry that requires a file",
+      "main.cjs",
+      (expected: number) =>
+        `const helper = require("./helper.cjs");\nif (helper.two !== ${expected} || typeof __filename !== "string" || typeof __dirname !== "string" || module.exports !== exports) throw new Error("helper " + helper.two);\n`,
+    ],
+    [
+      "a .js entry whose syntax makes it a module",
+      "main.js",
+      (expected: number) =>
+        `export const two = await Promise.resolve(2);\nif (two !== ${expected}) throw new Error("two " + two);\n`,
+    ],
+    [
+      "a .js entry in a package of modules",
+      "typed/main.js",
+      (expected: number) =>
+        `const two = typeof import.meta.url === "string" ? 2 : 0;\nif (two !== ${expected}) throw new Error("two " + two);\n`,
+    ],
+  ])("runs %s as Node does", (_, file, getScript) => {
+    const write = (expected: number) => {
+      const directory = copyFixtures("passing");
+      mkdirSync(join(directory, "typed"));
+      writeFileSync(join(directory, "typed/package.json"), '{ "type": "module" }\n');
+      writeFileSync(join(directory, "helper.cjs"), "module.exports = { two: 2 };\n");
+      writeFileSync(join(directory, file), getScript(expected));
+      return directory;
+    };
+
+    it("agrees with Node", () => {
+      const directory = write(2);
+      expect(runNode(directory, file).status).toBe(0);
+      expect(getExit(runCli(directory, [file]))).toEqual([0, ""]);
+    });
+
+    it("rejects another result", () => {
+      const directory = write(3);
+      const result = runCli(directory, [file]);
+      expect(getExit(result)).toEqual(getExit(runNode(directory, file)));
+      expect(result.status).toBe(1);
+    });
+  });
 });
