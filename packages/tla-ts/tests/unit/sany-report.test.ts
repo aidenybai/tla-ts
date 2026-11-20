@@ -1130,11 +1130,17 @@ Spec == Init /\\ [][Next]_x
     expect(report).toEqual({ text: "", isFailed: false });
   });
 
-  it("accepts an inner module that only a LET instantiates, which SANY rejects", () => {
-    const report = getReport({
-      M: "---- MODULE M ----\n---- MODULE Inner ----\nK == 1\n====\nD == LET N == INSTANCE Inner IN N!K\n====\n",
-    });
-    expect(report).toEqual({ text: "", isFailed: false });
+  it.each([
+    [
+      "rejects as multiply defined",
+      "---- MODULE M ----\n---- MODULE Inner ----\nK == 1\n====\nD == LET N == INSTANCE Inner IN N!K\n====\n",
+    ],
+    [
+      "fails to parse when it has an inner module of its own",
+      "---- MODULE M ----\n---- MODULE Inner ----\n---- MODULE Nested ----\nJ == 1\n====\nK == 1\n====\nD == LET N == INSTANCE Inner IN N!K\n====\n",
+    ],
+  ])("accepts an inner module that only a LET instantiates, which SANY %s", (_title, source) => {
+    expect(getReport({ M: source })).toEqual({ text: "", isFailed: false });
   });
 
   it.each([
