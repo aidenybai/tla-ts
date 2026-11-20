@@ -1099,15 +1099,30 @@ export const createModuleSubexpressions = (
         return { ...proof, facts: resolveFacts(proof.facts), defs: resolveDefs(proof.defs) };
       }
       if (proof?.kind !== "Steps") return proof;
-      let resolver = { lookup, resolveStep, resolveProof };
+      const statements = new Map<string, Definition>();
+      let resolver = createProofResolver((name) => statements.get(name) ?? lookup(name));
       return {
         ...proof,
         steps: proof.steps.map((step) => {
-          const resolved = {
-            ...step,
-            body: resolver.resolveStep(step.body),
-            proof: resolver.resolveProof(step.proof),
-          };
+          const body = resolver.resolveStep(step.body);
+          if (
+            step.name !== undefined &&
+            body.kind === "Assert" &&
+            !body.isSuffices &&
+            body.statement.kind !== "AssumeProve" &&
+            !containsReference(body.statement)
+          ) {
+            statements.set(step.name, {
+              kind: "Operator",
+              name: step.name,
+              params: [],
+              body: body.statement,
+              isLocal: true,
+              isRecursive: false,
+              location: step.location,
+            });
+          }
+          const resolved = { ...step, body, proof: resolver.resolveProof(step.proof) };
           if (resolved.body.kind === "Define") {
             const definitions = resolved.body.definitions.flatMap((definition) =>
               definition.kind === "Instance" ? [] : [definition],

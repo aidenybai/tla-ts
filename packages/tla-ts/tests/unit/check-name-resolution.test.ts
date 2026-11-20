@@ -1484,6 +1484,32 @@ describe("name resolution matches SANY", () => {
       ],
     ],
     [
+      "EXTENDS Naturals\n---- MODULE In ----\nCONSTANT c\nTHEOREM T == t :: (c = 1)\nTHEOREM U == ASSUME NEW y PROVE y = c\n====\nI0 == INSTANCE In WITH c <- 1\nD == LET K == INSTANCE In WITH c <- 1 IN K!U!1\nTHEOREM ASSUME NEW e PROVE LET K == INSTANCE In WITH c <- e IN K!T!1 /\\ K!U!:\nTHEOREM TRUE\n<1> K == INSTANCE In WITH c <- 1\n<1>1. K!T!: /\\ K!U!1\n  OBVIOUS\n<1> QED",
+      [
+        [
+          "line 9, col 42 to line 9, col 46",
+          "Selected a NEW declaration as an expression or operator.",
+        ],
+        ["line 10, col 73 to line 10, col 77", "Selected ASSUME/PROVE instead of expression."],
+        [
+          "line 13, col 16 to line 13, col 20",
+          "Selected a NEW declaration as an expression or operator.",
+        ],
+      ],
+    ],
+    [
+      "THEOREM TRUE\n<1>1. s :: (LET a == 1 IN a = 1)\n  OBVIOUS\n<1>2. <1>1!2 /\\ <1>1!s!1 /\\ <1>1!s!2\n  OBVIOUS\n<1>3. LET b == 1 IN b = 1\n  OBVIOUS\n<1>4. <1>3!1 /\\ <1>3!>> /\\ <1>3!1!3\n  OBVIOUS\n<1> QED",
+      [
+        ["line 5, col 12 to line 5, col 12", "A LET/IN expression has only one operand."],
+        ["line 5, col 36 to line 5, col 36", "A LET/IN expression has only one operand."],
+        ["line 9, col 22 to line 9, col 23", "A LET/IN expression has only one operand."],
+        [
+          "line 9, col 35 to line 9, col 35",
+          "Nonexistent operand specified by `argument selector 3'.",
+        ],
+      ],
+    ],
+    [
       "VARIABLE z\n---- MODULE Inner ----\nCONSTANT c\nVARIABLE y\na \\star b == c\nD(p) == y\nE == c\n====\nI == INSTANCE Inner WITH c <- z, y <- z\nU == I!\\star(1, 2)!1\nV == I!D(1)!1\nW == I!E!1",
       [
         [

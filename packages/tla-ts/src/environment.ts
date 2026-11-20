@@ -269,13 +269,6 @@ const getSubstitutions = (instances: Instance[]) =>
     instance.substitutions.map((substitution) => substitution.expression),
   );
 
-const getSubstitute = (instance: Instance, name: string): Expression =>
-  instance.substitutions.find((substitution) => substitution.name === name)?.expression ?? {
-    kind: "Identifier",
-    name,
-    location: instance.location,
-  };
-
 const getProofInstances = (proof: Proof | undefined): Instance[] =>
   proof?.kind === "Steps"
     ? proof.steps.flatMap((step) => [
@@ -358,6 +351,15 @@ export const createEnvironment = (
   const instanceCopies = new WeakMap<Definition, InstanceCopy>();
   const letInstances = new Map<string, LetInstance>();
   const recursiveSections = new WeakMap<Definition, SectionMember[]>();
+  const checkedLabels = new WeakSet<Expression>();
+  const resolvedSubstitutions = new WeakMap<Instance, Map<string, Expression>>();
+  const getInstanceSubstitute = (instance: Instance, name: string): Expression =>
+    resolvedSubstitutions.get(instance)?.get(name) ??
+    instance.substitutions.find((substitution) => substitution.name === name)?.expression ?? {
+      kind: "Identifier",
+      name,
+      location: instance.location,
+    };
   const createInstanceCopy = (
     sourceKey: string,
     module: string,
@@ -365,6 +367,20 @@ export const createEnvironment = (
   ): InstanceCopy | undefined => {
     const source = definitions.get(sourceKey);
     return source && { ...substitutes, source, module };
+  };
+  const getInstanceSubstitutes = (instance: Instance) => {
+    const linked = checkedModules.get(instance.module);
+    return (
+      linked && {
+        params: instance.params,
+        substitutions: new Map(
+          linked.declarations.map((declaration) => [
+            declaration.key,
+            getInstanceSubstitute(instance, declaration.name),
+          ]),
+        ),
+      }
+    );
   };
   const instanceLevels = createInstanceChecker(
     (name) => {
@@ -374,11 +390,16 @@ export const createEnvironment = (
         variables: linked.variables,
         getDefinitions: () => [
           ...new Set(
-            [...linked.visible.values()].flatMap((symbol) => getLinkedDefinition(symbol.key) ?? []),
+            [...linked.visible.values()].flatMap((symbol) =>
+              symbol.kind === "Theorem" ? [] : (getLinkedDefinition(symbol.key) ?? []),
+            ),
           ),
         ],
         assumptions: linked.module.assumptions.map((assumption) => assumption.expression),
         theorems: linked.module.theorems,
+        instances: linked.module.instances,
+        uses: linked.module.uses,
+        extended: linked.extended.map((extended) => extended.module.name),
         getDefinition: (symbol) => getLinkedDefinition(linked.visible.get(symbol)?.key ?? symbol),
         getQualifiedName: (symbol) => qualifiedNames.get(linked.visible.get(symbol)?.key ?? symbol),
       };
@@ -397,7 +418,7 @@ export const createEnvironment = (
           substitutions: new Map(
             linked.declarations.map((declaration) => [
               declaration.name,
-              getSubstitute(instance, declaration.name),
+              getInstanceSubstitute(instance, declaration.name),
             ]),
           ),
           location: instance.location,
@@ -405,19 +426,11 @@ export const createEnvironment = (
       },
       getInstanceDefinitions: (instance) => {
         const linked = checkedModules.get(instance.module);
-        if (!linked) return [];
-        const substitutes = {
-          params: instance.params,
-          substitutions: new Map(
-            linked.declarations.map((declaration) => [
-              declaration.key,
-              getSubstitute(instance, declaration.name),
-            ]),
-          ),
-        };
+        const substitutes = getInstanceSubstitutes(instance);
+        if (!linked || !substitutes) return [];
         return [...linked.exported].flatMap((entry) => {
           const copy =
-            entry[1].kind === "Definition"
+            entry[1].kind === "Definition" || entry[1].kind === "Theorem"
               ? createInstanceCopy(entry[1].key, instance.module, substitutes)
               : undefined;
           if (!copy) return [];
@@ -429,6 +442,7 @@ export const createEnvironment = (
           return [definition];
         });
       },
+      getSubstitutes: getInstanceSubstitutes,
     },
     recursiveSections,
   );
@@ -713,6 +727,7 @@ export const createEnvironment = (
       module.name,
       unit,
     );
+    resolvedSubstitutions.set(instance, substitutions);
     unit.reports.push({
       location: instance.location,
       errors: getSubstitutionErrors(instance, linked, substitutions.size),
@@ -1303,6 +1318,7 @@ export const createEnvironment = (
             symbols: getStandardInstanceSymbols(instance, standardSymbols, (symbol) => symbol.key),
             instancer: parsed.name,
             getSubstitutionErrors: () => [],
+            setSubstitutions: () => {},
           };
         }
         const linked = nested ?? getLinkedModule(instance.module, parsed.name);
@@ -1317,6 +1333,7 @@ export const createEnvironment = (
           instancer: parsed.name,
           getSubstitutionErrors: (substitutionCount) =>
             getSubstitutionErrors(instance, linked, substitutionCount),
+          setSubstitutions: (substitutions) => resolvedSubstitutions.set(instance, substitutions),
         };
       },
       bound,
@@ -1620,6 +1637,7 @@ export const createEnvironment = (
           getQualifiedName: (symbol) => qualifiedNames.get(visible.get(symbol)?.key ?? symbol),
           instances: instanceLevels.instances,
           recursiveSections,
+          checkedLabels,
         },
         instanceChecks.splice(firstCheck),
         warnings,

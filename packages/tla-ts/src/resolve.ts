@@ -611,6 +611,11 @@ const findClauseLabel = (
 const getLabelBody = (expression: Expression): Expression =>
   expression.kind === "Label" ? getLabelBody(expression.body) : expression;
 
+const getSelectedBody = (expression: Expression): Expression =>
+  expression.kind === "Let" && !expression.location.range
+    ? getSelectedBody(expression.body)
+    : getLabelBody(expression);
+
 const getOperandName = (operand: number | "<<" | ">>") =>
   typeof operand === "number" ? `argument selector ${operand}` : operand;
 
@@ -728,12 +733,20 @@ const checkSelection = (
     }
     if (node.kind === "NewSymbol") return node;
     if (node.kind !== "AssumeProve") {
-      const expression = getLabelBody(node);
+      const expression = getSelectedBody(node);
       if (unresolvedExpressions.has(expression)) {
         return report(
           index,
           "Subexpression selection failed, probably due to an error in the selected expression.",
         );
+      }
+      if (expression.kind === "Let") {
+        if (selector.kind !== "Operand" || getPosition(1) !== 0) {
+          return report(index, "A LET/IN expression has only one operand.");
+        }
+        state.node = expression.body;
+        state.isGoal = false;
+        continue;
       }
       if (["Number", "Decimal", "String"].includes(expression.kind)) {
         return report(index, "Selecting subexpression of expression that has none.");
@@ -889,8 +902,7 @@ const checkReference = (
     const selector = selectors[nameLength - 1];
     if (selector.kind !== "Name") return undefined;
     name = nameLength === 1 ? selector.name : `${name}!${selector.name}`;
-    const goal =
-      (nameLength === 1 ? lookupLocal(scope, name)?.goal : undefined) ?? getGoal(name, unit);
+    const goal = lookupLocal(scope, name)?.goal ?? getGoal(name, unit);
     if (goal) {
       const node = checkSelection(expression, selectors, nameLength, goal, unit, use);
       if (!node) emptyExpressions.add(expression);
@@ -1241,10 +1253,13 @@ const resolveDefinitions = (
       functionArity: getFunctionArity(definition),
     };
     if (isInstantiated(definition)) {
+      const instanced = lookupLocal(current, definition.name);
       return {
         ...local,
         params: getParamArities(definition),
-        functionArity: lookupLocal(current, definition.name)?.functionArity,
+        functionArity: instanced?.functionArity,
+        goal: instanced?.goal,
+        isSubstituted: instanced?.isSubstituted,
       };
     }
     if (isKey(definition.name)) return { ...local, params: getParamArities(definition) };
@@ -1896,7 +1911,8 @@ const isSubexpressionReported = (
   const symbolIndex = names.findIndex(
     (_name, index) =>
       index > 0 &&
-      (findSymbol(names.slice(0, index + 1).join("!"), unit)?.kind ?? "Instance") !== "Instance",
+      (findBinding(names.slice(0, index + 1).join("!"), scope, unit)?.kind ?? "Instance") !==
+        "Instance",
   );
   const isInstance =
     names.length > 1 &&
@@ -1911,7 +1927,7 @@ const isSubexpressionReported = (
     return true;
   }
   const name = names.slice(0, symbolIndex + 1).join("!");
-  const symbol = symbolIndex > 0 ? findSymbol(name, unit) : undefined;
+  const symbol = symbolIndex > 0 ? findBinding(name, scope, unit) : undefined;
   const argumentCount = expression.selectors
     .slice(0, symbolIndex + 1)
     .flatMap((selector) => ("args" in selector ? selector.args : [])).length;
@@ -2505,6 +2521,7 @@ interface InstancedModule {
   symbols: Symbols;
   instancer: string;
   getSubstitutionErrors: (substitutionCount: number) => SanyError[];
+  setSubstitutions: (substitutions: Map<string, Expression>) => void;
 }
 
 export interface ModuleReport {
@@ -2800,6 +2817,7 @@ const resolveInstance = (instance: Instance, scope: LocalName | undefined, unit:
     bindParams(scope, instance.params, unit),
     unit,
   );
+  instanced.setSubstitutions(substitutions);
   unit.errors.push(...instanced.getSubstitutionErrors(substitutions.size));
   return [...instanced.symbols].reduce(
     (parent, entry) => bindName(parent, entry[0], entry[1], unit),
