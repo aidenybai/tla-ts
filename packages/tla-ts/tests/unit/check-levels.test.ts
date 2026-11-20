@@ -1877,6 +1877,24 @@ describe("level checking matches SANY", () => {
     },
   );
 
+  it("reports a level error in priming a theorem's selection that definitions check before the theorem, as SANY does", async () => {
+    await expect(
+      check({
+        source:
+          "---- MODULE M ----\nVARIABLE x\nTHEOREM T == ((lab :: ((x' = 1) /\\ [](x = 1))) /\\ TRUE) \\/ FALSE\nE0 == T!1!1\nE == (T!1)'\nInit == x = 0\nNext == x' = x\n====",
+        config: "INIT Init\nNEXT Next",
+      }),
+    ).rejects.toThrow(
+      createSanyError([
+        {
+          location: "line 3, col 24 to line 3, col 44 of module M",
+          message: "\\land has both temporal formula and action as arguments.",
+        },
+        { location: "line 5, col 6 to line 5, col 11 of module M", message: primed },
+      ]),
+    );
+  });
+
   it.each([
     ["\\A y : l(y) :: (y' = q)", "T!l(x')", "line 4, col 7 to line 4, col 13"],
     ["\\A y : (y' = q)", "T!2!(x')", "line 4, col 7 to line 4, col 14"],
