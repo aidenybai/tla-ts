@@ -205,6 +205,18 @@ describe("printing matches TLC", () => {
       undefined,
     ],
     [
+      "Nat = {{s \\in SUBSET {1, 2} : PrintT(s) /\\ s # 1}}",
+      ["{}"],
+      "Attempted to compare overridden value Nat with non-overridden value:\n{{s \\in {{}, {1}, {2}, {1, 2}} : <expression line 3, col 38 to line 3, col 55 of module M> }}",
+      undefined,
+    ],
+    [
+      "Nat = <<{s \\in SUBSET {1, 2} : PrintT(s) /\\ s # 1}>>",
+      ["{}"],
+      "Attempted to compare overridden value Nat with non-overridden value:\n<<{s \\in {{}, {1}, {2}, {1, 2}} : <expression line 3, col 39 to line 3, col 56 of module M> }>>",
+      undefined,
+    ],
+    [
       "(SUBSET (1..5) \\ {s \\in SUBSET (1..5) : Cardinality(s) <= 1 /\\ PrintT(s)}) = {}",
       ["{}", "{1}", "{2}", "{3}", "{4}", "{5}"],
       "Attempted to construct a set with too many elements (>10).",

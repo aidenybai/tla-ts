@@ -1224,13 +1224,14 @@ export const normalizeShallowly = (value: Value): void => {
 const isUnenumeratedSet = (value: Value): value is ConvertibleSetValue =>
   typeof value === "object" && isLazySet(value) && value.enumerated === undefined;
 
-// TLC's equals compares two sets by class with valuesEqual, or enumerates the left set and then the right one as
-// valuesEqual does, except that it enumerates the right side before a set literal. So while valuesEqual leaves a side
-// unenumerated, TLC's equals would fail where it failed, running the same predicates again.
+// TLC's SetEnumValue#equals enumerates the right side before it sorts a set literal on the left.
 const isFailingLikeTlc = (left: Value, right: Value) =>
+  typeof left === "object" &&
   isSetValue(left) &&
-  isSetValue(right) &&
-  (isUnenumeratedSet(left) ? left.kind !== "MixedSet" : isUnenumeratedSet(right));
+  !isModelValue(right) &&
+  (isComparedByClass(left, right) ||
+    (isSetValue(right) &&
+      (isUnenumeratedSet(left) ? left.kind !== "MixedSet" : isUnenumeratedSet(right))));
 
 export const isEqualLikeTlc = (left: Value, right: Value) =>
   computeLikeTlcOnFailure(valuesEqual, equalsLikeTlc, left, right, isFailingLikeTlc);
