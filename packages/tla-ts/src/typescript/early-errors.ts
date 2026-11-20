@@ -86,12 +86,6 @@ const rejectRedeclaration = (
     duplicates.find((name) => !isFunctionsOnly(name)) ??
     [...statements.flatMap(getVarNames), ...others].find((name) => lexical.includes(name));
   if (clash !== undefined) reject(`Identifier '${clash}' has already been declared`, node);
-  if (duplicates.length > 0) {
-    throw new TlaTypeScriptError(
-      "tla-ts can't run a block that declares a function twice outside strict mode",
-      node,
-    );
-  }
 };
 
 // Whether a node is the target of an assignment, or part of a destructuring assignment's pattern.
@@ -213,8 +207,76 @@ const isPropertyName = (node: ts.Identifier) => {
   );
 };
 
-// Rejects programs that JavaScript rejects as it parses, where TypeScript accepts them, and stops at
-// those that it accepts only outside strict mode, where tla-ts doesn't follow them.
+const getNodeAt = (node: ts.Node, position: number): ts.Node =>
+  ts.forEachChild(node, (child) =>
+    child.getStart() <= position && position < child.getEnd()
+      ? getNodeAt(child, position)
+      : undefined,
+  ) ?? node;
+
+// TypeScript's error for a redeclared block-scoped variable, which it reports outside strict mode
+// of code that Annex B allows, such as a function declaration that an if statement's branch is,
+// beside a let of its name.
+const REDECLARED_ERROR = 2451;
+
+// TypeScript's errors for JavaScript that Node runs: a var in a catch block that redeclares the
+// catch's parameter, as Annex B allows.
+const NODE_ACCEPTED_ERRORS = new Set([2492]);
+
+// The file of TypeScript's own checks of a file's JavaScript.
+const GRAMMAR_PATH = "/tla-ts/grammar.js";
+
+// Rejects the first of TypeScript's errors in a file read as plain JavaScript, past its syntax
+// errors, which its parser reports: the errors of its binder and checker that it reports in
+// JavaScript that it doesn't type check, which are those that ECMAScript makes early errors, but
+// for those of code that Node runs. The file is a module where its
+// implied format makes it one, and strict code where it says so.
+const rejectGrammarErrors = (sourceFile: ts.SourceFile) => {
+  const file = ts.createSourceFile(
+    GRAMMAR_PATH,
+    sourceFile.text,
+    { languageVersion: ts.ScriptTarget.ESNext, impliedNodeFormat: sourceFile.impliedNodeFormat },
+    true,
+    ts.ScriptKind.JS,
+  );
+  const program = ts.createProgram({
+    rootNames: [GRAMMAR_PATH],
+    options: {
+      allowJs: true,
+      noLib: true,
+      noResolve: true,
+      types: [],
+      target: ts.ScriptTarget.ESNext,
+      module: ts.ModuleKind.ESNext,
+      moduleDetection: ts.ModuleDetectionKind.Legacy,
+      alwaysStrict: false,
+      ignoreDeprecations: "6.0",
+    },
+    host: {
+      ...ts.createCompilerHost({}),
+      getSourceFile: (fileName) => (fileName === GRAMMAR_PATH ? file : undefined),
+      fileExists: (fileName) => fileName === GRAMMAR_PATH,
+    },
+  });
+  const diagnostic = program
+    .getSemanticDiagnostics(file)
+    .find(
+      (candidate) =>
+        candidate.category === ts.DiagnosticCategory.Error &&
+        !NODE_ACCEPTED_ERRORS.has(candidate.code) &&
+        (candidate.code !== REDECLARED_ERROR ||
+          isStrictCode(getNodeAt(sourceFile, candidate.start ?? 0))),
+    );
+  if (diagnostic !== undefined) {
+    reject(
+      ts.flattenDiagnosticMessageText(diagnostic.messageText, " "),
+      getNodeAt(sourceFile, diagnostic.start ?? 0),
+    );
+  }
+};
+
+// Rejects programs that JavaScript rejects as it parses, where TypeScript's parser accepts them, and
+// stops at a let that a line break follows, which TypeScript's parser reads as a declaration.
 export const rejectEarlyErrors = (sourceFile: ts.SourceFile) => {
   // A module's imports and top-level functions are lexical declarations too, which no other
   // declaration repeats.
@@ -278,22 +340,15 @@ export const rejectEarlyErrors = (sourceFile: ts.SourceFile) => {
             parameter.initializer === undefined &&
             parameter.dotDotDotToken === undefined,
         );
-      if (duplicate !== undefined && isSloppyDuplicate) {
-        throw new TlaTypeScriptError(
-          "tla-ts can't run a function that names a parameter twice outside strict mode",
-          node,
-        );
-      }
-      if (duplicate !== undefined)
+      if (duplicate !== undefined && !isSloppyDuplicate) {
         reject("Duplicate parameter name not allowed in this context", node);
-    }
-    if ((ts.isClassDeclaration(node) || ts.isFunctionDeclaration(node)) && isBodyOf(node)) {
-      if (isSloppyFunctionBody(node)) {
-        throw new TlaTypeScriptError(
-          "tla-ts can't run a function declaration that is a statement's body outside strict mode",
-          node,
-        );
       }
+    }
+    if (
+      (ts.isClassDeclaration(node) || ts.isFunctionDeclaration(node)) &&
+      isBodyOf(node) &&
+      !isSloppyFunctionBody(node)
+    ) {
       reject("A declaration can't be the body of a statement", node);
     }
     rejectLexicalWithBody(node);
@@ -395,11 +450,9 @@ export const rejectEarlyErrors = (sourceFile: ts.SourceFile) => {
     if (
       ts.isIdentifier(node) &&
       (node.text === "arguments" || node.text === "eval") &&
-      isAssigned(node)
+      isAssigned(node) &&
+      isStrictCode(node)
     ) {
-      if (!isStrictCode(node)) {
-        throw new TlaTypeScriptError(`tla-ts can't write ${node.text} outside strict mode`, node);
-      }
       reject(`Unexpected ${node.text} in strict mode`, node);
     }
     // TypeScript reports an import call that an operator such as -= or ++ assigns only as an operand
@@ -416,4 +469,5 @@ export const rejectEarlyErrors = (sourceFile: ts.SourceFile) => {
     ts.forEachChild(node, visit);
   };
   visit(sourceFile);
+  rejectGrammarErrors(sourceFile);
 };

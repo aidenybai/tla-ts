@@ -1,5 +1,6 @@
 import { join } from "node:path";
 import { pathToFileURL } from "node:url";
+import { runInNewContext, Script } from "node:vm";
 import { Worker } from "node:worker_threads";
 import { afterAll, beforeAll, describe, expect, it } from "vite-plus/test";
 
@@ -1586,6 +1587,58 @@ describe("compiles scripts by specializing ESCore", () => {
       expect(
         (await checkScript("const x = 1;", true, "Fine(s) == {s = 1}")).message,
       ).toBeUndefined();
+    });
+  });
+
+  // Node throws a SyntaxError as it parses a program with an early error, and runs nothing of it.
+  describe("rejects the early errors of the program's own file, as Node does", () => {
+    // A program whose last statement throws where total holds other than 1.
+    const getSource = (statement: string) =>
+      `"use strict";\nconst box = { total: 1 };\nlet total = 1;\n${statement};\nif (total !== 1) throw new Error("total");\n`;
+
+    describe("an early error that tla-ts's own checks find", () => {
+      it("agrees with Node", async () => {
+        expect(() => new Script(getSource("eval = 2"))).toThrow(SyntaxError);
+        expect((await checkScript(getSource("eval = 2"), false)).message).toContain(
+          "SyntaxError: Unexpected eval in strict mode",
+        );
+      });
+
+      it("rejects another result", async () => {
+        expect(() => runInNewContext(getSource("total = 2"))).toThrow("total");
+        expect((await checkScript(getSource("total = 2"), false)).message).toContain(THREW);
+      });
+    });
+
+    describe("an early error that TypeScript's checks of plain JavaScript find", () => {
+      it("agrees with Node", async () => {
+        expect(() => new Script(getSource("delete total"))).toThrow(SyntaxError);
+        expect((await checkScript(getSource("delete total"), false)).message).toContain(
+          "SyntaxError: 'delete' cannot be called on an identifier in strict mode",
+        );
+      });
+
+      it("rejects another result", async () => {
+        expect(() => runInNewContext(getSource("delete box.total"))).not.toThrow();
+        expect((await checkScript(getSource("delete box.total"), false)).message).toBeUndefined();
+      });
+    });
+
+    // TypeScript reports a var in a catch block that redeclares the catch's parameter, which Annex
+    // B allows and Node runs.
+    describe("a redeclaration that Annex B allows", () => {
+      const getCaught = (expected: number) =>
+        `try { throw 1; } catch (caught) { var caught = 2; if (caught !== ${expected}) throw new Error("caught"); }\n`;
+
+      it("agrees with Node", async () => {
+        expect(() => runInNewContext(getCaught(2))).not.toThrow();
+        expect((await checkScript(getCaught(2), false)).message).toBeUndefined();
+      });
+
+      it("rejects another result", async () => {
+        expect(() => runInNewContext(getCaught(1))).toThrow("caught");
+        expect((await checkScript(getCaught(1), false)).message).toContain(THREW);
+      });
     });
   });
 });

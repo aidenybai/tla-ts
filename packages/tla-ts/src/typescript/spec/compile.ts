@@ -245,9 +245,12 @@ const loadFiles = (source: string, fileName: string, isModule: boolean): Program
   // A script loads modules only where it calls import().
   const isScript = !isModule;
   if (isScript && !/\bimport\s*\(/.test(source)) {
+    const sourceFile = parse(transpile(source, fileName, false), fileName, false);
+    // Node runs nothing of a script that it fails to parse.
+    rejectEarlyErrors(sourceFile);
     return [
       {
-        sourceFile: parse(transpile(source, fileName, false), fileName, false),
+        sourceFile,
         path: fileName,
         kind: "script",
         targets: new Map(),
@@ -329,7 +332,9 @@ const loadFiles = (source: string, fileName: string, isModule: boolean): Program
       kind === "commonjs"
         ? parse(transpile(code, path, false, WRAPPER), path, false)
         : parse(transpile(code, path, kind !== "script"), path, kind !== "script");
-    // Node loads none of the requests of a file that it fails to parse.
+    // Node runs nothing of a program whose entry it fails to parse, and loads none of the requests
+    // of another file that it fails to parse.
+    if (path === entry) rejectEarlyErrors(sourceFile);
     const isRejected = path !== entry && kind !== "script" && hasEarlyError(sourceFile);
     const targets = new Map(
       [...(isRejected ? [] : getSpecifiers(sourceFile, kind).keys())].flatMap((specifier) => {
