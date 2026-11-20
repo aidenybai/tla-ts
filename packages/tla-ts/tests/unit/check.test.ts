@@ -938,6 +938,35 @@ ASSUME TLCFP(a) = -887695703
     expect(printed).toEqual(['"w"', "TRUE", "TRUE"]);
   });
 
+  it.each([
+    [
+      "VARIABLES x, y\nInit == x = 0 /\\ y = 0\nNext == y < 3 /\\ y' = y + 1 /\\ x' = x\nInv == $S",
+      "INVARIANT Inv",
+      "abcdefghij\n0\n0\n0\n0\n",
+    ],
+    [
+      "VARIABLE x\nInit == x = 0 /\\ $S\nNext == x < 2 /\\ x' = x + 1 /\\ $S",
+      "",
+      "abcdefghij\n0\n0\n1\n",
+    ],
+  ])(
+    "appends with IOUtils' Serialize at each evaluation, as TLC does: %s",
+    async (definitions, config, content) => {
+      const files = new Map([["old.json", "abcdefghij\n"]]);
+      await check({
+        source: `---- MODULE M ----\nEXTENDS Integers, IOUtils\n${definitions.replaceAll("$S", 'Serialize(<<x>>, "old.json", [format |-> "NDJSON", charset |-> "UTF-8", openOptions |-> <<"APPEND">>])')}\n====`,
+        config: `INIT Init\nNEXT Next\nCHECK_DEADLOCK FALSE\n${config}`,
+        loadModule: (name) =>
+          name === "IOUtils"
+            ? "---- MODULE IOUtils ----\nLOCAL INSTANCE Integers\nSerialize(value, dest, options) ==\n  CHOOSE r \\in [exitValue : Int, stdout : STRING, stderr : STRING] : TRUE\n===="
+            : undefined,
+        readFile: (path) => files.get(path),
+        writeFile: (path, content) => files.set(path, String(content)),
+      });
+      expect(files.get("old.json")).toBe(content);
+    },
+  );
+
   it("reads and writes a file again at each reference to a LET definition, as TLC does", async () => {
     const printed: string[] = [];
     const files = new Map<string, string>();

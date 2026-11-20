@@ -85,8 +85,13 @@ const STREAMED_BUILTINS = new Set(["UNION", "\\cup"]);
 
 const RANDOM_BUILTINS = new Set(["RandomSubset", "RandomSetOfSubsets", "RandomSubsetSet"]);
 
-const isImpureBuiltin = (name: string, environment: DefinitionNames) =>
-  IMPURE_BUILTINS.has(name) || environment.builtins.get(name)?.isStateLevel === true;
+// A Java override of a module's definition, such as IOUtils' Serialize, is keyed by that definition.
+const getBuiltinName = (target: string, environment: DefinitionNames) =>
+  environment.builtins.get(target)?.name ?? target;
+
+const isImpureBuiltin = (target: string, environment: DefinitionNames) =>
+  IMPURE_BUILTINS.has(getBuiltinName(target, environment)) ||
+  environment.builtins.get(target)?.isStateLevel === true;
 
 interface Edge {
   callee: Definition;
@@ -175,7 +180,8 @@ const collectLocalFacts = (
         });
       } else {
         if (isImpureBuiltin(target, environment)) {
-          row[0] |= IMPURE | (target === "Assert" ? 0 : REPEATED_EFFECT);
+          row[0] |=
+            IMPURE | (getBuiltinName(target, environment) === "Assert" ? 0 : REPEATED_EFFECT);
         }
         const builtin = environment.builtins.get(target);
         if (STREAMED_BUILTINS.has(target)) row[0] |= STREAMED;
