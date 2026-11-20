@@ -612,6 +612,35 @@ describe("evaluation errors match TLC", () => {
     },
   );
 
+  it("compares the value under a predicate's UNCHANGED with its successor's on TLC's path, as TLC's eval of UNCHANGED does", async () => {
+    const result = await check({
+      source:
+        "---- MODULE M ----\nEXTENDS Integers, FiniteSets, TLC\nVARIABLE x\nInit == x = 0\nNext == x' = {1} /\\ ~UNCHANGED x\n====",
+      config: "INIT Init\nNEXT Next",
+    });
+    expect(result.failure?.message).toBe(
+      getRuntimeException("Attempted to check equality of integer 0 with non-integer:\n{1}"),
+    );
+    expect(formatCallStackLines(result)).toEqual([
+      "Line 5, column 9 to line 5, column 32 in M",
+      "Line 5, column 9 to line 5, column 16 in M",
+      "Line 5, column 21 to line 5, column 32 in M",
+      "Line 5, column 22 to line 5, column 32 in M",
+    ]);
+  });
+
+  it("evaluates the expression under a predicate's UNCHANGED before its successor, as TLC's eval of UNCHANGED does", async () => {
+    const printed: string[] = [];
+    const result = await check({
+      source:
+        "---- MODULE M ----\nEXTENDS Integers, FiniteSets, TLC\nVARIABLE x\nInit == x = 0\nNext == x' = (x + 1) % 2 /\\ ~UNCHANGED Print(x, x)\n====",
+      config: "INIT Init\nNEXT Next",
+      onPrint: (text) => printed.push(text),
+    });
+    expect(result.status).toBe("success");
+    expect(printed).toEqual(["0  0", "1  1", "1  1", "0  0"]);
+  });
+
   it.each([
     [
       "UNCHANGED of a tuple with an impure element",

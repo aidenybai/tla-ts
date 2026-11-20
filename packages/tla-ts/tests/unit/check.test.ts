@@ -5577,6 +5577,10 @@ describe("check without code generation from strings", () => {
       "a set filter whose predicate ignores the element",
       "EXTENDS Integers\nVARIABLE x\nInit == x = 0\nNext == UNCHANGED x\nInv == {e \\in 1..2147483647 : 1..3 \\subseteq {1, 2}} = {} /\\ {e \\in 1..3 : x = 0} = 1..3",
     ],
+    [
+      "a predicate's UNCHANGED that fails to compare a variable with its successor",
+      "VARIABLE x\nInit == x = 0\nNext == x' = {1} /\\ ~UNCHANGED x\nInv == TRUE",
+    ],
   ])("checks %s like it does with code generation", async (_title, body) => {
     const options = {
       source: `---- MODULE M ----\n${body}\n====`,
