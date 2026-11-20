@@ -24,9 +24,14 @@ const { parentPort, workerData } = require("node:worker_threads");
 // HACK: Node strips the types of tla-ts's sources, whose imports leave out the extension.
 register("data:text/javascript," + encodeURIComponent(\`export const resolve = (specifier, context, next) =>
   next(specifier, context).catch((error) => (specifier.startsWith(".") ? next(specifier + ".ts", context) : Promise.reject(error)));\`));
-const loading = import(workerData.source + "/index.ts");
+// index.ts reaches directories' modules, which the hook doesn't resolve, so compile and check load
+// from their own files.
+const loading = Promise.all([
+  import(workerData.source + "/compile.ts"),
+  import(workerData.source + "/parallel.ts"),
+]).then(([compile, parallel]) => ({ compile: compile.compile, check: parallel.check }));
 parentPort.on("message", async (request) => {
-  const index = await loading;
+  const loaded = await loading;
   if (request.isExplored) {
     const search = await import(workerData.tests + "/model-bfs.ts");
     try {
@@ -37,8 +42,8 @@ parentPort.on("message", async (request) => {
     return;
   }
   try {
-    const spec = await index.compile({ source: request.source, fileName: request.fileName, libraries: request.libraries });
-    const result = await index.check({ ...spec, onPrint: () => {} });
+    const spec = await loaded.compile({ source: request.source, fileName: request.fileName, libraries: request.libraries });
+    const result = await loaded.check({ ...spec, onPrint: () => {} });
     parentPort.postMessage({
       id: request.id,
       checked: {
