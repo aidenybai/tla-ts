@@ -1,5 +1,4 @@
 import { check, formatValue, parseModule, TlaError, type CheckResult, type Value } from "tla-ts";
-import { TlaTypeScriptError } from "../../tla-ts/src/errors";
 import { getErrorResult } from "./run-error";
 import { getSearch, type Search } from "./search";
 
@@ -8,6 +7,8 @@ export interface RunRequest {
   config: string;
   modules?: Record<string, string>;
   isSearchShown?: boolean;
+  // The TypeScript file that the spec was compiled from, which a site on ESCore checks instead.
+  typescript?: { source: string; fileName: string };
 }
 
 export interface LineNote {
@@ -49,25 +50,52 @@ const getStateText = (state: Record<string, Value>) =>
     .map(([name, value]) => `${name} = ${formatValue(value)}`)
     .join(", ");
 
-const getCheckResult = async (request: RunRequest): Promise<RunResult> => {
-  // A program compiled by specializing ESCore runs on ESCore's runtime, which its host prepares on
-  // Node's vm.
-  if (request.modules?.ProgramCode !== undefined) {
-    throw new TlaTypeScriptError("tla-ts can't check a TypeScript program in a browser yet");
+// On ESCore, the worker prepares ESCore's runtime as it loads, and parses TypeScript's declaration
+// files, and a run compiles its TypeScript file again, since its prepared modules don't travel
+// between workers.
+const escore = __TLA_TS_ESCORE__
+  ? Promise.all([
+      import("./escore").then((loaded) => loaded.loadEscoreRuntime()),
+      import("virtual:typescript-libraries"),
+      import("../../tla-ts/src/typescript/program"),
+      import("../../tla-ts/src/typescript/spec/api"),
+    ]).then(([runtime, libraries, program, api]) => ({
+      runtime,
+      library: program.createLibrary(libraries.default),
+      compile: api.compileEscore,
+    }))
+  : undefined;
+
+// The spec that a run checks, and the text of the module that the page shows of it, whose lines a
+// result marks: on ESCore, the module of the program's code.
+const getRun = async (request: RunRequest) => {
+  const loaded = await escore;
+  if (loaded === undefined || request.typescript === undefined) {
+    return {
+      spec: {
+        source: request.source,
+        config: request.config,
+        loadModule: (name: string) => request.modules?.[name],
+      },
+      shown: request.source,
+    };
   }
-  const source = request.source;
-  const config = request.config;
+  const spec = loaded.compile(request.typescript, loaded.runtime, loaded.library);
+  return { spec, shown: spec.loadModule("ProgramCode") ?? "" };
+};
+
+const getCheckResult = async (request: RunRequest): Promise<RunResult> => {
+  const run = await getRun(request);
+  const config = run.spec.config;
   const graphs: string[] = [];
   const result = await check({
-    source,
-    config,
-    loadModule: (name) => request.modules?.[name],
+    ...run.spec,
     dump: request.isSearchShown ? { path: "search.dot", dot: true, actionLabels: true } : undefined,
     writeFile: (_path, content) =>
       graphs.push(typeof content === "string" ? content : new TextDecoder().decode(content)),
   });
   const lastStep = result.violation?.trace.at(-1);
-  const module = parseModule(source);
+  const module = parseModule(run.shown);
   const getDefinitionLine = (name: string | undefined) =>
     module.definitions.find((definition) => definition.name === name)?.location.line;
   const variableLine = module.variables.at(0)?.location.line;

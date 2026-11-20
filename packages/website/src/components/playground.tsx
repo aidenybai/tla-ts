@@ -59,6 +59,7 @@ const usePlaygroundState = () => {
       config: compilation.config,
       modules: compilation.modules,
       isSearchShown: true,
+      typescript: { source: file.source, fileName: file.fileName },
     });
   };
   const discardRun = () => {

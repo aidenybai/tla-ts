@@ -50,6 +50,7 @@ export const ExampleRoot = (props: RootProps) => {
     config: example.config,
     modules: example.modules,
     isSearchShown: true,
+    typescript: { source: example.typescript.code, fileName: example.fileName },
   };
   return (
     <exampleContext.PartsContext
