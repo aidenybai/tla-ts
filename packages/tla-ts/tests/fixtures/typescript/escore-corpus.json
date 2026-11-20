@@ -6616,14 +6616,12 @@
         },
         {
           "name": "disposes what a for-of's using declaration holds at the end of each iteration (1)",
-          "source": "\n      const order: string[] = [];\n      const make = (name: string) => ({\n        name,\n        [Symbol.dispose]() {\n          order.push(this.name);\n        },\n      });\n      const resources = [make(\"a\"), make(\"b\"), make(\"c\")];\n      for (using held of resources) {\n        order.push(\"body\");\n        if (held.name === \"b\") continue;\n        if (held.name === \"c\") break;\n      }\n      if (order.join() !== \"body,a,body,b,body,c\") throw new Error(order.join());\n    ",
-          "wrong": "conformance: a for-of's using or await using disposes in another order than Node"
+          "source": "\n      const order: string[] = [];\n      const make = (name: string) => ({\n        name,\n        [Symbol.dispose]() {\n          order.push(this.name);\n        },\n      });\n      const resources = [make(\"a\"), make(\"b\"), make(\"c\")];\n      for (using held of resources) {\n        order.push(\"body\");\n        if (held.name === \"b\") continue;\n        if (held.name === \"c\") break;\n      }\n      if (order.join() !== \"body,a,body,b,body,c\") throw new Error(order.join());\n    "
         },
         {
           "name": "disposes what a for-of's using declaration holds at the end of each iteration (2)",
           "source": "\n      const order: string[] = [];\n      const make = (name: string) => ({\n        name,\n        [Symbol.dispose]() {\n          order.push(this.name);\n        },\n      });\n      const resources = [make(\"a\"), make(\"b\"), make(\"c\")];\n      for (using held of resources) {\n        order.push(\"body\");\n        if (held.name === \"b\") continue;\n        if (held.name === \"c\") break;\n      }\n      if (order.join() !== \"body,body,a,b,body,c\") throw new Error(order.join());\n    ",
-          "thrown": "body,a,body,b,body,c",
-          "wrong": "conformance: a for-of's using or await using disposes in another order than Node"
+          "thrown": "body,a,body,b,body,c"
         },
         {
           "name": "reads the properties of DisposableStack and AsyncDisposableStack (1)",
@@ -8374,14 +8372,12 @@
         },
         {
           "name": "disposes what a for-of's using declaration holds where its body returns (1)",
-          "source": "\n      const order: string[] = [];\n      const resources = [{ [Symbol.dispose]() { order.push(\"disposed\"); } }];\n      const run = () => {\n        for (using held of resources) {\n          order.push(\"run\");\n          return 1;\n        }\n        return 2;\n      };\n      if (run() !== 1) throw new Error(\"run\");\n      if (order.join() !== \"run,disposed\") throw new Error(order.join());\n    ",
-          "wrong": "conformance: a for-of's using or await using disposes in another order than Node"
+          "source": "\n      const order: string[] = [];\n      const resources = [{ [Symbol.dispose]() { order.push(\"disposed\"); } }];\n      const run = () => {\n        for (using held of resources) {\n          order.push(\"run\");\n          return 1;\n        }\n        return 2;\n      };\n      if (run() !== 1) throw new Error(\"run\");\n      if (order.join() !== \"run,disposed\") throw new Error(order.join());\n    "
         },
         {
           "name": "disposes what a for-of's using declaration holds where its body returns (2)",
           "source": "\n      const order: string[] = [];\n      const resources = [{ [Symbol.dispose]() { order.push(\"disposed\"); } }];\n      const run = () => {\n        for (using held of resources) {\n          order.push(\"run\");\n          return 1;\n        }\n        return 2;\n      };\n      if (run() !== 1) throw new Error(\"run\");\n      if (order.join() !== \"disposed,run\") throw new Error(order.join());\n    ",
-          "thrown": "run,disposed",
-          "wrong": "conformance: a for-of's using or await using disposes in another order than Node"
+          "thrown": "run,disposed"
         },
         {
           "name": "suppresses the errors that disposing a DisposableStack throws, and ignores re-entry (1)",
@@ -12844,14 +12840,12 @@
       "source": "\n      declare function setTimeout(callback: () => void): void;\n      const resource = {\n        disposed: false,\n        [Symbol.dispose]() {\n          this.disposed = true;\n        },\n      };\n      let seen = \"\";\n      function* make() {\n        seen += resource.disposed + \",\";\n        yield resource;\n        seen += resource.disposed + \",\";\n      }\n      const run = async () => {\n        for (await using _ of make()) {\n          seen += resource.disposed + \",\";\n        }\n      };\n      run();\n      setTimeout(() => {\n        if (seen !== \"false,false,true,\") throw new Error(\"seen \" + seen);\n      });\n    ",
       "runs": [
         {
-          "name": "agrees with Node",
-          "wrong": "conformance: a for-of's using or await using disposes in another order than Node"
+          "name": "agrees with Node"
         },
         {
           "name": "rejects a disposal after the loop",
           "replace": [",tru", ",fals"],
-          "thrown": "seen false,false,true,",
-          "wrong": "conformance: a for-of's using or await using disposes in another order than Node"
+          "thrown": "seen false,false,true,"
         }
       ]
     },
