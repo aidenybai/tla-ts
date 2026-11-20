@@ -3,7 +3,6 @@ import { Content } from "@/components/content";
 import { Footer } from "@/components/footer";
 import { Hero } from "@/components/hero";
 import { Section } from "@/components/section";
-import { InlineCode } from "@/components/ui/inline-code";
 import { Link } from "@/components/ui/link";
 
 const Page = () => (
@@ -12,13 +11,8 @@ const Page = () => (
       <Hero.Title>TLA+ for TypeScript programmers</Hero.Title>
       <Hero.Body>
         <p>
-          <Link href="https://github.com/tlaplus/tlaplus">TLA+</Link> is a language that describes
-          what a system can do. A model checker then visits every state that the description allows.
-        </p>
-        <p>
-          This guide puts each piece of TLA+ syntax next to the TypeScript you already write.{" "}
-          <Link href="/">TLA-ts</Link> writes the TLA+ for you, so read on to understand its output
-          or to write a spec by hand.
+          Learn to read and write <Link href="https://github.com/tlaplus/tlaplus">TLA+</Link> by
+          translating one TypeScript file.
         </p>
       </Hero.Body>
     </Hero.Root>
@@ -27,10 +21,8 @@ const Page = () => (
       <Section.Root>
         <Section.Title>Next steps</Section.Title>
         <p className="text-pretty">
-          You can skip the TLA+ and check the TypeScript directly: write the like button as{" "}
-          <InlineCode>likes.ts</InlineCode> and run <InlineCode>npx tla-ts likes.ts</InlineCode>.
-          The <Link href="/playground">playground</Link> shows each TypeScript file beside the TLA+
-          that TLA-ts writes for it.
+          The <Link href="/playground">playground</Link> shows more TypeScript files beside the TLA+
+          that <Link href="/">TLA-ts</Link> writes for them.
         </p>
         <p className="text-pretty">
           For the rest of the language, read{" "}

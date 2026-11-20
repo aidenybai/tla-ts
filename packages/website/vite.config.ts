@@ -165,13 +165,25 @@ const tutorial = (): Plugin => ({
         title: lesson.title,
         blocks: lesson.blocks.map((block): ContentBlock => {
           if (typeof block === "string") return { kind: "paragraph", text: block };
-          return "tla" in block
-            ? {
-                kind: "compare",
-                typescript: highlight(block.typescript, "typescript"),
-                tla: highlight(block.tla, "tlaplus"),
-              }
-            : { kind: "code", source: highlight(block.code, block.language) };
+          if ("heading" in block) return { kind: "heading", text: block.heading };
+          if ("tla" in block) {
+            return {
+              kind: "compare",
+              typescript: highlight(block.typescript, "typescript"),
+              tla: highlight(block.tla, "tlaplus"),
+            };
+          }
+          // Text has no grammar, so each of its lines is one token of the default color.
+          return {
+            kind: "code",
+            source:
+              block.language === "text"
+                ? {
+                    code: block.code,
+                    lines: block.code.split("\n").map((line) => [{ content: line, style: {} }]),
+                  }
+                : highlight(block.code, block.language),
+          };
         }),
       })),
     )};`;
