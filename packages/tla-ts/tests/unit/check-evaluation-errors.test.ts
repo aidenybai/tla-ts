@@ -3914,6 +3914,76 @@ describe("evaluation errors match TLC", () => {
     },
   );
 
+  it.each([
+    [
+      "x' = x /\\ \\E e \\in ({1} \\X {s \\in SUBSET (1..2) : s = {} \\/ s = 1}) : TRUE",
+      [
+        "Line 5, column 9 to line 5, column 82 in M",
+        "Line 5, column 9 to line 5, column 14 in M",
+        "Line 5, column 19 to line 5, column 82 in M",
+        "Line 5, column 59 to line 5, column 73 in M",
+        "Line 5, column 69 to line 5, column 73 in M",
+      ],
+    ],
+    [
+      "x' = x /\\ \\E e \\in [{1} -> {s \\in SUBSET (1..2) : s = {} \\/ s = 1}] : TRUE",
+      [
+        "Line 5, column 9 to line 5, column 82 in M",
+        "Line 5, column 9 to line 5, column 14 in M",
+        "Line 5, column 19 to line 5, column 82 in M",
+        "Line 5, column 59 to line 5, column 73 in M",
+        "Line 5, column 69 to line 5, column 73 in M",
+      ],
+    ],
+    [
+      "x' = x /\\ \\E e \\in [a : {s \\in SUBSET (1..2) : s = {} \\/ s = 1}] : TRUE",
+      [
+        "Line 5, column 9 to line 5, column 79 in M",
+        "Line 5, column 9 to line 5, column 14 in M",
+        "Line 5, column 19 to line 5, column 79 in M",
+        "Line 5, column 56 to line 5, column 70 in M",
+        "Line 5, column 66 to line 5, column 70 in M",
+      ],
+    ],
+    [
+      "x' = CHOOSE e \\in ({1} \\X {s \\in SUBSET (1..2) : s = {} \\/ s = 1}) : TRUE",
+      [
+        "Line 5, column 9 to line 5, column 81 in M",
+        "Line 5, column 14 to line 5, column 81 in M",
+        "Line 5, column 58 to line 5, column 72 in M",
+        "Line 5, column 68 to line 5, column 72 in M",
+      ],
+    ],
+    [
+      "x' = x /\\ \\E e \\in [a : {1}, b : {s \\in SUBSET (1..2) : s = {} \\/ s = 1}] : TRUE",
+      [
+        "Line 5, column 9 to line 5, column 88 in M",
+        "Line 5, column 9 to line 5, column 14 in M",
+        "Line 5, column 19 to line 5, column 88 in M",
+        "Line 5, column 65 to line 5, column 79 in M",
+        "Line 5, column 75 to line 5, column 79 in M",
+      ],
+    ],
+    [
+      "x' = x /\\ \\E e \\in [{1, 2} -> {s \\in SUBSET (1..2) : s = {} \\/ s = 1}] : TRUE",
+      [
+        "Line 5, column 9 to line 5, column 85 in M",
+        "Line 5, column 9 to line 5, column 14 in M",
+        "Line 5, column 19 to line 5, column 85 in M",
+        "Line 5, column 62 to line 5, column 76 in M",
+        "Line 5, column 72 to line 5, column 76 in M",
+      ],
+    ],
+  ])(
+    "collects [S -> T], [a : S] and S \\X T for a quantifier outside their frames, as TLC's toSetEnum does: %s",
+    async (next, callStack) => {
+      const result = await checkSetBound(next, "TRUE");
+      expect(result.failure?.message).toBe(getRuntimeException(SET_EQUALITY_REASON));
+      expect(formatCallStackLines(result)).toEqual(callStack);
+      expect(result.failure?.fingerprint).toBeUndefined();
+    },
+  );
+
   it("streams S into UNION S past -maxSetSize, as TLC's UnionValue does", async () => {
     const result = await checkSetBound(
       "x' = Cardinality(UNION (SUBSET {1} \\cup (SUBSET {2} \\cup (SUBSET {1} \\cup (SUBSET {2} \\cup (SUBSET {1} \\cup SUBSET {2}))))))",
