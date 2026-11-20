@@ -280,6 +280,7 @@ export class Context extends Internalizer {
       isEliminatingBounds: this.config.isEliminatingBounds,
       arithPropagationThreshold: this.config.arithPropagationThreshold,
       qiLazyThreshold: params.qiLazyThreshold ?? DEFAULT_CONFIG.qiLazyThreshold,
+      arrayLazyIeqDelay: this.config.arrayLazyIeqDelay,
     };
   }
 

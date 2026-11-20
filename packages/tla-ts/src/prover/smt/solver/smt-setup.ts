@@ -113,6 +113,8 @@ export interface SmtConfig {
   arithPropagationThreshold: number;
   isArithBoundPropagating: boolean;
   qiLazyThreshold: number;
+  // array_lazy_ieq_delay while array_lazy_ieq is on.
+  arrayLazyIeqDelay: number | undefined;
 }
 
 const UNKNOWN_THEORIES = [
@@ -150,6 +152,7 @@ export const DEFAULT_CONFIG: SmtConfig = {
   arithPropagationThreshold: Infinity,
   isArithBoundPropagating: true,
   qiLazyThreshold: 20,
+  arrayLazyIeqDelay: undefined,
 };
 
 // setup_unknown(), which closes with setup_relevancy.
@@ -408,6 +411,7 @@ const setupAufLira = (config: SmtConfig) => {
   config.qiLazyThreshold = 20;
   config.isFindingMacros = true;
   config.isLiftingNonGroundIte = true;
+  config.arrayLazyIeqDelay = 4;
   config.theories.push(FAMILY_ARITH, FAMILY_ARRAY);
 };
 
