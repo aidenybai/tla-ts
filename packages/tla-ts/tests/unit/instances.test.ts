@@ -629,6 +629,35 @@ describe("INSTANCE matches TLC", () => {
     },
   );
 
+  it.each([
+    ["Prop == LET K == INSTANCE L WITH v <- (x = 1) IN K!Av", "line 4, col 7 to line 4, col 7"],
+    ["I == INSTANCE L2 WITH w <- (x = 1)\nProp == I!A2", "line 4, col 7 to line 4, col 7"],
+    ["I(q) == INSTANCE L2 WITH w <- q\nProp == I(x = 1)!A2", "line 4, col 7 to line 4, col 7"],
+    ["Prop == LET K == INSTANCE L WITH v <- (x = 1) IN K!Fv", "line 5, col 22 to line 5, col 22"],
+    ["I == INSTANCE L2 WITH w <- (x = 1)\nProp == I!F2", "line 5, col 22 to line 5, col 22"],
+    ["I(q) == INSTANCE L WITH v <- q\nProp == I(x = 1)!Fv", "line 5, col 22 to line 5, col 22"],
+  ])(
+    "names the substitute that %j reaches as a part by its position in L, as TLC does",
+    async (definitions, range) => {
+      const modules = new Map([
+        [
+          "L",
+          "---- MODULE L ----\nVARIABLE v\nDv == v\nAv == v /\\ TRUE\nFv == \\A k \\in {1} : v\n====",
+        ],
+        [
+          "L2",
+          "---- MODULE L2 ----\nVARIABLE w\nJ == INSTANCE L WITH v <- w\nA2 == J!Av\nF2 == J!Fv\n====",
+        ],
+      ]);
+      const result = await check({
+        source: `---- MODULE M ----\nEXTENDS Naturals\nVARIABLE x\nInit == x = 0\nNext == x' = (x + 1) % 2\n${definitions}\n====`,
+        config: "INIT Init\nNEXT Next\nPROPERTY Prop",
+        loadModule: (module) => modules.get(module),
+      });
+      expect(result.violation?.name).toBe(`${range} of module L`);
+    },
+  );
+
   // Deviation from TLC: it rejects each row, though it checks [](x \in {0, 1}), [](x = 0) and x = 1 written without the instance this way.
   it.each([
     ["[](x \\in {0, 1})", "success", undefined],

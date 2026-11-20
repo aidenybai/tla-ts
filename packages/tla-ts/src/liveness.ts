@@ -37,7 +37,13 @@ import {
   type Thunk,
 } from "./evaluate";
 import { letDefinitions } from "./coverage";
-import { getSubstitutedName, mapChildren, substitutionFrames, writtenKeys } from "./instances";
+import {
+  getSubstitutedName,
+  getSubstitutedOccurrence,
+  mapChildren,
+  substitutionFrames,
+  writtenKeys,
+} from "./instances";
 import { getKeyName } from "./resolve";
 import {
   ACTION_LEVEL,
@@ -368,7 +374,10 @@ export const expandTemporal = (
     };
   };
   if (expression.kind === "And") {
-    return expression.operands.flatMap((operand) => expand(operand, scope, describeRange(operand)));
+    // TLC names a conjunct by its position in SANY's body, which keeps the declaration a substitute replaced.
+    return expression.operands.flatMap((operand) =>
+      expand(operand, scope, describeRange(getSubstitutedOccurrence(operand) ?? operand)),
+    );
   }
   if (expression.kind === "Label") return expand(expression.body, scope);
   if (expression.kind === "Selection") return expand(expression.expression, scope);
@@ -468,7 +477,13 @@ export const expandTemporal = (
   if (isUnrolled && sets) {
     const expanded: ExpandedExpression[] = [];
     forEachBoundElement(expression.bounds, sets, scope, (boundScope) => {
-      expanded.push(...expand(expression.body, boundScope, describeRange(expression.body)));
+      expanded.push(
+        ...expand(
+          expression.body,
+          boundScope,
+          describeRange(getSubstitutedOccurrence(expression.body) ?? expression.body),
+        ),
+      );
       return false;
     });
     if (expanded.length === 0) throw createTautologyError();

@@ -460,15 +460,24 @@ const SUBSTITUTION_SUFFIX = "@SUBSTITUTION";
 
 const getSubstitutionName = (name: string) => `${name}${SUBSTITUTION_SUFFIX}`;
 
-export const getSubstitutedName = (expression: Expression) => {
+// The first declaration a substitute replaced is the one SANY's body names. A LET instance substitutes a local definition, so only the frames of its reference record it.
+export const getSubstitutedOccurrence = (
+  expression: Expression,
+): (Expression & { kind: "Identifier" }) | undefined => {
   const isLocal = expression.kind === "Identifier" && isLocallyResolved(expression);
   const substitution = substitutedExpressions.get(expression);
-  // The first declaration a substitute replaced is the one SANY's body names. A LET instance substitutes a local definition, so only the frames of its reference record it.
   const occurrence = (substitution ? substitution.replacement !== expression : isLocal)
     ? substitutionFrames.get(expression)?.find((frame) => !frameSubstitutions.has(frame))
     : undefined;
-  if (occurrence?.kind === "Identifier") return occurrence.name;
-  return isLocal && expression.name.endsWith(SUBSTITUTION_SUFFIX)
+  return occurrence?.kind === "Identifier" ? occurrence : undefined;
+};
+
+export const getSubstitutedName = (expression: Expression) => {
+  const occurrence = getSubstitutedOccurrence(expression);
+  if (occurrence) return occurrence.name;
+  return expression.kind === "Identifier" &&
+    isLocallyResolved(expression) &&
+    expression.name.endsWith(SUBSTITUTION_SUFFIX)
     ? expression.name.slice(0, -SUBSTITUTION_SUFFIX.length)
     : undefined;
 };
