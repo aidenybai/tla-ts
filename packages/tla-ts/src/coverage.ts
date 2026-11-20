@@ -504,7 +504,6 @@ export const buildCoverage = (
         walk(expression.body, bindNames(expression.params, locals));
         return;
       case "EnabledVariable": {
-        // TLC's evalAppl counts the occurrence also where it reads the variable ENABLED binds, not the substitution.
         const entered = walkSubstitutions(expression.substitution, locals);
         enter(expression, getSubstitutedRange(expression.substitution), () => undefined);
         frames.length -= entered;

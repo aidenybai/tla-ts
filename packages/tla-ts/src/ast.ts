@@ -238,7 +238,6 @@ interface ExceptAtExpression {
   location: SourceLocation;
 }
 
-// An instance's variable inside ENABLED: primed, it is the variable ENABLED binds, named `name`; otherwise its substitution.
 interface EnabledVariableExpression {
   kind: "EnabledVariable";
   name: string;

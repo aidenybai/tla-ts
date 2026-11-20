@@ -561,7 +561,6 @@ const compileFunctionAction = (
   };
 };
 
-// TLC's Tool#enabledUnchanged evaluates what it keeps, where an instance's variable reads its substitution.
 const compileEnabledUnchanged =
   (expression: Expression, runner: Runner): Runner =>
   (run, scope, partial, action, isFixed, onComplete) => {

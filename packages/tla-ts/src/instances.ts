@@ -757,7 +757,6 @@ const substituteExpression = (
       const copy = withReplacedFrames(replacement, expression);
       const substitution = substitutedExpressions.get(replacement);
       if (substitution) substitutedExpressions.set(copy, substitution);
-      // TLC's OPCODE_enabled branches the context, so a primed variable of the instance skips its substitution however it is reached.
       return rewrite.mode === "Enabled" && instantiation.variables.has(expression.name)
         ? {
             kind: "EnabledVariable",

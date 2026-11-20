@@ -2680,7 +2680,6 @@ const compile = (expression: Expression, environment: Environment): Evaluator =>
       const name = expression.name;
       const index = environment.variableIndex.get(name) ?? -1;
       const substitution = getChildEvaluator(expression.substitution);
-      // Inside ENABLED only toNextContext leaves no next state, so a context without one evaluates a primed expression.
       return (context) => {
         if (context.next !== undefined) return substitution(context);
         const value = context.state?.[index];

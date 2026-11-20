@@ -1039,7 +1039,6 @@ const visitUnchanged = (
     const node = getNode(replay, parent, expression);
     const index = getVariable(replay.environment, expression, scope);
     if (index !== undefined) {
-      // TLC's Tool#enabledUnchanged evaluates what it keeps, where an instance's variable reads its substitution.
       const value = replay.isEnabled
         ? evaluateAt(replay, node, expression, {
             environment: replay.environment,
