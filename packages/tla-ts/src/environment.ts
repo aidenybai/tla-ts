@@ -1887,6 +1887,19 @@ export const createEnvironment = (
   const instantiated = new Set(
     linkOrder.flatMap((linked) => linked.module.instances.map((instance) => instance.module)),
   );
+  const isProcessedAtStartup = (linked: LinkedModule) =>
+    !instantiated.has(linked.module.name) || linked.declarations.length === 0;
+  // TLC's SpecProcessor#processConstantDefns takes a module's definitions, then its inner modules' in turn. It skips a file module whole, but an inner module only for its own definitions.
+  const getStartupModules = (linked: LinkedModule): LinkedModule[] => [
+    linked,
+    ...order
+      .getInnerModuleOrder(linked === linkedRoot ? undefined : linked.module.name)
+      .flatMap((name) => {
+        const nested = linked.modules.get(name);
+        return nested ? getStartupModules(nested) : [];
+      }),
+  ];
+  const nestedModules = new Set(linkOrder.flatMap((linked) => [...linked.modules.values()]));
   const getDefinitionOrder = order.createDefinitionOrder();
   return {
     environment,
@@ -1894,7 +1907,9 @@ export const createEnvironment = (
     variableLocations: linkedRoot.variableLocations,
     instanceActions,
     startupDefinitions: linkOrder
-      .filter((linked) => !instantiated.has(linked.module.name) || linked.declarations.length === 0)
+      .filter((linked) => !nestedModules.has(linked) && isProcessedAtStartup(linked))
+      .flatMap(getStartupModules)
+      .filter(isProcessedAtStartup)
       .flatMap((linked) =>
         getDefinitionOrder(linked === linkedRoot ? undefined : linked.module.name).flatMap(
           (name) => {

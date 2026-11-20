@@ -123,6 +123,46 @@ describe("INSTANCE matches TLC", () => {
     expect(prints).toEqual(['"g"', '"h"', '"h"', '"g"', '"K"', '"h"', '"g"', '"L"']);
   });
 
+  it.each([
+    [
+      "an enclosing module's definitions before its inner module's",
+      'A == PrintT("A")\n---- MODULE P ----\nP1 == PrintT("P1")\n====\nC == PrintT("C")',
+      ["A", "C", "P1"],
+    ],
+    [
+      "inner modules in the order of SANY's context",
+      '---- MODULE P ----\nP1 == PrintT("P1")\n====\n---- MODULE Q ----\nQ1 == PrintT("Q1")\n====',
+      ["Q1", "P1"],
+    ],
+    [
+      "an inner module's own inner module after it",
+      '---- MODULE P ----\nP1 == PrintT("P1")\n---- MODULE Q ----\nQ1 == PrintT("Q1")\n====\nP2 == PrintT("P2")\n====',
+      ["P1", "P2", "Q1"],
+    ],
+    [
+      "an instance's copies before the instanced inner module's definitions",
+      '---- MODULE P ----\nFoo == PrintT("Foo")\nBar == PrintT("Bar")\nBaz == PrintT("Baz")\n====\nI == INSTANCE P',
+      ["Bar", "Baz", "Foo", "Foo", "Bar", "Baz"],
+    ],
+    [
+      "no inner module of a module instanced with a parameter",
+      "I == INSTANCE N WITH c <- 1",
+      ["N1"],
+    ],
+  ])("evaluates %s at startup, as TLC does", async (_name, lines, expected) => {
+    const prints: string[] = [];
+    await check({
+      source: `---- MODULE M ----\nEXTENDS TLC\nVARIABLE x\n${lines}\nInit == x = 0\nNext == UNCHANGED x\n====`,
+      config: "INIT Init\nNEXT Next",
+      loadModule: (name) =>
+        name === "N"
+          ? '---- MODULE N ----\nEXTENDS TLC\nCONSTANT c\nN1 == PrintT("N1")\n---- MODULE P ----\nP1 == PrintT("P1")\n====\n===='
+          : undefined,
+      onPrint: (text) => prints.push(text),
+    });
+    expect(prints).toEqual(expected.map((text) => `"${text}"`));
+  });
+
   it("reports violations through instantiated operators", async () => {
     const result = await checkInstances("Violation.cfg");
     expect(result.status).toBe("invariant-violation");
