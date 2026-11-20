@@ -1596,15 +1596,33 @@ export const getLazySubsets = (value: Value): Value[] | undefined => {
   });
 };
 
-const getSortedSubsets = (base: Value[]) => {
-  const subsets: Value[] = [];
+const someSubset = (base: Value[], visit: (subset: Value) => boolean) => {
   for (let size = 0; size <= base.length; size++) {
     const indices = Array.from({ length: size }, (_value, index) => index);
     do {
-      subsets.push(createSortedSet(indices.map((index) => base[index])));
+      if (visit(createSortedSet(indices.map((index) => base[index])))) return true;
     } while (advanceCombination(indices, base.length));
   }
+  return false;
+};
+
+const getSortedSubsets = (base: Value[]) => {
+  const subsets: Value[] = [];
+  someSubset(base, (subset) => {
+    subsets.push(subset);
+    return false;
+  });
   return subsets;
+};
+
+const getSubsetBase = (value: SubsetValue) => {
+  if (getCardinality(value.base) === 0) return [];
+  if (!isSetValue(value.base)) {
+    throw new TlaEvaluationError(
+      `Attempted to compute the value of an expression of form\nSUBSET S, but S is a non-enumerable value:\n${prettyPrint(formatValue(value.base))}`,
+    );
+  }
+  return toFiniteSet(value.base).elements;
 };
 
 const getComponentElements = (
@@ -1710,13 +1728,7 @@ const enumerateSet = (
       return elements;
     }
     case "Subset": {
-      if (getCardinality(value.base) === 0) return getSortedSubsets([]);
-      if (!isSetValue(value.base)) {
-        throw new TlaEvaluationError(
-          `Attempted to compute the value of an expression of form\nSUBSET S, but S is a non-enumerable value:\n${prettyPrint(formatValue(value.base))}`,
-        );
-      }
-      const base = toFiniteSet(value.base).elements;
+      const base = getSubsetBase(value);
       if (base.length > MAXIMUM_ENUMERATED_SUBSET_BASE) {
         throw new TlaEvaluationError(describeOverflow(value));
       }
@@ -1771,12 +1783,12 @@ const enumerateSet = (
       }
       const test = value.startPass?.(true) ?? ((element: Value) => value.test(element, false));
       const kept: Value[] = [];
-      const elements = getStreamedElements(value.base);
-      for (let index = 0; index < elements.length; index++) {
-        if (!test(elements[index])) continue;
-        if (isBounded) addBoundedElement(kept, elements[index]);
-        else kept.push(elements[index]);
-      }
+      someStreamedElement(value.base, (element) => {
+        if (!test(element)) return false;
+        if (isBounded) addBoundedElement(kept, element);
+        else kept.push(element);
+        return false;
+      });
       return toFiniteSet(createEnumeratedSet(kept)).elements;
     }
     case "Union": {
@@ -1986,6 +1998,14 @@ const someElementOfStream = (value: ObjectValue, visit: (element: Value) => bool
   const components = getCombinedSets(value);
   if (components?.some(isStreamedApart)) {
     return enumerateSet(value, false, getStreamedElements).some(visit);
+  }
+  // TLC's SubsetValue#elements streams the subsets without sizing SUBSET S, where tla-ts builds at most 2^20 of them.
+  if (
+    value.kind === "Subset" &&
+    value.enumerated === undefined &&
+    getCardinality(value.base) > MAXIMUM_BUILT_SUBSET_BASE
+  ) {
+    return someSubset(getSubsetBase(value), visit);
   }
   if (value.kind !== "SetOperation") return getUnboundedElements(value).some(visit);
   if (value.operator === "\\cup") {
