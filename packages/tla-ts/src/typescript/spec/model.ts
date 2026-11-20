@@ -159,6 +159,27 @@ const printExpression = (expression: Expression) =>
     location: expression.location,
   }).replace(/^X ==\s*/, "");
 
+// The model value that stands for the value at index of the symmetric type set.
+const getSymmetricName = (set: number, index: number) => `TsSymmetric${set + 1}v${index + 1}`;
+
+// A lowered model's symmetric values: the model value of each value of a @symmetric type, which
+// its lowered state holds in place of the string, and the permutations of each type's values,
+// which TLC's SYMMETRY takes. A model without one has none.
+const getSymmetricDefinitions = (symmetric: string[][]) => {
+  const entries = symmetric.flatMap((values, set) =>
+    values.map((value, index) => ({ name: getSymmetricName(set, index), units: getUnits(value) })),
+  );
+  return entries.length === 0
+    ? ["SymmetricOf(u) == Empty", "SymmetricUnits(m) == <<>>", "SymmetricOrder == <<>>"]
+    : [
+        `CONSTANTS ${entries.map((entry) => entry.name).join(", ")}`,
+        `SymmetricOf(u) ==\n  CASE ${entries.map((entry) => `u = ${entry.units} -> ${entry.name}`).join("\n    [] ")}\n    [] OTHER -> Empty`,
+        `SymmetricUnits(m) ==\n  CASE ${entries.map((entry) => `m = ${entry.name} -> ${entry.units}`).join("\n    [] ")}`,
+        `SymmetricOrder == <<${entries.map((entry) => entry.name).join(", ")}>>`,
+        `SymmetricPerms == ${symmetric.map((values, set) => `Permutations({${values.map((_, index) => getSymmetricName(set, index)).join(", ")}})`).join(" \\cup ")}`,
+      ];
+};
+
 // A lowered model's definitions of its bindings: the state the module's top level leaves, its
 // declarative environment, ModelBase, and how a step's state materializes and lowers the bindings.
 const getLoweredSteps = (names: string[]) => {
@@ -930,8 +951,21 @@ export const compileModelToEscore = (
       : getLoweredBindings(file, new Set(choices.map((choice) => choice.name)));
   const variable = lowered === undefined ? "heap" : "model";
   const getState = (state: string) => (lowered === undefined ? state : `ModelState(${state})`);
+  // A symmetric model's states hold its symmetric values as model values, which only its lowered
+  // state does, and which its functions' native calls don't read. A symmetry can hide a temporal
+  // property's violation, as TLC warns.
+  const symmetric = today.symmetric;
+  if (symmetric.length > 0 && lowered === undefined) {
+    throw new TlaTypeScriptError(
+      "tla-ts can't check a symmetric model whose state ESCore keeps on its heap yet",
+    );
+  }
+  if (symmetric.length > 0 && config.properties.length > 0) {
+    throw new TlaTypeScriptError("tla-ts can't check a symmetric model's temporal properties");
+  }
   // A lowered model's functions run natively where they can, and on ESCore where that bails.
-  const native = lowered === undefined ? undefined : getNativeFunctions(file, lowered);
+  const native =
+    lowered === undefined || symmetric.length > 0 ? undefined : getNativeFunctions(file, lowered);
   // The native call of a function in the lowered state model, with the arguments of the values
   // given, converted and lowered, or undefined where the function runs on ESCore only.
   // A call of one function with another's arguments, as a property's target takes its own.
@@ -1169,9 +1203,6 @@ export const compileModelToEscore = (
     }
   }
   config.actionConstraints.forEach((name) => steps.push(`${name} == ${defineStepCheck(name)}`));
-  if (config.symmetry !== undefined) {
-    throw new TlaTypeScriptError("tla-ts can't check a symmetric model on ESCore yet");
-  }
   const initially = [...exported]
     .filter((entry) => entry[1].tags.has("initially"))
     .map((entry) => entry[0]);
@@ -1331,6 +1362,7 @@ export const compileModelToEscore = (
           "StartState(s) == StepEnd(ModelStart(s))",
         ]
       : [
+          ...getSymmetricDefinitions(symmetric),
           ...getLoweredSteps(lowered),
           // The lowered value of a converter's [s, v], an argument of a native call.
           "LowerConverted(c) == LowerValue(c.s, c.v, 0).v",
@@ -1366,6 +1398,12 @@ export const compileModelToEscore = (
     ...config.actionConstraints.map((name) => `ACTION_CONSTRAINT ${name}`),
     ...config.postconditions.map((name) => `POSTCONDITION ${name}`),
     ...(view === undefined ? [] : [`VIEW ${view}`]),
+    ...symmetric.flatMap((values, set) =>
+      values.map(
+        (_, index) => `CONSTANT ${getSymmetricName(set, index)} = ${getSymmetricName(set, index)}`,
+      ),
+    ),
+    ...(symmetric.length === 0 ? [] : ["SYMMETRY SymmetricPerms"]),
     ...(config.checkDeadlock ? [] : ["CHECK_DEADLOCK FALSE"]),
     ...(isStateless ? [] : ["ALIAS ModelAlias"]),
     "",

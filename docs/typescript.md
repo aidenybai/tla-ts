@@ -156,8 +156,9 @@ JSDoc tags cover what TypeScript has no syntax for:
 | `@postcondition`       | A boolean function             | Check it after the search                                                      |
 | `@terminating`         | A boolean function             | Stopping where it holds isn't a deadlock                                       |
 | `@noDeadlock`          | The first statement            | Allow states where no action can run                                           |
+| `@symmetric`           | A union of string literals     | Count states as equal when they differ by a permutation of its values          |
 
-A function that takes `before` reads the state before the step from it, an object of the state variables' values, and the variables themselves hold the state after the step. Parameters of a temporal property hold for every value of their type, and `@leadsTo` passes them to the target. A misspelled tag, such as `@fiar`, stops the compile. `@symmetric` stops it too, since tla-ts can't check a symmetric model yet.
+A function that takes `before` reads the state before the step from it, an object of the state variables' values, and the variables themselves hold the state after the step. Parameters of a temporal property hold for every value of their type, and `@leadsTo` passes them to the target. A misspelled tag, such as `@fiar`, stops the compile.
 
 ```ts
 /** @always */
@@ -168,6 +169,24 @@ export const isWaiting = (proc: Proc) => waiting.has(proc);
 ```
 
 A model whose every action only counts a state variable up or down, and which checks nothing, stops the compile, since its states never end. An action counts where each of its statements adds or subtracts a whole literal, or a parameter whose type is a union of whole literals of one sign, or does so in a `for...in` over an object literal with a key.
+
+### Symmetric values
+
+`@symmetric` on a type such as `type Client = "c1" | "c2" | "c3"` is your assertion, as TLC's `SYMMETRY` is. You assert that swapping the type's values maps each behavior to another behavior. tla-ts doesn't prove it. A program that tells the values apart gets an unsound verdict: the check can pass while a violation exists. TLC checks the model under `SYMMETRY` over model values that stand for the strings. A Set, a Map, or an object whose keys are all values of the type loses its insertion order in the state.
+
+tla-ts stops the compile where it can't rule out that the program tells the values apart. It stops when unsure, and it stops a program that:
+
+- Puts `@symmetric` on a type other than a union of two or more names, such as `"c1"`, that aren't properties of `Object.prototype`, or gives two types a value in common.
+- Names a value, as a string or as a property name, other than as a key of a module-level object literal that gives each value of the type the same initializer, one of a literal, `[]`, `{}`, `new Set()`, or `new Map()`.
+- Holds a value of type `string`, `any`, `unknown`, a type parameter, or `{}`.
+- Iterates, spreads, or destructures as an array, with `for…of`, `for…in`, `...`, `[a] =`, or `yield*`, or uses a template literal.
+- Applies an operator other than `===`, `!==`, `&&`, `||`, `??`, `!`, `=`, or `,` to a value that may be a string.
+- Reads a property of a value that may be a string, or indexes an array, a function, or a string by one.
+- Calls a function other than one the module declares, or a method other than `add`, `clear`, `delete`, `difference`, `get`, `has`, `includes`, `intersection`, `isDisjointFrom`, `isSubsetOf`, `isSupersetOf`, `pop`, `push`, `set`, `symmetricDifference`, or `union` of a Set, a Map, or an array, or constructs anything but a Set or a Map.
+- Checks a temporal property, since a symmetry can hide its violation, as TLC warns.
+- Keeps its state on ESCore's heap, such as one that names an error.
+
+The check stops too where a state holds an object, a Set, or a Map that mixes the type's values with other keys or elements. [`simple-allocator.ts`](../packages/tla-ts/tests/fixtures/typescript/simple-allocator/simple-allocator.ts) ports the safety part of `SimpleAllocator.tla`, and it finds the same 50 distinct states and 226 generated states that TLC finds under the spec's `Symmetry`.
 
 ## Files with other specs
 
