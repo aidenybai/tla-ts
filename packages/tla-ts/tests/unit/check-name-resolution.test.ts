@@ -1484,6 +1484,23 @@ describe("name resolution matches SANY", () => {
       ],
     ],
     [
+      "VARIABLE z\n---- MODULE Inner ----\nCONSTANT c\nVARIABLE y\na \\star b == c\nD(p) == y\nE == c\n====\nI == INSTANCE Inner WITH c <- z, y <- z\nU == I!\\star(1, 2)!1\nV == I!D(1)!1\nW == I!E!1",
+      [
+        [
+          "line 11, col 20 to line 11, col 20",
+          "Nonexistent operand specified by `argument selector 1'.",
+        ],
+        [
+          "line 12, col 13 to line 12, col 13",
+          "Choosing operand `argument selector 1' of subexpression with no operands.",
+        ],
+        [
+          "line 13, col 10 to line 13, col 10",
+          "Nonexistent operand specified by `argument selector 1'.",
+        ],
+      ],
+    ],
+    [
       "---- MODULE In ----\nCONSTANT k\nD5 == (D5!1)\n====\nI == INSTANCE In WITH k <- 1\nJ(p) == INSTANCE In WITH k <- p\nE == I!D5!2\nF == J(TRUE)!D5!2",
       [
         ["line 4, col 8 to line 4, col 9", "Unknown operator: `D5'."],
