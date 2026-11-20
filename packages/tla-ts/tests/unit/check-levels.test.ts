@@ -434,6 +434,16 @@ describe("level checking matches SANY", () => {
     );
   });
 
+  it("keeps an instance from substituting a temporal formula for a constant an assumption mentions, which SANY allows", async () => {
+    await expect(
+      check({
+        source:
+          "---- MODULE M ----\nVARIABLE x\n---- MODULE L ----\nCONSTANT k\nASSUME k /\\ TRUE\n====\nI == INSTANCE L WITH k <- [](x = 1)\nInit == x = 0\nNext == x' = x\n====",
+        config: "INIT Init\nNEXT Next",
+      }),
+    ).rejects.toThrow(createSanyError([getInstanceError(7, 35, 2)]));
+  });
+
   it("constrains a module by the theorems of a LET instance in an ASSUME/PROVE, as SANY does", async () => {
     await expect(
       check({

@@ -1689,6 +1689,7 @@ export const analyzeAssumeProve = (
 export const analyzeAssumption = (expression: Expression, analyzer: LevelAnalyzer) => {
   const data = createData();
   mergeLevels(data, analyzer.analyze(expression, new Map()));
+  // Deviation from SANY: AssumeNode#levelCheck passes its own empty level fields, so it never constrains the constants.
   constrainConstants(data, analyzer);
   return data;
 };
