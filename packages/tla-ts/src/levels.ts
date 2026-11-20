@@ -980,6 +980,8 @@ export const createLevelAnalyzer = (context: LevelContext) => {
       case "String":
       case "ExceptAt":
         return createData();
+      case "EnabledVariable":
+        return createData(VARIABLE_LEVEL);
       case "Identifier":
         return applyResolved(resolve(expression.name, scope), []);
       case "Apply": {

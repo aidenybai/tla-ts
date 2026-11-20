@@ -865,6 +865,8 @@ export const generateExpression = (
       return generateRecordFields(generation, "$SetOfRcds", expression);
     case "Except":
       return generateExcept(generation, expression);
+    case "EnabledVariable":
+      throw new TlaSyntaxError("Expected an expression");
     case "ExceptAt": {
       const except = generation.exceptStack[generation.exceptStack.length - 1];
       const component = generation.exceptSpecStack[generation.exceptSpecStack.length - 1];

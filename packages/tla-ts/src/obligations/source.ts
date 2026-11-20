@@ -558,6 +558,8 @@ export const createModuleConverter = (
         );
       case "ExceptAt":
         return at({ kind: "At", isExcept }, { location });
+      case "EnabledVariable":
+        throw new TlaProofError("Unexpected variable of an instance inside ENABLED");
       case "Bracket":
         throw new TlaProofError("Unexpected [ without a function or subscript");
       case "FunctionApplication":

@@ -298,6 +298,35 @@ describe("typed tier matches TLC", () => {
     expect(await getCounts(false)).toEqual(expected);
   });
 
+  it.each([
+    ["c < 3 /\\ c' = c + 1", 4],
+    ["c' \\in {1, 2} /\\ c' > 1", 5],
+  ])(
+    "takes ENABLED %s through an instance that keeps its variable for the instancing module's, as TLC does",
+    async (action, states) => {
+      const results = await Promise.all(
+        [undefined, INTERPRETED_SET_SIZE].map((maxSetSize) =>
+          check({
+            source:
+              "---- MODULE G ----\nEXTENDS Integers\nVARIABLE c\nINSTANCE Hi\nInit == c = 0\nNext == Can /\\ c < 4 /\\ c' = c + 1\n====",
+            config: "INIT Init\nNEXT Next\nCHECK_DEADLOCK FALSE",
+            maxSetSize,
+            loadModule: (name) =>
+              name === "Hi"
+                ? `---- MODULE Hi ----\nEXTENDS Integers\nVARIABLES c\nA == ${action}\nCan == ENABLED A\n====`
+                : undefined,
+          }),
+        ),
+      );
+      expect(
+        results.map((result) => [result.status, result.generatedStates, result.distinctStates]),
+      ).toEqual([
+        ["success", states, states],
+        ["success", states, states],
+      ]);
+    },
+  );
+
   it("checks a spec that has no initial state to give a record its fields, as TLC does", async () => {
     const result = await check({
       source:

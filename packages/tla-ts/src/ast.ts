@@ -238,6 +238,13 @@ interface ExceptAtExpression {
   location: SourceLocation;
 }
 
+interface EnabledVariableExpression {
+  kind: "EnabledVariable";
+  name: string;
+  substitution: Expression;
+  location: SourceLocation;
+}
+
 interface FunctionApplicationExpression {
   kind: "FunctionApplication";
   function: Expression;
@@ -343,6 +350,7 @@ export type Expression =
   | RecordExpression
   | ExceptExpression
   | ExceptAtExpression
+  | EnabledVariableExpression
   | FunctionApplicationExpression
   | BracketExpression
   | FieldAccessExpression
@@ -567,6 +575,8 @@ export const getChildren = (expression: Expression): Expression[] => {
       return expression.args;
     case "Lambda":
       return [expression.body];
+    case "EnabledVariable":
+      return [expression.substitution];
     case "And":
     case "Or":
       return expression.operands;

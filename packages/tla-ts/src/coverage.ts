@@ -503,6 +503,12 @@ export const buildCoverage = (
       case "Lambda":
         walk(expression.body, bindNames(expression.params, locals));
         return;
+      case "EnabledVariable": {
+        const entered = walkSubstitutions(expression.substitution, locals);
+        enter(expression, getSubstitutedRange(expression.substitution), () => undefined);
+        frames.length -= entered;
+        return;
+      }
       case "Selection":
         if (range === undefined) walk(expression.expression, locals);
         else enter(expression, range, () => walk(expression.expression, locals));

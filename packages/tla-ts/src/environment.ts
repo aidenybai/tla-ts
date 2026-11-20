@@ -259,9 +259,7 @@ const mentionsName = (expression: Expression, names: Set<string>): boolean => {
 
 const getVariableIndex = (variables: string[], declared: string[]) => {
   const index = new Map(variables.map((name, position) => [name, position]));
-  new Set(declared).forEach((name) =>
-    index.set(getEnabledVariableName(name), index.get(name) ?? index.size),
-  );
+  new Set(declared).forEach((name) => index.set(getEnabledVariableName(name), index.size));
   return index;
 };
 
@@ -312,6 +310,7 @@ export const createEnvironment = (
   const unresolvedBodyKeys = new Set<string>();
   const copySources = new Map<string, CopySource>();
   const substitutedDefinitions = new Set<Definition>();
+  const enabledSubstitutions = new WeakSet<Expression>();
   const goalOperands = new WeakMap<Expression, Expression[]>();
   const instanceParams = new Set<OperatorParam>();
   const builtins = new Map<string, Builtin>(
@@ -687,7 +686,17 @@ export const createEnvironment = (
     const instantiation = createInstantiation({
       params,
       substitutions: substitutes.substitutions,
-      variables: new Set(linked.variables),
+      substitutedVariables: new Set(
+        linked.variables.filter((name) => {
+          const replacement = substitutions.get(name);
+          return !(
+            replacement?.kind === "Identifier" &&
+            replacement.name === name &&
+            resolved.get(name)?.kind === "Variable"
+          );
+        }),
+      ),
+      enabledSubstitutions,
       getDefinition: getLinkedDefinition,
       getOuterDefinition: (key) =>
         module.definitions.find((definition) => unit.getKey(definition) === key),
@@ -974,7 +983,8 @@ export const createEnvironment = (
           createLocalSubstitution(declaration),
         ]),
       ),
-      variables: new Set(linked.variables),
+      substitutedVariables: new Set(linked.variables),
+      enabledSubstitutions,
       getDefinition: getLinkedDefinition,
       getOuterDefinition: () => undefined,
       isParameterized: (key) => parameterized.get(key) === true,
@@ -1649,6 +1659,7 @@ export const createEnvironment = (
     startupValues: Array.from({ length: facts.ids.size }, (): Value | undefined => undefined),
     tlcEvalValues: new WeakMap(),
     substitutedDefinitions,
+    enabledSubstitutions,
     instanceParams,
     evaluators: new WeakMap(),
     entryEvaluators: new WeakMap(),

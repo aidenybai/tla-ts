@@ -3827,6 +3827,123 @@ ASSUME TLCFP(a) = -887695703
     ]);
   });
 
+  it.each([
+    [
+      "d",
+      [
+        "||line 4, col 39 to line 4, col 39 of module M: 2",
+        "||line 5, col 8 to line 5, col 16 of module Inner: 4",
+        "|||line 4, col 6 to line 4, col 10 of module Inner: 4",
+        "|||line 4, col 15 to line 4, col 24 of module Inner: 2",
+        "|||line 4, col 29 to line 4, col 39 of module Inner: 2",
+      ],
+    ],
+    [
+      "<<d>>",
+      [
+        "||line 4, col 39 to line 4, col 39 of module M: 2",
+        "||line 5, col 8 to line 5, col 16 of module Inner: 4",
+        "|||line 4, col 6 to line 4, col 10 of module Inner: 4",
+        "|||line 4, col 15 to line 4, col 24 of module Inner: 2",
+        "|||line 4, col 29 to line 4, col 43 of module Inner: 2",
+      ],
+    ],
+    [
+      "<<>>",
+      [
+        "||line 5, col 8 to line 5, col 16 of module Inner: 4",
+        "|||line 4, col 6 to line 4, col 10 of module Inner: 4",
+        "|||line 4, col 15 to line 4, col 24 of module Inner: 2",
+        "|||line 4, col 29 to line 4, col 42 of module Inner: 0",
+      ],
+    ],
+  ])(
+    "counts UNCHANGED %s in an instanced ENABLED as TLC's Tool#enabledUnchanged does",
+    async (unchanged, lines) => {
+      const result = await check({
+        source:
+          "---- MODULE M ----\nEXTENDS Naturals\nVARIABLES x, y\nI == INSTANCE Inner WITH c <- x, d <- y\nInit == x = 0 /\\ y = 0\nNext == x < 3 /\\ x' = x + 1 /\\ UNCHANGED y\nInv == I!Can \\/ x >= 2\n====",
+        config: "INIT Init\nNEXT Next\nINVARIANT Inv",
+        coverage: 1,
+        loadModule: (name) =>
+          name === "Inner"
+            ? `---- MODULE Inner ----\nEXTENDS Naturals\nVARIABLES c, d\nA == c < 2 /\\ c' = c + 1 /\\ UNCHANGED ${unchanged}\nCan == ENABLED A\n====`
+            : undefined,
+      });
+      expect(formatCoverage(result)?.at(-1)).toEqual([
+        "line 7, col 8 to line 7, col 22 of module M: 4",
+        "|line 7, col 8 to line 7, col 12 of module M: 4",
+        "||line 4, col 31 to line 4, col 31 of module M: 4",
+        ...lines,
+        "|line 7, col 17 to line 7, col 22 of module M: 2",
+      ]);
+    },
+  );
+
+  it.each([
+    [
+      "K2",
+      "UNCHANGED <<d>>",
+      "UNCHANGED d",
+      [
+        "||line 8, col 32 to line 8, col 46 of module K2: 2",
+        "||line 9, col 10 to line 9, col 29 of module K2: 1",
+        "||line 9, col 34 to line 9, col 50 of module K2: 2",
+        "||line 10, col 30 to line 10, col 40 of module K2: 0",
+      ],
+    ],
+    [
+      "K4",
+      "d' = d",
+      "d' = d",
+      [
+        "||line 8, col 32 to line 8, col 37 of module K4: 2",
+        "||line 9, col 10 to line 9, col 29 of module K4: 1",
+        "||line 9, col 34 to line 9, col 50 of module K4: 2",
+      ],
+    ],
+  ])(
+    "counts an instance's variable that its ENABLED primes as an operator argument under UNCHANGED, as TLC's Tool#evalAppl counts each reference: %s",
+    async (name, incremented, reset, lines) => {
+      const result = await check({
+        source: `---- MODULE ${name} ----\nEXTENDS Integers\nVARIABLES x, y\n---- MODULE Hi ----\nEXTENDS Integers\nVARIABLES c, d\nKeep(v) == v\nHInc == c < 2 /\\ c' = c + 1 /\\ ${incremented}\nHFlip == c' = c /\\ d' = 1 - d /\\ UNCHANGED Keep(c)\nHReset == c = 2 /\\ c' = 0 /\\ ${reset}\nHNext == HInc \\/ HFlip \\/ HReset\nHCanMove == ENABLED HNext\n====\nInit == x = 0 /\\ y = 0\nNext == x < 2 /\\ x' = x + 1 /\\ UNCHANGED y\nH == INSTANCE Hi WITH c <- x, d <- y\nInv == H!HCanMove\n====`,
+        config: "INIT Init\nNEXT Next\nINVARIANT Inv\nCHECK_DEADLOCK FALSE",
+        coverage: 1,
+      });
+      expect(formatCoverage(result)?.at(-1)).toEqual([
+        `line 17, col 8 to line 17, col 17 of module ${name}: 3`,
+        `|line 16, col 28 to line 16, col 28 of module ${name}: 3`,
+        `|line 16, col 36 to line 16, col 36 of module ${name}: 3`,
+        `|line 12, col 13 to line 12, col 25 of module ${name}: 3`,
+        `||line 8, col 9 to line 8, col 13 of module ${name}: 3`,
+        `||line 8, col 18 to line 8, col 27 of module ${name}: 2`,
+        ...lines,
+      ]);
+    },
+  );
+
+  it.each([
+    ["P2", "Prop == []H!CanFlip", "PROPERTY Prop", "line 14, col 11 to line 14, col 19"],
+    ["P4", "Inv == H!CanFlip", "INVARIANT Inv", "line 14, col 8 to line 14, col 16"],
+  ])(
+    "counts UNCHANGED of an instance's variable in its ENABLED in %s, as TLC's Tool#enabledUnchanged evaluates it",
+    async (name, definition, config, location) => {
+      const result = await check({
+        source: `---- MODULE ${name} ----\nEXTENDS Integers\nVARIABLES x, y\n---- MODULE Hi ----\nEXTENDS Integers\nVARIABLES c, d\nFlip == d' = 1 - d /\\ UNCHANGED c\nCanFlip == ENABLED Flip\n====\nInit == x = 0 /\\ y = 0\nNext == x < 2 /\\ x' = x + 1 /\\ UNCHANGED y\nSpec == Init /\\ [][Next]_<<x, y>>\nH == INSTANCE Hi WITH c <- x, d <- y\n${definition}\n====`,
+        config: `SPECIFICATION Spec\n${config}\nCHECK_DEADLOCK FALSE`,
+        coverage: 1,
+      });
+      expect(formatCoverage(result)?.at(-1)).toEqual([
+        `${location} of module ${name}: 3`,
+        `|line 13, col 28 to line 13, col 28 of module ${name}: 3`,
+        `|line 13, col 36 to line 13, col 36 of module ${name}: 3`,
+        `|line 8, col 12 to line 8, col 23 of module ${name}: 3`,
+        `||line 7, col 9 to line 7, col 18 of module ${name}: 3`,
+        `||line 7, col 23 to line 7, col 33 of module ${name}: 3`,
+      ]);
+    },
+  );
+
   it("counts a substitution at each primed reference and again for UNCHANGED, as TLC's LazyValue caches it only for the states it was evaluated in", async () => {
     const lines = formatCoverage(
       await check({
