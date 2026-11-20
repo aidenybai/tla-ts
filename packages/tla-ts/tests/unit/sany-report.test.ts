@@ -1071,6 +1071,15 @@ Spec == Init /\\ [][Next]_x
     expect(report).toEqual({ text: "", isFailed: false });
   });
 
+  it.each([
+    "f[v \\in LET N == 1 IN {N}] == v",
+    "D == LET f[v \\in {LET N == 1 IN N}] == v IN f[1]",
+    "THEOREM TRUE\n<1> DEFINE f[v \\in [a : LET N == 1 IN {N}]] == v\n<1> QED",
+  ])("accepts a function definition with a LET in its bounds in %j, which SANY rejects", (unit) => {
+    const report = getReport({ M: `---- MODULE M ----\n${unit}\n====\n` });
+    expect(report).toEqual({ text: "", isFailed: false });
+  });
+
   it("accepts a definition after a field named THEOREM, AXIOM or DOMAIN, which SANY rejects", () => {
     const report = getReport({
       M: "---- MODULE M ----\nr == [a |-> 1]\nF == r.THEOREM\nG == [r EXCEPT !.AXIOM = 1]\nH == r.DOMAIN\nI == 1\n====\n",

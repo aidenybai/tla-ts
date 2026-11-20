@@ -2007,6 +2007,7 @@ const parse = (
     }
     const name = expectIdentifier();
     if (accept("[")) {
+      // Deviation from SANY: TLAplusParser#belchDEF marks the definition before the next == ahead, which in f[v \in LET N == 1 IN {N}] == v is the LET's, so SANY rejects a function definition whose bounds hold a LET; tla-ts reads it as the grammar does.
       const bounds = withBracketLayout(() => parseBounds());
       expect("]");
       expect("==");

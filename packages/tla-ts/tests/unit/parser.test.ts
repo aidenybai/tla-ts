@@ -168,6 +168,15 @@ describe("parseModule reads operators like SANY", () => {
     expect(result.status).toBe("success");
   });
 
+  it("reads a function definition with a LET in its bounds, which SANY rejects", async () => {
+    const result = await check({
+      source:
+        "---- MODULE M ----\nEXTENDS Naturals\nf[v \\in LET N == {1, 2} IN N] == v + 1\nD == LET g[w \\in {LET K == 3 IN K}] == w IN g[3]\nASSUME f[2] = 3 /\\ D = 3\n====",
+      config: "",
+    });
+    expect(result.status).toBe("success");
+  });
+
   it.each(['"a\\qb"', '"a\\ b"', '"a\rb"'])(
     "rejects the string %j that SANY's lexer stops in",
     (string) => {
