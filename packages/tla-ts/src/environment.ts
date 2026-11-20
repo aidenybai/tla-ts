@@ -368,7 +368,7 @@ export const createEnvironment = (
     const source = definitions.get(sourceKey);
     return source && { ...substitutes, source, module };
   };
-  const getInstanceSubstitutes = (instance: Instance): InstanceSubstitutes | undefined => {
+  const getInstanceSubstitutes = (instance: Instance) => {
     const linked = checkedModules.get(instance.module);
     return (
       linked && {
