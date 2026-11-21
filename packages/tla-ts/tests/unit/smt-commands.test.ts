@@ -3313,6 +3313,26 @@ describe("opt, as Z3 5.3.2 sets up its solver", () => {
     expect(getRlimit(["(set-option :smt.case_split 0)"])).toEqual(["sat", "(:rlimit 692)"]);
   });
 
+  it("makes its solver before it normalizes the objectives", () => {
+    expect(
+      run([
+        "(set-option :rlimit 78)",
+        "(declare-const a Bool)",
+        "(declare-const b Bool)",
+        "(declare-const x Int)",
+        "(assert (=> a (> x 3)))",
+        "(assert (=> b (< x 2)))",
+        "(assert-soft a :weight 2)",
+        "(assert-soft b :weight 3)",
+        "(check-sat)",
+        "(get-info :reason-unknown)",
+      ]),
+    ).toEqual([
+      '(error "line 9 column 10: max. resource limit exceeded")',
+      '(:reason-unknown "unknown")',
+    ]);
+  });
+
   it("reads the sat parameters for its SAT solver and reports their errors", () => {
     expect(
       run([

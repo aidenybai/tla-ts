@@ -254,9 +254,11 @@ export class OptContext {
       return L_FALSE;
     }
     this.release();
+    const solver = new OptSolver(this.manager, this.environment);
+    this.optSolver = solver;
     const normalized = this.normalize(hard, options.isEliminatingZeroOne);
     if (normalized.length === 1 && this.manager.isFalse(normalized[0])) return L_FALSE;
-    return this.execute(normalized, options);
+    return this.execute(solver, normalized, options);
   }
 
   private getMaxsatContext(optSolver: OptSolver, options: OptOptions): MaxsatContext {
@@ -324,13 +326,11 @@ export class OptContext {
     return actual !== undefined && actual.equals(expected);
   }
 
-  private execute(hard: readonly number[], options: OptOptions) {
+  private execute(solver: OptSolver, hard: readonly number[], options: OptOptions) {
     const manager = this.manager;
     this.reasonUnknown = "";
     if (hard.some((form) => manager.hasQuantifierFlags[form]))
       throw new SmtUnsupportedError("optimization with quantified constraints");
-    const solver = new OptSolver(manager, this.environment);
-    this.optSolver = solver;
     const optsmt = new Optsmt(
       manager,
       this.environment,
