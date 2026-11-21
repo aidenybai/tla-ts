@@ -94,13 +94,15 @@ interface Declared {
 
 // The locals of a function whose parameters are distinct names, whose body's vars, functions, and
 // lexical declarations its own code declares (the top scope), or undefined where its code may
-// reach an environment.
+// reach an environment. The names of kept are bindings that code outside the function reads from
+// its environment, as a model's steps read those of the function that Node wraps a module in.
 export const getLocals = (
   node: ts.Node,
   parameters: readonly ts.ParameterDeclaration[],
   body: ts.ConciseBody,
   top: Declared[],
   getBlockDeclarations: (statements: readonly ts.Statement[]) => Declared[],
+  kept: ReadonlySet<string> = new Set(),
 ): Locals | undefined => {
   const isArrow = ts.isArrowFunction(node);
   if (parameters.some((parameter) => isReaching(parameter, isArrow)) || isReaching(body, isArrow)) {
@@ -108,6 +110,7 @@ export const getLocals = (
   }
   const captured = getCaptured(body);
   parameters.forEach((parameter) => getCaptured(parameter, captured, true));
+  kept.forEach((name) => captured.add(name));
   const slots = new Map<ts.Node, number>();
   const constant: boolean[] = [];
   // Each scope's names, with the slot of each local, or 0 for a binding that an environment holds.

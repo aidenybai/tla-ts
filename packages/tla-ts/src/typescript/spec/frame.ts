@@ -4,7 +4,7 @@ import { KEYWORDS } from "../../lexer";
 import { parseModule } from "../../parser";
 import { getSetBound } from "../../values";
 import { formatString } from "../../printer";
-import { type FunctionNode, getFunction, isPlain, skipCasts } from "../context";
+import { type FunctionNode, getCommonJsExports, getFunction, isPlain, skipCasts } from "../context";
 import { createNames } from "../names";
 import { createProgram, type Library } from "../program";
 
@@ -477,9 +477,15 @@ export const frameModel = (
     return ts.forEachChild(node, (child) => readsState(child, visited) || undefined) ?? false;
   };
   const helpers = declarations.filter((declared) => !isLet(declared));
-  // The local bindings that the module's export lists export, as export { local as name } does.
-  const listed = new Set(
-    sourceFile.statements.flatMap((statement) =>
+  // The local bindings that the module's export lists export, as export { local as name } does,
+  // and those that a CommonJS file's exports name, as exports.name = local does.
+  const commonJsLocals = new Set(getCommonJsExports(sourceFile).values());
+  const listed = new Set([
+    ...declarations.flatMap((declared) => {
+      const symbol = getSymbol(declared.identifier);
+      return commonJsLocals.has(declared.name) && symbol !== undefined ? [symbol] : [];
+    }),
+    ...sourceFile.statements.flatMap((statement) =>
       ts.isExportDeclaration(statement) &&
       !statement.isTypeOnly &&
       statement.moduleSpecifier === undefined &&
@@ -493,7 +499,7 @@ export const frameModel = (
           })
         : [],
     ),
-  );
+  ]);
   const exported = helpers.flatMap((declared): Exported[] => {
     const declaration = declared.declaration;
     const node = getFunction(declaration);

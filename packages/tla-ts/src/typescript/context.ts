@@ -87,9 +87,49 @@ export const getFunction = (node: ts.Node | undefined) => {
   return found !== undefined && isPlain(found) ? found : undefined;
 };
 
+// The local names that a CommonJS file's top level exports by name, by the names it exports them
+// as, in exports.name = local or module.exports.name = local. A file of an ES module's import or
+// export syntax exports none this way.
+export const getCommonJsExports = (sourceFile: ts.SourceFile) =>
+  new Map(
+    sourceFile.statements.some(
+      (statement) =>
+        ts.isImportDeclaration(statement) ||
+        ts.isExportDeclaration(statement) ||
+        ts.isExportAssignment(statement) ||
+        (ts.canHaveModifiers(statement) &&
+          (ts.getModifiers(statement) ?? []).some(
+            (modifier) => modifier.kind === ts.SyntaxKind.ExportKeyword,
+          )),
+    )
+      ? []
+      : sourceFile.statements.flatMap((statement): [string, string][] => {
+          const expression = ts.isExpressionStatement(statement) ? statement.expression : undefined;
+          if (
+            expression === undefined ||
+            !ts.isBinaryExpression(expression) ||
+            expression.operatorToken.kind !== ts.SyntaxKind.EqualsToken ||
+            !ts.isPropertyAccessExpression(expression.left) ||
+            !ts.isIdentifier(expression.right)
+          ) {
+            return [];
+          }
+          const target = expression.left.expression;
+          const isExports =
+            (ts.isIdentifier(target) && target.text === "exports") ||
+            (ts.isPropertyAccessExpression(target) &&
+              ts.isIdentifier(target.expression) &&
+              target.expression.text === "module" &&
+              target.name.text === "exports");
+          return isExports ? [[expression.left.name.text, expression.right.text]] : [];
+        }),
+  );
+
 // A file that exports no function, which a spec exports as an action, runs as JavaScript does
-// rather than as a spec's model.
+// rather than as a spec's model. A CommonJS file may export a function by name, which the model's
+// frame tells.
 export const isScript = (sourceFile: ts.SourceFile) =>
+  getCommonJsExports(sourceFile).size === 0 &&
   sourceFile.statements.every(
     (statement) =>
       // An export list may name a function, which the model's frame tells.

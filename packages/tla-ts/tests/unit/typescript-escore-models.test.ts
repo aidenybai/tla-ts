@@ -421,6 +421,31 @@ describe("checks a module's exported functions as a model on ESCore", () => {
     });
   });
 
+  // A CommonJS module's functions that its exports name, as exports.tick = tick does, as Solid's
+  // CommonJS build exports them, are the model's, which the steps call in Node's wrapper.
+  describe("checks the functions that a CommonJS module exports by name", () => {
+    const directory = mkdtempSync(join(tmpdir(), "tla-ts-escore-commonjs-"));
+    afterAll(() => rmSync(directory, { recursive: true, force: true }));
+    const check = (operator: string, mode?: "compared") => {
+      const source = `let count = 0;\nfunction tick() {\n  if (count < 2) count += 1;\n}\nfunction isSmall() {\n  return count ${operator} 2;\n}\nexports.tick = tick;\nexports.isSmall = isSmall;\n`;
+      const path = join(directory, `${mode ?? "spec"}-${operator === "<" ? "less" : "most"}.cjs`);
+      writeFileSync(path, source);
+      return checkModel(source, path, mode);
+    };
+
+    it("agrees with Node", async () => {
+      expect(getCounts(await check("<="))).toEqual(["deadlock", 3, 3]);
+    });
+
+    it("rejects another result", async () => {
+      expect(getCounts(await check("<"))).toEqual(["invariant-violation", 3, 3]);
+    });
+
+    it("numbers the state natively as ESCanonical does", async () => {
+      expect(getCounts(await check("<=", "compared"))).toEqual(["deadlock", 3, 3]);
+    });
+  });
+
   // A step settles the jobs that its program queues, which a program that names then only in a
   // comment queues none of.
   describe("settles a step of a program that queues no jobs", () => {
