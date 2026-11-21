@@ -25,6 +25,7 @@ import {
   evaluate,
   forEachBoundElement,
   freezeCallStack,
+  getArgumentTuple,
   getContextElements,
   getDefinition,
   getLazyFunction,
@@ -42,6 +43,7 @@ import {
   toUnspecifiedSubscriptError,
 } from "../evaluate";
 import {
+  createTuple,
   formatValue,
   getLazyFunctionNode,
   getStreamedElements,
@@ -959,10 +961,21 @@ const visitApplication = (
         ),
       );
       if (lambda) {
-        if (replay.coverage && expression.args.length > 1) {
-          countArgumentTuple(replay.coverage, node, expression);
-        }
-        const bound = runAt(replay, node, () => bindLazyArguments(lambda, expression, context));
+        const isTuple = expression.args.length > 1;
+        if (replay.coverage && isTuple) countArgumentTuple(replay.coverage, node, expression);
+        const getArgument = () => {
+          const args = expression.args.map((arg) => evaluate(arg, context));
+          return isTuple ? createTuple(args) : args[0];
+        };
+        const bound = runAt(replay, node, () =>
+          bindLazyArguments(
+            lambda,
+            expression,
+            replay.callStack && isTuple
+              ? withFrame(replay, getArgumentTuple(expression), getArgument)
+              : getArgument(),
+          ),
+        );
         // Tool#getNextStates runs the body with the function's cost model, not the application's.
         return visit(replay, lambda.body, items, bound, partial, getLazyFunctionNode(lambda.value));
       }

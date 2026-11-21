@@ -709,14 +709,17 @@ const getUnrecordedApply = (functionValue: Value, coverage: Coverage) => {
       : runAtCoverageNode(coverage, DO_NOT_RECORD, () => lambda.compute(argument, lambda.value));
 };
 
+// SANY makes the arguments of f[a, b] a $Tuple at the application's location, which TLC's call stack holds while they evaluate.
+export const getArgumentTuple = (
+  expression: Expression & { kind: "FunctionApplication" },
+): Expression => ({ kind: "Tuple", elements: expression.args, location: expression.location });
+
 export const bindLazyArguments = (
   lambda: LazyFunction,
   expression: Expression & { kind: "FunctionApplication" },
-  context: Context,
+  argument: Value,
 ) => {
   const value = lambda.value;
-  const args = expression.args.map((arg) => evaluate(arg, context));
-  const argument = args.length === 1 ? args[0] : createTuple(args);
   const describeArgument = (ordinal: string, element: Value, problem: string) =>
     `In applying the function\n${prettyPrint(formatValue(value))},\nthe ${ordinal} is:\n${prettyPrint(formatValue(element))}${problem}.\n${describeRange(expression.function)}`;
   const bounds = lambda.bounds;
@@ -2807,15 +2810,20 @@ const compile = (expression: Expression, environment: Environment): Evaluator =>
       const args = expression.args.map(getChildEvaluator);
       const describeMissing = getMissingArgumentDescriber(environment.runtime.version);
       const coverage = environment.coverage;
+      const callStack = environment.callStack;
+      const traceArguments = (evaluator: Evaluator) =>
+        callStack
+          ? traceEvaluator(getArgumentTuple(expression), evaluator, environment, callStack)
+          : evaluator;
       if (coverage) {
         const isMember = createChargedMembership(coverage);
         const getArgument =
           args.length === 1
             ? args[0]
-            : (context: Context) => {
+            : traceArguments((context) => {
                 countArgumentTuple(coverage, coverage.current, expression);
                 return createTuple(args.map((arg) => arg(context)));
-              };
+              });
         return (context) => {
           const functionValue = evaluateFunction(context);
           const argument = getArgument(context);
@@ -2834,6 +2842,13 @@ const compile = (expression: Expression, environment: Environment): Evaluator =>
         const argument = args[0];
         return (context) =>
           applyFunction(evaluateFunction(context), argument(context), describeMissing);
+      }
+      if (callStack) {
+        const getArgument = traceArguments((context) =>
+          createTuple(args.map((arg) => arg(context))),
+        );
+        return (context) =>
+          applyFunction(evaluateFunction(context), getArgument(context), describeMissing);
       }
       return (context) =>
         applyFunction(

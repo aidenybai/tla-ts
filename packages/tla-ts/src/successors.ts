@@ -66,6 +66,7 @@ import {
   type UnchangedVariable,
 } from "./tlc/replay";
 import {
+  createTuple,
   getStreamedElements,
   isEqualLikeTlc,
   isFunctionValue,
@@ -552,9 +553,11 @@ const compileFunctionAction = (
     const value = evaluate(expression.function, isInit ? context : toKeepLazyContext(context));
     const lambda = getLazyFunction(value);
     if (lambda !== undefined) {
+      // Inline: a helper shared with replay's traced copy of these lines cost 1.4% per lazy action.
+      const args = expression.args.map((arg) => evaluate(arg, context));
       getRunner(lambda.body, environment, isInit)(
         run,
-        bindLazyArguments(lambda, expression, context),
+        bindLazyArguments(lambda, expression, args.length === 1 ? args[0] : createTuple(args)),
         partial,
         action,
         isFixed,

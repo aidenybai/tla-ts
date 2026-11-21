@@ -799,6 +799,82 @@ describe("evaluation errors match TLC", () => {
 
   it.each([
     [
+      "a lazy function",
+      "VARIABLE x\nInit == x = 0\nNext == x' = x + [i \\in 0..2, j \\in 1..2 |-> i][1 \\div x, 1]",
+      "INIT Init\nNEXT Next",
+      [
+        "Line 5, column 9 to line 5, column 60 in M",
+        "Line 5, column 14 to line 5, column 60 in M",
+        "Line 5, column 18 to line 5, column 60 in M",
+        "Line 5, column 18 to line 5, column 60 in M",
+        "Line 5, column 49 to line 5, column 56 in M",
+      ],
+    ],
+    [
+      "a function a state holds",
+      "VARIABLES x, f\nInit == x = 0 /\\ f = [i \\in 0..2, j \\in 1..2 |-> i + j]\nNext == x' = x + f[1, 1 \\div x] /\\ UNCHANGED f",
+      "INIT Init\nNEXT Next",
+      [
+        "Line 5, column 9 to line 5, column 46 in M",
+        "Line 5, column 9 to line 5, column 31 in M",
+        "Line 5, column 14 to line 5, column 31 in M",
+        "Line 5, column 18 to line 5, column 31 in M",
+        "Line 5, column 18 to line 5, column 31 in M",
+        "Line 5, column 23 to line 5, column 30 in M",
+      ],
+    ],
+    [
+      "a lazy function applied as an action",
+      "VARIABLE x\nInit == x = 0\nNext == [i \\in 0..2, j \\in 1..2 |-> x' = x + i][1 \\div x, 1]",
+      "INIT Init\nNEXT Next",
+      [
+        "Line 5, column 9 to line 5, column 60 in M",
+        "Line 5, column 9 to line 5, column 60 in M",
+        "Line 5, column 49 to line 5, column 56 in M",
+      ],
+    ],
+    [
+      "an invariant",
+      "VARIABLES x, f\nInit == x = 0 /\\ f = [i \\in 0..2, j \\in 1..2 |-> i + j]\nNext == x' = x /\\ UNCHANGED f\nInv == f[1, 1 \\div x] > 0",
+      "INIT Init\nNEXT Next\nINVARIANT Inv",
+      [
+        "Line 4, column 9 to line 4, column 55 in M",
+        "Line 4, column 9 to line 4, column 13 in M",
+        "Line 4, column 18 to line 4, column 55 in M",
+        "Line 6, column 8 to line 6, column 25 in M",
+        "Line 6, column 8 to line 6, column 21 in M",
+        "Line 6, column 8 to line 6, column 21 in M",
+        "Line 6, column 13 to line 6, column 20 in M",
+      ],
+    ],
+    [
+      "a recursive function",
+      "VARIABLE x\nInit == x = 0\nNext == x' = (LET g[n \\in 0..3, m \\in 1..2] == IF n = 0 THEN m ELSE g[n - 1, m \\div x] IN g[2, 1])",
+      "INIT Init\nNEXT Next",
+      [
+        "Line 5, column 9 to line 5, column 98 in M",
+        "Line 5, column 15 to line 5, column 97 in M",
+        "Line 5, column 91 to line 5, column 97 in M",
+        "Line 5, column 48 to line 5, column 86 in M",
+        "Line 5, column 69 to line 5, column 86 in M",
+        "Line 5, column 69 to line 5, column 86 in M",
+        "Line 5, column 78 to line 5, column 85 in M",
+      ],
+    ],
+  ])(
+    "frames the arguments of f[a, b] that fail in %s at the application's location, as TLC's call stack holds SANY's $Tuple",
+    async (_title, definitions, config, callStack) => {
+      const result = await check({
+        source: `---- MODULE M ----\nEXTENDS Integers\n${definitions}\n====`,
+        config,
+      });
+      expect(result.failure?.message).toBe("The second argument of \\div is 0.");
+      expect(formatCallStackLines(result)).toEqual(callStack);
+    },
+  );
+
+  it.each([
+    [
       "<<1>>",
       "[k \\in {1}, j \\in {2} |-> <expression line 6, col 35 to line 6, col 40 of module M>],\nthe argument list is:\n<<1>>\nwhich does not match its formal parameter.\n",
     ],
