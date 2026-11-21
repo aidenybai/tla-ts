@@ -294,6 +294,19 @@ const MBQI_UNDER_PUSH = [
   "(assert (not (= (f a) b)))",
 ];
 
+const MBQI_SUBSET = [
+  "(set-option :auto_config false)",
+  "(set-option :smt.mbqi true)",
+  "(declare-sort U 0)",
+  "(declare-fun mem (U U) Bool)",
+  "(declare-fun s () U)",
+  "(declare-fun t () U)",
+  "(declare-fun e () U)",
+  "(assert (forall ((x U)) (=> (mem x s) (mem x t))))",
+  "(assert (mem e s))",
+  "(assert (not (= s t)))",
+];
+
 const SMT_FIXTURES = join(import.meta.dirname, "../fixtures/smt");
 
 // A tlapm obligation from tlaplus/Examples' MisraReachability, with its goal checked under a push.
@@ -1107,6 +1120,30 @@ describe("runSmtlibScript runs its commands as Z3 does", () => {
     expect(run(["(set-option :rlimit 4000)", REACHABLE_PROOFS])).toEqual(
       readZ3Output("ReachableProofs-40-push-4000.z3out"),
     );
+  });
+
+  it("goes on to the model check when the limit stops the model finder's evaluation", () => {
+    expect(
+      run([
+        ...MBQI_SUBSET,
+        "(set-option :rlimit 370)",
+        "(check-sat)",
+        "(get-info :reason-unknown)",
+        "(get-info :rlimit)",
+      ]),
+    ).toEqual(["unknown", '(:reason-unknown "push canceled")', "(:rlimit 388)"]);
+  });
+
+  it("takes the model as valid when the limit stops its validation's evaluation", () => {
+    expect(
+      run([
+        ...MBQI_SUBSET,
+        "(set-option :rlimit 406)",
+        "(check-sat)",
+        "(get-info :reason-unknown)",
+        "(get-info :rlimit)",
+      ]),
+    ).toEqual(["unknown", '(:reason-unknown "canceled")', "(:rlimit 424)"]);
   });
 
   it("finishes base-level propagation past the limit and finds the conflict", () => {

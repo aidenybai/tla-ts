@@ -1474,9 +1474,10 @@ export class Context extends Internalizer {
       if (!this.isRelevant(atom)) continue;
       const expr = isNegated(literal) ? manager.mkNot(atom) : atom;
       manager.incRef(expr);
-      const value = manager.isGroundApp(expr) ? model.eval(expr, false) : -1;
-      if (value !== -1) manager.decRef(value);
+      const value = manager.isGroundApp(expr) ? model.tryEval(expr, false) : -1;
       manager.decRef(expr);
+      if (value === undefined) return true;
+      if (value !== -1) manager.decRef(value);
       if (value === manager.falseExpr) return false;
     }
     return true;
