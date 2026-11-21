@@ -1724,7 +1724,6 @@ export class Context extends Internalizer {
       }
       return this.checkFinalize(result);
     } finally {
-      // search_completion marks a search that an exception ends as canceled.
       if (!this.isSearchFinalized) this.lastSearchFailure = FAILURE_CANCELED;
     }
   }
