@@ -1061,6 +1061,12 @@ describe("runSmtlibScript runs its commands as Z3 does", () => {
     );
   });
 
+  it("orders a compacted interpretation's disjuncts as Z3 does once its aux functions are gone", () => {
+    expect(run(["(set-option :rlimit 29800)", REACHABLE_PROOFS])).toEqual(
+      readZ3Output("ReachableProofs-40-push-29800.z3out"),
+    );
+  });
+
   it("reports the limit that stops a push of ctx-solver-simplify as its reason", () => {
     expect(
       run([

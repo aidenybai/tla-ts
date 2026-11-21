@@ -820,7 +820,6 @@ export class ProtoModel {
           manager.decRef(cleaned);
         }
       }
-      rewriter.release();
       const occurrences = new Map<number, number>();
       const collectOccs = (expr: number) => {
         const decls = new Set<number>();
@@ -849,6 +848,7 @@ export class ProtoModel {
         (decl) => manager.funcDecls[decl].isSkolem && !occurrences.has(decl),
       );
       for (const decl of removed) this.unregisterDecl(decl);
+      rewriter.release();
       if (removed.length === 0) break;
     }
     this.isCompact = true;
