@@ -243,21 +243,26 @@ export class ModelChecker {
     if (completeCex === "unsat") return true;
     if (completeCex === "unknown") return false;
     completeCex?.incRef();
-    this.modelFinder.restrictSksToInstSet(quantifier, sks, (expr) => aux.assert(expr));
-    let numNewInstances = 0;
-    for (;;) {
-      const cex = aux.check();
-      if (typeof cex === "string") break;
-      cex?.incRef();
-      const isAdded = this.addInstance(quantifier, cex, sks, true);
-      if (isAdded) numNewInstances++;
-      if (cex !== undefined && isAdded && numNewInstances < this.maxCexs)
-        this.addBlockingClause(aux, cex, sks);
-      cex?.decRef();
-      if (!isAdded || numNewInstances >= this.maxCexs) break;
+    try {
+      this.modelFinder.restrictSksToInstSet(quantifier, sks, (expr) => aux.assert(expr));
+      let numNewInstances = 0;
+      for (;;) {
+        const cex = aux.check();
+        if (cex === undefined || typeof cex === "string") break;
+        cex.incRef();
+        try {
+          const isAdded = this.addInstance(quantifier, cex, sks, true);
+          if (isAdded) numNewInstances++;
+          if (isAdded && numNewInstances < this.maxCexs) this.addBlockingClause(aux, cex, sks);
+          if (!isAdded || numNewInstances >= this.maxCexs) break;
+        } finally {
+          cex.decRef();
+        }
+      }
+      if (numNewInstances === 0) this.addInstance(quantifier, completeCex, sks, false);
+    } finally {
+      completeCex?.decRef();
     }
-    if (numNewInstances === 0) this.addInstance(quantifier, completeCex, sks, false);
-    completeCex?.decRef();
     return false;
   }
 
