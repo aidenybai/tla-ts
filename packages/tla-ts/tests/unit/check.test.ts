@@ -4234,6 +4234,87 @@ ASSUME TLCFP(a) = -887695703
 
   it.each([
     [
+      "a tuple",
+      "VARIABLE x\nInit == x = 0\nNext == x < 2 /\\ x' = x + 1 /\\ <<3, x>> \\notin [{1} -> {1}]",
+      [
+        ["line 4, col 9 to line 4, col 13 of module M: 1"],
+        [
+          "line 5, col 9 to line 5, col 13 of module M: 2",
+          "|line 5, col 9 to line 5, col 9 of module M: 3",
+          "line 5, col 18 to line 5, col 27 of module M: 2",
+          "line 5, col 32 to line 5, col 59 of module M: 2",
+          "|line 5, col 32 to line 5, col 39 of module M: 2:4",
+          "||line 5, col 37 to line 5, col 37 of module M: 2",
+          "|line 5, col 48 to line 5, col 59 of module M: 2",
+        ],
+      ],
+    ],
+    [
+      "a record",
+      'VARIABLE x\nInit == x = 0\nNext == x < 2 /\\ x\' = x + 1 /\\ [a |-> x, b |-> 2] \\in [{"a", "b"} -> Nat]',
+      [
+        ["line 4, col 9 to line 4, col 13 of module M: 1"],
+        [
+          "line 5, col 9 to line 5, col 13 of module M: 2",
+          "|line 5, col 9 to line 5, col 9 of module M: 3",
+          "line 5, col 18 to line 5, col 27 of module M: 2",
+          "line 5, col 32 to line 5, col 73 of module M: 2",
+          "|line 5, col 32 to line 5, col 49 of module M: 2:4",
+          "||line 5, col 33 to line 5, col 39 of module M: 2",
+          "|line 5, col 55 to line 5, col 73 of module M: 2",
+        ],
+      ],
+    ],
+    [
+      "a tuple a state holds",
+      "VARIABLE x\nInit == x = <<0, 0>>\nNext == x[1] < 2 /\\ x \\in [1..2 -> Nat] /\\ x' = <<x[1] + 1, 0>>",
+      [
+        [
+          "line 4, col 9 to line 4, col 20 of module M: 1",
+          "|line 4, col 13 to line 4, col 20 of module M: 1:2",
+        ],
+        [
+          "line 5, col 9 to line 5, col 16 of module M: 2",
+          "|line 5, col 9 to line 5, col 12 of module M: 3",
+          "line 5, col 21 to line 5, col 39 of module M: 4",
+          "|line 5, col 21 to line 5, col 21 of module M: 2",
+          "|line 5, col 27 to line 5, col 39 of module M: 2",
+          "line 5, col 44 to line 5, col 63 of module M: 2",
+          "|line 5, col 49 to line 5, col 63 of module M: 2:2",
+          "||line 5, col 51 to line 5, col 58 of module M: 2",
+        ],
+      ],
+    ],
+    [
+      "a tuple in the range",
+      "VARIABLE x\nInit == x = 0\nNext == x < 2 /\\ x' = x + 1 /\\ <<<<x>>>> \\in [1..1 -> [1..1 -> Nat]]",
+      [
+        ["line 4, col 9 to line 4, col 13 of module M: 1"],
+        [
+          "line 5, col 9 to line 5, col 13 of module M: 2",
+          "|line 5, col 9 to line 5, col 9 of module M: 3",
+          "line 5, col 18 to line 5, col 27 of module M: 2",
+          "line 5, col 32 to line 5, col 68 of module M: 2",
+          "|line 5, col 32 to line 5, col 40 of module M: 2:2",
+          "||line 5, col 34 to line 5, col 38 of module M: 2:2",
+          "|||line 5, col 36 to line 5, col 36 of module M: 2",
+          "|line 5, col 46 to line 5, col 68 of module M: 2",
+        ],
+      ],
+    ],
+  ])(
+    "charges %s that a set of functions converts, as TLC's SetOfFcnsValue#member calls toFcnRcd",
+    async (_title, body, expected) => {
+      const lines = await getCoverageLines(
+        `---- MODULE M ----\nEXTENDS Integers, FiniteSets, Sequences, TLC\n${body}\n====`,
+        "INIT Init\nNEXT Next\nCHECK_DEADLOCK FALSE",
+      );
+      expect(lines).toEqual(expected);
+    },
+  );
+
+  it.each([
+    [
       "its body follows one argument",
       "VARIABLE x\nInit == x = 0\nNext == x < 2 /\\ [i \\in 0..2 |-> x' = x + i][IF x = 0 THEN 1 ELSE 2]",
       [

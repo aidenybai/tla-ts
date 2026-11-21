@@ -1143,6 +1143,15 @@ export const createChargedMembership = (coverage: Coverage) => {
   const isMember = (element: Value, set: Value): boolean => {
     if (typeof set !== "object") return isElementOf(element, set);
     if (set.kind !== "Subset" && set.kind !== "Union") {
+      // SetOfFcnsValue#member converts the element with toFcnRcd, which charges a tuple or record its length.
+      if (
+        set.kind === "FunctionSet" &&
+        typeof element === "object" &&
+        element.kind === "Function" &&
+        element.functionClass !== undefined
+      ) {
+        costCoverage(coverage, element, element.range.length);
+      }
       return COMPOSITE_SET_KINDS.has(set.kind)
         ? isElementOfWith(element, set, isMember)
         : isElementOf(element, set);

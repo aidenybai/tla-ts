@@ -1708,9 +1708,11 @@ const traceFrames =
     }
   };
 
-const getTaggedSetTest = (expression: Expression): ((value: Value) => boolean) | undefined => {
+const getTaggedValueTest = (expression: Expression): ((value: Value) => boolean) | undefined => {
   switch (expression.kind) {
     case "SetEnumeration":
+    case "Tuple":
+    case "Record":
       return () => true;
     case "SetMap":
       return isReducibleSet;
@@ -1738,7 +1740,7 @@ const countEvaluator = (
   evaluator: Evaluator,
   coverage: Coverage,
 ): Evaluator => {
-  const isTagged = getTaggedSetTest(expression);
+  const isTagged = getTaggedValueTest(expression);
   return (context) => {
     const outer = coverage.current;
     if (outer < 0 || !coverage.covered.has(expression)) return evaluator(context);
