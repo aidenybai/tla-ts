@@ -1172,6 +1172,37 @@ describe("runSmtlibScript runs its commands as Z3 does", () => {
     ).toEqual(["unknown", "sat", "(:rlimit 382)"]);
   });
 
+  it("frees the smt tactic's context when the model check's push cancels its search", () => {
+    expect(
+      run([
+        ...MBQI_SUBSET,
+        "(set-option :rlimit 370)",
+        "(check-sat)",
+        "(set-option :rlimit 0)",
+        "(check-sat)",
+        "(get-info :rlimit)",
+      ]),
+    ).toEqual(["unknown", "sat", "(:rlimit 816)"]);
+    expect(
+      run([
+        "(set-option :produce-unsat-cores true)",
+        "(declare-sort U 0)",
+        "(declare-fun mem (U U) Bool)",
+        "(declare-fun s () U)",
+        "(declare-fun t () U)",
+        "(declare-fun e () U)",
+        "(assert (! (forall ((x U)) (=> (mem x s) (mem x t))) :named a1))",
+        "(assert (! (mem e s) :named a2))",
+        "(assert (not (= s t)))",
+        "(set-option :rlimit 308)",
+        "(check-sat-using smt)",
+        "(set-option :rlimit 0)",
+        "(check-sat-using smt)",
+        "(get-info :rlimit)",
+      ]),
+    ).toEqual(["unknown", "sat", "(:rlimit 695)"]);
+  });
+
   it("finishes base-level propagation past the limit and finds the conflict", () => {
     expect(run([CIGARETTE_SMOKERS, "(get-info :rlimit)", "(get-info :reason-unknown)"])).toEqual([
       "unsat",
