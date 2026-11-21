@@ -16,10 +16,11 @@ export class SmtKernel {
   private scopeCount = 0;
 
   constructor(manager: AstManager, params: KernelParams) {
-    this.asserted = new AssertedFormulas(manager, params.isFindingMacros);
+    this.asserted = new AssertedFormulas(manager, params.isFindingMacros, params.isEmatching);
     this.context = new Context(manager, {
       isMbqi: params.isMbqi,
       mbqiMaxIterations: params.mbqiMaxIterations,
+      isEmatching: params.isEmatching,
       relevancyLevel: params.relevancyLevel ?? 2,
       isDelayingNewCaseSplits: params.isDelayingNewCaseSplits,
       randomSeed: params.randomSeed,
@@ -38,7 +39,7 @@ export class SmtKernel {
     if (!this.isSetUp) this.setup = params.setup;
     this.isCoreMinimizing = params.isCoreMinimizing ?? false;
     this.context.updateParams(params);
-    this.asserted.updateParams(this.context.config);
+    this.asserted.updateParams(this.context.config, params.isEmatching);
   }
 
   private setupContext(isUsingStaticFeatures: boolean) {
