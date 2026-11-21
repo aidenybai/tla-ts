@@ -262,6 +262,8 @@ const serializeWithOptions = (
             : text + existing.slice(text.length),
       ),
     );
+  // Files.newBufferedWriter creates or truncates the file before textSerialize converts a value.
+  write("");
   writeConverted(
     write,
     elements,

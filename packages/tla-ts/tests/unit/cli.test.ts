@@ -2020,6 +2020,24 @@ describe("the CLI fails to open a file as TLC does", () => {
   const getSerialize = (payload: string, path: string, openOptions: string) =>
     `Serialize(<<${payload}>>, "${path}", [format |-> "NDJSON", charset |-> "UTF-8", openOptions |-> <<${openOptions}>>])`;
 
+  const runAssumption = (expression: string) => {
+    const directory = mkdtempSync(join(FIXTURES, "open-"));
+    writeFileSync(
+      join(directory, "IOUtils.tla"),
+      "---- MODULE IOUtils ----\nLOCAL INSTANCE Integers\nSerialize(value, dest, options) ==\n  CHOOSE r \\in [exitValue : Int, stdout : STRING, stderr : STRING] : TRUE\n====",
+    );
+    writeFileSync(join(directory, "f.txt"), "x\n");
+    mkdirSync(join(directory, "d2"));
+    writeFileSync(
+      join(directory, "M.tla"),
+      `---- MODULE M ----\nEXTENDS Integers, TLC, Json, IOUtils\nVARIABLE x\nASSUME PrintT(${expression})\nInit == x = 0\nNext == x' = x\n====`,
+    );
+    writeFileSync(join(directory, "M.cfg"), "INIT Init\nNEXT Next");
+    const result = runCliWith(directory, ["M.tla"]);
+    rmSync(directory, { recursive: true });
+    return result;
+  };
+
   it.each([
     [
       getSerialize("1", "d/s.json", '"CREATE", "WRITE"'),
@@ -2045,23 +2063,21 @@ describe("the CLI fails to open a file as TLC does", () => {
     ['JsonDeserialize("f.txt/s.json")', "f.txt/s.json (Not a directory)"],
     ['JsonDeserialize("d2")', "d2 (Is a directory)"],
   ])("reports %s with the exception its Java method opens the file with", (expression, error) => {
-    const directory = mkdtempSync(join(FIXTURES, "open-"));
-    writeFileSync(
-      join(directory, "IOUtils.tla"),
-      "---- MODULE IOUtils ----\nLOCAL INSTANCE Integers\nSerialize(value, dest, options) ==\n  CHOOSE r \\in [exitValue : Int, stdout : STRING, stderr : STRING] : TRUE\n====",
-    );
-    writeFileSync(join(directory, "f.txt"), "x\n");
-    mkdirSync(join(directory, "d2"));
-    writeFileSync(
-      join(directory, "M.tla"),
-      `---- MODULE M ----\nEXTENDS Integers, TLC, Json, IOUtils\nVARIABLE x\nASSUME PrintT(${expression})\nInit == x = 0\nNext == x' = x\n====`,
-    );
-    writeFileSync(join(directory, "M.cfg"), "INIT Init\nNEXT Next");
-    const result = runCliWith(directory, ["M.tla"]);
-    rmSync(directory, { recursive: true });
+    const result = runAssumption(expression);
     expect([result.status, result.stdout]).toEqual([
       10,
       expect.stringContaining(`but it produced the following error:\n${error}\n`),
+    ]);
+  });
+
+  it("fails to open the file before it converts the value, as TLC's textSerialize does", () => {
+    const result = runAssumption(
+      getSerialize("[s \\in SUBSET {1} |-> PrintT(s)]", "d/s.json", '"CREATE"'),
+    );
+    expect([result.status, /^\{1\}$/m.test(result.stdout), result.stdout]).toEqual([
+      10,
+      false,
+      expect.stringContaining("error:\njava.nio.file.NoSuchFileException: d/s.json\n"),
     ]);
   });
 });
