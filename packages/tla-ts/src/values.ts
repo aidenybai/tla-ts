@@ -34,7 +34,6 @@ export interface SetValue {
   hash: number;
   fingerprint: number;
   walkFlags: number;
-  // Under -coverage, the cost node of the SUBSET this subset came from, as TLC's SubsetValue gives its subsets its cost model.
   costNode?: number;
 }
 
@@ -68,7 +67,6 @@ export interface InfiniteSetValue {
 export interface SubsetValue extends LazySet {
   kind: "Subset";
   base: Value;
-  // Under -coverage, the cost node the subsets it enumerates carry.
   costNode?: number;
 }
 
@@ -136,7 +134,6 @@ export interface LazyFunctionSource {
 export interface CostModel {
   secondary: number[];
   node: number;
-  // Charges what FcnLambdaValue#toFcnRcd enumerates once it has converted the function.
   chargeConversion: () => void;
 }
 
@@ -2894,7 +2891,6 @@ export const isElementOf = (element: Value, set: Value): boolean => {
   return isElement;
 };
 
-// Asks isMember whether each component is in the set's component sets, as TLC's member methods ask theirs.
 export const isElementOfWith = (
   element: Value,
   set: Value,
@@ -3325,7 +3321,6 @@ const checkBoundArguments = (
   }
 };
 
-// Returns before the body runs, so a recursive function nests no deeper for it.
 export const checkLazyArgument = (
   functionValue: LazyFunctionValue,
   argument: Value,

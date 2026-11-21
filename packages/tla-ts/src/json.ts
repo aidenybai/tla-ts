@@ -203,7 +203,6 @@ const getJavaExceptionClass = (error: TlaEvaluationError) => {
     : "util.Assert$TLCRuntimeException";
 };
 
-// Files.newBufferedWriter fails with the NIO exception of the open's errno, which Json#textSerialize reports unwrapped.
 const openLikeNio = <Result>(open: () => Result) => {
   try {
     return open();

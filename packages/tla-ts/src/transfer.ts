@@ -84,7 +84,6 @@ export const createStateEncoder = (): StateEncoder => {
       return value.elements.every(encodeValue);
     }
     if (value.kind === "Function") return encodeFunction(value);
-    // A converted lazy function goes as its record, except under -terse, where ToString shows the parameters the record lacks.
     if (
       value.kind === "LazyFunction" &&
       value.enumerated !== undefined &&

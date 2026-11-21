@@ -205,7 +205,6 @@ export class TlaAliasFormatError extends TlaEvaluationError {}
 
 export class TlaSetBoundError extends TlaEvaluationError {}
 
-// Worded as java.io's FileNotFoundException; code is the errno name and reason its text.
 export class TlaFileError extends TlaEvaluationError {
   path: string;
   code: string;

@@ -883,7 +883,6 @@ const searchStates = (
       );
     });
   };
-  // TLC fingerprints the successor once, so this second attempt drops the coverage it counts.
   const isUnfingerprintable = (state: Value[]) => {
     const primary = coverage?.primary.slice();
     const secondary = coverage?.secondary.slice();

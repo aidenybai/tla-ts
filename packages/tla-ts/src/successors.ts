@@ -553,7 +553,7 @@ const compileFunctionAction = (
     const value = evaluate(expression.function, isInit ? context : toKeepLazyContext(context));
     const lambda = getLazyFunction(value);
     if (lambda !== undefined) {
-      // Inline: a helper shared with replay's traced copy of these lines cost 1.4% per lazy action.
+      // Kept inline: sharing replay's helper for these lines cost 1.4% per lazy action.
       const args = expression.args.map((arg) => evaluate(arg, context));
       getRunner(lambda.body, environment, isInit)(
         run,

@@ -1631,7 +1631,6 @@ const traceFrames =
     }
   };
 
-// The sets TLC builds with the cost model of the expression that builds them.
 const getTaggedSetTest = (expression: Expression): ((value: Value) => boolean) | undefined => {
   switch (expression.kind) {
     case "SetEnumeration":

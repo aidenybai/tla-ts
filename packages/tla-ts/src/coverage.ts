@@ -740,7 +740,6 @@ export const countCoverage = (coverage: Coverage, node: number) => {
   for (let item = node; item !== -1; item = coverage.prefixes[item]) coverage.primary[item]++;
 };
 
-// TLC evaluates the arguments of f[a, b] as a $Tuple at the application's location, which the walk enters last.
 export const countArgumentTuple = (coverage: Coverage, node: number, expression: Expression) => {
   if (node >= 0 && coverage.expressions[node] === expression) {
     countCoverage(coverage, coverage.lastChild[node]);
@@ -825,7 +824,6 @@ export const getSubstitutionNode = (coverage: Coverage, substitution: Substituti
   return substitutionNode;
 };
 
-// TLC's SubsetValue gives the subsets it enumerates its own cost model.
 export const getValueNode = (coverage: Coverage, value: Value) =>
   typeof value !== "object"
     ? undefined
@@ -1024,7 +1022,6 @@ export const chargeFunctionConstruction = (coverage: Coverage, node: number, set
   coverage.secondary[node] += size;
 };
 
-// The member methods of these sets ask their component sets, which may charge.
 const COMPOSITE_SET_KINDS = new Set<string>([
   "FunctionSet",
   "RecordSet",
