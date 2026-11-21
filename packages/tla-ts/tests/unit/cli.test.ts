@@ -2080,4 +2080,16 @@ describe("the CLI fails to open a file as TLC does", () => {
       expect.stringContaining("error:\njava.nio.file.NoSuchFileException: d/s.json\n"),
     ]);
   });
+
+  it.each(["JsonSerialize", "ndJsonSerialize"])(
+    "fails to open the file before %s converts the value, as TLC's FileWriter does",
+    (operator) => {
+      const result = runAssumption(`${operator}("d2", <<[s \\in SUBSET {1} |-> PrintT(s)]>>)`);
+      expect([result.status, /^\{1\}$/m.test(result.stdout), result.stdout]).toEqual([
+        10,
+        false,
+        expect.stringContaining("error:\nd2 (Is a directory)\n"),
+      ]);
+    },
+  );
 });

@@ -122,6 +122,7 @@ const writeConverted = (
   toText: (element: Value) => string,
   toConversionError = (error: TlaEvaluationError) => error,
 ) => {
+  write("");
   const texts: string[] = [];
   try {
     elements.forEach((element) => texts.push(toText(element)));
@@ -261,8 +262,6 @@ const serializeWithOptions = (
             : text + existing.slice(text.length),
       ),
     );
-  // Files.newBufferedWriter creates or truncates the file before textSerialize converts a value.
-  write("");
   writeConverted(
     write,
     elements,
