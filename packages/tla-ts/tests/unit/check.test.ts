@@ -4564,6 +4564,37 @@ ASSUME TLCFP(a) = -887695703
     },
   );
 
+  it("counts a CASE guard under ENABLED at the CASE without TLC's warnings that its lookups failed", async () => {
+    const warnings: CheckProgress[] = [];
+    const result = await check({
+      source:
+        "---- MODULE M ----\nEXTENDS Naturals, TLC\nVARIABLE x\nI == INSTANCE N WITH y <- x\nInit == x = 0\nNext == x' = (x + 1) % 3\nInv == PrintT(<<x, I!E>>)\n====\n",
+      config: "INIT Init\nNEXT Next\nINVARIANT Inv\n",
+      coverage: 1,
+      onPrint: () => {},
+      onProgress: (progress) => {
+        if (progress.kind === "warning") warnings.push(progress);
+      },
+      loadModule: (name) =>
+        name === "N"
+          ? "---- MODULE N ----\nEXTENDS Naturals\nVARIABLE y\nA == y' = y + 1 /\\ CASE y = 1 -> TRUE [] OTHER -> FALSE\nE == ENABLED A\n====\n"
+          : undefined,
+    });
+    expect([formatCoverage(result)?.at(-1), warnings]).toEqual([
+      [
+        "line 7, col 8 to line 7, col 25 of module M: 3",
+        "|line 7, col 15 to line 7, col 24 of module M: 3",
+        "||line 7, col 17 to line 7, col 17 of module M: 3",
+        "||line 7, col 20 to line 7, col 22 of module M: 3",
+        "|||line 4, col 27 to line 4, col 27 of module M: 3",
+        "|||line 5, col 6 to line 5, col 14 of module N: 3",
+        "||||line 4, col 6 to line 4, col 15 of module N: 3",
+        "||||line 4, col 20 to line 4, col 55 of module N: 6",
+      ],
+      [],
+    ]);
+  });
+
   it.each([
     ["t /\\ (ENABLED (t /\\ y' = y))' /\\ t", "ACTION_CONSTRAINT", 4, 67],
     ["t /\\ ENABLED (t /\\ y' = y) /\\ t", "ACTION_CONSTRAINT", 4, 64],

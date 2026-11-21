@@ -783,6 +783,7 @@ export const runAtCoverageNode = <Result>(
   }
 };
 
+// Deviation from TLC: OpApplNodeWrapper#get also warns (2776) on each lookup these counts stand for, a lookup bug it asks users to report.
 export const runReportedInto = <Result>(
   coverage: Coverage,
   node: number,
