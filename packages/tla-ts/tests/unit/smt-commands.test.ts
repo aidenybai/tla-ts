@@ -3839,4 +3839,43 @@ describe("combined_solver, as Z3 5.3.2 reads its options", () => {
       run(["(set-option :combined_solver.solver2_unknown 3)", ...POWER, "(push 1)", ...CHECK]),
     ).toThrow(SmtInvariantError);
   });
+
+  it("checks with the incremental solver alone under ignore_solver1, and stays incremental", () => {
+    expect(
+      run([
+        ...POWER,
+        "(set-option :combined_solver.ignore_solver1 true)",
+        "(check-sat)",
+        "(get-info :reason-unknown)",
+        "(set-option :combined_solver.ignore_solver1 false)",
+        ...CHECK,
+      ]),
+    ).toEqual([
+      "unknown",
+      '(:reason-unknown "(incomplete (theory arithmetic))")',
+      "unknown",
+      '(:reason-unknown "smt tactic failed to show goal to be sat/unsat (incomplete (theory arithmetic))")',
+      "(:rlimit 295)",
+    ]);
+  });
+
+  it("never retries with the tactic under ignore_solver1, whatever solver2_unknown says", () => {
+    expect(
+      run([
+        "(set-option :combined_solver.ignore_solver1 true)",
+        "(set-option :combined_solver.solver2_unknown 2)",
+        ...QUANTIFIED,
+        ...CHECK,
+        "(set-option :combined_solver.ignore_solver1 false)",
+        ...CHECK,
+      ]),
+    ).toEqual([
+      "unknown",
+      '(:reason-unknown "(incomplete quantifiers)")',
+      "(:rlimit 122)",
+      "sat",
+      '(:reason-unknown "")',
+      "(:rlimit 368)",
+    ]);
+  });
 });

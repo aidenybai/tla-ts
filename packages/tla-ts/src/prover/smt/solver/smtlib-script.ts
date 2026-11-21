@@ -759,16 +759,22 @@ export const runSmtlibScript = (
     const names = state.names.filter((name) => name !== -1);
     const isNamed = names.length > 0;
     const isAssuming = isNamed || extra.length > 0;
-    if (isAssuming) state.isIncremental = true;
+    const isSolver2Only =
+      isAssuming ||
+      (!isOptimizing && settings.parameters.get("combined_solver.ignore_solver1") === "true");
+    if (isSolver2Only) state.isIncremental = true;
     if (!isOptimizing) state.hasChecked = true;
     const fdSolver = state.fdSolver;
     const isKernelChecking =
-      fdSolver === undefined && (isAssuming || (state.isIncremental && !isOptimizing));
+      fdSolver === undefined && (isSolver2Only || (state.isIncremental && !isOptimizing));
     try {
       const kernel = isKernelChecking ? checkKernel(names, extra) : undefined;
       const isFromTactic =
         kernel === undefined ||
-        (!isAssuming && kernel.result === L_UNDEF && useSolver1WhenUndef() && manager.limit.inc());
+        (!isSolver2Only &&
+          kernel.result === L_UNDEF &&
+          useSolver1WhenUndef() &&
+          manager.limit.inc());
       const solved =
         fdSolver !== undefined
           ? checkFdSolver(fdSolver, extra)
