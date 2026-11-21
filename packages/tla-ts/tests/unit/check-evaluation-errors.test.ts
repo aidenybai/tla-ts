@@ -4298,6 +4298,17 @@ describe("evaluation errors match TLC", () => {
     },
   );
 
+  it("evaluates a filter under a component S \\ T of [S -> T] as TLC's enumerators reset it when its predicate prints through a LET operator that calls a definition", async () => {
+    const lines: string[] = [];
+    await check({
+      source:
+        "---- MODULE M ----\nEXTENDS Integers, FiniteSets, TLC\nVARIABLE x\nShow(t) == PrintT(t)\nInit == x = 0\nNext == LET P(t) == Show(t) IN x' = x /\\ \\E e \\in [{1, 2} -> {t \\in (1..2) \\X {0} : P(t)} \\ {<<2, 0>>}] : FALSE\n====",
+      config: "INIT Init\nNEXT Next",
+      onPrint: (text) => lines.push(text),
+    });
+    expect(lines).toEqual(PRINTED_SELECTED);
+  });
+
   it("fails where TLC's enumerator of S \\X T reaches a failure, past a pure filter that fails in a component S \\cup T", async () => {
     const result = await check({
       source: `---- MODULE M ----\nEXTENDS Integers, FiniteSets, TLC\nVARIABLE x\nInit == x = 0\nNext == x' \\in (((1..2) \\cup {t \\in (1..2) \\X {0} : IF t[1] = 2 THEN 1 = "a" ELSE TRUE}) \\X SUBSET {1, "a"})\n====`,

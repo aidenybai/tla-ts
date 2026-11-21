@@ -53,6 +53,7 @@ import { isEvalException, MESSAGE_CODE } from "./tlc/messages";
 import type { InstanceLevels, SectionMember } from "./levels";
 import { EMPTY_STATE, type CheckerRuntime } from "./runtime";
 import {
+  isBodyVarying,
   isEvaluatedAtStartup,
   isExpressionImpure,
   isImpureDefinition,
@@ -70,7 +71,7 @@ import {
   type Substitution,
 } from "./instances";
 import { prettyPrint } from "./pretty-print";
-import { getBoundNames, getKeyName, getPatternNames } from "./resolve";
+import { getKeyName } from "./resolve";
 import { isEnabled } from "./successors";
 import {
   applyFunction,
@@ -945,10 +946,7 @@ const compileDefinitionBody = (definition: Definition, environment: Environment)
   if (definition.kind !== "Function") return getEntryEvaluator(definition.body, environment);
   const construction = getFunctionConstruction(definition);
   if (!definition.isSelfReferential) return getEntryEvaluator(construction, environment);
-  const isVaryingBody = isExpressionImpure([definition.body], environment, "varying", [
-    ...getBoundNames(definition.bounds),
-    definition.name,
-  ]);
+  const isVaryingBody = isBodyVarying([definition.body], definition.body, environment);
   const evaluator: Evaluator = (context) =>
     createRecursiveFunction(
       definition,
@@ -2404,10 +2402,7 @@ export const getFunctionBuilder = (
   environment: Environment,
 ) => {
   const isLazy = isKeptLazy(expression) || isRecursiveConstruction(expression);
-  const isVaryingBody = isExpressionImpure([expression.body], environment, "varying", [
-    ...getBoundNames(expression.bounds),
-    ...(expression.definition ? [expression.definition.name] : []),
-  ]);
+  const isVaryingBody = isBodyVarying([expression.body], expression.body, environment);
   const body = getEvaluator(expression.body, environment);
   const bounds = expression.bounds;
   const bound = bounds[0];
@@ -2593,11 +2588,10 @@ export const getLazyFilter = (
   };
   const coverage = environment.coverage;
   const isTestObserved =
-    isExpressionImpure(
+    isBodyVarying(
       [expression.bound.set, expression.predicate],
+      expression.predicate,
       environment,
-      "varying",
-      getPatternNames(pattern),
     ) || coverage !== undefined;
   const createFiltered = (
     base: Value,

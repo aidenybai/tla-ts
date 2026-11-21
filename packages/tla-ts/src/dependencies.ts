@@ -3,12 +3,13 @@ import {
   getDefinitionExpressions,
   getReferencedName,
   isLocallyResolved,
+  type Bound,
   type Definition,
   type Expression,
 } from "./ast";
 import type { Environment } from "./evaluate";
 import { ACTION_LEVEL, CONSTANT_LEVEL, TEMPORAL_LEVEL, VARIABLE_LEVEL } from "./levels";
-import { getBoundNames, getPatternNames } from "./resolve";
+import { getBoundNames } from "./resolve";
 
 interface DefinitionNames extends Pick<
   Environment,
@@ -31,7 +32,13 @@ export interface DefinitionFacts {
   ids: Map<Definition, number>;
   rows: Uint32Array;
   words: number;
-  hasEffects: boolean;
+  varyingBodies: Set<Expression>;
+}
+
+interface EffectRows {
+  ids: Map<Definition, number>;
+  effects: Uint32Array;
+  words: number;
 }
 
 const NONCONSTANT = 1;
@@ -46,7 +53,10 @@ const RANDOM = 256;
 const ABOVE_CONSTANT_BOUND = 512;
 const TLC_EVAL = 1024;
 const REEVALUATION_SHOWN = 2048;
-const OUTER_LOCAL = 4096;
+
+const PARAMETER_REACH = 1;
+const EFFECT_REACH = 2;
+const OPERATOR_NAME = 4;
 
 const ACTION_KINDS = new Set<Expression["kind"]>([
   "Prime",
@@ -92,36 +102,6 @@ const STREAMED_BUILTINS = new Set(["UNION", "\\cup"]);
 
 const RANDOM_BUILTINS = new Set(["RandomSubset", "RandomSetOfSubsets", "RandomSubsetSet"]);
 
-const getDefinitionNames = (definition: Definition): string[] => [
-  definition.name,
-  ...(definition.kind === "Function"
-    ? getBoundNames(definition.bounds)
-    : definition.params.map((param) => param.name)),
-  ...("standardDefinition" in definition ? getDefinitionNames(definition.standardDefinition) : []),
-];
-
-const getBinderNames = (node: Expression): string[] => {
-  switch (node.kind) {
-    case "Forall":
-    case "Exists":
-    case "SetMap":
-    case "FunctionConstruction":
-      return getBoundNames(node.bounds);
-    case "SetFilter":
-      return getPatternNames(node.bound.pattern);
-    case "Choose":
-      return getPatternNames(node.pattern);
-    case "UnboundedQuantifier":
-      return node.names;
-    case "Lambda":
-      return node.params;
-    case "Let":
-      return node.definitions.flatMap(getDefinitionNames);
-    default:
-      return [];
-  }
-};
-
 interface Edge {
   callee: Definition;
   isOverridden: boolean;
@@ -134,11 +114,9 @@ const collectLocalFacts = (
   expressions: Expression[],
   environment: DefinitionNames,
   words: number,
-  boundNames?: string[],
 ) => {
   const row = new Uint32Array(words);
   const edges: Edge[] = [];
-  const bound = boundNames && new Set(boundNames);
   const getOwnLevelFlags = (node: Expression) => {
     const kind = node.kind;
     if (ACTION_KINDS.has(kind) || (kind === "Apply" && node.operator === "\\cdot")) {
@@ -181,10 +159,8 @@ const collectLocalFacts = (
     const ownLevelFlags = getOwnLevelFlags(node);
     if (isLevelCounted && ownLevelFlags !== undefined) row[0] |= ownLevelFlags;
     const isInnerLevelCounted = isLevelCounted && ownLevelFlags === undefined;
-    if (bound) getBinderNames(node).forEach((binderName) => bound.add(binderName));
     const name = getReferencedName(node);
     const isLocal = name !== undefined && isLocallyResolved(node);
-    if (bound && isLocal && !bound.has(name)) row[0] |= OUTER_LOCAL;
     // TLC's getLevelBound takes a parameter named like a variable for that variable.
     if (isLocal && environment.variableIndex.has(name)) {
       if (!isOperatorArgument) row[0] |= ABOVE_CONSTANT_BOUND;
@@ -227,15 +203,6 @@ const collectLocalFacts = (
           isSubstitute: target !== name,
         });
       } else {
-        if (
-          bound &&
-          kind === "OperatorReference" &&
-          !builtin &&
-          !isOverridden &&
-          !bound.has(name)
-        ) {
-          row[0] |= OUTER_LOCAL;
-        }
         const builtinName = builtin?.name ?? target;
         const isImpure = IMPURE_BUILTINS.has(builtinName) || builtin?.isStateLevel === true;
         if (isImpure) row[0] |= IMPURE | (builtinName === "Assert" ? 0 : REPEATED_EFFECT);
@@ -438,10 +405,17 @@ export const createDefinitionFacts = (
         ((shown[position] & SHOWN_MASK) === 0 ? 0 : REEVALUATION_SHOWN)
       : word,
   );
-  const hasEffects =
-    localImpurity.some((flags) => (flags & EFFECT_MASK) !== 0) ||
-    (collectLocalFacts(assumptions, environment, words).row[0] & EFFECT_MASK) !== 0;
-  return { ids, rows, words, hasEffects };
+  const effects = closeRows(localImpurity, words, readEdges, EFFECT_MASK);
+  return {
+    ids,
+    rows,
+    words,
+    varyingBodies: collectVaryingBodies(definitions, assumptions, environment, {
+      ids,
+      effects,
+      words,
+    }),
+  };
 };
 
 const getRow = (definition: Definition, environment: Environment): Uint32Array => {
@@ -452,18 +426,9 @@ const getRow = (definition: Definition, environment: Environment): Uint32Array =
     : facts.rows.subarray(id * facts.words, (id + 1) * facts.words);
 };
 
-const getExpressionsRow = (
-  expressions: Expression[],
-  environment: Environment,
-  boundNames?: string[],
-) => {
+const getExpressionsRow = (expressions: Expression[], environment: Environment) => {
   const words = environment.facts.words;
-  const local = collectLocalFacts(
-    expressions,
-    environment,
-    words,
-    environment.facts.hasEffects ? boundNames : undefined,
-  );
+  const local = collectLocalFacts(expressions, environment, words);
   const row = local.row;
   local.edges.forEach((edge) => {
     const callee = getRow(edge.callee, environment);
@@ -483,6 +448,180 @@ const getExpressionsRow = (
   return row;
 };
 
+const getOuterReach = (expressions: Expression[], scope: ReadonlyMap<string, number>) => {
+  let reach = 0;
+  const visit = (node: Expression) => {
+    const name = getReferencedName(node);
+    if (name !== undefined && (isLocallyResolved(node) || node.kind === "OperatorReference")) {
+      reach |= scope.get(name) ?? 0;
+    }
+    getChildren(node).forEach(visit);
+  };
+  if (scope.size > 0) expressions.forEach(visit);
+  return reach & (PARAMETER_REACH | EFFECT_REACH);
+};
+
+const bindNames = (scope: ReadonlyMap<string, number>, names: string[], reach: number) =>
+  reach === 0
+    ? scope
+    : new Map([...scope, ...names.map((name): [string, number] => [name, reach])]);
+
+const isParameterized = (definition: Definition) =>
+  definition.kind !== "Function" && definition.params.length > 0;
+
+const isOperatorName = (
+  node: Expression,
+  scope: ReadonlyMap<string, number>,
+  environment: DefinitionNames,
+) => {
+  const name = getReferencedName(node);
+  if (name === undefined || node.kind === "Apply") return false;
+  if (isLocallyResolved(node) || scope.has(name)) {
+    return ((scope.get(name) ?? 0) & OPERATOR_NAME) !== 0;
+  }
+  const target = environment.substitutions.get(name) ?? name;
+  const definition = environment.definitions.get(target);
+  return definition === undefined
+    ? (environment.builtins.get(target)?.arity ?? 0) > 0
+    : isParameterized(definition);
+};
+
+const collectVaryingBodies = (
+  definitions: Definition[],
+  assumptions: Expression[],
+  environment: DefinitionNames,
+  effectRows: EffectRows,
+) => {
+  const varyingBodies = new Set<Expression>();
+  const parameterBodies: Expression[] = [];
+  let hasEffectfulValue = false;
+  const words = effectRows.words;
+  const isEffectfulDefinition = (id: number) =>
+    (effectRows.effects[id * words] & EFFECT_MASK) !== 0;
+  const hasEffect = (expressions: Expression[]) => {
+    const facts = collectLocalFacts(expressions, environment, words);
+    return (
+      (facts.row[0] & EFFECT_MASK) !== 0 ||
+      facts.edges.some(
+        (edge) =>
+          !edge.isOverridden && isEffectfulDefinition(effectRows.ids.get(edge.callee) ?? -1),
+      )
+    );
+  };
+  const getReach = (
+    expressions: Expression[],
+    scope: ReadonlyMap<string, number>,
+    isEffectful: boolean,
+  ) =>
+    (isEffectful && hasEffect(expressions) ? EFFECT_REACH : 0) | getOuterReach(expressions, scope);
+  const addValue = (
+    expressions: Expression[],
+    scope: ReadonlyMap<string, number>,
+    isEffectful: boolean,
+  ) => {
+    hasEffectfulValue ||= isEffectful && (getReach(expressions, scope, true) & EFFECT_REACH) !== 0;
+  };
+  const addBody = (
+    expressions: Expression[],
+    body: Expression,
+    scope: ReadonlyMap<string, number>,
+    isEffectful: boolean,
+  ) => {
+    const reach = getOuterReach(expressions, scope);
+    if ((reach & EFFECT_REACH) !== 0) varyingBodies.add(body);
+    else if (reach !== 0) parameterBodies.push(body);
+    addValue(expressions, scope, isEffectful);
+  };
+  const visitBounds = (
+    bounds: Bound[],
+    body: Expression,
+    reach: number,
+    scope: ReadonlyMap<string, number>,
+    isEffectful: boolean,
+  ) => {
+    const sets = bounds.map((bound) => bound.set);
+    sets.forEach((set) => visit(set, scope, isEffectful));
+    const boundReach = reach | getReach(sets, scope, isEffectful);
+    visit(body, bindNames(scope, getBoundNames(bounds), boundReach), isEffectful);
+  };
+  const visitDefinition = (
+    definition: Definition,
+    scope: ReadonlyMap<string, number>,
+    isEffectful: boolean,
+  ) => {
+    if (definition.kind !== "Function") {
+      const params = definition.params.map((param) => param.name);
+      visit(definition.body, bindNames(scope, params, PARAMETER_REACH), isEffectful);
+      return;
+    }
+    const bodyScope = new Map(scope).set(definition.name, 0);
+    addBody([definition.body], definition.body, bodyScope, isEffectful);
+    visitBounds(definition.bounds, definition.body, PARAMETER_REACH, scope, isEffectful);
+  };
+  const visit = (
+    node: Expression,
+    scope: ReadonlyMap<string, number>,
+    isEffectful: boolean,
+  ): void => {
+    if (isEffectful && node.kind === "Apply") {
+      node.args.forEach((arg) => {
+        if (isOperatorName(arg, scope, environment)) addValue([arg], scope, true);
+      });
+    }
+    switch (node.kind) {
+      case "Lambda":
+        addValue([node.body], scope, isEffectful);
+        return visit(node.body, bindNames(scope, node.params, PARAMETER_REACH), isEffectful);
+      case "Let": {
+        const expressions = node.definitions.flatMap(getDefinitionExpressions);
+        const reach = getReach(expressions, scope, isEffectful);
+        const inner =
+          reach === 0
+            ? scope
+            : new Map([
+                ...scope,
+                ...node.definitions.map((definition): [string, number] => [
+                  definition.name,
+                  isParameterized(definition) ? reach | OPERATOR_NAME : reach,
+                ]),
+              ]);
+        node.definitions.forEach((definition) => visitDefinition(definition, inner, isEffectful));
+        return visit(node.body, inner, isEffectful);
+      }
+      case "FunctionConstruction":
+        addBody([node.body], node.body, scope, isEffectful);
+        return visitBounds(node.bounds, node.body, PARAMETER_REACH, scope, isEffectful);
+      case "Forall":
+      case "Exists":
+        return visitBounds(node.bounds, node.body, 0, scope, isEffectful);
+      case "SetMap":
+        return visitBounds(node.bounds, node.expression, 0, scope, isEffectful);
+      case "SetFilter":
+        addBody([node.bound.set, node.predicate], node.predicate, scope, isEffectful);
+        return visitBounds([node.bound], node.predicate, PARAMETER_REACH, scope, isEffectful);
+      case "Choose":
+        return node.set
+          ? visitBounds(
+              [{ pattern: node.pattern, set: node.set }],
+              node.body,
+              0,
+              scope,
+              isEffectful,
+            )
+          : visit(node.body, scope, isEffectful);
+      default:
+        return getChildren(node).forEach((child) => visit(child, scope, isEffectful));
+    }
+  };
+  definitions.forEach((definition, id) => {
+    if (environment.bodyValues.has(definition.body)) return;
+    visitDefinition(definition, new Map(), isEffectfulDefinition(id));
+  });
+  assumptions.forEach((assumption) => visit(assumption, new Map(), hasEffect([assumption])));
+  if (hasEffectfulValue) parameterBodies.forEach((body) => varyingBodies.add(body));
+  return varyingBodies;
+};
+
 export const isConstantLevel = (definition: Definition, environment: Environment) =>
   (getRow(definition, environment)[0] & STARTUP_MASK) === 0;
 
@@ -498,15 +637,22 @@ const EFFECT_FLAGS = {
   streamed: STREAMED,
   // What a second evaluation shows: output again, or other random draws.
   replayed: REPEATED_EFFECT | RANDOM,
-  varying: EFFECT_MASK | OUTER_LOCAL,
+  varying: EFFECT_MASK,
 };
 
 export const isExpressionImpure = (
   expressions: Expression[],
   environment: Environment,
   effect: keyof typeof EFFECT_FLAGS,
-  boundNames?: string[],
-) => (getExpressionsRow(expressions, environment, boundNames)[0] & EFFECT_FLAGS[effect]) !== 0;
+) => (getExpressionsRow(expressions, environment)[0] & EFFECT_FLAGS[effect]) !== 0;
+
+export const isBodyVarying = (
+  expressions: Expression[],
+  body: Expression,
+  environment: Environment,
+) =>
+  environment.facts.varyingBodies.has(body) ||
+  isExpressionImpure(expressions, environment, "varying");
 
 export const isImpureDefinition = (
   definition: Definition,

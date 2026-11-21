@@ -1260,10 +1260,41 @@ ASSUME TLCFP(a) = -887695703
   it("keeps the tuple of a lazy function whose body names a LET definition when nothing in the spec prints or draws", async () => {
     const result = await check({
       source:
-        "---- MODULE M ----\nEXTENDS Naturals, Sequences\nVARIABLE x\nRECURSIVE Nest(_)\nNest(k) == IF k = 0 THEN <<0, 0>> ELSE LET g == Nest(k - 1) f[i \\in 1..2] == IF i = 0 THEN f[i] ELSE Len(g) IN f\nInit == x = Len(Nest(24))\nNext == UNCHANGED x\n====",
+        "---- MODULE M ----\nEXTENDS Naturals, Sequences\nVARIABLE x\nRECURSIVE Nest(_)\nNest(k) == IF k = 0 THEN <<0, 0>> ELSE LET g == Nest(k - 1) f[i \\in 1..2] == IF i = 0 THEN f[i] ELSE Len(g) IN f\nInit == x = Len(Nest(26))\nNext == UNCHANGED x\n====",
       config: "INIT Init\nNEXT Next",
     });
     expect([result.status, result.distinctStates]).toEqual(["success", 1]);
+  });
+
+  it("keeps the tuple of a lazy function whose body names a LET definition when the only effects are an unrelated Assert and a TLCGet constraint", async () => {
+    const result = await check({
+      source:
+        '---- MODULE M ----\nEXTENDS Naturals, Sequences, TLC\nVARIABLE x\nRECURSIVE Nest(_)\nNest(k) == IF k = 0 THEN <<0, 0>> ELSE LET g == Nest(k - 1) f[i \\in 1..2] == IF i = 0 THEN f[i] ELSE Len(g) IN f\nInit == x = Len(Nest(26))\nNext == Assert(x = 2, "x is 2") /\\ UNCHANGED x\nDepth == TLCGet("level") < 5\n====',
+      config: "INIT Init\nNEXT Next\nCONSTRAINT Depth",
+    });
+    expect([result.status, result.distinctStates]).toEqual(["success", 1]);
+  });
+
+  it("applies a lazy function again each time a tuple is compared with it when a definition that prints is passed to it by name", async () => {
+    const printed: string[] = [];
+    await check({
+      source:
+        "---- MODULE M ----\nEXTENDS Integers, TLC\nVARIABLE x\nShow(n) == PrintT(n)\nTup(P(_)) == [n \\in UNION {1..1, {2}} |-> IF P(n) THEN n ELSE 0]\nInit == x = 0 /\\ LET F == Tup(Show) IN <<1, 2>> = F /\\ <<1, 2>> = F\nNext == UNCHANGED x\n====",
+      config: "INIT Init\nNEXT Next",
+      onPrint: (text) => printed.push(text),
+    });
+    expect(printed).toEqual(["1", "2", "1", "2"]);
+  });
+
+  it("applies a lazy function again each time a tuple is compared with it when its body names a LET definition that holds a lazy function TLC evaluates once", async () => {
+    const printed: string[] = [];
+    await check({
+      source:
+        "---- MODULE M ----\nEXTENDS Integers, TLC\nVARIABLE x\nG == [s \\in SUBSET {1} |-> PrintT(s)]\nInit == x = 0 /\\ LET g == G IN LET F == [n \\in UNION {1..1, {2}} |-> g[{}] /\\ n = 1] IN <<TRUE, FALSE>> = F /\\ <<TRUE, FALSE>> = F\nNext == UNCHANGED x\n====",
+      config: "INIT Init\nNEXT Next",
+      onPrint: (text) => printed.push(text),
+    });
+    expect(printed).toEqual(["{}", "{}", "{}", "{}"]);
   });
 
   it("applies a lazy function again each time a tuple is compared with it when only an ASSUME prints, through a LAMBDA argument", async () => {
