@@ -282,6 +282,14 @@ const getGraph = (library: Library, realm: HostRealm) => {
 // The Node whose realm a recorded host holds, the project's reference, which .node-version pins.
 const REFERENCE_NODE = "26";
 
+// The realm of the host that runs this process, which only Node records: Bun, which gives itself
+// Node's version, has globals and built-ins of its own, which a compiled spec would model as Node's.
+const recordNodeRealm = (library: Library) => {
+  const bun = globalThis.process?.versions.bun;
+  if (bun !== undefined) throw new TlaError(`tla-ts can't record the host on Bun ${bun}`);
+  return recordHostRealm(library);
+};
+
 // The realm of the host that runs this process, which only the reference Node records, so that a
 // recorded host is the same wherever it's recorded.
 const recordReferenceRealm = (library: Library) => {
@@ -291,7 +299,7 @@ const recordReferenceRealm = (library: Library) => {
       `tla-ts can't record the host on Node ${version}; it needs Node ${REFERENCE_NODE}`,
     );
   }
-  return recordHostRealm(library);
+  return recordNodeRealm(library);
 };
 
 // The graph of the runtime of ESCore's directory for the realm of the host that runs this process.
@@ -436,5 +444,5 @@ export const prepareHostRuntime = (host: EscoreHost) =>
 // prepared it where the build wrote its graph into this bundle.
 export const prepareRuntime = (directory: string) => {
   const library = createLibrary(readEscoreFiles(directory));
-  return prepareLibraryRuntime(library, recordHostRealm(library), getBundledGraph());
+  return prepareLibraryRuntime(library, recordNodeRealm(library), getBundledGraph());
 };

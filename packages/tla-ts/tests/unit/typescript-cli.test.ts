@@ -16,7 +16,11 @@ import { afterAll, describe, expect, it } from "vite-plus/test";
 
 const FIXTURES = join(import.meta.dirname, "../fixtures/typescript/cli");
 
-const CLI = join(import.meta.dirname, "../../src/cli.ts");
+// The built CLI, which the tests' setup builds, run on the Node that runs the tests, as the CLI
+// records the host it runs on, which only Node can be.
+const CLI = join(import.meta.dirname, "../../dist/cli.js");
+
+const SOURCE_CLI = join(import.meta.dirname, "../../src/cli.ts");
 
 const copies: string[] = [];
 
@@ -31,10 +35,10 @@ const copyFixtures = (directory: string) => {
 };
 
 const runCli = (directory: string, args: string[]) =>
-  spawnSync("bun", [CLI, ...args], { cwd: directory, encoding: "utf8" });
+  spawnSync(process.execPath, [CLI, ...args], { cwd: directory, encoding: "utf8" });
 
 // The code and stderr of a run, without the stack frames that Node prints and tla-ts doesn't, or
-// the version of Node, which Bun gives the CLI as its own.
+// the version of Node.
 const getExit = (result: ReturnType<typeof runCli>) => [
   result.status,
   result.stderr
@@ -515,10 +519,10 @@ describe("the CLI with TypeScript files", () => {
     );
   });
 
-  // Under Bun, a Node on the path parses each file for its early errors, as V8 does, and TypeScript's
-  // checker never runs, whose inference of a long chain of JSDoc types, as a large program's code
-  // makes, runs out of stack.
-  describe("parses a file under Bun as Node does", () => {
+  // Node parses each file for its early errors, as V8 does, and TypeScript's checker never runs,
+  // whose inference of a long chain of JSDoc types, as a large program's code makes, runs out of
+  // stack.
+  describe("parses a file of a long chain of JSDoc types as Node does", () => {
     const getScript = (expected: number) =>
       `${Array.from({ length: 3000 }, (_, index) => `/** @typedef {Kind${index + 1} | ${index}} Kind${index} */`).join("\n")}\n/** @typedef {3000} Kind3000 */\n/** @type {Kind0} */\nconst kind = [0].length - 1;\nif (kind !== ${expected}) throw new RangeError("kind " + kind);\n`;
 
@@ -537,42 +541,23 @@ describe("the CLI with TypeScript files", () => {
       expect(getExit(result)).toEqual(getExit(runNode(directory, "kinds.js")));
       expect(result.status).toBe(1);
     });
+  });
 
-    // Where no Node is on the path, as in a browser, TypeScript's checks find the early errors.
-    const runWithoutNode = (directory: string, source: string) => {
-      writeFileSync(join(directory, "kinds.js"), source);
-      const bun = spawnSync("bun", ["-e", "console.log(process.execPath)"], { encoding: "utf8" });
-      const empty = mkdtempSync(join(tmpdir(), "tla-ts-path-"));
-      copies.push(empty);
-      return spawnSync(bun.stdout.trim(), [CLI, "kinds.js"], {
-        cwd: directory,
-        encoding: "utf8",
-        env: { ...process.env, PATH: empty },
-      });
-    };
-    const getSmallScript = (expected: number) =>
-      `const kind = [0].length - 1;\nif (kind !== ${expected}) throw new RangeError("kind " + kind);\n`;
-
-    it("agrees with Node where no Node is on the path", () => {
-      const result = runWithoutNode(copyFixtures("passing"), getSmallScript(0));
-      expect(result.status).toBe(0);
-      expect(result.stdout).toContain("Model checking completed. No error has been found.");
+  // Under Bun, which gives itself Node's version, the CLI stops rather than record Bun's globals as
+  // Node's, such as a process that Bun gives as a data property and Node as an accessor.
+  it("stops under Bun, whose globals aren't Node's", () => {
+    const directory = copyFixtures("passing");
+    writeFileSync(
+      join(directory, "global.mjs"),
+      'if (typeof Object.getOwnPropertyDescriptor(globalThis, "process").get !== "function") throw new Error("data");\n',
+    );
+    expect(runNode(directory, "global.mjs").status).toBe(0);
+    const result = spawnSync("bun", [SOURCE_CLI, "global.mjs"], {
+      cwd: directory,
+      encoding: "utf8",
     });
-
-    it("rejects another result where no Node is on the path", () => {
-      const directory = copyFixtures("passing");
-      const result = runWithoutNode(directory, getSmallScript(1));
-      expect(getExit(result)).toEqual(getExit(runNode(directory, "kinds.js")));
-      expect(result.status).toBe(1);
-    });
-
-    it("stops where TypeScript's checks run out of stack and no Node is on the path", () => {
-      const result = runWithoutNode(copyFixtures("passing"), getScript(0));
-      expect(result.status).not.toBe(0);
-      expect(result.stdout + result.stderr).toContain(
-        "tla-ts can't tell whether Node rejects a file's syntax without a Node to parse it",
-      );
-    });
+    expect(result.status).not.toBe(1);
+    expect(result.stderr).toMatch(/tla-ts can't record the host on Bun \d/);
   });
 
   // The CLI runs an entry as Node loads the path it's given: a .cjs file, or a .js file that no
@@ -725,6 +710,54 @@ describe("the CLI with TypeScript files", () => {
     });
   });
 
+  // A program makes an AsyncResource and runs a function in its scope, and stops where it uses the
+  // constructor otherwise, as an instanceof that Node answers false, whose throw a catch would see.
+  describe("uses AsyncResource as Node does", () => {
+    const getScript = (expected: number) =>
+      `const { AsyncResource } = require("async_hooks");\nif (new AsyncResource("t").runInAsyncScope(() => 2) !== ${expected}) throw new Error("ran");\n`;
+
+    it("agrees with Node", () => {
+      const directory = copyFixtures("passing");
+      writeFileSync(join(directory, "resource.cjs"), getScript(2));
+      expect(runNode(directory, "resource.cjs").status).toBe(0);
+      expect(getExit(runCli(directory, ["resource.cjs"]))).toEqual([0, ""]);
+    });
+
+    it("rejects another result", () => {
+      const directory = copyFixtures("passing");
+      writeFileSync(join(directory, "resource.cjs"), getScript(3));
+      const result = runCli(directory, ["resource.cjs"]);
+      expect(getExit(result)).toEqual(getExit(runNode(directory, "resource.cjs")));
+      expect(result.status).toBe(1);
+    });
+
+    it("stops at an instanceof, whose answer a catch would change", () => {
+      const directory = copyFixtures("passing");
+      writeFileSync(
+        join(directory, "resource.cjs"),
+        'const { AsyncResource } = require("async_hooks");\nconst getAnswer = () => {\n  try {\n    return ({}) instanceof AsyncResource;\n  } catch {\n    return "threw";\n  }\n};\nif (getAnswer() !== false) throw new Error("answer");\n',
+      );
+      expect(runNode(directory, "resource.cjs").status).toBe(0);
+      const result = runCli(directory, ["resource.cjs"]);
+      expect(result.status).not.toBe(1);
+      expect(result.stdout).toContain("tla-ts can't run the host's AsyncResource");
+    });
+  });
+
+  // A program reads the source text of a function of the host, which Node gives as its code has
+  // it, where a proxy's would be a native function's.
+  it("stops at the source text of a function of the host, which a program may compare", () => {
+    const directory = copyFixtures("passing");
+    writeFileSync(
+      join(directory, "text.mjs"),
+      'const text = Function.prototype.toString.call(structuredClone);\nif (!text.startsWith("function structuredClone(")) throw new Error("text");\n',
+    );
+    expect(runNode(directory, "text.mjs").status).toBe(0);
+    const result = runCli(directory, ["text.mjs"]);
+    expect(result.status).not.toBe(1);
+    expect(result.stdout).toContain("tla-ts can't give the source text of the host's function");
+  });
+
   // A module reads Node's performance, as React's server builds do, whose now gives the time,
   // which each run reads anew, so the check stops where a program reads the time it gives.
   describe("reads Node's performance as Node does", () => {
@@ -744,6 +777,18 @@ describe("the CLI with TypeScript files", () => {
       const result = runCli(directory, ["clock.cjs"]);
       expect(getExit(result)).toEqual(getExit(runNode(directory, "clock.cjs")));
       expect(result.status).toBe(1);
+    });
+
+    it("stops where the program calls now on another object, whose TypeError a catch would see", () => {
+      const directory = copyFixtures("passing");
+      writeFileSync(
+        join(directory, "clock.cjs"),
+        'const getAnswer = () => {\n  try {\n    return typeof performance.now.call({});\n  } catch (error) {\n    return error.name;\n  }\n};\nif (getAnswer() !== "TypeError") throw new Error("answer");\n',
+      );
+      expect(runNode(directory, "clock.cjs").status).toBe(0);
+      const result = runCli(directory, ["clock.cjs"]);
+      expect(result.status).not.toBe(1);
+      expect(result.stdout).toContain("tla-ts can't run the host's performance.now");
     });
 
     it("stops where the program reads the time that now gives", () => {

@@ -615,6 +615,123 @@ describe("gives a module the part of Node's process and TextEncoder that Effect 
   });
 });
 
+// Node's performance.now, whose name and length a program reads, which it calls on performance,
+// and which throws a TypeError where it's called on another object, so the check stops there, as
+// it does at every other use of the function.
+describe("calls performance.now on performance, and stops at every other use", () => {
+  const getFiles = (expected: string) => ({
+    "main.js": getMain(
+      `const log = [];
+      log.push(typeof performance.now, performance.now.name, performance.now.length, typeof performance.now());`,
+      expected,
+    ),
+  });
+
+  it("agrees with Node", async () => {
+    expect((await checkModules(getFiles("function,now,0,number"))).message).toBeUndefined();
+  });
+
+  it("rejects another result", async () => {
+    expect((await checkModules(getFiles("function,now,1,number"))).message).toContain(THREW);
+  });
+
+  it.each([
+    "performance.now.call({})",
+    "const { now } = performance; now()",
+    "String(performance.now)",
+    "performance.now.toString()",
+    "performance.now.prototype",
+    "Object.keys(performance.now)",
+    "Object.getPrototypeOf(performance.now)",
+  ])("stops at %s", async (use) => {
+    expect((await checkModules({ "main.js": `${use};` })).message).toContain(
+      "tla-ts can't run the host's performance.now",
+    );
+  });
+});
+
+// The source text of a function of the host, which Node gives as its own code has it, stops, where
+// a proxy would give a native function's text that Node doesn't.
+describe("stops at the source text of the host's functions", () => {
+  const getFiles = (expected: string) => ({
+    "main.js": getMain(
+      `const log = [];
+      function add(a, b) { return a + b; }
+      log.push(Function.prototype.toString.call(Math.max), String(add));`,
+      expected,
+    ),
+  });
+
+  it("agrees with Node", async () => {
+    expect(
+      (
+        await checkModules(
+          getFiles("function max() { [native code] },function add(a, b) { return a + b; }"),
+        )
+      ).message,
+    ).toBeUndefined();
+  });
+
+  it("rejects another result", async () => {
+    expect(
+      (
+        await checkModules(
+          getFiles("function () { [native code] },function add(a, b) { return a + b; }"),
+        )
+      ).message,
+    ).toContain(THREW);
+  });
+
+  it.each([
+    "structuredClone",
+    "setImmediate",
+    "process.getBuiltinModule",
+    "import.meta.resolve",
+    'Object.getOwnPropertyDescriptor(globalThis, "performance").get',
+  ])("stops at the source text of %s", async (host) => {
+    expect(
+      (await checkModules({ "main.js": `Function.prototype.toString.call(${host});` })).message,
+    ).toContain("tla-ts can't give the source text of the host's function");
+  });
+});
+
+// process.getBuiltinModule, whose name and length are Node's, loads async_hooks, and stops at
+// every other use, such as its prototype, which Node's, an ordinary function, has.
+describe("calls process.getBuiltinModule as Node does, and stops at every other use", () => {
+  const getFiles = (expected: string) => ({
+    "main.js": getMain(
+      `const log = [];
+      const load = process.getBuiltinModule;
+      log.push(load.name, load.length, typeof load("async_hooks"), load("async_hooks") === load("node:async_hooks"));`,
+      expected,
+    ),
+  });
+
+  it("agrees with Node", async () => {
+    expect(
+      (await checkModules(getFiles("getBuiltinModule,1,object,true"))).message,
+    ).toBeUndefined();
+  });
+
+  it("rejects another result", async () => {
+    expect((await checkModules(getFiles("getBuiltinModule,2,object,true"))).message).toContain(
+      THREW,
+    );
+  });
+
+  it.each([
+    "typeof process.getBuiltinModule.prototype",
+    "Reflect.ownKeys(process.getBuiltinModule)",
+    'new process.getBuiltinModule("async_hooks")',
+    'process.getBuiltinModule.call(null, "async_hooks")',
+    "String(process.getBuiltinModule)",
+  ])("stops at %s", async (use) => {
+    expect((await checkModules({ "main.js": `${use};` })).message).toContain(
+      "tla-ts can't run the host's getBuiltinModule",
+    );
+  });
+});
+
 describe("gives a module a Timeout of setTimeout, which stops where its code uses it", () => {
   const getFiles = (expected: string) => ({
     "main.js": `const log = [];
@@ -643,7 +760,7 @@ describe("gives a module the part of Node's console that writes primitives and m
     "main.js": getMain(
       `const log = [];
       const task = console.createTask("work");
-      log.push(typeof console.log, console.log === console.log, console.log.name, console.log.length, task.run(() => 7), Object.keys(task).join(), task.run === console.createTask("other").run);
+      log.push(typeof console.log, console.log === console.log, console.log.name, console.log.length, task.run(() => 7), Object.keys(task).join(), task.run === console.createTask("other").run, task.run.name, task.run.length);
       console.error("warning", 1, true);`,
       expected,
     ),
@@ -651,20 +768,35 @@ describe("gives a module the part of Node's console that writes primitives and m
 
   it("agrees with Node", async () => {
     expect(
-      (await checkModules(getFiles("function,true,log,0,7,run,true"))).message,
+      (await checkModules(getFiles("function,true,log,0,7,run,true,run,0"))).message,
     ).toBeUndefined();
   });
 
   it("rejects another result", async () => {
-    expect((await checkModules(getFiles("function,true,log,0,7,run,false"))).message).toContain(
-      THREW,
-    );
+    expect(
+      (await checkModules(getFiles("function,true,log,0,7,run,true,run,1"))).message,
+    ).toContain(THREW);
   });
 
   it("stops at a write of an object, which Node formats", async () => {
     expect((await checkModules({ "main.js": "console.log({});" })).message).toContain(
       "tla-ts can't write an object to the host's console",
     );
+  });
+
+  // A task's run, whose name and length are Node's, is an ordinary function in Node, with a
+  // prototype and a new that throws an Error, so every use of it but a call stops.
+  it.each([
+    "typeof task.run.prototype",
+    "Reflect.ownKeys(task.run)",
+    "new task.run(() => 1)",
+    "task.run.call(task, () => 1)",
+    "String(task.run)",
+  ])("stops at %s", async (use) => {
+    expect(
+      (await checkModules({ "main.js": `const task = console.createTask("work"); ${use};` }))
+        .message,
+    ).toContain("tla-ts can't run the host's console task's run");
   });
 });
 
@@ -834,6 +966,79 @@ describe("compiles CommonJS modules as Node loads them", () => {
           )
         ).message,
       ).toContain("tla-ts can't run the host's AsyncLocalStorage");
+    });
+  });
+
+  // Node's AsyncResource, whose name and length a program reads and whose objects it makes with
+  // new, as Effect does, stops at every other use, such as an instanceof, which Node answers.
+  describe("stops where the code uses AsyncResource other than to make its objects", () => {
+    it.each([
+      "({}) instanceof AsyncResource",
+      "AsyncResource.prototype",
+      "AsyncResource.bind",
+      '"name" in AsyncResource',
+      "Object.keys(AsyncResource)",
+      'Object.getOwnPropertyDescriptor(AsyncResource, "name")',
+      "Object.getPrototypeOf(AsyncResource)",
+      "AsyncResource.x = 1",
+      "delete AsyncResource.name",
+      "JSON.stringify({ AsyncResource })",
+      'AsyncResource("t")',
+      'Reflect.construct(AsyncResource, ["t"], Object)',
+      'new (class extends AsyncResource {})("t")',
+    ])("stops at %s", async (use) => {
+      expect(
+        (
+          await checkModules(
+            getFiles(`const { AsyncResource } = require("async_hooks"); ${use};`, ""),
+          )
+        ).message,
+      ).toContain("tla-ts can't run the host's AsyncResource");
+    });
+  });
+
+  // An AsyncResource's runInAsyncScope and emitDestroy, whose names and lengths are Node's, run as
+  // Node's do, and stop at every other use.
+  describe("runs an AsyncResource's methods as Node does, and stops at every other use", () => {
+    const main = `const { AsyncResource } = require("async_hooks");
+      const resource = new AsyncResource("t");
+      log.push(resource.runInAsyncScope.name, resource.runInAsyncScope.length, resource.emitDestroy.name, resource.emitDestroy.length);
+      log.push(resource.runInAsyncScope(function (a, b) { return [this.tag, a, b].join("-"); }, { tag: "t" }, 1, 2), resource.emitDestroy() === resource);
+      log.push(resource.runInAsyncScope === new AsyncResource("u").runInAsyncScope);`;
+
+    it("agrees with Node", async () => {
+      expect(
+        (await checkModules(getFiles(main, "runInAsyncScope,2,emitDestroy,0,t-1-2,true,true")))
+          .message,
+      ).toBeUndefined();
+    });
+
+    it("rejects another result", async () => {
+      expect(
+        (await checkModules(getFiles(main, "runInAsyncScope,1,emitDestroy,0,t-1-2,true,true")))
+          .message,
+      ).toContain(THREW);
+    });
+
+    it.each([
+      "resource.runInAsyncScope.prototype",
+      "Object.keys(resource.emitDestroy)",
+      "Object.getPrototypeOf(resource.runInAsyncScope)",
+      "resource.runInAsyncScope.call(resource, () => 1)",
+      "String(resource.emitDestroy)",
+      "resource.runInAsyncScope.call({}, () => 1)",
+      "Reflect.apply(resource.emitDestroy, {}, [])",
+    ])("stops at %s", async (use) => {
+      expect(
+        (
+          await checkModules(
+            getFiles(
+              `const { AsyncResource } = require("async_hooks"); const resource = new AsyncResource("t"); ${use};`,
+              "",
+            ),
+          )
+        ).message,
+      ).toContain("tla-ts can't run the host's AsyncResource");
     });
   });
 

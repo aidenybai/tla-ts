@@ -595,6 +595,49 @@ describe("checks a module's exported functions as a model on ESCore", () => {
     });
   });
 
+  // A step that asks whether an object is an AsyncResource, which Node answers, stops rather than
+  // catching a throw that Node doesn't make.
+  describe("stops where a step uses AsyncResource other than to make its objects", () => {
+    const directory = mkdtempSync(join(tmpdir(), "tla-ts-escore-resource-"));
+    afterAll(() => rmSync(directory, { recursive: true, force: true }));
+    const check = (check: string, mode?: "compared") => {
+      const source = `const { AsyncResource } = require("async_hooks");\nlet count = 0;\nfunction tick() {\n  if (count < 2) count += 1;\n}\nfunction isPlain() {\n  try {\n    return ${check};\n  } catch {\n    return false;\n  }\n}\nexports.tick = tick;\nexports.isPlain = isPlain;\n`;
+      const path = join(directory, `${mode ?? "spec"}-${check.length}.cjs`);
+      writeFileSync(path, source);
+      return checkModel(source, path, mode);
+    };
+
+    it("agrees with Node", async () => {
+      expect(getCounts(await check('typeof AsyncResource === "function"'))).toEqual([
+        "deadlock",
+        3,
+        3,
+      ]);
+    });
+
+    it("rejects another result", async () => {
+      expect(getCounts(await check('typeof AsyncResource === "object"'))).toEqual([
+        "invariant-violation",
+        1,
+        1,
+      ]);
+    });
+
+    it("stops at an instanceof", async () => {
+      const result = await check("!(({}) instanceof AsyncResource)");
+      expect(result.status).not.toBe("invariant-violation");
+      expect(result.message).toContain("tla-ts can't run the host's AsyncResource");
+    });
+
+    it("numbers the state natively as ESCanonical does", async () => {
+      expect(getCounts(await check('typeof AsyncResource === "function"', "compared"))).toEqual([
+        "deadlock",
+        3,
+        3,
+      ]);
+    });
+  });
+
   // A step settles the jobs that its program queues, which a program that names then only in a
   // comment queues none of.
   describe("settles a step of a program that queues no jobs", () => {

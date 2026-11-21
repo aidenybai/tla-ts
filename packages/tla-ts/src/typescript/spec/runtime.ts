@@ -576,13 +576,17 @@ const DEFINITIONS = [
   /\\ IsObject(O(s, v).slots.target) /\\ "id" \\in DOMAIN O(s, O(s, v).slots.target).slots
   /\\ O(s, O(s, v).slots.target).slots.id = <<"Module", "hostQuietConstructor">>
   /\\ O(s, O(s, v).slots.target).slots.data = name`,
+  // Whether an object is a function of the host's code, which the runtime makes as a built-in of
+  // its module.
+  `IsHostCode(s, o) == O(s, o).class = "builtin" /\\ O(s, o).slots.id[1] = "Module"`,
   // A function of the host, as a proxy that stops at every operation but typeof.
   `HostFunction(s, name) ==
   LET stop == Alloc(s, BuiltinObject(Intrinsic(s, "FunctionPrototype"), <<"Module", "hostStop">>, 0, <<>>, FALSE, name, s.realmId))
   IN ProxyCreate(stop.s, stop.v, s.hostHandler)`,
   // Node's process, of which a program reads only hrtime, whose bigint it may only read, and
-  // getBuiltinModule, of async_hooks, of which it reads only AsyncResource, whose objects run a
-  // function in their scope and emit their destroy, as Node's do (lib/async_hooks.js) where no hook
+  // getBuiltinModule, of async_hooks, of which it reads only AsyncResource, whose name and length
+  // it may read and whose objects, which it makes with new and nothing else, run a function in
+  // their scope and emit their destroy, as Node's do (lib/async_hooks.js) where no hook
   // of async_hooks observes them, which a program would make by reading more of async_hooks, and
   // AsyncLocalStorage, which makes an object of no arguments, at whose every use the program stops,
   // as its store follows the async context that ESCore's jobs don't carry. A program reads
@@ -595,19 +599,22 @@ const DEFINITIONS = [
                               <<[trap |-> SV("get"), method |-> "hrtimeGet", data |-> Val(bigint)]>>)
       o == OrdinaryObjectCreate(hrtime.s, Intrinsic(s, "ObjectPrototype"))
       withHrtime == CreateDataProperty(o.s, Val(o), SV("hrtime"), Val(hrtime))
-      load == CreateBuiltinFunction(withHrtime.s, <<"Module", "getBuiltinModule">>, 1, N("getBuiltinModule"), Empty)
+      load == HostMethod(withHrtime.s, N("getBuiltinModule"), 1, TRUE, N("getBuiltinModule"), "getBuiltinModule", Empty)
       made == CreateDataProperty(load.s, Val(o), SV("getBuiltinModule"), Val(load))
   IN Ok(made.s, Val(o))`,
   // Node's async_hooks, the one object that process.getBuiltinModule and require give, which the
   // state's required holds under the file number 0, the first time either asks for it.
   `AsyncHooksModule(s) ==
   IF 0 \\in DOMAIN s.required THEN Get(s, s.required[0].module, SV("exports")) ELSE
-  LET run == CreateBuiltinFunction(s, <<"Module", "asyncRun">>, 1, N("runInAsyncScope"), Empty)
-      destroy == CreateBuiltinFunction(run.s, <<"Module", "asyncDestroy">>, 0, N("emitDestroy"), Empty)
+  LET run == HostMethod(s, N("runInAsyncScope"), 2, FALSE, N("AsyncResource"), "asyncRun", Empty)
+      destroy == HostMethod(run.s, N("emitDestroy"), 0, FALSE, N("AsyncResource"), "asyncDestroy", Empty)
       resource == Alloc(destroy.s, BuiltinObject(Intrinsic(destroy.s, "FunctionPrototype"), <<"Module", "asyncResource">>, 1,
                                                  N("AsyncResource"), TRUE, [run |-> Val(run), destroy |-> Val(destroy)], destroy.s.realmId))
-      hooks == OrdinaryObjectCreate(resource.s, Null)
-      withResource == CreateDataProperty(hooks.s, Val(hooks), SV("AsyncResource"), resource.v)
+      resourceProxy == StoppingProxy(resource.s, resource.v, N("AsyncResource"),
+                                     <<[trap |-> SV("get"), method |-> "asyncResourceClassGet"],
+                                       [trap |-> SV("construct"), method |-> "asyncResourceConstruct"]>>)
+      hooks == OrdinaryObjectCreate(resourceProxy.s, Null)
+      withResource == CreateDataProperty(hooks.s, Val(hooks), SV("AsyncResource"), Val(resourceProxy))
       storage == Alloc(withResource.s, BuiltinObject(Intrinsic(s, "FunctionPrototype"), <<"Module", "hostStop">>, 0, <<>>, TRUE,
                                                      N("AsyncLocalStorage"), s.realmId))
       storageProxy == StoppingProxy(storage.s, storage.v, N("AsyncLocalStorage"),
@@ -633,18 +640,26 @@ const DEFINITIONS = [
   LET module == OrdinaryObjectCreate(s, Intrinsic(s, "ObjectPrototype"))
       made == CreateDataProperty(module.s, Val(module), SV("exports"), exports)
   IN Ok([made.s EXCEPT !.required = (k :> [module |-> Val(module), loaded |-> TRUE]) @@ @], exports)`,
-  // Node's performance, of which a program reads only now, whose time each run reads anew, so it
-  // gives HostTime, at whose reading a compiled spec stops.
+  // Node's performance, of which a program reads only now, which it calls on performance, whose
+  // time each run reads anew, so it gives HostTime, at whose reading a compiled spec stops.
   `PerformanceObject(s) ==
   LET o == OrdinaryObjectCreate(s, Intrinsic(s, "ObjectPrototype"))
-      now == CreateBuiltinFunction(o.s, <<"Module", "performanceNow">>, 0, N("now"), Empty)
+      now == HostMethod(o.s, N("now"), 0, FALSE, N("performance.now"), "performanceNow", Val(o))
   IN Ok(CreateDataProperty(now.s, Val(o), SV("now"), Val(now)).s, Val(o))`,
+  // A method of the host, as a proxy of a function of its name and length, which a program may
+  // read, and whose call runs the method's steps, which a program may only call: every other
+  // operation stops, as the function's source text, which Node's has, does, and a new of it, where
+  // Node's is a constructor, which a new of a function that isn't one would throw.
+  `HostMethod(s, name, length, isConstructor, stopName, method, data) ==
+  LET f == Alloc(s, BuiltinObject(Intrinsic(s, "FunctionPrototype"), <<"Module", "hostStop">>, length, name, isConstructor, stopName, s.realmId))
+  IN StoppingProxy(f.s, f.v, stopName, <<[trap |-> SV("get"), method |-> "hostMethodGet", data |-> stopName],
+                                           [trap |-> SV("apply"), method |-> method, data |-> data]>>)`,
   // Node's console, of which a program reads only the methods that write what they're given and
   // createTask: each of the former writes nothing that the program reads, where the values it's
   // given are primitives, which no code of the program runs to format.
   `ConsoleObject(s) ==
   LET o == OrdinaryObjectCreate(s, Intrinsic(s, "ObjectPrototype"))
-      run == CreateBuiltinFunction(o.s, <<"Module", "taskRun">>, 0, N("run"), Empty)
+      run == HostMethod(o.s, N("run"), 0, TRUE, N("console task's run"), "taskRun", Empty)
       createTask == CreateBuiltinFunction(run.s, <<"Module", "createTask">>, 0, N("createTask"), Val(run))
       made == CreateDataProperty(createTask.s, Val(o), SV("createTask"), Val(createTask))
   IN Ok(ConsoleMethods(made.s, Val(o), <<N("log"), N("info"), N("debug"), N("warn"), N("error")>>), Val(o))`,
@@ -1546,7 +1561,10 @@ const HOST_PATCHES = [
     [] m = "hostGlobal" -> Ok(s, data)
     [] m = "performanceGet" ->
          IF Arg(args, 2) # SV("now") THEN HostStop(N("performance")) ELSE Get(s, Arg(args, 1), Arg(args, 2))
-    [] m = "performanceNow" -> Ok(s, HostTime)
+    [] m = "hostMethodGet" -> IF Arg(args, 2) \\notin {SV("name"), SV("length")} THEN HostStop(data) ELSE Get(s, Arg(args, 1), Arg(args, 2))
+    [] m = "performanceNow" ->
+         IF ~IsObject(Arg(args, 2)) \\/ O(s, Arg(args, 2)).class # "proxy" \\/ O(s, Arg(args, 2)).slots.target # data
+         THEN HostStop(N("performance.now")) ELSE Ok(s, HostTime)
     [] m = "consoleGet" ->
          IF Arg(args, 2) \\notin {SV("log"), SV("info"), SV("debug"), SV("warn"), SV("error"), SV("createTask")}
          THEN Assert(FALSE, "tla-ts can't use the host's console other than to write primitives and createTask")
@@ -1583,7 +1601,9 @@ const HOST_PATCHES = [
     [] m = "processGet" ->
          IF Arg(args, 2) \\notin {SV("getBuiltinModule"), SV("hrtime")} THEN HostStop(N("process")) ELSE Get(s, Arg(args, 1), Arg(args, 2))
     [] m = "getBuiltinModule" ->
-         IF Arg(args, 1) \\notin {SV("node:async_hooks"), SV("async_hooks")} THEN HostStop(N("getBuiltinModule")) ELSE AsyncHooksModule(s)
+         LET list == CreateListFromArrayLike(s, Arg(args, 3), "all") IN
+         IF IsAbrupt(list) THEN list
+         ELSE IF Arg(Val(list), 1) \\notin {SV("node:async_hooks"), SV("async_hooks")} THEN HostStop(N("getBuiltinModule")) ELSE AsyncHooksModule(list.s)
     [] m = "asyncHooksGet" ->
          IF Arg(args, 2) \\notin {SV("AsyncResource"), SV("AsyncLocalStorage")} THEN HostStop(N("async_hooks")) ELSE Get(s, Arg(args, 1), Arg(args, 2))
     [] m = "asyncLocalStorageConstruct" ->
@@ -1597,6 +1617,14 @@ const HOST_PATCHES = [
          LET own == OrdinaryGetOwnProperty(O(s, Intrinsic(s, "GlobalObject")), SV("TextEncoder")) IN
          IF Arg(args, 2) # SV("TextEncoder") \\/ own = Absent \\/ ~IsDataDescriptor(own) \\/ ~IsHostConstructor(s, own.value, N("TextEncoder"))
          THEN HostStop(N("util")) ELSE Ok(s, own.value)
+    [] m = "asyncResourceClassGet" ->
+         IF Arg(args, 2) \\notin {SV("name"), SV("length")} THEN HostStop(N("AsyncResource")) ELSE Get(s, Arg(args, 1), Arg(args, 2))
+    [] m = "asyncResourceConstruct" ->
+         LET list == CreateListFromArrayLike(s, Arg(args, 2), "all") IN
+         IF IsAbrupt(list) THEN list
+         ELSE IF ~IsObject(Arg(args, 3)) \\/ O(list.s, Arg(args, 3)).class # "proxy" \\/ O(list.s, Arg(args, 3)).slots.target # Arg(args, 1)
+         THEN HostStop(N("AsyncResource"))
+         ELSE Construct(list.s, Arg(args, 1), Val(list), Arg(args, 1))
     [] m = "asyncResource" ->
          IF nt # f \\/ ~IsString(Arg(args, 1)) \\/ (Arg(args, 2) # Undefined /\\ ~IsObject(Arg(args, 2))) THEN HostStop(N("AsyncResource")) ELSE
          LET trigger == IF Arg(args, 2) = Undefined THEN Ok(s, Undefined) ELSE Get(s, Arg(args, 2), SV("triggerAsyncId")) IN
@@ -1610,10 +1638,14 @@ const HOST_PATCHES = [
            [] Arg(args, 2) = SV("emitDestroy") -> Ok(s, data.destroy)
            [] OTHER -> HostStop(N("AsyncResource"))
     [] m \\in {"asyncRun", "asyncDestroy"} ->
-         IF ~IsObject(this) \\/ O(s, this).class # "proxy" \\/ "asyncResource" \\notin DOMAIN O(s, O(s, this).slots.target).slots
-         THEN HostStop(N("AsyncResource"))
-         ELSE IF m = "asyncDestroy" THEN Ok(s, this)
-         ELSE Call(s, Arg(args, 1), Arg(args, 2), IF Len(args) > 2 THEN SubSeq(args, 3, Len(args)) ELSE <<>>)
+         LET resource == Arg(args, 2)
+             list == CreateListFromArrayLike(s, Arg(args, 3), "all")
+         IN IF IsAbrupt(list) THEN list
+            ELSE IF ~IsObject(resource) \\/ O(s, resource).class # "proxy" \\/ ~IsObject(O(s, resource).slots.target)
+                    \\/ "asyncResource" \\notin DOMAIN O(s, O(s, resource).slots.target).slots
+            THEN HostStop(N("AsyncResource"))
+            ELSE IF m = "asyncDestroy" THEN Ok(list.s, resource)
+            ELSE Call(list.s, Arg(Val(list), 1), Arg(Val(list), 2), Rest(Val(list), 3))
     [] m = "consoleWrite" ->
          IF \\E i \\in DOMAIN args : IsObject(args[i])
          THEN Assert(FALSE, "tla-ts can't write an object to the host's console, which formats it")
@@ -1623,9 +1655,11 @@ const HOST_PATCHES = [
          ELSE LET task == Alloc(s, MakeObject(Intrinsic(s, "ObjectPrototype"), "ordinary", [consoleTask |-> TRUE])) IN
               ResultThen(task.v, CreateDataProperty(task.s, task.v, SV("run"), data))
     [] m = "taskRun" ->
-         IF ~IsObject(this) \\/ "consoleTask" \\notin DOMAIN O(s, this).slots \\/ ~IsCallable(s, Arg(args, 1))
+         LET list == CreateListFromArrayLike(s, Arg(args, 3), "all") IN
+         IF IsAbrupt(list) THEN list
+         ELSE IF ~IsObject(Arg(args, 2)) \\/ "consoleTask" \\notin DOMAIN O(list.s, Arg(args, 2)).slots \\/ ~IsCallable(list.s, Arg(Val(list), 1))
          THEN Assert(FALSE, "tla-ts can't run a task of the host's console other than a function")
-         ELSE Call(s, Arg(args, 1), Undefined, <<>>)
+         ELSE Call(list.s, Arg(Val(list), 1), Undefined, <<>>)
     [] m \\in {"hostStop", "hostQuietConstructor"} -> HostStop(data)
     [] m = "hostConstruct" ->
          LET target == Arg(args, 1)
@@ -1645,6 +1679,15 @@ const HOST_PATCHES = [
     [] m = "hostTrap" ->
          HostStop(IF "hostName" \\in DOMAIN O(s, Arg(args, 1)).slots THEN O(s, Arg(args, 1)).slots.hostName ELSE O(s, Arg(args, 1)).slots.data)
     [] m = "hrtimeGet" -> IF Arg(args, 2) # SV("bigint") THEN HostStop(N("process.hrtime")) ELSE Ok(s, data)`,
+  },
+  // The source text of a function of the host, or of a proxy that stands for one, which Node gives
+  // as its own code has it, stops.
+  {
+    name: "FunctionBuiltin",
+    from: "ELSE LET slots == O(s, this).slots IN",
+    to: `ELSE IF IsHostCode(s, this) \\/ (O(s, this).class = "proxy" /\\ IsObject(O(s, this).slots.target) /\\ IsHostCode(s, O(s, this).slots.target))
+              THEN Assert(FALSE, "tla-ts can't give the source text of the host's function, which Node gives as its code has it")
+              ELSE LET slots == O(s, this).slots IN`,
   },
   // A program's functions hold their source text as the program's code gives it, which
   // SourceUnits makes code units of when a program reads it.
