@@ -3717,6 +3717,37 @@ ASSUME TLCFP(a) = -887695703
 
   it.each([
     [
+      "the initial predicate applies it, as TLC's Tool#getInitStates does",
+      "VARIABLE x\nInit == [n \\in Nat |-> x = n + 1][1]\nNext == x < 3 /\\ x' = x + 1\nInv == TRUE",
+      0,
+      [
+        "line 4, col 9 to line 4, col 36 of module M: 3",
+        "|line 4, col 9 to line 4, col 33 of module M: 1",
+      ],
+    ],
+    [
+      "ENABLED applies it, as TLC's Tool#enabled does",
+      "VARIABLE x\nInit == x = 0\nNext == x < 2 /\\ x' = x + 1\nInv == ENABLED [n \\in Nat |-> x' = n + x][1]",
+      -1,
+      [
+        "line 6, col 8 to line 6, col 44 of module M: 3",
+        "|line 6, col 16 to line 6, col 44 of module M: 9",
+        "||line 6, col 16 to line 6, col 41 of module M: 3",
+      ],
+    ],
+  ])(
+    "counts the body of a lazy function at the application's node when %s",
+    async (_title, body, relation, expected) => {
+      const lines = await getCoverageLines(
+        `---- MODULE M ----\nEXTENDS Integers\n${body}\n====`,
+        "INIT Init\nNEXT Next\nINVARIANT Inv\nCHECK_DEADLOCK FALSE",
+      );
+      expect(lines?.at(relation)).toEqual(expected);
+    },
+  );
+
+  it.each([
+    [
       "an IF picks an argument of a lazy function",
       "VARIABLE x\nInit == x = 0\nNext == x < 2 /\\ x' = x + 1 + [i \\in 0..2, j \\in 1..2 |-> i][IF x = 0 THEN x ELSE x - 1, 1]",
       [

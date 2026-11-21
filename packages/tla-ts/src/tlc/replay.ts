@@ -982,8 +982,15 @@ const visitApplication = (
               : evaluateArgument(expression, context),
           ),
         );
-        // Tool#getNextStates runs the body with the function's cost model, not the application's.
-        return visit(replay, lambda.body, items, bound, partial, getLazyFunctionNode(lambda.value));
+        // Tool#getNextStates runs the body with the function's cost model, but getInitStates and enabled with the application's.
+        return visit(
+          replay,
+          lambda.body,
+          items,
+          bound,
+          partial,
+          replay.isInit || replay.isEnabled ? node : getLazyFunctionNode(lambda.value),
+        );
       }
       break;
     }
