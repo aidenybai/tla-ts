@@ -362,7 +362,6 @@ These stop the compile:
 | `tla-ts can't load the module node:fs`                             | An import of a built-in module, or of a file that tla-ts can't find                 |
 | `tla-ts can't compile a module as a script`                        | A model that imports another file                                                   |
 | `tla-ts can't compile … to ESCore yet`                             | Syntax that tla-ts doesn't compile yet                                              |
-| `tla-ts can't read a let that a line break follows as a name`      | `let` and then a line break, which JavaScript may read as a name                    |
 
 A check stops where it reaches what tla-ts can't run exactly. It fails TLC's `Assert` with a message that starts with `tla-ts can't`, and exits with TLC's code for an evaluation error. These stop the check:
 

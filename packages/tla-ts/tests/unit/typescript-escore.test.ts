@@ -3576,6 +3576,22 @@ const result = [read(() => box.f()), read(() => box.inner.g()), read(() => value
 
     // TypeScript reports a var in a catch block that redeclares the catch's parameter, which Annex
     // B allows and Node runs.
+    // TypeScript's parser reads a let that a line break follows as a declaration, where it's a with
+    // statement's body, which JavaScript reads as the name let.
+    describe("reads a let that a line break follows in a with statement as a name", () => {
+      const getSource = (expected: string) =>
+        `var seen = [];\nvar scope = { get let() { seen.push("read"); return 1; } };\nwith (scope) let // ASI\n{}\nwith (scope) let\nx = 2;\nif (seen.join() + x !== "${expected}") throw new Error(seen.join() + x);\n`;
+
+      it("agrees with Node", async () => {
+        expect(() => runInNewContext(getSource("read,read2"))).not.toThrow();
+        expect((await checkScript(getSource("read,read2"), false)).message).toBeUndefined();
+      });
+
+      it("rejects another result", async () => {
+        expect((await checkScript(getSource("2"), false)).message).toContain(THREW);
+      });
+    });
+
     describe("a redeclaration that Annex B allows", () => {
       const getCaught = (expected: number) =>
         `try { throw 1; } catch (caught) { var caught = 2; if (caught !== ${expected}) throw new Error("caught"); }\n`;
