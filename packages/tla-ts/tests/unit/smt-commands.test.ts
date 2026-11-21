@@ -2760,6 +2760,74 @@ describe("pop, as Z3 5.3.2 frees the declarations of a scope", () => {
       ]),
     ).toEqual(["unsat", "(:rlimit 603)"]);
   });
+
+  it("frees the macros and named terms of the scopes it pops, as erase_macro does", () => {
+    const define = "(define-fun m2 ((x Int)) Int (* 2 x))";
+    expect(
+      run(["(push 1)", define, "(declare-fun k (Int) Int)", "(pop 1)", ...POPPED_CHECK]),
+    ).toEqual(["unsat", "(:rlimit 590)"]);
+    expect(
+      run([
+        "(push 1)",
+        define,
+        "(declare-fun e () Int)",
+        "(assert (> (m2 e) 4))",
+        "(pop 1)",
+        ...POPPED_CHECK,
+      ]),
+    ).toEqual(["unsat", "(:rlimit 562)"]);
+    expect(
+      run([
+        "(declare-fun e () Int)",
+        "(push 1)",
+        "(assert (! (> e 0) :named n1))",
+        "(declare-fun k (Int) Int)",
+        "(pop 1)",
+        ...POPPED_CHECK,
+      ]),
+    ).toEqual(["unsat", "(:rlimit 598)"]);
+  });
+
+  it("frees the recursive definitions of the scopes it pops, as erase_def does", () => {
+    expect(
+      run([
+        "(push 1)",
+        "(define-fun-rec sumto ((n Int)) Int (ite (<= n 0) 0 (+ n (sumto (- n 1)))))",
+        "(declare-fun e () Int)",
+        "(pop 1)",
+        ...POPPED_CHECK,
+      ]),
+    ).toEqual(["unsat", "(:rlimit 586)"]);
+    expect(
+      run([
+        "(push 1)",
+        "(define-funs-rec ((ev ((n Int)) Bool) (od ((n Int)) Bool)) ((ite (= n 0) true (od (- n 1))) (ite (= n 0) false (ev (- n 1)))))",
+        "(pop 1)",
+        ...POPPED_CHECK,
+      ]),
+    ).toEqual(["unsat", "(:rlimit 548)"]);
+  });
+});
+
+describe("macros, as Z3 5.3.2 substitutes them", () => {
+  it("defines a macro with std_subst and expands its applications with rev_subst", () => {
+    expect(
+      run([
+        "(push 1)",
+        "(define-fun m3 ((x Int) (y Int)) Int (- (* 3 x) y))",
+        "(pop 1)",
+        ...POPPED_CHECK,
+      ]),
+    ).toEqual(["unsat", "(:rlimit 557)"]);
+    expect(
+      run([
+        "(declare-fun k () Int)",
+        "(define-fun m ((x Int)) Int (+ (* 2 x) 1))",
+        "(assert (> (m k) 0))",
+        ...POPPED_CHECK,
+      ]),
+    ).toEqual(["unsat", "(:rlimit 1090)"]);
+  });
 });
 
 describe(":global-declarations, as Z3 5.3.2 keeps declarations through a pop", () => {
@@ -2817,5 +2885,151 @@ describe("opt, as Z3 5.3.2 sets up its solver", () => {
         "(eval (= (>= 0 (abs x0)) (xor (<= 5 (+ x0 x1 6)) b0)))",
       ]),
     ).toEqual(["sat", "false"]);
+  });
+
+  it("keeps relevancy on under a case split strategy other than 1", () => {
+    const getRlimit = (options: string[]) =>
+      run([
+        ...options,
+        "(declare-const x Real)",
+        "(declare-const y Real)",
+        "(declare-fun g (Real) Real)",
+        "(assert (or (< x 3.5) (and (< (g x) y) (< x 8.0))))",
+        "(assert (or (= (g y) x) (< y 1.0)))",
+        "(assert (<= y 10.0))",
+        "(minimize (- y x))",
+        "(check-sat)",
+        "(get-info :rlimit)",
+      ]);
+    expect(getRlimit([])).toEqual(["sat", "(:rlimit 1132)"]);
+    expect(getRlimit(["(set-option :smt.case_split 0)"])).toEqual(["sat", "(:rlimit 692)"]);
+  });
+});
+
+describe("case splits, as Z3 5.3.2 reads smt.case_split", () => {
+  it("delays the splits a search makes only under case_split 1", () => {
+    const getRlimit = (options: string[]) =>
+      run([
+        ...options,
+        "(declare-const x Int)",
+        "(declare-const y Int)",
+        "(declare-const z Int)",
+        "(declare-const w Int)",
+        "(declare-fun p0 (Int) Bool)",
+        "(declare-fun p1 (Int) Bool)",
+        "(declare-fun p2 (Int) Bool)",
+        "(declare-fun p3 (Int) Bool)",
+        "(assert (or (< (+ x x) 3) (> (+ x z) -2) (= (+ x y) -5)))",
+        "(assert (or (not (>= w 0)) (not (<= (+ y z) 5)) (not (p2 (+ w x)))))",
+        "(assert (or (p0 (+ x z)) (>= (+ x x) -3) (>= (+ w y) 0) (<= x -2)))",
+        "(assert (or (> (+ z y) -4) (p1 (+ z z)) (not (= x -6))))",
+        "(assert (or (<= (+ z z) -3) (<= y -1)))",
+        "(assert (or (not (>= (+ x z) -3)) (p1 (+ z y)) (not (> (+ z z) -5)) (>= (+ x w) 4)))",
+        "(assert (or (p1 w) (> w -2) (not (> x 6)) (<= (+ w x) 0)))",
+        "(assert (or (< (+ z y) -4) (p3 x)))",
+        "(assert (or (not (p2 y)) (not (< (+ y x) 1)) (= (+ w y) 4)))",
+        "(assert (or (= (+ w y) -6) (p2 (+ x y))))",
+        "(assert (or (not (< (+ z w) 2)) (not (> z 0))))",
+        "(assert (or (>= (+ y w) 1) (= w 6) (p2 (+ w w))))",
+        "(assert (or (p1 x) (p3 (+ y x)) (not (p3 z)) (not (<= (+ y z) 3))))",
+        "(assert (or (p3 (+ y w)) (> (+ y x) -3) (<= z 0)))",
+        "(check-sat)",
+        "(get-info :rlimit)",
+      ]);
+    expect(getRlimit([])).toEqual(["sat", "(:rlimit 3420)"]);
+    expect(getRlimit(["(set-option :smt.case_split 0)"])).toEqual(["sat", "(:rlimit 3465)"]);
+  });
+
+  const getRelevancySplits = (caseSplit: number, options: string[] = []) =>
+    run([
+      "(set-option :auto_config false)",
+      `(set-option :smt.case_split ${caseSplit})`,
+      ...options,
+      "(declare-const x Int)",
+      "(declare-const y Int)",
+      "(declare-fun p (Int) Bool)",
+      "(assert (or (and (p x) (> x 3)) (and (p y) (> y x))))",
+      "(assert (or (< x 2) (> y 7) (p (+ x y))))",
+      "(check-sat)",
+      "(get-info :rlimit)",
+      "(get-value (x y (p x) (p y)))",
+    ]);
+
+  it("splits on the relevant terms under case_split 3 with full relevancy", () => {
+    expect(getRelevancySplits(3)).toEqual([
+      "sat",
+      "(:rlimit 528)",
+      "((x 21242)",
+      " (y 0)",
+      " ((p x) true)",
+      " ((p y) true))",
+    ]);
+    expect(getRelevancySplits(3, ["(set-option :smt.relevancy 1)"])).toEqual([
+      "sat",
+      "(:rlimit 520)",
+      "((x 0)",
+      " (y 8)",
+      " ((p x) true)",
+      " ((p y) true))",
+    ]);
+  });
+
+  it("splits on the relevant terms, then on the new variables by activity, under case_split 4", () => {
+    expect(getRelevancySplits(4)).toEqual([
+      "sat",
+      "(:rlimit 490)",
+      "((x 4)",
+      " (y 8)",
+      " ((p x) true)",
+      " ((p y) true))",
+    ]);
+  });
+
+  it("splits on the relevant terms, then on the new ones by generation, under case_split 5", () => {
+    expect(getRelevancySplits(5)).toEqual([
+      "sat",
+      "(:rlimit 528)",
+      "((x 21242)",
+      " (y 0)",
+      " ((p x) true)",
+      " ((p y) true))",
+    ]);
+  });
+
+  it("queues the terms a push makes relevant once get-consequences ends its search", () => {
+    expect(
+      run([
+        "(set-option :auto_config false)",
+        "(set-option :smt.case_split 4)",
+        "(declare-const x Int)",
+        "(declare-const y Int)",
+        "(declare-const z Int)",
+        "(declare-fun p (Int) Bool)",
+        "(declare-fun q (Int) Bool)",
+        "(declare-const a Bool)",
+        "(declare-const b Bool)",
+        "(assert (or (and (p x) (> x 3)) (and (p y) (> y x))))",
+        "(assert (or (< x 2) (> y 7) (p (+ x y))))",
+        "(assert (=> a (= x 5)))",
+        "(get-consequences (a b) (x y))",
+        "(assert (or (and (q z) (< z y)) (and (q (+ z 1)) (> z 9)) (p z)))",
+        "(assert (or (not (q z)) (and (> (+ x z) 4) (p (+ z 2)))))",
+        "(assert (or (q x) (and (< z 3) (q y)) (not (p (+ y z)))))",
+        "(push 1)",
+        "(assert (or (p (+ x 1)) (q (+ y 1))))",
+        "(check-sat)",
+        "(get-info :rlimit)",
+        "(get-value (x y z))",
+      ]),
+    ).toEqual([
+      "sat",
+      "",
+      "(=> a (= x 5))",
+      "sat",
+      "(:rlimit 1058)",
+      "((x 5)",
+      " (y 2437)",
+      " (z 0))",
+    ]);
   });
 });

@@ -6,7 +6,7 @@ import { L_FALSE, L_TRUE } from "../lbool";
 import type { ProtoModel } from "../proto-model";
 import { RandomGen } from "../random-gen";
 import { RefVector } from "../ref-vector";
-import { SmtKernel } from "../smt-kernel";
+import { getGlobalSmtParams, SmtKernel } from "../smt-kernel";
 import type { SpacerManager } from "./spacer-manager";
 import { INFTY_LEVEL, isInftyLevel, pin } from "./spacer-util";
 
@@ -35,11 +35,13 @@ export class IucSolver {
   constructor(
     private manager: AstManager,
     private spacerManager: SpacerManager,
+    parameters: ReadonlyMap<string, string>,
   ) {
     this.kernel = new SmtKernel(manager, {
       isMbqi: true,
       isFindingMacros: false,
       mbqiMaxIterations: MBQI_MAX_ITERATIONS,
+      ...getGlobalSmtParams(parameters),
     });
   }
 
@@ -194,8 +196,9 @@ export class PropSolver {
     spacerManager: SpacerManager,
     private name: string,
     randomSeed: number,
+    parameters: ReadonlyMap<string, string>,
   ) {
-    this.context = new IucSolver(manager, spacerManager);
+    this.context = new IucSolver(manager, spacerManager, parameters);
     this.random = new RandomGen(randomSeed);
   }
 

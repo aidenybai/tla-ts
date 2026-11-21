@@ -14,7 +14,7 @@ import {
   SORT_BOOL,
 } from "../ast";
 import { L_FALSE } from "../lbool";
-import { SmtKernel } from "../smt-kernel";
+import { getGlobalSmtParams, SmtKernel } from "../smt-kernel";
 import type { Lemma, SpacerContext } from "./spacer-context";
 import { mkAndOf, pin } from "./spacer-util";
 
@@ -194,6 +194,7 @@ const mkArrayEqGeneralizer =
       isMbqi: true,
       isFindingMacros: false,
       mbqiMaxIterations: MBQI_MAX_ITERATIONS,
+      ...getGlobalSmtParams(context.params.parameters),
     });
     const lits = [...core];
     let isDirty = false;

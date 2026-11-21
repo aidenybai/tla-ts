@@ -1,9 +1,4 @@
-import {
-  SmtDefaultError,
-  SmtInvariantError,
-  SmtTacticError,
-  SmtUnsupportedError,
-} from "../../../errors";
+import { SmtDefaultError, SmtInvariantError, SmtTacticError } from "../../../errors";
 import {
   type AstManager,
   FAMILY_BASIC,
@@ -20,13 +15,15 @@ import { hasUninterpreted, isAppOf, pushNotOwned } from "./ast-util";
 import { MBQI_MAX_ITERATIONS } from "./context";
 import { extractVars, mkQuantifierOfConsts } from "./qe";
 import type { Goal } from "./goal";
+import { LabelRewriter } from "./label-rewriter";
 import { L_FALSE, L_TRUE, L_UNDEF } from "./lbool";
+import { ModelEvaluator } from "./model-evaluator";
 import type { ProtoModel } from "./proto-model";
 import { Mbproj } from "./qe-mbp";
 import { QuantifierHoister } from "./quant-hoist";
 import { hasSubterm } from "./recfun-decl-plugin";
 import { RefVector } from "./ref-vector";
-import { SmtKernel } from "./smt-kernel";
+import { getGlobalSmtParams, SmtKernel } from "./smt-kernel";
 import type { TacticEnvironment } from "./tactic";
 
 export const NO_LEVEL = -1;
@@ -136,7 +133,6 @@ class PredAbs {
         }
       }
       if (!hasNew) {
-        this.pin(current);
         this.elevel.set(current, level);
         todo.pop();
       }
@@ -176,33 +172,38 @@ class PredAbs {
       return;
     }
     if (level === 0) return;
+    const evaluator = new ModelEvaluator(manager, model);
+    evaluator.setModelCompletion(true);
     const isFalseIn = (pred: number) => {
-      const value = model.eval(pred, true);
+      const value = evaluator.rewrite(pred);
       const isFalse = manager.isFalse(value);
       manager.decRef(value);
       return isFalse;
     };
-    for (let index = 0; index <= level - 1; index++)
-      for (const pred of this.preds[index]) {
-        const isFalse = isFalseIn(pred);
-        if (!manager.limit.inc()) return;
-        this.asms.push(isFalse ? this.pin(manager.mkNot(pred)) : pred);
-      }
-    for (const asm of this.asms.items) asms.push(asm);
-    for (let index = level + 1; index < this.preds.length; index += 2)
-      for (const pred of this.preds[index]) {
-        if (!manager.limit.inc()) return;
-        const predLevel = this.elevel.get(pred) as MaxLevel;
-        const isUsed =
-          (predLevel.fa === index && (predLevel.ex === NO_LEVEL || predLevel.ex < level)) ||
-          (predLevel.ex === index && (predLevel.fa === NO_LEVEL || predLevel.fa < level));
-        if (isUsed) asms.push(isFalseIn(pred) ? this.pin(manager.mkNot(pred)) : pred);
-      }
+    try {
+      for (let index = 0; index <= level - 1; index++)
+        for (const pred of this.preds[index]) {
+          const isFalse = isFalseIn(pred);
+          if (!manager.limit.inc()) return;
+          this.asms.push(isFalse ? this.pin(manager.mkNot(pred)) : pred);
+        }
+      for (const asm of this.asms.items) asms.push(asm);
+      for (let index = level + 1; index < this.preds.length; index += 2)
+        for (const pred of this.preds[index]) {
+          if (!manager.limit.inc()) return;
+          const predLevel = this.elevel.get(pred) as MaxLevel;
+          const isUsed =
+            (predLevel.fa === index && (predLevel.ex === NO_LEVEL || predLevel.ex < level)) ||
+            (predLevel.ex === index && (predLevel.fa === NO_LEVEL || predLevel.fa < level));
+          if (isUsed) asms.push(isFalseIn(pred) ? this.pin(manager.mkNot(pred)) : pred);
+        }
+    } finally {
+      evaluator.release();
+    }
   }
 
   ensureExprLevel(variable: number, level: number) {
     if (this.elevel.has(variable)) return;
-    this.pin(variable);
     this.elevel.set(
       variable,
       level % 2 === 0 ? { ex: level, fa: NO_LEVEL } : { ex: NO_LEVEL, fa: level },
@@ -210,7 +211,6 @@ class PredAbs {
   }
 
   setExprLevel(expr: number, level: MaxLevel) {
-    this.pin(expr);
     this.elevel.set(expr, level);
   }
 
@@ -322,7 +322,7 @@ class Kernel {
 
   constructor(
     private manager: AstManager,
-    private isCoreMinimizing: boolean,
+    private parameters: ReadonlyMap<string, string>,
   ) {
     this.trail = new RefVector(manager);
   }
@@ -332,9 +332,8 @@ class Kernel {
       isMbqi: true,
       mbqiMaxIterations: MBQI_MAX_ITERATIONS,
       isFindingMacros: false,
-      relevancyLevel: 0,
-      isDelayingNewCaseSplits: false,
-      isCoreMinimizing: this.isCoreMinimizing,
+      ...getGlobalSmtParams(this.parameters, 0),
+      isCoreMinimizing: this.parameters.get("smt.core.minimize") === "true",
     });
     this.lastAssert = -1;
     this.trail.reset();
@@ -394,11 +393,11 @@ class Qsat {
   constructor(
     private manager: AstManager,
     private mode: number,
-    isCoreMinimizing: boolean,
+    parameters: ReadonlyMap<string, string>,
   ) {
     this.mbp = new Mbproj(manager);
-    this.fa = new Kernel(manager, isCoreMinimizing);
-    this.ex = new Kernel(manager, isCoreMinimizing);
+    this.fa = new Kernel(manager, parameters);
+    this.ex = new Kernel(manager, parameters);
     this.predAbs = new PredAbs(manager);
     this.answer = new RefVector(manager);
     this.asms = new RefVector(manager);
@@ -438,6 +437,7 @@ class Qsat {
       try {
         for (const asm of this.asms.items) asms.push(asm);
         this.predAbs.getAssumptions(this.model, asms);
+        if (this.model !== undefined) this.validateAssumptions(this.model, asms);
         const kernel = this.getKernel(this.level).solver;
         const result = kernel.check(asms.items);
         if (result === L_TRUE) {
@@ -459,6 +459,18 @@ class Qsat {
 
   private getKernel(level: number) {
     return level % 2 === 0 ? this.ex : this.fa;
+  }
+
+  // Z3 calls validate_assumptions outside of an assertion, so its evaluations take steps.
+  private validateAssumptions(model: ProtoModel, asms: RefVector) {
+    const manager = this.manager;
+    const isValue = (asm: number, expected: number) => {
+      const value = model.eval(asm, false);
+      manager.decRef(value);
+      return value === expected;
+    };
+    for (const asm of asms.items)
+      if (!isValue(asm, manager.trueExpr) && isValue(asm, manager.falseExpr)) return;
   }
 
   private push() {
@@ -504,12 +516,12 @@ class Qsat {
     const manager = this.manager;
     if (hasQuantifiedUninterpreted(manager, formula))
       throw new SmtTacticError("formula contains uninterpreted functions");
-    if (manager.hasLabelFlags[formula]) throw new SmtUnsupportedError("labels under qsat");
+    const labelRewriter = new LabelRewriter(manager);
+    let result = this.pinOwned(labelRewriter.rewrite(formula));
     const hoister = new QuantifierHoister(manager);
     const freeVars = new RefVector(manager);
-    getFreeVars(manager, formula, freeVars);
+    getFreeVars(manager, result, freeVars);
     this.vars.push(freeVars);
-    let result = formula;
     let isForall = false;
     const pullInto = (target: RefVector) => {
       result = this.pinOwned(hoister.pullQuantifier(isForall, result, target));
@@ -538,6 +550,7 @@ class Qsat {
       }
     } finally {
       hoister.release();
+      labelRewriter.release();
     }
     this.initializeLevels();
     return result;
@@ -817,11 +830,7 @@ class Qsat {
 }
 
 export const runQsat = (environment: TacticEnvironment, mode: number) => (goal: Goal) => {
-  const qsat = new Qsat(
-    environment.manager,
-    mode,
-    environment.parameters.get("smt.core.minimize") === "true",
-  );
+  const qsat = new Qsat(environment.manager, mode, environment.parameters);
   try {
     return qsat.apply(goal);
   } finally {
