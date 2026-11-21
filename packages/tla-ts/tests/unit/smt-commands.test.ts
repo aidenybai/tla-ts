@@ -1067,6 +1067,38 @@ describe("runSmtlibScript runs its commands as Z3 does", () => {
     );
   });
 
+  it("keeps the nested ites of an inlined aux function when it compacts the model", () => {
+    expect(
+      run([
+        "(set-option :smt.mbqi true)",
+        "(declare-fun f (Int) Int)",
+        "(declare-fun g (Int) Int)",
+        "(assert (forall ((x Int)) (! (=> (< 0 x) (> (f x) (- 1))) :pattern ((f x)))))",
+        "(assert (forall ((x Int)) (! (= (g x) (f x)) :pattern ((g x)))))",
+        "(assert (= (f 1) 5))",
+        "(assert (= (f 2) 5))",
+        "(assert (= (f 3) 5))",
+        "(assert (= (f 4) 7))",
+        "(assert (= (g 10) 7))",
+        "(check-sat)",
+        "(get-model)",
+      ]),
+    ).toEqual([
+      "sat",
+      "(",
+      "  (define-fun f ((x!0 Int)) Int",
+      "    (let ((a!1 (or (and (<= 2 x!0) (<= 3 x!0) (<= 4 x!0) (<= 10 x!0))",
+      "                   (and (<= 2 x!0) (<= 3 x!0) (<= 4 x!0) (not (<= 10 x!0)))))",
+      "          (a!2 (or (and (<= 2 x!0) (<= 3 x!0) (not (<= 4 x!0)))",
+      "                   (and (<= 2 x!0) (not (<= 3 x!0))))))",
+      "      (ite a!1 7 (ite a!2 5 (ite (<= 2 x!0) 6 5)))))",
+      "  (define-fun g ((x!0 Int)) Int",
+      "    (ite (= x!0 10) 7",
+      "      (f x!0)))",
+      ")",
+    ]);
+  });
+
   it("frees what a rewriter holds when the limit stops it, before the search goes on", () => {
     expect(run(["(set-option :rlimit 29600)", REACHABLE_PROOFS])).toEqual(
       readZ3Output("ReachableProofs-40-push-29600.z3out"),

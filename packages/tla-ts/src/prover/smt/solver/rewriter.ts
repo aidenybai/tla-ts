@@ -90,6 +90,7 @@ export interface RewriterOptions {
   readonly blastDistinctThreshold?: number;
   readonly bv?: BvRewriterOptions;
   readonly isFlatAndOr?: boolean;
+  readonly isEliminatingIte?: boolean;
   readonly localCtxLimit?: number;
   readonly isCoalescingChars?: boolean;
   readonly isSortingStore?: boolean;
@@ -1197,13 +1198,15 @@ export class Rewriter extends RewriterTpl {
     if (manager.isTrue(condition)) return thenExpr;
     if (manager.isFalse(condition)) return elseExpr;
     if (thenExpr === elseExpr) return thenExpr;
-    if (sort === SORT_BOOL) {
-      if (manager.isTrue(thenExpr))
-        return manager.isFalse(elseExpr) ? condition : this.mkOr([condition, elseExpr]);
+    if (sort === SORT_BOOL && manager.isTrue(thenExpr) && manager.isFalse(elseExpr))
+      return condition;
+    if (sort === SORT_BOOL && manager.isFalse(thenExpr) && manager.isTrue(elseExpr))
+      return this.mkNot(condition);
+    const isEliminatingIte = this.options.isEliminatingIte !== false;
+    if (sort === SORT_BOOL && isEliminatingIte) {
+      if (manager.isTrue(thenExpr)) return this.mkOr([condition, elseExpr]);
       if (manager.isFalse(thenExpr))
-        return manager.isTrue(elseExpr)
-          ? this.mkNot(condition)
-          : { expr: this.mkAnd([this.mkNot(condition), elseExpr]), depth: 1 };
+        return { expr: this.mkAnd([this.mkNot(condition), elseExpr]), depth: 1 };
       if (manager.isTrue(elseExpr)) return this.mkOr([this.mkNot(condition), thenExpr]);
       if (manager.isFalse(elseExpr) || elseExpr === condition)
         return { expr: this.mkAnd([condition, thenExpr]), depth: 1 };
@@ -1214,8 +1217,8 @@ export class Rewriter extends RewriterTpl {
       )
         return this.mkEq(condition, thenExpr);
     }
-    const isElseIte = this.isIte(elseExpr);
-    if (this.isIte(thenExpr)) {
+    const isElseIte = isEliminatingIte && this.isIte(elseExpr);
+    if (isEliminatingIte && this.isIte(thenExpr)) {
       if (elseExpr === manager.getArg(thenExpr, 1)) {
         const conjunction = this.mkAnd([condition, this.mkNot(manager.getArg(thenExpr, 0))]);
         return {

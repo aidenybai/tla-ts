@@ -795,7 +795,10 @@ export class ProtoModel {
       for (const [decl, value] of this.constInterps)
         if (!manager.recFunDefs.has(decl)) collectDeps(decl, [value]);
       sort.sort();
-      const rewriter = new Rewriter(manager, TACTIC_REWRITER_OPTIONS);
+      const rewriter = new Rewriter(manager, {
+        ...TACTIC_REWRITER_OPTIONS,
+        isEliminatingIte: false,
+      });
       for (const decl of sort.sorted) {
         const partition = sort.partitions.get(decl) as number;
         const cleanup = (expr: number) =>
