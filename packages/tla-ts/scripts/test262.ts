@@ -738,7 +738,8 @@ const runTest = async (path: string): Promise<TestRun> => {
   // A linked test's own file is on disk, as its fixtures are, so that TypeScript resolves an
   // import of the test's .js path to the test's code rather than to the .js that Node runs.
   if (isLinked) writeFileSync(programPath, program);
-  return checkProgram(id, program, compiledPath, metadata.isModule);
+  // Any other test runs as the JavaScript that TypeScript emits, which type stripping never reads.
+  return checkProgram(id, program, isLinked ? compiledPath : "test262.js", metadata.isModule);
 };
 
 const getReasonKind = (reason: string) =>
