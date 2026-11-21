@@ -788,6 +788,14 @@ const getBindings = (
   return { bindings, charge };
 };
 
+const evaluateArgument = (
+  expression: Expression & { kind: "FunctionApplication" },
+  context: Context,
+) => {
+  const args = expression.args.map((arg) => evaluate(arg, context));
+  return args.length === 1 ? args[0] : createTuple(args);
+};
+
 const visitApplication = (
   replay: Replay,
   expression: Expression,
@@ -963,17 +971,15 @@ const visitApplication = (
       if (lambda) {
         const isTuple = expression.args.length > 1;
         if (replay.coverage && isTuple) countArgumentTuple(replay.coverage, node, expression);
-        const getArgument = () => {
-          const args = expression.args.map((arg) => evaluate(arg, context));
-          return isTuple ? createTuple(args) : args[0];
-        };
         const bound = runAt(replay, node, () =>
           bindLazyArguments(
             lambda,
             expression,
             replay.callStack && isTuple
-              ? withFrame(replay, getArgumentTuple(expression), getArgument)
-              : getArgument(),
+              ? withFrame(replay, getArgumentTuple(expression), () =>
+                  evaluateArgument(expression, context),
+                )
+              : evaluateArgument(expression, context),
           ),
         );
         // Tool#getNextStates runs the body with the function's cost model, not the application's.
