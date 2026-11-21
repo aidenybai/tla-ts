@@ -6,14 +6,14 @@ import { Example } from "@/components/example";
 import { Hero } from "@/components/hero";
 import { Section } from "@/components/section";
 import { Prompt } from "@/components/prompt";
-import { Reference } from "@/components/reference";
-import { ThemeMenu } from "@/components/theme-menu";
+import { Content } from "@/components/content";
+import { Footer } from "@/components/footer";
 import { Test262Chart } from "@/components/test262-chart";
 import { InlineCode } from "@/components/ui/inline-code";
 import { buttonVariants } from "@/components/ui/button-variants";
 import { Link } from "@/components/ui/link";
 import { cn } from "cn";
-import { install, prompt } from "virtual:site-data";
+import { install, prompt, reference } from "virtual:site-data";
 import { getTest262Percent, TEST262_RUNS } from "@/lib/test262";
 
 const Page = () => (
@@ -56,6 +56,10 @@ const Page = () => (
           <Example.Graph />
           <Example.Hint />
         </Example.Root>
+        <p className="text-pretty">
+          To read the TLA+ that TLA-ts writes, see{" "}
+          <Link href="/tla-for-ts-developers">TLA+ for TypeScript developers</Link>.
+        </p>
       </Section.Root>
       <Section.Root>
         <Section.Title>Install</Section.Title>
@@ -72,7 +76,7 @@ const Page = () => (
           Or skip the install and run <InlineCode>npx tla-ts [file].ts</InlineCode> directly.
         </p>
       </Section.Root>
-      <Reference />
+      <Content sections={reference} />
       <Section.Root>
         <Section.Title>About</Section.Title>
         <p className="text-pretty">
@@ -92,17 +96,7 @@ const Page = () => (
         <Test262Chart />
       </Section.Root>
     </div>
-    <footer className="mt-24 flex items-center justify-between border-t pt-6">
-      <p className="text-sm text-muted-foreground">
-        Made by <Link href="https://aidenybai.com">Aiden Bai</Link>
-      </p>
-      <div className="flex items-center gap-3">
-        <span className="text-sm">
-          <Link href="https://github.com/aidenybai/tla-ts">GitHub</Link>
-        </span>
-        <ThemeMenu />
-      </div>
-    </footer>
+    <Footer />
   </main>
 );
 
