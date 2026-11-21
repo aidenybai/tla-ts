@@ -100,7 +100,7 @@ interface Run {
   generator: SuccessorGenerator | undefined;
   successors: number;
   onUnsatisfied?: (state: Value[], conjunct: Expression) => void;
-  initPredicates?: ReadonlyMap<Expression, Expression>;
+  initPredicates: ReadonlyMap<Expression, Expression> | undefined;
 }
 
 type Continuation = (partial: State, action: string | undefined) => void;
@@ -1348,6 +1348,7 @@ export const isEnabled = (expression: Expression, context: Context): boolean => 
       isStopped: false,
       generator: undefined,
       successors: 0,
+      initPredicates: undefined,
     };
     getRunner(expression, environment, false)(
       run,
@@ -1452,6 +1453,7 @@ export const forEachSuccessor = (
     generator,
     successors: 0,
     onUnsatisfied,
+    initPredicates: undefined,
   };
   getRunner(expression, environment, false)(
     run,
@@ -1489,6 +1491,7 @@ export const hasIncompleteSuccessor = (
     isStopped: false,
     generator: undefined,
     successors: 0,
+    initPredicates: undefined,
   };
   // TLC's Tool#getState generates every successor of the action before it compares them.
   getRunner(expression, environment, false)(
