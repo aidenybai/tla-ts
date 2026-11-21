@@ -700,8 +700,9 @@ const isKeptLazyFunction = (value: Value): value is KeptLazyFunctionValue =>
 
 const keepLambda = (lambda: LazyFunction) => Object.assign(lambda.value, { lambda });
 
+// Tool#getNextStates runs the body of a FcnLambdaValue as an action only until toFcnRcd builds its record.
 export const getLazyFunction = (value: Value) =>
-  isKeptLazyFunction(value) ? value.lambda : undefined;
+  isKeptLazyFunction(value) && value.enumerated === undefined ? value.lambda : undefined;
 
 // SANY makes the arguments of f[a, b] a $Tuple at the application's location, which TLC's call stack holds while they evaluate.
 export const getArgumentTuple = (
