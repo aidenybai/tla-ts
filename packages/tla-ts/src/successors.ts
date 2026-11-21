@@ -70,6 +70,7 @@ import {
 import {
   createTuple,
   getStreamedElements,
+  isElementOf,
   isEqualLikeTlc,
   isFunctionValue,
   isTlcEnumerable,
@@ -458,7 +459,9 @@ const compileMembership = (
     }
     const evaluated = evaluate(set, context);
     const value: Value =
-      expression.operator === "\\subseteq" ? { kind: "Subset", base: evaluated } : evaluated;
+      expression.operator === "\\subseteq"
+        ? { kind: "Subset", base: evaluated, costNode: undefined, secondary: undefined }
+        : evaluated;
     if (!isTlcEnumerable(value)) {
       const message = run.isEnabled
         ? "The right side of \\IN is not enumerable."
@@ -556,7 +559,12 @@ const compileFunctionAction = (
       const args = expression.args.map((arg) => evaluate(arg, context));
       getRunner(lambda.body, environment, isInit)(
         run,
-        bindLazyArguments(lambda, expression, args.length === 1 ? args[0] : createTuple(args)),
+        bindLazyArguments(
+          lambda,
+          expression,
+          args.length === 1 ? args[0] : createTuple(args),
+          isElementOf,
+        ),
         partial,
         action,
         isFixed,
