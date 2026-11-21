@@ -1564,10 +1564,9 @@ const mergeSorted = (
 export const combineFunctions = (left: FunctionValue, right: FunctionValue): FunctionValue => {
   const leftKeys = getWrittenKeys(left);
   const rightKeys = getWrittenKeys(right);
-  const dropped = new Set<Value>();
-  rightKeys.forEach((key) => {
-    if (leftKeys.some((leftKey) => isEqualLikeTlc(key, leftKey))) dropped.add(key);
-  });
+  const dropped =
+    findDroppedKeys(left, right) ??
+    new Set(rightKeys.filter((key) => leftKeys.some((leftKey) => isEqualLikeTlc(key, leftKey))));
   const keys = [...leftKeys, ...rightKeys.filter((key) => !dropped.has(key))];
   const merged = mergeCombined(left, right, dropped);
   if (!merged) {
@@ -1579,6 +1578,25 @@ export const combineFunctions = (left: FunctionValue, right: FunctionValue): Fun
   return keys.every((key, index) => key === combined.domain[index])
     ? combined
     : setWrittenOrder(combined, keys);
+};
+
+// The keys of g that equal one of f's, found by searching g's sorted domain for each key of f where
+// no key holds a written order to forget, as TLC's equality loop finds them; or undefined, for the
+// loop to find them, where a comparison fails.
+const findDroppedKeys = (left: FunctionValue, right: FunctionValue) => {
+  if (!left.domain.every(isOrderless) || !right.domain.every(isOrderless)) return undefined;
+  const dropped = new Set<Value>();
+  try {
+    left.domain.forEach((key) => {
+      const index = findSortedIndex(right.domain, key);
+      if (index !== -1) dropped.add(right.domain[index]);
+    });
+  } catch (error) {
+    // TLC's loop reports whatever equality fails as it always has.
+    if (error instanceof TlaEvaluationError) return undefined;
+    throw error;
+  }
+  return dropped;
 };
 
 const mergeCombined = (left: FunctionValue, right: FunctionValue, dropped: Set<Value>) => {

@@ -95,6 +95,35 @@ const checkModule = (source: string) =>
 const THREW = "the script threw an exception";
 
 describe("compiles scripts by specializing ESCore", () => {
+  // Each set puts a key into a WeakMap's table with @@, which finds an object's key without
+  // comparing it with each key the table holds.
+  describe("sets and gets the keys of a WeakMap that grows a key at a time", () => {
+    const getSource = (expected: string) => `
+      const map = new WeakMap<object, object>();
+      const head = {};
+      let key: object | undefined = head;
+      for (let index = 0; index < 300; index++) {
+        const next = {};
+        map.set(key as object, next);
+        key = next;
+      }
+      map.set(head, map.get(head) as object);
+      let count = 0;
+      for (key = head; key !== undefined; key = map.get(key)) count++;
+      if (String(count) !== "${expected}") throw new Error(String(count));
+    `;
+
+    it("agrees with Node", async () => {
+      expect(() => runInNewContext(stripTypeScriptTypes(getSource("301")))).not.toThrow();
+      expect((await checkScript(getSource("301"))).message).toBeUndefined();
+    });
+
+    it("rejects another result", async () => {
+      expect(() => runInNewContext(stripTypeScriptTypes(getSource("300")))).toThrow("301");
+      expect((await checkScript(getSource("300"))).message).toContain(THREW);
+    });
+  });
+
   describe("runs closures that keep their environments", () => {
     const getSource = (expected: string) => `
       const makeCounter = () => {

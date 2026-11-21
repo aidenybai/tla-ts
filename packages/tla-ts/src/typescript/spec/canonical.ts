@@ -33,12 +33,12 @@ PlainClasses == {"ordinary", "array", "error", "boolean", "number", "string", "d
 \* The classes that view an ArrayBuffer, which their slots' buffer holds.
 ViewClasses == {"typedArray", "dataView"}
 \* The built-in functions whose data is a value: the cell of a promise's resolving functions or
-\* capability, and the host's: process.getBuiltinModule's proxy of async_hooks, console.createTask's
-\* function that runs a task, the getter of a global's value, and the traps of the proxies that
-\* stand for process.hrtime, an AsyncResource, and a TextEncoder, of the value each one reads.
+\* capability, and the host's: console.createTask's function that runs a task, the getter of a
+\* global's value, and the traps of the proxies that stand for process.hrtime, an AsyncResource, and
+\* a TextEncoder, of the value each one reads.
 ObjectDataBuiltins ==
   {<<"Promise", "resolveFunction">>, <<"Promise", "rejectFunction">>, <<"Promise", "capabilityExecutor">>,
-   <<"Module", "getBuiltinModule">>, <<"Module", "createTask">>, <<"Module", "hostGlobal">>,
+   <<"Module", "createTask">>, <<"Module", "hostGlobal">>,
    <<"Module", "hrtimeGet">>, <<"Module", "asyncResourceGet">>, <<"Module", "textEncoderGet">>}
 \* The host's AsyncResource constructor, whose data is a record of the functions run and destroy.
 AsyncResourceBuiltin == <<"Module", "asyncResource">>

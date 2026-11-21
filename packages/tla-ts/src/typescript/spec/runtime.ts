@@ -584,16 +584,23 @@ const DEFINITIONS = [
                               <<[trap |-> SV("get"), method |-> "hrtimeGet", data |-> Val(bigint)]>>)
       o == OrdinaryObjectCreate(hrtime.s, Intrinsic(s, "ObjectPrototype"))
       withHrtime == CreateDataProperty(o.s, Val(o), SV("hrtime"), Val(hrtime))
-      run == CreateBuiltinFunction(withHrtime.s, <<"Module", "asyncRun">>, 1, N("runInAsyncScope"), Empty)
+      load == CreateBuiltinFunction(withHrtime.s, <<"Module", "getBuiltinModule">>, 1, N("getBuiltinModule"), Empty)
+      made == CreateDataProperty(load.s, Val(o), SV("getBuiltinModule"), Val(load))
+  IN Ok(made.s, Val(o))`,
+  // Node's async_hooks, the one object that process.getBuiltinModule and require give, which the
+  // state's required holds under the file number 0, the first time either asks for it.
+  `AsyncHooksModule(s) ==
+  IF 0 \\in DOMAIN s.required THEN Get(s, s.required[0].module, SV("exports")) ELSE
+  LET run == CreateBuiltinFunction(s, <<"Module", "asyncRun">>, 1, N("runInAsyncScope"), Empty)
       destroy == CreateBuiltinFunction(run.s, <<"Module", "asyncDestroy">>, 0, N("emitDestroy"), Empty)
       resource == Alloc(destroy.s, BuiltinObject(Intrinsic(destroy.s, "FunctionPrototype"), <<"Module", "asyncResource">>, 1,
                                                  N("AsyncResource"), TRUE, [run |-> Val(run), destroy |-> Val(destroy)], destroy.s.realmId))
       hooks == OrdinaryObjectCreate(resource.s, Null)
       withResource == CreateDataProperty(hooks.s, Val(hooks), SV("AsyncResource"), resource.v)
       hooksProxy == StoppingProxy(withResource.s, Val(hooks), N("async_hooks"), <<[trap |-> SV("get"), method |-> "asyncHooksGet"]>>)
-      load == CreateBuiltinFunction(hooksProxy.s, <<"Module", "getBuiltinModule">>, 1, N("getBuiltinModule"), Val(hooksProxy))
-      made == CreateDataProperty(load.s, Val(o), SV("getBuiltinModule"), Val(load))
-  IN Ok(made.s, Val(o))`,
+      module == OrdinaryObjectCreate(hooksProxy.s, Intrinsic(s, "ObjectPrototype"))
+      made == CreateDataProperty(module.s, Val(module), SV("exports"), Val(hooksProxy))
+  IN Ok([made.s EXCEPT !.required = (0 :> [module |-> Val(module), loaded |-> TRUE]) @@ @], Val(hooksProxy))`,
   // Node's console, of which a program reads only the methods that write what they're given and
   // createTask: each of the former writes nothing that the program reads, where the values it's
   // given are primitives, which no code of the program runs to format.
@@ -610,7 +617,8 @@ const DEFINITIONS = [
   // Module.prototype.require of Node's CommonJS loader for the module of the file referrer, which
   // loads the file of a specifier that its code requires.
   `Require(s, referrer, id) ==
-  IF ~IsString(id) \\/ id.value \\notin DOMAIN ModuleNode(referrer).targets
+  IF id \\in {SV("node:async_hooks"), SV("async_hooks")} THEN AsyncHooksModule(s)
+  ELSE IF ~IsString(id) \\/ id.value \\notin DOMAIN ModuleNode(referrer).targets
   THEN Assert(FALSE, "tla-ts can't require a module other than a file that a string names")
   ELSE RequireFile(s, ModuleNode(referrer).targets[id.value])`,
   // A part of ECMAScript that ESCore leaves out, by the reason that ESCore gives after
@@ -1531,7 +1539,7 @@ const HOST_PATCHES = [
     [] m = "processGet" ->
          IF Arg(args, 2) \\notin {SV("getBuiltinModule"), SV("hrtime")} THEN HostStop(N("process")) ELSE Get(s, Arg(args, 1), Arg(args, 2))
     [] m = "getBuiltinModule" ->
-         IF Arg(args, 1) \\notin {SV("node:async_hooks"), SV("async_hooks")} THEN HostStop(N("getBuiltinModule")) ELSE Ok(s, data)
+         IF Arg(args, 1) \\notin {SV("node:async_hooks"), SV("async_hooks")} THEN HostStop(N("getBuiltinModule")) ELSE AsyncHooksModule(s)
     [] m = "asyncHooksGet" ->
          IF Arg(args, 2) # SV("AsyncResource") THEN HostStop(N("async_hooks")) ELSE Get(s, Arg(args, 1), Arg(args, 2))
     [] m = "asyncResource" ->
