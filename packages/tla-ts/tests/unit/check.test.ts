@@ -1614,6 +1614,31 @@ ASSUME TLCFP(a) = -887695703
     expect(printed).toEqual([expected]);
   });
 
+  it("reads at each reference to N the value startup stores for a definition D read before startup stored it", async () => {
+    const printed: string[] = [];
+    await check({
+      source: getSubstituteSource(
+        "E == RandomElement(1..100)\nD == E\nASSUME PrintT(<<D, N, N, N, D>>)",
+      ),
+      config: "INIT Init\nNEXT Next\nCONSTANT N <- D",
+      seed: 4n,
+      onPrint: (text) => printed.push(text),
+    });
+    expect(printed).toEqual(["<<74, 92, 92, 92, 74>>"]);
+  });
+
+  it("evaluates the substitute again as TLC starts each module while a definition it reads isn't stored", async () => {
+    const printed: string[] = [];
+    await check({
+      source:
+        '---- MODULE M ----\nEXTENDS TLC, Naturals, P\nVARIABLE y\nInit == y = 0\nNext == y\' = (y + 1) % 2\nE == PrintT("E")\nD == E\nASSUME N\n====',
+      config: "INIT Init\nNEXT Next\nCONSTANT N <- D",
+      loadModule: (name) => (name === "P" ? "---- MODULE P ----\nCONSTANT N\n====" : undefined),
+      onPrint: (text) => printed.push(text),
+    });
+    expect(printed).toEqual(['"E"', '"E"', '"E"']);
+  });
+
   it("counts the substitute's body at each reference to N, as TLC's coverage does", async () => {
     const lines = await getCoverageLines(
       "---- MODULE M ----\nEXTENDS TLC, Naturals\nCONSTANT N\nVARIABLE y\nInit == y = 0\nNext == y' \\in N\nD == {1, 2} \\cup {3}\nInv == y \\in N \\/ y = 0\n====",
@@ -1826,6 +1851,19 @@ ASSUME TLCFP(a) = -887695703
       onPrint: (text) => printed.push(text),
     });
     expect(printed).toEqual([expected]);
+  });
+
+  it("reads at each reference to Foo the value startup stores for a definition Bar read before startup stored it", async () => {
+    const printed: string[] = [];
+    await check({
+      source: getOverrideSource(
+        "Foo == 1\nE == RandomElement(1..100)\nBar == E\nASSUME PrintT(<<Bar, Foo, Foo, Bar>>)",
+      ),
+      config: "INIT Init\nNEXT Next\nCONSTANT Foo <- Bar\n",
+      seed: 4n,
+      onPrint: (text) => printed.push(text),
+    });
+    expect(printed).toEqual(["<<74, 92, 92, 74>>"]);
   });
 
   it("counts the substitute's body at each reference to Foo, as TLC's coverage does", async () => {

@@ -43,6 +43,7 @@ const TEMPORAL_LEVEL_FLAGS = ACTION_LEVEL_FLAGS | 128;
 const RANDOM = 256;
 const ABOVE_CONSTANT_BOUND = 512;
 const TLC_EVAL = 1024;
+const REEVALUATION_SHOWN = 2048;
 
 const ACTION_KINDS = new Set<Expression["kind"]>([
   "Prime",
@@ -354,24 +355,25 @@ export const createDefinitionFacts = (environment: DefinitionNames): DefinitionF
     const callee = getId(edge);
     return !isEvaluatedOnce(edge.callee, reads[callee * words] | startup[callee * words]);
   };
-  const getPurityEdges = (isPassed: (edge: Edge) => boolean) =>
-    edges.map((own) => new Int32Array(own.filter(isPassed).map(getId)));
-  // TLC evaluates a substitute at each reference, which a reference shows only where a second evaluation does.
-  const shown = edges.some((own) => own.some((edge) => edge.isSubstitute))
-    ? closeRows(
-        localImpurity,
-        words,
-        getPurityEdges((edge) => edge.isSubstitute || isRecomputed(edge)),
-        SHOWN_MASK,
-      )
-    : localImpurity;
+  // SpecProcessor#processConstantDefns evaluates a substitute before it stores the definitions the substitute reads, so their draws and output can show again.
+  const shown =
+    environment.substitutions.size > 0
+      ? closeRows(localImpurity, words, readEdges, SHOWN_MASK)
+      : localImpurity;
   const purity = closeRows(
     localImpurity,
     words,
-    getPurityEdges(
-      (edge) =>
-        isRecomputed(edge) ||
-        (edge.isSubstitute && (shown[getId(edge) * words] & SHOWN_MASK) !== 0),
+    edges.map(
+      (own) =>
+        new Int32Array(
+          own
+            .filter(
+              (edge) =>
+                isRecomputed(edge) ||
+                (edge.isSubstitute && (shown[getId(edge) * words] & SHOWN_MASK) !== 0),
+            )
+            .map(getId),
+        ),
     ),
     PURITY_MASK,
   );
@@ -380,7 +382,8 @@ export const createDefinitionFacts = (environment: DefinitionNames): DefinitionF
       ? (word & READ_MASK) |
         (startup[position] & ABOVE_CONSTANT_BOUND) |
         (levels[position] & TEMPORAL_LEVEL_FLAGS) |
-        (purity[position] & PURITY_MASK)
+        (purity[position] & PURITY_MASK) |
+        ((shown[position] & SHOWN_MASK) === 0 ? 0 : REEVALUATION_SHOWN)
       : word,
   );
   return { ids, rows, words };
@@ -408,7 +411,7 @@ const getExpressionsRow = (expressions: Expression[], environment: Environment) 
     }
     if (
       !isEvaluatedOnce(edge.callee, callee[0]) ||
-      (edge.isSubstitute && (callee[0] & SHOWN_MASK) !== 0)
+      (edge.isSubstitute && (callee[0] & REEVALUATION_SHOWN) !== 0)
     ) {
       row[0] |= callee[0] & PURITY_MASK;
     }
@@ -423,7 +426,7 @@ export const isEvaluatedAtStartup = (definition: Definition, environment: Enviro
   (getRow(definition, environment)[0] & ABOVE_CONSTANT_BOUND) === 0;
 
 export const isReevaluationShown = (definition: Definition, environment: Environment) =>
-  (getRow(definition, environment)[0] & (SHOWN_MASK | STARTUP_MASK)) !== 0;
+  (getRow(definition, environment)[0] & (REEVALUATION_SHOWN | STARTUP_MASK)) !== 0;
 
 const EFFECT_FLAGS = {
   any: IMPURE,
