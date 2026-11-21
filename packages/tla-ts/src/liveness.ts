@@ -18,6 +18,7 @@ import {
   describeRange,
   bindDefinitions,
   bindOperatorArguments,
+  bindUncachedArguments,
   evaluate,
   forEachBinding,
   forEachBoundElement,
@@ -547,7 +548,7 @@ export const expandTemporal = (
     if (isExpandable) {
       return expand(
         operator.body,
-        bindOperatorArguments(operator, expression.args, context),
+        bindUncachedArguments(operator, expression.args, context),
         getReferenceName(expression, expression.operator, environment) ??
           (expansion.isSubstituted && definition
             ? definition.name
@@ -713,7 +714,7 @@ export const toLiveExpression = (
         }
         return expand(
           operator.body,
-          bindOperatorArguments(operator, args, context),
+          bindUncachedArguments(operator, args, context),
           expression,
           scope,
         );

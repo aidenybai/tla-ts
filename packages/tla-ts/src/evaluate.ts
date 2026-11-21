@@ -170,6 +170,7 @@ export interface Thunk {
   isStreamed: boolean;
   isRebuilt: boolean;
   isReleased?: boolean;
+  isUncached?: boolean;
 }
 
 type Binding =
@@ -1095,7 +1096,7 @@ const forceThunk = (thunk: Thunk, context: Context) => {
           evaluate(thunk.expression, withScope(context, thunk.scope)),
         )
       : evaluate(thunk.expression, withScope(context, thunk.scope));
-  if (!thunk.isStreamed || isSettledValue(value)) {
+  if (!thunk.isUncached && (!thunk.isStreamed || isSettledValue(value))) {
     thunk.cache = value;
     thunk.state = context.state;
     thunk.next = context.next;
@@ -1341,6 +1342,15 @@ export const bindOperatorArguments = (
   }
   return scope;
 };
+
+// SpecProcessor#getOpContext and Liveness#astToLiveAppl bind the arguments of an operator they take apart as uncachable LazyValues.
+export const bindUncachedArguments = (closure: Closure, args: Expression[], context: Context) =>
+  bindOperatorArguments(
+    closure,
+    args,
+    context,
+    args.map((arg) => (inner) => ({ ...createThunk(arg, inner), isUncached: true })),
+  );
 
 const callOperator = (
   operator: Operator,

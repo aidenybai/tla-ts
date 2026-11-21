@@ -2114,9 +2114,19 @@ ASSUME TLCFP(a) = -887695703
     "SpecInv == [](InnerS /\\ InnerS)",
     "SpecSub == [][InnerS /\\ FALSE]_c",
     "SpecQ == \\A q \\in {0, 1} : [][Step /\\ q \\in {0, 1}]_z",
+    "SpecArg(A) == [][A]_z",
+    "SpecApp == SpecArg(Step)",
+    "SpecArgInv(A) == [](A)",
+    "SpecAppInv == SpecArgInv(InnerS)",
     "====",
     "",
   ].join("\n");
+  const getPropertyPartCheck = (property: string, head: string[], printed: string[]) => ({
+    source: `---- MODULE M ----\nEXTENDS TLC, Naturals\n${head[0]}VARIABLE y\n${head[1]}\nInit == y = 0\nNext == y' = (y + 1) % 2\nSpec == Init /\\ [][Next]_y\nProp == ${property}\n====\n`,
+    config: `SPECIFICATION Spec\n${head[2]}PROPERTY Prop\n`,
+    loadModule: (name: string) => (name === "P" ? PROPERTY_PARTS : undefined),
+    onPrint: (text: string) => printed.push(text),
+  });
 
   it.each([
     ["I!Spec", "WITH c <- PrintT", EXPLICIT, 3],
@@ -2129,15 +2139,51 @@ ASSUME TLCFP(a) = -887695703
     "evaluates the substitutions of each part SpecProcessor#processConfigProps takes out of PROPERTY %s once per evaluation, through %s",
     async (property, _title, head, count) => {
       const printed: string[] = [];
-      await check({
-        source: `---- MODULE M ----\nEXTENDS TLC, Naturals\n${head[0]}VARIABLE y\n${head[1]}\nInit == y = 0\nNext == y' = (y + 1) % 2\nSpec == Init /\\ [][Next]_y\nProp == ${property}\n====\n`,
-        config: `SPECIFICATION Spec\n${head[2]}PROPERTY Prop\n`,
-        loadModule: (name) => (name === "P" ? PROPERTY_PARTS : undefined),
-        onPrint: (text) => printed.push(text),
-      });
+      await check(getPropertyPartCheck(property, head, printed));
       expect(printed).toEqual(Array.from({ length: count }, () => '"c"'));
     },
   );
+
+  it.each([
+    ["I!SpecApp", "WITH c <- PrintT", EXPLICIT, 0],
+    ["I!SpecApp", "CONSTANT c <- D", IMPLICIT, 1],
+    ['I("c")!SpecApp', "I(x) WITH c <- PrintT(x)", PARAMETERIZED, 0],
+  ])(
+    "rejects the action of the application PROPERTY %s reaches through %s, as SpecProcessor#processConfigProps inlines none under a SubstInNode",
+    async (property, _title, head, count) => {
+      const printed: string[] = [];
+      await expect(check(getPropertyPartCheck(property, head, printed))).rejects.toThrow(
+        new TlaEvaluationError(
+          "Temporal formulas containing actions must be of forms <>[]A or []<>A.",
+        ),
+      );
+      expect(printed).toEqual(Array.from({ length: count }, () => '"c"'));
+    },
+  );
+
+  it.each([
+    ["I!SpecAppInv", "WITH c <- PrintT", EXPLICIT, 5],
+    ["I!SpecAppInv", "CONSTANT c <- D", IMPLICIT, 6],
+    ['I("c")!SpecAppInv', "I(x) WITH c <- PrintT(x)", PARAMETERIZED, 5],
+  ])(
+    "evaluates the argument of the application PROPERTY %s reaches through %s at each liveness check, as Liveness#astToLiveAppl binds it uncachable",
+    async (property, _title, head, count) => {
+      const printed: string[] = [];
+      await check(getPropertyPartCheck(property, head, printed));
+      expect(printed).toEqual(Array.from({ length: count }, () => '"c"'));
+    },
+  );
+
+  it("evaluates the argument of an operator a PROPERTY applies at each liveness check, as SpecProcessor#processConfigProps binds it uncachable", async () => {
+    const printed: string[] = [];
+    await check({
+      source:
+        '---- MODULE M ----\nEXTENDS TLC, Naturals\nVARIABLE y\nInit == y = 0\nNext == y\' = (y + 1) % 2\nSpec == Init /\\ [][Next]_y /\\ WF_y(Next)\nLive(A) == <>(A)\nProp == Live(PrintT("c") /\\ y = 1)\n====\n',
+      config: "SPECIFICATION Spec\nPROPERTY Prop\n",
+      onPrint: (text) => printed.push(text),
+    });
+    expect(printed).toEqual(['"c"', '"c"', '"c"', '"c"', '"c"']);
+  });
 
   it("reads TLCGet in every state through a constant substituted with it, as TLC's level bound does", async () => {
     const prints: string[] = [];
