@@ -22,6 +22,8 @@ import { getJavaHashCode } from "./java-hash";
 import { getTlcFingerprint } from "./tlc/fingerprint";
 import {
   getCardinality,
+  isElementOf,
+  isElementOfWith,
   isEmptySet,
   isReducibleSet,
   type IntervalValue,
@@ -1023,6 +1025,39 @@ export const chargeFunctionConstruction = (coverage: Coverage, node: number, set
   const size = sizes.reduce((product, setSize) => product * setSize, 1);
   for (let index = 0; index < size; index++) advance();
   coverage.secondary[node] += size;
+};
+
+// The member methods of these sets ask their component sets, which may charge.
+const COMPOSITE_SET_KINDS = new Set<string>([
+  "FunctionSet",
+  "RecordSet",
+  "ProductSet",
+  "FilteredSet",
+  "SetOperation",
+  "SequenceSet",
+]);
+
+// SubsetValue#member enumerates the element and UnionValue#member its set of sets, each until it decides, then once more to find the end.
+export const createChargedMembership = (coverage: Coverage) => {
+  const isMember = (element: Value, set: Value): boolean => {
+    if (typeof set !== "object") return isElementOf(element, set);
+    if (set.kind !== "Subset" && set.kind !== "Union") {
+      return COMPOSITE_SET_KINDS.has(set.kind)
+        ? isElementOfWith(element, set, isMember)
+        : isElementOf(element, set);
+    }
+    let drawn = 0;
+    const isElement = isElementOfWith(element, set, (item, inner) => {
+      drawn++;
+      return isMember(item, inner);
+    });
+    const isSubset = set.kind === "Subset";
+    const enumerator = createEnumerator(coverage, isSubset ? element : set.base, drawn, false);
+    for (let index = 0; index < drawn; index++) enumerator.next();
+    if (isElement === isSubset) enumerator.next();
+    return isElement;
+  };
+  return isMember;
 };
 
 const getLeadingZeros = (value: bigint) => {

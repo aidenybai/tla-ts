@@ -2884,6 +2884,20 @@ export const isElementOf = (element: Value, set: Value): boolean => {
   return isElement;
 };
 
+// Asks isMember whether each component is in the set's component sets, as TLC's member methods ask theirs.
+export const isElementOfWith = (
+  element: Value,
+  set: Value,
+  isMember: typeof isElementOf,
+): boolean => {
+  const sets = setTrace.sets;
+  if (sets === undefined) return isElementOfAnySet(element, set, isMember);
+  sets.push(set);
+  const isElement = isElementOfAnySet(element, set, isMember);
+  sets.pop();
+  return isElement;
+};
+
 const isIntegerInSortedSet = (element: number, set: SetValue) => {
   const elements = set.elements;
   let low = 0;
@@ -2920,13 +2934,13 @@ const isModelValueMember = (modelValue: ModelValue, set: Value) => {
 const isElementOfSet = (element: Value, set: Value): boolean => {
   if (typeof element === "number" && typeof set === "object") {
     if (set.kind === "Set" && !isTypedModelValueCreated)
-      return isIntegerInSortedSet(element, set) ?? isElementOfAnySet(element, set);
+      return isIntegerInSortedSet(element, set) ?? isElementOfAnySet(element, set, isElementOf);
     if (set.kind === "Interval") return element >= set.low && element <= set.high;
   }
-  return isElementOfAnySet(element, set);
+  return isElementOfAnySet(element, set, isElementOf);
 };
 
-const isElementOfAnySet = (element: Value, set: Value): boolean => {
+const isElementOfAnySet = (element: Value, set: Value, isMember: typeof isElementOf): boolean => {
   if (!isSetValue(set)) throw new TlaEvaluationError(describeNonSetMembership(element, set));
   switch (set.kind) {
     case "Set":
@@ -2965,7 +2979,7 @@ const isElementOfAnySet = (element: Value, set: Value): boolean => {
           `Attempted to check if the non-enumerable value\n${prettyPrint(formatValue(element))}\nis element of\n${prettyPrint(formatValue(set))}`,
         );
       }
-      return toFiniteSet(element).elements.every((item) => isElementOf(item, set.base));
+      return toFiniteSet(element).elements.every((item) => isMember(item, set.base));
     case "FunctionSet": {
       if (!isFunctionValue(element)) {
         if (isModelValue(element)) return isModelValueMember(element, set);
@@ -2983,7 +2997,7 @@ const isElementOfAnySet = (element: Value, set: Value): boolean => {
               { kind: "Interval", low, high: low + functionValue.domain.length - 1 },
               set.domain,
             );
-      return isDomain && functionValue.range.every((item) => isElementOf(item, set.range));
+      return isDomain && functionValue.range.every((item) => isMember(item, set.range));
     }
     case "RecordSet": {
       forgetOwnWrittenOrder(element);
@@ -2998,7 +3012,7 @@ const isElementOfAnySet = (element: Value, set: Value): boolean => {
         functionValue.domain.length === set.names.length &&
         set.names.every((name, index) => {
           const position = findSortedIndex(functionValue.domain, name);
-          return position !== -1 && isElementOf(functionValue.range[position], set.sets[index]);
+          return position !== -1 && isMember(functionValue.range[position], set.sets[index]);
         })
       );
     }
@@ -3016,13 +3030,13 @@ const isElementOfAnySet = (element: Value, set: Value): boolean => {
       }
       return (
         elements.length === set.factors.length &&
-        elements.every((item, index) => isElementOf(item, set.factors[index]))
+        elements.every((item, index) => isMember(item, set.factors[index]))
       );
     }
     case "FilteredSet": {
       const depth = setTrace.sets?.length ?? 0;
       try {
-        return isElementOf(element, set.base) && set.test(element, true);
+        return isMember(element, set.base) && set.test(element, true);
       } catch (error) {
         // TLC's SetPredValue#member catches an EvalException, but not the FingerprintException a base with a source turns it into.
         if (
@@ -3049,14 +3063,13 @@ const isElementOfAnySet = (element: Value, set: Value): boolean => {
           if (typeof inner === "object" && inner.kind === "Set") inner.isNormalized = true;
         });
       }
-      return sets.some((inner) => isElementOf(element, inner));
+      return sets.some((inner) => isMember(element, inner));
     }
     case "SetOperation":
       if (set.operator === "\\cup")
-        return isElementOf(element, set.left) || isElementOf(element, set.right);
+        return isMember(element, set.left) || isMember(element, set.right);
       return (
-        isElementOf(element, set.left) &&
-        isElementOf(element, set.right) === (set.operator === "\\cap")
+        isMember(element, set.left) && isMember(element, set.right) === (set.operator === "\\cap")
       );
     case "SequenceSet": {
       const elements = getSequenceElements(element);
@@ -3066,7 +3079,7 @@ const isElementOfAnySet = (element: Value, set: Value): boolean => {
           `Attempted to check if the value:\n${prettyPrint(formatValue(element))}\nis an element of ${prettyPrint(formatValue(set))}.`,
         );
       }
-      return elements.every((item) => isElementOf(item, set.base));
+      return elements.every((item) => isMember(item, set.base));
     }
     default:
       throw new TlaEvaluationError(describeNonSetMembership(element, set));
@@ -3257,6 +3270,7 @@ const checkBoundArguments = (
   functionValue: LazyFunctionValue,
   tupleLengths: (number | undefined)[],
   argument: Value,
+  isMember: typeof isElementOf,
 ) => {
   const domain = functionValue.domain;
   const elements = getSequenceElements(argument);
@@ -3270,7 +3284,7 @@ const checkBoundArguments = (
     if (index >= elements.length) throw createArgumentListError(functionValue, argument);
     const element = elements[index];
     const position = `argument number ${index + 1}`;
-    if (!isElementOf(element, domain.factors[index])) {
+    if (!isMember(element, domain.factors[index])) {
       throw new TlaEvaluationError(
         describeBoundArgument(
           functionValue,
@@ -3298,6 +3312,20 @@ const checkBoundArguments = (
   }
 };
 
+// Returns before the body runs, so a recursive function nests no deeper for it.
+export const checkLazyArgument = (
+  functionValue: LazyFunctionValue,
+  argument: Value,
+  isMember: typeof isElementOf,
+) => {
+  const tupleLengths = functionValue.boundTupleLengths;
+  if (tupleLengths !== undefined) {
+    checkBoundArguments(functionValue, tupleLengths, argument, isMember);
+  } else if (!isMember(argument, functionValue.domain)) {
+    throw new TlaEvaluationError(describeMissingArgument(functionValue, argument));
+  }
+};
+
 export const applyFunction = (
   functionValue: Value,
   argument: Value,
@@ -3307,14 +3335,7 @@ export const applyFunction = (
     if (functionValue.enumerated) {
       return applyFunction(functionValue.enumerated, argument, describeMissing);
     }
-    const tupleLengths = functionValue.boundTupleLengths;
-    if (tupleLengths !== undefined) {
-      checkBoundArguments(functionValue, tupleLengths, argument);
-      return functionValue.apply(argument);
-    }
-    if (!isElementOf(argument, functionValue.domain)) {
-      throw new TlaEvaluationError(describeMissingArgument(functionValue, argument));
-    }
+    checkLazyArgument(functionValue, argument, isElementOf);
     return functionValue.apply(argument);
   }
   if (typeof functionValue !== "object" || functionValue.kind !== "Function") {

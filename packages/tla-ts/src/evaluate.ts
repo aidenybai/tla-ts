@@ -33,6 +33,7 @@ import {
   costCoverage,
   countCoverage,
   createChargedEnumerator,
+  createChargedMembership,
   createProductSetEnumerator,
   DO_NOT_RECORD,
   enterFrames,
@@ -70,6 +71,7 @@ import { getKeyName } from "./resolve";
 import { isEnabled } from "./successors";
 import {
   applyFunction,
+  checkLazyArgument,
   describeMissingArgument,
   compareValues,
   createFunction,
@@ -1984,6 +1986,7 @@ const compileApply = (
     const subset = getSubsetOperator(expression, global.evaluateBinary);
     const coverage = environment.coverage;
     if (!coverage) return (context) => subset(left(context), right(context));
+    const isMember = createChargedMembership(coverage);
     return (context) => {
       const leftValue = left(context);
       const rightValue = right(context);
@@ -1994,12 +1997,26 @@ const compileApply = (
       ) {
         return subset(leftValue, rightValue);
       }
-      const missing = leftValue.elements.findIndex((element) => !isElementOf(element, rightValue));
+      const missing = leftValue.elements.findIndex((element) => !isMember(element, rightValue));
       costCoverage(coverage, leftValue, (missing === -1 ? leftValue.elements.length : missing) + 1);
       return missing === -1;
     };
   }
   const coverage = environment.coverage;
+  if (
+    coverage &&
+    global?.kind === "Builtin" &&
+    (global.name === "\\in" || global.name === "\\notin") &&
+    args.length === 2 &&
+    isValueArgument(args[0], environment) &&
+    isValueArgument(args[1], environment)
+  ) {
+    const element = getEvaluator(args[0], environment);
+    const set = getEvaluator(args[1], environment);
+    const isMember = createChargedMembership(coverage);
+    const isIn = global.name === "\\in";
+    return (context) => isMember(element(context), set(context)) === isIn;
+  }
   const combine = global?.kind === "Builtin" ? global.evaluateBinary : undefined;
   if (coverage && combine && SET_OPERATORS.has(expression.operator) && args.length === 2) {
     const left = getEvaluator(args[0], environment);
@@ -2774,6 +2791,27 @@ const compile = (expression: Expression, environment: Environment): Evaluator =>
         expectFunction(evaluated(toKeepLazyContext(context)), expression);
       const args = expression.args.map(getChildEvaluator);
       const describeMissing = getMissingArgumentDescriber(environment.runtime.version);
+      const coverage = environment.coverage;
+      if (coverage) {
+        const isMember = createChargedMembership(coverage);
+        const getArgument =
+          args.length === 1
+            ? args[0]
+            : (context: Context) => createTuple(args.map((arg) => arg(context)));
+        return (context) => {
+          const functionValue = evaluateFunction(context);
+          const argument = getArgument(context);
+          if (
+            typeof functionValue !== "object" ||
+            functionValue.kind !== "LazyFunction" ||
+            functionValue.enumerated !== undefined
+          ) {
+            return applyFunction(functionValue, argument, describeMissing);
+          }
+          checkLazyArgument(functionValue, argument, isMember);
+          return functionValue.apply(argument);
+        };
+      }
       if (args.length === 1) {
         const argument = args[0];
         return (context) =>

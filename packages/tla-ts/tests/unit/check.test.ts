@@ -3246,6 +3246,360 @@ ASSUME TLCFP(a) = -887695703
     ]);
   });
 
+  it.each([
+    [
+      "a set literal is checked against SUBSET",
+      "VARIABLE x\nInit == x = 0\nNext == x < 2 /\\ x' = IF {1, 3} \\in SUBSET {1, 2, 3} THEN x + 1 ELSE x",
+      [
+        ["line 4, col 9 to line 4, col 13 of module M: 1"],
+        [
+          "line 5, col 9 to line 5, col 13 of module M: 2",
+          "|line 5, col 9 to line 5, col 9 of module M: 3",
+          "line 5, col 18 to line 5, col 70 of module M: 2",
+          "|line 5, col 23 to line 5, col 70 of module M: 2",
+          "||line 5, col 26 to line 5, col 52 of module M: 2",
+          "|||line 5, col 26 to line 5, col 31 of module M: 2:6",
+          "|||line 5, col 37 to line 5, col 52 of module M: 2",
+          "||line 5, col 59 to line 5, col 63 of module M: 2",
+        ],
+      ],
+    ],
+    [
+      "a set literal outside SUBSET is checked against it",
+      "VARIABLE x\nInit == x = 0\nNext == x < 2 /\\ x' = x + 1 /\\ {1, 3} \\notin SUBSET {1, 2}",
+      [
+        ["line 4, col 9 to line 4, col 13 of module M: 1"],
+        [
+          "line 5, col 9 to line 5, col 13 of module M: 2",
+          "|line 5, col 9 to line 5, col 9 of module M: 3",
+          "line 5, col 18 to line 5, col 27 of module M: 2",
+          "line 5, col 32 to line 5, col 58 of module M: 2",
+          "|line 5, col 32 to line 5, col 37 of module M: 2:4",
+          "|line 5, col 46 to line 5, col 58 of module M: 2",
+        ],
+      ],
+    ],
+    [
+      "a set a state holds is checked against SUBSET",
+      "VARIABLES x, y\nInit == x = 0 /\\ y = {1, 2}\nNext == x < 2 /\\ x' = x + 1 /\\ y \\in SUBSET {1, 2, 3} /\\ UNCHANGED y",
+      [
+        [
+          "line 4, col 18 to line 4, col 27 of module M: 1",
+          "|line 4, col 22 to line 4, col 27 of module M: 1:6",
+        ],
+        [
+          "line 5, col 9 to line 5, col 13 of module M: 2",
+          "|line 5, col 9 to line 5, col 9 of module M: 3",
+          "line 5, col 18 to line 5, col 27 of module M: 2",
+          "line 5, col 32 to line 5, col 53 of module M: 4",
+          "|line 5, col 32 to line 5, col 32 of module M: 2",
+          "|line 5, col 38 to line 5, col 53 of module M: 2",
+          "line 5, col 58 to line 5, col 68 of module M: 2",
+        ],
+      ],
+    ],
+    [
+      "a set of sets is checked against SUBSET SUBSET",
+      "VARIABLE x\nInit == x = 0\nNext == x < 2 /\\ x' = x + 1 /\\ {{1}, {2}} \\in SUBSET SUBSET {1, 2}",
+      [
+        ["line 4, col 9 to line 4, col 13 of module M: 1"],
+        [
+          "line 5, col 9 to line 5, col 13 of module M: 2",
+          "|line 5, col 9 to line 5, col 9 of module M: 3",
+          "line 5, col 18 to line 5, col 27 of module M: 2",
+          "line 5, col 32 to line 5, col 66 of module M: 2",
+          "|line 5, col 32 to line 5, col 41 of module M: 2:6",
+          "||line 5, col 33 to line 5, col 35 of module M: 2:4",
+          "||line 5, col 38 to line 5, col 40 of module M: 2:4",
+          "|line 5, col 47 to line 5, col 66 of module M: 2",
+        ],
+      ],
+    ],
+    [
+      "set literals are checked as a subset of SUBSET",
+      "VARIABLE x\nInit == x = 0\nNext == x < 2 /\\ x' = x + 1 /\\ {{1}, {2, 1}} \\subseteq SUBSET {1, 2}",
+      [
+        ["line 4, col 9 to line 4, col 13 of module M: 1"],
+        [
+          "line 5, col 9 to line 5, col 13 of module M: 2",
+          "|line 5, col 9 to line 5, col 9 of module M: 3",
+          "line 5, col 18 to line 5, col 27 of module M: 2",
+          "line 5, col 32 to line 5, col 68 of module M: 2",
+          "|line 5, col 32 to line 5, col 44 of module M: 2:6",
+          "||line 5, col 33 to line 5, col 35 of module M: 2:4",
+          "||line 5, col 38 to line 5, col 43 of module M: 2:6",
+          "|line 5, col 56 to line 5, col 68 of module M: 2",
+        ],
+      ],
+    ],
+    [
+      "a set literal is checked against a filter of SUBSET",
+      "VARIABLE x\nInit == x = 0\nNext == x < 2 /\\ x' = x + 1 /\\ {1, 2} \\in {t \\in SUBSET {1, 2, 3} : 1 \\in t}",
+      [
+        ["line 4, col 9 to line 4, col 13 of module M: 1"],
+        [
+          "line 5, col 9 to line 5, col 13 of module M: 2",
+          "|line 5, col 9 to line 5, col 9 of module M: 3",
+          "line 5, col 18 to line 5, col 27 of module M: 2",
+          "line 5, col 32 to line 5, col 76 of module M: 2",
+          "|line 5, col 32 to line 5, col 37 of module M: 2:6",
+          "|line 5, col 43 to line 5, col 76 of module M: 2",
+        ],
+      ],
+    ],
+    [
+      "a function a state holds is checked against a set of functions into SUBSET",
+      "VARIABLES x, y\nInit == x = 0 /\\ y = [i \\in {1, 2} |-> {i}]\nNext == x < 2 /\\ x' = x + 1 /\\ y \\in [{1, 2} -> SUBSET {1, 2, 3}] /\\ UNCHANGED y",
+      [
+        [
+          "line 4, col 18 to line 4, col 43 of module M: 1",
+          "|line 4, col 22 to line 4, col 43 of module M: 1:2",
+          "||line 4, col 40 to line 4, col 42 of module M: 2:8",
+          "|||line 4, col 41 to line 4, col 41 of module M: 2",
+          "||line 4, col 29 to line 4, col 34 of module M: 1:3",
+        ],
+        [
+          "line 5, col 9 to line 5, col 13 of module M: 2",
+          "|line 5, col 9 to line 5, col 9 of module M: 3",
+          "line 5, col 18 to line 5, col 27 of module M: 2",
+          "line 5, col 32 to line 5, col 65 of module M: 4",
+          "|line 5, col 32 to line 5, col 32 of module M: 2",
+          "|line 5, col 38 to line 5, col 65 of module M: 2",
+          "line 5, col 70 to line 5, col 80 of module M: 2",
+        ],
+      ],
+    ],
+    [
+      "a tuple is checked against a Cartesian product with SUBSET",
+      "VARIABLE x\nInit == x = 0\nNext == x < 2 /\\ x' = x + 1 /\\ <<{1}, 2>> \\in (SUBSET {1}) \\X {2}",
+      [
+        ["line 4, col 9 to line 4, col 13 of module M: 1"],
+        [
+          "line 5, col 9 to line 5, col 13 of module M: 2",
+          "|line 5, col 9 to line 5, col 9 of module M: 3",
+          "line 5, col 18 to line 5, col 27 of module M: 2",
+          "line 5, col 32 to line 5, col 65 of module M: 2",
+          "|line 5, col 32 to line 5, col 41 of module M: 2",
+          "||line 5, col 34 to line 5, col 36 of module M: 2:4",
+          "|line 5, col 47 to line 5, col 65 of module M: 2",
+        ],
+      ],
+    ],
+    [
+      "a tuple is checked against a set of sequences over SUBSET",
+      "VARIABLE x\nInit == x = 0\nNext == x < 2 /\\ x' = x + 1 /\\ <<{1}, {2}>> \\in Seq(SUBSET {1, 2})",
+      [
+        ["line 4, col 9 to line 4, col 13 of module M: 1"],
+        [
+          "line 5, col 9 to line 5, col 13 of module M: 2",
+          "|line 5, col 9 to line 5, col 9 of module M: 3",
+          "line 5, col 18 to line 5, col 27 of module M: 2",
+          "line 5, col 32 to line 5, col 66 of module M: 2",
+          "|line 5, col 32 to line 5, col 43 of module M: 2",
+          "||line 5, col 34 to line 5, col 36 of module M: 2:4",
+          "||line 5, col 39 to line 5, col 41 of module M: 2:4",
+          "|line 5, col 49 to line 5, col 66 of module M: 2",
+        ],
+      ],
+    ],
+    [
+      "a set literal is checked against a union of SUBSETs",
+      "VARIABLE x\nInit == x = 0\nNext == x < 2 /\\ x' = x + 1 /\\ {2} \\in (SUBSET {1}) \\cup (SUBSET {2})",
+      [
+        ["line 4, col 9 to line 4, col 13 of module M: 1"],
+        [
+          "line 5, col 9 to line 5, col 13 of module M: 2",
+          "|line 5, col 9 to line 5, col 9 of module M: 3",
+          "line 5, col 18 to line 5, col 27 of module M: 2",
+          "line 5, col 32 to line 5, col 69 of module M: 2",
+          "|line 5, col 32 to line 5, col 34 of module M: 2:6",
+          "|line 5, col 40 to line 5, col 69 of module M: 2",
+        ],
+      ],
+    ],
+    [
+      "a set literal is found in the second set of a UNION",
+      "VARIABLE x\nInit == x = 0\nNext == x < 2 /\\ x' = x + 1 /\\ {2} \\in UNION {SUBSET {1}, SUBSET {2}}",
+      [
+        ["line 4, col 9 to line 4, col 13 of module M: 1"],
+        [
+          "line 5, col 9 to line 5, col 13 of module M: 2",
+          "|line 5, col 9 to line 5, col 9 of module M: 3",
+          "line 5, col 18 to line 5, col 27 of module M: 2",
+          "line 5, col 32 to line 5, col 69 of module M: 2",
+          "|line 5, col 32 to line 5, col 34 of module M: 2:6",
+          "|line 5, col 40 to line 5, col 69 of module M: 2",
+          "||line 5, col 46 to line 5, col 69 of module M: 2:4",
+          "|||line 5, col 47 to line 5, col 56 of module M: 2",
+          "|||line 5, col 59 to line 5, col 68 of module M: 2",
+        ],
+      ],
+    ],
+    [
+      "a set literal is found in no set of a UNION",
+      "VARIABLE x\nInit == x = 0\nNext == x < 2 /\\ x' = x + 1 /\\ {3} \\notin UNION {SUBSET {1}, SUBSET {2}}",
+      [
+        ["line 4, col 9 to line 4, col 13 of module M: 1"],
+        [
+          "line 5, col 9 to line 5, col 13 of module M: 2",
+          "|line 5, col 9 to line 5, col 9 of module M: 3",
+          "line 5, col 18 to line 5, col 27 of module M: 2",
+          "line 5, col 32 to line 5, col 72 of module M: 2",
+          "|line 5, col 32 to line 5, col 34 of module M: 2:4",
+          "|line 5, col 43 to line 5, col 72 of module M: 2",
+          "||line 5, col 49 to line 5, col 72 of module M: 2:6",
+          "|||line 5, col 50 to line 5, col 59 of module M: 2",
+          "|||line 5, col 62 to line 5, col 71 of module M: 2",
+        ],
+      ],
+    ],
+    [
+      "a lazy function over SUBSET is applied",
+      "VARIABLE x\nf == [y \\in SUBSET {1, 2} |-> Cardinality(y)]\nInit == x = 0\nNext == x < 2 /\\ x' = x + f[{1}]",
+      [
+        ["line 5, col 9 to line 5, col 13 of module M: 1"],
+        [
+          "line 6, col 9 to line 6, col 13 of module M: 2",
+          "|line 6, col 9 to line 6, col 9 of module M: 3",
+          "line 6, col 18 to line 6, col 32 of module M: 2",
+          "|line 6, col 23 to line 6, col 32 of module M: 2",
+          "||line 6, col 23 to line 6, col 23 of module M: 2",
+          "||line 6, col 27 to line 6, col 32 of module M: 2",
+          "|||line 6, col 27 to line 6, col 27 of module M: 2",
+          "|||line 6, col 29 to line 6, col 31 of module M: 2:4",
+        ],
+      ],
+    ],
+    [
+      "a lazy function over SUBSET that prints is applied",
+      "VARIABLE x\nf == [y \\in SUBSET {1, 2} |-> IF PrintT(y) THEN Cardinality(y) ELSE 0]\nInit == x = 0\nNext == x < 2 /\\ x' = x + f[{1}]",
+      [
+        ["line 5, col 9 to line 5, col 13 of module M: 1"],
+        [
+          "line 6, col 9 to line 6, col 13 of module M: 2",
+          "|line 6, col 9 to line 6, col 9 of module M: 3",
+          "line 6, col 18 to line 6, col 32 of module M: 2",
+          "|line 6, col 23 to line 6, col 32 of module M: 2",
+          "||line 6, col 23 to line 6, col 23 of module M: 2",
+          "||line 6, col 27 to line 6, col 32 of module M: 2",
+          "|||line 6, col 27 to line 6, col 27 of module M: 2",
+          "|||line 6, col 29 to line 6, col 31 of module M: 2:4",
+        ],
+      ],
+    ],
+    [
+      "a lazy function an operator builds is applied",
+      "VARIABLE x\nf(z) == [y \\in SUBSET {1, 2} |-> Cardinality(y)]\nInit == x = 0\nNext == x < 2 /\\ x' = x + f(x)[{1}]",
+      [
+        ["line 5, col 9 to line 5, col 13 of module M: 1"],
+        [
+          "line 6, col 9 to line 6, col 13 of module M: 2",
+          "|line 6, col 9 to line 6, col 9 of module M: 3",
+          "line 6, col 18 to line 6, col 35 of module M: 2",
+          "|line 6, col 23 to line 6, col 35 of module M: 2",
+          "||line 6, col 23 to line 6, col 23 of module M: 2",
+          "||line 6, col 27 to line 6, col 35 of module M: 2",
+          "|||line 6, col 27 to line 6, col 30 of module M: 2",
+          "|||line 6, col 32 to line 6, col 34 of module M: 2:4",
+        ],
+      ],
+    ],
+    [
+      "a lazy function in a tuple is applied",
+      "VARIABLE x\nInit == x = 0\nNext == x < 2 /\\ x' = x + 1 /\\ <<[y \\in SUBSET {1, 2} |-> Cardinality(y) + x]>>[1][{1}] = 1 + x",
+      [
+        ["line 4, col 9 to line 4, col 13 of module M: 1"],
+        [
+          "line 5, col 9 to line 5, col 13 of module M: 2",
+          "|line 5, col 9 to line 5, col 9 of module M: 3",
+          "line 5, col 18 to line 5, col 27 of module M: 2",
+          "line 5, col 32 to line 5, col 95 of module M: 2",
+          "|line 5, col 32 to line 5, col 87 of module M: 2",
+          "||line 5, col 32 to line 5, col 82 of module M: 2",
+          "||line 5, col 84 to line 5, col 86 of module M: 2:4",
+          "|line 5, col 91 to line 5, col 95 of module M: 2",
+        ],
+      ],
+    ],
+    [
+      "a lazy function a LET defines is applied",
+      "VARIABLE x\nInit == x = 0\nNext == x = 0 /\\ x' = LET f == [y \\in SUBSET (1..3) |-> Cardinality(y)] IN f[{1}]",
+      [
+        ["line 4, col 9 to line 4, col 13 of module M: 1"],
+        [
+          "line 5, col 9 to line 5, col 13 of module M: 3",
+          "|line 5, col 9 to line 5, col 9 of module M: 2",
+          "line 5, col 18 to line 5, col 81 of module M: 1",
+          "|line 5, col 32 to line 5, col 71 of module M: 1",
+          "|line 5, col 76 to line 5, col 81 of module M: 1",
+          "||line 5, col 76 to line 5, col 76 of module M: 1",
+          "||line 5, col 78 to line 5, col 80 of module M: 1:2",
+        ],
+      ],
+    ],
+    [
+      "a lazy function over SUBSET is applied at a larger set",
+      "VARIABLE x\nInit == x = 0\nNext == x < 2 /\\ x' = x + [s \\in SUBSET {1, 2, 3} |-> Cardinality(s)][{1, 3}]",
+      [
+        ["line 4, col 9 to line 4, col 13 of module M: 1"],
+        [
+          "line 5, col 9 to line 5, col 13 of module M: 1",
+          "|line 5, col 9 to line 5, col 9 of module M: 2",
+          "line 5, col 18 to line 5, col 77 of module M: 1",
+          "|line 5, col 23 to line 5, col 77 of module M: 1",
+          "||line 5, col 23 to line 5, col 23 of module M: 1",
+          "||line 5, col 27 to line 5, col 77 of module M: 1",
+          "|||line 5, col 27 to line 5, col 69 of module M: 1",
+          "|||line 5, col 71 to line 5, col 76 of module M: 1:3",
+        ],
+      ],
+    ],
+    [
+      "a lazy function over SUBSET is applied outside its domain",
+      "VARIABLE x\nInit == x = 0\nNext == x < 2 /\\ x' = x + [s \\in SUBSET {1, 2} |-> Cardinality(s)][{1, 4, 2}]",
+      [
+        ["line 4, col 9 to line 4, col 13 of module M: 1"],
+        [
+          "line 5, col 9 to line 5, col 13 of module M: 2",
+          "line 5, col 18 to line 5, col 77 of module M: 0",
+          "|line 5, col 23 to line 5, col 77 of module M: 2",
+          "||line 5, col 23 to line 5, col 23 of module M: 2",
+          "||line 5, col 27 to line 5, col 77 of module M: 2",
+          "|||line 5, col 27 to line 5, col 66 of module M: 2:4",
+          "||||line 5, col 52 to line 5, col 65 of module M: 4",
+          "||||line 5, col 34 to line 5, col 46 of module M: 2",
+          "|||line 5, col 68 to line 5, col 76 of module M: 2:6",
+        ],
+      ],
+    ],
+    [
+      "a lazy function over a filter of SUBSET is applied",
+      "VARIABLE x\nInit == x = 0\nNext == x < 2 /\\ x' = x + [s \\in {t \\in SUBSET {1, 2} : 1 \\in t} |-> Cardinality(s)][{1}]",
+      [
+        ["line 4, col 9 to line 4, col 13 of module M: 1"],
+        [
+          "line 5, col 9 to line 5, col 13 of module M: 2",
+          "|line 5, col 9 to line 5, col 9 of module M: 3",
+          "line 5, col 18 to line 5, col 89 of module M: 2",
+          "|line 5, col 23 to line 5, col 89 of module M: 2",
+          "||line 5, col 23 to line 5, col 23 of module M: 2",
+          "||line 5, col 27 to line 5, col 89 of module M: 2",
+          "|||line 5, col 27 to line 5, col 84 of module M: 2",
+          "|||line 5, col 86 to line 5, col 88 of module M: 2:4",
+        ],
+      ],
+    ],
+  ])(
+    "charges the sets a membership check enumerates when %s, as TLC's member methods do",
+    async (_title, body, expected) => {
+      const lines = await getCoverageLines(
+        `---- MODULE M ----\nEXTENDS Integers, FiniteSets, Sequences, TLC\n${body}\n====`,
+        "INIT Init\nNEXT Next\nCHECK_DEADLOCK FALSE",
+      );
+      expect(lines).toEqual(expected);
+    },
+  );
+
   it("charges a filter of a set of records or functions per element it draws, as TLC's SetPredValue does", async () => {
     const lines = await getCoverageLines(
       "---- MODULE E ----\nEXTENDS Integers\nVARIABLE x\nInit == x \\in {r \\in [a : 0..1, b : BOOLEAN] : r.a = 0}\nNext == x' \\in {r \\in [a : 0..1, b : BOOLEAN] : r.b = ~x.b}\nInv1 == \\E r \\in {s \\in [a : 0..1, b : BOOLEAN] : s.a = x.a} : r = x\nInv2 == (CHOOSE r \\in {s \\in [a : 0..1, b : BOOLEAN] : s.b = x.b} : TRUE).b = x.b\nInv3 == \\A r \\in {s \\in {f \\in [{1} -> {0, 1}] : f[1] >= x.a} : s[1] > 0} : r[1] = 1\n====",
