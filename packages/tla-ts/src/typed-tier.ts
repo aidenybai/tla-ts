@@ -54,6 +54,7 @@ import {
   getStreamedElements,
   isEnumerable,
   isSameValue,
+  toFiniteFunction,
   toFiniteSet,
   type FunctionValue,
   type ModelValue,
@@ -672,6 +673,8 @@ const getValueType = (value: Value, plains: Plains): Type => {
     addAtom(type, plains, value);
     return type;
   }
+  // A lazy function from the interpreter converts here as the state's fingerprint would convert it, and the tier runs no effects.
+  if (value.kind === "LazyFunction") return getValueType(toFiniteFunction(value), plains);
   if (value.kind === "Interval") return { kind: "Set", element: createInt() };
   if (value.kind !== "Function") {
     const element: Type = createVar();
@@ -703,6 +706,9 @@ const isSameDomain = (left: Value[], right: Value[]) =>
   (left.length === right.length && left.every((key, index) => isSameValue(key, right[index])));
 
 const unifyValue = (type: Type, value: Value, plains: Plains): void => {
+  if (typeof value === "object" && value.kind === "LazyFunction") {
+    return unifyValue(type, toFiniteFunction(value), plains);
+  }
   const resolved = resolveType(type);
   const isMatch =
     (resolved.kind === "Int" && typeof value === "number") ||
@@ -828,6 +834,9 @@ const getEmptyRecordCode = (program: Program, record: RecType) =>
 const getEmptyMap = (map: MapType, plains: Plains) => [isMask(map.keys, plains) ? 0 : [], []];
 
 const toPlain = (value: Value, type: Type, plains: Plains): Plain => {
+  if (typeof value === "object" && value.kind === "LazyFunction") {
+    return toPlain(toFiniteFunction(value), type, plains);
+  }
   const resolved = resolveType(type);
   if (resolved.kind === "Int") return typeof value === "number" ? value : unsupported();
   if (resolved.kind === "Bool") return typeof value === "boolean" ? value : unsupported();
@@ -4447,6 +4456,7 @@ const writeValue = (bytes: Bytes, value: Value, plains: Plains): void => {
     writeScalar(bytes, 1);
     return writeScalar(bytes, getAtom(plains, value));
   }
+  if (value.kind === "LazyFunction") return writeValue(bytes, toFiniteFunction(value), plains);
   const items = value.kind === "Function" ? value.range : getElements(value);
   if (value.kind === "Function" && value.functionClass === "record") {
     const names = getFieldNames(value);

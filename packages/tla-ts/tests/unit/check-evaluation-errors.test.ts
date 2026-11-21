@@ -529,6 +529,187 @@ describe("evaluation errors match TLC", () => {
 
   it.each([
     [
+      "VARIABLE x\nInit == x = 0\nNext == x' = {1} /\\ UNCHANGED x",
+      "{1}",
+      [
+        "Line 5, column 9 to line 5, column 31 in M",
+        "Line 5, column 9 to line 5, column 16 in M",
+        "Line 5, column 21 to line 5, column 31 in M",
+      ],
+    ],
+    [
+      "VARIABLES x, y\nInit == x = 0 /\\ y = 0\nNext == x' = {1} /\\ UNCHANGED x /\\ y' = 0",
+      "{1}",
+      [
+        "Line 5, column 9 to line 5, column 41 in M",
+        "Line 5, column 9 to line 5, column 31 in M",
+        "Line 5, column 9 to line 5, column 16 in M",
+        "Line 5, column 21 to line 5, column 31 in M",
+        "Line 5, column 31 to line 5, column 31 in M",
+      ],
+    ],
+    [
+      "VARIABLES x, y\nInit == x = 0 /\\ y = 0\nNext == LET U(v) == UNCHANGED v IN x' = {1} /\\ U(x) /\\ y' = 0",
+      "{1}",
+      [
+        "Line 5, column 36 to line 5, column 61 in M",
+        "Line 5, column 36 to line 5, column 51 in M",
+        "Line 5, column 36 to line 5, column 43 in M",
+        "Line 5, column 48 to line 5, column 51 in M",
+        "Line 5, column 21 to line 5, column 31 in M",
+        "Line 5, column 31 to line 5, column 31 in M",
+      ],
+    ],
+    [
+      "VARIABLES x, y\nInit == x = 0 /\\ y = 0\nNext == x' = {1} /\\ UNCHANGED <<y, x>> /\\ y' = 0",
+      "{1}",
+      [
+        "Line 5, column 9 to line 5, column 48 in M",
+        "Line 5, column 9 to line 5, column 38 in M",
+        "Line 5, column 9 to line 5, column 16 in M",
+        "Line 5, column 21 to line 5, column 38 in M",
+        "Line 5, column 31 to line 5, column 38 in M",
+        "Line 5, column 33 to line 5, column 33 in M",
+        "Line 5, column 36 to line 5, column 36 in M",
+      ],
+    ],
+    [
+      "VARIABLES x, y\nInit == x = 0 /\\ y = 0\nNext == x' = \"a\" /\\ y' = 0 /\\ UNCHANGED x",
+      '"a"',
+      [
+        "Line 5, column 9 to line 5, column 41 in M",
+        "Line 5, column 9 to line 5, column 26 in M",
+        "Line 5, column 9 to line 5, column 16 in M",
+        "Line 5, column 21 to line 5, column 26 in M",
+        "Line 5, column 31 to line 5, column 41 in M",
+      ],
+    ],
+    [
+      "VARIABLES x, y\nInit == x = {0} /\\ y = 0\nNext == x' = {{\"a\"}} /\\ UNCHANGED x /\\ y' = 0",
+      '{"a"}',
+      [
+        "Line 5, column 9 to line 5, column 45 in M",
+        "Line 5, column 9 to line 5, column 35 in M",
+        "Line 5, column 9 to line 5, column 20 in M",
+        "Line 5, column 25 to line 5, column 35 in M",
+        "Line 5, column 35 to line 5, column 35 in M",
+      ],
+    ],
+  ])(
+    "compares a variable's value with its successor's under UNCHANGED, as TLC's Tool#processUnchangedImplVar calls val0.equals(val1): %s",
+    async (definitions, successor, callStack) => {
+      const result = await check({
+        source: `---- MODULE M ----\nEXTENDS Integers, FiniteSets, TLC\n${definitions}\n====`,
+        config: "INIT Init\nNEXT Next",
+      });
+      expect(result.failure?.message).toBe(
+        getRuntimeException(
+          `Attempted to check equality of integer 0 with non-integer:\n${successor}`,
+        ),
+      );
+      expect(formatCallStackLines(result)).toEqual(callStack);
+      expect(result.failure?.fingerprint).toBeUndefined();
+    },
+  );
+
+  it("compares the value under a predicate's UNCHANGED with its successor's on TLC's path, as TLC's eval of UNCHANGED does", async () => {
+    const result = await check({
+      source:
+        "---- MODULE M ----\nEXTENDS Integers, FiniteSets, TLC\nVARIABLE x\nInit == x = 0\nNext == x' = {1} /\\ ~UNCHANGED x\n====",
+      config: "INIT Init\nNEXT Next",
+    });
+    expect(result.failure?.message).toBe(
+      getRuntimeException("Attempted to check equality of integer 0 with non-integer:\n{1}"),
+    );
+    expect(formatCallStackLines(result)).toEqual([
+      "Line 5, column 9 to line 5, column 32 in M",
+      "Line 5, column 9 to line 5, column 16 in M",
+      "Line 5, column 21 to line 5, column 32 in M",
+      "Line 5, column 22 to line 5, column 32 in M",
+    ]);
+  });
+
+  it("evaluates the expression under a predicate's UNCHANGED before its successor, as TLC's eval of UNCHANGED does", async () => {
+    const printed: string[] = [];
+    const result = await check({
+      source:
+        "---- MODULE M ----\nEXTENDS Integers, FiniteSets, TLC\nVARIABLE x\nInit == x = 0\nNext == x' = (x + 1) % 2 /\\ ~UNCHANGED Print(x, x)\n====",
+      config: "INIT Init\nNEXT Next",
+      onPrint: (text) => printed.push(text),
+    });
+    expect(result.status).toBe("success");
+    expect(printed).toEqual(["0  0", "1  1", "1  1", "0  0"]);
+  });
+
+  it.each([
+    [
+      "x' = {1} /\\ ~UNCHANGED <<x, x>>",
+      "{1}",
+      [
+        "Line 5, column 9 to line 5, column 39 in M",
+        "Line 5, column 9 to line 5, column 16 in M",
+        "Line 5, column 21 to line 5, column 39 in M",
+        "Line 5, column 22 to line 5, column 39 in M",
+        "Line 5, column 32 to line 5, column 39 in M",
+      ],
+    ],
+    [
+      'x\' = "a" /\\ ~UNCHANGED {x}',
+      '"a"',
+      [
+        "Line 5, column 9 to line 5, column 34 in M",
+        "Line 5, column 9 to line 5, column 16 in M",
+        "Line 5, column 21 to line 5, column 34 in M",
+        "Line 5, column 22 to line 5, column 34 in M",
+        "Line 5, column 32 to line 5, column 34 in M",
+      ],
+    ],
+    [
+      'x\' = "a" /\\ UNCHANGED {x}',
+      '"a"',
+      [
+        "Line 5, column 9 to line 5, column 33 in M",
+        "Line 5, column 9 to line 5, column 16 in M",
+        "Line 5, column 21 to line 5, column 33 in M",
+        "Line 5, column 31 to line 5, column 33 in M",
+      ],
+    ],
+    [
+      "x' = {1} /\\ UNCHANGED <<x, x>>",
+      "{1}",
+      [
+        "Line 5, column 9 to line 5, column 38 in M",
+        "Line 5, column 9 to line 5, column 16 in M",
+        "Line 5, column 21 to line 5, column 38 in M",
+        "Line 5, column 31 to line 5, column 38 in M",
+      ],
+    ],
+    [
+      "x' = <<1>> /\\ UNCHANGED <<x>>",
+      "<<1>>",
+      [
+        "Line 5, column 9 to line 5, column 37 in M",
+        "Line 5, column 9 to line 5, column 18 in M",
+        "Line 5, column 23 to line 5, column 37 in M",
+        "Line 5, column 33 to line 5, column 37 in M",
+      ],
+    ],
+  ])(
+    "frames the value a predicate's UNCHANGED compares with its successor's, as TLC's equals heads the FingerprintException with it: %s",
+    async (next, successor, callStack) => {
+      const reason = `Attempted to check equality of integer 0 with non-integer:\n${successor}`;
+      const result = await check({
+        source: `---- MODULE M ----\nEXTENDS Integers, FiniteSets, TLC\nVARIABLE x\nInit == x = 0\nNext == ${next}\n====`,
+        config: "INIT Init\nNEXT Next",
+      });
+      expect(result.failure?.message).toBe(getRuntimeException(reason));
+      expect(formatCallStackLines(result)).toEqual(callStack);
+      expect(result.failure?.fingerprint?.reason).toBe(reason);
+    },
+  );
+
+  it.each([
+    [
       "UNCHANGED of a tuple with an impure element",
       "LET m == <<x, RandomElement({y})>> IN (y' = y /\\ UNCHANGED m)",
       0,
@@ -613,6 +794,82 @@ describe("evaluation errors match TLC", () => {
         `${UNEXPECTED_EXCEPTION}Attempted to apply a function to an argument not in its domain.\nline 6, col 9 to line 6, col 41 of module M`,
         new Set([43 + argument.length]),
       ]);
+    },
+  );
+
+  it.each([
+    [
+      "a lazy function",
+      "VARIABLE x\nInit == x = 0\nNext == x' = x + [i \\in 0..2, j \\in 1..2 |-> i][1 \\div x, 1]",
+      "INIT Init\nNEXT Next",
+      [
+        "Line 5, column 9 to line 5, column 60 in M",
+        "Line 5, column 14 to line 5, column 60 in M",
+        "Line 5, column 18 to line 5, column 60 in M",
+        "Line 5, column 18 to line 5, column 60 in M",
+        "Line 5, column 49 to line 5, column 56 in M",
+      ],
+    ],
+    [
+      "a function a state holds",
+      "VARIABLES x, f\nInit == x = 0 /\\ f = [i \\in 0..2, j \\in 1..2 |-> i + j]\nNext == x' = x + f[1, 1 \\div x] /\\ UNCHANGED f",
+      "INIT Init\nNEXT Next",
+      [
+        "Line 5, column 9 to line 5, column 46 in M",
+        "Line 5, column 9 to line 5, column 31 in M",
+        "Line 5, column 14 to line 5, column 31 in M",
+        "Line 5, column 18 to line 5, column 31 in M",
+        "Line 5, column 18 to line 5, column 31 in M",
+        "Line 5, column 23 to line 5, column 30 in M",
+      ],
+    ],
+    [
+      "a lazy function applied as an action",
+      "VARIABLE x\nInit == x = 0\nNext == [i \\in 0..2, j \\in 1..2 |-> x' = x + i][1 \\div x, 1]",
+      "INIT Init\nNEXT Next",
+      [
+        "Line 5, column 9 to line 5, column 60 in M",
+        "Line 5, column 9 to line 5, column 60 in M",
+        "Line 5, column 49 to line 5, column 56 in M",
+      ],
+    ],
+    [
+      "an invariant",
+      "VARIABLES x, f\nInit == x = 0 /\\ f = [i \\in 0..2, j \\in 1..2 |-> i + j]\nNext == x' = x /\\ UNCHANGED f\nInv == f[1, 1 \\div x] > 0",
+      "INIT Init\nNEXT Next\nINVARIANT Inv",
+      [
+        "Line 4, column 9 to line 4, column 55 in M",
+        "Line 4, column 9 to line 4, column 13 in M",
+        "Line 4, column 18 to line 4, column 55 in M",
+        "Line 6, column 8 to line 6, column 25 in M",
+        "Line 6, column 8 to line 6, column 21 in M",
+        "Line 6, column 8 to line 6, column 21 in M",
+        "Line 6, column 13 to line 6, column 20 in M",
+      ],
+    ],
+    [
+      "a recursive function",
+      "VARIABLE x\nInit == x = 0\nNext == x' = (LET g[n \\in 0..3, m \\in 1..2] == IF n = 0 THEN m ELSE g[n - 1, m \\div x] IN g[2, 1])",
+      "INIT Init\nNEXT Next",
+      [
+        "Line 5, column 9 to line 5, column 98 in M",
+        "Line 5, column 15 to line 5, column 97 in M",
+        "Line 5, column 91 to line 5, column 97 in M",
+        "Line 5, column 48 to line 5, column 86 in M",
+        "Line 5, column 69 to line 5, column 86 in M",
+        "Line 5, column 69 to line 5, column 86 in M",
+        "Line 5, column 78 to line 5, column 85 in M",
+      ],
+    ],
+  ])(
+    "frames the arguments of f[a, b] that fail in %s at the application's location, as TLC's call stack holds SANY's $Tuple",
+    async (_title, definitions, config, callStack) => {
+      const result = await check({
+        source: `---- MODULE M ----\nEXTENDS Integers\n${definitions}\n====`,
+        config,
+      });
+      expect(result.failure?.message).toBe("The second argument of \\div is 0.");
+      expect(formatCallStackLines(result)).toEqual(callStack);
     },
   );
 
@@ -3956,6 +4213,522 @@ describe("evaluation errors match TLC", () => {
       "Line 5, column 9 to line 5, column 88 in M",
       "Line 5, column 9 to line 5, column 14 in M",
       "Line 5, column 19 to line 5, column 88 in M",
+    ]);
+  });
+
+  it.each([
+    [
+      "x' = x /\\ [a |-> x] \\notin [{x} -> {1}]",
+      'Attempted to check equality of integer 0 with non-integer:\n"a"',
+      [
+        "Line 5, column 9 to line 5, column 47 in M",
+        "Line 5, column 9 to line 5, column 14 in M",
+        "Line 5, column 19 to line 5, column 47 in M",
+        "Line 5, column 36 to line 5, column 47 in M",
+        "Line 5, column 37 to line 5, column 39 in M",
+      ],
+    ],
+    [
+      "x' = x /\\ [a |-> x] \\notin ([{x} -> {1}] \\cup {})",
+      'Attempted to check equality of integer 0 with non-integer:\n"a"',
+      [
+        "Line 5, column 9 to line 5, column 57 in M",
+        "Line 5, column 9 to line 5, column 14 in M",
+        "Line 5, column 19 to line 5, column 57 in M",
+        "Line 5, column 37 to line 5, column 56 in M",
+        "Line 5, column 38 to line 5, column 40 in M",
+      ],
+    ],
+    [
+      'x\' = x /\\ [k \\in {x} |-> 1] \\notin [{"a"} -> {1}]',
+      'Attempted to check equality of string "a" with non-string:\n0',
+      [
+        "Line 5, column 9 to line 5, column 57 in M",
+        "Line 5, column 9 to line 5, column 14 in M",
+        "Line 5, column 19 to line 5, column 57 in M",
+        "Line 5, column 44 to line 5, column 57 in M",
+        "Line 5, column 45 to line 5, column 49 in M",
+      ],
+    ],
+    [
+      'x\' = x /\\ [{x} -> {1}] \\subseteq [{"a"} -> {1}]',
+      'Attempted to check equality of string "a" with non-string:\n0',
+      [
+        "Line 5, column 9 to line 5, column 55 in M",
+        "Line 5, column 9 to line 5, column 14 in M",
+        "Line 5, column 19 to line 5, column 55 in M",
+        "Line 5, column 19 to line 5, column 30 in M",
+        "Line 5, column 42 to line 5, column 55 in M",
+        "Line 5, column 43 to line 5, column 47 in M",
+      ],
+    ],
+  ])(
+    "frames the domain of [S -> T] that membership compares, as TLC's SetOfFcnsValue#member does: %s",
+    async (next, reason, callStack) => {
+      const result = await checkSetBound(next, "TRUE");
+      expect(result.failure?.message).toBe(getRuntimeException(reason));
+      expect(formatCallStackLines(result)).toEqual(callStack);
+      expect(result.failure?.fingerprint?.reason).toBe(reason);
+    },
+  );
+
+  it.each([
+    [
+      'x\' = x /\\ [{x} -> {1}] # [{"a"} -> {1}]',
+      [
+        "Line 5, column 9 to line 5, column 47 in M",
+        "Line 5, column 9 to line 5, column 14 in M",
+        "Line 5, column 19 to line 5, column 47 in M",
+        "Line 5, column 19 to line 5, column 30 in M",
+        "Line 5, column 20 to line 5, column 22 in M",
+      ],
+    ],
+    [
+      'x\' = x /\\ [{1} -> {x}] # [{1} -> {"a"}]',
+      [
+        "Line 5, column 9 to line 5, column 47 in M",
+        "Line 5, column 9 to line 5, column 14 in M",
+        "Line 5, column 19 to line 5, column 47 in M",
+        "Line 5, column 19 to line 5, column 30 in M",
+        "Line 5, column 27 to line 5, column 29 in M",
+      ],
+    ],
+    [
+      'x\' = x /\\ [a : {x}] # [a : {"a"}]',
+      [
+        "Line 5, column 9 to line 5, column 41 in M",
+        "Line 5, column 9 to line 5, column 14 in M",
+        "Line 5, column 19 to line 5, column 41 in M",
+        "Line 5, column 19 to line 5, column 27 in M",
+        "Line 5, column 24 to line 5, column 26 in M",
+      ],
+    ],
+    [
+      'x\' = x /\\ {x} \\X {1} # {"a"} \\X {1}',
+      [
+        "Line 5, column 9 to line 5, column 43 in M",
+        "Line 5, column 9 to line 5, column 14 in M",
+        "Line 5, column 19 to line 5, column 43 in M",
+        "Line 5, column 19 to line 5, column 28 in M",
+        "Line 5, column 19 to line 5, column 21 in M",
+      ],
+    ],
+    [
+      'x\' = x /\\ SUBSET {x} # SUBSET {"a"}',
+      [
+        "Line 5, column 9 to line 5, column 43 in M",
+        "Line 5, column 9 to line 5, column 14 in M",
+        "Line 5, column 19 to line 5, column 43 in M",
+        "Line 5, column 19 to line 5, column 28 in M",
+        "Line 5, column 26 to line 5, column 28 in M",
+      ],
+    ],
+  ])(
+    "compares and frames each component of two [S -> T], [a : S], S \\X T or SUBSET S as TLC's equals does: %s",
+    async (next, callStack) => {
+      const reason = 'Attempted to check equality of integer 0 with non-integer:\n"a"';
+      const result = await checkSetBound(next, "TRUE");
+      expect(result.failure?.message).toBe(getRuntimeException(reason));
+      expect(formatCallStackLines(result)).toEqual(callStack);
+      expect(result.failure?.fingerprint?.reason).toBe(reason);
+    },
+  );
+
+  it.each([
+    [
+      "x' = x /\\ <<0, 1>> \\in [a : ([a : 0..x, b : Nat] \\cap [{x} -> {}])]",
+      "Attempted to check if non-record\n<<0, 1>>\nis in the set of records:\n[a: [a: 0..0, b: Nat] \\cap {}]",
+      [
+        "Line 5, column 9 to line 5, column 75 in M",
+        "Line 5, column 9 to line 5, column 14 in M",
+        "Line 5, column 19 to line 5, column 75 in M",
+        "Line 5, column 32 to line 5, column 75 in M",
+      ],
+    ],
+    [
+      'x\' = x /\\ <<1, x>> \\notin SUBSET ([a : {"a", "b"}, b : {"a", "b"}] \\ {x, 1})',
+      'Attempted to check if the non-enumerable value\n<<1, 0>>\nis element of\nSUBSET {[a |-> "a", b |-> "a"], [a |-> "a", b |-> "b"], [a |-> "b", b |-> "a"], [a |-> "b", b |-> "b"]} \\ {0, 1}',
+      [
+        "Line 5, column 9 to line 5, column 84 in M",
+        "Line 5, column 9 to line 5, column 14 in M",
+        "Line 5, column 19 to line 5, column 84 in M",
+        "Line 5, column 35 to line 5, column 84 in M",
+      ],
+    ],
+  ])(
+    "drops the frames of a set that fails to expand as an error message prints it, as TLC's toString swallows the failure: %s",
+    async (next, reason, callStack) => {
+      const result = await checkSetBound(next, "TRUE");
+      expect(result.failure?.message).toBe(getRuntimeException(reason));
+      expect(formatCallStackLines(result)).toEqual(callStack);
+      expect(result.failure?.fingerprint?.reason).toBe(reason);
+    },
+  );
+
+  const OVERRIDDEN_UNION_REASON =
+    'Attempted to compare overridden value Nat with non-overridden value:\n{"a", "b"}';
+  const NON_RECORD_REASON =
+    "Attempted to check if non-record\n{}\nis in the set of records:\n{[a |-> 1, b |-> 1], [a |-> 2, b |-> 1]}";
+
+  it.each([
+    [
+      'x\' = x /\\ \\E e \\in {1} \\X UNION {{"a", "b"}, Nat} : TRUE',
+      OVERRIDDEN_UNION_REASON,
+      [
+        "Line 5, column 9 to line 5, column 64 in M",
+        "Line 5, column 9 to line 5, column 14 in M",
+        "Line 5, column 19 to line 5, column 64 in M",
+        "Line 5, column 28 to line 5, column 57 in M",
+        "Line 5, column 35 to line 5, column 57 in M",
+        "Line 5, column 41 to line 5, column 57 in M",
+      ],
+    ],
+    [
+      'x\' = x /\\ \\E e \\in [a : UNION {{"a", "b"}, Nat}] : TRUE',
+      OVERRIDDEN_UNION_REASON,
+      [
+        "Line 5, column 9 to line 5, column 63 in M",
+        "Line 5, column 9 to line 5, column 14 in M",
+        "Line 5, column 19 to line 5, column 63 in M",
+        "Line 5, column 28 to line 5, column 56 in M",
+        "Line 5, column 33 to line 5, column 55 in M",
+        "Line 5, column 39 to line 5, column 55 in M",
+      ],
+    ],
+    [
+      "x' = x /\\ [a : (SUBSET {x} \\ [a : {1, 2}, b : {1}])] # [{1} -> {1}]",
+      NON_RECORD_REASON,
+      [
+        "Line 5, column 9 to line 5, column 75 in M",
+        "Line 5, column 9 to line 5, column 14 in M",
+        "Line 5, column 19 to line 5, column 75 in M",
+        "Line 5, column 19 to line 5, column 60 in M",
+        "Line 5, column 25 to line 5, column 58 in M",
+        "Line 5, column 38 to line 5, column 58 in M",
+      ],
+    ],
+    [
+      "x' = x /\\ \\E e \\in [a : (SUBSET {x} \\ [a : {1, 2}, b : {1}])] : TRUE",
+      NON_RECORD_REASON,
+      [
+        "Line 5, column 9 to line 5, column 76 in M",
+        "Line 5, column 9 to line 5, column 14 in M",
+        "Line 5, column 19 to line 5, column 76 in M",
+        "Line 5, column 28 to line 5, column 69 in M",
+        "Line 5, column 34 to line 5, column 67 in M",
+        "Line 5, column 47 to line 5, column 67 in M",
+      ],
+    ],
+  ])(
+    "frames a component whose emptiness check fails, as TLC's Value#isEmpty does: %s",
+    async (next, reason, callStack) => {
+      const result = await checkSetBound(next, "TRUE");
+      expect(result.failure?.message).toBe(getRuntimeException(reason));
+      expect(formatCallStackLines(result)).toEqual(callStack);
+      expect(result.failure?.fingerprint?.reason).toBe(reason);
+    },
+  );
+
+  it.each([
+    [
+      'x\' = x /\\ [a |-> x] \\notin SUBSET [{1} -> UNION {{1, "a"}, Nat}]',
+      [
+        "Line 5, column 9 to line 5, column 72 in M",
+        "Line 5, column 9 to line 5, column 14 in M",
+        "Line 5, column 19 to line 5, column 72 in M",
+        "Line 5, column 36 to line 5, column 72 in M",
+        "Line 5, column 43 to line 5, column 72 in M",
+        "Line 5, column 51 to line 5, column 71 in M",
+        "Line 5, column 57 to line 5, column 71 in M",
+        "Line 5, column 58 to line 5, column 65 in M",
+      ],
+    ],
+    [
+      'x\' = x /\\ [a |-> 1] \\notin SUBSET [a : UNION {{1, "a"}, Nat}]',
+      [
+        "Line 5, column 9 to line 5, column 69 in M",
+        "Line 5, column 9 to line 5, column 14 in M",
+        "Line 5, column 19 to line 5, column 69 in M",
+        "Line 5, column 36 to line 5, column 69 in M",
+        "Line 5, column 43 to line 5, column 69 in M",
+        "Line 5, column 48 to line 5, column 68 in M",
+        "Line 5, column 54 to line 5, column 68 in M",
+        "Line 5, column 55 to line 5, column 62 in M",
+      ],
+    ],
+    [
+      'x\' = x /\\ 1 \\notin SUBSET ({1} \\X UNION {{1, "a"}, Nat})',
+      [
+        "Line 5, column 9 to line 5, column 64 in M",
+        "Line 5, column 9 to line 5, column 14 in M",
+        "Line 5, column 19 to line 5, column 64 in M",
+        "Line 5, column 28 to line 5, column 64 in M",
+        "Line 5, column 36 to line 5, column 63 in M",
+        "Line 5, column 43 to line 5, column 63 in M",
+        "Line 5, column 49 to line 5, column 63 in M",
+        "Line 5, column 50 to line 5, column 57 in M",
+      ],
+    ],
+  ])(
+    "frames each set an error message prints while printing it fails, as TLC's toString does: %s",
+    async (next, callStack) => {
+      const reason = 'Attempted to compare string "a" with non-string:\n1';
+      const result = await checkSetBound(next, "TRUE");
+      expect(result.failure?.message).toBe(getRuntimeException(reason));
+      expect(formatCallStackLines(result)).toEqual(callStack);
+      expect(result.failure?.fingerprint?.reason).toBe(reason);
+    },
+  );
+
+  const INTEGER_REASON = 'Attempted to compare integer 1 with non-integer:\n"a"';
+  const STRING_REASON = 'Attempted to compare string "a" with non-string:\n1';
+
+  it.each([
+    [
+      'Seq({1}) = Seq({"a"})',
+      INTEGER_REASON,
+      [
+        "Line 5, column 9 to line 5, column 39 in M",
+        "Line 5, column 9 to line 5, column 14 in M",
+        "Line 5, column 19 to line 5, column 39 in M",
+        "Line 5, column 23 to line 5, column 25 in M",
+      ],
+    ],
+    [
+      'Seq({x}) = Seq({"a"})',
+      'Attempted to compare integer 0 with non-integer:\n"a"',
+      [
+        "Line 5, column 9 to line 5, column 39 in M",
+        "Line 5, column 9 to line 5, column 14 in M",
+        "Line 5, column 19 to line 5, column 39 in M",
+        "Line 5, column 23 to line 5, column 25 in M",
+      ],
+    ],
+    [
+      '{Seq({1}), Seq({"a"})} # {}',
+      STRING_REASON,
+      [
+        "Line 5, column 9 to line 5, column 45 in M",
+        "Line 5, column 9 to line 5, column 14 in M",
+        "Line 5, column 19 to line 5, column 45 in M",
+        "Line 5, column 19 to line 5, column 40 in M",
+        "Line 5, column 34 to line 5, column 38 in M",
+      ],
+    ],
+    [
+      'Seq({1}) \\in {Seq({"a"})}',
+      STRING_REASON,
+      [
+        "Line 5, column 9 to line 5, column 43 in M",
+        "Line 5, column 9 to line 5, column 14 in M",
+        "Line 5, column 19 to line 5, column 43 in M",
+        "Line 5, column 32 to line 5, column 43 in M",
+        "Line 5, column 37 to line 5, column 41 in M",
+      ],
+    ],
+    [
+      'Seq(Seq({1})) = Seq(Seq({"a"}))',
+      INTEGER_REASON,
+      [
+        "Line 5, column 9 to line 5, column 49 in M",
+        "Line 5, column 9 to line 5, column 14 in M",
+        "Line 5, column 19 to line 5, column 49 in M",
+        "Line 5, column 27 to line 5, column 29 in M",
+      ],
+    ],
+    [
+      "Seq({1}) = Seq(Nat)",
+      "Attempted to compare the set {1} with the value:\nNat",
+      [
+        "Line 5, column 9 to line 5, column 37 in M",
+        "Line 5, column 9 to line 5, column 14 in M",
+        "Line 5, column 19 to line 5, column 37 in M",
+        "Line 5, column 23 to line 5, column 25 in M",
+      ],
+    ],
+    [
+      '<<Seq({1})>> # <<Seq({"a"})>>',
+      INTEGER_REASON,
+      [
+        "Line 5, column 9 to line 5, column 47 in M",
+        "Line 5, column 9 to line 5, column 14 in M",
+        "Line 5, column 19 to line 5, column 47 in M",
+        "Line 5, column 19 to line 5, column 30 in M",
+        "Line 5, column 25 to line 5, column 27 in M",
+      ],
+    ],
+  ])(
+    "compares the ranges of two Seq(S), as TLC's Sequences#compareTo does: x' = x /\\ %s",
+    async (comparison, reason, callStack) => {
+      const result = await check({
+        source: `---- MODULE M ----\nEXTENDS Integers, Sequences, FiniteSets, TLC\nVARIABLE x\nInit == x = 0\nNext == x' = x /\\ ${comparison}\nInv == TRUE\n====`,
+        config: "INIT Init\nNEXT Next\nINVARIANT Inv",
+      });
+      expect(result.failure?.message).toBe(getRuntimeException(reason));
+      expect(formatCallStackLines(result)).toEqual(callStack);
+      expect(result.failure?.fingerprint?.reason).toBe(reason);
+    },
+  );
+
+  const RECORD_SET_ORDER_REASON = 'Attempted to compare integer 0 with non-integer:\n"a"';
+
+  it.each([
+    [
+      'x\' = x /\\ \\E e \\in UNION {[a : {"a", "b"}], [a : {x, 1}]} : TRUE',
+      RECORD_SET_ORDER_REASON,
+      [
+        "Line 5, column 9 to line 5, column 72 in M",
+        "Line 5, column 9 to line 5, column 14 in M",
+        "Line 5, column 19 to line 5, column 72 in M",
+        "Line 5, column 28 to line 5, column 65 in M",
+        "Line 5, column 34 to line 5, column 65 in M",
+        "Line 5, column 53 to line 5, column 64 in M",
+      ],
+      RECORD_SET_ORDER_REASON,
+    ],
+    [
+      'x\' = x /\\ UNION {[a : {"a", "b"}], [a : {x, 1}]} # {}',
+      RECORD_SET_ORDER_REASON,
+      [
+        "Line 5, column 9 to line 5, column 61 in M",
+        "Line 5, column 9 to line 5, column 14 in M",
+        "Line 5, column 19 to line 5, column 61 in M",
+        "Line 5, column 19 to line 5, column 56 in M",
+        "Line 5, column 25 to line 5, column 56 in M",
+        "Line 5, column 44 to line 5, column 55 in M",
+      ],
+      RECORD_SET_ORDER_REASON,
+    ],
+    [
+      'x\' = x /\\ Cardinality(UNION {[a : {"a"}], [a : {x}]}) = 2',
+      `Attempted to apply the operator overridden by the Java method\npublic static tlc2.value.impl.IntValue tlc2.module.FiniteSets.Cardinality(tlc2.value.impl.Value),\nbut it produced the following error:\n${RECORD_SET_ORDER_REASON}`,
+      [
+        "Line 5, column 9 to line 5, column 65 in M",
+        "Line 5, column 9 to line 5, column 14 in M",
+        "Line 5, column 19 to line 5, column 65 in M",
+        "Line 5, column 19 to line 5, column 61 in M",
+      ],
+      undefined,
+    ],
+  ])(
+    "orders two sets of records by their elements, as TLC's SetOfRcdsValue#compareTo does: %s",
+    async (next, reason, callStack, fingerprintReason) => {
+      const result = await checkSetBound(next, "TRUE");
+      expect(result.failure?.message).toBe(getRuntimeException(reason));
+      expect(formatCallStackLines(result)).toEqual(callStack);
+      expect(result.failure?.fingerprint?.reason).toBe(fingerprintReason);
+    },
+  );
+
+  const checkComparison = (comparison: string, onPrint?: (text: string) => void) =>
+    check({
+      source: `---- MODULE M ----\nEXTENDS Integers, FiniteSets, TLC\nVARIABLE x\nInit == x = 0\nNext == x' = x /\\ ${comparison}\nInv == TRUE\n====`,
+      config: "INIT Init\nNEXT Next\nINVARIANT Inv",
+      onPrint,
+    });
+
+  it("orders two SUBSET S by their bases without enumerating them, as TLC's SubsetValue#compareTo does", async () => {
+    const result = await checkComparison("{SUBSET (1..30), SUBSET (1..31)} # {}");
+    expect(result.failure).toBeUndefined();
+  });
+
+  it.each([
+    [
+      '{SUBSET {x}, SUBSET {"a"}} # {}',
+      'Attempted to compare string "a" with non-string:\n0',
+      [
+        "Line 5, column 9 to line 5, column 49 in M",
+        "Line 5, column 9 to line 5, column 14 in M",
+        "Line 5, column 19 to line 5, column 49 in M",
+        "Line 5, column 19 to line 5, column 44 in M",
+        "Line 5, column 32 to line 5, column 43 in M",
+        "Line 5, column 39 to line 5, column 43 in M",
+      ],
+    ],
+    [
+      "{SUBSET Nat, SUBSET {1}} # {}",
+      "Attempted to compare the set {1} with the value:\nNat",
+      [
+        "Line 5, column 9 to line 5, column 47 in M",
+        "Line 5, column 9 to line 5, column 14 in M",
+        "Line 5, column 19 to line 5, column 47 in M",
+        "Line 5, column 19 to line 5, column 42 in M",
+        "Line 5, column 32 to line 5, column 41 in M",
+        "Line 5, column 39 to line 5, column 41 in M",
+      ],
+    ],
+  ])(
+    "frames the base two SUBSET S compare, as TLC's SubsetValue#compareTo does: x' = x /\\ %s",
+    async (comparison, reason, callStack) => {
+      const result = await checkComparison(comparison);
+      expect(result.failure?.message).toBe(getRuntimeException(reason));
+      expect(formatCallStackLines(result)).toEqual(callStack);
+      expect(result.failure?.fingerprint?.reason).toBe(reason);
+    },
+  );
+
+  const NAT_MEMBER_REASON = "Attempted to check if the value:\n<<1, 0>>\nis an element of Nat.";
+
+  it.each([
+    [
+      "<<1, x>> \\notin {e \\in ({} \\cup Nat) : e # x}",
+      "line 5, col 58 to line 5, col 62",
+      [
+        "Line 5, column 9 to line 5, column 63 in M",
+        "Line 5, column 9 to line 5, column 14 in M",
+        "Line 5, column 19 to line 5, column 63 in M",
+        "Line 5, column 43 to line 5, column 53 in M",
+      ],
+    ],
+    [
+      "\\E s \\in {{e \\in ({} \\cup Nat) : e # x}} : <<1, x>> \\in s",
+      "line 5, col 52 to line 5, col 56",
+      [
+        "Line 5, column 9 to line 5, column 75 in M",
+        "Line 5, column 9 to line 5, column 14 in M",
+        "Line 5, column 19 to line 5, column 75 in M",
+        "Line 5, column 62 to line 5, column 75 in M",
+        "Line 5, column 37 to line 5, column 47 in M",
+      ],
+    ],
+  ])(
+    "reports the base's failure under a filter's membership once the base frames it, as TLC's SetPredValue#member catches only an EvalException: x' = x /\\ %s",
+    async (comparison, predicate, callStack) => {
+      const result = await checkComparison(comparison);
+      expect(result.failure?.message).toBe(
+        getRuntimeException(
+          `Cannot decide if element:\n<<1, 0>>\n is element of:\nNat\nand satisfies the predicate ${predicate} of module M`,
+        ),
+      );
+      expect(formatCallStackLines(result)).toEqual(callStack);
+      expect(result.failure?.fingerprint?.reason).toBe(NAT_MEMBER_REASON);
+    },
+  );
+
+  const PRINTING_FILTER = 'LET Bad == {s \\in SUBSET {1, 2} : PrintT(<<"b", s>>) /\\ s # 1} IN';
+  const UNEXPANDED_FILTER_REASON =
+    "Attempted to check equality of the set {{s \\in {{}, {1}, {2}, {1, 2}} : <expression line 5, col 53 to line 5, col 79 of module M> }} with the value:\nSTRING";
+
+  it("prints a set it compares with STRING as TLC's toString does, which leaves a filter that fails unexpanded", async () => {
+    const printed: string[] = [];
+    const result = await checkComparison(`${PRINTING_FILTER} {Bad} = STRING`, (text) =>
+      printed.push(text),
+    );
+    expect(result.failure?.message).toBe(getRuntimeException(UNEXPANDED_FILTER_REASON));
+    expect(result.failure?.fingerprint?.reason).toBe(UNEXPANDED_FILTER_REASON);
+    expect([printed, result.failure?.traceOutput]).toEqual([['<<"b", {}>>'], ['<<"b", {}>>']]);
+  });
+
+  it("keeps the call stack frozen at a failure an error message swallows, as TLC's CallStackTool does", async () => {
+    const result = await checkComparison(`${PRINTING_FILTER} {Bad} = STRING`);
+    expect(result.failure?.fingerprint?.reason).toBe(UNEXPANDED_FILTER_REASON);
+    expect(formatCallStackLines(result)).toEqual([
+      "Line 5, column 9 to line 5, column 98 in M",
+      "Line 5, column 9 to line 5, column 14 in M",
+      "Line 5, column 19 to line 5, column 98 in M",
+      "Line 5, column 85 to line 5, column 98 in M",
+      "Line 5, column 53 to line 5, column 79 in M",
+      "Line 5, column 75 to line 5, column 79 in M",
     ]);
   });
 
