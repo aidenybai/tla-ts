@@ -2042,55 +2042,102 @@ ASSUME TLCFP(a) = -887695703
     },
   );
 
-  it("evaluates MCPaxos's Quorum substitute once per entry into its instance of Voting, as TLC does", async () => {
-    const printed: string[] = [];
-    const result = await check({
-      source: [
-        "---- MODULE M ----",
-        "EXTENDS TLC, Naturals",
-        "CONSTANT Acceptor, Quorum",
-        "VARIABLE msgs",
-        "votes == [a \\in Acceptor |-> {m.bal : m \\in {mm \\in msgs : mm.acc = a}}]",
-        "V == INSTANCE V",
-        'MCQuorum == IF PrintT("Q") THEN {{1, 2}, {2, 3}} ELSE {}',
-        "Init == msgs = {}",
-        "Send(a, b) == /\\ \\E Q \\in Quorum : a \\in Q",
-        "              /\\ msgs' = msgs \\cup {[acc |-> a, bal |-> b]}",
-        "Next == \\E a \\in Acceptor, b \\in {0, 1} : Send(a, b)",
-        "Spec == Init /\\ [][Next]_msgs",
-        "Inv == \\A b \\in {0, 1} : V!ShowsSafeAt({1, 2}, b)",
-        "VInv == V!Inv",
-        "VSpec == V!Spec",
-        "====",
-        "",
-      ].join("\n"),
-      config:
-        "CONSTANT Acceptor = {1, 2, 3}\nCONSTANT Quorum <- MCQuorum\nSPECIFICATION Spec\nINVARIANT Inv\nINVARIANT VInv\n",
-      loadModule: (name) =>
-        name === "V"
-          ? [
-              "---- MODULE V ----",
-              "EXTENDS Naturals",
-              "CONSTANT Acceptor, Quorum",
-              "VARIABLE votes",
-              "VotedFor(a, b) == b \\in votes[a]",
-              "DidNotVoteAt(a, b) == ~ VotedFor(a, b)",
-              "ShowsSafeAt(Q, b) == \\A a \\in Q : VotedFor(a, b) \\/ DidNotVoteAt(a, b)",
-              "SafeAt(b) == \\E Q \\in Quorum : ShowsSafeAt(Q, b)",
-              "VoteFor(a, b) == /\\ SafeAt(b)",
-              "                 /\\ votes' = [votes EXCEPT ![a] = @ \\cup {b}]",
-              "Next == \\E a \\in Acceptor, b \\in {0, 1} : VoteFor(a, b)",
-              "Init == votes = [a \\in Acceptor |-> {}]",
-              "Spec == Init /\\ [][Next]_votes",
-              "Inv == \\A b \\in {0, 1} : SafeAt(b)",
-              "====",
-              "",
-            ].join("\n")
-          : undefined,
-      onPrint: (text) => printed.push(text),
-    });
-    expect([printed.length, result.distinctStates]).toEqual([449, 64]);
-  });
+  it.each([
+    ["INVARIANT Inv and VInv", "INVARIANT Inv\nINVARIANT VInv\n", 449],
+    [
+      "INVARIANT Inv and VInv and PROPERTY VSpec",
+      "INVARIANT Inv\nINVARIANT VInv\nPROPERTY VSpec\n",
+      961,
+    ],
+    ["PROPERTY VSpec", "PROPERTY VSpec\n", 897],
+  ])(
+    "evaluates MCPaxos's Quorum substitute once per entry into its instance of Voting, with %s, as TLC does",
+    async (_title, checks, count) => {
+      const printed: string[] = [];
+      const result = await check({
+        source: [
+          "---- MODULE M ----",
+          "EXTENDS TLC, Naturals",
+          "CONSTANT Acceptor, Quorum",
+          "VARIABLE msgs",
+          "votes == [a \\in Acceptor |-> {m.bal : m \\in {mm \\in msgs : mm.acc = a}}]",
+          "V == INSTANCE V",
+          'MCQuorum == IF PrintT("Q") THEN {{1, 2}, {2, 3}} ELSE {}',
+          "Init == msgs = {}",
+          "Send(a, b) == /\\ \\E Q \\in Quorum : a \\in Q",
+          "              /\\ msgs' = msgs \\cup {[acc |-> a, bal |-> b]}",
+          "Next == \\E a \\in Acceptor, b \\in {0, 1} : Send(a, b)",
+          "Spec == Init /\\ [][Next]_msgs",
+          "Inv == \\A b \\in {0, 1} : V!ShowsSafeAt({1, 2}, b)",
+          "VInv == V!Inv",
+          "VSpec == V!Spec",
+          "====",
+          "",
+        ].join("\n"),
+        config: `CONSTANT Acceptor = {1, 2, 3}\nCONSTANT Quorum <- MCQuorum\nSPECIFICATION Spec\n${checks}`,
+        loadModule: (name) =>
+          name === "V"
+            ? [
+                "---- MODULE V ----",
+                "EXTENDS Naturals",
+                "CONSTANT Acceptor, Quorum",
+                "VARIABLE votes",
+                "VotedFor(a, b) == b \\in votes[a]",
+                "DidNotVoteAt(a, b) == ~ VotedFor(a, b)",
+                "ShowsSafeAt(Q, b) == \\A a \\in Q : VotedFor(a, b) \\/ DidNotVoteAt(a, b)",
+                "SafeAt(b) == \\E Q \\in Quorum : ShowsSafeAt(Q, b)",
+                "VoteFor(a, b) == /\\ SafeAt(b)",
+                "                 /\\ votes' = [votes EXCEPT ![a] = @ \\cup {b}]",
+                "Next == \\E a \\in Acceptor, b \\in {0, 1} : VoteFor(a, b)",
+                "Init == votes = [a \\in Acceptor |-> {}]",
+                "Spec == Init /\\ [][Next]_votes",
+                "Inv == \\A b \\in {0, 1} : SafeAt(b)",
+                "====",
+                "",
+              ].join("\n")
+            : undefined,
+        onPrint: (text) => printed.push(text),
+      });
+      expect([printed.length, result.distinctStates]).toEqual([count, 64]);
+    },
+  );
+
+  const PROPERTY_PARTS = [
+    "---- MODULE P ----",
+    "EXTENDS TLC, Naturals",
+    "CONSTANT c",
+    "VARIABLE z",
+    "InnerS == c = TRUE /\\ z \\in 0..1",
+    "Init == InnerS /\\ z = 0",
+    "Step == InnerS /\\ InnerS /\\ z' = (z + 1) % 2",
+    "Spec == Init /\\ [][Step]_z",
+    "SpecInv == [](InnerS /\\ InnerS)",
+    "SpecSub == [][InnerS /\\ FALSE]_c",
+    "SpecQ == \\A q \\in {0, 1} : [][Step /\\ q \\in {0, 1}]_z",
+    "====",
+    "",
+  ].join("\n");
+
+  it.each([
+    ["I!Spec", "WITH c <- PrintT", EXPLICIT, 3],
+    ["I!SpecInv", "WITH c <- PrintT", EXPLICIT, 2],
+    ["I!SpecSub", "WITH c <- PrintT", EXPLICIT, 6],
+    ["I!SpecQ", "WITH c <- PrintT", EXPLICIT, 4],
+    ["I!Spec", "CONSTANT c <- D", IMPLICIT, 4],
+    ['I("c")!Spec /\\ I("c")!SpecInv', "I(x) WITH c <- PrintT(x)", PARAMETERIZED, 5],
+  ])(
+    "evaluates the substitutions of each part SpecProcessor#processConfigProps takes out of PROPERTY %s once per evaluation, through %s",
+    async (property, _title, head, count) => {
+      const printed: string[] = [];
+      await check({
+        source: `---- MODULE M ----\nEXTENDS TLC, Naturals\n${head[0]}VARIABLE y\n${head[1]}\nInit == y = 0\nNext == y' = (y + 1) % 2\nSpec == Init /\\ [][Next]_y\nProp == ${property}\n====\n`,
+        config: `SPECIFICATION Spec\n${head[2]}PROPERTY Prop\n`,
+        loadModule: (name) => (name === "P" ? PROPERTY_PARTS : undefined),
+        onPrint: (text) => printed.push(text),
+      });
+      expect(printed).toEqual(Array.from({ length: count }, () => '"c"'));
+    },
+  );
 
   it("reads TLCGet in every state through a constant substituted with it, as TLC's level bound does", async () => {
     const prints: string[] = [];
