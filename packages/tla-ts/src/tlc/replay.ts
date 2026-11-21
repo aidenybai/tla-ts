@@ -29,6 +29,7 @@ import {
   getContextElements,
   getDefinition,
   getLazyFunction,
+  getMissingArgumentDescriber,
   getQuantifierElements,
   mapBoundSets,
   toKeepLazyContext,
@@ -43,12 +44,14 @@ import {
   toUnspecifiedSubscriptError,
 } from "../evaluate";
 import {
+  applyFunctionWith,
   createTuple,
   formatValue,
   getLazyFunctionNode,
   getStreamedElements,
   isElementOf,
   isEqualLikeTlc,
+  isFunctionValue,
   isTlcEnumerable,
   setTrace,
   type Value,
@@ -279,6 +282,12 @@ export const getIfConditionMessage = (run: RunKind, value: Value, expression: Ex
   }
   return `In computing ${getComputation(run)}, a non-boolean expression (${kind}) was used as the condition of an IF.${run.isInit ? "\n" : ""}${range}`;
 };
+
+export const getNonFunctionMessage = (run: RunKind, value: Value, expression: Expression) =>
+  `In computing ${getComputation(run)}, a non-function (${getKindString(value)}) was applied as a function.\n${describeRange(expression)}`;
+
+export const getFunctionResultMessage = (run: RunKind, expression: Expression) =>
+  `In computing ${getComputation(run)}, TLC expected a boolean expression,\nbut didn't find one.\n${describeRange(expression)}`;
 
 export const getCaseGuardMessage = (run: RunKind, value: Value, body: Expression) =>
   `In computing ${getComputation(run)}, a non-boolean expression${run.isEnabled ? "" : " "}(${getKindString(value)}) was used as a guard condition of a CASE.\n${describeNode(body)}`;
@@ -961,40 +970,55 @@ const visitApplication = (
       return visit(replay, body, items, scope, partial, node);
     }
     case "FunctionApplication": {
-      const lambda = getLazyFunction(
-        evaluateAt(
-          replay,
-          node,
-          expression.function,
-          replay.isInit ? context : toKeepLazyContext(context),
-        ),
+      const value = evaluateAt(
+        replay,
+        node,
+        expression.function,
+        replay.isInit ? context : toKeepLazyContext(context),
       );
-      if (lambda) {
-        const isTuple = expression.args.length > 1;
-        if (replay.coverage && isTuple) countArgumentTuple(replay.coverage, node, expression);
-        const bound = runAt(replay, node, () =>
-          bindLazyArguments(
-            lambda,
-            expression,
-            replay.callStack && isTuple
-              ? withFrame(replay, getArgumentTuple(expression), () =>
-                  evaluateArgument(expression, context),
-                )
-              : evaluateArgument(expression, context),
-            replay.coverage ? replay.coverage.isMember : isElementOf,
+      const lambda = getLazyFunction(value);
+      if (lambda === undefined && !isFunctionValue(value)) {
+        throw createRunError(replay, getNonFunctionMessage(replay, value, expression));
+      }
+      const isTuple = expression.args.length > 1;
+      if (replay.coverage && isTuple) countArgumentTuple(replay.coverage, node, expression);
+      const argument = runAt(replay, node, () =>
+        replay.callStack && isTuple
+          ? withFrame(replay, getArgumentTuple(expression), () =>
+              evaluateArgument(expression, context),
+            )
+          : evaluateArgument(expression, context),
+      );
+      const isMember = replay.coverage ? replay.coverage.isMember : isElementOf;
+      if (lambda === undefined) {
+        const sets = setTrace.sets;
+        sets?.push(value);
+        const result = runAt(replay, node, () =>
+          applyFunctionWith(
+            value,
+            argument,
+            getMissingArgumentDescriber(replay.environment.runtime.version),
+            isMember,
           ),
         );
-        // Tool#getNextStates runs the body with the function's cost model, but getInitStates and enabled with the application's.
-        return visit(
-          replay,
-          lambda.body,
-          items,
-          bound,
-          partial,
-          replay.isInit || replay.isEnabled ? node : getLazyFunctionNode(lambda.value),
-        );
+        sets?.pop();
+        if (typeof result !== "boolean") {
+          throw createRunError(replay, getFunctionResultMessage(replay, expression));
+        }
+        return result && proceed(replay, items, partial, node);
       }
-      break;
+      const bound = runAt(replay, node, () =>
+        bindLazyArguments(lambda, expression, argument, isMember),
+      );
+      // Tool#getNextStates runs the body with the function's cost model, but getInitStates and enabled with the application's.
+      return visit(
+        replay,
+        lambda.body,
+        items,
+        bound,
+        partial,
+        replay.isInit || replay.isEnabled ? node : getLazyFunctionNode(lambda.value),
+      );
     }
     case "Unchanged":
       if (!replay.isInit) {

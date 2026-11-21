@@ -73,7 +73,7 @@ import { getKeyName } from "./resolve";
 import { isEnabled } from "./successors";
 import {
   applyFunction,
-  checkLazyArgumentWith,
+  applyFunctionWith,
   describeMissingArgument,
   compareValues,
   createFunction,
@@ -3013,19 +3013,13 @@ const compile = (expression: Expression, environment: Environment): Evaluator =>
                 countArgumentTuple(coverage, coverage.current, expression);
                 return createTuple(args.map((arg) => arg(context)));
               });
-        return (context) => {
-          const functionValue = evaluateFunction(context);
-          const argument = getArgument(context);
-          if (
-            typeof functionValue !== "object" ||
-            functionValue.kind !== "LazyFunction" ||
-            functionValue.enumerated !== undefined
-          ) {
-            return applyFunction(functionValue, argument, describeMissing);
-          }
-          checkLazyArgumentWith(functionValue, argument, coverage.isMember);
-          return functionValue.apply(argument);
-        };
+        return (context) =>
+          applyFunctionWith(
+            evaluateFunction(context),
+            getArgument(context),
+            describeMissing,
+            coverage.isMember,
+          );
       }
       if (args.length === 1) {
         const argument = args[0];

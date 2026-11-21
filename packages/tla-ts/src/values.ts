@@ -3671,7 +3671,7 @@ const checkBoundArgumentsWith = (
   }
 };
 
-export const checkLazyArgumentWith = (
+const checkLazyArgumentWith = (
   functionValue: LazyFunctionValue,
   argument: Value,
   isMember: typeof isElementOf,
@@ -3712,6 +3712,23 @@ export const applyFunction = (
   const position = findKeyIndexLikeTlc(functionValue, argument, describe);
   if (position === -1) throw new TlaEvaluationError(describe(functionValue, argument));
   return functionValue.range[position];
+};
+
+export const applyFunctionWith = (
+  functionValue: Value,
+  argument: Value,
+  describeMissing: ((functionValue: FunctionValue, argument: Value) => string) | undefined,
+  isMember: typeof isElementOf,
+) => {
+  if (
+    typeof functionValue !== "object" ||
+    functionValue.kind !== "LazyFunction" ||
+    functionValue.enumerated !== undefined
+  ) {
+    return applyFunction(functionValue, argument, describeMissing);
+  }
+  checkLazyArgumentWith(functionValue, argument, isMember);
+  return functionValue.apply(argument);
 };
 
 export const getDomainInterval = (domain: Value[]) =>

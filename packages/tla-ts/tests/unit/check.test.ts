@@ -5671,6 +5671,90 @@ ASSUME TLCFP(a) = -887695703
     },
   );
 
+  it.each([
+    [
+      "a step",
+      "x < 1 /\\ f' = 0 /\\ (IF PrintT(\"e\") THEN <<TRUE>> ELSE 0)[1] /\\ x' = 1",
+      undefined,
+    ],
+    [
+      "a failing step",
+      `x < 1 /\\ f' = 0 /\\ (IF PrintT("e") THEN <<TRUE>> ELSE 0)[1] /\\ x' = 1 /\\ 1 = "a"`,
+      ['"e"'],
+    ],
+  ])(
+    "evaluates the function %s applies as an action once, as TLC's getNextStates does",
+    async (_step, next, traceOutput) => {
+      expect(await checkConvertedLazy("x = 0 /\\ f = 0", next)).toEqual([['"e"'], traceOutput]);
+    },
+  );
+
+  it.each([
+    [
+      "a state",
+      "x = 0 /\\ f = [s \\in {{}, {1}} |-> s = {}]",
+      "x < 1 /\\ f' = f /\\ f[{}] /\\ x' = 1",
+      [
+        "line 5, col 9 to line 5, col 13 of module M: 1",
+        "|line 5, col 9 to line 5, col 9 of module M: 2",
+        "line 5, col 18 to line 5, col 23 of module M: 1",
+        "line 5, col 28 to line 5, col 32 of module M: 1",
+        "line 5, col 37 to line 5, col 42 of module M: 1",
+      ],
+    ],
+    [
+      "a bound identifier",
+      "x = 0 /\\ f = 0",
+      "x < 1 /\\ f' = 0 /\\ \\E g \\in {[s \\in {{}, {1}} |-> s = {}]} : g[{}] /\\ x' = 1",
+      [
+        "line 5, col 9 to line 5, col 13 of module M: 1",
+        "|line 5, col 9 to line 5, col 9 of module M: 2",
+        "line 5, col 18 to line 5, col 23 of module M: 1",
+        "line 5, col 70 to line 5, col 84 of module M: 1",
+        "line 5, col 37 to line 5, col 66 of module M: 1:2",
+        "|line 5, col 38 to line 5, col 65 of module M: 1:2",
+        "||line 5, col 59 to line 5, col 64 of module M: 2",
+        "||line 5, col 45 to line 5, col 53 of module M: 1:3",
+        "|||line 5, col 46 to line 5, col 47 of module M: 1",
+        "|||line 5, col 50 to line 5, col 52 of module M: 1",
+      ],
+    ],
+  ])(
+    "counts the function %s holds and its argument once as an action applies it, as TLC's getNextStates does",
+    async (_holder, init, next, expected) => {
+      const lines = await getCoverageLines(
+        `---- MODULE M ----\nEXTENDS Integers\nVARIABLES x, f\nInit == ${init}\nNext == ${next}\n====`,
+        "INIT Init\nNEXT Next\nCHECK_DEADLOCK FALSE",
+      );
+      expect(lines?.at(-1)).toEqual(expected);
+    },
+  );
+
+  it.each([
+    [
+      "a non-function",
+      "x = 0 /\\ f = 0",
+      "x < 1 /\\ f' = 0 /\\ (IF PrintT(\"e\") THEN 0 ELSE 0)[{}] /\\ x' = 1",
+      "In computing next states, a non-function (an integer) was applied as a function.\nline 5, col 28 to line 5, col 61 of module M",
+    ],
+    [
+      "a function to a non-boolean",
+      "x = 0 /\\ f = [s \\in {{}, {1}} |-> 1]",
+      "x < 1 /\\ f' = f /\\ f[{}] /\\ x' = 1",
+      "In computing next states, TLC expected a boolean expression,\nbut didn't find one.\nline 5, col 28 to line 5, col 32 of module M",
+    ],
+  ])(
+    "fails on applying %s as an action under -coverage, as TLC's getNextStates does",
+    async (_applied, init, next, message) => {
+      const result = await check({
+        source: `---- MODULE M ----\nEXTENDS Integers, TLC\nVARIABLES x, f\nInit == ${init}\nNext == ${next}\n====`,
+        config: "INIT Init\nNEXT Next\nCHECK_DEADLOCK FALSE",
+        coverage: 1,
+      });
+      expect(result.failure?.message).toBe(`${UNEXPECTED_EXCEPTION}${message}`);
+    },
+  );
+
   it("counts the applications of the copy EXCEPT makes of a lazy function, though TLC's FcnLambdaValue#takeExcept drops the cost model", async () => {
     const lines = await getCoverageLines(
       "---- MODULE M ----\nEXTENDS Naturals\nVARIABLE x\nInit == LET f[n \\in 0..2] == 10 \\div (n + 1) IN x = [f EXCEPT ![2] = 0][1]\nNext == UNCHANGED x\n====",
