@@ -43,6 +43,7 @@ const TEMPORAL_LEVEL_FLAGS = ACTION_LEVEL_FLAGS | 128;
 const RANDOM = 256;
 const ABOVE_CONSTANT_BOUND = 512;
 const TLC_EVAL = 1024;
+const REEVALUATION_SHOWN = 2048;
 
 const ACTION_KINDS = new Set<Expression["kind"]>([
   "Prime",
@@ -93,6 +94,7 @@ interface Edge {
   isOverridden: boolean;
   isLevelCounted: boolean;
   isBoundCounted: boolean;
+  isSubstitute: boolean;
 }
 
 const collectLocalFacts = (
@@ -156,12 +158,15 @@ const collectLocalFacts = (
       const definition = environment.definitions.get(target);
       const isOverridden = environment.constants.has(name);
       const variableIndex = environment.variableIndex.get(name);
+      const builtin = environment.builtins.get(target);
       if (
         variableIndex !== undefined ||
-        environment.builtins.get(target)?.isStateLevel ||
+        builtin?.isStateLevel ||
         (definition && environment.variableIndex.has(definition.name))
       ) {
-        row[0] |= nonconstantFlags;
+        // TLC's getLevelBound takes an operator argument for a constant.
+        row[0] |=
+          kind === "Identifier" && builtin && builtin.arity > 0 ? NONCONSTANT : nonconstantFlags;
       }
       if (variableIndex !== undefined) {
         if (isInnerLevelCounted) row[0] |= VARIABLE_LEVEL_FLAGS;
@@ -181,9 +186,10 @@ const collectLocalFacts = (
               definition.params.length > 0) ||
             environment.theorems.has(target)
           ),
+          // Spec#lookup gives a substituted constant or definition its substitute's OpDefNode, whose body Tool#evalAppl evaluates at each reference.
+          isSubstitute: target !== name,
         });
       } else {
-        const builtin = environment.builtins.get(target);
         const builtinName = builtin?.name ?? target;
         const isImpure = IMPURE_BUILTINS.has(builtinName) || builtin?.isStateLevel === true;
         if (isImpure) row[0] |= IMPURE | (builtinName === "Assert" ? 0 : REPEATED_EFFECT);
@@ -205,13 +211,26 @@ const collectLocalFacts = (
     const substitute = isLocal ? substitutes?.get(name) : undefined;
     if (substitute) visit(substitute, isInnerLevelCounted, isOperatorArgument, substitutes);
     // TLC's SubstInNode binds a LET instance's substitute lazily, so its level counts only where the instanced definition reads it.
-    if (kind === "Let" && node.definitions.some(isLetSubstitute)) {
+    if (
+      kind === "Let" &&
+      node.definitions.some(
+        (definition) => isLetSubstitute(definition) || "standardDefinition" in definition,
+      )
+    ) {
       const innerSubstitutes = new Map(substitutes);
       node.definitions.forEach((definition) => {
         if (isLetSubstitute(definition)) innerSubstitutes.set(definition.name, definition.body);
       });
       node.definitions.forEach((definition) => {
         if (isLetSubstitute(definition)) return;
+        // TLC's getLevelBound reads a standard operator's TLA+ definition, not the builtin a LET instance's alias forwards to.
+        if ("standardDefinition" in definition) {
+          visit(definition.body, isInnerLevelCounted, true, innerSubstitutes);
+          getDefinitionExpressions(definition.standardDefinition).forEach((expression) =>
+            visit(expression, false, isOperatorArgument, undefined),
+          );
+          return;
+        }
         getDefinitionExpressions(definition).forEach((child) =>
           visit(child, isInnerLevelCounted, isOperatorArgument, innerSubstitutes),
         );
@@ -295,6 +314,8 @@ const closeRows = (local: Uint32Array, words: number, edges: Int32Array[], mask:
 };
 
 const PURITY_MASK = IMPURE | REPEATED_EFFECT | STREAMED | RANDOM | TLC_EVAL;
+// TLC streams a fresh \cup or UNION as it streams the startup value.
+const SHOWN_MASK = IMPURE | REPEATED_EFFECT | RANDOM | TLC_EVAL;
 const READ_MASK = NONCONSTANT | READS_IMPURE;
 const STARTUP_MASK = NONCONSTANT | ABOVE_CONSTANT_BOUND;
 
@@ -332,27 +353,39 @@ export const createDefinitionFacts = (environment: DefinitionNames): DefinitionF
       new Int32Array(own.filter((edge) => !edge.isOverridden && edge.isBoundCounted).map(getId)),
   );
   const startup = closeRows(local, words, startupEdges, ABOVE_CONSTANT_BOUND);
-  const purityEdges = edges.map(
-    (own) =>
-      new Int32Array(
-        own
-          .map(getId)
-          .filter(
-            (callee) =>
-              !isEvaluatedOnce(
-                definitions[callee],
-                reads[callee * words] | startup[callee * words],
-              ),
-          ),
-      ),
+  const isRecomputed = (edge: Edge) => {
+    const callee = getId(edge);
+    return !isEvaluatedOnce(edge.callee, reads[callee * words] | startup[callee * words]);
+  };
+  // SpecProcessor#processConstantDefns evaluates a substitute before it stores the definitions the substitute reads, so their draws and output can show again.
+  const shown =
+    environment.substitutions.size > 0
+      ? closeRows(localImpurity, words, readEdges, SHOWN_MASK)
+      : localImpurity;
+  const purity = closeRows(
+    localImpurity,
+    words,
+    edges.map(
+      (own) =>
+        new Int32Array(
+          own
+            .filter(
+              (edge) =>
+                isRecomputed(edge) ||
+                (edge.isSubstitute && (shown[getId(edge) * words] & SHOWN_MASK) !== 0),
+            )
+            .map(getId),
+        ),
+    ),
+    PURITY_MASK,
   );
-  const purity = closeRows(localImpurity, words, purityEdges, PURITY_MASK);
   const rows = reads.map((word, position) =>
     position % words === 0
       ? (word & READ_MASK) |
         (startup[position] & ABOVE_CONSTANT_BOUND) |
         (levels[position] & TEMPORAL_LEVEL_FLAGS) |
-        (purity[position] & PURITY_MASK)
+        (purity[position] & PURITY_MASK) |
+        ((shown[position] & SHOWN_MASK) === 0 ? 0 : REEVALUATION_SHOWN)
       : word,
   );
   return { ids, rows, words };
@@ -378,7 +411,12 @@ const getExpressionsRow = (expressions: Expression[], environment: Environment) 
       if (edge.isLevelCounted) row[0] |= callee[0] & TEMPORAL_LEVEL_FLAGS;
       for (let word = 1; word < words; word++) row[word] |= callee[word];
     }
-    if (!isEvaluatedOnce(edge.callee, callee[0])) row[0] |= callee[0] & PURITY_MASK;
+    if (
+      !isEvaluatedOnce(edge.callee, callee[0]) ||
+      (edge.isSubstitute && (callee[0] & REEVALUATION_SHOWN) !== 0)
+    ) {
+      row[0] |= callee[0] & PURITY_MASK;
+    }
   });
   return row;
 };
@@ -388,6 +426,9 @@ export const isConstantLevel = (definition: Definition, environment: Environment
 
 export const isEvaluatedAtStartup = (definition: Definition, environment: Environment) =>
   (getRow(definition, environment)[0] & ABOVE_CONSTANT_BOUND) === 0;
+
+export const isReevaluationShown = (definition: Definition, environment: Environment) =>
+  (getRow(definition, environment)[0] & (REEVALUATION_SHOWN | STARTUP_MASK)) !== 0;
 
 const EFFECT_FLAGS = {
   any: IMPURE,

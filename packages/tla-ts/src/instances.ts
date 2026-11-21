@@ -112,7 +112,7 @@ const sourceNames = new WeakMap<Definition, string>();
 export const getSourceName = (definition: Definition) =>
   sourceNames.get(definition) ?? definition.name;
 
-const withSourceName = (definition: Definition, source: Definition) => {
+const withSource = (definition: Definition, source: Definition) => {
   if (getSourceName(source) !== definition.name) sourceNames.set(definition, getSourceName(source));
   return definition;
 };
@@ -121,7 +121,7 @@ export const mapDefinition = (
   definition: Definition,
   map: (child: Expression, bound: string[]) => Expression,
 ): Definition =>
-  withSourceName(
+  withSource(
     definition.kind === "Function"
       ? {
           ...definition,
@@ -412,13 +412,20 @@ export const forEachChild = (
   }
 };
 
+export interface BoundSubstitutions {
+  lets: WeakSet<Expression>;
+  references: WeakMap<Expression, Expression>;
+}
+
 interface Instantiation {
   params: OperatorParam[];
   substitutions: Map<string, Expression>;
   substitutedVariables: Set<string>;
   enabledSubstitutions: WeakSet<Expression>;
+  boundSubstitutions: BoundSubstitutions;
   getDefinition: (key: string) => Definition | undefined;
   getOuterDefinition: (key: string) => Definition | undefined;
+  isSubstitutedConstant: (key: string) => boolean;
   isParameterized: (key: string) => boolean;
   addDefinition: (
     source: string,
@@ -450,20 +457,25 @@ const SUBSTITUTION_SUFFIX = "@SUBSTITUTION";
 
 const getSubstitutionName = (name: string) => `${name}${SUBSTITUTION_SUFFIX}`;
 
+export const getSubstitutedOccurrence = (
+  expression: Expression,
+): (Expression & { kind: "Identifier" }) | undefined => {
+  const isLocal = expression.kind === "Identifier" && isLocallyResolved(expression);
+  const substitution = substitutedExpressions.get(expression);
+  const occurrence = (substitution ? substitution.replacement !== expression : isLocal)
+    ? substitutionFrames.get(expression)?.find((frame) => !frameSubstitutions.has(frame))
+    : undefined;
+  return occurrence?.kind === "Identifier" ? occurrence : undefined;
+};
+
 export const getSubstitutedName = (expression: Expression) => {
-  if (
-    expression.kind === "Identifier" &&
+  const occurrence = getSubstitutedOccurrence(expression);
+  if (occurrence) return occurrence.name;
+  return expression.kind === "Identifier" &&
     isLocallyResolved(expression) &&
     expression.name.endsWith(SUBSTITUTION_SUFFIX)
-  ) {
-    return expression.name.slice(0, -SUBSTITUTION_SUFFIX.length);
-  }
-  const substitution = substitutedExpressions.get(expression);
-  if (!substitution || substitution.replacement === expression) return undefined;
-  const occurrence = substitutionFrames
-    .get(expression)
-    ?.find((frame) => !frameSubstitutions.has(frame));
-  return occurrence?.kind === "Identifier" ? occurrence.name : undefined;
+    ? expression.name.slice(0, -SUBSTITUTION_SUFFIX.length)
+    : undefined;
 };
 
 const isVariableAlias = (expression: Expression): boolean =>
@@ -480,13 +492,14 @@ const isBoundOnce = (replacement: Expression, instantiation: Instantiation) => {
       replacement.kind !== "String"
     );
   }
-  const definition = isLocallyResolved(replacement)
-    ? undefined
-    : instantiation.getOuterDefinition(replacement.name);
+  if (isLocallyResolved(replacement)) return false;
+  const definition = instantiation.getOuterDefinition(replacement.name);
+  // Spec#lookup gives a constant the configuration substitutes its substitute's OpDefNode, which Tool#evalImplSubstInKind binds as a cachable LazyValue.
   return (
-    definition?.kind === "Operator" &&
-    definition.params.length === 0 &&
-    !isVariableAlias(definition.body)
+    instantiation.isSubstitutedConstant(replacement.name) ||
+    (definition?.kind === "Operator" &&
+      definition.params.length === 0 &&
+      !isVariableAlias(definition.body))
   );
 };
 
@@ -554,7 +567,7 @@ const renameNames = (
       return {
         ...expression,
         definitions: expression.definitions.map((definition) =>
-          withSourceName(
+          withSource(
             { ...renameParams(definition, rename), name: rename(definition.name) },
             definition,
           ),
@@ -639,7 +652,7 @@ export const createLocalAlias = (
   params: OperatorParam[],
   forwarded: OperatorParam[],
   location: SourceLocation,
-): Definition => ({
+): OperatorDefinition => ({
   kind: "Operator",
   name,
   params,
@@ -768,14 +781,23 @@ const substituteExpression = (
     if (replacement && bindings) {
       const name = getSubstitutionName(expression.name);
       bindings.set(name, replacement);
-      return withSubstitutionFrames(
+      const reference = withSubstitutionFrames(
         createLocalIdentifier(name, expression.location),
         substitutionFrames.get(expression) ?? [],
       );
+      instantiation.boundSubstitutions.references.set(reference, replacement);
+      return reference;
     }
     const copy = getCopy(rewrite, expression.name);
     if (copy === undefined) return expression;
-    if (params.length === 0) return { ...expression, name: copy, resolution };
+    if (params.length === 0) {
+      return {
+        ...expression,
+        name: copy,
+        resolution,
+        writtenKey: expression.writtenKey ?? expression.name,
+      };
+    }
     const definition = instantiation.getDefinition(expression.name);
     if (definition && getArity(definition) > 0) {
       return getInstanceOperator(
@@ -792,6 +814,7 @@ const substituteExpression = (
       args: createLocalArguments(params, expression.location),
       location: expression.location,
       resolution,
+      writtenKey: expression.writtenKey ?? expression.name,
     };
   }
   if (expression.kind === "Apply" && isFree(expression.operator)) {
@@ -857,6 +880,7 @@ const substituteExpression = (
       operator: copy,
       args: [...createLocalArguments(params, expression.location), ...args],
       resolution,
+      writtenKey: expression.writtenKey ?? expression.operator,
     };
   }
   if (expression.kind === "OperatorReference" && isFree(expression.operator)) {
@@ -959,6 +983,7 @@ const copyDefinition = (rewrite: Rewrite, key: string): string => {
             // TLC has no such LET, so the call stack it prints has no position for it.
             location: { line: mapped.body.location.line, column: mapped.body.location.column },
           };
+    if (body !== mapped.body) instantiation.boundSubstitutions.lets.add(body);
     const copied = withInstanceParams({ ...mapped, body }, instantiation.params);
     const frames = substitutionFrames.get(definition.body);
     if (frames && copied.kind === "Operator") substitutionFrames.set(copied.body, frames);
@@ -995,7 +1020,10 @@ export const createInstantiation = (instantiation: Instantiation) => {
       definition.name,
       () => {
         const operator = getOperatorDefinition(definition);
-        return { ...operator, body: withSubstitutionFrames(operator.body, [frame]) };
+        const body = withSubstitutionFrames(operator.body, [frame]);
+        const lets = instantiation.boundSubstitutions.lets;
+        if (lets.has(operator.body)) lets.add(body);
+        return { ...operator, body };
       },
       reservedKey,
     );
