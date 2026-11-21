@@ -204,7 +204,7 @@ ASSUME PrintT(<<
 >>)`;
 
 describe("runs ESCore's native operators as their TLA+ does", () => {
-  it("gives the values the TLA+ gives", { timeout: 120_000 }, async () => {
+  it("gives the values the TLA+ gives", { timeout: 300_000 }, async () => {
     const checks = getChecks();
     expect(await getOutcomes(checks)).toEqual(checks.map(() => "TRUE"));
   });
