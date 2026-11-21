@@ -378,7 +378,6 @@ const isTrueValue = (
   usage: string,
 ) => {
   if (value === undefined) return false;
-  // TLC names the definition SANY's body names, which an instance's copy keeps as its written key.
   const name =
     getReferenceName(reference, key, environment) ?? getKeyName(reference.writtenKey ?? key);
   if (value === false) {
@@ -393,13 +392,13 @@ const isTrueValue = (
 };
 
 const isConstantTrue = (
-  item: ScopedExpression & { named?: Definition },
+  item: ScopedExpression & { argumentFreeDefinition?: Definition },
   environment: Environment,
   usage: string,
 ) => {
   const conjunct = item.expression;
-  if (item.named && conjunct.kind === "Apply") {
-    const value = getLookupValue(item.named, environment);
+  if (item.argumentFreeDefinition && conjunct.kind === "Apply") {
+    const value = getLookupValue(item.argumentFreeDefinition, environment);
     return isTrueValue(value, conjunct, conjunct.operator, environment, usage);
   }
   // SpecProcessor#processConfigProps looks up no VARIABLE, so it checks a substitute for one whatever its value.
@@ -947,7 +946,6 @@ const holdsLikeTlc = (
   return value;
 };
 
-// TLC evaluates the body of the definition a configuration file names, which tla-ts writes as an identifier with no range, and a reference in the spec as written.
 const getExpectedValue = (kind: string, expression: Expression, environment: Environment) => {
   const definition =
     expression.kind === "Identifier" && !expression.location.range

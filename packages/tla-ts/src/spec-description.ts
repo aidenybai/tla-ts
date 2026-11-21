@@ -512,7 +512,6 @@ const describeSpecification = (
   });
   const letDefinition = getLocalDefinition(expression, scope);
   const thunk = letDefinition?.kind === "Operator" ? getThunk(expression, scope) : undefined;
-  // TLC 1.7.4's SpecProcessor#processConfigSpec takes a LET and an application with arguments whole.
   const isTlc174 = environment.runtime.version === "1.7.4";
   const unwrapped =
     thunk || (isTlc174 && expression.kind === "Let")
@@ -536,7 +535,6 @@ const describeSpecification = (
   const calledFrames = called
     ? [...frames, ...(substitutionFrames.get(called.body) ?? [])]
     : frames;
-  // Inside an instance, SANY's body names a definition without parameters, whose copy takes the instance's.
   const isArgumentFree =
     called !== undefined &&
     (called.params.length === 0 ||

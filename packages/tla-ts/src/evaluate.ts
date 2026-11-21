@@ -269,7 +269,6 @@ export interface Context {
   state: State | undefined;
   next: State | undefined;
   isKeepLazy?: boolean;
-  // Evaluating under a prime, where TLC's s1 is TLCState.Null.
   isPrimed: boolean;
 }
 
@@ -562,7 +561,6 @@ export const getUnchangedVariables = (
   return getUnchangedVariables(definition.body, environment, visited, written);
 };
 
-// TLC's TupleValue#equals compares each component with Value#equals in turn. Undefined means a variable has no value, whose error the subscript's evaluation gives.
 export const isUnchangedState = (
   indexes: number[],
   state: State | undefined,
@@ -1054,7 +1052,6 @@ export const getStartupValue = (definition: Definition, environment: Environment
   return definitionId === undefined ? undefined : environment.startupValues[definitionId];
 };
 
-// SymbolNodeValueLookupProvider#lookup takes a definition processConstantDefns skipped, such as a LET's or one of an instanced module with parameters, for its body's literal, through SANY's SubstInNodes.
 export const getBodyLiteral = (body: Expression, environment: Environment): Value | undefined => {
   if (body.kind === "Let" && environment.boundSubstitutions.lets.has(body)) {
     return getBodyLiteral(body.body, environment);

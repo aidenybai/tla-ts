@@ -89,8 +89,7 @@ interface ExpandedExpression extends ScopedExpression {
   path: string[];
   frames: Expression[];
   theorem?: TheoremReference;
-  // The definition SANY's body names without arguments, whose copy takes the parameters of its instance.
-  named?: Definition;
+  argumentFreeDefinition?: Definition;
   substitutions: LetExpression[];
 }
 
@@ -430,7 +429,10 @@ export const expandTemporal = (
       ],
       substitutions,
     });
-  const getLeaf = (theorem?: TheoremReference, named?: Definition): ExpandedExpression[] => [
+  const getLeaf = (
+    theorem?: TheoremReference,
+    argumentFreeDefinition?: Definition,
+  ): ExpandedExpression[] => [
     {
       expression,
       scope,
@@ -438,7 +440,7 @@ export const expandTemporal = (
       path: expansion.path,
       frames: expansion.frames,
       theorem,
-      named,
+      argumentFreeDefinition,
       substitutions: expansion.substitutions.flatMap((item) =>
         isWithinScope(item.scope, scope) ? [item.expression] : [],
       ),
@@ -473,7 +475,6 @@ export const expandTemporal = (
   }
   if (expression.kind === "Label") return expand(expression.body, scope);
   if (expression.kind === "Selection") return expand(expression.expression, scope);
-  // TLC 1.7.4's SpecProcessor#processConfigSpec and #processConfigProps take a LET whole.
   if (expression.kind === "Let" && environment.runtime.version !== "1.7.4") {
     const bound = bindLetDefinitions(expression, scope, environment);
     const lets = environment.boundSubstitutions.lets;
@@ -532,7 +533,6 @@ export const expandTemporal = (
       if (expansion.expanding.has(definition)) {
         throw createStackOverflowError();
       }
-      // SpecProcessor#processConfigSpec takes a state-level definition whole as an initial predicate.
       if (
         !isProperty &&
         definition.kind === "Operator" &&
@@ -577,15 +577,14 @@ export const expandTemporal = (
       !isRecursive &&
       (!expansion.isSubstituted || isOwnArgumentFree);
     if (isExpandable) {
-      // Inside an instance, SANY's body names a definition without parameters, whose copy takes the instance's.
-      const isNamed = expansion.isSubstituted && isOwnArgumentFree;
-      if (isNamed && definition && getLookupValue(definition, environment) !== undefined) {
+      const isArgumentFree = expansion.isSubstituted && isOwnArgumentFree;
+      if (isArgumentFree && definition && getLookupValue(definition, environment) !== undefined) {
         return getLeaf(undefined, definition);
       }
       const bound = bindUncachedArguments(operator, expression.args, context);
       if (
         !isProperty &&
-        isNamed &&
+        isArgumentFree &&
         getLevelBound(operator.body, bound, environment) === VARIABLE_LEVEL
       ) {
         return getLeaf();
@@ -994,7 +993,6 @@ export const getInterpretedAtoms = (environment: Environment): LiveAtoms<Value[]
       subscript &&
       isEqualLikeTlc(
         evaluate(subscript, { environment, scope, state, next: undefined, isPrimed: false }),
-        // LNAction#eval reads the subscript in the second state with TLCState.Null.
         evaluate(subscript, { environment, scope, state: next, next: undefined, isPrimed: true }),
       )
     )
