@@ -725,6 +725,40 @@ describe("the CLI with TypeScript files", () => {
     });
   });
 
+  // A program makes an AsyncResource and runs a function in its scope, and stops where it uses the
+  // constructor otherwise, as an instanceof that Node answers false, whose throw a catch would see.
+  describe("uses AsyncResource as Node does", () => {
+    const getScript = (expected: number) =>
+      `const { AsyncResource } = require("async_hooks");\nif (new AsyncResource("t").runInAsyncScope(() => 2) !== ${expected}) throw new Error("ran");\n`;
+
+    it("agrees with Node", () => {
+      const directory = copyFixtures("passing");
+      writeFileSync(join(directory, "resource.cjs"), getScript(2));
+      expect(runNode(directory, "resource.cjs").status).toBe(0);
+      expect(getExit(runCli(directory, ["resource.cjs"]))).toEqual([0, ""]);
+    });
+
+    it("rejects another result", () => {
+      const directory = copyFixtures("passing");
+      writeFileSync(join(directory, "resource.cjs"), getScript(3));
+      const result = runCli(directory, ["resource.cjs"]);
+      expect(getExit(result)).toEqual(getExit(runNode(directory, "resource.cjs")));
+      expect(result.status).toBe(1);
+    });
+
+    it("stops at an instanceof, whose answer a catch would change", () => {
+      const directory = copyFixtures("passing");
+      writeFileSync(
+        join(directory, "resource.cjs"),
+        'const { AsyncResource } = require("async_hooks");\nconst getAnswer = () => {\n  try {\n    return ({}) instanceof AsyncResource;\n  } catch {\n    return "threw";\n  }\n};\nif (getAnswer() !== false) throw new Error("answer");\n',
+      );
+      expect(runNode(directory, "resource.cjs").status).toBe(0);
+      const result = runCli(directory, ["resource.cjs"]);
+      expect(result.status).not.toBe(1);
+      expect(result.stdout).toContain("tla-ts can't run the host's AsyncResource");
+    });
+  });
+
   // A module reads Node's performance, as React's server builds do, whose now gives the time,
   // which each run reads anew, so the check stops where a program reads the time it gives.
   describe("reads Node's performance as Node does", () => {

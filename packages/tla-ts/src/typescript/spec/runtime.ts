@@ -581,8 +581,9 @@ const DEFINITIONS = [
   LET stop == Alloc(s, BuiltinObject(Intrinsic(s, "FunctionPrototype"), <<"Module", "hostStop">>, 0, <<>>, FALSE, name, s.realmId))
   IN ProxyCreate(stop.s, stop.v, s.hostHandler)`,
   // Node's process, of which a program reads only hrtime, whose bigint it may only read, and
-  // getBuiltinModule, of async_hooks, of which it reads only AsyncResource, whose objects run a
-  // function in their scope and emit their destroy, as Node's do (lib/async_hooks.js) where no hook
+  // getBuiltinModule, of async_hooks, of which it reads only AsyncResource, whose name and length
+  // it may read and whose objects, which it makes with new and nothing else, run a function in
+  // their scope and emit their destroy, as Node's do (lib/async_hooks.js) where no hook
   // of async_hooks observes them, which a program would make by reading more of async_hooks, and
   // AsyncLocalStorage, which makes an object of no arguments, at whose every use the program stops,
   // as its store follows the async context that ESCore's jobs don't carry. A program reads
@@ -606,8 +607,11 @@ const DEFINITIONS = [
       destroy == CreateBuiltinFunction(run.s, <<"Module", "asyncDestroy">>, 0, N("emitDestroy"), Empty)
       resource == Alloc(destroy.s, BuiltinObject(Intrinsic(destroy.s, "FunctionPrototype"), <<"Module", "asyncResource">>, 1,
                                                  N("AsyncResource"), TRUE, [run |-> Val(run), destroy |-> Val(destroy)], destroy.s.realmId))
-      hooks == OrdinaryObjectCreate(resource.s, Null)
-      withResource == CreateDataProperty(hooks.s, Val(hooks), SV("AsyncResource"), resource.v)
+      resourceProxy == StoppingProxy(resource.s, resource.v, N("AsyncResource"),
+                                     <<[trap |-> SV("get"), method |-> "asyncResourceClassGet"],
+                                       [trap |-> SV("construct"), method |-> "asyncResourceConstruct"]>>)
+      hooks == OrdinaryObjectCreate(resourceProxy.s, Null)
+      withResource == CreateDataProperty(hooks.s, Val(hooks), SV("AsyncResource"), Val(resourceProxy))
       storage == Alloc(withResource.s, BuiltinObject(Intrinsic(s, "FunctionPrototype"), <<"Module", "hostStop">>, 0, <<>>, TRUE,
                                                      N("AsyncLocalStorage"), s.realmId))
       storageProxy == StoppingProxy(storage.s, storage.v, N("AsyncLocalStorage"),
@@ -1597,6 +1601,14 @@ const HOST_PATCHES = [
          LET own == OrdinaryGetOwnProperty(O(s, Intrinsic(s, "GlobalObject")), SV("TextEncoder")) IN
          IF Arg(args, 2) # SV("TextEncoder") \\/ own = Absent \\/ ~IsDataDescriptor(own) \\/ ~IsHostConstructor(s, own.value, N("TextEncoder"))
          THEN HostStop(N("util")) ELSE Ok(s, own.value)
+    [] m = "asyncResourceClassGet" ->
+         IF Arg(args, 2) \\notin {SV("name"), SV("length")} THEN HostStop(N("AsyncResource")) ELSE Get(s, Arg(args, 1), Arg(args, 2))
+    [] m = "asyncResourceConstruct" ->
+         LET list == CreateListFromArrayLike(s, Arg(args, 2), "all") IN
+         IF IsAbrupt(list) THEN list
+         ELSE IF ~IsObject(Arg(args, 3)) \\/ O(list.s, Arg(args, 3)).class # "proxy" \\/ O(list.s, Arg(args, 3)).slots.target # Arg(args, 1)
+         THEN HostStop(N("AsyncResource"))
+         ELSE Construct(list.s, Arg(args, 1), Val(list), Arg(args, 1))
     [] m = "asyncResource" ->
          IF nt # f \\/ ~IsString(Arg(args, 1)) \\/ (Arg(args, 2) # Undefined /\\ ~IsObject(Arg(args, 2))) THEN HostStop(N("AsyncResource")) ELSE
          LET trigger == IF Arg(args, 2) = Undefined THEN Ok(s, Undefined) ELSE Get(s, Arg(args, 2), SV("triggerAsyncId")) IN

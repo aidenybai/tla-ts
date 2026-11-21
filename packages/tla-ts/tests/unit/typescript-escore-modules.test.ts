@@ -837,6 +837,34 @@ describe("compiles CommonJS modules as Node loads them", () => {
     });
   });
 
+  // Node's AsyncResource, whose name and length a program reads and whose objects it makes with
+  // new, as Effect does, stops at every other use, such as an instanceof, which Node answers.
+  describe("stops where the code uses AsyncResource other than to make its objects", () => {
+    it.each([
+      "({}) instanceof AsyncResource",
+      "AsyncResource.prototype",
+      "AsyncResource.bind",
+      '"name" in AsyncResource',
+      "Object.keys(AsyncResource)",
+      'Object.getOwnPropertyDescriptor(AsyncResource, "name")',
+      "Object.getPrototypeOf(AsyncResource)",
+      "AsyncResource.x = 1",
+      "delete AsyncResource.name",
+      "JSON.stringify({ AsyncResource })",
+      'AsyncResource("t")',
+      'Reflect.construct(AsyncResource, ["t"], Object)',
+      'new (class extends AsyncResource {})("t")',
+    ])("stops at %s", async (use) => {
+      expect(
+        (
+          await checkModules(
+            getFiles(`const { AsyncResource } = require("async_hooks"); ${use};`, ""),
+          )
+        ).message,
+      ).toContain("tla-ts can't run the host's AsyncResource");
+    });
+  });
+
   describe("gives a module in a cycle the exports so far of the module that requires it", () => {
     const main = `const a = require("./a.js");
       log.push(a.name, a.fromB);`;
