@@ -184,7 +184,7 @@ const isInternalInstance = (module: Module, instance: Instance) => {
       return seen.has(instance.module);
     }
   }
-  // Deviation from SANY: SpecObj#instanceResolvesToInternalModule reads only top-level INSTANCEs, so SANY loads an inner module that only a LET instantiates a second time and rejects it as multiply defined.
+  // Deviation from SANY: SpecObj#instanceResolvesToInternalModule reads only top-level INSTANCEs, so SANY loads an inner module that only a LET instantiates a second time. MonolithSpecExtractor#module copies it from the root file up to the first ==== line, so SANY rejects it as multiply defined, or fails to parse it when it has an inner module of its own.
   return module.modules.some(
     (inner) => inner.name === instance.module && isBefore(inner.location, instance.location),
   );

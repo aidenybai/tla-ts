@@ -16,6 +16,7 @@ import { simplifyInjAxiom } from "./inj-axiom";
 import { MacroManager } from "./macro-finder";
 import { ElimBoundsRw } from "./elim-bounds";
 import { DefinedNames, Nnf } from "./nnf";
+import { PatternDatabase } from "./pattern-database";
 import { PatternInference } from "./pattern-inference";
 import { MaxBvSharing } from "./maximize-ac-sharing";
 import { PullQuant } from "./pull-quant";
@@ -26,6 +27,9 @@ import { RewriterTpl } from "./rewriter-tpl";
 import type { SmtConfig } from "./smt-setup";
 
 export class PatternInferenceRw extends RewriterTpl {
+  isUsingDatabase = false;
+  private database: PatternDatabase | undefined;
+
   constructor(
     manager: AstManager,
     private inference: PatternInference,
@@ -33,10 +37,38 @@ export class PatternInferenceRw extends RewriterTpl {
     super(manager);
   }
 
+  release() {
+    this.database?.release();
+    super.release();
+  }
+
+  private reduceByDatabase(expr: number) {
+    const manager = this.manager;
+    this.database ??= new PatternDatabase(manager);
+    const match = this.database.matchQuantifier(expr);
+    if (match === undefined) return -1;
+    const data = manager.getQuantifier(expr);
+    const withPatterns =
+      data.patterns.length > 0
+        ? expr
+        : manager.mkQuantifier({ ...data, patterns: match.patterns, noPatterns: [] });
+    manager.incRef(withPatterns);
+    const result =
+      data.weight === match.weight
+        ? withPatterns
+        : manager.mkQuantifier({ ...manager.getQuantifier(withPatterns), weight: match.weight });
+    manager.incRef(result);
+    manager.decRef(withPatterns);
+    for (const pattern of match.patterns) manager.decRef(pattern);
+    return result;
+  }
+
   reduceQuantifier(expr: number, body: number) {
     const manager = this.manager;
     const data = manager.getQuantifier(expr);
-    if (data.kind !== QUANTIFIER_FORALL || data.patterns.length > 0) return -1;
+    if (data.kind !== QUANTIFIER_FORALL) return -1;
+    const fromDatabase = this.isUsingDatabase ? this.reduceByDatabase(expr) : -1;
+    if (fromDatabase !== -1 || data.patterns.length > 0) return fromDatabase;
     const quantifier = manager.withTemporaries(() => {
       const inferred = this.inference.infer(data.sorts.length, body, data.weight, data.noPatterns);
       const withPatterns = manager.mkQuantifier({ ...data, body, patterns: inferred.patterns });
@@ -332,6 +364,7 @@ export class AssertedFormulas {
     this.isLiftingNonGroundIte = config.isLiftingNonGroundIte;
     this.isEliminatingBounds = config.isEliminatingBounds;
     this.isFindingMacros ||= config.isFindingMacros;
+    this.patternInference.isUsingDatabase = config.isUsingPatternDatabase;
   }
 
   updateParams(config: SmtConfig) {
@@ -341,6 +374,7 @@ export class AssertedFormulas {
     this.isLiftingNonGroundIte = config.isLiftingNonGroundIte;
     this.isEliminatingBounds = config.isEliminatingBounds;
     this.isFindingMacros = config.isFindingMacros;
+    this.patternInference.isUsingDatabase = config.isUsingPatternDatabase;
     this.isReducePending = true;
   }
 

@@ -576,6 +576,10 @@ describe("name resolution matches SANY", () => {
       "---- MODULE Inner ----\nK == 1\n====\nF == LET N == INSTANCE Inner IN N!K",
     ],
     [
+      "an inner module with an inner module of its own that only a LET instantiates, which SANY fails to parse",
+      "---- MODULE Inner ----\n---- MODULE Nested ----\nJ == 1\n====\nK == 1\n====\nF == LET N == INSTANCE Inner IN N!K",
+    ],
+    [
       "a definition after a field named THEOREM, AXIOM or DOMAIN, which SANY rejects",
       "r == [a |-> 1]\nF == r.THEOREM\nG == [r EXCEPT !.AXIOM = 1]\nH == r.DOMAIN\nI == 1",
     ],

@@ -14,6 +14,7 @@ import {
   type NumberExpression,
   type OperatorParam,
   type RecordField,
+  type SourceRange,
 } from "./ast";
 import { getKindString } from "./builtins";
 import {
@@ -183,6 +184,7 @@ export interface Scope {
 export interface Environment {
   runtime: CheckerRuntime;
   definitions: Map<string, Definition>;
+  theorems: Map<string, SourceRange>;
   rootKeys: Map<string, string>;
   builtins: Map<string, Builtin>;
   constants: Map<string, Value>;
@@ -521,6 +523,10 @@ export const getBuiltin = (name: string, environment: Environment) =>
 // Deviation from TLC: SpecProcessor#processModuleOverrides puts a standard module's Java override over a root definition of the same name.
 export const getRootKey = (name: string, environment: Environment) =>
   environment.rootKeys.get(name) ?? name;
+
+// TLC looks a configuration file's name up in defns, which holds no theorem or assumption.
+export const getConfigNameDefinition = (key: string, environment: Environment) =>
+  environment.theorems.has(key) ? undefined : getDefinition(key, environment);
 
 const getBoundExplanation = (set: Value, text: string) => {
   const quantified = `universally (\\A) or existentially (\\E) quantify over ${text}, because this would require checking an\ninfinite number of cases.`;

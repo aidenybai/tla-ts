@@ -396,7 +396,15 @@ export interface TheoremDefinition extends OperatorDefinition {
   statement: AssumeProve;
 }
 
-export type Definition = OperatorDefinition | FunctionDefinition | TheoremDefinition;
+export interface LetSubstituteDefinition extends OperatorDefinition {
+  isLetSubstitute: true;
+}
+
+export type Definition =
+  | OperatorDefinition
+  | FunctionDefinition
+  | TheoremDefinition
+  | LetSubstituteDefinition;
 
 export interface Declaration {
   name: string;

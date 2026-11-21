@@ -12,6 +12,7 @@ import { ACTION_LEVEL, CONSTANT_LEVEL, TEMPORAL_LEVEL, VARIABLE_LEVEL } from "./
 interface DefinitionNames extends Pick<
   Environment,
   | "definitions"
+  | "theorems"
   | "substitutions"
   | "constants"
   | "bodyValues"
@@ -19,6 +20,8 @@ interface DefinitionNames extends Pick<
   | "builtins"
   | "variables"
 > {}
+
+const isLetSubstitute = (definition: Definition) => "isLetSubstitute" in definition;
 
 const getFactExpressions = (definition: Definition, environment: DefinitionNames) =>
   environment.bodyValues.has(definition.body) ? [] : getDefinitionExpressions(definition);
@@ -89,7 +92,7 @@ interface Edge {
   callee: Definition;
   isOverridden: boolean;
   isLevelCounted: boolean;
-  isOperatorArgument: boolean;
+  isBoundCounted: boolean;
 }
 
 const collectLocalFacts = (
@@ -115,7 +118,12 @@ const collectLocalFacts = (
     return undefined;
   };
   const contexts = new Map<Expression, number>();
-  const visit = (node: Expression, isLevelCounted: boolean, isOperatorArgument: boolean) => {
+  const visit = (
+    node: Expression,
+    isLevelCounted: boolean,
+    isOperatorArgument: boolean,
+    substitutes: ReadonlyMap<string, Expression> | undefined,
+  ) => {
     const kind = node.kind;
     if (kind === "Selection") {
       const seen = contexts.get(node.expression) ?? 0;
@@ -137,12 +145,13 @@ const collectLocalFacts = (
     if (isLevelCounted && ownLevelFlags !== undefined) row[0] |= ownLevelFlags;
     const isInnerLevelCounted = isLevelCounted && ownLevelFlags === undefined;
     const name = getReferencedName(node);
+    const isLocal = name !== undefined && isLocallyResolved(node);
     // TLC's getLevelBound takes a parameter named like a variable for that variable.
-    if (name !== undefined && isLocallyResolved(node) && environment.variableIndex.has(name)) {
+    if (isLocal && environment.variableIndex.has(name)) {
       if (!isOperatorArgument) row[0] |= ABOVE_CONSTANT_BOUND;
       if (isInnerLevelCounted) row[0] |= VARIABLE_LEVEL_FLAGS;
     }
-    if (name !== undefined && !isLocallyResolved(node)) {
+    if (name !== undefined && !isLocal) {
       const target = environment.substitutions.get(name) ?? name;
       const definition = environment.definitions.get(target);
       const isOverridden = environment.constants.has(name);
@@ -163,12 +172,15 @@ const collectLocalFacts = (
           callee: definition,
           isOverridden,
           isLevelCounted: isInnerLevelCounted,
-          isOperatorArgument:
+          // TLC's getLevelBound reads neither an operator argument's body nor a theorem's.
+          isBoundCounted: !(
             isOperatorArgument ||
             kind === "OperatorReference" ||
             (kind === "Identifier" &&
               definition.kind === "Operator" &&
-              definition.params.length > 0),
+              definition.params.length > 0) ||
+            environment.theorems.has(target)
+          ),
         });
       } else {
         const builtin = environment.builtins.get(target);
@@ -190,11 +202,28 @@ const collectLocalFacts = (
         }
       }
     }
+    const substitute = isLocal ? substitutes?.get(name) : undefined;
+    if (substitute) visit(substitute, isInnerLevelCounted, isOperatorArgument, substitutes);
+    // TLC's SubstInNode binds a LET instance's substitute lazily, so its level counts only where the instanced definition reads it.
+    if (kind === "Let" && node.definitions.some(isLetSubstitute)) {
+      const innerSubstitutes = new Map(substitutes);
+      node.definitions.forEach((definition) => {
+        if (isLetSubstitute(definition)) innerSubstitutes.set(definition.name, definition.body);
+      });
+      node.definitions.forEach((definition) => {
+        if (isLetSubstitute(definition)) return;
+        getDefinitionExpressions(definition).forEach((child) =>
+          visit(child, isInnerLevelCounted, isOperatorArgument, innerSubstitutes),
+        );
+      });
+      visit(node.body, isInnerLevelCounted, isOperatorArgument, innerSubstitutes);
+      return;
+    }
     getChildren(node).forEach((child) =>
-      visit(child, isInnerLevelCounted, isOperatorArgument || kind === "Lambda"),
+      visit(child, isInnerLevelCounted, isOperatorArgument || kind === "Lambda", substitutes),
     );
   };
-  expressions.forEach((expression) => visit(expression, true, false));
+  expressions.forEach((expression) => visit(expression, true, false, undefined));
   return { row, edges };
 };
 
@@ -300,9 +329,7 @@ export const createDefinitionFacts = (environment: DefinitionNames): DefinitionF
   const levels = closeRows(local, words, levelEdges, TEMPORAL_LEVEL_FLAGS);
   const startupEdges = edges.map(
     (own) =>
-      new Int32Array(
-        own.filter((edge) => !edge.isOverridden && !edge.isOperatorArgument).map(getId),
-      ),
+      new Int32Array(own.filter((edge) => !edge.isOverridden && edge.isBoundCounted).map(getId)),
   );
   const startup = closeRows(local, words, startupEdges, ABOVE_CONSTANT_BOUND);
   const purityEdges = edges.map(
@@ -347,7 +374,7 @@ const getExpressionsRow = (expressions: Expression[], environment: Environment) 
     const callee = getRow(edge.callee, environment);
     if (!edge.isOverridden) {
       row[0] |= callee[0] & READ_MASK;
-      if (!edge.isOperatorArgument) row[0] |= callee[0] & ABOVE_CONSTANT_BOUND;
+      if (edge.isBoundCounted) row[0] |= callee[0] & ABOVE_CONSTANT_BOUND;
       if (edge.isLevelCounted) row[0] |= callee[0] & TEMPORAL_LEVEL_FLAGS;
       for (let word = 1; word < words; word++) row[word] |= callee[word];
     }
