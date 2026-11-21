@@ -422,6 +422,9 @@ const canonicalStateOf = (state: Value, initial: Value): Value => {
     .map((file, position) => ({ file: Number(file), entry: required.range[position] }))
     .sort((left, right) => left.file - right.file)
     .forEach((pair) => objectRef(get(pair.entry, "module"), realm, queue));
+  // The handler of the host's proxies and the host's import, which the state names by object.
+  maybeRef(get(state, "hostHandler"), realm, queue);
+  maybeRef(get(state, "hostImport"), realm, queue);
   // The breadth-first walk, whose queue grows at its end as each node it numbers adds the nodes
   // that node refers to.
   const numbers = new Map<number, number>();
@@ -663,6 +666,8 @@ const canonicalStateOf = (state: Value, initial: Value): Value => {
     envsHeld: () => environments.length,
     templates: (inner) => mapRange(inner, renameValue),
     required: (inner) => mapRange(inner, (entry) => except(entry, { module: renameValue })),
+    hostHandler: renameMaybe,
+    hostImport: renameMaybe,
     modules: (inner) =>
       createTuple(
         getList(inner).map((module) =>
