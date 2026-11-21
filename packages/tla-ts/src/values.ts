@@ -1711,7 +1711,11 @@ const someSubset = (
   for (let size = 0; size <= base.length; size++) {
     const indices = Array.from({ length: size }, (_value, index) => index);
     do {
-      const subset = createSortedSet(indices.map((index) => base[index]));
+      // eslint-disable-next-line unicorn/no-new-array
+      const elements = new Array<Value>(size);
+      for (let position = 0; position < size; position++)
+        elements[position] = base[indices[position]];
+      const subset = createSortedSet(elements);
       if (visit(costNode === undefined ? subset : { ...subset, costNode })) return true;
     } while (advanceCombination(indices, base.length));
   }
