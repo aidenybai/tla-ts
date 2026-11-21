@@ -3,6 +3,7 @@ import { check, TlaConfigError, TlaEvaluationError } from "../../src";
 import { getUnexpectedException, TlaStackOverflowError } from "../../src/errors";
 import { getExitCode } from "../../src/exit-codes";
 import type { TlcVersion } from "../../src/tlc/version";
+import { formatCallStackLines } from "./check-harness";
 
 describe("check matches TLC 1.7.4", () => {
   const check174 = (definitions: string, config = "INIT Init\nNEXT Next") =>
@@ -223,6 +224,73 @@ describe("check matches TLC 1.7.4", () => {
     expect(await getStatus("master")).toBe("success");
     await expect(getStatus("1.7.4")).rejects.toThrow(
       "The configuration file did not specify the initial state predicate.",
+    );
+  });
+
+  const checkWholeSpec = (spec: string) =>
+    check({
+      source: `---- MODULE M ----\nEXTENDS Integers\nVARIABLES x, y\nI(j) == INSTANCE N WITH k <- j\nG(a) == a = 0 /\\ y = 1 + "a"\nNext == x' = (x + 1) % 2 /\\ y' = y\n${spec}\n====\n`,
+      config: "SPECIFICATION Spec\n",
+      version: "1.7.4",
+      loadModule: (name) =>
+        name === "N"
+          ? '---- MODULE N ----\nEXTENDS Integers\nCONSTANT k\nVARIABLES x, y\nInit == x = k /\\ y = k + "a"\nNext == UNCHANGED <<x, y>>\nSpec == Init /\\ [][Next]_<<x, y>>\n====\n'
+          : undefined,
+    });
+
+  it.each([
+    [
+      "Spec == G(x) /\\ [][Next]_<<x, y>>",
+      [
+        "Line 7, column 9 to line 7, column 12 in M",
+        "Line 5, column 9 to line 5, column 28 in M",
+        "Line 5, column 9 to line 5, column 13 in M",
+        "Line 5, column 18 to line 5, column 28 in M",
+        "Line 5, column 22 to line 5, column 28 in M",
+      ],
+    ],
+    [
+      'Spec == (LET v == 0 IN x = v /\\ y = 1 + "a") /\\ [][Next]_<<x, y>>',
+      [
+        "Line 7, column 10 to line 7, column 43 in M",
+        "Line 7, column 24 to line 7, column 43 in M",
+        "Line 7, column 24 to line 7, column 28 in M",
+        "Line 7, column 33 to line 7, column 43 in M",
+        "Line 7, column 37 to line 7, column 43 in M",
+      ],
+    ],
+    [
+      "Spec == I(0)!Init /\\ [][I(0)!Next]_<<x, y>>",
+      [
+        "Line 7, column 9 to line 7, column 17 in M",
+        "Line 4, column 1 to line 4, column 30 in M",
+        "Line 5, column 9 to line 5, column 28 in N",
+        "Line 5, column 9 to line 5, column 13 in N",
+        "Line 5, column 18 to line 5, column 28 in N",
+        "Line 5, column 22 to line 5, column 28 in N",
+      ],
+    ],
+  ])("takes the initial predicate %j whole, as TLC 1.7.4 does", async (spec, lines) => {
+    const result = await checkWholeSpec(spec);
+    expect(formatCallStackLines(result)).toEqual(lines);
+  });
+
+  it.each(["Spec == I(0)!Spec", "Spec == LET v == <<x, y>> IN x = 0 /\\ y = 0 /\\ [][Next]_v"])(
+    "takes the temporal formula %j whole, as TLC 1.7.4 does",
+    async (spec) => {
+      await expect(checkWholeSpec(spec)).rejects.toThrow(
+        new TlaConfigError(
+          "The configuration file did not specify the initial state predicate.\nCan also be caused by trying to run TLC on a specification from\na module imported with a parameterized INSTANCE statement.",
+        ),
+      );
+    },
+  );
+
+  it("takes a property's LET whole, as TLC 1.7.4 does", async () => {
+    const property = "P == LET v == TRUE IN [][b' # v]_b";
+    expect((await checkProperty(property)).violation?.name).toBe("P");
+    await expect(checkProperty(property, "1.7.4")).rejects.toThrow(
+      "Temporal formulas containing actions must be of forms <>[]A or []<>A.",
     );
   });
 

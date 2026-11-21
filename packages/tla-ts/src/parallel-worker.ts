@@ -44,7 +44,6 @@ const runWorker = (start: StartMessage, parent: Port) => {
   const search = createSearch(
     start.config,
     environment,
-    specification.variableLocations,
     () => created.order.getDeclarationOrder("variable"),
     undefined,
     [],

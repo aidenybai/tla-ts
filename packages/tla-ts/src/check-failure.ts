@@ -1,5 +1,6 @@
 import type { Expression } from "./ast";
 import type { OutputLine, TraceFailure } from "./check";
+import { runUncounted, type Coverage } from "./coverage";
 import {
   getErrorExitCode,
   isStackOverflow,
@@ -118,11 +119,14 @@ export const fingerprintReplayed = (
   state: Value[],
   fingerprintState: Value[],
   callStack: CallStack | undefined,
+  coverage: Coverage | undefined,
 ) => {
   for (const value of fingerprintState) {
     const error = getFingerprintError(value);
     if (!error) continue;
-    const sources = callStack ? findFailedSources(value, callStack.sources) : [];
+    const sources = callStack
+      ? runUncounted(coverage, () => findFailedSources(value, callStack.sources))
+      : [];
     if (callStack && sources.length > 0) {
       callStack.expressions.length = 0;
       callStack.isFrozen = true;

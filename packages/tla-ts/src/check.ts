@@ -5,6 +5,7 @@ import {
   createCoverage,
   createCoverageEnvironment,
   getCoverageReport,
+  runUncounted,
   type CoverageReport,
 } from "./coverage";
 import {
@@ -412,8 +413,7 @@ const searchStates = (
   let description: SpecDescription | undefined;
   const getDescription = () =>
     (description ??= getSpecDescription(config, environment, specification.instanceActions));
-  runtime.getSpecification = () =>
-    getSpecificationValue(getDescription(), config, environment, specification.variableLocations);
+  runtime.getSpecification = () => getSpecificationValue(getDescription(), config, environment);
   let searchDepth = 0;
   let computedInitialStates: InitialStates | undefined;
   const getTraceSpec = (trace: TraceStep[], loopStart: number | undefined) =>
@@ -432,12 +432,7 @@ const searchStates = (
     });
   const getCoverage = () =>
     coverage?.relations.some((relation) => relation.kind === "next")
-      ? getCoverageReport(
-          coverage,
-          environment,
-          specification.variableLocations,
-          search?.getTlcOrder() ?? [],
-        )
+      ? getCoverageReport(coverage, environment, search?.getTlcOrder() ?? [])
       : undefined;
   const createResult = (
     status: CheckStatus,
@@ -497,7 +492,6 @@ const searchStates = (
   const search = createSearch(
     config,
     environment,
-    specification.variableLocations,
     () => created.order.getDeclarationOrder("variable"),
     options.onProgress,
     specification.moduleOperators,
@@ -630,7 +624,7 @@ const searchStates = (
   const createReplayedStates = () => {
     const replayed = unstoredFingerprint ? [unstoredFingerprint] : [];
     return (state: Value[], callStack: CallStack | undefined) => {
-      fingerprintReplayed(state, getFingerprintState(state), callStack);
+      fingerprintReplayed(state, getFingerprintState(state), callStack, coverage);
       const fingerprintState = getFingerprintState(state);
       const hash = getStateHash(fingerprintState);
       const isSeen =
@@ -883,21 +877,15 @@ const searchStates = (
       );
     });
   };
-  const isUnfingerprintable = (state: Value[]) => {
-    const primary = coverage?.primary.slice();
-    const secondary = coverage?.secondary.slice();
-    try {
-      return getFingerprintState(state).some((value) => getFingerprintError(value) !== undefined);
-    } catch (error) {
-      if (!(error instanceof TlaEvaluationError)) throw error;
-      return true;
-    } finally {
-      if (coverage) {
-        Object.assign(coverage.primary, primary);
-        Object.assign(coverage.secondary, secondary);
+  const isUnfingerprintable = (state: Value[]) =>
+    runUncounted(coverage, () => {
+      try {
+        return getFingerprintState(state).some((value) => getFingerprintError(value) !== undefined);
+      } catch (error) {
+        if (!(error instanceof TlaEvaluationError)) throw error;
+        return true;
       }
-    }
-  };
+    });
   const checkFailedTrace = (behavior: Behavior, counterExample?: CounterExampleOptions) => {
     if (!counterExample) return { behavior, postcondition: undefined };
     const checked = checkTracePostconditions(

@@ -1708,6 +1708,100 @@ ASSUME TLCFP(a) = -887695703
     },
   );
 
+  it.each([
+    ["D == FALSE\nSpec == Init /\\ [][Next]_y /\\ N", "SPECIFICATION Spec"],
+    ["D == FALSE\nSpec == Init /\\ [][Next]_y /\\ (N /\\ TRUE)", "SPECIFICATION Spec"],
+    ["D == FALSE", "SPECIFICATION N"],
+    ["D == FALSE\nSpec == Init /\\ [][Next]_y", "SPECIFICATION Spec\nPROPERTY N"],
+    [
+      "D == FALSE\nSpec == Init /\\ [][Next]_y\nProp == N /\\ y \\in Nat",
+      "SPECIFICATION Spec\nPROPERTY Prop",
+    ],
+  ])(
+    "takes the substitute of N in %j apart under %j, as SpecProcessor looks N up as the definition it names",
+    async (definitions, config) => {
+      await expect(
+        check({ source: getSubstituteSource(definitions), config: `${config}\nCONSTANT N <- D` }),
+      ).rejects.toThrow(new TlaConfigError("The spec is trivially false because FALSE is false."));
+    },
+  );
+
+  it.each([
+    ["D == FALSE", "INIT Init\nNEXT Next\nINVARIANT N", ["invariant-violation", "N", 0]],
+    ['D == PrintT("D")', "INIT Init\nNEXT Next\nINVARIANT N", ["success", undefined, 3]],
+    ["D == FALSE", "INIT Init\nNEXT Next\nCONSTRAINT N", ["success", undefined, 0]],
+    ["D == FALSE", "INIT Init\nNEXT Next\nACTION_CONSTRAINT N", ["success", undefined, 0]],
+    ["D == FALSE", "INIT N\nNEXT Next", ["success", undefined, 0]],
+    ["D == FALSE", "INIT Init\nNEXT N", ["deadlock", "deadlock", 0]],
+    [
+      "D == 1 = 2\nSpec == Init /\\ [][Next]_y /\\ N",
+      "SPECIFICATION Spec",
+      ["success", undefined, 0],
+    ],
+    ["D == 1 = 2", "SPECIFICATION N", ["success", undefined, 0]],
+    [
+      'D == PrintT("D")\nSpec == Init /\\ [][Next]_y /\\ N',
+      "SPECIFICATION Spec",
+      ["success", undefined, 2],
+    ],
+    [
+      "D == 1 = 2\nSpec == Init /\\ [][Next]_y",
+      "SPECIFICATION Spec\nPROPERTY N",
+      ["liveness-violation", "N", 0],
+    ],
+    [
+      "D == 1 = 2\nSpec == Init /\\ [][Next]_y\nProp == N /\\ y \\in Nat",
+      "SPECIFICATION Spec\nPROPERTY Prop",
+      ["liveness-violation", "N", 0],
+    ],
+    [
+      'D == PrintT("D")\nSpec == Init /\\ [][Next]_y',
+      "SPECIFICATION Spec\nPROPERTY N",
+      ["success", undefined, 2],
+    ],
+  ])(
+    "checks the substitute of N in %j under %j, as SpecProcessor looks N up as the definition it names",
+    async (definitions, config, expected) => {
+      const printed: string[] = [];
+      const result = await check({
+        source: getSubstituteSource(definitions),
+        config: `${config}\nCONSTANT N <- D`,
+        onPrint: (text) => printed.push(text),
+      });
+      expect([result.status, result.violation?.name, printed.length]).toEqual(expected);
+    },
+  );
+
+  it("checks the definition CONSTANT Foo <- Bar gives an operator, as SpecProcessor looks Foo up as Bar", async () => {
+    const checkOverride = (bar: string, config: string) =>
+      check({
+        source: `---- MODULE M ----\nEXTENDS Naturals\nVARIABLE y\nInit == y = 0\nNext == y' = (y + 1) % 2\nFoo == TRUE\nBar == ${bar}\nSpec == Init /\\ [][Next]_y\nProp == Foo /\\ y \\in Nat\n====`,
+        config: `${config}\nCONSTANT Foo <- Bar`,
+      });
+    await expect(checkOverride("FALSE", "SPECIFICATION Spec\nPROPERTY Foo")).rejects.toThrow(
+      new TlaConfigError("The spec is trivially false because FALSE is false."),
+    );
+    const results = await Promise.all([
+      checkOverride("FALSE", "SPECIFICATION Spec\nINVARIANT Foo"),
+      checkOverride("1 = 2", "SPECIFICATION Spec\nPROPERTY Prop"),
+    ]);
+    expect(results.map((result) => [result.status, result.violation?.name])).toEqual([
+      ["invariant-violation", "Foo"],
+      ["liveness-violation", "Foo"],
+    ]);
+  });
+
+  it("reports the literal body of a constraint a substituted name reaches, where TLC throws a ClassCastException", async () => {
+    const result = await check({
+      source: getSubstituteSource("D == 1"),
+      config: "INIT Init\nNEXT Next\nCONSTRAINT N\nCONSTANT N <- D",
+    });
+    expect([result.status, result.failure?.message]).toEqual([
+      "error",
+      "TLC expected a boolean value, but did not find one. 1",
+    ]);
+  });
+
   it("evaluates the substitute of a constant an extended module declares as TLC starts each module", async () => {
     const printed: string[] = [];
     await check({
@@ -2133,6 +2227,235 @@ ASSUME TLCFP(a) = -887695703
     },
   );
 
+  const PRIMED_READS = [
+    "---- MODULE Q ----",
+    "EXTENDS TLC, Naturals",
+    "CONSTANT d",
+    "VARIABLE w",
+    "Op2 == d = d /\\ w = w",
+    "Op1 == Op2 /\\ Op2",
+    "A2 == d = d /\\ w' = (w + 1) % 2",
+    "A1 == A2 /\\ A2",
+    "====",
+    "",
+  ].join("\n");
+  const ACTION_CHECK = "INIT Init\nNEXT Step\nACTION_CONSTRAINT Check\n";
+  const INVARIANT_CHECK = "INIT Init\nNEXT Step\nINVARIANT Check\n";
+  const NEXT_CHECK = "INIT Init\nNEXT Next\n";
+  const LIVE_CHECK = "SPECIFICATION Spec\nPROPERTY Live\n";
+  const getPrints = (text: string, count: number) => Array.from({ length: count }, () => text);
+  const UNWARNED_COVERAGE = { coverage: 1, isWarningEnabled: false };
+  const getLazyReads = async (
+    definitions: string,
+    config: string,
+    options?: typeof UNWARNED_COVERAGE,
+  ) => {
+    const printed: string[] = [];
+    const result = await check({
+      source: `---- MODULE M ----\nEXTENDS TLC, Naturals\nVARIABLE y\nJ == INSTANCE Q WITH d <- PrintT("d"), w <- y\nInit == y = 0\nStep == y' = (y + 1) % 2\nSpec == Init /\\ [][Step]_y /\\ WF_y(Step)\n${definitions}\n====\n`,
+      config,
+      seed: 4n,
+      ...options,
+      loadModule: (name) => (name === "Q" ? PRIMED_READS : undefined),
+      onPrint: (text) => printed.push(text),
+    });
+    return { printed, lines: formatCoverage(result)?.at(-1) };
+  };
+
+  it.each([
+    ["Check == (J!Op1)'", ACTION_CHECK, getPrints('"d"', 8)],
+    ["Check == J!Op1 /\\ (J!Op1)'", ACTION_CHECK, getPrints('"d"', 10)],
+    ["Check == (J!Op1)' /\\ J!Op1", ACTION_CHECK, getPrints('"d"', 10)],
+    ["Check == UNCHANGED J!Op1 \\/ TRUE", ACTION_CHECK, getPrints('"d"', 10)],
+    ["Ap(a) == a' /\\ a'\nCheck == Ap(J!Op2)", ACTION_CHECK, getPrints('"d"', 8)],
+    ["Ap(a) == a /\\ a' /\\ a\nCheck == Ap(J!Op2)", ACTION_CHECK, getPrints('"d"', 6)],
+    ["Check == LET t == PrintT(\"t\") IN t' /\\ t'", ACTION_CHECK, getPrints('"t"', 4)],
+    ['Check == LET t == PrintT("t") IN t /\\ t\' /\\ t', ACTION_CHECK, getPrints('"t"', 4)],
+    [
+      'Check == LET t == PrintT("t") /\\ y \\in 0..1 IN (UNCHANGED t \\/ TRUE) /\\ (UNCHANGED t \\/ TRUE)',
+      ACTION_CHECK,
+      getPrints('"t"', 6),
+    ],
+    [
+      "Check == LET t == PrintT(\"t\") /\\ y \\in 0..1 IN t /\\ ENABLED (y' = y /\\ t') /\\ t",
+      INVARIANT_CHECK,
+      getPrints('"t"', 4),
+    ],
+    ["Next == J!A1 /\\ J!Op1'", NEXT_CHECK, getPrints('"d"', 16)],
+    ["Next == Step /\\ UNCHANGED (J!Op2 \\/ TRUE)", NEXT_CHECK, getPrints('"d"', 6)],
+    ["Live == [][(J!Op2)']_y", LIVE_CHECK, getPrints('"d"', 4)],
+    ["Live == []<><<Step>>_<<y, J!Op2>>", LIVE_CHECK, getPrints('"d"', 12)],
+    ["Live == []<><<Step>>_<<J!Op2, y>>", LIVE_CHECK, getPrints('"d"', 12)],
+    [
+      "Check == LET r == RandomElement(1..1000) IN PrintT(<<r', r'>>)",
+      ACTION_CHECK,
+      ["<<773, 379>>", "<<484, 436>>"],
+    ],
+    [
+      "Check == LET r == RandomElement(1..1000) IN PrintT(<<r, r', r>>)",
+      ACTION_CHECK,
+      ["<<773, 379, 773>>", "<<484, 436, 484>>"],
+    ],
+    [
+      "Ap(a) == PrintT(<<a, a', a>>)\nCheck == Ap(RandomElement(1..1000))",
+      ACTION_CHECK,
+      ["<<773, 379, 773>>", "<<484, 436, 484>>"],
+    ],
+  ])(
+    "evaluates a lazy value read under a prime in %j afresh and keeps what it read before, as TLC's Tool#evalAppl does",
+    async (definitions, config, expected) => {
+      expect((await getLazyReads(definitions, config)).printed).toEqual(expected);
+    },
+  );
+
+  it.each([
+    [
+      "Check == LET r == RandomElement(1..1000) IN PrintT(<<r, UNCHANGED r, r>>)",
+      ["<<773, FALSE, 379>>", "<<484, FALSE, 436>>"],
+    ],
+    [
+      "Check == LET r == RandomElement(1..1000) IN PrintT(<<r, UNCHANGED <<r, y>>, r>>)",
+      ["<<773, FALSE, 379>>", "<<484, FALSE, 436>>"],
+    ],
+    [
+      "Check == LET r == RandomElement(1..1000) IN PrintT(<<r, [r = 0]_r, r>>)",
+      ["<<773, FALSE, 379>>", "<<484, FALSE, 436>>"],
+    ],
+    [
+      "Check == LET r == RandomElement(1..1000) IN PrintT(<<r, <<r = 0>>_r, r>>)",
+      ["<<773, FALSE, 773>>", "<<484, FALSE, 484>>"],
+    ],
+    [
+      "Check == LET r == RandomElement(1..1000) IN PrintT(<<UNCHANGED r, r, r'>>)",
+      ["<<FALSE, 773, 273>>", "<<FALSE, 484, 784>>"],
+    ],
+    [
+      'Check == LET t == PrintT("t") /\\ y \\in 0..1 IN t /\\ UNCHANGED t /\\ t',
+      getPrints('"t"', 6),
+    ],
+    [
+      'Check == LET t == PrintT("t") /\\ y \\in 0..1 IN t /\\ (UNCHANGED t \\/ TRUE) /\\ t',
+      getPrints('"t"', 6),
+    ],
+    [
+      'Check == LET t == PrintT("t") /\\ y \\in 0..1 IN (UNCHANGED t \\/ TRUE) /\\ t',
+      getPrints('"t"', 4),
+    ],
+    [
+      "Ap(a) == PrintT(<<a, UNCHANGED a, a>>)\nCheck == Ap(RandomElement(1..1000))",
+      ["<<773, FALSE, 379>>", "<<484, FALSE, 436>>"],
+    ],
+    [
+      'Ap(a) == a /\\ UNCHANGED a /\\ a\nCheck == Ap(PrintT("t") /\\ y \\in 0..1)',
+      getPrints('"t"', 6),
+    ],
+    [
+      "Ap(a) == PrintT(<<a, [a = 0]_a, a>>)\nCheck == Ap(RandomElement(1..1000))",
+      ["<<773, FALSE, 379>>", "<<484, FALSE, 436>>"],
+    ],
+  ])(
+    "evaluates the first side of UNCHANGED, [A]_e and <<A>>_e in %j without the next state, as TLC passes TLCState.Empty there",
+    async (definitions, expected) => {
+      expect((await getLazyReads(definitions, ACTION_CHECK)).printed).toEqual(expected);
+    },
+  );
+
+  it.each([
+    ["Next == Step /\\ UNCHANGED (J!Op2 \\/ TRUE)", NEXT_CHECK, '"d"', 6],
+    ["Live == []<><<Step>>_<<y, J!Op2>>", LIVE_CHECK, '"d"', 12],
+    ["Live == []<><<Step>>_<<J!Op2, y>>", LIVE_CHECK, '"d"', 12],
+    [
+      "Fair == Init /\\ [][Step]_y /\\ WF_<<y, J!Op2>>(Step)\nLive == <>(y = 1)",
+      "SPECIFICATION Fair\nPROPERTY Live\n",
+      '"d"',
+      24,
+    ],
+    [
+      "Check == LET t == PrintT(\"t\") /\\ y \\in 0..1 IN t /\\ (ENABLED (y' = IF t THEN y ELSE y))' /\\ t",
+      ACTION_CHECK,
+      '"t"',
+      6,
+    ],
+    [
+      "Check == LET t == PrintT(\"t\") /\\ y \\in 0..1 IN (ENABLED (y' = IF t THEN y ELSE y))' /\\ t'",
+      ACTION_CHECK,
+      '"t"',
+      4,
+    ],
+  ])(
+    "reads a lazy value in %j under coverage as TLC does, afresh only where s1 is TLCState.Null",
+    async (definitions, config, text, count) => {
+      expect((await getLazyReads(definitions, config, UNWARNED_COVERAGE)).printed).toEqual(
+        getPrints(text, count),
+      );
+    },
+  );
+
+  it.each([
+    [
+      "Check == J!Op2 /\\ (ENABLED (y' = IF J!Op2 THEN y ELSE y))'",
+      ACTION_CHECK,
+      4,
+      [
+        "line 8, col 10 to line 8, col 58 of module M: 2",
+        "|line 8, col 10 to line 8, col 14 of module M: 2",
+        "|line 8, col 19 to line 8, col 58 of module M: 2",
+        "||line 8, col 20 to line 8, col 56 of module M: 2",
+        "|||line 8, col 34 to line 8, col 55 of module M: 2",
+        "||||line 8, col 37 to line 8, col 41 of module M: 2",
+        "|||||line 4, col 27 to line 4, col 37 of module M: 4",
+        "|||||line 4, col 45 to line 4, col 45 of module M: 4",
+        "|||||line 5, col 8 to line 5, col 21 of module Q: 2",
+        "||||line 8, col 48 to line 8, col 48 of module M: 2",
+      ],
+    ],
+    [
+      "Next == Step /\\ UNCHANGED (J!Op2 \\/ TRUE) /\\ J!Op2",
+      NEXT_CHECK,
+      10,
+      [
+        "line 8, col 9 to line 8, col 12 of module M: 2",
+        "line 8, col 17 to line 8, col 41 of module M: 6",
+        "line 4, col 27 to line 4, col 37 of module M: 10",
+        "line 4, col 45 to line 4, col 45 of module M: 10",
+        "line 5, col 8 to line 5, col 12 of module Q: 4",
+        "|line 5, col 8 to line 5, col 8 of module Q: 2",
+        "|line 5, col 12 to line 5, col 12 of module Q: 2",
+        "line 5, col 17 to line 5, col 21 of module Q: 4",
+        "|line 5, col 17 to line 5, col 17 of module Q: 2",
+        "|line 5, col 21 to line 5, col 21 of module Q: 2",
+      ],
+    ],
+  ])(
+    "counts an instance's substitute in %j at each read where TLC's s1 is TLCState.Null, and not inside ENABLED under a prime",
+    async (definitions, config, count, lines) => {
+      expect(await getLazyReads(definitions, config, UNWARNED_COVERAGE)).toEqual({
+        printed: getPrints('"d"', count),
+        lines,
+      });
+    },
+  );
+
+  it.each([
+    ["Check == ENABLED J!A1", INVARIANT_CHECK, 8],
+    ["Next == Step /\\ ENABLED J!A1", NEXT_CHECK, 8],
+    ["Check == ENABLED (J!A2 /\\ J!A2)", INVARIANT_CHECK, 8],
+    ["Check == ENABLED J!A1 /\\ ENABLED J!A1", INVARIANT_CHECK, 16],
+    ["Check == ENABLED (J!Op1 /\\ y' = y)", INVARIANT_CHECK, 8],
+    ["Live == []<>ENABLED J!A1", LIVE_CHECK, 16],
+    [
+      "Fair == Init /\\ [][Step]_y /\\ WF_y(J!A1)\nLive == <>(y = 1)",
+      "SPECIFICATION Fair\nPROPERTY Live\n",
+      18,
+    ],
+    ["Check == J!A1", ACTION_CHECK, 2],
+  ])(
+    "evaluates an instance's substitute again at each read inside ENABLED in %j, as TLC's Tool#enabled binds it uncachable",
+    async (definitions, config, count) => {
+      expect((await getLazyReads(definitions, config)).printed).toEqual(getPrints('"d"', count));
+    },
+  );
+
   it("records the nested instance a call from one instanced definition to another enters, as TLC does", async () => {
     const result = await check(getInnerCallCheck(EXPLICIT, "I!YErr", NESTED_CALLS));
     const ranges = result.failure?.callStack?.flatMap((expression, index, expressions) => {
@@ -2191,6 +2514,91 @@ ASSUME TLCFP(a) = -887695703
       "Line 6, column 13 to line 6, column 19 in Q",
     ]);
   });
+
+  it.each([
+    ['I == INSTANCE P WITH c <- "d", v <- y', "I!J!Op3", "INVARIANT", 3],
+    ['I == INSTANCE P WITH c <- "d", v <- y', "I!J!KOp", "INVARIANT", 3],
+    ["I(z) == INSTANCE P WITH c <- z, v <- y", 'I("d")!J!Op3', "INVARIANT", 2],
+    ['I == INSTANCE P WITH c <- "d", v <- y', "I!J!A1", "ACTION_CONSTRAINT", 2],
+    ['I == INSTANCE P WITH c <- "d", v <- y', "I!J!Op5", "INVARIANT", 1],
+    ['I == INSTANCE P WITH c <- "d", v <- y', "[](I!J!Op3)", "PROPERTY", 3],
+    ['I == INSTANCE P WITH c <- "d", v <- y', "I!POp", "INVARIANT", 3],
+    ['J == INSTANCE Q WITH d <- PrintT("d"), w <- y', "J!Op3", "INVARIANT", 3],
+  ])(
+    "evaluates the printing substitute of an instance once per entry, with %s, into %s under %s, as TLC does",
+    async (instance, reached, kind, count) => {
+      const modules = new Map([
+        [
+          "P",
+          [
+            "---- MODULE P ----",
+            "EXTENDS TLC",
+            "CONSTANT c",
+            "VARIABLE v",
+            "J == INSTANCE Q WITH d <- PrintT(c), w <- v",
+            "POp == J!Op1 /\\ c = c",
+            "====",
+            "",
+          ].join("\n"),
+        ],
+        [
+          "Q",
+          [
+            "---- MODULE Q ----",
+            "EXTENDS TLC",
+            "CONSTANT d",
+            "VARIABLE w",
+            "Op2 == d = d /\\ w = w",
+            "Op1 == Op2 /\\ Op2",
+            "Op3 == Op1 /\\ d = d",
+            "A2 == d = d /\\ w' = w",
+            "A1 == A2 /\\ A2",
+            "Ap(Op(_)) == Op(d) /\\ Op(d)",
+            "Same(e) == e = d",
+            "Op5 == Ap(Same)",
+            "K == INSTANCE R WITH e <- d, u <- w",
+            "KOp == K!ROp1 /\\ d = d",
+            "====",
+            "",
+          ].join("\n"),
+        ],
+        [
+          "R",
+          [
+            "---- MODULE R ----",
+            "CONSTANT e",
+            "VARIABLE u",
+            "ROp2 == e = e /\\ u = u",
+            "ROp1 == ROp2 /\\ ROp2",
+            "====",
+            "",
+          ].join("\n"),
+        ],
+      ]);
+      const printed: string[] = [];
+      await check({
+        source: [
+          "---- MODULE M ----",
+          "EXTENDS TLC, Naturals",
+          "VARIABLE y",
+          instance,
+          "Init == y = 0",
+          "Next == y' = (y + 1) % 2",
+          "Spec == Init /\\ [][Next]_y",
+          `Check == ${reached}`,
+          "====",
+          "",
+        ].join("\n"),
+        config:
+          kind === "PROPERTY"
+            ? "SPECIFICATION Spec\nPROPERTY Check\n"
+            : `INIT Init\nNEXT Next\n${kind} Check\n`,
+        loadModule: (name) => modules.get(name),
+        onPrint: (text) => printed.push(text),
+      });
+      expect(printed).toEqual(Array.from({ length: count }, () => '"d"'));
+    },
+  );
 
   it.each([
     [
@@ -2374,6 +2782,10 @@ ASSUME TLCFP(a) = -887695703
       "Init == x = 0\nK(b) == G(b) /\\ x = 0\nBoth == K(P(1, x))\nSpec == Init /\\ Both /\\ [][Next]_<<x, y>>",
       1,
     ],
+    [
+      "H(b) == b /\\ b\nInit == x = 0 /\\ y = 0 /\\ H(P(1, TRUE))\nSpec == Init /\\ [][Next]_<<x, y>>",
+      1,
+    ],
   ])(
     "binds an argument under %j cached in a state-level definition, as getInitStates does, and uncached in an application the spec takes apart",
     async (definitions, count) => {
@@ -2386,6 +2798,20 @@ ASSUME TLCFP(a) = -887695703
       expect(printed).toEqual(Array.from({ length: count }, () => "1"));
     },
   );
+
+  it("evaluates a state-level Init's LET at each read when it rebuilds the trace, as TLC takes Init whole", async () => {
+    const printed: string[] = [];
+    const result = await check({
+      source:
+        "---- MODULE M ----\nEXTENDS Naturals, TLC\nVARIABLES x, y\nInit == LET a == PrintT(0) IN x = a /\\ y = a /\\ a = a\nNext == x' = (x + 1) % 2 /\\ y' = y\nSpec == Init /\\ [][Next]_<<x, y>>\n====\n",
+      config: "SPECIFICATION Spec\n",
+      onPrint: (text) => printed.push(text),
+    });
+    expect([printed, result.failure?.traceOutput]).toEqual([
+      ["0", "0", "0", "0"],
+      ["0", "0", "0", "0"],
+    ]);
+  });
 
   it("reads TLCGet in every state through a constant substituted with it, as TLC's level bound does", async () => {
     const prints: string[] = [];
@@ -2613,6 +3039,204 @@ ASSUME TLCFP(a) = -887695703
         config: "INIT Init\nNEXT Next\nINVARIANT Inv",
       });
       expect(formatCallStackLines(result)?.filter((line) => line !== "")).toEqual(lines);
+    },
+  );
+
+  it.each([
+    [
+      "printing substitutes",
+      'I == INSTANCE P WITH c <- PrintT("c"), z <- y\nInv == I!Op',
+      'Op == LET K == INSTANCE Q WITH d <- PrintT(<<"d", c>>), w <- z IN K!OutErr /\\ c',
+      [
+        "Line 4, column 9 to line 4, column 13 in M",
+        "Line 8, column 8 to line 8, column 11 in M",
+        "Line 7, column 1 to line 7, column 45 in M",
+        "Line 5, column 7 to line 5, column 79 in P",
+        "Line 5, column 67 to line 5, column 79 in P",
+        "Line 5, column 67 to line 5, column 74 in P",
+        "Line 5, column 11 to line 5, column 62 in P",
+        "Line 7, column 11 to line 7, column 19 in Q",
+        "Line 7, column 17 to line 7, column 19 in Q",
+        "Line 6, column 8 to line 6, column 23 in Q",
+        "Line 6, column 13 to line 6, column 23 in Q",
+        "Line 6, column 13 to line 6, column 19 in Q",
+      ],
+    ],
+    [
+      "a constant substitute",
+      "I == INSTANCE P WITH c <- TRUE, z <- y\nInv == I!Op",
+      "Op == LET K == INSTANCE Q WITH d <- c, w <- z IN K!OutErr",
+      [
+        "Line 4, column 9 to line 4, column 13 in M",
+        "Line 8, column 8 to line 8, column 11 in M",
+        "Line 7, column 1 to line 7, column 38 in M",
+        "Line 5, column 7 to line 5, column 57 in P",
+        "Line 5, column 50 to line 5, column 57 in P",
+        "Line 5, column 11 to line 5, column 45 in P",
+        "Line 7, column 11 to line 7, column 19 in Q",
+        "Line 7, column 17 to line 7, column 19 in Q",
+        "Line 6, column 8 to line 6, column 23 in Q",
+        "Line 6, column 13 to line 6, column 23 in Q",
+        "Line 6, column 13 to line 6, column 19 in Q",
+      ],
+    ],
+    [
+      "an operator's parameter",
+      "I == INSTANCE P WITH c <- TRUE, z <- y\nInv == I!Op(TRUE)",
+      "Op(a) == LET K == INSTANCE Q WITH d <- a, w <- z IN K!OutErr",
+      [
+        "Line 4, column 9 to line 4, column 13 in M",
+        "Line 8, column 8 to line 8, column 17 in M",
+        "Line 7, column 1 to line 7, column 38 in M",
+        "Line 5, column 10 to line 5, column 60 in P",
+        "Line 5, column 53 to line 5, column 60 in P",
+        "Line 5, column 14 to line 5, column 48 in P",
+        "Line 7, column 11 to line 7, column 19 in Q",
+        "Line 7, column 17 to line 7, column 19 in Q",
+        "Line 6, column 8 to line 6, column 23 in Q",
+        "Line 6, column 13 to line 6, column 23 in Q",
+        "Line 6, column 13 to line 6, column 19 in Q",
+      ],
+    ],
+    [
+      "a module two instances down",
+      "I == INSTANCE P WITH c <- TRUE, z <- y\nInv == I!J!Op",
+      "J == INSTANCE P2 WITH e <- c, x <- z",
+      [
+        "Line 4, column 9 to line 4, column 13 in M",
+        "Line 8, column 8 to line 8, column 13 in M",
+        "Line 7, column 1 to line 7, column 38 in M",
+        "Line 5, column 1 to line 5, column 36 in P",
+        "Line 5, column 7 to line 5, column 57 in P2",
+        "Line 5, column 50 to line 5, column 57 in P2",
+        "Line 5, column 11 to line 5, column 45 in P2",
+        "Line 7, column 11 to line 7, column 19 in Q",
+        "Line 7, column 17 to line 7, column 19 in Q",
+        "Line 6, column 8 to line 6, column 23 in Q",
+        "Line 6, column 13 to line 6, column 23 in Q",
+        "Line 6, column 13 to line 6, column 19 in Q",
+      ],
+    ],
+  ])(
+    "records the INSTANCE of a LET INSTANCE in an instanced module, with %s, as TLC does",
+    async (_title, definitions, instanced, lines) => {
+      const modules = new Map([
+        ["P", `---- MODULE P ----\nEXTENDS TLC\nCONSTANT c\nVARIABLE z\n${instanced}\n====\n`],
+        [
+          "P2",
+          "---- MODULE P2 ----\nEXTENDS TLC\nCONSTANT e\nVARIABLE x\nOp == LET K == INSTANCE Q WITH d <- e, w <- x IN K!OutErr\n====\n",
+        ],
+        [
+          "Q",
+          '---- MODULE Q ----\nEXTENDS TLC, Naturals\nCONSTANT d\nVARIABLE w\nIn == d = TRUE /\\ w \\in 0..1\nErr == d /\\ w + "a" = 1\nOutErr == In /\\ Err\nArgErr(a) == a /\\ OutErr\nStepErr == In /\\ w\' = w + "a"\n====\n',
+        ],
+      ]);
+      const result = await check({
+        source: `---- MODULE M ----\nEXTENDS TLC, Naturals\nVARIABLE y\nInit == y = 0\nNext == y' = (y + 1) % 2\nSpec == Init /\\ [][Next]_y\n${definitions}\n====\n`,
+        config: "SPECIFICATION Spec\nINVARIANT Inv\n",
+        loadModule: (name) => modules.get(name),
+        onPrint: () => {},
+      });
+      expect(formatCallStackLines(result)?.filter((line) => line !== "")).toEqual(lines);
+    },
+  );
+
+  const PARAMETERIZED_SPEC_MODULE =
+    '---- MODULE N ----\nEXTENDS Integers\nCONSTANT k\nVARIABLES x, y\nG(a) == /\\ a = k\n        /\\ y = 0\n        /\\ a + "s" = 1\nFlag == FALSE\nInit == x = k /\\ G(x)\nFlagInit == x = k /\\ y = 0 /\\ Flag\nNext == UNCHANGED <<x, y>>\nSpec == Init /\\ [][Next]_<<x, y>>\nFlagSpec == FlagInit /\\ [][Next]_<<x, y>>\n====\n';
+
+  const checkParameterizedSpec = (spec: string) =>
+    check({
+      source: `---- MODULE M ----\nVARIABLES x, y\nI(j) == INSTANCE N WITH k <- j\n${spec}\n====\n`,
+      config: "SPECIFICATION Spec\n",
+      loadModule: (name) => (name === "N" ? PARAMETERIZED_SPEC_MODULE : undefined),
+    });
+
+  it.each([
+    [
+      "Spec == I(0)!Init /\\ [][I(0)!Next]_<<x, y>>",
+      [
+        "Line 3, column 1 to line 3, column 30 in M",
+        "Line 9, column 9 to line 9, column 13 in N",
+        "Line 3, column 1 to line 3, column 30 in M",
+        "Line 9, column 18 to line 9, column 21 in N",
+        "Line 5, column 9 to line 7, column 22 in N",
+        "Line 5, column 12 to line 5, column 16 in N",
+        "Line 6, column 12 to line 6, column 16 in N",
+        "Line 7, column 12 to line 7, column 22 in N",
+        "Line 7, column 12 to line 7, column 18 in N",
+      ],
+    ],
+    [
+      "Spec == I(0)!Spec",
+      [
+        "Line 3, column 1 to line 3, column 30 in M",
+        "Line 9, column 9 to line 9, column 21 in N",
+        "Line 9, column 9 to line 9, column 13 in N",
+        "Line 9, column 18 to line 9, column 21 in N",
+        "Line 5, column 9 to line 7, column 22 in N",
+        "Line 5, column 12 to line 5, column 16 in N",
+        "Line 6, column 12 to line 6, column 16 in N",
+        "Line 7, column 12 to line 7, column 22 in N",
+        "Line 7, column 12 to line 7, column 18 in N",
+      ],
+    ],
+  ])(
+    "takes the initial predicate of a parameterized instance's %j apart as TLC does",
+    async (spec, lines) => {
+      const result = await checkParameterizedSpec(spec);
+      expect(formatCallStackLines(result)?.filter((line) => line !== "")).toEqual(lines);
+    },
+  );
+
+  it("takes a parameterized instance's state-level Init whole, as TLC does, so a FALSE conjunct inside leaves no initial state", async () => {
+    const result = await checkParameterizedSpec("Spec == I(0)!FlagSpec");
+    expect([result.status, result.failure?.message, result.distinctStates]).toEqual([
+      "success",
+      undefined,
+      0,
+    ]);
+  });
+
+  const LITERAL_MODULE =
+    '---- MODULE N ----\nCONSTANT k\nVARIABLES x, y\nTwo == 2\nStr == "a"\nNext == UNCHANGED <<x, y>>\nInit == x = k /\\ y = 0 /\\ Two\nSpec == x = k /\\ y = 0 /\\ Str /\\ [][Next]_<<x, y>>\nProp == []<>(x = k) /\\ Two\n====\n';
+
+  it.each([
+    [
+      "Spec == I(0)!Init /\\ [][I(0)!Next]_<<x, y>>",
+      "",
+      "The operator Two, which equals 2,\ncannot be used as a spec",
+    ],
+    ["Spec == I(0)!Spec", "", 'The operator Str, which equals "a",\ncannot be used as a spec'],
+    ["Spec == J!Spec", "", 'The operator Str, which equals "a",\ncannot be used as a spec'],
+    [
+      "Spec == J!Init /\\ [][J!Next]_<<x, y>>\nProp == I(0)!Prop",
+      "PROPERTY Prop\n",
+      "The operator Two, which equals 2,\ncannot be used as a property",
+    ],
+    [
+      "Spec == LET T == 2 IN J!Init /\\ T /\\ [][J!Next]_<<x, y>>",
+      "",
+      "The operator T, which equals 2,\ncannot be used as a spec",
+    ],
+    [
+      "Spec == J!Init /\\ J!Two /\\ [][J!Next]_<<x, y>>",
+      "",
+      "The operator J!Two, which equals 2,\ncannot be used as a spec",
+    ],
+    [
+      "Spec == LET T == FALSE IN J!Init /\\ T /\\ [][J!Next]_<<x, y>>",
+      "",
+      "The spec is trivially false because FALSE is false.",
+    ],
+  ])(
+    "looks up a definition %j names, where TLC stored no value for it at startup, as its literal body, as TLC does",
+    async (spec, property, message) => {
+      const checked = check({
+        source: `---- MODULE M ----\nVARIABLES x, y\nI(j) == INSTANCE N WITH k <- j\nJ == INSTANCE N WITH k <- 0\n${spec}\n====\n`,
+        config: `SPECIFICATION Spec\n${property}`,
+        loadModule: (name) => (name === "N" ? LITERAL_MODULE : undefined),
+      });
+      await expect(checked).rejects.toThrow(new TlaConfigError(message));
     },
   );
 
@@ -3294,6 +3918,33 @@ ASSUME TLCFP(a) = -887695703
   });
 
   it.each([
+    ["t /\\ (ENABLED (t /\\ y' = y))' /\\ t", "ACTION_CONSTRAINT", 4, 67],
+    ["t /\\ ENABLED (t /\\ y' = y) /\\ t", "ACTION_CONSTRAINT", 4, 64],
+    ["t /\\ ENABLED (t /\\ y' = y)", "INVARIANT", 4, 59],
+    ["t /\\ ENABLED (t /\\ y' = y) /\\ t", "INVARIANT", 4, 64],
+    ["t /\\ ENABLED (t /\\ y' = y /\\ t)", "INVARIANT", 6, 64],
+    ["(ENABLED (t /\\ y' = y))' /\\ t", "ACTION_CONSTRAINT", 4, 62],
+  ])(
+    "evaluates a LET definition with a value again inside ENABLED in %j as a %s, and counts nothing there, as TLC's Tool#enabledApplImpl does",
+    async (body, kind, count, end) => {
+      const printed: string[] = [];
+      const result = await check({
+        source: `---- MODULE M ----\nEXTENDS TLC, Naturals\nVARIABLE y\nInit == y = 0\nStep == y' = (y + 1) % 2\nCheck == LET t == PrintT("t") IN ${body}\n====\n`,
+        config: `INIT Init\nNEXT Step\n${kind} Check\n`,
+        coverage: 1,
+        onPrint: (text) => printed.push(text),
+      });
+      expect([printed.length, formatCoverage(result)?.at(-1)]).toEqual([
+        count,
+        [
+          "line 6, col 19 to line 6, col 29 of module M: 2",
+          `line 6, col 34 to line 6, col ${end} of module M: 2`,
+        ],
+      ]);
+    },
+  );
+
+  it.each([
     [
       "read primed",
       "VARIABLES c\nInit == c \\in 0..2\nNext == UNCHANGED c\nA == LET k == c IN k' = k + 1 /\\ k' > k\nInv == ENABLED A",
@@ -3802,6 +4453,286 @@ ASSUME TLCFP(a) = -887695703
     async (_title, init, next, expected) => {
       const lines = await getCoverageLines(
         `---- MODULE M ----\nEXTENDS Integers, FiniteSets\nVARIABLE x\nInit == x = ${init}\n${next}\n====`,
+        "INIT Init\nNEXT Next\nCHECK_DEADLOCK FALSE",
+      );
+      expect(lines?.at(-1)).toEqual(expected);
+    },
+  );
+
+  it.each([
+    [
+      "a set of functions",
+      "x' \\in [{1} -> {t \\in {3} \\X {4, 5} : PrintT(t) /\\ t[2] > 4}]",
+      4,
+      [
+        "line 5, col 9 to line 5, col 69 of module M: 2",
+        "|line 5, col 16 to line 5, col 69 of module M: 2:2",
+        "||line 5, col 17 to line 5, col 19 of module M: 2",
+        "||line 5, col 24 to line 5, col 68 of module M: 2:8",
+        "|||line 5, col 47 to line 5, col 67 of module M: 8",
+        "|||line 5, col 31 to line 5, col 43 of module M: 2:16",
+        "||||line 5, col 31 to line 5, col 33 of module M: 2:8",
+        "||||line 5, col 38 to line 5, col 43 of module M: 2:16",
+      ],
+    ],
+    [
+      "a Cartesian product",
+      "x' \\in {1} \\X {t \\in {3} \\X {4, 5} : PrintT(t) /\\ t[2] > 4}",
+      6,
+      [
+        "line 5, col 9 to line 5, col 67 of module M: 2",
+        "|line 5, col 16 to line 5, col 67 of module M: 2:4",
+        "||line 5, col 16 to line 5, col 18 of module M: 2:4",
+        "||line 5, col 23 to line 5, col 67 of module M: 2:12",
+        "|||line 5, col 46 to line 5, col 66 of module M: 12",
+        "|||line 5, col 30 to line 5, col 42 of module M: 2:24",
+        "||||line 5, col 30 to line 5, col 32 of module M: 2:12",
+        "||||line 5, col 37 to line 5, col 42 of module M: 2:24",
+      ],
+    ],
+  ])(
+    "enumerates a filter inside %s a successor draws from only as TLC does under -coverage",
+    async (_title, next, passes, expected) => {
+      const printed: string[] = [];
+      const result = await check({
+        source: `---- MODULE M ----\nEXTENDS Integers, TLC, FiniteSets, Sequences\nVARIABLE x\nInit == x = 0\nNext == ${next}\n====`,
+        config: "INIT Init\nNEXT Next\nCHECK_DEADLOCK FALSE",
+        coverage: 1,
+        onPrint: (text) => printed.push(text),
+      });
+      expect([printed, formatCoverage(result)?.at(-1)]).toEqual([
+        Array.from({ length: passes }, () => ["<<3, 4>>", "<<3, 5>>"]).flat(),
+        expected,
+      ]);
+    },
+  );
+
+  it.each([
+    [
+      "an interval and a set of functions",
+      "(1..2) \\cup [{1} -> {3, 4}]",
+      [
+        "line 5, col 9 to line 5, col 42 of module M: 20",
+        "|line 5, col 16 to line 5, col 42 of module M: 5",
+        "||line 5, col 17 to line 5, col 20 of module M: 5",
+        "||line 5, col 28 to line 5, col 42 of module M: 5:10",
+        "|||line 5, col 29 to line 5, col 31 of module M: 5",
+        "|||line 5, col 36 to line 5, col 41 of module M: 5:15",
+      ],
+    ],
+    [
+      "two sets of functions",
+      "[{1} -> {3}] \\cup [{2} -> {4, 5}]",
+      [
+        "line 5, col 9 to line 5, col 48 of module M: 12",
+        "|line 5, col 16 to line 5, col 48 of module M: 4:16",
+        "||line 5, col 16 to line 5, col 27 of module M: 4:4",
+        "|||line 5, col 17 to line 5, col 19 of module M: 4",
+        "|||line 5, col 24 to line 5, col 26 of module M: 4:8",
+        "||line 5, col 34 to line 5, col 48 of module M: 4:8",
+        "|||line 5, col 35 to line 5, col 37 of module M: 4",
+        "|||line 5, col 42 to line 5, col 47 of module M: 4:12",
+      ],
+    ],
+    [
+      "a set literal that shares an element with a set of functions",
+      "{<<3>>} \\cup [{1} -> {3, 4}]",
+      [
+        "line 5, col 9 to line 5, col 43 of module M: 9",
+        "|line 5, col 16 to line 5, col 43 of module M: 3",
+        "||line 5, col 16 to line 5, col 22 of module M: 3:24",
+        "|||line 5, col 17 to line 5, col 21 of module M: 3",
+        "||line 5, col 29 to line 5, col 43 of module M: 3:6",
+        "|||line 5, col 30 to line 5, col 32 of module M: 3",
+        "|||line 5, col 37 to line 5, col 42 of module M: 3:9",
+      ],
+    ],
+    [
+      "a set of functions and a set literal",
+      "[{1} -> {3, 4}] \\cup {7, 8}",
+      [
+        "line 5, col 9 to line 5, col 42 of module M: 20",
+        "|line 5, col 16 to line 5, col 42 of module M: 5",
+        "||line 5, col 16 to line 5, col 30 of module M: 5:10",
+        "|||line 5, col 17 to line 5, col 19 of module M: 5",
+        "|||line 5, col 24 to line 5, col 29 of module M: 5:15",
+        "||line 5, col 37 to line 5, col 42 of module M: 5:50",
+      ],
+    ],
+  ])(
+    "charges the union of %s a successor draws from, as TLC's SetCupValue enumerator does",
+    async (_title, union, expected) => {
+      const lines = await getCoverageLines(
+        `---- MODULE M ----\nEXTENDS Integers, TLC, FiniteSets, Sequences\nVARIABLE x\nInit == x = 0\nNext == x' \\in ${union}\n====`,
+        "INIT Init\nNEXT Next\nCHECK_DEADLOCK FALSE",
+      );
+      expect(lines?.at(-1)).toEqual(expected);
+    },
+  );
+
+  it.each([
+    [
+      "x' \\in draws from the intersection of two sets of functions",
+      "x' \\in [{1} -> {3, 4}] \\cap [{1} -> {3}]",
+      [
+        "line 5, col 9 to line 5, col 48 of module M: 2",
+        "|line 5, col 16 to line 5, col 48 of module M: 2",
+        "||line 5, col 16 to line 5, col 30 of module M: 2:4",
+        "|||line 5, col 17 to line 5, col 19 of module M: 2",
+        "|||line 5, col 24 to line 5, col 29 of module M: 2:6",
+        "||line 5, col 37 to line 5, col 48 of module M: 2",
+      ],
+    ],
+    [
+      "x' \\in draws from the difference of two sets of functions",
+      "x' \\in [{1} -> {3, 4}] \\ [{1} -> {3}]",
+      [
+        "line 5, col 9 to line 5, col 45 of module M: 2",
+        "|line 5, col 16 to line 5, col 45 of module M: 2",
+        "||line 5, col 16 to line 5, col 30 of module M: 2:4",
+        "|||line 5, col 17 to line 5, col 19 of module M: 2",
+        "|||line 5, col 24 to line 5, col 29 of module M: 2:6",
+        "||line 5, col 34 to line 5, col 45 of module M: 2",
+      ],
+    ],
+    [
+      "x' \\in draws from a set of functions less a set literal",
+      "x' \\in [{1} -> {3, 4}] \\ {[a \\in {1} |-> 3]}",
+      [
+        "line 5, col 9 to line 5, col 52 of module M: 2",
+        "|line 5, col 16 to line 5, col 52 of module M: 2",
+        "||line 5, col 16 to line 5, col 30 of module M: 2:4",
+        "|||line 5, col 17 to line 5, col 19 of module M: 2",
+        "|||line 5, col 24 to line 5, col 29 of module M: 2:6",
+        "||line 5, col 34 to line 5, col 52 of module M: 2",
+        "|||line 5, col 35 to line 5, col 51 of module M: 2:2",
+        "||||line 5, col 42 to line 5, col 44 of module M: 2:4",
+      ],
+    ],
+    [
+      "x' \\in draws from the intersection of two SUBSETs, whose member method draws",
+      "x' \\in SUBSET {1, 2} \\cap SUBSET {2, 3}",
+      [
+        "line 5, col 9 to line 5, col 47 of module M: 6",
+        "|line 5, col 16 to line 5, col 47 of module M: 3",
+        "||line 5, col 16 to line 5, col 28 of module M: 3:15",
+        "|||line 5, col 23 to line 5, col 28 of module M: 3",
+        "||line 5, col 35 to line 5, col 47 of module M: 3",
+      ],
+    ],
+    [
+      "an \\E that decides early normalizes the difference first",
+      "x' = 0 /\\ \\E e \\in [{1} -> {3, 4, 5}] \\ [{1} -> {3}] : e[1] = 4",
+      [
+        "line 5, col 9 to line 5, col 14 of module M: 1",
+        "line 5, col 19 to line 5, col 71 of module M: 1",
+        "|line 5, col 64 to line 5, col 71 of module M: 1",
+        "|line 5, col 28 to line 5, col 60 of module M: 1",
+        "||line 5, col 28 to line 5, col 45 of module M: 1:3",
+        "|||line 5, col 29 to line 5, col 31 of module M: 1",
+        "|||line 5, col 36 to line 5, col 44 of module M: 1:4",
+        "||line 5, col 49 to line 5, col 60 of module M: 1",
+      ],
+    ],
+    [
+      "Cardinality converts the intersection",
+      "x' = Cardinality([{1} -> {3, 4}] \\cap [{1} -> {3}])",
+      [
+        "line 5, col 9 to line 5, col 59 of module M: 2",
+        "|line 5, col 14 to line 5, col 59 of module M: 2",
+        "||line 5, col 26 to line 5, col 58 of module M: 2",
+        "|||line 5, col 26 to line 5, col 40 of module M: 2:4",
+        "||||line 5, col 27 to line 5, col 29 of module M: 2",
+        "||||line 5, col 34 to line 5, col 39 of module M: 2:6",
+        "|||line 5, col 47 to line 5, col 58 of module M: 2",
+      ],
+    ],
+    [
+      "x' \\in draws from a difference of an intersection",
+      "x' \\in ([{1} -> {3, 4}] \\cap [{1} -> {3, 4}]) \\ [{1} -> {3}]",
+      [
+        "line 5, col 9 to line 5, col 68 of module M: 2",
+        "|line 5, col 16 to line 5, col 68 of module M: 2",
+        "||line 5, col 17 to line 5, col 52 of module M: 2",
+        "|||line 5, col 17 to line 5, col 31 of module M: 2:4",
+        "||||line 5, col 18 to line 5, col 20 of module M: 2",
+        "||||line 5, col 25 to line 5, col 30 of module M: 2:6",
+        "|||line 5, col 38 to line 5, col 52 of module M: 2",
+        "||line 5, col 57 to line 5, col 68 of module M: 2",
+      ],
+    ],
+    [
+      "x' \\in draws from a set of functions less an intersection",
+      "x' \\in [{1} -> {3, 4}] \\ ([{1} -> {3}] \\cap [{1} -> {3, 4}])",
+      [
+        "line 5, col 9 to line 5, col 68 of module M: 2",
+        "|line 5, col 16 to line 5, col 68 of module M: 2",
+        "||line 5, col 16 to line 5, col 30 of module M: 2:4",
+        "|||line 5, col 17 to line 5, col 19 of module M: 2",
+        "|||line 5, col 24 to line 5, col 29 of module M: 2:6",
+        "||line 5, col 35 to line 5, col 67 of module M: 2",
+      ],
+    ],
+    [
+      "x' \\in draws from the intersection of two sets of records",
+      "x' \\in [a : {3, 4}] \\cap [a : {3}]",
+      [
+        "line 5, col 9 to line 5, col 42 of module M: 2",
+        "|line 5, col 16 to line 5, col 42 of module M: 2",
+        "||line 5, col 16 to line 5, col 27 of module M: 2:4",
+        "|||line 5, col 17 to line 5, col 26 of module M: 2:6",
+        "||line 5, col 34 to line 5, col 42 of module M: 2",
+      ],
+    ],
+    [
+      "x' \\in draws from the difference of two products",
+      "x' \\in ({1} \\X {3, 4}) \\ ({1} \\X {3})",
+      [
+        "line 5, col 9 to line 5, col 45 of module M: 2",
+        "|line 5, col 16 to line 5, col 45 of module M: 2",
+        "||line 5, col 17 to line 5, col 29 of module M: 2:8",
+        "|||line 5, col 17 to line 5, col 19 of module M: 2:4",
+        "|||line 5, col 24 to line 5, col 29 of module M: 2:8",
+        "||line 5, col 35 to line 5, col 44 of module M: 2",
+      ],
+    ],
+    [
+      "x' \\in draws from a SUBSET less a literal TLC can't sort",
+      'x\' \\in (SUBSET {}) \\ {{1}, {"a"}}',
+      ["line 5, col 9 to line 5, col 41 of module M: 2"],
+    ],
+    [
+      "x' \\in draws from a SUBSET less a SUBSET too large to size",
+      "x' \\in (SUBSET {1}) \\ SUBSET (1..40)",
+      [
+        "line 5, col 9 to line 5, col 44 of module M: 0",
+        "|line 5, col 16 to line 5, col 44 of module M: 1",
+        "||line 5, col 17 to line 5, col 26 of module M: 1:3",
+        "|||line 5, col 24 to line 5, col 26 of module M: 1",
+        "||line 5, col 31 to line 5, col 44 of module M: 1",
+      ],
+    ],
+    [
+      "x' \\in draws from a union with a difference less a literal TLC can't sort",
+      'x\' \\in ((SUBSET {}) \\ {{1}, {"a"}}) \\cup {{2}}',
+      [
+        "line 5, col 9 to line 5, col 54 of module M: 6",
+        "|line 5, col 16 to line 5, col 54 of module M: 3",
+        "||line 5, col 17 to line 5, col 42 of module M: 3",
+        "||line 5, col 50 to line 5, col 54 of module M: 3:18",
+        "|||line 5, col 51 to line 5, col 53 of module M: 3",
+      ],
+    ],
+    [
+      "Cardinality converts a difference less a literal TLC can't sort",
+      'x\' = Cardinality((SUBSET {}) \\ {{1}, {"a"}})',
+      ["line 5, col 9 to line 5, col 52 of module M: 2"],
+    ],
+  ])(
+    "charges what TLC's SetCapValue and SetDiffValue enumerators draw when %s",
+    async (_title, next, expected) => {
+      const lines = await getCoverageLines(
+        `---- MODULE M ----\nEXTENDS Integers, TLC, FiniteSets, Sequences\nVARIABLE x\nInit == x = 0\nNext == ${next}\n====`,
         "INIT Init\nNEXT Next\nCHECK_DEADLOCK FALSE",
       );
       expect(lines?.at(-1)).toEqual(expected);
@@ -4430,6 +5361,408 @@ ASSUME TLCFP(a) = -887695703
 
   it.each([
     [
+      "UNION",
+      '"a" \\in UNION {{"b"}, 0..x + 2}',
+      [
+        "line 5, col 9 to line 5, col 13 of module M: 2",
+        "line 5, col 18 to line 5, col 27 of module M: 0",
+        "|line 5, col 23 to line 5, col 27 of module M: 2",
+        "line 5, col 32 to line 5, col 62 of module M: 2",
+        "|line 5, col 40 to line 5, col 62 of module M: 2",
+        "||line 5, col 46 to line 5, col 62 of module M: 2:4",
+        "|||line 5, col 47 to line 5, col 51 of module M: 2",
+        "|||line 5, col 54 to line 5, col 61 of module M: 2",
+      ],
+    ],
+    [
+      "SUBSET",
+      '{{}, {x}} \\in SUBSET (SUBSET {"b"})',
+      [
+        "line 5, col 9 to line 5, col 13 of module M: 2",
+        "line 5, col 18 to line 5, col 27 of module M: 0",
+        "|line 5, col 23 to line 5, col 27 of module M: 2",
+        "line 5, col 32 to line 5, col 66 of module M: 2",
+        "|line 5, col 32 to line 5, col 40 of module M: 2:4",
+        "||line 5, col 33 to line 5, col 34 of module M: 2:2",
+        "||line 5, col 37 to line 5, col 39 of module M: 2:2",
+        "|||line 5, col 38 to line 5, col 38 of module M: 2",
+        "|line 5, col 46 to line 5, col 66 of module M: 2",
+      ],
+    ],
+  ])(
+    "charges the draws a membership check in %s made before it failed, as TLC's enumerators charge each as they draw it",
+    async (_title, condition, expected) => {
+      const lines = await getCoverageLines(
+        `---- MODULE M ----\nEXTENDS Integers, FiniteSets, Sequences, TLC\nVARIABLE x\nInit == x = 0\nNext == x < 2 /\\ x' = x + 1 /\\ ${condition}\n====`,
+        "INIT Init\nNEXT Next\nCHECK_DEADLOCK FALSE",
+      );
+      expect(lines?.at(-1)).toEqual(expected);
+    },
+  );
+
+  it.each([
+    [
+      "a tuple",
+      "VARIABLE x\nInit == x = 0\nNext == x < 2 /\\ x' = x + 1 /\\ <<3, x>> \\notin [{1} -> {1}]",
+      [
+        ["line 4, col 9 to line 4, col 13 of module M: 1"],
+        [
+          "line 5, col 9 to line 5, col 13 of module M: 2",
+          "|line 5, col 9 to line 5, col 9 of module M: 3",
+          "line 5, col 18 to line 5, col 27 of module M: 2",
+          "line 5, col 32 to line 5, col 59 of module M: 2",
+          "|line 5, col 32 to line 5, col 39 of module M: 2:4",
+          "||line 5, col 37 to line 5, col 37 of module M: 2",
+          "|line 5, col 48 to line 5, col 59 of module M: 2",
+        ],
+      ],
+    ],
+    [
+      "a record",
+      'VARIABLE x\nInit == x = 0\nNext == x < 2 /\\ x\' = x + 1 /\\ [a |-> x, b |-> 2] \\in [{"a", "b"} -> Nat]',
+      [
+        ["line 4, col 9 to line 4, col 13 of module M: 1"],
+        [
+          "line 5, col 9 to line 5, col 13 of module M: 2",
+          "|line 5, col 9 to line 5, col 9 of module M: 3",
+          "line 5, col 18 to line 5, col 27 of module M: 2",
+          "line 5, col 32 to line 5, col 73 of module M: 2",
+          "|line 5, col 32 to line 5, col 49 of module M: 2:4",
+          "||line 5, col 33 to line 5, col 39 of module M: 2",
+          "|line 5, col 55 to line 5, col 73 of module M: 2",
+        ],
+      ],
+    ],
+    [
+      "a tuple a state holds",
+      "VARIABLE x\nInit == x = <<0, 0>>\nNext == x[1] < 2 /\\ x \\in [1..2 -> Nat] /\\ x' = <<x[1] + 1, 0>>",
+      [
+        [
+          "line 4, col 9 to line 4, col 20 of module M: 1",
+          "|line 4, col 13 to line 4, col 20 of module M: 1:2",
+        ],
+        [
+          "line 5, col 9 to line 5, col 16 of module M: 2",
+          "|line 5, col 9 to line 5, col 12 of module M: 3",
+          "line 5, col 21 to line 5, col 39 of module M: 4",
+          "|line 5, col 21 to line 5, col 21 of module M: 2",
+          "|line 5, col 27 to line 5, col 39 of module M: 2",
+          "line 5, col 44 to line 5, col 63 of module M: 2",
+          "|line 5, col 49 to line 5, col 63 of module M: 2:2",
+          "||line 5, col 51 to line 5, col 58 of module M: 2",
+        ],
+      ],
+    ],
+    [
+      "a tuple in the range",
+      "VARIABLE x\nInit == x = 0\nNext == x < 2 /\\ x' = x + 1 /\\ <<<<x>>>> \\in [1..1 -> [1..1 -> Nat]]",
+      [
+        ["line 4, col 9 to line 4, col 13 of module M: 1"],
+        [
+          "line 5, col 9 to line 5, col 13 of module M: 2",
+          "|line 5, col 9 to line 5, col 9 of module M: 3",
+          "line 5, col 18 to line 5, col 27 of module M: 2",
+          "line 5, col 32 to line 5, col 68 of module M: 2",
+          "|line 5, col 32 to line 5, col 40 of module M: 2:2",
+          "||line 5, col 34 to line 5, col 38 of module M: 2:2",
+          "|||line 5, col 36 to line 5, col 36 of module M: 2",
+          "|line 5, col 46 to line 5, col 68 of module M: 2",
+        ],
+      ],
+    ],
+  ])(
+    "charges %s that a set of functions converts, as TLC's SetOfFcnsValue#member calls toFcnRcd",
+    async (_title, body, expected) => {
+      const lines = await getCoverageLines(
+        `---- MODULE M ----\nEXTENDS Integers, FiniteSets, Sequences, TLC\n${body}\n====`,
+        "INIT Init\nNEXT Next\nCHECK_DEADLOCK FALSE",
+      );
+      expect(lines).toEqual(expected);
+    },
+  );
+
+  it.each([
+    [
+      "two sets of functions",
+      "Cardinality([{1} -> {3, 4}] \\cup [{2} -> {5}])",
+      [
+        "line 5, col 9 to line 5, col 59 of module M: 2",
+        "|line 5, col 14 to line 5, col 59 of module M: 2",
+        "||line 5, col 26 to line 5, col 58 of module M: 2:14",
+        "|||line 5, col 26 to line 5, col 40 of module M: 2:4",
+        "||||line 5, col 27 to line 5, col 29 of module M: 2",
+        "||||line 5, col 34 to line 5, col 39 of module M: 2:6",
+        "|||line 5, col 47 to line 5, col 58 of module M: 2:2",
+        "||||line 5, col 48 to line 5, col 50 of module M: 2",
+        "||||line 5, col 55 to line 5, col 57 of module M: 2:4",
+      ],
+    ],
+    [
+      "a set literal and SUBSET S",
+      "Cardinality({{1}} \\cup SUBSET {2, 3})",
+      [
+        "line 5, col 9 to line 5, col 50 of module M: 2",
+        "|line 5, col 14 to line 5, col 50 of module M: 2",
+        "||line 5, col 26 to line 5, col 49 of module M: 2",
+        "|||line 5, col 26 to line 5, col 30 of module M: 2:34",
+        "||||line 5, col 27 to line 5, col 29 of module M: 2",
+        "|||line 5, col 37 to line 5, col 49 of module M: 2",
+      ],
+    ],
+    [
+      "two sets of functions that share an element",
+      "Cardinality([{1} -> {3, 4}] \\cup [{1} -> {4, 5}])",
+      [
+        "line 5, col 9 to line 5, col 62 of module M: 2",
+        "|line 5, col 14 to line 5, col 62 of module M: 2",
+        "||line 5, col 26 to line 5, col 61 of module M: 2:18",
+        "|||line 5, col 26 to line 5, col 40 of module M: 2:4",
+        "||||line 5, col 27 to line 5, col 29 of module M: 2",
+        "||||line 5, col 34 to line 5, col 39 of module M: 2:6",
+        "|||line 5, col 47 to line 5, col 61 of module M: 2:4",
+        "||||line 5, col 48 to line 5, col 50 of module M: 2",
+        "||||line 5, col 55 to line 5, col 60 of module M: 2:6",
+      ],
+    ],
+    [
+      "a union of a union",
+      "Cardinality(([{1} -> {3}] \\cup [{2} -> {4}]) \\cup [{3} -> {5}])",
+      [
+        "line 5, col 9 to line 5, col 76 of module M: 2",
+        "|line 5, col 14 to line 5, col 76 of module M: 2",
+        "||line 5, col 26 to line 5, col 75 of module M: 2:14",
+        "|||line 5, col 27 to line 5, col 56 of module M: 2:8",
+        "||||line 5, col 27 to line 5, col 38 of module M: 2:2",
+        "|||||line 5, col 28 to line 5, col 30 of module M: 2",
+        "|||||line 5, col 35 to line 5, col 37 of module M: 2:4",
+        "||||line 5, col 45 to line 5, col 56 of module M: 2:2",
+        "|||||line 5, col 46 to line 5, col 48 of module M: 2",
+        "|||||line 5, col 53 to line 5, col 55 of module M: 2:4",
+        "|||line 5, col 64 to line 5, col 75 of module M: 2:2",
+        "||||line 5, col 65 to line 5, col 67 of module M: 2",
+        "||||line 5, col 72 to line 5, col 74 of module M: 2:4",
+      ],
+    ],
+    [
+      "a union it sizes twice",
+      "LET U == [{1} -> {3, 4}] \\cup [{2} -> {5}] IN Cardinality(U) + Cardinality(U)",
+      [
+        "line 5, col 9 to line 5, col 90 of module M: 2",
+        "|line 5, col 23 to line 5, col 55 of module M: 2:14",
+        "||line 5, col 23 to line 5, col 37 of module M: 2:4",
+        "|||line 5, col 24 to line 5, col 26 of module M: 2",
+        "|||line 5, col 31 to line 5, col 36 of module M: 2:6",
+        "||line 5, col 44 to line 5, col 55 of module M: 2:2",
+        "|||line 5, col 45 to line 5, col 47 of module M: 2",
+        "|||line 5, col 52 to line 5, col 54 of module M: 2:4",
+        "|line 5, col 60 to line 5, col 90 of module M: 2",
+      ],
+    ],
+    [
+      "an interval and a set of functions, which fails to normalize",
+      "Cardinality((1..2) \\cup [{1} -> {3, 4}])",
+      [
+        "line 5, col 9 to line 5, col 53 of module M: 0",
+        "|line 5, col 14 to line 5, col 53 of module M: 2",
+        "||line 5, col 26 to line 5, col 52 of module M: 2",
+        "|||line 5, col 27 to line 5, col 30 of module M: 2",
+        "|||line 5, col 38 to line 5, col 52 of module M: 2:4",
+        "||||line 5, col 39 to line 5, col 41 of module M: 2",
+        "||||line 5, col 46 to line 5, col 51 of module M: 2:6",
+      ],
+    ],
+  ])(
+    "charges the conversion Cardinality makes of %s, as TLC's SetCupValue#size enumerates the union and collects it",
+    async (_title, size, expected) => {
+      const lines = await getCoverageLines(
+        `---- MODULE M ----\nEXTENDS Integers, FiniteSets, TLC\nVARIABLE x\nInit == x = 0\nNext == x' = ${size}\n====`,
+        "INIT Init\nNEXT Next\nCHECK_DEADLOCK FALSE",
+      );
+      expect(lines).toEqual([["line 4, col 9 to line 4, col 13 of module M: 1"], expected]);
+    },
+  );
+
+  it.each([
+    [
+      "a set literal sorts it against a filter",
+      "{5} \\notin UNION {SUBSET {1}, {n \\in 0..3 : n > 7}}",
+      [
+        "line 5, col 9 to line 5, col 13 of module M: 2",
+        "|line 5, col 9 to line 5, col 9 of module M: 3",
+        "line 5, col 18 to line 5, col 27 of module M: 2",
+        "line 5, col 32 to line 5, col 82 of module M: 2",
+        "|line 5, col 32 to line 5, col 34 of module M: 2:2",
+        "|line 5, col 43 to line 5, col 82 of module M: 2",
+        "||line 5, col 49 to line 5, col 82 of module M: 2:6",
+        "|||line 5, col 50 to line 5, col 59 of module M: 2:4",
+        "||||line 5, col 57 to line 5, col 59 of module M: 2",
+        "|||line 5, col 62 to line 5, col 81 of module M: 2",
+        "||||line 5, col 76 to line 5, col 80 of module M: 8",
+        "||||line 5, col 69 to line 5, col 72 of module M: 2",
+      ],
+    ],
+    [
+      "it is the left side of =",
+      "SUBSET {1} = {{}, {1}}",
+      [
+        "line 5, col 9 to line 5, col 13 of module M: 2",
+        "|line 5, col 9 to line 5, col 9 of module M: 3",
+        "line 5, col 18 to line 5, col 27 of module M: 2",
+        "line 5, col 32 to line 5, col 53 of module M: 2",
+        "|line 5, col 32 to line 5, col 41 of module M: 2:4",
+        "||line 5, col 39 to line 5, col 41 of module M: 2",
+        "|line 5, col 45 to line 5, col 53 of module M: 2",
+      ],
+    ],
+    [
+      "it is the right side of =",
+      "{{}, {1}} = SUBSET {1}",
+      [
+        "line 5, col 9 to line 5, col 13 of module M: 2",
+        "|line 5, col 9 to line 5, col 9 of module M: 3",
+        "line 5, col 18 to line 5, col 27 of module M: 2",
+        "line 5, col 32 to line 5, col 53 of module M: 2",
+        "|line 5, col 32 to line 5, col 40 of module M: 2",
+        "|line 5, col 44 to line 5, col 53 of module M: 2:4",
+        "||line 5, col 51 to line 5, col 53 of module M: 2",
+      ],
+    ],
+    [
+      "it is the left side of = twice, which converts it once",
+      "LET T == SUBSET {1} IN T = {{}, {1}} /\\ T = {{}, {1}}",
+      [
+        "line 5, col 9 to line 5, col 13 of module M: 2",
+        "|line 5, col 9 to line 5, col 9 of module M: 3",
+        "line 5, col 18 to line 5, col 27 of module M: 2",
+        "line 5, col 41 to line 5, col 50 of module M: 2:4",
+        "|line 5, col 48 to line 5, col 50 of module M: 2",
+        "line 5, col 55 to line 5, col 84 of module M: 2",
+      ],
+    ],
+    [
+      "it is the right side of = twice, which converts it each time",
+      "LET T == SUBSET {1} IN {{}, {1}} = T /\\ {{}, {1}} = T",
+      [
+        "line 5, col 9 to line 5, col 13 of module M: 2",
+        "|line 5, col 9 to line 5, col 9 of module M: 3",
+        "line 5, col 18 to line 5, col 27 of module M: 2",
+        "line 5, col 41 to line 5, col 50 of module M: 2:8",
+        "|line 5, col 48 to line 5, col 50 of module M: 2",
+        "line 5, col 55 to line 5, col 84 of module M: 2",
+      ],
+    ],
+    [
+      "a set literal sorts it against three sets",
+      "LET T == SUBSET {1} IN {T, {{}}, {{1}}, {{}, {1}, {2}}} # {}",
+      [
+        "line 5, col 9 to line 5, col 13 of module M: 2",
+        "|line 5, col 9 to line 5, col 9 of module M: 3",
+        "line 5, col 18 to line 5, col 27 of module M: 2",
+        "line 5, col 41 to line 5, col 50 of module M: 2:12",
+        "|line 5, col 48 to line 5, col 50 of module M: 2",
+        "line 5, col 55 to line 5, col 91 of module M: 2",
+      ],
+    ],
+    [
+      "a set literal that fails to sort holds it",
+      "x \\in {SUBSET {1}, {{}}, 1}",
+      [
+        "line 5, col 9 to line 5, col 13 of module M: 2",
+        "line 5, col 18 to line 5, col 27 of module M: 0",
+        "|line 5, col 23 to line 5, col 27 of module M: 2",
+        "line 5, col 32 to line 5, col 58 of module M: 2",
+        "|line 5, col 32 to line 5, col 32 of module M: 2",
+        "|line 5, col 38 to line 5, col 58 of module M: 2",
+        "||line 5, col 39 to line 5, col 48 of module M: 2:4",
+        "|||line 5, col 46 to line 5, col 48 of module M: 2",
+        "||line 5, col 51 to line 5, col 54 of module M: 2",
+      ],
+    ],
+    [
+      "membership in an unsorted set literal compares it",
+      "SUBSET {1} \\in {SUBSET {2}, {{}}}",
+      [
+        "line 5, col 9 to line 5, col 13 of module M: 1",
+        "line 5, col 18 to line 5, col 27 of module M: 0",
+        "|line 5, col 23 to line 5, col 27 of module M: 1",
+        "line 5, col 32 to line 5, col 64 of module M: 1",
+        "|line 5, col 32 to line 5, col 41 of module M: 1:2",
+        "||line 5, col 39 to line 5, col 41 of module M: 1",
+        "|line 5, col 47 to line 5, col 64 of module M: 1",
+      ],
+    ],
+    [
+      "PrintT prints it",
+      "PrintT(SUBSET {1})",
+      [
+        "line 5, col 9 to line 5, col 13 of module M: 2",
+        "|line 5, col 9 to line 5, col 9 of module M: 3",
+        "line 5, col 18 to line 5, col 27 of module M: 2",
+        "line 5, col 32 to line 5, col 49 of module M: 2",
+        "|line 5, col 39 to line 5, col 48 of module M: 2:4",
+        "||line 5, col 46 to line 5, col 48 of module M: 2",
+      ],
+    ],
+    [
+      "an error message prints it",
+      "{{}, {x}} \\in SUBSET (SUBSET (SUBSET {1}))",
+      [
+        "line 5, col 9 to line 5, col 13 of module M: 2",
+        "line 5, col 18 to line 5, col 27 of module M: 0",
+        "|line 5, col 23 to line 5, col 27 of module M: 2",
+        "line 5, col 32 to line 5, col 73 of module M: 2",
+        "|line 5, col 32 to line 5, col 40 of module M: 2:4",
+        "||line 5, col 33 to line 5, col 34 of module M: 2:2",
+        "||line 5, col 37 to line 5, col 39 of module M: 2:2",
+        "|||line 5, col 38 to line 5, col 38 of module M: 2",
+        "|line 5, col 46 to line 5, col 73 of module M: 2",
+        "||line 5, col 54 to line 5, col 72 of module M: 2",
+        "|||line 5, col 62 to line 5, col 71 of module M: 2:4",
+        "||||line 5, col 69 to line 5, col 71 of module M: 2",
+      ],
+    ],
+    [
+      "a filter only enumerates it",
+      "{s \\in SUBSET {1, 2} : Cardinality(s) = 1} = {{1}, {2}}",
+      [
+        "line 5, col 9 to line 5, col 13 of module M: 2",
+        "|line 5, col 9 to line 5, col 9 of module M: 3",
+        "line 5, col 18 to line 5, col 27 of module M: 2",
+        "line 5, col 32 to line 5, col 86 of module M: 2",
+        "|line 5, col 32 to line 5, col 73 of module M: 2:12",
+        "||line 5, col 55 to line 5, col 72 of module M: 8",
+        "||line 5, col 39 to line 5, col 51 of module M: 2",
+        "|line 5, col 77 to line 5, col 86 of module M: 2",
+      ],
+    ],
+  ])(
+    "charges the subsets SUBSET S collects when %s, as TLC's SubsetValue#toSetEnum does",
+    async (_title, condition, expected) => {
+      const lines = await getCoverageLines(
+        `---- MODULE M ----\nEXTENDS Integers, FiniteSets, TLC\nVARIABLE x\nInit == x = 0\nNext == x < 2 /\\ x' = x + 1 /\\ ${condition}\n====`,
+        "INIT Init\nNEXT Next\nCHECK_DEADLOCK FALSE",
+      );
+      expect(lines?.at(-1)).toEqual(expected);
+    },
+  );
+
+  it("charges the subsets SUBSET S collects when a state holds it, as TLC's SubsetValue#fingerPrint converts it", async () => {
+    const lines = await getCoverageLines(
+      "---- MODULE M ----\nEXTENDS Integers, FiniteSets, TLC\nVARIABLE x, y\nInit == x = 0 /\\ y = {}\nNext == x < 2 /\\ x' = x + 1 /\\ y' = SUBSET {1, 2}\n====",
+      "INIT Init\nNEXT Next\nCHECK_DEADLOCK FALSE",
+    );
+    expect(lines?.at(-1)).toEqual([
+      "line 5, col 9 to line 5, col 13 of module M: 2",
+      "|line 5, col 9 to line 5, col 9 of module M: 3",
+      "line 5, col 18 to line 5, col 27 of module M: 2",
+      "line 5, col 32 to line 5, col 49 of module M: 2",
+      "|line 5, col 37 to line 5, col 49 of module M: 2:8",
+      "||line 5, col 44 to line 5, col 49 of module M: 2",
+    ]);
+  });
+
+  it.each([
+    [
       "its body follows one argument",
       "VARIABLE x\nInit == x = 0\nNext == x < 2 /\\ [i \\in 0..2 |-> x' = x + i][IF x = 0 THEN 1 ELSE 2]",
       [
@@ -4501,6 +5834,42 @@ ASSUME TLCFP(a) = -887695703
         "INIT Init\nNEXT Next\nINVARIANT Inv\nCHECK_DEADLOCK FALSE",
       );
       expect(lines?.at(relation)).toEqual(expected);
+    },
+  );
+
+  it.each([
+    [
+      "one argument",
+      "VARIABLE x\nInit == x = 0\nNext == x < 2 /\\ [s \\in SUBSET {1, 2} |-> x' = x + Cardinality(s)][IF x = 0 THEN {1} ELSE {1, 2}]",
+      [
+        "line 5, col 9 to line 5, col 13 of module M: 2",
+        "|line 5, col 9 to line 5, col 9 of module M: 3",
+        "line 5, col 18 to line 5, col 66 of module M: 2",
+        "line 5, col 68 to line 5, col 96 of module M: 2",
+        "|line 5, col 71 to line 5, col 75 of module M: 2",
+        "|line 5, col 82 to line 5, col 84 of module M: 1:2",
+        "|line 5, col 91 to line 5, col 96 of module M: 1:3",
+      ],
+    ],
+    [
+      "two arguments",
+      "VARIABLE x\nInit == x = 0\nNext == x < 2 /\\ [s \\in SUBSET {1, 2}, j \\in 1..2 |-> x' = x + Cardinality(s) + j][{1}, 1]",
+      [
+        "line 5, col 9 to line 5, col 13 of module M: 1",
+        "|line 5, col 9 to line 5, col 9 of module M: 2",
+        "line 5, col 18 to line 5, col 82 of module M: 1",
+        "line 5, col 18 to line 5, col 90 of module M: 1",
+        "|line 5, col 84 to line 5, col 86 of module M: 1:2",
+      ],
+    ],
+  ])(
+    "charges the domain check of a lazy function over SUBSET applied as an action to %s, as TLC's Tool#getFcnContext asks the domain's member",
+    async (_title, body, expected) => {
+      const lines = await getCoverageLines(
+        `---- MODULE M ----\nEXTENDS Integers, FiniteSets\n${body}\n====`,
+        "INIT Init\nNEXT Next\nCHECK_DEADLOCK FALSE",
+      );
+      expect(lines?.at(-1)).toEqual(expected);
     },
   );
 
@@ -4876,12 +6245,20 @@ ASSUME TLCFP(a) = -887695703
     expect(result.failure?.fingerprint?.reason).toBe("The second argument of \\div is 0.");
   });
 
-  it("counts no application of the copy EXCEPT makes of a lazy function, as FcnLambdaValue#takeExcept drops the cost model", async () => {
+  it("counts the applications of the copy EXCEPT makes of a lazy function, though TLC's FcnLambdaValue#takeExcept drops the cost model", async () => {
     const lines = await getCoverageLines(
       "---- MODULE M ----\nEXTENDS Naturals\nVARIABLE x\nInit == LET f[n \\in 0..2] == 10 \\div (n + 1) IN x = [f EXCEPT ![2] = 0][1]\nNext == UNCHANGED x\n====",
       "INIT Init\nNEXT Next",
     );
-    expect(lines?.[0]).toEqual(["line 4, col 49 to line 4, col 74 of module M: 1"]);
+    expect(lines?.[0]).toEqual([
+      "line 4, col 49 to line 4, col 74 of module M: 1",
+      "|line 4, col 53 to line 4, col 74 of module M: 1",
+      "||line 4, col 53 to line 4, col 71 of module M: 1",
+      "|||line 4, col 54 to line 4, col 54 of module M: 1",
+      "||||line 4, col 13 to line 4, col 44 of module M: 1",
+      "|||||line 4, col 30 to line 4, col 44 of module M: 2",
+      "|||||line 4, col 21 to line 4, col 24 of module M: 1",
+    ]);
   });
 
   it.each([
@@ -4963,10 +6340,10 @@ ASSUME TLCFP(a) = -887695703
         "||line 6, col 23 to line 6, col 41 of module M: 9",
         "|||line 6, col 24 to line 6, col 24 of module M: 9",
         "||||line 4, col 1 to line 4, col 50 of module M: 9",
-        "|||||line 4, col 18 to line 4, col 50 of module M: 36",
-        "||||||line 4, col 21 to line 4, col 25 of module M: 36",
+        "|||||line 4, col 18 to line 4, col 50 of module M: 45",
+        "||||||line 4, col 21 to line 4, col 25 of module M: 45",
         "||||||line 4, col 32 to line 4, col 32 of module M: 18",
-        "||||||line 4, col 39 to line 4, col 50 of module M: 18",
+        "||||||line 4, col 39 to line 4, col 50 of module M: 27",
         "|||||line 4, col 9 to line 4, col 12 of module M: 9",
       ],
     ],
@@ -4980,14 +6357,14 @@ ASSUME TLCFP(a) = -887695703
         "||line 4, col 71 to line 4, col 89 of module M: 1",
         "|||line 4, col 72 to line 4, col 72 of module M: 1",
         "||||line 4, col 13 to line 4, col 62 of module M: 1",
-        "|||||line 4, col 30 to line 4, col 62 of module M: 4",
-        "||||||line 4, col 33 to line 4, col 37 of module M: 4",
-        "||||||line 4, col 51 to line 4, col 62 of module M: 2",
+        "|||||line 4, col 30 to line 4, col 62 of module M: 5",
+        "||||||line 4, col 33 to line 4, col 37 of module M: 5",
+        "||||||line 4, col 51 to line 4, col 62 of module M: 3",
         "|||||line 4, col 21 to line 4, col 24 of module M: 1",
       ],
     ],
   ])(
-    "counts the applications the copy EXCEPT makes of a recursive function of %s makes of the function, which keeps its cost model",
+    "counts the applications of the copy EXCEPT makes of a recursive function of %s, though TLC's FcnLambdaValue#takeExcept drops the copy's cost model",
     async (_name, definitions, relation, expected) => {
       const lines = await getCoverageLines(
         `---- MODULE M ----\nEXTENDS Naturals\nVARIABLE x\n${definitions}\n====`,
@@ -5057,11 +6434,11 @@ ASSUME TLCFP(a) = -887695703
         "|line 6, col 37 to line 6, col 59 of module M: 2",
         "||line 6, col 39 to line 6, col 57 of module M: 2",
         "|||line 6, col 40 to line 6, col 40 of module M: 2",
-        "||||line 4, col 1 to line 4, col 50 of module M: 2",
-        "|||||line 4, col 18 to line 4, col 50 of module M: 10",
-        "||||||line 4, col 21 to line 4, col 25 of module M: 10",
-        "||||||line 4, col 32 to line 4, col 32 of module M: 6",
-        "||||||line 4, col 39 to line 4, col 50 of module M: 4",
+        "||||line 4, col 1 to line 4, col 50 of module M: 2:6",
+        "|||||line 4, col 18 to line 4, col 50 of module M: 16",
+        "||||||line 4, col 21 to line 4, col 25 of module M: 16",
+        "||||||line 4, col 32 to line 4, col 32 of module M: 8",
+        "||||||line 4, col 39 to line 4, col 50 of module M: 8",
         "|||||line 4, col 9 to line 4, col 12 of module M: 2",
       ],
     ],
@@ -5077,16 +6454,16 @@ ASSUME TLCFP(a) = -887695703
         "||line 6, col 39 to line 6, col 85 of module M: 2",
         "|||line 6, col 40 to line 6, col 58 of module M: 2",
         "||||line 6, col 41 to line 6, col 41 of module M: 2",
-        "|||||line 4, col 1 to line 4, col 50 of module M: 2",
-        "||||||line 4, col 18 to line 4, col 50 of module M: 14",
-        "|||||||line 4, col 21 to line 4, col 25 of module M: 14",
-        "|||||||line 4, col 32 to line 4, col 32 of module M: 8",
-        "|||||||line 4, col 39 to line 4, col 50 of module M: 6",
+        "|||||line 4, col 1 to line 4, col 50 of module M: 2:6",
+        "||||||line 4, col 18 to line 4, col 50 of module M: 22",
+        "|||||||line 4, col 21 to line 4, col 25 of module M: 22",
+        "|||||||line 4, col 32 to line 4, col 32 of module M: 10",
+        "|||||||line 4, col 39 to line 4, col 50 of module M: 12",
         "||||||line 4, col 9 to line 4, col 12 of module M: 2",
       ],
     ],
   ])(
-    "counts the body of a recursive function at the keys %s replaces when TLC fingerprints a state holding the copy, as FcnLambdaValue#toFcnRcd evaluates every key",
+    "counts the body of a recursive function at the keys %s replaces when TLC fingerprints a state holding the copy, as FcnLambdaValue#toFcnRcd evaluates every key, though TLC's FcnLambdaValue#takeExcept drops the copy's cost model",
     async (_title, copy, expected) => {
       const lines = await getCoverageLines(
         `---- MODULE M ----\nEXTENDS Naturals\nVARIABLES x, y\ng[n \\in 0..2] == IF n = 0 THEN x ELSE g[n - 1] + 1\nInit == x = 0 /\\ y = <<>>\nNext == x < 2 /\\ x' = x + 1 /\\ y' = <<${copy}>>\n====`,
@@ -5095,6 +6472,28 @@ ASSUME TLCFP(a) = -887695703
       expect(lines?.[1]).toEqual(expected);
     },
   );
+
+  it("charges the domain of the copy EXCEPT makes of a recursive function when TLC fingerprints a state holding it, as FcnParams#elements charges each bound set", async () => {
+    const lines = await getCoverageLines(
+      "---- MODULE M ----\nEXTENDS Naturals\nVARIABLES x, y\ng[n \\in {0, 1, 2}] == IF n = 0 THEN x ELSE g[n - 1] + 1\nInit == x = 0 /\\ y = <<>>\nNext == x < 2 /\\ x' = x + 1 /\\ y' = <<[g EXCEPT ![1] = 7]>>\n====",
+      "INIT Init\nNEXT Next\nCHECK_DEADLOCK FALSE",
+    );
+    expect(lines?.[1]).toEqual([
+      "line 6, col 9 to line 6, col 13 of module M: 2",
+      "|line 6, col 9 to line 6, col 9 of module M: 3",
+      "line 6, col 18 to line 6, col 27 of module M: 2",
+      "line 6, col 32 to line 6, col 59 of module M: 2",
+      "|line 6, col 37 to line 6, col 59 of module M: 2",
+      "||line 6, col 39 to line 6, col 57 of module M: 2",
+      "|||line 6, col 40 to line 6, col 40 of module M: 2",
+      "||||line 4, col 1 to line 4, col 55 of module M: 2:6",
+      "|||||line 4, col 23 to line 4, col 55 of module M: 16",
+      "||||||line 4, col 26 to line 4, col 30 of module M: 16",
+      "||||||line 4, col 37 to line 4, col 37 of module M: 8",
+      "||||||line 4, col 44 to line 4, col 55 of module M: 8",
+      "|||||line 4, col 9 to line 4, col 17 of module M: 2:8",
+    ]);
+  });
 
   it.each([
     ["an EXCEPT copy of it", "[g EXCEPT ![1] = 7]", ["1", "0", "1", "2"]],
