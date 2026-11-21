@@ -1069,6 +1069,45 @@ export const specialize = (
     return (state, context) => `${name}(${state}, ${context})`;
   };
 
+  // The lexical bindings of a scope's declarations, which CreateLexicalDeclarations of the runtime
+  // makes in their order, in a loop rather than in calls nested as deep as they are many.
+  const createLexicalDeclarations = (
+    declarations: readonly { names: readonly string[]; isConst: boolean }[],
+    state: string,
+    environment: string,
+  ) =>
+    declarations.length === 0
+      ? state
+      : `CreateLexicalDeclarations(${state}, ${environment}, <<${declarations
+          .map(
+            (declaration) =>
+              `[names |-> ${getSequence(declaration.names.map(getUnits))}, isConst |-> ${getBool(declaration.isConst)}]`,
+          )
+          .join(", ")}>>, 1)`;
+
+  // The functions that the declarations of a scope instantiate, by the number that
+  // InstantiateCode dispatches on, which InstantiateDeclarations of the runtime runs in turn, in a
+  // loop rather than a chain of states as deep as the scope's declarations are many.
+  const instantiations: Code[] = [];
+  const instantiateDeclarations = (
+    entries: readonly {
+      instantiate: Code;
+      mode: "local" | "mutable" | "initialize";
+      name: string;
+      slot: number;
+    }[],
+    state: string,
+    context: string,
+    environment: string,
+  ) => {
+    if (entries.length === 0) return state;
+    const records = entries.map((entry) => {
+      instantiations.push(entry.instantiate);
+      return `[code |-> ${instantiations.length}, mode |-> "${entry.mode}", name |-> ${getUnits(entry.name)}, slot |-> ${entry.slot}]`;
+    });
+    return `InstantiateDeclarations(${state}, ${context}, ${environment}, <<${records.join(", ")}>>, 1)`;
+  };
+
   // Evaluate (§13): a result whose value may be a Reference Record.
   const reference = (node: ts.Expression, scope: Scope): Code => {
     if (ts.isIdentifier(node)) {
@@ -2306,22 +2345,34 @@ export const specialize = (
       steps.push(`LET bodyCtx == [ctx EXCEPT !.lex = ${lexEnv}, !.var = varEnv] IN`);
       if (lexical.length > 0) {
         steps.push(
-          `LET s6 == ${lexical.reduce((current, declaration) => `CreateLexicalNames(${current}, ${lexEnv}, ${getSequence(getBound(declaration.names, declaration.nodes, scope).map(getUnits))}, ${getBool(declaration.isConst)})`, isStrict ? varState : "le.s")} IN`,
+          `LET s6 == ${createLexicalDeclarations(
+            lexical.map((declaration) => ({
+              names: getBound(declaration.names, declaration.nodes, scope),
+              isConst: declaration.isConst,
+            })),
+            isStrict ? varState : "le.s",
+            lexEnv,
+          )} IN`,
         );
       }
       // Step 36: the functions.
-      let functionState = lexical.length > 0 ? "s6" : isStrict ? varState : "le.s";
-      functions.forEach((declaration, index) => {
-        const instantiate = instantiateFunction(declaration, scope);
-        steps.push(
-          `LET fo${index + 1} == ${instantiate(functionState, "bodyCtx")} IN`,
-          isLocal(declaration.name?.text ?? "*default*")
-            ? `LET fs${index + 1} == LocalInitialize(fo${index + 1}.s, ${locals?.top.get(declaration.name?.text ?? "*default*")}, Val(fo${index + 1})).s IN`
-            : `LET fs${index + 1} == SetMutableBinding(fo${index + 1}.s, varEnv, ${getUnits(declaration.name?.text ?? "*default*")}, Val(fo${index + 1}), FALSE).s IN`,
-        );
-        functionState = `fs${index + 1}`;
-      });
-      steps.push(getEvaluation(functionState, "bodyCtx"));
+      const functionState = lexical.length > 0 ? "s6" : isStrict ? varState : "le.s";
+      const instantiated = instantiateDeclarations(
+        functions.map((declaration) => {
+          const name = declaration.name?.text ?? "*default*";
+          return {
+            instantiate: instantiateFunction(declaration, scope),
+            mode: isLocal(name) ? ("local" as const) : ("mutable" as const),
+            name,
+            slot: locals?.top.get(name) ?? 0,
+          };
+        }),
+        functionState,
+        "bodyCtx",
+        "varEnv",
+      );
+      if (functions.length > 0) steps.push(`LET fs == ${instantiated} IN`);
+      steps.push(getEvaluation(functions.length > 0 ? "fs" : functionState, "bodyCtx"));
       return steps;
     };
     const key = getFunctionKey(node);
@@ -2361,11 +2412,25 @@ export const specialize = (
     );
     const getFramedSteps = () => [
       "LET bodyCtx == [ctx EXCEPT !.var = ctx.lex] IN",
-      ...functions.flatMap((declaration, index) => [
-        `LET fo${index + 1} == ${instantiateFunction(declaration, scope)(index === 0 ? "s" : `fs${index}`, "bodyCtx")} IN`,
-        `LET fs${index + 1} == LocalInitialize(fo${index + 1}.s, ${locals?.top.get(declaration.name?.text ?? "*default*")}, Val(fo${index + 1})).s IN`,
-      ]),
-      getEvaluation(functions.length === 0 ? "s" : `fs${functions.length}`, "bodyCtx"),
+      ...(functions.length === 0
+        ? []
+        : [
+            `LET fs == ${instantiateDeclarations(
+              functions.map((declaration) => {
+                const name = declaration.name?.text ?? "*default*";
+                return {
+                  instantiate: instantiateFunction(declaration, scope),
+                  mode: "local" as const,
+                  name,
+                  slot: locals?.top.get(name) ?? 0,
+                };
+              }),
+              "s",
+              "bodyCtx",
+              "ctx.lex",
+            )} IN`,
+          ]),
+      getEvaluation(functions.length === 0 ? "s" : "fs", "bodyCtx"),
     ];
     const run = isUnnamed
       ? `Assert(FALSE, "tla-ts can't call a function that its script names nowhere else")`
@@ -3285,19 +3350,21 @@ export const specialize = (
     ]);
     const steps = [
       `LET env == ctx.lex s1 == CreateVarBindings(s, env, ${getSequence(varNames.map(getUnits))}, env, FALSE, {}) IN`,
-      `LET s2 == ${lexical.reduce((current, declaration) => `CreateLexicalNames(${current}, env, ${getSequence(declaration.names.map(getUnits))}, ${getBool(declaration.isConst)})`, "s1")} IN`,
+      `LET s2 == ${createLexicalDeclarations(lexical, "s1", "env")} IN`,
     ];
-    let state = "s2";
-    lexical.forEach((declaration, index) => {
-      if (declaration.fn === undefined) return;
-      const instantiate = instantiateFunction(declaration.fn, scope);
-      steps.push(
-        `LET fo${index + 1} == ${instantiate(state, "ctx")} IN`,
-        `LET fs${index + 1} == InitializeBinding(fo${index + 1}.s, env, ${getUnits(declaration.names[0])}, Val(fo${index + 1})).s IN`,
-      );
-      state = `fs${index + 1}`;
-    });
-    steps.push(`Ok(${state}, Empty)`);
+    const declared = lexical.flatMap((declaration) =>
+      declaration.fn === undefined
+        ? []
+        : [
+            {
+              instantiate: instantiateFunction(declaration.fn, scope),
+              mode: "initialize" as const,
+              name: declaration.names[0],
+              slot: 0,
+            },
+          ],
+    );
+    steps.push(`Ok(${instantiateDeclarations(declared, "s2", "ctx", "env")}, Empty)`);
     const declarations = define("ModuleDeclarations", ["s", "ctx"], steps.join("\n  "));
     bodies.push(statementList(statements, scope));
     const dedupedRequests = dedupe(requests);
@@ -3413,6 +3480,16 @@ export const specialize = (
       : entry.kind === "commonjs"
         ? "RequireFile(s, 1)"
         : `${script(entry.sourceFile)}(s)`;
+  definitions.push({
+    name: "InstantiateCode",
+    arity: 3,
+    text: [
+      "InstantiateCode(s, ctx, id) ==",
+      instantiations.length === 0
+        ? `  Assert(FALSE, "tla-ts can't instantiate a function the program doesn't declare")`
+        : `  ${getDispatch("id", 1, instantiations.length, (code) => instantiations[code - 1]("s", "ctx"))}`,
+    ].join("\n"),
+  });
   definitions.push({
     name: "CallCode",
     arity: 5,

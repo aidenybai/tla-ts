@@ -1464,6 +1464,130 @@ describe("the arithmetic probes, as Z3 5.3.2 measures a goal", () => {
   });
 });
 
+describe("the counting probes, as Z3 5.3.2 walks a goal", () => {
+  it("count no constant that occurs only in a pattern", () => {
+    const counts =
+      '(apply (and-then (echo "consts " num-consts " bool " num-bool-consts " arith " num-arith-consts " bv " num-bv-consts " exprs " num-exprs) (fail-if (> 1 0))))';
+    expect(
+      run([
+        '(set-option :diagnostic-output-channel "stdout")',
+        "(declare-fun f (Int Int) Int)",
+        "(declare-fun g (Bool (_ BitVec 4)) Int)",
+        "(declare-const c Int)",
+        "(declare-const b Bool)",
+        "(declare-const v (_ BitVec 4))",
+        "(assert (forall ((x Int)) (! (> x 0) :pattern ((f x c)) :pattern ((+ x (g b v))))))",
+        counts,
+        "(assert (forall ((x Int)) (! (< x 9) :no-pattern (f x c))))",
+        counts,
+      ]),
+    ).toEqual([
+      "consts 0 bool 0 arith 0 bv 0 exprs 12",
+      '(error "tactic failed: fail-if tactic")',
+      "consts 0 bool 0 arith 0 bv 0 exprs 15",
+      '(error "tactic failed: fail-if tactic")',
+    ]);
+  });
+
+  it("find patterns in a quantifier that has only a no-pattern", () => {
+    expect(
+      run([
+        '(set-option :diagnostic-output-channel "stdout")',
+        "(declare-fun f (Int) Int)",
+        "(assert (forall ((x Int)) (! (> (f x) 0) :no-pattern (f x))))",
+        '(apply (and-then (if has-patterns (echo "patterns") (echo "none")) (fail-if (> 1 0))))',
+      ]),
+    ).toEqual(["patterns", '(error "tactic failed: fail-if tactic")']);
+  });
+});
+
+describe("preprocessing with proofs, as Z3 5.3.2 runs it", () => {
+  it("simplifies each formula alone in ctx-simplify", () => {
+    expect(
+      run([
+        "(set-option :produce-proofs true)",
+        "(declare-const a Bool)",
+        "(declare-const c Int)",
+        "(declare-const d Int)",
+        "(assert a)",
+        "(assert (or a (> c 0)))",
+        "(assert (or (not a) (> d c)))",
+        "(apply ctx-simplify)",
+        "(get-info :rlimit)",
+      ]),
+    ).toEqual([
+      [
+        "(goals",
+        "(goal",
+        "  a",
+        "  (or a (> c 0))",
+        "  (or (not a) (> d c))",
+        "  :precision precise :depth 1)",
+        ")",
+      ].join("\n"),
+      "(:rlimit 44)",
+    ]);
+  });
+
+  it("skips propagate-values in the kernel", () => {
+    expect(
+      run([
+        "(set-option :produce-proofs true)",
+        "(declare-sort U 0)",
+        "(declare-const a0 U)",
+        "(declare-const a1 U)",
+        "(declare-const a2 U)",
+        "(assert (distinct a0 a1 a2))",
+        "(check-sat)",
+        "(get-info :rlimit)",
+      ]),
+    ).toEqual(["sat", "(:rlimit 64)"]);
+  });
+
+  it("skips flatten-clauses in the kernel", () => {
+    expect(
+      run([
+        "(set-option :produce-proofs true)",
+        "(declare-sort U 0)",
+        "(declare-const a Bool)",
+        "(declare-const b Bool)",
+        "(declare-const r Bool)",
+        "(declare-const u U)",
+        "(declare-const v U)",
+        "(declare-const w U)",
+        "(assert (ite a (= u v) (= v w)))",
+        "(assert (or (not (or a b)) r))",
+        "(assert (not (= u w)))",
+        "(check-sat)",
+        "(get-info :rlimit)",
+        "(get-value (a b r))",
+      ]),
+    ).toEqual(["sat", "(:rlimit 274)", "((a false)\n (b false)\n (r false))"]);
+  });
+
+  it("skips them in the model checker's auxiliary context", () => {
+    expect(
+      run([
+        "(set-option :produce-proofs true)",
+        "(set-option :auto_config false)",
+        "(set-option :smt.mbqi true)",
+        "(declare-sort U 0)",
+        "(declare-fun f (U) U)",
+        "(declare-fun h (U) Int)",
+        "(declare-const a U)",
+        "(declare-const b U)",
+        "(declare-const c Bool)",
+        "(assert (forall ((x U)) (or (= (f x) a) (= (f x) b))))",
+        "(assert (forall ((x U)) (=> (= (f x) x) (> (h x) 3))))",
+        "(assert (or (not (or c (= a b))) (> (h a) 0)))",
+        "(assert (not (= a b)))",
+        "(check-sat)",
+        "(get-info :rlimit)",
+      ]),
+    ).toEqual(["sat", "(:rlimit 1712)"]);
+  });
+});
+
 describe("qfufbv, as Z3 5.3.2 answers QF_UFBV", () => {
   it("ackermannizes the functions and bit-blasts the goal", () => {
     expect(
