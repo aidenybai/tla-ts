@@ -22,10 +22,12 @@ import { getJavaHashCode } from "./java-hash";
 import { getTlcFingerprint } from "./tlc/fingerprint";
 import {
   getCardinality,
+  getStreamedElements,
   isElementOf,
   isElementOfWith,
   isEmptySet,
   isReducibleSet,
+  isTlcEnumerable,
   type IntervalValue,
   type SetOperationValue,
   type Value,
@@ -1010,10 +1012,11 @@ const getKnownSize = (set: Value): number | undefined => {
         ? getCardinality(set)
         : undefined;
     case "SetOperation": {
-      if (set.operator !== "\\cup" || set.isCached) return undefined;
+      if (set.isCached) return undefined;
       const leftSize = getKnownSize(set.left);
       const rightSize = getKnownSize(set.right);
-      return leftSize === undefined || rightSize === undefined ? undefined : leftSize + rightSize;
+      if (leftSize === undefined || rightSize === undefined) return undefined;
+      return set.operator === "\\cup" ? leftSize + rightSize : getStreamedElements(set).length;
     }
     default:
       return undefined;
@@ -1028,7 +1031,7 @@ const createUnionEnumerator = (
   size: number,
   isNormalized: boolean,
 ): ChargedEnumerator | undefined => {
-  if (set.operator !== "\\cup" || set.isCached) return undefined;
+  if (set.isCached) return undefined;
   const knownLeft = getKnownSize(set.left);
   const knownRight = getKnownSize(set.right);
   if (isNormalized && (knownLeft === undefined || knownRight === undefined)) return undefined;
@@ -1048,6 +1051,36 @@ const createUnionEnumerator = (
   };
 };
 
+// TLC's SetCapValue and SetDiffValue enumerators draw from one set and test each element's membership in the other, with no cost model of their own.
+const createIntersectionEnumerator = (
+  coverage: Coverage,
+  set: SetOperationValue,
+): ChargedEnumerator | undefined => {
+  if (set.isCached || isReducibleSet(set.left)) return undefined;
+  const isDifference = set.operator === "\\";
+  if (!isDifference && isReducibleSet(set.right)) return undefined;
+  const isLeftDrawn = isDifference || isTlcEnumerable(set.left);
+  const drawn = isLeftDrawn ? set.left : set.right;
+  const other = isLeftDrawn ? set.right : set.left;
+  const size = getKnownSize(drawn);
+  if (size === undefined || getKnownSize(other) === undefined) return undefined;
+  const elements = getStreamedElements(drawn);
+  const enumerator = createEnumerator(coverage, drawn, size, false);
+  let position = 0;
+  return {
+    next: () => {
+      while (enumerator.next()) {
+        if (coverage.isMember(elements[position++], other) !== isDifference) return true;
+      }
+      return false;
+    },
+    reset: () => {
+      enumerator.reset();
+      position = 0;
+    },
+  };
+};
+
 const createEnumerator = (
   coverage: Coverage,
   set: Value,
@@ -1061,18 +1094,20 @@ const createEnumerator = (
   ) {
     return createListEnumerator(coverage, undefined, size);
   }
-  const union =
+  const operation =
     typeof set === "object" && set.kind === "SetOperation"
-      ? createUnionEnumerator(coverage, set, node, size, isNormalized)
+      ? set.operator === "\\cup"
+        ? createUnionEnumerator(coverage, set, node, size, isNormalized)
+        : createIntersectionEnumerator(coverage, set)
       : undefined;
-  const elements = union ?? createProductSetEnumerator(coverage, set, size);
-  if (!elements || (node === undefined && !union))
+  const elements = operation ?? createProductSetEnumerator(coverage, set, size);
+  if (!elements || (node === undefined && !operation))
     return createListEnumerator(coverage, node, size);
   if (!isNormalized) return elements;
   let count = 0;
   while (elements.next()) count++;
   if (node !== undefined) coverage.secondary[node] += count;
-  return createListEnumerator(coverage, node, union ? size : count);
+  return createListEnumerator(coverage, node, operation ? size : count);
 };
 
 const RANDOMLY_INDEXED_KINDS = new Set<string>([
@@ -1096,8 +1131,8 @@ export const chargeRandomOrder = (coverage: Coverage, set: Value, size: number) 
   if (node !== undefined) coverage.secondary[node] += size;
 };
 
-// SetCupValue#size charges its enumeration and the elements it collected before normalizing them, which can fail.
-export const chargeUnionSize = (coverage: Coverage, set: Value) => {
+// The size methods of SetCupValue, SetCapValue and SetDiffValue charge their enumeration and the elements it collected before normalizing them, which can fail.
+export const chargeSetOperationSize = (coverage: Coverage, set: Value) => {
   if (typeof set !== "object" || set.kind !== "SetOperation") return;
   const size = getKnownSize(set);
   if (size === undefined) return;

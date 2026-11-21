@@ -31,7 +31,7 @@ import {
   chargeContexts,
   chargeFunctionConstruction,
   chargeSetOperation,
-  chargeUnionSize,
+  chargeSetOperationSize,
   costCoverage,
   countArgumentTuple,
   countCoverage,
@@ -2117,7 +2117,7 @@ const compileApply = (
     const cardinality = global.evaluateUnary;
     return (context) => {
       const value = set(context);
-      chargeUnionSize(coverage, value);
+      chargeSetOperationSize(coverage, value);
       return cardinality(value);
     };
   }

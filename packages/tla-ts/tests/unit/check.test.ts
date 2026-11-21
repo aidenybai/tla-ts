@@ -3573,6 +3573,143 @@ ASSUME TLCFP(a) = -887695703
 
   it.each([
     [
+      "x' \\in draws from the intersection of two sets of functions",
+      "x' \\in [{1} -> {3, 4}] \\cap [{1} -> {3}]",
+      [
+        "line 5, col 9 to line 5, col 48 of module M: 2",
+        "|line 5, col 16 to line 5, col 48 of module M: 2",
+        "||line 5, col 16 to line 5, col 30 of module M: 2:4",
+        "|||line 5, col 17 to line 5, col 19 of module M: 2",
+        "|||line 5, col 24 to line 5, col 29 of module M: 2:6",
+        "||line 5, col 37 to line 5, col 48 of module M: 2",
+      ],
+    ],
+    [
+      "x' \\in draws from the difference of two sets of functions",
+      "x' \\in [{1} -> {3, 4}] \\ [{1} -> {3}]",
+      [
+        "line 5, col 9 to line 5, col 45 of module M: 2",
+        "|line 5, col 16 to line 5, col 45 of module M: 2",
+        "||line 5, col 16 to line 5, col 30 of module M: 2:4",
+        "|||line 5, col 17 to line 5, col 19 of module M: 2",
+        "|||line 5, col 24 to line 5, col 29 of module M: 2:6",
+        "||line 5, col 34 to line 5, col 45 of module M: 2",
+      ],
+    ],
+    [
+      "x' \\in draws from a set of functions less a set literal",
+      "x' \\in [{1} -> {3, 4}] \\ {[a \\in {1} |-> 3]}",
+      [
+        "line 5, col 9 to line 5, col 52 of module M: 2",
+        "|line 5, col 16 to line 5, col 52 of module M: 2",
+        "||line 5, col 16 to line 5, col 30 of module M: 2:4",
+        "|||line 5, col 17 to line 5, col 19 of module M: 2",
+        "|||line 5, col 24 to line 5, col 29 of module M: 2:6",
+        "||line 5, col 34 to line 5, col 52 of module M: 2",
+        "|||line 5, col 35 to line 5, col 51 of module M: 2:2",
+        "||||line 5, col 42 to line 5, col 44 of module M: 2:4",
+      ],
+    ],
+    [
+      "x' \\in draws from the intersection of two SUBSETs, whose member method draws",
+      "x' \\in SUBSET {1, 2} \\cap SUBSET {2, 3}",
+      [
+        "line 5, col 9 to line 5, col 47 of module M: 6",
+        "|line 5, col 16 to line 5, col 47 of module M: 3",
+        "||line 5, col 16 to line 5, col 28 of module M: 3:15",
+        "|||line 5, col 23 to line 5, col 28 of module M: 3",
+        "||line 5, col 35 to line 5, col 47 of module M: 3",
+      ],
+    ],
+    [
+      "an \\E that decides early normalizes the difference first",
+      "x' = 0 /\\ \\E e \\in [{1} -> {3, 4, 5}] \\ [{1} -> {3}] : e[1] = 4",
+      [
+        "line 5, col 9 to line 5, col 14 of module M: 1",
+        "line 5, col 19 to line 5, col 71 of module M: 1",
+        "|line 5, col 64 to line 5, col 71 of module M: 1",
+        "|line 5, col 28 to line 5, col 60 of module M: 1",
+        "||line 5, col 28 to line 5, col 45 of module M: 1:3",
+        "|||line 5, col 29 to line 5, col 31 of module M: 1",
+        "|||line 5, col 36 to line 5, col 44 of module M: 1:4",
+        "||line 5, col 49 to line 5, col 60 of module M: 1",
+      ],
+    ],
+    [
+      "Cardinality converts the intersection",
+      "x' = Cardinality([{1} -> {3, 4}] \\cap [{1} -> {3}])",
+      [
+        "line 5, col 9 to line 5, col 59 of module M: 2",
+        "|line 5, col 14 to line 5, col 59 of module M: 2",
+        "||line 5, col 26 to line 5, col 58 of module M: 2",
+        "|||line 5, col 26 to line 5, col 40 of module M: 2:4",
+        "||||line 5, col 27 to line 5, col 29 of module M: 2",
+        "||||line 5, col 34 to line 5, col 39 of module M: 2:6",
+        "|||line 5, col 47 to line 5, col 58 of module M: 2",
+      ],
+    ],
+    [
+      "x' \\in draws from a difference of an intersection",
+      "x' \\in ([{1} -> {3, 4}] \\cap [{1} -> {3, 4}]) \\ [{1} -> {3}]",
+      [
+        "line 5, col 9 to line 5, col 68 of module M: 2",
+        "|line 5, col 16 to line 5, col 68 of module M: 2",
+        "||line 5, col 17 to line 5, col 52 of module M: 2",
+        "|||line 5, col 17 to line 5, col 31 of module M: 2:4",
+        "||||line 5, col 18 to line 5, col 20 of module M: 2",
+        "||||line 5, col 25 to line 5, col 30 of module M: 2:6",
+        "|||line 5, col 38 to line 5, col 52 of module M: 2",
+        "||line 5, col 57 to line 5, col 68 of module M: 2",
+      ],
+    ],
+    [
+      "x' \\in draws from a set of functions less an intersection",
+      "x' \\in [{1} -> {3, 4}] \\ ([{1} -> {3}] \\cap [{1} -> {3, 4}])",
+      [
+        "line 5, col 9 to line 5, col 68 of module M: 2",
+        "|line 5, col 16 to line 5, col 68 of module M: 2",
+        "||line 5, col 16 to line 5, col 30 of module M: 2:4",
+        "|||line 5, col 17 to line 5, col 19 of module M: 2",
+        "|||line 5, col 24 to line 5, col 29 of module M: 2:6",
+        "||line 5, col 35 to line 5, col 67 of module M: 2",
+      ],
+    ],
+    [
+      "x' \\in draws from the intersection of two sets of records",
+      "x' \\in [a : {3, 4}] \\cap [a : {3}]",
+      [
+        "line 5, col 9 to line 5, col 42 of module M: 2",
+        "|line 5, col 16 to line 5, col 42 of module M: 2",
+        "||line 5, col 16 to line 5, col 27 of module M: 2:4",
+        "|||line 5, col 17 to line 5, col 26 of module M: 2:6",
+        "||line 5, col 34 to line 5, col 42 of module M: 2",
+      ],
+    ],
+    [
+      "x' \\in draws from the difference of two products",
+      "x' \\in ({1} \\X {3, 4}) \\ ({1} \\X {3})",
+      [
+        "line 5, col 9 to line 5, col 45 of module M: 2",
+        "|line 5, col 16 to line 5, col 45 of module M: 2",
+        "||line 5, col 17 to line 5, col 29 of module M: 2:8",
+        "|||line 5, col 17 to line 5, col 19 of module M: 2:4",
+        "|||line 5, col 24 to line 5, col 29 of module M: 2:8",
+        "||line 5, col 35 to line 5, col 44 of module M: 2",
+      ],
+    ],
+  ])(
+    "charges what TLC's SetCapValue and SetDiffValue enumerators draw when %s",
+    async (_title, next, expected) => {
+      const lines = await getCoverageLines(
+        `---- MODULE M ----\nEXTENDS Integers, TLC, FiniteSets, Sequences\nVARIABLE x\nInit == x = 0\nNext == ${next}\n====`,
+        "INIT Init\nNEXT Next\nCHECK_DEADLOCK FALSE",
+      );
+      expect(lines?.at(-1)).toEqual(expected);
+    },
+  );
+
+  it.each([
+    [
       "SUBSET",
       "[s \\in SUBSET {1, 2} |-> Cardinality(s)]",
       [
