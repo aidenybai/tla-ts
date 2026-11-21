@@ -4211,6 +4211,7 @@ describe("evaluation errors match TLC", () => {
     "<<2, 0>>",
   ];
   const PRINTED_FILTER_RANGE = "{t \\in (1..2) \\X {0} : PrintT(t)}";
+  const PRINTED_FILTER_PAIR = ["<<1, 0>>", "<<2, 0>>"];
 
   it.each([
     [
@@ -4240,6 +4241,49 @@ describe("evaluation errors match TLC", () => {
     ],
   ])(
     "evaluates a filter under a component S \\cup T, S \\cap T, S \\ T or UNION S of [S -> T] as TLC's enumerators reset it: %s",
+    async (next, printed, traceOutput) => {
+      const lines: string[] = [];
+      const result = await check({
+        source: `---- MODULE M ----\nEXTENDS Integers, FiniteSets, TLC\nVARIABLE x\nInit == x = 0\nNext == ${next}\n====`,
+        config: "INIT Init\nNEXT Next",
+        onPrint: (text) => lines.push(text),
+      });
+      expect([lines, result.failure?.traceOutput]).toEqual([printed, traceOutput]);
+    },
+  );
+
+  const PRINTED_TWICE = [...PRINTED_FILTER_PAIR, ...PRINTED_FILTER_PAIR];
+  const PRINTED_FUNCTION_SET_TWICE = [...PRINTED_PASS, ...PRINTED_PASS];
+
+  it.each([
+    [
+      `x' = x /\\ \\E e \\in UNION {[{1} -> ${PRINTED_FILTER}], {1}} : FALSE`,
+      PRINTED_FUNCTION_SET_TWICE,
+      PRINTED_FUNCTION_SET_TWICE,
+    ],
+    [
+      `x' = x /\\ \\E e \\in UNION {${PRINTED_FILTER_RANGE}, {t \\in (3..4) \\X {0} : PrintT(t)}} : FALSE`,
+      ["<<3, 0>>", "<<4, 0>>", ...PRINTED_TWICE],
+      undefined,
+    ],
+    [
+      `LET F == ${PRINTED_FILTER_RANGE} IN x' = x /\\ {F, {<<9, 0>>}} = {{<<9, 0>>}, F} /\\ \\E e \\in F : FALSE`,
+      [...PRINTED_TWICE, ...PRINTED_TWICE],
+      undefined,
+    ],
+    [
+      `x' = x /\\ \\E S \\in {${PRINTED_FILTER_RANGE}, {<<9, 0>>}} : S # {<<1, 0>>} /\\ \\E e \\in S : FALSE`,
+      PRINTED_TWICE,
+      undefined,
+    ],
+    [
+      `x' = x /\\ \\E e \\in [a : UNION {${PRINTED_FILTER_RANGE}, {<<5, 0>>}}, b : {t \\in (1..2) : PrintT(t)} \\ {2}] : FALSE`,
+      ["1", "2", ...PRINTED_TWICE],
+      undefined,
+    ],
+    [`x' = {${PRINTED_FILTER_RANGE}, {<<9, 0>>}}`, [...PRINTED_TWICE, ...PRINTED_TWICE], undefined],
+  ])(
+    "sorts a set literal that holds a filter only when TLC normalizes it, and converts the filter again where TLC's toSetEnum keeps nothing: %s",
     async (next, printed, traceOutput) => {
       const lines: string[] = [];
       const result = await check({

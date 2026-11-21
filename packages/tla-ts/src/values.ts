@@ -1132,7 +1132,7 @@ const getSetElementsLikeTlc = (left: SetValue | MixedSetValue, right: Value) => 
     ? right
     : typeof right === "object" && right.kind === "Subset" && right.secondary !== undefined
       ? toChargedSet(right, false)
-      : toFiniteSet(right);
+      : toFiniteSet(right, false);
   return { elements: toFiniteSet(left).elements, otherElements: toFiniteSet(other).elements };
 };
 
@@ -1144,6 +1144,7 @@ const compareSetLikeTlc = (left: ObjectValue, right: Value, isEquality: boolean)
     !isEquality &&
     (left.kind === "FunctionSet" || left.kind === "RecordSet" || left.kind === "ProductSet")
   ) {
+    cacheSet(left);
     return compareSetLikeTlc(toFiniteSet(left), right, false);
   }
   if (isComparedByClass(left, right)) {
@@ -1151,6 +1152,7 @@ const compareSetLikeTlc = (left: ObjectValue, right: Value, isEquality: boolean)
     return valuesEqual(left, right) ? 0 : 1;
   }
   if (!isEnumeratedSet(left)) {
+    cacheSet(left);
     const set =
       left.kind === "Subset" && left.secondary !== undefined
         ? toChargedSet(left, true)
@@ -1350,7 +1352,7 @@ export const createSet = (elements: Value[]): SetValue => {
   return createSortedSet(unique);
 };
 
-// TLC sorts a set literal only once an operation needs it sorted, so a lazy function the sort would evaluate keeps the literal unsorted.
+// TLC sorts a set literal only once an operation needs it sorted, so a lazy function or a filter the sort would evaluate keeps the literal unsorted.
 let isSortingLiteral = false;
 
 export const createEnumeratedSet = (elements: Value[]): SetValue | MixedSetValue => {
@@ -1956,13 +1958,17 @@ const enumerateSet = (
   }
 };
 
-export const toFiniteSet = (value: Value): SetValue => {
+// TLC's SetEnumValue#compareTo and equals convert their argument with toSetEnum, which keeps nothing, so a filter inside runs again on the next conversion.
+export const toFiniteSet = (value: Value, isKept = true): SetValue => {
   if (typeof value === "object" && value.kind === "Set") return value;
   if (typeof value === "object" && value.kind === "Interval") {
     return createSortedSet(enumerateSet(value));
   }
   const lazy = typeof value === "object" && isLazySet(value) ? value : undefined;
   if (lazy?.enumerated) return lazy.enumerated;
+  if (isSortingLiteral && lazy !== undefined && isPredicated(lazy)) {
+    throw new TlaEvaluationError("The set literal holds a filter");
+  }
   const sets = setTrace.sets;
   sets?.push(value);
   const isOuterSorting = isSortingLiteral;
@@ -1984,7 +1990,7 @@ export const toFiniteSet = (value: Value): SetValue => {
       value.kind === "FunctionSet" ||
       value.kind === "Subset");
   const set = isSorted ? createSortedSet(elements) : createSet(elements);
-  if (lazy) lazy.enumerated = set;
+  if (lazy && (isKept || !isPredicated(lazy))) lazy.enumerated = set;
   return set;
 };
 
@@ -2076,7 +2082,7 @@ const isPredicated = (value: Value): boolean => {
       return (
         value.isCached !== true &&
         typeof value.base === "object" &&
-        value.base.kind === "Set" &&
+        (value.base.kind === "Set" || value.base.kind === "MixedSet") &&
         hasPredicatedSet(value.base.elements)
       );
     case "FunctionSet":

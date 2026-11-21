@@ -310,7 +310,7 @@ export const CORE_OPERATORS: Builtin[] = [
       (finiteSets: SetValue[]) =>
         createUnsortedCopy(getBalancedUnion(finiteSets, 0, finiteSets.length), added),
       getUnionLikeTlc,
-      sets.map(toFiniteSet),
+      sets.map((set) => toFiniteSet(set)),
       undefined,
     );
   }),
