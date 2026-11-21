@@ -449,6 +449,20 @@ describe("a distinct of more than two arguments", () => {
       ).toEqual(["sat", "(:rlimit 195)", "((a0 U!val!0)\n (a1 U!val!1))"]);
     });
 
+    it("maps them to model values under sat.euf, as add_distinct_axiom does", () => {
+      expect(
+        run([
+          "(set-option :sat.euf true)",
+          ...DECLARATIONS,
+          DISTINCT,
+          "(check-sat)",
+          "(get-info :rlimit)",
+          "(assert (= a0 a32))",
+          "(check-sat)",
+        ]),
+      ).toEqual(["sat", "(:rlimit 359)", "unsat"]);
+    });
+
     it("conflicts once two arguments are equal", () => {
       expect(
         run([

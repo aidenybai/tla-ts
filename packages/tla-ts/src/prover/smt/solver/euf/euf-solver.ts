@@ -380,10 +380,25 @@ export class EufSolver implements SatExtension {
       this.s.mkClause([]);
       return;
     }
-    if (size > 32) throw new SmtUnsupportedError("distinct over more than 32 arguments");
-    for (let first = 0; first < size; first++)
-      for (let second = first + 1; second < size; second++)
-        this.s.mkClause([this.mkLiteral(this.mkEq(args[first].owner, args[second].owner)) ^ 1]);
+    if (size <= 32) {
+      for (let first = 0; first < size; first++)
+        for (let second = first + 1; second < size; second++)
+          this.s.mkClause([this.mkLiteral(this.mkEq(args[first].owner, args[second].owner)) ^ 1]);
+      return;
+    }
+    const elements = manager.mkUninterpretedSort(manager.mkFreshVarName("distinct-elems"), []);
+    // Z3 passes an empty suffix, which adds a second "!" to the name.
+    const decl = manager.mkFreshFuncDecl(
+      "dist-f!",
+      [manager.sorts[manager.getArg(expr, 0)]],
+      elements,
+    );
+    for (let index = 0; index < size; index++) {
+      const app = manager.mkApp(decl, [manager.getArg(expr, index)], elements);
+      const value = manager.mkModelValue(index, elements);
+      this.mkEnode(value, []);
+      this.s.mkClause([this.mkLiteral(this.mkEq(app, value))]);
+    }
   }
 
   private axiomatizeBasic(node: Enode) {
