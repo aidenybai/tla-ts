@@ -165,6 +165,21 @@ LWith(c, i, v) ==
   ELSE LET n == Len(c.elems)
            k == IF i.value.i < 0 THEN n + i.value.i ELSE i.value.i
        IN IF k < 0 \/ k >= n THEN LBail ELSE LArray([c.elems EXCEPT ![k + 1] = v])
+\* Array.prototype.sort of an array that nothing else holds, by the comparator a - b, b - a, or
+\* none: of finite Numbers for a comparator and of strings for none, so that the comparator is
+\* consistent and the stable sort that ES2019 makes it has one result, each element at the count of
+\* those that sort before it. LBail for any other element, among them NaN, where a - b isn't
+\* consistent.
+LSortLess(order, a, b) ==
+  CASE order = "ascending" -> NumCompare(a.value, b.value) < 0
+    [] order = "descending" -> NumCompare(b.value, a.value) < 0
+    [] OTHER -> LexLess(a.value, b.value)
+LSortable(order, v) == IF order = "string" THEN v.type = "string" ELSE v.type = "number" /\ NumIsFinite(v.value)
+LSort(c, order) ==
+  IF c.type # "larray" \/ \E i \in DOMAIN c.elems : ~LSortable(order, c.elems[i]) THEN LBail
+  ELSE LET e == c.elems
+           rank(i) == Cardinality({j \in DOMAIN e : LSortLess(order, e[j], e[i]) \/ (j < i /\ ~LSortLess(order, e[i], e[j]))})
+       IN LArray([k \in DOMAIN e |-> e[CHOOSE i \in DOMAIN e : rank(i) = k - 1]])
 \* Array.from of an array-like object of a length alone, which reads undefined at each index.
 LFrom(length, F(_, _)) ==
   IF length.type = "number" /\ length.value.k = "int" /\ length.value.i >= 0 /\ length.value.i <= 65536
@@ -221,6 +236,31 @@ LSetMethod(c, m, o) ==
 // counts a call of a mutator on what existed before it as a write, as ModelCallBuiltin does.
 const METHODS = new Set(["push", "pop", "shift", "includes", "has", "add", "delete", "get", "set"]);
 const MUTATORS = new Set(["push", "pop", "shift", "add", "delete", "set"]);
+
+// The order of a comparator (a, b) => a - b, "ascending", or (a, b) => b - a, "descending", which
+// read only their parameters and change nothing, or undefined for any other.
+const getComparatorOrder = (node: ts.Expression) => {
+  if (!ts.isArrowFunction(node) || node.parameters.length !== 2) return undefined;
+  const names = node.parameters.map((parameter) =>
+    ts.isIdentifier(parameter.name) &&
+    parameter.initializer === undefined &&
+    parameter.dotDotDotToken === undefined
+      ? parameter.name.text
+      : undefined,
+  );
+  const body = node.body;
+  if (names.includes(undefined) || names[0] === names[1] || !ts.isBinaryExpression(body)) {
+    return undefined;
+  }
+  if (body.operatorToken.kind !== ts.SyntaxKind.MinusToken) return undefined;
+  if (!ts.isIdentifier(body.left) || !ts.isIdentifier(body.right)) return undefined;
+  const operands = [body.left.text, body.right.text].join(" ");
+  return operands === `${names[0]} ${names[1]}`
+    ? "ascending"
+    : operands === `${names[1]} ${names[0]}`
+      ? "descending"
+      : undefined;
+};
 
 // The built-in methods that change nothing, whose receiver a read-only parameter may give.
 const READING_METHODS = new Set([
@@ -742,6 +782,19 @@ export const getNativeFunctions = (
               text: `${iterating}(${receiver.text}, ${callback})`,
               isFresh: method === "map",
             };
+      }
+      // sort on an array that the expression just made, which nothing else holds, by a comparator
+      // that only subtracts its parameters, or by none.
+      if (method === "sort") {
+        const receiver = compileExpression(node.expression.expression, scope);
+        const order =
+          node.arguments.length === 0 ? "string" : getComparatorOrder(node.arguments[0]);
+        return receiver === undefined ||
+          !receiver.isFresh ||
+          order === undefined ||
+          node.arguments.length > 1
+          ? undefined
+          : { text: `LSort(${receiver.text}, "${order}")`, isFresh: true };
       }
       if (method === "with") {
         const receiver = compileExpression(node.expression.expression, scope);
