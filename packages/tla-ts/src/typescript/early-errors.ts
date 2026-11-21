@@ -327,16 +327,10 @@ export const rejectEarlyErrors = (sourceFile: ts.SourceFile) => {
     return;
   }
   if (parse.error !== undefined) {
-    reject(
-      parse.error.message,
-      getNodeAt(
-        sourceFile,
-        sourceFile.getPositionOfLineAndCharacter(
-          Math.min(parse.error.line, sourceFile.getLineStarts().length) - 1,
-          0,
-        ),
-      ),
-    );
+    // V8 gives some errors line 0, as a rest element's initializer, so a line outside the file
+    // places the error at its start.
+    const lineStarts = sourceFile.getLineStarts();
+    reject(parse.error.message, getNodeAt(sourceFile, lineStarts[parse.error.line - 1] ?? 0));
   }
   const visit = (node: ts.Node): void => {
     rejectLexicalWithBody(node);

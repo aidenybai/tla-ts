@@ -3514,6 +3514,24 @@ const result = [read(() => box.f()), read(() => box.inner.g()), read(() => value
       });
     });
 
+    // V8 places this SyntaxError on line 0, outside the file.
+    describe("rejects a rest element's initializer in a for-await-of, as V8's parse does", () => {
+      const getSource = (pattern: string) =>
+        `async function walk() {\n  for await (const [...${pattern}] of []) {}\n}\nwalk();\n`;
+
+      it("agrees with Node", async () => {
+        expect(isNodeParsed(getSource("[x] = []"), false)).toBe(false);
+        expect((await checkScript(getSource("[x] = []"), false)).message).toContain(
+          "SyntaxError: Invalid left-hand side in for-await-of loop: Must have a single binding.",
+        );
+      });
+
+      it("runs the rest element without one", async () => {
+        expect(isNodeParsed(getSource("[x]"), false)).toBe(true);
+        expect((await checkScript(getSource("[x]"), false)).message).toBeUndefined();
+      });
+    });
+
     describe("runs a module that V8's parse accepts", () => {
       const getSource = (expected: number) =>
         `export {};\nvar box = { await: 1 };\nbox.await = box.await + 1;\nif (box.await !== ${expected}) throw new Error("seen " + box.await);\n`;
