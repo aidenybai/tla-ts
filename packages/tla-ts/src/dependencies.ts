@@ -122,7 +122,7 @@ const collectLocalFacts = (
     node: Expression,
     isLevelCounted: boolean,
     isOperatorArgument: boolean,
-    substitutes: ReadonlyMap<string, Expression>,
+    substitutes: ReadonlyMap<string, Expression> | undefined,
   ) => {
     const kind = node.kind;
     if (kind === "Selection") {
@@ -145,12 +145,13 @@ const collectLocalFacts = (
     if (isLevelCounted && ownLevelFlags !== undefined) row[0] |= ownLevelFlags;
     const isInnerLevelCounted = isLevelCounted && ownLevelFlags === undefined;
     const name = getReferencedName(node);
+    const isLocal = name !== undefined && isLocallyResolved(node);
     // TLC's getLevelBound takes a parameter named like a variable for that variable.
-    if (name !== undefined && isLocallyResolved(node) && environment.variableIndex.has(name)) {
+    if (isLocal && environment.variableIndex.has(name)) {
       if (!isOperatorArgument) row[0] |= ABOVE_CONSTANT_BOUND;
       if (isInnerLevelCounted) row[0] |= VARIABLE_LEVEL_FLAGS;
     }
-    if (name !== undefined && !isLocallyResolved(node)) {
+    if (name !== undefined && !isLocal) {
       const target = environment.substitutions.get(name) ?? name;
       const definition = environment.definitions.get(target);
       const isOverridden = environment.constants.has(name);
@@ -201,8 +202,7 @@ const collectLocalFacts = (
         }
       }
     }
-    const substitute =
-      name !== undefined && isLocallyResolved(node) ? substitutes.get(name) : undefined;
+    const substitute = isLocal ? substitutes?.get(name) : undefined;
     if (substitute) visit(substitute, isInnerLevelCounted, isOperatorArgument, substitutes);
     // TLC's SubstInNode binds a LET instance's substitute lazily, so its level counts only where the instanced definition reads it.
     if (kind === "Let" && node.definitions.some(isLetSubstitute)) {
@@ -223,7 +223,7 @@ const collectLocalFacts = (
       visit(child, isInnerLevelCounted, isOperatorArgument || kind === "Lambda", substitutes),
     );
   };
-  expressions.forEach((expression) => visit(expression, true, false, new Map()));
+  expressions.forEach((expression) => visit(expression, true, false, undefined));
   return { row, edges };
 };
 
