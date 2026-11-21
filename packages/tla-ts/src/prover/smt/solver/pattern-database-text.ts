@@ -1,4 +1,3 @@
-// Z3 5.3.2's ast/pattern/database.smt2 byte for byte, trailing spaces included.
 export const PATTERN_DATABASE = `(declare-fun ?store (Int Int Int) Int)
 (declare-fun ?select (Int Int) Int)
 (declare-fun ?PO (Int Int) Int)
