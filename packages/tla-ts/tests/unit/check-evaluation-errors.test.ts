@@ -4199,6 +4199,58 @@ describe("evaluation errors match TLC", () => {
     },
   );
 
+  const PRINTED_SELECTED = ["<<1, 0>>", "<<1, 0>>", "<<1, 0>>", "<<2, 0>>", "<<1, 0>>", "<<2, 0>>"];
+  const PRINTED_CUP_RESETS = [
+    "<<1, 0>>",
+    "<<2, 0>>",
+    "<<1, 0>>",
+    "<<1, 0>>",
+    "<<2, 0>>",
+    "<<2, 0>>",
+    "<<1, 0>>",
+    "<<2, 0>>",
+  ];
+  const PRINTED_FILTER_RANGE = "{t \\in (1..2) \\X {0} : PrintT(t)}";
+
+  it.each([
+    [
+      `x' = x /\\ \\E e \\in [{1, 2} -> ${PRINTED_FILTER_RANGE} \\ {<<2, 0>>}] : FALSE`,
+      PRINTED_SELECTED,
+      undefined,
+    ],
+    [
+      `x' = x /\\ \\E e \\in [{1, 2} -> ${PRINTED_FILTER_RANGE} \\cap ({1} \\X {0, 1})] : FALSE`,
+      PRINTED_SELECTED,
+      undefined,
+    ],
+    [
+      `x' \\in [{1, 2} -> ${PRINTED_FILTER_RANGE} \\ {<<2, 0>>}]`,
+      [...PRINTED_SELECTED, ...PRINTED_SELECTED],
+      undefined,
+    ],
+    [
+      `x' = x /\\ \\E e \\in [{1, 2} -> UNION {${PRINTED_FILTER_RANGE}}] : FALSE`,
+      PRINTED_RESETS,
+      undefined,
+    ],
+    [
+      `x' = x /\\ \\E e \\in [{1, 2} -> ${PRINTED_FILTER_RANGE} \\cup {9}] : FALSE`,
+      PRINTED_CUP_RESETS,
+      PRINTED_CUP_RESETS,
+    ],
+  ])(
+    "evaluates a filter under a component S \\cup T, S \\cap T, S \\ T or UNION S of [S -> T] as TLC's enumerators reset it: %s",
+    async (next, printed, traceOutput) => {
+      const lines: string[] = [];
+      const result = await check({
+        source: `---- MODULE M ----\nEXTENDS Integers, FiniteSets, TLC\nVARIABLE x\nInit == x = 0\nNext == ${next}\n====`,
+        config: "INIT Init\nNEXT Next",
+        onPrint: (text) => lines.push(text),
+      });
+      expect([lines, result.failure?.traceOutput]).toEqual([printed, traceOutput]);
+    },
+  );
+
   it("normalizes [S -> T] after it streams a component S \\cup T, as TLC's toSetEnum does", async () => {
     const result = await check({
       source:

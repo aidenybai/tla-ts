@@ -2022,7 +2022,34 @@ interface ProductStream {
   isDone: boolean;
 }
 
-type ElementStream = ListStream | FilterStream | ProductStream;
+interface ConcatenatedStream {
+  kind: "Concatenated";
+  left: ElementStream;
+  right: ElementStream;
+}
+
+interface SelectedStream {
+  kind: "Selected";
+  base: ElementStream;
+  other: Value;
+  isIntersection: boolean;
+}
+
+interface UnionedStream {
+  kind: "Unioned";
+  union: UnionValue;
+  sets: Value[];
+  index: number;
+  part: ElementStream | undefined;
+}
+
+type ElementStream =
+  | ListStream
+  | FilterStream
+  | ProductStream
+  | ConcatenatedStream
+  | SelectedStream
+  | UnionedStream;
 
 interface CupStream {
   kind: "Cup";
@@ -2044,6 +2071,13 @@ const isPredicated = (value: Value): boolean => {
         value.hasFilter &&
         value.isCached !== true &&
         (isPredicated(value.left) || isPredicated(value.right))
+      );
+    case "Union":
+      return (
+        value.isCached !== true &&
+        typeof value.base === "object" &&
+        value.base.kind === "Set" &&
+        hasPredicatedSet(value.base.elements)
       );
     case "FunctionSet":
       return (
@@ -2174,6 +2208,16 @@ const openPart = (value: Value): ElementStream => {
     sets?.pop();
     return stream;
   }
+  if (
+    typeof value === "object" &&
+    (value.kind === "SetOperation" || value.kind === "Union") &&
+    isPredicated(value)
+  ) {
+    sets?.push(value);
+    const stream = value.kind === "Union" ? openUnionPart(value) : openOperationPart(value);
+    sets?.pop();
+    return stream;
+  }
   const product = typeof value === "object" ? getPredicatedProduct(value) : undefined;
   if (product === undefined) {
     return { kind: "List", elements: getStreamedElements(value), position: 0 };
@@ -2182,6 +2226,35 @@ const openPart = (value: Value): ElementStream => {
   const stream = openProductStream(product);
   sets?.pop();
   return stream;
+};
+
+// TLC's SetCupValue enumerator opens both sets and draws from S, then T. SetCapValue and SetDiffValue's draw from one set and test the other.
+const openOperationPart = (value: SetOperationValue): ElementStream => {
+  if (value.operator === "\\cup") {
+    if (!isTlcEnumerable(value.left) || !isTlcEnumerable(value.right)) toFiniteSet(value);
+    return { kind: "Concatenated", left: openPart(value.left), right: openPart(value.right) };
+  }
+  const isLeftDrawn = value.operator === "\\" || isTlcEnumerable(value.left);
+  const drawn = isLeftDrawn ? value.left : value.right;
+  if (!isTlcEnumerable(drawn)) toFiniteSet(value);
+  return {
+    kind: "Selected",
+    base: openPart(drawn),
+    other: isLeftDrawn ? value.right : value.left,
+    isIntersection: value.operator === "\\cap",
+  };
+};
+
+// TLC's UnionValue enumerator opens each set of S as it reaches it, and its reset opens the first set again.
+const openUnionPart = (value: UnionValue): UnionedStream => {
+  const sets = getUnionSets(value);
+  return {
+    kind: "Unioned",
+    union: value,
+    sets,
+    index: 0,
+    part: sets.length > 0 ? openPart(getUnionSet(sets[0], 0, value)) : undefined,
+  };
 };
 
 const restartPart = (stream: ProductStream, index: number) => {
@@ -2203,6 +2276,18 @@ const resetStream = (stream: ElementStream): void => {
     case "Product":
       stream.isDone = false;
       for (let index = 0; index < stream.parts.length; index++) restartPart(stream, index);
+      return;
+    case "Concatenated":
+      resetStream(stream.left);
+      resetStream(stream.right);
+      return;
+    case "Selected":
+      resetStream(stream.base);
+      return;
+    case "Unioned":
+      stream.index = 0;
+      stream.part =
+        stream.sets.length > 0 ? openPart(getUnionSet(stream.sets[0], 0, stream.union)) : undefined;
   }
 };
 
@@ -2241,6 +2326,28 @@ const getNextElement = (stream: ElementStream): Value | undefined => {
           ? createRecord(set.names.map((name, index): [string, Value] => [name, elements[index]]))
           : createTuple(elements);
     }
+    case "Concatenated":
+      return getNextElement(stream.left) ?? getNextElement(stream.right);
+    case "Selected":
+      for (
+        let element = getNextElement(stream.base);
+        element !== undefined;
+        element = getNextElement(stream.base)
+      ) {
+        if (isElementOf(element, stream.other) === stream.isIntersection) return element;
+      }
+      return undefined;
+    case "Unioned":
+      while (stream.part !== undefined) {
+        const element = getNextElement(stream.part);
+        if (element !== undefined) return element;
+        stream.index++;
+        stream.part =
+          stream.index < stream.sets.length
+            ? openPart(getUnionSet(stream.sets[stream.index], stream.index, stream.union))
+            : undefined;
+      }
+      return undefined;
   }
 };
 
