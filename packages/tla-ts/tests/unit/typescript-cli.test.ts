@@ -10,7 +10,7 @@ import {
   writeFileSync,
 } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { basename, dirname, join } from "node:path";
 import { pathToFileURL } from "node:url";
 import { afterAll, describe, expect, it } from "vite-plus/test";
 
@@ -272,27 +272,148 @@ describe("the CLI with TypeScript files", () => {
     expect(result.stdout).toContain("4 distinct states found");
   });
 
-  // Skipped until ESCore prints what Node prints for an error that nothing catches, as above.
-  it.skip("reads a file that a project's model imports without an extension, as Node reads it with one", () => {
-    const getModel = (total: number, specifier: string) =>
-      `import { STEP } from "${specifier}";\n\nif (4 + STEP !== ${total}) throw new Error("total");\n`;
+  // The project's barrel re-exports from "./limits/maximum", which Node doesn't find without its
+  // extension, so the compile stops rather than load the file that TypeScript resolves it to.
+  it("stops at a module that re-exports from a file that Node doesn't find", () => {
     const directory = copyFixtures("project");
-    const nodeDirectory = copyFixtures("project");
-    [directory, nodeDirectory].forEach((innerDirectory) =>
-      writeFileSync(join(innerDirectory, "step.ts"), "export const STEP = 3;\n"),
-    );
-    writeFileSync(join(directory, "model.ts"), getModel(7, "./step"));
-    writeFileSync(join(directory, "wrong.ts"), getModel(8, "./step"));
-    writeFileSync(join(nodeDirectory, "model.ts"), getModel(7, "./step.ts"));
-    writeFileSync(join(nodeDirectory, "wrong.ts"), getModel(8, "./step.ts"));
-    expect(runNode(nodeDirectory, "model.ts").status).toBe(0);
-    expect(runCli(directory, ["model.ts"]).status).toBe(0);
-    expect(runNode(nodeDirectory, "wrong.ts").status).toBe(1);
-    expect(runCli(directory, ["wrong.ts"]).status).toBe(1);
+    expect(runNode(directory, "barrel.ts").stderr).toContain("ERR_MODULE_NOT_FOUND");
+    const result = runCli(directory, ["barrel.ts"]);
+    expect(result.status).not.toBe(0);
+    expect(result.stderr).toContain("tla-ts can't load the module ./limits/maximum");
   });
 
-  it("checks the module that re-exports names", () => {
-    expect(runCli(copyFixtures("project"), ["barrel.ts"]).status).toBe(0);
+  // Each import and require loads the file that Node resolves it to: require's resolution, or
+  // Node's ESM resolution, with a package's exports and their conditions. Where Node finds no
+  // file, or TypeScript would read the types of another, the compile stops.
+  describe("loads the file that Node resolves a specifier to", () => {
+    const PACKAGES = {
+      "node_modules/conditions/package.json":
+        '{ "name": "conditions", "exports": { "node": { "import": "./node-import.mjs", "require": "./node-require.cjs" }, "default": "./default.js" } }\n',
+      "node_modules/conditions/node-import.mjs": 'export const where = "node-import";\n',
+      "node_modules/conditions/node-require.cjs": 'exports.where = "node-require";\n',
+      "node_modules/conditions/default.js": 'export const where = "default";\n',
+      "node_modules/sync/package.json":
+        '{ "name": "sync", "exports": { "module-sync": "./sync.js", "node": { "import": "./node-import.mjs" }, "default": "./default.js" } }\n',
+      "node_modules/sync/sync.js": 'export const where = "sync";\n',
+      "node_modules/sync/node-import.mjs": 'export const where = "node-import";\n',
+      "node_modules/sync/default.js": 'export const where = "default";\n',
+      "dep.ts": "module.exports = 2;\n",
+      "two.ts": "export const two = 2;\n",
+      "other.js": "export const two = 2;\n",
+      "dir/index.js": "export const two = 2;\n",
+      "bundler/tsconfig.json":
+        '{ "compilerOptions": { "module": "preserve", "moduleResolution": "bundler", "allowImportingTsExtensions": true, "noEmit": true } }\n',
+      "bundler/other.js": "export const two = 2;\n",
+      "bundler/dir/index.js": "export const two = 2;\n",
+    };
+    // The files above with a program's, in a copy of the passing fixture, and the directory of the
+    // program's file, where Node and the CLI run it.
+    const write = (file: string, source: string) => {
+      const directory = copyFixtures("passing");
+      Object.entries({ ...PACKAGES, [file]: source }).forEach((entry) => {
+        mkdirSync(dirname(join(directory, entry[0])), { recursive: true });
+        writeFileSync(join(directory, entry[0]), entry[1]);
+      });
+      return dirname(join(directory, file));
+    };
+
+    describe.each([
+      [
+        "a package's exports by the node and import conditions",
+        "main.mjs",
+        (where: string) =>
+          `import { where } from "conditions";\nif (where !== "${where}") throw new Error(where);\n`,
+        "node-import",
+      ],
+      [
+        "a package's exports by the node and require conditions",
+        "main.cjs",
+        (where: string) =>
+          `const { where } = require("conditions");\nif (where !== "${where}") throw new Error(where);\n`,
+        "node-require",
+      ],
+      [
+        "a require of a TypeScript file by its name",
+        "main.cjs",
+        (two: string) =>
+          `const two = require("./dep.ts");\nif (two !== ${two}) throw new Error("two");\n`,
+        "2",
+      ],
+      [
+        "an import of a directory's index by its name",
+        "main.mjs",
+        (two: string) =>
+          `import { two } from "./dir/index.js";\nif (two !== ${two}) throw new Error("two");\n`,
+        "2",
+      ],
+    ])("loads %s", (_, file, getScript, expected) => {
+      it("agrees with Node", () => {
+        const directory = write(file, getScript(expected));
+        expect(runNode(directory, file).status).toBe(0);
+        expect(getExit(runCli(directory, [file]))).toEqual([0, ""]);
+      });
+
+      it("rejects another result", () => {
+        const directory = write(file, getScript("3"));
+        const result = runCli(directory, [file]);
+        expect(getExit(result)).toEqual(getExit(runNode(directory, file)));
+        expect(result.status).toBe(1);
+      });
+    });
+
+    // Each of these ran the file that TypeScript resolves the specifier to, where Node finds none or
+    // another, but for the extensionless import outside a project, which stopped already.
+    it.each([
+      [
+        "a require of a TypeScript file without its extension",
+        "main.cjs",
+        'const two = require("./dep");\nif (two !== 2) throw new Error("two");\n',
+        1,
+        "tla-ts can't require a module",
+      ],
+      [
+        "an extensionless import",
+        "main.mjs",
+        'import { two } from "./other";\nif (two !== 2) throw new Error("two");\n',
+        1,
+        "tla-ts can't load the module ./other",
+      ],
+      [
+        "an extensionless import under a bundler tsconfig",
+        "bundler/main.ts",
+        'import { two } from "./other";\nif (two !== 2) throw new Error("two");\n',
+        1,
+        "tla-ts can't load the module ./other",
+      ],
+      [
+        "an import of a .js file that only its TypeScript has",
+        "main.mjs",
+        'import { two } from "./two.js";\nif (two !== 2) throw new Error("two");\n',
+        1,
+        "tla-ts can't load the module ./two.js",
+      ],
+      [
+        "an import of a directory under a bundler tsconfig",
+        "bundler/main.ts",
+        'import { two } from "./dir";\nif (two !== 2) throw new Error("two");\n',
+        1,
+        "tla-ts can't load the module ./dir",
+      ],
+      [
+        "a package's exports by a condition that TypeScript doesn't take",
+        "main.mjs",
+        'import { where } from "sync";\nif (where !== "sync") throw new Error(where);\n',
+        0,
+        "tla-ts can't read the types of a module that Node loads from another file than TypeScript reads",
+      ],
+    ])("stops at %s", (_, file, source, nodeStatus, stop) => {
+      const directory = write(file, source);
+      const name = basename(file);
+      expect(runNode(directory, name).status).toBe(nodeStatus);
+      const result = runCli(directory, [name]);
+      expect([0, 1]).not.toContain(result.status);
+      expect(result.stdout + result.stderr).toContain(stop);
+    });
   });
 
   // Skipped until ESCore checks a model that imports files, as above.

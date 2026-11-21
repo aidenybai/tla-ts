@@ -43,9 +43,9 @@ A module entry, or a script that calls `import()`, loads the files it imports an
 - A JSON file loads for an `import` with `with { type: "json" }` and for a `require`, and both get the same value.
 - An ES module gets the names that Node's lexer finds a CommonJS module exports, and a `require` of an ES module gets its namespace, as Node gives them.
 
-A TypeScript file's import of TypeScript code resolves as TypeScript resolves it, with the nearest `tsconfig.json` that includes the file, or else with TypeScript's `bundler` resolution. So `import { STEP } from "./step"` finds `step.ts`, where Node throws `ERR_MODULE_NOT_FOUND`. Every other import and require resolves as Node resolves it. A package in `node_modules` resolves with the `node`, `import` or `require`, `module-sync`, and `default` conditions.
+Each import and require loads the file that Node resolves it to: a `require` by `require`'s resolution, and an `import` by Node's ESM resolution, with a package's `exports` and `imports` and their conditions. Where Node finds no file, tla-ts loads none either, so `import { STEP } from "./step"` stops the compile with `tla-ts can't load the module ./step` where Node throws `ERR_MODULE_NOT_FOUND`, and a `require` that Node can't resolve stops where it runs. TypeScript reads the types of the file that it resolves a specifier to, with the nearest `tsconfig.json` that includes the file, and where that's another file than Node's, as for a `.js` specifier beside a `.ts` file of its name, the compile stops with `tla-ts can't read the types of a module that Node loads from another file than TypeScript reads`. Where no Node is at hand, as on the website, a specifier loads the file that TypeScript resolves it to only where it names that file by a relative path, and else stops.
 
-A built-in module, such as `node:fs`, and a package import that starts with `#` stop the compile, as in `TlaTypeScriptError: /work/builtin.js:1:1 tla-ts can't load the module node:fs`.
+A built-in module, such as `node:fs`, stops the compile, as in `TlaTypeScriptError: /work/builtin.js:1:1 tla-ts can't load the module node:fs`.
 
 ## Scripts
 

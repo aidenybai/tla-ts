@@ -384,15 +384,29 @@ const loadFiles = (
     ];
   }
   const resolveModule = createModuleResolver(fileName);
-  // The file that a literal of a file's code loads: a require's in CommonJS's mode.
-  const resolve = (literal: ts.StringLiteralLike) =>
-    resolveModule(
+  // The file that a literal of a file's code loads, as Node loads it: a require's in CommonJS's
+  // mode. TypeScript's program reads the types of the file that TypeScript resolves it to, so a
+  // literal that the two resolve to different files stops.
+  const resolve = (literal: ts.StringLiteralLike) => {
+    const resolved = resolveModule(
       literal.text,
       literal.getSourceFile().fileName,
       ts.isCallExpression(literal.parent) &&
         ts.isIdentifier(literal.parent.expression) &&
         literal.parent.expression.text === "require",
     );
+    if (
+      resolved.file !== undefined &&
+      resolved.typeScriptFile !== undefined &&
+      getRealPath(resolved.file) !== getRealPath(resolved.typeScriptFile)
+    ) {
+      throw new TlaTypeScriptError(
+        "tla-ts can't read the types of a module that Node loads from another file than TypeScript reads",
+        literal,
+      );
+    }
+    return resolved.file;
+  };
   const getRealPath = (path: string) => ts.sys.realpath?.(ts.sys.resolvePath(path)) ?? path;
   const entry = ts.sys.fileExists(fileName) ? getRealPath(fileName) : fileName;
   // Each file's number, by its path, in the order the program finds them.

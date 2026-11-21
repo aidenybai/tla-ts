@@ -13,11 +13,91 @@ const NODE_OPTIONS: ts.CompilerOptions = {
   moduleResolution: ts.ModuleResolutionKind.NodeNext,
 };
 
-// The file that each specifier of a program loads, as TypeScript resolves it under the project of
-// the entry, or as Node does without one (moduleResolution nodenext): a require in CommonJS's
-// mode, and an import in an ES module's. It resolves to the code that runs, rather than the
-// declaration files that type it, and maps an import of a .js file to the TypeScript beside it,
-// which Node doesn't.
+// The module of a specifier that asks Node's ESM loader to resolve from a file, whose URL follows
+// it, as a module at that URL, whose import.meta.resolve takes the loader's resolution.
+const RESOLVER_SCHEME = "tla-ts-resolve:";
+const RESOLVER_QUERY = "?tla-ts-resolve";
+
+// Node's module, where Node runs this process, whose resolution the code that runs takes.
+const getNodeModule = () =>
+  globalThis.process?.versions?.bun === undefined
+    ? globalThis.process?.getBuiltinModule?.("node:module")
+    : undefined;
+
+let isResolverHooked = false;
+
+// The file that Node loads for a specifier of the file containingFile: require's resolution
+// (Module._resolveFilename), or the ESM loader's, which import.meta.resolve gives of a module at
+// the file's URL, of a file that exists and isn't a directory, as the loader's finalizeResolution
+// requires and import.meta.resolve leaves unchecked. Undefined where Node finds no file, as for a
+// built-in module.
+const resolveWithNode = (
+  module: NonNullable<ReturnType<typeof getNodeModule>>,
+  specifier: string,
+  containingFile: string,
+  isRequire: boolean,
+) => {
+  const url = process.getBuiltinModule("node:url");
+  const fs = process.getBuiltinModule("node:fs");
+  const require = module.createRequire(containingFile);
+  if (isRequire) {
+    try {
+      const found = require.resolve(specifier);
+      return found.startsWith("/") ? found : undefined;
+    } catch {
+      return undefined;
+    }
+  }
+  if (!isResolverHooked) {
+    module.registerHooks({
+      resolve: (request, context, next) =>
+        request.startsWith(RESOLVER_SCHEME)
+          ? {
+              url: `${request.slice(RESOLVER_SCHEME.length)}${RESOLVER_QUERY}`,
+              format: "module",
+              shortCircuit: true,
+            }
+          : next(request, context),
+      load: (location, context, next) =>
+        location.endsWith(RESOLVER_QUERY)
+          ? {
+              format: "module",
+              source: "export const resolve = (specifier) => import.meta.resolve(specifier);",
+              shortCircuit: true,
+            }
+          : next(location, context),
+    });
+    isResolverHooked = true;
+  }
+  const resolver: { resolve: (request: string) => string } = require(
+    `${RESOLVER_SCHEME}${url.pathToFileURL(containingFile).href}`,
+  );
+  try {
+    const found = resolver.resolve(specifier);
+    if (!found.startsWith("file:")) return undefined;
+    const path = url.fileURLToPath(found);
+    return fs.statSync(path, { throwIfNoEntry: false })?.isFile() === true ? path : undefined;
+  } catch {
+    return undefined;
+  }
+};
+
+// Whether Node, where it isn't at hand, would load the file that TypeScript resolves a specifier
+// to: a relative specifier that names the file itself, which TypeScript and Node both load, but
+// for a require of TypeScript, as one of an extensionless name, a .js name of a TypeScript file,
+// a directory's index, or a package may load another file in Node.
+const isNodeFile = (specifier: string, containingFile: string, file: string, isRequire: boolean) =>
+  /^\.\.?\//.test(specifier) &&
+  !(isRequire && /\.[cm]?tsx?$/.test(file)) &&
+  decodeURIComponent(new URL(specifier, `file://${containingFile}`).pathname) === file;
+
+// The file that each specifier of a program loads as Node loads it, for the code that runs, and the
+// file that TypeScript resolves it to, which its program reads the types of: TypeScript's under the
+// project of the entry, or Node's own without one (moduleResolution nodenext), of the code rather
+// than the declaration files that type it, which maps an import of a .js file to the TypeScript
+// beside it, as Node doesn't. A require resolves in CommonJS's mode, and an import in an ES
+// module's. Where Node isn't at hand, as in a browser, a specifier loads TypeScript's file where
+// Node would load it too, and else none.
 export const createModuleResolver = (entry: string) => {
   const options: ts.CompilerOptions = {
     ...(getProjectCompilerOptions(entry) ?? NODE_OPTIONS),
@@ -31,8 +111,9 @@ export const createModuleResolver = (entry: string) => {
     (name) => name,
     options,
   );
-  return (specifier: string, containingFile: string, isRequire: boolean) =>
-    ts.resolveModuleName(
+  const module = getNodeModule();
+  return (specifier: string, containingFile: string, isRequire: boolean) => {
+    const typeScriptFile = ts.resolveModuleName(
       specifier,
       containingFile,
       options,
@@ -41,6 +122,15 @@ export const createModuleResolver = (entry: string) => {
       undefined,
       isRequire ? ts.ModuleKind.CommonJS : ts.ModuleKind.ESNext,
     ).resolvedModule?.resolvedFileName;
+    const file =
+      module !== undefined
+        ? resolveWithNode(module, specifier, containingFile, isRequire)
+        : typeScriptFile !== undefined &&
+            isNodeFile(specifier, containingFile, typeScriptFile, isRequire)
+          ? typeScriptFile
+          : undefined;
+    return { file, typeScriptFile };
+  };
 };
 
 // The type of the package.json nearest a file, which Node reads its format by, or undefined where
