@@ -1077,6 +1077,17 @@ export const chargeRandomOrder = (coverage: Coverage, set: Value, size: number) 
   if (node !== undefined) coverage.secondary[node] += size;
 };
 
+// SetCupValue#size charges its enumeration and the elements it collected before normalizing them, which can fail.
+export const chargeUnionSize = (coverage: Coverage, set: Value) => {
+  if (typeof set !== "object" || set.kind !== "SetOperation") return;
+  const size = getKnownSize(set);
+  if (size === undefined) return;
+  const enumerator = createEnumerator(coverage, set, size, false);
+  for (let position = 0; position <= size; position++) enumerator.next();
+  const node = getValueNode(coverage, set);
+  if (node !== undefined) coverage.secondary[node] += size;
+};
+
 export const createChargedEnumerator = (
   coverage: Coverage,
   set: Value,

@@ -31,6 +31,7 @@ import {
   chargeContexts,
   chargeFunctionConstruction,
   chargeSetOperation,
+  chargeUnionSize,
   costCoverage,
   countArgumentTuple,
   countCoverage,
@@ -2104,6 +2105,22 @@ const compileApply = (
     const isMember = createChargedMembership(coverage);
     const isIn = global.name === "\\in";
     return (context) => isMember(element(context), set(context)) === isIn;
+  }
+  if (
+    coverage &&
+    global?.kind === "Builtin" &&
+    global.name === "Cardinality" &&
+    global.evaluateUnary &&
+    args.length === 1 &&
+    isValueArgument(args[0], environment)
+  ) {
+    const set = getEvaluator(args[0], environment);
+    const cardinality = global.evaluateUnary;
+    return (context) => {
+      const value = set(context);
+      chargeUnionSize(coverage, value);
+      return cardinality(value);
+    };
   }
   if (
     coverage &&

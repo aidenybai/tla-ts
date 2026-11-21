@@ -4315,6 +4315,107 @@ ASSUME TLCFP(a) = -887695703
 
   it.each([
     [
+      "two sets of functions",
+      "Cardinality([{1} -> {3, 4}] \\cup [{2} -> {5}])",
+      [
+        "line 5, col 9 to line 5, col 59 of module M: 2",
+        "|line 5, col 14 to line 5, col 59 of module M: 2",
+        "||line 5, col 26 to line 5, col 58 of module M: 2:14",
+        "|||line 5, col 26 to line 5, col 40 of module M: 2:4",
+        "||||line 5, col 27 to line 5, col 29 of module M: 2",
+        "||||line 5, col 34 to line 5, col 39 of module M: 2:6",
+        "|||line 5, col 47 to line 5, col 58 of module M: 2:2",
+        "||||line 5, col 48 to line 5, col 50 of module M: 2",
+        "||||line 5, col 55 to line 5, col 57 of module M: 2:4",
+      ],
+    ],
+    [
+      "a set literal and SUBSET S",
+      "Cardinality({{1}} \\cup SUBSET {2, 3})",
+      [
+        "line 5, col 9 to line 5, col 50 of module M: 2",
+        "|line 5, col 14 to line 5, col 50 of module M: 2",
+        "||line 5, col 26 to line 5, col 49 of module M: 2",
+        "|||line 5, col 26 to line 5, col 30 of module M: 2:34",
+        "||||line 5, col 27 to line 5, col 29 of module M: 2",
+        "|||line 5, col 37 to line 5, col 49 of module M: 2",
+      ],
+    ],
+    [
+      "two sets of functions that share an element",
+      "Cardinality([{1} -> {3, 4}] \\cup [{1} -> {4, 5}])",
+      [
+        "line 5, col 9 to line 5, col 62 of module M: 2",
+        "|line 5, col 14 to line 5, col 62 of module M: 2",
+        "||line 5, col 26 to line 5, col 61 of module M: 2:18",
+        "|||line 5, col 26 to line 5, col 40 of module M: 2:4",
+        "||||line 5, col 27 to line 5, col 29 of module M: 2",
+        "||||line 5, col 34 to line 5, col 39 of module M: 2:6",
+        "|||line 5, col 47 to line 5, col 61 of module M: 2:4",
+        "||||line 5, col 48 to line 5, col 50 of module M: 2",
+        "||||line 5, col 55 to line 5, col 60 of module M: 2:6",
+      ],
+    ],
+    [
+      "a union of a union",
+      "Cardinality(([{1} -> {3}] \\cup [{2} -> {4}]) \\cup [{3} -> {5}])",
+      [
+        "line 5, col 9 to line 5, col 76 of module M: 2",
+        "|line 5, col 14 to line 5, col 76 of module M: 2",
+        "||line 5, col 26 to line 5, col 75 of module M: 2:14",
+        "|||line 5, col 27 to line 5, col 56 of module M: 2:8",
+        "||||line 5, col 27 to line 5, col 38 of module M: 2:2",
+        "|||||line 5, col 28 to line 5, col 30 of module M: 2",
+        "|||||line 5, col 35 to line 5, col 37 of module M: 2:4",
+        "||||line 5, col 45 to line 5, col 56 of module M: 2:2",
+        "|||||line 5, col 46 to line 5, col 48 of module M: 2",
+        "|||||line 5, col 53 to line 5, col 55 of module M: 2:4",
+        "|||line 5, col 64 to line 5, col 75 of module M: 2:2",
+        "||||line 5, col 65 to line 5, col 67 of module M: 2",
+        "||||line 5, col 72 to line 5, col 74 of module M: 2:4",
+      ],
+    ],
+    [
+      "a union it sizes twice",
+      "LET U == [{1} -> {3, 4}] \\cup [{2} -> {5}] IN Cardinality(U) + Cardinality(U)",
+      [
+        "line 5, col 9 to line 5, col 90 of module M: 2",
+        "|line 5, col 23 to line 5, col 55 of module M: 2:14",
+        "||line 5, col 23 to line 5, col 37 of module M: 2:4",
+        "|||line 5, col 24 to line 5, col 26 of module M: 2",
+        "|||line 5, col 31 to line 5, col 36 of module M: 2:6",
+        "||line 5, col 44 to line 5, col 55 of module M: 2:2",
+        "|||line 5, col 45 to line 5, col 47 of module M: 2",
+        "|||line 5, col 52 to line 5, col 54 of module M: 2:4",
+        "|line 5, col 60 to line 5, col 90 of module M: 2",
+      ],
+    ],
+    [
+      "an interval and a set of functions, which fails to normalize",
+      "Cardinality((1..2) \\cup [{1} -> {3, 4}])",
+      [
+        "line 5, col 9 to line 5, col 53 of module M: 0",
+        "|line 5, col 14 to line 5, col 53 of module M: 2",
+        "||line 5, col 26 to line 5, col 52 of module M: 2",
+        "|||line 5, col 27 to line 5, col 30 of module M: 2",
+        "|||line 5, col 38 to line 5, col 52 of module M: 2:4",
+        "||||line 5, col 39 to line 5, col 41 of module M: 2",
+        "||||line 5, col 46 to line 5, col 51 of module M: 2:6",
+      ],
+    ],
+  ])(
+    "charges the conversion Cardinality makes of %s, as TLC's SetCupValue#size enumerates the union and collects it",
+    async (_title, size, expected) => {
+      const lines = await getCoverageLines(
+        `---- MODULE M ----\nEXTENDS Integers, FiniteSets, TLC\nVARIABLE x\nInit == x = 0\nNext == x' = ${size}\n====`,
+        "INIT Init\nNEXT Next\nCHECK_DEADLOCK FALSE",
+      );
+      expect(lines).toEqual([["line 4, col 9 to line 4, col 13 of module M: 1"], expected]);
+    },
+  );
+
+  it.each([
+    [
       "its body follows one argument",
       "VARIABLE x\nInit == x = 0\nNext == x < 2 /\\ [i \\in 0..2 |-> x' = x + i][IF x = 0 THEN 1 ELSE 2]",
       [
