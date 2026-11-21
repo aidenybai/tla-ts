@@ -84,6 +84,7 @@ import { SolveEqs } from "./solve-eqs";
 import { RefVector } from "./ref-vector";
 import { type RewriterOptions, TACTIC_REWRITER_OPTIONS } from "./rewriter";
 import { createLia2Card } from "./lia2card";
+import { createSymmetryReduce } from "./symmetry-reduce-tactic";
 import { LOGIC_TACTICS, QFAUFBV, QFUFBV_ACKR_PREAMBLE } from "./logic-tactics";
 import {
   createCommandReader,
@@ -1128,6 +1129,17 @@ const NAMED_TACTICS = new Map<string, NamedTactic>([
     },
   ],
   [
+    "symmetry-reduce",
+    {
+      descrs: getDescrs("", []),
+      build: (environment) => {
+        const tactic = createSymmetryReduce(environment.manager);
+        environment.destructors.push(tactic.release);
+        return inPlace(tactic.run);
+      },
+    },
+  ],
+  [
     "card2bv",
     {
       isCatchingRewriterCancel: true,
@@ -1789,7 +1801,7 @@ const UNPORTED_TACTICS = new Set(
     "horn-simplify injectivity pb-preprocess pqffd propagate-bv-bounds " +
     "propagate-bv-bounds2 propagate-values2 qfbv-sls recover-01 reduce-args2 " +
     "sat-preprocess sls-smt smtfd solver-subsumption special-relations " +
-    "subpaving symmetry-reduce"
+    "subpaving"
   ).split(" "),
 );
 

@@ -64,7 +64,6 @@ import {
 import {
   contextualApplications,
   frameSubstitutions,
-  isSubstitutionDefinition,
   substitutedExpressions,
   substitutionFrames,
   type BoundSubstitutions,
@@ -191,6 +190,7 @@ export interface Thunk {
   cache: Value | undefined;
   isStreamed: boolean;
   isRebuilt: boolean;
+  isUncached: boolean;
   isReleased?: boolean;
   // Whether a step or a replay of one bound the thunk, so it may run the thunk's expression again in
   // its scope rather than read the cached value.
@@ -1172,7 +1172,7 @@ const forceThunk = (thunk: Thunk, context: Context) => {
           )
         : evaluate(thunk.expression, withScope(context, thunk.scope));
   if (isUncached) return value;
-  if (!thunk.isStreamed || isSettledValue(value)) {
+  if (!thunk.isUncached && (!thunk.isStreamed || isSettledValue(value))) {
     thunk.cache = value;
     thunk.state = context.state;
     thunk.next = context.next;
@@ -1253,7 +1253,19 @@ const evaluateOperatorArgument = (expression: Expression, context: Context): Ope
       `Expected an operator argument at ${describeLocation(expression)}`,
     );
   }
-  return operator;
+  const scope = context.scope;
+  if (operator.kind !== "Closure" || scope === undefined) return operator;
+  const called = getCalledBody(expression, operator.body, context.environment);
+  return called === undefined
+    ? operator
+    : {
+        kind: "Closure",
+        name: operator.name,
+        params: operator.params,
+        body: called,
+        scope,
+        site: undefined,
+      };
 };
 
 const callOperatorWithValues = (operator: Operator, args: Value[], context: Context): Value => {
@@ -1333,6 +1345,7 @@ const createThunk = (
   isStreamed: false,
   isRebuilt: false,
   isNamed: context.isNaming === true,
+  isUncached: false,
 });
 
 export const findGlobalName = (name: string, environment: Environment): GlobalName | undefined => {
@@ -1372,6 +1385,17 @@ const getBoundDefinitions = (expression: Expression & { kind: "Let" }, environme
         (definition) => !isStoredSubstitute(definition.body, environment),
       )
     : expression.definitions;
+
+export const getCalledBody = (
+  expression: Expression,
+  body: Expression,
+  environment: Environment,
+) =>
+  body.kind === "Let" &&
+  environment.boundSubstitutions.calls.has(expression) &&
+  environment.boundSubstitutions.lets.has(body)
+    ? body.body
+    : undefined;
 
 const compileArgumentBinder = (argument: Expression, environment: Environment): ArgumentBinder => {
   const isLiteral =
@@ -1741,6 +1765,19 @@ const getTailCalls = (closure: Closure, environment: Environment) => {
     : undefined;
 };
 
+// SpecProcessor#getOpContext and Liveness#astToLiveAppl bind the arguments of an operator they take apart as uncachable LazyValues.
+export const bindUncachedArguments = (closure: Closure, args: Expression[], context: Context) =>
+  bindOperatorArguments(
+    closure,
+    args,
+    context,
+    args.map((arg) => (inner) => {
+      const thunk = createThunk(arg, inner, undefined);
+      thunk.isUncached = true;
+      return thunk;
+    }),
+  );
+
 const callOperator = (
   operator: Operator,
   args: Expression[],
@@ -1860,6 +1897,7 @@ export const bindDefinitions = (
             (definition.kind === "Operator" || !definition.isSelfReferential) &&
             reevaluated?.isFunctionRebuilt === true,
           isNamed: context.isNaming === true,
+          isUncached: false,
         };
   }
   const coverage = context.environment.coverage;
@@ -1967,7 +2005,13 @@ const compileUnchanged = (evaluator: Evaluator, coverage: Coverage | undefined):
   coverage
     ? (context) =>
         isReceiverEqual(
-          evaluateWithNextState(coverage, "empty", evaluator, context),
+          evaluateWithNextState(coverage, "empty", evaluator, {
+            environment: context.environment,
+            scope: context.scope,
+            state: context.state,
+            next: undefined,
+            isKeepLazy: context.isKeepLazy,
+          }),
           evaluateWithNextState(coverage, "primed", evaluator, toNextContext(context)),
         )
     : (context) => isReceiverEqual(evaluator(context), evaluator(toNextContext(context)));
@@ -2246,11 +2290,14 @@ export const getEntryEvaluator = (expression: Expression, environment: Environme
   if (environment.callStack || environment.coverage) return getEvaluator(expression, environment);
   const compiled = environment.entryEvaluators.get(expression);
   if (compiled) return compiled;
-  const entry =
-    expression.kind === "Let" && getBoundDefinitions(expression, environment).length === 0
-      ? expression.body
-      : expression;
-  const evaluator = generateEvaluator(entry, environment) ?? getEvaluator(entry, environment);
+  const isBound = expression.kind === "Let" && environment.boundSubstitutions.lets.has(expression);
+  const entry = isBound ? expression.body : expression;
+  const body = generateEvaluator(entry, environment) ?? getEvaluator(entry, environment);
+  const definitions = isBound ? getBoundDefinitions(expression, environment) : [];
+  const evaluator: Evaluator =
+    definitions.length === 0
+      ? body
+      : (context) => body(withScope(context, bindDefinitions(definitions, context)));
   environment.entryEvaluators.set(expression, evaluator);
   return evaluator;
 };
@@ -2282,7 +2329,18 @@ const compileIdentifier = (
   if (global?.kind === "Definition") {
     const definition = global.definition;
     let compiled: Evaluator | undefined;
-    return (context) => (compiled ??= getDefinitionEvaluator(definition, environment))(context);
+    const evaluateDefinition: Evaluator = (context) =>
+      (compiled ??= getDefinitionEvaluator(definition, environment))(context);
+    const called = getCalledBody(expression, definition.body, environment);
+    if (called === undefined) return evaluateDefinition;
+    const definitionId = environment.facts.ids.get(definition);
+    const startupValues = environment.startupValues;
+    let calledBody: Evaluator | undefined;
+    return (context) =>
+      context.scope === undefined
+        ? evaluateDefinition(context)
+        : ((definitionId === undefined ? undefined : startupValues[definitionId]) ??
+          (calledBody ??= getEntryEvaluator(called, environment))(context));
   }
   if (expression.resolution?.isSelf) {
     return (context) => {
@@ -2354,7 +2412,7 @@ export const compileArgumentScope = (
   closure: Closure,
   args: Expression[],
   environment: Environment,
-): ((context: Context) => Scope | undefined) => {
+): ((context: Context, outer?: Scope) => Scope | undefined) => {
   if (args.length !== closure.params.length) {
     return () => {
       throw createArityError(closure, args.length);
@@ -2374,8 +2432,8 @@ export const compileArgumentScope = (
     };
     return () => binding;
   });
-  return (context) => {
-    let scope = closure.scope;
+  return (context, outer = closure.scope) => {
+    let scope = outer;
     for (let index = 0; index < args.length; index++) {
       const binder = binders[index];
       const binding: Binding = binder
@@ -2391,10 +2449,11 @@ const compileClosureCall = (
   closure: Closure,
   args: Expression[],
   environment: Environment,
+  called: Expression | undefined,
 ): Evaluator => {
   const bindArguments = compileArgumentScope(closure, args, environment);
   let body: Evaluator | undefined;
-  return (context) => {
+  const call: Evaluator = (context) => {
     if (body === undefined) {
       const tail =
         environment.callStack || environment.coverage
@@ -2407,6 +2466,21 @@ const compileClosureCall = (
     return body({
       environment,
       scope: bindArguments(context),
+      state: context.state,
+      next: context.next,
+      isKeepLazy: context.isKeepLazy,
+      isPrimed: context.isPrimed,
+    });
+  };
+  if (called === undefined) return call;
+  let calledBody: Evaluator | undefined;
+  return (context) => {
+    const scope = context.scope;
+    if (scope === undefined) return call(context);
+    calledBody ??= getEntryEvaluator(called, environment);
+    return calledBody({
+      environment,
+      scope: bindArguments(context, scope),
       state: context.state,
       next: context.next,
       isKeepLazy: context.isKeepLazy,
@@ -2474,7 +2548,14 @@ const compileApply = (
   const global = isLocallyResolved(expression)
     ? undefined
     : resolveGlobalOperator(expression.operator, environment);
-  if (global?.kind === "Closure") return compileClosureCall(global, args, environment);
+  if (global?.kind === "Closure") {
+    return compileClosureCall(
+      global,
+      args,
+      environment,
+      getCalledBody(expression, global.body, environment),
+    );
+  }
   if (global?.kind === "Builtin" && global.name === "DOMAIN") {
     const operand = getEvaluator(args[0], environment);
     const domain = getDomainOperator(expression);
@@ -3223,13 +3304,8 @@ const compile = (expression: Expression, environment: Environment): Evaluator =>
       const definitions = getBoundDefinitions(expression, environment);
       if (definitions.length === 0) return body;
       const sites = getLetSites(definitions);
-      const substituted = environment.coverage ? definitions.filter(isSubstitutionDefinition) : [];
-      const reevaluated =
-        substituted.length > 0
-          ? { impure: new Set(substituted), streamed: new Set<Definition>() }
-          : undefined;
       return (context) =>
-        body(withScope(context, bindDefinitions(definitions, context, reevaluated, sites)));
+        body(withScope(context, bindDefinitions(definitions, context, undefined, sites)));
     }
     case "Forall":
     case "Exists":

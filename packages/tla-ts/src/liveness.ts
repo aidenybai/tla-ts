@@ -4,6 +4,7 @@ import {
   type Bound,
   type Definition,
   type Expression,
+  type LetExpression,
   type SourceRange,
 } from "./ast";
 import { getDefinitionLevel } from "./dependencies";
@@ -19,6 +20,7 @@ import {
   bindDefinitions,
   getLetSites,
   bindOperatorArguments,
+  bindUncachedArguments,
   evaluate,
   forEachBinding,
   forEachBoundElement,
@@ -43,6 +45,7 @@ import {
   getSubstitutedOccurrence,
   mapChildren,
   substitutionFrames,
+  withSubstitutionFrames,
 } from "./instances";
 import { getArity, getKeyName } from "./resolve";
 import {
@@ -84,10 +87,16 @@ interface ExpandedExpression extends ScopedExpression {
   path: string[];
   frames: Expression[];
   theorem?: TheoremReference;
+  substitutions: LetExpression[];
 }
 
 export interface TemporalProperty extends ScopedExpression {
   name: string;
+}
+
+interface ExpandedSubstitutions {
+  expression: LetExpression;
+  scope: Scope | undefined;
 }
 
 interface Expansion {
@@ -95,10 +104,32 @@ interface Expansion {
   path: string[];
   expanding: Set<Definition>;
   isSubstituted: boolean;
+  isInitPredicate: boolean;
   frames: Expression[];
+  substitutions: ExpandedSubstitutions[];
 }
 
 const MAXIMUM_EXPANSION_DEPTH = 100;
+
+const isWithinScope = (outer: Scope | undefined, scope: Scope | undefined): boolean =>
+  scope !== undefined && (scope === outer || isWithinScope(outer, scope.parent));
+
+export const withExpandedSubstitutions = (
+  substitutions: LetExpression[],
+  expression: Expression,
+  frames: Expression[],
+  environment: Environment,
+) => {
+  const lets = environment.boundSubstitutions.lets;
+  const wrapped = substitutions.reduceRight((body: Expression, substitution) => {
+    const bound = { ...substitution, body };
+    lets.add(bound);
+    return bound;
+  }, expression);
+  const framed = withSubstitutionFrames(wrapped, frames);
+  if (lets.has(wrapped)) lets.add(framed);
+  return framed;
+};
 
 export const createTautologyError = () =>
   setExitCode(
@@ -368,7 +399,9 @@ export const expandTemporal = (
     path: [],
     expanding: new Set(),
     isSubstituted: false,
+    isInitPredicate: false,
     frames: [],
+    substitutions: [],
   },
 ): ExpandedExpression[] => {
   const expand = (
@@ -377,6 +410,7 @@ export const expandTemporal = (
     childName = expansion.name,
     childExpanding = expansion.expanding,
     definition?: Definition,
+    substitutions = expansion.substitutions,
   ): ExpandedExpression[] =>
     expandTemporal(child, childScope, environment, isProperty, {
       name: childName,
@@ -388,12 +422,20 @@ export const expandTemporal = (
       isSubstituted:
         expansion.isSubstituted ||
         (definition !== undefined && environment.substitutedDefinitions.has(definition)),
+      // SpecProcessor#processConfigSpec takes a state-level definition whole as an initial predicate, which getInitStates evaluates with cached arguments.
+      isInitPredicate:
+        expansion.isInitPredicate ||
+        (!isProperty &&
+          definition?.kind === "Operator" &&
+          definition.params.length === 0 &&
+          getLevelBound(definition.body, undefined, environment) === VARIABLE_LEVEL),
       frames: [
         ...expansion.frames,
         ...(substitutionFrames.get(child) ?? []).filter(
           (frame) => !expansion.frames.includes(frame),
         ),
       ],
+      substitutions,
     });
   const getLeaf = (theorem?: TheoremReference): ExpandedExpression[] => [
     {
@@ -403,6 +445,9 @@ export const expandTemporal = (
       path: expansion.path,
       frames: expansion.frames,
       theorem,
+      substitutions: expansion.substitutions.flatMap((item) =>
+        isWithinScope(item.scope, scope) ? [item.expression] : [],
+      ),
     },
   ];
   // An instanced body reaches the theorem its module named, and a direct reference the one its INSTANCE made.
@@ -435,7 +480,16 @@ export const expandTemporal = (
   if (expression.kind === "Label") return expand(expression.body, scope);
   if (expression.kind === "Selection") return expand(expression.expression, scope);
   if (expression.kind === "Let") {
-    return expand(expression.body, bindLetDefinitions(expression, scope, environment));
+    const bound = bindLetDefinitions(expression, scope, environment);
+    const impure = environment.boundSubstitutions.lets.has(expression)
+      ? getReevaluatedDefinitions(expression.definitions, environment).impure
+      : new Set<Definition>();
+    const definitions = expression.definitions.filter((definition) => impure.has(definition));
+    const substitutions =
+      definitions.length > 0
+        ? [...expansion.substitutions, { expression: { ...expression, definitions }, scope: bound }]
+        : expansion.substitutions;
+    return expand(expression.body, bound, undefined, undefined, undefined, substitutions);
   }
   if (expression.kind === "Identifier") {
     const isSubstitute = getSubstitutedName(expression) !== undefined;
@@ -509,7 +563,9 @@ export const expandTemporal = (
     if (isExpandable) {
       return expand(
         operator.body,
-        bindOperatorArguments(operator, expression.args, context),
+        expansion.isInitPredicate
+          ? bindOperatorArguments(operator, expression.args, context)
+          : bindUncachedArguments(operator, expression.args, context),
         getReferenceName(expression, expression.operator, environment) ??
           (expansion.isSubstituted && definition
             ? definition.name
@@ -676,7 +732,7 @@ export const toLiveExpression = (
         }
         return expand(
           operator.body,
-          bindOperatorArguments(operator, args, context),
+          bindUncachedArguments(operator, args, context),
           expression,
           scope,
         );
