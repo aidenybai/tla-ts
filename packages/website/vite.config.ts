@@ -288,12 +288,20 @@ const logoFiles = (): Plugin => ({
 });
 
 // Each route but / is built from the HTML file of its name.
-const ROUTES = ["/playground", "/tla-for-ts-programmers"];
+const ROUTES = ["/playground", "/tla-for-ts-developers"];
+const ORIGIN = "https://tla-ts.com";
 const EMPTY_ROOT = '<div id="root"></div>';
 const STYLESHEET = /<link rel="stylesheet"[^>]*href="\/([^"]+\.css)"[^>]*>/;
 
 const pages = (): Plugin => ({
   name: "pages",
+  generateBundle() {
+    this.emitFile({
+      type: "asset",
+      fileName: "sitemap.xml",
+      source: `<?xml version="1.0" encoding="UTF-8"?>\n<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">\n${["/", ...ROUTES].map((route) => `  <url><loc>${ORIGIN}${route}</loc></url>`).join("\n")}\n</urlset>\n`,
+    });
+  },
   configureServer(server) {
     server.middlewares.use((request, _response, next) => {
       const route = request.url?.replace(/\/$/, "");

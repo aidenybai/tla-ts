@@ -8,7 +8,7 @@ export const Footer = () => (
     </p>
     <div className="flex items-center gap-3">
       <span className="text-sm">
-        <Link href="/tla-for-ts-programmers">Tutorial</Link>
+        <Link href="/tla-for-ts-developers">Tutorial</Link>
       </span>
       <span className="text-sm">
         <Link href="https://github.com/aidenybai/tla-ts">GitHub</Link>

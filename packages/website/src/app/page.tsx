@@ -58,7 +58,7 @@ const Page = () => (
         </Example.Root>
         <p className="text-pretty">
           To read the TLA+ that TLA-ts writes, see{" "}
-          <Link href="/tla-for-ts-programmers">TLA+ for TypeScript programmers</Link>.
+          <Link href="/tla-for-ts-developers">TLA+ for TypeScript developers</Link>.
         </p>
       </Section.Root>
       <Section.Root>

@@ -22,8 +22,8 @@
       "destination": "/playground.html"
     },
     {
-      "source": "/tla-for-ts-programmers",
-      "destination": "/tla-for-ts-programmers.html"
+      "source": "/tla-for-ts-developers",
+      "destination": "/tla-for-ts-developers.html"
     }
   ],
   "headers": [

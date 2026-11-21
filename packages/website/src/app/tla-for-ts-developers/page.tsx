@@ -8,7 +8,7 @@ import { Link } from "@/components/ui/link";
 const Page = () => (
   <main className="mx-auto max-w-[692px] px-6 py-16 text-prose sm:py-28">
     <Hero.Root>
-      <Hero.Title>TLA+ for TypeScript programmers</Hero.Title>
+      <Hero.Title>TLA+ for TypeScript developers</Hero.Title>
       <Hero.Body>
         <p>
           Learn <Link href="https://github.com/tlaplus/tlaplus">TLA+</Link> by translating one
