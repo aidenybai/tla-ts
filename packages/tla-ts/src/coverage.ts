@@ -789,28 +789,29 @@ export const runReportedInto = <Result>(
   run: () => Result,
 ): Result => {
   const substitutions = new Set(coverage.substitutionNodes.get(coverage.roots[node])?.values());
-  const descendants: number[] = [];
-  for (let index = -1; index < descendants.length; index++) {
-    const parent = index === -1 ? node : descendants[index];
+  const snapshot: number[] = [];
+  for (let index = -3; index < snapshot.length; index += 3) {
+    const parent = index === -3 ? node : snapshot[index];
     for (
       let child = coverage.firstChild[parent];
       child !== -1;
       child = coverage.nextSibling[child]
     ) {
-      if (!substitutions.has(child)) descendants.push(child);
+      if (!substitutions.has(child)) {
+        snapshot.push(child, coverage.primary[child], coverage.secondary[child]);
+      }
     }
   }
-  const primary = descendants.map((descendant) => coverage.primary[descendant]);
-  const secondary = descendants.map((descendant) => coverage.secondary[descendant]);
   try {
     return run();
   } finally {
-    descendants.forEach((descendant, index) => {
-      coverage.primary[node] += coverage.primary[descendant] - primary[index];
-      coverage.secondary[node] += coverage.secondary[descendant] - secondary[index];
-      coverage.primary[descendant] = primary[index];
-      coverage.secondary[descendant] = secondary[index];
-    });
+    for (let index = 0; index < snapshot.length; index += 3) {
+      const descendant = snapshot[index];
+      coverage.primary[node] += coverage.primary[descendant] - snapshot[index + 1];
+      coverage.secondary[node] += coverage.secondary[descendant] - snapshot[index + 2];
+      coverage.primary[descendant] = snapshot[index + 1];
+      coverage.secondary[descendant] = snapshot[index + 2];
+    }
   }
 };
 
