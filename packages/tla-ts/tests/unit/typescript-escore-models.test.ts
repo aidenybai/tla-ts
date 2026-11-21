@@ -446,6 +446,37 @@ describe("checks a module's exported functions as a model on ESCore", () => {
     });
   });
 
+  // A model whose actions count on without end, and that checks an invariant, checks the states
+  // within its bound of steps, so a violation there is the violation, and stops where none is.
+  describe("checks a model whose actions count without end within its bound", () => {
+    const getSource = (check: string) =>
+      `let count = 0;\nexport const tick = () => {\n  count += 1;\n};\nexport const isSmall = () => ${check};\n`;
+
+    it("agrees with Node", async () => {
+      expect(getCounts(await checkModel(getSource("count < 3")))).toEqual([
+        "invariant-violation",
+        4,
+        4,
+      ]);
+    });
+
+    it("rejects another result", async () => {
+      expect(getCounts(await checkModel(getSource("count < 2")))).toEqual([
+        "invariant-violation",
+        3,
+        3,
+      ]);
+    });
+
+    it("stops where the invariant holds within the bound, never reporting success", async () => {
+      const result = await checkModel(getSource("count >= 0"));
+      expect(result.status).not.toBe("success");
+      expect(result.message).toContain(
+        "tla-ts can't check a model whose states never end: an action counts count on at each step",
+      );
+    });
+  });
+
   // A step settles the jobs that its program queues, which a program that names then only in a
   // comment queues none of.
   describe("settles a step of a program that queues no jobs", () => {

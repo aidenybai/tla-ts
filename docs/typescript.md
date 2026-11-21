@@ -255,6 +255,15 @@ export const increment = () => {
 TlaTypeScriptError: counter.ts:3:3 tla-ts can't check a model whose states never end: an action counts count on at each step, and the model checks nothing that could stop it
 ```
 
+A model whose actions count the same way but that checks an invariant or a property has states that never end too. tla-ts checks every state that 20 steps reach, so it reports an invariant that fails at a small count as the violation it is. Where none fails by then, the check stops, and never reports success:
+
+```
+Error: The first argument of Assert evaluated to FALSE; the second argument was:
+"tla-ts can't check a model whose states never end: an action counts count on at each step, and the check stopped after every state within 20 steps"
+```
+
+TLC, given the same spec without the bound, reports the same violation, and where none fails, it explores states until it runs out of memory.
+
 ### Symmetric values
 
 `@symmetric` on a type such as `type Client = "c1" | "c2" | "c3"` is your assertion, as TLC's `SYMMETRY` is. You assert that swapping the type's values maps each behavior to another behavior. tla-ts doesn't prove it. A program that tells the values apart gets an unsound verdict: the check can pass while a violation exists.

@@ -20,6 +20,9 @@ export interface EscoreModel extends EscoreSpec {
   notes: string[];
 }
 
+// The steps within which the search checks the states of a model whose actions count without end.
+const ENDLESS_STEPS = 20;
+
 // A module whose exported functions the model calls none of, which runs as a script does.
 export interface EscoreScript {
   isScript: true;
@@ -1439,6 +1442,13 @@ export const compileModelToEscore = (
       : [`delete (globalThis as { ${INITIAL}?: unknown }).${INITIAL};`]),
     "",
   ].join("\n");
+  // Where the actions count a state variable on without end, the search checks every state within
+  // ENDLESS_STEPS steps, then stops where a state takes more, as the states never end.
+  if (today.endlessCount !== undefined) {
+    steps.push(
+      `EndlessCount == TLCGet("level") <= ${ENDLESS_STEPS + 1} \\/ Assert(FALSE, ${JSON.stringify(`tla-ts can't check a model whose states never end: an action counts ${today.endlessCount} on at each step, and the check stopped after every state within ${ENDLESS_STEPS} steps`)})`,
+    );
+  }
   const modelSteps = [
     "CONSTANTS TsNull, TsUndefined",
     ...(isStateless ? ["vars == <<>>"] : [`VARIABLE ${variable}`, `vars == <<${variable}>>`]),
@@ -1498,6 +1508,7 @@ export const compileModelToEscore = (
     ...config.invariants.map((name) => `INVARIANT ${name}`),
     ...config.properties.map((name) => `PROPERTY ${name}`),
     ...config.constraints.map((name) => `CONSTRAINT ${name}`),
+    ...(today.endlessCount === undefined ? [] : ["CONSTRAINT EndlessCount"]),
     ...config.actionConstraints.map((name) => `ACTION_CONSTRAINT ${name}`),
     ...config.postconditions.map((name) => `POSTCONDITION ${name}`),
     ...(view === undefined ? [] : [`VIEW ${view}`]),
