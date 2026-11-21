@@ -26,6 +26,7 @@ import {
   compileArgumentScope,
   evaluate,
   forEachBinding,
+  getCalledBody,
   getLazyFunction,
   toKeepLazyContext,
   getDefinition,
@@ -704,12 +705,27 @@ const compileCall = (
   if (global?.kind === "Closure") {
     const bindArguments = compileArgumentScope(global, expression.args, environment);
     const actionName = environment.instanceNames.get(name) ?? global.name;
+    const called = getCalledBody(expression, global.body, environment);
     let bodyRunner: Runner | undefined;
+    let calledRunner: Runner | undefined;
     return (run, scope, partial, action, isFixed, onComplete) => {
+      const context = getContext(run, scope, partial);
+      if (called !== undefined && scope !== undefined) {
+        calledRunner ??= getRunner(called, environment, isInit);
+        calledRunner(
+          run,
+          bindArguments(context, scope),
+          partial,
+          isFixed ? action : actionName,
+          isFixed,
+          onComplete,
+        );
+        return;
+      }
       bodyRunner ??= getRunner(global.body, environment, isInit);
       bodyRunner(
         run,
-        bindArguments(getContext(run, scope, partial)),
+        bindArguments(context),
         partial,
         isFixed ? action : actionName,
         isFixed,
@@ -746,7 +762,9 @@ const compileIdentifier = (
     : getZeroArityBody(expression.name, environment);
   const actionName =
     definition && (environment.instanceNames.get(expression.name) ?? definition.name);
+  const called = definition && getCalledBody(expression, definition.body, environment);
   let bodyRunner: Runner | undefined;
+  let calledRunner: Runner | undefined;
   return (run, scope, partial, action, isFixed, onComplete) => {
     const binding = lookupScope(scope, expression.name);
     if (binding?.kind === "Thunk" && !binding.isReleased) {
@@ -779,6 +797,11 @@ const compileIdentifier = (
     ) {
       // Deviation from TLC: Tool#getInitStates prints an unassigned variable's declaration as the non-boolean value it found.
       guard(run, scope, partial, action, isFixed, onComplete);
+      return;
+    }
+    if (called !== undefined && scope !== undefined) {
+      calledRunner ??= getRunner(called, environment, isInit);
+      calledRunner(run, scope, partial, isFixed ? action : actionName, isFixed, onComplete);
       return;
     }
     bodyRunner ??= getRunner(definition.body, environment, isInit);
