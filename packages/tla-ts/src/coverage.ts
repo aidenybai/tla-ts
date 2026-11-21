@@ -912,6 +912,7 @@ export const createProductSetEnumerator = (coverage: Coverage, set: Value) => {
   const node = typeof set === "object" ? coverage.values.get(set) : undefined;
   if (node === undefined || typeof set !== "object") return undefined;
   if (set.kind === "RecordSet") return createProductEnumerator(coverage, node, set.sets);
+  if (set.kind === "ProductSet") return createProductEnumerator(coverage, node, set.factors);
   if (set.kind !== "FunctionSet") return undefined;
   return createProductEnumerator(
     coverage,

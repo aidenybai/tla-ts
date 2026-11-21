@@ -2994,6 +2994,62 @@ ASSUME TLCFP(a) = -887695703
     ]);
   });
 
+  it.each([
+    [
+      "a quantifier",
+      "0",
+      "Next == x < 2 /\\ x' = x + 1 /\\ \\E p \\in {1, 2} \\X {3} : p[1] = 2",
+      [
+        "line 5, col 9 to line 5, col 13 of module M: 2",
+        "|line 5, col 9 to line 5, col 9 of module M: 3",
+        "line 5, col 18 to line 5, col 27 of module M: 2",
+        "line 5, col 32 to line 5, col 64 of module M: 2",
+        "|line 5, col 57 to line 5, col 64 of module M: 4",
+        "|line 5, col 41 to line 5, col 53 of module M: 2:18",
+        "||line 5, col 41 to line 5, col 46 of module M: 2:6",
+        "||line 5, col 51 to line 5, col 53 of module M: 2:10",
+      ],
+    ],
+    [
+      "a filter",
+      "0",
+      "Next == x < 2 /\\ x' = x + Cardinality({p \\in {1, 2} \\X {3} : p[1] = 2})",
+      [
+        "line 5, col 9 to line 5, col 13 of module M: 2",
+        "|line 5, col 9 to line 5, col 9 of module M: 3",
+        "line 5, col 18 to line 5, col 71 of module M: 2",
+        "|line 5, col 23 to line 5, col 71 of module M: 2",
+        "||line 5, col 23 to line 5, col 23 of module M: 2",
+        "||line 5, col 27 to line 5, col 71 of module M: 2",
+        "|||line 5, col 39 to line 5, col 70 of module M: 2:6",
+        "||||line 5, col 62 to line 5, col 69 of module M: 4",
+        "||||line 5, col 46 to line 5, col 58 of module M: 2:8",
+        "|||||line 5, col 46 to line 5, col 51 of module M: 2:6",
+        "|||||line 5, col 56 to line 5, col 58 of module M: 2:10",
+      ],
+    ],
+    [
+      "a successor",
+      "<<1, 3>>",
+      "Next == x' \\in {1, 2} \\X {3}",
+      [
+        "line 5, col 9 to line 5, col 28 of module M: 4",
+        "|line 5, col 16 to line 5, col 28 of module M: 2:8",
+        "||line 5, col 16 to line 5, col 21 of module M: 2:6",
+        "||line 5, col 26 to line 5, col 28 of module M: 2:10",
+      ],
+    ],
+  ])(
+    "charges a Cartesian product per tuple %s draws, as TLC's SetOfTuplesValue does",
+    async (_title, init, next, expected) => {
+      const lines = await getCoverageLines(
+        `---- MODULE M ----\nEXTENDS Integers, FiniteSets\nVARIABLE x\nInit == x = ${init}\n${next}\n====`,
+        "INIT Init\nNEXT Next\nCHECK_DEADLOCK FALSE",
+      );
+      expect(lines?.at(-1)).toEqual(expected);
+    },
+  );
+
   it("charges a filter of a set of records or functions per element it draws, as TLC's SetPredValue does", async () => {
     const lines = await getCoverageLines(
       "---- MODULE E ----\nEXTENDS Integers\nVARIABLE x\nInit == x \\in {r \\in [a : 0..1, b : BOOLEAN] : r.a = 0}\nNext == x' \\in {r \\in [a : 0..1, b : BOOLEAN] : r.b = ~x.b}\nInv1 == \\E r \\in {s \\in [a : 0..1, b : BOOLEAN] : s.a = x.a} : r = x\nInv2 == (CHOOSE r \\in {s \\in [a : 0..1, b : BOOLEAN] : s.b = x.b} : TRUE).b = x.b\nInv3 == \\A r \\in {s \\in {f \\in [{1} -> {0, 1}] : f[1] >= x.a} : s[1] > 0} : r[1] = 1\n====",

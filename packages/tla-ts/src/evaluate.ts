@@ -1608,9 +1608,39 @@ const traceFrames =
     }
   };
 
-const countEvaluator =
-  (expression: Expression, evaluator: Evaluator, coverage: Coverage): Evaluator =>
-  (context) => {
+// The sets TLC builds with the cost model of the expression that builds them.
+const getTaggedSetTest = (expression: Expression): ((value: Value) => boolean) | undefined => {
+  switch (expression.kind) {
+    case "SetEnumeration":
+      return () => true;
+    case "SetMap":
+      return isReducibleSet;
+    case "SetFilter":
+      return (value) =>
+        isReducibleSet(value) || (typeof value === "object" && value.kind === "FilteredSet");
+    case "FunctionSet":
+    case "RecordSet": {
+      const kind = expression.kind;
+      return (value) => typeof value === "object" && value.kind === kind;
+    }
+    case "Product":
+      return (value) => typeof value === "object" && value.kind === "ProductSet";
+    case "Apply":
+      return expression.operator === "SUBSET"
+        ? (value) => typeof value === "object" && value.kind === "Subset"
+        : undefined;
+    default:
+      return undefined;
+  }
+};
+
+const countEvaluator = (
+  expression: Expression,
+  evaluator: Evaluator,
+  coverage: Coverage,
+): Evaluator => {
+  const isTagged = getTaggedSetTest(expression);
+  return (context) => {
     const outer = coverage.current;
     if (outer < 0 || !coverage.covered.has(expression)) return evaluator(context);
     const node = getCoverageNode(coverage, outer, expression);
@@ -1618,26 +1648,15 @@ const countEvaluator =
     coverage.current = node;
     try {
       const value = evaluator(context);
-      const isTagged =
-        expression.kind === "SetEnumeration" ||
-        ((expression.kind === "SetFilter" || expression.kind === "SetMap") &&
-          isReducibleSet(value)) ||
-        (expression.kind === "SetFilter" &&
-          typeof value === "object" &&
-          value.kind === "FilteredSet") ||
-        ((expression.kind === "FunctionSet" || expression.kind === "RecordSet") &&
-          typeof value === "object" &&
-          value.kind === expression.kind) ||
-        (expression.kind === "Apply" &&
-          expression.operator === "SUBSET" &&
-          typeof value === "object" &&
-          value.kind === "Subset");
-      if (typeof value === "object" && isTagged) coverage.values.set(value, node);
+      if (isTagged !== undefined && typeof value === "object" && isTagged(value)) {
+        coverage.values.set(value, node);
+      }
       return value;
     } finally {
       coverage.current = outer;
     }
   };
+};
 
 const countSubstitution =
   (substitution: Substitution, evaluator: Evaluator, coverage: Coverage): Evaluator =>
