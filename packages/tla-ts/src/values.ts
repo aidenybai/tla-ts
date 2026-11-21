@@ -3760,6 +3760,7 @@ export const formatNormalizedCopies = (values: Value[]) => {
           return isCopied ? { ...value, enumerated } : value;
         }
         normalizeInner(value.domain);
+        // Deviation from TLC: FcnLambdaValue#deepCopy drops cm, so PrintT's copy counts nothing.
         return isCopied ? { ...value } : value;
       case "SetOperation":
         normalizeInner(value.left);

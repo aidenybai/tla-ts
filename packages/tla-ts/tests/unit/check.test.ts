@@ -3214,6 +3214,22 @@ ASSUME TLCFP(a) = -887695703
     },
   );
 
+  it("counts the body and conversion of the copy of a lazy function PrintT prints, though TLC's FcnLambdaValue#deepCopy drops the cost model", async () => {
+    const lines = await getCoverageLines(
+      "---- MODULE M ----\nEXTENDS Integers, FiniteSets, TLC\nVARIABLE x\nInit == x = 0\nNext == x < 2 /\\ x' = x + 1 /\\ PrintT([s \\in SUBSET {1} |-> Cardinality(s)])\n====",
+      "INIT Init\nNEXT Next\nCHECK_DEADLOCK FALSE",
+    );
+    expect(lines?.at(-1)).toEqual([
+      "line 5, col 9 to line 5, col 13 of module M: 2",
+      "|line 5, col 9 to line 5, col 9 of module M: 3",
+      "line 5, col 18 to line 5, col 27 of module M: 2",
+      "line 5, col 32 to line 5, col 76 of module M: 2",
+      "|line 5, col 39 to line 5, col 75 of module M: 2:4",
+      "||line 5, col 61 to line 5, col 74 of module M: 4",
+      "||line 5, col 46 to line 5, col 55 of module M: 2",
+    ]);
+  });
+
   it("charges nothing for a conversion whose body fails, as FcnLambdaValue#toFcnRcd charges its size last", async () => {
     const lines = await getCoverageLines(
       "---- MODULE M ----\nEXTENDS Integers\nVARIABLE x\nInit == x = 0\nNext == x' = IF x = 1 THEN [k \\in SUBSET {1} |-> 1 \\div 0] ELSE x + 1\n====",
