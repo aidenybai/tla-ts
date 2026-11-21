@@ -19,6 +19,7 @@ import {
 import { getKindString } from "./builtins";
 import {
   isStackOverflow,
+  TlaConfigError,
   TlaEvaluationError,
   TlaSetBoundError,
   TlaUnassignedError,
@@ -46,14 +47,15 @@ import {
   type Coverage,
   type NextStateMode,
 } from "./coverage";
-import { MESSAGE_CODE } from "./tlc/messages";
+import { isEvalException, MESSAGE_CODE } from "./tlc/messages";
 import type { InstanceLevels, SectionMember } from "./levels";
-import type { CheckerRuntime } from "./runtime";
+import { EMPTY_STATE, type CheckerRuntime } from "./runtime";
 import {
   isEvaluatedAtStartup,
   isExpressionImpure,
   isImpureDefinition,
   isNonconstant,
+  isReevaluationShown,
   isTlcEvalReached,
   type DefinitionFacts,
 } from "./dependencies";
@@ -63,6 +65,7 @@ import {
   isSubstitutionDefinition,
   substitutedExpressions,
   substitutionFrames,
+  type BoundSubstitutions,
   type Substitution,
 } from "./instances";
 import { prettyPrint } from "./pretty-print";
@@ -190,6 +193,7 @@ export interface Environment {
   constants: Map<string, Value>;
   bodyValues: WeakMap<Expression, Value>;
   substitutions: Map<string, string>;
+  reevaluatedSubstitutes: Map<string, Definition>;
   instanceNames: Map<string, string>;
   variables: string[];
   variableIndex: Map<string, number>;
@@ -198,6 +202,7 @@ export interface Environment {
   tlcEvalValues: WeakMap<Expression, Value>;
   substitutedDefinitions: Set<Definition>;
   enabledSubstitutions: WeakSet<Expression>;
+  boundSubstitutions: BoundSubstitutions;
   instanceParams: Set<OperatorParam>;
   evaluators: WeakMap<Expression, Evaluator>;
   entryEvaluators: WeakMap<Expression, Evaluator>;
@@ -971,23 +976,79 @@ export const getStartupValue = (definition: Definition, environment: Environment
   return definitionId === undefined ? undefined : environment.startupValues[definitionId];
 };
 
-export const evaluateStartupDefinitions = (definitions: Definition[], environment: Environment) =>
-  definitions.forEach((definition) => {
-    if (definition.kind === "Operator" && definition.params.length > 0) return;
-    if (!isEvaluatedAtStartup(definition, environment)) return;
-    const definitionId = environment.facts.ids.get(definition);
-    if (definitionId === undefined || environment.startupValues[definitionId] !== undefined) return;
-    const context = { environment, scope: undefined, state: undefined, next: undefined };
-    try {
-      const value = environment.runtime.evaluateAtStartup(() =>
-        toStartupValue(definition, compileDefinitionBody(definition, environment)(context)),
-      );
-      markNormalized(value);
-      environment.startupValues[definitionId] = value;
-    } catch (error) {
-      // TLC swallows whatever the definition throws, a stack overflow included.
-      if (!(error instanceof TlaEvaluationError) && !isStackOverflow(error)) throw error;
-    }
+export interface StartupSubstitute {
+  key: string;
+  target: string;
+  definition: Definition;
+}
+
+export interface StartupDefinition {
+  definition: Definition;
+  isOverride: boolean;
+}
+
+export interface StartupModule {
+  substitutes: StartupSubstitute[];
+  definitions: StartupDefinition[];
+}
+
+const evaluateAtStartup = (
+  definition: Definition,
+  definitionId: number,
+  environment: Environment,
+) => {
+  // SpecProcessor#evalConstantDefn evaluates in TLCState.Empty, before any checker exists.
+  const context = { environment, scope: undefined, state: EMPTY_STATE, next: undefined };
+  const value = environment.runtime.evaluateAtStartup(() =>
+    toStartupValue(definition, compileDefinitionBody(definition, environment)(context)),
+  );
+  markNormalized(value);
+  environment.startupValues[definitionId] = value;
+};
+
+export const evaluateStartupDefinitions = (modules: StartupModule[], environment: Environment) =>
+  modules.forEach((module) => {
+    module.substitutes.forEach((substitute) => {
+      const definition = substitute.definition;
+      const definitionId = environment.facts.ids.get(definition);
+      if (definitionId === undefined) return;
+      if (
+        environment.startupValues[definitionId] !== undefined &&
+        !isReevaluationShown(definition, environment)
+      ) {
+        return;
+      }
+      try {
+        evaluateAtStartup(definition, definitionId, environment);
+      } catch (error) {
+        if (!(error instanceof TlaEvaluationError)) throw error;
+        // TLCSet's deviation in tlc/tlc-operators.ts makes a substitute that calls it state-level, so this reports what TLC swallows at TLCSet's bound of 0.
+        if (isEvaluatedAtStartup(definition, environment)) return;
+        const addendum = isEvalException(error) ? "" : ` - specifically: ${error.message}`;
+        throw new TlaConfigError(
+          `The configuration file substitutes constant ${getKeyName(substitute.key)} with non-constant ${getKeyName(substitute.target)}${addendum}`,
+        );
+      }
+    });
+    module.definitions.forEach((entry) => {
+      const definition = entry.definition;
+      if (definition.kind === "Operator" && definition.params.length > 0) return;
+      if (!isEvaluatedAtStartup(definition, environment)) return;
+      const definitionId = environment.facts.ids.get(definition);
+      if (
+        definitionId === undefined ||
+        (environment.startupValues[definitionId] !== undefined &&
+          !(entry.isOverride && isReevaluationShown(definition, environment)))
+      ) {
+        return;
+      }
+      try {
+        evaluateAtStartup(definition, definitionId, environment);
+      } catch (error) {
+        // TLC swallows whatever the definition throws, a stack overflow included.
+        if (!(error instanceof TlaEvaluationError) && !isStackOverflow(error)) throw error;
+      }
+    });
   });
 
 const isStateWithin = (state: State | undefined, cached: State | undefined) => {
@@ -1178,7 +1239,12 @@ export const findGlobalName = (name: string, environment: Environment): GlobalNa
   const constant = environment.constants.get(name);
   if (constant !== undefined) return { kind: "Value", value: constant };
   const target = environment.substitutions.get(name);
-  if (target !== undefined) return findGlobalName(target, environment);
+  if (target !== undefined) {
+    const substitute = environment.reevaluatedSubstitutes.get(name);
+    return substitute
+      ? { kind: "Definition", definition: substitute }
+      : findGlobalName(target, environment);
+  }
   const definition = environment.definitions.get(name);
   if (definition) return { kind: "Definition", definition };
   const builtin = environment.builtins.get(name);
@@ -1187,6 +1253,23 @@ export const findGlobalName = (name: string, environment: Environment): GlobalNa
   }
   return undefined;
 };
+
+const isStoredSubstitute = (
+  substitute: Expression | undefined,
+  environment: Environment,
+): substitute is Expression & { kind: "Identifier" } =>
+  environment.coverage === undefined &&
+  substitute?.kind === "Identifier" &&
+  !isLocallyResolved(substitute) &&
+  environment.substitutions.has(substitute.name) &&
+  !environment.reevaluatedSubstitutes.has(substitute.name);
+
+const getBoundDefinitions = (expression: Expression & { kind: "Let" }, environment: Environment) =>
+  environment.boundSubstitutions.lets.has(expression)
+    ? expression.definitions.filter(
+        (definition) => !isStoredSubstitute(definition.body, environment),
+      )
+    : expression.definitions;
 
 const compileArgumentBinder = (argument: Expression, environment: Environment): ArgumentBinder => {
   const isLiteral =
@@ -1204,6 +1287,10 @@ const compileArgumentBinder = (argument: Expression, environment: Environment): 
     };
   }
   if (argument.kind === "Identifier" && !argument.resolution?.isSelf) {
+    const substitute = environment.boundSubstitutions.references.get(argument);
+    if (isStoredSubstitute(substitute, environment)) {
+      return compileArgumentBinder(substitute, environment);
+    }
     const global = isLocallyResolved(argument)
       ? undefined
       : findGlobalName(argument.name, environment);
@@ -1715,8 +1802,11 @@ export const getEntryEvaluator = (expression: Expression, environment: Environme
   if (environment.callStack || environment.coverage) return getEvaluator(expression, environment);
   const compiled = environment.entryEvaluators.get(expression);
   if (compiled) return compiled;
-  const evaluator =
-    generateEvaluator(expression, environment) ?? getEvaluator(expression, environment);
+  const entry =
+    expression.kind === "Let" && getBoundDefinitions(expression, environment).length === 0
+      ? expression.body
+      : expression;
+  const evaluator = generateEvaluator(entry, environment) ?? getEvaluator(entry, environment);
   environment.entryEvaluators.set(expression, evaluator);
   return evaluator;
 };
@@ -1728,6 +1818,9 @@ const compileIdentifier = (
   expression: Expression & { kind: "Identifier" },
   environment: Environment,
 ): Evaluator => {
+  const substitute = environment.boundSubstitutions.references.get(expression);
+  if (isStoredSubstitute(substitute, environment))
+    return compileIdentifier(substitute, environment);
   const name = expression.name;
   const global = isLocallyResolved(expression) ? undefined : findGlobalName(name, environment);
   if (global?.kind === "Variable") {
@@ -2663,15 +2756,15 @@ const compile = (expression: Expression, environment: Environment): Evaluator =>
     }
     case "Let": {
       const body = getChildEvaluator(expression.body);
-      const substituted = environment.coverage
-        ? expression.definitions.filter(isSubstitutionDefinition)
-        : [];
+      const definitions = getBoundDefinitions(expression, environment);
+      if (definitions.length === 0) return body;
+      const substituted = environment.coverage ? definitions.filter(isSubstitutionDefinition) : [];
       const reevaluated =
         substituted.length > 0
           ? { impure: new Set(substituted), streamed: new Set<Definition>() }
           : undefined;
       return (context) =>
-        body(withScope(context, bindDefinitions(expression.definitions, context, reevaluated)));
+        body(withScope(context, bindDefinitions(definitions, context, reevaluated)));
     }
     case "Forall":
     case "Exists":

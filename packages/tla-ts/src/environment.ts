@@ -23,7 +23,6 @@ import {
   createMissingModuleError,
   formatRange,
   formatSanyWarnings,
-  TlaConfigError,
   TlaEvaluationError,
   TlaSyntaxError,
   type SanyError,
@@ -33,12 +32,13 @@ import {
   createBigNumberError,
   createRealNumberError,
   evaluate,
-  getDefinition,
   getDefinitionClosure,
   type Builtin,
   type BuiltinArgument,
   type Context,
   type Environment,
+  type StartupModule,
+  type StartupSubstitute,
 } from "./evaluate";
 import {
   createInstantiation,
@@ -54,6 +54,7 @@ import {
   substitutedExpressions,
   withInstanceParams,
   withSubstitutionFrames,
+  type BoundSubstitutions,
   type Substitution,
 } from "./instances";
 import { overrideDefinitions, type JavaOverride } from "./java-overrides";
@@ -103,7 +104,6 @@ import { getStandardModule, getStandardRange, STANDARD_LEVELS } from "./standard
 import { createModuleSubexpressions, resolveInstanceSubexpressions } from "./subexpressions";
 import {
   checkModuleLevels,
-  createLevelAnalyzer,
   type InstanceCopy,
   type InstanceLevelCheck,
   type InstanceSubstitutes,
@@ -112,8 +112,8 @@ import {
   type SectionMember,
 } from "./levels";
 import { createInstanceChecker, type KeyedDeclaration } from "./substitution-levels";
-import { formatPrompt, isEvalException } from "./tlc/messages";
-import { createDefinitionFacts } from "./dependencies";
+import { formatPrompt } from "./tlc/messages";
+import { createDefinitionFacts, isReevaluationShown } from "./dependencies";
 import { createTlcOrder, type TlcOrder } from "./tlc/order";
 import { isTlcInteger, type Value } from "./values";
 import type { TlcVersion } from "./tlc/version";
@@ -136,6 +136,7 @@ interface EnvironmentOptions {
   readLine?: () => string | undefined;
   printPrompt?: (text: string, code?: number) => void;
   runtimeInvariants?: RuntimeInvariant[];
+  isCovered?: boolean;
 }
 
 export interface RuntimeInvariant {
@@ -152,7 +153,7 @@ export interface Specification {
   assumptions: Assumption[];
   variableLocations: SourceLocation[];
   instanceActions: Map<string, InstanceAction>;
-  startupDefinitions: Definition[];
+  startupModules: StartupModule[];
   javaOverrides: JavaOverride[];
   moduleOperators: ResolvedModuleOperator[];
   runtimeInvariants: RuntimeInvariant[];
@@ -243,7 +244,7 @@ const getNodeWord = (kind: SymbolKind) =>
 const getNodeClass = (kind: SymbolKind) =>
   kind === "Theorem" ? "ThmOrAssumpDefNode" : getNodeWord(kind);
 
-const createLocalFunction = (definition: FunctionDefinition, key: string): Definition => ({
+const createLocalFunction = (definition: FunctionDefinition, key: string) => ({
   ...getOperatorDefinition(definition),
   name: key,
   isLocal: true,
@@ -321,6 +322,7 @@ export const createEnvironment = (
   const copySources = new Map<string, CopySource>();
   const substitutedDefinitions = new Set<Definition>();
   const enabledSubstitutions = new WeakSet<Expression>();
+  const boundSubstitutions: BoundSubstitutions = { lets: new WeakSet(), references: new WeakMap() };
   const goalOperands = new WeakMap<Expression, Expression[]>();
   const goalSelections = new WeakMap<Expression, Expression>();
   const subexpressionRecords: SubexpressionRecords = {
@@ -328,6 +330,11 @@ export const createEnvironment = (
     instanceReferences: new WeakMap(),
   };
   const instanceParams = new Set<OperatorParam>();
+  const substitutedNames = new Set(
+    config.substitutions.flatMap((substitution) =>
+      substitution.module === undefined ? [substitution.name] : [],
+    ),
+  );
   const builtins = new Map<string, Builtin>(
     CORE_OPERATORS.map((operator) => [operator.name, operator]),
   );
@@ -605,7 +612,7 @@ export const createEnvironment = (
       }
     });
     // SANY's Errors#addMessage drops a message it already has, such as an instantiated body's.
-    if (semanticErrors.length === 0) {
+    if (!isHidden && semanticErrors.length === 0) {
       semanticErrors.push(
         ...[
           ...collectSemanticErrors(
@@ -684,6 +691,28 @@ export const createEnvironment = (
     const linked = linkSource(name, name, true).linked;
     standardSources.set(name, linked);
     return linked;
+  };
+
+  const getStandardDefinition = (builtin: string) => {
+    const source = getStandardModule(builtin);
+    const key =
+      source !== undefined && getSanyStandardModules(runtime.version).has(source)
+        ? getStandardSource(source).visible.get(builtin)?.key
+        : builtin;
+    return key === undefined ? undefined : replacedDefinitions.get(key);
+  };
+
+  const createStandardAlias = (
+    name: string,
+    key: string,
+    params: OperatorParam[],
+    forwarded: OperatorParam[],
+    location: SourceLocation,
+  ) => {
+    // Deviation from TLC: Tool#evalImplLetInKind binds a 0-arity LET definition to a LazyValue of its body, so a LET instance's copy of a 0-arity override runs SANY's placeholder body, such as Nat == {}, where the alias forwards to the Java override.
+    const alias = createLocalAlias(name, key, params, forwarded, location);
+    const standardDefinition = builtins.has(key) ? getStandardDefinition(key) : undefined;
+    return standardDefinition ? { ...alias, standardDefinition } : alias;
   };
 
   // SANY substitutes for, arity-checks and reports missing an instanced module's declarations in its symbol table's hash order.
@@ -837,9 +866,20 @@ export const createEnvironment = (
         }),
       ),
       enabledSubstitutions,
+      boundSubstitutions,
       getDefinition: getLinkedDefinition,
       getOuterDefinition: (key) =>
         module.definitions.find((definition) => unit.getKey(definition) === key),
+      isSubstitutedConstant: (key) => {
+        const name = getKeyName(key);
+        const symbol = resolved.get(name);
+        return (
+          symbol?.kind === "Constant" &&
+          symbol.arity === 0 &&
+          symbol.key === key &&
+          substitutedNames.has(name)
+        );
+      },
       isParameterized: (key) => parameterized.get(key) === true,
       addDefinition: (source, name, create, reservedKey) => {
         const key = reservedKey ?? createName(`${name}@${module.name}`);
@@ -1050,7 +1090,7 @@ export const createEnvironment = (
       if (instance.name === undefined) return [];
       return [...standardSymbols].map((entry) => {
         const forwarded = createArgumentParams(entry[1].arity, entry[1].params);
-        return createLocalAlias(
+        return createStandardAlias(
           `${instance.name}!${entry[0]}`,
           entry[1].key,
           [...instance.params, ...forwarded],
@@ -1125,8 +1165,10 @@ export const createEnvironment = (
       ),
       substitutedVariables: new Set(linked.variables),
       enabledSubstitutions,
+      boundSubstitutions,
       getDefinition: getLinkedDefinition,
       getOuterDefinition: () => undefined,
+      isSubstitutedConstant: () => false,
       isParameterized: (key) => parameterized.get(key) === true,
       addDefinition: (source, name, create) => {
         const key = `${name}${KEY_SEPARATOR}${instance.module}${suffix}.${copies.length}`;
@@ -1135,8 +1177,9 @@ export const createEnvironment = (
           definition.kind === "Operator"
             ? { ...definition, name: key }
             : createLocalFunction(definition, key);
-        copies.push(copy);
-        if (theorems.has(source)) theorems.set(key, getInstanceRange(instance));
+        const isTheorem = theorems.has(source);
+        copies.push(isTheorem ? { ...copy, theoremRange: getInstanceRange(instance) } : copy);
+        if (isTheorem) theorems.set(key, getInstanceRange(instance));
         const instanceCopy = createInstanceCopy(source, instance.module, substitutes);
         if (instanceCopy) localCopies.set(key, instanceCopy);
         return key;
@@ -1175,10 +1218,17 @@ export const createEnvironment = (
             ...operator,
             name,
             body: withSubstitutionFrames(operator.body, frame ? [frame] : []),
+            theoremRange: theorems.has(key) ? getInstanceRange(instance) : undefined,
           };
         }
         const ownParams = createArgumentParams(entry[1].arity, entry[1].params);
-        return createLocalAlias(name, key, [...instance.params, ...ownParams], ownParams, location);
+        return createStandardAlias(
+          name,
+          key,
+          [...instance.params, ...ownParams],
+          ownParams,
+          location,
+        );
       });
     if (instance.location.range) {
       letInstances.set(formatRange(instance.location.range), {
@@ -1471,12 +1521,7 @@ export const createEnvironment = (
         if (symbol?.kind !== "Definition") return undefined;
         const builtin = builtinAliases.get(symbol.key) ?? symbol.key;
         if (!builtins.has(builtin)) return undefined;
-        const source = getStandardModule(builtin);
-        const key =
-          source !== undefined && getSanyStandardModules(runtime.version).has(source)
-            ? getStandardSource(source).visible.get(builtin)?.key
-            : builtin;
-        const definition = key === undefined ? undefined : replacedDefinitions.get(key);
+        const definition = getStandardDefinition(builtin);
         if (definition?.kind !== "Operator") return definition && { ...definition, name };
         return {
           ...definition,
@@ -1855,6 +1900,7 @@ export const createEnvironment = (
     constants,
     bodyValues,
     substitutions,
+    reevaluatedSubstitutes: new Map(),
     instanceNames,
     variables,
     variableIndex,
@@ -1863,6 +1909,7 @@ export const createEnvironment = (
     tlcEvalValues: new WeakMap(),
     substitutedDefinitions,
     enabledSubstitutions,
+    boundSubstitutions,
     instanceParams,
     evaluators: new WeakMap(),
     entryEvaluators: new WeakMap(),
@@ -1870,40 +1917,28 @@ export const createEnvironment = (
     instances: instanceLevels.instances,
     recursiveSections,
   };
-  const analyzer = createLevelAnalyzer({
-    // TLC's getLevelBound counts a theorem's arguments but not its body.
-    constants: new Map([...constants.keys(), ...theorems.keys()].map((key) => [key, 0])),
-    variables: new Set([
-      ...variables,
-      ...["TLCGet", "Trace", "CounterExample"].filter((name) => builtins.has(name)),
-    ]),
-    getDefinition: (name) => getDefinition(name, environment),
-    instances: instanceLevels.instances,
-    recursiveSections,
-  });
-  const getEvaluationError = (body: Expression) => {
-    try {
-      evaluate(body, { environment, scope: undefined, state: undefined, next: undefined });
-      return undefined;
-    } catch (error) {
-      if (error instanceof TlaEvaluationError) return error;
-      throw error;
-    }
+  const getSubstitute = (key: string) => {
+    const target = substitutions.get(key);
+    const definition = target === undefined ? undefined : definitions.get(target);
+    return definition?.kind === "Function" ||
+      (definition?.kind === "Operator" && definition.params.length === 0)
+      ? definition
+      : undefined;
   };
-  substitutions.forEach((target, key) => {
-    const definition = definitions.get(target);
-    const error =
-      linkedRoot.constants.some((constant) => constant.key === key) &&
-      definition?.kind === "Operator" &&
-      definition.params.length === 0 &&
-      analyzer.analyzeDefinition(definition, new Map()).level > 0
-        ? getEvaluationError(definition.body)
-        : undefined;
-    if (error) {
-      const addendum = isEvalException(error) ? "" : ` - specifically: ${error.message}`;
-      throw new TlaConfigError(
-        `The configuration file substitutes constant ${getKeyName(key)} with non-constant ${getKeyName(target)}${addendum}`,
-      );
+  const substitutes = new Map(
+    linkedRoot.constants.flatMap((constant): [string, StartupSubstitute][] => {
+      const target = substitutions.get(constant.key);
+      const definition = getSubstitute(constant.key);
+      return target !== undefined && definition
+        ? [[constant.key, { key: constant.key, target, definition }]]
+        : [];
+    }),
+  );
+  // HACK: a copy has no startup value, so each reference evaluates the substitute's body.
+  substitutions.forEach((_target, key) => {
+    const definition = getSubstitute(key);
+    if (definition && (options.isCovered || isReevaluationShown(definition, environment))) {
+      environment.reevaluatedSubstitutes.set(key, { ...definition });
     }
   });
   if (runtime.version !== "1.7.4") runtime.isStarted = true;
@@ -1939,22 +1974,36 @@ export const createEnvironment = (
     assumptions,
     variableLocations: linkedRoot.variableLocations,
     instanceActions,
-    // TLC's SpecProcessor#processConstantDefns walks a module's whole context, inherited definitions too, and skips each by the module it comes from.
-    startupDefinitions: linkOrder
+    // TLC's SpecProcessor#processConstantDefns walks a module's whole context, inherited constants and definitions too, and skips each definition by the module it comes from.
+    startupModules: linkOrder
       .filter((linked) => !nestedModules.has(linked) && isProcessedAtStartup(linked))
       .flatMap(getStartupModules)
-      .flatMap((linked) =>
-        order.getDefinitionOrder(getModuleName(linked)).flatMap((name) => {
-          const key = getDefinitionKey(linked, name);
-          const definition = definitions.get(key);
-          return definition &&
-            isProcessedAtStartup(origins.get(key) ?? linked) &&
-            !constants.has(key) &&
-            !substitutions.has(key)
-            ? [definition]
-            : [];
-        }),
-      ),
+      .map((linked) => {
+        const moduleSubstitutes = new Map(
+          linked.constants.flatMap((constant): [string, StartupSubstitute][] => {
+            const substitute = substitutes.get(constant.key);
+            return substitute ? [[constant.name, substitute]] : [];
+          }),
+        );
+        return {
+          substitutes:
+            moduleSubstitutes.size === 0
+              ? []
+              : order
+                  .getDeclarationOrder("constant", getModuleName(linked))
+                  .flatMap((name) => moduleSubstitutes.get(name) ?? []),
+          definitions: order.getDefinitionOrder(getModuleName(linked)).flatMap((name) => {
+            const key = getDefinitionKey(linked, name);
+            const isOverride = substitutions.has(key);
+            const definition = isOverride ? getSubstitute(key) : definitions.get(key);
+            return definition &&
+              isProcessedAtStartup(origins.get(key) ?? linked) &&
+              !constants.has(key)
+              ? [{ definition, isOverride }]
+              : [];
+          }),
+        };
+      }),
     javaOverrides: linkOrder.flatMap((linked) => javaOverrides.get(linked.module.name) ?? []),
     moduleOperators,
     runtimeInvariants,

@@ -119,6 +119,13 @@ interface Resolved {
 
 export const letDefinitions = new WeakMap<Scope, Definition>();
 
+export const getLetDefinition = (name: string | undefined, scope: Scope | undefined) => {
+  for (let node = scope; node; node = node.parent) {
+    if (node.name === name) return letDefinitions.get(node);
+  }
+  return undefined;
+};
+
 const STANDARD_MODULES = new Set([
   "FiniteSets",
   "Sequences",

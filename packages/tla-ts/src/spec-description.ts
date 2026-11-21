@@ -9,7 +9,12 @@ import {
   type SourceRange,
 } from "./ast";
 import type { ModelConfig } from "./config";
-import { getCoverageCounts, getDistinctCount, letDefinitions, type CoverageKind } from "./coverage";
+import {
+  getCoverageCounts,
+  getDistinctCount,
+  getLetDefinition,
+  type CoverageKind,
+} from "./coverage";
 import { EXIT_STATUS, setExitCode } from "./exit-codes";
 import {
   frameSubstitutions,
@@ -168,14 +173,8 @@ const getStandardHead = (name: string, environment: Environment) => {
 const getArguments = (expression: Expression) =>
   expression.kind === "Apply" ? expression.args : [];
 
-const getLetDefinition = (expression: Expression, scope: Scope | undefined) => {
-  if (!isLocallyResolved(expression)) return undefined;
-  const name = getOperatorName(expression);
-  for (let node = scope; node; node = node.parent) {
-    if (node.name === name) return letDefinitions.get(node);
-  }
-  return undefined;
-};
+const getLocalDefinition = (expression: Expression, scope: Scope | undefined) =>
+  isLocallyResolved(expression) ? getLetDefinition(getOperatorName(expression), scope) : undefined;
 
 const getDefinitionRanges = (definition: Definition | undefined) =>
   definition?.kind === "Operator"
@@ -385,7 +384,7 @@ const getActions = (
   if (theorem) throw createRelationError(theorem);
   if (instanceAction)
     return getInstanceActions(instanceAction, expression, scope, called, environment);
-  const letDefinition = getLetDefinition(expression, scope);
+  const letDefinition = getLocalDefinition(expression, scope);
   const thunk = letDefinition?.kind === "Operator" ? getThunk(expression, scope) : undefined;
   if (letDefinition && thunk) {
     return getActions(
@@ -509,7 +508,7 @@ const describeSpecification = (
     ...createAction(name, withSubstitutionFrames(conjunct, frames), conjunctScope),
     location: substitutionFrame?.location ?? conjunct.location,
   });
-  const letDefinition = getLetDefinition(expression, scope);
+  const letDefinition = getLocalDefinition(expression, scope);
   const thunk = letDefinition?.kind === "Operator" ? getThunk(expression, scope) : undefined;
   const unwrapped = thunk ? undefined : unwrapBinding(expression, scope, environment);
   if (unwrapped) {

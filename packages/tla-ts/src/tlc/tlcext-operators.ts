@@ -122,7 +122,7 @@ export const setTlcValue = (
   value: Value,
   state: (Value | undefined)[] | undefined,
 ) => {
-  // TLC splits Next before its checker exists, so TLCSet there throws on a numbered register and drops the other writes.
+  // TLC splits Next and evaluates constant definitions before its checker exists, so TLCSet there throws on a numbered register and drops the other writes.
   const isSplit = state === EMPTY_STATE;
   if (typeof key === "number" && key >= 0) {
     if (isSplit)
