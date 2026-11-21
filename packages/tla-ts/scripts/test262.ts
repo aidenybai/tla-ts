@@ -357,12 +357,13 @@ const runSyntaxTest = (id: string, source: string, metadata: Metadata): TestRun 
   if (!isRejected) {
     return { id, outcome: "skipped", reason: "Node accepts it" };
   }
-  // The program as written, as TypeScript's emit drops some of what V8 rejects, such as a trailing
-  // comma after a rest parameter, and without the harness, as it compiles and runs nothing.
+  // The program as written, as JavaScript, as TypeScript's emit and its type stripping drop some
+  // of what V8 rejects, such as a trailing comma after a rest parameter and a getter's parameter,
+  // and without the harness, as it compiles and runs nothing.
   const program = `${strict}${source}`;
   try {
     getEmitted(program, metadata.isModule);
-    compileToEscore(program, "test262.ts", RUNTIME, metadata.isModule);
+    compileToEscore(program, "test262.js", RUNTIME, metadata.isModule);
   } catch (error) {
     return getSyntaxRun(id, error);
   }
