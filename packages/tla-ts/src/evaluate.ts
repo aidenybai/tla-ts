@@ -723,13 +723,14 @@ export const bindLazyArguments = (
   lambda: LazyFunction,
   expression: Expression & { kind: "FunctionApplication" },
   argument: Value,
+  isMember: typeof isElementOf,
 ) => {
   const value = lambda.value;
   const describeArgument = (ordinal: string, element: Value, problem: string) =>
     `In applying the function\n${prettyPrint(formatValue(value))},\nthe ${ordinal} is:\n${prettyPrint(formatValue(element))}${problem}.\n${describeRange(expression.function)}`;
   const bounds = lambda.bounds;
   if (bounds.length === 1) {
-    if (!isElementOf(argument, value.domain)) {
+    if (!isMember(argument, value.domain)) {
       throw new TlaEvaluationError(
         describeArgument("first argument", argument, "which is not in its domain"),
       );
@@ -755,7 +756,7 @@ export const bindLazyArguments = (
     if (index >= elements.length) throw createListError();
     const element = elements[index];
     const ordinal = `argument number ${index + 1}`;
-    if (!isElementOf(element, domains[index])) {
+    if (!isMember(element, domains[index])) {
       throw new TlaEvaluationError(
         describeArgument(
           ordinal,

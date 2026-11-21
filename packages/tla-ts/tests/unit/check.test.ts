@@ -4158,6 +4158,42 @@ ASSUME TLCFP(a) = -887695703
 
   it.each([
     [
+      "one argument",
+      "VARIABLE x\nInit == x = 0\nNext == x < 2 /\\ [s \\in SUBSET {1, 2} |-> x' = x + Cardinality(s)][IF x = 0 THEN {1} ELSE {1, 2}]",
+      [
+        "line 5, col 9 to line 5, col 13 of module M: 2",
+        "|line 5, col 9 to line 5, col 9 of module M: 3",
+        "line 5, col 18 to line 5, col 66 of module M: 2",
+        "line 5, col 68 to line 5, col 96 of module M: 2",
+        "|line 5, col 71 to line 5, col 75 of module M: 2",
+        "|line 5, col 82 to line 5, col 84 of module M: 1:2",
+        "|line 5, col 91 to line 5, col 96 of module M: 1:3",
+      ],
+    ],
+    [
+      "two arguments",
+      "VARIABLE x\nInit == x = 0\nNext == x < 2 /\\ [s \\in SUBSET {1, 2}, j \\in 1..2 |-> x' = x + Cardinality(s) + j][{1}, 1]",
+      [
+        "line 5, col 9 to line 5, col 13 of module M: 1",
+        "|line 5, col 9 to line 5, col 9 of module M: 2",
+        "line 5, col 18 to line 5, col 82 of module M: 1",
+        "line 5, col 18 to line 5, col 90 of module M: 1",
+        "|line 5, col 84 to line 5, col 86 of module M: 1:2",
+      ],
+    ],
+  ])(
+    "charges the domain check of a lazy function over SUBSET applied as an action to %s, as TLC's Tool#getFcnContext asks the domain's member",
+    async (_title, body, expected) => {
+      const lines = await getCoverageLines(
+        `---- MODULE M ----\nEXTENDS Integers, FiniteSets\n${body}\n====`,
+        "INIT Init\nNEXT Next\nCHECK_DEADLOCK FALSE",
+      );
+      expect(lines?.at(-1)).toEqual(expected);
+    },
+  );
+
+  it.each([
+    [
       "an IF picks an argument of a lazy function",
       "VARIABLE x\nInit == x = 0\nNext == x < 2 /\\ x' = x + 1 + [i \\in 0..2, j \\in 1..2 |-> i][IF x = 0 THEN x ELSE x - 1, 1]",
       [
