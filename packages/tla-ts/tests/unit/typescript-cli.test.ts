@@ -658,4 +658,62 @@ describe("the CLI with TypeScript files", () => {
       expect(result.status).toBe(1);
     });
   });
+
+  // A module reads Node's performance, as React's server builds do, whose now gives the time,
+  // which each run reads anew, so the check stops where a program reads the time it gives.
+  describe("reads Node's performance as Node does", () => {
+    const getScript = (kind: string) =>
+      `const isClock = typeof performance === "object" && typeof performance.now === "${kind}";\nif (!isClock) throw new Error("clock");\nconst start = performance.now();\nif (typeof start !== "number") throw new Error("start");\n`;
+
+    it("agrees with Node", () => {
+      const directory = copyFixtures("passing");
+      writeFileSync(join(directory, "clock.cjs"), getScript("function"));
+      expect(runNode(directory, "clock.cjs").status).toBe(0);
+      expect(getExit(runCli(directory, ["clock.cjs"]))).toEqual([0, ""]);
+    });
+
+    it("rejects another result", () => {
+      const directory = copyFixtures("passing");
+      writeFileSync(join(directory, "clock.cjs"), getScript("object"));
+      const result = runCli(directory, ["clock.cjs"]);
+      expect(getExit(result)).toEqual(getExit(runNode(directory, "clock.cjs")));
+      expect(result.status).toBe(1);
+    });
+
+    it("stops where the program reads the time that now gives", () => {
+      const directory = copyFixtures("passing");
+      writeFileSync(
+        join(directory, "clock.cjs"),
+        'if (performance.now() < 0) throw new Error("before");\n',
+      );
+      expect(runCli(directory, ["clock.cjs"]).stdout).toContain(
+        "tla-ts can't read the host's clock, whose time each run reads anew",
+      );
+    });
+  });
+
+  // A file of thousands of function declarations, as react-dom's client build has, instantiates
+  // them in a loop, in their order, rather than in a chain of states that overflows the stack.
+  describe.each(["cjs", "mjs"])(
+    "runs a .%s file of thousands of function declarations as Node does",
+    (extension) => {
+      const getScript = (expected: number) =>
+        `${Array.from({ length: 3000 }, (_, index) => `function f${index}() {\n  return ${index};\n}`).join("\n")}\nconst total = f0() + f1499() + f2999();\nif (total !== ${expected}) throw new RangeError("total " + total);\n`;
+
+      it("agrees with Node", () => {
+        const directory = copyFixtures("passing");
+        writeFileSync(join(directory, `many.${extension}`), getScript(4498));
+        expect(runNode(directory, `many.${extension}`).status).toBe(0);
+        expect(getExit(runCli(directory, [`many.${extension}`]))).toEqual([0, ""]);
+      });
+
+      it("rejects another result", () => {
+        const directory = copyFixtures("passing");
+        writeFileSync(join(directory, `many.${extension}`), getScript(4499));
+        const result = runCli(directory, [`many.${extension}`]);
+        expect(getExit(result)).toEqual(getExit(runNode(directory, `many.${extension}`)));
+        expect(result.status).toBe(1);
+      });
+    },
+  );
 });

@@ -141,7 +141,7 @@ const getHostProperty = (
               ? `Str(N(${JSON.stringify(value)}))`
               : undefined;
   const kind =
-    (name === "console" || name === "process") && host !== undefined
+    (name === "console" || name === "process" || name === "performance") && host !== undefined
       ? name
       : isAccessor && host === undefined
         ? "accessor"
