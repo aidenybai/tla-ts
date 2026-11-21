@@ -211,6 +211,7 @@ export const getLevel = (
     if (definition) return getDefinitionLevel(definition, environment);
     const builtin = environment.builtins.get(environment.substitutions.get(name) ?? name);
     if (!builtin) return undefined;
+    if (isArgument && builtin.arity > 0) return CONSTANT_LEVEL;
     if (builtin.isActionLevel) return ACTION_LEVEL;
     return builtin.isStateLevel && !builtin.isLevelConstant ? VARIABLE_LEVEL : CONSTANT_LEVEL;
   };

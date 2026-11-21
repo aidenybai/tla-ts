@@ -5336,6 +5336,67 @@ describe("initial predicate and next-state relation match TLC", () => {
     },
   );
 
+  const getExtendingSource = (extended: string, definitions: string) =>
+    `---- MODULE M ----\nEXTENDS ${extended}, Naturals\nVARIABLE x\nInit == x = 0\nNext == x' = (x + 1) % 2\n${definitions}\n====`;
+
+  it.each([
+    ['G(Op(_)) == Op("level") \\in Nat\nC == PrintT(<<"C", G(TLCGet)>>)', ['<<"C", TRUE>>']],
+    [
+      'G(Op(_)) == Op("level") \\in Nat\nK(Op(_)) == G(Op)\nC == PrintT(<<"C", K(TLCGet)>>)',
+      ['<<"C", TRUE>>'],
+    ],
+    [
+      'G(Op(_)) == Op("level") \\in Nat\nC == PrintT(<<"C", LET L == G(TLCGet) IN L>>)',
+      ['<<"C", TRUE>>'],
+    ],
+    [
+      'G(Op(_)) == Op("level")\nC == PrintT(<<"C", G(LAMBDA v : TLCGet(v) \\in Nat)>>)',
+      ['<<"C", TRUE>>'],
+    ],
+    ['C == PrintT(<<"C", TLCGet("level") \\in Nat>>)', []],
+  ])(
+    "prints %j as TLC starts only for a builtin passed as an operator argument, which TLC's level bound takes for a constant",
+    async (definitions, expected) => {
+      const printed: string[] = [];
+      await check({
+        source: getExtendingSource("TLC", definitions),
+        config: "INIT Init\nNEXT Next",
+        onPrint: (text) => printed.push(text),
+      });
+      expect(printed).toEqual(expected);
+    },
+  );
+
+  it.each([
+    ["TLC", "G(Op(_)) == TRUE\nC == FALSE /\\ G(TLCGet)\nSpec == Init /\\ [][Next]_x /\\ C"],
+    [
+      "TLCExt",
+      "G(Op(_)) == TRUE\nC == FALSE /\\ G(PickSuccessor)\nSpec == Init /\\ [][Next]_x /\\ C",
+    ],
+  ])(
+    "rejects the spec by C's startup value when C passes a builtin of %s as an operator argument",
+    async (extended, definitions) => {
+      await expect(
+        check({ source: getExtendingSource(extended, definitions), config: "SPECIFICATION Spec" }),
+      ).rejects.toThrow(new TlaConfigError("The spec is trivially false because C is false."));
+    },
+  );
+
+  it.each([
+    "G(Op(_)) == TRUE\nP == [](G(PickSuccessor))",
+    "G(Op(_)) == TRUE\nC == G(PickSuccessor)\nP == []C",
+    "G(Op(_)) == TRUE\nP == LET L == G(PickSuccessor) IN []L",
+  ])(
+    "checks the property %j as an invariant, as TLC's level bound takes a builtin operator argument for a constant",
+    async (definitions) => {
+      const result = await check({
+        source: getExtendingSource("TLCExt", definitions),
+        config: "INIT Init\nNEXT Next\nPROPERTY P",
+      });
+      expect([result.status, result.distinctStates]).toEqual(["success", 2]);
+    },
+  );
+
   const getLetInstanceSource = (variable: string, definitions: string) =>
     `---- MODULE M ----\nEXTENDS TLC, Naturals\nVARIABLE ${variable}\nInit == ${variable} = 0\nNext == ${variable}' = (${variable} + 1) % 2\n${definitions}\n====\n`;
   const getInstancedModule = (line: string) =>

@@ -156,12 +156,15 @@ const collectLocalFacts = (
       const definition = environment.definitions.get(target);
       const isOverridden = environment.constants.has(name);
       const variableIndex = environment.variableIndex.get(name);
+      const builtin = environment.builtins.get(target);
       if (
         variableIndex !== undefined ||
-        environment.builtins.get(target)?.isStateLevel ||
+        builtin?.isStateLevel ||
         (definition && environment.variableIndex.has(definition.name))
       ) {
-        row[0] |= nonconstantFlags;
+        // TLC's getLevelBound takes an operator argument for a constant.
+        row[0] |=
+          kind === "Identifier" && builtin && builtin.arity > 0 ? NONCONSTANT : nonconstantFlags;
       }
       if (variableIndex !== undefined) {
         if (isInnerLevelCounted) row[0] |= VARIABLE_LEVEL_FLAGS;
@@ -183,7 +186,6 @@ const collectLocalFacts = (
           ),
         });
       } else {
-        const builtin = environment.builtins.get(target);
         const builtinName = builtin?.name ?? target;
         const isImpure = IMPURE_BUILTINS.has(builtinName) || builtin?.isStateLevel === true;
         if (isImpure) row[0] |= IMPURE | (builtinName === "Assert" ? 0 : REPEATED_EFFECT);
