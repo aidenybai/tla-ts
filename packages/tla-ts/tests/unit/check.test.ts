@@ -5965,6 +5965,58 @@ ASSUME TLCFP(a) = -887695703
   );
 });
 
+describe("f @@ g matches TLC", () => {
+  const getPrinted = async (expression: string) => {
+    const printed: string[] = [];
+    const result = await check({
+      source: `---- MODULE M ----\nEXTENDS Naturals, TLC\nASSUME PrintT(${expression})\n====`,
+      config: "",
+      onPrint: (text) => printed.push(text),
+    });
+    return { status: result.status, printed, message: result.violation?.message };
+  };
+
+  it.each([
+    ['("b" :> 1) @@ [a |-> 0, c |-> 2]', "[a |-> 0, c |-> 2, b |-> 1]"],
+    ['(2 :> "x") @@ ((1 :> "a") @@ (3 :> "c"))', '<<"a", "x", "c">>'],
+    [
+      '([type |-> "object", id |-> 5] :> 1) @@ (([type |-> "object", id |-> 3] :> 0) @@ ([type |-> "object", id |-> 7] :> 2))',
+      '( [type |-> "object", id |-> 3] :> 0 @@\n  [type |-> "object", id |-> 5] :> 1 @@\n  [type |-> "object", id |-> 7] :> 2 )',
+    ],
+    ['("a" :> 9) @@ [a |-> 0, b |-> 1]', "[a |-> 9, b |-> 1]"],
+    [
+      "([id |-> 1] :> 1) @@ ([id |-> 1, z |-> 0] :> 2)",
+      "([id |-> 1] :> 1 @@ [id |-> 1, z |-> 0] :> 2)",
+    ],
+    [
+      '(<<1, 2>> :> "t") @@ ((<<1>> :> "u") @@ (<<2, 1>> :> "v"))',
+      '(<<1>> :> "u" @@ <<1, 2>> :> "t" @@ <<2, 1>> :> "v")',
+    ],
+    ["([b |-> 1, a |-> 2] :> 1) @@ ([a |-> 2, b |-> 1] :> 2)", "([b |-> 1, a |-> 2] :> 1)"],
+  ])("combines %s as TLC does", async (expression, expected) => {
+    expect(await getPrinted(expression)).toEqual({
+      status: "success",
+      printed: [expected],
+      message: undefined,
+    });
+  });
+
+  it.each([
+    ['("a" :> 1) @@ (1 :> 2)', 'Attempted to check equality of integer 1 with non-integer:\n"a"'],
+    ["(1 :> 1) @@ [a |-> 2]", 'Attempted to check equality of string "a" with non-string:\n1'],
+    [
+      '([id |-> 1] :> 1) @@ ("x" :> 2)',
+      'Attempted to check equality of string "x" with non-string:\n[id |-> 1]',
+    ],
+  ])("fails to combine %s as TLC does", async (expression, reason) => {
+    expect(await getPrinted(expression)).toEqual({
+      status: "assumption-violation",
+      printed: [],
+      message: `Attempted to apply the operator overridden by the Java method\npublic static tlc2.value.impl.Value tlc2.module.TLC.CombineFcn(tlc2.value.impl.Value,tlc2.value.impl.Value),\nbut it produced the following error:\n${reason}`,
+    });
+  });
+});
+
 describe("formatValue matches TLC", () => {
   it("prints functions as records only when every key is a field name", async () => {
     const printed: string[] = [];
