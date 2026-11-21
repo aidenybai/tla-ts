@@ -172,6 +172,7 @@ const isValidAssumption = (manager: AstManager, expr: number) => {
 export interface SmtParams {
   isMbqi: boolean;
   mbqiMaxIterations: number;
+  isEmatching?: boolean;
   relevancyLevel: number;
   isDelayingNewCaseSplits?: boolean;
   randomSeed?: number;
@@ -270,6 +271,7 @@ export class Context extends Internalizer {
   updateParams(params: KernelParams) {
     this.params.isMbqi = params.isMbqi;
     this.params.mbqiMaxIterations = params.mbqiMaxIterations;
+    this.params.isEmatching = params.isEmatching;
     this.params.randomSeed = params.randomSeed;
     this.params.intHammerPeriod = params.intHammerPeriod;
     this.params.isArithPropagatingEqs = params.isArithPropagatingEqs;

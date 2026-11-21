@@ -333,6 +333,7 @@ const SMT_DESCRS = getDescrs("smt", [
   ["arith.branch_cut_ratio", PARAM_UINT, 2, true],
   ["random_seed", PARAM_UINT, 0, true],
   ["auto_config", PARAM_BOOL, true, true],
+  ["ematching", PARAM_BOOL, true, true],
   ["mbqi.id", PARAM_STRING, ""],
   ["qi.cost", PARAM_STRING, "(+ weight generation)", true],
   ["qi.eager_threshold", PARAM_NUMERAL, "10", true],
@@ -344,6 +345,9 @@ const getSmtDouble = (environment: TacticEnvironment, params: TacticParams, name
   params.has(name)
     ? getNumeral(params, name, "0").toDouble()
     : getDoubleParameter(environment.parameters, `smt.${name}`);
+
+const isEmatching = (environment: TacticEnvironment, params: TacticParams) =>
+  getBool(params, "ematching", getParameter(environment, "smt.ematching", "true") !== "false");
 
 const getRelevancyLevel = (environment: TacticEnvironment, params: TacticParams) =>
   getUint(params, "relevancy", Number(getParameter(environment, "smt.relevancy", "2")));
@@ -367,6 +371,7 @@ const getKernelParams = (environment: TacticEnvironment, params: TacticParams, g
     isMbqi: getBool(params, "mbqi", environment.isMbqi) || isMbqiByFeatures(setup, hasQuantifiers),
     mbqiMaxIterations: getUint(params, "mbqi.max_iterations", environment.mbqiMaxIterations),
     isFindingMacros: environment.isFindingMacros,
+    isEmatching: isEmatching(environment, params),
     relevancyLevel: getRelevancyLevel(environment, params),
     setup,
     randomSeed: getUint(
@@ -566,6 +571,7 @@ const runUnitSubsume = (environment: TacticEnvironment) => {
     isMbqi: environment.isMbqi,
     mbqiMaxIterations: environment.mbqiMaxIterations,
     isFindingMacros: environment.isFindingMacros,
+    isEmatching: getParameter(environment, "smt.ematching", "true") !== "false",
     relevancyLevel: Number(getParameter(environment, "smt.relevancy", "2")),
   });
   const clauses = new RefVector(manager);
@@ -942,6 +948,7 @@ const NAMED_TACTICS = new Map<string, NamedTactic>([
             environment.mbqiMaxIterations,
           ),
           isFindingMacros: environment.isFindingMacros,
+          isEmatching: isEmatching(environment, tacticParams),
           relevancyLevel: getRelevancyLevel(environment, tacticParams),
           qiCost: tacticParams.has("qi.cost")
             ? String(tacticParams.get("qi.cost"))

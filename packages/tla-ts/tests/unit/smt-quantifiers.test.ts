@@ -552,6 +552,58 @@ describe("relevancy, as Z3 5.3.2 reads smt.relevancy", () => {
   });
 });
 
+describe("e-matching, as Z3 5.3.2 reads smt.ematching", () => {
+  const UNKNOWN = [
+    "unknown",
+    '(:reason-unknown "smt tactic failed to show goal to be sat/unsat (incomplete quantifiers)")',
+  ];
+
+  it("leaves a check unknown without the instances e-matching finds", () => {
+    expect(
+      run([
+        "(set-option :auto_config false)",
+        "(set-option :smt.mbqi false)",
+        "(set-option :smt.ematching false)",
+        "(declare-fun f (Int) Int)",
+        "(assert (forall ((x Int)) (! (> (f x) x) :pattern ((f x)))))",
+        "(assert (< (f 3) 2))",
+        "(check-sat)",
+        "(get-info :reason-unknown)",
+        "(get-info :rlimit)",
+      ]),
+    ).toEqual([...UNKNOWN, "(:rlimit 287)"]);
+  });
+
+  it("reads ematching as a parameter of the smt tactic", () => {
+    expect(
+      run([
+        "(declare-fun f (Int) Int)",
+        "(assert (forall ((x Int)) (! (> (f x) x) :pattern ((f x)))))",
+        "(assert (< (f 3) 2))",
+        "(check-sat-using (using-params smt :ematching false :mbqi false :auto_config false))",
+        "(get-info :reason-unknown)",
+        "(get-info :rlimit)",
+      ]),
+    ).toEqual([...UNKNOWN, "(:rlimit 201)"]);
+  });
+
+  it("infers no patterns", () => {
+    expect(
+      run([
+        "(set-option :auto_config false)",
+        "(set-option :smt.ematching false)",
+        "(declare-fun a () Int)",
+        "(declare-fun p (Int) Bool)",
+        "(assert (forall ((x Int)) (or (> x a) (< x (* 2 a)))))",
+        "(assert (> a 0))",
+        "(assert (p a))",
+        "(check-sat)",
+        "(get-info :rlimit)",
+      ]),
+    ).toEqual(["sat", "(:rlimit 498)"]);
+  });
+});
+
 describe("the model checker, as Z3 5.3.2 counts its steps", () => {
   it("pushes its context as the kernel does", () => {
     expect(
