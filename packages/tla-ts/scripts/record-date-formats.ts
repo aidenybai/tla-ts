@@ -426,8 +426,6 @@ export interface DateFormat {
   isZoned?: boolean;
 }
 
-export const DATE_FORMAT_KEYS = ${JSON.stringify(KEYS)};
-
 export const DATE_FORMATS: Record<string, DateFormat> = {
 `;
 writeFileSync(

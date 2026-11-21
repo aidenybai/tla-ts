@@ -11,23 +11,6 @@ export interface DateFormat {
   isZoned?: boolean;
 }
 
-export const DATE_FORMAT_KEYS = [
-  "hour12",
-  "hourCycle",
-  "weekday",
-  "era",
-  "year",
-  "month",
-  "day",
-  "hour",
-  "minute",
-  "second",
-  "fractionalSecondDigits",
-  "dateStyle",
-  "timeStyle",
-  "dayPeriod",
-];
-
 export const DATE_FORMATS: Record<string, DateFormat> = {
   "PlainDate|iso8601": {
     fields: ["month", "literal", "day", "literal", "year"],
