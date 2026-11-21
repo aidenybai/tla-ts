@@ -6,7 +6,9 @@ import {
   OP_ARRAY_MAP,
   OP_AS_ARRAY,
   OP_CONST_ARRAY,
+  OP_EQ,
   OP_ITE,
+  OP_OR,
   OP_SELECT,
   OP_STORE,
   SORT_SIZE_INFINITE,
@@ -14,11 +16,71 @@ import {
   SORT_BOOL,
 } from "./ast";
 import { isAstLess } from "./ast-lt";
+import { mkNot } from "./ast-util";
 import { L_FALSE, L_TRUE, L_UNDEF } from "./lbool";
 import { InvVarShifter, type Rewrite, VarShifter } from "./rewriter-tpl";
 import { getFreeVarSorts, VarSubst } from "./var-subst";
 
 const MAX_SQUASH_ROUNDS = 10;
+
+const addStore = (
+  manager: AstManager,
+  numIndices: number,
+  condition: number,
+  value: number,
+  stores: number[][],
+) => {
+  const store = Array.from({ length: numIndices + 1 }, () => -1);
+  const isNegated = manager.isBool(value) && manager.isNot(condition);
+  const eqs = [isNegated ? manager.getArg(condition, 0) : condition];
+  for (let index = 0; index < eqs.length; index++) {
+    const eq = eqs[index];
+    if (manager.getOp(eq) === OP_AND) {
+      manager.pushArgs(eq, eqs);
+      continue;
+    }
+    if (manager.getOp(eq) !== OP_EQ) return false;
+    const [left, right] = manager.isVar(manager.getArg(eq, 1))
+      ? [manager.getArg(eq, 1), manager.getArg(eq, 0)]
+      : manager.getArgs(eq);
+    if (!manager.isVar(left) || !manager.isGroundApp(right)) return false;
+    if (manager.values[left] >= numIndices) return false;
+    const position = numIndices - manager.values[left] - 1;
+    if (store[position] !== -1 && store[position] !== right) return false;
+    store[position] = right;
+  }
+  if (store.indexOf(-1) < numIndices) return false;
+  store[numIndices] = isNegated ? mkNot(manager, value) : value;
+  stores.push(store);
+  return true;
+};
+
+// has_index_set on a lambda: the else value of a body that is an or or an and of index equalities,
+// or a chain of ites on them, after the stores it denotes.
+export const hasIndexSet = (manager: AstManager, lambda: number, stores: number[][]) => {
+  const numIndices = manager.getQuantifier(lambda).sorts.length;
+  const body = manager.getQuantifier(lambda).body;
+  const op = manager.getOp(body);
+  if (!manager.isGroundApp(body) && (op === OP_OR || op === OP_AND)) {
+    // Deviation from Z3: has_index_set misreads a negated equality in an or and an equality in an and, which gives a wrong model.
+    if (manager.getArgs(body).some((arg) => manager.isNot(arg) === (op === OP_OR)))
+      return undefined;
+    for (const arg of manager.getArgs(body))
+      if (!addStore(manager, numIndices, arg, manager.trueExpr, stores)) return undefined;
+    return op === OP_OR ? manager.falseExpr : manager.trueExpr;
+  }
+  let elseExpr = body;
+  while (
+    !manager.isGroundApp(elseExpr) &&
+    manager.getOp(elseExpr) === OP_ITE &&
+    manager.isGroundApp(manager.getArg(elseExpr, 1))
+  ) {
+    const [condition, value, rest] = manager.getArgs(elseExpr);
+    if (!addStore(manager, numIndices, condition, value, stores)) return undefined;
+    elseExpr = rest;
+  }
+  return manager.isGroundApp(elseExpr) ? elseExpr : undefined;
+};
 
 export class ArrayRewriter {
   constructor(

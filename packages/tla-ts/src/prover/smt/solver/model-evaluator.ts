@@ -1,4 +1,5 @@
 import { mkArrayApp } from "./array-decl-plugin";
+import { hasIndexSet } from "./array-rewriter";
 import {
   FAMILY_ARITH,
   FAMILY_BASIC,
@@ -84,6 +85,33 @@ export class ModelEvaluator extends RewriterTpl {
     const nested = new ModelEvaluator(this.manager, this.model);
     nested.isModelCompletion = this.isModelCompletion;
     return nested;
+  }
+
+  // model_evaluator::operator() under model.array_as_stores: an array value with an index set becomes
+  // stores over a constant array.
+  rewrite(expr: number) {
+    const manager = this.manager;
+    const value = super.rewrite(expr);
+    if (!manager.isArraySort(manager.sorts[value])) return value;
+    const interp = this.extractArrayFuncInterp(value);
+    if (interp === undefined) return value;
+    for (const store of interp.stores) for (const arg of store) manager.incRef(arg);
+    const constArray = mkArrayApp(
+      manager,
+      OP_CONST_ARRAY,
+      [interp.elseExpr],
+      [manager.sorts[value]],
+    );
+    manager.incRef(constArray);
+    manager.decRef(value);
+    const result = interp.stores.reduceRight((array, store) => {
+      const next = mkArrayApp(manager, OP_STORE, [array, ...store]);
+      manager.incRef(next);
+      manager.decRef(array);
+      return next;
+    }, constArray);
+    for (const store of interp.stores) for (const arg of store) manager.decRef(arg);
+    return result;
   }
 
   reduceApp(decl: number, args: number[], sort: number) {
@@ -215,14 +243,21 @@ export class ModelEvaluator extends RewriterTpl {
     const stores: number[][] = [];
     let array = inputArray;
     let areUnique = true;
+    const isUniqueStore = (store: number[]) =>
+      store.slice(0, -1).every((index) => manager.isUniqueValue(index));
     while (manager.getFamily(array) === FAMILY_ARRAY && manager.getOp(array) === OP_STORE) {
       const store = manager.getArgs(array).slice(1);
-      areUnique &&= store.slice(0, -1).every((index) => manager.isUniqueValue(index));
+      areUnique &&= isUniqueStore(store);
       stores.push(store);
       array = manager.getArg(array, 0);
     }
     if (manager.getFamily(array) === FAMILY_ARRAY && manager.getOp(array) === OP_CONST_ARRAY)
       return { stores, elseExpr: manager.getArg(array, 0), areUnique };
+    if (manager.isLambda(array)) {
+      const elseExpr = hasIndexSet(manager, array, stores);
+      if (elseExpr === undefined) return undefined;
+      return { stores, elseExpr, areUnique: areUnique && stores.every(isUniqueStore) };
+    }
     if (manager.getFamily(array) !== FAMILY_ARRAY || manager.getOp(array) !== OP_AS_ARRAY)
       return undefined;
     const interp = this.model.funcInterps.get(

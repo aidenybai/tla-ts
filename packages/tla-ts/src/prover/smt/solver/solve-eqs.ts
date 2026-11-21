@@ -1,4 +1,4 @@
-import { SmtUnsupportedError } from "../../../errors";
+import { mkArrayApp } from "./array-decl-plugin";
 import {
   type AstManager,
   KIND_APP,
@@ -26,7 +26,9 @@ import {
   SORT_INT,
   SORT_REAL,
   QUANTIFIER_FORALL,
+  QUANTIFIER_LAMBDA,
 } from "./ast";
+import { mkNot } from "./ast-util";
 import { BoundManager } from "./bound-manager";
 import { mkBvApp } from "./bv-decl-plugin";
 import { type Definition, type Dependency, type Goal, joinDependencies } from "./goal";
@@ -462,27 +464,39 @@ export class SolveEqs {
     return false;
   }
 
-  // Array definitions by a universal quantifier need lambdas, which the port does not have.
-  private checkArrayEqs(form: number) {
+  // array_extract_eq: (forall (x) (=> G (= (select A x) t))) solves A as
+  // (lambda (x) (ite G t (select A' x))) with a fresh A', and without G as (lambda (x) t).
+  private getArrayEqs(form: number, eqs: DependentEq[]) {
     const manager = this.manager;
     if (
       manager.kinds[form] !== KIND_QUANTIFIER ||
       manager.getQuantifier(form).kind !== QUANTIFIER_FORALL
     )
       return;
-    const numVars = manager.getQuantifier(form).sorts.length;
     const body = manager.getQuantifier(form).body;
+    const isOr = manager.getOp(body) === OP_OR && manager.getNumArgs(body) === 2;
     const [guard, eq] =
       manager.getOp(body) === OP_IMPLIES
         ? manager.getArgs(body)
-        : manager.getOp(body) === OP_OR && manager.getNumArgs(body) === 2
+        : isOr
           ? manager.getOp(manager.getArg(body, 1)) === OP_EQ
-            ? manager.getArgs(body)
+            ? [mkNot(manager, manager.getArg(body, 0)), manager.getArg(body, 1)]
             : manager.getOp(manager.getArg(body, 0)) === OP_EQ
-              ? manager.getArgs(body).reverse()
+              ? [mkNot(manager, manager.getArg(body, 1)), manager.getArg(body, 0)]
               : [-1, -1]
           : [-1, body];
-    if (eq === -1 || manager.getOp(eq) !== OP_EQ) return;
+    if (eq === -1) return;
+    if (isOr) manager.incRef(guard);
+    const definition = this.mkArrayDef(form, guard, eq);
+    if (definition !== undefined) this.push(eqs, form, definition.array, definition.term);
+    if (isOr) manager.decRef(guard);
+  }
+
+  private mkArrayDef(form: number, guard: number, eq: number) {
+    const manager = this.manager;
+    const data = manager.getQuantifier(form);
+    const numVars = data.sorts.length;
+    if (manager.getOp(eq) !== OP_EQ) return undefined;
     const [lhs, rhs] = manager.getArgs(eq);
     const isGuardedIte =
       guard === -1 &&
@@ -508,16 +522,42 @@ export class SolveEqs {
       : isSelectOfVars(right)
         ? [right, left]
         : [-1, -1];
-    if (select === -1) return;
+    if (select === -1) return undefined;
     const array = manager.getArg(select, 0);
     const isQuantifier = (expr: number) => manager.kinds[expr] === KIND_QUANTIFIER;
     const parts = condition === -1 ? [def] : [def, condition];
     if (
-      this.isConst(array) &&
-      !parts.some((part) => this.hasSubterm(part, (expr) => expr === array)) &&
-      !parts.some((part) => this.hasSubterm(part, isQuantifier))
+      !this.isConst(array) ||
+      parts.some((part) => this.hasSubterm(part, (expr) => expr === array)) ||
+      parts.some((part) => this.hasSubterm(part, isQuantifier))
     )
-      throw new SmtUnsupportedError("solving for an array defined by a quantifier");
+      return undefined;
+    const lambdaBody =
+      condition === -1
+        ? def
+        : manager.mkApp(
+            OP_ITE,
+            [
+              condition,
+              def,
+              mkArrayApp(manager, OP_SELECT, [
+                manager.mkFreshConst("array-def", manager.sorts[array]),
+                ...manager.getArgs(select).slice(1),
+              ]),
+            ],
+            manager.sorts[def],
+          );
+    const term = manager.mkQuantifier({
+      kind: QUANTIFIER_LAMBDA,
+      sorts: data.sorts,
+      names: data.names,
+      body: lambdaBody,
+      patterns: [],
+      noPatterns: [],
+      weight: 1,
+      qid: "",
+    });
+    return { array, term };
   }
 
   private getEqsOf(form: number, eqs: DependentEq[]) {
@@ -525,7 +565,7 @@ export class SolveEqs {
     this.getBasicEqs(form, eqs);
     if (!this.goal.isProofsEnabled) {
       this.getBvEqs(form, eqs);
-      this.checkArrayEqs(form);
+      this.getArrayEqs(form, eqs);
     }
   }
 
@@ -548,7 +588,7 @@ export class SolveEqs {
     extract((form) => this.getBasicEqs(form, eqs));
     if (!this.goal.isProofsEnabled) {
       extract((form) => this.getBvEqs(form, eqs));
-      state.forEachIndex((index) => this.checkArrayEqs(state.get(index)));
+      extract((form) => this.getArrayEqs(form, eqs));
       // ff_extract_eq finds no equations without finite fields, but its pass still counts steps.
       state.forEachIndex(() => {});
     }
