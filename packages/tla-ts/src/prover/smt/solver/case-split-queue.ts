@@ -1,16 +1,32 @@
-import { BoolVar, toBoolVar } from "./literal";
+import type { AstManager } from "./ast";
+import type { Enode } from "./enode";
+import { L_UNDEF } from "./lbool";
+import { BoolVar, type Literal, toBoolVar } from "./literal";
 
-class ActivityHeap {
-  private values: BoolVar[] = [toBoolVar(-1)];
+export const CS_ACTIVITY = 0;
+export const CS_ACTIVITY_DELAY_NEW = 1;
+export const CS_RELEVANCY = 3;
+export const CS_RELEVANCY_ACTIVITY = 4;
+export const CS_RELEVANCY_GOAL = 5;
+
+export const getCaseSplitStrategy = (
+  caseSplit: number,
+  relevancyLevel: number,
+  isAutoConfig: boolean,
+) =>
+  caseSplit >= CS_RELEVANCY &&
+  caseSplit <= CS_RELEVANCY_GOAL &&
+  (relevancyLevel < 2 || isAutoConfig)
+    ? CS_ACTIVITY
+    : caseSplit;
+
+export abstract class Heap {
+  private values = [-1];
   private indices = new Int32Array(1024);
 
-  constructor(private activity: number[]) {}
+  protected abstract isLess(first: number, second: number): boolean;
 
-  private isLess(first: BoolVar, second: BoolVar) {
-    return this.activity[first] > this.activity[second];
-  }
-
-  contains(value: BoolVar) {
+  contains(value: number) {
     return value < this.indices.length && this.indices[value] !== 0;
   }
 
@@ -18,7 +34,7 @@ class ActivityHeap {
     return this.values.length === 1;
   }
 
-  insert(value: BoolVar) {
+  insert(value: number) {
     if (value >= this.indices.length) {
       const indices = new Int32Array(Math.max(2 * this.indices.length, value + 1));
       indices.set(this.indices);
@@ -42,7 +58,7 @@ class ActivityHeap {
     return result;
   }
 
-  erase(value: BoolVar) {
+  erase(value: number) {
     const index = this.indices[value];
     if (index === this.values.length - 1) {
       this.indices[value] = 0;
@@ -59,11 +75,11 @@ class ActivityHeap {
     else this.moveDown(index);
   }
 
-  decreased(value: BoolVar) {
+  decreased(value: number) {
     this.moveUp(this.indices[value]);
   }
 
-  swap(other: ActivityHeap) {
+  swap(other: Heap) {
     const values = this.values;
     const indices = this.indices;
     this.values = other.values;
@@ -106,18 +122,49 @@ class ActivityHeap {
   }
 }
 
-interface CaseSplitContext {
-  activity: number[];
-  getIsSearching(): boolean;
+export class ActivityHeap extends Heap {
+  constructor(private activity: number[]) {
+    super();
+  }
+
+  protected isLess(first: number, second: number) {
+    return this.activity[first] > this.activity[second];
+  }
+}
+
+export interface CaseSplitContext {
+  readonly manager: AstManager;
+  readonly activity: number[];
+  readonly isSearching: boolean;
+  readonly numBoolVars: number;
   getRandomValue(): number;
-  getNumBoolVars(): number;
-  isUnassigned(boolVar: BoolVar): boolean;
+  getBoolVarAssignment(boolVar: BoolVar): number;
+  findBoolVar(expr: number): BoolVar | undefined;
+  getExprAssignment(expr: number): number;
+  getLiteral(expr: number): Literal;
+  getEnode(expr: number): Enode | undefined;
+  getGeneration(node: Enode): number;
+}
+
+export interface CaseSplitQueue {
+  readonly phase: number;
+  activityIncreased(boolVar: BoolVar): void;
+  mkVar(boolVar: BoolVar): void;
+  delVar(boolVar: BoolVar): void;
+  unassignVar(boolVar: BoolVar): void;
+  relevantEh(expr: number): void;
+  initSearchEh(): void;
+  endSearchEh(): void;
+  pushScope(): void;
+  popScope(numScopes: number): void;
+  nextCaseSplit(): BoolVar | undefined;
 }
 
 const RANDOM_VAR_FREQ = 0.01;
-const RANDOM_MAX_VALUE = 0x7fff;
+export const RANDOM_MAX_VALUE = 0x7fff;
 
-export class CaseSplitQueue {
+export class ActCaseSplitQueue implements CaseSplitQueue {
+  readonly phase = L_UNDEF;
   private queue: ActivityHeap;
   private delayedQueue: ActivityHeap;
 
@@ -135,7 +182,7 @@ export class CaseSplitQueue {
   }
 
   mkVar(boolVar: BoolVar) {
-    if (this.isDelayingNew && this.context.getIsSearching()) this.delayedQueue.insert(boolVar);
+    if (this.isDelayingNew && this.context.isSearching) this.delayedQueue.insert(boolVar);
     else this.queue.insert(boolVar);
   }
 
@@ -148,20 +195,30 @@ export class CaseSplitQueue {
     if (!this.queue.contains(boolVar)) this.queue.insert(boolVar);
   }
 
+  relevantEh() {}
+
+  initSearchEh() {}
+
+  endSearchEh() {}
+
+  pushScope() {}
+
+  popScope() {}
+
   nextCaseSplit() {
     const context = this.context;
     if (context.getRandomValue() < Math.trunc(RANDOM_VAR_FREQ * RANDOM_MAX_VALUE)) {
-      const next = toBoolVar(context.getRandomValue() % context.getNumBoolVars());
-      if (context.isUnassigned(next)) return next;
+      const next = toBoolVar(context.getRandomValue() % context.numBoolVars);
+      if (context.getBoolVarAssignment(next) === L_UNDEF) return next;
     }
     while (!this.queue.isEmpty()) {
-      const next = this.queue.eraseMin();
-      if (context.isUnassigned(next)) return next;
+      const next = toBoolVar(this.queue.eraseMin());
+      if (context.getBoolVarAssignment(next) === L_UNDEF) return next;
     }
     this.queue.swap(this.delayedQueue);
     while (!this.queue.isEmpty()) {
-      const next = this.queue.eraseMin();
-      if (context.isUnassigned(next)) return next;
+      const next = toBoolVar(this.queue.eraseMin());
+      if (context.getBoolVarAssignment(next) === L_UNDEF) return next;
     }
     return undefined;
   }

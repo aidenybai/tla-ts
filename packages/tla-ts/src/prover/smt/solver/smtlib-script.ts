@@ -62,7 +62,7 @@ import { getConsequences } from "./smt-consequences";
 import { FdSolver } from "./fd-solver";
 import { getDoubleParameter, getParameterValue, isDoubleParameter } from "./gparams";
 import { formatDouble } from "./probes";
-import { SmtKernel } from "./smt-kernel";
+import { getGlobalSmtParams, SmtKernel } from "./smt-kernel";
 import { RefVector } from "./ref-vector";
 import { IncSatSolver } from "./sat/inc-sat-solver";
 import { mkThSolver } from "./euf/th-solvers";
@@ -675,10 +675,8 @@ export const runSmtlibScript = (
         (assertion) => state.manager.hasQuantifierFlags[assertion],
       );
       const solved = solveAssertions(state.manager, state.assertions, {
+        ...getKernelParams(),
         isMbqi: settings.isMbqi || isMbqiByFeatures(getSetup(), hasQuantifiers),
-        mbqiMaxIterations: settings.mbqiMaxIterations,
-        isFindingMacros: settings.isFindingMacros,
-        setup: getSetup(),
       });
       return {
         ...solved,
@@ -708,8 +706,7 @@ export const runSmtlibScript = (
     isMbqi: settings.isMbqi || (!isSetUp && isMbqiByLogic(getSetup())),
     mbqiMaxIterations: settings.mbqiMaxIterations,
     isFindingMacros: settings.isFindingMacros,
-    isEmatching: settings.parameters.get("smt.ematching") !== "false",
-    relevancyLevel: Number(settings.parameters.get("smt.relevancy") ?? "2"),
+    ...getGlobalSmtParams(settings.parameters),
     isCoreMinimizing: settings.parameters.get("smt.core.minimize") === "true",
     setup: getSetup(),
     intHammerPeriod: getHammerPeriod(settings.parameters),
@@ -717,6 +714,7 @@ export const runSmtlibScript = (
     qiCost: settings.parameters.get("smt.qi.cost"),
     qiEagerThreshold: getDoubleParameter(settings.parameters, "smt.qi.eager_threshold"),
     qiLazyThreshold: getDoubleParameter(settings.parameters, "smt.qi.lazy_threshold"),
+    isProofsEnabled: settings.isProducingProofs || state.isProofsEnabled === true,
   });
   const checkFdSolver = (fdSolver: FdSolver, extra: number[]) => {
     const result = fdSolver.check(extra);

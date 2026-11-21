@@ -360,6 +360,7 @@ export interface RecFunDef {
   rhs: number;
   isMacro: boolean;
   cases: RecFunCase[];
+  vars: number[];
 }
 
 export interface RecFunCase {
@@ -868,13 +869,20 @@ export class AstManager {
     if (def === undefined) return;
     for (const recFunCase of def.cases) this.recFunCases.delete(recFunCase.pred);
     this.recFunDefs.delete(decl);
+    if (def.rhs !== -1) this.decRef(def.rhs);
+    for (const recFunCase of def.cases) {
+      this.decRef(recFunCase.rhs);
+      for (const guard of recFunCase.guards) this.decRef(guard);
+      this.decDeclRef(recFunCase.pred);
+    }
+    for (const variable of def.vars) this.decRef(variable);
   }
 
   // recfun::def: the declaration of a defined function, which the definition holds.
   mkRecFuncDecl(name: SmtSymbol, domain: number[], range: number) {
     const decl = this.mkRecFunDecl(OP_FUN_DEFINED, name, [0], domain, range);
     this.declRefCounts[decl] = 1;
-    this.recFunDefs.set(decl, { decl, rhs: -1, isMacro: false, cases: [] });
+    this.recFunDefs.set(decl, { decl, rhs: -1, isMacro: false, cases: [], vars: [] });
     return decl;
   }
 

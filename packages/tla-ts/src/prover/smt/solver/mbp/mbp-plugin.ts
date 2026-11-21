@@ -197,6 +197,7 @@ export class ProjectPlugin {
     if (manager.kinds[formula] !== KIND_APP) return;
     this.toVisit = manager.getArgs(formula);
     while (this.toVisit.length > 0) {
+      if (!manager.limit.inc()) return;
       const expr = this.toVisit[this.toVisit.length - 1];
       if (this.cache.has(expr)) this.toVisit.pop();
       else if (manager.kinds[expr] !== KIND_APP) {
