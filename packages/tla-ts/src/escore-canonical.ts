@@ -155,14 +155,13 @@ const PLAIN_CLASSES = new Set([
 const VIEW_CLASSES = new Set(["typedArray", "dataView"]);
 
 // The built-in functions whose data is a value: the cell of a promise's resolving functions or
-// capability, and the host's: process.getBuiltinModule's proxy of async_hooks, console.createTask's
-// function that runs a task, the getter of a global's value, and the traps of the proxies that
-// stand for process.hrtime, an AsyncResource, and a TextEncoder, of the value each one reads.
+// capability, and the host's: console.createTask's function that runs a task, the getter of a
+// global's value, and the traps of the proxies that stand for process.hrtime, an AsyncResource, and
+// a TextEncoder, of the value each one reads.
 const OBJECT_DATA_BUILTINS = new Set([
   "Promise resolveFunction",
   "Promise rejectFunction",
   "Promise capabilityExecutor",
-  "Module getBuiltinModule",
   "Module createTask",
   "Module hostGlobal",
   "Module hrtimeGet",
