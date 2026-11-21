@@ -1,5 +1,6 @@
 import { SmtCanceledError, SmtDefaultError, SmtInvariantError } from "../../../errors";
 import { type AstManager, FAMILY_ARITH, FAMILY_PB } from "./ast";
+import { CS_ACTIVITY_DELAY_NEW } from "./case-split-queue";
 import { InfEps } from "./inf-eps";
 import { L_FALSE, L_TRUE, L_UNDEF } from "./lbool";
 import type { AlgebraicManager } from "./nlsat/algebraic";
@@ -64,7 +65,8 @@ export class OptSolver {
     this.kernel = new SmtKernel(manager, {
       ...params,
       ...smtParams,
-      relevancyLevel: smtParams.isDelayingNewCaseSplits ? 0 : smtParams.relevancyLevel,
+      relevancyLevel:
+        smtParams.caseSplitStrategy === CS_ACTIVITY_DELAY_NEW ? 0 : smtParams.relevancyLevel,
       setup: params.setup && { ...params.setup, isArithAutoConfigSimplex: true },
     });
     this.kernel.context.registerFamily(FAMILY_PB);

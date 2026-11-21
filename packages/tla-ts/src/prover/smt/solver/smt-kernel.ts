@@ -1,7 +1,7 @@
 import { type AstManager } from "./ast";
 import type { SmtSetup } from "./smt-setup";
 import { AssertedFormulas } from "./asserted-formulas";
-import { isDelayingByCaseSplit } from "./case-split-queue";
+import { getCaseSplitStrategy } from "./case-split-queue";
 import { Context } from "./context";
 import { L_TRUE } from "./lbool";
 import { Mus } from "./mus";
@@ -15,7 +15,11 @@ export const getGlobalSmtParams = (
 ) => ({
   isEmatching: parameters.get("smt.ematching") !== "false",
   relevancyLevel,
-  isDelayingNewCaseSplits: isDelayingByCaseSplit(Number(parameters.get("smt.case_split") ?? "1")),
+  caseSplitStrategy: getCaseSplitStrategy(
+    Number(parameters.get("smt.case_split") ?? "1"),
+    relevancyLevel,
+    parameters.get("smt.auto_config") !== "false" && parameters.get("auto_config") !== "false",
+  ),
 });
 
 export class SmtKernel {
@@ -33,7 +37,7 @@ export class SmtKernel {
       mbqiMaxIterations: params.mbqiMaxIterations,
       isEmatching: params.isEmatching,
       relevancyLevel: params.relevancyLevel ?? 2,
-      isDelayingNewCaseSplits: params.isDelayingNewCaseSplits,
+      caseSplitStrategy: params.caseSplitStrategy,
       randomSeed: params.randomSeed,
       intHammerPeriod: params.intHammerPeriod,
       isArithPropagatingEqs: params.isArithPropagatingEqs,

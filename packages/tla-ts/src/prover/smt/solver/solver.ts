@@ -22,7 +22,7 @@ export interface KernelParams {
   isFindingMacros: boolean;
   isEmatching?: boolean;
   relevancyLevel?: number;
-  isDelayingNewCaseSplits?: boolean;
+  caseSplitStrategy?: number;
   isCoreMinimizing?: boolean;
   randomSeed?: number;
   intHammerPeriod?: number;
@@ -60,7 +60,7 @@ export const solveGoal = (manager: AstManager, forms: number[], params: KernelPa
     mbqiMaxIterations: params.mbqiMaxIterations,
     isEmatching: params.isEmatching,
     relevancyLevel: params.relevancyLevel ?? 2,
-    isDelayingNewCaseSplits: params.isDelayingNewCaseSplits,
+    caseSplitStrategy: params.caseSplitStrategy,
     randomSeed: params.randomSeed,
     intHammerPeriod: params.intHammerPeriod,
     isArithPropagatingEqs: params.isArithPropagatingEqs,
@@ -110,7 +110,7 @@ export const solveAssuming = (
     mbqiMaxIterations: params.mbqiMaxIterations,
     isEmatching: params.isEmatching,
     relevancyLevel: params.relevancyLevel ?? 2,
-    isDelayingNewCaseSplits: params.isDelayingNewCaseSplits,
+    caseSplitStrategy: params.caseSplitStrategy,
     randomSeed: params.randomSeed,
     intHammerPeriod: params.intHammerPeriod,
     isArithPropagatingEqs: params.isArithPropagatingEqs,

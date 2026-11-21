@@ -11,7 +11,7 @@ import { createQfufbvAckrTactic, runAckermannizeBv } from "./ackermannize-bv-tac
 import { createAigTactic } from "./aig-tactic";
 import { blastTermIte } from "./blast-term-ite";
 import { card2bv } from "./card2bv";
-import { isDelayingByCaseSplit } from "./case-split-queue";
+import { getCaseSplitStrategy } from "./case-split-queue";
 import { type Context, MBQI_MAX_ITERATIONS } from "./context";
 import { ctxSimplify } from "./ctx-simplify";
 import { createCtxSolverSimplify } from "./ctx-solver-simplify";
@@ -363,9 +363,11 @@ const isAutoConfig = (environment: TacticEnvironment, params: TacticParams) =>
     getParameter(environment, "smt.auto_config", "true") !== "false",
   ) && getParameter(environment, "auto_config", "true") !== "false";
 
-const isDelayingNewCaseSplits = (environment: TacticEnvironment, params: TacticParams) =>
-  isDelayingByCaseSplit(
+const getSmtCaseSplitStrategy = (environment: TacticEnvironment, params: TacticParams) =>
+  getCaseSplitStrategy(
     getUint(params, "case_split", Number(getParameter(environment, "smt.case_split", "1"))),
+    getRelevancyLevel(environment, params),
+    isAutoConfig(environment, params),
   );
 
 // The dependencies are assertion names, which are Boolean constants, so each one is its own
@@ -380,7 +382,7 @@ const getKernelParams = (environment: TacticEnvironment, params: TacticParams, g
     isFindingMacros: environment.isFindingMacros,
     isEmatching: isEmatching(environment, params),
     relevancyLevel: getRelevancyLevel(environment, params),
-    isDelayingNewCaseSplits: isDelayingNewCaseSplits(environment, params),
+    caseSplitStrategy: getSmtCaseSplitStrategy(environment, params),
     setup,
     randomSeed: getUint(
       params,
@@ -958,7 +960,7 @@ const NAMED_TACTICS = new Map<string, NamedTactic>([
           isFindingMacros: environment.isFindingMacros,
           isEmatching: isEmatching(environment, tacticParams),
           relevancyLevel: getRelevancyLevel(environment, tacticParams),
-          isDelayingNewCaseSplits: isDelayingNewCaseSplits(environment, tacticParams),
+          caseSplitStrategy: getSmtCaseSplitStrategy(environment, tacticParams),
           qiCost: tacticParams.has("qi.cost")
             ? String(tacticParams.get("qi.cost"))
             : environment.parameters.get("smt.qi.cost"),

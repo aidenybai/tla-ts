@@ -2939,4 +2939,60 @@ describe("case splits, as Z3 5.3.2 reads smt.case_split", () => {
     expect(getRlimit([])).toEqual(["sat", "(:rlimit 3420)"]);
     expect(getRlimit(["(set-option :smt.case_split 0)"])).toEqual(["sat", "(:rlimit 3465)"]);
   });
+
+  const getRelevancySplits = (caseSplit: number, options: string[] = []) =>
+    run([
+      "(set-option :auto_config false)",
+      `(set-option :smt.case_split ${caseSplit})`,
+      ...options,
+      "(declare-const x Int)",
+      "(declare-const y Int)",
+      "(declare-fun p (Int) Bool)",
+      "(assert (or (and (p x) (> x 3)) (and (p y) (> y x))))",
+      "(assert (or (< x 2) (> y 7) (p (+ x y))))",
+      "(check-sat)",
+      "(get-info :rlimit)",
+      "(get-value (x y (p x) (p y)))",
+    ]);
+
+  it("splits on the relevant terms under case_split 3 with full relevancy", () => {
+    expect(getRelevancySplits(3)).toEqual([
+      "sat",
+      "(:rlimit 528)",
+      "((x 21242)",
+      " (y 0)",
+      " ((p x) true)",
+      " ((p y) true))",
+    ]);
+    expect(getRelevancySplits(3, ["(set-option :smt.relevancy 1)"])).toEqual([
+      "sat",
+      "(:rlimit 520)",
+      "((x 0)",
+      " (y 8)",
+      " ((p x) true)",
+      " ((p y) true))",
+    ]);
+  });
+
+  it("splits on the relevant terms, then on the new variables by activity, under case_split 4", () => {
+    expect(getRelevancySplits(4)).toEqual([
+      "sat",
+      "(:rlimit 490)",
+      "((x 4)",
+      " (y 8)",
+      " ((p x) true)",
+      " ((p y) true))",
+    ]);
+  });
+
+  it("splits on the relevant terms, then on the new ones by generation, under case_split 5", () => {
+    expect(getRelevancySplits(5)).toEqual([
+      "sat",
+      "(:rlimit 528)",
+      "((x 21242)",
+      " (y 0)",
+      " ((p x) true)",
+      " ((p y) true))",
+    ]);
+  });
 });

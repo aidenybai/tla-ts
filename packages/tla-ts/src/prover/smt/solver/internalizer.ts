@@ -24,8 +24,20 @@ import {
   OP_XOR,
   SORT_BOOL,
 } from "./ast";
-import { CaseSplitQueue } from "./case-split-queue";
+import {
+  ActCaseSplitQueue,
+  type CaseSplitQueue,
+  CS_ACTIVITY_DELAY_NEW,
+  CS_RELEVANCY,
+  CS_RELEVANCY_ACTIVITY,
+  CS_RELEVANCY_GOAL,
+} from "./case-split-queue";
 import { CgTable, getCongruenceJustification, isCongruent } from "./cg-table";
+import {
+  RelActCaseSplitQueue,
+  RelCaseSplitQueue,
+  RelGoalCaseSplitQueue,
+} from "./rel-case-split-queue";
 import {
   BinJustification,
   BJustification,
@@ -184,7 +196,7 @@ export abstract class Internalizer {
   constructor(
     readonly manager: AstManager,
     protected relevancyLevel: number,
-    isDelayingNewCaseSplits: boolean,
+    caseSplitStrategy: number,
     private isProofsEnabled: boolean,
   ) {
     this.rewriter = new Rewriter(manager, KERNEL_REWRITER_OPTIONS);
@@ -197,16 +209,14 @@ export abstract class Internalizer {
       },
       relevancyLevel > 0,
     );
-    this.caseSplitQueue = new CaseSplitQueue(
-      {
-        activity: this.activity,
-        getIsSearching: () => this.isSearching,
-        getRandomValue: () => this.getRandomValue(),
-        getNumBoolVars: () => this.numBoolVars,
-        isUnassigned: (boolVar) => this.assignment[mkLiteral(boolVar)] === L_UNDEF,
-      },
-      isDelayingNewCaseSplits,
-    );
+    this.caseSplitQueue =
+      caseSplitStrategy === CS_RELEVANCY
+        ? new RelCaseSplitQueue(this)
+        : caseSplitStrategy === CS_RELEVANCY_ACTIVITY
+          ? new RelActCaseSplitQueue(this)
+          : caseSplitStrategy === CS_RELEVANCY_GOAL
+            ? new RelGoalCaseSplitQueue(this)
+            : new ActCaseSplitQueue(this, caseSplitStrategy === CS_ACTIVITY_DELAY_NEW);
     this.mkBoolVar(manager.trueExpr);
     this.assignment[0] = L_TRUE;
     this.assignment[1] = L_FALSE;
@@ -392,6 +402,14 @@ export abstract class Internalizer {
 
   private getAssignmentOfExpr(expr: number) {
     return this.assignment[mkLiteral(this.getBoolVar(expr))];
+  }
+
+  getExprAssignment(expr: number) {
+    const manager = this.manager;
+    if (expr === manager.falseExpr) return L_FALSE;
+    return manager.isNot(expr)
+      ? -this.getAssignmentOfExpr(manager.getArg(expr, 0))
+      : this.getAssignmentOfExpr(expr);
   }
 
   findAssignment(expr: number) {
