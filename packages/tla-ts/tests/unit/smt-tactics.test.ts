@@ -1501,6 +1501,35 @@ describe("the counting probes, as Z3 5.3.2 walks a goal", () => {
   });
 });
 
+describe("preprocessing with proofs, as Z3 5.3.2 runs it", () => {
+  it("simplifies each formula alone in ctx-simplify", () => {
+    expect(
+      run([
+        "(set-option :produce-proofs true)",
+        "(declare-const a Bool)",
+        "(declare-const c Int)",
+        "(declare-const d Int)",
+        "(assert a)",
+        "(assert (or a (> c 0)))",
+        "(assert (or (not a) (> d c)))",
+        "(apply ctx-simplify)",
+        "(get-info :rlimit)",
+      ]),
+    ).toEqual([
+      [
+        "(goals",
+        "(goal",
+        "  a",
+        "  (or a (> c 0))",
+        "  (or (not a) (> d c))",
+        "  :precision precise :depth 1)",
+        ")",
+      ].join("\n"),
+      "(:rlimit 44)",
+    ]);
+  });
+});
+
 describe("qfufbv, as Z3 5.3.2 answers QF_UFBV", () => {
   it("ackermannizes the functions and bit-blasts the goal", () => {
     expect(
