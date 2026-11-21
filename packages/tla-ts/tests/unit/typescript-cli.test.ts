@@ -590,4 +590,20 @@ describe("the CLI with TypeScript files", () => {
       expect(result.status).toBe(1);
     });
   });
+
+  // A file in a folder below its package's, given by a relative path, runs in its package's type,
+  // as Node finds the package from the file's own folder up to the working one.
+  it("exits with Node's code and stderr for a module below its package, given by a relative path", () => {
+    const directory = copyFixtures("passing");
+    mkdirSync(join(directory, "lib"));
+    writeFileSync(join(directory, "package.json"), '{ "type": "module" }\n');
+    const getScript = (limit: number) =>
+      `const total = [1].length;\nif (total !== ${limit}) throw new RangeError("total " + total);\n`;
+    writeFileSync(join(directory, "lib/main.js"), getScript(1));
+    expect(getExit(runCli(directory, ["lib/main.js"]))).toEqual([0, ""]);
+    writeFileSync(join(directory, "lib/main.js"), getScript(2));
+    const result = runCli(directory, ["lib/main.js"]);
+    expect(getExit(result)).toEqual(getExit(runNode(directory, "lib/main.js")));
+    expect(result.status).toBe(1);
+  });
 });
