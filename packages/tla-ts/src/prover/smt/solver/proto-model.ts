@@ -344,9 +344,8 @@ export class ProtoModel {
   // array_factory::m_ranges: the ranges whose fresh value an array's fresh value is waiting for.
   private freshArrayRanges: number[] = [];
   private finiteSorts = new Set<number>();
-  // model::m_usort2universe, and m_usorts, its sorts in the order they were registered.
   private universes: ObjMap<RefVector>;
-  private usorts: number[] = [];
+  private universeSorts: number[] = [];
   private boolRandom: RandomGen;
   private evaluator: ModelEvaluator;
   private rewriter: Rewriter;
@@ -466,12 +465,12 @@ export class ProtoModel {
     const values = new RefVector(this.manager);
     for (const value of universe) values.push(value);
     const old = this.universes.get(sort);
-    if (old === undefined) this.usorts.push(sort);
+    if (old === undefined) this.universeSorts.push(sort);
     else old.reset();
     this.universes.set(sort, values);
   }
 
-  // copy_usort_interps walks m_usort2universe, so the copy registers the sorts in its hash order.
+  // Z3 copies universes in the hash order of its sort map, not in registration order.
   copyUsortInterps(source: ProtoModel) {
     for (const entry of source.universes) this.registerUsort(entry[0], entry[1].items);
   }
@@ -735,9 +734,8 @@ export class ProtoModel {
     return this.funcDecls;
   }
 
-  // A model lists the sorts of its universes, and a proto_model the sorts its factory has values of.
   getUninterpretedSorts() {
-    if (this.isFinal) return [...this.usorts];
+    if (this.isFinal) return [...this.universeSorts];
     return [...this.values.keys()].filter((sort) => this.manager.isUninterpretedSort(sort));
   }
 

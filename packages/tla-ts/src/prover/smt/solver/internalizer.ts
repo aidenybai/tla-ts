@@ -840,7 +840,6 @@ export abstract class Internalizer {
     }
   }
 
-  // Past 32 arguments, a fresh function maps each argument to its own fresh value.
   private assertDistinct(expr: number) {
     const manager = this.manager;
     if (manager.getNumArgs(expr) <= DISTINCT_SZ_THRESHOLD) {
