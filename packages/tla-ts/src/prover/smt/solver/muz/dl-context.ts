@@ -40,7 +40,7 @@ const ENGINE_NAMES = new Map([
 
 // As in Z3, these are copied when the context is made, so a later fp option doesn't apply.
 export class FpParams {
-  private parameters: ReadonlyMap<string, string>;
+  readonly parameters: ReadonlyMap<string, string>;
 
   constructor(parameters: ReadonlyMap<string, string>) {
     this.parameters = new Map(parameters);

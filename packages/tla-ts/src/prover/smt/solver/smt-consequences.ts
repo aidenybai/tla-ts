@@ -247,6 +247,7 @@ class ConsequenceFinder {
       }
       this.extractFixedConsequences(0, assumptionSet);
       context.popToBaseLevel();
+      context.caseSplitQueue.initSearchEh();
       kernel.initAssumptions(assumptions);
       let numUnits = 0;
       while (this.var2val.size > 0) {
@@ -277,6 +278,7 @@ class ConsequenceFinder {
         numUnits = this.extractFixedConsequences(numUnits, assumptionSet);
         this.extractFixedEqs();
       }
+      context.caseSplitQueue.endSearchEh();
       return L_TRUE;
     } finally {
       if (context.scopeLevel > level + (isPushed ? 1 : 0))

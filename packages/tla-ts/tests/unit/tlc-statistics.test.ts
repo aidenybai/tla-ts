@@ -103,6 +103,70 @@ it.each([
   },
 );
 
+const getStartupSource = (definitions: string) =>
+  `---- MODULE M ----\nEXTENDS Naturals, TLC\nVARIABLE y\nInit == y = 0\nNext == y' = (y + 1) % 2\n${definitions}\n====`;
+
+it.each([
+  ['G(Op(_)) == Op("level")\nC == PrintT(<<"C", G(TLCGet)>>)', "", ['<<"C", 1>>']],
+  ['D == LET K == INSTANCE TLC IN PrintT(<<"D", K!TLCGet("level")>>)', "", ['<<"D", 1>>']],
+  ['ASSUME LET K == INSTANCE TLC IN PrintT(<<"A", K!TLCGet("level")>>)', "", ['<<"A", 0>>']],
+  ['ASSUME PrintT(<<"A", TLCGet("level")>>)', "", ['<<"A", 0>>']],
+  ['G(Op(_, _)) == Op(1, 2)\nC == PrintT(<<"C", G(TLCSet)>>)', "", []],
+  ['D == LET K == INSTANCE TLC IN PrintT(<<"D", K!TLCSet(1, 2)>>)', "", []],
+  [
+    'G(Op(_, _)) == Op(1, 2)\nC == PrintT(<<"C", G(TLCSet)>>)\nInv == C',
+    "\nINVARIANT Inv",
+    ['<<"C", TRUE>>', '<<"C", TRUE>>'],
+  ],
+  ['G(Op(_, _)) == Op("exit", TRUE)\nC == PrintT(<<"C", G(TLCSet)>>)', "", ['<<"C", TRUE>>']],
+])(
+  "evaluates %j as TLC's processConstantDefns does, in TLCState.Empty before the checker exists",
+  async (definitions, properties, expected) => {
+    const printed: string[] = [];
+    const result = await check({
+      source: getStartupSource(definitions),
+      config: `INIT Init\nNEXT Next${properties}`,
+      onPrint: (text) => printed.push(text),
+    });
+    expect([printed, result.distinctStates]).toEqual([expected, 2]);
+  },
+);
+
+it("reads TLC.tla's level as 0 in Init, as TLC's TLCGetEval does", async () => {
+  const printed: string[] = [];
+  await check({
+    source: getStartupSource('I == PrintT(<<"I", TLCGet("level")>>) /\\ y = 0'),
+    config: "INIT I\nNEXT Next",
+    onPrint: (text) => printed.push(text),
+  });
+  expect(printed).toEqual(['<<"I", 0>>']);
+});
+
+it.each([
+  [
+    'G(Op(_, _)) == Op("s:x", 2)\nC == PrintT(<<"C", G(TLCSet)>>)\nInv == C /\\ TLCGet("s:x") = 2',
+    '<<"C", TRUE>>',
+  ],
+  [
+    'D == LET K == INSTANCE TLC IN PrintT(<<"D", K!TLCSet("s:x", 2)>>)\nInv == D /\\ TLCGet("s:x") = 2',
+    '<<"D", TRUE>>',
+  ],
+])(
+  "drops the named register %j writes as TLC starts, before any checker holds it",
+  async (definitions, expected) => {
+    const printed: string[] = [];
+    const result = await check({
+      source: getStartupSource(definitions),
+      config: "INIT Init\nNEXT Next\nINVARIANT Inv",
+      onPrint: (text) => printed.push(text),
+    });
+    expect([printed, result.failure?.message]).toEqual([
+      [expected],
+      "Attempted to apply the operator overridden by the Java method\npublic static tlc2.value.impl.Value tlc2.module.TLCGetSet.TLCGetEval(tlc2.tool.impl.Tool,tla2sany.semantic.ExprOrOpArgNode[],tlc2.util.Context,tlc2.tool.TLCState,tlc2.tool.TLCState,int,tlc2.tool.coverage.CostModel),\nbut it produced the following error:\nTLCGet(s:x) was undefined.",
+    ]);
+  },
+);
+
 it.each([
   ['A(TLCGet("level"))', "A(1) line 6, col 9 to line 6, col 49 of module M"],
   [
