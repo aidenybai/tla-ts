@@ -526,6 +526,57 @@ export const expectBooleanBody = (value: Value, expression: Expression) => {
 export const getDefinition = (name: string, environment: Environment) =>
   environment.definitions.get(environment.substitutions.get(name) ?? name);
 
+export const getZeroArityBody = (name: string, environment: Environment) => {
+  if (environment.constants.has(name)) return undefined;
+  const definition = getDefinition(name, environment);
+  return definition?.kind === "Operator" && definition.params.length === 0 ? definition : undefined;
+};
+
+export interface UnchangedVariable {
+  index: number;
+  expression: Expression;
+}
+
+export const getUnchangedVariables = (
+  expression: Expression,
+  environment: Environment,
+  visited = new Set<string>(),
+  written = expression,
+): UnchangedVariable[] | undefined => {
+  if (expression.kind === "Tuple") {
+    const variables = expression.elements.map((element) =>
+      getUnchangedVariables(element, environment, visited),
+    );
+    return variables.every((item) => item !== undefined) ? variables.flat() : undefined;
+  }
+  if (expression.kind !== "Identifier" || visited.has(expression.name)) return undefined;
+  const index = environment.variableIndex.get(expression.name);
+  if (index !== undefined) return [{ index, expression: written }];
+  const definition = getZeroArityBody(expression.name, environment);
+  if (!definition) return undefined;
+  visited.add(expression.name);
+  return getUnchangedVariables(definition.body, environment, visited, written);
+};
+
+// TLC's TupleValue#equals compares each component with Value#equals in turn. Undefined means a variable has no value, whose error the subscript's evaluation gives.
+export const isUnchangedState = (
+  indexes: number[],
+  state: State | undefined,
+  next: State | undefined,
+) => {
+  if (state === undefined || next === undefined) return undefined;
+  for (let index = 0; index < indexes.length; index++) {
+    if (state[indexes[index]] === undefined || next[indexes[index]] === undefined) return undefined;
+  }
+  for (let index = 0; index < indexes.length; index++) {
+    const value = state[indexes[index]];
+    const nextValue = next[indexes[index]];
+    if (value === undefined || nextValue === undefined) return undefined;
+    if (!isReceiverEqual(value, nextValue)) return false;
+  }
+  return true;
+};
+
 export const getBuiltin = (name: string, environment: Environment) =>
   environment.builtins.get(environment.substitutions.get(name) ?? name);
 
@@ -1606,20 +1657,36 @@ const evaluateWithNextState = (
   }
 };
 
-const compileUnchanged = (evaluator: Evaluator, coverage: Coverage | undefined): Evaluator =>
-  coverage
-    ? (context) =>
-        isReceiverEqual(
-          evaluateWithNextState(coverage, "empty", evaluator, {
-            environment: context.environment,
-            scope: context.scope,
-            state: context.state,
-            next: undefined,
-            isKeepLazy: context.isKeepLazy,
-          }),
-          evaluateWithNextState(coverage, "primed", evaluator, toNextContext(context)),
-        )
-    : (context) => isReceiverEqual(evaluator(context), evaluator(toNextContext(context)));
+const compileUnchanged = (
+  evaluator: Evaluator,
+  expression: Expression,
+  environment: Environment,
+): Evaluator => {
+  const coverage = environment.coverage;
+  if (coverage) {
+    return (context) =>
+      isReceiverEqual(
+        evaluateWithNextState(coverage, "empty", evaluator, {
+          environment: context.environment,
+          scope: context.scope,
+          state: context.state,
+          next: undefined,
+          isKeepLazy: context.isKeepLazy,
+        }),
+        evaluateWithNextState(coverage, "primed", evaluator, toNextContext(context)),
+      );
+  }
+  const evaluateUnchanged: Evaluator = (context) =>
+    isReceiverEqual(evaluator(context), evaluator(toNextContext(context)));
+  // The tracing replay evaluates the subscript, whose tuple TLC names in the frames.
+  const variables = environment.callStack
+    ? undefined
+    : getUnchangedVariables(expression, environment);
+  if (!variables) return evaluateUnchanged;
+  const indexes = variables.map((variable) => variable.index);
+  return (context) =>
+    isUnchangedState(indexes, context.state, context.next) ?? evaluateUnchanged(context);
+};
 
 const traceEvaluator =
   (
@@ -2858,7 +2925,11 @@ const compile = (expression: Expression, environment: Environment): Evaluator =>
         : (context) => inner(toNextContext(context));
     }
     case "Unchanged":
-      return compileUnchanged(getChildEvaluator(expression.expression), environment.coverage);
+      return compileUnchanged(
+        getChildEvaluator(expression.expression),
+        expression.expression,
+        environment,
+      );
     case "If": {
       const condition = getChildEvaluator(expression.condition);
       const consequent = getChildEvaluator(expression.consequent);
@@ -3047,7 +3118,8 @@ const compile = (expression: Expression, environment: Environment): Evaluator =>
       const action = getChildEvaluator(expression.action);
       const unchanged = compileUnchanged(
         getChildEvaluator(expression.subscript),
-        environment.coverage,
+        expression.subscript,
+        environment,
       );
       const isBox = expression.kind === "BoxAction";
       const form = isBox ? "[A]_e" : "<A>_e";

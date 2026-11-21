@@ -27,9 +27,9 @@ import {
   freezeCallStack,
   getArgumentTuple,
   getContextElements,
-  getDefinition,
   getLazyFunction,
   getQuantifierElements,
+  getUnchangedVariables,
   mapBoundSets,
   toKeepLazyContext,
   lookupScope,
@@ -41,6 +41,7 @@ import {
   type Scope,
   type State,
   toUnspecifiedSubscriptError,
+  type UnchangedVariable,
 } from "../evaluate";
 import {
   createTuple,
@@ -325,38 +326,6 @@ export const createUnassignedConjunctError = (
   const range = run.environment.variableLocations[index].range;
   const declaration = range ? formatRange(range) : "Unknown location";
   return createRunError(run, getExpectedBooleanMessage(run, declaration, expression));
-};
-
-export const getZeroArityBody = (name: string, environment: Environment) => {
-  if (environment.constants.has(name)) return undefined;
-  const definition = getDefinition(name, environment);
-  return definition?.kind === "Operator" && definition.params.length === 0 ? definition : undefined;
-};
-
-export interface UnchangedVariable {
-  index: number;
-  expression: Expression;
-}
-
-export const getUnchangedVariables = (
-  expression: Expression,
-  environment: Environment,
-  visited = new Set<string>(),
-  written = expression,
-): UnchangedVariable[] | undefined => {
-  if (expression.kind === "Tuple") {
-    const variables = expression.elements.map((element) =>
-      getUnchangedVariables(element, environment, visited),
-    );
-    return variables.every((item) => item !== undefined) ? variables.flat() : undefined;
-  }
-  if (expression.kind !== "Identifier" || visited.has(expression.name)) return undefined;
-  const index = environment.variableIndex.get(expression.name);
-  if (index !== undefined) return [{ index, expression: written }];
-  const definition = getZeroArityBody(expression.name, environment);
-  if (!definition) return undefined;
-  visited.add(expression.name);
-  return getUnchangedVariables(definition.body, environment, visited, written);
 };
 
 // Deviation from TLC: Tool#getNextStates0 takes its all-assigned path when warnings are on, though its comment says off, so it evaluates UNCHANGED as a boolean and doesn't warn.

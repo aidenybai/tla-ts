@@ -36,7 +36,9 @@ import {
   toNextContext,
   createUnassignedError,
   getSortedFields,
+  getUnchangedVariables,
   hasDuplicateFields,
+  isUnchangedState,
   type Context,
   type Environment,
   type Evaluator,
@@ -114,6 +116,7 @@ const createGeneratedHelpers = () => ({
   record: createSortedRecord,
   writtenRecord: createWrittenRecord,
   equal: isEqualLikeTlc,
+  unchangedState: isUnchangedState,
   enumerate: getQuantifierElements,
   choiceElements: getChoiceElements,
   noChoice: (expression: Expression & { kind: "Choose" }): never => {
@@ -485,7 +488,14 @@ const generateExpression = (generator: Generator, expression: Expression, frame:
         expression: expression.expression,
         location: expression.location,
       });
-      return `equal(${generate(expression.expression)}, ${primed})`;
+      const evaluated = `equal(${generate(expression.expression)}, ${primed})`;
+      const variables = getUnchangedVariables(expression.expression, generator.environment);
+      if (!variables) return evaluated;
+      const indexes = addReference(
+        generator,
+        variables.map((variable) => variable.index),
+      );
+      return `(unchangedState(${indexes}, ${frame.state}, ${frame.next}) ?? ${evaluated})`;
     }
     case "Forall":
     case "Exists":

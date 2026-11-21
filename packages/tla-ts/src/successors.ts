@@ -34,6 +34,8 @@ import {
   getEntryEvaluator,
   getReevaluatedDefinitions,
   getStartupValue,
+  getUnchangedVariables,
+  getZeroArityBody,
   lookupScope,
   mapBoundSets,
   resolveApplyOperator,
@@ -44,6 +46,7 @@ import {
   type Evaluator,
   type Scope,
   type State,
+  type UnchangedVariable,
 } from "./evaluate";
 import { forEachChild } from "./instances";
 import { getRandomSubset, nextPrime, type JavaRandom } from "./tlc/random";
@@ -59,13 +62,10 @@ import {
   getIfConditionMessage,
   getImpliesConditionMessage,
   getRelationMessage,
-  getUnchangedVariables,
-  getZeroArityBody,
   holdsValue,
   isAssignedShortcut,
   replayEnabled,
   warnChangedUnchanged,
-  type UnchangedVariable,
 } from "./tlc/replay";
 import {
   createTuple,
