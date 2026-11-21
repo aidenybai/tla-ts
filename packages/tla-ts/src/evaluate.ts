@@ -2047,6 +2047,7 @@ export const toNextContext = (context: Context): Context => ({
   state: context.next,
   next: NULL_STATE,
   isKeepLazy: context.isKeepLazy,
+  isPrimed: true,
 });
 
 // TLC evaluates the first side of UNCHANGED, [A]_e and <A>_e with s1 as TLCState.Empty.
@@ -2056,7 +2057,6 @@ export const toEmptyContext = (context: Context): Context => ({
   state: context.state,
   next: undefined,
   isKeepLazy: context.isKeepLazy,
-  isPrimed: true,
 });
 
 const evaluateWithNextState = (
