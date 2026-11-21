@@ -357,10 +357,12 @@ const runSyntaxTest = (id: string, source: string, metadata: Metadata): TestRun 
   if (!isRejected) {
     return { id, outcome: "skipped", reason: "Node accepts it" };
   }
-  const program = `${strict}${getHarness(metadata, source)}
-${source}`;
+  // The program as written, as TypeScript's emit drops some of what V8 rejects, such as a trailing
+  // comma after a rest parameter, and without the harness, as it compiles and runs nothing.
+  const program = `${strict}${source}`;
   try {
-    compileProgram(program, "test262.ts", metadata.isModule);
+    getEmitted(program, metadata.isModule);
+    compileToEscore(program, "test262.ts", RUNTIME, metadata.isModule);
   } catch (error) {
     return getSyntaxRun(id, error);
   }
@@ -577,11 +579,9 @@ const getScriptError = (source: string, path: string, isSloppy: boolean) => {
 // prints each check's compile and check time and its module's size.
 const RUNTIME = prepareRuntime(join(import.meta.dirname, "../ecmascript"));
 
-// Compiles a test's program by specializing ESCore. The harness merges namespaces into its
-// functions, which Node's type stripping rejects, so the program runs as the JavaScript that
-// TypeScript emits for it, as Node runs it here, which a linked test's own file holds too, for an
-// import of it. A syntax error throws with TypeScript's code for it.
-const compileProgram = (program: string, path: string, isModule: boolean) => {
+// The JavaScript that TypeScript emits for a program, where a syntax error throws with each of
+// TypeScript's codes for it.
+const getEmitted = (program: string, isModule: boolean) => {
   const transpiled = ts.transpileModule(program, {
     compilerOptions: {
       target: ts.ScriptTarget.ESNext,
@@ -592,17 +592,30 @@ const compileProgram = (program: string, path: string, isModule: boolean) => {
     },
     reportDiagnostics: true,
   });
-  const error = transpiled.diagnostics?.find(
+  const errors = (transpiled.diagnostics ?? []).filter(
     (diagnostic) => diagnostic.category === ts.DiagnosticCategory.Error,
   );
-  // TypeScript's error, with its code, so that a test that TypeScript rejects runs as JavaScript.
-  if (error !== undefined) {
+  if (errors.length > 0) {
     throw new TlaTypeScriptError(
-      `error TS${error.code}: ${ts.flattenDiagnosticMessageText(error.messageText, "\n")}`,
+      errors
+        .map(
+          (error) =>
+            `error TS${error.code}: ${ts.flattenDiagnosticMessageText(error.messageText, "\n")}`,
+        )
+        .join("\n"),
     );
   }
-  if (existsSync(path)) writeFileSync(path, transpiled.outputText);
-  return compileToEscore(transpiled.outputText, path, RUNTIME, isModule);
+  return transpiled.outputText;
+};
+
+// Compiles a test's program by specializing ESCore. The harness merges namespaces into its
+// functions, which Node's type stripping rejects, so the program runs as the JavaScript that
+// TypeScript emits for it, as Node runs it here, which a linked test's own file holds too, for an
+// import of it.
+const compileProgram = (program: string, path: string, isModule: boolean) => {
+  const emitted = getEmitted(program, isModule);
+  if (existsSync(path)) writeFileSync(path, emitted);
+  return compileToEscore(emitted, path, RUNTIME, isModule);
 };
 
 // Compiles a program and checks it.
