@@ -70,6 +70,7 @@ const convertModel = (manager: AstManager, converter: BvModelConverter, source: 
   }
   for (const sort of source.getUninterpretedSorts())
     for (const value of source.getKnownUniverse(sort)) target.registerValue(value);
+  target.copyUsortInterps(source);
   for (const decl of source.getConstDecls()) {
     const value = source.constInterps.get(decl) as number;
     const original = converter.bvToInt.get(decl);

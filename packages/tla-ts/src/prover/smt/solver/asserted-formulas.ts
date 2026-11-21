@@ -261,6 +261,7 @@ export class AssertedFormulas {
   constructor(
     private manager: AstManager,
     private isFindingMacros = false,
+    private isEmatching = true,
   ) {
     this.formulas = new RefVector(manager);
     this.macros = new MacroManager(manager);
@@ -367,7 +368,8 @@ export class AssertedFormulas {
     this.patternInference.isUsingDatabase = config.isUsingPatternDatabase;
   }
 
-  updateParams(config: SmtConfig) {
+  updateParams(config: SmtConfig, isEmatching = true) {
+    this.isEmatching = isEmatching;
     this.isNnfCnf = config.isNnfCnf;
     this.isEq2Ineq = config.isEq2Ineq;
     this.isEliminatingTermIte = config.isEliminatingTermIte;
@@ -414,7 +416,7 @@ export class AssertedFormulas {
     if (!this.invoke(isFindingMacros, () => this.findMacros())) return;
     if (!this.invoke(this.isEliminatingBounds && this.hasQuantifiers, () => this.elimBounds()))
       return;
-    if (!this.invoke(this.hasQuantifiers, () => this.inferPatterns())) return;
+    if (!this.invoke(this.isEmatching && this.hasQuantifiers, () => this.inferPatterns())) return;
     if (!this.invoke(true, () => this.maximizeBvSharing())) return;
     if (!this.invoke(true, () => this.reduceAsserted())) return;
     if (!this.invoke(true, () => this.flattenClauses())) return;

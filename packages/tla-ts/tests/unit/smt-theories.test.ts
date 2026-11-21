@@ -431,6 +431,54 @@ describe("a distinct of more than two arguments", () => {
       ]),
     ).toEqual(["sat", "(:rlimit 1121)"]);
   });
+
+  describe("of more than 32 arguments, as assert_distinct maps them to fresh values", () => {
+    const names = Array.from({ length: 33 }, (_value, index) => `a${index}`);
+    const DECLARATIONS = ["(declare-sort U 0)", ...declareConsts("U", names)];
+    const DISTINCT = `(assert (distinct ${names.join(" ")}))`;
+
+    it("keeps the fresh values out of the model", () => {
+      expect(
+        run([
+          ...DECLARATIONS,
+          DISTINCT,
+          "(check-sat)",
+          "(get-info :rlimit)",
+          "(get-value (a0 a1))",
+        ]),
+      ).toEqual(["sat", "(:rlimit 195)", "((a0 U!val!0)\n (a1 U!val!1))"]);
+    });
+
+    it("conflicts once two arguments are equal", () => {
+      expect(
+        run([
+          ...DECLARATIONS,
+          "(declare-fun g (U) U)",
+          DISTINCT,
+          "(assert (= (g a0) a1))",
+          "(assert (or (= (g a0) a2) (= (g a0) a3)))",
+          "(check-sat)",
+          "(get-info :rlimit)",
+        ]),
+      ).toEqual(["unsat", "(:rlimit 419)"]);
+    });
+
+    it("leaves the arguments free once popped", () => {
+      expect(
+        run([
+          ...DECLARATIONS,
+          "(push)",
+          DISTINCT,
+          "(check-sat)",
+          "(get-info :rlimit)",
+          "(pop)",
+          "(assert (= a0 a1))",
+          "(check-sat)",
+          "(get-info :rlimit)",
+        ]),
+      ).toEqual(["sat", "(:rlimit 126)", "sat", "(:rlimit 179)"]);
+    });
+  });
 });
 
 describe("regular expressions", () => {

@@ -63,6 +63,7 @@ export class DefaultQuantifierManager {
 
   assignEh(quantifier: number) {
     this.isActive = true;
+    if (this.context.params.isEmatching === false) return;
     const manager = this.context.manager;
     const patterns = manager
       .getQuantifier(quantifier)
@@ -83,12 +84,16 @@ export class DefaultQuantifierManager {
     return this.isActive && (this.mam.isShared(node) || this.lazyMam.isShared(node));
   }
 
+  private isUsingEmatching() {
+    return this.context.params.isEmatching !== false && this.quantifiers.length > 0;
+  }
+
   addEqEh(first: Enode, second: Enode) {
-    if (this.quantifiers.length > 0) this.mam.addEqEh(first, second);
+    if (this.isUsingEmatching()) this.mam.addEqEh(first, second);
   }
 
   relevantEh(node: Enode) {
-    if (this.quantifiers.length === 0) return;
+    if (!this.isUsingEmatching()) return;
     this.mam.relevantEh(node, false);
     this.lazyMam.relevantEh(node, true);
   }
@@ -117,7 +122,7 @@ export class DefaultQuantifierManager {
       const enodes = this.context.enodes;
       if (
         !this.context.relevancy.isEnabled &&
-        this.quantifiers.length > 0 &&
+        this.isUsingEmatching() &&
         enodes.length > this.newEnodeQhead
       ) {
         const saved = this.newEnodeQhead;
@@ -146,7 +151,7 @@ export class DefaultQuantifierManager {
   finalCheckEh(isFull: boolean) {
     if (!isFull) return FC_DONE;
     let result = this.qiQueue.finalCheckEh() ? FC_DONE : FC_CONTINUE;
-    if (this.quantifiers.length > 0 && this.lazyMatchingIndex < QI_MAX_LAZY_MULTIPATTERN_MATCHING) {
+    if (this.isUsingEmatching() && this.lazyMatchingIndex < QI_MAX_LAZY_MULTIPATTERN_MATCHING) {
       this.lazyMam.rematch();
       const saved = this.lazyMatchingIndex;
       this.context.pushTrail(() => {
