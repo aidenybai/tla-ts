@@ -571,10 +571,13 @@ export class AssertedFormulas {
       const formula = this.formulas.items[index];
       manager.incRef(formula);
       const rewritten = this.rewriter.rewrite(formula);
+      if (rewritten !== formula) {
+        this.isReducePending = true;
+        numPropagated++;
+      }
       this.formulas.set(index, rewritten);
       if (manager.isFalse(rewritten)) this.isInconsistent = true;
       substitution.update(rewritten);
-      if (rewritten !== formula) numPropagated++;
       manager.decRef(rewritten);
       manager.decRef(formula);
     };

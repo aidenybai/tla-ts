@@ -305,6 +305,10 @@ const CIGARETTE_SMOKERS = readFileSync(
   "utf8",
 );
 
+// Reduced from a tlapm obligation of tlaplus/Examples' byzpaxos VoteProof, whose push runs out of its
+// rlimit in the reduce that ends propagate_values.
+const VOTE_PROOF = readFileSync(join(SMT_FIXTURES, "VoteProof-push-canceled.smt2"), "utf8");
+
 const readZ3Output = (name: string) =>
   readFileSync(join(SMT_FIXTURES, name), "utf8").trimEnd().split("\n");
 
@@ -1110,6 +1114,16 @@ describe("runSmtlibScript runs its commands as Z3 does", () => {
       "unsat",
       "(:rlimit 5143)",
       '(:reason-unknown "")',
+    ]);
+  });
+
+  it("reduces the formulas again when a later propagate_values rewrites one", () => {
+    expect(run([VOTE_PROOF, "(get-info :rlimit)", "(get-info :reason-unknown)"])).toEqual([
+      '(error "line 58 column 7: push canceled")',
+      "unknown",
+      "unsat",
+      "(:rlimit 5077)",
+      '(:reason-unknown "canceled")',
     ]);
   });
 
