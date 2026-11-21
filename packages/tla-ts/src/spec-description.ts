@@ -34,15 +34,8 @@ import {
   type Environment,
   type Scope,
 } from "./evaluate";
-import {
-  ACTION_LEVEL,
-  CONSTANT_LEVEL,
-  createBoundScope,
-  createLevelAnalyzer,
-  TEMPORAL_LEVEL,
-  VARIABLE_LEVEL,
-} from "./levels";
-import { bindLetDefinitions, getLevelBound } from "./liveness";
+import { ACTION_LEVEL, CONSTANT_LEVEL, TEMPORAL_LEVEL, VARIABLE_LEVEL } from "./levels";
+import { bindLetDefinitions, getLevelBound, getSanyLevel } from "./liveness";
 import { EMPTY_STATE } from "./runtime";
 import {
   createRecord,
@@ -149,21 +142,7 @@ const hasConstantArguments = (
   args: Expression[],
   scope: Scope | undefined,
   environment: Environment,
-) => {
-  const bindings: [string, Definition | undefined][] = [];
-  for (let node = scope; node; node = node.parent) {
-    bindings.unshift([node.name, letDefinitions.get(node)]);
-  }
-  const analyzer = createLevelAnalyzer({
-    constants: new Map([...environment.constants.keys()].map((key) => [key, 0])),
-    variables: new Set(environment.variables),
-    getDefinition: (name) => environment.definitions.get(name),
-    instances: environment.instances,
-    recursiveSections: environment.recursiveSections,
-  });
-  const boundScope = createBoundScope(bindings);
-  return args.every((arg) => analyzer.analyze(arg, boundScope).level === CONSTANT_LEVEL);
-};
+) => args.every((arg) => getSanyLevel(arg, scope, environment) === CONSTANT_LEVEL);
 
 const getOperatorName = (expression: Expression) =>
   expression.kind === "Identifier"

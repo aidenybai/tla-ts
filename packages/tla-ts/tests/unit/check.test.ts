@@ -4873,6 +4873,311 @@ describe("initial predicate and next-state relation match TLC", () => {
     ).rejects.toThrow(new TlaConfigError(message));
   });
 
+  const getTwoStateSource = (definitions: string) =>
+    `---- MODULE M ----\nEXTENDS Naturals\nVARIABLE x\nInit == x = 0\nNext == x' = (x + 1) % 2\n${definitions}\n====`;
+  it.each(["Q == LET A == x' = x IN x \\in {0, 1}\nP == Q", "F(p) == x = 0\nH == F(x')\nP == H"])(
+    "warns that the property in %j is state-level, as SANY levels the definition it names",
+    async (definitions) => {
+      const warned: string[] = [];
+      const result = await check({
+        source: getTwoStateSource(definitions),
+        config: "INIT Init\nNEXT Next\nPROPERTY P",
+        onProgress: (progress) => {
+          if (progress.kind === "state-level-property") warned.push(progress.name);
+        },
+      });
+      expect([result.status, warned]).toEqual(["success", ["P"]]);
+    },
+  );
+
+  it.each([
+    ["Q == LET A == x' = x IN x \\in {0, 1}\nSpec == Init /\\ [][Next]_x /\\ []Q", 7, 33],
+    ["F(p) == x = 0\nH == F(x')\nSpec == Init /\\ [][Next]_x /\\ []H", 8, 33],
+    ["MySpec(I) == Init /\\ [][Next]_x /\\ []I\nSpec == MySpec(<>(x = 1))", 6, 38],
+  ])(
+    "rejects the [] in %j, as SANY levels its argument below an action",
+    async (definitions, line, column) => {
+      await expect(
+        check({ source: getTwoStateSource(definitions), config: "SPECIFICATION Spec" }),
+      ).rejects.toThrow(
+        new TlaEvaluationError(
+          `TLC cannot handle the temporal formula line ${line}, col ${column} to line ${line}, col ${column} of module M`,
+        ),
+      );
+    },
+  );
+
+  it.each([
+    [
+      "INIT Init\nNEXT Next\nPROPERTY T",
+      new TlaConfigError(
+        "The property T specified in the configuration file\nis not defined in the specification.",
+      ),
+    ],
+    [
+      "INIT Init\nNEXT Next\nPROPERTY A",
+      new TlaConfigError(
+        "The property A specified in the configuration file\nis not defined in the specification.",
+      ),
+    ],
+    [
+      "INIT Init\nNEXT Next\nINVARIANT T",
+      new TlaConfigError(
+        "The invariant T specified in the configuration file\nis not defined in the specification.",
+      ),
+    ],
+    [
+      "INIT Init\nNEXT Next\nCONSTRAINT T",
+      new TlaConfigError(
+        "The constraint T specified in the configuration file\nis not defined in the specification.",
+      ),
+    ],
+    [
+      "INIT Init\nNEXT Next\nACTION_CONSTRAINT T",
+      new TlaConfigError(
+        "The action constraint T specified in the configuration file\nis not defined in the specification.",
+      ),
+    ],
+    [
+      "INIT T\nNEXT Next",
+      new TlaConfigError(
+        "The initial predicate T specified in the configuration file\nis not defined in the specification.",
+      ),
+    ],
+    [
+      "INIT Init\nNEXT T",
+      new TlaConfigError(
+        "The next state action T specified in the configuration file\nis not defined in the specification.",
+      ),
+    ],
+    [
+      "SPECIFICATION T",
+      new TlaConfigError(
+        "The name T specified in the configuration file\nis not defined in the specification.",
+      ),
+    ],
+    [
+      "INIT Init\nNEXT Next\nVIEW T",
+      new TlaConfigError(
+        "The view function T specified in the configuration file\nis not defined in the specification.",
+      ),
+    ],
+    [
+      "INIT Init\nNEXT Next\nSYMMETRY T",
+      new TlaConfigError(
+        "The symmetry function T specified in the configuration file\nis not defined in the specification.",
+      ),
+    ],
+    [
+      "INIT Init\nNEXT Next\nPOSTCONDITION T",
+      new TlaEvaluationError(
+        "The post condition T specified in the configuration file\nis not defined in the specification.",
+      ),
+    ],
+  ])(
+    "takes the theorem or assumption that %j names for undefined, as TLC does",
+    async (config, error) => {
+      await expect(
+        check({
+          source: getTwoStateSource("THEOREM T == x \\in {0, 1}\nASSUME A == TRUE"),
+          config,
+        }),
+      ).rejects.toThrow(error);
+    },
+  );
+
+  const theoremBase =
+    "---- MODULE Base ----\nVARIABLE v\nTHEOREM Baz == v \\in {0, 1}\nTHEOREM Foo == ASSUME v = 0 PROVE v \\in {0, 1}\nQ == Baz\n====\n";
+  const theoremChain = "---- MODULE L2 ----\nVARIABLE w\nJ == INSTANCE Base WITH v <- w\n====\n";
+  it.each([
+    [
+      "THEOREM T == x \\in {0, 1}\nP == T",
+      "INIT Init\nNEXT Next\nPROPERTY P",
+      "The operator T, which equals line 6, col 1 to line 6, col 25 of module M,\ncannot be used as a property",
+    ],
+    [
+      "THEOREM T == x \\in {0, 1}\nPROOF OBVIOUS\nP == T",
+      "INIT Init\nNEXT Next\nPROPERTY P",
+      "The operator T, which equals line 6, col 1 to line 7, col 13 of module M,\ncannot be used as a property",
+    ],
+    [
+      "ASSUME A == TRUE\nP == A /\\ [](x \\in {0, 1})",
+      "INIT Init\nNEXT Next\nPROPERTY P",
+      "The operator A, which equals line 6, col 1 to line 6, col 16 of module M,\ncannot be used as a property",
+    ],
+    [
+      "THEOREM T == 1\nP == T /\\ [](x \\in {0, 1})",
+      "INIT Init\nNEXT Next\nPROPERTY P",
+      "The operator T, which equals line 6, col 1 to line 6, col 14 of module M,\ncannot be used as a property",
+    ],
+    [
+      "THEOREM T == x \\in {0, 1}\nP == \\A i \\in {1} : LET Q == T IN Q",
+      "INIT Init\nNEXT Next\nPROPERTY P",
+      "The operator T, which equals line 6, col 1 to line 6, col 25 of module M,\ncannot be used as a property",
+    ],
+    [
+      `${theoremBase}I == INSTANCE Base WITH v <- x\nP == I!Foo`,
+      "INIT Init\nNEXT Next\nPROPERTY P",
+      "The operator I!Foo, which equals line 12, col 1 to line 12, col 30 of module M,\ncannot be used as a property",
+    ],
+    [
+      `${theoremBase}INSTANCE Base WITH v <- x\nP == Baz /\\ [](x \\in {0, 1})`,
+      "INIT Init\nNEXT Next\nPROPERTY P",
+      "The operator Baz, which equals line 12, col 1 to line 12, col 25 of module M,\ncannot be used as a property",
+    ],
+    [
+      `${theoremBase}${theoremChain}I == INSTANCE L2 WITH w <- x\nP == I!J!Baz /\\ [](x \\in {0, 1})`,
+      "INIT Init\nNEXT Next\nPROPERTY P",
+      "The operator I!J!Baz, which equals line 16, col 1 to line 16, col 28 of module M,\ncannot be used as a property",
+    ],
+    [
+      `${theoremBase}I(p) == INSTANCE Base WITH v <- p\nP == I(x)!Q /\\ [](x \\in {0, 1})`,
+      "INIT Init\nNEXT Next\nPROPERTY P",
+      "The operator Baz, which equals line 8, col 1 to line 8, col 27 of module M,\ncannot be used as a property",
+    ],
+    [
+      "THEOREM T == TRUE\nSpec == Init /\\ [][Next]_x /\\ (T /\\ TRUE)",
+      "SPECIFICATION Spec",
+      "The operator T, which equals line 6, col 1 to line 6, col 17 of module M,\ncannot be used as a spec",
+    ],
+    [
+      `${theoremBase}I == INSTANCE Base WITH v <- x\nSpec == Init /\\ [][Next]_x /\\ I!Q`,
+      "SPECIFICATION Spec",
+      "The operator Baz, which equals line 8, col 1 to line 8, col 27 of module M,\ncannot be used as a spec",
+    ],
+    [
+      "THEOREM T == [](x \\in {0, 1})\nSpec == Init /\\ [][Next]_x /\\ T",
+      "SPECIFICATION Spec",
+      "The operator T, which equals line 6, col 1 to line 6, col 29 of module M,\ncannot be used as a spec",
+    ],
+    [
+      "THEOREM T == x \\in {0, 1}\nInit2 == T\nSpec == Init2 /\\ [][Next]_x",
+      "SPECIFICATION Spec",
+      "The operator T, which equals line 6, col 1 to line 6, col 25 of module M,\ncannot be used as a spec",
+    ],
+    [
+      `${theoremBase}I == INSTANCE Base WITH v <- x\nR == I!Foo\nSpec == Init /\\ [][Next]_x /\\ R`,
+      "SPECIFICATION Spec",
+      "The operator I!Foo, which equals line 12, col 1 to line 12, col 30 of module M,\ncannot be used as a spec",
+    ],
+  ])("rejects the theorem that %j reaches, as TLC does", async (definitions, config, message) => {
+    await expect(check({ source: getTwoStateSource(definitions), config })).rejects.toThrow(
+      new TlaConfigError(message),
+    );
+  });
+
+  it.each([
+    ["P == TN", "The operator TN, which equals line 3, col 1 to line 3, col 26 of module N"],
+    [
+      "I == INSTANCE N\nP == I!TN",
+      "The operator I!TN, which equals line 5, col 1 to line 5, col 15 of module M",
+    ],
+  ])("rejects the extended theorem that %j reaches, as TLC does", async (definitions, operator) => {
+    await expect(
+      check({
+        source: `---- MODULE M ----\nEXTENDS Naturals, N\nInit == x = 0\nNext == x' = (x + 1) % 2\n${definitions} /\\ [](x \\in {0, 1})\n====`,
+        config: "INIT Init\nNEXT Next\nPROPERTY P",
+        loadModule: (name) =>
+          name === "N"
+            ? "---- MODULE N ----\nVARIABLE x\nTHEOREM TN == x \\in {0, 1}\n===="
+            : undefined,
+      }),
+    ).rejects.toThrow(new TlaConfigError(`${operator},\ncannot be used as a property`));
+  });
+
+  it.each([
+    [
+      "THEOREM T == x \\in {0, 1}\nInit2 == T /\\ x = 0\nSpec == Init2 /\\ [][Next]_x",
+      "SPECIFICATION Spec",
+    ],
+    [
+      "THEOREM T == x \\in {0, 1}\nSpec == Init /\\ [][Next]_x /\\ \\A i \\in {1} : T",
+      "SPECIFICATION Spec",
+    ],
+    ["THEOREM T == x \\in {0, 1}\nP == []T", "INIT Init\nNEXT Next\nPROPERTY P"],
+    [
+      "---- MODULE B2 ----\nTHEOREM Baz2 == TRUE\n====\nI2 == INSTANCE B2\nP == I2!Baz2",
+      "INIT Init\nNEXT Next\nPROPERTY P",
+    ],
+  ])("checks the theorem that %j evaluates, as TLC does", async (definitions, config) => {
+    expect((await check({ source: getTwoStateSource(definitions), config })).status).toBe(
+      "success",
+    );
+  });
+
+  it("takes a theorem that a <- substitutes for undefined, as TLC does", async () => {
+    await expect(
+      check({
+        source: getTwoStateSource("CONSTANT c\nTHEOREM T == TRUE"),
+        config: "INIT Init\nNEXT Next\nCONSTANT c <- T",
+      }),
+    ).rejects.toThrow(
+      new TlaConfigError(
+        "The configuration file substitutes for c with the undefined identifier T.",
+      ),
+    );
+  });
+
+  it("finds the Java override a root theorem shares its name with, as TLC's defns holds no theorem", async () => {
+    await expect(
+      check({
+        source: getTwoStateSource("THEOREM Len == TRUE\nI == INSTANCE Sequences"),
+        config: "INIT Init\nNEXT Next\nINVARIANT Len",
+      }),
+    ).rejects.toThrow(
+      new TlaConfigError(
+        "The invariant of Len is equal to <Java Method: public static tlc2.value.impl.IntValue tlc2.module.Sequences.Len(tlc2.value.impl.Value)>",
+      ),
+    );
+    const substituted = await check({
+      source: getTwoStateSource("CONSTANT c\nTHEOREM Len == TRUE\nI == INSTANCE Sequences"),
+      config: "INIT Init\nNEXT Next\nCONSTANT c <- Len",
+    });
+    expect(substituted.status).toBe("success");
+  });
+
+  it("takes a theorem that the ALIAS names for undefined, as TLC does", async () => {
+    const result = await check({
+      source: getTwoStateSource("THEOREM T == x \\in {0, 1}\nASSUME A == TRUE\nInv == x = 0"),
+      config: "INIT Init\nNEXT Next\nINVARIANT Inv\nALIAS T",
+    });
+    expect(result.violation?.trace[0].state._ALIASEvalError).toBe(
+      "The alias T specified in the configuration file\nis not defined in the specification.",
+    );
+  });
+
+  it("checks in the initial state a property that reaches an action-level theorem, as TLC's level bound skips it", async () => {
+    const result = await check({
+      source: getTwoStateSource("THEOREM T2 == x' = x\nP == ~T2"),
+      config: "INIT Init\nNEXT Next\nPROPERTY P",
+    });
+    expect([result.status, result.failure?.message]).toEqual([
+      "error",
+      "In evaluation, the identifier x is either undefined or not an operator.\nline 6, col 15 to line 6, col 15 of module M",
+    ]);
+  });
+
+  it.each(["THEOREM T == x \\in {0, 1}\nC == T", "THEOREM T2 == x' = x\nC == T2"])(
+    "substitutes the definition in %j for a constant, as TLC's level bound skips its theorem",
+    async (definitions) => {
+      const result = await check({
+        source: getTwoStateSource(`CONSTANT c\n${definitions}`),
+        config: "INIT Init\nNEXT Next\nCONSTANT c <- C",
+      });
+      expect(result.status).toBe("success");
+    },
+  );
+
+  it("evaluates at startup a definition that reaches a theorem, as TLC's level bound skips it", async () => {
+    const prints: string[] = [];
+    await check({
+      source: `---- MODULE M ----\nEXTENDS Naturals, TLC\nVARIABLE x\nInit == x = 0\nNext == x' = (x + 1) % 2\nTHEOREM T == x \\in {0, 1}\nC == PrintT("c") /\\ T\n====`,
+      config: "INIT Init\nNEXT Next",
+      onPrint: (text) => prints.push(text),
+    });
+    expect(prints).toEqual(['"c"']);
+  });
+
   it("takes an atom of a temporal property to the level TLC bounds its LET by", async () => {
     await expect(
       check({

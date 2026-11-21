@@ -199,6 +199,7 @@ export interface LinkedModule {
   variableLocations: SourceLocation[];
   declarations: KeyedDeclaration[];
   visible: Symbols;
+  enclosing: Symbols;
   exported: Symbols;
   modules: Map<string, LinkedModule>;
   extended: LinkedModule[];
@@ -248,13 +249,16 @@ const createLocalFunction = (definition: FunctionDefinition, key: string): Defin
   isLocal: true,
 });
 
-const getSubstitutionFrame = (instance: Instance): Expression => {
-  const range = instance.definitionRange
+const getInstanceRange = (instance: Instance): SourceRange =>
+  instance.definitionRange
     ? {
         ...instance.definitionRange,
         start: { line: instance.location.line, column: instance.location.column },
       }
     : instance.instanceRange;
+
+const getSubstitutionFrame = (instance: Instance): Expression => {
+  const range = getInstanceRange(instance);
   return {
     kind: "Identifier",
     name: instance.name ?? instance.module,
@@ -306,6 +310,7 @@ export const createEnvironment = (
   const order = options.order ?? createTlcOrder(options.source, options.loadModule);
   const root = order.parseModule(options.source);
   const definitions = new Map<string, Definition>();
+  const theorems = new Map<string, SourceRange>();
   const unlinkedTheorems = new Map<string, () => void>();
   const getLinkedDefinition = (key: string) => {
     unlinkedTheorems.get(key)?.();
@@ -416,10 +421,14 @@ export const createEnvironment = (
         variables: linked.variables,
         levelConstants: linked.levelConstants,
         levelVariables: linked.levelVariables,
+        // SANY starts an inner module's Context empty, so it reads the enclosing module's symbols through the symbol table alone.
         getDefinitions: () => [
           ...new Set(
-            [...linked.visible.values()].flatMap((symbol) =>
-              symbol.kind === "Theorem" ? [] : (getLinkedDefinition(symbol.key) ?? []),
+            [...linked.visible].flatMap((entry) =>
+              entry[1].kind === "Theorem" ||
+              (linked.enclosing.has(entry[0]) && !linked.exported.has(entry[0]))
+                ? []
+                : (getLinkedDefinition(entry[1].key) ?? []),
             ),
           ),
         ],
@@ -836,6 +845,7 @@ export const createEnvironment = (
         const key = reservedKey ?? createName(`${name}@${module.name}`);
         const definition = create(key);
         definitions.set(key, definition);
+        if (theorems.has(source)) theorems.set(key, getInstanceRange(instance));
         const copy = createInstanceCopy(source, instance.module, substitutes);
         if (copy) instanceCopies.set(definition, copy);
         if (declarations.length > 0) substitutedDefinitions.add(definition);
@@ -1080,6 +1090,7 @@ export const createEnvironment = (
         isLocal: true,
         isRecursive: false,
         location,
+        isLetSubstitute: true,
       };
     });
     const copies: Definition[] = [];
@@ -1125,6 +1136,7 @@ export const createEnvironment = (
             ? { ...definition, name: key }
             : createLocalFunction(definition, key);
         copies.push(copy);
+        if (theorems.has(source)) theorems.set(key, getInstanceRange(instance));
         const instanceCopy = createInstanceCopy(source, instance.module, substitutes);
         if (instanceCopy) localCopies.set(key, instanceCopy);
         return key;
@@ -1633,6 +1645,7 @@ export const createEnvironment = (
       const symbol = getDefinitionSymbol(definition);
       visible.set(definition.name, symbol);
       if (!definition.isLocal) exported.set(definition.name, symbol);
+      if (symbol.kind === "Theorem" && symbol.range) theorems.set(symbol.key, symbol.range);
     });
     resolved.boundRecursive.forEach((declaration) => {
       const symbol = getRecursiveSymbol(declaration);
@@ -1665,6 +1678,7 @@ export const createEnvironment = (
         range: theorem.location.range,
         goal: theorem.goal,
       };
+      if (symbol.range) theorems.set(key, symbol.range);
       visible.set(theorem.name, symbol);
       exported.set(theorem.name, symbol);
     });
@@ -1698,6 +1712,7 @@ export const createEnvironment = (
           ),
       ],
       visible,
+      enclosing: scope.symbols,
       exported,
       modules,
       extended,
@@ -1758,7 +1773,10 @@ export const createEnvironment = (
     const key = linked.visible.get(invariant.name)?.key;
     if (key !== undefined && getLinkedDefinition(key)) rootKeys.set(invariant.name, key);
   });
-  linkedRoot.visible.forEach((symbol, name) => rootKeys.set(name, symbol.key));
+  // TLC's defns holds no theorem, so a name a root theorem shares with a Java override reaches the override.
+  linkedRoot.visible.forEach((symbol, name) => {
+    if (symbol.kind !== "Theorem") rootKeys.set(name, symbol.key);
+  });
   linkedRoot.constants.forEach((constant) => rootKeys.set(constant.name, constant.key));
   moduleOperators.forEach((operator) => {
     if (
@@ -1820,6 +1838,7 @@ export const createEnvironment = (
   );
   const facts = createDefinitionFacts({
     definitions,
+    theorems,
     substitutions,
     constants,
     bodyValues,
@@ -1830,6 +1849,7 @@ export const createEnvironment = (
   const environment: Environment = {
     runtime,
     definitions,
+    theorems,
     rootKeys,
     builtins,
     constants,
@@ -1851,7 +1871,8 @@ export const createEnvironment = (
     recursiveSections,
   };
   const analyzer = createLevelAnalyzer({
-    constants: new Map([...constants.keys()].map((key) => [key, 0])),
+    // TLC's getLevelBound counts a theorem's arguments but not its body.
+    constants: new Map([...constants.keys(), ...theorems.keys()].map((key) => [key, 0])),
     variables: new Set([
       ...variables,
       ...["TLCGet", "Trace", "CounterExample"].filter((name) => builtins.has(name)),

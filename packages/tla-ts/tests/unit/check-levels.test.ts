@@ -2345,6 +2345,37 @@ describe("level checking matches SANY", () => {
     },
   );
 
+  const checkInnerConstant = (outer: string, inner: string, substitute: string) =>
+    check({
+      source: `---- MODULE M ----\n${outer}VARIABLE x\nInit == x = 0\n---- MODULE L ----\n${inner}CONSTANT c\nE1 == FALSE\n====\nJ == INSTANCE L WITH c <- 0\nD == LET K == INSTANCE L WITH c <- ${substitute} IN K!E1\nNext == x' = x\n====`,
+      config: "INIT Init\nNEXT Next",
+      loadModule: (name) => (name === "N" ? "---- MODULE N ----\nND == []TRUE\n====" : undefined),
+    });
+  it.each(["[](x = 0)", "x' = x", "x"])(
+    "accepts %j for the constant of an inner module after a state-level definition of the enclosing module, as SANY does",
+    async (substitute) => {
+      const result = await checkInnerConstant("", "", substitute);
+      expect(result.status).toBe("success");
+    },
+  );
+
+  it.each([
+    ["EXTENDS N\n", "EXTENDS N\n", 11],
+    ["", "LOCAL LD == x\n", 10],
+  ])(
+    "levels an inner module as nonconstant with %j around it and %j in it, as SANY does",
+    async (outer, inner, line) => {
+      await expect(checkInnerConstant(outer, inner, "x")).rejects.toThrow(
+        createSanyError([
+          {
+            location: `line ${line}, col 10 to line ${line}, col 36 of module M`,
+            message: getSubstitutedError("c", 0),
+          },
+        ]),
+      );
+    },
+  );
+
   it.each([
     [
       "CONSTANT e\nVARIABLE v\nTHEOREM PT == ASSUME e = e PROVE c = e",
