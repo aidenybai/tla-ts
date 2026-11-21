@@ -39,6 +39,7 @@ import {
   SORT_INT,
   SORT_REAL,
 } from "./ast";
+import { forEachExpr } from "./ast-util";
 import { logicHasPb } from "./smt-logics";
 
 interface LogicFlags {
@@ -280,39 +281,8 @@ export const createLogicChecker = (manager: AstManager, logic: string | undefine
     return kind === KIND_VAR ? checkSort(manager.sorts[expr]) : undefined;
   };
 
-  const getChildren = (expr: number) => {
-    if (manager.kinds[expr] === KIND_APP) return manager.getArgs(expr);
-    if (manager.kinds[expr] === KIND_VAR) return [];
-    const data = manager.getQuantifier(expr);
-    return [data.body, ...data.patterns, ...data.noPatterns];
-  };
-
-  // quick_for_each_expr visits each term once, after its arguments, and a quantifier's body
-  // before its patterns.
-  const checkExpr = (expr: number) => {
-    if (known === undefined) return undefined;
-    const visited = new Set([expr]);
-    const exprs = [expr];
-    const children = [getChildren(expr)];
-    const nextChildren = [0];
-    while (exprs.length > 0) {
-      const top = exprs.length - 1;
-      const child = children[top][nextChildren[top]++];
-      if (child === undefined) {
-        const error = checkNode(exprs.pop() as number);
-        if (error !== undefined) return error;
-        children.pop();
-        nextChildren.pop();
-        continue;
-      }
-      if (visited.has(child)) continue;
-      visited.add(child);
-      exprs.push(child);
-      children.push(getChildren(child));
-      nextChildren.push(0);
-    }
-    return undefined;
-  };
+  const checkExpr = (expr: number) =>
+    known === undefined ? undefined : forEachExpr(manager, expr, checkNode);
 
   const checkDecl = (decl: number) => {
     if (known === undefined) return undefined;

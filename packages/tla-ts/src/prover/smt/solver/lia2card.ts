@@ -36,7 +36,7 @@ interface PbSum {
 class PbRewriter extends RewriterTpl {
   constructor(
     manager: AstManager,
-    private terms: RefVector,
+    private args: RefVector,
     private maxIteNesting: number,
     private isCompilingEquality: boolean,
   ) {
@@ -47,9 +47,9 @@ class PbRewriter extends RewriterTpl {
     return false;
   }
 
-  private pin(expr: number) {
-    this.terms.push(expr);
-    return expr;
+  private pushArg(arg: number, sum: PbSum) {
+    this.args.push(arg);
+    sum.args.push(arg);
   }
 
   private getNumeral(expr: number): Rational | undefined {
@@ -60,25 +60,27 @@ class PbRewriter extends RewriterTpl {
     return manager.isNumeral(expr) ? manager.getRationalValue(expr) : undefined;
   }
 
-  private insertArg(value: Rational, conds: number[], sum: PbSum) {
+  private insertArg(value: Rational, conds: RefVector, sum: PbSum) {
     const manager = this.manager;
-    const cond = this.pin(manager.mkAnd(conds));
+    const cond = manager.mkAnd(conds.items);
+    manager.incRef(cond);
     if (manager.isTrue(cond)) sum.coeff = sum.coeff.add(value);
     else if (value.isNegative()) {
-      sum.args.push(this.pin(manager.mkApp(OP_NOT, [cond], SORT_BOOL)));
+      this.pushArg(manager.mkApp(OP_NOT, [cond], SORT_BOOL), sum);
       sum.coeffs.push(value.neg());
       sum.coeff = sum.coeff.add(value);
     } else if (value.isPositive()) {
-      sum.args.push(cond);
+      this.pushArg(cond, sum);
       sum.coeffs.push(value);
     }
+    manager.decRef(cond);
   }
 
   private getSum(
     nesting: number,
     expr: number,
     factor: Rational,
-    conds: number[],
+    conds: RefVector,
     sum: PbSum,
   ): boolean {
     const manager = this.manager;
@@ -109,22 +111,29 @@ class PbRewriter extends RewriterTpl {
     }
     if (op === OP_TO_REAL) return this.getSum(nesting, args[0], factor, conds, sum);
     if (op !== OP_ITE) return false;
-    const isThen = this.getSum(nesting + 1, args[1], factor, [...conds, args[0]], sum);
-    const negated = this.pin(manager.mkApp(OP_NOT, [args[0]], SORT_BOOL));
-    const isElse = this.getSum(nesting + 1, args[2], factor, [...conds, negated], sum);
+    conds.push(args[0]);
+    const isThen = this.getSum(nesting + 1, args[1], factor, conds, sum);
+    conds.pop();
+    conds.push(manager.mkApp(OP_NOT, [args[0]], SORT_BOOL));
+    const isElse = this.getSum(nesting + 1, args[2], factor, conds, sum);
+    conds.pop();
     return isThen && isElse;
+  }
+
+  private getSumOf(term: number, factor: Rational, sum: PbSum) {
+    return this.getSum(0, term, factor, new RefVector(this.manager), sum);
   }
 
   getPbSum(term: number) {
     const sum: PbSum = { args: [], coeffs: [], coeff: Rational.zero };
-    return this.getSum(0, term, Rational.one, [], sum) ? sum : undefined;
+    return this.getSumOf(term, Rational.one, sum) ? sum : undefined;
   }
 
   private getPb(first: number, second: number) {
+    this.args.reset();
     const sum: PbSum = { args: [], coeffs: [], coeff: Rational.zero };
     const isPb =
-      this.getSum(0, first, Rational.one, [], sum) &&
-      this.getSum(0, second, Rational.minusOne, [], sum);
+      this.getSumOf(first, Rational.one, sum) && this.getSumOf(second, Rational.minusOne, sum);
     return isPb ? sum : undefined;
   }
 
@@ -155,8 +164,7 @@ class PbRewriter extends RewriterTpl {
     const manager = this.manager;
     const bound = sum.coeff.neg();
     if (bound.isNegative()) return manager.falseExpr;
-    if (!this.isCompilingEquality)
-      return manager.mkAnd([this.pin(this.mkGe(sum)), this.pin(this.mkLe(sum))]);
+    if (!this.isCompilingEquality) return manager.mkAnd([this.mkGe(sum), this.mkLe(sum)]);
     return mkPbEq(manager, sum.coeffs, sum.args, bound);
   }
 
@@ -177,13 +185,12 @@ class PbRewriter extends RewriterTpl {
         ? this.mkEq(sum)
         : op === OP_LE || op === OP_GE
           ? this.mkLe(sum)
-          : manager.mkApp(OP_NOT, [this.pin(this.mkLe(sum))], SORT_BOOL);
+          : manager.mkApp(OP_NOT, [this.mkLe(sum)], SORT_BOOL);
     manager.incRef(result);
     return result;
   }
 }
 
-// The terms of the sum stay in terms.
 export const getPbSum = (manager: AstManager, term: number, terms: RefVector) =>
   new PbRewriter(manager, terms, 4, true).getPbSum(term);
 
@@ -194,7 +201,8 @@ export const createLia2Card = (
   isCompilingEquality: boolean,
 ) => {
   const terms = new RefVector(manager);
-  const rewriter = new PbRewriter(manager, terms, maxIteNesting, isCompilingEquality);
+  const args = new RefVector(manager);
+  const rewriter = new PbRewriter(manager, args, maxIteNesting, isCompilingEquality);
   return {
     run: (goal: Goal) => {
       if (manager.hasRecDefs) return;
@@ -266,6 +274,9 @@ export const createLia2Card = (
       replace.release();
       terms.reset();
     },
-    release: () => rewriter.release(),
+    release: () => {
+      args.reset();
+      rewriter.release();
+    },
   };
 };

@@ -276,6 +276,29 @@ const getPigeonholeLines = (holeCount: number) => {
   ];
 };
 
+const MBQI_UNDER_PUSH = [
+  "(set-option :auto_config false)",
+  "(set-option :smt.mbqi true)",
+  "(declare-sort U 0)",
+  "(declare-fun f (U) U)",
+  "(declare-fun g (U U) U)",
+  "(declare-fun p (U) Bool)",
+  "(declare-const a U)",
+  "(declare-const b U)",
+  "(push 1)",
+  "(assert (forall ((x U)) (! (= (f (f x)) x) :pattern ((f x)))))",
+  "(assert (forall ((x U) (y U)) (! (=> (p x) (p (g x y))) :pattern ((g x y)))))",
+  "(assert (p a))",
+  "(assert (not (= (f a) b)))",
+];
+
+const CHECK_AND_MODEL = [
+  "(check-sat)",
+  "(get-info :reason-unknown)",
+  "(get-info :rlimit)",
+  "(get-model)",
+];
+
 // Each expected value is what z3 5.3.2 prints for the script.
 describe("runSmtlibScript runs its commands as Z3 does", () => {
   it("prints the assertions under :produce-assertions", () => {
@@ -1001,6 +1024,24 @@ describe("runSmtlibScript runs its commands as Z3 does", () => {
       "unsat",
       "unknown",
       '(:reason-unknown "max. resource limit exceeded")',
+    ]);
+  });
+
+  it("marks a search that the push of the model checker's context ends as canceled", () => {
+    expect(run([...MBQI_UNDER_PUSH, "(set-option :rlimit 80)", ...CHECK_AND_MODEL])).toEqual([
+      "unknown",
+      '(:reason-unknown "canceled")',
+      "(:rlimit 124)",
+      '(error "line 18 column 10: model is not available")',
+    ]);
+  });
+
+  it("answers unknown when the limit stops the model finder's checkpoint", () => {
+    expect(run([...MBQI_UNDER_PUSH, "(set-option :rlimit 300)", ...CHECK_AND_MODEL])).toEqual([
+      "unknown",
+      '(:reason-unknown "canceled")',
+      "(:rlimit 344)",
+      '(error "line 18 column 10: model is not available")',
     ]);
   });
 
@@ -2717,6 +2758,313 @@ describe("reset-assertions, as Z3 5.3.2 frees the solver", () => {
     ]);
   });
 });
+
+describe("solve-eqs on an array a quantifier defines, as Z3 5.3.2 solves it", () => {
+  const getModel = (lines: string[]) =>
+    run([...lines, "(check-sat)", "(get-info :rlimit)", "(get-model)"]);
+
+  it("solves an array defined at every index and prints its value as stores", () => {
+    expect(
+      getModel([
+        "(declare-fun f (Int) Int)",
+        "(declare-fun A () (Array Int Int))",
+        "(assert (forall ((x Int)) (= (f x) (select A x))))",
+        "(assert (= (f 2) 7))",
+        "(assert (= (select A 3) 1))",
+      ]),
+    ).toEqual([
+      "sat",
+      "(:rlimit 271)",
+      "(",
+      "  (define-fun A () (Array Int Int)",
+      "    (store ((as const (Array Int Int)) 7) 3 1))",
+      "  (define-fun f ((x!0 Int)) Int",
+      "    (ite (= x!0 3) 1",
+      "      7))",
+      ")",
+    ]);
+  });
+
+  it("solves an array defined under the negation of the other disjunct", () => {
+    expect(
+      getModel([
+        "(declare-fun A () (Array Int Int))",
+        "(declare-const a Int)",
+        "(declare-const b Int)",
+        "(assert (forall ((x Int)) (or (= x a) (= (select A x) 0))))",
+        "(assert (= (select A b) 1))",
+      ]),
+    ).toEqual([
+      "sat",
+      "(:rlimit 290)",
+      "(",
+      "  (define-fun A () (Array Int Int)",
+      "    (store ((as const (Array Int Int)) 0) 0 1))",
+      "  (define-fun a () Int",
+      "    0)",
+      "  (define-fun b () Int",
+      "    0)",
+      ")",
+    ]);
+  });
+
+  it("keeps a lambda for an array defined under an implication", () => {
+    expect(
+      getModel([
+        "(declare-fun A () (Array Int Int))",
+        "(declare-const a Int)",
+        "(assert (forall ((x Int)) (=> (> x 0) (= (select A x) (+ x 1)))))",
+        "(assert (= (select A a) 5))",
+      ]),
+    ).toEqual([
+      "sat",
+      "(:rlimit 597)",
+      "(",
+      "  (define-fun A () (Array Int Int)",
+      "    (lambda ((x Int)) (ite (<= x 0) 5 (+ 1 x))))",
+      "  (define-fun a () Int",
+      "    0)",
+      ")",
+    ]);
+  });
+
+  it("reads the guard of two if-then-elses with the same condition and else", () => {
+    expect(
+      getModel([
+        "(declare-fun p (Int) Bool)",
+        "(declare-fun A () (Array Int Int))",
+        "(assert (forall ((x Int)) (= (ite (p x) (select A x) 3) (ite (p x) 4 3))))",
+        "(assert (p 1))",
+        "(assert (not (= (select A 1) 4)))",
+      ]),
+    ).toEqual(["unsat", "(:rlimit 244)", '(error "line 8 column 10: model is not available")']);
+  });
+
+  it("solves an array of two indices", () => {
+    expect(
+      getModel([
+        "(declare-fun C () (Array Int Int Int))",
+        "(declare-const a Int)",
+        "(assert (forall ((x Int) (y Int)) (= (select C x y) (ite (and (= x 1) (= y 2)) 5 0))))",
+        "(assert (= (select C a 2) 5))",
+      ]),
+    ).toEqual([
+      "sat",
+      "(:rlimit 245)",
+      "(",
+      "  (define-fun a () Int",
+      "    1)",
+      "  (define-fun C () (Array Int Int Int)",
+      "    (store ((as const (Array Int Int Int)) 0) 1 2 5))",
+      ")",
+    ]);
+  });
+
+  it("prints a set of indices as stores, and any other lambda as it is", () => {
+    expect(
+      getModel([
+        "(declare-fun B () (Array Int Bool))",
+        "(declare-fun D () (Array Int Bool))",
+        "(declare-fun E () (Array Int Bool))",
+        "(assert (forall ((x Int)) (= (select B x) (or (= x 1) (= x 2)))))",
+        "(assert (forall ((x Int)) (= (select D x) (and (not (= x 1)) (not (= x 2))))))",
+        "(assert (forall ((x Int)) (= (select E x) (not (= x 3)))))",
+      ]),
+    ).toEqual([
+      "sat",
+      "(:rlimit 1115)",
+      "(",
+      "  (define-fun E () (Array Int Bool)",
+      "    (lambda ((x!1 Int)) (not (= x!1 3))))",
+      "  (define-fun D () (Array Int Bool)",
+      "    (store (store ((as const (Array Int Bool)) true) 2 false) 1 false))",
+      "  (define-fun B () (Array Int Bool)",
+      "    (store (store ((as const (Array Int Bool)) false) 2 true) 1 true))",
+      ")",
+    ]);
+  });
+
+  // Deviation from Z3: has_index_set reads this or as true only at 1, which gives a wrong model.
+  it("keeps a lambda for an or of an equality and a disequality", () => {
+    expect(
+      run([
+        "(declare-fun B () (Array Int Bool))",
+        "(assert (forall ((x Int)) (= (select B x) (or (= x 1) (not (= x 2))))))",
+        "(check-sat)",
+        "(get-info :rlimit)",
+        "(get-model)",
+        "(eval (= (select B 3) (or (= 3 1) (not (= 3 2)))))",
+      ]),
+    ).toEqual([
+      "sat",
+      "(:rlimit 142)",
+      "(",
+      "  (define-fun B () (Array Int Bool)",
+      "    (lambda ((x Int)) (or (= x 1) (not (= x 2)))))",
+      ")",
+      "true",
+    ]);
+  });
+
+  // Deviation from Z3: has_index_set reads this and as true everywhere, which gives a wrong model.
+  it("keeps a lambda for an and of two equalities", () => {
+    expect(
+      run([
+        "(declare-fun B () (Array Int Bool))",
+        "(assert (forall ((x Int)) (= (select B x) (and (= x 1) (= x 2)))))",
+        "(check-sat)",
+        "(get-info :rlimit)",
+        "(get-model)",
+        "(eval (= (select B 3) (and (= 3 1) (= 3 2))))",
+      ]),
+    ).toEqual([
+      "sat",
+      "(:rlimit 122)",
+      "(",
+      "  (define-fun B () (Array Int Bool)",
+      "    (lambda ((x Int)) (and (= x 1) (= x 2))))",
+      ")",
+      "true",
+    ]);
+  });
+
+  it("prints an or with a disequality as stores when they cover the indices", () => {
+    expect(
+      run([
+        "(declare-fun B () (Array (_ BitVec 1) Bool))",
+        "(assert (forall ((x (_ BitVec 1))) (= (select B x) (or (= x #b0) (not (= x #b1))))))",
+        "(check-sat)",
+        "(get-info :rlimit)",
+        "(get-model)",
+        "(eval (select B #b0))",
+        "(eval (select B #b1))",
+      ]),
+    ).toEqual([
+      "sat",
+      "(:rlimit 142)",
+      "(",
+      "  (define-fun B () (Array (_ BitVec 1) Bool)",
+      "    (store ((as const (Array (_ BitVec 1) Bool)) false) #b0 true))",
+      ")",
+      "true",
+      "false",
+    ]);
+  });
+
+  it("prints an and with an equality as stores when they cover the indices", () => {
+    expect(
+      run([
+        "(declare-datatypes ((C 0)) (((r) (g) (k))))",
+        "(declare-fun B () (Array C Bool))",
+        "(assert (forall ((x C)) (= (select B x) (and (not (= x r)) (not (= x g)) (= x k)))))",
+        "(check-sat)",
+        "(get-info :rlimit)",
+        "(get-model)",
+        "(eval (select B r))",
+        "(eval (select B k))",
+      ]),
+    ).toEqual([
+      "sat",
+      "(:rlimit 182)",
+      "(",
+      "  (define-fun B () (Array C Bool)",
+      "    (store (store ((as const (Array C Bool)) true) g false) r false))",
+      ")",
+      "false",
+      "true",
+    ]);
+  });
+
+  // Deviation from Z3: has_index_set reads this or as false at both indices, which gives a wrong model.
+  it("keeps a lambda for an or of two disequalities that cover the indices", () => {
+    expect(
+      run([
+        "(declare-fun B () (Array (_ BitVec 1) Bool))",
+        "(assert (forall ((x (_ BitVec 1))) (= (select B x) (or (not (= x #b0)) (not (= x #b1))))))",
+        "(check-sat)",
+        "(get-info :rlimit)",
+        "(get-model)",
+        "(eval (select B #b0))",
+      ]),
+    ).toEqual([
+      "sat",
+      "(:rlimit 162)",
+      "(",
+      "  (define-fun B () (Array (_ BitVec 1) Bool)",
+      "    (lambda ((x (_ BitVec 1))) (or (not (= x #b0)) (not (= x #b1)))))",
+      ")",
+      "true",
+    ]);
+  });
+
+  it("prints an or with a disequality as stores when they cover the model's universe", () => {
+    expect(
+      run([
+        ...TWO_ELEMENT_LAMBDA,
+        "(assert (forall ((x U)) (= (select B x) (or (= x p) (not (= x q))))))",
+        ...TWO_ELEMENT_CHECK,
+        "(eval (select B q))",
+      ]),
+    ).toEqual([
+      "sat",
+      "(:rlimit 247)",
+      ...TWO_ELEMENT_MODEL,
+      "  (define-fun B () (Array U Bool)",
+      "    (store ((as const (Array U Bool)) false) U!val!0 true))",
+      ")",
+      "false",
+    ]);
+  });
+
+  // Deviation from Z3: has_index_set reads this and as true at both elements of the universe, which gives a wrong model.
+  it("keeps a lambda for an and of two equalities over the model's universe", () => {
+    expect(
+      run([
+        ...TWO_ELEMENT_LAMBDA,
+        "(assert (forall ((x U)) (= (select B x) (and (= x p) (= x q)))))",
+        ...TWO_ELEMENT_CHECK,
+        "(eval (= (select B p) (and (= p p) (= p q))))",
+      ]),
+    ).toEqual([
+      "sat",
+      "(:rlimit 227)",
+      ...TWO_ELEMENT_MODEL,
+      "  (define-fun B () (Array U Bool)",
+      "    (lambda ((x U)) (and (= x U!val!0) (= x U!val!1))))",
+      ")",
+      "true",
+    ]);
+  });
+});
+
+const TWO_ELEMENT_LAMBDA = [
+  "(declare-sort U 0)",
+  "(declare-const p U)",
+  "(declare-const q U)",
+  "(declare-fun B () (Array U Bool))",
+];
+const TWO_ELEMENT_CHECK = [
+  "(assert (not (= p q)))",
+  "(check-sat)",
+  "(get-info :rlimit)",
+  "(get-model)",
+];
+const TWO_ELEMENT_MODEL = [
+  "(",
+  "  ;; universe for U:",
+  "  ;;   U!val!1 U!val!0 ",
+  "  ;; -----------",
+  "  ;; definitions for universe elements:",
+  "  (declare-fun U!val!1 () U)",
+  "  (declare-fun U!val!0 () U)",
+  "  ;; cardinality constraint:",
+  "  (forall ((x U)) (or (= x U!val!1) (= x U!val!0)))",
+  "  ;; -----------",
+  "  (define-fun q () U",
+  "    U!val!1)",
+  "  (define-fun p () U",
+  "    U!val!0)",
+];
 
 const POPPED_CHECK = [
   "(declare-fun g (Int) Int)",

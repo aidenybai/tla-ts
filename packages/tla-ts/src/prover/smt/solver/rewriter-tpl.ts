@@ -529,7 +529,7 @@ class RewriterEngine extends SubstCore {
       const nested = this.config.mkNested();
       for (const blocked of this.blocked) nested.engine.blocked.add(blocked);
       nested.engine.blocked.add(expr);
-      const result = nested.rewrite(this.lastResult);
+      const result = nested.engine.rewrite(this.lastResult);
       this.setLastResult(result);
       manager.decRef(result);
       nested.release();

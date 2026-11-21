@@ -30,7 +30,12 @@ export class SmtKernel {
   private scopeCount = 0;
 
   constructor(manager: AstManager, params: KernelParams) {
-    this.asserted = new AssertedFormulas(manager, params.isFindingMacros, params.isEmatching);
+    this.asserted = new AssertedFormulas(
+      manager,
+      params.isFindingMacros,
+      params.isEmatching,
+      params.isProofsEnabled,
+    );
     this.context = new Context(manager, {
       isMbqi: params.isMbqi,
       mbqiMaxIterations: params.mbqiMaxIterations,

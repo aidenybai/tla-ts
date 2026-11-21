@@ -6,7 +6,9 @@ import {
   OP_ARRAY_MAP,
   OP_AS_ARRAY,
   OP_CONST_ARRAY,
+  OP_EQ,
   OP_ITE,
+  OP_OR,
   OP_SELECT,
   OP_STORE,
   SORT_SIZE_INFINITE,
@@ -14,11 +16,131 @@ import {
   SORT_BOOL,
 } from "./ast";
 import { isAstLess } from "./ast-lt";
+import { mkNot } from "./ast-util";
 import { L_FALSE, L_TRUE, L_UNDEF } from "./lbool";
+import type { ProtoModel } from "./proto-model";
 import { InvVarShifter, type Rewrite, VarShifter } from "./rewriter-tpl";
 import { getFreeVarSorts, VarSubst } from "./var-subst";
 
 const MAX_SQUASH_ROUNDS = 10;
+
+const addStore = (
+  manager: AstManager,
+  numIndices: number,
+  condition: number,
+  value: number,
+  stores: number[][],
+) => {
+  const store = Array.from({ length: numIndices + 1 }, () => -1);
+  const isNegated = manager.isBool(value) && manager.isNot(condition);
+  const eqs = [isNegated ? manager.getArg(condition, 0) : condition];
+  for (let index = 0; index < eqs.length; index++) {
+    const eq = eqs[index];
+    if (manager.getOp(eq) === OP_AND) {
+      manager.pushArgs(eq, eqs);
+      continue;
+    }
+    if (manager.getOp(eq) !== OP_EQ) return false;
+    const isSwapped = manager.isVar(manager.getArg(eq, 1));
+    const left = manager.getArg(eq, isSwapped ? 1 : 0);
+    const right = manager.getArg(eq, isSwapped ? 0 : 1);
+    if (!manager.isVar(left) || !manager.isGroundApp(right)) return false;
+    if (manager.values[left] >= numIndices) return false;
+    const position = numIndices - manager.values[left] - 1;
+    if (store[position] !== -1 && store[position] !== right) return false;
+    store[position] = right;
+  }
+  if (store.indexOf(-1) < numIndices) return false;
+  store[numIndices] = isNegated ? mkNot(manager, value) : value;
+  stores.push(store);
+  return true;
+};
+
+const isSameIndex = (first: number[], second: number[], numIndices: number) => {
+  for (let index = 0; index < numIndices; index++) if (first[index] !== second[index]) return false;
+  return true;
+};
+
+const getFirstStore = (stores: number[][], store: number, numIndices: number) => {
+  let first = 0;
+  while (!isSameIndex(stores[first], stores[store], numIndices)) first++;
+  return first;
+};
+
+const isIndexSetExact = (
+  manager: AstManager,
+  sorts: number[],
+  stores: number[][],
+  start: number,
+  elseExpr: number,
+  model: ProtoModel,
+) => {
+  const numIndices = sorts.length;
+  let hasMisread = false;
+  for (let store = start; store < stores.length; store++)
+    if (stores[store][numIndices] === elseExpr) hasMisread = true;
+  if (!hasMisread) return true;
+  let numPoints = 1n;
+  for (let index = 0; index < numIndices; index++) {
+    const universe = model.getUniverse(sorts[index]);
+    const size =
+      universe === undefined ? manager.getSortSize(sorts[index]) : BigInt(universe.length);
+    if (size < 0n) return false;
+    numPoints *= size;
+  }
+  let numCovered = 0n;
+  for (let store = 0; store < stores.length; store++) {
+    for (let index = 0; index < numIndices; index++)
+      if (!manager.isUniqueValue(stores[store][index])) return false;
+    if (getFirstStore(stores, store, numIndices) === store) numCovered++;
+  }
+  if (numCovered < numPoints) return false;
+  for (let point = start; point < stores.length; point++) {
+    if (getFirstStore(stores, point, numIndices) !== point) continue;
+    let numHolding = 0;
+    for (let store = start; store < stores.length; store++)
+      if (
+        (stores[store][numIndices] === manager.trueExpr) ===
+        isSameIndex(stores[store], stores[point], numIndices)
+      )
+        numHolding++;
+    const isTrue =
+      elseExpr === manager.trueExpr ? numHolding === stores.length - start : numHolding > 0;
+    if (isTrue !== (stores[point][numIndices] === manager.trueExpr)) return false;
+  }
+  return true;
+};
+
+export const hasIndexSet = (
+  manager: AstManager,
+  lambda: number,
+  stores: number[][],
+  model: ProtoModel,
+) => {
+  const sorts = manager.getQuantifier(lambda).sorts;
+  const body = manager.getQuantifier(lambda).body;
+  const op = manager.getOp(body);
+  if (!manager.isGroundApp(body) && (op === OP_OR || op === OP_AND)) {
+    const start = stores.length;
+    for (let index = 0; index < manager.getNumArgs(body); index++)
+      if (!addStore(manager, sorts.length, manager.getArg(body, index), manager.trueExpr, stores))
+        return undefined;
+    const elseValue = op === OP_OR ? manager.falseExpr : manager.trueExpr;
+    // Deviation from Z3: has_index_set misreads a negated equality in an or and an equality in an and, so the port keeps such a lambda unless the stores give its value at every index.
+    return isIndexSetExact(manager, sorts, stores, start, elseValue, model) ? elseValue : undefined;
+  }
+  let elseExpr = body;
+  while (
+    !manager.isGroundApp(elseExpr) &&
+    manager.getOp(elseExpr) === OP_ITE &&
+    manager.isGroundApp(manager.getArg(elseExpr, 1))
+  ) {
+    const [condition, value, rest] = manager.getArgs(elseExpr);
+    if (!addStore(manager, sorts.length, condition, value, stores)) return undefined;
+    elseExpr = rest;
+  }
+  return manager.isGroundApp(elseExpr) ? elseExpr : undefined;
+};
 
 export class ArrayRewriter {
   constructor(

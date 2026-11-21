@@ -1,6 +1,7 @@
 import {
   KIND_APP,
   KIND_QUANTIFIER,
+  KIND_VAR,
   OP_ADD,
   OP_AND,
   OP_DIV,
@@ -152,6 +153,54 @@ export const getNumExprs = (manager: AstManager, root: number) => {
     }
   }
   return count;
+};
+
+const getNumChildren = (manager: AstManager, expr: number, isIgnoringPatterns: boolean) => {
+  if (manager.kinds[expr] === KIND_APP) return manager.getNumArgs(expr);
+  if (manager.kinds[expr] === KIND_VAR) return 0;
+  const data = manager.getQuantifier(expr);
+  return isIgnoringPatterns ? 1 : 1 + data.patterns.length + data.noPatterns.length;
+};
+
+const getChild = (manager: AstManager, expr: number, index: number) => {
+  if (manager.kinds[expr] === KIND_APP) return manager.getArg(expr, index);
+  const data = manager.getQuantifier(expr);
+  if (index === 0) return data.body;
+  const numPatterns = data.patterns.length;
+  return index <= numPatterns ? data.patterns[index - 1] : data.noPatterns[index - numPatterns - 1];
+};
+
+export const forEachExpr = <T>(
+  manager: AstManager,
+  root: number,
+  visit: (expr: number) => T | undefined,
+  visited = new Set<number>(),
+  isIgnoringPatterns = false,
+) => {
+  if (visited.has(root)) return undefined;
+  visited.add(root);
+  const exprs = [root];
+  const numChildren = [getNumChildren(manager, root, isIgnoringPatterns)];
+  const nextChildren = [0];
+  while (exprs.length > 0) {
+    const top = exprs.length - 1;
+    const expr = exprs[top];
+    if (nextChildren[top] === numChildren[top]) {
+      const result = visit(expr);
+      if (result !== undefined) return result;
+      exprs.pop();
+      numChildren.pop();
+      nextChildren.pop();
+      continue;
+    }
+    const child = getChild(manager, expr, nextChildren[top]++);
+    if (visited.has(child)) continue;
+    visited.add(child);
+    exprs.push(child);
+    numChildren.push(getNumChildren(manager, child, isIgnoringPatterns));
+    nextChildren.push(0);
+  }
+  return undefined;
 };
 
 export const getExtendedNumeral = (manager: AstManager, expr: number) => {

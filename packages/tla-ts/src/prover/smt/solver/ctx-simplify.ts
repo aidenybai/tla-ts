@@ -35,6 +35,11 @@ class CtxSimplifier {
     if (goal.isInconsistent) return;
     this.countOccurrences(goal);
     const size = goal.forms.size;
+    if (goal.isProofsEnabled) {
+      for (let index = 0; !goal.isInconsistent && index < size; index++)
+        this.simplifyForm(goal, index, false);
+      return;
+    }
     for (let index = 0; !goal.isInconsistent && index < size; index++)
       this.simplifyForm(goal, index, index < size - 1);
     this.pop(this.scopes.length);

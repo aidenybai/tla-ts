@@ -1464,6 +1464,130 @@ describe("the arithmetic probes, as Z3 5.3.2 measures a goal", () => {
   });
 });
 
+describe("the counting probes, as Z3 5.3.2 walks a goal", () => {
+  it("count no constant that occurs only in a pattern", () => {
+    const counts =
+      '(apply (and-then (echo "consts " num-consts " bool " num-bool-consts " arith " num-arith-consts " bv " num-bv-consts " exprs " num-exprs) (fail-if (> 1 0))))';
+    expect(
+      run([
+        '(set-option :diagnostic-output-channel "stdout")',
+        "(declare-fun f (Int Int) Int)",
+        "(declare-fun g (Bool (_ BitVec 4)) Int)",
+        "(declare-const c Int)",
+        "(declare-const b Bool)",
+        "(declare-const v (_ BitVec 4))",
+        "(assert (forall ((x Int)) (! (> x 0) :pattern ((f x c)) :pattern ((+ x (g b v))))))",
+        counts,
+        "(assert (forall ((x Int)) (! (< x 9) :no-pattern (f x c))))",
+        counts,
+      ]),
+    ).toEqual([
+      "consts 0 bool 0 arith 0 bv 0 exprs 12",
+      '(error "tactic failed: fail-if tactic")',
+      "consts 0 bool 0 arith 0 bv 0 exprs 15",
+      '(error "tactic failed: fail-if tactic")',
+    ]);
+  });
+
+  it("find patterns in a quantifier that has only a no-pattern", () => {
+    expect(
+      run([
+        '(set-option :diagnostic-output-channel "stdout")',
+        "(declare-fun f (Int) Int)",
+        "(assert (forall ((x Int)) (! (> (f x) 0) :no-pattern (f x))))",
+        '(apply (and-then (if has-patterns (echo "patterns") (echo "none")) (fail-if (> 1 0))))',
+      ]),
+    ).toEqual(["patterns", '(error "tactic failed: fail-if tactic")']);
+  });
+});
+
+describe("preprocessing with proofs, as Z3 5.3.2 runs it", () => {
+  it("simplifies each formula alone in ctx-simplify", () => {
+    expect(
+      run([
+        "(set-option :produce-proofs true)",
+        "(declare-const a Bool)",
+        "(declare-const c Int)",
+        "(declare-const d Int)",
+        "(assert a)",
+        "(assert (or a (> c 0)))",
+        "(assert (or (not a) (> d c)))",
+        "(apply ctx-simplify)",
+        "(get-info :rlimit)",
+      ]),
+    ).toEqual([
+      [
+        "(goals",
+        "(goal",
+        "  a",
+        "  (or a (> c 0))",
+        "  (or (not a) (> d c))",
+        "  :precision precise :depth 1)",
+        ")",
+      ].join("\n"),
+      "(:rlimit 44)",
+    ]);
+  });
+
+  it("skips propagate-values in the kernel", () => {
+    expect(
+      run([
+        "(set-option :produce-proofs true)",
+        "(declare-sort U 0)",
+        "(declare-const a0 U)",
+        "(declare-const a1 U)",
+        "(declare-const a2 U)",
+        "(assert (distinct a0 a1 a2))",
+        "(check-sat)",
+        "(get-info :rlimit)",
+      ]),
+    ).toEqual(["sat", "(:rlimit 64)"]);
+  });
+
+  it("skips flatten-clauses in the kernel", () => {
+    expect(
+      run([
+        "(set-option :produce-proofs true)",
+        "(declare-sort U 0)",
+        "(declare-const a Bool)",
+        "(declare-const b Bool)",
+        "(declare-const r Bool)",
+        "(declare-const u U)",
+        "(declare-const v U)",
+        "(declare-const w U)",
+        "(assert (ite a (= u v) (= v w)))",
+        "(assert (or (not (or a b)) r))",
+        "(assert (not (= u w)))",
+        "(check-sat)",
+        "(get-info :rlimit)",
+        "(get-value (a b r))",
+      ]),
+    ).toEqual(["sat", "(:rlimit 274)", "((a false)\n (b false)\n (r false))"]);
+  });
+
+  it("skips them in the model checker's auxiliary context", () => {
+    expect(
+      run([
+        "(set-option :produce-proofs true)",
+        "(set-option :auto_config false)",
+        "(set-option :smt.mbqi true)",
+        "(declare-sort U 0)",
+        "(declare-fun f (U) U)",
+        "(declare-fun h (U) Int)",
+        "(declare-const a U)",
+        "(declare-const b U)",
+        "(declare-const c Bool)",
+        "(assert (forall ((x U)) (or (= (f x) a) (= (f x) b))))",
+        "(assert (forall ((x U)) (=> (= (f x) x) (> (h x) 3))))",
+        "(assert (or (not (or c (= a b))) (> (h a) 0)))",
+        "(assert (not (= a b)))",
+        "(check-sat)",
+        "(get-info :rlimit)",
+      ]),
+    ).toEqual(["sat", "(:rlimit 1712)"]);
+  });
+});
+
 describe("qfufbv, as Z3 5.3.2 answers QF_UFBV", () => {
   it("ackermannizes the functions and bit-blasts the goal", () => {
     expect(
@@ -3219,6 +3343,40 @@ describe("the goals of a tactic free what Z3 5.3.2 frees", () => {
       ].join("\n"),
     ]);
   });
+
+  it("keeps the terms of lia2card's last sum and frees the conditions of each, as Z3 does", () => {
+    expect(
+      run([
+        "(declare-fun p (Int) Bool)",
+        "(declare-fun q (Int) Bool)",
+        "(declare-fun g (Int) Int)",
+        "(declare-const a Int)",
+        "(declare-const b Int)",
+        "(assert (forall ((x Int)) (! (=> (p x) (> (g x) 1)) :pattern ((p x)))))",
+        "(assert (< (ite (= a 1) (ite (= b 2) (g a) (ite (= b 2) (g a) (g b))) 1) 2))",
+        "(check-sat)",
+        "(get-info :rlimit)",
+        "(get-model)",
+      ]),
+    ).toEqual([
+      "sat",
+      "(:rlimit 765)",
+      [
+        "(",
+        "  (define-fun b () Int",
+        "    3)",
+        "  (define-fun a () Int",
+        "    2)",
+        "  (define-fun p ((x!0 Int)) Bool",
+        "    false)",
+        "  (define-fun g ((x!0 Int)) Int",
+        "    0)",
+        "  (define-fun q ((x!0 Int)) Bool",
+        "    false)",
+        ")",
+      ].join("\n"),
+    ]);
+  });
 });
 
 describe("unit-subsume-simplify, as Z3 5.3.2 keeps its context", () => {
@@ -3824,5 +3982,143 @@ describe("the default tactic, as Z3 5.3.2 builds it", () => {
         "(check-sat-using (using-params default :random_seed 3))",
       ]),
     ).toEqual(["sat"]);
+  });
+});
+
+describe("symmetry-reduce, as Z3 5.3.2 breaks symmetries", () => {
+  const universe = [
+    "(declare-sort U 0)",
+    ...["a", "b", "c", "d", "e"].map((name) => `(declare-const ${name} U)`),
+    "(declare-fun f (U) U)",
+  ];
+
+  it("asserts a member predicate for each term that a class of constants restricts", () => {
+    expect(
+      run([
+        ...universe,
+        "(declare-sort V 0)",
+        ...["x", "y", "z"].map((name) => `(declare-const ${name} V)`),
+        "(declare-fun g (U) V)",
+        "(assert (distinct a b c))",
+        "(assert (distinct x y))",
+        "(assert (or (= d a) (= d b) (= d c)))",
+        "(assert (or (= (g d) x) (= (g d) y)))",
+        "(assert (or (= z x) (= z y)))",
+        "(apply symmetry-reduce)",
+      ]),
+    ).toEqual([
+      [
+        "(goals",
+        "(goal",
+        "  (distinct a b c)",
+        "  (distinct x y)",
+        "  (or (= d a) (= d b) (= d c))",
+        "  (or (= (g d) x) (= (g d) y))",
+        "  (or (= z x) (= z y))",
+        "  (= d b)",
+        "  (= z y)",
+        "  (or (= (g d) y) (= (g d) x))",
+        "  :precision precise :depth 1)",
+        ")",
+      ].join("\n"),
+    ]);
+  });
+
+  it("leaves a goal that a swap of the constants changes", () => {
+    expect(
+      run([
+        ...universe,
+        "(assert (distinct a b c))",
+        "(assert (or (= d a) (= d b) (= d c)))",
+        "(assert (= (f a) b))",
+        "(apply symmetry-reduce)",
+      ]),
+    ).toEqual([
+      [
+        "(goals",
+        "(goal",
+        "  (distinct a b c)",
+        "  (or (= d a) (= d b) (= d c))",
+        "  (= (f a) b)",
+        "  :precision precise :depth 1)",
+        ")",
+      ].join("\n"),
+    ]);
+  });
+
+  it("fails on unsat cores and on quantifiers", () => {
+    const symmetric = [...universe, "(assert (distinct a b c))"];
+    expect(
+      run(["(set-option :produce-unsat-cores true)", ...symmetric, "(apply symmetry-reduce)"]),
+    ).toEqual(['(error "tactic failed: symmetry_reduce does not support unsat core production")']);
+    expect(
+      run([...symmetric, "(assert (forall ((x U)) (= (f (f x)) x)))", "(apply symmetry-reduce)"]),
+    ).toEqual(['(error "tactic failed: symmetry_reduce does not apply to quantified goals")']);
+  });
+
+  it("keeps the caches of its rewriters across the checks of QF_UF", () => {
+    expect(
+      run([
+        "(set-logic QF_UF)",
+        "(set-option :produce-models true)",
+        ...universe,
+        "(declare-fun p (U) Bool)",
+        "(assert (distinct a b c))",
+        "(assert (or (= d a) (= d b) (= d c)))",
+        "(assert (or (= (f d) a) (= (f d) b) (= (f d) c)))",
+        "(assert (=> (p a) (= (f a) e)))",
+        "(assert (=> (p b) (= (f b) e)))",
+        "(assert (=> (p c) (= (f c) e)))",
+        "(check-sat)",
+        "(get-info :rlimit)",
+        "(get-model)",
+        "(check-sat)",
+        "(get-info :rlimit)",
+      ]),
+    ).toEqual([
+      "sat",
+      "(:rlimit 866)",
+      [
+        "(",
+        "  ;; universe for U:",
+        "  ;;   U!val!2 U!val!5 U!val!4 U!val!1 U!val!0 U!val!3 ",
+        "  ;; -----------",
+        "  ;; definitions for universe elements:",
+        "  (declare-fun U!val!2 () U)",
+        "  (declare-fun U!val!5 () U)",
+        "  (declare-fun U!val!4 () U)",
+        "  (declare-fun U!val!1 () U)",
+        "  (declare-fun U!val!0 () U)",
+        "  (declare-fun U!val!3 () U)",
+        "  ;; cardinality constraint:",
+        "  (forall ((x U))",
+        "          (or (= x U!val!2)",
+        "              (= x U!val!5)",
+        "              (= x U!val!4)",
+        "              (= x U!val!1)",
+        "              (= x U!val!0)",
+        "              (= x U!val!3)))",
+        "  ;; -----------",
+        "  (define-fun b () U",
+        "    U!val!0)",
+        "  (define-fun a () U",
+        "    U!val!4)",
+        "  (define-fun e () U",
+        "    U!val!3)",
+        "  (define-fun c () U",
+        "    U!val!1)",
+        "  (define-fun d () U",
+        "    U!val!0)",
+        "  (define-fun f ((x!0 U)) U",
+        "    (ite (= x!0 U!val!0) U!val!4",
+        "    (ite (= x!0 U!val!1) U!val!5",
+        "      U!val!2)))",
+        "  (define-fun p ((x!0 U)) Bool",
+        "    false)",
+        ")",
+      ].join("\n"),
+      "sat",
+      "(:rlimit 1574)",
+    ]);
   });
 });
