@@ -74,18 +74,23 @@ export const solveGoal = (manager: AstManager, forms: number[], params: KernelPa
     qiLazyThreshold: params.qiLazyThreshold,
     isProofsEnabled: params.isProofsEnabled,
   });
-  if (!assertForms(context, asserted, forms)) {
+  try {
+    if (!assertForms(context, asserted, forms)) {
+      manager.limit.release();
+      return { result: L_UNDEF, context, asserted, reasonUnknown: "canceled" };
+    }
+    context.setupContext(params.setup, true, asserted);
+    context.internalizeAssertions(asserted);
+    const theoryAssumptions: number[] = [];
+    context.addTheoryAssumptions(theoryAssumptions);
+    const result =
+      theoryAssumptions.length === 0 ? context.check() : context.checkResearching(asserted, []);
     manager.limit.release();
-    return { result: L_UNDEF, context, asserted, reasonUnknown: "canceled" };
+    return { result, context, asserted };
+  } catch (error) {
+    context.release(asserted);
+    throw error;
   }
-  context.setupContext(params.setup, true, asserted);
-  context.internalizeAssertions(asserted);
-  const theoryAssumptions: number[] = [];
-  context.addTheoryAssumptions(theoryAssumptions);
-  const result =
-    theoryAssumptions.length === 0 ? context.check() : context.checkResearching(asserted, []);
-  manager.limit.release();
-  return { result, context, asserted };
 };
 
 export const solveAssertions = (
@@ -129,14 +134,19 @@ export const solveAssuming = (
     qiLazyThreshold: params.qiLazyThreshold,
     isProofsEnabled: params.isProofsEnabled,
   });
-  if (!assertForms(context, asserted, assertions)) {
+  try {
+    if (!assertForms(context, asserted, assertions)) {
+      manager.limit.release();
+      return { result: L_UNDEF, context, asserted, reasonUnknown: "canceled" };
+    }
+    context.setupContext(params.setup, false, asserted);
+    const result = context.checkResearching(asserted, assumptions);
     manager.limit.release();
-    return { result: L_UNDEF, context, asserted, reasonUnknown: "canceled" };
+    return { result, context, asserted };
+  } catch (error) {
+    context.release(asserted);
+    throw error;
   }
-  context.setupContext(params.setup, false, asserted);
-  const result = context.checkResearching(asserted, assumptions);
-  manager.limit.release();
-  return { result, context, asserted };
 };
 
 export const getVerdict = (result: number): Verdict =>

@@ -609,25 +609,33 @@ export class Context extends Internalizer {
   }
 
   propagate() {
-    for (;;) {
-      if (this.isInconsistent()) return false;
-      const qhead = this.qhead;
-      if (!this.bcp()) return false;
-      this.propagateRelevancy(qhead);
-      if (this.isInconsistent()) return false;
-      if (!this.propagateAtoms()) return false;
-      if (!this.propagateEqs()) return false;
-      this.propagateThEqs();
-      this.propagateThDiseqs();
-      if (this.isInconsistent()) return false;
-      if (!this.propagateTheories()) return false;
-      if (!this.checkCanceled()) this.qmanager.propagate();
-      if (this.isInconsistent()) return false;
-      if (this.isResourceLimitExceeded()) {
-        this.qhead = qhead;
-        return true;
+    const limit = this.manager.limit;
+    const wasSuspended = limit.isSuspended;
+    try {
+      for (;;) {
+        if (this.isInconsistent()) return false;
+        const qhead = this.qhead;
+        limit.isSuspended = wasSuspended || this.scopeLevel === this.baseLevel;
+        if (!this.bcp()) return false;
+        this.propagateRelevancy(qhead);
+        if (this.isInconsistent()) return false;
+        if (!this.propagateAtoms()) return false;
+        if (!this.propagateEqs()) return false;
+        this.propagateThEqs();
+        this.propagateThDiseqs();
+        if (this.isInconsistent()) return false;
+        limit.isSuspended = wasSuspended;
+        if (!this.propagateTheories()) return false;
+        if (!this.checkCanceled()) this.qmanager.propagate();
+        if (this.isInconsistent()) return false;
+        if (this.isResourceLimitExceeded()) {
+          this.qhead = qhead;
+          return true;
+        }
+        if (!this.canPropagate()) return true;
       }
-      if (!this.canPropagate()) return true;
+    } finally {
+      limit.isSuspended = wasSuspended;
     }
   }
 
@@ -1325,9 +1333,11 @@ export class Context extends Internalizer {
     this.incompleteTheories = [];
     for (;;) {
       const theory = this.theories[this.finalCheckIndex];
-      const check = theory === undefined ? qmanager.finalCheckEh(true) : theory.finalCheckEh(level);
+      const theoryStatus =
+        theory === undefined ? qmanager.finalCheckEh(true) : theory.finalCheckEh(level);
       if (theory !== undefined) maxLevel = Math.max(maxLevel, theory.numFinalCheckLevels());
       const isCanceled = theory !== undefined && this.checkCanceled();
+      const check = isCanceled ? FC_GIVEUP : theoryStatus;
       if (isCanceled) failure = FAILURE_CANCELED;
       else if (theory !== undefined && check === FC_GIVEUP) {
         failure = FAILURE_THEORY;
@@ -1335,7 +1345,7 @@ export class Context extends Internalizer {
       }
       this.finalCheckIndex = (this.finalCheckIndex + 1) % (this.theories.length + 1);
       if (check === FC_CONTINUE) return FC_CONTINUE;
-      if (check === FC_GIVEUP || isCanceled) result = FC_GIVEUP;
+      if (check === FC_GIVEUP) result = FC_GIVEUP;
       if (this.finalCheckIndex !== oldIndex) continue;
       if (level >= maxLevel || result === FC_DONE || this.canPropagate()) break;
       level++;
@@ -1467,9 +1477,10 @@ export class Context extends Internalizer {
       if (!this.isRelevant(atom)) continue;
       const expr = isNegated(literal) ? manager.mkNot(atom) : atom;
       manager.incRef(expr);
-      const value = manager.isGroundApp(expr) ? model.eval(expr, false) : -1;
-      if (value !== -1) manager.decRef(value);
+      const value = manager.isGroundApp(expr) ? model.tryEval(expr, false) : -1;
+      if (value !== undefined && value !== -1) manager.decRef(value);
       manager.decRef(expr);
+      if (value === undefined) return true;
       if (value === manager.falseExpr) return false;
     }
     return true;
@@ -1825,12 +1836,15 @@ export class Context extends Internalizer {
     this.caseSplitQueue.initSearchEh();
     if (this.manager.hasTypeVars) this.registerFamily(FAMILY_POLY);
     this.isSearching = true;
-    const currentLevel = this.scopeLevel;
-    let result: number | undefined;
-    while (result === undefined) result = this.restart(this.boundedSearch(), currentLevel);
-    this.caseSplitQueue.endSearchEh();
-    this.isSearching = false;
-    return result;
+    try {
+      const currentLevel = this.scopeLevel;
+      let result: number | undefined;
+      while (result === undefined) result = this.restart(this.boundedSearch(), currentLevel);
+      this.caseSplitQueue.endSearchEh();
+      return result;
+    } finally {
+      this.isSearching = false;
+    }
   }
 
   getNumConflicts() {
