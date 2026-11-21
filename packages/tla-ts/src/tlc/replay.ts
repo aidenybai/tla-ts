@@ -14,6 +14,7 @@ import {
   getCoverageNode,
   getEnteredFrames,
   runAtCoverageNode,
+  runReportedInto,
   type Coverage,
 } from "../coverage";
 import {
@@ -969,14 +970,22 @@ const visitApplication = (
       return visit(replay, branch, items, scope, partial, node);
     }
     case "Case": {
-      const arm = expression.arms.find((candidate) => {
-        const value = evaluateAt(replay, node, candidate.condition, context);
-        if (typeof value === "boolean") return value;
-        throw createRunError(replay, getCaseGuardMessage(replay, value, candidate.body));
-      });
-      const body = arm?.body ?? expression.other;
-      if (body === undefined) throw createRunError(replay, getCaseOtherMessage(replay, expression));
-      return visit(replay, body, items, scope, partial, node);
+      const visitArm = () => {
+        const arm = expression.arms.find((candidate) => {
+          const value = evaluateAt(replay, node, candidate.condition, context);
+          if (typeof value === "boolean") return value;
+          throw createRunError(replay, getCaseGuardMessage(replay, value, candidate.body));
+        });
+        const body = arm?.body ?? expression.other;
+        if (body === undefined) {
+          throw createRunError(replay, getCaseOtherMessage(replay, expression));
+        }
+        return visit(replay, body, items, scope, partial, node);
+      };
+      // Tool#enabled evaluates a CASE's guards and arms in the CASE's CostModel, not their $Pair's, so OpApplNodeWrapper#get reports their costs into the CASE.
+      return replay.isEnabled && replay.coverage && node >= 0
+        ? runReportedInto(replay.coverage, node, visitArm)
+        : visitArm();
     }
     case "FunctionApplication": {
       const lambda = getLazyFunction(

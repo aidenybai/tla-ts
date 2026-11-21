@@ -4485,6 +4485,85 @@ ASSUME TLCFP(a) = -887695703
     ]);
   });
 
+  const ENABLED_CASE_PREFIX = [
+    "line 7, col 8 to line 7, col 25 of module M: 3",
+    "|line 7, col 15 to line 7, col 24 of module M: 3",
+    "||line 7, col 17 to line 7, col 17 of module M: 3",
+    "||line 7, col 20 to line 7, col 22 of module M: 3",
+    "|||line 4, col 27 to line 4, col 27 of module M: 3",
+    "|||line 7, col 6 to line 7, col 14 of module N: 3",
+  ];
+
+  it.each([
+    [
+      "A == y' = y + 1 /\\ CASE y = 1 -> TRUE [] OTHER -> FALSE",
+      [
+        ...ENABLED_CASE_PREFIX,
+        "||||line 6, col 6 to line 6, col 15 of module N: 3",
+        "||||line 6, col 20 to line 6, col 55 of module N: 6",
+      ],
+    ],
+    [
+      "A == CASE y = 1 -> y' = 2 [] OTHER -> y' = 0",
+      [...ENABLED_CASE_PREFIX, "||||line 7, col 14 to line 7, col 14 of module N: 6"],
+    ],
+    [
+      "A == y' = y + 1 /\\ CASE y = 1 -> TRUE [] y # 1 -> FALSE",
+      [
+        ...ENABLED_CASE_PREFIX,
+        "||||line 6, col 6 to line 6, col 15 of module N: 3",
+        "||||line 6, col 20 to line 6, col 55 of module N: 10",
+      ],
+    ],
+    [
+      "A == y' = y + 1 /\\ CASE y = 1 -> TRUE [] OTHER -> y > 5",
+      [
+        ...ENABLED_CASE_PREFIX,
+        "||||line 6, col 6 to line 6, col 15 of module N: 3",
+        "||||line 6, col 20 to line 6, col 55 of module N: 8",
+      ],
+    ],
+    [
+      "A == y' = y + 1 /\\ CASE K!G = 2 -> TRUE [] OTHER -> FALSE",
+      [
+        ...ENABLED_CASE_PREFIX,
+        "||||line 6, col 6 to line 6, col 15 of module N: 3",
+        "||||line 6, col 20 to line 6, col 57 of module N: 12",
+        "|||||line 6, col 25 to line 6, col 39 of module N: 3",
+      ],
+    ],
+    [
+      "A == y' = y + 1 /\\ CASE F(y) = 2 -> TRUE [] OTHER -> FALSE",
+      [
+        ...ENABLED_CASE_PREFIX,
+        "||||line 6, col 6 to line 6, col 15 of module N: 3",
+        "||||line 6, col 20 to line 6, col 58 of module N: 15",
+      ],
+    ],
+    [
+      "A == y' = y + 1 /\\ IF y = 1 THEN TRUE ELSE FALSE",
+      ["line 7, col 8 to line 7, col 25 of module M: 3"],
+    ],
+  ])(
+    "counts the guards and arms of %j under ENABLED at the CASE, as TLC's Tool#enabledApplImpl evaluates them in the CASE's cost model and reports their costs there",
+    async (action, lines) => {
+      const result = await check({
+        source:
+          "---- MODULE M ----\nEXTENDS Naturals, TLC\nVARIABLE x\nI == INSTANCE N WITH y <- x\nInit == x = 0\nNext == x' = (x + 1) % 3\nInv == PrintT(<<x, I!E>>)\n====\n",
+        config: "INIT Init\nNEXT Next\nINVARIANT Inv\n",
+        coverage: 1,
+        onPrint: () => {},
+        loadModule: (name) =>
+          name === "N"
+            ? `---- MODULE N ----\nEXTENDS Naturals\nVARIABLE y\nF(a) == a + 1\nK == INSTANCE P WITH z <- y\n${action}\nE == ENABLED A\n====\n`
+            : name === "P"
+              ? "---- MODULE P ----\nEXTENDS Naturals\nVARIABLE z\nG == z + 1\n====\n"
+              : undefined,
+      });
+      expect(formatCoverage(result)?.at(-1)).toEqual(lines);
+    },
+  );
+
   it.each([
     ["t /\\ (ENABLED (t /\\ y' = y))' /\\ t", "ACTION_CONSTRAINT", 4, 67],
     ["t /\\ ENABLED (t /\\ y' = y) /\\ t", "ACTION_CONSTRAINT", 4, 64],

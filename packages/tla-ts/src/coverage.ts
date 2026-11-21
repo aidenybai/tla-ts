@@ -783,6 +783,37 @@ export const runAtCoverageNode = <Result>(
   }
 };
 
+export const runReportedInto = <Result>(
+  coverage: Coverage,
+  node: number,
+  run: () => Result,
+): Result => {
+  const substitutions = new Set(coverage.substitutionNodes.get(coverage.roots[node])?.values());
+  const descendants: number[] = [];
+  for (let index = -1; index < descendants.length; index++) {
+    const parent = index === -1 ? node : descendants[index];
+    for (
+      let child = coverage.firstChild[parent];
+      child !== -1;
+      child = coverage.nextSibling[child]
+    ) {
+      if (!substitutions.has(child)) descendants.push(child);
+    }
+  }
+  const primary = descendants.map((descendant) => coverage.primary[descendant]);
+  const secondary = descendants.map((descendant) => coverage.secondary[descendant]);
+  try {
+    return run();
+  } finally {
+    descendants.forEach((descendant, index) => {
+      coverage.primary[node] += coverage.primary[descendant] - primary[index];
+      coverage.secondary[node] += coverage.secondary[descendant] - secondary[index];
+      coverage.primary[descendant] = primary[index];
+      coverage.secondary[descendant] = secondary[index];
+    });
+  }
+};
+
 export const enterFrames = (
   coverage: Coverage,
   frames: Expression[],
