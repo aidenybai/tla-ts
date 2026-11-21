@@ -2886,4 +2886,57 @@ describe("opt, as Z3 5.3.2 sets up its solver", () => {
       ]),
     ).toEqual(["sat", "false"]);
   });
+
+  it("keeps relevancy on under a case split strategy other than 1", () => {
+    const getRlimit = (options: string[]) =>
+      run([
+        ...options,
+        "(declare-const x Real)",
+        "(declare-const y Real)",
+        "(declare-fun g (Real) Real)",
+        "(assert (or (< x 3.5) (and (< (g x) y) (< x 8.0))))",
+        "(assert (or (= (g y) x) (< y 1.0)))",
+        "(assert (<= y 10.0))",
+        "(minimize (- y x))",
+        "(check-sat)",
+        "(get-info :rlimit)",
+      ]);
+    expect(getRlimit([])).toEqual(["sat", "(:rlimit 1132)"]);
+    expect(getRlimit(["(set-option :smt.case_split 0)"])).toEqual(["sat", "(:rlimit 692)"]);
+  });
+});
+
+describe("case splits, as Z3 5.3.2 reads smt.case_split", () => {
+  it("delays the splits a search makes only under case_split 1", () => {
+    const getRlimit = (options: string[]) =>
+      run([
+        ...options,
+        "(declare-const x Int)",
+        "(declare-const y Int)",
+        "(declare-const z Int)",
+        "(declare-const w Int)",
+        "(declare-fun p0 (Int) Bool)",
+        "(declare-fun p1 (Int) Bool)",
+        "(declare-fun p2 (Int) Bool)",
+        "(declare-fun p3 (Int) Bool)",
+        "(assert (or (< (+ x x) 3) (> (+ x z) -2) (= (+ x y) -5)))",
+        "(assert (or (not (>= w 0)) (not (<= (+ y z) 5)) (not (p2 (+ w x)))))",
+        "(assert (or (p0 (+ x z)) (>= (+ x x) -3) (>= (+ w y) 0) (<= x -2)))",
+        "(assert (or (> (+ z y) -4) (p1 (+ z z)) (not (= x -6))))",
+        "(assert (or (<= (+ z z) -3) (<= y -1)))",
+        "(assert (or (not (>= (+ x z) -3)) (p1 (+ z y)) (not (> (+ z z) -5)) (>= (+ x w) 4)))",
+        "(assert (or (p1 w) (> w -2) (not (> x 6)) (<= (+ w x) 0)))",
+        "(assert (or (< (+ z y) -4) (p3 x)))",
+        "(assert (or (not (p2 y)) (not (< (+ y x) 1)) (= (+ w y) 4)))",
+        "(assert (or (= (+ w y) -6) (p2 (+ x y))))",
+        "(assert (or (not (< (+ z w) 2)) (not (> z 0))))",
+        "(assert (or (>= (+ y w) 1) (= w 6) (p2 (+ w w))))",
+        "(assert (or (p1 x) (p3 (+ y x)) (not (p3 z)) (not (<= (+ y z) 3))))",
+        "(assert (or (p3 (+ y w)) (> (+ y x) -3) (<= z 0)))",
+        "(check-sat)",
+        "(get-info :rlimit)",
+      ]);
+    expect(getRlimit([])).toEqual(["sat", "(:rlimit 3420)"]);
+    expect(getRlimit(["(set-option :smt.case_split 0)"])).toEqual(["sat", "(:rlimit 3465)"]);
+  });
 });

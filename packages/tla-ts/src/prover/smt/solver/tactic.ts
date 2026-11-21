@@ -11,6 +11,7 @@ import { createQfufbvAckrTactic, runAckermannizeBv } from "./ackermannize-bv-tac
 import { createAigTactic } from "./aig-tactic";
 import { blastTermIte } from "./blast-term-ite";
 import { card2bv } from "./card2bv";
+import { isDelayingByCaseSplit } from "./case-split-queue";
 import { type Context, MBQI_MAX_ITERATIONS } from "./context";
 import { ctxSimplify } from "./ctx-simplify";
 import { createCtxSolverSimplify } from "./ctx-solver-simplify";
@@ -334,6 +335,7 @@ const SMT_DESCRS = getDescrs("smt", [
   ["arith.branch_cut_ratio", PARAM_UINT, 2, true],
   ["random_seed", PARAM_UINT, 0, true],
   ["auto_config", PARAM_BOOL, true, true],
+  ["case_split", PARAM_UINT, 1, true],
   ["ematching", PARAM_BOOL, true, true],
   ["mbqi.id", PARAM_STRING, ""],
   ["qi.cost", PARAM_STRING, "(+ weight generation)", true],
@@ -353,27 +355,32 @@ const isEmatching = (environment: TacticEnvironment, params: TacticParams) =>
 const getRelevancyLevel = (environment: TacticEnvironment, params: TacticParams) =>
   getUint(params, "relevancy", Number(getParameter(environment, "smt.relevancy", "2")));
 
+// smt_params ands the auto_config of the tactic with the global one, which smt does not scope.
+const isAutoConfig = (environment: TacticEnvironment, params: TacticParams) =>
+  getBool(
+    params,
+    "auto_config",
+    getParameter(environment, "smt.auto_config", "true") !== "false",
+  ) && getParameter(environment, "auto_config", "true") !== "false";
+
+const isDelayingNewCaseSplits = (environment: TacticEnvironment, params: TacticParams) =>
+  isDelayingByCaseSplit(
+    getUint(params, "case_split", Number(getParameter(environment, "smt.case_split", "1"))),
+  );
+
 // The dependencies are assertion names, which are Boolean constants, so each one is its own
 // assumption.
 const getKernelParams = (environment: TacticEnvironment, params: TacticParams, goal: Goal) => {
   const manager = environment.manager;
   const hasQuantifiers = goal.forms.items.some((form) => manager.hasQuantifierFlags[form]);
-  // smt_params ands the auto_config of the tactic with the global one, which smt does not scope.
-  const setup = {
-    ...environment.setup,
-    isAutoConfig:
-      getBool(
-        params,
-        "auto_config",
-        getParameter(environment, "smt.auto_config", "true") !== "false",
-      ) && getParameter(environment, "auto_config", "true") !== "false",
-  };
+  const setup = { ...environment.setup, isAutoConfig: isAutoConfig(environment, params) };
   return {
     isMbqi: getBool(params, "mbqi", environment.isMbqi) || isMbqiByFeatures(setup, hasQuantifiers),
     mbqiMaxIterations: getUint(params, "mbqi.max_iterations", environment.mbqiMaxIterations),
     isFindingMacros: environment.isFindingMacros,
     isEmatching: isEmatching(environment, params),
     relevancyLevel: getRelevancyLevel(environment, params),
+    isDelayingNewCaseSplits: isDelayingNewCaseSplits(environment, params),
     setup,
     randomSeed: getUint(
       params,
@@ -574,6 +581,7 @@ const runUnitSubsume = (environment: TacticEnvironment) => {
     isFindingMacros: environment.isFindingMacros,
     isEmatching: getParameter(environment, "smt.ematching", "true") !== "false",
     relevancyLevel: Number(getParameter(environment, "smt.relevancy", "2")),
+    isDelayingNewCaseSplits: isDelayingNewCaseSplits(environment, new Map()),
   });
   const clauses = new RefVector(manager);
   environment.destructors.push(() => {
@@ -951,6 +959,7 @@ const NAMED_TACTICS = new Map<string, NamedTactic>([
           isFindingMacros: environment.isFindingMacros,
           isEmatching: isEmatching(environment, tacticParams),
           relevancyLevel: getRelevancyLevel(environment, tacticParams),
+          isDelayingNewCaseSplits: isDelayingNewCaseSplits(environment, tacticParams),
           qiCost: tacticParams.has("qi.cost")
             ? String(tacticParams.get("qi.cost"))
             : environment.parameters.get("smt.qi.cost"),
@@ -1669,7 +1678,7 @@ const NAMED_TACTICS = new Map<string, NamedTactic>([
     {
       descrs: new Map(),
       isRejectingUnknown: false,
-      build: (environment) => runQe(environment.manager),
+      build: (environment) => runQe(environment),
     },
   ],
   [

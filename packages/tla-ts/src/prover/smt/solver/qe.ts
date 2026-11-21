@@ -34,6 +34,7 @@ import { RefVector } from "./ref-vector";
 import { Rewriter, TACTIC_REWRITER_OPTIONS } from "./rewriter";
 import { InvVarShifter, RewriterTpl, VarShifter } from "./rewriter-tpl";
 import { SmtKernel } from "./smt-kernel";
+import type { TacticEnvironment } from "./tactic";
 import { VarSubst } from "./var-subst";
 
 // Whether an expression contains x, with the answers kept for the subterms.
@@ -677,7 +678,7 @@ class QuantElimPlugin implements QeSolverContext {
       mbqiMaxIterations: MBQI_MAX_ITERATIONS,
       isFindingMacros: false,
       relevancyLevel: 0,
-      isDelayingNewCaseSplits: false,
+      isDelayingNewCaseSplits: Number(quantElim.parameters.get("smt.case_split") ?? "1") === 1,
     });
     this.root = new SearchTree(manager, undefined, manager.trueExpr);
     this.current = this.root;
@@ -1147,7 +1148,10 @@ class QuantElim {
   private all: QuantElimPlugin[] = [];
   assumption: number;
 
-  constructor(readonly manager: AstManager) {
+  constructor(
+    readonly manager: AstManager,
+    readonly parameters: ReadonlyMap<string, string>,
+  ) {
     this.rewriter = new Rewriter(manager, TACTIC_REWRITER_OPTIONS);
     this.trail = new RefVector(manager);
     this.assumption = manager.trueExpr;
@@ -1466,8 +1470,9 @@ export const simplifyQuantifiers = (manager: AstManager, formula: number) => {
   return result;
 };
 
-export const runQe = (manager: AstManager) => (goal: Goal) => {
-  const quantElim = new QuantElim(manager);
+export const runQe = (environment: TacticEnvironment) => (goal: Goal) => {
+  const manager = environment.manager;
+  const quantElim = new QuantElim(manager, environment.parameters);
   try {
     for (let index = 0; index < goal.forms.size; index++) {
       manager.limit.checkpoint();

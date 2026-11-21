@@ -1,5 +1,6 @@
 import { SmtCanceledError, SmtDefaultError, SmtInvariantError } from "../../../errors";
 import { type AstManager, FAMILY_ARITH, FAMILY_PB } from "./ast";
+import { isDelayingByCaseSplit } from "./case-split-queue";
 import { InfEps } from "./inf-eps";
 import { L_FALSE, L_TRUE, L_UNDEF } from "./lbool";
 import type { AlgebraicManager } from "./nlsat/algebraic";
@@ -58,11 +59,16 @@ export class OptSolver {
     params: TacticEnvironment,
   ) {
     this.dualBoundRlimit = Number(params.parameters.get("opt.optsmt_dual_bound_rlimit") ?? 100);
-    // opt_solver turns relevancy off under the default case split strategy, so a decided bound,
-    // such as one optsmt made for a lower bound, reaches the arithmetic solver.
+    const relevancyLevel = Number(params.parameters.get("smt.relevancy") ?? "2");
+    const isDelaying = isDelayingByCaseSplit(
+      Number(params.parameters.get("smt.case_split") ?? "1"),
+    );
+    // opt_solver turns relevancy off under case_split 1, so a decided bound, such as one optsmt
+    // made for a lower bound, reaches the arithmetic solver.
     this.kernel = new SmtKernel(manager, {
       ...params,
-      relevancyLevel: 0,
+      relevancyLevel: isDelaying ? 0 : relevancyLevel,
+      isDelayingNewCaseSplits: isDelaying,
       setup: params.setup && { ...params.setup, isArithAutoConfigSimplex: true },
     });
     this.kernel.context.registerFamily(FAMILY_PB);
@@ -90,6 +96,7 @@ export class OptSolver {
 
   assertExpr(expr: number) {
     this.model = null;
+    if (this.manager.hasQuantifierFlags[expr]) this.kernel.context.params.relevancyLevel = 2;
     this.pinned.push(expr);
     this.kernel.assertExpr(expr);
   }

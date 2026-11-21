@@ -322,7 +322,7 @@ class Kernel {
 
   constructor(
     private manager: AstManager,
-    private isCoreMinimizing: boolean,
+    private parameters: ReadonlyMap<string, string>,
   ) {
     this.trail = new RefVector(manager);
   }
@@ -333,8 +333,8 @@ class Kernel {
       mbqiMaxIterations: MBQI_MAX_ITERATIONS,
       isFindingMacros: false,
       relevancyLevel: 0,
-      isDelayingNewCaseSplits: false,
-      isCoreMinimizing: this.isCoreMinimizing,
+      isDelayingNewCaseSplits: Number(this.parameters.get("smt.case_split") ?? "1") === 1,
+      isCoreMinimizing: this.parameters.get("smt.core.minimize") === "true",
     });
     this.lastAssert = -1;
     this.trail.reset();
@@ -394,11 +394,11 @@ class Qsat {
   constructor(
     private manager: AstManager,
     private mode: number,
-    isCoreMinimizing: boolean,
+    parameters: ReadonlyMap<string, string>,
   ) {
     this.mbp = new Mbproj(manager);
-    this.fa = new Kernel(manager, isCoreMinimizing);
-    this.ex = new Kernel(manager, isCoreMinimizing);
+    this.fa = new Kernel(manager, parameters);
+    this.ex = new Kernel(manager, parameters);
     this.predAbs = new PredAbs(manager);
     this.answer = new RefVector(manager);
     this.asms = new RefVector(manager);
@@ -831,11 +831,7 @@ class Qsat {
 }
 
 export const runQsat = (environment: TacticEnvironment, mode: number) => (goal: Goal) => {
-  const qsat = new Qsat(
-    environment.manager,
-    mode,
-    environment.parameters.get("smt.core.minimize") === "true",
-  );
+  const qsat = new Qsat(environment.manager, mode, environment.parameters);
   try {
     return qsat.apply(goal);
   } finally {

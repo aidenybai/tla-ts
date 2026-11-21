@@ -70,6 +70,7 @@ import { getHammerPeriod } from "./lp/lp-settings";
 import { isAstLess } from "./ast-lt";
 import { InvVarShifter } from "./rewriter-tpl";
 import { elimUnusedVars, getFreeVarSorts, VarSubst } from "./var-subst";
+import { isDelayingByCaseSplit } from "./case-split-queue";
 import { type Context, MBQI_MAX_ITERATIONS } from "./context";
 import { L_FALSE, L_TRUE, L_UNDEF } from "./lbool";
 import type { DatalogContext } from "./muz/dl-context";
@@ -710,6 +711,9 @@ export const runSmtlibScript = (
     isFindingMacros: settings.isFindingMacros,
     isEmatching: settings.parameters.get("smt.ematching") !== "false",
     relevancyLevel: Number(settings.parameters.get("smt.relevancy") ?? "2"),
+    isDelayingNewCaseSplits: isDelayingByCaseSplit(
+      Number(settings.parameters.get("smt.case_split") ?? "1"),
+    ),
     isCoreMinimizing: settings.parameters.get("smt.core.minimize") === "true",
     setup: getSetup(),
     intHammerPeriod: getHammerPeriod(settings.parameters),

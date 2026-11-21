@@ -1,5 +1,12 @@
 import { BoolVar, toBoolVar } from "./literal";
 
+// mk_case_split_queue: case_split 1 delays the splits a search makes. Z3's cached queue splits as
+// its activity queue does, since undo_mk_bool_var clears the variable's term before del_var_eh
+// caches it, and so does its theory-aware queue, since no theory gives it a priority.
+// Deviation from Z3: the relevancy queues, which Z3 takes for case_split 3 to 5 with auto_config
+// off and full relevancy, split as the activity queue does.
+export const isDelayingByCaseSplit = (caseSplit: number) => caseSplit === 1;
+
 class ActivityHeap {
   private values: BoolVar[] = [toBoolVar(-1)];
   private indices = new Int32Array(1024);
