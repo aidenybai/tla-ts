@@ -1172,8 +1172,10 @@ const compileAction = (
     case "Let": {
       const body = getChildRunner(expression.body);
       const reevaluated = getReevaluatedDefinitions(expression.definitions, environment);
-      // TLC's Tool#enabled binds a LET's definitions to lazy values it caches, where Tool#getNextStates evaluates them at every use.
-      const cached = { impure: new Set<Definition>(), streamed: reevaluated.streamed };
+      // TLC's Tool#enabled binds a LET's definitions to lazy values it caches, where Tool#getNextStates evaluates them at every use. Both bind an instance's substitutions with getVal(..., false), which caches nothing.
+      const cached = environment.boundSubstitutions.lets.has(expression)
+        ? reevaluated
+        : { impure: new Set<Definition>(), streamed: reevaluated.streamed };
       return (run, scope, partial, action, isFixed, onComplete) =>
         body(
           run,

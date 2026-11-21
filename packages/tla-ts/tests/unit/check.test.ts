@@ -2240,8 +2240,20 @@ ASSUME TLCFP(a) = -887695703
     "",
   ].join("\n");
   const ACTION_CHECK = "INIT Init\nNEXT Step\nACTION_CONSTRAINT Check\n";
+  const INVARIANT_CHECK = "INIT Init\nNEXT Step\nINVARIANT Check\n";
   const LIVE_CHECK = "SPECIFICATION Spec\nPROPERTY Live\n";
   const getPrints = (text: string, count: number) => Array.from({ length: count }, () => text);
+  const getLazyReads = async (definitions: string, config: string) => {
+    const printed: string[] = [];
+    await check({
+      source: `---- MODULE M ----\nEXTENDS TLC, Naturals\nVARIABLE y\nJ == INSTANCE Q WITH d <- PrintT("d"), w <- y\nInit == y = 0\nStep == y' = (y + 1) % 2\nSpec == Init /\\ [][Step]_y /\\ WF_y(Step)\n${definitions}\n====\n`,
+      config,
+      seed: 4n,
+      loadModule: (name) => (name === "Q" ? PRIMED_READS : undefined),
+      onPrint: (text) => printed.push(text),
+    });
+    return printed;
+  };
 
   it.each([
     ["Check == (J!Op1)'", ACTION_CHECK, getPrints('"d"', 8)],
@@ -2259,7 +2271,7 @@ ASSUME TLCFP(a) = -887695703
     ],
     [
       "Check == LET t == PrintT(\"t\") /\\ y \\in 0..1 IN t /\\ ENABLED (y' = y /\\ t') /\\ t",
-      "INIT Init\nNEXT Step\nINVARIANT Check\n",
+      INVARIANT_CHECK,
       getPrints('"t"', 4),
     ],
     ["Next == J!A1 /\\ J!Op1'", "INIT Init\nNEXT Next\n", getPrints('"d"', 16)],
@@ -2285,15 +2297,27 @@ ASSUME TLCFP(a) = -887695703
   ])(
     "evaluates a lazy value read under a prime in %j afresh and keeps what it read before, as TLC's Tool#evalAppl does",
     async (definitions, config, expected) => {
-      const printed: string[] = [];
-      await check({
-        source: `---- MODULE M ----\nEXTENDS TLC, Naturals\nVARIABLE y\nJ == INSTANCE Q WITH d <- PrintT("d"), w <- y\nInit == y = 0\nStep == y' = (y + 1) % 2\nSpec == Init /\\ [][Step]_y /\\ WF_y(Step)\n${definitions}\n====\n`,
-        config,
-        seed: 4n,
-        loadModule: (name) => (name === "Q" ? PRIMED_READS : undefined),
-        onPrint: (text) => printed.push(text),
-      });
-      expect(printed).toEqual(expected);
+      expect(await getLazyReads(definitions, config)).toEqual(expected);
+    },
+  );
+
+  it.each([
+    ["Check == ENABLED J!A1", INVARIANT_CHECK, 8],
+    ["Next == Step /\\ ENABLED J!A1", "INIT Init\nNEXT Next\n", 8],
+    ["Check == ENABLED (J!A2 /\\ J!A2)", INVARIANT_CHECK, 8],
+    ["Check == ENABLED J!A1 /\\ ENABLED J!A1", INVARIANT_CHECK, 16],
+    ["Check == ENABLED (J!Op1 /\\ y' = y)", INVARIANT_CHECK, 8],
+    ["Live == []<>ENABLED J!A1", LIVE_CHECK, 16],
+    [
+      "Fair == Init /\\ [][Step]_y /\\ WF_y(J!A1)\nLive == <>(y = 1)",
+      "SPECIFICATION Fair\nPROPERTY Live\n",
+      18,
+    ],
+    ["Check == J!A1", ACTION_CHECK, 2],
+  ])(
+    "evaluates an instance's substitute again at each read inside ENABLED in %j, as TLC's Tool#enabled binds it uncachable",
+    async (definitions, config, count) => {
+      expect(await getLazyReads(definitions, config)).toEqual(getPrints('"d"', count));
     },
   );
 
