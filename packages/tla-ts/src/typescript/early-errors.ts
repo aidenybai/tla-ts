@@ -130,8 +130,8 @@ const isBodyOf = (node: ts.Statement) => {
 };
 
 // A let or a const that is a with statement's body, which the statement's rewrite would put in a
-// block. Where a line break follows a let, other than before a bracket, JavaScript reads the let
-// as a name, where TypeScript reads a declaration.
+// block. A compile gives a let that a line break follows there the semicolon that JavaScript reads
+// after it, as the name let, before it parses the file.
 const rejectLexicalWithBody = (node: ts.Node) => {
   if (
     !ts.isVariableStatement(node) ||
@@ -139,21 +139,6 @@ const rejectLexicalWithBody = (node: ts.Node) => {
     (node.declarationList.flags & ts.NodeFlags.BlockScoped) === 0
   ) {
     return;
-  }
-  const name = node.declarationList.declarations.at(0)?.name;
-  if (
-    (node.declarationList.flags & ts.NodeFlags.Let) !== 0 &&
-    name !== undefined &&
-    !ts.isArrayBindingPattern(name) &&
-    node
-      .getSourceFile()
-      .text.slice(node.declarationList.getStart() + "let".length, name.getStart())
-      .includes("\n")
-  ) {
-    throw new TlaTypeScriptError(
-      "tla-ts can't read a let that a line break follows as a name",
-      node,
-    );
   }
   reject("A declaration can't be the body of a statement", node);
 };
@@ -318,8 +303,7 @@ const getNodeParse = (sourceFile: ts.SourceFile) => {
 };
 
 // Rejects programs that JavaScript rejects as it parses, as V8 does where Node is at hand and else
-// where TypeScript's parser accepts them, and stops at a let that a line break follows, which
-// TypeScript's parser reads as a declaration.
+// where TypeScript's parser accepts them.
 export const rejectEarlyErrors = (sourceFile: ts.SourceFile) => {
   const parse = getNodeParse(sourceFile);
   if (parse === undefined) {

@@ -1,8 +1,8 @@
 import { X } from "@phosphor-icons/react";
 import { memo, type ReactNode } from "react";
 import { cn } from "cn";
-import type { Mark, Token } from "../site-data";
-import type { LineNote } from "../run-worker";
+import type { Mark, Token } from "@/lib/site-data";
+import type { LineNote } from "@/lib/run-worker";
 
 const WORDS = /\s+|[A-Za-z_]\w*|\d+|[^\sA-Za-z_\d]+/g;
 // Each word is its own box, and a line may break between two boxes. Words with no space between

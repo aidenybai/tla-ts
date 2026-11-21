@@ -5,8 +5,8 @@ import {
   type CompileResponse,
   compileOnEscore,
   listenToCompiles,
-} from "./escore-worker";
-import type { createHighlighter } from "./highlighter";
+} from "@/lib/escore-worker";
+import type { createHighlighter } from "@/lib/highlighter";
 
 interface CompileState {
   response: CompileResponse | undefined;
@@ -34,13 +34,11 @@ export const useCompile = (source: string, fileName: string) => {
         response,
         compiled: response.compilation ? response : previous.compiled,
       }));
-    const loadHighlighter = () =>
-      void import("./highlighter")
-        .then((loaded) => loaded.createHighlighter())
-        .then((nextHighlight) => setHighlight(() => nextHighlight));
     // The worker that checks compiles too.
     workerRef.current = { postMessage: compileOnEscore };
-    loadHighlighter();
+    void import("@/lib/highlighter")
+      .then((loaded) => loaded.createHighlighter())
+      .then((nextHighlight) => setHighlight(() => nextHighlight));
     return listenToCompiles(receive);
   }, [isStarted]);
 

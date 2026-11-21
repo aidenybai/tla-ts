@@ -1,19 +1,22 @@
 import { Play } from "@phosphor-icons/react";
-import { BenchmarkChart } from "./components/benchmark-chart";
-import { GitHubIcon } from "./components/github-icon";
-import { Code, Example, Hero, Section } from "./components/parts";
-import { Prompt } from "./components/prompt";
-import { Reference } from "./components/reference";
-import { ThemeMenu } from "./components/theme-menu";
-import { Test262Chart } from "./components/test262-chart";
-import { InlineCode } from "./components/ui/inline-code";
-import { buttonVariants } from "./components/ui/button-variants";
-import { Link } from "./components/ui/link";
+import { Code } from "@/components/code";
+import { GitHubIcon } from "@/components/github-icon";
+import { BenchmarkChart } from "@/components/benchmark-chart";
+import { Example } from "@/components/example";
+import { Hero } from "@/components/hero";
+import { Section } from "@/components/section";
+import { Prompt } from "@/components/prompt";
+import { Reference } from "@/components/reference";
+import { ThemeMenu } from "@/components/theme-menu";
+import { Test262Chart } from "@/components/test262-chart";
+import { InlineCode } from "@/components/ui/inline-code";
+import { buttonVariants } from "@/components/ui/button-variants";
+import { Link } from "@/components/ui/link";
 import { cn } from "cn";
 import { install, prompt } from "virtual:site-data";
-import { getTest262Percent, TEST262_RUNS } from "./test262";
+import { getTest262Percent, TEST262_RUNS } from "@/lib/test262";
 
-export const App = () => (
+const Page = () => (
   <main className="mx-auto max-w-[692px] px-6 py-16 text-prose sm:py-28">
     <Hero.Root>
       <Hero.Title>TLA-ts</Hero.Title>
@@ -102,3 +105,5 @@ export const App = () => (
     </footer>
   </main>
 );
+
+export default Page;

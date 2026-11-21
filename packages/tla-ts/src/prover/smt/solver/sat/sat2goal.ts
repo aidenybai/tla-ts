@@ -1,13 +1,11 @@
 import { SmtCanceledError } from "../../../../errors";
 import { type AstManager, SORT_BOOL } from "../ast";
+import { mkNot } from "../ast-util";
 import type { Definition, Goal } from "../goal";
 import { RefVector } from "../ref-vector";
 import { NULL_LITERAL } from "./clause";
 import { ModelConverter } from "./model-converter";
 import type { Solver } from "./solver";
-
-const mkNot = (manager: AstManager, expr: number) =>
-  manager.isNot(expr) ? manager.getArg(expr, 0) : manager.mkNot(expr);
 
 export const isLiteral = (manager: AstManager, expr: number) =>
   manager.isUninterpretedConst(expr) ||

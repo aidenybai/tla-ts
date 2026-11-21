@@ -45,6 +45,7 @@ interface ParsedModule {
   tokens: Token[];
   start: number;
   end: number;
+  isNested: boolean;
   getModule: () => Module;
   texts?: ModuleTexts;
 }
@@ -348,6 +349,7 @@ const createModuleSet = (
         tokens: [],
         start: 0,
         end: 0,
+        isNested: false,
         getModule: () => source,
         text: undefined,
         loaded: undefined,
@@ -376,6 +378,7 @@ const createModuleSet = (
     const file = {
       tokens,
       ...range,
+      isNested: false,
       getModule:
         preparedModule || name === undefined || text === undefined
           ? moduleText.getModule
@@ -390,6 +393,7 @@ const createModuleSet = (
       nestedModules.set(nestedName, {
         tokens,
         ...nestedRange,
+        isNested: true,
         getModule: () => findModule(file.getModule().modules, nestedName) ?? file.getModule(),
       });
     });
@@ -573,10 +577,13 @@ const createContexts = (getParsed: ModuleSet) => {
     if (cached) return cached;
     const table = createSymbolTable();
     contexts.set(name ?? "", table);
-    SANY_BUILTINS.toReversed().forEach((builtin) =>
-      table.put(createEntry(builtin, "builtin", false)),
-    );
     const unit = getParsed(name);
+    // SANY copies the builtins into a file module's context, but an inner module's context starts empty.
+    if (!unit.isNested) {
+      SANY_BUILTINS.toReversed().forEach((builtin) =>
+        table.put(createEntry(builtin, "builtin", false)),
+      );
+    }
     unit.getModule().extends.forEach((extended) =>
       getContext(extended).inserted.forEach((entry) => {
         if (!entry.isLocal) table.put(entry);
@@ -749,6 +756,7 @@ export interface TlcOrder {
   getDeclarationOrder: (kind: "variable" | "constant", module?: string) => string[];
   getDefinitionOrder: (module: string | undefined) => string[];
   getInstanceDeclarations: (module: string) => string[];
+  getInnerModuleOrder: (module: string | undefined) => string[];
   createDefinitionOrder: () => (name: string | undefined) => string[];
   getModule: (name: string | undefined, source: string) => Module;
   parseFile: (source: string, name: string) => Module;
@@ -785,6 +793,13 @@ export const createTlcOrder = (
         .getContext(module)
         .enumerate()
         .filter((entry) => entry.kind === "constant" || entry.kind === "variable")
+        .map((entry) => entry.name),
+    // SANY's ModuleNode#getInnerModules walks the module's Context, so inherited modules come too.
+    getInnerModuleOrder: (module) =>
+      getContexts()
+        .getContext(module)
+        .enumerate()
+        .filter((entry) => entry.kind === "module")
         .map((entry) => entry.name),
     getModule: modules.getModule,
     parseFile: modules.parseFile,

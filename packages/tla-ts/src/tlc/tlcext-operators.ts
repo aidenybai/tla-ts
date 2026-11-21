@@ -197,23 +197,28 @@ export const createTlcExtOperators = (runtime: CheckerRuntime): Builtin[] => {
     return caches;
   };
   return [
-    defineLazyOperator("AssertError", 2, (args) => {
-      const message = getOperator(args, 0, "AssertError").expression;
-      if (message && message.kind !== "String") {
-        throw new TlaEvaluationError(
-          `In computing AssertError, a non-string expression (${describeNode(message)}) was used as the err of an AssertError(err, exp).`,
-        );
-      }
-      try {
-        getThunk(args, 1, "AssertError")();
-      } catch (error) {
-        if (!(error instanceof TlaEvaluationError)) throw error;
-        return (
-          formatNestedMessage(error.message, runtime.isTool) === getThunk(args, 0, "AssertError")()
-        );
-      }
-      return false;
-    }),
+    {
+      ...defineLazyOperator("AssertError", 2, (args) => {
+        const message = getOperator(args, 0, "AssertError").expression;
+        if (message && message.kind !== "String") {
+          throw new TlaEvaluationError(
+            `In computing AssertError, a non-string expression (${describeNode(message)}) was used as the err of an AssertError(err, exp).`,
+          );
+        }
+        try {
+          getThunk(args, 1, "AssertError")();
+        } catch (error) {
+          if (!(error instanceof TlaEvaluationError)) throw error;
+          return (
+            formatNestedMessage(error.message, runtime.isTool) ===
+            getThunk(args, 0, "AssertError")()
+          );
+        }
+        return false;
+      }),
+      isStateLevel: false,
+    },
+    // Deviation from TLC: TLCExt#tlcGetOrDefault lacks TLCGet's minLevel = 1, so TLC evaluates a constant definition that calls it as it starts and keeps the default.
     defineStateOperator(
       "TLCGetOrDefault",
       2,
@@ -267,15 +272,18 @@ export const createTlcExtOperators = (runtime: CheckerRuntime): Builtin[] => {
       }
       return createModelValue(name);
     }),
-    defineLazyOperator("TLCDefer", 1, (args, context) => {
-      const expression = getOperator(args, 0, "TLCDefer").expression;
-      if (context && expression) {
-        runtime.deferred = (next) => {
-          evaluate(expression, { ...context, next });
-        };
-      }
-      return true;
-    }),
+    {
+      ...defineLazyOperator("TLCDefer", 1, (args, context) => {
+        const expression = getOperator(args, 0, "TLCDefer").expression;
+        if (context && expression) {
+          runtime.deferred = (next) => {
+            evaluate(expression, { ...context, next });
+          };
+        }
+        return true;
+      }),
+      isStateLevel: false,
+    },
     defineOperator("TLCNoOp", 1, (args) => getValue(args, 0, "TLCNoOp")),
     {
       ...defineLazyOperator("PickSuccessor", 1, (args, context) => {
@@ -338,34 +346,38 @@ export const createTlcExtOperators = (runtime: CheckerRuntime): Builtin[] => {
       }),
       isActionLevel: true,
     },
-    defineLazyOperator("TLCCache", 2, (args, context) => {
-      const expression = getOperator(args, 0, "TLCCache");
-      const closure = getValueKey(getThunk(args, 1, "TLCCache")());
-      const source = expression.expression;
-      if (!source || !context) return expression.call([]);
-      const level = getMentionedLevel(source, context.environment, new Set());
-      if (level === ACTION_LEVEL) return expression.call([]);
-      const isStateLevel = level === VARIABLE_LEVEL;
-      // TLC's model checker keeps no cache in a state, so its TLA+ definition evaluates it again.
-      if (isStateLevel && context.state && runtime.getSimulationValue === undefined) {
-        expression.call([]);
-        return expression.call([]);
-      }
-      const caches = isStateLevel && context.state ? getStateCaches(context.state) : globalCaches;
-      const cache = caches.get(source) ?? new Map<string, Value>();
-      caches.set(source, cache);
-      const cached = cache.get(closure);
-      if (cached !== undefined) return cached;
-      const value = expression.call([]);
-      cache.set(closure, value);
-      return value;
-    }),
+    {
+      ...defineLazyOperator("TLCCache", 2, (args, context) => {
+        const expression = getOperator(args, 0, "TLCCache");
+        const closure = getValueKey(getThunk(args, 1, "TLCCache")());
+        const source = expression.expression;
+        if (!source || !context) return expression.call([]);
+        const level = getMentionedLevel(source, context.environment, new Set());
+        if (level === ACTION_LEVEL) return expression.call([]);
+        const isStateLevel = level === VARIABLE_LEVEL;
+        // TLC's model checker keeps no cache in a state, so its TLA+ definition evaluates it again.
+        if (isStateLevel && context.state && runtime.getSimulationValue === undefined) {
+          expression.call([]);
+          return expression.call([]);
+        }
+        const caches = isStateLevel && context.state ? getStateCaches(context.state) : globalCaches;
+        const cache = caches.get(source) ?? new Map<string, Value>();
+        caches.set(source, cache);
+        const cached = cache.get(closure);
+        if (cached !== undefined) return cached;
+        const value = expression.call([]);
+        cache.set(closure, value);
+        return value;
+      }),
+      isStateLevel: false,
+    },
     defineOperator("TLCFP", 1, (args) => {
       const value = getValue(args, 0, "TLCFP");
       const error = getFingerprintError(value);
       if (error) throw error;
       return Number(BigInt.asIntN(32, getTlcFingerprint([value])));
     }),
+    // Deviation from TLC: TLCExt#tlcDefByName lacks a minLevel, so TLC evaluates a constant definition with it as it starts, running the argument before a null getSpecProcessor() fails.
     defineLazyOperator("TLCEvalDefinition", 1, (args, context) => {
       const name = getThunk(args, 0, "TLCEvalDefinition")();
       if (typeof name !== "string") {

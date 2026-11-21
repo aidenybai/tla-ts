@@ -784,6 +784,51 @@ Spec == Init /\\ [][Next]_x
     );
   });
 
+  // Deviation from SANY: it reports only the first row, since ThmOrAssumpDefNode#levelCheck never sets a theorem's weights.
+  it.each([
+    ["D == c = 1", "ASSUME I(x)!D", "line 8, col 1 to line 8, col 13"],
+    ["THEOREM T == ASSUME c = 1 PROVE TRUE", "ASSUME I(x)!T", "line 8, col 1 to line 8, col 13"],
+    ["THEOREM T == c = 1", "ASSUME I(x)!T", "line 8, col 1 to line 8, col 13"],
+    [
+      "THEOREM T == ASSUME NEW z, c = 1 PROVE z = z",
+      "ASSUME I(x)!T",
+      "line 8, col 1 to line 8, col 13",
+    ],
+    [
+      "THEOREM T == ASSUME c = 1, NEW z PROVE z = z",
+      "ASSUME I(x)!T",
+      "line 8, col 1 to line 8, col 13",
+    ],
+    [
+      "THEOREM T == ASSUME c = 1 PROVE TRUE",
+      "D == I(x)!T\nASSUME D",
+      "line 9, col 1 to line 9, col 8",
+    ],
+  ])(
+    "levels %j applied through a parameterized instance by its argument in %j",
+    (lines, use, range) => {
+      expect(
+        getReport({
+          M: `---- MODULE M ----\nVARIABLE x\n---- MODULE L ----\nCONSTANT c\n${lines}\n====\nI(p) == INSTANCE L WITH c <- p\n${use}\nInit == x = 0\nNext == x' = x\n====\n`,
+        }),
+      ).toEqual({
+        text: joinLines([
+          "Semantic errors:",
+          "",
+          "*** Errors: 1",
+          "",
+          `${range} of module M`,
+          "",
+          "Level error: assumptions must be level 0 (Constant), ",
+          "but this one has level 1.",
+          "",
+          "",
+        ]),
+        isFailed: true,
+      });
+    },
+  );
+
   it("parses a module once the module that names it reaches it, though another loaded it", () => {
     const report = getReport(
       {
@@ -1085,11 +1130,17 @@ Spec == Init /\\ [][Next]_x
     expect(report).toEqual({ text: "", isFailed: false });
   });
 
-  it("accepts an inner module that only a LET instantiates, which SANY rejects", () => {
-    const report = getReport({
-      M: "---- MODULE M ----\n---- MODULE Inner ----\nK == 1\n====\nD == LET N == INSTANCE Inner IN N!K\n====\n",
-    });
-    expect(report).toEqual({ text: "", isFailed: false });
+  it.each([
+    [
+      "rejects as multiply defined",
+      "---- MODULE M ----\n---- MODULE Inner ----\nK == 1\n====\nD == LET N == INSTANCE Inner IN N!K\n====\n",
+    ],
+    [
+      "fails to parse when it has an inner module of its own",
+      "---- MODULE M ----\n---- MODULE Inner ----\n---- MODULE Nested ----\nJ == 1\n====\nK == 1\n====\nD == LET N == INSTANCE Inner IN N!K\n====\n",
+    ],
+  ])("accepts an inner module that only a LET instantiates, which SANY %s", (_title, source) => {
+    expect(getReport({ M: source })).toEqual({ text: "", isFailed: false });
   });
 
   it.each([
@@ -1099,6 +1150,31 @@ Spec == Init /\\ [][Next]_x
   ])("accepts a function definition with a LET in its bounds in %j, which SANY rejects", (unit) => {
     const report = getReport({ M: `---- MODULE M ----\n${unit}\n====\n` });
     expect(report).toEqual({ text: "", isFailed: false });
+  });
+
+  it("checks the proof of a labeled temporal theorem or step, which SANY skips", () => {
+    const report = getReport({
+      M: "---- MODULE M ----\nVARIABLE x\nTHEOREM T == t :: [](x = 0)\n<1>1. HAVE x = 1\n<1>2. s :: [](x = 0)\n  <2>1. CASE x = 1\n    OBVIOUS\n  <2> QED\n<1> QED\n====\n",
+    });
+    expect(report).toEqual({
+      text: joinLines([
+        "Semantic errors:",
+        "",
+        "*** Errors: 2",
+        "",
+        "line 6, col 9 to line 6, col 18 of module M",
+        "",
+        "Non-constant CASE for temporal goal.",
+        "",
+        "",
+        "line 4, col 7 to line 4, col 16 of module M",
+        "",
+        "Non-constant TAKE, WITNESS, or HAVE for temporal goal.",
+        "",
+        "",
+      ]),
+      isFailed: true,
+    });
   });
 
   it("accepts a definition after a field named THEOREM, AXIOM or DOMAIN, which SANY rejects", () => {

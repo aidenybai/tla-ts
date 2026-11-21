@@ -1,14 +1,14 @@
 import { X } from "@phosphor-icons/react";
 import type { ReactNode } from "react";
 import { cn } from "cn";
-import { Button } from "./ui/button";
+import { Button } from "@/components/ui/button";
 
 interface ResultRootProps {
   isOpen: boolean;
   children: ReactNode;
 }
 
-export const ResultRoot = (props: ResultRootProps) => (
+const ResultRoot = (props: ResultRootProps) => (
   <aside
     aria-label="Result"
     inert={!props.isOpen}
@@ -25,7 +25,7 @@ interface ResultHeaderProps {
   onClose: () => void;
 }
 
-export const ResultHeader = (props: ResultHeaderProps) => (
+const ResultHeader = (props: ResultHeaderProps) => (
   <header className="flex h-11 shrink-0 items-center justify-between border-b pr-1.5 pl-4">
     <h2 className="font-medium text-foreground">Result</h2>
     <Button
@@ -43,7 +43,7 @@ interface ResultBodyProps {
   children: ReactNode;
 }
 
-export const ResultBody = (props: ResultBodyProps) => (
+const ResultBody = (props: ResultBodyProps) => (
   <div aria-live="polite" className="flex min-h-0 flex-1 flex-col gap-6 p-4">
     {props.children}
   </div>
@@ -56,7 +56,7 @@ interface ResultSectionProps {
   children: ReactNode;
 }
 
-export const ResultSection = (props: ResultSectionProps) => (
+const ResultSection = (props: ResultSectionProps) => (
   <section className={cn("grid shrink-0 gap-2", props.className)}>
     <header className="flex items-center justify-between gap-3">
       <h3 className="font-medium text-foreground">{props.title}</h3>
@@ -74,7 +74,7 @@ interface ResultSkeletonProps {
 
 // The outline of a result: a title and a verdict, then a title, a count, and the states. It
 // shows only if a check takes long enough to notice.
-export const ResultSkeleton = (props: ResultSkeletonProps) => (
+const ResultSkeleton = (props: ResultSkeletonProps) => (
   <div
     role="status"
     className="flex animate-pulse flex-col gap-6 transition-opacity delay-150 duration-150 ease-out motion-reduce:animate-none starting:opacity-0"
@@ -96,3 +96,11 @@ export const ResultSkeleton = (props: ResultSkeletonProps) => (
     </div>
   </div>
 );
+
+export const Result = {
+  Root: ResultRoot,
+  Header: ResultHeader,
+  Body: ResultBody,
+  Section: ResultSection,
+  Skeleton: ResultSkeleton,
+};

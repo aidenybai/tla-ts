@@ -259,6 +259,71 @@ describe("the setup of the smt kernel", () => {
       ]),
     ).toEqual(["sat", "(:rlimit 432)", "sat", "(:rlimit 561)"]);
   });
+
+  it("delays the interface equalities of arrays to every fourth final check under AUFLIRA", () => {
+    expect(
+      run([
+        "(set-logic AUFLIRA)",
+        "(declare-const a Int)",
+        "(declare-const b Int)",
+        "(declare-const c Int)",
+        "(declare-const r Real)",
+        "(declare-const s Real)",
+        "(declare-const q Bool)",
+        "(declare-fun f (Int) Int)",
+        "(assert (= a (ite (<= r s) (f 0) b)))",
+        "(assert (= a c))",
+        "(assert (< (abs a) (f 1)))",
+        "(check-sat-assuming (q))",
+        "(get-info :rlimit)",
+        "(check-sat)",
+        "(get-value (a))",
+      ]),
+    ).toEqual(["sat", "(:rlimit 385)", "sat", "((a (- 11798)))"]);
+  });
+});
+
+describe("theory_array, the array solver setup_AUFLIA picks", () => {
+  it("leaves out the default axioms of theory_array_full", () => {
+    expect(
+      run([
+        "(set-logic AUFLIA)",
+        "(set-option :smt.qi.lazy_threshold 10.0)",
+        "(declare-fun f (Int) Int)",
+        "(declare-fun g (Int Int) Int)",
+        "(declare-fun p (Int) Bool)",
+        "(declare-fun A () (Array Int Int))",
+        "(declare-fun B () (Array Int Int))",
+        "(declare-fun a () Int)",
+        "(declare-fun b () Int)",
+        "(declare-fun c () Int)",
+        "(assert (exists ((x0 Int)) (! (= (g 0 -1) (f c)) :pattern ((p x0)))))",
+        "(assert (= A (store A c a)))",
+        "(check-sat)",
+        "(get-info :rlimit)",
+        "(get-value (a b (f a)))",
+      ]),
+    ).toEqual(["sat", "(:rlimit 218)", "((a 4)\n (b 0)\n ((f a) 3))"]);
+  });
+
+  it("gives up on a constant array", () => {
+    expect(
+      run([
+        "(set-logic AUFLIA)",
+        "(declare-fun f ((Array Int Int)) Int)",
+        "(declare-fun A () (Array Int Int))",
+        "(assert (= (f ((as const (Array Int Int)) 0)) 1))",
+        "(assert (= (f A) 2))",
+        "(check-sat)",
+        "(get-info :reason-unknown)",
+        "(get-info :rlimit)",
+      ]),
+    ).toEqual([
+      "unknown",
+      '(:reason-unknown "smt tactic failed to show goal to be sat/unsat (incomplete (theory array))")',
+      "(:rlimit 377)",
+    ]);
+  });
 });
 
 describe("a distinct of more than two arguments", () => {

@@ -562,7 +562,7 @@ export class Goal2Sat implements SatInternalizer, EufInternalizer {
     const clause = new RefVector(manager);
     try {
       forms: for (let index = 0; index < goal.forms.size; index++) {
-        const form = goal.forms.items[index];
+        const form = goal.forms.get(index);
         held.set(1, form);
         const dependency = goal.getDependency(index);
         if (dependency === undefined) {

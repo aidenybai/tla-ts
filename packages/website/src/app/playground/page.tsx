@@ -1,6 +1,6 @@
-import { Playground } from "./components/playground-parts";
+import { Playground } from "@/components/playground/playground";
 
-export const PlaygroundPage = () => (
+const Page = () => (
   <Playground.Root>
     <Playground.Header>
       <Playground.Settings />
@@ -14,3 +14,5 @@ export const PlaygroundPage = () => (
     </Playground.Workspace>
   </Playground.Root>
 );
+
+export default Page;

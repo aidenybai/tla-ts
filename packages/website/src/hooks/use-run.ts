@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
-import { runOnEscore, startEscoreWorker, stopEscoreRun } from "./escore-worker";
-import type { RunRequest, RunResult } from "./run-worker";
+import { runOnEscore, startEscoreWorker, stopEscoreRun } from "@/lib/escore-worker";
+import type { RunRequest, RunResult } from "@/lib/run-worker";
 
 export const useRun = (isWarm = false) => {
   const [result, setResult] = useState<RunResult | undefined>(undefined);

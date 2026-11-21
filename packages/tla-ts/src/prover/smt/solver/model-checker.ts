@@ -29,11 +29,17 @@ class AuxContext {
     this.context = new Context(parent.manager, {
       ...parent.params,
       relevancyLevel: 0,
+      isDelayingNewCaseSplits: false,
       isArrayFakeSupport: true,
     });
     this.context.config = { ...parent.config, relevancyLevel: 0 };
     for (const theory of parent.theories) this.context.registerFamily(theory.id);
-    this.context.setupContext(parent.setup, false, this.asserted);
+    // Z3 gives the aux context no logic, so its setup adds every theory.
+    this.context.setupContext(
+      parent.setup === undefined ? undefined : { ...parent.setup, logic: undefined },
+      false,
+      this.asserted,
+    );
   }
 
   release() {
@@ -47,7 +53,6 @@ class AuxContext {
 
   pop() {
     this.context.pop(1);
-    this.asserted.pop();
   }
 
   assert(formula: number) {

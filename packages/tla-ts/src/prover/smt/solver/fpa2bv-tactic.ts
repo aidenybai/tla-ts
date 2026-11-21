@@ -61,7 +61,7 @@ export const runFpa2Bv = (manager: AstManager) => (goal: Goal) => {
   const rewriter = new Fpa2BvRewriter(manager, converter);
   const size = goal.forms.size;
   for (let index = 0; !goal.isInconsistent && index < size; index++) {
-    const result = rewriter.rewrite(goal.forms.items[index]);
+    const result = rewriter.rewrite(goal.forms.get(index));
     goal.update(index, result, goal.getDependency(index));
     manager.decRef(result);
   }

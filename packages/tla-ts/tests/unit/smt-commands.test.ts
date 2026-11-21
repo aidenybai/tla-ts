@@ -375,6 +375,80 @@ describe("runSmtlibScript runs its commands as Z3 does", () => {
     ).toEqual(["unsat", "(+ 7 x)", "(* 2 x)", "((not p) (not q))", "unsat", "((not p) (not q))"]);
   });
 
+  it("drops the implication of an assumption that is not a literal when its search pops", () => {
+    expect(
+      run([
+        "(declare-fun x1 () Int)",
+        "(declare-fun x2 () Int)",
+        "(declare-const b0 Bool)",
+        "(check-sat-assuming (b0))",
+        "(check-sat)",
+        "(assert (! (or false (>= x1 x2) (>= x1 2)) :named n3))",
+        "(check-sat-assuming (b0 n3))",
+        "(check-sat)",
+        "(get-model)",
+      ]),
+    ).toEqual([
+      "sat",
+      "sat",
+      "sat",
+      "sat",
+      "(",
+      "  (define-fun x1 () Int",
+      "    0)",
+      "  (define-fun x2 () Int",
+      "    0)",
+      "  (define-fun n3 () Bool",
+      "    (or false (>= x1 x2) (>= x1 2)))",
+      "  (define-fun b0 () Bool",
+      "    false)",
+      ")",
+    ]);
+  });
+
+  it("frees the implication of an assumption that is not a literal once it is asserted", () => {
+    expect(
+      run([
+        "(set-option :produce-unsat-cores true)",
+        "(declare-fun x1 () Int)",
+        "(declare-const b0 Bool)",
+        "(assert (! (<= (abs 6) x1) :named n0))",
+        "(check-sat)",
+        "(check-sat-assuming (n0))",
+        "(check-sat)",
+        "(check-sat-assuming (n0 b0 (not b0)))",
+        "(get-unsat-core)",
+      ]),
+    ).toEqual(["sat", "sat", "sat", "unsat", "(b0 (not b0))"]);
+  });
+
+  it("keeps the implication from the name of an assertion until its scope pops", () => {
+    expect(
+      run([
+        "(set-option :produce-unsat-cores true)",
+        "(declare-const v0 (_ BitVec 8))",
+        "(declare-const v1 (_ BitVec 3))",
+        "(assert (distinct v1 (bvsrem (bvshl #b000 v1) v1)))",
+        "(check-sat)",
+        "(push 1)",
+        "(assert (! (bvsge (bvudiv v0 v0) ((_ rotate_right 9) v0)) :named n10))",
+        "(check-sat)",
+        "(get-model)",
+      ]),
+    ).toEqual([
+      "sat",
+      "sat",
+      "(",
+      "  (define-fun n10 () Bool",
+      "    (bvsge (bvudiv v0 v0) ((_ rotate_right 9) v0)))",
+      "  (define-fun v1 () (_ BitVec 3)",
+      "    #b101)",
+      "  (define-fun v0 () (_ BitVec 8)",
+      "    #x1d)",
+      ")",
+    ]);
+  });
+
   it("reports an even root of a negative number as an error of the command", () => {
     const message = "even root of negative number is not real";
     expect(
@@ -1591,6 +1665,52 @@ describe("runSmtlibScript runs its commands as Z3 does", () => {
     ).toEqual(["sat", "sat", "sat"]);
   });
 
+  it("pops the asserted formulas of two scopes at once, as asserted_formulas does", () => {
+    expect(
+      run([
+        "(declare-fun f (Int) Int)",
+        "(declare-const a Int)",
+        "(declare-const b Int)",
+        "(check-sat)",
+        "(push 1)",
+        "(assert (> (f a) (+ a 1)))",
+        "(push 1)",
+        "(assert (> (f b) (+ (* 3 b) 2)))",
+        "(check-sat)",
+        "(pop 2)",
+        "(declare-const c Int)",
+        "(declare-const d Int)",
+        "(declare-const e Int)",
+        "(simplify (+ (* 2 c) (* 5 d) e (f c) (f d) (f e)))",
+        "(simplify (+ (* 3 e) (* 4 d) c (f d) (f c)))",
+        "(assert (> (+ (f c) (f d)) (+ (* 2 c) (f e))))",
+        "(check-sat)",
+        "(get-model)",
+      ]),
+    ).toEqual([
+      "sat",
+      "sat",
+      "(+ (* 2 c) (* 5 d) e (f c) (f d) (f e))",
+      "(+ (* 3 e) (* 4 d) c (f d) (f c))",
+      "sat",
+      "(",
+      "  (define-fun c () Int",
+      "    0)",
+      "  (define-fun d () Int",
+      "    2)",
+      "  (define-fun e () Int",
+      "    3)",
+      "  (define-fun b () Int",
+      "    0)",
+      "  (define-fun a () Int",
+      "    0)",
+      "  (define-fun f ((x!0 Int)) Int",
+      "    (ite (= x!0 2) 1",
+      "      0))",
+      ")",
+    ]);
+  });
+
   it("keeps the conflict that push propagates once its scope is popped", () => {
     expect(
       run([
@@ -2287,6 +2407,25 @@ describe("runSmtlibScript runs its commands as Z3 does", () => {
       ")",
     ]);
   });
+
+  it("frees the ids of select and store with their last terms, so later declarations reuse them", () => {
+    expect(
+      run([
+        "(declare-fun A () (Array Int Int))",
+        "(simplify (store A 1 (select A 0)))",
+        "(declare-fun g (Int) Int)",
+        "(declare-fun h (Int) Int)",
+        "(declare-fun c () Int)",
+        "(declare-fun d () Int)",
+        "(assert (= (g c) (h d)))",
+        "(assert (= (g d) (h c)))",
+        "(assert (distinct (g c) (g d)))",
+        "(assert (forall ((x Int)) (>= (g x) (h x))))",
+        "(check-sat)",
+        "(get-info :rlimit)",
+      ]),
+    ).toEqual(["(store A 1 (select A 0))", "unsat", "(:rlimit 713)"]);
+  });
 });
 
 describe("reset-assertions, as Z3 5.3.2 frees the solver", () => {
@@ -2576,5 +2715,107 @@ describe("reset-assertions, as Z3 5.3.2 frees the solver", () => {
       "  :precision precise :depth 2)",
       ")",
     ]);
+  });
+});
+
+const POPPED_CHECK = [
+  "(declare-fun g (Int) Int)",
+  "(declare-fun h (Int) Int)",
+  "(declare-fun c () Int)",
+  "(declare-fun d () Int)",
+  "(assert (= (g c) (h d)))",
+  "(assert (= (g d) (h c)))",
+  "(assert (distinct (g c) (g d)))",
+  "(assert (forall ((x Int)) (! (>= (g x) (h x)) :pattern ((g x)))))",
+  "(assert (forall ((x Int)) (! (<= (h x) (+ (g x) 1)) :pattern ((h x)))))",
+  "(check-sat)",
+  "(get-info :rlimit)",
+];
+
+describe("pop, as Z3 5.3.2 frees the declarations of a scope", () => {
+  it("keeps a declaration that the congruence table read until the solver is freed", () => {
+    expect(
+      run([
+        "(declare-fun a () (Array Int Bool))",
+        "(declare-fun b () (Array Bool Int))",
+        "(push 1)",
+        "(assert (= (select b (select a 0)) 2))",
+        "(check-sat)",
+        "(pop 1)",
+        ...POPPED_CHECK,
+      ]),
+    ).toEqual(["sat", "unsat", "(:rlimit 638)"]);
+  });
+
+  it("frees the declarations of the scopes it pops in the order they were made", () => {
+    expect(
+      run([
+        "(push 1)",
+        "(declare-fun e () Int)",
+        "(push 1)",
+        "(declare-fun k (Int) Int)",
+        "(pop 2)",
+        "(push 1)",
+        ...POPPED_CHECK,
+      ]),
+    ).toEqual(["unsat", "(:rlimit 603)"]);
+  });
+});
+
+describe(":global-declarations, as Z3 5.3.2 keeps declarations through a pop", () => {
+  it("keeps the functions, datatypes and named terms of a popped scope", () => {
+    expect(
+      run([
+        "(get-option :global-decls)",
+        "(set-option :global-declarations true)",
+        "(get-option :global-declarations)",
+        "(declare-const x Int)",
+        "(push 1)",
+        "(declare-datatypes ((P 0)) (((mk (fst Int)))))",
+        "(declare-fun a () Int)",
+        "(assert (! (> x 0) :named n))",
+        "(pop 1)",
+        "(declare-const p P)",
+        "(assert (= (fst p) a))",
+        "(assert (not n))",
+        "(check-sat)",
+      ]),
+    ).toEqual(["false", "true", "sat"]);
+  });
+
+  it("cannot be set once the solver is initialized", () => {
+    expect(
+      run([
+        "(push 1)",
+        "(set-option :global-declarations true)",
+        "(declare-fun a () Int)",
+        "(pop 1)",
+        "(assert (= a 1))",
+        "(check-sat)",
+      ]),
+    ).toEqual([
+      "(error \"line 2 column 33: error setting ':global-decls', option value cannot be modified after initialization\")",
+      '(error "line 5 column 11: unknown constant a")',
+      "sat",
+    ]);
+  });
+});
+
+describe("opt, as Z3 5.3.2 sets up its solver", () => {
+  it("delays the case splits a search makes", () => {
+    expect(
+      run([
+        "(set-logic QF_LIA)",
+        "(declare-const x0 Int)",
+        "(declare-fun x1 () Int)",
+        "(declare-const b0 Bool)",
+        "(assert (= (>= (abs x1) (- x0)) (=> (<= (div x0 1) x0) (= (- x0) x0))))",
+        "(assert b0)",
+        "(minimize 6)",
+        "(assert-soft (not (and (>= (ite (distinct (div x0 2) (+ x0 x0 x0)) 0 x0) x1) (> (mod 4 5) (div x0 (- 2))) (<= (abs x0) (div x1 3)))) :weight 10)",
+        "(check-sat)",
+        "(eval (= (>= 0 (abs x0)) (xor (<= 5 (+ x0 x1 6)) b0)))",
+      ]),
+    ).toEqual(["sat", "false"]);
   });
 });

@@ -13,7 +13,7 @@ import {
   TlaEvaluationError,
   TlaSyntaxError,
 } from "../../src";
-import type { OutputLine } from "../../src/check";
+import type { CheckResult, OutputLine } from "../../src/check";
 import { UNEXPECTED_EVAL_EXCEPTION, UNEXPECTED_EXCEPTION } from "../../src/errors";
 import type { TlcVersion } from "../../src/tlc/version";
 import { formatState } from "../../src/values";
@@ -559,6 +559,27 @@ IsTwo == x \\in {2, 3}
   });
 
   it.each([
+    ["no EXTENDS", "", ["A1", "Baz", "Cc", "Quux", "Bar", "Qux", "Foo", "dd", "B2", "Zeta"]],
+    [
+      "EXTENDS TLC",
+      "EXTENDS TLC\n",
+      ["B2", "A1", "Foo", "dd", "Baz", "Bar", "Cc", "Quux", "Qux", "Zeta"],
+    ],
+  ])(
+    "computes the definitions an INSTANCE of an inner module with %s adds in the order of its symbol table, which SANY starts without the builtins",
+    async (_label, extendsLine, expected) => {
+      const names = ["Foo", "Bar", "Baz", "Qux", "Quux", "A1", "B2", "Cc", "dd", "Zeta"];
+      const prints: string[] = [];
+      await check({
+        source: `---- MODULE M ----\nEXTENDS TLC\nVARIABLE x\n---- MODULE P ----\n${extendsLine}VARIABLE v\n${names.map((name) => `${name} == PrintT("${name}")`).join("\n")}\n====\nI == INSTANCE P WITH v <- x\nInit == x = 0\nNext == x' = x\n====`,
+        config: "INIT Init\nNEXT Next",
+        onPrint: (text) => prints.push(text),
+      });
+      expect(prints).toEqual(expected.map((name) => `"${name}"`));
+    },
+  );
+
+  it.each([
     ["Naturals", "{} >= 0", ">", "{}"],
     ["Integers", "{} >= 0", ">=", "{}"],
     ["Naturals, TLCExt", "{} >= 0", ">=", "{}"],
@@ -963,6 +984,243 @@ ASSUME TLCFP(a) = -887695703
       config: "INIT Init\nNEXT Next",
     });
     expect(result.status).toBe("success");
+  });
+
+  it("evaluates a constant definition with a Json operator once as it starts, as TLC does", async () => {
+    const printed: string[] = [];
+    const files = new Map<string, string>();
+    await check({
+      source:
+        '---- MODULE M ----\nEXTENDS Naturals, TLC, Json\nVARIABLE x\nJ == ToJson(<<PrintT("j")>>)\nA == ToJsonArray(<<PrintT("a")>>)\nO == ToJsonObject([k |-> PrintT("o")])\nS == JsonSerialize("s.json", <<PrintT("s")>>)\nN == ndJsonSerialize("n.json", <<PrintT("n")>>)\nD == JsonDeserialize("s.json")\nE == ndJsonDeserialize("n.json")\nInit == x = 0\nNext == x < 2 /\\ PrintT(<<J, A, O, S, N, D, E>>) /\\ x\' = x + 1\n====',
+      config: "INIT Init\nNEXT Next\nCHECK_DEADLOCK FALSE",
+      onPrint: (text) => printed.push(text),
+      readFile: (path) => files.get(path),
+      writeFile: (path, content) => files.set(path, String(content)),
+    });
+    const tuple = '<<"[true]", "[true]", "{\\"k\\":true}", TRUE, TRUE, <<TRUE>>, <<TRUE>>>>';
+    expect(printed).toEqual(['"j"', '"a"', '"o"', '"s"', '"n"', tuple, tuple]);
+  });
+
+  it("evaluates a constant definition with IOUtils' Serialize once as it starts, as TLC does", async () => {
+    const printed: string[] = [];
+    await check({
+      source:
+        '---- MODULE M ----\nEXTENDS Naturals, TLC, IOUtils\nVARIABLE x\nW == Serialize(<<PrintT("w")>>, "w.json", [format |-> "NDJSON", charset |-> "UTF-8", openOptions |-> <<"WRITE", "CREATE", "APPEND">>])\nInit == x = 0\nNext == x < 2 /\\ PrintT(W) /\\ x\' = x + 1\n====',
+      config: "INIT Init\nNEXT Next\nCHECK_DEADLOCK FALSE",
+      onPrint: (text) => printed.push(text),
+      loadModule: (name) =>
+        name === "IOUtils"
+          ? "---- MODULE IOUtils ----\nLOCAL INSTANCE Integers\nSerialize(value, dest, options) ==\n  CHOOSE r \\in [exitValue : Int, stdout : STRING, stderr : STRING] : TRUE\n===="
+          : undefined,
+      readFile: () => undefined,
+      writeFile: () => {},
+    });
+    expect(printed).toEqual(['"w"', "TRUE", "TRUE"]);
+  });
+
+  it.each([
+    [
+      "VARIABLES x, y\nInit == x = 0 /\\ y = 0\nNext == y < 3 /\\ y' = y + 1 /\\ x' = x\nInv == $S",
+      "INVARIANT Inv",
+      "abcdefghij\n0\n0\n0\n0\n",
+    ],
+    [
+      "VARIABLE x\nInit == x = 0 /\\ $S\nNext == x < 2 /\\ x' = x + 1 /\\ $S",
+      "",
+      "abcdefghij\n0\n0\n1\n",
+    ],
+  ])(
+    "appends with IOUtils' Serialize at each evaluation, as TLC does: %s",
+    async (definitions, config, content) => {
+      const files = new Map([["old.json", "abcdefghij\n"]]);
+      await check({
+        source: `---- MODULE M ----\nEXTENDS Integers, IOUtils\n${definitions.replaceAll("$S", 'Serialize(<<x>>, "old.json", [format |-> "NDJSON", charset |-> "UTF-8", openOptions |-> <<"APPEND">>])')}\n====`,
+        config: `INIT Init\nNEXT Next\nCHECK_DEADLOCK FALSE\n${config}`,
+        loadModule: (name) =>
+          name === "IOUtils"
+            ? "---- MODULE IOUtils ----\nLOCAL INSTANCE Integers\nSerialize(value, dest, options) ==\n  CHOOSE r \\in [exitValue : Int, stdout : STRING, stderr : STRING] : TRUE\n===="
+            : undefined,
+        readFile: (path) => files.get(path),
+        writeFile: (path, content) => files.set(path, String(content)),
+      });
+      expect(files.get("old.json")).toBe(content);
+    },
+  );
+
+  const checkSerialize = (
+    payload: string,
+    path: string,
+    openOptions: string,
+    files: Map<string, string>,
+    maxSetSize?: number,
+  ) =>
+    check({
+      source: `---- MODULE M ----\nEXTENDS Integers, TLC, IOUtils\nVARIABLE x\nInit == x = 0 /\\ Serialize(<<${payload}>>, "${path}", [format |-> "NDJSON", charset |-> "UTF-8", openOptions |-> <<${openOptions}>>])\nNext == x' = x\n====`,
+      config: "INIT Init\nNEXT Next",
+      isTool: true,
+      maxSetSize,
+      loadModule: (name) =>
+        name === "IOUtils"
+          ? "---- MODULE IOUtils ----\nLOCAL INSTANCE Integers\nSerialize(value, dest, options) ==\n  CHOOSE r \\in [exitValue : Int, stdout : STRING, stderr : STRING] : TRUE\n===="
+          : undefined,
+      readFile: (path) => files.get(path),
+      writeFile: (path, content) => files.set(path, String(content)),
+    });
+
+  const getSerializeError = (result: CheckResult) => {
+    const text = result.failure?.toolMessage ?? "";
+    const marker = "but it produced the following error:\n";
+    return text.slice(text.indexOf(marker) + marker.length);
+  };
+
+  it.each([
+    [
+      "1, {<<>>, 0}",
+      '"CREATE"',
+      "util.Assert$TLCRuntimeException: Attempted to compare integer 0 with non-integer:\n<<>>",
+    ],
+    [
+      "Nat",
+      '"CREATE"',
+      "java.io.IOException: Cannot convert value: unsupported value type tlc2.value.impl.UserValue",
+    ],
+    [
+      "[s \\in SUBSET {1} |-> 1 \\div 0]",
+      '"CREATE"',
+      "tlc2.tool.EvalException: @!@!@STARTMSG 2179:0 @!@!@\nThe second argument of \\div is 0.\n@!@!@ENDMSG 2179 @!@!@",
+    ],
+    [
+      "[s \\in SUBSET {1} |-> CHOOSE m \\in {} : TRUE]",
+      '"CREATE"',
+      "util.Assert$TLCDetailedRuntimeException: Attempted to compute the value of an expression of form\nCHOOSE x \\in S: P, but no element of S satisfied P.\nline 4, col 52 to line 4, col 73 of module M",
+    ],
+    [
+      '[s \\in SUBSET {1} |-> 1 .. "a"]',
+      '"CREATE"',
+      "util.Assert$TLCRuntimeException: @!@!@STARTMSG 2154:0 @!@!@\nAttempted to apply the operator overridden by the Java method\npublic static tlc2.value.impl.IntervalValue tlc2.module.Integers.DotDot(tlc2.value.impl.IntValue,tlc2.value.impl.IntValue),\nbut it produced the following error:\nCannot cast tlc2.value.impl.StringValue to tlc2.value.impl.IntValue\n@!@!@ENDMSG 2154 @!@!@",
+    ],
+    [
+      "{<<>>, 0}",
+      '"BOGUS"',
+      "java.lang.IllegalArgumentException: No enum constant java.nio.file.StandardOpenOption.BOGUS",
+    ],
+    ["{<<>>, 0}", '"WRITE"', "java.nio.file.NoSuchFileException: s.json"],
+  ])(
+    "opens the file before it converts <<%s>> with <<%s>>, and names the class of what fails, as TLC's textSerialize does",
+    async (payload, openOptions, error) => {
+      const result = await checkSerialize(payload, "s.json", openOptions, new Map());
+      expect(getSerializeError(result)).toBe(`${error}\n@!@!@ENDMSG 2154 @!@!@`);
+    },
+  );
+
+  it("names the WrongInvocationException of a set past -maxSetSize, as TLC's textSerialize does", async () => {
+    const result = await checkSerialize(
+      "[{1, 2, 3, 4} -> {1, 2, 3}]",
+      "s.json",
+      '"CREATE"',
+      new Map(),
+      10,
+    );
+    expect(getSerializeError(result)).toBe(
+      "util.WrongInvocationException: Attempted to construct a set with too many elements (>10).\n@!@!@ENDMSG 2154 @!@!@",
+    );
+  });
+
+  it.each([
+    ["s.json", '"CREATE"', "1\n"],
+    ["old.json", '"WRITE"', "1\ncdefghij\n"],
+    ["old.json", '"WRITE", "TRUNCATE_EXISTING"', "1\n"],
+    ["old.json", '"APPEND"', "abcdefghij\n1\n1\n"],
+  ])(
+    "keeps the lines converted before a failure in %s with <<%s>>, as TLC's textSerialize does",
+    async (path, openOptions, content) => {
+      const files = new Map([["old.json", "abcdefghij\n"]]);
+      await checkSerialize("1, {<<>>, 0}", path, openOptions, files);
+      expect(files.get(path)).toBe(content);
+    },
+  );
+
+  it("reads and writes a file again at each reference to a LET definition, as TLC does", async () => {
+    const printed: string[] = [];
+    const files = new Map<string, string>();
+    await check({
+      source:
+        '---- MODULE M ----\nEXTENDS Naturals, TLC, Json\nVARIABLE x\nInit == x = 0 /\\ JsonSerialize("f.json", <<0>>)\nNext == /\\ x < 2\n        /\\ LET d == JsonDeserialize("f.json")\n               w == JsonSerialize("f.json", <<x>>)\n           IN /\\ w\n              /\\ PrintT(d)\n              /\\ JsonSerialize("f.json", <<99>>)\n              /\\ PrintT(d)\n              /\\ w\n              /\\ PrintT(JsonDeserialize("f.json"))\n        /\\ x\' = x + 1\n====',
+      config: "INIT Init\nNEXT Next\nCHECK_DEADLOCK FALSE",
+      onPrint: (text) => printed.push(text),
+      readFile: (path) => files.get(path),
+      writeFile: (path, content) => files.set(path, String(content)),
+    });
+    expect(printed).toEqual(["<<0>>", "<<99>>", "<<0>>", "<<1>>", "<<99>>", "<<1>>"]);
+  });
+
+  it("keeps the value JsonDeserialize read as TLC starts after the file changes, as TLC does", async () => {
+    const printed: string[] = [];
+    const files = new Map<string, string>();
+    await check({
+      source:
+        '---- MODULE M ----\nEXTENDS Naturals, TLC, Json\nVARIABLE x\nW == JsonSerialize("f.json", <<0>>)\nD == JsonDeserialize("f.json")\nInit == x = 0 /\\ W\nNext == x < 2 /\\ JsonSerialize("f.json", <<x + 10>>) /\\ PrintT(D) /\\ PrintT(JsonDeserialize("f.json")) /\\ x\' = x + 1\n====',
+      config: "INIT Init\nNEXT Next\nCHECK_DEADLOCK FALSE",
+      onPrint: (text) => printed.push(text),
+      readFile: (path) => files.get(path),
+      writeFile: (path, content) => files.set(path, String(content)),
+    });
+    expect(printed).toEqual(["<<0>>", "<<10>>", "<<0>>", "<<11>>"]);
+  });
+
+  it.each([
+    ['JsonSerialize("old.json", <<[s \\in SUBSET {1} |-> 1 \\div 0]>>)', "old.json", ""],
+    ['ndJsonSerialize("old.json", <<1, [s \\in SUBSET {1} |-> 1 \\div 0], 2>>)', "old.json", "1\n"],
+    ['JsonSerialize("s.json", [a |-> Nat])', "s.json", ""],
+    ['ndJsonSerialize("s.json", <<[a |-> 1], {<<>>, 0}>>)', "s.json", '{"a":1}\n'],
+  ])(
+    "opens the file before %s converts the value, and keeps the lines it converted, as TLC does",
+    async (expression, path, contents) => {
+      const files = new Map([["old.json", "abcdefghij\n"]]);
+      const result = await check({
+        source: `---- MODULE M ----\nEXTENDS Naturals, TLC, Json\nVARIABLE x\nInit == x = 0 /\\ ${expression}\nNext == x' = x\n====`,
+        config: "INIT Init\nNEXT Next",
+        readFile: (path) => files.get(path),
+        writeFile: (path, content) => files.set(path, String(content)),
+      });
+      expect([result.status, files.get(path)]).toEqual(["error", contents]);
+    },
+  );
+
+  const checkLazyTuple = async (expression: string) => {
+    const printed: string[] = [];
+    const result = await check({
+      source: `---- MODULE M ----\nEXTENDS Integers, Sequences, TLC, Json\nVARIABLE x\nInit == x = 0\nNext == x = 0 /\\ x' = 1 /\\ PrintT(${expression})\n====`,
+      config: "INIT Init\nNEXT Next\nCHECK_DEADLOCK FALSE",
+      onPrint: (text) => printed.push(text),
+    });
+    return { result, printed };
+  };
+
+  it.each([
+    ["Len([n \\in UNION {1..1, {3}} |-> PrintT(n)])", ["1", "1", "3"]],
+    [
+      "LET F == [n \\in UNION {1..1, {2}} |-> PrintT(n)] IN Len(F) + Len(F)",
+      ["1", "2", "1", "2", "4"],
+    ],
+    [
+      'JsonSerialize("f.json", [n \\in UNION {1..1, {2}} |-> PrintT(n)])',
+      ["1", "2", "1", "2", "TRUE"],
+    ],
+  ])(
+    "applies a lazy function at 1, 2, ... to convert it to a tuple, and keeps none of it, as TLC's FcnLambdaValue#toTuple does, in %s",
+    async (expression, printed) => {
+      expect((await checkLazyTuple(expression)).printed).toEqual(printed);
+    },
+  );
+
+  it("converts a lazy function over sets to a tuple without applying it, as TLC's FcnLambdaValue#toTuple does", async () => {
+    expect(
+      (await checkLazyTuple('ndJsonSerialize("n.json", [s \\in SUBSET {1} |-> 1 \\div x])')).result
+        .failure?.message,
+    ).toBe(
+      "The second argument of ndJsonSerialize should be a sequence, but instead it is:\n[s \\in {{}, {1}} |-> <expression line 5, col 83 to line 5, col 90 of module M>]",
+    );
   });
 
   it("implements the TLCExt operators", async () => {
@@ -4682,6 +4940,392 @@ describe("initial predicate and next-state relation match TLC", () => {
     expect(warned).toEqual(["P"]);
   });
 
+  it.each([
+    ["P == LET A == x' = x IN x \\in {0, 1}", ["P"]],
+    ["P == LET A(p) == p' = p IN x \\in {0, 1}", ["P"]],
+    ["P == LET A == x IN TRUE", []],
+  ])("levels the property %j by its LET's body, as TLC does", async (definition, expected) => {
+    const warned: string[] = [];
+    await check({
+      source: `---- MODULE M ----\nVARIABLE x\nInit == x = 0\nNext == x' = x\n${definition}\n====`,
+      config: "INIT Init\nNEXT Next\nPROPERTY P",
+      onProgress: (progress) => {
+        if (progress.kind === "state-level-property") warned.push(progress.name);
+      },
+    });
+    expect(warned).toEqual(expected);
+  });
+
+  it.each(["P == [](LET A == x' = x IN x = 0)", "F(p) == x = 0\nP == [](F(x'))"])(
+    "checks %j as a temporal property, as TLC's level bound counts what the formula leaves out",
+    async (definitions) => {
+      const result = await check({
+        source: `---- MODULE M ----\nEXTENDS Naturals\nVARIABLE x\nInit == x = 0\nNext == x' = (x + 1) % 2\n${definitions}\n====`,
+        config: "INIT Init\nNEXT Next\nPROPERTY P",
+      });
+      expect([result.status, result.generatedStates, result.distinctStates]).toEqual([
+        "property-violation",
+        3,
+        2,
+      ]);
+    },
+  );
+
+  it.each([
+    [
+      "P == ~~(LET A == x' = x IN x = 0)",
+      "INIT Init\nNEXT Next\nPROPERTY P",
+      "The formula P at line 6, col 6 to line 6, col 33 of module M is an action-level formula (i.e., it contains no temporal operators). Only temporal-level (or state-level) formulas are allowed under PROPERTY or PROPERTIES. To check that action P holds in *every* step of the behavior, define a temporal property: Let A be the formula at line 6, col 6 to line 6, col 33 of module M; rewrite A as [][A]_v, where v is a state function (typically the tuple of variables) (compare page 90 of Specifying Systems at https://lamport.azurewebsites.net/tla/book.html).",
+    ],
+    [
+      "Spec == Init /\\ [][Next]_x /\\ ~~(LET A == x' = x IN x = 0)",
+      "SPECIFICATION Spec",
+      "TLC cannot handle this conjunct of the spec:\nline 6, col 31 to line 6, col 58 of module M",
+    ],
+    [
+      "F(p) == TRUE\nSpec == Init /\\ [][Next]_x /\\ ~~F(x')",
+      "SPECIFICATION Spec",
+      "TLC cannot handle this conjunct of the spec:\nline 7, col 31 to line 7, col 37 of module M",
+    ],
+  ])("rejects %j at the level TLC bounds it by", async (definitions, config, message) => {
+    await expect(
+      check({
+        source: `---- MODULE M ----\nEXTENDS Naturals\nVARIABLE x\nInit == x = 0\nNext == x' = (x + 1) % 2\n${definitions}\n====`,
+        config,
+      }),
+    ).rejects.toThrow(new TlaConfigError(message));
+  });
+
+  const getTwoStateSource = (definitions: string) =>
+    `---- MODULE M ----\nEXTENDS Naturals\nVARIABLE x\nInit == x = 0\nNext == x' = (x + 1) % 2\n${definitions}\n====`;
+  it.each(["Q == LET A == x' = x IN x \\in {0, 1}\nP == Q", "F(p) == x = 0\nH == F(x')\nP == H"])(
+    "warns that the property in %j is state-level, as SANY levels the definition it names",
+    async (definitions) => {
+      const warned: string[] = [];
+      const result = await check({
+        source: getTwoStateSource(definitions),
+        config: "INIT Init\nNEXT Next\nPROPERTY P",
+        onProgress: (progress) => {
+          if (progress.kind === "state-level-property") warned.push(progress.name);
+        },
+      });
+      expect([result.status, warned]).toEqual(["success", ["P"]]);
+    },
+  );
+
+  it.each([
+    ["Q == LET A == x' = x IN x \\in {0, 1}\nSpec == Init /\\ [][Next]_x /\\ []Q", 7, 33],
+    ["F(p) == x = 0\nH == F(x')\nSpec == Init /\\ [][Next]_x /\\ []H", 8, 33],
+    ["MySpec(I) == Init /\\ [][Next]_x /\\ []I\nSpec == MySpec(<>(x = 1))", 6, 38],
+  ])(
+    "rejects the [] in %j, as SANY levels its argument below an action",
+    async (definitions, line, column) => {
+      await expect(
+        check({ source: getTwoStateSource(definitions), config: "SPECIFICATION Spec" }),
+      ).rejects.toThrow(
+        new TlaEvaluationError(
+          `TLC cannot handle the temporal formula line ${line}, col ${column} to line ${line}, col ${column} of module M`,
+        ),
+      );
+    },
+  );
+
+  it.each([
+    [
+      "INIT Init\nNEXT Next\nPROPERTY T",
+      new TlaConfigError(
+        "The property T specified in the configuration file\nis not defined in the specification.",
+      ),
+    ],
+    [
+      "INIT Init\nNEXT Next\nPROPERTY A",
+      new TlaConfigError(
+        "The property A specified in the configuration file\nis not defined in the specification.",
+      ),
+    ],
+    [
+      "INIT Init\nNEXT Next\nINVARIANT T",
+      new TlaConfigError(
+        "The invariant T specified in the configuration file\nis not defined in the specification.",
+      ),
+    ],
+    [
+      "INIT Init\nNEXT Next\nCONSTRAINT T",
+      new TlaConfigError(
+        "The constraint T specified in the configuration file\nis not defined in the specification.",
+      ),
+    ],
+    [
+      "INIT Init\nNEXT Next\nACTION_CONSTRAINT T",
+      new TlaConfigError(
+        "The action constraint T specified in the configuration file\nis not defined in the specification.",
+      ),
+    ],
+    [
+      "INIT T\nNEXT Next",
+      new TlaConfigError(
+        "The initial predicate T specified in the configuration file\nis not defined in the specification.",
+      ),
+    ],
+    [
+      "INIT Init\nNEXT T",
+      new TlaConfigError(
+        "The next state action T specified in the configuration file\nis not defined in the specification.",
+      ),
+    ],
+    [
+      "SPECIFICATION T",
+      new TlaConfigError(
+        "The name T specified in the configuration file\nis not defined in the specification.",
+      ),
+    ],
+    [
+      "INIT Init\nNEXT Next\nVIEW T",
+      new TlaConfigError(
+        "The view function T specified in the configuration file\nis not defined in the specification.",
+      ),
+    ],
+    [
+      "INIT Init\nNEXT Next\nSYMMETRY T",
+      new TlaConfigError(
+        "The symmetry function T specified in the configuration file\nis not defined in the specification.",
+      ),
+    ],
+    [
+      "INIT Init\nNEXT Next\nPOSTCONDITION T",
+      new TlaEvaluationError(
+        "The post condition T specified in the configuration file\nis not defined in the specification.",
+      ),
+    ],
+  ])(
+    "takes the theorem or assumption that %j names for undefined, as TLC does",
+    async (config, error) => {
+      await expect(
+        check({
+          source: getTwoStateSource("THEOREM T == x \\in {0, 1}\nASSUME A == TRUE"),
+          config,
+        }),
+      ).rejects.toThrow(error);
+    },
+  );
+
+  const theoremBase =
+    "---- MODULE Base ----\nVARIABLE v\nTHEOREM Baz == v \\in {0, 1}\nTHEOREM Foo == ASSUME v = 0 PROVE v \\in {0, 1}\nQ == Baz\n====\n";
+  const theoremChain = "---- MODULE L2 ----\nVARIABLE w\nJ == INSTANCE Base WITH v <- w\n====\n";
+  it.each([
+    [
+      "THEOREM T == x \\in {0, 1}\nP == T",
+      "INIT Init\nNEXT Next\nPROPERTY P",
+      "The operator T, which equals line 6, col 1 to line 6, col 25 of module M,\ncannot be used as a property",
+    ],
+    [
+      "THEOREM T == x \\in {0, 1}\nPROOF OBVIOUS\nP == T",
+      "INIT Init\nNEXT Next\nPROPERTY P",
+      "The operator T, which equals line 6, col 1 to line 7, col 13 of module M,\ncannot be used as a property",
+    ],
+    [
+      "ASSUME A == TRUE\nP == A /\\ [](x \\in {0, 1})",
+      "INIT Init\nNEXT Next\nPROPERTY P",
+      "The operator A, which equals line 6, col 1 to line 6, col 16 of module M,\ncannot be used as a property",
+    ],
+    [
+      "THEOREM T == 1\nP == T /\\ [](x \\in {0, 1})",
+      "INIT Init\nNEXT Next\nPROPERTY P",
+      "The operator T, which equals line 6, col 1 to line 6, col 14 of module M,\ncannot be used as a property",
+    ],
+    [
+      "THEOREM T == x \\in {0, 1}\nP == \\A i \\in {1} : LET Q == T IN Q",
+      "INIT Init\nNEXT Next\nPROPERTY P",
+      "The operator T, which equals line 6, col 1 to line 6, col 25 of module M,\ncannot be used as a property",
+    ],
+    [
+      `${theoremBase}I == INSTANCE Base WITH v <- x\nP == I!Foo`,
+      "INIT Init\nNEXT Next\nPROPERTY P",
+      "The operator I!Foo, which equals line 12, col 1 to line 12, col 30 of module M,\ncannot be used as a property",
+    ],
+    [
+      `${theoremBase}INSTANCE Base WITH v <- x\nP == Baz /\\ [](x \\in {0, 1})`,
+      "INIT Init\nNEXT Next\nPROPERTY P",
+      "The operator Baz, which equals line 12, col 1 to line 12, col 25 of module M,\ncannot be used as a property",
+    ],
+    [
+      `${theoremBase}${theoremChain}I == INSTANCE L2 WITH w <- x\nP == I!J!Baz /\\ [](x \\in {0, 1})`,
+      "INIT Init\nNEXT Next\nPROPERTY P",
+      "The operator I!J!Baz, which equals line 16, col 1 to line 16, col 28 of module M,\ncannot be used as a property",
+    ],
+    [
+      `${theoremBase}I(p) == INSTANCE Base WITH v <- p\nP == I(x)!Q /\\ [](x \\in {0, 1})`,
+      "INIT Init\nNEXT Next\nPROPERTY P",
+      "The operator Baz, which equals line 8, col 1 to line 8, col 27 of module M,\ncannot be used as a property",
+    ],
+    [
+      "THEOREM T == TRUE\nSpec == Init /\\ [][Next]_x /\\ (T /\\ TRUE)",
+      "SPECIFICATION Spec",
+      "The operator T, which equals line 6, col 1 to line 6, col 17 of module M,\ncannot be used as a spec",
+    ],
+    [
+      `${theoremBase}I == INSTANCE Base WITH v <- x\nSpec == Init /\\ [][Next]_x /\\ I!Q`,
+      "SPECIFICATION Spec",
+      "The operator Baz, which equals line 8, col 1 to line 8, col 27 of module M,\ncannot be used as a spec",
+    ],
+    [
+      "THEOREM T == [](x \\in {0, 1})\nSpec == Init /\\ [][Next]_x /\\ T",
+      "SPECIFICATION Spec",
+      "The operator T, which equals line 6, col 1 to line 6, col 29 of module M,\ncannot be used as a spec",
+    ],
+    [
+      "THEOREM T == x \\in {0, 1}\nInit2 == T\nSpec == Init2 /\\ [][Next]_x",
+      "SPECIFICATION Spec",
+      "The operator T, which equals line 6, col 1 to line 6, col 25 of module M,\ncannot be used as a spec",
+    ],
+    [
+      `${theoremBase}I == INSTANCE Base WITH v <- x\nR == I!Foo\nSpec == Init /\\ [][Next]_x /\\ R`,
+      "SPECIFICATION Spec",
+      "The operator I!Foo, which equals line 12, col 1 to line 12, col 30 of module M,\ncannot be used as a spec",
+    ],
+  ])("rejects the theorem that %j reaches, as TLC does", async (definitions, config, message) => {
+    await expect(check({ source: getTwoStateSource(definitions), config })).rejects.toThrow(
+      new TlaConfigError(message),
+    );
+  });
+
+  it.each([
+    ["P == TN", "The operator TN, which equals line 3, col 1 to line 3, col 26 of module N"],
+    [
+      "I == INSTANCE N\nP == I!TN",
+      "The operator I!TN, which equals line 5, col 1 to line 5, col 15 of module M",
+    ],
+  ])("rejects the extended theorem that %j reaches, as TLC does", async (definitions, operator) => {
+    await expect(
+      check({
+        source: `---- MODULE M ----\nEXTENDS Naturals, N\nInit == x = 0\nNext == x' = (x + 1) % 2\n${definitions} /\\ [](x \\in {0, 1})\n====`,
+        config: "INIT Init\nNEXT Next\nPROPERTY P",
+        loadModule: (name) =>
+          name === "N"
+            ? "---- MODULE N ----\nVARIABLE x\nTHEOREM TN == x \\in {0, 1}\n===="
+            : undefined,
+      }),
+    ).rejects.toThrow(new TlaConfigError(`${operator},\ncannot be used as a property`));
+  });
+
+  it.each([
+    [
+      "THEOREM T == x \\in {0, 1}\nInit2 == T /\\ x = 0\nSpec == Init2 /\\ [][Next]_x",
+      "SPECIFICATION Spec",
+    ],
+    [
+      "THEOREM T == x \\in {0, 1}\nSpec == Init /\\ [][Next]_x /\\ \\A i \\in {1} : T",
+      "SPECIFICATION Spec",
+    ],
+    ["THEOREM T == x \\in {0, 1}\nP == []T", "INIT Init\nNEXT Next\nPROPERTY P"],
+    [
+      "---- MODULE B2 ----\nTHEOREM Baz2 == TRUE\n====\nI2 == INSTANCE B2\nP == I2!Baz2",
+      "INIT Init\nNEXT Next\nPROPERTY P",
+    ],
+  ])("checks the theorem that %j evaluates, as TLC does", async (definitions, config) => {
+    expect((await check({ source: getTwoStateSource(definitions), config })).status).toBe(
+      "success",
+    );
+  });
+
+  it("takes a theorem that a <- substitutes for undefined, as TLC does", async () => {
+    await expect(
+      check({
+        source: getTwoStateSource("CONSTANT c\nTHEOREM T == TRUE"),
+        config: "INIT Init\nNEXT Next\nCONSTANT c <- T",
+      }),
+    ).rejects.toThrow(
+      new TlaConfigError(
+        "The configuration file substitutes for c with the undefined identifier T.",
+      ),
+    );
+  });
+
+  it("finds the Java override a root theorem shares its name with, as TLC's defns holds no theorem", async () => {
+    await expect(
+      check({
+        source: getTwoStateSource("THEOREM Len == TRUE\nI == INSTANCE Sequences"),
+        config: "INIT Init\nNEXT Next\nINVARIANT Len",
+      }),
+    ).rejects.toThrow(
+      new TlaConfigError(
+        "The invariant of Len is equal to <Java Method: public static tlc2.value.impl.IntValue tlc2.module.Sequences.Len(tlc2.value.impl.Value)>",
+      ),
+    );
+    const substituted = await check({
+      source: getTwoStateSource("CONSTANT c\nTHEOREM Len == TRUE\nI == INSTANCE Sequences"),
+      config: "INIT Init\nNEXT Next\nCONSTANT c <- Len",
+    });
+    expect(substituted.status).toBe("success");
+  });
+
+  it("takes a theorem that the ALIAS names for undefined, as TLC does", async () => {
+    const result = await check({
+      source: getTwoStateSource("THEOREM T == x \\in {0, 1}\nASSUME A == TRUE\nInv == x = 0"),
+      config: "INIT Init\nNEXT Next\nINVARIANT Inv\nALIAS T",
+    });
+    expect(result.violation?.trace[0].state._ALIASEvalError).toBe(
+      "The alias T specified in the configuration file\nis not defined in the specification.",
+    );
+  });
+
+  it("checks in the initial state a property that reaches an action-level theorem, as TLC's level bound skips it", async () => {
+    const result = await check({
+      source: getTwoStateSource("THEOREM T2 == x' = x\nP == ~T2"),
+      config: "INIT Init\nNEXT Next\nPROPERTY P",
+    });
+    expect([result.status, result.failure?.message]).toEqual([
+      "error",
+      "In evaluation, the identifier x is either undefined or not an operator.\nline 6, col 15 to line 6, col 15 of module M",
+    ]);
+  });
+
+  it.each(["THEOREM T == x \\in {0, 1}\nC == T", "THEOREM T2 == x' = x\nC == T2"])(
+    "substitutes the definition in %j for a constant, as TLC's level bound skips its theorem",
+    async (definitions) => {
+      const result = await check({
+        source: getTwoStateSource(`CONSTANT c\n${definitions}`),
+        config: "INIT Init\nNEXT Next\nCONSTANT c <- C",
+      });
+      expect(result.status).toBe("success");
+    },
+  );
+
+  it("evaluates at startup a definition that reaches a theorem, as TLC's level bound skips it", async () => {
+    const prints: string[] = [];
+    await check({
+      source: `---- MODULE M ----\nEXTENDS Naturals, TLC\nVARIABLE x\nInit == x = 0\nNext == x' = (x + 1) % 2\nTHEOREM T == x \\in {0, 1}\nC == PrintT("c") /\\ T\n====`,
+      config: "INIT Init\nNEXT Next",
+      onPrint: (text) => prints.push(text),
+    });
+    expect(prints).toEqual(['"c"']);
+  });
+
+  it("takes an atom of a temporal property to the level TLC bounds its LET by", async () => {
+    await expect(
+      check({
+        source:
+          "---- MODULE M ----\nEXTENDS Naturals\nVARIABLE x\nInit == x = 0\nNext == x' = (x + 1) % 2\nP == <>((LET A == x' = x IN 1) = 2)\n====",
+        config: "INIT Init\nNEXT Next\nPROPERTY P",
+      }),
+    ).rejects.toThrow(
+      new TlaEvaluationError(
+        "Temporal formulas containing actions must be of forms <>[]A or []<>A.",
+      ),
+    );
+  });
+
+  it('describes a property in TLCGet("spec") at the level TLC bounds its LET by', async () => {
+    const prints: string[] = [];
+    await check({
+      source:
+        '---- MODULE M ----\nEXTENDS Naturals, TLC, FiniteSets\nVARIABLE x\nInit == x = 0\nNext == x\' = (x + 1) % 2\nP == [](LET A == x\' = x IN x \\in {0, 1})\nInv == PrintT(<<Cardinality(TLCGet("spec").invariants), Cardinality(TLCGet("spec").impliedtemporals)>>)\n====',
+      config: "INIT Init\nNEXT Next\nPROPERTY P\nINVARIANT Inv",
+      onPrint: (text) => prints.push(text),
+    });
+    expect(prints).toEqual(["<<1, 1>>", "<<1, 1>>"]);
+  });
+
   it("rejects an invariant that is not a state predicate", async () => {
     await expect(
       checkBody(
@@ -4721,6 +5365,22 @@ describe("initial predicate and next-state relation match TLC", () => {
     },
   );
 
+  it.each(["y", "z"])(
+    "rejects an invariant that selects through an instance with a primed argument for the bound %s",
+    async (bound) => {
+      await expect(
+        checkBody(
+          `---- MODULE L ----\nCONSTANT c\nDef == \\A ${bound} \\in {1} : <<${bound}, c>> = <<1, 1>>\n====\nVARIABLE y\nI3 == INSTANCE L WITH c <- y\nInv == I3!Def!(y')!1\nInit == y = 0\nNext == y' = y`,
+          "INIT Init\nNEXT Next\nINVARIANT Inv",
+        ),
+      ).rejects.toThrow(
+        new TlaConfigError(
+          "The invariant Inv is not a state predicate (one with no primes or temporal operators).\nNote that a bug can cause TLC to incorrectly report this error.\nIf you believe your TLA+ or PlusCal specification to be correct,\nplease check if this bug described in LevelNode.java starting at line 590ff affects you.",
+        ),
+      );
+    },
+  );
+
   it("binds a variable once for each time a lazy UNION streams an element", async () => {
     const set = "UNION {SUBSET {1}, {{}}}";
     const result = await checkBody(
@@ -4728,6 +5388,26 @@ describe("initial predicate and next-state relation match TLC", () => {
       "INIT Init\nNEXT Next",
     );
     expect([result.generatedStates, result.distinctStates]).toEqual([9, 2]);
+  });
+
+  it("takes each element of S for x' \\in S as it streams S, as TLC's getNextStates does", async () => {
+    const printed: string[] = [];
+    await check({
+      source:
+        '---- MODULE M ----\nEXTENDS TLC\nVARIABLE x\nInit == x = {}\nNext == x = {} /\\ x\' \\in {s \\in SUBSET {1, 2} : PrintT(<<"f", s>>)} /\\ PrintT(<<"n", x\'>>)\n====',
+      config: "INIT Init\nNEXT Next\nCHECK_DEADLOCK FALSE",
+      onPrint: (text) => printed.push(text),
+    });
+    expect(printed).toEqual([
+      '<<"f", {}>>',
+      '<<"n", {}>>',
+      '<<"f", {1}>>',
+      '<<"n", {1}>>',
+      '<<"f", {2}>>',
+      '<<"n", {2}>>',
+      '<<"f", {1, 2}>>',
+      '<<"n", {1, 2}>>',
+    ]);
   });
 
   it("keeps a set operation lazy unless TLC can reduce both sets", async () => {

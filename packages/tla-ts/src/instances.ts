@@ -17,6 +17,7 @@ import {
 } from "./ast";
 import { TlaSyntaxError } from "./errors";
 import {
+  copyResolution,
   getArity,
   getBoundNames,
   getKeyName,
@@ -42,22 +43,41 @@ export const substitutedExpressions = new WeakMap<Expression, Substitution>();
 export const isSubstitutionDefinition = (definition: Definition) =>
   substitutedExpressions.has(definition.body) && !substitutionFrames.has(definition.body);
 
-export const withSubstitutionFrames = (expression: Expression, frames: Expression[]) => {
-  if (frames.length === 0) return expression;
+const addFrames = (expression: Expression, frames: Expression[]) => {
   const copy = { ...expression };
   if (contextualApplications.has(expression)) contextualApplications.add(copy);
   substitutionFrames.set(copy, [...frames, ...(substitutionFrames.get(expression) ?? [])]);
   return copy;
 };
 
+export const withSubstitutionFrames = (expression: Expression, frames: Expression[]) => {
+  if (frames.length === 0) return expression;
+  const copy = addFrames(expression, frames);
+  copyResolution(expression, copy);
+  return copy;
+};
+
+// SANY selects into the instanced body, so a substitute's copy keeps the marks of the parameter it replaces, not its own.
 const withReplacedFrames = (replacement: Expression, expression: Expression) =>
-  withSubstitutionFrames(replacement, [...(substitutionFrames.get(expression) ?? []), expression]);
+  addFrames(replacement, [...(substitutionFrames.get(expression) ?? []), expression]);
+
+export const mentionsName = (
+  expression: Expression,
+  names: ReadonlySet<string> | ReadonlyMap<string, string>,
+): boolean => {
+  const name = getReferencedName(expression);
+  return (
+    (name !== undefined && names.has(name)) ||
+    getChildren(expression).some((child) => mentionsName(child, names))
+  );
+};
 
 export const renameLocals = (
   expression: Expression,
   names: Map<string, string>,
   bound = new Set<string>(),
 ): Expression => {
+  if (!mentionsName(expression, names)) return expression;
   const mapped = mapChildren(expression, (child, childBound) =>
     renameLocals(
       child,
@@ -407,6 +427,7 @@ interface Instantiation {
     reservedKey?: string,
   ) => string;
   createName: (name: string) => string;
+  originalNames: Map<string, string>;
   frame?: Expression;
   isLocal?: boolean;
 }
@@ -486,6 +507,7 @@ const createRenamer = (rewrite: Rewrite) => {
     if (!rewrite.substitutedNames.has(name)) return name;
     const fresh = renamed.get(name) ?? rewrite.instantiation.createName(name);
     renamed.set(name, fresh);
+    rewrite.instantiation.originalNames.set(fresh, name);
     return fresh;
   };
 };
@@ -671,6 +693,7 @@ const substitute = (
   const substituted = substituteExpression(expression, rewrite, bound);
   if (rewrite.mode === "Enabled") rewrite.instantiation.enabledSubstitutions.add(substituted);
   if (syntheticIdentifiers.has(expression)) syntheticIdentifiers.add(substituted);
+  copyResolution(expression, substituted);
   const substitution = substitutedExpressions.get(expression);
   if (!substitution || substituted === expression || substitutedExpressions.has(substituted)) {
     return substituted;

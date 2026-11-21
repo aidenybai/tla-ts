@@ -17,7 +17,7 @@ export const simplifyGoal = (manager: AstManager, goal: Goal, options: RewriterO
   const size = goal.forms.size;
   let rewritten = -1;
   for (let index = 0; index < size && !goal.isInconsistent; index++) {
-    const result = rewriter.rewrite(goal.forms.items[index]);
+    const result = rewriter.rewrite(goal.forms.get(index));
     if (rewritten !== -1) manager.decRef(rewritten);
     rewritten = result;
     goal.update(index, rewritten, goal.getDependency(index));

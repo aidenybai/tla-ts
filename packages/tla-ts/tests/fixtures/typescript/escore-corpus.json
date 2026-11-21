@@ -5136,11 +5136,12 @@
       "isModule": false,
       "source": "\n      const visited: number[] = [];\n      function visit(value: unknown, index: number, array: unknown[]) {\n        if (arguments.length === 3) visited.push(index);\n        return true;\n      }\n      const values: unknown[] = [0, 1];\n      values[999999] = 2;\n      const isEvery = values.every(visit);\n      values.reduceRight(function (sum: number, value: unknown, index: number) {\n        if (arguments.length === 4) visited.push(index);\n        return sum;\n      }, 0);\n      const seen = [isEvery, visited.join()];\n      if (seen.join(\";\") !== \"true;0,1,999999,999999,1,0\") throw new Error(seen.join(\";\"));\n    ",
       "runs": [
-        { "name": "visits the elements of a long sparse array" },
+        { "name": "visits the elements of a long sparse array", "isSlow": true },
         {
           "name": "rejects another result",
           "replace": ["1,0", "0,1"],
-          "thrown": "true;0,1,999999,999999,1,0"
+          "thrown": "true;0,1,999999,999999,1,0",
+          "isSlow": true
         }
       ]
     },

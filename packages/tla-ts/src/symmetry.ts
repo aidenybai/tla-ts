@@ -3,7 +3,13 @@ import type { Substitution } from "./config";
 import { TlaConfigError, TlaEvaluationError, UNEXPECTED_EXCEPTION } from "./errors";
 import { EXIT_STATUS, getMessageExitStatus, setExitCode } from "./exit-codes";
 import { getCodedMessage, MESSAGE_CODE, withUnexpectedException } from "./tlc/messages";
-import { evaluate, getBuiltin, getDefinition, getRootKey, type Environment } from "./evaluate";
+import {
+  evaluate,
+  getBuiltin,
+  getConfigNameDefinition,
+  getRootKey,
+  type Environment,
+} from "./evaluate";
 import { parenthesizedRanges } from "./parser";
 import { getKeyName } from "./resolve";
 import {
@@ -110,7 +116,7 @@ export const getSymmetryGroup = (
 ): Images[] | undefined => {
   const key = getRootKey(name, environment);
   // Deviation from TLC: TLC ignores a [Mod] <- of the symmetry, or throws a ClassCastException for a literal body.
-  const definition = getDefinition(key, environment);
+  const definition = getConfigNameDefinition(key, environment);
   if (
     definition === undefined &&
     !environment.constants.has(key) &&

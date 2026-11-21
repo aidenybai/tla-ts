@@ -1,6 +1,6 @@
-import type { Library } from "../../tla-ts/src/typescript/program";
-import { compileEscore } from "../../tla-ts/src/typescript/spec/api";
-import type { EscoreRuntime } from "../../tla-ts/src/typescript/spec/prepare";
+import type { Library } from "../../../tla-ts/src/typescript/program";
+import { compileEscore } from "../../../tla-ts/src/typescript/spec/api";
+import type { EscoreRuntime } from "../../../tla-ts/src/typescript/spec/prepare";
 import type { Compilation } from "./compilation";
 
 // A file compiled by specializing ESCore: the module of the program's code, which maps no regions

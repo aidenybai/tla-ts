@@ -1,5 +1,5 @@
 import { check, formatValue, parseModule, TlaError, type CheckResult, type Value } from "tla-ts";
-import type { EscoreHost } from "../../tla-ts/src/typescript/spec/prepare";
+import type { EscoreHost } from "../../../tla-ts/src/typescript/spec/prepare";
 import type { CompileResponse, EscoreRequest } from "./escore-worker";
 import { getErrorResult } from "./run-error";
 import { getSearch, type Search } from "./search";
@@ -63,9 +63,9 @@ const host: Promise<EscoreHost> = fetch(
 const escore = Promise.all([
   import("./escore"),
   import("virtual:typescript-libraries"),
-  import("../../tla-ts/src/typescript/program"),
-  import("../../tla-ts/src/typescript/spec/api"),
-  import("../../tla-ts/src/typescript/spec/prepare"),
+  import("../../../tla-ts/src/typescript/program"),
+  import("../../../tla-ts/src/typescript/spec/api"),
+  import("../../../tla-ts/src/typescript/spec/prepare"),
 ]).then(async ([loaded, libraries, program, api, prepare]) => ({
   library: program.createLibrary(libraries.default),
   runtime: prepare.prepareHostRuntime(await host),

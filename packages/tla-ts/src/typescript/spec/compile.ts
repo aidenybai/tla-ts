@@ -206,13 +206,51 @@ const transpile = (source: string, fileName: string, isModule: boolean, wrapper 
   return `${wrapper[0]}${code}${wrapper[1]}`;
 };
 
-const parse = (code: string, fileName: string, isModule: boolean) => {
+// Where a let that a line break follows is a with statement's body, which TypeScript's parser reads
+// as a declaration, and JavaScript as the name let, with a semicolon after it by ASI: the end of
+// each such let.
+const findLineBrokenLets = (node: ts.Node): number[] => {
+  const name = ts.isVariableStatement(node)
+    ? node.declarationList.declarations.at(0)?.name
+    : undefined;
+  const isLineBroken =
+    ts.isVariableStatement(node) &&
+    ts.isWithStatement(node.parent) &&
+    (node.declarationList.flags & ts.NodeFlags.Let) !== 0 &&
+    name !== undefined &&
+    !ts.isArrayBindingPattern(name) &&
+    node
+      .getSourceFile()
+      .text.slice(node.declarationList.getStart() + "let".length, name.getStart())
+      .includes("\n");
+  const found: number[] = [];
+  ts.forEachChild(node, (child) => {
+    found.push(...findLineBrokenLets(child));
+  });
+  return isLineBroken ? [node.declarationList.getStart() + "let".length, ...found] : found;
+};
+
+const parse = (code: string, fileName: string, isModule: boolean): ts.SourceFile => {
   const name = fileName.replace(/\.[cm]?tsx?$/, ".js");
   const options: ts.CreateSourceFileOptions = {
     languageVersion: ts.ScriptTarget.ESNext,
     impliedNodeFormat: isModule ? ts.ModuleKind.ESNext : ts.ModuleKind.CommonJS,
   };
   const sourceFile = ts.createSourceFile(name, code, options, true, ts.ScriptKind.JS);
+  // Each such let takes the semicolon that ASI gives it, in place of the space after it where there
+  // is one, so that the code keeps its positions.
+  const lets = findLineBrokenLets(sourceFile);
+  if (lets.length > 0) {
+    return parse(
+      lets.reduceRight(
+        (text, end) =>
+          `${text.slice(0, end)};${text.slice(/[ \t]/.test(text[end]) ? end + 1 : end)}`,
+        code,
+      ),
+      fileName,
+      isModule,
+    );
+  }
   return !isModule || ts.isExternalModule(sourceFile)
     ? sourceFile
     : ts.createSourceFile(name, `${code}\nexport {};\n`, options, true, ts.ScriptKind.JS);

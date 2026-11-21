@@ -498,6 +498,20 @@ describe("messages of the reader, as Z3 5.3.2 prints them", () => {
     ]);
   });
 
+  it("reports an unknown tactic after a tactic that has no port", () => {
+    expect(
+      run([
+        "(declare-const x Int)",
+        "(assert (> x 2))",
+        "(apply (par-or recover-01 solve-eqs2))",
+        "(apply skip)",
+      ]),
+    ).toEqual([
+      '(error "line 3 column 26: invalid tactic, unknown tactic solve-eqs2")',
+      "(goals\n(goal\n  (> x 2)\n  :precision precise :depth 0)\n)",
+    ]);
+  });
+
   it("finds a parameter of a combinator in its first child that has it", () => {
     expect(
       run([
