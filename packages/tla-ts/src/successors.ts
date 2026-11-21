@@ -563,8 +563,10 @@ const compileFunctionAction = (
       throw createRunError(run, getNonFunctionMessage(run, value, expression));
     }
     // Kept inline: sharing replay's helper for these lines cost 1.4% per lazy action.
-    const args = expression.args.map((arg) => evaluate(arg, context));
-    const argument = args.length === 1 ? args[0] : createTuple(args);
+    const argument =
+      expression.args.length === 1
+        ? evaluate(expression.args[0], context)
+        : createTuple(expression.args.map((arg) => evaluate(arg, context)));
     if (lambda !== undefined) {
       getRunner(lambda.body, environment, isInit)(
         run,
