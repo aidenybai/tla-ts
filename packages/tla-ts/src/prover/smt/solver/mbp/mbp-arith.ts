@@ -107,6 +107,7 @@ export class ArithProjectPlugin {
     const constant: Constant = { value: Rational.zero };
     let mul = Rational.one;
     let type = T_LE;
+    if (!manager.limit.inc()) return false;
     const isNot = manager.isNot(lit);
     const atom = isNot ? manager.getArg(lit, 0) : lit;
     if (isNot) mul = mul.neg();

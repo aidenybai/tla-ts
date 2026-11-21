@@ -7,20 +7,65 @@ import {
   FAMILY_DATATYPE,
   FAMILY_SEQ,
   KIND_APP,
+  OP_CONST_ARRAY,
+  OP_DT_CONSTRUCTOR,
   OP_EQ,
   SORT_BOOL,
 } from "./ast";
+import { mkArrayApp } from "./array-decl-plugin";
 import { flattenAndVector, isAppOf } from "./ast-util";
+import { getConstructorAccessors } from "./datatype-decl-plugin";
 import { ExprSafeReplace } from "./expr-safe-replace";
 import { ArithProjectPlugin } from "./mbp/mbp-arith";
 import { markRec, MbpContext, ProjectPlugin } from "./mbp/mbp-plugin";
-import { applyMbpQel } from "./mbp/mbp-qel";
+import { MbpQel } from "./mbp/mbp-qel";
 import { filterRefVector } from "./mbp/mbp-term-graph";
+import { ModelEvaluator } from "./model-evaluator";
 import type { ProtoModel } from "./proto-model";
 import { applyQel } from "./qel";
 import { hasSubterm } from "./recfun-decl-plugin";
 import { RefVector } from "./ref-vector";
 import { Rewriter, TACTIC_REWRITER_OPTIONS } from "./rewriter";
+import { RewriterTpl } from "./rewriter-tpl";
+
+class AppConstArrRewriter extends RewriterTpl {
+  private evaluator: ModelEvaluator;
+
+  constructor(manager: AstManager, model: ProtoModel) {
+    super(manager);
+    this.evaluator = new ModelEvaluator(manager, model);
+  }
+
+  reduceApp(decl: number, args: number[]) {
+    const manager = this.manager;
+    const funcDecl = manager.funcDecls[decl];
+    if (funcDecl.op === OP_CONST_ARRAY && !manager.isValue(args[0])) {
+      const value = this.evaluator.rewrite(args[0]);
+      const result = mkArrayApp(manager, OP_CONST_ARRAY, [value], [funcDecl.range]);
+      manager.incRef(result);
+      manager.decRef(value);
+      return result;
+    }
+    if (funcDecl.op !== OP_DT_CONSTRUCTOR) return -1;
+    const accessors = getConstructorAccessors(manager, decl);
+    if (accessors.some((accessor) => manager.funcDecls[accessor].domain.length !== 1)) return -1;
+    const isAccessorOf = (arg: number, index: number, term: number) =>
+      manager.kinds[arg] === KIND_APP &&
+      manager.decls[arg] === accessors[index] &&
+      manager.getArg(arg, 0) === term;
+    if (args.length === 0 || manager.kinds[args[0]] !== KIND_APP) return -1;
+    if (manager.decls[args[0]] !== accessors[0]) return -1;
+    const term = manager.getArg(args[0], 0);
+    if (!args.every((arg, index) => isAccessorOf(arg, index, term))) return -1;
+    manager.incRef(term);
+    return term;
+  }
+
+  release() {
+    super.release();
+    this.evaluator.release();
+  }
+}
 
 const hasSortFamily = (manager: AstManager, expr: number, families: readonly number[]) =>
   families.includes(manager.getSortFamily(manager.sorts[expr])) ||
@@ -67,6 +112,22 @@ export class Mbproj {
     return this.rewrite(context, result);
   }
 
+  // qel_project rewrites the projection while mbp_qel still holds its term graph.
+  private qelProject(context: MbpContext, vars: RefVector, formula: number) {
+    const projection = new MbpQel(context);
+    const result = this.rewrite(context, projection.apply(vars, this.flattenAnd(context, formula)));
+    projection.release();
+    return result;
+  }
+
+  private rewriteAsConstArr(context: MbpContext, formula: number) {
+    const rewriter = new AppConstArrRewriter(this.manager, context.model);
+    const result = rewriter.rewrite(formula);
+    context.pinned.pushOwned(result);
+    rewriter.release();
+    return result;
+  }
+
   private flattenAnd(context: MbpContext, formula: number) {
     const fmls = new RefVector(this.manager);
     fmls.push(formula);
@@ -87,11 +148,10 @@ export class Mbproj {
       throw new SmtUnsupportedError("model-based projection over arrays or datatypes");
     const origVars = [...vars.items];
     let result = this.doQel(context, vars, formula);
-    result = this.flattenAnd(context, result);
-    result = applyMbpQel(context, vars, result);
-    result = this.rewrite(context, result);
+    result = this.qelProject(context, vars, result);
     result = this.flattenAnd(context, result);
     result = this.rewrite(context, result);
+    result = this.rewriteAsConstArr(context, result);
     if (context.isFalse(result, true))
       throw new SmtUnsupportedError("model-based projection falling back to qe_lite");
     const otherVars = new RefVector(manager);
@@ -165,10 +225,14 @@ export class Mbproj {
   private preprocessSolve(context: MbpContext, vars: RefVector, fmls: RefVector) {
     const manager = this.manager;
     new ProjectPlugin(context).extractLiterals(fmls);
-    if (vars.size === 0) return;
-    const formula = this.doQel(context, vars, context.pin(manager.mkAnd(fmls.items)));
-    fmls.reset();
-    fmls.push(formula);
+    if (vars.size > 0) {
+      const formula = this.doQel(context, vars, context.pin(manager.mkAnd(fmls.items)));
+      fmls.reset();
+      fmls.push(formula);
+      flattenAndVector(manager, fmls);
+    }
+    // Z3 appends the rewritten conjunction to the literals, and flatten_and drops the duplicates.
+    fmls.push(this.rewriteAsConstArr(context, context.pin(manager.mkAnd(fmls.items))));
     flattenAndVector(manager, fmls);
   }
 

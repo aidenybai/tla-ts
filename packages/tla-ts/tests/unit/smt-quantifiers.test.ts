@@ -841,4 +841,13 @@ describe("qsat, as Z3 5.3.2 counts its steps", () => {
       ]),
     ).toEqual(["sat", "(:rlimit 358)"]);
   });
+
+  it("rewrites a projection while its term graph lives and then rewrites the constant arrays", () => {
+    expect(getRlimit("(forall ((x Int)) (> (+ x c) 3))")).toEqual(["unsat", "(:rlimit 379)"]);
+    expect(getRlimit("(forall ((x Int)) (> (+ (* 2 c) 1) x))")).toEqual(["unsat", "(:rlimit 456)"]);
+    expect(getRlimit("(forall ((x Int)) (=> (> x 0) (> (+ x c) 0)))")).toEqual([
+      "sat",
+      "(:rlimit 772)",
+    ]);
+  });
 });
