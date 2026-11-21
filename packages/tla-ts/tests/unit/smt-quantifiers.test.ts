@@ -818,3 +818,27 @@ describe("the pattern database setup_AUFLIA turns on, as Z3 5.3.2 loads it", () 
     expect(getOutput(0)).toEqual(expected);
   });
 });
+
+describe("qsat, as Z3 5.3.2 counts its steps", () => {
+  const getRlimit = (assertion: string) =>
+    run(["(declare-const c Int)", `(assert ${assertion})`, "(check-sat)", "(get-info :rlimit)"]);
+
+  it("removes the labels before it hoists and validates the assumptions it takes from the model", () => {
+    expect(getRlimit("(forall ((x Int)) (=> (>= x c) (>= (+ x 1) c)))")).toEqual([
+      "sat",
+      "(:rlimit 443)",
+    ]);
+    expect(getRlimit("(forall ((x Int)) (=> (> x c) (> x (- c 1))))")).toEqual([
+      "sat",
+      "(:rlimit 467)",
+    ]);
+    expect(
+      run([
+        "(declare-const c Int)",
+        "(assert (forall ((x Int)) (! (=> (>= x c) (>= (+ x 1) c)) :lblpos L)))",
+        "(check-sat-using qsat)",
+        "(get-info :rlimit)",
+      ]),
+    ).toEqual(["sat", "(:rlimit 358)"]);
+  });
+});
