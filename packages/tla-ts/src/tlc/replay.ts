@@ -1,6 +1,6 @@
 import { isAssumeProve, type Expression, type SourceLocation } from "../ast";
 import { getKindString } from "../builtins";
-import { TlaEvaluationError, TlaUnassignedError, TlaUncodedError } from "../errors";
+import { formatRange, TlaEvaluationError, TlaUnassignedError, TlaUncodedError } from "../errors";
 import { EXIT_STATUS, setExitCode } from "../exit-codes";
 import { isConstantLevel } from "../dependencies";
 import {
@@ -27,10 +27,11 @@ import {
   freezeCallStack,
   getArgumentTuple,
   getContextElements,
-  getDefinition,
   getLazyFunction,
   getQuantifierElements,
+  getUnchangedVariables,
   mapBoundSets,
+  NULL_STATE,
   toKeepLazyContext,
   lookupScope,
   resolveApplyOperator,
@@ -41,6 +42,7 @@ import {
   type Scope,
   type State,
   toUnspecifiedSubscriptError,
+  type UnchangedVariable,
 } from "../evaluate";
 import {
   createTuple,
@@ -309,47 +311,29 @@ const isBuiltInOperation = (expression: Expression) =>
     ? CORE_OPERATOR_NAMES.has(expression.operator)
     : expression.kind !== "Identifier" && !LITERAL_KINDS.has(expression.kind);
 
+const getExpectedBooleanMessage = (run: RunKind, found: string, expression: Expression) =>
+  `In computing ${getComputation(run)}, TLC expected a boolean expression,\nbut instead found ${found}.\n${describeNode(expression)}`;
+
 export const holdsValue = (run: RunKind, expression: Expression, value: Value, isWalked = true) => {
   if (typeof value === "boolean") return value;
   const message =
     isWalked && LITERAL_KINDS.has(expression.kind)
       ? getRelationMessage(run, expression)
-      : `In computing ${getComputation(run)}, TLC expected a boolean expression,\nbut instead found ${formatValue(value)}.\n${describeNode(expression)}`;
+      : getExpectedBooleanMessage(run, formatValue(value), expression);
   throw run.isInit && isWalked && isBuiltInOperation(expression)
     ? new TlaUncodedError(message)
     : createRunError(run, message);
 };
 
-export const getZeroArityBody = (name: string, environment: Environment) => {
-  if (environment.constants.has(name)) return undefined;
-  const definition = getDefinition(name, environment);
-  return definition?.kind === "Operator" && definition.params.length === 0 ? definition : undefined;
-};
-
-export interface UnchangedVariable {
-  index: number;
-  expression: Expression;
-}
-
-export const getUnchangedVariables = (
+// Tool#lookup gives an unassigned variable as its declaration, which Tool#getInitStatesAppl prints as the value it found.
+export const createUnassignedConjunctError = (
+  run: Pick<Replay, "environment" | "isInit" | "isEnabled">,
   expression: Expression,
-  environment: Environment,
-  visited = new Set<string>(),
-  written = expression,
-): UnchangedVariable[] | undefined => {
-  if (expression.kind === "Tuple") {
-    const variables = expression.elements.map((element) =>
-      getUnchangedVariables(element, environment, visited),
-    );
-    return variables.every((item) => item !== undefined) ? variables.flat() : undefined;
-  }
-  if (expression.kind !== "Identifier" || visited.has(expression.name)) return undefined;
-  const index = environment.variableIndex.get(expression.name);
-  if (index !== undefined) return [{ index, expression: written }];
-  const definition = getZeroArityBody(expression.name, environment);
-  if (!definition) return undefined;
-  visited.add(expression.name);
-  return getUnchangedVariables(definition.body, environment, visited, written);
+  index: number,
+) => {
+  const range = run.environment.variableLocations[index].range;
+  const declaration = range ? formatRange(range) : "Unknown location";
+  return createRunError(run, getExpectedBooleanMessage(run, declaration, expression));
 };
 
 // Deviation from TLC: Tool#getNextStates0 takes its all-assigned path when warnings are on, though its comment says off, so it evaluates UNCHANGED as a boolean and doesn't warn.
@@ -421,7 +405,7 @@ const evaluateInPartial = (
       environment: replay.environment,
       scope,
       state: partial,
-      next: undefined,
+      next: NULL_STATE,
     });
   } catch (error) {
     if (replay.isEnabled && error instanceof TlaUnassignedError) return error;
@@ -599,7 +583,11 @@ const visitDefined = (
   const context = getContext(replay, scope, partial);
   if (expression.kind === "Identifier") {
     const binding = lookupScope(scope, expression.name);
-    if (binding?.kind === "Thunk" && binding.cache === undefined) {
+    // Tool#enabledApplImpl visits a LazyValue's expression even when it holds a value, where Tool#getNextStatesAppl takes the value.
+    if (
+      binding?.kind === "Thunk" &&
+      (replay.isEnabled ? !binding.isReleased : binding.cache === undefined)
+    ) {
       const thunkNode = replay.coverage?.values.get(binding) ?? node;
       return visit(replay, binding.expression, items, binding.scope, partial, thunkNode);
     }
@@ -621,6 +609,12 @@ const visitDefined = (
       !(definition && isConstantLevel(definition, replay.environment))
     ) {
       return visit(replay, operator.body, items, operator.scope, partial, node);
+    }
+    const variableIndex = binding
+      ? undefined
+      : replay.environment.variableIndex.get(expression.name);
+    if (replay.isInit && variableIndex !== undefined && partial[variableIndex] === undefined) {
+      throw createUnassignedConjunctError(replay, expression, variableIndex);
     }
     return visitValue(
       replay,

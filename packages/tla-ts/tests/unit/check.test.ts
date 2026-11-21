@@ -1819,6 +1819,100 @@ ASSUME TLCFP(a) = -887695703
     },
   );
 
+  it.each([
+    ["D == FALSE\nSpec == Init /\\ [][Next]_y /\\ N", "SPECIFICATION Spec"],
+    ["D == FALSE\nSpec == Init /\\ [][Next]_y /\\ (N /\\ TRUE)", "SPECIFICATION Spec"],
+    ["D == FALSE", "SPECIFICATION N"],
+    ["D == FALSE\nSpec == Init /\\ [][Next]_y", "SPECIFICATION Spec\nPROPERTY N"],
+    [
+      "D == FALSE\nSpec == Init /\\ [][Next]_y\nProp == N /\\ y \\in Nat",
+      "SPECIFICATION Spec\nPROPERTY Prop",
+    ],
+  ])(
+    "takes the substitute of N in %j apart under %j, as SpecProcessor looks N up as the definition it names",
+    async (definitions, config) => {
+      await expect(
+        check({ source: getSubstituteSource(definitions), config: `${config}\nCONSTANT N <- D` }),
+      ).rejects.toThrow(new TlaConfigError("The spec is trivially false because FALSE is false."));
+    },
+  );
+
+  it.each([
+    ["D == FALSE", "INIT Init\nNEXT Next\nINVARIANT N", ["invariant-violation", "N", 0]],
+    ['D == PrintT("D")', "INIT Init\nNEXT Next\nINVARIANT N", ["success", undefined, 3]],
+    ["D == FALSE", "INIT Init\nNEXT Next\nCONSTRAINT N", ["success", undefined, 0]],
+    ["D == FALSE", "INIT Init\nNEXT Next\nACTION_CONSTRAINT N", ["success", undefined, 0]],
+    ["D == FALSE", "INIT N\nNEXT Next", ["success", undefined, 0]],
+    ["D == FALSE", "INIT Init\nNEXT N", ["deadlock", "deadlock", 0]],
+    [
+      "D == 1 = 2\nSpec == Init /\\ [][Next]_y /\\ N",
+      "SPECIFICATION Spec",
+      ["success", undefined, 0],
+    ],
+    ["D == 1 = 2", "SPECIFICATION N", ["success", undefined, 0]],
+    [
+      'D == PrintT("D")\nSpec == Init /\\ [][Next]_y /\\ N',
+      "SPECIFICATION Spec",
+      ["success", undefined, 2],
+    ],
+    [
+      "D == 1 = 2\nSpec == Init /\\ [][Next]_y",
+      "SPECIFICATION Spec\nPROPERTY N",
+      ["liveness-violation", "N", 0],
+    ],
+    [
+      "D == 1 = 2\nSpec == Init /\\ [][Next]_y\nProp == N /\\ y \\in Nat",
+      "SPECIFICATION Spec\nPROPERTY Prop",
+      ["liveness-violation", "N", 0],
+    ],
+    [
+      'D == PrintT("D")\nSpec == Init /\\ [][Next]_y',
+      "SPECIFICATION Spec\nPROPERTY N",
+      ["success", undefined, 2],
+    ],
+  ])(
+    "checks the substitute of N in %j under %j, as SpecProcessor looks N up as the definition it names",
+    async (definitions, config, expected) => {
+      const printed: string[] = [];
+      const result = await check({
+        source: getSubstituteSource(definitions),
+        config: `${config}\nCONSTANT N <- D`,
+        onPrint: (text) => printed.push(text),
+      });
+      expect([result.status, result.violation?.name, printed.length]).toEqual(expected);
+    },
+  );
+
+  it("checks the definition CONSTANT Foo <- Bar gives an operator, as SpecProcessor looks Foo up as Bar", async () => {
+    const checkOverride = (bar: string, config: string) =>
+      check({
+        source: `---- MODULE M ----\nEXTENDS Naturals\nVARIABLE y\nInit == y = 0\nNext == y' = (y + 1) % 2\nFoo == TRUE\nBar == ${bar}\nSpec == Init /\\ [][Next]_y\nProp == Foo /\\ y \\in Nat\n====`,
+        config: `${config}\nCONSTANT Foo <- Bar`,
+      });
+    await expect(checkOverride("FALSE", "SPECIFICATION Spec\nPROPERTY Foo")).rejects.toThrow(
+      new TlaConfigError("The spec is trivially false because FALSE is false."),
+    );
+    const results = await Promise.all([
+      checkOverride("FALSE", "SPECIFICATION Spec\nINVARIANT Foo"),
+      checkOverride("1 = 2", "SPECIFICATION Spec\nPROPERTY Prop"),
+    ]);
+    expect(results.map((result) => [result.status, result.violation?.name])).toEqual([
+      ["invariant-violation", "Foo"],
+      ["liveness-violation", "Foo"],
+    ]);
+  });
+
+  it("reports the literal body of a constraint a substituted name reaches, where TLC throws a ClassCastException", async () => {
+    const result = await check({
+      source: getSubstituteSource("D == 1"),
+      config: "INIT Init\nNEXT Next\nCONSTRAINT N\nCONSTANT N <- D",
+    });
+    expect([result.status, result.failure?.message]).toEqual([
+      "error",
+      "TLC expected a boolean value, but did not find one. 1",
+    ]);
+  });
+
   it("evaluates the substitute of a constant an extended module declares as TLC starts each module", async () => {
     const printed: string[] = [];
     await check({
@@ -2244,6 +2338,235 @@ ASSUME TLCFP(a) = -887695703
     },
   );
 
+  const PRIMED_READS = [
+    "---- MODULE Q ----",
+    "EXTENDS TLC, Naturals",
+    "CONSTANT d",
+    "VARIABLE w",
+    "Op2 == d = d /\\ w = w",
+    "Op1 == Op2 /\\ Op2",
+    "A2 == d = d /\\ w' = (w + 1) % 2",
+    "A1 == A2 /\\ A2",
+    "====",
+    "",
+  ].join("\n");
+  const ACTION_CHECK = "INIT Init\nNEXT Step\nACTION_CONSTRAINT Check\n";
+  const INVARIANT_CHECK = "INIT Init\nNEXT Step\nINVARIANT Check\n";
+  const NEXT_CHECK = "INIT Init\nNEXT Next\n";
+  const LIVE_CHECK = "SPECIFICATION Spec\nPROPERTY Live\n";
+  const getPrints = (text: string, count: number) => Array.from({ length: count }, () => text);
+  const UNWARNED_COVERAGE = { coverage: 1, isWarningEnabled: false };
+  const getLazyReads = async (
+    definitions: string,
+    config: string,
+    options?: typeof UNWARNED_COVERAGE,
+  ) => {
+    const printed: string[] = [];
+    const result = await check({
+      source: `---- MODULE M ----\nEXTENDS TLC, Naturals\nVARIABLE y\nJ == INSTANCE Q WITH d <- PrintT("d"), w <- y\nInit == y = 0\nStep == y' = (y + 1) % 2\nSpec == Init /\\ [][Step]_y /\\ WF_y(Step)\n${definitions}\n====\n`,
+      config,
+      seed: 4n,
+      ...options,
+      loadModule: (name) => (name === "Q" ? PRIMED_READS : undefined),
+      onPrint: (text) => printed.push(text),
+    });
+    return { printed, lines: formatCoverage(result)?.at(-1) };
+  };
+
+  it.each([
+    ["Check == (J!Op1)'", ACTION_CHECK, getPrints('"d"', 8)],
+    ["Check == J!Op1 /\\ (J!Op1)'", ACTION_CHECK, getPrints('"d"', 10)],
+    ["Check == (J!Op1)' /\\ J!Op1", ACTION_CHECK, getPrints('"d"', 10)],
+    ["Check == UNCHANGED J!Op1 \\/ TRUE", ACTION_CHECK, getPrints('"d"', 10)],
+    ["Ap(a) == a' /\\ a'\nCheck == Ap(J!Op2)", ACTION_CHECK, getPrints('"d"', 8)],
+    ["Ap(a) == a /\\ a' /\\ a\nCheck == Ap(J!Op2)", ACTION_CHECK, getPrints('"d"', 6)],
+    ["Check == LET t == PrintT(\"t\") IN t' /\\ t'", ACTION_CHECK, getPrints('"t"', 4)],
+    ['Check == LET t == PrintT("t") IN t /\\ t\' /\\ t', ACTION_CHECK, getPrints('"t"', 4)],
+    [
+      'Check == LET t == PrintT("t") /\\ y \\in 0..1 IN (UNCHANGED t \\/ TRUE) /\\ (UNCHANGED t \\/ TRUE)',
+      ACTION_CHECK,
+      getPrints('"t"', 6),
+    ],
+    [
+      "Check == LET t == PrintT(\"t\") /\\ y \\in 0..1 IN t /\\ ENABLED (y' = y /\\ t') /\\ t",
+      INVARIANT_CHECK,
+      getPrints('"t"', 4),
+    ],
+    ["Next == J!A1 /\\ J!Op1'", NEXT_CHECK, getPrints('"d"', 16)],
+    ["Next == Step /\\ UNCHANGED (J!Op2 \\/ TRUE)", NEXT_CHECK, getPrints('"d"', 6)],
+    ["Live == [][(J!Op2)']_y", LIVE_CHECK, getPrints('"d"', 4)],
+    ["Live == []<><<Step>>_<<y, J!Op2>>", LIVE_CHECK, getPrints('"d"', 12)],
+    ["Live == []<><<Step>>_<<J!Op2, y>>", LIVE_CHECK, getPrints('"d"', 12)],
+    [
+      "Check == LET r == RandomElement(1..1000) IN PrintT(<<r', r'>>)",
+      ACTION_CHECK,
+      ["<<773, 379>>", "<<484, 436>>"],
+    ],
+    [
+      "Check == LET r == RandomElement(1..1000) IN PrintT(<<r, r', r>>)",
+      ACTION_CHECK,
+      ["<<773, 379, 773>>", "<<484, 436, 484>>"],
+    ],
+    [
+      "Ap(a) == PrintT(<<a, a', a>>)\nCheck == Ap(RandomElement(1..1000))",
+      ACTION_CHECK,
+      ["<<773, 379, 773>>", "<<484, 436, 484>>"],
+    ],
+  ])(
+    "evaluates a lazy value read under a prime in %j afresh and keeps what it read before, as TLC's Tool#evalAppl does",
+    async (definitions, config, expected) => {
+      expect((await getLazyReads(definitions, config)).printed).toEqual(expected);
+    },
+  );
+
+  it.each([
+    [
+      "Check == LET r == RandomElement(1..1000) IN PrintT(<<r, UNCHANGED r, r>>)",
+      ["<<773, FALSE, 379>>", "<<484, FALSE, 436>>"],
+    ],
+    [
+      "Check == LET r == RandomElement(1..1000) IN PrintT(<<r, UNCHANGED <<r, y>>, r>>)",
+      ["<<773, FALSE, 379>>", "<<484, FALSE, 436>>"],
+    ],
+    [
+      "Check == LET r == RandomElement(1..1000) IN PrintT(<<r, [r = 0]_r, r>>)",
+      ["<<773, FALSE, 379>>", "<<484, FALSE, 436>>"],
+    ],
+    [
+      "Check == LET r == RandomElement(1..1000) IN PrintT(<<r, <<r = 0>>_r, r>>)",
+      ["<<773, FALSE, 773>>", "<<484, FALSE, 484>>"],
+    ],
+    [
+      "Check == LET r == RandomElement(1..1000) IN PrintT(<<UNCHANGED r, r, r'>>)",
+      ["<<FALSE, 773, 273>>", "<<FALSE, 484, 784>>"],
+    ],
+    [
+      'Check == LET t == PrintT("t") /\\ y \\in 0..1 IN t /\\ UNCHANGED t /\\ t',
+      getPrints('"t"', 6),
+    ],
+    [
+      'Check == LET t == PrintT("t") /\\ y \\in 0..1 IN t /\\ (UNCHANGED t \\/ TRUE) /\\ t',
+      getPrints('"t"', 6),
+    ],
+    [
+      'Check == LET t == PrintT("t") /\\ y \\in 0..1 IN (UNCHANGED t \\/ TRUE) /\\ t',
+      getPrints('"t"', 4),
+    ],
+    [
+      "Ap(a) == PrintT(<<a, UNCHANGED a, a>>)\nCheck == Ap(RandomElement(1..1000))",
+      ["<<773, FALSE, 379>>", "<<484, FALSE, 436>>"],
+    ],
+    [
+      'Ap(a) == a /\\ UNCHANGED a /\\ a\nCheck == Ap(PrintT("t") /\\ y \\in 0..1)',
+      getPrints('"t"', 6),
+    ],
+    [
+      "Ap(a) == PrintT(<<a, [a = 0]_a, a>>)\nCheck == Ap(RandomElement(1..1000))",
+      ["<<773, FALSE, 379>>", "<<484, FALSE, 436>>"],
+    ],
+  ])(
+    "evaluates the first side of UNCHANGED, [A]_e and <<A>>_e in %j without the next state, as TLC passes TLCState.Empty there",
+    async (definitions, expected) => {
+      expect((await getLazyReads(definitions, ACTION_CHECK)).printed).toEqual(expected);
+    },
+  );
+
+  it.each([
+    ["Next == Step /\\ UNCHANGED (J!Op2 \\/ TRUE)", NEXT_CHECK, '"d"', 6],
+    ["Live == []<><<Step>>_<<y, J!Op2>>", LIVE_CHECK, '"d"', 12],
+    ["Live == []<><<Step>>_<<J!Op2, y>>", LIVE_CHECK, '"d"', 12],
+    [
+      "Fair == Init /\\ [][Step]_y /\\ WF_<<y, J!Op2>>(Step)\nLive == <>(y = 1)",
+      "SPECIFICATION Fair\nPROPERTY Live\n",
+      '"d"',
+      24,
+    ],
+    [
+      "Check == LET t == PrintT(\"t\") /\\ y \\in 0..1 IN t /\\ (ENABLED (y' = IF t THEN y ELSE y))' /\\ t",
+      ACTION_CHECK,
+      '"t"',
+      6,
+    ],
+    [
+      "Check == LET t == PrintT(\"t\") /\\ y \\in 0..1 IN (ENABLED (y' = IF t THEN y ELSE y))' /\\ t'",
+      ACTION_CHECK,
+      '"t"',
+      4,
+    ],
+  ])(
+    "reads a lazy value in %j under coverage as TLC does, afresh only where s1 is TLCState.Null",
+    async (definitions, config, text, count) => {
+      expect((await getLazyReads(definitions, config, UNWARNED_COVERAGE)).printed).toEqual(
+        getPrints(text, count),
+      );
+    },
+  );
+
+  it.each([
+    [
+      "Check == J!Op2 /\\ (ENABLED (y' = IF J!Op2 THEN y ELSE y))'",
+      ACTION_CHECK,
+      4,
+      [
+        "line 8, col 10 to line 8, col 58 of module M: 2",
+        "|line 8, col 10 to line 8, col 14 of module M: 2",
+        "|line 8, col 19 to line 8, col 58 of module M: 2",
+        "||line 8, col 20 to line 8, col 56 of module M: 2",
+        "|||line 8, col 34 to line 8, col 55 of module M: 2",
+        "||||line 8, col 37 to line 8, col 41 of module M: 2",
+        "|||||line 4, col 27 to line 4, col 37 of module M: 4",
+        "|||||line 4, col 45 to line 4, col 45 of module M: 4",
+        "|||||line 5, col 8 to line 5, col 21 of module Q: 2",
+        "||||line 8, col 48 to line 8, col 48 of module M: 2",
+      ],
+    ],
+    [
+      "Next == Step /\\ UNCHANGED (J!Op2 \\/ TRUE) /\\ J!Op2",
+      NEXT_CHECK,
+      10,
+      [
+        "line 8, col 9 to line 8, col 12 of module M: 2",
+        "line 8, col 17 to line 8, col 41 of module M: 6",
+        "line 4, col 27 to line 4, col 37 of module M: 10",
+        "line 4, col 45 to line 4, col 45 of module M: 10",
+        "line 5, col 8 to line 5, col 12 of module Q: 4",
+        "|line 5, col 8 to line 5, col 8 of module Q: 2",
+        "|line 5, col 12 to line 5, col 12 of module Q: 2",
+        "line 5, col 17 to line 5, col 21 of module Q: 4",
+        "|line 5, col 17 to line 5, col 17 of module Q: 2",
+        "|line 5, col 21 to line 5, col 21 of module Q: 2",
+      ],
+    ],
+  ])(
+    "counts an instance's substitute in %j at each read where TLC's s1 is TLCState.Null, and not inside ENABLED under a prime",
+    async (definitions, config, count, lines) => {
+      expect(await getLazyReads(definitions, config, UNWARNED_COVERAGE)).toEqual({
+        printed: getPrints('"d"', count),
+        lines,
+      });
+    },
+  );
+
+  it.each([
+    ["Check == ENABLED J!A1", INVARIANT_CHECK, 8],
+    ["Next == Step /\\ ENABLED J!A1", NEXT_CHECK, 8],
+    ["Check == ENABLED (J!A2 /\\ J!A2)", INVARIANT_CHECK, 8],
+    ["Check == ENABLED J!A1 /\\ ENABLED J!A1", INVARIANT_CHECK, 16],
+    ["Check == ENABLED (J!Op1 /\\ y' = y)", INVARIANT_CHECK, 8],
+    ["Live == []<>ENABLED J!A1", LIVE_CHECK, 16],
+    [
+      "Fair == Init /\\ [][Step]_y /\\ WF_y(J!A1)\nLive == <>(y = 1)",
+      "SPECIFICATION Fair\nPROPERTY Live\n",
+      18,
+    ],
+    ["Check == J!A1", ACTION_CHECK, 2],
+  ])(
+    "evaluates an instance's substitute again at each read inside ENABLED in %j, as TLC's Tool#enabled binds it uncachable",
+    async (definitions, config, count) => {
+      expect((await getLazyReads(definitions, config)).printed).toEqual(getPrints('"d"', count));
+    },
+  );
+
   it("records the nested instance a call from one instanced definition to another enters, as TLC does", async () => {
     const result = await check(getInnerCallCheck(EXPLICIT, "I!YErr", NESTED_CALLS));
     const ranges = result.failure?.callStack?.flatMap((expression, index, expressions) => {
@@ -2302,6 +2625,91 @@ ASSUME TLCFP(a) = -887695703
       "Line 6, column 13 to line 6, column 19 in Q",
     ]);
   });
+
+  it.each([
+    ['I == INSTANCE P WITH c <- "d", v <- y', "I!J!Op3", "INVARIANT", 3],
+    ['I == INSTANCE P WITH c <- "d", v <- y', "I!J!KOp", "INVARIANT", 3],
+    ["I(z) == INSTANCE P WITH c <- z, v <- y", 'I("d")!J!Op3', "INVARIANT", 2],
+    ['I == INSTANCE P WITH c <- "d", v <- y', "I!J!A1", "ACTION_CONSTRAINT", 2],
+    ['I == INSTANCE P WITH c <- "d", v <- y', "I!J!Op5", "INVARIANT", 1],
+    ['I == INSTANCE P WITH c <- "d", v <- y', "[](I!J!Op3)", "PROPERTY", 3],
+    ['I == INSTANCE P WITH c <- "d", v <- y', "I!POp", "INVARIANT", 3],
+    ['J == INSTANCE Q WITH d <- PrintT("d"), w <- y', "J!Op3", "INVARIANT", 3],
+  ])(
+    "evaluates the printing substitute of an instance once per entry, with %s, into %s under %s, as TLC does",
+    async (instance, reached, kind, count) => {
+      const modules = new Map([
+        [
+          "P",
+          [
+            "---- MODULE P ----",
+            "EXTENDS TLC",
+            "CONSTANT c",
+            "VARIABLE v",
+            "J == INSTANCE Q WITH d <- PrintT(c), w <- v",
+            "POp == J!Op1 /\\ c = c",
+            "====",
+            "",
+          ].join("\n"),
+        ],
+        [
+          "Q",
+          [
+            "---- MODULE Q ----",
+            "EXTENDS TLC",
+            "CONSTANT d",
+            "VARIABLE w",
+            "Op2 == d = d /\\ w = w",
+            "Op1 == Op2 /\\ Op2",
+            "Op3 == Op1 /\\ d = d",
+            "A2 == d = d /\\ w' = w",
+            "A1 == A2 /\\ A2",
+            "Ap(Op(_)) == Op(d) /\\ Op(d)",
+            "Same(e) == e = d",
+            "Op5 == Ap(Same)",
+            "K == INSTANCE R WITH e <- d, u <- w",
+            "KOp == K!ROp1 /\\ d = d",
+            "====",
+            "",
+          ].join("\n"),
+        ],
+        [
+          "R",
+          [
+            "---- MODULE R ----",
+            "CONSTANT e",
+            "VARIABLE u",
+            "ROp2 == e = e /\\ u = u",
+            "ROp1 == ROp2 /\\ ROp2",
+            "====",
+            "",
+          ].join("\n"),
+        ],
+      ]);
+      const printed: string[] = [];
+      await check({
+        source: [
+          "---- MODULE M ----",
+          "EXTENDS TLC, Naturals",
+          "VARIABLE y",
+          instance,
+          "Init == y = 0",
+          "Next == y' = (y + 1) % 2",
+          "Spec == Init /\\ [][Next]_y",
+          `Check == ${reached}`,
+          "====",
+          "",
+        ].join("\n"),
+        config:
+          kind === "PROPERTY"
+            ? "SPECIFICATION Spec\nPROPERTY Check\n"
+            : `INIT Init\nNEXT Next\n${kind} Check\n`,
+        loadModule: (name) => modules.get(name),
+        onPrint: (text) => printed.push(text),
+      });
+      expect(printed).toEqual(Array.from({ length: count }, () => '"d"'));
+    },
+  );
 
   it.each([
     [
@@ -2485,6 +2893,10 @@ ASSUME TLCFP(a) = -887695703
       "Init == x = 0\nK(b) == G(b) /\\ x = 0\nBoth == K(P(1, x))\nSpec == Init /\\ Both /\\ [][Next]_<<x, y>>",
       1,
     ],
+    [
+      "H(b) == b /\\ b\nInit == x = 0 /\\ y = 0 /\\ H(P(1, TRUE))\nSpec == Init /\\ [][Next]_<<x, y>>",
+      1,
+    ],
   ])(
     "binds an argument under %j cached in a state-level definition, as getInitStates does, and uncached in an application the spec takes apart",
     async (definitions, count) => {
@@ -2497,6 +2909,20 @@ ASSUME TLCFP(a) = -887695703
       expect(printed).toEqual(Array.from({ length: count }, () => "1"));
     },
   );
+
+  it("evaluates a state-level Init's LET at each read when it rebuilds the trace, as TLC takes Init whole", async () => {
+    const printed: string[] = [];
+    const result = await check({
+      source:
+        "---- MODULE M ----\nEXTENDS Naturals, TLC\nVARIABLES x, y\nInit == LET a == PrintT(0) IN x = a /\\ y = a /\\ a = a\nNext == x' = (x + 1) % 2 /\\ y' = y\nSpec == Init /\\ [][Next]_<<x, y>>\n====\n",
+      config: "SPECIFICATION Spec\n",
+      onPrint: (text) => printed.push(text),
+    });
+    expect([printed, result.failure?.traceOutput]).toEqual([
+      ["0", "0", "0", "0"],
+      ["0", "0", "0", "0"],
+    ]);
+  });
 
   it("reads TLCGet in every state through a constant substituted with it, as TLC's level bound does", async () => {
     const prints: string[] = [];
@@ -2724,6 +3150,204 @@ ASSUME TLCFP(a) = -887695703
         config: "INIT Init\nNEXT Next\nINVARIANT Inv",
       });
       expect(formatCallStackLines(result)?.filter((line) => line !== "")).toEqual(lines);
+    },
+  );
+
+  it.each([
+    [
+      "printing substitutes",
+      'I == INSTANCE P WITH c <- PrintT("c"), z <- y\nInv == I!Op',
+      'Op == LET K == INSTANCE Q WITH d <- PrintT(<<"d", c>>), w <- z IN K!OutErr /\\ c',
+      [
+        "Line 4, column 9 to line 4, column 13 in M",
+        "Line 8, column 8 to line 8, column 11 in M",
+        "Line 7, column 1 to line 7, column 45 in M",
+        "Line 5, column 7 to line 5, column 79 in P",
+        "Line 5, column 67 to line 5, column 79 in P",
+        "Line 5, column 67 to line 5, column 74 in P",
+        "Line 5, column 11 to line 5, column 62 in P",
+        "Line 7, column 11 to line 7, column 19 in Q",
+        "Line 7, column 17 to line 7, column 19 in Q",
+        "Line 6, column 8 to line 6, column 23 in Q",
+        "Line 6, column 13 to line 6, column 23 in Q",
+        "Line 6, column 13 to line 6, column 19 in Q",
+      ],
+    ],
+    [
+      "a constant substitute",
+      "I == INSTANCE P WITH c <- TRUE, z <- y\nInv == I!Op",
+      "Op == LET K == INSTANCE Q WITH d <- c, w <- z IN K!OutErr",
+      [
+        "Line 4, column 9 to line 4, column 13 in M",
+        "Line 8, column 8 to line 8, column 11 in M",
+        "Line 7, column 1 to line 7, column 38 in M",
+        "Line 5, column 7 to line 5, column 57 in P",
+        "Line 5, column 50 to line 5, column 57 in P",
+        "Line 5, column 11 to line 5, column 45 in P",
+        "Line 7, column 11 to line 7, column 19 in Q",
+        "Line 7, column 17 to line 7, column 19 in Q",
+        "Line 6, column 8 to line 6, column 23 in Q",
+        "Line 6, column 13 to line 6, column 23 in Q",
+        "Line 6, column 13 to line 6, column 19 in Q",
+      ],
+    ],
+    [
+      "an operator's parameter",
+      "I == INSTANCE P WITH c <- TRUE, z <- y\nInv == I!Op(TRUE)",
+      "Op(a) == LET K == INSTANCE Q WITH d <- a, w <- z IN K!OutErr",
+      [
+        "Line 4, column 9 to line 4, column 13 in M",
+        "Line 8, column 8 to line 8, column 17 in M",
+        "Line 7, column 1 to line 7, column 38 in M",
+        "Line 5, column 10 to line 5, column 60 in P",
+        "Line 5, column 53 to line 5, column 60 in P",
+        "Line 5, column 14 to line 5, column 48 in P",
+        "Line 7, column 11 to line 7, column 19 in Q",
+        "Line 7, column 17 to line 7, column 19 in Q",
+        "Line 6, column 8 to line 6, column 23 in Q",
+        "Line 6, column 13 to line 6, column 23 in Q",
+        "Line 6, column 13 to line 6, column 19 in Q",
+      ],
+    ],
+    [
+      "a module two instances down",
+      "I == INSTANCE P WITH c <- TRUE, z <- y\nInv == I!J!Op",
+      "J == INSTANCE P2 WITH e <- c, x <- z",
+      [
+        "Line 4, column 9 to line 4, column 13 in M",
+        "Line 8, column 8 to line 8, column 13 in M",
+        "Line 7, column 1 to line 7, column 38 in M",
+        "Line 5, column 1 to line 5, column 36 in P",
+        "Line 5, column 7 to line 5, column 57 in P2",
+        "Line 5, column 50 to line 5, column 57 in P2",
+        "Line 5, column 11 to line 5, column 45 in P2",
+        "Line 7, column 11 to line 7, column 19 in Q",
+        "Line 7, column 17 to line 7, column 19 in Q",
+        "Line 6, column 8 to line 6, column 23 in Q",
+        "Line 6, column 13 to line 6, column 23 in Q",
+        "Line 6, column 13 to line 6, column 19 in Q",
+      ],
+    ],
+  ])(
+    "records the INSTANCE of a LET INSTANCE in an instanced module, with %s, as TLC does",
+    async (_title, definitions, instanced, lines) => {
+      const modules = new Map([
+        ["P", `---- MODULE P ----\nEXTENDS TLC\nCONSTANT c\nVARIABLE z\n${instanced}\n====\n`],
+        [
+          "P2",
+          "---- MODULE P2 ----\nEXTENDS TLC\nCONSTANT e\nVARIABLE x\nOp == LET K == INSTANCE Q WITH d <- e, w <- x IN K!OutErr\n====\n",
+        ],
+        [
+          "Q",
+          '---- MODULE Q ----\nEXTENDS TLC, Naturals\nCONSTANT d\nVARIABLE w\nIn == d = TRUE /\\ w \\in 0..1\nErr == d /\\ w + "a" = 1\nOutErr == In /\\ Err\nArgErr(a) == a /\\ OutErr\nStepErr == In /\\ w\' = w + "a"\n====\n',
+        ],
+      ]);
+      const result = await check({
+        source: `---- MODULE M ----\nEXTENDS TLC, Naturals\nVARIABLE y\nInit == y = 0\nNext == y' = (y + 1) % 2\nSpec == Init /\\ [][Next]_y\n${definitions}\n====\n`,
+        config: "SPECIFICATION Spec\nINVARIANT Inv\n",
+        loadModule: (name) => modules.get(name),
+        onPrint: () => {},
+      });
+      expect(formatCallStackLines(result)?.filter((line) => line !== "")).toEqual(lines);
+    },
+  );
+
+  const PARAMETERIZED_SPEC_MODULE =
+    '---- MODULE N ----\nEXTENDS Integers\nCONSTANT k\nVARIABLES x, y\nG(a) == /\\ a = k\n        /\\ y = 0\n        /\\ a + "s" = 1\nFlag == FALSE\nInit == x = k /\\ G(x)\nFlagInit == x = k /\\ y = 0 /\\ Flag\nNext == UNCHANGED <<x, y>>\nSpec == Init /\\ [][Next]_<<x, y>>\nFlagSpec == FlagInit /\\ [][Next]_<<x, y>>\n====\n';
+
+  const checkParameterizedSpec = (spec: string) =>
+    check({
+      source: `---- MODULE M ----\nVARIABLES x, y\nI(j) == INSTANCE N WITH k <- j\n${spec}\n====\n`,
+      config: "SPECIFICATION Spec\n",
+      loadModule: (name) => (name === "N" ? PARAMETERIZED_SPEC_MODULE : undefined),
+    });
+
+  it.each([
+    [
+      "Spec == I(0)!Init /\\ [][I(0)!Next]_<<x, y>>",
+      [
+        "Line 3, column 1 to line 3, column 30 in M",
+        "Line 9, column 9 to line 9, column 13 in N",
+        "Line 3, column 1 to line 3, column 30 in M",
+        "Line 9, column 18 to line 9, column 21 in N",
+        "Line 5, column 9 to line 7, column 22 in N",
+        "Line 5, column 12 to line 5, column 16 in N",
+        "Line 6, column 12 to line 6, column 16 in N",
+        "Line 7, column 12 to line 7, column 22 in N",
+        "Line 7, column 12 to line 7, column 18 in N",
+      ],
+    ],
+    [
+      "Spec == I(0)!Spec",
+      [
+        "Line 3, column 1 to line 3, column 30 in M",
+        "Line 9, column 9 to line 9, column 21 in N",
+        "Line 9, column 9 to line 9, column 13 in N",
+        "Line 9, column 18 to line 9, column 21 in N",
+        "Line 5, column 9 to line 7, column 22 in N",
+        "Line 5, column 12 to line 5, column 16 in N",
+        "Line 6, column 12 to line 6, column 16 in N",
+        "Line 7, column 12 to line 7, column 22 in N",
+        "Line 7, column 12 to line 7, column 18 in N",
+      ],
+    ],
+  ])(
+    "takes the initial predicate of a parameterized instance's %j apart as TLC does",
+    async (spec, lines) => {
+      const result = await checkParameterizedSpec(spec);
+      expect(formatCallStackLines(result)?.filter((line) => line !== "")).toEqual(lines);
+    },
+  );
+
+  it("takes a parameterized instance's state-level Init whole, as TLC does, so a FALSE conjunct inside leaves no initial state", async () => {
+    const result = await checkParameterizedSpec("Spec == I(0)!FlagSpec");
+    expect([result.status, result.failure?.message, result.distinctStates]).toEqual([
+      "success",
+      undefined,
+      0,
+    ]);
+  });
+
+  const LITERAL_MODULE =
+    '---- MODULE N ----\nCONSTANT k\nVARIABLES x, y\nTwo == 2\nStr == "a"\nNext == UNCHANGED <<x, y>>\nInit == x = k /\\ y = 0 /\\ Two\nSpec == x = k /\\ y = 0 /\\ Str /\\ [][Next]_<<x, y>>\nProp == []<>(x = k) /\\ Two\n====\n';
+
+  it.each([
+    [
+      "Spec == I(0)!Init /\\ [][I(0)!Next]_<<x, y>>",
+      "",
+      "The operator Two, which equals 2,\ncannot be used as a spec",
+    ],
+    ["Spec == I(0)!Spec", "", 'The operator Str, which equals "a",\ncannot be used as a spec'],
+    ["Spec == J!Spec", "", 'The operator Str, which equals "a",\ncannot be used as a spec'],
+    [
+      "Spec == J!Init /\\ [][J!Next]_<<x, y>>\nProp == I(0)!Prop",
+      "PROPERTY Prop\n",
+      "The operator Two, which equals 2,\ncannot be used as a property",
+    ],
+    [
+      "Spec == LET T == 2 IN J!Init /\\ T /\\ [][J!Next]_<<x, y>>",
+      "",
+      "The operator T, which equals 2,\ncannot be used as a spec",
+    ],
+    [
+      "Spec == J!Init /\\ J!Two /\\ [][J!Next]_<<x, y>>",
+      "",
+      "The operator J!Two, which equals 2,\ncannot be used as a spec",
+    ],
+    [
+      "Spec == LET T == FALSE IN J!Init /\\ T /\\ [][J!Next]_<<x, y>>",
+      "",
+      "The spec is trivially false because FALSE is false.",
+    ],
+  ])(
+    "looks up a definition %j names, where TLC stored no value for it at startup, as its literal body, as TLC does",
+    async (spec, property, message) => {
+      const checked = check({
+        source: `---- MODULE M ----\nVARIABLES x, y\nI(j) == INSTANCE N WITH k <- j\nJ == INSTANCE N WITH k <- 0\n${spec}\n====\n`,
+        config: `SPECIFICATION Spec\n${property}`,
+        loadModule: (name) => (name === "N" ? LITERAL_MODULE : undefined),
+      });
+      await expect(checked).rejects.toThrow(new TlaConfigError(message));
     },
   );
 
@@ -3403,6 +4027,33 @@ ASSUME TLCFP(a) = -887695703
       "||line 4, col 47 to line 4, col 57 of module M: 3",
     ]);
   });
+
+  it.each([
+    ["t /\\ (ENABLED (t /\\ y' = y))' /\\ t", "ACTION_CONSTRAINT", 4, 67],
+    ["t /\\ ENABLED (t /\\ y' = y) /\\ t", "ACTION_CONSTRAINT", 4, 64],
+    ["t /\\ ENABLED (t /\\ y' = y)", "INVARIANT", 4, 59],
+    ["t /\\ ENABLED (t /\\ y' = y) /\\ t", "INVARIANT", 4, 64],
+    ["t /\\ ENABLED (t /\\ y' = y /\\ t)", "INVARIANT", 6, 64],
+    ["(ENABLED (t /\\ y' = y))' /\\ t", "ACTION_CONSTRAINT", 4, 62],
+  ])(
+    "evaluates a LET definition with a value again inside ENABLED in %j as a %s, and counts nothing there, as TLC's Tool#enabledApplImpl does",
+    async (body, kind, count, end) => {
+      const printed: string[] = [];
+      const result = await check({
+        source: `---- MODULE M ----\nEXTENDS TLC, Naturals\nVARIABLE y\nInit == y = 0\nStep == y' = (y + 1) % 2\nCheck == LET t == PrintT("t") IN ${body}\n====\n`,
+        config: `INIT Init\nNEXT Step\n${kind} Check\n`,
+        coverage: 1,
+        onPrint: (text) => printed.push(text),
+      });
+      expect([printed.length, formatCoverage(result)?.at(-1)]).toEqual([
+        count,
+        [
+          "line 6, col 19 to line 6, col 29 of module M: 2",
+          `line 6, col 34 to line 6, col ${end} of module M: 2`,
+        ],
+      ]);
+    },
+  );
 
   it.each([
     [

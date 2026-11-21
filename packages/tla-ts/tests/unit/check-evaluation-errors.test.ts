@@ -1275,6 +1275,97 @@ describe("evaluation errors match TLC", () => {
     );
   });
 
+  it.each([
+    ["D == x + 1\nInv == D", "INIT Init\nNEXT Next\nINVARIANT Inv", 7, 8],
+    ["D == x + 1\nInv == D", "INIT Init\nNEXT Next\nCONSTRAINT Inv", 7, 8],
+    ["D == x + 1\nSpec == Init /\\ [][Next]_x\nP == [](D)", "SPECIFICATION Spec\nPROPERTY P", 8, 9],
+    [
+      "D == x + 1\nSpec == Init /\\ [][Next]_x\nP == [](D) /\\ [](x \\in Nat)",
+      "SPECIFICATION Spec\nPROPERTY P",
+      8,
+      9,
+    ],
+    ["f[a \\in {1}] == x = 0\nInv == f", "INIT Init\nNEXT Next\nINVARIANT Inv", 7, 8],
+    [
+      "f[a \\in {1}] == x = 0\nSpec == Init /\\ [][Next]_x\nP == [](f)",
+      "SPECIFICATION Spec\nPROPERTY P",
+      8,
+      9,
+    ],
+  ])(
+    "reports a non-boolean reference that %j checks at the reference, as TLC evaluates it as written",
+    async (definitions, config, line, column) => {
+      expect((await checkSteps(definitions, config)).failure?.message).toBe(
+        `TLC expected a boolean value, but did not find one. line ${line}, col ${column} to line ${line}, col ${column} of module M`,
+      );
+    },
+  );
+
+  it.each([
+    ["f[a \\in {1}] == x = 0", "INIT Init\nNEXT Next\nINVARIANT f", false, 6, 21],
+    ["f[a \\in {1}] == x = 0", "INIT Init\nNEXT Next\nCONSTRAINT f", false, 6, 21],
+    [
+      "f[a \\in {1}] == x = 0\nSpec == Init /\\ [][Next]_x",
+      "SPECIFICATION Spec\nPROPERTY f",
+      false,
+      6,
+      21,
+    ],
+    [
+      "f[a \\in {1}] == x = 0\nSpec == Init /\\ [][Next]_x\nP == f /\\ x \\in Nat",
+      "SPECIFICATION Spec\nPROPERTY P",
+      false,
+      6,
+      21,
+    ],
+    [
+      "f[a \\in {1}] == x = 0\nSpec == Init /\\ [][Next]_x /\\ f",
+      "SPECIFICATION Spec",
+      true,
+      6,
+      21,
+    ],
+    [
+      "CONSTANT N\nf[a \\in {1}] == TRUE",
+      "INIT Init\nNEXT Next\nINVARIANT N\nCONSTANT N <- f",
+      false,
+      7,
+      20,
+    ],
+    [
+      "CONSTANT N\nf[a \\in {1}] == TRUE",
+      "INIT Init\nNEXT Next\nCONSTRAINT N\nCONSTANT N <- f",
+      false,
+      7,
+      20,
+    ],
+    [
+      "CONSTANT N\nf[a \\in {1}] == TRUE\nSpec == Init /\\ [][Next]_x",
+      "SPECIFICATION Spec\nPROPERTY N\nCONSTANT N <- f",
+      false,
+      7,
+      20,
+    ],
+    [
+      "CONSTANT N\nf[a \\in {1}] == TRUE\nSpec == Init /\\ [][Next]_x /\\ N",
+      "SPECIFICATION Spec\nCONSTANT N <- f",
+      true,
+      7,
+      20,
+    ],
+    ["CONSTANT N\nf[a \\in {1}] == TRUE", "SPECIFICATION N\nCONSTANT N <- f", true, 7, 20],
+  ])(
+    "checks the function definition %j reaches under %j as its construction, as TLC's OpDefNode has it for a body",
+    async (definitions, config, isInitial, line, column) => {
+      const location = `line ${line}, col 1 to line ${line}, col ${column} of module M`;
+      expect((await checkSteps(definitions, config)).failure?.message).toBe(
+        isInitial
+          ? `In computing initial states, TLC expected a boolean expression,\nbut instead found <<TRUE>>.\n${location}`
+          : `TLC expected a boolean value, but did not find one. ${location}`,
+      );
+    },
+  );
+
   it("names the initial state a check fails on unless a standard module fails", async () => {
     const config = "INIT Init\nNEXT Next\nINVARIANT Inv";
     const core = await checkSteps("Inv == (CHOOSE y \\in {} : TRUE) = x", config);
@@ -3241,16 +3332,23 @@ describe("evaluation errors match TLC", () => {
     ]);
   });
 
-  it("reports an unassigned variable taken as a conjunct of the initial predicate as read before it is assigned", async () => {
-    const result = await check({
-      source: "---- MODULE M ----\nVARIABLE x\nInit == x /\\ x = FALSE\nNext == UNCHANGED x\n====",
-      config: "INIT Init\nNEXT Next",
-    });
-    expect([result.failure?.message, result.failure?.exitCode]).toEqual([
-      "In evaluation, the identifier x is either undefined or not an operator.\nline 3, col 9 to line 3, col 9 of module M",
-      75,
-    ]);
-  });
+  it.each([
+    ["Init == x /\\ x = FALSE", "line 3, col 9 to line 3, col 9"],
+    ["Init == LET z == x IN z /\\ x = FALSE", "line 3, col 18 to line 3, col 18"],
+    ["Foo == x\nInit == Foo /\\ x = FALSE", "line 3, col 8 to line 3, col 8"],
+  ])(
+    "reports an unassigned variable taken as a conjunct of the initial predicate in %j as the declaration TLC finds",
+    async (definitions, range) => {
+      const result = await check({
+        source: `---- MODULE M ----\nVARIABLE x\n${definitions}\nNext == UNCHANGED x\n====`,
+        config: "INIT Init\nNEXT Next",
+      });
+      expect([result.failure?.message, result.failure?.exitCode]).toEqual([
+        `In computing initial states, TLC expected a boolean expression,\nbut instead found line 2, col 10 to line 2, col 10 of module M.\n${range} of module M`,
+        75,
+      ]);
+    },
+  );
 
   it("reports a variable drawn from a set it can't enumerate like TLC", async () => {
     const result = await check({

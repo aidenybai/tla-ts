@@ -583,6 +583,9 @@ export const getFunctionConstruction = (definition: FunctionDefinition) => {
   return construction;
 };
 
+export const getOpDefBody = (definition: Definition) =>
+  definition.kind === "Function" ? getFunctionConstruction(definition) : definition.body;
+
 export const isRecursiveConstruction = (expression: FunctionConstructionExpression) =>
   expression.isRecursive || expression.definition?.isSelfReferential === true;
 

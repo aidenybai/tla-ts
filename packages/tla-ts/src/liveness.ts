@@ -1,5 +1,6 @@
 import {
   getDefinitionExpressions,
+  getOpDefBody,
   isLocallyResolved,
   type Bound,
   type Definition,
@@ -19,13 +20,14 @@ import {
   describeRange,
   bindDefinitions,
   getLetSites,
-  bindOperatorArguments,
   bindUncachedArguments,
   evaluate,
   forEachBinding,
   forEachBoundElement,
   getBoundElements,
+  getBodyLiteral,
   getDefinition,
+  getLookupValue,
   getReevaluatedDefinitions,
   getRootKey,
   getStartupValue,
@@ -33,6 +35,7 @@ import {
   resolveApplyOperator,
   resolveGlobalOperator,
   resolveOperator,
+  NULL_STATE,
   type Closure,
   type Context,
   type Environment,
@@ -87,6 +90,7 @@ interface ExpandedExpression extends ScopedExpression {
   path: string[];
   frames: Expression[];
   theorem?: TheoremReference;
+  argumentFreeDefinition?: Definition;
   substitutions: LetExpression[];
 }
 
@@ -104,7 +108,6 @@ interface Expansion {
   path: string[];
   expanding: Set<Definition>;
   isSubstituted: boolean;
-  isInitPredicate: boolean;
   frames: Expression[];
   substitutions: ExpandedSubstitutions[];
 }
@@ -123,11 +126,13 @@ export const withExpandedSubstitutions = (
   const lets = environment.boundSubstitutions.lets;
   const wrapped = substitutions.reduceRight((body: Expression, substitution) => {
     const bound = { ...substitution, body };
-    lets.add(bound);
+    const owner = lets.get(substitution);
+    if (owner) lets.set(bound, owner);
     return bound;
   }, expression);
   const framed = withSubstitutionFrames(wrapped, frames);
-  if (lets.has(wrapped)) lets.add(framed);
+  const wrappedOwner = lets.get(wrapped);
+  if (wrappedOwner) lets.set(framed, wrappedOwner);
   return framed;
 };
 
@@ -399,7 +404,6 @@ export const expandTemporal = (
     path: [],
     expanding: new Set(),
     isSubstituted: false,
-    isInitPredicate: false,
     frames: [],
     substitutions: [],
   },
@@ -422,13 +426,6 @@ export const expandTemporal = (
       isSubstituted:
         expansion.isSubstituted ||
         (definition !== undefined && environment.substitutedDefinitions.has(definition)),
-      // SpecProcessor#processConfigSpec takes a state-level definition whole as an initial predicate, which getInitStates evaluates with cached arguments.
-      isInitPredicate:
-        expansion.isInitPredicate ||
-        (!isProperty &&
-          definition?.kind === "Operator" &&
-          definition.params.length === 0 &&
-          getLevelBound(definition.body, undefined, environment) === VARIABLE_LEVEL),
       frames: [
         ...expansion.frames,
         ...(substitutionFrames.get(child) ?? []).filter(
@@ -437,7 +434,10 @@ export const expandTemporal = (
       ],
       substitutions,
     });
-  const getLeaf = (theorem?: TheoremReference): ExpandedExpression[] => [
+  const getLeaf = (
+    theorem?: TheoremReference,
+    argumentFreeDefinition?: Definition,
+  ): ExpandedExpression[] => [
     {
       expression,
       scope,
@@ -445,6 +445,7 @@ export const expandTemporal = (
       path: expansion.path,
       frames: expansion.frames,
       theorem,
+      argumentFreeDefinition,
       substitutions: expansion.substitutions.flatMap((item) =>
         isWithinScope(item.scope, scope) ? [item.expression] : [],
       ),
@@ -479,15 +480,19 @@ export const expandTemporal = (
   }
   if (expression.kind === "Label") return expand(expression.body, scope);
   if (expression.kind === "Selection") return expand(expression.expression, scope);
-  if (expression.kind === "Let") {
+  if (expression.kind === "Let" && environment.runtime.version !== "1.7.4") {
     const bound = bindLetDefinitions(expression, scope, environment);
-    const impure = environment.boundSubstitutions.lets.has(expression)
+    const lets = environment.boundSubstitutions.lets;
+    const owner = lets.get(expression);
+    const impure = owner
       ? getReevaluatedDefinitions(expression.definitions, environment).impure
       : new Set<Definition>();
     const definitions = expression.definitions.filter((definition) => impure.has(definition));
+    const substitution = { ...expression, definitions };
+    if (owner && definitions.length > 0) lets.set(substitution, owner);
     const substitutions =
       definitions.length > 0
-        ? [...expansion.substitutions, { expression: { ...expression, definitions }, scope: bound }]
+        ? [...expansion.substitutions, { expression: substitution, scope: bound }]
         : expansion.substitutions;
     return expand(expression.body, bound, undefined, undefined, undefined, substitutions);
   }
@@ -501,6 +506,12 @@ export const expandTemporal = (
     const theorem = getTheoremReference(expression, expression.name);
     if (theorem) return getLeaf(theorem);
     if (binding?.kind === "Thunk" && !binding.isReleased) {
+      if (
+        definitionThunks.has(binding) &&
+        getBodyLiteral(binding.expression, environment) !== undefined
+      ) {
+        return getLeaf();
+      }
       return expand(
         binding.expression,
         binding.scope,
@@ -516,19 +527,29 @@ export const expandTemporal = (
     const definition = environment.constants.has(expression.name)
       ? undefined
       : getDefinition(expression.name, environment);
+    // A name the configuration file substitutes looks up the target's definition, not the value processConstantDefns stored for it.
+    const isConfigSubstitute = environment.substitutions.has(expression.name);
     if (
       !binding &&
-      definition?.kind === "Operator" &&
-      definition.params.length === 0 &&
-      getStartupValue(definition, environment) === undefined
+      (definition?.kind === "Function" ||
+        (definition?.kind === "Operator" && definition.params.length === 0)) &&
+      (isConfigSubstitute || getLookupValue(definition, environment) === undefined)
     ) {
       if (expansion.expanding.has(definition)) {
         throw createStackOverflowError();
       }
+      if (
+        !isProperty &&
+        definition.kind === "Operator" &&
+        getLevelBound(definition.body, undefined, environment) === VARIABLE_LEVEL
+      ) {
+        return getLeaf();
+      }
       return expand(
-        definition.body,
+        getOpDefBody(definition),
         undefined,
-        getReferenceName(expression, expression.name, environment) ?? definition.name,
+        getReferenceName(expression, expression.name, environment) ??
+          (isConfigSubstitute ? getKeyName(expression.name) : definition.name),
         new Set([...expansion.expanding, definition]),
         definition,
       );
@@ -561,11 +582,21 @@ export const expandTemporal = (
       !isRecursive &&
       (!expansion.isSubstituted || isOwnArgumentFree);
     if (isExpandable) {
+      const isArgumentFree = expansion.isSubstituted && isOwnArgumentFree;
+      if (isArgumentFree && definition && getLookupValue(definition, environment) !== undefined) {
+        return getLeaf(undefined, definition);
+      }
+      const bound = bindUncachedArguments(operator, expression.args, context);
+      if (
+        !isProperty &&
+        isArgumentFree &&
+        getLevelBound(operator.body, bound, environment) === VARIABLE_LEVEL
+      ) {
+        return getLeaf();
+      }
       return expand(
         operator.body,
-        expansion.isInitPredicate
-          ? bindOperatorArguments(operator, expression.args, context)
-          : bindUncachedArguments(operator, expression.args, context),
+        bound,
         getReferenceName(expression, expression.operator, environment) ??
           (expansion.isSubstituted && definition
             ? definition.name
@@ -577,6 +608,7 @@ export const expandTemporal = (
   }
   const isUnrolled =
     isProperty &&
+    environment.runtime.version !== "1.7.4" &&
     expression.kind === "Forall" &&
     expression.bounds.every((bound) => getLevel(bound.set, scope, environment) === CONSTANT_LEVEL);
   const sets = isUnrolled ? getUnrolledElements(expression.bounds, context) : undefined;
@@ -967,7 +999,7 @@ export const getInterpretedAtoms = (environment: Environment): LiveAtoms<Value[]
       subscript &&
       isEqualLikeTlc(
         evaluate(subscript, { environment, scope, state, next: undefined }),
-        evaluate(subscript, { environment, scope, state: next, next: undefined }),
+        evaluate(subscript, { environment, scope, state: next, next: NULL_STATE }),
       )
     )
       return false;
