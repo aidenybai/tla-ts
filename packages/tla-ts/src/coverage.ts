@@ -958,17 +958,32 @@ const createProductEnumerator = (
 
 // Sizing a component whose enumeration runs user code would run it again, so its size comes from the product's when only that component is unknown.
 const getComponentSizes = (sets: Value[], size: number | undefined) => {
-  const sizes = sets.map(getKnownSize);
-  const unknown = sets.filter((_set, index) => sizes[index] === undefined);
-  if (unknown.length > 0 && (size === undefined || unknown.some((set) => set !== unknown[0]))) {
-    return undefined;
+  // eslint-disable-next-line unicorn/no-new-array
+  const sizes = new Array<number>(sets.length);
+  let unknown: Value | undefined;
+  let unknownCount = 0;
+  let isUnsized = false;
+  let knownProduct = 1;
+  for (let index = 0; index < sets.length; index++) {
+    const known = getKnownSize(sets[index]);
+    sizes[index] = known ?? -1;
+    if (known !== undefined) {
+      knownProduct *= known;
+      continue;
+    }
+    if (unknownCount > 0 && sets[index] !== unknown) isUnsized = true;
+    if (unknownCount === 0) unknown = sets[index];
+    unknownCount++;
   }
-  const knownProduct = sizes.reduce<number>((product, item) => product * (item ?? 1), 1);
+  if (isUnsized || (unknownCount > 0 && size === undefined)) return undefined;
   const derived =
-    unknown.length === 0 || knownProduct === 0
+    unknownCount === 0 || knownProduct === 0
       ? 0
-      : Math.round(((size ?? 0) / knownProduct) ** (1 / unknown.length));
-  return sizes.map((item) => item ?? derived);
+      : Math.round(((size ?? 0) / knownProduct) ** (1 / unknownCount));
+  for (let index = 0; index < sizes.length; index++) {
+    if (sizes[index] < 0) sizes[index] = derived;
+  }
+  return sizes;
 };
 
 export const createProductSetEnumerator = (
@@ -1005,12 +1020,13 @@ const getKnownSize = (set: Value): number | undefined => {
         ? undefined
         : getCardinality(set);
     case "RecordSet":
-    case "ProductSet":
-      return (set.kind === "RecordSet" ? set.sets : set.factors).every(
-        (component) => getKnownSize(component) !== undefined,
-      )
-        ? getCardinality(set)
-        : undefined;
+    case "ProductSet": {
+      const components = set.kind === "RecordSet" ? set.sets : set.factors;
+      for (let index = 0; index < components.length; index++) {
+        if (getKnownSize(components[index]) === undefined) return undefined;
+      }
+      return getCardinality(set);
+    }
     case "SetOperation": {
       if (set.isCached) return undefined;
       const leftSize = getKnownSize(set.left);
