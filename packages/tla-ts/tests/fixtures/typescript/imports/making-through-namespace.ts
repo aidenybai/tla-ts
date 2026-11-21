@@ -1,5 +1,5 @@
 // Calls functions that make objects through a module's namespace object.
-import * as Makers from "./makers";
+import * as Makers from "./makers.ts";
 
 const first = Makers.box(1);
 const second = Makers.box(1);

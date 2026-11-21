@@ -126,7 +126,10 @@ TypeScript's type checker gives the model's frame: which bindings are state, whi
 
 An exported function is a function declaration, or a variable whose value is an arrow function or a function expression. An async function or a generator isn't one.
 
-A call that writes nothing that existed before it takes no step. So a state where no call writes anything is a deadlock, unless the model allows it with `@noDeadlock` or `@terminating`.
+A call that writes nothing that existed before it takes no step. TLC checks deadlocks as follows:
+
+- **A model with an action**: TLC reports a deadlock at a state where no call of any action writes, unless the model allows it with `@noDeadlock` or `@terminating`. A model whose actions never write deadlocks in its initial state, since no step can run.
+- **A model without an action**: TLC checks no deadlock, since the model takes no step, so every state would be a deadlock. This covers a model without state, and a model whose exported functions are all checks.
 
 An invariant fails where its call returns other than `true`. An action or a check fails where its call throws, with the error's `message`, or the thrown value as a string. A check that reads no state is an assumption, which TLC checks once before the search, so a throw in it is an assumption violation. A check that reads state is an invariant, so a throw in it fails where the state is reached.
 

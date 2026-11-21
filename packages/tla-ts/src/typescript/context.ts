@@ -92,13 +92,19 @@ export const getFunction = (node: ts.Node | undefined) => {
 export const isScript = (sourceFile: ts.SourceFile) =>
   sourceFile.statements.every(
     (statement) =>
-      !ts.canHaveModifiers(statement) ||
-      !(ts.getModifiers(statement) ?? []).some(
-        (modifier) => modifier.kind === ts.SyntaxKind.ExportKeyword,
-      ) ||
-      !(ts.isVariableStatement(statement)
-        ? statement.declarationList.declarations.some(
-            (declaration) => getFunction(declaration)?.body !== undefined,
-          )
-        : getFunction(statement)?.body !== undefined),
+      // An export list may name a function, which the model's frame tells.
+      !(
+        ts.isExportDeclaration(statement) &&
+        statement.moduleSpecifier === undefined &&
+        !statement.isTypeOnly
+      ) &&
+      (!ts.canHaveModifiers(statement) ||
+        !(ts.getModifiers(statement) ?? []).some(
+          (modifier) => modifier.kind === ts.SyntaxKind.ExportKeyword,
+        ) ||
+        !(ts.isVariableStatement(statement)
+          ? statement.declarationList.declarations.some(
+              (declaration) => getFunction(declaration)?.body !== undefined,
+            )
+          : getFunction(statement)?.body !== undefined)),
   );

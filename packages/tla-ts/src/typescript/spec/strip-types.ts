@@ -1,5 +1,5 @@
 import ts from "@typescript/typescript6";
-import { TlaTypeScriptError } from "../../errors";
+import { TlaStrippingError, TlaTypeScriptError } from "../../errors";
 
 // Node's type stripping, which runs a .ts file by replacing its types with whitespace, so that
 // positions and function source texts stay those of the file: swc's strip-only mode
@@ -140,6 +140,16 @@ export const stripTypes = (sourceFile: ts.SourceFile): string => {
 
   const fail = (message: string, node: ts.Node): never => {
     throw new TlaTypeScriptError(message, node);
+  };
+  // Node's SyntaxError at syntax it rejects, which points at the span from start to end.
+  const reject = (
+    code: string,
+    message: string,
+    node: ts.Node,
+    start = node.getStart(sourceFile),
+    end = node.end,
+  ): never => {
+    throw new TlaStrippingError(code, message, node, start, end);
   };
 
   // swc's parser: a getter takes no parameter but this.
@@ -600,7 +610,11 @@ export const stripTypes = (sourceFile: ts.SourceFile): string => {
           fixAsi(node);
           return;
         }
-        fail("TypeScript enum is not supported in strip-only mode", node);
+        reject(
+          "ERR_UNSUPPORTED_TYPESCRIPT_SYNTAX",
+          "TypeScript enum is not supported in strip-only mode",
+          node,
+        );
         return;
       case ts.SyntaxKind.ModuleDeclaration:
         if (isDeclare(node) || isUninstantiated(node)) {
@@ -674,7 +688,8 @@ export const stripTypes = (sourceFile: ts.SourceFile): string => {
         return;
       }
       case ts.SyntaxKind.TypeAssertionExpression:
-        fail(
+        reject(
+          "ERR_UNSUPPORTED_TYPESCRIPT_SYNTAX",
           "The angle-bracket syntax for type assertions, `<T>expr`, is not supported in type strip mode. Instead, use the 'as' syntax: `expr as T`.",
           node,
         );
@@ -709,9 +724,33 @@ export const stripTypes = (sourceFile: ts.SourceFile): string => {
       }
       case ts.SyntaxKind.IfStatement: {
         const statement = node as ts.IfStatement;
+        // A function that an if declares as its clause, which swc's parser rejects.
+        [statement.thenStatement, statement.elseStatement].forEach((clause) => {
+          if (clause !== undefined && ts.isFunctionDeclaration(clause)) {
+            const keyword = getChildToken(clause, ts.SyntaxKind.FunctionKeyword);
+            reject(
+              "ERR_INVALID_TYPESCRIPT_SYNTAX",
+              "Declaration is not allowed",
+              clause,
+              keyword.getStart(sourceFile),
+              keyword.end,
+            );
+          }
+        });
         visit(statement.expression);
         visitBody(statement.thenStatement);
         if (statement.elseStatement !== undefined) visitBody(statement.elseStatement);
+        return;
+      }
+      case ts.SyntaxKind.WithStatement: {
+        const keyword = getChildToken(node, ts.SyntaxKind.WithKeyword);
+        reject(
+          "ERR_INVALID_TYPESCRIPT_SYNTAX",
+          "The 'with' statement is not supported. All symbols in a 'with' block will have type 'any'.",
+          node,
+          keyword.getStart(sourceFile),
+          keyword.end,
+        );
         return;
       }
       case ts.SyntaxKind.ForStatement:

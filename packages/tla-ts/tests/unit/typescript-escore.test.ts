@@ -67,12 +67,12 @@ const ready = new Promise((resolve) => {
 beforeAll(() => ready, 60_000);
 
 // Checks a script, with the definitions in appended added to the module of its code.
-const checkScript = (source: string, isStrict = true, appended = "") =>
+const checkScript = (source: string, isStrict = true, appended = "", fileName = "spec.ts") =>
   new Promise<ScriptResult>((resolve) => {
     worker.postMessage({
       id: pending.length,
       source: `${isStrict ? '"use strict";' : ""}\n${source}`,
-      fileName: "spec.ts",
+      fileName,
       isModule: false,
       appended,
     });
@@ -2471,6 +2471,7 @@ describe("compiles scripts by specializing ESCore", () => {
     });
   });
 
+  // A .js file, as Node's type stripping rejects a function declaration that an if clause is.
   describe("scopes an if clause's function declaration to a block of its own outside strict mode", () => {
     const getSource = (expected: string) => `
       const result = (function () {
@@ -2484,13 +2485,13 @@ describe("compiles scripts by specializing ESCore", () => {
     `;
 
     it("agrees with Node", async () => {
-      expect((await checkScript(getSource("1"), false)).message).toBeUndefined();
+      expect((await checkScript(getSource("1"), false, "", "spec.js")).message).toBeUndefined();
     });
 
     it("rejects another result", async () => {
-      expect((await checkScript(getSource("function shadowed() {}"), false)).message).toContain(
-        THREW,
-      );
+      expect(
+        (await checkScript(getSource("function shadowed() {}"), false, "", "spec.js")).message,
+      ).toContain(THREW);
     });
   });
 
@@ -3088,6 +3089,64 @@ const result = [read(() => box.f()), read(() => box.inner.g()), read(() => value
     });
   });
 
+  // Node runs no JSX, which a bundler compiles to the calls that TypeScript emits for it, here by
+  // the factories that the file's pragmas name.
+  describe("runs a file of JSX as the calls that TypeScript emits for it", () => {
+    const getSource = (expected: string) => `/** @jsxRuntime classic */
+/** @jsx h */
+/** @jsxFrag Fragment */
+const Fragment = "frag";
+const h = (type: unknown, props: Record<string, unknown> | null, ...children: unknown[]) =>
+  \`\${String(type)}(\${props === null ? "" : Object.keys(props).join("+")}:\${children.join(",")})\`;
+const label = "t";
+const view = (
+  <div id="a" title={label}>
+    {1}
+    {" "}
+    <span>x</span>
+    <>y</>
+  </div>
+);
+if (view !== "${expected}") throw new Error(view);
+`;
+
+    it("agrees with Node", async () => {
+      expect(
+        (await checkScript(getSource("div(id+title:1, ,span(:x),frag(:y))"), false, "", "spec.tsx"))
+          .message,
+      ).toBeUndefined();
+    });
+
+    it("rejects another result", async () => {
+      expect(
+        (await checkScript(getSource("div(id+title:1,span(:x),frag(:y))"), false, "", "spec.tsx"))
+          .message,
+      ).toContain(THREW);
+    });
+  });
+
+  // A .jsx file is JavaScript with JSX, which compiles as a .tsx file does.
+  describe("runs a file of JavaScript's JSX as the calls that TypeScript emits for it", () => {
+    const getSource = (expected: string) => `/** @jsxRuntime classic */
+/** @jsx h */
+const h = (type, props, ...children) => \`\${type}(\${props === null ? "" : Object.keys(props).join("+")}:\${children.join(",")})\`;
+const view = <p id="a">{1}<b>x</b></p>;
+if (view !== "${expected}") throw new Error(view);
+`;
+
+    it("agrees with Node", async () => {
+      expect(
+        (await checkScript(getSource("p(id:1,b(:x))"), false, "", "spec.jsx")).message,
+      ).toBeUndefined();
+    });
+
+    it("rejects another result", async () => {
+      expect(
+        (await checkScript(getSource("p(id:b(:x))"), false, "", "spec.jsx")).message,
+      ).toContain(THREW);
+    });
+  });
+
   describe("runs an array literal of thousands of elements", () => {
     const elements = Array.from({ length: 5000 }, (_, index) =>
       index === 2500 ? '...["x", "y"]' : index === 100 ? "" : String(index % 10),
@@ -3518,11 +3577,13 @@ const result = [read(() => box.f()), read(() => box.inner.g()), read(() => value
       ["a with statement in strict mode", '"use strict";\nwith ({}) {}', false],
     ];
 
+    // Of a TypeScript file, Node's type stripping rejects a with statement and a function as an
+    // if's branch before V8 parses it, with its own SyntaxError.
     describe.each(REJECTED)("rejects %s, as V8's parse does", (_, source, isModule) => {
       it("agrees with Node", async () => {
         expect(isNodeParsed(source, isModule)).toBe(false);
         const result = isModule ? await checkModule(source) : await checkScript(source, false);
-        expect(result.message).toContain("SyntaxError: ");
+        expect(result.message).toMatch(/SyntaxError(?: \[ERR_INVALID_TYPESCRIPT_SYNTAX\])?: /);
       });
     });
 
@@ -3578,17 +3639,20 @@ const result = [read(() => box.f()), read(() => box.inner.g()), read(() => value
     // B allows and Node runs.
     // TypeScript's parser reads a let that a line break follows as a declaration, where it's a with
     // statement's body, which JavaScript reads as the name let.
+    // A .js file, as Node's type stripping rejects a with statement.
     describe("reads a let that a line break follows in a with statement as a name", () => {
       const getSource = (expected: string) =>
         `var seen = [];\nvar scope = { get let() { seen.push("read"); return 1; } };\nwith (scope) let // ASI\n{}\nwith (scope) let\nx = 2;\nif (seen.join() + x !== "${expected}") throw new Error(seen.join() + x);\n`;
 
       it("agrees with Node", async () => {
         expect(() => runInNewContext(getSource("read,read2"))).not.toThrow();
-        expect((await checkScript(getSource("read,read2"), false)).message).toBeUndefined();
+        expect(
+          (await checkScript(getSource("read,read2"), false, "", "spec.js")).message,
+        ).toBeUndefined();
       });
 
       it("rejects another result", async () => {
-        expect((await checkScript(getSource("2"), false)).message).toContain(THREW);
+        expect((await checkScript(getSource("2"), false, "", "spec.js")).message).toContain(THREW);
       });
     });
 

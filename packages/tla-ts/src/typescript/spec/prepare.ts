@@ -53,6 +53,8 @@ export interface EscoreRuntime {
   // The runtime with the definitions that a text reads, and the leaves given without what they
   // read.
   getView: (text: string, leaves: readonly string[]) => PreparedModule;
+  // The names that the runtime's modules define, which a program's own definitions avoid.
+  names: ReadonlySet<string>;
   families: Family[];
   gates: Gate[];
   // The property keys that the runtime's own operators get or call.
@@ -146,7 +148,7 @@ const getOverrides = (library: Library, realm: HostRealm) => {
 
 const getBaseOverrides = (library: Library, realm: HostRealm) => [
   ...RUNTIME_DEFINITIONS,
-  ...getHostDefinitions(library, realm),
+  ...getHostDefinitions(library),
   ...getLocalDefinitions(library),
   ...getRealmDefinitions(library, realm),
   // The realm's first objects, which the runtime evaluates once, as it starts, rather than
@@ -412,6 +414,11 @@ const prepareLibraryRuntime = (
   return {
     modules: modules.slice(0, -1),
     getView,
+    names: new Set(
+      modules.flatMap((prepared) =>
+        prepared.module.definitions.map((definition) => definition.name),
+      ),
+    ),
     families: library.families,
     internalKeys: library.internalKeys,
     resumableSteps: new Set(

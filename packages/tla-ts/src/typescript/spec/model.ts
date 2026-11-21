@@ -3,7 +3,7 @@ import type { Bound, Definition, Expression, OperatorDefinition } from "../../as
 import { parseConfig } from "../../config";
 import { TlaTypeScriptError } from "../../errors";
 import { printDefinition } from "../../printer";
-import type { Library } from "../program";
+import { getJsxText, type Library } from "../program";
 import { CANONICAL_MODULE } from "./canonical";
 import { getLoweredBindings, LOWERED_DEFINITIONS } from "./lowered";
 import { getNativeFunctions, isIndexKey, NATIVE_MODULE } from "./native";
@@ -13,7 +13,14 @@ import { foldNames } from "./library";
 import type { EscoreRuntime } from "./prepare";
 
 export interface EscoreModel extends EscoreSpec {
+  isScript: false;
   variables: StateVariable[];
+  notes: string[];
+}
+
+// A module whose exported functions the model calls none of, which runs as a script does.
+export interface EscoreScript {
+  isScript: true;
   notes: string[];
 }
 
@@ -27,7 +34,7 @@ UnitsToString(units) ==
   ELSE IF Head(units) \notin DOMAIN CharacterOf THEN Assert(FALSE, "tla-ts can't show a string of a character TLA+ strings lack")
   ELSE CharacterOf[Head(units)] \o UnitsToString(Tail(units))
 \* The value that the module binds to name.
-BindingValue(s, name) == GetValue(s, Val(ResolveBinding(s, ScriptContext(s), name, TRUE)))
+BindingValue(s, name) == GetValue(s, Val(ResolveBinding(s, ModelContext(s), name, TRUE)))
 \* A call of the function that the module binds to name, and the jobs and timers it leaves.
 ModelCall(s, name, args) ==
   LET f == BindingValue(s, name) IN
@@ -271,18 +278,29 @@ export const compileModelToEscore = (
   library?: Library,
   // Whether the state may lower out of ESCore's heap, which a test turns off to check the heap.
   isLowerable = true,
-): EscoreModel => {
-  const today = frameModel(source, fileName, library);
-  if (today.isScript) {
-    throw new TlaTypeScriptError("tla-ts compiles a script, not a model, to ESCore this way");
-  }
+): EscoreModel | EscoreScript => {
+  // The module's text with its JSX the calls it compiles to, which the steps run.
+  const text = getJsxText(fileName, source);
+  const file = ts.createSourceFile(fileName, text, ts.ScriptTarget.ESNext, true);
+  // A model that imports files runs as the ES module it is, whose frame TypeScript's checker gives.
+  const isModule = file.statements.some(
+    (statement) =>
+      (ts.isImportDeclaration(statement) && statement.importClause?.isTypeOnly !== true) ||
+      (ts.isExportDeclaration(statement) &&
+        statement.moduleSpecifier !== undefined &&
+        !statement.isTypeOnly),
+  );
+  const today = frameModel(source, fileName, library, runtime.names);
+  if (today.isScript) return { isScript: true, notes: today.notes };
   const module = today.source;
   const config = parseConfig(today.config);
+  // The binding of the function that each of the spec's names calls.
+  const bindings = today.bindings;
+  const getBinding = (name: string) => getUnits(bindings.get(name) ?? name);
   const definitions = new Map<string, Definition>(
     module.definitions.map((definition) => [definition.name, definition]),
   );
   const variables = new Set(module.variables.map((variable) => variable.name));
-  const file = ts.createSourceFile(fileName, source, ts.ScriptTarget.ESNext, true);
   // The module's exported functions, by name, with their parameters and tags.
   const exported = new Map<
     string,
@@ -290,13 +308,34 @@ export const compileModelToEscore = (
       parameters: string[];
       types: (ts.TypeNode | undefined)[];
       tags: Map<string, string>;
-      node: ts.FunctionLikeDeclaration;
+      node: ts.FunctionLikeDeclaration | ts.FunctionTypeNode;
     }
   >();
-  const getFunction = (node: ts.Node | undefined) =>
-    node !== undefined && (ts.isArrowFunction(node) || ts.isFunctionExpression(node))
-      ? node
-      : undefined;
+  // A function that a declaration's initializer gives, through parentheses and casts.
+  const getFunction = (node: ts.Node | undefined): ts.FunctionLikeDeclaration | undefined =>
+    node === undefined
+      ? undefined
+      : ts.isArrowFunction(node) || ts.isFunctionExpression(node)
+        ? node
+        : ts.isParenthesizedExpression(node) ||
+            ts.isAsExpression(node) ||
+            ts.isSatisfiesExpression(node) ||
+            ts.isNonNullExpression(node)
+          ? getFunction(node.expression)
+          : undefined;
+  // The local names that the module exports in a list of its own.
+  const listed = new Set(
+    file.statements.flatMap((statement) =>
+      ts.isExportDeclaration(statement) &&
+      statement.moduleSpecifier === undefined &&
+      statement.exportClause !== undefined &&
+      ts.isNamedExports(statement.exportClause)
+        ? statement.exportClause.elements.map(
+            (element) => element.propertyName?.getText() ?? element.name.text,
+          )
+        : [],
+    ),
+  );
   const getTags = (node: ts.Node) =>
     new Map(
       ts
@@ -312,7 +351,11 @@ export const compileModelToEscore = (
       (ts.getModifiers(statement) ?? []).some(
         (modifier) => modifier.kind === ts.SyntaxKind.ExportKeyword,
       );
-    if (ts.isFunctionDeclaration(statement) && statement.name !== undefined && isExported) {
+    if (
+      ts.isFunctionDeclaration(statement) &&
+      statement.name !== undefined &&
+      (isExported || listed.has(statement.name.text))
+    ) {
       exported.set(statement.name.text, {
         parameters: statement.parameters.map((parameter) => parameter.name.getText()),
         types: statement.parameters.map((parameter) => parameter.type),
@@ -320,10 +363,21 @@ export const compileModelToEscore = (
         node: statement,
       });
     }
-    if (ts.isVariableStatement(statement) && isExported) {
+    if (ts.isVariableStatement(statement)) {
       for (const declaration of statement.declarationList.declarations) {
-        const fn = getFunction(declaration.initializer);
-        if (fn !== undefined && ts.isIdentifier(declaration.name)) {
+        // A const whose type names a function that its initializer gives from elsewhere.
+        const fn =
+          getFunction(declaration.initializer) ??
+          (declaration.initializer !== undefined &&
+          declaration.type !== undefined &&
+          ts.isFunctionTypeNode(declaration.type)
+            ? declaration.type
+            : undefined);
+        if (
+          fn !== undefined &&
+          ts.isIdentifier(declaration.name) &&
+          (isExported || listed.has(declaration.name.text))
+        ) {
           exported.set(declaration.name.text, {
             parameters: fn.parameters.map((parameter) => parameter.name.getText()),
             types: fn.parameters.map((parameter) => parameter.type),
@@ -334,6 +388,13 @@ export const compileModelToEscore = (
       }
     }
   }
+  bindings.forEach((binding, name) => {
+    const found = exported.get(binding);
+    if (found === undefined) {
+      throw new TlaTypeScriptError(`tla-ts can't find the exported function ${binding}`);
+    }
+    exported.set(name, found);
+  });
   const steps: string[] = [];
   const appended: string[] = [];
   const entries = new Set<string>();
@@ -597,13 +658,11 @@ export const compileModelToEscore = (
         );
       }
     }
-    // A union of record sets, such as a discriminated union: each value by the set it's in.
-    if (
-      domain.kind === "Apply" &&
-      domain.operator === "\\cup" &&
-      domain.args.every((arg) => arg.kind === "RecordSet")
-    ) {
-      const parts = domain.args.map((arg) => ({
+    // A union, such as a discriminated union of record sets or a literal's set with undefined:
+    // each value by the set it's in, which TLC compares it with, as today's domain is of values
+    // it can compare.
+    if (domain.kind === "Apply" && domain.operator === "\\cup") {
+      const parts = getUnion(domain).map((arg) => ({
         set: printExpression(renameModelValues(arg)),
         converter: getConverter(arg),
       }));
@@ -649,7 +708,10 @@ export const compileModelToEscore = (
   // module gets appended, which returns the set from the parameters its guard reads.
   const getGuard = (action: string, parameter: string) => {
     const definition = exported.get(action);
-    const body = definition?.node.body;
+    const body =
+      definition === undefined || ts.isFunctionTypeNode(definition.node)
+        ? undefined
+        : definition.node.body;
     const statement =
       body !== undefined && ts.isBlock(body)
         ? body.statements.find(
@@ -938,15 +1000,15 @@ export const compileModelToEscore = (
       ? [{ name: conjunct.args[0].name, domain: conjunct.args[1] }]
       : [],
   );
-  // A model without state, whose checks read none, runs the module's top level once as its
-  // assumptions do, and has no states, as today's spec has none.
+  // A model without state variables or actions has one state, the one its module's top level
+  // leaves, which no step compares with another, so it keeps it as it is.
   const isStateless = module.variables.length === 0 && actions.length === 0;
-  const isAsync = /\b(?:async|Promise|then|setTimeout)\b/.test(source);
+  const isAsync = /\b(?:async|Promise|then|setTimeout)\b/.test(text);
   // The bindings that the state lowers out of ESCore's heap, where the module lets it (see
   // lowered.ts), whose variable model holds them, and otherwise the variable heap holds ESCore's
   // state. A step's or a check's ESCore state is what the variable's value gives.
   const lowered =
-    isAsync || !isLowerable
+    isAsync || isModule || !isLowerable
       ? undefined
       : getLoweredBindings(file, new Set(choices.map((choice) => choice.name)));
   const variable = lowered === undefined ? "heap" : "model";
@@ -1028,11 +1090,11 @@ export const compileModelToEscore = (
   };
   const rewrittenNext = next?.kind === "Operator" ? rewriteGuards(next.body) : undefined;
   for (const [action, bounds] of actions) {
-    entries.add(action);
+    entries.add(bindings.get(action) ?? action);
     const step = define(
       "Step",
       (name) =>
-        `${name}(a) ==\n  LET s == StepStart(${getState("a[1]")})\n      converted == ${getArguments(action, "s", (index) => `a[${index + 2}]`).replaceAll("\n", "\n      ")}\n  IN StepOf(s, ${getUnits(action)}, converted)`,
+        `${name}(a) ==\n  LET s == StepStart(${getState("a[1]")})\n      converted == ${getArguments(action, "s", (index) => `a[${index + 2}]`).replaceAll("\n", "\n      ")}\n  IN StepOf(s, ${getBinding(action)}, converted)`,
     );
     const nativeCall = getNativeCall(action, "a[1]", (index) => `a[${index + 2}]`);
     const run =
@@ -1049,7 +1111,7 @@ export const compileModelToEscore = (
   }
   // A check of a function's result at a state: whether it holds, or only that it returns.
   const defineCheck = (name: string, kind: "HoldsOf" | "ReturnsOf", bounds: Bound[]) => {
-    entries.add(name);
+    entries.add(bindings.get(name) ?? name);
     const names = bounds.map((bound) => (bound.pattern.kind === "Name" ? bound.pattern.name : ""));
     bounds.forEach((bound, index) =>
       boundConverters.set(`${name} ${index}`, getConverter(bound.set).name),
@@ -1058,7 +1120,7 @@ export const compileModelToEscore = (
     const operator = define(
       "Check",
       (operatorName) =>
-        `${operatorName}(a) ==\n  LET converted == ${getArguments(name, getState("a[1]"), (index) => `a[${index + 2}]`).replaceAll("\n", "\n      ")}\n  IN ${kind}(converted.s, ${getUnits(name)}, converted.args)`,
+        `${operatorName}(a) ==\n  LET converted == ${getArguments(name, getState("a[1]"), (index) => `a[${index + 2}]`).replaceAll("\n", "\n      ")}\n  IN ${kind}(converted.s, ${getBinding(name)}, converted.args)`,
     );
     const nativeCall = getNativeCall(name, "a[1]", (index) => `a[${index + 2}]`);
     const checked =
@@ -1217,9 +1279,8 @@ export const compileModelToEscore = (
     set: printExpression(rewriteGuards(choice.domain)),
   }));
   // As compileToEscore runs a script's jobs and timers, a step runs the ones a call leaves.
-  const settle = /\b(?:async|Promise|then|setTimeout)\b/.test(source)
-    ? "ModelSettle(r) == LET j == RunJobs(r.s) IN IF IsAbrupt(j) THEN j ELSE LET u == UnhandledRejection(j.s) IN IF IsAbrupt(u) THEN u ELSE LET t == RunTimers(u.s) IN IF IsAbrupt(t) THEN t ELSE [t EXCEPT !.c = r.c]"
-    : "ModelSettle(r) == r";
+  const settle =
+    "ModelSettle(r) == LET t == SettleJobs(r.s) IN IF IsAbrupt(t) THEN t ELSE [t EXCEPT !.c = r.c]";
   // The module's top level reads each state variable that starts at every value of its type, at
   // its declaration, from the global $tlaTsInitial, which the initial state's choice holds before
   // the module runs, and which the module deletes as it ends.
@@ -1307,16 +1368,20 @@ export const compileModelToEscore = (
   const declarations = file.statements.flatMap((statement) =>
     ts.isVariableStatement(statement) ? statement.declarationList.declarations : [],
   );
-  // The module runs as a strict script, whose top-level declarations the steps read by name, so
-  // its declarations lose their export keywords.
+  // A module that imports none runs as a strict script, whose top-level declarations the steps
+  // read by name, so its declarations lose their export keywords and its export lists go.
   const exports = file.statements.flatMap((statement) =>
-    ts.canHaveModifiers(statement)
-      ? (ts.getModifiers(statement) ?? []).flatMap((modifier) =>
-          modifier.kind === ts.SyntaxKind.ExportKeyword
-            ? [{ start: modifier.getStart(), end: modifier.getEnd(), text: "" }]
-            : [],
-        )
-      : [],
+    isModule
+      ? []
+      : ts.isExportDeclaration(statement) && statement.moduleSpecifier === undefined
+        ? [{ start: statement.getStart(), end: statement.getEnd(), text: "" }]
+        : ts.canHaveModifiers(statement)
+          ? (ts.getModifiers(statement) ?? []).flatMap((modifier) =>
+              modifier.kind === ts.SyntaxKind.ExportKeyword
+                ? [{ start: modifier.getStart(), end: modifier.getEnd(), text: "" }]
+                : [],
+            )
+          : [],
   );
   const replaced = (lowered === undefined ? choose : [])
     .map((choice, index) => {
@@ -1338,8 +1403,8 @@ export const compileModelToEscore = (
     .concat(exports)
     .sort((left, right) => right.start - left.start)
     .reduce(
-      (text, change) => text.slice(0, change.start) + change.text + text.slice(change.end),
-      source,
+      (changed, change) => changed.slice(0, change.start) + change.text + changed.slice(change.end),
+      text,
     );
   const augmented = [
     replaced,
@@ -1354,6 +1419,10 @@ export const compileModelToEscore = (
     ...(isStateless ? ["vars == <<>>"] : [`VARIABLE ${variable}`, `vars == <<${variable}>>`]),
     "CanonicalState(s) == CanonicalStateOf(s, InitialState)",
     settle,
+    // The scope that a step reads the module's bindings in: the script's, or the module's own.
+    isModule
+      ? "ModelContext(s) == ModuleContext(ModuleAt(s, s.moduleIds[<<s.realmId, 1>>]).env)"
+      : "ModelContext(s) == ScriptContext(s)",
     MODEL_DEFINITIONS,
     "ModelStart(s) == Completed(ApplyTo(RunProgram, s)).s",
     ...(lowered === undefined
@@ -1373,11 +1442,17 @@ export const compileModelToEscore = (
     ...(isStateless ? [] : [`ModelAlias == ApplyTo(${alias}, ${variable})`]),
   ].join("\n");
   // The module runs as an ES module does, in strict mode.
-  const compiled = compileToEscore(`"use strict";\n${augmented}`, fileName, runtime, false, {
-    steps: modelSteps,
-    entries: [...entries],
-    reads: lowered === undefined ? CANONICAL_MODULE : `${CANONICAL_MODULE}\n${NATIVE_MODULE}`,
-  });
+  const compiled = compileToEscore(
+    isModule ? augmented : `"use strict";\n${augmented}`,
+    fileName,
+    runtime,
+    isModule,
+    {
+      steps: modelSteps,
+      entries: [...entries],
+      reads: lowered === undefined ? CANONICAL_MODULE : `${CANONICAL_MODULE}\n${NATIVE_MODULE}`,
+    },
+  );
   const configLines = [
     ...compiled.config
       .trimEnd()
@@ -1404,7 +1479,10 @@ export const compileModelToEscore = (
       ),
     ),
     ...(symmetric.length === 0 ? [] : ["SYMMETRY SymmetricPerms"]),
-    ...(config.checkDeadlock ? [] : ["CHECK_DEADLOCK FALSE"]),
+    // A model without actions takes no step, so its every state is a deadlock that tells nothing,
+    // and TLC checks none, as it checks none where a spec has no variables. A model with actions
+    // keeps the check, even where none is ever enabled, as a deadlock there is a finding.
+    ...(config.checkDeadlock && actions.length > 0 ? [] : ["CHECK_DEADLOCK FALSE"]),
     ...(isStateless ? [] : ["ALIAS ModelAlias"]),
     "",
   ];
@@ -1431,6 +1509,7 @@ export const compileModelToEscore = (
           : name === "ESNative" && lowered !== undefined
             ? NATIVE_MODULE
             : undefined,
+    isScript: false,
     variables: today.variables,
     notes,
   };

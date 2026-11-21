@@ -1,5 +1,5 @@
-import { log } from "./log";
-import { getFirst } from "./first";
+import { log } from "./log.ts";
+import { getFirst } from "./first.ts";
 
 const marks = { second: log.length };
 log.push("second");

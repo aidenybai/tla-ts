@@ -1,4 +1,4 @@
-import { readNumbers } from "./patterns";
+import { readNumbers } from "./patterns.ts";
 
 const read = readNumbers("12x3")
   .map((found) => `${found.text}@${found.index}`)

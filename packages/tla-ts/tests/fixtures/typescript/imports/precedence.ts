@@ -1,4 +1,4 @@
-import { LOWEST, PRECEDENCES } from "./precedences";
+import { LOWEST, PRECEDENCES } from "./precedences.ts";
 
 const getPrecedence = (operator: string) => PRECEDENCES.get(operator);
 const getTotal = (operators: string[]): number =>

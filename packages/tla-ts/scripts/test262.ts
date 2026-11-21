@@ -12,7 +12,7 @@ import ts from "@typescript/typescript6";
 import { TlaTypeScriptError } from "../src/errors";
 import { check } from "../src/parallel";
 import { compileToEscore } from "../src/typescript/spec/compile";
-import { prepareRuntime } from "../src/typescript/spec/prepare";
+import { prepareRuntime, SCRIPT_STEPS } from "../src/typescript/spec/prepare";
 import { CONFORMANCE_DIRECTORY, listTest262Files, TEST262_DIRECTORY } from "./corpora";
 
 type Outcome = "pass" | "wrong" | "untranslatable" | "skipped" | "out-of-memory";
@@ -616,7 +616,12 @@ const getEmitted = (program: string, isModule: boolean) => {
 const compileProgram = (program: string, path: string, isModule: boolean) => {
   const emitted = getEmitted(program, isModule);
   if (existsSync(path)) writeFileSync(path, emitted);
-  return compileToEscore(emitted, path, RUNTIME, isModule);
+  // test262's host loads every file of code as an ES module.
+  return compileToEscore(emitted, path, RUNTIME, isModule, {
+    steps: SCRIPT_STEPS,
+    entries: [],
+    isModuleHost: true,
+  });
 };
 
 // Compiles a program and checks it.

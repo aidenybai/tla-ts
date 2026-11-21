@@ -247,11 +247,13 @@ export const recordHostRealm = (library: Library): HostRealm => {
     scriptGlobals: getHostOnlyGlobals(scriptGlobal),
     moduleGlobals: getHostOnlyGlobals(globalThis).map((name) => ({
       name,
+      // Node warns where code reads localStorage without --localstorage-file, so tla-ts reads
+      // only its descriptor, and a program that reads it stops.
       record: getHostProperty(
         "GlobalObject",
         name,
         Object.getOwnPropertyDescriptor(globalThis, name),
-        globalThis,
+        name === "localStorage" ? undefined : globalThis,
       ),
     })),
     builtInProperties: [...new Set(library.properties.map((property) => property.owner))].flatMap(

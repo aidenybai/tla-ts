@@ -1,4 +1,4 @@
-import type { Chain } from "./chain";
+import type { Chain } from "./chain.ts";
 
 interface Link {
   items: number[];

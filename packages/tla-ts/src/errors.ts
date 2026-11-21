@@ -450,3 +450,22 @@ export class TlaTypeScriptError extends TlaError {
     this.name = "TlaTypeScriptError";
   }
 }
+
+// Syntax that Node's type stripping rejects, as Node's SyntaxError gives it: its code, its
+// message, and the span of the file's text that it points at.
+export class TlaStrippingError extends TlaTypeScriptError {
+  code: string;
+  reason: string;
+  fileName: string;
+  start: number;
+  end: number;
+  constructor(code: string, reason: string, node: ts.Node, start: number, end: number) {
+    super(`SyntaxError [${code}]: ${reason}`, node);
+    this.name = "TlaStrippingError";
+    this.code = code;
+    this.reason = reason;
+    this.fileName = node.getSourceFile().fileName;
+    this.start = start;
+    this.end = end;
+  }
+}

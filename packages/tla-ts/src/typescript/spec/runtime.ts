@@ -501,13 +501,30 @@ const DEFINITIONS = [
            ELSE DefinePropertyOrThrow(value.s, Intrinsic(s, p.owner), Str(p.name), DataDesc(Val(value), p.writable, p.enumerable, p.configurable))
   IN IF IsAbrupt(d) THEN d ELSE DefineHostWith(d.s, handler, Tail(properties))`,
   // import.meta of module m, as Node gives it: an object without a prototype whose dirname,
-  // filename, resolve, and url, which the runtime leaves out, are accessors that stop, and whose
-  // main tells whether m is the entry, the module the host loaded first.
+  // filename, and url are where the host loaded m from, whose resolve, which the runtime leaves
+  // out, stops, and whose main tells whether m is the entry, the module the host loaded first. Of a
+  // module the host gives no file of, the properties but main are accessors that stop.
   `ImportMeta(s, m) ==
   LET o == OrdinaryObjectCreate(s, Null)
-      stop == CreateBuiltinFunction(o.s, <<"Module", "hostStop">>, 0, <<>>, N("import.meta"))
-      d == DefineMetaProperties(stop.s, Val(o), Val(stop), <<N("dirname"), N("filename"), N("main"), N("resolve"), N("url")>>, m = 1)
-  IN IF IsAbrupt(d) THEN d ELSE Ok(d.s, Val(o))`,
+      file == ModuleAt(s, m).node.file
+      path == HostFilePath(file)
+      url == HostFileLocation(file)
+      slash == {i \\in DOMAIN path : path[i] = 47 /\\ \\A j \\in DOMAIN path : path[j] = 47 => j <= i}
+      directory == IF slash = {} THEN N(".") ELSE LET i == CHOOSE i \\in slash : TRUE IN IF i = 1 THEN N("/") ELSE SubSeq(path, 1, i - 1)
+  IN IF path = Empty \\/ url = Empty THEN
+       LET stop == CreateBuiltinFunction(o.s, <<"Module", "hostStop">>, 0, <<>>, N("import.meta"))
+           d == DefineMetaProperties(stop.s, Val(o), Val(stop), <<N("dirname"), N("filename"), N("main"), N("resolve"), N("url")>>, m = 1)
+       IN IF IsAbrupt(d) THEN d ELSE Ok(d.s, Val(o))
+     ELSE
+       LET resolve == CreateBuiltinFunction(o.s, <<"Module", "hostStop">>, 1, N("resolve"), N("import.meta.resolve"))
+           d == DefineDataProperties(resolve.s, Val(o),
+                  <<<<N("dirname"), Str(directory)>>, <<N("filename"), Str(path)>>, <<N("main"), Bool(m = 1)>>,
+                    <<N("resolve"), Val(resolve)>>, <<N("url"), Str(url)>>>>)
+       IN IF IsAbrupt(d) THEN d ELSE Ok(d.s, Val(o))`,
+  `DefineDataProperties(s, o, pairs) ==
+  IF pairs = <<>> THEN Ok(s, Empty) ELSE
+  LET d == DefinePropertyOrThrow(s, o, Str(Head(pairs)[1]), DataDesc(Head(pairs)[2], TRUE, TRUE, TRUE))
+  IN IF IsAbrupt(d) THEN d ELSE DefineDataProperties(d.s, o, Tail(pairs))`,
   `DefineMetaProperties(s, o, stop, names, isMain) ==
   IF names = <<>> THEN Ok(s, Empty) ELSE
   LET d == DefinePropertyOrThrow(s, o, Str(Head(names)),
@@ -728,6 +745,14 @@ const STACK_DEFINITIONS = [
   // writes the header of Error.prototype.toString, which reads the error's name and message, and
   // the frames V8 captured.
   `FormatStack(s, error, t) ==
+  LET header == StackHeader(s, error, t) IN IF IsAbrupt(header) THEN header ELSE
+  Ok(header.s, Str(Val(header).value \\o JoinFrames(WalkFrames(header.s, t, t.callers, <<>>, NoFrames).lines)))`,
+  // The walk of a stack's frames before it counts one: their lines, where it writes them, and
+  // their positions.
+  `NoFrames == [skipping |-> TRUE, count |-> 0, isText |-> TRUE, lines |-> <<>>, positions |-> <<>>]`,
+  // The header of an error's stack as Node writes it, Error.prototype.toString's, where no
+  // Error.prepareStackTrace of a program writes it instead.
+  `StackHeader(s, error, t) ==
   IF t.realm # 1 \\/ s.realmId # 1 THEN Assert(FALSE, "tla-ts can't read the stack of an error of another realm as Node writes it") ELSE
   LET e == Get(s, Intrinsic(s, "GlobalObject"), SV("Error")) IN IF IsAbrupt(e) THEN e ELSE
   LET p == CASE IsNullish(Val(e)) -> Ok(e.s, Undefined)
@@ -737,8 +762,7 @@ const STACK_DEFINITIONS = [
   LET q == Get(p.s, Intrinsic(p.s, "Error"), SV("prepareStackTrace")) IN IF IsAbrupt(q) THEN q ELSE
   IF IsCallable(q.s, Val(p)) \\/ IsCallable(q.s, Val(q)) THEN Assert(FALSE, "tla-ts can't run a program's Error.prepareStackTrace") ELSE
   IF ProxyOnChain(q.s, error) THEN Assert(FALSE, "tla-ts can't ask a proxy whether an error is one of Node's") ELSE
-  LET header == ErrorBuiltin(q.s, Undefined, "toString", error, <<>>, Undefined) IN IF IsAbrupt(header) THEN header ELSE
-  Ok(header.s, Str(Val(header).value \\o JoinFrames(WalkFrames(header.s, t, t.callers, <<>>, [skipping |-> TRUE, count |-> 0, lines |-> <<>>]))))`,
+  ErrorBuiltin(q.s, Undefined, "toString", error, <<>>, Undefined)`,
   `ProxyOnChain(s, o) == o # Null /\\ (O(s, o).class = "proxy" \\/ ProxyOnChain(s, O(s, o).proto))`,
   `JoinFrames(lines) == IF lines = <<>> THEN <<>> ELSE <<10>> \\o N("    at ") \\o Head(lines) \\o JoinFrames(Tail(lines))`,
   // The built-ins that run a function with no frame of their own on V8's stack, and those whose
@@ -757,9 +781,10 @@ const STACK_DEFINITIONS = [
   // The frames of a stack, from the frame of the call e, whose position is pos, down
   // (CallSiteBuilder): a frame of a built-in that V8 hides counts for nothing, as a class's default
   // constructor that a derived class's super calls, which V8 skips; and one that tla-ts can't tell
-  // stops, but where V8 skips it anyway.
+  // stops, but where V8 skips it anyway. The walk gives the lines of the frames it counts, and
+  // their positions.
   `WalkFrames(s, t, e, pos, r) ==
-  IF r.count >= t.limit THEN r.lines
+  IF r.count >= t.limit THEN r
   ELSE IF e = Null THEN BottomFrames(s, t, pos, r)
   ELSE LET o == O(s, e.f)
            frame == [kind |-> o.class, f |-> e.f, this |-> e.this, isNew |-> e.isNew, pos |-> pos]
@@ -772,6 +797,9 @@ const STACK_DEFINITIONS = [
                  IF SameValue(e.this, e.f) THEN WalkFrames(s, t, e.next, e.site, VisitFrame(s, t, [frame EXCEPT !.kind = "default"], r))
                  ELSE WalkFrames(s, t, e.next, e.site, r)
             [] r.skipping /\\ t.target # Empty /\\ ~SameValue(e.f, t.target) -> WalkFrames(s, t, e.next, e.site, r)
+            \\* An await's resumption, of which V8 shows the resumed code's frame, at its position.
+            [] ~r.isText /\\ o.class = "builtin" /\\ o.slots.id \\in {<<"Await", "fulfilled">>, <<"Await", "rejected">>} ->
+                 WalkFrames(s, t, e.next, e.site, VisitFrame(s, t, [kind |-> "top", pos |-> pos], r))
             [] OTHER -> Assert(FALSE, "tla-ts can't tell whether Node shows this frame of a stack")`,
   // The frame of a generator's body, which its function has, with its this value.
   `GeneratorFrame(s, gen, pos) ==
@@ -783,23 +811,26 @@ const STACK_DEFINITIONS = [
   IF r.count >= t.limit THEN r
   ELSE IF r.skipping THEN
     IF t.target = Empty \\/ (frame.kind \\in {"function", "builtin", "default"} /\\ SameValue(frame.f, t.target)) THEN [r EXCEPT !.skipping = FALSE] ELSE r
-  ELSE [r EXCEPT !.count = @ + 1, !.lines = Append(@, FrameText(s, frame))]`,
+  ELSE [r EXCEPT !.count = @ + 1, !.lines = IF r.isText THEN Append(@, FrameText(s, frame)) ELSE @,
+                 !.positions = Append(@, IF frame.kind = "host" THEN <<>> ELSE frame.pos)]`,
   // The frames below a program's: the top level of an entry module and the host's frames that run
   // it, nothing below a promise job's function but async frames, which stop, and in a job, code at
-  // the top level, which a resumed async body or module is, stops.
+  // the top level, which a resumed async body or module is, stops, but for a walk of positions
+  // alone, which takes its position.
   `BottomFrames(s, t, pos, r) ==
   CASE t.task.kind = "main" ->
          LET top == VisitFrame(s, t, [kind |-> "top", pos |-> pos], r) IN
-         IF top.count >= t.limit THEN top.lines
+         IF top.count >= t.limit THEN top
          ELSE IF HostEntryFrames(1) = Empty THEN Assert(FALSE, "tla-ts can't tell the frames that Node runs this program from")
-         ELSE VisitHostFrames(s, t, HostEntryFrames(1), top).lines
+         ELSE VisitHostFrames(s, t, HostEntryFrames(1), top)
     [] t.task.kind = "reaction" /\\ pos = <<>> ->
          IF t.task.promise # Empty /\\ O(s, t.task.promise).slots.state = "pending" /\\
             Len(O(s, t.task.promise).slots.fulfillReactions) = 1 /\\
             O(s, t.task.promise).slots.fulfillReactions[1].handler # Empty /\\
             O(s, O(s, t.task.promise).slots.fulfillReactions[1].handler).class = "builtin"
          THEN Assert(FALSE, "tla-ts can't write the async frames of a stack as Node does")
-         ELSE r.lines
+         ELSE r
+    [] ~r.isText /\\ pos # <<>> -> VisitFrame(s, t, [kind |-> "top", pos |-> pos], r)
     [] OTHER -> Assert(FALSE, "tla-ts can't tell the frames below this job's as Node writes them")`,
   `VisitHostFrames(s, t, lines, r) ==
   IF lines = <<>> THEN r ELSE VisitHostFrames(s, t, Tail(lines), VisitFrame(s, t, [kind |-> "host", text |-> Head(lines)], r))`,
@@ -1054,9 +1085,15 @@ const TAILORED_CASING = new Set(["az", "el", "hy", "lt", "tr"]);
 
 // The host's local time is UTC's where its default time zone is UTC, whose name V8 writes after a
 // date's offset in the host's default locale. In another time zone a compiled spec stops at local
-// time, which ESCore keeps as UTC's.
-const isUtcHost = (realm: HostRealm) => realm.timeZone === "UTC";
+// time, which ESCore keeps as UTC's. The runtime reads these facts of the host's realm through
+// HostRealmFact, which each program's code defines, so that the runtime, and the graph that a build
+// prepares of it, is the same in every time zone and locale.
 const LOCAL_TIME_STOP = `Assert(FALSE, "tla-ts can't tell the host's local time, whose time zone isn't UTC")`;
+export const getHostRealmFacts = (realm: HostRealm) =>
+  `HostRealmFact(name) ==
+  CASE name = "isUtc" -> ${realm.timeZone === "UTC" ? "TRUE" : "FALSE"}
+    [] name = "zoneName" -> <<${Array.from(realm.zoneName, (character) => character.charCodeAt(0)).join(", ")}>>
+    [] name = "tailorsCase" -> ${TAILORED_CASING.has(new Intl.Locale(realm.locale).language) ? "TRUE" : "FALSE"}`;
 const CLOCK_STOP = `Assert(FALSE, "tla-ts can't read the host's clock, whose time each run reads anew")`;
 // What Date.now gives, and the time value of a Date that new Date() makes: a Number without a
 // value, HostTime, which a program may store, pass, and return, as its outcome is then the same at
@@ -1087,29 +1124,27 @@ const HOST_TIME_READERS = [
 ];
 
 // The patches that the runtime makes of ESCore for a host's realm.
-const getHostPatches = (realm: HostRealm) => [
+const HOST_PATCHES = [
   { name: "ParseDate", from: "ParseDate(u) ==", to: "ParseSpecDate(u) ==" },
   {
     name: "LocalTime",
     from: "LocalTime(t) == t",
-    to: `LocalTime(t) == ${isUtcHost(realm) ? "t" : LOCAL_TIME_STOP}`,
+    to: `LocalTime(t) == IF HostRealmFact("isUtc") THEN t ELSE ${LOCAL_TIME_STOP}`,
   },
   {
     name: "UTC",
     from: "UTC(t) == IF NumIsFinite(t) THEN t ELSE NaN",
-    to: isUtcHost(realm)
-      ? "UTC(t) == IF NumIsFinite(t) THEN t ELSE NaN"
-      : `UTC(t) == ${LOCAL_TIME_STOP}`,
+    to: `UTC(t) == IF ~HostRealmFact("isUtc") THEN ${LOCAL_TIME_STOP} ELSE IF NumIsFinite(t) THEN t ELSE NaN`,
   },
   {
     name: "TimeZoneString",
     from: `N("+0000")`,
-    to: `N("+0000") \\o <<${Array.from(realm.zoneName, (character) => character.charCodeAt(0)).join(", ")}>>`,
+    to: `N("+0000") \\o HostRealmFact("zoneName")`,
   },
   {
     name: "TemporalNowBuiltin",
     from: `CASE m = "timeZoneId" -> Ok(s, Str(UTCTimeZone.id))`,
-    to: `CASE m = "timeZoneId" -> ${isUtcHost(realm) ? "Ok(s, Str(UTCTimeZone.id))" : LOCAL_TIME_STOP}`,
+    to: `CASE m = "timeZoneId" -> IF HostRealmFact("isUtc") THEN Ok(s, Str(UTCTimeZone.id)) ELSE ${LOCAL_TIME_STOP}`,
   },
   // What the host picks at random or reads from its clock differs from run to run, so a compiled
   // spec stops where a program reads it: Math.random, the time that Date.now gives and a Date that
@@ -1213,7 +1248,7 @@ const getHostPatches = (realm: HostRealm) => [
     name: "StringMethod",
     from: `    [] m = "toLowerCase" ->`,
     to: `    [] m \\in {"toLocaleLowerCase", "toLocaleUpperCase"} ->
-         LET isTailored == ${TAILORED_CASING.has(new Intl.Locale(realm.locale).language) ? "TRUE" : "FALSE"} IN
+         LET isTailored == HostRealmFact("tailorsCase") IN
          IF Arg(args, 1) # Undefined THEN IntlTransformCase(s, m, units, Arg(args, 1), isTailored)
          ELSE IF isTailored THEN Unsupported(s, <<>>)
          ELSE Ok(s, Str(IF m = "toLocaleLowerCase" THEN ToLowercase(units) ELSE ToUppercase(units)))
@@ -1557,7 +1592,7 @@ const getHostPatches = (realm: HostRealm) => [
   },
 ];
 
-export const getHostDefinitions = (library: Library, realm: HostRealm): GeneratedDefinition[] =>
+export const getHostDefinitions = (library: Library): GeneratedDefinition[] =>
   [
     `HostTime == [type |-> "number", host |-> "clock"]`,
     `HostTimeIn(values) == \\E i \\in DOMAIN values : values[i] = HostTime`,
@@ -1579,7 +1614,7 @@ export const getHostDefinitions = (library: Library, realm: HostRealm): Generate
     })
     .concat([
       // Each definition with its patches applied in turn.
-      ...[...Map.groupBy(getHostPatches(realm), (patch) => patch.name)].map((entry) => {
+      ...[...Map.groupBy(HOST_PATCHES, (patch) => patch.name)].map((entry) => {
         const definition = library.definitions.get(entry[0]);
         const text = entry[1].reduce((current, patch) => {
           if (!current.includes(patch.from)) {

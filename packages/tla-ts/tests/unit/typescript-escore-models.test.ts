@@ -1,4 +1,5 @@
-import { readFileSync } from "node:fs";
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { pathToFileURL } from "node:url";
 import { Worker } from "node:worker_threads";
@@ -180,6 +181,403 @@ const EXAMPLES = join(import.meta.dirname, "../fixtures/typescript/examples");
 const getCounts = (result: ModelResult) => [result.status, result.distinct, result.generated];
 
 describe("checks a module's exported functions as a model on ESCore", () => {
+  // A model without state variables or actions has no state, whose invariants TLC checks once, as
+  // it checks a spec without variables.
+  describe("checks the calls of a model without state", () => {
+    const getSource = (expected: number) =>
+      `const memo = [1, 2];\nexport const isTotal = () => memo.reduce((sum, value) => sum + value, 0) === ${expected};\n`;
+
+    it("agrees with Node", async () => {
+      expect(getCounts(await checkModel(getSource(3)))).toEqual(["success", 0, 0]);
+    });
+
+    it("rejects another result", async () => {
+      expect((await checkModel(getSource(4))).message).toContain(
+        "The invariant of isTotal is equal to FALSE",
+      );
+    });
+  });
+
+  // Each function that a check only calls returns, whatever today's spec names its result.
+  describe("checks each call of functions that only return", () => {
+    const getSource = (thrown: number) =>
+      `export const twice = (n: 0 | 1) => n * 2;\nexport const thrice = (n: 0 | 1) => {\n  if ((n as number) === ${thrown}) throw new Error("thrown");\n  return n * 3;\n};\n`;
+
+    it("agrees with Node", async () => {
+      expect((await checkModel(getSource(2))).status).toBe("success");
+    });
+
+    it("rejects another result", async () => {
+      expect((await checkModel(getSource(1))).status).toBe("assumption-violation");
+    });
+  });
+
+  // A parameter whose type has more values than TLC puts in a set, as the compiled glob that
+  // Effect's internal glob module matches, takes values tla-ts can't list, and the rest still run.
+  describe("calls no function whose parameter has more values than TLC lists", () => {
+    const getSource = (thrown: number) =>
+      `export const isCode = (codes: [number, number, number, number, number, number, number, number]) => codes.length === 8;\nexport const twice = (n: 0 | 1) => {\n  if ((n as number) === ${thrown}) throw new Error("thrown");\n  return n * 2;\n};\n`;
+
+    it("agrees with Node", async () => {
+      expect(getCounts(await checkModel(getSource(2)))).toEqual(["success", 0, 0]);
+    });
+
+    it("rejects another result", async () => {
+      expect((await checkModel(getSource(1))).status).toBe("assumption-violation");
+    });
+  });
+
+  // A WeakMap in the state keeps the entries whose keys a step can still read, and drops the rest,
+  // as the host's collector may, so a step that adds an entry no code can read leaves the state as
+  // it was, as bippy's cache of component frames does.
+  describe("keeps the entries of a WeakMap that a step can read", () => {
+    const getSource = (operator: string) =>
+      `const keys = [{}, {}];\nconst cache = new WeakMap<object, number>();\nlet count = 0;\nexport const tick = () => {\n  cache.set({}, count);\n  if (count < 2) {\n    cache.set(keys[count], count);\n    count += 1;\n  }\n};\nexport const isCached = () =>\n  count ${operator} 2 && keys.slice(0, count).every((key, index) => cache.get(key) === index);\n`;
+
+    it("agrees with Node", async () => {
+      expect(getCounts(await checkModel(getSource("<=")))).toEqual(["success", 3, 4]);
+    });
+
+    it("rejects another result", async () => {
+      expect(getCounts(await checkModel(getSource("<")))).toEqual(["invariant-violation", 3, 3]);
+    });
+
+    it("numbers the state natively as ESCanonical does", async () => {
+      expect(getCounts(await checkModel(getSource("<="), "spec.ts", "compared"))).toEqual([
+        "success",
+        3,
+        4,
+      ]);
+    });
+  });
+
+  // A WeakRef in the state keeps its target where a step can still reach it, and a
+  // FinalizationRegistry its callback, as bippy's registry of fibers does. A target that nothing
+  // else reaches the host may collect at any time after the step, which a check can't tell, so it
+  // stops, as it does where a program registers a target.
+  describe("keeps the WeakRefs whose targets a step reaches, and a FinalizationRegistry", () => {
+    const getSource = (operator: string, target = "fibers[count]") =>
+      `const fibers = [{ id: 1 }, { id: 2 }];\nconst registry = new FinalizationRegistry<number>(() => {});\nconst refs: WeakRef<object>[] = [];\nlet count = 0;\nexport const tick = () => {\n  if (count < 2) {\n    refs.push(new WeakRef(${target}));\n    count += 1;\n  }\n};\nexport const isHeld = () =>\n  count ${operator} 2 &&\n  registry instanceof FinalizationRegistry &&\n  refs.every((ref, index) => ref.deref() === fibers[index]);\n`;
+
+    it("agrees with Node", async () => {
+      expect(getCounts(await checkModel(getSource("<=")))).toEqual(["deadlock", 3, 3]);
+    });
+
+    it("rejects another result", async () => {
+      expect(getCounts(await checkModel(getSource("<")))).toEqual(["invariant-violation", 3, 3]);
+    });
+
+    it("numbers the state natively as ESCanonical does", async () => {
+      expect(getCounts(await checkModel(getSource("<="), "spec.ts", "compared"))).toEqual([
+        "deadlock",
+        3,
+        3,
+      ]);
+    });
+
+    it("stops where a WeakRef's target is an object nothing else reaches", async () => {
+      expect((await checkModel(getSource("<=", "{}"))).message).toContain(
+        "tla-ts can't keep a WeakRef whose target nothing else reaches",
+      );
+    });
+  });
+
+  // A RegExp in the state keeps its pattern, and its lastIndex as a step leaves it, as a module's
+  // constant pattern does.
+  describe("keeps a RegExp that a step uses", () => {
+    const getSource = (operator: string) =>
+      `const pattern = /a/g;\nlet count = 0;\nexport const tick = () => {\n  if (count < 2 && pattern.test("aa")) count += 1;\n};\nexport const isSmall = () => count ${operator} 2 && pattern.lastIndex === count;\n`;
+
+    it("agrees with Node", async () => {
+      expect(getCounts(await checkModel(getSource("<=")))).toEqual(["deadlock", 3, 3]);
+    });
+
+    it("rejects another result", async () => {
+      expect(getCounts(await checkModel(getSource("<")))).toEqual(["invariant-violation", 3, 3]);
+    });
+
+    it("numbers the state natively as ESCanonical does", async () => {
+      expect(getCounts(await checkModel(getSource("<="), "spec.ts", "compared"))).toEqual([
+        "deadlock",
+        3,
+        3,
+      ]);
+    });
+  });
+
+  // A typed array in the state keeps the ArrayBuffer it views, as a module's constant bytes do.
+  describe("keeps a typed array that a step writes", () => {
+    const getSource = (operator: string) =>
+      `const bytes = new Uint8Array(2);\nlet count = 0;\nexport const tick = () => {\n  if (count < 2) {\n    bytes[count] = 1;\n    count += 1;\n  }\n};\nexport const isSmall = () => count ${operator} 2 && bytes[0] + bytes[1] === count;\n`;
+
+    it("agrees with Node", async () => {
+      expect(getCounts(await checkModel(getSource("<=")))).toEqual(["deadlock", 3, 3]);
+    });
+
+    it("rejects another result", async () => {
+      expect(getCounts(await checkModel(getSource("<")))).toEqual(["invariant-violation", 3, 3]);
+    });
+
+    it("numbers the state natively as ESCanonical does", async () => {
+      expect(getCounts(await checkModel(getSource("<="), "spec.ts", "compared"))).toEqual([
+        "deadlock",
+        3,
+        3,
+      ]);
+    });
+  });
+
+  // A function that ESCore's runtime names an operator after, as Effect's SchemaGetter exports
+  // BigInt, gets a name of its own in the spec, which still calls it.
+  describe("checks a function named as one of the runtime's operators", () => {
+    const getSource = (thrown: number) =>
+      `export function BigInt(n: 0 | 1) {\n  if ((n as number) === ${thrown}) throw new Error("thrown");\n  return n;\n}\n`;
+
+    it("agrees with Node", async () => {
+      expect((await checkModel(getSource(2))).status).toBe("success");
+    });
+
+    it("rejects another result", async () => {
+      expect((await checkModel(getSource(1))).status).toBe("assumption-violation");
+    });
+  });
+
+  // A model with state and no action takes no step, so TLC checks no deadlock of it, as a deadlock
+  // there tells nothing, as of a library module whose functions tla-ts calls none of as actions.
+  describe("checks no deadlock of a model with state and no action", () => {
+    const getSource = (operator: string) =>
+      `let count = 0;\nexport const isSmall = () => count ${operator} 0;\n`;
+
+    it("agrees with Node", async () => {
+      expect(getCounts(await checkModel(getSource("<=")))).toEqual(["success", 1, 1]);
+    });
+
+    it("rejects another result", async () => {
+      expect(getCounts(await checkModel(getSource("<")))).toEqual(["invariant-violation", 1, 1]);
+    });
+  });
+
+  // A model with an action keeps the check, even where no call of it ever writes, as a deadlock
+  // there is a finding: no step can run.
+  describe("checks the deadlock of a model whose action never writes", () => {
+    const getSource = (bound: number) =>
+      `let count = 0;\nexport const tick = (n: 0 | 1) => {\n  if (n > ${bound} && count < 1) count += 1;\n};\nexport const isSmall = () => count <= 1;\n`;
+
+    it("agrees with Node", async () => {
+      expect(getCounts(await checkModel(getSource(1)))).toEqual(["deadlock", 1, 1]);
+    });
+
+    it("rejects another result", async () => {
+      expect(getCounts(await checkModel(getSource(0)))).toEqual(["deadlock", 2, 2]);
+    });
+  });
+
+  // A step settles the jobs that its program queues, which a program that names then only in a
+  // comment queues none of.
+  describe("settles a step of a program that queues no jobs", () => {
+    const getSource = (limit: number) =>
+      `// Each step then counts one more.\nlet count = 0;\nexport const step = () => {\n  if (count < 2) count++;\n};\nexport const isSmall = () => count < ${limit};\n`;
+
+    it("agrees with Node", async () => {
+      expect(getCounts(await checkModel(getSource(3)))).toEqual(["deadlock", 3, 3]);
+    });
+
+    it("rejects another result", async () => {
+      expect(getCounts(await checkModel(getSource(2)))).toEqual(["invariant-violation", 3, 3]);
+    });
+  });
+
+  // A model that imports a file runs as an ES module, with the module it imports beside it. A
+  // model without state checks only that its functions' calls return, as today's spec does, which
+  // fails as an assumption where one throws.
+  describe("checks the exported functions of a model that imports a file", () => {
+    const STOPPED_ASSUMPTION = ["assumption-violation", 0, 0];
+    const directory = mkdtempSync(join(tmpdir(), "tla-ts-escore-plan-"));
+    afterAll(() => rmSync(directory, { recursive: true, force: true }));
+    writeFileSync(
+      join(directory, "flip.ts"),
+      "export const flip = (value: 0 | 1) => (value === 0 ? 1 : 0);\n",
+    );
+    const check = (body: string) => {
+      const source = `import { flip } from "./flip.ts";\n${body}`;
+      writeFileSync(join(directory, "model.ts"), source);
+      return checkModel(source, join(directory, "model.ts"));
+    };
+
+    it("agrees with Node", async () => {
+      expect(
+        getCounts(
+          await check(
+            'export const undo = (value: 0 | 1) => {\n  if (flip(flip(value)) !== value) throw new Error("undone");\n  return value;\n};\n',
+          ),
+        ),
+      ).toEqual(["success", 0, 0]);
+    });
+
+    it("rejects another result", async () => {
+      expect(
+        getCounts(
+          await check(
+            'export const undo = (value: 0 | 1) => {\n  if (flip(value) !== value) throw new Error("undone");\n  return value;\n};\n',
+          ),
+        ),
+      ).toEqual(STOPPED_ASSUMPTION);
+    });
+
+    it("fails where a call that only returns throws for a value it takes", async () => {
+      const result = await check(
+        'export const twice = (value: 0 | 1 | 2) => {\n  if (value === 2) throw new RangeError("two");\n  return flip(flip(value));\n};\n',
+      );
+      expect(getCounts(result)).toEqual(STOPPED_ASSUMPTION);
+    });
+
+    // The module records and the module's environment stay in the state, which the canonical
+    // form numbers both natively and in TLA+ alike.
+    describe("keeps the state of a module whose step writes it", () => {
+      const getBody = (operator: string) =>
+        `let count = 0;\nexport const tick = () => {\n  count = count === flip(0) + 1 ? 0 : count + 1;\n};\nexport const isBounded = () => count ${operator} 2;\n`;
+
+      it("agrees with Node", async () => {
+        expect(getCounts(await check(getBody("<=")))).toEqual(["success", 3, 4]);
+      });
+
+      it("rejects another result", async () => {
+        expect(getCounts(await check(getBody("<")))).toEqual(["invariant-violation", 3, 3]);
+      });
+
+      it("numbers the state natively as ESCanonical does", async () => {
+        const source = `import { flip } from "./flip.ts";\n${getBody("<=")}`;
+        writeFileSync(join(directory, "compared.ts"), source);
+        expect(
+          getCounts(await checkModel(source, join(directory, "compared.ts"), "compared")),
+        ).toEqual(["success", 3, 4]);
+      });
+    });
+
+    // A parameter of a literal's type or undefined takes each value of its set, by the set it's in.
+    describe("passes a value of a union with undefined", () => {
+      const getBody = (bound: number) =>
+        `export const short = (text: "a" | "bb" | undefined) => {\n  if (flip(0) !== 1 || (text !== undefined && text.length >= ${bound})) throw new Error("long");\n  return text;\n};\n`;
+
+      it("agrees with Node", async () => {
+        expect(getCounts(await check(getBody(3)))).toEqual(["success", 0, 0]);
+      });
+
+      it("rejects another result", async () => {
+        expect(getCounts(await check(getBody(2)))).toEqual(STOPPED_ASSUMPTION);
+      });
+    });
+
+    // A function whose name a definition of the spec may take, as ESCore's do, gets one of its own.
+    describe("calls a function whose name TLA+ takes another for", () => {
+      const getBody = (operator: string) =>
+        `export const Undone = (value: 0 | 1) => {\n  if (flip(${operator}) !== value) throw new Error("undone");\n  return value;\n};\nexport const heap = () => flip(1);\n`;
+
+      it("agrees with Node", async () => {
+        expect(getCounts(await check(getBody("flip(value)")))).toEqual(["success", 0, 0]);
+      });
+
+      it("rejects another result", async () => {
+        expect(getCounts(await check(getBody("value")))).toEqual(STOPPED_ASSUMPTION);
+      });
+    });
+
+    // A global of the host that ESCore lacks is a built-in that stops where a program calls it,
+    // which the state keeps, as it refers to nothing.
+    describe("keeps the host's globals that stop where a program calls them", () => {
+      const getBody = (operator: string) =>
+        `let count = 0;\nconst later = typeof setImmediate;\nexport const tick = () => {\n  if (count < 2 && later === "function") count += flip(0);\n};\nexport const isSmall = () => count ${operator} 2;\n`;
+
+      it("agrees with Node", async () => {
+        expect(getCounts(await check(getBody("<=")))).toEqual(["deadlock", 3, 3]);
+      });
+
+      it("rejects another result", async () => {
+        expect(getCounts(await check(getBody("<")))).toEqual(["invariant-violation", 3, 3]);
+      });
+
+      it("numbers the state natively as ESCanonical does", async () => {
+        const source = `import { flip } from "./flip.ts";\n${getBody("<=")}`;
+        writeFileSync(join(directory, "host.ts"), source);
+        expect(getCounts(await checkModel(source, join(directory, "host.ts"), "compared"))).toEqual(
+          ["deadlock", 3, 3],
+        );
+      });
+    });
+
+    // The host's console and process, which a module reads, hold built-ins whose data is a value,
+    // such as console.createTask's function that runs a task, as bippy's core module reads them.
+    describe("keeps the host's console and process", () => {
+      const getBody = (operator: string) =>
+        `let count = 0;\nconst host = [console, process];\nexport const tick = () => {\n  if (count < 2 && typeof host[0].log === "function") count += flip(0);\n};\nexport const isSmall = () => count ${operator} 2;\n`;
+
+      it("agrees with Node", async () => {
+        expect(getCounts(await check(getBody("<=")))).toEqual(["deadlock", 3, 3]);
+      });
+
+      it("rejects another result", async () => {
+        expect(getCounts(await check(getBody("<")))).toEqual(["invariant-violation", 3, 3]);
+      });
+
+      it("numbers the state natively as ESCanonical does", async () => {
+        const source = `import { flip } from "./flip.ts";\n${getBody("<=")}`;
+        writeFileSync(join(directory, "console.ts"), source);
+        expect(
+          getCounts(await checkModel(source, join(directory, "console.ts"), "compared")),
+        ).toEqual(["deadlock", 3, 3]);
+      });
+    });
+
+    // A class without a constructor of its own has a built-in one, which holds the class's
+    // fields, and which the canonical form numbers natively and in TLA+ alike.
+    describe("keeps a class whose constructor is the default one", () => {
+      writeFileSync(join(directory, "box.ts"), "export class Box {\n  size = 1;\n}\n");
+      const getSource = (operator: string) =>
+        `import { Box } from "./box.ts";\nlet made = 0;\nlet last: Box | undefined = undefined;\nexport const make = () => {\n  if (made < 2) {\n    last = new Box();\n    made += last.size;\n  }\n};\nexport const isSmall = () => made ${operator} 2;\n`;
+      const checkBox = (operator: string, mode: "canonical" | "compared" = "canonical") => {
+        const source = getSource(operator);
+        writeFileSync(join(directory, "boxes.ts"), source);
+        return checkModel(source, join(directory, "boxes.ts"), mode);
+      };
+
+      it("agrees with Node", async () => {
+        expect(getCounts(await checkBox("<="))).toEqual(["deadlock", 3, 3]);
+      });
+
+      it("rejects another result", async () => {
+        expect(getCounts(await checkBox("<"))).toEqual(["invariant-violation", 3, 3]);
+      });
+
+      it("numbers the state natively as ESCanonical does", async () => {
+        expect(getCounts(await checkBox("<=", "compared"))).toEqual(["deadlock", 3, 3]);
+      });
+    });
+
+    // A function that a cast gives, and one that a list of the module's names exports.
+    describe("calls a function that a cast gives or a list exports", () => {
+      const getBody = (operator: string) =>
+        `const Undone = ((value: 0 | 1) => {\n  if (flip(${operator}) !== value) throw new Error("undone");\n  return value;\n}) as (value: 0 | 1) => number;\nexport { Undone };\n`;
+
+      it("agrees with Node", async () => {
+        expect(getCounts(await check(getBody("flip(value)")))).toEqual(["success", 0, 0]);
+      });
+
+      it("rejects another result", async () => {
+        expect(getCounts(await check(getBody("value")))).toEqual(STOPPED_ASSUMPTION);
+      });
+    });
+
+    it("calls none of the functions whose parameters take values it can't list", async () => {
+      expect(
+        getCounts(
+          await check(
+            "export const isSame = (get: () => 0 | 1) => flip(get()) === get();\nexport const isFlipped = () => flip(0) === 1;\n",
+          ),
+        ),
+      ).toEqual(["success", 0, 0]);
+    });
+  });
+
   describe("checks the port of DieHard.tla as TLC checks the ESCore model", () => {
     const path = join(EXAMPLES, "die-hard/die-hard.ts");
     const source = readFileSync(path, "utf8");

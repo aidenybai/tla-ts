@@ -1,4 +1,4 @@
-import { check } from "./alpha";
+import { check } from "./alpha.ts";
 
 export const isBeta = (value: string) => value === "beta";
 

@@ -147,6 +147,26 @@ describe("the CLI with TypeScript files", () => {
       "Promise.reject(undefined).catch(() => {});\n",
     ],
     [
+      "an error of a subclass that names itself",
+      'class Oops extends Error {}\nclass Named extends Oops {\n  name = "Custom";\n}\nthrow new Named("named");\n',
+      'class Oops extends Error {}\nclass Named extends Oops {\n  name = "Custom";\n}\ntry {\n  throw new Named("named");\n} catch {}\n',
+    ],
+    [
+      "an error that a function makes and a script throws",
+      'const make = (n: number) => new TypeError("made " + n);\nlet n = 2;\n\tif (n > 1) throw make(n);\n',
+      'const make = (n: number) => new TypeError("made " + n);\nlet n = 2;\nif (n > 2) throw make(n);\n',
+    ],
+    [
+      "an error that a promise rejects with",
+      'const fail = async () => {\n  throw new Error("in");\n};\nfail();\n',
+      'const fail = async () => {\n  throw new Error("in");\n};\nfail().catch(() => {});\n',
+    ],
+    [
+      "an error in a module whose exported functions it calls none of",
+      'export const apply = (f: () => number) => f();\nconst total = [1].length;\nif (total !== 2) throw new RangeError("total " + total);\n',
+      'export const apply = (f: () => number) => f();\nconst total = [1].length;\nif (total !== 1) throw new RangeError("total " + total);\n',
+    ],
+    [
       "a throw in an async function",
       "const fail = async () => {\n  throw 1;\n};\nfail();\n",
       "const fail = async () => {\n  throw 1;\n};\nfail().catch(() => {});\n",
@@ -381,6 +401,52 @@ describe("the CLI with TypeScript files", () => {
     expect(wrong.stderr).toContain("Error: seen 14");
   });
 
+  // Node runs each kind of file: .mts and .mjs as ES modules, .cts and .cjs as CommonJS, and .ts
+  // and .js, in a package that names no type, by their syntax.
+  it.each(["ts", "mts", "cts", "js", "mjs", "cjs"])(
+    "exits with Node's code and stderr where a .%s file leaves an error uncaught",
+    (extension) => {
+      const directory = copyFixtures("passing");
+      const annotation = extension.endsWith("ts") ? ": number" : "";
+      const getScript = (limit: number) =>
+        `const total${annotation} = [1].length;\nif (total !== ${limit}) throw new RangeError("total " + total);\n`;
+      writeFileSync(join(directory, `uncaught.${extension}`), getScript(2));
+      const result = runCli(directory, [`uncaught.${extension}`]);
+      expect(getExit(result)).toEqual(getExit(runNode(directory, `uncaught.${extension}`)));
+      expect(result.status).toBe(1);
+      writeFileSync(join(directory, `caught.${extension}`), getScript(1));
+      expect(getExit(runCli(directory, [`caught.${extension}`]))).toEqual([0, ""]);
+    },
+  );
+
+  // Node's type stripping rejects syntax that it can't strip, which it runs in JavaScript.
+  it.each([
+    ["a with statement", "const o = { a: 1 };\nlet x = 2;\n  with (o) { a; }\nx++;\n"],
+    ["a function that an if declares", "let x = 1;\nif (x) function f() {}\n"],
+  ])("exits with Node's code and stderr where TypeScript holds %s", (_, code) => {
+    const directory = copyFixtures("passing");
+    writeFileSync(join(directory, "rejected.ts"), code);
+    const result = runCli(directory, ["rejected.ts"]);
+    expect(getExit(result)).toEqual(getExit(runNode(directory, "rejected.ts")));
+    expect(result.status).toBe(1);
+    writeFileSync(join(directory, "accepted.js"), code);
+    expect(getExit(runCli(directory, ["accepted.js"]))).toEqual([0, ""]);
+  });
+
+  // Node runs no JSX, which compiles as TypeScript emits it, by the project's settings, or by
+  // React's automatic runtime without a project, here by the factory its pragma names.
+  it("checks a .jsx file as TypeScript emits it", () => {
+    const directory = copyFixtures("passing");
+    const getScript = (expected: string) =>
+      `/** @jsxRuntime classic */\n/** @jsx h */\nconst h = (type, props, ...children) => type + "(" + children.join(",") + ")";\nconst view = <p>{1}<b>x</b></p>;\nif (view !== "${expected}") throw new Error(view);\n`;
+    writeFileSync(join(directory, "view.jsx"), getScript("p(1,b(x))"));
+    expect(getExit(runCli(directory, ["view.jsx"]))).toEqual([0, ""]);
+    writeFileSync(join(directory, "wrong.jsx"), getScript("p(b(x))"));
+    const wrong = runCli(directory, ["wrong.jsx"]);
+    expect(wrong.status).toBe(1);
+    expect(wrong.stderr).toContain("Error: p(1,b(x))");
+  });
+
   it("exits with Node's warning where a module's top-level await never settles", () => {
     const directory = copyFixtures("passing");
     const script =
@@ -409,13 +475,100 @@ describe("the CLI with TypeScript files", () => {
     ]);
   });
 
-  it("stops where a script leaves an error uncaught, whose stack V8 writes", () => {
+  it("stops where a script leaves an error uncaught whose properties Node prints", () => {
     const directory = copyFixtures("passing");
-    writeFileSync(join(directory, "error.ts"), 'throw new RangeError("total");\n');
+    writeFileSync(join(directory, "error.ts"), 'throw new RangeError("total", { cause: 1 });\n');
     const result = runCli(directory, ["error.ts"]);
     expect(result.status).not.toBe(1);
     expect(result.stdout).toContain(
       "tla-ts can't print what Node prints for this uncaught exception",
     );
+  });
+
+  // Under Bun, a Node on the path parses each file for its early errors, as V8 does, and TypeScript's
+  // checker never runs, whose inference of a long chain of JSDoc types, as a large program's code
+  // makes, runs out of stack.
+  describe("parses a file under Bun as Node does", () => {
+    const getScript = (expected: number) =>
+      `${Array.from({ length: 3000 }, (_, index) => `/** @typedef {Kind${index + 1} | ${index}} Kind${index} */`).join("\n")}\n/** @typedef {3000} Kind3000 */\n/** @type {Kind0} */\nconst kind = [0].length - 1;\nif (kind !== ${expected}) throw new RangeError("kind " + kind);\n`;
+
+    it("agrees with Node", () => {
+      const directory = copyFixtures("passing");
+      writeFileSync(join(directory, "kinds.js"), getScript(0));
+      const result = runCli(directory, ["kinds.js"]);
+      expect(result.status).toBe(0);
+      expect(result.stdout).toContain("Model checking completed. No error has been found.");
+    });
+
+    it("rejects another result", () => {
+      const directory = copyFixtures("passing");
+      writeFileSync(join(directory, "kinds.js"), getScript(1));
+      const result = runCli(directory, ["kinds.js"]);
+      expect(getExit(result)).toEqual(getExit(runNode(directory, "kinds.js")));
+      expect(result.status).toBe(1);
+    });
+
+    it("stops where no Node is on the path to parse the file", () => {
+      const directory = copyFixtures("passing");
+      writeFileSync(join(directory, "kinds.js"), getScript(0));
+      const bun = spawnSync("bun", ["-e", "console.log(process.execPath)"], { encoding: "utf8" });
+      const empty = mkdtempSync(join(tmpdir(), "tla-ts-path-"));
+      copies.push(empty);
+      const result = spawnSync(bun.stdout.trim(), [CLI, "kinds.js"], {
+        cwd: directory,
+        encoding: "utf8",
+        env: { ...process.env, PATH: empty },
+      });
+      expect(result.status).not.toBe(0);
+      expect(result.stdout + result.stderr).toContain(
+        "tla-ts can't tell whether Node rejects a file's syntax without a Node to parse it",
+      );
+    });
+  });
+
+  // The CLI runs an entry as Node loads the path it's given: a .cjs file, or a .js file that no
+  // package types, in Node's CommonJS wrapper, a .js file with module syntax as a module, as Node
+  // 26 detects it, and a .js file in a package of "type": "module" as a module.
+  describe.each([
+    [
+      "a CommonJS entry that requires a file",
+      "main.cjs",
+      (expected: number) =>
+        `const helper = require("./helper.cjs");\nif (helper.two !== ${expected} || typeof __filename !== "string" || typeof __dirname !== "string" || module.exports !== exports) throw new Error("helper " + helper.two);\n`,
+    ],
+    [
+      "a .js entry whose syntax makes it a module",
+      "main.js",
+      (expected: number) =>
+        `export const two = await Promise.resolve(2);\nif (two !== ${expected}) throw new Error("two " + two);\n`,
+    ],
+    [
+      "a .js entry in a package of modules",
+      "typed/main.js",
+      (expected: number) =>
+        `const two = typeof import.meta.url === "string" ? 2 : 0;\nif (two !== ${expected}) throw new Error("two " + two);\n`,
+    ],
+  ])("runs %s as Node does", (_, file, getScript) => {
+    const write = (expected: number) => {
+      const directory = copyFixtures("passing");
+      mkdirSync(join(directory, "typed"));
+      writeFileSync(join(directory, "typed/package.json"), '{ "type": "module" }\n');
+      writeFileSync(join(directory, "helper.cjs"), "module.exports = { two: 2 };\n");
+      writeFileSync(join(directory, file), getScript(expected));
+      return directory;
+    };
+
+    it("agrees with Node", () => {
+      const directory = write(2);
+      expect(runNode(directory, file).status).toBe(0);
+      expect(getExit(runCli(directory, [file]))).toEqual([0, ""]);
+    });
+
+    it("rejects another result", () => {
+      const directory = write(3);
+      const result = runCli(directory, [file]);
+      expect(getExit(result)).toEqual(getExit(runNode(directory, file)));
+      expect(result.status).toBe(1);
+    });
   });
 });

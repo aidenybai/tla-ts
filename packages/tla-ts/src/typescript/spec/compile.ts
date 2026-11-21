@@ -1,8 +1,8 @@
 import ts from "@typescript/typescript6";
-import { TlaTypeScriptError } from "../../errors";
-import { createJavaScriptFile, isCommonJsFile } from "../common-js";
+import { TlaStrippingError, TlaTypeScriptError } from "../../errors";
 import { rejectEarlyErrors } from "../early-errors";
-import { createFileResolver } from "../program";
+import { getJsxText } from "../program";
+import { createModuleResolver, getModuleFormat } from "./resolve";
 import type { PreparedModule } from "../../tlc/order";
 import { foldNames, getCallBuiltin, HOOKS } from "./library";
 import { CONFIG, type EscoreRuntime, ROOT, SCRIPT_STEPS } from "./prepare";
@@ -11,6 +11,7 @@ import {
   getHostCalendars,
   getHostDateFormat,
   getHostLocale,
+  getHostRealmFacts,
   getHostTimeZone,
   getTlaString,
   getUnitsOf,
@@ -43,6 +44,9 @@ export interface EscoreSteps {
   entries: readonly string[];
   // The text of other modules the steps extend, whose reads of the runtime the spec keeps.
   reads?: string;
+  // Whether the host loads every file of code as an ES module, as test262's does, rather than as
+  // Node does.
+  isModuleHost?: boolean;
 }
 
 interface CodeDefinition {
@@ -174,7 +178,7 @@ const sortDefinitions = (definitions: readonly CodeDefinition[]) => {
 // level awaits, which its JavaScript marks with an empty export after its code. A CommonJS
 // module's JavaScript is in the function that Node wraps it in, where a .js file may return.
 const transpile = (source: string, fileName: string, isModule: boolean, wrapper = ["", ""]) => {
-  const isTypeScript = /\.[cm]?ts$/.test(fileName);
+  const isTypeScript = /\.[cm]?tsx?$/.test(fileName);
   const transpiled = ts.transpileModule(
     isTypeScript ? source : `${wrapper[0]}${source}${wrapper[1]}`,
     {
@@ -204,6 +208,12 @@ const transpile = (source: string, fileName: string, isModule: boolean, wrapper 
       )
     : source;
   return `${wrapper[0]}${code}${wrapper[1]}`;
+};
+
+// A file of Node's wrapper, whose name wrapped records.
+const wrap = (sourceFile: ts.SourceFile, wrapped: Set<string>) => {
+  wrapped.add(sourceFile.fileName);
+  return sourceFile;
 };
 
 // Where a let that a line break follows is a with statement's body, which TypeScript's parser reads
@@ -297,17 +307,30 @@ const getSpecifiers = (sourceFile: ts.SourceFile, kind: ProgramFile["kind"]) => 
 // The function that Node wraps a CommonJS module's code in, as its loader writes it.
 const WRAPPER = ["(function (exports, require, module, __filename, __dirname) { ", "\n});"];
 
-// Whether Node loads a file as an ES module or as CommonJS: TypeScript's code as a module, as
-// tla-ts compiles it, unless it's a .cts file, and JavaScript as its extension, its package's type,
-// or its syntax tells.
-const getKind = (path: string, text: string): ProgramFile["kind"] =>
-  /\.[cm]?tsx?$/.test(path)
-    ? path.endsWith(".cts")
-      ? "commonjs"
-      : "module"
-    : isCommonJsFile(createJavaScriptFile(path, text, ts.ScriptTarget.ESNext))
-      ? "commonjs"
-      : "module";
+// Runs compile, whose stops name where they are in the code that tla-ts parses, as the file's own
+// code places them: the entry by the name the compile gives it, and a file that Node wraps, as
+// CommonJS, at its own columns, which the wrapper, of the parsed names in wrapped, moves on its
+// first line.
+const atSourceLocations = <T>(fileName: string, compile: (wrapped: Set<string>) => T): T => {
+  const wrapped = new Set<string>();
+  try {
+    return compile(wrapped);
+  } catch (error) {
+    // Node's stripping of a file's types reads the file's own code, which its error points into.
+    const found =
+      error instanceof TlaTypeScriptError && !(error instanceof TlaStrippingError)
+        ? /^(.+?):(\d+):(\d+) ([^]*)$/.exec(error.message)
+        : null;
+    if (found === null) throw error;
+    const entry = fileName.replace(/\.[cm]?tsx?$/, ".js");
+    const isEntry = ts.sys?.fileExists(fileName) === true && found[1] === resolve(entry);
+    const column =
+      Number(found[2]) === 1 && wrapped.has(found[1])
+        ? Number(found[3]) - WRAPPER[0].length
+        : Number(found[3]);
+    throw new TlaTypeScriptError(`${isEntry ? entry : found[1]}:${found[2]}:${column} ${found[4]}`);
+  }
+};
 
 // Whether JSON.parse reads a text, as Node's does where it loads a JSON file.
 const isJson = (text: string) => {
@@ -329,11 +352,25 @@ const getWrapperNames = (names: ReadonlySet<string>) => [
 // A program's files: the script, or the module and each file that its imports and requires load,
 // as the model's resolver finds them, each once, by path. A require of a file that Node reads as
 // other than code, such as JSON, loads none.
-const loadFiles = (source: string, fileName: string, isModule: boolean): ProgramFile[] => {
+const loadFiles = (
+  source: string,
+  fileName: string,
+  isModule: boolean,
+  host: Pick<EscoreSteps, "isModuleHost">,
+  // The names of the parsed files that Node's wrapper holds the code of.
+  wrapped: Set<string>,
+): ProgramFile[] => {
+  // Whether the host loads a file as an ES module or as CommonJS (see getModuleFormat).
+  const getKind = (path: string, text: string): ProgramFile["kind"] =>
+    host.isModuleHost === true ? "module" : getModuleFormat(path, text);
   // A script loads modules only where it calls import().
   const isScript = !isModule;
   if (isScript && !/\bimport\s*\(/.test(source)) {
-    const sourceFile = parse(transpile(source, fileName, false), fileName, false);
+    const sourceFile = parse(
+      transpile(getJsxText(fileName, source), fileName, false),
+      fileName,
+      false,
+    );
     // Node runs nothing of a script that it fails to parse.
     rejectEarlyErrors(sourceFile);
     return [
@@ -346,7 +383,16 @@ const loadFiles = (source: string, fileName: string, isModule: boolean): Program
       },
     ];
   }
-  const resolve = createFileResolver(fileName);
+  const resolveModule = createModuleResolver(fileName);
+  // The file that a literal of a file's code loads: a require's in CommonJS's mode.
+  const resolve = (literal: ts.StringLiteralLike) =>
+    resolveModule(
+      literal.text,
+      literal.getSourceFile().fileName,
+      ts.isCallExpression(literal.parent) &&
+        ts.isIdentifier(literal.parent.expression) &&
+        literal.parent.expression.text === "require",
+    );
   const getRealPath = (path: string) => ts.sys.realpath?.(ts.sys.resolvePath(path)) ?? path;
   const entry = ts.sys.fileExists(fileName) ? getRealPath(fileName) : fileName;
   // Each file's number, by its path, in the order the program finds them.
@@ -395,9 +441,7 @@ const loadFiles = (source: string, fileName: string, isModule: boolean): Program
     const text =
       original !== undefined
         ? `export * from ${JSON.stringify(original)};\nexport { default } from ${JSON.stringify(original)};\nexport const __esModule = true;\n`
-        : path === entry
-          ? source
-          : readFileSync(path, "utf8");
+        : getJsxText(path, path === entry ? source : readFileSync(path, "utf8"));
     if (path.endsWith(".json")) {
       files.push({
         sourceFile: ts.createSourceFile(path, "", ts.ScriptTarget.ESNext),
@@ -409,7 +453,16 @@ const loadFiles = (source: string, fileName: string, isModule: boolean): Program
       });
       continue;
     }
-    const kind = isScript && path === entry ? "script" : getKind(path, text);
+    // A module entry that no file holds runs as an ES module, as no package's type or syntax
+    // makes it CommonJS for Node.
+    const kind =
+      path !== entry
+        ? getKind(path, text)
+        : isScript
+          ? "script"
+          : ts.sys.fileExists(entry)
+            ? getKind(path, text)
+            : "module";
     const written = getSpecifiers(
       ts.createSourceFile(path, text, ts.ScriptTarget.ESNext, true),
       kind,
@@ -418,7 +471,7 @@ const loadFiles = (source: string, fileName: string, isModule: boolean): Program
     const code = text.replace(/^#!.*/, (line) => " ".repeat(line.length));
     const sourceFile =
       kind === "commonjs"
-        ? parse(transpile(code, path, false, WRAPPER), path, false)
+        ? wrap(parse(transpile(code, path, false, WRAPPER), path, false), wrapped)
         : parse(transpile(code, path, kind !== "script"), path, kind !== "script");
     // Node runs nothing of a program whose entry it fails to parse, and loads none of the requests
     // of another file that it fails to parse.
@@ -535,8 +588,13 @@ export const compileToEscore = (
 ): EscoreSpec => {
   // Node reads a program's file as UTF-8, where a lone surrogate, which a string in memory may
   // hold, is U+FFFD.
-  const files = loadFiles(source.toWellFormed(), fileName, isModule);
-  const program = specialize(files, new Set([...runtime.internalKeys, ...model.entries]));
+  const { files, program } = atSourceLocations(fileName, (wrapped) => {
+    const loaded = loadFiles(source.toWellFormed(), fileName, isModule, model, wrapped);
+    return {
+      files: loaded,
+      program: specialize(loaded, new Set([...runtime.internalKeys, ...model.entries])),
+    };
+  });
   // The runtime's setTimeout gives a script undefined where Node gives a Timeout, so a script may
   // only call it as a statement.
   const findTimerValue = (node: ts.Node): ts.Node | undefined =>
@@ -637,6 +695,11 @@ export const compileToEscore = (
           text: getHostDateFormat(program.words, runtime.realm),
         },
         {
+          name: "HostRealmFact",
+          arity: 1,
+          text: getHostRealmFacts(runtime.realm),
+        },
+        {
           name: "HostParseDate",
           arity: 1,
           text: getHostParseDate(
@@ -661,6 +724,12 @@ export const compileToEscore = (
           name: "HostFileLocation",
           arity: 1,
           text: `HostFileLocation(file) ==\n  CASE ${files.map((file, index) => `file = ${index + 1} -> ${getHostFileLocation(file)}`).join("\n    [] ")}`,
+        },
+        {
+          name: "HostFilePath",
+          arity: 1,
+          // The path of the file that the host loaded each module from, which import.meta gives.
+          text: `HostFilePath(file) ==\n  CASE ${files.map((file, index) => `file = ${index + 1} -> ${file.kind === "module" ? getUnitsOf(resolve(file.path)) : "Empty"}`).join("\n    [] ")}`,
         },
         {
           name: "HostDefaultStackTraceLimit",
@@ -690,6 +759,15 @@ export const compileToEscore = (
                   : isQueuing
                     ? `RunProgram(s) == LET p == Program(s) IN IF IsAbrupt(p) THEN p ELSE ${runJobs} RunTimers(u.s)`
                     : "RunProgram(s) == Program(s)",
+        },
+        {
+          name: "SettleJobs",
+          arity: 1,
+          // The jobs, the rejections, and the timers that a model's call leaves, which a program
+          // that queues none has none of.
+          text: isQueuing
+            ? `SettleJobs(s) == ${runJobs.replaceAll("p.s", "s")} RunTimers(u.s)`
+            : "SettleJobs(s) == Ok(s, Undefined)",
         },
         {
           name: "CallBuiltin",

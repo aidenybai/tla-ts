@@ -1,6 +1,7 @@
 import ts from "@typescript/typescript6";
 import { TlaTypeScriptError } from "../errors";
 import { createJavaScriptFile, isJavaScriptFile, resolveModule } from "./common-js";
+import { rewriteJsx } from "./jsx";
 
 const COMPILER_OPTIONS: ts.CompilerOptions = {
   strict: true,
@@ -233,6 +234,26 @@ const getProjectOptions = (options: ts.CompilerOptions): ts.CompilerOptions => (
   // An option that TypeScript deprecates still works as it did, and Node reads none of them.
   ignoreDeprecations: "6.0",
 });
+
+// The options of the project of the nearest tsconfig.json that holds the file at path, with those
+// that tla-ts needs, or undefined where no project holds it.
+export const getProjectCompilerOptions = (path: string) => {
+  const project = getProject(path);
+  return project === undefined ? undefined : getProjectOptions(project.options);
+};
+
+// The text of a file as tla-ts runs it: a file of JSX's with each JSX expression the call that
+// TypeScript emits for it, by the options of its project, as createProgram reads it (see
+// rewriteJsx), and any other file's as it is.
+export const getJsxText = (path: string, text: string) => {
+  if (!/\.[jt]sx$/.test(path)) return text;
+  const project = getProject(path);
+  const options =
+    project === undefined
+      ? { ...COMPILER_OPTIONS, jsx: ts.JsxEmit.ReactJSX }
+      : getProjectOptions(project.options);
+  return rewriteJsx(path, text, options, ts.createCompilerHost(options));
+};
 
 // The file that a literal of a model's file loads as the model runs, as createProgram resolves
 // it for the model at path, or undefined where none does.

@@ -1,4 +1,4 @@
-import { getShared } from "./aliased";
+import { getShared } from "./aliased.ts";
 
 let count = 0;
 
