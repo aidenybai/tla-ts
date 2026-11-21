@@ -709,6 +709,134 @@ describe("compiles CommonJS modules as Node loads them", () => {
     });
   });
 
+  // Node's util, of which a program reads only TextEncoder, the global's own, as React's server
+  // builds do, and each require gives the same object.
+  describe("requires Node's util, which stops where the code uses more of it", () => {
+    const main = `const util = require("util");
+      log.push(util === require("node:util"), util.TextEncoder === TextEncoder, new util.TextEncoder().encode("é").length);`;
+
+    it("agrees with Node", async () => {
+      expect((await checkModules(getFiles(main, "true,true,2"))).message).toBeUndefined();
+    });
+
+    it("rejects another result", async () => {
+      expect((await checkModules(getFiles(main, "true,true,1"))).message).toContain(THREW);
+    });
+
+    it.each([
+      "util.inspect",
+      '"TextEncoder" in util',
+      "Object.keys(util)",
+      "Reflect.ownKeys(util)",
+      "Object.getPrototypeOf(util)",
+      'Object.defineProperty(util, "x", { value: 1 })',
+      "util.x = 1",
+      "delete util.TextEncoder",
+      "({ ...util })",
+      "JSON.stringify(util)",
+      "globalThis.TextEncoder = class {}; util.TextEncoder",
+    ])("stops at %s", async (use) => {
+      expect(
+        (await checkModules(getFiles(`const util = require("util"); ${use};`, ""))).message,
+      ).toContain("tla-ts can't run the host's util");
+    });
+  });
+
+  // Node's crypto and stream, which React's server builds require and use only in functions that
+  // they export, and each require gives the same object, of the type Node's is.
+  describe("requires Node's crypto and stream, which stop where the code uses them", () => {
+    const main = `const crypto = require("crypto");
+      const stream = require("stream");
+      log.push(typeof crypto, typeof stream, crypto === require("node:crypto"), stream === require("node:stream"));`;
+
+    it("agrees with Node", async () => {
+      expect(
+        (await checkModules(getFiles(main, "object,function,true,true"))).message,
+      ).toBeUndefined();
+    });
+
+    it("rejects another result", async () => {
+      expect((await checkModules(getFiles(main, "object,object,true,true"))).message).toContain(
+        THREW,
+      );
+    });
+
+    it.each(
+      ["crypto", "stream"].flatMap((name) =>
+        [
+          `${name}.createHash`,
+          `"Readable" in ${name}`,
+          `Object.keys(${name})`,
+          `Reflect.ownKeys(${name})`,
+          `Object.getPrototypeOf(${name})`,
+          `Object.defineProperty(${name}, "x", { value: 1 })`,
+          `${name}.x = 1`,
+          `delete ${name}.Readable`,
+          `({ ...${name} })`,
+          `JSON.stringify(${name})`,
+          ...(name === "stream" ? ["stream()", "new stream()"] : []),
+        ].map((use) => [name, use]),
+      ),
+    )("stops at a use of %s: %s", async (name, use) => {
+      expect(
+        (await checkModules(getFiles(`const ${name} = require("${name}"); ${use};`, ""))).message,
+      ).toContain(`tla-ts can't run the host's ${name}`);
+    });
+  });
+
+  // Node's AsyncLocalStorage, which React's server builds make one of as they load, makes an
+  // object of no arguments, whose every use stops, as its store follows the async context.
+  describe("makes an AsyncLocalStorage of no arguments, which stops where the code uses it", () => {
+    const main = `const Storage = require("async_hooks").AsyncLocalStorage;
+      const storage = new Storage();
+      log.push(typeof Storage, typeof storage, Storage === require("node:async_hooks").AsyncLocalStorage, storage !== new Storage());`;
+
+    it("agrees with Node", async () => {
+      expect(
+        (await checkModules(getFiles(main, "function,object,true,true"))).message,
+      ).toBeUndefined();
+    });
+
+    it("rejects another result", async () => {
+      expect((await checkModules(getFiles(main, "function,object,true,false"))).message).toContain(
+        THREW,
+      );
+    });
+
+    it.each([
+      "storage.getStore()",
+      "storage.run(1, () => 1)",
+      "storage.enterWith(1)",
+      "storage.exit(() => 1)",
+      "storage.disable()",
+      "Object.keys(storage)",
+      "Object.getPrototypeOf(storage)",
+      "JSON.stringify(storage)",
+      "Object.prototype.toString.call(storage)",
+      "storage instanceof Storage",
+      "({}) instanceof Storage",
+      "storage instanceof Object",
+      "Storage.prototype",
+      "Storage.name",
+      "new Storage({})",
+      "new Storage(undefined)",
+      "Reflect.construct(Storage, [], Object)",
+      "new (class extends Storage {})()",
+      "Storage()",
+    ])("stops at %s", async (use) => {
+      expect(
+        (
+          await checkModules(
+            getFiles(
+              `const Storage = require("async_hooks").AsyncLocalStorage; const storage = new Storage(); ${use};`,
+              "",
+            ),
+          )
+        ).message,
+      ).toContain("tla-ts can't run the host's AsyncLocalStorage");
+    });
+  });
+
   describe("gives a module in a cycle the exports so far of the module that requires it", () => {
     const main = `const a = require("./a.js");
       log.push(a.name, a.fromB);`;

@@ -502,6 +502,99 @@ describe("checks a module's exported functions as a model on ESCore", () => {
     });
   });
 
+  // Node's util, which a CommonJS module's function closes over, as React's server builds do, is in
+  // the state, under a number of no file.
+  describe("keeps Node's util in the state", () => {
+    const directory = mkdtempSync(join(tmpdir(), "tla-ts-escore-util-"));
+    afterAll(() => rmSync(directory, { recursive: true, force: true }));
+    const check = (operator: string, mode?: "compared") => {
+      const source = `const util = require("util");\nlet count = 0;\nfunction tick() {\n  if (count < 2 && util.TextEncoder === TextEncoder) count += 1;\n}\nfunction isSmall() {\n  return count ${operator} 2;\n}\nexports.tick = tick;\nexports.isSmall = isSmall;\n`;
+      const path = join(directory, `${mode ?? "spec"}-${operator === "<" ? "less" : "most"}.cjs`);
+      writeFileSync(path, source);
+      return checkModel(source, path, mode);
+    };
+
+    it("agrees with Node", async () => {
+      expect(getCounts(await check("<="))).toEqual(["deadlock", 3, 3]);
+    });
+
+    it("rejects another result", async () => {
+      expect(getCounts(await check("<"))).toEqual(["invariant-violation", 3, 3]);
+    });
+
+    it("numbers the state natively as ESCanonical does", async () => {
+      expect(getCounts(await check("<=", "compared"))).toEqual(["deadlock", 3, 3]);
+    });
+  });
+
+  // An AsyncLocalStorage that a CommonJS module makes as it loads, as React's server builds do, is
+  // in the state.
+  describe("keeps an AsyncLocalStorage in the state", () => {
+    const directory = mkdtempSync(join(tmpdir(), "tla-ts-escore-storage-"));
+    afterAll(() => rmSync(directory, { recursive: true, force: true }));
+    const check = (operator: string, mode?: "compared") => {
+      const source = `const storage = new (require("async_hooks").AsyncLocalStorage)();\nlet count = 0;\nfunction tick() {\n  if (count < 2 && typeof storage === "object") count += 1;\n}\nfunction isSmall() {\n  return count ${operator} 2;\n}\nexports.tick = tick;\nexports.isSmall = isSmall;\n`;
+      const path = join(directory, `${mode ?? "spec"}-${operator === "<" ? "less" : "most"}.cjs`);
+      writeFileSync(path, source);
+      return checkModel(source, path, mode);
+    };
+
+    it("agrees with Node", async () => {
+      expect(getCounts(await check("<="))).toEqual(["deadlock", 3, 3]);
+    });
+
+    it("rejects another result", async () => {
+      expect(getCounts(await check("<"))).toEqual(["invariant-violation", 3, 3]);
+    });
+
+    it("numbers the state natively as ESCanonical does", async () => {
+      expect(getCounts(await check("<=", "compared"))).toEqual(["deadlock", 3, 3]);
+    });
+  });
+
+  // The handler of the host's proxies keeps its number in a step's state, so a host object that a
+  // step makes, such as a TextDecoder, stops where its code uses it, rather than using a program's
+  // object that took the handler's number, such as one with a method named get.
+  describe("keeps the handler of the host's objects in the state", () => {
+    const getSource = (check: string) =>
+      `Function.prototype.box = { get: () => "wrong" };\nlet count = 0;\nexport const tick = () => {\n  if (count < 2) count += 1;\n};\nexport const isDecoder = () => ${check};\n`;
+
+    it("agrees with Node", async () => {
+      expect(
+        getCounts(await checkModel(getSource('typeof new TextDecoder() === "object"'), "spec.mjs")),
+      ).toEqual(["deadlock", 3, 3]);
+    });
+
+    it("rejects another result", async () => {
+      expect(
+        getCounts(
+          await checkModel(getSource('typeof new TextDecoder() === "function"'), "spec.mjs"),
+        ),
+      ).toEqual(["invariant-violation", 1, 1]);
+    });
+
+    it("stops where a step reads the TextDecoder that it makes", async () => {
+      const result = await checkModel(
+        getSource('new TextDecoder().encoding !== "wrong"'),
+        "spec.mjs",
+      );
+      expect(result.status).not.toBe("invariant-violation");
+      expect(result.message).toContain("tla-ts can't run the host's TextDecoder");
+    });
+
+    it("numbers the state natively as ESCanonical does", async () => {
+      expect(
+        getCounts(
+          await checkModel(
+            getSource('typeof new TextDecoder() === "object"'),
+            "spec.mjs",
+            "compared",
+          ),
+        ),
+      ).toEqual(["deadlock", 3, 3]);
+    });
+  });
+
   // A step settles the jobs that its program queues, which a program that names then only in a
   // comment queues none of.
   describe("settles a step of a program that queues no jobs", () => {

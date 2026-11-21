@@ -569,15 +569,24 @@ const DEFINITIONS = [
   IF u[k] >= 55296 /\\ u[k] <= 56319 /\\ k < Len(u) /\\ u[k + 1] >= 56320 /\\ u[k + 1] <= 57343
   THEN Utf8Bytes(u, k + 2, acc \\o UTF8Encode((u[k] - 55296) * 1024 + u[k + 1] - 56320 + 65536))
   ELSE Utf8Bytes(u, k + 1, acc \\o UTF8Encode(IF u[k] >= 55296 /\\ u[k] <= 57343 THEN 65533 ELSE u[k]))`,
+  // Whether a value is the proxy that DefineHost made of the host's constructor of a name, the one
+  // proxy whose target is that constructor, which a program can't reach.
+  `IsHostConstructor(s, v, name) ==
+  /\\ IsObject(v) /\\ O(s, v).class = "proxy"
+  /\\ IsObject(O(s, v).slots.target) /\\ "id" \\in DOMAIN O(s, O(s, v).slots.target).slots
+  /\\ O(s, O(s, v).slots.target).slots.id = <<"Module", "hostQuietConstructor">>
+  /\\ O(s, O(s, v).slots.target).slots.data = name`,
   // A function of the host, as a proxy that stops at every operation but typeof.
   `HostFunction(s, name) ==
   LET stop == Alloc(s, BuiltinObject(Intrinsic(s, "FunctionPrototype"), <<"Module", "hostStop">>, 0, <<>>, FALSE, name, s.realmId))
   IN ProxyCreate(stop.s, stop.v, s.hostHandler)`,
   // Node's process, of which a program reads only hrtime, whose bigint it may only read, and
-  // getBuiltinModule, of async_hooks, of which it reads
-  // only AsyncResource, whose objects run a function in their scope and emit their destroy, as
-  // Node's do (lib/async_hooks.js) where no hook of async_hooks observes them, which a program would
-  // make by reading more of async_hooks. A program reads process.env as the compile gives it.
+  // getBuiltinModule, of async_hooks, of which it reads only AsyncResource, whose objects run a
+  // function in their scope and emit their destroy, as Node's do (lib/async_hooks.js) where no hook
+  // of async_hooks observes them, which a program would make by reading more of async_hooks, and
+  // AsyncLocalStorage, which makes an object of no arguments, at whose every use the program stops,
+  // as its store follows the async context that ESCore's jobs don't carry. A program reads
+  // process.env as the compile gives it.
   `ProcessObject(s) ==
   LET bigint == HostFunction(s, N("process.hrtime.bigint"))
       hrtimeTarget == Alloc(bigint.s, BuiltinObject(Intrinsic(s, "FunctionPrototype"), <<"Module", "hostStop">>, 0, <<>>, FALSE,
@@ -599,10 +608,31 @@ const DEFINITIONS = [
                                                  N("AsyncResource"), TRUE, [run |-> Val(run), destroy |-> Val(destroy)], destroy.s.realmId))
       hooks == OrdinaryObjectCreate(resource.s, Null)
       withResource == CreateDataProperty(hooks.s, Val(hooks), SV("AsyncResource"), resource.v)
-      hooksProxy == StoppingProxy(withResource.s, Val(hooks), N("async_hooks"), <<[trap |-> SV("get"), method |-> "asyncHooksGet"]>>)
-      module == OrdinaryObjectCreate(hooksProxy.s, Intrinsic(s, "ObjectPrototype"))
-      made == CreateDataProperty(module.s, Val(module), SV("exports"), Val(hooksProxy))
-  IN Ok([made.s EXCEPT !.required = (0 :> [module |-> Val(module), loaded |-> TRUE]) @@ @], Val(hooksProxy))`,
+      storage == Alloc(withResource.s, BuiltinObject(Intrinsic(s, "FunctionPrototype"), <<"Module", "hostStop">>, 0, <<>>, TRUE,
+                                                     N("AsyncLocalStorage"), s.realmId))
+      storageProxy == StoppingProxy(storage.s, storage.v, N("AsyncLocalStorage"),
+                                    <<[trap |-> SV("construct"), method |-> "asyncLocalStorageConstruct"]>>)
+      withStorage == CreateDataProperty(storageProxy.s, Val(hooks), SV("AsyncLocalStorage"), Val(storageProxy))
+      hooksProxy == StoppingProxy(withStorage.s, Val(hooks), N("async_hooks"), <<[trap |-> SV("get"), method |-> "asyncHooksGet"]>>)
+  IN HoldModule(hooksProxy.s, 0, Val(hooksProxy))`,
+  // A built-in module of Node that ESCore has none of, the one object that each require of it
+  // gives, which the state's required holds under the number k: a proxy that stops at every
+  // operation but its allowed traps, such as util's read of TextEncoder, whose target is a function
+  // where Node's module is one, such as stream's Stream, so that typeof gives what Node's does.
+  `BuiltinModule(s, k, name, allowed, isFunction) ==
+  IF k \\in DOMAIN s.required THEN Get(s, s.required[k].module, SV("exports")) ELSE
+  LET target == IF isFunction
+                THEN LET a == Alloc(s, BuiltinObject(Intrinsic(s, "FunctionPrototype"), <<"Module", "hostStop">>, 0, <<>>, TRUE, name, s.realmId))
+                     IN Ok(a.s, a.v)
+                ELSE OrdinaryObjectCreate(s, Null)
+      proxy == StoppingProxy(target.s, Val(target), name, allowed)
+  IN HoldModule(proxy.s, k, Val(proxy))`,
+  // A built-in module of Node, whose exports the state's required holds under the number k, so
+  // that each require of it gives the same object.
+  `HoldModule(s, k, exports) ==
+  LET module == OrdinaryObjectCreate(s, Intrinsic(s, "ObjectPrototype"))
+      made == CreateDataProperty(module.s, Val(module), SV("exports"), exports)
+  IN Ok([made.s EXCEPT !.required = (k :> [module |-> Val(module), loaded |-> TRUE]) @@ @], exports)`,
   // Node's performance, of which a program reads only now, whose time each run reads anew, so it
   // gives HostTime, at whose reading a compiled spec stops.
   `PerformanceObject(s) ==
@@ -626,6 +656,9 @@ const DEFINITIONS = [
   // loads the file of a specifier that its code requires.
   `Require(s, referrer, id) ==
   IF id \\in {SV("node:async_hooks"), SV("async_hooks")} THEN AsyncHooksModule(s)
+  ELSE IF id \\in {SV("node:util"), SV("util")} THEN BuiltinModule(s, -1, N("util"), <<[trap |-> SV("get"), method |-> "utilGet"]>>, FALSE)
+  ELSE IF id \\in {SV("node:crypto"), SV("crypto")} THEN BuiltinModule(s, -2, N("crypto"), <<>>, FALSE)
+  ELSE IF id \\in {SV("node:stream"), SV("stream")} THEN BuiltinModule(s, -3, N("stream"), <<>>, TRUE)
   ELSE IF ~IsString(id) \\/ id.value \\notin DOMAIN ModuleNode(referrer).targets
   THEN Assert(FALSE, "tla-ts can't require a module other than a file that a string names")
   ELSE RequireFile(s, ModuleNode(referrer).targets[id.value])`,
@@ -1552,7 +1585,18 @@ const HOST_PATCHES = [
     [] m = "getBuiltinModule" ->
          IF Arg(args, 1) \\notin {SV("node:async_hooks"), SV("async_hooks")} THEN HostStop(N("getBuiltinModule")) ELSE AsyncHooksModule(s)
     [] m = "asyncHooksGet" ->
-         IF Arg(args, 2) # SV("AsyncResource") THEN HostStop(N("async_hooks")) ELSE Get(s, Arg(args, 1), Arg(args, 2))
+         IF Arg(args, 2) \\notin {SV("AsyncResource"), SV("AsyncLocalStorage")} THEN HostStop(N("async_hooks")) ELSE Get(s, Arg(args, 1), Arg(args, 2))
+    [] m = "asyncLocalStorageConstruct" ->
+         LET list == CreateListFromArrayLike(s, Arg(args, 2), "all") IN
+         IF IsAbrupt(list) THEN list
+         ELSE IF Val(list) # <<>> \\/ ~IsObject(Arg(args, 3)) \\/ O(list.s, Arg(args, 3)).class # "proxy" \\/ O(list.s, Arg(args, 3)).slots.target # Arg(args, 1)
+         THEN HostStop(N("AsyncLocalStorage")) ELSE
+         LET instance == Alloc(list.s, MakeObject(Null, "ordinary", [hostName |-> N("AsyncLocalStorage")])) IN
+         StoppingProxy(instance.s, instance.v, N("AsyncLocalStorage"), <<>>)
+    [] m = "utilGet" ->
+         LET own == OrdinaryGetOwnProperty(O(s, Intrinsic(s, "GlobalObject")), SV("TextEncoder")) IN
+         IF Arg(args, 2) # SV("TextEncoder") \\/ own = Absent \\/ ~IsDataDescriptor(own) \\/ ~IsHostConstructor(s, own.value, N("TextEncoder"))
+         THEN HostStop(N("util")) ELSE Ok(s, own.value)
     [] m = "asyncResource" ->
          IF nt # f \\/ ~IsString(Arg(args, 1)) \\/ (Arg(args, 2) # Undefined /\\ ~IsObject(Arg(args, 2))) THEN HostStop(N("AsyncResource")) ELSE
          LET trigger == IF Arg(args, 2) = Undefined THEN Ok(s, Undefined) ELSE Get(s, Arg(args, 2), SV("triggerAsyncId")) IN
@@ -2028,7 +2072,10 @@ export const getLocalDefinitions = (library: Library): GeneratedDefinition[] => 
   // (InstantiateCode) and bound by its mode, in their order: in a frame's slot, as a var's mutable
   // binding, or as a lexical one that a script or module initializes. Its call of itself is in its
   // tail, with the state the argument itself, which the call evaluates rather than chains, so it
-  // runs as a loop however many declarations a scope has.
+  // runs as a loop however many declarations a scope has. The tail loop binds an argument that is a
+  // name, such as a LET's, to that name's lazy value, so a state passed as a LET's name would chain
+  // each turn's state on the last one's, and overflow the stack as the last one is read: keep the
+  // state's expression in the call.
   {
     name: "InstantiateDeclarations",
     arity: 5,
