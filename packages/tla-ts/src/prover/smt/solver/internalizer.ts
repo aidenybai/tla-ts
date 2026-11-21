@@ -70,6 +70,7 @@ import { DEFAULT_CONFIG, IA_RANDOM, IA_RANDOM_WHEN_SEARCHING } from "./smt-setup
 import { StickyGenerations } from "./sticky-generations";
 
 const DEEP_EXPR_THRESHOLD = 1024;
+const DISTINCT_SZ_THRESHOLD = 32;
 const WHITE = 0;
 const GREY = 1;
 const BLACK = 2;
@@ -822,20 +823,45 @@ export abstract class Internalizer {
         }
       }
       this.markAsRelevant(expr);
-    } else {
-      if (manager.getOp(expr) === OP_DISTINCT && manager.getNumArgs(expr) > 32)
-        throw new SmtUnsupportedError(
-          "a distinct of more than 32 arguments, which Z3 asserts by fresh values",
-        );
-      this.internalizeRec(expr, true);
-      const literal = this.getLiteral(expr);
-      if (literal === this.falseLiteral) this.setConflict("axiom", null);
-      else if (literal !== this.trueLiteral) {
-        this.assign(literal, "axiom");
-        this.markLiteralAsRelevant(literal);
-      }
-    }
+    } else if (manager.getOp(expr) === OP_DISTINCT) {
+      this.assertDistinct(expr);
+      this.markAsRelevant(expr);
+    } else this.assertDefault(expr);
     this.generation = savedGeneration;
+  }
+
+  private assertDefault(expr: number) {
+    this.internalize(expr, true);
+    const literal = this.getLiteral(expr);
+    if (literal === this.falseLiteral) this.setConflict("axiom", null);
+    else if (literal !== this.trueLiteral) {
+      this.assign(literal, "axiom");
+      this.markLiteralAsRelevant(literal);
+    }
+  }
+
+  // Past 32 arguments, a fresh function maps each argument to its own fresh value.
+  private assertDistinct(expr: number) {
+    const manager = this.manager;
+    if (manager.getNumArgs(expr) <= DISTINCT_SZ_THRESHOLD) {
+      this.assertDefault(expr);
+      return;
+    }
+    const elements = manager.mkUninterpretedSort(manager.mkFreshVarName("distinct-elems"), []);
+    // Z3 passes an empty suffix, which adds a second "!" to the name.
+    const decl = manager.mkFreshFuncDecl(
+      "distinct-aux-f!",
+      [manager.sorts[manager.getArg(expr, 0)]],
+      elements,
+    );
+    for (const arg of manager.getArgs(expr)) {
+      const app = manager.mkApp(decl, [arg], elements);
+      const value = manager.mkFreshConst("unique-value", elements);
+      this.mkEnode(value, false, false, true).isInterpreted = true;
+      const eq = manager.mkEq(app, value);
+      this.assertDefault(eq);
+      this.markAsRelevant(eq);
+    }
   }
 
   internalize(expr: number, isGateContext: boolean, generation = this.generation) {
