@@ -87,7 +87,7 @@ const getToken = (content: string, style: Record<string, string>, prefix: string
   },
 });
 
-export const getHighlightedLines = (code: string, language: "shellscript" | "typescript") =>
+const getHighlightedLines = (code: string, language: "shellscript" | "typescript") =>
   codeToTokens(code, { lang: language, themes: HIGHLIGHTS_THEMES, defaultColor: false }).tokens.map(
     (line) => line.map((token) => getToken(token.content, token.htmlStyle ?? {}, "--hls-")),
   );

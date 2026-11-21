@@ -12,14 +12,14 @@ const isLexical = (statement: ts.Statement, isFunctionBody: boolean) =>
   (ts.isVariableStatement(statement) &&
     (statement.declarationList.flags & ts.NodeFlags.BlockScoped) !== 0);
 
-export const getBindingNames = (name: ts.BindingName): string[] =>
+const getBindingNames = (name: ts.BindingName): string[] =>
   ts.isIdentifier(name)
     ? [name.text]
     : name.elements.flatMap((element) =>
         ts.isBindingElement(element) ? getBindingNames(element.name) : [],
       );
 
-export const getLexicalNames = (statements: readonly ts.Statement[], isFunctionBody: boolean) =>
+const getLexicalNames = (statements: readonly ts.Statement[], isFunctionBody: boolean) =>
   statements
     .filter((statement) => isLexical(statement, isFunctionBody))
     .flatMap((statement) => {
@@ -39,7 +39,7 @@ export const getLexicalNames = (statements: readonly ts.Statement[], isFunctionB
 // nested functions.
 // Code that a declare holds, as declare global does, which only types the host's values and never
 // runs.
-export const isAmbientCode = (node: ts.Node) =>
+const isAmbientCode = (node: ts.Node) =>
   ts.findAncestor(
     node,
     (ancestor) =>
@@ -49,7 +49,7 @@ export const isAmbientCode = (node: ts.Node) =>
       ),
   ) !== undefined;
 
-export const getVarNames = (node: ts.Node): string[] => {
+const getVarNames = (node: ts.Node): string[] => {
   if (ts.isFunctionLike(node) || ts.isClassLike(node) || isAmbientCode(node)) return [];
   const own =
     ts.isVariableDeclarationList(node) && (node.flags & ts.NodeFlags.BlockScoped) === 0
@@ -162,7 +162,7 @@ const isSloppyFunctionBody = (node: ts.Statement) => {
 
 // The SyntaxError of a regular expression literal that JavaScript rejects, as Node reads its
 // grammar, or undefined where JavaScript accepts it.
-export const getRegularExpressionError = (node: ts.RegularExpressionLiteral) => {
+const getRegularExpressionError = (node: ts.RegularExpressionLiteral) => {
   const text = node.text;
   const end = text.lastIndexOf("/");
   try {

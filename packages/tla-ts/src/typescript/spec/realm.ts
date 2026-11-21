@@ -48,7 +48,7 @@ export interface HostRealm {
 // The locale tags whose answers a realm records for a browser, which answers no other: en-US, the
 // default of the Node that records them, and the locales that programs commonly name. The
 // playground's examples name none.
-export const RECORDED_LOCALE_TAGS = [
+const RECORDED_LOCALE_TAGS = [
   "en-US",
   "en",
   "en-GB",

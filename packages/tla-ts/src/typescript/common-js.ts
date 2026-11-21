@@ -435,7 +435,3 @@ export const createJavaScriptFile = (
   const file = create(ts.ModuleKind.CommonJS);
   return type === undefined && hasModuleSyntax(file) ? create(ts.ModuleKind.ESNext) : file;
 };
-
-// A file that Node runs as CommonJS, in the function that it wraps a module's code in.
-export const isCommonJsFile = (file: ts.SourceFile) =>
-  isJavaScriptFile(file.fileName) && file.impliedNodeFormat === ts.ModuleKind.CommonJS;

@@ -15,7 +15,7 @@ import {
   type SourceRange,
 } from "./ast";
 import type { ModuleOperator } from "./check";
-import { parseConfig, type ModelConfig } from "./config";
+import type { ModelConfig } from "./config";
 import { applyConfig, type CopySource } from "./environment-config";
 import type { FileSystem } from "./json";
 import {
@@ -24,7 +24,6 @@ import {
   formatRange,
   formatSanyWarnings,
   TlaConfigError,
-  TlaError,
   TlaEvaluationError,
   TlaSyntaxError,
   type SanyError,
@@ -2096,34 +2095,4 @@ export const createEnvironment = (
     runtimeInvariants,
     rootName: root.name,
   };
-};
-
-// The levels of each definition of a prepared module, if SANY's checks accept it as a module that
-// another extends with no error or warning, so that every check that links it can skip them. Its
-// expressions keep the names that the checks resolve.
-export const getPreparedModuleLevels = (prepared: PreparedModule) => {
-  let isPrinted = false;
-  let levels: (OperatorLevels | undefined)[] | undefined;
-  try {
-    const constants = prepared.module.constants.map((constant) => constant.name);
-    createEnvironment(
-      parseConfig(`CONSTANTS ${constants.map((name) => `${name} = ${name}`).join(" ")}`),
-      {
-        source: `---- MODULE ${prepared.name}Check ----\nEXTENDS ${prepared.name}\n====`,
-        loadModule: undefined,
-        preparedModules: [prepared],
-        onModuleLevels: (module, moduleLevels) => {
-          if (module === prepared.module) levels = moduleLevels;
-        },
-        print: () => {
-          isPrinted = true;
-        },
-        files: { readFile: undefined, writeFile: undefined, makeDirectory: undefined },
-      },
-    );
-    return isPrinted ? undefined : levels;
-  } catch (error) {
-    if (error instanceof TlaError) return undefined;
-    throw error;
-  }
 };

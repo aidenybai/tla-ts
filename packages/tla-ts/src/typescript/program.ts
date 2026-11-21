@@ -36,7 +36,7 @@ interface SourceRedirectingHost {
 
 // A specifier that only types read, which a package's declarations give where it has them, as
 // import("fs") in a type, or an import or an export of only types.
-export const isTypeImport = (literal: ts.StringLiteralLike) => {
+const isTypeImport = (literal: ts.StringLiteralLike) => {
   const parent = literal.parent;
   const clause = ts.isImportDeclaration(parent) ? parent.importClause : undefined;
   const bindings = clause?.namedBindings;
@@ -253,29 +253,6 @@ export const getJsxText = (path: string, text: string) => {
       ? { ...COMPILER_OPTIONS, jsx: ts.JsxEmit.ReactJSX }
       : getProjectOptions(project.options);
   return rewriteJsx(path, text, options, ts.createCompilerHost(options));
-};
-
-// The file that a literal of a model's file loads as the model runs, as createProgram resolves
-// it for the model at path, or undefined where none does.
-export const createFileResolver = (path: string) => {
-  const project = getProject(path);
-  const options = project === undefined ? COMPILER_OPTIONS : getProjectOptions(project.options);
-  const host = ts.createCompilerHost(options);
-  // A JSON file, which tla-ts reads TypeScript's resolution of as no module, is the one that Node
-  // loads.
-  return (literal: ts.StringLiteralLike) =>
-    resolveLiteral(
-      literal,
-      literal.getSourceFile().fileName,
-      literal.getSourceFile(),
-      true,
-      options,
-      host,
-      undefined,
-    ).module.resolvedModule?.resolvedFileName ??
-    [resolveModule(literal, literal.getSourceFile().fileName)].find((path) =>
-      path?.endsWith(".json"),
-    );
 };
 
 // TypeScript's program of a model's file and the files it imports, whose checker gives the types
