@@ -508,17 +508,36 @@ describe("the CLI with TypeScript files", () => {
       expect(result.status).toBe(1);
     });
 
-    it("stops where no Node is on the path to parse the file", () => {
-      const directory = copyFixtures("passing");
-      writeFileSync(join(directory, "kinds.js"), getScript(0));
+    // Where no Node is on the path, as in a browser, TypeScript's checks find the early errors.
+    const runWithoutNode = (directory: string, source: string) => {
+      writeFileSync(join(directory, "kinds.js"), source);
       const bun = spawnSync("bun", ["-e", "console.log(process.execPath)"], { encoding: "utf8" });
       const empty = mkdtempSync(join(tmpdir(), "tla-ts-path-"));
       copies.push(empty);
-      const result = spawnSync(bun.stdout.trim(), [CLI, "kinds.js"], {
+      return spawnSync(bun.stdout.trim(), [CLI, "kinds.js"], {
         cwd: directory,
         encoding: "utf8",
         env: { ...process.env, PATH: empty },
       });
+    };
+    const getSmallScript = (expected: number) =>
+      `const kind = [0].length - 1;\nif (kind !== ${expected}) throw new RangeError("kind " + kind);\n`;
+
+    it("agrees with Node where no Node is on the path", () => {
+      const result = runWithoutNode(copyFixtures("passing"), getSmallScript(0));
+      expect(result.status).toBe(0);
+      expect(result.stdout).toContain("Model checking completed. No error has been found.");
+    });
+
+    it("rejects another result where no Node is on the path", () => {
+      const directory = copyFixtures("passing");
+      const result = runWithoutNode(directory, getSmallScript(1));
+      expect(getExit(result)).toEqual(getExit(runNode(directory, "kinds.js")));
+      expect(result.status).toBe(1);
+    });
+
+    it("stops where TypeScript's checks run out of stack and no Node is on the path", () => {
+      const result = runWithoutNode(copyFixtures("passing"), getScript(0));
       expect(result.status).not.toBe(0);
       expect(result.stdout + result.stderr).toContain(
         "tla-ts can't tell whether Node rejects a file's syntax without a Node to parse it",

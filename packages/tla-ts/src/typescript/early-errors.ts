@@ -1,5 +1,5 @@
 import ts from "@typescript/typescript6";
-import { TlaTypeScriptError } from "../errors";
+import { isStackOverflow, TlaTypeScriptError } from "../errors";
 import { isModuleFile, isStrictCode } from "./context";
 
 const reject = (message: string, node: ts.Node): never => {
@@ -199,6 +199,85 @@ const getNodeAt = (node: ts.Node, position: number): ts.Node =>
       : undefined,
   ) ?? node;
 
+// TypeScript's error for a redeclared block-scoped variable, which it reports outside strict mode
+// of code that Annex B allows, such as a function declaration that an if statement's branch is,
+// beside a let of its name.
+const REDECLARED_ERROR = 2451;
+
+// TypeScript's errors for JavaScript that Node runs: a var in a catch block that redeclares the
+// catch's parameter, as Annex B allows.
+const NODE_ACCEPTED_ERRORS = new Set([2492]);
+
+// The file of TypeScript's own checks of a file's JavaScript.
+const GRAMMAR_PATH = "/tla-ts/grammar.js";
+
+// Rejects the first of TypeScript's errors in a file read as plain JavaScript, past its syntax
+// errors, which its parser reports: the errors of its binder and checker that it reports in
+// JavaScript that it doesn't type check, which are those that ECMAScript makes early errors, but
+// for those of code that Node runs. The file is a module where its
+// implied format makes it one, and strict code where it says so.
+const rejectGrammarErrors = (sourceFile: ts.SourceFile) => {
+  const file = ts.createSourceFile(
+    GRAMMAR_PATH,
+    sourceFile.text,
+    { languageVersion: ts.ScriptTarget.ESNext, impliedNodeFormat: sourceFile.impliedNodeFormat },
+    true,
+    ts.ScriptKind.JS,
+  );
+  const program = ts.createProgram({
+    rootNames: [GRAMMAR_PATH],
+    options: {
+      allowJs: true,
+      noLib: true,
+      noResolve: true,
+      types: [],
+      target: ts.ScriptTarget.ESNext,
+      module: ts.ModuleKind.ESNext,
+      moduleDetection: ts.ModuleDetectionKind.Legacy,
+      alwaysStrict: false,
+      ignoreDeprecations: "6.0",
+    },
+    // A host of the one file, which needs no file system, so that a browser checks the file too.
+    host: {
+      getSourceFile: (fileName) => (fileName === GRAMMAR_PATH ? file : undefined),
+      fileExists: (fileName) => fileName === GRAMMAR_PATH,
+      readFile: () => undefined,
+      getDefaultLibFileName: () => "lib.d.ts",
+      writeFile: () => {},
+      getCurrentDirectory: () => "/",
+      getCanonicalFileName: (fileName) => fileName,
+      useCaseSensitiveFileNames: () => true,
+      getNewLine: () => "\n",
+    },
+  });
+  // TypeScript's checker infers the file's types to report these, which can recurse past any
+  // stack on a large program, where only V8 could tell.
+  const getDiagnostics = () => {
+    try {
+      return program.getSemanticDiagnostics(file);
+    } catch (error) {
+      if (!isStackOverflow(error)) throw error;
+      throw new TlaTypeScriptError(
+        "tla-ts can't tell whether Node rejects a file's syntax without a Node to parse it",
+        sourceFile,
+      );
+    }
+  };
+  const diagnostic = getDiagnostics().find(
+    (candidate) =>
+      candidate.category === ts.DiagnosticCategory.Error &&
+      !NODE_ACCEPTED_ERRORS.has(candidate.code) &&
+      (candidate.code !== REDECLARED_ERROR ||
+        isStrictCode(getNodeAt(sourceFile, candidate.start ?? 0))),
+  );
+  if (diagnostic !== undefined) {
+    reject(
+      ts.flattenDiagnosticMessageText(diagnostic.messageText, " "),
+      getNodeAt(sourceFile, diagnostic.start ?? 0),
+    );
+  }
+};
+
 // The program that Node runs under Bun to parse a script as vm does, which prints what --check
 // prints for a module: the line of the SyntaxError, then the error.
 const SCRIPT_CHECK = `const vm = require("node:vm");
@@ -252,7 +331,7 @@ const getNodeParse = (sourceFile: ts.SourceFile) => {
 };
 
 // Rejects programs that JavaScript rejects as it parses, as V8 does where Node is at hand and else
-// as tla-ts's own checks find them, which stop where they find none.
+// where TypeScript's parser accepts them.
 export const rejectEarlyErrors = (sourceFile: ts.SourceFile) => {
   const parse = getNodeParse(sourceFile);
   if (parse === undefined) {
@@ -273,8 +352,7 @@ export const rejectEarlyErrors = (sourceFile: ts.SourceFile) => {
 };
 
 // Rejects what JavaScript rejects as it parses where TypeScript's parser accepts it, as tla-ts's own
-// checks find it, and stops where they find nothing, as only V8 tells that a file has no early
-// error.
+// checks and TypeScript's find it.
 const rejectTypeScriptEarlyErrors = (sourceFile: ts.SourceFile) => {
   // A module's imports and top-level functions are lexical declarations too, which no other
   // declaration repeats.
@@ -467,10 +545,5 @@ const rejectTypeScriptEarlyErrors = (sourceFile: ts.SourceFile) => {
     ts.forEachChild(node, visit);
   };
   visit(sourceFile);
-  // TypeScript finds the rest only as its checker infers the file's types, which can recurse past
-  // any stack on a large program.
-  throw new TlaTypeScriptError(
-    "tla-ts can't tell whether Node rejects a file's syntax without a Node to parse it",
-    sourceFile,
-  );
+  rejectGrammarErrors(sourceFile);
 };
