@@ -1436,6 +1436,32 @@ describe("the arithmetic probes, as Z3 5.3.2 measures a goal", () => {
       "(:rlimit 318)",
     ]);
   });
+
+  it("find no LIRA goal once a quantifier has a pattern", () => {
+    const probe = '(apply (and-then (if is-lira (echo "lira") (echo "other")) (fail-if (> 1 0))))';
+    expect(
+      run([
+        '(set-option :diagnostic-output-channel "stdout")',
+        "(declare-const c Int)",
+        "(assert (forall ((x Int)) (> (+ x c) 3)))",
+        probe,
+        "(reset)",
+        '(set-option :diagnostic-output-channel "stdout")',
+        "(declare-const c Int)",
+        "(assert (forall ((x Int)) (! (> (+ x c) 3) :pattern ((+ x c)))))",
+        probe,
+        "(check-sat)",
+        "(get-info :rlimit)",
+      ]),
+    ).toEqual([
+      "lira",
+      '(error "tactic failed: fail-if tactic")',
+      "other",
+      '(error "tactic failed: fail-if tactic")',
+      "unsat",
+      "(:rlimit 427)",
+    ]);
+  });
 });
 
 describe("qfufbv, as Z3 5.3.2 answers QF_UFBV", () => {

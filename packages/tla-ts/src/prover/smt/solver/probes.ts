@@ -34,6 +34,7 @@ import {
   OP_MOD,
   OP_MUL,
   OP_NUM,
+  OP_PATTERN,
   OP_POWER,
   OP_SUB,
   OP_TO_INT,
@@ -254,7 +255,8 @@ const mkNonNira =
     if (manager.kinds[expr] === KIND_QUANTIFIER) return !isQuantified;
     if (!isCompatible) return true;
     const family = manager.getFamily(expr);
-    if (family === FAMILY_BASIC) return false;
+    // Z3's patterns have a family of their own, which these probes reject.
+    if (family === FAMILY_BASIC) return manager.getOp(expr) === OP_PATTERN;
     if (family !== FAMILY_ARITH) return !manager.isUninterpretedConst(expr);
     const op = manager.getOp(expr);
     if (NIRA_OPS.includes(op)) return false;
