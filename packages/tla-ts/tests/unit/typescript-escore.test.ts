@@ -2244,6 +2244,32 @@ describe("compiles scripts by specializing ESCore", () => {
     },
   );
 
+  // HostIntl's table holds at most 5,000 answers, and an object's answers go in only where all of
+  // them fit, so a range of every pair of a program's numbers, for each locale it may take, stops
+  // past 32 of them. Past the bound the compile computes no more of an object's answers, which for
+  // thousands of numbers took more memory than the compile has.
+  describe("records the host's Intl answers to its table's bound, and stops past it", () => {
+    const getSource = (count: number, expected: string) => `
+      const values = [${Array.from({ length: count }, (_, index) => index + 1).join(", ")}];
+      const range = new Intl.NumberFormat().formatRange(1, values.length > 1 ? 2 : 1);
+      if (range !== "${expected}") throw new Error(range);
+    `;
+
+    it("agrees with Node", async () => {
+      expect((await checkScript(getSource(32, "1–2"))).message).toBeUndefined();
+    });
+
+    it("rejects another result", async () => {
+      expect((await checkScript(getSource(32, "1-2"))).message).toContain(THREW);
+    });
+
+    it.each([33, 3000])("stops at a range of %i numbers, past the bound", async (count) => {
+      expect((await checkScript(getSource(count, "1–2"))).message).toContain(
+        "tla-ts can't model a value the host's Intl table leaves out",
+      );
+    });
+  });
+
   describe.runIf(Reflect.has(globalThis, "Temporal"))(
     "formats the Temporal objects that a program computes through the host's recorded English patterns",
     () => {
