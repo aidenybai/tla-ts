@@ -246,9 +246,10 @@ const hasBodyValue = (definition: Definition, environment: Environment) =>
   definition.body.kind === "String" ||
   environment.bodyValues.has(definition.body);
 
+// TLC's defns holds the definition a configuration file substitutes for a name, not the value processConstantDefns stored for it.
 const getConstantValue = (key: string, definition: Definition, environment: Environment) => {
   if (environment.constants.has(key)) return environment.constants.get(key);
-  return hasBodyValue(definition, environment)
+  return hasBodyValue(definition, environment) || environment.substitutions.has(key)
     ? undefined
     : getStartupValue(definition, environment);
 };
@@ -1279,7 +1280,7 @@ export const createSearch = (
   const invariantPredicates = [
     ...new Map(invariants.map((invariant) => [invariant.predicate, invariant])).values(),
   ];
-  // Deviation from TLC: a constraint whose literal body has a [Mod] value throws a ClassCastException.
+  // Deviation from TLC: a constraint whose literal body has a [Mod] value, or that a substituted name reaches, throws a ClassCastException.
   const namedConstraints = getNamedExpressions(
     "constraint",
     [...config.constraints, ...getModuleOperators("constraint").map((operator) => operator.name)],

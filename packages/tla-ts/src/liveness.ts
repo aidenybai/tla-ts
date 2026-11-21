@@ -510,11 +510,13 @@ export const expandTemporal = (
     const definition = environment.constants.has(expression.name)
       ? undefined
       : getDefinition(expression.name, environment);
+    // A name the configuration file substitutes looks up the target's definition, not the value processConstantDefns stored for it.
+    const isConfigSubstitute = environment.substitutions.has(expression.name);
     if (
       !binding &&
       definition?.kind === "Operator" &&
       definition.params.length === 0 &&
-      getStartupValue(definition, environment) === undefined
+      (isConfigSubstitute || getStartupValue(definition, environment) === undefined)
     ) {
       if (expansion.expanding.has(definition)) {
         throw createStackOverflowError();
@@ -522,7 +524,8 @@ export const expandTemporal = (
       return expand(
         definition.body,
         undefined,
-        getReferenceName(expression, expression.name, environment) ?? definition.name,
+        getReferenceName(expression, expression.name, environment) ??
+          (isConfigSubstitute ? getKeyName(expression.name) : definition.name),
         new Set([...expansion.expanding, definition]),
         definition,
       );

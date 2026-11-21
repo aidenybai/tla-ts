@@ -1708,6 +1708,100 @@ ASSUME TLCFP(a) = -887695703
     },
   );
 
+  it.each([
+    ["D == FALSE\nSpec == Init /\\ [][Next]_y /\\ N", "SPECIFICATION Spec"],
+    ["D == FALSE\nSpec == Init /\\ [][Next]_y /\\ (N /\\ TRUE)", "SPECIFICATION Spec"],
+    ["D == FALSE", "SPECIFICATION N"],
+    ["D == FALSE\nSpec == Init /\\ [][Next]_y", "SPECIFICATION Spec\nPROPERTY N"],
+    [
+      "D == FALSE\nSpec == Init /\\ [][Next]_y\nProp == N /\\ y \\in Nat",
+      "SPECIFICATION Spec\nPROPERTY Prop",
+    ],
+  ])(
+    "takes the substitute of N in %j apart under %j, as SpecProcessor looks N up as the definition it names",
+    async (definitions, config) => {
+      await expect(
+        check({ source: getSubstituteSource(definitions), config: `${config}\nCONSTANT N <- D` }),
+      ).rejects.toThrow(new TlaConfigError("The spec is trivially false because FALSE is false."));
+    },
+  );
+
+  it.each([
+    ["D == FALSE", "INIT Init\nNEXT Next\nINVARIANT N", ["invariant-violation", "N", 0]],
+    ['D == PrintT("D")', "INIT Init\nNEXT Next\nINVARIANT N", ["success", undefined, 3]],
+    ["D == FALSE", "INIT Init\nNEXT Next\nCONSTRAINT N", ["success", undefined, 0]],
+    ["D == FALSE", "INIT Init\nNEXT Next\nACTION_CONSTRAINT N", ["success", undefined, 0]],
+    ["D == FALSE", "INIT N\nNEXT Next", ["success", undefined, 0]],
+    ["D == FALSE", "INIT Init\nNEXT N", ["deadlock", "deadlock", 0]],
+    [
+      "D == 1 = 2\nSpec == Init /\\ [][Next]_y /\\ N",
+      "SPECIFICATION Spec",
+      ["success", undefined, 0],
+    ],
+    ["D == 1 = 2", "SPECIFICATION N", ["success", undefined, 0]],
+    [
+      'D == PrintT("D")\nSpec == Init /\\ [][Next]_y /\\ N',
+      "SPECIFICATION Spec",
+      ["success", undefined, 2],
+    ],
+    [
+      "D == 1 = 2\nSpec == Init /\\ [][Next]_y",
+      "SPECIFICATION Spec\nPROPERTY N",
+      ["liveness-violation", "N", 0],
+    ],
+    [
+      "D == 1 = 2\nSpec == Init /\\ [][Next]_y\nProp == N /\\ y \\in Nat",
+      "SPECIFICATION Spec\nPROPERTY Prop",
+      ["liveness-violation", "N", 0],
+    ],
+    [
+      'D == PrintT("D")\nSpec == Init /\\ [][Next]_y',
+      "SPECIFICATION Spec\nPROPERTY N",
+      ["success", undefined, 2],
+    ],
+  ])(
+    "checks the substitute of N in %j under %j, as SpecProcessor looks N up as the definition it names",
+    async (definitions, config, expected) => {
+      const printed: string[] = [];
+      const result = await check({
+        source: getSubstituteSource(definitions),
+        config: `${config}\nCONSTANT N <- D`,
+        onPrint: (text) => printed.push(text),
+      });
+      expect([result.status, result.violation?.name, printed.length]).toEqual(expected);
+    },
+  );
+
+  it("checks the definition CONSTANT Foo <- Bar gives an operator, as SpecProcessor looks Foo up as Bar", async () => {
+    const checkOverride = (bar: string, config: string) =>
+      check({
+        source: `---- MODULE M ----\nEXTENDS Naturals\nVARIABLE y\nInit == y = 0\nNext == y' = (y + 1) % 2\nFoo == TRUE\nBar == ${bar}\nSpec == Init /\\ [][Next]_y\nProp == Foo /\\ y \\in Nat\n====`,
+        config: `${config}\nCONSTANT Foo <- Bar`,
+      });
+    await expect(checkOverride("FALSE", "SPECIFICATION Spec\nPROPERTY Foo")).rejects.toThrow(
+      new TlaConfigError("The spec is trivially false because FALSE is false."),
+    );
+    const results = await Promise.all([
+      checkOverride("FALSE", "SPECIFICATION Spec\nINVARIANT Foo"),
+      checkOverride("1 = 2", "SPECIFICATION Spec\nPROPERTY Prop"),
+    ]);
+    expect(results.map((result) => [result.status, result.violation?.name])).toEqual([
+      ["invariant-violation", "Foo"],
+      ["liveness-violation", "Foo"],
+    ]);
+  });
+
+  it("reports the literal body of a constraint a substituted name reaches, where TLC throws a ClassCastException", async () => {
+    const result = await check({
+      source: getSubstituteSource("D == 1"),
+      config: "INIT Init\nNEXT Next\nCONSTRAINT N\nCONSTANT N <- D",
+    });
+    expect([result.status, result.failure?.message]).toEqual([
+      "error",
+      "TLC expected a boolean value, but did not find one. 1",
+    ]);
+  });
+
   it("evaluates the substitute of a constant an extended module declares as TLC starts each module", async () => {
     const printed: string[] = [];
     await check({
