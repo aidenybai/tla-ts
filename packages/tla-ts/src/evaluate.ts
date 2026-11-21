@@ -42,9 +42,9 @@ import {
   getCoverageFrames,
   getCoverageNode,
   getSubstitutionNode,
+  getValueNode,
   runAtCoverageNode,
   runInCoverageFrames,
-  tagSubset,
   type Coverage,
   type NextStateMode,
 } from "./coverage";
@@ -1994,7 +1994,7 @@ const compileApply = (
       if (
         typeof leftValue !== "object" ||
         leftValue.kind !== "Set" ||
-        !coverage.values.has(leftValue)
+        getValueNode(coverage, leftValue) === undefined
       ) {
         return subset(leftValue, rightValue);
       }
@@ -2426,7 +2426,6 @@ export const getLazyFilter = (
         const draws = createProductSetEnumerator(coverage, base);
         return (element) => {
           draws?.next();
-          tagSubset(coverage, base, element);
           coverage.secondary[node]++;
           const value = runAtCoverageNode(coverage, node, () => test(element, false));
           if (isMaterialized && value) coverage.secondary[node]++;

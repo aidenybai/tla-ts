@@ -826,7 +826,7 @@ export const getSubstitutionNode = (coverage: Coverage, substitution: Substituti
 };
 
 // TLC's SubsetValue gives the subsets it enumerates its own cost model.
-const getValueNode = (coverage: Coverage, value: Value) =>
+export const getValueNode = (coverage: Coverage, value: Value) =>
   typeof value !== "object"
     ? undefined
     : (coverage.values.get(value) ?? (value.kind === "Set" ? value.costNode : undefined));
@@ -857,7 +857,8 @@ export const chargeSetOperation = (
   }
   const node = operator === "\\cup" ? undefined : getValueNode(coverage, receiver);
   if (getValueNode(coverage, result) === node) return result;
-  const isShared = result === left || result === right || coverage.values.has(result);
+  const isShared =
+    result === left || result === right || getValueNode(coverage, result) !== undefined;
   const charged = isShared ? { ...result, costNode: undefined } : result;
   if (node !== undefined) coverage.values.set(charged, node);
   return charged;
@@ -951,12 +952,6 @@ const createEnumerator = (
   return createListEnumerator(coverage, node, count);
 };
 
-export const tagSubset = (coverage: Coverage, set: Value, subset: Value) => {
-  const node =
-    typeof set === "object" && set.kind === "Subset" ? coverage.values.get(set) : undefined;
-  if (node !== undefined && typeof subset === "object") coverage.values.set(subset, node);
-};
-
 const RANDOMLY_INDEXED_KINDS = new Set<string>([
   "Set",
   "MixedSet",
@@ -967,7 +962,7 @@ const RANDOMLY_INDEXED_KINDS = new Set<string>([
 ]);
 
 // TLC's EnumerableValue#elements(Ordering.RANDOMIZED) draws indices, but a value class without its own k-out-of-n enumerator draws the whole set first, and SubsetValue converts itself to a SetEnumValue.
-export const chargeRandomOrder = (coverage: Coverage, set: Value, size: number, order: Value[]) => {
+export const chargeRandomOrder = (coverage: Coverage, set: Value, size: number) => {
   if (typeof set !== "object" || RANDOMLY_INDEXED_KINDS.has(set.kind)) return;
   if (set.kind !== "Subset") {
     const enumerator = createEnumerator(coverage, set, size, false);
@@ -976,9 +971,6 @@ export const chargeRandomOrder = (coverage: Coverage, set: Value, size: number, 
   }
   const node = coverage.values.get(set);
   if (node !== undefined) coverage.secondary[node] += size;
-  for (let position = 0; position < order.length; position++) {
-    tagSubset(coverage, set, order[position]);
-  }
 };
 
 export const createChargedEnumerator = (
@@ -986,14 +978,13 @@ export const createChargedEnumerator = (
   set: Value,
   list: Value[] | IntervalValue,
   isNormalized: boolean,
-) => {
-  const size = Array.isArray(list) ? list.length : list.high - list.low + 1;
-  if (typeof set !== "object" || set.kind !== "Subset" || !Array.isArray(list)) {
-    return createEnumerator(coverage, set, size, isNormalized);
-  }
-  list.forEach((subset) => tagSubset(coverage, set, subset));
-  return createListEnumerator(coverage, undefined, size);
-};
+) =>
+  createEnumerator(
+    coverage,
+    set,
+    Array.isArray(list) ? list.length : list.high - list.low + 1,
+    isNormalized,
+  );
 
 const chargeBindings = (enumerators: ChargedEnumerator[]) => {
   enumerators.every((enumerator) => enumerator.next());

@@ -680,7 +680,12 @@ const visitAssignment = (
   if (expression.operator === "=") {
     return proceedWithValue(replay, items, partial, index, value, node);
   }
-  const set: Value = expression.operator === "\\subseteq" ? { kind: "Subset", base: value } : value;
+  const set: Value =
+    expression.operator !== "\\subseteq"
+      ? value
+      : replay.coverage
+        ? { kind: "Subset", base: value, costNode: node }
+        : { kind: "Subset", base: value };
   if (typeof set === "object" && set !== value) {
     replay.callStack?.sources.set(set, source);
     replay.coverage?.values.set(set, node);
@@ -747,7 +752,7 @@ export const getEnabledFailure = (expression: Expression) => {
 const getRandomOrder = (replay: Replay, set: Value, elements: Value[]) => {
   const runtime = replay.environment.runtime;
   const order = getRandomSubset(elements.length, set, runtime.getRandom(), runtime.version);
-  if (replay.coverage) chargeRandomOrder(replay.coverage, set, elements.length, order);
+  if (replay.coverage) chargeRandomOrder(replay.coverage, set, elements.length);
   return order;
 };
 
