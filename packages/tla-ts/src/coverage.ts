@@ -1025,13 +1025,49 @@ const getKnownSize = (set: Value): number | undefined => {
     }
     case "SetOperation": {
       if (set.isCached) return undefined;
+      if (set.operator !== "\\cup") {
+        const drawn = getDrawnSet(set);
+        return getKnownSize(drawn) !== undefined &&
+          hasKnownSize(drawn === set.left ? set.right : set.left)
+          ? getStreamedElements(set).length
+          : undefined;
+      }
       const leftSize = getKnownSize(set.left);
       const rightSize = getKnownSize(set.right);
-      if (leftSize === undefined || rightSize === undefined) return undefined;
-      return set.operator === "\\cup" ? leftSize + rightSize : getStreamedElements(set).length;
+      return leftSize === undefined || rightSize === undefined ? undefined : leftSize + rightSize;
     }
     default:
       return undefined;
+  }
+};
+
+const getDrawnSet = (set: SetOperationValue) =>
+  set.operator === "\\" || isTlcEnumerable(set.left) ? set.left : set.right;
+
+// TLC only tests membership in the other set of S \cap T or S \ T, so sizing it would normalize a set TLC leaves unsorted.
+const hasKnownSize = (set: Value): boolean => {
+  if (typeof set !== "object") return false;
+  switch (set.kind) {
+    case "Set":
+    case "MixedSet":
+    case "Interval":
+      return true;
+    case "Subset":
+      return hasKnownSize(set.base);
+    case "FunctionSet":
+      return hasKnownSize(set.domain) && hasKnownSize(set.range);
+    case "RecordSet":
+    case "ProductSet": {
+      const components = set.kind === "RecordSet" ? set.sets : set.factors;
+      for (let index = 0; index < components.length; index++) {
+        if (!hasKnownSize(components[index])) return false;
+      }
+      return true;
+    }
+    case "SetOperation":
+      return !set.isCached && hasKnownSize(set.left) && hasKnownSize(set.right);
+    default:
+      return false;
   }
 };
 
@@ -1069,11 +1105,10 @@ const createIntersectionEnumerator = (
   if (set.isCached || isReducibleSet(set.left)) return undefined;
   const isDifference = set.operator === "\\";
   if (!isDifference && isReducibleSet(set.right)) return undefined;
-  const isLeftDrawn = isDifference || isTlcEnumerable(set.left);
-  const drawn = isLeftDrawn ? set.left : set.right;
-  const other = isLeftDrawn ? set.right : set.left;
+  const drawn = getDrawnSet(set);
+  const other = drawn === set.left ? set.right : set.left;
   const size = getKnownSize(drawn);
-  if (size === undefined || getKnownSize(other) === undefined) return undefined;
+  if (size === undefined || !hasKnownSize(other)) return undefined;
   const elements = getStreamedElements(drawn);
   const enumerator = createEnumerator(coverage, drawn, size, false);
   let position = 0;

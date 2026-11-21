@@ -3697,6 +3697,38 @@ ASSUME TLCFP(a) = -887695703
         "||line 5, col 35 to line 5, col 44 of module M: 2",
       ],
     ],
+    [
+      "x' \\in draws from a SUBSET less a literal TLC can't sort",
+      'x\' \\in (SUBSET {}) \\ {{1}, {"a"}}',
+      ["line 5, col 9 to line 5, col 41 of module M: 2"],
+    ],
+    [
+      "x' \\in draws from a SUBSET less a SUBSET too large to size",
+      "x' \\in (SUBSET {1}) \\ SUBSET (1..40)",
+      [
+        "line 5, col 9 to line 5, col 44 of module M: 0",
+        "|line 5, col 16 to line 5, col 44 of module M: 1",
+        "||line 5, col 17 to line 5, col 26 of module M: 1:3",
+        "|||line 5, col 24 to line 5, col 26 of module M: 1",
+        "||line 5, col 31 to line 5, col 44 of module M: 1",
+      ],
+    ],
+    [
+      "x' \\in draws from a union with a difference less a literal TLC can't sort",
+      'x\' \\in ((SUBSET {}) \\ {{1}, {"a"}}) \\cup {{2}}',
+      [
+        "line 5, col 9 to line 5, col 54 of module M: 6",
+        "|line 5, col 16 to line 5, col 54 of module M: 3",
+        "||line 5, col 17 to line 5, col 42 of module M: 3",
+        "||line 5, col 50 to line 5, col 54 of module M: 3:18",
+        "|||line 5, col 51 to line 5, col 53 of module M: 3",
+      ],
+    ],
+    [
+      "Cardinality converts a difference less a literal TLC can't sort",
+      'x\' = Cardinality((SUBSET {}) \\ {{1}, {"a"}})',
+      ["line 5, col 9 to line 5, col 52 of module M: 2"],
+    ],
   ])(
     "charges what TLC's SetCapValue and SetDiffValue enumerators draw when %s",
     async (_title, next, expected) => {
