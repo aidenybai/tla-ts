@@ -866,7 +866,7 @@ const chargeConversion = (coverage: Coverage, value: FunctionValue) =>
   costCoverage(coverage, value, value.range.length);
 
 // FcnRcdValue#toTuple charges a function only when its domain isn't an interval.
-const isTupleConvertible = (coverage: Coverage, value: Value) => {
+const chargeTupleConversion = (coverage: Coverage, value: Value) => {
   if (typeof value !== "object") return false;
   if (value.kind === "LazyFunction") return true;
   if (value.kind !== "Function") return false;
@@ -900,7 +900,7 @@ export const chargeEquality = (coverage: Coverage, left: Value, right: Value) =>
     }
     return;
   }
-  if (isTupleConvertible(coverage, right)) return;
+  if (chargeTupleConversion(coverage, right)) return;
   chargeConversion(coverage, left);
   if (isRightFunction && right.functionClass === "record") chargeConversion(coverage, right);
 };
