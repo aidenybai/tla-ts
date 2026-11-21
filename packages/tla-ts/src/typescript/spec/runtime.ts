@@ -659,7 +659,7 @@ const DEFINITIONS = [
   // given are primitives, which no code of the program runs to format.
   `ConsoleObject(s) ==
   LET o == OrdinaryObjectCreate(s, Intrinsic(s, "ObjectPrototype"))
-      run == CreateBuiltinFunction(o.s, <<"Module", "taskRun">>, 0, N("run"), Empty)
+      run == HostMethod(o.s, N("run"), 0, TRUE, N("console task's run"), "taskRun", Empty)
       createTask == CreateBuiltinFunction(run.s, <<"Module", "createTask">>, 0, N("createTask"), Val(run))
       made == CreateDataProperty(createTask.s, Val(o), SV("createTask"), Val(createTask))
   IN Ok(ConsoleMethods(made.s, Val(o), <<N("log"), N("info"), N("debug"), N("warn"), N("error")>>), Val(o))`,
@@ -1655,9 +1655,11 @@ const HOST_PATCHES = [
          ELSE LET task == Alloc(s, MakeObject(Intrinsic(s, "ObjectPrototype"), "ordinary", [consoleTask |-> TRUE])) IN
               ResultThen(task.v, CreateDataProperty(task.s, task.v, SV("run"), data))
     [] m = "taskRun" ->
-         IF ~IsObject(this) \\/ "consoleTask" \\notin DOMAIN O(s, this).slots \\/ ~IsCallable(s, Arg(args, 1))
+         LET list == CreateListFromArrayLike(s, Arg(args, 3), "all") IN
+         IF IsAbrupt(list) THEN list
+         ELSE IF ~IsObject(Arg(args, 2)) \\/ "consoleTask" \\notin DOMAIN O(list.s, Arg(args, 2)).slots \\/ ~IsCallable(list.s, Arg(Val(list), 1))
          THEN Assert(FALSE, "tla-ts can't run a task of the host's console other than a function")
-         ELSE Call(s, Arg(args, 1), Undefined, <<>>)
+         ELSE Call(list.s, Arg(Val(list), 1), Undefined, <<>>)
     [] m \\in {"hostStop", "hostQuietConstructor"} -> HostStop(data)
     [] m = "hostConstruct" ->
          LET target == Arg(args, 1)

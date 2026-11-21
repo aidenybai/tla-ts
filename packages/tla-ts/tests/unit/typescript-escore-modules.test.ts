@@ -760,7 +760,7 @@ describe("gives a module the part of Node's console that writes primitives and m
     "main.js": getMain(
       `const log = [];
       const task = console.createTask("work");
-      log.push(typeof console.log, console.log === console.log, console.log.name, console.log.length, task.run(() => 7), Object.keys(task).join(), task.run === console.createTask("other").run);
+      log.push(typeof console.log, console.log === console.log, console.log.name, console.log.length, task.run(() => 7), Object.keys(task).join(), task.run === console.createTask("other").run, task.run.name, task.run.length);
       console.error("warning", 1, true);`,
       expected,
     ),
@@ -768,20 +768,35 @@ describe("gives a module the part of Node's console that writes primitives and m
 
   it("agrees with Node", async () => {
     expect(
-      (await checkModules(getFiles("function,true,log,0,7,run,true"))).message,
+      (await checkModules(getFiles("function,true,log,0,7,run,true,run,0"))).message,
     ).toBeUndefined();
   });
 
   it("rejects another result", async () => {
-    expect((await checkModules(getFiles("function,true,log,0,7,run,false"))).message).toContain(
-      THREW,
-    );
+    expect(
+      (await checkModules(getFiles("function,true,log,0,7,run,true,run,1"))).message,
+    ).toContain(THREW);
   });
 
   it("stops at a write of an object, which Node formats", async () => {
     expect((await checkModules({ "main.js": "console.log({});" })).message).toContain(
       "tla-ts can't write an object to the host's console",
     );
+  });
+
+  // A task's run, whose name and length are Node's, is an ordinary function in Node, with a
+  // prototype and a new that throws an Error, so every use of it but a call stops.
+  it.each([
+    "typeof task.run.prototype",
+    "Reflect.ownKeys(task.run)",
+    "new task.run(() => 1)",
+    "task.run.call(task, () => 1)",
+    "String(task.run)",
+  ])("stops at %s", async (use) => {
+    expect(
+      (await checkModules({ "main.js": `const task = console.createTask("work"); ${use};` }))
+        .message,
+    ).toContain("tla-ts can't run the host's console task's run");
   });
 });
 
