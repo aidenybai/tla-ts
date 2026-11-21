@@ -67,8 +67,6 @@ export interface Coverage {
   substitutionNodes: Map<number, Map<Substitution, number>>;
   frames: CoverageFrame[];
   nextState: NextStateMode;
-  isEnabled: boolean;
-  cachedInEnabled: WeakMap<object, boolean>;
   isMember: typeof isElementOf;
 }
 
@@ -172,8 +170,6 @@ export const createCoverage = (variableCount: number): Coverage => {
     substitutionNodes: new Map(),
     frames: [],
     nextState: "given",
-    isEnabled: false,
-    cachedInEnabled: new WeakMap(),
     isMember: isElementOf,
   };
   coverage.isMember = createChargedMembership(coverage);

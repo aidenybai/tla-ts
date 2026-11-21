@@ -571,6 +571,7 @@ const getSpecification = (
               scope: item.scope,
               state: undefined,
               next: undefined,
+              control: "Clear",
               cache: undefined,
               isStreamed: false,
               isRebuilt: false,

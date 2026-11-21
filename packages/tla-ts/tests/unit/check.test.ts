@@ -2456,6 +2456,34 @@ ASSUME TLCFP(a) = -887695703
     },
   );
 
+  it.each([
+    [
+      'Check == LET t == PrintT("t") /\\ y \\in 0..1 IN t /\\ ENABLED (y\' = y /\\ UNCHANGED (t \\/ TRUE)) /\\ t',
+      getPrints('"t"', 8),
+    ],
+    [
+      "Check == LET t == PrintT(\"t\") /\\ y \\in 0..1 IN t /\\ ENABLED (y' = y /\\ (t \\/ TRUE)' = (t \\/ TRUE)) /\\ t",
+      getPrints('"t"', 8),
+    ],
+    [
+      "Ap(a) == PrintT(<<a>>) /\\ ENABLED <<Step>>_<<y, a>> /\\ PrintT(<<a>>)\nCheck == Ap(RandomElement(1..1000))",
+      ["<<731>>", "<<680>>", "<<773>>", "<<769>>"],
+    ],
+    [
+      "Ap(a) == PrintT(<<a>>) /\\ ENABLED <<Step>>_<<y, a + 0>> /\\ PrintT(<<a>>)\nCheck == Ap(RandomElement(y..1000))",
+      ["<<731>>", "<<680>>", "<<773>>", "<<769>>"],
+    ],
+    [
+      "Ap(a) == PrintT(<<a>>) /\\ ENABLED (Step /\\ UNCHANGED (a > 0)) /\\ PrintT(<<a>>)\nCheck == Ap(RandomElement(y..1000))",
+      ["<<731>>", "<<680>>", "<<773>>", "<<769>>"],
+    ],
+  ])(
+    "reads a lazy value in %j afresh across ENABLED, as TLC's LazyValue#getCachedValue serves a value only under the EvalControl it cached it under",
+    async (definitions, expected) => {
+      expect((await getLazyReads(definitions, INVARIANT_CHECK)).printed).toEqual(expected);
+    },
+  );
+
   it("records the nested instance a call from one instanced definition to another enters, as TLC does", async () => {
     const result = await check(getInnerCallCheck(EXPLICIT, "I!YErr", NESTED_CALLS));
     const ranges = result.failure?.callStack?.flatMap((expression, index, expressions) => {

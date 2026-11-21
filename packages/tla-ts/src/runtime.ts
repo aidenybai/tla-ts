@@ -1,6 +1,7 @@
 import { getTlcFingerprint } from "./tlc/fingerprint";
 import { createJavaRandom, type JavaRandom } from "./tlc/random";
 import { createFunction, createRecord, type Value } from "./values";
+import type { EvalControl } from "./evaluate";
 import type { SpecAction } from "./spec-description";
 import type { TlcVersion } from "./tlc/version";
 
@@ -17,6 +18,7 @@ export interface CheckerRuntime {
   reseedRandom: () => void;
   runWithNewRandom: <Result>(evaluate: () => Result) => Result;
   runWithCurrentState: <Result>(state: Value[] | undefined, evaluate: () => Result) => Result;
+  runWithEvalControl: <Result>(control: EvalControl, evaluate: () => Result) => Result;
   getSimulationValue:
     | ((key: string, state: (Value | undefined)[] | undefined) => Value | undefined)
     | undefined;
@@ -47,6 +49,7 @@ export interface CheckerRuntime {
   isStarted: boolean;
   checkDeadlock: boolean;
   startedAt: number;
+  evalControl: EvalControl;
 }
 
 export const createRuntime = (checkDeadlock: boolean, seed = 0n): CheckerRuntime => {
@@ -108,6 +111,15 @@ export const createRuntime = (checkDeadlock: boolean, seed = 0n): CheckerRuntime
         workerState = previous;
       }
     },
+    runWithEvalControl: (control, evaluate) => {
+      const outer = runtime.evalControl;
+      runtime.evalControl = control;
+      try {
+        return evaluate();
+      } finally {
+        runtime.evalControl = outer;
+      }
+    },
     evaluateAtStartup: (evaluate) => {
       const wasStartup = isStartup;
       isStartup = true;
@@ -139,6 +151,7 @@ export const createRuntime = (checkDeadlock: boolean, seed = 0n): CheckerRuntime
     isStarted: false,
     checkDeadlock,
     startedAt: Date.now(),
+    evalControl: "Clear",
   };
   return runtime;
 };

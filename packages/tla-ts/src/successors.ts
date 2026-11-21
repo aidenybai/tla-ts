@@ -1294,29 +1294,31 @@ export const isEnabled = (expression: Expression, context: Context): boolean => 
     );
   }
   const environment = context.environment;
-  if (environment.callStack || (environment.coverage && environment.coverage.current >= 0)) {
-    return replayEnabled(expression, context.scope, state, environment);
-  }
-  const run: Run = {
-    environment,
-    isInit: false,
-    isEnabled: true,
-    current: state,
-    isStopped: false,
-    generator: undefined,
-    successors: 0,
-  };
-  getRunner(expression, environment, false)(
-    run,
-    context.scope,
-    getEmptyState(environment),
-    undefined,
-    false,
-    () => {
-      run.isStopped = true;
-    },
-  );
-  return run.isStopped;
+  return environment.runtime.runWithEvalControl("Enabled", () => {
+    if (environment.callStack || (environment.coverage && environment.coverage.current >= 0)) {
+      return replayEnabled(expression, context.scope, state, environment);
+    }
+    const run: Run = {
+      environment,
+      isInit: false,
+      isEnabled: true,
+      current: state,
+      isStopped: false,
+      generator: undefined,
+      successors: 0,
+    };
+    getRunner(expression, environment, false)(
+      run,
+      context.scope,
+      getEmptyState(environment),
+      undefined,
+      false,
+      () => {
+        run.isStopped = true;
+      },
+    );
+    return run.isStopped;
+  });
 };
 
 export const forEachInitialState = (

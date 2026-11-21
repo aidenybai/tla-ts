@@ -162,12 +162,16 @@ export interface Closure {
 
 type Operator = Closure | Builtin | OperatorValue;
 
+// LazyValue#getCachedValue ignores TLC's KeepLazy, Init and Const flags.
+export type EvalControl = "Clear" | "Enabled" | "Primed";
+
 export interface Thunk {
   kind: "Thunk";
   expression: Expression;
   scope: Scope | undefined;
   state: State | undefined;
   next: State | undefined;
+  control: EvalControl;
   cache: Value | undefined;
   isStreamed: boolean;
   isRebuilt: boolean;
@@ -1150,8 +1154,10 @@ const evaluateCoveredThunk = (thunk: Thunk, context: Context, coverage: Coverage
 
 const forceThunk = (thunk: Thunk, context: Context) => {
   const cache = thunk.cache;
+  const control = context.environment.runtime.evalControl;
   const isCached =
     cache !== undefined &&
+    thunk.control === control &&
     isStateWithin(context.state, thunk.state) &&
     isStateWithin(context.next, thunk.next) &&
     // TLC builds the function again at each reference, and outside KeepLazy evaluates each element.
@@ -1174,6 +1180,7 @@ const forceThunk = (thunk: Thunk, context: Context) => {
     thunk.cache = value;
     thunk.state = context.state;
     thunk.next = context.next;
+    thunk.control = control;
   }
   if (
     thunk.cache !== undefined &&
@@ -1307,6 +1314,7 @@ const createThunk = (expression: Expression, context: Context): Thunk => ({
   scope: context.scope,
   state: context.state,
   next: context.next,
+  control: "Clear",
   cache: undefined,
   isStreamed: false,
   isRebuilt: false,
@@ -1536,6 +1544,7 @@ export const bindDefinitions = (
           scope: ownScope,
           state: context.state,
           next: context.next,
+          control: "Clear",
           cache: undefined,
           isStreamed:
             definition.kind === "Operator" && (reevaluated?.streamed.has(definition) ?? false),
@@ -2024,17 +2033,15 @@ const compileIdentifier = (
   }
   const coverage = environment.coverage;
   if (!coverage) return (context) => evaluateLocalIdentifier(name, expression, context);
-  // TLC's Tool#evalAppl evaluates a LazyValue afresh where s1 is TLCState.Null, and LazyValue#getValue reuses a value only under the EvalControl it computed it under.
+  // TLC's Tool#evalAppl evaluates a LazyValue afresh where s1 is TLCState.Null.
   return (context) => {
     const binding = lookupScope(context.scope, name);
     if (binding?.kind !== "Thunk" || binding.isReleased) {
       return evaluateLocalIdentifier(name, expression, context);
     }
-    if (context.next === NULL_STATE) return evaluateCoveredThunk(binding, context, coverage);
-    if (coverage.cachedInEnabled.get(binding) !== coverage.isEnabled) binding.cache = undefined;
-    const value = forceThunk(binding, context);
-    coverage.cachedInEnabled.set(binding, coverage.isEnabled);
-    return value;
+    return context.next === NULL_STATE
+      ? evaluateCoveredThunk(binding, context, coverage)
+      : forceThunk(binding, context);
   };
 };
 
