@@ -3462,6 +3462,54 @@ ASSUME TLCFP(a) = -887695703
 
   it.each([
     [
+      "a set of functions",
+      "x' \\in [{1} -> {t \\in {3} \\X {4, 5} : PrintT(t) /\\ t[2] > 4}]",
+      4,
+      [
+        "line 5, col 9 to line 5, col 69 of module M: 2",
+        "|line 5, col 16 to line 5, col 69 of module M: 2:2",
+        "||line 5, col 17 to line 5, col 19 of module M: 2",
+        "||line 5, col 24 to line 5, col 68 of module M: 2:8",
+        "|||line 5, col 47 to line 5, col 67 of module M: 8",
+        "|||line 5, col 31 to line 5, col 43 of module M: 2:16",
+        "||||line 5, col 31 to line 5, col 33 of module M: 2:8",
+        "||||line 5, col 38 to line 5, col 43 of module M: 2:16",
+      ],
+    ],
+    [
+      "a Cartesian product",
+      "x' \\in {1} \\X {t \\in {3} \\X {4, 5} : PrintT(t) /\\ t[2] > 4}",
+      6,
+      [
+        "line 5, col 9 to line 5, col 67 of module M: 2",
+        "|line 5, col 16 to line 5, col 67 of module M: 2:4",
+        "||line 5, col 16 to line 5, col 18 of module M: 2:4",
+        "||line 5, col 23 to line 5, col 67 of module M: 2:12",
+        "|||line 5, col 46 to line 5, col 66 of module M: 12",
+        "|||line 5, col 30 to line 5, col 42 of module M: 2:24",
+        "||||line 5, col 30 to line 5, col 32 of module M: 2:12",
+        "||||line 5, col 37 to line 5, col 42 of module M: 2:24",
+      ],
+    ],
+  ])(
+    "enumerates a filter inside %s a successor draws from only as TLC does under -coverage",
+    async (_title, next, passes, expected) => {
+      const printed: string[] = [];
+      const result = await check({
+        source: `---- MODULE M ----\nEXTENDS Integers, TLC, FiniteSets, Sequences\nVARIABLE x\nInit == x = 0\nNext == ${next}\n====`,
+        config: "INIT Init\nNEXT Next\nCHECK_DEADLOCK FALSE",
+        coverage: 1,
+        onPrint: (text) => printed.push(text),
+      });
+      expect([printed, formatCoverage(result)?.at(-1)]).toEqual([
+        Array.from({ length: passes }, () => ["<<3, 4>>", "<<3, 5>>"]).flat(),
+        expected,
+      ]);
+    },
+  );
+
+  it.each([
+    [
       "SUBSET",
       "[s \\in SUBSET {1, 2} |-> Cardinality(s)]",
       [

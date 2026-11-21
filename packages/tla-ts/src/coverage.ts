@@ -891,10 +891,11 @@ const createProductEnumerator = (
   coverage: Coverage,
   node: number,
   sets: Value[],
+  sizes: number[],
 ): ChargedEnumerator => {
-  if (sets.some((set) => isEmptySet(set))) return { next: () => false, reset: () => undefined };
-  const enumerators = sets.map((set) =>
-    createEnumerator(coverage, set, getCardinality(set), false),
+  if (sizes.includes(0)) return { next: () => false, reset: () => undefined };
+  const enumerators = sets.map((set, index) =>
+    createEnumerator(coverage, set, sizes[index], false),
   );
   const advance = () => {
     for (let index = enumerators.length - 1; index > 0; index--) {
@@ -922,17 +923,64 @@ const createProductEnumerator = (
   };
 };
 
-export const createProductSetEnumerator = (coverage: Coverage, set: Value) => {
+// Sizing a component whose enumeration runs user code would run it again, so its size comes from the product's when only that component is unknown.
+const getComponentSizes = (sets: Value[], size: number | undefined) => {
+  const sizes = sets.map(getKnownSize);
+  const unknown = sets.filter((_set, index) => sizes[index] === undefined);
+  if (unknown.length > 0 && (size === undefined || unknown.some((set) => set !== unknown[0]))) {
+    return undefined;
+  }
+  const knownProduct = sizes.reduce<number>((product, item) => product * (item ?? 1), 1);
+  const derived =
+    unknown.length === 0 || knownProduct === 0
+      ? 0
+      : Math.round(((size ?? 0) / knownProduct) ** (1 / unknown.length));
+  return sizes.map((item) => item ?? derived);
+};
+
+export const createProductSetEnumerator = (
+  coverage: Coverage,
+  set: Value,
+  size: number | undefined,
+) => {
   const node = typeof set === "object" ? coverage.values.get(set) : undefined;
   if (node === undefined || typeof set !== "object") return undefined;
-  if (set.kind === "RecordSet") return createProductEnumerator(coverage, node, set.sets);
-  if (set.kind === "ProductSet") return createProductEnumerator(coverage, node, set.factors);
-  if (set.kind !== "FunctionSet") return undefined;
-  return createProductEnumerator(
-    coverage,
-    node,
-    Array.from({ length: getCardinality(set.domain) }, () => set.range),
-  );
+  const sets =
+    set.kind === "RecordSet"
+      ? set.sets
+      : set.kind === "ProductSet"
+        ? set.factors
+        : set.kind === "FunctionSet"
+          ? Array.from({ length: getCardinality(set.domain) }, () => set.range)
+          : undefined;
+  const sizes = sets && getComponentSizes(sets, size);
+  return sets && sizes && createProductEnumerator(coverage, node, sets, sizes);
+};
+
+// The number of elements TLC's enumerator draws from a set whose enumeration runs no user code.
+const getKnownSize = (set: Value): number | undefined => {
+  if (typeof set !== "object") return undefined;
+  switch (set.kind) {
+    case "Set":
+    case "MixedSet":
+    case "Interval":
+      return getCardinality(set);
+    case "Subset":
+      return getKnownSize(set.base) === undefined ? undefined : getCardinality(set);
+    case "FunctionSet":
+      return getKnownSize(set.domain) === undefined || getKnownSize(set.range) === undefined
+        ? undefined
+        : getCardinality(set);
+    case "RecordSet":
+    case "ProductSet":
+      return (set.kind === "RecordSet" ? set.sets : set.factors).every(
+        (component) => getKnownSize(component) !== undefined,
+      )
+        ? getCardinality(set)
+        : undefined;
+    default:
+      return undefined;
+  }
 };
 
 const createEnumerator = (
@@ -948,7 +996,7 @@ const createEnumerator = (
   ) {
     return createListEnumerator(coverage, undefined, size);
   }
-  const elements = createProductSetEnumerator(coverage, set);
+  const elements = createProductSetEnumerator(coverage, set, size);
   if (!elements || node === undefined) return createListEnumerator(coverage, node, size);
   if (!isNormalized) return elements;
   let count = 0;

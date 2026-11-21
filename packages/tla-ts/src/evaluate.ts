@@ -2519,7 +2519,7 @@ export const getLazyFilter = (
       test: (element, isMember) =>
         runAtCoverageNode(coverage, isMember ? -1 : node, () => test(element, isMember)),
       startPass: (isMaterialized) => {
-        const draws = createProductSetEnumerator(coverage, base);
+        const draws = createProductSetEnumerator(coverage, base, undefined);
         return (element) => {
           draws?.next();
           coverage.secondary[node]++;
