@@ -610,12 +610,12 @@ export class Context extends Internalizer {
 
   propagate() {
     const limit = this.manager.limit;
-    for (;;) {
-      if (this.isInconsistent()) return false;
-      const qhead = this.qhead;
-      const wasSuspended = limit.isSuspended;
-      limit.isSuspended = wasSuspended || this.scopeLevel === this.baseLevel;
-      try {
+    const wasSuspended = limit.isSuspended;
+    try {
+      for (;;) {
+        if (this.isInconsistent()) return false;
+        const qhead = this.qhead;
+        limit.isSuspended = wasSuspended || this.scopeLevel === this.baseLevel;
         if (!this.bcp()) return false;
         this.propagateRelevancy(qhead);
         if (this.isInconsistent()) return false;
@@ -624,17 +624,18 @@ export class Context extends Internalizer {
         this.propagateThEqs();
         this.propagateThDiseqs();
         if (this.isInconsistent()) return false;
-      } finally {
         limit.isSuspended = wasSuspended;
+        if (!this.propagateTheories()) return false;
+        if (!this.checkCanceled()) this.qmanager.propagate();
+        if (this.isInconsistent()) return false;
+        if (this.isResourceLimitExceeded()) {
+          this.qhead = qhead;
+          return true;
+        }
+        if (!this.canPropagate()) return true;
       }
-      if (!this.propagateTheories()) return false;
-      if (!this.checkCanceled()) this.qmanager.propagate();
-      if (this.isInconsistent()) return false;
-      if (this.isResourceLimitExceeded()) {
-        this.qhead = qhead;
-        return true;
-      }
-      if (!this.canPropagate()) return true;
+    } finally {
+      limit.isSuspended = wasSuspended;
     }
   }
 
