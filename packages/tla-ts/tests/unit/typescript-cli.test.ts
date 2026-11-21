@@ -606,4 +606,26 @@ describe("the CLI with TypeScript files", () => {
     expect(getExit(result)).toEqual(getExit(runNode(directory, "lib/main.js")));
     expect(result.status).toBe(1);
   });
+
+  // A CommonJS module requires Node's async_hooks, as Solid's web storage does, and gets the one
+  // object that process.getBuiltinModule gives too.
+  describe("requires Node's async_hooks as Node does", () => {
+    const getScript = (operator: string) =>
+      `const first = require("node:async_hooks");\nconst second = process.getBuiltinModule("async_hooks");\nif ((first === second && first === require("async_hooks")) ${operator} true) throw new Error("hooks");\n`;
+
+    it("agrees with Node", () => {
+      const directory = copyFixtures("passing");
+      writeFileSync(join(directory, "hooks.cjs"), getScript("!=="));
+      expect(runNode(directory, "hooks.cjs").status).toBe(0);
+      expect(getExit(runCli(directory, ["hooks.cjs"]))).toEqual([0, ""]);
+    });
+
+    it("rejects another result", () => {
+      const directory = copyFixtures("passing");
+      writeFileSync(join(directory, "hooks.cjs"), getScript("==="));
+      const result = runCli(directory, ["hooks.cjs"]);
+      expect(getExit(result)).toEqual(getExit(runNode(directory, "hooks.cjs")));
+      expect(result.status).toBe(1);
+    });
+  });
 });
