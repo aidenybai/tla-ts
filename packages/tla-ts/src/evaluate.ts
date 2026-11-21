@@ -62,7 +62,6 @@ import {
 import {
   contextualApplications,
   frameSubstitutions,
-  isSubstitutionDefinition,
   substitutedExpressions,
   substitutionFrames,
   type BoundSubstitutions,
@@ -1555,7 +1554,7 @@ const compileUnchanged = (evaluator: Evaluator, coverage: Coverage | undefined):
   coverage
     ? (context) =>
         valuesEqual(
-          evaluateWithNextState(coverage, "empty", evaluator, context),
+          evaluateWithNextState(coverage, "empty", evaluator, { ...context, next: undefined }),
           evaluateWithNextState(coverage, "primed", evaluator, toNextContext(context)),
         )
     : (context) => valuesEqual(evaluator(context), evaluator(toNextContext(context)));
@@ -2808,13 +2807,7 @@ const compile = (expression: Expression, environment: Environment): Evaluator =>
       const body = getChildEvaluator(expression.body);
       const definitions = getBoundDefinitions(expression, environment);
       if (definitions.length === 0) return body;
-      const substituted = environment.coverage ? definitions.filter(isSubstitutionDefinition) : [];
-      const reevaluated =
-        substituted.length > 0
-          ? { impure: new Set(substituted), streamed: new Set<Definition>() }
-          : undefined;
-      return (context) =>
-        body(withScope(context, bindDefinitions(definitions, context, reevaluated)));
+      return (context) => body(withScope(context, bindDefinitions(definitions, context)));
     }
     case "Forall":
     case "Exists":

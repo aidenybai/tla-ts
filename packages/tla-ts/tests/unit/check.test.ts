@@ -4924,6 +4924,51 @@ ASSUME TLCFP(a) = -887695703
     ]);
   });
 
+  it.each([
+    ["w = w /\\ UNCHANGED w", 6],
+    ["UNCHANGED w /\\ w = w", 4],
+    ["w' = w /\\ w = w", 4],
+    ["w = w /\\ w' = w'", 6],
+    ["UNCHANGED w /\\ UNCHANGED w", 6],
+    ["w' = w /\\ UNCHANGED w /\\ [x' = x]_w", 10],
+  ])(
+    "evaluates a substitution under -coverage in %s as often as TLC counts it, as its LazyValue caches the value",
+    async (body, count) => {
+      const printed: string[] = [];
+      const result = await check({
+        source:
+          "---- MODULE M ----\nEXTENDS TLC, Naturals\nVARIABLES x, y\nI == INSTANCE P WITH w <- IF PrintT(\"w\") THEN y ELSE y\nInit == x = 0 /\\ y = 0\nNext == x < 2 /\\ x' = x + 1 /\\ y' = y\nAC == I!C\n====\n",
+        config: "INIT Init\nNEXT Next\nACTION_CONSTRAINT AC\nCHECK_DEADLOCK FALSE\n",
+        coverage: 1,
+        loadModule: (name) =>
+          name === "P" ? `---- MODULE P ----\nVARIABLES x, w\nC == ${body}\n====\n` : undefined,
+        onPrint: (text) => printed.push(text),
+      });
+      expect([
+        printed.length,
+        formatCoverage(result)
+          ?.at(-1)
+          ?.find((line) => line.startsWith("|line 4, col 27 ")),
+      ]).toEqual([count, `|line 4, col 27 to line 4, col 54 of module M: ${count}`]);
+    },
+  );
+
+  it("evaluates a substitution an invariant reads twice once per state under -coverage, as TLC's LazyValue caches it", async () => {
+    const printed: string[] = [];
+    await check({
+      source:
+        "---- MODULE M ----\nEXTENDS TLC, Naturals\nVARIABLES x, y\nI == INSTANCE P WITH w <- IF PrintT(\"w\") THEN y ELSE y\nInit == x = 0 /\\ y = 0\nNext == x < 2 /\\ x' = x + 1 /\\ y' = y\nInv == I!D\n====\n",
+      config: "INIT Init\nNEXT Next\nINVARIANT Inv\nCHECK_DEADLOCK FALSE\n",
+      coverage: 1,
+      loadModule: (name) =>
+        name === "P"
+          ? "---- MODULE P ----\nVARIABLES x, w\nD == w = w /\\ w = w\n====\n"
+          : undefined,
+      onPrint: (text) => printed.push(text),
+    });
+    expect(printed).toEqual(['"w"', '"w"', '"w"']);
+  });
+
   it("assigns the variables UNCHANGED keeps through the definition of an instance, where TLC evaluates the definition and fails on an unassigned variable", async () => {
     const result = await check({
       source:
