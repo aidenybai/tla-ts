@@ -2129,12 +2129,15 @@ const compileApply = (
     isValueArgument(args[0], environment)
   ) {
     const base = getEvaluator(args[0], environment);
-    return (context): Value => ({
-      kind: "Subset",
-      base: base(context),
-      costNode:
-        coverage.expressions[coverage.current] === expression ? coverage.current : undefined,
-    });
+    return (context): Value => {
+      const isCharged = coverage.expressions[coverage.current] === expression;
+      return {
+        kind: "Subset",
+        base: base(context),
+        costNode: isCharged ? coverage.current : undefined,
+        secondary: isCharged ? coverage.secondary : undefined,
+      };
+    };
   }
   const combine = global?.kind === "Builtin" ? global.evaluateBinary : undefined;
   if (coverage && combine && SET_OPERATORS.has(expression.operator) && args.length === 2) {

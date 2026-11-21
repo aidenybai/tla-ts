@@ -67,7 +67,8 @@ export interface InfiniteSetValue {
 export interface SubsetValue extends LazySet {
   kind: "Subset";
   base: Value;
-  costNode?: number;
+  costNode: number | undefined;
+  secondary: number[] | undefined;
 }
 
 export interface FunctionSetValue extends LazySet {
@@ -663,7 +664,16 @@ export const compareValues = (left: Value, right: Value): number => {
       const difference = left.elements.length - getCardinality(right);
       if (difference !== 0) return difference;
     }
-    if (isLeftSet) return compareSets(toFiniteSet(left), toFiniteSet(right));
+    if (isLeftSet) {
+      return compareSets(
+        leftKind === "Subset" && left.secondary !== undefined
+          ? toChargedSet(left, true)
+          : toFiniteSet(left),
+        rightKind === "Subset" && right.secondary !== undefined
+          ? toChargedSet(right, false)
+          : toFiniteSet(right),
+      );
+    }
     return compareFunctions(toFiniteFunction(left), toFiniteFunction(right));
   }
   if (typeof left === "number" && typeof right === "number") return left - right;
@@ -1118,7 +1128,11 @@ const isComparedByClass = (left: ObjectValue, right: Value) =>
       left.kind === "ProductSet"));
 
 const getSetElementsLikeTlc = (left: SetValue | MixedSetValue, right: Value) => {
-  const other = isEnumeratedSet(right) ? right : toFiniteSet(right);
+  const other = isEnumeratedSet(right)
+    ? right
+    : typeof right === "object" && right.kind === "Subset" && right.secondary !== undefined
+      ? toChargedSet(right, false)
+      : toFiniteSet(right);
   return { elements: toFiniteSet(left).elements, otherElements: toFiniteSet(other).elements };
 };
 
@@ -1136,7 +1150,13 @@ const compareSetLikeTlc = (left: ObjectValue, right: Value, isEquality: boolean)
     if (!isEquality) return compareValues(left, right);
     return valuesEqual(left, right) ? 0 : 1;
   }
-  if (!isEnumeratedSet(left)) return compareSetLikeTlc(toFiniteSet(left), right, isEquality);
+  if (!isEnumeratedSet(left)) {
+    const set =
+      left.kind === "Subset" && left.secondary !== undefined
+        ? toChargedSet(left, true)
+        : toFiniteSet(left);
+    return compareSetLikeTlc(set, right, isEquality);
+  }
   if (!isSetValue(right)) {
     if (isModelValue(right)) return compareModelValueWith(right, left, isEquality);
     throw new TlaEvaluationError(
@@ -1965,6 +1985,18 @@ export const toFiniteSet = (value: Value): SetValue => {
       value.kind === "Subset");
   const set = isSorted ? createSortedSet(elements) : createSet(elements);
   if (lazy) lazy.enumerated = set;
+  return set;
+};
+
+// SubsetValue#toSetEnum charges the subsets it collects, which convertAndCache keeps, so a cached SUBSET charges once.
+const toChargedSet = (value: SubsetValue, isCached: boolean) => {
+  // TLC's SetEnumValue#member scans an unsorted literal, so a literal whose sort charges a SUBSET stays unsorted.
+  if (isSortingLiteral) throw new TlaEvaluationError("The set literal holds a charged SUBSET");
+  const set = toFiniteSet(value);
+  if (value.secondary !== undefined && value.costNode !== undefined) {
+    value.secondary[value.costNode] += set.elements.length;
+  }
+  if (isCached) value.secondary = undefined;
   return set;
 };
 
@@ -3738,7 +3770,12 @@ export const getValueHash = (value: Value): number => {
       ? getValueHash(toFiniteFunction(value))
       : UNFINGERPRINTABLE_HASH;
   }
-  return isEnumerable(value) ? getValueHash(toFiniteSet(value)) : UNFINGERPRINTABLE_HASH;
+  if (!isEnumerable(value)) return UNFINGERPRINTABLE_HASH;
+  return getValueHash(
+    value.kind === "Subset" && value.secondary !== undefined
+      ? toChargedSet(value, true)
+      : toFiniteSet(value),
+  );
 };
 
 const finalizeFingerprint = (hash: number) => {
@@ -3839,9 +3876,8 @@ const getProductSize = (sets: Value[]) =>
 
 const expandLazySet = (value: LazySetValue) => {
   if (value.kind === "Subset") {
-    return getCardinality(value.base) <= MAXIMUM_EXPANDED_SUBSET_BASE
-      ? toFiniteSet(value)
-      : undefined;
+    if (getCardinality(value.base) > MAXIMUM_EXPANDED_SUBSET_BASE) return undefined;
+    return value.secondary !== undefined ? toChargedSet(value, false) : toFiniteSet(value);
   }
   if (value.kind === "SetOperation" || value.kind === "FilteredSet" || value.kind === "Union") {
     return toFiniteSet(value);

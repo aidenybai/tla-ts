@@ -460,7 +460,9 @@ const compileMembership = (
     }
     const evaluated = evaluate(set, context);
     const value: Value =
-      expression.operator === "\\subseteq" ? { kind: "Subset", base: evaluated } : evaluated;
+      expression.operator === "\\subseteq"
+        ? { kind: "Subset", base: evaluated, costNode: undefined, secondary: undefined }
+        : evaluated;
     if (!isTlcEnumerable(value)) {
       const message = run.isEnabled
         ? "The right side of \\IN is not enumerable."

@@ -188,6 +188,19 @@ export const createCoverageEnvironment = (
   coverage,
 });
 
+// TLC makes no search of its own for the part of a state that fails, so tla-ts's counts nothing.
+export const runUncounted = <Result>(coverage: Coverage | undefined, run: () => Result): Result => {
+  if (!coverage) return run();
+  const primary = coverage.primary.slice();
+  const secondary = coverage.secondary.slice();
+  try {
+    return run();
+  } finally {
+    Object.assign(coverage.primary, primary);
+    Object.assign(coverage.secondary, secondary);
+  }
+};
+
 const addNode = (
   coverage: Coverage,
   expression: Expression | undefined,

@@ -4416,6 +4416,185 @@ ASSUME TLCFP(a) = -887695703
 
   it.each([
     [
+      "a set literal sorts it against a filter",
+      "{5} \\notin UNION {SUBSET {1}, {n \\in 0..3 : n > 7}}",
+      [
+        "line 5, col 9 to line 5, col 13 of module M: 2",
+        "|line 5, col 9 to line 5, col 9 of module M: 3",
+        "line 5, col 18 to line 5, col 27 of module M: 2",
+        "line 5, col 32 to line 5, col 82 of module M: 2",
+        "|line 5, col 32 to line 5, col 34 of module M: 2:2",
+        "|line 5, col 43 to line 5, col 82 of module M: 2",
+        "||line 5, col 49 to line 5, col 82 of module M: 2:6",
+        "|||line 5, col 50 to line 5, col 59 of module M: 2:4",
+        "||||line 5, col 57 to line 5, col 59 of module M: 2",
+        "|||line 5, col 62 to line 5, col 81 of module M: 2",
+        "||||line 5, col 76 to line 5, col 80 of module M: 8",
+        "||||line 5, col 69 to line 5, col 72 of module M: 2",
+      ],
+    ],
+    [
+      "it is the left side of =",
+      "SUBSET {1} = {{}, {1}}",
+      [
+        "line 5, col 9 to line 5, col 13 of module M: 2",
+        "|line 5, col 9 to line 5, col 9 of module M: 3",
+        "line 5, col 18 to line 5, col 27 of module M: 2",
+        "line 5, col 32 to line 5, col 53 of module M: 2",
+        "|line 5, col 32 to line 5, col 41 of module M: 2:4",
+        "||line 5, col 39 to line 5, col 41 of module M: 2",
+        "|line 5, col 45 to line 5, col 53 of module M: 2",
+      ],
+    ],
+    [
+      "it is the right side of =",
+      "{{}, {1}} = SUBSET {1}",
+      [
+        "line 5, col 9 to line 5, col 13 of module M: 2",
+        "|line 5, col 9 to line 5, col 9 of module M: 3",
+        "line 5, col 18 to line 5, col 27 of module M: 2",
+        "line 5, col 32 to line 5, col 53 of module M: 2",
+        "|line 5, col 32 to line 5, col 40 of module M: 2",
+        "|line 5, col 44 to line 5, col 53 of module M: 2:4",
+        "||line 5, col 51 to line 5, col 53 of module M: 2",
+      ],
+    ],
+    [
+      "it is the left side of = twice, which converts it once",
+      "LET T == SUBSET {1} IN T = {{}, {1}} /\\ T = {{}, {1}}",
+      [
+        "line 5, col 9 to line 5, col 13 of module M: 2",
+        "|line 5, col 9 to line 5, col 9 of module M: 3",
+        "line 5, col 18 to line 5, col 27 of module M: 2",
+        "line 5, col 41 to line 5, col 50 of module M: 2:4",
+        "|line 5, col 48 to line 5, col 50 of module M: 2",
+        "line 5, col 55 to line 5, col 84 of module M: 2",
+      ],
+    ],
+    [
+      "it is the right side of = twice, which converts it each time",
+      "LET T == SUBSET {1} IN {{}, {1}} = T /\\ {{}, {1}} = T",
+      [
+        "line 5, col 9 to line 5, col 13 of module M: 2",
+        "|line 5, col 9 to line 5, col 9 of module M: 3",
+        "line 5, col 18 to line 5, col 27 of module M: 2",
+        "line 5, col 41 to line 5, col 50 of module M: 2:8",
+        "|line 5, col 48 to line 5, col 50 of module M: 2",
+        "line 5, col 55 to line 5, col 84 of module M: 2",
+      ],
+    ],
+    [
+      "a set literal sorts it against three sets",
+      "LET T == SUBSET {1} IN {T, {{}}, {{1}}, {{}, {1}, {2}}} # {}",
+      [
+        "line 5, col 9 to line 5, col 13 of module M: 2",
+        "|line 5, col 9 to line 5, col 9 of module M: 3",
+        "line 5, col 18 to line 5, col 27 of module M: 2",
+        "line 5, col 41 to line 5, col 50 of module M: 2:12",
+        "|line 5, col 48 to line 5, col 50 of module M: 2",
+        "line 5, col 55 to line 5, col 91 of module M: 2",
+      ],
+    ],
+    [
+      "a set literal that fails to sort holds it",
+      "x \\in {SUBSET {1}, {{}}, 1}",
+      [
+        "line 5, col 9 to line 5, col 13 of module M: 2",
+        "line 5, col 18 to line 5, col 27 of module M: 0",
+        "|line 5, col 23 to line 5, col 27 of module M: 2",
+        "line 5, col 32 to line 5, col 58 of module M: 2",
+        "|line 5, col 32 to line 5, col 32 of module M: 2",
+        "|line 5, col 38 to line 5, col 58 of module M: 2",
+        "||line 5, col 39 to line 5, col 48 of module M: 2:4",
+        "|||line 5, col 46 to line 5, col 48 of module M: 2",
+        "||line 5, col 51 to line 5, col 54 of module M: 2",
+      ],
+    ],
+    [
+      "membership in an unsorted set literal compares it",
+      "SUBSET {1} \\in {SUBSET {2}, {{}}}",
+      [
+        "line 5, col 9 to line 5, col 13 of module M: 1",
+        "line 5, col 18 to line 5, col 27 of module M: 0",
+        "|line 5, col 23 to line 5, col 27 of module M: 1",
+        "line 5, col 32 to line 5, col 64 of module M: 1",
+        "|line 5, col 32 to line 5, col 41 of module M: 1:2",
+        "||line 5, col 39 to line 5, col 41 of module M: 1",
+        "|line 5, col 47 to line 5, col 64 of module M: 1",
+      ],
+    ],
+    [
+      "PrintT prints it",
+      "PrintT(SUBSET {1})",
+      [
+        "line 5, col 9 to line 5, col 13 of module M: 2",
+        "|line 5, col 9 to line 5, col 9 of module M: 3",
+        "line 5, col 18 to line 5, col 27 of module M: 2",
+        "line 5, col 32 to line 5, col 49 of module M: 2",
+        "|line 5, col 39 to line 5, col 48 of module M: 2:4",
+        "||line 5, col 46 to line 5, col 48 of module M: 2",
+      ],
+    ],
+    [
+      "an error message prints it",
+      "{{}, {x}} \\in SUBSET (SUBSET (SUBSET {1}))",
+      [
+        "line 5, col 9 to line 5, col 13 of module M: 2",
+        "line 5, col 18 to line 5, col 27 of module M: 0",
+        "|line 5, col 23 to line 5, col 27 of module M: 2",
+        "line 5, col 32 to line 5, col 73 of module M: 2",
+        "|line 5, col 32 to line 5, col 40 of module M: 2:4",
+        "||line 5, col 33 to line 5, col 34 of module M: 2:2",
+        "||line 5, col 37 to line 5, col 39 of module M: 2:2",
+        "|||line 5, col 38 to line 5, col 38 of module M: 2",
+        "|line 5, col 46 to line 5, col 73 of module M: 2",
+        "||line 5, col 54 to line 5, col 72 of module M: 2",
+        "|||line 5, col 62 to line 5, col 71 of module M: 2:4",
+        "||||line 5, col 69 to line 5, col 71 of module M: 2",
+      ],
+    ],
+    [
+      "a filter only enumerates it",
+      "{s \\in SUBSET {1, 2} : Cardinality(s) = 1} = {{1}, {2}}",
+      [
+        "line 5, col 9 to line 5, col 13 of module M: 2",
+        "|line 5, col 9 to line 5, col 9 of module M: 3",
+        "line 5, col 18 to line 5, col 27 of module M: 2",
+        "line 5, col 32 to line 5, col 86 of module M: 2",
+        "|line 5, col 32 to line 5, col 73 of module M: 2:12",
+        "||line 5, col 55 to line 5, col 72 of module M: 8",
+        "||line 5, col 39 to line 5, col 51 of module M: 2",
+        "|line 5, col 77 to line 5, col 86 of module M: 2",
+      ],
+    ],
+  ])(
+    "charges the subsets SUBSET S collects when %s, as TLC's SubsetValue#toSetEnum does",
+    async (_title, condition, expected) => {
+      const lines = await getCoverageLines(
+        `---- MODULE M ----\nEXTENDS Integers, FiniteSets, TLC\nVARIABLE x\nInit == x = 0\nNext == x < 2 /\\ x' = x + 1 /\\ ${condition}\n====`,
+        "INIT Init\nNEXT Next\nCHECK_DEADLOCK FALSE",
+      );
+      expect(lines?.at(-1)).toEqual(expected);
+    },
+  );
+
+  it("charges the subsets SUBSET S collects when a state holds it, as TLC's SubsetValue#fingerPrint converts it", async () => {
+    const lines = await getCoverageLines(
+      "---- MODULE M ----\nEXTENDS Integers, FiniteSets, TLC\nVARIABLE x, y\nInit == x = 0 /\\ y = {}\nNext == x < 2 /\\ x' = x + 1 /\\ y' = SUBSET {1, 2}\n====",
+      "INIT Init\nNEXT Next\nCHECK_DEADLOCK FALSE",
+    );
+    expect(lines?.at(-1)).toEqual([
+      "line 5, col 9 to line 5, col 13 of module M: 2",
+      "|line 5, col 9 to line 5, col 9 of module M: 3",
+      "line 5, col 18 to line 5, col 27 of module M: 2",
+      "line 5, col 32 to line 5, col 49 of module M: 2",
+      "|line 5, col 37 to line 5, col 49 of module M: 2:8",
+      "||line 5, col 44 to line 5, col 49 of module M: 2",
+    ]);
+  });
+
+  it.each([
+    [
       "its body follows one argument",
       "VARIABLE x\nInit == x = 0\nNext == x < 2 /\\ [i \\in 0..2 |-> x' = x + i][IF x = 0 THEN 1 ELSE 2]",
       [
