@@ -278,6 +278,7 @@ class ConsequenceFinder {
         numUnits = this.extractFixedConsequences(numUnits, assumptionSet);
         this.extractFixedEqs();
       }
+      context.caseSplitQueue.endSearchEh();
       return L_TRUE;
     } finally {
       if (context.scopeLevel > level + (isPushed ? 1 : 0))

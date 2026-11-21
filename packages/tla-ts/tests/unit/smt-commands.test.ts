@@ -2995,4 +2995,41 @@ describe("case splits, as Z3 5.3.2 reads smt.case_split", () => {
       " ((p y) true))",
     ]);
   });
+
+  it("queues the terms a push makes relevant once get-consequences ends its search", () => {
+    expect(
+      run([
+        "(set-option :auto_config false)",
+        "(set-option :smt.case_split 4)",
+        "(declare-const x Int)",
+        "(declare-const y Int)",
+        "(declare-const z Int)",
+        "(declare-fun p (Int) Bool)",
+        "(declare-fun q (Int) Bool)",
+        "(declare-const a Bool)",
+        "(declare-const b Bool)",
+        "(assert (or (and (p x) (> x 3)) (and (p y) (> y x))))",
+        "(assert (or (< x 2) (> y 7) (p (+ x y))))",
+        "(assert (=> a (= x 5)))",
+        "(get-consequences (a b) (x y))",
+        "(assert (or (and (q z) (< z y)) (and (q (+ z 1)) (> z 9)) (p z)))",
+        "(assert (or (not (q z)) (and (> (+ x z) 4) (p (+ z 2)))))",
+        "(assert (or (q x) (and (< z 3) (q y)) (not (p (+ y z)))))",
+        "(push 1)",
+        "(assert (or (p (+ x 1)) (q (+ y 1))))",
+        "(check-sat)",
+        "(get-info :rlimit)",
+        "(get-value (x y z))",
+      ]),
+    ).toEqual([
+      "sat",
+      "",
+      "(=> a (= x 5))",
+      "sat",
+      "(:rlimit 1058)",
+      "((x 5)",
+      " (y 2437)",
+      " (z 0))",
+    ]);
+  });
 });
