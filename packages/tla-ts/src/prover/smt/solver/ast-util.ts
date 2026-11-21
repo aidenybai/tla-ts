@@ -155,21 +155,24 @@ export const getNumExprs = (manager: AstManager, root: number) => {
   return count;
 };
 
-const getChildren = (manager: AstManager, expr: number) => {
+const getChildren = (manager: AstManager, expr: number, isIgnoringPatterns: boolean) => {
   if (manager.kinds[expr] === KIND_APP) return manager.getArgs(expr);
   if (manager.kinds[expr] === KIND_VAR) return [];
   const data = manager.getQuantifier(expr);
-  return [data.body, ...data.patterns, ...data.noPatterns];
+  return isIgnoringPatterns ? [data.body] : [data.body, ...data.patterns, ...data.noPatterns];
 };
 
 export const forEachExpr = <T>(
   manager: AstManager,
   root: number,
   visit: (expr: number) => T | undefined,
+  visited = new Set<number>(),
+  isIgnoringPatterns = false,
 ) => {
-  const visited = new Set([root]);
+  if (visited.has(root)) return undefined;
+  visited.add(root);
   const exprs = [root];
-  const children = [getChildren(manager, root)];
+  const children = [getChildren(manager, root, isIgnoringPatterns)];
   const nextChildren = [0];
   while (exprs.length > 0) {
     const top = exprs.length - 1;
@@ -185,7 +188,7 @@ export const forEachExpr = <T>(
     if (visited.has(child)) continue;
     visited.add(child);
     exprs.push(child);
-    children.push(getChildren(manager, child));
+    children.push(getChildren(manager, child, isIgnoringPatterns));
     nextChildren.push(0);
   }
   return undefined;

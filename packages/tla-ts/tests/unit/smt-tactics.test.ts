@@ -1464,6 +1464,32 @@ describe("the arithmetic probes, as Z3 5.3.2 measures a goal", () => {
   });
 });
 
+describe("the counting probes, as Z3 5.3.2 walks a goal", () => {
+  it("count no constant that occurs only in a pattern", () => {
+    const counts =
+      '(apply (and-then (echo "consts " num-consts " bool " num-bool-consts " arith " num-arith-consts " bv " num-bv-consts " exprs " num-exprs) (fail-if (> 1 0))))';
+    expect(
+      run([
+        '(set-option :diagnostic-output-channel "stdout")',
+        "(declare-fun f (Int Int) Int)",
+        "(declare-fun g (Bool (_ BitVec 4)) Int)",
+        "(declare-const c Int)",
+        "(declare-const b Bool)",
+        "(declare-const v (_ BitVec 4))",
+        "(assert (forall ((x Int)) (! (> x 0) :pattern ((f x c)) :pattern ((+ x (g b v))))))",
+        counts,
+        "(assert (forall ((x Int)) (! (< x 9) :no-pattern (f x c))))",
+        counts,
+      ]),
+    ).toEqual([
+      "consts 0 bool 0 arith 0 bv 0 exprs 12",
+      '(error "tactic failed: fail-if tactic")',
+      "consts 0 bool 0 arith 0 bv 0 exprs 15",
+      '(error "tactic failed: fail-if tactic")',
+    ]);
+  });
+});
+
 describe("qfufbv, as Z3 5.3.2 answers QF_UFBV", () => {
   it("ackermannizes the functions and bit-blasts the goal", () => {
     expect(
