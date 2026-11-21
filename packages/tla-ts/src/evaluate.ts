@@ -72,7 +72,7 @@ import { getKeyName } from "./resolve";
 import { isEnabled } from "./successors";
 import {
   applyFunction,
-  checkLazyArgument,
+  checkLazyArgumentWith,
   describeMissingArgument,
   compareValues,
   createFunction,
@@ -2833,7 +2833,7 @@ const compile = (expression: Expression, environment: Environment): Evaluator =>
           ) {
             return applyFunction(functionValue, argument, describeMissing);
           }
-          checkLazyArgument(functionValue, argument, isMember);
+          checkLazyArgumentWith(functionValue, argument, isMember);
           return functionValue.apply(argument);
         };
       }

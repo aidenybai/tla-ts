@@ -2913,9 +2913,9 @@ export const isElementOfWith = (
   isMember: typeof isElementOf,
 ): boolean => {
   const sets = setTrace.sets;
-  if (sets === undefined) return isElementOfAnySet(element, set, isMember);
+  if (sets === undefined) return isElementOfComponents(element, set, isMember);
   sets.push(set);
-  const isElement = isElementOfAnySet(element, set, isMember);
+  const isElement = isElementOfComponents(element, set, isMember);
   sets.pop();
   return isElement;
 };
@@ -2943,7 +2943,7 @@ const isInSortedSetLikeTlc = (element: Value, set: SetValue) =>
     ? searchLikeTlc(element, set.elements).isFound
     : isElementOfLikeTlc(element, getWrittenElements(set));
 
-const isModelValueMember = (modelValue: ModelValue, set: Value) => {
+const isModelValueMember = (modelValue: ModelValue, set: Value): false => {
   if (modelValue.type !== undefined) {
     throw new TlaEvaluationError(
       `Attempted to check if the typed model value ${prettyPrint(formatValue(modelValue))} is an element of\n${prettyPrint(formatValue(set))}`,
@@ -2956,13 +2956,102 @@ const isModelValueMember = (modelValue: ModelValue, set: Value) => {
 const isElementOfSet = (element: Value, set: Value): boolean => {
   if (typeof element === "number" && typeof set === "object") {
     if (set.kind === "Set" && !isTypedModelValueCreated)
-      return isIntegerInSortedSet(element, set) ?? isElementOfAnySet(element, set, isElementOf);
+      return isIntegerInSortedSet(element, set) ?? isElementOfAnySet(element, set);
     if (set.kind === "Interval") return element >= set.low && element <= set.high;
   }
-  return isElementOfAnySet(element, set, isElementOf);
+  return isElementOfAnySet(element, set);
 };
 
-const isElementOfAnySet = (element: Value, set: Value, isMember: typeof isElementOf): boolean => {
+const getSubsetMemberElements = (element: Value, set: SubsetValue) => {
+  if (!isSetValue(element) || isOverriddenSet(element)) {
+    throw new TlaEvaluationError(
+      `Attempted to check if the non-enumerable value\n${prettyPrint(formatValue(element))}\nis element of\n${prettyPrint(formatValue(set))}`,
+    );
+  }
+  return toFiniteSet(element).elements;
+};
+
+const getFunctionSetMemberRange = (element: Value, set: FunctionSetValue): Value[] | false => {
+  if (!isFunctionValue(element)) {
+    if (isModelValue(element)) return isModelValueMember(element, set);
+    throw new TlaEvaluationError(
+      `Attempted to check if \n${formatValue(element)}\nwhich is not a TLC function value, is in the set of functions:\n${prettyPrint(formatValue(set))}`,
+    );
+  }
+  forgetOwnWrittenOrder(element);
+  const functionValue = toFiniteFunction(element);
+  const low = getIntervalLow(element, functionValue.domain);
+  const isDomain =
+    low === undefined
+      ? isReceiverEqual(set.domain, createSortedSet(functionValue.domain))
+      : isEqualLikeTlc(
+          { kind: "Interval", low, high: low + functionValue.domain.length - 1 },
+          set.domain,
+        );
+  return isDomain && functionValue.range;
+};
+
+const getRecordSetMember = (element: Value, set: RecordSetValue): FunctionValue | false => {
+  forgetOwnWrittenOrder(element);
+  const functionValue = isFunctionValue(element) ? toFiniteFunction(element) : undefined;
+  if (!functionValue || !isRecordDomain(functionValue.domain)) {
+    if (isModelValue(element)) return isModelValueMember(element, set);
+    throw new TlaEvaluationError(
+      `Attempted to check if non-record\n${formatValue(element)}\nis in the set of records:\n${prettyPrint(formatValue(set))}`,
+    );
+  }
+  return functionValue.domain.length === set.names.length && functionValue;
+};
+
+const getProductSetMemberElements = (element: Value, set: ProductSetValue): Value[] | false => {
+  const elements = isFunctionValue(element) ? getSequenceElements(element) : undefined;
+  if (elements === undefined) {
+    const isFunction =
+      isFunctionValue(element) &&
+      toFiniteFunction(element).domain.every((key) => typeof key === "number");
+    if (isModelValue(element)) return isModelValueMember(element, set);
+    if (isFunction) return false;
+    throw new TlaEvaluationError(
+      `Attempted to check if non-tuple\n${prettyPrint(formatValue(element))}\nis in the set of tuples:\n${prettyPrint(formatValue(set))}`,
+    );
+  }
+  return elements.length === set.factors.length && elements;
+};
+
+// TLC's SetPredValue#member catches an EvalException, but not the FingerprintException a base with a source turns it into.
+const isCaughtFilterError = (error: unknown, depth: number) =>
+  error instanceof TlaEvaluationError && isEvalException(error) && !isFingerprintedSince(depth);
+
+const describeUndecidedFilterMember = (element: Value, set: FilteredSetValue) =>
+  `Cannot decide if element:\n${prettyPrint(formatValue(element))}\n is element of:\n${prettyPrint(formatValue(set.base))}\nand satisfies the predicate ${set.source?.predicate}`;
+
+const getUnionMemberSets = (element: Value, set: UnionValue) => {
+  if (!isTlcEnumerable(set.base)) {
+    throw new TlaEvaluationError(
+      `Attempted to check if:\n ${prettyPrint(formatValue(element))}\nis an element of the non-enumerable set:\n ${prettyPrint(formatUnion(set))}`,
+    );
+  }
+  const sets = toFiniteSet(set.base).elements;
+  if (sets.length > 1) {
+    sets.forEach((inner) => {
+      if (typeof inner === "object" && inner.kind === "Set") inner.isNormalized = true;
+    });
+  }
+  return sets;
+};
+
+const getSequenceSetMemberElements = (element: Value, set: SequenceSetValue): Value[] | false => {
+  const elements = getSequenceElements(element);
+  if (elements === undefined) {
+    if (isModelValue(element)) return isModelValueMember(element, set);
+    throw new TlaModuleError(
+      `Attempted to check if the value:\n${prettyPrint(formatValue(element))}\nis an element of ${prettyPrint(formatValue(set))}.`,
+    );
+  }
+  return elements;
+};
+
+const isElementOfAnySet = (element: Value, set: Value): boolean => {
   if (!isSetValue(set)) throw new TlaEvaluationError(describeNonSetMembership(element, set));
   switch (set.kind) {
     case "Set":
@@ -2996,63 +3085,82 @@ const isElementOfAnySet = (element: Value, set: Value, isMember: typeof isElemen
       return set.name !== "Nat" || (typeof element === "number" && element >= 0);
     }
     case "Subset":
-      if (!isSetValue(element) || isOverriddenSet(element)) {
-        throw new TlaEvaluationError(
-          `Attempted to check if the non-enumerable value\n${prettyPrint(formatValue(element))}\nis element of\n${prettyPrint(formatValue(set))}`,
-        );
-      }
-      return toFiniteSet(element).elements.every((item) => isMember(item, set.base));
+      return getSubsetMemberElements(element, set).every((item) => isElementOf(item, set.base));
     case "FunctionSet": {
-      if (!isFunctionValue(element)) {
-        if (isModelValue(element)) return isModelValueMember(element, set);
-        throw new TlaEvaluationError(
-          `Attempted to check if \n${formatValue(element)}\nwhich is not a TLC function value, is in the set of functions:\n${prettyPrint(formatValue(set))}`,
-        );
-      }
-      forgetOwnWrittenOrder(element);
-      const functionValue = toFiniteFunction(element);
-      const low = getIntervalLow(element, functionValue.domain);
-      const isDomain =
-        low === undefined
-          ? isReceiverEqual(set.domain, createSortedSet(functionValue.domain))
-          : isEqualLikeTlc(
-              { kind: "Interval", low, high: low + functionValue.domain.length - 1 },
-              set.domain,
-            );
-      return isDomain && functionValue.range.every((item) => isMember(item, set.range));
+      const range = getFunctionSetMemberRange(element, set);
+      return range !== false && range.every((item) => isElementOf(item, set.range));
     }
     case "RecordSet": {
-      forgetOwnWrittenOrder(element);
-      const functionValue = isFunctionValue(element) ? toFiniteFunction(element) : undefined;
-      if (!functionValue || !isRecordDomain(functionValue.domain)) {
-        if (isModelValue(element)) return isModelValueMember(element, set);
-        throw new TlaEvaluationError(
-          `Attempted to check if non-record\n${formatValue(element)}\nis in the set of records:\n${prettyPrint(formatValue(set))}`,
-        );
-      }
+      const record = getRecordSetMember(element, set);
       return (
-        functionValue.domain.length === set.names.length &&
+        record !== false &&
         set.names.every((name, index) => {
-          const position = findSortedIndex(functionValue.domain, name);
-          return position !== -1 && isMember(functionValue.range[position], set.sets[index]);
+          const position = findSortedIndex(record.domain, name);
+          return position !== -1 && isElementOf(record.range[position], set.sets[index]);
         })
       );
     }
     case "ProductSet": {
-      const elements = isFunctionValue(element) ? getSequenceElements(element) : undefined;
-      if (elements === undefined) {
-        const isFunction =
-          isFunctionValue(element) &&
-          toFiniteFunction(element).domain.every((key) => typeof key === "number");
-        if (isModelValue(element)) return isModelValueMember(element, set);
-        if (isFunction) return false;
-        throw new TlaEvaluationError(
-          `Attempted to check if non-tuple\n${prettyPrint(formatValue(element))}\nis in the set of tuples:\n${prettyPrint(formatValue(set))}`,
-        );
-      }
+      const elements = getProductSetMemberElements(element, set);
       return (
-        elements.length === set.factors.length &&
-        elements.every((item, index) => isMember(item, set.factors[index]))
+        elements !== false && elements.every((item, index) => isElementOf(item, set.factors[index]))
+      );
+    }
+    case "FilteredSet": {
+      const depth = setTrace.sets?.length ?? 0;
+      try {
+        return isElementOf(element, set.base) && set.test(element, true);
+      } catch (error) {
+        if (!isCaughtFilterError(error, depth)) throw error;
+        throw new TlaEvaluationError(describeUndecidedFilterMember(element, set));
+      }
+    }
+    case "Union":
+      return getUnionMemberSets(element, set).some((inner) => isElementOf(element, inner));
+    case "SetOperation":
+      if (set.operator === "\\cup")
+        return isElementOf(element, set.left) || isElementOf(element, set.right);
+      return (
+        isElementOf(element, set.left) &&
+        isElementOf(element, set.right) === (set.operator === "\\cap")
+      );
+    case "SequenceSet": {
+      const elements = getSequenceSetMemberElements(element, set);
+      return elements !== false && elements.every((item) => isElementOf(item, set.base));
+    }
+    default:
+      throw new TlaEvaluationError(describeNonSetMembership(element, set));
+  }
+};
+
+// Asks isMember about each component, as TLC's member methods ask their component sets, and leaves any other set to isElementOfAnySet.
+const isElementOfComponents = (
+  element: Value,
+  set: Value,
+  isMember: typeof isElementOf,
+): boolean => {
+  if (typeof set !== "object") return isElementOfAnySet(element, set);
+  switch (set.kind) {
+    case "Subset":
+      return getSubsetMemberElements(element, set).every((item) => isMember(item, set.base));
+    case "FunctionSet": {
+      const range = getFunctionSetMemberRange(element, set);
+      return range !== false && range.every((item) => isMember(item, set.range));
+    }
+    case "RecordSet": {
+      const record = getRecordSetMember(element, set);
+      return (
+        record !== false &&
+        set.names.every((name, index) => {
+          const position = findSortedIndex(record.domain, name);
+          return position !== -1 && isMember(record.range[position], set.sets[index]);
+        })
+      );
+    }
+    case "ProductSet": {
+      const elements = getProductSetMemberElements(element, set);
+      return (
+        elements !== false && elements.every((item, index) => isMember(item, set.factors[index]))
       );
     }
     case "FilteredSet": {
@@ -3060,33 +3168,12 @@ const isElementOfAnySet = (element: Value, set: Value, isMember: typeof isElemen
       try {
         return isMember(element, set.base) && set.test(element, true);
       } catch (error) {
-        // TLC's SetPredValue#member catches an EvalException, but not the FingerprintException a base with a source turns it into.
-        if (
-          !(error instanceof TlaEvaluationError) ||
-          !isEvalException(error) ||
-          isFingerprintedSince(depth)
-        ) {
-          throw error;
-        }
-        throw new TlaEvaluationError(
-          `Cannot decide if element:\n${prettyPrint(formatValue(element))}\n is element of:\n${prettyPrint(formatValue(set.base))}\nand satisfies the predicate ${set.source?.predicate}`,
-        );
+        if (!isCaughtFilterError(error, depth)) throw error;
+        throw new TlaEvaluationError(describeUndecidedFilterMember(element, set));
       }
     }
-    case "Union": {
-      if (!isTlcEnumerable(set.base)) {
-        throw new TlaEvaluationError(
-          `Attempted to check if:\n ${prettyPrint(formatValue(element))}\nis an element of the non-enumerable set:\n ${prettyPrint(formatUnion(set))}`,
-        );
-      }
-      const sets = toFiniteSet(set.base).elements;
-      if (sets.length > 1) {
-        sets.forEach((inner) => {
-          if (typeof inner === "object" && inner.kind === "Set") inner.isNormalized = true;
-        });
-      }
-      return sets.some((inner) => isMember(element, inner));
-    }
+    case "Union":
+      return getUnionMemberSets(element, set).some((inner) => isMember(element, inner));
     case "SetOperation":
       if (set.operator === "\\cup")
         return isMember(element, set.left) || isMember(element, set.right);
@@ -3094,17 +3181,11 @@ const isElementOfAnySet = (element: Value, set: Value, isMember: typeof isElemen
         isMember(element, set.left) && isMember(element, set.right) === (set.operator === "\\cap")
       );
     case "SequenceSet": {
-      const elements = getSequenceElements(element);
-      if (elements === undefined) {
-        if (isModelValue(element)) return isModelValueMember(element, set);
-        throw new TlaModuleError(
-          `Attempted to check if the value:\n${prettyPrint(formatValue(element))}\nis an element of ${prettyPrint(formatValue(set))}.`,
-        );
-      }
-      return elements.every((item) => isMember(item, set.base));
+      const elements = getSequenceSetMemberElements(element, set);
+      return elements !== false && elements.every((item) => isMember(item, set.base));
     }
     default:
-      throw new TlaEvaluationError(describeNonSetMembership(element, set));
+      return isElementOfAnySet(element, set);
   }
 };
 
@@ -3290,8 +3371,73 @@ const createArgumentListError = (functionValue: LazyFunctionValue, argument: Val
     ),
   );
 
+const createBoundDomainError = (argument: Value) =>
+  new TlaEvaluationError(
+    `Attempted to apply a function to ${formatValue(argument)}, which is not in its domain`,
+  );
+
+const createBoundNonMemberError = (
+  functionValue: LazyFunctionValue,
+  index: number,
+  element: Value,
+  tupleLength: number | undefined,
+) =>
+  new TlaEvaluationError(
+    describeBoundArgument(
+      functionValue,
+      `argument number ${index + 1}`,
+      element,
+      tupleLength === undefined
+        ? `is not in the function's domain ${formatValue(functionValue.domain)}`
+        : "is not in its domain",
+    ),
+  );
+
+const checkBoundTuple = (
+  functionValue: LazyFunctionValue,
+  index: number,
+  element: Value,
+  tupleLength: number | undefined,
+) => {
+  if (tupleLength !== undefined && getSequenceElements(element)?.length !== tupleLength) {
+    throw new TlaEvaluationError(
+      describeBoundArgument(
+        functionValue,
+        `argument number ${index + 1}`,
+        element,
+        "does not match its formal parameter",
+      ),
+    );
+  }
+};
+
 // Deviation from TLC: FcnLambdaValue#apply indexes past an argument tuple shorter than the bounds and ignores a longer one, where this rejects the list.
 const checkBoundArguments = (
+  functionValue: LazyFunctionValue,
+  tupleLengths: (number | undefined)[],
+  argument: Value,
+) => {
+  const domain = functionValue.domain;
+  const elements = getSequenceElements(argument);
+  if (elements === undefined) throw createArgumentListError(functionValue, argument);
+  if (typeof domain !== "object" || domain.kind !== "ProductSet") {
+    throw createBoundDomainError(argument);
+  }
+  tupleLengths.forEach((tupleLength, index) => {
+    if (index >= elements.length) throw createArgumentListError(functionValue, argument);
+    const element = elements[index];
+    if (!isElementOf(element, domain.factors[index])) {
+      throw createBoundNonMemberError(functionValue, index, element, tupleLength);
+    }
+    checkBoundTuple(functionValue, index, element, tupleLength);
+  });
+  if (elements.length > tupleLengths.length) {
+    throw createArgumentListError(functionValue, argument);
+  }
+};
+
+// checkBoundArguments for the coverage path, whose isMember charges what TLC's member methods charge.
+const checkBoundArgumentsWith = (
   functionValue: LazyFunctionValue,
   tupleLengths: (number | undefined)[],
   argument: Value,
@@ -3301,50 +3447,29 @@ const checkBoundArguments = (
   const elements = getSequenceElements(argument);
   if (elements === undefined) throw createArgumentListError(functionValue, argument);
   if (typeof domain !== "object" || domain.kind !== "ProductSet") {
-    throw new TlaEvaluationError(
-      `Attempted to apply a function to ${formatValue(argument)}, which is not in its domain`,
-    );
+    throw createBoundDomainError(argument);
   }
   tupleLengths.forEach((tupleLength, index) => {
     if (index >= elements.length) throw createArgumentListError(functionValue, argument);
     const element = elements[index];
-    const position = `argument number ${index + 1}`;
     if (!isMember(element, domain.factors[index])) {
-      throw new TlaEvaluationError(
-        describeBoundArgument(
-          functionValue,
-          position,
-          element,
-          tupleLength === undefined
-            ? `is not in the function's domain ${formatValue(domain)}`
-            : "is not in its domain",
-        ),
-      );
+      throw createBoundNonMemberError(functionValue, index, element, tupleLength);
     }
-    if (tupleLength !== undefined && getSequenceElements(element)?.length !== tupleLength) {
-      throw new TlaEvaluationError(
-        describeBoundArgument(
-          functionValue,
-          position,
-          element,
-          "does not match its formal parameter",
-        ),
-      );
-    }
+    checkBoundTuple(functionValue, index, element, tupleLength);
   });
   if (elements.length > tupleLengths.length) {
     throw createArgumentListError(functionValue, argument);
   }
 };
 
-export const checkLazyArgument = (
+export const checkLazyArgumentWith = (
   functionValue: LazyFunctionValue,
   argument: Value,
   isMember: typeof isElementOf,
 ) => {
   const tupleLengths = functionValue.boundTupleLengths;
   if (tupleLengths !== undefined) {
-    checkBoundArguments(functionValue, tupleLengths, argument, isMember);
+    checkBoundArgumentsWith(functionValue, tupleLengths, argument, isMember);
   } else if (!isMember(argument, functionValue.domain)) {
     throw new TlaEvaluationError(describeMissingArgument(functionValue, argument));
   }
@@ -3359,7 +3484,14 @@ export const applyFunction = (
     if (functionValue.enumerated) {
       return applyFunction(functionValue.enumerated, argument, describeMissing);
     }
-    checkLazyArgument(functionValue, argument, isElementOf);
+    const tupleLengths = functionValue.boundTupleLengths;
+    if (tupleLengths !== undefined) {
+      checkBoundArguments(functionValue, tupleLengths, argument);
+      return functionValue.apply(argument);
+    }
+    if (!isElementOf(argument, functionValue.domain)) {
+      throw new TlaEvaluationError(describeMissingArgument(functionValue, argument));
+    }
     return functionValue.apply(argument);
   }
   if (typeof functionValue !== "object" || functionValue.kind !== "Function") {
