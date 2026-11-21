@@ -673,7 +673,9 @@ export const compareValues = (left: Value, right: Value): number => {
           : toFiniteSet(left),
         rightKind === "Subset" && right.secondary !== undefined
           ? toChargedSet(right, false)
-          : toFiniteSet(right),
+          : rightKind === "SetOperation" || rightKind === "Union"
+            ? toOpenedSet(right)
+            : toFiniteSet(right),
       );
     }
     return compareFunctions(toFiniteFunction(left), toFiniteFunction(right));
@@ -1967,20 +1969,30 @@ export const toFiniteSet = (value: Value): SetValue => {
   }
   const lazy = typeof value === "object" && isLazySet(value) ? value : undefined;
   if (lazy?.enumerated) return lazy.enumerated;
+  return convertSet(value, lazy, false);
+};
+
+const convertSet = (
+  value: Value,
+  lazy: ConvertibleSetValue | undefined,
+  isFramedAsOpened: boolean,
+) => {
   if (isSortingLiteral && lazy !== undefined && isPredicated(lazy) && hasObservedFilter(lazy)) {
     throw new TlaEvaluationError("The set literal holds a filter");
   }
   const sets = setTrace.sets;
-  sets?.push(value);
+  if (!isFramedAsOpened) sets?.push(value);
   const isOuterSorting = isSortingLiteral;
   isSortingLiteral = isOuterSorting && lazy?.kind === "MixedSet";
   let elements: Value[];
   try {
-    elements = enumerateSet(value);
+    elements = isFramedAsOpened
+      ? enumerateSet(value, true, undefined, openOperandStream(value, false))
+      : enumerateSet(value);
   } finally {
     isSortingLiteral = isOuterSorting;
   }
-  sets?.pop();
+  if (!isFramedAsOpened) sets?.pop();
   const isSorted =
     typeof value === "object" &&
     (value.kind === "MixedSet" ||
@@ -1995,18 +2007,20 @@ export const toFiniteSet = (value: Value): SetValue => {
   return set;
 };
 
-// TLC's SetEnumValue#compareTo and equals convert their argument with toSetEnum, which keeps nothing, so a filter inside runs again on the next conversion.
+// TLC's SetEnumValue#compareTo and equals convert their argument with toSetEnum, which frames S \cup T, S \cap T, S \ T and UNION S only as their elements() opens them, not as it draws from them.
+const toOpenedSet = (value: SetOperationValue | UnionValue) =>
+  setTrace.sets !== undefined && !value.enumerated
+    ? convertSet(value, value, true)
+    : toFiniteSet(value);
+
+// TLC's toSetEnum keeps nothing, so a filter inside runs again on the next conversion.
 const toArgumentSet = (value: Value) => {
-  const lazy =
-    typeof value === "object" &&
-    isLazySet(value) &&
-    !value.enumerated &&
-    isPredicated(value) &&
-    hasObservedFilter(value)
-      ? value
-      : undefined;
-  const set = toFiniteSet(value);
-  if (lazy) lazy.enumerated = undefined;
+  const lazy = typeof value === "object" && isLazySet(value) ? value : undefined;
+  if (lazy === undefined || lazy.enumerated) return toFiniteSet(value);
+  const isRepeated = isPredicated(lazy) && hasObservedFilter(lazy);
+  const set =
+    lazy.kind === "SetOperation" || lazy.kind === "Union" ? toOpenedSet(lazy) : toFiniteSet(lazy);
+  if (isRepeated) lazy.enumerated = undefined;
   return set;
 };
 

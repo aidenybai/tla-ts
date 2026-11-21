@@ -280,6 +280,27 @@ describe("evaluation errors match TLC", () => {
   });
 
   it.each([
+    ['{1} # ((UNION {1..2, {x}} \\ {"a"}) \\ {x})', ["SetEnumeration", "SetEnumeration"]],
+    ['{1} # UNION {UNION {1..2, {x}} \\ {"a"}}', ["SetEnumeration", "SetEnumeration"]],
+    [
+      '<<{1}>> # <<((UNION {1..2, {x}} \\ {"a"}) \\ {x})>>',
+      ["Tuple", "SetEnumeration", "SetEnumeration"],
+    ],
+  ])(
+    "frames the set that %s converts as an argument only as its stream opens, like TLC",
+    async (invariant, sources) => {
+      const result = await check({
+        source: `---- MODULE M ----\nEXTENDS Integers\nVARIABLE x\nInit == x = 0\nNext == x' = (x + 1) % 3\nInv == ${invariant}\n====`,
+        config: "INIT Init\nNEXT Next\nINVARIANT Inv",
+      });
+      expect([
+        result.failure?.fingerprint?.reason,
+        result.failure?.fingerprint?.sources.map((source) => source.kind),
+      ]).toEqual(['Attempted to check equality of string "a" with non-string:\n0', sources]);
+    },
+  );
+
+  it.each([
     ["x = [k \\in {1, 2} |-> k \\div 0]", "x' = x", ["FunctionConstruction"]],
     ["x = 0", "x' = [k \\in 1..2 |-> k \\div 0]", ["FunctionConstruction"]],
     ["x = 0", "x' = [k \\in {1, 2} |-> <<1, 2>>[k + 1]]", ["FunctionConstruction", "Tuple"]],
