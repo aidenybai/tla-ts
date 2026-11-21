@@ -185,8 +185,8 @@ const collectLocalFacts = (
               definition.params.length > 0) ||
             environment.theorems.has(target)
           ),
-          // Spec#lookup gives a substituted constant its substitute's OpDefNode, whose body Tool#evalAppl evaluates at each reference.
-          isSubstitute: target !== name && !environment.definitions.has(name),
+          // Spec#lookup gives a substituted constant or definition its substitute's OpDefNode, whose body Tool#evalAppl evaluates at each reference.
+          isSubstitute: target !== name,
         });
       } else {
         const builtinName = builtin?.name ?? target;
@@ -356,7 +356,7 @@ export const createDefinitionFacts = (environment: DefinitionNames): DefinitionF
   };
   const getPurityEdges = (isPassed: (edge: Edge) => boolean) =>
     edges.map((own) => new Int32Array(own.filter(isPassed).map(getId)));
-  // TLC evaluates a constant's substitute at each reference, which a reference shows only where a second evaluation does.
+  // TLC evaluates a substitute at each reference, which a reference shows only where a second evaluation does.
   const shown = edges.some((own) => own.some((edge) => edge.isSubstitute))
     ? closeRows(
         localImpurity,

@@ -1718,6 +1718,145 @@ ASSUME TLCFP(a) = -887695703
     expect(printed).toEqual(["<<2, 3>>"]);
   });
 
+  const getOverrideSource = (definitions: string, next = "y' = (y + 1) % 2", extended = "") =>
+    `---- MODULE M ----\nEXTENDS TLC, Naturals${extended}\nVARIABLE y\n${definitions}\nInit == y = 0\nNext == ${next}\n====\n`;
+
+  it.each([
+    [
+      'Foo == 1\nBar == PrintT("B")\nASSUME Foo /\\ Foo',
+      "CONSTANT Foo <- Bar",
+      ['"B"', '"B"', '"B"'],
+    ],
+    [
+      'Bar == PrintT("B")\nFoo == 1\nASSUME Foo /\\ Foo',
+      "CONSTANT Foo <- Bar",
+      ['"B"', '"B"', '"B"', '"B"'],
+    ],
+    [
+      'Foo == 1\nBar == PrintT("B")\nASSUME Bar /\\ Foo /\\ Bar',
+      "CONSTANT Foo <- Bar",
+      ['"B"', '"B"'],
+    ],
+    [
+      'Foo == 1\nBar == PrintT("B")\nInv == Foo',
+      "CONSTANT Foo <- Bar\nINVARIANT Inv",
+      ['"B"', '"B"'],
+    ],
+    [
+      'Foo == 1\nBar == PrintT("B")\nInv == y = 0 \\/ Foo',
+      "CONSTANT Foo <- Bar\nINVARIANT Inv",
+      ['"B"', '"B"'],
+    ],
+    [
+      'Foo == 1\nBar == PrintT("B")\nE == Foo\nASSUME E /\\ E',
+      "CONSTANT Foo <- Bar",
+      ['"B"', '"B"'],
+    ],
+    [
+      'Foo == 1\nBar == PrintT("B")\nE == Foo\nInv == E /\\ Foo',
+      "CONSTANT Foo <- Bar\nINVARIANT Inv",
+      ['"B"', '"B"', '"B"'],
+    ],
+    ['Foo == 1\nBaz == PrintT("Z")\nBar == Baz\nASSUME Foo', "CONSTANT Foo <- Bar", ['"Z"', '"Z"']],
+    ['Foo == 1\nBar == PrintT("B") /\\ CHOOSE v : TRUE', "CONSTANT Foo <- Bar", ['"B"', '"B"']],
+    [
+      'Foo == 1\nG(Op(_)) == Op("level")\nBar == G(TLCGet)\nASSUME PrintT(<<"F", Foo>>)',
+      "CONSTANT Foo <- Bar",
+      ['<<"F", 0>>'],
+    ],
+    [
+      "Foo == 1\nf[a \\in {1}] == PrintT(a)\nBar == f\nASSUME Foo[1]",
+      "CONSTANT Foo <- Bar",
+      ["1", "1"],
+    ],
+    [
+      'Foo == 1\nBar == PrintT("B")\nASSUME Foo /\\ Foo',
+      "CONSTANT Foo <- [M] Bar",
+      ['"B"', '"B"', '"B"'],
+    ],
+  ])(
+    "evaluates the substitute of Foo in %j at Foo's place as TLC starts and at each reference to Foo, for %j",
+    async (definitions, override, expected) => {
+      const printed: string[] = [];
+      const result = await check({
+        source: getOverrideSource(definitions),
+        config: `INIT Init\nNEXT Next\n${override}\n`,
+        onPrint: (text) => printed.push(text),
+      });
+      expect([printed, result.status, result.distinctStates]).toEqual([expected, "success", 2]);
+    },
+  );
+
+  it.each([
+    ["ASSUME Foo", "CONSTANT Foo <- Bar", 3],
+    ["ASSUME Foo /\\ Foo", "CONSTANT Foo <- [P] Bar", 4],
+  ])(
+    "evaluates the substitute of a definition an extended module holds as TLC starts each module, for %j and %j",
+    async (assumption, override, count) => {
+      const printed: string[] = [];
+      await check({
+        source: getOverrideSource(`Bar == PrintT("B")\n${assumption}`, undefined, ", P"),
+        config: `INIT Init\nNEXT Next\n${override}\n`,
+        loadModule: (name) => (name === "P" ? "---- MODULE P ----\nFoo == 1\n====\n" : undefined),
+        onPrint: (text) => printed.push(text),
+      });
+      expect(printed).toEqual(Array.from({ length: count }, () => '"B"'));
+    },
+  );
+
+  it("fails at a reference to Foo whose substitute failed as TLC started", async () => {
+    const printed: string[] = [];
+    const result = await check({
+      source: getOverrideSource('Foo == 1\nBar == PrintT("B") /\\ CHOOSE v : TRUE\nASSUME Foo'),
+      config: "INIT Init\nNEXT Next\nCONSTANT Foo <- Bar\n",
+      onPrint: (text) => printed.push(text),
+    });
+    expect([printed, result.status]).toEqual([['"B"', '"B"', '"B"'], "assumption-violation"]);
+  });
+
+  it.each([
+    ["Bar == RandomElement(1..100)", "<<74, 92, 92, 74>>"],
+    ["Bar == TLCEval(RandomElement(1..100))", "<<74, 74, 74, 74>>"],
+  ])("draws %s again at each reference to Foo with TLC's -seed 4", async (definition, expected) => {
+    const printed: string[] = [];
+    await check({
+      source: getOverrideSource(`Foo == 1\n${definition}\nASSUME PrintT(<<Bar, Foo, Foo, Bar>>)`),
+      config: "INIT Init\nNEXT Next\nCONSTANT Foo <- Bar\n",
+      seed: 4n,
+      onPrint: (text) => printed.push(text),
+    });
+    expect(printed).toEqual([expected]);
+  });
+
+  it("counts the substitute's body at each reference to Foo, as TLC's coverage does", async () => {
+    const lines = await getCoverageLines(
+      getOverrideSource(
+        "Foo == {0}\nBar == {1, 2} \\cup {3}\nInv == y \\in Foo \\/ y = 0",
+        "y' \\in Foo",
+      ),
+      "INIT Init\nNEXT Next\nCONSTANT Foo <- Bar\nINVARIANT Inv\n",
+    );
+    expect(lines?.slice(-2)).toEqual([
+      [
+        "line 8, col 9 to line 8, col 18 of module M: 12",
+        "|line 8, col 16 to line 8, col 18 of module M: 4",
+        "||line 5, col 8 to line 5, col 22 of module M: 4",
+        "|||line 5, col 8 to line 5, col 13 of module M: 4",
+        "|||line 5, col 20 to line 5, col 22 of module M: 4:8",
+      ],
+      [
+        "line 6, col 8 to line 6, col 25 of module M: 4",
+        "|line 6, col 8 to line 6, col 16 of module M: 4",
+        "||line 6, col 8 to line 6, col 8 of module M: 4",
+        "||line 6, col 14 to line 6, col 16 of module M: 4",
+        "|||line 5, col 8 to line 5, col 22 of module M: 4",
+        "||||line 5, col 8 to line 5, col 13 of module M: 4",
+        "||||line 5, col 20 to line 5, col 22 of module M: 4:8",
+        "|line 6, col 21 to line 6, col 25 of module M: 1",
+      ],
+    ]);
+  });
+
   it("reads TLCGet in every state through a constant substituted with it, as TLC's level bound does", async () => {
     const prints: string[] = [];
     await check({

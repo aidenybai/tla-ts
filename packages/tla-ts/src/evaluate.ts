@@ -979,10 +979,16 @@ export interface StartupSubstitute {
   definition: Definition;
 }
 
+// An overridden definition's place holds its substitute, which SpecProcessor#processConstantDefns evaluates there even when stored.
+export interface StartupDefinition {
+  definition: Definition;
+  isOverride: boolean;
+}
+
 // SpecProcessor#processConstantDefns evaluates the substitute of each constant in a module's context, then the module's definitions.
 export interface StartupModule {
   substitutes: StartupSubstitute[];
-  definitions: Definition[];
+  definitions: StartupDefinition[];
 }
 
 const evaluateAtStartup = (
@@ -1024,11 +1030,16 @@ export const evaluateStartupDefinitions = (modules: StartupModule[], environment
         );
       }
     });
-    module.definitions.forEach((definition) => {
+    module.definitions.forEach((entry) => {
+      const definition = entry.definition;
       if (definition.kind === "Operator" && definition.params.length > 0) return;
       if (!isEvaluatedAtStartup(definition, environment)) return;
       const definitionId = environment.facts.ids.get(definition);
-      if (definitionId === undefined || environment.startupValues[definitionId] !== undefined) {
+      if (
+        definitionId === undefined ||
+        (environment.startupValues[definitionId] !== undefined &&
+          !(entry.isOverride && isReevaluationShown(definition, environment)))
+      ) {
         return;
       }
       try {

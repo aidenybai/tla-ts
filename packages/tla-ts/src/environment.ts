@@ -1922,21 +1922,28 @@ export const createEnvironment = (
     instances: instanceLevels.instances,
     recursiveSections,
   };
+  const getSubstitute = (key: string) => {
+    const target = substitutions.get(key);
+    const definition = target === undefined ? undefined : definitions.get(target);
+    return definition?.kind === "Function" ||
+      (definition?.kind === "Operator" && definition.params.length === 0)
+      ? definition
+      : undefined;
+  };
   const substitutes = new Map(
     linkedRoot.constants.flatMap((constant): [string, StartupSubstitute][] => {
       const target = substitutions.get(constant.key);
-      const definition = target === undefined ? undefined : definitions.get(target);
-      return target !== undefined &&
-        (definition?.kind === "Function" ||
-          (definition?.kind === "Operator" && definition.params.length === 0))
+      const definition = getSubstitute(constant.key);
+      return target !== undefined && definition
         ? [[constant.key, { key: constant.key, target, definition }]]
         : [];
     }),
   );
-  // Tool#evalAppl evaluates a constant's substitute at each reference, which shows only where a second evaluation does or coverage counts it. The copy has no startup value to read.
-  substitutes.forEach((substitute) => {
-    if (options.isCovered || isReevaluationShown(substitute.definition, environment)) {
-      environment.reevaluatedSubstitutes.set(substitute.key, { ...substitute.definition });
+  // Tool#evalAppl evaluates a substitute at each reference, which shows only where a second evaluation does or coverage counts it. The copy has no startup value to read.
+  substitutions.forEach((_target, key) => {
+    const definition = getSubstitute(key);
+    if (definition && (options.isCovered || isReevaluationShown(definition, environment))) {
+      environment.reevaluatedSubstitutes.set(key, { ...definition });
     }
   });
   if (runtime.version !== "1.7.4") runtime.isStarted = true;
@@ -1992,12 +1999,12 @@ export const createEnvironment = (
                   .flatMap((name) => moduleSubstitutes.get(name) ?? []),
           definitions: order.getDefinitionOrder(getModuleName(linked)).flatMap((name) => {
             const key = getDefinitionKey(linked, name);
-            const definition = definitions.get(key);
+            const isOverride = substitutions.has(key);
+            const definition = isOverride ? getSubstitute(key) : definitions.get(key);
             return definition &&
               isProcessedAtStartup(origins.get(key) ?? linked) &&
-              !constants.has(key) &&
-              !substitutions.has(key)
-              ? [definition]
+              !constants.has(key)
+              ? [{ definition, isOverride }]
               : [];
           }),
         };
