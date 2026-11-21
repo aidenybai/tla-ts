@@ -1229,6 +1229,34 @@ ASSUME TLCFP(a) = -887695703
     },
   );
 
+  it.each([
+    [
+      "a LAMBDA argument",
+      "LET Tup(P(_)) == [n \\in UNION {1..1, {2}} |-> IF P(n) THEN n ELSE 0] IN LET F == Tup(LAMBDA n : PrintT(n)) IN <<1, 2>> = F /\\ <<1, 2>> = F",
+      ["1", "2", "1", "2", "TRUE"],
+    ],
+    [
+      "a LET operator",
+      "LET P(n) == PrintT(n) IN LET F == [n \\in UNION {1..1, {2}} |-> IF P(n) THEN n ELSE 0] IN <<1, 2>> = F /\\ <<1, 2>> = F",
+      ["1", "2", "1", "2", "TRUE"],
+    ],
+    [
+      "an operator argument",
+      "LET Op(h) == [n \\in UNION {1..1, {2}} |-> h[{}] /\\ n = 1] IN LET F == Op([s \\in SUBSET {1} |-> PrintT(s)]) IN <<TRUE, FALSE>> = F /\\ <<TRUE, FALSE>> = F",
+      ["{}", "{}", "{}", "{}", "TRUE"],
+    ],
+    [
+      "a LAMBDA argument of a recursive function",
+      "LET Op(P(_)) == LET r[n \\in 1..2] == IF n = 1 THEN P(n) ELSE r[n - 1] IN r IN LET F == Op(LAMBDA n : PrintT(n)) IN <<TRUE, TRUE>> = F /\\ <<TRUE, TRUE>> = F",
+      ["1", "1", "1", "1", "TRUE"],
+    ],
+  ])(
+    "applies a lazy function again each time a tuple is compared with it, as TLC does, when its body prints through %s",
+    async (_name, expression, printed) => {
+      expect((await checkLazyTuple(expression)).printed).toEqual(printed);
+    },
+  );
+
   it("applies a lazy function a tuple is compared with again when TLC replays its error", async () => {
     const lazyTuple = await checkLazyTuple(
       "<<1, 2>> # [n \\in UNION {1..1, {3}} |-> PrintT(n) /\\ 1 \\div (n - 3) = 0]",

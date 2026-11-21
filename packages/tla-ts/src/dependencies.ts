@@ -8,6 +8,7 @@ import {
 } from "./ast";
 import type { Environment } from "./evaluate";
 import { ACTION_LEVEL, CONSTANT_LEVEL, TEMPORAL_LEVEL, VARIABLE_LEVEL } from "./levels";
+import { getBoundNames, getPatternNames } from "./resolve";
 
 interface DefinitionNames extends Pick<
   Environment,
@@ -44,6 +45,7 @@ const RANDOM = 256;
 const ABOVE_CONSTANT_BOUND = 512;
 const TLC_EVAL = 1024;
 const REEVALUATION_SHOWN = 2048;
+const OUTER_LOCAL = 4096;
 
 const ACTION_KINDS = new Set<Expression["kind"]>([
   "Prime",
@@ -89,6 +91,36 @@ const STREAMED_BUILTINS = new Set(["UNION", "\\cup"]);
 
 const RANDOM_BUILTINS = new Set(["RandomSubset", "RandomSetOfSubsets", "RandomSubsetSet"]);
 
+const getDefinitionNames = (definition: Definition): string[] => [
+  definition.name,
+  ...(definition.kind === "Function"
+    ? getBoundNames(definition.bounds)
+    : definition.params.map((param) => param.name)),
+  ...("standardDefinition" in definition ? getDefinitionNames(definition.standardDefinition) : []),
+];
+
+const getBinderNames = (node: Expression): string[] => {
+  switch (node.kind) {
+    case "Forall":
+    case "Exists":
+    case "SetMap":
+    case "FunctionConstruction":
+      return getBoundNames(node.bounds);
+    case "SetFilter":
+      return getPatternNames(node.bound.pattern);
+    case "Choose":
+      return getPatternNames(node.pattern);
+    case "UnboundedQuantifier":
+      return node.names;
+    case "Lambda":
+      return node.params;
+    case "Let":
+      return node.definitions.flatMap(getDefinitionNames);
+    default:
+      return [];
+  }
+};
+
 interface Edge {
   callee: Definition;
   isOverridden: boolean;
@@ -101,9 +133,11 @@ const collectLocalFacts = (
   expressions: Expression[],
   environment: DefinitionNames,
   words: number,
+  boundNames?: string[],
 ) => {
   const row = new Uint32Array(words);
   const edges: Edge[] = [];
+  const bound = boundNames && new Set(boundNames);
   const getOwnLevelFlags = (node: Expression) => {
     const kind = node.kind;
     if (ACTION_KINDS.has(kind) || (kind === "Apply" && node.operator === "\\cdot")) {
@@ -146,8 +180,10 @@ const collectLocalFacts = (
     const ownLevelFlags = getOwnLevelFlags(node);
     if (isLevelCounted && ownLevelFlags !== undefined) row[0] |= ownLevelFlags;
     const isInnerLevelCounted = isLevelCounted && ownLevelFlags === undefined;
+    if (bound) getBinderNames(node).forEach((binderName) => bound.add(binderName));
     const name = getReferencedName(node);
     const isLocal = name !== undefined && isLocallyResolved(node);
+    if (bound && isLocal && !bound.has(name)) row[0] |= OUTER_LOCAL;
     // TLC's getLevelBound takes a parameter named like a variable for that variable.
     if (isLocal && environment.variableIndex.has(name)) {
       if (!isOperatorArgument) row[0] |= ABOVE_CONSTANT_BOUND;
@@ -190,6 +226,16 @@ const collectLocalFacts = (
           isSubstitute: target !== name,
         });
       } else {
+        // An operator passed by name carries no resolution, so one with no definition or builtin is local.
+        if (
+          bound &&
+          kind === "OperatorReference" &&
+          !builtin &&
+          !isOverridden &&
+          !bound.has(name)
+        ) {
+          row[0] |= OUTER_LOCAL;
+        }
         const builtinName = builtin?.name ?? target;
         const isImpure = IMPURE_BUILTINS.has(builtinName) || builtin?.isStateLevel === true;
         if (isImpure) row[0] |= IMPURE | (builtinName === "Assert" ? 0 : REPEATED_EFFECT);
@@ -399,9 +445,13 @@ const getRow = (definition: Definition, environment: Environment): Uint32Array =
     : facts.rows.subarray(id * facts.words, (id + 1) * facts.words);
 };
 
-const getExpressionsRow = (expressions: Expression[], environment: Environment) => {
+const getExpressionsRow = (
+  expressions: Expression[],
+  environment: Environment,
+  boundNames?: string[],
+) => {
   const words = environment.facts.words;
-  const local = collectLocalFacts(expressions, environment, words);
+  const local = collectLocalFacts(expressions, environment, words, boundNames);
   const row = local.row;
   local.edges.forEach((edge) => {
     const callee = getRow(edge.callee, environment);
@@ -436,14 +486,16 @@ const EFFECT_FLAGS = {
   streamed: STREAMED,
   // What a second evaluation shows: output again, or other random draws.
   replayed: REPEATED_EFFECT | RANDOM,
-  varying: IMPURE | RANDOM,
+  // A local name bound outside the expressions can hold an operator or a lazy value whose body prints or draws.
+  varying: IMPURE | RANDOM | OUTER_LOCAL,
 };
 
 export const isExpressionImpure = (
   expressions: Expression[],
   environment: Environment,
   effect: keyof typeof EFFECT_FLAGS,
-) => (getExpressionsRow(expressions, environment)[0] & EFFECT_FLAGS[effect]) !== 0;
+  boundNames?: string[],
+) => (getExpressionsRow(expressions, environment, boundNames)[0] & EFFECT_FLAGS[effect]) !== 0;
 
 export const isImpureDefinition = (
   definition: Definition,
