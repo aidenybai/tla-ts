@@ -637,12 +637,19 @@ const DEFINITIONS = [
   LET module == OrdinaryObjectCreate(s, Intrinsic(s, "ObjectPrototype"))
       made == CreateDataProperty(module.s, Val(module), SV("exports"), exports)
   IN Ok([made.s EXCEPT !.required = (k :> [module |-> Val(module), loaded |-> TRUE]) @@ @], exports)`,
-  // Node's performance, of which a program reads only now, whose time each run reads anew, so it
-  // gives HostTime, at whose reading a compiled spec stops.
+  // Node's performance, of which a program reads only now, which it calls on performance, whose
+  // time each run reads anew, so it gives HostTime, at whose reading a compiled spec stops.
   `PerformanceObject(s) ==
   LET o == OrdinaryObjectCreate(s, Intrinsic(s, "ObjectPrototype"))
-      now == CreateBuiltinFunction(o.s, <<"Module", "performanceNow">>, 0, N("now"), Empty)
+      now == HostMethod(o.s, N("now"), 0, N("performance.now"), "performanceNow", Val(o))
   IN Ok(CreateDataProperty(now.s, Val(o), SV("now"), Val(now)).s, Val(o))`,
+  // A method of the host, as a proxy of a function of its name and length, which a program may
+  // read, and whose call runs the method's steps, which a program may only call: every other
+  // operation stops, as the function's source text, which Node's has, does.
+  `HostMethod(s, name, length, stopName, method, data) ==
+  LET f == CreateBuiltinFunction(s, <<"Module", "hostStop">>, length, name, stopName)
+  IN StoppingProxy(f.s, Val(f), stopName, <<[trap |-> SV("get"), method |-> "hostMethodGet", data |-> stopName],
+                                           [trap |-> SV("apply"), method |-> method, data |-> data]>>)`,
   // Node's console, of which a program reads only the methods that write what they're given and
   // createTask: each of the former writes nothing that the program reads, where the values it's
   // given are primitives, which no code of the program runs to format.
@@ -1550,7 +1557,10 @@ const HOST_PATCHES = [
     [] m = "hostGlobal" -> Ok(s, data)
     [] m = "performanceGet" ->
          IF Arg(args, 2) # SV("now") THEN HostStop(N("performance")) ELSE Get(s, Arg(args, 1), Arg(args, 2))
-    [] m = "performanceNow" -> Ok(s, HostTime)
+    [] m = "hostMethodGet" -> IF Arg(args, 2) \\notin {SV("name"), SV("length")} THEN HostStop(data) ELSE Get(s, Arg(args, 1), Arg(args, 2))
+    [] m = "performanceNow" ->
+         IF ~IsObject(Arg(args, 2)) \\/ O(s, Arg(args, 2)).class # "proxy" \\/ O(s, Arg(args, 2)).slots.target # data
+         THEN HostStop(N("performance.now")) ELSE Ok(s, HostTime)
     [] m = "consoleGet" ->
          IF Arg(args, 2) \\notin {SV("log"), SV("info"), SV("debug"), SV("warn"), SV("error"), SV("createTask")}
          THEN Assert(FALSE, "tla-ts can't use the host's console other than to write primitives and createTask")

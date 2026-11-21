@@ -780,6 +780,18 @@ describe("the CLI with TypeScript files", () => {
       expect(result.status).toBe(1);
     });
 
+    it("stops where the program calls now on another object, whose TypeError a catch would see", () => {
+      const directory = copyFixtures("passing");
+      writeFileSync(
+        join(directory, "clock.cjs"),
+        'const getAnswer = () => {\n  try {\n    return typeof performance.now.call({});\n  } catch (error) {\n    return error.name;\n  }\n};\nif (getAnswer() !== "TypeError") throw new Error("answer");\n',
+      );
+      expect(runNode(directory, "clock.cjs").status).toBe(0);
+      const result = runCli(directory, ["clock.cjs"]);
+      expect(result.status).not.toBe(1);
+      expect(result.stdout).toContain("tla-ts can't run the host's performance.now");
+    });
+
     it("stops where the program reads the time that now gives", () => {
       const directory = copyFixtures("passing");
       writeFileSync(

@@ -615,6 +615,41 @@ describe("gives a module the part of Node's process and TextEncoder that Effect 
   });
 });
 
+// Node's performance.now, whose name and length a program reads, which it calls on performance,
+// and which throws a TypeError where it's called on another object, so the check stops there, as
+// it does at every other use of the function.
+describe("calls performance.now on performance, and stops at every other use", () => {
+  const getFiles = (expected: string) => ({
+    "main.js": getMain(
+      `const log = [];
+      log.push(typeof performance.now, performance.now.name, performance.now.length, typeof performance.now());`,
+      expected,
+    ),
+  });
+
+  it("agrees with Node", async () => {
+    expect((await checkModules(getFiles("function,now,0,number"))).message).toBeUndefined();
+  });
+
+  it("rejects another result", async () => {
+    expect((await checkModules(getFiles("function,now,1,number"))).message).toContain(THREW);
+  });
+
+  it.each([
+    "performance.now.call({})",
+    "const { now } = performance; now()",
+    "String(performance.now)",
+    "performance.now.toString()",
+    "performance.now.prototype",
+    "Object.keys(performance.now)",
+    "Object.getPrototypeOf(performance.now)",
+  ])("stops at %s", async (use) => {
+    expect((await checkModules({ "main.js": `${use};` })).message).toContain(
+      "tla-ts can't run the host's performance.now",
+    );
+  });
+});
+
 describe("gives a module a Timeout of setTimeout, which stops where its code uses it", () => {
   const getFiles = (expected: string) => ({
     "main.js": `const log = [];
