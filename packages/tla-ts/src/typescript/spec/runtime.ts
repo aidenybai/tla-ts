@@ -608,13 +608,18 @@ const DEFINITIONS = [
       withResource == CreateDataProperty(hooks.s, Val(hooks), SV("AsyncResource"), resource.v)
       hooksProxy == StoppingProxy(withResource.s, Val(hooks), N("async_hooks"), <<[trap |-> SV("get"), method |-> "asyncHooksGet"]>>)
   IN HoldModule(hooksProxy.s, 0, Val(hooksProxy))`,
-  // Node's util, of which a program reads only TextEncoder, the global's own, the one object that
-  // require gives, which the state's required holds under the number -1.
-  `UtilModule(s) ==
-  IF -1 \\in DOMAIN s.required THEN Get(s, s.required[-1].module, SV("exports")) ELSE
-  LET util == OrdinaryObjectCreate(s, Null)
-      proxy == StoppingProxy(util.s, Val(util), N("util"), <<[trap |-> SV("get"), method |-> "utilGet"]>>)
-  IN HoldModule(proxy.s, -1, Val(proxy))`,
+  // A built-in module of Node that ESCore has none of, the one object that each require of it
+  // gives, which the state's required holds under the number k: a proxy that stops at every
+  // operation but its allowed traps, such as util's read of TextEncoder, whose target is a function
+  // where Node's module is one, such as stream's Stream, so that typeof gives what Node's does.
+  `BuiltinModule(s, k, name, allowed, isFunction) ==
+  IF k \\in DOMAIN s.required THEN Get(s, s.required[k].module, SV("exports")) ELSE
+  LET target == IF isFunction
+                THEN LET a == Alloc(s, BuiltinObject(Intrinsic(s, "FunctionPrototype"), <<"Module", "hostStop">>, 0, <<>>, TRUE, name, s.realmId))
+                     IN Ok(a.s, a.v)
+                ELSE OrdinaryObjectCreate(s, Null)
+      proxy == StoppingProxy(target.s, Val(target), name, allowed)
+  IN HoldModule(proxy.s, k, Val(proxy))`,
   // A built-in module of Node, whose exports the state's required holds under the number k, so
   // that each require of it gives the same object.
   `HoldModule(s, k, exports) ==
@@ -644,7 +649,9 @@ const DEFINITIONS = [
   // loads the file of a specifier that its code requires.
   `Require(s, referrer, id) ==
   IF id \\in {SV("node:async_hooks"), SV("async_hooks")} THEN AsyncHooksModule(s)
-  ELSE IF id \\in {SV("node:util"), SV("util")} THEN UtilModule(s)
+  ELSE IF id \\in {SV("node:util"), SV("util")} THEN BuiltinModule(s, -1, N("util"), <<[trap |-> SV("get"), method |-> "utilGet"]>>, FALSE)
+  ELSE IF id \\in {SV("node:crypto"), SV("crypto")} THEN BuiltinModule(s, -2, N("crypto"), <<>>, FALSE)
+  ELSE IF id \\in {SV("node:stream"), SV("stream")} THEN BuiltinModule(s, -3, N("stream"), <<>>, TRUE)
   ELSE IF ~IsString(id) \\/ id.value \\notin DOMAIN ModuleNode(referrer).targets
   THEN Assert(FALSE, "tla-ts can't require a module other than a file that a string names")
   ELSE RequireFile(s, ModuleNode(referrer).targets[id.value])`,

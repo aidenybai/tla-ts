@@ -681,6 +681,28 @@ describe("the CLI with TypeScript files", () => {
     });
   });
 
+  // A CommonJS module requires Node's crypto and stream, as React's server builds do, and gets the
+  // same object of each again.
+  describe("requires Node's crypto and stream as Node does", () => {
+    const getScript = (type: string) =>
+      `const crypto = require("crypto");\nconst stream = require("stream");\nif (crypto !== require("node:crypto") || stream !== require("node:stream")) throw new Error("same");\nif (typeof crypto !== "object" || typeof stream !== "${type}") throw new Error("type");\n`;
+
+    it("agrees with Node", () => {
+      const directory = copyFixtures("passing");
+      writeFileSync(join(directory, "streams.cjs"), getScript("function"));
+      expect(runNode(directory, "streams.cjs").status).toBe(0);
+      expect(getExit(runCli(directory, ["streams.cjs"]))).toEqual([0, ""]);
+    });
+
+    it("rejects another result", () => {
+      const directory = copyFixtures("passing");
+      writeFileSync(join(directory, "streams.cjs"), getScript("object"));
+      const result = runCli(directory, ["streams.cjs"]);
+      expect(getExit(result)).toEqual(getExit(runNode(directory, "streams.cjs")));
+      expect(result.status).toBe(1);
+    });
+  });
+
   // A module reads Node's performance, as React's server builds do, whose now gives the time,
   // which each run reads anew, so the check stops where a program reads the time it gives.
   describe("reads Node's performance as Node does", () => {

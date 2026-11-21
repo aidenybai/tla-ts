@@ -742,6 +742,48 @@ describe("compiles CommonJS modules as Node loads them", () => {
     });
   });
 
+  // Node's crypto and stream, which React's server builds require and use only in functions that
+  // they export, and each require gives the same object, of the type Node's is.
+  describe("requires Node's crypto and stream, which stop where the code uses them", () => {
+    const main = `const crypto = require("crypto");
+      const stream = require("stream");
+      log.push(typeof crypto, typeof stream, crypto === require("node:crypto"), stream === require("node:stream"));`;
+
+    it("agrees with Node", async () => {
+      expect(
+        (await checkModules(getFiles(main, "object,function,true,true"))).message,
+      ).toBeUndefined();
+    });
+
+    it("rejects another result", async () => {
+      expect((await checkModules(getFiles(main, "object,object,true,true"))).message).toContain(
+        THREW,
+      );
+    });
+
+    it.each(
+      ["crypto", "stream"].flatMap((name) =>
+        [
+          `${name}.createHash`,
+          `"Readable" in ${name}`,
+          `Object.keys(${name})`,
+          `Reflect.ownKeys(${name})`,
+          `Object.getPrototypeOf(${name})`,
+          `Object.defineProperty(${name}, "x", { value: 1 })`,
+          `${name}.x = 1`,
+          `delete ${name}.Readable`,
+          `({ ...${name} })`,
+          `JSON.stringify(${name})`,
+          ...(name === "stream" ? ["stream()", "new stream()"] : []),
+        ].map((use) => [name, use]),
+      ),
+    )("stops at a use of %s: %s", async (name, use) => {
+      expect(
+        (await checkModules(getFiles(`const ${name} = require("${name}"); ${use};`, ""))).message,
+      ).toContain(`tla-ts can't run the host's ${name}`);
+    });
+  });
+
   describe("gives a module in a cycle the exports so far of the module that requires it", () => {
     const main = `const a = require("./a.js");
       log.push(a.name, a.fromB);`;
