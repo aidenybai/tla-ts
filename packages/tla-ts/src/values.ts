@@ -410,6 +410,7 @@ export const setStringOrder = (texts: Iterable<string>) => {
   isWrittenOrderUsed = false;
   hasLambda = false;
   hasStreamedSet = false;
+  hasFilteredSet = false;
   for (const text of texts) rankString(text);
 };
 
@@ -753,6 +754,13 @@ export const markStreamedSet = <Streamed extends UnionValue | SetOperationValue>
   value: Streamed,
 ) => {
   hasStreamedSet = true;
+  return value;
+};
+
+let hasFilteredSet = false;
+
+export const markFilteredSet = <Filtered extends FilteredSetValue>(value: Filtered) => {
+  hasFilteredSet = true;
   return value;
 };
 
@@ -1938,18 +1946,18 @@ type OpenedStream = ElementStream | CupStream;
 
 // TLC's enumerators of [S -> T], [a : S] and S \X T read ahead and reset their components, which shows when a component evaluates a predicate.
 const isPredicated = (value: Value): boolean => {
-  if (typeof value !== "object" || isCachedSet(value)) return false;
+  if (!hasFilteredSet || typeof value !== "object") return false;
   switch (value.kind) {
     case "FilteredSet":
-      return true;
+      return value.isCached !== true;
     case "SetOperation":
-      return isPredicated(value.left) || isPredicated(value.right);
+      return value.isCached !== true && (isPredicated(value.left) || isPredicated(value.right));
     case "FunctionSet":
-      return !value.enumerated && isPredicated(value.range);
+      return value.isCached !== true && !value.enumerated && isPredicated(value.range);
     case "RecordSet":
-      return !value.enumerated && value.sets.some(isPredicated);
+      return value.isCached !== true && !value.enumerated && value.sets.some(isPredicated);
     case "ProductSet":
-      return !value.enumerated && value.factors.some(isPredicated);
+      return value.isCached !== true && !value.enumerated && value.factors.some(isPredicated);
     default:
       return false;
   }
@@ -2374,8 +2382,12 @@ const someElementOfStream = (
       (element) => value.test(element, false) && visit(element),
     );
   }
-  const product = getPredicatedProduct(value);
-  if (product) return somePulledElement(getProductStream(product, opened), visit);
+  if (
+    (value.kind === "FunctionSet" || value.kind === "RecordSet" || value.kind === "ProductSet") &&
+    opened !== undefined
+  ) {
+    return somePulledElement(getProductStream(value, opened), visit);
+  }
   const components = getCombinedSets(value);
   if (components?.some(isStreamedApart)) {
     return enumerateSet(value, false, getStreamedElements).some(visit);

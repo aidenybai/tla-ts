@@ -98,6 +98,7 @@ import {
   isEnumerable,
   isFunctionValue,
   isOverriddenSet,
+  markFilteredSet,
   markLambdaFunction,
   isReducibleSet,
   isSetValue,
@@ -2360,8 +2361,10 @@ export const getLazyFilter = (
         getEvaluator(expression.predicate, tracing),
         -1,
       );
-    if (!coverage || node < 0) return { kind: "FilteredSet", base, test, source, rebind };
-    return {
+    if (!coverage || node < 0) {
+      return markFilteredSet({ kind: "FilteredSet", base, test, source, rebind });
+    }
+    return markFilteredSet({
       kind: "FilteredSet",
       base,
       test: (element, isMember) =>
@@ -2379,7 +2382,7 @@ export const getLazyFilter = (
       },
       source,
       rebind,
-    };
+    });
   };
   return (base: Value, context: Context, node = -1) =>
     createFiltered(base, context, predicate, node);
