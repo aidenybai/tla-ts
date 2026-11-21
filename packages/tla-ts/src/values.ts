@@ -132,6 +132,8 @@ export interface LazyFunctionSource {
 export interface CostModel {
   secondary: number[];
   node: number;
+  // Charges what FcnLambdaValue#toFcnRcd enumerates once it has converted the function.
+  chargeConversion: () => void;
 }
 
 export interface LazyFunctionValue {
@@ -3124,9 +3126,7 @@ export const toFiniteFunction = (value: Value): FunctionValue => {
         ? domain.map((key) => getCopiedValue(value, key))
         : domain.map((key) => value.apply(key)),
     );
-    if (isCountedLazyFunction(value)) {
-      value.costModel.secondary[value.costModel.node] += domain.length;
-    }
+    if (isCountedLazyFunction(value)) value.costModel.chargeConversion();
     return value.enumerated;
   }
   throw new TlaEvaluationError(`Expected a function but found ${formatValue(value)}`);

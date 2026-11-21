@@ -1009,8 +1009,16 @@ export const chargeContexts = (
 
 export const chargeFunctionConstruction = (coverage: Coverage, node: number, sets: Value[]) => {
   const sizes = sets.map((set) => getCardinality(set));
+  // Sizing a filter converts it, as SetPredValue#size does.
   const advance = chargeBindings(
-    sets.map((set, index) => createEnumerator(coverage, set, sizes[index], false)),
+    sets.map((set, index) =>
+      createEnumerator(
+        coverage,
+        set,
+        sizes[index],
+        typeof set === "object" && set.kind === "FilteredSet",
+      ),
+    ),
   );
   const size = sizes.reduce((product, setSize) => product * setSize, 1);
   for (let index = 0; index < size; index++) advance();

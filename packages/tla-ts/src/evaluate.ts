@@ -837,8 +837,25 @@ const getBoundTupleLengths = (bounds: Bound[]) =>
         bound.pattern.kind === "Tuple" ? bound.pattern.names.length : undefined,
       );
 
-const getRecursiveCostModel = (coverage: Coverage | undefined, node: number) =>
-  coverage && node >= 0 ? { secondary: coverage.secondary, node } : undefined;
+const getBoundSets = (bounds: Bound[], domain: Value) =>
+  bounds.length === 1 || typeof domain !== "object" || domain.kind !== "ProductSet"
+    ? [domain]
+    : domain.factors;
+
+const getCostModel = (
+  coverage: Coverage | undefined,
+  node: number,
+  bounds: Bound[],
+  domain: Value,
+) =>
+  coverage && node >= 0
+    ? {
+        secondary: coverage.secondary,
+        node,
+        chargeConversion: () =>
+          chargeFunctionConstruction(coverage, node, getBoundSets(bounds, domain)),
+      }
+    : undefined;
 
 const createRecursiveFunction = (
   definition: FunctionDefinition,
@@ -871,7 +888,7 @@ const createRecursiveFunction = (
       domain,
     ),
     getBoundTupleLengths(definition.bounds),
-    getRecursiveCostModel(coverage, node),
+    getCostModel(coverage, node, definition.bounds, domain),
     isVaryingBody || coverage !== undefined,
   );
   keepLambda({
@@ -2209,7 +2226,7 @@ export const getFunctionBuilder = (
         : compute,
       getLazyFunctionSource(template, bounds, domain),
       boundTupleLengths,
-      name === undefined ? undefined : getRecursiveCostModel(coverage, node),
+      getCostModel(coverage, node, bounds, domain),
       isApplicationObserved,
     );
     if (name !== undefined) scope = bindSelf(outer, name, value);
@@ -2246,10 +2263,7 @@ const compileFunctionConstruction = (
     return (context) => {
       const domain = getBoundsDomain(bounds, context);
       const value = build(domain, context);
-      const sets =
-        bounds.length === 1 || typeof domain !== "object" || domain.kind !== "ProductSet"
-          ? [domain]
-          : domain.factors;
+      const sets = getBoundSets(bounds, domain);
       const isConverted =
         (typeof value !== "object" || value.kind !== "LazyFunction") && sets.every(isReducibleSet);
       if (isConverted && coverage.current >= 0 && coverage.covered.has(expression)) {

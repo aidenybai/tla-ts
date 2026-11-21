@@ -3050,6 +3050,186 @@ ASSUME TLCFP(a) = -887695703
     },
   );
 
+  it.each([
+    [
+      "SUBSET",
+      "[s \\in SUBSET {1, 2} |-> Cardinality(s)]",
+      [
+        "line 4, col 18 to line 4, col 61 of module M: 1",
+        "|line 4, col 22 to line 4, col 61 of module M: 1:4",
+        "||line 4, col 47 to line 4, col 60 of module M: 4",
+        "||line 4, col 29 to line 4, col 41 of module M: 1",
+      ],
+    ],
+    [
+      "a filter",
+      "[s \\in {t \\in SUBSET {1, 2} : 1 \\in t} |-> Cardinality(s)]",
+      [
+        "line 4, col 18 to line 4, col 79 of module M: 1",
+        "|line 4, col 22 to line 4, col 79 of module M: 1:2",
+        "||line 4, col 65 to line 4, col 78 of module M: 2",
+        "||line 4, col 29 to line 4, col 59 of module M: 1:9",
+        "|||line 4, col 52 to line 4, col 58 of module M: 4",
+        "|||line 4, col 36 to line 4, col 48 of module M: 1",
+      ],
+    ],
+    [
+      "a set of functions",
+      "[g \\in [{1, 2} -> {0, 1}] |-> g[1]]",
+      [
+        "line 4, col 18 to line 4, col 56 of module M: 1",
+        "|line 4, col 22 to line 4, col 56 of module M: 1:4",
+        "||line 4, col 52 to line 4, col 55 of module M: 4",
+        "||line 4, col 29 to line 4, col 46 of module M: 1:8",
+        "|||line 4, col 30 to line 4, col 35 of module M: 1",
+        "|||line 4, col 40 to line 4, col 45 of module M: 1:10",
+      ],
+    ],
+    [
+      "a set of records",
+      "[r \\in [a : {1, 2}, b : {3}] |-> r.a]",
+      [
+        "line 4, col 18 to line 4, col 58 of module M: 1",
+        "|line 4, col 22 to line 4, col 58 of module M: 1:2",
+        "||line 4, col 55 to line 4, col 57 of module M: 2",
+        "||line 4, col 29 to line 4, col 49 of module M: 1:4",
+        "|||line 4, col 30 to line 4, col 39 of module M: 1:3",
+        "|||line 4, col 42 to line 4, col 48 of module M: 1:5",
+      ],
+    ],
+    [
+      "a Cartesian product",
+      "[p \\in {1, 2} \\X {3} |-> p[1]]",
+      [
+        "line 4, col 18 to line 4, col 51 of module M: 1",
+        "|line 4, col 22 to line 4, col 51 of module M: 1:2",
+        "||line 4, col 47 to line 4, col 50 of module M: 2",
+        "||line 4, col 29 to line 4, col 41 of module M: 1:4",
+        "|||line 4, col 29 to line 4, col 34 of module M: 1:3",
+        "|||line 4, col 39 to line 4, col 41 of module M: 1:5",
+      ],
+    ],
+    [
+      "a Cartesian product with a tuple of parameters",
+      "[<<a, b>> \\in {1} \\X SUBSET {1} |-> a]",
+      [
+        "line 4, col 18 to line 4, col 59 of module M: 1",
+        "|line 4, col 22 to line 4, col 59 of module M: 1:2",
+        "||line 4, col 58 to line 4, col 58 of module M: 2",
+        "||line 4, col 36 to line 4, col 52 of module M: 1:4",
+        "|||line 4, col 36 to line 4, col 38 of module M: 1:2",
+        "|||line 4, col 43 to line 4, col 52 of module M: 1",
+      ],
+    ],
+    [
+      "SUBSET and a set literal",
+      "[a \\in SUBSET {1}, b \\in {1, 2} |-> b]",
+      [
+        "line 4, col 18 to line 4, col 59 of module M: 1",
+        "|line 4, col 22 to line 4, col 59 of module M: 1:4",
+        "||line 4, col 58 to line 4, col 58 of module M: 4",
+        "||line 4, col 29 to line 4, col 38 of module M: 1",
+        "||line 4, col 47 to line 4, col 52 of module M: 1:3",
+      ],
+    ],
+    [
+      "a set literal and SUBSET",
+      "[a \\in {1, 2}, b \\in SUBSET {1} |-> a]",
+      [
+        "line 4, col 18 to line 4, col 59 of module M: 1",
+        "|line 4, col 22 to line 4, col 59 of module M: 1:4",
+        "||line 4, col 58 to line 4, col 58 of module M: 4",
+        "||line 4, col 29 to line 4, col 34 of module M: 1:7",
+        "||line 4, col 43 to line 4, col 52 of module M: 1",
+      ],
+    ],
+  ])(
+    "charges the sets a lazy function over %s enumerates when an initial state holds it, as TLC's FcnLambdaValue#toFcnRcd does",
+    async (_title, value, expected) => {
+      const lines = await getCoverageLines(
+        `---- MODULE M ----\nEXTENDS Integers, FiniteSets\nVARIABLES x, y\nInit == x = 0 /\\ y = ${value}\nNext == x < 2 /\\ x' = x + 1 /\\ UNCHANGED y\n====`,
+        "INIT Init\nNEXT Next\nCHECK_DEADLOCK FALSE",
+      );
+      expect(lines?.[0]).toEqual(expected);
+    },
+  );
+
+  it.each([
+    [
+      "a successor holds it",
+      "x = 0 /\\ y = 0",
+      "Next == x < 2 /\\ x' = x + 1 /\\ y' = [s \\in SUBSET {1, 2} |-> Cardinality(s) + x]",
+      [
+        "line 5, col 9 to line 5, col 13 of module M: 2",
+        "|line 5, col 9 to line 5, col 9 of module M: 3",
+        "line 5, col 18 to line 5, col 27 of module M: 2",
+        "line 5, col 32 to line 5, col 80 of module M: 2",
+        "|line 5, col 37 to line 5, col 80 of module M: 2:8",
+        "||line 5, col 62 to line 5, col 79 of module M: 8",
+        "||line 5, col 44 to line 5, col 56 of module M: 2",
+      ],
+    ],
+    [
+      "ToString converts it",
+      "x = 0 /\\ y = 0",
+      'Next == x < 2 /\\ x\' = x + 1 /\\ ToString([s \\in SUBSET {1} |-> Cardinality(s)]) # "" /\\ UNCHANGED y',
+      [
+        "line 5, col 9 to line 5, col 13 of module M: 2",
+        "|line 5, col 9 to line 5, col 9 of module M: 3",
+        "line 5, col 18 to line 5, col 27 of module M: 2",
+        "line 5, col 32 to line 5, col 83 of module M: 4",
+        "|line 5, col 32 to line 5, col 78 of module M: 2",
+        "||line 5, col 41 to line 5, col 77 of module M: 2:4",
+        "|||line 5, col 63 to line 5, col 76 of module M: 4",
+        "|||line 5, col 48 to line 5, col 57 of module M: 2",
+        "line 5, col 88 to line 5, col 98 of module M: 2",
+      ],
+    ],
+    [
+      "a successor holds it, defined recursively over a set literal",
+      "x = 0 /\\ y = 0",
+      "Next == x < 2 /\\ x' = x + 1 /\\ y' = LET f[n \\in {0, 1, 2}] == IF n = 0 THEN x ELSE f[n - 1] + 1 IN f",
+      [
+        "line 5, col 9 to line 5, col 13 of module M: 2",
+        "|line 5, col 9 to line 5, col 9 of module M: 3",
+        "line 5, col 18 to line 5, col 27 of module M: 2",
+        "line 5, col 32 to line 5, col 100 of module M: 2",
+        "|line 5, col 41 to line 5, col 95 of module M: 2:6",
+        "||line 5, col 63 to line 5, col 95 of module M: 12",
+        "|||line 5, col 66 to line 5, col 70 of module M: 12",
+        "|||line 5, col 77 to line 5, col 77 of module M: 6",
+        "|||line 5, col 84 to line 5, col 95 of module M: 6",
+        "||line 5, col 49 to line 5, col 57 of module M: 2:8",
+        "|line 5, col 100 to line 5, col 100 of module M: 2",
+      ],
+    ],
+  ])(
+    "charges the sets a lazy function enumerates when %s, as TLC's FcnLambdaValue#toFcnRcd does",
+    async (_title, init, next, expected) => {
+      const lines = await getCoverageLines(
+        `---- MODULE M ----\nEXTENDS Integers, FiniteSets, TLC\nVARIABLES x, y\nInit == ${init}\n${next}\n====`,
+        "INIT Init\nNEXT Next\nCHECK_DEADLOCK FALSE",
+      );
+      expect(lines?.at(-1)).toEqual(expected);
+    },
+  );
+
+  it("charges nothing for a conversion whose body fails, as FcnLambdaValue#toFcnRcd charges its size last", async () => {
+    const lines = await getCoverageLines(
+      "---- MODULE M ----\nEXTENDS Integers\nVARIABLE x\nInit == x = 0\nNext == x' = IF x = 1 THEN [k \\in SUBSET {1} |-> 1 \\div 0] ELSE x + 1\n====",
+      "INIT Init\nNEXT Next",
+    );
+    expect(lines?.at(-1)).toEqual([
+      "line 5, col 9 to line 5, col 69 of module M: 4",
+      "|line 5, col 14 to line 5, col 69 of module M: 5",
+      "||line 5, col 17 to line 5, col 21 of module M: 5",
+      "||line 5, col 28 to line 5, col 58 of module M: 3",
+      "|||line 5, col 50 to line 5, col 57 of module M: 2",
+      "|||line 5, col 35 to line 5, col 44 of module M: 3",
+      "||line 5, col 65 to line 5, col 69 of module M: 2",
+    ]);
+  });
+
   it("charges a filter of a set of records or functions per element it draws, as TLC's SetPredValue does", async () => {
     const lines = await getCoverageLines(
       "---- MODULE E ----\nEXTENDS Integers\nVARIABLE x\nInit == x \\in {r \\in [a : 0..1, b : BOOLEAN] : r.a = 0}\nNext == x' \\in {r \\in [a : 0..1, b : BOOLEAN] : r.b = ~x.b}\nInv1 == \\E r \\in {s \\in [a : 0..1, b : BOOLEAN] : s.a = x.a} : r = x\nInv2 == (CHOOSE r \\in {s \\in [a : 0..1, b : BOOLEAN] : s.b = x.b} : TRUE).b = x.b\nInv3 == \\A r \\in {s \\in {f \\in [{1} -> {0, 1}] : f[1] >= x.a} : s[1] > 0} : r[1] = 1\n====",
