@@ -127,7 +127,7 @@ export class Rewriter extends RewriterTpl {
   private bv: BvRewriter;
   private array: ArrayRewriter;
   private seq: SeqRewriter;
-  private substitution: Substitution = new Map<number, number>();
+  private substitution: Substitution | undefined;
   private substitutionDependencies = new Map<number, Dependency | undefined>();
   usedDependencies: Dependency | undefined;
   private unusedVarsEliminator: UnusedVarsEliminator;
@@ -219,13 +219,19 @@ export class Rewriter extends RewriterTpl {
     substitution: Substitution,
     dependencies = new Map<number, Dependency | undefined>(),
   ) {
+    this.reset();
     this.substitution = substitution;
     this.substitutionDependencies = dependencies;
-    this.reset();
+  }
+
+  resetConfig() {
+    this.substitution = undefined;
   }
 
   getSubst(expr: number) {
-    const replacement = this.substitution.size === 0 ? undefined : this.substitution.get(expr);
+    const substitution = this.substitution;
+    const replacement =
+      substitution === undefined || substitution.size === 0 ? undefined : substitution.get(expr);
     if (replacement !== undefined)
       this.usedDependencies = joinDependencies(
         this.usedDependencies,
@@ -336,10 +342,11 @@ export class Rewriter extends RewriterTpl {
 
   private substitutePatterns(patterns: number[]) {
     const manager = this.manager;
-    if (this.substitution.size === 0) return patterns;
+    const substitution = this.substitution;
+    if (substitution === undefined || substitution.size === 0) return patterns;
     const cache = new Map<number, number>();
     const replace = (expr: number): number => {
-      const replacement = this.substitution.get(expr);
+      const replacement = substitution.get(expr);
       if (replacement !== undefined) return replacement;
       if (manager.kinds[expr] !== KIND_APP || manager.getNumArgs(expr) === 0) return expr;
       const cached = cache.get(expr);

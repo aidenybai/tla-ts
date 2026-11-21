@@ -372,6 +372,7 @@ class RewriterEngine extends SubstCore {
   }
 
   reset() {
+    this.config.resetConfig();
     this.resetCore();
     shrink(this.bindings, 0);
     shrink(this.shifts, 0);
@@ -815,6 +816,8 @@ export class RewriterTpl {
   mkNested(): RewriterTpl {
     return new RewriterTpl(this.manager);
   }
+
+  resetConfig() {}
 
   reset() {
     this.engine.reset();

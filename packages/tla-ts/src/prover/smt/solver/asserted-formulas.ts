@@ -288,7 +288,7 @@ export class AssertedFormulas {
     this.names.release();
     this.formulas.reset();
     this.macros.release();
-    this.bvSharing.reset();
+    this.bvSharing.resetConfig();
     this.rewriter.reset();
     this.substitution.cleanup();
   }

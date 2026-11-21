@@ -1363,6 +1363,29 @@ describe("runSmtlibScript runs its commands as Z3 does", () => {
     );
   });
 
+  it("rewrites the next assertion without the substitution that a stopped rewriter dropped", () => {
+    expect(
+      run([
+        "(declare-fun x () Int)",
+        "(declare-fun y () Int)",
+        "(declare-fun f (Int) Int)",
+        "(push 1)",
+        "(assert (= x 5))",
+        "(assert (> (f x) (f y)))",
+        "(check-sat)",
+        "(assert (> (f (+ x y)) 0))",
+        "(assert (or (> (f (+ y 1)) 2) (< (f (+ y 2)) x)))",
+        "(set-option :rlimit 60)",
+        "(check-sat)",
+        "(get-info :reason-unknown)",
+        "(set-option :rlimit 0)",
+        "(assert (< (f (+ x y)) 3))",
+        "(check-sat)",
+        "(get-info :rlimit)",
+      ]),
+    ).toEqual(["sat", "unknown", '(:reason-unknown "canceled")', "sat", "(:rlimit 538)"]);
+  });
+
   it("reports the limit that stops a push of ctx-solver-simplify as its reason", () => {
     expect(
       run([
