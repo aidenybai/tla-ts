@@ -1,7 +1,7 @@
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { describe, expect, it } from "vite-plus/test";
-import { SmtInvariantError } from "../../src/errors";
+import { SmtInvariantError, SmtUnsupportedError } from "../../src/errors";
 import { runSmtlibScript } from "../../src/prover/smt/solver/smtlib-script";
 
 const run = (lines: string[], timeLimitMs = 5000) => {
@@ -3877,5 +3877,33 @@ describe("combined_solver, as Z3 5.3.2 reads its options", () => {
       '(:reason-unknown "")',
       "(:rlimit 368)",
     ]);
+  });
+
+  it("answers where Z3 sets no timer for solver2_timeout", () => {
+    expect(
+      run(["(set-option :combined_solver.solver2_timeout 100000)", ...POWER, ...CHECK]),
+    ).toEqual([
+      "unknown",
+      '(:reason-unknown "smt tactic failed to show goal to be sat/unsat (incomplete (theory arithmetic))")',
+      "(:rlimit 144)",
+    ]);
+    expect(
+      run([
+        "(set-option :combined_solver.solver2_timeout 4294967295)",
+        ...POWER,
+        "(push 1)",
+        ...CHECK,
+      ]),
+    ).toEqual([
+      "unknown",
+      '(:reason-unknown "smt tactic failed to show goal to be sat/unsat (incomplete (theory arithmetic))")',
+      "(:rlimit 254)",
+    ]);
+  });
+
+  it("throws at an incremental check that Z3 would run under a solver2_timeout timer", () => {
+    expect(() =>
+      run(["(set-option :combined_solver.solver2_timeout 100000)", ...POWER, "(push 1)", ...CHECK]),
+    ).toThrow(SmtUnsupportedError);
   });
 });

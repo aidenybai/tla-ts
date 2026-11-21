@@ -65,6 +65,7 @@ import { getDoubleParameter, getParameterValue, isDoubleParameter } from "./gpar
 import { formatDouble } from "./probes";
 import { getGlobalSmtParams, SmtKernel } from "./smt-kernel";
 import { RefVector } from "./ref-vector";
+import { UINT_MAX } from "./sat/clause";
 import { IncSatSolver } from "./sat/inc-sat-solver";
 import { mkThSolver } from "./euf/th-solvers";
 import { getHammerPeriod } from "./lp/lp-settings";
@@ -768,6 +769,12 @@ export const runSmtlibScript = (
     const isKernelChecking =
       fdSolver === undefined && (isSolver2Only || (state.isIncremental && !isOptimizing));
     try {
+      if (
+        isKernelChecking &&
+        !isSolver2Only &&
+        Number(settings.parameters.get("combined_solver.solver2_timeout") ?? UINT_MAX) !== UINT_MAX
+      )
+        throw new SmtUnsupportedError("the option :combined_solver.solver2_timeout");
       const kernel = isKernelChecking ? checkKernel(names, extra) : undefined;
       const isFromTactic =
         kernel === undefined ||
