@@ -12,7 +12,7 @@ import {
 import { flattenAndVector, flattenOrVector, mkNot } from "../ast-util";
 import { DerRewriter } from "../der";
 import { simplifyInjAxiom } from "../inj-axiom";
-import { L_FALSE, L_TRUE } from "../lbool";
+import { L_FALSE, L_TRUE, L_UNDEF } from "../lbool";
 import type { ProtoModel } from "../proto-model";
 import { pullQuant } from "../pull-quant";
 import { containsDef } from "../recfun-decl-plugin";
@@ -35,9 +35,11 @@ export class QSolver extends ThSolver {
   readonly mbqi: Mbqi;
   private expanded: RefVector;
   private der: DerRewriter;
+  private isMbqi: boolean;
 
   constructor(ctx: EufSolver, parameters: ReadonlyMap<string, string>) {
     super(ctx, "quant", FAMILY_QUANT);
+    this.isMbqi = parameters.get("smt.mbqi") !== "false";
     this.mbqi = new Mbqi(ctx, this);
     this.ematch = new Ematch(ctx, this, parameters);
     this.expanded = new RefVector(ctx.manager);
@@ -86,12 +88,12 @@ export class QSolver extends ThSolver {
     }
     this.universal.push(lit);
     ctx.trail.push(() => this.universal.pop());
-    this.ematch.add(expr);
+    if (this.ematch.isEnabled) this.ematch.add(expr);
   }
 
   check() {
-    if (this.ematch.run()) return CR_CONTINUE;
-    const result = this.mbqi.run();
+    if (this.ematch.isEnabled && this.ematch.run()) return CR_CONTINUE;
+    const result = this.isMbqi ? this.mbqi.run() : L_UNDEF;
     if (result === L_TRUE) return CR_DONE;
     if (result === L_FALSE) return CR_CONTINUE;
     return CR_GIVEUP;

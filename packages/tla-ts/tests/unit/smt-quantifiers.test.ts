@@ -604,6 +604,35 @@ describe("e-matching, as Z3 5.3.2 reads smt.ematching", () => {
   });
 });
 
+describe("the quantifier solver of sat.euf, as Z3 5.3.2 reads smt.ematching and smt.mbqi", () => {
+  const getOutput = (options: string[], assertion: string) =>
+    run([
+      "(set-option :sat.euf true)",
+      ...options,
+      "(declare-fun f (Int) Int)",
+      "(declare-fun g (Int) Int)",
+      "(declare-fun a () Int)",
+      "(assert (forall ((x Int)) (! (> (f x) (g x)) :pattern ((f x)))))",
+      assertion,
+      "(check-sat-using sat)",
+      "(get-info :reason-unknown)",
+    ]);
+  const GIVE_UP = ["unknown", '(:reason-unknown "incomplete theory quant")'];
+
+  it("gives up without mbqi once e-matching has nothing left", () => {
+    expect(getOutput(["(set-option :smt.mbqi false)"], "(assert (< a 0))")).toEqual(GIVE_UP);
+  });
+
+  it("gives up without e-matching or mbqi", () => {
+    expect(
+      getOutput(
+        ["(set-option :smt.mbqi false)", "(set-option :smt.ematching false)"],
+        "(assert (< (f a) (g a)))",
+      ),
+    ).toEqual(GIVE_UP);
+  });
+});
+
 describe("the model checker, as Z3 5.3.2 counts its steps", () => {
   it("pushes its context as the kernel does", () => {
     expect(

@@ -396,6 +396,7 @@ export class Ematch {
   private names: DefinedNames;
   private nnf: Nnf;
   private subst: VarSubst;
+  readonly isEnabled: boolean;
 
   constructor(
     private ctx: EufSolver,
@@ -409,8 +410,11 @@ export class Ematch {
     this.names = new DefinedNames(manager);
     this.nnf = new Nnf(manager, this.names);
     this.subst = new VarSubst(manager, true);
-    ctx.egraph.onMerge.push((root, other) => this.onMerge(root, other));
-    ctx.egraph.onMake = (node) => this.mam.addNode(node, false);
+    this.isEnabled = parameters.get("smt.ematching") !== "false";
+    if (this.isEnabled) {
+      ctx.egraph.onMerge.push((root, other) => this.onMerge(root, other));
+      ctx.egraph.onMake = (node) => this.mam.addNode(node, false);
+    }
     this.mam = new Mam(ctx, this.onBinding);
   }
 
@@ -766,7 +770,7 @@ export class Ematch {
   }
 
   unitPropagate() {
-    return this.propagateAll(false);
+    return this.isEnabled && this.propagateAll(false);
   }
 
   private propagateClause(clause: Clause, isFlushing: boolean) {
