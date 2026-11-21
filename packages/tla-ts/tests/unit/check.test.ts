@@ -2710,6 +2710,105 @@ ASSUME TLCFP(a) = -887695703
     },
   );
 
+  it.each([
+    [
+      "printing substitutes",
+      'I == INSTANCE P WITH c <- PrintT("c"), z <- y\nInv == I!Op',
+      'Op == LET K == INSTANCE Q WITH d <- PrintT(<<"d", c>>), w <- z IN K!OutErr /\\ c',
+      [
+        "Line 4, column 9 to line 4, column 13 in M",
+        "Line 8, column 8 to line 8, column 11 in M",
+        "Line 7, column 1 to line 7, column 45 in M",
+        "Line 5, column 7 to line 5, column 79 in P",
+        "Line 5, column 67 to line 5, column 79 in P",
+        "Line 5, column 67 to line 5, column 74 in P",
+        "Line 5, column 11 to line 5, column 62 in P",
+        "Line 7, column 11 to line 7, column 19 in Q",
+        "Line 7, column 17 to line 7, column 19 in Q",
+        "Line 6, column 8 to line 6, column 23 in Q",
+        "Line 6, column 13 to line 6, column 23 in Q",
+        "Line 6, column 13 to line 6, column 19 in Q",
+      ],
+    ],
+    [
+      "a constant substitute",
+      "I == INSTANCE P WITH c <- TRUE, z <- y\nInv == I!Op",
+      "Op == LET K == INSTANCE Q WITH d <- c, w <- z IN K!OutErr",
+      [
+        "Line 4, column 9 to line 4, column 13 in M",
+        "Line 8, column 8 to line 8, column 11 in M",
+        "Line 7, column 1 to line 7, column 38 in M",
+        "Line 5, column 7 to line 5, column 57 in P",
+        "Line 5, column 50 to line 5, column 57 in P",
+        "Line 5, column 11 to line 5, column 45 in P",
+        "Line 7, column 11 to line 7, column 19 in Q",
+        "Line 7, column 17 to line 7, column 19 in Q",
+        "Line 6, column 8 to line 6, column 23 in Q",
+        "Line 6, column 13 to line 6, column 23 in Q",
+        "Line 6, column 13 to line 6, column 19 in Q",
+      ],
+    ],
+    [
+      "an operator's parameter",
+      "I == INSTANCE P WITH c <- TRUE, z <- y\nInv == I!Op(TRUE)",
+      "Op(a) == LET K == INSTANCE Q WITH d <- a, w <- z IN K!OutErr",
+      [
+        "Line 4, column 9 to line 4, column 13 in M",
+        "Line 8, column 8 to line 8, column 17 in M",
+        "Line 7, column 1 to line 7, column 38 in M",
+        "Line 5, column 10 to line 5, column 60 in P",
+        "Line 5, column 53 to line 5, column 60 in P",
+        "Line 5, column 14 to line 5, column 48 in P",
+        "Line 7, column 11 to line 7, column 19 in Q",
+        "Line 7, column 17 to line 7, column 19 in Q",
+        "Line 6, column 8 to line 6, column 23 in Q",
+        "Line 6, column 13 to line 6, column 23 in Q",
+        "Line 6, column 13 to line 6, column 19 in Q",
+      ],
+    ],
+    [
+      "a module two instances down",
+      "I == INSTANCE P WITH c <- TRUE, z <- y\nInv == I!J!Op",
+      "J == INSTANCE P2 WITH e <- c, x <- z",
+      [
+        "Line 4, column 9 to line 4, column 13 in M",
+        "Line 8, column 8 to line 8, column 13 in M",
+        "Line 7, column 1 to line 7, column 38 in M",
+        "Line 5, column 1 to line 5, column 36 in P",
+        "Line 5, column 7 to line 5, column 57 in P2",
+        "Line 5, column 50 to line 5, column 57 in P2",
+        "Line 5, column 11 to line 5, column 45 in P2",
+        "Line 7, column 11 to line 7, column 19 in Q",
+        "Line 7, column 17 to line 7, column 19 in Q",
+        "Line 6, column 8 to line 6, column 23 in Q",
+        "Line 6, column 13 to line 6, column 23 in Q",
+        "Line 6, column 13 to line 6, column 19 in Q",
+      ],
+    ],
+  ])(
+    "records the INSTANCE of a LET INSTANCE in an instanced module, with %s, as TLC does",
+    async (_title, definitions, instanced, lines) => {
+      const modules = new Map([
+        ["P", `---- MODULE P ----\nEXTENDS TLC\nCONSTANT c\nVARIABLE z\n${instanced}\n====\n`],
+        [
+          "P2",
+          "---- MODULE P2 ----\nEXTENDS TLC\nCONSTANT e\nVARIABLE x\nOp == LET K == INSTANCE Q WITH d <- e, w <- x IN K!OutErr\n====\n",
+        ],
+        [
+          "Q",
+          '---- MODULE Q ----\nEXTENDS TLC, Naturals\nCONSTANT d\nVARIABLE w\nIn == d = TRUE /\\ w \\in 0..1\nErr == d /\\ w + "a" = 1\nOutErr == In /\\ Err\nArgErr(a) == a /\\ OutErr\nStepErr == In /\\ w\' = w + "a"\n====\n',
+        ],
+      ]);
+      const result = await check({
+        source: `---- MODULE M ----\nEXTENDS TLC, Naturals\nVARIABLE y\nInit == y = 0\nNext == y' = (y + 1) % 2\nSpec == Init /\\ [][Next]_y\n${definitions}\n====\n`,
+        config: "SPECIFICATION Spec\nINVARIANT Inv\n",
+        loadModule: (name) => modules.get(name),
+        onPrint: () => {},
+      });
+      expect(formatCallStackLines(result)?.filter((line) => line !== "")).toEqual(lines);
+    },
+  );
+
   it("applies an operator to each value @ takes in the same state", async () => {
     const result = await check({
       source:

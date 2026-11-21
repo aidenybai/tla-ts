@@ -120,8 +120,8 @@ const withSource = (definition: Definition, source: Definition) => {
 export const mapDefinition = (
   definition: Definition,
   map: (child: Expression, bound: string[]) => Expression,
-): Definition =>
-  withSource(
+): Definition => {
+  const mapped: Definition =
     definition.kind === "Function"
       ? {
           ...definition,
@@ -134,9 +134,13 @@ export const mapDefinition = (
             definition.body,
             definition.params.map((param) => param.name),
           ),
-        },
-    definition,
-  );
+        };
+  const frames = substitutionFrames.get(definition.body);
+  if (frames && mapped.body !== definition.body && !substitutionFrames.has(mapped.body)) {
+    substitutionFrames.set(mapped.body, frames);
+  }
+  return withSource(mapped, definition);
+};
 
 export const mapChildren = (
   expression: Expression,
