@@ -7,10 +7,15 @@ import {
   type OperatorValue,
 } from "./evaluate";
 import {
+  applyFunction,
   compareValues,
   createSortedFunction,
   createTuple,
+  getDomain,
   getSequenceElements,
+  isElementOf,
+  isEqualLikeTlc,
+  isModelValue,
   isNormalizedSet,
   setFunctionClass,
   type FunctionValue,
@@ -250,12 +255,12 @@ const createDefine =
   (
     name: string,
     arity: number,
-    evaluate: (args: BuiltinArgument[]) => Value | undefined,
+    evaluate: (args: BuiltinArgument[], context: Context | undefined) => Value | undefined,
   ): Builtin => ({
     kind: "Builtin",
     name,
     arity,
-    evaluate: (args, context) => evaluate(args) ?? callReplaced(name, args, context),
+    evaluate: (args, context) => evaluate(args, context) ?? callReplaced(name, args, context),
     evaluateUnary: undefined,
     evaluateBinary: undefined,
   });
@@ -640,9 +645,227 @@ const getIndexUnits = (key: Value | undefined) => {
     : [];
 };
 
+// The code units of the strings NumToString gives: decimal digits, "+", "-", ".", "e", and the
+// letters of "NaN" and "Infinity".
+const NUMBER_STRING_UNITS = new Set([
+  ...Array.from({ length: 10 }, (_, index) => 48 + index),
+  43,
+  45,
+  46,
+  101,
+  78,
+  97,
+  73,
+  110,
+  102,
+  105,
+  116,
+  121,
+]);
+
+// The integer that units spell where they are NumToString's form of an integer below 2^30 other
+// than 0, or undefined.
+const getCanonicalInteger = (units: number[]) => {
+  const isNegative = units[0] === MINUS;
+  const digits = isNegative ? units.slice(1) : units;
+  if (digits.length === 0 || digits.length > 10 || digits[0] === 48) return undefined;
+  if (!digits.every((unit) => unit >= 48 && unit <= 57)) return undefined;
+  const value = digits.reduce((total, unit) => total * 10 + unit - 48, 0);
+  if (value >= INT_LIMIT) return undefined;
+  return isNegative ? -value : value;
+};
+
+// The bucket of an object's props that PropBucket gives a key of these units.
+const getBucket = (units: number[]) =>
+  units.length === 0
+    ? NAMED_BUCKET
+    : units.length <= 2
+      ? 0
+      : units.slice(0, -2).reduce((value, unit) => value * 10 + unit - 48, 0);
+
+// The value of one of the runtime's CONSTANTS as its TLA+ reads it, which the check keys by the
+// name and the module that declares it, or undefined where the configuration binds it to an
+// expression rather than a value. An INSTANCE copies the TLA+ of the runtime's operators instead.
+const getConstant = (context: Context | undefined, name: string) =>
+  context?.environment.constants.get(`${name}@ESRuntime`);
+
+// The record of a heap's pages at an index, HeapGet(h, i), or undefined.
+const getHeapEntry = (pages: Value | undefined, index: Value) =>
+  typeof index === "number" && Number.isInteger(index) && index >= 1
+    ? getTuple(getTuple(pages)?.[Math.floor((index - 1) / HEAP_PAGE_SIZE)])?.[
+        (index - 1) % HEAP_PAGE_SIZE
+      ]
+    : undefined;
+
+// OrdinaryGetOwnProperty(o, k): the descriptor of k in o's props, or absent, or undefined where o
+// or k isn't one the TLA+ reads without failing.
+const getOwnDescriptor = (
+  object: Value | undefined,
+  key: Value | undefined,
+  absent: Value | undefined,
+) => {
+  const units = getIndexUnits(key);
+  const props = getField(object, "props");
+  if (units === undefined || key === undefined || !isFunction(props)) return undefined;
+  const bucket = getBucket(units);
+  const keys = isElementOf(bucket, getDomain(props)) ? applyFunction(props, bucket) : undefined;
+  if (keys !== undefined && !isFunction(keys)) return undefined;
+  return keys !== undefined && isElementOf(key, getDomain(keys))
+    ? applyFunction(keys, key)
+    : absent;
+};
+
+const DECLARATIVE_KINDS = new Set(["declarative", "catch", "function", "module"]);
+const okShape = createShape(["s", "c"]);
+const completionShape = createShape(["type", "value", "target"]);
+
+// Ok(s, v), whose completion's target is Empty.
+const createOk = (state: Value, value: Value, empty: Value) =>
+  okShape([state, completionShape(["normal", value, empty])]);
+
+// E(s, e), the environment at an index of a state's envs, or undefined.
+const getEnvironment = (state: Value, index: Value) =>
+  getHeapEntry(getField(getField(state, "envs"), "pages"), index);
+
+// The descriptor that an object environment's object holds of a name as its own property, where
+// the object is ordinary, so that HasProperty and GetV read it through OrdinaryGetOwnProperty, or
+// undefined. A proxy or any other exotic object, such as a host's, runs the TLA+.
+const getObjectDescriptor = (state: Value, environment: Value, name: Value) => {
+  const object = getHeapEntry(
+    getField(getField(state, "objs"), "pages"),
+    getField(getField(environment, "obj"), "id") ?? 0,
+  );
+  return getField(object, "class") === "ordinary"
+    ? getOwnDescriptor(object, valueShape(["string", name]), undefined)
+    : undefined;
+};
+
+interface BindingConstants {
+  empty: Value;
+  absent: Value;
+}
+
+// HasBinding(s, e, name) where e is a declarative environment, a global one whose declarative
+// part or object holds name, or an object one without a with statement whose object holds it.
+const getHasBinding = (
+  state: Value,
+  environment: Value,
+  name: Value,
+  constants: BindingConstants,
+): Value | undefined => {
+  const kind = getField(environment, "kind");
+  const bindings = getField(environment, "b");
+  if (typeof kind === "string" && DECLARATIVE_KINDS.has(kind)) {
+    return isFunction(bindings)
+      ? createOk(state, createBool(isElementOf(name, getDomain(bindings))), constants.empty)
+      : undefined;
+  }
+  if (kind === "global") {
+    const declarative = getField(getEnvironment(state, getField(environment, "declRec") ?? 0), "b");
+    if (!isFunction(declarative)) return undefined;
+    if (isElementOf(name, getDomain(declarative))) {
+      return createOk(state, createBool(true), constants.empty);
+    }
+    const objectEnvironment = getEnvironment(state, getField(environment, "objRec") ?? 0);
+    return getField(objectEnvironment, "kind") === "object" && objectEnvironment !== undefined
+      ? getHasBinding(state, objectEnvironment, name, constants)
+      : undefined;
+  }
+  return kind === "object" &&
+    getField(environment, "withEnv") === false &&
+    getObjectDescriptor(state, environment, name) !== undefined
+    ? createOk(state, createBool(true), constants.empty)
+    : undefined;
+};
+
+// GetBindingValue(s, e, name, strict) where name is an initialized binding of a declarative
+// environment, other than a module's import, or a data property that an object environment's
+// object, or a global one's, holds as its own.
+const getBindingValue = (
+  state: Value,
+  environment: Value,
+  name: Value,
+  constants: BindingConstants,
+): Value | undefined => {
+  const kind = getField(environment, "kind");
+  const bindings = getField(environment, "b");
+  if (typeof kind === "string" && DECLARATIVE_KINDS.has(kind)) {
+    if (!isFunction(bindings) || !isElementOf(name, getDomain(bindings))) return undefined;
+    const binding = applyFunction(bindings, name);
+    const value = getField(binding, "value");
+    if (value === undefined || getField(binding, "init") !== true) return undefined;
+    return kind === "module" && (getType(value) ?? "import") === "import"
+      ? undefined
+      : createOk(state, value, constants.empty);
+  }
+  if (kind === "global") {
+    const declarativeEnvironment = getEnvironment(state, getField(environment, "declRec") ?? 0);
+    const declarative = getField(declarativeEnvironment, "b");
+    if (!isFunction(declarative) || declarativeEnvironment === undefined) return undefined;
+    const target = isElementOf(name, getDomain(declarative))
+      ? declarativeEnvironment
+      : getEnvironment(state, getField(environment, "objRec") ?? 0);
+    return target === undefined ? undefined : getBindingValue(state, target, name, constants);
+  }
+  if (kind !== "object") return undefined;
+  const descriptor = getObjectDescriptor(state, environment, name);
+  const value = getField(descriptor, "value");
+  const writable = getField(descriptor, "writable");
+  return value !== undefined &&
+    writable !== undefined &&
+    (!isEqualLikeTlc(value, constants.absent) || !isEqualLikeTlc(writable, constants.absent))
+    ? createOk(state, value, constants.empty)
+    : undefined;
+};
+
+// HasBinding or GetBindingValue, which reads its state and environment as E(s, e) reads them, as
+// it applies them, then the name, and never strict where it runs natively. Any other case falls
+// back with the arguments it has read and the rest as they were.
+const createBindingOperator = (
+  callReplaced: CallReplaced,
+  name: string,
+  arity: number,
+  getBinding: typeof getHasBinding,
+): Builtin => ({
+  kind: "Builtin",
+  name,
+  arity,
+  isLazy: true,
+  evaluate: (args, context) => {
+    const state = getKeepLazyValue(args[0], context);
+    const pages = getField(getField(state, "envs"), "pages");
+    if (state === undefined || pages === undefined) {
+      return callReplaced(name, state === undefined ? args : [state, ...args.slice(1)], context);
+    }
+    const index = getKeepLazyValue(args[1], context);
+    const environment = index === undefined ? undefined : getHeapEntry(pages, index);
+    if (index === undefined || environment === undefined) {
+      return callReplaced(name, [state, index ?? args[1], ...args.slice(2)], context);
+    }
+    const nameArgument = args[2];
+    const bindingName = isOperator(nameArgument) ? nameArgument.call([]) : nameArgument;
+    const empty = getConstant(context, "Empty");
+    const absent = getConstant(context, "Absent");
+    // The TLA+ compares descriptors with Absent, which can fail only where Absent isn't an untyped
+    // model value.
+    const result =
+      empty === undefined ||
+      absent === undefined ||
+      !isModelValue(absent) ||
+      absent.type !== undefined
+        ? undefined
+        : getBinding(state, environment, bindingName, { empty, absent });
+    return result ?? callReplaced(name, [state, index, bindingName, ...args.slice(3)], context);
+  },
+  evaluateUnary: undefined,
+  evaluateBinary: undefined,
+});
+
 // ESCore's operators on its heap and property keys that tla-ts runs natively, while TLC runs the
-// runtime's TLA+: HeapGet, a heap's record at an index, IsArrayIndex, and PropBucket, the bucket
-// of an object's props that holds a key. Each falls back where its operands aren't the common ones.
+// runtime's TLA+: HeapGet, a heap's record at an index, IsArrayIndex, PropBucket, the bucket of an
+// object's props that holds a key, and CanonicalNumericIndexString, which gives Undefined for a
+// string NumToString can't give and a nonzero integer's Number for its canonical string. Each falls
+// back where its operands aren't the common ones.
 export const createEsRuntimeOperators = (callReplaced: CallReplaced): Builtin[] => {
   const define = createDefine(callReplaced);
   return [
@@ -661,13 +884,7 @@ export const createEsRuntimeOperators = (callReplaced: CallReplaced): Builtin[] 
         }
         const index = getKeepLazyValue(args[1], context);
         if (index === undefined) return callReplaced("HeapGet", [heap, args[1]], context);
-        const record =
-          typeof index === "number" && Number.isInteger(index) && index >= 1
-            ? getTuple(getTuple(pages)?.[Math.floor((index - 1) / HEAP_PAGE_SIZE)])?.[
-                (index - 1) % HEAP_PAGE_SIZE
-              ]
-            : undefined;
-        return record ?? callReplaced("HeapGet", [heap, index], context);
+        return getHeapEntry(pages, index) ?? callReplaced("HeapGet", [heap, index], context);
       },
       evaluateUnary: undefined,
       evaluateBinary: undefined,
@@ -676,13 +893,22 @@ export const createEsRuntimeOperators = (callReplaced: CallReplaced): Builtin[] 
       const units = getIndexUnits(getValue(args[0]));
       return units === undefined ? undefined : units.length > 0;
     }),
+    define("CanonicalNumericIndexString", 1, (args) => {
+      const units = getTuple(getValue(args[0]));
+      if (units === undefined || !isIntegers(units)) return undefined;
+      if (units.some((unit) => !NUMBER_STRING_UNITS.has(unit))) return typeShape(["undefined"]);
+      const integer = getCanonicalInteger(units);
+      return integer === undefined ? undefined : createInt(integer);
+    }),
     define("PropBucket", 1, (args) => {
       const units = getIndexUnits(getValue(args[0]));
-      if (units === undefined) return undefined;
-      if (units.length === 0) return NAMED_BUCKET;
-      return units.length <= 2
-        ? 0
-        : units.slice(0, -2).reduce((value, unit) => value * 10 + unit - 48, 0);
+      return units === undefined ? undefined : getBucket(units);
     }),
+    // OrdinaryGetOwnProperty(o, k): the descriptor of k in o's props, or Absent.
+    define("OrdinaryGetOwnProperty", 2, (args, context) =>
+      getOwnDescriptor(getValue(args[0]), getValue(args[1]), getConstant(context, "Absent")),
+    ),
+    createBindingOperator(callReplaced, "HasBinding", 3, getHasBinding),
+    createBindingOperator(callReplaced, "GetBindingValue", 4, getBindingValue),
   ];
 };

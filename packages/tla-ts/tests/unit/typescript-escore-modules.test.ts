@@ -650,6 +650,46 @@ describe("calls performance.now on performance, and stops at every other use", (
   });
 });
 
+// A global binding that holds the host's performance, which HasBinding and GetBindingValue read
+// natively from the global object's own data property, and a missing one, which reaches the trap
+// of a proxy on the global object's prototype, so that the host's object and the trap still run.
+describe("reads global bindings through the global object and the proxy on its prototype", () => {
+  const getFiles = (expected: string) => ({
+    "main.js": getMain(
+      `const log = [];
+      globalThis.clock = performance;
+      log.push(typeof clock.now(), clock === performance, typeof globalThis.clock);
+      Object.setPrototypeOf(globalThis, new Proxy(Object.getPrototypeOf(globalThis), {
+        has(target, key) {
+          if (key === "probe") log.push("has");
+          return Reflect.has(target, key);
+        },
+      }));
+      try { probe; } catch (error) { log.push(error.name); }`,
+      expected,
+    ),
+  });
+
+  it("agrees with Node", async () => {
+    expect(
+      (await checkModules(getFiles("number,true,object,has,ReferenceError"))).message,
+    ).toBeUndefined();
+  });
+
+  it("rejects another result", async () => {
+    expect((await checkModules(getFiles("number,true,object,ReferenceError"))).message).toContain(
+      THREW,
+    );
+  });
+
+  it("stops where a global binding's host object would", async () => {
+    expect(
+      (await checkModules({ "main.js": "globalThis.clock = performance; clock.now.call({});" }))
+        .message,
+    ).toContain("tla-ts can't run the host's performance.now");
+  });
+});
+
 // The source text of a function of the host, which Node gives as its own code has it, stops, where
 // a proxy would give a native function's text that Node doesn't.
 describe("stops at the source text of the host's functions", () => {

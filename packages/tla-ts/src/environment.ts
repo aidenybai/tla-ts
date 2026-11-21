@@ -370,6 +370,12 @@ export const createEnvironment = (
   const standardExports = new Map<string, Symbols>();
   const standardSources = new Map<string, LinkedModule>();
   const replacedDefinitions = new Map<string, Definition>();
+  // The definition that an INSTANCE copies under a key: one that a builtin replaced is copied as its
+  // TLA+ where its module has CONSTANTS or VARIABLES, which the INSTANCE may substitute, as the
+  // builtin can't read the substitutes.
+  const getInstanceDefinition = (key: string) =>
+    getLinkedDefinition(key) ??
+    (parameterized.get(key) === true ? replacedDefinitions.get(key) : undefined);
   const builtinAliases = new Map<string, string>();
   const runtime = createRuntime(config.checkDeadlock, options.seed);
   runtime.isWarningEnabled = options.isWarningEnabled ?? true;
@@ -922,7 +928,7 @@ export const createEnvironment = (
       ),
       enabledSubstitutions,
       boundSubstitutions,
-      getDefinition: getLinkedDefinition,
+      getDefinition: getInstanceDefinition,
       getOuterDefinition: (key) =>
         module.definitions.find((definition) => unit.getKey(definition) === key),
       isSubstitutedConstant: (key) => {
@@ -1221,7 +1227,7 @@ export const createEnvironment = (
       substitutedVariables: new Set(linked.variables),
       enabledSubstitutions,
       boundSubstitutions,
-      getDefinition: getLinkedDefinition,
+      getDefinition: getInstanceDefinition,
       getOuterDefinition: () => undefined,
       isSubstitutedConstant: () => false,
       isParameterized: (key) => parameterized.get(key) === true,
