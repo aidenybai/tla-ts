@@ -1,20 +1,20 @@
 import type { Language } from "./highlighter";
 
-export interface Comparison {
+interface Comparison {
   typescript: string;
   tla: string;
 }
 
-export interface Listing {
+interface Listing {
   language: Language;
   code: string;
 }
 
-export interface Subheading {
+interface Subheading {
   heading: string;
 }
 
-export interface Lesson {
+interface Lesson {
   title: string;
   blocks: (string | Comparison | Listing | Subheading)[];
 }
