@@ -232,6 +232,8 @@ export interface Environment {
   getPreparedLevels: (name: string) => OperatorLevels | undefined;
   instances: InstanceLevels;
   recursiveSections: WeakMap<Definition, SectionMember[]>;
+  // The modules of ESCore's runtime, whose recursions are tla-ts's own rather than a spec's.
+  runtimeModules: ReadonlySet<string>;
   callStack?: CallStack;
   coverage?: Coverage;
 }
@@ -1302,6 +1304,43 @@ export const bindOperatorArguments = (
   return scope;
 };
 
+const createCaseConditionError = (condition: Expression, value: Value) =>
+  new TlaEvaluationError(
+    `A non-boolean expression (${getKindString(value)}) was used as a condition of a CASE. ${describeNode(condition)}`,
+  );
+
+const createCaseExhaustedError = (expression: Expression) =>
+  new TlaEvaluationError(
+    `Attempted to evaluate a CASE with no conditions true.\n${describeRange(expression)}`,
+  );
+
+// A call of one of ESCore's runtime operators binds each argument that isn't a name or a literal to
+// its value, so that a loop's accumulator doesn't nest a thunk in the last turn's at each turn.
+const bindArgumentValues = (
+  callee: Closure,
+  step: TailStep & { kind: "Call" },
+  context: Context,
+): Scope | undefined => {
+  const args = step.expression.args;
+  if (args.length !== callee.params.length) throw createArityError(callee, args.length);
+  let scope = callee.scope;
+  for (let index = 0; index < args.length; index++) {
+    const param = callee.params[index];
+    const arg = args[index];
+    const binding: Binding =
+      param.arity > 0
+        ? { kind: "Operator", operator: evaluateOperatorArgument(arg, context) }
+        : arg.kind === "Identifier" || arg.kind === "String" || arg.kind === "Number"
+          ? step.binders[index](context)
+          : {
+              kind: "Value",
+              value: (step.values[index] ??= getEntryEvaluator(arg, context.environment))(context),
+            };
+    scope = { name: param.name, binding, parent: scope };
+  }
+  return scope;
+};
+
 // TLC calls an operator in its own body as a nested Java call. A call in the tail of the body runs
 // here as the next turn of a loop instead, so that a deep recursion, such as a loop that tla-ts
 // compiles from TypeScript, needn't fit on the stack. A recursion past this many turns overflows,
@@ -1319,6 +1358,12 @@ export type TailStep =
       alternative: TailStep;
     }
   | {
+      kind: "Case";
+      expression: Expression & { kind: "Case" };
+      arms: { source: Expression; condition: Evaluator; body: TailStep }[];
+      other: TailStep | undefined;
+    }
+  | {
       kind: "Let";
       definitions: Definition[];
       sites: (CodeSite | undefined)[] | undefined;
@@ -1328,6 +1373,9 @@ export type TailStep =
       kind: "Call";
       expression: Expression & { kind: "Apply" };
       binders: ArgumentBinder[];
+      // The evaluator of each argument that a call of one of ESCore's runtime operators binds to its
+      // value, compiled at the first such call.
+      values: (Evaluator | undefined)[];
       evaluator: Evaluator;
       // The LET operator whose body the call enters, or none for a call of the body's own operator.
       entered: { body: Expression; step: TailStep } | undefined;
@@ -1361,6 +1409,15 @@ const collectTailOperators = (
     collectTailOperators(expression.alternative, name, operators, collected, visited);
     return;
   }
+  if (expression.kind === "Case") {
+    expression.arms.forEach((arm) =>
+      collectTailOperators(arm.body, name, operators, collected, visited),
+    );
+    if (expression.other) {
+      collectTailOperators(expression.other, name, operators, collected, visited);
+    }
+    return;
+  }
   if (expression.kind === "Let") {
     if (expression.definitions.some((definition) => definition.name === name)) return;
     collectTailOperators(
@@ -1385,6 +1442,7 @@ const compileTailStep = (
   operators: ReadonlyMap<string, Definition>,
   environment: Environment,
   entries: ReadonlyMap<Definition, TailStep | undefined>,
+  isRuntime: boolean,
 ): TailStep | undefined => {
   if (expression.kind === "If") {
     const consequent = compileTailStep(
@@ -1393,6 +1451,7 @@ const compileTailStep = (
       operators,
       environment,
       entries,
+      isRuntime,
     );
     const alternative = compileTailStep(
       expression.alternative,
@@ -1400,6 +1459,7 @@ const compileTailStep = (
       operators,
       environment,
       entries,
+      isRuntime,
     );
     if (consequent === undefined && alternative === undefined) return undefined;
     return {
@@ -1416,6 +1476,26 @@ const compileTailStep = (
       },
     };
   }
+  // A spec's CASE recursion nests as TLC's does, and overflows where the stack runs out.
+  if (expression.kind === "Case" && isRuntime) {
+    const compile = (body: Expression) =>
+      compileTailStep(body, name, operators, environment, entries, isRuntime);
+    const arms = expression.arms.map((arm) => compile(arm.body));
+    const other = expression.other && compile(expression.other);
+    if (arms.every((arm) => arm === undefined) && other === undefined) return undefined;
+    const orOther = (step: TailStep | undefined, body: Expression): TailStep =>
+      step ?? { kind: "Other", evaluator: getEntryEvaluator(body, environment) };
+    return {
+      kind: "Case",
+      expression,
+      arms: expression.arms.map((arm, index) => ({
+        source: arm.condition,
+        condition: getEntryEvaluator(arm.condition, environment),
+        body: orOther(arms[index], arm.body),
+      })),
+      other: expression.other && orOther(other, expression.other),
+    };
+  }
   if (expression.kind === "Let") {
     if (expression.definitions.some((definition) => definition.name === name)) return undefined;
     const body = compileTailStep(
@@ -1424,6 +1504,7 @@ const compileTailStep = (
       withLetOperators(operators, expression),
       environment,
       entries,
+      isRuntime,
     );
     return (
       body && {
@@ -1442,6 +1523,7 @@ const compileTailStep = (
     kind: "Call",
     expression,
     binders: expression.args.map((arg) => compileArgumentBinder(arg, environment)),
+    values: expression.args.map(() => undefined),
     evaluator: getEntryEvaluator(expression, environment),
     entered:
       operator === undefined || entered === undefined
@@ -1454,23 +1536,43 @@ const compileTailStep = (
 // operator that the tail enters compiles once, into a table that every path through the body reads,
 // as the branches of a body may all enter one operator.
 const compileTailCalls = (name: string, body: Expression, environment: Environment) => {
+  const isRuntime = isRuntimeBody(body, environment);
   const collected = new Map<Definition, ReadonlyMap<string, Definition>>();
   collectTailOperators(body, name, new Map(), collected, new Set());
   const entries = new Map<Definition, TailStep | undefined>();
   collected.forEach((operators, operator) =>
-    entries.set(operator, compileTailStep(operator.body, name, operators, environment, entries)),
+    entries.set(
+      operator,
+      compileTailStep(operator.body, name, operators, environment, entries, isRuntime),
+    ),
   );
-  return compileTailStep(body, name, new Map(), environment, entries);
+  return compileTailStep(body, name, new Map(), environment, entries, isRuntime);
 };
+
+// Whether a body is one of ESCore's runtime operators, whose recursions are tla-ts's own.
+const isRuntimeBody = (body: Expression, environment: Environment) =>
+  environment.runtimeModules.has(body.location.range?.module ?? "");
 
 const evaluateTailCalls = (closure: Closure, body: TailStep, bodyContext: Context): Value => {
   let context = bodyContext;
   let step = body;
-  for (let turn = 0; turn < TAIL_CALL_LIMIT;) {
+  // ESCore's runtime loops as long as its JavaScript program does; a spec's recursion overflows.
+  const isRuntime = isRuntimeBody(closure.body, bodyContext.environment);
+  const limit = isRuntime ? Infinity : TAIL_CALL_LIMIT;
+  for (let turn = 0; turn < limit;) {
     if (step.kind === "If") {
       const value = step.condition(context);
       if (typeof value !== "boolean") throw createConditionError(step.expression, value);
       step = value ? step.consequent : step.alternative;
+    } else if (step.kind === "Case") {
+      const arm = step.arms.find((candidate) => {
+        const value = candidate.condition(context);
+        if (typeof value !== "boolean") throw createCaseConditionError(candidate.source, value);
+        return value;
+      });
+      if (arm) step = arm.body;
+      else if (step.other) step = step.other;
+      else throw createCaseExhaustedError(step.expression);
     } else if (step.kind === "Let") {
       context = withScope(
         context,
@@ -1486,7 +1588,9 @@ const evaluateTailCalls = (closure: Closure, body: TailStep, bodyContext: Contex
       if (!isEntered) return step.evaluator(context);
       context = withScope(
         context,
-        bindOperatorArguments(callee, step.expression.args, context, step.binders),
+        isRuntime
+          ? bindArgumentValues(callee, step, context)
+          : bindOperatorArguments(callee, step.expression.args, context, step.binders),
       );
       step = entered?.step ?? body;
       turn += entered === undefined ? 1 : 0;
@@ -2948,16 +3052,12 @@ const compile = (expression: Expression, environment: Environment): Evaluator =>
         for (const arm of arms) {
           const value = arm.condition(context);
           if (typeof value !== "boolean") {
-            throw new TlaEvaluationError(
-              `A non-boolean expression (${getKindString(value)}) was used as a condition of a CASE. ${describeNode(arm.source)}`,
-            );
+            throw createCaseConditionError(arm.source, value);
           }
           if (value) return arm.body(context);
         }
         if (other) return other(context);
-        throw new TlaEvaluationError(
-          `Attempted to evaluate a CASE with no conditions true.\n${describeRange(expression)}`,
-        );
+        throw createCaseExhaustedError(expression);
       };
     }
     case "Let": {

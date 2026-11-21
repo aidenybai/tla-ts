@@ -1828,6 +1828,7 @@ export const createEnvironment = (
     getPreparedLevels,
     instances: instanceLevels.instances,
     recursiveSections,
+    runtimeModules: new Set(options.preparedModules?.map((prepared) => prepared.name)),
   };
   preparedValues.forEach((values) =>
     values.forEach((value, definition) => {
