@@ -55,7 +55,7 @@ export type OnBinding = (
   maxGeneration: number,
 ) => void;
 
-const isAcDecl = (manager: AstManager, decl: number) => {
+export const isAcDecl = (manager: AstManager, decl: number) => {
   const info = manager.funcDecls[decl];
   if (info.family === FAMILY_BASIC)
     return info.op === OP_AND || info.op === OP_OR || info.op === OP_XOR;

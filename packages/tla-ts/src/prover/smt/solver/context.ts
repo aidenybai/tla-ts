@@ -61,6 +61,7 @@ import type { ProtoModel } from "./proto-model";
 import { DefaultQuantifierManager } from "./quantifier-manager";
 import { FC_CONTINUE, FC_DONE, FC_GIVEUP, Theory } from "./theory";
 import { TheoryArray } from "./theory-array";
+import { TheoryArrayFull } from "./theory-array-full";
 import { TheoryBv } from "./theory-bv";
 import { TheoryFpa } from "./theory-fpa";
 import { TheoryChar } from "./theory-char";
@@ -126,7 +127,11 @@ type ModelState =
 
 const THEORY_MAKERS = new Map<number, (context: Context) => Theory>([
   [FAMILY_ARITH, (context) => new TheoryLra(context)],
-  [FAMILY_ARRAY, (context) => new TheoryArray(context)],
+  [
+    FAMILY_ARRAY,
+    (context) =>
+      context.config.isArraySimple ? new TheoryArray(context) : new TheoryArrayFull(context),
+  ],
   [FAMILY_BV, (context) => new TheoryBv(context)],
   [FAMILY_DATATYPE, (context) => new TheoryDatatype(context)],
   [FAMILY_RECFUN, (context) => new TheoryRecfun(context)],
@@ -167,6 +172,7 @@ const isValidAssumption = (manager: AstManager, expr: number) => {
 export interface SmtParams {
   isMbqi: boolean;
   mbqiMaxIterations: number;
+  isEmatching?: boolean;
   relevancyLevel: number;
   isDelayingNewCaseSplits?: boolean;
   randomSeed?: number;
@@ -265,6 +271,7 @@ export class Context extends Internalizer {
   updateParams(params: KernelParams) {
     this.params.isMbqi = params.isMbqi;
     this.params.mbqiMaxIterations = params.mbqiMaxIterations;
+    this.params.isEmatching = params.isEmatching;
     this.params.randomSeed = params.randomSeed;
     this.params.intHammerPeriod = params.intHammerPeriod;
     this.params.isArithPropagatingEqs = params.isArithPropagatingEqs;
@@ -286,6 +293,7 @@ export class Context extends Internalizer {
       arithPropagationThreshold: this.config.arithPropagationThreshold,
       qiLazyThreshold: params.qiLazyThreshold ?? DEFAULT_CONFIG.qiLazyThreshold,
       arrayLazyIeqDelay: this.config.arrayLazyIeqDelay,
+      isArraySimple: this.config.isArraySimple,
     };
     this.updateRelevancyLevel();
   }

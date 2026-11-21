@@ -708,6 +708,7 @@ export const runSmtlibScript = (
     isMbqi: settings.isMbqi || (!isSetUp && isMbqiByLogic(getSetup())),
     mbqiMaxIterations: settings.mbqiMaxIterations,
     isFindingMacros: settings.isFindingMacros,
+    isEmatching: settings.parameters.get("smt.ematching") !== "false",
     relevancyLevel: Number(settings.parameters.get("smt.relevancy") ?? "2"),
     isCoreMinimizing: settings.parameters.get("smt.core.minimize") === "true",
     setup: getSetup(),

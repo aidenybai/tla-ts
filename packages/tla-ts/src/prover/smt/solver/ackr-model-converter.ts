@@ -72,6 +72,7 @@ const convert = (info: AckrInfo, source: ProtoModel, target: ProtoModel) => {
   for (const entry of source.funcInterps) target.registerFunc(entry[0], entry[1].copy());
   for (const sort of source.getUninterpretedSorts())
     for (const value of source.getKnownUniverse(sort)) target.registerValue(value);
+  target.copyUsortInterps(source);
   const interpretations = new ObjMap<FuncInterp>((decl) => manager.getDeclHash(decl));
   const arrayInterpretations = new ObjMap<number>((expr) => manager.hashes[expr]);
   const converter = { manager, info, evaluator: new ModelEvaluator(manager, source) };

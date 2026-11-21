@@ -66,6 +66,7 @@ import {
   isEqualLikeTlc,
   createEnumeratedSet,
   createNormalizedSet,
+  createSetOperation,
   EMPTY_SET,
   isEnumeratedSet,
   type IntervalValue,
@@ -118,7 +119,7 @@ const combineReducible = (
   }
   if (isEmptySet(set)) return other;
   if (!isReducibleSet(other)) {
-    return markStreamedSet({ kind: "SetOperation", operator, left: set, right: other });
+    return markStreamedSet(createSetOperation(operator, set, other));
   }
   const union: Value[] = [];
   forEachElement(elements, (element) => addBoundedElement(union, element));
@@ -279,7 +280,7 @@ export const CORE_OPERATORS: Builtin[] = [
       if (isReducibleSet(left)) return combineReducible(operator, left, right);
       if (operator !== "\\" && isReducibleSet(right))
         return combineReducible(operator, right, left);
-      return markStreamedSet({ kind: "SetOperation", operator, left, right });
+      return markStreamedSet(createSetOperation(operator, left, right));
     }),
   ),
   defineOperator("SUBSET", 1, (args) => ({ kind: "Subset", base: getValue(args, 0, "SUBSET") })),

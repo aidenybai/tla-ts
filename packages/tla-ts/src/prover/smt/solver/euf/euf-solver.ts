@@ -13,7 +13,7 @@ import {
   SORT_SIZE_VERY_BIG,
   QUANTIFIER_LAMBDA,
 } from "../ast";
-import { ObjHashtable } from "../hashtable";
+import { ObjHashtable, ObjMap } from "../hashtable";
 import { L_FALSE, L_TRUE, L_UNDEF } from "../lbool";
 import type { ProtoModel } from "../proto-model";
 import { FuncInterp } from "../proto-model";
@@ -1102,11 +1102,13 @@ export class EufSolver implements SatExtension {
 // euf::solver::user_sort: the universe of each uninterpreted sort, with fresh values from a
 // user_sort_factory.
 class UserSortValues {
-  private sort2values = new Map<number, number[]>();
+  private sort2values: ObjMap<number[]>;
   private registered = new Map<number, Set<number>>();
   private next = new Map<number, number>();
 
-  constructor(private manager: AstManager) {}
+  constructor(private manager: AstManager) {
+    this.sort2values = new ObjMap((sort) => manager.getSortHash(sort));
+  }
 
   registerValue(value: number) {
     const sort = this.manager.sorts[value];
