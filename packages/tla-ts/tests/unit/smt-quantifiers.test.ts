@@ -1,4 +1,6 @@
+import { createHash } from "node:crypto";
 import { describe, expect, it } from "vite-plus/test";
+import { PATTERN_DATABASE } from "../../src/prover/smt/solver/pattern-database-text";
 import { runSmtlibScript } from "../../src/prover/smt/solver/smtlib-script";
 
 const run = (lines: string[]) => {
@@ -670,5 +672,68 @@ describe("the preprocessing setup_AUFLIA turns on, as Z3 5.3.2 runs it", () => {
       "      6))",
       ")",
     ]);
+  });
+});
+
+describe("the pattern database setup_AUFLIA turns on, as Z3 5.3.2 loads it", () => {
+  it("holds the bytes of Z3's ast/pattern/database.smt2", () => {
+    expect(createHash("sha256").update(PATTERN_DATABASE).digest("hex")).toBe(
+      "3b19a7e9f88910f7796f7ead70160a6a636fa33a27b812d3d51c90a3080b2bec",
+    );
+  });
+
+  it("loads it at the first universal quantifier, though that one has patterns", () => {
+    expect(
+      run([
+        "(set-logic AUFLIA)",
+        "(set-option :smt.mbqi false)",
+        "(set-option :smt.qi.lazy_threshold 10.0)",
+        "(set-option :smt.qi.max_multi_patterns 1)",
+        "(declare-fun f (Int) Int)",
+        "(declare-fun g (Int Int) Int)",
+        "(declare-fun p (Int) Bool)",
+        "(declare-fun A () (Array Int Int))",
+        "(declare-fun B () (Array Int Int))",
+        "(declare-fun a () Int)",
+        "(declare-fun b () Int)",
+        "(declare-fun c () Int)",
+        "(assert (forall ((x0 Int)) (! (or (and (>= (* -2 a) (+ c x0)) (p (+ 3 a))) (=> (<= (+ -2 c) b) (p (g b a)))) :pattern ((p x0)))))",
+        "(assert (or (or (< 1 (g 2 b)) (p (+ b b))) (=> (> (* 1 b) (+ a -2)) (> a (+ c c)))))",
+        "(assert (and (> (+ 1 a) (+ c c)) (= a (* 2 0))))",
+        "(check-sat)",
+        "(get-info :rlimit)",
+        "(assert (< (+ 3 a) 2))",
+        "(check-sat)",
+        "(get-info :rlimit)",
+      ]),
+    ).toEqual(["sat", "(:rlimit 1165)", "unsat", "(:rlimit 1368)"]);
+  });
+
+  it("gives a quantifier the weight of the database entry it matches", () => {
+    const getOutput = (weight: number) =>
+      run([
+        "(set-option :smt.mbqi false)",
+        "(declare-sort U 0)",
+        "(declare-fun f (U) U)",
+        "(declare-fun g (U) U)",
+        "(declare-fun h (U U) U)",
+        "(declare-fun p (U) Bool)",
+        "(declare-const c0 U)",
+        "(declare-const c1 U)",
+        "(declare-const c2 U)",
+        "(assert (forall ((x U)) (! (= (f x) (h c0 c2)) :pattern ((f x)) :pattern ((g x)) :qid q0)))",
+        "(assert (forall ((x U)) (! (p (f x)) :pattern ((f x)))))",
+        `(assert (forall ((x U)) (! (= (g (f x)) x) :pattern ((g (f x))) :weight ${weight})))`,
+        "(assert (p (f c1)))",
+        "(assert (p (h (f c0) (f c0))))",
+        "(check-sat)",
+        "(get-info :rlimit)",
+        "(assert (= c0 (h c2 c1)))",
+        "(check-sat)",
+        "(get-info :rlimit)",
+      ]);
+    const expected = ["sat", "(:rlimit 2378)", "unknown", "(:rlimit 2810)"];
+    expect(getOutput(5)).toEqual(expected);
+    expect(getOutput(0)).toEqual(expected);
   });
 });
