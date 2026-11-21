@@ -3702,6 +3702,52 @@ ASSUME TLCFP(a) = -887695703
     ).toBe(getWholeMessage(2, "2"));
   });
 
+  const checkTakenApart = (spec: string, coverage: number | undefined, prints: string[] = []) =>
+    check({
+      source: `---- MODULE M ----\nEXTENDS Naturals, TLC\nVARIABLES x, y\n${spec}\n====\n`,
+      config: "SPECIFICATION Spec\n",
+      coverage,
+      onPrint: (text) => prints.push(text),
+    });
+
+  it.each([
+    [
+      `F(a) == a\nSpec == LET G == 1 IN x = 0 /\\ y = 0 /\\ F(2) /\\ ${UNCHANGED_STEP}`,
+      getWholeMessage(2, "2"),
+    ],
+    [`F(a) == a\nSpec == x = 0 /\\ y = 0 /\\ F(2) /\\ ${UNCHANGED_STEP}`, getWholeMessage(2, "2")],
+    [
+      `F(a) == a\nSpec == x = 0 /\\ y = 0 /\\ F("s") /\\ ${UNCHANGED_STEP}`,
+      'In computing initial states, TLC expected a boolean expression,\nbut instead found "s".\nline 5, col 29 to line 5, col 31 of module M',
+    ],
+    [
+      `F(a, b) == a /\\ b\nSpec == x = 0 /\\ y = 0 /\\ F(TRUE, 2) /\\ ${UNCHANGED_STEP}`,
+      getWholeMessage(2, "2"),
+    ],
+  ])(
+    "follows a parameter of an application the specification takes apart in %j to its literal argument, with and without coverage, as SpecProcessor#processConfigSpec does",
+    async (spec, message) => {
+      const failures = [
+        (await checkTakenApart(spec, undefined)).failure?.message,
+        (await checkTakenApart(spec, 1)).failure?.message,
+      ];
+      expect(failures).toEqual([message, message]);
+    },
+  );
+
+  it.each([undefined, 1])(
+    "evaluates an argument of an application the specification takes apart at each read with coverage %j, as SpecProcessor#getOpContext binds it as an uncachable LazyValue",
+    async (coverage) => {
+      const prints: string[] = [];
+      await checkTakenApart(
+        `F(a) == x = a /\\ y = a\nSpec == F(PrintT(0)) /\\ ${UNCHANGED_STEP}`,
+        coverage,
+        prints,
+      );
+      expect(prints).toEqual(["0", "0"]);
+    },
+  );
+
   it('describes an application of a definition whose body is a literal in TLCGet("spec") whole, as TLC does', async () => {
     const prints: string[] = [];
     await check({

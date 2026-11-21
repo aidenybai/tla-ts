@@ -27,6 +27,7 @@ import type { InstanceAction } from "./environment";
 import { formatRange, TlaError, TlaEvaluationError, UNEXPECTED_EXCEPTION } from "./errors";
 import {
   bindOperatorArguments,
+  bindUncachedArguments,
   describeNode,
   evaluate,
   forEachBinding,
@@ -570,7 +571,7 @@ const describeSpecification = (
   ) {
     recurse(
       called.body,
-      bindOperatorArguments(called, expression.args, getConstantContext(environment, scope)),
+      bindUncachedArguments(called, expression.args, getConstantContext(environment, scope)),
       calledFrames,
     );
     return;
