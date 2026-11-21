@@ -2950,6 +2950,49 @@ ASSUME TLCFP(a) = -887695703
     ]);
   });
 
+  const LITERAL_MODULE =
+    '---- MODULE N ----\nCONSTANT k\nVARIABLES x, y\nTwo == 2\nStr == "a"\nNext == UNCHANGED <<x, y>>\nInit == x = k /\\ y = 0 /\\ Two\nSpec == x = k /\\ y = 0 /\\ Str /\\ [][Next]_<<x, y>>\nProp == []<>(x = k) /\\ Two\n====\n';
+
+  it.each([
+    [
+      "Spec == I(0)!Init /\\ [][I(0)!Next]_<<x, y>>",
+      "",
+      "The operator Two, which equals 2,\ncannot be used as a spec",
+    ],
+    ["Spec == I(0)!Spec", "", 'The operator Str, which equals "a",\ncannot be used as a spec'],
+    ["Spec == J!Spec", "", 'The operator Str, which equals "a",\ncannot be used as a spec'],
+    [
+      "Spec == J!Init /\\ [][J!Next]_<<x, y>>\nProp == I(0)!Prop",
+      "PROPERTY Prop\n",
+      "The operator Two, which equals 2,\ncannot be used as a property",
+    ],
+    [
+      "Spec == LET T == 2 IN J!Init /\\ T /\\ [][J!Next]_<<x, y>>",
+      "",
+      "The operator T, which equals 2,\ncannot be used as a spec",
+    ],
+    [
+      "Spec == J!Init /\\ J!Two /\\ [][J!Next]_<<x, y>>",
+      "",
+      "The operator J!Two, which equals 2,\ncannot be used as a spec",
+    ],
+    [
+      "Spec == LET T == FALSE IN J!Init /\\ T /\\ [][J!Next]_<<x, y>>",
+      "",
+      "The spec is trivially false because FALSE is false.",
+    ],
+  ])(
+    "looks up a definition %j names, where TLC stored no value for it at startup, as its literal body, as TLC does",
+    async (spec, property, message) => {
+      const checked = check({
+        source: `---- MODULE M ----\nVARIABLES x, y\nI(j) == INSTANCE N WITH k <- j\nJ == INSTANCE N WITH k <- 0\n${spec}\n====\n`,
+        config: `SPECIFICATION Spec\n${property}`,
+        loadModule: (name) => (name === "N" ? LITERAL_MODULE : undefined),
+      });
+      await expect(checked).rejects.toThrow(new TlaConfigError(message));
+    },
+  );
+
   it("applies an operator to each value @ takes in the same state", async () => {
     const result = await check({
       source:

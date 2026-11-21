@@ -999,6 +999,18 @@ export const getStartupValue = (definition: Definition, environment: Environment
   return definitionId === undefined ? undefined : environment.startupValues[definitionId];
 };
 
+// SymbolNodeValueLookupProvider#lookup takes a definition processConstantDefns skipped, such as a LET's or one of an instanced module with parameters, for its body's literal, through SANY's SubstInNodes.
+export const getBodyLiteral = (body: Expression, environment: Environment): Value | undefined => {
+  if (body.kind === "Let" && environment.boundSubstitutions.lets.has(body)) {
+    return getBodyLiteral(body.body, environment);
+  }
+  return body.kind === "Number" || body.kind === "String" ? body.value : undefined;
+};
+
+export const getLookupValue = (definition: Definition, environment: Environment) =>
+  getStartupValue(definition, environment) ??
+  (definition.kind === "Operator" ? getBodyLiteral(definition.body, environment) : undefined);
+
 export interface StartupSubstitute {
   key: string;
   target: string;

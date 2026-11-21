@@ -25,7 +25,9 @@ import {
   forEachBinding,
   forEachBoundElement,
   getBoundElements,
+  getBodyLiteral,
   getDefinition,
+  getLookupValue,
   getReevaluatedDefinitions,
   getRootKey,
   getStartupValue,
@@ -87,6 +89,8 @@ interface ExpandedExpression extends ScopedExpression {
   path: string[];
   frames: Expression[];
   theorem?: TheoremReference;
+  // The definition SANY's body names without arguments, whose copy takes the parameters of its instance.
+  named?: Definition;
   substitutions: LetExpression[];
 }
 
@@ -425,7 +429,7 @@ export const expandTemporal = (
       ],
       substitutions,
     });
-  const getLeaf = (theorem?: TheoremReference): ExpandedExpression[] => [
+  const getLeaf = (theorem?: TheoremReference, named?: Definition): ExpandedExpression[] => [
     {
       expression,
       scope,
@@ -433,6 +437,7 @@ export const expandTemporal = (
       path: expansion.path,
       frames: expansion.frames,
       theorem,
+      named,
       substitutions: expansion.substitutions.flatMap((item) =>
         isWithinScope(item.scope, scope) ? [item.expression] : [],
       ),
@@ -493,6 +498,12 @@ export const expandTemporal = (
     const theorem = getTheoremReference(expression, expression.name);
     if (theorem) return getLeaf(theorem);
     if (binding?.kind === "Thunk" && !binding.isReleased) {
+      if (
+        definitionThunks.has(binding) &&
+        getBodyLiteral(binding.expression, environment) !== undefined
+      ) {
+        return getLeaf();
+      }
       return expand(
         binding.expression,
         binding.scope,
@@ -514,7 +525,7 @@ export const expandTemporal = (
       !binding &&
       (definition?.kind === "Function" ||
         (definition?.kind === "Operator" && definition.params.length === 0)) &&
-      (isConfigSubstitute || getStartupValue(definition, environment) === undefined)
+      (isConfigSubstitute || getLookupValue(definition, environment) === undefined)
     ) {
       if (expansion.expanding.has(definition)) {
         throw createStackOverflowError();
@@ -564,12 +575,15 @@ export const expandTemporal = (
       !isRecursive &&
       (!expansion.isSubstituted || isOwnArgumentFree);
     if (isExpandable) {
-      const bound = bindUncachedArguments(operator, expression.args, context);
       // Inside an instance, SANY's body names a definition without parameters, whose copy takes the instance's.
+      const isNamed = expansion.isSubstituted && isOwnArgumentFree;
+      if (isNamed && definition && getLookupValue(definition, environment) !== undefined) {
+        return getLeaf(undefined, definition);
+      }
+      const bound = bindUncachedArguments(operator, expression.args, context);
       if (
         !isProperty &&
-        expansion.isSubstituted &&
-        isOwnArgumentFree &&
+        isNamed &&
         getLevelBound(operator.body, bound, environment) === VARIABLE_LEVEL
       ) {
         return getLeaf();

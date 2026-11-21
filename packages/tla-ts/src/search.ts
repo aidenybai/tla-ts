@@ -59,6 +59,7 @@ import {
   getBuiltin,
   getConfigNameDefinition,
   getDefinition,
+  getLookupValue,
   getRootKey,
   type Builtin,
   type Context,
@@ -369,22 +370,17 @@ const createTheoremError = (theorem: TheoremReference, usage: string) =>
     `The operator ${theorem.name}, which equals ${formatRange(theorem.range)},\ncannot be used as a ${usage}`,
   );
 
-const isConstantTrue = (item: ScopedExpression, environment: Environment, usage: string) => {
-  const conjunct = item.expression;
-  // SpecProcessor#processConfigProps looks up no VARIABLE, so it checks a substitute for one whatever its value.
-  if (conjunct.kind !== "Identifier" || getSubstitutedName(conjunct) !== undefined) return false;
-  // SpecProcessor#processConfigSpec looks a definition up as the value processConstantDefns stored, if it stored one.
-  const definition =
-    isLocallyResolved(conjunct) || environment.constants.has(conjunct.name)
-      ? undefined
-      : getDefinition(conjunct.name, environment);
-  const value = definition
-    ? getStartupValue(definition, environment)
-    : getLevel(conjunct, item.scope, environment) > CONSTANT_LEVEL
-      ? undefined
-      : evaluate(conjunct, getContext(environment, undefined, undefined, item.scope));
+const isTrueValue = (
+  value: Value | undefined,
+  reference: Expression & { kind: "Identifier" | "Apply" },
+  key: string,
+  environment: Environment,
+  usage: string,
+) => {
   if (value === undefined) return false;
-  const name = environment.instanceNames.get(conjunct.name) ?? getKeyName(conjunct.name);
+  // TLC names the definition SANY's body names, which an instance's copy keeps as its written key.
+  const name =
+    getReferenceName(reference, key, environment) ?? getKeyName(reference.writtenKey ?? key);
   if (value === false) {
     throw new TlaConfigError(`The spec is trivially false because ${name} is false.`);
   }
@@ -394,6 +390,31 @@ const isConstantTrue = (item: ScopedExpression, environment: Environment, usage:
     );
   }
   return true;
+};
+
+const isConstantTrue = (
+  item: ScopedExpression & { named?: Definition },
+  environment: Environment,
+  usage: string,
+) => {
+  const conjunct = item.expression;
+  if (item.named && conjunct.kind === "Apply") {
+    const value = getLookupValue(item.named, environment);
+    return isTrueValue(value, conjunct, conjunct.operator, environment, usage);
+  }
+  // SpecProcessor#processConfigProps looks up no VARIABLE, so it checks a substitute for one whatever its value.
+  if (conjunct.kind !== "Identifier" || getSubstitutedName(conjunct) !== undefined) return false;
+  // SpecProcessor#processConfigSpec looks a definition up as the value processConstantDefns stored, if it stored one.
+  const definition =
+    isLocallyResolved(conjunct) || environment.constants.has(conjunct.name)
+      ? undefined
+      : getDefinition(conjunct.name, environment);
+  const value = definition
+    ? getLookupValue(definition, environment)
+    : getLevel(conjunct, item.scope, environment) > CONSTANT_LEVEL
+      ? undefined
+      : evaluate(conjunct, getContext(environment, undefined, undefined, item.scope));
+  return isTrueValue(value, conjunct, conjunct.name, environment, usage);
 };
 
 const getSpecification = (
