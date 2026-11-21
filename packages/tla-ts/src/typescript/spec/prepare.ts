@@ -22,6 +22,8 @@ import {
   type Library,
   readEscoreFiles,
 } from "./library";
+import { CANONICAL_MODULE } from "./canonical";
+import { NATIVE_MODULE } from "./native-module";
 import { type HostRealm, recordHostRealm } from "./realm";
 import {
   getHostDefinitions,
@@ -64,6 +66,9 @@ export interface EscoreRuntime {
   resumableSteps: ReadonlySet<string>;
   // What a program's spec reads of the host whose behavior it models.
   realm: HostRealm;
+  // The modules that a model's spec extends besides the runtime, ESCanonical and ESNative, by name,
+  // prepared once as the runtime is, which every model's spec links whole.
+  extensions: ReadonlyMap<string, PreparedModule>;
 }
 
 // What a host prepares ESCore's runtime from: ESCore's texts, the realm of the host that the
@@ -116,6 +121,18 @@ const EMPTY_PROGRAM = [
   "====",
   "",
 ].join("\n");
+
+// A program with no code that extends the modules a model's spec extends besides the runtime,
+// with which they're checked and started after the runtime, so that the runtime's strings and
+// values stay as they are without them.
+const EXTENSIONS_PROGRAM = EMPTY_PROGRAM.replace(
+  "EXTENDS ESRuntime",
+  "EXTENDS ESRuntime, ESCanonical, ESNative",
+);
+const EXTENSION_TEXTS = [
+  ["ESCanonical", CANONICAL_MODULE],
+  ["ESNative", NATIVE_MODULE],
+] as const;
 
 // The realm's tables and what building them runs, which a program's spec keeps whole, so that a
 // program sees every property the realm has, even of the built-ins it can't run.
@@ -186,18 +203,23 @@ const getModuleTexts = (library: Library, realm: HostRealm) => [
   ["ESRuntime", assembleRuntime(library, getOverrides(library, realm), INTERPRETER)] as const,
 ];
 
-// The modules of the texts, read, checked by SANY's checks, and started: each one's levels, the
-// strings it ranks, what its definitions without parameters evaluate to, among them the realm, and
-// the facts of its definitions, of the runtime's as its views stand in its values.
-const prepareModules = (texts: readonly (readonly [string, string])[]): PreparedModule[] => {
+// The modules of the texts, read, checked by SANY's checks, and started, after the prepared modules
+// they extend and with a program that extends them: each one's levels, the strings it ranks, what
+// its definitions without parameters evaluate to, among them the realm, and the facts of its
+// definitions, of the runtime's as its views stand in its values.
+const prepareModules = (
+  texts: readonly (readonly [string, string])[],
+  extended: readonly PreparedModule[] = [],
+  program = EMPTY_PROGRAM,
+): PreparedModule[] => {
   const modules = texts.map((entry) => prepare(entry[0], entry[1]));
   const config = parseConfig(CONFIG);
   const levels = new Map<Module, (OperatorLevels | undefined)[]>();
   let warning: string | undefined;
   createEnvironment(config, {
     source: ROOT,
-    loadModule: (name) => (name === "ProgramCode" ? EMPTY_PROGRAM : undefined),
-    preparedModules: modules,
+    loadModule: (name) => (name === "ProgramCode" ? program : undefined),
+    preparedModules: [...extended, ...modules],
     onModuleLevels: (module, moduleLevels) => levels.set(module, moduleLevels),
     print: (text) => {
       warning ??= text;
@@ -214,8 +236,8 @@ const prepareModules = (texts: readonly (readonly [string, string])[]): Prepared
     config,
     {
       source: ROOT,
-      loadModule: (name) => (name === "ProgramCode" ? EMPTY_PROGRAM : undefined),
-      preparedModules: accepted,
+      loadModule: (name) => (name === "ProgramCode" ? program : undefined),
+      preparedModules: [...extended, ...accepted],
     },
     () => {},
   ).specification;
@@ -260,8 +282,8 @@ interface PreparedGraph {
 // The graph of the modules of the runtime of ESCore's texts for a realm, prepared, which a build
 // writes into a bundle so that a process reads the modules rather than prepares them.
 const getGraph = (library: Library, realm: HostRealm) => {
-  const texts = getModuleTexts(library, realm);
-  const modules = prepareModules(texts);
+  const runtime = prepareModules(getModuleTexts(library, realm));
+  const modules = [...runtime, ...prepareModules(EXTENSION_TEXTS, runtime, EXTENSIONS_PROGRAM)];
   const entries = modules.map((prepared) => [...(prepared.values ?? [])]);
   const plain = getPlainValues(entries.flat().map((entry) => entry[1]));
   let position = 0;
@@ -364,11 +386,13 @@ const prepareLibraryRuntime = (
   graph: EncodedGraph | undefined,
 ): EscoreRuntime => {
   const texts = getModuleTexts(library, hostRealm);
-  const modules =
-    readPreparedModules(
-      texts.map((entry) => entry[1]),
-      graph,
-    ) ?? prepareModules(texts);
+  const read = readPreparedModules(
+    [...texts, ...EXTENSION_TEXTS].map((entry) => entry[1]),
+    graph,
+  );
+  const modules = read?.slice(0, texts.length) ?? prepareModules(texts);
+  const extensions =
+    read?.slice(texts.length) ?? prepareModules(EXTENSION_TEXTS, modules, EXTENSIONS_PROGRAM);
   const runtime = modules[modules.length - 1];
   const overridden = new Set(getOverrides(library, hostRealm).map((override) => override.name));
   const getView = createModuleView(runtime);
@@ -433,6 +457,7 @@ const prepareLibraryRuntime = (
       reached: getReachedStubs(entry[0]),
     })),
     realm: hostRealm,
+    extensions: new Map(extensions.map((extension) => [extension.name, extension])),
   };
 };
 

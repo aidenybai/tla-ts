@@ -109,8 +109,14 @@ const worker = new Worker(
       ).replace("\\nEXTENDS ESRuntime, ESCanonical", spec.mode === "compared" ? "\\nEXTENDS ESRuntime, ESCanonical, ESCanonicalPlain" : "\\nEXTENDS ESRuntime, ESCanonical")
         .replace(/^(EXTENDS .*)$/m, (line) => (isOperators ? line + ", ESNativePlain" : line))
         .replace(/\\n====\\n$/, isOperators ? "\\n" + spec.operators + "\\n====\\n" : "\\n====\\n");
+      // The unprepared mode reads ESCanonical and ESNative as the spec's texts rather than as the
+      // runtime prepared them.
+      const preparedModules = spec.mode === "unprepared"
+        ? compiled.preparedModules.filter((prepared) => prepared.name !== "ESCanonical" && prepared.name !== "ESNative")
+        : compiled.preparedModules;
       const result = await loaded.check({
         ...compiled,
+        preparedModules,
         loadModule: (name) =>
           name === "ProgramCode"
             ? changed
@@ -168,7 +174,14 @@ beforeAll(() => ready, 60_000);
 const checkModel = (
   source: string,
   fileName = "spec.ts",
-  mode: "canonical" | "raw" | "compared" | "lowered" | "native" | "operators" = "canonical",
+  mode:
+    | "canonical"
+    | "raw"
+    | "compared"
+    | "lowered"
+    | "native"
+    | "operators"
+    | "unprepared" = "canonical",
   mutation?: [string, string],
   operators?: string,
 ) =>
@@ -1501,6 +1514,14 @@ describe("checks a module's exported functions as a model on ESCore", () => {
       const counts = [explored.status, explored.distinctStates, explored.generatedStates];
       expect(getCounts(await checkModel(source, "spec.ts", "native"))).toEqual(counts);
       expect(getCounts(await checkModel(source, "spec.ts", "compared"))).toEqual(counts);
+    });
+
+    // The runtime prepares ESCanonical and ESNative once, which a check reads as it would parse
+    // them, with the same states.
+    it("checks alike with ESCanonical and ESNative prepared and parsed", async () => {
+      expect(getCounts(await checkModel(source, "spec.ts"))).toEqual(
+        getCounts(await checkModel(source, "spec.ts", "unprepared")),
+      );
     });
 
     it("stops where with throws past the end, as Node throws", async () => {

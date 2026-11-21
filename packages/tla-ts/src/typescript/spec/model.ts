@@ -7,7 +7,8 @@ import { getCommonJsExports } from "../context";
 import { getJsxText, type Library } from "../program";
 import { CANONICAL_MODULE } from "./canonical";
 import { getLoweredBindings, LOWERED_DEFINITIONS } from "./lowered";
-import { getNativeFunctions, isIndexKey, NATIVE_MODULE } from "./native";
+import { getNativeFunctions, isIndexKey } from "./native";
+import { NATIVE_MODULE } from "./native-module";
 import { compileToEscore, type EscoreSpec } from "./compile";
 import { frameModel, type StateVariable } from "./frame";
 import { foldNames } from "./library";
@@ -1540,6 +1541,12 @@ export const compileModelToEscore = (
   return {
     ...compiled,
     config: configLines.join("\n"),
+    preparedModules: [
+      ...compiled.preparedModules,
+      ...["ESCanonical", ...(lowered === undefined ? [] : ["ESNative"])].flatMap(
+        (name) => runtime.extensions.get(name) ?? [],
+      ),
+    ],
     loadModule: (name) =>
       name === "ProgramCode"
         ? finalCode
