@@ -405,13 +405,14 @@ const evaluateInPartial = (
   expression: Expression,
   scope: Scope | undefined,
   partial: State,
+  next: State | undefined,
 ) => {
   try {
     return evaluateAt(replay, node, expression, {
       environment: replay.environment,
       scope,
       state: partial,
-      next: NULL_STATE,
+      next,
     });
   } catch (error) {
     if (replay.isEnabled && error instanceof TlaUnassignedError) return error;
@@ -426,7 +427,14 @@ const isChanged = (replay: Replay, item: ActionItem, partial: State) => {
     state: replay.current,
     next: partial,
   });
-  const after = evaluateInPartial(replay, item.node, item.expression, item.scope, partial);
+  const after = evaluateInPartial(
+    replay,
+    item.node,
+    item.expression,
+    item.scope,
+    partial,
+    NULL_STATE,
+  );
   if (after instanceof TlaUnassignedError) {
     throw toUnspecifiedSubscriptError(after, replay.environment.runtime.version);
   }
@@ -1136,7 +1144,11 @@ const visitUnchanged = (
     const callStack = replay.callStack;
     const depth = callStack?.expressions.length ?? 0;
     const fingerprint = callStack?.fingerprint;
-    const after = evaluateInPartial(replay, node, expression, scope, partial);
+    const after = replay.isEnabled
+      ? replay.environment.runtime.runWithEvalControl("Primed", () =>
+          evaluateInPartial(replay, node, expression, scope, partial, undefined),
+        )
+      : evaluateInPartial(replay, node, expression, scope, partial, NULL_STATE);
     if (!(after instanceof TlaUnassignedError)) {
       return isEqualLikeTlc(before, after) && proceed(replay, items, partial, node);
     }

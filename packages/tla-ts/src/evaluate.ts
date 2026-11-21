@@ -3085,7 +3085,10 @@ const compile = (expression: Expression, environment: Environment): Evaluator =>
       const index = environment.variableIndex.get(name) ?? -1;
       const substitution = getChildEvaluator(expression.substitution);
       return (context) => {
-        if (context.next !== NULL_STATE) return substitution(context);
+        // Tool#lookup stops at ENABLED's context branch under EvalControl.Primed, which TLC also passes without s1 as TLCState.Null.
+        if (context.next !== NULL_STATE && context.environment.runtime.evalControl !== "Primed") {
+          return substitution(context);
+        }
         const value = context.state?.[index];
         if (value === undefined) throw createUnassignedError(name, expression);
         return value;

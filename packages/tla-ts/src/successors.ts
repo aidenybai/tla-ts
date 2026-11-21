@@ -40,6 +40,7 @@ import {
   mapBoundSets,
   resolveApplyOperator,
   resolveGlobalOperator,
+  toEmptyContext,
   toUnspecifiedSubscriptError,
   type Context,
   type Environment,
@@ -73,6 +74,7 @@ import {
   isElementOf,
   isEqualLikeTlc,
   isFunctionValue,
+  isReceiverEqual,
   isTlcEnumerable,
   someStreamedElement,
   type Value,
@@ -140,6 +142,26 @@ const holdsUnchanged = (run: Run, unchanged: Expression, context: Context) => {
     return holds(run, unchanged, context);
   } catch (error) {
     if (run.isEnabled && error instanceof TlaUnassignedError) return error;
+    throw error;
+  }
+};
+
+// Tool#enabledUnchanged evaluates the second side in s1 with TLCState.Empty under EvalControl.Primed, where a LazyValue's cache serves it.
+const holdsEnabledUnchanged = (expression: Expression, context: Context) => {
+  const environment = context.environment;
+  try {
+    const before = evaluate(expression, toEmptyContext(context));
+    const after = environment.runtime.runWithEvalControl("Primed", () =>
+      evaluate(expression, {
+        environment,
+        scope: context.scope,
+        state: context.next,
+        next: undefined,
+      }),
+    );
+    return isReceiverEqual(before, after);
+  } catch (error) {
+    if (error instanceof TlaUnassignedError) return error;
     throw error;
   }
 };
@@ -682,7 +704,9 @@ const compileUnchanged = (expression: Expression, environment: Environment): Run
       return;
     }
     const context = getContext(run, scope, partial);
-    const isHeld = holdsUnchanged(run, unchanged, context);
+    const isHeld = run.isEnabled
+      ? holdsEnabledUnchanged(expression, context)
+      : holdsUnchanged(run, unchanged, context);
     if (!(isHeld instanceof TlaUnassignedError)) {
       if (isHeld) onComplete(partial, action);
       return;

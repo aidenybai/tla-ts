@@ -2514,6 +2514,86 @@ ASSUME TLCFP(a) = -887695703
     },
   );
 
+  const ENABLED_UNCHANGED = [
+    'Check == LET t == PrintT("t") /\\ y \\in 0..1 IN ENABLED (y\' = y /\\ UNCHANGED (t \\/ TRUE) /\\ UNCHANGED (t \\/ TRUE))',
+    "Check == ENABLED (y' = y /\\ UNCHANGED (J!Op2 \\/ TRUE))",
+    "Check == J!Op2 /\\ ENABLED (y' = y /\\ UNCHANGED (J!Op2 \\/ TRUE)) /\\ J!Op2",
+    "Next == Step /\\ ENABLED (y' = y /\\ UNCHANGED (J!Op2 \\/ TRUE))",
+  ];
+
+  it.each([
+    [ENABLED_UNCHANGED[0], INVARIANT_CHECK, getPrints('"t"', 8)],
+    [ENABLED_UNCHANGED[1], INVARIANT_CHECK, getPrints('"d"', 4)],
+    [ENABLED_UNCHANGED[2], INVARIANT_CHECK, getPrints('"d"', 8)],
+    [ENABLED_UNCHANGED[3], NEXT_CHECK, getPrints('"d"', 4)],
+  ])(
+    "reads a lazy value on the second side of UNCHANGED inside ENABLED in %j from its cache, as TLC's Tool#enabledUnchanged evaluates that side in s1 with TLCState.Empty",
+    async (definitions, config, expected) => {
+      expect((await getLazyReads(definitions, config)).printed).toEqual(expected);
+    },
+  );
+
+  it.each([
+    [
+      ENABLED_UNCHANGED[0],
+      INVARIANT_CHECK,
+      getPrints('"t"', 8),
+      [
+        "line 8, col 19 to line 8, col 43 of module M: 8",
+        "line 8, col 48 to line 8, col 113 of module M: 2",
+        "|line 8, col 57 to line 8, col 62 of module M: 2",
+        "|line 8, col 67 to line 8, col 87 of module M: 4",
+        "|line 8, col 92 to line 8, col 112 of module M: 4",
+      ],
+    ],
+    [
+      ENABLED_UNCHANGED[1],
+      INVARIANT_CHECK,
+      getPrints('"d"', 4),
+      [
+        "line 8, col 10 to line 8, col 54 of module M: 2",
+        "|line 8, col 19 to line 8, col 24 of module M: 2",
+        "|line 8, col 29 to line 8, col 53 of module M: 4",
+      ],
+    ],
+    [
+      ENABLED_UNCHANGED[2],
+      INVARIANT_CHECK,
+      getPrints('"d"', 8),
+      [
+        "line 8, col 10 to line 8, col 72 of module M: 2",
+        "|line 8, col 10 to line 8, col 63 of module M: 2",
+        "||line 8, col 10 to line 8, col 14 of module M: 2",
+        "||line 8, col 19 to line 8, col 63 of module M: 2",
+        "|||line 8, col 28 to line 8, col 33 of module M: 2",
+        "|||line 8, col 38 to line 8, col 62 of module M: 4",
+        "|line 8, col 68 to line 8, col 72 of module M: 2",
+        "||line 4, col 27 to line 4, col 37 of module M: 8",
+        "||line 4, col 45 to line 4, col 45 of module M: 8",
+        "||line 5, col 8 to line 5, col 21 of module Q: 2",
+      ],
+    ],
+    [
+      ENABLED_UNCHANGED[3],
+      NEXT_CHECK,
+      getPrints('"d"', 4),
+      [
+        "line 8, col 9 to line 8, col 12 of module M: 2",
+        "line 8, col 17 to line 8, col 61 of module M: 4",
+        "|line 8, col 26 to line 8, col 31 of module M: 2",
+        "|line 8, col 36 to line 8, col 60 of module M: 4",
+      ],
+    ],
+  ])(
+    "reads a lazy value on the second side of UNCHANGED inside ENABLED in %j from its cache under coverage too",
+    async (definitions, config, printed, lines) => {
+      expect(await getLazyReads(definitions, config, UNWARNED_COVERAGE)).toEqual({
+        printed,
+        lines,
+      });
+    },
+  );
+
   it("records the nested instance a call from one instanced definition to another enters, as TLC does", async () => {
     const result = await check(getInnerCallCheck(EXPLICIT, "I!YErr", NESTED_CALLS));
     const ranges = result.failure?.callStack?.flatMap((expression, index, expressions) => {
