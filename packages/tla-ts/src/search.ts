@@ -449,22 +449,14 @@ const getSpecification = (
   let isUntaggedFound = false;
   expandTemporal(getOpDefBody(definition), undefined, environment, false).forEach((item) => {
     const conjunct = item.expression;
-    // TLC takes a state-level definition of the spec whole as an initial predicate.
-    const isInitial = item.path.some((name) => {
-      const expanded = getDefinition(getRootKey(name, environment), environment);
-      return (
-        expanded?.kind === "Operator" &&
-        getLevelBound(expanded.body, undefined, environment) === VARIABLE_LEVEL
-      );
-    });
-    if (!isInitial && item.theorem) throw createTheoremError(item.theorem, "spec");
-    if (!isInitial && isConstantTrue(item, environment, "spec")) return;
+    if (item.theorem) throw createTheoremError(item.theorem, "spec");
+    if (isConstantTrue(item, environment, "spec")) return;
     // Deviation from TLC: SpecProcessor#processConfigSpec looks an instance's parameter up without its substitute and rejects it as "cannot be used as a spec", where tla-ts takes the substitute.
     const variableIndex =
       conjunct.kind === "Identifier" && !isLocallyResolved(conjunct)
         ? environment.variableIndex.get(conjunct.name)
         : undefined;
-    if (!isInitial && conjunct.kind === "Identifier" && variableIndex !== undefined) {
+    if (conjunct.kind === "Identifier" && variableIndex !== undefined) {
       const range = variableLocations[variableIndex].range;
       throw new TlaConfigError(
         `The operator ${conjunct.name}, which equals ${range ? formatRange(range) : conjunct.name},\ncannot be used as a spec`,
@@ -596,8 +588,7 @@ const getProperties = (
     if (getSanyLevel(body, undefined, environment) === VARIABLE_LEVEL) {
       onProgress?.({ kind: "state-level-property", name });
     }
-    const isProperty = environment.runtime.version !== "1.7.4";
-    expandTemporal(body, undefined, environment, isProperty).forEach((item) => {
+    expandTemporal(body, undefined, environment, true).forEach((item) => {
       const conjunct = item.expression;
       if (item.theorem) throw createTheoremError(item.theorem, "property");
       if (isConstantTrue(item, environment, "property")) return;

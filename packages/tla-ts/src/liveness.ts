@@ -104,7 +104,6 @@ interface Expansion {
   path: string[];
   expanding: Set<Definition>;
   isSubstituted: boolean;
-  isInitPredicate: boolean;
   frames: Expression[];
   substitutions: ExpandedSubstitutions[];
 }
@@ -394,7 +393,6 @@ export const expandTemporal = (
     path: [],
     expanding: new Set(),
     isSubstituted: false,
-    isInitPredicate: false,
     frames: [],
     substitutions: [],
   },
@@ -417,13 +415,6 @@ export const expandTemporal = (
       isSubstituted:
         expansion.isSubstituted ||
         (definition !== undefined && environment.substitutedDefinitions.has(definition)),
-      // SpecProcessor#processConfigSpec takes a state-level definition whole as an initial predicate, which getInitStates evaluates with cached arguments.
-      isInitPredicate:
-        expansion.isInitPredicate ||
-        (!isProperty &&
-          definition?.kind === "Operator" &&
-          definition.params.length === 0 &&
-          getLevelBound(definition.body, undefined, environment) === VARIABLE_LEVEL),
       frames: [
         ...expansion.frames,
         ...(substitutionFrames.get(child) ?? []).filter(
@@ -522,6 +513,14 @@ export const expandTemporal = (
       if (expansion.expanding.has(definition)) {
         throw createStackOverflowError();
       }
+      // SpecProcessor#processConfigSpec takes a state-level definition whole as an initial predicate.
+      if (
+        !isProperty &&
+        definition.kind === "Operator" &&
+        getLevelBound(definition.body, undefined, environment) === VARIABLE_LEVEL
+      ) {
+        return getLeaf();
+      }
       return expand(
         getOpDefBody(definition),
         undefined,
@@ -561,9 +560,7 @@ export const expandTemporal = (
     if (isExpandable) {
       return expand(
         operator.body,
-        expansion.isInitPredicate
-          ? bindOperatorArguments(operator, expression.args, context)
-          : bindUncachedArguments(operator, expression.args, context),
+        bindUncachedArguments(operator, expression.args, context),
         getReferenceName(expression, expression.operator, environment) ??
           (expansion.isSubstituted && definition
             ? definition.name
@@ -575,6 +572,7 @@ export const expandTemporal = (
   }
   const isUnrolled =
     isProperty &&
+    environment.runtime.version !== "1.7.4" &&
     expression.kind === "Forall" &&
     expression.bounds.every((bound) => getLevel(bound.set, scope, environment) === CONSTANT_LEVEL);
   const sets = isUnrolled ? getUnrolledElements(expression.bounds, context) : undefined;
