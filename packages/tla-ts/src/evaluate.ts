@@ -36,7 +36,6 @@ import {
   countArgumentTuple,
   countCoverage,
   createChargedEnumerator,
-  createChargedMembership,
   createProductSetEnumerator,
   enterFrames,
   exitFrames,
@@ -2075,7 +2074,6 @@ const compileApply = (
     const subset = getSubsetOperator(expression, global.evaluateBinary);
     const coverage = environment.coverage;
     if (!coverage) return (context) => subset(left(context), right(context));
-    const isMember = createChargedMembership(coverage);
     return (context) => {
       const leftValue = left(context);
       const rightValue = right(context);
@@ -2086,7 +2084,9 @@ const compileApply = (
       ) {
         return subset(leftValue, rightValue);
       }
-      const missing = leftValue.elements.findIndex((element) => !isMember(element, rightValue));
+      const missing = leftValue.elements.findIndex(
+        (element) => !coverage.isMember(element, rightValue),
+      );
       costCoverage(coverage, leftValue, (missing === -1 ? leftValue.elements.length : missing) + 1);
       return missing === -1;
     };
@@ -2102,9 +2102,8 @@ const compileApply = (
   ) {
     const element = getEvaluator(args[0], environment);
     const set = getEvaluator(args[1], environment);
-    const isMember = createChargedMembership(coverage);
     const isIn = global.name === "\\in";
-    return (context) => isMember(element(context), set(context)) === isIn;
+    return (context) => coverage.isMember(element(context), set(context)) === isIn;
   }
   if (
     coverage &&
@@ -2916,7 +2915,6 @@ const compile = (expression: Expression, environment: Environment): Evaluator =>
           ? traceEvaluator(getArgumentTuple(expression), evaluator, environment, callStack)
           : evaluator;
       if (coverage) {
-        const isMember = createChargedMembership(coverage);
         const getArgument =
           args.length === 1
             ? args[0]
@@ -2934,7 +2932,7 @@ const compile = (expression: Expression, environment: Environment): Evaluator =>
           ) {
             return applyFunction(functionValue, argument, describeMissing);
           }
-          checkLazyArgumentWith(functionValue, argument, isMember);
+          checkLazyArgumentWith(functionValue, argument, coverage.isMember);
           return functionValue.apply(argument);
         };
       }

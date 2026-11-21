@@ -9,7 +9,6 @@ import {
   countArgumentTuple,
   countCoverage,
   createChargedEnumerator,
-  createChargedMembership,
   enterFrames,
   exitFrames,
   getCoverageNode,
@@ -982,7 +981,7 @@ const visitApplication = (
                   evaluateArgument(expression, context),
                 )
               : evaluateArgument(expression, context),
-            replay.coverage ? createChargedMembership(replay.coverage) : isElementOf,
+            replay.coverage ? replay.coverage.isMember : isElementOf,
           ),
         );
         // Tool#getNextStates runs the body with the function's cost model, but getInitStates and enabled with the application's.

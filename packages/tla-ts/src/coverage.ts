@@ -66,6 +66,7 @@ export interface Coverage {
   nextState: NextStateMode;
   isEnabled: boolean;
   cachedInEnabled: WeakMap<object, boolean>;
+  isMember: typeof isElementOf;
 }
 
 export interface CoverageFrame {
@@ -144,32 +145,37 @@ const STANDARD_MODULES = new Set([
 const REGISTER_BITS = 10;
 const REGISTERS = 1 << REGISTER_BITS;
 
-export const createCoverage = (variableCount: number): Coverage => ({
-  current: -1,
-  expressions: [],
-  ranges: [],
-  firstChild: [],
-  lastChild: [],
-  nextSibling: [],
-  prefixes: [],
-  isPart: [],
-  isPrimed: [],
-  isUnchanged: [],
-  recursive: [],
-  lets: [],
-  roots: [],
-  primary: [],
-  secondary: [],
-  covered: new WeakSet(),
-  values: new WeakMap(),
-  registers: new Uint8Array(variableCount * REGISTERS),
-  relations: [],
-  substitutionNodes: new Map(),
-  frames: [],
-  nextState: "given",
-  isEnabled: false,
-  cachedInEnabled: new WeakMap(),
-});
+export const createCoverage = (variableCount: number): Coverage => {
+  const coverage: Coverage = {
+    current: -1,
+    expressions: [],
+    ranges: [],
+    firstChild: [],
+    lastChild: [],
+    nextSibling: [],
+    prefixes: [],
+    isPart: [],
+    isPrimed: [],
+    isUnchanged: [],
+    recursive: [],
+    lets: [],
+    roots: [],
+    primary: [],
+    secondary: [],
+    covered: new WeakSet(),
+    values: new WeakMap(),
+    registers: new Uint8Array(variableCount * REGISTERS),
+    relations: [],
+    substitutionNodes: new Map(),
+    frames: [],
+    nextState: "given",
+    isEnabled: false,
+    cachedInEnabled: new WeakMap(),
+    isMember: isElementOf,
+  };
+  coverage.isMember = createChargedMembership(coverage);
+  return coverage;
+};
 
 export const createCoverageEnvironment = (
   environment: Environment,
@@ -1150,7 +1156,7 @@ const COMPOSITE_SET_KINDS = new Set<string>([
 
 // SubsetValue#member enumerates the element and UnionValue#member its set of sets, each until it decides, then once more to find the end.
 // Their enumerators charge each draw as they make it, so a member check that throws keeps the draws before it.
-export const createChargedMembership = (coverage: Coverage) => {
+const createChargedMembership = (coverage: Coverage) => {
   const isMember = (element: Value, set: Value): boolean => {
     if (typeof set !== "object") return isElementOf(element, set);
     if (set.kind !== "Subset" && set.kind !== "Union") {
