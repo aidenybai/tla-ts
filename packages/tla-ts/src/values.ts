@@ -646,7 +646,7 @@ export const compareValues = (left: Value, right: Value): number => {
       (leftKind === "SequenceSet" && rightKind === "SequenceSet") ||
       (leftKind === "Subset" && rightKind === "Subset")
     ) {
-      return callTracedMethod(left.base, () => compareLikeTlc(left.base, right.base));
+      return compareReceiver(left.base, right.base);
     }
     if (isSetValue(left) && isSetValue(right) && isOverriddenComparison(left, right)) {
       return compareOverriddenSets(left, right, "compare");
@@ -1291,6 +1291,15 @@ export const isReceiverEqual = (left: Value, right: Value) => {
   return isEqual;
 };
 
+const compareReceiver = (left: Value, right: Value) => {
+  const sets = setTrace.sets;
+  if (sets === undefined) return compareLikeTlc(left, right);
+  sets.push(left);
+  const comparison = compareLikeTlc(left, right);
+  sets.pop();
+  return comparison;
+};
+
 // TLC's ValueVec#sort compares each element with the ones before it, which orders what lazy elements evaluate.
 const isStrictlySorted = (elements: Value[]) => {
   for (let index = 1; index < elements.length; index++) {
@@ -1694,11 +1703,16 @@ export const getLazySubsets = (value: Value): Value[] | undefined => {
   });
 };
 
-const someSubset = (base: Value[], visit: (subset: SetValue) => boolean) => {
+const someSubset = (
+  base: Value[],
+  visit: (subset: SetValue) => boolean,
+  costNode: number | undefined,
+) => {
   for (let size = 0; size <= base.length; size++) {
     const indices = Array.from({ length: size }, (_value, index) => index);
     do {
-      if (visit(createSortedSet(indices.map((index) => base[index])))) return true;
+      const subset = createSortedSet(indices.map((index) => base[index]));
+      if (visit(costNode === undefined ? subset : { ...subset, costNode })) return true;
     } while (advanceCombination(indices, base.length));
   }
   return false;
@@ -1706,11 +1720,15 @@ const someSubset = (base: Value[], visit: (subset: SetValue) => boolean) => {
 
 const getSortedSubsets = (base: Value[], costNode: number | undefined) => {
   const subsets: SetValue[] = [];
-  someSubset(base, (subset) => {
-    subsets.push(subset);
-    return false;
-  });
-  return costNode === undefined ? subsets : subsets.map((subset) => ({ ...subset, costNode }));
+  someSubset(
+    base,
+    (subset) => {
+      subsets.push(subset);
+      return false;
+    },
+    costNode,
+  );
+  return subsets;
 };
 
 const getSubsetBase = (value: SubsetValue) => {
@@ -2486,11 +2504,7 @@ const someElementOfStream = (
     value.enumerated === undefined &&
     getCardinality(value.base) > MAXIMUM_BUILT_SUBSET_BASE
   ) {
-    const costNode = value.costNode;
-    return someSubset(
-      getSubsetBase(value),
-      costNode === undefined ? visit : (subset) => visit({ ...subset, costNode }),
-    );
+    return someSubset(getSubsetBase(value), visit, value.costNode);
   }
   if (value.kind !== "SetOperation") return getUnboundedElements(value).some(visit);
   if (value.operator === "\\cup") {
