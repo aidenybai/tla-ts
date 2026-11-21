@@ -45,6 +45,7 @@ import {
   SORT_REAL,
 } from "./ast";
 import { getAckrBound } from "./ackr-helper";
+import { forEachExpr } from "./ast-util";
 import { BoundManager } from "./bound-manager";
 import { Expr2Polynomial } from "./expr2polynomial";
 import { PolynomialManager, PolynomialRef } from "./nlsat/polynomial";
@@ -56,31 +57,38 @@ export interface Probe {
   (goal: Goal): number;
 }
 
-const forEachExpr = (goal: Goal, visit: (expr: number) => void) => {
-  const manager = goal.manager;
+const forEachGoalExpr = <T>(
+  goal: Goal,
+  visit: (expr: number) => T | undefined,
+  isIgnoringPatterns = false,
+) => {
   const visited = new Set<number>();
-  const todo = [...goal.forms.items].reverse();
-  for (let expr = todo.pop(); expr !== undefined; expr = todo.pop()) {
-    if (visited.has(expr)) continue;
-    visited.add(expr);
-    visit(expr);
-    if (manager.kinds[expr] === KIND_APP) manager.pushArgs(expr, todo);
-    else if (manager.kinds[expr] === KIND_QUANTIFIER) {
-      const data = manager.getQuantifier(expr);
-      todo.push(data.body, ...data.patterns, ...data.noPatterns);
-    }
+  const forms = goal.forms.items;
+  for (let index = 0; index < forms.length; index++) {
+    const result = forEachExpr(goal.manager, forms[index], visit, visited, isIgnoringPatterns);
+    if (result !== undefined) return result;
   }
+  return undefined;
 };
 
-const countExprs = (goal: Goal, isCounted: (expr: number) => boolean) => {
+const countExprs = (
+  goal: Goal,
+  isCounted: (expr: number) => boolean,
+  isIgnoringPatterns = false,
+) => {
   let count = 0;
-  forEachExpr(goal, (expr) => {
-    if (isCounted(expr)) count++;
-  });
+  forEachGoalExpr(
+    goal,
+    (expr) => {
+      if (isCounted(expr)) count++;
+    },
+    isIgnoringPatterns,
+  );
   return count;
 };
 
-const isNone = (goal: Goal, isFound: (expr: number) => boolean) => countExprs(goal, isFound) === 0;
+const isNone = (goal: Goal, isFound: (expr: number) => boolean) =>
+  forEachGoalExpr(goal, (expr) => isFound(expr) || undefined) === undefined;
 
 const mkTest =
   (isFound: (manager: AstManager, expr: number) => boolean): Probe =>
@@ -89,6 +97,13 @@ const mkTest =
 
 const isConst = (manager: AstManager, expr: number) =>
   manager.kinds[expr] === KIND_APP && manager.getNumArgs(expr) === 0 && !manager.isValue(expr);
+
+const countConsts = (goal: Goal, isCounted: (sort: number) => boolean) =>
+  countExprs(
+    goal,
+    (expr) => isConst(goal.manager, expr) && isCounted(goal.manager.sorts[expr]),
+    true,
+  );
 
 const isArithSort = (sort: number) => sort === SORT_INT || sort === SORT_REAL;
 
@@ -362,7 +377,9 @@ const hasPatterns: Probe = (goal) => {
     !isNone(
       goal,
       (expr) =>
-        manager.kinds[expr] === KIND_QUANTIFIER && manager.getQuantifier(expr).patterns.length > 0,
+        manager.kinds[expr] === KIND_QUANTIFIER &&
+        (manager.getQuantifier(expr).patterns.length > 0 ||
+          manager.getQuantifier(expr).noPatterns.length > 0),
     ),
   );
 };
@@ -397,7 +414,7 @@ const mkArithDegreeProbe =
       second.reset();
       first.reset();
     };
-    forEachExpr(goal, (expr) => {
+    forEachGoalExpr(goal, (expr) => {
       const op = manager.getOp(expr);
       if (op === OP_LE || op === OP_LT || op === OP_GT || op === OP_GE) process(expr);
       if (op === OP_EQ && isArithSort(manager.sorts[manager.getArg(expr, 0)])) process(expr);
@@ -415,7 +432,7 @@ const mkArithBwProbe =
     let maxBitWidth = 0;
     let accBitWidth = 0;
     let counter = 0;
-    forEachExpr(goal, (expr) => {
+    forEachGoalExpr(goal, (expr) => {
       if (!manager.isNumeral(expr)) return;
       const value = manager.getRationalValue(expr);
       const bitWidth = getBitsize(value.num) + (value.den === 1n ? 0 : getBitsize(value.den));
@@ -430,38 +447,10 @@ const NAMED_PROBES = new Map<string, Probe>([
   ["depth", (goal) => goal.depth],
   ["size", (goal) => goal.forms.size],
   ["num-exprs", (goal) => countExprs(goal, () => true)],
-  [
-    "num-consts",
-    (goal) =>
-      countExprs(
-        goal,
-        (expr) => isConst(goal.manager, expr) && goal.manager.sorts[expr] !== SORT_BOOL,
-      ),
-  ],
-  [
-    "num-bool-consts",
-    (goal) =>
-      countExprs(
-        goal,
-        (expr) => isConst(goal.manager, expr) && goal.manager.sorts[expr] === SORT_BOOL,
-      ),
-  ],
-  [
-    "num-arith-consts",
-    (goal) =>
-      countExprs(
-        goal,
-        (expr) => isConst(goal.manager, expr) && isArithSort(goal.manager.sorts[expr]),
-      ),
-  ],
-  [
-    "num-bv-consts",
-    (goal) =>
-      countExprs(
-        goal,
-        (expr) => isConst(goal.manager, expr) && goal.manager.isBvSort(goal.manager.sorts[expr]),
-      ),
-  ],
+  ["num-consts", (goal) => countConsts(goal, (sort) => sort !== SORT_BOOL)],
+  ["num-bool-consts", (goal) => countConsts(goal, (sort) => sort === SORT_BOOL)],
+  ["num-arith-consts", (goal) => countConsts(goal, isArithSort)],
+  ["num-bv-consts", (goal) => countConsts(goal, (sort) => goal.manager.isBvSort(sort))],
   ["produce-proofs", (goal) => Number(goal.isProofsEnabled)],
   ["produce-model", () => 1],
   ["produce-unsat-cores", (goal) => Number(goal.isCoresEnabled)],

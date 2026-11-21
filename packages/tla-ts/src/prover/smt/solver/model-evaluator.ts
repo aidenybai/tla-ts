@@ -262,7 +262,7 @@ export class ModelEvaluator extends RewriterTpl {
     if (manager.getFamily(array) === FAMILY_ARRAY && manager.getOp(array) === OP_CONST_ARRAY)
       return { stores, elseExpr: manager.getArg(array, 0), areUnique };
     if (manager.isLambda(array)) {
-      const elseExpr = hasIndexSet(manager, array, stores);
+      const elseExpr = hasIndexSet(manager, array, stores, this.model);
       if (elseExpr === undefined) return undefined;
       for (let store = 0; store < stores.length; store++)
         areUnique &&= hasUniqueIndices(manager, stores[store]);
