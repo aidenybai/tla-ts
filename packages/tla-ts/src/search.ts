@@ -600,10 +600,13 @@ const getProperties = (
       if (isConstantTrue(item, environment, "property")) return;
       // Deviation from TLC: SpecProcessor#processConfigProps looks an instance's constant up without its substitute and rejects it as "cannot be used as a property", where tla-ts checks the substitute.
       const partName = item.name ?? name;
-      const frames = (check: Expression) =>
-        item.frames.filter((frame) => !substitutionFrames.get(check)?.includes(frame));
       const withFrames = (check: Expression) =>
-        withExpandedSubstitutions(item.substitutions, check, frames(check), environment);
+        withExpandedSubstitutions(
+          item.substitutions,
+          check,
+          item.frames.filter((frame) => !substitutionFrames.get(check)?.includes(frame)),
+          environment,
+        );
       if (conjunct.kind === "Always" && conjunct.expression.kind === "BoxAction") {
         const box = conjunct.expression;
         properties.actionProperties.push({

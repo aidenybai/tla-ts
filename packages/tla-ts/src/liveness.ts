@@ -4,6 +4,7 @@ import {
   type Bound,
   type Definition,
   type Expression,
+  type LetExpression,
   type SourceRange,
 } from "./ast";
 import { getDefinitionLevel } from "./dependencies";
@@ -85,7 +86,7 @@ interface ExpandedExpression extends ScopedExpression {
   path: string[];
   frames: Expression[];
   theorem?: TheoremReference;
-  substitutions: (Expression & { kind: "Let" })[];
+  substitutions: LetExpression[];
 }
 
 export interface TemporalProperty extends ScopedExpression {
@@ -93,7 +94,7 @@ export interface TemporalProperty extends ScopedExpression {
 }
 
 interface ExpandedSubstitutions {
-  expression: Expression & { kind: "Let" };
+  expression: LetExpression;
   scope: Scope | undefined;
 }
 
@@ -112,7 +113,7 @@ const isWithinScope = (outer: Scope | undefined, scope: Scope | undefined): bool
   scope !== undefined && (scope === outer || isWithinScope(outer, scope.parent));
 
 export const withExpandedSubstitutions = (
-  substitutions: (Expression & { kind: "Let" })[],
+  substitutions: LetExpression[],
   expression: Expression,
   frames: Expression[],
   environment: Environment,
@@ -468,7 +469,6 @@ export const expandTemporal = (
     const impure = environment.boundSubstitutions.lets.has(expression)
       ? getReevaluatedDefinitions(expression.definitions, environment).impure
       : new Set<Definition>();
-    // A pure substitution reads the same value from this binding.
     const definitions = expression.definitions.filter((definition) => impure.has(definition));
     const substitutions =
       definitions.length > 0
