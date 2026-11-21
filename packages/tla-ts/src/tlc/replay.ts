@@ -1131,7 +1131,7 @@ const visitUnchanged = (
       environment: replay.environment,
       scope,
       state: replay.current,
-      next: partial,
+      next: undefined,
     });
     const callStack = replay.callStack;
     const depth = callStack?.expressions.length ?? 0;

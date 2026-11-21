@@ -2361,6 +2361,36 @@ ASSUME TLCFP(a) = -887695703
   );
 
   it.each([
+    [
+      "Ap(a) == Step /\\ PrintT(<<a>>) /\\ (UNCHANGED (a + 0) \\/ TRUE) /\\ PrintT(<<a>>)\nNext == Ap(RandomElement(y..1000))",
+      [
+        "line 8, col 10 to line 8, col 30 of module M: 2",
+        "line 8, col 36 to line 8, col 52 of module M: 4",
+        "line 8, col 57 to line 8, col 60 of module M: 2",
+        "line 8, col 66 to line 8, col 78 of module M: 2",
+        "line 9, col 12 to line 9, col 33 of module M: 6",
+      ],
+    ],
+    [
+      "Ap(a) == Step /\\ PrintT(<<a>>) /\\ UNCHANGED (a > 0) /\\ PrintT(<<a>>)\nNext == Ap(RandomElement(y..1000))",
+      [
+        "line 8, col 10 to line 8, col 30 of module M: 2",
+        "line 8, col 35 to line 8, col 51 of module M: 6",
+        "line 8, col 56 to line 8, col 68 of module M: 2",
+        "line 9, col 12 to line 9, col 33 of module M: 6",
+      ],
+    ],
+  ])(
+    "evaluates the first side of an action's UNCHANGED in %j without the next state under coverage, as TLC's Tool#processUnchanged passes TLCState.Empty there",
+    async (definitions, lines) => {
+      expect(await getLazyReads(definitions, NEXT_CHECK, UNWARNED_COVERAGE)).toEqual({
+        printed: ["<<773>>", "<<379>>", "<<484>>", "<<436>>"],
+        lines,
+      });
+    },
+  );
+
+  it.each([
     ["Next == Step /\\ UNCHANGED (J!Op2 \\/ TRUE)", NEXT_CHECK, '"d"', 6],
     ["Live == []<><<Step>>_<<y, J!Op2>>", LIVE_CHECK, '"d"', 12],
     ["Live == []<><<Step>>_<<J!Op2, y>>", LIVE_CHECK, '"d"', 12],
