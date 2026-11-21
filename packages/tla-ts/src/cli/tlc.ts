@@ -5,7 +5,6 @@ import {
   readFileSync,
   readSync,
   realpathSync,
-  statSync,
   writeFileSync,
 } from "node:fs";
 import { basename, dirname, isAbsolute, join, resolve } from "node:path";
@@ -18,6 +17,7 @@ import {
   TlaError,
   TlaEvaluationError,
   TlaFeatureUnsupportedError,
+  TlaFileError,
   TlaMissingCheckpointError,
   TlaSyntaxError,
   getUnexpectedException,
@@ -88,12 +88,6 @@ const EXIT_CODES: Record<CheckStatus, number> = {
   "liveness-violation": EXIT_STATUS.livenessViolation,
   "postcondition-violation": EXIT_STATUS.assumptionViolation,
   error: EXIT_STATUS.error,
-};
-
-const checkNotDirectory = (path: string) => {
-  if (statSync(path, { throwIfNoEntry: false })?.isDirectory()) {
-    throw new TlaEvaluationError(`${path} (Is a directory)`);
-  }
 };
 
 const getDumpPath = (path: string, extension: string) =>
@@ -200,14 +194,29 @@ const JAVA_FILE_ERRORS: Record<string, string> = {
   EACCES: "Permission denied",
 };
 
+const getErrorCode = (error: unknown) =>
+  error instanceof Error && "code" in error ? String(error.code) : undefined;
+
+const toJavaFileError = (path: string, error: unknown) => {
+  const code = getErrorCode(error);
+  const reason = code === undefined ? undefined : JAVA_FILE_ERRORS[code];
+  return code === undefined || reason === undefined ? error : new TlaFileError(path, code, reason);
+};
+
+const readJavaFile = (path: string) => {
+  try {
+    return readFileSync(path, "utf8");
+  } catch (error) {
+    if (getErrorCode(error) === "ENOENT") return undefined;
+    throw toJavaFileError(path, error);
+  }
+};
+
 const writeJavaFile = (path: string, content: string | Uint8Array) => {
   try {
     writeFileSync(path, content);
   } catch (error) {
-    const reason =
-      error instanceof Error && "code" in error ? JAVA_FILE_ERRORS[String(error.code)] : undefined;
-    if (reason === undefined) throw error;
-    throw new TlaEvaluationError(`${path} (${reason})`);
+    throw toJavaFileError(path, error);
   }
 };
 
@@ -424,10 +433,7 @@ const checkSpec = async (
         const classPath = getClassPath(directory, name);
         return existsSync(classPath) ? readFileSync(classPath) : undefined;
       },
-      readFile: (path) => {
-        checkNotDirectory(path);
-        return existsSync(path) ? readFileSync(path, "utf8") : undefined;
-      },
+      readFile: readJavaFile,
       writeFile: writeJavaFile,
       makeDirectory: makeJavaDirectory,
     };

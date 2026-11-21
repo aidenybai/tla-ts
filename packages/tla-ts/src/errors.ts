@@ -205,6 +205,20 @@ export class TlaAliasFormatError extends TlaEvaluationError {}
 
 export class TlaSetBoundError extends TlaEvaluationError {}
 
+// Worded as java.io's FileNotFoundException; code is the errno name and reason its text.
+export class TlaFileError extends TlaEvaluationError {
+  path: string;
+  code: string;
+  reason: string;
+
+  constructor(path: string, code: string, reason: string) {
+    super(`${path} (${reason})`);
+    this.path = path;
+    this.code = code;
+    this.reason = reason;
+  }
+}
+
 export const TOO_MANY_STATES_MESSAGE =
   "Too many possible next states for the last state in the trace.";
 

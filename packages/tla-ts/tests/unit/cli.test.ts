@@ -1,4 +1,4 @@
-import { mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it } from "vite-plus/test";
@@ -2013,5 +2013,55 @@ describe("the CLI reads a monolith's configs and modules like TLC", () => {
     const result = runCliWith(directory, [...args, "M.tla"]);
     rmSync(directory, { recursive: true });
     expect([result.status, result.stdout]).toEqual([status, expect.stringContaining(line)]);
+  });
+});
+
+describe("the CLI fails to open a file as TLC does", () => {
+  const getSerialize = (payload: string, path: string, openOptions: string) =>
+    `Serialize(<<${payload}>>, "${path}", [format |-> "NDJSON", charset |-> "UTF-8", openOptions |-> <<${openOptions}>>])`;
+
+  it.each([
+    [
+      getSerialize("1", "d/s.json", '"CREATE", "WRITE"'),
+      "java.nio.file.NoSuchFileException: d/s.json",
+    ],
+    [
+      getSerialize("Nat", "d/s.json", '"CREATE", "WRITE"'),
+      "java.nio.file.NoSuchFileException: d/s.json",
+    ],
+    [getSerialize("1", "d/s.json", ""), "java.nio.file.NoSuchFileException: d/s.json"],
+    [
+      getSerialize("1", "f.txt/s.json", '"CREATE", "WRITE"'),
+      "java.nio.file.FileSystemException: f.txt/s.json: Not a directory",
+    ],
+    [
+      getSerialize("1", "f.txt/s.json", '"WRITE"'),
+      "java.nio.file.FileSystemException: f.txt/s.json: Not a directory",
+    ],
+    [
+      getSerialize("1", "d2", '"CREATE", "WRITE"'),
+      "java.nio.file.FileSystemException: d2: Is a directory",
+    ],
+    ['JsonDeserialize("f.txt/s.json")', "f.txt/s.json (Not a directory)"],
+    ['JsonDeserialize("d2")', "d2 (Is a directory)"],
+  ])("reports %s with the exception its Java method opens the file with", (expression, error) => {
+    const directory = mkdtempSync(join(FIXTURES, "open-"));
+    writeFileSync(
+      join(directory, "IOUtils.tla"),
+      "---- MODULE IOUtils ----\nLOCAL INSTANCE Integers\nSerialize(value, dest, options) ==\n  CHOOSE r \\in [exitValue : Int, stdout : STRING, stderr : STRING] : TRUE\n====",
+    );
+    writeFileSync(join(directory, "f.txt"), "x\n");
+    mkdirSync(join(directory, "d2"));
+    writeFileSync(
+      join(directory, "M.tla"),
+      `---- MODULE M ----\nEXTENDS Integers, TLC, Json, IOUtils\nVARIABLE x\nASSUME PrintT(${expression})\nInit == x = 0\nNext == x' = x\n====`,
+    );
+    writeFileSync(join(directory, "M.cfg"), "INIT Init\nNEXT Next");
+    const result = runCliWith(directory, ["M.tla"]);
+    rmSync(directory, { recursive: true });
+    expect([result.status, result.stdout]).toEqual([
+      10,
+      expect.stringContaining(`but it produced the following error:\n${error}\n`),
+    ]);
   });
 });
