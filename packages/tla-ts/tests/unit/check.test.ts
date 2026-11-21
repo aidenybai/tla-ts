@@ -1895,6 +1895,203 @@ ASSUME TLCFP(a) = -887695703
     ]);
   });
 
+  const INNER_CALLS = [
+    "---- MODULE P ----",
+    "EXTENDS TLC, Naturals",
+    "CONSTANT c",
+    "VARIABLE z",
+    "InnerS == c /\\ z = z",
+    "OuterS == InnerS /\\ InnerS",
+    "InnerP(q) == c /\\ q = z",
+    "OuterP == \\A q \\in {0, 1} : InnerP(q) \\/ TRUE",
+    "InnerA == c /\\ z' = z",
+    "OuterA == InnerA /\\ InnerA",
+    "InnerF == c /\\ z' = (z + 1) % 2",
+    "OuterF == InnerF /\\ InnerF",
+    "OuterL == LET v == c IN v /\\ InnerS",
+    "====",
+    "",
+  ].join("\n");
+  const OPERATOR_ARGUMENT = [
+    "---- MODULE P ----",
+    "EXTENDS TLC, Naturals",
+    "CONSTANT c",
+    "VARIABLE z",
+    "InnerOp(q) == c /\\ q \\in {0, 1}",
+    "Ap(F(_)) == F(0) /\\ F(1)",
+    "OuterHO == Ap(InnerOp) /\\ z = z",
+    "====",
+    "",
+  ].join("\n");
+  const NESTED_CALLS = [
+    "---- MODULE P ----",
+    "EXTENDS TLC, Naturals",
+    "CONSTANT c",
+    "VARIABLE z",
+    "J == INSTANCE Q WITH d <- c, w <- z",
+    "Y == J!X /\\ J!X",
+    "YErr == J!X /\\ J!XErr",
+    'InnerErr == c /\\ z + "a" = 1',
+    "YOwn == c /\\ InnerErr",
+    "a ++ b == c /\\ a = b",
+    "Ap(F(_, _)) == F(0, 0) /\\ F(1, 1)",
+    "YInfix == Ap(++) /\\ z = z",
+    "====",
+    "",
+  ].join("\n");
+  const NESTED_INSTANCE = [
+    "---- MODULE Q ----",
+    "EXTENDS TLC, Naturals",
+    "CONSTANT d",
+    "VARIABLE w",
+    "X == d /\\ w = w",
+    'XErr == d /\\ w + "a" = 1',
+    "====",
+    "",
+  ].join("\n");
+  const EXPLICIT = ["", 'I == INSTANCE P WITH c <- PrintT("c"), z <- y', ""];
+  const IMPLICIT = [
+    "CONSTANT c\n",
+    'D == PrintT("c")\nI == INSTANCE P WITH z <- y',
+    "CONSTANT c <- D\n",
+  ];
+  const PARAMETERIZED = ["", "I(x) == INSTANCE P WITH c <- PrintT(x), z <- y", ""];
+  const getInnerCallCheck = (head: string[], invariant: string, child: string) => ({
+    source: `---- MODULE M ----\nEXTENDS TLC, Naturals\n${head[0]}VARIABLE y\n${head[1]}\nInv == ${invariant}\nInit == y = 0\nNext == y' = (y + 1) % 2\n====\n`,
+    config: `INIT Init\nNEXT Next\n${head[2]}INVARIANT Inv\n`,
+    loadModule: (name: string) =>
+      name === "P" ? child : name === "Q" ? NESTED_INSTANCE : undefined,
+  });
+
+  it.each([
+    ["I!OuterS", "WITH c <- PrintT", EXPLICIT, INNER_CALLS, 2],
+    ["I!OuterP", "WITH c <- PrintT", EXPLICIT, INNER_CALLS, 2],
+    ["I!OuterL", "WITH c <- PrintT", EXPLICIT, INNER_CALLS, 2],
+    ["I!InnerS /\\ I!OuterS", "WITH c <- PrintT", EXPLICIT, INNER_CALLS, 4],
+    ["I!OuterS", "CONSTANT c <- D", IMPLICIT, INNER_CALLS, 3],
+    ["I!OuterP", "CONSTANT c <- D", IMPLICIT, INNER_CALLS, 3],
+    ["I!OuterL", "CONSTANT c <- D", IMPLICIT, INNER_CALLS, 3],
+    ["I!InnerS /\\ I!OuterS", "CONSTANT c <- D", IMPLICIT, INNER_CALLS, 5],
+    ["I!OuterHO", "WITH c <- PrintT", EXPLICIT, OPERATOR_ARGUMENT, 2],
+    ["I!Y", "WITH c <- PrintT and a nested instance", EXPLICIT, NESTED_CALLS, 2],
+    ["I!YInfix", "WITH c <- PrintT", EXPLICIT, NESTED_CALLS, 2],
+    ['I("c")!Y', "I(x) WITH c <- PrintT(x)", PARAMETERIZED, NESTED_CALLS, 2],
+    ['I("c")!YInfix', "I(x) WITH c <- PrintT(x)", PARAMETERIZED, NESTED_CALLS, 2],
+  ])(
+    "evaluates the substitutions %s reaches once per entry into the instance, through %s, as TLC's Tool#evalAppl reads its caller's LazyValue",
+    async (invariant, _title, head, child, count) => {
+      const printed: string[] = [];
+      await check({
+        ...getInnerCallCheck(head, invariant, child),
+        onPrint: (text) => printed.push(text),
+      });
+      expect(printed).toEqual(Array.from({ length: count }, () => '"c"'));
+    },
+  );
+
+  it("records the nested instance a call from one instanced definition to another enters, as TLC does", async () => {
+    const result = await check(getInnerCallCheck(EXPLICIT, "I!YErr", NESTED_CALLS));
+    const ranges = result.failure?.callStack?.flatMap((expression, index, expressions) => {
+      const range = expression.location.range;
+      return range && expression !== expressions[index - 1]
+        ? [
+            `${range.module} ${range.start.line}:${range.start.column}-${range.end.line}:${range.end.column}`,
+          ]
+        : [];
+    });
+    expect(ranges).toEqual([
+      "M 6:9-6:13",
+      "M 5:8-5:13",
+      "M 4:1-4:45",
+      "P 7:9-7:21",
+      "P 7:16-7:21",
+      "P 5:1-5:35",
+      "Q 6:9-6:24",
+      "Q 6:14-6:24",
+      "Q 6:14-6:20",
+    ]);
+  });
+
+  it.each([
+    [
+      "CONSTANT N <- D",
+      '---- MODULE M ----\nEXTENDS TLC, Naturals\nCONSTANT N\nVARIABLE y\nInit == y = 0\nNext == y\' = (y + 1) % 3\nD == PrintT("D")\nI == INSTANCE L WITH c <- N\nInv == I!R(2)\n====\n',
+      "CONSTANT N <- D\n",
+      2,
+    ],
+    [
+      'WITH c <- PrintT("D")',
+      '---- MODULE M ----\nEXTENDS TLC, Naturals\n\nVARIABLE y\nInit == y = 0\nI == INSTANCE L WITH c <- PrintT("D")\nInv == I!R(2)\nNext == y\' = (y + 1) % 3\n====\n',
+      "",
+      1,
+    ],
+  ])(
+    "evaluates a substitution once per entry into a recursive instanced operator, through %s",
+    async (_title, source, substitution, count) => {
+      const printed: string[] = [];
+      await check({
+        source,
+        config: `INIT Init\nNEXT Next\n${substitution}INVARIANT Inv\n`,
+        loadModule: (name) =>
+          name === "L"
+            ? "---- MODULE L ----\nEXTENDS TLC, Naturals\nCONSTANT c\nVARIABLE y\nRECURSIVE R(_)\nR(k) == IF k = 0 THEN c ELSE c /\\ R(k - 1)\n====\n"
+            : undefined,
+        onPrint: (text) => printed.push(text),
+      });
+      expect(printed).toEqual(Array.from({ length: count }, () => '"D"'));
+    },
+  );
+
+  it("evaluates MCPaxos's Quorum substitute once per entry into its instance of Voting, as TLC does", async () => {
+    const printed: string[] = [];
+    const result = await check({
+      source: [
+        "---- MODULE M ----",
+        "EXTENDS TLC, Naturals",
+        "CONSTANT Acceptor, Quorum",
+        "VARIABLE msgs",
+        "votes == [a \\in Acceptor |-> {m.bal : m \\in {mm \\in msgs : mm.acc = a}}]",
+        "V == INSTANCE V",
+        'MCQuorum == IF PrintT("Q") THEN {{1, 2}, {2, 3}} ELSE {}',
+        "Init == msgs = {}",
+        "Send(a, b) == /\\ \\E Q \\in Quorum : a \\in Q",
+        "              /\\ msgs' = msgs \\cup {[acc |-> a, bal |-> b]}",
+        "Next == \\E a \\in Acceptor, b \\in {0, 1} : Send(a, b)",
+        "Spec == Init /\\ [][Next]_msgs",
+        "Inv == \\A b \\in {0, 1} : V!ShowsSafeAt({1, 2}, b)",
+        "VInv == V!Inv",
+        "VSpec == V!Spec",
+        "====",
+        "",
+      ].join("\n"),
+      config:
+        "CONSTANT Acceptor = {1, 2, 3}\nCONSTANT Quorum <- MCQuorum\nSPECIFICATION Spec\nINVARIANT Inv\nINVARIANT VInv\n",
+      loadModule: (name) =>
+        name === "V"
+          ? [
+              "---- MODULE V ----",
+              "EXTENDS Naturals",
+              "CONSTANT Acceptor, Quorum",
+              "VARIABLE votes",
+              "VotedFor(a, b) == b \\in votes[a]",
+              "DidNotVoteAt(a, b) == ~ VotedFor(a, b)",
+              "ShowsSafeAt(Q, b) == \\A a \\in Q : VotedFor(a, b) \\/ DidNotVoteAt(a, b)",
+              "SafeAt(b) == \\E Q \\in Quorum : ShowsSafeAt(Q, b)",
+              "VoteFor(a, b) == /\\ SafeAt(b)",
+              "                 /\\ votes' = [votes EXCEPT ![a] = @ \\cup {b}]",
+              "Next == \\E a \\in Acceptor, b \\in {0, 1} : VoteFor(a, b)",
+              "Init == votes = [a \\in Acceptor |-> {}]",
+              "Spec == Init /\\ [][Next]_votes",
+              "Inv == \\A b \\in {0, 1} : SafeAt(b)",
+              "====",
+              "",
+            ].join("\n")
+          : undefined,
+      onPrint: (text) => printed.push(text),
+    });
+    expect([printed.length, result.distinctStates]).toEqual([449, 64]);
+  });
+
   it("reads TLCGet in every state through a constant substituted with it, as TLC's level bound does", async () => {
     const prints: string[] = [];
     await check({

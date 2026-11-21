@@ -415,6 +415,7 @@ export const forEachChild = (
 export interface BoundSubstitutions {
   lets: WeakSet<Expression>;
   references: WeakMap<Expression, Expression>;
+  calls: WeakSet<Expression>;
 }
 
 interface Instantiation {
@@ -449,8 +450,13 @@ interface Rewrite {
   copies: Map<string, string>;
   mode: RewriteMode;
   modes: Map<RewriteMode, Rewrite>;
-  bindings?: Map<string, Expression>;
+  getReachedSubstitutions: (key: string) => [string, Expression][];
+  binding?: CopyBinding;
   selections: Map<Expression, Expression>;
+}
+
+interface CopyBinding {
+  isReaching: boolean;
 }
 
 const SUBSTITUTION_SUFFIX = "@SUBSTITUTION";
@@ -676,7 +682,7 @@ const getInstanceOperator = (
   arity: number,
   location: SourceLocation,
   resolution: typeof LOCAL_RESOLUTION | undefined,
-): Expression => {
+): Expression & { kind: "Lambda" } => {
   const names = Array.from({ length: arity }, (_value, index) => `argument${index}`);
   return {
     kind: "Lambda",
@@ -697,6 +703,14 @@ const getInstanceOperator = (
 
 const getCopy = (rewrite: Rewrite, key: string) =>
   rewrite.instantiation.isParameterized(key) ? copyDefinition(rewrite, key) : undefined;
+
+const markCall = (rewrite: Rewrite, reference: Expression) => {
+  if (rewrite.binding) {
+    rewrite.binding.isReaching = true;
+    rewrite.instantiation.boundSubstitutions.calls.add(reference);
+  }
+  return reference;
+};
 
 const substitute = (
   expression: Expression,
@@ -764,8 +778,8 @@ const substituteExpression = (
   if (enabled) return enabled;
   if (expression.kind === "Identifier" && isFree(expression.name)) {
     const replacement = instantiation.substitutions.get(expression.name);
-    const bindings = rewrite.bindings;
-    if (replacement && (bindings === undefined || !isBoundOnce(replacement, instantiation))) {
+    const binding = rewrite.binding;
+    if (replacement && (!binding || !isBoundOnce(replacement, instantiation))) {
       const copy = withReplacedFrames(replacement, expression);
       const substitution = substitutedExpressions.get(replacement);
       if (substitution) substitutedExpressions.set(copy, substitution);
@@ -778,11 +792,10 @@ const substituteExpression = (
           }
         : copy;
     }
-    if (replacement && bindings) {
-      const name = getSubstitutionName(expression.name);
-      bindings.set(name, replacement);
+    if (replacement && binding) {
+      binding.isReaching = true;
       const reference = withSubstitutionFrames(
-        createLocalIdentifier(name, expression.location),
+        createLocalIdentifier(getSubstitutionName(expression.name), expression.location),
         substitutionFrames.get(expression) ?? [],
       );
       instantiation.boundSubstitutions.references.set(reference, replacement);
@@ -791,31 +804,33 @@ const substituteExpression = (
     const copy = getCopy(rewrite, expression.name);
     if (copy === undefined) return expression;
     if (params.length === 0) {
-      return {
+      return markCall(rewrite, {
         ...expression,
         name: copy,
         resolution,
         writtenKey: expression.writtenKey ?? expression.name,
-      };
+      });
     }
     const definition = instantiation.getDefinition(expression.name);
     if (definition && getArity(definition) > 0) {
-      return getInstanceOperator(
+      const operator = getInstanceOperator(
         copy,
         params,
         getArity(definition),
         expression.location,
         resolution,
       );
+      markCall(rewrite, operator.body);
+      return operator;
     }
-    return {
+    return markCall(rewrite, {
       kind: "Apply",
       operator: copy,
       args: createLocalArguments(params, expression.location),
       location: expression.location,
       resolution,
       writtenKey: expression.writtenKey ?? expression.name,
-    };
+    });
   }
   if (expression.kind === "Apply" && isFree(expression.operator)) {
     const args = expression.args.map(recurse);
@@ -875,13 +890,13 @@ const substituteExpression = (
     }
     const copy = getCopy(rewrite, expression.operator);
     if (copy === undefined) return markContextual({ ...expression, args });
-    return {
+    return markCall(rewrite, {
       ...expression,
       operator: copy,
       args: [...createLocalArguments(params, expression.location), ...args],
       resolution,
       writtenKey: expression.writtenKey ?? expression.operator,
-    };
+    });
   }
   if (expression.kind === "OperatorReference" && isFree(expression.operator)) {
     const replacement = instantiation.substitutions.get(expression.operator);
@@ -896,15 +911,17 @@ const substituteExpression = (
     if (copy === undefined) return expression;
     const definition = instantiation.getDefinition(expression.operator);
     if (params.length > 0 && definition) {
-      return getInstanceOperator(
+      const operator = getInstanceOperator(
         copy,
         params,
         getArity(definition),
         expression.location,
         resolution,
       );
+      markCall(rewrite, operator.body);
+      return operator;
     }
-    return { ...expression, operator: copy };
+    return markCall(rewrite, { ...expression, operator: copy });
   }
   const rename = createRenamer(rewrite);
   const mapped = mapChildren(expression, (child, names) =>
@@ -953,26 +970,29 @@ const copyDefinition = (rewrite: Rewrite, key: string): string => {
   return instantiation.addDefinition(key, definition.name, (copyKey) => {
     rewrite.copies.set(key, copyKey);
     const rename = createRenamer(rewrite);
-    const bindings = new Map<string, Expression>();
     const unboundRewrite = getMode(rewrite, rewrite.mode);
-    const bodyRewrite =
+    const binding =
       definition.kind === "Operator" && rewrite.mode === "Normal"
-        ? { ...unboundRewrite, bindings, selections: new Map<Expression, Expression>() }
-        : unboundRewrite;
+        ? { isReaching: false }
+        : undefined;
+    const bodyRewrite = binding
+      ? { ...unboundRewrite, binding, selections: new Map<Expression, Expression>() }
+      : unboundRewrite;
     const mapped = renameParams(
       mapDefinition(definition, (child, bound) =>
         substitute(child, bodyRewrite, bindNames(new Map(), bound, rename)),
       ),
       rename,
     );
+    const bindings = binding?.isReaching ? rewrite.getReachedSubstitutions(key) : [];
     const body: Expression =
-      mapped.kind !== "Operator" || bindings.size === 0
+      bindings.length === 0
         ? mapped.body
         : {
             kind: "Let",
-            definitions: [...bindings].map((entry): Definition => ({
+            definitions: bindings.map((entry): Definition => ({
               kind: "Operator",
-              name: entry[0],
+              name: getSubstitutionName(entry[0]),
               params: [],
               body: entry[1],
               isLocal: true,
@@ -986,16 +1006,50 @@ const copyDefinition = (rewrite: Rewrite, key: string): string => {
     if (body !== mapped.body) instantiation.boundSubstitutions.lets.add(body);
     const copied = withInstanceParams({ ...mapped, body }, instantiation.params);
     const frames = substitutionFrames.get(definition.body);
-    if (frames && copied.kind === "Operator") substitutionFrames.set(copied.body, frames);
+    if (frames && copied.kind === "Operator") {
+      substitutionFrames.set(body === mapped.body ? copied.body : mapped.body, frames);
+    }
     return copied;
   });
 };
+
+const getDefinitionFreeNames = (definition: Definition) =>
+  definition.kind === "Function"
+    ? [
+        ...definition.bounds.flatMap((bound) => getFreeNames(bound.set)),
+        ...getFreeNames(definition.body, new Set(getBoundNames(definition.bounds))),
+      ]
+    : getFreeNames(definition.body, new Set(definition.params.map((param) => param.name)));
 
 export const createInstantiation = (instantiation: Instantiation) => {
   const modes = new Map<RewriteMode, Rewrite>();
   const substitutedNames = new Set(
     [...instantiation.substitutions.values()].flatMap((expression) => getFreeNames(expression)),
   );
+  let bound: [string, Expression][] | undefined;
+  const freeNames = new Map<string, string[]>();
+  const getReachedSubstitutions = (key: string) => {
+    bound ??= [...instantiation.substitutions].filter((entry) =>
+      isBoundOnce(entry[1], instantiation),
+    );
+    if (bound.length === 0) return bound;
+    const reached = new Set<string>();
+    const visited = new Set([key]);
+    const pending = [key];
+    for (let next = pending.pop(); next !== undefined; next = pending.pop()) {
+      const definition = instantiation.getDefinition(next);
+      const names = freeNames.get(next) ?? (definition ? getDefinitionFreeNames(definition) : []);
+      freeNames.set(next, names);
+      names.forEach((name) => {
+        if (instantiation.substitutions.has(name)) reached.add(name);
+        else if (!visited.has(name) && instantiation.isParameterized(name)) {
+          visited.add(name);
+          pending.push(name);
+        }
+      });
+    }
+    return bound.filter((entry) => reached.has(entry[0]));
+  };
   const createRewrite = (mode: RewriteMode): Rewrite => {
     const created = {
       instantiation,
@@ -1003,6 +1057,7 @@ export const createInstantiation = (instantiation: Instantiation) => {
       copies: new Map<string, string>(),
       mode,
       modes,
+      getReachedSubstitutions,
       selections: new Map<Expression, Expression>(),
     };
     modes.set(mode, created);
