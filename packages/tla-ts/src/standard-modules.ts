@@ -3,6 +3,7 @@ import {
   createEscoreNativeOperators,
   createEscoreProgramOperators,
   createEsNumberOperators,
+  createEsRuntimeOperators,
 } from "./escore-native";
 import { TlaEvaluationError, TlaModuleError, TlaSetBoundError } from "./errors";
 import {
@@ -637,6 +638,7 @@ export const getJavaOverrides = (
   if (name === "ESCanonical") return ESCORE_CANONICAL_OPERATORS;
   if (name === "ESNative") return createEscoreNativeOperators(evaluateReplaced);
   if (name === "ESNumber") return createEsNumberOperators(evaluateReplaced);
+  if (name === "ESRuntime") return createEsRuntimeOperators(evaluateReplaced);
   if (name === "ProgramCode") return createEscoreProgramOperators(evaluateReplaced);
   if (name === "AnySet") {
     return [

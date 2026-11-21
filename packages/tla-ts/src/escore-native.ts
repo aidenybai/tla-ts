@@ -1,4 +1,11 @@
-import type { Builtin, BuiltinArgument, Context, OperatorValue } from "./evaluate";
+import {
+  evaluate,
+  toKeepLazyContext,
+  type Builtin,
+  type BuiltinArgument,
+  type Context,
+  type OperatorValue,
+} from "./evaluate";
 import {
   compareValues,
   createSortedFunction,
@@ -37,6 +44,11 @@ const getType = (value: Value | undefined) => {
 
 const getList = (value: Value | undefined) =>
   value === undefined ? undefined : getSequenceElements(value);
+
+// A finite function's elements as a tuple, or undefined for any other value, so that a lazy
+// function falls back to the TLA+ rather than being applied here.
+const getTuple = (value: Value | undefined) =>
+  isFunction(value) ? getSequenceElements(value) : undefined;
 
 // The records of one literal, with the fields in the order TLA+ writes them, which tla-ts keeps.
 const createShape = (written: string[]) => {
@@ -228,6 +240,9 @@ const getRelative = (value: Value, length: number, fallback: number) => {
 
 const isOperator = (value: BuiltinArgument): value is OperatorValue =>
   typeof value === "object" && value.kind === "Operator";
+
+// An argument's value, or undefined for an operator.
+const getValue = (arg: BuiltinArgument) => (isOperator(arg) ? undefined : arg);
 
 // An operator that runs natively, or through its TLA+ where evaluate gives undefined.
 const createDefine =
@@ -566,7 +581,7 @@ export const createEsNumberOperators = (callReplaced: CallReplaced): Builtin[] =
   const define = createDefine(callReplaced);
   return [
     define("StrToNum", 1, (args) => {
-      const units = getList(isOperator(args[0]) ? undefined : args[0]);
+      const units = getTuple(getValue(args[0]));
       if (units === undefined || units.length === 0 || units.length > 11) return undefined;
       const sign = units[0] === PLUS || units[0] === MINUS ? units[0] : undefined;
       const digits = sign === undefined ? units : units.slice(1);
@@ -579,6 +594,95 @@ export const createEsNumberOperators = (callReplaced: CallReplaced): Builtin[] =
       if (value === 0 || value >= INT_LIMIT) return undefined;
       const integer = sign === MINUS ? -value : value;
       return numberShape(["int", integer < 0, integer, createTuple([]), 0]);
+    }),
+  ];
+};
+
+// The value of a lazy builtin's argument as TLA+ reads it where it applies the argument as a
+// function, which keeps the functions the argument builds lazy, or undefined where the argument
+// isn't an expression to evaluate.
+const getKeepLazyValue = (arg: BuiltinArgument, context: Context | undefined) =>
+  isOperator(arg) && arg.expression !== undefined && context !== undefined
+    ? evaluate(arg.expression, toKeepLazyContext(context))
+    : undefined;
+
+const isLazyFunction = (value: Value) => typeof value === "object" && value.kind === "LazyFunction";
+
+// ESCore's HeapPageSize and NamedBucket.
+const HEAP_PAGE_SIZE = 256;
+const NAMED_BUCKET = -1;
+// The units of "4294967295", 2^32 - 1, the least integer that isn't an array index.
+const INDEX_LIMIT = [52, 50, 57, 52, 57, 54, 55, 50, 57, 53];
+
+// Whether units of digits are below INDEX_LIMIT, as DigitsBelow orders them.
+const isBelowIndexLimit = (units: number[]) => {
+  if (units.length !== INDEX_LIMIT.length) return units.length < INDEX_LIMIT.length;
+  const index = units.findIndex((unit, position) => unit !== INDEX_LIMIT[position]);
+  return index !== -1 && units[index] < INDEX_LIMIT[index];
+};
+
+const isIntegers = (values: Value[]): values is number[] =>
+  values.every((value) => typeof value === "number");
+
+// The units of a key that IsArrayIndex holds for, an empty list for a key it doesn't hold for,
+// or undefined where the key isn't a record with a type or a string's units aren't all integers.
+const getIndexUnits = (key: Value | undefined) => {
+  const type = getType(key);
+  if (type === undefined) return undefined;
+  if (type !== "string") return [];
+  const units = getTuple(getField(key, "value"));
+  if (units === undefined || !isIntegers(units)) return undefined;
+  return units.length > 0 &&
+    units.every((unit) => unit >= 48 && unit <= 57) &&
+    (units.length === 1 || units[0] !== 48) &&
+    isBelowIndexLimit(units)
+    ? units
+    : [];
+};
+
+// ESCore's operators on its heap and property keys that tla-ts runs natively, while TLC runs the
+// runtime's TLA+: HeapGet, a heap's record at an index, IsArrayIndex, and PropBucket, the bucket
+// of an object's props that holds a key. Each falls back where its operands aren't the common ones.
+export const createEsRuntimeOperators = (callReplaced: CallReplaced): Builtin[] => {
+  const define = createDefine(callReplaced);
+  return [
+    {
+      kind: "Builtin",
+      name: "HeapGet",
+      arity: 2,
+      isLazy: true,
+      // HeapGet's TLA+ reads h.pages, then i, as it applies them, which keeps the functions they
+      // build lazy, and fails on h.pages before it reads i.
+      evaluate: (args, context) => {
+        const heap = getKeepLazyValue(args[0], context);
+        const pages = getField(heap, "pages");
+        if (heap === undefined || (pages === undefined && !isLazyFunction(heap))) {
+          return callReplaced("HeapGet", heap === undefined ? args : [heap, args[1]], context);
+        }
+        const index = getKeepLazyValue(args[1], context);
+        if (index === undefined) return callReplaced("HeapGet", [heap, args[1]], context);
+        const record =
+          typeof index === "number" && Number.isInteger(index) && index >= 1
+            ? getTuple(getTuple(pages)?.[Math.floor((index - 1) / HEAP_PAGE_SIZE)])?.[
+                (index - 1) % HEAP_PAGE_SIZE
+              ]
+            : undefined;
+        return record ?? callReplaced("HeapGet", [heap, index], context);
+      },
+      evaluateUnary: undefined,
+      evaluateBinary: undefined,
+    },
+    define("IsArrayIndex", 1, (args) => {
+      const units = getIndexUnits(getValue(args[0]));
+      return units === undefined ? undefined : units.length > 0;
+    }),
+    define("PropBucket", 1, (args) => {
+      const units = getIndexUnits(getValue(args[0]));
+      if (units === undefined) return undefined;
+      if (units.length === 0) return NAMED_BUCKET;
+      return units.length <= 2
+        ? 0
+        : units.slice(0, -2).reduce((value, unit) => value * 10 + unit - 48, 0);
     }),
   ];
 };

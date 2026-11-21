@@ -95,6 +95,36 @@ const checkModule = (source: string) =>
 const THREW = "the script threw an exception";
 
 describe("compiles scripts by specializing ESCore", () => {
+  // Each key goes in the bucket that PropBucket gives it, and each object in the page of the heap
+  // that HeapGet reads, which tla-ts runs natively.
+  describe("orders an object's keys and reads objects past a page of the heap", () => {
+    const getSource = (expected: string) => `
+      const object: Record<string, number> = {};
+      for (const key of ["b", "250", "4294967295", "4294967294", "01", "7", "100", "99", "a", "12345"]) {
+        object[key] = key.length;
+      }
+      const objects: { index: number }[] = [];
+      for (let index = 0; index < 300; index++) objects.push({ index });
+      let total = 0;
+      for (const item of objects) total += item.index;
+      const text =
+        Object.keys(object).join(",") + ";" + String(total) + ";" + String(object["4294967295"]) + String(object["01"]);
+      if (text !== "${expected}") throw new Error(text);
+    `;
+    const expected = "7,99,100,250,12345,4294967294,b,4294967295,01,a;44850;102";
+
+    it("agrees with Node", async () => {
+      expect(() => runInNewContext(stripTypeScriptTypes(getSource(expected)))).not.toThrow();
+      expect((await checkScript(getSource(expected))).message).toBeUndefined();
+    });
+
+    it("rejects another result", async () => {
+      const wrong = expected.replace("250,12345", "12345,250");
+      expect(() => runInNewContext(stripTypeScriptTypes(getSource(wrong)))).toThrow(expected);
+      expect((await checkScript(getSource(wrong))).message).toContain(THREW);
+    });
+  });
+
   // Each key of the typed array is a string that CanonicalNumericIndexString reads with StrToNum,
   // which tla-ts runs natively for a string of decimal digits.
   describe("reads the keys of a typed array that are canonical numeric strings", () => {
