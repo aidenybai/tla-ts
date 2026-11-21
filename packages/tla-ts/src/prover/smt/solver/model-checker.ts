@@ -71,7 +71,7 @@ class AuxContext {
     const context = this.context;
     context.popToBaseLevel();
     const result = context.checkResearching(this.asserted, []);
-    return result === L_TRUE ? context.getSatModel() : result === L_FALSE ? "unsat" : "unknown";
+    return result === L_TRUE ? context.getModel() : result === L_FALSE ? "unsat" : "unknown";
   }
 }
 
@@ -186,8 +186,13 @@ export class ModelChecker {
     return true;
   }
 
-  private addInstance(quantifier: number, cex: ProtoModel, sks: number[], isUsingInv: boolean) {
-    if (sks.length === 0) return false;
+  private addInstance(
+    quantifier: number,
+    cex: ProtoModel | undefined,
+    sks: number[],
+    isUsingInv: boolean,
+  ) {
+    if (cex === undefined || sks.length === 0) return false;
     const manager = this.manager;
     const numDecls = manager.getQuantifier(quantifier).sorts.length;
     const bindings: number[] = [];
@@ -234,21 +239,22 @@ export class ModelChecker {
     const completeCex = aux.check();
     if (completeCex === "unsat") return true;
     if (completeCex === "unknown") return false;
-    completeCex.incRef();
+    completeCex?.incRef();
     this.modelFinder.restrictSksToInstSet(quantifier, sks, (expr) => aux.assert(expr));
     let numNewInstances = 0;
     for (;;) {
       const cex = aux.check();
       if (typeof cex === "string") break;
-      cex.incRef();
+      cex?.incRef();
       const isAdded = this.addInstance(quantifier, cex, sks, true);
       if (isAdded) numNewInstances++;
-      if (isAdded && numNewInstances < this.maxCexs) this.addBlockingClause(aux, cex, sks);
-      cex.decRef();
+      if (cex !== undefined && isAdded && numNewInstances < this.maxCexs)
+        this.addBlockingClause(aux, cex, sks);
+      cex?.decRef();
       if (!isAdded || numNewInstances >= this.maxCexs) break;
     }
     if (numNewInstances === 0) this.addInstance(quantifier, completeCex, sks, false);
-    completeCex.decRef();
+    completeCex?.decRef();
     return false;
   }
 
