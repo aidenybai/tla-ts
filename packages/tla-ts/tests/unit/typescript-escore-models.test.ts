@@ -1314,6 +1314,59 @@ describe("checks a module's exported functions as a model on ESCore", () => {
     });
   });
 
+  // Array.prototype.sort of an array the step just made, which tla-ts runs natively as LSort by
+  // a - b, b - a, or no comparator: the one result of a stable sort, as ESCore and Node give it,
+  // with -0 before or after 0 as they came, and NaN, where a - b isn't consistent, on ESCore.
+  describe("sorts a fresh array natively, stably, as ESCore and Node sort it", () => {
+    const source = `
+      let values: number[] = [];
+      let words: string[] = [];
+      export const add = (at: 0 | 1 | 2 | 3 | 4) => {
+        if (values.length >= 2) return;
+        values = [...values, [0, -0, 2, -1.5, 1073741824][at]].sort((left, right) => left - right);
+      };
+      export const addDown = (at: 0 | 1 | 2) => {
+        if (values.length >= 2) return;
+        values = [...values, [-0, 0, 1073741823][at]].sort((left, right) => right - left);
+      };
+      export const say = (word: "b" | "a" | "ab") => {
+        if (words.length >= 1) return;
+        words = [...words, word].sort();
+      };
+      export const isShort = () => values.length <= 2 && words.length <= 1;
+    `;
+
+    it("gives what ESCore gives in every call, with Node's states", async () => {
+      const explored = await exploreInNode(source, "spec.ts");
+      expect(explored.error).toBeUndefined();
+      const counts = [explored.status, explored.distinctStates, explored.generatedStates];
+      expect(getCounts(await checkModel(source, "spec.ts", "native"))).toEqual(counts);
+      expect(getCounts(await checkModel(source, "spec.ts", "compared"))).toEqual(counts);
+    });
+
+    it("tells a native sort that puts equal values in the other order", async () => {
+      const result = await checkModel(source, "spec.ts", "native", [
+        "(j < i /\\ ~LSortLess(order, e[i], e[j]))",
+        "(j > i /\\ ~LSortLess(order, e[i], e[j]))",
+      ]);
+      expect(result.message).toContain("the native call differs from ESCore's");
+    });
+
+    it("runs a sort of NaN on ESCore, as Node sorts it", async () => {
+      const withNaN = `
+        let values: number[] = [];
+        export const add = (value: 0 | 1 | 2) => {
+          if (values.length >= 3) return;
+          values = [...values, value === 2 ? NaN : value].sort((left, right) => left - right);
+        };
+        export const isShort = () => values.length <= 3;
+      `;
+      const explored = await exploreInNode(withNaN, "spec.ts");
+      const counts = [explored.status, explored.distinctStates, explored.generatedStates];
+      expect(getCounts(await checkModel(withNaN, "spec.ts", "native"))).toEqual(counts);
+    });
+  });
+
   // An object literal of the state's arrays, which a function that only reads its parameter
   // borrows rather than owns, so the call runs natively, and one that a function returns a part
   // of, which it owns, so the call runs on ESCore. Comparing the borrowed array with the state's
