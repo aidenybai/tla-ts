@@ -113,7 +113,6 @@ export interface FilteredSetValue extends LazySet {
   kind: "FilteredSet";
   base: Value;
   test: (element: Value, isMember: boolean) => boolean;
-  // Set when the predicate has an effect or is counted under -coverage, so running it again on TLC's resets shows. A pure filter leaves it out.
   isTestObserved?: true;
   startPass?: (isMaterialized: boolean) => (element: Value) => boolean;
   source?: FilteredSetSource;
@@ -2007,7 +2006,7 @@ const convertSet = (
   return set;
 };
 
-// TLC's SetEnumValue#compareTo and equals convert their argument with toSetEnum, which frames S \cup T, S \cap T, S \ T and UNION S only as their elements() opens them, not as it draws from them.
+// TLC's toSetEnum frames S \cup T, S \cap T, S \ T and UNION S only as their elements() opens them.
 const toOpenedSet = (value: SetOperationValue | UnionValue) =>
   setTrace.sets !== undefined && !value.enumerated
     ? convertSet(value, value, true)
@@ -2024,7 +2023,6 @@ const toArgumentSet = (value: Value) => {
   return set;
 };
 
-// SubsetValue#toSetEnum charges the subsets it collects, which convertAndCache keeps, so a cached SUBSET charges once.
 const toChargedSet = (value: SubsetValue, isCached: boolean) => {
   // TLC's SetEnumValue#member scans an unsorted literal, so a literal whose sort charges a SUBSET stays unsorted.
   if (isSortingLiteral) throw new TlaEvaluationError("The set literal holds a charged SUBSET");
@@ -2145,7 +2143,6 @@ const hasPredicatedSet = (sets: Value[]) => {
   return false;
 };
 
-// Running a pure filter again gives the same elements, so only a filter whose runs show needs TLC's repeated runs.
 const hasObservedFilter = (value: Value): boolean => {
   if (typeof value !== "object") return false;
   switch (value.kind) {
@@ -2281,7 +2278,6 @@ const openPart = (value: Value): ElementStream => {
     (value.kind === "SetOperation" || value.kind === "Union") &&
     isPredicated(value)
   ) {
-    // A pure filter collected once gives the elements TLC's enumerator gives on each reset. TLC fails only as the stream reaches a failing element, so a failure streams, and so does the traced replay of one.
     return hasObservedFilter(value) || setTrace.sets !== undefined
       ? openStreamedPart(value)
       : computeLikeTlcOnFailure(openListPart, openStreamedPart, value, undefined);
@@ -2308,7 +2304,6 @@ const openStreamedPart = (value: SetOperationValue | UnionValue) => {
   return stream;
 };
 
-// TLC's SetCupValue enumerator opens both sets and draws from S, then T. SetCapValue and SetDiffValue's draw from one set and test the other.
 const openOperationPart = (value: SetOperationValue): ElementStream => {
   if (value.operator === "\\cup") {
     if (!isTlcEnumerable(value.left) || !isTlcEnumerable(value.right)) toFiniteSet(value);
@@ -2325,7 +2320,6 @@ const openOperationPart = (value: SetOperationValue): ElementStream => {
   };
 };
 
-// TLC's UnionValue enumerator opens each set of S as it reaches it, and its reset opens the first set again.
 const openUnionPart = (value: UnionValue): UnionedStream => {
   const sets = getUnionSets(value);
   return {

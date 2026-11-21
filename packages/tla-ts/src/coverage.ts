@@ -190,7 +190,6 @@ export const createCoverageEnvironment = (
   coverage,
 });
 
-// TLC makes no search of its own for the part of a state that fails, so tla-ts's counts nothing.
 export const runUncounted = <Result>(coverage: Coverage | undefined, run: () => Result): Result => {
   if (!coverage) return run();
   const primary = coverage.primary.slice();
@@ -875,7 +874,6 @@ export const chargeSetOperation = (
       : undefined;
   if (typeof result !== "object") return result;
   if (receiver === undefined) {
-    // Tool#eval gives a union of two sets it can't reduce the union's cost model.
     if (operator === "\\cup" && node !== undefined && result.kind === "SetOperation") {
       coverage.values.set(result, node);
     }
@@ -956,7 +954,6 @@ const createProductEnumerator = (
   };
 };
 
-// Sizing a component whose enumeration runs user code would run it again, so its size comes from the product's when only that component is unknown.
 const getComponentSizes = (sets: Value[], size: number | undefined) => {
   // eslint-disable-next-line unicorn/no-new-array
   const sizes = new Array<number>(sets.length);
@@ -1005,7 +1002,6 @@ export const createProductSetEnumerator = (
   return sets && sizes && createProductEnumerator(coverage, node, sets, sizes);
 };
 
-// The number of elements TLC's enumerator draws from a set whose enumeration runs no user code.
 const getKnownSize = (set: Value): number | undefined => {
   if (typeof set !== "object") return undefined;
   switch (set.kind) {
@@ -1039,7 +1035,6 @@ const getKnownSize = (set: Value): number | undefined => {
   }
 };
 
-// TLC's SetCupValue enumerator charges its cost model on each call, then draws from S, and from T once S runs out.
 const createUnionEnumerator = (
   coverage: Coverage,
   set: SetOperationValue,
@@ -1067,7 +1062,6 @@ const createUnionEnumerator = (
   };
 };
 
-// TLC's SetCapValue and SetDiffValue enumerators draw from one set and test each element's membership in the other, with no cost model of their own.
 const createIntersectionEnumerator = (
   coverage: Coverage,
   set: SetOperationValue,
@@ -1147,7 +1141,6 @@ export const chargeRandomOrder = (coverage: Coverage, set: Value, size: number) 
   if (node !== undefined) coverage.secondary[node] += size;
 };
 
-// The size methods of SetCupValue, SetCapValue and SetDiffValue charge their enumeration and the elements it collected before normalizing them, which can fail.
 export const chargeSetOperationSize = (coverage: Coverage, set: Value) => {
   if (typeof set !== "object" || set.kind !== "SetOperation") return;
   const size = getKnownSize(set);
@@ -1219,7 +1212,6 @@ const COMPOSITE_SET_KINDS = new Set<string>([
 ]);
 
 // SubsetValue#member enumerates the element and UnionValue#member its set of sets, each until it decides, then once more to find the end.
-// Their enumerators charge each draw as they make it, so a member check that throws keeps the draws before it.
 const createChargedMembership = (coverage: Coverage) => {
   const isMember = (element: Value, set: Value): boolean => {
     if (typeof set !== "object") return isElementOf(element, set);
