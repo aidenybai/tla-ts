@@ -3860,3 +3860,141 @@ describe("the default tactic, as Z3 5.3.2 builds it", () => {
     ).toEqual(["sat"]);
   });
 });
+
+describe("symmetry-reduce, as Z3 5.3.2 breaks symmetries", () => {
+  const universe = [
+    "(declare-sort U 0)",
+    ...["a", "b", "c", "d", "e"].map((name) => `(declare-const ${name} U)`),
+    "(declare-fun f (U) U)",
+  ];
+
+  it("asserts a member predicate for each term that a class of constants restricts", () => {
+    expect(
+      run([
+        ...universe,
+        "(declare-sort V 0)",
+        ...["x", "y", "z"].map((name) => `(declare-const ${name} V)`),
+        "(declare-fun g (U) V)",
+        "(assert (distinct a b c))",
+        "(assert (distinct x y))",
+        "(assert (or (= d a) (= d b) (= d c)))",
+        "(assert (or (= (g d) x) (= (g d) y)))",
+        "(assert (or (= z x) (= z y)))",
+        "(apply symmetry-reduce)",
+      ]),
+    ).toEqual([
+      [
+        "(goals",
+        "(goal",
+        "  (distinct a b c)",
+        "  (distinct x y)",
+        "  (or (= d a) (= d b) (= d c))",
+        "  (or (= (g d) x) (= (g d) y))",
+        "  (or (= z x) (= z y))",
+        "  (= d b)",
+        "  (= z y)",
+        "  (or (= (g d) y) (= (g d) x))",
+        "  :precision precise :depth 1)",
+        ")",
+      ].join("\n"),
+    ]);
+  });
+
+  it("leaves a goal that a swap of the constants changes", () => {
+    expect(
+      run([
+        ...universe,
+        "(assert (distinct a b c))",
+        "(assert (or (= d a) (= d b) (= d c)))",
+        "(assert (= (f a) b))",
+        "(apply symmetry-reduce)",
+      ]),
+    ).toEqual([
+      [
+        "(goals",
+        "(goal",
+        "  (distinct a b c)",
+        "  (or (= d a) (= d b) (= d c))",
+        "  (= (f a) b)",
+        "  :precision precise :depth 1)",
+        ")",
+      ].join("\n"),
+    ]);
+  });
+
+  it("fails on unsat cores and on quantifiers", () => {
+    const symmetric = [...universe, "(assert (distinct a b c))"];
+    expect(
+      run(["(set-option :produce-unsat-cores true)", ...symmetric, "(apply symmetry-reduce)"]),
+    ).toEqual(['(error "tactic failed: symmetry_reduce does not support unsat core production")']);
+    expect(
+      run([...symmetric, "(assert (forall ((x U)) (= (f (f x)) x)))", "(apply symmetry-reduce)"]),
+    ).toEqual(['(error "tactic failed: symmetry_reduce does not apply to quantified goals")']);
+  });
+
+  it("keeps the caches of its rewriters across the checks of QF_UF", () => {
+    expect(
+      run([
+        "(set-logic QF_UF)",
+        "(set-option :produce-models true)",
+        ...universe,
+        "(declare-fun p (U) Bool)",
+        "(assert (distinct a b c))",
+        "(assert (or (= d a) (= d b) (= d c)))",
+        "(assert (or (= (f d) a) (= (f d) b) (= (f d) c)))",
+        "(assert (=> (p a) (= (f a) e)))",
+        "(assert (=> (p b) (= (f b) e)))",
+        "(assert (=> (p c) (= (f c) e)))",
+        "(check-sat)",
+        "(get-info :rlimit)",
+        "(get-model)",
+        "(check-sat)",
+        "(get-info :rlimit)",
+      ]),
+    ).toEqual([
+      "sat",
+      "(:rlimit 866)",
+      [
+        "(",
+        "  ;; universe for U:",
+        "  ;;   U!val!2 U!val!5 U!val!4 U!val!1 U!val!0 U!val!3 ",
+        "  ;; -----------",
+        "  ;; definitions for universe elements:",
+        "  (declare-fun U!val!2 () U)",
+        "  (declare-fun U!val!5 () U)",
+        "  (declare-fun U!val!4 () U)",
+        "  (declare-fun U!val!1 () U)",
+        "  (declare-fun U!val!0 () U)",
+        "  (declare-fun U!val!3 () U)",
+        "  ;; cardinality constraint:",
+        "  (forall ((x U))",
+        "          (or (= x U!val!2)",
+        "              (= x U!val!5)",
+        "              (= x U!val!4)",
+        "              (= x U!val!1)",
+        "              (= x U!val!0)",
+        "              (= x U!val!3)))",
+        "  ;; -----------",
+        "  (define-fun b () U",
+        "    U!val!0)",
+        "  (define-fun a () U",
+        "    U!val!4)",
+        "  (define-fun e () U",
+        "    U!val!3)",
+        "  (define-fun c () U",
+        "    U!val!1)",
+        "  (define-fun d () U",
+        "    U!val!0)",
+        "  (define-fun f ((x!0 U)) U",
+        "    (ite (= x!0 U!val!0) U!val!4",
+        "    (ite (= x!0 U!val!1) U!val!5",
+        "      U!val!2)))",
+        "  (define-fun p ((x!0 U)) Bool",
+        "    false)",
+        ")",
+      ].join("\n"),
+      "sat",
+      "(:rlimit 1574)",
+    ]);
+  });
+});
