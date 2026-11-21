@@ -606,8 +606,8 @@ const DEFINITIONS = [
   // state's required holds under the file number 0, the first time either asks for it.
   `AsyncHooksModule(s) ==
   IF 0 \\in DOMAIN s.required THEN Get(s, s.required[0].module, SV("exports")) ELSE
-  LET run == CreateBuiltinFunction(s, <<"Module", "asyncRun">>, 1, N("runInAsyncScope"), Empty)
-      destroy == CreateBuiltinFunction(run.s, <<"Module", "asyncDestroy">>, 0, N("emitDestroy"), Empty)
+  LET run == HostMethod(s, N("runInAsyncScope"), 2, N("AsyncResource"), "asyncRun", Empty)
+      destroy == HostMethod(run.s, N("emitDestroy"), 0, N("AsyncResource"), "asyncDestroy", Empty)
       resource == Alloc(destroy.s, BuiltinObject(Intrinsic(destroy.s, "FunctionPrototype"), <<"Module", "asyncResource">>, 1,
                                                  N("AsyncResource"), TRUE, [run |-> Val(run), destroy |-> Val(destroy)], destroy.s.realmId))
       resourceProxy == StoppingProxy(resource.s, resource.v, N("AsyncResource"),
@@ -1635,10 +1635,14 @@ const HOST_PATCHES = [
            [] Arg(args, 2) = SV("emitDestroy") -> Ok(s, data.destroy)
            [] OTHER -> HostStop(N("AsyncResource"))
     [] m \\in {"asyncRun", "asyncDestroy"} ->
-         IF ~IsObject(this) \\/ O(s, this).class # "proxy" \\/ "asyncResource" \\notin DOMAIN O(s, O(s, this).slots.target).slots
-         THEN HostStop(N("AsyncResource"))
-         ELSE IF m = "asyncDestroy" THEN Ok(s, this)
-         ELSE Call(s, Arg(args, 1), Arg(args, 2), IF Len(args) > 2 THEN SubSeq(args, 3, Len(args)) ELSE <<>>)
+         LET resource == Arg(args, 2)
+             list == CreateListFromArrayLike(s, Arg(args, 3), "all")
+         IN IF IsAbrupt(list) THEN list
+            ELSE IF ~IsObject(resource) \\/ O(s, resource).class # "proxy" \\/ ~IsObject(O(s, resource).slots.target)
+                    \\/ "asyncResource" \\notin DOMAIN O(s, O(s, resource).slots.target).slots
+            THEN HostStop(N("AsyncResource"))
+            ELSE IF m = "asyncDestroy" THEN Ok(list.s, resource)
+            ELSE Call(list.s, Arg(Val(list), 1), Arg(Val(list), 2), Rest(Val(list), 3))
     [] m = "consoleWrite" ->
          IF \\E i \\in DOMAIN args : IsObject(args[i])
          THEN Assert(FALSE, "tla-ts can't write an object to the host's console, which formats it")

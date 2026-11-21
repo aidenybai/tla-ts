@@ -945,6 +945,51 @@ describe("compiles CommonJS modules as Node loads them", () => {
     });
   });
 
+  // An AsyncResource's runInAsyncScope and emitDestroy, whose names and lengths are Node's, run as
+  // Node's do, and stop at every other use.
+  describe("runs an AsyncResource's methods as Node does, and stops at every other use", () => {
+    const main = `const { AsyncResource } = require("async_hooks");
+      const resource = new AsyncResource("t");
+      log.push(resource.runInAsyncScope.name, resource.runInAsyncScope.length, resource.emitDestroy.name, resource.emitDestroy.length);
+      log.push(resource.runInAsyncScope(function (a, b) { return [this.tag, a, b].join("-"); }, { tag: "t" }, 1, 2), resource.emitDestroy() === resource);
+      log.push(resource.runInAsyncScope === new AsyncResource("u").runInAsyncScope);`;
+
+    it("agrees with Node", async () => {
+      expect(
+        (await checkModules(getFiles(main, "runInAsyncScope,2,emitDestroy,0,t-1-2,true,true")))
+          .message,
+      ).toBeUndefined();
+    });
+
+    it("rejects another result", async () => {
+      expect(
+        (await checkModules(getFiles(main, "runInAsyncScope,1,emitDestroy,0,t-1-2,true,true")))
+          .message,
+      ).toContain(THREW);
+    });
+
+    it.each([
+      "resource.runInAsyncScope.prototype",
+      "Object.keys(resource.emitDestroy)",
+      "Object.getPrototypeOf(resource.runInAsyncScope)",
+      "resource.runInAsyncScope.call(resource, () => 1)",
+      "String(resource.emitDestroy)",
+      "resource.runInAsyncScope.call({}, () => 1)",
+      "Reflect.apply(resource.emitDestroy, {}, [])",
+    ])("stops at %s", async (use) => {
+      expect(
+        (
+          await checkModules(
+            getFiles(
+              `const { AsyncResource } = require("async_hooks"); const resource = new AsyncResource("t"); ${use};`,
+              "",
+            ),
+          )
+        ).message,
+      ).toContain("tla-ts can't run the host's AsyncResource");
+    });
+  });
+
   describe("gives a module in a cycle the exports so far of the module that requires it", () => {
     const main = `const a = require("./a.js");
       log.push(a.name, a.fromB);`;
