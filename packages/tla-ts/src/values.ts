@@ -917,6 +917,8 @@ const createSameValueCheck = (isClassSensitive: boolean) => {
         areSameValues(left.domain, right.domain) &&
         areSameValues(left.range, right.range)
       );
+    if (left.kind === "LazyFunction" && left.enumerated) return isSame(left.enumerated, right);
+    if (right.kind === "LazyFunction" && right.enumerated) return isSame(left, right.enumerated);
     return getValueKey(left) === getValueKey(right);
   };
   return isSame;

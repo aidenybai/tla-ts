@@ -1171,6 +1171,34 @@ ASSUME TLCFP(a) = -887695703
     },
   );
 
+  it("evaluates the body of a lazy function a state holds once per key of each successor, as TLC's fingerprint converts it and later reads go through the record", async () => {
+    const printed: string[] = [];
+    await check({
+      source:
+        "---- MODULE M ----\nEXTENDS Integers, TLC\nVARIABLES x, y\nInit == x = 0 /\\ y = [s \\in SUBSET {1, 2} |-> 0]\nNext == x < 2 /\\ x' = x + 1 /\\ \\E i \\in {1, 2} : y' = [s \\in SUBSET {1, 2} |-> IF PrintT(<<x, i, s>>) THEN y[s] + 1 ELSE 0]\nInv == \\A s \\in SUBSET {1, 2} : y[s] < 3\n====",
+      config: "INIT Init\nNEXT Next\nINVARIANT Inv\nCHECK_DEADLOCK FALSE",
+      onPrint: (text) => printed.push(text),
+    });
+    expect(printed).toEqual([
+      "<<0, 1, {}>>",
+      "<<0, 1, {1}>>",
+      "<<0, 1, {2}>>",
+      "<<0, 1, {1, 2}>>",
+      "<<0, 2, {}>>",
+      "<<0, 2, {1}>>",
+      "<<0, 2, {2}>>",
+      "<<0, 2, {1, 2}>>",
+      "<<1, 1, {}>>",
+      "<<1, 1, {1}>>",
+      "<<1, 1, {2}>>",
+      "<<1, 1, {1, 2}>>",
+      "<<1, 2, {}>>",
+      "<<1, 2, {1}>>",
+      "<<1, 2, {2}>>",
+      "<<1, 2, {1, 2}>>",
+    ]);
+  });
+
   it("converts a lazy function over sets to a tuple without applying it, as TLC's FcnLambdaValue#toTuple does", async () => {
     expect(
       (await checkLazyTuple('ndJsonSerialize("n.json", [s \\in SUBSET {1} |-> 1 \\div x])')).result
