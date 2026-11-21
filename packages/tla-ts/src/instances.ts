@@ -41,7 +41,6 @@ export const frameSubstitutions = new WeakMap<Expression, () => Substitution[]>(
 
 export const substitutedExpressions = new WeakMap<Expression, Substitution>();
 
-// SANY's instanced body keeps the original's references, so each copy of a reference keeps the key it was written with.
 export const writtenKeys = new WeakMap<Expression, string>();
 
 const withWrittenKey = (copy: Expression, expression: Expression, key: string) => {
@@ -123,7 +122,6 @@ const sourceNames = new WeakMap<Definition, string>();
 export const getSourceName = (definition: Definition) =>
   sourceNames.get(definition) ?? definition.name;
 
-// A LET instance's theorem is a LET definition, so each copy of its LET keeps the range of its INSTANCE.
 export const letTheorems = new WeakMap<Definition, SourceRange>();
 
 const withSource = (definition: Definition, source: Definition) => {
@@ -428,7 +426,6 @@ export const forEachChild = (
   }
 };
 
-// The LET a copy binds its substitutions in, and each reference to one of them with the substitution it reads.
 export interface BoundSubstitutions {
   lets: WeakSet<Expression>;
   references: WeakMap<Expression, Expression>;
@@ -474,7 +471,6 @@ const SUBSTITUTION_SUFFIX = "@SUBSTITUTION";
 
 const getSubstitutionName = (name: string) => `${name}${SUBSTITUTION_SUFFIX}`;
 
-// The first declaration a substitute replaced is the one SANY's body names. A LET instance substitutes a local definition, so only the frames of its reference record it.
 export const getSubstitutedOccurrence = (
   expression: Expression,
 ): (Expression & { kind: "Identifier" }) | undefined => {

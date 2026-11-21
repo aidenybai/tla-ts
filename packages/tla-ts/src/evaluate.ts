@@ -979,13 +979,11 @@ export interface StartupSubstitute {
   definition: Definition;
 }
 
-// An overridden definition's place holds its substitute, which SpecProcessor#processConstantDefns evaluates there even when stored.
 export interface StartupDefinition {
   definition: Definition;
   isOverride: boolean;
 }
 
-// SpecProcessor#processConstantDefns evaluates the substitute of each constant in a module's context, then the module's definitions.
 export interface StartupModule {
   substitutes: StartupSubstitute[];
   definitions: StartupDefinition[];
@@ -1011,7 +1009,6 @@ export const evaluateStartupDefinitions = (modules: StartupModule[], environment
       const definition = substitute.definition;
       const definitionId = environment.facts.ids.get(definition);
       if (definitionId === undefined) return;
-      // SpecProcessor evaluates an inherited constant's substitute again in each module, which only a substitute whose evaluation shows can tell.
       if (
         environment.startupValues[definitionId] !== undefined &&
         !isReevaluationShown(definition, environment)
@@ -1254,7 +1251,6 @@ export const findGlobalName = (name: string, environment: Environment): GlobalNa
   return undefined;
 };
 
-// A substitute that startup stored reads the same value whether a copy binds it once or reads it at each reference.
 const isStoredSubstitute = (
   substitute: Expression | undefined,
   environment: Environment,

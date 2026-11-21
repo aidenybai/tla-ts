@@ -331,7 +331,6 @@ export const createEnvironment = (
     instanceReferences: new WeakMap(),
   };
   const instanceParams = new Set<OperatorParam>();
-  // An unscoped CONSTANT N <- D substitutes the root's N, whose key exists only once the root links, so an instance tells it by name.
   const substitutedNames = new Set(
     config.substitutions.flatMap((substitution) =>
       substitution.module === undefined ? [substitution.name] : [],
@@ -613,7 +612,7 @@ export const createEnvironment = (
         semanticErrors.push(error);
       }
     });
-    // SANY's Errors#addMessage drops a message it already has, such as an instantiated body's. SANY makes no hidden link, so it level-checks none.
+    // SANY's Errors#addMessage drops a message it already has, such as an instantiated body's.
     if (!isHidden && semanticErrors.length === 0) {
       semanticErrors.push(
         ...[
@@ -713,8 +712,8 @@ export const createEnvironment = (
   ): Definition => {
     // Deviation from TLC: Tool#evalImplLetInKind binds a 0-arity LET definition to a LazyValue of its body, so a LET instance's copy of a 0-arity override runs SANY's placeholder body, such as Nat == {}, where the alias forwards to the Java override.
     const alias = createLocalAlias(name, key, params, forwarded, location);
-    const standard = builtins.has(key) ? getStandardDefinition(key) : undefined;
-    return standard ? { ...alias, standard } : alias;
+    const standardDefinition = builtins.has(key) ? getStandardDefinition(key) : undefined;
+    return standardDefinition ? { ...alias, standardDefinition } : alias;
   };
 
   // SANY substitutes for, arity-checks and reports missing an instanced module's declarations in its symbol table's hash order.
@@ -1939,7 +1938,7 @@ export const createEnvironment = (
         : [];
     }),
   );
-  // Tool#evalAppl evaluates a substitute at each reference, which shows only where a second evaluation does or coverage counts it. The copy has no startup value to read.
+  // HACK: a copy has no startup value, so each reference evaluates the substitute's body.
   substitutions.forEach((_target, key) => {
     const definition = getSubstitute(key);
     if (definition && (options.isCovered || isReevaluationShown(definition, environment))) {

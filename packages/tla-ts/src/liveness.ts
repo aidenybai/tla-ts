@@ -111,7 +111,6 @@ const TEMPORAL_OPERATORS = new Set(["~>", "-+->"]);
 
 const definitionThunks = new WeakSet<Thunk>();
 
-// TLC names a reference by the definition it named in the module it was written in.
 export const getReferenceName = (reference: Expression, key: string, environment: Environment) => {
   const written = writtenKeys.get(reference);
   return written === undefined
@@ -274,14 +273,18 @@ export const getLevel = (
           isLevelBound,
         );
       }
-      const aliases = expression.definitions.filter((definition) => "standard" in definition);
+      const aliases = expression.definitions.filter(
+        (definition) => "standardDefinition" in definition,
+      );
       if (aliases.length === 0) return getChildrenLevel(expression);
       // TLC's getLevelBound reads a standard operator's TLA+ definition, not the builtin a LET instance's alias forwards to.
       return Math.max(
         getLevel(
           {
             ...expression,
-            definitions: expression.definitions.filter((definition) => !("standard" in definition)),
+            definitions: expression.definitions.filter(
+              (definition) => !("standardDefinition" in definition),
+            ),
           },
           scope,
           environment,
@@ -290,7 +293,7 @@ export const getLevel = (
           isLevelBound,
         ),
         ...aliases
-          .flatMap((alias) => getDefinitionExpressions(alias.standard))
+          .flatMap((alias) => getDefinitionExpressions(alias.standardDefinition))
           .map((item) => getBodyLevel(item, item, undefined)),
       );
     }

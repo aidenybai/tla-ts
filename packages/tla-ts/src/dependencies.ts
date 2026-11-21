@@ -213,7 +213,9 @@ const collectLocalFacts = (
     // TLC's SubstInNode binds a LET instance's substitute lazily, so its level counts only where the instanced definition reads it.
     if (
       kind === "Let" &&
-      node.definitions.some((definition) => isLetSubstitute(definition) || "standard" in definition)
+      node.definitions.some(
+        (definition) => isLetSubstitute(definition) || "standardDefinition" in definition,
+      )
     ) {
       const innerSubstitutes = new Map(substitutes);
       node.definitions.forEach((definition) => {
@@ -222,9 +224,9 @@ const collectLocalFacts = (
       node.definitions.forEach((definition) => {
         if (isLetSubstitute(definition)) return;
         // TLC's getLevelBound reads a standard operator's TLA+ definition, not the builtin a LET instance's alias forwards to.
-        if ("standard" in definition) {
+        if ("standardDefinition" in definition) {
           visit(definition.body, isInnerLevelCounted, true, innerSubstitutes);
-          getDefinitionExpressions(definition.standard).forEach((expression) =>
+          getDefinitionExpressions(definition.standardDefinition).forEach((expression) =>
             visit(expression, false, isOperatorArgument, undefined),
           );
           return;
@@ -312,7 +314,7 @@ const closeRows = (local: Uint32Array, words: number, edges: Int32Array[], mask:
 };
 
 const PURITY_MASK = IMPURE | REPEATED_EFFECT | STREAMED | RANDOM | TLC_EVAL;
-// What a second evaluation can show. TLC streams a fresh \cup or UNION as it streams the startup value.
+// TLC streams a fresh \cup or UNION as it streams the startup value.
 const SHOWN_MASK = IMPURE | REPEATED_EFFECT | RANDOM | TLC_EVAL;
 const READ_MASK = NONCONSTANT | READS_IMPURE;
 const STARTUP_MASK = NONCONSTANT | ABOVE_CONSTANT_BOUND;

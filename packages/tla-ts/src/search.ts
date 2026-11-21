@@ -622,7 +622,6 @@ const getProperties = (
       ) {
         const body = conjunct.expression;
         const substituted = getSubstitutedName(body);
-        // TLC names the invariant by the operator under the box, as the module it is written in names it.
         properties.invariants.push({
           name:
             substituted !== undefined
