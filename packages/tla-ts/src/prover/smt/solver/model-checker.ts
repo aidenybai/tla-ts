@@ -174,15 +174,18 @@ export class ModelChecker {
       }
     }
     const subst = new VarSubst(manager, true);
-    const skBody = subst.apply(body, sks.items);
-    // m.mk_not, which makes (not true) of a true body too.
-    const negated = manager.mkApp(OP_NOT, [skBody], SORT_BOOL);
-    manager.incRef(negated);
-    aux.assert(negated);
-    manager.decRef(negated);
-    manager.decRef(skBody);
-    subst.release();
-    manager.decRef(body);
+    try {
+      const skBody = subst.apply(body, sks.items);
+      // m.mk_not, which makes (not true) of a true body too.
+      const negated = manager.mkApp(OP_NOT, [skBody], SORT_BOOL);
+      manager.incRef(negated);
+      aux.assert(negated);
+      manager.decRef(negated);
+      manager.decRef(skBody);
+    } finally {
+      subst.release();
+      manager.decRef(body);
+    }
     return true;
   }
 

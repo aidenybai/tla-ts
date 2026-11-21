@@ -307,6 +307,17 @@ const MBQI_SUBSET = [
   "(assert (not (= s t)))",
 ];
 
+const NO_FIXED_POINT = [
+  "(declare-sort U 0)",
+  "(declare-fun g (U) U)",
+  "(declare-fun a () U)",
+  "(declare-fun b () U)",
+  "(push 1)",
+  "(assert (forall ((x U)) (not (= (g x) x))))",
+  "(assert (= (g a) b))",
+  "(assert (not (= a b)))",
+];
+
 const SMT_FIXTURES = join(import.meta.dirname, "../fixtures/smt");
 
 // A tlapm obligation from tlaplus/Examples' MisraReachability, with its goal checked under a push.
@@ -1206,14 +1217,7 @@ describe("runSmtlibScript runs its commands as Z3 does", () => {
   it("pops the model check's scope when the limit stops its check", () => {
     expect(
       run([
-        "(declare-sort U 0)",
-        "(declare-fun g (U) U)",
-        "(declare-fun a () U)",
-        "(declare-fun b () U)",
-        "(push 1)",
-        "(assert (forall ((x U)) (not (= (g x) x))))",
-        "(assert (= (g a) b))",
-        "(assert (not (= a b)))",
+        ...NO_FIXED_POINT,
         "(set-option :rlimit 207)",
         "(check-sat)",
         "(set-option :rlimit 0)",
@@ -1223,17 +1227,23 @@ describe("runSmtlibScript runs its commands as Z3 does", () => {
     ).toEqual(["unknown", "sat", "(:rlimit 1938)"]);
   });
 
+  it("frees the model check's instance when the limit stops its substitution", () => {
+    expect(
+      run([
+        ...NO_FIXED_POINT,
+        "(set-option :rlimit 387)",
+        "(check-sat)",
+        "(set-option :rlimit 0)",
+        "(check-sat)",
+        "(get-info :rlimit)",
+      ]),
+    ).toEqual(["unknown", "sat", "(:rlimit 1936)"]);
+  });
+
   it("goes on with the model check when the limit leaves its counterexample without a model", () => {
     expect(
       run([
-        "(declare-sort U 0)",
-        "(declare-fun g (U) U)",
-        "(declare-fun a () U)",
-        "(declare-fun b () U)",
-        "(push 1)",
-        "(assert (forall ((x U)) (not (= (g x) x))))",
-        "(assert (= (g a) b))",
-        "(assert (not (= a b)))",
+        ...NO_FIXED_POINT,
         "(set-option :rlimit 302)",
         "(check-sat)",
         "(get-info :reason-unknown)",
