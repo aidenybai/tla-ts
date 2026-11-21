@@ -283,7 +283,12 @@ export const CORE_OPERATORS: Builtin[] = [
       return markStreamedSet(createSetOperation(operator, left, right));
     }),
   ),
-  defineOperator("SUBSET", 1, (args) => ({ kind: "Subset", base: getValue(args, 0, "SUBSET") })),
+  defineOperator("SUBSET", 1, (args) => ({
+    kind: "Subset",
+    base: getValue(args, 0, "SUBSET"),
+    costNode: undefined,
+    secondary: undefined,
+  })),
   defineOperator("UNION", 1, (args) => {
     const outer = getValue(args, 0, "UNION");
     const written = isEnumeratedSet(outer) ? getWrittenElements(outer) : [];

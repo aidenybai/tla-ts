@@ -31,13 +31,12 @@ import {
   chargeContexts,
   chargeFunctionConstruction,
   chargeSetOperation,
+  chargeSetOperationSize,
   costCoverage,
   countArgumentTuple,
   countCoverage,
   createChargedEnumerator,
-  createChargedMembership,
   createProductSetEnumerator,
-  DO_NOT_RECORD,
   enterFrames,
   exitFrames,
   getCoverageFrames,
@@ -704,16 +703,6 @@ const keepLambda = (lambda: LazyFunction) => Object.assign(lambda.value, { lambd
 export const getLazyFunction = (value: Value) =>
   isKeptLazyFunction(value) ? value.lambda : undefined;
 
-// FcnLambdaValue#takeExcept copies the function without its cost model.
-const getUnrecordedApply = (functionValue: Value, coverage: Coverage) => {
-  const lambda = getLazyFunction(functionValue);
-  if (!lambda) return undefined;
-  return (argument: Value) =>
-    coverage.current === -1
-      ? lambda.compute(argument, lambda.value)
-      : runAtCoverageNode(coverage, DO_NOT_RECORD, () => lambda.compute(argument, lambda.value));
-};
-
 // SANY makes the arguments of f[a, b] a $Tuple at the application's location, which TLC's call stack holds while they evaluate.
 export const getArgumentTuple = (
   expression: Expression & { kind: "FunctionApplication" },
@@ -723,13 +712,14 @@ export const bindLazyArguments = (
   lambda: LazyFunction,
   expression: Expression & { kind: "FunctionApplication" },
   argument: Value,
+  isMember: typeof isElementOf,
 ) => {
   const value = lambda.value;
   const describeArgument = (ordinal: string, element: Value, problem: string) =>
     `In applying the function\n${prettyPrint(formatValue(value))},\nthe ${ordinal} is:\n${prettyPrint(formatValue(element))}${problem}.\n${describeRange(expression.function)}`;
   const bounds = lambda.bounds;
   if (bounds.length === 1) {
-    if (!isElementOf(argument, value.domain)) {
+    if (!isMember(argument, value.domain)) {
       throw new TlaEvaluationError(
         describeArgument("first argument", argument, "which is not in its domain"),
       );
@@ -755,7 +745,7 @@ export const bindLazyArguments = (
     if (index >= elements.length) throw createListError();
     const element = elements[index];
     const ordinal = `argument number ${index + 1}`;
-    if (!isElementOf(element, domains[index])) {
+    if (!isMember(element, domains[index])) {
       throw new TlaEvaluationError(
         describeArgument(
           ordinal,
@@ -1755,9 +1745,11 @@ const traceFrames =
     }
   };
 
-const getTaggedSetTest = (expression: Expression): ((value: Value) => boolean) | undefined => {
+const getTaggedValueTest = (expression: Expression): ((value: Value) => boolean) | undefined => {
   switch (expression.kind) {
     case "SetEnumeration":
+    case "Tuple":
+    case "Record":
       return () => true;
     case "SetMap":
       return isReducibleSet;
@@ -1785,7 +1777,7 @@ const countEvaluator = (
   evaluator: Evaluator,
   coverage: Coverage,
 ): Evaluator => {
-  const isTagged = getTaggedSetTest(expression);
+  const isTagged = getTaggedValueTest(expression);
   return (context) => {
     const outer = coverage.current;
     if (outer < 0 || !coverage.covered.has(expression)) return evaluator(context);
@@ -2155,7 +2147,6 @@ const compileApply = (
     const subset = getSubsetOperator(expression, global.evaluateBinary);
     const coverage = environment.coverage;
     if (!coverage) return (context) => subset(left(context), right(context));
-    const isMember = createChargedMembership(coverage);
     return (context) => {
       const leftValue = left(context);
       const rightValue = right(context);
@@ -2166,7 +2157,9 @@ const compileApply = (
       ) {
         return subset(leftValue, rightValue);
       }
-      const missing = leftValue.elements.findIndex((element) => !isMember(element, rightValue));
+      const missing = leftValue.elements.findIndex(
+        (element) => !coverage.isMember(element, rightValue),
+      );
       costCoverage(coverage, leftValue, (missing === -1 ? leftValue.elements.length : missing) + 1);
       return missing === -1;
     };
@@ -2182,9 +2175,24 @@ const compileApply = (
   ) {
     const element = getEvaluator(args[0], environment);
     const set = getEvaluator(args[1], environment);
-    const isMember = createChargedMembership(coverage);
     const isIn = global.name === "\\in";
-    return (context) => isMember(element(context), set(context)) === isIn;
+    return (context) => coverage.isMember(element(context), set(context)) === isIn;
+  }
+  if (
+    coverage &&
+    global?.kind === "Builtin" &&
+    global.name === "Cardinality" &&
+    global.evaluateUnary &&
+    args.length === 1 &&
+    isValueArgument(args[0], environment)
+  ) {
+    const set = getEvaluator(args[0], environment);
+    const cardinality = global.evaluateUnary;
+    return (context) => {
+      const value = set(context);
+      chargeSetOperationSize(coverage, value);
+      return cardinality(value);
+    };
   }
   if (
     coverage &&
@@ -2194,12 +2202,15 @@ const compileApply = (
     isValueArgument(args[0], environment)
   ) {
     const base = getEvaluator(args[0], environment);
-    return (context): Value => ({
-      kind: "Subset",
-      base: base(context),
-      costNode:
-        coverage.expressions[coverage.current] === expression ? coverage.current : undefined,
-    });
+    return (context): Value => {
+      const isCharged = coverage.expressions[coverage.current] === expression;
+      return {
+        kind: "Subset",
+        base: base(context),
+        costNode: isCharged ? coverage.current : undefined,
+        secondary: isCharged ? coverage.secondary : undefined,
+      };
+    };
   }
   const combine = global?.kind === "Builtin" ? global.evaluateBinary : undefined;
   if (coverage && combine && SET_OPERATORS.has(expression.operator) && args.length === 2) {
@@ -2214,6 +2225,7 @@ const compileApply = (
         leftValue,
         rightValue,
         combine(leftValue, rightValue),
+        coverage.expressions[coverage.current] === expression ? coverage.current : undefined,
       );
     };
   }
@@ -2487,7 +2499,6 @@ const compileExcept = (
   const isKeptLazyExpression = keptLazyExpressions.has(expression);
   if (isKeptLazyExpression) keepLazy(expression.function);
   const evaluateFunction = getEvaluator(expression.function, environment);
-  const coverage = environment.coverage;
   const updates = expression.updates.map((update) => ({
     path: update.path.map((step): CompiledStep =>
       step.kind === "Field"
@@ -2520,7 +2531,6 @@ const compileExcept = (
       getKey(path[depth], context),
       (previous) => update(previous, path, depth + 1, context, value),
       isKeptLazyExpression && depth === 0,
-      coverage && getUnrecordedApply(current, coverage),
     );
   };
   return (context) => {
@@ -2542,6 +2552,13 @@ const compileExcept = (
   };
 };
 
+const hasOuterLocalName = (expression: Expression, names: string[]): boolean => {
+  if (expression.kind === "OperatorReference") return true;
+  const name = getReferencedName(expression);
+  if (name !== undefined && isLocallyResolved(expression) && !names.includes(name)) return true;
+  return getChildren(expression).some((child) => hasOuterLocalName(child, names));
+};
+
 export const getLazyFilter = (
   expression: Expression & { kind: "SetFilter" },
   environment: Environment,
@@ -2554,6 +2571,13 @@ export const getLazyFilter = (
     predicate: predicateNode,
   };
   const coverage = environment.coverage;
+  const isTestObserved =
+    isExpressionImpure([expression.predicate], environment, "varying") ||
+    hasOuterLocalName(
+      expression.predicate,
+      pattern.kind === "Name" ? [pattern.name] : pattern.names,
+    ) ||
+    coverage !== undefined;
   const createFiltered = (
     base: Value,
     context: Context,
@@ -2584,14 +2608,19 @@ export const getLazyFilter = (
         getEvaluator(expression.predicate, tracing),
         -1,
       );
-    if (!coverage || node < 0) return { kind: "FilteredSet", base, test, source, rebind };
+    if (!coverage || node < 0) {
+      return isTestObserved
+        ? { kind: "FilteredSet", base, test, isTestObserved, source, rebind }
+        : { kind: "FilteredSet", base, test, source, rebind };
+    }
     return {
       kind: "FilteredSet",
       base,
       test: (element, isMember) =>
         runAtCoverageNode(coverage, isMember ? -1 : node, () => test(element, isMember)),
+      isTestObserved: true,
       startPass: (isMaterialized) => {
-        const draws = createProductSetEnumerator(coverage, base);
+        const draws = createProductSetEnumerator(coverage, base, undefined);
         return (element) => {
           draws?.next();
           coverage.secondary[node]++;
@@ -2975,7 +3004,6 @@ const compile = (expression: Expression, environment: Environment): Evaluator =>
           ? traceEvaluator(getArgumentTuple(expression), evaluator, environment, callStack)
           : evaluator;
       if (coverage) {
-        const isMember = createChargedMembership(coverage);
         const getArgument =
           args.length === 1
             ? args[0]
@@ -2993,7 +3021,7 @@ const compile = (expression: Expression, environment: Environment): Evaluator =>
           ) {
             return applyFunction(functionValue, argument, describeMissing);
           }
-          checkLazyArgumentWith(functionValue, argument, isMember);
+          checkLazyArgumentWith(functionValue, argument, coverage.isMember);
           return functionValue.apply(argument);
         };
       }
