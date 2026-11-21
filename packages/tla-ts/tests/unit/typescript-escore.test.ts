@@ -95,6 +95,44 @@ const checkModule = (source: string) =>
 const THREW = "the script threw an exception";
 
 describe("compiles scripts by specializing ESCore", () => {
+  // Each lookup reads an object's own property with OrdinaryGetOwnProperty, which tla-ts runs
+  // natively, and a missing one goes on to the prototype.
+  describe("reads own and inherited properties", () => {
+    const getSource = (expected: string) => `
+      const base: Record<string, number> = { a: 1 };
+      const derived = Object.create(base) as Record<string, number>;
+      derived.b = 2;
+      const list = [10, 20, 30];
+      const text = [
+        derived.a,
+        derived.b,
+        derived.c,
+        "a" in derived,
+        Object.prototype.hasOwnProperty.call(derived, "a"),
+        Object.getOwnPropertyDescriptor(derived, "b")?.value,
+        Object.getOwnPropertyDescriptor(derived, "a"),
+        list[1],
+        list[5],
+        Object.prototype.hasOwnProperty.call(list, "2"),
+      ]
+        .map(String)
+        .join(",");
+      if (text !== "${expected}") throw new Error(text);
+    `;
+    const expected = "1,2,undefined,true,false,2,undefined,20,undefined,true";
+
+    it("agrees with Node", async () => {
+      expect(() => runInNewContext(stripTypeScriptTypes(getSource(expected)))).not.toThrow();
+      expect((await checkScript(getSource(expected))).message).toBeUndefined();
+    });
+
+    it("rejects another result", async () => {
+      const wrong = expected.replace("true,false", "true,true");
+      expect(() => runInNewContext(stripTypeScriptTypes(getSource(wrong)))).toThrow(expected);
+      expect((await checkScript(getSource(wrong))).message).toContain(THREW);
+    });
+  });
+
   // CanonicalNumericIndexString, which tla-ts runs natively, tells the keys that a typed array
   // keeps as its own properties from those it reads as indices.
   describe("keeps a typed array's keys that aren't canonical numeric strings", () => {

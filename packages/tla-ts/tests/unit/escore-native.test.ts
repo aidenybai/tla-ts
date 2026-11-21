@@ -106,11 +106,46 @@ const getError = async (module: string, expression: string) =>
     })
   ).violation?.message?.replaceAll("module ESRuntime", "module ESCore");
 
+// What a module that extends the runtime prints, under the name ESRuntime, whose operators that
+// read a CONSTANT tla-ts runs natively, or under ESCore, whose operators run as written. An INSTANCE
+// such as Plain would run the TLA+ of both.
+const getPrinted = async (module: string, body: string, config = CONFIG) => {
+  const printed: string[] = [];
+  const result = await check({
+    source: `---- MODULE Twin ----\nEXTENDS ${module}\n${body}\n====`,
+    config,
+    loadModule,
+    onPrint: (text) => printed.push(text),
+  });
+  return [result.status, result.violation?.message, ...printed];
+};
+
+const OWN_PROPERTIES = `Object(pairs) == WithDataProps(MakeObject(Null, "ordinary", <<>>), pairs)
+Objects == <<Object(<<>>),
+             Object([j \\in 1..120 |-> <<Str(IntToRadix(j * 7, 10)), Num(NumIntNum(j))>>]),
+             Object(<<<<Sym(1), True>>, <<Str(<<97>>), False>>>>)>>
+Keys == <<Str(<<97>>), Str(<<98>>), Sym(1), Sym(2), Str(<<>>)>> \\o [n \\in 1..900 |-> Str(IntToRadix(n - 1, 10))]
+ASSUME PrintT([i \\in 1..Len(Objects) |-> [j \\in 1..Len(Keys) |->
+  ToString(OrdinaryGetOwnProperty(Objects[i], Keys[j]))]])`;
+
 describe("runs ESCore's native operators as their TLA+ does", () => {
   it("gives the values the TLA+ gives", { timeout: 120_000 }, async () => {
     const checks = getChecks();
     expect(await getOutcomes(checks)).toEqual(checks.map(() => "TRUE"));
   });
+
+  it.each([
+    ["the CONSTANTS the configuration gives", CONFIG],
+    ["Absent bound to a value", "CONSTANTS None = None\nEmpty = Empty\nAbsent = 8\n"],
+  ])(
+    "reads an object's own properties, and Absent, as the TLA+ does under %s",
+    { timeout: 120_000 },
+    async (_, config) => {
+      const expected = await getPrinted("ESCore", OWN_PROPERTIES, config);
+      expect(expected[0]).toBe("success");
+      expect(await getPrinted("ESRuntime", OWN_PROPERTIES, config)).toEqual(expected);
+    },
+  );
 
   it.each([
     ["PropBucket of a key that isn't a record", "PropBucket(3)"],
@@ -122,6 +157,11 @@ describe("runs ESCore's native operators as their TLA+ does", () => {
     [
       "CanonicalNumericIndexString of units that aren't integers",
       'CanonicalNumericIndexString(<<49, "a">>)',
+    ],
+    ["OrdinaryGetOwnProperty of an object without props", "OrdinaryGetOwnProperty(3, Str(<<97>>))"],
+    [
+      "OrdinaryGetOwnProperty of a bucket that isn't a function",
+      "OrdinaryGetOwnProperty([props |-> (-1 :> 5)], Str(<<97>>))",
     ],
     [
       "CanonicalNumericIndexString of a lazy function",

@@ -7,10 +7,13 @@ import {
   type OperatorValue,
 } from "./evaluate";
 import {
+  applyFunction,
   compareValues,
   createSortedFunction,
   createTuple,
+  getDomain,
   getSequenceElements,
+  isElementOf,
   isNormalizedSet,
   setFunctionClass,
   type FunctionValue,
@@ -250,12 +253,12 @@ const createDefine =
   (
     name: string,
     arity: number,
-    evaluate: (args: BuiltinArgument[]) => Value | undefined,
+    evaluate: (args: BuiltinArgument[], context: Context | undefined) => Value | undefined,
   ): Builtin => ({
     kind: "Builtin",
     name,
     arity,
-    evaluate: (args, context) => evaluate(args) ?? callReplaced(name, args, context),
+    evaluate: (args, context) => evaluate(args, context) ?? callReplaced(name, args, context),
     evaluateUnary: undefined,
     evaluateBinary: undefined,
   });
@@ -659,6 +662,20 @@ const getCanonicalInteger = (units: number[]) => {
   return isNegative ? -value : value;
 };
 
+// The bucket of an object's props that PropBucket gives a key of these units.
+const getBucket = (units: number[]) =>
+  units.length === 0
+    ? NAMED_BUCKET
+    : units.length <= 2
+      ? 0
+      : units.slice(0, -2).reduce((value, unit) => value * 10 + unit - 48, 0);
+
+// The value of one of the runtime's CONSTANTS as its TLA+ reads it, which the check keys by the
+// name and the module that declares it, or undefined where the configuration binds it to an
+// expression rather than a value. An INSTANCE copies the TLA+ of the runtime's operators instead.
+const getConstant = (context: Context | undefined, name: string) =>
+  context?.environment.constants.get(`${name}@ESRuntime`);
+
 // ESCore's operators on its heap and property keys that tla-ts runs natively, while TLC runs the
 // runtime's TLA+: HeapGet, a heap's record at an index, IsArrayIndex, PropBucket, the bucket of an
 // object's props that holds a key, and CanonicalNumericIndexString, which gives Undefined for a
@@ -706,11 +723,20 @@ export const createEsRuntimeOperators = (callReplaced: CallReplaced): Builtin[] 
     }),
     define("PropBucket", 1, (args) => {
       const units = getIndexUnits(getValue(args[0]));
-      if (units === undefined) return undefined;
-      if (units.length === 0) return NAMED_BUCKET;
-      return units.length <= 2
-        ? 0
-        : units.slice(0, -2).reduce((value, unit) => value * 10 + unit - 48, 0);
+      return units === undefined ? undefined : getBucket(units);
+    }),
+    // OrdinaryGetOwnProperty(o, k): the descriptor of k in o's props, or Absent.
+    define("OrdinaryGetOwnProperty", 2, (args, context) => {
+      const key = getValue(args[1]);
+      const units = getIndexUnits(key);
+      const props = getField(getValue(args[0]), "props");
+      if (units === undefined || key === undefined || !isFunction(props)) return undefined;
+      const bucket = getBucket(units);
+      const keys = isElementOf(bucket, getDomain(props)) ? applyFunction(props, bucket) : undefined;
+      if (keys !== undefined && !isFunction(keys)) return undefined;
+      return keys !== undefined && isElementOf(key, getDomain(keys))
+        ? applyFunction(keys, key)
+        : getConstant(context, "Absent");
     }),
   ];
 };
