@@ -2310,6 +2310,58 @@ ASSUME TLCFP(a) = -887695703
   );
 
   it.each([
+    [
+      "Check == LET r == RandomElement(1..1000) IN PrintT(<<r, UNCHANGED r, r>>)",
+      ["<<773, FALSE, 379>>", "<<484, FALSE, 436>>"],
+    ],
+    [
+      "Check == LET r == RandomElement(1..1000) IN PrintT(<<r, UNCHANGED <<r, y>>, r>>)",
+      ["<<773, FALSE, 379>>", "<<484, FALSE, 436>>"],
+    ],
+    [
+      "Check == LET r == RandomElement(1..1000) IN PrintT(<<r, [r = 0]_r, r>>)",
+      ["<<773, FALSE, 379>>", "<<484, FALSE, 436>>"],
+    ],
+    [
+      "Check == LET r == RandomElement(1..1000) IN PrintT(<<r, <<r = 0>>_r, r>>)",
+      ["<<773, FALSE, 773>>", "<<484, FALSE, 484>>"],
+    ],
+    [
+      "Check == LET r == RandomElement(1..1000) IN PrintT(<<UNCHANGED r, r, r'>>)",
+      ["<<FALSE, 773, 273>>", "<<FALSE, 484, 784>>"],
+    ],
+    [
+      'Check == LET t == PrintT("t") /\\ y \\in 0..1 IN t /\\ UNCHANGED t /\\ t',
+      getPrints('"t"', 6),
+    ],
+    [
+      'Check == LET t == PrintT("t") /\\ y \\in 0..1 IN t /\\ (UNCHANGED t \\/ TRUE) /\\ t',
+      getPrints('"t"', 6),
+    ],
+    [
+      'Check == LET t == PrintT("t") /\\ y \\in 0..1 IN (UNCHANGED t \\/ TRUE) /\\ t',
+      getPrints('"t"', 4),
+    ],
+    [
+      "Ap(a) == PrintT(<<a, UNCHANGED a, a>>)\nCheck == Ap(RandomElement(1..1000))",
+      ["<<773, FALSE, 379>>", "<<484, FALSE, 436>>"],
+    ],
+    [
+      'Ap(a) == a /\\ UNCHANGED a /\\ a\nCheck == Ap(PrintT("t") /\\ y \\in 0..1)',
+      getPrints('"t"', 6),
+    ],
+    [
+      "Ap(a) == PrintT(<<a, [a = 0]_a, a>>)\nCheck == Ap(RandomElement(1..1000))",
+      ["<<773, FALSE, 379>>", "<<484, FALSE, 436>>"],
+    ],
+  ])(
+    "evaluates the first side of UNCHANGED, [A]_e and <<A>>_e in %j without the next state, as TLC passes TLCState.Empty there",
+    async (definitions, expected) => {
+      expect((await getLazyReads(definitions, ACTION_CHECK)).printed).toEqual(expected);
+    },
+  );
+
+  it.each([
     ["Next == Step /\\ UNCHANGED (J!Op2 \\/ TRUE)", NEXT_CHECK, '"d"', 6],
     ["Live == []<><<Step>>_<<y, J!Op2>>", LIVE_CHECK, '"d"', 12],
     ["Live == []<><<Step>>_<<J!Op2, y>>", LIVE_CHECK, '"d"', 12],

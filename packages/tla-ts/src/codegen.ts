@@ -32,6 +32,7 @@ import {
   keepLazy,
   resolveGlobalOperator,
   expectFunction,
+  toEmptyContext,
   toKeepLazyContext,
   toNextContext,
   createUnassignedError,
@@ -135,6 +136,7 @@ const createGeneratedHelpers = () => ({
     throw createUnassignedError(name, expression);
   },
   prime: toNextContext,
+  empty: toEmptyContext,
   keepLazyContext: toKeepLazyContext,
   extend: (context: Context, names: string[], values: Value[]): Context => ({
     environment: context.environment,
@@ -214,7 +216,7 @@ const generateHelper = (
   };
   const parameters = outerLocals.map((local) => `, ${local}`).join("");
   generator.helpers.push(
-    `function ${name}(context, state, next${parameters}) { let primed; let applied; ${build(bodyFrame)} }`,
+    `function ${name}(context, state, next${parameters}) { let primed; let emptied; let applied; ${build(bodyFrame)} }`,
   );
   return `${name}(${frame.context}, ${frame.state}, ${frame.isPrimed ? "undefined" : frame.next}${parameters})`;
 };
@@ -489,7 +491,14 @@ const generateExpression = (generator: Generator, expression: Expression, frame:
         expression: expression.expression,
         location: expression.location,
       });
-      const evaluated = `equal(${generate(expression.expression)}, ${primed})`;
+      const empty = generate(expression.expression, {
+        context: `(emptied ??= empty(${frame.context}))`,
+        state: frame.state,
+        next: "undefined",
+        isPrimed: false,
+        locals: frame.locals,
+      });
+      const evaluated = `equal(${empty}, ${primed})`;
       const variables = getUnchangedVariables(expression.expression, generator.environment);
       if (!variables) return evaluated;
       const indexes = addReference(
@@ -556,7 +565,7 @@ export const generateEvaluator = (
   };
   const body = generateExpression(generator, expression, frame);
   const referenceNames = generator.references.map((_reference, index) => `reference${index}`);
-  const source = `${generator.helpers.join("\n")}\nreturn (context) => { const state = context.state; const next = context.next; let primed; let applied; return ${body}; };`;
+  const source = `${generator.helpers.join("\n")}\nreturn (context) => { const state = context.state; const next = context.next; let primed; let emptied; let applied; return ${body}; };`;
   generatedHelpers ??= createGeneratedHelpers();
   const factory = new Function(...Object.keys(generatedHelpers), ...referenceNames, source);
   return factory(...Object.values(generatedHelpers), ...generator.references);

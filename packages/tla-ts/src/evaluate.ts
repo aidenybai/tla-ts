@@ -1658,6 +1658,16 @@ export const toNextContext = (context: Context): Context => ({
   isPrimed: true,
 });
 
+// TLC evaluates the first side of UNCHANGED, [A]_e and <A>_e with s1 as TLCState.Empty.
+export const toEmptyContext = (context: Context): Context => ({
+  environment: context.environment,
+  scope: context.scope,
+  state: context.state,
+  next: undefined,
+  isKeepLazy: context.isKeepLazy,
+  isPrimed: false,
+});
+
 const evaluateWithNextState = (
   coverage: Coverage,
   nextState: NextStateMode,
@@ -1682,19 +1692,12 @@ const compileUnchanged = (
   if (coverage) {
     return (context) =>
       isReceiverEqual(
-        evaluateWithNextState(coverage, "empty", evaluator, {
-          environment: context.environment,
-          scope: context.scope,
-          state: context.state,
-          next: undefined,
-          isKeepLazy: context.isKeepLazy,
-          isPrimed: false,
-        }),
+        evaluateWithNextState(coverage, "empty", evaluator, toEmptyContext(context)),
         evaluator(toNextContext(context)),
       );
   }
   const evaluateUnchanged: Evaluator = (context) =>
-    isReceiverEqual(evaluator(context), evaluator(toNextContext(context)));
+    isReceiverEqual(evaluator(toEmptyContext(context)), evaluator(toNextContext(context)));
   // The tracing replay evaluates the subscript, whose tuple TLC names in the frames.
   const variables = environment.callStack
     ? undefined
@@ -3059,7 +3062,7 @@ const compile = (expression: Expression, environment: Environment): Evaluator =>
       const index = environment.variableIndex.get(name) ?? -1;
       const substitution = getChildEvaluator(expression.substitution);
       return (context) => {
-        if (context.next !== undefined) return substitution(context);
+        if (!context.isPrimed) return substitution(context);
         const value = context.state?.[index];
         if (value === undefined) throw createUnassignedError(name, expression);
         return value;
