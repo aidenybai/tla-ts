@@ -1039,7 +1039,10 @@ export const createInstantiation = (instantiation: Instantiation) => {
       definition.name,
       () => {
         const operator = getOperatorDefinition(definition);
-        return { ...operator, body: withSubstitutionFrames(operator.body, [frame]) };
+        const body = withSubstitutionFrames(operator.body, [frame]);
+        const lets = instantiation.boundSubstitutions.lets;
+        if (lets.has(operator.body)) lets.add(body);
+        return { ...operator, body };
       },
       reservedKey,
     );
