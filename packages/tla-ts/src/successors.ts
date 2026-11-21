@@ -67,6 +67,7 @@ import {
   type UnchangedVariable,
 } from "./tlc/replay";
 import {
+  createTuple,
   getStreamedElements,
   isEqualLikeTlc,
   isFunctionValue,
@@ -411,7 +412,7 @@ const compileConjunction = (
           if (assigned === undefined) {
             unchanged ??= current.slice();
             unchanged[variable.index] = state[variable.index];
-          } else if (!isEqualLikeTlc(assigned, state[variable.index])) {
+          } else if (!isEqualLikeTlc(state[variable.index], assigned)) {
             warnChangedUnchanged(run.environment, variable.index, variable.expression);
             return;
           }
@@ -550,9 +551,11 @@ const compileFunctionAction = (
     const value = evaluate(expression.function, isInit ? context : toKeepLazyContext(context));
     const lambda = getLazyFunction(value);
     if (lambda !== undefined) {
+      // Kept inline: sharing replay's helper for these lines cost 1.4% per lazy action.
+      const args = expression.args.map((arg) => evaluate(arg, context));
       getRunner(lambda.body, environment, isInit)(
         run,
-        bindLazyArguments(lambda, expression, context),
+        bindLazyArguments(lambda, expression, args.length === 1 ? args[0] : createTuple(args)),
         partial,
         action,
         isFixed,
@@ -632,7 +635,7 @@ const compileUnchanged = (expression: Expression, environment: Environment): Run
         onComplete(assign(partial, index, value), action);
         return;
       }
-      if (!isEqualLikeTlc(assigned, value)) {
+      if (!isEqualLikeTlc(value, assigned)) {
         warnChangedUnchanged(run.environment, index, expression);
         return;
       }

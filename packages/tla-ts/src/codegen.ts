@@ -54,10 +54,10 @@ import {
   getFunctionDomain,
   isElementOf,
   isBeyondSetBound,
+  isEqualLikeTlc,
   isReducibleSet,
   isTlcInteger,
   toFiniteSet,
-  valuesEqual,
   type Value,
 } from "./values";
 
@@ -120,7 +120,7 @@ const createGeneratedHelpers = () => ({
       : isElementOf(value, createEnumeratedSet([...strings]))) !== isNegated,
   record: createSortedRecord,
   writtenRecord: createWrittenRecord,
-  equal: valuesEqual,
+  equal: isEqualLikeTlc,
   enumerate: getQuantifierElements,
   choiceElements: getChoiceElements,
   noChoice: (expression: Expression & { kind: "Choose" }): never => {

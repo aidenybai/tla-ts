@@ -445,12 +445,13 @@ class PredTransformer {
     const manager = context.manager;
     this.manager = manager;
     const spacer = context.spacerManager;
-    this.reachSolver = new IucSolver(manager, spacer);
+    this.reachSolver = new IucSolver(manager, spacer, context.params.parameters);
     this.solver = new PropSolver(
       manager,
       spacer,
       this.getHeadName(),
       context.params.getUint("spacer.random_seed", 0),
+      context.params.parameters,
     );
     manager.funcDecls[head].domain.forEach((sort, index) => {
       const decl = spacer.mkFuncDecl(`${this.getHeadName()}_${index}`, [], sort);

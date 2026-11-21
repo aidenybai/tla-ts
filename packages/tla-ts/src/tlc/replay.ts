@@ -6,6 +6,7 @@ import { isConstantLevel } from "../dependencies";
 import {
   chargeContexts,
   chargeRandomOrder,
+  countArgumentTuple,
   countCoverage,
   createChargedEnumerator,
   enterFrames,
@@ -24,6 +25,7 @@ import {
   evaluate,
   forEachBoundElement,
   freezeCallStack,
+  getArgumentTuple,
   getContextElements,
   getDefinition,
   getLazyFunction,
@@ -41,7 +43,9 @@ import {
   toUnspecifiedSubscriptError,
 } from "../evaluate";
 import {
+  createTuple,
   formatValue,
+  getLazyFunctionNode,
   getStreamedElements,
   isEqualLikeTlc,
   isTlcEnumerable,
@@ -355,7 +359,7 @@ export const findChangedVariable = (
 ) =>
   variables.find((variable) => {
     const assigned = partial[variable.index];
-    return assigned !== undefined && !isEqualLikeTlc(assigned, current[variable.index]);
+    return assigned !== undefined && !isEqualLikeTlc(current[variable.index], assigned);
   });
 
 export const isAssignedShortcut = (replay: Pick<Replay, "environment" | "isInit" | "isEnabled">) =>
@@ -684,7 +688,12 @@ const visitAssignment = (
   if (expression.operator === "=") {
     return proceedWithValue(replay, items, partial, index, value, node);
   }
-  const set: Value = expression.operator === "\\subseteq" ? { kind: "Subset", base: value } : value;
+  const set: Value =
+    expression.operator !== "\\subseteq"
+      ? value
+      : replay.coverage
+        ? { kind: "Subset", base: value, costNode: node }
+        : { kind: "Subset", base: value };
   if (typeof set === "object" && set !== value) {
     replay.callStack?.sources.set(set, source);
     replay.coverage?.values.set(set, node);
@@ -751,7 +760,7 @@ export const getEnabledFailure = (expression: Expression) => {
 const getRandomOrder = (replay: Replay, set: Value, elements: Value[]) => {
   const runtime = replay.environment.runtime;
   const order = getRandomSubset(elements.length, set, runtime.getRandom(), runtime.version);
-  if (replay.coverage) chargeRandomOrder(replay.coverage, set, elements.length, order);
+  if (replay.coverage) chargeRandomOrder(replay.coverage, set, elements.length);
   return order;
 };
 
@@ -783,6 +792,14 @@ const getBindings = (
       sets,
     );
   return { bindings, charge };
+};
+
+const evaluateArgument = (
+  expression: Expression & { kind: "FunctionApplication" },
+  context: Context,
+) => {
+  const args = expression.args.map((arg) => evaluate(arg, context));
+  return args.length === 1 ? args[0] : createTuple(args);
 };
 
 const visitApplication = (
@@ -958,8 +975,28 @@ const visitApplication = (
         ),
       );
       if (lambda) {
-        const bound = runAt(replay, node, () => bindLazyArguments(lambda, expression, context));
-        return visit(replay, lambda.body, items, bound, partial, node);
+        const isTuple = expression.args.length > 1;
+        if (replay.coverage && isTuple) countArgumentTuple(replay.coverage, node, expression);
+        const bound = runAt(replay, node, () =>
+          bindLazyArguments(
+            lambda,
+            expression,
+            replay.callStack && isTuple
+              ? withFrame(replay, getArgumentTuple(expression), () =>
+                  evaluateArgument(expression, context),
+                )
+              : evaluateArgument(expression, context),
+          ),
+        );
+        // Tool#getNextStates runs the body with the function's cost model, but getInitStates and enabled with the application's.
+        return visit(
+          replay,
+          lambda.body,
+          items,
+          bound,
+          partial,
+          replay.isInit || replay.isEnabled ? node : getLazyFunctionNode(lambda.value),
+        );
       }
       break;
     }
@@ -1055,7 +1092,10 @@ const visitUnchanged = (
         : replay.current?.[index];
       if (value === undefined) return false;
       const assigned = partial[index];
-      if (assigned !== undefined && !isEqualLikeTlc(assigned, value)) {
+      if (
+        assigned !== undefined &&
+        !(replay.isEnabled ? isEqualLikeTlc(assigned, value) : isEqualLikeTlc(value, assigned))
+      ) {
         warnChangedUnchanged(replay.environment, index, expression);
         return false;
       }

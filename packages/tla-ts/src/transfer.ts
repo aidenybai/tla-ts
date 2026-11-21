@@ -1,11 +1,13 @@
 import {
+  applyFunction,
   createModelValue,
   createSortedFunction,
   createSortedSet,
-  type FunctionClass,
+  type FunctionValue,
+  getDomain,
   getDomainInterval,
-  getFunctionClass,
   getFunctionDomain,
+  isLazyValueExpanded,
   setFunctionClass,
   type Value,
 } from "./values";
@@ -18,8 +20,9 @@ const MODEL_VALUE_TAG = 4;
 const SET_TAG = 5;
 const FUNCTION_TAG = 6;
 const INTERVAL_FUNCTION_TAG = 7;
+const LAZY_FUNCTION_TAG = 8;
 
-const FUNCTION_CLASSES: (FunctionClass | undefined)[] = [undefined, "lambda", "tuple", "record"];
+const FUNCTION_CLASSES: FunctionValue["functionClass"][] = [undefined, "tuple", "record"];
 
 export interface EncodedStates {
   words: Int32Array;
@@ -79,21 +82,35 @@ export const createStateEncoder = (): StateEncoder => {
       pushWord(value.elements.length);
       return value.elements.every(encodeValue);
     }
-    if (value.kind === "Function") {
-      const interval = getDomainInterval(value.domain);
-      if (interval) {
-        pushWord(INTERVAL_FUNCTION_TAG);
-        pushWord(FUNCTION_CLASSES.indexOf(getFunctionClass(value)));
-        pushWord(interval.low);
-        pushWord(value.range.length);
-        return value.range.every(encodeValue);
+    if (value.kind === "Function") return encodeFunction(value);
+    if (
+      value.kind === "LazyFunction" &&
+      value.enumerated !== undefined &&
+      (value.source === undefined || isLazyValueExpanded())
+    ) {
+      const lengths = value.boundTupleLengths;
+      pushWord(LAZY_FUNCTION_TAG);
+      pushWord(lengths === undefined ? -1 : lengths.length);
+      if (lengths !== undefined) {
+        for (let index = 0; index < lengths.length; index++) pushWord(lengths[index] ?? -1);
       }
-      pushWord(FUNCTION_TAG);
-      pushWord(FUNCTION_CLASSES.indexOf(getFunctionClass(value)));
-      pushWord(value.domain.length);
-      return value.domain.every(encodeValue) && value.range.every(encodeValue);
+      return encodeFunction(value.enumerated);
     }
     return false;
+  };
+  const encodeFunction = (value: FunctionValue) => {
+    const interval = getDomainInterval(value.domain);
+    if (interval) {
+      pushWord(INTERVAL_FUNCTION_TAG);
+      pushWord(FUNCTION_CLASSES.indexOf(value.functionClass));
+      pushWord(interval.low);
+      pushWord(value.range.length);
+      return value.range.every(encodeValue);
+    }
+    pushWord(FUNCTION_TAG);
+    pushWord(FUNCTION_CLASSES.indexOf(value.functionClass));
+    pushWord(value.domain.length);
+    return value.domain.every(encodeValue) && value.range.every(encodeValue);
   };
   return {
     encode: (state) => {
@@ -123,6 +140,27 @@ export const createStateDecoder =
       if (tag === STRING_TAG) return encoded.strings[words[cursor++]];
       if (tag === MODEL_VALUE_TAG) return createModelValue(encoded.strings[words[cursor++]]);
       if (tag === SET_TAG) return createSortedSet(decodeElements(words[cursor++]));
+      if (tag !== LAZY_FUNCTION_TAG) return decodeFunction(tag);
+      const count = words[cursor++];
+      const boundTupleLengths =
+        count === -1
+          ? undefined
+          : Array.from({ length: count }, () => {
+              const length = words[cursor++];
+              return length === -1 ? undefined : length;
+            });
+      const enumerated = decodeFunction(words[cursor++]);
+      return {
+        kind: "LazyFunction",
+        domain: getDomain(enumerated),
+        source: undefined,
+        boundTupleLengths,
+        isApplicationObserved: false,
+        apply: (argument) => applyFunction(enumerated, argument),
+        enumerated,
+      };
+    };
+    const decodeFunction = (tag: number) => {
       const functionClass = FUNCTION_CLASSES[words[cursor++]];
       if (tag === INTERVAL_FUNCTION_TAG) {
         const low = words[cursor++];
