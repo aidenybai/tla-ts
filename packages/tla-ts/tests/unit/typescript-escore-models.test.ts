@@ -402,6 +402,25 @@ describe("checks a module's exported functions as a model on ESCore", () => {
     });
   });
 
+  // An ES module that reads a host's global that a script's realm lacks, as Solid's build reads
+  // queueMicrotask and console, runs as the module it is, where the host's globals are.
+  describe("checks an ES module that reads the host's console", () => {
+    const getSource = (operator: string) =>
+      `let count = 0;\nexport const tick = () => {\n  if (count < 2 && typeof console.warn === "function") count += 1;\n};\nexport const isSmall = () => count ${operator} 2;\n`;
+
+    it("agrees with Node", async () => {
+      expect(getCounts(await checkModel(getSource("<="), "spec.mts"))).toEqual(["deadlock", 3, 3]);
+    });
+
+    it("rejects another result", async () => {
+      expect(getCounts(await checkModel(getSource("<"), "spec.mts"))).toEqual([
+        "invariant-violation",
+        3,
+        3,
+      ]);
+    });
+  });
+
   // A step settles the jobs that its program queues, which a program that names then only in a
   // comment queues none of.
   describe("settles a step of a program that queues no jobs", () => {
