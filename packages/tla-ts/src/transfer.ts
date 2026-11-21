@@ -8,7 +8,6 @@ import {
   getDomainInterval,
   getFunctionDomain,
   isLazyValueExpanded,
-  type LazyFunctionValue,
   setFunctionClass,
   type Value,
 } from "./values";
@@ -92,7 +91,9 @@ export const createStateEncoder = (): StateEncoder => {
       const lengths = value.boundTupleLengths;
       pushWord(LAZY_FUNCTION_TAG);
       pushWord(lengths === undefined ? -1 : lengths.length);
-      if (lengths !== undefined) for (const length of lengths) pushWord(length ?? -1);
+      if (lengths !== undefined) {
+        for (let index = 0; index < lengths.length; index++) pushWord(lengths[index] ?? -1);
+      }
       return encodeFunction(value.enumerated);
     }
     return false;
@@ -149,7 +150,7 @@ export const createStateDecoder =
               return length === -1 ? undefined : length;
             });
       const enumerated = decodeFunction(words[cursor++]);
-      const lazy: LazyFunctionValue = {
+      return {
         kind: "LazyFunction",
         domain: getDomain(enumerated),
         source: undefined,
@@ -158,7 +159,6 @@ export const createStateDecoder =
         apply: (argument) => applyFunction(enumerated, argument),
         enumerated,
       };
-      return lazy;
     };
     const decodeFunction = (tag: number) => {
       const functionClass = FUNCTION_CLASSES[words[cursor++]];
