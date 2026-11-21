@@ -44,6 +44,7 @@ import {
   compileInternalTactic,
   convertModel,
   destroyTactics,
+  getSatParams,
   type TacticEnvironment,
 } from "./tactic";
 
@@ -358,7 +359,9 @@ export class OptContext {
           : this.pin(manager.mkApp(OP_UMINUS, [term], manager.sorts[term])),
       );
     }
-    this.satSolver = this.updateSolver(hard, options) ? new IncSatSolver(manager, new Map()) : null;
+    this.satSolver = this.updateSolver(hard, options)
+      ? new IncSatSolver(manager, getSatParams(this.environment.parameters))
+      : null;
     const checkSolver = this.satSolver ?? solver;
     for (const form of hard) checkSolver.assertExpr(form);
     const checked = checkSolver.check();

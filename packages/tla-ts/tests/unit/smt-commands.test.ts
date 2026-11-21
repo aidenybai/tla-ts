@@ -3312,6 +3312,28 @@ describe("opt, as Z3 5.3.2 sets up its solver", () => {
     expect(getRlimit([])).toEqual(["sat", "(:rlimit 1132)"]);
     expect(getRlimit(["(set-option :smt.case_split 0)"])).toEqual(["sat", "(:rlimit 692)"]);
   });
+
+  it("reads the sat parameters for its SAT solver and reports their errors", () => {
+    expect(
+      run([
+        "(set-option :sat.phase foo)",
+        "(declare-const a Bool)",
+        "(declare-const b Bool)",
+        "(assert (or a b))",
+        "(assert-soft (not a) :weight 2)",
+        "(assert-soft (not b) :weight 3)",
+        "(check-sat)",
+        "(get-info :reason-unknown)",
+        "(get-objectives)",
+      ]),
+    ).toEqual([
+      '(error "line 7 column 10: invalid phase selection strategy: always_false, always_true, basic_caching, caching, random")',
+      '(:reason-unknown "unknown")',
+      "(objectives",
+      " (  (interval 0 5))",
+      ")",
+    ]);
+  });
 });
 
 describe("case splits, as Z3 5.3.2 reads smt.case_split", () => {

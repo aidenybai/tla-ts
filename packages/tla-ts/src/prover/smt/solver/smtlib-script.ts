@@ -612,7 +612,7 @@ export const runSmtlibScript = (
         resetOptimizer();
         return false;
       }
-      if (error instanceof SmtDefaultError) {
+      if (error instanceof SmtDefaultError || error instanceof SmtTacticError) {
         setCheck(L_UNDEF, { isFromTactic: true, reasonUnknown: optimizer.getReasonUnknown() });
         throw new SmtParseError(error.message, end);
       }
