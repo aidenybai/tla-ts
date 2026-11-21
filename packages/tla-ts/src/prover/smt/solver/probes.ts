@@ -376,7 +376,9 @@ const hasPatterns: Probe = (goal) => {
     !isNone(
       goal,
       (expr) =>
-        manager.kinds[expr] === KIND_QUANTIFIER && manager.getQuantifier(expr).patterns.length > 0,
+        manager.kinds[expr] === KIND_QUANTIFIER &&
+        (manager.getQuantifier(expr).patterns.length > 0 ||
+          manager.getQuantifier(expr).noPatterns.length > 0),
     ),
   );
 };

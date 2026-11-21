@@ -1488,6 +1488,17 @@ describe("the counting probes, as Z3 5.3.2 walks a goal", () => {
       '(error "tactic failed: fail-if tactic")',
     ]);
   });
+
+  it("find patterns in a quantifier that has only a no-pattern", () => {
+    expect(
+      run([
+        '(set-option :diagnostic-output-channel "stdout")',
+        "(declare-fun f (Int) Int)",
+        "(assert (forall ((x Int)) (! (> (f x) 0) :no-pattern (f x))))",
+        '(apply (and-then (if has-patterns (echo "patterns") (echo "none")) (fail-if (> 1 0))))',
+      ]),
+    ).toEqual(["patterns", '(error "tactic failed: fail-if tactic")']);
+  });
 });
 
 describe("qfufbv, as Z3 5.3.2 answers QF_UFBV", () => {
