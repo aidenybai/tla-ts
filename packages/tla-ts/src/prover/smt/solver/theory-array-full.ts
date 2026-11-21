@@ -540,8 +540,10 @@ export class TheoryArrayFull extends TheoryArray {
   popScopeEh(numScopes: number) {
     const numOldVars = this.getOldNumVars(numScopes);
     super.popScopeEh(numScopes);
-    for (const list of [this.consts, this.asArrays, this.maps, this.parentMaps])
-      list.length = numOldVars;
+    this.consts.length = numOldVars;
+    this.asArrays.length = numOldVars;
+    this.maps.length = numOldVars;
+    this.parentMaps.length = numOldVars;
     this.assignedEqs.clear();
   }
 }

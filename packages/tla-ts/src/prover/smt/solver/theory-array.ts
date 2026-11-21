@@ -587,8 +587,9 @@ export class TheoryArray extends Theory {
     this.trail.length = limit;
     this.trailLimits.length = newLevel;
     const numOldVars = this.getOldNumVars(numScopes);
-    for (const list of [this.stores, this.parentSelects, this.parentStores])
-      list.length = numOldVars;
+    this.stores.length = numOldVars;
+    this.parentSelects.length = numOldVars;
+    this.parentStores.length = numOldVars;
     this.isPropUpward.length = numOldVars;
     this.axiom1Todo.length = 0;
     this.axiom2Todo.length = 0;

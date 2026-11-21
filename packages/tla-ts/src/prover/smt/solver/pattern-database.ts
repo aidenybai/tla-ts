@@ -195,14 +195,17 @@ export class PatternDatabase {
     if (patternDecl === decl) return true;
     const patternInfo = this.manager.funcDecls[patternDecl];
     const info = this.manager.funcDecls[decl];
-    return (
-      patternInfo.domain.length === info.domain.length &&
-      patternInfo.family !== FAMILY_USER &&
-      info.family === patternInfo.family &&
-      info.op === patternInfo.op &&
-      info.parameters.length === patternInfo.parameters.length &&
-      info.parameters.every((parameter, index) => parameter === patternInfo.parameters[index])
-    );
+    if (
+      patternInfo.domain.length !== info.domain.length ||
+      patternInfo.family === FAMILY_USER ||
+      info.family !== patternInfo.family ||
+      info.op !== patternInfo.op ||
+      info.parameters.length !== patternInfo.parameters.length
+    )
+      return false;
+    for (let index = 0; index < info.parameters.length; index++)
+      if (info.parameters[index] !== patternInfo.parameters[index]) return false;
+    return true;
   }
 
   private match(start: number, functionRegisters: Map<number, number>) {
@@ -237,7 +240,9 @@ export class PatternDatabase {
         }
         case SET_BOUND: {
           if (manager.kinds[term] !== KIND_VAR) break;
-          isOk = this.boundRange.slice(0, instruction.numBound).every((other) => other !== term);
+          isOk = true;
+          for (let index = 0; isOk && index < instruction.numBound; index++)
+            isOk = term !== this.boundRange[index];
           if (!isOk) break;
           this.boundDomain[instruction.numBound] = instruction.pattern;
           this.boundRange[instruction.numBound] = term;
