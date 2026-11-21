@@ -1913,6 +1913,29 @@ describe("runSmtlibScript prints what Z3 prints", () => {
     ]);
   });
 
+  it("completes the model in the order of cmd_context's func decl dictionary, which a pop does not shrink", () => {
+    expect(
+      run([
+        ...["a", "b", "c", "d", "e", "f", "g"].map((name) => `(declare-fun ${name} () Int)`),
+        "(push 1)",
+        "(declare-fun w () Int)",
+        "(pop 1)",
+        "(check-sat)",
+        "(get-model)",
+      ]),
+    ).toEqual([
+      "sat",
+      [
+        "(",
+        ...["f", "b", "a", "d", "g", "c", "e"].flatMap((name) => [
+          `  (define-fun ${name} () Int`,
+          "    0)",
+        ]),
+        ")",
+      ].join("\n"),
+    ]);
+  });
+
   it("answers QF_BV in scopes with inc_sat_solver, whose bit-blaster pops with them", () => {
     expect(
       run([
