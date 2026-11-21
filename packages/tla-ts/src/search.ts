@@ -1,5 +1,6 @@
 import {
   getChildren,
+  getOpDefBody,
   isLocallyResolved,
   type Assumption,
   type Definition,
@@ -58,6 +59,7 @@ import {
   getBuiltin,
   getConfigNameDefinition,
   getDefinition,
+  getLookupValue,
   getRootKey,
   type Builtin,
   type Context,
@@ -246,9 +248,10 @@ const hasBodyValue = (definition: Definition, environment: Environment) =>
   definition.body.kind === "String" ||
   environment.bodyValues.has(definition.body);
 
+// TLC's defns holds the definition a configuration file substitutes for a name, not the value processConstantDefns stored for it.
 const getConstantValue = (key: string, definition: Definition, environment: Environment) => {
   if (environment.constants.has(key)) return environment.constants.get(key);
-  return hasBodyValue(definition, environment)
+  return hasBodyValue(definition, environment) || environment.substitutions.has(key)
     ? undefined
     : getStartupValue(definition, environment);
 };
@@ -367,22 +370,16 @@ const createTheoremError = (theorem: TheoremReference, usage: string) =>
     `The operator ${theorem.name}, which equals ${formatRange(theorem.range)},\ncannot be used as a ${usage}`,
   );
 
-const isConstantTrue = (item: ScopedExpression, environment: Environment, usage: string) => {
-  const conjunct = item.expression;
-  // SpecProcessor#processConfigProps looks up no VARIABLE, so it checks a substitute for one whatever its value.
-  if (conjunct.kind !== "Identifier" || getSubstitutedName(conjunct) !== undefined) return false;
-  // SpecProcessor#processConfigSpec looks a definition up as the value processConstantDefns stored, if it stored one.
-  const definition =
-    isLocallyResolved(conjunct) || environment.constants.has(conjunct.name)
-      ? undefined
-      : getDefinition(conjunct.name, environment);
-  const value = definition
-    ? getStartupValue(definition, environment)
-    : getLevel(conjunct, item.scope, environment) > CONSTANT_LEVEL
-      ? undefined
-      : evaluate(conjunct, getContext(environment, undefined, undefined, item.scope));
+const isTrueValue = (
+  value: Value | undefined,
+  reference: Expression & { kind: "Identifier" | "Apply" },
+  key: string,
+  environment: Environment,
+  usage: string,
+) => {
   if (value === undefined) return false;
-  const name = environment.instanceNames.get(conjunct.name) ?? getKeyName(conjunct.name);
+  const name =
+    getReferenceName(reference, key, environment) ?? getKeyName(reference.writtenKey ?? key);
   if (value === false) {
     throw new TlaConfigError(`The spec is trivially false because ${name} is false.`);
   }
@@ -394,10 +391,39 @@ const isConstantTrue = (item: ScopedExpression, environment: Environment, usage:
   return true;
 };
 
+const isConstantTrue = (
+  item: ScopedExpression & { argumentFreeDefinition?: Definition },
+  environment: Environment,
+  usage: string,
+) => {
+  const conjunct = item.expression;
+  if (item.argumentFreeDefinition && conjunct.kind === "Apply") {
+    return isTrueValue(
+      getLookupValue(item.argumentFreeDefinition, environment),
+      conjunct,
+      conjunct.operator,
+      environment,
+      usage,
+    );
+  }
+  // SpecProcessor#processConfigProps looks up no VARIABLE, so it checks a substitute for one whatever its value.
+  if (conjunct.kind !== "Identifier" || getSubstitutedName(conjunct) !== undefined) return false;
+  // SpecProcessor#processConfigSpec looks a definition up as the value processConstantDefns stored, if it stored one.
+  const definition =
+    isLocallyResolved(conjunct) || environment.constants.has(conjunct.name)
+      ? undefined
+      : getDefinition(conjunct.name, environment);
+  const value = definition
+    ? getLookupValue(definition, environment)
+    : getLevel(conjunct, item.scope, environment) > CONSTANT_LEVEL
+      ? undefined
+      : evaluate(conjunct, getContext(environment, undefined, undefined, item.scope));
+  return isTrueValue(value, conjunct, conjunct.name, environment, usage);
+};
+
 const getSpecification = (
   config: ModelConfig,
   environment: Environment,
-  variableLocations: SourceLocation[],
   getVariableOrder: () => string[],
   onProgress: CheckOptions["onProgress"],
 ): Specification => {
@@ -445,25 +471,17 @@ const getSpecification = (
   const definition = getConfigOperator("name", config.specification, environment);
   const property = config.properties.length === 1 ? config.properties[0] : undefined;
   let isUntaggedFound = false;
-  expandTemporal(definition.body, undefined, environment, false).forEach((item) => {
+  expandTemporal(getOpDefBody(definition), undefined, environment, false).forEach((item) => {
     const conjunct = item.expression;
-    // TLC takes a state-level definition of the spec whole as an initial predicate.
-    const isInitial = item.path.some((name) => {
-      const expanded = getDefinition(getRootKey(name, environment), environment);
-      return (
-        expanded?.kind === "Operator" &&
-        getLevelBound(expanded.body, undefined, environment) === VARIABLE_LEVEL
-      );
-    });
-    if (!isInitial && item.theorem) throw createTheoremError(item.theorem, "spec");
-    if (!isInitial && isConstantTrue(item, environment, "spec")) return;
+    if (item.theorem) throw createTheoremError(item.theorem, "spec");
+    if (isConstantTrue(item, environment, "spec")) return;
     // Deviation from TLC: SpecProcessor#processConfigSpec looks an instance's parameter up without its substitute and rejects it as "cannot be used as a spec", where tla-ts takes the substitute.
     const variableIndex =
       conjunct.kind === "Identifier" && !isLocallyResolved(conjunct)
         ? environment.variableIndex.get(conjunct.name)
         : undefined;
-    if (!isInitial && conjunct.kind === "Identifier" && variableIndex !== undefined) {
-      const range = variableLocations[variableIndex].range;
+    if (conjunct.kind === "Identifier" && variableIndex !== undefined) {
+      const range = environment.variableLocations[variableIndex].range;
       throw new TlaConfigError(
         `The operator ${conjunct.name}, which equals ${range ? formatRange(range) : conjunct.name},\ncannot be used as a spec`,
       );
@@ -590,11 +608,11 @@ const getProperties = (
   config.properties.forEach((name) => {
     const definition = getConfigPredicate("property", name, environment);
     if (!definition) return;
-    if (getSanyLevel(definition.body, undefined, environment) === VARIABLE_LEVEL) {
+    const body = getOpDefBody(definition);
+    if (getSanyLevel(body, undefined, environment) === VARIABLE_LEVEL) {
       onProgress?.({ kind: "state-level-property", name });
     }
-    const isProperty = environment.runtime.version !== "1.7.4";
-    expandTemporal(definition.body, undefined, environment, isProperty).forEach((item) => {
+    expandTemporal(body, undefined, environment, true).forEach((item) => {
       const conjunct = item.expression;
       if (item.theorem) throw createTheoremError(item.theorem, "property");
       if (isConstantTrue(item, environment, "property")) return;
@@ -935,8 +953,10 @@ const holdsLikeTlc = (
 
 const getExpectedValue = (kind: string, expression: Expression, environment: Environment) => {
   const definition =
-    expression.kind === "Identifier" ? getDefinition(expression.name, environment) : undefined;
-  const body = definition?.kind === "Operator" ? definition.body : expression;
+    expression.kind === "Identifier" && !expression.location.range
+      ? getDefinition(expression.name, environment)
+      : undefined;
+  const body = definition ? getOpDefBody(definition) : expression;
   const range = definition?.kind === "Operator" ? definition.bodyRange : undefined;
   const location = range && body.kind !== "Number" ? formatRange(range) : describeNode(body);
   return `TLC expected a ${kind} value, but did not find one. ${location}`;
@@ -1096,24 +1116,17 @@ export const prepareSearch = (options: CheckOptions) => {
   const getDescription = () =>
     (description ??= getSpecDescription(config, environment, specification.instanceActions));
   environment.runtime.getSpecification = () =>
-    getSpecificationValue(getDescription(), config, environment, specification.variableLocations);
+    getSpecificationValue(getDescription(), config, environment);
   const search = createSearch(
     config,
     environment,
-    specification.variableLocations,
     () => created.order.getDeclarationOrder("variable"),
     options.onProgress,
     specification.moduleOperators,
     specification.runtimeInvariants,
   );
   const getCoverage = () =>
-    coverage &&
-    getCoverageReport(
-      coverage,
-      environment,
-      specification.variableLocations,
-      search?.getTlcOrder() ?? [],
-    );
+    coverage && getCoverageReport(coverage, environment, search?.getTlcOrder() ?? []);
   return { config, specification, environment, search, getDescription, coverage, getCoverage };
 };
 
@@ -1205,7 +1218,6 @@ export const createMissingOperatorError = (operator: ModuleOperator) =>
 export const createSearch = (
   config: ModelConfig,
   environment: Environment,
-  variableLocations: SourceLocation[],
   getVariableOrder: () => string[],
   onProgress?: CheckOptions["onProgress"],
   moduleOperators: ResolvedModuleOperator[] = [],
@@ -1219,13 +1231,7 @@ export const createSearch = (
         return { name: operator.operator, key: operator.key };
       });
   const configInvariants = getInvariants(config.invariants, environment);
-  const spec = getSpecification(
-    config,
-    environment,
-    variableLocations,
-    getVariableOrder,
-    onProgress,
-  );
+  const spec = getSpecification(config, environment, getVariableOrder, onProgress);
   const properties = getProperties(config, environment, onProgress);
   const live = config.properties[0];
   const liveRange =
@@ -1279,7 +1285,7 @@ export const createSearch = (
   const invariantPredicates = [
     ...new Map(invariants.map((invariant) => [invariant.predicate, invariant])).values(),
   ];
-  // Deviation from TLC: a constraint whose literal body has a [Mod] value throws a ClassCastException.
+  // Deviation from TLC: a constraint whose literal body has a [Mod] value, or that a substituted name reaches, throws a ClassCastException.
   const namedConstraints = getNamedExpressions(
     "constraint",
     [...config.constraints, ...getModuleOperators("constraint").map((operator) => operator.name)],

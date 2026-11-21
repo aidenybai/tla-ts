@@ -32,10 +32,12 @@ import {
   keepLazy,
   resolveGlobalOperator,
   expectFunction,
+  toEmptyContext,
   toKeepLazyContext,
   toNextContext,
   createUnassignedError,
   getSortedFields,
+  getUnchangedVariables,
   hasDuplicateFields,
   type Context,
   type Environment,
@@ -73,6 +75,7 @@ interface Generator {
   references: unknown[];
   helpers: string[];
   counter: number;
+  hasEmptied: boolean;
 }
 
 const GENERATED_KINDS = new Set([
@@ -209,9 +212,13 @@ const generateHelper = (
     locals: new Map(frame.locals),
   };
   const parameters = outerLocals.map((local) => `, ${local}`).join("");
+  const hasOuterEmptied = generator.hasEmptied;
+  generator.hasEmptied = false;
+  const body = build(bodyFrame);
   generator.helpers.push(
-    `function ${name}(context, state, next${parameters}) { let primed; let applied; ${build(bodyFrame)} }`,
+    `function ${name}(context, state, next${parameters}) { let primed;${generator.hasEmptied ? " let emptied;" : ""} let applied; ${body} }`,
   );
+  generator.hasEmptied = hasOuterEmptied;
   return `${name}(${frame.context}, ${frame.state}, ${frame.isPrimed ? "undefined" : frame.next}${parameters})`;
 };
 
@@ -485,7 +492,36 @@ const generateExpression = (generator: Generator, expression: Expression, frame:
         expression: expression.expression,
         location: expression.location,
       });
-      return `equal(${generate(expression.expression)}, ${primed})`;
+      generator.hasEmptied = true;
+      const empty = generate(expression.expression, {
+        context: `(emptied ??= ${addReference(generator, toEmptyContext)}(${frame.context}))`,
+        state: frame.state,
+        next: "undefined",
+        isPrimed: false,
+        locals: frame.locals,
+      });
+      const evaluated = `equal(${empty}, ${primed})`;
+      const subscript = expression.expression;
+      const variables = getUnchangedVariables(subscript, generator.environment);
+      if (
+        !variables ||
+        (subscript.kind === "Identifier" && generator.environment.variableIndex.has(subscript.name))
+      ) {
+        return evaluated;
+      }
+      const isAssigned = variables
+        .map(
+          (variable) =>
+            `${frame.state}?.[${variable.index}] !== undefined && ${frame.next}?.[${variable.index}] !== undefined`,
+        )
+        .join(" && ");
+      const isUnchanged = variables
+        .map(
+          (variable) =>
+            `equal(${frame.state}[${variable.index}], ${frame.next}[${variable.index}])`,
+        )
+        .join(" && ");
+      return `(${isAssigned} ? ${isUnchanged} : ${evaluated})`;
     }
     case "Forall":
     case "Exists":
@@ -535,7 +571,13 @@ export const generateEvaluator = (
   }
   isCodeGenerationAllowed ??= getIsCodeGenerationAllowed();
   if (!isCodeGenerationAllowed) return undefined;
-  const generator: Generator = { environment, references: [], helpers: [], counter: 0 };
+  const generator: Generator = {
+    environment,
+    references: [],
+    helpers: [],
+    counter: 0,
+    hasEmptied: false,
+  };
   const frame: Frame = {
     context: "context",
     state: "state",
@@ -545,7 +587,7 @@ export const generateEvaluator = (
   };
   const body = generateExpression(generator, expression, frame);
   const referenceNames = generator.references.map((_reference, index) => `reference${index}`);
-  const source = `${generator.helpers.join("\n")}\nreturn (context) => { const state = context.state; const next = context.next; let primed; let applied; return ${body}; };`;
+  const source = `${generator.helpers.join("\n")}\nreturn (context) => { const state = context.state; const next = context.next; let primed;${generator.hasEmptied ? " let emptied;" : ""} let applied; return ${body}; };`;
   generatedHelpers ??= createGeneratedHelpers();
   const factory = new Function(...Object.keys(generatedHelpers), ...referenceNames, source);
   return factory(...Object.values(generatedHelpers), ...generator.references);
