@@ -48,7 +48,7 @@ import {
 } from "./coverage";
 import { MESSAGE_CODE } from "./tlc/messages";
 import type { InstanceLevels, SectionMember } from "./levels";
-import type { CheckerRuntime } from "./runtime";
+import { EMPTY_STATE, type CheckerRuntime } from "./runtime";
 import {
   isEvaluatedAtStartup,
   isExpressionImpure,
@@ -974,7 +974,8 @@ export const evaluateStartupDefinitions = (definitions: Definition[], environmen
     if (!isEvaluatedAtStartup(definition, environment)) return;
     const definitionId = environment.facts.ids.get(definition);
     if (definitionId === undefined || environment.startupValues[definitionId] !== undefined) return;
-    const context = { environment, scope: undefined, state: undefined, next: undefined };
+    // SpecProcessor#evalConstantDefn evaluates in TLCState.Empty, before any checker exists.
+    const context = { environment, scope: undefined, state: EMPTY_STATE, next: undefined };
     try {
       const value = environment.runtime.evaluateAtStartup(() =>
         toStartupValue(definition, compileDefinitionBody(definition, environment)(context)),
