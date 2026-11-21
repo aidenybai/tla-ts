@@ -677,6 +677,7 @@ class QuantElimPlugin implements QeSolverContext {
       mbqiMaxIterations: MBQI_MAX_ITERATIONS,
       isFindingMacros: false,
       relevancyLevel: 0,
+      isDelayingNewCaseSplits: false,
     });
     this.root = new SearchTree(manager, undefined, manager.trueExpr);
     this.current = this.root;

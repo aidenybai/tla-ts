@@ -21,9 +21,9 @@ import {
   OP_FPA_NUM,
   OP_FUN_CASE_PRED,
   OP_LABEL,
-  OP_ITE,
   OP_NUM,
   OP_PATTERN,
+  OP_POWER0,
   SORT_INT,
   type AstManager,
   type SmtSymbol,
@@ -201,36 +201,20 @@ const compareSorts = (manager: AstManager, first: number, second: number): numbe
   return 0;
 };
 
-const isSameDeclKey = (manager: AstManager, first: number, second: number) => {
-  const decl = manager.funcDecls[manager.decls[first]];
-  if (decl.family === FAMILY_USER) return true;
-  if (
+// The port shares one declaration among these, where Z3 has one for each value or sort.
+const isSharedDecl = (manager: AstManager, expr: number) => {
+  const decl = manager.funcDecls[manager.decls[expr]];
+  return (
     decl.op === OP_NUM ||
     decl.op === OP_BV_NUM ||
     decl.op === OP_PATTERN ||
+    decl.op === OP_POWER0 ||
     decl.family === FAMILY_MODEL_VALUE
-  )
-    return false;
-  if (
-    decl.family === FAMILY_BV ||
-    decl.family === FAMILY_ARRAY ||
-    decl.family === FAMILY_DATATYPE ||
-    decl.family === FAMILY_FPA ||
-    decl.family === FAMILY_SEQ ||
-    decl.family === FAMILY_CHAR ||
-    decl.family === FAMILY_RECFUN
-  )
-    return true;
-  const index = decl.op === OP_ITE ? 1 : 0;
-  return (
-    manager.sorts[first] === manager.sorts[second] &&
-    manager.sorts[manager.getArg(first, index)] === manager.sorts[manager.getArg(second, index)]
   );
 };
 
 const compareDecls = (manager: AstManager, first: number, second: number) => {
-  if (manager.decls[first] === manager.decls[second] && isSameDeclKey(manager, first, second))
-    return 0;
+  if (manager.decls[first] === manager.decls[second] && !isSharedDecl(manager, first)) return 0;
   const firstKey = getDeclKey(manager, first);
   const secondKey = getDeclKey(manager, second);
   const byName = compareNames(firstKey.name, secondKey.name);

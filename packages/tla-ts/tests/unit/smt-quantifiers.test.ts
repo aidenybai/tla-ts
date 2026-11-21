@@ -294,6 +294,26 @@ describe("the model finder, as Z3 5.3.2 cleans up its instantiation sets", () =>
   });
 });
 
+describe("the model finder, as Z3 5.3.2 reads a recursive function", () => {
+  it("treats a call with a ground recursion argument as uninterpreted", () => {
+    expect(
+      run([
+        "(declare-datatypes ((L 0)) (((nil) (cons (hd Int) (tl L)))))",
+        "(declare-sort U 0)",
+        "(declare-fun val (U) Int)",
+        "(define-fun-rec mem ((u U) (l L)) Bool (ite ((_ is nil) l) false (or (= (val u) (hd l)) (mem u (tl l)))))",
+        "(declare-const a U)",
+        "(declare-const b U)",
+        "(declare-const c U)",
+        "(assert (distinct (val a) (val b) (val c)))",
+        "(assert (forall ((x U)) (mem x (cons 1 (cons 2 nil)))))",
+        "(check-sat)",
+        "(get-info :rlimit)",
+      ]),
+    ).toEqual(["unsat", "(:rlimit 5028)"]);
+  });
+});
+
 describe("e-matching, as Z3 5.3.2 counts its steps", () => {
   it("counts the steps of the matcher and of the instantiation queue", () => {
     const lines = [
@@ -364,6 +384,24 @@ describe("e-matching, as Z3 5.3.2 counts its steps", () => {
     expect(getOutput("10.00000001")).toEqual(["unsat", "(:rlimit 641)"]);
     expect(getOutput("20.0000001")).toEqual(["unsat", "(:rlimit 661)"]);
     expect(getOutput("18446744073709551616")).toEqual(["unsat", "(:rlimit 641)"]);
+  });
+
+  it("keeps a real sum out of the code tree of an integer sum", () => {
+    expect(
+      run([
+        "(set-option :auto_config false)",
+        "(set-option :smt.mbqi true)",
+        "(declare-fun p (Int) Bool)",
+        "(declare-fun a () Int)",
+        "(declare-fun b () Int)",
+        "(declare-fun x () Real)",
+        "(assert (<= a x))",
+        "(assert (forall ((x0 Int)) (p (+ 1 x0))))",
+        "(assert (=> (<= b x) (>= 2 b)))",
+        "(check-sat)",
+        "(get-info :rlimit)",
+      ]),
+    ).toEqual(["sat", "(:rlimit 848)"]);
   });
 });
 
@@ -454,6 +492,64 @@ describe("the instantiation thresholds, as Z3 5.3.2 reads them", () => {
   });
 });
 
+const BOUNDED_BELOW = [
+  "(declare-fun f (Int) Int)",
+  "(declare-fun g (Int) Int)",
+  "(assert (forall ((x Int)) (! (> (f x) (g x)) :pattern ((f x)))))",
+  "(assert (forall ((x Int)) (! (> (g x) x) :pattern ((g x)))))",
+];
+
+const getBoundCheck = (argument: number) => [
+  "(push)",
+  `(assert (< (f ${argument}) 2))`,
+  "(check-sat)",
+  "(get-info :rlimit)",
+  "(pop)",
+];
+
+describe("relevancy, as Z3 5.3.2 reads smt.relevancy", () => {
+  it("matches each new term when relevancy is off", () => {
+    expect(
+      run([
+        "(set-option :auto_config false)",
+        "(set-option :smt.mbqi false)",
+        "(set-option :smt.relevancy 0)",
+        ...BOUNDED_BELOW,
+        "(assert (< (f 3) 2))",
+        "(check-sat)",
+        "(get-info :rlimit)",
+      ]),
+    ).toEqual(["unsat", "(:rlimit 546)"]);
+  });
+
+  it("reads relevancy as a parameter of the smt tactic", () => {
+    expect(
+      run([
+        "(set-option :auto_config false)",
+        ...BOUNDED_BELOW,
+        "(assert (< (f 3) 2))",
+        "(check-sat-using (using-params smt :relevancy 1))",
+        "(get-info :rlimit)",
+      ]),
+    ).toEqual(["unsat", "(:rlimit 412)"]);
+  });
+
+  it("keeps the lowest level a check has used", () => {
+    expect(
+      run([
+        "(set-option :auto_config false)",
+        "(set-option :smt.mbqi false)",
+        ...BOUNDED_BELOW,
+        ...getBoundCheck(3),
+        "(set-option :smt.relevancy 0)",
+        ...getBoundCheck(5),
+        "(set-option :smt.relevancy 2)",
+        ...getBoundCheck(7),
+      ]),
+    ).toEqual(["unsat", "(:rlimit 394)", "unsat", "(:rlimit 548)", "unsat", "(:rlimit 707)"]);
+  });
+});
+
 describe("the model checker, as Z3 5.3.2 counts its steps", () => {
   it("pushes its context as the kernel does", () => {
     expect(
@@ -495,6 +591,33 @@ describe("the model checker, as Z3 5.3.2 counts its steps", () => {
         "(get-info :rlimit)",
       ]),
     ).toEqual(["sat", "(:rlimit 362)"]);
+  });
+
+  it("sets up its context with every theory, whatever the logic", () => {
+    expect(
+      run([
+        "(set-logic AUFLIRA)",
+        "(set-option :smt.qi.max_multi_patterns 3)",
+        "(set-option :smt.array.extensional false)",
+        "(declare-fun f (Int) Int)",
+        "(declare-fun g (Int Int) Int)",
+        "(declare-fun p (Int) Bool)",
+        "(declare-fun A () (Array Int Int))",
+        "(declare-fun B () (Array Int Int))",
+        "(declare-fun a () Int)",
+        "(declare-fun b () Int)",
+        "(declare-fun c () Int)",
+        "(declare-fun r (Int) Real)",
+        "(declare-fun x () Real)",
+        "(assert (forall ((x0 Int)) (! (=> (and (<= (r (* 1 c)) (+ x (to_real c))) (< (+ 3 x0) (+ c x0))) (=> (> x0 b) (< (r (g a c)) (+ x (to_real b))))) :weight 0 :qid ax0)))",
+        "(assert (forall ((x0 Int)) (! (p (+ b c)) :weight 0 :qid ax1)))",
+        "(assert (forall ((x0 Int)) (<= (r (+ b x0)) (+ x (to_real c)))))",
+        "(assert (or (and (< (+ b 3) c) (= (r (f b)) (+ x (to_real c)))) (and (p c) (< (r c) (+ x (to_real 2))))))",
+        "(assert (or (=> (<= (f 1) (f 0)) (p (+ a b))) (or (>= (+ c b) (+ b a)) (> (f a) (f c)))))",
+        "(check-sat)",
+        "(get-info :rlimit)",
+      ]),
+    ).toEqual(["sat", "(:rlimit 4128)"]);
   });
 });
 

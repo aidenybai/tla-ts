@@ -98,8 +98,10 @@ export class MaxBvSharing extends RewriterTpl {
     this.pairScopes.push(this.entries.length);
   }
 
-  popScope() {
-    this.restoreEntries(this.pairScopes.pop() as number);
+  popScope(numScopes: number) {
+    const newLevel = this.pairScopes.length - numScopes;
+    this.restoreEntries(this.pairScopes[newLevel]);
+    this.pairScopes.length = newLevel;
   }
 
   private restoreEntries(size: number) {

@@ -8,7 +8,7 @@ export class NgPushAppIteRw extends RewriterTpl {
 
   private isTarget(decl: number, args: number[]) {
     const manager = this.manager;
-    if (decl === OP_ITE) return false;
+    if (manager.funcDecls[decl].op === OP_ITE) return false;
     let hasTermIte = false;
     for (let index = 0; index < args.length; index++)
       if (manager.getOp(args[index]) === OP_ITE && manager.sorts[args[index]] !== SORT_BOOL) {

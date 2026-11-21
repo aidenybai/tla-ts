@@ -16,7 +16,7 @@ class ElimTermIteRw extends RewriterTpl {
 
   reduceApp(decl: number, args: number[], sort: number) {
     const manager = this.manager;
-    if (decl !== OP_ITE || sort === SORT_BOOL) return -1;
+    if (manager.funcDecls[decl].op !== OP_ITE || sort === SORT_BOOL) return -1;
     const ite = manager.mkApp(OP_ITE, args, sort);
     manager.incRef(ite);
     const named = this.names.mkName(ite);

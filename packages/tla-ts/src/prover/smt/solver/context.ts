@@ -167,7 +167,8 @@ const isValidAssumption = (manager: AstManager, expr: number) => {
 export interface SmtParams {
   isMbqi: boolean;
   mbqiMaxIterations: number;
-  relevancyLevel: 0 | 2;
+  relevancyLevel: number;
+  isDelayingNewCaseSplits?: boolean;
   randomSeed?: number;
   intHammerPeriod?: number;
   isArithPropagatingEqs?: boolean;
@@ -222,12 +223,14 @@ export class Context extends Internalizer {
   private asserted: AssertedFormulas | undefined;
   macros: MacroManager | undefined;
   hasQuantifiers = false;
+  private contextRelevancyLevel: number;
 
   constructor(
     manager: AstManager,
     readonly params: SmtParams,
   ) {
-    super(manager, params.relevancyLevel > 0);
+    super(manager, params.relevancyLevel, params.isDelayingNewCaseSplits ?? true);
+    this.contextRelevancyLevel = params.relevancyLevel;
     this.qmanager = new DefaultQuantifierManager(this);
     this.config = {
       ...DEFAULT_CONFIG,
@@ -252,6 +255,7 @@ export class Context extends Internalizer {
     if (state.kind === "proto" || state.kind === "final") state.generated.model.decRef();
     this.dynAck.release();
     this.conflictResolution.lemmaAtoms.reset();
+    this.releaseCgDecls();
     for (const theory of this.theories) theory.release();
     this.rewriter.release();
     asserted.release();
@@ -267,6 +271,7 @@ export class Context extends Internalizer {
     this.params.qiCost = params.qiCost;
     this.params.qiEagerThreshold = params.qiEagerThreshold;
     this.params.qiLazyThreshold = params.qiLazyThreshold;
+    this.params.relevancyLevel = params.relevancyLevel ?? 2;
     this.arith?.updateParams();
     this.config = {
       ...DEFAULT_CONFIG,
@@ -282,6 +287,19 @@ export class Context extends Internalizer {
       qiLazyThreshold: params.qiLazyThreshold ?? DEFAULT_CONFIG.qiLazyThreshold,
       arrayLazyIeqDelay: this.config.arrayLazyIeqDelay,
     };
+    this.updateRelevancyLevel();
+  }
+
+  private updateRelevancyLevel() {
+    this.relevancyLevel = Math.min(
+      this.contextRelevancyLevel,
+      this.config.relevancyLevel ?? this.params.relevancyLevel,
+    );
+    this.relevancy.isEnabled = this.relevancyLevel > 0;
+  }
+
+  keepRelevancyLevel() {
+    this.contextRelevancyLevel = this.relevancyLevel;
   }
 
   // setup_context and setup_components. The setup's theories come in its order, then setup_card's.
@@ -290,7 +308,10 @@ export class Context extends Internalizer {
     isUsingStaticFeatures: boolean,
     asserted: AssertedFormulas,
   ) {
-    if (this.isInconsistent() || asserted.isInconsistent) return false;
+    if (this.isInconsistent() || asserted.isInconsistent) {
+      this.keepRelevancyLevel();
+      return false;
+    }
     const config = getSmtConfig(
       this.manager,
       setup,
@@ -301,7 +322,8 @@ export class Context extends Internalizer {
     this.setup = setup;
     this.config = config;
     this.randomSeed = this.params.randomSeed ?? 0;
-    if (config.relevancyLevel !== undefined) this.relevancy.isEnabled = config.relevancyLevel > 0;
+    this.contextRelevancyLevel = config.relevancyLevel ?? this.params.relevancyLevel;
+    this.updateRelevancyLevel();
     for (const family of config.theories)
       if (family !== FAMILY_POLY || this.manager.hasTypeVars) this.registerFamily(family);
     this.registerFamily(FAMILY_PB);
@@ -351,7 +373,12 @@ export class Context extends Internalizer {
     }
     this.setBoolVarFlag(boolVar, BV_PHASE_AVAILABLE, true);
     this.setBoolVarFlag(boolVar, BV_PHASE, !isNegative);
-    if (this.isAtom(boolVar) && this.isRelevant(this.boolVar2Expr[boolVar]))
+    if (
+      this.isAtom(boolVar) &&
+      (this.isRelevant(this.boolVar2Expr[boolVar]) ||
+        (this.relevancyLevel === 1 &&
+          this.manager.kinds[this.boolVar2Expr[boolVar]] !== KIND_QUANTIFIER))
+    )
       this.atomPropagationQueue.push(literal);
   }
 
@@ -495,7 +522,11 @@ export class Context extends Internalizer {
 
   relevantEh(expr: number) {
     const boolVar = this.findBoolVar(expr);
-    if (boolVar !== undefined && this.isAtom(boolVar)) {
+    if (
+      boolVar !== undefined &&
+      this.isAtom(boolVar) &&
+      (this.relevancyLevel >= 2 || this.manager.kinds[expr] === KIND_QUANTIFIER)
+    ) {
       const value = this.assignment[mkLiteral(boolVar)];
       if (value !== L_UNDEF) this.atomPropagationQueue.push(mkLiteral(boolVar, value === L_FALSE));
     }
@@ -1055,7 +1086,7 @@ export class Context extends Internalizer {
     this.unassignVars(this.scopeAssignedLimits[newLevel]);
     this.popTrail(this.scopeTrailLimits[newLevel]);
     for (const theory of this.theories) theory.popScopeEh(numScopes);
-    for (let index = 0; index < numScopes; index++) this.asserted?.pop();
+    this.asserted?.pop(numScopes);
     this.eqPropagationQueue = [];
     this.thEqQueue = [];
     this.thDiseqQueue = [];

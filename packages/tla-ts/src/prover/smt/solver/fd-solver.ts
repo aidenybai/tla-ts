@@ -573,7 +573,7 @@ export class FdSolver {
       const premise = manager.getArg(consequence, 0);
       const conclusion = manager.getArg(consequence, 1);
       const [query, value] = (() => {
-        if (manager.decls[conclusion] === OP_EQ) {
+        if (manager.getOp(conclusion) === OP_EQ) {
           const lhs = manager.getArg(conclusion, 0);
           const rhs = manager.getArg(conclusion, 1);
           for (const queryVar of queryVars) {
