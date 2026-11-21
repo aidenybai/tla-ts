@@ -22,6 +22,8 @@ import { getJavaHashCode } from "./java-hash";
 import { getTlcFingerprint } from "./tlc/fingerprint";
 import {
   getCardinality,
+  isElementOf,
+  isElementOfWith,
   isEmptySet,
   isReducibleSet,
   type IntervalValue,
@@ -605,14 +607,7 @@ export const buildCoverage = (
           walk(expression.function, locals);
           const args = expression.args;
           if (args.length === 1) walk(args[0], locals);
-          else {
-            enter(
-              undefined,
-              spanRanges(args[0]?.location.range, args.at(-1)?.location.range),
-              () => walkAll(args),
-              true,
-            );
-          }
+          else enter(undefined, range, () => walkAll(args), true);
         });
         return;
       case "Forall":
@@ -752,6 +747,12 @@ export const countCoverage = (coverage: Coverage, node: number) => {
   for (let item = node; item !== -1; item = coverage.prefixes[item]) coverage.primary[item]++;
 };
 
+export const countArgumentTuple = (coverage: Coverage, node: number, expression: Expression) => {
+  if (node >= 0 && coverage.expressions[node] === expression) {
+    countCoverage(coverage, coverage.lastChild[node]);
+  }
+};
+
 export const runAtCoverageNode = <Result>(
   coverage: Coverage,
   node: number,
@@ -830,8 +831,13 @@ export const getSubstitutionNode = (coverage: Coverage, substitution: Substituti
   return substitutionNode;
 };
 
+export const getValueNode = (coverage: Coverage, value: Value) =>
+  typeof value !== "object"
+    ? undefined
+    : (coverage.values.get(value) ?? (value.kind === "Set" ? value.costNode : undefined));
+
 export const costCoverage = (coverage: Coverage, value: Value, cost: number) => {
-  const node = typeof value === "object" ? coverage.values.get(value) : undefined;
+  const node = getValueNode(coverage, value);
   if (node !== undefined) coverage.secondary[node] += cost;
 };
 
@@ -851,13 +857,14 @@ export const chargeSetOperation = (
   const other = receiver === left ? right : left;
   if (operator === "\\cup") {
     if (isEmptySet(receiver) || !isReducibleSet(other)) return result;
-    const otherNode = coverage.values.get(other);
+    const otherNode = getValueNode(coverage, other);
     if (otherNode !== undefined) coverage.secondary[otherNode] += getCardinality(other) + 1;
   }
-  const node = operator === "\\cup" ? undefined : coverage.values.get(receiver);
-  if (coverage.values.get(result) === node) return result;
-  const isShared = result === left || result === right || coverage.values.has(result);
-  const charged = isShared ? { ...result } : result;
+  const node = operator === "\\cup" ? undefined : getValueNode(coverage, receiver);
+  if (getValueNode(coverage, result) === node) return result;
+  const isShared =
+    result === left || result === right || getValueNode(coverage, result) !== undefined;
+  const charged = isShared ? { ...result, costNode: undefined } : result;
   if (node !== undefined) coverage.values.set(charged, node);
   return charged;
 };
@@ -919,6 +926,7 @@ export const createProductSetEnumerator = (coverage: Coverage, set: Value) => {
   const node = typeof set === "object" ? coverage.values.get(set) : undefined;
   if (node === undefined || typeof set !== "object") return undefined;
   if (set.kind === "RecordSet") return createProductEnumerator(coverage, node, set.sets);
+  if (set.kind === "ProductSet") return createProductEnumerator(coverage, node, set.factors);
   if (set.kind !== "FunctionSet") return undefined;
   return createProductEnumerator(
     coverage,
@@ -933,7 +941,7 @@ const createEnumerator = (
   size: number,
   isNormalized: boolean,
 ): ChargedEnumerator => {
-  const node = typeof set === "object" ? coverage.values.get(set) : undefined;
+  const node = getValueNode(coverage, set);
   if (
     typeof set === "object" &&
     (set.kind === "Subset" || (!isNormalized && set.kind === "FilteredSet"))
@@ -949,12 +957,6 @@ const createEnumerator = (
   return createListEnumerator(coverage, node, count);
 };
 
-export const tagSubset = (coverage: Coverage, set: Value, subset: Value) => {
-  const node =
-    typeof set === "object" && set.kind === "Subset" ? coverage.values.get(set) : undefined;
-  if (node !== undefined && typeof subset === "object") coverage.values.set(subset, node);
-};
-
 const RANDOMLY_INDEXED_KINDS = new Set<string>([
   "Set",
   "MixedSet",
@@ -965,7 +967,7 @@ const RANDOMLY_INDEXED_KINDS = new Set<string>([
 ]);
 
 // TLC's EnumerableValue#elements(Ordering.RANDOMIZED) draws indices, but a value class without its own k-out-of-n enumerator draws the whole set first, and SubsetValue converts itself to a SetEnumValue.
-export const chargeRandomOrder = (coverage: Coverage, set: Value, size: number, order: Value[]) => {
+export const chargeRandomOrder = (coverage: Coverage, set: Value, size: number) => {
   if (typeof set !== "object" || RANDOMLY_INDEXED_KINDS.has(set.kind)) return;
   if (set.kind !== "Subset") {
     const enumerator = createEnumerator(coverage, set, size, false);
@@ -974,9 +976,6 @@ export const chargeRandomOrder = (coverage: Coverage, set: Value, size: number, 
   }
   const node = coverage.values.get(set);
   if (node !== undefined) coverage.secondary[node] += size;
-  for (let position = 0; position < order.length; position++) {
-    tagSubset(coverage, set, order[position]);
-  }
 };
 
 export const createChargedEnumerator = (
@@ -984,14 +983,13 @@ export const createChargedEnumerator = (
   set: Value,
   list: Value[] | IntervalValue,
   isNormalized: boolean,
-) => {
-  const size = Array.isArray(list) ? list.length : list.high - list.low + 1;
-  if (typeof set !== "object" || set.kind !== "Subset" || !Array.isArray(list)) {
-    return createEnumerator(coverage, set, size, isNormalized);
-  }
-  list.forEach((subset) => tagSubset(coverage, set, subset));
-  return createListEnumerator(coverage, undefined, size);
-};
+) =>
+  createEnumerator(
+    coverage,
+    set,
+    Array.isArray(list) ? list.length : list.high - list.low + 1,
+    isNormalized,
+  );
 
 const chargeBindings = (enumerators: ChargedEnumerator[]) => {
   enumerators.every((enumerator) => enumerator.next());
@@ -1015,12 +1013,52 @@ export const chargeContexts = (
 
 export const chargeFunctionConstruction = (coverage: Coverage, node: number, sets: Value[]) => {
   const sizes = sets.map((set) => getCardinality(set));
+  // Sizing a filter converts it, as SetPredValue#size does.
   const advance = chargeBindings(
-    sets.map((set, index) => createEnumerator(coverage, set, sizes[index], false)),
+    sets.map((set, index) =>
+      createEnumerator(
+        coverage,
+        set,
+        sizes[index],
+        typeof set === "object" && set.kind === "FilteredSet",
+      ),
+    ),
   );
   const size = sizes.reduce((product, setSize) => product * setSize, 1);
   for (let index = 0; index < size; index++) advance();
   coverage.secondary[node] += size;
+};
+
+const COMPOSITE_SET_KINDS = new Set<string>([
+  "FunctionSet",
+  "RecordSet",
+  "ProductSet",
+  "FilteredSet",
+  "SetOperation",
+  "SequenceSet",
+]);
+
+// SubsetValue#member enumerates the element and UnionValue#member its set of sets, each until it decides, then once more to find the end.
+export const createChargedMembership = (coverage: Coverage) => {
+  const isMember = (element: Value, set: Value): boolean => {
+    if (typeof set !== "object") return isElementOf(element, set);
+    if (set.kind !== "Subset" && set.kind !== "Union") {
+      return COMPOSITE_SET_KINDS.has(set.kind)
+        ? isElementOfWith(element, set, isMember)
+        : isElementOf(element, set);
+    }
+    let drawn = 0;
+    const isElement = isElementOfWith(element, set, (item, inner) => {
+      drawn++;
+      return isMember(item, inner);
+    });
+    const isSubset = set.kind === "Subset";
+    const enumerator = createEnumerator(coverage, isSubset ? element : set.base, drawn, false);
+    for (let index = 0; index < drawn; index++) enumerator.next();
+    if (isElement === isSubset) enumerator.next();
+    return isElement;
+  };
+  return isMember;
 };
 
 const getLeadingZeros = (value: bigint) => {

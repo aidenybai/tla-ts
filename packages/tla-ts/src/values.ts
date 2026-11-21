@@ -34,6 +34,7 @@ export interface SetValue {
   hash: number;
   fingerprint: number;
   walkFlags: number;
+  costNode?: number;
 }
 
 export interface MixedSetValue extends LazySet {
@@ -48,8 +49,7 @@ export interface FunctionValue {
   hash: number;
   fingerprint: number;
   writtenKeys: Value[] | undefined;
-  functionClass: FunctionClass | undefined;
-  lambdaDomain: Value | undefined;
+  functionClass: "tuple" | "record" | undefined;
   walkFlags: number;
 }
 
@@ -67,6 +67,7 @@ export interface InfiniteSetValue {
 export interface SubsetValue extends LazySet {
   kind: "Subset";
   base: Value;
+  costNode?: number;
 }
 
 export interface FunctionSetValue extends LazySet {
@@ -133,6 +134,7 @@ export interface LazyFunctionSource {
 export interface CostModel {
   secondary: number[];
   node: number;
+  chargeConversion: () => void;
 }
 
 export interface LazyFunctionValue {
@@ -143,7 +145,6 @@ export interface LazyFunctionValue {
   // Set when an application has an effect or is counted under -coverage, so converting to a tuple applies again as TLC does.
   isApplicationObserved: boolean;
   source?: LazyFunctionSource;
-  functionClass?: FunctionClass;
   enumerated?: FunctionValue;
   walkFlags?: number;
 }
@@ -412,7 +413,6 @@ export const setStringOrder = (texts: Iterable<string>) => {
   modelValues.clear();
   isTypedModelValueCreated = false;
   isWrittenOrderUsed = false;
-  hasLambda = false;
   hasStreamedSet = false;
   for (const text of texts) rankString(text);
 };
@@ -426,6 +426,8 @@ export const getUnorderedString = () => stringOrder.unorderedString;
 let isVersion174 = false;
 
 const printing = { isExpanded: true, isViewPrinted: false };
+
+export const isLazyValueExpanded = () => printing.isExpanded;
 
 export interface ValueOptions {
   version?: TlcVersion;
@@ -511,7 +513,7 @@ const isOverriddenComparison = (left: Value, right: Value) =>
 const createComparisonError = (left: Value, right: Value) =>
   new TlaEvaluationError(
     isOverriddenSet(left)
-      ? `Attempted to compare overridden value ${prettyPrint(formatValue(left, true))} with non-overridden value:\n${prettyPrint(formatValue(right))}`
+      ? `Attempted to compare overridden value ${prettyPrint(formatValue(left))} with non-overridden value:\n${prettyPrint(formatValue(right))}`
       : `Attempted to compare ${describeKind(left)} ${formatValue(left)} with ${describeKind(right)} ${formatValue(right)}`,
   );
 
@@ -522,7 +524,7 @@ const compareOverriddenSets = (
 ) => {
   if (!isOverriddenSet(left)) {
     throw new TlaEvaluationError(
-      `Attempted to ${verb} the set ${prettyPrint(formatValue(isEnumerable(left) ? toFiniteSet(left) : left, true))} with the value:\n${prettyPrint(formatValue(right, true))}`,
+      `Attempted to ${verb} the set ${prettyPrint(formatValue(toFiniteSet(left)))} with the value:\n${prettyPrint(formatValue(right))}`,
     );
   }
   if (!isOverriddenSet(right)) throw createComparisonError(left, right);
@@ -533,7 +535,7 @@ const compareOverriddenSets = (
     return leftName === "Nat" ? -1 : 1;
   }
   throw new TlaModuleError(
-    `Attempted to compare ${prettyPrint(formatValue(left, true))} with the value\n${prettyPrint(formatValue(right, true))}`,
+    `Attempted to compare ${prettyPrint(formatValue(left))} with the value\n${prettyPrint(formatValue(right))}`,
   );
 };
 
@@ -640,6 +642,12 @@ export const compareValues = (left: Value, right: Value): number => {
       return leftKind === "ModelValue" ? -1 : 1;
     }
     if (left === ANY_SET || right === ANY_SET) return compareAny(left === ANY_SET ? right : left);
+    if (
+      (leftKind === "SequenceSet" && rightKind === "SequenceSet") ||
+      (leftKind === "Subset" && rightKind === "Subset")
+    ) {
+      return compareReceiver(left.base, right.base);
+    }
     if (isSetValue(left) && isSetValue(right) && isOverriddenComparison(left, right)) {
       return compareOverriddenSets(left, right, "compare");
     }
@@ -723,31 +731,37 @@ export const createSortedFunction = (domain: Value[], range: Value[]): FunctionV
   fingerprint: 0,
   writtenKeys: undefined,
   functionClass: undefined,
-  lambdaDomain: undefined,
   walkFlags: 0,
 });
 
 export type FunctionClass = "lambda" | "tuple" | "record";
 
-let hasLambda = false;
-
-export const setFunctionClass = <FunctionLike extends FunctionValue | LazyFunctionValue>(
-  functionValue: FunctionLike,
-  functionClass: FunctionClass | undefined,
+export const setFunctionClass = (
+  functionValue: FunctionValue,
+  functionClass: FunctionValue["functionClass"],
 ) => {
-  if (functionClass === "lambda") hasLambda = true;
   if (functionClass !== undefined) functionValue.functionClass = functionClass;
   return functionValue;
 };
 
-export const getFunctionClass = (value: Value) =>
-  typeof value === "object" && (value.kind === "Function" || value.kind === "LazyFunction")
-    ? value.functionClass
-    : undefined;
+export const getFunctionClass = (value: Value): FunctionClass | undefined =>
+  typeof value !== "object"
+    ? undefined
+    : value.kind === "LazyFunction"
+      ? "lambda"
+      : value.kind === "Function"
+        ? value.functionClass
+        : undefined;
 
-export const markLambdaFunction = <FunctionLike extends FunctionValue | LazyFunctionValue>(
-  functionValue: FunctionLike,
-) => setFunctionClass(functionValue, "lambda");
+const isObservedLambda = (value: Value) =>
+  typeof value === "object" &&
+  value.kind === "LazyFunction" &&
+  value.isApplicationObserved &&
+  value.enumerated === undefined;
+
+// TLC's TupleValue converts the other side with toTuple, which applies a lazy function again on every comparison.
+const isTupleAgainstObservedLambda = (left: FunctionValue, right: Value) =>
+  left.functionClass === "tuple" && isObservedLambda(right);
 
 const isCachedSet = (value: ObjectValue) => isLazySet(value) && value.isCached === true;
 
@@ -781,7 +795,7 @@ const cacheSet = (value: Value) => {
 };
 
 export const markFingerprinted = (value: Value): void => {
-  if ((!hasLambda && !hasStreamedSet) || typeof value !== "object") return;
+  if (!hasStreamedSet || typeof value !== "object") return;
   if (value.kind === "ModelValue" || value.kind === "Interval" || value.kind === "InfiniteSet") {
     return;
   }
@@ -789,7 +803,6 @@ export const markFingerprinted = (value: Value): void => {
   if ((walkFlags & FINGERPRINTED_FLAG) !== 0) return;
   value.walkFlags = walkFlags | FINGERPRINTED_FLAG;
   if (value.kind === "Function") {
-    if (value.functionClass === "lambda") value.functionClass = undefined;
     value.domain.forEach(markFingerprinted);
     value.range.forEach(markFingerprinted);
   } else if (value.kind === "Set" || value.kind === "MixedSet") {
@@ -827,7 +840,8 @@ export const valuesEqual = (left: Value, right: Value): boolean => {
     checkModelValueTypes(left, right, true);
     return isModelValue(left) && isModelValue(right) && left.name === right.name;
   }
-  if (left.kind === "Subset" && right.kind === "Subset") return valuesEqual(left.base, right.base);
+  if (left.kind === "Subset" && right.kind === "Subset")
+    return isReceiverEqual(left.base, right.base);
   if (left.kind === "FunctionSet" && right.kind === "FunctionSet") {
     const isUnit = isEmptySet(left.domain);
     const isOtherUnit = isEmptySet(right.domain);
@@ -835,7 +849,7 @@ export const valuesEqual = (left: Value, right: Value): boolean => {
     const isEmpty = isEmptySet(left.range);
     const isOtherEmpty = isEmptySet(right.range);
     if (isEmpty || isOtherEmpty) return isEmpty === isOtherEmpty;
-    return valuesEqual(left.domain, right.domain) && valuesEqual(left.range, right.range);
+    return isReceiverEqual(left.domain, right.domain) && isReceiverEqual(left.range, right.range);
   }
   if (left.kind === "RecordSet" && right.kind === "RecordSet") {
     if (isEmptySet(left)) return isEmptySet(right);
@@ -849,7 +863,7 @@ export const valuesEqual = (left: Value, right: Value): boolean => {
       left.names.length === right.names.length &&
       getFields(left).every(
         (field, index) =>
-          field[0] === otherFields[index][0] && valuesEqual(field[1], otherFields[index][1]),
+          field[0] === otherFields[index][0] && isReceiverEqual(field[1], otherFields[index][1]),
       )
     );
   }
@@ -858,7 +872,7 @@ export const valuesEqual = (left: Value, right: Value): boolean => {
     if (isEmptySet(right)) return false;
     return (
       left.factors.length === right.factors.length &&
-      left.factors.every((factor, index) => valuesEqual(factor, right.factors[index]))
+      left.factors.every((factor, index) => isReceiverEqual(factor, right.factors[index]))
     );
   }
   const isInfiniteComparison =
@@ -871,7 +885,10 @@ export const valuesEqual = (left: Value, right: Value): boolean => {
       const elements = toFiniteSet(left);
       if (!isOverriddenSet(right)) return compareSets(elements, toFiniteSet(right)) === 0;
     }
-    return getValueKey(left) === getValueKey(right);
+    return compareValues(left, right) === 0;
+  }
+  if (left.kind === "Function" && isTupleAgainstObservedLambda(left, right)) {
+    return compareFunctionLikeTlc(left, right, true) === 0;
   }
   return compareValues(left, right) === 0;
 };
@@ -900,6 +917,8 @@ const createSameValueCheck = (isClassSensitive: boolean) => {
         areSameValues(left.domain, right.domain) &&
         areSameValues(left.range, right.range)
       );
+    if (left.kind === "LazyFunction" && left.enumerated) return isSame(left.enumerated, right);
+    if (right.kind === "LazyFunction" && right.enumerated) return isSame(left, right.enumerated);
     return getValueKey(left) === getValueKey(right);
   };
   return isSame;
@@ -1106,6 +1125,13 @@ const getSetElementsLikeTlc = (left: SetValue | MixedSetValue, right: Value) => 
 const compareSetLikeTlc = (left: ObjectValue, right: Value, isEquality: boolean): number => {
   // TLC's UserValue#compareTo puts STRING, Nat, Int and Seq(S) after any model value, typed or not.
   if (isOverriddenSet(left) && isModelValue(right)) return 1;
+  // TLC's SetOfFcnsValue, SetOfRcdsValue and SetOfTuplesValue compare their elements, though they test equality by component.
+  if (
+    !isEquality &&
+    (left.kind === "FunctionSet" || left.kind === "RecordSet" || left.kind === "ProductSet")
+  ) {
+    return compareSetLikeTlc(toFiniteSet(left), right, false);
+  }
   if (isComparedByClass(left, right)) {
     if (!isEquality) return compareValues(left, right);
     return valuesEqual(left, right) ? 0 : 1;
@@ -1246,14 +1272,33 @@ const isUnenumeratedSet = (value: Value): value is ConvertibleSetValue =>
 // TLC's SetEnumValue#equals enumerates the right side before it sorts a set literal on the left.
 const isFailingLikeTlc = (left: Value, right: Value) =>
   typeof left === "object" &&
-  isSetValue(left) &&
-  !isModelValue(right) &&
-  (isComparedByClass(left, right) ||
-    (isSetValue(right) &&
-      (isUnenumeratedSet(left) ? left.kind !== "MixedSet" : isUnenumeratedSet(right))));
+  ((left.kind === "Function" && isTupleAgainstObservedLambda(left, right)) ||
+    (isSetValue(left) &&
+      !isModelValue(right) &&
+      (isComparedByClass(left, right) ||
+        (isSetValue(right) &&
+          (isUnenumeratedSet(left) ? left.kind !== "MixedSet" : isUnenumeratedSet(right))))));
 
 export const isEqualLikeTlc = (left: Value, right: Value) =>
   computeLikeTlcOnFailure(valuesEqual, equalsLikeTlc, left, right, isFailingLikeTlc);
+
+export const isReceiverEqual = (left: Value, right: Value) => {
+  const sets = setTrace.sets;
+  if (sets === undefined) return isEqualLikeTlc(left, right);
+  sets.push(left);
+  const isEqual = isEqualLikeTlc(left, right);
+  sets.pop();
+  return isEqual;
+};
+
+const compareReceiver = (left: Value, right: Value) => {
+  const sets = setTrace.sets;
+  if (sets === undefined) return compareLikeTlc(left, right);
+  sets.push(left);
+  const comparison = compareLikeTlc(left, right);
+  sets.pop();
+  return comparison;
+};
 
 // TLC's ValueVec#sort compares each element with the ones before it, which orders what lazy elements evaluate.
 const isStrictlySorted = (elements: Value[]) => {
@@ -1629,6 +1674,7 @@ export const getLazySubsets = (value: Value): Value[] | undefined => {
   const base = toFiniteSet(value.base).elements;
   sets?.pop();
   if (base.length <= MAXIMUM_BUILT_SUBSET_BASE) return undefined;
+  const costNode = value.costNode;
   let cursorIndex = -1;
   let indices = [0];
   const getSubset = (index: number) => {
@@ -1640,7 +1686,8 @@ export const getLazySubsets = (value: Value): Value[] | undefined => {
       }
       cursorIndex++;
     }
-    return createSortedSet(indices.map((baseIndex) => base[baseIndex]));
+    const subset = createSortedSet(indices.map((baseIndex) => base[baseIndex]));
+    return costNode === undefined ? subset : { ...subset, costNode };
   };
   const length = 2 ** base.length;
   const isIndex = (property: string | symbol) =>
@@ -1656,22 +1703,31 @@ export const getLazySubsets = (value: Value): Value[] | undefined => {
   });
 };
 
-const someSubset = (base: Value[], visit: (subset: Value) => boolean) => {
+const someSubset = (
+  base: Value[],
+  visit: (subset: SetValue) => boolean,
+  costNode: number | undefined,
+) => {
   for (let size = 0; size <= base.length; size++) {
     const indices = Array.from({ length: size }, (_value, index) => index);
     do {
-      if (visit(createSortedSet(indices.map((index) => base[index])))) return true;
+      const subset = createSortedSet(indices.map((index) => base[index]));
+      if (visit(costNode === undefined ? subset : { ...subset, costNode })) return true;
     } while (advanceCombination(indices, base.length));
   }
   return false;
 };
 
-const getSortedSubsets = (base: Value[]) => {
-  const subsets: Value[] = [];
-  someSubset(base, (subset) => {
-    subsets.push(subset);
-    return false;
-  });
+const getSortedSubsets = (base: Value[], costNode: number | undefined) => {
+  const subsets: SetValue[] = [];
+  someSubset(
+    base,
+    (subset) => {
+      subsets.push(subset);
+      return false;
+    },
+    costNode,
+  );
   return subsets;
 };
 
@@ -1805,7 +1861,7 @@ const enumerateSet = (
       if (base.length > MAXIMUM_ENUMERATED_SUBSET_BASE) {
         throw new TlaEvaluationError(describeOverflow(value));
       }
-      return getSortedSubsets(base);
+      return getSortedSubsets(base, value.costNode);
     }
     case "FunctionSet": {
       if (!isVersion174 && isEmptySet(value)) return [];
@@ -2374,7 +2430,6 @@ export const isSettledValue = (value: Value): boolean => {
       return value.elements.every(isSettledValue);
     case "Function":
       return (
-        value.functionClass !== "lambda" &&
         value.writtenKeys === undefined &&
         value.domain.every(isSettledValue) &&
         value.range.every(isSettledValue)
@@ -2449,7 +2504,7 @@ const someElementOfStream = (
     value.enumerated === undefined &&
     getCardinality(value.base) > MAXIMUM_BUILT_SUBSET_BASE
   ) {
-    return someSubset(getSubsetBase(value), visit);
+    return someSubset(getSubsetBase(value), visit, value.costNode);
   }
   if (value.kind !== "SetOperation") return getUnboundedElements(value).some(visit);
   if (value.operator === "\\cup") {
@@ -2494,6 +2549,25 @@ export const isEmptySet = (value: Value): boolean => {
     case "Subset":
     case "SequenceSet":
       return false;
+  }
+  const sets = setTrace.sets;
+  if (sets === undefined) return isEmptyComposite(value);
+  sets.push(value);
+  const isEmpty = isEmptyComposite(value);
+  sets.pop();
+  return isEmpty;
+};
+
+const isEmptyComposite = (
+  value:
+    | ProductSetValue
+    | RecordSetValue
+    | FunctionSetValue
+    | UnionValue
+    | SetOperationValue
+    | FilteredSetValue,
+): boolean => {
+  switch (value.kind) {
     case "ProductSet":
       return value.factors.some(isEmptySet);
     case "RecordSet":
@@ -2768,6 +2842,40 @@ export const setTrace: { sets: Value[] | undefined; callStack?: TracedCallStack 
   sets: undefined,
 };
 
+interface TraceMark {
+  depth: number;
+  length: number;
+  isFrozen: boolean;
+  fingerprint: unknown;
+}
+
+const markTrace = (): TraceMark | undefined => {
+  const sets = setTrace.sets;
+  const callStack = setTrace.callStack;
+  if (sets === undefined && callStack === undefined) return undefined;
+  return {
+    depth: sets?.length ?? 0,
+    length: callStack?.expressions.length ?? 0,
+    isFrozen: callStack?.isFrozen ?? false,
+    fingerprint: callStack?.fingerprint,
+  };
+};
+
+// TLC drops the FingerprintException of an exception it swallows, while its CallStackTool stays frozen where the exception left it.
+const dropFingerprint = (mark: TraceMark | undefined) => {
+  if (mark === undefined) return;
+  if (setTrace.sets) setTrace.sets.length = mark.depth;
+  if (setTrace.callStack) setTrace.callStack.fingerprint = mark.fingerprint;
+};
+
+const resetTrace = (mark: TraceMark | undefined) => {
+  dropFingerprint(mark);
+  const callStack = setTrace.callStack;
+  if (mark === undefined || !callStack) return;
+  callStack.expressions.length = mark.length;
+  callStack.isFrozen = mark.isFrozen;
+};
+
 export const computeLikeTlcOnFailure = <Left, Right, Result>(
   compute: (left: Left, right: Right) => Result,
   computeLikeTlc: (left: Left, right: Right, error: TlaEvaluationError) => Result,
@@ -2775,20 +2883,12 @@ export const computeLikeTlcOnFailure = <Left, Right, Result>(
   right: Right,
   isFailingLikeTlc?: (left: Left, right: Right) => boolean,
 ): Result => {
-  const sets = setTrace.sets;
-  const callStack = setTrace.callStack;
-  const depth = sets?.length ?? 0;
-  const trace = callStack && { ...callStack, length: callStack.expressions.length };
+  const mark = markTrace();
   try {
     return compute(left, right);
   } catch (error) {
     if (!(error instanceof TlaEvaluationError) || isFailingLikeTlc?.(left, right)) throw error;
-    if (sets) sets.length = depth;
-    if (callStack && trace) {
-      callStack.expressions.length = trace.length;
-      callStack.isFrozen = trace.isFrozen;
-      callStack.fingerprint = trace.fingerprint;
-    }
+    resetTrace(mark);
     return computeLikeTlc(left, right, error);
   }
 };
@@ -2803,6 +2903,19 @@ export const isElementOf = (element: Value, set: Value): boolean => {
   if (sets === undefined) return isElementOfSet(element, set);
   sets.push(set);
   const isElement = isElementOfSet(element, set);
+  sets.pop();
+  return isElement;
+};
+
+export const isElementOfWith = (
+  element: Value,
+  set: Value,
+  isMember: typeof isElementOf,
+): boolean => {
+  const sets = setTrace.sets;
+  if (sets === undefined) return isElementOfComponents(element, set, isMember);
+  sets.push(set);
+  const isElement = isElementOfComponents(element, set, isMember);
   sets.pop();
   return isElement;
 };
@@ -2830,7 +2943,7 @@ const isInSortedSetLikeTlc = (element: Value, set: SetValue) =>
     ? searchLikeTlc(element, set.elements).isFound
     : isElementOfLikeTlc(element, getWrittenElements(set));
 
-const isModelValueMember = (modelValue: ModelValue, set: Value) => {
+const isModelValueMember = (modelValue: ModelValue, set: Value): false => {
   if (modelValue.type !== undefined) {
     throw new TlaEvaluationError(
       `Attempted to check if the typed model value ${prettyPrint(formatValue(modelValue))} is an element of\n${prettyPrint(formatValue(set))}`,
@@ -2849,12 +2962,102 @@ const isElementOfSet = (element: Value, set: Value): boolean => {
   return isElementOfAnySet(element, set);
 };
 
+const getSubsetMemberElements = (element: Value, set: SubsetValue) => {
+  if (!isSetValue(element) || isOverriddenSet(element)) {
+    throw new TlaEvaluationError(
+      `Attempted to check if the non-enumerable value\n${prettyPrint(formatValue(element))}\nis element of\n${prettyPrint(formatValue(set))}`,
+    );
+  }
+  return toFiniteSet(element).elements;
+};
+
+const getFunctionSetMemberRange = (element: Value, set: FunctionSetValue) => {
+  if (!isFunctionValue(element)) {
+    if (isModelValue(element)) return isModelValueMember(element, set);
+    throw new TlaEvaluationError(
+      `Attempted to check if \n${formatValue(element)}\nwhich is not a TLC function value, is in the set of functions:\n${prettyPrint(formatValue(set))}`,
+    );
+  }
+  forgetOwnWrittenOrder(element);
+  const functionValue = toFiniteFunction(element);
+  const low = getIntervalLow(element, functionValue.domain);
+  const isDomain =
+    low === undefined
+      ? isReceiverEqual(set.domain, createSortedSet(functionValue.domain))
+      : isEqualLikeTlc(
+          { kind: "Interval", low, high: low + functionValue.domain.length - 1 },
+          set.domain,
+        );
+  return isDomain && functionValue.range;
+};
+
+const getRecordSetMember = (element: Value, set: RecordSetValue) => {
+  forgetOwnWrittenOrder(element);
+  const functionValue = isFunctionValue(element) ? toFiniteFunction(element) : undefined;
+  if (!functionValue || !isRecordDomain(functionValue.domain)) {
+    if (isModelValue(element)) return isModelValueMember(element, set);
+    throw new TlaEvaluationError(
+      `Attempted to check if non-record\n${formatValue(element)}\nis in the set of records:\n${prettyPrint(formatValue(set))}`,
+    );
+  }
+  return functionValue.domain.length === set.names.length && functionValue;
+};
+
+const getProductSetMemberElements = (element: Value, set: ProductSetValue) => {
+  const elements = isFunctionValue(element) ? getSequenceElements(element) : undefined;
+  if (elements === undefined) {
+    const isFunction =
+      isFunctionValue(element) &&
+      toFiniteFunction(element).domain.every((key) => typeof key === "number");
+    if (isModelValue(element)) return isModelValueMember(element, set);
+    if (isFunction) return false;
+    throw new TlaEvaluationError(
+      `Attempted to check if non-tuple\n${prettyPrint(formatValue(element))}\nis in the set of tuples:\n${prettyPrint(formatValue(set))}`,
+    );
+  }
+  return elements.length === set.factors.length && elements;
+};
+
+// TLC's SetPredValue#member catches an EvalException, but not the FingerprintException a base with a source turns it into.
+const isCaughtFilterError = (error: unknown, depth: number) =>
+  error instanceof TlaEvaluationError && isEvalException(error) && !isFingerprintedSince(depth);
+
+const describeUndecidedFilterMember = (element: Value, set: FilteredSetValue) =>
+  `Cannot decide if element:\n${prettyPrint(formatValue(element))}\n is element of:\n${prettyPrint(formatValue(set.base))}\nand satisfies the predicate ${set.source?.predicate}`;
+
+const getUnionMemberSets = (element: Value, set: UnionValue) => {
+  if (!isTlcEnumerable(set.base)) {
+    throw new TlaEvaluationError(
+      `Attempted to check if:\n ${prettyPrint(formatValue(element))}\nis an element of the non-enumerable set:\n ${prettyPrint(formatUnion(set))}`,
+    );
+  }
+  const sets = toFiniteSet(set.base).elements;
+  if (sets.length > 1) {
+    sets.forEach((inner) => {
+      if (typeof inner === "object" && inner.kind === "Set") inner.isNormalized = true;
+    });
+  }
+  return sets;
+};
+
+const getSequenceSetMemberElements = (element: Value, set: SequenceSetValue) => {
+  const elements = getSequenceElements(element);
+  if (elements === undefined) {
+    if (isModelValue(element)) return isModelValueMember(element, set);
+    throw new TlaModuleError(
+      `Attempted to check if the value:\n${prettyPrint(formatValue(element))}\nis an element of ${prettyPrint(formatValue(set))}.`,
+    );
+  }
+  return elements;
+};
+
 const isElementOfAnySet = (element: Value, set: Value): boolean => {
   if (!isSetValue(set)) throw new TlaEvaluationError(describeNonSetMembership(element, set));
   switch (set.kind) {
     case "Set":
       cacheSet(element);
-      return isTypedModelValueCreated
+      // TLC's ValueVec#search makes the element the receiver of a sorted set's comparisons, and each member the receiver of an unsorted one's.
+      return isTypedModelValueCreated || isObservedLambda(element)
         ? isInSortedSetLikeTlc(element, set)
         : computeLikeTlcOnFailure(isInSortedSet, isInSortedSetLikeTlc, element, set);
     case "MixedSet":
@@ -2882,88 +3085,38 @@ const isElementOfAnySet = (element: Value, set: Value): boolean => {
       return set.name !== "Nat" || (typeof element === "number" && element >= 0);
     }
     case "Subset":
-      if (!isSetValue(element) || isOverriddenSet(element)) {
-        throw new TlaEvaluationError(
-          `Attempted to check if the non-enumerable value\n${prettyPrint(formatValue(element))}\nis element of\n${prettyPrint(formatValue(set))}`,
-        );
-      }
-      return toFiniteSet(element).elements.every((item) => isElementOf(item, set.base));
+      return getSubsetMemberElements(element, set).every((item) => isElementOf(item, set.base));
     case "FunctionSet": {
-      if (!isFunctionValue(element)) {
-        if (isModelValue(element)) return isModelValueMember(element, set);
-        throw new TlaEvaluationError(
-          `Attempted to check if \n${formatValue(element)}\nwhich is not a TLC function value, is in the set of functions:\n${prettyPrint(formatValue(set))}`,
-        );
-      }
-      forgetOwnWrittenOrder(element);
-      const functionValue = toFiniteFunction(element);
-      const low = getIntervalLow(element, functionValue.domain);
-      const isDomain =
-        low === undefined
-          ? isEqualLikeTlc(set.domain, createSortedSet(functionValue.domain))
-          : isEqualLikeTlc(
-              { kind: "Interval", low, high: low + functionValue.domain.length - 1 },
-              set.domain,
-            );
-      return isDomain && functionValue.range.every((item) => isElementOf(item, set.range));
+      const range = getFunctionSetMemberRange(element, set);
+      return range !== false && range.every((item) => isElementOf(item, set.range));
     }
     case "RecordSet": {
-      forgetOwnWrittenOrder(element);
-      const functionValue = isFunctionValue(element) ? toFiniteFunction(element) : undefined;
-      if (!functionValue || !isRecordDomain(functionValue.domain)) {
-        if (isModelValue(element)) return isModelValueMember(element, set);
-        throw new TlaEvaluationError(
-          `Attempted to check if non-record\n${formatValue(element)}\nis in the set of records:\n${prettyPrint(formatValue(set))}`,
-        );
-      }
+      const record = getRecordSetMember(element, set);
       return (
-        functionValue.domain.length === set.names.length &&
+        record !== false &&
         set.names.every((name, index) => {
-          const position = findSortedIndex(functionValue.domain, name);
-          return position !== -1 && isElementOf(functionValue.range[position], set.sets[index]);
+          const position = findSortedIndex(record.domain, name);
+          return position !== -1 && isElementOf(record.range[position], set.sets[index]);
         })
       );
     }
     case "ProductSet": {
-      const elements = isFunctionValue(element) ? getSequenceElements(element) : undefined;
-      if (elements === undefined) {
-        const isFunction =
-          isFunctionValue(element) &&
-          toFiniteFunction(element).domain.every((key) => typeof key === "number");
-        if (isModelValue(element)) return isModelValueMember(element, set);
-        if (isFunction) return false;
-        throw new TlaEvaluationError(
-          `Attempted to check if non-tuple\n${prettyPrint(formatValue(element))}\nis in the set of tuples:\n${prettyPrint(formatValue(set))}`,
-        );
-      }
+      const elements = getProductSetMemberElements(element, set);
       return (
-        elements.length === set.factors.length &&
-        elements.every((item, index) => isElementOf(item, set.factors[index]))
+        elements !== false && elements.every((item, index) => isElementOf(item, set.factors[index]))
       );
     }
-    case "FilteredSet":
+    case "FilteredSet": {
+      const depth = setTrace.sets?.length ?? 0;
       try {
         return isElementOf(element, set.base) && set.test(element, true);
       } catch (error) {
-        if (!(error instanceof TlaEvaluationError) || !isEvalException(error)) throw error;
-        throw new TlaEvaluationError(
-          `Cannot decide if element:\n${prettyPrint(formatValue(element))}\n is element of:\n${prettyPrint(formatValue(set.base))}\nand satisfies the predicate ${set.source?.predicate}`,
-        );
+        if (!isCaughtFilterError(error, depth)) throw error;
+        throw new TlaEvaluationError(describeUndecidedFilterMember(element, set));
       }
-    case "Union": {
-      if (!isTlcEnumerable(set.base)) {
-        throw new TlaEvaluationError(
-          `Attempted to check if:\n ${prettyPrint(formatValue(element))}\nis an element of the non-enumerable set:\n ${prettyPrint(formatUnion(set))}`,
-        );
-      }
-      const sets = toFiniteSet(set.base).elements;
-      if (sets.length > 1) {
-        sets.forEach((inner) => {
-          if (typeof inner === "object" && inner.kind === "Set") inner.isNormalized = true;
-        });
-      }
-      return sets.some((inner) => isElementOf(element, inner));
     }
+    case "Union":
+      return getUnionMemberSets(element, set).some((inner) => isElementOf(element, inner));
     case "SetOperation":
       if (set.operator === "\\cup")
         return isElementOf(element, set.left) || isElementOf(element, set.right);
@@ -2972,17 +3125,66 @@ const isElementOfAnySet = (element: Value, set: Value): boolean => {
         isElementOf(element, set.right) === (set.operator === "\\cap")
       );
     case "SequenceSet": {
-      const elements = getSequenceElements(element);
-      if (elements === undefined) {
-        if (isModelValue(element)) return isModelValueMember(element, set);
-        throw new TlaModuleError(
-          `Attempted to check if the value:\n${prettyPrint(formatValue(element))}\nis an element of ${prettyPrint(formatValue(set))}.`,
-        );
-      }
-      return elements.every((item) => isElementOf(item, set.base));
+      const elements = getSequenceSetMemberElements(element, set);
+      return elements !== false && elements.every((item) => isElementOf(item, set.base));
     }
     default:
       throw new TlaEvaluationError(describeNonSetMembership(element, set));
+  }
+};
+
+const isElementOfComponents = (
+  element: Value,
+  set: Value,
+  isMember: typeof isElementOf,
+): boolean => {
+  if (typeof set !== "object") return isElementOfAnySet(element, set);
+  switch (set.kind) {
+    case "Subset":
+      return getSubsetMemberElements(element, set).every((item) => isMember(item, set.base));
+    case "FunctionSet": {
+      const range = getFunctionSetMemberRange(element, set);
+      return range !== false && range.every((item) => isMember(item, set.range));
+    }
+    case "RecordSet": {
+      const record = getRecordSetMember(element, set);
+      return (
+        record !== false &&
+        set.names.every((name, index) => {
+          const position = findSortedIndex(record.domain, name);
+          return position !== -1 && isMember(record.range[position], set.sets[index]);
+        })
+      );
+    }
+    case "ProductSet": {
+      const elements = getProductSetMemberElements(element, set);
+      return (
+        elements !== false && elements.every((item, index) => isMember(item, set.factors[index]))
+      );
+    }
+    case "FilteredSet": {
+      const depth = setTrace.sets?.length ?? 0;
+      try {
+        return isMember(element, set.base) && set.test(element, true);
+      } catch (error) {
+        if (!isCaughtFilterError(error, depth)) throw error;
+        throw new TlaEvaluationError(describeUndecidedFilterMember(element, set));
+      }
+    }
+    case "Union":
+      return getUnionMemberSets(element, set).some((inner) => isMember(element, inner));
+    case "SetOperation":
+      if (set.operator === "\\cup")
+        return isMember(element, set.left) || isMember(element, set.right);
+      return (
+        isMember(element, set.left) && isMember(element, set.right) === (set.operator === "\\cap")
+      );
+    case "SequenceSet": {
+      const elements = getSequenceSetMemberElements(element, set);
+      return elements !== false && elements.every((item) => isMember(item, set.base));
+    }
+    default:
+      return isElementOfAnySet(element, set);
   }
 };
 
@@ -3005,6 +3207,9 @@ export const isUpdatedElementOf = (element: Value, member: Value, set: Value): b
 
 const isCountedLazyFunction = (value: LazyFunctionValue): value is CountedLazyFunctionValue =>
   "costModel" in value;
+
+export const getLazyFunctionNode = (value: LazyFunctionValue) =>
+  isCountedLazyFunction(value) ? value.costModel.node : -1;
 
 const isLazyFunctionCopy = (value: LazyFunctionValue): value is LazyFunctionCopy =>
   "original" in value;
@@ -3039,9 +3244,7 @@ export const toFiniteFunction = (value: Value): FunctionValue => {
         ? domain.map((key) => getCopiedValue(value, key))
         : domain.map((key) => value.apply(key)),
     );
-    if (isCountedLazyFunction(value)) {
-      value.costModel.secondary[value.costModel.node] += domain.length;
-    }
+    if (isCountedLazyFunction(value)) value.costModel.chargeConversion();
     return value.enumerated;
   }
   throw new TlaEvaluationError(`Expected a function but found ${formatValue(value)}`);
@@ -3167,6 +3370,46 @@ const createArgumentListError = (functionValue: LazyFunctionValue, argument: Val
     ),
   );
 
+const createBoundDomainError = (argument: Value) =>
+  new TlaEvaluationError(
+    `Attempted to apply a function to ${formatValue(argument)}, which is not in its domain`,
+  );
+
+const createBoundNonMemberError = (
+  functionValue: LazyFunctionValue,
+  index: number,
+  element: Value,
+  tupleLength: number | undefined,
+) =>
+  new TlaEvaluationError(
+    describeBoundArgument(
+      functionValue,
+      `argument number ${index + 1}`,
+      element,
+      tupleLength === undefined
+        ? `is not in the function's domain ${formatValue(functionValue.domain)}`
+        : "is not in its domain",
+    ),
+  );
+
+const checkBoundTuple = (
+  functionValue: LazyFunctionValue,
+  index: number,
+  element: Value,
+  tupleLength: number | undefined,
+) => {
+  if (tupleLength !== undefined && getSequenceElements(element)?.length !== tupleLength) {
+    throw new TlaEvaluationError(
+      describeBoundArgument(
+        functionValue,
+        `argument number ${index + 1}`,
+        element,
+        "does not match its formal parameter",
+      ),
+    );
+  }
+};
+
 // Deviation from TLC: FcnLambdaValue#apply indexes past an argument tuple shorter than the bounds and ignores a longer one, where this rejects the list.
 const checkBoundArguments = (
   functionValue: LazyFunctionValue,
@@ -3177,47 +3420,58 @@ const checkBoundArguments = (
   const elements = getSequenceElements(argument);
   if (elements === undefined) throw createArgumentListError(functionValue, argument);
   if (typeof domain !== "object" || domain.kind !== "ProductSet") {
-    throw new TlaEvaluationError(
-      `Attempted to apply a function to ${formatValue(argument)}, which is not in its domain`,
-    );
+    throw createBoundDomainError(argument);
   }
   tupleLengths.forEach((tupleLength, index) => {
     if (index >= elements.length) throw createArgumentListError(functionValue, argument);
     const element = elements[index];
-    const position = `argument number ${index + 1}`;
     if (!isElementOf(element, domain.factors[index])) {
-      throw new TlaEvaluationError(
-        describeBoundArgument(
-          functionValue,
-          position,
-          element,
-          tupleLength === undefined
-            ? `is not in the function's domain ${formatValue(domain)}`
-            : "is not in its domain",
-        ),
-      );
+      throw createBoundNonMemberError(functionValue, index, element, tupleLength);
     }
-    if (tupleLength !== undefined && getSequenceElements(element)?.length !== tupleLength) {
-      throw new TlaEvaluationError(
-        describeBoundArgument(
-          functionValue,
-          position,
-          element,
-          "does not match its formal parameter",
-        ),
-      );
-    }
+    checkBoundTuple(functionValue, index, element, tupleLength);
   });
   if (elements.length > tupleLengths.length) {
     throw createArgumentListError(functionValue, argument);
   }
 };
 
-const isOutsideLambdaDomain = (functionValue: FunctionValue, argument: Value) =>
-  functionValue.lambdaDomain !== undefined &&
-  functionValue.hash === 0 &&
-  functionValue.fingerprint === 0 &&
-  !isElementOf(argument, functionValue.lambdaDomain);
+const checkBoundArgumentsWith = (
+  functionValue: LazyFunctionValue,
+  tupleLengths: (number | undefined)[],
+  argument: Value,
+  isMember: typeof isElementOf,
+) => {
+  const domain = functionValue.domain;
+  const elements = getSequenceElements(argument);
+  if (elements === undefined) throw createArgumentListError(functionValue, argument);
+  if (typeof domain !== "object" || domain.kind !== "ProductSet") {
+    throw createBoundDomainError(argument);
+  }
+  tupleLengths.forEach((tupleLength, index) => {
+    if (index >= elements.length) throw createArgumentListError(functionValue, argument);
+    const element = elements[index];
+    if (!isMember(element, domain.factors[index])) {
+      throw createBoundNonMemberError(functionValue, index, element, tupleLength);
+    }
+    checkBoundTuple(functionValue, index, element, tupleLength);
+  });
+  if (elements.length > tupleLengths.length) {
+    throw createArgumentListError(functionValue, argument);
+  }
+};
+
+export const checkLazyArgumentWith = (
+  functionValue: LazyFunctionValue,
+  argument: Value,
+  isMember: typeof isElementOf,
+) => {
+  const tupleLengths = functionValue.boundTupleLengths;
+  if (tupleLengths !== undefined) {
+    checkBoundArgumentsWith(functionValue, tupleLengths, argument, isMember);
+  } else if (!isMember(argument, functionValue.domain)) {
+    throw new TlaEvaluationError(describeMissingArgument(functionValue, argument));
+  }
+};
 
 export const applyFunction = (
   functionValue: Value,
@@ -3234,11 +3488,7 @@ export const applyFunction = (
       return functionValue.apply(argument);
     }
     if (!isElementOf(argument, functionValue.domain)) {
-      throw new TlaEvaluationError(
-        getFunctionClass(functionValue) === "lambda"
-          ? describeMissingArgument(functionValue, argument)
-          : `Attempted to apply a function to ${formatValue(argument)}, which is not in its domain`,
-      );
+      throw new TlaEvaluationError(describeMissingArgument(functionValue, argument));
     }
     return functionValue.apply(argument);
   }
@@ -3248,9 +3498,6 @@ export const applyFunction = (
     );
   }
   const describe = describeMissing ?? describeMissingArgument;
-  if (isOutsideLambdaDomain(functionValue, argument)) {
-    throw new TlaEvaluationError(describe(functionValue, argument));
-  }
   const position = findKeyIndexLikeTlc(functionValue, argument, describe);
   if (position === -1) throw new TlaEvaluationError(describe(functionValue, argument));
   return functionValue.range[position];
@@ -3261,11 +3508,16 @@ export const getDomainInterval = (domain: Value[]) =>
     ? (intervalArrays.get(domain) ?? getIntervalValue(domain.length))
     : undefined;
 
+// FcnLambdaValue#getDomain answers with its record's domain once it has converted.
 export const getDomain = (functionValue: Value): Value => {
-  if (typeof functionValue === "object" && functionValue.kind === "LazyFunction")
+  if (
+    typeof functionValue === "object" &&
+    functionValue.kind === "LazyFunction" &&
+    functionValue.enumerated === undefined
+  ) {
     return functionValue.domain;
+  }
   const finite = toFiniteFunction(functionValue);
-  if (finite.functionClass === "lambda" && finite.lambdaDomain) return finite.lambdaDomain;
   const interval = getDomainInterval(finite.domain);
   if (interval) return interval;
   const set = createSortedSet(finite.domain);
@@ -3298,21 +3550,19 @@ export const updateFunction = (
     if (!isElementOf(argument, functionValue.domain)) return functionValue;
     const updated = update(functionValue.apply(argument));
     const apply = applyUnrecorded ?? functionValue.apply;
-    return setFunctionClass<LazyFunctionCopy>(
-      {
-        kind: "LazyFunction",
-        domain: functionValue.domain,
-        apply: (key) => (isEqualLikeTlc(argument, key) ? updated : apply(key)),
-        source: functionValue.source,
-        boundTupleLengths: functionValue.boundTupleLengths,
-        isApplicationObserved: functionValue.isApplicationObserved,
-        original: functionValue,
-        replacedKey: argument,
-        replacement: updated,
-        applyBody: isLazyFunctionCopy(functionValue) ? functionValue.applyBody : apply,
-      },
-      getFunctionClass(functionValue),
-    );
+    const copy: LazyFunctionCopy = {
+      kind: "LazyFunction",
+      domain: functionValue.domain,
+      apply: (key) => (isEqualLikeTlc(argument, key) ? updated : apply(key)),
+      source: functionValue.source,
+      boundTupleLengths: functionValue.boundTupleLengths,
+      isApplicationObserved: functionValue.isApplicationObserved,
+      original: functionValue,
+      replacedKey: argument,
+      replacement: updated,
+      applyBody: isLazyFunctionCopy(functionValue) ? functionValue.applyBody : apply,
+    };
+    return copy;
   }
   if (!isFunctionValue(functionValue)) {
     throw new TlaEvaluationError(
@@ -3320,7 +3570,6 @@ export const updateFunction = (
     );
   }
   const finite = toFiniteFunction(functionValue);
-  if (isOutsideLambdaDomain(finite, argument)) return finite;
   const position = findKeyIndexLikeTlc(finite, argument, describeExceptKey);
   if (position === -1) return finite;
   const range = [...finite.range];
@@ -3329,10 +3578,9 @@ export const updateFunction = (
   range[position] = next;
   const updated = setFunctionClass(
     createSortedFunction(finite.domain, range),
-    getFunctionClass(finite),
+    finite.functionClass,
   );
   updated.writtenKeys = finite.writtenKeys;
-  updated.lambdaDomain = finite.lambdaDomain;
   // Hashing marks a set sorted, and TLC sorts a set that EXCEPT stores only once it fingerprints the function.
   if (
     finite.hash !== 0 &&
@@ -3612,11 +3860,13 @@ const getExpandedLazySet = (value: LazySetValue, isStrict: boolean) => {
     return expandLazySet(value);
   }
   if (!isEnumerable(value)) return undefined;
+  const mark = markTrace();
   try {
     return expandLazySet(value);
   } catch (error) {
-    if (error instanceof TlaEvaluationError) return undefined;
-    throw error;
+    if (!(error instanceof TlaEvaluationError)) throw error;
+    dropFingerprint(mark);
+    return undefined;
   }
 };
 
@@ -3651,78 +3901,79 @@ const isFieldName = (name: string) =>
 
 const toPrintedFunction = (value: LazyFunctionValue) => {
   if (!isEnumerable(value.domain)) return undefined;
+  const mark = markTrace();
   try {
     return toFiniteFunction(value);
   } catch (error) {
-    if (error instanceof TlaEvaluationError || isStackOverflow(error)) return undefined;
-    throw error;
+    if (!(error instanceof TlaEvaluationError) && !isStackOverflow(error)) throw error;
+    dropFingerprint(mark);
+    return undefined;
   }
 };
 
 export const formatNormalizedCopies = (values: Value[]) => {
-  const writtenFunctions: [FunctionValue, Value[]][] = [];
-  const copiedFunctions: LazyFunctionValue[] = [];
   // TLC prints a deep copy, which copies functions but shares sets, so a set and the functions inside it stay normalized and cached.
-  const normalize = (value: Value, isWrittenOrderKept: boolean, isCopied: boolean): void => {
-    if (typeof value !== "object") return;
-    const normalizeInner = (inner: Value) => normalize(inner, isWrittenOrderKept, false);
+  const copy = (value: Value, isWrittenOrderKept: boolean, isCopied: boolean): Value => {
+    if (typeof value !== "object") return value;
+    const normalizeInner = (inner: Value) => {
+      copy(inner, isWrittenOrderKept, false);
+    };
     switch (value.kind) {
       case "Set":
         value.elements.forEach(normalizeInner);
         value.isNormalized = true;
-        return;
+        return value;
       case "MixedSet":
         value.elements.forEach(normalizeInner);
         toFiniteSet(value);
-        return;
-      case "Function": {
-        const isRangeWrittenOrderKept = isWrittenOrderKept || getFunctionClass(value) === "lambda";
-        value.range.forEach((inner) => normalize(inner, isRangeWrittenOrderKept, isCopied));
-        if (isWrittenOrderKept || value.writtenKeys === undefined) return;
-        if (isCopied) writtenFunctions.push([value, value.writtenKeys]);
-        value.writtenKeys = undefined;
-        return;
-      }
+        return value;
+      case "Function":
+        return copyFunction(value, isWrittenOrderKept, isCopied);
       case "LazyFunction":
-        if (value.enumerated) return normalize(value.enumerated, true, isCopied);
-        if (isCopied) copiedFunctions.push(value);
+        if (value.enumerated) {
+          const enumerated = copyFunction(value.enumerated, true, isCopied);
+          return isCopied ? { ...value, enumerated } : value;
+        }
         normalizeInner(value.domain);
-        return;
+        // Deviation from TLC: FcnLambdaValue#deepCopy drops cm, so PrintT's copy counts nothing.
+        return isCopied ? { ...value } : value;
       case "SetOperation":
         normalizeInner(value.left);
         normalizeInner(value.right);
-        return;
+        return value;
       case "FunctionSet":
         normalizeInner(value.domain);
         normalizeInner(value.range);
-        return;
+        return value;
       case "RecordSet":
         value.sets.forEach(normalizeInner);
-        return;
+        return value;
       case "ProductSet":
         value.factors.forEach(normalizeInner);
-        return;
+        return value;
       case "Subset":
       case "Union":
       case "FilteredSet":
       case "SequenceSet":
         normalizeInner(value.base);
-        return;
+        return value;
       default:
-        return;
+        return value;
     }
   };
-  try {
-    values.forEach((value) => normalize(value, false, true));
-    return values.map((value) => formatValue(value, true, true));
-  } finally {
-    copiedFunctions.forEach((copied) => {
-      copied.enumerated = undefined;
-    });
-    writtenFunctions.forEach((entry) => {
-      entry[0].writtenKeys = entry[1];
-    });
-  }
+  const copyFunction = (
+    value: FunctionValue,
+    isWrittenOrderKept: boolean,
+    isCopied: boolean,
+  ): FunctionValue => {
+    const range = value.range.map((inner) => copy(inner, isWrittenOrderKept, isCopied));
+    const writtenKeys = isWrittenOrderKept ? value.writtenKeys : undefined;
+    if (isCopied) return { ...value, range, writtenKeys };
+    value.writtenKeys = writtenKeys;
+    return value;
+  };
+  const copies = values.map((value) => copy(value, false, true));
+  return copies.map((value) => formatValue(value, true, true));
 };
 
 export const formatValue = (value: Value, isStrict = false, isNormalized = false): string => {
@@ -3748,8 +3999,12 @@ export const formatValue = (value: Value, isStrict = false, isNormalized = false
     case "SetOperation":
     case "FilteredSet":
     case "Union": {
+      const sets = setTrace.sets;
+      sets?.push(value);
       const expanded = printing.isExpanded ? getExpandedLazySet(value, isStrict) : undefined;
-      return expanded ? format(expanded) : formatLazySet(value, isStrict);
+      const formatted = expanded ? format(expanded) : formatLazySet(value, isStrict);
+      sets?.pop();
+      return formatted;
     }
 
     case "SequenceSet":
