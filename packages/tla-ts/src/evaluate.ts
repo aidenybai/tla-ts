@@ -1690,7 +1690,7 @@ const compileUnchanged = (
           isKeepLazy: context.isKeepLazy,
           isPrimed: false,
         }),
-        evaluateWithNextState(coverage, "primed", evaluator, toNextContext(context)),
+        evaluator(toNextContext(context)),
       );
   }
   const evaluateUnchanged: Evaluator = (context) =>
@@ -1909,7 +1909,7 @@ const countSubstitution =
   (substitution: Substitution, evaluator: Evaluator, coverage: Coverage): Evaluator =>
   (context) => {
     const outer = coverage.current;
-    const node = getSubstitutionNode(coverage, substitution);
+    const node = getSubstitutionNode(coverage, substitution, context.isPrimed);
     coverage.current = node === -1 && outer < 0 ? outer : node;
     try {
       return evaluator(context);
@@ -2040,13 +2040,13 @@ const compileIdentifier = (
   }
   const coverage = environment.coverage;
   if (!coverage) return (context) => evaluateLocalIdentifier(name, expression, context);
-  // TLC's Tool#evalAppl evaluates a LazyValue afresh where it reads it primed, and LazyValue#getValue reuses a value only under the EvalControl it computed it under.
+  // TLC's Tool#evalAppl evaluates a LazyValue afresh where s1 is TLCState.Null, and LazyValue#getValue reuses a value only under the EvalControl it computed it under.
   return (context) => {
     const binding = lookupScope(context.scope, name);
     if (binding?.kind !== "Thunk" || binding.isReleased) {
       return evaluateLocalIdentifier(name, expression, context);
     }
-    if (coverage.nextState === "primed") return evaluateCoveredThunk(binding, context, coverage);
+    if (context.isPrimed) return evaluateCoveredThunk(binding, context, coverage);
     if (coverage.cachedInEnabled.get(binding) !== coverage.isEnabled) binding.cache = undefined;
     const value = forceThunk(binding, context);
     coverage.cachedInEnabled.set(binding, coverage.isEnabled);
@@ -2938,10 +2938,7 @@ const compile = (expression: Expression, environment: Environment): Evaluator =>
     }
     case "Prime": {
       const inner = getChildEvaluator(expression.expression);
-      const coverage = environment.coverage;
-      return coverage
-        ? (context) => evaluateWithNextState(coverage, "primed", inner, toNextContext(context))
-        : (context) => inner(toNextContext(context));
+      return (context) => inner(toNextContext(context));
     }
     case "Unchanged":
       return compileUnchanged(

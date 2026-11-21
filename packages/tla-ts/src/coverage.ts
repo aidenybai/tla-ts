@@ -75,7 +75,7 @@ export interface CoverageFrame {
   countedWithoutNext: Substitution[];
 }
 
-export type NextStateMode = "given" | "empty" | "primed";
+export type NextStateMode = "given" | "empty";
 
 export interface CoverageReport {
   variables: CoverageVariable[];
@@ -815,11 +815,15 @@ export const runInCoverageFrames = <Result>(
   }
 };
 
-export const getSubstitutionNode = (coverage: Coverage, substitution: Substitution) => {
+export const getSubstitutionNode = (
+  coverage: Coverage,
+  substitution: Substitution,
+  isPrimed: boolean,
+) => {
   const entry = findFrame(coverage, substitution.frame, undefined);
   if (!entry) return -1;
   const substitutionNode = coverage.substitutionNodes.get(entry.root)?.get(substitution) ?? -1;
-  if (!entry.isCached || coverage.nextState === "primed") return substitutionNode;
+  if (!entry.isCached || isPrimed) return substitutionNode;
   // LazyValue#getValue reuses a value cached without a next state for any next state, but not the reverse.
   if (entry.countedWithoutNext.includes(substitution)) return -1;
   if (coverage.nextState === "empty") {
