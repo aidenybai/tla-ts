@@ -3219,6 +3219,40 @@ describe("the goals of a tactic free what Z3 5.3.2 frees", () => {
       ].join("\n"),
     ]);
   });
+
+  it("keeps the terms of lia2card's last sum and frees the conditions of each, as Z3 does", () => {
+    expect(
+      run([
+        "(declare-fun p (Int) Bool)",
+        "(declare-fun q (Int) Bool)",
+        "(declare-fun g (Int) Int)",
+        "(declare-const a Int)",
+        "(declare-const b Int)",
+        "(assert (forall ((x Int)) (! (=> (p x) (> (g x) 1)) :pattern ((p x)))))",
+        "(assert (< (ite (= a 1) (ite (= b 2) (g a) (ite (= b 2) (g a) (g b))) 1) 2))",
+        "(check-sat)",
+        "(get-info :rlimit)",
+        "(get-model)",
+      ]),
+    ).toEqual([
+      "sat",
+      "(:rlimit 765)",
+      [
+        "(",
+        "  (define-fun b () Int",
+        "    3)",
+        "  (define-fun a () Int",
+        "    2)",
+        "  (define-fun p ((x!0 Int)) Bool",
+        "    false)",
+        "  (define-fun g ((x!0 Int)) Int",
+        "    0)",
+        "  (define-fun q ((x!0 Int)) Bool",
+        "    false)",
+        ")",
+      ].join("\n"),
+    ]);
+  });
 });
 
 describe("unit-subsume-simplify, as Z3 5.3.2 keeps its context", () => {
