@@ -201,15 +201,17 @@ const isDefaultConstructor = (slots: Value) => {
 };
 
 // The built-in functions whose data refers to nothing: the host's that stop, whose data is a name,
-// and the RegExp constructor, whose data is the strings of its last match, as RegExp.$1 reads.
-const isNamedBuiltin = (slots: Value) => {
-  const id = getList(get(slots, "id"));
-  return (
-    id.length === 2 &&
-    ((id[0] === "Module" && (id[1] === "hostStop" || id[1] === "hostQuietConstructor")) ||
-      (id[0] === "RegExp" && id[1] === "constructor"))
-  );
-};
+// a CommonJS module's require, whose data is its file's number, and the RegExp constructor, whose
+// data is the strings of its last match, as RegExp.$1 reads.
+const NAMED_BUILTINS = new Set([
+  "Module hostStop",
+  "Module hostQuietConstructor",
+  "Module require",
+  "RegExp constructor",
+]);
+
+const isNamedBuiltin = (slots: Value) =>
+  NAMED_BUILTINS.has(getList(get(slots, "id")).map(String).join(" "));
 
 const isPlainBuiltin = (slots: Value) =>
   getDomain(slots).join() === BUILTIN_SLOTS.join() &&
