@@ -121,7 +121,7 @@ export const mapDefinition = (
   definition: Definition,
   map: (child: Expression, bound: string[]) => Expression,
 ): Definition => {
-  const mapped: Definition =
+  const mapped =
     definition.kind === "Function"
       ? {
           ...definition,

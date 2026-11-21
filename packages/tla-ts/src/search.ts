@@ -398,8 +398,13 @@ const isConstantTrue = (
 ) => {
   const conjunct = item.expression;
   if (item.argumentFreeDefinition && conjunct.kind === "Apply") {
-    const value = getLookupValue(item.argumentFreeDefinition, environment);
-    return isTrueValue(value, conjunct, conjunct.operator, environment, usage);
+    return isTrueValue(
+      getLookupValue(item.argumentFreeDefinition, environment),
+      conjunct,
+      conjunct.operator,
+      environment,
+      usage,
+    );
   }
   // SpecProcessor#processConfigProps looks up no VARIABLE, so it checks a substitute for one whatever its value.
   if (conjunct.kind !== "Identifier" || getSubstitutedName(conjunct) !== undefined) return false;
