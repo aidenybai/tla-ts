@@ -42,6 +42,7 @@ import {
 } from "../evaluate";
 import {
   formatValue,
+  getLazyFunctionNode,
   getStreamedElements,
   isEqualLikeTlc,
   isTlcEnumerable,
@@ -953,7 +954,8 @@ const visitApplication = (
       );
       if (lambda) {
         const bound = runAt(replay, node, () => bindLazyArguments(lambda, expression, context));
-        return visit(replay, lambda.body, items, bound, partial, node);
+        // Tool#getNextStates runs the body with the function's cost model, not the application's.
+        return visit(replay, lambda.body, items, bound, partial, getLazyFunctionNode(lambda.value));
       }
       break;
     }

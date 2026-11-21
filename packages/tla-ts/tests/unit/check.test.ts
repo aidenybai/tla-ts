@@ -3670,6 +3670,51 @@ ASSUME TLCFP(a) = -887695703
     },
   );
 
+  it.each([
+    [
+      "its body follows one argument",
+      "VARIABLE x\nInit == x = 0\nNext == x < 2 /\\ [i \\in 0..2 |-> x' = x + i][IF x = 0 THEN 1 ELSE 2]",
+      [
+        "line 5, col 9 to line 5, col 13 of module M: 2",
+        "|line 5, col 9 to line 5, col 9 of module M: 3",
+        "line 5, col 18 to line 5, col 68 of module M: 2",
+      ],
+    ],
+    [
+      "it is recursive",
+      "VARIABLE x\nInit == x = 0\nNext == x < 2 /\\ (LET g[n \\in 0..2] == IF n = 0 THEN x' = x + 1 ELSE g[n - 1] IN g[x])",
+      [
+        "line 5, col 9 to line 5, col 13 of module M: 2",
+        "|line 5, col 9 to line 5, col 9 of module M: 3",
+        "line 5, col 82 to line 5, col 82 of module M: 2",
+        "|line 5, col 23 to line 5, col 77 of module M: 2",
+        "||line 5, col 43 to line 5, col 47 of module M: 3",
+        "||line 5, col 54 to line 5, col 63 of module M: 2",
+        "||line 5, col 70 to line 5, col 77 of module M: 1",
+        "||line 5, col 31 to line 5, col 34 of module M: 2",
+        "line 5, col 84 to line 5, col 84 of module M: 2",
+      ],
+    ],
+    [
+      "a definition names it",
+      "VARIABLE x\nInit == x = 0\nF == [i \\in 0..2 |-> x' = x + i]\nNext == x < 2 /\\ F[IF x = 0 THEN 1 ELSE 2]",
+      [
+        "line 6, col 9 to line 6, col 13 of module M: 2",
+        "|line 6, col 9 to line 6, col 9 of module M: 3",
+        "line 6, col 18 to line 6, col 42 of module M: 2",
+      ],
+    ],
+  ])(
+    "counts the body of a lazy function applied as an action when %s at the function's node, as TLC's Tool#getNextStates passes the body its cost model",
+    async (_title, body, expected) => {
+      const lines = await getCoverageLines(
+        `---- MODULE M ----\nEXTENDS Integers\n${body}\n====`,
+        "INIT Init\nNEXT Next\nCHECK_DEADLOCK FALSE",
+      );
+      expect(lines?.at(-1)).toEqual(expected);
+    },
+  );
+
   it("charges a filter of a set of records or functions per element it draws, as TLC's SetPredValue does", async () => {
     const lines = await getCoverageLines(
       "---- MODULE E ----\nEXTENDS Integers\nVARIABLE x\nInit == x \\in {r \\in [a : 0..1, b : BOOLEAN] : r.a = 0}\nNext == x' \\in {r \\in [a : 0..1, b : BOOLEAN] : r.b = ~x.b}\nInv1 == \\E r \\in {s \\in [a : 0..1, b : BOOLEAN] : s.a = x.a} : r = x\nInv2 == (CHOOSE r \\in {s \\in [a : 0..1, b : BOOLEAN] : s.b = x.b} : TRUE).b = x.b\nInv3 == \\A r \\in {s \\in {f \\in [{1} -> {0, 1}] : f[1] >= x.a} : s[1] > 0} : r[1] = 1\n====",

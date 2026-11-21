@@ -3116,6 +3116,9 @@ export const isUpdatedElementOf = (element: Value, member: Value, set: Value): b
 const isCountedLazyFunction = (value: LazyFunctionValue): value is CountedLazyFunctionValue =>
   "costModel" in value;
 
+export const getLazyFunctionNode = (value: LazyFunctionValue) =>
+  isCountedLazyFunction(value) ? value.costModel.node : -1;
+
 const isLazyFunctionCopy = (value: LazyFunctionValue): value is LazyFunctionCopy =>
   "original" in value;
 
