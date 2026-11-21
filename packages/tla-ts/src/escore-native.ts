@@ -640,9 +640,30 @@ const getIndexUnits = (key: Value | undefined) => {
     : [];
 };
 
+// The code units of the strings NumToString gives: decimal digits, "+", "-", ".", "e", and the
+// letters of "NaN" and "Infinity".
+const NUMBER_STRING_UNITS = new Set([
+  ...Array.from({ length: 10 }, (_, index) => 48 + index),
+  ...[43, 45, 46, 101, 78, 97, 73, 110, 102, 105, 116, 121],
+]);
+
+// The integer that units spell where they are NumToString's form of an integer below 2^30 other
+// than 0, or undefined.
+const getCanonicalInteger = (units: number[]) => {
+  const isNegative = units[0] === MINUS;
+  const digits = isNegative ? units.slice(1) : units;
+  if (digits.length === 0 || digits.length > 10 || digits[0] === 48) return undefined;
+  if (!digits.every((unit) => unit >= 48 && unit <= 57)) return undefined;
+  const value = digits.reduce((total, unit) => total * 10 + unit - 48, 0);
+  if (value >= INT_LIMIT) return undefined;
+  return isNegative ? -value : value;
+};
+
 // ESCore's operators on its heap and property keys that tla-ts runs natively, while TLC runs the
-// runtime's TLA+: HeapGet, a heap's record at an index, IsArrayIndex, and PropBucket, the bucket
-// of an object's props that holds a key. Each falls back where its operands aren't the common ones.
+// runtime's TLA+: HeapGet, a heap's record at an index, IsArrayIndex, PropBucket, the bucket of an
+// object's props that holds a key, and CanonicalNumericIndexString, which gives Undefined for a
+// string NumToString can't give and a nonzero integer's Number for its canonical string. Each falls
+// back where its operands aren't the common ones.
 export const createEsRuntimeOperators = (callReplaced: CallReplaced): Builtin[] => {
   const define = createDefine(callReplaced);
   return [
@@ -675,6 +696,13 @@ export const createEsRuntimeOperators = (callReplaced: CallReplaced): Builtin[] 
     define("IsArrayIndex", 1, (args) => {
       const units = getIndexUnits(getValue(args[0]));
       return units === undefined ? undefined : units.length > 0;
+    }),
+    define("CanonicalNumericIndexString", 1, (args) => {
+      const units = getTuple(getValue(args[0]));
+      if (units === undefined || !isIntegers(units)) return undefined;
+      if (units.some((unit) => !NUMBER_STRING_UNITS.has(unit))) return typeShape(["undefined"]);
+      const integer = getCanonicalInteger(units);
+      return integer === undefined ? undefined : createInt(integer);
     }),
     define("PropBucket", 1, (args) => {
       const units = getIndexUnits(getValue(args[0]));

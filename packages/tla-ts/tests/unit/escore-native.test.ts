@@ -51,7 +51,23 @@ const KEYS = [
   '[type |-> "string", value |-> <<97, "a">>]',
 ];
 
+// Strings that CanonicalNumericIndexString tells apart: the canonical strings of integers on
+// either side of 0 and 2^30, of fractions, exponents, NaN and the infinities, strings that read as
+// Numbers but aren't their canonical strings, and strings that no Number's string spells.
+const NUMERIC_STRINGS = [
+  ...Array.from({ length: 400 }, (_, index) => String(index - 200)),
+  ...Array.from({ length: 60 }, (_, index) => String((index - 30) * 35_791_394)),
+  ...["1073741823", "1073741824", "-1073741823", "-1073741824", "4294967295", "9007199254740993"],
+  ...["-0", "0", "00", "01", "-01", "+1", " 1", "1 ", "1.5", "-1.5", "0.5", ".5", "1e21", "1e+21"],
+  ...["1e-7", "1.5e-7", "NaN", "Infinity", "-Infinity", "+Infinity", "nan", "length", "foo"],
+  ...["", "-", "e", "0x10", "1_0", "\u0661", "1\uff10", "Infinityx"],
+];
+
 const getChecks = () => [
+  ...NUMERIC_STRINGS.map((text) => {
+    const call = `CanonicalNumericIndexString(${getUnits(text)})`;
+    return `${call} = Plain!${call} /\\ ToString(${call}) = ToString(Plain!${call})`;
+  }),
   ...KEYS.flatMap((key) =>
     ["PropBucket", "IsArrayIndex"].map(
       (operator) =>
@@ -90,7 +106,7 @@ const getError = async (module: string, expression: string) =>
     })
   ).violation?.message?.replaceAll("module ESRuntime", "module ESCore");
 
-describe("runs ESCore's HeapGet, IsArrayIndex, and PropBucket as their TLA+ does", () => {
+describe("runs ESCore's native operators as their TLA+ does", () => {
   it("gives the values the TLA+ gives", { timeout: 120_000 }, async () => {
     const checks = getChecks();
     expect(await getOutcomes(checks)).toEqual(checks.map(() => "TRUE"));
@@ -103,6 +119,14 @@ describe("runs ESCore's HeapGet, IsArrayIndex, and PropBucket as their TLA+ does
       'IsArrayIndex([type |-> "string", value |-> <<49, "a">>])',
     ],
     ["HeapGet of an address past the heap", `HeapGet(${HEAP}, 601)`],
+    [
+      "CanonicalNumericIndexString of units that aren't integers",
+      'CanonicalNumericIndexString(<<49, "a">>)',
+    ],
+    [
+      "CanonicalNumericIndexString of a lazy function",
+      "CanonicalNumericIndexString([i \\in Nat |-> 49])",
+    ],
   ])("fails as the TLA+ fails on %s", { timeout: 120_000 }, async (_, expression) => {
     const error = await getError("ESCore", expression);
     expect(error).toBeDefined();

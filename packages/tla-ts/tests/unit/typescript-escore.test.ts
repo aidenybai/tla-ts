@@ -95,6 +95,37 @@ const checkModule = (source: string) =>
 const THREW = "the script threw an exception";
 
 describe("compiles scripts by specializing ESCore", () => {
+  // CanonicalNumericIndexString, which tla-ts runs natively, tells the keys that a typed array
+  // keeps as its own properties from those it reads as indices.
+  describe("keeps a typed array's keys that aren't canonical numeric strings", () => {
+    const getSource = (expected: string) => `
+      const array = new Uint8Array(3);
+      const view = array as unknown as Record<string, unknown>;
+      for (const key of ["foo", "NaN", "Infinity", "-Infinity", "1.5", "1e21", "0.5", "-0", "01"]) {
+        view[key] = 9;
+      }
+      let text = Object.keys(array).join(",") + ";";
+      for (const key of ["foo", "NaN", "Infinity", "1.5", "1e21", "01", "length", "-1", "3"]) {
+        text += String(view[key]) + ",";
+      }
+      text += String("foo" in array) + String("1.5" in array) + String("01" in array);
+      if (text !== "${expected}") throw new Error(text);
+    `;
+    const expected =
+      "0,1,2,foo,1e21,01;9,undefined,undefined,undefined,9,9,3,undefined,undefined,truefalsetrue";
+
+    it("agrees with Node", async () => {
+      expect(() => runInNewContext(stripTypeScriptTypes(getSource(expected)))).not.toThrow();
+      expect((await checkScript(getSource(expected))).message).toBeUndefined();
+    });
+
+    it("rejects another result", async () => {
+      const wrong = expected.replace("foo,1e21", "foo,NaN,1e21");
+      expect(() => runInNewContext(stripTypeScriptTypes(getSource(wrong)))).toThrow(expected);
+      expect((await checkScript(getSource(wrong))).message).toContain(THREW);
+    });
+  });
+
   // Each key goes in the bucket that PropBucket gives it, and each object in the page of the heap
   // that HeapGet reads, which tla-ts runs natively.
   describe("orders an object's keys and reads objects past a page of the heap", () => {
