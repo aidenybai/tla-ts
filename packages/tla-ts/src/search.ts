@@ -370,14 +370,18 @@ const createTheoremError = (theorem: TheoremReference, usage: string) =>
 const isConstantTrue = (item: ScopedExpression, environment: Environment, usage: string) => {
   const conjunct = item.expression;
   // SpecProcessor#processConfigProps looks up no VARIABLE, so it checks a substitute for one whatever its value.
-  if (
-    conjunct.kind !== "Identifier" ||
-    getSubstitutedName(conjunct) !== undefined ||
-    getLevel(conjunct, item.scope, environment) > CONSTANT_LEVEL
-  ) {
-    return false;
-  }
-  const value = evaluate(conjunct, getContext(environment, undefined, undefined, item.scope));
+  if (conjunct.kind !== "Identifier" || getSubstitutedName(conjunct) !== undefined) return false;
+  // SpecProcessor#processConfigSpec looks a definition up as the value processConstantDefns stored, if it stored one.
+  const definition =
+    isLocallyResolved(conjunct) || environment.constants.has(conjunct.name)
+      ? undefined
+      : getDefinition(conjunct.name, environment);
+  const value = definition
+    ? getStartupValue(definition, environment)
+    : getLevel(conjunct, item.scope, environment) > CONSTANT_LEVEL
+      ? undefined
+      : evaluate(conjunct, getContext(environment, undefined, undefined, item.scope));
+  if (value === undefined) return false;
   const name = environment.instanceNames.get(conjunct.name) ?? getKeyName(conjunct.name);
   if (value === false) {
     throw new TlaConfigError(`The spec is trivially false because ${name} is false.`);

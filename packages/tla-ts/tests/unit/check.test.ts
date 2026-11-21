@@ -5274,6 +5274,68 @@ describe("initial predicate and next-state relation match TLC", () => {
     },
   );
 
+  const argumentBase = "G(Op(_)) == TRUE\nH(a) == x' = a\n";
+  const stateTheorem = "THEOREM T == x \\in {0, 1}\n";
+
+  it.each([
+    [`${argumentBase}C == FALSE /\\ G(H)\nSpec == Init /\\ [][Next]_x /\\ C`, "SPECIFICATION Spec"],
+    [`${stateTheorem}C == FALSE /\\ T\nSpec == Init /\\ [][Next]_x /\\ C`, "SPECIFICATION Spec"],
+    [
+      `${stateTheorem}C == IF TRUE THEN FALSE ELSE T\nSpec == Init /\\ [][Next]_x /\\ C`,
+      "SPECIFICATION Spec",
+    ],
+    [
+      "G(Op(_)) == TRUE\nC == FALSE /\\ G(LAMBDA a : x' = a)\nSpec == Init /\\ [][Next]_x /\\ C",
+      "SPECIFICATION Spec",
+    ],
+    [
+      `${stateTheorem}C == FALSE /\\ T\nP == C /\\ [](x \\in {0, 1})`,
+      "INIT Init\nNEXT Next\nPROPERTY P",
+    ],
+    [
+      `${stateTheorem}C == IF TRUE THEN FALSE ELSE T\nP == C /\\ [](x \\in {0, 1})`,
+      "INIT Init\nNEXT Next\nPROPERTY P",
+    ],
+  ])(
+    "rejects %j by the value startup stored for C, as TLC's lookup does",
+    async (definitions, config) => {
+      await expect(check({ source: getTwoStateSource(definitions), config })).rejects.toThrow(
+        new TlaConfigError("The spec is trivially false because C is false."),
+      );
+    },
+  );
+
+  it("rejects a spec conjunct whose stored value isn't a boolean, as TLC does", async () => {
+    await expect(
+      check({
+        source: getTwoStateSource(
+          `${stateTheorem}C == IF TRUE THEN 1 ELSE T\nSpec == Init /\\ [][Next]_x /\\ C`,
+        ),
+        config: "SPECIFICATION Spec",
+      }),
+    ).rejects.toThrow(
+      new TlaConfigError("The operator C, which equals 1,\ncannot be used as a spec"),
+    );
+  });
+
+  it.each([
+    `${argumentBase}C == G(H)\nP == []C`,
+    `${argumentBase}P == [](G(H))`,
+    "G(Op(_)) == TRUE\nP == [](G(LAMBDA a : x' = a))",
+    `${argumentBase}K(Op(_)) == [](G(Op))\nP == K(H)`,
+    "G(Op(_)) == TRUE\nP == LET L(a) == x' = a IN [](G(L))",
+    "a ++ b == x' = a\nG(Op(_, _)) == TRUE\nP == [](G(++))",
+  ])(
+    "checks the property %j as an invariant, as TLC's level bound takes an operator argument for a constant",
+    async (definitions) => {
+      const result = await check({
+        source: getTwoStateSource(definitions),
+        config: "INIT Init\nNEXT Next\nPROPERTY P",
+      });
+      expect([result.status, result.distinctStates]).toEqual(["success", 2]);
+    },
+  );
+
   const literalBase =
     "---- MODULE B7 ----\nCONSTANT c\nTHEOREM Cz == c = 1\n====\nJ7 == INSTANCE B7 WITH c <- 1\n";
 

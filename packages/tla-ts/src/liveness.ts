@@ -45,7 +45,7 @@ import {
   substitutionFrames,
   writtenKeys,
 } from "./instances";
-import { getKeyName } from "./resolve";
+import { getArity, getKeyName } from "./resolve";
 import {
   ACTION_LEVEL,
   CONSTANT_LEVEL,
@@ -175,7 +175,7 @@ export const getLevel = (
     if (!isLevelBound) visiting.delete(binding);
     return level;
   };
-  const getBindingLevel = (name: string) => {
+  const getBindingLevel = (name: string, isArgument: boolean) => {
     const binding = lookupScope(scope, name);
     if (!binding) return undefined;
     if (binding.kind === "Value") return CONSTANT_LEVEL;
@@ -185,16 +185,24 @@ export const getLevel = (
         : getBodyLevel(binding, binding.expression, binding.scope);
     }
     const operator = binding.operator;
-    return operator.kind === "Closure"
+    return operator.kind === "Closure" && !(isArgument && operator.params.length > 0)
       ? getBodyLevel(operator, operator.body, operator.scope)
       : CONSTANT_LEVEL;
   };
-  const getGlobalLevel = (name: string) => {
+  const getGlobalLevel = (name: string, isArgument: boolean) => {
     if (environment.variableIndex.has(name)) return VARIABLE_LEVEL;
     if (environment.constants.has(name)) return CONSTANT_LEVEL;
     const definition = getDefinition(name, environment);
-    // TLC's getLevelBound counts a theorem's arguments but not its body.
-    if (definition && isLevelBound && environment.theorems.has(name)) return CONSTANT_LEVEL;
+    // TLC's getLevelBound counts a theorem's arguments but not its body, and it looks a definition up as the value startup stored for it.
+    if (
+      definition &&
+      isLevelBound &&
+      (environment.theorems.has(name) ||
+        getStartupValue(definition, environment) !== undefined ||
+        (isArgument && getArity(definition) > 0))
+    ) {
+      return CONSTANT_LEVEL;
+    }
     if (definition && isLevelBound) {
       return Math.max(
         ...getDefinitionExpressions(definition).map((item) => getBodyLevel(item, item, undefined)),
@@ -208,10 +216,14 @@ export const getLevel = (
   };
   const getNameLevel = (name: string, node: Expression) => {
     if (shadowed.has(name)) return CONSTANT_LEVEL;
+    // TLC's getLevelBound takes an operator argument for a constant.
+    const isArgument = isLevelBound && node.kind === "Identifier";
     if (isLocallyResolved(node)) {
-      return getBindingLevel(name) ?? getGlobalLevel(name) ?? CONSTANT_LEVEL;
+      return (
+        getBindingLevel(name, isArgument) ?? getGlobalLevel(name, isArgument) ?? CONSTANT_LEVEL
+      );
     }
-    return getGlobalLevel(name) ?? getBindingLevel(name) ?? CONSTANT_LEVEL;
+    return getGlobalLevel(name, isArgument) ?? getBindingLevel(name, isArgument) ?? CONSTANT_LEVEL;
   };
   const getChildrenLevel = (node: Expression) => {
     let level = CONSTANT_LEVEL;
@@ -262,7 +274,9 @@ export const getLevel = (
     case "Identifier":
       return getNameLevel(expression.name, expression);
     case "OperatorReference":
-      return getNameLevel(expression.operator, expression);
+      return isLevelBound ? CONSTANT_LEVEL : getNameLevel(expression.operator, expression);
+    case "Lambda":
+      return isLevelBound ? CONSTANT_LEVEL : getChildrenLevel(expression);
     case "Apply": {
       if (TEMPORAL_OPERATORS.has(expression.operator)) return TEMPORAL_LEVEL;
       if (expression.operator === "\\cdot") return ACTION_LEVEL;
@@ -418,8 +432,7 @@ export const expandTemporal = (
       !binding &&
       definition?.kind === "Operator" &&
       definition.params.length === 0 &&
-      (getDefinitionLevel(definition, environment) > CONSTANT_LEVEL ||
-        getStartupValue(definition, environment) === undefined)
+      getStartupValue(definition, environment) === undefined
     ) {
       if (expansion.expanding.has(definition)) {
         throw createStackOverflowError();
