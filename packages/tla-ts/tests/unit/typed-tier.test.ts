@@ -212,6 +212,49 @@ describe("typed tier matches TLC", () => {
     expect(typed).toEqual(interpreted);
   });
 
+  it.each([
+    ["FunctionDefinitions", "success", [5533, 919, 0, 11, undefined]],
+    ["SymmetricOrbits", "success", [9361, 780, 0, 17, undefined]],
+    ["FairProcesses", "success", [55, 27, 0, 7, undefined]],
+    ["ViolatedCounters", "invariant-violation", [36, 16, 2, 6, 6]],
+    ["ViolatedStep", "liveness-violation", [37, 23, 3, 8, 8]],
+    ["DeadlockedCounters", "deadlock", [17, 11, 0, 5, 5]],
+    ["ActionFails", "liveness-violation", [4, 3, 1, 2, 2]],
+  ])(
+    "reports %s as TLC does when it writes a trace spec, as the interpreter does",
+    async (name, status, counts) => {
+      const [typed, interpreted] = await Promise.all(
+        [undefined, INTERPRETED_SET_SIZE].map(async (maxSetSize) => {
+          const written = new Map<string, string | Uint8Array>();
+          const result = await check({
+            source: readFileSync(join(FIXTURES, `${name}.tla`), "utf8"),
+            config: readFileSync(join(FIXTURES, `${name}.cfg`), "utf8"),
+            isWarningEnabled: true,
+            maxSetSize,
+            writeFile: (path, content) => written.set(path, content),
+            traceSpec: { module: `${name}_TTrace`, traceFile: `${name}_TTrace.bin` },
+          });
+          return {
+            ...result,
+            traceSpec: result.traceSpec?.replace(/\\\* Generated on .*/, ""),
+            written,
+          };
+        }),
+      );
+      expect([
+        typed.status,
+        [
+          typed.generatedStates,
+          typed.distinctStates,
+          typed.queuedStates,
+          typed.depth,
+          typed.violation?.trace.length,
+        ],
+      ]).toEqual([status, counts]);
+      expect(typed).toEqual(interpreted);
+    },
+  );
+
   it.each(["default", "final", "off"] as const)(
     "reports a deadlock past a stuttering violation with the %s liveness check, as the interpreter does",
     async (livenessCheck) => {

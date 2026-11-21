@@ -513,10 +513,11 @@ const searchStates = (
     });
     return createSuccess();
   }
-  const hasPostconditions =
+  const hasUserPostconditions =
     config.postconditions.length > 0 ||
     config.possible.length > 0 ||
-    specification.moduleOperators.some((operator) => operator.kind === "postcondition");
+    (options.moduleOperators ?? []).some((operator) => operator.kind === "postcondition");
+  const hasPostconditions = hasUserPostconditions || options.traceSpec?.traceFile !== undefined;
   const tracedSteps = new WeakMap<TraceStep, TracedStep>();
   const getStepState = (step: TraceStep) => tracedSteps.get(step)?.state ?? step.state;
   // TLC's Worker#doPostCondition and LiveCheck bind CounterExample to the alias of each state, while its initial states and lassos keep the states.
@@ -1316,7 +1317,8 @@ const searchStates = (
     options.dump === undefined &&
     // A set of small integers on the tier is a 31-bit mask, which a lower bound could overflow.
     options.maxSetSize === undefined &&
-    !hasPostconditions
+    // The trace spec's _TLCTraceSilent holds without effect while CounterExample.state = {}, as it is after any run the tier decides.
+    !hasUserPostconditions
       ? search.getTypedChecks(liveness?.solutions)
       : undefined;
   const typed =
