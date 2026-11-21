@@ -547,12 +547,18 @@ const describeSpecification = (
       (!substitutionFrame || isVariableBound(called.body, environment, new Set()))
     ) {
       const name = isLocallyResolved(expression) ? undefined : getOperatorName(expression);
+      const written =
+        expression.kind === "Identifier" || expression.kind === "Apply"
+          ? instanceActions.get(expression.writtenKey ?? "")
+          : undefined;
       description.inits.push({
         ...createConjunct(called.name, called.body, calledScope),
         ...(name === undefined
           ? getDefinitionRanges(letDefinition)
           : substitutionFrame
-            ? getDefinitionRanges(getDefinition(name, environment))
+            ? written
+              ? { name: written.name, head: written.head, body: written.body }
+              : getDefinitionRanges(getDefinition(name, environment))
             : instanceActions.get(name)),
       });
       return;

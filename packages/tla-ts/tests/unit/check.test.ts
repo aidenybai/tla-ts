@@ -7647,6 +7647,109 @@ ASSUME TLCFP(a) = -887695703
     ]);
   });
 
+  const NESTED_MODULES = new Map([
+    [
+      "N",
+      "---- MODULE N ----\nEXTENDS Naturals\nCONSTANT k\nVARIABLES x, y\nInner == INSTANCE O WITH m <- k\nInitIn == x = 0 /\\ y = 0 /\\ Inner!BadM\nInitIn2 == Inner!InitO\nNextIn == Inner!NextO\nInitIn3 == Inner!InitD\nPlain == INSTANCE Q\nInitQ == Plain!InitQ\nSpecN == Inner!InitO /\\ [][UNCHANGED <<x, y>>]_<<x, y>>\nSpecO == Inner!SpecO\n====\n",
+    ],
+    [
+      "O",
+      "---- MODULE O ----\nEXTENDS Naturals\nCONSTANT m\nVARIABLES x, y\nBadM == x + m\nInitO == x = m /\\ y = 0\nNextO == x' = x /\\ y' = y\nDeep == INSTANCE P WITH n <- m\nInitD == Deep!InitP\nSpecO == InitO /\\ [][UNCHANGED <<x, y>>]_<<x, y>>\n====\n",
+    ],
+    ["P", "---- MODULE P ----\nCONSTANT n\nVARIABLES x, y\nInitP == x = n /\\ y = 0\n====\n"],
+    ["Q", "---- MODULE Q ----\nVARIABLES x, y\nInitQ == x = 0 /\\ y = 0\n====\n"],
+  ]);
+  const getInitRecord = (name: string, line: number, endColumn: number) =>
+    `[ coverage |-> [generated |-> 0, distinct |-> 0],\n    name |-> "${name}",\n    location |->\n        [ beginLine |-> ${line},\n          beginColumn |-> 1,\n          endLine |-> ${line},\n          endColumn |-> ${endColumn},\n          module |-> "M" ] ]`;
+
+  it.each([
+    [
+      `Spec == I(0)!InitIn /\\ ${UNCHANGED_STEP}`,
+      [
+        "<Action line 4, col 1 to line 4, col 30 of module M>: 0:0",
+        "<Action line 4, col 1 to line 4, col 30 of module M>: 0:0",
+        "<Inner!BadM line 5, col 1 to line 5, col 5 of module N (4 1 4 30)>: 0:0",
+        "<Action line 6, col 27 to line 6, col 44 of module M>: 0:0",
+      ],
+      `{ ${getInitRecord("Inner!BadM", 4, 30)},\n  ${getInitRecord("UnnamedAction", 4, 30)} }`,
+    ],
+    [
+      `Spec == I(0)!InitIn2 /\\ ${UNCHANGED_STEP}`,
+      [
+        "<Inner!InitO line 5, col 1 to line 5, col 5 of module N (4 1 4 30)>: 1:1",
+        "<Action line 6, col 28 to line 6, col 45 of module M>: 0:1",
+      ],
+      `{ ${getInitRecord("Inner!InitO", 4, 30)} }`,
+    ],
+    [
+      `Spec == I(0)!InitIn3 /\\ ${UNCHANGED_STEP}`,
+      [
+        "<Inner!InitD line 5, col 1 to line 5, col 5 of module N (4 1 4 30)>: 1:1",
+        "<Action line 6, col 28 to line 6, col 45 of module M>: 0:1",
+      ],
+      `{ ${getInitRecord("Inner!InitD", 4, 30)} }`,
+    ],
+    [
+      `Spec == I(0)!InitQ /\\ ${UNCHANGED_STEP}`,
+      [
+        "<Plain!InitQ line 10, col 1 to line 10, col 5 of module N (4 1 4 30)>: 1:1",
+        "<Action line 6, col 26 to line 6, col 43 of module M>: 0:1",
+      ],
+      `{ ${getInitRecord("Plain!InitQ", 4, 30)} }`,
+    ],
+    [
+      "Spec == J!SpecN",
+      [
+        "<Inner!InitO line 5, col 1 to line 5, col 5 of module N (5 1 5 27)>: 1:1",
+        "<Action line 5, col 1 to line 5, col 27 of module M>: 0:1",
+      ],
+      `{ ${getInitRecord("Inner!InitO", 5, 27)} }`,
+    ],
+    [
+      "Spec == I(0)!SpecN",
+      [
+        "<Inner!InitO line 5, col 1 to line 5, col 5 of module N (4 1 4 30)>: 1:1",
+        "<Action line 4, col 1 to line 4, col 30 of module M>: 0:1",
+      ],
+      `{ ${getInitRecord("Inner!InitO", 4, 30)} }`,
+    ],
+    [
+      `Spec == J!InitIn2 /\\ ${UNCHANGED_STEP}`,
+      [
+        "<J!InitIn2 line 5, col 1 to line 5, col 1 of module M>: 1:1",
+        "<Action line 6, col 25 to line 6, col 42 of module M>: 0:1",
+      ],
+      `{ ${getInitRecord("J!InitIn2", 5, 27)} }`,
+    ],
+    [
+      `Spec == I(0)!Inner!InitO /\\ ${UNCHANGED_STEP}`,
+      [
+        "<Action line 4, col 1 to line 4, col 30 of module M>: 0:0",
+        "<Action line 4, col 1 to line 4, col 30 of module M>: 1:1",
+        "<Action line 6, col 32 to line 6, col 49 of module M>: 0:1",
+      ],
+      `{ ${getInitRecord("UnnamedAction", 4, 30)} }`,
+    ],
+  ])(
+    "names the initial predicate %j reaches through an inner instance by the definition that instance adds to its module, as TLC names the OpDefNode the body refers to",
+    async (spec, labels, printed) => {
+      const prints: string[] = [];
+      const result = await check({
+        source: `---- MODULE M ----\nEXTENDS Naturals, TLC\nVARIABLES x, y\nI(j) == INSTANCE N WITH k <- j\nJ == INSTANCE N WITH k <- 0\n${spec}\nASSUME PrintT(TLCGet("spec").inits)\n====\n`,
+        config: "SPECIFICATION Spec\n",
+        coverage: 1,
+        onPrint: (text) => prints.push(text),
+        loadModule: (name) => NESTED_MODULES.get(name),
+      });
+      expect([
+        result.coverage?.relations.map(
+          (relation) => `<${relation.label}>: ${relation.distinct}:${relation.generated}`,
+        ),
+        prints,
+      ]).toEqual([labels, [printed]]);
+    },
+  );
+
   it.each([
     [
       "LET I2 == Init IN I2",
