@@ -488,11 +488,13 @@ const DEFINITIONS = [
       target == CASE p.kind = "function" -> stop
                   [] p.kind = "console" -> ConsoleObject(stop.s)
                   [] p.kind = "process" -> ProcessObject(stop.s)
+                  [] p.kind = "performance" -> PerformanceObject(stop.s)
                   [] OTHER -> LET a == Alloc(stop.s, MakeObject(Null, "ordinary", [hostName |-> p.name])) IN Ok(a.s, a.v)
       value == CASE p.kind = "value" -> Ok(target.s, p.value)
                  [] p.kind \\in {"undefined", "accessor"} -> Ok(target.s, Undefined)
                  [] p.kind = "console" -> StoppingProxy(target.s, Val(target), p.name, <<[trap |-> SV("get"), method |-> "consoleGet"]>>)
                  [] p.kind = "process" -> StoppingProxy(target.s, Val(target), p.name, <<[trap |-> SV("get"), method |-> "processGet"]>>)
+                 [] p.kind = "performance" -> StoppingProxy(target.s, Val(target), p.name, <<[trap |-> SV("get"), method |-> "performanceGet"]>>)
                  [] OTHER -> ProxyCreate(target.s, Val(target), handler)
       getter == IF p.kind = "accessor" THEN Ok(value.s, Val(stop))
                 ELSE CreateBuiltinFunction(value.s, <<"Module", "hostGlobal">>, 0, <<>>, Val(value))
@@ -601,6 +603,12 @@ const DEFINITIONS = [
       module == OrdinaryObjectCreate(hooksProxy.s, Intrinsic(s, "ObjectPrototype"))
       made == CreateDataProperty(module.s, Val(module), SV("exports"), Val(hooksProxy))
   IN Ok([made.s EXCEPT !.required = (0 :> [module |-> Val(module), loaded |-> TRUE]) @@ @], Val(hooksProxy))`,
+  // Node's performance, of which a program reads only now, whose time each run reads anew, so it
+  // gives HostTime, at whose reading a compiled spec stops.
+  `PerformanceObject(s) ==
+  LET o == OrdinaryObjectCreate(s, Intrinsic(s, "ObjectPrototype"))
+      now == CreateBuiltinFunction(o.s, <<"Module", "performanceNow">>, 0, N("now"), Empty)
+  IN Ok(CreateDataProperty(now.s, Val(o), SV("now"), Val(now)).s, Val(o))`,
   // Node's console, of which a program reads only the methods that write what they're given and
   // createTask: each of the former writes nothing that the program reads, where the values it's
   // given are primitives, which no code of the program runs to format.
@@ -1503,6 +1511,9 @@ const HOST_PATCHES = [
          LET list == CreateListFromArrayLike(s, Arg(args, 3), "all") IN
          IF IsAbrupt(list) THEN list ELSE Call(list.s, Arg(args, 1), Arg(args, 2), Val(list))
     [] m = "hostGlobal" -> Ok(s, data)
+    [] m = "performanceGet" ->
+         IF Arg(args, 2) # SV("now") THEN HostStop(N("performance")) ELSE Get(s, Arg(args, 1), Arg(args, 2))
+    [] m = "performanceNow" -> Ok(s, HostTime)
     [] m = "consoleGet" ->
          IF Arg(args, 2) \\notin {SV("log"), SV("info"), SV("debug"), SV("warn"), SV("error"), SV("createTask")}
          THEN Assert(FALSE, "tla-ts can't use the host's console other than to write primitives and createTask")
