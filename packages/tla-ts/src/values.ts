@@ -2991,7 +2991,7 @@ export const createUnsortedCopy = (set: SetValue, added: Value[]): SetValue => {
   return copy;
 };
 
-const isSequenceDomain = (keys: Value[]) => keys.every((key, index) => key === index + 1);
+export const isSequenceDomain = (keys: Value[]) => keys.every((key, index) => key === index + 1);
 
 // TLC's FcnLambdaValue#toTuple applies the function at 1, 2, ... until a key breaks the run, and caches nothing.
 const getAppliedSequenceElements = (value: LazyFunctionValue) => {
@@ -3671,7 +3671,7 @@ const checkBoundArgumentsWith = (
   }
 };
 
-export const checkLazyArgumentWith = (
+const checkLazyArgumentWith = (
   functionValue: LazyFunctionValue,
   argument: Value,
   isMember: typeof isElementOf,
@@ -3714,6 +3714,23 @@ export const applyFunction = (
   return functionValue.range[position];
 };
 
+export const applyFunctionWith = (
+  functionValue: Value,
+  argument: Value,
+  describeMissing: ((functionValue: FunctionValue, argument: Value) => string) | undefined,
+  isMember: typeof isElementOf,
+) => {
+  if (
+    typeof functionValue !== "object" ||
+    functionValue.kind !== "LazyFunction" ||
+    functionValue.enumerated !== undefined
+  ) {
+    return applyFunction(functionValue, argument, describeMissing);
+  }
+  checkLazyArgumentWith(functionValue, argument, isMember);
+  return functionValue.apply(argument);
+};
+
 export const getDomainInterval = (domain: Value[]) =>
   isIntervalDomain(domain)
     ? (intervalArrays.get(domain) ?? getIntervalValue(domain.length))
@@ -3744,13 +3761,12 @@ export const updateFunction = (
   functionValue: Value,
   argument: Value,
   update: (previous: Value) => Value,
-  isKeptLazy: boolean,
 ): Value => {
-  const isLazy =
+  if (
     typeof functionValue === "object" &&
     functionValue.kind === "LazyFunction" &&
-    (isKeptLazy || functionValue.enumerated === undefined);
-  if (isLazy) {
+    functionValue.enumerated === undefined
+  ) {
     if (
       functionValue.boundTupleLengths !== undefined &&
       getSequenceElements(argument) === undefined

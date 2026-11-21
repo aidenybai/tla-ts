@@ -6,7 +6,6 @@ import {
   type Expression,
   type QuantifierExpression,
 } from "./ast";
-import { getKindString } from "./builtins";
 import { getReadVariables } from "./dependencies";
 import {
   TlaEvaluationError,
@@ -32,6 +31,7 @@ import {
   getDefinition,
   getContextElements,
   getEntryEvaluator,
+  getMissingArgumentDescriber,
   getReevaluatedDefinitions,
   getStartupValue,
   getUnchangedVariables,
@@ -59,8 +59,10 @@ import {
   getCaseOtherMessage,
   getComputation,
   getEnabledFailure,
+  getFunctionResultMessage,
   getIfConditionMessage,
   getImpliesConditionMessage,
+  getNonFunctionMessage,
   getRelationMessage,
   holdsValue,
   isAssignedShortcut,
@@ -68,6 +70,7 @@ import {
   warnChangedUnchanged,
 } from "./tlc/replay";
 import {
+  applyFunction,
   createTuple,
   getStreamedElements,
   isElementOf,
@@ -553,22 +556,23 @@ const compileFunctionAction = (
   environment: Environment,
   isInit: boolean,
 ): Runner => {
-  const node = describeRange(expression);
+  const describeMissing = getMissingArgumentDescriber(environment.runtime.version);
   return (run, scope, partial, action, isFixed, onComplete) => {
     const context = getContext(run, scope, partial);
     const value = evaluate(expression.function, isInit ? context : toKeepLazyContext(context));
     const lambda = getLazyFunction(value);
+    if (lambda === undefined && !isFunctionValue(value)) {
+      throw createRunError(run, getNonFunctionMessage(run, value, expression));
+    }
+    // Kept inline: sharing replay's helper for these lines cost 1.4% per lazy action.
+    const argument =
+      expression.args.length === 1
+        ? evaluate(expression.args[0], context)
+        : createTuple(expression.args.map((arg) => evaluate(arg, context)));
     if (lambda !== undefined) {
-      // Kept inline: sharing replay's helper for these lines cost 1.4% per lazy action.
-      const args = expression.args.map((arg) => evaluate(arg, context));
       getRunner(lambda.body, environment, isInit)(
         run,
-        bindLazyArguments(
-          lambda,
-          expression,
-          args.length === 1 ? args[0] : createTuple(args),
-          isElementOf,
-        ),
+        bindLazyArguments(lambda, expression, argument, isElementOf),
         partial,
         action,
         isFixed,
@@ -576,18 +580,9 @@ const compileFunctionAction = (
       );
       return;
     }
-    if (!isFunctionValue(value)) {
-      throw createRunError(
-        run,
-        `In computing ${getComputation(run)}, a non-function (${getKindString(value)}) was applied as a function.\n${node}`,
-      );
-    }
-    const result = evaluate(expression, context);
+    const result = applyFunction(value, argument, describeMissing);
     if (typeof result !== "boolean") {
-      throw createRunError(
-        run,
-        `In computing ${getComputation(run)}, TLC expected a boolean expression,\nbut didn't find one.\n${node}`,
-      );
+      throw createRunError(run, getFunctionResultMessage(run, expression));
     }
     if (result) onComplete(partial, action);
   };

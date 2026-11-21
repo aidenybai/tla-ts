@@ -4378,6 +4378,11 @@ describe("evaluation errors match TLC", () => {
       PRINTED_SELECTED,
       undefined,
     ],
+    [
+      `x' = x /\\ \\E e \\in [{1, 2} -> {h \\in [{1} -> {[s \\in SUBSET {1} |-> PrintT(s)]}] : h[1][{}]} \\ {}] : FALSE`,
+      ["{}", "{}", "{}", "{}"],
+      undefined,
+    ],
   ])(
     "evaluates a filter under a component S \\cup T, S \\cap T, S \\ T or UNION S of [S -> T] as TLC's enumerators reset it: %s",
     async (next, printed, traceOutput) => {
@@ -4390,6 +4395,17 @@ describe("evaluation errors match TLC", () => {
       expect([lines, result.failure?.traceOutput]).toEqual([printed, traceOutput]);
     },
   );
+
+  it("evaluates a filter under a component S \\ T of [S -> T] as TLC's enumerators reset it when its predicate prints through a LET operator that calls a definition", async () => {
+    const lines: string[] = [];
+    await check({
+      source:
+        "---- MODULE M ----\nEXTENDS Integers, FiniteSets, TLC\nVARIABLE x\nShow(t) == PrintT(t)\nInit == x = 0\nNext == LET P(t) == Show(t) IN x' = x /\\ \\E e \\in [{1, 2} -> {t \\in (1..2) \\X {0} : P(t)} \\ {<<2, 0>>}] : FALSE\n====",
+      config: "INIT Init\nNEXT Next",
+      onPrint: (text) => lines.push(text),
+    });
+    expect(lines).toEqual(PRINTED_SELECTED);
+  });
 
   it("fails where TLC's enumerator of S \\X T reaches a failure, past a pure filter that fails in a component S \\cup T", async () => {
     const result = await check({
