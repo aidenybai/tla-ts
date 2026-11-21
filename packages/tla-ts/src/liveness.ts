@@ -35,6 +35,7 @@ import {
   resolveApplyOperator,
   resolveGlobalOperator,
   resolveOperator,
+  NULL_STATE,
   type Closure,
   type Context,
   type Environment,
@@ -168,7 +169,6 @@ const getConstantContext = (environment: Environment, scope: Scope | undefined):
   scope,
   state: undefined,
   next: undefined,
-  isPrimed: false,
 });
 
 const createCannotHandleError = (expression: Expression, inner?: string) =>
@@ -978,7 +978,7 @@ export interface LiveAtoms<State> {
 
 export const getInterpretedAtoms = (environment: Environment): LiveAtoms<Value[]> => ({
   holdsState: (atom, state) => {
-    const context = { environment, scope: atom.scope, state, next: undefined, isPrimed: false };
+    const context = { environment, scope: atom.scope, state, next: undefined };
     const value =
       atom.kind === "State" ? evaluate(atom.expression, context) : isEnabled(atom.step, context);
     if (typeof value !== "boolean") {
@@ -992,12 +992,12 @@ export const getInterpretedAtoms = (environment: Environment): LiveAtoms<Value[]
     if (
       subscript &&
       isEqualLikeTlc(
-        evaluate(subscript, { environment, scope, state, next: undefined, isPrimed: false }),
-        evaluate(subscript, { environment, scope, state: next, next: undefined, isPrimed: true }),
+        evaluate(subscript, { environment, scope, state, next: undefined }),
+        evaluate(subscript, { environment, scope, state: next, next: NULL_STATE }),
       )
     )
       return false;
-    const value = evaluate(atom.expression, { environment, scope, state, next, isPrimed: false });
+    const value = evaluate(atom.expression, { environment, scope, state, next });
     if (typeof value !== "boolean") {
       throw new TlaEvaluationError("Encountered an action predicate that's not a boolean.");
     }

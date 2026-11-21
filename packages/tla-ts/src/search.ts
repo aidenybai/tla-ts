@@ -934,7 +934,7 @@ export const getContext = (
   state: State | undefined,
   next: State | undefined,
   scope?: Scope,
-) => ({ environment, scope, state, next, isPrimed: false });
+) => ({ environment, scope, state, next });
 
 const holds = (expression: Expression, context: Context, description: string) =>
   expectBoolean(evaluate(expression, context), description);

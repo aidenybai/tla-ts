@@ -269,7 +269,6 @@ export interface Context {
   state: State | undefined;
   next: State | undefined;
   isKeepLazy?: boolean;
-  isPrimed: boolean;
 }
 
 export type Evaluator = (context: Context) => Value;
@@ -469,7 +468,6 @@ export const toKeepLazyContext = (context: Context): Context =>
         state: context.state,
         next: context.next,
         isKeepLazy: true,
-        isPrimed: context.isPrimed,
       };
 
 const withScope = (context: Context, scope: Scope | undefined): Context => ({
@@ -478,7 +476,6 @@ const withScope = (context: Context, scope: Scope | undefined): Context => ({
   state: context.state,
   next: context.next,
   isKeepLazy: context.isKeepLazy,
-  isPrimed: context.isPrimed,
 });
 
 export const expectBoolean = (value: Value, description: string) => {
@@ -1085,13 +1082,7 @@ const evaluateAtStartup = (
   environment: Environment,
 ) => {
   // SpecProcessor#evalConstantDefn evaluates in TLCState.Empty, before any checker exists.
-  const context = {
-    environment,
-    scope: undefined,
-    state: EMPTY_STATE,
-    next: undefined,
-    isPrimed: false,
-  };
+  const context = { environment, scope: undefined, state: EMPTY_STATE, next: undefined };
   const value = environment.runtime.evaluateAtStartup(() =>
     toStartupValue(definition, compileDefinitionBody(definition, environment)(context)),
   );
@@ -1578,7 +1569,7 @@ const evaluateLocalIdentifier = (name: string, expression: Expression, context: 
   if (binding?.kind === "Value") return binding.value;
   if (binding?.kind === "Thunk") {
     // Tool#evalAppl reads a LazyValue afresh, and stores nothing, where s1 is TLCState.Null, as under a prime.
-    return context.isPrimed && !binding.isReleased
+    return context.next === NULL_STATE && !binding.isReleased
       ? evaluate(binding.expression, withScope(context, binding.scope))
       : forceThunk(binding, context);
   }
@@ -1646,13 +1637,15 @@ const isRebindable = (value: Value): value is RebindableFilteredSet | Rebindable
   (value.kind === "FilteredSet" || value.kind === "LazyFunction") &&
   "rebind" in value;
 
+// Holds undefined, as a state's slots do, so V8 gives it the states' elements kind.
+export const NULL_STATE: State = [undefined];
+
 export const toNextContext = (context: Context): Context => ({
   environment: context.environment,
   scope: context.scope,
   state: context.next,
-  next: undefined,
+  next: NULL_STATE,
   isKeepLazy: context.isKeepLazy,
-  isPrimed: true,
 });
 
 // TLC evaluates the first side of UNCHANGED, [A]_e and <A>_e with s1 as TLCState.Empty.
@@ -1662,7 +1655,6 @@ export const toEmptyContext = (context: Context): Context => ({
   state: context.state,
   next: undefined,
   isKeepLazy: context.isKeepLazy,
-  isPrimed: false,
 });
 
 const evaluateWithNextState = (
@@ -1909,7 +1901,7 @@ const countSubstitution =
   (substitution: Substitution, evaluator: Evaluator, coverage: Coverage): Evaluator =>
   (context) => {
     const outer = coverage.current;
-    const node = getSubstitutionNode(coverage, substitution, context.isPrimed);
+    const node = getSubstitutionNode(coverage, substitution, context.next === NULL_STATE);
     coverage.current = node === -1 && outer < 0 ? outer : node;
     try {
       return evaluator(context);
@@ -2046,7 +2038,7 @@ const compileIdentifier = (
     if (binding?.kind !== "Thunk" || binding.isReleased) {
       return evaluateLocalIdentifier(name, expression, context);
     }
-    if (context.isPrimed) return evaluateCoveredThunk(binding, context, coverage);
+    if (context.next === NULL_STATE) return evaluateCoveredThunk(binding, context, coverage);
     if (coverage.cachedInEnabled.get(binding) !== coverage.isEnabled) binding.cache = undefined;
     const value = forceThunk(binding, context);
     coverage.cachedInEnabled.set(binding, coverage.isEnabled);
@@ -2139,7 +2131,6 @@ const compileClosureCall = (
       state: context.state,
       next: context.next,
       isKeepLazy: context.isKeepLazy,
-      isPrimed: context.isPrimed,
     });
   };
   if (called === undefined) return call;
@@ -2154,7 +2145,6 @@ const compileClosureCall = (
       state: context.state,
       next: context.next,
       isKeepLazy: context.isKeepLazy,
-      isPrimed: context.isPrimed,
     });
   };
 };
@@ -3059,7 +3049,7 @@ const compile = (expression: Expression, environment: Environment): Evaluator =>
       const index = environment.variableIndex.get(name) ?? -1;
       const substitution = getChildEvaluator(expression.substitution);
       return (context) => {
-        if (!context.isPrimed) return substitution(context);
+        if (context.next !== NULL_STATE) return substitution(context);
         const value = context.state?.[index];
         if (value === undefined) throw createUnassignedError(name, expression);
         return value;

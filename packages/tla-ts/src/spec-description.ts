@@ -133,7 +133,6 @@ const getConstantContext = (environment: Environment, scope: Scope | undefined) 
   scope,
   state: undefined,
   next: undefined,
-  isPrimed: false,
 });
 
 const getSplitContext = (environment: Environment, scope: Scope | undefined) => ({
@@ -141,7 +140,6 @@ const getSplitContext = (environment: Environment, scope: Scope | undefined) => 
   scope,
   state: EMPTY_STATE,
   next: undefined,
-  isPrimed: false,
 });
 
 // Tool#getActionsAppl reads the level SANY gives each argument, which is constant for TLCGet.
