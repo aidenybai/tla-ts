@@ -10,6 +10,7 @@ import { parseConfig, type ModelConfig } from "./config";
 import { TlaEvaluationError } from "./errors";
 import type { RuntimeInvariant } from "./environment";
 import { isImpure } from "./evaluate";
+import { printModule } from "./printer";
 import {
   createSharedFingerprints,
   growSharedFingerprints,
@@ -75,6 +76,15 @@ export type CoordinatorMessage =
   | { type: "resize"; fingerprints: SharedFingerprints };
 
 export const check = async (options: CheckOptions): Promise<CheckResult> => {
+  // TLC ranks the strings of the root's tokens, which a parsed module lacks, before those of the
+  // modules it extends, and a prepared module's values hold the order that its preparation ranked
+  // from the root's text, so a parsed root with them is checked from its text, as the CLI does.
+  if (
+    typeof options.source !== "string" &&
+    options.preparedModules?.some((prepared) => (prepared.values?.size ?? 0) > 0)
+  ) {
+    return check({ ...options, source: printModule(options.source) });
+  }
   const config =
     typeof options.config === "string"
       ? parseConfig(options.config, options.version)

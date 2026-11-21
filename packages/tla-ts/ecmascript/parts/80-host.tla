@@ -32,10 +32,15 @@ AnyRestrictedGlobal(s, env, names) ==
   ELSE LET r == HasRestrictedGlobalProperty(s, env, Head(names)) IN
        IF IsAbrupt(r) THEN r ELSE IF Val(r) = True THEN Ok(r.s, TRUE) ELSE AnyRestrictedGlobal(r.s, env, Tail(names))
 
+\* Each of names in order, in halves, so that thousands of names nest log n deep rather than n.
 CheckGlobalNames(s, env, names, isFunction) ==
-  IF names = <<>> THEN Ok(s, Empty)
-  ELSE LET r == IF isFunction THEN CanDeclareGlobalFunction(s, env, Head(names)) ELSE CanDeclareGlobalVar(s, env, Head(names)) IN
-       IF IsAbrupt(r) THEN r ELSE IF Val(r) = False THEN ThrowTypeError(r.s) ELSE CheckGlobalNames(r.s, env, Tail(names), isFunction)
+  CASE names = <<>> -> Ok(s, Empty)
+    [] Len(names) = 1 ->
+         LET r == IF isFunction THEN CanDeclareGlobalFunction(s, env, names[1]) ELSE CanDeclareGlobalVar(s, env, names[1]) IN
+         IF IsAbrupt(r) THEN r ELSE IF Val(r) = False THEN ThrowTypeError(r.s) ELSE Ok(r.s, Empty)
+    [] OTHER ->
+         LET first == CheckGlobalNames(s, env, SubSeq(names, 1, Len(names) \div 2), isFunction) IN
+         IF IsAbrupt(first) THEN first ELSE CheckGlobalNames(first.s, env, SubSeq(names, Len(names) \div 2 + 1, Len(names)), isFunction)
 
 CreateGlobalLexicals(s, env, decls) ==
   IF decls = <<>> THEN Ok(s, Empty)
@@ -54,9 +59,11 @@ CreateGlobalFunctions(s, ctx, env, fns) ==
        IN IF IsAbrupt(r) THEN r ELSE CreateGlobalFunctions(r.s, ctx, env, Tail(fns))
 
 CreateGlobalVars(s, env, names) ==
-  IF names = <<>> THEN Ok(s, Empty)
-  ELSE LET r == CreateGlobalVarBinding(s, env, Head(names), FALSE) IN
-       IF IsAbrupt(r) THEN r ELSE CreateGlobalVars(r.s, env, Tail(names))
+  CASE names = <<>> -> Ok(s, Empty)
+    [] Len(names) = 1 -> CreateGlobalVarBinding(s, env, names[1], FALSE)
+    [] OTHER ->
+         LET first == CreateGlobalVars(s, env, SubSeq(names, 1, Len(names) \div 2)) IN
+         IF IsAbrupt(first) THEN first ELSE CreateGlobalVars(first.s, env, SubSeq(names, Len(names) \div 2 + 1, Len(names)))
 
 \* Step 12 of GlobalDeclarationInstantiation and step 13 of EvalDeclarationInstantiation (§B.3.2.2,
 \* §B.3.2.3): var bindings for the block functions fns that sloppy code hoists, which eval makes
@@ -119,6 +126,57 @@ RunModuleFrom(harness, specifier, directory, canSuspend, parses) ==
   TestResult(IF IsAbrupt(harness) THEN harness
              ELSE RunModule([harness.s EXCEPT !.parses = parses, !.directory = directory, !.canSuspend = canSuspend],
                             specifier))
+\* The named time zone that the host has of a lowercase name (AvailableNamedTimeZoneIdentifiers,
+\* §11.1.2): an entry [found, id, primary, offsets, days, seconds, isFinal, rule], whose found is
+\* "zone", with its identifier and its primary identifier as code units, its offsets in seconds, the first before any transition,
+\* the epoch days and the seconds within the day of its transitions before 2038, whether it has no
+\* transition after them, and otherwise the rule of its later transitions: its standard and daylight
+\* offsets in seconds, and the month, week, weekday, and local time in seconds of the start and of
+\* the end of daylight time. Else found is "rejected" where the host has no such time zone, and
+\* "unknown" where it may have one that this table leaves out. engine262 has none but UTC.
+HostTimeZone(key) == [found |-> "rejected"]
+
+\* HostDateFormat(key): how the host's Intl formats a Temporal object's toLocaleString for a key of
+\* its kind, its calendar, and its options (DateFormatKey): found is "format", with the fields and
+\* styles of an English pattern and whether a time zone option leaves the pattern as it is, or
+\* "error", with the name of the error that it throws. Else found is "unknown" where the host's
+\* table leaves the key out, and "none" where the host has no Intl, as engine262 has none.
+HostDateFormat(key) == [found |-> "none"]
+
+\* HostLocale(tag): what the host's Intl gives of a locale tag's units. found is "locale", with its
+\* canonical form (CanonicalizeUnicodeLocaleId) and the services whose supportedLocalesOf support it
+\* with the lookup matcher and with the best fit one, and those where the two differ, which the
+\* table leaves out, or "invalid", where it isn't a structurally valid language tag. Else found is
+\* "unknown", as engine262 has no locale data.
+HostLocale(tag) == [found |-> "unknown"]
+
+\* HostCalendarYear(<<cal, year>>): a year of the Chinese or the Dangi calendar, which the host
+\* computes astronomically: found is "year", with the epoch days of its first day, the ordinal of
+\* its leap month or 0, and its months of 30 days as bits from the first month's. Else found is
+\* "unknown", where the host's table leaves the year out, as engine262 has no such calendar.
+HostCalendarYear(key) == [found |-> "unknown"]
+
+\* HostCalendarMonthDay(<<cal, month, leap, day>>): the month-day of the Chinese or the Dangi
+\* calendar of a month code's month and leap flag and a day from 1 to 30: found is "monthDay", with
+\* the epoch days of its ISO reference date and whether the month code and the day are kept, which
+\* they aren't where no year that the host searches has them. Else found is "unknown".
+HostCalendarMonthDay(key) == [found |-> "unknown"]
+
+\* HostIntl(<<service, config, method, args>>): what the host's Intl gives for a method of an object
+\* of a service whose requested locales and options config gives, with arguments args. found is
+\* "options", with the pairs of a property's units and its value that resolvedOptions gives, "parts",
+\* with the parts of a formatted value, each a sequence of a property's units and its value's, or
+\* "error", with the name of the error it throws. <<"currencyDigits", code>> gives "digits", with
+\* the digits of a currency. Else found is "unknown", where the host's table leaves the key out,
+\* and "none" where the host has no Intl, as engine262 has none.
+HostIntl(key) == [found |-> "none"]
+
+\* A run whose jobs leave a promise rejected that nothing handles fails with the promise's reason, as
+\* Node fails such a script (HostPromiseRejectionTracker, §27.2.1.9).
 TestResult(r) ==
-  LET thrown == IF r.c.type = "throw" THEN DescribeThrown(r.s, r.c.value) ELSE [name |-> <<>>, message |-> <<>>]
-  IN [ok |-> ~IsAbrupt(r), name |-> thrown.name, message |-> thrown.message, out |-> r.s.out]
+  LET rejected == {i \in 1..r.s.objs.size :
+                     LET o == HeapGet(r.s.objs, i) IN o.class = "promise" /\ o.slots.state = "rejected" /\ ~o.slots.isHandled}
+      ended == IF IsAbrupt(r) \/ rejected = {} THEN r
+               ELSE ThrowValue(r.s, HeapGet(r.s.objs, CHOOSE i \in rejected : \A j \in rejected : i <= j).slots.result)
+      thrown == IF ended.c.type = "throw" THEN DescribeThrown(ended.s, ended.c.value) ELSE [name |-> <<>>, message |-> <<>>]
+  IN [ok |-> ~IsAbrupt(ended), name |-> thrown.name, message |-> thrown.message, out |-> ended.s.out]

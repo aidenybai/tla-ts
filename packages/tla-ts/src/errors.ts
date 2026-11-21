@@ -14,8 +14,10 @@ export const UNEXPECTED_EVAL_EXCEPTION = getUnexpectedException("tlc2.tool.EvalE
 
 export const WRONG_INVOCATION_EXCEPTION = getUnexpectedException("util.WrongInvocationException");
 
+// V8 words an overflow of the stack without the period that JavaScriptCore, which Bun runs on,
+// ends it with.
 export const isStackOverflow = (error: unknown) =>
-  (error instanceof RangeError && error.message === "Maximum call stack size exceeded") ||
+  (error instanceof RangeError && /^Maximum call stack size exceeded\.?$/.test(error.message)) ||
   (error instanceof SyntaxError && error.message.endsWith(": Stack overflow"));
 
 export class TlaError extends Error {
@@ -140,6 +142,17 @@ export class TlaStackOverflowError extends TlaEvaluationError {
 
 export const createStackOverflowError = () =>
   setExitCode(new TlaStackOverflowError(), EXIT_STATUS.error);
+
+// A TypeScript program whose check needs more stack than tla-ts gives it, though Node may run it,
+// with the depth of the state graph where the check overflowed, when it got that far.
+export class TlaStackLimitError extends TlaError {
+  constructor(stackMb: number, depth?: number) {
+    super(
+      `tla-ts can't check this program within the stack: its check overflowed its ${stackMb} MB stack${depth === undefined ? "" : ` at depth ${depth}`}`,
+    );
+    this.name = "TlaStackLimitError";
+  }
+}
 
 export class TlaUncodedError extends TlaEvaluationError {}
 
@@ -448,5 +461,24 @@ export class TlaTypeScriptError extends TlaError {
         : `${sourceFile.fileName}:${position.line + 1}:${position.character + 1} ${message}`,
     );
     this.name = "TlaTypeScriptError";
+  }
+}
+
+// Syntax that Node's type stripping rejects, as Node's SyntaxError gives it: its code, its
+// message, and the span of the file's text that it points at.
+export class TlaStrippingError extends TlaTypeScriptError {
+  code: string;
+  reason: string;
+  fileName: string;
+  start: number;
+  end: number;
+  constructor(code: string, reason: string, node: ts.Node, start: number, end: number) {
+    super(`SyntaxError [${code}]: ${reason}`, node);
+    this.name = "TlaStrippingError";
+    this.code = code;
+    this.reason = reason;
+    this.fileName = node.getSourceFile().fileName;
+    this.start = start;
+    this.end = end;
   }
 }

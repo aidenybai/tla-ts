@@ -32,11 +32,15 @@ export const l2 = (self: Proc) => {
   pc.set(self, "l0");
 };
 
+// Whether two sets hold the same processes, as TLA+'s = compares them.
+const isSameSet = (left: ReadonlySet<Proc>, right: ReadonlySet<Proc>) =>
+  left.isSubsetOf(right) && right.isSubsetOf(left);
+
 const isLocked = (proc: Proc) => pc.get(proc) === "cs" || pc.get(proc) === "l2";
 
 export const typeOK = () =>
   (lock === 0 || lock === 1) &&
-  new Set(pc.keys()) === procs &&
+  isSameSet(new Set(pc.keys()), procs) &&
   pc.values().every((label) => ["l0", "l1", "cs", "l2"].includes(label));
 
 export const lockInv = () =>

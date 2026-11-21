@@ -1,0 +1,11 @@
+{
+  "compilerOptions": {
+    "strict": true,
+    "target": "es2022",
+    "lib": ["es2022"],
+    "types": [],
+    "module": "Preserve",
+    "moduleResolution": "Bundler"
+  },
+  "include": ["*.ts"]
+}

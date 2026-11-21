@@ -673,7 +673,7 @@ export const checkDepthFirst = (options: DepthFirstOptions): number => {
     if (isReplayFailed) {
       message(
         MESSAGE_CODE.nestedExpression,
-        `The error occurred when TLC was evaluating the nested\nexpressions at the following positions:\ntlc2.tool.impl.FastTool@${(Number(BigInt.asUintN(28, getTlcFingerprint([options.source]))) | 0x1000_0000).toString(16)}`,
+        `The error occurred when TLC was evaluating the nested\nexpressions at the following positions:\ntlc2.tool.impl.FastTool@${(Number(BigInt.asUintN(28, getTlcFingerprint([typeof options.source === "string" ? options.source : options.source.name]))) | 0x1000_0000).toString(16)}`,
       );
     }
     printSummary();

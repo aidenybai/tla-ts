@@ -194,6 +194,21 @@ describe("check matches TLC", () => {
     );
   });
 
+  it.each([
+    [
+      "FALSE",
+      "assumption-violation",
+      'The first argument of Assert evaluated to FALSE; the second argument was:\n"count 2"',
+    ],
+    ["TRUE", "success", undefined],
+  ])(
+    "reports the message of an Assert to %s that an assumption evaluates as TLC does",
+    async (condition, status, message) => {
+      const result = await checkModule(`Check == Assert(${condition}, "count 2")\nASSUME Check`);
+      expect([result.status, result.violation?.message]).toEqual([status, message]);
+    },
+  );
+
   it("compares power sets through their bases", async () => {
     expect((await checkModule("ASSUME SUBSET (1..23) \\subseteq SUBSET (1..42)")).status).toBe(
       "success",
@@ -288,6 +303,30 @@ describe("check matches TLC", () => {
       ["postcondition-violation", "AtTen", 4],
       ["postcondition-violation", "FiveStates", 4],
     ]);
+  });
+
+  it("checks one parsed module again with another config", async () => {
+    const module = parseModule(`---- MODULE M ----
+EXTENDS Naturals
+CONSTANT N
+Scaled(value) == value * N
+VARIABLE x
+Init == x = Scaled(1)
+Next == x < N + 1 /\\ x' = x + 1
+IsScaled == x \\in {N, N + 1}
+IsTwo == x \\in {2, 3}
+====`);
+    const checkWith = (value: number, invariant: string) =>
+      check({
+        source: module,
+        config: `CONSTANT N = ${value}\nINIT Init\nNEXT Next\nINVARIANT ${invariant}\nCHECK_DEADLOCK FALSE`,
+      });
+    expect((await checkWith(2, "IsScaled")).failure).toBeUndefined();
+    const result = await checkWith(3, "IsScaled");
+    expect(result.failure).toBeUndefined();
+    expect(result.distinctStates).toBe(2);
+    const wrong = await checkWith(3, "IsTwo");
+    expect(formatValue(wrong.violation?.trace[0].state.x ?? false)).toBe("3");
   });
 
   it("generates no states for a specification without variables", async () => {
@@ -797,6 +836,26 @@ describe("check matches TLC", () => {
       expect([result.generatedStates, result.distinctStates]).toEqual([3, 1]);
     },
   );
+
+  it("merges states whose strings differ only above U+00FF where an extended module holds them", async () => {
+    const getResult = (words: string) =>
+      check({
+        source: `---- MODULE M ----
+EXTENDS Words
+VARIABLE s
+Init == s \\in Words
+Next == UNCHANGED s
+====
+---- MODULE Words ----
+Words == {${words}}
+====`,
+        config: "INIT Init\nNEXT Next",
+      });
+    const wide = await getResult('"é", "ǩ"');
+    expect([wide.generatedStates, wide.distinctStates]).toEqual([3, 1]);
+    const narrow = await getResult('"é", "f"');
+    expect([narrow.generatedStates, narrow.distinctStates]).toEqual([4, 2]);
+  });
 
   it("computes TLCFP with TLC's fingerprint", async () => {
     const result = await check({
@@ -1455,6 +1514,16 @@ ASSUME TLCFP(a) = -887695703
     expect(printed).toEqual([]);
   });
 
+  it("assigns variables in a LET definition that calls Assert", async () => {
+    const result = await check({
+      source:
+        '---- MODULE M ----\nEXTENDS Integers, TLC\nVARIABLES x, y\nInit == \\E h \\in {1, 2} : LET J == IF h > 5 THEN Assert(FALSE, "big") ELSE /\\ x = h /\\ y = h + 1 IN J\nNext == LET K == IF x > 5 THEN Assert(FALSE, "big") ELSE /\\ x\' = x /\\ y\' = y IN K\nInv == y = x + 1\n====',
+      config: "INIT Init\nNEXT Next\nINVARIANT Inv",
+    });
+    expect(result.status).toBe("success");
+    expect([result.generatedStates, result.distinctStates, result.depth]).toEqual([4, 2, 1]);
+  });
+
   it("stops branching on initial conjuncts once every variable is assigned", async () => {
     const result = await checkFixture("initial-states", "InitialStates");
     expect(result.status).toBe("success");
@@ -1501,6 +1570,48 @@ ASSUME TLCFP(a) = -887695703
     expect(result.status).toBe("error");
     expect(result.failure?.message).toContain(message);
     expect([result.generatedStates, result.distinctStates]).toEqual([1, 1]);
+  });
+
+  describe("evaluates a tuple of more values than a function takes parameters", () => {
+    // Each read of a definition's value is a value that the generated function takes.
+    const tuple = `<<${Array.from({ length: 70_000 }, () => "One").join(", ")}, "last">>`;
+
+    it("agrees with TLC", async () => {
+      const result = await checkModule(
+        `One == 1\nInv == LET t == ${tuple} IN Len(t) = 70001 + x /\\ t[70001 + x] = "last"`,
+        "INVARIANT Inv",
+      );
+      expect(result.status).toBe("success");
+    });
+
+    it("rejects another value", async () => {
+      const result = await checkModule(
+        `One == 1\nInv == LET t == ${tuple} IN t[70001 + x] = "first"`,
+        "INVARIANT Inv",
+      );
+      expect(result.status).toBe("invariant-violation");
+    });
+
+    // Under the limit the generated function evaluates the tuple, and over it the interpreter.
+    const getReads = (count: number) =>
+      `<<${Array.from({ length: count }, () => "One").join(", ")}, "last">>`;
+    const definitions = `One == 1\nUnder == ${getReads(9_900)}\nOver == ${getReads(12_000)}`;
+
+    it("gives the value that the generated function gives just under the limit", async () => {
+      const result = await checkModule(
+        `${definitions}\nInv == SubSeq(Over, 2101 + x, 12001) = Under`,
+        "INVARIANT Inv",
+      );
+      expect(result.status).toBe("success");
+    });
+
+    it("rejects another value than the generated function gives", async () => {
+      const result = await checkModule(
+        `${definitions}\nInv == SubSeq(Over, 2100 + x, 12001) = Under`,
+        "INVARIANT Inv",
+      );
+      expect(result.status).toBe("invariant-violation");
+    });
   });
 
   it("checks liveness on the symmetry-reduced graph", async () => {
@@ -6083,6 +6194,18 @@ describe("initial predicate and next-state relation match TLC", () => {
     ]);
   });
 
+  it("evaluates the initial predicate of a spec without variables as TLC does", async () => {
+    const getResult = (condition: string) =>
+      checkBody(
+        `EXTENDS TLC\nInit == Assert(${condition}, "wrong")\nSpec == Init /\\ [][FALSE]_<<>>`,
+        "SPECIFICATION Spec",
+      );
+    expect((await getResult("TRUE")).status).toBe("success");
+    await expect(getResult("FALSE")).rejects.toThrow(
+      'The first argument of Assert evaluated to FALSE; the second argument was:\n"wrong"',
+    );
+  });
+
   it("requires an initial predicate when the spec has variables", async () => {
     await expect(
       checkBody("VARIABLE x\nSpec == [][x' = x]_x", "SPECIFICATION Spec"),
@@ -7279,6 +7402,146 @@ describe("initial predicate and next-state relation match TLC", () => {
       "INIT Init\nNEXT Next",
     );
     expect([result.generatedStates, result.distinctStates]).toEqual(counts);
+  });
+
+  const checkPrints = async (variables: string, init: string, next: string, invariant = "TRUE") => {
+    const printed: string[] = [];
+    const result = await check({
+      source: `---- MODULE M ----\nEXTENDS Naturals, TLC\nVARIABLE ${variables}\nBoth(a) == a /\\ a\nOuter(b) == Both(b = TRUE)\nG(a) == IF a THEN x ELSE x\nInit == ${init}\nNext == ${next}\nInv == ${invariant}\n====`,
+      config: "INIT Init\nNEXT Next\nINVARIANT Inv",
+      onPrint: (text) => printed.push(text),
+    });
+    return { result, printed };
+  };
+
+  it.each([
+    ["x", 'x = IF Outer(PrintT("init")) THEN 0 ELSE 1', "UNCHANGED x", ['"init"']],
+    ["x", 'x \\in {1, 2} /\\ Outer(PrintT("init"))', "UNCHANGED x", ['"init"', '"init"']],
+    [
+      "x, y",
+      "x \\in {1, 2} /\\ y = IF Outer(PrintT(x)) THEN 0 ELSE 1",
+      "UNCHANGED <<x, y>>",
+      ["1", "2"],
+    ],
+    ["x", "x \\in {1, 2}", 'x\' = IF Outer(PrintT("next")) THEN x ELSE x', ['"next"', '"next"']],
+    ["x", "x \\in {1, 2}", "x' = IF Outer(PrintT(x)) THEN x ELSE x", ["1", "2"]],
+    [
+      "x, y",
+      'y = (LET d == PrintT("d") IN IF Outer(d) THEN {e \\in 1..3 : Outer(d)} ELSE {}) /\\ x \\in {0, 1}',
+      'x\' = (x + 1) % 3 /\\ UNCHANGED y /\\ 2 \\in {e \\in y : Outer(LET c == PrintT("c") IN c)}',
+      ['"d"', ...Array<string>(9).fill('"c"')],
+    ],
+  ])(
+    "prints from an operator argument a definition forces with Init %s as often as TLC",
+    async (variables, init, next, expected) => {
+      const checked = await checkPrints(variables, init, next);
+      expect([checked.result.status, checked.printed]).toEqual(["success", expected]);
+    },
+  );
+
+  it("prints from an operator argument again as TLC does when it replays a violation", async () => {
+    const checked = await checkPrints(
+      "x",
+      'x = IF Outer(PrintT("init")) THEN 0 ELSE 1',
+      "x' = IF Outer(PrintT(x)) THEN x + 1 ELSE x",
+      "x < 2",
+    );
+    const violation = checked.result.violation;
+    expect([
+      checked.result.status,
+      checked.printed,
+      violation?.trace.map((step) => step.output),
+      violation?.traceOutput,
+    ]).toEqual([
+      "invariant-violation",
+      ['"init"', "0", "1"],
+      [['"init"'], ["0"], ["1"]],
+      ['"init"', "0", "1"],
+    ]);
+  });
+
+  it.each([
+    ["x = 0", 'LET F(c) == (x\' = IF c THEN x ELSE x) /\\ c IN F(PrintT("f"))', ['"f"']],
+    ["x = 0", 'LET F(c) == (x\' = G(c)) /\\ c IN F(PrintT("g"))', ['"g"']],
+    ["x = 0", 'LET F(c) == c /\\ (x\' = IF c THEN x ELSE x) IN F(PrintT("h"))', ['"h"']],
+    ["x \\in {0, 1}", 'LET F(c) == c /\\ c /\\ x\' = x IN F(PrintT("q"))', ['"q"']],
+    ["x = 0", "\\E i \\in {1} : LET F(c) == c /\\ c /\\ x' = x IN F(PrintT(i))", ["1"]],
+    [
+      "x = 0",
+      "LET F(c) == ENABLED (x' = IF c THEN x ELSE x) /\\ c /\\ x' = x IN F(PrintT(\"e\"))",
+      ['"e"'],
+    ],
+    ["x = 0", 'LET F(c) == c /\\ c /\\ x\' = x IN x = 0 /\\ F(PrintT("q"))', ['"q"', '"q"']],
+    ["x \\in {0, 1}", "LET F(c) == (x' = IF c THEN x ELSE x) /\\ c IN F(PrintT(x))", ["0", "1"]],
+    [
+      "x \\in {0, 1}",
+      "LET F(c) == c /\\ (x' = IF c THEN x ELSE x) IN F(PrintT(x))",
+      ["0", "0", "1", "1"],
+    ],
+    ["x = 0", 'LET d == PrintT("d") IN (x\' = IF d THEN x ELSE x) /\\ d', ['"d"', '"d"']],
+  ])(
+    "prints from an argument of a next-state action with Init %s and Next %s as often as TLC",
+    async (init, next, expected) => {
+      const checked = await checkPrints("x", init, next);
+      expect([checked.result.status, checked.printed]).toEqual(["success", expected]);
+    },
+  );
+
+  it("prints a constant argument of a next-state action once as TLC does when it finds a violation", async () => {
+    const checked = await checkPrints(
+      "x",
+      "x = 0",
+      'LET F(c) == c /\\ c /\\ x\' = x + 1 IN F(PrintT("w"))',
+      "x < 2",
+    );
+    expect([checked.result.status, checked.printed]).toEqual(["invariant-violation", ['"w"']]);
+  });
+
+  const printsU = 'IF PrintT("u") THEN x ELSE x';
+  const printsV = 'PrintT(<<"v", x>>)';
+
+  it.each([
+    ["(x' = x) /\\ UNCHANGED c", printsU, ['"u"', '"u"']],
+    ["(x' = IF c = x THEN x ELSE x) /\\ UNCHANGED c", printsU, ['"u"', '"u"']],
+    ["(x' = x) /\\ UNCHANGED c /\\ UNCHANGED c", printsU, ['"u"', '"u"', '"u"']],
+    ["(x' = x) /\\ UNCHANGED <<c, c>>", printsU, ['"u"', '"u"', '"u"']],
+    [
+      "(x' = IF c THEN (x + 1) % 2 ELSE x) /\\ c' /\\ c'",
+      printsV,
+      ['<<"v", 0>>', '<<"v", 1>>', '<<"v", 1>>', '<<"v", 1>>', '<<"v", 0>>', '<<"v", 0>>'],
+    ],
+    [
+      "(x' = (x + 1) % 2) /\\ UNCHANGED c",
+      printsV,
+      ['<<"v", 0>>', '<<"v", 1>>', '<<"v", 1>>', '<<"v", 0>>'],
+    ],
+  ])(
+    "prints from an argument that %s evaluates in the next state as often and in the order TLC does",
+    async (body, argument, expected) => {
+      const checked = await checkPrints("x", "x = 0", `LET F(c) == ${body} IN F(${argument})`);
+      expect([checked.result.status, checked.printed]).toEqual(["success", expected]);
+    },
+  );
+
+  it("prints from an argument that UNCHANGED evaluates again as TLC does when it replays a violation", async () => {
+    const checked = await checkPrints(
+      "x",
+      "x = 0",
+      `LET F(c) == (x' = (x + 1) % 3) /\\ UNCHANGED c IN F(${printsV})`,
+      "x < 2",
+    );
+    const violation = checked.result.violation;
+    expect([
+      checked.result.status,
+      checked.printed,
+      violation?.trace.map((step) => step.output),
+      violation?.traceOutput,
+    ]).toEqual([
+      "invariant-violation",
+      ['<<"v", 0>>', '<<"v", 1>>', '<<"v", 1>>', '<<"v", 2>>'],
+      [[], ['<<"v", 0>>', '<<"v", 1>>'], ['<<"v", 1>>', '<<"v", 2>>']],
+      ['<<"v", 0>>', '<<"v", 1>>', '<<"v", 1>>', '<<"v", 2>>'],
+    ]);
   });
 });
 

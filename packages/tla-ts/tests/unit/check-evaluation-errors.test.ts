@@ -2587,6 +2587,55 @@ describe("evaluation errors match TLC", () => {
     expect(result.failure?.trace.map((step) => step.state.x)).toEqual([0]);
   });
 
+  it("evaluates a deep recursion whose calls, or LET operators that make them, end its body", async () => {
+    const getResult = (definitions: string, value: string) =>
+      check({
+        source: `---- MODULE M ----\nEXTENDS Naturals\nVARIABLE x\n${definitions}\nInit == x = ${value}\nNext == UNCHANGED x\nInv == x = 100000\n====`,
+        config: "INIT Init\nNEXT Next\nINVARIANT Inv",
+      });
+    const global = await getResult(
+      "RECURSIVE Count(_)\nCount(n) == IF n < 100000 THEN LET m == n + 1 IN Count(m) ELSE n",
+      "Count(0)",
+    );
+    const local = await getResult(
+      "",
+      "LET RECURSIVE Count(_)\n        Count(n) == LET Step(m) == Count(m + 1) IN IF n = 99999 THEN n ELSE Step(n)\n    IN  Count(0)",
+    );
+    expect([global.status, global.distinctStates]).toEqual(["success", 1]);
+    expect(local.status).toBe("invariant-violation");
+  });
+
+  it("evaluates a deep recursion of an operator that an operator argument names", async () => {
+    const getResult = (body: string) =>
+      check({
+        source: `---- MODULE M ----\nEXTENDS Naturals\nVARIABLE x\nRECURSIVE Count(_)\nCount(n) == IF n < 100000 THEN Count(n + 1) ELSE n\nApply(F(_), v) == F(v)\nTwice(n) == LET Add(m) == m + n IN Add(Add(0))\nInit == x = ${body}\nNext == UNCHANGED x\nInv == x = 100000\n====`,
+        config: "INIT Init\nNEXT Next\nINVARIANT Inv",
+      });
+    const counted = await getResult("Apply(Count, 0)");
+    expect([counted.status, counted.distinctStates]).toEqual(["success", 1]);
+    const added = await getResult("Apply(Twice, 50000)");
+    expect([added.status, added.distinctStates]).toEqual(["success", 1]);
+    const other = await getResult("Apply(Twice, 49999)");
+    expect(other.status).toBe("invariant-violation");
+  });
+
+  it("enters each LET operator once where the branches of a recursion's body all reach it", async () => {
+    const getResult = (limit: number, depth: number) => {
+      const joins = Array.from(
+        { length: depth },
+        (_, index) => `J${index + 1}(m) == IF m % 2 = 0 THEN J${index}(m) ELSE J${index}(m)`,
+      ).join("\n      ");
+      return check({
+        source: `---- MODULE M ----\nEXTENDS Naturals\nVARIABLE x\nRECURSIVE Count(_)\nCount(n) ==\n  LET J0(m) == IF m = ${limit} THEN m ELSE Count(m + 1)\n      ${joins}\n  IN  J${depth}(n)\nInit == x = Count(0)\nNext == UNCHANGED x\nInv == x = ${limit}\n====`,
+        config: "INIT Init\nNEXT Next\nINVARIANT Inv",
+      });
+    };
+    const counted = await getResult(1000, 24);
+    expect([counted.status, counted.distinctStates]).toEqual(["success", 1]);
+    const overflowed = await getResult(1 << 21, 1);
+    expect(overflowed.failure?.message).toContain("StackOverflowError");
+  });
+
   it("reports a successor the next-state relation leaves incomplete like TLC", async () => {
     const getResult = (next: string) =>
       check({

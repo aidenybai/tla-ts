@@ -327,7 +327,12 @@ TestIntegrityLevel(s, v, level) ==
   IF IsAbrupt(e) THEN e
   ELSE IF Val(e) = True THEN Ok(e.s, False)
   ELSE LET ks == OwnPropertyKeys(e.s, v) IN
-  IF IsAbrupt(ks) THEN ks ELSE TestIntegrityKeys(ks.s, v, Val(ks), level)
+  IF IsAbrupt(ks) THEN ks
+  \* V8 tests a typed array's properties but its elements, which leave it sealed but not frozen.
+  ELSE IF O(ks.s, v).class = "typedArray" THEN
+    LET named == SelectSeq(Val(ks), LAMBDA k : ~IsTypedArrayKey(k)) IN
+    IF level = "frozen" /\ Len(named) < Len(Val(ks)) THEN Ok(ks.s, False) ELSE TestIntegrityKeys(ks.s, v, named, level)
+  ELSE TestIntegrityKeys(ks.s, v, Val(ks), level)
 TestIntegrityKeys(s, v, ks, level) ==
   IF ks = <<>> THEN Ok(s, True)
   ELSE LET cur == GetOwnProperty(s, v, Head(ks)) IN
@@ -459,12 +464,11 @@ ToPropertyDescriptor(s, v) ==
   ELSE LET r == ReadDescriptorFields(s, v, <<"enumerable", "configurable", "value", "writable", "get", "set">>, EmptyDesc) IN
   IF IsAbrupt(r) THEN r
   ELSE LET d == Val(r) IN
-  IF (d.get # Absent /\ d.get # Undefined /\ ~IsCallable(r.s, d.get)) \/
-     (d.set # Absent /\ d.set # Undefined /\ ~IsCallable(r.s, d.set))
-  THEN ThrowTypeError(r.s)
-  ELSE IF (d.get # Absent \/ d.set # Absent) /\ (d.value # Absent \/ d.writable # Absent)
+  IF (d.get # Absent \/ d.set # Absent) /\ (d.value # Absent \/ d.writable # Absent)
   THEN ThrowTypeError(r.s)
   ELSE r
+\* Reads each field that v has, in order, where a getter or setter that isn't callable throws as it's
+\* read, before the fields after it.
 ReadDescriptorFields(s, v, fields, d) ==
   IF fields = <<>> THEN Ok(s, d)
   ELSE LET f == Head(fields)
@@ -473,6 +477,7 @@ ReadDescriptorFields(s, v, fields, d) ==
           ELSE IF Val(h) = False THEN ReadDescriptorFields(h.s, v, Tail(fields), d)
           ELSE LET g == Get(h.s, v, DescriptorKey(f)) IN
           IF IsAbrupt(g) THEN g
+          ELSE IF f \in {"get", "set"} /\ Val(g) # Undefined /\ ~IsCallable(g.s, Val(g)) THEN ThrowTypeError(g.s)
           ELSE ReadDescriptorFields(g.s, v, Tail(fields),
                  [d EXCEPT ![f] = IF f \in {"enumerable", "configurable", "writable"}
                                   THEN ToBoolean(Val(g)) ELSE Val(g)])

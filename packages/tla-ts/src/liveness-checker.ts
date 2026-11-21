@@ -95,7 +95,8 @@ interface Tracing {
 }
 
 export interface LiveEvaluation<State> {
-  atoms: LiveAtoms<State>;
+  // Whether the atom at a position of getLiveAtoms holds of a state, or, for an action, of a step.
+  holds: (position: number, state: State, next: State) => boolean;
   // Whether a check's result for a state holds for every step from it.
   isShared: boolean;
   isSame: (left: State, right: State) => boolean;
@@ -423,12 +424,15 @@ export const createLivenessChecker = (
   const isShared = isSharingResults(formula, environment);
   const solutions = getSolutions(formula);
   const tracing: Tracing = { atoms: getInterpretedAtoms(environment), replay: undefined };
+  const liveAtoms = getLiveAtoms(solutions);
   const graph = createLiveGraph(
     solutions,
     {
-      atoms: {
-        holdsState: (atom, state) => tracing.atoms.holdsState(atom, state),
-        holdsAction: (atom, state, next) => tracing.atoms.holdsAction(atom, state, next),
+      holds: (position, state, next) => {
+        const atom = liveAtoms[position];
+        return atom.kind === "Action"
+          ? tracing.atoms.holdsAction(atom, state, next)
+          : tracing.atoms.holdsState(atom, state);
       },
       isShared,
       isSame: isSameState,
@@ -486,14 +490,17 @@ export const createLiveGraph = <State>(
   const actionIds = new Map<string, number>();
   let capacityMultiplier = 1;
   const isShared = evaluation.isShared;
-  const atoms = evaluation.atoms;
+  const holds = evaluation.holds;
   const evaluateFrom = evaluation.evaluateFrom;
+  const positions = new Map(getLiveAtoms(solutions).map((atom, position) => [atom, position]));
+  const getPosition = (atom: LiveAtom) => positions.get(atom) ?? -1;
+  // The state atoms by the id of their cell in a row, with the position of each.
   const stateAtoms = new Map<LiveState | LiveEnabled, number>();
-  const atomsById: (LiveState | LiveEnabled)[] = [];
+  const atomPositions: number[] = [];
   const getAtomId = (atom: LiveState | LiveEnabled) => {
     const id = stateAtoms.get(atom) ?? stateAtoms.size;
     stateAtoms.set(atom, id);
-    atomsById[id] = atom;
+    atomPositions[id] = getPosition(atom);
     return id;
   };
   const getLiterals = (expression: LiveExpression): number[] | undefined => {
@@ -531,19 +538,21 @@ export const createLiveGraph = <State>(
       case "State":
       case "Enabled": {
         const id = getAtomId(expression);
+        const position = getPosition(expression);
         return (state, row, offset) => {
           if (row[offset + id] === -1) {
-            row[offset + id] = atoms.holdsState(expression, state) ? 1 : 0;
+            row[offset + id] = holds(position, state, state) ? 1 : 0;
           }
           return row[offset + id] === 1;
         };
       }
       case "Action": {
         const enabled = expression.enabled && getAtomId(expression.enabled);
+        const position = getPosition(expression);
         return (state, row, offset, next) =>
           !(enabled !== undefined && row[offset + enabled] === 0) &&
           next !== undefined &&
-          atoms.holdsAction(expression, state, next);
+          holds(position, state, next);
       }
       case "Not": {
         const body = compileCheck(expression.body);
@@ -746,7 +755,7 @@ export const createLiveGraph = <State>(
     for (let position = 0; position < checks.length; position++) {
       const literal: number = checks[position];
       const cell = offset + (literal >> 1);
-      if (row[cell] === -1) row[cell] = atoms.holdsState(atomsById[literal >> 1], state) ? 1 : 0;
+      if (row[cell] === -1) row[cell] = holds(atomPositions[literal >> 1], state, state) ? 1 : 0;
       if (row[cell] !== (literal & 1)) return false;
     }
     return true;

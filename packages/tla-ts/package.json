@@ -28,6 +28,7 @@
   },
   "files": [
     "dist",
+    "ecmascript",
     "src",
     "package.json",
     "README.md",
@@ -55,7 +56,7 @@
     "access": "public"
   },
   "scripts": {
-    "build": "NODE_ENV=production vp pack",
+    "build": "NODE_ENV=production vp pack && bun scripts/dist-graph.ts",
     "dev": "NODE_ENV=development vp pack --watch",
     "prepack": "cp ../../README.md ../../LICENSE .",
     "prepublishOnly": "nr build",
@@ -75,8 +76,10 @@
     "conformance:record-statechart": "bun scripts/run.ts record-statechart",
     "conformance:record-proofs": "bun scripts/run.ts record-proofs",
     "conformance:record-tlapm": "bun scripts/run.ts record-tlapm",
+    "conformance:record-test262": "bun scripts/run.ts record-test262",
     "conformance:smt-encode": "bun scripts/run.ts smt-encode-conformance",
     "conformance:prove": "pnpm build && bun scripts/run.ts prove-conformance",
+    "conformance:test262": "bun scripts/run.ts test262",
     "conformance:tlapm": "bun scripts/run.ts tlapm-conformance",
     "conformance:zenon": "bun scripts/run.ts zenon-conformance",
     "publint": "publint",
@@ -88,10 +91,9 @@
     "fflate": "^0.8.3"
   },
   "devDependencies": {
-    "@engine262/engine262": "0.0.1-d553e7b52501fbc47eae981c8d0fa7a5c26d0171",
     "@types/node": "^22",
     "publint": "^0.3.0",
     "typescript": "^7.0.2",
-    "vite-plus": "latest"
+    "vite-plus": "1.4.0"
   }
 }

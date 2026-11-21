@@ -11,7 +11,15 @@
           "value": ".*text/markdown.*"
         }
       ],
-      "destination": "/index.md"
+      "destination": "https://raw.githubusercontent.com/aidenybai/tla-ts/main/README.md"
+    },
+    {
+      "source": "/(index.md|llms.txt)",
+      "destination": "https://raw.githubusercontent.com/aidenybai/tla-ts/main/README.md"
+    },
+    {
+      "source": "/playground",
+      "destination": "/playground.html"
     }
   ],
   "headers": [
@@ -25,11 +33,36 @@
       ]
     },
     {
+      "source": "/",
+      "has": [
+        {
+          "type": "header",
+          "key": "accept",
+          "value": ".*text/markdown.*"
+        }
+      ],
+      "headers": [
+        {
+          "key": "Content-Type",
+          "value": "text/markdown; charset=utf-8"
+        }
+      ]
+    },
+    {
       "source": "/(index.md|llms.txt)",
       "headers": [
         {
           "key": "Content-Type",
           "value": "text/markdown; charset=utf-8"
+        }
+      ]
+    },
+    {
+      "source": "/assets/(.*)",
+      "headers": [
+        {
+          "key": "Cache-Control",
+          "value": "public, max-age=31536000, immutable"
         }
       ]
     }

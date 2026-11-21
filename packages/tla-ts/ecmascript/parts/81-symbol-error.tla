@@ -241,6 +241,10 @@ BigIntBuiltin(s, f, m, this, args, nt) ==
          LET a == ToBigInt(bits.s, Arg(args, 2)) IN IF IsAbrupt(a) THEN a ELSE
          BigIntAsN(a.s, m, Val(bits).value, Val(a).value)
     [] m = "valueOf" -> ThisBigIntValue(s, this)
+    \* ECMA-402 §20.3.1, where the host has Intl.
+    [] m = "toLocaleString" /\ HostIntl(<<"none">>).found # "none" ->
+         LET b == ThisBigIntValue(s, this) IN IF IsAbrupt(b) THEN b
+         ELSE IntlToLocaleString(b.s, <<"bigint", BigIntToString(Val(b).value, 10)>>, Arg(args, 1), Arg(args, 2))
     \* toString and, as engine262 has it, toLocaleString.
     [] OTHER ->
          LET b == ThisBigIntValue(s, this) IN IF IsAbrupt(b) THEN b ELSE

@@ -1,3 +1,5 @@
+import { ESCORE_CANONICAL_OPERATORS } from "./escore-canonical";
+import { createEscoreNativeOperators, createEscoreProgramOperators } from "./escore-native";
 import { TlaEvaluationError, TlaModuleError, TlaSetBoundError } from "./errors";
 import {
   checkJavaArity,
@@ -50,6 +52,7 @@ import {
   getSequenceElements,
   isEmptySet,
   isEnumerable,
+  setNormalized,
   isFiniteSet,
   isFunctionValue,
   isOverriddenSet,
@@ -257,14 +260,14 @@ export const CORE_OPERATORS: Builtin[] = [
               if (written.length + added.length > getMaximumSetSize()) {
                 throw new TlaSetBoundError(getSetBoundMessage());
               }
-              if (isSorted && !leftSet.isNormalized) return merged;
+              if (isSorted && !isNormalizedSet(leftSet)) return merged;
               const union = merged === leftSet ? createSortedSet(merged.elements) : merged;
               if (!isSorted) union.writtenElements = [...written, ...added];
               return union;
             }
             if (merged === finiteLeft) return merged;
-            merged.isNormalized = isNormalizedReducible(finiteLeft);
-            if (leftSet.writtenElements && !leftSet.isNormalized) {
+            setNormalized(merged, isNormalizedReducible(finiteLeft));
+            if (leftSet.writtenElements && !isNormalizedSet(leftSet)) {
               merged.writtenElements = leftSet.writtenElements.filter((element) =>
                 isElementOf(element, merged),
               );
@@ -627,6 +630,9 @@ export const getJavaOverrides = (
   evaluateReplaced: (name: string, args: BuiltinArgument[], context: Context | undefined) => Value,
 ) => {
   if (name === "TransitiveClosure") return TRANSITIVE_CLOSURE_OPERATORS;
+  if (name === "ESCanonical") return ESCORE_CANONICAL_OPERATORS;
+  if (name === "ESNative") return createEscoreNativeOperators(evaluateReplaced);
+  if (name === "ProgramCode") return createEscoreProgramOperators(evaluateReplaced);
   if (name === "AnySet") {
     return [
       overrideWithJava(

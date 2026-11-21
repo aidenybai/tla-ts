@@ -24,6 +24,8 @@ export type SanyModuleOrigin = "file" | "root file" | "standard";
 
 export interface SanyReportOptions {
   fileName?: string;
+  // The root module's source, when it has no file, such as a spec tla-ts compiles from TypeScript.
+  rootSource?: string;
   describeFile?: (moduleName: string, origin: SanyModuleOrigin) => string;
   isXmlExport?: boolean;
   version?: TlcVersion;
@@ -108,8 +110,10 @@ export const getSanyReport = (
   const rootName = basename(rootPath, ".tla");
   const standardModules = getSanyStandardModules(options.version);
   const name = options.fileName ?? rootName;
-  const isRootFile = existsSync(rootPath);
-  const source = isRootFile ? readFileSync(rootPath, "utf8") : standardModules.get(rootName);
+  const isRootFile = options.rootSource !== undefined || existsSync(rootPath);
+  const source =
+    options.rootSource ??
+    (existsSync(rootPath) ? readFileSync(rootPath, "utf8") : standardModules.get(rootName));
   const lines: string[] = [];
   const write = (text: string) => {
     lines.push(text);

@@ -1,4 +1,4 @@
-import type { Expression } from "./ast";
+import type { Expression, Module } from "./ast";
 import { parseConfig, type ModelConfig } from "./config";
 import {
   countCoverageVariables,
@@ -21,8 +21,10 @@ import {
 } from "./errors";
 import {
   describeRange,
+  findGlobalName,
   getDefinition,
   getRootKey,
+  getStartupValue,
   type CallStack,
   type FingerprintFailure,
   type State,
@@ -77,6 +79,7 @@ import {
   getActionLabel,
   getActionSignature,
   getSpecDescription,
+  getStepName,
   getSpecificationValue,
   toActionValue,
   type SpecAction,
@@ -119,6 +122,7 @@ import {
   type CounterExampleLoop,
 } from "./tlc/tlcext-operators";
 import type { TlcVersion } from "./tlc/version";
+import type { PreparedModule } from "./tlc/order";
 import { runTypedSearch, type TypedResult } from "./typed-tier";
 import {
   createCanonicalizer,
@@ -131,9 +135,11 @@ import {
 } from "./values";
 
 export interface CheckOptions {
-  source: string;
+  source: string | Module;
   config: string | ModelConfig;
   loadModule?: (name: string) => string | undefined;
+  /** Modules a compiler already read, such as the JavaScript module of a spec compiled from TypeScript. */
+  preparedModules?: readonly PreparedModule[];
   loadClass?: (name: string) => Uint8Array | undefined;
   onPrint?: (text: string) => void;
   onPause?: () => void;
@@ -523,6 +529,9 @@ const searchStates = (
     config.postconditions.length > 0 ||
     config.possible.length > 0 ||
     specification.moduleOperators.some((operator) => operator.kind === "postcondition");
+  // A postcondition reads the statistics and the counterexample once the search ends, which the
+  // tier's search gives as the interpreter's would, but the possible states need every state seen.
+  const isTypedSearchable = config.possible.length === 0;
   const tracedSteps = new WeakMap<TraceStep, TracedStep>();
   const getStepState = (step: TraceStep) => tracedSteps.get(step)?.state ?? step.state;
   // TLC's Worker#doPostCondition and LiveCheck bind CounterExample to the alias of each state, while its initial states and lassos keep the states.
@@ -1320,15 +1329,46 @@ const searchStates = (
   if (liveness) {
     options.onProgress?.({ kind: "liveness-prepared", branches: liveness.branches });
   }
+  const checkFinalPostconditions = () => {
+    const missingPostcondition = specification.moduleOperators.find(
+      (operator) => operator.kind === "postcondition" && operator.key === undefined,
+    );
+    if (missingPostcondition) {
+      return createFailureResult(createMissingOperatorError(missingPostcondition), { trace: [] });
+    }
+    const postcondition = search.findPostconditionViolation();
+    return (
+      postcondition &&
+      createResult("postcondition-violation", {
+        name: postcondition.name,
+        message: postcondition.message,
+        counts: postcondition.counts,
+        trace: [],
+        postcondition,
+      })
+    );
+  };
   const assumptionViolation = findViolatedAssumption();
   if (assumptionViolation) return createResult("assumption-violation", assumptionViolation);
   options.onProgress?.({ kind: "initial-states-started" });
+  // A next-state relation that is the constant FALSE leaves every initial state without a successor,
+  // so with deadlock checked the typed tier, which decides only a search that succeeds, would only
+  // search the initial states for the interpreter to search again. A script compiled from
+  // TypeScript runs in its initial state and has no next-state relation.
+  const global =
+    spec.next?.kind === "Identifier" && spec.scope === undefined
+      ? findGlobalName(spec.next.name, environment)
+      : undefined;
+  const isStepless =
+    (global?.kind === "Value" && global.value === false) ||
+    (global?.kind === "Definition" && getStartupValue(global.definition, environment) === false);
   const typedChecks =
+    !(config.checkDeadlock && isStepless) &&
     !options.isContinued &&
     options.dump === undefined &&
     // A set of small integers on the tier is a 31-bit mask, which a lower bound could overflow.
     options.maxSetSize === undefined &&
-    !hasPostconditions
+    isTypedSearchable
       ? search.getTypedChecks(liveness?.solutions)
       : undefined;
   const typed =
@@ -1362,6 +1402,14 @@ const searchStates = (
       });
       options.onProgress?.({ kind: "liveness-finished" });
     }
+    runtime.generatedStates = typed.generatedStates;
+    runtime.distinctStates = typed.distinctStates;
+    runtime.initialStates = typed.initialStates.generated;
+    runtime.queueSize = 0;
+    runtime.diameter = typed.depth;
+    searchDepth = typed.depth;
+    const finalPostcondition = checkFinalPostconditions();
+    if (finalPostcondition) return finalPostcondition;
     return {
       ...statistics,
       outDegrees: typed.outDegrees,
@@ -1528,6 +1576,8 @@ const searchStates = (
           action.scope,
           undefined,
           onUnsatisfied && ((successor, conjunct) => onUnsatisfied(successor, conjunct, action)),
+          undefined,
+          getStepName(action),
         )
       );
     }, 0);
@@ -2038,21 +2088,8 @@ const searchStates = (
   if (finalLiveness && lasso) return reportLasso(finalLiveness, lasso);
 
   if (finalLiveness) options.onProgress?.({ kind: "liveness-finished" });
-  const missingPostcondition = specification.moduleOperators.find(
-    (operator) => operator.kind === "postcondition" && operator.key === undefined,
+  return (
+    checkFinalPostconditions() ??
+    (continuedStatus ? createResult(continuedStatus) : createSuccess())
   );
-  if (missingPostcondition) {
-    return createFailureResult(createMissingOperatorError(missingPostcondition), { trace: [] });
-  }
-  const postcondition = search.findPostconditionViolation();
-  if (postcondition) {
-    return createResult("postcondition-violation", {
-      name: postcondition.name,
-      message: postcondition.message,
-      counts: postcondition.counts,
-      trace: [],
-      postcondition,
-    });
-  }
-  return continuedStatus ? createResult(continuedStatus) : createSuccess();
 };

@@ -130,6 +130,9 @@ interface LevelContext {
   variables: Set<string>;
   getDefinition: (name: string) => Definition | undefined;
   getQualifiedName?: (name: string) => string | undefined;
+  // The levels of a definition of a prepared module that SANY's checks accepted, which they found
+  // when they checked it.
+  getPreparedLevels?: (name: string) => OperatorLevels | undefined;
   instances: InstanceLevels;
   recursiveSections: WeakMap<Definition, SectionMember[]>;
   // SANY keeps each node's first level check, though a label checked again, here or in a module it sees, is level-correct.
@@ -269,12 +272,12 @@ const createSignature = (
   nonLeibniz: new Set(),
 });
 
-const getMaxLevel = (operator: OperatorLevels, index: number) =>
+export const getMaxLevel = (operator: OperatorLevels, index: number) =>
   operator.formals.length === 0 && operator.maxLevels.length > 0
     ? operator.maxLevels[Math.min(index, operator.maxLevels.length - 1)]
     : (operator.maxLevels[index] ?? TEMPORAL_LEVEL);
 
-const getWeight = (operator: OperatorLevels, index: number) =>
+export const getWeight = (operator: OperatorLevels, index: number) =>
   operator.formals.length === 0 && operator.weights.length > 0
     ? operator.weights[Math.min(index, operator.weights.length - 1)]
     : (operator.weights[index] ?? 1);
@@ -320,36 +323,40 @@ const UNCHANGED_LEVELS = createSignature("UNCHANGED", 2, [1], [0]);
 const ENABLED_LEVELS = createSignature("ENABLED", 1, [2], [0]);
 const ALWAYS_LEVELS = createSignature("[]", 3, [3], [0]);
 const EVENTUALLY_LEVELS = createSignature("<>", 3, [3], [0]);
-const AND_LEVELS = createSignature("$ConjList", 0, [3], [1]);
-const OR_LEVELS = createSignature("$DisjList", 0, [3], [1]);
-const IF_LEVELS = createSignature("$IfThenElse", 0, [3], [1]);
-const CASE_LEVELS = createSignature("$Case", 0, [3], [1]);
-const FORALL_LEVELS = createSignature("$BoundedForall", 0, [3], [1]);
-const EXISTS_LEVELS = createSignature("$BoundedExists", 0, [3], [1]);
+export const AND_LEVELS = createSignature("$ConjList", 0, [3], [1]);
+export const OR_LEVELS = createSignature("$DisjList", 0, [3], [1]);
+export const IF_LEVELS = createSignature("$IfThenElse", 0, [3], [1]);
+export const CASE_LEVELS = createSignature("$Case", 0, [3], [1]);
+export const FORALL_LEVELS = createSignature("$BoundedForall", 0, [3], [1]);
+export const EXISTS_LEVELS = createSignature("$BoundedExists", 0, [3], [1]);
 const UNBOUNDED_FORALL_LEVELS = createSignature("$UnboundedForall", 0, [3], [1]);
 const UNBOUNDED_EXISTS_LEVELS = createSignature("$UnboundedExists", 0, [3], [1]);
 const TEMPORAL_FORALL_LEVELS = createSignature("$TemporalForall", 3, [3], [0]);
 const TEMPORAL_EXISTS_LEVELS = createSignature("$TemporalExists", 3, [3], [0]);
-const BOUNDED_CHOOSE_LEVELS = createSignature("$BoundedChoose", 0, [2], [1]);
-const UNBOUNDED_CHOOSE_LEVELS = createSignature("$UnboundedChoose", 0, [2], [1]);
-const SET_ENUMERATE_LEVELS = createSignature("$SetEnumerate", 0, [2], [1]);
-const TUPLE_LEVELS = createSignature("$Tuple", 0, [2], [1]);
+export const BOUNDED_CHOOSE_LEVELS = createSignature("$BoundedChoose", 0, [2], [1]);
+export const UNBOUNDED_CHOOSE_LEVELS = createSignature("$UnboundedChoose", 0, [2], [1]);
+export const SET_ENUMERATE_LEVELS = createSignature("$SetEnumerate", 0, [2], [1]);
+export const TUPLE_LEVELS = createSignature("$Tuple", 0, [2], [1]);
 const SET_OF_FCNS_LEVELS = createSignature("$SetOfFcns", 0, [2], [1]);
 const CARTESIAN_PROD_LEVELS = createSignature("$CartesianProd", 0, [2], [1]);
-const SUBSET_OF_LEVELS = createSignature("$SubsetOf", 0, [2], [1]);
-const SET_OF_ALL_LEVELS = createSignature("$SetOfAll", 0, [2], [1]);
-const FCN_CONSTRUCTOR_LEVELS = createSignature("$FcnConstructor", 0, [3], [1]);
-const RCD_CONSTRUCTOR_LEVELS = createSignature("$RcdConstructor", 0, [3], [1]);
+export const SUBSET_OF_LEVELS = createSignature("$SubsetOf", 0, [2], [1]);
+export const SET_OF_ALL_LEVELS = createSignature("$SetOfAll", 0, [2], [1]);
+export const FCN_CONSTRUCTOR_LEVELS = createSignature("$FcnConstructor", 0, [3], [1]);
+export const RCD_CONSTRUCTOR_LEVELS = createSignature("$RcdConstructor", 0, [3], [1]);
 const SET_OF_RCDS_LEVELS = createSignature("$SetOfRcds", 0, [2], [1]);
-const EXCEPT_LEVELS = createSignature("$Except", 0, [2], [1]);
+export const EXCEPT_LEVELS = createSignature("$Except", 0, [2], [1]);
 const PAIR_LEVELS = createSignature("$Pair", 0, [3], [1]);
 const SEQ_LEVELS = createSignature("$Seq", 0, [2], [1]);
-const APPLY_LEVELS = createSignature("$FcnApply", 0, [2, 2], [1, 1]);
-const SELECT_LEVELS = createSignature("$RcdSelect", 0, [2, 0], [1, 1]);
+export const APPLY_LEVELS = createSignature("$FcnApply", 0, [2, 2], [1, 1]);
+export const SELECT_LEVELS = createSignature("$RcdSelect", 0, [2, 0], [1, 1]);
 const SQUARE_ACT_LEVELS = createSignature("$SquareAct", 2, [2, 1], [0, 0]);
 const ANGLE_ACT_LEVELS = createSignature("$AngleAct", 2, [2, 1], [0, 0]);
 const WF_LEVELS = createSignature("$WF", 3, [1, 2], [0, 0]);
 const SF_LEVELS = createSignature("$SF", 3, [1, 2], [0, 0]);
+
+// The levels of a builtin operator or a standard module's operator, by name.
+export const getSignatureLevels = (name: string) =>
+  CORE_SIGNATURES.get(name) ?? STANDARD_LEVELS.get(name);
 
 const bindFormals = (scope: Scope, formals: OperatorParam[]) =>
   formals.length === 0
@@ -657,20 +664,22 @@ export const createLevelAnalyzer = (context: LevelContext) => {
     if (context.variables.has(name)) return { kind: "Declared", name, level: 1, arity: 0 };
     const definition = context.getDefinition(name);
     if (definition) {
-      const levels = analyzeDefinition(definition, new Map());
+      const levels = context.getPreparedLevels?.(name) ?? analyzeDefinition(definition, new Map());
       const qualifiedName = context.getQualifiedName?.(name);
       return {
         kind: "Defined",
         levels: qualifiedName ? { ...levels, name: qualifiedName } : levels,
       };
     }
-    const signature = CORE_SIGNATURES.get(name) ?? STANDARD_LEVELS.get(name);
+    const signature = getSignatureLevels(name);
     if (signature) return { kind: "Defined", levels: signature };
     return { kind: "Unknown", name };
   };
 
   const applyDeclared = (name: string, level: number, operands: Operand[]) => {
-    const data = createData(Math.max(level, ...operands.map((operand) => operand.data.level)));
+    let maximum = level;
+    for (const operand of operands) maximum = Math.max(maximum, operand.data.level);
+    const data = createData(maximum);
     data.isCorrect = operands.every((operand) => operand.data.isCorrect);
     data.params.add(name);
     operands.forEach((operand, index) => {
@@ -1906,6 +1915,11 @@ export const createLevelAnalyzer = (context: LevelContext) => {
     members.forEach(recheck);
   };
 
+  const getOperatorLevels = (name: string) => {
+    const resolved = resolve(name, new Map());
+    return resolved.kind === "Defined" ? resolved.levels : undefined;
+  };
+
   const analyzer = {
     analyze,
     analyzeDefinition,
@@ -1917,6 +1931,7 @@ export const createLevelAnalyzer = (context: LevelContext) => {
     constants: context.constants,
     getSubstitutes,
     toOperand,
+    getOperatorLevels,
     errors,
   };
   return analyzer;
@@ -2171,6 +2186,8 @@ export const checkModuleLevels = (
       context.recursiveSections.set(member.definition, section.members),
     ),
   );
+  // The levels of each definition, which a check of a module that extends a prepared module links.
+  const levels: (OperatorLevels | undefined)[] = module.definitions.map(() => undefined);
   const createCheck = (location: SourceLocation, run: () => void) => ({
     location,
     check: (reported: SanyError[]) => {
@@ -2187,6 +2204,8 @@ export const checkModuleLevels = (
         ),
       );
   return {
+    module,
+    levels,
     sections: sections.map((section) =>
       createCheck(section.location, () => analyzer.checkRecursiveSection(section.members)),
     ),
@@ -2196,16 +2215,15 @@ export const checkModuleLevels = (
           createCheck(section.location, () => analyzer.checkPrimedArguments(section.members)),
         ),
         [
-          ...module.definitions
-            .filter(
-              (definition) =>
-                !definition.name.includes("!") && !statementBodies.has(definition.body),
-            )
-            .map((definition) =>
-              createCheck(definition.location, () =>
-                analyzer.analyzeDefinition(definition, new Map()),
-              ),
-            ),
+          ...module.definitions.flatMap((definition, position) =>
+            definition.name.includes("!") || statementBodies.has(definition.body)
+              ? []
+              : [
+                  createCheck(definition.location, () => {
+                    levels[position] = analyzer.analyzeDefinition(definition, new Map());
+                  }),
+                ],
+          ),
           ...getSubstitutesChecks("Definition"),
         ],
         [

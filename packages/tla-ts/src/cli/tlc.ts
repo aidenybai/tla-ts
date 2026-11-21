@@ -19,15 +19,22 @@ import {
   TlaFeatureUnsupportedError,
   TlaFileError,
   TlaMissingCheckpointError,
+  TlaStackLimitError,
+  TlaStackOverflowError,
   TlaSyntaxError,
+  createStackOverflowError,
   getUnexpectedException,
+  isStackOverflow,
+  STACK_OVERFLOW_MESSAGE,
   TlaSanyFatalError,
 } from "../errors";
 import { EXIT_STATUS } from "../exit-codes";
 import { trimJava } from "../java-string";
 import { check } from "../parallel";
 import { extractModule, getMonolithSection, parseModule } from "../parser";
+import { printModule } from "../printer";
 import { simulate } from "../simulate";
+import { CHECK_STACK_MB } from "../worker";
 import type { CliSettings } from "../search";
 import { getDotHeader, type StateDump } from "../state-graph";
 import {
@@ -77,7 +84,12 @@ import {
   toLibraryPath,
   type JavaProperties,
 } from "./shared";
-import { writeTypeScriptSpec } from "./typescript";
+import {
+  compileTypeScriptFile,
+  getNodeExit,
+  isProgramPath,
+  type CompiledInput,
+} from "./typescript";
 
 const EXIT_CODES: Record<CheckStatus, number> = {
   success: EXIT_STATUS.success,
@@ -125,7 +137,9 @@ const createFileDescriber = (
   const jar = getToolsJar(java);
   return (name: string, origin: SanyModuleOrigin) => {
     const fileName = `${name}.tla`;
-    if (origin === "file") return realpathSync(findModuleFile(directories, name) ?? specPath);
+    const file = origin === "file" ? findModuleFile(directories, name) : undefined;
+    if (file !== undefined) return realpathSync(file);
+    if (origin === "file") return realpathSync(specPath);
     if (version === "1.7.4") return join(temporaryDirectory, fileName);
     if (origin === "root file") {
       const directory = metadir === undefined ? temporaryDirectory : resolve(metadir);
@@ -241,6 +255,7 @@ const checkSpec = async (
   dump: StateDump | undefined,
   java: JavaProperties,
   printer: MessagePrinter,
+  compiled?: CompiledInput,
 ) => {
   const livenessCheck = args.livenessCheck;
   const version = printer.version;
@@ -255,7 +270,9 @@ const checkSpec = async (
   }
   printStartupBanner(printer, args);
   const configPath = args.configPath ?? specPath.replace(/\.tla$/, ".cfg");
-  if (!existsSync(configPath)) {
+  // A spec compiled from TypeScript has its config with it, unless -config names another.
+  const compiledConfig = args.configPath === undefined ? compiled?.config : undefined;
+  if (compiledConfig === undefined && !existsSync(configPath)) {
     printer.print(
       MESSAGE_CODE.configFileError,
       MESSAGE_LEVEL.error,
@@ -279,7 +296,21 @@ const checkSpec = async (
       MESSAGE_LEVEL.error,
       "Parsing or semantic analysis failed.",
     );
-  const printFailure = (error: TlaError) => {
+  // A script that fails as Node would run it exits as Node does.
+  const getScriptExit = (message: string) => {
+    const nodeExit = compiled?.isScript ? getNodeExit(message, compiled.path) : undefined;
+    if (nodeExit === undefined) return undefined;
+    process.stderr.write(nodeExit.stderr);
+    printFinished();
+    return nodeExit.code;
+  };
+  // A TypeScript program whose check overflows the stack is one that tla-ts can't check, which
+  // isn't TLC's verdict on it.
+  const printFailure = (failure: TlaError) => {
+    const error =
+      compiled !== undefined && failure instanceof TlaStackOverflowError
+        ? new TlaStackLimitError(CHECK_STACK_MB)
+        : failure;
     if (error instanceof TlaSyntaxError) {
       printParsingFailed();
     } else {
@@ -291,13 +322,18 @@ const checkSpec = async (
   };
   const config = (() => {
     try {
+      if (compiledConfig !== undefined) return parseConfig(compiledConfig, version);
       const contents = readFileSync(configPath, "utf8");
-      return parseConfig(
-        configPath.endsWith(".tla")
-          ? getEmbeddedConfig(contents, configPath.replaceAll(".tla", ""))
-          : contents,
-        version,
-      );
+      const given = configPath.endsWith(".tla")
+        ? getEmbeddedConfig(contents, configPath.replaceAll(".tla", ""))
+        : contents;
+      // A compiled spec keeps the constants that its own config assigns, which its runtime reads,
+      // under the config -config names.
+      const kept =
+        compiled === undefined
+          ? []
+          : compiled.config.split("\n").filter((line) => line.startsWith("CONSTANT"));
+      return parseConfig([given, ...kept].join("\n"), version);
     } catch (error) {
       if (!(error instanceof TlaConfigError)) throw error;
       return error;
@@ -313,10 +349,12 @@ const checkSpec = async (
     return EXIT_STATUS.error;
   }
   if (config instanceof TlaConfigError) return printFailure(config);
-  if (!args.isDeadlockChecked) config.checkDeadlock = false;
+  // A script ends where Node's process would exit, rather than where it deadlocks.
+  if (!args.isDeadlockChecked || compiled?.isScript) config.checkDeadlock = false;
   const directory = dirname(specPath);
   const directories = [directory, ...java.libraries];
-  const loadModule = createModuleLoader(directories);
+  const loadFile = createModuleLoader(directories);
+  const loadModule = (name: string) => compiled?.loadModule(name) ?? loadFile(name);
   const traceSpec = getTraceSpecLocation(
     args,
     version,
@@ -333,49 +371,59 @@ const checkSpec = async (
   const isAbsoluteSpec = isAbsolute(specPath);
   const specName = isAbsoluteSpec ? fileName : specPath.replace(/\.tla$/, "");
   const jar = getToolsJar(java);
+  const isSpecFound = compiled !== undefined || existsSync(specPath);
   const reportMissingFile =
     version === "1.7.4" ? createMissingFilePrinter174(specPath, java, jar) : undefined;
   if (reportMissingFile) {
-    if (!existsSync(specPath) && !SANY_174_STANDARD_MODULES.has(fileName)) {
+    if (!isSpecFound && !SANY_174_STANDARD_MODULES.has(fileName)) {
       reportMissingFile(`${fileName}.tla`);
     }
-  } else if (!existsSync(specPath) && !SANY_STANDARD_MODULES.has(fileName)) {
+  } else if (!isSpecFound && !SANY_STANDARD_MODULES.has(fileName)) {
     printMissingFile(
       isAbsoluteSpec ? directory : process.cwd(),
       isAbsoluteSpec ? `${fileName}.tla` : `./${specName}.tla`,
       [...(isAbsoluteSpec || directory === "." ? [] : [directory]), ...java.libraries],
     );
   }
-  const sany = getSanyReport(
-    specPath,
-    reportMissingFile ? reportMissingModules174(loadModule, reportMissingFile) : loadModule,
-    {
-      fileName: specName,
-      describeFile: createFileDescriber(specPath, directories, java, args.metadir, version),
-      version,
-      rootExtendees: [
-        ...getOperatorModules("postcondition"),
-        ...(traceSpec?.traceFile === undefined ? [] : ["_TLCTrace"]),
-        ...args.invariants.flatMap((invariant) => invariant.modules),
-        ...getOperatorModules("constraint"),
-        ...getOperatorModules("view").slice(0, 1),
-      ],
-      suppressedCodes: args.suppressedCodes,
-      errorCodes: args.errorCodes,
-      onPrint: (text) => process.stdout.write(text),
-      onPrintError: (text) => process.stderr.write(text),
-    },
-  );
-  const specification = sany.specification;
-  if (sany.isFailed || specification === undefined) {
+  const rootSource = compiled && printModule(compiled.source);
+  // A compiled spec is checked from its prepared modules, which SANY's report can't parse from
+  // their texts, so its report is the line of the file it compiles.
+  if (compiled !== undefined) {
+    console.log(`Parsing file ${resolve(compiled.path)}`);
+  }
+  const sany =
+    compiled !== undefined
+      ? undefined
+      : getSanyReport(
+          specPath,
+          reportMissingFile ? reportMissingModules174(loadModule, reportMissingFile) : loadModule,
+          {
+            fileName: specName,
+            describeFile: createFileDescriber(specPath, directories, java, args.metadir, version),
+            version,
+            rootExtendees: [
+              ...getOperatorModules("postcondition"),
+              ...(traceSpec?.traceFile === undefined ? [] : ["_TLCTrace"]),
+              ...args.invariants.flatMap((invariant) => invariant.modules),
+              ...getOperatorModules("constraint"),
+              ...getOperatorModules("view").slice(0, 1),
+            ],
+            suppressedCodes: args.suppressedCodes,
+            errorCodes: args.errorCodes,
+            onPrint: (text) => process.stdout.write(text),
+            onPrintError: (text) => process.stderr.write(text),
+          },
+        );
+  const specification = sany?.specification;
+  if (sany !== undefined && (sany.isFailed || specification === undefined)) {
     printCheckProgress(printer, { kind: "parsed" }, timing, directory);
     printParsingFailed();
     printFinished();
     return EXIT_STATUS.specParseError;
   }
   try {
-    const source = readFileSync(specPath, "utf8");
-    const moduleName = parseModule(source).name;
+    const source = rootSource ?? readFileSync(specPath, "utf8");
+    const moduleName = compiled?.source.name ?? parseModule(source).name;
     if (moduleName !== fileName) {
       throw new TlaSanyFatalError(
         `File name '${fileName}' does not match the name '${moduleName}' of the top level module it contains.`,
@@ -383,13 +431,20 @@ const checkSpec = async (
       );
     }
     const standardModules = getSanyStandardModules(version);
-    const runtimeInvariants = getRuntimeInvariants(
-      source,
-      specification.root,
-      args.invariants,
-      (name) => loadModule(name) ?? standardModules.get(name) ?? extractModule(source, name),
-      version,
-    );
+    const runtimeInvariants =
+      specification === undefined
+        ? args.invariants.map((invariant) => ({
+            name: invariant.expression,
+            module: undefined,
+            source: undefined,
+          }))
+        : getRuntimeInvariants(
+            source,
+            specification.root,
+            args.invariants,
+            (name) => loadModule(name) ?? standardModules.get(name) ?? extractModule(source, name),
+            version,
+          );
     const options: CheckOptions & CliSettings = {
       workers: args.workers,
       livenessCheck:
@@ -401,6 +456,7 @@ const checkSpec = async (
       seed: args.seed,
       fingerprintPolynomial: args.fingerprintIndex,
       maxSetSize: args.maxSetSize,
+      preparedModules: compiled?.preparedModules,
       isLazyValueExpanded: args.isLazyValueExpanded,
       isViewPrinted: args.isViewPrinted,
       dump,
@@ -415,6 +471,8 @@ const checkSpec = async (
       version,
       onProgress: (progress) => printCheckProgress(printer, progress, timing, directory),
       onPrint: printer.printOutput,
+      // A compiled spec is checked from its text, whose strings the check ranks with those of its
+      // prepared modules.
       source,
       config,
       onPause: () => readSync(0, Buffer.alloc(1)),
@@ -461,6 +519,11 @@ const checkSpec = async (
       return status;
     }
     const result = await check(options);
+    if (compiled !== undefined && result.failure?.message === STACK_OVERFLOW_MESSAGE) {
+      throw new TlaStackLimitError(CHECK_STACK_MB, result.depth);
+    }
+    const nodeExit = result.failure && getScriptExit(result.failure.message);
+    if (nodeExit !== undefined) return nodeExit;
     printResult(result, printer, timing);
     printFinished();
     if (traceSpec && result.traceSpec !== undefined) {
@@ -486,6 +549,8 @@ const checkSpec = async (
     return result.failure?.exitCode ?? EXIT_CODES[result.status];
   } catch (error) {
     if (!(error instanceof TlaError)) throw error;
+    const nodeExit = getScriptExit(error.message);
+    if (nodeExit !== undefined) return nodeExit;
     if (error instanceof TlaSyntaxError) console.log(formatSanyErrors(error, fileName));
     if (!timing.isParsed) printCheckProgress(printer, { kind: "parsed" }, timing, directory);
     return printFailure(error);
@@ -561,13 +626,13 @@ export const checkSpecs = async (args: string[], java: JavaProperties) => {
     .map((input) => ({
       ...input,
       path:
-        input.isGlobbed || /\.(tla|cfg|ts)$/.test(input.path)
+        input.isGlobbed || /\.(tla|cfg)$/.test(input.path) || isProgramPath(input.path)
           ? input.path.replace(/\.cfg$/, ".tla")
           : `${input.path}.tla`,
     }))
     .filter(
       (input) =>
-        input.path.endsWith(".ts") ||
+        isProgramPath(input.path) ||
         (input.path.endsWith(".tla") &&
           (!input.isGlobbed || isConfigured || existsSync(input.path.replace(/\.tla$/, ".cfg")))),
     )
@@ -600,12 +665,25 @@ export const checkSpecs = async (args: string[], java: JavaProperties) => {
     });
     exitCodes.push(
       await reportErrors(async () => {
-        const specPath = path.endsWith(".ts") ? await writeTypeScriptSpec(path) : path;
-        // An extension: TLC refuses more than one spec, and tla-ts checks each one under its name.
+        const isTypeScript = isProgramPath(path);
+        // An extension: TLC refuses more than one spec, and tla-ts checks each one under its name,
+        // before a TypeScript file compiles, so a stop names the file it comes from.
         if (paths.length > 1) {
-          console.log(`Checking ${basename(specPath)} with ${basename(specPath, ".tla")}.cfg`);
+          console.log(
+            isTypeScript
+              ? `Checking ${basename(path)}`
+              : `Checking ${basename(path)} with ${basename(path, ".tla")}.cfg`,
+          );
         }
-        return checkSpec(specPath, parsed, dump, java, printer);
+        // A stack overflow that nothing caught ends the check as one that the check caught does.
+        try {
+          const compiled = isTypeScript ? await compileTypeScriptFile(path) : undefined;
+          compiled?.notes.forEach((note) => console.log(note));
+          return await checkSpec(compiled?.specPath ?? path, parsed, dump, java, printer, compiled);
+        } catch (error) {
+          if (!isStackOverflow(error)) throw error;
+          throw isTypeScript ? new TlaStackLimitError(CHECK_STACK_MB) : createStackOverflowError();
+        }
       }, printer),
     );
   }

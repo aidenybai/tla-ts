@@ -11,6 +11,10 @@ const procs = new Set<Proc>([1, 2]);
 
 const other = (proc: Proc): Proc => (proc === 1 ? 2 : 1);
 
+// Whether two sets hold the same processes, as TLA+'s = compares them.
+const isSameSet = (left: ReadonlySet<Proc>, right: ReadonlySet<Proc>) =>
+  left.isSubsetOf(right) && right.isSubsetOf(left);
+
 let c = new Map<Proc, boolean>([
   [1, false],
   [2, false],
@@ -59,9 +63,9 @@ export const a4 = (self: Proc) => {
 const isLocked = (proc: Proc) => pc.get(proc) === "cs" || pc.get(proc) === "a4";
 
 export const typeOK = () =>
-  new Set(c.keys()) === procs &&
+  isSameSet(new Set(c.keys()), procs) &&
   procs.has(turn) &&
-  new Set(pc.keys()) === procs &&
+  isSameSet(new Set(pc.keys()), procs) &&
   pc.values().every((label) => ["a0", "a1", "a2", "a3", "cs", "a4"].includes(label));
 
 export const inv = () =>
@@ -108,7 +112,8 @@ export const lSpec = (before: State) => {
   const lock = translateLock(before.pc);
   const nextLock = translateLock(pc);
   return (
-    (nextLockPc === lockPc && nextLock === lock) ||
+    (procs.values().every((proc) => nextLockPc.get(proc) === lockPc.get(proc)) &&
+      nextLock === lock) ||
     procs
       .values()
       .some(

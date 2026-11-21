@@ -65,6 +65,10 @@ ReturnThen(ctx, r) ==
 ReturnValueThen(r) == IF IsAbrupt(r) THEN r ELSE Abrupt(r.s, Completion("return", Val(r), Empty))
 
 ThrowThen(r) == IF IsAbrupt(r) THEN r ELSE ThrowValue(r.s, Val(r))
+\* ThrowThen of a throw statement at a site of a compiled program, <<file, throw>>, the numbers of
+\* its file and of the statement among the file's throws, which the completion's target carries, so
+\* that the host can say where an exception that nothing catches was thrown.
+ThrowAtThen(site, r) == IF IsAbrupt(r) THEN r ELSE Abrupt(r.s, Completion("throw", Val(r), [kind |-> "throw", site |-> site]))
 
 \* The with statement (§14.11.2).
 WithThen(ctx, n, r) ==

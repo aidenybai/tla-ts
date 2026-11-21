@@ -1,3 +1,4 @@
+import { spawnSync } from "node:child_process";
 import { mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -631,6 +632,101 @@ const TLC_REPORTS = [
 describe("the CLI reports results like TLC", () => {
   it.each(TLC_REPORTS)("reports %s", (name, code, lines) => {
     const result = runCli("cli-output", name);
+    expect(result.status).toBe(code);
+    expect(getSteadyLines(result.stdout)).toEqual([...lines, ""]);
+  });
+
+  it.each([
+    [
+      "SetBoundRecords",
+      75,
+      [
+        "Starting... (_)",
+        "Computing initial states...",
+        "Error: Attempted to construct a set with too many elements (>100).",
+        "While working on the initial state:",
+        "x = [a: 1..11, b: 1..10]",
+        "",
+        "Error: TLC was unable to fingerprint.",
+        "",
+        "Fingerprint Stack Trace:",
+        "0) line 4, col 13 to line 4, col 34 of module SetBoundRecords",
+        "",
+        "Reason:",
+        "Attempted to construct a set with too many elements (>100).",
+        "1 states generated, 0 distinct states found, 0 states left on queue.",
+        "The depth of the complete state graph search is 1.",
+        "Finished in _ at (_)",
+      ],
+    ],
+    [
+      "SetBoundFilter",
+      75,
+      [
+        "Starting... (_)",
+        "Computing initial states...",
+        "Error: Attempted to construct a set with too many elements (>100).",
+        "While working on the initial state:",
+        "x = {r \\in [a: 1..11, b: 1..10] : <expression line 4, col 45 to line 4, col 48 of module SetBoundFilter> }",
+        "",
+        "Error: The error occurred when TLC was evaluating the nested",
+        "expressions at the following positions:",
+        "    The error call stack is empty.",
+        "",
+        "1 states generated, 0 distinct states found, 0 states left on queue.",
+        "The depth of the complete state graph search is 1.",
+        "Finished in _ at (_)",
+      ],
+    ],
+    [
+      "SetBoundSelection",
+      0,
+      [
+        "Starting... (_)",
+        "Computing initial states...",
+        "Finished computing initial states: 1 distinct state generated at _.",
+        "Model checking completed. No error has been found.",
+        "  Estimates of the probability that TLC did not check all reachable states",
+        "  because two distinct states had the same fingerprint:",
+        "  calculated (optimistic):  val = 5.4E-20",
+        "2 states generated, 1 distinct states found, 0 states left on queue.",
+        "The depth of the complete state graph search is 1.",
+        "The average outdegree of the complete state graph is 0 (minimum is 0, the maximum 0 and the 95th percentile is 0).",
+        "Finished in _ at (_)",
+      ],
+    ],
+    [
+      "SetBoundQuantifier",
+      75,
+      [
+        "Starting... (_)",
+        "Computing initial states...",
+        "Error: Attempted to construct a set with too many elements (>100).",
+        "Error: The error occurred when TLC was evaluating the nested",
+        "expressions at the following positions:",
+        "    The error call stack is empty.",
+        "",
+        "0 states generated, 0 distinct states found, 0 states left on queue.",
+        "The depth of the complete state graph search is 0.",
+        "Finished in _ at (_)",
+      ],
+    ],
+    [
+      "SetBoundUnion",
+      255,
+      [
+        "Starting... (_)",
+        "Computing initial states...",
+        "Error: TLC threw an unexpected exception.",
+        "This was probably caused by an error in the spec or model.",
+        "See the User Output or TLC Console for clues to what happened.",
+        "The exception was a util.WrongInvocationException",
+        ": Attempted to construct a set with too many elements (>100).",
+        "Finished in _ at (_)",
+      ],
+    ],
+  ] as const)("stops %s at TLC's set bound as TLC does", (name, code, lines) => {
+    const result = runCli("set-bound", name, ["-maxSetSize", "100"]);
     expect(result.status).toBe(code);
     expect(getSteadyLines(result.stdout)).toEqual([...lines, ""]);
   });
@@ -2013,6 +2109,28 @@ describe("the CLI reads a monolith's configs and modules like TLC", () => {
     const result = runCliWith(directory, [...args, "M.tla"]);
     rmSync(directory, { recursive: true });
     expect([result.status, result.stdout]).toEqual([status, expect.stringContaining(line)]);
+  });
+});
+
+// Node gives its main thread about 1 MB of stack, which Sum's recursion of 10,000 overflows, so the
+// built CLI, as Node runs it, checks on a thread with a stack of its own.
+describe("the CLI checks on a thread with a deeper stack than Node's main thread", () => {
+  const runBuiltCli = (args: string[]) =>
+    spawnSync(process.execPath, [join(import.meta.dirname, "../../dist/cli.js"), ...args], {
+      cwd: join(FIXTURES, "cli-stack"),
+      encoding: "utf8",
+    });
+
+  it("checks a recursion deeper than Node's main thread holds", () => {
+    const result = runBuiltCli(["Sum.tla"]);
+    expect(result.stdout).toContain("Model checking completed. No error has been found.");
+    expect(result.status).toBe(0);
+  });
+
+  it("reports a recursion deeper than its own stack holds as TLC reports an overflow", () => {
+    const result = runBuiltCli(["Sum.tla", "-config", "Overflow.cfg"]);
+    expect(result.stdout).toContain("Error: This was a Java StackOverflowError.");
+    expect(result.status).toBe(255);
   });
 });
 

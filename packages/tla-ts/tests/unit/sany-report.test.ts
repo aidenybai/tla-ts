@@ -1360,6 +1360,21 @@ Spec == Init /\\ [][Next]_x
     expect(report.isFailed).toBe(false);
   });
 
+  // OpDefNode.setParams gives the operator its definition's parameters before SANY generates the
+  // body, so the body's call to the operator knows which argument is an operator. tla-ts reports
+  // the operator parameter that the RECURSIVE declaration doesn't declare, which TLC misses.
+  it("takes an operator that a recursive operator passes to itself", () => {
+    const getRecursive = (argument: string) =>
+      getReport({
+        M: `---- MODULE M ----\nEXTENDS Naturals\nRECURSIVE F(_, _)\nF(Op(_, _), n) == IF n = 0 THEN 0 ELSE F(${argument}, n - 1)\n====\n`,
+      });
+    const arityError = "Definition of F has different arity than its RECURSIVE declaration.";
+    const argumentError = "Argument number 1 to operator 'F' \nshould be a 2-parameter operator.\n";
+    expect(getRecursive("Op").text).toContain(arityError);
+    expect(getRecursive("Op").text).not.toContain(argumentError);
+    expect(getRecursive("Op(n, n)").text).toContain(argumentError);
+  });
+
   it("takes the parentheses of an operator's only argument for the operator's own", () => {
     const report = getReport({
       M: "---- MODULE M ----\nF(y) == y\nOp(G(_)) == G(1)\nA == Op(F)\n====\n",

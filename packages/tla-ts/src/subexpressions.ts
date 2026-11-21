@@ -1215,6 +1215,15 @@ export const createModuleSubexpressions = (
     },
     resolve: (): Module => {
       resolveDefinitionsBefore(undefined);
+      // A module with nothing to resolve stays itself, so that a check links a prepared module as it is.
+      if (
+        resolvedDefinitions.size === 0 &&
+        module.theorems.length === 0 &&
+        module.uses.length === 0 &&
+        !module.assumptions.some((assumption) => isMapped(assumption.expression))
+      ) {
+        return module;
+      }
       const getSharedBody = (statement: Expression | AssumeProve) => {
         const definition = module.definitions.find((candidate) => candidate.body === statement);
         return definition && (resolvedDefinitions.get(definition) ?? definition).body;

@@ -23,17 +23,17 @@ export interface ModelValue {
 interface LazySet {
   enumerated?: SetValue;
   isCached?: boolean;
-  walkFlags?: number;
+  flags?: number;
 }
 
 export interface SetValue {
   kind: "Set";
   elements: Value[];
   writtenElements: Value[] | undefined;
-  isNormalized: boolean;
   hash: number;
   fingerprint: number;
-  walkFlags: number;
+  // VALUE_NORMALIZED, VALUE_FINGERPRINTED, VALUE_SELF_COMPARED and VALUE_DEEPLY_NORMALIZED bits.
+  flags: number;
   costNode?: number;
 }
 
@@ -50,7 +50,8 @@ export interface FunctionValue {
   fingerprint: number;
   writtenKeys: Value[] | undefined;
   functionClass: "tuple" | "record" | undefined;
-  walkFlags: number;
+  // VALUE_FINGERPRINTED, VALUE_SELF_COMPARED and VALUE_DEEPLY_NORMALIZED bits.
+  flags: number;
 }
 
 export interface IntervalValue {
@@ -146,7 +147,7 @@ export interface LazyFunctionValue {
   isApplicationObserved: boolean;
   source?: LazyFunctionSource;
   enumerated?: FunctionValue;
-  walkFlags?: number;
+  flags?: number;
 }
 
 interface CountedLazyFunctionValue extends LazyFunctionValue {
@@ -202,6 +203,22 @@ const isLazySet = (value: ObjectValue): value is ConvertibleSetValue =>
   value.kind !== "LazyFunction";
 
 export const MAXIMUM_INTEGER = 2147483647;
+
+// A set that TLC has normalized, which it prints in sorted order.
+const VALUE_NORMALIZED = 1;
+// A value that a state holds once TLC has fingerprinted it.
+const VALUE_FINGERPRINTED = 2;
+// A value that compareWithItself walked, as TLC's equals and compareTo do once.
+const VALUE_SELF_COMPARED = 4;
+// A set or function that markNormalized walked, every set within which TLC has normalized.
+const VALUE_DEEPLY_NORMALIZED = 8;
+
+export const isNormalizedSet = (set: SetValue | MixedSetValue) =>
+  set.kind === "MixedSet" ? set.enumerated !== undefined : (set.flags & VALUE_NORMALIZED) !== 0;
+
+export const setNormalized = (set: SetValue, isNormalized: boolean) => {
+  set.flags = isNormalized ? set.flags | VALUE_NORMALIZED : set.flags & ~VALUE_NORMALIZED;
+};
 
 const DEFAULT_SET_BOUND = 1000000;
 const VALUE_VEC_CAPACITY = 10;
@@ -279,11 +296,18 @@ const getWrittenKeys = (functionValue: FunctionValue) =>
     ? undefined
     : functionValue.writtenKeys) ?? functionValue.domain;
 
-export const getWrittenPairs = (functionValue: FunctionValue): [Value, Value][] =>
-  getWrittenKeys(functionValue).map((key) => [
-    key,
-    functionValue.range[functionValue.domain.indexOf(key)],
-  ]);
+export const getWrittenPairs = (functionValue: FunctionValue): [Value, Value][] => {
+  const keys = getWrittenKeys(functionValue);
+  const domain = functionValue.domain;
+  const range = functionValue.range;
+  if (keys === domain) return domain.map((key, index) => [key, range[index]]);
+  // The position of each key in the domain, its first where it holds a key twice.
+  const positions = new Map<Value, number>();
+  domain.forEach((key, index) => {
+    if (!positions.has(key)) positions.set(key, index);
+  });
+  return keys.map((key) => [key, range[positions.get(key) ?? -1]]);
+};
 
 export const getPrintedPairs = (functionValue: FunctionValue): [Value, Value][] =>
   functionValue.domain.every((key) => typeof key === "number")
@@ -479,6 +503,12 @@ export const rankString = (text: string) => {
 
 export const getStringRank = (text: string) => stringOrder.ranks[rankString(text)];
 
+// The strings ranked so far, in their order.
+export const getRankedStrings = () => {
+  const ranks = stringOrder.ranks;
+  return Object.keys(ranks).sort((left, right) => ranks[left] - ranks[right]);
+};
+
 const compareStrings = (left: string, right: string) => {
   if (left === right) return 0;
   const ranks = stringOrder.ranks;
@@ -547,9 +577,6 @@ const compareAny = (other: Value): never => {
   );
 };
 
-const FINGERPRINTED_FLAG = 1;
-const SELF_COMPARED_FLAG = 2;
-
 const isHashed = (value: SetValue | FunctionValue) =>
   value.fingerprint !== 0 || (value.hash !== 0 && value.hash !== UNFINGERPRINTABLE_HASH);
 
@@ -568,7 +595,7 @@ const compareWithItself = (value: Value, isEquality: boolean): boolean => {
     case "LazyFunction":
       return compareWithItself(toFiniteFunction(value), isEquality);
     case "Function": {
-      if ((value.walkFlags & SELF_COMPARED_FLAG) !== 0 || isHashed(value)) return true;
+      if ((value.flags & VALUE_SELF_COMPARED) !== 0 || isHashed(value)) return true;
       if (isWrittenOrderUsed) value.writtenKeys = undefined;
       const domain = value.domain;
       const range = value.range;
@@ -579,18 +606,18 @@ const compareWithItself = (value: Value, isEquality: boolean): boolean => {
       for (let index = 0; index < range.length; index++) {
         isInnerSettled = compareWithItself(range[index], isEquality) && isInnerSettled;
       }
-      if (isInnerSettled) value.walkFlags |= SELF_COMPARED_FLAG;
+      if (isInnerSettled) value.flags |= VALUE_SELF_COMPARED;
       return isInnerSettled;
     }
     case "Set": {
-      if ((value.walkFlags & SELF_COMPARED_FLAG) !== 0 || isHashed(value)) return true;
-      value.isNormalized = true;
+      if ((value.flags & VALUE_SELF_COMPARED) !== 0 || isHashed(value)) return true;
+      value.flags |= VALUE_NORMALIZED;
       const elements = value.elements;
       let isInnerSettled = true;
       for (let index = 0; index < elements.length; index++) {
         isInnerSettled = compareWithItself(elements[index], isEquality) && isInnerSettled;
       }
-      if (isInnerSettled) value.walkFlags |= SELF_COMPARED_FLAG;
+      if (isInnerSettled) value.flags |= VALUE_SELF_COMPARED;
       return isInnerSettled;
     }
     case "Subset":
@@ -711,15 +738,14 @@ export const createSortedSet = (elements: Value[]): SetValue => ({
   kind: "Set",
   elements,
   writtenElements: undefined,
-  isNormalized: false,
   hash: 0,
   fingerprint: 0,
-  walkFlags: 0,
+  flags: 0,
 });
 
 export const createNormalizedSet = (elements: Value[]): SetValue => {
   const set = createSortedSet(elements);
-  set.isNormalized = true;
+  set.flags = VALUE_NORMALIZED;
   return set;
 };
 
@@ -731,7 +757,7 @@ export const createSortedFunction = (domain: Value[], range: Value[]): FunctionV
   fingerprint: 0,
   writtenKeys: undefined,
   functionClass: undefined,
-  walkFlags: 0,
+  flags: 0,
 });
 
 export type FunctionClass = "lambda" | "tuple" | "record";
@@ -799,9 +825,14 @@ export const markFingerprinted = (value: Value): void => {
   if (value.kind === "ModelValue" || value.kind === "Interval" || value.kind === "InfiniteSet") {
     return;
   }
-  const walkFlags = value.walkFlags ?? 0;
-  if ((walkFlags & FINGERPRINTED_FLAG) !== 0) return;
-  value.walkFlags = walkFlags | FINGERPRINTED_FLAG;
+  if (value.kind === "Function" || value.kind === "Set") {
+    if ((value.flags & VALUE_FINGERPRINTED) !== 0) return;
+    value.flags |= VALUE_FINGERPRINTED;
+  } else {
+    const flags = value.flags ?? 0;
+    if ((flags & VALUE_FINGERPRINTED) !== 0) return;
+    value.flags = flags | VALUE_FINGERPRINTED;
+  }
   if (value.kind === "Function") {
     value.domain.forEach(markFingerprinted);
     value.range.forEach(markFingerprinted);
@@ -934,31 +965,46 @@ const canonicalizeElements = (elements: Value[], canonicalize: (value: Value) =>
   }
 };
 
+// The canonical copy of each set and function a search has stored, in an open-addressed table
+// whose slots hold a value's hash and its position in values plus one, so that equal values in
+// states share one object.
 export const createCanonicalizer = () => {
-  const canonicalValues = new Map<number, Value | Value[]>();
+  let slots = new Int32Array(1 << 11);
+  const values: Value[] = [];
+  const insert = (hash: number, position: number) => {
+    const mask = slots.length - 1;
+    let slot = (Math.imul(hash, 0x9e3779b1) >>> 0) & mask & ~1;
+    while (slots[slot + 1] !== 0) slot = (slot + 2) & mask;
+    slots[slot] = hash;
+    slots[slot + 1] = position + 1;
+  };
   const canonicalize = (value: Value): Value => {
     if (typeof value !== "object" || (value.kind !== "Set" && value.kind !== "Function")) {
       return value;
     }
     const hash = getValueHash(value);
-    const bucket = canonicalValues.get(hash);
-    if (bucket !== undefined && !Array.isArray(bucket)) {
-      if (bucket === value || isInterchangeableValue(bucket, value)) return bucket;
-    }
-    if (Array.isArray(bucket)) {
-      for (let index = 0; index < bucket.length; index++) {
-        if (bucket[index] === value || isInterchangeableValue(bucket[index], value))
-          return bucket[index];
-      }
+    const mask = slots.length - 1;
+    for (
+      let slot = (Math.imul(hash, 0x9e3779b1) >>> 0) & mask & ~1;
+      slots[slot + 1] !== 0;
+      slot = (slot + 2) & mask
+    ) {
+      if (slots[slot] !== hash) continue;
+      const stored = values[slots[slot + 1] - 1];
+      if (stored === value || isInterchangeableValue(stored, value)) return stored;
     }
     if (value.kind === "Set") canonicalizeElements(value.elements, canonicalize);
     else {
       canonicalizeElements(value.domain, canonicalize);
       canonicalizeElements(value.range, canonicalize);
     }
-    if (bucket === undefined) canonicalValues.set(hash, value);
-    else if (Array.isArray(bucket)) bucket.push(value);
-    else canonicalValues.set(hash, [bucket, value]);
+    values.push(value);
+    if (values.length * 4 > slots.length) {
+      slots = new Int32Array(slots.length * 2);
+      values.forEach((stored, position) => insert(getValueHash(stored), position));
+    } else {
+      insert(hash, values.length - 1);
+    }
     return value;
   };
   return (state: Value[]) => {
@@ -1207,23 +1253,23 @@ const searchLikeTlc = (element: Value, sorted: Value[]) => {
 const isElementOfLikeTlc = (element: Value, elements: Value[]) =>
   elements.some((member) => callTracedMethod(member, () => equalsLikeTlc(member, element)));
 
-export const isNormalizedSet = (set: SetValue | MixedSetValue) =>
-  set.kind === "MixedSet" ? set.enumerated !== undefined : set.isNormalized;
-
 export const getWrittenElements = (set: SetValue | MixedSetValue) =>
   set.kind === "MixedSet"
     ? (set.enumerated?.elements ?? set.elements)
-    : set.isNormalized
+    : isNormalizedSet(set)
       ? set.elements
       : (set.writtenElements ?? set.elements);
 
+// A value that markNormalized walked once, as the constants that share the runtime's heap do, it
+// doesn't walk again.
 export const markNormalized = (value: Value): void => {
   if (typeof value !== "object") return;
-  if (value.kind === "Set") {
-    value.isNormalized = true;
+  if (value.kind === "Set" && (value.flags & VALUE_DEEPLY_NORMALIZED) === 0) {
+    value.flags |= VALUE_NORMALIZED | VALUE_DEEPLY_NORMALIZED;
     value.elements.forEach(markNormalized);
   }
-  if (value.kind === "Function") {
+  if (value.kind === "Function" && (value.flags & VALUE_DEEPLY_NORMALIZED) === 0) {
+    value.flags |= VALUE_DEEPLY_NORMALIZED;
     value.writtenKeys = undefined;
     value.domain.forEach(markNormalized);
     value.range.forEach(markNormalized);
@@ -1233,7 +1279,7 @@ export const markNormalized = (value: Value): void => {
 export const normalizeShallowly = (value: Value): void => {
   if (typeof value !== "object" || isCachedSet(value)) return;
   if (value.kind === "Set") {
-    value.isNormalized = true;
+    value.flags |= VALUE_NORMALIZED;
     return;
   }
   if (value.kind === "MixedSet") {
@@ -1461,6 +1507,97 @@ export const createFunction = (pairs: [Value, Value][]): FunctionValue => {
   return createSortedFunction(domain, range);
 };
 
+// A key that holds no written order, so comparing it forgets none: TLC compares such keys without
+// anything observable but the result.
+const isOrderless = (value: Value): boolean =>
+  typeof value !== "object" ||
+  (value.kind === "Function" &&
+    ((value.flags & VALUE_SELF_COMPARED) !== 0 ||
+      (value.writtenKeys === undefined &&
+        value.domain.every(isOrderless) &&
+        value.range.every(isOrderless))));
+
+// The keys and values of two sorted domains, merged by searching the longer for each key of the
+// shorter, or undefined where two keys compare equal.
+const mergeSorted = (
+  domain: Value[],
+  range: Value[],
+  otherDomain: Value[],
+  otherRange: Value[],
+): [Value[], Value[]] | undefined => {
+  const isOtherShorter = otherDomain.length <= domain.length;
+  const longKeys = isOtherShorter ? domain : otherDomain;
+  const longValues = isOtherShorter ? range : otherRange;
+  const shortKeys = isOtherShorter ? otherDomain : domain;
+  const shortValues = isOtherShorter ? otherRange : range;
+  const mergedKeys: Value[] = [];
+  const mergedValues: Value[] = [];
+  let taken = 0;
+  const takeUntil = (position: number) => {
+    for (; taken < position; taken++) {
+      mergedKeys.push(longKeys[taken]);
+      mergedValues.push(longValues[taken]);
+    }
+  };
+  for (let index = 0; index < shortKeys.length; index++) {
+    const key = shortKeys[index];
+    let low = taken;
+    let high = longKeys.length;
+    while (low < high) {
+      const middle = (low + high) >> 1;
+      const comparison = compareValues(longKeys[middle], key);
+      if (comparison === 0) return undefined;
+      if (comparison < 0) low = middle + 1;
+      else high = middle;
+    }
+    takeUntil(low);
+    mergedKeys.push(key);
+    mergedValues.push(shortValues[index]);
+  }
+  takeUntil(longKeys.length);
+  return [mergedKeys, mergedValues];
+};
+
+// f @@ g as TLC's CombineFcn: f's pairs, then those of g whose keys equal none of f's, written in
+// that order. The keys sort by merging the sorted domains where comparing them forgets nothing and
+// can't fail, and by sorting every pair otherwise.
+export const combineFunctions = (left: FunctionValue, right: FunctionValue): FunctionValue => {
+  const leftKeys = getWrittenKeys(left);
+  const rightKeys = getWrittenKeys(right);
+  const dropped = new Set<Value>();
+  rightKeys.forEach((key) => {
+    if (leftKeys.some((leftKey) => isEqualLikeTlc(key, leftKey))) dropped.add(key);
+  });
+  const keys = [...leftKeys, ...rightKeys.filter((key) => !dropped.has(key))];
+  const merged = mergeCombined(left, right, dropped);
+  if (!merged) {
+    const leftPairs = getWrittenPairs(left);
+    const addedPairs = getWrittenPairs(right).filter((pair) => !dropped.has(pair[0]));
+    return createWrittenFunction([...leftPairs, ...addedPairs]);
+  }
+  const combined = createSortedFunction(merged[0], merged[1]);
+  return keys.every((key, index) => key === combined.domain[index])
+    ? combined
+    : setWrittenOrder(combined, keys);
+};
+
+const mergeCombined = (left: FunctionValue, right: FunctionValue, dropped: Set<Value>) => {
+  const addedDomain =
+    dropped.size === 0 ? right.domain : right.domain.filter((key) => !dropped.has(key));
+  const addedRange =
+    dropped.size === 0
+      ? right.range
+      : right.range.filter((_, index) => !dropped.has(right.domain[index]));
+  if (!left.domain.every(isOrderless) || !addedDomain.every(isOrderless)) return undefined;
+  try {
+    return mergeSorted(left.domain, left.range, addedDomain, addedRange);
+  } catch (error) {
+    // Sorting every pair reports whatever comparison fails as it always has.
+    if (error instanceof TlaEvaluationError) return undefined;
+    throw error;
+  }
+};
+
 export const createWrittenFunction = (pairs: [Value, Value][]) => {
   const functionValue = createFunction(pairs);
   const isWrittenSorted =
@@ -1474,19 +1611,96 @@ export const createWrittenFunction = (pairs: [Value, Value][]) => {
       );
 };
 
+// The elements of an interval, which keep it: a function whose domain they are has the interval as
+// its domain, as TLC's functions over an interval keep it. An array made from them is a plain array.
+class IntervalElements extends Array<Value> {
+  static override get [Symbol.species]() {
+    return Array;
+  }
+
+  readonly interval: IntervalValue;
+
+  constructor(interval: IntervalValue) {
+    // Sized up front: pushing onto an Array subclass costs about 30 times as much per element.
+    super(Math.max(interval.high - interval.low + 1, 0));
+    this.interval = interval;
+    for (let index = 0; index < this.length; index++) this[index] = interval.low + index;
+  }
+}
+
 const MAX_SHARED_INTERVAL_LENGTH = 1024;
-const intervalDomains: Value[][] = [];
-const longIntervalDomains = new Map<number, WeakRef<Value[]>>();
-const intervalValues: IntervalValue[] = [];
-const intervalArrays = new WeakMap<Value[], IntervalValue>();
+// The elements of 1..length for each length up to MAX_SHARED_INTERVAL_LENGTH, which every function
+// over one of them shares.
+const intervalDomains: IntervalElements[] = [];
 
 const getIntervalDomain = (length: number): Value[] => {
-  const cached = intervalDomains[length] ?? longIntervalDomains.get(length)?.deref();
-  if (cached) return cached;
-  const domain = Array.from({ length }, (_value, index) => index + 1);
-  if (length > MAX_SHARED_INTERVAL_LENGTH) longIntervalDomains.set(length, new WeakRef(domain));
-  else intervalDomains[length] = domain;
+  const shared = intervalDomains[length];
+  if (shared) return shared;
+  const domain = new IntervalElements({ kind: "Interval", low: 1, high: length });
+  if (length <= MAX_SHARED_INTERVAL_LENGTH) intervalDomains[length] = domain;
   return domain;
+};
+
+// The kind of the mark that stands for 1..n, the elements of an array of their own class, in a
+// copy of a value that encodeGraph holds.
+const INTERVAL_MARK = "IntervalElements";
+
+interface IntervalMark {
+  kind: typeof INTERVAL_MARK;
+  length: number;
+}
+
+const isIntervalMark = (value: object): value is IntervalMark =>
+  Reflect.get(value, "kind") === INTERVAL_MARK;
+
+// Copies of values of plain objects and arrays, which share what the values share, as encodeGraph
+// holds them, with a mark for each array of 1..n. A value that holds a function, as a lazy one
+// does, keeps it, which encodeGraph rejects.
+export const getPlainValues = (values: Value[]): unknown[] => {
+  const copies = new Map<object, unknown>();
+  const copy = (value: unknown): unknown => {
+    if (typeof value !== "object" || value === null) return value;
+    const known = copies.get(value);
+    if (known !== undefined) return known;
+    if (value instanceof IntervalElements) {
+      const mark: IntervalMark = { kind: INTERVAL_MARK, length: value.length };
+      copies.set(value, mark);
+      return mark;
+    }
+    if (Array.isArray(value)) {
+      const array: unknown[] = [];
+      copies.set(value, array);
+      for (const item of value) array.push(copy(item));
+      return array;
+    }
+    const object: Record<string, unknown> = {};
+    copies.set(value, object);
+    for (const [key, item] of Object.entries(value)) object[key] = copy(item);
+    return object;
+  };
+  return values.map(copy);
+};
+
+// The values that getPlainValues copied, as decodeGraph reads them, made values again in place: each
+// mark its array of 1..n, and what made the values noted, as it is where a check makes them.
+export const readPlainValues = (plain: unknown[]): Value[] => {
+  const isRead = new Set<object>();
+  const read = (value: unknown): unknown => {
+    if (typeof value !== "object" || value === null) return value;
+    if (isIntervalMark(value)) return getIntervalDomain(value.length);
+    if (isRead.has(value)) return value;
+    isRead.add(value);
+    if (Array.isArray(value)) {
+      for (let index = 0; index < value.length; index++) value[index] = read(value[index]);
+      return value;
+    }
+    for (const key of Object.keys(value)) Reflect.set(value, key, read(Reflect.get(value, key)));
+    const kind: unknown = Reflect.get(value, "kind");
+    if (kind === "Union" || kind === "SetOperation") hasStreamedSet = true;
+    if (Reflect.get(value, "writtenKeys") !== undefined) isWrittenOrderUsed = true;
+    return value;
+  };
+  return plain.map((value) => read(value) as Value);
 };
 
 export const getIntervalElements = (value: IntervalValue): Value[] => {
@@ -1497,25 +1711,13 @@ export const getIntervalElements = (value: IntervalValue): Value[] => {
   return elements;
 };
 
-const isIntervalDomain = (domain: Value[]) =>
-  (domain.length > 0 &&
-    (domain === intervalDomains[domain.length] ||
-      domain === longIntervalDomains.get(domain.length)?.deref())) ||
-  intervalArrays.has(domain);
+const isIntervalDomain = (domain: Value[]) => domain instanceof IntervalElements;
 
 export const getFunctionDomain = (set: Value, isBounded = true): Value[] => {
   const elements = isBounded ? toFiniteSet(set).elements : getUnboundedElements(set);
   return isIntervalDomain(elements) && !(typeof set === "object" && set.kind === "Interval")
     ? [...elements]
     : elements;
-};
-
-const getIntervalValue = (high: number): IntervalValue => {
-  const cached = intervalValues[high];
-  if (cached) return cached;
-  const interval: IntervalValue = { kind: "Interval", low: 1, high };
-  intervalValues[high] = interval;
-  return interval;
 };
 
 export const createTuple = (elements: Value[]): FunctionValue =>
@@ -1851,11 +2053,11 @@ const enumerateSet = (
       return value.elements;
     case "MixedSet":
       return sortLikeTlc(value.elements);
-    case "Interval": {
-      const elements = getIntervalElements(value);
-      if (elements !== intervalDomains[elements.length]) intervalArrays.set(elements, value);
-      return elements;
-    }
+    case "Interval":
+      getCardinality(value);
+      return value.low === 1 && value.high >= 1
+        ? getIntervalDomain(value.high)
+        : new IntervalElements(value);
     case "Subset": {
       const base = getSubsetBase(value);
       if (base.length > MAXIMUM_ENUMERATED_SUBSET_BASE) {
@@ -2816,8 +3018,13 @@ export const getSequenceElements = (value: Value): Value[] | undefined => {
     }
   }
   const functionValue = toFiniteFunction(value);
-  return isSequenceDomain(functionValue.domain) ? functionValue.range : undefined;
+  return isSortedSequenceDomain(functionValue.domain) ? functionValue.range : undefined;
 };
+
+// A function's domain is sorted and of values that compare with each other, so one that starts at 1
+// and ends at its length holds only integers, each once, and is 1..n.
+const isSortedSequenceDomain = (domain: Value[]) =>
+  domain.length === 0 || (domain[0] === 1 && domain[domain.length - 1] === domain.length);
 
 const describeNonSetMembership = (element: Value, value: Value) => {
   const prefix = `Attempted to check if the value:\n${prettyPrint(formatValue(element))}\nis an element of the`;
@@ -2939,7 +3146,7 @@ const isInSortedSet = (element: Value, set: SetValue) =>
   findSortedIndex(set.elements, element) !== -1;
 
 const isInSortedSetLikeTlc = (element: Value, set: SetValue) =>
-  set.isNormalized
+  isNormalizedSet(set)
     ? searchLikeTlc(element, set.elements).isFound
     : isElementOfLikeTlc(element, getWrittenElements(set));
 
@@ -3034,7 +3241,7 @@ const getUnionMemberSets = (element: Value, set: UnionValue) => {
   const sets = toFiniteSet(set.base).elements;
   if (sets.length > 1) {
     sets.forEach((inner) => {
-      if (typeof inner === "object" && inner.kind === "Set") inner.isNormalized = true;
+      if (typeof inner === "object" && inner.kind === "Set") inner.flags |= VALUE_NORMALIZED;
     });
   }
   return sets;
@@ -3504,9 +3711,7 @@ export const applyFunction = (
 };
 
 export const getDomainInterval = (domain: Value[]) =>
-  isIntervalDomain(domain)
-    ? (intervalArrays.get(domain) ?? getIntervalValue(domain.length))
-    : undefined;
+  domain instanceof IntervalElements ? domain.interval : undefined;
 
 // FcnLambdaValue#getDomain answers with its record's domain once it has converted.
 export const getDomain = (functionValue: Value): Value => {
@@ -3525,7 +3730,7 @@ export const getDomain = (functionValue: Value): Value => {
     if (finite.writtenKeys) set.writtenElements = finite.writtenKeys;
     return set;
   }
-  set.isNormalized = true;
+  set.flags |= VALUE_NORMALIZED;
   return set;
 };
 
@@ -3679,6 +3884,18 @@ const fingerprintValue = (value: Value): void => {
   functionValue.range.forEach(fingerprintValue);
 };
 
+// The error that streaming a set's elements raises, which is how TLC reads the set a filter
+// selects from rather than fingerprinting it.
+export const getStreamError = (value: Value) => {
+  try {
+    someStreamedElement(value, () => false);
+    return undefined;
+  } catch (error) {
+    if (!(error instanceof TlaEvaluationError)) throw error;
+    return error;
+  }
+};
+
 export const getFingerprintError = (value: Value) => {
   if (typeof value !== "object" || value.kind === "ModelValue") return undefined;
   try {
@@ -3723,7 +3940,7 @@ export const getValueHash = (value: Value): number => {
   if (typeof value === "string") return hashString(value);
   if (value.kind === "Set" || value.kind === "Function") {
     // TLC sorts a set in place as it fingerprints it, also a union that inherited its hash, so every lookup marks it.
-    if (value.kind === "Set" && !value.isNormalized) value.isNormalized = true;
+    if (value.kind === "Set") value.flags |= VALUE_NORMALIZED;
     if (value.hash === 0) value.hash = computeValueHash(value);
     return value.hash;
   }
@@ -3921,7 +4138,7 @@ export const formatNormalizedCopies = (values: Value[]) => {
     switch (value.kind) {
       case "Set":
         value.elements.forEach(normalizeInner);
-        value.isNormalized = true;
+        value.flags |= VALUE_NORMALIZED;
         return value;
       case "MixedSet":
         value.elements.forEach(normalizeInner);
@@ -4035,7 +4252,7 @@ export const formatValue = (value: Value, isStrict = false, isNormalized = false
       const formatRange = (inner: Value) =>
         formatValue(inner, isStrict, isNormalized && getFunctionClass(value) !== "lambda");
       if (functionValue.domain.length === 0 && getFunctionClass(value) === "record") return "[]";
-      if (functionValue.domain.every((key, index) => key === index + 1)) {
+      if (isSequenceDomain(functionValue.domain)) {
         return `<<${functionValue.range.map(formatRange).join(", ")}>>`;
       }
       const pairs = isNormalized

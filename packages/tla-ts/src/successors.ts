@@ -31,6 +31,7 @@ import {
   getDefinition,
   getContextElements,
   getEntryEvaluator,
+  getLetSites,
   getReevaluatedDefinitions,
   getStartupValue,
   lookupScope,
@@ -98,7 +99,7 @@ interface Run {
 
 type Continuation = (partial: State, action: string | undefined) => void;
 
-type Runner = (
+export type Runner = (
   run: Run,
   scope: Scope | undefined,
   partial: State,
@@ -114,13 +115,10 @@ type Conjunct = { expression: Expression } & (
   | { kind: "Branch"; runner: Runner }
 );
 
-const initRunners = new WeakMap<Expression, Runner>();
-const nextRunners = new WeakMap<Expression, Runner>();
-
 const getContext = (run: Run, scope: Scope | undefined, partial: State) =>
   run.isInit
-    ? { environment: run.environment, scope, state: partial, next: undefined }
-    : { environment: run.environment, scope, state: run.current, next: partial };
+    ? { environment: run.environment, scope, state: partial, next: undefined, isNaming: true }
+    : { environment: run.environment, scope, state: run.current, next: partial, isNaming: true };
 
 const assign = (partial: State, index: number, value: Value) => {
   const copy = partial.slice();
@@ -154,7 +152,7 @@ const isAssignmentOperator = (operator: string) =>
   operator === "=" || operator === "\\in" || operator === "\\subseteq";
 
 const getRunner = (expression: Expression, environment: Environment, isInit: boolean): Runner => {
-  const runners = isInit ? initRunners : nextRunners;
+  const runners = isInit ? environment.initRunners : environment.nextRunners;
   const cached = runners.get(expression);
   if (cached) return cached;
   const deterministic = compileAction(expression, environment, isInit);
@@ -1141,6 +1139,7 @@ const compileAction = (
     case "Let": {
       const body = getChildRunner(expression.body);
       const reevaluated = getReevaluatedDefinitions(expression.definitions, environment);
+      const sites = getLetSites(expression.definitions);
       // TLC's Tool#enabled binds a LET's definitions to lazy values it caches, where Tool#getNextStates evaluates them at every use.
       const cached = { impure: new Set<Definition>(), streamed: reevaluated.streamed };
       return (run, scope, partial, action, isFixed, onComplete) =>
@@ -1150,6 +1149,7 @@ const compileAction = (
             expression.definitions,
             getContext(run, scope, partial),
             run.isEnabled ? cached : reevaluated,
+            sites,
           ),
           partial,
           action,
@@ -1354,6 +1354,7 @@ export const forEachSuccessor = (
   generator?: SuccessorGenerator,
   onUnsatisfied?: Run["onUnsatisfied"],
   onIncomplete?: (state: State, action: string | undefined) => void,
+  action?: string,
 ) => {
   const run: Run = {
     environment,
@@ -1369,7 +1370,7 @@ export const forEachSuccessor = (
     run,
     scope,
     getEmptyState(environment),
-    undefined,
+    action,
     false,
     (partial, action) => {
       if (run.isStopped) return;
