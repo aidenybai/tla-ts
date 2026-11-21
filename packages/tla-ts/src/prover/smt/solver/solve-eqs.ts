@@ -464,8 +464,6 @@ export class SolveEqs {
     return false;
   }
 
-  // array_extract_eq: (forall (x) (=> G (= (select A x) t))) solves A as
-  // (lambda (x) (ite G t (select A' x))) with a fresh A', and without G as (lambda (x) t).
   private getArrayEqs(form: number, eqs: DependentEq[]) {
     const manager = this.manager;
     if (

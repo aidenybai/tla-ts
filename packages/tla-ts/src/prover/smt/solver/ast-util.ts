@@ -162,8 +162,6 @@ const getChildren = (manager: AstManager, expr: number) => {
   return [data.body, ...data.patterns, ...data.noPatterns];
 };
 
-// for_each_expr_core visits each term once, after its arguments, and a quantifier's body
-// before its patterns.
 export const forEachExpr = <T>(
   manager: AstManager,
   root: number,

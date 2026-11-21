@@ -87,8 +87,6 @@ export class ModelEvaluator extends RewriterTpl {
     return nested;
   }
 
-  // model_evaluator::operator() under model.array_as_stores: an array value with an index set becomes
-  // stores over a constant array.
   rewrite(expr: number) {
     const manager = this.manager;
     const value = super.rewrite(expr);

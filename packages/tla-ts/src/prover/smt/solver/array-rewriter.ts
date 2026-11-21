@@ -55,8 +55,6 @@ const addStore = (
   return true;
 };
 
-// has_index_set on a lambda: the else value of a body that is an or or an and of index equalities,
-// or a chain of ites on them, after the stores it denotes.
 export const hasIndexSet = (manager: AstManager, lambda: number, stores: number[][]) => {
   const numIndices = manager.getQuantifier(lambda).sorts.length;
   const body = manager.getQuantifier(lambda).body;

@@ -33,8 +33,6 @@ interface PbSum {
   coeff: Rational;
 }
 
-// lia_rewriter_cfg. Its args vector holds the terms of the last sum it read until it reads the next one,
-// and the conditions of a sum live only while it reads them.
 class PbRewriter extends RewriterTpl {
   constructor(
     manager: AstManager,
@@ -122,7 +120,6 @@ class PbRewriter extends RewriterTpl {
     return isThen && isElse;
   }
 
-  // get_pb_sum
   private getSumOf(term: number, factor: Rational, sum: PbSum) {
     return this.getSum(0, term, factor, new RefVector(this.manager), sum);
   }
@@ -132,7 +129,6 @@ class PbRewriter extends RewriterTpl {
     return this.getSumOf(term, Rational.one, sum) ? sum : undefined;
   }
 
-  // is_pb
   private getPb(first: number, second: number) {
     this.args.reset();
     const sum: PbSum = { args: [], coeffs: [], coeff: Rational.zero };
@@ -195,7 +191,6 @@ class PbRewriter extends RewriterTpl {
   }
 }
 
-// get_pb_sum: the terms of the sum stay in terms.
 export const getPbSum = (manager: AstManager, term: number, terms: RefVector) =>
   new PbRewriter(manager, terms, 4, true).getPbSum(term);
 
