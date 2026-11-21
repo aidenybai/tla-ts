@@ -8,7 +8,7 @@ import {
   isOutOfRange,
   overrideWithJava,
 } from "./builtins";
-import { TlaEvaluationError, TlaSetBoundError, TlaUnsupportedError } from "./errors";
+import { TlaEvaluationError, TlaFileError, TlaSetBoundError, TlaUnsupportedError } from "./errors";
 import type { Builtin, BuiltinArgument, Context } from "./evaluate";
 import { trimJava } from "./java-string";
 import { readJson, type JsonElement } from "./json-reader";
@@ -120,13 +120,17 @@ const writeConverted = (
   write: (text: string) => void,
   elements: Value[],
   toText: (element: Value) => string,
+  toConversionError = (error: TlaEvaluationError) => error,
 ) => {
+  write("");
   const texts: string[] = [];
   try {
     elements.forEach((element) => texts.push(toText(element)));
-  } finally {
+  } catch (error) {
     write(texts.join(""));
+    throw error instanceof TlaEvaluationError ? toConversionError(error) : error;
   }
+  write(texts.join(""));
 };
 
 const toJsonObject = (value: Value) => {
@@ -200,6 +204,21 @@ const getJavaExceptionClass = (error: TlaEvaluationError) => {
     : "util.Assert$TLCRuntimeException";
 };
 
+const openLikeNio = <Result>(open: () => Result) => {
+  try {
+    return open();
+  } catch (error) {
+    if (!(error instanceof TlaFileError)) throw error;
+    throw new TlaEvaluationError(
+      error.code === "ENOENT"
+        ? `java.nio.file.NoSuchFileException: ${error.path}`
+        : error.code === "EACCES"
+          ? `java.nio.file.AccessDeniedException: ${error.path}`
+          : `java.nio.file.FileSystemException: ${error.path}: ${error.reason}`,
+    );
+  }
+};
+
 // Files.newBufferedWriter writes the text over the start of a file that it neither truncates nor appends to.
 const serializeWithOptions = (
   files: FileSystem,
@@ -225,7 +244,7 @@ const serializeWithOptions = (
   if (options.has("DELETE_ON_CLOSE")) {
     throw new TlaUnsupportedError("IOUtils!Serialize does not support DELETE_ON_CLOSE");
   }
-  const existing = files.readFile?.(path);
+  const existing = openLikeNio(() => files.readFile?.(path));
   if (existing === undefined && !options.has("CREATE") && !options.has("CREATE_NEW")) {
     throw new TlaEvaluationError(`java.nio.file.NoSuchFileException: ${path}`);
   }
@@ -233,20 +252,22 @@ const serializeWithOptions = (
     throw new TlaEvaluationError(`java.nio.file.FileAlreadyExistsException: ${path}`);
   }
   const write = (text: string) =>
-    files.writeFile?.(
-      path,
-      existing === undefined || options.has("TRUNCATE_EXISTING")
-        ? text
-        : options.has("APPEND")
-          ? existing + text
-          : text + existing.slice(text.length),
+    openLikeNio(() =>
+      files.writeFile?.(
+        path,
+        existing === undefined || options.has("TRUNCATE_EXISTING")
+          ? text
+          : options.has("APPEND")
+            ? existing + text
+            : text + existing.slice(text.length),
+      ),
     );
-  try {
-    writeConverted(write, elements, toNdJsonLine);
-  } catch (error) {
-    if (!(error instanceof TlaEvaluationError)) throw error;
-    throw new TlaEvaluationError(`${getJavaExceptionClass(error)}: ${error.message}`);
-  }
+  writeConverted(
+    write,
+    elements,
+    toNdJsonLine,
+    (error) => new TlaEvaluationError(`${getJavaExceptionClass(error)}: ${error.message}`),
+  );
 };
 
 const makeParentDirectory = (files: FileSystem, path: string) => {

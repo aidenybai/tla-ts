@@ -616,11 +616,15 @@ describe("the quantifier solver of sat.euf, as Z3 5.3.2 reads smt.ematching and 
       assertion,
       "(check-sat-using sat)",
       "(get-info :reason-unknown)",
+      "(get-info :rlimit)",
     ]);
   const GIVE_UP = ["unknown", '(:reason-unknown "incomplete theory quant")'];
 
   it("gives up without mbqi once e-matching has nothing left", () => {
-    expect(getOutput(["(set-option :smt.mbqi false)"], "(assert (< a 0))")).toEqual(GIVE_UP);
+    expect(getOutput(["(set-option :smt.mbqi false)"], "(assert (< a 0))")).toEqual([
+      ...GIVE_UP,
+      "(:rlimit 99)",
+    ]);
   });
 
   it("gives up without e-matching or mbqi", () => {
@@ -629,7 +633,15 @@ describe("the quantifier solver of sat.euf, as Z3 5.3.2 reads smt.ematching and 
         ["(set-option :smt.mbqi false)", "(set-option :smt.ematching false)"],
         "(assert (< (f a) (g a)))",
       ),
-    ).toEqual(GIVE_UP);
+    ).toEqual([...GIVE_UP, "(:rlimit 98)"]);
+  });
+
+  it("counts a step for each term that e_internalize visits", () => {
+    expect(getOutput([], "(assert (< (f a) (g a)))")).toEqual([
+      "unsat",
+      '(:reason-unknown "")',
+      "(:rlimit 87)",
+    ]);
   });
 });
 
@@ -816,5 +828,38 @@ describe("the pattern database setup_AUFLIA turns on, as Z3 5.3.2 loads it", () 
     const expected = ["sat", "(:rlimit 2378)", "unknown", "(:rlimit 2810)"];
     expect(getOutput(5)).toEqual(expected);
     expect(getOutput(0)).toEqual(expected);
+  });
+});
+
+describe("qsat, as Z3 5.3.2 counts its steps", () => {
+  const getRlimit = (assertion: string) =>
+    run(["(declare-const c Int)", `(assert ${assertion})`, "(check-sat)", "(get-info :rlimit)"]);
+
+  it("removes the labels before it hoists and validates the assumptions it takes from the model", () => {
+    expect(getRlimit("(forall ((x Int)) (=> (>= x c) (>= (+ x 1) c)))")).toEqual([
+      "sat",
+      "(:rlimit 443)",
+    ]);
+    expect(getRlimit("(forall ((x Int)) (=> (> x c) (> x (- c 1))))")).toEqual([
+      "sat",
+      "(:rlimit 467)",
+    ]);
+    expect(
+      run([
+        "(declare-const c Int)",
+        "(assert (forall ((x Int)) (! (=> (>= x c) (>= (+ x 1) c)) :lblpos L)))",
+        "(check-sat-using qsat)",
+        "(get-info :rlimit)",
+      ]),
+    ).toEqual(["sat", "(:rlimit 358)"]);
+  });
+
+  it("rewrites a projection while its term graph lives and then rewrites the constant arrays", () => {
+    expect(getRlimit("(forall ((x Int)) (> (+ x c) 3))")).toEqual(["unsat", "(:rlimit 379)"]);
+    expect(getRlimit("(forall ((x Int)) (> (+ (* 2 c) 1) x))")).toEqual(["unsat", "(:rlimit 456)"]);
+    expect(getRlimit("(forall ((x Int)) (=> (> x 0) (> (+ x c) 0)))")).toEqual([
+      "sat",
+      "(:rlimit 772)",
+    ]);
   });
 });

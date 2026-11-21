@@ -1,11 +1,25 @@
 import { type AstManager } from "./ast";
 import type { SmtSetup } from "./smt-setup";
 import { AssertedFormulas } from "./asserted-formulas";
+import { getCaseSplitStrategy } from "./case-split-queue";
 import { Context } from "./context";
 import { L_TRUE } from "./lbool";
 import { Mus } from "./mus";
 import { RefVector } from "./ref-vector";
 import type { KernelParams } from "./solver";
+
+export const getGlobalSmtParams = (
+  parameters: ReadonlyMap<string, string>,
+  relevancyLevel = Number(parameters.get("smt.relevancy") ?? "2"),
+) => ({
+  isEmatching: parameters.get("smt.ematching") !== "false",
+  relevancyLevel,
+  caseSplitStrategy: getCaseSplitStrategy(
+    Number(parameters.get("smt.case_split") ?? "1"),
+    relevancyLevel,
+    parameters.get("smt.auto_config") !== "false" && parameters.get("auto_config") !== "false",
+  ),
+});
 
 export class SmtKernel {
   readonly context: Context;
@@ -22,13 +36,14 @@ export class SmtKernel {
       mbqiMaxIterations: params.mbqiMaxIterations,
       isEmatching: params.isEmatching,
       relevancyLevel: params.relevancyLevel ?? 2,
-      isDelayingNewCaseSplits: params.isDelayingNewCaseSplits,
+      caseSplitStrategy: params.caseSplitStrategy,
       randomSeed: params.randomSeed,
       intHammerPeriod: params.intHammerPeriod,
       isArithPropagatingEqs: params.isArithPropagatingEqs,
       qiCost: params.qiCost,
       qiEagerThreshold: params.qiEagerThreshold,
       qiLazyThreshold: params.qiLazyThreshold,
+      isProofsEnabled: params.isProofsEnabled,
     });
     this.setup = params.setup;
     this.isCoreMinimizing = params.isCoreMinimizing ?? false;

@@ -32,8 +32,10 @@ import {
   chargeFunctionConstruction,
   chargeSetOperation,
   costCoverage,
+  countArgumentTuple,
   countCoverage,
   createChargedEnumerator,
+  createChargedMembership,
   createProductSetEnumerator,
   DO_NOT_RECORD,
   enterFrames,
@@ -41,9 +43,9 @@ import {
   getCoverageFrames,
   getCoverageNode,
   getSubstitutionNode,
+  getValueNode,
   runAtCoverageNode,
   runInCoverageFrames,
-  tagSubset,
   type Coverage,
   type NextStateMode,
 } from "./coverage";
@@ -73,6 +75,7 @@ import { getKeyName } from "./resolve";
 import { isEnabled, type Runner } from "./successors";
 import {
   applyFunction,
+  checkLazyArgumentWith,
   describeMissingArgument,
   compareValues,
   createFunction,
@@ -102,10 +105,9 @@ import {
   getNormalizedSetElements,
   getSequenceElements,
   isElementOf,
-  isEnumerable,
+  isReceiverEqual,
   isFunctionValue,
   isOverriddenSet,
-  markLambdaFunction,
   isReducibleSet,
   isSetValue,
   isSettledValue,
@@ -751,14 +753,17 @@ const getUnrecordedApply = (functionValue: Value, coverage: Coverage) => {
       : runAtCoverageNode(coverage, DO_NOT_RECORD, () => lambda.compute(argument, lambda.value));
 };
 
+// SANY makes the arguments of f[a, b] a $Tuple at the application's location, which TLC's call stack holds while they evaluate.
+export const getArgumentTuple = (
+  expression: Expression & { kind: "FunctionApplication" },
+): Expression => ({ kind: "Tuple", elements: expression.args, location: expression.location });
+
 export const bindLazyArguments = (
   lambda: LazyFunction,
   expression: Expression & { kind: "FunctionApplication" },
-  context: Context,
+  argument: Value,
 ) => {
   const value = lambda.value;
-  const args = expression.args.map((arg) => evaluate(arg, context));
-  const argument = args.length === 1 ? args[0] : createTuple(args);
   const describeArgument = (ordinal: string, element: Value, problem: string) =>
     `In applying the function\n${prettyPrint(formatValue(value))},\nthe ${ordinal} is:\n${prettyPrint(formatValue(element))}${problem}.\n${describeRange(expression.function)}`;
   const bounds = lambda.bounds;
@@ -882,8 +887,25 @@ const getBoundTupleLengths = (bounds: Bound[]) =>
         bound.pattern.kind === "Tuple" ? bound.pattern.names.length : undefined,
       );
 
-const getRecursiveCostModel = (coverage: Coverage | undefined, node: number) =>
-  coverage && node >= 0 ? { secondary: coverage.secondary, node } : undefined;
+const getBoundSets = (bounds: Bound[], domain: Value) =>
+  bounds.length === 1 || typeof domain !== "object" || domain.kind !== "ProductSet"
+    ? [domain]
+    : domain.factors;
+
+const getCostModel = (
+  coverage: Coverage | undefined,
+  node: number,
+  bounds: Bound[],
+  domain: Value,
+) =>
+  coverage && node >= 0
+    ? {
+        secondary: coverage.secondary,
+        node,
+        chargeConversion: () =>
+          chargeFunctionConstruction(coverage, node, getBoundSets(bounds, domain)),
+      }
+    : undefined;
 
 const createRecursiveFunction = (
   definition: FunctionDefinition,
@@ -916,7 +938,7 @@ const createRecursiveFunction = (
       domain,
     ),
     getBoundTupleLengths(definition.bounds),
-    getRecursiveCostModel(coverage, node),
+    getCostModel(coverage, node, definition.bounds, domain),
     isVaryingBody || coverage !== undefined,
   );
   keepLambda({
@@ -926,7 +948,7 @@ const createRecursiveFunction = (
     scope: bindSelf(undefined, definition.name, functionValue),
     compute,
   });
-  const rebindable: RebindableLazyFunction = Object.assign(functionValue, {
+  return Object.assign(functionValue, {
     rebind: (tracing: Environment) => {
       const rebound = createRecursiveFunction(
         definition,
@@ -938,7 +960,6 @@ const createRecursiveFunction = (
       return rebound;
     },
   });
-  return definition.bounds.length === 1 ? markLambdaFunction(rebindable) : rebindable;
 };
 
 const toStartupValue = (definition: Definition, value: Value): Value => {
@@ -1841,11 +1862,11 @@ const evaluateWithNextState = (
 const compileUnchanged = (evaluator: Evaluator, coverage: Coverage | undefined): Evaluator =>
   coverage
     ? (context) =>
-        valuesEqual(
+        isReceiverEqual(
           evaluateWithNextState(coverage, "empty", evaluator, context),
           evaluateWithNextState(coverage, "primed", evaluator, toNextContext(context)),
         )
-    : (context) => valuesEqual(evaluator(context), evaluator(toNextContext(context)));
+    : (context) => isReceiverEqual(evaluator(context), evaluator(toNextContext(context)));
 
 const traceEvaluator =
   (
@@ -1998,9 +2019,38 @@ const traceFrames =
     }
   };
 
-const countEvaluator =
-  (expression: Expression, evaluator: Evaluator, coverage: Coverage): Evaluator =>
-  (context) => {
+const getTaggedSetTest = (expression: Expression): ((value: Value) => boolean) | undefined => {
+  switch (expression.kind) {
+    case "SetEnumeration":
+      return () => true;
+    case "SetMap":
+      return isReducibleSet;
+    case "SetFilter":
+      return (value) =>
+        isReducibleSet(value) || (typeof value === "object" && value.kind === "FilteredSet");
+    case "FunctionSet":
+    case "RecordSet": {
+      const kind = expression.kind;
+      return (value) => typeof value === "object" && value.kind === kind;
+    }
+    case "Product":
+      return (value) => typeof value === "object" && value.kind === "ProductSet";
+    case "Apply":
+      return expression.operator === "SUBSET"
+        ? (value) => typeof value === "object" && value.kind === "Subset"
+        : undefined;
+    default:
+      return undefined;
+  }
+};
+
+const countEvaluator = (
+  expression: Expression,
+  evaluator: Evaluator,
+  coverage: Coverage,
+): Evaluator => {
+  const isTagged = getTaggedSetTest(expression);
+  return (context) => {
     const outer = coverage.current;
     if (outer < 0 || !coverage.covered.has(expression)) return evaluator(context);
     const node = getCoverageNode(coverage, outer, expression);
@@ -2008,26 +2058,15 @@ const countEvaluator =
     coverage.current = node;
     try {
       const value = evaluator(context);
-      const isTagged =
-        expression.kind === "SetEnumeration" ||
-        ((expression.kind === "SetFilter" || expression.kind === "SetMap") &&
-          isReducibleSet(value)) ||
-        (expression.kind === "SetFilter" &&
-          typeof value === "object" &&
-          value.kind === "FilteredSet") ||
-        ((expression.kind === "FunctionSet" || expression.kind === "RecordSet") &&
-          typeof value === "object" &&
-          value.kind === expression.kind) ||
-        (expression.kind === "Apply" &&
-          expression.operator === "SUBSET" &&
-          typeof value === "object" &&
-          value.kind === "Subset");
-      if (typeof value === "object" && isTagged) coverage.values.set(value, node);
+      if (isTagged !== undefined && typeof value === "object" && isTagged(value)) {
+        coverage.values.set(value, node);
+      }
       return value;
     } finally {
       coverage.current = outer;
     }
   };
+};
 
 const countSubstitution =
   (substitution: Substitution, evaluator: Evaluator, coverage: Coverage): Evaluator =>
@@ -2364,22 +2403,52 @@ const compileApply = (
     const subset = getSubsetOperator(expression, global.evaluateBinary);
     const coverage = environment.coverage;
     if (!coverage) return (context) => subset(left(context), right(context));
+    const isMember = createChargedMembership(coverage);
     return (context) => {
       const leftValue = left(context);
       const rightValue = right(context);
       if (
         typeof leftValue !== "object" ||
         leftValue.kind !== "Set" ||
-        !coverage.values.has(leftValue)
+        getValueNode(coverage, leftValue) === undefined
       ) {
         return subset(leftValue, rightValue);
       }
-      const missing = leftValue.elements.findIndex((element) => !isElementOf(element, rightValue));
+      const missing = leftValue.elements.findIndex((element) => !isMember(element, rightValue));
       costCoverage(coverage, leftValue, (missing === -1 ? leftValue.elements.length : missing) + 1);
       return missing === -1;
     };
   }
   const coverage = environment.coverage;
+  if (
+    coverage &&
+    global?.kind === "Builtin" &&
+    (global.name === "\\in" || global.name === "\\notin") &&
+    args.length === 2 &&
+    isValueArgument(args[0], environment) &&
+    isValueArgument(args[1], environment)
+  ) {
+    const element = getEvaluator(args[0], environment);
+    const set = getEvaluator(args[1], environment);
+    const isMember = createChargedMembership(coverage);
+    const isIn = global.name === "\\in";
+    return (context) => isMember(element(context), set(context)) === isIn;
+  }
+  if (
+    coverage &&
+    global?.kind === "Builtin" &&
+    global.name === "SUBSET" &&
+    args.length === 1 &&
+    isValueArgument(args[0], environment)
+  ) {
+    const base = getEvaluator(args[0], environment);
+    return (context): Value => ({
+      kind: "Subset",
+      base: base(context),
+      costNode:
+        coverage.expressions[coverage.current] === expression ? coverage.current : undefined,
+    });
+  }
   const combine = global?.kind === "Builtin" ? global.evaluateBinary : undefined;
   if (coverage && combine && SET_OPERATORS.has(expression.operator) && args.length === 2) {
     const left = getEvaluator(args[0], environment);
@@ -2554,10 +2623,7 @@ export const getFunctionBuilder = (
         return createLazy(domain, context);
       }
       const keys = getFunctionDomain(domain, false);
-      const functionValue = createSortedFunction(keys, keys.map(evaluateAt));
-      if (isReducibleSet(domain)) return functionValue;
-      functionValue.lambdaDomain = domain;
-      return markLambdaFunction(functionValue);
+      return createSortedFunction(keys, keys.map(evaluateAt));
     }
     const pairs: [Value, Value][] = [];
     const sets = mapBoundSets(bounds, (set, index) =>
@@ -2597,42 +2663,28 @@ export const getFunctionBuilder = (
     const value = createLazyFunction(
       domain,
       coverage
-        ? (argument) => {
-            const target = coverage.current === -1 && name === undefined ? -1 : node;
-            return target === coverage.current && !frames
+        ? (argument) =>
+            node === coverage.current && !frames
               ? compute(argument)
-              : runInCoverageFrames(coverage, target, frames, () => compute(argument));
-          }
+              : runInCoverageFrames(coverage, node, frames, () => compute(argument))
         : compute,
       getLazyFunctionSource(template, bounds, domain),
       boundTupleLengths,
-      name === undefined ? undefined : getRecursiveCostModel(coverage, node),
+      getCostModel(coverage, node, bounds, domain),
       isApplicationObserved,
     );
     if (name !== undefined) scope = bindSelf(outer, name, value);
-    const functionValue = keepLambda({ value, bounds, body: expression.body, scope, compute });
-    return bounds.length === 1 ? markLambdaFunction(functionValue) : functionValue;
+    return keepLambda({ value, bounds, body: expression.body, scope, compute });
   };
   const callStack = environment.callStack;
   const build = (domain: Value, context: Context) => {
-    if (isLazy || context.isKeepLazy || !isEnumerable(domain)) {
-      return createLazy(domain, context);
-    }
     const isReducibleDomain =
       bounds.length === 1
         ? isReducibleSet(domain)
         : typeof domain === "object" &&
           domain.kind === "ProductSet" &&
           domain.factors.every(isReducibleSet);
-    if (!isReducibleDomain) {
-      if (callStack || isVaryingBody) return createLazy(domain, context);
-      try {
-        return construct(domain, context);
-      } catch (error) {
-        if (!(error instanceof TlaEvaluationError)) throw error;
-        return createLazy(domain, context);
-      }
-    }
+    if (isLazy || context.isKeepLazy || !isReducibleDomain) return createLazy(domain, context);
     if (!callStack) return construct(domain, context);
     try {
       return construct(domain, context);
@@ -2655,10 +2707,7 @@ const compileFunctionConstruction = (
     return (context) => {
       const domain = getBoundsDomain(bounds, context);
       const value = build(domain, context);
-      const sets =
-        bounds.length === 1 || typeof domain !== "object" || domain.kind !== "ProductSet"
-          ? [domain]
-          : domain.factors;
+      const sets = getBoundSets(bounds, domain);
       const isConverted =
         (typeof value !== "object" || value.kind !== "LazyFunction") && sets.every(isReducibleSet);
       if (isConverted && coverage.current >= 0 && coverage.covered.has(expression)) {
@@ -2788,7 +2837,6 @@ export const getLazyFilter = (
         const draws = createProductSetEnumerator(coverage, base);
         return (element) => {
           draws?.next();
-          tagSubset(coverage, base, element);
           coverage.secondary[node]++;
           const value = runAtCoverageNode(coverage, node, () => test(element, false));
           if (isMaterialized && value) coverage.secondary[node]++;
@@ -3170,10 +3218,46 @@ const compile = (expression: Expression, environment: Environment): Evaluator =>
         expectFunction(evaluated(toKeepLazyContext(context)), expression);
       const args = expression.args.map(getChildEvaluator);
       const describeMissing = getMissingArgumentDescriber(environment.runtime.version);
+      const coverage = environment.coverage;
+      const callStack = environment.callStack;
+      const traceArguments = (evaluator: Evaluator) =>
+        callStack
+          ? traceEvaluator(getArgumentTuple(expression), evaluator, environment, callStack)
+          : evaluator;
+      if (coverage) {
+        const isMember = createChargedMembership(coverage);
+        const getArgument =
+          args.length === 1
+            ? args[0]
+            : traceArguments((context) => {
+                countArgumentTuple(coverage, coverage.current, expression);
+                return createTuple(args.map((arg) => arg(context)));
+              });
+        return (context) => {
+          const functionValue = evaluateFunction(context);
+          const argument = getArgument(context);
+          if (
+            typeof functionValue !== "object" ||
+            functionValue.kind !== "LazyFunction" ||
+            functionValue.enumerated !== undefined
+          ) {
+            return applyFunction(functionValue, argument, describeMissing);
+          }
+          checkLazyArgumentWith(functionValue, argument, isMember);
+          return functionValue.apply(argument);
+        };
+      }
       if (args.length === 1) {
         const argument = args[0];
         return (context) =>
           applyFunction(evaluateFunction(context), argument(context), describeMissing);
+      }
+      if (callStack) {
+        const getArgument = traceArguments((context) =>
+          createTuple(args.map((arg) => arg(context))),
+        );
+        return (context) =>
+          applyFunction(evaluateFunction(context), getArgument(context), describeMissing);
       }
       return (context) =>
         applyFunction(

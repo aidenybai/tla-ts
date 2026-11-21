@@ -10,7 +10,6 @@ import {
   createSortedFunction,
   createTuple,
   formatValue,
-  getFunctionClass,
   getSequenceElements,
   setFunctionClass,
   toFiniteFunction,
@@ -77,7 +76,7 @@ const mapRange = (value: Value, change: (inner: Value, key: Value) => Value): Fu
       functionValue.domain,
       functionValue.range.map((inner, index) => change(inner, functionValue.domain[index])),
     ),
-    getFunctionClass(functionValue),
+    functionValue.functionClass,
   );
 };
 
@@ -615,7 +614,7 @@ const canonicalStateOf = (state: Value, initial: Value): Value => {
             kept.map((entry) => entry.key),
             kept.map((entry) => entry.bucket),
           ),
-          getFunctionClass(buckets),
+          buckets.functionClass,
         );
       },
       privs: renameElements,

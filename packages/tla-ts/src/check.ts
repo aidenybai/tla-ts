@@ -893,11 +893,18 @@ const searchStates = (
     });
   };
   const isUnfingerprintable = (state: Value[]) => {
+    const primary = coverage?.primary.slice();
+    const secondary = coverage?.secondary.slice();
     try {
       return getFingerprintState(state).some((value) => getFingerprintError(value) !== undefined);
     } catch (error) {
       if (!(error instanceof TlaEvaluationError)) throw error;
       return true;
+    } finally {
+      if (coverage) {
+        Object.assign(coverage.primary, primary);
+        Object.assign(coverage.secondary, secondary);
+      }
     }
   };
   const checkFailedTrace = (behavior: Behavior, counterExample?: CounterExampleOptions) => {

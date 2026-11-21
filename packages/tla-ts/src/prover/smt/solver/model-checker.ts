@@ -1,6 +1,7 @@
 import { SmtInvariantError } from "../../../errors";
 import { KIND_APP, OP_NOT, OP_OR, SORT_BOOL } from "./ast";
 import { AssertedFormulas } from "./asserted-formulas";
+import { CS_ACTIVITY } from "./case-split-queue";
 import { Context } from "./context";
 import type { Enode } from "./enode";
 import { L_FALSE, L_TRUE } from "./lbool";
@@ -29,7 +30,7 @@ class AuxContext {
     this.context = new Context(parent.manager, {
       ...parent.params,
       relevancyLevel: 0,
-      isDelayingNewCaseSplits: false,
+      caseSplitStrategy: CS_ACTIVITY,
       isArrayFakeSupport: true,
     });
     this.context.config = { ...parent.config, relevancyLevel: 0 };

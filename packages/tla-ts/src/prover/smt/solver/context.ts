@@ -25,6 +25,7 @@ import {
   OP_NOT,
   SORT_BOOL,
 } from "./ast";
+import { CS_ACTIVITY_DELAY_NEW } from "./case-split-queue";
 import { getCongruenceJustification, isCongruent } from "./cg-table";
 import { BJustification, type Clause, CLS_LEARNED, CLS_TH_LEMMA, HEADER_SIZE } from "./clause";
 import { ConflictResolution } from "./conflict-resolution";
@@ -174,7 +175,7 @@ export interface SmtParams {
   mbqiMaxIterations: number;
   isEmatching?: boolean;
   relevancyLevel: number;
-  isDelayingNewCaseSplits?: boolean;
+  caseSplitStrategy?: number;
   randomSeed?: number;
   intHammerPeriod?: number;
   isArithPropagatingEqs?: boolean;
@@ -183,6 +184,7 @@ export interface SmtParams {
   qiLazyThreshold?: number;
   // The model checker's auxiliary context pretends every array operation is supported.
   isArrayFakeSupport?: boolean;
+  isProofsEnabled?: boolean;
 }
 
 export class Context extends Internalizer {
@@ -235,7 +237,12 @@ export class Context extends Internalizer {
     manager: AstManager,
     readonly params: SmtParams,
   ) {
-    super(manager, params.relevancyLevel, params.isDelayingNewCaseSplits ?? true);
+    super(
+      manager,
+      params.relevancyLevel,
+      params.caseSplitStrategy ?? CS_ACTIVITY_DELAY_NEW,
+      params.isProofsEnabled ?? false,
+    );
     this.contextRelevancyLevel = params.relevancyLevel;
     this.qmanager = new DefaultQuantifierManager(this);
     this.config = {
@@ -538,6 +545,7 @@ export class Context extends Internalizer {
       const value = this.assignment[mkLiteral(boolVar)];
       if (value !== L_UNDEF) this.atomPropagationQueue.push(mkLiteral(boolVar, value === L_FALSE));
     }
+    this.caseSplitQueue.relevantEh(expr);
     if (this.manager.kinds[expr] !== KIND_APP) return;
     const node = this.exprToEnode[expr];
     if (node !== undefined) this.qmanager.relevantEh(node);
@@ -1023,6 +1031,7 @@ export class Context extends Internalizer {
     this.relevancy.push();
     this.qmanager.push();
     this.fingerprints.push();
+    this.caseSplitQueue.pushScope();
     this.asserted?.push();
     for (const theory of this.theories) theory.pushScopeEh();
   }
@@ -1082,6 +1091,7 @@ export class Context extends Internalizer {
     const newLevel = this.scopeLevel - numScopes;
     this.cacheGeneration(newLevel, visited);
     this.qmanager.pop(numScopes);
+    this.caseSplitQueue.popScope(numScopes);
     this.fingerprints.pop(numScopes);
     if (newLevel >= this.baseLevel || !this.isBaseScopeInconsistent[newLevel]) this.conflict = null;
     if (newLevel < this.baseLevel) {
@@ -1207,8 +1217,9 @@ export class Context extends Internalizer {
     return isFound;
   }
 
-  private guess(boolVar: BoolVar) {
+  private guess(boolVar: BoolVar, phase: number) {
     if (this.manager.kinds[this.boolVar2Expr[boolVar]] === KIND_QUANTIFIER) return false;
+    if (phase !== L_UNDEF) return phase === L_TRUE;
     if (this.hasBoolVarFlag(boolVar, BV_TRUE_FIRST)) return true;
     const phaseSelection = this.config.phaseSelection;
     if (phaseSelection === PS_ALWAYS_FALSE) return false;
@@ -1242,7 +1253,7 @@ export class Context extends Internalizer {
       this.hasCaseSplit = false;
       return false;
     }
-    const isPositive = this.guess(boolVar);
+    const isPositive = this.guess(boolVar, this.caseSplitQueue.phase);
     this.pushScope();
     this.assign(mkLiteral(boolVar, !isPositive), "axiom", true);
     return true;
@@ -1790,11 +1801,13 @@ export class Context extends Internalizer {
     this.finalCheckIndex = 0;
     this.lastSearchFailure = FAILURE_OK;
     this.phaseDefault = false;
+    this.caseSplitQueue.initSearchEh();
     if (this.manager.hasTypeVars) this.registerFamily(FAMILY_POLY);
     this.isSearching = true;
     const currentLevel = this.scopeLevel;
     let result: number | undefined;
     while (result === undefined) result = this.restart(this.boundedSearch(), currentLevel);
+    this.caseSplitQueue.endSearchEh();
     this.isSearching = false;
     return result === L_TRUE && this.checkCanceled() ? L_UNDEF : result;
   }

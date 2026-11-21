@@ -11,6 +11,7 @@ import { createQfufbvAckrTactic, runAckermannizeBv } from "./ackermannize-bv-tac
 import { createAigTactic } from "./aig-tactic";
 import { blastTermIte } from "./blast-term-ite";
 import { card2bv } from "./card2bv";
+import { getCaseSplitStrategy } from "./case-split-queue";
 import { type Context, MBQI_MAX_ITERATIONS } from "./context";
 import { ctxSimplify } from "./ctx-simplify";
 import { createCtxSolverSimplify } from "./ctx-solver-simplify";
@@ -71,7 +72,7 @@ import { PropagateValuesTactic } from "./propagate-values";
 import { purifyArith } from "./purify-arith";
 import { ModelEvaluator } from "./model-evaluator";
 import { FuncInterp, ProtoModel } from "./proto-model";
-import { SmtKernel } from "./smt-kernel";
+import { getGlobalSmtParams, SmtKernel } from "./smt-kernel";
 import { isMbqiByFeatures, type SmtSetup } from "./smt-setup";
 import { compileProbe, formatDouble, isQfufbv, type Probe } from "./probes";
 import { runHorn } from "./muz/horn-tactic";
@@ -334,6 +335,7 @@ const SMT_DESCRS = getDescrs("smt", [
   ["arith.branch_cut_ratio", PARAM_UINT, 2, true],
   ["random_seed", PARAM_UINT, 0, true],
   ["auto_config", PARAM_BOOL, true, true],
+  ["case_split", PARAM_UINT, 1, true],
   ["ematching", PARAM_BOOL, true, true],
   ["mbqi.id", PARAM_STRING, ""],
   ["qi.cost", PARAM_STRING, "(+ weight generation)", true],
@@ -353,27 +355,34 @@ const isEmatching = (environment: TacticEnvironment, params: TacticParams) =>
 const getRelevancyLevel = (environment: TacticEnvironment, params: TacticParams) =>
   getUint(params, "relevancy", Number(getParameter(environment, "smt.relevancy", "2")));
 
+// smt_params ands the auto_config of the tactic with the global one, which smt does not scope.
+const isAutoConfig = (environment: TacticEnvironment, params: TacticParams) =>
+  getBool(
+    params,
+    "auto_config",
+    getParameter(environment, "smt.auto_config", "true") !== "false",
+  ) && getParameter(environment, "auto_config", "true") !== "false";
+
+const getSmtCaseSplitStrategy = (environment: TacticEnvironment, params: TacticParams) =>
+  getCaseSplitStrategy(
+    getUint(params, "case_split", Number(getParameter(environment, "smt.case_split", "1"))),
+    getRelevancyLevel(environment, params),
+    isAutoConfig(environment, params),
+  );
+
 // The dependencies are assertion names, which are Boolean constants, so each one is its own
 // assumption.
 const getKernelParams = (environment: TacticEnvironment, params: TacticParams, goal: Goal) => {
   const manager = environment.manager;
   const hasQuantifiers = goal.forms.items.some((form) => manager.hasQuantifierFlags[form]);
-  // smt_params ands the auto_config of the tactic with the global one, which smt does not scope.
-  const setup = {
-    ...environment.setup,
-    isAutoConfig:
-      getBool(
-        params,
-        "auto_config",
-        getParameter(environment, "smt.auto_config", "true") !== "false",
-      ) && getParameter(environment, "auto_config", "true") !== "false",
-  };
+  const setup = { ...environment.setup, isAutoConfig: isAutoConfig(environment, params) };
   return {
     isMbqi: getBool(params, "mbqi", environment.isMbqi) || isMbqiByFeatures(setup, hasQuantifiers),
     mbqiMaxIterations: getUint(params, "mbqi.max_iterations", environment.mbqiMaxIterations),
     isFindingMacros: environment.isFindingMacros,
     isEmatching: isEmatching(environment, params),
     relevancyLevel: getRelevancyLevel(environment, params),
+    caseSplitStrategy: getSmtCaseSplitStrategy(environment, params),
     setup,
     randomSeed: getUint(
       params,
@@ -387,6 +396,7 @@ const getKernelParams = (environment: TacticEnvironment, params: TacticParams, g
       : environment.parameters.get("smt.qi.cost"),
     qiEagerThreshold: getSmtDouble(environment, params, "qi.eager_threshold"),
     qiLazyThreshold: getSmtDouble(environment, params, "qi.lazy_threshold"),
+    isProofsEnabled: goal.isProofsEnabled,
   };
 };
 
@@ -572,8 +582,7 @@ const runUnitSubsume = (environment: TacticEnvironment) => {
     isMbqi: environment.isMbqi,
     mbqiMaxIterations: environment.mbqiMaxIterations,
     isFindingMacros: environment.isFindingMacros,
-    isEmatching: getParameter(environment, "smt.ematching", "true") !== "false",
-    relevancyLevel: Number(getParameter(environment, "smt.relevancy", "2")),
+    ...getGlobalSmtParams(environment.parameters),
   });
   const clauses = new RefVector(manager);
   environment.destructors.push(() => {
@@ -951,6 +960,7 @@ const NAMED_TACTICS = new Map<string, NamedTactic>([
           isFindingMacros: environment.isFindingMacros,
           isEmatching: isEmatching(environment, tacticParams),
           relevancyLevel: getRelevancyLevel(environment, tacticParams),
+          caseSplitStrategy: getSmtCaseSplitStrategy(environment, tacticParams),
           qiCost: tacticParams.has("qi.cost")
             ? String(tacticParams.get("qi.cost"))
             : environment.parameters.get("smt.qi.cost"),
@@ -1669,7 +1679,7 @@ const NAMED_TACTICS = new Map<string, NamedTactic>([
     {
       descrs: new Map(),
       isRejectingUnknown: false,
-      build: (environment) => runQe(environment.manager),
+      build: (environment) => runQe(environment),
     },
   ],
   [
