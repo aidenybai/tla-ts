@@ -1164,6 +1164,22 @@ describe("runSmtlibScript runs its commands as Z3 does", () => {
     ]);
   });
 
+  it("goes on through every theory when the limit stops a final check", () => {
+    expect(
+      run([
+        "(set-option :auto_config false)",
+        "(set-option :rlimit 46)",
+        "(declare-fun x () Int)",
+        "(push 1)",
+        "(assert (> x 0))",
+        "(check-sat)",
+        "(get-info :rlimit)",
+        "(check-sat)",
+        "(get-info :rlimit)",
+      ]),
+    ).toEqual(["unknown", "(:rlimit 63)", "sat", "(:rlimit 90)"]);
+  });
+
   it("makes a zero dividend's axiom atoms one at a time, so later terms reuse the ids Z3's do", () => {
     expect(
       run([

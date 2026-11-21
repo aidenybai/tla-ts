@@ -1332,9 +1332,11 @@ export class Context extends Internalizer {
     this.incompleteTheories = [];
     for (;;) {
       const theory = this.theories[this.finalCheckIndex];
-      const check = theory === undefined ? qmanager.finalCheckEh(true) : theory.finalCheckEh(level);
+      const theoryStatus =
+        theory === undefined ? qmanager.finalCheckEh(true) : theory.finalCheckEh(level);
       if (theory !== undefined) maxLevel = Math.max(maxLevel, theory.numFinalCheckLevels());
       const isCanceled = theory !== undefined && this.checkCanceled();
+      const check = isCanceled ? FC_GIVEUP : theoryStatus;
       if (isCanceled) failure = FAILURE_CANCELED;
       else if (theory !== undefined && check === FC_GIVEUP) {
         failure = FAILURE_THEORY;
@@ -1342,7 +1344,7 @@ export class Context extends Internalizer {
       }
       this.finalCheckIndex = (this.finalCheckIndex + 1) % (this.theories.length + 1);
       if (check === FC_CONTINUE) return FC_CONTINUE;
-      if (check === FC_GIVEUP || isCanceled) result = FC_GIVEUP;
+      if (check === FC_GIVEUP) result = FC_GIVEUP;
       if (this.finalCheckIndex !== oldIndex) continue;
       if (level >= maxLevel || result === FC_DONE || this.canPropagate()) break;
       level++;
