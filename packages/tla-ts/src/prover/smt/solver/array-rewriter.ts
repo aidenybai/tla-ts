@@ -18,6 +18,7 @@ import {
 import { isAstLess } from "./ast-lt";
 import { mkNot } from "./ast-util";
 import { L_FALSE, L_TRUE, L_UNDEF } from "./lbool";
+import type { ProtoModel } from "./proto-model";
 import { InvVarShifter, type Rewrite, VarShifter } from "./rewriter-tpl";
 import { getFreeVarSorts, VarSubst } from "./var-subst";
 
@@ -72,7 +73,7 @@ const isIndexSetExact = (
   stores: number[][],
   start: number,
   elseExpr: number,
-  getSortSize: (sort: number) => bigint,
+  model: ProtoModel,
 ) => {
   const numIndices = sorts.length;
   let hasMisread = false;
@@ -81,7 +82,9 @@ const isIndexSetExact = (
   if (!hasMisread) return true;
   let numPoints = 1n;
   for (let index = 0; index < numIndices; index++) {
-    const size = getSortSize(sorts[index]);
+    const universe = model.getUniverse(sorts[index]);
+    const size =
+      universe === undefined ? manager.getSortSize(sorts[index]) : BigInt(universe.length);
     if (size < 0n) return false;
     numPoints *= size;
   }
@@ -112,7 +115,7 @@ export const hasIndexSet = (
   manager: AstManager,
   lambda: number,
   stores: number[][],
-  getSortSize: (sort: number) => bigint,
+  model: ProtoModel,
 ) => {
   const sorts = manager.getQuantifier(lambda).sorts;
   const body = manager.getQuantifier(lambda).body;
@@ -124,9 +127,7 @@ export const hasIndexSet = (
         return undefined;
     const elseValue = op === OP_OR ? manager.falseExpr : manager.trueExpr;
     // Deviation from Z3: has_index_set misreads a negated equality in an or and an equality in an and, so the port keeps such a lambda unless the stores give its value at every index.
-    return isIndexSetExact(manager, sorts, stores, start, elseValue, getSortSize)
-      ? elseValue
-      : undefined;
+    return isIndexSetExact(manager, sorts, stores, start, elseValue, model) ? elseValue : undefined;
   }
   let elseExpr = body;
   while (
