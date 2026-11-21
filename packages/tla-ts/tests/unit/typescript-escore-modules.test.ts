@@ -1336,9 +1336,10 @@ describe("loads each kind of file as Node does", () => {
     });
   });
 
-  // Deviation from Node: TypeScript resolves an import of a .js file to the TypeScript file of its
-  // name, which Node doesn't find, and which TypeScript takes even beside the .js file.
-  it("resolves an import of a .js file to its TypeScript as TypeScript does", async () => {
+  // An import of a .js file loads the file that Node finds, which isn't the TypeScript file of its
+  // name, so the compile stops where Node finds none, and where TypeScript would read the types of
+  // that TypeScript file beside the .js file that Node loads.
+  it("stops at an import of a .js file that only its TypeScript has, which Node doesn't find", async () => {
     const result = await checkEntry(
       {
         "package.json": '{ "type": "module" }',
@@ -1347,10 +1348,13 @@ describe("loads each kind of file as Node does", () => {
       },
       "main.ts",
     );
-    expect([result.node, result.message]).toEqual([1, undefined]);
+    expect([result.node, result.message]).toEqual([
+      1,
+      expect.stringContaining("tla-ts can't load the module ./lib.js"),
+    ]);
   });
 
-  it("resolves an import of a .js file beside a TypeScript file of its name to that", async () => {
+  it("stops at an import of a .js file beside a TypeScript file of its name", async () => {
     const result = await checkEntry(
       {
         "package.json": '{ "type": "module" }',
@@ -1360,7 +1364,12 @@ describe("loads each kind of file as Node does", () => {
       },
       "main.js",
     );
-    expect([result.node, result.message]).toEqual([1, undefined]);
+    expect([result.node, result.message]).toEqual([
+      1,
+      expect.stringContaining(
+        "tla-ts can't read the types of a module that Node loads from another file than TypeScript reads",
+      ),
+    ]);
   });
 
   // Node runs a file of no module syntax, in a package that names no type, as CommonJS, in the
