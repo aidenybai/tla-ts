@@ -581,7 +581,7 @@ export const createEsNumberOperators = (callReplaced: CallReplaced): Builtin[] =
   const define = createDefine(callReplaced);
   return [
     define("StrToNum", 1, (args) => {
-      const units = getList(isOperator(args[0]) ? undefined : args[0]);
+      const units = getTuple(getValue(args[0]));
       if (units === undefined || units.length === 0 || units.length > 11) return undefined;
       const sign = units[0] === PLUS || units[0] === MINUS ? units[0] : undefined;
       const digits = sign === undefined ? units : units.slice(1);

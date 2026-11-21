@@ -544,6 +544,24 @@ describe("ESNumber matches JavaScript's Number semantics", { timeout: 60_000 }, 
     expect(failures).toEqual([]);
   });
 
+  // StrToNum reads only a finite function natively, so a lazy one fails as StringToNumber fails.
+  it.each(["[i \\in Nat |-> 49]", "[i \\in Nat |-> CHOOSE x \\in {} : TRUE]"])(
+    "fails in StrToNum as StringToNumber does on %s",
+    async (argument) => {
+      const getError = async (operator: string) =>
+        (
+          await check({
+            source: `---- MODULE StringError ----\nEXTENDS ESNumber, TLC\nF(string) == ${operator}(string)\nASSUME PrintT(F(${argument}))\n====`,
+            config: "",
+            loadModule,
+          })
+        ).violation?.message;
+      const error = await getError("StringToNumber");
+      expect(error).toBeDefined();
+      expect(await getError("StrToNum")).toBe(error);
+    },
+  );
+
   it.each([
     [
       "integral",
