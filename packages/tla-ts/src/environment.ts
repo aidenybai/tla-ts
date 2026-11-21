@@ -703,6 +703,7 @@ export const createEnvironment = (
     forwarded: OperatorParam[],
     location: SourceLocation,
   ): Definition => {
+    // Deviation from TLC: Tool#evalImplLetInKind binds a 0-arity LET definition to a LazyValue of its body, so a LET instance's copy of a 0-arity override runs SANY's placeholder body, such as Nat == {}, where the alias forwards to the Java override.
     const alias = createLocalAlias(name, key, params, forwarded, location);
     const standard = builtins.has(key) ? getStandardDefinition(key) : undefined;
     return standard ? { ...alias, standard } : alias;

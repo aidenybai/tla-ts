@@ -5466,6 +5466,23 @@ describe("initial predicate and next-state relation match TLC", () => {
     },
   );
 
+  // Deviation from TLC: TLC evaluates the copy by SANY's placeholder body, so it prints <<"A", FALSE>> for Nat == {} and fails JavaTime as an unbounded CHOOSE.
+  it.each([
+    ["Naturals", "1 \\in K!Nat"],
+    ["TLC", "K!JavaTime > 0"],
+  ])("evaluates LET K == INSTANCE %s's %s by the Java override", async (module, expression) => {
+    const printed: string[] = [];
+    await check({
+      source: getLetInstanceSource(
+        "y",
+        `ASSUME LET K == INSTANCE ${module} IN PrintT(<<"A", ${expression}>>)`,
+      ),
+      config: "INIT Init\nNEXT Next",
+      onPrint: (text) => printed.push(text),
+    });
+    expect(printed).toEqual(['<<"A", TRUE>>']);
+  });
+
   const literalBase =
     "---- MODULE B7 ----\nCONSTANT c\nTHEOREM Cz == c = 1\n====\nJ7 == INSTANCE B7 WITH c <- 1\n";
 
