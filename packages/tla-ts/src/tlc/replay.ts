@@ -425,15 +425,16 @@ const isChanged = (replay: Replay, item: ActionItem, partial: State) => {
     environment: replay.environment,
     scope: item.scope,
     state: replay.current,
-    next: partial,
+    next: undefined,
   });
+  // Tool#getNextStates evaluates a CHANGED item in s1 with TLCState.Empty, and Tool#enabled with TLCState.Null.
   const after = evaluateInPartial(
     replay,
     item.node,
     item.expression,
     item.scope,
     partial,
-    NULL_STATE,
+    replay.isEnabled ? NULL_STATE : undefined,
   );
   if (after instanceof TlaUnassignedError) {
     throw toUnspecifiedSubscriptError(after, replay.environment.runtime.version);

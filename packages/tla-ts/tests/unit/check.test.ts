@@ -2594,6 +2594,78 @@ ASSUME TLCFP(a) = -887695703
     },
   );
 
+  const CHANGED_ITEMS = [
+    'Ap(a) == PrintT(<<a>>) /\\ <<Step>>_<<y, a /\\ TRUE>> /\\ PrintT(<<a>>)\nNext == Ap(PrintT("a") /\\ y \\in 0..1)',
+    "Ap(a) == PrintT(<<a>>) /\\ <<Step>>_<<y, a + 0>> /\\ PrintT(<<a>>)\nNext == Ap(RandomElement(y..1000))",
+    "Next == <<Step>>_<<y, J!Op2>>",
+  ];
+  const CHANGED_PRINTS = [
+    ['"a"', "<<TRUE>>", '"a"', '"a"', "<<TRUE>>", '"a"', "<<TRUE>>", '"a"', '"a"', "<<TRUE>>"],
+    ["<<773>>", "<<272>>", "<<484>>", "<<784>>"],
+    getPrints('"d"', 4),
+  ];
+
+  it.each([
+    [CHANGED_ITEMS[0], CHANGED_PRINTS[0]],
+    [CHANGED_ITEMS[1], CHANGED_PRINTS[1]],
+    [CHANGED_ITEMS[2], CHANGED_PRINTS[2]],
+    ["Next == J!Op2 /\\ <<Step>>_<<y, J!Op2>> /\\ J!Op2", getPrints('"d"', 10)],
+  ])(
+    "reads a lazy value on the second side of <<A>>_e in the next-state relation %j from its cache, as TLC's Tool#getNextStates evaluates that side in s1 with TLCState.Empty",
+    async (definitions, expected) => {
+      expect((await getLazyReads(definitions, NEXT_CHECK)).printed).toEqual(expected);
+    },
+  );
+
+  it.each([
+    [
+      CHANGED_ITEMS[0],
+      CHANGED_PRINTS[0],
+      [
+        "line 8, col 10 to line 8, col 22 of module M: 2",
+        "line 8, col 29 to line 8, col 32 of module M: 2",
+        "line 8, col 36 to line 8, col 51 of module M: 4",
+        "line 8, col 56 to line 8, col 68 of module M: 2",
+        "line 9, col 12 to line 9, col 36 of module M: 6",
+      ],
+    ],
+    [
+      CHANGED_ITEMS[1],
+      CHANGED_PRINTS[1],
+      [
+        "line 8, col 10 to line 8, col 22 of module M: 2",
+        "line 8, col 29 to line 8, col 32 of module M: 2",
+        "line 8, col 36 to line 8, col 47 of module M: 4",
+        "line 8, col 52 to line 8, col 64 of module M: 2",
+        "line 9, col 12 to line 9, col 33 of module M: 6",
+      ],
+    ],
+    [
+      CHANGED_ITEMS[2],
+      CHANGED_PRINTS[2],
+      [
+        "line 8, col 11 to line 8, col 14 of module M: 2",
+        "line 8, col 18 to line 8, col 29 of module M: 4",
+      ],
+    ],
+  ])(
+    "reads a lazy value on the second side of <<A>>_e in the next-state relation %j from its cache under coverage too",
+    async (definitions, printed, lines) => {
+      expect(
+        await getLazyReads(definitions, NEXT_CHECK, { coverage: 1, isWarningEnabled: true }),
+      ).toEqual({ printed, lines });
+    },
+  );
+
+  it("evaluates both sides of <<A>>_e in the next-state relation without the next state under coverage, as TLC's Tool#getNextStates passes TLCState.Empty there", async () => {
+    const reads = await getLazyReads(
+      "Ap(a) == Step /\\ PrintT(<<a>>) /\\ <<TRUE>>_<<y, a + 0>> /\\ PrintT(<<a>>)\nNext == Ap(RandomElement(y..1000))",
+      NEXT_CHECK,
+      UNWARNED_COVERAGE,
+    );
+    expect(reads.printed).toEqual(["<<773>>", "<<768>>", "<<484>>", "<<730>>"]);
+  });
+
   it("records the nested instance a call from one instanced definition to another enters, as TLC does", async () => {
     const result = await check(getInnerCallCheck(EXPLICIT, "I!YErr", NESTED_CALLS));
     const ranges = result.failure?.callStack?.flatMap((expression, index, expressions) => {

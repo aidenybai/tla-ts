@@ -36,6 +36,7 @@ import {
   getStartupValue,
   getUnchangedVariables,
   getZeroArityBody,
+  isUnchangedState,
   lookupScope,
   mapBoundSets,
   resolveApplyOperator,
@@ -146,18 +147,19 @@ const holdsUnchanged = (run: Run, unchanged: Expression, context: Context) => {
   }
 };
 
+const toEmptyNextContext = (context: Context): Context => ({
+  environment: context.environment,
+  scope: context.scope,
+  state: context.next,
+  next: undefined,
+});
+
 // Tool#enabledUnchanged evaluates the second side in s1 with TLCState.Empty under EvalControl.Primed, where a LazyValue's cache serves it.
 const holdsEnabledUnchanged = (expression: Expression, context: Context) => {
-  const environment = context.environment;
   try {
     const before = evaluate(expression, toEmptyContext(context));
-    const after = environment.runtime.runWithEvalControl("Primed", () =>
-      evaluate(expression, {
-        environment,
-        scope: context.scope,
-        state: context.next,
-        next: undefined,
-      }),
+    const after = context.environment.runtime.runWithEvalControl("Primed", () =>
+      evaluate(expression, toEmptyNextContext(context)),
     );
     return isReceiverEqual(before, after);
   } catch (error) {
@@ -1234,14 +1236,30 @@ const compileAction = (
       return compileUnchanged(expression.expression, environment);
     case "AngleAction": {
       const body = getChildRunner(expression.action);
+      const subscript = expression.subscript;
       const unchanged: Expression = {
         kind: "Unchanged",
-        expression: expression.subscript,
-        location: expression.subscript.location,
+        expression: subscript,
+        location: subscript.location,
       };
+      const indexes = getUnchangedVariables(subscript, environment)?.map(
+        (variable) => variable.index,
+      );
       return (run, scope, partial, action, isFixed, onComplete) =>
         body(run, scope, partial, action, isFixed, (nextPartial, nextAction) => {
-          const isHeld = holdsUnchanged(run, unchanged, getContext(run, scope, nextPartial));
+          const context = getContext(run, scope, nextPartial);
+          if (!run.isEnabled) {
+            // Tool#getNextStates evaluates a CHANGED item in s1 with TLCState.Empty, and Tool#enabled with TLCState.Null.
+            const isSame =
+              (indexes && isUnchangedState(indexes, context.state, nextPartial)) ??
+              isReceiverEqual(
+                evaluate(subscript, toEmptyContext(context)),
+                evaluate(subscript, toEmptyNextContext(context)),
+              );
+            if (!isSame) onComplete(nextPartial, nextAction);
+            return;
+          }
+          const isHeld = holdsUnchanged(run, unchanged, context);
           if (isHeld instanceof TlaUnassignedError) {
             throw toUnspecifiedSubscriptError(isHeld, run.environment.runtime.version);
           }
