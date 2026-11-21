@@ -2809,6 +2809,27 @@ describe("pop, as Z3 5.3.2 frees the declarations of a scope", () => {
   });
 });
 
+describe("macros, as Z3 5.3.2 substitutes them", () => {
+  it("defines a macro with std_subst and expands its applications with rev_subst", () => {
+    expect(
+      run([
+        "(push 1)",
+        "(define-fun m3 ((x Int) (y Int)) Int (- (* 3 x) y))",
+        "(pop 1)",
+        ...POPPED_CHECK,
+      ]),
+    ).toEqual(["unsat", "(:rlimit 557)"]);
+    expect(
+      run([
+        "(declare-fun k () Int)",
+        "(define-fun m ((x Int)) Int (+ (* 2 x) 1))",
+        "(assert (> (m k) 0))",
+        ...POPPED_CHECK,
+      ]),
+    ).toEqual(["unsat", "(:rlimit 1090)"]);
+  });
+});
+
 describe(":global-declarations, as Z3 5.3.2 keeps declarations through a pop", () => {
   it("keeps the functions, datatypes and named terms of a popped scope", () => {
     expect(

@@ -1027,6 +1027,10 @@ export const createSmtlibReader = (
   const scopedFuncStarts: number[] = [];
   const scopedMacros: number[] = [];
   const scopedMacroStarts: number[] = [];
+  // cmd_context's std_subst and rev_subst, whose caches live until their next substitution.
+  const stdSubst = new VarSubst(manager, true);
+  const revSubst = new VarSubst(manager, false);
+  const macroApp = { expr: -1 };
 
   const pushUndo = (restore: () => void) => {
     if (!options.isGlobalDecls) undo.push(restore);
@@ -1680,16 +1684,6 @@ export const createSmtlibReader = (
     });
   };
 
-  const expandMacro = (macro: Macro, args: number[]) =>
-    replaceFreeVars(manager, macro.body, (_variable, index, shift) => {
-      const arg = args[args.length - 1 - index];
-      return shift === 0
-        ? arg
-        : replaceFreeVars(manager, arg, (inner, innerIndex, innerShift) =>
-            manager.mkVar(innerIndex + innerShift + shift, manager.sorts[inner]),
-          );
-    });
-
   const isBvOpName = (name: string) =>
     hasBv &&
     BV_OP_NAMES.has(name) &&
@@ -2277,11 +2271,15 @@ export const createSmtlibReader = (
           manager.sorts[arg] === macro.domain[index] ||
           (isArithSort(manager.sorts[arg]) && isArithSort(macro.domain[index])),
       )
-    )
-      return expandMacro(
-        macro,
+    ) {
+      if (args.length === 0) return macro.body;
+      // try_mk_macro_app holds the term until pop_app_frame pushes it.
+      macroApp.expr = revSubst.apply(
+        macro.body,
         args.map((arg, index) => coerce(arg, macro.domain[index])),
       );
+      return macroApp.expr;
+    }
     const decls = funcs.get(name);
     const declared = decls === undefined ? undefined : mkDeclaredApp(name, decls, args, range, at);
     if (declared !== undefined) return declared;
@@ -2969,6 +2967,9 @@ export const createSmtlibReader = (
         frame.isTail,
         frame.start,
       );
+      if (macroApp.expr === -1) continue;
+      manager.decRef(macroApp.expr);
+      macroApp.expr = -1;
     }
   };
 
@@ -3300,7 +3301,7 @@ export const createSmtlibReader = (
 
   // parse_define and insert_macro: Z3 declares a macro as a recursive function with one case, which
   // a reference without arguments takes as an array. Z3's macro_decls holds the body with its
-  // variables reversed, and the definition holds the body as it was parsed.
+  // variables reversed, and the definition holds the body that std_subst turns back.
   const defineMacroFunc = (name: string, domain: number[], body: number) => {
     const count = domain.length;
     const mkHeldVar = (index: number, sort: number) => {
@@ -3318,7 +3319,7 @@ export const createSmtlibReader = (
       for (const variable of parsedVars) manager.decRef(variable);
       subst.release();
     }
-    insertMacro(name, { domain, range: manager.sorts[body], body });
+    insertMacro(name, { domain, range: manager.sorts[body], body: macroBody });
     if (!options.isGlobalDecls) scopedMacros.push(macroBody);
     const vars: number[] = [];
     const reversedVars: number[] = [];
@@ -3327,8 +3328,10 @@ export const createSmtlibReader = (
       reversedVars.push(mkHeldVar(index, domain[count - index - 1]));
     }
     const decl = manager.mkRecFuncDecl(name, domain, manager.sorts[body]);
-    setRecFunDefinition(manager, manager.recFunDefs.get(decl)!, true, vars, body);
+    const definition = stdSubst.apply(macroBody, reversedVars);
+    setRecFunDefinition(manager, manager.recFunDefs.get(decl)!, true, vars, definition);
     declareFunc(name, funcs.get(name) ?? [], decl);
+    manager.decRef(definition);
     for (const variable of [...reversedVars, ...vars]) manager.decRef(variable);
   };
 
