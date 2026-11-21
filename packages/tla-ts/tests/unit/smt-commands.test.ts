@@ -1113,6 +1113,26 @@ describe("runSmtlibScript runs its commands as Z3 does", () => {
     ]);
   });
 
+  it("makes a zero dividend's axiom atoms one at a time, so later terms reuse the ids Z3's do", () => {
+    expect(
+      run([
+        "(declare-fun q () Int)",
+        "(declare-fun r () Int)",
+        "(declare-fun f0 () Int)",
+        "(declare-fun f1 () Int)",
+        "(declare-fun f2 () Int)",
+        "(push 1)",
+        "(assert (= r (mod 0 q)))",
+        "(check-sat)",
+        "(pop 1)",
+        "(assert (> f0 10))",
+        "(assert (> f1 11))",
+        "(assert (> f2 12))",
+        "(simplify (or (= (+ r 5) q) (<= (div 2 q) 9)))",
+      ]),
+    ).toEqual(["sat", "(or (<= (div 2 q) 9) (= r (+ (- 5) q)))"]);
+  });
+
   it("orders a compacted interpretation's disjuncts as Z3 does once its aux functions are gone", () => {
     expect(run(["(set-option :rlimit 29800)", REACHABLE_PROOFS])).toEqual(
       readZ3Output("ReachableProofs-40-push-29800.z3out"),
