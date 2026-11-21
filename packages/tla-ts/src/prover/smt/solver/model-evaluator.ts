@@ -52,6 +52,12 @@ const BY_ZERO_OPS = new Map([
 
 const BUILTIN_FAMILIES = new Set([FAMILY_BASIC, FAMILY_USER, FAMILY_MODEL_VALUE, FAMILY_LABEL]);
 
+const hasUniqueIndices = (manager: AstManager, store: number[]) => {
+  for (let index = 0; index + 1 < store.length; index++)
+    if (!manager.isUniqueValue(store[index])) return false;
+  return true;
+};
+
 export class ModelEvaluator extends RewriterTpl {
   private rewriter: Rewriter;
   private isModelCompletion = false;
@@ -93,7 +99,10 @@ export class ModelEvaluator extends RewriterTpl {
     if (!manager.isArraySort(manager.sorts[value])) return value;
     const interp = this.extractArrayFuncInterp(value);
     if (interp === undefined) return value;
-    for (const store of interp.stores) for (const arg of store) manager.incRef(arg);
+    const stores = interp.stores;
+    for (let store = 0; store < stores.length; store++)
+      for (let index = 0; index < stores[store].length; index++)
+        manager.incRef(stores[store][index]);
     const constArray = mkArrayApp(
       manager,
       OP_CONST_ARRAY,
@@ -102,13 +111,16 @@ export class ModelEvaluator extends RewriterTpl {
     );
     manager.incRef(constArray);
     manager.decRef(value);
-    const result = interp.stores.reduceRight((array, store) => {
-      const next = mkArrayApp(manager, OP_STORE, [array, ...store]);
+    let result = constArray;
+    for (let store = stores.length - 1; store >= 0; store--) {
+      const next = mkArrayApp(manager, OP_STORE, [result, ...stores[store]]);
       manager.incRef(next);
-      manager.decRef(array);
-      return next;
-    }, constArray);
-    for (const store of interp.stores) for (const arg of store) manager.decRef(arg);
+      manager.decRef(result);
+      result = next;
+    }
+    for (let store = 0; store < stores.length; store++)
+      for (let index = 0; index < stores[store].length; index++)
+        manager.decRef(stores[store][index]);
     return result;
   }
 
@@ -241,11 +253,9 @@ export class ModelEvaluator extends RewriterTpl {
     const stores: number[][] = [];
     let array = inputArray;
     let areUnique = true;
-    const isUniqueStore = (store: number[]) =>
-      store.slice(0, -1).every((index) => manager.isUniqueValue(index));
     while (manager.getFamily(array) === FAMILY_ARRAY && manager.getOp(array) === OP_STORE) {
       const store = manager.getArgs(array).slice(1);
-      areUnique &&= isUniqueStore(store);
+      areUnique &&= hasUniqueIndices(manager, store);
       stores.push(store);
       array = manager.getArg(array, 0);
     }
@@ -254,7 +264,9 @@ export class ModelEvaluator extends RewriterTpl {
     if (manager.isLambda(array)) {
       const elseExpr = hasIndexSet(manager, array, stores);
       if (elseExpr === undefined) return undefined;
-      return { stores, elseExpr, areUnique: areUnique && stores.every(isUniqueStore) };
+      for (let store = 0; store < stores.length; store++)
+        areUnique &&= hasUniqueIndices(manager, stores[store]);
+      return { stores, elseExpr, areUnique };
     }
     if (manager.getFamily(array) !== FAMILY_ARRAY || manager.getOp(array) !== OP_AS_ARRAY)
       return undefined;

@@ -40,9 +40,9 @@ const addStore = (
       continue;
     }
     if (manager.getOp(eq) !== OP_EQ) return false;
-    const [left, right] = manager.isVar(manager.getArg(eq, 1))
-      ? [manager.getArg(eq, 1), manager.getArg(eq, 0)]
-      : manager.getArgs(eq);
+    const isSwapped = manager.isVar(manager.getArg(eq, 1));
+    const left = manager.getArg(eq, isSwapped ? 1 : 0);
+    const right = manager.getArg(eq, isSwapped ? 0 : 1);
     if (!manager.isVar(left) || !manager.isGroundApp(right)) return false;
     if (manager.values[left] >= numIndices) return false;
     const position = numIndices - manager.values[left] - 1;

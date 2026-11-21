@@ -15,6 +15,9 @@ const isAcDecl = (manager: AstManager, decl: number): boolean => {
 };
 
 class AcRewriter extends RewriterTpl {
+  private compareIds = (first: number, second: number) =>
+    this.manager.ids[first] - this.manager.ids[second];
+
   isRewritingPatterns() {
     return false;
   }
@@ -22,9 +25,11 @@ class AcRewriter extends RewriterTpl {
   reduceApp(decl: number, args: number[], sort: number) {
     const manager = this.manager;
     if (isAcDecl(manager, decl) || manager.funcDecls[decl].op === OP_DISTINCT) {
-      const sorted = [...args].sort((first, second) => manager.ids[first] - manager.ids[second]);
-      if (sorted.every((arg, index) => arg === args[index])) return -1;
-      const result = manager.mkApp(decl, sorted, sort);
+      let isSorted = true;
+      for (let index = 1; index < args.length; index++)
+        if (manager.ids[args[index - 1]] > manager.ids[args[index]]) isSorted = false;
+      if (isSorted) return -1;
+      const result = manager.mkApp(decl, args.slice().sort(this.compareIds), sort);
       manager.incRef(result);
       return result;
     }
@@ -158,8 +163,8 @@ class SymmetryReducer {
       const known = depths.get(expr);
       if (known !== undefined && depth <= known) continue;
       depths.set(expr, depth);
-      for (const arg of manager.getArgs(expr)) {
-        todo.push(arg);
+      for (let index = 0; index < manager.getNumArgs(expr); index++) {
+        todo.push(manager.getArg(expr, index));
         todoDepths.push(depth + 1);
       }
     }
@@ -204,7 +209,7 @@ class SymmetryReducer {
     const todo = [formula];
     for (let form = todo.pop(); form !== undefined; form = todo.pop()) {
       if (manager.getOp(form) === OP_AND) {
-        todo.push(...manager.getArgs(form));
+        manager.pushArgs(form, todo);
         continue;
       }
       const term = this.getRangeRestriction(form, consts);
@@ -217,7 +222,8 @@ class SymmetryReducer {
     const manager = this.manager;
     if (manager.getOp(form) !== OP_OR) return -1;
     let term = -1;
-    for (const arg of manager.getArgs(form)) {
+    for (let index = 0; index < manager.getNumArgs(form); index++) {
+      const arg = manager.getArg(form, index);
       if (manager.getOp(arg) !== OP_EQ) return -1;
       const left = manager.getArg(arg, 0);
       const right = manager.getArg(arg, 1);
@@ -233,7 +239,10 @@ class SymmetryReducer {
     const occs = new ObjMap<number>((expr) => manager.hashes[expr]);
     forEachExpr(manager, formula, (expr) => {
       occs.set(expr, occs.get(expr) ?? 0);
-      for (const arg of manager.getArgs(expr)) occs.set(arg, (occs.get(arg) ?? 0) + 1);
+      for (let index = 0; index < manager.getNumArgs(expr); index++) {
+        const arg = manager.getArg(expr, index);
+        occs.set(arg, (occs.get(arg) ?? 0) + 1);
+      }
     });
     return occs;
   }
@@ -248,7 +257,8 @@ class SymmetryReducer {
     let term = terms[0];
     let weight = occs.get(term) ?? 0;
     let ctsDelta = computeCtsDelta(manager, term, cts, consts);
-    for (const other of terms.slice(1)) {
+    for (let index = 1; index < terms.length; index++) {
+      const other = terms[index];
       const otherWeight = occs.get(other) ?? 0;
       const numArgs = manager.getNumArgs(term);
       const otherNumArgs = manager.getNumArgs(other);
