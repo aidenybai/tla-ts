@@ -2971,7 +2971,7 @@ const getSubsetMemberElements = (element: Value, set: SubsetValue) => {
   return toFiniteSet(element).elements;
 };
 
-const getFunctionSetMemberRange = (element: Value, set: FunctionSetValue): Value[] | false => {
+const getFunctionSetMemberRange = (element: Value, set: FunctionSetValue) => {
   if (!isFunctionValue(element)) {
     if (isModelValue(element)) return isModelValueMember(element, set);
     throw new TlaEvaluationError(
@@ -2991,7 +2991,7 @@ const getFunctionSetMemberRange = (element: Value, set: FunctionSetValue): Value
   return isDomain && functionValue.range;
 };
 
-const getRecordSetMember = (element: Value, set: RecordSetValue): FunctionValue | false => {
+const getRecordSetMember = (element: Value, set: RecordSetValue) => {
   forgetOwnWrittenOrder(element);
   const functionValue = isFunctionValue(element) ? toFiniteFunction(element) : undefined;
   if (!functionValue || !isRecordDomain(functionValue.domain)) {
@@ -3003,7 +3003,7 @@ const getRecordSetMember = (element: Value, set: RecordSetValue): FunctionValue 
   return functionValue.domain.length === set.names.length && functionValue;
 };
 
-const getProductSetMemberElements = (element: Value, set: ProductSetValue): Value[] | false => {
+const getProductSetMemberElements = (element: Value, set: ProductSetValue) => {
   const elements = isFunctionValue(element) ? getSequenceElements(element) : undefined;
   if (elements === undefined) {
     const isFunction =
@@ -3040,7 +3040,7 @@ const getUnionMemberSets = (element: Value, set: UnionValue) => {
   return sets;
 };
 
-const getSequenceSetMemberElements = (element: Value, set: SequenceSetValue): Value[] | false => {
+const getSequenceSetMemberElements = (element: Value, set: SequenceSetValue) => {
   const elements = getSequenceElements(element);
   if (elements === undefined) {
     if (isModelValue(element)) return isModelValueMember(element, set);
@@ -3133,7 +3133,6 @@ const isElementOfAnySet = (element: Value, set: Value): boolean => {
   }
 };
 
-// Asks isMember about each component, as TLC's member methods ask their component sets, and leaves any other set to isElementOfAnySet.
 const isElementOfComponents = (
   element: Value,
   set: Value,
@@ -3436,7 +3435,6 @@ const checkBoundArguments = (
   }
 };
 
-// checkBoundArguments for the coverage path, whose isMember charges what TLC's member methods charge.
 const checkBoundArgumentsWith = (
   functionValue: LazyFunctionValue,
   tupleLengths: (number | undefined)[],
