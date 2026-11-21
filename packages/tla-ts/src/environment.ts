@@ -605,8 +605,8 @@ export const createEnvironment = (
         semanticErrors.push(error);
       }
     });
-    // SANY's Errors#addMessage drops a message it already has, such as an instantiated body's.
-    if (semanticErrors.length === 0) {
+    // SANY's Errors#addMessage drops a message it already has, such as an instantiated body's. SANY makes no hidden link, so it level-checks none.
+    if (!isHidden && semanticErrors.length === 0) {
       semanticErrors.push(
         ...[
           ...collectSemanticErrors(
