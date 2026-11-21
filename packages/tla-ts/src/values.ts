@@ -424,6 +424,8 @@ let isVersion174 = false;
 
 const printing = { isExpanded: true, isViewPrinted: false };
 
+export const isLazyValueExpanded = () => printing.isExpanded;
+
 export interface ValueOptions {
   version?: TlcVersion;
   maxSetSize?: number;
