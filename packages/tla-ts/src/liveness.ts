@@ -472,7 +472,8 @@ export const expandTemporal = (
   }
   if (expression.kind === "Label") return expand(expression.body, scope);
   if (expression.kind === "Selection") return expand(expression.expression, scope);
-  if (expression.kind === "Let") {
+  // TLC 1.7.4's SpecProcessor#processConfigSpec and #processConfigProps take a LET whole.
+  if (expression.kind === "Let" && environment.runtime.version !== "1.7.4") {
     const bound = bindLetDefinitions(expression, scope, environment);
     const lets = environment.boundSubstitutions.lets;
     const owner = lets.get(expression);

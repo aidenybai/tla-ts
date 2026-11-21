@@ -510,7 +510,12 @@ const describeSpecification = (
   });
   const letDefinition = getLocalDefinition(expression, scope);
   const thunk = letDefinition?.kind === "Operator" ? getThunk(expression, scope) : undefined;
-  const unwrapped = thunk ? undefined : unwrapBinding(expression, scope, environment);
+  // TLC 1.7.4's SpecProcessor#processConfigSpec takes a LET and an application with arguments whole.
+  const isTlc174 = environment.runtime.version === "1.7.4";
+  const unwrapped =
+    thunk || (isTlc174 && expression.kind === "Let")
+      ? undefined
+      : unwrapBinding(expression, scope, environment);
   if (unwrapped) {
     recurse(unwrapped.expression, unwrapped.scope);
     return;
@@ -558,6 +563,7 @@ const describeSpecification = (
   // SpecProcessor#processConfigSpec takes an application apart only outside an instance's substitutions.
   if (
     called &&
+    !isTlc174 &&
     !substitutionFrame &&
     expression.kind === "Apply" &&
     called.params.length === expression.args.length
