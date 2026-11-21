@@ -34,7 +34,7 @@ interface DatabaseMatch {
   weight: number;
 }
 
-const mkInstruction = (kind: number, offset = 0, next = 0, app = -1, count = 0): Instruction => ({
+const mkInstruction = (kind: number, offset = 0, next = 0, app = -1, count = 0) => ({
   kind,
   offset,
   next,

@@ -8,6 +8,7 @@ import {
   OP_STORE,
 } from "./ast";
 import { type Enode, TheoryJustification } from "./enode";
+import { L_FALSE, L_TRUE, L_UNDEF } from "./lbool";
 import { FC_CONTINUE, FC_DONE, FC_GIVEUP } from "./theory";
 import { hasLargeDomain, hasUnitaryDomain, THEORY_DATA, TheoryArray } from "./theory-array";
 
@@ -226,8 +227,8 @@ export class TheoryArrayFull extends TheoryArray {
     }
     if (result === FC_DONE) {
       const constArrays = this.checkConstArrays();
-      if (constArrays < 0) result = FC_CONTINUE;
-      else if (constArrays === 0) result = FC_GIVEUP;
+      if (constArrays === L_FALSE) result = FC_CONTINUE;
+      else if (constArrays === L_UNDEF) result = FC_GIVEUP;
     }
     if (result === FC_DONE && this.canPropagate()) result = FC_CONTINUE;
     if (result === FC_DONE && (this.isUnsupportedOpFound || this.hasNonBetaAsArray()))
@@ -464,7 +465,6 @@ export class TheoryArrayFull extends TheoryArray {
     return isNew;
   }
 
-  // l_false as -1, l_undef as 0 and l_true as 1.
   private checkConstArrays() {
     const context = this.context;
     const manager = this.manager;
@@ -476,7 +476,7 @@ export class TheoryArrayFull extends TheoryArray {
           seen.add(constArray.root);
           constArrays.push(constArray);
         }
-    if (constArrays.length < 2) return 1;
+    if (constArrays.length < 2) return L_TRUE;
     const reachables = constArrays.map((constArray) => this.getReachable(constArray));
     let hasUninterpreted = false;
     for (let first = 0; first < constArrays.length; first++) {
@@ -520,7 +520,7 @@ export class TheoryArrayFull extends TheoryArray {
           this.addPathEqs(constArrays[second], secondPath, eqs);
           const justification = new TheoryJustification(this.id, [], eqs);
           context.pushEq(firstValue, secondValue, { kind: "justification", justification });
-          return -1;
+          return L_FALSE;
         }
         let isNew = false;
         for (const store of indices) {
@@ -530,11 +530,11 @@ export class TheoryArrayFull extends TheoryArray {
           isNew = this.internalizeConstSelect(constArrays[first], storeIndices) || isNew;
           isNew = this.internalizeConstSelect(constArrays[second], storeIndices) || isNew;
         }
-        if (isNew) return -1;
+        if (isNew) return L_FALSE;
         if (hasUninterp) hasUninterpreted = true;
       }
     }
-    return hasUninterpreted ? 0 : 1;
+    return hasUninterpreted ? L_UNDEF : L_TRUE;
   }
 
   popScopeEh(numScopes: number) {

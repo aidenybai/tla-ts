@@ -48,11 +48,8 @@ export class PatternInferenceRw extends RewriterTpl {
     const match = this.database.matchQuantifier(expr);
     if (match === undefined) return -1;
     const data = manager.getQuantifier(expr);
-    const isSamePatterns =
-      match.patterns.length === data.patterns.length &&
-      match.patterns.every((pattern, index) => pattern === data.patterns[index]);
     const withPatterns =
-      data.patterns.length > 0 || isSamePatterns
+      data.patterns.length > 0
         ? expr
         : manager.mkQuantifier({ ...data, patterns: match.patterns, noPatterns: [] });
     manager.incRef(withPatterns);
