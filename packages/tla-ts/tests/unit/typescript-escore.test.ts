@@ -95,6 +95,38 @@ const checkModule = (source: string) =>
 const THREW = "the script threw an exception";
 
 describe("compiles scripts by specializing ESCore", () => {
+  // Each key of the typed array is a string that CanonicalNumericIndexString reads with StrToNum,
+  // which tla-ts runs natively for a string of decimal digits.
+  describe("reads the keys of a typed array that are canonical numeric strings", () => {
+    const getSource = (expected: string) => `
+      const array = new Uint8Array(4);
+      const view = array as unknown as Record<string, number | undefined>;
+      view["1"] = 7;
+      view["-1"] = 5;
+      view["01"] = 6;
+      view["4"] = 8;
+      let text = "";
+      for (const key of ["0", "1", "-0", "01", "+1", "1.0", "-1", "4", "1073741823", "1073741824"]) {
+        text += String(view[key]) + ",";
+      }
+      text += String(Number("-12") + Number("+3") + Number("007"));
+      if (text !== "${expected}") throw new Error(text);
+    `;
+    const expected =
+      "0,7,undefined,6,undefined,undefined,undefined,undefined,undefined,undefined,-2";
+
+    it("agrees with Node", async () => {
+      expect(() => runInNewContext(stripTypeScriptTypes(getSource(expected)))).not.toThrow();
+      expect((await checkScript(getSource(expected))).message).toBeUndefined();
+    });
+
+    it("rejects another result", async () => {
+      const wrong = expected.replace("0,7", "0,5");
+      expect(() => runInNewContext(stripTypeScriptTypes(getSource(wrong)))).toThrow(expected);
+      expect((await checkScript(getSource(wrong))).message).toContain(THREW);
+    });
+  });
+
   // Each set puts a key into a WeakMap's table with @@, which finds an object's key without
   // comparing it with each key the table holds.
   describe("sets and gets the keys of a WeakMap that grows a key at a time", () => {
