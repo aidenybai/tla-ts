@@ -4,6 +4,7 @@ import {
   SmtCanceledError,
   SmtParseError,
   SmtDefaultError,
+  SmtInvariantError,
   SmtTacticError,
   SmtUnsupportedError,
 } from "../../../errors";
@@ -731,6 +732,14 @@ export const runSmtlibScript = (
       reasonUnknown: fdSolver.reasonUnknown,
     };
   };
+  const useSolver1WhenUndef = () => {
+    const behavior = Number(settings.parameters.get("combined_solver.solver2_unknown") ?? 1);
+    if (behavior === 0) return false;
+    if (behavior === 1)
+      return !state.assertions.some((assertion) => state.manager.hasQuantifierFlags[assertion]);
+    if (behavior === 2) return true;
+    throw new SmtInvariantError("combined_solver.solver2_unknown is not 0, 1 or 2");
+  };
   const checkSat = (extra: number[], end: SmtToken) => {
     clearCheck();
     const deadline = Date.now() + options.timeLimitMs;
@@ -757,13 +766,9 @@ export const runSmtlibScript = (
       fdSolver === undefined && (isAssuming || (state.isIncremental && !isOptimizing));
     try {
       const kernel = isKernelChecking ? checkKernel(names, extra) : undefined;
-      // Z3 retries a quantifier-free problem with its tactic when the incremental kernel gives up.
       const isFromTactic =
         kernel === undefined ||
-        (!isAssuming &&
-          kernel.result === L_UNDEF &&
-          !state.assertions.some((assertion) => manager.hasQuantifierFlags[assertion]) &&
-          manager.limit.inc());
+        (!isAssuming && kernel.result === L_UNDEF && useSolver1WhenUndef() && manager.limit.inc());
       const solved =
         fdSolver !== undefined
           ? checkFdSolver(fdSolver, extra)

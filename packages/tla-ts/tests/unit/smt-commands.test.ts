@@ -1,6 +1,7 @@
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { describe, expect, it } from "vite-plus/test";
+import { SmtInvariantError } from "../../src/errors";
 import { runSmtlibScript } from "../../src/prover/smt/solver/smtlib-script";
 
 const run = (lines: string[], timeLimitMs = 5000) => {
@@ -3809,5 +3810,33 @@ describe("case splits, as Z3 5.3.2 reads smt.case_split", () => {
       " (y 2437)",
       " (z 0))",
     ]);
+  });
+});
+
+describe("combined_solver, as Z3 5.3.2 reads its options", () => {
+  const POWER = ["(declare-fun x () Int)", "(declare-fun y () Int)", "(assert (= (^ x y) 8))"];
+  const QUANTIFIED = [
+    "(set-option :smt.mbqi false)",
+    "(declare-fun f (Int) Int)",
+    "(assert (forall ((x Int)) (> (f x) 0)))",
+  ];
+  const CHECK = ["(check-sat)", "(get-info :reason-unknown)", "(get-info :rlimit)"];
+
+  it("keeps the incremental solver's unknown under solver2_unknown 0", () => {
+    expect(
+      run(["(set-option :combined_solver.solver2_unknown 0)", ...POWER, "(push 1)", ...CHECK]),
+    ).toEqual(["unknown", '(:reason-unknown "(incomplete (theory arithmetic))")', "(:rlimit 117)"]);
+  });
+
+  it("retries a quantified problem with the tactic under solver2_unknown 2", () => {
+    expect(
+      run(["(set-option :combined_solver.solver2_unknown 2)", ...QUANTIFIED, "(push 1)", ...CHECK]),
+    ).toEqual(["sat", '(:reason-unknown "")', "(:rlimit 345)"]);
+  });
+
+  it("stops where Z3 exits on a solver2_unknown above 2", () => {
+    expect(() =>
+      run(["(set-option :combined_solver.solver2_unknown 3)", ...POWER, "(push 1)", ...CHECK]),
+    ).toThrow(SmtInvariantError);
   });
 });
