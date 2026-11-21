@@ -41,6 +41,7 @@ interface IdentifierExpression {
   selectorRanges?: SourceRange[];
   location: SourceLocation;
   resolution?: LocalResolution;
+  writtenKey?: string;
 }
 
 export interface ApplyExpression {
@@ -54,6 +55,7 @@ export interface ApplyExpression {
   argumentRanges?: (SourceRange | undefined)[];
   location: SourceLocation;
   resolution?: LocalResolution;
+  writtenKey?: string;
 }
 
 interface OperatorReferenceExpression {
@@ -378,6 +380,7 @@ export interface OperatorDefinition {
   isLocal: boolean;
   isRecursive: boolean;
   location: SourceLocation;
+  theoremRange?: SourceRange;
 }
 
 export interface FunctionDefinition {

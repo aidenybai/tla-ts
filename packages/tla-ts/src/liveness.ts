@@ -40,10 +40,8 @@ import { getLetDefinition, letDefinitions } from "./coverage";
 import {
   getSubstitutedName,
   getSubstitutedOccurrence,
-  letTheorems,
   mapChildren,
   substitutionFrames,
-  writtenKeys,
 } from "./instances";
 import { getArity, getKeyName } from "./resolve";
 import {
@@ -111,8 +109,12 @@ const TEMPORAL_OPERATORS = new Set(["~>", "-+->"]);
 
 const definitionThunks = new WeakSet<Thunk>();
 
-export const getReferenceName = (reference: Expression, key: string, environment: Environment) => {
-  const written = writtenKeys.get(reference);
+export const getReferenceName = (
+  reference: Expression & { kind: "Identifier" | "Apply" },
+  key: string,
+  environment: Environment,
+) => {
+  const written = reference.writtenKey;
   return written === undefined
     ? environment.instanceNames.get(key)
     : (environment.instanceNames.get(written) ?? getDefinition(written, environment)?.name);
@@ -399,16 +401,16 @@ export const expandTemporal = (
   ];
   // An instanced body reaches the theorem its module named, and a direct reference the one its INSTANCE made.
   const getTheoremReference = (
-    reference: Expression,
+    reference: Expression & { kind: "Identifier" | "Apply" },
     key: string,
   ): TheoremReference | undefined => {
     const isLocal = isLocallyResolved(reference);
     const letDefinition = isLocal ? getLetDefinition(key, scope) : undefined;
     const range = isLocal
-      ? letDefinition && letTheorems.get(letDefinition)
+      ? letDefinition?.kind === "Operator" && letDefinition.theoremRange
       : environment.theorems.get(key);
     if (!range) return undefined;
-    const written = writtenKeys.get(reference);
+    const written = reference.writtenKey;
     const original = getDefinition(key, environment);
     return {
       name: getReferenceName(reference, key, environment) ?? original?.name ?? getKeyName(key),
@@ -473,7 +475,7 @@ export const expandTemporal = (
     }
   }
   // A parameterized INSTANCE passes its parameters to each theorem it copies, which SANY's body names with none.
-  if (expression.kind === "Apply" && writtenKeys.has(expression)) {
+  if (expression.kind === "Apply" && expression.writtenKey !== undefined) {
     const theorem = getTheoremReference(expression, expression.operator);
     if (theorem) return getLeaf(theorem);
   }

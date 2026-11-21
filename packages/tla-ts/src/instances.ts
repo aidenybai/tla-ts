@@ -13,7 +13,6 @@ import {
   type OperatorDefinition,
   type OperatorParam,
   type SourceLocation,
-  type SourceRange,
   type Theorem,
 } from "./ast";
 import { TlaSyntaxError } from "./errors";
@@ -41,21 +40,12 @@ export const frameSubstitutions = new WeakMap<Expression, () => Substitution[]>(
 
 export const substitutedExpressions = new WeakMap<Expression, Substitution>();
 
-export const writtenKeys = new WeakMap<Expression, string>();
-
-const withWrittenKey = (copy: Expression, expression: Expression, key: string) => {
-  writtenKeys.set(copy, writtenKeys.get(expression) ?? key);
-  return copy;
-};
-
 export const isSubstitutionDefinition = (definition: Definition) =>
   substitutedExpressions.has(definition.body) && !substitutionFrames.has(definition.body);
 
 const addFrames = (expression: Expression, frames: Expression[]) => {
   const copy = { ...expression };
   if (contextualApplications.has(expression)) contextualApplications.add(copy);
-  const written = writtenKeys.get(expression);
-  if (written !== undefined) writtenKeys.set(copy, written);
   substitutionFrames.set(copy, [...frames, ...(substitutionFrames.get(expression) ?? [])]);
   return copy;
 };
@@ -122,12 +112,8 @@ const sourceNames = new WeakMap<Definition, string>();
 export const getSourceName = (definition: Definition) =>
   sourceNames.get(definition) ?? definition.name;
 
-export const letTheorems = new WeakMap<Definition, SourceRange>();
-
 const withSource = (definition: Definition, source: Definition) => {
   if (getSourceName(source) !== definition.name) sourceNames.set(definition, getSourceName(source));
-  const theorem = letTheorems.get(source);
-  if (theorem) letTheorems.set(definition, theorem);
   return definition;
 };
 
@@ -805,7 +791,12 @@ const substituteExpression = (
     const copy = getCopy(rewrite, expression.name);
     if (copy === undefined) return expression;
     if (params.length === 0) {
-      return withWrittenKey({ ...expression, name: copy, resolution }, expression, expression.name);
+      return {
+        ...expression,
+        name: copy,
+        resolution,
+        writtenKey: expression.writtenKey ?? expression.name,
+      };
     }
     const definition = instantiation.getDefinition(expression.name);
     if (definition && getArity(definition) > 0) {
@@ -817,17 +808,14 @@ const substituteExpression = (
         resolution,
       );
     }
-    return withWrittenKey(
-      {
-        kind: "Apply",
-        operator: copy,
-        args: createLocalArguments(params, expression.location),
-        location: expression.location,
-        resolution,
-      },
-      expression,
-      expression.name,
-    );
+    return {
+      kind: "Apply",
+      operator: copy,
+      args: createLocalArguments(params, expression.location),
+      location: expression.location,
+      resolution,
+      writtenKey: expression.writtenKey ?? expression.name,
+    };
   }
   if (expression.kind === "Apply" && isFree(expression.operator)) {
     const args = expression.args.map(recurse);
@@ -887,16 +875,13 @@ const substituteExpression = (
     }
     const copy = getCopy(rewrite, expression.operator);
     if (copy === undefined) return markContextual({ ...expression, args });
-    return withWrittenKey(
-      {
-        ...expression,
-        operator: copy,
-        args: [...createLocalArguments(params, expression.location), ...args],
-        resolution,
-      },
-      expression,
-      expression.operator,
-    );
+    return {
+      ...expression,
+      operator: copy,
+      args: [...createLocalArguments(params, expression.location), ...args],
+      resolution,
+      writtenKey: expression.writtenKey ?? expression.operator,
+    };
   }
   if (expression.kind === "OperatorReference" && isFree(expression.operator)) {
     const replacement = instantiation.substitutions.get(expression.operator);

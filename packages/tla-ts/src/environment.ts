@@ -49,7 +49,6 @@ import {
   getEnabledVariableName,
   getLetInstanceExpansion,
   getOperatorDefinition,
-  letTheorems,
   mentionsName,
   renameLocals,
   substitutedExpressions,
@@ -245,7 +244,7 @@ const getNodeWord = (kind: SymbolKind) =>
 const getNodeClass = (kind: SymbolKind) =>
   kind === "Theorem" ? "ThmOrAssumpDefNode" : getNodeWord(kind);
 
-const createLocalFunction = (definition: FunctionDefinition, key: string): Definition => ({
+const createLocalFunction = (definition: FunctionDefinition, key: string) => ({
   ...getOperatorDefinition(definition),
   name: key,
   isLocal: true,
@@ -1178,11 +1177,9 @@ export const createEnvironment = (
           definition.kind === "Operator"
             ? { ...definition, name: key }
             : createLocalFunction(definition, key);
-        copies.push(copy);
-        if (theorems.has(source)) {
-          theorems.set(key, getInstanceRange(instance));
-          letTheorems.set(copy, getInstanceRange(instance));
-        }
+        const isTheorem = theorems.has(source);
+        copies.push(isTheorem ? { ...copy, theoremRange: getInstanceRange(instance) } : copy);
+        if (isTheorem) theorems.set(key, getInstanceRange(instance));
         const instanceCopy = createInstanceCopy(source, instance.module, substitutes);
         if (instanceCopy) localCopies.set(key, instanceCopy);
         return key;
@@ -1217,13 +1214,12 @@ export const createEnvironment = (
             definition.kind === "Operator" ? definition : createLocalFunction(definition, name);
           const instanceCopy = localCopies.get(key);
           if (copy && instanceCopy) localCopies.set(name, instanceCopy);
-          const exportedDefinition = {
+          return {
             ...operator,
             name,
             body: withSubstitutionFrames(operator.body, frame ? [frame] : []),
+            theoremRange: theorems.has(key) ? getInstanceRange(instance) : undefined,
           };
-          if (theorems.has(key)) letTheorems.set(exportedDefinition, getInstanceRange(instance));
-          return exportedDefinition;
         }
         const ownParams = createArgumentParams(entry[1].arity, entry[1].params);
         return createStandardAlias(
