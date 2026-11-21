@@ -872,6 +872,9 @@ export const specialize = (
   files: readonly ProgramFile[],
   internalKeys: ReadonlySet<string>,
 ): SpecializedProgram => {
+  // The names of the bindings of the function that Node wraps the entry module in, which the
+  // environment holds rather than its frame.
+  const keptByWrapper = new Map<ts.Node, ReadonlySet<string>>();
   // How many times the program writes each name, as an identifier or a string.
   const occurrences = new Map<string, number>();
   const countNames = (node: ts.Node): void => {
@@ -2170,6 +2173,7 @@ export const specialize = (
               ...lexical,
             ],
             (items) => getLexicalDeclarations(items, true),
+            keptByWrapper.get(node),
           )
         : undefined;
     const isLocal = (name: string) => (locals?.top.get(name) ?? 0) !== 0;
@@ -3332,6 +3336,8 @@ export const specialize = (
         statement,
       );
     }
+    // The entry's bindings that a model's steps read, which its environment holds.
+    if (number === 1) keptByWrapper.set(wrapper, internalKeys);
     const code = functionCode(
       { node: wrapper, parameters: wrapper.parameters, body: wrapper.body, kind: "normal" },
       { isStrict: false, isClassBody: false, isAsyncGenerator: false },

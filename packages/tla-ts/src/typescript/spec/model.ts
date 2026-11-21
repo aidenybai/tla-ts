@@ -3,6 +3,7 @@ import type { Bound, Definition, Expression, OperatorDefinition } from "../../as
 import { parseConfig } from "../../config";
 import { TlaTypeScriptError } from "../../errors";
 import { printDefinition } from "../../printer";
+import { getCommonJsExports } from "../context";
 import { getJsxText, type Library } from "../program";
 import { CANONICAL_MODULE } from "./canonical";
 import { getLoweredBindings, LOWERED_DEFINITIONS } from "./lowered";
@@ -18,6 +19,9 @@ export interface EscoreModel extends EscoreSpec {
   variables: StateVariable[];
   notes: string[];
 }
+
+// The steps within which the search checks the states of a model whose actions count without end.
+const ENDLESS_STEPS = 20;
 
 // A module whose exported functions the model calls none of, which runs as a script does.
 export interface EscoreScript {
@@ -307,6 +311,10 @@ export const compileModelToEscore = (
     ) ||
     (getModuleFormat(fileName, text) === "module" &&
       hostGlobals.some((name) => identifiers.has(name)));
+  // A CommonJS file whose exports name its functions, as exports.name = local does, runs as the
+  // CommonJS module that Node loads, in Node's wrapper, whose scope its functions close over.
+  const commonJsExports = getCommonJsExports(file);
+  const isCommonJs = commonJsExports.size > 0 && getModuleFormat(fileName, text) === "commonjs";
   const today = frameModel(source, fileName, library, runtime.names);
   if (today.isScript) return { isScript: true, notes: today.notes };
   const module = today.source;
@@ -340,9 +348,10 @@ export const compileModelToEscore = (
             ts.isNonNullExpression(node)
           ? getFunction(node.expression)
           : undefined;
-  // The local names that the module exports in a list of its own.
-  const listed = new Set(
-    file.statements.flatMap((statement) =>
+  // The local names that the module exports in a list of its own, or by name as CommonJS does.
+  const listed = new Set([
+    ...commonJsExports.values(),
+    ...file.statements.flatMap((statement) =>
       ts.isExportDeclaration(statement) &&
       statement.moduleSpecifier === undefined &&
       statement.exportClause !== undefined &&
@@ -352,7 +361,7 @@ export const compileModelToEscore = (
           )
         : [],
     ),
-  );
+  ]);
   const getTags = (node: ts.Node) =>
     new Map(
       ts
@@ -405,6 +414,8 @@ export const compileModelToEscore = (
       }
     }
   }
+  // The name that a CommonJS module exports one of its functions as.
+  const commonJsExported = [...commonJsExports].find((entry) => exported.has(entry[1]))?.[0] ?? "";
   bindings.forEach((binding, name) => {
     const found = exported.get(binding);
     if (found === undefined) {
@@ -1025,7 +1036,7 @@ export const compileModelToEscore = (
   // lowered.ts), whose variable model holds them, and otherwise the variable heap holds ESCore's
   // state. A step's or a check's ESCore state is what the variable's value gives.
   const lowered =
-    isAsync || isModule || !isLowerable
+    isAsync || isModule || isCommonJs || !isLowerable
       ? undefined
       : getLoweredBindings(file, new Set(choices.map((choice) => choice.name)));
   const variable = lowered === undefined ? "heap" : "model";
@@ -1431,15 +1442,25 @@ export const compileModelToEscore = (
       : [`delete (globalThis as { ${INITIAL}?: unknown }).${INITIAL};`]),
     "",
   ].join("\n");
+  // Where the actions count a state variable on without end, the search checks every state within
+  // ENDLESS_STEPS steps, then stops where a state takes more, as the states never end.
+  if (today.endlessCount !== undefined) {
+    steps.push(
+      `EndlessCount == TLCGet("level") <= ${ENDLESS_STEPS + 1} \\/ Assert(FALSE, ${JSON.stringify(`tla-ts can't check a model whose states never end: an action counts ${today.endlessCount} on at each step, and the check stopped after every state within ${ENDLESS_STEPS} steps`)})`,
+    );
+  }
   const modelSteps = [
     "CONSTANTS TsNull, TsUndefined",
     ...(isStateless ? ["vars == <<>>"] : [`VARIABLE ${variable}`, `vars == <<${variable}>>`]),
     "CanonicalState(s) == CanonicalStateOf(s, InitialState)",
     settle,
-    // The scope that a step reads the module's bindings in: the script's, or the module's own.
+    // The scope that a step reads the module's bindings in: the script's, the module's own, or the
+    // one of Node's wrapper of a CommonJS module, which the function it exports first closes over.
     isModule
       ? "ModelContext(s) == ModuleContext(ModuleAt(s, s.moduleIds[<<s.realmId, 1>>]).env)"
-      : "ModelContext(s) == ScriptContext(s)",
+      : isCommonJs
+        ? `ModelContext(s) == ModuleContext(O(s, Val(Get(s, Val(Get(s, s.required[1].module, Str(${getUnits("exports")}))), Str(${getUnits(commonJsExported)})))).slots.env)`
+        : "ModelContext(s) == ScriptContext(s)",
     MODEL_DEFINITIONS,
     "ModelStart(s) == Completed(ApplyTo(RunProgram, s)).s",
     ...(lowered === undefined
@@ -1460,10 +1481,10 @@ export const compileModelToEscore = (
   ].join("\n");
   // The module runs as an ES module does, in strict mode.
   const compiled = compileToEscore(
-    isModule ? augmented : `"use strict";\n${augmented}`,
+    isModule || isCommonJs ? augmented : `"use strict";\n${augmented}`,
     fileName,
     runtime,
-    isModule,
+    isModule || isCommonJs,
     {
       steps: modelSteps,
       entries: [...entries],
@@ -1487,6 +1508,7 @@ export const compileModelToEscore = (
     ...config.invariants.map((name) => `INVARIANT ${name}`),
     ...config.properties.map((name) => `PROPERTY ${name}`),
     ...config.constraints.map((name) => `CONSTRAINT ${name}`),
+    ...(today.endlessCount === undefined ? [] : ["CONSTRAINT EndlessCount"]),
     ...config.actionConstraints.map((name) => `ACTION_CONSTRAINT ${name}`),
     ...config.postconditions.map((name) => `POSTCONDITION ${name}`),
     ...(view === undefined ? [] : [`VIEW ${view}`]),

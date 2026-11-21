@@ -421,6 +421,87 @@ describe("checks a module's exported functions as a model on ESCore", () => {
     });
   });
 
+  // A CommonJS module's functions that its exports name, as exports.tick = tick does, as Solid's
+  // CommonJS build exports them, are the model's, which the steps call in Node's wrapper.
+  describe("checks the functions that a CommonJS module exports by name", () => {
+    const directory = mkdtempSync(join(tmpdir(), "tla-ts-escore-commonjs-"));
+    afterAll(() => rmSync(directory, { recursive: true, force: true }));
+    const check = (operator: string, mode?: "compared") => {
+      const source = `let count = 0;\nfunction tick() {\n  if (count < 2) count += 1;\n}\nfunction isSmall() {\n  return count ${operator} 2;\n}\nexports.tick = tick;\nexports.isSmall = isSmall;\n`;
+      const path = join(directory, `${mode ?? "spec"}-${operator === "<" ? "less" : "most"}.cjs`);
+      writeFileSync(path, source);
+      return checkModel(source, path, mode);
+    };
+
+    it("agrees with Node", async () => {
+      expect(getCounts(await check("<="))).toEqual(["deadlock", 3, 3]);
+    });
+
+    it("rejects another result", async () => {
+      expect(getCounts(await check("<"))).toEqual(["invariant-violation", 3, 3]);
+    });
+
+    it("numbers the state natively as ESCanonical does", async () => {
+      expect(getCounts(await check("<=", "compared"))).toEqual(["deadlock", 3, 3]);
+    });
+  });
+
+  // A model whose actions count on without end, and that checks an invariant, checks the states
+  // within its bound of steps, so a violation there is the violation, and stops where none is.
+  describe("checks a model whose actions count without end within its bound", () => {
+    const getSource = (check: string) =>
+      `let count = 0;\nexport const tick = () => {\n  count += 1;\n};\nexport const isSmall = () => ${check};\n`;
+
+    it("agrees with Node", async () => {
+      expect(getCounts(await checkModel(getSource("count < 3")))).toEqual([
+        "invariant-violation",
+        4,
+        4,
+      ]);
+    });
+
+    it("rejects another result", async () => {
+      expect(getCounts(await checkModel(getSource("count < 2")))).toEqual([
+        "invariant-violation",
+        3,
+        3,
+      ]);
+    });
+
+    it("stops where the invariant holds within the bound, never reporting success", async () => {
+      const result = await checkModel(getSource("count >= 0"));
+      expect(result.status).not.toBe("success");
+      expect(result.message).toContain(
+        "tla-ts can't check a model whose states never end: an action counts count on at each step",
+      );
+    });
+  });
+
+  // A CommonJS module's require, which a function of it closes over, is in the state, as in Solid's
+  // CommonJS build, which refers to nothing but the module's file.
+  describe("keeps a CommonJS module's require in the state", () => {
+    const directory = mkdtempSync(join(tmpdir(), "tla-ts-escore-require-"));
+    afterAll(() => rmSync(directory, { recursive: true, force: true }));
+    const check = (operator: string, mode?: "compared") => {
+      const source = `let count = 0;\nfunction tick() {\n  if (count < 2 && typeof require === "function") count += 1;\n}\nfunction isSmall() {\n  return count ${operator} 2;\n}\nexports.tick = tick;\nexports.isSmall = isSmall;\n`;
+      const path = join(directory, `${mode ?? "spec"}-${operator === "<" ? "less" : "most"}.cjs`);
+      writeFileSync(path, source);
+      return checkModel(source, path, mode);
+    };
+
+    it("agrees with Node", async () => {
+      expect(getCounts(await check("<="))).toEqual(["deadlock", 3, 3]);
+    });
+
+    it("rejects another result", async () => {
+      expect(getCounts(await check("<"))).toEqual(["invariant-violation", 3, 3]);
+    });
+
+    it("numbers the state natively as ESCanonical does", async () => {
+      expect(getCounts(await check("<=", "compared"))).toEqual(["deadlock", 3, 3]);
+    });
+  });
+
   // A step settles the jobs that its program queues, which a program that names then only in a
   // comment queues none of.
   describe("settles a step of a program that queues no jobs", () => {

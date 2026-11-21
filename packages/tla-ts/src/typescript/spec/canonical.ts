@@ -44,8 +44,10 @@ ObjectDataBuiltins ==
 AsyncResourceBuiltin == <<"Module", "asyncResource">>
 BuiltinSlots == {"id", "constructor", "data", "realm", "initialName"}
 \* The built-in functions whose data refers to nothing: the host's that stop, whose data is a name,
-\* and the RegExp constructor, whose data is the strings of its last match, as RegExp.$1 reads.
-NamedBuiltins == {<<"Module", "hostStop">>, <<"Module", "hostQuietConstructor">>, <<"RegExp", "constructor">>}
+\* a CommonJS module's require, whose data is its file's number, and the RegExp constructor, whose
+\* data is the strings of its last match, as RegExp.$1 reads.
+NamedBuiltins ==
+  {<<"Module", "hostStop">>, <<"Module", "hostQuietConstructor">>, <<"Module", "require">>, <<"RegExp", "constructor">>}
 \* The slots of a class's default constructor, a built-in that holds the class's elements.
 DefaultConstructorSlots == BuiltinSlots \cup {"ctorKind", "sourceText", "privateMethods", "fields", "initializers"}
 SlotRefs(o, r) ==
@@ -240,7 +242,7 @@ RenameEnvironmentsIn(h, ids, number, r) ==
 CanonicalStateOf(s, initial) ==
   IF s.jobs # <<>> \/ s.timers # <<>> \/ s.callers # Null \/ Len(s.realms) > 1 \/ s.waiters # <<>> \/ s.disposables # <<>>
   THEN ModelStop("pending work")
-  ELSE IF s.required # <<>> THEN ModelStop("a module that require loaded")
+  ELSE IF \E k \in DOMAIN s.required : ~s.required[k].loaded THEN ModelStop("a module that require is loading")
   ELSE
   LET r == [objects |-> initial.objs.size, environments |-> initial.envs.size]
       changed == ChangedRealmObjects(s, initial)
@@ -248,6 +250,7 @@ CanonicalStateOf(s, initial) ==
                \o ConcatMap(changed, LAMBDA i : ObjectRefs(HeapGet(s.objs, i), r))
                \o ConcatMap(SortInts(DOMAIN s.templates), LAMBDA k : ObjectRef(s.templates[k], r))
                \o ConcatMap(s.modules, LAMBDA m : ModuleRefs(m, r))
+               \o ConcatMap(SortInts(DOMAIN s.required), LAMBDA k : ObjectRef(s.required[k].module, r))
       walk == CanonicalClosure(s, CanonicalWalk(s, roots, [number |-> <<>>, order |-> <<>>, objects |-> 0, environments |-> 0], r), r)
       number == walk.number
       objects == SelectSeq(walk.order, LAMBDA n : n > 0)
@@ -261,6 +264,7 @@ CanonicalStateOf(s, initial) ==
         !.envsHeld = envs.size,
         !.templates = [k \in DOMAIN @ |-> RenameValue(@[k], number, r)],
         !.modules = [i \in DOMAIN @ |-> RenameModule(@[i], number, r)],
+        !.required = [k \in DOMAIN @ |-> [@[k] EXCEPT !.module = RenameValue(@, number, r)]],
         !.hoisted = {<<RenameEnvironment(pair[1], number, r), pair[2]>> : pair \in {p \in @ : p[1] <= r.environments \/ -p[1] \in DOMAIN number}},
         !.out = <<>>]
 ====

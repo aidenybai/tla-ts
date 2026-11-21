@@ -4,7 +4,7 @@ import { KEYWORDS } from "../../lexer";
 import { parseModule } from "../../parser";
 import { getSetBound } from "../../values";
 import { formatString } from "../../printer";
-import { type FunctionNode, getFunction, isPlain, skipCasts } from "../context";
+import { type FunctionNode, getCommonJsExports, getFunction, isPlain, skipCasts } from "../context";
 import { createNames } from "../names";
 import { createProgram, type Library } from "../program";
 
@@ -477,9 +477,15 @@ export const frameModel = (
     return ts.forEachChild(node, (child) => readsState(child, visited) || undefined) ?? false;
   };
   const helpers = declarations.filter((declared) => !isLet(declared));
-  // The local bindings that the module's export lists export, as export { local as name } does.
-  const listed = new Set(
-    sourceFile.statements.flatMap((statement) =>
+  // The local bindings that the module's export lists export, as export { local as name } does,
+  // and those that a CommonJS file's exports name, as exports.name = local does.
+  const commonJsLocals = new Set(getCommonJsExports(sourceFile).values());
+  const listed = new Set([
+    ...declarations.flatMap((declared) => {
+      const symbol = getSymbol(declared.identifier);
+      return commonJsLocals.has(declared.name) && symbol !== undefined ? [symbol] : [];
+    }),
+    ...sourceFile.statements.flatMap((statement) =>
       ts.isExportDeclaration(statement) &&
       !statement.isTypeOnly &&
       statement.moduleSpecifier === undefined &&
@@ -493,7 +499,7 @@ export const frameModel = (
           })
         : [],
     ),
-  );
+  ]);
   const exported = helpers.flatMap((declared): Exported[] => {
     const declaration = declared.declaration;
     const node = getFunction(declaration);
@@ -1104,7 +1110,7 @@ export const frameModel = (
     throw new TlaTypeScriptError("Tag only one function @view");
   }
   // A state variable that a whole number that its declaration gives starts at.
-  rejectEndlessCount(sourceFile, checker, called, sections, (target) => {
+  const endless = findEndlessCount(sourceFile, checker, called.filter(isStepExport), (target) => {
     const symbol = ts.isIdentifier(target) ? getSymbol(target) : undefined;
     const declaration = symbol?.valueDeclaration;
     const initializer =
@@ -1125,6 +1131,15 @@ export const frameModel = (
       Number.isSafeInteger(Number(start.text))
     );
   });
+  // A model whose states never end and that checks nothing can't fail, so the compile stops. One
+  // that checks something checks the states that a bounded number of steps reach first.
+  const isChecking = [...sections.values()].some((names) => names.length > 0);
+  if (endless !== undefined && !isChecking) {
+    throw new TlaTypeScriptError(
+      `tla-ts can't check a model whose states never end: an action counts ${endless.getText()} on at each step, and the model checks nothing that could stop it`,
+      endless,
+    );
+  }
   const isGuarded = next.some((step) => step.includes(GUARDED));
   const stateNames = variables.map((variable) => variable.name);
   const text = [
@@ -1159,6 +1174,9 @@ export const frameModel = (
     notes,
     bindings,
     symmetric,
+    // The state variable that the model's actions count on without end, whose search checks the
+    // states within ENDLESS_STEPS steps and then stops.
+    endlessCount: endless?.getText(),
   };
 };
 
@@ -1459,16 +1477,14 @@ const getCounted = (
   return target !== undefined && isState(target) ? target : undefined;
 };
 
-// Where every action only counts state variables, and the model checks nothing, nothing can fail,
-// and an action that counts reaches a new state at each step, so the check would visit states
-// until memory runs out.
-const rejectEndlessCount = (
+// The state variable that an action counts on, where every action only counts state variables, so
+// that each step reaches a state that no step before reached, and the states never end.
+const findEndlessCount = (
   sourceFile: ts.SourceFile,
   checker: ts.TypeChecker,
   called: readonly Exported[],
-  sections: ReadonlyMap<string, string[]>,
   isState: (target: ts.Expression) => boolean,
-) => {
+): ts.Expression | undefined => {
   // A declaration runs nothing, as a string as a statement, such as a "use strict" directive, does.
   const isInertStatement = (statement: ts.Statement) =>
     ts.isFunctionDeclaration(statement) ||
@@ -1482,12 +1498,7 @@ const rejectEndlessCount = (
         (declaration) =>
           declaration.initializer === undefined || isInertValue(declaration.initializer),
       ));
-  if (
-    [...sections.values()].some((names) => names.length > 0) ||
-    !sourceFile.statements.every(isInertStatement)
-  ) {
-    return;
-  }
+  if (!sourceFile.statements.every(isInertStatement)) return undefined;
   // The values of a type that is a union of literals, which TLC takes each of.
   const getLiterals = (node: ts.Node) => {
     const type = checker.getTypeAtLocation(node);
@@ -1508,9 +1519,7 @@ const rejectEndlessCount = (
         ).map((statement) => getCounted(statement, isState, getLiterals)),
   );
   const counted = counts.flat().at(0);
-  if (counted === undefined || counts.some((count) => count.includes(undefined))) return;
-  throw new TlaTypeScriptError(
-    `tla-ts can't check a model whose states never end: an action counts ${counted.getText()} on at each step, and the model checks nothing that could stop it`,
-    counted,
-  );
+  return counted === undefined || counts.some((count) => count.includes(undefined))
+    ? undefined
+    : counted;
 };

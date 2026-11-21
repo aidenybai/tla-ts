@@ -200,15 +200,17 @@ const isDefaultConstructor = (slots: Value) => {
 };
 
 // The built-in functions whose data refers to nothing: the host's that stop, whose data is a name,
-// and the RegExp constructor, whose data is the strings of its last match, as RegExp.$1 reads.
-const isNamedBuiltin = (slots: Value) => {
-  const id = getList(get(slots, "id"));
-  return (
-    id.length === 2 &&
-    ((id[0] === "Module" && (id[1] === "hostStop" || id[1] === "hostQuietConstructor")) ||
-      (id[0] === "RegExp" && id[1] === "constructor"))
-  );
-};
+// a CommonJS module's require, whose data is its file's number, and the RegExp constructor, whose
+// data is the strings of its last match, as RegExp.$1 reads.
+const NAMED_BUILTINS = new Set([
+  "Module hostStop",
+  "Module hostQuietConstructor",
+  "Module require",
+  "RegExp constructor",
+]);
+
+const isNamedBuiltin = (slots: Value) =>
+  NAMED_BUILTINS.has(getList(get(slots, "id")).map(String).join(" "));
 
 const isPlainBuiltin = (slots: Value) =>
   getDomain(slots).join() === BUILTIN_SLOTS.join() &&
@@ -384,8 +386,10 @@ const canonicalStateOf = (state: Value, initial: Value): Value => {
   ) {
     stop("pending work");
   }
-  if (toFiniteFunction(get(state, "required")).domain.length > 0) {
-    stop("a module that require loaded");
+  // The CommonJS modules that require loaded, by file, whose module objects the walk starts from.
+  const required = toFiniteFunction(get(state, "required"));
+  if (required.range.some((entry) => get(entry, "loaded") !== true)) {
+    stop("a module that require is loading");
   }
   const objs = get(state, "objs");
   const envs = get(state, "envs");
@@ -415,6 +419,10 @@ const canonicalStateOf = (state: Value, initial: Value): Value => {
     .sort((left, right) => left.key - right.key)
     .forEach((entry) => objectRef(entry.value, realm, queue));
   getList(get(state, "modules")).forEach((module) => moduleRefs(module, realm, queue));
+  required.domain
+    .map((file, position) => ({ file: Number(file), entry: required.range[position] }))
+    .sort((left, right) => left.file - right.file)
+    .forEach((pair) => objectRef(get(pair.entry, "module"), realm, queue));
   // The breadth-first walk, whose queue grows at its end as each node it numbers adds the nodes
   // that node refers to.
   const numbers = new Map<number, number>();
@@ -655,6 +663,7 @@ const canonicalStateOf = (state: Value, initial: Value): Value => {
     envs: () => createHeap(environments),
     envsHeld: () => environments.length,
     templates: (inner) => mapRange(inner, renameValue),
+    required: (inner) => mapRange(inner, (entry) => except(entry, { module: renameValue })),
     modules: (inner) =>
       createTuple(
         getList(inner).map((module) =>
