@@ -79,16 +79,12 @@ import {
   type ScopedExpression,
   type TemporalProperty,
   type TheoremReference,
+  withExpandedSubstitutions,
 } from "./liveness";
 import { getLiveExpressions } from "./liveness-checker";
 import { prettyPrint, prettyPrintT } from "./pretty-print";
 import { parenthesizedRanges } from "./parser";
-import {
-  getOperatorDefinition,
-  getSubstitutedName,
-  substitutionFrames,
-  withSubstitutionFrames,
-} from "./instances";
+import { getOperatorDefinition, getSubstitutedName, substitutionFrames } from "./instances";
 import { getPossibleCounts, type CheckerRuntime } from "./runtime";
 import { createIncompleteSuccessorError, type SuccessorGenerator } from "./successors";
 import {
@@ -190,8 +186,10 @@ interface Membership {
 interface ActionProperty {
   name: string;
   box: Expression;
+  checked: Expression;
   action: Expression;
   subscript: Expression;
+  unchanged: Expression;
   scope: Scope | undefined;
 }
 
@@ -551,6 +549,7 @@ const getSpecification = (
               cache: undefined,
               isStreamed: false,
               isRebuilt: false,
+              isUncached: false,
             },
             parent,
           },
@@ -602,16 +601,26 @@ const getProperties = (
       // Deviation from TLC: SpecProcessor#processConfigProps looks an instance's constant up without its substitute and rejects it as "cannot be used as a property", where tla-ts checks the substitute.
       const partName = item.name ?? name;
       const withFrames = (check: Expression) =>
-        withSubstitutionFrames(
+        withExpandedSubstitutions(
+          item.substitutions,
           check,
           item.frames.filter((frame) => !substitutionFrames.get(check)?.includes(frame)),
+          environment,
         );
       if (conjunct.kind === "Always" && conjunct.expression.kind === "BoxAction") {
+        const box = conjunct.expression;
         properties.actionProperties.push({
           name: partName,
-          box: withFrames(conjunct.expression),
-          action: conjunct.expression.action,
-          subscript: conjunct.expression.subscript,
+          box,
+          checked: withFrames(box),
+          action: withExpandedSubstitutions(item.substitutions, box.action, [], environment),
+          subscript: box.subscript,
+          unchanged: withExpandedSubstitutions(
+            item.substitutions,
+            { kind: "Unchanged", expression: box.subscript, location: START },
+            [],
+            environment,
+          ),
           scope: item.scope,
         });
         return;
@@ -1312,7 +1321,7 @@ export const createSearch = (
   const coveredInitialPredicates = getCoveredChecks("implied", properties.initialPredicates, false);
   const coveredActionProperties = getCoveredChecks(
     "implied",
-    properties.actionProperties.map((property) => ({ ...property, expression: property.box })),
+    properties.actionProperties.map((property) => ({ ...property, expression: property.checked })),
     false,
   );
   const evaluateCovered = (
@@ -1363,14 +1372,6 @@ export const createSearch = (
       : getConfigDefinition("view function", config.view, environment);
   const viewName = config.view ?? getModuleOperators("view")[0]?.name;
   const view = viewName === undefined ? undefined : createNamedIdentifier(viewName, environment);
-  const actionProperties = properties.actionProperties.map((property) => {
-    const unchanged: Expression = {
-      kind: "Unchanged",
-      expression: property.subscript,
-      location: START,
-    };
-    return { ...property, unchanged };
-  });
   const isActionPossible = (item: NamedExpression) =>
     getSanyLevel(item.expression, undefined, environment) >= ACTION_LEVEL;
   const statePossible = possible.filter((item) => !isActionPossible(item));
@@ -1717,10 +1718,10 @@ export const createSearch = (
               getContext(tracing, next, undefined, invariant.scope),
             ),
           )) &&
-        actionProperties.every((property, index) =>
+        properties.actionProperties.every((property, index) =>
           holdsReplayed(
             coveredActionProperties[index],
-            property.box,
+            property.checked,
             getContext(tracing, state, next, property.scope),
           ),
         )
@@ -1735,7 +1736,7 @@ export const createSearch = (
       ),
     findFailedInitialPredicate,
     findViolatedActionProperty: (state, next) =>
-      actionProperties.find((property, index) => {
+      properties.actionProperties.find((property, index) => {
         try {
           const value =
             coverage && evaluateCovered(coverage, coveredActionProperties[index], state, next);
