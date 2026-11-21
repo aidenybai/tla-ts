@@ -7750,6 +7750,22 @@ ASSUME TLCFP(a) = -887695703
     },
   );
 
+  it.each(["Spec == J!SpecO", "Spec == I(0)!SpecO", "Spec == J!SpecN"])(
+    "finds the variables of a subscript %j reaches through two instances, where TLC's SubscriptCollector loses the outer substitutes and warns",
+    async (spec) => {
+      const warnings: string[] = [];
+      const result = await check({
+        source: `---- MODULE M ----\nEXTENDS Naturals\nVARIABLES x, y\nI(j) == INSTANCE N WITH k <- j\nJ == INSTANCE N WITH k <- 0\n${spec}\n====\n`,
+        config: "SPECIFICATION Spec\n",
+        loadModule: (name) => NESTED_MODULES.get(name),
+        onProgress: (progress) => {
+          if (progress.kind === "warning") warnings.push(progress.text);
+        },
+      });
+      expect([result.status, warnings]).toEqual(["success", []]);
+    },
+  );
+
   it.each([
     [
       "LET I2 == Init IN I2",

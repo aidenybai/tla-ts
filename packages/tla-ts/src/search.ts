@@ -502,6 +502,7 @@ const getSpecification = (
       );
     }
     if (conjunct.kind === "Always" && conjunct.expression.kind === "BoxAction") {
+      // Deviation from TLC: SpecProcessor's SubscriptCollector binds each enclosing instance's substitutes in the context outside them all, so it misses a variable two instances down and warns the subscript lacks it.
       const variables = getSubscriptVariables(
         conjunct.expression.subscript,
         item.scope,
