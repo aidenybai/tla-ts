@@ -3510,6 +3510,69 @@ ASSUME TLCFP(a) = -887695703
 
   it.each([
     [
+      "an interval and a set of functions",
+      "(1..2) \\cup [{1} -> {3, 4}]",
+      [
+        "line 5, col 9 to line 5, col 42 of module M: 20",
+        "|line 5, col 16 to line 5, col 42 of module M: 5",
+        "||line 5, col 17 to line 5, col 20 of module M: 5",
+        "||line 5, col 28 to line 5, col 42 of module M: 5:10",
+        "|||line 5, col 29 to line 5, col 31 of module M: 5",
+        "|||line 5, col 36 to line 5, col 41 of module M: 5:15",
+      ],
+    ],
+    [
+      "two sets of functions",
+      "[{1} -> {3}] \\cup [{2} -> {4, 5}]",
+      [
+        "line 5, col 9 to line 5, col 48 of module M: 12",
+        "|line 5, col 16 to line 5, col 48 of module M: 4:16",
+        "||line 5, col 16 to line 5, col 27 of module M: 4:4",
+        "|||line 5, col 17 to line 5, col 19 of module M: 4",
+        "|||line 5, col 24 to line 5, col 26 of module M: 4:8",
+        "||line 5, col 34 to line 5, col 48 of module M: 4:8",
+        "|||line 5, col 35 to line 5, col 37 of module M: 4",
+        "|||line 5, col 42 to line 5, col 47 of module M: 4:12",
+      ],
+    ],
+    [
+      "a set literal that shares an element with a set of functions",
+      "{<<3>>} \\cup [{1} -> {3, 4}]",
+      [
+        "line 5, col 9 to line 5, col 43 of module M: 9",
+        "|line 5, col 16 to line 5, col 43 of module M: 3",
+        "||line 5, col 16 to line 5, col 22 of module M: 3:24",
+        "|||line 5, col 17 to line 5, col 21 of module M: 3",
+        "||line 5, col 29 to line 5, col 43 of module M: 3:6",
+        "|||line 5, col 30 to line 5, col 32 of module M: 3",
+        "|||line 5, col 37 to line 5, col 42 of module M: 3:9",
+      ],
+    ],
+    [
+      "a set of functions and a set literal",
+      "[{1} -> {3, 4}] \\cup {7, 8}",
+      [
+        "line 5, col 9 to line 5, col 42 of module M: 20",
+        "|line 5, col 16 to line 5, col 42 of module M: 5",
+        "||line 5, col 16 to line 5, col 30 of module M: 5:10",
+        "|||line 5, col 17 to line 5, col 19 of module M: 5",
+        "|||line 5, col 24 to line 5, col 29 of module M: 5:15",
+        "||line 5, col 37 to line 5, col 42 of module M: 5:50",
+      ],
+    ],
+  ])(
+    "charges the union of %s a successor draws from, as TLC's SetCupValue enumerator does",
+    async (_title, union, expected) => {
+      const lines = await getCoverageLines(
+        `---- MODULE M ----\nEXTENDS Integers, TLC, FiniteSets, Sequences\nVARIABLE x\nInit == x = 0\nNext == x' \\in ${union}\n====`,
+        "INIT Init\nNEXT Next\nCHECK_DEADLOCK FALSE",
+      );
+      expect(lines?.at(-1)).toEqual(expected);
+    },
+  );
+
+  it.each([
+    [
       "SUBSET",
       "[s \\in SUBSET {1, 2} |-> Cardinality(s)]",
       [

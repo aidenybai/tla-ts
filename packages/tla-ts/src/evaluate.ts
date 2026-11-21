@@ -2142,6 +2142,7 @@ const compileApply = (
         leftValue,
         rightValue,
         combine(leftValue, rightValue),
+        coverage.expressions[coverage.current] === expression ? coverage.current : undefined,
       );
     };
   }

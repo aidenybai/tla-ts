@@ -27,6 +27,7 @@ import {
   isEmptySet,
   isReducibleSet,
   type IntervalValue,
+  type SetOperationValue,
   type Value,
 } from "./values";
 
@@ -847,25 +848,39 @@ export const chargeSetOperation = (
   left: Value,
   right: Value,
   result: Value,
+  node: number | undefined,
 ): Value => {
   const receiver = isReducibleSet(left)
     ? left
     : operator !== "\\" && isReducibleSet(right)
       ? right
       : undefined;
-  if (receiver === undefined || typeof result !== "object") return result;
+  if (typeof result !== "object") return result;
+  if (receiver === undefined) {
+    // Tool#eval gives a union of two sets it can't reduce the union's cost model.
+    if (operator === "\\cup" && node !== undefined && result.kind === "SetOperation") {
+      coverage.values.set(result, node);
+    }
+    return result;
+  }
   const other = receiver === left ? right : left;
   if (operator === "\\cup") {
-    if (isEmptySet(receiver) || !isReducibleSet(other)) return result;
+    if (isEmptySet(receiver)) return result;
+    if (!isReducibleSet(other)) {
+      // IntervalValue#cup and SetEnumValue#cup give a union they can't reduce the receiver's cost model.
+      const unionNode = getValueNode(coverage, receiver);
+      if (unionNode !== undefined) coverage.values.set(result, unionNode);
+      return result;
+    }
     const otherNode = getValueNode(coverage, other);
     if (otherNode !== undefined) coverage.secondary[otherNode] += getCardinality(other) + 1;
   }
-  const node = operator === "\\cup" ? undefined : getValueNode(coverage, receiver);
-  if (getValueNode(coverage, result) === node) return result;
+  const receiverNode = operator === "\\cup" ? undefined : getValueNode(coverage, receiver);
+  if (getValueNode(coverage, result) === receiverNode) return result;
   const isShared =
     result === left || result === right || getValueNode(coverage, result) !== undefined;
   const charged = isShared ? { ...result, costNode: undefined } : result;
-  if (node !== undefined) coverage.values.set(charged, node);
+  if (receiverNode !== undefined) coverage.values.set(charged, receiverNode);
   return charged;
 };
 
@@ -978,9 +993,43 @@ const getKnownSize = (set: Value): number | undefined => {
       )
         ? getCardinality(set)
         : undefined;
+    case "SetOperation": {
+      if (set.operator !== "\\cup" || set.isCached) return undefined;
+      const leftSize = getKnownSize(set.left);
+      const rightSize = getKnownSize(set.right);
+      return leftSize === undefined || rightSize === undefined ? undefined : leftSize + rightSize;
+    }
     default:
       return undefined;
   }
+};
+
+// TLC's SetCupValue enumerator charges its cost model on each call, then draws from S, and from T once S runs out.
+const createUnionEnumerator = (
+  coverage: Coverage,
+  set: SetOperationValue,
+  node: number | undefined,
+  size: number,
+  isNormalized: boolean,
+): ChargedEnumerator | undefined => {
+  if (set.operator !== "\\cup" || set.isCached) return undefined;
+  const knownLeft = getKnownSize(set.left);
+  const knownRight = getKnownSize(set.right);
+  if (isNormalized && (knownLeft === undefined || knownRight === undefined)) return undefined;
+  const leftSize = knownLeft ?? (knownRight === undefined ? undefined : size - knownRight);
+  if (leftSize === undefined) return undefined;
+  const left = createEnumerator(coverage, set.left, leftSize, false);
+  const right = createEnumerator(coverage, set.right, knownRight ?? size - leftSize, false);
+  return {
+    next: () => {
+      if (node !== undefined) coverage.secondary[node]++;
+      return left.next() || right.next();
+    },
+    reset: () => {
+      left.reset();
+      right.reset();
+    },
+  };
 };
 
 const createEnumerator = (
@@ -996,13 +1045,18 @@ const createEnumerator = (
   ) {
     return createListEnumerator(coverage, undefined, size);
   }
-  const elements = createProductSetEnumerator(coverage, set, size);
-  if (!elements || node === undefined) return createListEnumerator(coverage, node, size);
+  const union =
+    typeof set === "object" && set.kind === "SetOperation"
+      ? createUnionEnumerator(coverage, set, node, size, isNormalized)
+      : undefined;
+  const elements = union ?? createProductSetEnumerator(coverage, set, size);
+  if (!elements || (node === undefined && !union))
+    return createListEnumerator(coverage, node, size);
   if (!isNormalized) return elements;
   let count = 0;
   while (elements.next()) count++;
-  coverage.secondary[node] += count;
-  return createListEnumerator(coverage, node, count);
+  if (node !== undefined) coverage.secondary[node] += count;
+  return createListEnumerator(coverage, node, union ? size : count);
 };
 
 const RANDOMLY_INDEXED_KINDS = new Set<string>([
