@@ -650,6 +650,51 @@ describe("calls performance.now on performance, and stops at every other use", (
   });
 });
 
+// The source text of a function of the host, which Node gives as its own code has it, stops, where
+// a proxy would give a native function's text that Node doesn't.
+describe("stops at the source text of the host's functions", () => {
+  const getFiles = (expected: string) => ({
+    "main.js": getMain(
+      `const log = [];
+      function add(a, b) { return a + b; }
+      log.push(Function.prototype.toString.call(Math.max), String(add));`,
+      expected,
+    ),
+  });
+
+  it("agrees with Node", async () => {
+    expect(
+      (
+        await checkModules(
+          getFiles("function max() { [native code] },function add(a, b) { return a + b; }"),
+        )
+      ).message,
+    ).toBeUndefined();
+  });
+
+  it("rejects another result", async () => {
+    expect(
+      (
+        await checkModules(
+          getFiles("function () { [native code] },function add(a, b) { return a + b; }"),
+        )
+      ).message,
+    ).toContain(THREW);
+  });
+
+  it.each([
+    "structuredClone",
+    "setImmediate",
+    "process.getBuiltinModule",
+    "import.meta.resolve",
+    'Object.getOwnPropertyDescriptor(globalThis, "performance").get',
+  ])("stops at the source text of %s", async (host) => {
+    expect(
+      (await checkModules({ "main.js": `Function.prototype.toString.call(${host});` })).message,
+    ).toContain("tla-ts can't give the source text of the host's function");
+  });
+});
+
 describe("gives a module a Timeout of setTimeout, which stops where its code uses it", () => {
   const getFiles = (expected: string) => ({
     "main.js": `const log = [];

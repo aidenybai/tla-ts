@@ -576,6 +576,9 @@ const DEFINITIONS = [
   /\\ IsObject(O(s, v).slots.target) /\\ "id" \\in DOMAIN O(s, O(s, v).slots.target).slots
   /\\ O(s, O(s, v).slots.target).slots.id = <<"Module", "hostQuietConstructor">>
   /\\ O(s, O(s, v).slots.target).slots.data = name`,
+  // Whether an object is a function of the host's code, which the runtime makes as a built-in of
+  // its module.
+  `IsHostCode(s, o) == O(s, o).class = "builtin" /\\ O(s, o).slots.id[1] = "Module"`,
   // A function of the host, as a proxy that stops at every operation but typeof.
   `HostFunction(s, name) ==
   LET stop == Alloc(s, BuiltinObject(Intrinsic(s, "FunctionPrototype"), <<"Module", "hostStop">>, 0, <<>>, FALSE, name, s.realmId))
@@ -1667,6 +1670,15 @@ const HOST_PATCHES = [
     [] m = "hostTrap" ->
          HostStop(IF "hostName" \\in DOMAIN O(s, Arg(args, 1)).slots THEN O(s, Arg(args, 1)).slots.hostName ELSE O(s, Arg(args, 1)).slots.data)
     [] m = "hrtimeGet" -> IF Arg(args, 2) # SV("bigint") THEN HostStop(N("process.hrtime")) ELSE Ok(s, data)`,
+  },
+  // The source text of a function of the host, or of a proxy that stands for one, which Node gives
+  // as its own code has it, stops.
+  {
+    name: "FunctionBuiltin",
+    from: "ELSE LET slots == O(s, this).slots IN",
+    to: `ELSE IF IsHostCode(s, this) \\/ (O(s, this).class = "proxy" /\\ IsObject(O(s, this).slots.target) /\\ IsHostCode(s, O(s, this).slots.target))
+              THEN Assert(FALSE, "tla-ts can't give the source text of the host's function, which Node gives as its code has it")
+              ELSE LET slots == O(s, this).slots IN`,
   },
   // A program's functions hold their source text as the program's code gives it, which
   // SourceUnits makes code units of when a program reads it.

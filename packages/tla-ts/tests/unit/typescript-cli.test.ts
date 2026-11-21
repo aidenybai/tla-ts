@@ -759,6 +759,20 @@ describe("the CLI with TypeScript files", () => {
     });
   });
 
+  // A program reads the source text of a function of the host, which Node gives as its code has
+  // it, where a proxy's would be a native function's.
+  it("stops at the source text of a function of the host, which a program may compare", () => {
+    const directory = copyFixtures("passing");
+    writeFileSync(
+      join(directory, "text.mjs"),
+      'const text = Function.prototype.toString.call(structuredClone);\nif (!text.startsWith("function structuredClone(")) throw new Error("text");\n',
+    );
+    expect(runNode(directory, "text.mjs").status).toBe(0);
+    const result = runCli(directory, ["text.mjs"]);
+    expect(result.status).not.toBe(1);
+    expect(result.stdout).toContain("tla-ts can't give the source text of the host's function");
+  });
+
   // A module reads Node's performance, as React's server builds do, whose now gives the time,
   // which each run reads anew, so the check stops where a program reads the time it gives.
   describe("reads Node's performance as Node does", () => {
