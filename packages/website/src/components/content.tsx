@@ -46,7 +46,7 @@ const Block = (props: BlockProps) => {
       </Code.Root>
     );
   }
-  if (block.kind === "compare") {
+  if (block.kind === "comparison") {
     return <Comparison typescript={block.typescript} tla={block.tla} />;
   }
   return (

@@ -8,7 +8,7 @@ import { codeToTokens } from "@pierre/highlights";
 import type { Source, Token } from "./site-data";
 import { TLA_GRAMMAR } from "./tla-grammar";
 
-type Language = "shellscript" | "typescript" | "tlaplus";
+export type Language = "shellscript" | "typescript" | "tlaplus" | "text";
 
 interface Palette {
   foreground: string;
@@ -106,16 +106,18 @@ export const createHighlighter = async () => {
   return (code: string, language: Language): Source => ({
     code,
     lines:
-      language === "tlaplus"
-        ? shiki
-            .codeToTokens(code, {
-              lang: language,
-              themes: { light: LIGHT_NAME, dark: DARK_NAME },
-              defaultColor: false,
-            })
-            .tokens.map((line) =>
-              line.map((token) => getToken(token.content, token.htmlStyle ?? {}, "--shiki-")),
-            )
-        : getHighlightedLines(code, language),
+      language === "text"
+        ? code.split("\n").map((line) => [{ content: line, style: {} }])
+        : language === "tlaplus"
+          ? shiki
+              .codeToTokens(code, {
+                lang: language,
+                themes: { light: LIGHT_NAME, dark: DARK_NAME },
+                defaultColor: false,
+              })
+              .tokens.map((line) =>
+                line.map((token) => getToken(token.content, token.htmlStyle ?? {}, "--shiki-")),
+              )
+          : getHighlightedLines(code, language),
   });
 };

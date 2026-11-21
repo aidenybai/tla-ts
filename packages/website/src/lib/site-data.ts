@@ -52,13 +52,13 @@ export interface TableBlock {
   rows: string[][];
 }
 
-export interface CompareBlock {
-  kind: "compare";
+export interface ComparisonBlock {
+  kind: "comparison";
   typescript: Source;
   tla: Source;
 }
 
-export type ContentBlock = HeadingBlock | ParagraphBlock | CodeBlock | TableBlock | CompareBlock;
+export type ContentBlock = HeadingBlock | ParagraphBlock | CodeBlock | TableBlock | ComparisonBlock;
 
 export interface ContentSection {
   title: string;

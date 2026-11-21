@@ -1,10 +1,12 @@
+import type { Language } from "./highlighter";
+
 export interface Comparison {
   typescript: string;
   tla: string;
 }
 
 export interface Listing {
-  language: "typescript" | "tlaplus" | "shellscript" | "text";
+  language: Language;
   code: string;
 }
 

@@ -168,22 +168,12 @@ const tutorial = (): Plugin => ({
           if ("heading" in block) return { kind: "heading", text: block.heading };
           if ("tla" in block) {
             return {
-              kind: "compare",
+              kind: "comparison",
               typescript: highlight(block.typescript, "typescript"),
               tla: highlight(block.tla, "tlaplus"),
             };
           }
-          // Text has no grammar, so each of its lines is one token of the default color.
-          return {
-            kind: "code",
-            source:
-              block.language === "text"
-                ? {
-                    code: block.code,
-                    lines: block.code.split("\n").map((line) => [{ content: line, style: {} }]),
-                  }
-                : highlight(block.code, block.language),
-          };
+          return { kind: "code", source: highlight(block.code, block.language) };
         }),
       })),
     )};`;
@@ -297,6 +287,8 @@ const logoFiles = (): Plugin => ({
   },
 });
 
+// Each route but / is built from the HTML file of its name.
+const ROUTES = ["/playground", "/tla-for-ts-programmers"];
 const EMPTY_ROOT = '<div id="root"></div>';
 const STYLESHEET = /<link rel="stylesheet"[^>]*href="\/([^"]+\.css)"[^>]*>/;
 
@@ -305,8 +297,7 @@ const pages = (): Plugin => ({
   configureServer(server) {
     server.middlewares.use((request, _response, next) => {
       const route = request.url?.replace(/\/$/, "");
-      if (route === "/playground" || route === "/tla-for-ts-programmers")
-        request.url = `${route}.html`;
+      if (route !== undefined && ROUTES.includes(route)) request.url = `${route}.html`;
       next();
     });
   },
@@ -358,11 +349,9 @@ export default defineConfig({
   ],
   build: {
     rollupOptions: {
-      input: [
-        fileURLToPath(new URL("./index.html", import.meta.url)),
-        fileURLToPath(new URL("./playground.html", import.meta.url)),
-        fileURLToPath(new URL("./tla-for-ts-programmers.html", import.meta.url)),
-      ],
+      input: ["/index", ...ROUTES].map((route) =>
+        fileURLToPath(new URL(`.${route}.html`, import.meta.url)),
+      ),
     },
   },
   resolve: {
