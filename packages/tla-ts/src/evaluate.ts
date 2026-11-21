@@ -79,6 +79,9 @@ import {
   isBeyondSetBound,
   createRecord,
   createEnumeratedSet,
+  createFunctionSet,
+  createProductSet,
+  createRecordSet,
   createSortedFunction,
   createSortedRecord,
   createNormalizedSet,
@@ -661,7 +664,7 @@ const forEachChargedBinding = (
 
 const getBoundsDomain = (bounds: Bound[], context: Context): Value => {
   const sets = mapBoundSets(bounds, (set) => evaluate(set, context));
-  return sets.length === 1 ? sets[0] : { kind: "ProductSet", factors: sets };
+  return sets.length === 1 ? sets[0] : createProductSet(sets);
 };
 
 const bindArgument = (bounds: Bound[], scope: Scope | undefined, argument: Value) => {
@@ -2703,7 +2706,7 @@ const compile = (expression: Expression, environment: Environment): Evaluator =>
     case "FunctionSet": {
       const domain = getChildEvaluator(expression.domain);
       const range = getChildEvaluator(expression.range);
-      return (context) => ({ kind: "FunctionSet", domain: domain(context), range: range(context) });
+      return (context) => createFunctionSet(domain(context), range(context));
     }
     case "Record":
       return compileRecord(expression.fields, environment);
@@ -2713,15 +2716,18 @@ const compile = (expression: Expression, environment: Environment): Evaluator =>
       const writtenIndexes = fields.map((field) => expression.fields.indexOf(field));
       const sets = expression.fields.map((field) => getChildEvaluator(field.value));
       if (writtenIndexes.every((writtenIndex, index) => writtenIndex === index)) {
-        return (context) => ({ kind: "RecordSet", names, sets: sets.map((set) => set(context)) });
+        return (context) =>
+          createRecordSet(
+            names,
+            sets.map((set) => set(context)),
+          );
       }
       return (context) => {
         const writtenSets = sets.map((set) => set(context));
-        return {
-          kind: "RecordSet",
+        return createRecordSet(
           names,
-          sets: writtenIndexes.map((index) => writtenSets[index]),
-        };
+          writtenIndexes.map((index) => writtenSets[index]),
+        );
       };
     }
     case "Except":
@@ -2773,10 +2779,7 @@ const compile = (expression: Expression, environment: Environment): Evaluator =>
     }
     case "Product": {
       const factors = expression.factors.map(getChildEvaluator);
-      return (context) => ({
-        kind: "ProductSet",
-        factors: factors.map((factor) => factor(context)),
-      });
+      return (context) => createProductSet(factors.map((factor) => factor(context)));
     }
     case "BoxAction":
     case "AngleAction": {

@@ -3248,6 +3248,9 @@ describe("evaluation errors match TLC", () => {
     "TLC threw an unexpected exception.\nThis was probably caused by an error in the spec or model.\nSee the User Output or TLC Console for clues to what happened.\nThe exception was a util.WrongInvocationException\n: Attempted to construct a set with too many elements (>10).";
   const EQUALITY_EXCEPTION =
     "TLC threw an unexpected exception.\nThis was probably caused by an error in the spec or model.\nSee the User Output or TLC Console for clues to what happened.\nThe exception was a java.lang.RuntimeException\n: Attempted to check equality of the set {} with the value:\n1";
+  const getRuntimeException = (reason: string) =>
+    `TLC threw an unexpected exception.\nThis was probably caused by an error in the spec or model.\nSee the User Output or TLC Console for clues to what happened.\nThe exception was a java.lang.RuntimeException\n: ${reason}`;
+  const COMPARE_REASON = 'Attempted to compare string "a" with non-string:\n1';
 
   it.each([
     [
@@ -3496,6 +3499,604 @@ describe("evaluation errors match TLC", () => {
       'Attempted to compare string "a" with non-string:\n1',
     );
   });
+
+  it.each([
+    [
+      'x\' = x /\\ \\A e \\in (SUBSET SUBSET {1, "a"} \\ {}) : TRUE',
+      [
+        "Line 5, column 9 to line 5, column 63 in M",
+        "Line 5, column 9 to line 5, column 14 in M",
+        "Line 5, column 19 to line 5, column 63 in M",
+        "Line 5, column 29 to line 5, column 55 in M",
+        "Line 5, column 29 to line 5, column 50 in M",
+        "Line 5, column 36 to line 5, column 50 in M",
+        "Line 5, column 43 to line 5, column 50 in M",
+      ],
+    ],
+    [
+      'x\' = x /\\ \\A e \\in (SUBSET [a : {1, "a"}] \\ {}) : TRUE',
+      [
+        "Line 5, column 9 to line 5, column 62 in M",
+        "Line 5, column 9 to line 5, column 14 in M",
+        "Line 5, column 19 to line 5, column 62 in M",
+        "Line 5, column 29 to line 5, column 54 in M",
+        "Line 5, column 29 to line 5, column 49 in M",
+        "Line 5, column 36 to line 5, column 49 in M",
+        "Line 5, column 41 to line 5, column 48 in M",
+      ],
+    ],
+    [
+      'x\' = x /\\ \\A e \\in (SUBSET ({1} \\X {1, "a"}) \\ {}) : TRUE',
+      [
+        "Line 5, column 9 to line 5, column 65 in M",
+        "Line 5, column 9 to line 5, column 14 in M",
+        "Line 5, column 19 to line 5, column 65 in M",
+        "Line 5, column 29 to line 5, column 57 in M",
+        "Line 5, column 29 to line 5, column 52 in M",
+        "Line 5, column 37 to line 5, column 51 in M",
+        "Line 5, column 44 to line 5, column 51 in M",
+      ],
+    ],
+    [
+      'x\' = x /\\ \\A e \\in (SUBSET [{1} -> {1, "a"}] \\ {}) : TRUE',
+      [
+        "Line 5, column 9 to line 5, column 65 in M",
+        "Line 5, column 9 to line 5, column 14 in M",
+        "Line 5, column 19 to line 5, column 65 in M",
+        "Line 5, column 29 to line 5, column 57 in M",
+        "Line 5, column 29 to line 5, column 52 in M",
+        "Line 5, column 36 to line 5, column 52 in M",
+        "Line 5, column 44 to line 5, column 51 in M",
+      ],
+    ],
+    [
+      'x\' \\in (SUBSET SUBSET {1, "a"} \\cup {})',
+      [
+        "Line 5, column 9 to line 5, column 47 in M",
+        "Line 5, column 17 to line 5, column 46 in M",
+        "Line 5, column 24 to line 5, column 38 in M",
+        "Line 5, column 31 to line 5, column 38 in M",
+      ],
+    ],
+    [
+      'x\' = x /\\ \\A e \\in (SUBSET [a : SUBSET {1, "a"}] \\ {}) : TRUE',
+      [
+        "Line 5, column 9 to line 5, column 69 in M",
+        "Line 5, column 9 to line 5, column 14 in M",
+        "Line 5, column 19 to line 5, column 69 in M",
+        "Line 5, column 29 to line 5, column 61 in M",
+        "Line 5, column 29 to line 5, column 56 in M",
+        "Line 5, column 36 to line 5, column 56 in M",
+        "Line 5, column 41 to line 5, column 55 in M",
+        "Line 5, column 48 to line 5, column 55 in M",
+      ],
+    ],
+  ])("frames the sets that TLC's size() sizes for SUBSET S: %s", async (next, callStack) => {
+    const result = await checkSetBound(next, "TRUE");
+    expect(result.failure?.message).toBe(getRuntimeException(COMPARE_REASON));
+    expect(formatCallStackLines(result)).toEqual(callStack);
+    expect(result.failure?.fingerprint?.reason).toBe(COMPARE_REASON);
+  });
+
+  it.each([
+    [
+      'x\' = x /\\ ~(((1..2) \\cup SUBSET {1, "a"}) \\subseteq {})',
+      COMPARE_REASON,
+      [
+        "Line 5, column 9 to line 5, column 63 in M",
+        "Line 5, column 9 to line 5, column 14 in M",
+        "Line 5, column 19 to line 5, column 63 in M",
+        "Line 5, column 21 to line 5, column 62 in M",
+        "Line 5, column 22 to line 5, column 48 in M",
+        "Line 5, column 34 to line 5, column 48 in M",
+        "Line 5, column 41 to line 5, column 48 in M",
+      ],
+    ],
+    [
+      'x\' = x /\\ ~(((1..2) \\cup [{1, "a"} -> {1}]) \\subseteq {})',
+      COMPARE_REASON,
+      [
+        "Line 5, column 9 to line 5, column 65 in M",
+        "Line 5, column 9 to line 5, column 14 in M",
+        "Line 5, column 19 to line 5, column 65 in M",
+        "Line 5, column 21 to line 5, column 64 in M",
+        "Line 5, column 22 to line 5, column 50 in M",
+        "Line 5, column 34 to line 5, column 50 in M",
+        "Line 5, column 35 to line 5, column 42 in M",
+      ],
+    ],
+    [
+      'x\' = x /\\ ~(((1..2) \\cup [a : SUBSET {1, "a"}]) \\subseteq {})',
+      COMPARE_REASON,
+      [
+        "Line 5, column 9 to line 5, column 69 in M",
+        "Line 5, column 9 to line 5, column 14 in M",
+        "Line 5, column 19 to line 5, column 69 in M",
+        "Line 5, column 21 to line 5, column 68 in M",
+        "Line 5, column 22 to line 5, column 54 in M",
+        "Line 5, column 34 to line 5, column 54 in M",
+        "Line 5, column 39 to line 5, column 53 in M",
+        "Line 5, column 46 to line 5, column 53 in M",
+      ],
+    ],
+    [
+      'x\' = x /\\ ((((1..2) \\cup SUBSET {1, "a"}) \\X {1}) # ({} \\X {1}))',
+      COMPARE_REASON,
+      [
+        "Line 5, column 9 to line 5, column 72 in M",
+        "Line 5, column 9 to line 5, column 14 in M",
+        "Line 5, column 20 to line 5, column 71 in M",
+        "Line 5, column 21 to line 5, column 56 in M",
+        "Line 5, column 22 to line 5, column 48 in M",
+        "Line 5, column 34 to line 5, column 48 in M",
+        "Line 5, column 41 to line 5, column 48 in M",
+      ],
+    ],
+    [
+      'x\' = x /\\ ([{1} -> ((1..2) \\cup SUBSET {1, "a"})] # [{1} -> {}])',
+      COMPARE_REASON,
+      [
+        "Line 5, column 9 to line 5, column 72 in M",
+        "Line 5, column 9 to line 5, column 14 in M",
+        "Line 5, column 20 to line 5, column 71 in M",
+        "Line 5, column 20 to line 5, column 57 in M",
+        "Line 5, column 29 to line 5, column 55 in M",
+        "Line 5, column 41 to line 5, column 55 in M",
+        "Line 5, column 48 to line 5, column 55 in M",
+      ],
+    ],
+    [
+      'x\' = x /\\ ([a : ((1..2) \\cup [{1, "a"} -> {1}])] # [a : {}])',
+      COMPARE_REASON,
+      [
+        "Line 5, column 9 to line 5, column 68 in M",
+        "Line 5, column 9 to line 5, column 14 in M",
+        "Line 5, column 20 to line 5, column 67 in M",
+        "Line 5, column 20 to line 5, column 56 in M",
+        "Line 5, column 26 to line 5, column 54 in M",
+        "Line 5, column 38 to line 5, column 54 in M",
+        "Line 5, column 39 to line 5, column 46 in M",
+      ],
+    ],
+  ])(
+    "opens both operands of S \\cup T before it streams either, as TLC's elements() does: %s",
+    async (next, reason, callStack) => {
+      const result = await checkSetBound(next, "TRUE");
+      expect(result.failure?.message).toBe(getRuntimeException(reason));
+      expect(formatCallStackLines(result)).toEqual(callStack);
+      expect(result.failure?.fingerprint?.reason).toBe(reason);
+    },
+  );
+
+  it.each([
+    [
+      'x\' = x /\\ \\A e \\in ((1..20) \\cup SUBSET {1, "a"}) : TRUE',
+      COMPARE_REASON,
+      [
+        "Line 5, column 9 to line 5, column 64 in M",
+        "Line 5, column 9 to line 5, column 14 in M",
+        "Line 5, column 19 to line 5, column 64 in M",
+        "Line 5, column 29 to line 5, column 56 in M",
+        "Line 5, column 42 to line 5, column 56 in M",
+        "Line 5, column 49 to line 5, column 56 in M",
+      ],
+    ],
+    [
+      'x\' = x /\\ \\A e \\in ((1..20) \\cup [{1, "a"} -> {1}]) : TRUE',
+      COMPARE_REASON,
+      [
+        "Line 5, column 9 to line 5, column 66 in M",
+        "Line 5, column 9 to line 5, column 14 in M",
+        "Line 5, column 19 to line 5, column 66 in M",
+        "Line 5, column 29 to line 5, column 58 in M",
+        "Line 5, column 42 to line 5, column 58 in M",
+        "Line 5, column 43 to line 5, column 50 in M",
+      ],
+    ],
+    [
+      'x\' = x /\\ \\A e \\in ((1..20) \\cup ({1} \\X {1, "a"})) : TRUE',
+      COMPARE_REASON,
+      [
+        "Line 5, column 9 to line 5, column 66 in M",
+        "Line 5, column 9 to line 5, column 14 in M",
+        "Line 5, column 19 to line 5, column 66 in M",
+        "Line 5, column 29 to line 5, column 58 in M",
+        "Line 5, column 43 to line 5, column 57 in M",
+        "Line 5, column 50 to line 5, column 57 in M",
+      ],
+    ],
+    [
+      'x\' = CHOOSE e \\in ((1..20) \\cup SUBSET {1, "a"}) : TRUE',
+      COMPARE_REASON,
+      [
+        "Line 5, column 9 to line 5, column 63 in M",
+        "Line 5, column 14 to line 5, column 63 in M",
+        "Line 5, column 28 to line 5, column 55 in M",
+        "Line 5, column 41 to line 5, column 55 in M",
+        "Line 5, column 48 to line 5, column 55 in M",
+      ],
+    ],
+    [
+      'x\' = x /\\ \\A e \\in ((1..5) \\cup ((6..12) \\cup SUBSET {1, "a"})) : TRUE',
+      COMPARE_REASON,
+      [
+        "Line 5, column 9 to line 5, column 78 in M",
+        "Line 5, column 9 to line 5, column 14 in M",
+        "Line 5, column 19 to line 5, column 78 in M",
+        "Line 5, column 29 to line 5, column 70 in M",
+        "Line 5, column 42 to line 5, column 69 in M",
+        "Line 5, column 55 to line 5, column 69 in M",
+        "Line 5, column 62 to line 5, column 69 in M",
+      ],
+    ],
+    [
+      'x\' = x /\\ \\A e \\in ((1..20) \\cup {t \\in SUBSET {1, "a"} : TRUE}) : TRUE',
+      COMPARE_REASON,
+      [
+        "Line 5, column 9 to line 5, column 79 in M",
+        "Line 5, column 9 to line 5, column 14 in M",
+        "Line 5, column 19 to line 5, column 79 in M",
+        "Line 5, column 29 to line 5, column 71 in M",
+        "Line 5, column 49 to line 5, column 63 in M",
+        "Line 5, column 56 to line 5, column 63 in M",
+      ],
+    ],
+    [
+      'x\' = x /\\ \\A e \\in ((1..20) \\cup [{1} -> SUBSET {1, "a"}]) : TRUE',
+      COMPARE_REASON,
+      [
+        "Line 5, column 9 to line 5, column 73 in M",
+        "Line 5, column 9 to line 5, column 14 in M",
+        "Line 5, column 19 to line 5, column 73 in M",
+        "Line 5, column 29 to line 5, column 65 in M",
+        "Line 5, column 42 to line 5, column 65 in M",
+        "Line 5, column 50 to line 5, column 64 in M",
+        "Line 5, column 57 to line 5, column 64 in M",
+      ],
+    ],
+    [
+      "x' = x /\\ \\A e \\in ((1..20) \\cup SUBSET Nat) : TRUE",
+      "Attempted to compute the number of elements in the overridden value Nat.",
+      [
+        "Line 5, column 9 to line 5, column 59 in M",
+        "Line 5, column 9 to line 5, column 14 in M",
+        "Line 5, column 19 to line 5, column 59 in M",
+        "Line 5, column 29 to line 5, column 51 in M",
+        "Line 5, column 42 to line 5, column 51 in M",
+      ],
+    ],
+  ])(
+    "opens both operands of S \\cup T before it collects them past -maxSetSize, as TLC's elements() does: %s",
+    async (next, reason, callStack) => {
+      const result = await checkSetBound(next, "TRUE");
+      expect(result.failure?.message).toBe(getRuntimeException(reason));
+      expect(formatCallStackLines(result)).toEqual(callStack);
+      expect(result.failure?.fingerprint?.reason).toBe(reason);
+    },
+  );
+
+  it.each([
+    [
+      "x' \\in ([Nat -> {1}] \\ {})",
+      "Attempted to enumerate a set of the form [D -> R],but the domain D:\nNat\ncannot be enumerated.",
+      [
+        "Line 5, column 9 to line 5, column 34 in M",
+        "Line 5, column 17 to line 5, column 33 in M",
+        "Line 5, column 17 to line 5, column 28 in M",
+      ],
+    ],
+    [
+      "x' \\in ([{1} -> Nat] \\ {})",
+      "Attempted to enumerate a set of the form [D -> R],but the range R:\nNat\ncannot be enumerated.",
+      [
+        "Line 5, column 9 to line 5, column 34 in M",
+        "Line 5, column 17 to line 5, column 33 in M",
+        "Line 5, column 17 to line 5, column 28 in M",
+      ],
+    ],
+    [
+      "x' \\in ([a : Nat] \\ {})",
+      "Attempted to enumerate a set of the form [l1 : v1, ..., ln : vn],\nbut can't enumerate the value of the `a' field:\nNat",
+      [
+        "Line 5, column 9 to line 5, column 31 in M",
+        "Line 5, column 17 to line 5, column 30 in M",
+        "Line 5, column 17 to line 5, column 25 in M",
+      ],
+    ],
+    [
+      "x' \\in ((Nat \\X {1}) \\ {})",
+      "Attempted to enumerate a set of the form s1 \\X s2 ... \\X sn,\nbut can't enumerate s0:\nNat",
+      [
+        "Line 5, column 9 to line 5, column 34 in M",
+        "Line 5, column 17 to line 5, column 33 in M",
+        "Line 5, column 18 to line 5, column 27 in M",
+      ],
+    ],
+    [
+      "x' = x /\\ \\E e \\in ([{1} -> Nat] \\ {}) : TRUE",
+      "Attempted to enumerate a set of the form [D -> R],but the range R:\nNat\ncannot be enumerated.",
+      [
+        "Line 5, column 9 to line 5, column 53 in M",
+        "Line 5, column 9 to line 5, column 14 in M",
+        "Line 5, column 19 to line 5, column 53 in M",
+        "Line 5, column 29 to line 5, column 45 in M",
+        "Line 5, column 29 to line 5, column 40 in M",
+      ],
+    ],
+    [
+      "x' = x /\\ ~(((1..2) \\cup ({1} \\X Nat)) \\subseteq {})",
+      "Attempted to enumerate a set of the form s1 \\X s2 ... \\X sn,\nbut can't enumerate s1:\nNat",
+      [
+        "Line 5, column 9 to line 5, column 60 in M",
+        "Line 5, column 9 to line 5, column 14 in M",
+        "Line 5, column 19 to line 5, column 60 in M",
+        "Line 5, column 21 to line 5, column 59 in M",
+        "Line 5, column 22 to line 5, column 45 in M",
+        "Line 5, column 35 to line 5, column 44 in M",
+      ],
+    ],
+  ])(
+    "frames a component that can't be enumerated as TLC's elements() opens the set: %s",
+    async (next, reason, callStack) => {
+      const result = await checkSetBound(next, "TRUE");
+      expect(result.failure?.message).toBe(getRuntimeException(reason));
+      expect(formatCallStackLines(result)).toEqual(callStack);
+      expect(result.failure?.fingerprint?.reason).toBe(reason);
+    },
+  );
+
+  const INTERVAL_SIZE_REASON =
+    "Size of interval value exceeds the maximum representable size (32bits): 0..2147483647.";
+
+  it.each([
+    [
+      "x' = x /\\ ~(((1..2) \\cup SUBSET (0..2147483647)) \\subseteq {})",
+      [
+        "Line 5, column 9 to line 5, column 70 in M",
+        "Line 5, column 9 to line 5, column 14 in M",
+        "Line 5, column 19 to line 5, column 70 in M",
+        "Line 5, column 21 to line 5, column 69 in M",
+        "Line 5, column 22 to line 5, column 55 in M",
+        "Line 5, column 34 to line 5, column 55 in M",
+      ],
+    ],
+    [
+      "x' = x /\\ \\A e \\in (SUBSET (0..2147483647) \\ {}) : TRUE",
+      [
+        "Line 5, column 9 to line 5, column 63 in M",
+        "Line 5, column 9 to line 5, column 14 in M",
+        "Line 5, column 19 to line 5, column 63 in M",
+        "Line 5, column 29 to line 5, column 55 in M",
+        "Line 5, column 29 to line 5, column 50 in M",
+      ],
+    ],
+  ])(
+    "sizes the interval under SUBSET S as TLC's elements() opens it: %s",
+    async (next, callStack) => {
+      const result = await checkSetBound(next, "TRUE");
+      expect(result.failure?.message).toBe(getRuntimeException(INTERVAL_SIZE_REASON));
+      expect(formatCallStackLines(result)).toEqual(callStack);
+      expect(result.failure?.fingerprint?.reason).toBe(INTERVAL_SIZE_REASON);
+    },
+  );
+
+  const PRINTED_FILTER = "{t \\in (1..3) \\X {0} : PrintT(t)}";
+  const PRINTED_PASS = ["<<1, 0>>", "<<1, 0>>", "<<2, 0>>", "<<3, 0>>"];
+  const PRINTED_RESETS = [
+    "<<1, 0>>",
+    "<<1, 0>>",
+    "<<1, 0>>",
+    "<<2, 0>>",
+    "<<1, 0>>",
+    "<<2, 0>>",
+    "<<2, 0>>",
+    "<<1, 0>>",
+  ];
+  const PRINTED_LATE_MATCH = [
+    "<<1, 0>>",
+    "<<2, 0>>",
+    "<<3, 0>>",
+    "<<1, 0>>",
+    "<<2, 0>>",
+    "<<3, 0>>",
+  ];
+
+  it.each([
+    [`x' = Cardinality((1..2) \\cup [{1} -> ${PRINTED_FILTER}])`, PRINTED_PASS, PRINTED_PASS],
+    [`x' = Cardinality((1..2) \\cup [a : ${PRINTED_FILTER}])`, PRINTED_PASS, PRINTED_PASS],
+    [
+      `x' = x /\\ ~(((1..2) \\cup [{1} -> ${PRINTED_FILTER}]) \\subseteq {})`,
+      PRINTED_PASS.slice(0, 2),
+      undefined,
+    ],
+    [
+      `(TLCGet("level") = 1 /\\ x' \\in ((1..2) \\cup [{1} -> ${PRINTED_FILTER}])) \\/ (TLCGet("level") > 1 /\\ UNCHANGED x)`,
+      PRINTED_PASS,
+      undefined,
+    ],
+    [
+      "x' = Cardinality((1..2) \\cup [{1, 2} -> {t \\in (1..2) \\X {0} : PrintT(t)}])",
+      PRINTED_RESETS,
+      PRINTED_RESETS,
+    ],
+    [
+      "x' = Cardinality((1..2) \\cup [{1} -> {t \\in (1..3) \\X {0} : PrintT(t) /\\ t[1] = 3}])",
+      PRINTED_LATE_MATCH,
+      PRINTED_LATE_MATCH,
+    ],
+    [
+      `x' = x /\\ \\E e \\in ({t \\in (1..2) \\X {0} : PrintT(t)} \\cup [{1} -> {u \\in (4..5) \\X {0} : PrintT(u)}]) : FALSE`,
+      ["<<4, 0>>", "<<4, 0>>", "<<1, 0>>", "<<2, 0>>", "<<5, 0>>"],
+      undefined,
+    ],
+  ])(
+    "evaluates a filter under an operand of S \\cup T as TLC's enumerators do: %s",
+    async (next, printed, traceOutput) => {
+      const lines: string[] = [];
+      const result = await check({
+        source: `---- MODULE M ----\nEXTENDS Integers, FiniteSets, TLC\nVARIABLE x\nInit == x = 0\nNext == ${next}\n====`,
+        config: "INIT Init\nNEXT Next",
+        onPrint: (text) => lines.push(text),
+      });
+      expect([lines, result.failure?.traceOutput]).toEqual([printed, traceOutput]);
+    },
+  );
+
+  it("normalizes [S -> T] after it streams a component S \\cup T, as TLC's toSetEnum does", async () => {
+    const result = await check({
+      source:
+        "---- MODULE M ----\nEXTENDS Integers\nVARIABLE x\nInit == x = 0\nNext == x' = x /\\ \\E e \\in [{1, 2} -> {9} \\cup {t \\in (1..2) \\X {0} : t[1] > 0}] : FALSE\n====",
+      config: "INIT Init\nNEXT Next",
+    });
+    expect([result.failure?.message, result.failure?.fingerprint]).toEqual([
+      getRuntimeException("Attempted to compare the function <<1, 0>> with the value:\n9"),
+      undefined,
+    ]);
+    expect(formatCallStackLines(result)).toEqual([
+      "Line 5, column 9 to line 5, column 88 in M",
+      "Line 5, column 9 to line 5, column 14 in M",
+      "Line 5, column 19 to line 5, column 88 in M",
+    ]);
+  });
+
+  const SET_EQUALITY_REASON = "Attempted to check equality of the set {1} with the value:\n1";
+
+  it.each([
+    [
+      "x' \\in (({1} \\X {s \\in SUBSET (1..2) : s = {} \\/ s = 1}) \\ {})",
+      [
+        "Line 5, column 9 to line 5, column 70 in M",
+        "Line 5, column 48 to line 5, column 62 in M",
+        "Line 5, column 58 to line 5, column 62 in M",
+      ],
+      undefined,
+    ],
+    [
+      "x' \\in (([a : {s \\in SUBSET (1..2) : s = {} \\/ s = 1}]) \\cup {})",
+      [
+        "Line 5, column 9 to line 5, column 72 in M",
+        "Line 5, column 46 to line 5, column 60 in M",
+        "Line 5, column 56 to line 5, column 60 in M",
+      ],
+      undefined,
+    ],
+    [
+      "x' \\in ([{1} -> {s \\in SUBSET (1..2) : s = {} \\/ s = 1}] \\ {})",
+      [
+        "Line 5, column 9 to line 5, column 70 in M",
+        "Line 5, column 48 to line 5, column 62 in M",
+        "Line 5, column 58 to line 5, column 62 in M",
+      ],
+      undefined,
+    ],
+    [
+      "x' \\in ({1} \\X {s \\in SUBSET (1..2) : s = {} \\/ s = 1})",
+      [
+        "Line 5, column 9 to line 5, column 63 in M",
+        "Line 5, column 47 to line 5, column 61 in M",
+        "Line 5, column 57 to line 5, column 61 in M",
+      ],
+      undefined,
+    ],
+    [
+      "x' = x /\\ \\E e \\in {t \\in ({1} \\X {s \\in SUBSET (1..2) : s = {} \\/ s = 1}) : TRUE} : TRUE",
+      [
+        "Line 5, column 9 to line 5, column 97 in M",
+        "Line 5, column 9 to line 5, column 14 in M",
+        "Line 5, column 19 to line 5, column 97 in M",
+        "Line 5, column 66 to line 5, column 80 in M",
+        "Line 5, column 76 to line 5, column 80 in M",
+      ],
+      undefined,
+    ],
+    [
+      "x' \\in [{s \\in SUBSET (1..2) : s = {} \\/ s = 1} -> {1}]",
+      [
+        "Line 5, column 9 to line 5, column 63 in M",
+        "Line 5, column 40 to line 5, column 54 in M",
+        "Line 5, column 50 to line 5, column 54 in M",
+      ],
+      SET_EQUALITY_REASON,
+    ],
+  ])(
+    "streams [S -> T], [a : S] and S \\X T outside their frames, as TLC's nextElement does: %s",
+    async (next, callStack, reason) => {
+      const result = await checkSetBound(next, "TRUE");
+      expect(result.failure?.message).toBe(getRuntimeException(SET_EQUALITY_REASON));
+      expect(formatCallStackLines(result)).toEqual(callStack);
+      expect(result.failure?.fingerprint?.reason).toBe(reason);
+    },
+  );
+
+  it.each([
+    [
+      "x' = x /\\ \\E e \\in ({1} \\X {s \\in SUBSET (1..2) : s = {} \\/ s = 1}) : TRUE",
+      [
+        "Line 5, column 9 to line 5, column 82 in M",
+        "Line 5, column 9 to line 5, column 14 in M",
+        "Line 5, column 19 to line 5, column 82 in M",
+        "Line 5, column 59 to line 5, column 73 in M",
+        "Line 5, column 69 to line 5, column 73 in M",
+      ],
+    ],
+    [
+      "x' = x /\\ \\E e \\in [{1} -> {s \\in SUBSET (1..2) : s = {} \\/ s = 1}] : TRUE",
+      [
+        "Line 5, column 9 to line 5, column 82 in M",
+        "Line 5, column 9 to line 5, column 14 in M",
+        "Line 5, column 19 to line 5, column 82 in M",
+        "Line 5, column 59 to line 5, column 73 in M",
+        "Line 5, column 69 to line 5, column 73 in M",
+      ],
+    ],
+    [
+      "x' = x /\\ \\E e \\in [a : {s \\in SUBSET (1..2) : s = {} \\/ s = 1}] : TRUE",
+      [
+        "Line 5, column 9 to line 5, column 79 in M",
+        "Line 5, column 9 to line 5, column 14 in M",
+        "Line 5, column 19 to line 5, column 79 in M",
+        "Line 5, column 56 to line 5, column 70 in M",
+        "Line 5, column 66 to line 5, column 70 in M",
+      ],
+    ],
+    [
+      "x' = CHOOSE e \\in ({1} \\X {s \\in SUBSET (1..2) : s = {} \\/ s = 1}) : TRUE",
+      [
+        "Line 5, column 9 to line 5, column 81 in M",
+        "Line 5, column 14 to line 5, column 81 in M",
+        "Line 5, column 58 to line 5, column 72 in M",
+        "Line 5, column 68 to line 5, column 72 in M",
+      ],
+    ],
+    [
+      "x' = x /\\ \\E e \\in [a : {1}, b : {s \\in SUBSET (1..2) : s = {} \\/ s = 1}] : TRUE",
+      [
+        "Line 5, column 9 to line 5, column 88 in M",
+        "Line 5, column 9 to line 5, column 14 in M",
+        "Line 5, column 19 to line 5, column 88 in M",
+        "Line 5, column 65 to line 5, column 79 in M",
+        "Line 5, column 75 to line 5, column 79 in M",
+      ],
+    ],
+    [
+      "x' = x /\\ \\E e \\in [{1, 2} -> {s \\in SUBSET (1..2) : s = {} \\/ s = 1}] : TRUE",
+      [
+        "Line 5, column 9 to line 5, column 85 in M",
+        "Line 5, column 9 to line 5, column 14 in M",
+        "Line 5, column 19 to line 5, column 85 in M",
+        "Line 5, column 62 to line 5, column 76 in M",
+        "Line 5, column 72 to line 5, column 76 in M",
+      ],
+    ],
+  ])(
+    "collects [S -> T], [a : S] and S \\X T for a quantifier outside their frames, as TLC's toSetEnum does: %s",
+    async (next, callStack) => {
+      const result = await checkSetBound(next, "TRUE");
+      expect(result.failure?.message).toBe(getRuntimeException(SET_EQUALITY_REASON));
+      expect(formatCallStackLines(result)).toEqual(callStack);
+      expect(result.failure?.fingerprint).toBeUndefined();
+    },
+  );
 
   it("streams S into UNION S past -maxSetSize, as TLC's UnionValue does", async () => {
     const result = await checkSetBound(
