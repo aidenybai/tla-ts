@@ -22,7 +22,7 @@ A file is a model where it puts `export` on a function declaration or on a varia
 
 ### Node 26 as the reference
 
-tla-ts models Node 26, which `.node-version` pins. The stack traces, the module loader, the type stripping, and the recorded time zones, calendars, and date formats come from Node 26.13.1. The package's build and the website record Node's realm, and recording on another major version throws a `TlaError` that says `tla-ts can't record the host on Node <version>; it needs Node 26`.
+tla-ts models Node 26, which `.node-version` pins. The stack traces, the module loader, the type stripping, and the recorded time zones, calendars, and date formats come from Node 26.13.1. The package's build and the website record Node's realm, and recording on another major version throws a `TlaError` that says `tla-ts can't record the host on Node <version>; it needs Node 26`. The CLI and the API record the realm of the Node that runs them, so run them on Node 26. Under Bun, which reports Node's version as its own, they throw a `TlaError` that says `tla-ts can't record the host on Bun <version>`.
 
 ## Modules and file kinds
 
@@ -357,7 +357,7 @@ Pass TypeScript, JavaScript, and TLA+ files in one command, as in `npx tla-ts ba
 
 tla-ts stops with a `TlaTypeScriptError`, before the check, in these cases:
 
-- Node rejects the file. In Node, tla-ts parses the file's JavaScript with V8 and runs none of it. It uses `vm.Script` for a script, and `node --input-type=module --check` for a module. The message is V8's `SyntaxError`, as in `TlaTypeScriptError: early.js:3:1 SyntaxError: Delete of an unqualified identifier in strict mode.` Elsewhere, such as in a browser or Bun, TypeScript's checks of the file stand in for V8's.
+- Node rejects the file. In Node, tla-ts parses the file's JavaScript with V8 and runs none of it. It uses `vm.Script` for a script, and `node --input-type=module --check` for a module. The message is V8's `SyntaxError`, as in `TlaTypeScriptError: early.js:3:1 SyntaxError: Delete of an unqualified identifier in strict mode.` Elsewhere, such as in a browser, TypeScript's checks of the file stand in for V8's.
 - Node's type stripping rejects the file, with Node's message.
 - tla-ts can't run what the file does exactly. The message says what it can't do, as in `TlaTypeScriptError: evaluated.js:1:15 tla-ts can't run eval`.
 - tla-ts can't build the model's frame, as [Models](#models) describes.

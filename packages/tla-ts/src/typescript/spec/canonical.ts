@@ -3,11 +3,11 @@
 // call leaves behind the objects and environments that nothing reaches any more, and numbers the
 // ones it makes in the order it made them, so that states that are equal to JavaScript differ as
 // values. The canonical form keeps the realm's objects and environments where they are, drops
-// every other one that the realm's objects, the global environments, and the template registry
-// don't reach, and numbers the rest in the order a breadth-first walk from those roots visits
-// them, which only the graph decides: the realm's changed objects by id, an object's prototype,
-// its properties in OrdinaryOwnPropertyKeys order, its private elements and its internal slots,
-// an environment's outer one and its bindings by name. A Map's or a Set's deleted entries go, as
+// every other one that the realm's objects, the global environments, the template registry, and
+// the host's handler and import don't reach, and numbers the rest in the order a breadth-first
+// walk from those roots visits them, which only the graph decides: the realm's changed objects by
+// id, an object's prototype, its properties in OrdinaryOwnPropertyKeys order, its private elements
+// and its internal slots, an environment's outer one and its bindings by name. A Map's or a Set's deleted entries go, as
 // no iterator can read them once a step ends, and so do the buckets of properties that deletes
 // emptied, which no lookup tells from a bucket never made. Where a state holds what the walk can't number,
 // such as a suspended generator or a pending job, the check stops.
@@ -35,19 +35,20 @@ ViewClasses == {"typedArray", "dataView"}
 \* The built-in functions whose data is a value: the cell of a promise's resolving functions or
 \* capability, and the host's: console.createTask's function that runs a task, the getter of a
 \* global's value, and the traps of the proxies that stand for process.hrtime, an AsyncResource, and
-\* a TextEncoder, of the value each one reads.
+\* a TextEncoder, of the value each one reads, and the call of performance.now, of performance.
 ObjectDataBuiltins ==
   {<<"Promise", "resolveFunction">>, <<"Promise", "rejectFunction">>, <<"Promise", "capabilityExecutor">>,
    <<"Module", "createTask">>, <<"Module", "hostGlobal">>,
-   <<"Module", "hrtimeGet">>, <<"Module", "asyncResourceGet">>, <<"Module", "textEncoderGet">>}
+   <<"Module", "hrtimeGet">>, <<"Module", "asyncResourceGet">>, <<"Module", "textEncoderGet">>, <<"Module", "performanceNow">>}
 \* The host's AsyncResource constructor, whose data is a record of the functions run and destroy.
 AsyncResourceBuiltin == <<"Module", "asyncResource">>
 BuiltinSlots == {"id", "constructor", "data", "realm", "initialName"}
-\* The built-in functions whose data refers to nothing: the host's that stop, whose data is a name,
+\* The built-in functions whose data refers to nothing: the host's that stop, and the reads of a
+\* host method's name and length, whose data is a name,
 \* a CommonJS module's require, whose data is its file's number, and the RegExp constructor, whose
 \* data is the strings of its last match, as RegExp.$1 reads.
 NamedBuiltins ==
-  {<<"Module", "hostStop">>, <<"Module", "hostQuietConstructor">>, <<"Module", "require">>, <<"RegExp", "constructor">>}
+  {<<"Module", "hostStop">>, <<"Module", "hostMethodGet">>, <<"Module", "hostQuietConstructor">>, <<"Module", "require">>, <<"RegExp", "constructor">>}
 \* The slots of a class's default constructor, a built-in that holds the class's elements.
 DefaultConstructorSlots == BuiltinSlots \cup {"ctorKind", "sourceText", "privateMethods", "fields", "initializers"}
 SlotRefs(o, r) ==
@@ -251,6 +252,7 @@ CanonicalStateOf(s, initial) ==
                \o ConcatMap(SortInts(DOMAIN s.templates), LAMBDA k : ObjectRef(s.templates[k], r))
                \o ConcatMap(s.modules, LAMBDA m : ModuleRefs(m, r))
                \o ConcatMap(SortInts(DOMAIN s.required), LAMBDA k : ObjectRef(s.required[k].module, r))
+               \o MaybeRef(s.hostHandler, r) \o MaybeRef(s.hostImport, r)
       walk == CanonicalClosure(s, CanonicalWalk(s, roots, [number |-> <<>>, order |-> <<>>, objects |-> 0, environments |-> 0], r), r)
       number == walk.number
       objects == SelectSeq(walk.order, LAMBDA n : n > 0)
@@ -265,6 +267,8 @@ CanonicalStateOf(s, initial) ==
         !.templates = [k \in DOMAIN @ |-> RenameValue(@[k], number, r)],
         !.modules = [i \in DOMAIN @ |-> RenameModule(@[i], number, r)],
         !.required = [k \in DOMAIN @ |-> [@[k] EXCEPT !.module = RenameValue(@, number, r)]],
+        !.hostHandler = RenameMaybe(@, number, r),
+        !.hostImport = RenameMaybe(@, number, r),
         !.hoisted = {<<RenameEnvironment(pair[1], number, r), pair[2]>> : pair \in {p \in @ : p[1] <= r.environments \/ -p[1] \in DOMAIN number}},
         !.out = <<>>]
 ====

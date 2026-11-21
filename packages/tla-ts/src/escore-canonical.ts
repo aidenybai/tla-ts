@@ -157,7 +157,7 @@ const VIEW_CLASSES = new Set(["typedArray", "dataView"]);
 // The built-in functions whose data is a value: the cell of a promise's resolving functions or
 // capability, and the host's: console.createTask's function that runs a task, the getter of a
 // global's value, and the traps of the proxies that stand for process.hrtime, an AsyncResource, and
-// a TextEncoder, of the value each one reads.
+// a TextEncoder, of the value each one reads, and the call of performance.now, of performance.
 const OBJECT_DATA_BUILTINS = new Set([
   "Promise resolveFunction",
   "Promise rejectFunction",
@@ -167,6 +167,7 @@ const OBJECT_DATA_BUILTINS = new Set([
   "Module hrtimeGet",
   "Module asyncResourceGet",
   "Module textEncoderGet",
+  "Module performanceNow",
 ]);
 
 const BUILTIN_SLOTS = ["constructor", "data", "id", "initialName", "realm"];
@@ -198,11 +199,13 @@ const isDefaultConstructor = (slots: Value) => {
   return id.length === 2 && id[0] === "Class" && id[1] === "default";
 };
 
-// The built-in functions whose data refers to nothing: the host's that stop, whose data is a name,
+// The built-in functions whose data refers to nothing: the host's that stop, and the reads of a
+// host method's name and length, whose data is a name,
 // a CommonJS module's require, whose data is its file's number, and the RegExp constructor, whose
 // data is the strings of its last match, as RegExp.$1 reads.
 const NAMED_BUILTINS = new Set([
   "Module hostStop",
+  "Module hostMethodGet",
   "Module hostQuietConstructor",
   "Module require",
   "RegExp constructor",
@@ -422,6 +425,9 @@ const canonicalStateOf = (state: Value, initial: Value): Value => {
     .map((file, position) => ({ file: Number(file), entry: required.range[position] }))
     .sort((left, right) => left.file - right.file)
     .forEach((pair) => objectRef(get(pair.entry, "module"), realm, queue));
+  // The handler of the host's proxies and the host's import, which the state names by object.
+  maybeRef(get(state, "hostHandler"), realm, queue);
+  maybeRef(get(state, "hostImport"), realm, queue);
   // The breadth-first walk, whose queue grows at its end as each node it numbers adds the nodes
   // that node refers to.
   const numbers = new Map<number, number>();
@@ -663,6 +669,8 @@ const canonicalStateOf = (state: Value, initial: Value): Value => {
     envsHeld: () => environments.length,
     templates: (inner) => mapRange(inner, renameValue),
     required: (inner) => mapRange(inner, (entry) => except(entry, { module: renameValue })),
+    hostHandler: renameMaybe,
+    hostImport: renameMaybe,
     modules: (inner) =>
       createTuple(
         getList(inner).map((module) =>
