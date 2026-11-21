@@ -4270,6 +4270,16 @@ describe("evaluation errors match TLC", () => {
       ],
       undefined,
     ],
+    [
+      `LET P(t) == PrintT(t) IN x' = x /\\ \\E e \\in [{1, 2} -> {t \\in (1..2) \\X {0} : P(t)} \\ {<<2, 0>>}] : FALSE`,
+      PRINTED_SELECTED,
+      undefined,
+    ],
+    [
+      `LET Filter(S, P(_)) == {t \\in S : P(t)} IN x' = x /\\ \\E e \\in [{1, 2} -> Filter((1..2) \\X {0}, LAMBDA t : PrintT(t)) \\ {<<2, 0>>}] : FALSE`,
+      PRINTED_SELECTED,
+      undefined,
+    ],
   ])(
     "evaluates a filter under a component S \\cup T, S \\cap T, S \\ T or UNION S of [S -> T] as TLC's enumerators reset it: %s",
     async (next, printed, traceOutput) => {
@@ -4292,6 +4302,24 @@ describe("evaluation errors match TLC", () => {
       result.failure?.fingerprint?.reason,
       result.failure?.fingerprint?.sources.map((source) => source.kind),
     ]).toEqual([
+      'Attempted to compare string "a" with non-string:\n1',
+      ["Product", "Apply", "SetEnumeration"],
+    ]);
+  });
+
+  it("fails where TLC's enumerator of S \\X T reaches a failure, before a filter that prints through a LET operator in a component S \\cup T", async () => {
+    const lines: string[] = [];
+    const result = await check({
+      source: `---- MODULE M ----\nEXTENDS Integers, FiniteSets, TLC\nVARIABLE x\nInit == x = 0\nNext == LET P(t) == PrintT(t) IN x' \\in (((1..2) \\cup {t \\in (1..2) \\X {0} : P(t) /\\ IF t[1] = 2 THEN 1 = "a" ELSE TRUE}) \\X SUBSET {1, "a"})\n====`,
+      config: "INIT Init\nNEXT Next",
+      onPrint: (text) => lines.push(text),
+    });
+    expect([
+      lines,
+      result.failure?.fingerprint?.reason,
+      result.failure?.fingerprint?.sources.map((source) => source.kind),
+    ]).toEqual([
+      [],
       'Attempted to compare string "a" with non-string:\n1',
       ["Product", "Apply", "SetEnumeration"],
     ]);
@@ -4327,6 +4355,11 @@ describe("evaluation errors match TLC", () => {
       undefined,
     ],
     [`x' = {${PRINTED_FILTER_RANGE}, {<<9, 0>>}}`, [...PRINTED_TWICE, ...PRINTED_TWICE], undefined],
+    [
+      `LET P(t) == PrintT(t) IN x' = x /\\ \\E S \\in {{t \\in (1..2) \\X {0} : P(t)}, {<<9, 0>>}} : S # {<<1, 0>>} /\\ \\E e \\in S : FALSE`,
+      PRINTED_TWICE,
+      undefined,
+    ],
   ])(
     "sorts a set literal that holds a filter only when TLC normalizes it, and converts the filter again where TLC's toSetEnum keeps nothing: %s",
     async (next, printed, traceOutput) => {

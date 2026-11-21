@@ -2479,6 +2479,13 @@ const compileExcept = (
   };
 };
 
+const hasOuterLocalName = (expression: Expression, names: string[]): boolean => {
+  if (expression.kind === "OperatorReference") return true;
+  const name = getReferencedName(expression);
+  if (name !== undefined && isLocallyResolved(expression) && !names.includes(name)) return true;
+  return getChildren(expression).some((child) => hasOuterLocalName(child, names));
+};
+
 export const getLazyFilter = (
   expression: Expression & { kind: "SetFilter" },
   environment: Environment,
@@ -2492,7 +2499,12 @@ export const getLazyFilter = (
   };
   const coverage = environment.coverage;
   const isTestObserved =
-    isExpressionImpure([expression.predicate], environment, "varying") || coverage !== undefined;
+    isExpressionImpure([expression.predicate], environment, "varying") ||
+    hasOuterLocalName(
+      expression.predicate,
+      pattern.kind === "Name" ? [pattern.name] : pattern.names,
+    ) ||
+    coverage !== undefined;
   const createFiltered = (
     base: Value,
     context: Context,
