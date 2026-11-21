@@ -2015,6 +2015,33 @@ export const getLocalDefinitions = (library: Library): GeneratedDefinition[] => 
     arity: 3,
     text: `LocalInitialize(s, slot, v) == Ok([s EXCEPT !.frame[slot] = v], Empty)`,
   },
+  // The lexical bindings of a scope's declarations, from the ith of entries, in their order. Its call
+  // of itself is in its tail, with the state the argument itself, so it runs as a loop.
+  {
+    name: "CreateLexicalDeclarations",
+    arity: 4,
+    text: `CreateLexicalDeclarations(s, env, entries, i) ==
+  IF i > Len(entries) THEN s
+  ELSE CreateLexicalDeclarations(CreateLexicalNames(s, env, entries[i].names, entries[i].isConst), env, entries, i + 1)`,
+  },
+  // The function declarations of a scope, from the ith of entries, each instantiated by its code
+  // (InstantiateCode) and bound by its mode, in their order: in a frame's slot, as a var's mutable
+  // binding, or as a lexical one that a script or module initializes. Its call of itself is in its
+  // tail, with the state the argument itself, which the call evaluates rather than chains, so it
+  // runs as a loop however many declarations a scope has.
+  {
+    name: "InstantiateDeclarations",
+    arity: 5,
+    text: `InstantiateDeclarations(s, ctx, env, entries, i) ==
+  IF i > Len(entries) THEN s ELSE
+  LET entry == entries[i]
+      fo == InstantiateCode(s, ctx, entry.code)
+  IN InstantiateDeclarations(
+       CASE entry.mode = "local" -> LocalInitialize(fo.s, entry.slot, Val(fo)).s
+         [] entry.mode = "mutable" -> SetMutableBinding(fo.s, env, entry.name, Val(fo), FALSE).s
+         [] OTHER -> InitializeBinding(fo.s, env, entry.name, Val(fo)).s,
+       ctx, env, entries, i + 1)`,
+  },
 ];
 
 export const getRealmDefinitions = (library: Library, realm: HostRealm): GeneratedDefinition[] => {
