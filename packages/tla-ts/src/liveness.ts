@@ -1,5 +1,6 @@
 import {
   getDefinitionExpressions,
+  getOpDefBody,
   isLocallyResolved,
   type Bound,
   type Definition,
@@ -514,15 +515,15 @@ export const expandTemporal = (
     const isConfigSubstitute = environment.substitutions.has(expression.name);
     if (
       !binding &&
-      definition?.kind === "Operator" &&
-      definition.params.length === 0 &&
+      (definition?.kind === "Function" ||
+        (definition?.kind === "Operator" && definition.params.length === 0)) &&
       (isConfigSubstitute || getStartupValue(definition, environment) === undefined)
     ) {
       if (expansion.expanding.has(definition)) {
         throw createStackOverflowError();
       }
       return expand(
-        definition.body,
+        getOpDefBody(definition),
         undefined,
         getReferenceName(expression, expression.name, environment) ??
           (isConfigSubstitute ? getKeyName(expression.name) : definition.name),

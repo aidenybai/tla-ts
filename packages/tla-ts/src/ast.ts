@@ -583,6 +583,10 @@ export const getFunctionConstruction = (definition: FunctionDefinition) => {
   return construction;
 };
 
+// TLC's OpDefNode for a function definition has the function's construction as its body.
+export const getOpDefBody = (definition: Definition) =>
+  definition.kind === "Function" ? getFunctionConstruction(definition) : definition.body;
+
 export const isRecursiveConstruction = (expression: FunctionConstructionExpression) =>
   expression.isRecursive || expression.definition?.isSelfReferential === true;
 

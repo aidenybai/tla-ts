@@ -1280,6 +1280,71 @@ describe("evaluation errors match TLC", () => {
     },
   );
 
+  it.each([
+    ["f[a \\in {1}] == x = 0", "INIT Init\nNEXT Next\nINVARIANT f", false, 6, 21],
+    ["f[a \\in {1}] == x = 0", "INIT Init\nNEXT Next\nCONSTRAINT f", false, 6, 21],
+    [
+      "f[a \\in {1}] == x = 0\nSpec == Init /\\ [][Next]_x",
+      "SPECIFICATION Spec\nPROPERTY f",
+      false,
+      6,
+      21,
+    ],
+    [
+      "f[a \\in {1}] == x = 0\nSpec == Init /\\ [][Next]_x\nP == f /\\ x \\in Nat",
+      "SPECIFICATION Spec\nPROPERTY P",
+      false,
+      6,
+      21,
+    ],
+    [
+      "f[a \\in {1}] == x = 0\nSpec == Init /\\ [][Next]_x /\\ f",
+      "SPECIFICATION Spec",
+      true,
+      6,
+      21,
+    ],
+    [
+      "CONSTANT N\nf[a \\in {1}] == TRUE",
+      "INIT Init\nNEXT Next\nINVARIANT N\nCONSTANT N <- f",
+      false,
+      7,
+      20,
+    ],
+    [
+      "CONSTANT N\nf[a \\in {1}] == TRUE",
+      "INIT Init\nNEXT Next\nCONSTRAINT N\nCONSTANT N <- f",
+      false,
+      7,
+      20,
+    ],
+    [
+      "CONSTANT N\nf[a \\in {1}] == TRUE\nSpec == Init /\\ [][Next]_x",
+      "SPECIFICATION Spec\nPROPERTY N\nCONSTANT N <- f",
+      false,
+      7,
+      20,
+    ],
+    [
+      "CONSTANT N\nf[a \\in {1}] == TRUE\nSpec == Init /\\ [][Next]_x /\\ N",
+      "SPECIFICATION Spec\nCONSTANT N <- f",
+      true,
+      7,
+      20,
+    ],
+    ["CONSTANT N\nf[a \\in {1}] == TRUE", "SPECIFICATION N\nCONSTANT N <- f", true, 7, 20],
+  ])(
+    "checks the function definition %j reaches under %j as its construction, as TLC's OpDefNode has it for a body",
+    async (definitions, config, isInitial, line, column) => {
+      const location = `line ${line}, col 1 to line ${line}, col ${column} of module M`;
+      expect((await checkSteps(definitions, config)).failure?.message).toBe(
+        isInitial
+          ? `In computing initial states, TLC expected a boolean expression,\nbut instead found <<TRUE>>.\n${location}`
+          : `TLC expected a boolean value, but did not find one. ${location}`,
+      );
+    },
+  );
+
   it("names the initial state a check fails on unless a standard module fails", async () => {
     const config = "INIT Init\nNEXT Next\nINVARIANT Inv";
     const core = await checkSteps("Inv == (CHOOSE y \\in {} : TRUE) = x", config);

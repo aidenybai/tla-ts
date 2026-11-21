@@ -1,5 +1,6 @@
 import {
   getChildren,
+  getOpDefBody,
   isLocallyResolved,
   type Assumption,
   type Definition,
@@ -446,7 +447,7 @@ const getSpecification = (
   const definition = getConfigOperator("name", config.specification, environment);
   const property = config.properties.length === 1 ? config.properties[0] : undefined;
   let isUntaggedFound = false;
-  expandTemporal(definition.body, undefined, environment, false).forEach((item) => {
+  expandTemporal(getOpDefBody(definition), undefined, environment, false).forEach((item) => {
     const conjunct = item.expression;
     // TLC takes a state-level definition of the spec whole as an initial predicate.
     const isInitial = item.path.some((name) => {
@@ -591,11 +592,12 @@ const getProperties = (
   config.properties.forEach((name) => {
     const definition = getConfigPredicate("property", name, environment);
     if (!definition) return;
-    if (getSanyLevel(definition.body, undefined, environment) === VARIABLE_LEVEL) {
+    const body = getOpDefBody(definition);
+    if (getSanyLevel(body, undefined, environment) === VARIABLE_LEVEL) {
       onProgress?.({ kind: "state-level-property", name });
     }
     const isProperty = environment.runtime.version !== "1.7.4";
-    expandTemporal(definition.body, undefined, environment, isProperty).forEach((item) => {
+    expandTemporal(body, undefined, environment, isProperty).forEach((item) => {
       const conjunct = item.expression;
       if (item.theorem) throw createTheoremError(item.theorem, "property");
       if (isConstantTrue(item, environment, "property")) return;
@@ -940,7 +942,7 @@ const getExpectedValue = (kind: string, expression: Expression, environment: Env
     expression.kind === "Identifier" && !expression.location.range
       ? getDefinition(expression.name, environment)
       : undefined;
-  const body = definition?.kind === "Operator" ? definition.body : expression;
+  const body = definition ? getOpDefBody(definition) : expression;
   const range = definition?.kind === "Operator" ? definition.bodyRange : undefined;
   const location = range && body.kind !== "Number" ? formatRange(range) : describeNode(body);
   return `TLC expected a ${kind} value, but did not find one. ${location}`;
