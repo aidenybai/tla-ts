@@ -1,7 +1,6 @@
 import { delimiter } from "node:path";
 import { getTlcVersion } from "../tlc/version";
 import { getToolsJar, reportErrors, type JavaProperties } from "./shared";
-import { runTlapm } from "./tlapm";
 import { checkSpecs } from "./tlc";
 import { exportXml, exportXml174 } from "./xml-exporter";
 
@@ -38,7 +37,10 @@ const getJavaLaunch = (args: string[]) => {
 };
 
 const run = async (args: string[]) => {
-  if (args[0] === "tlapm") return reportErrors(() => runTlapm(args.slice(1)));
+  if (args[0] === "tlapm") {
+    const tlapm = await import("./tlapm");
+    return reportErrors(() => tlapm.runTlapm(args.slice(1)));
+  }
   const launch = getJavaLaunch(args);
   if (launch === undefined) return checkSpecs(args, { libraries: [] });
   launch.java.tlcVersion ??= await getTlcVersion(getToolsJar(launch.java));
