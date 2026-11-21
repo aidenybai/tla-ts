@@ -3599,6 +3599,100 @@ ASSUME TLCFP(a) = -887695703
     },
   );
 
+  const SUBSTITUTED_MODULES = new Map([
+    [
+      "N",
+      "---- MODULE N ----\nEXTENDS Naturals\nCONSTANT k\nVARIABLES x, y\nInitC == x = 0 /\\ y = 0 /\\ k\nInitW == k /\\ x = 0 /\\ y = 0\nNextC == x' = x /\\ y' = y /\\ k\nK == k\nInitK == x = 0 /\\ y = 0 /\\ K\nO == INSTANCE P WITH m <- k, w <- x\nInitO == O!InitP\n====\n",
+    ],
+    [
+      "P",
+      "---- MODULE P ----\nEXTENDS Naturals\nCONSTANT m\nVARIABLES x, y, w\nInitP == x = 0 /\\ y = 0 /\\ m\nInitPW == x = 0 /\\ y = 0 /\\ w\n====\n",
+    ],
+  ]);
+  const getSubstitutedFailure = async (instance: string, spec: string, coverage?: number) => {
+    const result = await check({
+      source: `---- MODULE M ----\nEXTENDS Naturals\nVARIABLES x, y\n${instance}\n${spec}\n====\n`,
+      config: "SPECIFICATION Spec\n",
+      loadModule: (name) => SUBSTITUTED_MODULES.get(name),
+      coverage,
+    });
+    return result.failure?.message;
+  };
+  const getNextMessage = (found: number, location: string) =>
+    `${UNEXPECTED_EXCEPTION}In computing next states, TLC expected a boolean expression,\nbut instead found ${found}.\n${location}`;
+  const SUBSTITUTED_NEXT = "Spec == x = 0 /\\ y = 0 /\\ [][J!NextC]_<<x, y>>";
+
+  it.each([
+    [
+      "J == INSTANCE N WITH k <- 0",
+      `Spec == J!InitC /\\ ${UNCHANGED_STEP}`,
+      getWholeMessage(0, "line 5, col 28 to line 5, col 28 of module N"),
+    ],
+    [
+      'J == INSTANCE N WITH k <- "a"',
+      `Spec == J!InitC /\\ ${UNCHANGED_STEP}`,
+      'In computing initial states, TLC expected a boolean expression,\nbut instead found "a".\nline 5, col 28 to line 5, col 28 of module N',
+    ],
+    [
+      "J == INSTANCE N WITH k <- 0",
+      `Spec == J!InitO /\\ ${UNCHANGED_STEP}`,
+      getWholeMessage(0, "line 5, col 28 to line 5, col 28 of module P"),
+    ],
+    [
+      "J == INSTANCE P WITH m <- 0, w <- x",
+      `Spec == J!InitPW /\\ ${UNCHANGED_STEP}`,
+      getWholeMessage(0, "line 6, col 29 to line 6, col 29 of module P"),
+    ],
+    [
+      "J == INSTANCE N WITH k <- 0",
+      SUBSTITUTED_NEXT,
+      getNextMessage(0, "line 7, col 30 to line 7, col 30 of module N"),
+    ],
+    [
+      "J == INSTANCE N WITH k <- 1 + 1",
+      `Spec == J!InitC /\\ ${UNCHANGED_STEP}`,
+      getWholeMessage(2, "line 5, col 28 to line 5, col 28 of module N"),
+    ],
+    [
+      "J == INSTANCE P WITH m <- 0, w <- x + 0",
+      `Spec == J!InitPW /\\ ${UNCHANGED_STEP}`,
+      getWholeMessage(0, "line 6, col 29 to line 6, col 29 of module P"),
+    ],
+    [
+      "J == INSTANCE N WITH k <- 1 + 1",
+      SUBSTITUTED_NEXT,
+      getNextMessage(2, "line 7, col 30 to line 7, col 30 of module N"),
+    ],
+    [
+      "J == INSTANCE N WITH k <- 0",
+      "Next == x' = x /\\ y' = y /\\ J!K\nSpec == x = 0 /\\ y = 0 /\\ [][Next]_<<x, y>>",
+      getNextMessage(0, "line 5, col 29 to line 5, col 31 of module M"),
+    ],
+  ])(
+    "reports a substituted name in %j %j that TLC evaluates once every variable is assigned at the name, with and without coverage, as TLC's ActionItemList holds it",
+    async (instance, spec, message) => {
+      expect([
+        await getSubstitutedFailure(instance, spec),
+        await getSubstitutedFailure(instance, spec, 1),
+      ]).toEqual([message, message]);
+    },
+  );
+
+  it.each([
+    [
+      "J == INSTANCE N WITH k <- 1 + 1",
+      getWholeMessage(2, "line 4, col 27 to line 4, col 31 of module M"),
+    ],
+    ["J == INSTANCE N WITH k <- 0", "The init state relation is not a boolean expression.\n0"],
+  ])(
+    "reports a substituted name in %j that TLC walks to at its substitute, as TLC does",
+    async (instance, message) => {
+      expect(await getSubstitutedFailure(instance, `Spec == J!InitW /\\ ${UNCHANGED_STEP}`)).toBe(
+        message,
+      );
+    },
+  );
+
   it("reports a literal that a LET's scope passes to an initial conjunct by its text, as TLC does", async () => {
     expect(
       await getWholeFailure(

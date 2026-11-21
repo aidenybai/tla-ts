@@ -57,6 +57,7 @@ import {
 } from "../values";
 import {
   getActionPredicate,
+  getSubstitutedOccurrence,
   isSubstitutionDefinition,
   substitutedExpressions,
   substitutionFrames,
@@ -324,7 +325,9 @@ export const holdsValue = (run: RunKind, expression: Expression, value: Value, i
           formatValue(value),
           isWalked
             ? expression
-            : (run.initPredicates?.get(expression) ?? getActionPredicate(expression)),
+            : (run.initPredicates?.get(expression) ??
+                getSubstitutedOccurrence(expression) ??
+                getActionPredicate(expression)),
         );
   throw run.isInit && isWalked && isBuiltInOperation(expression)
     ? new TlaUncodedError(message)
