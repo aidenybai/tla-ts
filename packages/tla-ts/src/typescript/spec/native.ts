@@ -156,6 +156,15 @@ LSlice(c, start, end) ==
       f == LRelative(end, n, n)
   IN IF k < 0 \/ f < 0 THEN LBail
      ELSE LArray([j \in 1..(IF f > k THEN f - k ELSE 0) |-> c.elems[k + j]])
+\* Array.prototype.with, a new array of an array's elements with one at an index, relative to the
+\* end where it's negative, replaced: of primitives alone, so that no two arrays hold one object, and
+\* LBail where the index isn't an integer or lies outside the array, where with throws.
+LWith(c, i, v) ==
+  IF c.type # "larray" \/ v.type = "bail" \/ IsLComposite(v) \/ ~(i.type = "number" /\ i.value.k = "int")
+     \/ \E k \in DOMAIN c.elems : IsLComposite(c.elems[k]) THEN LBail
+  ELSE LET n == Len(c.elems)
+           k == IF i.value.i < 0 THEN n + i.value.i ELSE i.value.i
+       IN IF k < 0 \/ k >= n THEN LBail ELSE LArray([c.elems EXCEPT ![k + 1] = v])
 \* Array.from of an array-like object of a length alone, which reads undefined at each index.
 LFrom(length, F(_, _)) ==
   IF length.type = "number" /\ length.value.k = "int" /\ length.value.i >= 0 /\ length.value.i <= 65536
@@ -577,6 +586,13 @@ export const getNativeFunctions = (
               text: `${iterating}(${receiver.text}, ${callback})`,
               isFresh: method === "map",
             };
+      }
+      if (method === "with") {
+        const receiver = compileExpression(node.expression.expression, scope);
+        const args = compileArguments(node.arguments, scope, false);
+        return receiver === undefined || args?.length !== 2
+          ? undefined
+          : { text: `LWith(${receiver.text}, ${args[0]}, ${args[1]})`, isFresh: true };
       }
       // A method that doesn't change its receiver, on any lowered value.
       if (!METHODS.has(method) || MUTATORS.has(method)) return undefined;

@@ -5,6 +5,7 @@ import { pathToFileURL } from "node:url";
 import { Worker } from "node:worker_threads";
 import { afterAll, beforeAll, describe, expect, it } from "vite-plus/test";
 import { check } from "../../src";
+import { exploreInNode } from "./compile-worker";
 
 interface ModelResult {
   status: string;
@@ -1310,6 +1311,53 @@ describe("checks a module's exported functions as a model on ESCore", () => {
         '1,"1"',
         '2,"11"',
       ]);
+    });
+  });
+
+  // Array.prototype.with, which tla-ts runs natively as LWith on an index within the array, and on
+  // ESCore where with throws a RangeError, at an index past the end, where the check stops as Node
+  // throws.
+  describe("runs an array's with natively, and on ESCore where it throws, as Node runs it", () => {
+    const source = `
+      let cells = [false, false, false];
+      export const toggle = (index: -1 | 0 | 2) => {
+        cells = cells.with(index, !cells[index < 0 ? index + 3 : index]);
+      };
+      export const isWhole = () => cells.length === 3;
+    `;
+    const outside = source
+      .replace("-1 | 0 | 2", "-1 | 0 | 3")
+      .replace("!cells[index < 0 ? index + 3 : index]", "true");
+
+    it("gives what ESCore gives in every call, with Node's states", async () => {
+      const explored = await exploreInNode(source, "spec.ts");
+      expect(explored.error).toBeUndefined();
+      const counts = [explored.status, explored.distinctStates, explored.generatedStates];
+      expect(getCounts(await checkModel(source, "spec.ts", "native"))).toEqual(counts);
+      expect(getCounts(await checkModel(source, "spec.ts", "compared"))).toEqual(counts);
+    });
+
+    it("stops where with throws past the end, as Node throws", async () => {
+      expect((await exploreInNode(outside, "spec.ts")).status).toBe("error");
+      expect((await checkModel(outside, "spec.ts")).message).toContain(
+        "tla-ts can't read the message that Node writes for an error it throws",
+      );
+    });
+
+    it("tells a native with that counts a negative index from the wrong end", async () => {
+      const result = await checkModel(source, "spec.ts", "native", [
+        "k == IF i.value.i < 0 THEN n + i.value.i ELSE i.value.i",
+        "k == IF i.value.i < 0 THEN n + i.value.i - 1 ELSE i.value.i",
+      ]);
+      expect(result.message).toContain("the native call differs from ESCore's");
+    });
+
+    it("tells a native with that writes past the end instead of throwing", async () => {
+      const result = await checkModel(outside, "spec.ts", "canonical", [
+        "IN IF k < 0 \\/ k >= n THEN LBail ELSE LArray([c.elems EXCEPT ![k + 1] = v])",
+        "IN IF k < 0 THEN LBail ELSE LArray(IF k >= n THEN Append(c.elems, v) ELSE [c.elems EXCEPT ![k + 1] = v])",
+      ]);
+      expect(result.status).toBe("invariant-violation");
     });
   });
 
