@@ -78,7 +78,7 @@ export const solveGoal = (manager: AstManager, forms: number[], params: KernelPa
   const theoryAssumptions: number[] = [];
   context.addTheoryAssumptions(theoryAssumptions);
   const result =
-    theoryAssumptions.length === 0 ? context.search() : context.checkResearching(asserted, []);
+    theoryAssumptions.length === 0 ? context.check() : context.checkResearching(asserted, []);
   manager.limit.release();
   return { result, context, asserted };
 };

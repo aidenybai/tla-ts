@@ -276,6 +276,29 @@ const getPigeonholeLines = (holeCount: number) => {
   ];
 };
 
+const MBQI_UNDER_PUSH = [
+  "(set-option :auto_config false)",
+  "(set-option :smt.mbqi true)",
+  "(declare-sort U 0)",
+  "(declare-fun f (U) U)",
+  "(declare-fun g (U U) U)",
+  "(declare-fun p (U) Bool)",
+  "(declare-const a U)",
+  "(declare-const b U)",
+  "(push 1)",
+  "(assert (forall ((x U)) (! (= (f (f x)) x) :pattern ((f x)))))",
+  "(assert (forall ((x U) (y U)) (! (=> (p x) (p (g x y))) :pattern ((g x y)))))",
+  "(assert (p a))",
+  "(assert (not (= (f a) b)))",
+];
+
+const CHECK_AND_MODEL = [
+  "(check-sat)",
+  "(get-info :reason-unknown)",
+  "(get-info :rlimit)",
+  "(get-model)",
+];
+
 // Each expected value is what z3 5.3.2 prints for the script.
 describe("runSmtlibScript runs its commands as Z3 does", () => {
   it("prints the assertions under :produce-assertions", () => {
@@ -1001,6 +1024,15 @@ describe("runSmtlibScript runs its commands as Z3 does", () => {
       "unsat",
       "unknown",
       '(:reason-unknown "max. resource limit exceeded")',
+    ]);
+  });
+
+  it("marks a search that the push of the model checker's context ends as canceled", () => {
+    expect(run([...MBQI_UNDER_PUSH, "(set-option :rlimit 80)", ...CHECK_AND_MODEL])).toEqual([
+      "unknown",
+      '(:reason-unknown "canceled")',
+      "(:rlimit 124)",
+      '(error "line 18 column 10: model is not available")',
     ]);
   });
 

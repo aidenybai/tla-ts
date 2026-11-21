@@ -798,11 +798,12 @@ export const runSmtlibScript = (
         ? state.satSolver?.reasonUnknown
         : state.fdSolver?.reasonUnknown;
       setCheck(L_UNDEF, {
+        context,
         isOptimizing,
         isFromTactic: !isKernelChecking,
         reasonUnknown:
-          error instanceof SmtDefaultError
-            ? ((isKernelChecking ? undefined : reasonUnknown) ?? error.message)
+          !isKernelChecking && error instanceof SmtDefaultError
+            ? (reasonUnknown ?? error.message)
             : getReasonUnknown({ result: L_UNDEF, context, reasonUnknown }, deadline),
         isHoldingSolver: true,
       });
