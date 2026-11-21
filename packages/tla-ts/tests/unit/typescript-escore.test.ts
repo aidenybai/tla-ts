@@ -95,6 +95,35 @@ const checkModule = (source: string) =>
 const THREW = "the script threw an exception";
 
 describe("compiles scripts by specializing ESCore", () => {
+  // Each operation on two finite nonzero doubles runs natively in ESNumber, and each with a zero, an
+  // infinity, or a zero result runs its TLA+.
+  describe("computes doubles, their powers and floors, and signed zeros", () => {
+    const getSource = (expected: string) => `
+      const values = [0.1, -2.5, 3, 2 ** 53 + 2, 1e-310];
+      let text = "";
+      for (const left of values) {
+        for (const right of values) text += \`\${left / right},\${left % right},\${left * right},\${left + right};\`;
+      }
+      text += [2 ** 10, 3 ** 5, (-2) ** 3, 0.5 ** 3, Math.floor(-0.5), Math.floor(2.75), 1 / -0, -0 % 1, Object.is(3 * -0, -0)]
+        .map(String)
+        .join(",");
+      if (text !== "${expected}") throw new Error(text);
+    `;
+    const expected =
+      "1,0,0.010000000000000002,0.2;-0.04,0.1,-0.25,-2.4;0.03333333333333333,0.1,0.30000000000000004,3.1;1.1102230246251563e-17,0.1,900719925474099.5,9007199254740994;Infinity,3.135287412051e-311,1e-311,0.1;-25,-0.09999999999999987,-0.25,-2.4;1,0,6.25,-5;-0.8333333333333334,-2.5,-7.5,0.5;-2.775557561562891e-16,-2.5,-22517998136852484,9007199254740992;-Infinity,-8.7685794026083e-311,-2.5e-310,-2.5;30,0.09999999999999984,0.30000000000000004,3.1;-1.2,0.5,-7.5,0.5;1,0,9,6;3.330669073875469e-16,3,27021597764222984,9007199254740996;Infinity,5.2229528313e-312,3e-310,3;90071992547409940,0.09999999999999992,900719925474099.5,9007199254740994;-3602879701896397.5,1.5,-22517998136852484,9007199254740992;3002399751580331.5,1,27021597764222984,9007199254740996;1,0,8.112963841460672e+31,18014398509481988;Infinity,9.01884420564e-312,9.007199254740966e-295,9007199254740994;9.99999999999997e-310,1e-310,1e-311,0.1;-4e-311,1e-310,-2.5e-310,-2.5;3.333333333333e-311,1e-310,3e-310,3;0,1e-310,9.007199254740966e-295,9007199254740994;1,0,0,2e-310;1024,243,-8,0.125,-1,2,-Infinity,0,true";
+
+    it("agrees with Node", async () => {
+      expect(() => runInNewContext(stripTypeScriptTypes(getSource(expected)))).not.toThrow();
+      expect((await checkScript(getSource(expected))).message).toBeUndefined();
+    });
+
+    it("rejects another result", async () => {
+      const wrong = expected.replace("-1,2,-Infinity", "-0,2,-Infinity");
+      expect(() => runInNewContext(stripTypeScriptTypes(getSource(wrong)))).toThrow(expected);
+      expect((await checkScript(getSource(wrong))).message).toContain(THREW);
+    });
+  });
+
   // Each lookup reads an object's own property with OrdinaryGetOwnProperty, which tla-ts runs
   // natively, and a missing one goes on to the prototype.
   describe("reads own and inherited properties", () => {
