@@ -48,7 +48,7 @@ export const neverNegative = () => likes >= 0;`,
 
 Init == likes = 0`,
       },
-      "`==` defines a name, as `const` does. `=` compares, as `===` does. `Init` is a condition, not an assignment: the checker starts in every state where it's true.",
+      "`VARIABLE` declares a value that changes. `==` defines a name, as `const` does. `=` compares, as `===` does. `Init` is a condition, not an assignment: the checker starts in every state where it's true.",
     ],
   },
   {
@@ -66,11 +66,12 @@ Init == likes = 0`,
 const unlike = () => {
   likes -= 1;
 };`,
-        tla: `Like == likes' = likes + 1
+        tla: `Like ==
+  likes' = likes + 1
 
 
-
-Unlike == likes' = likes - 1`,
+Unlike ==
+  likes' = likes - 1`,
       },
       "A condition on a before and an after is called an action. `Next` lists the actions, joined with `\\/`, which is `||`. In every state, the checker tries each one.",
       { language: "tlaplus", code: String.raw`Next == Like \/ Unlike` },
@@ -82,7 +83,8 @@ Unlike == likes' = likes - 1`,
       {
         typescript: `const neverNegative = () =>
   likes >= 0;`,
-        tla: `NeverNegative == likes >= 0`,
+        tla: `NeverNegative ==
+  likes >= 0`,
       },
       "A rule that must be true in every state is called an invariant. It has no prime, because it reads one state.",
     ],
@@ -180,11 +182,10 @@ const unlike = (user: User) => {
 };`,
         tla: String.raw`Users == {"ada", "bob"}
 VARIABLE liked
-
 Init == liked = {}
-
 Like(user) ==
   liked' = liked \union {user}
+
 
 Unlike(user) ==
   liked' = liked \ {user}`,

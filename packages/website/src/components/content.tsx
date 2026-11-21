@@ -1,5 +1,6 @@
 import type { ContentBlock, ContentSection } from "@/lib/site-data";
 import { Code } from "./code";
+import { Comparison } from "./comparison";
 import { Section } from "./section";
 import { InlineCode } from "@/components/ui/inline-code";
 
@@ -46,21 +47,7 @@ const Block = (props: BlockProps) => {
     );
   }
   if (block.kind === "compare") {
-    return (
-      <div className="grid gap-x-3 gap-y-1.5 sm:grid-cols-2 lg:-mx-8">
-        {[
-          { label: "TypeScript", source: block.typescript },
-          { label: "TLA+", source: block.tla },
-        ].map((side) => (
-          <figure key={side.label} className="flex min-w-0 flex-col gap-1.5">
-            <figcaption className="text-xs text-faint">{side.label}</figcaption>
-            <Code.Root source={side.source}>
-              <Code.Content />
-            </Code.Root>
-          </figure>
-        ))}
-      </div>
-    );
+    return <Comparison typescript={block.typescript} tla={block.tla} />;
   }
   return (
     <div className="overflow-x-auto">
