@@ -235,8 +235,7 @@ export class RelGoalCaseSplitQueue extends RelevancyCaseSplitQueue {
     const manager = context.manager;
     const todo = [expr];
     let maxGeneration = 0;
-    while (todo.length > 0) {
-      const current = todo.pop() ?? -1;
+    for (let current = todo.pop(); current !== undefined; current = todo.pop()) {
       const node = context.getEnode(current);
       if (node !== undefined) maxGeneration = Math.max(maxGeneration, context.getGeneration(node));
       else if (manager.kinds[current] === KIND_APP)

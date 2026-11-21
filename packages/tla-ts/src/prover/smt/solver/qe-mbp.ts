@@ -48,15 +48,20 @@ class AppConstArrRewriter extends RewriterTpl {
     }
     if (funcDecl.op !== OP_DT_CONSTRUCTOR) return -1;
     const accessors = getConstructorAccessors(manager, decl);
-    if (accessors.some((accessor) => manager.funcDecls[accessor].domain.length !== 1)) return -1;
-    const isAccessorOf = (arg: number, index: number, term: number) =>
-      manager.kinds[arg] === KIND_APP &&
-      manager.decls[arg] === accessors[index] &&
-      manager.getArg(arg, 0) === term;
+    for (let index = 0; index < accessors.length; index++)
+      if (manager.funcDecls[accessors[index]].domain.length !== 1) return -1;
     if (args.length === 0 || manager.kinds[args[0]] !== KIND_APP) return -1;
     if (manager.decls[args[0]] !== accessors[0]) return -1;
     const term = manager.getArg(args[0], 0);
-    if (!args.every((arg, index) => isAccessorOf(arg, index, term))) return -1;
+    for (let index = 1; index < args.length; index++) {
+      const arg = args[index];
+      if (
+        manager.kinds[arg] !== KIND_APP ||
+        manager.decls[arg] !== accessors[index] ||
+        manager.getArg(arg, 0) !== term
+      )
+        return -1;
+    }
     manager.incRef(term);
     return term;
   }

@@ -1030,7 +1030,7 @@ export const createSmtlibReader = (
   // cmd_context's std_subst and rev_subst, whose caches live until their next substitution.
   const stdSubst = new VarSubst(manager, true);
   const revSubst = new VarSubst(manager, false);
-  const macroApp = { expr: -1 };
+  let macroAppExpr = -1;
 
   const pushUndo = (restore: () => void) => {
     if (!options.isGlobalDecls) undo.push(restore);
@@ -2274,11 +2274,11 @@ export const createSmtlibReader = (
     ) {
       if (args.length === 0) return macro.body;
       // try_mk_macro_app holds the term until pop_app_frame pushes it.
-      macroApp.expr = revSubst.apply(
+      macroAppExpr = revSubst.apply(
         macro.body,
         args.map((arg, index) => coerce(arg, macro.domain[index])),
       );
-      return macroApp.expr;
+      return macroAppExpr;
     }
     const decls = funcs.get(name);
     const declared = decls === undefined ? undefined : mkDeclaredApp(name, decls, args, range, at);
@@ -2967,9 +2967,9 @@ export const createSmtlibReader = (
         frame.isTail,
         frame.start,
       );
-      if (macroApp.expr === -1) continue;
-      manager.decRef(macroApp.expr);
-      macroApp.expr = -1;
+      if (macroAppExpr === -1) continue;
+      manager.decRef(macroAppExpr);
+      macroAppExpr = -1;
     }
   };
 
