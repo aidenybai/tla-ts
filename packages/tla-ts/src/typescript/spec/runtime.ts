@@ -599,15 +599,15 @@ const DEFINITIONS = [
                               <<[trap |-> SV("get"), method |-> "hrtimeGet", data |-> Val(bigint)]>>)
       o == OrdinaryObjectCreate(hrtime.s, Intrinsic(s, "ObjectPrototype"))
       withHrtime == CreateDataProperty(o.s, Val(o), SV("hrtime"), Val(hrtime))
-      load == CreateBuiltinFunction(withHrtime.s, <<"Module", "getBuiltinModule">>, 1, N("getBuiltinModule"), Empty)
+      load == HostMethod(withHrtime.s, N("getBuiltinModule"), 1, TRUE, N("getBuiltinModule"), "getBuiltinModule", Empty)
       made == CreateDataProperty(load.s, Val(o), SV("getBuiltinModule"), Val(load))
   IN Ok(made.s, Val(o))`,
   // Node's async_hooks, the one object that process.getBuiltinModule and require give, which the
   // state's required holds under the file number 0, the first time either asks for it.
   `AsyncHooksModule(s) ==
   IF 0 \\in DOMAIN s.required THEN Get(s, s.required[0].module, SV("exports")) ELSE
-  LET run == HostMethod(s, N("runInAsyncScope"), 2, N("AsyncResource"), "asyncRun", Empty)
-      destroy == HostMethod(run.s, N("emitDestroy"), 0, N("AsyncResource"), "asyncDestroy", Empty)
+  LET run == HostMethod(s, N("runInAsyncScope"), 2, FALSE, N("AsyncResource"), "asyncRun", Empty)
+      destroy == HostMethod(run.s, N("emitDestroy"), 0, FALSE, N("AsyncResource"), "asyncDestroy", Empty)
       resource == Alloc(destroy.s, BuiltinObject(Intrinsic(destroy.s, "FunctionPrototype"), <<"Module", "asyncResource">>, 1,
                                                  N("AsyncResource"), TRUE, [run |-> Val(run), destroy |-> Val(destroy)], destroy.s.realmId))
       resourceProxy == StoppingProxy(resource.s, resource.v, N("AsyncResource"),
@@ -644,14 +644,15 @@ const DEFINITIONS = [
   // time each run reads anew, so it gives HostTime, at whose reading a compiled spec stops.
   `PerformanceObject(s) ==
   LET o == OrdinaryObjectCreate(s, Intrinsic(s, "ObjectPrototype"))
-      now == HostMethod(o.s, N("now"), 0, N("performance.now"), "performanceNow", Val(o))
+      now == HostMethod(o.s, N("now"), 0, FALSE, N("performance.now"), "performanceNow", Val(o))
   IN Ok(CreateDataProperty(now.s, Val(o), SV("now"), Val(now)).s, Val(o))`,
   // A method of the host, as a proxy of a function of its name and length, which a program may
   // read, and whose call runs the method's steps, which a program may only call: every other
-  // operation stops, as the function's source text, which Node's has, does.
-  `HostMethod(s, name, length, stopName, method, data) ==
-  LET f == CreateBuiltinFunction(s, <<"Module", "hostStop">>, length, name, stopName)
-  IN StoppingProxy(f.s, Val(f), stopName, <<[trap |-> SV("get"), method |-> "hostMethodGet", data |-> stopName],
+  // operation stops, as the function's source text, which Node's has, does, and a new of it, where
+  // Node's is a constructor, which a new of a function that isn't one would throw.
+  `HostMethod(s, name, length, isConstructor, stopName, method, data) ==
+  LET f == Alloc(s, BuiltinObject(Intrinsic(s, "FunctionPrototype"), <<"Module", "hostStop">>, length, name, isConstructor, stopName, s.realmId))
+  IN StoppingProxy(f.s, f.v, stopName, <<[trap |-> SV("get"), method |-> "hostMethodGet", data |-> stopName],
                                            [trap |-> SV("apply"), method |-> method, data |-> data]>>)`,
   // Node's console, of which a program reads only the methods that write what they're given and
   // createTask: each of the former writes nothing that the program reads, where the values it's
@@ -1600,7 +1601,9 @@ const HOST_PATCHES = [
     [] m = "processGet" ->
          IF Arg(args, 2) \\notin {SV("getBuiltinModule"), SV("hrtime")} THEN HostStop(N("process")) ELSE Get(s, Arg(args, 1), Arg(args, 2))
     [] m = "getBuiltinModule" ->
-         IF Arg(args, 1) \\notin {SV("node:async_hooks"), SV("async_hooks")} THEN HostStop(N("getBuiltinModule")) ELSE AsyncHooksModule(s)
+         LET list == CreateListFromArrayLike(s, Arg(args, 3), "all") IN
+         IF IsAbrupt(list) THEN list
+         ELSE IF Arg(Val(list), 1) \\notin {SV("node:async_hooks"), SV("async_hooks")} THEN HostStop(N("getBuiltinModule")) ELSE AsyncHooksModule(list.s)
     [] m = "asyncHooksGet" ->
          IF Arg(args, 2) \\notin {SV("AsyncResource"), SV("AsyncLocalStorage")} THEN HostStop(N("async_hooks")) ELSE Get(s, Arg(args, 1), Arg(args, 2))
     [] m = "asyncLocalStorageConstruct" ->

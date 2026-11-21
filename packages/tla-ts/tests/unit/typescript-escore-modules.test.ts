@@ -695,6 +695,43 @@ describe("stops at the source text of the host's functions", () => {
   });
 });
 
+// process.getBuiltinModule, whose name and length are Node's, loads async_hooks, and stops at
+// every other use, such as its prototype, which Node's, an ordinary function, has.
+describe("calls process.getBuiltinModule as Node does, and stops at every other use", () => {
+  const getFiles = (expected: string) => ({
+    "main.js": getMain(
+      `const log = [];
+      const load = process.getBuiltinModule;
+      log.push(load.name, load.length, typeof load("async_hooks"), load("async_hooks") === load("node:async_hooks"));`,
+      expected,
+    ),
+  });
+
+  it("agrees with Node", async () => {
+    expect(
+      (await checkModules(getFiles("getBuiltinModule,1,object,true"))).message,
+    ).toBeUndefined();
+  });
+
+  it("rejects another result", async () => {
+    expect((await checkModules(getFiles("getBuiltinModule,2,object,true"))).message).toContain(
+      THREW,
+    );
+  });
+
+  it.each([
+    "typeof process.getBuiltinModule.prototype",
+    "Reflect.ownKeys(process.getBuiltinModule)",
+    'new process.getBuiltinModule("async_hooks")',
+    'process.getBuiltinModule.call(null, "async_hooks")',
+    "String(process.getBuiltinModule)",
+  ])("stops at %s", async (use) => {
+    expect((await checkModules({ "main.js": `${use};` })).message).toContain(
+      "tla-ts can't run the host's getBuiltinModule",
+    );
+  });
+});
+
 describe("gives a module a Timeout of setTimeout, which stops where its code uses it", () => {
   const getFiles = (expected: string) => ({
     "main.js": `const log = [];
