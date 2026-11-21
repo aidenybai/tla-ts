@@ -553,3 +553,32 @@ export const createEscoreNativeOperators = (callReplaced: CallReplaced): Builtin
     }),
   ];
 };
+
+const PLUS = 43;
+const MINUS = 45;
+
+// ESNumber's operators that tla-ts runs natively, while TLC runs the module's TLA+. StrToNum reads
+// a string of an optional sign and decimal digits whose nonzero value is below 2^30 as
+// NumIntNum(value), the record StringToNumber builds for it, and falls back for any other string.
+// A zero falls back because StringToNumber gives the constant PosZero or NegZero, which TLC
+// normalizes, so it prints its fields in another order.
+export const createEsNumberOperators = (callReplaced: CallReplaced): Builtin[] => {
+  const define = createDefine(callReplaced);
+  return [
+    define("StrToNum", 1, (args) => {
+      const units = getList(isOperator(args[0]) ? undefined : args[0]);
+      if (units === undefined || units.length === 0 || units.length > 11) return undefined;
+      const sign = units[0] === PLUS || units[0] === MINUS ? units[0] : undefined;
+      const digits = sign === undefined ? units : units.slice(1);
+      if (digits.length === 0 || digits.length > 10) return undefined;
+      let value = 0;
+      for (const digit of digits) {
+        if (typeof digit !== "number" || digit < 48 || digit > 57) return undefined;
+        value = value * 10 + (digit - 48);
+      }
+      if (value === 0 || value >= INT_LIMIT) return undefined;
+      const integer = sign === MINUS ? -value : value;
+      return numberShape(["int", integer < 0, integer, createTuple([]), 0]);
+    }),
+  ];
+};

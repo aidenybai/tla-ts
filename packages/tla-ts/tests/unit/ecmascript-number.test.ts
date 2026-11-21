@@ -491,6 +491,59 @@ describe("ESNumber matches JavaScript's Number semantics", { timeout: 60_000 }, 
     expect(failures).toEqual([]);
   });
 
+  // tla-ts runs StrToNum natively for a string of decimal digits, so it must give the record
+  // StringToNumber builds, printed in the same order of fields.
+  it("reads strings with StrToNum as StringToNumber does", async () => {
+    const strings = [
+      ...Array.from({ length: 1500 }, (_, index) => String(index)),
+      ...Array.from({ length: 200 }, (_, index) => String(index * 5_368_709)),
+      ...Array.from({ length: 300 }, (_, index) => `-${index * 3_578_183}`),
+      ...Array.from({ length: 100 }, (_, index) => `+${index}`),
+      ...[
+        2 ** 30 - 1,
+        2 ** 30,
+        2 ** 30 + 1,
+        2 ** 31,
+        2 ** 53 - 1,
+        2 ** 53,
+        2 ** 53 + 1,
+        1e10,
+      ].flatMap((value) => [`${value}`, `-${value}`, `+${value}`, `0${value}`]),
+      "-0",
+      "+0",
+      "0",
+      "-00",
+      "00",
+      "007",
+      "-007",
+      "+1",
+      " 1",
+      "1 ",
+      "1e3",
+      "0x10",
+      "",
+      "-",
+      "+",
+      "1.0",
+      ".5",
+      "Infinity",
+      "+-1",
+      "--1",
+      "1-",
+      "\u0661",
+      "\uff10",
+      "1\u0661",
+    ];
+    const failures = await getFailures(
+      strings.map((text) => ({
+        name: `StrToNum(${JSON.stringify(text)})`,
+        actual: `ToString(StrToNum(${encodeString(text)}))`,
+        expected: `ToString(StringToNumber(${encodeString(text)}))`,
+      })),
+    );
+    expect(failures).toEqual([]);
+  });
+
   it.each([
     [
       "integral",
