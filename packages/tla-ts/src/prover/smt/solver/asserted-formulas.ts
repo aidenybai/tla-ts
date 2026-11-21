@@ -537,22 +537,23 @@ export class AssertedFormulas {
   private simplifyFormulas(simplify: (formula: number) => number) {
     const manager = this.manager;
     const formulas = new RefVector(manager);
-    for (let index = this.qhead; index < this.formulas.size; index++) {
-      const formula = this.formulas.items[index];
-      const result = simplify(formula);
-      if (result === formula) formulas.push(formula);
-      else {
-        this.pushAssertion(result, formulas);
-        this.isReducePending = true;
+    try {
+      for (let index = this.qhead; index < this.formulas.size; index++) {
+        const formula = this.formulas.items[index];
+        const result = simplify(formula);
+        if (result === formula) formulas.push(formula);
+        else {
+          this.pushAssertion(result, formulas);
+          this.isReducePending = true;
+        }
+        manager.decRef(result);
+        if (this.isCanceled()) return false;
       }
-      manager.decRef(result);
-      if (this.isCanceled()) {
-        formulas.reset();
-        return false;
-      }
+      this.swapFormulas(formulas);
+      return true;
+    } finally {
+      formulas.reset();
     }
-    this.swapFormulas(formulas);
-    return true;
   }
 
   private reduceAsserted() {

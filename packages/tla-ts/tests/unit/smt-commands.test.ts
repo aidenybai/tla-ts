@@ -1240,6 +1240,19 @@ describe("runSmtlibScript runs its commands as Z3 does", () => {
     ).toEqual(["unknown", "sat", "(:rlimit 1936)"]);
   });
 
+  it("frees the simplified formulas when the limit stops a simplification", () => {
+    expect(
+      run([
+        ...NO_FIXED_POINT,
+        "(set-option :rlimit 483)",
+        "(check-sat)",
+        "(set-option :rlimit 0)",
+        "(check-sat)",
+        "(get-info :rlimit)",
+      ]),
+    ).toEqual(["unknown", "sat", "(:rlimit 2047)"]);
+  });
+
   it("goes on with the model check when the limit leaves its counterexample without a model", () => {
     expect(
       run([
