@@ -1036,6 +1036,15 @@ describe("runSmtlibScript runs its commands as Z3 does", () => {
     ]);
   });
 
+  it("answers unknown when the limit stops the model finder's checkpoint", () => {
+    expect(run([...MBQI_UNDER_PUSH, "(set-option :rlimit 300)", ...CHECK_AND_MODEL])).toEqual([
+      "unknown",
+      '(:reason-unknown "canceled")',
+      "(:rlimit 344)",
+      '(error "line 18 column 10: model is not available")',
+    ]);
+  });
+
   it("reports the limit that stops a push of ctx-solver-simplify as its reason", () => {
     expect(
       run([

@@ -789,6 +789,7 @@ export const runSmtlibScript = (
         !(
           error instanceof SmtCanceledError ||
           error instanceof SmtDefaultError ||
+          error instanceof SmtTacticError ||
           isStackOverflow(error)
         )
       )
@@ -802,7 +803,7 @@ export const runSmtlibScript = (
         isOptimizing,
         isFromTactic: !isKernelChecking,
         reasonUnknown:
-          !isKernelChecking && error instanceof SmtDefaultError
+          !isKernelChecking && (error instanceof SmtDefaultError || error instanceof SmtTacticError)
             ? (reasonUnknown ?? error.message)
             : getReasonUnknown({ result: L_UNDEF, context, reasonUnknown }, deadline),
         isHoldingSolver: true,
