@@ -1,17 +1,17 @@
 import { useRef, type ReactNode } from "react";
 import { cn } from "cn";
 import { createPartsContext } from "@/lib/utils";
-import type { LineNote } from "../run-worker";
-import type { Search, SearchState } from "../search";
-import type { Source } from "../site-data";
-import { useCopy } from "../use-copy";
-import { useIsHydrated } from "../use-is-hydrated";
-import { useTokenMorph } from "../use-token-morph";
+import type { LineNote } from "@/lib/run-worker";
+import type { Search, SearchState } from "@/lib/search";
+import type { Source } from "@/lib/site-data";
+import { useIsHydrated } from "@/hooks/use-is-hydrated";
+import { useTokenMorph } from "@/hooks/use-token-morph";
 import { CodeLine } from "./code-line";
-import { CopyIcon } from "./copy-icon";
+import { CopyButton } from "./copy-button";
 import { RunIcon } from "./run-icon";
 import { SearchCell } from "./search-cell";
-import { Button } from "./ui/button";
+import { Button } from "@/components/ui/button";
+import { Tooltip } from "@/components/ui/tooltip";
 
 const NO_HIGHLIGHTS = {};
 const NO_PATH: SearchState[] = [];
@@ -42,7 +42,7 @@ interface RootProps {
   children: ReactNode;
 }
 
-export const CodeRoot = (props: RootProps) => {
+const CodeRoot = (props: RootProps) => {
   const isMultiline = props.source.lines.length > 1;
   return (
     <codeContext.PartsContext
@@ -70,7 +70,7 @@ export const CodeRoot = (props: RootProps) => {
   );
 };
 
-export const CodeContent = () => {
+const CodeContent = () => {
   const code = codeContext.useParts();
   const contentRef = useRef<HTMLElement>(null);
   const activeLine = code.path.at(0)?.line ?? code.activeLine;
@@ -119,7 +119,7 @@ interface FooterProps {
   children: ReactNode;
 }
 
-export const CodeFooter = (props: FooterProps) => (
+const CodeFooter = (props: FooterProps) => (
   <div className="relative z-10 -mr-4 -mb-4 -ml-4 flex w-[calc(100%+2rem)] shrink-0 bg-card items-center gap-1.5 border-t py-2 pr-2.5 pl-4 text-sm">
     {props.children}
   </div>
@@ -129,7 +129,7 @@ interface ActionsProps {
   children: ReactNode;
 }
 
-export const CodeActions = (props: ActionsProps) => {
+const CodeActions = (props: ActionsProps) => {
   const code = codeContext.useParts();
   return (
     <div
@@ -149,27 +149,38 @@ interface RunProps {
   onRun: () => void;
 }
 
-export const CodeRun = (props: RunProps) => {
+const CodeRun = (props: RunProps) => {
   const isHydrated = useIsHydrated();
+  const label = props.isRunning ? "Running" : props.isDone ? "Run again" : "Run";
   return (
-    <Button
-      variant={props.isDone || props.isRunning ? "outline" : "success"}
-      size="icon"
-      aria-label={props.isRunning ? "Running" : props.isDone ? "Run again" : "Run"}
-      disabled={!isHydrated}
-      aria-disabled={props.isRunning}
-      onClick={() => !props.isRunning && props.onRun()}
-    >
-      <RunIcon isRunning={props.isRunning} isDone={props.isDone} />
-    </Button>
+    <Tooltip.Root>
+      <Tooltip.Trigger
+        closeOnClick={false}
+        render={
+          <Button
+            variant={props.isDone || props.isRunning ? "outline" : "success"}
+            size="icon"
+            aria-label={label}
+            disabled={!isHydrated}
+            aria-disabled={props.isRunning}
+            onClick={() => !props.isRunning && props.onRun()}
+          />
+        }
+      >
+        <RunIcon isRunning={props.isRunning} isDone={props.isDone} />
+      </Tooltip.Trigger>
+      <Tooltip.Content>{label}</Tooltip.Content>
+    </Tooltip.Root>
   );
 };
 
-export const CodeCopy = () => {
-  const copy = useCopy(codeContext.useParts().source.code);
-  return (
-    <Button size="icon" aria-label={copy.isCopied ? "Copied" : "Copy"} onClick={copy.copy}>
-      <CopyIcon isCopied={copy.isCopied} />
-    </Button>
-  );
+const CodeCopy = () => <CopyButton text={codeContext.useParts().source.code} />;
+
+export const Code = {
+  Root: CodeRoot,
+  Content: CodeContent,
+  Footer: CodeFooter,
+  Actions: CodeActions,
+  Run: CodeRun,
+  Copy: CodeCopy,
 };

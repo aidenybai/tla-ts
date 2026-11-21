@@ -29,8 +29,23 @@ MaterializeList(s, list) ==
   ELSE LET head == MaterializeValue(s, Head(list))
            rest == MaterializeList(head.s, Tail(list))
        IN [s |-> rest.s, args |-> <<head.v>> \o rest.args]
+\* The symmetric values that a lowered set, map's keys, or object's keys holds, in their declared
+\* order, which no step of a symmetric model reads.
+SymmetricIn(set) == SelectSeq(SymmetricOrder, LAMBDA m : m \in set)
 MaterializeValue(s, v) ==
-  CASE v.type = "lobject" ->
+  CASE v.type = "lsymmetric" -> [s |-> s, v |-> Str(SymmetricUnits(v.value))]
+    [] v.type = "lsymobject" ->
+         LET keys == SymmetricIn(DOMAIN v.vals)
+             e == MaterializeList(s, [i \in DOMAIN keys |-> v.vals[keys[i]]])
+         IN NewRecord(e.s, [i \in DOMAIN keys |-> <<Str(SymmetricUnits(keys[i])), e.args[i]>>])
+    [] v.type = "lsymset" ->
+         LET elems == SymmetricIn(v.elems) IN
+         NewSet(s, [i \in DOMAIN elems |-> Str(SymmetricUnits(elems[i]))])
+    [] v.type = "lsymmap" ->
+         LET keys == SymmetricIn(DOMAIN v.vals)
+             e == MaterializeList(s, [i \in DOMAIN keys |-> v.vals[keys[i]]])
+         IN NewMap(e.s, [i \in DOMAIN keys |-> [key |-> Str(SymmetricUnits(keys[i])), value |-> e.args[i]]])
+    [] v.type = "lobject" ->
          LET e == MaterializeList(s, [i \in DOMAIN v.keys |-> v.vals[v.keys[i]]])
          IN NewRecord(e.s, [i \in DOMAIN v.keys |-> <<Str(v.keys[i]), e.args[i]>>])
     [] v.type = "larray" -> LET e == MaterializeList(s, v.elems) IN NewArray(e.s, e.args)
@@ -56,8 +71,11 @@ LowerList(s, list, depth) ==
            rest == LowerList(s, Tail(list), depth)
        IN [vs |-> <<head.v>> \o rest.vs, ids |-> head.ids \o rest.ids]
 DataOf(o, k) == o.props[PropBucket(k)][k].value
+\* Whether a value is a symmetric value's string.
+IsSymmetric(v) == v.type = "string" /\ SymmetricOf(v.value) # Empty
 LowerValue(s, v, depth) ==
-  IF v.type # "object" THEN [v |-> v, ids |-> <<>>]
+  IF IsSymmetric(v) THEN [v |-> [type |-> "lsymmetric", value |-> SymmetricOf(v.value)], ids |-> <<>>]
+  ELSE IF v.type # "object" THEN [v |-> v, ids |-> <<>>]
   ELSE IF depth > 64 THEN LowerStop("an object that holds itself")
   ELSE
   LET o == NormalObject(O(s, v)) IN
@@ -69,7 +87,12 @@ LowerValue(s, v, depth) ==
                                       [i \in DOMAIN keys |-> <<keys[i], raw[i]>>])
             THEN LowerStop("an object other than one of data properties")
             ELSE LET e == LowerList(s, raw, depth + 1)
-                 IN [v |-> LObj([i \in DOMAIN keys |-> keys[i].value], e.vs), ids |-> <<v.id>> \o e.ids]
+                     symmetric == {i \in DOMAIN keys : IsSymmetric(keys[i])}
+                 IN IF symmetric = {} THEN [v |-> LObj([i \in DOMAIN keys |-> keys[i].value], e.vs), ids |-> <<v.id>> \o e.ids]
+                    ELSE IF symmetric # DOMAIN keys THEN LowerStop("an object of a symmetric value's key and another key")
+                    ELSE [v |-> [type |-> "lsymobject", vals |-> [m \in {SymmetricOf(keys[i].value) : i \in DOMAIN keys} |->
+                                   e.vs[CHOOSE i \in DOMAIN keys : SymmetricOf(keys[i].value) = m]]],
+                          ids |-> <<v.id>> \o e.ids]
     [] o.class = "array" ->
          LET length == DataOf(o, SV("length"))
              n == NumToInt(length.value)
@@ -88,14 +111,22 @@ LowerValue(s, v, depth) ==
          IF o # MakeObject(Intrinsic(s, "SetPrototype"), "set", [setData |-> o.slots.setData])
          THEN LowerStop("a Set with properties")
          ELSE LET e == LowerList(s, o.slots.setData, depth + 1)
-              IN [v |-> [type |-> "lset", elems |-> e.vs], ids |-> <<v.id>> \o e.ids]
+                  symmetric == {i \in DOMAIN o.slots.setData : IsSymmetric(o.slots.setData[i])}
+              IN IF symmetric = {} \/ o.slots.setData = <<>> THEN [v |-> [type |-> "lset", elems |-> e.vs], ids |-> <<v.id>> \o e.ids]
+                 ELSE IF symmetric # DOMAIN o.slots.setData THEN LowerStop("a Set of a symmetric value and another value")
+                 ELSE [v |-> [type |-> "lsymset", elems |-> {e.vs[i].value : i \in DOMAIN e.vs}], ids |-> <<v.id>> \o e.ids]
     [] o.class = "map" ->
          IF o # MakeObject(Intrinsic(s, "MapPrototype"), "map", [mapData |-> o.slots.mapData])
          THEN LowerStop("a Map with properties")
          ELSE LET entries == o.slots.mapData
                   k == LowerList(s, [i \in DOMAIN entries |-> entries[i].key], depth + 1)
                   e == LowerList(s, [i \in DOMAIN entries |-> entries[i].value], depth + 1)
-              IN [v |-> [type |-> "lmap", keys |-> k.vs, vals |-> e.vs], ids |-> <<v.id>> \o k.ids \o e.ids]
+                  symmetric == {i \in DOMAIN entries : IsSymmetric(entries[i].key)}
+              IN IF symmetric = {} \/ entries = <<>> THEN [v |-> [type |-> "lmap", keys |-> k.vs, vals |-> e.vs], ids |-> <<v.id>> \o k.ids \o e.ids]
+                 ELSE IF symmetric # DOMAIN entries THEN LowerStop("a Map of a symmetric value's key and another key")
+                 ELSE [v |-> [type |-> "lsymmap", vals |-> [m \in {k.vs[i].value : i \in DOMAIN entries} |->
+                                e.vs[CHOOSE i \in DOMAIN entries : k.vs[i].value = m]]],
+                       ids |-> <<v.id>> \o k.ids \o e.ids]
     [] OTHER -> LowerStop("an object of class " \o o.class)
 \* Whether a step's state s left base as it was, but for the bindings the model lowers, whose
 \* declarative environment, at e, is env without them: every object and environment of base, and
@@ -156,9 +187,15 @@ export const getLoweredBindings = (file: ts.SourceFile, chosen: ReadonlySet<stri
       continue;
     }
     if (ts.isTypeAliasDeclaration(statement) || ts.isInterfaceDeclaration(statement)) continue;
+    // A declare binds nothing when the module runs, so the module's state stays on the heap, where
+    // reading the binding throws as in Node.
     if (
       !ts.isVariableStatement(statement) ||
-      (statement.declarationList.flags & ts.NodeFlags.BlockScoped) === 0
+      (statement.declarationList.flags & ts.NodeFlags.BlockScoped) === 0 ||
+      (ts
+        .getModifiers(statement)
+        ?.some((modifier) => modifier.kind === ts.SyntaxKind.DeclareKeyword) ??
+        false)
     ) {
       return undefined;
     }

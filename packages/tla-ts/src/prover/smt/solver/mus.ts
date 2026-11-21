@@ -1,4 +1,3 @@
-// Ported from Z3 (src/solver/mus.cpp), MIT license, see z3-license.txt.
 import type { AstManager } from "./ast";
 import { mkNot } from "./ast-util";
 import { L_TRUE, L_UNDEF } from "./lbool";
@@ -11,7 +10,7 @@ export class Mus {
 
   constructor(
     private manager: AstManager,
-    private solver: MaxsatSolver,
+    private solver: Pick<MaxsatSolver, "checkSat" | "getUnsatCore">,
   ) {
     this.lit2expr = new RefVector(manager);
     this.trail = new RefVector(manager);
@@ -34,8 +33,7 @@ export class Mus {
       return L_TRUE;
     }
     let unknown = [...literals];
-    while (unknown.length > 0) {
-      const literal = unknown.pop() as number;
+    for (let literal = unknown.pop(); literal !== undefined; literal = unknown.pop()) {
       const notLiteral = mkNot(this.manager, literal);
       this.trail.push(notLiteral);
       const status = this.solver.checkSat([...mus.items, ...unknown, notLiteral]);

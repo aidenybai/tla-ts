@@ -1,5 +1,7 @@
-import { isConstantLevel } from "./dependencies";
 import {
+  getAssumeProveBody,
+  getChildren,
+  getDefinitionExpressions,
   isLocallyResolved,
   type Definition,
   type Expression,
@@ -7,19 +9,25 @@ import {
   type SourceRange,
 } from "./ast";
 import type { ModelConfig } from "./config";
-import { getCoverageCounts, getDistinctCount, type CoverageKind } from "./coverage";
+import { getCoverageCounts, getDistinctCount, letDefinitions, type CoverageKind } from "./coverage";
 import { EXIT_STATUS, setExitCode } from "./exit-codes";
-import { substitutionFrames, withSubstitutionFrames } from "./instances";
+import {
+  frameSubstitutions,
+  getSubstitutedName,
+  isSubstitutionDefinition,
+  substitutionFrames,
+  withSubstitutionFrames,
+} from "./instances";
 import type { InstanceAction } from "./environment";
 import { formatRange, TlaError, TlaEvaluationError, UNEXPECTED_EXCEPTION } from "./errors";
 import {
-  bindDefinitions,
-  getLetSites,
   bindOperatorArguments,
   describeNode,
   evaluate,
   forEachBinding,
   getDefinition,
+  getRootKey,
+  getStartupValue,
   lookupScope,
   resolveGlobalOperator,
   type Closure,
@@ -27,14 +35,28 @@ import {
   type Scope,
 } from "./evaluate";
 import { ACTION_LEVEL, CONSTANT_LEVEL, TEMPORAL_LEVEL, VARIABLE_LEVEL } from "./levels";
-import { getLevel } from "./liveness";
-import { createRecord, createSet, createTuple, formatValue, type Value } from "./values";
+import { bindLetDefinitions, getLevelBound, getSanyLevel } from "./liveness";
+import { EMPTY_STATE } from "./runtime";
+import {
+  createRecord,
+  createSet,
+  createTuple,
+  formatValue,
+  rankString,
+  type Value,
+} from "./values";
 import { LITERAL_KINDS } from "./tlc/replay";
+import { resolveSynonym, TLC_RUNTIME_STRINGS } from "./tlc/jar-data";
+import { getSanyStandardModules } from "./sany/modules";
+import { parseModule } from "./parser";
+import { getStandardModule } from "./standard-definitions";
 import type { TlcVersion } from "./tlc/version";
 
 export interface SpecAction {
   name: string;
   location: SourceLocation;
+  head?: SourceRange;
+  body?: SourceRange;
   parameters: [string, Value][];
   expression: Expression;
   scope: Scope | undefined;
@@ -108,6 +130,20 @@ const getConstantContext = (environment: Environment, scope: Scope | undefined) 
   next: undefined,
 });
 
+const getSplitContext = (environment: Environment, scope: Scope | undefined) => ({
+  environment,
+  scope,
+  state: EMPTY_STATE,
+  next: undefined,
+});
+
+// Tool#getActionsAppl reads the level SANY gives each argument, which is constant for TLCGet.
+const hasConstantArguments = (
+  args: Expression[],
+  scope: Scope | undefined,
+  environment: Environment,
+) => args.every((arg) => getSanyLevel(arg, scope, environment) === CONSTANT_LEVEL);
+
 const getOperatorName = (expression: Expression) =>
   expression.kind === "Identifier"
     ? expression.name
@@ -115,8 +151,36 @@ const getOperatorName = (expression: Expression) =>
       ? expression.operator
       : undefined;
 
+// Tool#getActionsAppl names an action by the operator it applies, even one TLC implements, and declares it where the standard module defines the operator.
+const getStandardHead = (name: string, environment: Environment) => {
+  const module = getStandardModule(name);
+  const source =
+    module === undefined
+      ? undefined
+      : getSanyStandardModules(environment.runtime.version).get(module);
+  const definition =
+    source === undefined
+      ? undefined
+      : parseModule(source).definitions.find((item) => item.name === name);
+  return definition?.kind === "Operator" ? definition.head : undefined;
+};
+
 const getArguments = (expression: Expression) =>
   expression.kind === "Apply" ? expression.args : [];
+
+const getLetDefinition = (expression: Expression, scope: Scope | undefined) => {
+  if (!isLocallyResolved(expression)) return undefined;
+  const name = getOperatorName(expression);
+  for (let node = scope; node; node = node.parent) {
+    if (node.name === name) return letDefinitions.get(node);
+  }
+  return undefined;
+};
+
+const getDefinitionRanges = (definition: Definition | undefined) =>
+  definition?.kind === "Operator"
+    ? { head: definition.head, body: definition.body.location.range }
+    : undefined;
 
 const resolveClosure = (
   expression: Expression,
@@ -136,21 +200,10 @@ const resolveClosure = (
   return operator?.kind === "Closure" ? operator : undefined;
 };
 
-const isEvaluable = (expression: Expression, environment: Environment) => {
-  try {
-    evaluate(expression, getConstantContext(environment, undefined));
-    return true;
-  } catch (error) {
-    if (error instanceof TlaError) return false;
-    throw error;
-  }
-};
-
 const isStartupValue = (definition: Definition | undefined, environment: Environment) =>
   definition?.kind === "Operator" &&
   definition.params.length === 0 &&
-  isConstantLevel(definition, environment) &&
-  isEvaluable(definition.body, environment);
+  getStartupValue(definition, environment) !== undefined;
 
 const isConstantValue = (definition: Definition | undefined, environment: Environment) =>
   definition?.kind === "Operator" &&
@@ -159,7 +212,7 @@ const isConstantValue = (definition: Definition | undefined, environment: Enviro
   isStartupValue(definition, environment);
 
 const isConstantDefinition = (closure: Closure, environment: Environment) => {
-  const definition = getDefinition(closure.name, environment);
+  const definition = getDefinition(getRootKey(closure.name, environment), environment);
   return definition?.body === closure.body && isConstantValue(definition, environment);
 };
 
@@ -177,12 +230,7 @@ const unwrapBinding = (
   if (expression.kind === "Let") {
     return {
       expression: expression.body,
-      scope: bindDefinitions(
-        expression.definitions,
-        getConstantContext(environment, scope),
-        undefined,
-        getLetSites(expression.definitions),
-      ),
+      scope: bindLetDefinitions(expression, scope, environment),
     };
   }
   const thunk = getThunk(expression, scope);
@@ -204,6 +252,10 @@ const getParameters = (closure: Closure | undefined, scope: Scope | undefined) =
     const binding = lookupScope(scope, param.name);
     return binding?.kind === "Value" ? [[param.name, binding.value]] : [];
   });
+
+// The operator whose body an action splits from, which names a step that calls no other.
+export const getStepName = (action: SpecAction) =>
+  action.name === UNNAMED_ACTION ? undefined : action.name;
 
 const tryCollect = <Result>(collect: () => Result, fallback: () => Result) => {
   try {
@@ -229,24 +281,37 @@ const getInstanceActions = (
     return [{ ...instanceAction, parameters: [], expression: called.body, scope: called.scope }];
   }
   if (!called) return [{ ...instanceAction, parameters: [], expression, scope }];
-  if (args.some((arg) => getLevel(arg, scope, environment) !== CONSTANT_LEVEL)) {
-    return callAction();
-  }
-  return tryCollect(
-    () => [
+  if (!hasConstantArguments(args, scope, environment)) return callAction();
+  return tryCollect(() => {
+    const values = args.map((arg) => evaluate(arg, getSplitContext(environment, scope)));
+    return [
       {
         ...instanceAction,
-        parameters: args.map((arg, index): [string, Value] => [
+        parameters: values.map((value, index): [string, Value] => [
           called.params[index].name.replace(/#\d+$/, ""),
-          evaluate(arg, getConstantContext(environment, scope)),
+          value,
         ]),
-        expression,
-        scope,
+        expression: called.body,
+        scope: values.reduce<Scope | undefined>(
+          (current, value, index) => ({
+            name: called.params[index].name,
+            binding: { kind: "Value", value },
+            parent: current,
+          }),
+          called.scope,
+        ),
       },
-    ],
-    callAction,
-  );
+    ];
+  }, callAction);
 };
+
+const createRelationError = (expression: Expression) =>
+  setExitCode(
+    new TlaEvaluationError(
+      `${UNEXPECTED_EXCEPTION}The next state relation is not a boolean expression.\n${describeNode(expression)}`,
+    ),
+    EXIT_STATUS.error,
+  );
 
 const getActions = (
   expression: Expression,
@@ -254,56 +319,62 @@ const getActions = (
   closure: Closure | undefined,
   environment: Environment,
   instanceActions: Map<string, InstanceAction>,
+  definition?: Definition,
 ): SpecAction[] => {
   const createSplitAction = (): SpecAction => ({
     name: closure?.name ?? UNNAMED_ACTION,
     location: expression.location,
+    ...getDefinitionRanges(definition),
     parameters: getParameters(closure, scope),
     expression,
     scope,
   });
-  if (LITERAL_KINDS.has(expression.kind)) {
-    throw setExitCode(
-      new TlaEvaluationError(
-        `${UNEXPECTED_EXCEPTION}The next state relation is not a boolean expression.\n${describeNode(expression)}`,
-      ),
-      EXIT_STATUS.error,
-    );
-  }
+  if (LITERAL_KINDS.has(expression.kind)) throw createRelationError(expression);
   switch (expression.kind) {
     case "Let":
       return getActions(
         expression.body,
-        bindDefinitions(
-          expression.definitions,
-          getConstantContext(environment, scope),
-          undefined,
-          getLetSites(expression.definitions),
-        ),
+        bindLetDefinitions(expression, scope, environment),
         closure,
         environment,
         instanceActions,
+        definition,
       );
     case "Label":
-      return getActions(expression.body, scope, closure, environment, instanceActions);
+      return getActions(expression.body, scope, closure, environment, instanceActions, definition);
+    case "Selection":
+      // TLC's Tool#getActions takes SANY's $Nop as an action of its own.
+      return expression.location.range === undefined
+        ? getActions(
+            expression.expression,
+            scope,
+            closure,
+            environment,
+            instanceActions,
+            definition,
+          )
+        : [createSplitAction()];
     case "Or":
       return expression.operands.flatMap((operand) =>
-        getActions(operand, scope, closure, environment, instanceActions),
+        getActions(operand, scope, closure, environment, instanceActions, definition),
       );
     case "Exists":
       return tryCollect(
         () => {
           const actions: SpecAction[] = [];
-          forEachBinding(
-            expression.bounds,
-            getConstantContext(environment, scope),
-            (boundScope) => {
-              actions.push(
-                ...getActions(expression.body, boundScope, closure, environment, instanceActions),
-              );
-              return false;
-            },
-          );
+          forEachBinding(expression.bounds, getSplitContext(environment, scope), (boundScope) => {
+            actions.push(
+              ...getActions(
+                expression.body,
+                boundScope,
+                closure,
+                environment,
+                instanceActions,
+                definition,
+              ),
+            );
+            return false;
+          });
           return actions.length === 0 ? [createSplitAction()] : actions;
         },
         () => [createSplitAction()],
@@ -313,27 +384,64 @@ const getActions = (
     ? undefined
     : instanceActions.get(getOperatorName(expression) ?? "");
   const called = resolveClosure(expression, scope, environment);
+  const theorem = called && getAssumeProveBody(called.body);
+  // Deviation from TLC: Tool#getActionsAppl casts a theorem to an OpDefNode, and the ClassCastException crashes TLC unless an enclosing \E or operator catches it.
+  if (theorem) throw createRelationError(theorem);
   if (instanceAction)
     return getInstanceActions(instanceAction, expression, scope, called, environment);
-  if (!called) return [createSplitAction()];
+  const letDefinition = getLetDefinition(expression, scope);
+  const thunk = letDefinition?.kind === "Operator" ? getThunk(expression, scope) : undefined;
+  if (letDefinition && thunk) {
+    return getActions(
+      thunk.expression,
+      thunk.scope,
+      {
+        kind: "Closure",
+        name: letDefinition.name,
+        params: [],
+        body: thunk.expression,
+        scope: thunk.scope,
+        site: thunk.site,
+      },
+      environment,
+      instanceActions,
+      letDefinition,
+    );
+  }
+  if (!called) {
+    const builtin = isLocallyResolved(expression)
+      ? undefined
+      : environment.builtins.get(getOperatorName(expression) ?? "");
+    const head = builtin && getStandardHead(builtin.name, environment);
+    return [
+      builtin && head
+        ? { ...createSplitAction(), name: resolveSynonym(builtin.name), head }
+        : createSplitAction(),
+    ];
+  }
   const args = getArguments(expression);
   const calledName = isLocallyResolved(expression)
     ? called.name
     : (environment.instanceNames.get(getOperatorName(expression) ?? "") ?? called.name);
   const callAction = (): SpecAction[] => [
-    { name: calledName, location: expression.location, parameters: [], expression, scope },
+    {
+      name: calledName,
+      location: expression.location,
+      ...getDefinitionRanges(letDefinition),
+      parameters: [],
+      expression,
+      scope,
+    },
   ];
   if (isConstantDefinition(called, environment)) return callAction();
-  if (args.some((arg) => getLevel(arg, scope, environment) !== CONSTANT_LEVEL)) {
-    return callAction();
-  }
+  if (!hasConstantArguments(args, scope, environment)) return callAction();
   return tryCollect(() => {
     const boundScope = args.reduce<Scope | undefined>(
       (current, arg, index) => ({
         name: called.params[index].name,
         binding: {
           kind: "Value",
-          value: evaluate(arg, getConstantContext(environment, scope)),
+          value: evaluate(arg, getSplitContext(environment, scope)),
         },
         parent: current,
       }),
@@ -345,35 +453,103 @@ const getActions = (
       { ...called, name: calledName },
       environment,
       instanceActions,
+      letDefinition,
     );
   }, callAction);
+};
+
+// TLC bounds the level of a definition without the substitutions of its instances, so an instance's declaration counts as a variable only by the name of a root variable.
+const isVariableBound = (
+  expression: Expression,
+  environment: Environment,
+  visited: Set<Definition>,
+): boolean => {
+  const substituted = getSubstitutedName(expression);
+  if (substituted !== undefined) return environment.variableIndex.has(substituted);
+  if (expression.kind === "Enabled") return true;
+  const name = isLocallyResolved(expression) ? undefined : getOperatorName(expression);
+  if (name !== undefined && environment.variableIndex.has(name)) return true;
+  const definition = name === undefined ? undefined : getDefinition(name, environment);
+  if (definition?.kind === "Operator" && !visited.has(definition)) {
+    visited.add(definition);
+    if (isVariableBound(definition.body, environment, visited)) return true;
+  }
+  const children =
+    expression.kind === "Let"
+      ? [
+          ...expression.definitions
+            .filter((item) => !isSubstitutionDefinition(item))
+            .flatMap(getDefinitionExpressions),
+          expression.body,
+        ]
+      : getChildren(expression);
+  return children.some((child) => isVariableBound(child, environment, visited));
 };
 
 const describeSpecification = (
   expression: Expression,
   scope: Scope | undefined,
   environment: Environment,
+  instanceActions: Map<string, InstanceAction>,
   description: SpecDescription,
   next: NextItem[],
   frames: Expression[] = [],
 ): void => {
   const recurse = (inner: Expression, innerScope: Scope | undefined, innerFrames = frames) =>
-    describeSpecification(inner, innerScope, environment, description, next, innerFrames);
-  const createConjunct = (name: string, conjunct: Expression, conjunctScope: Scope | undefined) =>
-    createAction(name, withSubstitutionFrames(conjunct, frames), conjunctScope);
-  const unwrapped = unwrapBinding(expression, scope, environment);
+    describeSpecification(
+      inner,
+      innerScope,
+      environment,
+      instanceActions,
+      description,
+      next,
+      innerFrames,
+    );
+  const substitutionFrame = frames.find((frame) => frameSubstitutions.has(frame));
+  const createConjunct = (
+    name: string,
+    conjunct: Expression,
+    conjunctScope: Scope | undefined,
+  ) => ({
+    ...createAction(name, withSubstitutionFrames(conjunct, frames), conjunctScope),
+    location: substitutionFrame?.location ?? conjunct.location,
+  });
+  const letDefinition = getLetDefinition(expression, scope);
+  const thunk = letDefinition?.kind === "Operator" ? getThunk(expression, scope) : undefined;
+  const unwrapped = thunk ? undefined : unwrapBinding(expression, scope, environment);
   if (unwrapped) {
     recurse(unwrapped.expression, unwrapped.scope);
     return;
   }
-  const called = resolveClosure(expression, scope, environment);
+  const called: Closure | undefined =
+    letDefinition && thunk
+      ? {
+          kind: "Closure",
+          name: letDefinition.name,
+          params: [],
+          body: thunk.expression,
+          scope: thunk.scope,
+          site: thunk.site,
+        }
+      : resolveClosure(expression, scope, environment);
   if (called && isConstantDefinition(called, environment)) return;
   const calledFrames = called
     ? [...frames, ...(substitutionFrames.get(called.body) ?? [])]
     : frames;
   if (called && called.params.length === 0) {
-    if (getLevel(called.body, called.scope, environment) === VARIABLE_LEVEL) {
-      description.inits.push(createConjunct(called.name, called.body, called.scope));
+    if (
+      getLevelBound(called.body, called.scope, environment) === VARIABLE_LEVEL &&
+      (!substitutionFrame || isVariableBound(called.body, environment, new Set()))
+    ) {
+      const name = isLocallyResolved(expression) ? undefined : getOperatorName(expression);
+      description.inits.push({
+        ...createConjunct(called.name, called.body, called.scope),
+        ...(name === undefined
+          ? getDefinitionRanges(letDefinition)
+          : substitutionFrame
+            ? getDefinitionRanges(getDefinition(name, environment))
+            : instanceActions.get(name)),
+      });
       return;
     }
     recurse(called.body, called.scope, calledFrames);
@@ -399,7 +575,15 @@ const describeSpecification = (
     description.temporals.push(createConjunct(UNNAMED_ACTION, expression, scope));
     return;
   }
-  const level = getLevel(expression, scope, environment);
+  const level = getLevelBound(expression, scope, environment);
+  // SpecProcessor#processConfigSpec drops a name whose value is TRUE, though it keeps a formula such as 1 = 1.
+  if (
+    expression.kind === "Identifier" &&
+    level === CONSTANT_LEVEL &&
+    evaluate(expression, getConstantContext(environment, scope)) === true
+  ) {
+    return;
+  }
   if (level <= VARIABLE_LEVEL) {
     description.inits.push(createConjunct(UNNAMED_ACTION, expression, scope));
   } else if (level === TEMPORAL_LEVEL) {
@@ -448,14 +632,14 @@ const describeProperty = (
     const inner = expression.expression;
     if (inner.kind === "BoxAction") {
       description.impliedActions.push(createAction(configName, inner));
-    } else if (getLevel(inner, scope, environment) < ACTION_LEVEL) {
+    } else if (getLevelBound(inner, scope, environment) < ACTION_LEVEL) {
       description.invariants.push(createAction(configName, inner));
     } else {
       description.impliedTemporals.push(createAction(configName, expression));
     }
     return;
   }
-  const level = getLevel(expression, scope, environment);
+  const level = getLevelBound(expression, scope, environment);
   if (level <= VARIABLE_LEVEL) {
     description.impliedInits.push(createAction(configName, expression));
   } else if (level === TEMPORAL_LEVEL) {
@@ -464,7 +648,7 @@ const describeProperty = (
 };
 
 const getOperatorDefinition = (name: string, environment: Environment) => {
-  const definition = getDefinition(name, environment);
+  const definition = getDefinition(getRootKey(name, environment), environment);
   return definition?.kind === "Operator" && !isConstantValue(definition, environment)
     ? definition
     : undefined;
@@ -483,7 +667,14 @@ export const getSpecDescription = (
       ? undefined
       : getOperatorDefinition(config.specification, environment);
   if (specification) {
-    describeSpecification(specification.body, undefined, environment, description, next);
+    describeSpecification(
+      specification.body,
+      undefined,
+      environment,
+      instanceActions,
+      description,
+      next,
+    );
     next.forEach((item) =>
       description.actions.push(
         ...(item.frames.length > 0
@@ -501,10 +692,14 @@ export const getSpecDescription = (
     );
   }
   const init =
-    config.init === undefined ? undefined : resolveGlobalOperator(config.init, environment);
+    config.init === undefined
+      ? undefined
+      : resolveGlobalOperator(getRootKey(config.init, environment), environment);
   if (init?.kind === "Closure") description.inits.push(createAction(config.init ?? "", init.body));
   const nextOperator =
-    config.next === undefined ? undefined : resolveGlobalOperator(config.next, environment);
+    config.next === undefined
+      ? undefined
+      : resolveGlobalOperator(getRootKey(config.next, environment), environment);
   if (nextOperator?.kind === "Closure") {
     description.actions.push(
       ...getActions(
@@ -516,6 +711,8 @@ export const getSpecDescription = (
       ),
     );
   }
+  // TLC creates the checker, which interns these, once Tool's constructor has split the next-state relation.
+  TLC_RUNTIME_STRINGS.forEach(rankString);
   return description;
 };
 
@@ -537,6 +734,7 @@ export const getSubscriptVariables = (
       return expression.elements.every((element) => collect(element, innerScope));
     }
     if (expression.kind === "Label") return collect(expression.body, innerScope);
+    if (expression.kind === "Selection") return collect(expression.expression, innerScope);
     const unwrapped = unwrapBinding(expression, innerScope, environment);
     if (unwrapped) return collect(unwrapped.expression, unwrapped.scope);
     const argument =
@@ -556,7 +754,7 @@ export const getSubscriptVariables = (
     }
     const called = resolveClosure(expression, innerScope, environment);
     if (!called || called.params.length !== getArguments(expression).length) return true;
-    const definition = getDefinition(called.name, environment);
+    const definition = getDefinition(getRootKey(called.name, environment), environment);
     if (definition?.body === called.body && isStartupValue(definition, environment)) return true;
     return collect(called.body, getCallScope(called, expression, innerScope, environment));
   };

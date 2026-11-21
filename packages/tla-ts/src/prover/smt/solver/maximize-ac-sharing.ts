@@ -1,4 +1,3 @@
-// Ported from Z3 (src/ast/rewriter/maximize_ac_sharing.cpp), MIT license, see z3-license.txt.
 import { OP_ADD, OP_BADD, OP_BAND, OP_BMUL, OP_BOR, OP_OR } from "./ast";
 import { RewriterTpl } from "./rewriter-tpl";
 import { shrink } from "./array";
@@ -85,13 +84,27 @@ export class MaxBvSharing extends RewriterTpl {
     );
   }
 
+  reset() {
+    this.pairCache.clear();
+  }
+
+  release() {
+    this.restoreEntries(0);
+    super.release();
+  }
+
   pushScope() {
     this.isInit = true;
     this.pairScopes.push(this.entries.length);
   }
 
-  popScope() {
-    const size = this.pairScopes.pop() as number;
+  popScope(numScopes: number) {
+    const newLevel = this.pairScopes.length - numScopes;
+    this.restoreEntries(this.pairScopes[newLevel]);
+    this.pairScopes.length = newLevel;
+  }
+
+  private restoreEntries(size: number) {
     for (let index = this.entries.length - 1; index >= size; index--) {
       const entry = this.entries[index];
       this.pairCache

@@ -1,7 +1,6 @@
 import type {
   AssumeProve,
   Assumption,
-  Bound,
   BoundPattern,
   CaseArm,
   Declaration,
@@ -22,9 +21,11 @@ import type {
   StepBody,
   UseOrHide,
 } from "./ast";
-import { createSanyError, formatRange, TlaSyntaxError } from "./errors";
+import { TlaSyntaxError } from "./errors";
 import { getNumeralValue, readAtAsIdentifier, tokenize, type Token } from "./lexer";
+import { getDefEntryErrors, type DefEntryError } from "./sany/generator-def-entries";
 import { getSanyParseError } from "./sany/parse-error";
+import { createSourceFile } from "./sany/source";
 
 interface Precedence {
   low: number;
@@ -252,6 +253,7 @@ const OPERATOR_ARGUMENTS = new Set([
 
 const SELECTOR_SYMBOLS = new Set(["<<", ">>", ":", "@", "("]);
 
+// Deviation from SANY: TLAplusParser#OpOrExpr's lookahead omits PROPOSITION, LEMMA and COROLLARY, so SANY parses an operator argument before them as an expression.
 const UNIT_KEYWORDS = new Set([
   "ASSUME",
   "ASSUMPTION",
@@ -478,13 +480,76 @@ const getOperatorApplication = (
   }
 };
 
-export const extractModule = (source: string, name: string) => {
-  const header = new RegExp(`^-{4,}\\s*MODULE\\s+${name}\\s*-{3,}$`);
-  const lines = source.replace(/\r?\n$/, "").split(/\r?\n/);
-  const start = lines.findIndex((line) => header.test(line));
+export const parenthesizedRanges = new WeakMap<Expression, SourceRange>();
+
+export const defEntryErrors = new WeakMap<Expression, DefEntryError[]>();
+
+export const getDefEntryBinder = (expression: Expression): Expression | undefined => {
+  if (parenthesizedRanges.has(expression)) return undefined;
+  const binder =
+    expression.kind === "UnboundedQuantifier"
+      ? { name: expression.names[0], range: expression.nameRanges?.[0] }
+      : expression.kind === "Choose" && expression.pattern.kind === "Name"
+        ? { name: expression.pattern.name, range: expression.pattern.ranges?.[0] }
+        : expression.kind === "SetFilter" && expression.bound.pattern.kind === "Name"
+          ? { name: expression.bound.pattern.name, range: expression.bound.pattern.ranges?.[0] }
+          : undefined;
+  const range = binder?.range;
+  return binder && range
+    ? { kind: "Identifier", name: binder.name, location: { ...range.start, range } }
+    : undefined;
+};
+
+interface AtStep {
+  operator: string;
+  at: Expression;
+  right: Expression;
+}
+
+export const getAtSteps = (steps: ProofStep[]) => {
+  const atSteps = new Map<ProofStep, AtStep>();
+  steps.reduce((isPreviousInfix, step) => {
+    const body = step.body;
+    if (body.kind !== "Assert" || body.statement.kind === "AssumeProve") return false;
+    // SANY keeps the right side of the step before a SUFFICES step for an @ after it.
+    if (body.isSuffices) return isPreviousInfix;
+    const statement = body.statement;
+    const infix = parenthesizedRanges.has(statement)
+      ? undefined
+      : statement.kind === "Apply" && statement.args.length === 2 && !statement.argumentsRange
+        ? { operator: statement.operator, operands: statement.args }
+        : (statement.kind === "And" || statement.kind === "Or") && !statement.isBulleted
+          ? {
+              operator: statement.kind === "And" ? "\\land" : "\\lor",
+              operands: statement.operands,
+            }
+          : undefined;
+    const at = infix?.operands.length === 2 ? infix.operands[0] : undefined;
+    if (isPreviousInfix && infix && at?.kind === "ExceptAt" && !parenthesizedRanges.has(at)) {
+      atSteps.set(step, { operator: infix.operator, at, right: infix.operands[1] });
+    }
+    return infix !== undefined;
+  }, false);
+  return atSteps;
+};
+
+// TLC's markers use Java's `.`, which excludes \u0085, \u2028 and \u2029, and Java's \s, which matches only ASCII whitespace.
+export const getMonolithSection = (source: string, isStart: (line: string) => boolean) => {
+  const lines = source.replace(/(?:\r\n|\r|\n)$/, "").split(/\r\n|\r|\n/);
+  const start = lines.findIndex(isStart);
   if (start === -1) return undefined;
-  const end = lines.findIndex((line, index) => index > start && line.startsWith("===="));
-  return `${lines.slice(start, end === -1 ? undefined : end + 1).join("\n")}\n`;
+  const end = lines.findIndex(
+    (line, index) => index > start && /^====[^\u0085\u2028\u2029]*$/.test(line),
+  );
+  return { lines: lines.slice(start, end === -1 ? undefined : end + 1), isEnded: end !== -1 };
+};
+
+export const extractModule = (source: string, name: string) => {
+  const section = getMonolithSection(
+    source,
+    (line) => /^-{4,}[ \t\v\f]*MODULE[ \t\v\f]+(\w+)[ \t\v\f]*-{3,}$/.exec(line)?.[1] === name,
+  );
+  return section && `${section.lines.join("\n")}\n`;
 };
 
 type ParseMode = "tlc" | "tlapm" | "sany";
@@ -501,8 +566,6 @@ const parse = (
   let lastOperator: Precedence | undefined;
   let precedingOperator: Precedence | undefined;
   const recursiveScopes: Set<string>[] = [];
-  const factNames = new Set<string>();
-  const proofScopes: Set<string>[] = [];
   const openModules: Module[] = [];
   // Pco's backtracking: a failure not past a commit rewinds to its attempt's frame.
   let attemptFrame: number | undefined;
@@ -654,6 +717,7 @@ const parse = (
     return result;
   };
 
+  // Deviation from SANY: TLAplusParser#belchDEF reads a field named THEOREM, AXIOM, DOMAIN or a like keyword as that keyword, so SANY rejects the definition after it.
   const isFieldName = (token: Token) =>
     (token.kind === "Identifier" ||
       token.kind === "Keyword" ||
@@ -664,6 +728,23 @@ const parse = (
     const token = peek(offset);
     return token.text === text && token.kind !== "String" && token.kind !== "End";
   };
+
+  // SANY's lexer reads a [] right before ASSUME or PROVE as one token, []ASSUME or []PROVE; tlapm has neither.
+  const isBoxAt = (keyword: "ASSUME" | "PROVE", offset = 0) => {
+    const box = peek(offset);
+    const next = peek(offset + 1);
+    return (
+      !isTlapm &&
+      box.kind === "Operator" &&
+      box.text === "[]" &&
+      next.kind === "Keyword" &&
+      next.text === keyword &&
+      next.line === box.line &&
+      next.column === box.endColumn + 1
+    );
+  };
+
+  const isAssumeAt = (offset = 0) => isAt("ASSUME", offset) || isBoxAt("ASSUME", offset);
 
   const advance = () => {
     const token = peek();
@@ -786,7 +867,9 @@ const parse = (
     return bounds.flat();
   };
 
-  const parseSubscript = (): { subscript: Expression; lastArgs: Expression[] } => {
+  const parseSubscript = (
+    isFairness: boolean,
+  ): { subscript: Expression; lastArgs: Expression[] } => {
     const token = peek();
     if (isTlapm && BUILTIN_CONSTANTS.has(token.text)) {
       const start = cursor;
@@ -814,22 +897,27 @@ const parse = (
         advance();
         elementArgs.push(parseElement(true));
       }
-      const prefixArgs = elementArgs.slice(0, -1);
+      const lastArgs = elementArgs[elementArgs.length - 1];
+      const isHooked = isFairness && !isTlapm && lastArgs.length > 0 && isAt("(");
+      const appliedArgs = isHooked ? elementArgs : [...elementArgs.slice(0, -1), []];
+      const argumentCounts = appliedArgs.map((args) => args.length);
       const location = getLocation(token);
-      location.range = { ...getRange(start), end: selectorRanges[selectorRanges.length - 1].end };
+      location.range = isHooked
+        ? getRange(start)
+        : { ...getRange(start), end: selectorRanges[selectorRanges.length - 1].end };
       const name = names.join("!");
-      const subscript: Expression = prefixArgs.every((args) => args.length === 0)
+      const subscript: Expression = argumentCounts.every((count) => count === 0)
         ? { kind: "Identifier", name, location }
         : {
             kind: "Apply",
             operator: name,
-            args: prefixArgs.flat(),
-            argumentCounts: [...prefixArgs.map((args) => args.length), 0],
-            argumentsRange: location.range,
+            args: appliedArgs.flat(),
+            ...(argumentCounts.slice(0, -1).some((count) => count > 0) && { argumentCounts }),
+            argumentsRange: isHooked ? lastArgumentsRange : location.range,
             selectorRanges,
             location,
           };
-      return { subscript, lastArgs: elementArgs[elementArgs.length - 1] };
+      return { subscript, lastArgs: isHooked ? [] : lastArgs };
     }
     if (isAt("<<") || isAt("(") || isAt("{") || isAt("[") || isTlapmAtom) {
       const start = cursor;
@@ -1032,22 +1120,45 @@ const parse = (
       }
       if (accept("EXCEPT")) {
         const updates = parseSeparated(() => {
+          const heirStarts = [cursor];
           expect("!");
-          const path: ExceptPathStep[] = [];
+          const components: (string | Expression[])[] = [];
           while (isAt(".") || isAt("[")) {
+            heirStarts.push(cursor);
             if (accept(".")) {
               if (!isFieldName(peek()))
                 throw createUnexpected(`Expected a field name but found ${describeToken(peek())}`);
               if (!isTlapm && isAt("@")) throw createUnexpected("@ used in !.@");
-              path.push({ kind: "Field", name: advance().text });
+              components.push(advance().text);
               continue;
             }
             expect("[");
-            path.push({ kind: "Index", args: parseSeparated(() => parseExpression()) });
+            components.push(parseSeparated(() => parseExpression()));
             expect("]");
           }
+          heirStarts.push(cursor, cursor + 1);
           expect("=");
-          return { path, value: parseExpression() };
+          const value = parseExpression();
+          heirStarts.push(cursor);
+          const getHeirRange = (index: number) =>
+            getRange(heirStarts[index], heirStarts[index + 1] - 1);
+          return {
+            path: components.map((component, index): ExceptPathStep =>
+              typeof component === "string"
+                ? { kind: "Field", name: component }
+                : {
+                    kind: "Index",
+                    args: component,
+                    // SANY's Generator locates the $Tuple of component i at heir 2i + 1 of its ExceptSpec, not i + 1.
+                    // Deviation from SANY: past the last heir, that throws ArrayIndexOutOfBoundsException; tla-ts locates it at the component.
+                    tupleRange: getHeirRange(
+                      2 * index + 1 < heirStarts.length - 1 ? 2 * index + 1 : index + 1,
+                    ),
+                  },
+            ),
+            value,
+            range: getRange(heirStarts[0]),
+          };
         });
         expect("]");
         return { kind: "Except", function: expression, updates, location };
@@ -1062,7 +1173,7 @@ const parse = (
       return {
         kind: "BoxAction",
         action: expression,
-        subscript: parseSubscript().subscript,
+        subscript: parseSubscript(false).subscript,
         location,
       };
     });
@@ -1093,6 +1204,7 @@ const parse = (
         }
         cursor = checkpoint;
       }
+      // Deviation from SANY: TLAplusParser#matchFcnConst reads the a, e in {a, e \in S} or the <<1, 2>> in {<<1, 2>> \in S} as a bound, a bug its comment names; tla-ts reads a set enumeration, as the grammar does.
       const first =
         peek().kind === "Identifier" && isAt("\\in", 1) ? parseSetMembership() : parseExpression();
       if (accept(":")) {
@@ -1117,7 +1229,7 @@ const parse = (
       return {
         kind: "AngleAction",
         action: elements[0],
-        subscript: commit(parseSubscript).subscript,
+        subscript: commit(() => parseSubscript(false)).subscript,
         location,
       };
     }
@@ -1165,7 +1277,7 @@ const parse = (
       const condition = parseExpression();
       expect("->");
       arms.push({ condition, body: parseExpression() });
-    } while (accept("[]"));
+    } while (!isBoxAt("PROVE") && accept("[]"));
     return { kind: "Case", arms, other: undefined, location: getLocation(start) };
   };
 
@@ -1202,6 +1314,55 @@ const parse = (
     return { kind: "Name", name: token.text, args: isAt("(") ? parseArguments() : [] };
   };
 
+  const parseSelections = (
+    name: string,
+    args: Expression[],
+    argumentsRange: SourceRange | undefined,
+    start: number,
+    location: SourceLocation,
+  ): Expression => {
+    const selectors: Selector[] = [{ kind: "Name", name, args }];
+    const selectorRanges = [getRange(start, start)];
+    const argumentRanges = [argumentsRange];
+    while (isSelectorAhead()) {
+      advance();
+      const selectorStart = cursor;
+      lastArgumentsRange = undefined;
+      const selector = parseSelector();
+      selectorRanges.push(
+        selector.kind === "Bound"
+          ? getRange(selectorStart)
+          : getRange(selectorStart, selectorStart),
+      );
+      selectors.push(selector);
+      argumentRanges.push(lastArgumentsRange);
+    }
+    const names = selectors.flatMap((selector) =>
+      selector.kind === "Name" ? [selector.name] : [],
+    );
+    const operator = names.join("!");
+    const qualifiedArgs = selectors.flatMap((selector) =>
+      "args" in selector ? selector.args : [],
+    );
+    const argumentCounts = selectors.map((selector) =>
+      "args" in selector ? selector.args.length : 0,
+    );
+    return names.length < selectors.length
+      ? { kind: "Subexpression", selectors, selectorRanges, argumentRanges, location }
+      : qualifiedArgs.length === 0
+        ? { kind: "Identifier", name: operator, selectorRanges, location }
+        : {
+            kind: "Apply",
+            operator,
+            args: qualifiedArgs,
+            ...(argumentCounts.slice(0, -1).some((count) => count > 0) && { argumentCounts }),
+            argumentsRange: argumentRanges.at(-1) ?? getRange(start),
+            selectorRanges,
+            argumentRanges,
+            location,
+          };
+  };
+
   const parsePrimary = (preceding?: Precedence): Expression => {
     const start = cursor;
     const token = advance();
@@ -1211,8 +1372,20 @@ const parse = (
       expect(":");
       return { kind: "Lambda", params, body: parseExpression(), location };
     }
-    if (token.kind === "Number")
-      return { kind: "Number", value: getNumeralValue(token.text), text: token.text, location };
+    if (token.kind === "Number") {
+      // SANY's Number() reads NUMBER_LITERAL [DOT NUMBER_LITERAL], so spaces and comments may surround the point.
+      if (isTlapm || !isAt(".") || peek(1).kind !== "Number") {
+        return { kind: "Number", value: getNumeralValue(token.text), text: token.text, location };
+      }
+      advance();
+      const fraction = advance();
+      const based = token.text.startsWith("\\") ? token : fraction;
+      // Deviation from SANY: DecimalNode throws NumberFormatException on a based part, as in \b1.1; tla-ts rejects the part as a syntax error.
+      if (based.text.startsWith("\\")) {
+        throw createError(`Expected decimal digits but found ${based.text}`, based);
+      }
+      return { kind: "Decimal", text: `${token.text}.${fraction.text}`, location };
+    }
     if (token.kind === "Decimal") return { kind: "Decimal", text: token.text, location };
     if (token.kind === "String") return { kind: "String", value: token.text, location };
     const isStep = token.kind === "Step" && isStepReference(token);
@@ -1253,61 +1426,51 @@ const parse = (
       if (name === "@" && !hasArguments && !isSelectorAhead())
         return { kind: "ExceptAt", location };
       const args = hasArguments ? parseArguments() : [];
-      const argumentRanges = [hasArguments ? lastArgumentsRange : undefined];
       if (!isSelectorAhead()) {
         return hasArguments
           ? { kind: "Apply", operator: name, args, argumentsRange: lastArgumentsRange, location }
           : { kind: "Identifier", name, location };
       }
-      const selectors: Selector[] = [{ kind: "Name", name, args }];
-      const selectorRanges = [getRange(start, start)];
-      while (isSelectorAhead()) {
-        advance();
-        selectorRanges.push(getRange(cursor, cursor));
-        lastArgumentsRange = undefined;
-        selectors.push(parseSelector());
-        argumentRanges.push(lastArgumentsRange);
-      }
-      const names = selectors.flatMap((selector) =>
-        selector.kind === "Name" ? [selector.name] : [],
+      return parseSelections(
+        name,
+        args,
+        hasArguments ? lastArgumentsRange : undefined,
+        start,
+        location,
       );
-      const operator = names.join("!");
-      const qualifiedArgs = selectors.flatMap((selector) =>
-        "args" in selector ? selector.args : [],
-      );
-      const argumentCounts = selectors.map((selector) =>
-        "args" in selector ? selector.args.length : 0,
-      );
-      const argumentsRange = argumentRanges.at(-1) ?? getRange(start);
-      return names.length < selectors.length
-        ? { kind: "Subexpression", selectors, selectorRanges, argumentRanges, location }
-        : qualifiedArgs.length === 0
-          ? { kind: "Identifier", name: operator, selectorRanges, location }
-          : {
-              kind: "Apply",
-              operator,
-              args: qualifiedArgs,
-              ...(argumentCounts.slice(0, -1).some((count) => count > 0) && { argumentCounts }),
-              argumentsRange,
-              selectorRanges,
-              argumentRanges,
-              location,
-            };
     }
-    if (token.kind === "Operator" && isOperatorName(token.text) && isAt("(")) {
+    const isOperatorNamed =
+      token.kind === "Operator" && (isOperatorName(token.text) || (token.text === "'" && !isTlapm));
+    if (isOperatorNamed && isAt("(")) {
       const args = parseArguments();
+      if (!isTlapm && isSelectorAhead()) {
+        return parseSelections(token.text, args, lastArgumentsRange, start, location);
+      }
       // Deviation from TLC: SANY's built-in \X has no definition for TLC to evaluate, a TLC bug.
-      return mode === "tlc" && token.text === "\\X" && args.length === 2
-        ? { kind: "Product", factors: args, location }
-        : { kind: "Apply", operator: token.text, spelling: token.spelling, args, location };
+      if (mode === "tlc" && token.text === "\\X" && args.length === 2) {
+        return { kind: "Product", factors: args, location };
+      }
+      return token.text === "'" && args.length === 1
+        ? { kind: "Prime", expression: args[0], location }
+        : {
+            kind: "Apply",
+            operator: token.text,
+            spelling: token.spelling,
+            args,
+            argumentsRange: lastArgumentsRange,
+            location,
+          };
     }
-    if (token.kind === "Operator" && isOperatorName(token.text) && !isTlapm) {
-      return { kind: "Identifier", name: token.text, spelling: token.spelling, location };
+    if (isOperatorNamed && !isTlapm) {
+      return isSelectorAhead()
+        ? parseSelections(token.text, [], undefined, start, location)
+        : { kind: "Identifier", name: token.text, spelling: token.spelling, location };
     }
     switch (token.text) {
       case "(": {
         const expression = withBracketLayout(() => parseExpression());
         expect(")");
+        parenthesizedRanges.set(expression, getRange(start));
         return expression;
       }
       case "[":
@@ -1335,22 +1498,28 @@ const parse = (
       case "LET": {
         const definitions: Definition[] = [];
         const instances: Instance[] = [];
+        const recursive: Declaration[] = [];
         recursiveScopes.push(new Set());
-        while (!accept("IN")) {
+        do {
           if (isTlapm && isAt("RECURSIVE")) throw createUnexpected("Unexpected keyword RECURSIVE");
           if (accept("RECURSIVE")) {
-            declareRecursive();
+            recursive.push(...declareRecursive());
+            openModules[openModules.length - 1].hasRecursiveLet = true;
             continue;
           }
           const unit = parseDefinition(!isTlapm && accept("LOCAL"));
           if (unit.kind === "Instance") instances.push(unit);
           else definitions.push(unit);
-        }
+        } while (!accept("IN"));
         recursiveScopes.pop();
-        const body = parseExpression();
-        return instances.length === 0
-          ? { kind: "Let", definitions, body, location }
-          : { kind: "Let", definitions, instances, body, location };
+        return {
+          kind: "Let",
+          definitions,
+          ...(instances.length > 0 && { instances }),
+          ...(recursive.length > 0 && { recursive }),
+          body: parseExpression(),
+          location,
+        };
       }
       case "CHOOSE": {
         const pattern = parsePattern();
@@ -1360,7 +1529,7 @@ const parse = (
       }
       case "WF_":
       case "SF_": {
-        const subscript = parseSubscript();
+        const subscript = parseSubscript(true);
         const action =
           !isAt("(") && subscript.lastArgs.length === 1
             ? subscript.lastArgs[0]
@@ -1856,6 +2025,7 @@ const parse = (
     }
     const name = expectIdentifier();
     if (accept("[")) {
+      // Deviation from SANY: TLAplusParser#belchDEF takes the LET's == in f[v \in LET N == 1 IN {N}] == v for the definition's and rejects it; tla-ts reads it as the grammar does.
       const bounds = withBracketLayout(() => parseBounds());
       expect("]");
       expect("==");
@@ -1873,8 +2043,9 @@ const parse = (
     const params = parseParams();
     expect("==");
     if (isAt("INSTANCE")) {
+      const head = getRange(start, cursor - 2);
       const instance = parseInstance(name, params, isLocal, location);
-      return { ...instance, definitionRange: getRange(definitionStart) };
+      return { ...instance, definitionRange: getRange(definitionStart), head };
     }
     return parseOperator(name, params);
   };
@@ -1916,10 +2087,16 @@ const parse = (
 
   const parseDeclarationUnit = (): Declaration => {
     const location = getLocation(peek());
-    if (isAt("_") && peek(1).kind === "Operator") {
+    const isOperatorDeclaration =
+      isAt("_") &&
+      peek(1).kind === "Operator" &&
+      (INFIX_OPERATORS.has(peek(1).text) || DEFINABLE_POSTFIX_OPERATORS.has(peek(1).text));
+    if (isOperatorDeclaration) {
       advance();
       const name = advance().text;
-      return { name, arity: accept("_") ? 2 : 1, location };
+      const isInfix = INFIX_OPERATORS.has(name);
+      if (isInfix) expect("_");
+      return { name, arity: isInfix ? 2 : 1, location };
     }
     const isPrefixOperator =
       peek().kind !== "String" &&
@@ -2029,23 +2206,6 @@ const parse = (
     return isFirst ? level > outer : proofLevels[top] === level;
   };
 
-  const isDeclared = (name: string) =>
-    !factNames.has(name) &&
-    openModules.some(
-      (module) =>
-        module.constants.some((constant) => constant.name === name) ||
-        module.variables.some((variable) => variable.name === name) ||
-        module.definitions.some((definition) => definition.name === name),
-    );
-
-  const isHideFact = (fact: Fact) => {
-    if (fact.kind === "ModuleFact" || fact.kind === "Subexpression") return true;
-    if (fact.kind === "Apply") return fact.operator.includes("!");
-    if (fact.kind !== "Identifier") return false;
-    if (fact.name.startsWith("<") || fact.name.includes("!")) return true;
-    return !BUILTIN_CONSTANTS.has(fact.name) && !isDeclared(fact.name);
-  };
-
   const isFactAhead = () => {
     const token = peek();
     if (token.kind === "Step") return isStepReference(token);
@@ -2082,23 +2242,6 @@ const parse = (
     );
   };
 
-  const declareProofSymbol = (name: string) => proofScopes[proofScopes.length - 1]?.add(name);
-
-  const withProofScope = <Result>(parse: () => Result) => {
-    proofScopes.push(new Set());
-    const result = parse();
-    proofScopes.pop();
-    return result;
-  };
-
-  const isDeclaredSymbol = (name: string) =>
-    proofScopes.some((scope) => scope.has(name)) ||
-    openModules.some(
-      (module) =>
-        module.constants.some((constant) => constant.name === name) ||
-        module.variables.some((variable) => variable.name === name),
-    );
-
   const parseDefinable = (): Fact => {
     const start = cursor;
     const token = peek();
@@ -2120,18 +2263,23 @@ const parse = (
     );
   };
 
-  const parseDefs = () => {
-    if (isTlapm) return parseSeparated(parseDefinable);
-    const defs = parseSeparated(parseFact);
-    const invalid =
-      mode === "tlc"
-        ? defs.find((def) => def.kind === "Identifier" && isDeclaredSymbol(def.name))
-        : undefined;
-    if (invalid) {
-      throw createError("DEF clause entry should describe a defined operator", invalid.location);
-    }
-    return defs;
-  };
+  const parseDefs = () =>
+    parseSeparated(() => {
+      if (isTlapm) return parseDefinable();
+      const fact = parseFact();
+      const isName =
+        (fact.kind === "Identifier" ||
+          fact.kind === "Subexpression" ||
+          fact.kind === "OperatorReference") &&
+        !parenthesizedRanges.has(fact);
+      if (fact.kind !== "ModuleFact" && !isName) {
+        defEntryErrors.set(
+          fact,
+          getDefEntryErrors(createSourceFile(openModules[0].name, source), fact),
+        );
+      }
+      return fact;
+    });
 
   // tlapm's usebody reads facts while an expression starts after the comma.
   const parseTlapmFacts = (): Fact[] => {
@@ -2163,25 +2311,16 @@ const parse = (
     const keyword = advance();
     const isOnly = keyword.text === "USE" && accept("ONLY");
     const keywordRange = getRange(start);
-    const use: UseOrHide = {
-      kind: keyword.text === "USE" ? "Use" : "Hide",
-      isOnly,
-      ...parseFacts(),
-      keyword: keywordRange,
-      location: getLocation(keyword),
-    };
-    const invalid =
-      use.kind === "Hide" && mode === "tlc" ? use.facts.filter((fact) => !isHideFact(fact)) : [];
-    if (invalid.length > 0) {
-      throw createSanyError(
-        invalid.map((fact) => ({
-          location: formatRange(fact.location.range ?? getRange(start)),
-          message:
-            "The only expression allowed as a fact in a HIDE is \nthe name of a theorem, assumption, or step.",
-        })),
-      );
-    }
-    return withRange(use, start);
+    return withRange(
+      {
+        kind: keyword.text === "USE" ? "Use" : "Hide",
+        isOnly,
+        ...parseFacts(),
+        keyword: keywordRange,
+        location: getLocation(keyword),
+      },
+      start,
+    );
   };
 
   const parseNewSymbol = (): NewSymbol => {
@@ -2197,7 +2336,6 @@ const parse = (
     if (level !== undefined) advance();
     if (level === "Variable") {
       const named = expectName();
-      declareProofSymbol(named.name);
       return withRange(
         {
           kind: "NewSymbol",
@@ -2212,7 +2350,6 @@ const parse = (
       );
     }
     const declaration = parseDeclaration();
-    declareProofSymbol(declaration.name);
     const isBounded = (level ?? "Constant") === "Constant" && isAt("\\in");
     if (isBounded && declaration.arity > 0) {
       throw createError("declared symbol with arguments before \\in");
@@ -2233,11 +2370,16 @@ const parse = (
   };
 
   const parseHypothesis = () => {
-    if (peek().kind === "Identifier" && isAt("::", 1) && isAt("ASSUME", 2)) {
+    if (peek().kind === "Identifier" && isAt("::", 1) && isAssumeAt(2)) {
+      const start = cursor;
+      const name = advance();
       advance();
-      advance();
+      return {
+        ...parseAssumeProve(),
+        label: withRange({ name: name.text, location: getLocation(name) }, start),
+      };
     }
-    if (isAt("ASSUME")) return withProofScope(parseAssumeProve);
+    if (isAssumeAt()) return parseAssumeProve();
     if (peek().kind === "Keyword" && NEW_SYMBOL_STARTS.has(peek().text))
       return isTlapm ? commit(parseNewSymbol) : parseNewSymbol();
     if (!isTlapm) return parseExpression();
@@ -2266,12 +2408,24 @@ const parse = (
 
   const parseAssumeProve = (): AssumeProve => {
     const start = cursor;
-    const location = getLocation(expect("ASSUME"));
+    const location = getLocation(peek());
+    const isBoxed = isBoxAt("ASSUME");
+    if (isBoxed) advance();
+    expect("ASSUME");
     const parseSequent = (): AssumeProve => {
       const assumptions = isTlapm ? parseTlapmHypotheses() : parseSeparated(parseHypothesis);
+      const isProveBoxed = isBoxAt("PROVE");
+      if (isProveBoxed) advance();
       expect("PROVE");
       return withRange(
-        { kind: "AssumeProve", assumptions, conclusion: parseExpression(), location },
+        {
+          kind: "AssumeProve",
+          ...(isBoxed ? { isBoxed } : {}),
+          ...(isProveBoxed ? { isProveBoxed } : {}),
+          assumptions,
+          conclusion: parseExpression(),
+          location,
+        },
         start,
       );
     };
@@ -2284,15 +2438,6 @@ const parse = (
       offset += 2;
     }
     return peek(offset).kind === "Identifier" && isAt(terminator, offset + 1);
-  };
-
-  const declareProofSymbols = (names: string[], bounds: Bound[]) => {
-    names.forEach(declareProofSymbol);
-    bounds.forEach((bound) =>
-      (bound.pattern.kind === "Name" ? [bound.pattern.name] : bound.pattern.names).forEach(
-        declareProofSymbol,
-      ),
-    );
   };
 
   const parseStepBody = (): StepBody => {
@@ -2315,7 +2460,6 @@ const parse = (
       const isBounded = isBoundAhead();
       const names = getNames(isBounded ? [] : parseSeparated(expectName));
       const bounds = isBounded ? parseBounds() : [];
-      declareProofSymbols(names.names, bounds);
       return { kind: "Take", names: names.names, nameRanges: names.ranges, bounds };
     }
     if (accept("WITNESS")) {
@@ -2325,7 +2469,6 @@ const parse = (
       const isNames = isNameListAhead(":");
       const names = getNames(isNames ? parseSeparated(expectName) : []);
       const bounds = isNames ? [] : parseBounds();
-      declareProofSymbols(names.names, bounds);
       expect(":");
       return {
         kind: "Pick",
@@ -2339,7 +2482,7 @@ const parse = (
     return {
       kind: "Assert",
       isSuffices: accept("SUFFICES"),
-      statement: isAt("ASSUME") ? parseAssumeProve() : parseExpression(),
+      statement: isAssumeAt() ? parseAssumeProve() : parseExpression(),
     };
   };
 
@@ -2351,9 +2494,6 @@ const parse = (
     if (!isCorrectLevel(step)) {
       throw createError(`${isQed ? "QED step" : "step"}'s number has bad level`, step);
     }
-    if (mode !== "sany" && getStepLevel(step) < 0 && getStepName(step) !== undefined) {
-      throw createError("<*> and <+> cannot be used for a named step", step);
-    }
     cursor++;
     return { name: getStepName(step), token: step.text, location: getLocation(step) };
   };
@@ -2362,8 +2502,6 @@ const parse = (
     const start = cursor;
     const step = parseStepStart(isAt("QED", 1));
     const statementStart = cursor;
-    const scope = new Set<string>();
-    proofScopes.push(scope);
     const body: StepBody = accept("QED") ? { kind: "Qed" } : parseStepBody();
     const head = getRange(start);
     const statement = getRange(statementStart);
@@ -2372,8 +2510,6 @@ const parse = (
       throw createError("Proof of a step that does not take a proof");
     }
     const proof = hasProof ? parseProof() : undefined;
-    proofScopes.pop();
-    if (body.kind !== "Assert" || body.isSuffices) scope.forEach(declareProofSymbol);
     return withRange({ ...step, body, head, statement, proof }, start);
   };
 
@@ -2405,7 +2541,7 @@ const parse = (
   const parseProof = (): Proof => {
     const start = cursor;
     proofLevels.push(-1);
-    const proof = withProofScope(parseProofBody);
+    const proof = parseProofBody();
     proofLevels.pop();
     return withRange(proof, start);
   };
@@ -2589,7 +2725,6 @@ const parse = (
   const parseFactName = () => {
     if (peek().kind !== "Identifier" || !isAt("==", 1)) return undefined;
     const name = expectIdentifier();
-    factNames.add(name);
     advance();
     return name;
   };
@@ -2607,16 +2742,9 @@ const parse = (
     const start = cursor;
     const keyword = advance();
     const name = parseFactName();
-    const parsed = withProofScope(() => {
-      const statement = isAt("ASSUME") ? parseAssumeProve() : parseTheoremExpression();
-      if (isTlapm) return { statement, proof: parseTlapmProof() };
-      return { statement, proof: isProofStart(peek()) ? parseProof() : undefined };
-    });
-    const statement = parsed.statement;
-    const theorem = withRange(
-      { name, statement, proof: parsed.proof, location: getLocation(keyword) },
-      start,
-    );
+    const statement = isAssumeAt() ? parseAssumeProve() : parseTheoremExpression();
+    const proof = isTlapm ? parseTlapmProof() : isProofStart(peek()) ? parseProof() : undefined;
+    const theorem = withRange({ name, statement, proof, location: getLocation(keyword) }, start);
     module.theorems.push(theorem);
     module.units.push({ kind: "Theorem", theorem });
     if (name === undefined || statement.kind === "AssumeProve") return;
@@ -2657,6 +2785,7 @@ const parse = (
       theorems: [],
       uses: [],
       units: [],
+      hasRecursiveLet: false,
     };
     openModules.push(module);
     recursiveScopes.push(new Set());

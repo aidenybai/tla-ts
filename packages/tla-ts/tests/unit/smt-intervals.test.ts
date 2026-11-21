@@ -421,6 +421,31 @@ describe("cross_nested", () => {
     expect(forms).toEqual(["(j0)*(j2+j1)"]);
   });
 
+  it("lists a common factor in the order of Z3's unordered_map", () => {
+    const creator = mkCreator(Array.from({ length: 10 }, () => 0));
+    const [varA, varB, varC, varD, varE] = [7, 2, 5, 1, 9].map((variable) =>
+      creator.mkVar(variable),
+    );
+    const sum = creator.simplify(
+      creator.mkSum([
+        creator.mkMul(varA, varB, varC, varD),
+        creator.mkMul(createInt(2), varA, varB, varC, varE),
+      ]),
+    );
+    const forms: string[] = [];
+    new CrossNested(
+      (expr) => {
+        forms.push(printNex(expr));
+        return false;
+      },
+      () => false,
+      unlimited,
+      1,
+      creator,
+    ).run(sum);
+    expect(forms).toEqual(["(j7*j2*j5)*((2 *j9)+j1)"]);
+  });
+
   it("reports forms that keep the value of the sum", () => {
     const creator = mkCreator([0, 1, 2, 3]);
     const variables = [0, 1, 2, 3].map((variable) => creator.mkVar(variable));

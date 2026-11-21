@@ -12,7 +12,6 @@ import { getSany174LexicalError } from "./lexer";
 import { lintSanyModule } from "./linter";
 import { getSanyStandardModules } from "./modules";
 import { formatSanyLocation, type SanyMessage } from "./nodes";
-import { getUnboxedSource } from "./source";
 import type { TlcVersion } from "../tlc/version";
 
 interface SanyReport {
@@ -91,7 +90,7 @@ const getExtendees = (module: Module) => {
 // a module that doesn't parse is one SANY stops at before validating it.
 const parseValidatedModule = (text: string) => {
   try {
-    return parseSanyModule(getUnboxedSource(text));
+    return parseSanyModule(text);
   } catch (error) {
     if (error instanceof TlaSyntaxError) return undefined;
     throw error;

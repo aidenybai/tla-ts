@@ -1,5 +1,3 @@
-// A port of tlapm's obligation generation (Proof.Gen and Module.Gen).
-
 import { TlapmBugError, TlaProofError } from "../errors";
 import { isEqualExpr } from "./equality";
 import {

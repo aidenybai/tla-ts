@@ -307,7 +307,7 @@ const getMembership = (polarity: Polarity, element: Expr, set: Expr): Expr | und
         items: [
           builtin("Eq", [
             left,
-            { kind: "Tuple", elements: factors.map((_, index) => component(index)) },
+            { kind: "Tuple", elements: factors.map((_value, index) => component(index)) },
           ]),
           ...factors.map((factor, index) => mem(component(index), factor)),
         ],

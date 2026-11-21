@@ -1,5 +1,3 @@
-// Ported from Z3 (src/sat/smt/bv_solver.h, src/sat/smt/bv_internalize.cpp), MIT license, see
-// z3-license.txt.
 import { SmtUnsupportedError } from "../../../../errors";
 import {
   OP_ADD,
@@ -73,7 +71,7 @@ import { type Enode, NULL_THEORY_VAR } from "./egraph";
 import type { EufSolver } from "./euf-solver";
 import { ThSolver } from "./th-solver";
 
-export interface ZeroOneBit {
+interface ZeroOneBit {
   readonly owner: number;
   readonly index: number;
   readonly isTrue: boolean;

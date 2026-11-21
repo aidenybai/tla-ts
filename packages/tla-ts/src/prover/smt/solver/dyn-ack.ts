@@ -1,4 +1,3 @@
-// Ported from Z3 (src/smt/dyn_ack.cpp), MIT license, see z3-license.txt.
 import { OP_EQ } from "./ast";
 import { CLS_TH_LEMMA } from "./clause";
 import type { Context } from "./context";
@@ -26,6 +25,10 @@ export class DynAckManager {
 
   constructor(private readonly context: Context) {}
 
+  release() {
+    this.resetAppPairs();
+  }
+
   private resetAppPairs() {
     const manager = this.context.manager;
     for (const pair of this.appPairs) {
@@ -46,7 +49,7 @@ export class DynAckManager {
 
   cgConflictEh(inputFirst: number, inputSecond: number) {
     const manager = this.context.manager;
-    if (manager.decls[inputFirst] === OP_EQ) return;
+    if (manager.funcDecls[manager.decls[inputFirst]].op === OP_EQ) return;
     const isSwapped = manager.ids[inputFirst] > manager.ids[inputSecond];
     const first = isSwapped ? inputSecond : inputFirst;
     const second = isSwapped ? inputFirst : inputSecond;

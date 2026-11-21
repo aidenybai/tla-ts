@@ -1,4 +1,3 @@
-// Ported from Z3 (src/math/lp/lp_settings.h, src/math/lp/lp_settings.cpp), MIT license, see z3-license.txt.
 import { RandomGen } from "../random-gen";
 
 export interface LpStats {
@@ -26,6 +25,11 @@ export interface LpStats {
   nlaThrottledLemmas: number;
   nraCalls: number;
 }
+
+export const DEFAULT_HAMMER_PERIOD = 4;
+
+export const getHammerPeriod = (parameters: ReadonlyMap<string, string>) =>
+  Number(parameters.get("lp.int_hammer_period") ?? DEFAULT_HAMMER_PERIOD);
 
 export class LpSettings {
   private random = new RandomGen(0);
@@ -55,13 +59,13 @@ export class LpSettings {
     nraCalls: 0,
   };
   readonly maxRowLengthForBoundPropagation = 300;
-  readonly isPropagatingEqs = true;
-  readonly intFindCubePeriod = 4;
+  isPropagatingEqs = true;
+  intFindCubePeriod = DEFAULT_HAMMER_PERIOD;
   readonly lcubeFlips = 16;
-  readonly hnfCutPeriod = 4;
+  hnfCutPeriod = DEFAULT_HAMMER_PERIOD;
   readonly limitOnRowsForHnfCutter = 75;
   readonly limitOnColumnsForHnfCutter = 150;
-  readonly intGomoryCutPeriod = 4;
+  intGomoryCutPeriod = DEFAULT_HAMMER_PERIOD;
   dioCallsPeriod = 1;
   readonly dioCallsPeriodDecrease = 2;
   readonly dioGomoryEnablePeriod = 16;
@@ -69,7 +73,19 @@ export class LpSettings {
   readonly isDioIgnoringBigNums = true;
   readonly dioUndoMaxWork = 1000000;
 
-  constructor(readonly isCanceled: () => boolean) {}
+  constructor(readonly isCanceled: (cost?: number) => boolean) {}
+
+  // As in Z3, rereading the parameters sets arith.propagate_eqs again over the setup's choice.
+  updateParams(hammerPeriod: number, isPropagatingEqs: boolean) {
+    this.isPropagatingEqs = isPropagatingEqs;
+    this.intFindCubePeriod = hammerPeriod;
+    this.intGomoryCutPeriod = hammerPeriod;
+    this.hnfCutPeriod = hammerPeriod;
+  }
+
+  setRandomSeed(seed: number) {
+    this.random = new RandomGen(seed);
+  }
 
   getRandomNext(bound?: number) {
     const value = this.random.next();

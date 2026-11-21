@@ -414,10 +414,10 @@ PrepareFrom(s, item, order, acc, isAny, required) ==
           ELSE LET c == ConvertCalendarField(v.s, name, Val(v)) IN IF IsAbrupt(c) THEN c
           ELSE PrepareFrom(c.s, item, Tail(order), [acc EXCEPT ![name] = Val(c)], TRUE, required)
 \* PrepareCalendarFields, for the set of field names to read and required "partial",
-\* "time-zone", or "no-required-fields". The fields are read in code unit order. A calendar other
-\* than ISO 8601 reads an era and an era year with a year (CalendarExtraFields).
+\* "time-zone", or "no-required-fields". The fields are read in code unit order. A calendar with
+\* eras reads an era and an era year with a year (CalendarExtraFields).
 PrepareCalendarFields(s, cal, item, names, required) ==
-  LET read == IF cal # ISO8601 /\ "year" \in names THEN names \cup {"era", "eraYear"} ELSE names IN
+  LET read == IF CalendarHasEras(cal) /\ "year" \in names THEN names \cup {"era", "eraYear"} ELSE names IN
   PrepareFrom(s, item, SelectSeq([i \in 1..14 |-> i], LAMBDA i : CalendarFieldNames[i] \in read),
               [n \in Range(CalendarFieldNames) |->
                  IF required # "partial" /\ n \in CalendarTimeFieldNames THEN TI(0) ELSE Empty],

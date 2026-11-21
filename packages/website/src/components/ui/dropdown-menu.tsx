@@ -5,7 +5,7 @@ import { cn } from "cn";
 const ITEM_CLASS_NAME =
   "relative flex cursor-default items-center gap-2 rounded-md py-1 pr-8 pl-2 text-sm text-muted-foreground outline-none select-none data-highlighted:bg-foreground/8 data-highlighted:text-foreground pointer-coarse:py-2";
 
-export const DropdownMenu = (props: Menu.Root.Props) => (
+const DropdownMenuRoot = (props: Menu.Root.Props) => (
   <Menu.Root data-slot="dropdown-menu" {...props} />
 );
 
@@ -13,7 +13,7 @@ interface TriggerProps extends Omit<Menu.Trigger.Props, "className"> {
   className?: string;
 }
 
-export const DropdownMenuTrigger = (props: TriggerProps) => (
+const DropdownMenuTrigger = (props: TriggerProps) => (
   <Menu.Trigger data-slot="dropdown-menu-trigger" {...props} />
 );
 
@@ -22,7 +22,7 @@ interface ContentProps extends Omit<Menu.Popup.Props, "className"> {
   className?: string;
 }
 
-export const DropdownMenuContent = (props: ContentProps) => {
+const DropdownMenuContent = (props: ContentProps) => {
   const { align, className, ...popupProps } = props;
   return (
     <Menu.Portal>
@@ -44,7 +44,7 @@ export const DropdownMenuContent = (props: ContentProps) => {
   );
 };
 
-export const DropdownMenuRadioGroup = (props: Menu.RadioGroup.Props) => (
+const DropdownMenuRadioGroup = (props: Menu.RadioGroup.Props) => (
   <Menu.RadioGroup data-slot="dropdown-menu-radio-group" {...props} />
 );
 
@@ -52,7 +52,7 @@ interface RadioItemProps extends Omit<Menu.RadioItem.Props, "className"> {
   className?: string;
 }
 
-export const DropdownMenuRadioItem = (props: RadioItemProps) => (
+const DropdownMenuRadioItem = (props: RadioItemProps) => (
   <Menu.RadioItem
     data-slot="dropdown-menu-radio-item"
     closeOnClick
@@ -70,7 +70,7 @@ interface ItemProps extends Omit<Menu.Item.Props, "className"> {
   className?: string;
 }
 
-export const DropdownMenuItem = (props: ItemProps) => (
+const DropdownMenuItem = (props: ItemProps) => (
   <Menu.Item
     data-slot="dropdown-menu-item"
     {...props}
@@ -78,11 +78,11 @@ export const DropdownMenuItem = (props: ItemProps) => (
   />
 );
 
-export const DropdownMenuGroup = (props: Menu.Group.Props) => (
+const DropdownMenuGroup = (props: Menu.Group.Props) => (
   <Menu.Group data-slot="dropdown-menu-group" {...props} />
 );
 
-export const DropdownMenuLabel = (props: Menu.GroupLabel.Props) => (
+const DropdownMenuLabel = (props: Menu.GroupLabel.Props) => (
   <Menu.GroupLabel
     data-slot="dropdown-menu-label"
     {...props}
@@ -94,9 +94,21 @@ interface SeparatorProps {
   className?: string;
 }
 
-export const DropdownMenuSeparator = (props: SeparatorProps) => (
+const DropdownMenuSeparator = (props: SeparatorProps) => (
   <Menu.Separator
     data-slot="dropdown-menu-separator"
     className={cn("-mx-1 my-1 h-px bg-border", props.className)}
   />
 );
+
+export const DropdownMenu = {
+  Root: DropdownMenuRoot,
+  Trigger: DropdownMenuTrigger,
+  Content: DropdownMenuContent,
+  RadioGroup: DropdownMenuRadioGroup,
+  RadioItem: DropdownMenuRadioItem,
+  Item: DropdownMenuItem,
+  Group: DropdownMenuGroup,
+  Label: DropdownMenuLabel,
+  Separator: DropdownMenuSeparator,
+};

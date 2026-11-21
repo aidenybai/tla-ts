@@ -1,4 +1,3 @@
-// Ported from Z3 (src/math/lp/monic.h, src/math/lp/emonics.h, src/math/lp/emonics.cpp), MIT license, see z3-license.txt.
 import { getSignedVarVar, isSignedVarNegated, negateSignedVar, type VarEqs } from "./nla-var-eqs";
 import { TrailStack, UnionFind } from "./union-find";
 

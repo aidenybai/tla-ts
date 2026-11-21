@@ -1,6 +1,7 @@
 import {
   getChildren,
   isLocallyResolved,
+  type ApplyExpression,
   type AssumeProve,
   type Bound,
   type BoundPattern,
@@ -18,9 +19,14 @@ import {
   type Selector,
   type SourceLocation,
   type SourceRange,
+  type StepBody,
   type Theorem,
+  type UseOrHide,
 } from "./ast";
-import { formatRange, TlaSyntaxError, type SanyError } from "./errors";
+import { formatRange, TlaSyntaxError, type CodedSanyError, type SanyError } from "./errors";
+import { defEntryErrors, getAtSteps, getDefEntryBinder, parenthesizedRanges } from "./parser";
+import { formatSanyLocation } from "./sany/nodes";
+import { resolveSynonym } from "./tlc/jar-data";
 
 export type SymbolKind =
   | "Builtin"
@@ -37,6 +43,11 @@ interface Binding {
   arity: number;
   params?: number[];
   range?: SourceRange;
+  functionArity?: number;
+  goal?: Goal;
+  isSubstituted?: boolean;
+  sourceRange?: SourceRange;
+  nonFactStep?: "Use" | "Hide" | "Instance" | "Define";
 }
 
 export interface ModuleSymbol extends Binding {
@@ -49,43 +60,60 @@ interface Goal {
   statement: Expression | AssumeProve;
   isSuffices: boolean;
   isInProof: boolean;
+  keyword: string | undefined;
 }
 
 interface LocalName extends Binding {
   name: string;
+  isSelf?: boolean;
   parent: LocalName | undefined;
-  goal?: Goal;
   isPending?: boolean;
-  isNonFact?: boolean;
 }
 
 interface ModuleBinding extends Binding {
+  key?: string;
   position: SourceLocation;
   isPending?: boolean;
 }
 
+interface ModuleBindings {
+  get: (name: string) => ModuleBinding | undefined;
+  keys: () => Iterable<string>;
+}
+
 interface Unit {
   imported: Symbols;
+  linkTheorem: (key: string) => void;
   getInstance: (instance: Instance) => InstancedModule;
   definitions: Map<string, Definition>;
-  getKey: (definition: Definition) => string;
+  getKey: (item: { name: string }) => string;
+  isModuleKnown: (name: string, location: SourceLocation) => boolean;
   location: SourceLocation;
   self: Definition | undefined;
-  facts: Set<string>;
-  goals: Map<string, Goal>;
-  bindings: Map<string, ModuleBinding>;
+  bindings: ModuleBindings;
   errors: SanyError[];
   warnings: SanyError[];
   hasLabelScope: boolean;
   isLabelForbidden: boolean;
   isInExcept: boolean;
+  stepAt?: Expression;
   labelParams: string[];
   labels: Set<string>;
   isGenerated: boolean;
+  goalOperands: WeakMap<Expression, Expression[]>;
+  goalSelections: WeakMap<Expression, Expression>;
+}
+
+export interface SelectionArguments {
+  operator: string;
+  range: SourceRange | undefined;
+  args: Expression[];
+  params: number[];
 }
 
 interface SelectionError {
-  args: Expression[];
+  applications: SelectionArguments[];
+  nulls: NullSelection[];
   error: SanyError;
 }
 
@@ -97,10 +125,73 @@ interface SelectionState {
 
 type Reference = Expression & { kind: "Identifier" | "Apply" | "Subexpression" };
 
+type SelectionUse = "Expression" | "Fact" | "Definition";
+
 export const LOCAL_RESOLUTION = { kind: "Local" } as const;
 
-export const selections = new WeakSet<Expression>();
+const SELF_RESOLUTION = { kind: "Local", isSelf: true } as const;
+
+// SANY names the operator that a selection with arguments applies LAMBDA.
+export const SELECTION_NAME = "LAMBDA";
+
+export interface NullSelection {
+  node: Expression;
+  error: SanyError;
+  isEmpty: boolean;
+  applications: SelectionArguments[];
+}
+
+interface SelectionArgument {
+  operator: string;
+  index: number;
+  range: SourceRange | undefined;
+}
+
+export interface SelectedDefinition {
+  definition: Definition;
+  params: string[];
+}
+
+export interface SubexpressionRecords {
+  selectedDefinitions: WeakMap<Expression, SelectedDefinition>;
+  instanceReferences: WeakMap<Instance, Instance>;
+}
+
+export const selections = new WeakMap<Expression, Expression>();
 export const selectionErrors = new WeakMap<Expression, SelectionError>();
+export const operatorSelectionErrors = new WeakMap<Expression, SanyError>();
+export const factReferences = new WeakMap<Fact[], Fact[]>();
+export const selectionArguments = new WeakMap<Expression, SelectionArgument>();
+export const nullSelections = new WeakMap<Expression, NullSelection[]>();
+export const generatedArgumentCounts = new WeakMap<Expression, number>();
+export const operandApplications = new WeakMap<Expression, ApplyExpression[]>();
+const unresolvedExpressions = new WeakSet<Expression>();
+const emptyExpressions = new WeakSet<Expression>();
+
+export const isUnresolved = (expression: Expression) => unresolvedExpressions.has(expression);
+
+export const copyResolution = (expression: Expression, copy: Expression) => {
+  if (unresolvedExpressions.has(expression)) unresolvedExpressions.add(copy);
+  if (emptyExpressions.has(expression)) emptyExpressions.add(copy);
+};
+
+// SANY's failed selection is an operator application with no operands.
+const isEmptyExpression = (expression: Expression): boolean =>
+  emptyExpressions.has(expression) || findNullError(nullSelections.get(expression)) !== undefined;
+
+export const hasNoOperands = (expression: Expression) =>
+  expression.kind === "Apply" &&
+  generatedArgumentCounts.get(expression) === undefined &&
+  isEmptyExpression(expression);
+
+const findNullSelection = (nulls: NullSelection[] | undefined) =>
+  nulls?.find((selection) =>
+    selection.isEmpty
+      ? emptyExpressions.has(selection.node)
+      : unresolvedExpressions.has(selection.node),
+  );
+
+const findNullError = (nulls: NullSelection[] | undefined) => findNullSelection(nulls)?.error;
 
 const renamedArities = new WeakMap<Expression, number>();
 
@@ -111,12 +202,22 @@ const isKey = (name: string) => {
   return index > 0 && index < name.length - 1;
 };
 
-const CORE_SYMBOLS: Symbols = new Map(
-  ["~>", "-+->", "\\cdot"].map((name) => [name, { key: name, arity: 2, kind: "Builtin" }]),
-);
+export const getKeyName = (key: string) =>
+  isKey(key) ? key.slice(0, key.lastIndexOf(KEY_SEPARATOR)) : key;
+
+export const CORE_SYMBOLS: Symbols = new Map([
+  ...["~>", "-+->", "\\cdot", "\\X"].map((name): [string, ModuleSymbol] => [
+    name,
+    { key: name, arity: 2, kind: "Builtin" },
+  ]),
+  ["'", { key: "'", arity: 1, kind: "Builtin" }],
+]);
 
 export const isBefore = (left: SourceLocation, right: SourceLocation) =>
   left.line < right.line || (left.line === right.line && left.column < right.column);
+
+export const compareLocations = (left: SourceLocation, right: SourceLocation) =>
+  isBefore(left, right) ? -1 : isBefore(right, left) ? 1 : 0;
 
 export const getArity = (definition: Definition) =>
   definition.kind === "Operator" ? definition.params.length : 0;
@@ -125,6 +226,11 @@ export const getParamArities = (definition: Definition) =>
   definition.kind === "Operator" ? definition.params.map((param) => param.arity) : [];
 
 const isInstantiated = (definition: Definition) => definition.name.includes("!");
+
+export const getFunctionArity = (definition: Definition) =>
+  definition.kind === "Function" && !isInstantiated(definition)
+    ? definition.bounds.length
+    : undefined;
 
 const lookupLocal = (scope: LocalName | undefined, name: string) => {
   for (let current = scope; current; current = current.parent) {
@@ -147,7 +253,9 @@ const isSameRange = (left: SourceRange | undefined, right: SourceRange | undefin
 
 const isBindable = (name: string, current: Binding | undefined, added: Binding, unit: Unit) => {
   if (current === undefined) return true;
-  if (isSameRange(current.range, added.range)) return false;
+  if (isSameRange(current.sourceRange ?? current.range, added.sourceRange ?? added.range)) {
+    return false;
+  }
   const range = added.range;
   if (range === undefined || unit.isGenerated || (current.kind !== "Builtin" && !current.range)) {
     return true;
@@ -157,21 +265,22 @@ const isBindable = (name: string, current: Binding | undefined, added: Binding, 
   if (current.kind === "Builtin") {
     unit.errors.push({
       location,
-      message: `Symbol ${name} is a built-in operator, and cannot be redefined.`,
+      message: `Symbol ${resolveSynonym(name)} is a built-in operator, and cannot be redefined.`,
     });
   } else if (
     added.kind === "Parameter" ||
     current.kind !== added.kind ||
-    current.arity !== added.arity
+    current.arity !== added.arity ||
+    (current.nonFactStep === undefined) !== (added.nonFactStep === undefined)
   ) {
     unit.errors.push({
       location,
-      message: `Multiply-defined symbol '${name}': this definition or declaration conflicts \nwith the one at ${existing}.`,
+      message: `Multiply-defined symbol '${resolveSynonym(name)}': this definition or declaration conflicts \nwith the one at ${existing}.`,
     });
   } else {
     unit.warnings.push({
       location,
-      message: `Multiple declarations or definitions for symbol ${name}.  \nThis duplicates the one at ${existing}.`,
+      message: `Multiple declarations or definitions for symbol ${resolveSynonym(name)}.  \nThis duplicates the one at ${existing}.`,
     });
   }
   return false;
@@ -192,9 +301,14 @@ const bindName = (
     ? { ...added, name, parent: scope }
     : scope;
 
-const bindModuleName = (name: string, added: Binding, unit: Unit) => {
-  if (isBindable(name, unit.bindings.get(name), added, unit)) {
-    unit.bindings.set(name, { ...added, position: unit.location });
+const bindModuleName = (
+  bindings: Map<string, ModuleBinding>,
+  name: string,
+  added: Binding,
+  unit: Unit,
+) => {
+  if (isBindable(name, bindings.get(name), added, unit)) {
+    bindings.set(name, { ...added, position: unit.location });
   }
 };
 
@@ -230,24 +344,50 @@ export const getBoundNames = (bounds: Bound[]) =>
 
 const getVisibleDefinition = (name: string, unit: Unit) => {
   const definition = unit.definitions.get(name);
+  const binding = getModuleBinding(name, unit, undefined);
   const isVisible =
     definition !== undefined &&
-    (definition === unit.self
-      ? definition.kind === "Function" || definition.isRecursive
-      : definition.isRecursive || isBefore(definition.location, unit.location));
+    (definition.isRecursive
+      ? binding?.isPending === true || isSameRange(binding?.range, definition.location.range)
+      : definition !== unit.self &&
+        (isBefore(definition.location, unit.location) ||
+          unit.bindings.get(name)?.position === definition.location) &&
+        (binding === undefined || !isBefore(binding.position, definition.location)));
   return isVisible ? definition : undefined;
 };
 
+const hasKey = (binding: ModuleBinding | undefined): binding is ModuleBinding & ModuleSymbol =>
+  binding?.key !== undefined;
+
 const findSymbol = (name: string, unit: Unit): ModuleSymbol | undefined => {
   const definition = getVisibleDefinition(name, unit);
-  return definition
-    ? {
-        key: unit.getKey(definition),
-        arity: getArity(definition),
-        params: getParamArities(definition),
-        kind: "Definition",
-      }
-    : unit.imported.get(name);
+  if (definition) {
+    const declared = definition.isRecursive ? unit.bindings.get(name) : undefined;
+    return {
+      key: unit.getKey(definition),
+      arity: declared?.arity ?? getArity(definition),
+      params: declared?.params ?? getParamArities(definition),
+      kind: "Definition",
+      range: definition.location.range,
+      functionArity: getFunctionArity(definition),
+    };
+  }
+  const binding = getModuleBinding(name, unit, undefined);
+  if (binding?.isPending) {
+    return { key: name, arity: binding.arity, params: binding.params, kind: binding.kind };
+  }
+  if (hasKey(binding)) return binding;
+  return binding ? unit.imported.get(name) : undefined;
+};
+
+const isFact = (name: string, unit: Unit) => unit.bindings.get(name)?.kind === "Theorem";
+
+const getGoal = (name: string, unit: Unit) => unit.bindings.get(name)?.goal;
+
+const isAssumeProveTheorem = (name: string, scope: LocalName | undefined, unit: Unit) => {
+  const binding = lookupLocal(scope, name) ?? unit.bindings.get(name);
+  // SANY sees no ASSUME/PROVE in a theorem whose body an instance wraps in its substitutions.
+  return binding?.goal?.statement.kind === "AssumeProve" && !binding.isSubstituted;
 };
 
 const findBinding = (name: string, scope: LocalName | undefined, unit: Unit): Binding | undefined =>
@@ -271,11 +411,21 @@ const getSpelledNameRange = (
 };
 
 const getFixity = (expression: Expression) => {
-  if (expression.kind !== "Apply") return undefined;
+  if (expression.kind !== "Apply" || expression.argumentsRange) return undefined;
   if (expression.args.length === 2) return "infix";
   if (expression.args.length !== 1) return undefined;
-  return isBefore(expression.location, expression.args[0].location) ? "prefix" : "postfix";
+  return expression.operator === "-." ? "prefix" : "postfix";
 };
+
+const BUILTIN_LOCATION = "In module --TLA+ BUILTINS--";
+
+const SELECTABLE_KINDS = new Set<SymbolKind>(["Definition", "Instance", "Theorem"]);
+
+const reportUnselectable = (name: string, range: SourceRange, unit: Unit) =>
+  unit.errors.push({
+    location: formatRange(range),
+    message: `Cannot take subexpression of \`${resolveSynonym(name)}'.`,
+  });
 
 const isOperatorSymbol = (name: string) => !/^[\p{L}\d_]/u.test(name);
 
@@ -356,13 +506,30 @@ export const getBinder = (
   }
 };
 
+// SANY parses `a /\ b /\ c` as `(a /\ b) /\ c`, so an infix junction has two operands.
+const getJunctionOperands = (expression: Expression & { kind: "And" | "Or" }) => {
+  const operands = expression.operands;
+  const range = expression.location.range;
+  const end = expression.prefixEnds?.[operands.length - 3];
+  if (expression.isBulleted || !range || !end) return operands;
+  return [
+    {
+      ...expression,
+      operands: operands.slice(0, -1),
+      prefixEnds: expression.prefixEnds?.slice(0, -1),
+      location: { ...expression.location, range: { ...range, end } },
+    },
+    operands[operands.length - 1],
+  ];
+};
+
 export const getOperands = (expression: Expression): Expression[] | undefined => {
   switch (expression.kind) {
     case "Apply":
       return expression.args;
     case "And":
     case "Or":
-      return expression.operands;
+      return getJunctionOperands(expression);
     case "If":
       return [expression.condition, expression.consequent, expression.alternative];
     case "Tuple":
@@ -388,6 +555,7 @@ export const getOperands = (expression: Expression): Expression[] | undefined =>
     case "Enabled":
     case "Always":
     case "Eventually":
+    case "Selection":
       return [expression.expression];
     case "BoxAction":
     case "AngleAction":
@@ -416,33 +584,48 @@ const isInScopeOfDeclaration = (assumeProve: AssumeProve, clause: number) =>
 
 const findLabel = (expression: Expression, name: string): LabelExpression | undefined => {
   if (expression.kind === "Label") return expression.name === name ? expression : undefined;
-  if (expression.kind === "Lambda") return undefined;
+  if (expression.kind === "Lambda" || expression.kind === "Selection") return undefined;
   if (expression.kind === "Let") return findLabel(expression.body, name);
-  return getChildren(expression).reduce<LabelExpression | undefined>(
-    (found, child) => found ?? findLabel(child, name),
+  if (hasNoOperands(expression)) return undefined;
+  if (expression.kind === "FunctionApplication" && isEmptyExpression(expression))
+    return findLabel(expression.function, name);
+  return getChildren(expression)
+    .slice(0, generatedArgumentCounts.get(expression))
+    .reduce<LabelExpression | undefined>(
+      (found, child) => found ?? findLabel(child, name),
+      undefined,
+    );
+};
+
+const findAssumeProveLabel = (assumeProve: AssumeProve, name: string) =>
+  [...assumeProve.assumptions, assumeProve.conclusion].reduce<
+    LabelExpression | AssumeProve | undefined
+  >(
+    (found, clause, index) =>
+      found ?? findClauseLabel(clause, name, isInScopeOfDeclaration(assumeProve, index)),
     undefined,
   );
-};
 
 const findClauseLabel = (
   clause: Expression | NewSymbol | AssumeProve,
   name: string,
   isForbidden: boolean,
-): LabelExpression | undefined => {
-  if (clause.kind === "AssumeProve") {
-    return [...clause.assumptions, clause.conclusion].reduce<LabelExpression | undefined>(
-      (found, inner, index) =>
-        found ?? findClauseLabel(inner, name, isForbidden || isInScopeOfDeclaration(clause, index)),
-      undefined,
-    );
-  }
+): LabelExpression | AssumeProve | undefined => {
   if (isForbidden) return undefined;
+  if (clause.kind === "AssumeProve" && clause.label)
+    return clause.label.name === name ? clause : undefined;
+  if (clause.kind === "AssumeProve") return findAssumeProveLabel(clause, name);
   if (clause.kind === "NewSymbol") return clause.set && findLabel(clause.set, name);
   return findLabel(clause, name);
 };
 
 const getLabelBody = (expression: Expression): Expression =>
   expression.kind === "Label" ? getLabelBody(expression.body) : expression;
+
+const getSelectedBody = (expression: Expression): Expression =>
+  expression.kind === "Let" && !expression.location.range
+    ? getSelectedBody(expression.body)
+    : getLabelBody(expression);
 
 const getOperandName = (operand: number | "<<" | ">>") =>
   typeof operand === "number" ? `argument selector ${operand}` : operand;
@@ -452,16 +635,18 @@ const SCOPE_MESSAGE = "within the scope of a declaration\n from outside that dec
 const checkSelection = (
   reference: Reference,
   selectors: Selector[],
+  nameLength: number,
   goal: Goal,
-  scope: LocalName | undefined,
   unit: Unit,
-  isFact: boolean,
+  use: SelectionUse,
+  formals: string[],
 ) => {
   const report = (index: number | undefined, message: string) => {
     const range =
       (index === undefined ? undefined : reference.selectorRanges?.[index]) ??
       reference.location.range;
     if (range) unit.errors.push({ location: formatRange(range), message });
+    return undefined;
   };
   const isOutOfScope = goal.isSuffices === goal.isInProof;
   const statement = goal.statement;
@@ -470,8 +655,10 @@ const checkSelection = (
     isGoal: true,
     isSufficesOpen: goal.isSuffices,
   };
-  for (const [offset, selector] of selectors.slice(1).entries()) {
-    const index = offset + 1;
+  let params = 0;
+  let args = 0;
+  for (const [offset, selector] of selectors.slice(nameLength).entries()) {
+    const index = offset + nameLength;
     const node = state.node;
     if (selector.kind === "Name") {
       if (selectors[index - 1].kind !== "Name") {
@@ -479,16 +666,14 @@ const checkSelection = (
           node.kind !== "NewSymbol" &&
           node.kind !== "AssumeProve" &&
           getLabelBody(node).kind === "Let";
-        return isLet
-          ? undefined
-          : report(index - 1, "A name selector here must be from a LET clause.");
+        return isLet ? node : report(index - 1, "A name selector here must be from a LET clause.");
       }
       const clauses =
         statement.kind === "AssumeProve"
           ? [...statement.assumptions, statement.conclusion]
           : [statement];
       const found =
-        index === 1
+        index === nameLength
           ? clauses
               .map((clause, position) => ({
                 position,
@@ -497,32 +682,58 @@ const checkSelection = (
               .find((item) => item.label !== undefined)
           : {
               position: 0,
-              label: node.kind === "Label" ? findLabel(node.body, selector.name) : undefined,
+              label:
+                node.kind === "Label"
+                  ? findLabel(node.body, selector.name)
+                  : node.kind === "AssumeProve"
+                    ? findAssumeProveLabel(node, selector.name)
+                    : undefined,
             };
       if (!found?.label) return report(index, `Cannot find label \`${selector.name}'.`);
       if (
-        index === 1 &&
+        index === nameLength &&
         statement.kind === "AssumeProve" &&
         isInScopeOfDeclaration(statement, found.position) &&
         isOutOfScope
       ) {
         return report(
-          1,
+          nameLength,
           `Accessing subexpression labeled \`${selector.name}' of ASSUME/PROVE clause ${SCOPE_MESSAGE}`,
         );
       }
-      if (selector.args.length !== found.label.params.length) {
+      if (selector.args.length !== (found.label.kind === "Label" ? found.label.params.length : 0)) {
         return report(index, `Label \`${selector.name}' used with wrong number of arguments.`);
       }
+      if (found.label.kind === "Label") formals.push(...found.label.params);
       state.node = found.label;
       state.isGoal = false;
       state.isSufficesOpen = false;
       continue;
     }
-    if (selector.kind !== "Operand") return;
-    const operand = getOperandName(selector.operand);
+    if (selector.kind === "Colon") {
+      if (selectors[index - 1].kind !== "Name") {
+        return report(index - 1, "!: should not follow an operand selector.");
+      }
+      const next = selectors[index + 1];
+      if (next === undefined ? index !== nameLength : next.kind !== "Name") {
+        return report(
+          index,
+          "`!:' can be used only after a name and either at the end after an\noperator name or before an operator name.",
+        );
+      }
+      continue;
+    }
+    const operand =
+      selector.kind === "Operand"
+        ? getOperandName(selector.operand)
+        : selector.kind === "At"
+          ? "@"
+          : "!(...)";
+    const getPosition = (count: number) =>
+      selector.kind === "Operand" ? getOperandIndex(selector.operand, count) : -1;
+    const unexpectedNull = `An unexpected null node specified by '${operand}'.\nThis is probably due to a previous error.`;
     if (state.isSufficesOpen) {
-      if (getOperandIndex(selector.operand, 1) !== 0) {
+      if (getPosition(1) !== 0) {
         return report(
           index,
           node.kind === "AssumeProve"
@@ -533,39 +744,62 @@ const checkSelection = (
       state.isSufficesOpen = false;
       continue;
     }
-    if (node.kind === "NewSymbol") return;
+    if (node.kind === "NewSymbol") return node;
     if (node.kind !== "AssumeProve") {
-      const expression = getLabelBody(node);
+      const expression = getSelectedBody(node);
+      if (unresolvedExpressions.has(expression)) {
+        return report(
+          index,
+          "Subexpression selection failed, probably due to an error in the selected expression.",
+        );
+      }
+      if (expression.kind === "Let") {
+        if (selector.kind !== "Operand" || getPosition(1) !== 0) {
+          return report(index, "A LET/IN expression has only one operand.");
+        }
+        state.node = expression.body;
+        state.isGoal = false;
+        continue;
+      }
       if (["Number", "Decimal", "String"].includes(expression.kind)) {
         return report(index, "Selecting subexpression of expression that has none.");
       }
-      const kind =
-        expression.kind === "Identifier"
-          ? findBinding(expression.name, scope, unit)?.kind
-          : undefined;
-      if (kind === "Variable" || kind?.startsWith("New")) {
+      if (isEmptyExpression(expression)) {
         return report(index, `Choosing operand \`${operand}' of subexpression with no operands.`);
       }
-      const sets = getBinder(expression)?.sets;
+      const binder = getBinder(expression);
+      if (binder && selector.kind !== "Operand") {
+        const count = selector.kind === "Bound" ? selector.args.length : 0;
+        if (selector.kind === "Bound" && count !== binder.names.length) {
+          return report(
+            index,
+            `Selector with ${count} argument(s) used for quantifier with ${binder.names.length} bound identifier(s).`,
+          );
+        }
+        params += binder.names.length;
+        formals.push(...binder.names);
+        args += count;
+        state.node = binder.body;
+        state.isGoal = false;
+        continue;
+      }
       const operands =
-        expression.kind === "Identifier"
-          ? []
-          : sets
-            ? sets.length > 0
-              ? sets
-              : undefined
-            : expression.kind === "Except"
-              ? undefined
-              : getOperands(expression);
-      if (!operands) return;
-      const position = getOperandIndex(selector.operand, operands.length);
+        unit.goalOperands.get(expression) ??
+        (expression.kind === "Identifier" ? [] : (binder?.sets ?? getOperands(expression)));
+      if (!operands) return node;
+      const isExcept = expression.kind === "Except";
+      const position = getPosition(isExcept ? expression.updates.length + 1 : operands.length);
       if (position === -1) return report(index, `Nonexistent operand specified by \`${operand}'.`);
+      if (isExcept && position > 0) {
+        return report(index, "Selecting subexpression of an EXCEPT not yet implemented.");
+      }
       state.node = operands[position];
       state.isGoal = false;
+      if (unresolvedExpressions.has(state.node)) return report(index, unexpectedNull);
       continue;
     }
     const clauses = [...node.assumptions, node.conclusion];
-    const position = getOperandIndex(selector.operand, clauses.length);
+    const position = getPosition(clauses.length);
     if (position === -1) return report(index, `Nonexistent operand specified by \`${operand}'.`);
     if (isInScopeOfDeclaration(node, position) && (!state.isGoal || isOutOfScope)) {
       return report(index, `Accessing ASSUME/PROVE clause ${SCOPE_MESSAGE}`);
@@ -576,17 +810,34 @@ const checkSelection = (
     }
     state.node = clause;
     state.isGoal = false;
+    if (
+      clause.kind !== "NewSymbol" &&
+      clause.kind !== "AssumeProve" &&
+      unresolvedExpressions.has(clause)
+    ) {
+      return report(index, unexpectedNull);
+    }
   }
-  if (isFact) return;
   if (state.node.kind === "AssumeProve") {
-    report(undefined, "Selected ASSUME/PROVE instead of expression.");
+    return use === "Fact" || (use === "Definition" && state.node.label !== undefined)
+      ? state.node
+      : report(
+          undefined,
+          state.node.label
+            ? "ASSUME/PROVE used where an expression is required."
+            : "Selected ASSUME/PROVE instead of expression.",
+        );
   }
   if (state.node.kind === "NewSymbol") {
-    report(undefined, "Selected a NEW declaration as an expression or operator.");
+    return use === "Fact"
+      ? state.node
+      : report(undefined, "Selected a NEW declaration as an expression or operator.");
   }
+  if (params !== args) return report(undefined, `Expected ${params} arguments but found ${args}.`);
+  return state.node;
 };
 
-const isLabelReported = (label: LabelExpression, unit: Unit) => {
+const isLabelReported = (location: SourceLocation, unit: Unit) => {
   const message = unit.isGenerated
     ? undefined
     : !unit.hasLabelScope
@@ -596,12 +847,16 @@ const isLabelReported = (label: LabelExpression, unit: Unit) => {
         : unit.isInExcept
           ? "Labels inside EXCEPT clauses are not yet implemented."
           : undefined;
-  if (message === undefined || !label.location.range) return false;
-  unit.errors.push({ location: formatRange(label.location.range), message });
+  if (message === undefined || !location.range) return false;
+  unit.errors.push({ location: formatRange(location.range), message });
   return true;
 };
 
-const checkLabel = (label: LabelExpression, scope: LocalName | undefined, unit: Unit) => {
+const checkLabel = (
+  label: Pick<LabelExpression, "name" | "params" | "paramRanges" | "location">,
+  scope: LocalName | undefined,
+  unit: Unit,
+) => {
   const range = label.location.range;
   if (!range || unit.isGenerated) return;
   const location = formatRange(range);
@@ -652,17 +907,44 @@ const checkReference = (
   expression: Expression,
   scope: LocalName | undefined,
   unit: Unit,
-  isFact: boolean,
+  use: SelectionUse,
 ) => {
   if (!isReference(expression)) return false;
   const selectors = getSelectors(expression);
-  const first = selectors[0];
-  const goal =
-    selectors.length > 1 && first.kind === "Name"
-      ? (lookupLocal(scope, first.name)?.goal ?? unit.goals.get(first.name))
-      : undefined;
-  if (goal) checkSelection(expression, selectors, goal, scope, unit, isFact);
-  return goal !== undefined;
+  let name = "";
+  for (let nameLength = 1; nameLength < selectors.length; nameLength++) {
+    const selector = selectors[nameLength - 1];
+    if (selector.kind !== "Name") return undefined;
+    name = nameLength === 1 ? selector.name : `${name}!${selector.name}`;
+    const goal = lookupLocal(scope, name)?.goal ?? getGoal(name, unit);
+    if (goal) {
+      const formals: string[] = [];
+      const node = checkSelection(expression, selectors, nameLength, goal, unit, use, formals);
+      if (!node) emptyExpressions.add(expression);
+      if (node && node.kind !== "NewSymbol" && node.kind !== "AssumeProve") {
+        const args = selectors.flatMap((selector) => ("args" in selector ? selector.args : []));
+        // SANY applies a LAMBDA to a selection's arguments, or wraps a selection without them in $Nop.
+        unit.goalOperands.set(expression, args.length > 0 ? args : [node]);
+        unit.goalSelections.set(
+          expression,
+          args.length > 0
+            ? { kind: "Lambda", params: formals, body: node, location: expression.location }
+            : node,
+        );
+      }
+      return { node };
+    }
+  }
+  return undefined;
+};
+
+const isInstanceName = (name: string, scope: LocalName | undefined, unit: Unit) => {
+  const binding = lookupLocal(scope, name) ?? getModuleBinding(name, unit, undefined);
+  if (binding) return binding.kind === "Instance";
+  return (
+    findInstance(name, scope, unit) !== undefined &&
+    [...unit.bindings.keys()].some((key) => key.startsWith(`${name}!`))
+  );
 };
 
 const getSymbolArity = (
@@ -670,6 +952,7 @@ const getSymbolArity = (
   name: string,
   scope: LocalName | undefined,
   unit: Unit,
+  isOperatorArgument = false,
 ) => {
   const location = expression.location;
   if (isSelectionReported(expression, scope, unit)) return undefined;
@@ -677,49 +960,128 @@ const getSymbolArity = (
   if (renamed !== undefined) return renamed;
   if (isKey(name)) return expression.kind === "Apply" ? expression.args.length : 0;
   const local = lookupLocal(scope, name);
-  if (local?.isNonFact) {
+  if (local?.nonFactStep) {
     unit.errors.push({
       location: formatRange(getSpelledNameRange(expression, name)),
       message: "Step number of non-expression step used as an expression.",
     });
     return undefined;
   }
-  if (checkReference(expression, scope, unit, false) || (isStepName(name) && local)) {
+  const keyword = local?.goal?.keyword;
+  if (keyword) {
+    unit.errors.push({
+      location: formatRange(getSpelledNameRange(expression, name)),
+      message: `${keyword} proof step selected instead of expression.`,
+    });
+    return undefined;
+  }
+  if (checkReference(expression, scope, unit, "Expression") || (isStepName(name) && local)) {
     return expression.kind === "Apply" ? expression.args.length : 0;
   }
-  if (local && expression.kind !== "OperatorReference") expression.resolution = LOCAL_RESOLUTION;
+  if (isInstanceName(name, scope, unit)) {
+    const instance = lookupLocal(scope, name) ?? getModuleBinding(name, unit, undefined);
+    const count = expression.kind === "Apply" ? expression.args.length : 0;
+    // SANY counts an instance's arguments only where an expression is expected.
+    if (!isOperatorArgument && instance?.kind === "Instance" && instance.arity !== count) {
+      unit.errors.push({
+        location: formatRange(
+          (expression.kind === "Apply" && expression.argumentsRange) ||
+            getSpelledNameRange(expression, name),
+        ),
+        message: `The operator ${name} requires ${instance.arity} arguments.`,
+      });
+      return undefined;
+    }
+    const range = getSpelledNameRange(expression, name);
+    if (!isOperatorArgument && expression.kind === "Apply") {
+      expression.args.forEach((arg, index) =>
+        matchArgument(arg, instance?.params?.[index] ?? 0, index, name, range, scope, unit),
+      );
+    }
+    unit.errors.push({
+      location: formatRange({
+        ...range,
+        start: {
+          line: range.end.line,
+          column: range.end.column - name.slice(name.lastIndexOf("!") + 1).length + 1,
+        },
+      }),
+      message: `Operator name ${name} is incomplete.`,
+    });
+    return undefined;
+  }
+  if (local && expression.kind !== "OperatorReference") {
+    expression.resolution = local.isSelf ? SELF_RESOLUTION : LOCAL_RESOLUTION;
+  }
   if (local) return local.arity;
+  const binding = unit.bindings.get(name);
+  if (binding?.goal?.statement.kind === "AssumeProve" && !binding.isSubstituted) {
+    return binding.arity;
+  }
   const symbol = findSymbol(name, unit);
   if (symbol) {
+    if (symbol.kind === "Theorem") unit.linkTheorem(symbol.key);
     if (expression.kind === "Identifier") expression.name = symbol.key;
     else expression.operator = symbol.key;
+    operandApplications.get(expression)?.forEach((application) => {
+      application.operator = symbol.key;
+    });
     renamedArities.set(expression, symbol.arity);
     return symbol.arity;
   }
   const prefix = name.includes("!") ? name.slice(0, name.indexOf("!")) : "";
-  const isSelected =
-    prefix !== "" &&
-    (lookupLocal(scope, prefix) !== undefined ||
-      findSymbol(prefix, unit) !== undefined ||
-      unit.facts.has(prefix));
-  if (isSelected) {
-    return expression.kind === "Apply" ? expression.args.length : 0;
-  }
-  const spelling = (expression.kind === "Identifier" ? undefined : expression.spelling) ?? name;
-  const range = formatRange(
-    expression.kind === "Apply" && spelling === "-."
-      ? getNameRange(location, "-")
-      : getSpelledNameRange(expression, name),
-  );
-  if (!isOperatorSymbol(name) || isStepName(name)) {
-    unit.errors.push({ location: range, message: `Unknown operator: \`${name}'.` });
+  const selected =
+    prefix === "" ? undefined : (lookupLocal(scope, prefix) ?? findSymbol(prefix, unit));
+  if (
+    selected &&
+    (!SELECTABLE_KINDS.has(selected.kind) || lookupLocal(scope, prefix)?.nonFactStep)
+  ) {
+    reportUnselectable(
+      prefix,
+      (expression.kind !== "OperatorReference" && expression.selectorRanges?.[0]) ||
+        getSpelledNameRange(expression, name),
+      unit,
+    );
     return undefined;
   }
+  if (
+    expression.kind !== "OperatorReference" &&
+    prefix !== "" &&
+    isPendingSelectionReported(
+      prefix,
+      expression.kind === "Apply" && expression.argumentCounts
+        ? expression.args.slice(0, expression.argumentCounts[0])
+        : [],
+      expression.selectorRanges?.[0],
+      (expression.kind === "Apply" ? expression.argumentRanges?.[0] : undefined) ?? location.range,
+      scope,
+      unit,
+    )
+  ) {
+    return undefined;
+  }
+  if (selected || (prefix !== "" && isFact(prefix, unit))) {
+    return expression.kind === "Apply" ? expression.args.length : 0;
+  }
+  const fixity = getFixity(expression);
+  const isOperatorApplication = expression.kind === "OperatorReference" || fixity !== undefined;
+  if (!isOperatorSymbol(name) || isStepName(name) || !isOperatorApplication) {
+    unit.errors.push({
+      location: formatRange(getSpelledNameRange(expression, name)),
+      message: `Unknown operator: \`${resolveSynonym(name)}'.`,
+    });
+    return undefined;
+  }
+  const spelling = expression.spelling ?? name;
   unit.errors.push({
-    location: range,
+    location: formatRange(
+      fixity === "prefix" && spelling === "-."
+        ? getNameRange(location, "-")
+        : getSpelledNameRange(expression, name),
+    ),
     message: `Could not find declaration or definition of symbol '${spelling}'.`,
   });
-  const fixity = getFixity(expression);
+  if (fixity) unresolvedExpressions.add(expression);
   if (fixity && location.range) {
     unit.errors.push({
       location: formatRange(location.range),
@@ -730,7 +1092,7 @@ const getSymbolArity = (
 };
 
 const resolveBounds = (bounds: Bound[], scope: LocalName | undefined, unit: Unit) => {
-  bounds.forEach((bound) => resolveExpression(bound.set, scope, unit));
+  getBoundSets(bounds).forEach((set) => resolveExpression(set, scope, unit));
   return bounds.reduce(
     (current, bound) =>
       bindNames(current, getPatternNames(bound.pattern), bound.pattern.ranges, unit),
@@ -774,27 +1136,55 @@ const resolveDefinition = (
   const isDeclared = current?.isPending === true && recursive.has(current);
   if (current?.isPending && !isDeclared) {
     report(
-      `Recursive ${definition.kind === "Function" ? "function" : "operator"} ${name} defined at wrong LET/IN level.`,
+      `Recursive ${definition.kind === "Function" ? "function" : "operator"} ${resolveSynonym(name)} defined at wrong LET/IN level.`,
     );
   } else if (current && !isDeclared) {
     report(
       definition.kind === "Function"
         ? `Function name \`${name}' already defined or declared.`
-        : `Operator ${name} already defined or declared.`,
+        : `Operator ${resolveSynonym(name)} already defined or declared.`,
+    );
+  } else if (current && definition.kind === "Function" && current.arity > 0) {
+    report(`Function ${resolveSynonym(name)} has operator arguments in its RECURSIVE declaration.`);
+  } else if (
+    current &&
+    definition.kind === "Operator" &&
+    // Deviation from SANY: Generator#processOperator compares only the last parameter's arity with the RECURSIVE declaration's.
+    (current.arity !== definition.params.length ||
+      definition.params.some((param) => param.arity > 0))
+  ) {
+    report(
+      `Definition of ${resolveSynonym(name)} has different arity than its RECURSIVE declaration.`,
     );
   }
+  if (current && isDeclared && definition.kind === "Operator") {
+    current.params = getParamArities(definition);
+  }
   if (definition.kind === "Function") {
+    const isTaken = current !== undefined && !isDeclared;
+    const isTakenByDefinition =
+      isTaken &&
+      !current.isPending &&
+      (current.kind === "Definition" || current.kind === "Instance");
+    // SANY names a function declared RECURSIVE by its definition in the body, and any other by a parameter of its own.
+    // Generator#processFunction gives a function whose name is taken no such parameter, and its bound names only when a definition took the name.
     resolveExpression(
       definition.body,
-      { name, kind: "Parameter", arity: 0, range, parent: inner },
+      !isTaken
+        ? { name, kind: "Parameter", arity: 0, range, parent: inner, isSelf: !isDeclared }
+        : isTakenByDefinition
+          ? inner
+          : scope,
       unit,
     );
     markRecursiveConstructions(definition.body, name);
     definition.isSelfReferential = isReferenced(definition.body, name);
   } else resolveExpression(definition.body, inner, unit);
   if (current && isDeclared) {
-    current.isPending = false;
-    current.range = range;
+    if (definition.kind === "Operator" || current.arity === 0) {
+      current.isPending = false;
+      current.range = range;
+    }
     return false;
   }
   return definition.kind === "Function"
@@ -812,10 +1202,15 @@ const resolveDefinitions = (
   scope: LocalName | undefined,
   unit: Unit,
   instances: Instance[] = [],
+  declarations: Declaration[] = [],
 ) => {
   const recursive = new Set<Binding>();
   const declared = definitions
-    .filter((definition) => definition.isRecursive)
+    .filter(
+      (definition) =>
+        definition.isRecursive &&
+        declarations.every((declaration) => declaration.name !== definition.name),
+    )
     .reduce<LocalName | undefined>((parent, definition) => {
       if (lookupLocal(parent, definition.name)?.isPending) return parent;
       const local: LocalName = {
@@ -829,30 +1224,68 @@ const resolveDefinitions = (
       recursive.add(local);
       return local;
     }, scope);
-  const pending = unit.isGenerated ? [] : [...instances];
-  const resolveInstances = (
+  const declaredLocals = new Map<Declaration, LocalName | undefined>();
+  const bindDeclaration = (parent: LocalName | undefined, declaration: Declaration) => {
+    const binding: Binding = {
+      kind: "Definition",
+      arity: declaration.arity,
+      params: Array(declaration.arity).fill(0),
+      range: declaration.location.range,
+    };
+    const local: LocalName | undefined = isBindable(
+      declaration.name,
+      lookupLocal(parent, declaration.name) ??
+        getModuleBinding(declaration.name, unit, binding.range),
+      binding,
+      unit,
+    )
+      ? { ...binding, name: declaration.name, parent, isPending: true }
+      : undefined;
+    if (local) recursive.add(local);
+    declaredLocals.set(declaration, local);
+    return local ?? parent;
+  };
+  const pending = [...(unit.isGenerated ? [] : instances), ...declarations].toSorted(
+    (left, right) => compareLocations(left.location, right.location),
+  );
+  const resolvePending = (
     current: LocalName | undefined,
-    isDue: (instance: Instance) => boolean,
+    isDue: (item: Instance | Declaration) => boolean,
   ) => {
-    const count = pending.findIndex((instance) => !isDue(instance));
+    const count = pending.findIndex((item) => !isDue(item));
     return pending
       .splice(0, count === -1 ? pending.length : count)
-      .reduce((parent, instance) => resolveLocalInstance(instance, parent, unit), current);
+      .reduce(
+        (parent, item) =>
+          "kind" in item ? resolveLocalInstance(item, parent, unit) : bindDeclaration(parent, item),
+        current,
+      );
   };
   const resolved = definitions.reduce<LocalName | undefined>((previous, definition) => {
     const current = isKey(definition.name)
       ? previous
-      : resolveInstances(previous, (instance) => !isBefore(definition.location, instance.location));
+      : resolvePending(previous, (item) => !isBefore(definition.location, item.location));
     const local: LocalName = {
       name: definition.name,
       arity: getArity(definition),
       kind: "Definition",
       range: definition.location.range,
       parent: current,
+      functionArity: getFunctionArity(definition),
     };
-    if (isInstantiated(definition)) return local;
+    if (isInstantiated(definition)) {
+      const instanced = lookupLocal(current, definition.name);
+      return {
+        ...local,
+        params: getParamArities(definition),
+        functionArity: instanced?.functionArity,
+        goal: instanced?.goal,
+        isSubstituted: instanced?.isSubstituted,
+      };
+    }
+    if (isKey(definition.name)) return { ...local, params: getParamArities(definition) };
     const isInstanced = instances.some((instance) => instance.location === definition.location);
-    const isGenerated = unit.isGenerated || definition.isLocal || isKey(definition.name);
+    const isGenerated = unit.isGenerated || definition.isLocal;
     const inner = isInstanced
       ? { ...unit, isGenerated: true, errors: [], warnings: [] }
       : isGenerated
@@ -862,141 +1295,291 @@ const resolveDefinitions = (
       ? { ...local, params: getParamArities(definition) }
       : current;
   }, declared);
-  return resolveInstances(resolved, () => true);
+  const resolvedScope = resolvePending(resolved, () => true);
+  declaredLocals.forEach((local, declaration) => {
+    const range = declaration.location.range;
+    if (range && !unit.isGenerated && (!local || local.isPending)) {
+      unit.errors.push({
+        location: formatRange(range),
+        message: `Symbol ${resolveSynonym(declaration.name)} declared in RECURSIVE statement but not defined.`,
+      });
+    }
+  });
+  return resolvedScope;
 };
 
-const findInstance = (name: string, scope: LocalName | undefined, unit: Unit) => {
-  const prefix = name.split("!")[0];
-  const binding =
-    prefix === name
-      ? undefined
-      : (lookupLocal(scope, prefix) ?? getModuleBinding(prefix, unit, undefined));
-  return binding?.kind === "Instance" ? { name: prefix, arity: binding.arity } : undefined;
-};
+const getInstances = (names: string[], scope: LocalName | undefined, unit: Unit) =>
+  names.slice(0, -1).map((_name, index) => {
+    const prefix = names.slice(0, index + 1).join("!");
+    const binding = lookupLocal(scope, prefix) ?? getModuleBinding(prefix, unit, undefined);
+    return binding?.kind === "Instance"
+      ? { name: prefix, arity: binding.arity, range: binding.range }
+      : undefined;
+  });
+
+const findInstance = (name: string, scope: LocalName | undefined, unit: Unit) =>
+  getInstances(name.split("!"), scope, unit)[0];
 
 const isInstanceArityReported = (
   expression: Expression,
   scope: LocalName | undefined,
   unit: Unit,
 ) => {
-  if (expression.kind !== "Identifier" && expression.kind !== "Apply") return false;
-  const instance = findInstance(
-    expression.kind === "Identifier" ? expression.name : expression.operator,
+  if (!isReference(expression)) return false;
+  const selectors = getSelectors(expression);
+  const nameCount = selectors.findIndex((selector) => selector.kind !== "Name");
+  const names = selectors
+    .slice(0, nameCount === -1 ? selectors.length : nameCount)
+    .flatMap((selector) => (selector.kind === "Name" ? [selector] : []));
+  const instances = getInstances(
+    names.map((name) => name.name),
     scope,
     unit,
   );
-  const count = expression.kind === "Apply" ? (expression.argumentCounts?.[0] ?? 0) : 0;
-  if (!instance || count === instance.arity) return false;
+  const index = instances.findIndex(
+    (instance, position) =>
+      instance !== undefined &&
+      (instances[position - 1]?.arity ?? 0) + names[position].args.length !== instance.arity,
+  );
+  const instance = instances[index];
+  if (!instance) return false;
   const range =
-    (expression.kind === "Apply" ? expression.argumentRanges?.[0] : undefined) ??
+    (expression.kind === "Identifier" ? undefined : expression.argumentRanges?.[index]) ??
     expression.location.range;
   if (range) {
     unit.errors.push({
       location: formatRange(range),
-      message: `The operator ${instance.name} requires ${instance.arity} arguments.`,
+      message: `The operator ${instance.name} requires ${instance.arity - (instances[index - 1]?.arity ?? 0)} arguments.`,
     });
   }
   return true;
 };
 
-// Deviation from SANY: an operator whose parameters tla-ts does not know takes any argument.
+const isArgumentCountReported = (
+  callee: Binding | undefined,
+  name: string,
+  count: number,
+  range: SourceRange | undefined,
+  unit: Unit,
+) => {
+  const params = callee?.kind === "Definition" ? callee.params : undefined;
+  if (!callee || !params || params.length === callee.arity) return false;
+  if (range && !unit.isGenerated) {
+    unit.errors.push({
+      location: formatRange(range),
+      message: `Wrong number of arguments (${count}) given to operator '${resolveSynonym(name)}', \nwhich requires ${params.length} arguments.`,
+    });
+  }
+  return true;
+};
+
+const resolveExpressionArgument = (arg: Expression, scope: LocalName | undefined, unit: Unit) => {
+  const range = arg.location.range;
+  const report = (message: string) => {
+    if (range) unit.errors.push({ location: formatRange(range), message });
+  };
+  const selectionError = operatorSelectionErrors.get(arg);
+  // Deviation from SANY: SANY names its internal node kind here, where tla-ts words it as for a name.
+  if (arg.kind === "Lambda" && arg.operator !== undefined) {
+    unresolvedExpressions.add(arg);
+    report(`The operator ${resolveSynonym(arg.operator)} requires 1 arguments.`);
+  } else if (selectionError) {
+    unit.errors.push(selectionError);
+  } else if (arg.kind === "Lambda" && range) {
+    unresolvedExpressions.add(arg);
+    report("LAMBDA expression used where an expression is required.");
+  } else if (arg.kind === "OperatorReference") {
+    unresolvedExpressions.add(arg);
+    const operator = arg.operator;
+    const argArity = getSymbolArity(arg, operator, scope, unit);
+    if (argArity !== undefined) {
+      report(`The operator ${resolveSynonym(operator)} requires ${argArity} arguments.`);
+    }
+  } else resolveExpression(arg, scope, unit);
+};
+
+const getSelectorArgumentError = (reference: Expression, isDefEntry = false) => {
+  if (!isReference(reference)) return undefined;
+  // SANY reads a reference that ends in arguments as an application, not as a selector's arguments, outside a DEF clause.
+  const selectors =
+    isDefEntry ||
+    reference.kind === "Subexpression" ||
+    (reference.kind === "Apply" && reference.argumentCounts?.at(-1) === 0)
+      ? getSelectors(reference)
+      : [];
+  const index = selectors.findIndex((selector) => "args" in selector && selector.args.length > 0);
+  if (index === -1) return undefined;
+  const selector = selectors[index];
+  return {
+    index,
+    range: reference.selectorRanges?.[index],
+    message: `Selector \`${selector.kind === "Name" ? selector.name : "!(...)"}' should not have argument(s).`,
+  };
+};
+
+const matchArgument = (
+  arg: Expression,
+  expected: number,
+  index: number,
+  operator: string,
+  operatorRange: SourceRange | undefined,
+  scope: LocalName | undefined,
+  unit: Unit,
+) => {
+  const report = (range: SourceRange | undefined, message: string) => {
+    if (range) unit.errors.push({ location: formatRange(range), message });
+  };
+  const reportOperatorArity = (name: string, arity: number) => {
+    const definition =
+      findInstance(operator, scope, unit)?.range ?? findBinding(operator, scope, unit)?.range;
+    if (!definition) return;
+    report(
+      operatorRange,
+      `Operator with incorrect arity passed as argument. \nOperator '${resolveSynonym(name)}' of arity ${arity} is argument number ${index + 1} (counting from 1) to operator \`${formatRange(definition)}', \nbut an operator of arity ${expected} was expected.`,
+    );
+  };
+  const range = arg.location.range;
+  if (expected === 0) {
+    resolveExpressionArgument(arg, scope, unit);
+    return true;
+  }
+  const parenthesized = parenthesizedRanges.get(arg);
+  if (parenthesized) {
+    report(
+      parenthesized,
+      `An expression appears as argument number ${index + 1} (counting from 1) to operator '${operator}', in a position an operator is required.`,
+    );
+    return false;
+  }
+  const reference = selections.get(arg) ?? arg;
+  const argumentError = getSelectorArgumentError(reference);
+  if (argumentError) {
+    report(argumentError.range, argumentError.message);
+    return false;
+  }
+  if (arg.kind === "Lambda") {
+    if (selections.has(arg)) resolveExpression(arg, scope, unit);
+    else resolveLambda(arg, scope, unit);
+    if (findNullError(nullSelections.get(arg))) return false;
+    const isMatched = arg.params.length === expected;
+    if (!isMatched && selections.has(arg)) {
+      report(range, `Expected arity ${expected} but found operator of arity ${arg.params.length}.`);
+    } else if (!isMatched && range && arg.operator === undefined) {
+      report(
+        operatorRange,
+        `Lambda expression with arity ${arg.params.length} used as argument ${index + 1} of operator \`${operator}', \nbut an operator of arity ${expected} is required.`,
+      );
+    } else if (!isMatched && arg.operator !== undefined) {
+      reportOperatorArity(arg.operator, arg.params.length);
+    }
+    return isMatched;
+  }
+  if (reference !== arg) {
+    const failed = findNullError(nullSelections.get(arg));
+    if (failed) unit.errors.push(failed);
+    if (!failed) {
+      report(reference.location.range, `Expected arity ${expected} but found operator of arity 0.`);
+    }
+    return false;
+  }
+  if (arg.kind === "Subexpression") {
+    resolveExpression(arg, scope, unit);
+    return false;
+  }
+  if (arg.kind !== "Identifier" && arg.kind !== "OperatorReference") {
+    report(
+      range,
+      `An expression appears as argument number ${index + 1} (counting from 1) to operator '${operator}', in a position an operator is required.`,
+    );
+    return false;
+  }
+  const name = arg.kind === "Identifier" ? arg.name : arg.operator;
+  const argParams = findBinding(name, scope, unit)?.params ?? [];
+  const argArity = getSymbolArity(arg, name, scope, unit, true);
+  if (arg.kind === "Identifier" && argArity !== undefined && argArity !== expected) {
+    report(
+      getSpelledNameRange(arg, name),
+      `Expected arity ${expected} but found operator of arity ${argArity}.`,
+    );
+  }
+  if (arg.kind === "OperatorReference" && argArity !== undefined && argArity !== expected) {
+    reportOperatorArity(name, argArity);
+  }
+  if (argArity === expected && isAssumeProveTheorem(name, scope, unit)) {
+    report(range, "ASSUME/PROVE used where an expression is required.");
+    return false;
+  }
+  // Deviation from SANY: OpDefNode#matchingOpArgOperand reads as many parameters as a RECURSIVE declaration gives and crashes when the definition has fewer.
+  return argArity === expected && argParams.every((param) => param === 0);
+};
+
 const resolveApply = (
   expression: Expression & { kind: "Apply" },
   scope: LocalName | undefined,
   unit: Unit,
 ) => {
-  if (isInstanceArityReported(expression, scope, unit)) return;
   const operator = expression.operator;
   const callee = findBinding(operator, scope, unit);
-  const arity = getSymbolArity(expression, operator, scope, unit);
-  if (arity === undefined) return;
-  if (arity !== expression.args.length) {
+  const arity = isInstanceArityReported(expression, scope, unit)
+    ? undefined
+    : getSymbolArity(expression, operator, scope, unit);
+  if (arity !== undefined && arity !== expression.args.length) {
     unit.errors.push({
       location: formatRange(expression.argumentsRange ?? getSpelledNameRange(expression, operator)),
-      message: `The operator ${operator} requires ${arity - (findInstance(operator, scope, unit)?.arity ?? 0)} arguments.`,
+      message: `The operator ${resolveSynonym(operator)} requires ${arity - (getInstances(operator.split("!"), scope, unit).findLast((instance) => instance !== undefined)?.arity ?? 0)} arguments.`,
     });
+  }
+  if (arity !== expression.args.length) {
+    emptyExpressions.add(expression);
     return;
   }
-  const params = callee && (callee.kind === "Definition" ? callee.params : []);
+  const params =
+    callee && (callee.kind === "Definition" ? callee.params : expression.args.map(() => 0));
   if (params === undefined) {
     expression.args.forEach((arg) => resolveArgument(arg, scope, unit));
     return;
   }
-  const report = (range: SourceRange | undefined, message: string) => {
-    if (range) unit.errors.push({ location: formatRange(range), message });
-  };
-  expression.args
-    .map((arg, index) => {
-      const expected = params[index] ?? 0;
-      const range = arg.location.range;
-      if (expected === 0) {
-        // Deviation from SANY: SANY fails here with an internal error; tla-ts words it as for a name.
-        if (arg.kind === "Lambda" && arg.operator !== undefined) {
-          report(range, `The operator ${arg.operator} requires 1 arguments.`);
-        } else if (arg.kind === "Lambda" && range) {
-          report(range, "LAMBDA expression used where an expression is required.");
-        } else if (arg.kind === "OperatorReference") {
-          const argArity = getSymbolArity(arg, arg.operator, scope, unit);
-          if (argArity !== undefined) {
-            report(range, `The operator ${arg.operator} requires ${argArity} arguments.`);
-          }
-        } else resolveExpression(arg, scope, unit);
-        return true;
-      }
-      if (arg.kind === "Lambda") {
-        resolveExpression(arg, scope, unit);
-        const isMatched = arg.params.length === expected;
-        if (!isMatched && selections.has(arg)) {
-          report(
-            range,
-            `Expected arity ${expected} but found operator of arity ${arg.params.length}.`,
-          );
-        } else if (!isMatched && range && arg.operator === undefined) {
-          report(
-            expression.selectorRanges?.at(-1) ?? getSpelledNameRange(expression, operator),
-            `Lambda expression with arity ${arg.params.length} used as argument ${index + 1} of operator \`${operator}', \nbut an operator of arity ${expected} is required.`,
-          );
-        }
-        return isMatched;
-      }
-      if (arg.kind === "Subexpression") {
-        resolveExpression(arg, scope, unit);
-        return true;
-      }
-      if (arg.kind === "Apply" && arg.argumentCounts?.at(-1) === 0) {
-        const selectorIndex = arg.argumentCounts.findIndex((count) => count > 0);
-        report(
-          arg.selectorRanges?.[selectorIndex],
-          `Selector \`${arg.operator.split("!")[selectorIndex]}' should not have argument(s).`,
-        );
-        return false;
-      }
-      if (arg.kind !== "Identifier" && arg.kind !== "OperatorReference") {
-        report(
-          range,
-          `An expression appears as argument number ${index + 1} (counting from 1) to operator '${operator}', in a position an operator is required.`,
-        );
-        return false;
-      }
-      const name = arg.kind === "Identifier" ? arg.name : arg.operator;
-      const argParams = findBinding(name, scope, unit)?.params ?? [];
-      const argArity = getSymbolArity(arg, name, scope, unit);
-      if (arg.kind === "Identifier" && argArity !== undefined && argArity !== expected) {
-        report(
-          getSpelledNameRange(arg, name),
-          `Expected arity ${expected} but found operator of arity ${argArity}.`,
-        );
-      }
-      return argArity === expected && argParams.every((param) => param === 0);
-    })
-    .forEach((isMatched, index) => {
-      if (!isMatched) {
-        report(
-          expression.location.range,
-          `Argument number ${index + 1} to operator '${operator}' \nshould be a ${params[index]}-parameter operator.`,
-        );
-      }
+  const operatorRange =
+    expression.selectorRanges?.at(-1) ?? getSpelledNameRange(expression, operator);
+  const isSelection = operator === SELECTION_NAME;
+  const matches = expression.args.slice(0, params.length).map((arg, index) => {
+    const source = isSelection ? selectionArguments.get(arg) : undefined;
+    return matchArgument(
+      arg,
+      params[index],
+      source?.index ?? index,
+      source?.operator ?? operator,
+      source?.range ?? operatorRange,
+      scope,
+      isSelection ? { ...unit, isGenerated: false } : unit,
+    );
+  });
+  if (isAssumeProveTheorem(operator, scope, unit) && expression.location.range) {
+    unit.errors.push({
+      location: formatRange(expression.location.range),
+      message: "ASSUME/PROVE used where an expression is required.",
     });
+    return;
+  }
+  if (
+    isArgumentCountReported(
+      callee,
+      operator,
+      expression.args.length,
+      expression.location.range,
+      unit,
+    )
+  ) {
+    return;
+  }
+  matches.forEach((isMatched, index) => {
+    if (!isMatched && expression.location.range) {
+      unit.errors.push({
+        location: formatRange(expression.location.range),
+        message: `Argument number ${index + 1} to operator '${operator}' \nshould be a ${params[index]}-parameter operator.`,
+      });
+    }
+  });
 };
 
 const resolveArgument = (arg: Expression, scope: LocalName | undefined, unit: Unit) => {
@@ -1004,13 +1587,48 @@ const resolveArgument = (arg: Expression, scope: LocalName | undefined, unit: Un
   else resolveExpression(arg, scope, unit);
 };
 
+const matchApplications = (
+  applications: SelectionArguments[],
+  scope: LocalName | undefined,
+  unit: Unit,
+) =>
+  applications.forEach((application) =>
+    application.args
+      .slice(0, application.params.length)
+      .forEach((arg, index) =>
+        matchArgument(
+          arg,
+          application.params[index],
+          index,
+          application.operator,
+          application.range,
+          scope,
+          unit,
+        ),
+      ),
+  );
+
 const isSelectionReported = (expression: Expression, scope: LocalName | undefined, unit: Unit) => {
   const failed = selectionErrors.get(expression);
   if (!failed) return false;
-  failed.args.forEach((arg) => resolveArgument(arg, scope, unit));
-  unit.errors.push(failed.error);
+  matchApplications(failed.applications, scope, unit);
+  unit.errors.push(findNullError(failed.nulls) ?? failed.error);
   return true;
 };
+
+const resolveLambda = (
+  expression: Expression & { kind: "Lambda" },
+  scope: LocalName | undefined,
+  unit: Unit,
+) =>
+  resolveExpression(
+    expression.body,
+    bindNames(scope, expression.params, expression.paramRanges, unit),
+    {
+      ...unit,
+      labelParams: [...unit.labelParams, ...expression.params],
+    },
+  );
 
 const resolveExpression = (
   expression: Expression,
@@ -1018,6 +1636,13 @@ const resolveExpression = (
   unit: Unit,
 ): void => {
   if (selections.has(expression) && !unit.isGenerated) {
+    const failed = findNullSelection(nullSelections.get(expression));
+    if (failed) {
+      emptyExpressions.add(expression);
+      matchApplications(failed.applications, scope, unit);
+      unit.errors.push(failed.error);
+      return;
+    }
     resolveExpression(expression, scope, { ...unit, isGenerated: true });
     return;
   }
@@ -1031,18 +1656,50 @@ const resolveExpression = (
     case "Number":
     case "Decimal":
     case "String":
-    case "ExceptAt":
       return;
-    case "Identifier": {
-      if (isInstanceArityReported(expression, scope, unit)) return;
-      const name = expression.name;
-      const arity = getSymbolArity(expression, name, scope, unit);
-      if (arity !== undefined && arity > 0) {
+    case "ExceptAt":
+      if (!unit.isInExcept && expression !== unit.stepAt && expression.location.range) {
+        emptyExpressions.add(expression);
         unit.errors.push({
-          location: formatRange(getSpelledNameRange(expression, name)),
-          message: `The operator ${name} requires ${arity} arguments.`,
+          location: formatRange(expression.location.range),
+          message: "@ used where its meaning is not defined.",
         });
       }
+      return;
+    case "Identifier": {
+      const name = expression.name;
+      const arity = isInstanceArityReported(expression, scope, unit)
+        ? undefined
+        : getSymbolArity(expression, name, scope, unit);
+      if (arity === 0) {
+        const binding = findBinding(name, scope, unit);
+        const kind = binding?.kind;
+        // SANY's selector chooses no operand of a variable, theorem, step or NEW symbol, unlike of a constant or definition.
+        if (
+          kind === "Variable" ||
+          kind === "Theorem" ||
+          kind?.startsWith("New") ||
+          isFact(name, unit)
+        ) {
+          emptyExpressions.add(expression);
+        }
+        if (isAssumeProveTheorem(name, scope, unit)) {
+          unit.errors.push({
+            location: formatRange(getSpelledNameRange(expression, name)),
+            message: "ASSUME/PROVE used where an expression is required.",
+          });
+          return;
+        }
+        isArgumentCountReported(binding, name, 0, getSpelledNameRange(expression, name), unit);
+        return;
+      }
+      if (arity !== undefined) {
+        unit.errors.push({
+          location: formatRange(getSpelledNameRange(expression, name)),
+          message: `The operator ${resolveSynonym(name)} requires ${arity} arguments.`,
+        });
+      }
+      emptyExpressions.add(expression);
       return;
     }
     case "OperatorReference":
@@ -1052,11 +1709,14 @@ const resolveExpression = (
       resolveApply(expression, scope, unit);
       return;
     case "Lambda":
-      resolveExpression(
-        expression.body,
-        bindNames(scope, expression.params, expression.paramRanges, unit),
-        bindLabelParams(expression.params),
-      );
+      if (selections.has(expression)) resolveLambda(expression, scope, unit);
+      else if (expression.location.range) {
+        unresolvedExpressions.add(expression);
+        unit.errors.push({
+          location: formatRange(expression.location.range),
+          message: "LAMBDA expression used where an expression is required.",
+        });
+      }
       return;
     case "And":
     case "Or":
@@ -1079,7 +1739,13 @@ const resolveExpression = (
     case "Let":
       resolveExpression(
         expression.body,
-        resolveDefinitions(expression.definitions, scope, unit, expression.instances),
+        resolveDefinitions(
+          expression.definitions,
+          scope,
+          unit,
+          expression.instances,
+          expression.recursive,
+        ),
         unit,
       );
       return;
@@ -1099,14 +1765,21 @@ const resolveExpression = (
         bindLabelParams(expression.names),
       );
       return;
-    case "Choose":
+    case "Choose": {
       if (expression.set) resolveExpression(expression.set, scope, unit);
+      const range = expression.location.range;
+      // SANY locates the identifier of an unbounded CHOOSE x at the CHOOSE.
+      const ranges =
+        !expression.set && expression.pattern.kind === "Name" && range
+          ? [{ ...range, end: { ...range.start, column: range.start.column + 5 } }]
+          : expression.pattern.ranges;
       resolveExpression(
         expression.body,
-        bindNames(scope, getPatternNames(expression.pattern), expression.pattern.ranges, unit),
+        bindNames(scope, getPatternNames(expression.pattern), ranges, unit),
         bindLabelParams(getPatternNames(expression.pattern)),
       );
       return;
+    }
     case "SetEnumeration":
     case "Tuple":
       resolveAll(expression.elements);
@@ -1147,9 +1820,35 @@ const resolveExpression = (
         resolveExpression(update.value, scope, { ...unit, isInExcept: true });
       });
       return;
-    case "FunctionApplication":
-      resolveAll([expression.function, ...expression.args]);
+    case "FunctionApplication": {
+      const applied = expression.function;
+      const name =
+        applied.kind === "Identifier"
+          ? applied.name
+          : applied.kind === "Apply"
+            ? applied.operator
+            : undefined;
+      const arity = name === undefined ? undefined : findBinding(name, scope, unit)?.functionArity;
+      resolveExpression(applied, scope, unit);
+      // SANY generates neither the arguments nor the application of a function it failed to generate.
+      if (unresolvedExpressions.has(applied)) {
+        unresolvedExpressions.add(expression);
+        return;
+      }
+      const count = expression.args.length;
+      if (arity === undefined || count < 2 || arity === count || isEmptyExpression(applied)) {
+        resolveAll(expression.args);
+        return;
+      }
+      emptyExpressions.add(expression);
+      if (expression.location.range) {
+        unit.errors.push({
+          location: formatRange(expression.location.range),
+          message: `Function '${name}' is defined with ${arity} parameters, but is applied to ${count} arguments.`,
+        });
+      }
       return;
+    }
     case "FieldAccess":
       resolveExpression(expression.record, scope, unit);
       return;
@@ -1165,38 +1864,394 @@ const resolveExpression = (
       resolveAll([expression.subscript, expression.action]);
       return;
     case "Label":
-      if (isLabelReported(expression, unit)) return;
+      if (isLabelReported(expression.location, unit)) return;
       resolveExpression(expression.body, scope, { ...unit, labelParams: [], labels: new Set() });
       checkLabel(expression, scope, unit);
       return;
-    case "Subexpression": {
-      if (isSelectionReported(expression, scope, unit)) return;
-      expression.selectors
-        .flatMap((selector) => ("args" in selector ? selector.args : []))
-        .forEach((arg) => resolveArgument(arg, scope, unit));
-      checkReference(expression, scope, unit, false);
+    case "Subexpression":
+      if (isSubexpressionReported(expression, scope, unit)) emptyExpressions.add(expression);
+      return;
+    case "Bracket": {
+      unresolvedExpressions.add(expression);
+      const range = expression.location.range;
+      if (range) {
+        unit.errors.push({
+          location: formatRange({ ...range, end: range.start }),
+          message: "Unsupported expression type `['.",
+        });
+      }
+      return;
     }
+    case "Selection":
+      return;
   }
 };
 
-const checkFacts = (facts: Fact[], scope: LocalName | undefined, unit: Unit) =>
-  facts.forEach((fact) => {
-    if (
-      fact.kind === "ModuleFact" ||
-      isInstanceArityReported(fact, scope, unit) ||
-      checkReference(fact, scope, unit, true)
-    ) {
-      return;
-    }
-    const name =
-      fact.kind === "Identifier" ? fact.name : fact.kind === "Apply" ? fact.operator : "";
-    if (fact.kind === "Identifier" && lookupLocal(scope, name)?.isNonFact) {
-      unit.errors.push({
-        location: formatRange(getSpelledNameRange(fact, name)),
-        message: "Step number of non-fact used as a fact",
-      });
-    } else if (!unit.facts.has(name)) resolveExpression(fact, scope, unit);
+const isPendingSelectionReported = (
+  name: string,
+  args: Expression[],
+  selectorRange: SourceRange | undefined,
+  argumentsRange: SourceRange | undefined,
+  scope: LocalName | undefined,
+  unit: Unit,
+) => {
+  const pending = lookupLocal(scope, name) ?? getModuleBinding(name, unit, undefined);
+  if (!pending?.isPending || !selectorRange || !argumentsRange) return false;
+  if (args.length !== pending.arity) {
+    unit.errors.push({
+      location: formatRange(argumentsRange),
+      message: `The operator ${name} requires ${pending.arity} arguments.`,
+    });
+    return true;
+  }
+  args.forEach((arg) => resolveExpression(arg, scope, unit));
+  unit.errors.push({
+    location: formatRange(selectorRange),
+    message: `Subexpression of  \`${name}' used inside the operator's definition.`,
   });
+  return true;
+};
+
+const isSubexpressionReported = (
+  expression: Expression & { kind: "Subexpression" },
+  scope: LocalName | undefined,
+  unit: Unit,
+) => {
+  if (
+    isInstanceArityReported(expression, scope, unit) ||
+    isSelectionReported(expression, scope, unit)
+  ) {
+    return true;
+  }
+  const head = expression.selectors[0];
+  const range = expression.selectorRanges?.[0];
+  const nameCount = expression.selectors.findIndex((selector) => selector.kind !== "Name");
+  const names = expression.selectors
+    .slice(0, nameCount)
+    .flatMap((selector) => (selector.kind === "Name" ? [selector.name] : []));
+  const symbolIndex = names.findIndex(
+    (_name, index) =>
+      index > 0 &&
+      (findBinding(names.slice(0, index + 1).join("!"), scope, unit)?.kind ?? "Instance") !==
+        "Instance",
+  );
+  const isInstance =
+    names.length > 1 &&
+    (lookupLocal(scope, names[0]) ?? getModuleBinding(names[0], unit, undefined))?.kind ===
+      "Instance";
+  const lastRange = expression.selectorRanges?.[nameCount - 1];
+  if (isInstance && symbolIndex === -1 && range && lastRange) {
+    unit.errors.push({
+      location: formatRange({ module: range.module, start: range.start, end: lastRange.end }),
+      message: `Unknown operator: \`${resolveSynonym(names.join("!"))}'.`,
+    });
+    return true;
+  }
+  const name = names.slice(0, symbolIndex + 1).join("!");
+  const symbol = symbolIndex > 0 ? findBinding(name, scope, unit) : undefined;
+  const argumentCount = expression.selectors
+    .slice(0, symbolIndex + 1)
+    .flatMap((selector) => ("args" in selector ? selector.args : [])).length;
+  const argumentRange = expression.argumentRanges?.[symbolIndex] ?? expression.location.range;
+  if (symbol && symbol.arity !== argumentCount && argumentRange) {
+    unit.errors.push({
+      location: formatRange(argumentRange),
+      message: `The operator ${resolveSynonym(name)} requires ${symbol.arity} arguments.`,
+    });
+    return true;
+  }
+  if (head.kind === "Name" && range && lastRange) {
+    const local = lookupLocal(scope, head.name);
+    const binding = local ?? findSymbol(head.name, unit);
+    const isUnknown = binding === undefined && !isFact(head.name, unit);
+    if (expression.selectors[1].kind !== "Name" && (isUnknown || binding?.kind === "Instance")) {
+      unit.errors.push({
+        location: formatRange(range),
+        message: `Unknown operator: \`${resolveSynonym(head.name)}'.`,
+      });
+      return true;
+    }
+    if (isUnknown && !isInstance && symbolIndex === -1) {
+      unit.errors.push({
+        location: formatRange({ module: range.module, start: range.start, end: lastRange.end }),
+        message: `Unknown operator: \`${resolveSynonym(names.join("!"))}'.`,
+      });
+      return true;
+    }
+    if (binding && (!SELECTABLE_KINDS.has(binding.kind) || local?.nonFactStep)) {
+      reportUnselectable(head.name, range, unit);
+      return true;
+    }
+  }
+  if (
+    head.kind === "Name" &&
+    isPendingSelectionReported(
+      head.name,
+      head.args,
+      range,
+      expression.argumentRanges?.[0] ?? expression.location.range,
+      scope,
+      unit,
+    )
+  ) {
+    return true;
+  }
+  expression.selectors
+    .flatMap((selector) => ("args" in selector ? selector.args : []))
+    .forEach((arg) => resolveArgument(arg, scope, unit));
+  const selected = checkReference(expression, scope, unit, "Expression");
+  return selected ? selected.node === undefined : false;
+};
+
+const reportUnknownModule = (fact: Fact & { kind: "ModuleFact" }, unit: Unit) => {
+  const range = fact.location.range;
+  if (unit.isModuleKnown(fact.name, fact.location) || !range) return;
+  unit.errors.push({
+    location: formatRange({
+      ...range,
+      start: { line: range.end.line, column: range.end.column - fact.name.length + 1 },
+    }),
+    message: `Module \`${fact.name}' used without being extended or instantiated.`,
+  });
+};
+
+const checkFact = (fact: Fact, reference: Fact, scope: LocalName | undefined, unit: Unit) => {
+  if (fact.kind === "ModuleFact") {
+    reportUnknownModule(fact, unit);
+    return undefined;
+  }
+  if (fact.kind === "ExceptAt" && fact.location.range) {
+    unit.errors.push({
+      location: formatRange(fact.location.range),
+      message: "Unknown operator: `@'.",
+    });
+    return BUILTIN_LOCATION;
+  }
+  const hidden = getHiddenExpressionLocation(fact, reference, scope, unit);
+  if (selections.has(fact)) {
+    resolveExpression(fact, scope, unit);
+    return hidden;
+  }
+  if (isInstanceArityReported(fact, scope, unit)) return hidden;
+  const selected = checkReference(fact, scope, unit, "Fact");
+  if (selected) {
+    const node = selected.node;
+    if (node === undefined) return BUILTIN_LOCATION;
+    return (node.kind === "AssumeProve" && node.label === undefined) || node.kind === "NewSymbol"
+      ? undefined
+      : fact.location.range && formatRange(fact.location.range);
+  }
+  if (fact.kind === "Subexpression") {
+    return isSubexpressionReported(fact, scope, unit) ? BUILTIN_LOCATION : hidden;
+  }
+  const name = fact.kind === "Identifier" ? fact.name : fact.kind === "Apply" ? fact.operator : "";
+  if (fact.kind === "Identifier" && lookupLocal(scope, name)?.nonFactStep) {
+    unit.errors.push({
+      location: formatRange(getSpelledNameRange(fact, name)),
+      message: "Step number of non-fact used as a fact",
+    });
+    return BUILTIN_LOCATION;
+  }
+  if (
+    !isFact(name, unit) &&
+    !lookupLocal(scope, name)?.goal &&
+    !(fact.kind === "Identifier" && isInstanceName(name, scope, unit))
+  ) {
+    resolveExpression(fact, scope, unit);
+  }
+  return hidden;
+};
+
+const isDefinitionEntry = (def: Fact, scope: LocalName | undefined, unit: Unit) => {
+  if (def.kind === "ModuleFact") {
+    reportUnknownModule(def, unit);
+    return unit.isModuleKnown(def.name, def.location);
+  }
+  const entryErrors = defEntryErrors.get(def) ?? [];
+  unit.errors.push(
+    ...entryErrors.map((error) => ({
+      location: formatSanyLocation(error.location),
+      message: error.message,
+    })),
+  );
+  if (entryErrors.length > 0) return false;
+  const binder = getDefEntryBinder(def);
+  const reference = binder ?? selections.get(def) ?? def;
+  const range = reference.location.range;
+  if (!range) return true;
+  const name =
+    reference.kind === "Identifier"
+      ? reference.name
+      : reference.kind === "Apply" || reference.kind === "OperatorReference"
+        ? reference.operator
+        : "";
+  const local = lookupLocal(scope, name);
+  const binding = local ?? findSymbol(name, unit) ?? getModuleBinding(name, unit, range);
+  if (binding === undefined && isFact(name, unit)) return true;
+  // Deviation from SANY: Generator#genIdToSelector throws an internal error on the arguments of a name after a prefix, as in DEF A!B(1); tla-ts rejects them as Generator#selectorToNode rejects a selector's arguments in a DEF clause.
+  const isDefined =
+    isReference(reference) &&
+    getSelectors(reference).length > 1 &&
+    (binding === undefined || getSelectorArgumentError(reference, true))
+      ? isDefinitionSelected(def, reference, scope, unit)
+      : name === "" || isDefinitionName(name, local, binding, range, unit);
+  if (isDefined) return true;
+  unit.errors.push({
+    location: formatRange((binder ? def : reference).location.range ?? range),
+    message: "DEF clause entry should describe a defined operator.",
+  });
+  return false;
+};
+
+const isDefinitionName = (
+  name: string,
+  local: LocalName | undefined,
+  binding: Binding | undefined,
+  range: SourceRange,
+  unit: Unit,
+) => {
+  if (binding === undefined) {
+    unit.errors.push({
+      location: formatRange(range),
+      message: `Unknown operator: \`${resolveSynonym(name)}'.`,
+    });
+  }
+  if (local?.nonFactStep === "Define") return true;
+  if (local?.nonFactStep) {
+    unit.errors.push({
+      location: formatRange(range),
+      message: "DEF clause entry refers to a non-definition step.",
+    });
+  }
+  return binding !== undefined && SELECTABLE_KINDS.has(binding.kind) && !isStepName(name);
+};
+
+const isDefinitionSelected = (
+  def: Expression,
+  reference: Reference,
+  scope: LocalName | undefined,
+  unit: Unit,
+) => {
+  const report = (range: SourceRange | undefined, message: string) => {
+    if (range) unit.errors.push({ location: formatRange(range), message });
+    return false;
+  };
+  const argumentError = getSelectorArgumentError(reference, true);
+  if (argumentError?.index === 0) return report(argumentError.range, argumentError.message);
+  const selectors = getSelectors(reference);
+  const ranges = reference.selectorRanges;
+  const failed = selectionErrors.get(def);
+  if (!failed && !selections.has(def)) {
+    const head = selectors[0];
+    const name = head.kind === "Name" ? head.name : "";
+    const local = lookupLocal(scope, name);
+    const binding = local ?? findSymbol(name, unit);
+    if (binding && (!SELECTABLE_KINDS.has(binding.kind) || local?.nonFactStep) && ranges?.[0]) {
+      reportUnselectable(name, ranges[0], unit);
+      return false;
+    }
+    if (argumentError) return report(argumentError.range, argumentError.message);
+    if (checkReference(reference, scope, unit, "Definition")) return false;
+    const first = ranges?.[0];
+    const last = ranges?.[selectors.findLastIndex((selector) => selector.kind === "Name")];
+    const names = selectors.flatMap((selector) =>
+      selector.kind === "Name" ? [selector.name] : [],
+    );
+    return report(
+      first && last && { ...first, end: last.end },
+      `Unknown operator: \`${resolveSynonym(names.join("!"))}'.`,
+    );
+  }
+  if (argumentError) return report(argumentError.range, argumentError.message);
+  const error = failed
+    ? (findNullError(failed.nulls) ?? failed.error)
+    : findNullError(nullSelections.get(def));
+  if (error) {
+    unit.errors.push(error);
+    return false;
+  }
+  return selectors.at(-1)?.kind === "Name" && selectors.at(-2)?.kind !== "Name";
+};
+
+const getHiddenExpressionLocation = (
+  fact: Expression,
+  reference: Fact,
+  scope: LocalName | undefined,
+  unit: Unit,
+) => {
+  const range = fact.location.range && formatRange(fact.location.range);
+  if (selections.has(fact)) {
+    return findNullError(nullSelections.get(fact))
+      ? BUILTIN_LOCATION
+      : reference.location.range && formatRange(reference.location.range);
+  }
+  if (selectionErrors.has(fact) || fact.kind === "ExceptAt") return BUILTIN_LOCATION;
+  switch (fact.kind) {
+    case "Number":
+    case "String":
+    case "Decimal":
+    case "Let":
+    case "Label":
+      return undefined;
+    case "Identifier":
+    case "Apply":
+    case "Subexpression": {
+      const first = getSelectors(fact)[0];
+      if (fact.kind === "Subexpression" || first.kind !== "Name") return undefined;
+      const name = fact.kind === "Identifier" ? fact.name : fact.operator;
+      const goal = lookupLocal(scope, first.name)?.goal ?? getGoal(first.name, unit);
+      if (
+        isFact(name, unit) ||
+        goal ||
+        (isStepName(name) && lookupLocal(scope, name)) ||
+        (fact.kind === "Identifier" && isInstanceName(name, scope, unit))
+      ) {
+        return undefined;
+      }
+      const binding = findBinding(name, scope, unit);
+      const count = fact.kind === "Apply" ? fact.args.length : 0;
+      // Deviation from SANY: UseOrHideNode#factCheck crashes on a fact whose operator Generator#generateExpression could not resolve, where tla-ts reports it like a null node.
+      return binding?.arity === count ? range : BUILTIN_LOCATION;
+    }
+    default:
+      return range;
+  }
+};
+
+const checkUseOrHide = (
+  statement: UseOrHide | Extract<Proof, { kind: "By" }>,
+  scope: LocalName | undefined,
+  unit: Unit,
+) => {
+  const references = factReferences.get(statement.facts) ?? statement.facts;
+  const hidden = statement.facts.map((fact, index) =>
+    checkFact(fact, references[index], scope, unit),
+  );
+  const factCount = statement.facts.filter(
+    (fact) => fact.kind !== "ModuleFact" || unit.isModuleKnown(fact.name, fact.location),
+  ).length;
+  const defCount = statement.defs.filter((def) => isDefinitionEntry(def, scope, unit)).length;
+  hidden.forEach((location) => {
+    if (location && statement.kind === "Hide") {
+      unit.errors.push({
+        location,
+        message:
+          "The only expression allowed as a fact in a HIDE is \nthe name of a theorem, assumption, or step.",
+      });
+    }
+  });
+  const range = statement.location.range;
+  if (factCount + defCount === 0 && range) {
+    const location = formatRange(range);
+    if (!statement.isOnly && statement.facts.length + statement.defs.length === 0) {
+      unit.errors.push({ location, message: "Empty BY, USE, or HIDE" });
+    }
+    unit.errors.push({
+      location,
+      message: statement.kind === "By" ? "Empty BY" : "Empty USE or HIDE statement.",
+    });
+  }
+};
 
 const resolveNewSymbol = (symbol: NewSymbol, scope: LocalName | undefined, unit: Unit) => {
   if (symbol.set) resolveExpression(symbol.set, scope, unit);
@@ -1208,12 +2263,34 @@ const resolveNewSymbol = (symbol: NewSymbol, scope: LocalName | undefined, unit:
   );
 };
 
+const IN_ASSUME = "$$InAssume";
+
 const resolveAssumeProve = (
   assumeProve: AssumeProve,
   scope: LocalName | undefined,
   unit: Unit,
   isNested = false,
 ): LocalName | undefined => {
+  const isBoxed = assumeProve.isBoxed === true;
+  const range = assumeProve.location.range;
+  const report = (message: string) => {
+    if (!range) return;
+    const end = { ...range.start, column: range.start.column + (isBoxed ? 7 : 5) };
+    unit.errors.push({ location: formatRange({ ...range, end }), message });
+  };
+  if (isBoxed !== (assumeProve.isProveBoxed === true)) {
+    report(
+      isBoxed
+        ? "[]ASSUME matched by PROVE instead of []PROVE"
+        : "ASSUME matched by []PROVE instead of PROVE",
+    );
+  }
+  if (isBoxed && lookupLocal(scope, IN_ASSUME)) {
+    report("[]ASSUME used within the scope of an ordinary ASSUME's assumptions");
+  }
+  const assumeScope: LocalName | undefined = isBoxed
+    ? scope
+    : { name: IN_ASSUME, kind: "Constant", arity: 0, parent: scope };
   const assumed = assumeProve.assumptions.reduce(
     (current, assumption) => {
       if (assumption.kind === "NewSymbol") {
@@ -1222,12 +2299,22 @@ const resolveAssumeProve = (
           unit: isNested ? { ...current.unit, isLabelForbidden: true } : current.unit,
         };
       }
-      if (assumption.kind === "AssumeProve") {
+      if (assumption.kind !== "AssumeProve") {
+        resolveExpression(assumption, current.scope, current.unit);
+      } else if (assumption.label === undefined) {
         resolveAssumeProve(assumption, current.scope, current.unit, true);
-      } else resolveExpression(assumption, current.scope, current.unit);
+      } else if (!isLabelReported(assumption.label.location, current.unit)) {
+        resolveAssumeProve(
+          assumption,
+          current.scope,
+          { ...current.unit, labelParams: [], labels: new Set() },
+          true,
+        );
+        checkLabel({ ...assumption.label, params: [] }, current.scope, current.unit);
+      }
       return current;
     },
-    { scope, unit },
+    { scope: assumeScope, unit },
   );
   resolveExpression(assumeProve.conclusion, assumed.scope, assumed.unit);
   return assumed.scope;
@@ -1245,59 +2332,132 @@ const resolveStatement = (
 
 const resolveProof = (proof: Proof | undefined, scope: LocalName | undefined, outer: Unit) => {
   const unit = outer.hasLabelScope ? { ...outer, hasLabelScope: false } : outer;
-  if (proof?.kind === "By") checkFacts(proof.facts, scope, unit);
+  if (proof?.kind === "By") checkUseOrHide(proof, scope, unit);
   if (proof?.kind !== "Steps") return;
-  proof.steps.reduce((current, step) => resolveStep(step, current, unit), scope);
+  const atSteps = getAtSteps(proof.steps);
+  proof.steps.reduce(
+    (current, step) => resolveStep(step, current, unit, atSteps.get(step)?.at),
+    scope,
+  );
 };
+
+export const getInstanceBinding = (instance: Instance): Binding => ({
+  kind: "Instance",
+  arity: instance.params.length,
+  params: instance.params.map((param) => param.arity),
+  range: instance.location.range,
+});
 
 const resolveLocalInstance = (instance: Instance, scope: LocalName | undefined, unit: Unit) => {
   const instanced = resolveInstance(instance, scope, unit);
   return instance.name === undefined
     ? instanced
-    : bindName(
-        instanced,
-        instance.name,
-        { kind: "Instance", arity: instance.params.length, range: instance.location.range },
-        unit,
-      );
+    : bindName(instanced, instance.name, getInstanceBinding(instance), unit);
 };
+
+const getStepGoal = (body: StepBody, location: SourceLocation): Goal | undefined => {
+  const createGoal = (keyword: string, statement: Expression) => ({
+    statement,
+    isSuffices: false,
+    isInProof: false,
+    keyword,
+  });
+  switch (body.kind) {
+    case "Have":
+      return createGoal("HAVE", { kind: "Tuple", elements: [body.expression], location });
+    case "Case":
+      return createGoal("CASE", { kind: "Tuple", elements: [body.expression], location });
+    case "Witness":
+      return createGoal("WITNESS", { kind: "Tuple", elements: body.expressions, location });
+    case "Take":
+      return createGoal("TAKE", { kind: "Tuple", elements: getBoundSets(body.bounds), location });
+    case "Pick":
+      return createGoal(
+        "PICK",
+        body.bounds.length > 0
+          ? { kind: "Exists", bounds: body.bounds, body: body.body, location }
+          : {
+              kind: "UnboundedQuantifier",
+              quantifier: "Exists",
+              names: body.names,
+              body: body.body,
+              location,
+            },
+      );
+    case "Qed":
+      return createGoal("QED step", { kind: "Tuple", elements: [], location });
+    default:
+      return undefined;
+  }
+};
+
+const moveStep = (
+  named: LocalName | undefined,
+  from: LocalName | undefined,
+  parent: LocalName | undefined,
+) => (parent === from ? named : named && named !== from ? { ...named, parent } : parent);
 
 const resolveStep = (
   step: ProofStep,
   scope: LocalName | undefined,
   unit: Unit,
+  stepAt: Expression | undefined,
 ): LocalName | undefined => {
   const body = step.body;
   const stepUnit =
     step.name === undefined
       ? unit
       : { ...unit, hasLabelScope: true, labelParams: [], labels: new Set<string>() };
-  const bindStep = (parent: LocalName | undefined): LocalName | undefined =>
-    step.name === undefined ? parent : { name: step.name, arity: 0, kind: "Theorem", parent };
-  const bindNonFactStep = (parent: LocalName | undefined): LocalName | undefined =>
+  const goal = getStepGoal(body, step.location);
+  const start = step.head.start;
+  const numberRange =
+    step.name === undefined
+      ? undefined
+      : { ...step.head, end: { ...start, column: start.column + step.token.length - 1 } };
+  if (numberRange && (step.token[1] === "*" || step.token[1] === "+")) {
+    unit.errors.push({
+      location: formatRange(numberRange),
+      message: "<*> and <+> cannot be used for a named step.",
+    });
+  }
+  const bindStep = (parent: LocalName | undefined, stepGoal = goal) =>
     step.name === undefined
       ? parent
-      : { name: step.name, arity: 0, kind: "Theorem", parent, isNonFact: true };
+      : bindName(
+          parent,
+          step.name,
+          { kind: "Theorem", arity: 0, range: numberRange, goal: stepGoal },
+          unit,
+        );
+  const bindNonFactStep = (parent: LocalName | undefined, nonFactStep: Binding["nonFactStep"]) =>
+    step.name === undefined
+      ? parent
+      : bindName(
+          parent,
+          step.name,
+          { kind: "Theorem", arity: 0, range: step.head, nonFactStep },
+          unit,
+        );
   switch (body.kind) {
     case "Assert": {
-      const assumed = resolveStatement(body.statement, scope, stepUnit);
-      const proofScope = body.isSuffices ? scope : assumed;
-      const name = step.name;
-      if (name === undefined) {
-        resolveProof(step.proof, proofScope, unit);
-        return body.isSuffices ? assumed : scope;
-      }
-      const goal = { statement: body.statement, isSuffices: body.isSuffices, isInProof: true };
-      resolveProof(step.proof, { name, arity: 0, kind: "Theorem", parent: proofScope, goal }, unit);
-      goal.isInProof = false;
-      return { name, arity: 0, kind: "Theorem", parent: body.isSuffices ? assumed : scope, goal };
+      const assumed = resolveStatement(body.statement, scope, { ...stepUnit, stepAt });
+      const assertion = {
+        statement: body.statement,
+        isSuffices: body.isSuffices,
+        isInProof: true,
+        keyword: body.isSuffices && body.statement.kind !== "AssumeProve" ? "SUFFICES" : undefined,
+      };
+      const named = bindStep(scope, assertion);
+      resolveProof(step.proof, moveStep(named, scope, body.isSuffices ? scope : assumed), unit);
+      assertion.isInProof = false;
+      return moveStep(named, scope, body.isSuffices ? assumed : scope);
     }
     case "Use":
     case "Hide":
-      checkFacts(body.facts, scope, unit);
-      return bindNonFactStep(scope);
+      checkUseOrHide(body, scope, unit);
+      return bindNonFactStep(scope, body.kind);
     case "Instance":
-      return bindNonFactStep(resolveLocalInstance(body, scope, stepUnit));
+      return bindNonFactStep(resolveLocalInstance(body, scope, stepUnit), body.kind);
     case "Define":
       return bindNonFactStep(
         body.definitions.reduce(
@@ -1307,12 +2467,15 @@ const resolveStep = (
               : resolveDefinitions([definition], current, unit),
           scope,
         ),
+        body.kind,
       );
     case "Have":
-    case "Case":
+    case "Case": {
       resolveExpression(body.expression, scope, stepUnit);
-      resolveProof(step.proof, bindStep(scope), unit);
-      return bindStep(scope);
+      const named = bindStep(scope);
+      resolveProof(step.proof, named, unit);
+      return named;
+    }
     case "Witness":
       body.expressions.forEach((expression) => resolveExpression(expression, scope, stepUnit));
       return bindStep(scope);
@@ -1336,26 +2499,39 @@ const resolveStep = (
         ...stepUnit,
         labelParams: [...stepUnit.labelParams, ...getBoundNames(body.bounds), ...body.names],
       });
-      resolveProof(step.proof, bindStep(scope), unit);
-      return bindStep(picked);
+      const named = bindStep(scope);
+      resolveProof(step.proof, named, unit);
+      return moveStep(named, scope, picked);
     }
-    default:
-      resolveProof(step.proof, bindStep(scope), unit);
-      return bindStep(scope);
+    default: {
+      const named = bindStep(scope);
+      resolveProof(step.proof, named, unit);
+      return named;
+    }
   }
 };
 
-const resolveTheorem = (theorem: Theorem, unit: Unit) => {
-  const isDefinition = theorem.name !== undefined && theorem.statement.kind !== "AssumeProve";
-  const scope = isDefinition ? undefined : resolveStatement(theorem.statement, undefined, unit);
+export const getTheoremGoal = (theorem: Theorem): Goal | undefined =>
+  theorem.name !== undefined && theorem.statement.kind === "AssumeProve"
+    ? { statement: theorem.statement, isSuffices: false, isInProof: false, keyword: undefined }
+    : undefined;
+
+const resolveTheorem = (
+  theorem: Theorem,
+  unit: Unit,
+  bindings: Map<string, ModuleBinding>,
+  isDefinitionBody: boolean,
+) => {
+  const scope = isDefinitionBody ? undefined : resolveStatement(theorem.statement, undefined, unit);
+  const goal = getTheoremGoal(theorem);
   if (theorem.name !== undefined) {
     bindModuleName(
+      bindings,
       theorem.name,
-      { kind: "Theorem", arity: 0, range: theorem.location.range },
+      { kind: "Theorem", arity: 0, range: theorem.location.range, goal },
       unit,
     );
   }
-  const goal = unit.goals.get(theorem.name ?? "");
   if (goal) goal.isInProof = true;
   resolveProof(theorem.proof, scope, unit);
   if (goal) goal.isInProof = false;
@@ -1365,6 +2541,8 @@ interface InstancedModule {
   declarations: Declaration[];
   symbols: Symbols;
   instancer: string;
+  getSubstitutionErrors: (substitutionCount: number) => SanyError[];
+  setSubstitutions: (substitutions: Map<string, Expression>) => void;
 }
 
 export interface ModuleReport {
@@ -1375,14 +2553,19 @@ export interface ModuleReport {
 
 export interface ModuleUnit {
   imported: Symbols;
+  linkTheorem: (key: string) => void;
   getInstance: (instance: Instance) => InstancedModule;
   bound: Symbols;
   definitions: Map<string, Definition>;
-  getKey: (definition: Definition) => string;
+  getKey: (item: { name: string }) => string;
+  isModuleKnown: (name: string, location: SourceLocation) => boolean;
   instanced: Map<Instance, Symbols>;
-  facts: Set<string>;
   reports: ModuleReport[];
   warnings: SanyError[];
+  goalOperands: WeakMap<Expression, Expression[]>;
+  goalSelections: WeakMap<Expression, Expression>;
+  recursiveCount: RecursiveCount;
+  nestedRecursion: NestedRecursion[];
 }
 
 export const MODULE_START: SourceLocation = { line: 0, column: 0 };
@@ -1395,40 +2578,210 @@ export const isTheoremDefinition = (module: Module, definition: Definition) =>
       item.location.column === definition.location.column,
   );
 
-const createSymbols = (module: Module, imported: Symbols) => {
-  const symbols = new Map([...CORE_SYMBOLS, ...imported]);
-  module.constants.forEach((constant) =>
-    symbols.set(constant.name, { key: constant.name, arity: constant.arity, kind: "Constant" }),
+export interface RecursiveDeclaration {
+  declaration: Declaration;
+  isTaken: boolean;
+}
+
+export interface RecursiveCount {
+  declarations: RecursiveDeclaration[];
+  closed: number;
+}
+
+export interface NestedRecursion {
+  location: SourceLocation;
+  definitions: Definition[];
+  declarations: Declaration[];
+  closed: number;
+}
+
+export const getRecursiveDefinitions = (
+  module: Module,
+  declarations: Declaration[],
+  definitions: Definition[],
+) => {
+  const names = new Set(declarations.map((declaration) => declaration.name));
+  return Map.groupBy(
+    definitions.filter(
+      (definition) => names.has(definition.name) && !isTheoremDefinition(module, definition),
+    ),
+    (definition) => definition.name,
   );
-  module.variables.forEach((variable) =>
-    symbols.set(variable.name, { key: variable.name, arity: 0, kind: "Variable" }),
-  );
-  return symbols;
 };
+
+// SANY counts a RECURSIVE declaration whose name is taken, and nothing defines it.
+const getOpenRecursive = (
+  declarations: RecursiveDeclaration[],
+  definitions: Map<string, Definition[]>,
+  location: SourceLocation,
+) =>
+  declarations.filter(
+    (declared) =>
+      isBefore(declared.declaration.location, location) &&
+      (declared.isTaken ||
+        definitions
+          .get(declared.declaration.name)
+          ?.some(
+            (definition) =>
+              isBefore(declared.declaration.location, definition.location) &&
+              isBefore(definition.location, location) &&
+              (definition.kind === "Operator" || declared.declaration.arity === 0),
+          ) !== true),
+  );
+
+// SANY shares its RECURSIVE counter with inner modules: their undefined declarations stay counted, and each module's end takes the count off the sum that flags a section.
+export const getRecursiveCount = (
+  start: RecursiveCount,
+  declarations: RecursiveDeclaration[],
+  nested: NestedRecursion[],
+  definitions: Map<string, Definition[]>,
+  location: SourceLocation,
+): RecursiveCount => ({
+  declarations: getOpenRecursive(
+    [
+      ...start.declarations,
+      ...declarations,
+      ...nested.flatMap((item) =>
+        item.declarations.map((declaration) => ({ declaration, isTaken: true })),
+      ),
+    ],
+    definitions,
+    location,
+  ),
+  closed: nested.findLast((item) => isBefore(item.location, location))?.closed ?? start.closed,
+});
+
+const getRecursiveBinding = (declaration: Declaration, key: string): ModuleBinding => ({
+  key,
+  kind: "Definition",
+  arity: declaration.arity,
+  params: Array(declaration.arity).fill(0),
+  range: declaration.location.range,
+  position: declaration.location,
+  isPending: true,
+});
+
+const getDeclarationSymbol = (
+  declaration: Declaration,
+  kind: "Constant" | "Variable",
+  getKey: (item: { name: string }) => string,
+): ModuleSymbol => ({
+  key: kind === "Constant" ? getKey(declaration) : declaration.name,
+  arity: declaration.arity,
+  kind,
+  range: declaration.location.range,
+});
+
+const createSymbols = (module: Module, unit: ModuleUnit) =>
+  new Map([
+    ...CORE_SYMBOLS,
+    ...unit.imported,
+    ...module.constants.map((constant): [string, ModuleSymbol] => [
+      constant.name,
+      getDeclarationSymbol(constant, "Constant", unit.getKey),
+    ]),
+    ...module.variables.map((variable): [string, ModuleSymbol] => [
+      variable.name,
+      getDeclarationSymbol(variable, "Variable", unit.getKey),
+    ]),
+  ]);
 
 const checkSubstitutions = (
   instance: Instance,
   declarations: Declaration[],
   instancer: string,
-  outer: LocalName | undefined,
+  scope: LocalName | undefined,
   unit: Unit,
 ) => {
-  const scope = instance.params.reduce<LocalName | undefined>(
-    (parent, param) => ({ name: param.name, arity: param.arity, kind: "Parameter", parent }),
-    outer,
-  );
+  const reportArity = (declaration: Declaration, location: string) =>
+    unit.errors.push({
+      location,
+      message: `An operator must be substituted for symbol '${resolveSynonym(declaration.name)}', and it must have arity ${declaration.arity}.`,
+    });
   const resolveSubstitute = (declaration: Declaration, expression: Expression) => {
-    if (declaration.arity === 0 || expression.kind !== "Identifier") {
-      resolveExpression(expression, scope, unit);
+    const range = expression.location.range;
+    if (declaration.arity === 0) {
+      resolveExpressionArgument(expression, scope, unit);
       return;
     }
-    const arity = getSymbolArity(expression, expression.name, scope, unit);
-    if (arity !== undefined && arity !== declaration.arity) {
-      throw new TlaSyntaxError(
-        `An operator must be substituted for symbol '${declaration.name}', and it must have arity ${declaration.arity} in the instance of ${instance.module} at line ${instance.location.line}, column ${instance.location.column}`,
-      );
+    const parenthesized = parenthesizedRanges.get(expression);
+    const reference = parenthesized ? undefined : selections.get(expression);
+    if (reference) {
+      const arity = expression.kind === "Lambda" ? expression.params.length : 0;
+      const failed = findNullError(nullSelections.get(expression));
+      if (expression.kind === "Lambda") resolveExpression(expression, scope, unit);
+      else if (failed) unit.errors.push(failed);
+      if (!failed && arity !== declaration.arity && reference.location.range) {
+        unit.errors.push({
+          location: formatRange(reference.location.range),
+          message: `Expected arity ${declaration.arity} but found operator of arity ${arity}.`,
+        });
+      }
+      if (failed || arity !== declaration.arity) reportArity(declaration, BUILTIN_LOCATION);
+      return;
     }
+    if (expression.kind === "Subexpression" && !parenthesized) {
+      resolveExpression(expression, scope, unit);
+      reportArity(declaration, BUILTIN_LOCATION);
+      return;
+    }
+    if (expression.kind === "Lambda" && !parenthesized) {
+      resolveLambda(expression, scope, unit);
+      if (expression.params.length !== declaration.arity && range) {
+        reportArity(declaration, formatRange(range));
+      }
+      return;
+    }
+    if (expression.kind === "OperatorReference" && !parenthesized) {
+      const arity = getSymbolArity(expression, expression.operator, scope, unit);
+      if (arity === undefined) reportArity(declaration, BUILTIN_LOCATION);
+      else if (arity !== declaration.arity && range) reportArity(declaration, formatRange(range));
+      return;
+    }
+    if (expression.kind !== "Identifier" || parenthesized) {
+      const errorRange = parenthesized ?? range;
+      if (errorRange) {
+        unit.errors.push({
+          location: formatRange(errorRange),
+          message: `Arity ${declaration.arity} operator (not an expression) is expected \nto substitute for CONSTANT '${resolveSynonym(declaration.name)}'.`,
+        });
+      }
+      reportArity(declaration, BUILTIN_LOCATION);
+      return;
+    }
+    const name = expression.name;
+    const arity = getSymbolArity(expression, name, scope, unit);
+    if (arity !== undefined && arity !== declaration.arity) {
+      unit.errors.push({
+        location: formatRange(getSpelledNameRange(expression, name)),
+        message: `Expected arity ${declaration.arity} but found operator of arity ${arity}.`,
+      });
+    }
+    if (arity !== declaration.arity) reportArity(declaration, BUILTIN_LOCATION);
   };
+  const instanceRange = instance.location.range;
+  const isFound = (declaration: Declaration) =>
+    lookupLocal(scope, declaration.name) !== undefined ||
+    findSymbol(declaration.name, unit) !== undefined;
+  const implicit = declarations.filter(isFound).map((declaration) => {
+    const expression: Expression & { kind: "Identifier" } = {
+      kind: "Identifier",
+      name: declaration.name,
+      location: instance.location,
+    };
+    return { declaration, expression };
+  });
+  implicit
+    .filter((item) => item.declaration.arity === 0)
+    .forEach((item) => {
+      const arity = getSymbolArity(item.expression, item.declaration.name, scope, unit);
+      if (arity && instanceRange) {
+        unit.errors.push({
+          location: formatRange(instanceRange),
+          message: `Wrong number of arguments (0) given to operator '${resolveSynonym(item.declaration.name)}', \nwhich requires ${arity} arguments.`,
+        });
+      }
+    });
   const substitutions = new Map<string, Expression>();
   instance.substitutions.forEach((substitution) => {
     const name = substitution.name;
@@ -1451,38 +2804,51 @@ const checkSubstitutions = (
       });
     }
   });
-  const implicit = declarations.filter((declaration) => !substitutions.has(declaration.name));
-  const isMissing = (declaration: Declaration) =>
-    !lookupLocal(scope, declaration.name) && !findSymbol(declaration.name, unit);
   implicit
-    .filter((declaration) => !isMissing(declaration))
-    .forEach((declaration) => {
-      const expression: Expression = {
-        kind: "Identifier",
-        name: declaration.name,
-        location: instance.location,
-      };
-      resolveSubstitute(declaration, expression);
-      substitutions.set(declaration.name, expression);
+    .filter((item) => !substitutions.has(item.declaration.name))
+    .forEach((item) => {
+      const arity =
+        item.declaration.arity === 0
+          ? 0
+          : getSymbolArity(item.expression, item.declaration.name, scope, unit);
+      if (arity !== item.declaration.arity && instanceRange) {
+        reportArity(item.declaration, formatRange(instanceRange));
+      }
+      substitutions.set(item.declaration.name, item.expression);
     });
-  implicit.filter(isMissing).forEach((declaration) => {
-    const range = instance.location.range;
-    const declared = declaration.location.range;
-    if (range && declared) {
-      unit.errors.push({
-        location: formatRange(range),
-        message: `Substitution missing for symbol ${declaration.name} declared at ${formatRange(declared)} \nand instantiated in module ${instancer}.`,
-      });
-    }
-  });
-  return substitutions;
+  declarations
+    .filter((declaration) => !substitutions.has(declaration.name))
+    .forEach((declaration) => {
+      const declared = declaration.location.range;
+      if (instanceRange && declared) {
+        unit.errors.push({
+          location: formatRange(instanceRange),
+          message: `Substitution missing for symbol ${resolveSynonym(declaration.name)} declared at ${formatRange(declared)} \nand instantiated in module ${instancer}.`,
+        });
+      }
+    });
+  const getOrder = (name: string) => {
+    const index = implicit.findIndex((item) => item.declaration.name === name);
+    return index === -1 ? implicit.length : index;
+  };
+  return new Map(
+    [...substitutions].toSorted((left, right) => getOrder(left[0]) - getOrder(right[0])),
+  );
 };
 
 const resolveInstance = (instance: Instance, scope: LocalName | undefined, unit: Unit) => {
   const instanced = unit.getInstance(instance);
-  checkSubstitutions(instance, instanced.declarations, instanced.instancer, scope, unit);
+  const substitutions = checkSubstitutions(
+    instance,
+    instanced.declarations,
+    instanced.instancer,
+    bindParams(scope, instance.params, unit),
+    unit,
+  );
+  instanced.setSubstitutions(substitutions);
+  unit.errors.push(...instanced.getSubstitutionErrors(substitutions.size));
   return [...instanced.symbols].reduce(
-    (parent, [name, symbol]) => bindName(parent, name, symbol, unit),
+    (parent, entry) => bindName(parent, entry[0], entry[1], unit),
     scope,
   );
 };
@@ -1490,61 +2856,77 @@ const resolveInstance = (instance: Instance, scope: LocalName | undefined, unit:
 export const resolveSubstitutions = (
   instance: Instance,
   declarations: Declaration[],
-  module: Module,
+  symbols: Symbols,
+  instancer: string,
   unit: ModuleUnit,
 ) => {
-  const imported = createSymbols(module, unit.imported);
+  const imported = new Map([...CORE_SYMBOLS, ...symbols]);
   const report: ModuleReport = { location: instance.location, errors: [], warnings: [] };
   unit.reports.push(report);
-  return checkSubstitutions(instance, declarations, module.name, undefined, {
-    imported,
-    getInstance: unit.getInstance,
-    definitions: unit.definitions,
-    getKey: unit.getKey,
-    location: instance.location,
-    self: undefined,
-    facts: new Set(),
-    goals: new Map(),
-    bindings: new Map(
-      [...imported].map(([name, symbol]) => [name, { ...symbol, position: MODULE_START }]),
+  return checkSubstitutions(
+    instance,
+    declarations,
+    instancer,
+    instance.params.reduce<LocalName | undefined>(
+      (parent, param) =>
+        imported.has(param.name) || lookupLocal(parent, param.name)
+          ? parent
+          : {
+              name: param.name,
+              arity: param.arity,
+              kind: "Parameter",
+              range: param.location?.range,
+              parent,
+            },
+      undefined,
     ),
-    errors: report.errors,
-    warnings: report.warnings,
-    hasLabelScope: false,
-    isLabelForbidden: false,
-    isInExcept: false,
-    labelParams: [],
-    labels: new Set(),
-    isGenerated: false,
-  });
+    {
+      imported,
+      linkTheorem: unit.linkTheorem,
+      getInstance: unit.getInstance,
+      definitions: unit.definitions,
+      getKey: unit.getKey,
+      isModuleKnown: unit.isModuleKnown,
+      location: instance.location,
+      self: undefined,
+      bindings: {
+        get: (name): ModuleBinding | undefined => {
+          const symbol = imported.get(name);
+          return symbol && { ...symbol, position: MODULE_START };
+        },
+        keys: () => imported.keys(),
+      },
+      errors: report.errors,
+      warnings: report.warnings,
+      hasLabelScope: false,
+      isLabelForbidden: false,
+      isInExcept: false,
+      labelParams: [],
+      labels: new Set(),
+      isGenerated: false,
+      goalOperands: unit.goalOperands,
+      goalSelections: unit.goalSelections,
+    },
+  );
 };
 
 interface SemanticUnit {
   location: SourceLocation;
-  check: (reported: SanyError[], warned: SanyError[]) => void;
+  check: (reported: CodedSanyError[], warned: SanyError[]) => void;
 }
 
+export const isSameSanyError = (left: CodedSanyError, right: CodedSanyError) =>
+  left.location === right.location && left.message === right.message && left.code === right.code;
+
 export const collectSemanticErrors = (units: SemanticUnit[], warnings: SanyError[]) => {
-  const errors: SanyError[] = [];
-  const addUnique = (list: SanyError[], item: SanyError) => {
-    if (
-      list.every(
-        (existing) => existing.location !== item.location || existing.message !== item.message,
-      )
-    ) {
-      list.push(item);
-    }
+  const errors: CodedSanyError[] = [];
+  const addUnique = (list: CodedSanyError[], item: CodedSanyError) => {
+    if (!list.some((existing) => isSameSanyError(existing, item))) list.push(item);
   };
   units
-    .toSorted((left, right) =>
-      isBefore(left.location, right.location)
-        ? -1
-        : isBefore(right.location, left.location)
-          ? 1
-          : 0,
-    )
+    .toSorted((left, right) => compareLocations(left.location, right.location))
     .forEach((unit) => {
-      const reported: SanyError[] = [];
+      const reported: CodedSanyError[] = [];
       const warned: SanyError[] = [];
       try {
         unit.check(reported, warned);
@@ -1561,26 +2943,39 @@ export const collectSemanticErrors = (units: SemanticUnit[], warnings: SanyError
 };
 
 export const resolveModule = (module: Module, unit: ModuleUnit) => {
-  const symbols = createSymbols(module, unit.imported);
-  const facts = new Set([
-    ...unit.facts,
-    ...[...module.theorems, ...module.assumptions].flatMap((fact) => fact.name ?? []),
-  ]);
-  const goals = new Map(
-    module.theorems.flatMap((theorem): [string, Goal][] =>
-      theorem.name !== undefined && theorem.statement.kind === "AssumeProve"
-        ? [[theorem.name, { statement: theorem.statement, isSuffices: false, isInProof: false }]]
-        : [],
-    ),
-  );
+  const symbols = createSymbols(module, unit);
   const bindings = new Map<string, ModuleBinding>(
-    [...CORE_SYMBOLS, ...unit.bound].map(([name, symbol]) => [
-      name,
-      { ...symbol, position: MODULE_START },
+    [...CORE_SYMBOLS, ...unit.bound].map((entry) => [
+      entry[0],
+      { ...entry[1], position: MODULE_START },
     ]),
   );
   const recursive = new Set<Binding>();
-  const declarations: { declaration: Declaration; binding: ModuleBinding | undefined }[] = [];
+  const outerBindings = new Map(
+    unit.recursiveCount.declarations
+      .filter((declared) => !declared.isTaken)
+      .map((declared) => [
+        declared.declaration.name,
+        getRecursiveBinding(declared.declaration, unit.getKey(declared.declaration)),
+      ]),
+  );
+  outerBindings.forEach((binding, name) => {
+    bindings.set(name, binding);
+    recursive.add(binding);
+  });
+  const nestedDefinitions = unit.nestedRecursion.flatMap((item) => item.definitions);
+  const recursiveDeclarations = module.units.flatMap((item) =>
+    item.kind === "Recursive" ? item.declarations : [],
+  );
+  const recursiveDefinitions = getRecursiveDefinitions(
+    module,
+    [
+      ...unit.recursiveCount.declarations.map((declared) => declared.declaration),
+      ...recursiveDeclarations,
+    ],
+    [...module.definitions, ...nestedDefinitions],
+  );
+  const declarations: RecursiveDeclaration[] = [];
   const createCheck = (
     location: SourceLocation,
     self: Definition | undefined,
@@ -1591,13 +2986,13 @@ export const resolveModule = (module: Module, unit: ModuleUnit) => {
     check: (errors, warnings) =>
       check({
         imported: symbols,
+        linkTheorem: unit.linkTheorem,
         getInstance: unit.getInstance,
         definitions: unit.definitions,
         getKey: unit.getKey,
+        isModuleKnown: unit.isModuleKnown,
         location,
         self,
-        facts,
-        goals,
         bindings,
         errors,
         warnings,
@@ -1607,20 +3002,69 @@ export const resolveModule = (module: Module, unit: ModuleUnit) => {
         labelParams: [],
         labels: new Set(),
         isGenerated: false,
+        goalOperands: unit.goalOperands,
+        goalSelections: unit.goalSelections,
       }),
   });
+  const isDefinitionBody = (statement: Expression | AssumeProve) =>
+    module.definitions.some((definition) => definition.body === statement);
   const bindDeclarations = (declarations: Declaration[], kind: "Constant" | "Variable") =>
     declarations.map((declaration) =>
       createCheck(declaration.location, undefined, false, (inner) =>
         bindModuleName(
+          bindings,
           declaration.name,
-          { kind, arity: declaration.arity, range: declaration.location.range },
+          getDeclarationSymbol(declaration, kind, inner.getKey),
           inner,
         ),
       ),
     );
-  return collectSemanticErrors(
+  const end = module.location.range?.end ?? module.location;
+  const semanticErrors = collectSemanticErrors(
     [
+      ...module.units.flatMap((item): SemanticUnit[] => {
+        const section =
+          item.kind === "Variables"
+            ? { type: "A VARIABLE declaration", location: item.location }
+            : item.kind === "Constants"
+              ? { type: "A declaration", location: item.location }
+              : item.kind === "Module"
+                ? { type: "A MODULE ", location: item.module.location }
+                : item.kind === "Theorem"
+                  ? { type: "A THEOREM", location: item.theorem.location }
+                  : item.kind === "Assumption"
+                    ? { type: "An ASSUME", location: item.assumption.location }
+                    : item.kind === "Use"
+                      ? { type: "A USE or HIDE", location: item.use.location }
+                      : undefined;
+        const range = section?.location.range;
+        if (!section || !range) return [];
+        return [
+          {
+            location: section.location,
+            check: (errors) => {
+              const count = getRecursiveCount(
+                unit.recursiveCount,
+                declarations,
+                unit.nestedRecursion,
+                recursiveDefinitions,
+                section.location,
+              );
+              if (count.declarations.length > count.closed) {
+                errors.push({
+                  location: formatRange(range),
+                  message: `${section.type} may not appear within a recursive definition section.`,
+                });
+              }
+            },
+          },
+        ];
+      }),
+      ...module.instances.map((instance) =>
+        createCheck(instance.location, undefined, false, (inner) =>
+          bindParams(undefined, instance.params, inner),
+        ),
+      ),
       ...unit.reports.map((report) => ({
         location: report.location,
         check: (errors: SanyError[], warnings: SanyError[]) => {
@@ -1628,32 +3072,34 @@ export const resolveModule = (module: Module, unit: ModuleUnit) => {
           warnings.push(...report.warnings);
         },
       })),
+      ...nestedDefinitions.map((definition) => ({
+        location: definition.location,
+        check: () => {
+          const binding = bindings.get(definition.name);
+          if (!binding?.isPending) return;
+          binding.isPending = false;
+          binding.range = definition.location.range;
+          if (definition.kind === "Operator") binding.params = getParamArities(definition);
+        },
+      })),
       ...bindDeclarations(module.constants, "Constant"),
       ...bindDeclarations(module.variables, "Variable"),
-      ...module.units
-        .flatMap((item) => (item.kind === "Recursive" ? item.declarations : []))
-        .map((declaration) =>
-          createCheck(declaration.location, undefined, false, (inner) => {
-            const binding: ModuleBinding = {
-              kind: "Definition",
-              arity: declaration.arity,
-              range: declaration.location.range,
-              position: declaration.location,
-              isPending: true,
-            };
-            const isBound = isBindable(
-              declaration.name,
-              bindings.get(declaration.name),
-              binding,
-              inner,
-            );
-            if (isBound) {
-              bindings.set(declaration.name, binding);
-              recursive.add(binding);
-            }
-            declarations.push({ declaration, binding: isBound ? binding : undefined });
-          }),
-        ),
+      ...recursiveDeclarations.map((declaration) =>
+        createCheck(declaration.location, undefined, false, (inner) => {
+          const binding = getRecursiveBinding(declaration, unit.getKey(declaration));
+          const isBound = isBindable(
+            declaration.name,
+            bindings.get(declaration.name),
+            binding,
+            inner,
+          );
+          if (isBound) {
+            bindings.set(declaration.name, binding);
+            recursive.add(binding);
+          }
+          declarations.push({ declaration, isTaken: !isBound });
+        }),
+      ),
       ...module.definitions.map((definition) =>
         createCheck(definition.location, definition, true, (inner) => {
           if (isTheoremDefinition(module, definition)) {
@@ -1670,24 +3116,22 @@ export const resolveModule = (module: Module, unit: ModuleUnit) => {
       ),
       ...module.instances.map((instance) =>
         createCheck(instance.location, undefined, false, (inner) => {
-          bindParams(undefined, instance.params, inner);
           unit.instanced
             .get(instance)
-            ?.forEach((symbol, name) => bindModuleName(name, symbol, inner));
+            ?.forEach((symbol, name) => bindModuleName(bindings, name, symbol, inner));
           if (instance.name !== undefined) {
-            bindModuleName(
-              instance.name,
-              { kind: "Instance", arity: instance.params.length, range: instance.location.range },
-              inner,
-            );
+            bindModuleName(bindings, instance.name, getInstanceBinding(instance), inner);
           }
         }),
       ),
       ...module.assumptions.map((assumption) =>
         createCheck(assumption.location, undefined, assumption.name !== undefined, (inner) => {
-          resolveExpression(assumption.expression, undefined, inner);
+          if (!isDefinitionBody(assumption.expression)) {
+            resolveExpression(assumption.expression, undefined, inner);
+          }
           if (assumption.name !== undefined) {
             bindModuleName(
+              bindings,
               assumption.name,
               { kind: "Theorem", arity: 0, range: assumption.location.range },
               inner,
@@ -1697,23 +3141,23 @@ export const resolveModule = (module: Module, unit: ModuleUnit) => {
       ),
       ...module.theorems.map((theorem) =>
         createCheck(theorem.location, undefined, theorem.name !== undefined, (inner) =>
-          resolveTheorem(theorem, inner),
+          resolveTheorem(theorem, inner, bindings, isDefinitionBody(theorem.statement)),
         ),
       ),
       ...module.uses.map((use) =>
         createCheck(use.location, undefined, false, (inner) =>
-          checkFacts(use.facts, undefined, inner),
+          checkUseOrHide(use, undefined, inner),
         ),
       ),
       {
-        location: module.location.range?.end ?? module.location,
+        location: end,
         check: (errors: SanyError[]) =>
-          declarations.forEach((item) => {
+          getOpenRecursive(declarations, recursiveDefinitions, end).forEach((item) => {
             const range = item.declaration.location.range;
-            if (range && (!item.binding || item.binding.isPending)) {
+            if (range) {
               errors.push({
                 location: formatRange(range),
-                message: `Symbol ${item.declaration.name} declared in RECURSIVE statement but not defined.`,
+                message: `Symbol ${resolveSynonym(item.declaration.name)} declared in RECURSIVE statement but not defined.`,
               });
             }
           }),
@@ -1721,4 +3165,39 @@ export const resolveModule = (module: Module, unit: ModuleUnit) => {
     ],
     unit.warnings,
   );
+  const endCount = getRecursiveCount(
+    unit.recursiveCount,
+    declarations,
+    unit.nestedRecursion,
+    recursiveDefinitions,
+    end,
+  );
+  return {
+    errors: semanticErrors,
+    boundDefinitions: module.definitions.filter(
+      (definition) =>
+        !outerBindings.has(definition.name) &&
+        isSameRange(bindings.get(definition.name)?.range, definition.location.range),
+    ),
+    boundRecursive: declarations
+      .filter((item) => !item.isTaken && bindings.get(item.declaration.name)?.isPending === true)
+      .map((item) => item.declaration),
+    boundTheorems: module.theorems.flatMap((theorem) => {
+      if (theorem.name === undefined) return [];
+      const binding = bindings.get(theorem.name);
+      return binding?.goal && isSameRange(binding.range, theorem.location.range)
+        ? [{ name: theorem.name, location: theorem.location, goal: binding.goal }]
+        : [];
+    }),
+    recursion: {
+      location: module.location,
+      definitions: [...module.definitions, ...nestedDefinitions].filter((definition) =>
+        isSameRange(outerBindings.get(definition.name)?.range, definition.location.range),
+      ),
+      declarations: endCount.declarations
+        .filter((item) => !unit.recursiveCount.declarations.includes(item))
+        .map((item) => item.declaration),
+      closed: endCount.closed + endCount.declarations.length,
+    },
+  };
 };

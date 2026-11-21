@@ -1,4 +1,3 @@
-// Ported from Z3 (src/util/trail.h, src/util/union_find.h), MIT license, see z3-license.txt.
 import { shrink } from "../array";
 
 export class TrailStack {
@@ -21,7 +20,7 @@ export class TrailStack {
   }
 }
 
-export interface UnionFindTrail {
+interface UnionFindTrail {
   push(undo: () => void): void;
 }
 

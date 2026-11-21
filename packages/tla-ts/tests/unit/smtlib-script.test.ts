@@ -32,6 +32,35 @@ describe("runSmtlibScript prints what Z3 prints", () => {
     ).toEqual(["sat", "unsat", '(error "line 15 column 8: unknown constant p")']);
   });
 
+  it("drops the last check at a pop past the stack, but not at one it cannot read", () => {
+    expect(
+      run([
+        "(declare-const x Int)",
+        "(assert (> x 2))",
+        "(check-sat)",
+        "(pop 1)",
+        "(get-model)",
+        "(get-info :reason-unknown)",
+        "(check-sat)",
+        "(pop 0)",
+        "(get-value (x))",
+        "(check-sat)",
+        "(pop -1)",
+        "(get-value (x))",
+      ]),
+    ).toEqual([
+      "sat",
+      '(error "line 4 column 6: invalid pop command, argument is greater than the current stack depth")',
+      '(error "line 5 column 10: model is not available")',
+      '(:reason-unknown "state of the most recent check-sat command is not known")',
+      "sat",
+      '(error "line 9 column 14: model is not available")',
+      "sat",
+      '(error "line 11 column 5: invalid push command, value is negative.")',
+      "((x 3))",
+    ]);
+  });
+
   it("counts the columns of the first line from 1", () => {
     expect(run(["(assert q)"])).toEqual(['(error "line 1 column 9: unknown constant q")']);
   });
@@ -48,6 +77,13 @@ describe("runSmtlibScript prints what Z3 prints", () => {
     expect(
       run(["(set-option :print-success true)", "(declare-const b Bool)", "(assert (not b))"]),
     ).toEqual(["success", "success", "success"]);
+  });
+
+  it("prints success at exit", () => {
+    expect(run(["(set-option :print-success true)", "(exit)", "(check-sat)"])).toEqual([
+      "success",
+      "success",
+    ]);
   });
 
   it("expands define-fun and takes check-sat's assumptions", () => {
@@ -94,6 +130,59 @@ describe("runSmtlibScript prints what Z3 prints", () => {
         "(check-sat)",
       ]),
     ).toEqual(["sat", "unsat"]);
+  });
+
+  it("walks the pareto front of objectives that elim01 turns into soft constraints", () => {
+    expect(
+      run([
+        "(set-option :opt.priority pareto)",
+        "(declare-const x Int)",
+        "(declare-const y Int)",
+        "(assert (<= 0 x 2))",
+        "(assert (<= 0 y 2))",
+        "(assert (<= (+ x y) 3))",
+        "(maximize x)",
+        "(maximize y)",
+        "(check-sat)",
+        "(get-objectives)",
+        "(check-sat)",
+        "(get-objectives)",
+        "(check-sat)",
+        "(check-sat)",
+      ]),
+    ).toEqual([
+      "sat",
+      "(objectives\n (x 1)\n (y 2)\n)",
+      "sat",
+      "(objectives\n (x 2)\n (y 1)\n)",
+      "unsat",
+      "sat",
+    ]);
+  });
+
+  it("gives the objectives 0 when the hard constraints are false", () => {
+    expect(
+      run([
+        "(declare-const x Int)",
+        "(declare-const p Bool)",
+        "(assert (< x 10))",
+        "(assert-soft p :weight 3 :id g)",
+        "(assert-soft (not p) :weight 2 :id g)",
+        "(maximize x)",
+        "(minimize (+ x 1))",
+        "(check-sat)",
+        "(get-objectives)",
+        "(push)",
+        "(assert false)",
+        "(check-sat)",
+        "(get-objectives)",
+      ]),
+    ).toEqual([
+      "sat",
+      "(objectives\n (g 2)\n (x 9)\n ((+ x 1) 10)\n)",
+      "unsat",
+      "(objectives\n (g 0)\n (x 0)\n ((+ x 1) 0)\n)",
+    ]);
   });
 
   it("prints the simplified term, as in z3test's t27.smt2 and abs.smt2", () => {
@@ -216,6 +305,139 @@ describe("runSmtlibScript prints what Z3 prints", () => {
     ]);
   });
 
+  it("completes a floating-point constant that no assertion mentions as NaN", () => {
+    expect(
+      run([
+        "(set-logic QF_FP)",
+        "(declare-const z0 (_ FloatingPoint 3 5))",
+        "(declare-const z1 (_ FloatingPoint 3 5))",
+        "(assert (fp.isNegative z1))",
+        "(check-sat)",
+        "(get-model)",
+      ]),
+    ).toEqual([
+      "sat",
+      [
+        "(",
+        "  (define-fun z1 () (_ FloatingPoint 3 5)",
+        "    (_ -zero 3 5))",
+        "  (define-fun z0 () (_ FloatingPoint 3 5)",
+        "    (_ NaN 3 5))",
+        ")",
+      ].join("\n"),
+    ]);
+  });
+
+  it("takes the fresh values of a model in the order that their stubs were made", () => {
+    expect(
+      run([
+        "(declare-fun x0 () Int)",
+        "(declare-fun x1 () Int)",
+        "(declare-fun q (Int Int) Bool)",
+        "(declare-const a0 (Array Int Int))",
+        "(declare-const a2 (Array Int Int))",
+        "(assert (distinct (select (store a0 x0 x1) 1) (ite (= (ite (q 6 (- x0)) (- 2) x0) (select (store a2 x1 x1) x0)) x0 (- x0 x1))))",
+        "(check-sat)",
+        "(get-value (a0 a2))",
+      ]),
+    ).toEqual([
+      "sat",
+      [
+        "((a0 ((as const (Array Int Int)) 2))",
+        " (a2 (store ((as const (Array Int Int)) 4) 1 (- 2))))",
+      ].join("\n"),
+    ]);
+  });
+
+  it("completes the empty model of a goal that simplifies to true", () => {
+    expect(
+      run([
+        "(declare-sort U 0)",
+        "(declare-fun u () U)",
+        "(declare-const b Bool)",
+        "(assert (or b (= u u)))",
+        "(check-sat)",
+        "(get-model)",
+      ]),
+    ).toEqual([
+      "sat",
+      [
+        "(",
+        "  (define-fun u () U",
+        "    U!val!0)",
+        "  (define-fun b () Bool",
+        "    false)",
+        ")",
+      ].join("\n"),
+    ]);
+  });
+
+  it("prints a named term's definition in the model as the script spells it", () => {
+    expect(
+      run([
+        "(declare-fun x () Int)",
+        "(assert (! (> (abs x) 2) :named a0))",
+        "(check-sat)",
+        "(get-model)",
+      ]),
+    ).toEqual([
+      "sat",
+      [
+        "(",
+        "  (define-fun x () Int",
+        "    3)",
+        "  (define-fun a0 () Bool",
+        "    (> (abs x) 2))",
+        ")",
+      ].join("\n"),
+    ]);
+  });
+
+  it("qualifies a constant that a named term of the same name overloads", () => {
+    expect(
+      run([
+        "(declare-const a0 (Array Int Int))",
+        "(declare-const x Int)",
+        "(assert (! (= a0 (store a0 x 1)) :named a0))",
+        "(simplify a0)",
+        "(simplify (! (> x 2) :named x))",
+        "(simplify (x 1))",
+        "(apply skip)",
+        "(reset)",
+        "(declare-const y Int)",
+        "(assert (! (> y 2) :named n))",
+        "(declare-const p Bool)",
+        "(assert (! (not p) :named q))",
+        "(check-sat)",
+        "(get-model)",
+      ]),
+    ).toEqual([
+      "(= (as a0 (Array Int Int)) (store (as a0 (Array Int Int)) x 1))",
+      "(not (<= (as x Int) 2))",
+      '(error "line 6 column 14: ambiguous constant reference, more than one constant with the same sort, use a qualified expression (as <symbol> <sort>) to disambiguate x")',
+      [
+        "(goals",
+        "(goal",
+        "  (= (as a0 (Array Int Int)) (store (as a0 (Array Int Int)) (as x Int) 1))",
+        "  :precision precise :depth 0)",
+        ")",
+      ].join("\n"),
+      "sat",
+      [
+        "(",
+        "  (define-fun y () Int",
+        "    3)",
+        "  (define-fun p () Bool",
+        "    false)",
+        "  (define-fun q () Bool",
+        "    (not p))",
+        "  (define-fun n () Bool",
+        "    (> y 2))",
+        ")",
+      ].join("\n"),
+    ]);
+  });
+
   it("prints the names of an unsat core, as in z3test's t10.smt2", () => {
     expect(
       run([
@@ -249,6 +471,62 @@ describe("runSmtlibScript prints what Z3 prints", () => {
         "(eval (= a b))",
       ]),
     ).toEqual(["sat", "true", "true", "false"]);
+  });
+
+  it("expands a select over a store or an if-then-else in eval", () => {
+    expect(
+      run([
+        "(declare-sort E 0)",
+        "(declare-const e0 E)",
+        "(declare-const e2 E)",
+        "(declare-const i0 Int)",
+        "(declare-const i2 Int)",
+        "(declare-const p Bool)",
+        "(declare-const a (Array Int E))",
+        "(declare-const b (Array Int Int))",
+        "(declare-const c (Array Int Int))",
+        "(check-sat)",
+        "(eval (= e0 (select (store a i0 e2) i2)))",
+        "(eval (+ (select b 0) (select c 0) (select (ite p b c) i2)))",
+      ]),
+    ).toEqual([
+      "sat",
+      "(= e0 (ite (= i0 i2) e2 (select a i2)))",
+      "(+ (select b 0) (select c 0) (ite p (select b i2) (select c i2)))",
+    ]);
+  });
+
+  it("expands the same select again in a later eval", () => {
+    expect(
+      run([
+        "(declare-const i0 Int)",
+        "(declare-const i2 Int)",
+        "(declare-const a2 (Array Int Int))",
+        "(check-sat)",
+        "(eval (+ 1 (select (store a2 i0 3) i2)))",
+        "(eval (+ 1 (select (store a2 i0 3) i2)))",
+      ]),
+    ).toEqual([
+      "sat",
+      "(+ 1 (ite (= i0 i2) 3 (select a2 i2)))",
+      "(+ 1 (ite (= i0 i2) 3 (select a2 i2)))",
+    ]);
+  });
+
+  it("keeps a distinct of more than two terms in eval", () => {
+    expect(
+      run([
+        "(declare-const x Int)",
+        "(declare-const y Int)",
+        "(declare-const z Int)",
+        "(assert (= x 1))",
+        "(check-sat)",
+        "(eval (distinct x y z))",
+        "(eval (distinct x 1 z))",
+        "(eval (distinct x 2 3))",
+        "(get-value ((distinct x y z)))",
+      ]),
+    ).toEqual(["sat", "(distinct 1 y z)", "false", "true", "(((distinct x y z) false))"]);
   });
 
   // z3test's regressions/smt2/fp-rem-1.smt2, with what Z3 prints for it.
@@ -430,7 +708,7 @@ describe("runSmtlibScript prints what Z3 prints", () => {
         "(set-option :produce-unsat-cores true)",
         "(declare-const x Int)",
         "(assert (! (= x 1) :named a))",
-        "(apply solve-eqs :print-dependencies true)",
+        "(apply ctx-solver-simplify :print-dependencies true)",
       ]),
     ).toThrow(SmtUnsupportedError);
   });
@@ -1176,10 +1454,507 @@ describe("runSmtlibScript prints what Z3 prints", () => {
     ]);
   });
 
-  it("throws at a command named like a property of Object", () => {
-    expect(() => run(["(constructor)"])).toThrow(SmtUnsupportedError);
-    expect(() => run(["(toString)"])).toThrow(SmtUnsupportedError);
-    expect(() => run(["(__proto__)"])).toThrow(SmtUnsupportedError);
+  it("reports a command Z3 does not know, also one named like a property of Object", () => {
+    expect(
+      run([
+        "(constructor)",
+        "(toString 1 (2 3))",
+        "(__proto__)",
+        "(asert (> 1 0))",
+        "(set-option :print-success true)",
+        "(foo)",
+        '(echo "x")',
+      ]),
+    ).toEqual([
+      "unsupported",
+      "; constructor line: 1 position: 13",
+      "unsupported",
+      "; toString line: 2 position: 17",
+      "unsupported",
+      "; __proto__ line: 3 position: 10",
+      "unsupported",
+      "; asert line: 4 position: 14",
+      "success",
+      "unsupported",
+      "; foo line: 6 position: 4",
+      "x",
+    ]);
+  });
+
+  it("reports an answer that differs from the one set-info :status announces, also after reset", () => {
+    expect(
+      run([
+        "(set-info :status unsat)",
+        "(declare-const p Bool)",
+        "(assert p)",
+        "(check-sat)",
+        "(get-model)",
+        "(set-info :status sat)",
+        "(check-sat-assuming ((not p)))",
+        "(check-sat-using smt)",
+        "(set-info :status foo)",
+        "(set-info :status)",
+        "(set-info :status (unsat))",
+        "(set-info status sat)",
+        "(set-info :status unknown :x)",
+        "(check-sat-assuming ((not p)))",
+        "(set-info :status sat)",
+        "(reset)",
+        "(assert false)",
+        "(check-sat-using simplify)",
+      ]),
+    ).toEqual([
+      "sat",
+      '(error "line 4 column 10: check annotation that says unsat")',
+      "(\n  (define-fun p () Bool\n    true)\n)",
+      "unsat",
+      '(error "line 7 column 29: check annotation that says sat")',
+      "sat",
+      "(error \"line 9 column 18: invalid ':status' attribute\")",
+      '(error "line 10 column 17: invalid command, argument(s) missing")',
+      '(error "line 11 column 18: invalid option value")',
+      '(error "line 12 column 10: invalid command argument, keyword expected")',
+      '(error "line 13 column 26: invalid command, too many arguments")',
+      "unsat",
+      "unsat",
+      '(error "line 18 column 25: check annotation that says sat")',
+    ]);
+  });
+
+  it("rejects apply and check-sat-using under both proofs and unsat cores, and keeps the last check", () => {
+    const error = "Frontend does not support simultaneous generation of proofs and unsat cores";
+    expect(
+      run([
+        "(set-option :produce-proofs true)",
+        "(set-option :produce-unsat-cores true)",
+        "(declare-const x Int)",
+        "(assert (> x 2))",
+        "(check-sat)",
+        "(apply simplify)",
+        "(check-sat-using smt)",
+        "(get-info :reason-unknown)",
+        "(get-model)",
+      ]),
+    ).toEqual([
+      "sat",
+      `(error "line 6 column 15: ${error}")`,
+      `(error "line 7 column 20: ${error}")`,
+      '(:reason-unknown "")',
+      "(\n  (define-fun x () Int\n    3)\n)",
+    ]);
+  });
+
+  it("keeps the answer of the last check across reset-assertions", () => {
+    expect(
+      run([
+        "(set-option :produce-unsat-cores true)",
+        "(declare-const x Int)",
+        "(declare-const b Bool)",
+        "(assert (! (> x 2) :named a1))",
+        "(check-sat)",
+        "(reset-assertions)",
+        "(get-info :reason-unknown)",
+        "(get-model)",
+        "(get-value (x))",
+        "(assert (! (< x 0) :named a2))",
+        "(assert (! (> x 0) :named a3))",
+        "(check-sat)",
+        "(reset-assertions)",
+        "(get-unsat-core)",
+        "(get-model)",
+      ]),
+    ).toEqual([
+      "sat",
+      '(:reason-unknown "unknown")',
+      "(\n  (define-fun a1 () Bool\n    (> x 2))\n  (define-fun x () Int\n    3)\n  (define-fun b () Bool\n    false)\n)",
+      "((x 3))",
+      "unsat",
+      "(a2 a3)",
+      '(error "line 15 column 10: model is not available")',
+    ]);
+  });
+
+  it("gives the reason of inc_sat_solver after an answer of the finite-domain or bit-vector solver", () => {
+    expect(
+      run([
+        "(set-logic QF_FD)",
+        "(declare-const b Bool)",
+        "(assert b)",
+        "(check-sat)",
+        "(get-info :reason-unknown)",
+        "(check-sat-assuming ((not b)))",
+        "(get-info :reason-unknown)",
+        "(reset)",
+        "(set-option :produce-unsat-cores true)",
+        "(set-logic QF_BV)",
+        "(declare-const v (_ BitVec 4))",
+        "(assert (! (= v #x1) :named a0))",
+        "(check-sat)",
+        "(get-info :reason-unknown)",
+        "(check-sat-using smt)",
+        "(get-info :reason-unknown)",
+      ]),
+    ).toEqual([
+      "sat",
+      '(:reason-unknown "no reason given")',
+      "unsat",
+      '(:reason-unknown "no reason given")',
+      "sat",
+      '(:reason-unknown "no reason given")',
+      "sat",
+      '(:reason-unknown "")',
+    ]);
+  });
+
+  it("answers unknown for formulas outside the logic that the smt setup rejects", () => {
+    const reason =
+      "Benchmark contains uninterpreted function symbols, but specified logic does not support them.";
+    expect(
+      run([
+        "(set-logic QF_LIA)",
+        "(declare-const x Int)",
+        "(assert (>= (div x 0) 1))",
+        "(check-sat)",
+        "(get-info :reason-unknown)",
+        "(check-sat-using (or-else smt skip))",
+        "(get-info :reason-unknown)",
+        "(apply smt)",
+        "(minimize x)",
+        "(check-sat)",
+        "(get-info :reason-unknown)",
+        "(reset)",
+        "(set-logic QF_LRA)",
+        "(declare-const r Real)",
+        "(assert (> (/ r 0.0) 2.5))",
+        "(check-sat-using qflra)",
+        "(get-info :reason-unknown)",
+        "(push)",
+        "(check-sat)",
+      ]),
+    ).toEqual([
+      "unknown",
+      `(:reason-unknown "${reason}")`,
+      "unknown",
+      `(:reason-unknown "${reason}")`,
+      "(goals\n(goal\n  :precision precise :depth 0)\n)",
+      `(error "line 10 column 10: ${reason}")`,
+      '(:reason-unknown "unknown")',
+      "unknown",
+      `(:reason-unknown "${reason}")`,
+      "sat",
+    ]);
+  });
+
+  it("sets up no context whose formulas are inconsistent, so its setup rejects nothing", () => {
+    expect(
+      run([
+        "(set-logic QF_LRA)",
+        "(declare-const y Real)",
+        "(assert (>= y (/ 3.1 0.0)))",
+        "(assert (>= y (+ 3.0 y)))",
+        "(check-sat)",
+        "(get-info :reason-unknown)",
+      ]),
+    ).toEqual(["unsat", '(:reason-unknown "")']);
+  });
+
+  it("reports where Z3 raises on a datatype whose declaration failed", () => {
+    expect(
+      run([
+        "(declare-datatype Opt ((none) (some (the X))))",
+        "(declare-const o Opt)",
+        "(declare-const p Opt)",
+        "(check-sat)",
+        "(get-value (o))",
+        "(get-model)",
+        "(reset)",
+        "(declare-datatype Opt ((none) (some (the X))))",
+        "(declare-const o Opt)",
+        "(assert (not ((_ is none) o)))",
+        "(declare-const p Opt)",
+        "(assert (distinct o p))",
+        "(check-sat)",
+        "(get-info :reason-unknown)",
+      ]),
+    ).toEqual([
+      `(error "line 1 column 19: invalid datatype declaration, unknown sort 'X'")`,
+      "sat",
+      '((error "line 5 column 14: datatype constructors have not been created")',
+      '(error "line 6 column 10: constructor not available")',
+      `(error "line 8 column 18: invalid datatype declaration, unknown sort 'X'")`,
+      '(error "line 10 column 27: datatype constructors have not been created")',
+      "unknown",
+      '(:reason-unknown "constructor not available")',
+    ]);
+  });
+
+  it("forgets the constructors of a datatype at a pop, as the datatype plugin does", () => {
+    expect(
+      run([
+        "(declare-datatype Opt ((none) (some (the X))))",
+        "(declare-const o Opt)",
+        "(push)",
+        "(check-sat)",
+        "(get-model)",
+        "(pop)",
+        "(check-sat)",
+        "(get-model)",
+        "(get-model)",
+      ]),
+    ).toEqual([
+      `(error "line 1 column 19: invalid datatype declaration, unknown sort 'X'")`,
+      "sat",
+      '(error "line 5 column 10: datatype constructors have not been created")',
+      "sat",
+      '(error "line 8 column 10: datatype constructors have not been created")',
+      '(error "line 9 column 10: constructor not available")',
+    ]);
+  });
+
+  it("orders div0 and mod0 in a model by the hashes of their declarations", () => {
+    expect(
+      run([
+        "(declare-const x Int)",
+        "(assert (distinct 5 (div x 0)))",
+        "(check-sat)",
+        "(get-model)",
+      ]),
+    ).toEqual([
+      "sat",
+      [
+        "(",
+        "  (define-fun x () Int\n    21238)",
+        "  (define-fun mod0 ((x!0 Int) (x!1 Int)) Int\n    0)",
+        "  (define-fun div0 ((x!0 Int) (x!1 Int)) Int\n    0)",
+        ")",
+      ].join("\n"),
+    ]);
+  });
+
+  it("takes an array's default from its selects in the order of the hashes of their indices", () => {
+    expect(
+      run([
+        "(declare-const a (Array Int Int))",
+        "(assert (= (select a 5) 10))",
+        "(assert (= (select a 1) 11))",
+        "(check-sat)",
+        "(get-model)",
+      ]),
+    ).toEqual([
+      "sat",
+      [
+        "(",
+        "  (define-fun a () (Array Int Int)",
+        "    (store ((as const (Array Int Int)) 11) 5 10))",
+        ")",
+      ].join("\n"),
+    ]);
+  });
+
+  it("assigns the Boolean macros in the order of cmd_context's dictionary, which a pop does not shrink", () => {
+    expect(
+      run([
+        "(declare-const p Bool)",
+        "(declare-const q Bool)",
+        "(declare-const x Int)",
+        "(define-fun d1 () Bool (> x 2))",
+        "(define-fun d2 () Int x)",
+        "(assert (! (or p q) :named a0))",
+        "(assert (! (> x 5) :named zz))",
+        "(assert (! (not q) :named a1))",
+        "(assert (! (=> q p) :named b))",
+        "(check-sat)",
+        "(get-assignment)",
+        "(push)",
+        "(define-fun d3 () Bool (< x 0))",
+        "(assert (! true :named c9))",
+        "(get-assignment)",
+        "(pop)",
+        "(check-sat)",
+        "(get-assignment)",
+      ]),
+    ).toEqual([
+      "sat",
+      "((a0 true) (d1 true) (a1 true) (zz true) (b true))",
+      '(error "line 15 column 15: model is not available")',
+      "sat",
+      "((b true) (a1 true) (a0 true) (d1 true) (zz true))",
+    ]);
+  });
+
+  it("answers QF_BV in scopes with inc_sat_solver, whose bit-blaster pops with them", () => {
+    expect(
+      run([
+        "(set-logic QF_BV)",
+        "(declare-const b0 Bool)",
+        "(declare-const v0 (_ BitVec 3))",
+        "(push)",
+        "(assert (distinct v0 #b101))",
+        "(assert b0)",
+        "(check-sat)",
+        "(get-model)",
+        "(pop)",
+        "(declare-const v1 (_ BitVec 2))",
+        "(assert (= ((_ extract 1 0) v0) (bvnot v1)))",
+        "(assert (bvult v1 #b01))",
+        "(check-sat)",
+        "(get-model)",
+      ]),
+    ).toEqual([
+      "sat",
+      [
+        "(",
+        "  (define-fun b0 () Bool\n    true)",
+        "  (define-fun v0 () (_ BitVec 3)\n    #b000)",
+        ")",
+      ].join("\n"),
+      "sat",
+      [
+        "(",
+        "  (define-fun v1 () (_ BitVec 2)\n    #b00)",
+        "  (define-fun v0 () (_ BitVec 3)\n    #b011)",
+        "  (define-fun b0 () Bool\n    false)",
+        ")",
+      ].join("\n"),
+    ]);
+  });
+
+  it("gives an array of bit-vectors the default of a bit-vector value made before it", () => {
+    expect(
+      run([
+        "(declare-const v0 (_ BitVec 4))",
+        "(declare-const a0 (Array (_ BitVec 4) (_ BitVec 4)))",
+        "(assert (not (= v0 (select (store a0 v0 v0) #x0))))",
+        "(check-sat-using smt)",
+        "(get-model)",
+      ]),
+    ).toEqual([
+      "sat",
+      [
+        "(",
+        "  (define-fun v0 () (_ BitVec 4)\n    #x1)",
+        "  (define-fun a0 () (Array (_ BitVec 4) (_ BitVec 4))\n    (store ((as const (Array (_ BitVec 4) (_ BitVec 4))) #x1) #x0 #x0))",
+        ")",
+      ].join("\n"),
+    ]);
+  });
+
+  it("interprets array-ext in the model and keeps the arrays it compares", () => {
+    expect(
+      run([
+        "(set-option :produce-models true)",
+        "(declare-const a0 (Array Int Int))",
+        "(declare-const a1 (Array Int Int))",
+        "(declare-const i0 Int)",
+        "(declare-const i1 Int)",
+        "(assert (not (= a1 (store a1 (select a0 i0) i1))))",
+        "(assert (not (= (store a0 (select a1 i1) (select a1 i1)) a1)))",
+        "(check-sat)",
+        "(get-model)",
+      ]),
+    ).toEqual([
+      "sat",
+      [
+        "(",
+        "  (define-fun a0 () (Array Int Int)",
+        "    (store (store ((as const (Array Int Int)) 3) 9 11) 4 7))",
+        "  (define-fun a1 () (Array Int Int)",
+        "    (store (store (store ((as const (Array Int Int)) 2) 5 6) 9 10) 7 8))",
+        "  (define-fun i1 () Int",
+        "    5)",
+        "  (define-fun i0 () Int",
+        "    4)",
+        "  (define-fun k!3 ((x!0 Int)) Int",
+        "    (ite (= x!0 6) 6",
+        "    (ite (= x!0 9) 11",
+        "    (ite (= x!0 4) 7",
+        "      3))))",
+        "  (define-fun k!0 ((x!0 Int)) Int",
+        "    (ite (= x!0 5) 6",
+        "    (ite (= x!0 9) 10",
+        "    (ite (= x!0 7) 8",
+        "      2))))",
+        ")",
+      ].join("\n"),
+    ]);
+  });
+
+  it("expands a select of a store as it asserts the formula", () => {
+    expect(
+      run([
+        "(set-option :produce-models true)",
+        "(declare-const a0 (Array Int Int))",
+        "(declare-const i0 Int)",
+        "(assert (< (select (store a0 2 -1) i0) 0))",
+        "(check-sat)",
+        "(get-info :rlimit)",
+      ]),
+    ).toEqual(["sat", "(:rlimit 224)"]);
+  });
+
+  it("counts the steps of a model cleanup as Z3 does", () => {
+    expect(
+      run([
+        "(declare-const a0 (Array Int Int))",
+        "(declare-const a2 (Array Int Int))",
+        "(declare-const i0 Int)",
+        "(declare-const i1 Int)",
+        "(assert (>= (select (store a0 (select a0 i0) i1) 0) 2))",
+        "(assert (= a2 a0))",
+        "(check-sat)",
+        "(get-model)",
+        "(get-info :rlimit)",
+      ]),
+    ).toEqual([
+      "sat",
+      [
+        "(",
+        "  (define-fun a0 () (Array Int Int)",
+        "    (store ((as const (Array Int Int)) 3) 4 0))",
+        "  (define-fun i1 () Int",
+        "    2)",
+        "  (define-fun i0 () Int",
+        "    4)",
+        "  (define-fun a2 () (Array Int Int)",
+        "    (store ((as const (Array Int Int)) 3) 4 0))",
+        ")",
+      ].join("\n"),
+      "(:rlimit 288)",
+    ]);
+  });
+
+  it("keeps the array of a function interpretation as Z3 does", () => {
+    expect(
+      run([
+        "(declare-const a0 (Array Int Int))",
+        "(declare-const a1 (Array Int Int))",
+        "(declare-const a2 (Array Int Int))",
+        "(declare-const i0 Int)",
+        "(declare-const i1 Int)",
+        "(assert (= (store a1 i1 (select a2 i0)) a2))",
+        "(assert (= (store a2 i0 i0) a0))",
+        "(check-sat)",
+        "(get-model)",
+        "(get-info :rlimit)",
+      ]),
+    ).toEqual([
+      "sat",
+      [
+        "(",
+        "  (define-fun a1 () (Array Int Int)",
+        "    ((as const (Array Int Int)) 2))",
+        "  (define-fun i1 () Int",
+        "    3)",
+        "  (define-fun a2 () (Array Int Int)",
+        "    (store ((as const (Array Int Int)) 2) 3 4))",
+        "  (define-fun i0 () Int",
+        "    3)",
+        "  (define-fun a0 () (Array Int Int)",
+        "    (store ((as const (Array Int Int)) 2) 3 3))",
+        ")",
+      ].join("\n"),
+      "(:rlimit 270)",
+    ]);
   });
 
   it("throws at a theory it does not implement", () => {

@@ -1,5 +1,3 @@
-// A port of tlapm's anonymization (Expr.Anon, Elab.desugar and Proof.Anon).
-
 import { TlapmBugError, TlaProofError } from "../errors";
 import { consSubstitution, normalizeApply, shift, shiftExpr, substituteExpr } from "./substitution";
 import { isEqualExpr } from "./equality";

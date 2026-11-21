@@ -119,6 +119,43 @@ describe("parseConfig matches TLC", () => {
       expect(() => parseConfig(item[0])).toThrow(new TlaConfigError(item[1]));
     }
   });
+
+  it.each([
+    [
+      "a form feed",
+      "INIT Init\fNEXT Next\n",
+      ':\nLexical error at line 1, column 10.  Encountered: "\\f" (12), after : ""',
+    ],
+    [
+      "a no-break space",
+      "INIT Init\u00a0NEXT Next\n",
+      ':\nLexical error at line 1, column 10.  Encountered: "\\u00a0" (160), after : ""',
+    ],
+    [
+      "an escape SANY lacks",
+      'CONSTANT N = "\\a"\n',
+      ':\nLexical error at line 1, column 16.  Encountered: "a" (97), after : "\\"\\\\"',
+    ],
+    [
+      "a comment and lines that end at a lone CR",
+      "INIT Init\r\\* c\rNEXT Next\rINIT Init\n",
+      " at line 4\nThe keyword INIT appeared twice.",
+    ],
+    [
+      "WF_ before a name",
+      "CONSTANT N = {WF_x}\n",
+      " at line 1\nIt was expecting }, but did not find it.",
+    ],
+    [
+      "underscores",
+      "CONSTANT N = __\n",
+      " at line 2\nIt was expecting = or <-, but did not find it.",
+    ],
+  ])("reads %s with SANY's token manager, as TLC does", (_name, source, message) => {
+    expect(() => parseConfig(source)).toThrow(
+      new TlaConfigError(`TLC found an error in the configuration file${message}`),
+    );
+  });
 });
 
 describe("parseConfig matches TLC 1.7.4", () => {

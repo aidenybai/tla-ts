@@ -1,4 +1,3 @@
-// Ported from Z3 (src/tactic/core/occf_tactic.cpp), MIT license, see z3-license.txt.
 import { SmtTacticError } from "../../../errors";
 import { type AstManager, OP_OR, SORT_BOOL } from "./ast";
 import type { Goal } from "./goal";
@@ -76,7 +75,7 @@ export const occf = (manager: AstManager, goal: Goal) => {
   const size = goal.forms.size;
   for (let index = 0; index < size; index++) {
     manager.limit.checkpoint();
-    const clause = goal.forms.items[index];
+    const clause = goal.forms.get(index);
     if (manager.getOp(clause) !== OP_OR || !isTarget(clause)) continue;
     let keep: number | undefined;
     const literals: number[] = [];
@@ -91,7 +90,7 @@ export const occf = (manager: AstManager, goal: Goal) => {
       else literals.push(mkAuxLit(literal));
     }
     if (keep !== undefined) literals.push(keep);
-    goal.update(index, pin(manager.mkOr(literals)));
+    goal.update(index, pin(manager.mkOr(literals)), goal.getDependency(index));
   }
   pinned.reset();
   goal.depth++;

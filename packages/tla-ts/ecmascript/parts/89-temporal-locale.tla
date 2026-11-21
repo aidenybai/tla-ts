@@ -4,8 +4,9 @@
 \* pattern that the host's table holds for the object's kind, its calendar, and the options: an
 \* English pattern of fields, each with its style, where a literal's style is its units. A field's
 \* text is as Node writes it in English, from 1583, before which Node writes the Julian calendar, to
-\* 9999. It stops at a locale other than English, at a calendar or numbering system option, and at
-\* options whose pattern the table leaves out.
+\* 9999. Where HostIntl answers for the object, its requested locales, and the options it read, it
+\* gives that answer instead. Otherwise it stops at a locale other than English, at a calendar or
+\* numbering system option, and at options whose pattern the table leaves out.
 
 \* The options that CreateDateTimeFormat reads after the time zone, in its order (ECMA-402 Table 16,
 \* then formatMatcher, dateStyle, and timeStyle), with the values each may take.
@@ -66,7 +67,8 @@ DateFormatKey(kind, calendar, hour12, values) ==
         [] values.fractionalSecondDigits = 1 -> "|fractionalSecondDigits=1"
         [] values.fractionalSecondDigits = 2 -> "|fractionalSecondDigits=2"
         [] OTHER -> "|fractionalSecondDigits=3") \o
-     DateFormatEntry(values, "dateStyle") \o DateFormatEntry(values, "timeStyle")
+     DateFormatEntry(values, "dateStyle") \o DateFormatEntry(values, "timeStyle") \o
+     (IF "dayPeriod" \in DOMAIN values THEN DateFormatEntry(values, "dayPeriod") ELSE "")
 
 \* The text of a field of a pattern for a date [year, month, day] and a time [hour, minute, second,
 \* millisecond], where an hour's style is its cycle and width, as "h12 numeric", and a fraction's
@@ -105,20 +107,42 @@ LocaleText(format, i, date, time) ==
   IF i > Len(format.fields) THEN <<>>
   ELSE LocaleField(format.fields[i], format.styles[i], date, time) \o LocaleText(format, i + 1, date, time)
 
+\* The key of HostIntl's entries for a Temporal object of a kind with its slots: its ISO fields, its
+\* epoch nanoseconds' units, and its time zone's identifier and its calendar, as it has them.
+TemporalFormatKey(kind, slots) ==
+  CASE kind \in {"PlainDate", "PlainYearMonth", "PlainMonthDay"} ->
+         <<kind, slots.date.year, slots.date.month, slots.date.day, slots.calendar>>
+    [] kind = "PlainDateTime" ->
+         <<kind, slots.dateTime.date.year, slots.dateTime.date.month, slots.dateTime.date.day>> \o
+         TimeFields(slots.dateTime.time) \o <<slots.calendar>>
+    [] kind = "PlainTime" -> <<kind>> \o TimeFields(slots.time)
+    [] kind = "ZonedDateTime" -> <<kind, TIUnits(slots.epochNs), slots.timeZone.id, slots.calendar>>
+    [] OTHER -> <<kind, TIUnits(slots.epochNs)>>
+\* The kind of a Temporal object by its class.
+TemporalKinds ==
+  ("temporalDate" :> "PlainDate") @@ ("temporalDateTime" :> "PlainDateTime") @@ ("temporalYearMonth" :> "PlainYearMonth") @@
+  ("temporalMonthDay" :> "PlainMonthDay") @@ ("temporalTime" :> "PlainTime") @@ ("temporalZonedDateTime" :> "ZonedDateTime") @@
+  ("temporalInstant" :> "Instant")
+
 \* toLocaleString of a Temporal object of a kind ("PlainDate" and the like) with its slots, where
-\* text is what toString gives.
+\* text is what toString gives: what HostIntl answers for its requested locales and the options it
+\* read, or else the host's recorded English pattern, for an English locale.
 TemporalToLocaleString(s, kind, slots, locales, options, text) ==
   IF HostDateFormat(Empty).found = "none" THEN Ok(s, Str(text))
-  ELSE IF kind = "Duration" THEN Unsupported(s, N("Unsupported: Intl.DurationFormat"))
-  ELSE IF ~(locales = Undefined \/ (IsString(locales) /\ TPLower(locales.value) \in {N("en"), N("en-us")}))
-  THEN Unsupported(s, N("Unsupported: a locale other than English"))
-  ELSE LET o == IF options = Undefined THEN OrdinaryObjectCreate(s, Null) ELSE ToObject(s, options) IN IF IsAbrupt(o) THEN o ELSE
+  \* Temporal.Duration.prototype.toLocaleString: the format of a new Intl.DurationFormat.
+  ELSE IF kind = "Duration" THEN
+    LET df == DurationFormatConstruct(s, Intrinsic(s, "IntlDurationFormat"), locales, options) IN IF IsAbrupt(df) THEN df ELSE
+    LET answer == IntlAnswer(df.s, "DurationFormat", O(df.s, Val(df)).slots.options, "formatToParts",
+                             <<<<"duration", [i \in 1..10 |-> TIUnits(slots.fields[i])]>>>>)
+    IN IF IsAbrupt(answer) THEN answer ELSE IntlResult(answer.s, "format", Val(answer))
+  ELSE LET requested == CanonicalizeLocaleList(s, locales) IN IF IsAbrupt(requested) THEN requested ELSE
+  LET o == IF options = Undefined THEN OrdinaryObjectCreate(requested.s, Null) ELSE ToObject(requested.s, options) IN IF IsAbrupt(o) THEN o ELSE
   LET matcher == GetStringOption(o.s, Val(o), SV("localeMatcher"), {N("lookup"), N("best fit")}, Undefined) IN
   IF IsAbrupt(matcher) THEN matcher ELSE
-  LET calendar == Get(matcher.s, Val(o), SV("calendar")) IN IF IsAbrupt(calendar) THEN calendar
-  ELSE IF Val(calendar) # Undefined THEN Unsupported(calendar.s, N("Unsupported: a calendar option"))
-  ELSE LET numbering == Get(calendar.s, Val(o), SV("numberingSystem")) IN IF IsAbrupt(numbering) THEN numbering
-  ELSE IF Val(numbering) # Undefined THEN Unsupported(numbering.s, N("Unsupported: a numberingSystem option")) ELSE
+  LET calendar == GetAnyStringOption(matcher.s, Val(o), SV("calendar")) IN IF IsAbrupt(calendar) THEN calendar
+  ELSE IF Val(calendar) # Empty /\ ~IsTypeSequenceFrom(Val(calendar), 1, 0) THEN ThrowError(calendar.s, "RangeError")
+  ELSE LET numbering == GetAnyStringOption(calendar.s, Val(o), SV("numberingSystem")) IN IF IsAbrupt(numbering) THEN numbering
+  ELSE IF Val(numbering) # Empty /\ ~IsTypeSequenceFrom(Val(numbering), 1, 0) THEN ThrowError(numbering.s, "RangeError") ELSE
   LET hour12 == Get(numbering.s, Val(o), SV("hour12")) IN IF IsAbrupt(hour12) THEN hour12 ELSE
   LET hourCycle == GetStringOption(hour12.s, Val(o), SV("hourCycle"), {N("h11"), N("h12"), N("h23"), N("h24")}, Empty) IN
   IF IsAbrupt(hourCycle) THEN hourCycle ELSE
@@ -130,6 +154,19 @@ TemporalToLocaleString(s, kind, slots, locales, options, text) ==
   IF IsAbrupt(tz) THEN tz ELSE
   LET read == ReadDateTimeFormatOptions(tz.s, Val(o), 1, [n \in {DateTimeFormatOptions[i].key : i \in 1..Len(DateTimeFormatOptions)} |-> Empty]) IN
   IF IsAbrupt(read) THEN read ELSE
+  LET hostKey == <<"Temporal",
+                   <<Val(requested),
+                     <<IF Val(matcher) = Undefined THEN Empty ELSE Val(matcher), Val(calendar), Val(numbering),
+                       IF Val(hour12) = Undefined THEN Empty ELSE ToBooleanValue(Val(hour12)), Val(hourCycle),
+                       IF Val(zoneText) = Undefined THEN Empty ELSE Val(zoneText).value>> \o
+                     [i \in 1..Len(DateTimeFormatOptions) |-> Val(read)[DateTimeFormatOptions[i].key]]>>,
+                   "toLocaleString", <<TemporalFormatKey(kind, slots)>>>>
+      answer == HostIntl(hostKey)
+  IN IF answer.found = "value" THEN Ok(read.s, answer.value)
+  ELSE IF answer.found = "error" THEN ThrowError(read.s, answer.error)
+  ELSE IF Val(calendar) # Empty \/ Val(numbering) # Empty THEN Unsupported(read.s, N("Unsupported: a calendar or numberingSystem option"))
+  ELSE IF ~(locales = Undefined \/ (IsString(locales) /\ TPLower(locales.value) \in {N("en"), N("en-us")}))
+  THEN Unsupported(read.s, N("Unsupported: a locale other than English")) ELSE
   LET values == Val(read) @@ [hourCycle |-> Val(hourCycle)]
       key == DateFormatKey(kind, IF kind \in {"PlainTime", "Instant"} \/ slots.calendar = ISO8601 THEN "iso8601" ELSE "gregory",
                            IF Val(hour12) = Undefined THEN Empty ELSE ToBooleanValue(Val(hour12)), values)
@@ -138,13 +175,13 @@ TemporalToLocaleString(s, kind, slots, locales, options, text) ==
                  [] kind = "PlainTime" -> [date |-> [year |-> 1970, month |-> 1, day |-> 1], time |-> slots.time]
                  [] kind = "PlainDateTime" -> slots.dateTime
                  [] OTHER -> [date |-> slots.date, time |-> MidnightTimeRecord]
-  IN CASE kind \notin {"PlainTime", "Instant"} /\ slots.calendar \notin {ISO8601, N("gregory")} ->
-            Unsupported(read.s, N("Unsupported: a calendar the host's table leaves out"))
-       [] values.dayPeriod # Empty \/ values.timeZoneName # Empty ->
+  IN CASE values.dayPeriod # Empty \/ values.timeZoneName # Empty ->
             Unsupported(read.s, N("Unsupported: a dayPeriod or timeZoneName option"))
        [] values.formatMatcher = N("basic") -> Unsupported(read.s, N("Unsupported: the basic format matcher"))
        [] format.found = "error" -> ThrowError(read.s, format.error)
        [] format.found # "format" -> Unsupported(read.s, N("Unsupported: options the host's table leaves out"))
+       \* A calendar other than English's, the Gregorian, and ISO 8601 isn't the formatter's.
+       [] kind \notin {"PlainTime", "Instant"} /\ slots.calendar \notin {ISO8601, N("gregory")} -> ThrowError(read.s, "RangeError")
        [] Val(zoneText) # Undefined /\ ~format.isZoned -> Unsupported(read.s, N("Unsupported: a time zone option"))
        [] kind # "PlainTime" /\ (local.date.year < 1583 \/ local.date.year > 9999) ->
             Unsupported(read.s, N("Unsupported: a date that Node writes in the Julian calendar"))

@@ -1,5 +1,5 @@
-import type { Definition } from "./ast";
-import type { ConfigValue, ModelConfig } from "./config";
+import type { Definition, Expression } from "./ast";
+import type { ConfigValue, ConstantAssignment, ModelConfig } from "./config";
 import {
   TlaConfigError,
   TlaEvaluationError,
@@ -12,8 +12,9 @@ import type { LinkedModule } from "./environment";
 import type { Builtin } from "./evaluate";
 import { createLocalAlias } from "./instances";
 import type { Symbols } from "./resolve";
-import type { TlcOrder } from "./tlc/order";
+import { getHashtableOrder, type TlcOrder } from "./tlc/order";
 import {
+  createEnumeratedSet,
   createModelValue,
   formatValue,
   isTlcInteger,
@@ -28,8 +29,18 @@ export interface CopySource {
   prefix: number;
 }
 
+interface ConfigName {
+  name: string;
+  module?: string;
+}
+
+interface ConfigTable extends ConfigName {
+  rows: ConstantAssignment[];
+}
+
 interface LinkedSpecification {
   root: LinkedModule;
+  rootKeys: Map<string, string>;
   moduleSymbols: Map<string, Symbols>;
   definitions: Map<string, Definition>;
   builtins: Map<string, Builtin>;
@@ -40,6 +51,7 @@ interface LinkedSpecification {
 
 interface AppliedConfig {
   constants: Map<string, Value>;
+  bodyValues: WeakMap<Expression, Value>;
   substitutions: Map<string, string>;
 }
 
@@ -82,8 +94,13 @@ const toConstantValue = (value: ConfigValue) => {
   }
 };
 
+// TLC normalizes only the value of a constant, and keeps a definition's as written, like a set literal.
+const toLiteralValue = (value: ConfigValue): Value =>
+  value.kind === "Set" ? createEnumeratedSet(value.elements.map(toLiteralValue)) : toValue(value);
+
 const createOperatorTable = (name: string, arity: number, rows: [Value[], Value][]): Builtin => {
-  const table = `{ ${rows.map((row) => `<${[...row[0], row[1]].map((value) => formatValue(value)).join(", ")}>`).join(", ")}}`;
+  const getTable = () =>
+    `{ ${rows.map((row) => `<${[...row[0], row[1]].map((value) => formatValue(value)).join(", ")}>`).join(", ")}}`;
   return {
     kind: "Builtin",
     name,
@@ -92,7 +109,7 @@ const createOperatorTable = (name: string, arity: number, rows: [Value[], Value]
       const row = rows.find((candidate) => {
         if (candidate[0].length !== args.length) {
           throw new TlaEvaluationError(
-            `Attempted to apply the operator ${table}\nwith wrong number of arguments.`,
+            `Attempted to apply the operator ${getTable()}\nwith wrong number of arguments.`,
           );
         }
         return candidate[0].every((value, index) => {
@@ -105,7 +122,7 @@ const createOperatorTable = (name: string, arity: number, rows: [Value[], Value]
       });
       if (row) return row[1];
       throw new TlaEvaluationError(
-        `Attempted to apply operator:\n${table}\nto arguments (${args.map((argument) => (typeof argument === "object" && argument.kind === "Operator" ? argument.name : formatValue(argument))).join(", ")}), which is undefined.`,
+        `Attempted to apply operator:\n${getTable()}\nto arguments (${args.map((argument) => (typeof argument === "object" && argument.kind === "Operator" ? argument.name : formatValue(argument))).join(", ")}), which is undefined.`,
       );
     },
     evaluateUnary: undefined,
@@ -118,156 +135,283 @@ const createReusedTargetError = (target: string) =>
     `In the configuration file, the identifier ${target} appears\non the right-hand side of a <- after already appearing on the\nleft-hand side of one.`,
   );
 
+const createArityError = (name: string, target: string) =>
+  new TlaConfigError(
+    `The configuration file substitutes for ${name} with ${target} of different number of arguments.`,
+  );
+
+const createMissingError = (name: string) =>
+  new TlaConfigError(
+    `In the configuration file, the identifier ${name} does not appear in the specification.`,
+  );
+
+const getModuleOrder = (module: LinkedModule, visited: Set<LinkedModule>): LinkedModule[] => {
+  if (visited.has(module)) return [];
+  visited.add(module);
+  return [...module.extended.flatMap((extended) => getModuleOrder(extended, visited)), module];
+};
+
 export const applyConfig = (config: ModelConfig, linked: LinkedSpecification): AppliedConfig => {
-  const getRootKey = (name: string) => linked.root.visible.get(name)?.key ?? name;
-  const declaredConstants = linked.root.constants.map((constant) => constant.name);
-  const variables = linked.root.variables;
-  const getScopedSymbol = (item: { name: string; module?: string }) => {
+  const getRootKey = (name: string) => linked.rootKeys.get(name) ?? name;
+  const declaredConstants = new Set(linked.root.constants.map((constant) => constant.name));
+  const getScopedSymbol = (item: ConfigName) => {
     const symbol = linked.moduleSymbols.get(item.module ?? "")?.get(item.name);
     return symbol?.kind === "Definition" ? symbol : undefined;
   };
-  const getSubstitutedKeys = (item: { name: string; module?: string }) => {
-    if (item.module === undefined) return [item.name, getRootKey(item.name)];
+  const getSubstitutedKeys = (item: ConfigName) => {
+    if (item.module === undefined) return [getRootKey(item.name)];
     const symbol = getScopedSymbol(item);
     return symbol ? [symbol.key] : [];
   };
-  const getScopedKeys = (item: { name: string; module?: string }) =>
-    item.module === linked.root.module.name ? [] : getSubstitutedKeys(item);
+  const isDefined = (name: string) => {
+    const key = getRootKey(name);
+    return linked.definitions.has(key) || linked.builtins.has(key) || declaredConstants.has(name);
+  };
+  const getScopedKeys = (item: ConfigName) =>
+    item.module === undefined && !isDefined(item.name) ? [] : getSubstitutedKeys(item);
   const getKeyArity = (key: string) => {
     const definition = linked.definitions.get(key);
     return definition?.kind === "Operator"
       ? definition.params.length
-      : (linked.root.constants.find((constant) => constant.name === key)?.arity ??
+      : (linked.root.constants.find((constant) => constant.key === key)?.arity ??
           linked.builtins.get(key)?.arity ??
           0);
   };
-  const constants = new Map<string, Value>();
-  const operatorKeys = new Set<string>();
-  const setOperator = (key: string, operator: Builtin) => {
-    linked.builtins.set(key, operator);
-    linked.definitions.delete(key);
-    constants.delete(key);
-    operatorKeys.add(key);
-  };
-  config.constants
-    .filter((assignment) => assignment.args === undefined)
-    .forEach((assignment) => {
-      const value = toConstantValue(assignment.value);
-      markNormalized(value);
-      getScopedKeys(assignment).forEach((key) => {
-        const arity = getKeyArity(key);
-        if (arity === 0) constants.set(key, value);
-        else
-          setOperator(key, {
-            kind: "Builtin",
-            name: key,
-            arity,
-            evaluate: () => value,
-            evaluateUnary: undefined,
-            evaluateBinary: undefined,
-            isLazy: true,
-          });
-      });
+  const tables = new Map<string, ConfigTable>();
+  const addRows = (isRoot: boolean) =>
+    config.constants.forEach((assignment) => {
+      if (assignment.args === undefined || (assignment.module === undefined) !== isRoot) return;
+      const tableKey = `${assignment.module ?? ""}!${assignment.name}`;
+      const table = tables.get(tableKey) ?? {
+        name: assignment.name,
+        module: assignment.module,
+        rows: [],
+      };
+      if (table.rows.length > 0 && table.rows[0].args?.length !== assignment.args.length) {
+        throw new TlaConfigError(
+          `The arity of the operator ${assignment.name} is inconsistent in the configuration file.`,
+        );
+      }
+      table.rows.push(assignment);
+      tables.set(tableKey, table);
     });
-  const tables = new Map<string, { name: string; module?: string; rows: [Value[], Value][] }>();
-  config.constants.forEach((assignment) => {
-    if (assignment.args === undefined) return;
-    const tableKey = `${assignment.module ?? ""}!${assignment.name}`;
-    const table = tables.get(tableKey) ?? {
-      name: assignment.name,
-      module: assignment.module,
-      rows: [],
-    };
-    if (table.rows.length > 0 && table.rows[0][0].length !== assignment.args.length) {
-      throw new TlaConfigError(
-        `The arity of the operator ${assignment.name} is inconsistent in the configuration file.`,
-      );
-    }
-    table.rows.push([assignment.args.map(toValue), toValue(assignment.value)]);
-    tables.set(tableKey, table);
-  });
-  tables.forEach((table) =>
-    getScopedKeys(table).forEach((key) =>
-      setOperator(key, createOperatorTable(table.name, getKeyArity(key), table.rows)),
-    ),
+  addRows(true);
+  const assignedNames = new Set(
+    [...config.constants, ...config.substitutions]
+      .filter((item) => item.module === undefined)
+      .map((item) => item.name),
   );
-  const substitutions = new Map(
-    config.substitutions.flatMap((substitution) =>
-      getSubstitutedKeys(substitution).map((key): [string, string] => [
-        key,
-        getRootKey(substitution.target),
+  const unassigned = linked.root.constants
+    .filter(
+      (constant) =>
+        !linked.operatorConstants.has(constant.key) && !assignedNames.has(constant.name),
+    )
+    .map((constant) => constant.name);
+  if (unassigned.length > 0) {
+    const name =
+      linked.order
+        .getDeclarationOrder("constant")
+        .find((constant) => unassigned.includes(constant)) ?? unassigned[0];
+    throw new TlaConfigError(
+      `The constant parameter ${name} is not assigned a value by the configuration file.`,
+    );
+  }
+  addRows(false);
+  const lastSubstitutions = [
+    ...new Map(
+      config.substitutions.map((substitution) => [
+        `${substitution.module ?? ""}!${substitution.name}`,
+        substitution,
       ]),
-    ),
-  );
-  [...substitutions.keys()].forEach((key) => constants.delete(key));
-  const checkSubstitutionTarget = (name: string, target: string, arity: number | undefined) => {
-    const targetKey = getRootKey(target);
-    const definition = linked.definitions.get(targetKey);
-    const isDefined =
-      definition !== undefined ||
-      linked.builtins.has(targetKey) ||
-      constants.has(targetKey) ||
-      declaredConstants.includes(target) ||
-      variables.includes(target);
-    if (!isDefined) {
+    ).values(),
+  ];
+  // Defns holds the value of a definition the configuration assigns one, so TLC checks no arity against it.
+  const getTargetArity = (target: string) => {
+    const definition = linked.definitions.get(getRootKey(target));
+    const isAssigned = config.constants.some(
+      (assignment) => assignment.module === undefined && assignment.name === target,
+    );
+    if (definition === undefined || isAssigned) return undefined;
+    return definition.kind === "Operator" ? definition.params.length : 0;
+  };
+  const checkTarget = (
+    name: string,
+    target: string,
+    others: Map<string, string>,
+    arity: number | undefined,
+  ) => {
+    if (others.has(target)) throw createReusedTargetError(target);
+    // TLC looks the target up in defns, which holds no theorem or assumption.
+    if (
+      !isDefined(target) ||
+      (linked.root.visible.get(target)?.kind === "Theorem" && !linked.builtins.has(target))
+    ) {
       throw new TlaConfigError(
         `The configuration file substitutes for ${name} with the undefined identifier ${target}.`,
       );
     }
-    if (definition?.kind === "Operator" && definition.params.length !== arity) {
-      throw new TlaConfigError(
-        `The configuration file substitutes for ${name} with ${target} of different number of arguments.`,
-      );
+    const targetArity = getTargetArity(target);
+    if (arity !== undefined && targetArity !== undefined && targetArity !== arity) {
+      throw createArityError(name, target);
     }
   };
-  config.substitutions
-    .filter((substitution) => substitution.module === undefined)
-    .forEach((substitution) => {
-      const name = substitution.name;
-      const target = substitution.target;
-      if (!declaredConstants.includes(name) && !linked.root.visible.has(name)) {
-        throw new TlaConfigError(
-          `In the configuration file, the identifier ${name} does not appear in the specification.`,
-        );
-      }
-      if (config.substitutions.some((other) => other.name === target)) {
-        throw createReusedTargetError(target);
-      }
-      checkSubstitutionTarget(
-        name,
-        target,
-        linked.root.constants.find((constant) => constant.name === name)?.arity ??
-          linked.root.visible.get(name)?.arity,
-      );
+  const getOverrides = (module: string | undefined) =>
+    new Map(
+      lastSubstitutions
+        .filter((substitution) => substitution.module === module)
+        .map((substitution) => [substitution.name, substitution.target]),
+    );
+  const overrides = getOverrides(undefined);
+  if (overrides.size > 0) {
+    linked.order.getDeclarationOrder("constant").forEach((name) => {
+      const target = overrides.get(name);
+      if (target !== undefined) checkTarget(name, target, overrides, undefined);
     });
-  const scopedSubstitutions = config.substitutions.filter(
-    (substitution) => substitution.module !== undefined,
-  );
-  [...linked.moduleSymbols.keys()].forEach((name) => {
-    const inModule = scopedSubstitutions.filter((substitution) => substitution.module === name);
-    inModule.forEach((substitution) => {
-      const symbol = getScopedSymbol(substitution);
-      if (!symbol) return;
-      if (inModule.some((other) => other.name === substitution.target)) {
-        throw createReusedTargetError(substitution.target);
+    const rootDefinitions = linked.order
+      .getDefinitionOrder(undefined)
+      .filter((name) => linked.root.visible.get(name)?.kind === "Definition");
+    rootDefinitions.forEach((name) => {
+      const target = overrides.get(name);
+      if (target !== undefined) {
+        checkTarget(name, target, overrides, linked.root.visible.get(name)?.arity);
       }
-      checkSubstitutionTarget(substitution.name, substitution.target, symbol.arity);
     });
-    const missing = inModule.find((substitution) => !getScopedSymbol(substitution));
-    if (missing) {
-      throw new TlaConfigError(
-        `In the configuration file, the identifier ${missing.name} does not appear in the specification.`,
-      );
-    }
+    const missing = getHashtableOrder([...overrides.keys()]).find(
+      (name) => !declaredConstants.has(name) && !rootDefinitions.includes(name),
+    );
+    if (missing !== undefined) throw createMissingError(missing);
+  }
+  [...linked.moduleSymbols.keys()].forEach((module) => {
+    const moduleOverrides = getOverrides(module);
+    if (moduleOverrides.size === 0) return;
+    const definitions = linked.order
+      .getDefinitionOrder(module === linked.root.module.name ? undefined : module)
+      .filter((name) => getScopedSymbol({ name, module }) !== undefined);
+    definitions.forEach((name) => {
+      const target = moduleOverrides.get(name);
+      if (target !== undefined) {
+        checkTarget(name, target, moduleOverrides, getScopedSymbol({ name, module })?.arity);
+      }
+    });
+    const moduleMissing = getHashtableOrder([...moduleOverrides.keys()]).find(
+      (name) => !definitions.includes(name),
+    );
+    if (moduleMissing !== undefined) throw createMissingError(moduleMissing);
   });
-  const unknownModule = scopedSubstitutions.find(
-    (substitution) => !linked.moduleSymbols.has(substitution.module ?? ""),
-  );
-  if (unknownModule) {
+  const unknownModule = getHashtableOrder(
+    config.substitutions.flatMap((substitution) => substitution.module ?? []),
+  ).find((module) => !linked.moduleSymbols.has(module));
+  if (unknownModule !== undefined) {
     throw new TlaConfigError(
-      `In the configuration file, the module name ${unknownModule.module} is not a module in the specification.`,
+      `In the configuration file, the module name ${unknownModule} is not a module in the specification.`,
     );
   }
+  const constants = new Map<string, Value>();
+  const bodyValues = new WeakMap<Expression, Value>();
+  const setOperator = (key: string, operator: Builtin) => {
+    linked.builtins.set(key, operator);
+    linked.definitions.delete(key);
+    constants.delete(key);
+  };
+  const constantOrder = new Set(
+    getModuleOrder(linked.root, new Set()).flatMap((module) =>
+      module.constants.length === 0
+        ? []
+        : linked.order.getDeclarationOrder(
+            "constant",
+            module === linked.root ? undefined : module.module.name,
+          ),
+    ),
+  );
+  const isConstant = (item: ConfigName) =>
+    item.module === undefined && constantOrder.has(item.name);
+  const setValue = (item: ConfigName, configValue: ConfigValue, keys: string[]) => {
+    const isNormalized = isConstant(item);
+    const value = isNormalized ? toConstantValue(configValue) : toLiteralValue(configValue);
+    if (isNormalized) markNormalized(value);
+    keys.forEach((key) => {
+      const arity = getKeyArity(key);
+      const definition = linked.definitions.get(key);
+      // Deviation from TLC: TLC applies a [Mod] value to a <- or a config name only when the body is a literal.
+      if (
+        item.module === linked.root.module.name &&
+        definition?.kind === "Operator" &&
+        arity === 0
+      ) {
+        bodyValues.set(definition.body, value);
+      } else if (arity === 0) constants.set(key, value);
+      else
+        setOperator(key, {
+          kind: "Builtin",
+          name: item.name,
+          arity,
+          evaluate: () => value,
+          evaluateUnary: undefined,
+          evaluateBinary: undefined,
+          isLazy: true,
+        });
+    });
+  };
+  const setTable = (table: ConfigTable) => {
+    const toRowValue = isConstant(table) ? toConstantValue : toLiteralValue;
+    const rows = table.rows.map((row): [Value[], Value] => [
+      (row.args ?? []).map(toRowValue),
+      toRowValue(row.value),
+    ]);
+    getScopedKeys(table).forEach((key) =>
+      setOperator(key, createOperatorTable(table.name, getKeyArity(key), rows)),
+    );
+  };
+  const values = new Map(
+    config.constants
+      .filter((assignment) => assignment.args === undefined)
+      .map((assignment) => [`${assignment.module ?? ""}!${assignment.name}`, assignment]),
+  );
+  constantOrder.forEach((name) => {
+    const target = overrides.get(name);
+    if (target === undefined) {
+      const assignment = values.get(`!${name}`);
+      const table = tables.get(`!${name}`);
+      if (assignment) setValue(assignment, assignment.value, getScopedKeys(assignment));
+      if (table) setTable(table);
+      return;
+    }
+    const forwarded = values.get(`!${target}`);
+    if (forwarded) setValue({ name }, forwarded.value, [getRootKey(name)]);
+    tables
+      .get(`!${target}`)
+      ?.rows.forEach((row) => [...(row.args ?? []), row.value].forEach(toConstantValue));
+    const targetArity = getTargetArity(target);
+    const arity = linked.root.constants.find((constant) => constant.name === name)?.arity;
+    if (targetArity !== undefined && targetArity !== arity) throw createArityError(name, target);
+  });
+  values.forEach((assignment) => {
+    if (!isConstant(assignment)) {
+      setValue(assignment, assignment.value, getScopedKeys(assignment));
+    }
+  });
+  tables.forEach((table) => {
+    if (!isConstant(table)) setTable(table);
+  });
+  lastSubstitutions.forEach((substitution) => {
+    const assignment = values.get(`!${substitution.target}`);
+    if (assignment && !isConstant(substitution)) {
+      setValue(substitution, assignment.value, getSubstitutedKeys(substitution));
+    }
+  });
+  const substitutions = new Map<string, string>();
+  lastSubstitutions
+    .filter((substitution) => !values.has(`!${substitution.target}`))
+    .forEach((substitution) => {
+      const targetKey = getRootKey(substitution.target);
+      const builtin = linked.builtins.get(targetKey);
+      getSubstitutedKeys(substitution).forEach((key) => {
+        if (builtin !== undefined && builtin.arity > 0 && getKeyArity(key) === 0) {
+          setOperator(key, { ...builtin, arity: 0, isLazy: true });
+        } else substitutions.set(key, targetKey);
+      });
+    });
+  [...substitutions.keys()].forEach((key) => constants.delete(key));
   const scopedKeys = new Set(
     [...config.constants, ...config.substitutions]
       .filter((item) => item.module !== undefined)
@@ -294,22 +438,7 @@ export const applyConfig = (config: ModelConfig, linked: LinkedSpecification): A
       definition.location,
     );
     linked.definitions.set(key, alias);
-    linked.root.visible.forEach((symbol, name) => {
-      if (symbol.key === key && name !== key) linked.definitions.set(name, alias);
-    });
   });
   linked.operatorConstants.forEach((value, name) => constants.set(name, value));
-  const unassigned = declaredConstants.filter(
-    (name) => !constants.has(name) && !substitutions.has(name) && !operatorKeys.has(name),
-  );
-  if (unassigned.length > 0) {
-    const name =
-      linked.order
-        .getDeclarationOrder("constant")
-        .find((constant) => unassigned.includes(constant)) ?? unassigned[0];
-    throw new TlaConfigError(
-      `The constant parameter ${name} is not assigned a value by the configuration file.`,
-    );
-  }
-  return { constants, substitutions };
+  return { constants, bodyValues, substitutions };
 };

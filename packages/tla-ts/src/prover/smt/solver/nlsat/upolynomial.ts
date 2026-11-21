@@ -1,12 +1,11 @@
-// Ported from Z3 (src/math/polynomial/upolynomial.{h,cpp}, src/util/mpzzp.h,
-// src/math/polynomial/polynomial_primes.h), MIT license, see z3-license.txt.
-import { SmtInvariantError } from "../../../../errors";
+import { SmtCanceledError, SmtInvariantError } from "../../../../errors";
 import { getGcd, Rational } from "../rational";
+import type { ResourceLimit } from "../rlimit";
 import { getLog2, Mpbq, refineLower, refineUpper } from "./mpbq";
 
 export type Upolynomial = readonly bigint[];
 
-const BIG_PRIMES = [
+export const BIG_PRIMES = [
   39103, 39107, 39113, 39119, 39133, 39139, 39157, 39161, 39163, 39181, 39191, 39199, 39209, 39217,
   39227, 39229, 39233, 39239, 39241, 39251, 39293, 39301, 39313, 39317, 39323, 39341, 39343, 39359,
   39367, 39371, 39373, 39383, 39397, 39409, 39419, 39439, 39443, 39451, 39461, 39499, 39503, 39509,
@@ -28,12 +27,12 @@ const BIG_PRIMES = [
 
 const getSign = (value: bigint) => (value > 0n ? 1 : value < 0n ? -1 : 0);
 
-export const floorDiv = (dividend: bigint, divisor: bigint) => {
+const floorDiv = (dividend: bigint, divisor: bigint) => {
   const quotient = dividend / divisor;
   return dividend % divisor !== 0n && dividend < 0n !== divisor < 0n ? quotient - 1n : quotient;
 };
 
-const getExtendedGcd = (first: bigint, second: bigint) => {
+export const getExtendedGcd = (first: bigint, second: bigint) => {
   let [oldR, r] = [first, second];
   let [oldS, s] = [1n, 0n];
   let [oldT, t] = [0n, 1n];
@@ -75,7 +74,10 @@ interface DrsFrame {
 export class UpolynomialManager {
   private isPrimeModulus = true;
 
-  constructor(private modulus: bigint | null = null) {}
+  constructor(
+    readonly limit: ResourceLimit,
+    private modulus: bigint | null = null,
+  ) {}
 
   get zp() {
     return this.modulus;
@@ -172,12 +174,15 @@ export class UpolynomialManager {
   mul(first: Upolynomial, second: Upolynomial) {
     if (first.length === 0 || second.length === 0) return [];
     const result = Array.from({ length: first.length + second.length - 1 }, () => 0n);
-    for (let index = 0; index < first.length; index++) {
-      if (first[index] === 0n) continue;
-      for (let other = 0; other < second.length; other++)
-        if (second[other] !== 0n)
+    const outer = first.length < second.length ? second : first;
+    const inner = first.length < second.length ? first : second;
+    for (let index = 0; index < outer.length; index++) {
+      this.limit.checkpoint();
+      if (outer[index] === 0n) continue;
+      for (let other = 0; other < inner.length; other++)
+        if (inner[other] !== 0n)
           result[index + other] = this.normalizeNumeral(
-            result[index + other] + first[index] * second[other],
+            result[index + other] + outer[index] * inner[other],
           );
     }
     return trim(result);
@@ -233,8 +238,10 @@ export class UpolynomialManager {
     const quotient = Array.from({ length: quotientSize }, () => 0n);
     const leading = divisor[divisor.length - 1];
     let power = 0;
-    while (remainder.length >= divisor.length) {
+    while (true) {
+      this.limit.checkpoint();
       const size = remainder.length;
+      if (size < divisor.length) return { quotient: trim(quotient), remainder, power };
       const shift = size - divisor.length;
       if (isField) {
         const ratio = this.divNumeral(remainder[size - 1], leading);
@@ -259,7 +266,6 @@ export class UpolynomialManager {
       remainder.length = size - 1;
       trim(remainder);
     }
-    return { quotient: trim(quotient), remainder, power };
   }
 
   div(dividend: Upolynomial, divisor: Upolynomial) {
@@ -273,8 +279,9 @@ export class UpolynomialManager {
     const isField = this.isField;
     const leading = divisor[divisor.length - 1];
     let power = 0;
-    while (remainder.length >= divisor.length) {
+    while (this.limit.inc()) {
       const size = remainder.length;
+      if (size < divisor.length) break;
       const shift = size - divisor.length;
       if (isField) {
         const ratio = this.divNumeral(remainder[size - 1], leading);
@@ -359,13 +366,16 @@ export class UpolynomialManager {
     if (second.length === 0) return this.flipSignIfLmNeg(this.set(first));
     let a = this.set(first);
     let b = this.set(second);
-    while (b.length > 0) {
+    while (this.limit.inc()) {
+      if (b.length === 0) {
+        const normalized = this.normalize(a);
+        return this.isField ? this.mkMonic(normalized) : this.flipSignIfLmNeg(normalized);
+      }
       const remainder = this.normalize(this.rem(a, b));
       a = b;
       b = remainder;
     }
-    const normalized = this.normalize(a);
-    return this.isField ? this.mkMonic(normalized) : this.flipSignIfLmNeg(normalized);
+    throw new SmtCanceledError();
   }
 
   private combineImages(image: Upolynomial, prime: bigint, combined: Upolynomial, bound: bigint) {
@@ -499,6 +509,7 @@ export class UpolynomialManager {
     let previous = 0;
     let changes = 0;
     for (let index = 0; index < work.length; index++) {
+      this.limit.checkpoint();
       let position = 1;
       for (; position < work.length - index; position++) work[position] += work[position - 1];
       const current = getSign(work[position - 1]);
@@ -515,9 +526,11 @@ export class UpolynomialManager {
   translate(coeffs: Upolynomial) {
     const result = [...coeffs];
     const degree = result.length - 1;
-    for (let step = 1; step <= degree; step++)
+    for (let step = 1; step <= degree; step++) {
+      this.limit.checkpoint();
       for (let index = degree - step; index <= degree - 1; index++)
         result[index] += result[index + 1];
+    }
     return result;
   }
 
@@ -526,6 +539,7 @@ export class UpolynomialManager {
     const result = this.composeAnPxDivA(coeffs, value.den);
     const degree = result.length - 1;
     for (let step = 1; step <= degree; step++) {
+      this.limit.checkpoint();
       result[degree - step] += value.num * result[degree - step + 1];
       for (let index = degree - step + 1; index <= degree - 1; index++)
         result[index] = result[index] * value.den + value.num * result[index + 1];
@@ -698,6 +712,7 @@ export class UpolynomialManager {
       this.pushChildFrames(this.div(coeffs, twoXMinusOne), frames);
     } else this.pushChildFrames(coeffs, frames);
     while (frames.length > 0) {
+      this.limit.checkpoint();
       const frame = frames[frames.length - 1];
       if (!frame.isFirst) {
         frames.pop();
@@ -760,11 +775,12 @@ export class UpolynomialManager {
   }
 
   private sturmSeqCore(sequence: bigint[][]) {
-    while (true) {
+    while (this.limit.inc()) {
       const remainder = this.srem(sequence[sequence.length - 2], sequence[sequence.length - 1]);
       if (remainder.length === 0) return sequence;
       sequence.push(this.normalize(remainder));
     }
+    return sequence;
   }
 
   sturmSeq(coeffs: Upolynomial) {
@@ -776,6 +792,7 @@ export class UpolynomialManager {
   }
 
   isolating2refinable(coeffs: Upolynomial, lower: Mpbq, upper: Mpbq): Refinement {
+    this.limit.checkpoint();
     const signLower = this.evalSignAtBq(coeffs, lower);
     const signUpper = this.evalSignAtBq(coeffs, upper);
     if (signLower !== 0 && signUpper !== 0) return { isInterval: true, lower, upper };
@@ -784,6 +801,7 @@ export class UpolynomialManager {
       let b = upper;
       let newA = a.add(b).div2();
       while (true) {
+        this.limit.checkpoint();
         const signNewA = this.evalSignAtBq(coeffs, newA);
         if (signNewA !== signUpper) return { isInterval: signNewA !== 0, lower: newA, upper: b };
         b = newA;
@@ -795,6 +813,7 @@ export class UpolynomialManager {
       let b = upper;
       let newB = a.add(b).div2();
       while (true) {
+        this.limit.checkpoint();
         const signNewB = this.evalSignAtBq(coeffs, newB);
         if (signNewB !== signLower)
           return signNewB === 0
@@ -814,6 +833,7 @@ export class UpolynomialManager {
     let newA1 = a1.add(b1).div2();
     let newB2 = a2.add(b2).div2();
     while (true) {
+      this.limit.checkpoint();
       const signNewA1 = this.evalSignAtBq(coeffs, newA1);
       if (signNewA1 === 0) return { isInterval: false, lower: newA1, upper };
       if (signNewA1 === -signB1) return { isInterval: true, lower: newA1, upper: b1 };
@@ -840,6 +860,7 @@ export class UpolynomialManager {
     const signLower = this.evalSignAtBq(coeffs, lower);
     let current: Refinement = { isInterval: true, lower, upper };
     while (true) {
+      this.limit.checkpoint();
       if (current.upper.sub(current.lower).isLessThanOneDiv2k(precision)) return current;
       current = this.refineCore(coeffs, signLower, current.lower, current.upper);
       if (!current.isInterval) return current;

@@ -13,7 +13,7 @@ RegExpPrototypeFlags ==
 \* RegExpAlloc (§22.2.3.2), with the legacy RegExp features proposal's [[Realm]] and [[LegacyFeaturesEnabled]].
 RegExpAlloc(s, newTarget) ==
   LET o == OrdinaryCreateFromConstructor(s, newTarget, "RegExpPrototype", "regexp",
-                                         [source |-> <<>>, flags |-> <<>>, matcher |-> None, groups |-> <<>>,
+                                         [source |-> <<>>, flags |-> <<>>, matcher |-> None, groups |-> <<>>, foldedSingles |-> {},
                                           realm |-> s.realmId, legacy |-> newTarget = Intrinsic(s, "RegExp")])
   IN IF IsAbrupt(o) THEN o
      ELSE Ok(SetO(o.s, Val(o), PutProp(O(o.s, Val(o)), SV("lastIndex"), DataDesc(Undefined, TRUE, FALSE, FALSE))), Val(o))
@@ -29,9 +29,18 @@ RegExpInitialize(s, obj, pattern, flags) ==
      ELSE LET rer == [ic |-> 105 \in Range(units), multiline |-> 109 \in Range(units), dotAll |-> 115 \in Range(units),
                       u |-> 117 \in Range(units), v |-> 118 \in Range(units), groups |-> parsed.pattern.groups]
               t == SetO(f.s, obj, [O(f.s, obj) EXCEPT !.slots.source = Val(p).value, !.slots.flags = units,
-                                     !.slots.matcher = RxCompilePattern(parsed.pattern, rer), !.slots.groups = parsed.pattern.groups])
+                                     !.slots.matcher = RxCompilePattern(parsed.pattern, rer), !.slots.groups = parsed.pattern.groups,
+                                     !.slots.foldedSingles = RxFoldedSingles(parsed.pattern.singles, rer)])
               r == Set(t, obj, SV("lastIndex"), IntV(0), TRUE)
           IN IF IsAbrupt(r) THEN r ELSE Ok(r.s, obj)
+
+\* V8 folds a ClassString of one code point under the i and v flags and then matches only the
+\* folded code point, so /[\q{a}]/iv doesn't match "A", where the spec matches every code point
+\* that folds as it does. These are the folded code points of a pattern's ClassStrings of one code
+\* point that another code point folds to, where V8 and the spec can differ.
+RxFoldedSingles(singles, rer) ==
+  IF ~rer.ic \/ ~rer.v THEN {}
+  ELSE {RxScf(c) : c \in {c \in singles : RxScfPreimage(RxScf(c)) # {RxScf(c)}}}
 
 \* RegExpCreate (§22.2.3.1).
 RegExpCreate(s, P, F) ==
@@ -117,7 +126,9 @@ RegExpBuiltinExec(s, R, S) ==
       lastIndex == IF ~global /\ ~sticky THEN PosZero ELSE Val(len).value
       found == IF NumLess(NumFromInt(Len(units)), lastIndex) THEN None
                ELSE RxExecFrom(o, units, input, fullUnicode, sticky, NumToSmallInt(lastIndex))
-  IN IF found = None THEN
+  IN IF o.foldedSingles # {} /\ \E c \in Range(input.chars) : c # RxScf(c) /\ RxScf(c) \in o.foldedSingles
+     THEN Unsupported(len.s, N("Unsupported: a code point that folds to a ClassString of one code point under the i and v flags"))
+     ELSE IF found = None THEN
        LET r == IF global \/ sticky THEN Set(len.s, R, SV("lastIndex"), IntV(0), TRUE) ELSE Ok(len.s, Undefined) IN
        IF IsAbrupt(r) THEN r ELSE Ok(r.s, Null)
      ELSE LET e == GetStringIndex(units, input, fullUnicode, found.r.e)
@@ -158,12 +169,25 @@ UpdateLegacyRegExpStatics(s, R, units, start, end, captures) ==
                               parens |-> [i \in 1..9 |-> Capture(i)]]])
 
 \* The first index at or after lastIndex where the pattern matches, with its MatchState, or None.
+\* After lastIndex, AdvanceStringIndex steps to each next character of the input in turn.
 RxExecFrom(o, units, input, fullUnicode, sticky, lastIndex) ==
   IF lastIndex > Len(units) THEN None ELSE
-  LET r == RxRun(o.matcher, input.chars, RxInputIndex(units, fullUnicode, lastIndex), Len(o.groups)) IN
-  CASE r # MatchFailure -> [index |-> lastIndex, r |-> r]
-    [] sticky -> None
-    [] OTHER -> RxExecFrom(o, units, input, fullUnicode, sticky, RxAdvanceIndex(units, lastIndex, fullUnicode))
+  LET first == RxInputIndex(units, fullUnicode, lastIndex)
+      r == RxRun(o.matcher, input.chars, first, Len(o.groups))
+  IN CASE r # MatchFailure -> [index |-> lastIndex, r |-> r]
+       [] sticky -> None
+       [] OTHER -> RxExecFirst(o, units, input, fullUnicode, first + 1, Len(input.chars))
+\* The first character from lo to hi where the pattern matches, searched in halves so that the
+\* depth of the search grows with the logarithm of the input's length.
+RxExecFirst(o, units, input, fullUnicode, lo, hi) ==
+  CASE lo > hi -> None
+    [] lo = hi ->
+         LET r == RxRun(o.matcher, input.chars, lo, Len(o.groups)) IN
+         IF r = MatchFailure THEN None ELSE [index |-> GetStringIndex(units, input, fullUnicode, lo), r |-> r]
+    [] OTHER ->
+         LET mid == (lo + hi) \div 2
+             left == RxExecFirst(o, units, input, fullUnicode, lo, mid)
+         IN IF left # None THEN left ELSE RxExecFirst(o, units, input, fullUnicode, mid + 1, hi)
 
 \* The match array of RegExpBuiltinExec from the Match Records of the match and of each capture.
 RxMatchResult(s, o, S, match, captures) ==

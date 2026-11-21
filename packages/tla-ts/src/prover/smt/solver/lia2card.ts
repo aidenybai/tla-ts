@@ -1,4 +1,3 @@
-// Ported from Z3 (src/tactic/arith/lia2card_tactic.cpp), MIT license, see z3-license.txt.
 import {
   type AstManager,
   KIND_APP,
@@ -188,82 +187,85 @@ class PbRewriter extends RewriterTpl {
 export const getPbSum = (manager: AstManager, term: number, terms: RefVector) =>
   new PbRewriter(manager, terms, 4, true).getPbSum(term);
 
-export const lia2card = (
+export const createLia2Card = (
   manager: AstManager,
-  goal: Goal,
   maxRange: number,
   maxIteNesting: number,
   isCompilingEquality: boolean,
 ) => {
-  if (manager.hasRecDefs) return;
   const terms = new RefVector(manager);
-  const pin = (expr: number) => {
-    terms.push(expr);
-    return expr;
-  };
-  const bounds = new BoundManager(manager);
-  if (!goal.isProofsEnabled) for (const form of goal.forms.items) bounds.add(form);
-  const replace = new ExprSafeReplace(manager);
-  const definitions: Definition[] = [];
-  const axioms: number[] = [];
-  for (const variable of bounds.boundedVars) {
-    manager.limit.checkpoint();
-    const lower = bounds.lowers.get(variable);
-    const upper = bounds.uppers.get(variable);
-    if (
-      manager.sorts[variable] !== SORT_INT ||
-      !manager.isUninterpretedConst(variable) ||
-      lower === undefined ||
-      lower.isStrict ||
-      !lower.value.isInt() ||
-      lower.value.num < 0n ||
-      lower.value.num >= UINT_LIMIT ||
-      upper === undefined ||
-      upper.isStrict ||
-      !upper.value.isInt() ||
-      upper.value.num < 0n ||
-      upper.value.num >= UINT_LIMIT ||
-      (((upper.value.num - lower.value.num) % UINT_LIMIT) + UINT_LIMIT) % UINT_LIMIT >
-        BigInt(maxRange)
-    )
-      continue;
-    const low = Number(lower.value.num);
-    const high = Number(upper.value.num);
-    const decl = manager.decls[variable];
-    const summands: number[] = low > 0 ? [pin(manager.mkNumeral(BigInt(low)))] : [];
-    let last = -1;
-    for (let index = low; index < high; index++) {
-      manager.limit.checkpoint();
-      const fresh = pin(manager.mkFreshConst(manager.funcDecls[decl].name, SORT_BOOL));
-      if (last !== -1) axioms.push(pin(manager.mkApp(OP_IMPLIES, [fresh, last], SORT_BOOL)));
-      const one = pin(manager.mkNumeral(1n));
-      const zero = pin(manager.mkNumeral(0n));
-      summands.push(pin(manager.mkApp(OP_ITE, [fresh, one, zero], SORT_INT)));
-      definitions.push({ decl: manager.decls[fresh], def: -1 });
-      last = fresh;
-    }
-    const sum =
-      high === 0
-        ? pin(manager.mkNumeral(0n))
-        : summands.length === 1
-          ? summands[0]
-          : pin(manager.mkApp(OP_ADD, summands, SORT_INT));
-    definitions.push({ decl, def: sum });
-    replace.insert(variable, sum);
-  }
   const rewriter = new PbRewriter(manager, terms, maxIteNesting, isCompilingEquality);
-  for (let index = 0; !goal.isInconsistent && index < goal.forms.size; index++) {
-    manager.limit.checkpoint();
-    const replaced = replace.apply(goal.forms.items[index]);
-    const rewritten = rewriter.rewrite(replaced);
-    manager.decRef(replaced);
-    goal.update(index, rewritten, goal.getDependency(index));
-    manager.decRef(rewritten);
-  }
-  for (const axiom of axioms) goal.assert(axiom);
-  if (definitions.length > 0) goal.addDefinitions(definitions);
-  goal.depth++;
-  rewriter.release();
-  replace.release();
-  terms.reset();
+  return {
+    run: (goal: Goal) => {
+      if (manager.hasRecDefs) return;
+      const pin = (expr: number) => {
+        terms.push(expr);
+        return expr;
+      };
+      const bounds = new BoundManager(manager);
+      if (!goal.isProofsEnabled) for (const form of goal.forms.items) bounds.add(form);
+      const replace = new ExprSafeReplace(manager);
+      const definitions: Definition[] = [];
+      const axioms: number[] = [];
+      for (const variable of bounds.boundedVars) {
+        manager.limit.checkpoint();
+        const lower = bounds.lowers.get(variable);
+        const upper = bounds.uppers.get(variable);
+        if (
+          manager.sorts[variable] !== SORT_INT ||
+          !manager.isUninterpretedConst(variable) ||
+          lower === undefined ||
+          lower.isStrict ||
+          !lower.value.isInt() ||
+          lower.value.num < 0n ||
+          lower.value.num >= UINT_LIMIT ||
+          upper === undefined ||
+          upper.isStrict ||
+          !upper.value.isInt() ||
+          upper.value.num < 0n ||
+          upper.value.num >= UINT_LIMIT ||
+          (((upper.value.num - lower.value.num) % UINT_LIMIT) + UINT_LIMIT) % UINT_LIMIT >
+            BigInt(maxRange)
+        )
+          continue;
+        const low = Number(lower.value.num);
+        const high = Number(upper.value.num);
+        const decl = manager.decls[variable];
+        const summands: number[] = low > 0 ? [pin(manager.mkNumeral(BigInt(low)))] : [];
+        let last = -1;
+        for (let index = low; index < high; index++) {
+          manager.limit.checkpoint();
+          const fresh = pin(manager.mkFreshConst(manager.funcDecls[decl].name, SORT_BOOL));
+          if (last !== -1) axioms.push(pin(manager.mkApp(OP_IMPLIES, [fresh, last], SORT_BOOL)));
+          const one = pin(manager.mkNumeral(1n));
+          const zero = pin(manager.mkNumeral(0n));
+          summands.push(pin(manager.mkApp(OP_ITE, [fresh, one, zero], SORT_INT)));
+          definitions.push({ decl: manager.decls[fresh], def: -1 });
+          last = fresh;
+        }
+        const sum =
+          high === 0
+            ? pin(manager.mkNumeral(0n))
+            : summands.length === 1
+              ? summands[0]
+              : pin(manager.mkApp(OP_ADD, summands, SORT_INT));
+        definitions.push({ decl, def: sum });
+        replace.insert(variable, sum);
+      }
+      for (let index = 0; !goal.isInconsistent && index < goal.forms.size; index++) {
+        manager.limit.checkpoint();
+        const replaced = replace.apply(goal.forms.get(index));
+        const rewritten = rewriter.rewrite(replaced);
+        manager.decRef(replaced);
+        goal.update(index, rewritten, goal.getDependency(index));
+        manager.decRef(rewritten);
+      }
+      for (const axiom of axioms) goal.assert(axiom);
+      if (definitions.length > 0) goal.addDefinitions(definitions);
+      goal.depth++;
+      replace.release();
+      terms.reset();
+    },
+    release: () => rewriter.release(),
+  };
 };

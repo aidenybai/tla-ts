@@ -1,6 +1,6 @@
-// Ported from Z3 (src/smt/smt_model_finder.cpp), MIT license, see z3-license.txt.
 import { SmtInvariantError } from "../../../errors";
-import { OP_ITE, OP_LT, SORT_BOOL, SORT_INT, isArithSort, type AstManager } from "./ast";
+import { KIND_APP, OP_ITE, OP_LT, SORT_BOOL, SORT_INT, isArithSort, type AstManager } from "./ast";
+import { assign, release } from "./expr-ref";
 import { combineHash } from "./hash";
 import { ObjHashtable, ObjMap } from "./hashtable";
 import { FuncInterp, type ProtoModel } from "./proto-model";
@@ -196,6 +196,11 @@ export class AufSolver {
     this.ks.reset();
   }
 
+  release() {
+    this.reset();
+    this.resetEvalCache();
+  }
+
   setModel(model: ProtoModel) {
     this.resetEvalCache();
     this.model = model;
@@ -246,14 +251,30 @@ export class AufSolver {
 
   private cleanupInstantiationSets() {
     const manager = this.manager;
+    const containsArray = (expr: number) => {
+      const visited = new Set<number>();
+      const todo = [expr];
+      for (let term = todo.pop(); term !== undefined; term = todo.pop()) {
+        if (visited.has(term)) continue;
+        visited.add(term);
+        if (manager.isArraySort(manager.sorts[term])) return true;
+        manager.pushArgs(term, todo);
+      }
+      return false;
+    };
+    const shouldCleanup = (value: number | null) =>
+      value === null ||
+      (!manager.isValue(value) &&
+        !manager.isArraySort(manager.sorts[value]) &&
+        (manager.kinds[value] !== KIND_APP ||
+          manager.getNumArgs(value) === 0 ||
+          !containsArray(value)));
     for (const node of this.nodes) {
       if (!node.isRoot()) continue;
       const set = node.getInstantiationSet();
       const toDelete: number[] = [];
-      for (const term of set.elems.keys()) {
-        const value = this.eval(term, true);
-        if (value === null || !manager.isUniqueValue(value)) toDelete.push(term);
-      }
+      for (const term of set.elems.keys())
+        if (shouldCleanup(this.eval(term, true))) toDelete.push(term);
       for (const term of toDelete) set.remove(term);
       this.resetEvalCache();
     }
@@ -286,18 +307,13 @@ export class AufSolver {
     return result;
   }
 
-  private areDistinct(first: number, second: number) {
-    const manager = this.manager;
-    return first !== second && manager.isUniqueValue(first) && manager.isUniqueValue(second);
-  }
-
   private pickInstanceDiffExceptions(node: Node, exceptionValues: number[]) {
     let result: number | null = null;
     let resultGeneration = Number.POSITIVE_INFINITY;
     for (const entry of node.getInstantiationSet().elems) {
       const value = this.eval(entry[0], true);
       if (value === null) return result;
-      const isFound = exceptionValues.some((other) => !this.areDistinct(value, other));
+      const isFound = exceptionValues.some((other) => !this.manager.areDistinct(value, other));
       if (!isFound && (result === null || entry[1] < resultGeneration)) {
         result = entry[0];
         resultGeneration = entry[1];
@@ -332,7 +348,7 @@ export class AufSolver {
     if (kValue === null) return false;
     for (const exception of exceptions) {
       const value = this.eval(exception, true);
-      if (value !== null && !this.areDistinct(kValue, value))
+      if (value !== null && !this.manager.areDistinct(kValue, value))
         this.newConstraints.push(this.manager.mkNot(this.manager.mkEq(k, exception)));
     }
     return true;
@@ -362,14 +378,20 @@ export class AufSolver {
 
   private addMonoExceptions(node: Node) {
     if (node.sort !== SORT_INT) return;
+    const manager = this.manager;
     const rewriter = this.rewriter;
-    const one = this.manager.mkNumeral(1n);
+    const one = assign(manager, -1, manager.mkNumeral(1n));
+    let minusOne = -1;
+    let plusOne = -1;
     for (const exception of node.getExceptions()) {
-      const minusOne = rewriter.mkSub(exception, one);
-      const plusOne = rewriter.mkAdd([exception, one]);
-      node.insert(this.manager, plusOne, 0);
-      node.insert(this.manager, minusOne, 0);
+      minusOne = assign(manager, minusOne, rewriter.mkSub(exception, one));
+      plusOne = assign(manager, plusOne, rewriter.mkAdd([exception, one]));
+      node.insert(manager, plusOne, 0);
+      node.insert(manager, minusOne, 0);
     }
+    manager.decRef(one);
+    release(manager, plusOne);
+    release(manager, minusOne);
   }
 
   private getInstantiationSetValues(node: Node) {

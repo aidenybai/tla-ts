@@ -1,5 +1,3 @@
-// Ported from Z3 (src/ast/macros/quasi_macros.cpp, src/tactic/ufbv/quasi_macros_tactic.cpp), MIT
-// license, see z3-license.txt.
 import {
   type AstManager,
   FAMILY_USER,

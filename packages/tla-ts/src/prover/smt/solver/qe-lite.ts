@@ -1,4 +1,3 @@
-// Ported from Z3 (src/qe/lite/qe_lite_tactic.cpp, src/qe/mbp/mbp_solve_plugin.cpp), MIT license, see z3-license.txt.
 import {
   KIND_QUANTIFIER,
   KIND_VAR,
@@ -17,6 +16,7 @@ import {
   QUANTIFIER_LAMBDA,
 } from "./ast";
 import { flattenAndVector, flattenOrVector, pushNotOwned } from "./ast-util";
+import { finishSimplifier } from "./dependent-expr-state";
 import { isOccurring } from "./der";
 import { ExprSafeReplace } from "./expr-safe-replace";
 import type { Goal } from "./goal";
@@ -354,19 +354,18 @@ export const applyQeLite = (manager: AstManager, goal: Goal) => {
     let formula = -1;
     const size = goal.forms.size;
     for (let index = 0; index < size && !goal.isInconsistent; index++) {
-      const form = goal.forms.items[index];
+      const form = goal.forms.get(index);
       dep = assign(manager, dep, form);
       if (manager.hasQuantifierFlags[form]) {
         formula = assign(manager, formula, form);
         formula = assignOwned(manager, formula, qe.apply(formula));
         if (formula !== form) goal.update(index, formula);
       }
-      manager.limit.checkpoint();
+      if (!manager.limit.inc()) break;
     }
     release(manager, formula);
   }
-  goal.elimTrue();
-  goal.elimRedundancies();
+  finishSimplifier(goal);
   qe.release();
   release(manager, dep);
 };

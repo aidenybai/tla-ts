@@ -1,6 +1,5 @@
 import {
   getErrorExitCode,
-  getUnexpectedException,
   STACK_OVERFLOW_MESSAGE,
   TlaEvaluationError,
   TlaModuleError,
@@ -11,6 +10,7 @@ import {
   TOO_MANY_STATES_MESSAGE,
   UNEXPECTED_EVAL_EXCEPTION,
   UNEXPECTED_EXCEPTION,
+  WRONG_INVOCATION_EXCEPTION,
 } from "../errors";
 import { setExitCode } from "../exit-codes";
 import type { TlcVersion } from "./version";
@@ -119,6 +119,7 @@ export interface MessagePrinter {
   isDiffTrace: boolean;
   version: TlcVersion;
   print: (code: number, level: MessageLevel, text: string) => void;
+  printOutput: (text: string) => void;
 }
 
 interface MessagePrinterOptions {
@@ -128,12 +129,16 @@ interface MessagePrinterOptions {
   version?: TlcVersion;
   suppressedCodes?: number[];
   errorCodes?: number[];
+  onOutput?: (text: string) => void;
 }
 
 export const formatMessage = (isTool: boolean, code: number, level: MessageLevel, text: string) =>
   isTool
     ? `@!@!@STARTMSG ${code}:${level} @!@!@\n${text}\n@!@!@ENDMSG ${code} @!@!@`
     : `${LEVEL_PREFIXES[level]}${text}`;
+
+export const formatPrompt = (isTool: boolean, text: string, code: number | undefined) =>
+  code === undefined ? text : formatMessage(isTool, code, MESSAGE_LEVEL.none, text);
 
 export const createMessagePrinter = (options: MessagePrinterOptions): MessagePrinter => {
   const warnings = new Set<string>();
@@ -157,6 +162,7 @@ export const createMessagePrinter = (options: MessagePrinterOptions): MessagePri
       if (isWarning) warnings.add(message);
       console.log(message);
     },
+    printOutput: options.onOutput ?? console.log,
   };
 };
 
@@ -345,14 +351,14 @@ interface CodedMessage {
 let codedMessagePatterns: { pattern: RegExp; message: CodedMessage }[] | undefined;
 
 const getCodedMessagePatterns = () =>
-  (codedMessagePatterns ??= CODED_MESSAGES.map(([code, template, isEvalException]) => ({
+  (codedMessagePatterns ??= CODED_MESSAGES.map((codedMessage) => ({
     pattern: new RegExp(
-      `^${template
+      `^${codedMessage[1]
         .split(/%\d+%/)
         .map((part) => part.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"))
         .join("[\\s\\S]*")}$`,
     ),
-    message: { code, isEvalException },
+    message: { code: codedMessage[0], isEvalException: codedMessage[2] },
   })));
 
 const UNCODED_MESSAGE_PATTERN =
@@ -384,11 +390,16 @@ export const formatInnerMessage = (code: number, text: string, isTool: boolean) 
   return `${text.slice(0, end)}${formatNestedMessage(text.slice(end), isTool)}`;
 };
 
+const JAVA_EXCEPTION_PREFIX =
+  /^(?:tlc2\.tool\.EvalException|util\.Assert\$TLC(?:Detailed)?RuntimeException): /;
+
 export const formatNestedMessage = (text: string, isTool: boolean): string => {
-  const code = isTool ? getCodedMessage(text)?.code : undefined;
+  const prefix = JAVA_EXCEPTION_PREFIX.exec(text)?.[0] ?? "";
+  const inner = text.slice(prefix.length);
+  const code = isTool ? getCodedMessage(inner)?.code : undefined;
   return code === undefined
     ? text
-    : `@!@!@STARTMSG ${code}:${MESSAGE_LEVEL.none} @!@!@\n${formatInnerMessage(code, text, isTool)}\n@!@!@ENDMSG ${code} @!@!@`;
+    : `${prefix}@!@!@STARTMSG ${code}:${MESSAGE_LEVEL.none} @!@!@\n${formatInnerMessage(code, inner, isTool)}\n@!@!@ENDMSG ${code} @!@!@`;
 };
 
 export const zeroPad = (value: number, length = 2) => String(value).padStart(length, "0");
@@ -427,7 +438,10 @@ export const withHeadline = (error: unknown, code: number, headline: string) => 
 
 export const isHeadedError = (error: Error) => headedErrors.has(error);
 
-const WRONG_INVOCATION_EXCEPTION = getUnexpectedException("util.WrongInvocationException");
+// The exception TLC names for an error it didn't expect: its ValueVec throws a
+// WrongInvocationException where a set grows past the bound.
+export const getUnexpectedPrefix = (error: TlaEvaluationError) =>
+  error instanceof TlaSetBoundError ? WRONG_INVOCATION_EXCEPTION : UNEXPECTED_EXCEPTION;
 
 const UNEXPECTED_HEADLINE = UNEXPECTED_EXCEPTION.slice(0, UNEXPECTED_EXCEPTION.indexOf("\n"));
 
@@ -501,9 +515,7 @@ export const getFailureMessage = (
   }
   const isUnexpected =
     isNextState && !message.startsWith(UNEXPECTED_HEADLINE) && !(error instanceof TlaUncodedError);
-  const exception =
-    error instanceof TlaSetBoundError ? WRONG_INVOCATION_EXCEPTION : UNEXPECTED_EXCEPTION;
-  const prefix = isUnexpected ? exception : "";
+  const prefix = isUnexpected ? getUnexpectedPrefix(error) : "";
   return {
     code: MESSAGE_CODE.general,
     message: `${prefix}${message}`,

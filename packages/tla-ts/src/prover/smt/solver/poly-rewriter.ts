@@ -1,5 +1,3 @@
-// Ported from Z3 (src/ast/rewriter/poly_rewriter.h, poly_rewriter_def.h), MIT license, see z3-license.txt.
-import { SmtUnsupportedError } from "../../../errors";
 import {
   type AstManager,
   KIND_APP,
@@ -44,12 +42,14 @@ import {
   SORT_INT,
 } from "./ast";
 import { isAstLess } from "./ast-lt";
+import { ObjHashtable } from "./hashtable";
 import { Rational } from "./rational";
 import type { Rewrite } from "./rewriter-tpl";
 
 export interface ArithRewriterOptions {
   readonly isSom: boolean;
   readonly isSortSums: boolean;
+  readonly isArithLhs: boolean;
   readonly isArithIneqLhs: boolean;
   readonly isGcdRounding: boolean;
   readonly isAnumSimp: boolean;
@@ -233,17 +233,6 @@ export class PolyRewriter {
 
   mkAddCore(args: number[]): number | Rewrite | undefined {
     if (args.length < 2) return args.length === 1 ? args[0] : undefined;
-    const manager = this.manager;
-    if (
-      this.options.isHoistIte === true &&
-      args.some(
-        (arg) =>
-          manager.getOp(arg) === OP_ITE ||
-          (this.isAdd(arg) &&
-            manager.getArgs(arg).some((inner) => manager.getOp(inner) === OP_ITE)),
-      )
-    )
-      throw new SmtUnsupportedError("hoisting an if-then-else out of a sum");
     this.currSort = this.manager.sorts[args[0]];
     if (this.options.isFlat === false || !args.some((arg) => this.isAdd(arg)))
       return this.mkNflatAdd(args);
@@ -301,22 +290,27 @@ export class PolyRewriter {
           if (!coefficient.isZero()) newArgs.push(this.mkMulAppWith(coefficient, product));
         }
       }
-      return this.hoistMultiplication(
+      return this.hoist(
         this.mkAddApp(
           isSortSums ? this.sortMonomials(newArgs, constant.isZero() ? 0 : 1) : newArgs,
         ),
       );
     }
-    if (isOrdered && this.options.isHoistMul !== true) {
+    if (isOrdered && this.options.isHoistMul !== true && this.options.isHoistIte !== true) {
       if (numCoeffs === 0) return undefined;
       if (numCoeffs === 1 && this.isNumeral(args[0]) && !this.getValue(args[0]).isZero())
         return undefined;
     }
     const newArgs: number[] = constant.isZero() ? [] : [this.mkNumeral(constant)];
     for (const arg of args) if (!this.isNumeral(arg)) newArgs.push(arg);
-    return this.hoistMultiplication(
+    return this.hoist(
       this.mkAddApp(isOrdered ? newArgs : this.sortMonomials(newArgs, constant.isZero() ? 0 : 1)),
     );
+  }
+
+  private hoist(sum: number): number | Rewrite {
+    const hoisted = this.hoistMultiplication(sum) ?? this.hoistIte(sum);
+    return hoisted === undefined ? sum : this.reduce(hoisted, Infinity);
   }
 
   // TO_BUFFER: the first argument takes the place of the term, and the others go at the end.
@@ -336,8 +330,8 @@ export class PolyRewriter {
     return buffer;
   }
 
-  private hoistMultiplication(sum: number): number | Rewrite {
-    if (this.options.isHoistMul !== true) return sum;
+  private hoistMultiplication(sum: number) {
+    if (this.options.isHoistMul !== true) return undefined;
     const isMul = (expr: number) => this.isMul(expr);
     const adds = this.getFlatArgs(sum, (expr) => this.isAdd(expr));
     const isValid = adds.map(() => true);
@@ -373,7 +367,69 @@ export class PolyRewriter {
         isChanged = true;
         break;
       }
-    return isChanged ? this.reduce(this.mkAddApp(adds), Infinity) : sum;
+    return isChanged ? this.mkAddApp(adds) : undefined;
+  }
+
+  private hoistIte(sum: number) {
+    if (this.options.isHoistIte !== true) return undefined;
+    const manager = this.manager;
+    const shared = new ObjHashtable((expr) => manager.hashes[expr]);
+    const adds = this.getFlatArgs(sum, (expr) => this.isAdd(expr));
+    let isChanged = false;
+    for (let index = 0; index < adds.length; index++) {
+      const add = adds[index];
+      if (manager.getOp(add) !== OP_ITE) continue;
+      shared.clear();
+      if (!this.collectSharedSummands(add, shared)) continue;
+      const summands = [this.applyHoist(add, shared)];
+      for (const summand of shared) summands.push(summand);
+      const hoisted = this.mkAddApp(summands);
+      if (hoisted === add) continue;
+      adds[index] = hoisted;
+      isChanged = true;
+    }
+    return isChanged ? this.mkAddApp(adds) : undefined;
+  }
+
+  private collectSharedSummands(expr: number, shared: ObjHashtable): boolean {
+    const manager = this.manager;
+    if (manager.getOp(expr) === OP_ITE)
+      return (
+        this.collectSharedSummands(manager.getArg(expr, 1), shared) &&
+        this.collectSharedSummands(manager.getArg(expr, 2), shared)
+      );
+    if (this.isNumeral(expr) && this.getValue(expr).isInt()) return false;
+    const summands = this.getFlatArgs(expr, (summand) => this.isAdd(summand));
+    if (shared.size === 0)
+      for (let index = 0; index < summands.length; index++) shared.add(summands[index]);
+    else {
+      const removed: number[] = [];
+      for (const summand of shared) if (!summands.includes(summand)) removed.push(summand);
+      for (let index = removed.length - 1; index >= 0; index--) shared.delete(removed[index]);
+    }
+    if (shared.size === 0) return false;
+    for (let index = 1; index < summands.length; index++)
+      if (summands.lastIndexOf(summands[index], index - 1) !== -1) return false;
+    return true;
+  }
+
+  private applyHoist(expr: number, shared: ObjHashtable): number {
+    const manager = this.manager;
+    if (manager.getOp(expr) === OP_ITE) {
+      const thenExpr = this.applyHoist(manager.getArg(expr, 1), shared);
+      const elseExpr = this.applyHoist(manager.getArg(expr, 2), shared);
+      return manager.mkApp(
+        OP_ITE,
+        [manager.getArg(expr, 0), thenExpr, elseExpr],
+        manager.sorts[expr],
+      );
+    }
+    const summands = this.getFlatArgs(expr, (summand) => this.isAdd(summand));
+    let size = 0;
+    for (let index = 0; index < summands.length; index++)
+      if (!shared.has(summands[index])) summands[size++] = summands[index];
+    summands.length = size;
+    return this.mkAddApp(summands);
   }
 
   private growStamps(expr: number) {

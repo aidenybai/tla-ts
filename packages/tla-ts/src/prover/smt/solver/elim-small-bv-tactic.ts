@@ -1,4 +1,3 @@
-// Ported from Z3 (src/tactic/bv/elim_small_bv_tactic.cpp), MIT license, see z3-license.txt.
 import { SmtTacticError } from "../../../errors";
 import {
   type AstManager,
@@ -117,7 +116,7 @@ export const runElimSmallBv =
     let rewritten = -1;
     const size = goal.forms.size;
     for (let index = 0; index < size && !goal.isInconsistent; index++) {
-      const next = rewriter.rewrite(goal.forms.items[index]);
+      const next = rewriter.rewrite(goal.forms.get(index));
       release(manager, rewritten);
       rewritten = next;
       goal.update(index, rewritten);

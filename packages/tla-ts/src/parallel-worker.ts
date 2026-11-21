@@ -41,8 +41,14 @@ const runWorker = (start: StartMessage, parent: Port) => {
   );
   const specification = created.specification;
   const environment = specification.environment;
-  const search = createSearch(start.config, environment, specification.variableLocations, () =>
-    created.order.getDeclarationOrder("variable"),
+  const search = createSearch(
+    start.config,
+    environment,
+    specification.variableLocations,
+    () => created.order.getDeclarationOrder("variable"),
+    undefined,
+    [],
+    specification.runtimeInvariants,
   );
   const nextAction = search?.spec.next;
   if (!search || nextAction === undefined)

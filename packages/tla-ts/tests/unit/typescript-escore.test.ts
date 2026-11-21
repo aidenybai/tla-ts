@@ -364,6 +364,264 @@ describe("compiles scripts by specializing ESCore", () => {
     });
   });
 
+  describe("holds a long string of runs of consecutive code points as the runs", () => {
+    const literal = `${[
+      ...Array.from({ length: 5000 }, (_, index) => 0x4e00 + index),
+      ...Array.from({ length: 3000 }, (_, index) => 0x1f000 + index),
+    ]
+      .map((codePoint) => `\\u{${codePoint.toString(16)}}`)
+      .join("")}\\uD800\\uDBFF`;
+    const getSource = (expected: string) => `
+      const literal = "${literal}";
+      let built = "";
+      for (let code = 0x4e00; code < 0x4e00 + 5000; code++) built += String.fromCharCode(code);
+      const result = [
+        literal.length,
+        literal.charCodeAt(4999),
+        literal.charCodeAt(5000),
+        literal.charCodeAt(5001),
+        literal.codePointAt(5000 + 2 * 2999),
+        literal.charCodeAt(literal.length - 1),
+        literal.slice(0, 5000) === built,
+        /^\\p{Script=Han}+/u.exec(literal)?.[0].length,
+      ].join();
+      if (result !== "${expected}") throw new Error(result);
+    `;
+
+    it("agrees with Node", async () => {
+      expect(
+        (await checkScript(getSource("11002,24967,55356,56320,129975,56319,true,5000"))).message,
+      ).toBeUndefined();
+    }, 600_000);
+
+    it("rejects another result", async () => {
+      expect(
+        (await checkScript(getSource("11002,24967,55356,56320,129975,56320,true,5000"))).message,
+      ).toContain(THREW);
+    }, 600_000);
+  });
+
+  describe("repeats a character class and searches a long string as RepeatMatcher does", () => {
+    const getSource = (expected: string) => `
+      const run = "a".repeat(30000);
+      const result = [
+        /^\\p{L}+$/u.test(run),
+        /^\\P{L}+$/u.test(run),
+        /a+b/.test(run.slice(0, 200)),
+        /a+?a$/.exec(run)?.[0].length,
+        /(?<=a{3})b/.exec(run + "b")?.index,
+        /a{2,5}?/.exec(run)?.[0].length,
+        /[^a]/u.exec(run + "😀")?.index,
+        /b|a$/u.exec(run)?.index,
+        /^a*a{199}$/.test(run.slice(0, 200)),
+        "aab".replace(/a*?b/, "-"),
+        /(?<!a+)b/.test("ab"),
+        /x*/.exec("y")?.[0].length,
+        /\\p{Lu}{2,}/u.exec("aBCd")?.[0],
+      ].join();
+      if (result !== "${expected}") throw new Error(result);
+    `;
+
+    it("agrees with Node", async () => {
+      expect(
+        (
+          await checkScript(
+            getSource("true,false,false,30000,30000,2,30000,29999,true,-,false,0,BC"),
+          )
+        ).message,
+      ).toBeUndefined();
+    }, 600_000);
+
+    it("rejects another result", async () => {
+      expect(
+        (
+          await checkScript(
+            getSource("true,false,false,30000,30000,2,30000,29999,true,-,false,0,B"),
+          )
+        ).message,
+      ).toContain(THREW);
+    }, 600_000);
+  });
+
+  describe("repeats a class of strings over a long string as RepeatMatcher does", () => {
+    const getSource = (expected: string) => `
+      const result = [
+        /^[\\q{ab|c}]+$/v.test("ab".repeat(4000) + "c"),
+        /^[\\q{abc|ab|a}]+$/v.exec("abcab")?.[0],
+        /^[\\q{ab|a}]+b$/v.exec("ab")?.[0],
+        /[\\q{ab|a}]{2}/v.exec("aab")?.[0],
+        /[\\q{xy|x}]{2,3}/v.exec("xyxyxyx")?.[0],
+        /^\\p{RGI_Emoji}+$/v.test("😀👍🏽".repeat(1000)),
+        /[\\q{ab|a}]+?/v.exec("abab")?.[0],
+        /^[\\q{aa|1}]+$/iv.test("aA1".repeat(2000)),
+        /^[\\q{ab|c}]+$/v.test("ab".repeat(4000) + "d"),
+        /[\\q{ab|a}]*c/v.exec("abaabc")?.[0],
+        /^[\\q{abc|ab|a}]{2,4}c$/v.exec("abcabcabc")?.[0],
+        /^(?:[\\q{ab|a}]{3})+$/v.test("abaab"),
+      ].join();
+      if (result !== "${expected}") throw new Error(result);
+    `;
+
+    it("agrees with Node", async () => {
+      expect(
+        (
+          await checkScript(
+            getSource("true,abcab,ab,aab,xyxyxy,true,ab,true,false,abaabc,abcabcabc,true"),
+          )
+        ).message,
+      ).toBeUndefined();
+    }, 600_000);
+
+    it("rejects another result", async () => {
+      expect(
+        (
+          await checkScript(
+            getSource("true,abcab,ab,aab,xyxyxy,true,ab,true,false,abaabc,abcabc,true"),
+          )
+        ).message,
+      ).toContain(THREW);
+    }, 600_000);
+  });
+
+  describe("stops where a code point folds to a ClassString of one code point under the i and v flags", () => {
+    const getSource = (expected: string) => `
+      const result = [
+        /^[\\q{1|ab}]+$/iv.test("1aB"),
+        /[\\q{a}]/v.test("A"),
+        /^[\\q{KK|ß}]$/iv.test("Kk"),
+        /[\\q{a}]/iv.test("ab"),
+        /[\\q{ß}]/iv.test("xß"),
+      ].join();
+      if (result !== "${expected}") throw new Error(result);
+    `;
+
+    it("agrees with Node", async () => {
+      expect((await checkScript(getSource("true,false,true,true,true"))).message).toBeUndefined();
+    });
+
+    it("rejects another result", async () => {
+      expect((await checkScript(getSource("true,false,true,false,true"))).message).toContain(THREW);
+    });
+
+    it("stops where V8 matches only the folded code point", async () => {
+      expect((await checkScript('/[\\q{a}]/iv.test("A");')).message).toContain("tla-ts can't");
+    });
+  });
+
+  describe("substitutes a replacement's captures, and stops at one longer than tla-ts holds", () => {
+    const getSource = (expected: string) => `
+      const x = "ab".repeat(1 << 15);
+      const result = [x.replace(/(.+)/, "$1-$1-$1").length, "abc".replace(/(b)/, "[$1$&$\`$']")].join();
+      if (result !== "${expected}") throw new Error(result);
+    `;
+
+    it("agrees with Node", async () => {
+      expect((await checkScript(getSource("196610,a[bbac]c"))).message).toBeUndefined();
+    }, 600_000);
+
+    it("rejects another result", async () => {
+      expect((await checkScript(getSource("196610,a[bbac]"))).message).toContain(THREW);
+    }, 600_000);
+
+    it("stops at a replacement of millions of code units", async () => {
+      expect(
+        (await checkScript('"ab".repeat(1 << 15).replace(/(.+)/, "$1".repeat(65));')).message,
+      ).toContain("tla-ts can't");
+    }, 600_000);
+  });
+
+  describe("reads RegExp's legacy static properties after a match, and stops where V8 differs", () => {
+    const getSource = (expected: string) => `
+      /(b)(c)?/.exec("abd");
+      const legacy = RegExp as unknown as Record<string, string>;
+      const result = ["$1", "$2", "lastMatch", "leftContext", "rightContext", "input", "lastParen"]
+        .map((key) => legacy[key])
+        .join("|");
+      if (result !== "${expected}") throw new Error(result);
+    `;
+
+    it("agrees with Node", async () => {
+      expect((await checkScript(getSource("b||b|a|d|abd|"))).message).toBeUndefined();
+    });
+
+    it("rejects another result", async () => {
+      expect((await checkScript(getSource("b||b|a|d|abd|c"))).message).toContain(THREW);
+    });
+
+    it("stops where V8 reads an empty string before any match", async () => {
+      expect(
+        (await checkScript("const first = (RegExp as unknown as Record<string, string>).$1;"))
+          .message,
+      ).toContain("tla-ts can't read a legacy static property of RegExp");
+    });
+  });
+
+  describe("calls a sort comparator on the pairs that V8's TimSort compares, in its order", () => {
+    const getSource = (expected: string) => `
+      const log: string[] = [];
+      const sortLogged = (items: number[]) =>
+        items
+          .slice()
+          .sort((a, b) => {
+            log.push(\`\${a}\${b}\`);
+            return a - b;
+          })
+          .join("");
+      const holey = [2, undefined, 1, , 3];
+      const result = [
+        sortLogged([5, 4, 3, 1, 2, 3]),
+        log.splice(0).join(" "),
+        sortLogged([3, 1, 4, 1, 5, 9, 2, 6]),
+        log.splice(0).join(" "),
+        holey
+          .sort((a, b) => {
+            log.push(\`\${a}\${b}\`);
+            return (b as number) - (a as number);
+          })
+          .join(),
+        log.splice(0).join(" "),
+        Array.from({ length: 70 }, (_, index) => 70 - index).sort((a, b) => {
+          log.push("");
+          return a - b;
+        })[0],
+        log.splice(0).length,
+      ].join("|");
+      if (result !== "${expected}") throw new Error(result);
+    `;
+    const expected =
+      "123345|45 35 34 14 13 24 23 21 33 35 34|11234569|13 41 43 13 11 53 54 93 95 24 21 23 63 65 69|3,2,1,,|12 31 32|1|69";
+
+    it("agrees with Node", async () => {
+      expect((await checkScript(getSource(expected))).message).toBeUndefined();
+    });
+
+    it("rejects another result", async () => {
+      expect((await checkScript(getSource(expected.replace("45 35", "45 34")))).message).toContain(
+        THREW,
+      );
+    });
+
+    const getMerged = (expected: string) => `
+      let calls = 0;
+      let hash = 0;
+      const sorted = Array.from({ length: 150 }, (_, index) => (index * 37) % 101).sort((a, b) => {
+        calls += 1;
+        hash = (hash * 31 + a * 1009 + b) % 1000000007;
+        return a - b;
+      });
+      const result = calls + ":" + hash + ":" + sorted.slice(0, 5).join(",");
+      if (result !== "${expected}") throw new Error(result);
+    `;
+
+    it("agrees with Node where TimSort merges runs", async () => {
+      expect((await checkScript(getMerged("889:821657304:0,0,1,2,2"))).message).toBeUndefined();
+    }, 600_000);
+
+    it("rejects another result where TimSort merges runs", async () => {
+      expect((await checkScript(getMerged("888:821657304:0,0,1,2,2"))).message).toContain(THREW);
+    }, 600_000);
+  });
+
   describe("compares values of different types as unequal", () => {
     const getSource = (expected: string) => `
       const values: unknown[] = [null, true, "", 0];
@@ -398,6 +656,49 @@ describe("compiles scripts by specializing ESCore", () => {
 
     it("rejects another result", async () => {
       expect((await checkScript(getSource("true,false,0:5 1:6"))).message).toContain(THREW);
+    });
+  });
+
+  describe("runs the built-ins that a generator's helpers and an async disposal reach", () => {
+    const getSource = (expected: string) => `
+      function* numbers() {
+        yield 1;
+        yield 2;
+        yield 3;
+      }
+      const helped = numbers()
+        .filter((value) => value !== 2)
+        .map((value) => value * 10)
+        .toArray();
+      const stack = new AsyncDisposableStack();
+      stack.disposeAsync();
+      const result = [helped.join(), stack.disposed].join();
+      if (result !== "${expected}") throw new Error(result);
+    `;
+
+    it("agrees with Node", async () => {
+      expect((await checkScript(getSource("10,30,true"))).message).toBeUndefined();
+    });
+
+    it("rejects another result", async () => {
+      expect((await checkScript(getSource("10,20,30,true"))).message).toContain(THREW);
+    });
+  });
+
+  describe("reads the tag that every built-in iterator inherits", () => {
+    const getSource = (expected: string) => `
+      const iterator = ""[Symbol.iterator]();
+      delete Object.getPrototypeOf(iterator)[Symbol.toStringTag];
+      const result = Object.prototype.toString.call(iterator);
+      if (result !== "${expected}") throw new Error(result);
+    `;
+
+    it("agrees with Node", async () => {
+      expect((await checkScript(getSource("[object Iterator]"))).message).toBeUndefined();
+    });
+
+    it("rejects another result", async () => {
+      expect((await checkScript(getSource("[object Object]"))).message).toContain(THREW);
     });
   });
 
@@ -512,12 +813,94 @@ describe("compiles scripts by specializing ESCore", () => {
       );
     });
 
-    it("stops at a locale-sensitive method and at a date string outside ECMA-262's formats", async () => {
-      expect((await checkScript("(1234.5).toLocaleString();")).message).toContain("tla-ts can't");
-      expect((await checkScript('Date.parse("Thu Jan 01 1970");')).message).toContain(
+    it("stops at a locale-sensitive method and at a computed date string outside ECMA-262's formats", async () => {
+      expect(
+        (await checkScript('new Date("abcd".length * 1000).toLocaleString("de-DE");')).message,
+      ).toContain("tla-ts can't");
+      expect((await checkScript('Date.parse("Thu Jan 01 " + 1970);')).message).toContain(
         "tla-ts can't",
       );
       expect((await checkScript('"I".toLocaleLowerCase("tr");')).message).toContain("tla-ts can't");
+    });
+  });
+
+  describe("reads a date string outside ECMA-262's formats that the program writes as the host does", () => {
+    const getSource = (expected: string) => `
+      const result = [
+        new Date("10/31/2010 08:00").getTime(),
+        Date.parse("-000000-03-31T00:45Z"),
+        new Date({}).getTime(),
+        Date.parse("Thu, 01 Jan 1970 00:00:00 GMT+0100"),
+      ].join();
+      if (result !== "${expected}") throw new Error(result);
+    `;
+
+    it("agrees with Node", async () => {
+      expect(
+        (await checkScript(getSource(`${Date.parse("10/31/2010 08:00")},NaN,NaN,-3600000`)))
+          .message,
+      ).toBeUndefined();
+    });
+
+    it("rejects another result", async () => {
+      expect(
+        (await checkScript(getSource(`${Date.parse("10/31/2010 08:00")},NaN,NaN,NaN`))).message,
+      ).toContain(THREW);
+    });
+  });
+
+  describe("joins the elements' toLocaleString with their locales and options, as ECMA-402 does", () => {
+    const getSource = (expected: string) => `
+      const seen: string[] = [];
+      const element = {
+        toLocaleString(...args: unknown[]) {
+          seen.push(args.length + ":" + String(args[0]));
+          return "e";
+        },
+      };
+      const result = [
+        [undefined, element, null, element].toLocaleString("zh", {}),
+        Array.prototype.toLocaleString.call({ length: 2, 0: element, 1: element }),
+        new Uint8Array(2).subarray(0, 0).toLocaleString(),
+        ({ toString: () => "plain" }).toLocaleString(),
+        [true, "x"].toLocaleString(),
+        seen.join(" "),
+      ].join("|");
+      if (result !== "${expected}") throw new Error(result);
+    `;
+
+    it("agrees with Node", async () => {
+      expect(
+        (await checkScript(getSource(",e,,e|e,e||plain|true,x|2:zh 2:zh 2:undefined 2:undefined")))
+          .message,
+      ).toBeUndefined();
+    });
+
+    it("rejects another result", async () => {
+      expect(
+        (await checkScript(getSource(",e,,e|e,e||plain|true,x|1:zh 1:zh 0:undefined 0:undefined")))
+          .message,
+      ).toContain(THREW);
+    });
+
+    it("formats an element whose toLocaleString reads the host's locale as the host does", async () => {
+      expect(
+        (
+          await checkScript(
+            'if ([1234.5].toLocaleString() !== "1,234.5") throw new Error("other");',
+          )
+        ).message,
+      ).toBeUndefined();
+      expect(
+        (await checkScript('if ([1234.5].toLocaleString() !== "1234.5") throw new Error("other");'))
+          .message,
+      ).toContain(THREW);
+    });
+
+    it("stops at an element whose toLocaleString formats a value the program computes", async () => {
+      expect(
+        (await checkScript('[new Date("abcd".length * 1000)].toLocaleString("de-DE");')).message,
+      ).toContain("tla-ts can't");
     });
   });
 
@@ -706,6 +1089,137 @@ describe("compiles scripts by specializing ESCore", () => {
 
     it("rejects another result", async () => {
       expect((await checkScript(getSource("1,2,a,b,c,after"))).message).toContain(THREW);
+    });
+  });
+
+  describe("disposes a using declaration's resources once its scope completes", () => {
+    const getSource = (expected: string) => `
+      const log: string[] = [];
+      const resource = (name: string) => ({
+        [Symbol.dispose]() {
+          log.push("dispose " + name);
+        },
+      });
+      {
+        using first = resource("a"),
+          second = resource("b");
+        using none = null;
+        log.push("body");
+      }
+      function returning() {
+        using held = resource("c");
+        return "ret";
+      }
+      log.push(returning());
+      for (using each of [resource("d1"), resource("d2")]) log.push("iter");
+      for (using head = resource("e"), unused = null; !log.includes("for"); ) log.push("for");
+      try {
+        using throwing = {
+          [Symbol.dispose]() {
+            throw new Error("g");
+          },
+        };
+        throw new Error("body");
+      } catch (error) {
+        log.push(error.constructor.name + ":" + error.error.message + "/" + error.suppressed.message);
+      }
+      try {
+        using bad = 1 as unknown as Disposable;
+      } catch (error) {
+        log.push(error.constructor.name);
+      }
+      const result = log.join();
+      if (result !== "${expected}") throw new Error(result);
+    `;
+
+    it("agrees with Node", async () => {
+      expect(
+        (
+          await checkScript(
+            getSource(
+              "body,dispose b,dispose a,dispose c,ret,iter,dispose d1,iter,dispose d2,for,dispose e,SuppressedError:g/body,TypeError",
+            ),
+          )
+        ).message,
+      ).toBeUndefined();
+    });
+
+    it("rejects another result", async () => {
+      expect(
+        (
+          await checkScript(
+            getSource(
+              "body,dispose a,dispose b,dispose c,ret,iter,dispose d1,iter,dispose d2,for,dispose e,SuppressedError:g/body,TypeError",
+            ),
+          )
+        ).message,
+      ).toContain(THREW);
+    });
+  });
+
+  describe("awaits the disposal of an await using declaration's resources", () => {
+    const getSource = (expected: string) => `
+      const log: string[] = [];
+      const resource = (name: string) => ({
+        async [Symbol.asyncDispose]() {
+          await null;
+          log.push("dispose " + name);
+        },
+      });
+      const syncOnly = {
+        [Symbol.dispose]() {
+          log.push("sync");
+        },
+      };
+      async function run() {
+        {
+          await using first = resource("a"),
+            second = syncOnly;
+          await using none = undefined;
+          log.push("body");
+        }
+        for (await using each of [resource("c")]) log.push("iter");
+        for await (await using each of [resource("d")]) log.push("iter2");
+        log.push("end");
+      }
+      run().then(() => {
+        if (log.join() !== "${expected}") throw new Error(log.join());
+      });
+    `;
+
+    it("agrees with Node", async () => {
+      expect(
+        (await checkScript(getSource("body,sync,dispose a,iter,dispose c,iter2,dispose d,end")))
+          .message,
+      ).toBeUndefined();
+    });
+
+    it("rejects another result", async () => {
+      expect(
+        (await checkScript(getSource("body,dispose a,sync,iter,dispose c,iter2,dispose d,end")))
+          .message,
+      ).toContain(THREW);
+    });
+
+    const getModule = (expected: string) => `
+      const log: string[] = [];
+      {
+        await using held = {
+          async [Symbol.asyncDispose]() {
+            log.push("disposed");
+          },
+        };
+        log.push("body");
+      }
+      if (log.join() !== "${expected}") throw new Error(log.join());
+    `;
+
+    it("agrees with Node where a module's code awaits the disposal", async () => {
+      expect((await checkModule(getModule("body,disposed"))).message).toBeUndefined();
+    });
+
+    it("rejects another result where a module's code awaits the disposal", async () => {
+      expect((await checkModule(getModule("body"))).message).toContain(THREW);
     });
   });
 
@@ -917,9 +1431,55 @@ describe("compiles scripts by specializing ESCore", () => {
           "2024-03-10[u-ca=hebrew]|6|13|M06|P2Y9M26D|heisei|31|1445-9-1|30|6|2024-09-06[u-ca=coptic]|1972-03-20[u-ca=persian]|RangeError";
         expect((await checkScript(getSource(expected))).message).toContain(THREW);
       });
+    },
+  );
 
-      it("stops at the Chinese calendar, whose tables ESCore doesn't hold", async () => {
-        const source = 'Temporal.PlainDate.from("2024-03-11[u-ca=chinese]");';
+  describe.runIf(Reflect.has(globalThis, "Temporal"))(
+    "runs the Chinese and Dangi calendars from the years that the host's table records",
+    () => {
+      const getSource = (expected: string) => `
+      const date = Temporal.PlainDate.from({ year: 2023, monthCode: "M02L", day: 29, calendar: "chinese" });
+      const dangi = Temporal.PlainDate.from("2023-03-22[u-ca=dangi]");
+      const monthDay = Temporal.PlainMonthDay.from({ monthCode: "M09L", day: 30, calendar: "chinese" });
+      let rejected = "none";
+      try {
+        Temporal.PlainMonthDay.from({ monthCode: "M01L", day: 1, calendar: "chinese" }, { overflow: "reject" });
+      } catch (error) {
+        rejected = (error as Error).name;
+      }
+      const result = [
+        date.toString(),
+        date.month,
+        date.monthsInYear,
+        date.daysInYear,
+        date.era,
+        date.add({ years: 1 }).monthCode,
+        date.add({ months: 13 }).toString(),
+        date.until("2025-06-01[u-ca=chinese]", { largestUnit: "years" }).toString(),
+        dangi.monthCode,
+        dangi.day,
+        monthDay.toString(),
+        monthDay.monthCode,
+        rejected,
+      ].join("|");
+      if (result !== "${expected}") throw new Error(result);
+    `;
+
+      it("agrees with Node", async () => {
+        const expected =
+          "2023-04-19[u-ca=chinese]|3|13|384||M02|2024-05-07[u-ca=chinese]|P2Y2M6D|M02L|1|1972-11-05[u-ca=chinese]|M09|RangeError";
+        expect((await checkScript(getSource(expected))).message).toBeUndefined();
+      });
+
+      it("rejects another result", async () => {
+        const expected =
+          "2023-04-19[u-ca=chinese]|3|13|384||M02|2024-05-07[u-ca=chinese]|P2Y2M6D|M02L|1|1972-11-05[u-ca=chinese]|M09L|RangeError";
+        expect((await checkScript(getSource(expected))).message).toContain(THREW);
+      });
+
+      it("stops at a year that the host's table leaves out", async () => {
+        const source =
+          'Temporal.PlainDate.from({ year: 3000, month: 1, day: 1, calendar: "chinese" });';
         expect((await checkScript(source)).message).toContain("tla-ts can't");
       });
     },
@@ -978,8 +1538,93 @@ describe("compiles scripts by specializing ESCore", () => {
         expect((await checkScript(getSource(expected))).message).toContain(THREW);
       });
 
-      it("stops at a locale other than English", async () => {
-        const source = 'new Temporal.PlainDate(2024, 12, 26).toLocaleString("de");';
+      it("stops at a locale other than English for an object that the host's Intl doesn't format", async () => {
+        const source = 'new Temporal.PlainDate(2024, 12, [26].length).toLocaleString("de");';
+        expect((await checkScript(source)).message).toContain("tla-ts can't");
+      });
+    },
+  );
+
+  describe.runIf(Reflect.has(globalThis, "Temporal"))(
+    "formats the Temporal objects that a program's literals make through the host's Intl",
+    () => {
+      const getSource = (expected: string) => `
+      const date = new Temporal.PlainDate(2021, 8, 4);
+      let error = "none";
+      try {
+        new Intl.DateTimeFormat("en-US", { timeStyle: "short" }).format(date);
+      } catch (caught) {
+        error = (caught as Error).name;
+      }
+      try {
+        new Intl.DurationFormat("en", { hours: "numeric", minutes: "long" });
+      } catch (caught) {
+        error += (caught as Error).name;
+      }
+      const result = [
+        date.toLocaleString("de-AT", { dateStyle: "long" }),
+        new Intl.DateTimeFormat("en-US", { dateStyle: "short" }).format(date),
+        Temporal.Instant.fromEpochMilliseconds(0).toLocaleString("en-US", { timeZone: "UTC", timeStyle: "short" }),
+        new Intl.DurationFormat("en", { style: "long" }).format({ hours: 1, minutes: 2 }),
+        Temporal.Duration.from({ hours: 1 }).toLocaleString("en"),
+        Intl.supportedValuesOf("calendar").includes("chinese"),
+        error,
+      ].join("|");
+      if (result !== "${expected}") throw new Error(result);
+    `;
+
+      it("agrees with Node", async () => {
+        const expected =
+          "4. August 2021|8/4/21|12:00 AM|1 hour, 2 minutes|1 hr|true|TypeErrorRangeError";
+        expect((await checkScript(getSource(expected))).message).toBeUndefined();
+      });
+
+      it("rejects another result", async () => {
+        const expected =
+          "4. August 2021|8/4/21|12:00 AM|1 hour, 2 minute|1 hr|true|TypeErrorRangeError";
+        expect((await checkScript(getSource(expected))).message).toContain(THREW);
+      });
+
+      it("stops at a Temporal object that the program's literals don't make", async () => {
+        const source =
+          'new Temporal.PlainDate(2021, 8, 4).add({ days: [1].length }).toLocaleString("de-AT");';
+        expect((await checkScript(source)).message).toContain("tla-ts can't");
+      });
+    },
+  );
+
+  describe.runIf(Reflect.has(globalThis, "Temporal"))(
+    "reads the time zones that Node takes, by their links and names joined of parts",
+    () => {
+      const getSource = (expected: string) => `
+      const zone = new Temporal.ZonedDateTime(0n, "Asia/Calcutta");
+      let rejected = "none";
+      try {
+        new Temporal.ZonedDateTime(0n, "Etc/GMT-" + "0" + 1);
+      } catch (error) {
+        rejected = (error as Error).name;
+      }
+      const result = [
+        zone.timeZoneId,
+        zone.equals(new Temporal.ZonedDateTime(0n, "asia/kolkata")),
+        new Temporal.ZonedDateTime(0n, "Etc/GMT-" + 14).timeZoneId,
+        rejected,
+      ].join("|");
+      if (result !== "${expected}") throw new Error(result);
+    `;
+
+      it("agrees with Node", async () => {
+        const expected = "Asia/Calcutta|true|Etc/GMT-14|RangeError";
+        expect((await checkScript(getSource(expected))).message).toBeUndefined();
+      });
+
+      it("rejects another result", async () => {
+        const expected = "Asia/Calcutta|false|Etc/GMT-14|RangeError";
+        expect((await checkScript(getSource(expected))).message).toContain(THREW);
+      });
+
+      it("stops at a joined name that the host's table leaves out", async () => {
+        const source = 'new Temporal.ZonedDateTime(0n, "Etc/GMT-" + "1x");';
         expect((await checkScript(source)).message).toContain("tla-ts can't");
       });
     },
@@ -1031,12 +1676,13 @@ describe("compiles scripts by specializing ESCore", () => {
       expect((await checkScript(getSource(expected))).message).toContain(THREW);
     });
 
-    it("stops at a constructor whose options it leaves out", async () => {
-      expect((await checkScript("new Intl.NumberFormat();")).message).toContain("tla-ts can't");
+    it("stops at a constructor whose options the host's table leaves out", async () => {
+      const source = 'new Intl.DurationFormat("en", { numberingSystem: ["ar", "ab"].join("") });';
+      expect((await checkScript(source)).message).toContain("tla-ts can't");
     });
 
     it("stops at a locale that the program doesn't write", async () => {
-      const source = 'Intl.getCanonicalLocales(["en", "US"].join("-"));';
+      const source = 'Intl.getCanonicalLocales(["de", "AT"].join("-"));';
       expect((await checkScript(source)).message).toContain("tla-ts can't");
     });
   });
@@ -1091,7 +1737,7 @@ describe("compiles scripts by specializing ESCore", () => {
     });
 
     it("stops at a method, which reads locale data", async () => {
-      const source = "new Intl.Collator().resolvedOptions();";
+      const source = 'new Intl.Collator().compare(String.fromCharCode(120), "b");';
       expect((await checkScript(source)).message).toContain("tla-ts can't");
     });
   });
@@ -1144,11 +1790,349 @@ describe("compiles scripts by specializing ESCore", () => {
       expect((await checkScript(getSource(expected))).message).toContain(THREW);
     });
 
-    it("stops where a call without new chains an instance, as Intl's legacy symbol does", async () => {
-      const source = "Intl.DateTimeFormat.call(new Intl.DateTimeFormat());";
+    it("stops at a format of a date that the host's table leaves out", async () => {
+      const source =
+        'new Intl.DateTimeFormat("de", { timeZone: "UTC" }).format(Date.UTC([2024].length));';
       expect((await checkScript(source)).message).toContain("tla-ts can't");
     });
   });
+
+  describe("answers Intl's methods from the host's Intl for the literals a program writes", () => {
+    const getSource = (expected: string) => `
+      const format = new Intl.NumberFormat("de-DE", { style: "currency", currency: "EUR" });
+      const parts = format.formatToParts(-1234.5).map((part) => part.type).join(",");
+      const list = new Intl.ListFormat("en-US", { type: "disjunction" });
+      const time = new Intl.RelativeTimeFormat("en-US", { numeric: "auto" });
+      const locale = new Intl.Locale("en", { region: "GB" });
+      const dates = new Intl.DateTimeFormat("en-US", { dateStyle: "medium", timeZone: "UTC" });
+      const words = [...new Intl.Segmenter("en-US", { granularity: "word" }).segment("Hi there")];
+      let errors = "";
+      for (const run of [
+        () => new Intl.NumberFormat("en-US", { style: "currency" }),
+        () => new Intl.NumberFormat("en-US", { maximumFractionDigits: 101 }),
+        () => new Intl.ListFormat("en-US").format(["a", 1 as unknown as string]),
+        () => time.format(1, "fortnight" as "day"),
+      ]) {
+        try {
+          run();
+        } catch (error) {
+          errors += (error as Error).name + ";";
+        }
+      }
+      const result = [
+        format.format(-1234.5),
+        parts,
+        (12345.678).toLocaleString("en-US"),
+        format.resolvedOptions().minimumFractionDigits,
+        list.format(["a", "b", "c"]),
+        time.format(-1, "day"),
+        new Intl.Collator("en-US").compare("a", "B"),
+        locale.toString(),
+        locale.maximize().toString(),
+        dates.format(0),
+        words.filter((word) => word.isWordLike).map((word) => word.segment).join("+"),
+        errors,
+      ].join("|");
+      if (result !== "${expected}") throw new Error(result);
+    `;
+
+    it("agrees with Node", async () => {
+      const expected =
+        "-1.234,50\\u00a0€|minusSign,integer,group,integer,decimal,fraction,literal,currency|12,345.678|2|a, b, or c|yesterday|-1|en-GB|en-Latn-GB|Jan 1, 1970|Hi+there|TypeError;RangeError;TypeError;RangeError;";
+      expect((await checkScript(getSource(expected))).message).toBeUndefined();
+    });
+
+    it("rejects another result", async () => {
+      const expected =
+        "-1.234,50\\u00a0€|minusSign,integer,group,integer,decimal,fraction,literal,currency|12,345.678|2|a, b, or c|tomorrow|-1|en-GB|en-Latn-GB|Jan 1, 1970|Hi+there|TypeError;RangeError;TypeError;RangeError;";
+      expect((await checkScript(getSource(expected))).message).toContain(THREW);
+    });
+
+    it("stops at a value that the program doesn't write", async () => {
+      const source = 'new Intl.NumberFormat("en-US").format(Math.PI);';
+      expect((await checkScript(source)).message).toContain("tla-ts can't");
+    });
+  });
+
+  describe.runIf(Reflect.has(globalThis, "Temporal"))(
+    "formats dates that a program computes and chains legacy Intl objects",
+    () => {
+      const getSource = (expected: string) => `
+      const format = new Intl.DateTimeFormat("en", { hour: "numeric", dayPeriod: "long" });
+      const hours: string[] = [];
+      for (let hour = 9; hour < 24; hour += 6) hours.push(format.format(Date.UTC(2017, 11, 12, hour)));
+      const chained = Intl.NumberFormat.call(Object.create(Intl.NumberFormat.prototype));
+      const symbol = Object.getOwnPropertySymbols(chained)[0];
+      const result = [
+        hours.join(","),
+        symbol.description,
+        Intl.NumberFormat.prototype.resolvedOptions.call(chained).locale,
+      ].join("|");
+      if (result !== "${expected}") throw new Error(result);
+    `;
+
+      it("agrees with Node", async () => {
+        const expected =
+          "9 in the morning,3 in the afternoon,9 at night|IntlLegacyConstructedSymbol|en-US";
+        expect((await checkScript(getSource(expected))).message).toBeUndefined();
+      });
+
+      it("rejects another result", async () => {
+        const expected =
+          "9 in the morning,3 in the afternoon,9 in the evening|IntlLegacyConstructedSymbol|en-US";
+        expect((await checkScript(getSource(expected))).message).toContain(THREW);
+      });
+
+      it("stops at a format of the time now", async () => {
+        expect((await checkScript("new Intl.DateTimeFormat().format();")).message).toContain(
+          "tla-ts can't",
+        );
+      });
+    },
+  );
+
+  describe.runIf(Reflect.has(globalThis, "Temporal"))(
+    "runs the locale-sensitive methods of arrays and strings as ECMA-402 does",
+    () => {
+      const getSource = (expected: string) => `
+      const lengths = [{ toLocaleString: (...args: unknown[]) => String(args.length) }].toLocaleString();
+      const result = [
+        [1234.5, 6].toLocaleString("de-DE"),
+        new Int8Array([7]).toLocaleString("en"),
+        lengths,
+        "a".localeCompare("B", "en"),
+        "i".toLocaleUpperCase("tr"),
+        "I".toLocaleLowerCase("en"),
+      ].join("|");
+      if (result !== "${expected}") throw new Error(result);
+    `;
+
+      it("agrees with Node", async () => {
+        expect((await checkScript(getSource("1.234,5,6|7|2|-1|İ|i"))).message).toBeUndefined();
+      });
+
+      it("rejects another result", async () => {
+        expect((await checkScript(getSource("1.234,5,6|7|0|-1|İ|i"))).message).toContain(THREW);
+      });
+
+      it("stops at a case mapping of a string that the program doesn't write", async () => {
+        const source = 'String.fromCharCode(105).toLocaleUpperCase("tr");';
+        expect((await checkScript(source)).message).toContain("tla-ts can't");
+      });
+    },
+  );
+
+  describe.runIf(Reflect.has(globalThis, "Temporal"))(
+    "records the Intl objects of subclasses, computed option names, and locales the host gives back",
+    () => {
+      const getSource = (expected: string) => `
+      const key = "style";
+      class Formatter extends Intl.NumberFormat {}
+      const result = [
+        new Formatter("de-DE").format(1234.5),
+        new Intl.NumberFormat("en", { [key]: "percent" }).format(0.5),
+        new Intl.NumberFormat("en").format("abc"),
+        Intl.getCanonicalLocales(new Intl.NumberFormat().resolvedOptions().locale).join(),
+        new Intl.NumberFormat("en", { style: "currency", currency: "USD", currencySign: "accounting", signDisplay: "never" }).format(-5),
+      ].join("|");
+      if (result !== "${expected}") throw new Error(result);
+    `;
+
+      it("agrees with Node", async () => {
+        expect(
+          (await checkScript(getSource("1.234,5|50%|NaN|en-US|$5.00"))).message,
+        ).toBeUndefined();
+      });
+
+      it("rejects another result", async () => {
+        expect((await checkScript(getSource("1.234,5|50%|NaN|en-US|($5.00)"))).message).toContain(
+          THREW,
+        );
+      });
+
+      it("stops at a locale that the program joins of parts", async () => {
+        const source = 'new Intl.NumberFormat(["d", "e"].join("")).format(1);';
+        expect((await checkScript(source)).message).toContain("tla-ts can't");
+      });
+    },
+  );
+
+  describe.runIf(Reflect.has(globalThis, "Temporal"))(
+    "gives Date's locale strings through Intl.DateTimeFormat",
+    () => {
+      const getSource = (expected: string) => `
+      const date = new Date(0);
+      const result = [
+        date.toLocaleString("en-US", { timeZone: "UTC" }),
+        date.toLocaleDateString("en-US", { month: "long" }),
+        date.toLocaleTimeString("en-US", { hour: "numeric" }),
+        new Date(Number.NaN).toLocaleString("en-US"),
+      ].join("|");
+      if (result !== "${expected}") throw new Error(result);
+    `;
+
+      it("agrees with Node", async () => {
+        expect(
+          (await checkScript(getSource("1/1/1970, 12:00:00 AM|January|12 AM|Invalid Date")))
+            .message,
+        ).toBeUndefined();
+      });
+
+      it("rejects another result", async () => {
+        expect(
+          (await checkScript(getSource("1/1/1970, 12:00:00 PM|January|12 AM|Invalid Date")))
+            .message,
+        ).toContain(THREW);
+      });
+
+      it("stops at a time value that the program doesn't write", async () => {
+        const source = 'new Date("abcd".length * 1000).toLocaleString("en-US");';
+        expect((await checkScript(source)).message).toContain("tla-ts can't");
+      });
+    },
+  );
+
+  describe.runIf(Reflect.has(globalThis, "Temporal"))(
+    "records the values that a program's arithmetic of literals makes",
+    () => {
+      const getSource = (expected: string) => `
+      const result = [
+        new Intl.NumberFormat("en").format(2 ** 10),
+        new Intl.DurationFormat("en").format({ years: 2 ** 32 - 1 }),
+        new Intl.NumberFormat("en").format(Number.MAX_SAFE_INTEGER),
+      ].join("|");
+      if (result !== "${expected}") throw new Error(result);
+    `;
+
+      it("agrees with Node", async () => {
+        const expected = "1,024|4,294,967,295 yrs|9,007,199,254,740,991";
+        expect((await checkScript(getSource(expected))).message).toBeUndefined();
+      });
+
+      it("rejects another result", async () => {
+        const expected = "1,024|4,294,967,295 yrs|9,007,199,254,740,990";
+        expect((await checkScript(getSource(expected))).message).toContain(THREW);
+      });
+
+      it("stops at a value that arithmetic of a computed value makes", async () => {
+        const source = 'new Intl.NumberFormat("en").format("abc".length ** 10);';
+        expect((await checkScript(source)).message).toContain("tla-ts can't");
+      });
+    },
+  );
+
+  describe.runIf(Reflect.has(globalThis, "Temporal"))(
+    "throws a range's TypeError for a Temporal object and a time value before its RangeError",
+    () => {
+      const getSource = (expected: string) => `
+      const format = new Intl.DateTimeFormat("en");
+      let errors = "";
+      for (const run of [
+        () => format.formatRange({ valueOf: () => Number.NaN }, new Temporal.PlainDate(1970, 1, 1)),
+        () => format.formatRange(Number.NaN, 0),
+      ]) {
+        try {
+          run();
+        } catch (error) {
+          errors += (error as Error).name + ";";
+        }
+      }
+      if (errors !== "${expected}") throw new Error(errors);
+    `;
+
+      it("agrees with Node", async () => {
+        expect((await checkScript(getSource("TypeError;RangeError;"))).message).toBeUndefined();
+      });
+
+      it("rejects another result", async () => {
+        expect((await checkScript(getSource("RangeError;RangeError;"))).message).toContain(THREW);
+      });
+
+      it("stops at a range of time values that the program doesn't write", async () => {
+        const source = 'new Intl.DateTimeFormat("de").formatRange(0, "abcd".length * 1000);';
+        expect((await checkScript(source)).message).toContain("tla-ts can't");
+      });
+    },
+  );
+
+  describe.runIf(Reflect.has(globalThis, "Temporal"))(
+    "formats the Temporal objects that a program computes through the host's recorded English patterns",
+    () => {
+      const getSource = (expected: string) => `
+      const date = new Temporal.PlainDate(2000, 5, [2].length);
+      let error = "none";
+      try {
+        new Intl.DateTimeFormat("en", { month: "long" }).format(date.toPlainYearMonth());
+      } catch (caught) {
+        error = (caught as Error).name;
+      }
+      const result = [
+        new Intl.DateTimeFormat("en").format(date),
+        new Intl.DateTimeFormat("en", { month: "long" }).format(date.withCalendar("gregory").toPlainYearMonth()),
+        new Intl.DateTimeFormat("en", { hour: "numeric" }).format(new Temporal.PlainTime([3].length)),
+        error,
+      ].join("|");
+      if (result !== "${expected}") throw new Error(result);
+    `;
+
+      it("agrees with Node", async () => {
+        expect(
+          (await checkScript(getSource("5/1/2000|May|1 AM|RangeError"))).message,
+        ).toBeUndefined();
+      });
+
+      it("rejects another result", async () => {
+        expect((await checkScript(getSource("5/1/2000|May|1 PM|RangeError"))).message).toContain(
+          THREW,
+        );
+      });
+
+      it("stops at a locale whose patterns the table leaves out", async () => {
+        const source =
+          'new Intl.DateTimeFormat("de").format(new Temporal.PlainDate(2000, 5, [2].length));';
+        expect((await checkScript(source)).message).toContain("tla-ts can't");
+      });
+    },
+  );
+
+  describe.runIf(Reflect.has(globalThis, "Temporal"))(
+    "throws a RangeError where a Temporal object's calendar isn't its English formatter's",
+    () => {
+      const getSource = (expected: string) => `
+      const calendar = ["greg", "ory"].join("");
+      let errors = "";
+      for (const make of [
+        () => new Temporal.PlainDate(2000, 5, 2, "hebrew").toLocaleString(),
+        () => new Temporal.PlainDate(2000, 5, 2, "hebrew").toPlainYearMonth().toLocaleString("en"),
+        () => new Temporal.PlainDate(2000, 5, 2, "hebrew").toLocaleString("en", { timeStyle: "short" }),
+      ]) {
+        try {
+          make();
+        } catch (error) {
+          errors += (error as Error).name + ";";
+        }
+      }
+      const result = [new Temporal.PlainDate(2000, 5, 2, calendar).toLocaleString(), errors].join("|");
+      if (result !== "${expected}") throw new Error(result);
+    `;
+
+      it("agrees with Node", async () => {
+        const expected = "5/2/2000|RangeError;RangeError;TypeError;";
+        expect((await checkScript(getSource(expected))).message).toBeUndefined();
+      });
+
+      it("rejects another result", async () => {
+        const expected = "5/2/2000|RangeError;RangeError;RangeError;";
+        expect((await checkScript(getSource(expected))).message).toContain(THREW);
+      });
+
+      it("stops at a calendar option", async () => {
+        const source =
+          'new Temporal.PlainDate(2000, 5, [2].length).toLocaleString("en", { calendar: "hebrew" });';
+        expect((await checkScript(source)).message).toContain("tla-ts can't");
+      });
+    },
+  );
 
   describe("gives each error V8's own stack accessor", () => {
     const getSource = (expected: string) => `
@@ -1339,7 +2323,7 @@ describe("compiles scripts by specializing ESCore", () => {
         "JSON.stringify(error)",
       ];
       for (const read of reads) {
-        const source = `try { (null as unknown as { x: number }).x; } catch (error) { ${read}; }`;
+        const source = `try { (null as unknown as Record<string, number>)[{} as unknown as string]; } catch (error) { ${read}; }`;
         expect((await checkScript(source)).message).toContain(
           "tla-ts can't read the message that Node writes for an error it throws",
         );
@@ -1359,6 +2343,55 @@ describe("compiles scripts by specializing ESCore", () => {
 
     it("rejects another result", async () => {
       expect((await checkScript(getSource("3,1"))).message).toContain(THREW);
+    });
+  });
+
+  describe("defines a static method named constructor, which TypeScript parses as a constructor", () => {
+    const getSource = (expected: string) => `
+      const A = class {
+        static constructor() { return 1; }
+        x = 0;
+        constructor() { this.x = 2; }
+      } as unknown as { new (): { x: number }; constructor(): number; prototype: object };
+      const B = class {
+        constructor() {}
+        static constructor(value: number) { return value * 2; }
+      } as unknown as { constructor(value: number): number };
+      const result = [
+        A.constructor(),
+        new A().x,
+        Object.getOwnPropertyNames(A).join(),
+        A.constructor.name,
+        (A.prototype as { constructor: unknown }).constructor === A,
+        B.constructor(4),
+        String(A.constructor),
+        Object.getOwnPropertyDescriptor(A, "constructor")?.enumerable,
+      ].join();
+      if (result !== "${expected}") throw new Error(result);
+    `;
+
+    it("agrees with Node", async () => {
+      expect(
+        (
+          await checkScript(
+            getSource(
+              "1,2,length,name,prototype,constructor,constructor,true,8,constructor() { return 1; },false",
+            ),
+          )
+        ).message,
+      ).toBeUndefined();
+    });
+
+    it("rejects another result", async () => {
+      expect(
+        (
+          await checkScript(
+            getSource(
+              "1,2,length,name,prototype,constructor,constructor,false,8,constructor() { return 1; },false",
+            ),
+          )
+        ).message,
+      ).toContain(THREW);
     });
   });
 
@@ -1438,6 +2471,71 @@ describe("compiles scripts by specializing ESCore", () => {
     });
   });
 
+  // A .js file, as Node's type stripping rejects a function declaration that an if clause is.
+  describe("scopes an if clause's function declaration to a block of its own outside strict mode", () => {
+    const getSource = (expected: string) => `
+      const result = (function () {
+        let shadowed = 1;
+        if (true) function shadowed() {}
+        if (false);
+        else function shadowed() {}
+        return String(shadowed);
+      })();
+      if (result !== "${expected}") throw new Error(result);
+    `;
+
+    it("agrees with Node", async () => {
+      expect((await checkScript(getSource("1"), false, "", "spec.js")).message).toBeUndefined();
+    });
+
+    it("rejects another result", async () => {
+      expect(
+        (await checkScript(getSource("function shadowed() {}"), false, "", "spec.js")).message,
+      ).toContain(THREW);
+    });
+  });
+
+  describe("assigns each key of a for-in statement to the identifier let outside strict mode", () => {
+    const getSource = (expected: string) => `
+      var let;
+      for (let in { key: 1 });
+      const inner = (function () {
+        var let;
+        for (let in { first: 1, last: 2 });
+        return let;
+      })();
+      const result = [let, inner].join();
+      if (result !== "${expected}") throw new Error(result);
+    `;
+
+    it("agrees with Node", async () => {
+      expect((await checkScript(getSource("key,last"), false)).message).toBeUndefined();
+    });
+
+    it("rejects another result", async () => {
+      expect((await checkScript(getSource("key,first"), false)).message).toContain(THREW);
+    });
+  });
+
+  describe("runs a var's initializer in a for-in head before its expression, as Annex B does", () => {
+    const getSource = (expected: string) => `
+      let effects = 0;
+      let stored;
+      for (var key = (++effects, -1) in ((stored = key), { first: 0, last: 1 }));
+      for (var named = function () {} in {});
+      const result = [stored, effects, key, named.name].join();
+      if (result !== "${expected}") throw new Error(result);
+    `;
+
+    it("agrees with Node", async () => {
+      expect((await checkScript(getSource("-1,1,last,named"), false)).message).toBeUndefined();
+    });
+
+    it("rejects another result", async () => {
+      expect((await checkScript(getSource(",1,last,named"), false)).message).toContain(THREW);
+    });
+  });
+
   describe("models the realm of the host that compiles it", () => {
     const getSource = (expected: string) => `
       const result = [
@@ -1497,6 +2595,36 @@ describe("compiles scripts by specializing ESCore", () => {
 
   // Node runs a .ts file with its types stripped to whitespace, as its stripTypeScriptTypes gives,
   // and rejects the syntax that only a transform could remove.
+  describe("starts a static method's source text after static, as V8 does", () => {
+    const getSource = (expected: string) => `
+      class Point {
+        static make(n: number): number { return n; }
+        public static async load(): Promise<void> {}
+        static *keys() {}
+        static get origin(): number { return 0; }
+      }
+      const origin = Object.getOwnPropertyDescriptor(Point, "origin")!.get!;
+      const result = JSON.stringify([Point.make, Point.load, Point.keys, origin].map(String));
+      if (result !== ${JSON.stringify(expected)}) throw new Error(result);
+    `;
+    const expected = JSON.stringify([
+      "make(n        )         { return n; }",
+      "async load()                {}",
+      "*keys() {}",
+      "get origin()         { return 0; }",
+    ]);
+
+    it("agrees with Node", async () => {
+      expect((await checkScript(getSource(expected))).message).toBeUndefined();
+    });
+
+    it("rejects another result", async () => {
+      expect(
+        (await checkScript(getSource(expected.replace("make(", "static make(")))).message,
+      ).toContain(THREW);
+    });
+  });
+
   describe("gives each function the source text that Node strips its types from", () => {
     const program = [
       "const arrow = <T,>(value: T, rest?: number): T => value;",
@@ -1544,6 +2672,18 @@ describe("compiles scripts by specializing ESCore", () => {
       );
       expect((await checkScript("namespace N { export type T = 1; }")).message).toBeUndefined();
     });
+
+    it.each([
+      ["an object's", "const holder = { get a(PARAMETER) { return 1; } };\nholder.a;"],
+      ["a class's", "class Holder { get a(PARAMETER) { return 1; } }\nnew Holder().a;"],
+    ])("rejects a parameter of %s getter as Node does, but this", async (_title, source) => {
+      expect((await checkScript(source.replace("PARAMETER", "value = null"))).message).toContain(
+        "A `get` accessor cannot have parameters",
+      );
+      expect(
+        (await checkScript(source.replace("PARAMETER", "this: unknown"))).message,
+      ).toBeUndefined();
+    });
   });
 
   describe("keeps a date's local time as a host in UTC does", () => {
@@ -1578,6 +2718,137 @@ describe("compiles scripts by specializing ESCore", () => {
             .message,
         ).toContain(THREW);
       });
+    });
+  });
+
+  describe("throws V8's message for an error that ESCore throws itself", () => {
+    const getSource = (expected: string) => `
+declare const undeclared: number;
+const read = (run: () => unknown) => {
+  try {
+    run();
+    return "none";
+  } catch (error) {
+    return \`\${(error as Error).constructor.name}: \${(error as Error).message}\`;
+  }
+};
+const nothing = null as unknown as { x: number };
+const result = [
+  read(() => undeclared),
+  read(() => nothing.x),
+  read(() => (nothing as unknown as Record<symbol, number>)[Symbol("d")]),
+  read(() => { (undefined as unknown as { x: number }).x = 1; }),
+  read(() => { late; let late = 1; }),
+  read(() => { const fixed = 1; (fixed as number) = 2; }),
+  read(() => "a".repeat(-1.5)),
+  read(() => String.fromCodePoint(65.5)),
+  read(() => [].reduce((a: number) => a)),
+  read(() => (1n as unknown as number) + 1),
+  read(() => 1n / 0n),
+  read(() => \`\${Symbol("q")}\`),
+  read(() => String.prototype.trim.call(null)),
+  read(() => Object.keys(null as unknown as object)),
+  read(() => Object.setPrototypeOf(null, {})),
+].join("|");
+      if (result !== ${JSON.stringify(expected)}) throw new Error(result);
+    `;
+    const expected =
+      "ReferenceError: undeclared is not defined|TypeError: Cannot read properties of null (reading 'x')|TypeError: Cannot read properties of null (reading 'Symbol(d)')|TypeError: Cannot set properties of undefined (setting 'x')|ReferenceError: Cannot access 'late' before initialization|TypeError: Assignment to constant variable.|RangeError: Invalid count value: -1.5|RangeError: Invalid code point 65.5|TypeError: Reduce of empty array with no initial value|TypeError: Cannot mix BigInt and other types, use explicit conversions|RangeError: Division by zero|TypeError: Cannot convert a Symbol value to a string|TypeError: String.prototype.trim called on null or undefined|TypeError: Cannot convert undefined or null to object|TypeError: Object.setPrototypeOf called on null or undefined";
+
+    it("agrees with Node", async () => {
+      expect((await checkScript(getSource(expected))).message).toBeUndefined();
+    });
+
+    it("rejects another result", async () => {
+      expect(
+        (await checkScript(getSource(expected.replace("(reading 'x')", "(reading x)")))).message,
+      ).toContain(THREW);
+    });
+  });
+
+  describe("throws V8's message for a refused write, an iteration, and a typed array's bounds", () => {
+    const getSource = (expected: string) => `
+const read = (run: () => unknown) => {
+  try {
+    run();
+    return "none";
+  } catch (error) {
+    return (error as Error).message;
+  }
+};
+type Loose = Record<string | symbol, unknown>;
+const frozen = Object.freeze({ a: 1 }) as Loose;
+const closed = Object.preventExtensions({}) as Loose;
+const getter = { get a() { return 1; } } as Loose;
+const number = 5 as unknown as number[];
+const result = [
+  read(() => { frozen.a = 2; }),
+  read(() => { closed.b = 1; }),
+  read(() => { getter.a = 2; }),
+  read(() => { (Object.freeze([]) as number[]).push(1); }),
+  read(() => Object.defineProperty(frozen, "a", { value: 2 })),
+  read(() => [...number]),
+  read(() => { for (const item of number) void item; }),
+  read(() => Math.max(...number)),
+  read(() => new Uint8Array(new ArrayBuffer(4), 8)),
+  read(() => new Int32Array(new ArrayBuffer(4), 2)),
+  read(() => new Uint8Array(4).set([1], -1)),
+  read(() => new Uint8Array(-1)),
+].join("|");
+      if (result !== ${JSON.stringify(expected)}) throw new Error(result);
+    `;
+    const expected =
+      "Cannot assign to read only property 'a' of object '#<Object>'|Cannot add property b, object is not extensible|Cannot set property a of #<Object> which has only a getter|Cannot add property 0, object is not extensible|Cannot redefine property: a|number is not iterable|number is not iterable|Spread syntax requires ...iterable[Symbol.iterator] to be a function|Start offset 8 is outside the bounds of the buffer|start offset of Int32Array should be a multiple of 4|offset is out of bounds|Invalid typed array length: -1";
+
+    it("agrees with Node", async () => {
+      expect((await checkScript(getSource(expected))).message).toBeUndefined();
+    });
+
+    it("rejects another result", async () => {
+      expect(
+        (await checkScript(getSource(expected.replace("number is", "5 is")))).message,
+      ).toContain(THREW);
+    });
+  });
+
+  describe("names a callee that isn't callable by its text, as V8 does", () => {
+    const getSource = (expected: string) => `
+const read = (run: () => unknown) => {
+  try {
+    run();
+    return "none";
+  } catch (error) {
+    return (error as Error).message;
+  }
+};
+const box = { f: 1, inner: { g: "x" } } as unknown as { f: () => void; inner: { g: () => void } };
+const value = 5 as unknown as () => void;
+const Made = 1 as unknown as new () => object;
+const result = [read(() => box.f()), read(() => box.inner.g()), read(() => value()), read(() => new Made()), read(() => box.f?.())].join("|");
+      if (result !== ${JSON.stringify(expected)}) throw new Error(result);
+    `;
+    const expected =
+      "box.f is not a function|box.inner.g is not a function|value is not a function|Made is not a constructor|box.f is not a function";
+
+    it("agrees with Node", async () => {
+      expect((await checkScript(getSource(expected))).message).toBeUndefined();
+    });
+
+    it("rejects another result", async () => {
+      expect(
+        (await checkScript(getSource(expected.replace("value is", "value() is")))).message,
+      ).toContain(THREW);
+    });
+  });
+
+  describe("names the part of ECMAScript that ESCore leaves out where it stops", () => {
+    it("stops at Atomics.wait with no agent to notify it", async () => {
+      const result = await checkScript(
+        "Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0);",
+      );
+      expect(result.message).toContain(
+        "tla-ts can't model Atomics.wait with no agent to notify it",
+      );
     });
   });
 
@@ -1876,6 +3147,263 @@ if (view !== "${expected}") throw new Error(view);
     });
   });
 
+  describe("runs an array literal of thousands of elements", () => {
+    const elements = Array.from({ length: 5000 }, (_, index) =>
+      index === 2500 ? '...["x", "y"]' : index === 100 ? "" : String(index % 10),
+    ).join(", ");
+    const getSource = (expected: string) => `
+      const list = [${elements}];
+      const result = [list.length, list[99], 100 in list, list[2500], list[2501], list[2502], list[4999]].join();
+      if (result !== "${expected}") throw new Error(result);
+    `;
+
+    it("agrees with Node", async () => {
+      expect((await checkScript(getSource("5001,9,false,x,y,1,8"))).message).toBeUndefined();
+    }, 600_000);
+
+    it("rejects another result", async () => {
+      expect((await checkScript(getSource("5001,9,false,x,y,2,8"))).message).toContain(THREW);
+    }, 600_000);
+  });
+
+  describe("joins an array of thousands of elements", () => {
+    const getSource = (expected: string) => `
+      const list = [${Array.from({ length: 5000 }, (_, index) => index % 7).join(", ")}];
+      const result = [list.join("-").length, list.join().slice(-9)].join();
+      if (result !== "${expected}") throw new Error(result);
+    `;
+
+    it("agrees with Node", async () => {
+      expect((await checkScript(getSource("9999,4,5,6,0,1"))).message).toBeUndefined();
+    }, 600_000);
+
+    it("rejects another result", async () => {
+      expect((await checkScript(getSource("9999,4,5,6,0,2"))).message).toContain(THREW);
+    }, 600_000);
+  });
+
+  describe("defines a class of thousands of elements", () => {
+    const body = Array.from(
+      { length: 1000 },
+      (_, index) =>
+        `f${index} = ${index}; #p${index} = ${index * 2}; m${index}() { return this.#p${index}; } static s${index}() { return ${index * 3}; }`,
+    ).join("\n");
+    const getSource = (expected: string) => `
+      class C {
+        ${body}
+        static ready = 0;
+        static { C.ready = 7; }
+        get g() { return this.#p999 + this.f999; }
+      }
+      const c = new C() as unknown as Record<string, () => number>;
+      const methods = C as unknown as Record<string, () => number>;
+      const result = [C.ready, c.f0, c.f999, c.m500(), methods.s999(), c.g, Object.keys(c).length, Object.getOwnPropertyNames(C.prototype).length].join();
+      if (result !== "${expected}") throw new Error(result);
+    `;
+
+    it("agrees with Node", async () => {
+      expect(
+        (await checkScript(getSource("7,0,999,1000,2997,2997,1000,1002"))).message,
+      ).toBeUndefined();
+    }, 600_000);
+
+    it("rejects another result", async () => {
+      expect((await checkScript(getSource("7,0,999,1000,2997,2997,1000,1001"))).message).toContain(
+        THREW,
+      );
+    }, 600_000);
+  });
+
+  describe("serializes thousands of keys, elements, and replacer names to JSON", () => {
+    const getSource = (expected: string) => `
+      const replacer: number[] = [];
+      for (let index = 0; index < 4096; index++) replacer.push(index);
+      const list: (number | undefined)[] = [];
+      for (let index = 0; index < 3000; index++) list.push(index % 3 === 0 ? undefined : index);
+      const wide: Record<string, number> = {};
+      for (let index = 0; index < 3000; index++) wide["k" + index] = index;
+      const result = [
+        JSON.stringify({ foopy: "FAIL", "4093": 17 }, replacer),
+        JSON.stringify(list).length,
+        JSON.stringify(list, null, 1).length,
+        JSON.stringify(wide).length,
+        JSON.stringify(wide).slice(-12),
+        JSON.stringify(list).slice(0, 12),
+      ].join();
+      if (result !== '${expected}') throw new Error(result);
+    `;
+
+    it("agrees with Node", async () => {
+      expect(
+        (await checkScript(getSource('{"4093":17},14263,20264,36781,k2999":2999},[null,1,2,nu')))
+          .message,
+      ).toBeUndefined();
+    }, 600_000);
+
+    it("rejects another result", async () => {
+      expect(
+        (await checkScript(getSource('{"4093":17},14263,20264,36782,k2999":2999},[null,1,2,nu')))
+          .message,
+      ).toContain(THREW);
+    }, 600_000);
+  });
+
+  describe("fills an array of thousands of elements", () => {
+    const getSource = (expected: string) => `
+      const list = new Array<number>(5000).fill(3);
+      list.fill(1, 2, 4900);
+      const result = [list.length, list[1], list[2], list[4899], list[4900], list.join("").length, list.join("").slice(-4)].join();
+      if (result !== "${expected}") throw new Error(result);
+    `;
+
+    it("agrees with Node", async () => {
+      expect((await checkScript(getSource("5000,3,1,1,3,5000,3333"))).message).toBeUndefined();
+    }, 600_000);
+
+    it("rejects another result", async () => {
+      expect((await checkScript(getSource("5000,3,1,1,1,5000,3333"))).message).toContain(THREW);
+    }, 600_000);
+  });
+
+  describe("visits the present elements of an array of thousands", () => {
+    const getSource = (expected: string) => `
+      const list = new Array<number>(5000).fill(2);
+      delete list[10];
+      delete list[4000];
+      const result = [
+        list.reduce((total, item) => total + item, 0),
+        list.reduceRight((total, item) => total + item),
+        list.indexOf(2, 11),
+        list.lastIndexOf(2, 4000),
+        list.map((item) => item * 2).filter((item) => item === 4).length,
+        ([] as number[]).concat(list, list).length,
+        list.some((_, index) => index === 4999),
+        list.every((item) => item === 2),
+      ].join();
+      if (result !== "${expected}") throw new Error(result);
+    `;
+
+    it("agrees with Node", async () => {
+      expect(
+        (await checkScript(getSource("9996,9996,11,3999,4998,10000,true,true"))).message,
+      ).toBeUndefined();
+    }, 600_000);
+
+    it("rejects another result", async () => {
+      expect(
+        (await checkScript(getSource("9996,9996,11,4000,4998,10000,true,true"))).message,
+      ).toContain(THREW);
+    }, 600_000);
+  });
+
+  describe("gives a static method's source text from the token after static", () => {
+    const getSource = (expected: string) => `
+      class A {
+        static m() { return 1; }
+        static async n() {}
+        static /* c */ get g() { return 1; }
+        static *gen() {}
+        m2() {}
+        static async *ag() {}
+        static #p() {}
+        static pm() { return A.#p; }
+      }
+      const getter = Object.getOwnPropertyDescriptor(A, "g")?.get;
+      const result = [A.m, A.n, getter, A.gen, A.prototype.m2, A.ag, A.pm()].map(String).join("|");
+      if (result !== "${expected}") throw new Error(result);
+    `;
+
+    it("agrees with Node", async () => {
+      expect(
+        (
+          await checkScript(
+            getSource(
+              "m() { return 1; }|async n() {}|get g() { return 1; }|*gen() {}|m2() {}|async *ag() {}|#p() {}",
+            ),
+          )
+        ).message,
+      ).toBeUndefined();
+    });
+
+    it("rejects another result", async () => {
+      expect(
+        (
+          await checkScript(
+            getSource(
+              "static m() { return 1; }|async n() {}|get g() { return 1; }|*gen() {}|m2() {}|async *ag() {}|#p() {}",
+            ),
+          )
+        ).message,
+      ).toContain(THREW);
+    });
+  });
+
+  describe("runs a script of thousands of statements and global vars", () => {
+    const getSource = (expected: number) => `
+      let count = 0;
+      ${Array.from({ length: 3000 }, (_, index) => `var global${index};\ncount += ${index % 3};`).join("\n")}
+      if (count !== ${expected} || global2999 !== undefined) throw new Error(String(count));
+    `;
+
+    it("agrees with Node", async () => {
+      expect((await checkScript(getSource(3000), false)).message).toBeUndefined();
+    }, 600_000);
+
+    it("rejects another result", async () => {
+      expect((await checkScript(getSource(2999), false)).message).toContain(THREW);
+    }, 600_000);
+  });
+
+  describe("compiles a program whose strings run to a million characters", () => {
+    // Escapes in a string's source and characters that a TLA+ string can't hold, so that the
+    // program's source text and the code units of a string are each one long definition.
+    const getSource = (escapes: number, wides: number, expected: number) => `
+      const escaped = "${'ab\\n\\"'.repeat(escapes)}";
+      const wide = "${"é".repeat(wides)}";
+      if (escaped.length + wide.length !== ${expected}) throw new Error(String(escaped.length));
+    `;
+
+    it("agrees with Node", async () => {
+      expect((await checkScript(getSource(300_000, 20_000, 1_220_000))).message).toBeUndefined();
+    }, 600_000);
+
+    it("rejects another result", async () => {
+      expect((await checkScript(getSource(300_000, 20_000, 1_220_001))).message).toContain(THREW);
+    }, 600_000);
+
+    it("compiles it on the stack that test262's runner gives Node", async () => {
+      const compiler = new Worker(
+        `const { register } = require("node:module");
+        const { parentPort, workerData } = require("node:worker_threads");
+        register("data:text/javascript," + encodeURIComponent(\`export const resolve = (specifier, context, next) =>
+          next(specifier, context).catch((error) => (specifier.startsWith(".") ? next(specifier + ".ts", context) : Promise.reject(error)));\`));
+        Promise.all([
+          import(workerData.source + "/typescript/spec/compile.ts"),
+          import(workerData.source + "/typescript/spec/prepare.ts"),
+        ]).then(([compile, prepare]) => {
+          try {
+            compile.compileToEscore(workerData.program, "spec.ts", prepare.prepareRuntime(workerData.directory), false);
+            parentPort.postMessage("compiled");
+          } catch (error) {
+            parentPort.postMessage(error.message);
+          }
+        });`,
+        {
+          eval: true,
+          workerData: {
+            source: pathToFileURL(join(import.meta.dirname, "../../src")).href,
+            directory: join(import.meta.dirname, "../../ecmascript"),
+            program: `"use strict";\n${getSource(300_000, 200_000, 1_400_000)}`,
+          },
+          resourceLimits: { stackSizeMb: 4 },
+        },
+      );
+      const message = await new Promise((resolve) => compiler.once("message", resolve));
+      await compiler.terminate();
+      expect(message).toBe("compiled");
+    }, 600_000);
+  });
+
   describe("checks the names and levels of a program's code", () => {
     it("rejects a definition that names an unknown operator", async () => {
       expect(
@@ -2059,6 +3587,24 @@ if (view !== "${expected}") throw new Error(view);
       });
     });
 
+    // V8 places this SyntaxError on line 0, outside the file.
+    describe("rejects a rest element's initializer in a for-await-of, as V8's parse does", () => {
+      const getSource = (pattern: string) =>
+        `async function walk() {\n  for await (const [...${pattern}] of []) {}\n}\nwalk();\n`;
+
+      it("agrees with Node", async () => {
+        expect(isNodeParsed(getSource("[x] = []"), false)).toBe(false);
+        expect((await checkScript(getSource("[x] = []"), false)).message).toContain(
+          "SyntaxError: Invalid left-hand side in for-await-of loop: Must have a single binding.",
+        );
+      });
+
+      it("runs the rest element without one", async () => {
+        expect(isNodeParsed(getSource("[x]"), false)).toBe(true);
+        expect((await checkScript(getSource("[x]"), false)).message).toBeUndefined();
+      });
+    });
+
     describe("runs a module that V8's parse accepts", () => {
       const getSource = (expected: number) =>
         `export {};\nvar box = { await: 1 };\nbox.await = box.await + 1;\nif (box.await !== ${expected}) throw new Error("seen " + box.await);\n`;
@@ -2091,6 +3637,25 @@ if (view !== "${expected}") throw new Error(view);
 
     // TypeScript reports a var in a catch block that redeclares the catch's parameter, which Annex
     // B allows and Node runs.
+    // TypeScript's parser reads a let that a line break follows as a declaration, where it's a with
+    // statement's body, which JavaScript reads as the name let.
+    // A .js file, as Node's type stripping rejects a with statement.
+    describe("reads a let that a line break follows in a with statement as a name", () => {
+      const getSource = (expected: string) =>
+        `var seen = [];\nvar scope = { get let() { seen.push("read"); return 1; } };\nwith (scope) let // ASI\n{}\nwith (scope) let\nx = 2;\nif (seen.join() + x !== "${expected}") throw new Error(seen.join() + x);\n`;
+
+      it("agrees with Node", async () => {
+        expect(() => runInNewContext(getSource("read,read2"))).not.toThrow();
+        expect(
+          (await checkScript(getSource("read,read2"), false, "", "spec.js")).message,
+        ).toBeUndefined();
+      });
+
+      it("rejects another result", async () => {
+        expect((await checkScript(getSource("2"), false, "", "spec.js")).message).toContain(THREW);
+      });
+    });
+
     describe("a redeclaration that Annex B allows", () => {
       const getCaught = (expected: number) =>
         `try { throw 1; } catch (caught) { var caught = 2; if (caught !== ${expected}) throw new Error("caught"); }\n`;

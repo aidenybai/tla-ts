@@ -1,7 +1,7 @@
 import { TlaModuleError } from "../errors";
 import { EXIT_STATUS } from "../exit-codes";
 import type { Builtin, Context } from "../evaluate";
-import { prettyPrint } from "../pretty-print";
+import { prettyPrint, prettyPrintT } from "../pretty-print";
 import {
   defineConstant,
   defineHigherOrderOperator,
@@ -15,26 +15,29 @@ import {
   overrideWithJava,
   toEnumeratedSet,
 } from "../builtins";
-import { getNamedRegisters, NAMED_REGISTER_PREFIX, type CheckerRuntime } from "../runtime";
-import { createActionRecord, setTlcValue } from "./tlcext-operators";
+import {
+  EMPTY_STATE,
+  getNamedRegisters,
+  NAMED_REGISTER_PREFIX,
+  type CheckerRuntime,
+} from "../runtime";
+import { createActionRecord, createTlcRecord, setTlcValue } from "./tlcext-operators";
 import { getRandomElement } from "./random";
 import {
   ANY_SET,
   createFunction,
   createSet,
+  createSortedFunction,
   createTuple,
-  createWrittenFunction,
+  combineFunctions,
   formatNormalizedCopies,
   formatValue,
   getSequenceElements,
-  getWrittenPairs,
-  isEqualLikeTlc,
   isFunctionValue,
   toFiniteFunction,
   toFiniteSet,
   type Value,
   rankString,
-  setFunctionClass,
 } from "../values";
 import { getFingerprintPolynomial } from "./fingerprint";
 import { zeroPad } from "./messages";
@@ -43,12 +46,20 @@ const formatCalendarVersion = (date: Date) =>
   `${date.getUTCFullYear()}.${zeroPad(date.getUTCMonth() + 1)}.${zeroPad(date.getUTCDate())}.${zeroPad(date.getUTCHours())}${zeroPad(date.getUTCMinutes())}${zeroPad(date.getUTCSeconds())}`;
 
 const getRegisterFunction = <Key extends Value>(registers: Map<Key, Value>) =>
-  createFunction([...registers].map(([key, value]): [Value, Value] => [key, createTuple([value])]));
+  createFunction(
+    [...registers].map((entry): [Value, Value] => [entry[0], createTuple([entry[1]])]),
+  );
 
-const createTlcRecord = (fields: [string, Value][]) =>
-  setFunctionClass(createWrittenFunction(fields), "record");
-
-const CHECKER_KEYS = new Set(["diameter", "generated", "distinct", "queue", "stats", "config"]);
+const CHECKER_KEYS = new Set([
+  "diameter",
+  "generated",
+  "distinct",
+  "queue",
+  "stats",
+  "config",
+  "all",
+  "all:named",
+]);
 const TLC_174_KEYS = new Set(["diameter", "distinct", "queue", "duration", "level"]);
 const CHECKER_KEYS_174 = new Set(["diameter", "distinct", "queue", "level"]);
 
@@ -60,14 +71,14 @@ const getRuntimeValue = (
   const isUndefined =
     runtime.version === "1.7.4"
       ? !TLC_174_KEYS.has(key) || (!runtime.isStarted && CHECKER_KEYS_174.has(key))
-      : !runtime.isStarted && CHECKER_KEYS.has(key);
+      : (!runtime.isStarted || state === EMPTY_STATE) && CHECKER_KEYS.has(key);
   if (isUndefined) throw new TlaModuleError(`TLCGet(${key}) was undefined.`);
   const simulated = runtime.getSimulationValue?.(key, state);
   if (simulated !== undefined) return simulated;
   const duration = Math.floor((Date.now() - runtime.startedAt) / 1000);
   switch (key) {
     case "level":
-      return state === undefined ? 0 : runtime.getLevel(state);
+      return state === undefined ? 0 : state === EMPTY_STATE ? 1 : runtime.getLevel(state);
     case "diameter":
       return runtime.diameter;
     case "generated":
@@ -117,7 +128,7 @@ const getRuntimeValue = (
       return getRegisterFunction(getNamedRegisters(runtime));
   }
   if (key.startsWith(NAMED_REGISTER_PREFIX)) {
-    const value = getNamedRegisters(runtime).get(key);
+    const value = state === EMPTY_STATE ? undefined : getNamedRegisters(runtime).get(key);
     if (value === undefined) throw new TlaModuleError(`TLCGet(${key}) was undefined.`);
     return value;
   }
@@ -126,14 +137,15 @@ const getRuntimeValue = (
 };
 
 const getTlcValue = (runtime: CheckerRuntime, key: Value, context: Context | undefined) => {
+  // Deviation from TLC: under -dfid, a register read or set before the search, as in ASSUME or Init, reaches a DFIDWorker that DFIDModelChecker hasn't created and throws a NullPointerException.
   if (typeof key === "number" && key >= 0) {
-    const value = runtime.registers.get(key);
+    const value = context?.state === EMPTY_STATE ? undefined : runtime.registers.get(key);
     if (value === undefined) throw new TlaModuleError(`TLCGet(${key}) was undefined.`);
     return value;
   }
   if (typeof key !== "string") {
     throw new TlaModuleError(
-      `The argument of TLCGet should be a nonnegative integer, but instead it is:\n${formatValue(key)}`,
+      `The argument of TLCGet should be a nonnegative integer, but instead it is:\n${prettyPrint(formatValue(key))}`,
     );
   }
   return getRuntimeValue(runtime, key, context?.state);
@@ -160,8 +172,11 @@ const normalizeDeeply = (value: Value): void => {
 const convertLikeTlcEval = (value: Value): Value => {
   if (typeof value !== "object") return value;
   switch (value.kind) {
-    case "ModelValue":
     case "Function":
+      return value.functionClass === undefined
+        ? value
+        : createSortedFunction(value.domain, value.range);
+    case "ModelValue":
     case "MixedSet":
     case "InfiniteSet":
     case "SequenceSet":
@@ -186,7 +201,9 @@ export const createTlcOperators = (
     return getValue(args, 1, "Print");
   }),
   defineOperator("PrintT", 1, (args) => {
-    print(prettyPrint(formatNormalizedCopies([getValue(args, 0, "PrintT")])[0]));
+    print(
+      prettyPrintT(formatNormalizedCopies([getValue(args, 0, "PrintT")])[0], runtime.hasUserFile),
+    );
     return true;
   }),
   defineOperator("Assert", 2, (args) => {
@@ -209,11 +226,7 @@ export const createTlcOperators = (
     const right = isFunctionValue(rightValue) ? toFiniteFunction(rightValue) : undefined;
     if (!left) throw createModuleArgumentError("first", "@@", "function", leftValue);
     if (!right) throw createModuleArgumentError("second", "@@", "function", rightValue);
-    const leftPairs = getWrittenPairs(left);
-    const addedPairs = getWrittenPairs(right).filter(
-      (pair) => !leftPairs.some((leftPair) => isEqualLikeTlc(pair[0], leftPair[0])),
-    );
-    return createWrittenFunction([...leftPairs, ...addedPairs]);
+    return combineFunctions(left, right);
   }),
   defineOperator("ToString", 1, (args) =>
     rankString(formatValue(getValue(args, 0, "ToString"), true)),
@@ -270,8 +283,9 @@ export const createTlcOperators = (
         ),
         "public static tlc2.value.impl.Value tlc2.module.TLCGetSet.TLCGetEval(tlc2.tool.impl.Tool,tla2sany.semantic.ExprOrOpArgNode[],tlc2.util.Context,tlc2.tool.TLCState,tlc2.tool.TLCState,int,tlc2.tool.coverage.CostModel)",
       ),
-  defineStateOperator("TLCSet", 2, (args) => {
-    setTlcValue(runtime, print, getValue(args, 0, "TLCSet"), getValue(args, 1, "TLCSet"));
+  // Deviation from TLC: TLCGetSet#TLCSet lacks a minLevel, so TLC evaluates a constant definition that sets a named register as it starts, before any checker holds the register, and drops the write.
+  defineStateOperator("TLCSet", 2, (args, context) => {
+    setTlcValue(runtime, getValue(args, 0, "TLCSet"), getValue(args, 1, "TLCSet"), context?.state);
     return true;
   }),
   defineConstant("Any", ANY_SET),

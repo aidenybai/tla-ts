@@ -52,7 +52,7 @@ export const getDependencies = (text: string) => [
     text
       .slice(text.indexOf("=="))
       .replace(/\\\*.*$/gm, "")
-      .replace(/"(?:[^"\\]|\\.)*"/g, '""')
+      .replace(/"[^"\\]*(?:\\.[^"\\]*)*"/g, '""')
       .match(/\b[A-Z][A-Za-z0-9_]*\b/g) ?? [],
   ),
 ];
@@ -94,39 +94,53 @@ const GATED_GROUPS = [
   "90-intl.tla",
 ];
 
-// String methods that make regular expressions, and the methods of collections and arrays that
-// give iterators, whose helpers, such as every and map, a program may call.
+// String methods that make regular expressions, the methods of collections and arrays that give
+// iterators, whose helpers, such as every and map, a program may call, the methods that give
+// promises, Date's method that gives a Temporal.Instant, the methods that format through Intl,
+// Intl's DurationFormat, which reads a duration as Temporal does, and its DateTimeFormat, which
+// formats a time value through Temporal's patterns and Date's fields.
 const EXTRA_TRIGGERS = new Map([
   ["83-regexp", ["match", "matchAll", "replace", "replaceAll", "search", "split"]],
   ["81-iterator.tla", ["values", "keys", "entries"]],
+  ["86-promise.tla", ["waitAsync", "disposeAsync", "asyncDispose"]],
+  [
+    "90-intl.tla",
+    [
+      "toLocaleString",
+      "toLocaleDateString",
+      "toLocaleTimeString",
+      "localeCompare",
+      "toLocaleLowerCase",
+      "toLocaleUpperCase",
+    ],
+  ],
+  ["89", ["toTemporalInstant", "DurationFormat", "DateTimeFormat"]],
+  ["82-date.tla", ["DateTimeFormat"]],
 ]);
 
-// ESCore's texts: ESCore.tla, its parts by file name, and the modules it extends by name, which a
-// host without ESCore's directory, such as a browser, is given.
+// The prototypes that every generator's and built-in iterator's prototype chain reaches, whose
+// methods a program calls without naming any global.
+const ITERATOR_PROTOTYPES = new Set(["IteratorPrototype", "AsyncIteratorPrototype"]);
+
+// What ESCore's parts give a library: the group of each definition that a part defines, the
+// words that reach each gated group, and the realm's properties with a string key, by the intrinsic
+// that holds each, as the property tables list them.
+export interface PartTables {
+  groups: [name: string, group: string][];
+  triggers: [group: string, words: string[]][];
+  properties: { owner: string; key: string }[];
+}
+
+// ESCore's texts that a library reads: ESCore.tla, the tables of its parts, and the modules it
+// extends by name, which a host without ESCore's directory, such as a browser, is given.
 export interface EscoreFiles {
   core: string;
-  parts: [name: string, text: string][];
+  tables: PartTables;
   modules: [name: string, text: string][];
 }
 
-export const readEscoreFiles = (directory: string): EscoreFiles => {
-  const files = process.getBuiltinModule("node:fs");
-  const path = process.getBuiltinModule("node:path");
-  const read = (...names: string[]) => files.readFileSync(path.join(directory, ...names), "utf8");
-  return {
-    core: read("ESCore.tla"),
-    parts: files
-      .readdirSync(path.join(directory, "parts"))
-      .filter((name) => name.endsWith(".tla"))
-      .map((name) => [name, read("parts", name)]),
-    modules: ["ESNumber", "ESBigNat"].map((name) => [name, read(`${name}.tla`)]),
-  };
-};
-
-export const createLibrary = (files: EscoreFiles): Library => {
-  const core = files.core;
-  const body = core.slice(core.lastIndexOf("\nRECURSIVE "), core.lastIndexOf("\n===="));
-  const parts = files.parts.map((part) => ({ group: getGroup(part[0]), text: part[1] }));
+const getPartTables = (files: [name: string, text: string][]): PartTables => {
+  const parts = files.map((part) => ({ group: getGroup(part[0]), text: part[1] }));
   const groupOf = new Map(
     parts.flatMap((part) =>
       splitDefinitions(part.text).flatMap((definition) => {
@@ -156,7 +170,67 @@ export const createLibrary = (files: EscoreFiles): Library => {
         triggers.get(groupOf.get(`${match[3]}Builtin`) ?? "")?.add(match[2]);
       }
     }
+    // The iterator prototypes' methods and accessors, such as map, Symbol.dispose and
+    // Symbol.toStringTag, by the word that names each.
+    for (const match of part.text.matchAll(
+      /\b(?:M|G)\("([A-Za-z]+)", (?:SV\("([^"]+)"\)|Sym([A-Za-z]+)), "([A-Za-z0-9]+)"/g,
+    )) {
+      if (ITERATOR_PROTOTYPES.has(match[1])) {
+        triggers
+          .get(groupOf.get(`${match[4]}Builtin`) ?? "")
+          ?.add(match[2] ?? `${match[3].charAt(0).toLowerCase()}${match[3].slice(1)}`);
+      }
+    }
   }
+  return {
+    groups: [...groupOf],
+    triggers: [...triggers].map((entry) => [entry[0], [...entry[1]]]),
+    properties: parts.flatMap((part) => [
+      ...[...part.text.matchAll(/\b(?:M|G|V|L)\("([A-Za-z0-9_]+)", SV\("([^"]+)"\)/g)].map(
+        (match) => ({
+          owner: match[1],
+          key: match[2],
+        }),
+      ),
+      ...[...part.text.matchAll(/GlobalLink\("[A-Za-z0-9_]+", N\("([^"]+)"\)\)/g)].map((match) => ({
+        owner: "GlobalObject",
+        key: match[1],
+      })),
+      // The globals that a table of names links: the native errors and the typed arrays.
+      ...[
+        ...part.text.matchAll(
+          /^(?:NativeErrors|[A-Z][A-Za-z0-9]*Names) ==\n?((?:.*\n)*?)(?=^\S)/gm,
+        ),
+      ].flatMap((table) =>
+        [...table[1].matchAll(/"([A-Z][A-Za-z0-9]*(?:Error|Array))"/g)].map((match) => ({
+          owner: "GlobalObject",
+          key: match[1],
+        })),
+      ),
+    ]),
+  };
+};
+
+export const readEscoreFiles = (directory: string): EscoreFiles => {
+  const files = process.getBuiltinModule("node:fs");
+  const path = process.getBuiltinModule("node:path");
+  const read = (...names: string[]) => files.readFileSync(path.join(directory, ...names), "utf8");
+  return {
+    core: read("ESCore.tla"),
+    tables: getPartTables(
+      files
+        .readdirSync(path.join(directory, "parts"))
+        .filter((name) => name.endsWith(".tla"))
+        .map((name) => [name, read("parts", name)]),
+    ),
+    modules: ["ESNumber", "ESBigNat"].map((name) => [name, read(`${name}.tla`)]),
+  };
+};
+
+export const createLibrary = (files: EscoreFiles): Library => {
+  const core = files.core;
+  const body = core.slice(core.lastIndexOf("\nRECURSIVE "), core.lastIndexOf("\n===="));
+  const groupOf = new Map(files.tables.groups);
   const definitions = new Map<string, Definition>();
   const order: string[] = [];
   for (const text of splitDefinitions(body.slice(body.indexOf("\n", 1)))) {
@@ -173,27 +247,6 @@ export const createLibrary = (files: EscoreFiles): Library => {
     order.push(match[1]);
   }
   const modules = new Map(files.modules);
-  const properties = parts.flatMap((part) => [
-    ...[...part.text.matchAll(/\b(?:M|G|V|L)\("([A-Za-z0-9_]+)", SV\("([^"]+)"\)/g)].map(
-      (match) => ({
-        owner: match[1],
-        key: match[2],
-      }),
-    ),
-    ...[...part.text.matchAll(/GlobalLink\("[A-Za-z0-9_]+", N\("([^"]+)"\)\)/g)].map((match) => ({
-      owner: "GlobalObject",
-      key: match[1],
-    })),
-    // The globals that a table of names links: the native errors and the typed arrays.
-    ...[
-      ...part.text.matchAll(/^(?:NativeErrors|[A-Z][A-Za-z0-9]*Names) ==\n?((?:.*\n)*?)(?=^\S)/gm),
-    ].flatMap((table) =>
-      [...table[1].matchAll(/"([A-Z][A-Za-z0-9]*(?:Error|Array))"/g)].map((match) => ({
-        owner: "GlobalObject",
-        key: match[1],
-      })),
-    ),
-  ]);
   return {
     definitions,
     order,
@@ -201,7 +254,7 @@ export const createLibrary = (files: EscoreFiles): Library => {
       name: match[1],
       group: groupOf.get(`${match[1]}Builtin`) ?? "",
     })),
-    triggers,
+    triggers: new Map(files.tables.triggers.map((entry) => [entry[0], new Set(entry[1])])),
     internalKeys: new Set(
       [...definitions.values()]
         .filter((definition) => !definition.name.endsWith("Properties"))
@@ -209,7 +262,7 @@ export const createLibrary = (files: EscoreFiles): Library => {
           [...definition.text.matchAll(/\b(?:SV|N)\("([^"]+)"\)/g)].map((match) => match[1]),
         ),
     ),
-    properties,
+    properties: files.tables.properties,
     modules,
   };
 };
@@ -252,6 +305,10 @@ export const HOOKS = new Map([
   ["HostDateFormat", "key"],
   ["HostLocale", "tag"],
   ["HostRealmFact", "name"],
+  ["HostParseDate", "u"],
+  ["HostCalendarYear", "key"],
+  ["HostCalendarMonthDay", "key"],
+  ["HostIntl", "key"],
   ["ModuleNode", "id"],
   ["ModuleDeclarations", "s, ctx, node"],
 ]);
@@ -313,8 +370,24 @@ export const assembleRuntime = (
   );
 };
 
+// The locale-sensitive methods that ESCore runs as ECMA-402 does, through HostIntl: those that
+// format a Number, a BigInt, or a Date or compare strings, and those that call their elements' or
+// their own.
+const LOCALE_FORMATTING = [
+  ["Number", "toLocaleString"],
+  ["BigInt", "toLocaleString"],
+  ["Array", "toLocaleString"],
+  ["TypedArray", "toLocaleString"],
+  ["Object", "toLocaleString"],
+  ["String", "localeCompare"],
+  ["Date", "toLocaleString"],
+  ["Date", "toLocaleDateString"],
+  ["Date", "toLocaleTimeString"],
+];
+
 // A program's CallBuiltin, which runs the built-ins of the families given and stops at the others
-// and at the methods in stoppedMethods, but for Temporal's, which format through HostDateFormat.
+// and at the methods in stoppedMethods, but for Temporal's, which format through HostDateFormat,
+// and those of LOCALE_FORMATTING.
 export const getCallBuiltin = (
   name: string,
   families: readonly Family[],
@@ -327,7 +400,7 @@ export const getCallBuiltin = (
       .map((family) => `"${family.name}"`)
       .join(
         ", ",
-      )}} THEN Assert(FALSE, "tla-ts can't run a built-in whose result depends on the host's locale") ELSE`,
+      )}} /\\ id \\notin {${LOCALE_FORMATTING.map((pair) => `<<"${pair[0]}", "${pair[1]}">>`).join(", ")}} THEN Assert(FALSE, "tla-ts can't run a built-in whose result depends on the host's locale") ELSE`,
     ...families.map(
       (family, index) =>
         `  ${index === 0 ? "CASE" : "  []"} id[1] = "${family.name}" -> ${family.name}Builtin(s, f, id[2], this, args, nt)`,

@@ -34,19 +34,7 @@ import {
   getTokenIndex,
   type SourceFile,
 } from "./source";
-import { SANY_OPERATOR_SYNONYMS } from "../tlc/jar-data";
-
-const SYNONYMS = new Map(
-  SANY_OPERATOR_SYNONYMS.flatMap(([canonical, ...synonyms]) =>
-    synonyms.map((synonym) => [synonym, canonical]),
-  ),
-);
-
-export const resolveSynonym = (name: string) =>
-  name
-    .split("!")
-    .map((part) => SYNONYMS.get(part) ?? (part === "~" ? "\\lnot" : part))
-    .join("!");
+import { resolveSynonym } from "../tlc/jar-data";
 
 export interface AssumeProveScope {
   isDeclaredBefore: boolean[];
@@ -113,6 +101,12 @@ interface LabelScope {
   params: FormalParamNode[][];
 }
 
+export interface Recursion {
+  sectionCount: number;
+  unresolvedCount: number[];
+  unresolvedSum: number;
+}
+
 export interface ModuleGeneration {
   version: TlcVersion | undefined;
   addError: (location: SanyLocation | string | undefined, text: string) => void;
@@ -125,9 +119,8 @@ export interface ModuleGeneration {
   contexts: Context[];
   currentModule: ModuleNode;
   curLevel: number;
-  unresolvedCount: number[];
-  unresolvedSum: number;
-  recursiveSectionCount: number;
+  // A module's inner modules share its Generator, so its RECURSIVE counters too.
+  recursion: Recursion;
   functions: { name: string; node: OpApplNode }[];
   exceptStack: OpApplNode[];
   exceptSpecStack: OpApplNode[];
@@ -270,9 +263,9 @@ export const createOpDef = (
 
 export const setRecursionFields = (generation: ModuleGeneration, definition: OpDefNode) => {
   definition.letInLevel = generation.curLevel;
-  if (generation.unresolvedSum > 0) {
-    definition.recursiveSection = generation.recursiveSectionCount;
-    definition.inRecursiveSection = generation.unresolvedCount[generation.curLevel] > 0;
+  if (generation.recursion.unresolvedSum > 0) {
+    definition.recursiveSection = generation.recursion.sectionCount;
+    definition.inRecursiveSection = generation.recursion.unresolvedCount[generation.curLevel] > 0;
     generation.currentModule.opDefsInRecursiveSection.push(definition);
   }
 };
@@ -382,6 +375,7 @@ export const matchArguments = (
       getSymbolArity(operand.op) === param.arity &&
       !(
         operand.op.kind === "OpDef" &&
+        // Deviation from SANY: OpDefNode#matchingOpArgOperand reads as many parameters as a RECURSIVE declaration gives and crashes when the definition has fewer.
         (operand.op.params ?? []).some((parameter) => parameter.arity > 0)
       );
     if (param.arity > 0 && !isMatching) {

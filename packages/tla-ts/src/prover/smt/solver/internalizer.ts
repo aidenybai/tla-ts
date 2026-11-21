@@ -1,9 +1,9 @@
-// Ported from Z3 (src/smt/smt_context.h, src/smt/smt_internalizer.cpp), MIT license, see z3-license.txt.
 import { SmtInvariantError, SmtUnsupportedError } from "../../../errors";
 import {
   AstManager,
   FAMILY_BASIC,
   FAMILY_USER,
+  isDeclared,
   KIND_APP,
   KIND_QUANTIFIER,
   OP_ADD,
@@ -14,6 +14,7 @@ import {
   OP_BOR,
   OP_BXNOR,
   OP_BXOR,
+  OP_DISTINCT,
   OP_EQ,
   OP_IMPLIES,
   OP_ITE,
@@ -45,6 +46,7 @@ import {
   UnitResolutionJustification,
 } from "./enode";
 import { isCommutativeDecl } from "./euf/egraph";
+import { ObjMap } from "./hashtable";
 import { L_FALSE, L_TRUE, L_UNDEF } from "./lbool";
 import {
   BoolVar,
@@ -131,6 +133,7 @@ export abstract class Internalizer {
   readonly relevancy: RelevancyPropagator;
   readonly caseSplitQueue: CaseSplitQueue;
   readonly cgTable = new CgTable();
+  private readonly cgDecls = new ObjMap<true>((decl) => this.manager.getDeclHash(decl));
   private stickyGenerations = new StickyGenerations();
   abstract getTheory(family: number): Theory | undefined;
   abstract readonly qmanager: DefaultQuantifierManager;
@@ -169,17 +172,18 @@ export abstract class Internalizer {
   enodes: Enode[] = [];
   protected decl2enodes = new Map<number, Enode[]>();
   trueEnode: Enode;
-  private isDiseqTmp = -1;
+  protected isDiseqTmp = -1;
   falseEnode: Enode;
   protected generation = 0;
   protected cachedGeneration = new Map<number, number>();
-  private randomSeed = 0;
+  protected randomSeed = 0;
   isSearching = false;
   config = DEFAULT_CONFIG;
 
   constructor(
     readonly manager: AstManager,
-    isRelevancyEnabled: boolean,
+    protected relevancyLevel: number,
+    isDelayingNewCaseSplits: boolean,
   ) {
     this.rewriter = new Rewriter(manager, KERNEL_REWRITER_OPTIONS);
     this.relevancy = new RelevancyPropagator(
@@ -189,7 +193,7 @@ export abstract class Internalizer {
         findEnode: (expr) => this.exprToEnode[expr],
         relevantEh: (expr) => this.relevantEh(expr),
       },
-      isRelevancyEnabled,
+      relevancyLevel > 0,
     );
     this.caseSplitQueue = new CaseSplitQueue(
       {
@@ -199,7 +203,7 @@ export abstract class Internalizer {
         getNumBoolVars: () => this.numBoolVars,
         isUnassigned: (boolVar) => this.assignment[mkLiteral(boolVar)] === L_UNDEF,
       },
-      isRelevancyEnabled,
+      isDelayingNewCaseSplits,
     );
     this.mkBoolVar(manager.trueExpr);
     this.assignment[0] = L_TRUE;
@@ -222,7 +226,7 @@ export abstract class Internalizer {
   }
 
   pushEq(lhs: Enode, rhs: Enode, justification: EqJustification) {
-    this.eqPropagationQueue.push({ lhs, rhs, justification });
+    if (lhs.root !== rhs.root) this.eqPropagationQueue.push({ lhs, rhs, justification });
   }
 
   getRandomValue() {
@@ -334,7 +338,18 @@ export abstract class Internalizer {
     return this.exprToEnode[expr] !== undefined;
   }
 
+  private holdCgDecl(decl: number) {
+    if (!isDeclared(this.manager.funcDecls[decl]) || this.cgDecls.has(decl)) return;
+    this.cgDecls.set(decl, true);
+    this.manager.incDeclRef(decl);
+  }
+
+  protected releaseCgDecls() {
+    for (const decl of this.cgDecls.keys()) this.manager.decDeclRef(decl);
+  }
+
   findCongruent(decl: number, args: Enode[]) {
+    this.holdCgDecl(decl);
     return this.cgTable.findFor(
       decl,
       args,
@@ -353,7 +368,7 @@ export abstract class Internalizer {
       this.isDiseqTmp = manager.mkEq(first.owner, second.owner);
       manager.incRef(this.isDiseqTmp);
     }
-    const root = this.cgTable.findFor(OP_EQ, [first, second], true)?.root;
+    const root = this.cgTable.findFor(manager.decls[this.isDiseqTmp], [first, second], true)?.root;
     if (root === undefined || root === this.trueEnode) return false;
     return (
       root === this.falseEnode ||
@@ -619,6 +634,7 @@ export abstract class Internalizer {
         );
         this.pushEq(node, this.trueEnode, AXIOM_EQ_JUSTIFICATION);
       } else if (isCgcEnabled) {
+        this.holdCgDecl(decl);
         const congruent = this.cgTable.insert(node);
         if (congruent !== node) {
           node.cg = congruent;
@@ -667,9 +683,9 @@ export abstract class Internalizer {
     }
     node.isMergeTf = true;
     const value = this.assignment[mkLiteral(boolVar)];
-    if (value === L_TRUE && node.root !== this.trueEnode.root)
+    if (value === L_TRUE)
       this.pushEq(node, this.trueEnode, { kind: "equation", literal: mkLiteral(boolVar) });
-    else if (value === L_FALSE && node.root !== this.falseEnode.root)
+    else if (value === L_FALSE)
       this.pushEq(node, this.falseEnode, { kind: "equation", literal: mkLiteral(boolVar, true) });
   }
 
@@ -807,6 +823,10 @@ export abstract class Internalizer {
       }
       this.markAsRelevant(expr);
     } else {
+      if (manager.getOp(expr) === OP_DISTINCT && manager.getNumArgs(expr) > 32)
+        throw new SmtUnsupportedError(
+          "a distinct of more than 32 arguments, which Z3 asserts by fresh values",
+        );
       this.internalizeRec(expr, true);
       const literal = this.getLiteral(expr);
       if (literal === this.falseLiteral) this.setConflict("axiom", null);
@@ -862,6 +882,7 @@ export abstract class Internalizer {
     const op = manager.getOp(expr);
     if (op === OP_EQ && !manager.isBool(manager.getArg(expr, 0)))
       this.internalizeEq(expr, isGateContext);
+    else if (op === OP_DISTINCT) this.internalizeDistinct(expr, isGateContext);
     else if (manager.kinds[expr] === KIND_APP && this.internalizeTheoryAtom(expr, isGateContext))
       return;
     else if (manager.kinds[expr] === KIND_QUANTIFIER) this.internalizeQuantifier(expr);
@@ -877,6 +898,36 @@ export abstract class Internalizer {
       expr,
       boolVar,
     );
+  }
+
+  private internalizeDistinct(expr: number, isGateContext: boolean) {
+    const manager = this.manager;
+    const boolVar = this.mkBoolVar(expr);
+    const literal = mkLiteral(boolVar);
+    const numArgs = manager.getNumArgs(expr);
+    const disequalities: number[] = [];
+    for (let left = 0; left < numArgs - 1; left++)
+      for (let right = left + 1; right < numArgs; right++)
+        disequalities.push(
+          manager.mkApp(
+            OP_NOT,
+            [manager.mkEq(manager.getArg(expr, left), manager.getArg(expr, right))],
+            SORT_BOOL,
+          ),
+        );
+    const definition = manager.mkAnd(disequalities);
+    this.internalizeRec(definition, true);
+    const definitionLiteral = this.getLiteral(definition);
+    this.mkGateClause(negate(literal), definitionLiteral);
+    this.mkGateClause(literal, negate(definitionLiteral));
+    this.relevancy.addDependency(
+      expr,
+      manager.isNot(definition) ? manager.getArg(definition, 0) : definition,
+    );
+    if (isGateContext) return;
+    this.mkEnode(expr, true, true, false);
+    this.setEnodeFlag(boolVar, true);
+    if (this.assignment[literal] !== L_UNDEF) this.propagateBoolVarEnode(boolVar);
   }
 
   private internalizeTheoryAtom(expr: number, isGateContext: boolean) {
@@ -1210,7 +1261,7 @@ export abstract class Internalizer {
   }
 
   private isUsingBinaryClauseOpt(first: Literal, second: Literal, isLemma: boolean) {
-    if (isLemma && this.relevancy.isEnabled) return false;
+    if (isLemma && this.relevancyLevel >= 2) return false;
     if (this.baseLevel > 0) return false;
     if (!isLemma && this.scopeLevel > 0) return false;
     return this.getInternLevel(getVar(first)) === 0 && this.getInternLevel(getVar(second)) === 0;

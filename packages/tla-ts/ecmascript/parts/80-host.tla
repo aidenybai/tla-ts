@@ -32,10 +32,15 @@ AnyRestrictedGlobal(s, env, names) ==
   ELSE LET r == HasRestrictedGlobalProperty(s, env, Head(names)) IN
        IF IsAbrupt(r) THEN r ELSE IF Val(r) = True THEN Ok(r.s, TRUE) ELSE AnyRestrictedGlobal(r.s, env, Tail(names))
 
+\* Each of names in order, in halves, so that thousands of names nest log n deep rather than n.
 CheckGlobalNames(s, env, names, isFunction) ==
-  IF names = <<>> THEN Ok(s, Empty)
-  ELSE LET r == IF isFunction THEN CanDeclareGlobalFunction(s, env, Head(names)) ELSE CanDeclareGlobalVar(s, env, Head(names)) IN
-       IF IsAbrupt(r) THEN r ELSE IF Val(r) = False THEN ThrowTypeError(r.s) ELSE CheckGlobalNames(r.s, env, Tail(names), isFunction)
+  CASE names = <<>> -> Ok(s, Empty)
+    [] Len(names) = 1 ->
+         LET r == IF isFunction THEN CanDeclareGlobalFunction(s, env, names[1]) ELSE CanDeclareGlobalVar(s, env, names[1]) IN
+         IF IsAbrupt(r) THEN r ELSE IF Val(r) = False THEN ThrowTypeError(r.s) ELSE Ok(r.s, Empty)
+    [] OTHER ->
+         LET first == CheckGlobalNames(s, env, SubSeq(names, 1, Len(names) \div 2), isFunction) IN
+         IF IsAbrupt(first) THEN first ELSE CheckGlobalNames(first.s, env, SubSeq(names, Len(names) \div 2 + 1, Len(names)), isFunction)
 
 CreateGlobalLexicals(s, env, decls) ==
   IF decls = <<>> THEN Ok(s, Empty)
@@ -54,9 +59,11 @@ CreateGlobalFunctions(s, ctx, env, fns) ==
        IN IF IsAbrupt(r) THEN r ELSE CreateGlobalFunctions(r.s, ctx, env, Tail(fns))
 
 CreateGlobalVars(s, env, names) ==
-  IF names = <<>> THEN Ok(s, Empty)
-  ELSE LET r == CreateGlobalVarBinding(s, env, Head(names), FALSE) IN
-       IF IsAbrupt(r) THEN r ELSE CreateGlobalVars(r.s, env, Tail(names))
+  CASE names = <<>> -> Ok(s, Empty)
+    [] Len(names) = 1 -> CreateGlobalVarBinding(s, env, names[1], FALSE)
+    [] OTHER ->
+         LET first == CreateGlobalVars(s, env, SubSeq(names, 1, Len(names) \div 2)) IN
+         IF IsAbrupt(first) THEN first ELSE CreateGlobalVars(first.s, env, SubSeq(names, Len(names) \div 2 + 1, Len(names)))
 
 \* Step 12 of GlobalDeclarationInstantiation and step 13 of EvalDeclarationInstantiation (§B.3.2.2,
 \* §B.3.2.3): var bindings for the block functions fns that sloppy code hoists, which eval makes
@@ -142,6 +149,27 @@ HostDateFormat(key) == [found |-> "none"]
 \* table leaves out, or "invalid", where it isn't a structurally valid language tag. Else found is
 \* "unknown", as engine262 has no locale data.
 HostLocale(tag) == [found |-> "unknown"]
+
+\* HostCalendarYear(<<cal, year>>): a year of the Chinese or the Dangi calendar, which the host
+\* computes astronomically: found is "year", with the epoch days of its first day, the ordinal of
+\* its leap month or 0, and its months of 30 days as bits from the first month's. Else found is
+\* "unknown", where the host's table leaves the year out, as engine262 has no such calendar.
+HostCalendarYear(key) == [found |-> "unknown"]
+
+\* HostCalendarMonthDay(<<cal, month, leap, day>>): the month-day of the Chinese or the Dangi
+\* calendar of a month code's month and leap flag and a day from 1 to 30: found is "monthDay", with
+\* the epoch days of its ISO reference date and whether the month code and the day are kept, which
+\* they aren't where no year that the host searches has them. Else found is "unknown".
+HostCalendarMonthDay(key) == [found |-> "unknown"]
+
+\* HostIntl(<<service, config, method, args>>): what the host's Intl gives for a method of an object
+\* of a service whose requested locales and options config gives, with arguments args. found is
+\* "options", with the pairs of a property's units and its value that resolvedOptions gives, "parts",
+\* with the parts of a formatted value, each a sequence of a property's units and its value's, or
+\* "error", with the name of the error it throws. <<"currencyDigits", code>> gives "digits", with
+\* the digits of a currency. Else found is "unknown", where the host's table leaves the key out,
+\* and "none" where the host has no Intl, as engine262 has none.
+HostIntl(key) == [found |-> "none"]
 
 \* A run whose jobs leave a promise rejected that nothing handles fails with the promise's reason, as
 \* Node fails such a script (HostPromiseRejectionTracker, §27.2.1.9).

@@ -1,47 +1,70 @@
-import type { Declaration, Definition, Expression, SourceLocation, Theorem } from "./ast";
-import { createSanyError, formatRange, type SanyError } from "./errors";
+import type {
+  Declaration,
+  Definition,
+  Expression,
+  Instance,
+  SourceLocation,
+  Theorem,
+  UseOrHide,
+} from "./ast";
+import { formatRange, type SanyError } from "./errors";
 import {
-  ACTION_LEVEL,
-  analyzeAssumeProve,
+  analyzeAssumption,
   createLevelAnalyzer,
+  createProofChecker,
   getArgumentKey,
+  parseArgumentParamKey,
   putArgConstraint,
   putConstraint,
   TEMPORAL_LEVEL,
-  type ArgumentParam,
+  type InstanceLevels,
+  type LevelAnalyzer,
+  type LevelData,
+  type ModuleLevels,
   type OperatorLevels,
   type Scope,
+  type SectionMember,
 } from "./levels";
 
-export interface InstanceCheck {
+interface InstanceCheck {
   module: string;
   instancer: string;
-  lets: Definition[];
+  scope: Scope;
   substitutions: Map<string, Expression>;
   location: SourceLocation;
 }
 
-interface ModuleContext {
-  constants: Declaration[];
-  variables: string[];
-  definitions: Definition[];
-  assumptions: Expression[];
-  theorems: Theorem[];
-  getDefinition: (name: string) => Definition | undefined;
+export interface KeyedDeclaration extends Declaration {
+  key: string;
 }
 
-interface ModuleLevels {
-  isConstant: boolean;
-  constraints: Map<string, number>;
-  argConstraints: Map<string, number>;
-  argParams: Map<string, ArgumentParam>;
+interface ModuleContext {
+  constants: KeyedDeclaration[];
+  variables: string[];
+  levelConstants: Map<string, number>;
+  levelVariables: Set<string>;
+  getDefinitions: () => Definition[];
+  assumptions: Expression[];
+  theorems: Theorem[];
+  instances: Instance[];
+  uses: UseOrHide[];
+  extended: string[];
+  getDefinition: (name: string) => Definition | undefined;
+  getQualifiedName: (name: string) => string | undefined;
+}
+
+interface TopLevel {
+  theorems: LevelData[];
+  nodes: LevelData[];
 }
 
 interface Substituted {
   name: string;
+  key: string;
   maximumLevel: number;
   arity: number;
   level: number;
+  isCorrect: boolean;
   operator: OperatorLevels | undefined;
   isLeibniz: boolean;
 }
@@ -49,19 +72,53 @@ interface Substituted {
 const getMaxLevel = (operator: OperatorLevels, index: number) =>
   operator.maxLevels[index] ?? TEMPORAL_LEVEL;
 
-export const createInstanceChecker = (getModule: (name: string) => ModuleContext) => {
-  const analyzers = new Map<string, ReturnType<typeof createLevelAnalyzer>>();
+export const createInstanceChecker = (
+  getModule: (name: string) => ModuleContext,
+  copies: Omit<InstanceLevels, "getInstanced" | "getOriginal" | "getModuleLevels">,
+  recursiveSections: WeakMap<Definition, SectionMember[]>,
+  goalSelections: WeakMap<Expression, Expression>,
+) => {
+  const analyzers = new Map<string, LevelAnalyzer>();
   const getAnalyzer = (name: string) => {
     const cached = analyzers.get(name);
     if (cached) return cached;
     const module = getModule(name);
     const analyzer = createLevelAnalyzer({
-      constants: new Set(module.constants.map((constant) => constant.name)),
-      variables: new Set(module.variables),
+      module: name,
+      constants: module.levelConstants,
+      variables: module.levelVariables,
       getDefinition: module.getDefinition,
+      getQualifiedName: module.getQualifiedName,
+      instances,
+      recursiveSections,
+      goalSelections,
     });
     analyzers.set(name, analyzer);
     return analyzer;
+  };
+
+  const getTopLevel = (name: string): TopLevel => {
+    const module = getModule(name);
+    const analyzer = getAnalyzer(name);
+    const proofs = createProofChecker(analyzer, instances, name);
+    const extended = module.extended.map(getTopLevel);
+    return {
+      theorems: [
+        ...extended.flatMap((other) => other.theorems),
+        ...module.theorems.map(proofs.analyzeTheorem),
+      ],
+      nodes: [
+        ...extended.flatMap((other) => other.nodes),
+        ...module.assumptions.map((assumption) => analyzeAssumption(assumption, analyzer)),
+        ...module.instances.flatMap((instance) => {
+          const substitutes = instances.getSubstitutes(instance);
+          return substitutes
+            ? [analyzer.analyzeInstance(substitutes, getModuleLevels(instance.module), new Map())]
+            : [];
+        }),
+        ...module.uses.map((use) => proofs.getFactData(use.facts, new Map())),
+      ],
+    };
   };
 
   const moduleLevels = new Map<string, ModuleLevels>();
@@ -70,33 +127,34 @@ export const createInstanceChecker = (getModule: (name: string) => ModuleContext
     if (cached) return cached;
     const module = getModule(name);
     const analyzer = getAnalyzer(name);
-    const definitions = module.definitions.map((definition) =>
-      analyzer.analyzeDefinition(definition, new Map()),
-    );
+    const definitions = module
+      .getDefinitions()
+      .map((definition) => analyzer.analyzeDefinition(definition, new Map()));
+    const topLevel = getTopLevel(name);
     const levels: ModuleLevels = {
       isConstant:
-        module.variables.length === 0 && definitions.every((definition) => definition.level === 0),
+        module.variables.length === 0 &&
+        [...definitions, ...topLevel.theorems].every((data) => data.level === 0),
+      constants: module.levelConstants,
+      variables: module.levelVariables,
       constraints: new Map(),
       argConstraints: new Map(),
-      argParams: new Map(),
+      argParams: new Set(),
     };
     if (!levels.isConstant) {
-      module.constants.forEach((constant) => putConstraint(levels.constraints, constant.name, 0));
+      module.constants.forEach((constant) => putConstraint(levels.constraints, constant.key, 0));
     }
     const addLevels = (
-      data: {
-        constraints: Map<string, number> | undefined;
-        argConstraints: Map<string, number> | undefined;
-        argParams: Map<string, ArgumentParam> | undefined;
-      },
+      data: Pick<ModuleLevels, "constraints" | "argConstraints" | "argParams">,
       isKept: (operator: string, param: string) => boolean,
     ) => {
-      data.constraints?.forEach((value, key) => putConstraint(levels.constraints, key, value));
-      data.argConstraints?.forEach((value, key) =>
+      data.constraints.forEach((value, key) => putConstraint(levels.constraints, key, value));
+      data.argConstraints.forEach((value, key) =>
         putArgConstraint(levels.argConstraints, key, value),
       );
-      data.argParams?.forEach((parameter, key) => {
-        if (isKept(parameter.operator, parameter.param)) levels.argParams.set(key, parameter);
+      data.argParams.forEach((key) => {
+        const parameter = parseArgumentParamKey(key);
+        if (isKept(parameter.operator, parameter.param)) levels.argParams.add(key);
       });
     };
     definitions.forEach((definition) =>
@@ -104,27 +162,22 @@ export const createInstanceChecker = (getModule: (name: string) => ModuleContext
         definition.formals.every((formal) => formal.name !== operator && formal.name !== param),
       ),
     );
-    const addAssumedLevels = (data: ReturnType<typeof analyzeAssumeProve>) => {
-      addLevels(data, () => true);
-      module.constants.forEach((constant) => {
-        if (data.params?.has(constant.name)) {
-          putConstraint(levels.constraints, constant.name, ACTION_LEVEL);
-        }
-      });
-    };
-    module.assumptions.forEach((assumption) =>
-      addAssumedLevels(analyzer.analyze(assumption, new Map())),
-    );
-    module.theorems.forEach((theorem) =>
-      theorem.statement.kind === "AssumeProve"
-        ? addAssumedLevels(analyzeAssumeProve(theorem.statement, new Map(), analyzer))
-        : addLevels(analyzer.analyze(theorem.statement, new Map()), () => true),
-    );
+    [...topLevel.theorems, ...topLevel.nodes].forEach((data) => addLevels(data, () => true));
     moduleLevels.set(name, levels);
     return levels;
   };
 
-  return (check: InstanceCheck) => {
+  const instances: InstanceLevels = {
+    ...copies,
+    getInstanced: (copy) => ({
+      ...getModuleLevels(copy.module),
+      source: getAnalyzer(copy.module).analyzeDefinition(copy.source, new Map()),
+    }),
+    getOriginal: (copy, target) => getAnalyzer(copy.module).analyzeOriginal(copy.source, target),
+    getModuleLevels,
+  };
+
+  const checkInstance = (check: InstanceCheck) => {
     const errors = new Map<string, SanyError>();
     const location = formatRange(
       check.location.range ?? {
@@ -138,27 +191,38 @@ export const createInstanceChecker = (getModule: (name: string) => ModuleContext
     const instancee = getModule(check.module);
     const levels = getModuleLevels(check.module);
     const analyzer = getAnalyzer(check.instancer);
-    const scope: Scope = new Map();
-    check.lets.forEach((definition) =>
-      scope.set(definition.name, { kind: "Let", definition, scope }),
-    );
     const declarations = [
       ...instancee.constants.map((constant) => ({ ...constant, maximumLevel: 0 })),
-      ...instancee.variables.map((variable) => ({ name: variable, arity: 0, maximumLevel: 1 })),
+      ...instancee.variables.map((variable) => ({
+        name: variable,
+        key: variable,
+        arity: 0,
+        maximumLevel: 1,
+      })),
     ];
-    const substituted = declarations.flatMap((declaration): Substituted[] => {
-      const expression = check.substitutions.get(declaration.name);
-      if (!expression) return [];
+    const substituted = [...check.substitutions].flatMap((entry): Substituted[] => {
+      const declaration = declarations.find((item) => item.name === entry[0]);
+      if (!declaration) return [];
+      const expression = entry[1];
       if (declaration.arity === 0) {
-        const data = analyzer.analyze(expression, scope);
-        return [{ ...declaration, level: data.level, operator: undefined, isLeibniz: true }];
+        const data = analyzer.analyze(expression, check.scope);
+        return [
+          {
+            ...declaration,
+            level: data.level,
+            isCorrect: data.isCorrect,
+            operator: undefined,
+            isLeibniz: true,
+          },
+        ];
       }
-      const operand = analyzer.toOperand(expression, scope);
+      const operand = analyzer.toOperand(expression, check.scope);
       const operator = operand.kind === "Operator" ? operand.data : undefined;
       return [
         {
           ...declaration,
           level: operand.data.level,
+          isCorrect: operand.data.isCorrect,
           operator,
           isLeibniz: operator === undefined || operator.nonLeibniz.size === 0,
         },
@@ -166,8 +230,9 @@ export const createInstanceChecker = (getModule: (name: string) => ModuleContext
     });
     const getLevelMessage = (name: string, level: number) =>
       `Level error in instantiating module '${check.module}':\nThe level of the expression or operator substituted for '${name}' \nmust be at most ${level}.`;
+    // SANY reports a level error of a substitute only when the substitute itself is level-correct.
     substituted.forEach((item) => {
-      if (!levels.isConstant && item.level > item.maximumLevel) {
+      if (!levels.isConstant && item.level > item.maximumLevel && item.isCorrect) {
         addMessage(getLevelMessage(item.name, item.maximumLevel));
       }
       if (!item.isLeibniz) {
@@ -177,13 +242,13 @@ export const createInstanceChecker = (getModule: (name: string) => ModuleContext
       }
     });
     substituted.forEach((item) => {
-      const maximum = levels.constraints.get(item.name);
-      if (maximum !== undefined && item.level > maximum)
+      const maximum = levels.constraints.get(item.key);
+      if (maximum !== undefined && item.level > maximum && item.isCorrect)
         addMessage(getLevelMessage(item.name, maximum));
       const operator = item.operator;
-      if (!operator) return;
+      if (!operator?.isCorrect) return;
       for (let index = 0; index < item.arity; index++) {
-        const minimum = levels.argConstraints.get(getArgumentKey(item.name, index));
+        const minimum = levels.argConstraints.get(getArgumentKey(item.key, index));
         if (minimum !== undefined && getMaxLevel(operator, index) < minimum) {
           addMessage(
             `Level error in instantiating module '${check.module}':\nThe level of the argument ${index + 1} of the operator ${operator.name} \nmust be at least ${minimum}.`,
@@ -191,17 +256,24 @@ export const createInstanceChecker = (getModule: (name: string) => ModuleContext
         }
       }
     });
-    levels.argParams.forEach((parameter) => {
-      const operator = substituted.find((item) => item.name === parameter.operator)?.operator;
-      const argument = substituted.find((item) => item.name === parameter.param);
-      if (!operator || !argument) return;
-      const maximum = getMaxLevel(operator, parameter.index);
-      if (argument.level > maximum) {
+    levels.argParams.forEach((key) => {
+      const parameter = parseArgumentParamKey(key);
+      const substitute = substituted.find((item) => item.key === parameter.operator);
+      const argument = substituted.find((item) => item.key === parameter.param);
+      if (!substitute?.operator || !argument) return;
+      const maximum = getMaxLevel(substitute.operator, parameter.index);
+      if (argument.level > maximum && substitute.operator.isCorrect && argument.isCorrect) {
         addMessage(
-          `Level error when instantiating module '${check.module}':\nThe level of the argument ${parameter.index} of the operator ${parameter.operator}' \nmust be at most ${maximum}.`,
+          `Level error when instantiating module '${check.module}':\nThe level of the argument ${parameter.index} of the operator ${substitute.name}' \nmust be at most ${maximum}.`,
         );
       }
     });
-    if (errors.size > 0) throw createSanyError([...errors.values()]);
+    return [...errors.values()];
+  };
+
+  return {
+    checkInstance,
+    instances,
+    getArgParams: (name: string) => getModuleLevels(name).argParams,
   };
 };

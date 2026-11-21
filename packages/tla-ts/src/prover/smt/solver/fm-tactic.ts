@@ -1,4 +1,3 @@
-// Ported from Z3 (src/tactic/arith/fm_tactic.cpp), MIT license, see z3-license.txt.
 import { SmtCanceledError, SmtTacticError } from "../../../errors";
 import {
   type AstManager,
@@ -528,12 +527,14 @@ class Fm {
   }
 
   private markConstraintsDead(variable: number) {
-    const clauses = new RefVector(this.manager);
-    for (const constraint of [...this.lowers[variable], ...this.uppers[variable]])
-      clauses.push(this.toExpr(constraint));
-    const decl = this.manager.decls[this.var2expr.items[variable]];
-    this.manager.incDeclRef(decl);
-    this.converter.push({ decl, clauses });
+    if (this.goal.isModelsEnabled) {
+      const clauses = new RefVector(this.manager);
+      for (const constraint of [...this.lowers[variable], ...this.uppers[variable]])
+        clauses.push(this.toExpr(constraint));
+      const decl = this.manager.decls[this.var2expr.items[variable]];
+      this.manager.incDeclRef(decl);
+      this.converter.push({ decl, clauses });
+    }
     for (const constraint of this.lowers[variable]) constraint.isDead = true;
     for (const constraint of this.uppers[variable]) constraint.isDead = true;
   }
@@ -879,7 +880,13 @@ export const fm = (manager: AstManager, goal: Goal, options: FmOptions) => {
   const eliminator = new Fm(manager, goal, options);
   const isConsistent = eliminator.run();
   eliminator.release();
-  if (!isConsistent) return;
+  if (!isConsistent || !goal.isModelsEnabled) return;
   const converter = new FmModelConverter(manager, eliminator.converter);
-  goal.addModelConversion((model) => converter.convert(model));
+  goal.addModelConversion(
+    (model) => converter.convert(model),
+    () => {
+      for (const entry of eliminator.converter) manager.decDeclRef(entry.decl);
+      for (const entry of eliminator.converter) entry.clauses.reset();
+    },
+  );
 };

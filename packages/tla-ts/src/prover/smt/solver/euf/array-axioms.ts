@@ -1,4 +1,3 @@
-// Ported from Z3 (src/sat/smt/array_axioms.cpp), MIT license, see z3-license.txt.
 import { SmtUnsupportedError } from "../../../../errors";
 import { mkArrayApp } from "../array-decl-plugin";
 import {

@@ -1,4 +1,3 @@
-// Ported from Z3 (src/tactic/arith/eq2bv_tactic.cpp), MIT license, see z3-license.txt.
 import {
   type AstManager,
   KIND_APP,
@@ -12,6 +11,7 @@ import {
 import { BoundManager } from "./bound-manager";
 import { mkBvApp } from "./bv-decl-plugin";
 import type { Goal } from "./goal";
+import { ObjMap } from "./hashtable";
 import { FuncInterp, ProtoModel } from "./proto-model";
 import { Rational } from "./rational";
 import { RefVector } from "./ref-vector";
@@ -45,7 +45,7 @@ class EqRewriter extends RewriterTpl {
   }
 
   override reduceApp(decl: number, args: number[]) {
-    if (decl !== OP_EQ) return -1;
+    if (this.manager.funcDecls[decl].op !== OP_EQ) return -1;
     const first = this.getFd(args[0], args[1]);
     const result = first === -1 ? this.getFd(args[1], args[0]) : first;
     if (result !== -1) this.manager.incRef(result);
@@ -89,11 +89,12 @@ export const createEq2BvTactic = (manager: AstManager) => (goal: Goal) => {
   const bounds = new BoundManager(manager);
   const trail = new RefVector(manager);
   const fd = new Map<number, number>();
-  const max = new Map<number, Rational>();
+  const max = new ObjMap<Rational>((expr) => manager.hashes[expr]);
   const nonFd = new Set<number>();
   const hasEq = new Set<number>();
   const converter: BvModelConverter = { bvToInt: new Map(), vars: [], values: [] };
-  for (const form of goal.forms.items) bounds.add(form);
+  for (let index = 0; index < goal.forms.size; index++)
+    bounds.add(goal.forms.get(index), goal.getDependency(index));
   if (bounds.isInconsistent() || goal.isProofsEnabled) {
     goal.depth++;
     return [goal];
@@ -148,7 +149,7 @@ export const createEq2BvTactic = (manager: AstManager) => (goal: Goal) => {
     }
   };
   for (const form of goal.forms.items) collectFd(form);
-  for (const variable of max.keys()) if (nonFd.has(variable)) max.delete(variable);
+  for (const variable of [...max.keys()].filter((key) => nonFd.has(key))) max.delete(variable);
   for (const [variable, maximum] of max) {
     const upper = bounds.uppers.get(variable);
     const lower = bounds.lowers.get(variable);
@@ -170,7 +171,7 @@ export const createEq2BvTactic = (manager: AstManager) => (goal: Goal) => {
   }
   const rewriter = new EqRewriter(manager, fd);
   for (let index = 0; !goal.isInconsistent && index < goal.forms.size; index++) {
-    const form = goal.forms.items[index];
+    const form = goal.forms.get(index);
     const variable = getBoundVar(form);
     if (variable !== -1 && !hasEq.has(variable)) {
       const upper = bounds.uppers.get(variable);
@@ -193,19 +194,26 @@ export const createEq2BvTactic = (manager: AstManager) => (goal: Goal) => {
       continue;
     }
     const rewritten = rewriter.rewrite(form);
-    if (rewritten !== form) goal.update(index, rewritten);
+    if (rewritten !== form) goal.update(index, rewritten, goal.getDependency(index));
     manager.decRef(rewritten);
   }
   rewriter.release();
+  // Deviation from Z3: Z3 5.3.2 frees the bound dependencies above, then reads them and crashes.
   for (const variable of max.keys()) {
     const bv = fd.get(variable) as number;
     const width = manager.getBvSize(manager.sorts[bv]);
     const lower = bounds.lowers.get(variable);
     const upper = bounds.uppers.get(variable);
     if (lower !== undefined && !lower.value.isNegative())
-      goal.assert(mkBvApp(manager, OP_ULEQ, [manager.mkBvNumeral(lower.value.num, width), bv]));
+      goal.assert(
+        mkBvApp(manager, OP_ULEQ, [manager.mkBvNumeral(lower.value.num, width), bv]),
+        bounds.lowerDependencies.get(variable),
+      );
     if (upper !== undefined && !upper.value.isNegative())
-      goal.assert(mkBvApp(manager, OP_ULEQ, [bv, manager.mkBvNumeral(upper.value.num, width)]));
+      goal.assert(
+        mkBvApp(manager, OP_ULEQ, [bv, manager.mkBvNumeral(upper.value.num, width)]),
+        bounds.upperDependencies.get(variable),
+      );
   }
   for (const decl of converter.vars) manager.incDeclRef(decl);
   for (const entry of converter.bvToInt) {
@@ -214,6 +222,15 @@ export const createEq2BvTactic = (manager: AstManager) => (goal: Goal) => {
   }
   trail.reset();
   goal.depth++;
-  goal.addModelConversion((model) => convertModel(manager, converter, model));
+  goal.addModelConversion(
+    (model) => convertModel(manager, converter, model),
+    () => {
+      for (const decl of converter.vars) manager.decDeclRef(decl);
+      for (const entry of converter.bvToInt) {
+        manager.decDeclRef(entry[0]);
+        manager.decDeclRef(entry[1]);
+      }
+    },
+  );
   return [goal];
 };

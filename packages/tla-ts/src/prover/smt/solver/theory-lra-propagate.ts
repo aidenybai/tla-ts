@@ -1,4 +1,3 @@
-// Ported from Z3 (src/smt/theory_lra.cpp), MIT license, see z3-license.txt.
 import { OP_ITE, OP_SUB, SORT_BOOL } from "./ast";
 import { TheoryJustification } from "./enode";
 import { L_FALSE, L_TRUE, L_UNDEF } from "./lbool";
@@ -34,11 +33,11 @@ export abstract class TheoryLraPropagate extends TheoryLraBounds {
   private delayIneqsQhead = 0;
   protected explanation = new Explanation();
   protected coreLiterals: Literal[] = [];
-  protected numConflicts = 0;
   private lowerTerms: (TermBound | undefined)[] = [];
   private upperTerms: (TermBound | undefined)[] = [];
   protected isModelInitialized = false;
   private activeInfEpsConstraints: number[] = [];
+  protected numConflicts = 0;
 
   canPropagate() {
     return (
@@ -132,9 +131,14 @@ export abstract class TheoryLraPropagate extends TheoryLraBounds {
       : bound.isLower
         ? bound.value.sub(Rational.one)
         : bound.value.add(Rational.one);
-    if (isTrue ? bound.eps.isZero() : bound.isInt)
+    if (this.isPropagatingEqs() && (isTrue ? bound.eps.isZero() : bound.isInt))
       this.propagateEqs(bound.column, constraint, kind, bound, value);
     return true;
+  }
+
+  protected isPropagatingEqs() {
+    const config = this.context.config;
+    return config.isArithPropagatingEqs && this.numConflicts < config.arithPropagationThreshold;
   }
 
   private propagateEqs(
@@ -257,7 +261,7 @@ export abstract class TheoryLraPropagate extends TheoryLraBounds {
   }
 
   protected addEq(first: number, second: number, explanation: Explanation, isFixed: boolean) {
-    if (this.context.isInconsistent()) return false;
+    if (this.context.isInconsistent() || !this.isPropagatingEqs()) return false;
     const v1 = this.solver.getExternal(first);
     const v2 = this.solver.getExternal(second);
     if (v1 === NULL_THEORY_VAR || v2 === NULL_THEORY_VAR) return false;
@@ -300,6 +304,9 @@ export abstract class TheoryLraPropagate extends TheoryLraBounds {
   }
 
   private propagateBoundsWithLpSolver() {
+    const config = this.context.config;
+    if (!config.isArithBoundPropagating || this.numConflicts >= config.arithPropagationThreshold)
+      return;
     this.bp.init();
     this.bp.propagateBoundsForTouchedRows();
     if (this.context.checkCanceled()) return;
@@ -308,6 +315,7 @@ export abstract class TheoryLraPropagate extends TheoryLraBounds {
       return;
     }
     for (const implied of this.bp.ibounds) {
+      this.manager.limit.inc();
       if (this.context.isInconsistent()) break;
       this.propagateLpSolverBound(implied);
     }

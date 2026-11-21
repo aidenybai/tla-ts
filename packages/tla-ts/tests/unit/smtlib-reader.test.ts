@@ -70,6 +70,72 @@ describe("set-logic after the first declaration, as Z3 5.3.2 prints it", () => {
   });
 });
 
+describe("the operators of a theory the logic lacks, as Z3 5.3.2 reports them", () => {
+  it("reads numerals but not the operators of arithmetic, whose names a declaration may take", () => {
+    expect(
+      run([
+        "(set-logic QF_UF)",
+        "(simplify (- 2))",
+        "(simplify (+ 1 2))",
+        "(simplify (< 1 2))",
+        "(simplify (to_real 2))",
+        "(simplify 2.5)",
+        "(simplify (= 1 2))",
+        "(declare-sort U 0)",
+        "(declare-fun + (U U) U)",
+        "(declare-const u U)",
+        "(simplify (+ u u))",
+      ]),
+    ).toEqual([
+      '(error "line 2 column 14: unknown constant - (Int) ")',
+      '(error "line 3 column 16: unknown constant + (Int Int) ")',
+      '(error "line 4 column 16: unknown constant < (Int Int) ")',
+      '(error "line 5 column 20: unknown constant to_real (Int) ")',
+      "(/ 5.0 2.0)",
+      "false",
+      "(+ u u)",
+    ]);
+  });
+
+  it("leaves the operators of the other theories unknown, and bit-vector overflow predicates", () => {
+    expect(
+      run([
+        "(set-logic QF_UF)",
+        "(declare-sort U 0)",
+        "(declare-const u U)",
+        "(simplify (bvadd #x1 #x2))",
+        '(simplify (str.len "a"))',
+        "(simplify (fp.abs u))",
+        "(simplify (select u u))",
+        "(simplify (bvfoo u))",
+        "(simplify (concat u u))",
+      ]),
+    ).toEqual([
+      '(error "line 4 column 24: unknown constant bvadd ((_ BitVec 4) (_ BitVec 4)) ")',
+      '(error "line 5 column 22: unknown constant str.len (String) ")',
+      '(error "line 6 column 19: unknown constant fp.abs (U) ")',
+      '(error "line 7 column 21: unknown constant select (U U) ")',
+      '(error "line 8 column 18: unknown constant bvfoo (U) ")',
+      '(error "line 9 column 21: unknown constant concat (U U) ")',
+    ]);
+    expect(
+      run([
+        "(set-logic QF_ABV)",
+        "(declare-const v (_ BitVec 4))",
+        "(simplify (bvsmul_noovfl v v))",
+        "(simplify (bvumul_noovfl v v))",
+        "(simplify (bvsmul_noudfl v v))",
+        "(simplify (concat v v))",
+      ]),
+    ).toEqual([
+      '(error "line 3 column 28: unknown constant bvsmul_noovfl ((_ BitVec 4) (_ BitVec 4)) ")',
+      '(error "line 4 column 28: unknown constant bvumul_noovfl ((_ BitVec 4) (_ BitVec 4)) ")',
+      '(error "line 5 column 28: unknown constant bvsmul_noudfl ((_ BitVec 4) (_ BitVec 4)) ")',
+      "(concat v v)",
+    ]);
+  });
+});
+
 describe("terms nested 20,000 deep, which Z3 5.3.2 reads on its own stack", () => {
   const DEPTH = 20000;
 
@@ -188,6 +254,27 @@ describe("a backslash in a quoted symbol, as Z3 5.3.2 reports it", () => {
   });
 });
 
+describe("a command without a symbol at its head, as Z3 5.3.2 reports it", () => {
+  it("reports the head before the rest of the command, which may never close", () => {
+    expect(run(['(echo "a")', "( (assert true)", '(echo "b")'])).toEqual([
+      "a",
+      '(error "line 2 column 2: invalid command, symbol expected")',
+    ]);
+    expect(run(['(echo "a")', "(1 2", '(echo "b")'])).toEqual([
+      "a",
+      '(error "line 2 column 1: invalid command, symbol expected")',
+    ]);
+    expect(run(['(echo "a")', "("])).toEqual([
+      "a",
+      '(error "line 2 column 1: invalid command, symbol expected")',
+    ]);
+    expect(run(["() )", '(echo "b")'])).toEqual([
+      '(error "line 1 column 2: invalid command, symbol expected")',
+      "b",
+    ]);
+  });
+});
+
 describe("a malformed application or indexed constant, as Z3 5.3.2 reports it", () => {
   it("reports a head that is no symbol where it stands, and goes on", () => {
     expect(
@@ -238,6 +325,27 @@ describe("a qualified constant, as Z3 5.3.2 reports it", () => {
       '(error "line 3 column 23: unknown constant xBool \ndeclared: (declare-fun x () Int) ")',
     ]);
   });
+
+  it("reports a macro of another sort, but not an application of one", () => {
+    expect(
+      run([
+        "(define-const c Bool true)",
+        "(define-fun f ((y Int)) Int (+ y 1))",
+        "(simplify (as c Int))",
+        "(simplify (as c Bool))",
+        "(simplify ((as f Bool) 1))",
+        "(declare-const x Int)",
+        "(simplify (! (> x 2) :named n))",
+        "(simplify (as n Int))",
+      ]),
+    ).toEqual([
+      '(error "line 3 column 20: sort mismatch in qualified identifier, expected: Int, got: Bool")',
+      "true",
+      "2",
+      "(not (<= x 2))",
+      '(error "line 8 column 20: sort mismatch in qualified identifier, expected: Int, got: Bool")',
+    ]);
+  });
 });
 
 describe("a finite-field literal, as Z3 5.3.2 reports it", () => {
@@ -261,6 +369,70 @@ describe("a finite-field literal, as Z3 5.3.2 reports it", () => {
       '(error "line 6 column 10: logic does not support finite fields")',
       "sat",
       "(\n  (define-fun a () (_ BitVec 12)\n    #xf0a)\n)",
+    ]);
+  });
+});
+
+describe("match, as Z3 5.3.2 compiles it", () => {
+  const declarations = [
+    "(declare-datatypes ((Lst 0)) (((nil) (cons (hd Int) (tl Lst)))))",
+    "(declare-datatype Color ((red) (green) (blue)))",
+    "(declare-const l Lst)",
+    "(declare-const c Color)",
+  ];
+
+  it("tests the cases from the first, binds the accessors, and ignores the last test", () => {
+    expect(
+      run([
+        ...declarations,
+        "(simplify (match c ((red 1) (green 2.5) (blue 3))))",
+        "(simplify (match c (case red 1) (case _ 2)))",
+        "(simplify (match l ((x (hd x)))))",
+        "(simplify (forall ((y Lst) (z Int)) (= (match y ((nil z) ((cons h t) (+ h z)))) z)))",
+        "(simplify (exists ((y Lst)) (match y ((nil true) ((cons h t) (match t ((nil (> h 0)) ((cons h2 t2) (> h h2)))))))))",
+        "(assert (> (match l ((nil 0) ((cons h t) (match t ((nil h) ((cons h2 _) (+ h h2))))))) 7))",
+        "(check-sat)",
+        "(get-model)",
+        "(get-value ((match l ((nil 0) ((cons h t) h)))))",
+      ]),
+    ).toEqual([
+      "(ite ((_ is red) c) 1.0 (ite ((_ is green) c) (/ 5.0 2.0) 3.0))",
+      "(ite ((_ is red) c) 1 2)",
+      "(hd l)",
+      "(forall ((y Lst) (z Int)) (= (ite ((_ is nil) y) z (+ (hd y) z)) z))",
+      "(exists ((y Lst))\n  (let ((a!1 (not (<= (hd y) (hd (tl y))))))\n  (let ((a!2 (ite ((_ is nil) (tl y)) (not (<= (hd y) 0)) a!1)))\n    (or ((_ is nil) y) a!2))))",
+      "sat",
+      "(\n  (define-fun l () Lst\n    (cons 8 (cons 0 nil)))\n  (define-fun c () Color\n    blue)\n)",
+      "(((match l ((nil 0) ((cons h t) h))) 8))",
+    ]);
+  });
+
+  it("reports a malformed or incomplete match where Z3 does", () => {
+    expect(
+      run([
+        ...declarations,
+        "(simplify (match c ((red 1) (green 2))))",
+        "(simplify (match c ((red 1) (green 2) (red 3))))",
+        "(simplify (match 1 ((y 1))))",
+        "(simplify (match l ((nil 0) ((cons h h) h))))",
+        "(simplify (match l ((nil 0) ((cons h) h))))",
+        "(simplify (match c ((l 1))))",
+        "(simplify (match c ((red 1) (green l) (blue 2))))",
+        "(simplify (match c red))",
+        "(simplify (match c ((red 1 2))))",
+        "(simplify (match l (((cons 1 t) 1))))",
+      ]),
+    ).toEqual([
+      '(error "line 5 column 38: non-exhaustive pattern match")',
+      '(error "line 6 column 46: a constructor is missing from pattern match")',
+      '(error "line 7 column 26: pattern matching is only supported for algebraic datatypes")',
+      '(error "line 8 column 38: unexpected repeated variable in pattern expression")',
+      '(error "line 9 column 38: invalid function declaration reference, unknown indexed function cons")',
+      "1",
+      '(error "line 11 column 47: Sorts Lst and Int are incompatible")',
+      '(error "line 12 column 19: pattern bindings should be enclosed in a parenthesis got red")',
+      "(error \"line 13 column 27: invalid pattern binding, ')' expected got red\")",
+      '(error "line 14 column 27: variable symbol expected")',
     ]);
   });
 });

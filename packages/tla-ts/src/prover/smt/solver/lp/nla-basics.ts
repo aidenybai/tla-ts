@@ -1,7 +1,6 @@
-// Ported from Z3 (src/math/lp/nla_basics_lemmas.h, src/math/lp/nla_basics_lemmas.cpp), MIT license,
-// see z3-license.txt.
 import { Rational } from "../rational";
 import { KIND_EQ, KIND_GE, KIND_GT, KIND_LE, KIND_LT, KIND_NE } from "./constraints";
+import { NULL_LPVAR } from "./lar-solver";
 import { LarTerm } from "./lar-term";
 import type { NlaCore } from "./nla-core";
 import type { Factorization } from "./nla-factorization";
@@ -307,8 +306,52 @@ export class Basics {
     );
   }
 
-  // Deviation from Z3: the monic-to-factor neutral lemma is left out because it never fires (nla_basics_lemmas.cpp).
+  private basicLemmaForMonNeutralMonicToFactorModelBased(
+    rooted: Monic,
+    factorization: Factorization,
+  ) {
+    const core = this.core;
+    const monicVar = core.emons.get(rooted.variable).variable;
+    const absMonicValue = core.val(monicVar).abs();
+    if (absMonicValue.isZero()) return;
+    let sameAbsVar = NULL_LPVAR;
+    let nonUnitVar = NULL_LPVAR;
+    let isAllInt = true;
+    for (const factor of factorization.factors) {
+      const lpVar = factor.variable;
+      isAllInt &&= core.varIsInt(lpVar);
+      // Z3 tests the factor's variable against null_lpvar, which never holds, so the lemma never fires.
+      if (lpVar === NULL_LPVAR && core.valFactor(factor).abs().equals(absMonicValue))
+        sameAbsVar = lpVar;
+      else if (!core.valFactor(factor).abs().equals(Rational.one)) nonUnitVar = lpVar;
+    }
+    if (sameAbsVar === NULL_LPVAR || nonUnitVar === NULL_LPVAR) return;
+    if (!isAllInt && factorization.factors.length > 2) return;
+    const lemma = new LemmaBuilder(core);
+    lemma.addIneq(mkIneq(monicVar, KIND_EQ, 0));
+    lemma.addIneq(
+      mkIneq(
+        new LarTerm([
+          [sameAbsVar, Rational.one],
+          [
+            monicVar,
+            core.val(sameAbsVar).equals(core.val(monicVar).neg())
+              ? Rational.one
+              : Rational.minusOne,
+          ],
+        ]),
+        KIND_NE,
+        0,
+      ),
+    );
+    lemma.addIneq(mkIneq(nonUnitVar, KIND_EQ, 1));
+    lemma.addIneq(mkIneq(nonUnitVar, KIND_EQ, -1));
+    lemma.explainMonic(rooted);
+    lemma.explainFactorization(factorization);
+  }
+
   private basicLemmaForMonNeutralModelBased(rooted: Monic, factorization: Factorization) {
+    this.basicLemmaForMonNeutralMonicToFactorModelBased(rooted, factorization);
     if (factorization.mon !== null)
       this.basicLemmaForMonNeutralFromFactorsToMonicModelBasedFm(factorization.mon);
     else this.basicLemmaForMonNeutralFromFactorsToMonicModelBased(rooted, factorization);

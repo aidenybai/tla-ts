@@ -1,6 +1,6 @@
-// Ported from Z3 (src/math/lp/nla_core.h, src/math/lp/nla_core.cpp, src/math/lp/nla_common.cpp, src/math/lp/nla_explanations.cpp, src/math/lp/factorization.cpp, src/math/lp/factorization_factory_imp.cpp, src/math/lp/nla_solver.cpp), MIT license, see z3-license.txt.
+import { SmtInvariantError } from "../../../../errors";
 import { L_FALSE, L_TRUE, L_UNDEF } from "../lbool";
-import type { ResourceLimit } from "../rlimit";
+import { ResourceLimit } from "../rlimit";
 import { Rational } from "../rational";
 import { IndexedUintSet } from "./containers";
 import { COLUMN_BOXED, COLUMN_FIXED, COLUMN_FREE, COLUMN_LOWER, COLUMN_UPPER } from "./core-solver";
@@ -144,6 +144,7 @@ export class NlaCore {
   private readonly patcher: Patcher;
   private readonly horner: Horner;
   readonly grobner: Grobner;
+  readonly nraLimit = new ResourceLimit(Infinity);
   readonly nra = new NraSolver(this);
   readonly transcendentals = new NlaTranscendentals(this);
   isUsingNraModel = false;
@@ -151,6 +152,9 @@ export class NlaCore {
   private checkAssignmentFailCount = 0;
   private squeezeSchedule = new SqueezeSchedule();
   isRelevant: (lpVar: number) => boolean = () => true;
+  addMulDefHook: (vars: number[]) => number = () => {
+    throw new SmtInvariantError("nla has no hook to define a product");
+  };
 
   constructor(
     readonly lra: LarSolver,
@@ -343,6 +347,12 @@ export class NlaCore {
   addMonic(lpVar: number, vars: number[]) {
     this.emons.add(lpVar, vars);
     this.monicsWithChangedBounds.add(lpVar);
+  }
+
+  addMulDef(vars: number[]) {
+    const lpVar = this.addMulDefHook(vars);
+    this.addMonic(lpVar, vars);
+    return lpVar;
   }
 
   checkMonic(monic: Monic) {
@@ -758,7 +768,9 @@ export class NlaCore {
       NLA_PARAMS.nraCheckAssignment &&
       this.checkAssignmentFailCount < NLA_PARAMS.nraCheckAssignmentMaxFail
     ) {
+      this.limit.pushChild(this.nraLimit);
       result = this.nra.checkAssignment();
+      this.limit.popChild(this.nraLimit);
       if (result !== L_TRUE) this.checkAssignmentFailCount++;
     }
     if (hasNoEffect() && this.shouldRunBoundedNlsat()) result = this.boundedNlsat();
@@ -778,10 +790,12 @@ export class NlaCore {
         result = this.boundedNlsat();
     }
     if (hasNoEffect() && NLA_PARAMS.nra && level >= 2) {
-      result = this.nra.check(Infinity, Infinity);
+      this.limit.pushChild(this.nraLimit);
+      result = this.nra.check(Infinity);
+      this.limit.popChild(this.nraLimit);
       stats.nraCalls++;
     }
-    if (result === L_UNDEF && !hasNoEffect()) result = L_FALSE;
+    if (result === L_UNDEF && !hasNoEffect() && this.limit.inc()) result = L_FALSE;
     stats.nlaLemmas += this.lemmas.length;
     return result;
   }
@@ -791,10 +805,15 @@ export class NlaCore {
   }
 
   private boundedNlsat() {
-    const budget = 100000;
-    const result = this.nra.check(100, budget);
+    const rlimitBudget = 100000;
+    this.limit.pushChild(this.nraLimit);
+    this.nraLimit.push(rlimitBudget);
+    const result = this.nra.check(100);
+    const rlimitConsumed = this.nraLimit.count;
+    this.nraLimit.pop();
+    this.limit.popChild(this.nraLimit);
     this.stats.nraCalls++;
-    this.nlsatBackoff.update(result === L_FALSE || this.nra.steps < budget / 10);
+    this.nlsatBackoff.update(result === L_FALSE || rlimitConsumed < rlimitBudget / 10);
     if (result === L_TRUE) this.clear();
     return result;
   }

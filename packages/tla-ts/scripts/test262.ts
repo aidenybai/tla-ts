@@ -15,7 +15,7 @@ import { compileToEscore } from "../src/typescript/spec/compile";
 import { prepareRuntime, SCRIPT_STEPS } from "../src/typescript/spec/prepare";
 import { CONFORMANCE_DIRECTORY, listTest262Files, TEST262_DIRECTORY } from "./corpora";
 
-type Outcome = "pass" | "wrong" | "untranslatable" | "skipped";
+type Outcome = "pass" | "wrong" | "untranslatable" | "skipped" | "out-of-memory";
 
 interface TestRun {
   id: string;
@@ -357,10 +357,13 @@ const runSyntaxTest = (id: string, source: string, metadata: Metadata): TestRun 
   if (!isRejected) {
     return { id, outcome: "skipped", reason: "Node accepts it" };
   }
-  const program = `${strict}${getHarness(metadata, source)}
-${source}`;
+  // The program as written, as JavaScript, as TypeScript's emit and its type stripping drop some
+  // of what V8 rejects, such as a trailing comma after a rest parameter and a getter's parameter,
+  // and without the harness, as it compiles and runs nothing.
+  const program = `${strict}${source}`;
   try {
-    compileProgram(program, "test262.ts", metadata.isModule);
+    getEmitted(program, metadata.isModule);
+    compileToEscore(program, "test262.js", RUNTIME, metadata.isModule);
   } catch (error) {
     return getSyntaxRun(id, error);
   }
@@ -577,11 +580,9 @@ const getScriptError = (source: string, path: string, isSloppy: boolean) => {
 // prints each check's compile and check time and its module's size.
 const RUNTIME = prepareRuntime(join(import.meta.dirname, "../ecmascript"));
 
-// Compiles a test's program by specializing ESCore. The harness merges namespaces into its
-// functions, which Node's type stripping rejects, so the program runs as the JavaScript that
-// TypeScript emits for it, as Node runs it here, which a linked test's own file holds too, for an
-// import of it. A syntax error throws with TypeScript's code for it.
-const compileProgram = (program: string, path: string, isModule: boolean) => {
+// The JavaScript that TypeScript emits for a program, where a syntax error throws with each of
+// TypeScript's codes for it.
+const getEmitted = (program: string, isModule: boolean) => {
   const transpiled = ts.transpileModule(program, {
     compilerOptions: {
       target: ts.ScriptTarget.ESNext,
@@ -592,17 +593,31 @@ const compileProgram = (program: string, path: string, isModule: boolean) => {
     },
     reportDiagnostics: true,
   });
-  const error = transpiled.diagnostics?.find(
+  const errors = (transpiled.diagnostics ?? []).filter(
     (diagnostic) => diagnostic.category === ts.DiagnosticCategory.Error,
   );
-  if (error !== undefined) {
+  if (errors.length > 0) {
     throw new TlaTypeScriptError(
-      `error TS${error.code}: ${ts.flattenDiagnosticMessageText(error.messageText, "\n")}`,
+      errors
+        .map(
+          (error) =>
+            `error TS${error.code}: ${ts.flattenDiagnosticMessageText(error.messageText, "\n")}`,
+        )
+        .join("\n"),
     );
   }
-  if (existsSync(path)) writeFileSync(path, transpiled.outputText);
+  return transpiled.outputText;
+};
+
+// Compiles a test's program by specializing ESCore. The harness merges namespaces into its
+// functions, which Node's type stripping rejects, so the program runs as the JavaScript that
+// TypeScript emits for it, as Node runs it here, which a linked test's own file holds too, for an
+// import of it.
+const compileProgram = (program: string, path: string, isModule: boolean) => {
+  const emitted = getEmitted(program, isModule);
+  if (existsSync(path)) writeFileSync(path, emitted);
   // test262's host loads every file of code as an ES module.
-  return compileToEscore(transpiled.outputText, path, RUNTIME, isModule, {
+  return compileToEscore(emitted, path, RUNTIME, isModule, {
     steps: SCRIPT_STEPS,
     entries: [],
     isModuleHost: true,
@@ -638,6 +653,36 @@ const checkProgram = async (
   }
 };
 
+// A test whose source, its built strings written out, runs to a million characters, as the
+// property escapes' do, runs in a process of its own with the heap that Node gives this one, where
+// running out of it is a failure of the test of its own kind rather than the run's.
+const LARGE_SOURCE = 1_000_000;
+const OUTCOMES: Outcome[] = ["pass", "wrong", "untranslatable", "skipped", "out-of-memory"];
+const IS_OWN_PROCESS = process.env.TLA_TS_OWN_PROCESS !== undefined;
+
+const runInOwnProcess = (id: string): TestRun => {
+  const run = spawnSync(process.execPath, [...process.execArgv, process.argv[1], "--verbose", id], {
+    encoding: "utf8",
+    env: { ...process.env, TLA_TS_OWN_PROCESS: "1" },
+    maxBuffer: 1 << 26,
+  });
+  const words = run.stdout
+    .split("\n")
+    .map((text) => text.split(" "))
+    .find((line) => line[1] === id);
+  const outcome = OUTCOMES.find((candidate) => candidate.toUpperCase() === words?.[0]);
+  if (words !== undefined && outcome !== undefined) {
+    return { id, outcome, reason: words.slice(2).join(" ") };
+  }
+  return run.stderr.includes("heap out of memory")
+    ? { id, outcome: "out-of-memory", reason: "" }
+    : {
+        id,
+        outcome: "wrong",
+        reason: `the test's process failed: ${getFirstLine(run.stderr || `exit ${run.status}`)}`,
+      };
+};
+
 const runTest = async (path: string): Promise<TestRun> => {
   const id = relative(TEST262_DIRECTORY, path);
   const read = readFileSync(path, "utf8");
@@ -649,6 +694,7 @@ const runTest = async (path: string): Promise<TestRun> => {
   if (source === undefined) {
     return { id, outcome: "skipped", reason: "a buildString call of other than literal arrays" };
   }
+  if (source.length > LARGE_SOURCE && !IS_OWN_PROCESS) return runInOwnProcess(id);
   const isImporting = hasImportCall(source);
   const isLinked =
     isImporting || (metadata.isModule && LINKED_MODULE.test(source.slice(source.indexOf("---*/"))));
@@ -703,7 +749,7 @@ const getReasonKind = (reason: string) =>
 
 const isVerbose = process.argv.includes("--verbose");
 const prefixes = process.argv.slice(2).filter((argument) => !argument.startsWith("--"));
-const paths = listTest262Files()
+const paths = listTest262Files(prefixes)
   .filter((path) => {
     const id = relative(TEST262_DIRECTORY, path);
     return prefixes.length === 0 || prefixes.some((prefix) => id.startsWith(prefix));
@@ -714,7 +760,7 @@ const runs: TestRun[] = [];
 for (const path of paths) {
   const run = await runTest(path);
   runs.push(run);
-  if (isVerbose || run.outcome === "wrong") {
+  if (isVerbose || run.outcome === "wrong" || run.outcome === "out-of-memory") {
     console.log(`${run.outcome.toUpperCase()} ${run.id}${run.reason ? ` ${run.reason}` : ""}`);
   }
 }
@@ -736,4 +782,6 @@ for (const outcome of ["untranslatable", "skipped"]) {
     .slice(0, 10)
     .forEach((entry) => console.log(`  ${entry.count} ${entry.key}`));
 }
-process.exit(runs.some((run) => run.outcome === "wrong") ? 1 : 0);
+process.exit(
+  runs.some((run) => run.outcome === "wrong" || run.outcome === "out-of-memory") ? 1 : 0,
+);

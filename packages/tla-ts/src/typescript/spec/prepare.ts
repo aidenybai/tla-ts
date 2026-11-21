@@ -26,6 +26,7 @@ import { type HostRealm, recordHostRealm } from "./realm";
 import {
   getHostDefinitions,
   getLocalDefinitions,
+  getMessageDefinitions,
   getRealmDefinitions,
   INTERPRETER,
   RUNTIME_DEFINITIONS,
@@ -140,7 +141,12 @@ const prepare = (name: string, text: string): PreparedModule => {
 const files = { readFile: undefined, writeFile: undefined, makeDirectory: undefined };
 
 // The definitions that the runtime puts in place of ESCore's, as a compiled spec runs them.
-const getOverrides = (library: Library, realm: HostRealm) => [
+const getOverrides = (library: Library, realm: HostRealm) => {
+  const overrides = getBaseOverrides(library, realm);
+  return [...overrides, ...getMessageDefinitions(library, overrides, realm)];
+};
+
+const getBaseOverrides = (library: Library, realm: HostRealm) => [
   ...RUNTIME_DEFINITIONS,
   ...getHostDefinitions(library),
   ...getLocalDefinitions(library),

@@ -21,7 +21,7 @@ interface ToggleGroupProps {
   children: ReactNode;
 }
 
-export const ToggleGroup = (props: ToggleGroupProps) => {
+const ToggleGroupRoot = (props: ToggleGroupProps) => {
   const indicatorId = useId();
   return (
     <toggleGroupContext.PartsContext
@@ -51,7 +51,7 @@ interface ToggleGroupItemProps {
   children: ReactNode;
 }
 
-export const ToggleGroupItem = (props: ToggleGroupItemProps) => {
+const ToggleGroupItem = (props: ToggleGroupItemProps) => {
   const group = toggleGroupContext.useParts();
   return (
     <button
@@ -70,6 +70,7 @@ export const ToggleGroupItem = (props: ToggleGroupItemProps) => {
       {group.value === props.value && (
         <m.span
           layoutId={group.indicatorId}
+          layoutDependency={group.value}
           transition={{ type: "spring", duration: 0.3, bounce: 0 }}
           className="absolute inset-0 rounded-[inherit] bg-raised shadow-raised"
         />
@@ -77,4 +78,9 @@ export const ToggleGroupItem = (props: ToggleGroupItemProps) => {
       <span className="relative z-10 flex">{props.children}</span>
     </button>
   );
+};
+
+export const ToggleGroup = {
+  Root: ToggleGroupRoot,
+  Item: ToggleGroupItem,
 };

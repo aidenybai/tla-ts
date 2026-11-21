@@ -1,4 +1,3 @@
-// Ported from Z3 (src/ast/recfun_decl_plugin.cpp), MIT license, see z3-license.txt.
 import {
   type AstManager,
   KIND_APP,
@@ -150,10 +149,11 @@ const computeCases = (manager: AstManager, def: RecFunDef, isMacro: boolean, rhs
     }
     if (branch.toSplit !== null) {
       const ite = branch.toSplit.expr;
+      const toSplit = branch.toSplit.next;
       const condition = manager.getArg(ite, 0);
       const mkBranch = (isPositive: boolean): Branch => ({
         path: { ite, isPositive, next: branch.path },
-        toSplit: branch.toSplit!.next,
+        toSplit,
         toUnfold: {
           expr: condition,
           next: { expr: manager.getArg(ite, isPositive ? 1 : 2), next: branch.toUnfold },

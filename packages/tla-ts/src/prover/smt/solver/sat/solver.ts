@@ -1,5 +1,3 @@
-// Ported from Z3 (src/sat/sat_solver.h, src/sat/sat_solver.cpp, src/sat/sat_gc.cpp,
-// src/sat/sat_justification.h, src/util/ema.h), MIT license, see z3-license.txt.
 import { SmtCanceledError } from "../../../../errors";
 import { L_FALSE, L_TRUE, L_UNDEF } from "../lbool";
 import { RandomGen } from "../random-gen";
@@ -61,6 +59,7 @@ export interface SatExtension {
   pop(numScopes: number): void;
   userPush?(): void;
   userPop?(numScopes: number): void;
+  gcVars?(numVars: number): void;
   popReinit(): void;
   simplify(): void;
   gc(): void;
@@ -76,7 +75,7 @@ const RANDOM_MAX_VALUE = 0x7fff;
 const S_SAT = 0;
 const S_UNSAT = 1;
 
-export class Ema {
+class Ema {
   private beta = 1;
   value = 0;
   private period = 0;
@@ -141,7 +140,6 @@ export class Solver {
   model = new Int8Array(0);
   isModelCurrent = false;
   isInconsistent = false;
-  isSearching = false;
   conflictJustLevel = 0;
   conflictLevel = 0;
   conflictVal = 0;
@@ -149,7 +147,6 @@ export class Solver {
   notL = NULL_LITERAL;
   clauses: number[] = [];
   learned: number[] = [];
-  numFrozen = 0;
   watches: WatchList[] = [];
   assignment = new Int8Array(16);
   justLevel = new Uint32Array(8);
@@ -198,7 +195,6 @@ export class Solver {
   scopes: Scope[] = [];
   core: number[] = [];
   conflicts = 0;
-  decisions = 0;
   conflictsSinceInit = 0;
   restarts = 0;
   conflictsSinceRestart = 0;
@@ -394,7 +390,6 @@ export class Solver {
   }
 
   delClause(clause: number) {
-    if (this.arena.isFrozen(clause)) this.numFrozen--;
     this.arena.delClause(clause);
   }
 
@@ -881,38 +876,33 @@ export class Solver {
   check(assumptions: readonly number[] = []) {
     this.reasonUnknown = "no reason given";
     this.popToBaseLevel();
-    this.isSearching = true;
     this.isGivenUp = false;
-    try {
-      this.initSearch();
-      if (this.checkInconsistent()) return L_FALSE;
-      this.propagate(false);
-      if (this.checkInconsistent()) return L_FALSE;
-      this.initAssumptions(assumptions);
-      this.propagate(false);
-      if (this.checkInconsistent()) return L_FALSE;
-      if (this.config.isForcingCleanup) this.doCleanup(true);
-      if (this.config.isGcBurst) {
-        this.conflictsSinceGc = this.gcThreshold + 1;
-        this.doGc();
-      }
-      if (this.config.isEnablingPreSimplify) {
-        this.doSimplify();
-        if (this.checkInconsistent()) return L_FALSE;
-      }
-      if (this.config.maxConflicts === 0) return L_UNDEF;
-      if (this.config.maxConflicts > 0 && this.config.burstSearch > 0) {
-        this.restartThreshold = this.config.burstSearch;
-        const result = this.boundedSearch();
-        if (result !== L_UNDEF || this.isGivenUp) return result;
-        this.popReinit(this.scopeLvl);
-        this.conflictsSinceRestart = 0;
-        this.restartThreshold = this.config.restartInitial;
-      }
-      return this.basicSearch();
-    } finally {
-      this.isSearching = false;
+    this.initSearch();
+    if (this.checkInconsistent()) return L_FALSE;
+    this.propagate(false);
+    if (this.checkInconsistent()) return L_FALSE;
+    this.initAssumptions(assumptions);
+    this.propagate(false);
+    if (this.checkInconsistent()) return L_FALSE;
+    if (this.config.isForcingCleanup) this.doCleanup(true);
+    if (this.config.isGcBurst) {
+      this.conflictsSinceGc = this.gcThreshold + 1;
+      this.doGc();
     }
+    if (this.config.isEnablingPreSimplify) {
+      this.doSimplify();
+      if (this.checkInconsistent()) return L_FALSE;
+    }
+    if (this.config.maxConflicts === 0) return L_UNDEF;
+    if (this.config.maxConflicts > 0 && this.config.burstSearch > 0) {
+      this.restartThreshold = this.config.burstSearch;
+      const result = this.boundedSearch();
+      if (result !== L_UNDEF || this.isGivenUp) return result;
+      this.popReinit(this.scopeLvl);
+      this.conflictsSinceRestart = 0;
+      this.restartThreshold = this.config.restartInitial;
+    }
+    return this.basicSearch();
   }
 
   checkInconsistent() {
@@ -1128,7 +1118,6 @@ export class Solver {
     const next = this.nextVar();
     if (next === -1) return false;
     this.push();
-    this.decisions++;
     this.assignScoped(2 * next + (this.guess(next) ? 0 : 1));
     return true;
   }
@@ -1887,6 +1876,7 @@ export class Solver {
     };
     gcClauses(this.learned);
     gcClauses(this.clauses);
+    this.ext?.gcVars?.(maxVar);
     let next = 0;
     for (const lit of this.trail) if (lit >> 1 < maxVar) this.trail[next++] = lit;
     this.trail.length = next;
@@ -1932,16 +1922,6 @@ export class Solver {
   private rescaleActivity() {
     for (let index = 0; index < this.activity.length; index++) this.activity[index] >>>= 14;
     this.activityInc >>>= 14;
-  }
-
-  numClauses() {
-    let numClauses = this.trail.length;
-    for (let lit = 0; lit < this.watches.length; lit++) {
-      const wlist = this.watches[lit];
-      for (let index = 0; index < wlist.size; index++)
-        if (wlist.isBinary(index) && (lit ^ 1) < wlist.getLiteral(index)) numClauses++;
-    }
-    return numClauses + this.clauses.length + this.learned.length;
   }
 
   doCleanup(isForced: boolean) {
@@ -2065,12 +2045,10 @@ export class Solver {
             this.detachClause(clause);
             arena.inactRounds[clause] = 0;
             arena.setFrozen(clause, true);
-            this.numFrozen++;
           }
         }
       } else if (this.psm(clause) <= Math.trunc(arena.size[clause] * this.minDTk)) {
         arena.setFrozen(clause, false);
-        this.numFrozen--;
         if (!this.activateFrozenClause(clause)) {
           this.delClause(clause);
           continue;

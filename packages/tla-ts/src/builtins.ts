@@ -1,5 +1,6 @@
 import { TlaEndOfInputError, TlaEvaluationError, TlaModuleError } from "./errors";
 import type { Builtin, BuiltinArgument, Context, OperatorValue } from "./evaluate";
+import { prettyPrint } from "./pretty-print";
 import {
   formatValue,
   getFunctionClass,
@@ -51,13 +52,13 @@ export const createModuleArgumentError = (
   value: Value,
 ) =>
   new TlaModuleError(
-    `The ${position} argument of ${name} should be a ${expected}, but instead it is:\n${formatValue(value)}`,
+    `The ${position} argument of ${name} should be a ${expected}, but instead it is:\n${prettyPrint(formatValue(value))}`,
   );
 
 export const toEnumeratedSet = (value: Value, name: string, reported = value) => {
   if (!isSetValue(value) || isOverriddenSet(value)) {
     throw new TlaModuleError(
-      `Applying ${name} to the following value,\nwhich is not a finite set:\n${formatValue(reported)}`,
+      `Applying ${name} to the following value,\nwhich is not a finite set:\n${prettyPrint(formatValue(reported))}`,
     );
   }
   return toFiniteSet(value);
@@ -224,6 +225,27 @@ const createJavaOverrideError = (signature: string, message: string) =>
     `Attempted to apply the operator overridden by the Java method\n${signature},\nbut it produced the following error:\n${message}`,
   );
 
+export const checkJavaArity = (builtin: Builtin, signature: string): Builtin => ({
+  ...builtin,
+  signature,
+  evaluate: (args, context) => {
+    if (args.length === builtin.arity) return builtin.evaluate(args, context);
+    const result = /(\w+) \S+\(/.exec(signature)?.[1];
+    if (builtin.arity === 0) {
+      throw createJavaOverrideError(
+        signature,
+        `cannot convert MethodHandle()${result} to (Value[])Value`,
+      );
+    }
+    throw createJavaOverrideError(
+      signature,
+      args.length === 0
+        ? `handle's method type (IValue[])${result} but found ()Value`
+        : `array is not of length ${builtin.arity}`,
+    );
+  },
+});
+
 export const overrideWithJava = (builtin: Builtin, signature: string): Builtin => {
   const reportAsJavaFailure =
     <Arguments extends unknown[]>(compute: (...args: Arguments) => Value) =>
@@ -240,21 +262,20 @@ export const overrideWithJava = (builtin: Builtin, signature: string): Builtin =
         const isWrapped =
           builtin.isLazy === true || !(error instanceof TlaModuleError) || isFingerprinted;
         if (!isWrapped) throw error;
+        // TLC's MethodValue#eval rethrows a FingerprintException from the method as a TLCRuntimeException.
+        if (setTrace.callStack) setTrace.callStack.fingerprint = undefined;
         throw createJavaOverrideError(signature, error.message);
       }
     };
-  const evaluate = reportAsJavaFailure(builtin.evaluate);
-  return {
-    ...builtin,
-    evaluate: (args, context) => {
-      if (args.length !== builtin.arity) {
-        throw createJavaOverrideError(signature, `array is not of length ${builtin.arity}`);
-      }
-      return evaluate(args, context);
+  return checkJavaArity(
+    {
+      ...builtin,
+      evaluate: reportAsJavaFailure(builtin.evaluate),
+      evaluateUnary: builtin.evaluateUnary && reportAsJavaFailure(builtin.evaluateUnary),
+      evaluateBinary: builtin.evaluateBinary && reportAsJavaFailure(builtin.evaluateBinary),
     },
-    evaluateUnary: builtin.evaluateUnary && reportAsJavaFailure(builtin.evaluateUnary),
-    evaluateBinary: builtin.evaluateBinary && reportAsJavaFailure(builtin.evaluateBinary),
-  };
+    signature,
+  );
 };
 
 export const getJavaInteger = (value: Value, signature: string) => {
@@ -277,20 +298,23 @@ export const defineArithmetic = (
   compute: (left: number, right: number) => number,
 ) => {
   const signature = getJavaSignature(module, method, "IntValue", 2);
-  return defineBinary(name, (left, right) => {
-    // TLC's MethodHandle casts the last argument first.
-    const rightNumber = getJavaInteger(right, signature);
-    const leftNumber = getJavaInteger(left, signature);
-    const result = compute(leftNumber, rightNumber);
-    if (isOutOfRange(result)) throw createOverflowError(`${leftNumber}${name}${rightNumber}`);
-    return result;
-  });
+  return checkJavaArity(
+    defineBinary(name, (left, right) => {
+      // TLC's MethodHandle casts the last argument first.
+      const rightNumber = getJavaInteger(right, signature);
+      const leftNumber = getJavaInteger(left, signature);
+      const result = compute(leftNumber, rightNumber);
+      if (isOutOfRange(result)) throw createOverflowError(`${leftNumber}${name}${rightNumber}`);
+      return result;
+    }),
+    signature,
+  );
 };
 
 const getIntegerArgument = (value: Value, position: string, name: string) => {
   if (typeof value !== "number") {
     throw new TlaModuleError(
-      `The ${position} argument of ${name} should be an integer, but instead it is:\n${formatValue(value)}`,
+      `The ${position} argument of ${name} should be an integer, but instead it is:\n${prettyPrint(formatValue(value))}`,
     );
   }
   return value;

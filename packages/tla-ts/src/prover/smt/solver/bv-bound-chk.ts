@@ -1,5 +1,3 @@
-// Ported from Z3 (src/tactic/bv/bv_bound_chk_tactic.cpp, src/ast/rewriter/bv_bounds.h,
-// src/ast/rewriter/bv_bounds.cpp), MIT license, see z3-license.txt.
 import { SmtTacticError } from "../../../errors";
 import {
   type AstManager,
@@ -473,22 +471,40 @@ class BvBoundChkRewriter extends RewriterTpl {
   }
 }
 
-export const runBvBoundChk = (manager: AstManager, limit: number) => (goal: Goal) => {
-  if (goal.isProofsEnabled)
-    throw new SmtTacticError("bv-bound-chk does not support proof production");
-  if (goal.isCoresEnabled)
-    throw new SmtTacticError("bv-bound-chk does not support unsat core production");
-  const rewriter = new BvBoundChkRewriter(manager, limit);
-  let rewritten = -1;
-  const size = goal.forms.size;
-  for (let index = 0; index < size && !goal.isInconsistent; index++) {
-    const next = rewriter.rewrite(goal.forms.items[index]);
+export class BvBoundChkTactic {
+  private rewriter: BvBoundChkRewriter | undefined;
+
+  constructor(
+    private readonly manager: AstManager,
+    private readonly limit: number,
+  ) {}
+
+  run(goal: Goal) {
+    const manager = this.manager;
+    if (goal.isProofsEnabled)
+      throw new SmtTacticError("bv-bound-chk does not support proof production");
+    if (goal.isCoresEnabled)
+      throw new SmtTacticError("bv-bound-chk does not support unsat core production");
+    const rewriter = (this.rewriter ??= new BvBoundChkRewriter(manager, this.limit));
+    let rewritten = -1;
+    const size = goal.forms.size;
+    for (let index = 0; index < size && !goal.isInconsistent; index++) {
+      const next = rewriter.rewrite(goal.forms.get(index));
+      release(manager, rewritten);
+      rewritten = next;
+      goal.update(index, rewritten);
+    }
     release(manager, rewritten);
-    rewritten = next;
-    goal.update(index, rewritten);
+    goal.depth++;
+    return [goal];
   }
-  release(manager, rewritten);
-  rewriter.release();
-  goal.depth++;
-  return [goal];
-};
+
+  cleanup() {
+    this.rewriter?.release();
+    this.rewriter = undefined;
+  }
+
+  release() {
+    this.rewriter?.release();
+  }
+}

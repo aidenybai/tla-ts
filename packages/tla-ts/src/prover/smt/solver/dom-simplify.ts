@@ -1,5 +1,3 @@
-// Ported from Z3 (src/ast/simplifiers/dominator_simplifier.cpp, src/ast/rewriter/dom_simplifier.cpp,
-// src/ast/expr_substitution.cpp), MIT license, see z3-license.txt.
 import { type AstManager, KIND_APP, OP_AND, OP_EQ, OP_ITE, OP_NOT, OP_OR } from "./ast";
 import { mkNot } from "./ast-util";
 import { type DependentExprState, runSimplifier } from "./dependent-expr-state";
@@ -449,7 +447,7 @@ class DominatorSimplifier {
     const args = new RefVector(manager);
     state.forEachIndex((index) => {
       state.get(index);
-      args.push(state.get(index));
+      if (state.goal.getDependency(index) === undefined) args.push(state.get(index));
     });
     const fml = this.own(manager.mkAnd(args.items));
     this.results.clear();
@@ -464,6 +462,7 @@ class DominatorSimplifier {
     const manager = this.manager;
     const goal = this.state.goal;
     const form = this.state.get(index);
+    if (goal.getDependency(index) !== undefined) return false;
     let result = this.simplifyRec(form);
     if (
       !manager.isTrue(result) &&

@@ -1,6 +1,3 @@
-// Ported from Z3 (src/sat/sat_watched.h, src/sat/sat_watched.cpp), MIT license, see
-// z3-license.txt.
-
 export const WATCH_BINARY = 0;
 export const WATCH_CLAUSE = 1;
 export const WATCH_EXT_CONSTRAINT = 2;

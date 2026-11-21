@@ -188,24 +188,105 @@ describe("prepare ESCore's runtime from a recorded host as from Node's realm", (
     });
   });
 
-  // A recorded realm holds no functions of the host, so a program that asks the host about a
-  // locale tag stops where Node's realm answers.
-  describe("stop where the program asks the host about a locale tag", () => {
-    const getSource = (expected: number) =>
-      `const supported = Intl.Collator.supportedLocalesOf(["en-US"]);\nif (supported.length !== ${expected}) throw new Error(String(supported));\n`;
+  // A recorded realm holds no functions of the host, but the answers of the tags it recorded
+  // (RECORDED_LOCALE_TAGS), so a program that asks the host about another tag stops where Node's
+  // realm answers.
+  const getLocaleSource = (tag: string, expected: number) =>
+    `const supported = Intl.Collator.supportedLocalesOf(["${tag}"]);\nif (supported.length !== ${expected}) throw new Error(String(supported));\n`;
 
+  // A program that names an Intl service, such as Collator, has Node's realm answer what the
+  // service resolves of its literals (HostIntl), which a recorded realm leaves out, so only a
+  // program that names none compiles to the same spec on both.
+  const getCanonicalSource = (tag: string, expected: number) =>
+    `const canonical = Intl.getCanonicalLocales(["${tag}"]);\nif (canonical.length !== ${expected}) throw new Error(String(canonical));\n`;
+
+  describe("answer a locale tag that the realm recorded", () => {
     it("agrees with Node", async () => {
-      expect(runNode(getSource(1), "locale.ts").status).toBe(0);
-      expect((await live.getOutcome(getSource(1), "locale.ts")).status).toBe("success");
-      expect((await getRecorded(getSource(1), "locale.ts")).message).toContain("tla-ts can't");
+      const text = getCanonicalSource("en-US", 1);
+      expect(runNode(text, "locale.ts").status).toBe(0);
+      const outcome = await getRecorded(text, "locale.ts");
+      expect(outcome).toEqual(await live.getOutcome(text, "locale.ts"));
+      expect(outcome.status).toBe("success");
+      const supported = getLocaleSource("en-US", 1);
+      expect(runNode(supported, "locale.ts").status).toBe(0);
+      const recorded = await getRecorded(supported, "locale.ts");
+      const answered = await live.getOutcome(supported, "locale.ts");
+      expect([recorded.status, recorded.message]).toEqual([answered.status, answered.message]);
+      expect(recorded.status).toBe("success");
     });
 
     it("rejects another result", async () => {
-      expect(runNode(getSource(0), "locale.ts").stderr).toContain("Error: en-US");
-      expect((await live.getOutcome(getSource(0), "locale.ts")).message).toContain(
+      const text = getCanonicalSource("en-US", 0);
+      expect(runNode(text, "locale.ts").stderr).toContain("Error: en-US");
+      const outcome = await getRecorded(text, "locale.ts");
+      expect(outcome).toEqual(await live.getOutcome(text, "locale.ts"));
+      expect(outcome.message).toContain("the script threw an exception");
+      const supported = getLocaleSource("en-US", 0);
+      expect(runNode(supported, "locale.ts").stderr).toContain("Error: en-US");
+      const recorded = await getRecorded(supported, "locale.ts");
+      const answered = await live.getOutcome(supported, "locale.ts");
+      expect([recorded.status, recorded.message]).toEqual([answered.status, answered.message]);
+      expect(recorded.message).toContain("the script threw an exception");
+    });
+  });
+
+  describe("stop at a locale tag that the realm didn't record", () => {
+    it("agrees with Node", async () => {
+      const text = getLocaleSource("fy-NL", 1);
+      expect(runNode(text, "locale.ts").status).toBe(0);
+      expect((await live.getOutcome(text, "locale.ts")).status).toBe("success");
+      expect((await getRecorded(text, "locale.ts")).message).toContain("tla-ts can't");
+    });
+
+    it("rejects another result", async () => {
+      const text = getLocaleSource("fy-NL", 0);
+      expect(runNode(text, "locale.ts").stderr).toContain("Error: fy-NL");
+      expect((await live.getOutcome(text, "locale.ts")).message).toContain(
         "the script threw an exception",
       );
-      expect((await getRecorded(getSource(0), "locale.ts")).message).toContain("tla-ts can't");
+      expect((await getRecorded(text, "locale.ts")).message).toContain("tla-ts can't");
+    });
+  });
+
+  // Nor does it answer what the host's Intl formats of the program's literals, or how its
+  // Date.parse reads a date string outside ECMA-262's formats.
+  describe("stop where the program formats through the host's Intl", () => {
+    const getSource = (expected: string) =>
+      `const formatted = new Intl.NumberFormat("en-US").format(1234.5);\nif (formatted !== "${expected}") throw new Error(formatted);\n`;
+
+    it("agrees with Node", async () => {
+      expect(runNode(getSource("1,234.5"), "intl.ts").status).toBe(0);
+      expect((await live.getOutcome(getSource("1,234.5"), "intl.ts")).status).toBe("success");
+      expect((await getRecorded(getSource("1,234.5"), "intl.ts")).message).toContain(
+        "tla-ts can't",
+      );
+    });
+
+    it("rejects another result", async () => {
+      expect(runNode(getSource("1234.5"), "intl.ts").stderr).toContain("Error: 1,234.5");
+      expect((await live.getOutcome(getSource("1234.5"), "intl.ts")).message).toContain(
+        "the script threw an exception",
+      );
+      expect((await getRecorded(getSource("1234.5"), "intl.ts")).message).toContain("tla-ts can't");
+    });
+  });
+
+  describe("stop where the program parses a date string as the host does", () => {
+    const getSource = (expected: number) =>
+      `const parsed = Date.parse("1970/01/01 00:00:01");\nif (parsed !== ${expected}) throw new Error(String(parsed));\n`;
+
+    it("agrees with Node", async () => {
+      expect(runNode(getSource(1000), "date.ts").status).toBe(0);
+      expect((await live.getOutcome(getSource(1000), "date.ts")).status).toBe("success");
+      expect((await getRecorded(getSource(1000), "date.ts")).message).toContain("tla-ts can't");
+    });
+
+    it("rejects another result", async () => {
+      expect(runNode(getSource(0), "date.ts").stderr).toContain("Error: 1000");
+      expect((await live.getOutcome(getSource(0), "date.ts")).message).toContain(
+        "the script threw an exception",
+      );
+      expect((await getRecorded(getSource(0), "date.ts")).message).toContain("tla-ts can't");
     });
   });
 

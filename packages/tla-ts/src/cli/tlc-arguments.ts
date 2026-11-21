@@ -35,11 +35,11 @@ export interface TlcArguments {
   suppressedCodes: number[];
   errorCodes: number[];
   userFile: string | undefined;
-  invariants: RuntimeInvariant[];
+  invariants: RuntimeInvariantTemplate[];
   moduleOperators: ModuleOperator[];
 }
 
-export interface RuntimeInvariant {
+export interface RuntimeInvariantTemplate {
   modules: string[];
   expression: string;
 }

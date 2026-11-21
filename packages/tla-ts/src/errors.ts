@@ -12,8 +12,12 @@ export const UNEXPECTED_EXCEPTION = getUnexpectedException("java.lang.RuntimeExc
 
 export const UNEXPECTED_EVAL_EXCEPTION = getUnexpectedException("tlc2.tool.EvalException");
 
+export const WRONG_INVOCATION_EXCEPTION = getUnexpectedException("util.WrongInvocationException");
+
+// V8 words an overflow of the stack without the period that JavaScriptCore, which Bun runs on,
+// ends it with.
 export const isStackOverflow = (error: unknown) =>
-  (error instanceof RangeError && error.message === "Maximum call stack size exceeded") ||
+  (error instanceof RangeError && /^Maximum call stack size exceeded\.?$/.test(error.message)) ||
   (error instanceof SyntaxError && error.message.endsWith(": Stack overflow"));
 
 export class TlaError extends Error {
@@ -34,6 +38,11 @@ export interface SyntaxFailure {
 export interface SanyError {
   location: string;
   message: string;
+}
+
+// SANY drops an error it already has only when the codes match too, so two errors can share text.
+export interface CodedSanyError extends SanyError {
+  code?: string;
 }
 
 interface SanyReport {
@@ -133,6 +142,17 @@ export class TlaStackOverflowError extends TlaEvaluationError {
 
 export const createStackOverflowError = () =>
   setExitCode(new TlaStackOverflowError(), EXIT_STATUS.error);
+
+// A TypeScript program whose check needs more stack than tla-ts gives it, though Node may run it,
+// with the depth of the state graph where the check overflowed, when it got that far.
+export class TlaStackLimitError extends TlaError {
+  constructor(stackMb: number, depth?: number) {
+    super(
+      `tla-ts can't check this program within the stack: its check overflowed its ${stackMb} MB stack${depth === undefined ? "" : ` at depth ${depth}`}`,
+    );
+    this.name = "TlaStackLimitError";
+  }
+}
 
 export class TlaUncodedError extends TlaEvaluationError {}
 
@@ -313,10 +333,24 @@ export class SmtCanceledError extends TlaError {
   }
 }
 
+export class SmtRewriterCanceledError extends SmtCanceledError {
+  constructor() {
+    super();
+    this.name = "SmtRewriterCanceledError";
+  }
+}
+
 export class SmtTacticError extends TlaError {
   constructor(message: string) {
     super(message);
     this.name = "SmtTacticError";
+  }
+}
+
+export class SmtDefaultError extends TlaError {
+  constructor(message: string) {
+    super(message);
+    this.name = "SmtDefaultError";
   }
 }
 

@@ -52,7 +52,7 @@ const XML_EXPORT_USAGE = (() => {
     "",
     getBold("OPTIONS"),
     "",
-    ...options.map(([flag, description]) => `\t${getBold(flag)}\n\t\t${description}`),
+    ...options.map((option) => `\t${getBold(option[0])}\n\t\t${option[1]}`),
     "",
     getBold("TIPS"),
     "",

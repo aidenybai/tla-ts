@@ -1,5 +1,3 @@
-// Ported from Z3 (src/ast/euf/euf_mam.h, src/ast/euf/euf_mam.cpp), MIT license, see
-// z3-license.txt.
 import {
   type AstManager,
   FAMILY_ARITH,
@@ -44,7 +42,7 @@ import { type Egraph, type Enode, getClass } from "./egraph";
 import type { TrailStack } from "./th-solver";
 
 // euf::mam_solver: the solver whose trail undoes the matcher.
-export interface MamSolver {
+interface MamSolver {
   readonly manager: AstManager;
   readonly egraph: Egraph;
   readonly trail: TrailStack;
@@ -57,7 +55,7 @@ export type OnBinding = (
   maxGeneration: number,
 ) => void;
 
-const isAcDecl = (manager: AstManager, decl: number) => {
+export const isAcDecl = (manager: AstManager, decl: number) => {
   const info = manager.funcDecls[decl];
   if (info.family === FAMILY_BASIC)
     return info.op === OP_AND || info.op === OP_OR || info.op === OP_XOR;
@@ -575,10 +573,11 @@ export class Mam implements LabelHasher<Enode> {
   }
 
   getLabelHash(decl: number) {
-    const cached = this.labelHashes[decl];
+    const smallId = this.manager.funcDecls[decl].smallId;
+    const cached = this.labelHashes[smallId];
     if (cached !== undefined) return cached;
-    const hash = mkMix(17, 3, this.manager.funcDecls[decl].smallId) & 63;
-    this.labelHashes[decl] = hash;
+    const hash = mkMix(17, 3, smallId) & 63;
+    this.labelHashes[smallId] = hash;
     return hash;
   }
 
@@ -590,10 +589,6 @@ export class Mam implements LabelHasher<Enode> {
 
   getGroundEnode(expr: number) {
     return this.ctx.egraph.find(expr) ?? null;
-  }
-
-  canPropagate() {
-    return this.toMatch.length > 0 || this.newPatterns.length > 0;
   }
 
   private setLbls(root: Enode, isParent: boolean, hash: number) {

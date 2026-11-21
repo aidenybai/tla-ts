@@ -1,5 +1,3 @@
-// Ported from Z3 (src/sat/smt/arith_solver.h, src/sat/smt/arith_internalize.cpp,
-// src/math/lp/lp_api.h), MIT license, see z3-license.txt.
 import {
   FAMILY_ARITH,
   OP_ABS,
@@ -69,7 +67,7 @@ const mkInternalizeState = (): InternalizeState => ({
 
 const MAX_POWER_DEGREE = 10;
 
-export const isUnderspecified = (op: number) =>
+const isUnderspecified = (op: number) =>
   op === OP_DIV ||
   op === OP_IDIV ||
   op === OP_REM ||
@@ -111,9 +109,10 @@ export abstract class ArithInternalize extends ThSolver {
   protected value2var = new Map<string, number>();
   protected scopes: { boundsLim: number; assertedQhead: number; assertedLim: number }[] = [];
 
-  constructor(ctx: EufSolver, id: number) {
+  constructor(ctx: EufSolver, id: number, hammerPeriod: number) {
     super(ctx, "arith", id);
     this.solver = new LarSolver(() => !ctx.manager.limit.inc());
+    this.solver.settings.updateParams(hammerPeriod, true);
   }
 
   protected isIntVar(thVar: number) {

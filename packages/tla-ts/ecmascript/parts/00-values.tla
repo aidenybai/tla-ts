@@ -84,7 +84,11 @@ IndexOf(seq, x) ==
 Remove(seq, x) == SelectSeq(seq, LAMBDA y : y # x)
 MapSeq(seq, F(_)) == [i \in DOMAIN seq |-> F(seq[i])]
 Concat(seqs) == FoldLeftSeq(seqs)
-FoldLeftSeq(seqs) == IF seqs = <<>> THEN <<>> ELSE Head(seqs) \o FoldLeftSeq(Tail(seqs))
+\* In halves, so that thousands of sequences nest log n deep rather than n.
+FoldLeftSeq(seqs) ==
+  CASE seqs = <<>> -> <<>>
+    [] Len(seqs) = 1 -> seqs[1]
+    [] OTHER -> FoldLeftSeq(SubSeq(seqs, 1, Len(seqs) \div 2)) \o FoldLeftSeq(SubSeq(seqs, Len(seqs) \div 2 + 1, Len(seqs)))
 Repeat(x, n) == [i \in 1..n |-> x]
 
 \* A heap of records, indexed from 1, in pages of HeapPageSize. Changing a record copies its page and

@@ -1,4 +1,3 @@
-// Ported from Z3 (src/smt/smt_clause.h, src/smt/smt_b_justification.h, src/util/small_object_allocator.cpp), MIT license, see z3-license.txt.
 import { SmtInvariantError } from "../../../errors";
 import type { Justification } from "./enode";
 import type { Literal } from "./literal";

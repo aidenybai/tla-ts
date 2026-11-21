@@ -1,30 +1,75 @@
 import {
   getChildren,
+  getFunctionConstruction,
   getReferencedName,
   isLocallyResolved,
   type Bound,
   type BoundPattern,
   type Definition,
   type Expression,
+  type FunctionDefinition,
   type Instance,
   type Module,
+  type OperatorDefinition,
   type OperatorParam,
   type SourceLocation,
   type Theorem,
 } from "./ast";
 import { TlaSyntaxError } from "./errors";
-import { getArity, getBoundNames, getPatternNames, isBefore, LOCAL_RESOLUTION } from "./resolve";
+import {
+  copyResolution,
+  getArity,
+  getBoundNames,
+  getKeyName,
+  getPatternNames,
+  hasNoOperands,
+  isBefore,
+  LOCAL_RESOLUTION,
+} from "./resolve";
 
 export const contextualApplications = new WeakSet<Expression>();
 
 export const substitutionFrames = new WeakMap<Expression, Expression[]>();
 
-export const withSubstitutionFrames = (expression: Expression, frames: Expression[]) => {
-  if (frames.length === 0) return expression;
+export interface Substitution {
+  frame: Expression;
+  replacement: Expression;
+}
+
+export const frameSubstitutions = new WeakMap<Expression, () => Substitution[]>();
+
+export const substitutedExpressions = new WeakMap<Expression, Substitution>();
+
+export const isSubstitutionDefinition = (definition: Definition) =>
+  substitutedExpressions.has(definition.body) && !substitutionFrames.has(definition.body);
+
+const addFrames = (expression: Expression, frames: Expression[]) => {
   const copy = { ...expression };
   if (contextualApplications.has(expression)) contextualApplications.add(copy);
   substitutionFrames.set(copy, [...frames, ...(substitutionFrames.get(expression) ?? [])]);
   return copy;
+};
+
+export const withSubstitutionFrames = (expression: Expression, frames: Expression[]) => {
+  if (frames.length === 0) return expression;
+  const copy = addFrames(expression, frames);
+  copyResolution(expression, copy);
+  return copy;
+};
+
+// SANY selects into the instanced body, so a substitute's copy keeps the marks of the parameter it replaces, not its own.
+const withReplacedFrames = (replacement: Expression, expression: Expression) =>
+  addFrames(replacement, [...(substitutionFrames.get(expression) ?? []), expression]);
+
+export const mentionsName = (
+  expression: Expression,
+  names: ReadonlySet<string> | ReadonlyMap<string, string>,
+): boolean => {
+  const name = getReferencedName(expression);
+  return (
+    (name !== undefined && names.has(name)) ||
+    getChildren(expression).some((child) => mentionsName(child, names))
+  );
 };
 
 export const renameLocals = (
@@ -32,6 +77,7 @@ export const renameLocals = (
   names: Map<string, string>,
   bound = new Set<string>(),
 ): Expression => {
+  if (!mentionsName(expression, names)) return expression;
   const mapped = mapChildren(expression, (child, childBound) =>
     renameLocals(
       child,
@@ -52,7 +98,14 @@ export const renameLocals = (
 };
 
 const mapBounds = (bounds: Bound[], map: (child: Expression) => Expression) =>
-  bounds.map((bound) => ({ pattern: bound.pattern, set: map(bound.set) }));
+  bounds.reduce<Bound[]>((mapped, bound, index) => {
+    mapped.push({
+      pattern: bound.pattern,
+      set:
+        index > 0 && bounds[index - 1].set === bound.set ? mapped[index - 1].set : map(bound.set),
+    });
+    return mapped;
+  }, []);
 
 const sourceNames = new WeakMap<Definition, string>();
 
@@ -102,6 +155,8 @@ export const mapChildren = (
       return { ...expression, args: expression.args.map(mapUnbound) };
     case "Lambda":
       return { ...expression, body: map(expression.body, expression.params) };
+    case "EnabledVariable":
+      return { ...expression, substitution: mapUnbound(expression.substitution) };
     case "And":
     case "Or":
       return { ...expression, operands: expression.operands.map(mapUnbound) };
@@ -185,8 +240,9 @@ export const mapChildren = (
         ...expression,
         function: mapUnbound(expression.function),
         updates: expression.updates.map((update) => ({
+          ...update,
           path: update.path.map((step) =>
-            step.kind === "Index" ? { kind: "Index", args: step.args.map(mapUnbound) } : step,
+            step.kind === "Index" ? { ...step, args: step.args.map(mapUnbound) } : step,
           ),
           value: mapUnbound(update.value),
         })),
@@ -219,6 +275,8 @@ export const mapChildren = (
       };
     case "Label":
       return { ...expression, body: mapUnbound(expression.body) };
+    case "Selection":
+      return { ...expression, expression: mapUnbound(expression.expression) };
     case "Subexpression":
       return {
         ...expression,
@@ -229,26 +287,149 @@ export const mapChildren = (
   }
 };
 
+const NO_NAMES: string[] = [];
+
+const visitAll = (children: Expression[], visit: (child: Expression, bound: string[]) => void) => {
+  for (let index = 0; index < children.length; index++) visit(children[index], NO_NAMES);
+};
+
+const visitBoundSets = (bounds: Bound[], visit: (child: Expression, bound: string[]) => void) => {
+  for (let index = 0; index < bounds.length; index++) visit(bounds[index].set, NO_NAMES);
+};
+
 export const forEachChild = (
   expression: Expression,
   visit: (child: Expression, bound: string[]) => void,
 ): void => {
-  mapChildren(expression, (child, bound) => {
-    visit(child, bound);
-    return child;
-  });
+  switch (expression.kind) {
+    case "Number":
+    case "Decimal":
+    case "String":
+    case "Identifier":
+    case "OperatorReference":
+    case "ExceptAt":
+      return;
+    case "Apply":
+    case "Bracket":
+      return visitAll(expression.args, visit);
+    case "Lambda":
+      return visit(expression.body, expression.params);
+    case "EnabledVariable":
+      return visit(expression.substitution, NO_NAMES);
+    case "And":
+    case "Or":
+      return visitAll(expression.operands, visit);
+    case "Prime":
+    case "Unchanged":
+    case "Enabled":
+    case "Always":
+    case "Eventually":
+    case "Selection":
+      return visit(expression.expression, NO_NAMES);
+    case "If":
+      visit(expression.condition, NO_NAMES);
+      visit(expression.consequent, NO_NAMES);
+      return visit(expression.alternative, NO_NAMES);
+    case "Case":
+      for (let index = 0; index < expression.arms.length; index++) {
+        visit(expression.arms[index].condition, NO_NAMES);
+        visit(expression.arms[index].body, NO_NAMES);
+      }
+      if (expression.other) visit(expression.other, NO_NAMES);
+      return;
+    case "Let": {
+      const names = expression.definitions.map((definition) => definition.name);
+      expression.definitions.forEach((definition) => {
+        if (definition.kind === "Function") {
+          visitBoundSets(definition.bounds, (child) => visit(child, names));
+          visit(definition.body, [...names, ...getBoundNames(definition.bounds)]);
+        } else {
+          visit(definition.body, [...names, ...definition.params.map((param) => param.name)]);
+        }
+      });
+      return visit(expression.body, names);
+    }
+    case "Forall":
+    case "Exists":
+    case "FunctionConstruction":
+      visitBoundSets(expression.bounds, visit);
+      return visit(expression.body, getBoundNames(expression.bounds));
+    case "UnboundedQuantifier":
+      return visit(expression.body, expression.names);
+    case "Choose":
+      if (expression.set) visit(expression.set, NO_NAMES);
+      return visit(expression.body, getPatternNames(expression.pattern));
+    case "SetEnumeration":
+    case "Tuple":
+      return visitAll(expression.elements, visit);
+    case "SetFilter":
+      visit(expression.bound.set, NO_NAMES);
+      return visit(expression.predicate, getPatternNames(expression.bound.pattern));
+    case "SetMap":
+      visitBoundSets(expression.bounds, visit);
+      return visit(expression.expression, getBoundNames(expression.bounds));
+    case "FunctionSet":
+      visit(expression.domain, NO_NAMES);
+      return visit(expression.range, NO_NAMES);
+    case "Record":
+    case "RecordSet":
+      for (let index = 0; index < expression.fields.length; index++) {
+        visit(expression.fields[index].value, NO_NAMES);
+      }
+      return;
+    case "Except":
+      visit(expression.function, NO_NAMES);
+      for (let index = 0; index < expression.updates.length; index++) {
+        const update = expression.updates[index];
+        for (let step = 0; step < update.path.length; step++) {
+          const component = update.path[step];
+          if (component.kind === "Index") visitAll(component.args, visit);
+        }
+        visit(update.value, NO_NAMES);
+      }
+      return;
+    case "FunctionApplication":
+      visit(expression.function, NO_NAMES);
+      return visitAll(expression.args, visit);
+    case "FieldAccess":
+      return visit(expression.record, NO_NAMES);
+    case "Product":
+      return visitAll(expression.factors, visit);
+    case "BoxAction":
+    case "AngleAction":
+      visit(expression.action, NO_NAMES);
+      return visit(expression.subscript, NO_NAMES);
+    case "WeakFairness":
+    case "StrongFairness":
+      visit(expression.subscript, NO_NAMES);
+      return visit(expression.action, NO_NAMES);
+    case "Label":
+      return visit(expression.body, NO_NAMES);
+    case "Subexpression":
+      expression.selectors.forEach((selector) => {
+        if ("args" in selector) visitAll(selector.args, visit);
+      });
+  }
 };
 
 interface Instantiation {
   params: OperatorParam[];
   substitutions: Map<string, Expression>;
-  variables: Set<string>;
+  substitutedVariables: Set<string>;
+  enabledSubstitutions: WeakSet<Expression>;
   getDefinition: (key: string) => Definition | undefined;
-  getOuterDefinition: (name: string) => Definition | undefined;
+  getOuterDefinition: (key: string) => Definition | undefined;
   isParameterized: (key: string) => boolean;
-  addDefinition: (source: string, name: string, create: (key: string) => Definition) => string;
+  addDefinition: (
+    source: string,
+    name: string,
+    create: (key: string) => Definition,
+    reservedKey?: string,
+  ) => string;
   createName: (name: string) => string;
+  originalNames: Map<string, string>;
   frame?: Expression;
+  isLocal?: boolean;
 }
 
 const LAMBDA_NAME = "LAMBDA";
@@ -262,9 +443,28 @@ interface Rewrite {
   mode: RewriteMode;
   modes: Map<RewriteMode, Rewrite>;
   bindings?: Map<string, Expression>;
+  selections: Map<Expression, Expression>;
 }
 
-const getSubstitutionName = (name: string) => `${name}@SUBSTITUTION`;
+const SUBSTITUTION_SUFFIX = "@SUBSTITUTION";
+
+const getSubstitutionName = (name: string) => `${name}${SUBSTITUTION_SUFFIX}`;
+
+export const getSubstitutedName = (expression: Expression) => {
+  if (
+    expression.kind === "Identifier" &&
+    isLocallyResolved(expression) &&
+    expression.name.endsWith(SUBSTITUTION_SUFFIX)
+  ) {
+    return expression.name.slice(0, -SUBSTITUTION_SUFFIX.length);
+  }
+  const substitution = substitutedExpressions.get(expression);
+  if (!substitution || substitution.replacement === expression) return undefined;
+  const occurrence = substitutionFrames
+    .get(expression)
+    ?.find((frame) => !frameSubstitutions.has(frame));
+  return occurrence?.kind === "Identifier" ? occurrence.name : undefined;
+};
 
 const isVariableAlias = (expression: Expression): boolean =>
   expression.kind === "Identifier" ||
@@ -307,6 +507,7 @@ const createRenamer = (rewrite: Rewrite) => {
     if (!rewrite.substitutedNames.has(name)) return name;
     const fresh = renamed.get(name) ?? rewrite.instantiation.createName(name);
     renamed.set(name, fresh);
+    rewrite.instantiation.originalNames.set(fresh, name);
     return fresh;
   };
 };
@@ -389,28 +590,7 @@ const isVariable = (expression: Expression, rewrite: Rewrite, bound: Map<string,
   expression.kind === "Identifier" &&
   !bound.has(expression.name) &&
   !isLocallyResolved(expression) &&
-  rewrite.instantiation.variables.has(expression.name);
-
-const getUnchangedVariables = (
-  expression: Expression,
-  rewrite: Rewrite,
-  bound: Map<string, string>,
-): string[] | undefined => {
-  if (expression.kind === "Tuple") {
-    const names = expression.elements.map((element) =>
-      getUnchangedVariables(element, rewrite, bound),
-    );
-    return names.every((element) => element !== undefined) ? names.flat() : undefined;
-  }
-  if (expression.kind !== "Identifier") return undefined;
-  if (isVariable(expression, rewrite, bound)) return [expression.name];
-  const definition = isLocallyResolved(expression)
-    ? undefined
-    : rewrite.instantiation.getDefinition(expression.name);
-  return definition?.kind === "Operator" && definition.params.length === 0
-    ? getUnchangedVariables(definition.body, rewrite, new Map())
-    : undefined;
-};
+  rewrite.instantiation.substitutedVariables.has(expression.name);
 
 const substituteInEnabled = (
   expression: Expression,
@@ -427,59 +607,12 @@ const substituteInEnabled = (
         }
       : undefined;
   }
-  if (expression.kind === "Prime") {
-    return {
-      ...expression,
-      expression: substitute(expression.expression, getMode(rewrite, "Primed"), bound),
-    };
-  }
-  if (expression.kind === "AngleAction") {
-    const location = expression.location;
-    return {
-      kind: "And",
-      operands: [
-        substitute(expression.action, rewrite, bound),
-        {
-          kind: "Apply",
-          operator: "#",
-          args: [
-            {
-              kind: "Prime",
-              expression: substitute(expression.subscript, getMode(rewrite, "Primed"), bound),
-              location,
-            },
-            substitute(expression.subscript, rewrite, bound),
-          ],
-          location,
-        },
-      ],
-      location,
-    };
-  }
-  if (expression.kind !== "Unchanged") return undefined;
-  const names = getUnchangedVariables(expression.expression, rewrite, bound);
-  if (names === undefined) return undefined;
-  return {
-    kind: "And",
-    operands: names.map((name) => ({
-      kind: "Apply",
-      operator: "=",
-      args: [
-        {
-          kind: "Prime",
-          expression: {
-            kind: "Identifier",
-            name: getEnabledVariableName(name),
-            location: expression.location,
-          },
-          location: expression.location,
-        },
-        substitute({ kind: "Identifier", name, location: expression.location }, rewrite, bound),
-      ],
-      location: expression.location,
-    })),
-    location: expression.location,
-  };
+  return expression.kind === "Prime"
+    ? {
+        ...expression,
+        expression: substitute(expression.expression, getMode(rewrite, "Primed"), bound),
+      }
+    : undefined;
 };
 
 export const createLocalIdentifier = (name: string, location: SourceLocation): Expression => ({
@@ -489,8 +622,16 @@ export const createLocalIdentifier = (name: string, location: SourceLocation): E
   resolution: LOCAL_RESOLUTION,
 });
 
+export const syntheticIdentifiers = new WeakSet<Expression>();
+
+const createSyntheticIdentifier = (name: string, location: SourceLocation) => {
+  const identifier = createLocalIdentifier(name, location);
+  syntheticIdentifiers.add(identifier);
+  return identifier;
+};
+
 export const createLocalArguments = (params: OperatorParam[], location: SourceLocation) =>
-  params.map((param) => createLocalIdentifier(param.name, location));
+  params.map((param) => createSyntheticIdentifier(param.name, location));
 
 export const createLocalAlias = (
   name: string,
@@ -521,8 +662,9 @@ const getInstanceOperator = (
   params: OperatorParam[],
   arity: number,
   location: SourceLocation,
+  resolution: typeof LOCAL_RESOLUTION | undefined,
 ): Expression => {
-  const names = Array.from({ length: arity }, (_, index) => `argument${index}`);
+  const names = Array.from({ length: arity }, (_value, index) => `argument${index}`);
   return {
     kind: "Lambda",
     params: names,
@@ -534,6 +676,7 @@ const getInstanceOperator = (
         ...names.map((name) => createLocalIdentifier(name, location)),
       ],
       location,
+      resolution,
     },
     location,
   };
@@ -547,9 +690,36 @@ const substitute = (
   rewrite: Rewrite,
   bound: Map<string, string>,
 ): Expression => {
+  const substituted = substituteExpression(expression, rewrite, bound);
+  if (rewrite.mode === "Enabled") rewrite.instantiation.enabledSubstitutions.add(substituted);
+  if (syntheticIdentifiers.has(expression)) syntheticIdentifiers.add(substituted);
+  copyResolution(expression, substituted);
+  const substitution = substitutedExpressions.get(expression);
+  if (!substitution || substituted === expression || substitutedExpressions.has(substituted)) {
+    return substituted;
+  }
+  substitutedExpressions.set(substituted, substitution);
+  const frames = substitutionFrames.get(expression);
+  if (frames && !substitutionFrames.has(substituted)) substitutionFrames.set(substituted, frames);
+  return substituted;
+};
+
+const substituteExpression = (
+  expression: Expression,
+  rewrite: Rewrite,
+  bound: Map<string, string>,
+): Expression => {
+  if (hasNoOperands(expression)) return expression;
   const recurse = (node: Expression) => substitute(node, rewrite, bound);
+  if (expression.kind === "Selection" && [...bound].every((entry) => entry[0] === entry[1])) {
+    const selected = expression.expression;
+    const substituted = rewrite.selections.get(selected) ?? recurse(selected);
+    rewrite.selections.set(selected, substituted);
+    return { ...expression, expression: substituted };
+  }
   const instantiation = rewrite.instantiation;
   const params = instantiation.params;
+  const resolution = instantiation.isLocal ? LOCAL_RESOLUTION : undefined;
   const isFree = (name: string) => !bound.has(name) && !isLocallyResolved(expression);
   if (expression.kind === "Enabled" && rewrite.mode === "Normal") {
     return {
@@ -583,25 +753,45 @@ const substitute = (
     const replacement = instantiation.substitutions.get(expression.name);
     const bindings = rewrite.bindings;
     if (replacement && (bindings === undefined || !isBoundOnce(replacement, instantiation))) {
-      return withSubstitutionFrames(replacement, [expression]);
+      const copy = withReplacedFrames(replacement, expression);
+      const substitution = substitutedExpressions.get(replacement);
+      if (substitution) substitutedExpressions.set(copy, substitution);
+      return rewrite.mode === "Enabled" && instantiation.substitutedVariables.has(expression.name)
+        ? {
+            kind: "EnabledVariable",
+            name: getEnabledVariableName(expression.name),
+            substitution: copy,
+            location: expression.location,
+          }
+        : copy;
     }
     if (replacement && bindings) {
       const name = getSubstitutionName(expression.name);
       bindings.set(name, replacement);
-      return createLocalIdentifier(name, expression.location);
+      return withSubstitutionFrames(
+        createLocalIdentifier(name, expression.location),
+        substitutionFrames.get(expression) ?? [],
+      );
     }
     const copy = getCopy(rewrite, expression.name);
     if (copy === undefined) return expression;
-    if (params.length === 0) return { ...expression, name: copy };
+    if (params.length === 0) return { ...expression, name: copy, resolution };
     const definition = instantiation.getDefinition(expression.name);
     if (definition && getArity(definition) > 0) {
-      return getInstanceOperator(copy, params, getArity(definition), expression.location);
+      return getInstanceOperator(
+        copy,
+        params,
+        getArity(definition),
+        expression.location,
+        resolution,
+      );
     }
     return {
       kind: "Apply",
       operator: copy,
       args: createLocalArguments(params, expression.location),
       location: expression.location,
+      resolution,
     };
   }
   if (expression.kind === "Apply" && isFree(expression.operator)) {
@@ -652,12 +842,12 @@ const substitute = (
           args,
           resolution: LOCAL_RESOLUTION,
         },
-        location: expression.location,
+        location: { line: expression.location.line, column: expression.location.column },
       };
     }
     if (replacement) {
       throw new TlaSyntaxError(
-        `The operator ${expression.operator} can only be substituted by an operator at line ${expression.location.line}, column ${expression.location.column}`,
+        `The operator ${getKeyName(expression.operator)} can only be substituted by an operator at line ${expression.location.line}, column ${expression.location.column}`,
       );
     }
     const copy = getCopy(rewrite, expression.operator);
@@ -666,6 +856,7 @@ const substitute = (
       ...expression,
       operator: copy,
       args: [...createLocalArguments(params, expression.location), ...args],
+      resolution,
     };
   }
   if (expression.kind === "OperatorReference" && isFree(expression.operator)) {
@@ -675,13 +866,19 @@ const substitute = (
       replacement?.kind === "OperatorReference" ||
       replacement?.kind === "Lambda"
     ) {
-      return withSubstitutionFrames(replacement, [expression]);
+      return withReplacedFrames(replacement, expression);
     }
     const copy = getCopy(rewrite, expression.operator);
     if (copy === undefined) return expression;
     const definition = instantiation.getDefinition(expression.operator);
     if (params.length > 0 && definition) {
-      return getInstanceOperator(copy, params, getArity(definition), expression.location);
+      return getInstanceOperator(
+        copy,
+        params,
+        getArity(definition),
+        expression.location,
+        resolution,
+      );
     }
     return { ...expression, operator: copy };
   }
@@ -694,29 +891,33 @@ const substitute = (
   return renameNames(mapped, bound, rename);
 };
 
-const withInstanceParams = (
-  definition: Definition,
-  params: OperatorParam[],
-  location: SourceLocation,
-): Definition => {
-  if (params.length === 0) return definition;
-  if (definition.kind === "Operator") {
-    return { ...definition, params: [...params, ...definition.params] };
-  }
-  return {
-    kind: "Operator",
-    name: definition.name,
-    params,
-    body: {
-      kind: "Let",
-      definitions: [definition],
-      body: createLocalIdentifier(definition.name, location),
-      location,
-    },
-    isLocal: definition.isLocal,
-    isRecursive: false,
-    location: definition.location,
-  };
+const getFunctionBody = (definition: FunctionDefinition): Expression =>
+  definition.isSelfReferential
+    ? {
+        kind: "Let",
+        definitions: [definition],
+        body: createSyntheticIdentifier(definition.name, definition.location),
+        location: { line: definition.location.line, column: definition.location.column },
+      }
+    : getFunctionConstruction(definition);
+
+export const getOperatorDefinition = (definition: Definition): OperatorDefinition =>
+  definition.kind === "Operator"
+    ? definition
+    : {
+        kind: "Operator",
+        name: definition.name,
+        params: [],
+        body: getFunctionBody(definition),
+        isLocal: definition.isLocal,
+        isRecursive: false,
+        location: definition.location,
+      };
+
+export const withInstanceParams = (definition: Definition, params: OperatorParam[]): Definition => {
+  if (params.length === 0) return { ...definition };
+  const operator = getOperatorDefinition(definition);
+  return { ...operator, params: [...params, ...operator.params] };
 };
 
 const copyDefinition = (rewrite: Rewrite, key: string): string => {
@@ -729,10 +930,11 @@ const copyDefinition = (rewrite: Rewrite, key: string): string => {
     rewrite.copies.set(key, copyKey);
     const rename = createRenamer(rewrite);
     const bindings = new Map<string, Expression>();
+    const unboundRewrite = getMode(rewrite, rewrite.mode);
     const bodyRewrite =
       definition.kind === "Operator" && rewrite.mode === "Normal"
-        ? { ...rewrite, bindings }
-        : rewrite;
+        ? { ...unboundRewrite, bindings, selections: new Map<Expression, Expression>() }
+        : unboundRewrite;
     const mapped = renameParams(
       mapDefinition(definition, (child, bound) =>
         substitute(child, bodyRewrite, bindNames(new Map(), bound, rename)),
@@ -744,24 +946,23 @@ const copyDefinition = (rewrite: Rewrite, key: string): string => {
         ? mapped.body
         : {
             kind: "Let",
-            definitions: [...bindings].map(([name, replacement]): Definition => ({
+            definitions: [...bindings].map((entry): Definition => ({
               kind: "Operator",
-              name,
+              name: entry[0],
               params: [],
-              body: replacement,
+              body: entry[1],
               isLocal: true,
               isRecursive: false,
-              location: replacement.location,
+              location: entry[1].location,
             })),
             body: mapped.body,
             // TLC has no such LET, so the call stack it prints has no position for it.
             location: { line: mapped.body.location.line, column: mapped.body.location.column },
           };
-    const frame = instantiation.frame;
-    // TLC's call stack holds the SubstInNode an instance puts around each definition it copies.
-    if (frame)
-      substitutionFrames.set(body, [frame, ...(substitutionFrames.get(definition.body) ?? [])]);
-    return withInstanceParams({ ...mapped, body }, instantiation.params, definition.location);
+    const copied = withInstanceParams({ ...mapped, body }, instantiation.params);
+    const frames = substitutionFrames.get(definition.body);
+    if (frames && copied.kind === "Operator") substitutionFrames.set(copied.body, frames);
+    return copied;
   });
 };
 
@@ -777,6 +978,7 @@ export const createInstantiation = (instantiation: Instantiation) => {
       copies: new Map<string, string>(),
       mode,
       modes,
+      selections: new Map<Expression, Expression>(),
     };
     modes.set(mode, created);
     return created;
@@ -784,21 +986,41 @@ export const createInstantiation = (instantiation: Instantiation) => {
   const rewrite = createRewrite("Normal");
   createRewrite("Enabled");
   createRewrite("Primed");
+  const getEntry = (key: string, copy: string, reservedKey: string | undefined) => {
+    const frame = instantiation.frame;
+    const definition = instantiation.getDefinition(copy);
+    if (!frame || !definition) return copy;
+    return instantiation.addDefinition(
+      key,
+      definition.name,
+      () => {
+        const operator = getOperatorDefinition(definition);
+        return { ...operator, body: withSubstitutionFrames(operator.body, [frame]) };
+      },
+      reservedKey,
+    );
+  };
   return {
-    getKey: (key: string) => getCopy(rewrite, key) ?? key,
-    getQualifiedKey: (key: string) => {
+    getKey: (key: string, reservedKey?: string) => {
       const copy = getCopy(rewrite, key);
-      if (copy !== undefined) return copy;
+      return copy === undefined ? key : getEntry(key, copy, reservedKey);
+    },
+    getQualifiedKey: (key: string, reservedKey?: string) => {
+      const copy = getCopy(rewrite, key);
+      if (copy !== undefined) return getEntry(key, copy, reservedKey);
       const definition = instantiation.getDefinition(key);
       if (!definition) return key;
-      return instantiation.addDefinition(key, definition.name, () =>
-        withInstanceParams(definition, instantiation.params, definition.location),
+      return instantiation.addDefinition(
+        key,
+        definition.name,
+        () => withInstanceParams(definition, instantiation.params),
+        reservedKey,
       );
     },
   };
 };
 
-const hasLetInstance = (expression: Expression): boolean =>
+export const hasLetInstance = (expression: Expression): boolean =>
   (expression.kind === "Let" && expression.instances !== undefined) ||
   getChildren(expression).some(hasLetInstance);
 
@@ -811,7 +1033,12 @@ const expandLetInstances = (
   const mapped = mapChildren(expression, (child) =>
     expandLetInstances(child, instantiate, visibleLets),
   );
-  if (mapped.kind !== "Let" || !mapped.instances) return mapped;
+  if (mapped.kind !== "Let" || !mapped.instances) {
+    const children = getChildren(expression);
+    return getChildren(mapped).every((child, index) => child === children[index])
+      ? expression
+      : mapped;
+  }
   const definitions = mapped.instances.reduce((current, instance) => {
     const position = current.findIndex((definition) =>
       isBefore(instance.location, definition.location),
@@ -831,10 +1058,10 @@ const getUnnamedStatement = (theorem: Theorem) =>
     ? theorem.statement
     : undefined;
 
-export const withLetInstances = (
+export const getLetInstanceExpansion = (
   module: Module,
   instantiate: (instance: Instance, lets: Definition[]) => Definition[],
-): Module => {
+) => {
   const hasLetInstances =
     module.definitions.some((definition) => hasLetInstance(definition.body)) ||
     module.assumptions.some((assumption) => hasLetInstance(assumption.expression)) ||
@@ -842,21 +1069,7 @@ export const withLetInstances = (
       const statement = getUnnamedStatement(theorem);
       return statement !== undefined && hasLetInstance(statement);
     });
-  if (!hasLetInstances) return module;
-  return {
-    ...module,
-    definitions: module.definitions.map((definition) =>
-      mapDefinition(definition, (child) => expandLetInstances(child, instantiate, [])),
-    ),
-    assumptions: module.assumptions.map((assumption) => ({
-      ...assumption,
-      expression: expandLetInstances(assumption.expression, instantiate, []),
-    })),
-    theorems: module.theorems.map((theorem) => {
-      const statement = getUnnamedStatement(theorem);
-      return statement === undefined
-        ? theorem
-        : { ...theorem, statement: expandLetInstances(statement, instantiate, []) };
-    }),
-  };
+  return hasLetInstances
+    ? (expression: Expression) => expandLetInstances(expression, instantiate, [])
+    : undefined;
 };

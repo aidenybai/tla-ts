@@ -1,4 +1,3 @@
-// Ported from Z3 (src/smt/smt_enode.h, src/smt/smt_eq_justification.h, src/smt/smt_justification.h), MIT license, see z3-license.txt.
 import type { Literal } from "./literal";
 
 export interface Antecedents {

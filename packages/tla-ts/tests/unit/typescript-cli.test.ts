@@ -462,6 +462,19 @@ describe("the CLI with TypeScript files", () => {
     expect(getExit(runCli(directory, ["settled.ts"]))).toEqual([0, ""]);
   });
 
+  it("tells a program whose check overflows its stack, though Node runs it", () => {
+    const directory = copyFixtures("passing");
+    writeFileSync(
+      join(directory, "deep.ts"),
+      'const depth = (n: number): number => (n === 0 ? 0 : 1 + depth(n - 1));\nif (depth(1000) !== 1000) throw new Error("wrong depth");\n',
+    );
+    expect(getExit(runNode(directory, "deep.ts"))).toEqual([0, ""]);
+    expect(getExit(runCli(directory, ["deep.ts"]))).toEqual([
+      255,
+      "TlaStackLimitError: tla-ts can't check this program within the stack: its check overflowed its 8 MB stack at depth 0\n",
+    ]);
+  });
+
   it("stops where a script leaves an error uncaught whose properties Node prints", () => {
     const directory = copyFixtures("passing");
     writeFileSync(join(directory, "error.ts"), 'throw new RangeError("total", { cause: 1 });\n');

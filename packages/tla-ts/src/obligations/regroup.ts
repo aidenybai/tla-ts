@@ -1,5 +1,3 @@
-// A port of tlapm's Pco.resolve.
-
 import type { Expression, SourceLocation } from "../ast";
 import { lookupOperator, type Operator } from "./operators";
 

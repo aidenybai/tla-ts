@@ -8,11 +8,17 @@ import react from "@vitejs/plugin-react";
 import { createServer, defineConfig, type Plugin } from "vite-plus";
 import { parseModule } from "../tla-ts/src/parser";
 import { type EscoreRuntime, prepareHostRuntime } from "../tla-ts/src/typescript/spec/prepare";
-import type { Precompiled } from "./src/compilation";
-import { getEscoreCompilation } from "./src/escore";
-import { createHighlighter } from "./src/highlighter";
-import { LOGO_PATH } from "./src/logo";
-import type { Benchmark, CompiledExample, ReferenceBlock, ReferenceSection } from "./src/site-data";
+import { BUILT_OUTPUT_LINES, type Precompiled } from "./src/lib/compilation";
+import { getEscoreCompilation } from "./src/lib/escore";
+import { createHighlighter } from "./src/lib/highlighter";
+import { LOGO_PATH } from "./src/lib/logo";
+import { getPageFile } from "./src/router";
+import type {
+  Benchmark,
+  CompiledExample,
+  ReferenceBlock,
+  ReferenceSection,
+} from "./src/lib/site-data";
 
 const SITE_DATA = "virtual:site-data";
 const README_URL = new URL("../../README.md", import.meta.url);
@@ -78,6 +84,7 @@ const getOutline = (path: string, highlight: Awaited<ReturnType<typeof createHig
         )
         .join("\t"),
     )
+    .slice(0, BUILT_OUTPUT_LINES)
     .join("\n");
 
 const getBenchmarks = (): Benchmark[] => {
@@ -204,12 +211,21 @@ const recordEscoreHost = () => {
     const result = spawnSync(step[0], step.slice(1), { stdio: "inherit" });
     if (result.status !== 0) throw new Error(`${step.join(" ")} exited with ${result.status}`);
   }
+  process.env[RECORDED_HOST] = join(directory, ESCORE_HOST);
   return readFileSync(join(directory, ESCORE_HOST), "utf8");
 };
 
-// The host, recorded once a build or dev server.
+// The file of the host that this process recorded, which the build's prerender servers, which
+// load this config again, read rather than record it again.
+const RECORDED_HOST = "TLA_TS_ESCORE_HOST";
+
+// The host, recorded once a process.
 let escoreHost: string | undefined;
-const getEscoreHost = () => (escoreHost ??= recordEscoreHost());
+const getEscoreHost = () => {
+  const recorded = process.env[RECORDED_HOST];
+  escoreHost ??= recorded === undefined ? recordEscoreHost() : readFileSync(recorded, "utf8");
+  return escoreHost;
+};
 
 // The page fetches the host beside its scripts: a build writes it, and a dev server records it
 // when the page first asks.
@@ -266,7 +282,12 @@ const compilations = (): Plugin => ({
       source,
       typescript: highlight(source, "typescript").lines,
       compilation,
-      tla: highlight(compilation.tla, "tlaplus"),
+      // ESCore's code of a program runs to hundreds of lines, which the site ships as plain text
+      // rather than with the styles of each token that highlighting gives.
+      tla: {
+        code: compilation.tla,
+        lines: compilation.tla.split("\n").map((content) => [{ content, style: {} }]),
+      },
     } satisfies Precompiled)};`;
   },
 });
@@ -336,16 +357,24 @@ const pages = (): Plugin => ({
       });
       const prerender = await server.ssrLoadModule("/src/prerender.tsx");
       await server.close();
-      const content = context.filename.endsWith("/playground.html")
-        ? prerender.getPlaygroundHtml()
-        : prerender.getAppHtml();
+      const route = context.path.replace(/(?:index)?\.html$/, "");
+      const pageFile = getPageFile(route).slice(1);
+      const page = Object.values(context.bundle ?? {}).find(
+        (chunk) => chunk.type === "chunk" && chunk.facadeModuleId?.endsWith(pageFile),
+      );
+      // The entry imports the route's page by its path, so the page's chunks are named here to
+      // load beside the entry, not after it.
+      const preloads = (page?.type === "chunk" ? [page.fileName, ...page.imports] : [])
+        .map((fileName) => `<link rel="modulepreload" crossorigin href="/${fileName}">`)
+        .join("");
       return html
+        .replace("</head>", `${preloads}</head>`)
         .replace(STYLESHEET, (link, fileName) => {
           const styles = context.bundle?.[fileName];
           // The styles ride in the HTML, so the first paint does not wait on a second request.
           return styles?.type === "asset" ? `<style>${styles.source}</style>` : link;
         })
-        .replace(EMPTY_ROOT, `<div id="root">${content}</div>`);
+        .replace(EMPTY_ROOT, `<div id="root">${prerender.getHtml(route)}</div>`);
     },
   },
 });

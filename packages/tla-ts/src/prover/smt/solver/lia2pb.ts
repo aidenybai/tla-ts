@@ -1,4 +1,3 @@
-// Ported from Z3 (src/tactic/arith/lia2pb_tactic.cpp), MIT license, see z3-license.txt.
 import { SmtTacticError } from "../../../errors";
 import {
   type AstManager,
@@ -39,7 +38,7 @@ export const lia2pb = (manager: AstManager, goal: Goal, options: Lia2PbOptions) 
   if (goal.isInconsistent) return;
   const bounds = new BoundManager(manager);
   for (let index = 0; index < goal.forms.size; index++)
-    bounds.add(goal.forms.items[index], goal.getDependency(index));
+    bounds.add(goal.forms.get(index), goal.getDependency(index));
   const getTargetUpper = (expr: number) => {
     if (!manager.isUninterpretedConst(expr)) return undefined;
     const lower = bounds.lowers.get(expr);
@@ -139,7 +138,7 @@ export const lia2pb = (manager: AstManager, goal: Goal, options: Lia2PbOptions) 
   rewriter.setSubstitution(substitution, substitutionDependencies);
   const size = goal.forms.size;
   for (let index = 0; !goal.isInconsistent && index < size; index++) {
-    const rewritten = rewriter.rewrite(goal.forms.items[index]);
+    const rewritten = rewriter.rewrite(goal.forms.get(index));
     goal.update(
       index,
       rewritten,
@@ -150,6 +149,6 @@ export const lia2pb = (manager: AstManager, goal: Goal, options: Lia2PbOptions) 
   }
   rewriter.release();
   goal.depth++;
-  goal.addDefinitions(definitions);
+  if (goal.isModelsEnabled) goal.addDefinitions(definitions);
   terms.reset();
 };

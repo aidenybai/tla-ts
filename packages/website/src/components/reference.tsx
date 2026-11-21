@@ -1,8 +1,8 @@
 import { reference } from "virtual:site-data";
-import type { ReferenceBlock } from "../site-data";
-import { CodeActions, CodeContent, CodeCopy, CodeRoot } from "./code";
-import { SectionRoot, SectionTitle } from "./section";
-import { InlineCode } from "./ui/inline-code";
+import type { ReferenceBlock } from "@/lib/site-data";
+import { Code } from "./code";
+import { Section } from "./section";
+import { InlineCode } from "@/components/ui/inline-code";
 
 interface TextProps {
   text: string;
@@ -38,12 +38,12 @@ const Block = (props: BlockProps) => {
   }
   if (block.kind === "code") {
     return (
-      <CodeRoot source={block.source}>
-        <CodeContent />
-        <CodeActions>
-          <CodeCopy />
-        </CodeActions>
-      </CodeRoot>
+      <Code.Root source={block.source}>
+        <Code.Content />
+        <Code.Actions>
+          <Code.Copy />
+        </Code.Actions>
+      </Code.Root>
     );
   }
   return (
@@ -79,12 +79,12 @@ const Block = (props: BlockProps) => {
 
 export const Reference = () =>
   reference.map((section) => (
-    <SectionRoot key={section.title}>
-      <SectionTitle>{section.title}</SectionTitle>
+    <Section.Root key={section.title}>
+      <Section.Title>{section.title}</Section.Title>
       {section.blocks
         .map((block, index) => ({ block, order: index }))
         .map((item) => (
           <Block key={item.order} block={item.block} />
         ))}
-    </SectionRoot>
+    </Section.Root>
   ));

@@ -1,5 +1,3 @@
-// Ported from Z3 (src/tactic/arith/pb2bv_tactic.cpp, src/tactic/arith/pb2bv_model_converter.cpp),
-// MIT license, see z3-license.txt.
 import { SmtTacticError } from "../../../errors";
 import {
   type AstManager,
@@ -25,8 +23,8 @@ import {
 } from "./ast";
 import { BoundManager } from "./bound-manager";
 import { mkBvApp } from "./bv-decl-plugin";
-import { checkPbFree } from "./card2bv";
-import type { Definition, Goal } from "./goal";
+import { CardPbRewriter, checkPbFree } from "./card2bv";
+import { type Definition, type Dependency, type Goal, joinDependencies } from "./goal";
 import { ObjMap } from "./hashtable";
 import { getGcd, Rational } from "./rational";
 import { RefVector } from "./ref-vector";
@@ -122,7 +120,9 @@ class Pb2Bv {
   private allClausesLimit: number;
   private cardinalityLimit: number;
   private rewriter: ConstraintRewriter | undefined;
+  private pbRewriter: CardPbRewriter;
   private results: RefVector | undefined;
+  private usedDependency: Dependency | undefined = undefined;
 
   constructor(
     private manager: AstManager,
@@ -141,6 +141,7 @@ class Pb2Bv {
     };
     this.allClausesLimit = getUint("pb2bv_all_clauses_limit", 8);
     this.cardinalityLimit = getUint("pb2bv_cardinality_limit", 4294967295);
+    this.pbRewriter = new CardPbRewriter(manager);
   }
 
   private hold(expr: number) {
@@ -318,6 +319,13 @@ class Pb2Bv {
     return this.monLit2lit({ variable, isSigned });
   }
 
+  private addBoundsDependencies(variable: number) {
+    this.usedDependency = joinDependencies(
+      joinDependencies(this.usedDependency, this.bounds.lowerDependencies.get(variable)),
+      this.bounds.upperDependencies.get(variable),
+    );
+  }
+
   convert(atom: number, isPositive: boolean, isRoot: boolean): number {
     const manager = this.manager;
     const op = manager.getOp(atom);
@@ -326,6 +334,8 @@ class Pb2Bv {
     let pos = isPositive;
     if (op === OP_EQ) {
       if (manager.isUninterpretedConst(lhs) && manager.isUninterpretedConst(rhs)) {
+        this.addBoundsDependencies(lhs);
+        this.addBoundsDependencies(rhs);
         const lhsLit = this.mkUnit(lhs, false);
         const rhsLit = this.mkUnit(rhs, !pos);
         return this.hold(manager.mkEq(lhsLit, rhsLit));
@@ -351,6 +361,7 @@ class Pb2Bv {
     if (manager.isNumeral(lhs)) {
       const value = adjust(manager.getRationalValue(lhs));
       if (!manager.isUninterpretedConst(rhs)) this.throwNonPb(atom);
+      this.addBoundsDependencies(rhs);
       if (kind === EQ) return this.mkUnit(rhs, value.isZero() !== !pos);
       if ((value.isZero() && kind === LE) || (value.equals(Rational.one) && kind === GE))
         return manager.trueExpr;
@@ -361,6 +372,7 @@ class Pb2Bv {
     if (!manager.isNumeral(rhs) || manager.sorts[rhs] !== SORT_INT) this.throwNonPb(atom);
     const value = adjust(manager.getRationalValue(rhs));
     if (manager.isUninterpretedConst(lhs)) {
+      this.addBoundsDependencies(lhs);
       if (kind === EQ) {
         if (!value.isZero() && !value.equals(Rational.one))
           return pos ? manager.falseExpr : manager.trueExpr;
@@ -390,9 +402,12 @@ class Pb2Bv {
     }
     let bound = value;
     const polynomial: Monomial[] = monomials.map((monomial) => {
-      if (manager.isUninterpretedConst(monomial))
+      if (manager.isUninterpretedConst(monomial)) {
+        this.addBoundsDependencies(monomial);
         return { coeff: Rational.one, lit: { variable: monomial, isSigned: false } };
+      }
       const [coeffExpr, variable] = getMulArgs(monomial) as number[];
+      this.addBoundsDependencies(variable);
       const coeff = manager.getRationalValue(coeffExpr);
       if (!coeff.isNegative()) return { coeff, lit: { variable, isSigned: false } };
       bound = bound.add(coeff.neg());
@@ -454,30 +469,42 @@ class Pb2Bv {
 
   run(goal: Goal) {
     const manager = this.manager;
-    for (const form of goal.forms.items) this.bounds.add(form);
-    const failed = findNonPb(manager, goal.forms.items, this.bounds);
+    const forms = goal.forms.items;
+    for (let index = 0; index < forms.length; index++)
+      this.bounds.add(forms[index], goal.getDependency(index));
+    const failed = findNonPb(manager, forms, this.bounds);
     if (failed !== undefined) this.throwNonPb(failed);
     const rewriter = new ConstraintRewriter(manager, this);
     this.rewriter = rewriter;
     const results = new RefVector(manager);
     this.results = results;
-    for (const form of goal.forms.items) {
+    const dependencies: (Dependency | undefined)[] = [];
+    for (let index = 0; index < forms.length; index++) {
+      const form = forms[index];
       let atom = form;
       let isPositive = true;
       while (manager.isNot(atom)) {
         atom = manager.getArg(atom, 0);
         isPositive = !isPositive;
       }
-      if (this.isConstraintCore(atom)) {
-        results.push(this.convert(atom, isPositive, true));
-        continue;
+      if (this.isConstraintCore(atom)) results.push(this.convert(atom, isPositive, true));
+      else {
+        const simplified = rewriter.rewrite(form);
+        const rewritten = this.pbRewriter.rewrite(simplified);
+        manager.decRef(simplified);
+        checkPbFree(manager, rewritten);
+        results.pushOwned(rewritten);
       }
-      const rewritten = rewriter.rewrite(form);
-      checkPbFree(manager, rewritten);
-      results.pushOwned(rewritten);
+      if (goal.isCoresEnabled) {
+        dependencies.push(joinDependencies(this.usedDependency, goal.getDependency(index)));
+        this.usedDependency = undefined;
+      }
     }
-    for (const [index, result] of results.items.entries()) goal.update(index, result);
+    for (let index = 0; index < results.items.length; index++)
+      goal.update(index, results.items[index], dependencies[index]);
     results.reset();
+    goal.depth++;
+    if (!goal.isModelsEnabled) return;
     const hidden: Definition[] = [];
     for (const [, bit] of this.const2bit) hidden.push({ decl: manager.decls[bit], def: -1 });
     for (const fresh of this.temporaryInts.items)
@@ -495,15 +522,22 @@ class Pb2Bv {
       manager.incDeclRef(decl);
       c2bit.push({ decl, bit: -1 });
     }
-    goal.addModelConversion((model) => {
-      for (const entry of c2bit) {
-        const value = entry.bit === -1 ? undefined : model.constInterps.get(entry.bit);
-        const isOne = value !== undefined && !manager.isFalse(value);
-        model.registerConst(entry.decl, manager.mkNumeral(isOne ? 1n : 0n));
-      }
-      return model;
-    });
-    goal.depth++;
+    goal.addModelConversion(
+      (model) => {
+        for (const entry of c2bit) {
+          const value = entry.bit === -1 ? undefined : model.constInterps.get(entry.bit);
+          const isOne = value !== undefined && !manager.isFalse(value);
+          model.registerConst(entry.decl, manager.mkNumeral(isOne ? 1n : 0n));
+        }
+        return model;
+      },
+      () => {
+        for (const entry of c2bit) {
+          manager.decDeclRef(entry.decl);
+          if (entry.bit !== -1) manager.decDeclRef(entry.bit);
+        }
+      },
+    );
   }
 
   private throwNonPb(expr: number): never {
@@ -515,6 +549,7 @@ class Pb2Bv {
   release() {
     this.results?.reset();
     this.rewriter?.release();
+    this.pbRewriter.release();
     for (const [decl] of this.const2bit) this.manager.decDeclRef(decl);
     this.terms.reset();
     this.temporaryInts.reset();

@@ -1,5 +1,3 @@
-// Ported from Z3 (src/sat/sat_model_converter.h, src/sat/sat_model_converter.cpp), MIT license,
-// see z3-license.txt.
 import { L_FALSE, L_TRUE, L_UNDEF } from "../lbool";
 import { NULL_BOOL_VAR, NULL_LITERAL } from "./clause";
 
@@ -8,7 +6,7 @@ export const MC_BCE = 1;
 export const MC_CCE = 2;
 export const MC_ACCE = 3;
 export const MC_ABCE = 4;
-export const MC_ATE = 5;
+const MC_ATE = 5;
 
 export interface McEntry {
   boolVar: number;

@@ -120,6 +120,10 @@ NumberBuiltin(s, f, m, this, args, nt) ==
                     ~NumLess(MaxSafeInteger, NumAbs(a1.value))))
     \* §21.1.3.7
     [] m = "valueOf" -> ThisNumberValue(s, this)
+    \* ECMA-402 §20.2.1, where the host has Intl.
+    [] m = "toLocaleString" /\ HostIntl(<<"none">>).found # "none" ->
+         LET x == ThisNumberValue(s, this) IN IF IsAbrupt(x) THEN x
+         ELSE IntlToLocaleString(x.s, IntlNumberKey(Val(x).value), Arg(args, 1), Arg(args, 2))
     [] OTHER ->
          LET x == ThisNumberValue(s, this) IN IF IsAbrupt(x) THEN x
          ELSE NumberPrototypeMethod(x.s, Val(x).value, m, IF m = "toLocaleString" THEN <<>> ELSE args)

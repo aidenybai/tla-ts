@@ -1,5 +1,3 @@
-// Ported from Z3 (src/sat/sat_elim_eqs.h, src/sat/sat_elim_eqs.cpp), MIT license, see
-// z3-license.txt.
 import { L_FALSE, L_TRUE } from "../lbool";
 import { NULL_LITERAL } from "./clause";
 import { MC_ELIM_VAR } from "./model-converter";

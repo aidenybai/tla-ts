@@ -44,15 +44,29 @@ describe("operator constants match TLC", () => {
     );
   });
 
-  it("prefers a substitution over a table and leaves the root module's definitions to scoped tables", async () => {
+  it("prefers a substitution over a table", async () => {
     expect(await getTrace("F(0) = 1 F <- Inc G <- Add C = 1")).toEqual([
       "invariant-violation",
       [0, 1, 2],
     ]);
-    expect(await getTrace("F <- Inc G <- Add C = 1 Inc(0) = [Op] 7")).toEqual([
+  });
+
+  it("gives a <- the table a [Mod] entry gives its target, where TLC evaluates the target's body", async () => {
+    expect((await checkConstants("F <- Inc G <- Add C = 1 Inc(0) = [Op] 7")).failure?.message).toBe(
+      `${UNEXPECTED_EXCEPTION}Attempted to apply operator:\n{ <0, 7>}\nto arguments (7), which is undefined.`,
+    );
+  });
+
+  it("checks and uses only the last <- of a name, as TLC's ModelConfig keeps it", async () => {
+    expect(await getTrace("F <- Add F <- Inc G <- Add C = 1")).toEqual([
       "invariant-violation",
       [0, 1, 2],
     ]);
+    await expect(checkConstants("F <- x F <- Nope G <- Add C = 1")).rejects.toThrow(
+      new TlaConfigError(
+        "The configuration file substitutes for F with the undefined identifier Nope.",
+      ),
+    );
   });
 
   it("reports arguments a table does not cover like TLC", async () => {
@@ -92,6 +106,22 @@ describe("operator constants match TLC", () => {
       [
         "F <- Nope G <- Add C = 1",
         "The configuration file substitutes for F with the undefined identifier Nope.",
+      ],
+      [
+        "F <- Add G <- Inc C <- Nope",
+        "The configuration file substitutes for C with the undefined identifier Nope.",
+      ],
+      [
+        "C <- Zero G <- Inc F <- Add",
+        "The configuration file substitutes for F with Add of different number of arguments.",
+      ],
+      [
+        "F <- Inc G <- Add C <- x",
+        "The configuration file substitutes for C with the undefined identifier x.",
+      ],
+      [
+        "F <- Inc G <- Add C = 1 Zero <- x",
+        "The configuration file substitutes for Zero with the undefined identifier x.",
       ],
       [
         "F <- Inc G <- Add C = 1 Q <- Zero",

@@ -1,18 +1,18 @@
 import { ArrowUpRight } from "@phosphor-icons/react";
-import { Fragment, useState, type ReactNode } from "react";
+import { Fragment, useEffect, useState, type ReactNode } from "react";
 import { cn } from "cn";
 import { createPartsContext } from "@/lib/utils";
-import { EXAMPLES } from "../example";
-import type { RunResult } from "../run-worker";
-import type { SearchState } from "../search";
-import { useRun } from "../use-run";
-import { useSearchPath } from "../use-search-path";
+import { EXAMPLES } from "@/lib/examples";
+import type { RunResult } from "@/lib/run-worker";
+import type { SearchState } from "@/lib/search";
+import { useRun } from "@/hooks/use-run";
+import { useSearchPath } from "@/hooks/use-search-path";
 import { StateGraph } from "./state-graph";
-import { CodeActions, CodeContent, CodeFooter, CodeRoot, CodeRun } from "./code";
-import { Button } from "./ui/button";
-import { buttonVariants } from "./ui/button-variants";
-import { ToggleGroup, ToggleGroupItem } from "./ui/toggle-group";
-import { Tooltip, TooltipContent, TooltipTrigger } from "./ui/tooltip";
+import { Code } from "./code";
+import { Button } from "@/components/ui/button";
+import { buttonVariants } from "@/components/ui/button-variants";
+import { ToggleGroup } from "@/components/ui/toggle-group";
+import { Tooltip } from "@/components/ui/tooltip";
 import { Verdict } from "./verdict";
 
 interface ExampleState {
@@ -35,7 +35,7 @@ interface RootProps {
   children: ReactNode;
 }
 
-export const ExampleRoot = (props: RootProps) => {
+const ExampleRoot = (props: RootProps) => {
   const runner = useRun();
   const [example, setExample] = useState(EXAMPLES[0]);
   const [isCompiled, setIsCompiled] = useState(false);
@@ -52,6 +52,22 @@ export const ExampleRoot = (props: RootProps) => {
     isSearchShown: true,
     typescript: { source: example.typescript.code, fileName: example.fileName },
   };
+  const run = () => {
+    setHasRun(true);
+    if (isCompiled && runner.result === undefined) return runner.run(request);
+    runner.reset();
+    setPhase(isCompiled ? "rewinding" : "compiling");
+    setIsCompiled(!isCompiled);
+  };
+  useEffect(() => {
+    const handleShortcut = (event: KeyboardEvent) => {
+      if (!(event.metaKey || event.ctrlKey) || event.key !== "Enter") return;
+      event.preventDefault();
+      if (!isRunning) run();
+    };
+    addEventListener("keydown", handleShortcut);
+    return () => removeEventListener("keydown", handleShortcut);
+  });
   return (
     <exampleContext.PartsContext
       value={{
@@ -68,13 +84,7 @@ export const ExampleRoot = (props: RootProps) => {
         result,
         path,
         hoverState: setHoveredStateId,
-        run: () => {
-          setHasRun(true);
-          if (isCompiled && runner.result === undefined) return runner.run(request);
-          runner.reset();
-          setPhase(isCompiled ? "rewinding" : "compiling");
-          setIsCompiled(!isCompiled);
-        },
+        run,
         finishMorph: () => {
           if (phase === "rewinding") {
             setPhase("compiling");
@@ -92,7 +102,7 @@ export const ExampleRoot = (props: RootProps) => {
   );
 };
 
-export const ExampleDescription = () => {
+const ExampleDescription = () => {
   const state = exampleContext.useParts();
   return (
     <p className="text-pretty">
@@ -119,7 +129,7 @@ export const ExampleDescription = () => {
   );
 };
 
-export const ExampleHint = () => {
+const ExampleHint = () => {
   const state = exampleContext.useParts();
   return (
     <span
@@ -148,10 +158,10 @@ export const ExampleHint = () => {
 
 const VIEW_ITEM_CLASS_NAME = "h-7 rounded-md px-2 text-xs";
 
-export const ExampleSource = () => {
+const ExampleSource = () => {
   const state = exampleContext.useParts();
   return (
-    <CodeRoot
+    <Code.Root
       source={state.isCompiled ? state.example.tla : state.example.typescript}
       activeLine={state.result?.activeLine}
       notes={state.result?.notes}
@@ -161,10 +171,11 @@ export const ExampleSource = () => {
       highlights={state.example.highlights}
       onMorphEnd={state.finishMorph}
     >
-      <CodeContent />
-      <CodeActions>
-        <Tooltip>
-          <TooltipTrigger
+      {/* A new example is other code, not this code in another language, so it does not morph. */}
+      <Code.Content key={state.example.fileName} />
+      <Code.Actions>
+        <Tooltip.Root>
+          <Tooltip.Trigger
             render={
               <a
                 href={`/playground#${new URLSearchParams({ file: state.example.fileName, code: state.example.typescript.code })}`}
@@ -174,44 +185,44 @@ export const ExampleSource = () => {
             }
           >
             <ArrowUpRight />
-          </TooltipTrigger>
-          <TooltipContent>View in playground</TooltipContent>
-        </Tooltip>
-      </CodeActions>
-      <CodeFooter>
+          </Tooltip.Trigger>
+          <Tooltip.Content>View in playground</Tooltip.Content>
+        </Tooltip.Root>
+      </Code.Actions>
+      <Code.Footer>
         <output className="flex min-w-0 flex-1 items-center gap-1.5 max-sm:text-xs">
-          <ToggleGroup
+          <ToggleGroup.Root
             label="Language"
             value={state.isCompiled ? "tla" : "typescript"}
             isDisabled={state.isRunning}
             onValueChange={(value) => state.setIsCompiled(value === "tla")}
             className="mr-1 -ml-1.5 rounded-lg"
           >
-            <ToggleGroupItem value="typescript" className={VIEW_ITEM_CLASS_NAME}>
+            <ToggleGroup.Item value="typescript" className={VIEW_ITEM_CLASS_NAME}>
               TypeScript
-            </ToggleGroupItem>
-            <ToggleGroupItem value="tla" className={VIEW_ITEM_CLASS_NAME}>
+            </ToggleGroup.Item>
+            <ToggleGroup.Item value="tla" className={VIEW_ITEM_CLASS_NAME}>
               TLA+
-            </ToggleGroupItem>
-          </ToggleGroup>
+            </ToggleGroup.Item>
+          </ToggleGroup.Root>
           {state.result && <Verdict result={state.result} />}
         </output>
-        <CodeRun
+        <Code.Run
           isRunning={state.isRunning}
           isDone={state.result !== undefined}
           onRun={state.run}
         />
-      </CodeFooter>
-    </CodeRoot>
+      </Code.Footer>
+    </Code.Root>
   );
 };
 
-export const ExampleGraph = () => {
+const ExampleGraph = () => {
   const state = exampleContext.useParts();
   return (
     state.result?.search && (
       <div className="absolute top-10 left-full ml-8 w-60 transition-[opacity,translate] duration-200 ease-out max-xl:hidden starting:opacity-0 motion-safe:starting:-translate-x-2">
-        <StateGraph
+        <StateGraph.Root
           search={state.result.search}
           limit={12}
           path={state.path}
@@ -220,4 +231,12 @@ export const ExampleGraph = () => {
       </div>
     )
   );
+};
+
+export const Example = {
+  Root: ExampleRoot,
+  Description: ExampleDescription,
+  Hint: ExampleHint,
+  Source: ExampleSource,
+  Graph: ExampleGraph,
 };

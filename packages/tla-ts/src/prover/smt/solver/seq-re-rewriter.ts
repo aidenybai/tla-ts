@@ -1,4 +1,3 @@
-// Ported from Z3 (src/ast/rewriter/seq_rewriter.cpp), MIT license, see z3-license.txt.
 import { SmtInvariantError } from "../../../errors";
 import {
   type AstManager,
@@ -485,7 +484,8 @@ export class ReRewriter {
       left === right ? 0 : getId(left) < getId(right) ? -1 : 1;
     const composeResult = (suffix: number) => {
       let result = suffix;
-      while (prefix.length > 0) result = compose(prefix.pop()!, result);
+      for (let regex = prefix.pop(); regex !== undefined; regex = prefix.pop())
+        result = compose(regex, result);
       return result;
     };
     let left = first;

@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import { cn } from "cn";
-import { LOGO_PARTS } from "../logo";
+import { LOGO_PARTS } from "@/lib/logo";
 
 // The mark is a small character. Hovering its `group/logo` ancestor makes it dance: twice its arms
 // seesaw while it hops and taps its toe, then it flips. Clicking makes it crouch, leap into a

@@ -1,4 +1,11 @@
-import { getChildren, getReferencedName, isLocallyResolved, type Expression } from "./ast";
+import {
+  getChildren,
+  getReferencedName,
+  isLocallyResolved,
+  isRecursiveConstruction,
+  type Expression,
+} from "./ast";
+import { isTlcEvalReached } from "./dependencies";
 import {
   bindValue,
   expectBooleanBody,
@@ -14,6 +21,7 @@ import {
   getFunctionBuilder,
   getLazyFilter,
   isKeptLazy,
+  isUniformPredicate,
   getDomainOperator,
   getSubsetOperator,
   getEvaluator,
@@ -141,6 +149,7 @@ const createGeneratedHelpers = () => ({
     state: context.state,
     next: context.next,
     isKeepLazy: context.isKeepLazy,
+    isPrimed: context.isPrimed,
   }),
 });
 
@@ -149,6 +158,10 @@ let generatedHelpers: ReturnType<typeof createGeneratedHelpers> | undefined;
 let isCodeGenerationAllowed: boolean | undefined;
 
 // Hosts such as Cloudflare Workers, or a page whose CSP lacks 'unsafe-eval', throw an EvalError.
+// The most values a generated function takes as its parameters, which the call that makes it
+// spreads on the stack: far below the 65,534 that a function can take.
+const MAX_PARAMETERS = 10_000;
+
 const getIsCodeGenerationAllowed = () => {
   try {
     return Boolean(new Function(""));
@@ -168,19 +181,26 @@ const createLocal = (generator: Generator) => `local${generator.counter++}`;
 const getFreeNames = (expression: Expression, names = new Set<string>()) => {
   const name = getReferencedName(expression);
   if (name !== undefined) names.add(name);
-  getChildren(expression).forEach((child) => getFreeNames(child, names));
+  if (expression.kind !== "Selection") {
+    getChildren(expression).forEach((child) => getFreeNames(child, names));
+  }
   return names;
 };
 
 const getDelegateContext = (generator: Generator, expression: Expression, frame: Frame) => {
+  if (frame.locals.size === 0) return frame.context;
+  // TLC caches a constant TLCEval only where no name is bound, so a delegate that reaches one sees every local.
+  const isEveryLocalCaptured = isTlcEvalReached(expression, generator.environment);
   const freeNames = getFreeNames(expression);
-  const captured = [...frame.locals].filter(([name]) => freeNames.has(name));
+  const captured = [...frame.locals].filter(
+    (entry) => isEveryLocalCaptured || freeNames.has(entry[0]),
+  );
   if (captured.length === 0) return frame.context;
   const names = addReference(
     generator,
-    captured.map(([name]) => name),
+    captured.map((entry) => entry[0]),
   );
-  return `extend(${frame.context}, ${names}, [${captured.map(([, local]) => local).join(", ")}])`;
+  return `extend(${frame.context}, ${names}, [${captured.map((entry) => entry[1]).join(", ")}])`;
 };
 
 const generateDelegate = (generator: Generator, expression: Expression, frame: Frame) =>
@@ -274,7 +294,8 @@ const generateSetFilter = (
     const lazy = `if (!isReducible(${base})) return ${filterLazily}(${base}, ${getDelegateContext(generator, expression, bodyFrame)});`;
     const set = generateExpression(generator, expression.bound.set, bodyFrame);
     bodyFrame.locals.set(name, element);
-    const test = `if (filterPredicate(${generateExpression(generator, expression.predicate, bodyFrame)}, ${node})) addBounded(${kept}, ${element});`;
+    const stop = isUniformPredicate(expression, generator.environment) ? " else break;" : "";
+    const test = `if (filterPredicate(${generateExpression(generator, expression.predicate, bodyFrame)}, ${node})) addBounded(${kept}, ${element});${stop}`;
     return `const ${base} = ${set}; ${lazy} const ${list} = ${base}.kind === "Interval" ? ${base} : finiteElements(${base}); const ${kept} = []; ${generateLoop(generator, list, element, test)} return normalizedSet(${kept});`;
   });
 
@@ -332,9 +353,8 @@ const generateApply = (
     const domain = addReference(generator, getDomainOperator(expression));
     return `${domain}(${generateExpression(generator, args[0], frame)})`;
   }
-  if (builtin.name === "TLCEval") return generateDelegate(generator, expression, frame);
-  if (builtin.name === "\\subseteq" && args.length === 2) {
-    const subset = addReference(generator, getSubsetOperator(expression, builtin));
+  if (builtin.name === "\\subseteq" && builtin.evaluateBinary && args.length === 2) {
+    const subset = addReference(generator, getSubsetOperator(expression, builtin.evaluateBinary));
     return `${subset}(${generateExpression(generator, args[0], frame)}, ${generateExpression(generator, args[1], frame)})`;
   }
   const environment = generator.environment;
@@ -465,12 +485,16 @@ const generateExpression = (generator: Generator, expression: Expression, frame:
         generator,
         fields.map((field) => field.name),
       );
-      const values = `[${fields.map((field) => generate(field.value)).join(", ")}]`;
+      const values = `[${expression.fields.map((field) => generate(field.value)).join(", ")}]`;
       const writtenNames = expression.fields.map((field) => field.name);
       if (writtenNames.every((name, index) => name === fields[index].name)) {
         return `record(${names}, ${values})`;
       }
-      return `writtenRecord(${names}, ${values}, ${addReference(generator, writtenNames)})`;
+      const writtenIndexes = addReference(
+        generator,
+        fields.map((field) => expression.fields.indexOf(field)),
+      );
+      return `writtenRecord(${names}, ${writtenIndexes}, ${values}, ${addReference(generator, writtenNames)})`;
     }
     case "Tuple":
       return `tuple([${expression.elements.map((element) => generate(element)).join(", ")}])`;
@@ -491,7 +515,8 @@ const generateExpression = (generator: Generator, expression: Expression, frame:
         expression: expression.expression,
         location: expression.location,
       });
-      return `equal(${primed}, ${generate(expression.expression)})`;
+      // TLC's verifyUnchanged evaluates the expression in the current state first.
+      return `equal(${generate(expression.expression)}, ${primed})`;
     }
     case "Forall":
     case "Exists":
@@ -515,7 +540,7 @@ const generateExpression = (generator: Generator, expression: Expression, frame:
       if (
         expression.bounds.length === 1 &&
         bound.pattern.kind === "Name" &&
-        !expression.isRecursive &&
+        !isRecursiveConstruction(expression) &&
         !isKeptLazy(expression)
       ) {
         return generateFunctionConstruction(generator, expression, bound.pattern.name, frame);
@@ -536,7 +561,9 @@ export const generateEvaluator = (
   expression: Expression,
   environment: Environment,
 ): Evaluator | undefined => {
-  if (!GENERATED_KINDS.has(expression.kind)) return undefined;
+  if (!GENERATED_KINDS.has(expression.kind) || environment.bodyValues.has(expression)) {
+    return undefined;
+  }
   isCodeGenerationAllowed ??= getIsCodeGenerationAllowed();
   if (!isCodeGenerationAllowed) return undefined;
   const generator: Generator = { environment, references: [], helpers: [], counter: 0 };
@@ -548,9 +575,14 @@ export const generateEvaluator = (
     locals: new Map(),
   };
   const body = generateExpression(generator, expression, frame);
+  generatedHelpers ??= createGeneratedHelpers();
+  // An expression that reads more values than that, such as a tuple of a long string's code
+  // units, the interpreter evaluates.
+  if (Object.keys(generatedHelpers).length + generator.references.length > MAX_PARAMETERS) {
+    return undefined;
+  }
   const referenceNames = generator.references.map((_reference, index) => `reference${index}`);
   const source = `${generator.helpers.join("\n")}\nreturn (context) => { const state = context.state; const next = context.next; let primed; let applied; return ${body}; };`;
-  generatedHelpers ??= createGeneratedHelpers();
   const factory = new Function(...Object.keys(generatedHelpers), ...referenceNames, source);
   return factory(...Object.values(generatedHelpers), ...generator.references);
 };

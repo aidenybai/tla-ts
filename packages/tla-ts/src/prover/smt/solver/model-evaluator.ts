@@ -1,4 +1,3 @@
-// Ported from Z3 (src/model/model_evaluator.cpp), MIT license, see z3-license.txt.
 import { mkArrayApp } from "./array-decl-plugin";
 import {
   FAMILY_ARITH,
@@ -65,8 +64,14 @@ export class ModelEvaluator extends RewriterTpl {
     this.rewriter = new Rewriter(manager, {
       ...TACTIC_REWRITER_OPTIONS,
       bv: { ...DEFAULT_BV_OPTIONS, isHiDiv0: manager.isHiDiv0, isMkbv2num: true },
+      isExpandingSelectStores: true,
+      isExpandingSelectItes: true,
     });
     this.rewriter.releaseResult = () => this.setLastResult(-1);
+  }
+
+  getModelCompletion() {
+    return this.isModelCompletion;
   }
 
   setModelCompletion(isModelCompletion: boolean) {

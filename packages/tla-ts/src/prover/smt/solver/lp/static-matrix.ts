@@ -1,4 +1,3 @@
-// Ported from Z3 (src/math/lp/static_matrix.h, src/math/lp/static_matrix_def.h), MIT license, see z3-license.txt.
 import { Rational } from "../rational";
 import type { LarTerm } from "./lar-term";
 

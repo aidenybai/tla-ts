@@ -128,6 +128,62 @@ describe("applications of the builtin operators, as Z3 5.3.2 makes them", () => 
       '(error "line 14 column 22: invalid parameter to datatype function arity == 1 && num_parameters == 1 && parameters[0].is_ast() && is_func_decl(parameters[0].get_ast())")',
     ]);
   });
+
+  it("reports the bit-vector argument whose size differs from the first one's", () => {
+    expect(
+      run([
+        "(declare-const x (_ BitVec 8))",
+        "(declare-const y (_ BitVec 6))",
+        "(simplify (bvshl x y))",
+        "(simplify (bvadd x y x))",
+        "(simplify (bvneg x y))",
+        "(simplify (bvadd x (bvmul y y)))",
+        "(simplify (bvule (bvadd y y) x))",
+        "(assert (forall ((z (_ BitVec 4))) (= (bvadd x z) x)))",
+      ]),
+    ).toEqual([
+      '(error "line 3 column 20: Argument y at position 1 has sort (_ BitVec 6) it does not match declaration (declare-fun bvshl ((_ BitVec 8) (_ BitVec 8)) (_ BitVec 8))")',
+      '(error "line 4 column 22: declared sorts do not match supplied sorts")',
+      '(error "line 5 column 20: declared arity mismatches supplied arity")',
+      '(error "line 6 column 30: Argument (bvmul y y) at position 1 has sort (_ BitVec 6) it does not match declaration (declare-fun bvadd ((_ BitVec 8) (_ BitVec 8)) (_ BitVec 8))")',
+      '(error "line 7 column 30: Argument x at position 1 has sort (_ BitVec 8) it does not match declaration (declare-fun bvule ((_ BitVec 6) (_ BitVec 6)) Bool)")',
+      '(error "line 8 column 48: Argument (:var 0) at position 1 has sort (_ BitVec 4) it does not match declaration (declare-fun bvadd ((_ BitVec 8) (_ BitVec 8)) (_ BitVec 8))")',
+    ]);
+  });
+
+  it("reports a bit-vector operator whose first argument is no bit-vector as applied to the wrong sort", () => {
+    expect(
+      run([
+        "(declare-const v (_ BitVec 4))",
+        "(declare-const b Bool)",
+        "(declare-const x Int)",
+        "(simplify (bvuge true v))",
+        "(simplify (concat b #b1))",
+        "(simplify ((_ extract 1 0) b))",
+        "(simplify ((_ zero_extend 1) x))",
+        "(simplify (bvnot 1))",
+        "(simplify (bv2nat b))",
+        "(simplify ((_ int2bv 3) b))",
+      ]),
+    ).toEqual([
+      '(error "line 4 column 23: operator is applied to arguments of the wrong sort")',
+      '(error "line 5 column 23: operator is applied to arguments of the wrong sort")',
+      '(error "line 6 column 28: operator is applied to arguments of the wrong sort")',
+      '(error "line 7 column 30: operator is applied to arguments of the wrong sort")',
+      '(error "line 8 column 18: operator is applied to arguments of the wrong sort")',
+      '(error "line 9 column 19: operator is applied to arguments of the wrong sort")',
+      "((_ int_to_bv 3) b)",
+    ]);
+  });
+
+  it("reports the arguments of true and false as too many", () => {
+    expect(
+      run(["(declare-const b Bool)", "(simplify (true #b101))", "(simplify (false b b))"]),
+    ).toEqual([
+      '(error "line 2 column 21: Wrong number of arguments (1) passed to function (declare-fun true () Bool) \narg: #b101")',
+      '(error "line 3 column 20: Wrong number of arguments (2) passed to function (declare-fun false () Bool) \narg: b\n\narg: b")',
+    ]);
+  });
 });
 
 describe("terms that Z3 5.3.2 rejects", () => {
@@ -300,6 +356,643 @@ describe("messages of the reader, as Z3 5.3.2 prints them", () => {
       "(error \"line 8 column 18: Invalid constant declaration: unknown sort 'String'\")",
     ]);
   });
+
+  it("reports a sort list without a symbol at its head, with the context of the sort", () => {
+    expect(
+      run([
+        "(declare-datatypes ((D 0)) (((mk (f ())))))",
+        "(declare-datatypes ((E 0)) (((mk2 (g (5 Int))))))",
+        "(declare-fun h (()) Int)",
+        "(declare-fun k (Int) ())",
+        "(define-fun m ((x ())) Int 1)",
+        "(simplify (as foo ()))",
+        "(define-sort S () ())",
+        "(declare-const a (Array () Int))",
+        "(declare-const b (Array Int (1)))",
+      ]),
+    ).toEqual([
+      "(error \"line 1 column 38: invalid sort, symbol or '_' expected\")",
+      "(error \"line 2 column 38: invalid sort, symbol or '_' expected\")",
+      "(error \"line 3 column 17: Parsing function declaration. Expecting sort list '(' invalid sort, symbol or '_' expected\")",
+      "(error \"line 4 column 22: Invalid function declaration invalid sort, symbol or '_' expected\")",
+      "(error \"line 5 column 19: invalid sorted variables invalid sort, symbol or '_' expected\")",
+      "(error \"line 6 column 19: Invalid qualified identifier invalid sort, symbol or '_' expected\")",
+      "(error \"line 7 column 19: invalid sort, symbol or '_' expected\")",
+      "(error \"line 8 column 25: Invalid constant declaration invalid sort, symbol or '_' expected\")",
+      "(error \"line 9 column 29: Invalid constant declaration invalid sort, symbol or '_' expected\")",
+    ]);
+  });
+
+  it("reports an unknown sort of a command argument with the context of the argument", () => {
+    expect(
+      run([
+        "(declare-rel p ((_ BitVec 4)))",
+        "(declare-rel q (Foo))",
+        "(declare-var y Foo)",
+        "(declare-var x (_ BitVec 4))",
+        "(query (and (p x) true))",
+        "(query (p ((_ BitVec 4)) Foo))",
+        "(dbg-some-value Foo)",
+      ]),
+    ).toEqual([
+      "(error \"line 2 column 16: expecting sort list starting with '(': unknown sort 'Foo'\")",
+      "(error \"line 3 column 15: invalid command argument, sort expected: unknown sort 'Foo'\")",
+      "(error \"line 5 column 13: Invalid function name. Expecting sort list starting with '(' to disambiguate function name: unknown sort 'p'\")",
+      "(error \"line 6 column 25: Invalid function name: unknown sort 'Foo'\")",
+      "(error \"line 7 column 16: invalid command argument, sort expected: unknown sort 'Foo'\")",
+    ]);
+  });
+
+  it("makes a declaration with a token before its closing parenthesis, and reports the token", () => {
+    expect(
+      run([
+        "(declare-const a Int 1)",
+        "(declare-fun f (Int) Int 2)",
+        "(define-fun g ((x Int)) Int (+ x 1) 3)",
+        "(define-const c Int 4 5)",
+        "(define-fun-rec r ((x Int)) Int x 6)",
+        "(define-sort S () Int 7)",
+        "(declare-sort T 0 8)",
+        "(declare-datatype D ((d1) (d2)) 9)",
+        "(define-funs-rec ((h ((x Int)) Int)) (x) 10)",
+        "(define-fun e () Int true   11)",
+        "(declare-const a Int   12)",
+        "(declare-const s S)",
+        "(declare-const t T)",
+        "(declare-const d D)",
+        "(simplify (+ a (f (g c)) (r 1) (h 2)))",
+      ]),
+    ).toEqual([
+      "(error \"line 1 column 22: invalid constant declaration, ')' expected\")",
+      "(error \"line 2 column 25: invalid function declaration, ')' expected\")",
+      "(error \"line 3 column 36: invalid function/constant definition, ')' expected\")",
+      "(error \"line 4 column 22: invalid constant definition, ')' expected\")",
+      "(error \"line 5 column 34: invalid function/constant definition, ')' expected\")",
+      "(error \"line 6 column 22: invalid sort definition, ')' expected\")",
+      "(error \"line 7 column 18: invalid sort declaration, ')' expected\")",
+      "(error \"line 8 column 32: invalid end of datatype declaration, ')' expected\")",
+      "(error \"line 9 column 41: invalid function/constant definition, ')' expected\")",
+      '(error "line 10 column 28: invalid function/constant definition, sort mismatch")',
+      "(error \"line 11 column 23: invalid declaration, constant 'a' (with the given signature) already declared\")",
+      "(+ 3 a (f 5))",
+    ]);
+  });
+
+  it("reports a malformed tactic or probe at the s-expression, a list at its closing parenthesis", () => {
+    expect(
+      run([
+        "(declare-const x Int)",
+        "(assert (> x 0))",
+        "(apply solve-eqs2)",
+        "(apply (then simplify  foo   ) )",
+        "(apply (then simplify (foo x)  ) )",
+        "(apply (then)  )",
+        "(apply ( )  )",
+        "(apply ((then) simplify) )",
+        "(apply 5  )",
+        "(apply (or-else) )",
+        "(apply (try-for simplify)  )",
+        "(apply (try-for simplify x)  )",
+        "(apply (repeat)  )",
+        "(apply (repeat simplify x) )",
+        "(apply (using-params simplify :foo 1) )",
+        "(apply (using-params simplify foo 1) )",
+        "(apply (using-params simplify :som) )",
+        "(apply (using-params simplify :som 3) )",
+        "(apply (if) )",
+        "(apply (if foo simplify skip) )",
+        "(apply (if (> foo 1) simplify skip) )",
+        "(apply (fail-if) )",
+        "(apply (when) )",
+        "(apply (echo) )",
+        "(apply (fail-if-branching) )",
+        "(check-sat-using (par-or (if has-quantifiers qe aig) (par-or solve-eqs2 qfnia)) :print_unsat_core true)",
+        "(check-sat-using   foo  :print_model true)",
+      ]),
+    ).toEqual([
+      '(error "line 3 column 7: invalid tactic, unknown tactic solve-eqs2")',
+      '(error "line 4 column 23: invalid tactic, unknown tactic foo")',
+      '(error "line 5 column 28: invalid tactic, unknown tactic combinator foo")',
+      '(error "line 6 column 12: invalid and-then combinator, at least one argument expected")',
+      '(error "line 7 column 9: invalid tactic, arguments expected")',
+      '(error "line 8 column 23: invalid tactic, symbol expected")',
+      '(error "line 9 column 7: invalid tactic, unexpected input")',
+      '(error "line 10 column 15: invalid or-else combinator, at least one argument expected")',
+      '(error "line 11 column 24: invalid try-for combinator, two arguments expected")',
+      '(error "line 12 column 26: invalid try-for combinator, second argument must be an unsigned integer")',
+      '(error "line 13 column 14: invalid repeat combinator, one or two arguments expected")',
+      '(error "line 14 column 25: invalid repeat combinator, second argument must be an unsigned integer")',
+      '(error "line 15 column 35: invalid using-params combinator, unknown parameter foo")',
+      '(error "line 16 column 30: invalid using-params combinator, keyword expected")',
+      '(error "line 17 column 30: invalid using-params combinator, parameter value expected")',
+      '(error "line 18 column 35: invalid parameter value, true or false expected")',
+      '(error "line 19 column 10: invalid if/conditional combinator, three arguments expected")',
+      '(error "line 20 column 11: invalid probe, unknown builtin probe foo")',
+      '(error "line 21 column 14: invalid probe, unknown builtin probe foo")',
+      '(error "line 22 column 15: invalid fail-if tactic, one argument expected")',
+      '(error "line 23 column 12: invalid when combinator, two arguments expected")',
+      '(error "line 24 column 12: invalid echo tactic, must have at least one argument")',
+      '(error "line 25 column 25: invalid fail-if-branching combinator, one or two arguments expected")',
+      '(error "line 26 column 61: invalid tactic, unknown tactic solve-eqs2")',
+      '(error "line 27 column 19: invalid tactic, unknown tactic foo")',
+    ]);
+  });
+
+  it("reports an unknown tactic after a tactic that has no port", () => {
+    expect(
+      run([
+        "(declare-const x Int)",
+        "(assert (> x 2))",
+        "(apply (par-or recover-01 solve-eqs2))",
+        "(apply skip)",
+      ]),
+    ).toEqual([
+      '(error "line 3 column 26: invalid tactic, unknown tactic solve-eqs2")',
+      "(goals\n(goal\n  (> x 2)\n  :precision precise :depth 0)\n)",
+    ]);
+  });
+
+  it("finds a parameter of a combinator in its first child that has it", () => {
+    expect(
+      run([
+        "(declare-const a Int)",
+        "(assert (> a 5))",
+        "(check-sat-using (using-params (then simplify ctx-simplify) :rewriter.max_steps 4294967295))",
+        "(check-sat-using (using-params (then ctx-simplify simplify) :rewriter.max_steps 4294967295))",
+      ]),
+    ).toEqual([
+      "unknown",
+      '(error "line 4 column 80: invalid using-params combinator, unknown parameter rewriter.max_steps")',
+    ]);
+  });
+
+  it("rejects a string parameter of the smt tactic at the end of the command", () => {
+    expect(
+      run([
+        "(declare-const x Int)",
+        "(assert (> x 0))",
+        '(check-sat-using (using-params smt :qi.cost "(+ weight generation)"))',
+        '(check-sat-using (using-params smt :smt.mbqi.id "x"))',
+        "(check-sat-using (using-params smt :qi.cost 3))",
+        '(apply (using-params simplify :qi.cost "x"))',
+      ]),
+    ).toEqual([
+      '(error "line 3 column 68: invalid using-params combinator, unsupported parameter kind")',
+      '(error "line 4 column 52: invalid using-params combinator, unsupported parameter kind")',
+      '(error "line 5 column 46: invalid using-params combinator, unsupported parameter kind")',
+      '(error "line 6 column 39: invalid using-params combinator, unknown parameter qi.cost")',
+    ]);
+  });
+
+  it("checks the parameters of smt as the sat tactic's under sat.euf", () => {
+    expect(
+      run([
+        "(set-option :sat.euf true)",
+        "(declare-fun f (Int) Int)",
+        "(declare-const a Int)",
+        "(assert (forall ((x Int)) (! (<= (f x) x) :pattern ((f x)))))",
+        "(assert (< a (f 3)))",
+        "(check-sat-using (using-params smt :qi.eager_threshold 50.0))",
+        "(check-sat-using (using-params smt :mbqi false))",
+        "(check-sat-using (using-params smt :restart.fast false))",
+      ]),
+    ).toEqual([
+      '(error "line 6 column 55: invalid using-params combinator, unknown parameter qi.eager_threshold")',
+      '(error "line 7 column 41: invalid using-params combinator, unknown parameter mbqi")',
+      "sat",
+    ]);
+  });
+
+  it("rejects a parameter the sat tactic lacks and takes its euf", () => {
+    expect(
+      run([
+        "(declare-fun f (Int) Int)",
+        "(declare-const a Int)",
+        "(declare-const b Int)",
+        "(assert (= (f a) 3))",
+        "(assert (not (= (f b) 3)))",
+        "(check-sat-using (using-params sat :bogus 1))",
+        "(check-sat-using sat)",
+        "(check-sat-using (using-params sat :euf true))",
+        "(get-value (a b))",
+      ]),
+    ).toEqual([
+      '(error "line 6 column 42: invalid using-params combinator, unknown parameter bogus")',
+      "unknown",
+      "sat",
+      "((a 21238)\n (b 2437))",
+    ]);
+  });
+
+  it("takes a whole decimal as a probe constant and rejects any other decimal", () => {
+    expect(
+      run([
+        "(apply (fail-if (> 3.0 2)))",
+        "(apply (fail-if (> 2.5 2)))",
+        "(apply (fail-if (> #x3 2)))",
+        "(apply (fail-if (> 2147483648.0 2)))",
+      ]),
+    ).toEqual([
+      '(error "tactic failed: fail-if tactic")',
+      '(error "line 2 column 19: invalid probe, constant is too big to fit in a fixed size integer")',
+      '(error "line 3 column 19: invalid probe, unexpected input")',
+      '(error "line 4 column 19: invalid probe, constant is too big to fit in a fixed size integer")',
+    ]);
+  });
+
+  // Z3 5.3.2 fails both: its n-ary probes read (+ 2 3) as 7 and (* 2 3) as 12.
+  it("applies an n-ary probe to each argument once", () => {
+    expect(run(["(apply (fail-if (> (+ 2 3) 6)))", "(apply (fail-if (> (* 2 3) 11)))"])).toEqual([
+      "(goals\n(goal\n  :precision precise :depth 0)\n)",
+      "(goals\n(goal\n  :precision precise :depth 0)\n)",
+    ]);
+  });
+
+  it("takes no negative numeral for an unsigned value of a tactic or a command", () => {
+    expect(
+      run([
+        "(declare-const x Int)",
+        "(assert (> x 0))",
+        "(apply (! simplify :max_steps -1) )",
+        "(apply (repeat simplify -1) )",
+        "(apply (try-for simplify -1) )",
+        "(apply (fail-if-branching simplify -1) )",
+        "(check-sat-using smt :timeout -1)",
+        "(apply simplify :timeout -1)",
+        "(apply (if (> 5 -1) skip fail) )",
+        "(apply (! simplify :max_steps 4294967296) )",
+        "(apply (! propagate-values :max_rounds -2) )",
+      ]),
+    ).toEqual([
+      '(error "line 3 column 30: invalid parameter value, unsigned integer expected")',
+      '(error "line 4 column 26: invalid repeat combinator, second argument must be an unsigned integer")',
+      '(error "line 5 column 27: invalid try-for combinator, second argument must be an unsigned integer")',
+      '(error "line 6 column 37: invalid fail-if-branching combinator, second argument must be an unsigned integer")',
+      '(error "line 7 column 30: invalid indexed identifier, index is too big to fit in an unsigned machine integer")',
+      '(error "line 8 column 25: invalid indexed identifier, index is too big to fit in an unsigned machine integer")',
+      "(goals\n(goal\n  (> x 0)\n  :precision precise :depth 0)\n)",
+      '(error "line 10 column 30: invalid parameter value, unsigned integer expected")',
+      '(error "line 11 column 39: invalid parameter value, unsigned integer expected")',
+    ]);
+  });
+
+  it("names the identifier read last where a parenthesis is missing", () => {
+    expect(
+      run([
+        "(declare-const x 5)",
+        '(declare-fun f (Int "s") Bool)',
+        "(declare-const y :k)",
+        "(declare-datatypes ((T1 0)) (((mk (a Int 5)))))",
+        "(declare-datatypes ((T3 0)) ((5)))",
+        "(declare-datatypes ((T5 0)) 5)",
+        "(declare-datatypes ((T7 0)) ((par (A) 5)))",
+        "(declare-datatypes x ())",
+        "(declare-datatypes ((T10 0) 5) ((mk)))",
+        "(define-sort S x Int)",
+        "(declare-const z Real)",
+        "(assert (= (* z z) 2.0))",
+        "(check-sat)",
+        "(get-value z)",
+        "(get-value ((root-obj (+ (^ x 2) (- 2)) 1 4)))",
+        "(check-sat-assuming 5)",
+      ]),
+    ).toEqual([
+      "(error \"line 1 column 18: invalid sort, symbol, '_' or '(' expected got x\")",
+      "(error \"line 2 column 20: invalid sort, symbol, '_' or '(' expected got Int\")",
+      "(error \"line 3 column 17: invalid sort, symbol, '_' or '(' expected got :k\")",
+      "(error \"line 4 column 41: invalid accessor declaration, ')' expected got Int\")",
+      "(error \"line 5 column 30: invalid datatype declaration, '(' or ')' expected got T3\")",
+      "(error \"line 6 column 28: invalid datatype declaration, '(' expected got T5\")",
+      "(error \"line 7 column 38: invalid constructor declaration after par, '(' expected got A\")",
+      '(error "line 8 column 19: invalid sort declaration, parameters missing got x")',
+      "(error \"line 9 column 28: invalid sort declaration, '(' expected got T10\")",
+      '(error "line 10 column 15: invalid sort declaration, parameters missing got x")',
+      "sat",
+      "(error \"line 14 column 11: invalid get-value command, '(' expected got z\")",
+      "(error \"line 15 column 42: invalid root-obj, ')' expected got -\")",
+      "(error \"line 16 column 20: invalid check-sat-assuming command, '(', expected got check-sat-assuming\")",
+    ]);
+  });
+
+  it("takes unsigned integers for get-model and prints the model for the index 0", () => {
+    const model = "(\n  (define-fun x () Int\n    3)\n)";
+    expect(
+      run([
+        "(declare-const x Int)",
+        "(get-model x)",
+        "(get-model 0)",
+        "(assert (> x 2))",
+        "(check-sat)",
+        "(get-model 0)",
+        "(get-model 0 0)",
+        "(get-model 4294967296)",
+        '(get-model "a")',
+        "(get-model 1.5)",
+        "(get-model 3 0)",
+        "(get-model",
+      ]),
+    ).toEqual([
+      '(error "line 2 column 11: invalid command argument, unsigned integer expected")',
+      '(error "line 3 column 12: model is not available")',
+      "sat",
+      model,
+      model,
+      '(error "line 8 column 11: invalid indexed identifier, index is too big to fit in an unsigned machine integer")',
+      '(error "line 9 column 11: invalid command argument, unsigned integer expected")',
+      '(error "line 10 column 11: invalid command argument, unsigned integer expected")',
+      model,
+      '(error "line 12 column 10: invalid command argument, unsigned integer expected")',
+    ]);
+  });
+
+  it("reports a datatype sort that is already defined at the token where Z3 declares it", () => {
+    expect(
+      run([
+        "(declare-sort T 0)",
+        "(declare-datatypes ((T 0)) (((mk))))",
+        "(declare-datatypes ((T 0 5)) (((mk))))",
+        "(declare-datatypes (()) (((mk))))",
+        "(declare-datatype T ((mk)))",
+        "(declare-datatype T (par (A) ((mk (a A)))))",
+        "(declare-datatype)",
+        "(declare-datatypes ((U 0) (U 0)) (((mk)) ((mk2))))",
+      ]),
+    ).toEqual([
+      '(error "line 2 column 24: sort already defined T")',
+      '(error "line 3 column 25: sort already defined T")',
+      '(error "line 4 column 21: invalid sort name, identified expected")',
+      '(error "line 5 column 21: sort already defined T")',
+      '(error "line 6 column 30: sort already defined T")',
+      '(error "line 7 column 17: unexpected token used as datatype name")',
+      '(error "line 8 column 30: sort already defined U")',
+    ]);
+  });
+
+  it("rejects a second constructor or accessor of a datatype that Z3 makes as the same declaration", () => {
+    expect(
+      run([
+        "(declare-datatypes ((C 0) (D 0)) (((red) (red)) ((green))))",
+        "(declare-datatypes ((E 0)) (((a (f Int) (f Int)) (b))))",
+        "(declare-datatype F ((blue) (blue)))",
+        "(declare-const d D)",
+        "(declare-const e E)",
+        "(declare-const c F)",
+        "(assert (= d green))",
+        "(assert (= e b))",
+        "(check-sat)",
+        "(get-model)",
+      ]),
+    ).toEqual([
+      "(error \"line 1 column 59: invalid declaration, constant 'red' (with the given signature) already declared\")",
+      "(error \"line 2 column 54: invalid declaration, function 'f' (with the given signature) already declared\")",
+      "(error \"line 3 column 35: invalid declaration, constant 'blue' (with the given signature) already declared\")",
+      "sat",
+      [
+        "(",
+        "  (define-fun e () E",
+        "    b)",
+        "  (define-fun d () D",
+        "    green)",
+        "  (define-fun c () F",
+        "    blue)",
+        ")",
+      ].join("\n"),
+    ]);
+  });
+
+  it("frees the declaration that declare-fun rejects, so the next one takes its id", () => {
+    const getModel = (declarations: string[]) =>
+      run([
+        "(set-logic QF_DT)",
+        ...declarations,
+        "(declare-datatypes ((C 0)) (((k0) (k1) (k2) (k3) (k4) (k5) (k6))))",
+        "(declare-const e0 C)",
+        "(check-sat)",
+        "(get-model)",
+      ]);
+    expect(getModel(["(declare-sort V 0)", "(declare-fun f (V) Bool)"])).toEqual([
+      '(error "line 3 column 23: logic does not support uninterpreted functions")',
+      "sat",
+      ["(", "  (define-fun e0 () C", "    k4)", ")"].join("\n"),
+    ]);
+    expect(getModel(["(declare-const p Bool)", "(declare-const p Bool)"])).toEqual([
+      "(error \"line 3 column 21: invalid declaration, constant 'p' (with the given signature) already declared\")",
+      "sat",
+      ["(", "  (define-fun p () Bool", "    false)", "  (define-fun e0 () C", "    k4)", ")"].join(
+        "\n",
+      ),
+    ]);
+  });
+
+  it("rejects a repeated accessor before declare-datatype makes its datatype", () => {
+    expect(
+      run([
+        "(declare-datatype H ((h1 (s1 Int) (s1 Int)) (h2)))",
+        "(declare-datatype F2 ((c1 (acc Int)) (c2 (acc Bool))))",
+        "(declare-const u H)",
+        "(declare-const v F2)",
+        "(assert (= v (c2 true)))",
+        "(assert ((_ is h1) u))",
+        "(check-sat)",
+        "(get-model)",
+      ]),
+    ).toEqual([
+      "(error \"line 1 column 19: invalid datatype declaration, repeated accessor identifier 's1'\")",
+      "(error \"line 2 column 18: invalid datatype declaration, repeated accessor identifier 'acc'\")",
+      '(error "line 5 column 21: unknown constant c2 (Bool) ")',
+      '(error "line 6 column 20: datatype constructors have not been created")',
+      "sat",
+      '(error "line 8 column 10: datatype constructors have not been created")',
+    ]);
+  });
+
+  it("names the declaration that lacks a symbol, and takes _ and as only for define-const", () => {
+    expect(
+      run([
+        "(declare-const 5 Int)",
+        "(declare-fun 5 () Int)",
+        "(declare-sort 5)",
+        "(define-sort 5 () Int)",
+        "(define-fun 5 () Int 1)",
+        "(define-const 5 Int 1)",
+        "(declare-const _ Int)",
+        "(declare-sort as)",
+        "(define-fun as () Int 1)",
+        "(define-const _ Int 1)",
+        "(declare-const)",
+        "(define-const)",
+      ]),
+    ).toEqual([
+      '(error "line 1 column 16: invalid constant declaration, symbol expected")',
+      '(error "line 2 column 13: invalid function declaration, symbol expected")',
+      '(error "line 3 column 14: invalid sort declaration, symbol expected")',
+      '(error "line 4 column 13: invalid sort definition, symbol expected")',
+      '(error "line 5 column 12: invalid function/constant definition, symbol expected")',
+      '(error "line 6 column 14: invalid constant definition, symbol expected")',
+      '(error "line 7 column 15: invalid constant declaration, symbol expected")',
+      '(error "line 8 column 14: invalid sort declaration, symbol expected")',
+      '(error "line 9 column 12: invalid function/constant definition, symbol expected")',
+      '(error "line 11 column 14: invalid constant declaration, symbol expected")',
+      '(error "line 12 column 13: invalid constant definition, symbol expected")',
+    ]);
+  });
+
+  it("reports what a command expects where the file ends", () => {
+    expect(
+      [
+        "(assert true",
+        "(assert (and true",
+        "(check-sat",
+        "(declare-const x Int",
+        "(exit",
+        "(push",
+        "(foo a b",
+        "(check-sat-using (then",
+        "(assert (_ bv1",
+        '(echo "a"',
+        '(echo "a" ',
+        "(assert #b1",
+      ].map((script) => run([script])),
+    ).toEqual([
+      ["(error \"line 1 column 13: invalid assert command, ')' expected\")"],
+      ['(error "line 1 column 18: invalid expression, unexpected input")'],
+      ['(error "line 1 column 11: invalid expression, unexpected input")'],
+      ["(error \"line 1 column 21: invalid constant declaration, ')' expected\")"],
+      ['(error "line 1 column 6: invalid command, too many arguments")'],
+      ['(error "line 1 column 6: invalid push command, integer expected")'],
+      ['(error "line 1 column 9: invalid s-expression, unexpected end of file")'],
+      ['(error "line 1 column 23: invalid s-expression, unexpected end of file")'],
+      [
+        "(error \"line 1 column 15: invalid indexed identifier, integer, identifier or '(' expected\")",
+      ],
+      ['(error "line 1 column 7: unexpected end of file")'],
+      ["a", '(error "line 1 column 11: invalid command, too many arguments")'],
+      ['(error "line 1 column 9: unexpected end of file")'],
+    ]);
+  });
+
+  it("checks the value of a parameter against its kind, as gparams does, and goes on", () => {
+    expect(
+      run([
+        "(declare-const x Int)",
+        "(set-option :sat.restart.max foo)",
+        "(set-option :smt.mbqi maybe)",
+        "(set-option :sat.restart.factor x1)",
+        "(set-option :sat.restart.max 99999999999)",
+        "(set-option :smt.relevancy 1.5)",
+        "(set-option :model.completion #b1)",
+        "(set-option :timeout none)",
+        '(set-option :smt.random_seed "12")',
+        "(set-option :smt.mbqi |false|)",
+        "(set-option :sat.restart.factor 1.5)",
+        "(assert (> x 0))",
+        "(check-sat)",
+      ]),
+    ).toEqual([
+      `(error "line 2 column 29: Expected values for parameter restart.max is an unsigned integer. It was given argument 'foo'")`,
+      `(error "line 3 column 22: Expected values for parameter mbqi are 'true' or 'false'. It was given argument 'maybe'")`,
+      `(error "line 4 column 32: Expected values for parameter restart.factor is a double. It was given argument 'x1'")`,
+      `(error "line 5 column 29: invalid value '99999999999' for unsigned int parameter 'restart.max'")`,
+      `(error "line 6 column 27: Expected values for parameter relevancy is an unsigned integer. It was given argument '3/2'")`,
+      `(error "line 7 column 30: Expected values for parameter completion are 'true' or 'false'. It was given argument '1'")`,
+      `(error "line 8 column 21: Expected values for parameter timeout is an unsigned integer. It was given argument 'none'")`,
+      "sat",
+    ]);
+  });
+
+  it("sets a whole decimal as an integer", () => {
+    expect(
+      run([
+        "(set-option :rlimit 30.0)",
+        "(get-option :rlimit)",
+        "(set-option :smt.mbqi.max_iterations 3.0)",
+        "(get-option :smt.mbqi.max_iterations)",
+        "(set-option :sat.restart.factor 1.5)",
+        "(get-option :sat.restart.factor)",
+        "(set-option :sat.restart.factor 2.0)",
+        "(get-option :sat.restart.factor)",
+        "(declare-const x Int)",
+        "(declare-const y Int)",
+        "(assert (> (+ x y) 2))",
+        "(assert (< (- x y) 7))",
+        "(assert (or (> x 10) (< y -3)))",
+        "(check-sat)",
+        "(get-info :reason-unknown)",
+      ]),
+    ).toEqual([
+      "30",
+      "3",
+      "1.5",
+      "2",
+      "unknown",
+      '(:reason-unknown "max. resource limit exceeded")',
+    ]);
+  });
+
+  it("prints a double with six digits and any other numeral as its rational", () => {
+    expect(
+      run([
+        "(set-option :sat.restart.factor 1.23456789)",
+        "(get-option :sat.restart.factor)",
+        "(set-option :sat.restart.factor 100.125)",
+        "(get-option :sat.restart.factor)",
+        "(set-option :sat.restart.factor 1234567.5)",
+        "(get-option :sat.restart.factor)",
+        "(set-option :sat.restart.factor 0.00001)",
+        "(get-option :sat.restart.factor)",
+        "(set-option :sat.phase 1.5)",
+        "(get-option :sat.phase)",
+      ]),
+    ).toEqual(["1.23457", "100.125", "1.23457e+06", "1e-05", "3/2"]);
+  });
+
+  it("rounds a double's exact value to six digits and a tie to even, as %g does", () => {
+    expect(
+      run([
+        "(set-option :sat.restart.factor 100000.5)",
+        "(get-option :sat.restart.factor)",
+        "(set-option :sat.restart.factor 1234565)",
+        "(get-option :sat.restart.factor)",
+        "(set-option :sat.restart.factor 999999.5)",
+        "(get-option :sat.restart.factor)",
+        "(set-option :sat.restart.factor 0.00001234565)",
+        "(get-option :sat.restart.factor)",
+        `(set-option :sat.restart.factor ${"1".repeat(400)}.0)`,
+        "(get-option :sat.restart.factor)",
+      ]),
+    ).toEqual(["100000", "1.23456e+06", "1e+06", "1.23456e-05", "inf"]);
+  });
+
+  it("reads a double option as Z3's rational, which skips the characters it doesn't expect", () => {
+    expect(
+      run([
+        '(set-option :sat.restart.factor "3/2")',
+        "(get-option :sat.restart.factor)",
+        '(set-option :sat.restart.factor "1.2.3")',
+        "(get-option :sat.restart.factor)",
+        '(set-option :sat.restart.factor "--1")',
+        "(get-option :sat.restart.factor)",
+        '(set-option :sat.restart.factor "1/0")',
+        "(get-option :sat.restart.factor)",
+      ]),
+    ).toEqual(["1.5", "1.23", "-1", '(error "line 7 column 32: division by zero")', "-1"]);
+  });
+
+  it("sets an option before it finds too many arguments", () => {
+    expect(
+      run([
+        "(set-option :smt.random_seed 3 4)",
+        "(get-option :smt.random_seed)",
+        "(set-option :print-success true 3)",
+        "(get-option :print-success)",
+      ]),
+    ).toEqual([
+      '(error "line 1 column 32: invalid command, too many arguments")',
+      "3",
+      '(error "line 3 column 32: invalid command, too many arguments")',
+      "true",
+    ]);
+  });
 });
 
 describe("the terms the reader makes and frees, in Z3's order", () => {
@@ -357,5 +1050,244 @@ describe("the terms the reader makes and frees, in Z3's order", () => {
         "(simplify (or (or s r) q p))",
       ]),
     ).toEqual(["2", "(or s r q p)", "(and p q)", "(or s r q p)"]);
+  });
+
+  it("asserts the term of an assert with a token before its closing parenthesis, then reports the token", () => {
+    expect(
+      run([
+        "(set-option :print-success true)",
+        "(set-logic QF_LIA)",
+        "(declare-const x Int)",
+        "(declare-const b Bool)",
+        "(assert (> (* x x) 1) 2)",
+        "(assert b 1)",
+        "(assert (not b) (> x 2))",
+        "(check-sat)",
+      ]),
+    ).toEqual([
+      "success",
+      "success",
+      "success",
+      "success",
+      '(error "line 5 column 22: logic does not support nonlinear arithmetic")',
+      `(error "line 6 column 10: invalid assert command, ')' expected")`,
+      `(error "line 7 column 16: invalid assert command, ')' expected")`,
+      "unsat",
+    ]);
+  });
+
+  it("reports a term of assert or check-sat that is not Boolean at the token after it", () => {
+    expect(
+      run([
+        "(declare-const x Int)",
+        "(assert x)",
+        "(assert x true)",
+        "(check-sat 1)",
+        "(check-sat-assuming (x true))",
+        "(check-sat-assuming (true x))",
+        "(assert (+ x 1))",
+      ]),
+    ).toEqual([
+      '(error "line 2 column 9: invalid assert command, term is not Boolean")',
+      '(error "line 3 column 10: invalid assert command, term is not Boolean")',
+      '(error "line 4 column 12: invalid check-sat command, argument must be a Boolean literal")',
+      '(error "line 5 column 23: invalid check-sat command, argument must be a Boolean literal")',
+      '(error "line 6 column 27: invalid check-sat command, argument must be a Boolean literal")',
+      '(error "line 7 column 15: invalid assert command, term is not Boolean")',
+    ]);
+  });
+
+  it("runs a command on its arguments, then reports a token past them", () => {
+    expect(
+      run([
+        "(set-option :print-success true)",
+        "(declare-const x Int)",
+        '(echo "a" "b")',
+        "(echo 1)",
+        "(display x x)",
+        "(minimize)",
+        "(minimize x 1)",
+        "(maximize true x)",
+        "(set-logic 1)",
+        "(set-logic QF_LIA x)",
+        "(get-unsat-core x)",
+        "(reset-assertions x)",
+        "(exit 1)",
+        "(check-sat)",
+      ]),
+    ).toEqual([
+      "success",
+      "success",
+      "a",
+      '(error "line 3 column 10: invalid command, too many arguments")',
+      '(error "line 4 column 6: invalid command argument, string expected")',
+      "x",
+      '(error "line 5 column 11: invalid command, too many arguments")',
+      '(error "line 6 column 9: invalid command, argument(s) missing")',
+      "success",
+      '(error "line 7 column 12: invalid command, too many arguments")',
+      '(error "line 8 column 15: Objective must be bit-vector, integer or real")',
+      '(error "line 9 column 11: invalid command argument, symbol expected")',
+      "success",
+      '(error "line 10 column 18: invalid command, too many arguments")',
+      '(error "line 11 column 16: invalid command, too many arguments")',
+      '(error "line 12 column 18: invalid command, too many arguments")',
+      '(error "line 13 column 6: invalid command, too many arguments")',
+      "sat",
+    ]);
+  });
+
+  it("reports a token before the closing parenthesis of push, pop, reset and get-value", () => {
+    expect(
+      run([
+        "(set-option :print-success true)",
+        "(declare-const x Int)",
+        "(push 1 2)",
+        "(push x)",
+        "(pop 1 x)",
+        "(pop 0 1)",
+        "(pop 5 1)",
+        "(pop 1 2)",
+        "(check-sat)",
+        "(get-value (x) 1)",
+        "(get-value (x) :foo)",
+        "(reset 1)",
+        "(check-sat)",
+        "(reset)",
+      ]),
+    ).toEqual([
+      "success",
+      "success",
+      `(error "line 3 column 8: invalid push command, ')' expected")`,
+      '(error "line 4 column 6: invalid push command, integer expected")',
+      `(error "line 5 column 7: invalid pop command, ')' expected")`,
+      `(error "line 6 column 7: invalid pop command, ')' expected")`,
+      '(error "line 7 column 7: invalid pop command, argument is greater than the current stack depth")',
+      '(error "line 8 column 7: invalid pop command, argument is greater than the current stack depth")',
+      "sat",
+      `(error "line 10 column 15: invalid get-value command, ')' expected")`,
+      `(error "line 11 column 15: invalid get-value command, ')' expected")`,
+      `(error "line 12 column 7: invalid reset command, ')' expected")`,
+      "sat",
+      "success",
+    ]);
+  });
+
+  it("reports a parameter of simplify, assert-soft or eval that is not a keyword", () => {
+    expect(
+      run([
+        "(declare-const x Int)",
+        "(declare-const p Bool)",
+        "(simplify (+ x 1) false)",
+        "(simplify (+ x 1) :som true 1)",
+        "(assert-soft p 1)",
+        "(assert-soft p :weight 2 x)",
+        "(check-sat)",
+        "(eval x 2)",
+        "(eval x (+ x 1))",
+      ]),
+    ).toEqual([
+      '(error "line 3 column 18: invalid command argument, keyword expected")',
+      '(error "line 4 column 28: invalid command argument, keyword expected")',
+      '(error "line 5 column 15: invalid command argument, keyword expected")',
+      '(error "line 6 column 25: invalid command argument, keyword expected")',
+      "sat",
+      '(error "line 8 column 8: invalid command argument, keyword expected")',
+      '(error "line 9 column 8: invalid command argument, keyword expected")',
+    ]);
+  });
+
+  it("reports a term of assert-soft that is not Boolean at the token after it", () => {
+    expect(
+      run([
+        "(declare-const x0 Int)",
+        "(assert-soft x0 :weight 3)",
+        "(assert-soft x0)",
+        "(assert-soft   x0   :id g)",
+        "(assert-soft (+ x0 1) :weight 2 :id h)",
+        "(assert-soft x0",
+        ")",
+        "(assert-soft (> x0 1) :weight x0)",
+        "(assert-soft x0 :dweight 3)",
+        "(check-sat)",
+      ]),
+    ).toEqual([
+      '(error "line 2 column 16: Invalid type for expression. Expected Boolean type.")',
+      '(error "line 3 column 15: Invalid type for expression. Expected Boolean type.")',
+      '(error "line 4 column 20: Invalid type for expression. Expected Boolean type.")',
+      '(error "line 5 column 22: Invalid type for expression. Expected Boolean type.")',
+      '(error "line 7 column 0: Invalid type for expression. Expected Boolean type.")',
+      '(error "line 8 column 30: invalid command argument, numeral expected")',
+      '(error "line 9 column 16: Invalid type for expression. Expected Boolean type.")',
+      "sat",
+    ]);
+  });
+
+  it("checks the parameters of assert-soft by their kinds, and takes one without a value", () => {
+    const runSoft = (command: string) =>
+      run([
+        "(declare-const p Bool)",
+        command,
+        "(assert (not p))",
+        "(check-sat)",
+        "(get-objectives)",
+      ]);
+    expect(run(["(declare-const p Bool)", "(assert-soft p :weight x)", "(check-sat)"])).toEqual([
+      '(error "line 2 column 23: invalid command argument, numeral expected")',
+      "sat",
+    ]);
+    expect(run(["(declare-const p Bool)", "(assert-soft p :weight #x3)", "(check-sat)"])).toEqual([
+      '(error "line 2 column 23: invalid command argument, numeral expected")',
+      "sat",
+    ]);
+    expect(run(["(declare-const p Bool)", "(assert-soft p :id 3)", "(check-sat)"])).toEqual([
+      '(error "line 2 column 19: invalid command argument, symbol expected")',
+      "sat",
+    ]);
+    expect(run(["(declare-const p Bool)", "(assert-soft p :dweight 3)", "(check-sat)"])).toEqual([
+      '(error "line 2 column 15: invalid keyword argument")',
+      "sat",
+    ]);
+    expect(runSoft("(assert-soft p :weight)")).toEqual(["sat", "(objectives\n ( 1)\n)"]);
+    expect(runSoft("(assert-soft p :weight 2 :weight)")).toEqual(["sat", "(objectives\n ( 2)\n)"]);
+    expect(runSoft("(assert-soft p :WEIGHT 4 :Id |a b|)")).toEqual([
+      "sat",
+      "(objectives\n (a b 4)\n)",
+    ]);
+  });
+
+  it("gives an assert-soft none of the parameters of one that failed, where Z3 keeps them", () => {
+    expect(
+      run([
+        "(declare-const p Bool)",
+        "(declare-const q Bool)",
+        "(assert-soft p :weight 3 :dweight 1)",
+        "(assert-soft q)",
+        "(assert (not p))",
+        "(assert (not q))",
+        "(check-sat)",
+        "(get-objectives)",
+      ]),
+    ).toEqual([
+      '(error "line 3 column 25: invalid keyword argument")',
+      "sat",
+      "(objectives\n ( 1)\n)",
+    ]);
+  });
+
+  it("reads the keywords of an assert-soft after one that left a keyword without a value, where Z3 reads a value", () => {
+    expect(
+      run([
+        "(declare-const p Bool)",
+        "(declare-const q Bool)",
+        "(assert-soft p :weight 3 :id)",
+        "(assert-soft q :weight 2)",
+        "(assert-soft p)",
+        "(assert (not p))",
+        "(assert (not q))",
+        "(check-sat)",
+        "(get-objectives)",
+      ]),
+    ).toEqual(["sat", "(objectives\n ( 6)\n)"]);
   });
 });

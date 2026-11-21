@@ -1,4 +1,3 @@
-// Ported from Z3 (src/opt/maxsmt.h, src/opt/maxsmt.cpp), MIT license, see z3-license.txt.
 import { type AstManager, SORT_BOOL } from "./ast";
 import { L_TRUE, L_UNDEF } from "./lbool";
 import { Preprocess } from "./opt-preprocess";
@@ -11,6 +10,7 @@ export interface MaxsatSolver {
   checkSat(assumptions: readonly number[]): number;
   getModel(): ProtoModel | null;
   getUnsatCore(): readonly number[];
+  getNumAssertions(): number;
   findMutexes(vars: readonly number[]): { status: number; mutexes: number[][] };
 }
 

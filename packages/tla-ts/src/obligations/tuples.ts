@@ -1,5 +1,3 @@
-// A port of tlapm's E_tuply_declarations.
-
 import type { Bound, BoundDomain, Defn, Expr } from "./expression";
 
 export type TuplyBound =

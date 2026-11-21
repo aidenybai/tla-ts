@@ -4,18 +4,15 @@ import {
   defineConstant,
   defineHigherOrderOperator,
   defineOperator,
-  getJavaClassName,
-  getKindString,
   getOperator,
   getValue,
   isOutOfRange,
 } from "./builtins";
-import { TlaEvaluationError, TlaModuleError } from "./errors";
+import { TlaModuleError } from "./errors";
 import type { Builtin, BuiltinArgument } from "./evaluate";
+import { prettyPrint } from "./pretty-print";
 import {
-  createEnumeratedSet,
   createFunction,
-  createSet,
   createSortedFunction,
   formatValue,
   getDomain,
@@ -31,7 +28,7 @@ import {
 
 const createWrongValueError = (name: string, expected: string, value: Value) =>
   new TlaModuleError(
-    `Applying ${name} to the following value,\nwhich is not ${expected}:\n${formatValue(value)}`,
+    `Applying ${name} to the following value,\nwhich is not ${expected}:\n${prettyPrint(formatValue(value))}`,
   );
 
 const toFunction = (value: Value) => (isFunctionValue(value) ? toFiniteFunction(value) : undefined);
@@ -45,6 +42,7 @@ const getFunction = (args: BuiltinArgument[], index: number, name: string) => {
   return functionValue;
 };
 
+// Deviation from TLC: Bags#BagIn and Bags#CopiesIn read the null that toFcnRcd gives for a value that isn't a function and leak a NullPointerException, where tla-ts reports the argument as not a bag.
 const getCount = (args: BuiltinArgument[], name: string) => {
   const bag = getValue(args, 1, name);
   const functionValue = toFunction(bag);
@@ -55,6 +53,7 @@ const getCount = (args: BuiltinArgument[], name: string) => {
   return count;
 };
 
+// Deviation from TLC: Bags#BagCup passes the null that toFcnRcd gives for a value that isn't a function to IsABag and leaks a NullPointerException, where tla-ts reports the argument as not a bag.
 const getAddedBag = (
   args: BuiltinArgument[],
   functions: (FunctionValue | undefined)[],
@@ -85,34 +84,44 @@ const findCount = (functionValue: FunctionValue, element: Value) => {
   return position === -1 ? undefined : functionValue.range[position];
 };
 
-const toCount = (value: Value) => {
+// Deviation from TLC: Bags.java casts a count to IntValue and leaks the ClassCastException, where tla-ts reports the argument as not a bag.
+const toCount = (value: Value, createError: () => TlaModuleError) => {
   if (typeof value === "number") return value;
-  const javaClass = `tlc2.value.impl.${getJavaClassName(value)}`;
-  throw new TlaEvaluationError(
-    `class ${javaClass} cannot be cast to class tlc2.value.impl.IntValue (${javaClass} and tlc2.value.impl.IntValue are in unnamed module of loader 'app')`,
-  );
+  throw createError();
 };
 
-const addCounts = (left: Value, right: Value) => {
-  const sum = toCount(left) + toCount(right);
+const addCounts = (left: Value, right: Value, createError: () => TlaModuleError) => {
+  const sum = toCount(left, createError) + toCount(right, createError);
   if (isOutOfRange(sum)) throw createOverflowError(`${left}+${right}`);
   return sum;
 };
 
-// Deviation from TLC: Bags.java subtracts counts as Java ints, which wrap; this overflows like -.
-const subtractCounts = (functionValue: FunctionValue, index: number, other: FunctionValue) => {
-  const count = toCount(functionValue.range[index]);
+// Deviation from TLC: Bags#BagDiff subtracts counts as Java ints that wrap, where tla-ts reports the overflow as - does.
+const subtractCounts = (
+  functionValue: FunctionValue,
+  index: number,
+  other: FunctionValue,
+  createLeftError: () => TlaModuleError,
+  createRightError: () => TlaModuleError,
+) => {
+  const count = toCount(functionValue.range[index], createLeftError);
   const removed = findCount(other, functionValue.domain[index]);
   if (removed === undefined) return count;
-  const difference = count - toCount(removed);
+  const difference = count - toCount(removed, createRightError);
   if (isOutOfRange(difference)) throw createOverflowError(`${count}-${removed}`);
   return difference;
 };
 
 // BagCup looks up a key of its second bag only among the keys of its first.
-const addToBag = (pairs: [Value, Value][], key: Value, count: Value, end = pairs.length) => {
+const addToBag = (
+  pairs: [Value, Value][],
+  key: Value,
+  count: Value,
+  createError: () => TlaModuleError,
+  end = pairs.length,
+) => {
   const existing = pairs.slice(0, end).find((pair) => isEqualLikeTlc(key, pair[0]));
-  if (existing) existing[1] = addCounts(existing[1], count);
+  if (existing) existing[1] = addCounts(existing[1], count, createError);
   else pairs.push([key, count]);
 };
 
@@ -121,7 +130,7 @@ const getPairs = (functionValue: FunctionValue) =>
 
 const EMPTY_BAG = createSortedFunction([], []);
 
-export const createBagsOperators = (builtins: ReadonlyMap<string, Builtin>): Builtin[] => [
+export const BAGS_OPERATORS: Builtin[] = [
   defineConstant("EmptyBag", EMPTY_BAG),
   defineOperator("IsABag", 1, (args) => {
     const functionValue = toFunction(getValue(args, 0, "IsABag"));
@@ -130,11 +139,10 @@ export const createBagsOperators = (builtins: ReadonlyMap<string, Builtin>): Bui
   defineOperator("BagCardinality", 1, (args) => {
     const bag = getValue(args, 0, "BagCardinality");
     const functionValue = getFunction(args, 0, "BagCardinality");
+    const createError = () => createWrongValueError("BagCardinality", "a bag", bag);
     return functionValue.range.reduce<number>((total, count) => {
-      if (typeof count !== "number" || count <= 0) {
-        throw createWrongValueError("BagCardinality", "a bag", bag);
-      }
-      return addCounts(total, count);
+      if (typeof count !== "number" || count <= 0) throw createError();
+      return addCounts(total, count, createError);
     }, 0);
   }),
   defineOperator("BagIn", 2, (args) => {
@@ -147,8 +155,10 @@ export const createBagsOperators = (builtins: ReadonlyMap<string, Builtin>): Bui
     const left = getAddedBag(args, functions, 0);
     const right = getAddedBag(args, functions, 1);
     const pairs = getPairs(left);
+    const createError = () =>
+      createModuleArgumentError("second", "(+)", "bag", getValue(args, 1, "(+)"));
     right.domain.forEach((key, index) =>
-      addToBag(pairs, key, right.range[index], left.domain.length),
+      addToBag(pairs, key, right.range[index], createError, left.domain.length),
     );
     return createFunction(pairs);
   }),
@@ -159,9 +169,11 @@ export const createBagsOperators = (builtins: ReadonlyMap<string, Builtin>): Bui
     const right = toFunction(rightValue);
     if (!left) throw createModuleArgumentError("first", "(-)", "bag", leftValue);
     if (!right) throw createModuleArgumentError("second", "(-)", "bag", rightValue);
+    const createLeftError = () => createModuleArgumentError("first", "(-)", "bag", leftValue);
+    const createRightError = () => createModuleArgumentError("second", "(-)", "bag", rightValue);
     return createFunction(
       left.domain.flatMap((key, index): [Value, Value][] => {
-        const count = subtractCounts(left, index, right);
+        const count = subtractCounts(left, index, right, createLeftError, createRightError);
         return count > 0 ? [[key, count]] : [];
       }),
     );
@@ -172,20 +184,20 @@ export const createBagsOperators = (builtins: ReadonlyMap<string, Builtin>): Bui
       createWrongValueError("BagUnion", "a finite enumerable set", set),
     );
     if (elements.length < 2) return elements[0] ?? EMPTY_BAG;
+    const createUnionError = () =>
+      new TlaModuleError(
+        `Attempted to apply BagUnion to the following set, whose\nelement is not a bag:\n${prettyPrint(formatValue(set))}`,
+      );
     const getBag = (element: Value) => {
       const functionValue = toFunction(element);
-      if (!functionValue) {
-        throw new TlaModuleError(
-          `Attempted to apply BagUnion to the following set, whose\nelement is not a bag:\n${formatValue(set)}`,
-        );
-      }
+      if (!functionValue) throw createUnionError();
       return functionValue;
     };
     const pairs = getPairs(getBag(elements[0]));
     elements.slice(1).forEach((element) => {
       const functionValue = getBag(element);
       functionValue.domain.forEach((key, index) =>
-        addToBag(pairs, key, functionValue.range[index]),
+        addToBag(pairs, key, functionValue.range[index], createUnionError),
       );
     });
     return createFunction(pairs);
@@ -197,9 +209,14 @@ export const createBagsOperators = (builtins: ReadonlyMap<string, Builtin>): Bui
     const right = toFunction(rightValue);
     if (!left) throw createWrongValueError("\\sqsubseteq", FINITE_FUNCTION, leftValue);
     if (!right) throw createWrongValueError("\\sqsubseteq", FINITE_FUNCTION, rightValue);
+    const createLeftError = () => createWrongValueError("\\sqsubseteq", "a bag", leftValue);
+    const createRightError = () => createWrongValueError("\\sqsubseteq", "a bag", rightValue);
     return left.domain.every((key, index) => {
       const count = findCount(right, key);
-      return toCount(left.range[index]) <= (count === undefined ? 0 : toCount(count));
+      return (
+        toCount(left.range[index], createLeftError) <=
+        (count === undefined ? 0 : toCount(count, createRightError))
+      );
     });
   }),
   defineHigherOrderOperator("BagOfAll", 2, (args) => {
@@ -210,49 +227,11 @@ export const createBagsOperators = (builtins: ReadonlyMap<string, Builtin>): Bui
       throw createModuleArgumentError("second", "BagOfAll", "function with a finite domain", value);
     }
     const pairs: [Value, Value][] = [];
+    const createError = () => createModuleArgumentError("second", "BagOfAll", "bag", value);
     functionValue.domain.forEach((key, index) =>
-      addToBag(pairs, operator.call([key]), functionValue.range[index]),
+      addToBag(pairs, operator.call([key]), functionValue.range[index], createError),
     );
     return createFunction(pairs);
-  }),
-  defineOperator("SubBag", 1, (args) => {
-    const value = getValue(args, 0, "SubBag");
-    if (!isFunctionValue(value)) {
-      throw new TlaEvaluationError(
-        `Attempted to apply the operator DOMAIN to a non-function\n(${getKindString(value)})\nline 106, col 58 to line 106, col 65 of module Bags`,
-      );
-    }
-    const functionValue = toFiniteFunction(value);
-    const range = toFiniteSet(createEnumeratedSet(functionValue.range)).elements;
-    const invalid = range.find((count) => typeof count !== "number");
-    // A count that isn't an integer fails the comparison.
-    if (invalid !== undefined) builtins.get(">=")?.evaluateBinary?.(range[0], invalid);
-    const counts = functionValue.range.filter((count) => typeof count === "number");
-    if (counts.some((count) => count < 1)) {
-      throw new TlaEvaluationError(
-        `Attempted to apply a function to ${formatValue(functionValue)}, which is not in its domain`,
-      );
-    }
-    return createSet(
-      functionValue.domain
-        .reduce<[Value, Value][][]>(
-          (subBags, key, index) =>
-            subBags.flatMap((entries) => [
-              entries,
-              ...Array.from({ length: counts[index] }, (_value, copies): [Value, Value][] => [
-                ...entries,
-                [key, copies + 1],
-              ]),
-            ]),
-          [[]],
-        )
-        .map((entries) =>
-          createSortedFunction(
-            entries.map((entry) => entry[0]),
-            entries.map((entry) => entry[1]),
-          ),
-        ),
-    );
   }),
   defineOperator("BagToSet", 1, (args) => getDomain(getFunction(args, 0, "BagToSet"))),
   defineOperator("SetToBag", 1, (args) => {

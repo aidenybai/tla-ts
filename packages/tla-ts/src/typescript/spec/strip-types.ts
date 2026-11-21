@@ -152,6 +152,16 @@ export const stripTypes = (sourceFile: ts.SourceFile): string => {
     throw new TlaStrippingError(code, message, node, start, end);
   };
 
+  // swc's parser: a getter takes no parameter but this.
+  const rejectGetterParameters = (node: ts.FunctionLikeDeclaration) => {
+    const extra = ts.isGetAccessor(node)
+      ? node.parameters.find(
+          (parameter) => !ts.isIdentifier(parameter.name) || parameter.name.text !== "this",
+        )
+      : undefined;
+    if (extra !== undefined) fail("A `get` accessor cannot have parameters", extra);
+  };
+
   // The first token that starts at or after a position, where position is a token's start or a
   // token's end.
   const getNextToken = (position: number): Token | undefined => {
@@ -364,6 +374,7 @@ export const stripTypes = (sourceFile: ts.SourceFile): string => {
       return;
     }
     if (ts.isMethodDeclaration(node) || ts.isGetAccessor(node) || ts.isSetAccessor(node)) {
+      rejectGetterParameters(node);
       if (node.body === undefined || (!isPrivate && isAbstract)) {
         replaceNode(node);
         return;
@@ -545,6 +556,7 @@ export const stripTypes = (sourceFile: ts.SourceFile): string => {
           return;
         }
         const fn = node as ts.FunctionLikeDeclaration;
+        rejectGetterParameters(fn);
         if (ts.isGetAccessor(fn) && ts.isObjectLiteralExpression(fn.parent)) {
           const open = getChildToken(fn, ts.SyntaxKind.OpenParenToken);
           const close = getChildToken(fn, ts.SyntaxKind.CloseParenToken);

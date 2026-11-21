@@ -1,5 +1,3 @@
-// A port of tlapm's Expr.Tla_norm, Expr.Constness and Expr.Temporal_props.
-
 import {
   adjoin,
   adjoinAll,

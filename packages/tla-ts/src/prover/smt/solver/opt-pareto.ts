@@ -1,5 +1,3 @@
-// Ported from Z3 (src/opt/opt_pareto.cpp, src/opt/opt_pareto_solver.cpp), MIT license, see
-// z3-license.txt.
 import { SmtTacticError } from "../../../errors";
 import {
   type AstManager,
@@ -24,12 +22,15 @@ import {
   SORT_BOOL,
   SORT_REAL,
 } from "./ast";
+import { mkNot } from "./ast-util";
 import { Goal } from "./goal";
 import { goal2nlsat } from "./goal2nlsat";
 import { L_FALSE, L_TRUE, L_UNDEF } from "./lbool";
 import { NlsatSolver } from "./nlsat/solver";
 import { getModelValueBound } from "./opt-solver";
+import { mkPbGe, mkPbLe } from "./pb-rewriter";
 import { ProtoModel } from "./proto-model";
+import { Rational } from "./rational";
 import { RefVector } from "./ref-vector";
 import { compileInternalTactic, type TacticEnvironment } from "./tactic";
 
@@ -55,6 +56,9 @@ const REUSABLE_OPS = new Set([
 export interface ParetoObjective {
   term: number;
   isMax: boolean;
+  isMaxsmt: boolean;
+  terms: readonly number[];
+  weights: readonly Rational[];
 }
 
 export const canReuseNlsatSolver = (manager: AstManager, terms: readonly number[]) => {
@@ -240,6 +244,20 @@ export const giaPareto = (
     return bound === undefined ? -1 : pin(manager.mkRealNumeral(bound));
   };
   const mkCmp = (isGe: boolean, model: ProtoModel, objective: ParetoObjective) => {
+    if (objective.isMaxsmt) {
+      let bound = Rational.zero;
+      for (const [index, term] of objective.terms.entries()) {
+        const value = model.eval(term, true);
+        if (value === manager.trueExpr) bound = bound.add(objective.weights[index]);
+        manager.decRef(value);
+      }
+      const terms = [...objective.terms];
+      return pin(
+        isGe
+          ? mkPbGe(manager, objective.weights, terms, bound)
+          : mkPbLe(manager, objective.weights, terms, bound),
+      );
+    }
     const isGreater = objective.isMax ? isGe : !isGe;
     const evaluated = model.eval(objective.term, true);
     pin(evaluated);
@@ -252,8 +270,6 @@ export const giaPareto = (
     args.length === 1 ? args[0] : pin(manager.mkApp(OP_AND, args, SORT_BOOL));
   const mkOr = (args: number[]) =>
     args.length === 1 ? args[0] : pin(manager.mkApp(OP_OR, args, SORT_BOOL));
-  const mkNot = (expr: number) =>
-    manager.isNot(expr) ? manager.getArg(expr, 0) : pin(manager.mkNot(expr));
   let status = solver.check();
   if (status !== L_TRUE) return { status, model: null };
   let model = solver.model;
@@ -262,7 +278,9 @@ export const giaPareto = (
   while (status === L_TRUE && model !== null && manager.limit.inc()) {
     const current = model;
     const dominating = objectives.map((objective) => mkCmp(true, current, objective));
-    const improving = objectives.map((objective) => mkNot(mkCmp(false, current, objective)));
+    const improving = objectives.map((objective) =>
+      pin(mkNot(manager, mkCmp(false, current, objective))),
+    );
     solver.assert(mkAnd([...dominating, mkOr(improving)]));
     status = solver.check();
     if (status !== L_TRUE) break;

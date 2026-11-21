@@ -1,4 +1,3 @@
-// Ported from Z3 (src/util/rational.h), MIT license, see z3-license.txt.
 import { SmtInvariantError } from "../../../errors";
 
 export const getGcd = (first: bigint, second: bigint) => {
@@ -94,6 +93,11 @@ export class Rational {
     const sign = den < 0n ? -1n : 1n;
     const divisor = getGcd(num, den);
     return new Rational((sign * num) / divisor, (sign * den) / divisor);
+  }
+
+  static fromDecimal(text: string) {
+    const [whole, fraction = ""] = text.split(".");
+    return Rational.of(BigInt(whole + fraction), 10n ** BigInt(fraction.length));
   }
 
   static fromNumber(value: number) {

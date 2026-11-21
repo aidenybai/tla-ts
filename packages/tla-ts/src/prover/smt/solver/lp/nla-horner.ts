@@ -1,5 +1,3 @@
-// Ported from Z3 (src/math/lp/horner.h, src/math/lp/horner.cpp, and nexvar, create_sum_from_row,
-// and add_deps_of_fixed from src/math/lp/nla_common.cpp), MIT license, see z3-license.txt.
 import { Rational } from "../rational";
 import { CrossNested } from "./cross-nested";
 import { type Dependency, mkJoin } from "./dependency";

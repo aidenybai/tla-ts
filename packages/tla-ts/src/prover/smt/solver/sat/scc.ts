@@ -1,4 +1,3 @@
-// Ported from Z3 (src/sat/sat_scc.h, src/sat/sat_scc.cpp), MIT license, see z3-license.txt.
 import { Big } from "./big";
 import { NULL_LITERAL } from "./clause";
 import type { SatConfig } from "./config";

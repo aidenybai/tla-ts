@@ -1,4 +1,3 @@
-// Ported from Z3 (src/math/lp/nla_intervals.h, src/math/lp/nla_intervals.cpp), MIT license, see z3-license.txt.
 import { Rational } from "../rational";
 import {
   type DepInterval,

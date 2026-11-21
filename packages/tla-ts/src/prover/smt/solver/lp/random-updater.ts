@@ -1,5 +1,3 @@
-// Ported from Z3 (src/math/lp/random_updater_def.h, and shift_var and
-// get_freedom_interval_for_column in src/math/lp/int_solver.cpp), MIT license, see z3-license.txt.
 import { getLcm, Rational } from "../rational";
 import { IndexedUintSet } from "./containers";
 import type { LarSolver } from "./lar-solver";
@@ -66,7 +64,7 @@ const getFreedomInterval = (solver: LarSolver, column: number): FreedomInterval 
 const shiftVar = (solver: LarSolver, column: number) => {
   if (solver.isFixed(column) || solver.isBase(column) || solver.settings.isCanceled()) return false;
   const interval = getFreedomInterval(solver, column);
-  if (interval === undefined) return false;
+  if (interval === undefined || solver.settings.isCanceled()) return false;
   const settings = solver.settings;
   const value = solver.getValue(column);
   const multiple = interval.multiple;

@@ -1,4 +1,3 @@
-// Ported from Z3 (src/ast/seq_decl_plugin.cpp, src/ast/char_decl_plugin.cpp), MIT license, see z3-license.txt.
 import { SmtInvariantError } from "../../../errors";
 import {
   type AstManager,
@@ -272,7 +271,7 @@ const SEQ_VARIANTS = new Map([
   [OP_INTERNAL_STRING_SUBSTR, OP_SEQ_EXTRACT],
 ]);
 
-const STRING_VARIANTS = new Map([...SEQ_VARIANTS].map(([variant, op]) => [op, variant]));
+const STRING_VARIANTS = new Map([...SEQ_VARIANTS].map((entry) => [entry[1], entry[0]]));
 
 const getPsig = (op: number) => {
   const sig = SIGS.get(op);

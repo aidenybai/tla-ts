@@ -5984,18 +5984,18 @@
           "name": "throws the TypeError of an Intl getter on another kind of object (2)",
           "source": "\n      const holder: { [key: string]: unknown } = {};\n      const descriptor = Object.getOwnPropertyDescriptor(Intl.NumberFormat.prototype, \"format\")!;\n      let name = \"none\";\n      try {\n        descriptor.get!.call(new Intl.NumberFormat());\n      } catch (error) {\n        name = (error as Error).name;\n      }\n      if (name !== \"TypeError\") throw new Error(name);\n    ",
           "thrown": "none",
-          "stop": "tla-ts can't run a part of ECMAScript that ESCore leaves out"
+          "stop": "tla-ts can't model an Intl constructor, which reads locale data"
         },
         {
           "name": "constructs Intl's objects of literal locales and options (1)",
           "source": "\n      const holder: { [key: string]: unknown } = {};\n      const names = new Intl.DisplayNames(undefined, { type: \"language\" });\n      const locale = new Intl.Locale(\"en-Latn\");\n      const format = new Intl.NumberFormat([\"de-DE\", \"en\"], { maximumFractionDigits: 100 });\n      const result = [\n        Object.getPrototypeOf(names) === Intl.DisplayNames.prototype,\n        Object.prototype.toString.call(locale),\n        typeof format.format,\n      ].join(\",\");\n      if (result !== \"true,[object Intl.Locale],function\") throw new Error(result);\n    ",
-          "stop": "tla-ts can't run a part of ECMAScript that ESCore leaves out"
+          "stop": "tla-ts can't model an Intl constructor, which reads locale data"
         },
         {
           "name": "constructs Intl's objects of literal locales and options (2)",
           "source": "\n      const holder: { [key: string]: unknown } = {};\n      const names = new Intl.DisplayNames(undefined, { type: \"language\" });\n      const locale = new Intl.Locale(\"en-Latn\");\n      const format = new Intl.NumberFormat([\"de-DE\", \"en\"], { maximumFractionDigits: 100 });\n      const result = [\n        Object.getPrototypeOf(names) === Intl.DisplayNames.prototype,\n        Object.prototype.toString.call(locale),\n        typeof format.format,\n      ].join(\",\");\n      if (result !== \"true,[object Object],function\") throw new Error(result);\n    ",
           "thrown": "true,[object Intl.Locale],function",
-          "stop": "tla-ts can't run a part of ECMAScript that ESCore leaves out"
+          "stop": "tla-ts can't model an Intl constructor, which reads locale data"
         },
         {
           "name": "reads the prototypes of the iterators that strings, maps, sets, and regexps make (1)",
@@ -6616,14 +6616,12 @@
         },
         {
           "name": "disposes what a for-of's using declaration holds at the end of each iteration (1)",
-          "source": "\n      const order: string[] = [];\n      const make = (name: string) => ({\n        name,\n        [Symbol.dispose]() {\n          order.push(this.name);\n        },\n      });\n      const resources = [make(\"a\"), make(\"b\"), make(\"c\")];\n      for (using held of resources) {\n        order.push(\"body\");\n        if (held.name === \"b\") continue;\n        if (held.name === \"c\") break;\n      }\n      if (order.join() !== \"body,a,body,b,body,c\") throw new Error(order.join());\n    ",
-          "wrong": "conformance: a for-of's using or await using disposes in another order than Node"
+          "source": "\n      const order: string[] = [];\n      const make = (name: string) => ({\n        name,\n        [Symbol.dispose]() {\n          order.push(this.name);\n        },\n      });\n      const resources = [make(\"a\"), make(\"b\"), make(\"c\")];\n      for (using held of resources) {\n        order.push(\"body\");\n        if (held.name === \"b\") continue;\n        if (held.name === \"c\") break;\n      }\n      if (order.join() !== \"body,a,body,b,body,c\") throw new Error(order.join());\n    "
         },
         {
           "name": "disposes what a for-of's using declaration holds at the end of each iteration (2)",
           "source": "\n      const order: string[] = [];\n      const make = (name: string) => ({\n        name,\n        [Symbol.dispose]() {\n          order.push(this.name);\n        },\n      });\n      const resources = [make(\"a\"), make(\"b\"), make(\"c\")];\n      for (using held of resources) {\n        order.push(\"body\");\n        if (held.name === \"b\") continue;\n        if (held.name === \"c\") break;\n      }\n      if (order.join() !== \"body,body,a,b,body,c\") throw new Error(order.join());\n    ",
-          "thrown": "body,a,body,b,body,c",
-          "wrong": "conformance: a for-of's using or await using disposes in another order than Node"
+          "thrown": "body,a,body,b,body,c"
         },
         {
           "name": "reads the properties of DisposableStack and AsyncDisposableStack (1)",
@@ -6787,14 +6785,12 @@
         {
           "name": "runs Array.fromAsync of a generator, which it closes where a value rejects",
           "source": "\n      declare function setTimeout(callback: () => void): void;\n      let log = \"\";\n      const first = (function* () {\n        log += \"a\";\n        yield 1;\n        log += \"b\";\n        yield 2;\n        log += \"c\";\n      })();\n      Array.fromAsync(first, (value: number, k: number) => value * 10 + k).then((values) => {\n        log += \"[\" + values.join(\",\") + \"]\";\n      });\n      const second = (function* () {\n        log += \"d\";\n        throw \"t\";\n      })();\n      Array.fromAsync(second).catch((error) => {\n        log += \"<\" + String(error) + \">\";\n      });\n      const third = (function* () {\n        log += \"e\";\n        yield Promise.reject(\"r\");\n        log += \"f\";\n      })();\n      Array.fromAsync(third).catch((error) => {\n        log += \"(\" + String(error) + \")\";\n      });\n      const fourth = (function* () {\n        yield 1;\n        log += \"x\";\n      })();\n      Array.fromAsync(fourth, () => {\n        throw \"m\";\n      }).catch((error) => {\n        log += \"{\" + String(error) + \"}\";\n      });\n      Promise.resolve()\n        .then(() => { log += \"0\"; })\n        .then(() => { log += \"1\"; })\n        .then(() => { log += \"2\"; })\n        .then(() => { log += \"3\"; })\n        .then(() => { log += \"4\"; })\n        .then(() => { log += \"5\"; })\n        .then(() => { log += \"6\"; })\n        .then(() => { log += \"7\"; })\n        .then(() => { log += \"8\"; });\n      setTimeout(() => {\n        if (log !== \"ade0<t>1b(r)23{m}4c567[10,21]8\") throw new Error(log);\n      });\n    ",
-          "thrown": "ade01b2<t>3(r){m}4c567[10,21]8",
-          "wrong": "conformance: Array.fromAsync closes or awaits its iterator in another order than Node"
+          "thrown": "ade01b2<t>3(r){m}4c567[10,21]8"
         },
         {
           "name": "runs Array.fromAsync of an async generator, which it closes where a mapping throws",
           "source": "\n      declare function setTimeout(callback: () => void): void;\n      let log = \"\";\n      const first = (async function* () {\n        log += \"a\";\n        yield 1;\n        log += \"b\";\n        yield Promise.resolve(2);\n        log += \"c\";\n      })();\n      Array.fromAsync(first, (value: number, k: number) => value * 10 + k).then((values) => {\n        log += \"[\" + values.join(\",\") + \"]\";\n      });\n      const second = (async function* () {\n        log += \"d\";\n        throw \"t\";\n      })();\n      Array.fromAsync(second).catch((error) => {\n        log += \"<\" + String(error) + \">\";\n      });\n      const third = (async function* () {\n        yield 1;\n        log += \"x\";\n      })();\n      Array.fromAsync(third, () => {\n        throw \"m\";\n      }).catch((error) => {\n        log += \"{\" + String(error) + \"}\";\n      });\n      async function* fourth() {\n        yield \"p\";\n        yield \"q\";\n      }\n      Array.fromAsync({ [Symbol.asyncIterator]: fourth }, async (value: string) => value + \"!\").then(\n        (values) => {\n          log += \"(\" + values.join(\",\") + \")\";\n        },\n      );\n      Promise.resolve()\n        .then(() => { log += \"0\"; })\n        .then(() => { log += \"1\"; })\n        .then(() => { log += \"2\"; })\n        .then(() => { log += \"3\"; })\n        .then(() => { log += \"4\"; })\n        .then(() => { log += \"5\"; })\n        .then(() => { log += \"6\"; })\n        .then(() => { log += \"7\"; })\n        .then(() => { log += \"8\"; })\n        .then(() => { log += \"9\"; });\n      setTimeout(() => {\n        if (log !== \"ad0<t>1b23{m}4c56[10,21](p!,q!)789\") throw new Error(log);\n      });\n    ",
-          "thrown": "ad01b2<t>3{m}4c56[10,21](p!,q!)789",
-          "wrong": "conformance: Array.fromAsync closes or awaits its iterator in another order than Node"
+          "thrown": "ad01b2<t>3{m}4c56[10,21](p!,q!)789"
         },
         {
           "name": "throws from a generator's pattern default to the code that resumes the generator",
@@ -7073,8 +7069,7 @@
         },
         {
           "name": "runs the getters of a descriptor's fields in the order defineProperty reads them",
-          "source": "\n      const log = { text: \"\" };\n      const target: { [key: string]: unknown } = {};\n      const attributes: { [key: string]: unknown } = {};\n      Object.defineProperty(attributes, \"enumerable\", {\n        get: function () {\n          log.text += \"e\";\n          return true;\n        },\n      });\n      Object.defineProperty(attributes, \"value\", {\n        get: function () {\n          log.text += \"v\";\n          return 1;\n        },\n      });\n      Object.defineProperty(target, \"property\", attributes);\n      const read = log.text;\n      if (read !== \"ev\" || target.property !== 1) throw new Error(read);\n      const invalid: { [key: string]: unknown } = {};\n      Object.defineProperty(invalid, \"get\", {\n        get: function () {\n          log.text += \"g\";\n          return 5;\n        },\n      });\n      Object.defineProperty(invalid, \"set\", {\n        get: function () {\n          log.text += \"s\";\n          return undefined;\n        },\n      });\n      let caught = false;\n      try {\n        Object.defineProperty(target, \"other\", invalid);\n      } catch (error) {\n        caught = error instanceof TypeError;\n      }\n      if (!caught || log.text !== \"evg\") throw new Error(log.text);\n    ",
-          "wrong": "conformance: defineProperty reads a descriptor's fields in another order"
+          "source": "\n      const log = { text: \"\" };\n      const target: { [key: string]: unknown } = {};\n      const attributes: { [key: string]: unknown } = {};\n      Object.defineProperty(attributes, \"enumerable\", {\n        get: function () {\n          log.text += \"e\";\n          return true;\n        },\n      });\n      Object.defineProperty(attributes, \"value\", {\n        get: function () {\n          log.text += \"v\";\n          return 1;\n        },\n      });\n      Object.defineProperty(target, \"property\", attributes);\n      const read = log.text;\n      if (read !== \"ev\" || target.property !== 1) throw new Error(read);\n      const invalid: { [key: string]: unknown } = {};\n      Object.defineProperty(invalid, \"get\", {\n        get: function () {\n          log.text += \"g\";\n          return 5;\n        },\n      });\n      Object.defineProperty(invalid, \"set\", {\n        get: function () {\n          log.text += \"s\";\n          return undefined;\n        },\n      });\n      let caught = false;\n      try {\n        Object.defineProperty(target, \"other\", invalid);\n      } catch (error) {\n        caught = error instanceof TypeError;\n      }\n      if (!caught || log.text !== \"evg\") throw new Error(log.text);\n    "
         },
         {
           "name": "sets an object's prototype, and throws a TypeError where the chain would loop",
@@ -7192,8 +7187,7 @@
         {
           "name": "changes the case of a code point that a surrogate pair makes",
           "source": "\n      const high = \"\ud801\";\n      const low = \"\udc28\";\n      if ((high + low + \"x\").toUpperCase() !== \"\\u{10400}X\" || high.toUpperCase() !== high) {\n        throw new Error(\"pair\");\n      }\n    ",
-          "thrown": "pair",
-          "wrong": "conformance: case mapping or code point iteration outside ASCII"
+          "thrown": "pair"
         },
         {
           "name": "pads a string at its start or end",
@@ -7206,8 +7200,7 @@
         {
           "name": "reads a string's code units outside ASCII and iterates its code points",
           "source": "\n      const text = \"é😀\ude00a\";\n      if (text.length !== 5 || text.charCodeAt(0) !== 233 || text.charCodeAt(2) !== 0xde00) {\n        throw new Error(\"units\");\n      }\n      if (text.codePointAt(1) !== 0x1f600 || text.codePointAt(3) !== 0xde00) {\n        throw new Error(\"points\");\n      }\n      const points = [...text];\n      const visited: string[] = [];\n      for (const point of text) visited.push(point);\n      if (points.length !== 4 || points[1] !== \"😀\" || visited.join(\"|\") !== \"é|😀|\ude00|a\") {\n        throw new Error(\"iterate\");\n      }\n      if (text.split(\"\").length !== 5 || String.fromCodePoint(0x1f600, 233) !== \"😀é\") {\n        throw new Error(\"split\");\n      }\n      if (!(\"z\" < \"é\") || !(\"😀\" < \"￿\") || \"é\" < \"e\") throw new Error(\"order\");\n    ",
-          "thrown": "points",
-          "wrong": "conformance: case mapping or code point iteration outside ASCII"
+          "thrown": "points"
         },
         {
           "name": "encodes and escapes characters outside ASCII",
@@ -7768,13 +7761,13 @@
         {
           "name": "constructs Intl's objects without locales or options (1)",
           "source": "\n      const holder: { [key: string]: unknown } = {};\n      const collator = new Intl.Collator();\n      const format = Intl.NumberFormat(undefined, undefined);\n      const segmenter = new Intl.Segmenter([]);\n      const result = [\n        Object.getPrototypeOf(collator) === Intl.Collator.prototype,\n        Object.isExtensible(collator),\n        Object.prototype.toString.call(format),\n        Object.getPrototypeOf(segmenter) === Intl.Segmenter.prototype,\n        Object.keys(collator).length,\n      ].join(\",\");\n      if (result !== \"true,true,[object Intl.NumberFormat],true,0\") throw new Error(result);\n    ",
-          "stop": "tla-ts can't run a part of ECMAScript that ESCore leaves out"
+          "stop": "tla-ts can't model an Intl constructor, which reads locale data"
         },
         {
           "name": "constructs Intl's objects without locales or options (2)",
           "source": "\n      const holder: { [key: string]: unknown } = {};\n      const collator = new Intl.Collator();\n      const format = Intl.NumberFormat(undefined, undefined);\n      const segmenter = new Intl.Segmenter([]);\n      const result = [\n        Object.getPrototypeOf(collator) === Intl.Collator.prototype,\n        Object.isExtensible(collator),\n        Object.prototype.toString.call(format),\n        Object.getPrototypeOf(segmenter) === Intl.Segmenter.prototype,\n        Object.keys(collator).length,\n      ].join(\",\");\n      if (result !== \"true,true,[object Object],true,0\") throw new Error(result);\n    ",
           "thrown": "true,true,[object Intl.NumberFormat],true,0",
-          "stop": "tla-ts can't run a part of ECMAScript that ESCore leaves out"
+          "stop": "tla-ts can't model an Intl constructor, which reads locale data"
         },
         {
           "name": "throws the TypeError of an Intl method on another kind of object (1)",
@@ -7784,7 +7777,7 @@
           "name": "throws the TypeError of an Intl method on another kind of object (2)",
           "source": "\n      const holder: { [key: string]: unknown } = {};\n      const format = Intl.RelativeTimeFormat.prototype.format;\n      const names: string[] = [];\n      const run = (callback: () => unknown) => {\n        try {\n          callback();\n          names.push(\"none\");\n        } catch (error) {\n          names.push((error as Error).name);\n        }\n      };\n      run(() => format.call(new Intl.RelativeTimeFormat(), 1, \"day\"));\n      if (names.join() !== \"TypeError\") throw new Error(names.join());\n    ",
           "thrown": "none",
-          "stop": "tla-ts can't run a part of ECMAScript that ESCore leaves out"
+          "stop": "tla-ts can't model an Intl object's method, which reads locale data"
         },
         {
           "name": "throws the error of Intl's literal locales and options that a constructor rejects (1)",
@@ -7793,18 +7786,18 @@
         {
           "name": "throws the error of Intl's literal locales and options that a constructor rejects (2)",
           "source": "\n      const holder: { [key: string]: unknown } = {};\n      const make = () => new Intl.NumberFormat(undefined, { maximumFractionDigits: 101 });\n      let name = \"none\";\n      try {\n        make();\n      } catch (error) {\n        name = (error as Error).name;\n      }\n      if (name !== \"RangeError\") throw new Error(name);\n    ",
-          "stop": "tla-ts can't run a part of ECMAScript that ESCore leaves out"
+          "stop": "tla-ts can't model an Intl constructor, which reads locale data"
         },
         {
           "name": "throws the error of Intl's literal locales and options that a constructor rejects (3)",
           "source": "\n      const holder: { [key: string]: unknown } = {};\n      const make = () => new Intl.NumberFormat(\"en\", { style: \"currency\" });\n      let name = \"none\";\n      try {\n        make();\n      } catch (error) {\n        name = (error as Error).name;\n      }\n      if (name !== \"TypeError\") throw new Error(name);\n    ",
-          "stop": "tla-ts can't run a part of ECMAScript that ESCore leaves out"
+          "stop": "tla-ts can't model an Intl constructor, which reads locale data"
         },
         {
           "name": "throws the error of Intl's literal locales and options that a constructor rejects (4)",
           "source": "\n      const holder: { [key: string]: unknown } = {};\n      const make = () => new Intl.NumberFormat(\"en\", { style: \"currency\" });\n      let name = \"none\";\n      try {\n        make();\n      } catch (error) {\n        name = (error as Error).name;\n      }\n      if (name !== \"none\") throw new Error(name);\n    ",
           "thrown": "TypeError",
-          "stop": "tla-ts can't run a part of ECMAScript that ESCore leaves out"
+          "stop": "tla-ts can't model an Intl constructor, which reads locale data"
         },
         {
           "name": "flattens an array whose elements are all arrays, or none of them",
@@ -8374,14 +8367,12 @@
         },
         {
           "name": "disposes what a for-of's using declaration holds where its body returns (1)",
-          "source": "\n      const order: string[] = [];\n      const resources = [{ [Symbol.dispose]() { order.push(\"disposed\"); } }];\n      const run = () => {\n        for (using held of resources) {\n          order.push(\"run\");\n          return 1;\n        }\n        return 2;\n      };\n      if (run() !== 1) throw new Error(\"run\");\n      if (order.join() !== \"run,disposed\") throw new Error(order.join());\n    ",
-          "wrong": "conformance: a for-of's using or await using disposes in another order than Node"
+          "source": "\n      const order: string[] = [];\n      const resources = [{ [Symbol.dispose]() { order.push(\"disposed\"); } }];\n      const run = () => {\n        for (using held of resources) {\n          order.push(\"run\");\n          return 1;\n        }\n        return 2;\n      };\n      if (run() !== 1) throw new Error(\"run\");\n      if (order.join() !== \"run,disposed\") throw new Error(order.join());\n    "
         },
         {
           "name": "disposes what a for-of's using declaration holds where its body returns (2)",
           "source": "\n      const order: string[] = [];\n      const resources = [{ [Symbol.dispose]() { order.push(\"disposed\"); } }];\n      const run = () => {\n        for (using held of resources) {\n          order.push(\"run\");\n          return 1;\n        }\n        return 2;\n      };\n      if (run() !== 1) throw new Error(\"run\");\n      if (order.join() !== \"disposed,run\") throw new Error(order.join());\n    ",
-          "thrown": "run,disposed",
-          "wrong": "conformance: a for-of's using or await using disposes in another order than Node"
+          "thrown": "run,disposed"
         },
         {
           "name": "suppresses the errors that disposing a DisposableStack throws, and ignores re-entry (1)",
@@ -9499,13 +9490,13 @@
         {
           "name": "reads the function that a Collator's compare gives, bound to the Collator (1)",
           "source": "\n      const holder: { [key: string]: unknown } = {};\n      const collator = new Intl.Collator();\n      const compare = collator.compare;\n      const result = [\n        compare.length,\n        compare === collator.compare,\n        compare === new Intl.Collator().compare,\n        Object.getOwnPropertyNames(compare).join(\"|\"),\n        Object.getPrototypeOf(compare) === Function.prototype,\n      ].join(\",\");\n      if (result !== \"2,true,false,length|name,true\") throw new Error(result);\n    ",
-          "stop": "tla-ts can't run a part of ECMAScript that ESCore leaves out"
+          "stop": "tla-ts can't model an Intl object's method, which reads locale data"
         },
         {
           "name": "reads the function that a Collator's compare gives, bound to the Collator (2)",
           "source": "\n      const holder: { [key: string]: unknown } = {};\n      const collator = new Intl.Collator();\n      const compare = collator.compare;\n      const result = [\n        compare.length,\n        compare === collator.compare,\n        compare === new Intl.Collator().compare,\n        Object.getOwnPropertyNames(compare).join(\"|\"),\n        Object.getPrototypeOf(compare) === Function.prototype,\n      ].join(\",\");\n      if (result !== \"2,true,true,length|name,true\") throw new Error(result);\n    ",
           "thrown": "2,true,false,length|name,true",
-          "stop": "tla-ts can't run a part of ECMAScript that ESCore leaves out"
+          "stop": "tla-ts can't model an Intl object's method, which reads locale data"
         },
         {
           "name": "gives the empty array of Intl's functions that read locales, or the error they throw (1)",
@@ -10231,14 +10222,12 @@
         {
           "name": "runs Array.fromAsync of the values() of an array written in place",
           "source": "\n      declare function setTimeout(callback: () => void): void;\n      let log = \"\";\n      const input = [1, 2, 3].values();\n      Array.fromAsync(input, (value: number, k: number) => value * 10 + k).then((values) => {\n        log += \"[\" + values.join(\",\") + \"]\";\n      });\n      const thenable = {\n        then(resolve: (value: number) => void, reject: (reason: unknown) => void) {\n          log += \"t\";\n          reject(\"r\");\n        },\n      };\n      const rejecting = [thenable].values();\n      Array.fromAsync(rejecting as Iterable<unknown>).catch((error) => {\n        log += \"<\" + String(error) + \">\";\n      });\n      Promise.resolve()\n        .then(() => { log += \"0\"; })\n        .then(() => { log += \"1\"; })\n        .then(() => { log += \"2\"; })\n        .then(() => { log += \"3\"; })\n        .then(() => { log += \"4\"; })\n        .then(() => { log += \"5\"; })\n        .then(() => { log += \"6\"; })\n        .then(() => { log += \"7\"; })\n        .then(() => { log += \"8\"; });\n      setTimeout(() => {\n        if (log !== \"t012<r>345678[10,21,32]\") throw new Error(log);\n      });\n    ",
-          "thrown": "t0123<r>45678[10,21,32]",
-          "wrong": "conformance: Array.fromAsync closes or awaits its iterator in another order than Node"
+          "thrown": "t0123<r>45678[10,21,32]"
         },
         {
           "name": "rejects Array.fromAsync with an element's reason or a mapping function's throw",
           "source": "\n      declare function setTimeout(callback: () => void): void;\n      let log = \"\";\n      Array.fromAsync([1, Promise.reject(\"r\"), 3]).catch((error) => {\n        log += \"<\" + String(error) + \">\";\n      });\n      Array.fromAsync([1], () => {\n        throw \"t\";\n      }).catch((error) => {\n        log += \"(\" + String(error) + \")\";\n      });\n      Promise.resolve()\n        .then(() => {\n          log += \"0\";\n        })\n        .then(() => {\n          log += \"1\";\n        })\n        .then(() => {\n          log += \"2\";\n        })\n        .then(() => {\n          log += \"3\";\n        })\n        .then(() => {\n          log += \"4\";\n        })\n        .then(() => {\n          log += \"5\";\n        })\n        .then(() => {\n          log += \"6\";\n        })\n        .then(() => {\n          log += \"7\";\n        });\n      setTimeout(() => {\n        if (log !== \"012(t)3<r>4567\") throw new Error(log);\n      });\n    ",
-          "thrown": "012(t)34<r>567",
-          "wrong": "conformance: Array.fromAsync closes or awaits its iterator in another order than Node"
+          "thrown": "012(t)34<r>567"
         },
         {
           "name": "runs a script's constructor with the executor of a promise capability",
@@ -12300,14 +12289,12 @@
       "source": "\n      let calls = 0;\n      let isThrown = false;\n      try {\n        [1, 2, 3].toSorted((a, b) => {\n          calls += 1;\n          if (a === 3 && b === 1) throw new Error(\"compared 3 with 1\");\n          if (a === 3 && b === 2) throw new Error(\"compared 3 with 2\");\n          return a - b;\n        });\n      } catch {\n        isThrown = true;\n      }\n      const sorted = [1, 2, 3].sort((a, b) => {\n        if (a === 3 && b === 1) throw new Error(\"compared 3 with 1\");\n        return a - b;\n      });\n      if (!isThrown || calls !== 2 || sorted.join() !== \"1,2,3\") {\n        throw new Error(\"calls \" + calls);\n      }\n    ",
       "runs": [
         {
-          "name": "agrees with Node",
-          "wrong": "conformance: Array.prototype.sort calls a comparator in another order than V8's TimSort, which today's compiler modelled"
+          "name": "agrees with Node"
         },
         {
           "name": "rejects wrong expectation 1",
           "replace": ["!== 2", "!== 3"],
-          "thrown": "calls 2",
-          "wrong": "conformance: Array.prototype.sort calls a comparator in another order than V8's TimSort, which today's compiler modelled"
+          "thrown": "calls 2"
         }
       ]
     },
@@ -12339,8 +12326,7 @@
       "source": "\n      let calls = 0;\n      const items = [64, 63, 62, 61, 60, 59, 58, 57, 56, 55, 54, 53, 52, 51, 50, 49, 48, 47, 46, 45, 44, 43, 42, 41, 40, 39, 38, 37, 36, 35, 34, 33, 32, 31, 30, 29, 28, 27, 26, 25, 24, 23, 22, 21, 20, 19, 18, 17, 16, 15, 14, 13, 12, 11, 10, 9, 8, 7, 6, 5, 4, 3, 2, 1];\n      items.sort((a, b) => { calls += 1; return a - b; });\n      if (items[0] !== 1 || calls !== 63) throw new Error(\"calls \" + calls);\n    ",
       "runs": [
         {
-          "name": "stops at 64 elements (1)",
-          "wrong": "conformance: Array.prototype.sort calls a comparator in another order than V8's TimSort, which today's compiler modelled"
+          "name": "stops at 64 elements (1)"
         },
         {
           "name": "stops at 64 elements (2)",
@@ -12351,14 +12337,12 @@
         },
         {
           "name": "agrees with Node",
-          "source": "\n      let calls = 0;\n      const items = [63, 62, 61, 60, 59, 58, 57, 56, 55, 54, 53, 52, 51, 50, 49, 48, 47, 46, 45, 44, 43, 42, 41, 40, 39, 38, 37, 36, 35, 34, 33, 32, 31, 30, 29, 28, 27, 26, 25, 24, 23, 22, 21, 20, 19, 18, 17, 16, 15, 14, 13, 12, 11, 10, 9, 8, 7, 6, 5, 4, 3, 2, 1];\n      items.sort((a, b) => { calls += 1; return a - b; });\n      if (items[0] !== 1 || calls !== 62) throw new Error(\"calls \" + calls);\n    ",
-          "wrong": "conformance: Array.prototype.sort calls a comparator in another order than V8's TimSort, which today's compiler modelled"
+          "source": "\n      let calls = 0;\n      const items = [63, 62, 61, 60, 59, 58, 57, 56, 55, 54, 53, 52, 51, 50, 49, 48, 47, 46, 45, 44, 43, 42, 41, 40, 39, 38, 37, 36, 35, 34, 33, 32, 31, 30, 29, 28, 27, 26, 25, 24, 23, 22, 21, 20, 19, 18, 17, 16, 15, 14, 13, 12, 11, 10, 9, 8, 7, 6, 5, 4, 3, 2, 1];\n      items.sort((a, b) => { calls += 1; return a - b; });\n      if (items[0] !== 1 || calls !== 62) throw new Error(\"calls \" + calls);\n    "
         },
         {
           "name": "rejects wrong expectation 1",
           "replace": ["4, 6", ""],
-          "thrown": "calls 62",
-          "wrong": "conformance: Array.prototype.sort calls a comparator in another order than V8's TimSort, which today's compiler modelled"
+          "thrown": "calls 62"
         }
       ]
     },
@@ -12727,7 +12711,7 @@
         {
           "name": "agrees with Node on run,0,1,loop,loop,for where a function returns and loops leave",
           "thrown": "Expected ';', got 'ident'",
-          "stop": "tla-ts can't compile a using declaration to ESCore yet"
+          "wrong": "realcode: Node's type stripping rejects this syntax in a .ts file, where ESCore's runs it"
         },
         {
           "name": "agrees with Node on body,c,b,a",
@@ -12738,7 +12722,7 @@
           "name": "rejects the expectation run,0,1,for,loop,loop",
           "replace": ["loop,loop,for", "for,loop,loop"],
           "thrown": "Expected ';', got 'ident'",
-          "stop": "tla-ts can't compile a using declaration to ESCore yet"
+          "wrong": "realcode: Node's type stripping rejects this syntax in a .ts file, where ESCore's runs it"
         },
         {
           "name": "rejects the expectation body,a,b,c",
@@ -12844,14 +12828,12 @@
       "source": "\n      declare function setTimeout(callback: () => void): void;\n      const resource = {\n        disposed: false,\n        [Symbol.dispose]() {\n          this.disposed = true;\n        },\n      };\n      let seen = \"\";\n      function* make() {\n        seen += resource.disposed + \",\";\n        yield resource;\n        seen += resource.disposed + \",\";\n      }\n      const run = async () => {\n        for (await using _ of make()) {\n          seen += resource.disposed + \",\";\n        }\n      };\n      run();\n      setTimeout(() => {\n        if (seen !== \"false,false,true,\") throw new Error(\"seen \" + seen);\n      });\n    ",
       "runs": [
         {
-          "name": "agrees with Node",
-          "wrong": "conformance: a for-of's using or await using disposes in another order than Node"
+          "name": "agrees with Node"
         },
         {
           "name": "rejects a disposal after the loop",
           "replace": [",tru", ",fals"],
-          "thrown": "seen false,false,true,",
-          "wrong": "conformance: a for-of's using or await using disposes in another order than Node"
+          "thrown": "seen false,false,true,"
         }
       ]
     },
@@ -14588,8 +14570,7 @@
         },
         {
           "name": "stops where a script asks whether an inextensible typed array with elements is sealed",
-          "source": "if (!Object.isSealed(Object.preventExtensions(new Int8Array(2)))) throw new Error(\"sealed\");",
-          "wrong": "conformance: Object.isSealed of an inextensible typed array with elements"
+          "source": "if (!Object.isSealed(Object.preventExtensions(new Int8Array(2)))) throw new Error(\"sealed\");"
         }
       ]
     },
@@ -15323,14 +15304,12 @@
       "source": "\n      const rab = new ArrayBuffer(3, { maxByteLength: 4 });\n      const fixed = new Uint8Array(rab, 0, 3);\n      fixed[0] = 9;\n      const values = fixed.values();\n      let log = \"\";\n      rab.resize(2);\n      try {\n        Array.from(values);\n      } catch (error) {\n        log += error instanceof TypeError ? \"a\" : \"other\";\n      }\n      try {\n        Array.from(values);\n      } catch (error) {\n        log += error instanceof TypeError ? \"b\" : \"other\";\n      }\n      rab.resize(3);\n      const listed = Array.from(values);\n      const again = Array.from(values);\n      log += listed.join(\"\") + again.length;\n      if (log !== \"ab9000\") throw new Error(log);\n    ",
       "runs": [
         {
-          "name": "agrees with Node",
-          "wrong": "conformance: an array iterator over a typed array out of bounds"
+          "name": "agrees with Node"
         },
         {
           "name": "rejects an iterator that its first steps leave done",
           "replace": ["900", ""],
-          "thrown": "ab9000",
-          "wrong": "conformance: an array iterator over a typed array out of bounds"
+          "thrown": "ab9000"
         }
       ]
     },
@@ -15604,7 +15583,11 @@
       "isModule": false,
       "source": "\n      const results = [\n        String(/^[\\d--[3-5]]+$/v.test(\"1290\")),\n        String(/^[\\p{ASCII_Hex_Digit}&&[a-z]]+$/v.test(\"abg\")),\n        \"xab-abc\".replace(/[\\q{abc|ab}]/gv, \"<$&>\"),\n        String(/^[\\q{KK|ß}]$/vi.test(\"Kk\")),\n        \"a1️⃣b\".replace(/[\\p{Emoji_Keycap_Sequence}--\\q{2️⃣}]/v, \"#\"),\n        \"x🇺🇸y\".replace(/\\p{RGI_Emoji_Flag_Sequence}/v, \"F\"),\n        \"ſK\".replace(/[\\w--\\d]/gvi, \"w\"),\n        \"a😀b\".replace(/(?:)/gv, \"-\"),\n        \"abcab\".replace(/[\\q{abc|ab|a}&&\\q{ab|abc}]/gv, \"-\"),\n        \"ab\".replace(/[\\q{}]/gv, \".\"),\n      ];\n      if (results.join(\"|\") !== \"true|false|x<ab>-<abc>|true|a#b|xFy|ww|-a-😀-b-|--|.a.b.\") throw new Error(results.join(\"|\"));\n    ",
       "runs": [
-        { "name": "agrees with Node" },
+        { "name": "agrees with Node", "replace": ["\\q{KK|ß}", "\\q{KK|1}"] },
+        {
+          "name": "stops at a ClassString of one cased code point under the i and v flags",
+          "stop": "tla-ts can't model a ClassString of one code point with a case under the i and v flags"
+        },
         {
           "name": "stops where a property of strings meets a character outside the script's text",
           "source": "\n        let code = 0x1f3fc;\n        code += 1;\n        if ((\"👋\" + String.fromCodePoint(code)).replace(/\\p{RGI_Emoji_Modifier_Sequence}/v, \"M\") !== \"M\") {\n          throw new Error(\"wrong\");\n        }\n      "
@@ -16819,8 +16802,7 @@
       "runs": [
         {
           "name": "rejects the members that Node 24 has",
-          "thrown": "seen true,length name prototype from concat,true,false,16",
-          "wrong": "conformance: the built-ins' own keys come in another order than V8's"
+          "thrown": "seen true,length name prototype from concat,true,false,16"
         },
         {
           "name": "stops at the value of a member that tla-ts doesn't model",
@@ -16831,8 +16813,7 @@
           "replace": [
             "false,length name prototype from,false,true,3",
             "true,length name prototype from concat,true,false,1"
-          ],
-          "wrong": "conformance: the built-ins' own keys come in another order than V8's"
+          ]
         }
       ]
     },
@@ -16843,13 +16824,11 @@
       "runs": [
         {
           "name": "rejects the time value that the conversions leave, as Node 24 reads it",
-          "thrown": "seen NaN,259200000,60000,60000,-62130240000000,-62130240000000",
-          "wrong": "conformance: a Date setter converts its arguments in another order than V8"
+          "thrown": "seen NaN,259200000,60000,60000,-62130240000000,-62130240000000"
         },
         {
           "name": "agrees with Node",
-          "replace": ["262920000,262920000,NaN,NaN", "NaN,259200000,60000,60000"],
-          "wrong": "conformance: a Date setter converts its arguments in another order than V8"
+          "replace": ["262920000,262920000,NaN,NaN", "NaN,259200000,60000,60000"]
         }
       ]
     },
@@ -16957,7 +16936,7 @@
           "name": "stops at a calendar that Node takes",
           "source": "\n        const date = new Temporal.PlainDate(2000, 1, 1, \"chinese\");\n        if (date.year !== 2000) throw new Error(\"year \" + date.year);\n      ",
           "thrown": "year 1999",
-          "stop": "tla-ts can't run a part of ECMAScript that ESCore leaves out"
+          "stop": "tla-ts can't model the chinese and dangi calendars"
         },
         { "name": "agrees with Node", "replace": ["= \"none", "= \"RangeError"] }
       ]
@@ -16974,7 +16953,7 @@
         {
           "name": "stops at a named time zone that it has no table of",
           "source": "\n        const zoned = new Temporal.ZonedDateTime(0n, \"Asia/Taipei\");\n        if (zoned.hour !== 8) throw new Error(\"hour \" + zoned.hour);\n      ",
-          "stop": "tla-ts can't run a part of ECMAScript that ESCore leaves out"
+          "stop": "tla-ts can't model a time zone that the host's table leaves out"
         },
         { "name": "agrees with Node", "replace": ["T3", "T2"] }
       ]
@@ -17111,15 +17090,11 @@
       "isModule": false,
       "source": "\n      function typed<T>(this: unknown, value: T, label?: string): T {\n        return value as T;\n      }\n      const arrow = async (a: number, b?: string): Promise<number> => a!;\n      class Point<T> implements Iterable<T> {\n        private readonly x: number = 1;\n        declare y: string;\n        static make(this: void, n: number): Point<number> {\n          return new Point();\n        }\n        get size(): number {\n          return this.x;\n        }\n        *[Symbol.iterator](): Iterator<T> {}\n      }\n      const object = {\n        method(a: string): void {},\n        async *gen() {},\n        [\"computed\" + 1]<U>(u: U) {\n          return u;\n        },\n        plain: function () {\n          /* : comment */\n        },\n      };\n      const getter = Object.getOwnPropertyDescriptor(Point.prototype, \"size\");\n      const listed: unknown[] = [\n        typed,\n        arrow,\n        Point.make,\n        getter === undefined ? undefined : getter.get,\n        object.method,\n        object.gen,\n        object.computed1,\n        object.plain,\n        Point.prototype[Symbol.iterator],\n        Math.max,\n        Function.prototype.call,\n        Function.prototype[Symbol.hasInstance],\n        new Proxy(object.method, {}),\n        Symbol,\n        Function.prototype,\n      ];\n      const seen = JSON.stringify(listed.map((value) => Function.prototype.toString.call(value)));\n      if (seen !== \"[\\\"function typed   (               value   , label         )    {\\\\n        return value     ;\\\\n      }\\\",\\\"async (a        , b         )                  => a\\\",\\\"make(            n        )                {\\\\n          return new Point();\\\\n        }\\\",\\\"get size()         {\\\\n          return this.x;\\\\n        }\\\",\\\"method(a        )       {}\\\",\\\"async *gen() {}\\\",\\\"[\\\\\\\"computed\\\\\\\" + 1]   (u   ) {\\\\n          return u;\\\\n        }\\\",\\\"function () {\\\\n          /* : comment */\\\\n        }\\\",\\\"*[Symbol.iterator]()              {}\\\",\\\"function max() { [native code] }\\\",\\\"function call() { [native code] }\\\",\\\"function [Symbol.hasInstance]() { [native code] }\\\",\\\"function () { [native code] }\\\",\\\"function Symbol() { [native code] }\\\",\\\"function () { [native code] }\\\"]\") throw new Error(\"seen \" + seen);\n    ",
       "runs": [
-        {
-          "name": "agrees with Node",
-          "wrong": "host-text: Function.prototype.toString of a function whose types Node strips"
-        },
+        { "name": "agrees with Node" },
         {
           "name": "rejects a text that keeps the types",
           "replace": ["l         ", "l?: string"],
-          "thrown": "seen [\"function typed   (               value   , label         )    {\\n        return value     ;\\n      }\",\"async (a        , b         )                  => a\",\"make(            n        )                {\\n          return new Point();\\n        }\",\"get size()         {\\n          return this.x;\\n        }\",\"method(a        )       {}\",\"async *gen() {}\",\"[\\\"computed\\\" + 1]   (u   ) {\\n          return u;\\n        }\",\"function () {\\n          /* : comment */\\n        }\",\"*[Symbol.iterator]()              {}\",\"function max() { [native code] }\",\"function call() { [native code] }\",\"function [Symbol.hasInstance]() { [native code] }\",\"function () { [native code] }\",\"function Symbol() { [native code] }\",\"function () { [native code] }\"]",
-          "wrong": "host-text: Function.prototype.toString of a function whose types Node strips"
+          "thrown": "seen [\"function typed   (               value   , label         )    {\\n        return value     ;\\n      }\",\"async (a        , b         )                  => a\",\"make(            n        )                {\\n          return new Point();\\n        }\",\"get size()         {\\n          return this.x;\\n        }\",\"method(a        )       {}\",\"async *gen() {}\",\"[\\\"computed\\\" + 1]   (u   ) {\\n          return u;\\n        }\",\"function () {\\n          /* : comment */\\n        }\",\"*[Symbol.iterator]()              {}\",\"function max() { [native code] }\",\"function call() { [native code] }\",\"function [Symbol.hasInstance]() { [native code] }\",\"function () { [native code] }\",\"function Symbol() { [native code] }\",\"function () { [native code] }\"]"
         },
         {
           "name": "stops at a class that the heap holds, and at a value that isn't a function (1)",
@@ -17416,13 +17391,12 @@
       "runs": [
         {
           "name": "agrees with Node on entry.cjs",
-          "thrown": "seen ,,,true,string,false,true",
           "stop": "tla-ts can't read the message that Node writes for an error it throws"
         },
         {
           "name": "rejects another outcome of entry.cjs",
           "replace": ["ly,", "ly,late"],
-          "thrown": "seen ,,,true,string,false,true",
+          "thrown": "seen early,,1,true,string,true,true",
           "stop": "tla-ts can't read the message that Node writes for an error it throws"
         }
       ]
@@ -17587,8 +17561,7 @@
         },
         {
           "name": "stops at a string that V8 reads with its legacy parser",
-          "source": "\n        const holder: { [key: string]: unknown } = {};\n        if (Date.parse(\"Thu, 01 Jan 0099 00:00:00 GMT\") !== 915148800000) throw new Error(\"year\");\n      ",
-          "wrong": "conformance: Date.parse reads a string that V8's legacy parser reads otherwise"
+          "source": "\n        const holder: { [key: string]: unknown } = {};\n        if (Date.parse(\"Thu, 01 Jan 0099 00:00:00 GMT\") !== 915148800000) throw new Error(\"year\");\n      "
         }
       ]
     },
@@ -17663,12 +17636,12 @@
         {
           "name": "rejects options that a later call shares",
           "thrown": "seen locale type style,short,false,true,en-US,upper",
-          "stop": "tla-ts can't run a part of ECMAScript that ESCore leaves out"
+          "stop": "tla-ts can't model an Intl object's method, which reads locale data"
         },
         {
           "name": "agrees with Node",
           "replace": [",tru", ",fals"],
-          "stop": "tla-ts can't run a part of ECMAScript that ESCore leaves out"
+          "stop": "tla-ts can't model an Intl object's method, which reads locale data"
         }
       ]
     },
@@ -18985,8 +18958,8 @@
       "runs": [
         {
           "name": "stops at a key of a primitive that an element access names and its type lacks",
-          "thrown": "Cannot create property '62' on symbol 'Symbol(66)'",
-          "stop": "tla-ts can't read the message that Node writes for an error it throws"
+          "stop": "tla-ts can't read the message that Node writes for an error it throws",
+          "thrown": "Cannot create property '62' on symbol 'Symbol(66)'"
         },
         {
           "name": "rejects \"function\" read otherwise",
@@ -19139,7 +19112,7 @@
         {
           "name": "stops in another locale",
           "source": "const text = new Temporal.PlainDate(2024, 12, 26).toLocaleString(\"de\");",
-          "stop": "tla-ts can't run a part of ECMAScript that ESCore leaves out"
+          "stop": "tla-ts can't model a locale other than English"
         },
         { "name": "agrees with Node", "replace": ["26/12", "12/26"] }
       ]
@@ -19223,25 +19196,21 @@
       "source": "\n      \"use strict\";\n      var log = \"\";\n      var bump = 1;\n      var key = { toString: function () { log += \"k|\"; bump += 1; return \"a\"; } };\n      var frozen = Object.freeze({ a: 1 });\n      var thrown = \"none\";\n      try {\n        frozen[key] += bump;\n      } catch (error) {\n        thrown = error.constructor.name;\n      }\n      var open = { a: 1 };\n      open[key] += bump;\n      var result = [thrown, frozen.a, open.a, log].join();\n      if (result !== \"TypeError,1,5,k|k|k|k|\") throw new Error(\"result \" + result);\n    ",
       "runs": [
         {
-          "name": "reads its value after the first conversion and throws where it can't write (1)",
-          "wrong": "conformance: a compound assignment to an object key converts the key in another order than V8"
+          "name": "reads its value after the first conversion and throws where it can't write (1)"
         },
         {
           "name": "reads its value after the first conversion and throws where it can't write (2)",
           "replace": ["5", "4"],
-          "thrown": "result TypeError,1,5,k|k|k|k|",
-          "wrong": "conformance: a compound assignment to an object key converts the key in another order than V8"
+          "thrown": "result TypeError,1,5,k|k|k|k|"
         },
         {
           "name": "agrees with Node",
-          "source": "\n      var log = \"\";\n      var n = 0;\n      var key = { toString: function () { n += 1; log += \"key\" + n + \"|\"; return n === 1 ? \"a\" : \"b\"; } };\n      var obj = { a: 1, b: 10 };\n      var rhs = 5;\n      obj[key] += rhs;\n      var other = { [Symbol.toPrimitive]: function (hint) { log += hint + \"|\"; return \"c\"; } };\n      obj.c = 2;\n      obj[other] *= 3;\n      var bad = { toString: function () { throw new RangeError(\"x\"); } };\n      var thrown = \"none\";\n      try {\n        obj[bad] -= 1;\n      } catch (error) {\n        thrown = error.constructor.name;\n      }\n      var result = [obj.a, obj.b, obj.c, Object.keys(obj).join(\"|\"), thrown, log].join();\n      if (result !== \"1,6,6,a|b|c,RangeError,key1|key2|string|string|\") throw new Error(\"result \" + result);\n    ",
-          "wrong": "conformance: a compound assignment to an object key converts the key in another order than V8"
+          "source": "\n      var log = \"\";\n      var n = 0;\n      var key = { toString: function () { n += 1; log += \"key\" + n + \"|\"; return n === 1 ? \"a\" : \"b\"; } };\n      var obj = { a: 1, b: 10 };\n      var rhs = 5;\n      obj[key] += rhs;\n      var other = { [Symbol.toPrimitive]: function (hint) { log += hint + \"|\"; return \"c\"; } };\n      obj.c = 2;\n      obj[other] *= 3;\n      var bad = { toString: function () { throw new RangeError(\"x\"); } };\n      var thrown = \"none\";\n      try {\n        obj[bad] -= 1;\n      } catch (error) {\n        thrown = error.constructor.name;\n      }\n      var result = [obj.a, obj.b, obj.c, Object.keys(obj).join(\"|\"), thrown, log].join();\n      if (result !== \"1,6,6,a|b|c,RangeError,key1|key2|string|string|\") throw new Error(\"result \" + result);\n    "
         },
         {
           "name": "rejects another result",
           "source": "\n      var log = \"\";\n      var n = 0;\n      var key = { toString: function () { n += 1; log += \"key\" + n + \"|\"; return n === 1 ? \"a\" : \"b\"; } };\n      var obj = { a: 1, b: 10 };\n      var rhs = 5;\n      obj[key] += rhs;\n      var other = { [Symbol.toPrimitive]: function (hint) { log += hint + \"|\"; return \"c\"; } };\n      obj.c = 2;\n      obj[other] *= 3;\n      var bad = { toString: function () { throw new RangeError(\"x\"); } };\n      var thrown = \"none\";\n      try {\n        obj[bad] -= 1;\n      } catch (error) {\n        thrown = error.constructor.name;\n      }\n      var result = [obj.a, obj.b, obj.c, Object.keys(obj).join(\"|\"), thrown, log].join();\n      if (result !== \"1,15,6,a|b|c,RangeError,key1|key2|string|string|\") throw new Error(\"result \" + result);\n    ",
-          "thrown": "result 1,6,6,a|b|c,RangeError,key1|key2|string|string|",
-          "wrong": "conformance: a compound assignment to an object key converts the key in another order than V8"
+          "thrown": "result 1,6,6,a|b|c,RangeError,key1|key2|string|string|"
         }
       ]
     },
@@ -19267,13 +19236,11 @@
       "runs": [
         {
           "name": "rejects another result",
-          "thrown": "result 6,RangeError,SyntaxError,key1|rhs|key2|key3|",
-          "wrong": "conformance: a compound assignment to an object key converts the key in another order than V8"
+          "thrown": "result 6,RangeError,SyntaxError,key1|rhs|key2|key3|"
         },
         {
           "name": "agrees with Node",
-          "replace": ["105", "6"],
-          "wrong": "conformance: a compound assignment to an object key converts the key in another order than V8"
+          "replace": ["105", "6"]
         }
       ]
     },
@@ -19554,15 +19521,12 @@
       "isModule": false,
       "source": "\n      const dtf = new Intl.DateTimeFormat(\"en\");\n      const fractional = new Intl.DateTimeFormat(\"en\", {\n        minute: \"numeric\",\n        second: \"numeric\",\n        fractionalSecondDigits: 2,\n      });\n      const timed = new Intl.DateTimeFormat(undefined, {\n        hour: \"numeric\",\n        minute: \"numeric\",\n        second: \"numeric\",\n      });\n      const period = new Intl.DateTimeFormat(\"en\", { dayPeriod: \"narrow\" });\n      const inputs = [\n        new Date(2019, 7, 10, 1, 2, 3, 234),\n        new Date(2017, 11, 12, 12, 30),\n        new Date(2017, 11, 12, 22),\n      ];\n      let thrown = \"none\";\n      try {\n        timed.format(NaN);\n      } catch (error) {\n        thrown = error instanceof RangeError ? \"range\" : \"other\";\n      }\n      const seen = [\n        dtf.format(0),\n        fractional.format(inputs[0]),\n        timed.format(-0.9),\n        timed.format(13 * 3600000 + 5),\n        period.format(inputs[1]),\n        period.format(inputs[2]),\n        thrown,\n      ].join(\"|\");\n      if (seen !== \"1/1/1970|02:03.23|12:00:00 AM|1:00:00 PM|n|at night|range\") throw new Error(\"seen \" + seen);\n    ",
       "runs": [
-        {
-          "name": "agrees with Node",
-          "stop": "tla-ts can't run a part of ECMAScript that ESCore leaves out"
-        },
+        { "name": "agrees with Node", "stop": "tla-ts can't model an object that Intl unwraps" },
         {
           "name": "rejects noon's long day period where the narrow one is n",
           "replace": ["|n", "|noon"],
           "thrown": "seen 1/1/1970|02:03.23|12:00:00 AM|1:00:00 PM|n|at night|range",
-          "stop": "tla-ts can't run a part of ECMAScript that ESCore leaves out"
+          "stop": "tla-ts can't model an object that Intl unwraps"
         }
       ]
     },
@@ -20408,14 +20372,12 @@
       "runs": [
         {
           "name": "agrees with Node",
-          "thrown": "log 45,35,34,14,13,24,23,21,33,35,34",
-          "wrong": "conformance: Array.prototype.sort calls a comparator in another order than V8's TimSort, which today's compiler modelled"
+          "thrown": "log 45,35,34,14,13,24,23,21,33,35,34"
         },
         {
           "name": "rejects wrong expectation 1",
           "replace": ["35,34", "34,35"],
-          "thrown": "log 45,35,34,14,13,24,23,21,33,35,34",
-          "wrong": "conformance: Array.prototype.sort calls a comparator in another order than V8's TimSort, which today's compiler modelled"
+          "thrown": "log 45,35,34,14,13,24,23,21,33,35,34"
         }
       ]
     },
@@ -21086,14 +21048,12 @@
       "source": "\n      const rab = new ArrayBuffer(3, { maxByteLength: 4 });\n      const fixed = new Uint8Array(rab, 0, 3);\n      fixed[1] = 7;\n      let log = \"\";\n      const keys = Array.prototype.keys.call(fixed);\n      const values = Array.prototype.values.call(fixed);\n      const entries = fixed.entries();\n      const first = values.next();\n      log += first.value;\n      rab.resize(2);\n      try {\n        Array.from(keys);\n      } catch (error) {\n        log += error instanceof TypeError ? \"k\" : \"other\";\n      }\n      try {\n        values.next();\n      } catch (error) {\n        log += error instanceof TypeError ? \"v\" : \"other\";\n      }\n      try {\n        entries.next();\n      } catch (error) {\n        log += error instanceof TypeError ? \"e\" : \"other\";\n      }\n      rab.resize(3);\n      const second = values.next();\n      const third = entries.next();\n      log += second.value;\n      log += JSON.stringify(third.value);\n      if (log !== \"0kve7[0,0]\") throw new Error(log);\n    ",
       "runs": [
         {
-          "name": "agrees with Node",
-          "wrong": "conformance: an array iterator over a typed array out of bounds"
+          "name": "agrees with Node"
         },
         {
           "name": "rejects an iterator that a throw moves on",
           "replace": ["e7", "e0"],
-          "thrown": "0kve7[0,0]",
-          "wrong": "conformance: an array iterator over a typed array out of bounds"
+          "thrown": "0kve7[0,0]"
         }
       ]
     },
@@ -21628,14 +21588,12 @@
       "source": "\n      const seen = [\n        typeof Temporal,\n        Temporal.Duration.length,\n        Temporal.PlainDate.name,\n        Temporal.Duration.prototype[Symbol.toStringTag],\n        Object.getOwnPropertyNames(Temporal).join(\"|\"),\n        typeof Object.getOwnPropertyDescriptor(Temporal.Duration.prototype, \"years\")!.get,\n        Object.getOwnPropertyNames(Date.prototype).includes(\"toTemporalInstant\"),\n      ].join();\n      if (seen !== \"object,0,PlainDate,Temporal.Duration,Now|PlainDate|PlainTime|PlainDateTime|ZonedDateTime|Duration|Instant|PlainYearMonth|PlainMonthDay,function,true\") throw new Error(\"seen \" + seen);\n    ",
       "runs": [
         {
-          "name": "agrees with Node",
-          "wrong": "conformance: the built-ins' own keys come in another order than V8's"
+          "name": "agrees with Node"
         },
         {
           "name": "rejects a Temporal without its PlainDate",
           "replace": ["Date|Plain", ""],
-          "thrown": "seen object,0,PlainDate,Temporal.Duration,Now|PlainDate|PlainTime|PlainDateTime|ZonedDateTime|Duration|Instant|PlainYearMonth|PlainMonthDay,function,true",
-          "wrong": "conformance: the built-ins' own keys come in another order than V8's"
+          "thrown": "seen object,0,PlainDate,Temporal.Duration,Now|PlainDate|PlainTime|PlainDateTime|ZonedDateTime|Duration|Instant|PlainYearMonth|PlainMonthDay,function,true"
         }
       ]
     },
@@ -22644,14 +22602,12 @@
       "source": "\n      var log = \"\";\n      function DummyError() {}\n      var first = \"ok\";\n      var nullBase = null;\n      var throwingProp = function () {\n        log += \"prop|\";\n        throw new DummyError();\n      };\n      var expr = function () {\n        log += \"expr|\";\n        return 1;\n      };\n      try {\n        nullBase[throwingProp()] /= expr();\n      } catch (error) {\n        first = error instanceof DummyError ? \"dummy\" : error.constructor.name;\n      }\n      var second = \"ok\";\n      var undefinedBase = undefined;\n      var keyObject = { toString: function () { log += \"key|\"; return \"p\"; } };\n      try {\n        undefinedBase[keyObject] /= expr();\n      } catch (error) {\n        second = error.constructor.name;\n      }\n      var base = { p: 6 };\n      var makeKey = function () {\n        log += \"call|\";\n        return keyObject;\n      };\n      base[makeKey()] -= 2;\n      var result = [first, second, base.p, log].join();\n      if (result !== \"dummy,TypeError,4,prop|call|key|key|\") throw new Error(\"result \" + result);\n    ",
       "runs": [
         {
-          "name": "agrees with Node",
-          "wrong": "conformance: a compound assignment to an object key converts the key in another order than V8"
+          "name": "agrees with Node"
         },
         {
           "name": "rejects another result",
           "replace": [",prop|", ",prop|key|"],
-          "thrown": "result dummy,TypeError,4,prop|call|key|key|",
-          "wrong": "conformance: a compound assignment to an object key converts the key in another order than V8"
+          "thrown": "result dummy,TypeError,4,prop|call|key|key|"
         }
       ]
     },
@@ -22852,8 +22808,7 @@
       "source": "\n      const sorted = [1, 4, 2, 5, 3].sort((a, b) => ((a * 7 + b) % 5) - 2);\n      if (sorted.join() !== \"1,4,2,3,5\") throw new Error(\"sorted \" + sorted.join());\n    ",
       "runs": [
         {
-          "name": "agrees with Node",
-          "wrong": "conformance: Array.prototype.sort calls a comparator in another order than V8's TimSort, which today's compiler modelled"
+          "name": "agrees with Node"
         }
       ]
     },
@@ -22879,16 +22834,11 @@
       "isModule": true,
       "source": "declare function setTimeout(callback: () => void): void;\nimport * as ns from \"./selfish.ts\";\nexport let b = 7;\nconst seen: unknown[] = [];\nseen.push(ns.a, Object.keys(ns).join());\n// A var's binding holds undefined until its declaration runs.\n// oxlint-disable-next-line no-var\nexport var a = 1;\nseen.push(ns.a);\na = 2;\nconst read = () => ns.a;\nseen.push(read());\na += 3;\nseen.push(read(), \"a\" in ns, ns.b);\nb = 8;\nconst descriptor = Object.getOwnPropertyDescriptor(ns, \"a\");\nseen.push(ns.b, Object.keys(ns).join(), descriptor?.value);\nPromise.resolve().then(() => {\n  seen.push(ns.a);\n});\na = 9;\nsetTimeout(() => {\n  if (seen.join() !== \",a,b,1,2,5,true,7,8,a,b,5,9\") throw new Error(seen.join());\n});\n",
       "runs": [
-        {
-          "name": "follows the script's own namespace object as its exports change (1)",
-          "thrown": "9,a,b,9,9,9,true,8,8,a,b,9,9",
-          "wrong": "modules: a module's own namespace object as its exports change"
-        },
+        { "name": "follows the script's own namespace object as its exports change (1)" },
         {
           "name": "follows the script's own namespace object as its exports change (2)",
           "replace": [",8", ",7"],
-          "thrown": "9,a,b,9,9,9,true,8,8,a,b,9,9",
-          "wrong": "modules: a module's own namespace object as its exports change"
+          "thrown": ",a,b,1,2,5,true,7,8,a,b,5,9"
         }
       ]
     },
@@ -23018,8 +22968,8 @@
           "name": "counts successors like a spec that writes the negated guard as conjuncts (2)",
           "source": "\n          let isLeft = false;\n          let isRight = false;\n          const isClear = () => !isLeft || !isRight;\n          export const setLeft = () => {\n            if (isClear()) {} else return;\n            isLeft = true;\n          };\n        ",
           "status": "success",
-          "generated": 4,
-          "wrong": "models: ESCore's check of this model gives another status, count, or message than today's compiler's, and which is right is unverified"
+          "generated": 3,
+          "correction": "Today's compiler counted 4 generated states; a search of the module in Node generates 3, as ESCore does: the call from the state where both flags are set writes nothing, so it is no step."
         },
         {
           "name": "stops the check when an action throws",
@@ -23053,8 +23003,8 @@
           "name": "changes a value through a Map lookup",
           "source": "\n      type Key = \"a\" | \"b\";\n      let held = new Map<Key, Set<0 | 1>>([[\"a\", new Set()], [\"b\", new Set()]]);\n      export const take = (key: Key, item: 0 | 1) => {\n        held.get(key)!.add(item);\n      };\n    ",
           "status": "success",
-          "distinct": 16,
-          "wrong": "models: ESCore's check of this model gives another status, count, or message than today's compiler's, and which is right is unverified"
+          "distinct": 25,
+          "correction": "Today's compiler found 16 distinct states, 4 Sets per key; a Set keeps its insertion order, so {0, 1} and {1, 0} differ, and each key holds one of 5 Sets, as ESCore finds."
         }
       ]
     },
@@ -23078,8 +23028,8 @@
           "name": "filters and quantifies over sets",
           "source": "\n      type Digit = 1 | 2 | 3;\n      let seen = new Set<Digit>();\n      export const see = (digit: Digit) => {\n        seen.add(digit);\n      };\n      export const isConsistent = () =>\n        [...seen].filter((digit) => digit > 1).length <= 2 &&\n        seen.values().every((digit) => digit >= 1) &&\n        new Set([...seen].map((digit) => digit * 2)).size === seen.size;\n    ",
           "status": "success",
-          "distinct": 8,
-          "wrong": "models: ESCore's check of this model gives another status, count, or message than today's compiler's, and which is right is unverified"
+          "distinct": 16,
+          "correction": "Today's compiler found 8 distinct states, as it kept a Set without its insertion order; a search of the module in Node finds 16, as ESCore does."
         },
         {
           "name": "compiles records with numeric keys to functions",
@@ -23091,14 +23041,13 @@
           "name": "adds and deletes Map entries",
           "source": "\n      type Key = \"a\" | \"b\";\n      let owners = new Map<Key, 0 | 1>();\n      export const own = (key: Key, value: 0 | 1) => {\n        owners.set(key, value);\n      };\n      export const remove = (key: Key) => {\n        if (!owners.has(key)) return;\n        owners.delete(key);\n      };\n      export const isSmall = () => owners.size <= 2;\n    ",
           "status": "success",
-          "distinct": 9,
-          "wrong": "models: ESCore's check of this model gives another status, count, or message than today's compiler's, and which is right is unverified"
+          "distinct": 13,
+          "correction": "Today's compiler found 9 distinct states, as it kept a Map without its insertion order; a search of the module in Node finds 13, as ESCore does."
         },
         {
           "name": "matches JavaScript's remainder, division, and strings",
           "source": "\n      let count = 0;\n      export const step = () => {\n        count = 1 - count;\n      };\n      /** @assume */\n      export const isLikeJavaScript = () =>\n        -7 % 3 === -1 &&\n        7 % -3 === 1 &&\n        Math.trunc(-7 / 2) === -3 &&\n        Math.floor(-7 / 2) === -4 &&\n        `${\"a\"}-${1}` === \"a-1\";\n    ",
-          "status": "success",
-          "wrong": "models: ESCore's check of this model gives another status, count, or message than today's compiler's, and which is right is unverified"
+          "status": "success"
         }
       ]
     },
@@ -23115,8 +23064,8 @@
           "name": "chooses a string from three",
           "source": "\n      let names = new Set<string>();\n      export const add = (name: string) => {\n        names.add(name);\n      };\n      /** @noDeadlock */\n      export const isSmall = () => names.size < 3;\n    ",
           "status": "invariant-violation",
-          "distinct": 8,
-          "wrong": "models: ESCore's check of this model gives another status, count, or message than today's compiler's, and which is right is unverified"
+          "distinct": 11,
+          "correction": "Today's compiler found 8 distinct states, as it kept a Set without its insertion order; a search of the module in Node finds 11, as ESCore does."
         },
         {
           "name": "starts an array at every length up to 3",
@@ -23282,15 +23231,14 @@
           "name": "reduces states with a symmetric type (1)",
           "source": "\n          \n          type Proc = \"p1\" | \"p2\";\n          let busy = new Set<Proc>();\n          export const start = (proc: Proc) => {\n            busy.add(proc);\n          };\n        ",
           "status": "success",
-          "distinct": 4,
-          "wrong": "models: ESCore's check of this model gives another status, count, or message than today's compiler's, and which is right is unverified"
+          "distinct": 5,
+          "correction": "Without @symmetric, today's compiler found 4 distinct states, as it kept a Set without its insertion order; a search of the module in Node finds 5, as ESCore does."
         },
         {
           "name": "reduces states with a symmetric type (2)",
           "source": "\n          /** @symmetric */\n          type Proc = \"p1\" | \"p2\";\n          let busy = new Set<Proc>();\n          export const start = (proc: Proc) => {\n            busy.add(proc);\n          };\n        ",
           "status": "success",
-          "distinct": 3,
-          "stop": "tla-ts can't check a symmetric model on ESCore yet"
+          "distinct": 3
         },
         {
           "name": "checks assumptions before the search",

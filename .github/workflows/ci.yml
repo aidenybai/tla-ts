@@ -36,7 +36,7 @@ jobs:
       - uses: oven-sh/setup-bun@v2
       - uses: actions/setup-node@v4
         with:
-          node-version: 24.18.1
+          node-version-file: .node-version
           cache: "pnpm"
       - run: pnpm install --frozen-lockfile
       - run: ${{ matrix.command }}
@@ -58,7 +58,7 @@ jobs:
       - uses: oven-sh/setup-bun@v2
       - uses: actions/setup-node@v4
         with:
-          node-version: 22
+          node-version-file: .node-version
           cache: "pnpm"
       - run: pnpm install --frozen-lockfile
       - run: pnpm run build

@@ -1,4 +1,3 @@
-// Ported from Z3 (src/qe/mbp/mbp_qel.cpp), MIT license, see z3-license.txt.
 import { OP_DISTINCT, OP_IMPLIES, OP_ITE, OP_OR, SORT_BOOL } from "../ast";
 import { flattenAndVector, isAppOf } from "../ast-util";
 import { RefVector } from "../ref-vector";

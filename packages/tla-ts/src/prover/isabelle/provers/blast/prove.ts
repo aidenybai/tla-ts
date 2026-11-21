@@ -1,5 +1,3 @@
-// Ported from Isabelle2025's Provers/blast.ML. Copyright (c) 1986-2025 University of Cambridge, Technische Universitaet Muenchen, and contributors, see LICENSE.
-
 import type { Seq } from "../../pure/seq";
 import type { GoalTactic } from "../../pure/tactical";
 import { checkInterrupt } from "../../pure/interrupt";

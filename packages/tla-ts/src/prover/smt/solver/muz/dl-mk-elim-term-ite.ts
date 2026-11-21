@@ -1,5 +1,3 @@
-// Ported from Z3 (src/muz/transforms/dl_mk_elim_term_ite.cpp,
-// src/ast/simplifiers/blast_term_ite_simplifier.h), MIT license, see z3-license.txt.
 import { SmtUnsupportedError } from "../../../../errors";
 import { type AstManager, KIND_APP, KIND_QUANTIFIER, OP_ITE, SORT_BOOL } from "../ast";
 import { flattenAndVector, getNumExprs } from "../ast-util";
@@ -23,7 +21,7 @@ class BlastTermIte extends RewriterTpl {
 
   reduceApp(decl: number, args: number[], sort: number): number | Rewrite {
     const manager = this.manager;
-    if (decl === OP_ITE) return -1;
+    if (manager.funcDecls[decl].op === OP_ITE) return -1;
     // The product wraps as Z3's unsigned one does.
     if (
       this.maxInflation < 0xffffffff &&

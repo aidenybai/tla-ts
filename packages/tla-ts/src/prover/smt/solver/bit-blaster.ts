@@ -1,6 +1,3 @@
-// Ported from Z3 (src/ast/rewriter/bit_blaster/bit_blaster_tpl_def.h,
-// src/ast/rewriter/bit_blaster/bit_blaster.cpp,
-// src/ast/rewriter/bit_blaster/bit_blaster_rewriter.cpp), MIT license, see z3-license.txt.
 import { SmtCanceledError } from "../../../errors";
 import { OP_EQ, SORT_BOOL, type AstManager } from "./ast";
 import { TACTIC_ARITH_OPTIONS } from "./arith-rewriter";
@@ -17,22 +14,6 @@ const BOOL_REWRITER_OPTIONS = {
 
 type Bits = readonly number[];
 
-// mk_not_core releases the negation of an equality's left side before it returns. Its callers hold
-// temporaries open.
-class BlasterBoolRewriter extends Rewriter {
-  mkNot(arg: number): number {
-    const manager = this.manager;
-    if (manager.getOp(arg) !== OP_EQ || manager.sorts[manager.getArg(arg, 0)] !== SORT_BOOL)
-      return super.mkNot(arg);
-    const outer = manager.beginTemporaries();
-    const result = this.mkEq(this.mkNot(manager.getArg(arg, 0)), manager.getArg(arg, 1));
-    manager.incRef(result);
-    manager.endTemporaries(outer);
-    manager.releaseLater(result);
-    return result;
-  }
-}
-
 export class BitBlaster {
   private rewriter: Rewriter;
 
@@ -42,9 +23,10 @@ export class BitBlaster {
     private manager: AstManager,
     private isBlasterCfg = false,
   ) {
-    this.rewriter = isBlasterCfg
-      ? new BlasterBoolRewriter(manager, { ...BOOL_REWRITER_OPTIONS, isEliminatingAnd: true })
-      : new Rewriter(manager, BOOL_REWRITER_OPTIONS);
+    this.rewriter = new Rewriter(
+      manager,
+      isBlasterCfg ? { ...BOOL_REWRITER_OPTIONS, isEliminatingAnd: true } : BOOL_REWRITER_OPTIONS,
+    );
   }
 
   private checkpoint() {
@@ -68,35 +50,34 @@ export class BitBlaster {
     return expr === this.manager.trueExpr || expr === this.manager.falseExpr;
   }
 
-  // blaster_cfg's bool_rewriter releases the conjunction that eliminating and makes, so its
-  // temporaries are held until it returns.
-  private beginRewrite() {
-    return this.isBlasterCfg ? this.manager.beginTemporaries() : -1;
-  }
-
   private endRewrite(result: number, outer: number) {
     this.manager.incRef(result);
-    if (this.isBlasterCfg) this.manager.endTemporaries(outer);
+    this.manager.endTemporaries(outer);
     return result;
   }
 
-  mkNot(arg: number) {
-    const outer = this.beginRewrite();
-    return this.endRewrite(this.rewriter.mkNot(arg), outer);
+  mkNot(arg: number, previous = -1) {
+    const manager = this.manager;
+    if (manager.getOp(arg) === OP_EQ && manager.sorts[manager.getArg(arg, 0)] === SORT_BOOL)
+      return this.mkXor(manager.getArg(arg, 0), manager.getArg(arg, 1), previous);
+    const outer = manager.beginTemporaries();
+    const result = this.endRewrite(this.rewriter.mkNot(arg), outer);
+    release(manager, previous);
+    return result;
   }
 
   mkAnd(args: number[]) {
-    const outer = this.beginRewrite();
+    const outer = this.manager.beginTemporaries();
     return this.endRewrite(this.rewriter.mkAnd(args), outer);
   }
 
   mkOr(args: number[]) {
-    const outer = this.beginRewrite();
+    const outer = this.manager.beginTemporaries();
     return this.endRewrite(this.rewriter.mkOr(args), outer);
   }
 
   mkIff(first: number, second: number) {
-    const outer = this.beginRewrite();
+    const outer = this.manager.beginTemporaries();
     return this.endRewrite(this.rewriter.mkEq(first, second), outer);
   }
 
@@ -111,7 +92,7 @@ export class BitBlaster {
   }
 
   mkIte(condition: number, thenExpr: number, elseExpr: number) {
-    const outer = this.beginRewrite();
+    const outer = this.manager.beginTemporaries();
     const result = this.rewriter.mkIte(condition, thenExpr, elseExpr);
     return this.endRewrite(typeof result === "number" ? result : result.expr, outer);
   }
@@ -723,9 +704,8 @@ export class BitBlaster {
     const size = first.length;
     let negation = this.mkNot(first[0]);
     let result = this.mkOr([negation, second[0]]);
-    const manager = this.manager;
     for (let index = 1; index < (isSigned ? size - 1 : size); index++) {
-      negation = assignOwned(manager, negation, this.mkNot(first[index]));
+      negation = this.mkNot(first[index], negation);
       result = this.mkGe2(negation, second[index], result, result);
     }
     if (isSigned) {

@@ -1,5 +1,3 @@
-// Ported from Z3 (src/ast/ast_util.cpp, src/ast/for_each_expr.cpp, src/ast/arith_decl_plugin.cpp),
-// MIT license, see z3-license.txt.
 import {
   KIND_APP,
   KIND_QUANTIFIER,

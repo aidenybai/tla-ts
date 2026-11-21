@@ -1,5 +1,3 @@
-// Ported from Zenon's mlproof.ml, as shipped in tlapm. Copyright 2004 INRIA, see LICENSE.
-
 import type { Expr } from "./expr";
 import type { Definition } from "./parse";
 

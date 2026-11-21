@@ -1,9 +1,5 @@
-// Ported from Z3 (src/ast/pb_decl_plugin.h, src/ast/pb_decl_plugin.cpp,
-// src/ast/rewriter/pb_rewriter.cpp, src/ast/rewriter/pb_rewriter_def.h), MIT license, see
-// z3-license.txt.
 import {
   type AstManager,
-  FAMILY_PB,
   OP_AT_LEAST_K,
   OP_AT_MOST_K,
   OP_PB_EQ,
@@ -22,8 +18,6 @@ interface PbArg {
   coeff: Rational;
 }
 
-export const isPb = (manager: AstManager, expr: number) => manager.getFamily(expr) === FAMILY_PB;
-
 export const getPbK = (manager: AstManager, decl: number) => manager.getPbParameters(decl)[0];
 
 export const getPbCoeff = (manager: AstManager, decl: number, index: number) => {
@@ -34,7 +28,7 @@ export const getPbCoeff = (manager: AstManager, decl: number, index: number) => 
 };
 
 export const hasUnitCoefficients = (manager: AstManager, decl: number) =>
-  manager.funcDecls[decl].domain.every((_, index) =>
+  manager.funcDecls[decl].domain.every((_value, index) =>
     getPbCoeff(manager, decl, index).equals(Rational.one),
   );
 

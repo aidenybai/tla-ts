@@ -1,5 +1,3 @@
-// Ported from Z3 (src/muz/base/dl_context.cpp, src/muz/base/dl_engine_base.h), MIT license, see
-// z3-license.txt.
 import { SmtTacticError, SmtUnsupportedError } from "../../../../errors";
 import {
   type AstManager,
@@ -12,16 +10,16 @@ import {
   SORT_SIZE_INFINITE,
 } from "../ast";
 import type { Definition } from "../goal";
-import { ModelEvaluator } from "../model-evaluator";
-import { FuncInterp, type ProtoModel } from "../proto-model";
+import type { ProtoModel } from "../proto-model";
 import { type RewriterOptions, Rewriter } from "../rewriter";
 import { RefVector } from "../ref-vector";
 import { applyQeLiteToConjuncts } from "../qe-lite";
+import { applyDefinitions } from "../tactic";
 import { BindVariables, mkExists, type Rule, RuleManager, getUsedVars } from "./dl-rule";
 import { RuleSet } from "./dl-rule-set";
 import { RuleProperties } from "./rule-properties";
 
-const ENGINE_DATALOG = 0;
+export const ENGINE_DATALOG = 0;
 export const ENGINE_SPACER = 1;
 const ENGINE_BMC = 2;
 const ENGINE_QBMC = 3;
@@ -40,9 +38,13 @@ const ENGINE_NAMES = new Map([
   ["ddnf", ENGINE_DDNF],
 ]);
 
-// The fp module's parameters, which Z3 keeps as global parameters across resets.
+// As in Z3, these are copied when the context is made, so a later fp option doesn't apply.
 export class FpParams {
-  constructor(private parameters: ReadonlyMap<string, string>) {}
+  private parameters: ReadonlyMap<string, string>;
+
+  constructor(parameters: ReadonlyMap<string, string>) {
+    this.parameters = new Map(parameters);
+  }
 
   getBool(name: string, defaultValue: boolean) {
     const value = this.parameters.get(`fp.${name}`);
@@ -61,40 +63,6 @@ export class FpParams {
 
 export type ModelConverter = (model: ProtoModel) => ProtoModel;
 
-// generic_model_converter::operator() over predicates, where a definition of -1 hides the
-// declaration.
-const applyDefinitions = (definitions: readonly Definition[], model: ProtoModel) => {
-  const manager = model.manager;
-  let evaluator = new ModelEvaluator(manager, model);
-  evaluator.setModelCompletion(true);
-  for (let index = definitions.length - 1; index >= 0; index--) {
-    const definition = definitions[index];
-    if (definition.def === -1) {
-      model.unregisterDecl(definition.decl);
-      continue;
-    }
-    const value = evaluator.rewrite(definition.def);
-    const arity = manager.funcDecls[definition.decl].domain.length;
-    const oldInterp = model.funcInterps.get(definition.decl);
-    const old = arity === 0 ? model.constInterps.get(definition.decl) : oldInterp?.elseExpr;
-    if (old !== value) {
-      if (arity === 0) model.registerConst(definition.decl, value);
-      else {
-        const interp = new FuncInterp(manager, arity);
-        interp.setElse(value);
-        model.registerFunc(definition.decl, interp);
-      }
-    }
-    manager.decRef(value);
-    if (old === value || (arity === 0 ? old === undefined : oldInterp === undefined)) continue;
-    evaluator.release();
-    evaluator = new ModelEvaluator(manager, model);
-    evaluator.setModelCompletion(true);
-  }
-  evaluator.release();
-  return model;
-};
-
 export interface Engine {
   query(query: number): number;
   getModel(): ProtoModel;
@@ -110,7 +78,7 @@ export class DatalogContext {
   private isBindingVariables = true;
   ruleSet: RuleSet;
   private ruleFmls: number[] = [];
-  private ruleNames: string[] = [];
+  private ruleNames: (string | undefined)[] = [];
   private ruleFmlsHead = 0;
   readonly background: number[] = [];
   private isClosed = false;
@@ -119,6 +87,7 @@ export class DatalogContext {
   readonly rewriter: Rewriter;
   // m_mc: the converters since the last query, or undefined before one.
   modelConverters: ModelConverter[] | undefined;
+  isBounded = false;
 
   constructor(
     readonly manager: AstManager,
@@ -178,7 +147,7 @@ export class DatalogContext {
     return result;
   }
 
-  addRule(fml: number, name = "") {
+  addRule(fml: number, name?: string) {
     this.manager.incRef(fml);
     this.ruleFmls.push(fml);
     this.ruleNames.push(name);
@@ -214,7 +183,13 @@ export class DatalogContext {
     const properties = this.ruleProperties;
     switch (this.getEngine()) {
       case ENGINE_DATALOG:
-        throw new SmtUnsupportedError("the datalog engine");
+        properties.collect(rules);
+        properties.checkQuantifierFree();
+        properties.checkUninterpretedFree();
+        properties.checkNestedFree();
+        properties.checkInfiniteSorts();
+        properties.checkBackgroundFree();
+        break;
       case ENGINE_SPACER:
         properties.collect(rules);
         properties.checkExistentialTail();
@@ -330,6 +305,7 @@ export class DatalogContext {
 
   query(query: number) {
     this.modelConverters = [];
+    this.isBounded = false;
     this.getEngine(query);
     this.flushAddRules();
     return this.ensureEngine(query).query(query);
@@ -364,7 +340,7 @@ export class DatalogContext {
         : mkExists(
             manager,
             [...domain].reverse(),
-            domain.map((_, index) => String(index)).reverse(),
+            domain.map((_value, index) => String(index)).reverse(),
             atom,
           );
     manager.incRef(query);
@@ -397,7 +373,7 @@ export class DatalogContext {
       ...conjs.items.map((conj) => this.ruleManager.ensureApp(conj)),
     ];
     const isNegated = tail.map(
-      (_, index) => index < rule.uninterpretedSize && rule.isNegated[index],
+      (_value, index) => index < rule.uninterpretedSize && rule.isNegated[index],
     );
     const reduced = this.ruleManager.mk(rule.head, tail, isNegated, rule.name);
     conjs.reset();

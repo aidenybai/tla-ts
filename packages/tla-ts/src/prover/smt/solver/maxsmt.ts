@@ -1,4 +1,3 @@
-// Ported from Z3 (src/opt/maxsmt.cpp), MIT license, see z3-license.txt.
 import { SmtCanceledError, SmtUnsupportedError } from "../../../errors";
 import { L_FALSE, L_UNDEF } from "./lbool";
 import { Maxcore } from "./maxcore";

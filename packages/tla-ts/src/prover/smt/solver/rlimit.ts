@@ -1,4 +1,3 @@
-// Ported from Z3 (src/util/rlimit.h, src/util/rlimit.cpp, src/util/memory_manager.cpp), MIT license, see z3-license.txt.
 import type { GCProfiler } from "node:v8";
 import { SmtCanceledError } from "../../../errors";
 
@@ -15,11 +14,11 @@ export class ResourceLimit {
     private signal?: AbortSignal,
   ) {}
 
-  inc() {
-    this.count++;
+  inc(offset = 1) {
+    this.count += offset;
     if (
       !this.isCanceled &&
-      (this.count & CLOCK_CHECK_MASK) === 0 &&
+      (this.count & CLOCK_CHECK_MASK) < offset &&
       (Date.now() > this.deadline || this.signal?.aborted === true || this.isHeapNearlyFull())
     ) {
       this.isCanceled = true;
@@ -32,6 +31,10 @@ export class ResourceLimit {
     return !this.isSuspended && (this.isCanceled || this.count > this.limit);
   }
 
+  getCancelMessage() {
+    return this.isCanceled ? "canceled" : "max. resource limit exceeded";
+  }
+
   push(delta: number) {
     this.limits.push(this.limit);
     this.limit = Math.min(delta === 0 ? Infinity : this.count + delta, this.limit);
@@ -42,6 +45,19 @@ export class ResourceLimit {
     this.count = Math.min(this.count, this.limit);
     this.limit = this.limits.pop() ?? Infinity;
     this.isCanceled = false;
+  }
+
+  pushChild(child: ResourceLimit) {
+    child.limit = Math.min(child.limit, this.limit - Math.min(this.limit, this.count));
+    child.count = 0;
+    child.deadline = this.deadline;
+    child.signal = this.signal;
+  }
+
+  popChild(child: ResourceLimit) {
+    this.count += child.count;
+    child.count = 0;
+    child.release();
   }
 
   restart(deadline: number) {

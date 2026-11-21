@@ -1,5 +1,3 @@
-// Ported from Z3 (src/ast/simplifiers/bound_simplifier.cpp, src/ast/simplifiers/bound_propagator.cpp),
-// MIT license, see z3-license.txt.
 import {
   type AstManager,
   OP_ADD,
@@ -31,6 +29,7 @@ import { Rational } from "./rational";
 import { RefVector } from "./ref-vector";
 import { Rewriter, TACTIC_REWRITER_OPTIONS } from "./rewriter";
 import { RewriterTpl } from "./rewriter-tpl";
+import { DependentExprState, finishSimplifier } from "./dependent-expr-state";
 
 interface Bound {
   value: Rational;
@@ -375,30 +374,32 @@ class BoundSimplifier {
 
   reduce() {
     const goal = this.goal;
+    const state = new DependentExprState(this.manager, goal);
     let isUpdated = true;
     for (let round = 0; round < 5 && isUpdated; round++) {
       isUpdated = false;
       let isBoundFound = false;
       this.reset();
-      const size = goal.forms.size;
-      for (let index = 0; index < size && !goal.isInconsistent; index++)
-        if (this.insertBound(goal.forms.items[index])) {
-          goal.update(index, this.manager.trueExpr);
-          isBoundFound = true;
-        }
+      state.forEachIndex((index) => {
+        if (goal.getDependency(index) !== undefined || !this.insertBound(goal.forms.get(index)))
+          return;
+        goal.update(index, this.manager.trueExpr);
+        isBoundFound = true;
+      });
       if (!isBoundFound) break;
-      for (let index = 0; index < size && !goal.isInconsistent; index++)
-        this.tightenBound(goal.forms.items[index]);
+      state.forEachIndex((index) => {
+        if (goal.getDependency(index) === undefined) this.tightenBound(goal.forms.get(index));
+      });
       const rewriter = new BoundRewriter(this.manager, this);
-      for (let index = 0; index < size && !goal.isInconsistent; index++) {
-        const form = goal.forms.items[index];
+      state.forEachIndex((index) => {
+        const form = goal.forms.get(index);
         const result = rewriter.rewrite(form);
         if (result !== form) {
-          goal.update(index, result);
+          goal.update(index, result, goal.getDependency(index));
           isUpdated = true;
         }
         this.manager.decRef(result);
-      }
+      });
       rewriter.release();
       this.restoreBounds();
     }
@@ -596,7 +597,5 @@ export const propagateIneqs = (manager: AstManager, goal: Goal) => {
     simplifier.reduce();
     simplifier.release();
   }
-  goal.elimTrue();
-  goal.elimRedundancies();
-  goal.depth++;
+  finishSimplifier(goal);
 };

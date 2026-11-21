@@ -1,4 +1,3 @@
-// Ported from Z3 (src/sat/smt/arith_axioms.cpp), MIT license, see z3-license.txt.
 import {
   OP_ADD,
   OP_DIV,

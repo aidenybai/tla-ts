@@ -1,4 +1,3 @@
-// Ported from Z3 (src/muz/spacer/spacer_context.cpp), MIT license, see z3-license.txt.
 import { SmtTacticError, SmtUnsupportedError } from "../../../../errors";
 import { type AstManager, getSymbolName, KIND_VAR, OP_AND, OP_IMPLIES, SORT_BOOL } from "../ast";
 import { flattenOrVector, pushNotOwned } from "../ast-util";
@@ -54,7 +53,6 @@ export class Lemma {
   ctp: ProtoModel | undefined;
   level: number;
   bumped = 0;
-  weakness: number;
   isBlocked = false;
 
   constructor(
@@ -64,7 +62,6 @@ export class Lemma {
     pob?: Pob,
   ) {
     this.level = level;
-    this.weakness = pob === undefined ? 65535 : pob.weakness;
     this.pob = pob;
     if (body !== -1) this.body = context.normalizer.normalize(body);
   }
@@ -299,7 +296,6 @@ class Derivation {
 
   constructor(
     readonly parent: Pob,
-    readonly rule: Rule,
     private trans: number,
     private evars: number[],
   ) {}
@@ -1143,6 +1139,7 @@ export class SpacerContext {
       this.pobQueue.incLevel();
       level = this.pobQueue.maxLevel;
     }
+    this.datalogContext.isBounded = true;
     return L_UNDEF;
   }
 
@@ -1373,7 +1370,7 @@ export class SpacerContext {
     ];
     phi = pt.mbp(vars, phi, model, this.isUsingGroundPob);
     if (this.isUsingGpdr && predicates.length > 1) return gpdrCreateSplitChildren();
-    const derivation = new Derivation(pob, rule, phi, vars);
+    const derivation = new Derivation(pob, phi, vars);
     for (let index = 0; index < predicates.length; index++) {
       const premisePt = this.getPredTransformer(predicates[index]);
       const summary = premisePt.getOriginSummary(
