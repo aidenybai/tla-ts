@@ -2017,6 +2017,21 @@ const compileApply = (
     const isIn = global.name === "\\in";
     return (context) => isMember(element(context), set(context)) === isIn;
   }
+  if (
+    coverage &&
+    global?.kind === "Builtin" &&
+    global.name === "SUBSET" &&
+    args.length === 1 &&
+    isValueArgument(args[0], environment)
+  ) {
+    const base = getEvaluator(args[0], environment);
+    return (context): Value => ({
+      kind: "Subset",
+      base: base(context),
+      costNode:
+        coverage.expressions[coverage.current] === expression ? coverage.current : undefined,
+    });
+  }
   const combine = global?.kind === "Builtin" ? global.evaluateBinary : undefined;
   if (coverage && combine && SET_OPERATORS.has(expression.operator) && args.length === 2) {
     const left = getEvaluator(args[0], environment);

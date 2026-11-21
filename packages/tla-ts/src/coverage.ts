@@ -825,8 +825,14 @@ export const getSubstitutionNode = (coverage: Coverage, substitution: Substituti
   return substitutionNode;
 };
 
+// TLC's SubsetValue gives the subsets it enumerates its own cost model.
+const getValueNode = (coverage: Coverage, value: Value) =>
+  typeof value !== "object"
+    ? undefined
+    : (coverage.values.get(value) ?? (value.kind === "Set" ? value.costNode : undefined));
+
 export const costCoverage = (coverage: Coverage, value: Value, cost: number) => {
-  const node = typeof value === "object" ? coverage.values.get(value) : undefined;
+  const node = getValueNode(coverage, value);
   if (node !== undefined) coverage.secondary[node] += cost;
 };
 
@@ -846,13 +852,13 @@ export const chargeSetOperation = (
   const other = receiver === left ? right : left;
   if (operator === "\\cup") {
     if (isEmptySet(receiver) || !isReducibleSet(other)) return result;
-    const otherNode = coverage.values.get(other);
+    const otherNode = getValueNode(coverage, other);
     if (otherNode !== undefined) coverage.secondary[otherNode] += getCardinality(other) + 1;
   }
-  const node = operator === "\\cup" ? undefined : coverage.values.get(receiver);
-  if (coverage.values.get(result) === node) return result;
+  const node = operator === "\\cup" ? undefined : getValueNode(coverage, receiver);
+  if (getValueNode(coverage, result) === node) return result;
   const isShared = result === left || result === right || coverage.values.has(result);
-  const charged = isShared ? { ...result } : result;
+  const charged = isShared ? { ...result, costNode: undefined } : result;
   if (node !== undefined) coverage.values.set(charged, node);
   return charged;
 };
@@ -929,7 +935,7 @@ const createEnumerator = (
   size: number,
   isNormalized: boolean,
 ): ChargedEnumerator => {
-  const node = typeof set === "object" ? coverage.values.get(set) : undefined;
+  const node = getValueNode(coverage, set);
   if (
     typeof set === "object" &&
     (set.kind === "Subset" || (!isNormalized && set.kind === "FilteredSet"))

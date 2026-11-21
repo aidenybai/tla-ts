@@ -34,6 +34,8 @@ export interface SetValue {
   hash: number;
   fingerprint: number;
   walkFlags: number;
+  // Under -coverage, the cost node of the SUBSET this subset came from, as TLC's SubsetValue gives its subsets its cost model.
+  costNode?: number;
 }
 
 export interface MixedSetValue extends LazySet {
@@ -66,6 +68,8 @@ export interface InfiniteSetValue {
 export interface SubsetValue extends LazySet {
   kind: "Subset";
   base: Value;
+  // Under -coverage, the cost node the subsets it enumerates carry.
+  costNode?: number;
 }
 
 export interface FunctionSetValue extends LazySet {
@@ -1662,6 +1666,7 @@ export const getLazySubsets = (value: Value): Value[] | undefined => {
   const base = toFiniteSet(value.base).elements;
   sets?.pop();
   if (base.length <= MAXIMUM_BUILT_SUBSET_BASE) return undefined;
+  const costNode = value.costNode;
   let cursorIndex = -1;
   let indices = [0];
   const getSubset = (index: number) => {
@@ -1673,7 +1678,8 @@ export const getLazySubsets = (value: Value): Value[] | undefined => {
       }
       cursorIndex++;
     }
-    return createSortedSet(indices.map((baseIndex) => base[baseIndex]));
+    const subset = createSortedSet(indices.map((baseIndex) => base[baseIndex]));
+    return costNode === undefined ? subset : { ...subset, costNode };
   };
   const length = 2 ** base.length;
   const isIndex = (property: string | symbol) =>
@@ -1689,7 +1695,7 @@ export const getLazySubsets = (value: Value): Value[] | undefined => {
   });
 };
 
-const someSubset = (base: Value[], visit: (subset: Value) => boolean) => {
+const someSubset = (base: Value[], visit: (subset: SetValue) => boolean) => {
   for (let size = 0; size <= base.length; size++) {
     const indices = Array.from({ length: size }, (_value, index) => index);
     do {
@@ -1699,13 +1705,13 @@ const someSubset = (base: Value[], visit: (subset: Value) => boolean) => {
   return false;
 };
 
-const getSortedSubsets = (base: Value[]) => {
-  const subsets: Value[] = [];
+const getSortedSubsets = (base: Value[], costNode: number | undefined) => {
+  const subsets: SetValue[] = [];
   someSubset(base, (subset) => {
     subsets.push(subset);
     return false;
   });
-  return subsets;
+  return costNode === undefined ? subsets : subsets.map((subset) => ({ ...subset, costNode }));
 };
 
 const getSubsetBase = (value: SubsetValue) => {
@@ -1838,7 +1844,7 @@ const enumerateSet = (
       if (base.length > MAXIMUM_ENUMERATED_SUBSET_BASE) {
         throw new TlaEvaluationError(describeOverflow(value));
       }
-      return getSortedSubsets(base);
+      return getSortedSubsets(base, value.costNode);
     }
     case "FunctionSet": {
       if (!isVersion174 && isEmptySet(value)) return [];
@@ -2481,7 +2487,11 @@ const someElementOfStream = (
     value.enumerated === undefined &&
     getCardinality(value.base) > MAXIMUM_BUILT_SUBSET_BASE
   ) {
-    return someSubset(getSubsetBase(value), visit);
+    const costNode = value.costNode;
+    return someSubset(
+      getSubsetBase(value),
+      costNode === undefined ? visit : (subset) => visit({ ...subset, costNode }),
+    );
   }
   if (value.kind !== "SetOperation") return getUnboundedElements(value).some(visit);
   if (value.operator === "\\cup") {

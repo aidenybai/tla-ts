@@ -3214,6 +3214,76 @@ ASSUME TLCFP(a) = -887695703
     },
   );
 
+  it.each([
+    [
+      "its body enumerates one",
+      "[s \\in SUBSET {1, 2} |-> \\E e \\in s : e > 1]",
+      "UNCHANGED y",
+      [
+        "line 4, col 18 to line 4, col 65 of module M: 1",
+        "|line 4, col 22 to line 4, col 65 of module M: 1:4",
+        "||line 4, col 47 to line 4, col 64 of module M: 4",
+        "||line 4, col 29 to line 4, col 41 of module M: 1:8",
+        "|||line 4, col 36 to line 4, col 41 of module M: 1",
+      ],
+    ],
+    [
+      "its body chooses from one",
+      "[s \\in SUBSET {1, 2} |-> IF s = {} THEN 0 ELSE CHOOSE e \\in s : TRUE]",
+      "UNCHANGED y",
+      [
+        "line 4, col 18 to line 4, col 90 of module M: 1",
+        "|line 4, col 22 to line 4, col 90 of module M: 1:4",
+        "||line 4, col 47 to line 4, col 89 of module M: 4",
+        "|||line 4, col 50 to line 4, col 55 of module M: 4",
+        "|||line 4, col 69 to line 4, col 89 of module M: 3",
+        "||line 4, col 29 to line 4, col 41 of module M: 1:3",
+        "|||line 4, col 36 to line 4, col 41 of module M: 1",
+      ],
+    ],
+    [
+      "a successor enumerates its domain",
+      "[s \\in SUBSET {1, 2} |-> 0]",
+      "UNCHANGED y /\\ \\A s \\in DOMAIN y : \\A e \\in s : e > 0",
+      [
+        "line 4, col 18 to line 4, col 48 of module M: 1",
+        "|line 4, col 22 to line 4, col 48 of module M: 1:4",
+        "||line 4, col 29 to line 4, col 41 of module M: 1:16",
+        "|||line 4, col 36 to line 4, col 41 of module M: 1",
+      ],
+    ],
+  ])(
+    "charges SUBSET for enumerating the subsets a lazy function's conversion draws when %s, as TLC's SubsetValue gives them its cost model",
+    async (_title, value, next, expected) => {
+      const lines = await getCoverageLines(
+        `---- MODULE M ----\nEXTENDS Integers, FiniteSets\nVARIABLES x, y\nInit == x = 0 /\\ y = ${value}\nNext == x < 2 /\\ x' = x + 1 /\\ ${next}\n====`,
+        "INIT Init\nNEXT Next\nCHECK_DEADLOCK FALSE",
+      );
+      expect(lines?.[0]).toEqual(expected);
+    },
+  );
+
+  it("charges SUBSET for the subsets a recursive function over it chooses from, as TLC's SubsetValue gives them its cost model", async () => {
+    const lines = await getCoverageLines(
+      "---- MODULE M ----\nEXTENDS Integers, FiniteSets\nVARIABLES x, y\nInit == x = 0 /\\ y = 0\nNext == x < 2 /\\ x' = x + 1 /\\ y' = LET f[s \\in SUBSET {1, 2}] == IF s = {} THEN x ELSE f[s \\ {CHOOSE e \\in s : TRUE}] + 1 IN f\n====",
+      "INIT Init\nNEXT Next\nCHECK_DEADLOCK FALSE",
+    );
+    expect(lines?.at(-1)).toEqual([
+      "line 5, col 9 to line 5, col 13 of module M: 2",
+      "|line 5, col 9 to line 5, col 9 of module M: 3",
+      "line 5, col 18 to line 5, col 27 of module M: 2",
+      "line 5, col 32 to line 5, col 127 of module M: 2",
+      "|line 5, col 41 to line 5, col 122 of module M: 2:8",
+      "||line 5, col 67 to line 5, col 122 of module M: 16",
+      "|||line 5, col 70 to line 5, col 75 of module M: 16",
+      "|||line 5, col 82 to line 5, col 82 of module M: 8",
+      "|||line 5, col 89 to line 5, col 122 of module M: 8",
+      "||line 5, col 49 to line 5, col 61 of module M: 2:18",
+      "|||line 5, col 56 to line 5, col 61 of module M: 2",
+      "|line 5, col 127 to line 5, col 127 of module M: 2",
+    ]);
+  });
+
   it("counts the body and conversion of the copy of a lazy function PrintT prints, though TLC's FcnLambdaValue#deepCopy drops the cost model", async () => {
     const lines = await getCoverageLines(
       "---- MODULE M ----\nEXTENDS Integers, FiniteSets, TLC\nVARIABLE x\nInit == x = 0\nNext == x < 2 /\\ x' = x + 1 /\\ PrintT([s \\in SUBSET {1} |-> Cardinality(s)])\n====",
