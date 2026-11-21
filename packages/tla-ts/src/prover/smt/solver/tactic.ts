@@ -72,7 +72,7 @@ import { PropagateValuesTactic } from "./propagate-values";
 import { purifyArith } from "./purify-arith";
 import { ModelEvaluator } from "./model-evaluator";
 import { FuncInterp, ProtoModel } from "./proto-model";
-import { SmtKernel } from "./smt-kernel";
+import { getGlobalSmtParams, SmtKernel } from "./smt-kernel";
 import { isMbqiByFeatures, type SmtSetup } from "./smt-setup";
 import { compileProbe, formatDouble, isQfufbv, type Probe } from "./probes";
 import { runHorn } from "./muz/horn-tactic";
@@ -579,9 +579,7 @@ const runUnitSubsume = (environment: TacticEnvironment) => {
     isMbqi: environment.isMbqi,
     mbqiMaxIterations: environment.mbqiMaxIterations,
     isFindingMacros: environment.isFindingMacros,
-    isEmatching: getParameter(environment, "smt.ematching", "true") !== "false",
-    relevancyLevel: Number(getParameter(environment, "smt.relevancy", "2")),
-    isDelayingNewCaseSplits: isDelayingNewCaseSplits(environment, new Map()),
+    ...getGlobalSmtParams(environment.parameters),
   });
   const clauses = new RefVector(manager);
   environment.destructors.push(() => {

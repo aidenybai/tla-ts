@@ -1,6 +1,5 @@
 import { SmtCanceledError, SmtDefaultError, SmtInvariantError } from "../../../errors";
 import { type AstManager, FAMILY_ARITH, FAMILY_PB } from "./ast";
-import { isDelayingByCaseSplit } from "./case-split-queue";
 import { InfEps } from "./inf-eps";
 import { L_FALSE, L_TRUE, L_UNDEF } from "./lbool";
 import type { AlgebraicManager } from "./nlsat/algebraic";
@@ -8,7 +7,7 @@ import type { ParetoSolver } from "./opt-pareto";
 import type { ProtoModel } from "./proto-model";
 import { Rational } from "./rational";
 import { RefVector } from "./ref-vector";
-import { SmtKernel } from "./smt-kernel";
+import { getGlobalSmtParams, SmtKernel } from "./smt-kernel";
 import type { TacticEnvironment } from "./tactic";
 
 const MODEL_BOUND_SCALE = Rational.of(10n ** 12n);
@@ -59,16 +58,13 @@ export class OptSolver {
     params: TacticEnvironment,
   ) {
     this.dualBoundRlimit = Number(params.parameters.get("opt.optsmt_dual_bound_rlimit") ?? 100);
-    const relevancyLevel = Number(params.parameters.get("smt.relevancy") ?? "2");
-    const isDelaying = isDelayingByCaseSplit(
-      Number(params.parameters.get("smt.case_split") ?? "1"),
-    );
+    const smtParams = getGlobalSmtParams(params.parameters);
     // opt_solver turns relevancy off under case_split 1, so a decided bound, such as one optsmt
     // made for a lower bound, reaches the arithmetic solver.
     this.kernel = new SmtKernel(manager, {
       ...params,
-      relevancyLevel: isDelaying ? 0 : relevancyLevel,
-      isDelayingNewCaseSplits: isDelaying,
+      ...smtParams,
+      relevancyLevel: smtParams.isDelayingNewCaseSplits ? 0 : smtParams.relevancyLevel,
       setup: params.setup && { ...params.setup, isArithAutoConfigSimplex: true },
     });
     this.kernel.context.registerFamily(FAMILY_PB);

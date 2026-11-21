@@ -192,6 +192,24 @@ describe("horn tactic", () => {
     ).toEqual(["sat"]);
   });
 
+  it("reads smt.relevancy in the solvers spacer makes", () => {
+    const getSteps = (options: string[]) => {
+      const output = run([
+        ...options,
+        "(set-logic HORN)",
+        "(declare-fun p (Int Int) Bool)",
+        "(assert (forall ((x Int) (y Int)) (=> (and (or (= x 1) (= x 2)) (= y (+ x 1))) (p x y))))",
+        "(assert (forall ((x Int) (y Int)) (=> (and (p x y) (or (< y x) (> y 3))) false)))",
+        "(check-sat)",
+        "(get-info :rlimit)",
+      ]);
+      expect(output[0]).toBe("sat");
+      return Number(output[1].slice("(:rlimit ".length, -1));
+    };
+    // Deviation from Z3: the port's spacer takes fewer steps, so this checks the step relevancy adds.
+    expect(getSteps(["(set-option :smt.relevancy 0)"]) - getSteps([])).toBe(938 - 937);
+  });
+
   it("prints the formula that is not a Horn clause", () => {
     expect(
       run([

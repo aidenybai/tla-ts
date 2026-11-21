@@ -23,7 +23,7 @@ import { Mbproj } from "./qe-mbp";
 import { QuantifierHoister } from "./quant-hoist";
 import { hasSubterm } from "./recfun-decl-plugin";
 import { RefVector } from "./ref-vector";
-import { SmtKernel } from "./smt-kernel";
+import { getGlobalSmtParams, SmtKernel } from "./smt-kernel";
 import type { TacticEnvironment } from "./tactic";
 
 export const NO_LEVEL = -1;
@@ -332,8 +332,7 @@ class Kernel {
       isMbqi: true,
       mbqiMaxIterations: MBQI_MAX_ITERATIONS,
       isFindingMacros: false,
-      relevancyLevel: 0,
-      isDelayingNewCaseSplits: Number(this.parameters.get("smt.case_split") ?? "1") === 1,
+      ...getGlobalSmtParams(this.parameters, 0),
       isCoreMinimizing: this.parameters.get("smt.core.minimize") === "true",
     });
     this.lastAssert = -1;

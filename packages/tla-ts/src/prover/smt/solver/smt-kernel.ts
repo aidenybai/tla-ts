@@ -1,11 +1,22 @@
 import { type AstManager } from "./ast";
 import type { SmtSetup } from "./smt-setup";
 import { AssertedFormulas } from "./asserted-formulas";
+import { isDelayingByCaseSplit } from "./case-split-queue";
 import { Context } from "./context";
 import { L_TRUE } from "./lbool";
 import { Mus } from "./mus";
 import { RefVector } from "./ref-vector";
 import type { KernelParams } from "./solver";
+
+// smt_params reads the global parameters of smt that its maker leaves unset.
+export const getGlobalSmtParams = (
+  parameters: ReadonlyMap<string, string>,
+  relevancyLevel = Number(parameters.get("smt.relevancy") ?? "2"),
+) => ({
+  isEmatching: parameters.get("smt.ematching") !== "false",
+  relevancyLevel,
+  isDelayingNewCaseSplits: isDelayingByCaseSplit(Number(parameters.get("smt.case_split") ?? "1")),
+});
 
 export class SmtKernel {
   readonly context: Context;

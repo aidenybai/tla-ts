@@ -33,7 +33,7 @@ import { hasSubterm } from "./recfun-decl-plugin";
 import { RefVector } from "./ref-vector";
 import { Rewriter, TACTIC_REWRITER_OPTIONS } from "./rewriter";
 import { InvVarShifter, RewriterTpl, VarShifter } from "./rewriter-tpl";
-import { SmtKernel } from "./smt-kernel";
+import { getGlobalSmtParams, SmtKernel } from "./smt-kernel";
 import type { TacticEnvironment } from "./tactic";
 import { VarSubst } from "./var-subst";
 
@@ -677,8 +677,7 @@ class QuantElimPlugin implements QeSolverContext {
       isMbqi: true,
       mbqiMaxIterations: MBQI_MAX_ITERATIONS,
       isFindingMacros: false,
-      relevancyLevel: 0,
-      isDelayingNewCaseSplits: Number(quantElim.parameters.get("smt.case_split") ?? "1") === 1,
+      ...getGlobalSmtParams(quantElim.parameters, 0),
     });
     this.root = new SearchTree(manager, undefined, manager.trueExpr);
     this.current = this.root;
