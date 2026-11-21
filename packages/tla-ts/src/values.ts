@@ -2114,27 +2114,21 @@ const isPredicated = (value: Value): boolean => {
         hasPredicatedSet(value.base.elements)
       );
     case "FunctionSet":
-      return (
-        value.hasFilter && value.isCached !== true && !value.enumerated && isPredicated(value.range)
-      );
     case "RecordSet":
-      return (
-        value.hasFilter &&
-        value.isCached !== true &&
-        !value.enumerated &&
-        hasPredicatedSet(value.sets)
-      );
     case "ProductSet":
-      return (
-        value.hasFilter &&
-        value.isCached !== true &&
-        !value.enumerated &&
-        hasPredicatedSet(value.factors)
-      );
+      return isPredicatedProduct(value);
     default:
       return false;
   }
 };
+
+const isPredicatedProduct = (value: FunctionSetValue | RecordSetValue | ProductSetValue) =>
+  value.hasFilter &&
+  value.isCached !== true &&
+  !value.enumerated &&
+  (value.kind === "FunctionSet"
+    ? isPredicated(value.range)
+    : hasPredicatedSet(value.kind === "RecordSet" ? value.sets : value.factors));
 
 const hasPredicatedSet = (sets: Value[]) => {
   for (let index = 0; index < sets.length; index++) {
@@ -2208,7 +2202,7 @@ export const createSetOperation = (
 
 const getPredicatedProduct = (value: ObjectValue) =>
   (value.kind === "FunctionSet" || value.kind === "RecordSet" || value.kind === "ProductSet") &&
-  isPredicated(value)
+  isPredicatedProduct(value)
     ? value
     : undefined;
 
@@ -2492,7 +2486,7 @@ const openStream = (value: Value, isEager: boolean): OpenedStream | undefined =>
     case "FunctionSet":
     case "RecordSet":
     case "ProductSet":
-      if (isPredicated(value)) return openProductStream(value);
+      if (isPredicatedProduct(value)) return openProductStream(value);
       if (isEager) openCombinedStream(value);
       return undefined;
     case "Subset":
