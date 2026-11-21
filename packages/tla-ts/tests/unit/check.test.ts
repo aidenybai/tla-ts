@@ -2894,6 +2894,62 @@ ASSUME TLCFP(a) = -887695703
     },
   );
 
+  const PARAMETERIZED_SPEC_MODULE =
+    '---- MODULE N ----\nEXTENDS Integers\nCONSTANT k\nVARIABLES x, y\nG(a) == /\\ a = k\n        /\\ y = 0\n        /\\ a + "s" = 1\nFlag == FALSE\nInit == x = k /\\ G(x)\nFlagInit == x = k /\\ y = 0 /\\ Flag\nNext == UNCHANGED <<x, y>>\nSpec == Init /\\ [][Next]_<<x, y>>\nFlagSpec == FlagInit /\\ [][Next]_<<x, y>>\n====\n';
+
+  const checkParameterizedSpec = (spec: string) =>
+    check({
+      source: `---- MODULE M ----\nVARIABLES x, y\nI(j) == INSTANCE N WITH k <- j\n${spec}\n====\n`,
+      config: "SPECIFICATION Spec\n",
+      loadModule: (name) => (name === "N" ? PARAMETERIZED_SPEC_MODULE : undefined),
+    });
+
+  it.each([
+    [
+      "Spec == I(0)!Init /\\ [][I(0)!Next]_<<x, y>>",
+      [
+        "Line 3, column 1 to line 3, column 30 in M",
+        "Line 9, column 9 to line 9, column 13 in N",
+        "Line 3, column 1 to line 3, column 30 in M",
+        "Line 9, column 18 to line 9, column 21 in N",
+        "Line 5, column 9 to line 7, column 22 in N",
+        "Line 5, column 12 to line 5, column 16 in N",
+        "Line 6, column 12 to line 6, column 16 in N",
+        "Line 7, column 12 to line 7, column 22 in N",
+        "Line 7, column 12 to line 7, column 18 in N",
+      ],
+    ],
+    [
+      "Spec == I(0)!Spec",
+      [
+        "Line 3, column 1 to line 3, column 30 in M",
+        "Line 9, column 9 to line 9, column 21 in N",
+        "Line 9, column 9 to line 9, column 13 in N",
+        "Line 9, column 18 to line 9, column 21 in N",
+        "Line 5, column 9 to line 7, column 22 in N",
+        "Line 5, column 12 to line 5, column 16 in N",
+        "Line 6, column 12 to line 6, column 16 in N",
+        "Line 7, column 12 to line 7, column 22 in N",
+        "Line 7, column 12 to line 7, column 18 in N",
+      ],
+    ],
+  ])(
+    "takes the initial predicate of a parameterized instance's %j apart as TLC does",
+    async (spec, lines) => {
+      const result = await checkParameterizedSpec(spec);
+      expect(formatCallStackLines(result)?.filter((line) => line !== "")).toEqual(lines);
+    },
+  );
+
+  it("takes a parameterized instance's state-level Init whole, as TLC does, so a FALSE conjunct inside leaves no initial state", async () => {
+    const result = await checkParameterizedSpec("Spec == I(0)!FlagSpec");
+    expect([result.status, result.failure?.message, result.distinctStates]).toEqual([
+      "success",
+      undefined,
+      0,
+    ]);
+  });
+
   it("applies an operator to each value @ takes in the same state", async () => {
     const result = await check({
       source:

@@ -564,9 +564,19 @@ export const expandTemporal = (
       !isRecursive &&
       (!expansion.isSubstituted || isOwnArgumentFree);
     if (isExpandable) {
+      const bound = bindUncachedArguments(operator, expression.args, context);
+      // Inside an instance, SANY's body names a definition without parameters, whose copy takes the instance's.
+      if (
+        !isProperty &&
+        expansion.isSubstituted &&
+        isOwnArgumentFree &&
+        getLevelBound(operator.body, bound, environment) === VARIABLE_LEVEL
+      ) {
+        return getLeaf();
+      }
       return expand(
         operator.body,
-        bindUncachedArguments(operator, expression.args, context),
+        bound,
         getReferenceName(expression, expression.operator, environment) ??
           (expansion.isSubstituted && definition
             ? definition.name

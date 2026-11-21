@@ -529,14 +529,21 @@ const describeSpecification = (
   const calledFrames = called
     ? [...frames, ...(substitutionFrames.get(called.body) ?? [])]
     : frames;
-  if (called && called.params.length === 0) {
+  // Inside an instance, SANY's body names a definition without parameters, whose copy takes the instance's.
+  const isArgumentFree =
+    called !== undefined &&
+    (called.params.length === 0 ||
+      (substitutionFrame !== undefined &&
+        called.params.every((param) => environment.instanceParams.has(param))));
+  if (called && isArgumentFree) {
+    const calledScope = getCallScope(called, expression, scope, environment);
     if (
-      getLevelBound(called.body, called.scope, environment) === VARIABLE_LEVEL &&
+      getLevelBound(called.body, calledScope, environment) === VARIABLE_LEVEL &&
       (!substitutionFrame || isVariableBound(called.body, environment, new Set()))
     ) {
       const name = isLocallyResolved(expression) ? undefined : getOperatorName(expression);
       description.inits.push({
-        ...createConjunct(called.name, called.body, called.scope),
+        ...createConjunct(called.name, called.body, calledScope),
         ...(name === undefined
           ? getDefinitionRanges(letDefinition)
           : substitutionFrame
@@ -545,10 +552,16 @@ const describeSpecification = (
       });
       return;
     }
-    recurse(called.body, called.scope, calledFrames);
+    recurse(called.body, calledScope, calledFrames);
     return;
   }
-  if (called && expression.kind === "Apply" && called.params.length === expression.args.length) {
+  // SpecProcessor#processConfigSpec takes an application apart only outside an instance's substitutions.
+  if (
+    called &&
+    !substitutionFrame &&
+    expression.kind === "Apply" &&
+    called.params.length === expression.args.length
+  ) {
     recurse(
       called.body,
       bindOperatorArguments(called, expression.args, getConstantContext(environment, scope)),
