@@ -1067,6 +1067,12 @@ describe("runSmtlibScript runs its commands as Z3 does", () => {
     );
   });
 
+  it("frees what a rewriter holds when the limit stops it, before the search goes on", () => {
+    expect(run(["(set-option :rlimit 29600)", REACHABLE_PROOFS])).toEqual(
+      readZ3Output("ReachableProofs-40-push-29600.z3out"),
+    );
+  });
+
   it("reports the limit that stops a push of ctx-solver-simplify as its reason", () => {
     expect(
       run([
