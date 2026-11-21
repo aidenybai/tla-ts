@@ -199,7 +199,7 @@ export interface LinkedModule {
   variableLocations: SourceLocation[];
   declarations: KeyedDeclaration[];
   visible: Symbols;
-  context: Symbols;
+  enclosing: Symbols;
   exported: Symbols;
   modules: Map<string, LinkedModule>;
   extended: LinkedModule[];
@@ -421,10 +421,14 @@ export const createEnvironment = (
         variables: linked.variables,
         levelConstants: linked.levelConstants,
         levelVariables: linked.levelVariables,
+        // SANY starts an inner module's Context empty, so it reads the enclosing module's symbols through the symbol table alone.
         getDefinitions: () => [
           ...new Set(
-            [...linked.context.values()].flatMap((symbol) =>
-              symbol.kind === "Theorem" ? [] : (getLinkedDefinition(symbol.key) ?? []),
+            [...linked.visible].flatMap((entry) =>
+              entry[1].kind === "Theorem" ||
+              (linked.enclosing.has(entry[0]) && !linked.exported.has(entry[0]))
+                ? []
+                : (getLinkedDefinition(entry[1].key) ?? []),
             ),
           ),
         ],
@@ -1708,10 +1712,7 @@ export const createEnvironment = (
           ),
       ],
       visible,
-      // SANY starts an inner module's Context empty, so it reads the enclosing module's symbols through the symbol table alone.
-      context: new Map(
-        [...visible].filter((entry) => !scope.symbols.has(entry[0]) || exported.has(entry[0])),
-      ),
+      enclosing: scope.symbols,
       exported,
       modules,
       extended,
