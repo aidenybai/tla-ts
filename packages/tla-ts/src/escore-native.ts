@@ -575,6 +575,126 @@ export const createEscoreNativeOperators = (callReplaced: CallReplaced): Builtin
 const PLUS = 43;
 const MINUS = 45;
 
+// ESBigNat's limbs, of 15 bits each, lowest first.
+const LIMB = 32768n;
+const MAX_MANTISSA = 2n ** 53n;
+
+// The mantissa that a canonical Number's limbs spell, or undefined where they aren't a BigNat's.
+const getMantissa = (limbs: Value[]) => {
+  if (limbs.length === 0 || limbs.at(-1) === 0) return undefined;
+  if (!limbs.every((limb) => typeof limb === "number" && Number.isInteger(limb) && limb >= 0)) {
+    return undefined;
+  }
+  return limbs.reduceRight(
+    (total: bigint | undefined, limb) =>
+      total === undefined || typeof limb !== "number" || limb >= 32768
+        ? undefined
+        : total * LIMB + BigInt(limb),
+    0n,
+  );
+};
+
+interface Finite {
+  isNegative: boolean;
+  // The value is (-1)^isNegative * mantissa * 2^exponent, with an odd mantissa.
+  mantissa: bigint;
+  exponent: number;
+}
+
+// The parts of a Number of kind "int" or "fin" in ESNumber's canonical form other than zero, or
+// undefined for any other value, among them 0, -0, NaN, and the infinities, which the TLA+ may give
+// back as they are.
+const getFinite = (value: Value | undefined): Finite | undefined => {
+  const kind = getField(value, "k");
+  const isNegative = getField(value, "neg");
+  const integer = getField(value, "i");
+  const limbs = getTuple(getField(value, "m"));
+  const exponent = getField(value, "e");
+  if (typeof isNegative !== "boolean" || limbs === undefined || typeof exponent !== "number") {
+    return undefined;
+  }
+  if (kind === "int") {
+    if (typeof integer !== "number" || !Number.isInteger(integer) || integer === 0)
+      return undefined;
+    if (Math.abs(integer) >= INT_LIMIT || isNegative !== integer < 0) return undefined;
+    if (limbs.length > 0 || exponent !== 0) return undefined;
+    const magnitude = BigInt(Math.abs(integer));
+    const zeros = getTrailingZeros(magnitude);
+    return { isNegative, mantissa: magnitude >> BigInt(zeros), exponent: zeros };
+  }
+  const mantissa = getMantissa(limbs);
+  if (kind !== "fin" || integer !== 0 || mantissa === undefined || mantissa % 2n === 0n) {
+    return undefined;
+  }
+  if (!Number.isInteger(exponent) || mantissa > MAX_MANTISSA || exponent < -1074) return undefined;
+  if (exponent + mantissa.toString(2).length > 1024) return undefined;
+  // A "fin" Number is never an integer that "int" holds.
+  if (exponent >= 0 && exponent + mantissa.toString(2).length <= 30) return undefined;
+  return { isNegative, mantissa, exponent };
+};
+
+const getTrailingZeros = (value: bigint) => {
+  let zeros = 0;
+  for (let rest = value; rest % 2n === 0n; rest /= 2n) zeros++;
+  return zeros;
+};
+
+// The double that the parts give, exactly.
+const getDouble = (finite: Finite) =>
+  (finite.isNegative ? -1 : 1) * Number(finite.mantissa) * 2 ** finite.exponent;
+
+// The record of a double in ESNumber's canonical form, as the TLA+ builds it afresh for any finite
+// result other than 0 or -0: NumIntNum for an integer strictly within 2^30, and MkNum("fin", ...)
+// of its odd mantissa otherwise. Undefined for 0, -0, NaN, and the infinities, which the TLA+ gives
+// as constants that print their fields in another order.
+const createNumberRecord = (value: number) => {
+  if (!Number.isFinite(value) || value === 0) return undefined;
+  if (Number.isInteger(value) && Math.abs(value) < INT_LIMIT) {
+    return numberShape(["int", value < 0, value, createTuple([]), 0]);
+  }
+  const view = new DataView(new ArrayBuffer(8));
+  view.setFloat64(0, value);
+  const bits = view.getBigUint64(0);
+  const biasedExponent = Number((bits >> 52n) & 0x7ffn);
+  const fraction = bits & ((1n << 52n) - 1n);
+  const significand = biasedExponent === 0 ? fraction : fraction | (1n << 52n);
+  const zeros = getTrailingZeros(significand);
+  const limbs: Value[] = [];
+  for (let rest = significand >> BigInt(zeros); rest > 0n; rest /= LIMB)
+    limbs.push(Number(rest % LIMB));
+  return numberShape([
+    "fin",
+    value < 0,
+    0,
+    createTuple(limbs),
+    Math.max(biasedExponent, 1) - 1075 + zeros,
+  ]);
+};
+
+// A binary operation on two Numbers natively, where both are finite and nonzero and the double
+// that JavaScript computes, which IEEE 754 rounds as ESNumber does, is finite and nonzero.
+const defineFinite = (
+  define: ReturnType<typeof createDefine>,
+  name: string,
+  compute: (left: number, right: number) => number,
+) =>
+  define(name, 2, (args) => {
+    const left = getFinite(getValue(args[0]));
+    const right = getFinite(getValue(args[1]));
+    return left === undefined || right === undefined
+      ? undefined
+      : createNumberRecord(compute(getDouble(left), getDouble(right)));
+  });
+
+// base ** n for an integer n from 1 to 2200, as PowFinite gives it exactly, where the power's
+// mantissa fits a double without rounding.
+const getPower = (base: Finite, power: number) => {
+  const mantissa = base.mantissa ** BigInt(power);
+  const exponent = base.exponent * power;
+  if (mantissa > MAX_MANTISSA || exponent < -1074 || exponent > 1023) return undefined;
+  return getDouble({ isNegative: base.isNegative && power % 2 === 1, mantissa, exponent });
+};
+
 // ESNumber's operators that tla-ts runs natively, while TLC runs the module's TLA+. StrToNum reads
 // a string of an optional sign and decimal digits whose nonzero value is below 2^30 as
 // NumIntNum(value), the record StringToNumber builds for it, and falls back for any other string.
@@ -597,6 +717,29 @@ export const createEsNumberOperators = (callReplaced: CallReplaced): Builtin[] =
       if (value === 0 || value >= INT_LIMIT) return undefined;
       const integer = sign === MINUS ? -value : value;
       return numberShape(["int", integer < 0, integer, createTuple([]), 0]);
+    }),
+    defineFinite(define, "NumAdd", (left, right) => left + right),
+    defineFinite(define, "NumMultiply", (left, right) => left * right),
+    defineFinite(define, "NumDivide", (left, right) => left / right),
+    defineFinite(define, "NumRemainder", (left, right) => left % right),
+    define("NumExponentiate", 2, (args) => {
+      const base = getFinite(getValue(args[0]));
+      const power = getField(getValue(args[1]), "i");
+      if (base === undefined || getField(getValue(args[1]), "k") !== "int") return undefined;
+      if (typeof power !== "number" || power < 1 || power > 2200) return undefined;
+      // PowFinite computes exactly only where n * BNBitLength(NumMag(base)) <= 2200.
+      const magnitude = base.exponent >= 0 ? base.mantissa << BigInt(base.exponent) : base.mantissa;
+      const isInt = getField(getValue(args[0]), "k") === "int";
+      if (power * (isInt ? magnitude : base.mantissa).toString(2).length > 2200) return undefined;
+      const result = getPower(base, power);
+      return result === undefined ? undefined : createNumberRecord(result);
+    }),
+    // MathFloor gives an integral Number back as it is, so only a fraction runs natively.
+    define("MathFloor", 1, (args) => {
+      const value = getFinite(getValue(args[0]));
+      return value === undefined || value.exponent >= 0
+        ? undefined
+        : createNumberRecord(Math.floor(getDouble(value)));
     }),
   ];
 };
