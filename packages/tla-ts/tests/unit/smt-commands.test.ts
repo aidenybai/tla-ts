@@ -1203,6 +1203,26 @@ describe("runSmtlibScript runs its commands as Z3 does", () => {
     ).toEqual(["unknown", "sat", "(:rlimit 695)"]);
   });
 
+  it("pops the model check's scope when the limit stops its check", () => {
+    expect(
+      run([
+        "(declare-sort U 0)",
+        "(declare-fun g (U) U)",
+        "(declare-fun a () U)",
+        "(declare-fun b () U)",
+        "(push 1)",
+        "(assert (forall ((x U)) (not (= (g x) x))))",
+        "(assert (= (g a) b))",
+        "(assert (not (= a b)))",
+        "(set-option :rlimit 207)",
+        "(check-sat)",
+        "(set-option :rlimit 0)",
+        "(check-sat)",
+        "(get-info :rlimit)",
+      ]),
+    ).toEqual(["unknown", "sat", "(:rlimit 1938)"]);
+  });
+
   it("finishes base-level propagation past the limit and finds the conflict", () => {
     expect(run([CIGARETTE_SMOKERS, "(get-info :rlimit)", "(get-info :reason-unknown)"])).toEqual([
       "unsat",

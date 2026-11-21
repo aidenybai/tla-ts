@@ -219,10 +219,12 @@ export class ModelChecker {
     const manager = this.manager;
     aux.push();
     const sks = new RefVector(manager);
-    const isSatisfied = this.checkInScope(aux, quantifier, model, sks);
-    sks.reset();
-    aux.pop();
-    return isSatisfied;
+    try {
+      return this.checkInScope(aux, quantifier, model, sks);
+    } finally {
+      sks.reset();
+      aux.pop();
+    }
   }
 
   private checkInScope(aux: AuxContext, quantifier: number, model: ProtoModel, skRefs: RefVector) {
