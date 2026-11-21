@@ -40,6 +40,7 @@ export class SmtKernel {
       qiCost: params.qiCost,
       qiEagerThreshold: params.qiEagerThreshold,
       qiLazyThreshold: params.qiLazyThreshold,
+      isProofsEnabled: params.isProofsEnabled,
     });
     this.setup = params.setup;
     this.isCoreMinimizing = params.isCoreMinimizing ?? false;

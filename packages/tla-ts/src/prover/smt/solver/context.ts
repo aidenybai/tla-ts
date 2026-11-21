@@ -183,6 +183,7 @@ export interface SmtParams {
   qiLazyThreshold?: number;
   // The model checker's auxiliary context pretends every array operation is supported.
   isArrayFakeSupport?: boolean;
+  isProofsEnabled?: boolean;
 }
 
 export class Context extends Internalizer {
@@ -235,7 +236,12 @@ export class Context extends Internalizer {
     manager: AstManager,
     readonly params: SmtParams,
   ) {
-    super(manager, params.relevancyLevel, params.isDelayingNewCaseSplits ?? true);
+    super(
+      manager,
+      params.relevancyLevel,
+      params.isDelayingNewCaseSplits ?? true,
+      params.isProofsEnabled ?? false,
+    );
     this.contextRelevancyLevel = params.relevancyLevel;
     this.qmanager = new DefaultQuantifierManager(this);
     this.config = {

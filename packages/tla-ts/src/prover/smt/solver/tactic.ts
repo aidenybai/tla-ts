@@ -394,6 +394,7 @@ const getKernelParams = (environment: TacticEnvironment, params: TacticParams, g
       : environment.parameters.get("smt.qi.cost"),
     qiEagerThreshold: getSmtDouble(environment, params, "qi.eager_threshold"),
     qiLazyThreshold: getSmtDouble(environment, params, "qi.lazy_threshold"),
+    isProofsEnabled: goal.isProofsEnabled,
   };
 };
 

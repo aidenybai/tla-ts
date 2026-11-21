@@ -30,6 +30,7 @@ export interface KernelParams {
   qiCost?: string;
   qiEagerThreshold?: number;
   qiLazyThreshold?: number;
+  isProofsEnabled?: boolean;
   // A kernel without a setup runs as with auto_config false.
   setup?: SmtSetup;
 }
@@ -66,6 +67,7 @@ export const solveGoal = (manager: AstManager, forms: number[], params: KernelPa
     qiCost: params.qiCost,
     qiEagerThreshold: params.qiEagerThreshold,
     qiLazyThreshold: params.qiLazyThreshold,
+    isProofsEnabled: params.isProofsEnabled,
   });
   if (!assertForms(context, asserted, forms)) {
     manager.limit.release();
@@ -115,6 +117,7 @@ export const solveAssuming = (
     qiCost: params.qiCost,
     qiEagerThreshold: params.qiEagerThreshold,
     qiLazyThreshold: params.qiLazyThreshold,
+    isProofsEnabled: params.isProofsEnabled,
   });
   if (!assertForms(context, asserted, assertions)) {
     manager.limit.release();

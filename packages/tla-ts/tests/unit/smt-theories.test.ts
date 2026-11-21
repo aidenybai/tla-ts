@@ -449,6 +449,15 @@ describe("a distinct of more than two arguments", () => {
       ).toEqual(["sat", "(:rlimit 195)", "((a0 U!val!0)\n (a1 U!val!1))"]);
     });
 
+    it("asserts the distinct itself under produce-proofs", () => {
+      const getUniverses = (options: string[]) =>
+        run([...options, ...DECLARATIONS, DISTINCT, "(check-sat)", "(get-model)"])
+          .join("\n")
+          .match(/;; universe for \S+/g);
+      expect(getUniverses([])).toEqual([";; universe for U:", ";; universe for distinct-elems!0:"]);
+      expect(getUniverses(["(set-option :produce-proofs true)"])).toEqual([";; universe for U:"]);
+    });
+
     it("maps them to model values under sat.euf, as add_distinct_axiom does", () => {
       expect(
         run([

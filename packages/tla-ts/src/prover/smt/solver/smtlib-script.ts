@@ -714,6 +714,7 @@ export const runSmtlibScript = (
     qiCost: settings.parameters.get("smt.qi.cost"),
     qiEagerThreshold: getDoubleParameter(settings.parameters, "smt.qi.eager_threshold"),
     qiLazyThreshold: getDoubleParameter(settings.parameters, "smt.qi.lazy_threshold"),
+    isProofsEnabled: settings.isProducingProofs || state.isProofsEnabled === true,
   });
   const checkFdSolver = (fdSolver: FdSolver, extra: number[]) => {
     const result = fdSolver.check(extra);

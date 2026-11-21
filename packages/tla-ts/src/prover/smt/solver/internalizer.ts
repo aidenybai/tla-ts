@@ -185,6 +185,7 @@ export abstract class Internalizer {
     readonly manager: AstManager,
     protected relevancyLevel: number,
     isDelayingNewCaseSplits: boolean,
+    private isProofsEnabled: boolean,
   ) {
     this.rewriter = new Rewriter(manager, KERNEL_REWRITER_OPTIONS);
     this.relevancy = new RelevancyPropagator(
@@ -842,7 +843,7 @@ export abstract class Internalizer {
 
   private assertDistinct(expr: number) {
     const manager = this.manager;
-    if (manager.getNumArgs(expr) <= DISTINCT_SZ_THRESHOLD) {
+    if (manager.getNumArgs(expr) <= DISTINCT_SZ_THRESHOLD || this.isProofsEnabled) {
       this.assertDefault(expr);
       return;
     }
