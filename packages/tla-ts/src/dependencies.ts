@@ -31,6 +31,7 @@ export interface DefinitionFacts {
   ids: Map<Definition, number>;
   rows: Uint32Array;
   words: number;
+  hasEffects: boolean;
 }
 
 const NONCONSTANT = 1;
@@ -360,6 +361,7 @@ const closeRows = (local: Uint32Array, words: number, edges: Int32Array[], mask:
 };
 
 const PURITY_MASK = IMPURE | REPEATED_EFFECT | STREAMED | RANDOM | TLC_EVAL;
+const EFFECT_MASK = IMPURE | RANDOM;
 // TLC streams a fresh \cup or UNION as it streams the startup value.
 const SHOWN_MASK = IMPURE | REPEATED_EFFECT | RANDOM | TLC_EVAL;
 const READ_MASK = NONCONSTANT | READS_IMPURE;
@@ -368,7 +370,10 @@ const STARTUP_MASK = NONCONSTANT | ABOVE_CONSTANT_BOUND;
 const isEvaluatedOnce = (definition: Definition, flags: number) =>
   definition.kind === "Operator" && definition.params.length === 0 && (flags & STARTUP_MASK) === 0;
 
-export const createDefinitionFacts = (environment: DefinitionNames): DefinitionFacts => {
+export const createDefinitionFacts = (
+  environment: DefinitionNames,
+  assumptions: Expression[],
+): DefinitionFacts => {
   const definitions = [...new Set(environment.definitions.values())];
   const ids = new Map(definitions.map((definition, id) => [definition, id]));
   const words = 1 + ((environment.variables.length + 31) >>> 5);
@@ -434,7 +439,10 @@ export const createDefinitionFacts = (environment: DefinitionNames): DefinitionF
         ((shown[position] & SHOWN_MASK) === 0 ? 0 : REEVALUATION_SHOWN)
       : word,
   );
-  return { ids, rows, words };
+  const hasEffects =
+    localImpurity.some((flags) => (flags & EFFECT_MASK) !== 0) ||
+    (collectLocalFacts(assumptions, environment, words).row[0] & EFFECT_MASK) !== 0;
+  return { ids, rows, words, hasEffects };
 };
 
 const getRow = (definition: Definition, environment: Environment): Uint32Array => {
@@ -451,7 +459,12 @@ const getExpressionsRow = (
   boundNames?: string[],
 ) => {
   const words = environment.facts.words;
-  const local = collectLocalFacts(expressions, environment, words, boundNames);
+  const local = collectLocalFacts(
+    expressions,
+    environment,
+    words,
+    environment.facts.hasEffects ? boundNames : undefined,
+  );
   const row = local.row;
   local.edges.forEach((edge) => {
     const callee = getRow(edge.callee, environment);
@@ -487,7 +500,7 @@ const EFFECT_FLAGS = {
   // What a second evaluation shows: output again, or other random draws.
   replayed: REPEATED_EFFECT | RANDOM,
   // A local name bound outside the expressions can hold an operator or a lazy value whose body prints or draws.
-  varying: IMPURE | RANDOM | OUTER_LOCAL,
+  varying: EFFECT_MASK | OUTER_LOCAL,
 };
 
 export const isExpressionImpure = (
