@@ -1,6 +1,6 @@
 // Of the parameters a setup picks, the port takes those in SmtConfig and the MBQI that setup_AUFLIA
 // and setup_AUFLIRA turn on. The port has one arithmetic solver, so it stands in for the legacy
-// ones the setups for difference logic pick, and one array solver, which is theory_array_full.
+// ones the setups for difference logic pick.
 import {
   type AstManager,
   FAMILY_ARITH,
@@ -115,6 +115,7 @@ export interface SmtConfig {
   isArithBoundPropagating: boolean;
   qiLazyThreshold: number;
   arrayLazyIeqDelay: number | undefined;
+  isArraySimple: boolean;
 }
 
 const UNKNOWN_THEORIES = [
@@ -154,6 +155,7 @@ export const DEFAULT_CONFIG: SmtConfig = {
   isArithBoundPropagating: true,
   qiLazyThreshold: 20,
   arrayLazyIeqDelay: undefined,
+  isArraySimple: false,
 };
 
 // setup_unknown(), which closes with setup_relevancy.
@@ -342,6 +344,7 @@ const setupQfUfLiaByFeatures = (config: SmtConfig, features: StaticFeatures) => 
 };
 
 const setupQfAufBv = (config: SmtConfig) => {
+  config.isArraySimple = false;
   config.relevancyLevel = 0;
   config.isNnfCnf = false;
   config.theories.push(FAMILY_BV, FAMILY_ARRAY);
@@ -353,11 +356,13 @@ const setupQfFp = (config: SmtConfig) => {
 };
 
 const setupQfAx = (config: SmtConfig) => {
+  config.isArraySimple = true;
   config.isNnfCnf = false;
   config.theories.push(FAMILY_ARRAY);
 };
 
 const setupQfAxByFeatures = (config: SmtConfig, features: StaticFeatures) => {
+  config.isArraySimple = !features.hasExtArrays;
   config.isNnfCnf = false;
   if (features.numClauses === features.numUnits) {
     config.relevancyLevel = 0;
@@ -367,6 +372,7 @@ const setupQfAxByFeatures = (config: SmtConfig, features: StaticFeatures) => {
 };
 
 const setupQfAufLia = (config: SmtConfig) => {
+  config.isArraySimple = true;
   config.isNnfCnf = false;
   config.relevancyLevel = 2;
   config.restartStrategy = RS_GEOMETRIC;
@@ -376,6 +382,7 @@ const setupQfAufLia = (config: SmtConfig) => {
 };
 
 const setupQfAufLiaByFeatures = (config: SmtConfig, features: StaticFeatures) => {
+  config.isArraySimple = !features.hasExtArrays;
   config.isNnfCnf = false;
   config.relevancyLevel = 0;
   if (features.numClauses === features.numUnits) config.phaseSelection = PS_ALWAYS_FALSE;
@@ -388,7 +395,8 @@ const setupQfAufLiaByFeatures = (config: SmtConfig, features: StaticFeatures) =>
   config.theories.push(FAMILY_ARITH, FAMILY_ARRAY);
 };
 
-const setupAufLia = (config: SmtConfig) => {
+const setupAufLia = (config: SmtConfig, isArraySimple = true) => {
+  config.isArraySimple = isArraySimple;
   config.isUsingPatternDatabase = true;
   config.phaseSelection = PS_ALWAYS_FALSE;
   config.restartStrategy = RS_GEOMETRIC;
@@ -407,7 +415,8 @@ const setupAufLiaByFeatures = (config: SmtConfig, features: StaticFeatures) => {
   setupAufLia(config);
 };
 
-const setupAufLira = (config: SmtConfig) => {
+const setupAufLira = (config: SmtConfig, isArraySimple = true) => {
+  config.isArraySimple = isArraySimple;
   config.phaseSelection = PS_ALWAYS_FALSE;
   config.isEliminatingBounds = true;
   config.qiLazyThreshold = 20;
@@ -483,8 +492,8 @@ const isArith = (features: StaticFeatures) =>
   features.numArithIneqs > 0 || features.numArithTerms > 0 || features.numArithEqs > 0;
 
 const setupQuantified = (config: SmtConfig, features: StaticFeatures) => {
-  if (features.hasReal) setupAufLira(config);
-  else setupAufLia(config);
+  if (features.hasReal) setupAufLira(config, false);
+  else setupAufLia(config, false);
   config.theories.push(
     FAMILY_DATATYPE,
     FAMILY_BV,
@@ -551,15 +560,15 @@ const AUTO_SETUPS = new Map<
   ["QF_S", setupUnknown],
   ["QF_SLIA", setupUnknown],
   ["AUFLIA", setupAufLiaByFeatures],
-  ["AUFLIRA", setupAufLira],
-  ["AUFNIRA", setupAufLira],
-  ["AUFLIA+", setupAufLia],
-  ["AUFLIA-", setupAufLia],
-  ["AUFLIRA+", setupAufLira],
-  ["AUFLIRA-", setupAufLira],
-  ["AUFNIRA+", setupAufLira],
-  ["AUFNIRA-", setupAufLira],
-  ["UFNIA", setupAufLia],
+  ["AUFLIRA", (config) => setupAufLira(config)],
+  ["AUFNIRA", (config) => setupAufLira(config)],
+  ["AUFLIA+", (config) => setupAufLia(config)],
+  ["AUFLIA-", (config) => setupAufLia(config)],
+  ["AUFLIRA+", (config) => setupAufLira(config)],
+  ["AUFLIRA-", (config) => setupAufLira(config)],
+  ["AUFNIRA+", (config) => setupAufLira(config)],
+  ["AUFNIRA-", (config) => setupAufLira(config)],
+  ["UFNIA", (config) => setupAufLia(config)],
   ["QF_DT", setupQfDt],
   ["LRA", setupLra],
   ["QF_FF", setupFf],
