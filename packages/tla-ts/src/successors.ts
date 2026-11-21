@@ -154,13 +154,22 @@ const toEmptyNextContext = (context: Context): Context => ({
   next: undefined,
 });
 
+const evaluatePrimed = (expression: Expression, context: Context) => {
+  const runtime = context.environment.runtime;
+  const outerControl = runtime.evalControl;
+  runtime.evalControl = "Primed";
+  try {
+    return evaluate(expression, context);
+  } finally {
+    runtime.evalControl = outerControl;
+  }
+};
+
 // Tool#enabledUnchanged evaluates the second side in s1 with TLCState.Empty under EvalControl.Primed, where a LazyValue's cache serves it.
 const holdsEnabledUnchanged = (expression: Expression, context: Context) => {
   try {
     const before = evaluate(expression, toEmptyContext(context));
-    const after = context.environment.runtime.runWithEvalControl("Primed", () =>
-      evaluate(expression, toEmptyNextContext(context)),
-    );
+    const after = evaluatePrimed(expression, toEmptyNextContext(context));
     return isReceiverEqual(before, after);
   } catch (error) {
     if (error instanceof TlaUnassignedError) return error;
@@ -1336,7 +1345,10 @@ export const isEnabled = (expression: Expression, context: Context): boolean => 
     );
   }
   const environment = context.environment;
-  return environment.runtime.runWithEvalControl("Enabled", () => {
+  const runtime = environment.runtime;
+  const outerControl = runtime.evalControl;
+  runtime.evalControl = "Enabled";
+  try {
     if (environment.callStack || (environment.coverage && environment.coverage.current >= 0)) {
       return replayEnabled(expression, context.scope, state, environment);
     }
@@ -1361,7 +1373,9 @@ export const isEnabled = (expression: Expression, context: Context): boolean => 
       },
     );
     return run.isStopped;
-  });
+  } finally {
+    runtime.evalControl = outerControl;
+  }
 };
 
 export const forEachInitialState = (
