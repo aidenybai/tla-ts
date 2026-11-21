@@ -92,7 +92,7 @@ class ConsequenceFinder {
         return isNegated(literal) ? manager.mkApp(OP_NOT, [orig], SORT_BOOL) : orig;
       }
       if (isNegated(literal) || manager.kinds[expr] !== KIND_APP) return -1;
-      if (manager.decls[expr] === OP_EQ) {
+      if (manager.getOp(expr) === OP_EQ) {
         const lhs = manager.getArg(expr, 0);
         const rhs = manager.getArg(expr, 1);
         if (this.var2val.has(rhs) && manager.isValue(lhs)) {

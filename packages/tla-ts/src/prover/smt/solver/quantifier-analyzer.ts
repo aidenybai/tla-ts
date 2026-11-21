@@ -24,6 +24,7 @@ import { assign, release } from "./expr-ref";
 import { collectMacroCandidates, releaseCondMacros } from "./model-macro-solver";
 import { pullQuant } from "./pull-quant";
 import { Rational } from "./rational";
+import { isRecFunWithGroundRecursionArgs } from "./recfun-rewriter";
 import { Rewriter } from "./rewriter";
 import { AufSolver, type Evaluate, InstantiationSet, Node } from "./auf-solver";
 
@@ -501,7 +502,11 @@ export class QuantifierAnalyzer {
     const manager = this.manager;
     const decl = manager.decls[expr];
     if (manager.funcDecls[decl].family !== FAMILY_BASIC) this.info.ngDecls.add(decl);
-    if (manager.funcDecls[decl].family === FAMILY_USER) this.processUApp(expr);
+    if (
+      manager.funcDecls[decl].family === FAMILY_USER ||
+      isRecFunWithGroundRecursionArgs(manager, expr)
+    )
+      this.processUApp(expr);
     else this.processIApp(expr);
   }
 

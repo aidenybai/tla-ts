@@ -153,10 +153,22 @@ export class TheoryArray extends Theory {
     if (this.sortSkolems.has(sort)) return;
     const manager = this.manager;
     const skolems: number[] = [];
-    for (let index = 0; index < manager.getArrayArity(sort); index++)
-      skolems.push(mkArrayDecl(manager, OP_ARRAY_EXT, [sort, sort], [index]));
+    for (let index = 0; index < manager.getArrayArity(sort); index++) {
+      const skolem = mkArrayDecl(manager, OP_ARRAY_EXT, [sort, sort], [index]);
+      manager.incDeclRef(skolem);
+      skolems.push(skolem);
+    }
     this.sortSkolems.set(sort, skolems);
     this.sortsTrail.push(sort);
+  }
+
+  private restoreSorts(limit: number) {
+    for (let index = this.sortsTrail.length - 1; index >= limit; index--) {
+      const sort = this.sortsTrail[index];
+      for (const skolem of this.sortSkolems.get(sort) ?? []) this.manager.decDeclRef(skolem);
+      this.sortSkolems.delete(sort);
+    }
+    this.sortsTrail.length = limit;
   }
 
   private mkVar(node: Enode) {
@@ -1068,13 +1080,14 @@ export class TheoryArray extends Theory {
     this.axiom1Todo.length = 0;
     this.axiom2Todo.length = 0;
     this.extensionalityTodo.length = 0;
-    const sortsLimit = this.sortsTrailLimits[this.sortsTrailLimits.length - numScopes];
-    for (let index = this.sortsTrail.length - 1; index >= sortsLimit; index--)
-      this.sortSkolems.delete(this.sortsTrail[index]);
-    this.sortsTrail.length = sortsLimit;
+    this.restoreSorts(this.sortsTrailLimits[this.sortsTrailLimits.length - numScopes]);
     this.sortsTrailLimits.length -= numScopes;
     super.popScopeEh(numScopes);
     this.assignedEqs.clear();
+  }
+
+  release() {
+    this.restoreSorts(0);
   }
 
   // The model is free to choose the defaults when no store, const or default term is relevant.

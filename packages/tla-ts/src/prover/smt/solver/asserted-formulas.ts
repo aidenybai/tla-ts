@@ -85,7 +85,7 @@ class ElimTermIteRw extends RewriterTpl {
 
   reduceApp(decl: number, args: number[], sort: number) {
     const manager = this.manager;
-    if (decl !== OP_ITE || sort === SORT_BOOL) return -1;
+    if (manager.funcDecls[decl].op !== OP_ITE || sort === SORT_BOOL) return -1;
     const ite = manager.mkApp(OP_ITE, args, sort);
     manager.incRef(ite);
     const named = this.names.mkName(ite);
@@ -101,9 +101,10 @@ class ElimTermIteRw extends RewriterTpl {
     this.lims.push(this.definitions.size);
   }
 
-  pop() {
-    this.definitions.shrink(this.lims[this.lims.length - 1]);
-    this.lims.pop();
+  pop(numScopes: number) {
+    const newLevel = this.lims.length - numScopes;
+    this.definitions.shrink(this.lims[newLevel]);
+    this.lims.length = newLevel;
   }
 }
 
@@ -148,9 +149,10 @@ class Substitution {
     this.trailLims.push(this.trail.size);
   }
 
-  pop() {
-    const size = this.trailLims[this.trailLims.length - 1];
-    this.trailLims.pop();
+  pop(numScopes: number) {
+    const newLevel = this.trailLims.length - numScopes;
+    const size = this.trailLims[newLevel];
+    this.trailLims.length = newLevel;
     for (const key of this.trail.items.slice(size)) {
       const value = this.map.get(key);
       if (value === undefined) throw new SmtInvariantError("a trailed key has no substitution");
@@ -272,21 +274,24 @@ export class AssertedFormulas {
     this.numLazyScopes++;
   }
 
-  pop() {
-    if (this.numLazyScopes > 0) {
-      this.numLazyScopes--;
+  pop(numScopes: number) {
+    if (numScopes <= this.numLazyScopes) {
+      this.numLazyScopes -= numScopes;
       return;
     }
-    const scope = this.scopes[this.scopes.length - 1];
-    this.scopes.pop();
+    const numRealScopes = numScopes - this.numLazyScopes;
+    this.numLazyScopes = 0;
+    this.bvSharing.popScope(numRealScopes);
+    this.macros.popScope(numRealScopes);
+    const newLevel = this.scopes.length - numRealScopes;
+    const scope = this.scopes[newLevel];
     this.isInconsistent = scope.isInconsistent;
-    this.bvSharing.popScope();
-    this.macros.popScope();
-    this.names.pop();
-    this.termIteElim.pop();
-    this.substitution.pop();
+    this.names.pop(numRealScopes);
+    this.termIteElim.pop(numRealScopes);
+    this.substitution.pop(numRealScopes);
     this.formulas.shrink(scope.numFormulas);
     this.qhead = scope.numFormulas;
+    this.scopes.length = newLevel;
     this.flushCache();
   }
 
@@ -539,10 +544,10 @@ export class AssertedFormulas {
     substitution.push();
     for (let index = this.qhead; index < size; index++) propagate(index);
     this.flushCache();
-    substitution.pop();
+    substitution.pop(1);
     substitution.push();
     for (let index = size - 1; index >= this.qhead; index--) propagate(index);
-    substitution.pop();
+    substitution.pop(1);
     this.flushCache();
     if (numPropagated > 0) this.reduceAsserted();
   }

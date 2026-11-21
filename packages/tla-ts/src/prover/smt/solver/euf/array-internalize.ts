@@ -112,10 +112,16 @@ export abstract class ArrayInternalize extends ThSolver {
     if (existing !== undefined) return existing;
     const manager = this.manager;
     const result: number[] = [];
-    for (let index = 0; index < manager.getArrayArity(sort); index++)
-      result.push(mkArrayDecl(manager, OP_ARRAY_EXT, [sort, sort], [index]));
+    for (let index = 0; index < manager.getArrayArity(sort); index++) {
+      const diff = mkArrayDecl(manager, OP_ARRAY_EXT, [sort, sort], [index]);
+      manager.incDeclRef(diff);
+      result.push(diff);
+    }
     this.sort2diffs.set(sort, result);
-    this.ctx.trail.push(() => this.sort2diffs.delete(sort));
+    this.ctx.trail.push(() => {
+      for (const diff of result) manager.decDeclRef(diff);
+      this.sort2diffs.delete(sort);
+    });
     return result;
   }
 
