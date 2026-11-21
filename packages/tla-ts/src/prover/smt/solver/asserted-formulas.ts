@@ -262,6 +262,7 @@ export class AssertedFormulas {
     private manager: AstManager,
     private isFindingMacros = false,
     private isEmatching = true,
+    private isProofsEnabled = false,
   ) {
     this.formulas = new RefVector(manager);
     this.macros = new MacroManager(manager);
@@ -561,6 +562,7 @@ export class AssertedFormulas {
   }
 
   private propagateValues() {
+    if (this.isProofsEnabled) return;
     const manager = this.manager;
     const substitution = this.substitution;
     const size = this.formulas.size;
@@ -625,6 +627,7 @@ export class AssertedFormulas {
 
   private flattenClauses() {
     this.isReducePending = true;
+    if (this.isProofsEnabled) return;
     const manager = this.manager;
     const mkNegation = (expr: number) =>
       manager.isNot(expr) ? manager.getArg(expr, 0) : manager.mkApp(OP_NOT, [expr], SORT_BOOL);

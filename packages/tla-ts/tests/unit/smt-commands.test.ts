@@ -276,6 +276,29 @@ const getPigeonholeLines = (holeCount: number) => {
   ];
 };
 
+const MBQI_UNDER_PUSH = [
+  "(set-option :auto_config false)",
+  "(set-option :smt.mbqi true)",
+  "(declare-sort U 0)",
+  "(declare-fun f (U) U)",
+  "(declare-fun g (U U) U)",
+  "(declare-fun p (U) Bool)",
+  "(declare-const a U)",
+  "(declare-const b U)",
+  "(push 1)",
+  "(assert (forall ((x U)) (! (= (f (f x)) x) :pattern ((f x)))))",
+  "(assert (forall ((x U) (y U)) (! (=> (p x) (p (g x y))) :pattern ((g x y)))))",
+  "(assert (p a))",
+  "(assert (not (= (f a) b)))",
+];
+
+const CHECK_AND_MODEL = [
+  "(check-sat)",
+  "(get-info :reason-unknown)",
+  "(get-info :rlimit)",
+  "(get-model)",
+];
+
 // Each expected value is what z3 5.3.2 prints for the script.
 describe("runSmtlibScript runs its commands as Z3 does", () => {
   it("prints the assertions under :produce-assertions", () => {
@@ -1001,6 +1024,24 @@ describe("runSmtlibScript runs its commands as Z3 does", () => {
       "unsat",
       "unknown",
       '(:reason-unknown "max. resource limit exceeded")',
+    ]);
+  });
+
+  it("marks a search that the push of the model checker's context ends as canceled", () => {
+    expect(run([...MBQI_UNDER_PUSH, "(set-option :rlimit 80)", ...CHECK_AND_MODEL])).toEqual([
+      "unknown",
+      '(:reason-unknown "canceled")',
+      "(:rlimit 124)",
+      '(error "line 18 column 10: model is not available")',
+    ]);
+  });
+
+  it("answers unknown when the limit stops the model finder's checkpoint", () => {
+    expect(run([...MBQI_UNDER_PUSH, "(set-option :rlimit 300)", ...CHECK_AND_MODEL])).toEqual([
+      "unknown",
+      '(:reason-unknown "canceled")',
+      "(:rlimit 344)",
+      '(error "line 18 column 10: model is not available")',
     ]);
   });
 
@@ -2955,7 +2996,75 @@ describe("solve-eqs on an array a quantifier defines, as Z3 5.3.2 solves it", ()
       "true",
     ]);
   });
+
+  it("prints an or with a disequality as stores when they cover the model's universe", () => {
+    expect(
+      run([
+        ...TWO_ELEMENT_LAMBDA,
+        "(assert (forall ((x U)) (= (select B x) (or (= x p) (not (= x q))))))",
+        ...TWO_ELEMENT_CHECK,
+        "(eval (select B q))",
+      ]),
+    ).toEqual([
+      "sat",
+      "(:rlimit 247)",
+      ...TWO_ELEMENT_MODEL,
+      "  (define-fun B () (Array U Bool)",
+      "    (store ((as const (Array U Bool)) false) U!val!0 true))",
+      ")",
+      "false",
+    ]);
+  });
+
+  // Deviation from Z3: has_index_set reads this and as true at both elements of the universe, which gives a wrong model.
+  it("keeps a lambda for an and of two equalities over the model's universe", () => {
+    expect(
+      run([
+        ...TWO_ELEMENT_LAMBDA,
+        "(assert (forall ((x U)) (= (select B x) (and (= x p) (= x q)))))",
+        ...TWO_ELEMENT_CHECK,
+        "(eval (= (select B p) (and (= p p) (= p q))))",
+      ]),
+    ).toEqual([
+      "sat",
+      "(:rlimit 227)",
+      ...TWO_ELEMENT_MODEL,
+      "  (define-fun B () (Array U Bool)",
+      "    (lambda ((x U)) (and (= x U!val!0) (= x U!val!1))))",
+      ")",
+      "true",
+    ]);
+  });
 });
+
+const TWO_ELEMENT_LAMBDA = [
+  "(declare-sort U 0)",
+  "(declare-const p U)",
+  "(declare-const q U)",
+  "(declare-fun B () (Array U Bool))",
+];
+const TWO_ELEMENT_CHECK = [
+  "(assert (not (= p q)))",
+  "(check-sat)",
+  "(get-info :rlimit)",
+  "(get-model)",
+];
+const TWO_ELEMENT_MODEL = [
+  "(",
+  "  ;; universe for U:",
+  "  ;;   U!val!1 U!val!0 ",
+  "  ;; -----------",
+  "  ;; definitions for universe elements:",
+  "  (declare-fun U!val!1 () U)",
+  "  (declare-fun U!val!0 () U)",
+  "  ;; cardinality constraint:",
+  "  (forall ((x U)) (or (= x U!val!1) (= x U!val!0)))",
+  "  ;; -----------",
+  "  (define-fun q () U",
+  "    U!val!1)",
+  "  (define-fun p () U",
+  "    U!val!0)",
+];
 
 const POPPED_CHECK = [
   "(declare-fun g (Int) Int)",

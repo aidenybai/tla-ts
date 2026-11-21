@@ -232,6 +232,7 @@ export class Context extends Internalizer {
   macros: MacroManager | undefined;
   hasQuantifiers = false;
   private contextRelevancyLevel: number;
+  private isSearchFinalized = true;
 
   constructor(
     manager: AstManager,
@@ -1441,7 +1442,7 @@ export class Context extends Internalizer {
   getModel() {
     if (this.isInconsistent()) return undefined;
     if (this.modelState.kind === "final") return this.modelState.model;
-    if (!this.manager.limit.inc()) return undefined;
+    if (!this.manager.limit.inc() || !this.isSearchFinalized) return undefined;
     const generated =
       this.modelState.kind === "proto" ? this.modelState.generated : this.mkProtoModel();
     if (generated === undefined) return undefined;
@@ -1708,17 +1709,37 @@ export class Context extends Internalizer {
   }
 
   checkResearching(asserted: AssertedFormulas, assumptions: readonly number[]) {
-    let result: number;
-    for (;;) {
-      this.popToBaseLevel();
-      this.internalizeAssertions(asserted);
-      const all = [...assumptions];
-      this.addTheoryAssumptions(all);
-      this.initAssumptions(all, asserted);
-      result = this.mkUnsatCore(this.search());
-      if (result !== L_FALSE || this.unsatCore.length === 0) return result;
-      if (!this.theories.some((theory) => theory.shouldResearch(this.unsatCore))) return result;
+    this.isSearchFinalized = false;
+    try {
+      let result: number;
+      for (;;) {
+        this.popToBaseLevel();
+        this.internalizeAssertions(asserted);
+        const all = [...assumptions];
+        this.addTheoryAssumptions(all);
+        this.initAssumptions(all, asserted);
+        result = this.mkUnsatCore(this.search());
+        if (result !== L_FALSE || this.unsatCore.length === 0) break;
+        if (!this.theories.some((theory) => theory.shouldResearch(this.unsatCore))) break;
+      }
+      return this.checkFinalize(result);
+    } finally {
+      if (!this.isSearchFinalized) this.lastSearchFailure = FAILURE_CANCELED;
     }
+  }
+
+  check() {
+    this.isSearchFinalized = false;
+    try {
+      return this.checkFinalize(this.search());
+    } finally {
+      if (!this.isSearchFinalized) this.lastSearchFailure = FAILURE_CANCELED;
+    }
+  }
+
+  private checkFinalize(result: number) {
+    this.isSearchFinalized = true;
+    return result === L_TRUE && this.checkCanceled() ? L_UNDEF : result;
   }
 
   findMutexes(vars: readonly number[]) {
@@ -1779,7 +1800,7 @@ export class Context extends Internalizer {
     return L_FALSE;
   }
 
-  search() {
+  private search() {
     if (this.asserted?.isInconsistent && !this.isInconsistent()) this.setConflict("axiom", null);
     if (this.isInconsistent()) {
       this.resolveConflict();
@@ -1809,7 +1830,7 @@ export class Context extends Internalizer {
     while (result === undefined) result = this.restart(this.boundedSearch(), currentLevel);
     this.caseSplitQueue.endSearchEh();
     this.isSearching = false;
-    return result === L_TRUE && this.checkCanceled() ? L_UNDEF : result;
+    return result;
   }
 
   getNumConflicts() {
