@@ -1067,6 +1067,7 @@ describe("the optimizer releases what Z3 releases", () => {
         write: () => {},
         parameters: new Map(),
         hasDefinitions: () => false,
+        getNumAssertionDrops: () => 0,
         destructors: [],
         inits: [],
       },

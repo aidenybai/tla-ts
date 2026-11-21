@@ -9,7 +9,7 @@ interface CachedResult {
   level: number;
 }
 
-class CtxSimplifier {
+export class CtxSimplifier {
   private occs = new Map<number, number>();
   private pinned: RefVector;
   private assertions = new Map<number, number>();
@@ -33,22 +33,26 @@ class CtxSimplifier {
 
   apply(goal: Goal) {
     if (goal.isInconsistent) return;
+    this.occs.clear();
+    this.pinned.reset();
     this.countOccurrences(goal);
+    this.numSteps = 0;
     const size = goal.forms.size;
     if (goal.isProofsEnabled) {
       for (let index = 0; !goal.isInconsistent && index < size; index++)
         this.simplifyForm(goal, index, false);
       return;
     }
+    const level = this.scopes.length;
     for (let index = 0; !goal.isInconsistent && index < size; index++)
       this.simplifyForm(goal, index, index < size - 1);
-    this.pop(this.scopes.length);
+    this.pop(this.scopes.length - level);
     this.countOccurrences(goal);
     for (let index = goal.forms.size; !goal.isInconsistent && index > 0;) {
       index--;
       this.simplifyForm(goal, index, index > 0);
     }
-    this.pop(this.scopes.length);
+    this.pop(this.scopes.length - level);
   }
 
   private simplifyForm(goal: Goal, index: number, isAsserted: boolean) {
@@ -68,6 +72,7 @@ class CtxSimplifier {
   }
 
   release() {
+    this.pop(this.scopes.length);
     this.restoreCache(0);
     this.pinned.reset();
   }

@@ -13,7 +13,7 @@ import { blastTermIte } from "./blast-term-ite";
 import { card2bv } from "./card2bv";
 import { getCaseSplitStrategy } from "./case-split-queue";
 import { type Context, MBQI_MAX_ITERATIONS } from "./context";
-import { ctxSimplify } from "./ctx-simplify";
+import { CtxSimplifier } from "./ctx-simplify";
 import { createCtxSolverSimplify } from "./ctx-solver-simplify";
 import {
   type Definition,
@@ -155,6 +155,7 @@ export interface TacticEnvironment {
   write: (text: string, isDiagnostic: boolean) => void;
   parameters: ReadonlyMap<string, string>;
   hasDefinitions: () => boolean;
+  getNumAssertionDrops: () => number;
   destructors: (() => void)[];
   inits: (() => void)[];
 }
@@ -542,7 +543,10 @@ const createTacticSolver = (environment: TacticEnvironment, strategy: string): A
   const manager = environment.manager;
   const destructors: (() => void)[] = [];
   const inits: (() => void)[] = [];
-  const tactic = compileInternalTactic({ ...environment, destructors, inits }, strategy);
+  const tactic = compileInternalTactic(
+    { ...environment, getNumAssertionDrops: () => 0, destructors, inits },
+    strategy,
+  );
   const assertions = new RefVector(manager);
   let model: ProtoModel | undefined;
   let converters: Goal["converters"] = [];
@@ -934,15 +938,31 @@ const NAMED_TACTICS = new Map<string, NamedTactic>([
         ["propagate_eq", PARAM_BOOL, false],
       ]),
       isTrackingDependencies: true,
-      build: (environment, params) =>
-        inPlace((goal) =>
-          ctxSimplify(
+      build: (environment, params) => {
+        const getSimplifier = () =>
+          new CtxSimplifier(
             environment.manager,
-            goal,
             getUint(params, "max_depth", 1024),
             getUint(params, "max_steps", UINT_MAX),
-          ),
-        ),
+          );
+        let simplifier = getSimplifier();
+        let numDrops = environment.getNumAssertionDrops();
+        environment.destructors.push(() => simplifier.release());
+        const renewSimplifier = () => {
+          const cleaned = getSimplifier();
+          simplifier.release();
+          simplifier = cleaned;
+        };
+        return inPlace((goal) => {
+          // Deviation from Z3: a pop that drops assertions drops the facts a canceled run left.
+          if (environment.getNumAssertionDrops() !== numDrops) renewSimplifier();
+          numDrops = environment.getNumAssertionDrops();
+          simplifier.apply(goal);
+          goal.depth++;
+          // Z3's clean() renews the simplifier only after a run returns, never from tactic2solver.
+          renewSimplifier();
+        });
+      },
     },
   ],
   [

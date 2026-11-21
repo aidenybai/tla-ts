@@ -1253,6 +1253,53 @@ describe("runSmtlibScript runs its commands as Z3 does", () => {
     ).toEqual(["unknown", "sat", "(:rlimit 2047)"]);
   });
 
+  it("goes on from the scopes that the limit leaves in ctx-simplify at the next check", () => {
+    expect(
+      run([
+        "(declare-sort U 0)",
+        "(declare-fun g (U) U)",
+        "(declare-fun a () U)",
+        "(declare-fun b () U)",
+        "(assert (forall ((x U)) (not (= (g x) x))))",
+        "(assert (= (g a) b))",
+        "(assert (not (= a b)))",
+        "(set-option :rlimit 44)",
+        "(check-sat)",
+        "(set-option :rlimit 0)",
+        "(check-sat)",
+        "(get-info :rlimit)",
+      ]),
+    ).toEqual(["unknown", "sat", "(:rlimit 923)"]);
+  });
+
+  it("drops the facts that the limit leaves in ctx-simplify once a pop drops assertions", () => {
+    // Z3 answers unsat at the second check, though a = b = false, z = -1, x = 2 and y = 3 satisfy it.
+    expect(
+      run([
+        "(declare-fun x () Int)",
+        "(declare-fun y () Int)",
+        "(declare-fun z () Int)",
+        "(declare-fun a () Bool)",
+        "(declare-fun b () Bool)",
+        "(assert (= (^ x y) 8))",
+        "(assert (=> (or a b) (> z 0)))",
+        "(push 1)",
+        "(assert (or a b))",
+        "(set-option :rlimit 144)",
+        "(check-sat)",
+        "(pop 1)",
+        "(assert (< z 0))",
+        "(set-option :rlimit 0)",
+        "(check-sat)",
+        "(get-info :reason-unknown)",
+      ]),
+    ).toEqual([
+      "unknown",
+      "unknown",
+      '(:reason-unknown "smt tactic failed to show goal to be sat/unsat (incomplete (theory arithmetic))")',
+    ]);
+  });
+
   it("goes on with the model check when the limit leaves its counterexample without a model", () => {
     expect(
       run([
