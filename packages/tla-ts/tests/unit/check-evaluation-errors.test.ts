@@ -1254,6 +1254,32 @@ describe("evaluation errors match TLC", () => {
     );
   });
 
+  it.each([
+    ["D == x + 1\nInv == D", "INIT Init\nNEXT Next\nINVARIANT Inv", 7, 8],
+    ["D == x + 1\nInv == D", "INIT Init\nNEXT Next\nCONSTRAINT Inv", 7, 8],
+    ["D == x + 1\nSpec == Init /\\ [][Next]_x\nP == [](D)", "SPECIFICATION Spec\nPROPERTY P", 8, 9],
+    [
+      "D == x + 1\nSpec == Init /\\ [][Next]_x\nP == [](D) /\\ [](x \\in Nat)",
+      "SPECIFICATION Spec\nPROPERTY P",
+      8,
+      9,
+    ],
+    ["f[a \\in {1}] == x = 0\nInv == f", "INIT Init\nNEXT Next\nINVARIANT Inv", 7, 8],
+    [
+      "f[a \\in {1}] == x = 0\nSpec == Init /\\ [][Next]_x\nP == [](f)",
+      "SPECIFICATION Spec\nPROPERTY P",
+      8,
+      9,
+    ],
+  ])(
+    "reports a non-boolean reference that %j checks at the reference, as TLC evaluates it as written",
+    async (definitions, config, line, column) => {
+      expect((await checkSteps(definitions, config)).failure?.message).toBe(
+        `TLC expected a boolean value, but did not find one. line ${line}, col ${column} to line ${line}, col ${column} of module M`,
+      );
+    },
+  );
+
   it("names the initial state a check fails on unless a standard module fails", async () => {
     const config = "INIT Init\nNEXT Next\nINVARIANT Inv";
     const core = await checkSteps("Inv == (CHOOSE y \\in {} : TRUE) = x", config);

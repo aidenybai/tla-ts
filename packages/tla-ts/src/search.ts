@@ -934,9 +934,12 @@ const holdsLikeTlc = (
   return value;
 };
 
+// TLC evaluates the body of the definition a configuration file names, which tla-ts writes as an identifier with no range, and a reference in the spec as written.
 const getExpectedValue = (kind: string, expression: Expression, environment: Environment) => {
   const definition =
-    expression.kind === "Identifier" ? getDefinition(expression.name, environment) : undefined;
+    expression.kind === "Identifier" && !expression.location.range
+      ? getDefinition(expression.name, environment)
+      : undefined;
   const body = definition?.kind === "Operator" ? definition.body : expression;
   const range = definition?.kind === "Operator" ? definition.bodyRange : undefined;
   const location = range && body.kind !== "Number" ? formatRange(range) : describeNode(body);
