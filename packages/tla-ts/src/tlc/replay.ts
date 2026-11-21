@@ -584,7 +584,11 @@ const visitDefined = (
   const context = getContext(replay, scope, partial);
   if (expression.kind === "Identifier") {
     const binding = lookupScope(scope, expression.name);
-    if (binding?.kind === "Thunk" && binding.cache === undefined) {
+    // Tool#enabledApplImpl visits a LazyValue's expression even when it holds a value, where Tool#getNextStatesAppl takes the value.
+    if (
+      binding?.kind === "Thunk" &&
+      (replay.isEnabled ? !binding.isReleased : binding.cache === undefined)
+    ) {
       const thunkNode = replay.coverage?.values.get(binding) ?? node;
       return visit(replay, binding.expression, items, binding.scope, partial, thunkNode);
     }

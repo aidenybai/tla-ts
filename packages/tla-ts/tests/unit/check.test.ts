@@ -3765,6 +3765,33 @@ ASSUME TLCFP(a) = -887695703
   });
 
   it.each([
+    ["t /\\ (ENABLED (t /\\ y' = y))' /\\ t", "ACTION_CONSTRAINT", 4, 67],
+    ["t /\\ ENABLED (t /\\ y' = y) /\\ t", "ACTION_CONSTRAINT", 4, 64],
+    ["t /\\ ENABLED (t /\\ y' = y)", "INVARIANT", 4, 59],
+    ["t /\\ ENABLED (t /\\ y' = y) /\\ t", "INVARIANT", 4, 64],
+    ["t /\\ ENABLED (t /\\ y' = y /\\ t)", "INVARIANT", 6, 64],
+    ["(ENABLED (t /\\ y' = y))' /\\ t", "ACTION_CONSTRAINT", 4, 62],
+  ])(
+    "evaluates a LET definition with a value again inside ENABLED in %j as a %s, and counts nothing there, as TLC's Tool#enabledApplImpl does",
+    async (body, kind, count, end) => {
+      const printed: string[] = [];
+      const result = await check({
+        source: `---- MODULE M ----\nEXTENDS TLC, Naturals\nVARIABLE y\nInit == y = 0\nStep == y' = (y + 1) % 2\nCheck == LET t == PrintT("t") IN ${body}\n====\n`,
+        config: `INIT Init\nNEXT Step\n${kind} Check\n`,
+        coverage: 1,
+        onPrint: (text) => printed.push(text),
+      });
+      expect([printed.length, formatCoverage(result)?.at(-1)]).toEqual([
+        count,
+        [
+          "line 6, col 19 to line 6, col 29 of module M: 2",
+          `line 6, col 34 to line 6, col ${end} of module M: 2`,
+        ],
+      ]);
+    },
+  );
+
+  it.each([
     [
       "read primed",
       "VARIABLES c\nInit == c \\in 0..2\nNext == UNCHANGED c\nA == LET k == c IN k' = k + 1 /\\ k' > k\nInv == ENABLED A",
