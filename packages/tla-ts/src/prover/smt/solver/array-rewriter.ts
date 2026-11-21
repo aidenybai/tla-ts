@@ -72,6 +72,7 @@ const isIndexSetExact = (
   stores: number[][],
   start: number,
   elseExpr: number,
+  getSortSize: (sort: number) => bigint,
 ) => {
   const numIndices = sorts.length;
   let hasMisread = false;
@@ -80,7 +81,7 @@ const isIndexSetExact = (
   if (!hasMisread) return true;
   let numPoints = 1n;
   for (let index = 0; index < numIndices; index++) {
-    const size = manager.getSortSize(sorts[index]);
+    const size = getSortSize(sorts[index]);
     if (size < 0n) return false;
     numPoints *= size;
   }
@@ -107,7 +108,12 @@ const isIndexSetExact = (
   return true;
 };
 
-export const hasIndexSet = (manager: AstManager, lambda: number, stores: number[][]) => {
+export const hasIndexSet = (
+  manager: AstManager,
+  lambda: number,
+  stores: number[][],
+  getSortSize: (sort: number) => bigint,
+) => {
   const sorts = manager.getQuantifier(lambda).sorts;
   const body = manager.getQuantifier(lambda).body;
   const op = manager.getOp(body);
@@ -118,7 +124,9 @@ export const hasIndexSet = (manager: AstManager, lambda: number, stores: number[
         return undefined;
     const elseValue = op === OP_OR ? manager.falseExpr : manager.trueExpr;
     // Deviation from Z3: has_index_set misreads a negated equality in an or and an equality in an and, so the port keeps such a lambda unless the stores give its value at every index.
-    return isIndexSetExact(manager, sorts, stores, start, elseValue) ? elseValue : undefined;
+    return isIndexSetExact(manager, sorts, stores, start, elseValue, getSortSize)
+      ? elseValue
+      : undefined;
   }
   let elseExpr = body;
   while (
