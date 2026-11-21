@@ -709,6 +709,39 @@ describe("compiles CommonJS modules as Node loads them", () => {
     });
   });
 
+  // Node's util, of which a program reads only TextEncoder, the global's own, as React's server
+  // builds do, and each require gives the same object.
+  describe("requires Node's util, which stops where the code uses more of it", () => {
+    const main = `const util = require("util");
+      log.push(util === require("node:util"), util.TextEncoder === TextEncoder, new util.TextEncoder().encode("é").length);`;
+
+    it("agrees with Node", async () => {
+      expect((await checkModules(getFiles(main, "true,true,2"))).message).toBeUndefined();
+    });
+
+    it("rejects another result", async () => {
+      expect((await checkModules(getFiles(main, "true,true,1"))).message).toContain(THREW);
+    });
+
+    it.each([
+      "util.inspect",
+      '"TextEncoder" in util',
+      "Object.keys(util)",
+      "Reflect.ownKeys(util)",
+      "Object.getPrototypeOf(util)",
+      'Object.defineProperty(util, "x", { value: 1 })',
+      "util.x = 1",
+      "delete util.TextEncoder",
+      "({ ...util })",
+      "JSON.stringify(util)",
+      "globalThis.TextEncoder = class {}; util.TextEncoder",
+    ])("stops at %s", async (use) => {
+      expect(
+        (await checkModules(getFiles(`const util = require("util"); ${use};`, ""))).message,
+      ).toContain("tla-ts can't run the host's util");
+    });
+  });
+
   describe("gives a module in a cycle the exports so far of the module that requires it", () => {
     const main = `const a = require("./a.js");
       log.push(a.name, a.fromB);`;

@@ -659,6 +659,28 @@ describe("the CLI with TypeScript files", () => {
     });
   });
 
+  // A CommonJS module requires Node's util for its TextEncoder, as React's server builds do, the
+  // global's own.
+  describe("requires Node's util as Node does", () => {
+    const getScript = (length: number) =>
+      `const util = require("util");\nif (util !== require("node:util") || util.TextEncoder !== TextEncoder) throw new Error("util");\nif (new util.TextEncoder().encode("ab").length !== ${length}) throw new Error("length");\n`;
+
+    it("agrees with Node", () => {
+      const directory = copyFixtures("passing");
+      writeFileSync(join(directory, "util.cjs"), getScript(2));
+      expect(runNode(directory, "util.cjs").status).toBe(0);
+      expect(getExit(runCli(directory, ["util.cjs"]))).toEqual([0, ""]);
+    });
+
+    it("rejects another result", () => {
+      const directory = copyFixtures("passing");
+      writeFileSync(join(directory, "util.cjs"), getScript(3));
+      const result = runCli(directory, ["util.cjs"]);
+      expect(getExit(result)).toEqual(getExit(runNode(directory, "util.cjs")));
+      expect(result.status).toBe(1);
+    });
+  });
+
   // A module reads Node's performance, as React's server builds do, whose now gives the time,
   // which each run reads anew, so the check stops where a program reads the time it gives.
   describe("reads Node's performance as Node does", () => {

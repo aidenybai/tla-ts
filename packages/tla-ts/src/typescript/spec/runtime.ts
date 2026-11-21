@@ -569,6 +569,13 @@ const DEFINITIONS = [
   IF u[k] >= 55296 /\\ u[k] <= 56319 /\\ k < Len(u) /\\ u[k + 1] >= 56320 /\\ u[k + 1] <= 57343
   THEN Utf8Bytes(u, k + 2, acc \\o UTF8Encode((u[k] - 55296) * 1024 + u[k + 1] - 56320 + 65536))
   ELSE Utf8Bytes(u, k + 1, acc \\o UTF8Encode(IF u[k] >= 55296 /\\ u[k] <= 57343 THEN 65533 ELSE u[k]))`,
+  // Whether a value is the proxy that DefineHost made of the host's constructor of a name, the one
+  // proxy whose target is that constructor, which a program can't reach.
+  `IsHostConstructor(s, v, name) ==
+  /\\ IsObject(v) /\\ O(s, v).class = "proxy"
+  /\\ IsObject(O(s, v).slots.target) /\\ "id" \\in DOMAIN O(s, O(s, v).slots.target).slots
+  /\\ O(s, O(s, v).slots.target).slots.id = <<"Module", "hostQuietConstructor">>
+  /\\ O(s, O(s, v).slots.target).slots.data = name`,
   // A function of the host, as a proxy that stops at every operation but typeof.
   `HostFunction(s, name) ==
   LET stop == Alloc(s, BuiltinObject(Intrinsic(s, "FunctionPrototype"), <<"Module", "hostStop">>, 0, <<>>, FALSE, name, s.realmId))
@@ -600,9 +607,20 @@ const DEFINITIONS = [
       hooks == OrdinaryObjectCreate(resource.s, Null)
       withResource == CreateDataProperty(hooks.s, Val(hooks), SV("AsyncResource"), resource.v)
       hooksProxy == StoppingProxy(withResource.s, Val(hooks), N("async_hooks"), <<[trap |-> SV("get"), method |-> "asyncHooksGet"]>>)
-      module == OrdinaryObjectCreate(hooksProxy.s, Intrinsic(s, "ObjectPrototype"))
-      made == CreateDataProperty(module.s, Val(module), SV("exports"), Val(hooksProxy))
-  IN Ok([made.s EXCEPT !.required = (0 :> [module |-> Val(module), loaded |-> TRUE]) @@ @], Val(hooksProxy))`,
+  IN HoldModule(hooksProxy.s, 0, Val(hooksProxy))`,
+  // Node's util, of which a program reads only TextEncoder, the global's own, the one object that
+  // require gives, which the state's required holds under the number -1.
+  `UtilModule(s) ==
+  IF -1 \\in DOMAIN s.required THEN Get(s, s.required[-1].module, SV("exports")) ELSE
+  LET util == OrdinaryObjectCreate(s, Null)
+      proxy == StoppingProxy(util.s, Val(util), N("util"), <<[trap |-> SV("get"), method |-> "utilGet"]>>)
+  IN HoldModule(proxy.s, -1, Val(proxy))`,
+  // A built-in module of Node, whose exports the state's required holds under the number k, so
+  // that each require of it gives the same object.
+  `HoldModule(s, k, exports) ==
+  LET module == OrdinaryObjectCreate(s, Intrinsic(s, "ObjectPrototype"))
+      made == CreateDataProperty(module.s, Val(module), SV("exports"), exports)
+  IN Ok([made.s EXCEPT !.required = (k :> [module |-> Val(module), loaded |-> TRUE]) @@ @], exports)`,
   // Node's performance, of which a program reads only now, whose time each run reads anew, so it
   // gives HostTime, at whose reading a compiled spec stops.
   `PerformanceObject(s) ==
@@ -626,6 +644,7 @@ const DEFINITIONS = [
   // loads the file of a specifier that its code requires.
   `Require(s, referrer, id) ==
   IF id \\in {SV("node:async_hooks"), SV("async_hooks")} THEN AsyncHooksModule(s)
+  ELSE IF id \\in {SV("node:util"), SV("util")} THEN UtilModule(s)
   ELSE IF ~IsString(id) \\/ id.value \\notin DOMAIN ModuleNode(referrer).targets
   THEN Assert(FALSE, "tla-ts can't require a module other than a file that a string names")
   ELSE RequireFile(s, ModuleNode(referrer).targets[id.value])`,
@@ -1553,6 +1572,10 @@ const HOST_PATCHES = [
          IF Arg(args, 1) \\notin {SV("node:async_hooks"), SV("async_hooks")} THEN HostStop(N("getBuiltinModule")) ELSE AsyncHooksModule(s)
     [] m = "asyncHooksGet" ->
          IF Arg(args, 2) # SV("AsyncResource") THEN HostStop(N("async_hooks")) ELSE Get(s, Arg(args, 1), Arg(args, 2))
+    [] m = "utilGet" ->
+         LET own == OrdinaryGetOwnProperty(O(s, Intrinsic(s, "GlobalObject")), SV("TextEncoder")) IN
+         IF Arg(args, 2) # SV("TextEncoder") \\/ own = Absent \\/ ~IsDataDescriptor(own) \\/ ~IsHostConstructor(s, own.value, N("TextEncoder"))
+         THEN HostStop(N("util")) ELSE Ok(s, own.value)
     [] m = "asyncResource" ->
          IF nt # f \\/ ~IsString(Arg(args, 1)) \\/ (Arg(args, 2) # Undefined /\\ ~IsObject(Arg(args, 2))) THEN HostStop(N("AsyncResource")) ELSE
          LET trigger == IF Arg(args, 2) = Undefined THEN Ok(s, Undefined) ELSE Get(s, Arg(args, 2), SV("triggerAsyncId")) IN
