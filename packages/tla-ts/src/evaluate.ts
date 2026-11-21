@@ -19,6 +19,7 @@ import {
 import { getKindString } from "./builtins";
 import {
   isStackOverflow,
+  TlaConfigError,
   TlaEvaluationError,
   TlaSetBoundError,
   TlaUnassignedError,
@@ -46,7 +47,7 @@ import {
   type Coverage,
   type NextStateMode,
 } from "./coverage";
-import { MESSAGE_CODE } from "./tlc/messages";
+import { isEvalException, MESSAGE_CODE } from "./tlc/messages";
 import type { InstanceLevels, SectionMember } from "./levels";
 import { EMPTY_STATE, type CheckerRuntime } from "./runtime";
 import {
@@ -54,6 +55,7 @@ import {
   isExpressionImpure,
   isImpureDefinition,
   isNonconstant,
+  isReevaluationShown,
   isTlcEvalReached,
   type DefinitionFacts,
 } from "./dependencies";
@@ -187,6 +189,7 @@ export interface Environment {
   constants: Map<string, Value>;
   bodyValues: WeakMap<Expression, Value>;
   substitutions: Map<string, string>;
+  reevaluatedSubstitutes: Map<string, Definition>;
   instanceNames: Map<string, string>;
   variables: string[];
   variableIndex: Map<string, number>;
@@ -968,24 +971,71 @@ export const getStartupValue = (definition: Definition, environment: Environment
   return definitionId === undefined ? undefined : environment.startupValues[definitionId];
 };
 
-export const evaluateStartupDefinitions = (definitions: Definition[], environment: Environment) =>
-  definitions.forEach((definition) => {
-    if (definition.kind === "Operator" && definition.params.length > 0) return;
-    if (!isEvaluatedAtStartup(definition, environment)) return;
-    const definitionId = environment.facts.ids.get(definition);
-    if (definitionId === undefined || environment.startupValues[definitionId] !== undefined) return;
-    // SpecProcessor#evalConstantDefn evaluates in TLCState.Empty, before any checker exists.
-    const context = { environment, scope: undefined, state: EMPTY_STATE, next: undefined };
-    try {
-      const value = environment.runtime.evaluateAtStartup(() =>
-        toStartupValue(definition, compileDefinitionBody(definition, environment)(context)),
-      );
-      markNormalized(value);
-      environment.startupValues[definitionId] = value;
-    } catch (error) {
-      // TLC swallows whatever the definition throws, a stack overflow included.
-      if (!(error instanceof TlaEvaluationError) && !isStackOverflow(error)) throw error;
-    }
+export interface StartupSubstitute {
+  key: string;
+  target: string;
+  definition: Definition;
+}
+
+// SpecProcessor#processConstantDefns evaluates the substitute of each constant in a module's context, then the module's definitions.
+export interface StartupModule {
+  substitutes: StartupSubstitute[];
+  definitions: Definition[];
+}
+
+const evaluateAtStartup = (
+  definition: Definition,
+  definitionId: number,
+  environment: Environment,
+) => {
+  // SpecProcessor#evalConstantDefn evaluates in TLCState.Empty, before any checker exists.
+  const context = { environment, scope: undefined, state: EMPTY_STATE, next: undefined };
+  const value = environment.runtime.evaluateAtStartup(() =>
+    toStartupValue(definition, compileDefinitionBody(definition, environment)(context)),
+  );
+  markNormalized(value);
+  environment.startupValues[definitionId] = value;
+};
+
+export const evaluateStartupDefinitions = (modules: StartupModule[], environment: Environment) =>
+  modules.forEach((module) => {
+    module.substitutes.forEach((substitute) => {
+      const definition = substitute.definition;
+      const definitionId = environment.facts.ids.get(definition);
+      if (definitionId === undefined) return;
+      // SpecProcessor evaluates an inherited constant's substitute again in each module, which only a substitute whose evaluation shows can tell.
+      if (
+        environment.startupValues[definitionId] !== undefined &&
+        !isReevaluationShown(definition, environment)
+      ) {
+        return;
+      }
+      try {
+        evaluateAtStartup(definition, definitionId, environment);
+      } catch (error) {
+        if (!(error instanceof TlaEvaluationError)) throw error;
+        // TLCSet's deviation in tlc/tlc-operators.ts makes a substitute that calls it state-level, so this reports what TLC swallows at TLCSet's bound of 0.
+        if (isEvaluatedAtStartup(definition, environment)) return;
+        const addendum = isEvalException(error) ? "" : ` - specifically: ${error.message}`;
+        throw new TlaConfigError(
+          `The configuration file substitutes constant ${getKeyName(substitute.key)} with non-constant ${getKeyName(substitute.target)}${addendum}`,
+        );
+      }
+    });
+    module.definitions.forEach((definition) => {
+      if (definition.kind === "Operator" && definition.params.length > 0) return;
+      if (!isEvaluatedAtStartup(definition, environment)) return;
+      const definitionId = environment.facts.ids.get(definition);
+      if (definitionId === undefined || environment.startupValues[definitionId] !== undefined) {
+        return;
+      }
+      try {
+        evaluateAtStartup(definition, definitionId, environment);
+      } catch (error) {
+        // TLC swallows whatever the definition throws, a stack overflow included.
+        if (!(error instanceof TlaEvaluationError) && !isStackOverflow(error)) throw error;
+      }
+    });
   });
 
 const isStateWithin = (state: State | undefined, cached: State | undefined) => {
@@ -1176,7 +1226,12 @@ export const findGlobalName = (name: string, environment: Environment): GlobalNa
   const constant = environment.constants.get(name);
   if (constant !== undefined) return { kind: "Value", value: constant };
   const target = environment.substitutions.get(name);
-  if (target !== undefined) return findGlobalName(target, environment);
+  if (target !== undefined) {
+    const substitute = environment.reevaluatedSubstitutes.get(name);
+    return substitute
+      ? { kind: "Definition", definition: substitute }
+      : findGlobalName(target, environment);
+  }
   const definition = environment.definitions.get(name);
   if (definition) return { kind: "Definition", definition };
   const builtin = environment.builtins.get(name);

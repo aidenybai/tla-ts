@@ -63,6 +63,7 @@ import {
   type Context,
   type Environment,
   type Scope,
+  type StartupModule,
   type State,
 } from "./evaluate";
 import { EXIT_STATUS, setExitCode } from "./exit-codes";
@@ -159,6 +160,7 @@ interface EnvironmentSettings
       | "maxSetSize"
       | "isLazyValueExpanded"
       | "isViewPrinted"
+      | "coverage"
     >,
     CliSettings {}
 
@@ -303,7 +305,7 @@ export const reportInitialStatesProgress = (
 
 interface StartupSpecification {
   environment: Environment;
-  startupDefinitions: Definition[];
+  startupModules: StartupModule[];
   javaOverrides: JavaOverride[];
 }
 
@@ -318,7 +320,7 @@ export const reportStartup = (
   specification.javaOverrides.forEach((override) =>
     onProgress?.({ kind: "java-override", ...override }),
   );
-  evaluateStartupDefinitions(specification.startupDefinitions, environment);
+  evaluateStartupDefinitions(specification.startupModules, environment);
   config.invariants.forEach((name) => {
     if (!getConfigPredicate("invariant", name, environment)) {
       onProgress?.({ kind: "constant-level-invariant", name });
@@ -1027,6 +1029,7 @@ export const createCheckEnvironment = (
     readLine: options.readLine,
     printPrompt: options.printPrompt,
     runtimeInvariants: options.runtimeInvariants,
+    isCovered: options.coverage !== undefined,
   });
   return { order, specification };
 };

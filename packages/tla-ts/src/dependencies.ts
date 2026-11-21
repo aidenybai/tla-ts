@@ -93,6 +93,7 @@ interface Edge {
   isOverridden: boolean;
   isLevelCounted: boolean;
   isBoundCounted: boolean;
+  isSubstitute: boolean;
 }
 
 const collectLocalFacts = (
@@ -184,6 +185,8 @@ const collectLocalFacts = (
               definition.params.length > 0) ||
             environment.theorems.has(target)
           ),
+          // Spec#lookup gives a substituted constant its substitute's OpDefNode, whose body Tool#evalAppl evaluates at each reference.
+          isSubstitute: target !== name && !environment.definitions.has(name),
         });
       } else {
         const builtinName = builtin?.name ?? target;
@@ -308,6 +311,8 @@ const closeRows = (local: Uint32Array, words: number, edges: Int32Array[], mask:
 };
 
 const PURITY_MASK = IMPURE | REPEATED_EFFECT | STREAMED | RANDOM | TLC_EVAL;
+// What a second evaluation can show. TLC streams a fresh \cup or UNION as it streams the startup value.
+const SHOWN_MASK = IMPURE | REPEATED_EFFECT | RANDOM | TLC_EVAL;
 const READ_MASK = NONCONSTANT | READS_IMPURE;
 const STARTUP_MASK = NONCONSTANT | ABOVE_CONSTANT_BOUND;
 
@@ -345,21 +350,31 @@ export const createDefinitionFacts = (environment: DefinitionNames): DefinitionF
       new Int32Array(own.filter((edge) => !edge.isOverridden && edge.isBoundCounted).map(getId)),
   );
   const startup = closeRows(local, words, startupEdges, ABOVE_CONSTANT_BOUND);
-  const purityEdges = edges.map(
-    (own) =>
-      new Int32Array(
-        own
-          .map(getId)
-          .filter(
-            (callee) =>
-              !isEvaluatedOnce(
-                definitions[callee],
-                reads[callee * words] | startup[callee * words],
-              ),
-          ),
-      ),
+  const isRecomputed = (edge: Edge) => {
+    const callee = getId(edge);
+    return !isEvaluatedOnce(edge.callee, reads[callee * words] | startup[callee * words]);
+  };
+  const getPurityEdges = (isPassed: (edge: Edge) => boolean) =>
+    edges.map((own) => new Int32Array(own.filter(isPassed).map(getId)));
+  // TLC evaluates a constant's substitute at each reference, which a reference shows only where a second evaluation does.
+  const shown = edges.some((own) => own.some((edge) => edge.isSubstitute))
+    ? closeRows(
+        localImpurity,
+        words,
+        getPurityEdges((edge) => edge.isSubstitute || isRecomputed(edge)),
+        SHOWN_MASK,
+      )
+    : localImpurity;
+  const purity = closeRows(
+    localImpurity,
+    words,
+    getPurityEdges(
+      (edge) =>
+        isRecomputed(edge) ||
+        (edge.isSubstitute && (shown[getId(edge) * words] & SHOWN_MASK) !== 0),
+    ),
+    PURITY_MASK,
   );
-  const purity = closeRows(localImpurity, words, purityEdges, PURITY_MASK);
   const rows = reads.map((word, position) =>
     position % words === 0
       ? (word & READ_MASK) |
@@ -391,7 +406,12 @@ const getExpressionsRow = (expressions: Expression[], environment: Environment) 
       if (edge.isLevelCounted) row[0] |= callee[0] & TEMPORAL_LEVEL_FLAGS;
       for (let word = 1; word < words; word++) row[word] |= callee[word];
     }
-    if (!isEvaluatedOnce(edge.callee, callee[0])) row[0] |= callee[0] & PURITY_MASK;
+    if (
+      !isEvaluatedOnce(edge.callee, callee[0]) ||
+      (edge.isSubstitute && (callee[0] & SHOWN_MASK) !== 0)
+    ) {
+      row[0] |= callee[0] & PURITY_MASK;
+    }
   });
   return row;
 };
@@ -401,6 +421,9 @@ export const isConstantLevel = (definition: Definition, environment: Environment
 
 export const isEvaluatedAtStartup = (definition: Definition, environment: Environment) =>
   (getRow(definition, environment)[0] & ABOVE_CONSTANT_BOUND) === 0;
+
+export const isReevaluationShown = (definition: Definition, environment: Environment) =>
+  (getRow(definition, environment)[0] & (SHOWN_MASK | STARTUP_MASK)) !== 0;
 
 const EFFECT_FLAGS = {
   any: IMPURE,

@@ -1513,6 +1513,133 @@ ASSUME TLCFP(a) = -887695703
     ]);
   });
 
+  const getSubstituteSource = (definitions: string) =>
+    `---- MODULE M ----\nEXTENDS TLC, Naturals\nCONSTANT N\nVARIABLE y\nInit == y = 0\nNext == y' = (y + 1) % 2\n${definitions}\n====`;
+
+  it.each([
+    ['D == PrintT("D")\nASSUME N', "CONSTANT N <- D", ['"D"', '"D"']],
+    ['D == PrintT("D")\nASSUME N /\\ N', "CONSTANT N <- D", ['"D"', '"D"', '"D"']],
+    ['D == PrintT("D")\nInv == N', "CONSTANT N <- D\nINVARIANT Inv", ['"D"', '"D"']],
+    ['D == PrintT("D")\nE == N\nASSUME E /\\ E', "CONSTANT N <- D", ['"D"', '"D"']],
+    [
+      'D == PrintT("D")\nInv == N /\\ y \\in {0, 1}',
+      "CONSTANT N <- D\nINVARIANT Inv",
+      ['"D"', '"D"', '"D"'],
+    ],
+    ['E == PrintT("E")\nD == E\nASSUME N', "CONSTANT N <- D", ['"E"', '"E"']],
+    ['D == TLCGet("level")\nASSUME PrintT(<<"D", D, N>>)', "CONSTANT N <- D", ['<<"D", 1, 0>>']],
+    [
+      'D == TLCGet("level")\nInv == PrintT(<<"I", D, N>>)',
+      "CONSTANT N <- D\nINVARIANT Inv",
+      ['<<"I", 1, 1>>', '<<"I", 1, 2>>'],
+    ],
+    [
+      'G(Op(_)) == Op("level")\nD == G(TLCGet)\nASSUME PrintT(<<"N", N>>)',
+      "CONSTANT N <- D",
+      ['<<"N", 0>>'],
+    ],
+    [
+      'CONSTANT K\nD == PrintT("D")\nE == PrintT("E")',
+      "CONSTANT N <- D\nCONSTANT K <- E",
+      ['"E"', '"D"'],
+    ],
+    [
+      'CONSTANT K\nE == PrintT("E")\nD == K\nASSUME N',
+      "CONSTANT N <- D\nCONSTANT K <- E",
+      ['"E"', '"E"', '"E"'],
+    ],
+    ['D == PrintT("D") /\\ CHOOSE v : TRUE', "CONSTANT N <- D", ['"D"', '"D"']],
+    ["f[a \\in {1}] == PrintT(a)\nASSUME N[1]", "CONSTANT N <- f", ["1", "1"]],
+    ['G(Op(_)) == Op("diameter")\nD == G(TLCGet)\nASSUME PrintT("A")', "CONSTANT N <- D", ['"A"']],
+  ])(
+    "evaluates the substitute of N in %j as TLC starts and at each reference to N, as SpecProcessor and Tool#evalAppl do",
+    async (definitions, substitution, expected) => {
+      const printed: string[] = [];
+      const result = await check({
+        source: getSubstituteSource(definitions),
+        config: `INIT Init\nNEXT Next\n${substitution}`,
+        onPrint: (text) => printed.push(text),
+      });
+      expect([printed, result.status, result.distinctStates]).toEqual([expected, "success", 2]);
+    },
+  );
+
+  it("evaluates the substitute of a constant an extended module declares as TLC starts each module", async () => {
+    const printed: string[] = [];
+    await check({
+      source:
+        '---- MODULE M ----\nEXTENDS TLC, Naturals, P\nVARIABLE y\nInit == y = 0\nNext == y\' = (y + 1) % 2\nD == PrintT("D")\nASSUME N\n====',
+      config: "INIT Init\nNEXT Next\nCONSTANT N <- D",
+      loadModule: (name) => (name === "P" ? "---- MODULE P ----\nCONSTANT N\n====" : undefined),
+      onPrint: (text) => printed.push(text),
+    });
+    expect(printed).toEqual(['"D"', '"D"', '"D"']);
+  });
+
+  // TLCSet's deviation in tlc/tlc-operators.ts makes D state-level, so the NullPointerException that TLC swallows at TLCSet's bound of 0, printing "A", is a config error.
+  it("rejects a substitute that sets a numbered register as TLC starts, where TLC swallows the NullPointerException", async () => {
+    await expect(
+      check({
+        source: getSubstituteSource('D == TLCSet(1, 2)\nASSUME PrintT("A")'),
+        config: "INIT Init\nNEXT Next\nCONSTANT N <- D",
+      }),
+    ).rejects.toThrow(
+      new TlaConfigError(
+        "The configuration file substitutes constant N with non-constant D - specifically: TLC threw an unexpected exception.\nThis was probably caused by an error in the spec or model.\nSee the User Output or TLC Console for clues to what happened.\nThe exception was a java.lang.NullPointerException\n: ",
+      ),
+    );
+  });
+
+  it("fails at a reference to N whose substitute failed as TLC started", async () => {
+    const printed: string[] = [];
+    const result = await check({
+      source: getSubstituteSource('D == PrintT("D") /\\ CHOOSE v : TRUE\nASSUME N'),
+      config: "INIT Init\nNEXT Next\nCONSTANT N <- D",
+      onPrint: (text) => printed.push(text),
+    });
+    expect([printed, result.status]).toEqual([['"D"', '"D"', '"D"'], "assumption-violation"]);
+  });
+
+  it.each([
+    ["D == RandomElement(1..100)", "<<74, 92, 92, 68, 74>>"],
+    ["D == TLCEval(RandomElement(1..100))", "<<74, 74, 74, 74, 74>>"],
+  ])("draws %s again at each reference to N with TLC's -seed 4", async (definition, expected) => {
+    const printed: string[] = [];
+    await check({
+      source: getSubstituteSource(`${definition}\nASSUME PrintT(<<D, N, N, N, D>>)`),
+      config: "INIT Init\nNEXT Next\nCONSTANT N <- D",
+      seed: 4n,
+      onPrint: (text) => printed.push(text),
+    });
+    expect(printed).toEqual([expected]);
+  });
+
+  it("counts the substitute's body at each reference to N, as TLC's coverage does", async () => {
+    const lines = await getCoverageLines(
+      "---- MODULE M ----\nEXTENDS TLC, Naturals\nCONSTANT N\nVARIABLE y\nInit == y = 0\nNext == y' \\in N\nD == {1, 2} \\cup {3}\nInv == y \\in N \\/ y = 0\n====",
+      "INIT Init\nNEXT Next\nCONSTANT N <- D\nINVARIANT Inv",
+    );
+    expect(lines?.slice(-2)).toEqual([
+      [
+        "line 6, col 9 to line 6, col 16 of module M: 12",
+        "|line 6, col 16 to line 6, col 16 of module M: 4",
+        "||line 7, col 6 to line 7, col 20 of module M: 4",
+        "|||line 7, col 6 to line 7, col 11 of module M: 4",
+        "|||line 7, col 18 to line 7, col 20 of module M: 4:8",
+      ],
+      [
+        "line 8, col 8 to line 8, col 23 of module M: 4",
+        "|line 8, col 8 to line 8, col 14 of module M: 4",
+        "||line 8, col 8 to line 8, col 8 of module M: 4",
+        "||line 8, col 14 to line 8, col 14 of module M: 4",
+        "|||line 7, col 6 to line 7, col 20 of module M: 4",
+        "||||line 7, col 6 to line 7, col 11 of module M: 4",
+        "||||line 7, col 18 to line 7, col 20 of module M: 4:8",
+        "|line 8, col 19 to line 8, col 23 of module M: 1",
+      ],
+    ]);
+  });
+
   it("reads TLCGet in every state through a constant substituted with it, as TLC's level bound does", async () => {
     const prints: string[] = [];
     await check({
