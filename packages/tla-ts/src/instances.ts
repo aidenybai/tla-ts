@@ -661,7 +661,7 @@ export const createLocalAlias = (
   params: OperatorParam[],
   forwarded: OperatorParam[],
   location: SourceLocation,
-): Definition => ({
+): OperatorDefinition => ({
   kind: "Operator",
   name,
   params,

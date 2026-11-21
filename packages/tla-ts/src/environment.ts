@@ -687,6 +687,27 @@ export const createEnvironment = (
     return linked;
   };
 
+  const getStandardDefinition = (builtin: string) => {
+    const source = getStandardModule(builtin);
+    const key =
+      source !== undefined && getSanyStandardModules(runtime.version).has(source)
+        ? getStandardSource(source).visible.get(builtin)?.key
+        : builtin;
+    return key === undefined ? undefined : replacedDefinitions.get(key);
+  };
+
+  const createStandardAlias = (
+    name: string,
+    key: string,
+    params: OperatorParam[],
+    forwarded: OperatorParam[],
+    location: SourceLocation,
+  ): Definition => {
+    const alias = createLocalAlias(name, key, params, forwarded, location);
+    const standard = builtins.has(key) ? getStandardDefinition(key) : undefined;
+    return standard ? { ...alias, standard } : alias;
+  };
+
   // SANY substitutes for, arity-checks and reports missing an instanced module's declarations in its symbol table's hash order.
   const getSymbolTableOrdered = (module: string, declarations: KeyedDeclaration[]) => {
     const names = order.getInstanceDeclarations(module);
@@ -1051,7 +1072,7 @@ export const createEnvironment = (
       if (instance.name === undefined) return [];
       return [...standardSymbols].map((entry) => {
         const forwarded = createArgumentParams(entry[1].arity, entry[1].params);
-        return createLocalAlias(
+        return createStandardAlias(
           `${instance.name}!${entry[0]}`,
           entry[1].key,
           [...instance.params, ...forwarded],
@@ -1184,7 +1205,13 @@ export const createEnvironment = (
           return exportedDefinition;
         }
         const ownParams = createArgumentParams(entry[1].arity, entry[1].params);
-        return createLocalAlias(name, key, [...instance.params, ...ownParams], ownParams, location);
+        return createStandardAlias(
+          name,
+          key,
+          [...instance.params, ...ownParams],
+          ownParams,
+          location,
+        );
       });
     if (instance.location.range) {
       letInstances.set(formatRange(instance.location.range), {
@@ -1477,12 +1504,7 @@ export const createEnvironment = (
         if (symbol?.kind !== "Definition") return undefined;
         const builtin = builtinAliases.get(symbol.key) ?? symbol.key;
         if (!builtins.has(builtin)) return undefined;
-        const source = getStandardModule(builtin);
-        const key =
-          source !== undefined && getSanyStandardModules(runtime.version).has(source)
-            ? getStandardSource(source).visible.get(builtin)?.key
-            : builtin;
-        const definition = key === undefined ? undefined : replacedDefinitions.get(key);
+        const definition = getStandardDefinition(builtin);
         if (definition?.kind !== "Operator") return definition && { ...definition, name };
         return {
           ...definition,

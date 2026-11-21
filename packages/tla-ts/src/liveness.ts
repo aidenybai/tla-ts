@@ -215,6 +215,8 @@ export const getLevel = (
     return builtin.isStateLevel && !builtin.isLevelConstant ? VARIABLE_LEVEL : CONSTANT_LEVEL;
   };
   const getNameLevel = (name: string, node: Expression) => {
+    // TLC's getLevelBound takes any name a root variable shares for that variable.
+    if (isLevelBound && environment.variableIndex.has(name)) return VARIABLE_LEVEL;
     if (shadowed.has(name)) return CONSTANT_LEVEL;
     // TLC's getLevelBound takes an operator argument for a constant.
     const isArgument = isLevelBound && node.kind === "Identifier";
@@ -260,17 +262,37 @@ export const getLevel = (
     case "UnboundedQuantifier":
       return expression.isTemporal ? TEMPORAL_LEVEL : getChildrenLevel(expression);
     // TLC's level bound counts a LET's definitions, though SANY levels a LET by its body.
-    case "Let":
-      return isLevelBound
-        ? getChildrenLevel(expression)
-        : getLevel(
-            expression.body,
-            bindLetDefinitions(expression, scope, environment),
-            environment,
-            shadowed,
-            visiting,
-            isLevelBound,
-          );
+    case "Let": {
+      if (!isLevelBound) {
+        return getLevel(
+          expression.body,
+          bindLetDefinitions(expression, scope, environment),
+          environment,
+          shadowed,
+          visiting,
+          isLevelBound,
+        );
+      }
+      const aliases = expression.definitions.filter((definition) => "standard" in definition);
+      if (aliases.length === 0) return getChildrenLevel(expression);
+      // TLC's getLevelBound reads a standard operator's TLA+ definition, not the builtin a LET instance's alias forwards to.
+      return Math.max(
+        getLevel(
+          {
+            ...expression,
+            definitions: expression.definitions.filter((definition) => !("standard" in definition)),
+          },
+          scope,
+          environment,
+          new Set([...shadowed, ...aliases.map((alias) => alias.name)]),
+          visiting,
+          isLevelBound,
+        ),
+        ...aliases
+          .flatMap((alias) => getDefinitionExpressions(alias.standard))
+          .map((item) => getBodyLevel(item, item, undefined)),
+      );
+    }
     case "Identifier":
       return getNameLevel(expression.name, expression);
     case "OperatorReference":

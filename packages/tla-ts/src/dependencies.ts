@@ -205,13 +205,24 @@ const collectLocalFacts = (
     const substitute = isLocal ? substitutes?.get(name) : undefined;
     if (substitute) visit(substitute, isInnerLevelCounted, isOperatorArgument, substitutes);
     // TLC's SubstInNode binds a LET instance's substitute lazily, so its level counts only where the instanced definition reads it.
-    if (kind === "Let" && node.definitions.some(isLetSubstitute)) {
+    if (
+      kind === "Let" &&
+      node.definitions.some((definition) => isLetSubstitute(definition) || "standard" in definition)
+    ) {
       const innerSubstitutes = new Map(substitutes);
       node.definitions.forEach((definition) => {
         if (isLetSubstitute(definition)) innerSubstitutes.set(definition.name, definition.body);
       });
       node.definitions.forEach((definition) => {
         if (isLetSubstitute(definition)) return;
+        // TLC's getLevelBound reads a standard operator's TLA+ definition, not the builtin a LET instance's alias forwards to.
+        if ("standard" in definition) {
+          visit(definition.body, isInnerLevelCounted, true, innerSubstitutes);
+          getDefinitionExpressions(definition.standard).forEach((expression) =>
+            visit(expression, false, isOperatorArgument, undefined),
+          );
+          return;
+        }
         getDefinitionExpressions(definition).forEach((child) =>
           visit(child, isInnerLevelCounted, isOperatorArgument, innerSubstitutes),
         );

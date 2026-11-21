@@ -400,11 +400,17 @@ export interface LetSubstituteDefinition extends OperatorDefinition {
   isLetSubstitute: true;
 }
 
+// A LET instance's alias of a standard operator: it forwards to the builtin, and TLC's getLevelBound reads the operator's TLA+ definition instead.
+export interface StandardAliasDefinition extends OperatorDefinition {
+  standard: Definition;
+}
+
 export type Definition =
   | OperatorDefinition
   | FunctionDefinition
   | TheoremDefinition
-  | LetSubstituteDefinition;
+  | LetSubstituteDefinition
+  | StandardAliasDefinition;
 
 export interface Declaration {
   name: string;

@@ -5336,6 +5336,75 @@ describe("initial predicate and next-state relation match TLC", () => {
     },
   );
 
+  const getLetInstanceSource = (variable: string, definitions: string) =>
+    `---- MODULE M ----\nEXTENDS TLC, Naturals\nVARIABLE ${variable}\nInit == ${variable} = 0\nNext == ${variable}' = (${variable} + 1) % 2\n${definitions}\n====\n`;
+  const getInstancedModule = (line: string) =>
+    `---- MODULE P ----\n${line}\nCONSTANT c\nP1 == c\n====\n`;
+  const instancedPrint = 'D == LET K == INSTANCE P WITH c <- 1 IN PrintT(<<"P1", K!P1>>)';
+  const directPrint = 'D == LET K == INSTANCE TLC IN PrintT(<<"P1", 1>>)';
+
+  it.each([
+    ["y", instancedPrint, "EXTENDS TLC", ['<<"P1", 1>>']],
+    ["x", instancedPrint, "EXTENDS TLC", []],
+    ["y", instancedPrint, "LOCAL INSTANCE TLC", ['<<"P1", 1>>']],
+    ["a", instancedPrint, "EXTENDS Naturals", []],
+    ["y", instancedPrint, "EXTENDS Naturals", ['<<"P1", 1>>']],
+    ["s", instancedPrint, "EXTENDS Sequences", []],
+    ["x", instancedPrint, "EXTENDS FiniteSets", []],
+    ["y", directPrint, "", ['<<"P1", 1>>']],
+    ["a", directPrint, "", ['<<"P1", 1>>']],
+    ["n", directPrint, "", []],
+  ])(
+    "with VARIABLE %s, evaluates %j at startup unless a TLA+ body K exports from %j applies that name, as TLC does",
+    async (variable, definitions, line, printed) => {
+      const prints: string[] = [];
+      await check({
+        source: getLetInstanceSource(variable, definitions),
+        config: "INIT Init\nNEXT Next",
+        loadModule: (name) => (name === "P" ? getInstancedModule(line) : undefined),
+        onPrint: (text) => prints.push(text),
+      });
+      expect(prints).toEqual(printed);
+    },
+  );
+
+  it.each([
+    ["y", "INSTANCE P WITH c <- 1", "EXTENDS Naturals"],
+    ["y", "INSTANCE TLC", ""],
+  ])(
+    "with VARIABLE %s, rejects the spec by C's startup value through LET K == %s, as TLC does",
+    async (variable, instance, line) => {
+      await expect(
+        check({
+          source: getLetInstanceSource(
+            variable,
+            `C == LET K == ${instance} IN FALSE\nSpec == Init /\\ [][Next]_${variable} /\\ C`,
+          ),
+          config: "SPECIFICATION Spec",
+          loadModule: (name) => (name === "P" ? getInstancedModule(line) : undefined),
+        }),
+      ).rejects.toThrow(new TlaConfigError("The spec is trivially false because C is false."));
+    },
+  );
+
+  it.each([
+    ["a", "INSTANCE P WITH c <- 1", "EXTENDS Naturals"],
+    ["x", "INSTANCE TLC", ""],
+  ])(
+    "with VARIABLE %s, takes C through LET K == %s whole as an initial predicate, as TLC does",
+    async (variable, instance, line) => {
+      const result = await check({
+        source: getLetInstanceSource(
+          variable,
+          `C == LET K == ${instance} IN FALSE\nSpec == Init /\\ [][Next]_${variable} /\\ C`,
+        ),
+        config: "SPECIFICATION Spec",
+        loadModule: (name) => (name === "P" ? getInstancedModule(line) : undefined),
+      });
+      expect([result.status, result.distinctStates]).toEqual(["success", 0]);
+    },
+  );
+
   const literalBase =
     "---- MODULE B7 ----\nCONSTANT c\nTHEOREM Cz == c = 1\n====\nJ7 == INSTANCE B7 WITH c <- 1\n";
 
