@@ -600,14 +600,7 @@ export const buildCoverage = (
           walk(expression.function, locals);
           const args = expression.args;
           if (args.length === 1) walk(args[0], locals);
-          else {
-            enter(
-              undefined,
-              spanRanges(args[0]?.location.range, args.at(-1)?.location.range),
-              () => walkAll(args),
-              true,
-            );
-          }
+          else enter(undefined, range, () => walkAll(args), true);
         });
         return;
       case "Forall":
@@ -745,6 +738,13 @@ export const getCoverageNode = (coverage: Coverage, node: number, expression: Ex
 
 export const countCoverage = (coverage: Coverage, node: number) => {
   for (let item = node; item !== -1; item = coverage.prefixes[item]) coverage.primary[item]++;
+};
+
+// TLC evaluates the arguments of f[a, b] as a $Tuple at the application's location, which the walk enters last.
+export const countArgumentTuple = (coverage: Coverage, node: number, expression: Expression) => {
+  if (node >= 0 && coverage.expressions[node] === expression) {
+    countCoverage(coverage, coverage.lastChild[node]);
+  }
 };
 
 export const runAtCoverageNode = <Result>(

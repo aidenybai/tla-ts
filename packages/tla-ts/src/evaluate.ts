@@ -31,6 +31,7 @@ import {
   chargeFunctionConstruction,
   chargeSetOperation,
   costCoverage,
+  countArgumentTuple,
   countCoverage,
   createChargedEnumerator,
   createChargedMembership,
@@ -2812,7 +2813,10 @@ const compile = (expression: Expression, environment: Environment): Evaluator =>
         const getArgument =
           args.length === 1
             ? args[0]
-            : (context: Context) => createTuple(args.map((arg) => arg(context)));
+            : (context: Context) => {
+                countArgumentTuple(coverage, coverage.current, expression);
+                return createTuple(args.map((arg) => arg(context)));
+              };
         return (context) => {
           const functionValue = evaluateFunction(context);
           const argument = getArgument(context);

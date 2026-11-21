@@ -3715,6 +3715,84 @@ ASSUME TLCFP(a) = -887695703
     },
   );
 
+  it.each([
+    [
+      "an IF picks an argument of a lazy function",
+      "VARIABLE x\nInit == x = 0\nNext == x < 2 /\\ x' = x + 1 + [i \\in 0..2, j \\in 1..2 |-> i][IF x = 0 THEN x ELSE x - 1, 1]",
+      [
+        "line 5, col 9 to line 5, col 13 of module M: 2",
+        "|line 5, col 9 to line 5, col 9 of module M: 3",
+        "line 5, col 18 to line 5, col 91 of module M: 2",
+        "|line 5, col 23 to line 5, col 91 of module M: 2",
+        "||line 5, col 23 to line 5, col 27 of module M: 2",
+        "||line 5, col 31 to line 5, col 91 of module M: 2",
+        "|||line 5, col 31 to line 5, col 60 of module M: 2",
+        "|||line 5, col 31 to line 5, col 91 of module M: 2",
+        "||||line 5, col 62 to line 5, col 87 of module M: 2",
+        "|||||line 5, col 65 to line 5, col 69 of module M: 2",
+        "|||||line 5, col 76 to line 5, col 76 of module M: 1",
+        "|||||line 5, col 83 to line 5, col 87 of module M: 1",
+      ],
+    ],
+    [
+      "an IF picks an argument of a function a state holds",
+      "VARIABLES x, f\nInit == x = 0 /\\ f = [i \\in 0..2, j \\in 1..2 |-> i + j]\nNext == x < 2 /\\ x' = x + f[IF x = 0 THEN x ELSE x - 1, 1] /\\ UNCHANGED f",
+      [
+        "line 5, col 9 to line 5, col 13 of module M: 2",
+        "|line 5, col 9 to line 5, col 9 of module M: 3",
+        "line 5, col 18 to line 5, col 58 of module M: 2",
+        "|line 5, col 23 to line 5, col 58 of module M: 2",
+        "||line 5, col 23 to line 5, col 23 of module M: 2",
+        "||line 5, col 27 to line 5, col 58 of module M: 2",
+        "|||line 5, col 27 to line 5, col 27 of module M: 2",
+        "|||line 5, col 27 to line 5, col 58 of module M: 2",
+        "||||line 5, col 29 to line 5, col 54 of module M: 2",
+        "|||||line 5, col 32 to line 5, col 36 of module M: 2",
+        "|||||line 5, col 43 to line 5, col 43 of module M: 1",
+        "|||||line 5, col 50 to line 5, col 54 of module M: 1",
+        "line 5, col 63 to line 5, col 73 of module M: 2",
+      ],
+    ],
+    [
+      "an argument of a lazy function over SUBSET is charged",
+      "VARIABLE x\nInit == x = 0\nNext == x < 2 /\\ x' = x + [a \\in SUBSET {1, 2}, b \\in {1, 2} |-> Cardinality(a) + b][{1}, 2]",
+      [
+        "line 5, col 9 to line 5, col 13 of module M: 1",
+        "|line 5, col 9 to line 5, col 9 of module M: 2",
+        "line 5, col 18 to line 5, col 92 of module M: 1",
+        "|line 5, col 23 to line 5, col 92 of module M: 1",
+        "||line 5, col 23 to line 5, col 23 of module M: 1",
+        "||line 5, col 27 to line 5, col 92 of module M: 1",
+        "|||line 5, col 27 to line 5, col 84 of module M: 1",
+        "|||line 5, col 27 to line 5, col 92 of module M: 1",
+        "||||line 5, col 86 to line 5, col 88 of module M: 1:2",
+      ],
+    ],
+    [
+      "an IF picks an argument of a lazy function applied as an action",
+      "VARIABLE x\nInit == x = 0\nNext == x < 2 /\\ [i \\in 0..2, j \\in 1..2 |-> x' = x + i][IF x = 0 THEN x + 1 ELSE x, 1]",
+      [
+        "line 5, col 9 to line 5, col 13 of module M: 2",
+        "|line 5, col 9 to line 5, col 9 of module M: 3",
+        "line 5, col 18 to line 5, col 56 of module M: 2",
+        "line 5, col 18 to line 5, col 87 of module M: 2",
+        "|line 5, col 58 to line 5, col 83 of module M: 2",
+        "||line 5, col 61 to line 5, col 65 of module M: 2",
+        "||line 5, col 72 to line 5, col 76 of module M: 1",
+        "||line 5, col 83 to line 5, col 83 of module M: 1",
+      ],
+    ],
+  ])(
+    "counts the arguments of an application when %s as a tuple at the application's location, as TLC evaluates SANY's $Tuple",
+    async (_title, body, expected) => {
+      const lines = await getCoverageLines(
+        `---- MODULE M ----\nEXTENDS Integers, FiniteSets\n${body}\n====`,
+        "INIT Init\nNEXT Next\nCHECK_DEADLOCK FALSE",
+      );
+      expect(lines?.at(-1)).toEqual(expected);
+    },
+  );
+
   it("charges a filter of a set of records or functions per element it draws, as TLC's SetPredValue does", async () => {
     const lines = await getCoverageLines(
       "---- MODULE E ----\nEXTENDS Integers\nVARIABLE x\nInit == x \\in {r \\in [a : 0..1, b : BOOLEAN] : r.a = 0}\nNext == x' \\in {r \\in [a : 0..1, b : BOOLEAN] : r.b = ~x.b}\nInv1 == \\E r \\in {s \\in [a : 0..1, b : BOOLEAN] : s.a = x.a} : r = x\nInv2 == (CHOOSE r \\in {s \\in [a : 0..1, b : BOOLEAN] : s.b = x.b} : TRUE).b = x.b\nInv3 == \\A r \\in {s \\in {f \\in [{1} -> {0, 1}] : f[1] >= x.a} : s[1] > 0} : r[1] = 1\n====",

@@ -6,6 +6,7 @@ import { isConstantLevel } from "../dependencies";
 import {
   chargeContexts,
   chargeRandomOrder,
+  countArgumentTuple,
   countCoverage,
   createChargedEnumerator,
   enterFrames,
@@ -953,6 +954,9 @@ const visitApplication = (
         ),
       );
       if (lambda) {
+        if (replay.coverage && expression.args.length > 1) {
+          countArgumentTuple(replay.coverage, node, expression);
+        }
         const bound = runAt(replay, node, () => bindLazyArguments(lambda, expression, context));
         // Tool#getNextStates runs the body with the function's cost model, not the application's.
         return visit(replay, lambda.body, items, bound, partial, getLazyFunctionNode(lambda.value));
