@@ -36,14 +36,12 @@ export const termination = () => {
   can = { ...can };
 };
 
-/** @always */
 export const monotonicDecrease = (before: { can: typeof can }) =>
   can.black + can.white < before.can.black + before.can.white;
 
 /** @eventually */
 export const eventuallyTerminates = () => beanCount() === 1;
 
-/** @always */
 export const loopInvariant = (before: { can: typeof can }) =>
   (before.can.white % 2 === 0) === (can.white % 2 === 0);
 
