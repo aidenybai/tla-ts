@@ -18,7 +18,7 @@ import {
   type Substitution,
 } from "./instances";
 import { SELECTION_NAME } from "./resolve";
-import { getRootKey, type Environment, type Scope } from "./evaluate";
+import { describeNode, getRootKey, type Environment, type Scope } from "./evaluate";
 import { getJavaHashCode } from "./java-hash";
 import { getTlcFingerprint } from "./tlc/fingerprint";
 import {
@@ -281,6 +281,9 @@ export const getCoverageLabel = (
   const actual = getPredicateRange(expression) ?? range;
   const label = actionHead ? name : definition?.name;
   if (label === undefined || !head) {
+    const predicate = getActionPredicate(expression);
+    // ActionWrapper prints an undeclared Action by Action#toString, which gives a NumeralNode as its image.
+    if (predicate.kind === "Number") return `Action ${describeNode(predicate)}`;
     return `Action ${actual ? formatRange(actual) : "Unknown location"}`;
   }
   const isBody = actionHead

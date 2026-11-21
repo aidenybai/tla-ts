@@ -3748,6 +3748,55 @@ ASSUME TLCFP(a) = -887695703
     },
   );
 
+  it.each([
+    [
+      `Spec == x = 0 /\\ y = 0 /\\ 2 /\\ ${UNCHANGED_STEP}`,
+      [
+        "<Action line 4, col 9 to line 4, col 13 of module M>: 0:0",
+        "<Action line 4, col 18 to line 4, col 22 of module M>: 0:0",
+        "<Action 2>: 0:0",
+        "<Action line 4, col 35 to line 4, col 52 of module M>: 0:0",
+      ],
+    ],
+    [
+      `F(a) == a\nSpec == x = 0 /\\ y = 0 /\\ F(2) /\\ ${UNCHANGED_STEP}`,
+      [
+        "<Action line 5, col 9 to line 5, col 13 of module M>: 0:0",
+        "<Action line 5, col 18 to line 5, col 22 of module M>: 0:0",
+        "<Action 2>: 0:0",
+        "<Action line 5, col 38 to line 5, col 55 of module M>: 0:0",
+      ],
+    ],
+    [
+      `Spec == 2 /\\ x = 0 /\\ y = 0 /\\ ${UNCHANGED_STEP}`,
+      [
+        "<Action 2>: 0:0",
+        "<Action line 4, col 14 to line 4, col 18 of module M>: 0:0",
+        "<Action line 4, col 23 to line 4, col 27 of module M>: 0:0",
+        "<Action line 4, col 35 to line 4, col 52 of module M>: 0:0",
+      ],
+    ],
+    [
+      `Spec == x = 0 /\\ y = 0 /\\ "s" /\\ ${UNCHANGED_STEP}`,
+      [
+        "<Action line 4, col 9 to line 4, col 13 of module M>: 0:0",
+        "<Action line 4, col 18 to line 4, col 22 of module M>: 0:0",
+        "<Action line 4, col 27 to line 4, col 29 of module M>: 0:0",
+        "<Action line 4, col 37 to line 4, col 54 of module M>: 0:0",
+      ],
+    ],
+  ])(
+    "names the unnamed actions of %j under coverage as TLC's Action#toString does, a numeral by its text",
+    async (spec, labels) => {
+      const result = await checkTakenApart(spec, 1);
+      expect(
+        result.coverage?.relations.map(
+          (relation) => `<${relation.label}>: ${relation.distinct}:${relation.generated}`,
+        ),
+      ).toEqual(labels);
+    },
+  );
+
   it('describes an application of a definition whose body is a literal in TLCGet("spec") whole, as TLC does', async () => {
     const prints: string[] = [];
     await check({
