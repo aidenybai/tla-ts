@@ -164,9 +164,10 @@ export class MacroManager {
     this.scopes.push({ numDecls: this.decls.length, numForbidden: this.forbiddenTrail.length });
   }
 
-  popScope() {
-    const scope = this.scopes.pop();
-    if (scope === undefined) return;
+  popScope(numScopes: number) {
+    const newLevel = this.scopes.length - numScopes;
+    const scope = this.scopes[newLevel];
+    this.scopes.length = newLevel;
     for (const decl of this.decls.splice(scope.numDecls)) {
       this.deps.delete(decl);
       this.decl2macro.delete(decl);
@@ -222,8 +223,12 @@ export class MacroManager {
     return manager.withTemporaries(
       () => {
         const headDef = getHeadDef(manager, this.macros[index], this.decls[index]);
-        const def = normalizeMacroDef(manager, headDef.head, headDef.def);
-        manager.incRef(def);
+        const def = normalizeMacroDef(
+          manager,
+          headDef.head,
+          manager.getQuantifier(this.macros[index]).sorts.length,
+          headDef.def,
+        );
         manager.decRef(headDef.def);
         return def;
       },

@@ -125,6 +125,7 @@ export const createRandomSubsetSet = (runtime: CheckerRuntime) =>
 export const createRandomizationOperators = (runtime: CheckerRuntime): Builtin[] => [
   overrideWithJava(
     defineOperator("RandomSubset", 2, (args) => {
+      // Deviation from TLC: Randomization#RandomSubset passes a negative count to new ValueVec, which throws a NegativeArraySizeException.
       const count = getCount(getValue(args, 0, "RandomSubset"), "first", "RandomSubset");
       const set = getValue(args, 1, "RandomSubset");
       if (!isTlcEnumerable(set) || !isFiniteSet(set)) {

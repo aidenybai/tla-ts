@@ -34,15 +34,8 @@ import {
   type Environment,
   type Scope,
 } from "./evaluate";
-import {
-  ACTION_LEVEL,
-  CONSTANT_LEVEL,
-  createBoundScope,
-  createLevelAnalyzer,
-  TEMPORAL_LEVEL,
-  VARIABLE_LEVEL,
-} from "./levels";
-import { bindLetDefinitions, getLevel } from "./liveness";
+import { ACTION_LEVEL, CONSTANT_LEVEL, TEMPORAL_LEVEL, VARIABLE_LEVEL } from "./levels";
+import { bindLetDefinitions, getLevelBound, getSanyLevel } from "./liveness";
 import { EMPTY_STATE } from "./runtime";
 import {
   createRecord,
@@ -149,21 +142,7 @@ const hasConstantArguments = (
   args: Expression[],
   scope: Scope | undefined,
   environment: Environment,
-) => {
-  const bindings: [string, Definition | undefined][] = [];
-  for (let node = scope; node; node = node.parent) {
-    bindings.unshift([node.name, letDefinitions.get(node)]);
-  }
-  const analyzer = createLevelAnalyzer({
-    constants: new Map([...environment.constants.keys()].map((key) => [key, 0])),
-    variables: new Set(environment.variables),
-    getDefinition: (name) => environment.definitions.get(name),
-    instances: environment.instances,
-    recursiveSections: environment.recursiveSections,
-  });
-  const boundScope = createBoundScope(bindings);
-  return args.every((arg) => analyzer.analyze(arg, boundScope).level === CONSTANT_LEVEL);
-};
+) => args.every((arg) => getSanyLevel(arg, scope, environment) === CONSTANT_LEVEL);
 
 const getOperatorName = (expression: Expression) =>
   expression.kind === "Identifier"
@@ -559,7 +538,7 @@ const describeSpecification = (
     : frames;
   if (called && called.params.length === 0) {
     if (
-      getLevel(called.body, called.scope, environment) === VARIABLE_LEVEL &&
+      getLevelBound(called.body, called.scope, environment) === VARIABLE_LEVEL &&
       (!substitutionFrame || isVariableBound(called.body, environment, new Set()))
     ) {
       const name = isLocallyResolved(expression) ? undefined : getOperatorName(expression);
@@ -596,7 +575,7 @@ const describeSpecification = (
     description.temporals.push(createConjunct(UNNAMED_ACTION, expression, scope));
     return;
   }
-  const level = getLevel(expression, scope, environment);
+  const level = getLevelBound(expression, scope, environment);
   // SpecProcessor#processConfigSpec drops a name whose value is TRUE, though it keeps a formula such as 1 = 1.
   if (
     expression.kind === "Identifier" &&
@@ -653,14 +632,14 @@ const describeProperty = (
     const inner = expression.expression;
     if (inner.kind === "BoxAction") {
       description.impliedActions.push(createAction(configName, inner));
-    } else if (getLevel(inner, scope, environment) < ACTION_LEVEL) {
+    } else if (getLevelBound(inner, scope, environment) < ACTION_LEVEL) {
       description.invariants.push(createAction(configName, inner));
     } else {
       description.impliedTemporals.push(createAction(configName, expression));
     }
     return;
   }
-  const level = getLevel(expression, scope, environment);
+  const level = getLevelBound(expression, scope, environment);
   if (level <= VARIABLE_LEVEL) {
     description.impliedInits.push(createAction(configName, expression));
   } else if (level === TEMPORAL_LEVEL) {

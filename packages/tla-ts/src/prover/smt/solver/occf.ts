@@ -75,7 +75,7 @@ export const occf = (manager: AstManager, goal: Goal) => {
   const size = goal.forms.size;
   for (let index = 0; index < size; index++) {
     manager.limit.checkpoint();
-    const clause = goal.forms.items[index];
+    const clause = goal.forms.get(index);
     if (manager.getOp(clause) !== OP_OR || !isTarget(clause)) continue;
     let keep: number | undefined;
     const literals: number[] = [];

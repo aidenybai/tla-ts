@@ -88,9 +88,7 @@ export const tseitinCnf = (manager: AstManager, goal: Goal) => {
     return pin(manager.mkNot(expr));
   };
 
-  // ast_manager::mk_not keeps (not true), which AstManager.mkNot folds to false.
-  const mkLit = (expr: number, isNeg: boolean) =>
-    isNeg ? pin(manager.mkApp(OP_NOT, [expr], SORT_BOOL)) : expr;
+  const mkLit = (expr: number, isNeg: boolean) => (isNeg ? pin(manager.mkNot(expr)) : expr);
 
   const getLit = (form: number, isNegated: boolean): number => {
     let expr = form;
@@ -473,7 +471,7 @@ export const tseitinCnf = (manager: AstManager, goal: Goal) => {
   try {
     for (let index = 0; index < goal.forms.size; index++) {
       dependency = goal.getDependency(index);
-      process(goal.forms.items[index]);
+      process(goal.forms.get(index));
     }
   } catch (error) {
     pinned.reset();

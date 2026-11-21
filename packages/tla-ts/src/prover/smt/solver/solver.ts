@@ -20,7 +20,8 @@ export interface KernelParams {
   isMbqi: boolean;
   mbqiMaxIterations: number;
   isFindingMacros: boolean;
-  relevancyLevel?: 0 | 2;
+  relevancyLevel?: number;
+  isDelayingNewCaseSplits?: boolean;
   isCoreMinimizing?: boolean;
   randomSeed?: number;
   intHammerPeriod?: number;
@@ -55,7 +56,7 @@ export const solveGoal = (manager: AstManager, forms: number[], params: KernelPa
   const context = new Context(manager, {
     isMbqi: params.isMbqi,
     mbqiMaxIterations: params.mbqiMaxIterations,
-    relevancyLevel: 2,
+    relevancyLevel: params.relevancyLevel ?? 2,
     randomSeed: params.randomSeed,
     intHammerPeriod: params.intHammerPeriod,
     isArithPropagatingEqs: params.isArithPropagatingEqs,
@@ -102,7 +103,7 @@ export const solveAssuming = (
   const context = new Context(manager, {
     isMbqi: params.isMbqi,
     mbqiMaxIterations: params.mbqiMaxIterations,
-    relevancyLevel: 2,
+    relevancyLevel: params.relevancyLevel ?? 2,
     randomSeed: params.randomSeed,
     intHammerPeriod: params.intHammerPeriod,
     isArithPropagatingEqs: params.isArithPropagatingEqs,

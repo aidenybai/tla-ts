@@ -71,6 +71,26 @@ it("starts the random generator over from the seed at each level, as TLC's new D
   expect(prints).toEqual(["731", "731", "919"]);
 });
 
+it("replays an error with the generator that drew for the initial states, as TLC's main thread does", () => {
+  const prints: string[] = [];
+  checkDepthFirst({
+    source:
+      '---- MODULE M ----\nEXTENDS Integers, Sequences, TLC\nVARIABLE x\nInit == x = 0 /\\ PrintT(<<"init", RandomElement(1..1000000)>>)\nNext == x < 2 /\\ x\' = x + 1 /\\ PrintT(<<"next", x, RandomElement(1..1000000)>>) /\\ (x = 1 => Head(<<>>) = 1)\n====',
+    config: "INIT Init\nNEXT Next",
+    maxDepth: 5,
+    seed: 4n,
+    onPrint: (text) => prints.push(text),
+    onOutput: () => {},
+  });
+  expect(prints).toEqual([
+    '<<"init", 730610>>',
+    '<<"next", 0, 730610>>',
+    '<<"next", 0, 730610>>',
+    '<<"next", 1, 918715>>',
+    '<<"next", 1, 918715>>',
+  ]);
+});
+
 // Deviation from TLC: TLC fails the assumption with 'Cannot invoke "tlc2.tool.IWorker.setLocalValue(int, tlc2.value.IValue)" because "this.workers[i]" is null'.
 it("reads in Init a register that ASSUME sets, as model checking does", () => {
   const messages: string[] = [];

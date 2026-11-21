@@ -1,5 +1,6 @@
 import { type AstManager, SORT_BOOL, SORT_INT } from "./ast";
 import type { Goal } from "./goal";
+import { ObjMap } from "./hashtable";
 import { L_FALSE } from "./lbool";
 import { RefVector } from "./ref-vector";
 import { Rewriter, TACTIC_REWRITER_OPTIONS } from "./rewriter";
@@ -24,7 +25,7 @@ export const createCtxSolverSimplify = (
   let kernel = new SmtKernel(manager, frontParams);
   kernel.updateParams(params);
   const boolFn = manager.mkFuncDecl(FRESH_SYMBOL, [SORT_INT], SORT_BOOL);
-  const fns = new Map<number, number>();
+  const fns = new ObjMap<number>((sort) => manager.getSortHash(sort));
   const reduceGoal = (goal: Goal) => {
     if (goal.isProofsEnabled || goal.isInconsistent) {
       goal.depth++;
@@ -148,6 +149,10 @@ export const createCtxSolverSimplify = (
       kernel.release();
       kernel = new SmtKernel(manager, params);
     },
-    release: () => kernel.release(),
+    release: () => {
+      for (const fn of fns.values()) manager.decDeclRef(fn);
+      manager.decDeclRef(boolFn);
+      kernel.release();
+    },
   };
 };

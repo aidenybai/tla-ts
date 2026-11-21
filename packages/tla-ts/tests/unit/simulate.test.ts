@@ -81,6 +81,12 @@ it("keeps a step whose values TLC fails to compare as it drops stuttering steps,
   ]);
 });
 
+it("reports the violation of a successor TLC fails to compare with the current state, where TLC reports that failure", () => {
+  const body =
+    'Init == p = 0 /\\ q = 0\nNext == p\' = 1 /\\ q\' = IF p = 0 THEN 0 ELSE "a"\nInv == TLCGet("level") < 3';
+  expect(getPrintedRecords(body, SAFETY_CONFIG)).toEqual([["0", "0", '"a"']]);
+});
+
 it("sorts the records of a behavior TLC checks for liveness, as it fingerprints each state", () => {
   const body =
     "Init == p = 0 /\\ q = [b |-> 0, a |-> 0]\nNext == p < 2 /\\ p' = p + 1 /\\ q' = [b |-> 5, a |-> p]\nSpec == Init /\\ [][Next]_<<p, q>>\nLive == <>(q.a = 7)";

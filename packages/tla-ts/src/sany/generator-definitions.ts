@@ -521,6 +521,7 @@ export const processModuleDefinition = (
       isLeibniz: false,
       opLevelCond: [],
       maxLevels: [],
+      weights: [],
       minMaxLevel: [],
     };
     addSymbol(generation, node);

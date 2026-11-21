@@ -16,6 +16,7 @@ import { simplifyInjAxiom } from "./inj-axiom";
 import { MacroManager } from "./macro-finder";
 import { ElimBoundsRw } from "./elim-bounds";
 import { DefinedNames, Nnf } from "./nnf";
+import { PatternDatabase } from "./pattern-database";
 import { PatternInference } from "./pattern-inference";
 import { MaxBvSharing } from "./maximize-ac-sharing";
 import { PullQuant } from "./pull-quant";
@@ -26,6 +27,9 @@ import { RewriterTpl } from "./rewriter-tpl";
 import type { SmtConfig } from "./smt-setup";
 
 export class PatternInferenceRw extends RewriterTpl {
+  isUsingDatabase = false;
+  private database: PatternDatabase | undefined;
+
   constructor(
     manager: AstManager,
     private inference: PatternInference,
@@ -33,10 +37,38 @@ export class PatternInferenceRw extends RewriterTpl {
     super(manager);
   }
 
+  release() {
+    this.database?.release();
+    super.release();
+  }
+
+  private reduceByDatabase(expr: number) {
+    const manager = this.manager;
+    this.database ??= new PatternDatabase(manager);
+    const match = this.database.matchQuantifier(expr);
+    if (match === undefined) return -1;
+    const data = manager.getQuantifier(expr);
+    const withPatterns =
+      data.patterns.length > 0
+        ? expr
+        : manager.mkQuantifier({ ...data, patterns: match.patterns, noPatterns: [] });
+    manager.incRef(withPatterns);
+    const result =
+      data.weight === match.weight
+        ? withPatterns
+        : manager.mkQuantifier({ ...manager.getQuantifier(withPatterns), weight: match.weight });
+    manager.incRef(result);
+    manager.decRef(withPatterns);
+    for (const pattern of match.patterns) manager.decRef(pattern);
+    return result;
+  }
+
   reduceQuantifier(expr: number, body: number) {
     const manager = this.manager;
     const data = manager.getQuantifier(expr);
-    if (data.kind !== QUANTIFIER_FORALL || data.patterns.length > 0) return -1;
+    if (data.kind !== QUANTIFIER_FORALL) return -1;
+    const fromDatabase = this.isUsingDatabase ? this.reduceByDatabase(expr) : -1;
+    if (fromDatabase !== -1 || data.patterns.length > 0) return fromDatabase;
     const quantifier = manager.withTemporaries(() => {
       const inferred = this.inference.infer(data.sorts.length, body, data.weight, data.noPatterns);
       const withPatterns = manager.mkQuantifier({ ...data, body, patterns: inferred.patterns });
@@ -85,7 +117,7 @@ class ElimTermIteRw extends RewriterTpl {
 
   reduceApp(decl: number, args: number[], sort: number) {
     const manager = this.manager;
-    if (decl !== OP_ITE || sort === SORT_BOOL) return -1;
+    if (manager.funcDecls[decl].op !== OP_ITE || sort === SORT_BOOL) return -1;
     const ite = manager.mkApp(OP_ITE, args, sort);
     manager.incRef(ite);
     const named = this.names.mkName(ite);
@@ -101,9 +133,10 @@ class ElimTermIteRw extends RewriterTpl {
     this.lims.push(this.definitions.size);
   }
 
-  pop() {
-    this.definitions.shrink(this.lims[this.lims.length - 1]);
-    this.lims.pop();
+  pop(numScopes: number) {
+    const newLevel = this.lims.length - numScopes;
+    this.definitions.shrink(this.lims[newLevel]);
+    this.lims.length = newLevel;
   }
 }
 
@@ -148,9 +181,10 @@ class Substitution {
     this.trailLims.push(this.trail.size);
   }
 
-  pop() {
-    const size = this.trailLims[this.trailLims.length - 1];
-    this.trailLims.pop();
+  pop(numScopes: number) {
+    const newLevel = this.trailLims.length - numScopes;
+    const size = this.trailLims[newLevel];
+    this.trailLims.length = newLevel;
     for (const key of this.trail.items.slice(size)) {
       const value = this.map.get(key);
       if (value === undefined) throw new SmtInvariantError("a trailed key has no substitution");
@@ -272,21 +306,24 @@ export class AssertedFormulas {
     this.numLazyScopes++;
   }
 
-  pop() {
-    if (this.numLazyScopes > 0) {
-      this.numLazyScopes--;
+  pop(numScopes: number) {
+    if (numScopes <= this.numLazyScopes) {
+      this.numLazyScopes -= numScopes;
       return;
     }
-    const scope = this.scopes[this.scopes.length - 1];
-    this.scopes.pop();
+    const numRealScopes = numScopes - this.numLazyScopes;
+    this.numLazyScopes = 0;
+    this.bvSharing.popScope(numRealScopes);
+    this.macros.popScope(numRealScopes);
+    const newLevel = this.scopes.length - numRealScopes;
+    const scope = this.scopes[newLevel];
     this.isInconsistent = scope.isInconsistent;
-    this.bvSharing.popScope();
-    this.macros.popScope();
-    this.names.pop();
-    this.termIteElim.pop();
-    this.substitution.pop();
+    this.names.pop(numRealScopes);
+    this.termIteElim.pop(numRealScopes);
+    this.substitution.pop(numRealScopes);
     this.formulas.shrink(scope.numFormulas);
     this.qhead = scope.numFormulas;
+    this.scopes.length = newLevel;
     this.flushCache();
   }
 
@@ -327,6 +364,7 @@ export class AssertedFormulas {
     this.isLiftingNonGroundIte = config.isLiftingNonGroundIte;
     this.isEliminatingBounds = config.isEliminatingBounds;
     this.isFindingMacros ||= config.isFindingMacros;
+    this.patternInference.isUsingDatabase = config.isUsingPatternDatabase;
   }
 
   updateParams(config: SmtConfig) {
@@ -336,6 +374,7 @@ export class AssertedFormulas {
     this.isLiftingNonGroundIte = config.isLiftingNonGroundIte;
     this.isEliminatingBounds = config.isEliminatingBounds;
     this.isFindingMacros = config.isFindingMacros;
+    this.patternInference.isUsingDatabase = config.isUsingPatternDatabase;
     this.isReducePending = true;
   }
 
@@ -539,10 +578,10 @@ export class AssertedFormulas {
     substitution.push();
     for (let index = this.qhead; index < size; index++) propagate(index);
     this.flushCache();
-    substitution.pop();
+    substitution.pop(1);
     substitution.push();
     for (let index = size - 1; index >= this.qhead; index--) propagate(index);
-    substitution.pop();
+    substitution.pop(1);
     this.flushCache();
     if (numPropagated > 0) this.reduceAsserted();
   }

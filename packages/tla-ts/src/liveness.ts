@@ -4,6 +4,7 @@ import {
   type Bound,
   type Definition,
   type Expression,
+  type SourceRange,
 } from "./ast";
 import { getDefinitionLevel } from "./dependencies";
 import {
@@ -37,9 +38,16 @@ import {
   type Thunk,
 } from "./evaluate";
 import { letDefinitions } from "./coverage";
-import { mapChildren, substitutionFrames } from "./instances";
+import { getSubstitutedName, mapChildren, substitutionFrames } from "./instances";
 import { getKeyName } from "./resolve";
-import { ACTION_LEVEL, CONSTANT_LEVEL, TEMPORAL_LEVEL, VARIABLE_LEVEL } from "./levels";
+import {
+  ACTION_LEVEL,
+  CONSTANT_LEVEL,
+  createBoundScope,
+  createLevelAnalyzer,
+  TEMPORAL_LEVEL,
+  VARIABLE_LEVEL,
+} from "./levels";
 import { isEnabled } from "./successors";
 import { EXIT_STATUS, setExitCode } from "./exit-codes";
 import { isEvalException } from "./tlc/messages";
@@ -61,10 +69,16 @@ export interface ScopedExpression {
   scope: Scope | undefined;
 }
 
+export interface TheoremReference {
+  name: string;
+  range: SourceRange;
+}
+
 interface ExpandedExpression extends ScopedExpression {
   name: string | undefined;
   path: string[];
   frames: Expression[];
+  theorem?: TheoremReference;
 }
 
 export interface TemporalProperty extends ScopedExpression {
@@ -110,6 +124,29 @@ const createCannotHandleError = (expression: Expression, inner?: string) =>
     `TLC cannot handle the temporal formula ${describeRange(expression)}${inner === undefined ? "" : `:\n${inner}`}`,
   );
 
+export const createSanyAnalyzer = (environment: Environment) =>
+  createLevelAnalyzer({
+    constants: new Map([...environment.constants.keys()].map((key) => [key, 0])),
+    variables: new Set(environment.variables),
+    getDefinition: (name) => environment.definitions.get(name),
+    getPreparedLevels: environment.getPreparedLevels,
+    instances: environment.instances,
+    recursiveSections: environment.recursiveSections,
+  });
+
+// TLC reads the level SANY gives a node, which counts a formal parameter as a constant whatever its argument.
+export const getSanyLevel = (
+  expression: Expression,
+  scope: Scope | undefined,
+  environment: Environment,
+) => {
+  const bindings: [string, Definition | undefined][] = [];
+  for (let node = scope; node; node = node.parent) {
+    bindings.unshift([node.name, letDefinitions.get(node)]);
+  }
+  return createSanyAnalyzer(environment).analyze(expression, createBoundScope(bindings)).level;
+};
+
 // The level that SANY gives an expression, with the levels of what its scope binds read in, as
 // Specs.getLevel finds it, or with isLevelBound the bound on it that Tool.getLevelBound finds
 // through the definitions the expression calls.
@@ -149,6 +186,8 @@ export const getLevel = (
     if (environment.variableIndex.has(name)) return VARIABLE_LEVEL;
     if (environment.constants.has(name)) return CONSTANT_LEVEL;
     const definition = getDefinition(name, environment);
+    // TLC's getLevelBound counts a theorem's arguments but not its body.
+    if (definition && isLevelBound && environment.theorems.has(name)) return CONSTANT_LEVEL;
     if (definition && isLevelBound) {
       return Math.max(
         ...getDefinitionExpressions(definition).map((item) => getBodyLevel(item, item, undefined)),
@@ -201,6 +240,18 @@ export const getLevel = (
       return TEMPORAL_LEVEL;
     case "UnboundedQuantifier":
       return expression.isTemporal ? TEMPORAL_LEVEL : getChildrenLevel(expression);
+    // TLC's level bound counts a LET's definitions, though SANY levels a LET by its body.
+    case "Let":
+      return isLevelBound
+        ? getChildrenLevel(expression)
+        : getLevel(
+            expression.body,
+            bindLetDefinitions(expression, scope, environment),
+            environment,
+            shadowed,
+            bindingLevels,
+            isLevelBound,
+          );
     case "Identifier":
       return getNameLevel(expression.name, expression);
     case "OperatorReference":
@@ -287,6 +338,28 @@ export const expandTemporal = (
         ),
       ],
     });
+  const getLeaf = (theorem?: TheoremReference): ExpandedExpression[] => [
+    {
+      expression,
+      scope,
+      name: expansion.name,
+      path: expansion.path,
+      frames: expansion.frames,
+      theorem,
+    },
+  ];
+  // An instanced body reaches the theorem SANY copied it from, and a direct reference the one its INSTANCE made.
+  const getTheoremReference = (key: string): TheoremReference | undefined => {
+    const range = environment.theorems.get(key);
+    if (!range) return undefined;
+    const original = getDefinition(key, environment);
+    return {
+      name:
+        (!expansion.isSubstituted && environment.instanceNames.get(key)) ||
+        (original?.name ?? getKeyName(key)),
+      range: (expansion.isSubstituted && original?.location.range) || range,
+    };
+  };
   if (expression.kind === "And") {
     return expression.operands.flatMap((operand) => expand(operand, scope, describeRange(operand)));
   }
@@ -296,18 +369,25 @@ export const expandTemporal = (
     return expand(expression.body, bindLetDefinitions(expression, scope, environment));
   }
   if (expression.kind === "Identifier") {
+    const isSubstitute = getSubstitutedName(expression) !== undefined;
+    // TLC never takes a VARIABLE's substitute apart, and SANY keeps one at most state-level.
+    if (isSubstitute && getLevelBound(expression, scope, environment) <= VARIABLE_LEVEL) {
+      return getLeaf();
+    }
     const binding = isLocallyResolved(expression) ? lookupScope(scope, expression.name) : undefined;
     if (binding?.kind === "Thunk" && !binding.isReleased) {
       return expand(
         binding.expression,
         binding.scope,
-        definitionThunks.has(binding) ? expression.name : expansion.name,
+        definitionThunks.has(binding) && !isSubstitute ? expression.name : expansion.name,
       );
     }
     const operator = binding?.kind === "Operator" ? binding.operator : undefined;
     if (operator?.kind === "Closure" && operator.params.length === 0) {
-      return expand(operator.body, operator.scope, expression.name);
+      return expand(operator.body, operator.scope, isSubstitute ? expansion.name : expression.name);
     }
+    const theorem = binding ? undefined : getTheoremReference(expression.name);
+    if (theorem) return getLeaf(theorem);
     const definition = environment.constants.has(expression.name)
       ? undefined
       : getDefinition(expression.name, environment);
@@ -330,6 +410,16 @@ export const expandTemporal = (
         definition,
       );
     }
+  }
+  // A parameterized INSTANCE passes its parameters to each theorem it copies, which SANY's body names with none.
+  if (expression.kind === "Apply" && expansion.isSubstituted && !isLocallyResolved(expression)) {
+    const applied = getDefinition(expression.operator, environment);
+    const theorem =
+      applied?.kind === "Operator" &&
+      applied.params.every((param) => environment.instanceParams.has(param))
+        ? getTheoremReference(expression.operator)
+        : undefined;
+    if (theorem) return getLeaf(theorem);
   }
   const context = getConstantContext(environment, scope);
   if (
@@ -375,9 +465,7 @@ export const expandTemporal = (
     if (expanded.length === 0) throw createTautologyError();
     return expanded;
   }
-  return [
-    { expression, scope, name: expansion.name, path: expansion.path, frames: expansion.frames },
-  ];
+  return getLeaf();
 };
 
 // TLC takes a formula apart through a LET without binding its definitions, so it evaluates an impure one again at each reference.

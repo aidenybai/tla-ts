@@ -14,6 +14,7 @@ import {
   type NumberExpression,
   type OperatorParam,
   type RecordField,
+  type SourceRange,
 } from "./ast";
 import { getKindString } from "./builtins";
 import {
@@ -78,6 +79,9 @@ import {
   isBeyondSetBound,
   createRecord,
   createEnumeratedSet,
+  createFunctionSet,
+  createProductSet,
+  createRecordSet,
   createSortedFunction,
   createSortedRecord,
   createNormalizedSet,
@@ -202,6 +206,7 @@ export interface Scope {
 export interface Environment {
   runtime: CheckerRuntime;
   definitions: Map<string, Definition>;
+  theorems: Map<string, SourceRange>;
   rootKeys: Map<string, string>;
   builtins: Map<string, Builtin>;
   constants: Map<string, Value>;
@@ -558,6 +563,10 @@ export const getBuiltin = (name: string, environment: Environment) =>
 export const getRootKey = (name: string, environment: Environment) =>
   environment.rootKeys.get(name) ?? name;
 
+// TLC looks a configuration file's name up in defns, which holds no theorem or assumption.
+export const getConfigNameDefinition = (key: string, environment: Environment) =>
+  environment.theorems.has(key) ? undefined : getDefinition(key, environment);
+
 const getBoundExplanation = (set: Value, text: string) => {
   const quantified = `universally (\\A) or existentially (\\E) quantify over ${text}, because this would require checking an\ninfinite number of cases.`;
   if (typeof set === "object" && set.kind === "SequenceSet") {
@@ -694,7 +703,7 @@ const forEachChargedBinding = (
 
 const getBoundsDomain = (bounds: Bound[], context: Context): Value => {
   const sets = mapBoundSets(bounds, (set) => evaluate(set, context));
-  return sets.length === 1 ? sets[0] : { kind: "ProductSet", factors: sets };
+  return sets.length === 1 ? sets[0] : createProductSet(sets);
 };
 
 const bindArgument = (bounds: Bound[], scope: Scope | undefined, argument: Value) => {
@@ -848,12 +857,14 @@ const createLazyFunction = (
   source: LazyFunctionSource | undefined,
   boundTupleLengths: (number | undefined)[] | undefined,
   costModel: CostModel | undefined,
+  isApplicationObserved: boolean,
 ) => {
   const self: LazyFunctionValue = {
     kind: "LazyFunction",
     domain,
     source,
     boundTupleLengths,
+    isApplicationObserved,
     apply: (argument) => compute(argument, self),
   };
   return costModel ? Object.assign(self, { costModel }) : self;
@@ -873,6 +884,7 @@ const createRecursiveFunction = (
   definition: FunctionDefinition,
   context: Context,
   domain: Value,
+  isVaryingBody: boolean,
 ): RebindableLazyFunction => {
   const compute = (argument: Value, self: Value) =>
     evaluate(
@@ -900,6 +912,7 @@ const createRecursiveFunction = (
     ),
     getBoundTupleLengths(definition.bounds),
     getRecursiveCostModel(coverage, node),
+    isVaryingBody || coverage !== undefined,
   );
   keepLambda({
     value: functionValue,
@@ -914,6 +927,7 @@ const createRecursiveFunction = (
         definition,
         { ...context, environment: tracing },
         functionValue.domain,
+        isVaryingBody,
       );
       rebound.enumerated = functionValue.enumerated;
       return rebound;
@@ -952,8 +966,14 @@ const compileDefinitionBody = (definition: Definition, environment: Environment)
   if (definition.kind !== "Function") return getEntryEvaluator(definition.body, environment);
   const construction = getFunctionConstruction(definition);
   if (!definition.isSelfReferential) return getEntryEvaluator(construction, environment);
+  const isVaryingBody = isExpressionImpure([definition.body], environment, "varying");
   const evaluator: Evaluator = (context) =>
-    createRecursiveFunction(definition, context, getBoundsDomain(definition.bounds, context));
+    createRecursiveFunction(
+      definition,
+      context,
+      getBoundsDomain(definition.bounds, context),
+      isVaryingBody,
+    );
   const coverage = environment.coverage;
   return coverage ? countEvaluator(construction, evaluator, coverage) : evaluator;
 };
@@ -2430,6 +2450,7 @@ export const getFunctionBuilder = (
   environment: Environment,
 ) => {
   const isLazy = isKeptLazy(expression) || isRecursiveConstruction(expression);
+  const isVaryingBody = isExpressionImpure([expression.body], environment, "varying");
   const body = getEvaluator(expression.body, environment);
   const bounds = expression.bounds;
   const bound = bounds[0];
@@ -2476,6 +2497,7 @@ export const getFunctionBuilder = (
   const boundTupleLengths = getBoundTupleLengths(bounds);
   const bodyNames = getScopeNames(expression.body);
   const coverage = environment.coverage;
+  const isApplicationObserved = isVaryingBody || coverage !== undefined;
   const name = expression.definition?.isSelfReferential ? expression.definition.name : undefined;
   const createLazy = (domain: Value, context: Context) => {
     const outer = trimScope(context.scope, bodyNames);
@@ -2498,6 +2520,7 @@ export const getFunctionBuilder = (
       getLazyFunctionSource(template, bounds, domain),
       boundTupleLengths,
       name === undefined ? undefined : getRecursiveCostModel(coverage, node),
+      isApplicationObserved,
     );
     if (name !== undefined) scope = bindSelf(outer, name, value);
     const functionValue = keepLambda({ value, bounds, body: expression.body, scope, compute });
@@ -2515,7 +2538,7 @@ export const getFunctionBuilder = (
           domain.kind === "ProductSet" &&
           domain.factors.every(isReducibleSet);
     if (!isReducibleDomain) {
-      if (callStack) return createLazy(domain, context);
+      if (callStack || isVaryingBody) return createLazy(domain, context);
       try {
         return construct(domain, context);
       } catch (error) {
@@ -3005,7 +3028,7 @@ const compile = (expression: Expression, environment: Environment): Evaluator =>
     case "FunctionSet": {
       const domain = getChildEvaluator(expression.domain);
       const range = getChildEvaluator(expression.range);
-      return (context) => ({ kind: "FunctionSet", domain: domain(context), range: range(context) });
+      return (context) => createFunctionSet(domain(context), range(context));
     }
     case "Record":
       return compileRecord(expression.fields, environment);
@@ -3015,15 +3038,18 @@ const compile = (expression: Expression, environment: Environment): Evaluator =>
       const writtenIndexes = fields.map((field) => expression.fields.indexOf(field));
       const sets = expression.fields.map((field) => getChildEvaluator(field.value));
       if (writtenIndexes.every((writtenIndex, index) => writtenIndex === index)) {
-        return (context) => ({ kind: "RecordSet", names, sets: sets.map((set) => set(context)) });
+        return (context) =>
+          createRecordSet(
+            names,
+            sets.map((set) => set(context)),
+          );
       }
       return (context) => {
         const writtenSets = sets.map((set) => set(context));
-        return {
-          kind: "RecordSet",
+        return createRecordSet(
           names,
-          sets: writtenIndexes.map((index) => writtenSets[index]),
-        };
+          writtenIndexes.map((index) => writtenSets[index]),
+        );
       };
     }
     case "Except":
@@ -3075,10 +3101,7 @@ const compile = (expression: Expression, environment: Environment): Evaluator =>
     }
     case "Product": {
       const factors = expression.factors.map(getChildEvaluator);
-      return (context) => ({
-        kind: "ProductSet",
-        factors: factors.map((factor) => factor(context)),
-      });
+      return (context) => createProductSet(factors.map((factor) => factor(context)));
     }
     case "BoxAction":
     case "AngleAction": {

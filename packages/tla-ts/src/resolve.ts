@@ -101,6 +101,7 @@ interface Unit {
   labels: Set<string>;
   isGenerated: boolean;
   goalOperands: WeakMap<Expression, Expression[]>;
+  goalSelections: WeakMap<Expression, Expression>;
 }
 
 export interface SelectionArguments {
@@ -146,6 +147,16 @@ interface SelectionArgument {
   range: SourceRange | undefined;
 }
 
+export interface SelectedDefinition {
+  definition: Definition;
+  params: string[];
+}
+
+export interface SubexpressionRecords {
+  selectedDefinitions: WeakMap<Expression, SelectedDefinition>;
+  instanceReferences: WeakMap<Instance, Instance>;
+}
+
 export const selections = new WeakMap<Expression, Expression>();
 export const selectionErrors = new WeakMap<Expression, SelectionError>();
 export const operatorSelectionErrors = new WeakMap<Expression, SanyError>();
@@ -158,6 +169,11 @@ const unresolvedExpressions = new WeakSet<Expression>();
 const emptyExpressions = new WeakSet<Expression>();
 
 export const isUnresolved = (expression: Expression) => unresolvedExpressions.has(expression);
+
+export const copyResolution = (expression: Expression, copy: Expression) => {
+  if (unresolvedExpressions.has(expression)) unresolvedExpressions.add(copy);
+  if (emptyExpressions.has(expression)) emptyExpressions.add(copy);
+};
 
 // SANY's failed selection is an operator application with no operands.
 const isEmptyExpression = (expression: Expression): boolean =>
@@ -606,6 +622,11 @@ const findClauseLabel = (
 const getLabelBody = (expression: Expression): Expression =>
   expression.kind === "Label" ? getLabelBody(expression.body) : expression;
 
+const getSelectedBody = (expression: Expression): Expression =>
+  expression.kind === "Let" && !expression.location.range
+    ? getSelectedBody(expression.body)
+    : getLabelBody(expression);
+
 const getOperandName = (operand: number | "<<" | ">>") =>
   typeof operand === "number" ? `argument selector ${operand}` : operand;
 
@@ -618,6 +639,7 @@ const checkSelection = (
   goal: Goal,
   unit: Unit,
   use: SelectionUse,
+  formals: string[],
 ) => {
   const report = (index: number | undefined, message: string) => {
     const range =
@@ -682,6 +704,7 @@ const checkSelection = (
       if (selector.args.length !== (found.label.kind === "Label" ? found.label.params.length : 0)) {
         return report(index, `Label \`${selector.name}' used with wrong number of arguments.`);
       }
+      if (found.label.kind === "Label") formals.push(...found.label.params);
       state.node = found.label;
       state.isGoal = false;
       state.isSufficesOpen = false;
@@ -723,12 +746,20 @@ const checkSelection = (
     }
     if (node.kind === "NewSymbol") return node;
     if (node.kind !== "AssumeProve") {
-      const expression = getLabelBody(node);
+      const expression = getSelectedBody(node);
       if (unresolvedExpressions.has(expression)) {
         return report(
           index,
           "Subexpression selection failed, probably due to an error in the selected expression.",
         );
+      }
+      if (expression.kind === "Let") {
+        if (selector.kind !== "Operand" || getPosition(1) !== 0) {
+          return report(index, "A LET/IN expression has only one operand.");
+        }
+        state.node = expression.body;
+        state.isGoal = false;
+        continue;
       }
       if (["Number", "Decimal", "String"].includes(expression.kind)) {
         return report(index, "Selecting subexpression of expression that has none.");
@@ -746,6 +777,7 @@ const checkSelection = (
           );
         }
         params += binder.names.length;
+        formals.push(...binder.names);
         args += count;
         state.node = binder.body;
         state.isGoal = false;
@@ -884,15 +916,21 @@ const checkReference = (
     const selector = selectors[nameLength - 1];
     if (selector.kind !== "Name") return undefined;
     name = nameLength === 1 ? selector.name : `${name}!${selector.name}`;
-    const goal =
-      (nameLength === 1 ? lookupLocal(scope, name)?.goal : undefined) ?? getGoal(name, unit);
+    const goal = lookupLocal(scope, name)?.goal ?? getGoal(name, unit);
     if (goal) {
-      const node = checkSelection(expression, selectors, nameLength, goal, unit, use);
+      const formals: string[] = [];
+      const node = checkSelection(expression, selectors, nameLength, goal, unit, use, formals);
       if (!node) emptyExpressions.add(expression);
       if (node && node.kind !== "NewSymbol" && node.kind !== "AssumeProve") {
         const args = selectors.flatMap((selector) => ("args" in selector ? selector.args : []));
         // SANY applies a LAMBDA to a selection's arguments, or wraps a selection without them in $Nop.
         unit.goalOperands.set(expression, args.length > 0 ? args : [node]);
+        unit.goalSelections.set(
+          expression,
+          args.length > 0
+            ? { kind: "Lambda", params: formals, body: node, location: expression.location }
+            : node,
+        );
       }
       return { node };
     }
@@ -1236,10 +1274,13 @@ const resolveDefinitions = (
       functionArity: getFunctionArity(definition),
     };
     if (isInstantiated(definition)) {
+      const instanced = lookupLocal(current, definition.name);
       return {
         ...local,
         params: getParamArities(definition),
-        functionArity: lookupLocal(current, definition.name)?.functionArity,
+        functionArity: instanced?.functionArity,
+        goal: instanced?.goal,
+        isSubstituted: instanced?.isSubstituted,
       };
     }
     if (isKey(definition.name)) return { ...local, params: getParamArities(definition) };
@@ -1891,7 +1932,8 @@ const isSubexpressionReported = (
   const symbolIndex = names.findIndex(
     (_name, index) =>
       index > 0 &&
-      (findSymbol(names.slice(0, index + 1).join("!"), unit)?.kind ?? "Instance") !== "Instance",
+      (findBinding(names.slice(0, index + 1).join("!"), scope, unit)?.kind ?? "Instance") !==
+        "Instance",
   );
   const isInstance =
     names.length > 1 &&
@@ -1906,7 +1948,7 @@ const isSubexpressionReported = (
     return true;
   }
   const name = names.slice(0, symbolIndex + 1).join("!");
-  const symbol = symbolIndex > 0 ? findSymbol(name, unit) : undefined;
+  const symbol = symbolIndex > 0 ? findBinding(name, scope, unit) : undefined;
   const argumentCount = expression.selectors
     .slice(0, symbolIndex + 1)
     .flatMap((selector) => ("args" in selector ? selector.args : [])).length;
@@ -1929,7 +1971,7 @@ const isSubexpressionReported = (
       });
       return true;
     }
-    if (isUnknown && !isInstance) {
+    if (isUnknown && !isInstance && symbolIndex === -1) {
       unit.errors.push({
         location: formatRange({ module: range.module, start: range.start, end: lastRange.end }),
         message: `Unknown operator: \`${resolveSynonym(names.join("!"))}'.`,
@@ -2499,6 +2541,8 @@ interface InstancedModule {
   declarations: Declaration[];
   symbols: Symbols;
   instancer: string;
+  getSubstitutionErrors: (substitutionCount: number) => SanyError[];
+  setSubstitutions: (substitutions: Map<string, Expression>) => void;
 }
 
 export interface ModuleReport {
@@ -2519,6 +2563,7 @@ export interface ModuleUnit {
   reports: ModuleReport[];
   warnings: SanyError[];
   goalOperands: WeakMap<Expression, Expression[]>;
+  goalSelections: WeakMap<Expression, Expression>;
   recursiveCount: RecursiveCount;
   nestedRecursion: NestedRecursion[];
 }
@@ -2782,18 +2827,26 @@ const checkSubstitutions = (
         });
       }
     });
-  return substitutions;
+  const getOrder = (name: string) => {
+    const index = implicit.findIndex((item) => item.declaration.name === name);
+    return index === -1 ? implicit.length : index;
+  };
+  return new Map(
+    [...substitutions].toSorted((left, right) => getOrder(left[0]) - getOrder(right[0])),
+  );
 };
 
 const resolveInstance = (instance: Instance, scope: LocalName | undefined, unit: Unit) => {
   const instanced = unit.getInstance(instance);
-  checkSubstitutions(
+  const substitutions = checkSubstitutions(
     instance,
     instanced.declarations,
     instanced.instancer,
     bindParams(scope, instance.params, unit),
     unit,
   );
+  instanced.setSubstitutions(substitutions);
+  unit.errors.push(...instanced.getSubstitutionErrors(substitutions.size));
   return [...instanced.symbols].reduce(
     (parent, entry) => bindName(parent, entry[0], entry[1], unit),
     scope,
@@ -2852,6 +2905,7 @@ export const resolveSubstitutions = (
       labels: new Set(),
       isGenerated: false,
       goalOperands: unit.goalOperands,
+      goalSelections: unit.goalSelections,
     },
   );
 };
@@ -2949,6 +3003,7 @@ export const resolveModule = (module: Module, unit: ModuleUnit) => {
         labels: new Set(),
         isGenerated: false,
         goalOperands: unit.goalOperands,
+        goalSelections: unit.goalSelections,
       }),
   });
   const isDefinitionBody = (statement: Expression | AssumeProve) =>

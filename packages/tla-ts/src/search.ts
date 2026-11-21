@@ -57,6 +57,7 @@ import {
   expectBoolean,
   expectBooleanBody,
   getBuiltin,
+  getConfigNameDefinition,
   getDefinition,
   getRootKey,
   type Builtin,
@@ -67,24 +68,26 @@ import {
 } from "./evaluate";
 import { EXIT_STATUS, setExitCode } from "./exit-codes";
 import type { JavaOverride } from "./java-overrides";
+import { ACTION_LEVEL, CONSTANT_LEVEL, TEMPORAL_LEVEL, VARIABLE_LEVEL } from "./levels";
 import {
-  ACTION_LEVEL,
-  CONSTANT_LEVEL,
-  createLevelAnalyzer,
-  TEMPORAL_LEVEL,
-  VARIABLE_LEVEL,
-} from "./levels";
-import {
+  createSanyAnalyzer,
   expandTemporal,
   getLevel,
   getLevelBound,
+  getSanyLevel,
   type ScopedExpression,
   type TemporalProperty,
+  type TheoremReference,
 } from "./liveness";
 import { getLiveExpressions } from "./liveness-checker";
 import { prettyPrint, prettyPrintT } from "./pretty-print";
 import { parenthesizedRanges } from "./parser";
-import { getOperatorDefinition, substitutionFrames, withSubstitutionFrames } from "./instances";
+import {
+  getOperatorDefinition,
+  getSubstitutedName,
+  substitutionFrames,
+  withSubstitutionFrames,
+} from "./instances";
 import { getPossibleCounts, type CheckerRuntime } from "./runtime";
 import { createIncompleteSuccessorError, type SuccessorGenerator } from "./successors";
 import {
@@ -223,7 +226,7 @@ const createNamedIdentifier = (name: string, environment: Environment): NamedExp
 const UNNAMED_ARGUMENT_KINDS = new Set(["name", "property"]);
 
 const getConfigOperator = (kind: string, name: string, environment: Environment) => {
-  const definition = getDefinition(getRootKey(name, environment), environment);
+  const definition = getConfigNameDefinition(getRootKey(name, environment), environment);
   if (!definition) {
     throw new TlaConfigError(
       `The ${kind} ${name} specified in the configuration file\nis not defined in the specification.`,
@@ -325,14 +328,7 @@ export const reportStartup = (
 };
 
 const getInvariants = (names: string[], environment: Environment) => {
-  const analyzer = createLevelAnalyzer({
-    constants: new Map([...environment.constants.keys()].map((key) => [key, 0])),
-    variables: new Set(environment.variables),
-    getDefinition: (name) => environment.definitions.get(name),
-    getPreparedLevels: environment.getPreparedLevels,
-    instances: environment.instances,
-    recursiveSections: environment.recursiveSections,
-  });
+  const analyzer = createSanyAnalyzer(environment);
   return names.flatMap((name) => {
     const definition = getConfigPredicate("invariant", name, environment);
     if (!definition) return [];
@@ -366,6 +362,11 @@ const getConjuncts = (expression: Expression, environment: Environment): Express
   }
   return [expression];
 };
+
+const createTheoremError = (theorem: TheoremReference, usage: string) =>
+  new TlaConfigError(
+    `The operator ${theorem.name}, which equals ${formatRange(theorem.range)},\ncannot be used as a ${usage}`,
+  );
 
 const isConstantTrue = (item: ScopedExpression, environment: Environment, usage: string) => {
   const conjunct = item.expression;
@@ -446,10 +447,12 @@ const getSpecification = (
       const expanded = getDefinition(getRootKey(name, environment), environment);
       return (
         expanded?.kind === "Operator" &&
-        getLevel(expanded.body, undefined, environment) === VARIABLE_LEVEL
+        getLevelBound(expanded.body, undefined, environment) === VARIABLE_LEVEL
       );
     });
+    if (!isInitial && item.theorem) throw createTheoremError(item.theorem, "spec");
     if (!isInitial && isConstantTrue(item, environment, "spec")) return;
+    // Deviation from TLC: SpecProcessor#processConfigSpec looks an instance's parameter up without its substitute and rejects it as "cannot be used as a spec", where tla-ts takes the substitute.
     const variableIndex =
       conjunct.kind === "Identifier" && !isLocallyResolved(conjunct)
         ? environment.variableIndex.get(conjunct.name)
@@ -502,7 +505,7 @@ const getSpecification = (
       conjunct.kind === "Always" &&
       conjunct.expression.kind !== "Let" &&
       conjunct.expression.kind !== "Label" &&
-      getLevel(conjunct.expression, item.scope, environment) < ACTION_LEVEL
+      getSanyLevel(conjunct.expression, item.scope, environment) < ACTION_LEVEL
     ) {
       throw setExitCode(
         new TlaEvaluationError(
@@ -582,13 +585,15 @@ const getProperties = (
   config.properties.forEach((name) => {
     const definition = getConfigPredicate("property", name, environment);
     if (!definition) return;
-    if (getLevel(definition.body, undefined, environment) === VARIABLE_LEVEL) {
+    if (getSanyLevel(definition.body, undefined, environment) === VARIABLE_LEVEL) {
       onProgress?.({ kind: "state-level-property", name });
     }
     const isProperty = environment.runtime.version !== "1.7.4";
     expandTemporal(definition.body, undefined, environment, isProperty).forEach((item) => {
       const conjunct = item.expression;
+      if (item.theorem) throw createTheoremError(item.theorem, "property");
       if (isConstantTrue(item, environment, "property")) return;
+      // Deviation from TLC: SpecProcessor#processConfigProps looks an instance's constant up without its substitute and rejects it as "cannot be used as a property", where tla-ts checks the substitute.
       const partName = item.name ?? name;
       const withFrames = (check: Expression) =>
         withSubstitutionFrames(
@@ -614,8 +619,15 @@ const getProperties = (
           body.kind === "Identifier" && !isLocallyResolved(body)
             ? getDefinition(body.name, environment)
             : undefined;
+        const substituted = getSubstitutedName(body);
         properties.invariants.push({
-          name: operator?.name ?? (body.kind === "Identifier" ? body.name : partName),
+          name:
+            operator?.name ??
+            (substituted !== undefined
+              ? getKeyName(substituted)
+              : body.kind === "Identifier"
+                ? body.name
+                : partName),
           expression: withFrames(body),
           scope: item.scope,
         });
@@ -697,7 +709,7 @@ const getPossiblePredicates = (names: string[], environment: Environment) =>
     }
     getConfigDefinition("possible", name, environment);
     const possible = createNamedIdentifier(name, environment);
-    if (getLevel(possible.expression, undefined, environment) === TEMPORAL_LEVEL) {
+    if (getSanyLevel(possible.expression, undefined, environment) === TEMPORAL_LEVEL) {
       throw new TlaConfigError(
         `The possible of ${name} is equal to a temporal formula; only state- and action-level predicates are supported`,
       );
@@ -1343,7 +1355,7 @@ export const createSearch = (
     return { ...property, unchanged };
   });
   const isActionPossible = (item: NamedExpression) =>
-    getLevel(item.expression, undefined, environment) >= ACTION_LEVEL;
+    getSanyLevel(item.expression, undefined, environment) >= ACTION_LEVEL;
   const statePossible = possible.filter((item) => !isActionPossible(item));
   const actionPossible = possible.filter(isActionPossible);
   const runtime = environment.runtime;
@@ -1769,7 +1781,7 @@ export const createSearch = (
       const rejection = config.postconditions
         .map((name) => {
           const key = getRootKey(name, environment);
-          const definition = getDefinition(key, environment);
+          const definition = getConfigNameDefinition(key, environment);
           if (environment.constants.has(key) || getBuiltin(key, environment)) {
             return `The post condition ${name} cannot be a constant.`;
           }

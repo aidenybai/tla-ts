@@ -524,7 +524,7 @@ export const elimUncnstr = (manager: AstManager, goal: Goal, bodies: RefVector) 
   let start = 0;
   for (;;) {
     for (let index = start; index < size; index++) {
-      const form = goal.forms.items[index];
+      const form = goal.forms.get(index);
       const rewritten = rewriter.rewrite(form);
       if (rewritten !== form) {
         isModified = true;

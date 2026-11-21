@@ -333,6 +333,13 @@ export class SmtCanceledError extends TlaError {
   }
 }
 
+export class SmtRewriterCanceledError extends SmtCanceledError {
+  constructor() {
+    super();
+    this.name = "SmtRewriterCanceledError";
+  }
+}
+
 export class SmtTacticError extends TlaError {
   constructor(message: string) {
     super(message);

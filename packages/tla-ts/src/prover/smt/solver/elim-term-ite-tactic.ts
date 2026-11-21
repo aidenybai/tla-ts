@@ -16,7 +16,7 @@ class ElimTermIteRw extends RewriterTpl {
 
   reduceApp(decl: number, args: number[], sort: number) {
     const manager = this.manager;
-    if (decl !== OP_ITE || sort === SORT_BOOL) return -1;
+    if (manager.funcDecls[decl].op !== OP_ITE || sort === SORT_BOOL) return -1;
     const ite = manager.mkApp(OP_ITE, args, sort);
     manager.incRef(ite);
     const named = this.names.mkName(ite);
@@ -36,7 +36,7 @@ export const runElimTermIte = (manager: AstManager) => (goal: Goal) => {
   const rewriter = new ElimTermIteRw(manager, names, goal);
   const size = goal.forms.size;
   for (let index = 0; index < size && !goal.isInconsistent; index++) {
-    const result = rewriter.rewrite(goal.forms.items[index]);
+    const result = rewriter.rewrite(goal.forms.get(index));
     goal.update(index, result, goal.getDependency(index));
     manager.decRef(result);
   }

@@ -692,6 +692,8 @@ export const checkDepthFirst = (options: DepthFirstOptions): number => {
     reportSuccess();
     return finish(NO_ERROR);
   }
+  // TLC replays an error on its main thread, whose generator for random values goes on from the initial states.
+  const mainRandom = runtime.getRandom();
   let isTerminated = false;
   let levelCode: number = MESSAGE_CODE.general;
   for (let level = 2; level <= options.maxDepth; level++) {
@@ -701,7 +703,10 @@ export const checkDepthFirst = (options: DepthFirstOptions): number => {
         levelCode = NO_ERROR;
         reportSuccess();
       }
-      if (errorEntry && checker.isKeepingCallStack) replayExpansion(errorEntry);
+      if (errorEntry && checker.isKeepingCallStack) {
+        runtime.getRandom = () => mainRandom;
+        replayExpansion(errorEntry);
+      }
       break;
     }
     message(
