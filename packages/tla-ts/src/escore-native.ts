@@ -155,9 +155,8 @@ const setProperty = (object: Value, key: Value, value: Value) =>
   updateFunction(
     object,
     "vals",
-    (values) => updateFunction(values, key, () => value, false, undefined),
+    (values) => updateFunction(values, key, () => value, false),
     false,
-    undefined,
   );
 
 // IsStrictlyEqual of two primitives, or undefined for Numbers other than "int" ones.
@@ -457,9 +456,8 @@ export const createEscoreNativeOperators = (callReplaced: CallReplaced): Builtin
           ? updateFunction(
               args[0],
               "elems",
-              (inner) => updateFunction(inner, int + 1, () => args[2], false, undefined),
+              (inner) => updateFunction(inner, int + 1, () => args[2], false),
               false,
-              undefined,
             )
           : undefined;
       }
