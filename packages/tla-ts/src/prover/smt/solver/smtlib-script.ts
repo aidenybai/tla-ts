@@ -2423,7 +2423,7 @@ export const runSmtlibScript = (
     try {
       command(list);
     } catch (error) {
-      if (!(error instanceof SmtDefaultError)) throw error;
+      if (!(error instanceof SmtDefaultError || error instanceof SmtTacticError)) throw error;
       throw new SmtParseError(error.message, list.end);
     }
     if (settings.isPrintingSuccess && SILENT_COMMANDS.has(head.text)) print("success");

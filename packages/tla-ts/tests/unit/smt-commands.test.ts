@@ -991,6 +991,44 @@ describe("runSmtlibScript runs its commands as Z3 does", () => {
     ).toEqual(["unknown", '(:reason-unknown "canceled")', "sat", "3", "sat"]);
   });
 
+  it("reports the limit as an error when it stops a push in the model finder", () => {
+    expect(
+      run([
+        "(set-option :rlimit 823)",
+        "(declare-sort U 0)",
+        "(declare-fun h (U U U) U)",
+        "(declare-fun mem (U U) Bool)",
+        "(declare-fun ext (U U) Bool)",
+        "(declare-fun tt () U)",
+        "(assert (forall ((x U) (y U)) (! (=> (forall ((z U)) (= (mem z x) (mem z y))) (= x y)) :pattern ((ext x y)))))",
+        "(declare-fun value () U)",
+        "(declare-fun acceptor () U)",
+        "(declare-fun ballot () U)",
+        "(declare-fun voted (U U U) U)",
+        "(declare-fun inv1 () U)",
+        "(declare-fun inv2 () U)",
+        "(declare-fun inv3 () U)",
+        "(assert (and (and (and (= inv1 tt) (= inv2 tt)) (forall ((a1 U) (a2 U) (b U) (v1 U) (v2 U)) (=> (and (mem a1 acceptor) (mem a2 acceptor) (mem b ballot) (mem v1 value) (mem v2 value)) (and (= (voted a1 b v1) tt) (= (voted a2 b v2) tt))))) (= inv3 tt)))",
+        "(declare-fun self () U)",
+        "(assert (mem self acceptor))",
+        "(declare-fun b () U)",
+        "(assert (mem b ballot))",
+        "(assert (= self tt))",
+        "(declare-fun a1 () U)",
+        "(declare-fun a2 () U)",
+        "(declare-fun c () U)",
+        "(declare-fun v1 () U)",
+        "(declare-fun v2 () U)",
+        "(assert (and true (= (h a2 c v2) tt) (= (voted a1 c v1) tt) (= (voted a2 c v2) tt)))",
+        "(push 1)",
+        "(assert false)",
+        "(check-sat)",
+        "(pop 1)",
+        "(check-sat)",
+      ]),
+    ).toEqual(['(error "line 27 column 7: max. resource limit exceeded")', "unsat", "unsat"]);
+  });
+
   it("bounds push by the rlimit and keeps the scopes that a canceled push leaves", () => {
     expect(
       run([
