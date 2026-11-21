@@ -880,7 +880,6 @@ const isTupleConvertible = (coverage: Coverage, value: Value) => {
   return true;
 };
 
-// TLC's equals converts the other side with toTuple, toRcd or toFcnRcd, which charge the converted value its length, and a tuple whose other side has no tuple form converts itself.
 export const chargeEquality = (coverage: Coverage, left: Value, right: Value) => {
   if (typeof left !== "object" || (left.kind !== "Function" && left.kind !== "LazyFunction")) {
     return;

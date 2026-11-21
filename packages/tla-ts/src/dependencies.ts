@@ -227,7 +227,6 @@ const collectLocalFacts = (
           isSubstitute: target !== name,
         });
       } else {
-        // An operator passed by name carries no resolution, so one with no definition or builtin is local.
         if (
           bound &&
           kind === "OperatorReference" &&
@@ -499,7 +498,6 @@ const EFFECT_FLAGS = {
   streamed: STREAMED,
   // What a second evaluation shows: output again, or other random draws.
   replayed: REPEATED_EFFECT | RANDOM,
-  // A local name bound outside the expressions can hold an operator or a lazy value whose body prints or draws.
   varying: EFFECT_MASK | OUTER_LOCAL,
 };
 
