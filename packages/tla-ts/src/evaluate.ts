@@ -2593,8 +2593,12 @@ export const getLazyFilter = (
   };
   const coverage = environment.coverage;
   const isTestObserved =
-    isExpressionImpure([expression.predicate], environment, "varying", getPatternNames(pattern)) ||
-    coverage !== undefined;
+    isExpressionImpure(
+      [expression.bound.set, expression.predicate],
+      environment,
+      "varying",
+      getPatternNames(pattern),
+    ) || coverage !== undefined;
   const createFiltered = (
     base: Value,
     context: Context,

@@ -4280,6 +4280,11 @@ describe("evaluation errors match TLC", () => {
       PRINTED_SELECTED,
       undefined,
     ],
+    [
+      `x' = x /\\ \\E e \\in [{1, 2} -> {h \\in [{1} -> {[s \\in SUBSET {1} |-> PrintT(s)]}] : h[1][{}]} \\ {}] : FALSE`,
+      ["{}", "{}", "{}", "{}"],
+      undefined,
+    ],
   ])(
     "evaluates a filter under a component S \\cup T, S \\cap T, S \\ T or UNION S of [S -> T] as TLC's enumerators reset it: %s",
     async (next, printed, traceOutput) => {
