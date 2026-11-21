@@ -64,6 +64,7 @@ import {
   type Context,
   type Environment,
   type Scope,
+  type StartupModule,
   type State,
 } from "./evaluate";
 import { EXIT_STATUS, setExitCode } from "./exit-codes";
@@ -74,6 +75,7 @@ import {
   expandTemporal,
   getLevel,
   getLevelBound,
+  getReferenceName,
   getSanyLevel,
   type ScopedExpression,
   type TemporalProperty,
@@ -160,6 +162,7 @@ interface EnvironmentSettings
       | "maxSetSize"
       | "isLazyValueExpanded"
       | "isViewPrinted"
+      | "coverage"
     >,
     CliSettings {}
 
@@ -304,7 +307,7 @@ export const reportInitialStatesProgress = (
 
 interface StartupSpecification {
   environment: Environment;
-  startupDefinitions: Definition[];
+  startupModules: StartupModule[];
   javaOverrides: JavaOverride[];
 }
 
@@ -319,7 +322,7 @@ export const reportStartup = (
   specification.javaOverrides.forEach((override) =>
     onProgress?.({ kind: "java-override", ...override }),
   );
-  evaluateStartupDefinitions(specification.startupDefinitions, environment);
+  evaluateStartupDefinitions(specification.startupModules, environment);
   config.invariants.forEach((name) => {
     if (!getConfigPredicate("invariant", name, environment)) {
       onProgress?.({ kind: "constant-level-invariant", name });
@@ -370,13 +373,19 @@ const createTheoremError = (theorem: TheoremReference, usage: string) =>
 
 const isConstantTrue = (item: ScopedExpression, environment: Environment, usage: string) => {
   const conjunct = item.expression;
-  if (
-    conjunct.kind !== "Identifier" ||
-    getLevel(conjunct, item.scope, environment) > CONSTANT_LEVEL
-  ) {
-    return false;
-  }
-  const value = evaluate(conjunct, getContext(environment, undefined, undefined, item.scope));
+  // SpecProcessor#processConfigProps looks up no VARIABLE, so it checks a substitute for one whatever its value.
+  if (conjunct.kind !== "Identifier" || getSubstitutedName(conjunct) !== undefined) return false;
+  // SpecProcessor#processConfigSpec looks a definition up as the value processConstantDefns stored, if it stored one.
+  const definition =
+    isLocallyResolved(conjunct) || environment.constants.has(conjunct.name)
+      ? undefined
+      : getDefinition(conjunct.name, environment);
+  const value = definition
+    ? getStartupValue(definition, environment)
+    : getLevel(conjunct, item.scope, environment) > CONSTANT_LEVEL
+      ? undefined
+      : evaluate(conjunct, getContext(environment, undefined, undefined, item.scope));
+  if (value === undefined) return false;
   const name = environment.instanceNames.get(conjunct.name) ?? getKeyName(conjunct.name);
   if (value === false) {
     throw new TlaConfigError(`The spec is trivially false because ${name} is false.`);
@@ -615,19 +624,18 @@ const getProperties = (
         getLevelBound(conjunct.expression, item.scope, environment) <= VARIABLE_LEVEL
       ) {
         const body = conjunct.expression;
-        const operator =
-          body.kind === "Identifier" && !isLocallyResolved(body)
-            ? getDefinition(body.name, environment)
-            : undefined;
         const substituted = getSubstitutedName(body);
         properties.invariants.push({
           name:
-            operator?.name ??
-            (substituted !== undefined
+            substituted !== undefined
               ? getKeyName(substituted)
               : body.kind === "Identifier"
-                ? body.name
-                : partName),
+                ? (getReferenceName(body, body.name, environment) ??
+                  (isLocallyResolved(body)
+                    ? undefined
+                    : getDefinition(body.name, environment)?.name) ??
+                  body.name)
+                : partName,
           expression: withFrames(body),
           scope: item.scope,
         });
@@ -1006,6 +1014,7 @@ export const createCheckEnvironment = (
     readLine: options.readLine,
     printPrompt: options.printPrompt,
     runtimeInvariants: options.runtimeInvariants,
+    isCovered: options.coverage !== undefined,
   });
   return { order, specification };
 };

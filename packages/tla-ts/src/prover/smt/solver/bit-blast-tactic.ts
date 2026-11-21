@@ -534,6 +534,7 @@ const convertModel = (manager: AstManager, consts: BlastedConst[], source: Proto
   for (const entry of source.funcInterps) target.registerFunc(entry[0], entry[1].copy());
   for (const sort of source.getUninterpretedSorts())
     for (const value of source.getKnownUniverse(sort)) target.registerValue(value);
+  target.copyUsortInterps(source);
   for (const blasted of consts) {
     const existing = source.constInterps.get(blasted.decl);
     if (existing !== undefined) {

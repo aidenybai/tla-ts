@@ -20,6 +20,7 @@ export interface KernelParams {
   isMbqi: boolean;
   mbqiMaxIterations: number;
   isFindingMacros: boolean;
+  isEmatching?: boolean;
   relevancyLevel?: number;
   isDelayingNewCaseSplits?: boolean;
   isCoreMinimizing?: boolean;
@@ -52,10 +53,11 @@ interface SmtCheck {
 // The context makes its asserted formulas first, and asserts the formulas. It makes the theories
 // next, before the formulas are reduced.
 export const solveGoal = (manager: AstManager, forms: number[], params: KernelParams) => {
-  const asserted = new AssertedFormulas(manager, params.isFindingMacros);
+  const asserted = new AssertedFormulas(manager, params.isFindingMacros, params.isEmatching);
   const context = new Context(manager, {
     isMbqi: params.isMbqi,
     mbqiMaxIterations: params.mbqiMaxIterations,
+    isEmatching: params.isEmatching,
     relevancyLevel: params.relevancyLevel ?? 2,
     randomSeed: params.randomSeed,
     intHammerPeriod: params.intHammerPeriod,
@@ -99,10 +101,11 @@ export const solveAssuming = (
   assumptions: number[],
   params = DEFAULT_KERNEL_PARAMS,
 ) => {
-  const asserted = new AssertedFormulas(manager, params.isFindingMacros);
+  const asserted = new AssertedFormulas(manager, params.isFindingMacros, params.isEmatching);
   const context = new Context(manager, {
     isMbqi: params.isMbqi,
     mbqiMaxIterations: params.mbqiMaxIterations,
+    isEmatching: params.isEmatching,
     relevancyLevel: params.relevancyLevel ?? 2,
     randomSeed: params.randomSeed,
     intHammerPeriod: params.intHammerPeriod,

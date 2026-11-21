@@ -1624,6 +1624,388 @@ ASSUME TLCFP(a) = -887695703
     ]);
   });
 
+  const getSubstituteSource = (definitions: string) =>
+    `---- MODULE M ----\nEXTENDS TLC, Naturals\nCONSTANT N\nVARIABLE y\nInit == y = 0\nNext == y' = (y + 1) % 2\n${definitions}\n====`;
+
+  it.each([
+    ['D == PrintT("D")\nASSUME N', "CONSTANT N <- D", ['"D"', '"D"']],
+    ['D == PrintT("D")\nASSUME N /\\ N', "CONSTANT N <- D", ['"D"', '"D"', '"D"']],
+    ['D == PrintT("D")\nInv == N', "CONSTANT N <- D\nINVARIANT Inv", ['"D"', '"D"']],
+    ['D == PrintT("D")\nE == N\nASSUME E /\\ E', "CONSTANT N <- D", ['"D"', '"D"']],
+    [
+      'D == PrintT("D")\nInv == N /\\ y \\in {0, 1}',
+      "CONSTANT N <- D\nINVARIANT Inv",
+      ['"D"', '"D"', '"D"'],
+    ],
+    ['E == PrintT("E")\nD == E\nASSUME N', "CONSTANT N <- D", ['"E"', '"E"']],
+    ['D == TLCGet("level")\nASSUME PrintT(<<"D", D, N>>)', "CONSTANT N <- D", ['<<"D", 1, 0>>']],
+    [
+      'D == TLCGet("level")\nInv == PrintT(<<"I", D, N>>)',
+      "CONSTANT N <- D\nINVARIANT Inv",
+      ['<<"I", 1, 1>>', '<<"I", 1, 2>>'],
+    ],
+    [
+      'G(Op(_)) == Op("level")\nD == G(TLCGet)\nASSUME PrintT(<<"N", N>>)',
+      "CONSTANT N <- D",
+      ['<<"N", 0>>'],
+    ],
+    [
+      'CONSTANT K\nD == PrintT("D")\nE == PrintT("E")',
+      "CONSTANT N <- D\nCONSTANT K <- E",
+      ['"E"', '"D"'],
+    ],
+    [
+      'CONSTANT K\nE == PrintT("E")\nD == K\nASSUME N',
+      "CONSTANT N <- D\nCONSTANT K <- E",
+      ['"E"', '"E"', '"E"'],
+    ],
+    ['D == PrintT("D") /\\ CHOOSE v : TRUE', "CONSTANT N <- D", ['"D"', '"D"']],
+    ["f[a \\in {1}] == PrintT(a)\nASSUME N[1]", "CONSTANT N <- f", ["1", "1"]],
+    ['G(Op(_)) == Op("diameter")\nD == G(TLCGet)\nASSUME PrintT("A")', "CONSTANT N <- D", ['"A"']],
+  ])(
+    "evaluates the substitute of N in %j as TLC starts and at each reference to N, as SpecProcessor and Tool#evalAppl do",
+    async (definitions, substitution, expected) => {
+      const printed: string[] = [];
+      const result = await check({
+        source: getSubstituteSource(definitions),
+        config: `INIT Init\nNEXT Next\n${substitution}`,
+        onPrint: (text) => printed.push(text),
+      });
+      expect([printed, result.status, result.distinctStates]).toEqual([expected, "success", 2]);
+    },
+  );
+
+  it("evaluates the substitute of a constant an extended module declares as TLC starts each module", async () => {
+    const printed: string[] = [];
+    await check({
+      source:
+        '---- MODULE M ----\nEXTENDS TLC, Naturals, P\nVARIABLE y\nInit == y = 0\nNext == y\' = (y + 1) % 2\nD == PrintT("D")\nASSUME N\n====',
+      config: "INIT Init\nNEXT Next\nCONSTANT N <- D",
+      loadModule: (name) => (name === "P" ? "---- MODULE P ----\nCONSTANT N\n====" : undefined),
+      onPrint: (text) => printed.push(text),
+    });
+    expect(printed).toEqual(['"D"', '"D"', '"D"']);
+  });
+
+  // TLCSet's deviation in tlc/tlc-operators.ts makes D state-level, so the NullPointerException that TLC swallows at TLCSet's bound of 0, printing "A", is a config error.
+  it("rejects a substitute that sets a numbered register as TLC starts, where TLC swallows the NullPointerException", async () => {
+    await expect(
+      check({
+        source: getSubstituteSource('D == TLCSet(1, 2)\nASSUME PrintT("A")'),
+        config: "INIT Init\nNEXT Next\nCONSTANT N <- D",
+      }),
+    ).rejects.toThrow(
+      new TlaConfigError(
+        "The configuration file substitutes constant N with non-constant D - specifically: TLC threw an unexpected exception.\nThis was probably caused by an error in the spec or model.\nSee the User Output or TLC Console for clues to what happened.\nThe exception was a java.lang.NullPointerException\n: ",
+      ),
+    );
+  });
+
+  it("fails at a reference to N whose substitute failed as TLC started", async () => {
+    const printed: string[] = [];
+    const result = await check({
+      source: getSubstituteSource('D == PrintT("D") /\\ CHOOSE v : TRUE\nASSUME N'),
+      config: "INIT Init\nNEXT Next\nCONSTANT N <- D",
+      onPrint: (text) => printed.push(text),
+    });
+    expect([printed, result.status]).toEqual([['"D"', '"D"', '"D"'], "assumption-violation"]);
+  });
+
+  it.each([
+    ["D == RandomElement(1..100)", "<<74, 92, 92, 68, 74>>"],
+    ["D == TLCEval(RandomElement(1..100))", "<<74, 74, 74, 74, 74>>"],
+  ])("draws %s again at each reference to N with TLC's -seed 4", async (definition, expected) => {
+    const printed: string[] = [];
+    await check({
+      source: getSubstituteSource(`${definition}\nASSUME PrintT(<<D, N, N, N, D>>)`),
+      config: "INIT Init\nNEXT Next\nCONSTANT N <- D",
+      seed: 4n,
+      onPrint: (text) => printed.push(text),
+    });
+    expect(printed).toEqual([expected]);
+  });
+
+  it("reads at each reference to N the value startup stores for a definition D read before startup stored it", async () => {
+    const printed: string[] = [];
+    await check({
+      source: getSubstituteSource(
+        "E == RandomElement(1..100)\nD == E\nASSUME PrintT(<<D, N, N, N, D>>)",
+      ),
+      config: "INIT Init\nNEXT Next\nCONSTANT N <- D",
+      seed: 4n,
+      onPrint: (text) => printed.push(text),
+    });
+    expect(printed).toEqual(["<<74, 92, 92, 92, 74>>"]);
+  });
+
+  it("evaluates the substitute again as TLC starts each module while a definition it reads isn't stored", async () => {
+    const printed: string[] = [];
+    await check({
+      source:
+        '---- MODULE M ----\nEXTENDS TLC, Naturals, P\nVARIABLE y\nInit == y = 0\nNext == y\' = (y + 1) % 2\nE == PrintT("E")\nD == E\nASSUME N\n====',
+      config: "INIT Init\nNEXT Next\nCONSTANT N <- D",
+      loadModule: (name) => (name === "P" ? "---- MODULE P ----\nCONSTANT N\n====" : undefined),
+      onPrint: (text) => printed.push(text),
+    });
+    expect(printed).toEqual(['"E"', '"E"', '"E"']);
+  });
+
+  it("counts the substitute's body at each reference to N, as TLC's coverage does", async () => {
+    const lines = await getCoverageLines(
+      "---- MODULE M ----\nEXTENDS TLC, Naturals\nCONSTANT N\nVARIABLE y\nInit == y = 0\nNext == y' \\in N\nD == {1, 2} \\cup {3}\nInv == y \\in N \\/ y = 0\n====",
+      "INIT Init\nNEXT Next\nCONSTANT N <- D\nINVARIANT Inv",
+    );
+    expect(lines?.slice(-2)).toEqual([
+      [
+        "line 6, col 9 to line 6, col 16 of module M: 12",
+        "|line 6, col 16 to line 6, col 16 of module M: 4",
+        "||line 7, col 6 to line 7, col 20 of module M: 4",
+        "|||line 7, col 6 to line 7, col 11 of module M: 4",
+        "|||line 7, col 18 to line 7, col 20 of module M: 4:8",
+      ],
+      [
+        "line 8, col 8 to line 8, col 23 of module M: 4",
+        "|line 8, col 8 to line 8, col 14 of module M: 4",
+        "||line 8, col 8 to line 8, col 8 of module M: 4",
+        "||line 8, col 14 to line 8, col 14 of module M: 4",
+        "|||line 7, col 6 to line 7, col 20 of module M: 4",
+        "||||line 7, col 6 to line 7, col 11 of module M: 4",
+        "||||line 7, col 18 to line 7, col 20 of module M: 4:8",
+        "|line 8, col 19 to line 8, col 23 of module M: 1",
+      ],
+    ]);
+  });
+
+  it.each([
+    [
+      "an assumption",
+      "c",
+      "I == INSTANCE P WITH z <- y",
+      "ASSUME I!Two",
+      "y' = (y + 1) % 2",
+      "",
+      2,
+    ],
+    [
+      "an invariant",
+      "c",
+      "I == INSTANCE P WITH z <- y",
+      "Inv == I!Two",
+      "y' = (y + 1) % 2",
+      "INVARIANT Inv",
+      2,
+    ],
+    [
+      "an action property",
+      "c",
+      "I == INSTANCE P WITH z <- y",
+      "Prop == [][I!Act]_y",
+      "y' = (y + 1) % 2",
+      "PROPERTY Prop",
+      3,
+    ],
+    [
+      "an action property through WITH c <- N",
+      "N",
+      "I == INSTANCE P WITH c <- N, z <- y",
+      "Prop == [][I!Act]_y",
+      "y' = (y + 1) % 2",
+      "PROPERTY Prop",
+      3,
+    ],
+    [
+      "the next-state relation, at each reference",
+      "c",
+      "I == INSTANCE P WITH z <- y",
+      "",
+      "I!Flip",
+      "",
+      6,
+    ],
+  ])(
+    "evaluates an instance's substitution of a substituted constant in %s as TLC's LazyValue does",
+    async (_title, constant, instance, definitions, next, checked, count) => {
+      const printed: string[] = [];
+      await check({
+        source: `---- MODULE M ----\nEXTENDS TLC, Naturals\nCONSTANT ${constant}\nVARIABLE y\nD == PrintT("c")\n${instance}\n${definitions}\nInit == y = 0\nNext == ${next}\n====\n`,
+        config: `INIT Init\nNEXT Next\nCONSTANT ${constant} <- D\n${checked}`,
+        loadModule: (name) =>
+          name === "P"
+            ? "---- MODULE P ----\nEXTENDS TLC, Naturals\nCONSTANT c\nVARIABLE z\nTwo == c /\\ c\nAct == c /\\ c /\\ z' = z\nFlip == c /\\ c /\\ z' = (z + 1) % 2\nStep == c /\\ z' = (z + 1) % 2 /\\ c\n====\n"
+            : undefined,
+        onPrint: (text) => printed.push(text),
+      });
+      expect(printed).toEqual(Array.from({ length: count }, () => '"c"'));
+    },
+  );
+
+  it("applies an instance's operator parameter that a substituted operator constant replaces, as TLC does", async () => {
+    const printed: string[] = [];
+    await check({
+      source:
+        "---- MODULE M ----\nEXTENDS TLC, Naturals\nCONSTANT C(_)\nVARIABLE y\nInc(a) == a + 1\nI == INSTANCE P WITH Op <- C\nASSUME PrintT(<<I!Two, I!Three>>)\nInit == y = 0\nNext == y' = (y + 1) % 2\n====\n",
+      config: "INIT Init\nNEXT Next\nCONSTANT C <- Inc\n",
+      loadModule: (name) =>
+        name === "P"
+          ? "---- MODULE P ----\nEXTENDS Naturals\nCONSTANT Op(_)\nAp(F(_), a) == F(a)\nTwo == Ap(Op, 1)\nThree == Op(2)\n====\n"
+          : undefined,
+      onPrint: (text) => printed.push(text),
+    });
+    expect(printed).toEqual(["<<2, 3>>"]);
+  });
+
+  const getOverrideSource = (definitions: string, next = "y' = (y + 1) % 2", extended = "") =>
+    `---- MODULE M ----\nEXTENDS TLC, Naturals${extended}\nVARIABLE y\n${definitions}\nInit == y = 0\nNext == ${next}\n====\n`;
+
+  it.each([
+    [
+      'Foo == 1\nBar == PrintT("B")\nASSUME Foo /\\ Foo',
+      "CONSTANT Foo <- Bar",
+      ['"B"', '"B"', '"B"'],
+    ],
+    [
+      'Bar == PrintT("B")\nFoo == 1\nASSUME Foo /\\ Foo',
+      "CONSTANT Foo <- Bar",
+      ['"B"', '"B"', '"B"', '"B"'],
+    ],
+    [
+      'Foo == 1\nBar == PrintT("B")\nASSUME Bar /\\ Foo /\\ Bar',
+      "CONSTANT Foo <- Bar",
+      ['"B"', '"B"'],
+    ],
+    [
+      'Foo == 1\nBar == PrintT("B")\nInv == Foo',
+      "CONSTANT Foo <- Bar\nINVARIANT Inv",
+      ['"B"', '"B"'],
+    ],
+    [
+      'Foo == 1\nBar == PrintT("B")\nInv == y = 0 \\/ Foo',
+      "CONSTANT Foo <- Bar\nINVARIANT Inv",
+      ['"B"', '"B"'],
+    ],
+    [
+      'Foo == 1\nBar == PrintT("B")\nE == Foo\nASSUME E /\\ E',
+      "CONSTANT Foo <- Bar",
+      ['"B"', '"B"'],
+    ],
+    [
+      'Foo == 1\nBar == PrintT("B")\nE == Foo\nInv == E /\\ Foo',
+      "CONSTANT Foo <- Bar\nINVARIANT Inv",
+      ['"B"', '"B"', '"B"'],
+    ],
+    ['Foo == 1\nBaz == PrintT("Z")\nBar == Baz\nASSUME Foo', "CONSTANT Foo <- Bar", ['"Z"', '"Z"']],
+    ['Foo == 1\nBar == PrintT("B") /\\ CHOOSE v : TRUE', "CONSTANT Foo <- Bar", ['"B"', '"B"']],
+    [
+      'Foo == 1\nG(Op(_)) == Op("level")\nBar == G(TLCGet)\nASSUME PrintT(<<"F", Foo>>)',
+      "CONSTANT Foo <- Bar",
+      ['<<"F", 0>>'],
+    ],
+    [
+      "Foo == 1\nf[a \\in {1}] == PrintT(a)\nBar == f\nASSUME Foo[1]",
+      "CONSTANT Foo <- Bar",
+      ["1", "1"],
+    ],
+    [
+      'Foo == 1\nBar == PrintT("B")\nASSUME Foo /\\ Foo',
+      "CONSTANT Foo <- [M] Bar",
+      ['"B"', '"B"', '"B"'],
+    ],
+  ])(
+    "evaluates the substitute of Foo in %j at Foo's place as TLC starts and at each reference to Foo, for %j",
+    async (definitions, override, expected) => {
+      const printed: string[] = [];
+      const result = await check({
+        source: getOverrideSource(definitions),
+        config: `INIT Init\nNEXT Next\n${override}\n`,
+        onPrint: (text) => printed.push(text),
+      });
+      expect([printed, result.status, result.distinctStates]).toEqual([expected, "success", 2]);
+    },
+  );
+
+  it.each([
+    ["ASSUME Foo", "CONSTANT Foo <- Bar", 3],
+    ["ASSUME Foo /\\ Foo", "CONSTANT Foo <- [P] Bar", 4],
+  ])(
+    "evaluates the substitute of a definition an extended module holds as TLC starts each module, for %j and %j",
+    async (assumption, override, count) => {
+      const printed: string[] = [];
+      await check({
+        source: getOverrideSource(`Bar == PrintT("B")\n${assumption}`, undefined, ", P"),
+        config: `INIT Init\nNEXT Next\n${override}\n`,
+        loadModule: (name) => (name === "P" ? "---- MODULE P ----\nFoo == 1\n====\n" : undefined),
+        onPrint: (text) => printed.push(text),
+      });
+      expect(printed).toEqual(Array.from({ length: count }, () => '"B"'));
+    },
+  );
+
+  it("fails at a reference to Foo whose substitute failed as TLC started", async () => {
+    const printed: string[] = [];
+    const result = await check({
+      source: getOverrideSource('Foo == 1\nBar == PrintT("B") /\\ CHOOSE v : TRUE\nASSUME Foo'),
+      config: "INIT Init\nNEXT Next\nCONSTANT Foo <- Bar\n",
+      onPrint: (text) => printed.push(text),
+    });
+    expect([printed, result.status]).toEqual([['"B"', '"B"', '"B"'], "assumption-violation"]);
+  });
+
+  it.each([
+    ["Bar == RandomElement(1..100)", "<<74, 92, 92, 74>>"],
+    ["Bar == TLCEval(RandomElement(1..100))", "<<74, 74, 74, 74>>"],
+  ])("draws %s again at each reference to Foo with TLC's -seed 4", async (definition, expected) => {
+    const printed: string[] = [];
+    await check({
+      source: getOverrideSource(`Foo == 1\n${definition}\nASSUME PrintT(<<Bar, Foo, Foo, Bar>>)`),
+      config: "INIT Init\nNEXT Next\nCONSTANT Foo <- Bar\n",
+      seed: 4n,
+      onPrint: (text) => printed.push(text),
+    });
+    expect(printed).toEqual([expected]);
+  });
+
+  it("reads at each reference to Foo the value startup stores for a definition Bar read before startup stored it", async () => {
+    const printed: string[] = [];
+    await check({
+      source: getOverrideSource(
+        "Foo == 1\nE == RandomElement(1..100)\nBar == E\nASSUME PrintT(<<Bar, Foo, Foo, Bar>>)",
+      ),
+      config: "INIT Init\nNEXT Next\nCONSTANT Foo <- Bar\n",
+      seed: 4n,
+      onPrint: (text) => printed.push(text),
+    });
+    expect(printed).toEqual(["<<74, 92, 92, 74>>"]);
+  });
+
+  it("counts the substitute's body at each reference to Foo, as TLC's coverage does", async () => {
+    const lines = await getCoverageLines(
+      getOverrideSource(
+        "Foo == {0}\nBar == {1, 2} \\cup {3}\nInv == y \\in Foo \\/ y = 0",
+        "y' \\in Foo",
+      ),
+      "INIT Init\nNEXT Next\nCONSTANT Foo <- Bar\nINVARIANT Inv\n",
+    );
+    expect(lines?.slice(-2)).toEqual([
+      [
+        "line 8, col 9 to line 8, col 18 of module M: 12",
+        "|line 8, col 16 to line 8, col 18 of module M: 4",
+        "||line 5, col 8 to line 5, col 22 of module M: 4",
+        "|||line 5, col 8 to line 5, col 13 of module M: 4",
+        "|||line 5, col 20 to line 5, col 22 of module M: 4:8",
+      ],
+      [
+        "line 6, col 8 to line 6, col 25 of module M: 4",
+        "|line 6, col 8 to line 6, col 16 of module M: 4",
+        "||line 6, col 8 to line 6, col 8 of module M: 4",
+        "||line 6, col 14 to line 6, col 16 of module M: 4",
+        "|||line 5, col 8 to line 5, col 22 of module M: 4",
+        "||||line 5, col 8 to line 5, col 13 of module M: 4",
+        "||||line 5, col 20 to line 5, col 22 of module M: 4:8",
+        "|line 6, col 21 to line 6, col 25 of module M: 1",
+      ],
+    ]);
+  });
+
   it("reads TLCGet in every state through a constant substituted with it, as TLC's level bound does", async () => {
     const prints: string[] = [];
     await check({
@@ -5112,6 +5494,10 @@ describe("initial predicate and next-state relation match TLC", () => {
   const theoremBase =
     "---- MODULE Base ----\nVARIABLE v\nTHEOREM Baz == v \\in {0, 1}\nTHEOREM Foo == ASSUME v = 0 PROVE v \\in {0, 1}\nQ == Baz\n====\n";
   const theoremChain = "---- MODULE L2 ----\nVARIABLE w\nJ == INSTANCE Base WITH v <- w\n====\n";
+  const theoremLink =
+    "---- MODULE L3 ----\nVARIABLE w\nJ == INSTANCE Base WITH v <- w\nR == J!Baz\n====\n";
+  // SANY loads an inner module that only a LET instance names a second time, so Base also has a top-level INSTANCE.
+  const letBase = `${theoremBase}JB == INSTANCE Base WITH v <- x\n`;
   it.each([
     [
       "THEOREM T == x \\in {0, 1}\nP == T",
@@ -5154,6 +5540,16 @@ describe("initial predicate and next-state relation match TLC", () => {
       "The operator I!J!Baz, which equals line 16, col 1 to line 16, col 28 of module M,\ncannot be used as a property",
     ],
     [
+      `${theoremBase}${theoremLink}I == INSTANCE L3 WITH w <- x\nP == I!R /\\ [](x \\in {0, 1})`,
+      "INIT Init\nNEXT Next\nPROPERTY P",
+      "The operator J!Baz, which equals line 14, col 1 to line 14, col 30 of module M,\ncannot be used as a property",
+    ],
+    [
+      `${theoremBase}${theoremLink}I == INSTANCE L3 WITH w <- x\nP == I!J!Q /\\ [](x \\in {0, 1})`,
+      "INIT Init\nNEXT Next\nPROPERTY P",
+      "The operator Baz, which equals line 8, col 1 to line 8, col 27 of module M,\ncannot be used as a property",
+    ],
+    [
       `${theoremBase}I(p) == INSTANCE Base WITH v <- p\nP == I(x)!Q /\\ [](x \\in {0, 1})`,
       "INIT Init\nNEXT Next\nPROPERTY P",
       "The operator Baz, which equals line 8, col 1 to line 8, col 27 of module M,\ncannot be used as a property",
@@ -5182,6 +5578,66 @@ describe("initial predicate and next-state relation match TLC", () => {
       `${theoremBase}I == INSTANCE Base WITH v <- x\nR == I!Foo\nSpec == Init /\\ [][Next]_x /\\ R`,
       "SPECIFICATION Spec",
       "The operator I!Foo, which equals line 12, col 1 to line 12, col 30 of module M,\ncannot be used as a spec",
+    ],
+    [
+      `${theoremBase}I(p) == INSTANCE Base WITH v <- p\nSpec == Init /\\ [][Next]_x /\\ I(x)!Q`,
+      "SPECIFICATION Spec",
+      "The operator Baz, which equals line 8, col 1 to line 8, col 27 of module M,\ncannot be used as a spec",
+    ],
+    [
+      `${theoremBase}I(p) == INSTANCE Base WITH v <- p\nF(q) == I(q)!Q\nSpec == Init /\\ [][Next]_x /\\ F(x)`,
+      "SPECIFICATION Spec",
+      "The operator Baz, which equals line 8, col 1 to line 8, col 27 of module M,\ncannot be used as a spec",
+    ],
+    [
+      "THEOREM T == x \\in {0, 1}\nF(p) == T /\\ p = 0\nSpec == Init /\\ [][Next]_x /\\ F(x)",
+      "SPECIFICATION Spec",
+      "The operator T, which equals line 6, col 1 to line 6, col 25 of module M,\ncannot be used as a spec",
+    ],
+    [
+      `${letBase}P == LET K == INSTANCE Base WITH v <- x IN K!Baz`,
+      "INIT Init\nNEXT Next\nPROPERTY P",
+      "The operator K!Baz, which equals line 13, col 10 to line 13, col 39 of module M,\ncannot be used as a property",
+    ],
+    [
+      `${letBase}P == LET K == INSTANCE Base WITH v <- x IN K!Q`,
+      "INIT Init\nNEXT Next\nPROPERTY P",
+      "The operator Baz, which equals line 8, col 1 to line 8, col 27 of module M,\ncannot be used as a property",
+    ],
+    [
+      `${letBase}P == LET K == INSTANCE Base WITH v <- x IN K!Foo`,
+      "INIT Init\nNEXT Next\nPROPERTY P",
+      "The operator K!Foo, which equals line 13, col 10 to line 13, col 39 of module M,\ncannot be used as a property",
+    ],
+    [
+      `${letBase}P == LET K(p) == INSTANCE Base WITH v <- p IN K(x)!Q`,
+      "INIT Init\nNEXT Next\nPROPERTY P",
+      "The operator Baz, which equals line 8, col 1 to line 8, col 27 of module M,\ncannot be used as a property",
+    ],
+    [
+      `${letBase}${theoremLink}JL == INSTANCE L3 WITH w <- x\nP == LET K == INSTANCE L3 WITH w <- x IN K!R`,
+      "INIT Init\nNEXT Next\nPROPERTY P",
+      "The operator J!Baz, which equals line 15, col 1 to line 15, col 30 of module M,\ncannot be used as a property",
+    ],
+    [
+      `${letBase}${theoremLink}JL == INSTANCE L3 WITH w <- x\nP == LET K == INSTANCE L3 WITH w <- x IN K!J!Baz`,
+      "INIT Init\nNEXT Next\nPROPERTY P",
+      "The operator K!J!Baz, which equals line 19, col 10 to line 19, col 37 of module M,\ncannot be used as a property",
+    ],
+    [
+      `${letBase}P == LET K == INSTANCE Base WITH v <- x IN \\A k \\in {1} : K!Baz`,
+      "INIT Init\nNEXT Next\nPROPERTY P",
+      "The operator K!Baz, which equals line 13, col 10 to line 13, col 39 of module M,\ncannot be used as a property",
+    ],
+    [
+      `${letBase}Spec == Init /\\ [][Next]_x /\\ LET K == INSTANCE Base WITH v <- x IN K!Baz`,
+      "SPECIFICATION Spec",
+      "The operator K!Baz, which equals line 13, col 35 to line 13, col 64 of module M,\ncannot be used as a spec",
+    ],
+    [
+      `${letBase}Spec == LET K == INSTANCE Base WITH v <- x IN Init /\\ [][Next]_x /\\ K!Q`,
+      "SPECIFICATION Spec",
+      "The operator Baz, which equals line 8, col 1 to line 8, col 27 of module M,\ncannot be used as a spec",
     ],
   ])("rejects the theorem that %j reaches, as TLC does", async (definitions, config, message) => {
     await expect(check({ source: getTwoStateSource(definitions), config })).rejects.toThrow(
@@ -5222,10 +5678,344 @@ describe("initial predicate and next-state relation match TLC", () => {
       "---- MODULE B2 ----\nTHEOREM Baz2 == TRUE\n====\nI2 == INSTANCE B2\nP == I2!Baz2",
       "INIT Init\nNEXT Next\nPROPERTY P",
     ],
+    [
+      `${letBase}P == LET K(p) == INSTANCE Base WITH v <- p IN K(x)!Baz`,
+      "INIT Init\nNEXT Next\nPROPERTY P",
+    ],
+    [
+      `${letBase}P == LET K == INSTANCE Base WITH v <- x IN [](K!Baz)`,
+      "INIT Init\nNEXT Next\nPROPERTY P",
+    ],
+    [
+      `${letBase}P == LET K == INSTANCE Base WITH v <- x IN K!Baz \\/ FALSE`,
+      "INIT Init\nNEXT Next\nPROPERTY P",
+    ],
+    [
+      `${letBase}P == LET K == INSTANCE Base WITH v <- x IN K!Baz`,
+      "INIT Init\nNEXT Next\nINVARIANT P",
+    ],
   ])("checks the theorem that %j evaluates, as TLC does", async (definitions, config) => {
     expect((await check({ source: getTwoStateSource(definitions), config })).status).toBe(
       "success",
     );
+  });
+
+  const loopBase =
+    "---- MODULE R ----\nVARIABLE z\nRECURSIVE Ev(_)\nEv(n) == IF n = 0 THEN z = 1 ELSE Ev(n - 1)\n====\n";
+  const falseBase =
+    "---- MODULE R ----\nVARIABLE z\nRECURSIVE Ev(_)\nEv(n) == z = n /\\ FALSE\n====\n";
+
+  it.each([
+    ["F(p) == p = 0 /\\ FALSE\nSpec == Init /\\ [][Next]_x /\\ F(x)", "FALSE"],
+    ["F(p) == FALSE\nSpec == Init /\\ [][Next]_x /\\ F(x)", "FALSE"],
+    [`${falseBase}INSTANCE R WITH z <- x\nSpec == Init /\\ [][Next]_x /\\ Ev(0)`, "FALSE"],
+    [
+      `${falseBase}I == INSTANCE R WITH z <- x\nSpec == LET J == INSTANCE R WITH z <- x IN Init /\\ [][Next]_x /\\ J!Ev(0)`,
+      "FALSE",
+    ],
+    [`${falseBase}I == INSTANCE R WITH z <- x\nSpec == Init /\\ [][Next]_x /\\ I!Ev(0)`, "FALSE"],
+    ["Spec == LET F(p) == p = 0 /\\ FALSE IN Init /\\ [][Next]_x /\\ F(x)", "FALSE"],
+    ["F(p) == p = 0\nG(q) == F(q) /\\ FALSE\nSpec == Init /\\ [][Next]_x /\\ G(x)", "FALSE"],
+    ["H(Op(_)) == Op(x)\nSpec == Init /\\ [][Next]_x /\\ H(LAMBDA p : p = 0 /\\ FALSE)", "FALSE"],
+    ["G(p) == p = 0 /\\ FALSE\nH(Op(_)) == Op(x)\nSpec == Init /\\ [][Next]_x /\\ H(G)", "FALSE"],
+    ["C == FALSE\nF(p) == p = 0 /\\ C\nSpec == Init /\\ [][Next]_x /\\ F(x)", "C"],
+  ])(
+    "takes apart the state-level application in %j of the spec, as TLC does",
+    async (definitions, name) => {
+      await expect(
+        check({ source: getTwoStateSource(definitions), config: "SPECIFICATION Spec" }),
+      ).rejects.toThrow(
+        new TlaConfigError(`The spec is trivially false because ${name} is false.`),
+      );
+    },
+  );
+
+  it.each([
+    "RECURSIVE R(_)\nR(p) == p = 0 /\\ FALSE\nSpec == Init /\\ [][Next]_x /\\ R(x)",
+    "Spec == LET RECURSIVE R(_)\n            R(p) == p = 0 /\\ FALSE\n        IN Init /\\ [][Next]_x /\\ R(x)",
+    "F(p) == p = 0 /\\ FALSE\nS == F(x)\nSpec == Init /\\ [][Next]_x /\\ S",
+  ])(
+    "takes the conjunct in %j of the spec whole as an initial predicate, as TLC does",
+    async (definitions) => {
+      const result = await check({
+        source: getTwoStateSource(definitions),
+        config: "SPECIFICATION Spec",
+      });
+      expect([result.status, result.distinctStates]).toEqual(["success", 0]);
+    },
+  );
+
+  it.each([
+    ["P == LET RECURSIVE R(_)\n         R(n) == x \\in {0, 1} /\\ FALSE\n     IN R(1)", "P"],
+    [
+      "P == LET RECURSIVE R(_)\n         R(n) == x = 1\n     IN R(1) /\\ [](x \\in {0, 1})",
+      "line 8, col 9 to line 8, col 12 of module M",
+    ],
+  ])(
+    "names the property in %j without taking its RECURSIVE operator apart, as TLC does",
+    async (definitions, name) => {
+      const result = await check({
+        source: getTwoStateSource(definitions),
+        config: "INIT Init\nNEXT Next\nPROPERTY P",
+      });
+      expect(result.violation?.name).toBe(name);
+    },
+  );
+
+  it.each([
+    [`${loopBase}INSTANCE R WITH z <- x\nP == Ev(1) /\\ [](x \\in {0, 1})`, "Ev"],
+    [
+      `${loopBase}I == INSTANCE R WITH z <- x\nP == LET J == INSTANCE R WITH z <- x IN J!Ev(1) /\\ [](x \\in {0, 1})`,
+      "J!Ev",
+    ],
+  ])(
+    "names the property in %j by the INSTANCE's copy of a RECURSIVE operator it takes apart, as TLC does",
+    async (definitions, name) => {
+      const result = await check({
+        source: getTwoStateSource(definitions),
+        config: "INIT Init\nNEXT Next\nPROPERTY P",
+      });
+      expect(result.violation?.name).toBe(name);
+    },
+  );
+
+  const argumentBase = "G(Op(_)) == TRUE\nH(a) == x' = a\n";
+  const stateTheorem = "THEOREM T == x \\in {0, 1}\n";
+
+  it.each([
+    [`${argumentBase}C == FALSE /\\ G(H)\nSpec == Init /\\ [][Next]_x /\\ C`, "SPECIFICATION Spec"],
+    [`${stateTheorem}C == FALSE /\\ T\nSpec == Init /\\ [][Next]_x /\\ C`, "SPECIFICATION Spec"],
+    [
+      `${stateTheorem}C == IF TRUE THEN FALSE ELSE T\nSpec == Init /\\ [][Next]_x /\\ C`,
+      "SPECIFICATION Spec",
+    ],
+    [
+      "G(Op(_)) == TRUE\nC == FALSE /\\ G(LAMBDA a : x' = a)\nSpec == Init /\\ [][Next]_x /\\ C",
+      "SPECIFICATION Spec",
+    ],
+    [
+      `${stateTheorem}C == FALSE /\\ T\nP == C /\\ [](x \\in {0, 1})`,
+      "INIT Init\nNEXT Next\nPROPERTY P",
+    ],
+    [
+      `${stateTheorem}C == IF TRUE THEN FALSE ELSE T\nP == C /\\ [](x \\in {0, 1})`,
+      "INIT Init\nNEXT Next\nPROPERTY P",
+    ],
+  ])(
+    "rejects %j by the value startup stored for C, as TLC's lookup does",
+    async (definitions, config) => {
+      await expect(check({ source: getTwoStateSource(definitions), config })).rejects.toThrow(
+        new TlaConfigError("The spec is trivially false because C is false."),
+      );
+    },
+  );
+
+  it("rejects a spec conjunct whose stored value isn't a boolean, as TLC does", async () => {
+    await expect(
+      check({
+        source: getTwoStateSource(
+          `${stateTheorem}C == IF TRUE THEN 1 ELSE T\nSpec == Init /\\ [][Next]_x /\\ C`,
+        ),
+        config: "SPECIFICATION Spec",
+      }),
+    ).rejects.toThrow(
+      new TlaConfigError("The operator C, which equals 1,\ncannot be used as a spec"),
+    );
+  });
+
+  it.each([
+    `${argumentBase}C == G(H)\nP == []C`,
+    `${argumentBase}P == [](G(H))`,
+    "G(Op(_)) == TRUE\nP == [](G(LAMBDA a : x' = a))",
+    `${argumentBase}K(Op(_)) == [](G(Op))\nP == K(H)`,
+    "G(Op(_)) == TRUE\nP == LET L(a) == x' = a IN [](G(L))",
+    "a ++ b == x' = a\nG(Op(_, _)) == TRUE\nP == [](G(++))",
+  ])(
+    "checks the property %j as an invariant, as TLC's level bound takes an operator argument for a constant",
+    async (definitions) => {
+      const result = await check({
+        source: getTwoStateSource(definitions),
+        config: "INIT Init\nNEXT Next\nPROPERTY P",
+      });
+      expect([result.status, result.distinctStates]).toEqual(["success", 2]);
+    },
+  );
+
+  const getExtendingSource = (extended: string, definitions: string) =>
+    `---- MODULE M ----\nEXTENDS ${extended}, Naturals\nVARIABLE x\nInit == x = 0\nNext == x' = (x + 1) % 2\n${definitions}\n====`;
+
+  it.each([
+    ['G(Op(_)) == Op("level") \\in Nat\nC == PrintT(<<"C", G(TLCGet)>>)', ['<<"C", TRUE>>']],
+    [
+      'G(Op(_)) == Op("level") \\in Nat\nK(Op(_)) == G(Op)\nC == PrintT(<<"C", K(TLCGet)>>)',
+      ['<<"C", TRUE>>'],
+    ],
+    [
+      'G(Op(_)) == Op("level") \\in Nat\nC == PrintT(<<"C", LET L == G(TLCGet) IN L>>)',
+      ['<<"C", TRUE>>'],
+    ],
+    [
+      'G(Op(_)) == Op("level")\nC == PrintT(<<"C", G(LAMBDA v : TLCGet(v) \\in Nat)>>)',
+      ['<<"C", TRUE>>'],
+    ],
+    ['C == PrintT(<<"C", TLCGet("level") \\in Nat>>)', []],
+  ])(
+    "prints %j as TLC starts only for a builtin passed as an operator argument, which TLC's level bound takes for a constant",
+    async (definitions, expected) => {
+      const printed: string[] = [];
+      await check({
+        source: getExtendingSource("TLC", definitions),
+        config: "INIT Init\nNEXT Next",
+        onPrint: (text) => printed.push(text),
+      });
+      expect(printed).toEqual(expected);
+    },
+  );
+
+  it.each([
+    ["TLC", "G(Op(_)) == TRUE\nC == FALSE /\\ G(TLCGet)\nSpec == Init /\\ [][Next]_x /\\ C"],
+    [
+      "TLCExt",
+      "G(Op(_)) == TRUE\nC == FALSE /\\ G(PickSuccessor)\nSpec == Init /\\ [][Next]_x /\\ C",
+    ],
+  ])(
+    "rejects the spec by C's startup value when C passes a builtin of %s as an operator argument",
+    async (extended, definitions) => {
+      await expect(
+        check({ source: getExtendingSource(extended, definitions), config: "SPECIFICATION Spec" }),
+      ).rejects.toThrow(new TlaConfigError("The spec is trivially false because C is false."));
+    },
+  );
+
+  it.each([
+    "G(Op(_)) == TRUE\nP == [](G(PickSuccessor))",
+    "G(Op(_)) == TRUE\nC == G(PickSuccessor)\nP == []C",
+    "G(Op(_)) == TRUE\nP == LET L == G(PickSuccessor) IN []L",
+  ])(
+    "checks the property %j as an invariant, as TLC's level bound takes a builtin operator argument for a constant",
+    async (definitions) => {
+      const result = await check({
+        source: getExtendingSource("TLCExt", definitions),
+        config: "INIT Init\nNEXT Next\nPROPERTY P",
+      });
+      expect([result.status, result.distinctStates]).toEqual(["success", 2]);
+    },
+  );
+
+  const getLetInstanceSource = (variable: string, definitions: string) =>
+    `---- MODULE M ----\nEXTENDS TLC, Naturals\nVARIABLE ${variable}\nInit == ${variable} = 0\nNext == ${variable}' = (${variable} + 1) % 2\n${definitions}\n====\n`;
+  const getInstancedModule = (line: string) =>
+    `---- MODULE P ----\n${line}\nCONSTANT c\nP1 == c\n====\n`;
+  const instancedPrint = 'D == LET K == INSTANCE P WITH c <- 1 IN PrintT(<<"P1", K!P1>>)';
+  const directPrint = 'D == LET K == INSTANCE TLC IN PrintT(<<"P1", 1>>)';
+
+  it.each([
+    ["y", instancedPrint, "EXTENDS TLC", ['<<"P1", 1>>']],
+    ["x", instancedPrint, "EXTENDS TLC", []],
+    ["y", instancedPrint, "LOCAL INSTANCE TLC", ['<<"P1", 1>>']],
+    ["a", instancedPrint, "EXTENDS Naturals", []],
+    ["y", instancedPrint, "EXTENDS Naturals", ['<<"P1", 1>>']],
+    ["s", instancedPrint, "EXTENDS Sequences", []],
+    ["x", instancedPrint, "EXTENDS FiniteSets", []],
+    ["y", directPrint, "", ['<<"P1", 1>>']],
+    ["a", directPrint, "", ['<<"P1", 1>>']],
+    ["n", directPrint, "", []],
+  ])(
+    "with VARIABLE %s, evaluates %j at startup unless a TLA+ body K exports from %j applies that name, as TLC does",
+    async (variable, definitions, line, printed) => {
+      const prints: string[] = [];
+      await check({
+        source: getLetInstanceSource(variable, definitions),
+        config: "INIT Init\nNEXT Next",
+        loadModule: (name) => (name === "P" ? getInstancedModule(line) : undefined),
+        onPrint: (text) => prints.push(text),
+      });
+      expect(prints).toEqual(printed);
+    },
+  );
+
+  it.each([
+    ["y", "INSTANCE P WITH c <- 1", "EXTENDS Naturals"],
+    ["y", "INSTANCE TLC", ""],
+  ])(
+    "with VARIABLE %s, rejects the spec by C's startup value through LET K == %s, as TLC does",
+    async (variable, instance, line) => {
+      await expect(
+        check({
+          source: getLetInstanceSource(
+            variable,
+            `C == LET K == ${instance} IN FALSE\nSpec == Init /\\ [][Next]_${variable} /\\ C`,
+          ),
+          config: "SPECIFICATION Spec",
+          loadModule: (name) => (name === "P" ? getInstancedModule(line) : undefined),
+        }),
+      ).rejects.toThrow(new TlaConfigError("The spec is trivially false because C is false."));
+    },
+  );
+
+  it.each([
+    ["a", "INSTANCE P WITH c <- 1", "EXTENDS Naturals"],
+    ["x", "INSTANCE TLC", ""],
+  ])(
+    "with VARIABLE %s, takes C through LET K == %s whole as an initial predicate, as TLC does",
+    async (variable, instance, line) => {
+      const result = await check({
+        source: getLetInstanceSource(
+          variable,
+          `C == LET K == ${instance} IN FALSE\nSpec == Init /\\ [][Next]_${variable} /\\ C`,
+        ),
+        config: "SPECIFICATION Spec",
+        loadModule: (name) => (name === "P" ? getInstancedModule(line) : undefined),
+      });
+      expect([result.status, result.distinctStates]).toEqual(["success", 0]);
+    },
+  );
+
+  // Deviation from TLC: TLC evaluates the copy by SANY's placeholder body, so it prints <<"A", FALSE>> for Nat == {} and fails JavaTime as an unbounded CHOOSE.
+  it.each([
+    ["Naturals", "1 \\in K!Nat"],
+    ["TLC", "K!JavaTime > 0"],
+  ])("evaluates LET K == INSTANCE %s's %s by the Java override", async (module, expression) => {
+    const printed: string[] = [];
+    await check({
+      source: getLetInstanceSource(
+        "y",
+        `ASSUME LET K == INSTANCE ${module} IN PrintT(<<"A", ${expression}>>)`,
+      ),
+      config: "INIT Init\nNEXT Next",
+      onPrint: (text) => printed.push(text),
+    });
+    expect(printed).toEqual(['<<"A", TRUE>>']);
+  });
+
+  const literalBase =
+    "---- MODULE B7 ----\nCONSTANT c\nTHEOREM Cz == c = 1\n====\nJ7 == INSTANCE B7 WITH c <- 1\n";
+
+  // Deviation from TLC: SpecProcessor#processConstants visits a module's own theorems but not an INSTANCE's copies, so a literal substitute that only the copies reach has no value. Evaluating one fails with a NullPointerException, which startup swallows before it rejects the property as "The operator J7!Cz ... cannot be used as a property".
+  it.each([
+    ["P == J7!Cz", "INIT Init\nNEXT Next\nPROPERTY P"],
+    ["P == LET K == INSTANCE B7 WITH c <- 1 IN K!Cz", "INIT Init\nNEXT Next\nPROPERTY P"],
+    ["ASSUME J7!Cz", "INIT Init\nNEXT Next"],
+    ["P == J7!Cz", "INIT Init\nNEXT Next\nINVARIANT P"],
+  ])(
+    "evaluates the theorem that %j reaches with its literal substitute, where TLC fails with a NullPointerException",
+    async (definitions, config) => {
+      const result = await check({
+        source: getTwoStateSource(`${literalBase}${definitions}`),
+        config,
+      });
+      expect(result.status).toBe("success");
+    },
+  );
+
+  // Deviation from TLC: as above, TLC rejects P as "The operator K!Cz ... cannot be used as a property".
+  it("evaluates at startup a property that reaches a theorem with a literal substitute, where TLC fails with a NullPointerException", async () => {
+    await expect(
+      check({
+        source: getTwoStateSource(`${literalBase}P == LET K == INSTANCE B7 WITH c <- 2 IN K!Cz`),
+        config: "INIT Init\nNEXT Next\nPROPERTY P",
+      }),
+    ).rejects.toThrow(new TlaConfigError("The property of P is equal to FALSE"));
   });
 
   it("takes a theorem that a <- substitutes for undefined, as TLC does", async () => {

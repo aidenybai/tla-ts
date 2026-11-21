@@ -2104,7 +2104,7 @@ describe("the CLI reads a monolith's configs and modules like TLC", () => {
       "Cannot find source file for module B imported in module M.",
     ],
   ])("%s", (_name, files, args, status, line) => {
-    const directory = mkdtempSync(join(tmpdir(), "monolith-"));
+    const directory = mkdtempSync(join(FIXTURES, "monolith-"));
     Object.entries(files).forEach((entry) => writeFileSync(join(directory, entry[0]), entry[1]));
     const result = runCliWith(directory, [...args, "M.tla"]);
     rmSync(directory, { recursive: true });

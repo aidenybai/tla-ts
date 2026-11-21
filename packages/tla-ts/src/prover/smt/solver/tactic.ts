@@ -39,6 +39,7 @@ import { createSatTactic } from "./sat/sat-tactic";
 import { mkThSolver } from "./euf/th-solvers";
 import { getHammerPeriod } from "./lp/lp-settings";
 import { getDoubleParameter } from "./gparams";
+import { ObjMap } from "./hashtable";
 import { createFdTactic } from "./fd-solver";
 import { elimUncnstr } from "./elim-uncnstr";
 import { runElimTermIte } from "./elim-term-ite-tactic";
@@ -333,6 +334,7 @@ const SMT_DESCRS = getDescrs("smt", [
   ["arith.branch_cut_ratio", PARAM_UINT, 2, true],
   ["random_seed", PARAM_UINT, 0, true],
   ["auto_config", PARAM_BOOL, true, true],
+  ["ematching", PARAM_BOOL, true, true],
   ["mbqi.id", PARAM_STRING, ""],
   ["qi.cost", PARAM_STRING, "(+ weight generation)", true],
   ["qi.eager_threshold", PARAM_NUMERAL, "10", true],
@@ -344,6 +346,9 @@ const getSmtDouble = (environment: TacticEnvironment, params: TacticParams, name
   params.has(name)
     ? getNumeral(params, name, "0").toDouble()
     : getDoubleParameter(environment.parameters, `smt.${name}`);
+
+const isEmatching = (environment: TacticEnvironment, params: TacticParams) =>
+  getBool(params, "ematching", getParameter(environment, "smt.ematching", "true") !== "false");
 
 const getRelevancyLevel = (environment: TacticEnvironment, params: TacticParams) =>
   getUint(params, "relevancy", Number(getParameter(environment, "smt.relevancy", "2")));
@@ -367,6 +372,7 @@ const getKernelParams = (environment: TacticEnvironment, params: TacticParams, g
     isMbqi: getBool(params, "mbqi", environment.isMbqi) || isMbqiByFeatures(setup, hasQuantifiers),
     mbqiMaxIterations: getUint(params, "mbqi.max_iterations", environment.mbqiMaxIterations),
     isFindingMacros: environment.isFindingMacros,
+    isEmatching: isEmatching(environment, params),
     relevancyLevel: getRelevancyLevel(environment, params),
     setup,
     randomSeed: getUint(
@@ -566,6 +572,7 @@ const runUnitSubsume = (environment: TacticEnvironment) => {
     isMbqi: environment.isMbqi,
     mbqiMaxIterations: environment.mbqiMaxIterations,
     isFindingMacros: environment.isFindingMacros,
+    isEmatching: getParameter(environment, "smt.ematching", "true") !== "false",
     relevancyLevel: Number(getParameter(environment, "smt.relevancy", "2")),
   });
   const clauses = new RefVector(manager);
@@ -942,6 +949,7 @@ const NAMED_TACTICS = new Map<string, NamedTactic>([
             environment.mbqiMaxIterations,
           ),
           isFindingMacros: environment.isFindingMacros,
+          isEmatching: isEmatching(environment, tacticParams),
           relevancyLevel: getRelevancyLevel(environment, tacticParams),
           qiCost: tacticParams.has("qi.cost")
             ? String(tacticParams.get("qi.cost"))
@@ -2472,7 +2480,7 @@ const DIVISION_BY_ZERO_DECLS = new Set([OP_DIV0, OP_IDIV0, OP_MOD0, OP_POWER0]);
 // A constant of an uninterpreted sort the model lacks puts its value in that sort's universe.
 export const applyDefinitions = (definitions: readonly Definition[], model: ProtoModel) => {
   const manager = model.manager;
-  const universe: number[] = [];
+  const universes = new ObjMap<number[]>((sort) => manager.getSortHash(sort));
   let evaluator = new ModelEvaluator(manager, model);
   evaluator.setModelCompletion(true);
   for (let index = definitions.length - 1; index >= 0; index--) {
@@ -2504,12 +2512,11 @@ export const applyDefinitions = (definitions: readonly Definition[], model: Prot
     const old = model.constInterps.get(definition.decl);
     if (old !== value) model.registerConst(definition.decl, value);
     const sort = manager.sorts[value];
-    if (
-      manager.isUninterpretedSort(sort) &&
-      !model.getUninterpretedSorts().includes(sort) &&
-      !universe.includes(value)
-    )
-      universe.push(value);
+    if (manager.isUninterpretedSort(sort) && !model.getUninterpretedSorts().includes(sort)) {
+      const values = universes.get(sort) ?? [];
+      if (!values.includes(value)) values.push(value);
+      universes.set(sort, values);
+    }
     manager.decRef(value);
     if (old !== undefined && old !== value) {
       evaluator.release();
@@ -2518,7 +2525,10 @@ export const applyDefinitions = (definitions: readonly Definition[], model: Prot
     }
   }
   evaluator.release();
-  for (const value of universe) model.registerValue(value);
+  for (const entry of universes) {
+    for (const value of entry[1]) model.registerValue(value);
+    model.registerUsort(entry[0], entry[1]);
+  }
   return model;
 };
 

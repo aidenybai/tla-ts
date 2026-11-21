@@ -37,9 +37,14 @@ import {
   type Scope,
   type Thunk,
 } from "./evaluate";
-import { letDefinitions } from "./coverage";
-import { getSubstitutedName, mapChildren, substitutionFrames } from "./instances";
-import { getKeyName } from "./resolve";
+import { getLetDefinition, letDefinitions } from "./coverage";
+import {
+  getSubstitutedName,
+  getSubstitutedOccurrence,
+  mapChildren,
+  substitutionFrames,
+} from "./instances";
+import { getArity, getKeyName } from "./resolve";
 import {
   ACTION_LEVEL,
   CONSTANT_LEVEL,
@@ -105,6 +110,17 @@ const TEMPORAL_OPERATORS = new Set(["~>", "-+->"]);
 
 const definitionThunks = new WeakSet<Thunk>();
 
+export const getReferenceName = (
+  reference: Expression & { kind: "Identifier" | "Apply" },
+  key: string,
+  environment: Environment,
+) => {
+  const written = reference.writtenKey;
+  return written === undefined
+    ? environment.instanceNames.get(key)
+    : (environment.instanceNames.get(written) ?? getDefinition(written, environment)?.name);
+};
+
 const recursiveLetBodies = new WeakSet<Expression>();
 
 const JUNCTIONS = new Map<string, "And" | "Or">([
@@ -168,7 +184,7 @@ export const getLevel = (
     bindingLevels.set(binding, level);
     return level;
   };
-  const getBindingLevel = (name: string) => {
+  const getBindingLevel = (name: string, isArgument: boolean) => {
     const binding = lookupScope(scope, name);
     if (!binding) return undefined;
     if (binding.kind === "Value") return CONSTANT_LEVEL;
@@ -178,16 +194,24 @@ export const getLevel = (
         : getBodyLevel(binding, binding.expression, binding.scope);
     }
     const operator = binding.operator;
-    return operator.kind === "Closure"
+    return operator.kind === "Closure" && !(isArgument && operator.params.length > 0)
       ? getBodyLevel(operator, operator.body, operator.scope)
       : CONSTANT_LEVEL;
   };
-  const getGlobalLevel = (name: string) => {
+  const getGlobalLevel = (name: string, isArgument: boolean) => {
     if (environment.variableIndex.has(name)) return VARIABLE_LEVEL;
     if (environment.constants.has(name)) return CONSTANT_LEVEL;
     const definition = getDefinition(name, environment);
-    // TLC's getLevelBound counts a theorem's arguments but not its body.
-    if (definition && isLevelBound && environment.theorems.has(name)) return CONSTANT_LEVEL;
+    // TLC's getLevelBound counts a theorem's arguments but not its body, and it looks a definition up as the value startup stored for it.
+    if (
+      definition &&
+      isLevelBound &&
+      (environment.theorems.has(name) ||
+        getStartupValue(definition, environment) !== undefined ||
+        (isArgument && getArity(definition) > 0))
+    ) {
+      return CONSTANT_LEVEL;
+    }
     if (definition && isLevelBound) {
       return Math.max(
         ...getDefinitionExpressions(definition).map((item) => getBodyLevel(item, item, undefined)),
@@ -196,15 +220,22 @@ export const getLevel = (
     if (definition) return getDefinitionLevel(definition, environment);
     const builtin = environment.builtins.get(environment.substitutions.get(name) ?? name);
     if (!builtin) return undefined;
+    if (isArgument && builtin.arity > 0) return CONSTANT_LEVEL;
     if (builtin.isActionLevel) return ACTION_LEVEL;
     return builtin.isStateLevel && !builtin.isLevelConstant ? VARIABLE_LEVEL : CONSTANT_LEVEL;
   };
   const getNameLevel = (name: string, node: Expression) => {
+    // TLC's getLevelBound takes any name a root variable shares for that variable.
+    if (isLevelBound && environment.variableIndex.has(name)) return VARIABLE_LEVEL;
     if (shadowed.has(name)) return CONSTANT_LEVEL;
+    // TLC's getLevelBound takes an operator argument for a constant.
+    const isArgument = isLevelBound && node.kind === "Identifier";
     if (isLocallyResolved(node)) {
-      return getBindingLevel(name) ?? getGlobalLevel(name) ?? CONSTANT_LEVEL;
+      return (
+        getBindingLevel(name, isArgument) ?? getGlobalLevel(name, isArgument) ?? CONSTANT_LEVEL
+      );
     }
-    return getGlobalLevel(name) ?? getBindingLevel(name) ?? CONSTANT_LEVEL;
+    return getGlobalLevel(name, isArgument) ?? getBindingLevel(name, isArgument) ?? CONSTANT_LEVEL;
   };
   const getChildrenLevel = (node: Expression) => {
     let level = CONSTANT_LEVEL;
@@ -241,21 +272,47 @@ export const getLevel = (
     case "UnboundedQuantifier":
       return expression.isTemporal ? TEMPORAL_LEVEL : getChildrenLevel(expression);
     // TLC's level bound counts a LET's definitions, though SANY levels a LET by its body.
-    case "Let":
-      return isLevelBound
-        ? getChildrenLevel(expression)
-        : getLevel(
-            expression.body,
-            bindLetDefinitions(expression, scope, environment),
-            environment,
-            shadowed,
-            bindingLevels,
-            isLevelBound,
-          );
+    case "Let": {
+      if (!isLevelBound) {
+        return getLevel(
+          expression.body,
+          bindLetDefinitions(expression, scope, environment),
+          environment,
+          shadowed,
+          bindingLevels,
+          isLevelBound,
+        );
+      }
+      const aliases = expression.definitions.filter(
+        (definition) => "standardDefinition" in definition,
+      );
+      if (aliases.length === 0) return getChildrenLevel(expression);
+      // TLC's getLevelBound reads a standard operator's TLA+ definition, not the builtin a LET instance's alias forwards to.
+      return Math.max(
+        getLevel(
+          {
+            ...expression,
+            definitions: expression.definitions.filter(
+              (definition) => !("standardDefinition" in definition),
+            ),
+          },
+          scope,
+          environment,
+          new Set([...shadowed, ...aliases.map((alias) => alias.name)]),
+          bindingLevels,
+          isLevelBound,
+        ),
+        ...aliases
+          .flatMap((alias) => getDefinitionExpressions(alias.standardDefinition))
+          .map((item) => getBodyLevel(item, item, undefined)),
+      );
+    }
     case "Identifier":
       return getNameLevel(expression.name, expression);
     case "OperatorReference":
-      return getNameLevel(expression.operator, expression);
+      return isLevelBound ? CONSTANT_LEVEL : getNameLevel(expression.operator, expression);
+    case "Lambda":
+      return isLevelBound ? CONSTANT_LEVEL : getChildrenLevel(expression);
     case "Apply": {
       if (TEMPORAL_OPERATORS.has(expression.operator)) return TEMPORAL_LEVEL;
       if (expression.operator === "\\cdot") return ACTION_LEVEL;
@@ -348,20 +405,32 @@ export const expandTemporal = (
       theorem,
     },
   ];
-  // An instanced body reaches the theorem SANY copied it from, and a direct reference the one its INSTANCE made.
-  const getTheoremReference = (key: string): TheoremReference | undefined => {
-    const range = environment.theorems.get(key);
+  // An instanced body reaches the theorem its module named, and a direct reference the one its INSTANCE made.
+  const getTheoremReference = (
+    reference: Expression & { kind: "Identifier" | "Apply" },
+    key: string,
+  ): TheoremReference | undefined => {
+    const isLocal = isLocallyResolved(reference);
+    const letDefinition = isLocal ? getLetDefinition(key, scope) : undefined;
+    const range = isLocal
+      ? letDefinition?.kind === "Operator" && letDefinition.theoremRange
+      : environment.theorems.get(key);
     if (!range) return undefined;
+    const written = reference.writtenKey;
     const original = getDefinition(key, environment);
     return {
-      name:
-        (!expansion.isSubstituted && environment.instanceNames.get(key)) ||
-        (original?.name ?? getKeyName(key)),
-      range: (expansion.isSubstituted && original?.location.range) || range,
+      name: getReferenceName(reference, key, environment) ?? original?.name ?? getKeyName(key),
+      range:
+        (written !== undefined && environment.theorems.get(written)) ||
+        (expansion.isSubstituted && original?.location.range) ||
+        range,
     };
   };
   if (expression.kind === "And") {
-    return expression.operands.flatMap((operand) => expand(operand, scope, describeRange(operand)));
+    // TLC names a conjunct by its position in SANY's body, which keeps the declaration a substitute replaced.
+    return expression.operands.flatMap((operand) =>
+      expand(operand, scope, describeRange(getSubstitutedOccurrence(operand) ?? operand)),
+    );
   }
   if (expression.kind === "Label") return expand(expression.body, scope);
   if (expression.kind === "Selection") return expand(expression.expression, scope);
@@ -375,19 +444,21 @@ export const expandTemporal = (
       return getLeaf();
     }
     const binding = isLocallyResolved(expression) ? lookupScope(scope, expression.name) : undefined;
+    const theorem = getTheoremReference(expression, expression.name);
+    if (theorem) return getLeaf(theorem);
     if (binding?.kind === "Thunk" && !binding.isReleased) {
       return expand(
         binding.expression,
         binding.scope,
-        definitionThunks.has(binding) && !isSubstitute ? expression.name : expansion.name,
+        definitionThunks.has(binding) && !isSubstitute
+          ? (getReferenceName(expression, expression.name, environment) ?? expression.name)
+          : expansion.name,
       );
     }
     const operator = binding?.kind === "Operator" ? binding.operator : undefined;
     if (operator?.kind === "Closure" && operator.params.length === 0) {
       return expand(operator.body, operator.scope, isSubstitute ? expansion.name : expression.name);
     }
-    const theorem = binding ? undefined : getTheoremReference(expression.name);
-    if (theorem) return getLeaf(theorem);
     const definition = environment.constants.has(expression.name)
       ? undefined
       : getDefinition(expression.name, environment);
@@ -395,8 +466,7 @@ export const expandTemporal = (
       !binding &&
       definition?.kind === "Operator" &&
       definition.params.length === 0 &&
-      (getDefinitionLevel(definition, environment) > CONSTANT_LEVEL ||
-        getStartupValue(definition, environment) === undefined)
+      getStartupValue(definition, environment) === undefined
     ) {
       if (expansion.expanding.has(definition)) {
         throw createStackOverflowError();
@@ -404,48 +474,46 @@ export const expandTemporal = (
       return expand(
         definition.body,
         undefined,
-        (!expansion.isSubstituted && environment.instanceNames.get(expression.name)) ||
-          definition.name,
+        getReferenceName(expression, expression.name, environment) ?? definition.name,
         new Set([...expansion.expanding, definition]),
         definition,
       );
     }
   }
   // A parameterized INSTANCE passes its parameters to each theorem it copies, which SANY's body names with none.
-  if (expression.kind === "Apply" && expansion.isSubstituted && !isLocallyResolved(expression)) {
-    const applied = getDefinition(expression.operator, environment);
-    const theorem =
-      applied?.kind === "Operator" &&
-      applied.params.every((param) => environment.instanceParams.has(param))
-        ? getTheoremReference(expression.operator)
-        : undefined;
+  if (expression.kind === "Apply" && expression.writtenKey !== undefined) {
+    const theorem = getTheoremReference(expression, expression.operator);
     if (theorem) return getLeaf(theorem);
   }
   const context = getConstantContext(environment, scope);
-  if (
-    expression.kind === "Apply" &&
-    environment.runtime.version !== "1.7.4" &&
-    (isProperty || getLevel(expression, scope, environment) === TEMPORAL_LEVEL)
-  ) {
+  // SpecProcessor#processConfigSpec and #processConfigProps take apart an application of a parameterized definition whatever its level.
+  if (expression.kind === "Apply" && environment.runtime.version !== "1.7.4") {
     const operator = resolveApplyOperator(expression, context);
     const definition = isLocallyResolved(expression)
       ? undefined
       : getDefinition(expression.operator, environment);
+    // SANY sets getInRecursive only on the definition a RECURSIVE declaration names, and an INSTANCE's copy is a new one, which a LET reaches through its instance's `!`.
+    const isRecursive = definition
+      ? definition.isRecursive && !environment.substitutedDefinitions.has(definition)
+      : isLocallyResolved(expression) &&
+        getLetDefinition(expression.operator, scope)?.isRecursive === true &&
+        !expression.operator.includes("!");
     const isOwnArgumentFree =
       operator?.kind === "Closure" &&
       operator.params.every((param) => environment.instanceParams.has(param));
     const isExpandable =
       operator?.kind === "Closure" &&
       operator.params.length === expression.args.length &&
-      !definition?.isRecursive &&
+      !isRecursive &&
       (!expansion.isSubstituted || isOwnArgumentFree);
     if (isExpandable) {
       return expand(
         operator.body,
         bindOperatorArguments(operator, expression.args, context),
-        expansion.isSubstituted && definition
-          ? definition.name
-          : (environment.instanceNames.get(expression.operator) ?? getKeyName(expression.operator)),
+        getReferenceName(expression, expression.operator, environment) ??
+          (expansion.isSubstituted && definition
+            ? definition.name
+            : getKeyName(expression.operator)),
         expansion.expanding,
         definition,
       );
@@ -459,7 +527,13 @@ export const expandTemporal = (
   if (isUnrolled && sets) {
     const expanded: ExpandedExpression[] = [];
     forEachBoundElement(expression.bounds, sets, scope, (boundScope) => {
-      expanded.push(...expand(expression.body, boundScope, describeRange(expression.body)));
+      expanded.push(
+        ...expand(
+          expression.body,
+          boundScope,
+          describeRange(getSubstitutedOccurrence(expression.body) ?? expression.body),
+        ),
+      );
       return false;
     });
     if (expanded.length === 0) throw createTautologyError();

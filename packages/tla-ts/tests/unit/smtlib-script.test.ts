@@ -1224,6 +1224,137 @@ describe("runSmtlibScript prints what Z3 prints", () => {
     ]);
   });
 
+  describe("lists the universes of several sorts in the hash order of a model's sort map", () => {
+    const getUniverseHeaders = (output: string[]) =>
+      output
+        .flatMap((text) => text.split("\n"))
+        .filter((line) => line.startsWith("  ;; universe for"));
+    const TWO_SORTS = [
+      "(declare-sort Key 0)",
+      "(declare-sort B 0)",
+      "(declare-const x Key)",
+      "(declare-const y Key)",
+      "(declare-const u B)",
+      "(declare-const v B)",
+    ];
+
+    it("as model::copy copies the smt kernel's model", () => {
+      expect(
+        getUniverseHeaders(
+          run([
+            ...TWO_SORTS,
+            "(assert (not (= x y)))",
+            "(assert (not (= u v)))",
+            "(check-sat)",
+            "(get-model)",
+          ]),
+        ),
+      ).toEqual(["  ;; universe for B:", "  ;; universe for Key:"]);
+    });
+
+    it("as sat.euf's user_sort registers them", () => {
+      expect(
+        getUniverseHeaders(
+          run([
+            "(set-option :sat.euf true)",
+            "(declare-sort A 0)",
+            "(declare-sort B 0)",
+            "(declare-sort U 0)",
+            "(declare-const x0 A)",
+            "(declare-const y0 A)",
+            "(declare-const x1 B)",
+            "(declare-const y1 B)",
+            "(declare-const x2 U)",
+            "(declare-const y2 U)",
+            "(assert (not (= x0 y0)))",
+            "(assert (not (= x1 y1)))",
+            "(assert (not (= x2 y2)))",
+            "(check-sat)",
+            "(get-model)",
+          ]),
+        ),
+      ).toEqual(["  ;; universe for B:", "  ;; universe for A:", "  ;; universe for U:"]);
+    });
+
+    it("as generic_model_converter registers the sorts of eliminated constants", () => {
+      expect(
+        getUniverseHeaders(
+          run([
+            ...TWO_SORTS,
+            "(assert (= x y))",
+            "(assert (= u v))",
+            "(check-sat-using (then simplify solve-eqs smt))",
+            "(get-model)",
+          ]),
+        ),
+      ).toEqual(["  ;; universe for B:", "  ;; universe for Key:"]);
+    });
+
+    it("as fpa2bv_model_converter copies them in the source model's order", () => {
+      expect(
+        getUniverseHeaders(
+          run([
+            ...TWO_SORTS,
+            "(declare-const z (_ FloatingPoint 3 5))",
+            "(assert (not (= x y)))",
+            "(assert (not (= u v)))",
+            "(assert (fp.isNormal z))",
+            "(check-sat-using (then fpa2bv smt))",
+            "(get-model)",
+          ]),
+        ),
+      ).toEqual(["  ;; universe for B:", "  ;; universe for Key:"]);
+    });
+
+    it("as bit_blaster_model_converter copies them again, in the copy's hash order", () => {
+      expect(
+        getUniverseHeaders(
+          run([
+            ...TWO_SORTS,
+            "(declare-const bv (_ BitVec 2))",
+            "(assert (not (= x y)))",
+            "(assert (not (= u v)))",
+            "(assert (bvult bv #b10))",
+            "(check-sat-using (then bit-blast smt))",
+            "(get-model)",
+          ]),
+        ),
+      ).toEqual(["  ;; universe for Key:", "  ;; universe for B:"]);
+    });
+
+    it("as ackr_model_converter copies them again, in the copy's hash order", () => {
+      expect(
+        getUniverseHeaders(
+          run([
+            ...TWO_SORTS,
+            "(assert (not (= x y)))",
+            "(assert (not (= u v)))",
+            "(check-sat-using (then ackermannize_bv smt))",
+            "(get-model)",
+          ]),
+        ),
+      ).toEqual(["  ;; universe for Key:", "  ;; universe for B:"]);
+    });
+
+    it("as eq2bv's model converter copies them again, in the copy's hash order", () => {
+      expect(
+        getUniverseHeaders(
+          run([
+            ...TWO_SORTS,
+            "(declare-const i Int)",
+            "(assert (not (= x y)))",
+            "(assert (not (= u v)))",
+            "(assert (and (<= 0 i) (<= i 2)))",
+            "(assert (not (= i 1)))",
+            "(assert (not (= i 0)))",
+            "(check-sat-using (then eq2bv smt))",
+            "(get-model)",
+          ]),
+        ),
+      ).toEqual(["  ;; universe for Key:", "  ;; universe for B:"]);
+    });
+  });
+
   it("orders sat.euf model dependencies by expression id", () => {
     expect(
       run([
