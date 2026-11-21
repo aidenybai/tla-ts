@@ -2244,7 +2244,6 @@ ASSUME TLCFP(a) = -887695703
   const NEXT_CHECK = "INIT Init\nNEXT Next\n";
   const LIVE_CHECK = "SPECIFICATION Spec\nPROPERTY Live\n";
   const getPrints = (text: string, count: number) => Array.from({ length: count }, () => text);
-  // TLC's -coverage 1 -nowarning.
   const UNWARNED_COVERAGE = { coverage: 1, isWarningEnabled: false };
   const getLazyReads = async (
     definitions: string,
