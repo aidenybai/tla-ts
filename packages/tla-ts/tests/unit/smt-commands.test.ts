@@ -2886,6 +2886,75 @@ describe("solve-eqs on an array a quantifier defines, as Z3 5.3.2 solves it", ()
       "true",
     ]);
   });
+
+  it("prints an or with a disequality as stores when they cover the indices", () => {
+    expect(
+      run([
+        "(declare-fun B () (Array (_ BitVec 1) Bool))",
+        "(assert (forall ((x (_ BitVec 1))) (= (select B x) (or (= x #b0) (not (= x #b1))))))",
+        "(check-sat)",
+        "(get-info :rlimit)",
+        "(get-model)",
+        "(eval (select B #b0))",
+        "(eval (select B #b1))",
+      ]),
+    ).toEqual([
+      "sat",
+      "(:rlimit 142)",
+      "(",
+      "  (define-fun B () (Array (_ BitVec 1) Bool)",
+      "    (store ((as const (Array (_ BitVec 1) Bool)) false) #b0 true))",
+      ")",
+      "true",
+      "false",
+    ]);
+  });
+
+  it("prints an and with an equality as stores when they cover the indices", () => {
+    expect(
+      run([
+        "(declare-datatypes ((C 0)) (((r) (g) (k))))",
+        "(declare-fun B () (Array C Bool))",
+        "(assert (forall ((x C)) (= (select B x) (and (not (= x r)) (not (= x g)) (= x k)))))",
+        "(check-sat)",
+        "(get-info :rlimit)",
+        "(get-model)",
+        "(eval (select B r))",
+        "(eval (select B k))",
+      ]),
+    ).toEqual([
+      "sat",
+      "(:rlimit 182)",
+      "(",
+      "  (define-fun B () (Array C Bool)",
+      "    (store (store ((as const (Array C Bool)) true) g false) r false))",
+      ")",
+      "false",
+      "true",
+    ]);
+  });
+
+  // Deviation from Z3: has_index_set reads this or as false at both indices, which gives a wrong model.
+  it("keeps a lambda for an or of two disequalities that cover the indices", () => {
+    expect(
+      run([
+        "(declare-fun B () (Array (_ BitVec 1) Bool))",
+        "(assert (forall ((x (_ BitVec 1))) (= (select B x) (or (not (= x #b0)) (not (= x #b1))))))",
+        "(check-sat)",
+        "(get-info :rlimit)",
+        "(get-model)",
+        "(eval (select B #b0))",
+      ]),
+    ).toEqual([
+      "sat",
+      "(:rlimit 162)",
+      "(",
+      "  (define-fun B () (Array (_ BitVec 1) Bool)",
+      "    (lambda ((x (_ BitVec 1))) (or (not (= x #b0)) (not (= x #b1)))))",
+      ")",
+      "true",
+    ]);
+  });
 });
 
 const POPPED_CHECK = [

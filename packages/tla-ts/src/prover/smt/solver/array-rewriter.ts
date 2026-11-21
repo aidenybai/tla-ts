@@ -55,17 +55,70 @@ const addStore = (
   return true;
 };
 
+const isSameIndex = (first: number[], second: number[], numIndices: number) => {
+  for (let index = 0; index < numIndices; index++) if (first[index] !== second[index]) return false;
+  return true;
+};
+
+const getFirstStore = (stores: number[][], store: number, numIndices: number) => {
+  let first = 0;
+  while (!isSameIndex(stores[first], stores[store], numIndices)) first++;
+  return first;
+};
+
+const isIndexSetExact = (
+  manager: AstManager,
+  sorts: number[],
+  stores: number[][],
+  start: number,
+  elseExpr: number,
+) => {
+  const numIndices = sorts.length;
+  let hasMisread = false;
+  for (let store = start; store < stores.length; store++)
+    if (stores[store][numIndices] === elseExpr) hasMisread = true;
+  if (!hasMisread) return true;
+  let numPoints = 1n;
+  for (let index = 0; index < numIndices; index++) {
+    const size = manager.getSortSize(sorts[index]);
+    if (size < 0n) return false;
+    numPoints *= size;
+  }
+  let numCovered = 0n;
+  for (let store = 0; store < stores.length; store++) {
+    for (let index = 0; index < numIndices; index++)
+      if (!manager.isUniqueValue(stores[store][index])) return false;
+    if (getFirstStore(stores, store, numIndices) === store) numCovered++;
+  }
+  if (numCovered < numPoints) return false;
+  for (let point = start; point < stores.length; point++) {
+    if (getFirstStore(stores, point, numIndices) !== point) continue;
+    let numHolding = 0;
+    for (let store = start; store < stores.length; store++)
+      if (
+        (stores[store][numIndices] === manager.trueExpr) ===
+        isSameIndex(stores[store], stores[point], numIndices)
+      )
+        numHolding++;
+    const isTrue =
+      elseExpr === manager.trueExpr ? numHolding === stores.length - start : numHolding > 0;
+    if (isTrue !== (stores[point][numIndices] === manager.trueExpr)) return false;
+  }
+  return true;
+};
+
 export const hasIndexSet = (manager: AstManager, lambda: number, stores: number[][]) => {
-  const numIndices = manager.getQuantifier(lambda).sorts.length;
+  const sorts = manager.getQuantifier(lambda).sorts;
   const body = manager.getQuantifier(lambda).body;
   const op = manager.getOp(body);
   if (!manager.isGroundApp(body) && (op === OP_OR || op === OP_AND)) {
-    // Deviation from Z3: has_index_set misreads a negated equality in an or and an equality in an and, which gives a wrong model.
-    if (manager.getArgs(body).some((arg) => manager.isNot(arg) === (op === OP_OR)))
-      return undefined;
-    for (const arg of manager.getArgs(body))
-      if (!addStore(manager, numIndices, arg, manager.trueExpr, stores)) return undefined;
-    return op === OP_OR ? manager.falseExpr : manager.trueExpr;
+    const start = stores.length;
+    for (let index = 0; index < manager.getNumArgs(body); index++)
+      if (!addStore(manager, sorts.length, manager.getArg(body, index), manager.trueExpr, stores))
+        return undefined;
+    const elseValue = op === OP_OR ? manager.falseExpr : manager.trueExpr;
+    // Deviation from Z3: has_index_set misreads a negated equality in an or and an equality in an and, so the port keeps such a lambda unless the stores give its value at every index.
+    return isIndexSetExact(manager, sorts, stores, start, elseValue) ? elseValue : undefined;
   }
   let elseExpr = body;
   while (
@@ -74,7 +127,7 @@ export const hasIndexSet = (manager: AstManager, lambda: number, stores: number[
     manager.isGroundApp(manager.getArg(elseExpr, 1))
   ) {
     const [condition, value, rest] = manager.getArgs(elseExpr);
-    if (!addStore(manager, numIndices, condition, value, stores)) return undefined;
+    if (!addStore(manager, sorts.length, condition, value, stores)) return undefined;
     elseExpr = rest;
   }
   return manager.isGroundApp(elseExpr) ? elseExpr : undefined;
