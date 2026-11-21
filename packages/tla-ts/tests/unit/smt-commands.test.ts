@@ -299,6 +299,12 @@ const SMT_FIXTURES = join(import.meta.dirname, "../fixtures/smt");
 // A tlapm obligation from tlaplus/Examples' MisraReachability, with its goal checked under a push.
 const REACHABLE_PROOFS = readFileSync(join(SMT_FIXTURES, "ReachableProofs-40-push.smt2"), "utf8");
 
+// A tlapm obligation from tlaplus/Examples' CigaretteSmokers at an rlimit that runs out in base-level bcp.
+const CIGARETTE_SMOKERS = readFileSync(
+  join(SMT_FIXTURES, "CigaretteSmokers-base-level.smt2"),
+  "utf8",
+);
+
 const readZ3Output = (name: string) =>
   readFileSync(join(SMT_FIXTURES, name), "utf8").trimEnd().split("\n");
 
@@ -1097,6 +1103,14 @@ describe("runSmtlibScript runs its commands as Z3 does", () => {
     expect(run(["(set-option :rlimit 4000)", REACHABLE_PROOFS])).toEqual(
       readZ3Output("ReachableProofs-40-push-4000.z3out"),
     );
+  });
+
+  it("finishes base-level propagation past the limit and finds the conflict", () => {
+    expect(run([CIGARETTE_SMOKERS, "(get-info :rlimit)", "(get-info :reason-unknown)"])).toEqual([
+      "unsat",
+      "(:rlimit 5143)",
+      '(:reason-unknown "")',
+    ]);
   });
 
   it("orders a compacted interpretation's disjuncts as Z3 does once its aux functions are gone", () => {

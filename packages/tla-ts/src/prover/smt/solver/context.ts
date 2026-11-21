@@ -609,17 +609,24 @@ export class Context extends Internalizer {
   }
 
   propagate() {
+    const limit = this.manager.limit;
     for (;;) {
       if (this.isInconsistent()) return false;
       const qhead = this.qhead;
-      if (!this.bcp()) return false;
-      this.propagateRelevancy(qhead);
-      if (this.isInconsistent()) return false;
-      if (!this.propagateAtoms()) return false;
-      if (!this.propagateEqs()) return false;
-      this.propagateThEqs();
-      this.propagateThDiseqs();
-      if (this.isInconsistent()) return false;
+      const wasSuspended = limit.isSuspended;
+      limit.isSuspended = wasSuspended || this.scopeLevel === this.baseLevel;
+      try {
+        if (!this.bcp()) return false;
+        this.propagateRelevancy(qhead);
+        if (this.isInconsistent()) return false;
+        if (!this.propagateAtoms()) return false;
+        if (!this.propagateEqs()) return false;
+        this.propagateThEqs();
+        this.propagateThDiseqs();
+        if (this.isInconsistent()) return false;
+      } finally {
+        limit.isSuspended = wasSuspended;
+      }
       if (!this.propagateTheories()) return false;
       if (!this.checkCanceled()) this.qmanager.propagate();
       if (this.isInconsistent()) return false;
