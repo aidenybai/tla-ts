@@ -3299,9 +3299,6 @@ export const createSmtlibReader = (
     shrinkRefs(exprStack, start);
   };
 
-  // parse_define and insert_macro: Z3 declares a macro as a recursive function with one case, which
-  // a reference without arguments takes as an array. Z3's macro_decls holds the body with its
-  // variables reversed, and the definition holds the body that std_subst turns back.
   const defineMacroFunc = (name: string, domain: number[], body: number) => {
     const count = domain.length;
     const mkHeldVar = (index: number, sort: number) => {

@@ -60,8 +60,6 @@ export class OptSolver {
   ) {
     this.dualBoundRlimit = Number(params.parameters.get("opt.optsmt_dual_bound_rlimit") ?? 100);
     const smtParams = getGlobalSmtParams(params.parameters);
-    // opt_solver turns relevancy off under case_split 1, so a decided bound, such as one optsmt
-    // made for a lower bound, reaches the arithmetic solver.
     this.kernel = new SmtKernel(manager, {
       ...params,
       ...smtParams,

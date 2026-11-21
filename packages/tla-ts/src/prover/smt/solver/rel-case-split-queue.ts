@@ -26,8 +26,6 @@ interface QueueEntry {
   lastDecided: number;
 }
 
-// relevant_eh: the variable of a term that a relevancy queue takes, null_bool_var for a clause
-// without one, or undefined for a term it leaves out.
 const getRelevantVar = (context: CaseSplitContext, expr: number) => {
   const manager = context.manager;
   if (!manager.isBool(expr)) return undefined;
@@ -42,7 +40,6 @@ const getRelevantVar = (context: CaseSplitContext, expr: number) => {
     : undefined;
 };
 
-// has_child_assigned_to with m_rel_case_split_order 0, which smt_params never changes.
 const findUndefChild = (context: CaseSplitContext, parent: number, value: number) => {
   const manager = context.manager;
   let undefChild: number | undefined;
@@ -219,8 +216,6 @@ class GenerationHeap extends Heap {
   }
 }
 
-// rel_goal_case_split_queue's goals never change a generation, since m_current_generation stays at
-// start_gen, so this leaves out assign_lit_eh, set_goal and the generation updates.
 export class RelGoalCaseSplitQueue extends RelevancyCaseSplitQueue {
   private queue = new ExprQueue();
   private queue2: QueueEntry[] = [];

@@ -9,9 +9,6 @@ export const CS_RELEVANCY = 3;
 export const CS_RELEVANCY_ACTIVITY = 4;
 export const CS_RELEVANCY_GOAL = 5;
 
-// mk_case_split_queue: Z3's cached queue splits as its activity queue does, since undo_mk_bool_var
-// clears the variable's term before del_var_eh caches it, and so does its theory-aware queue, since
-// no theory gives it a priority. The relevancy queues need full relevancy and auto_config off.
 export const getCaseSplitStrategy = (
   caseSplit: number,
   relevancyLevel: number,

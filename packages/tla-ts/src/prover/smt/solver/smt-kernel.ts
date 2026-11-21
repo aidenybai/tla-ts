@@ -8,7 +8,6 @@ import { Mus } from "./mus";
 import { RefVector } from "./ref-vector";
 import type { KernelParams } from "./solver";
 
-// smt_params reads the global parameters of smt that its maker leaves unset.
 export const getGlobalSmtParams = (
   parameters: ReadonlyMap<string, string>,
   relevancyLevel = Number(parameters.get("smt.relevancy") ?? "2"),

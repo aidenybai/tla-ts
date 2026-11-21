@@ -12,14 +12,11 @@ export class MbpQel {
     this.termGraph = new TermGraph(context.manager);
   }
 
-  // Projects the variables with the term graph's rules until saturation, first without and then
-  // with splits on the model. The caller rules out arrays and datatypes, whose rules are not ported.
   apply(vars: RefVector, formula: number) {
     const context = this.context;
     const manager = context.manager;
     const termGraph = this.termGraph;
     if (vars.size === 0) return formula;
-    // Splitting also visits inactive branches, whose conditions may be undefined.
     const wasCompletion = context.isCompletion;
     context.isCompletion = true;
     termGraph.addVars(vars.items);
@@ -40,7 +37,6 @@ export class MbpQel {
       isAppOf(manager, expr, OP_IMPLIES) ||
       isAppOf(manager, expr, OP_DISTINCT);
     termGraph.qel(vars, isNonCore);
-    // The remaining Boolean variables get their values.
     const substituted = new Set<number>();
     for (const innerVar of vars.items) {
       if (manager.sorts[innerVar] !== SORT_BOOL) continue;
