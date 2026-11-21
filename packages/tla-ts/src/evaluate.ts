@@ -2423,9 +2423,11 @@ export const compileArgumentScope = (
     if (params[index].arity === 0) return compileArgumentBinder(arg, environment);
     if (arg.kind !== "Identifier" || isLocallyResolved(arg)) return undefined;
     // An operator argument that names a global definition resolves here, once, to a closure whose
-    // code site keeps what its calls compile.
+    // code site keeps what its calls compile, but for one whose body runs in its caller's scope.
     const operator = resolveGlobalOperator(arg.name, environment);
-    if (operator?.kind !== "Closure") return undefined;
+    if (operator?.kind !== "Closure" || getCalledBody(arg, operator.body, environment)) {
+      return undefined;
+    }
     const binding: Binding = {
       kind: "Operator",
       operator: { ...operator, site: createCodeSite(operator.body) },
