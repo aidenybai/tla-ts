@@ -48,8 +48,7 @@ export interface FunctionValue {
   hash: number;
   fingerprint: number;
   writtenKeys: Value[] | undefined;
-  functionClass: FunctionClass | undefined;
-  lambdaDomain: Value | undefined;
+  functionClass: "tuple" | "record" | undefined;
   walkFlags: number;
 }
 
@@ -143,7 +142,6 @@ export interface LazyFunctionValue {
   // Set when an application has an effect or is counted under -coverage, so converting to a tuple applies again as TLC does.
   isApplicationObserved: boolean;
   source?: LazyFunctionSource;
-  functionClass?: FunctionClass;
   enumerated?: FunctionValue;
   walkFlags?: number;
 }
@@ -412,7 +410,6 @@ export const setStringOrder = (texts: Iterable<string>) => {
   modelValues.clear();
   isTypedModelValueCreated = false;
   isWrittenOrderUsed = false;
-  hasLambda = false;
   hasStreamedSet = false;
   for (const text of texts) rankString(text);
 };
@@ -729,27 +726,27 @@ export const createSortedFunction = (domain: Value[], range: Value[]): FunctionV
   fingerprint: 0,
   writtenKeys: undefined,
   functionClass: undefined,
-  lambdaDomain: undefined,
   walkFlags: 0,
 });
 
 export type FunctionClass = "lambda" | "tuple" | "record";
 
-let hasLambda = false;
-
-export const setFunctionClass = <FunctionLike extends FunctionValue | LazyFunctionValue>(
-  functionValue: FunctionLike,
-  functionClass: FunctionClass | undefined,
+export const setFunctionClass = (
+  functionValue: FunctionValue,
+  functionClass: FunctionValue["functionClass"],
 ) => {
-  if (functionClass === "lambda") hasLambda = true;
   if (functionClass !== undefined) functionValue.functionClass = functionClass;
   return functionValue;
 };
 
-export const getFunctionClass = (value: Value) =>
-  typeof value === "object" && (value.kind === "Function" || value.kind === "LazyFunction")
-    ? value.functionClass
-    : undefined;
+export const getFunctionClass = (value: Value): FunctionClass | undefined =>
+  typeof value !== "object"
+    ? undefined
+    : value.kind === "LazyFunction"
+      ? "lambda"
+      : value.kind === "Function"
+        ? value.functionClass
+        : undefined;
 
 const isObservedLambda = (value: Value) =>
   typeof value === "object" &&
@@ -760,10 +757,6 @@ const isObservedLambda = (value: Value) =>
 // TLC's TupleValue converts the other side with toTuple, which applies a lazy function again on every comparison.
 const isTupleAgainstObservedLambda = (left: FunctionValue, right: Value) =>
   left.functionClass === "tuple" && isObservedLambda(right);
-
-export const markLambdaFunction = <FunctionLike extends FunctionValue | LazyFunctionValue>(
-  functionValue: FunctionLike,
-) => setFunctionClass(functionValue, "lambda");
 
 const isCachedSet = (value: ObjectValue) => isLazySet(value) && value.isCached === true;
 
@@ -797,7 +790,7 @@ const cacheSet = (value: Value) => {
 };
 
 export const markFingerprinted = (value: Value): void => {
-  if ((!hasLambda && !hasStreamedSet) || typeof value !== "object") return;
+  if (!hasStreamedSet || typeof value !== "object") return;
   if (value.kind === "ModelValue" || value.kind === "Interval" || value.kind === "InfiniteSet") {
     return;
   }
@@ -805,7 +798,6 @@ export const markFingerprinted = (value: Value): void => {
   if ((walkFlags & FINGERPRINTED_FLAG) !== 0) return;
   value.walkFlags = walkFlags | FINGERPRINTED_FLAG;
   if (value.kind === "Function") {
-    if (value.functionClass === "lambda") value.functionClass = undefined;
     value.domain.forEach(markFingerprinted);
     value.range.forEach(markFingerprinted);
   } else if (value.kind === "Set" || value.kind === "MixedSet") {
@@ -2411,7 +2403,6 @@ export const isSettledValue = (value: Value): boolean => {
       return value.elements.every(isSettledValue);
     case "Function":
       return (
-        value.functionClass !== "lambda" &&
         value.writtenKeys === undefined &&
         value.domain.every(isSettledValue) &&
         value.range.every(isSettledValue)
@@ -3305,12 +3296,6 @@ const checkBoundArguments = (
   }
 };
 
-const isOutsideLambdaDomain = (functionValue: FunctionValue, argument: Value) =>
-  functionValue.lambdaDomain !== undefined &&
-  functionValue.hash === 0 &&
-  functionValue.fingerprint === 0 &&
-  !isElementOf(argument, functionValue.lambdaDomain);
-
 export const applyFunction = (
   functionValue: Value,
   argument: Value,
@@ -3326,11 +3311,7 @@ export const applyFunction = (
       return functionValue.apply(argument);
     }
     if (!isElementOf(argument, functionValue.domain)) {
-      throw new TlaEvaluationError(
-        getFunctionClass(functionValue) === "lambda"
-          ? describeMissingArgument(functionValue, argument)
-          : `Attempted to apply a function to ${formatValue(argument)}, which is not in its domain`,
-      );
+      throw new TlaEvaluationError(describeMissingArgument(functionValue, argument));
     }
     return functionValue.apply(argument);
   }
@@ -3340,9 +3321,6 @@ export const applyFunction = (
     );
   }
   const describe = describeMissing ?? describeMissingArgument;
-  if (isOutsideLambdaDomain(functionValue, argument)) {
-    throw new TlaEvaluationError(describe(functionValue, argument));
-  }
   const position = findKeyIndexLikeTlc(functionValue, argument, describe);
   if (position === -1) throw new TlaEvaluationError(describe(functionValue, argument));
   return functionValue.range[position];
@@ -3353,11 +3331,16 @@ export const getDomainInterval = (domain: Value[]) =>
     ? (intervalArrays.get(domain) ?? getIntervalValue(domain.length))
     : undefined;
 
+// FcnLambdaValue#getDomain answers with its record's domain once it has converted.
 export const getDomain = (functionValue: Value): Value => {
-  if (typeof functionValue === "object" && functionValue.kind === "LazyFunction")
+  if (
+    typeof functionValue === "object" &&
+    functionValue.kind === "LazyFunction" &&
+    functionValue.enumerated === undefined
+  ) {
     return functionValue.domain;
+  }
   const finite = toFiniteFunction(functionValue);
-  if (finite.functionClass === "lambda" && finite.lambdaDomain) return finite.lambdaDomain;
   const interval = getDomainInterval(finite.domain);
   if (interval) return interval;
   const set = createSortedSet(finite.domain);
@@ -3390,21 +3373,19 @@ export const updateFunction = (
     if (!isElementOf(argument, functionValue.domain)) return functionValue;
     const updated = update(functionValue.apply(argument));
     const apply = applyUnrecorded ?? functionValue.apply;
-    return setFunctionClass<LazyFunctionCopy>(
-      {
-        kind: "LazyFunction",
-        domain: functionValue.domain,
-        apply: (key) => (isEqualLikeTlc(argument, key) ? updated : apply(key)),
-        source: functionValue.source,
-        boundTupleLengths: functionValue.boundTupleLengths,
-        isApplicationObserved: functionValue.isApplicationObserved,
-        original: functionValue,
-        replacedKey: argument,
-        replacement: updated,
-        applyBody: isLazyFunctionCopy(functionValue) ? functionValue.applyBody : apply,
-      },
-      getFunctionClass(functionValue),
-    );
+    const copy: LazyFunctionCopy = {
+      kind: "LazyFunction",
+      domain: functionValue.domain,
+      apply: (key) => (isEqualLikeTlc(argument, key) ? updated : apply(key)),
+      source: functionValue.source,
+      boundTupleLengths: functionValue.boundTupleLengths,
+      isApplicationObserved: functionValue.isApplicationObserved,
+      original: functionValue,
+      replacedKey: argument,
+      replacement: updated,
+      applyBody: isLazyFunctionCopy(functionValue) ? functionValue.applyBody : apply,
+    };
+    return copy;
   }
   if (!isFunctionValue(functionValue)) {
     throw new TlaEvaluationError(
@@ -3412,7 +3393,6 @@ export const updateFunction = (
     );
   }
   const finite = toFiniteFunction(functionValue);
-  if (isOutsideLambdaDomain(finite, argument)) return finite;
   const position = findKeyIndexLikeTlc(finite, argument, describeExceptKey);
   if (position === -1) return finite;
   const range = [...finite.range];
@@ -3421,10 +3401,9 @@ export const updateFunction = (
   range[position] = next;
   const updated = setFunctionClass(
     createSortedFunction(finite.domain, range),
-    getFunctionClass(finite),
+    finite.functionClass,
   );
   updated.writtenKeys = finite.writtenKeys;
-  updated.lambdaDomain = finite.lambdaDomain;
   // Hashing marks a set sorted, and TLC sorts a set that EXCEPT stores only once it fingerprints the function.
   if (
     finite.hash !== 0 &&
@@ -3809,8 +3788,7 @@ export const formatNormalizedCopies = (values: Value[]) => {
     isWrittenOrderKept: boolean,
     isCopied: boolean,
   ): FunctionValue => {
-    const isRangeWrittenOrderKept = isWrittenOrderKept || getFunctionClass(value) === "lambda";
-    const range = value.range.map((inner) => copy(inner, isRangeWrittenOrderKept, isCopied));
+    const range = value.range.map((inner) => copy(inner, isWrittenOrderKept, isCopied));
     const writtenKeys = isWrittenOrderKept ? value.writtenKeys : undefined;
     if (isCopied) return { ...value, range, writtenKeys };
     value.writtenKeys = writtenKeys;

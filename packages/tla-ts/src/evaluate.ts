@@ -99,11 +99,9 @@ import {
   getNormalizedSetElements,
   getSequenceElements,
   isElementOf,
-  isEnumerable,
   isReceiverEqual,
   isFunctionValue,
   isOverriddenSet,
-  markLambdaFunction,
   isReducibleSet,
   isSetValue,
   isSettledValue,
@@ -883,7 +881,7 @@ const createRecursiveFunction = (
     scope: bindSelf(undefined, definition.name, functionValue),
     compute,
   });
-  const rebindable: RebindableLazyFunction = Object.assign(functionValue, {
+  return Object.assign(functionValue, {
     rebind: (tracing: Environment) => {
       const rebound = createRecursiveFunction(
         definition,
@@ -895,7 +893,6 @@ const createRecursiveFunction = (
       return rebound;
     },
   });
-  return definition.bounds.length === 1 ? markLambdaFunction(rebindable) : rebindable;
 };
 
 const toStartupValue = (definition: Definition, value: Value): Value => {
@@ -2146,10 +2143,7 @@ export const getFunctionBuilder = (
         return createLazy(domain, context);
       }
       const keys = getFunctionDomain(domain, false);
-      const functionValue = createSortedFunction(keys, keys.map(evaluateAt));
-      if (isReducibleSet(domain)) return functionValue;
-      functionValue.lambdaDomain = domain;
-      return markLambdaFunction(functionValue);
+      return createSortedFunction(keys, keys.map(evaluateAt));
     }
     const pairs: [Value, Value][] = [];
     const sets = mapBoundSets(bounds, (set, index) =>
@@ -2189,12 +2183,10 @@ export const getFunctionBuilder = (
     const value = createLazyFunction(
       domain,
       coverage
-        ? (argument) => {
-            const target = coverage.current === -1 && name === undefined ? -1 : node;
-            return target === coverage.current && !frames
+        ? (argument) =>
+            node === coverage.current && !frames
               ? compute(argument)
-              : runInCoverageFrames(coverage, target, frames, () => compute(argument));
-          }
+              : runInCoverageFrames(coverage, node, frames, () => compute(argument))
         : compute,
       getLazyFunctionSource(template, bounds, domain),
       boundTupleLengths,
@@ -2202,29 +2194,17 @@ export const getFunctionBuilder = (
       isApplicationObserved,
     );
     if (name !== undefined) scope = bindSelf(outer, name, value);
-    const functionValue = keepLambda({ value, bounds, body: expression.body, scope, compute });
-    return bounds.length === 1 ? markLambdaFunction(functionValue) : functionValue;
+    return keepLambda({ value, bounds, body: expression.body, scope, compute });
   };
   const callStack = environment.callStack;
   const build = (domain: Value, context: Context) => {
-    if (isLazy || context.isKeepLazy || !isEnumerable(domain)) {
-      return createLazy(domain, context);
-    }
     const isReducibleDomain =
       bounds.length === 1
         ? isReducibleSet(domain)
         : typeof domain === "object" &&
           domain.kind === "ProductSet" &&
           domain.factors.every(isReducibleSet);
-    if (!isReducibleDomain) {
-      if (callStack || isVaryingBody) return createLazy(domain, context);
-      try {
-        return construct(domain, context);
-      } catch (error) {
-        if (!(error instanceof TlaEvaluationError)) throw error;
-        return createLazy(domain, context);
-      }
-    }
+    if (isLazy || context.isKeepLazy || !isReducibleDomain) return createLazy(domain, context);
     if (!callStack) return construct(domain, context);
     try {
       return construct(domain, context);

@@ -2,9 +2,8 @@ import {
   createModelValue,
   createSortedFunction,
   createSortedSet,
-  type FunctionClass,
+  type FunctionValue,
   getDomainInterval,
-  getFunctionClass,
   getFunctionDomain,
   setFunctionClass,
   type Value,
@@ -19,7 +18,7 @@ const SET_TAG = 5;
 const FUNCTION_TAG = 6;
 const INTERVAL_FUNCTION_TAG = 7;
 
-const FUNCTION_CLASSES: (FunctionClass | undefined)[] = [undefined, "lambda", "tuple", "record"];
+const FUNCTION_CLASSES: FunctionValue["functionClass"][] = [undefined, "tuple", "record"];
 
 export interface EncodedStates {
   words: Int32Array;
@@ -83,13 +82,13 @@ export const createStateEncoder = (): StateEncoder => {
       const interval = getDomainInterval(value.domain);
       if (interval) {
         pushWord(INTERVAL_FUNCTION_TAG);
-        pushWord(FUNCTION_CLASSES.indexOf(getFunctionClass(value)));
+        pushWord(FUNCTION_CLASSES.indexOf(value.functionClass));
         pushWord(interval.low);
         pushWord(value.range.length);
         return value.range.every(encodeValue);
       }
       pushWord(FUNCTION_TAG);
-      pushWord(FUNCTION_CLASSES.indexOf(getFunctionClass(value)));
+      pushWord(FUNCTION_CLASSES.indexOf(value.functionClass));
       pushWord(value.domain.length);
       return value.domain.every(encodeValue) && value.range.every(encodeValue);
     }

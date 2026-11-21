@@ -1155,6 +1155,22 @@ ASSUME TLCFP(a) = -887695703
     },
   );
 
+  it.each([
+    ["f == [y \\in SUBSET {1, 2} |-> g[y]]", "f[{1}]"],
+    ["F(h) == [y \\in SUBSET {1, 2} |-> h[y]]\nG == F(g)", "G[{1}]"],
+  ])(
+    "applies %s only at the key %s applies, as TLC keeps a function over SUBSET a FcnLambdaValue",
+    async (definitions, application) => {
+      const printed: string[] = [];
+      await check({
+        source: `---- MODULE M ----\nEXTENDS Integers, TLC\nVARIABLE x\ng == [s \\in SUBSET {1, 2} |-> PrintT(s)]\n${definitions}\nInit == x = 0\nNext == x = 0 /\\ x' = 1 /\\ PrintT(<<"next", ${application}>>)\n====`,
+        config: "INIT Init\nNEXT Next\nCHECK_DEADLOCK FALSE",
+        onPrint: (text) => printed.push(text),
+      });
+      expect(printed).toEqual(["{1}", '<<"next", TRUE>>']);
+    },
+  );
+
   it("converts a lazy function over sets to a tuple without applying it, as TLC's FcnLambdaValue#toTuple does", async () => {
     expect(
       (await checkLazyTuple('ndJsonSerialize("n.json", [s \\in SUBSET {1} |-> 1 \\div x])')).result
@@ -2899,6 +2915,19 @@ ASSUME TLCFP(a) = -887695703
       "|||line 5, col 34 to line 5, col 41 of module E: 1",
       "|||line 5, col 26 to line 5, col 28 of module E: 2",
       "||line 5, col 44 to line 5, col 44 of module E: 2",
+    ]);
+  });
+
+  it("counts nothing under a function over SUBSET that Len never applies, as TLC keeps it a FcnLambdaValue", async () => {
+    const lines = await getCoverageLines(
+      "---- MODULE M ----\nEXTENDS Integers, TLC, FiniteSets, Sequences\nVARIABLE x\nInit == x = 0\nNext == x < 2 /\\ x' = x + 1 /\\ Len(<<[y \\in SUBSET {1, 2} |-> Cardinality(y) + x]>>) = 1\n====",
+      "INIT Init\nNEXT Next\nCHECK_DEADLOCK FALSE",
+    );
+    expect(lines?.at(-1)).toEqual([
+      "line 5, col 9 to line 5, col 13 of module M: 2",
+      "|line 5, col 9 to line 5, col 9 of module M: 3",
+      "line 5, col 18 to line 5, col 27 of module M: 2",
+      "line 5, col 32 to line 5, col 88 of module M: 2",
     ]);
   });
 
@@ -4675,6 +4704,44 @@ describe("DOMAIN matches TLC", () => {
     expect(await printDomain(expression)).toEqual([text]);
   });
 
+  it.each([
+    [
+      'x = [s \\in SUBSET {1} |-> TLCGet("level")]',
+      "x' = x /\\ (DOMAIN x)[1] = 0",
+      "{e1, ... ,eN}",
+      "line 5, col 19 to line 5, col 31",
+    ],
+    [
+      "x = [s \\in SUBSET {1} |-> 0]",
+      "x' = x /\\ (DOMAIN x)[1] = 0",
+      "{e1, ... ,eN}",
+      "line 5, col 19 to line 5, col 31",
+    ],
+    [
+      "x = 0",
+      "x' = x /\\ LET f == [s \\in SUBSET {1} |-> 0] IN f = f /\\ (DOMAIN f)[1] = 0",
+      "{e1, ... ,eN}",
+      "line 5, col 65 to line 5, col 77",
+    ],
+    [
+      "x = 0",
+      "x' = x /\\ (DOMAIN [s \\in SUBSET {1} |-> 0])[1] = 0",
+      "SUBSET S",
+      "line 5, col 19 to line 5, col 54",
+    ],
+  ])(
+    "takes DOMAIN of a function over SUBSET from its record once it converts, as TLC's FcnLambdaValue#getDomain does, with Init == %s and Next == %s",
+    async (init, next, form, location) => {
+      const result = await check({
+        source: `---- MODULE M ----\nEXTENDS Integers, TLC\nVARIABLE x\nInit == ${init}\nNext == ${next}\n====`,
+        config: "INIT Init\nNEXT Next",
+      });
+      expect(result.failure?.message).toBe(
+        `${UNEXPECTED_EXCEPTION}A non-function (a set of the form ${form}) was applied as a function.\n${location} of module M`,
+      );
+    },
+  );
+
   it("keeps the interval in a state", async () => {
     const result = await check({
       source:
@@ -5584,6 +5651,10 @@ describe("check without code generation from strings", () => {
     [
       "a filter's membership whose base fails after framing the failure",
       "EXTENDS Naturals\nVARIABLE x\nInit == x = 0\nNext == x' = x /\\ <<1, x>> \\notin {e \\in ({} \\cup Nat) : e # x}\nInv == TRUE",
+    ],
+    [
+      "the domain of a converted function over SUBSET",
+      "EXTENDS Integers\nVARIABLE x\nInit == x = 0\nNext == x' = x /\\ LET f == [s \\in SUBSET {1} |-> 0] IN f = f /\\ (DOMAIN f)[1] = 0\nInv == TRUE",
     ],
   ])("checks %s like it does with code generation", async (_title, body) => {
     const options = {
