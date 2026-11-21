@@ -24,6 +24,7 @@ export interface LiveAction {
   kind: "Action";
   expression: Expression;
   subscript: Expression | undefined;
+  subscriptVariables: number[] | undefined;
   scope: Scope | undefined;
   enabled?: LiveEnabled;
 }

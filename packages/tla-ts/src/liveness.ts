@@ -31,6 +31,8 @@ import {
   getReevaluatedDefinitions,
   getRootKey,
   getStartupValue,
+  getUnchangedVariables,
+  isUnchangedState,
   lookupScope,
   resolveApplyOperator,
   resolveGlobalOperator,
@@ -658,6 +660,8 @@ export const toLiveExpression = (
   environment: Environment,
 ): LiveExpression => {
   const is174 = environment.runtime.version === "1.7.4";
+  const getSubscriptVariables = (subscript: Expression) =>
+    getUnchangedVariables(subscript, environment)?.map((variable) => variable.index);
   const toAtom = (
     expression: Expression,
     scope: Scope | undefined,
@@ -680,10 +684,17 @@ export const toLiveExpression = (
         kind: "Action",
         expression: expression.action,
         subscript: expression.subscript,
+        subscriptVariables: getSubscriptVariables(expression.subscript),
         scope,
       };
     }
-    return { kind: "Action", expression, subscript: undefined, scope };
+    return {
+      kind: "Action",
+      expression,
+      subscript: undefined,
+      subscriptVariables: undefined,
+      scope,
+    };
   };
 
   let expansionDepth = 0;
@@ -947,6 +958,7 @@ export const toLiveExpression = (
           kind: "Action",
           expression: expression.action,
           subscript: expression.subscript,
+          subscriptVariables: getSubscriptVariables(expression.subscript),
           scope,
           enabled,
         };
@@ -989,12 +1001,16 @@ export const getInterpretedAtoms = (environment: Environment): LiveAtoms<Value[]
   holdsAction: (atom, state, next) => {
     const scope = atom.scope;
     const subscript = atom.subscript;
+    // The tracing replay evaluates the subscript, whose tuple TLC names in the frames.
+    const variables = environment.callStack ? undefined : atom.subscriptVariables;
     if (
       subscript &&
-      isEqualLikeTlc(
-        evaluate(subscript, { environment, scope, state, next: undefined }),
-        evaluate(subscript, { environment, scope, state: next, next: NULL_STATE }),
-      )
+      (variables
+        ? isUnchangedState(variables, state, next)
+        : isEqualLikeTlc(
+            evaluate(subscript, { environment, scope, state, next: undefined }),
+            evaluate(subscript, { environment, scope, state: next, next: NULL_STATE }),
+          ))
     )
       return false;
     const value = evaluate(atom.expression, { environment, scope, state, next });
