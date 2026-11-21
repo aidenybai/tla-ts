@@ -3744,13 +3744,12 @@ export const updateFunction = (
   functionValue: Value,
   argument: Value,
   update: (previous: Value) => Value,
-  isKeptLazy: boolean,
 ): Value => {
-  const isLazy =
+  if (
     typeof functionValue === "object" &&
     functionValue.kind === "LazyFunction" &&
-    (isKeptLazy || functionValue.enumerated === undefined);
-  if (isLazy) {
+    functionValue.enumerated === undefined
+  ) {
     if (
       functionValue.boundTupleLengths !== undefined &&
       getSequenceElements(argument) === undefined

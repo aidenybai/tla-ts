@@ -2501,8 +2501,7 @@ const compileExcept = (
   expression: Expression & { kind: "Except" },
   environment: Environment,
 ): Evaluator => {
-  const isKeptLazyExpression = keptLazyExpressions.has(expression);
-  if (isKeptLazyExpression) keepLazy(expression.function);
+  if (keptLazyExpressions.has(expression)) keepLazy(expression.function);
   const evaluateFunction = getEvaluator(expression.function, environment);
   const updates = expression.updates.map((update) => ({
     path: update.path.map((step): CompiledStep =>
@@ -2531,11 +2530,8 @@ const compileExcept = (
     if (depth === path.length) {
       return value(withScope(context, bindValue(context.scope, EXCEPT_AT, current)));
     }
-    return updateFunction(
-      current,
-      getKey(path[depth], context),
-      (previous) => update(previous, path, depth + 1, context, value),
-      isKeptLazyExpression && depth === 0,
+    return updateFunction(current, getKey(path[depth], context), (previous) =>
+      update(previous, path, depth + 1, context, value),
     );
   };
   return (context) => {

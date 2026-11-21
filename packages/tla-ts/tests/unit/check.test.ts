@@ -5616,6 +5616,35 @@ ASSUME TLCFP(a) = -887695703
     ]);
   });
 
+  it.each([
+    [
+      "a state",
+      "x = 0 /\\ f = [s \\in SUBSET {1} |-> PrintT(s)]",
+      "x < 1 /\\ x' = 1 /\\ f' = f /\\ PrintT([f EXCEPT ![{1}] = FALSE][{}])",
+      ["{}", "{1}", "TRUE"],
+      undefined,
+    ],
+    [
+      "an operator argument",
+      "x = 0 /\\ f = 0",
+      "x < 1 /\\ x' = 1 /\\ f' = 0 /\\ LET Op(h) == h = [s \\in {{}, {1}} |-> TRUE] /\\ PrintT([h EXCEPT ![{1}] = ~@][{1}]) IN Op([s \\in SUBSET {1} |-> PrintT(s)])",
+      ["{}", "{1}", "FALSE"],
+      undefined,
+    ],
+    [
+      "an operator argument of a failing step",
+      "x = 0 /\\ f = 0",
+      `x < 1 /\\ x' = 1 /\\ f' = 0 /\\ LET Op(h) == h = [s \\in {{}, {1}} |-> TRUE] /\\ PrintT([h EXCEPT ![{1}] = ~@][{1}]) /\\ 1 = "a" IN Op([s \\in SUBSET {1} |-> PrintT(s)])`,
+      ["{}", "{1}", "FALSE"],
+      ["{}", "{1}", "{1}", "FALSE"],
+    ],
+  ])(
+    "takes an EXCEPT of the lazy function %s holds on the record its conversion built, as TLC's FcnLambdaValue#takeExcept does",
+    async (_holder, init, next, printed, traceOutput) => {
+      expect(await checkConvertedLazy(init, next)).toEqual([printed, traceOutput]);
+    },
+  );
+
   it("counts the applications of the copy EXCEPT makes of a lazy function, though TLC's FcnLambdaValue#takeExcept drops the cost model", async () => {
     const lines = await getCoverageLines(
       "---- MODULE M ----\nEXTENDS Naturals\nVARIABLE x\nInit == LET f[n \\in 0..2] == 10 \\div (n + 1) IN x = [f EXCEPT ![2] = 0][1]\nNext == UNCHANGED x\n====",
