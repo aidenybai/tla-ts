@@ -14,6 +14,7 @@ import {
   type NumberExpression,
   type OperatorParam,
   type RecordField,
+  type SourceLocation,
   type SourceRange,
 } from "./ast";
 import { getKindString } from "./builtins";
@@ -199,6 +200,7 @@ export interface Environment {
   instanceNames: Map<string, string>;
   variables: string[];
   variableIndex: Map<string, number>;
+  variableLocations: SourceLocation[];
   facts: DefinitionFacts;
   startupValues: (Value | undefined)[];
   tlcEvalValues: WeakMap<Expression, Value>;

@@ -1,6 +1,6 @@
 import { isAssumeProve, type Expression, type SourceLocation } from "../ast";
 import { getKindString } from "../builtins";
-import { TlaEvaluationError, TlaUnassignedError, TlaUncodedError } from "../errors";
+import { formatRange, TlaEvaluationError, TlaUnassignedError, TlaUncodedError } from "../errors";
 import { EXIT_STATUS, setExitCode } from "../exit-codes";
 import { isConstantLevel } from "../dependencies";
 import {
@@ -302,15 +302,29 @@ const isBuiltInOperation = (expression: Expression) =>
     ? CORE_OPERATOR_NAMES.has(expression.operator)
     : expression.kind !== "Identifier" && !LITERAL_KINDS.has(expression.kind);
 
+const getExpectedBooleanMessage = (run: RunKind, found: string, expression: Expression) =>
+  `In computing ${getComputation(run)}, TLC expected a boolean expression,\nbut instead found ${found}.\n${describeNode(expression)}`;
+
 export const holdsValue = (run: RunKind, expression: Expression, value: Value, isWalked = true) => {
   if (typeof value === "boolean") return value;
   const message =
     isWalked && LITERAL_KINDS.has(expression.kind)
       ? getRelationMessage(run, expression)
-      : `In computing ${getComputation(run)}, TLC expected a boolean expression,\nbut instead found ${formatValue(value)}.\n${describeNode(expression)}`;
+      : getExpectedBooleanMessage(run, formatValue(value), expression);
   throw run.isInit && isWalked && isBuiltInOperation(expression)
     ? new TlaUncodedError(message)
     : createRunError(run, message);
+};
+
+// Tool#lookup gives an unassigned variable as its declaration, which Tool#getInitStatesAppl prints as the value it found.
+export const createUnassignedConjunctError = (
+  run: Pick<Replay, "environment" | "isInit" | "isEnabled">,
+  expression: Expression,
+  index: number,
+) => {
+  const range = run.environment.variableLocations[index].range;
+  const declaration = range ? formatRange(range) : "Unknown location";
+  return createRunError(run, getExpectedBooleanMessage(run, declaration, expression));
 };
 
 export const getZeroArityBody = (name: string, environment: Environment) => {
@@ -614,6 +628,12 @@ const visitDefined = (
       !(definition && isConstantLevel(definition, replay.environment))
     ) {
       return visit(replay, operator.body, items, operator.scope, partial, node);
+    }
+    const variableIndex = binding
+      ? undefined
+      : replay.environment.variableIndex.get(expression.name);
+    if (replay.isInit && variableIndex !== undefined && partial[variableIndex] === undefined) {
+      throw createUnassignedConjunctError(replay, expression, variableIndex);
     }
     return visitValue(
       replay,

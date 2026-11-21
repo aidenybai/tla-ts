@@ -151,7 +151,6 @@ export interface ResolvedModuleOperator extends ModuleOperator {
 export interface Specification {
   environment: Environment;
   assumptions: Assumption[];
-  variableLocations: SourceLocation[];
   instanceActions: Map<string, InstanceAction>;
   startupModules: StartupModule[];
   javaOverrides: JavaOverride[];
@@ -1908,6 +1907,7 @@ export const createEnvironment = (
     instanceNames,
     variables,
     variableIndex,
+    variableLocations: linkedRoot.variableLocations,
     facts,
     startupValues: Array.from({ length: facts.ids.size }, (): Value | undefined => undefined),
     tlcEvalValues: new WeakMap(),
@@ -1976,7 +1976,6 @@ export const createEnvironment = (
   return {
     environment,
     assumptions,
-    variableLocations: linkedRoot.variableLocations,
     instanceActions,
     // TLC's SpecProcessor#processConstantDefns walks a module's whole context, inherited constants and definitions too, and skips each definition by the module it comes from.
     startupModules: linkOrder

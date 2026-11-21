@@ -1244,11 +1244,10 @@ const getReportedRelations = (coverage: Coverage) =>
 export const getCoverageReport = (
   coverage: Coverage,
   environment: Environment,
-  variableLocations: SourceLocation[],
   variableOrder: number[],
 ): CoverageReport => ({
   variables: variableOrder.map((index) => {
-    const range = variableLocations[index]?.range;
+    const range = environment.variableLocations[index]?.range;
     return {
       label: `${environment.variables[index]} ${range ? formatRange(range) : "Unknown location"}`,
       distinct: getDistinctCount(coverage, index),

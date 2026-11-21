@@ -50,6 +50,7 @@ import { getRandomSubset, nextPrime, type JavaRandom } from "./tlc/random";
 import {
   bindUnchangedApplication,
   createRunError,
+  createUnassignedConjunctError,
   findChangedVariable,
   getCaseGuardMessage,
   getCaseOtherMessage,
@@ -245,7 +246,8 @@ const isGuard = (expression: Expression, environment: Environment, isInit: boole
   if (ACTION_KINDS.has(expression.kind)) return false;
   if (expression.kind === "Identifier") {
     return (
-      environment.variableIndex.has(expression.name) || environment.constants.has(expression.name)
+      (!isInit && environment.variableIndex.has(expression.name)) ||
+      environment.constants.has(expression.name)
     );
   }
   if (expression.kind !== "Apply") return true;
@@ -763,6 +765,10 @@ const compileIdentifier = (
   const actionName =
     definition && (environment.instanceNames.get(expression.name) ?? definition.name);
   const called = definition && getCalledBody(expression, definition.body, environment);
+  const variableIndex =
+    isInit && !isLocallyResolved(expression)
+      ? environment.variableIndex.get(expression.name)
+      : undefined;
   let bodyRunner: Runner | undefined;
   let calledRunner: Runner | undefined;
   return (run, scope, partial, action, isFixed, onComplete) => {
@@ -795,7 +801,9 @@ const compileIdentifier = (
       !definition ||
       (expression.location.range && getStartupValue(definition, environment) !== undefined)
     ) {
-      // Deviation from TLC: Tool#getInitStates prints an unassigned variable's declaration as the non-boolean value it found.
+      if (!binding && variableIndex !== undefined && partial[variableIndex] === undefined) {
+        throw createUnassignedConjunctError(run, expression, variableIndex);
+      }
       guard(run, scope, partial, action, isFixed, onComplete);
       return;
     }

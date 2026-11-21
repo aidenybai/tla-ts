@@ -3262,16 +3262,23 @@ describe("evaluation errors match TLC", () => {
     ]);
   });
 
-  it("reports an unassigned variable taken as a conjunct of the initial predicate as read before it is assigned", async () => {
-    const result = await check({
-      source: "---- MODULE M ----\nVARIABLE x\nInit == x /\\ x = FALSE\nNext == UNCHANGED x\n====",
-      config: "INIT Init\nNEXT Next",
-    });
-    expect([result.failure?.message, result.failure?.exitCode]).toEqual([
-      "In evaluation, the identifier x is either undefined or not an operator.\nline 3, col 9 to line 3, col 9 of module M",
-      75,
-    ]);
-  });
+  it.each([
+    ["Init == x /\\ x = FALSE", "line 3, col 9 to line 3, col 9"],
+    ["Init == LET z == x IN z /\\ x = FALSE", "line 3, col 18 to line 3, col 18"],
+    ["Foo == x\nInit == Foo /\\ x = FALSE", "line 3, col 8 to line 3, col 8"],
+  ])(
+    "reports an unassigned variable taken as a conjunct of the initial predicate in %j as the declaration TLC finds",
+    async (definitions, range) => {
+      const result = await check({
+        source: `---- MODULE M ----\nVARIABLE x\n${definitions}\nNext == UNCHANGED x\n====`,
+        config: "INIT Init\nNEXT Next",
+      });
+      expect([result.failure?.message, result.failure?.exitCode]).toEqual([
+        `In computing initial states, TLC expected a boolean expression,\nbut instead found line 2, col 10 to line 2, col 10 of module M.\n${range} of module M`,
+        75,
+      ]);
+    },
+  );
 
   it("reports a variable drawn from a set it can't enumerate like TLC", async () => {
     const result = await check({

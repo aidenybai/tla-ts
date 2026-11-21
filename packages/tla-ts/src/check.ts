@@ -412,8 +412,7 @@ const searchStates = (
   let description: SpecDescription | undefined;
   const getDescription = () =>
     (description ??= getSpecDescription(config, environment, specification.instanceActions));
-  runtime.getSpecification = () =>
-    getSpecificationValue(getDescription(), config, environment, specification.variableLocations);
+  runtime.getSpecification = () => getSpecificationValue(getDescription(), config, environment);
   let searchDepth = 0;
   let computedInitialStates: InitialStates | undefined;
   const getTraceSpec = (trace: TraceStep[], loopStart: number | undefined) =>
@@ -432,12 +431,7 @@ const searchStates = (
     });
   const getCoverage = () =>
     coverage?.relations.some((relation) => relation.kind === "next")
-      ? getCoverageReport(
-          coverage,
-          environment,
-          specification.variableLocations,
-          search?.getTlcOrder() ?? [],
-        )
+      ? getCoverageReport(coverage, environment, search?.getTlcOrder() ?? [])
       : undefined;
   const createResult = (
     status: CheckStatus,
@@ -497,7 +491,6 @@ const searchStates = (
   const search = createSearch(
     config,
     environment,
-    specification.variableLocations,
     () => created.order.getDeclarationOrder("variable"),
     options.onProgress,
     specification.moduleOperators,

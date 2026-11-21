@@ -399,7 +399,6 @@ const isConstantTrue = (item: ScopedExpression, environment: Environment, usage:
 const getSpecification = (
   config: ModelConfig,
   environment: Environment,
-  variableLocations: SourceLocation[],
   getVariableOrder: () => string[],
   onProgress: CheckOptions["onProgress"],
 ): Specification => {
@@ -457,7 +456,7 @@ const getSpecification = (
         ? environment.variableIndex.get(conjunct.name)
         : undefined;
     if (conjunct.kind === "Identifier" && variableIndex !== undefined) {
-      const range = variableLocations[variableIndex].range;
+      const range = environment.variableLocations[variableIndex].range;
       throw new TlaConfigError(
         `The operator ${conjunct.name}, which equals ${range ? formatRange(range) : conjunct.name},\ncannot be used as a spec`,
       );
@@ -1093,24 +1092,17 @@ export const prepareSearch = (options: CheckOptions) => {
   const getDescription = () =>
     (description ??= getSpecDescription(config, environment, specification.instanceActions));
   environment.runtime.getSpecification = () =>
-    getSpecificationValue(getDescription(), config, environment, specification.variableLocations);
+    getSpecificationValue(getDescription(), config, environment);
   const search = createSearch(
     config,
     environment,
-    specification.variableLocations,
     () => created.order.getDeclarationOrder("variable"),
     options.onProgress,
     specification.moduleOperators,
     specification.runtimeInvariants,
   );
   const getCoverage = () =>
-    coverage &&
-    getCoverageReport(
-      coverage,
-      environment,
-      specification.variableLocations,
-      search?.getTlcOrder() ?? [],
-    );
+    coverage && getCoverageReport(coverage, environment, search?.getTlcOrder() ?? []);
   return { config, specification, environment, search, getDescription, coverage, getCoverage };
 };
 
@@ -1202,7 +1194,6 @@ export const createMissingOperatorError = (operator: ModuleOperator) =>
 export const createSearch = (
   config: ModelConfig,
   environment: Environment,
-  variableLocations: SourceLocation[],
   getVariableOrder: () => string[],
   onProgress?: CheckOptions["onProgress"],
   moduleOperators: ResolvedModuleOperator[] = [],
@@ -1216,13 +1207,7 @@ export const createSearch = (
         return { name: operator.operator, key: operator.key };
       });
   const configInvariants = getInvariants(config.invariants, environment);
-  const spec = getSpecification(
-    config,
-    environment,
-    variableLocations,
-    getVariableOrder,
-    onProgress,
-  );
+  const spec = getSpecification(config, environment, getVariableOrder, onProgress);
   const properties = getProperties(config, environment, onProgress);
   const live = config.properties[0];
   const liveRange =

@@ -769,7 +769,6 @@ export const getSpecificationValue = (
   description: SpecDescription,
   config: ModelConfig,
   environment: Environment,
-  variableLocations: SourceLocation[],
 ): Value => {
   const properties: PropertyDescription = {
     invariants: [],
@@ -821,7 +820,7 @@ export const getSpecificationValue = (
         environment.variables.map((name, index) =>
           createRecord([
             ["name", name],
-            ["location", toLocationValue(variableLocations[index])],
+            ["location", toLocationValue(environment.variableLocations[index])],
             ...(coverage
               ? [
                   [
