@@ -581,10 +581,12 @@ const DEFINITIONS = [
   LET stop == Alloc(s, BuiltinObject(Intrinsic(s, "FunctionPrototype"), <<"Module", "hostStop">>, 0, <<>>, FALSE, name, s.realmId))
   IN ProxyCreate(stop.s, stop.v, s.hostHandler)`,
   // Node's process, of which a program reads only hrtime, whose bigint it may only read, and
-  // getBuiltinModule, of async_hooks, of which it reads
-  // only AsyncResource, whose objects run a function in their scope and emit their destroy, as
-  // Node's do (lib/async_hooks.js) where no hook of async_hooks observes them, which a program would
-  // make by reading more of async_hooks. A program reads process.env as the compile gives it.
+  // getBuiltinModule, of async_hooks, of which it reads only AsyncResource, whose objects run a
+  // function in their scope and emit their destroy, as Node's do (lib/async_hooks.js) where no hook
+  // of async_hooks observes them, which a program would make by reading more of async_hooks, and
+  // AsyncLocalStorage, which makes an object of no arguments, at whose every use the program stops,
+  // as its store follows the async context that ESCore's jobs don't carry. A program reads
+  // process.env as the compile gives it.
   `ProcessObject(s) ==
   LET bigint == HostFunction(s, N("process.hrtime.bigint"))
       hrtimeTarget == Alloc(bigint.s, BuiltinObject(Intrinsic(s, "FunctionPrototype"), <<"Module", "hostStop">>, 0, <<>>, FALSE,
@@ -606,7 +608,12 @@ const DEFINITIONS = [
                                                  N("AsyncResource"), TRUE, [run |-> Val(run), destroy |-> Val(destroy)], destroy.s.realmId))
       hooks == OrdinaryObjectCreate(resource.s, Null)
       withResource == CreateDataProperty(hooks.s, Val(hooks), SV("AsyncResource"), resource.v)
-      hooksProxy == StoppingProxy(withResource.s, Val(hooks), N("async_hooks"), <<[trap |-> SV("get"), method |-> "asyncHooksGet"]>>)
+      storage == Alloc(withResource.s, BuiltinObject(Intrinsic(s, "FunctionPrototype"), <<"Module", "hostStop">>, 0, <<>>, TRUE,
+                                                     N("AsyncLocalStorage"), s.realmId))
+      storageProxy == StoppingProxy(storage.s, storage.v, N("AsyncLocalStorage"),
+                                    <<[trap |-> SV("construct"), method |-> "asyncLocalStorageConstruct"]>>)
+      withStorage == CreateDataProperty(storageProxy.s, Val(hooks), SV("AsyncLocalStorage"), Val(storageProxy))
+      hooksProxy == StoppingProxy(withStorage.s, Val(hooks), N("async_hooks"), <<[trap |-> SV("get"), method |-> "asyncHooksGet"]>>)
   IN HoldModule(hooksProxy.s, 0, Val(hooksProxy))`,
   // A built-in module of Node that ESCore has none of, the one object that each require of it
   // gives, which the state's required holds under the number k: a proxy that stops at every
@@ -1578,7 +1585,14 @@ const HOST_PATCHES = [
     [] m = "getBuiltinModule" ->
          IF Arg(args, 1) \\notin {SV("node:async_hooks"), SV("async_hooks")} THEN HostStop(N("getBuiltinModule")) ELSE AsyncHooksModule(s)
     [] m = "asyncHooksGet" ->
-         IF Arg(args, 2) # SV("AsyncResource") THEN HostStop(N("async_hooks")) ELSE Get(s, Arg(args, 1), Arg(args, 2))
+         IF Arg(args, 2) \\notin {SV("AsyncResource"), SV("AsyncLocalStorage")} THEN HostStop(N("async_hooks")) ELSE Get(s, Arg(args, 1), Arg(args, 2))
+    [] m = "asyncLocalStorageConstruct" ->
+         LET list == CreateListFromArrayLike(s, Arg(args, 2), "all") IN
+         IF IsAbrupt(list) THEN list
+         ELSE IF Val(list) # <<>> \\/ ~IsObject(Arg(args, 3)) \\/ O(list.s, Arg(args, 3)).class # "proxy" \\/ O(list.s, Arg(args, 3)).slots.target # Arg(args, 1)
+         THEN HostStop(N("AsyncLocalStorage")) ELSE
+         LET instance == Alloc(list.s, MakeObject(Null, "ordinary", [hostName |-> N("AsyncLocalStorage")])) IN
+         StoppingProxy(instance.s, instance.v, N("AsyncLocalStorage"), <<>>)
     [] m = "utilGet" ->
          LET own == OrdinaryGetOwnProperty(O(s, Intrinsic(s, "GlobalObject")), SV("TextEncoder")) IN
          IF Arg(args, 2) # SV("TextEncoder") \\/ own = Absent \\/ ~IsDataDescriptor(own) \\/ ~IsHostConstructor(s, own.value, N("TextEncoder"))

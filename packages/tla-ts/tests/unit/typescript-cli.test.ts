@@ -703,6 +703,28 @@ describe("the CLI with TypeScript files", () => {
     });
   });
 
+  // A CommonJS module makes an AsyncLocalStorage of no arguments as it loads, as React's server
+  // builds do.
+  describe("makes an AsyncLocalStorage as Node does", () => {
+    const getScript = (type: string) =>
+      `const Storage = require("async_hooks").AsyncLocalStorage;\nconst storage = new Storage();\nif (typeof Storage !== "function" || typeof storage !== "${type}") throw new Error("type");\nif (storage === new Storage()) throw new Error("same");\n`;
+
+    it("agrees with Node", () => {
+      const directory = copyFixtures("passing");
+      writeFileSync(join(directory, "storage.cjs"), getScript("object"));
+      expect(runNode(directory, "storage.cjs").status).toBe(0);
+      expect(getExit(runCli(directory, ["storage.cjs"]))).toEqual([0, ""]);
+    });
+
+    it("rejects another result", () => {
+      const directory = copyFixtures("passing");
+      writeFileSync(join(directory, "storage.cjs"), getScript("function"));
+      const result = runCli(directory, ["storage.cjs"]);
+      expect(getExit(result)).toEqual(getExit(runNode(directory, "storage.cjs")));
+      expect(result.status).toBe(1);
+    });
+  });
+
   // A module reads Node's performance, as React's server builds do, whose now gives the time,
   // which each run reads anew, so the check stops where a program reads the time it gives.
   describe("reads Node's performance as Node does", () => {

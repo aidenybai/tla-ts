@@ -784,6 +784,59 @@ describe("compiles CommonJS modules as Node loads them", () => {
     });
   });
 
+  // Node's AsyncLocalStorage, which React's server builds make one of as they load, makes an
+  // object of no arguments, whose every use stops, as its store follows the async context.
+  describe("makes an AsyncLocalStorage of no arguments, which stops where the code uses it", () => {
+    const main = `const Storage = require("async_hooks").AsyncLocalStorage;
+      const storage = new Storage();
+      log.push(typeof Storage, typeof storage, Storage === require("node:async_hooks").AsyncLocalStorage, storage !== new Storage());`;
+
+    it("agrees with Node", async () => {
+      expect(
+        (await checkModules(getFiles(main, "function,object,true,true"))).message,
+      ).toBeUndefined();
+    });
+
+    it("rejects another result", async () => {
+      expect((await checkModules(getFiles(main, "function,object,true,false"))).message).toContain(
+        THREW,
+      );
+    });
+
+    it.each([
+      "storage.getStore()",
+      "storage.run(1, () => 1)",
+      "storage.enterWith(1)",
+      "storage.exit(() => 1)",
+      "storage.disable()",
+      "Object.keys(storage)",
+      "Object.getPrototypeOf(storage)",
+      "JSON.stringify(storage)",
+      "Object.prototype.toString.call(storage)",
+      "storage instanceof Storage",
+      "({}) instanceof Storage",
+      "storage instanceof Object",
+      "Storage.prototype",
+      "Storage.name",
+      "new Storage({})",
+      "new Storage(undefined)",
+      "Reflect.construct(Storage, [], Object)",
+      "new (class extends Storage {})()",
+      "Storage()",
+    ])("stops at %s", async (use) => {
+      expect(
+        (
+          await checkModules(
+            getFiles(
+              `const Storage = require("async_hooks").AsyncLocalStorage; const storage = new Storage(); ${use};`,
+              "",
+            ),
+          )
+        ).message,
+      ).toContain("tla-ts can't run the host's AsyncLocalStorage");
+    });
+  });
+
   describe("gives a module in a cycle the exports so far of the module that requires it", () => {
     const main = `const a = require("./a.js");
       log.push(a.name, a.fromB);`;
