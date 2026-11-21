@@ -2287,6 +2287,91 @@ ASSUME TLCFP(a) = -887695703
   });
 
   it.each([
+    ['I == INSTANCE P WITH c <- "d", v <- y', "I!J!Op3", "INVARIANT", 3],
+    ['I == INSTANCE P WITH c <- "d", v <- y', "I!J!KOp", "INVARIANT", 3],
+    ["I(z) == INSTANCE P WITH c <- z, v <- y", 'I("d")!J!Op3', "INVARIANT", 2],
+    ['I == INSTANCE P WITH c <- "d", v <- y', "I!J!A1", "ACTION_CONSTRAINT", 2],
+    ['I == INSTANCE P WITH c <- "d", v <- y', "I!J!Op5", "INVARIANT", 1],
+    ['I == INSTANCE P WITH c <- "d", v <- y', "[](I!J!Op3)", "PROPERTY", 3],
+    ['I == INSTANCE P WITH c <- "d", v <- y', "I!POp", "INVARIANT", 3],
+    ['J == INSTANCE Q WITH d <- PrintT("d"), w <- y', "J!Op3", "INVARIANT", 3],
+  ])(
+    "evaluates the printing substitute of an instance once per entry, with %s, into %s under %s, as TLC does",
+    async (instance, reached, kind, count) => {
+      const modules = new Map([
+        [
+          "P",
+          [
+            "---- MODULE P ----",
+            "EXTENDS TLC",
+            "CONSTANT c",
+            "VARIABLE v",
+            "J == INSTANCE Q WITH d <- PrintT(c), w <- v",
+            "POp == J!Op1 /\\ c = c",
+            "====",
+            "",
+          ].join("\n"),
+        ],
+        [
+          "Q",
+          [
+            "---- MODULE Q ----",
+            "EXTENDS TLC",
+            "CONSTANT d",
+            "VARIABLE w",
+            "Op2 == d = d /\\ w = w",
+            "Op1 == Op2 /\\ Op2",
+            "Op3 == Op1 /\\ d = d",
+            "A2 == d = d /\\ w' = w",
+            "A1 == A2 /\\ A2",
+            "Ap(Op(_)) == Op(d) /\\ Op(d)",
+            "Same(e) == e = d",
+            "Op5 == Ap(Same)",
+            "K == INSTANCE R WITH e <- d, u <- w",
+            "KOp == K!ROp1 /\\ d = d",
+            "====",
+            "",
+          ].join("\n"),
+        ],
+        [
+          "R",
+          [
+            "---- MODULE R ----",
+            "CONSTANT e",
+            "VARIABLE u",
+            "ROp2 == e = e /\\ u = u",
+            "ROp1 == ROp2 /\\ ROp2",
+            "====",
+            "",
+          ].join("\n"),
+        ],
+      ]);
+      const printed: string[] = [];
+      await check({
+        source: [
+          "---- MODULE M ----",
+          "EXTENDS TLC, Naturals",
+          "VARIABLE y",
+          instance,
+          "Init == y = 0",
+          "Next == y' = (y + 1) % 2",
+          "Spec == Init /\\ [][Next]_y",
+          `Check == ${reached}`,
+          "====",
+          "",
+        ].join("\n"),
+        config:
+          kind === "PROPERTY"
+            ? "SPECIFICATION Spec\nPROPERTY Check\n"
+            : `INIT Init\nNEXT Next\n${kind} Check\n`,
+        loadModule: (name) => modules.get(name),
+        onPrint: (text) => printed.push(text),
+      });
+      expect(printed).toEqual(Array.from({ length: count }, () => '"d"'));
+    },
+  );
+
+  it.each([
     [
       "CONSTANT N <- D",
       '---- MODULE M ----\nEXTENDS TLC, Naturals\nCONSTANT N\nVARIABLE y\nInit == y = 0\nNext == y\' = (y + 1) % 3\nD == PrintT("D")\nI == INSTANCE L WITH c <- N\nInv == I!R(2)\n====\n',

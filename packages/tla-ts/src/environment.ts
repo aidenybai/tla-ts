@@ -323,9 +323,9 @@ export const createEnvironment = (
   const substitutedDefinitions = new Set<Definition>();
   const enabledSubstitutions = new WeakSet<Expression>();
   const boundSubstitutions: BoundSubstitutions = {
-    lets: new WeakSet(),
+    lets: new WeakMap(),
     references: new WeakMap(),
-    calls: new WeakSet(),
+    calls: new WeakMap(),
   };
   const goalOperands = new WeakMap<Expression, Expression[]>();
   const goalSelections = new WeakMap<Expression, Expression>();

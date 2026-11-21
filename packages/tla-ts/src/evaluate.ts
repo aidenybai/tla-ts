@@ -1302,12 +1302,15 @@ export const getCalledBody = (
   expression: Expression,
   body: Expression,
   environment: Environment,
-) =>
-  body.kind === "Let" &&
-  environment.boundSubstitutions.calls.has(expression) &&
-  environment.boundSubstitutions.lets.has(body)
-    ? body.body
-    : undefined;
+): Expression | undefined => {
+  if (body.kind !== "Let") return undefined;
+  const owners = environment.boundSubstitutions.calls.get(expression);
+  if (owners === undefined) return undefined;
+  const owner = environment.boundSubstitutions.lets.get(body);
+  const isOwned =
+    owner !== undefined && (owners === owner || (Array.isArray(owners) && owners.includes(owner)));
+  return isOwned ? (getCalledBody(expression, body.body, environment) ?? body.body) : undefined;
+};
 
 const compileArgumentBinder = (argument: Expression, environment: Environment): ArgumentBinder => {
   const isLiteral =

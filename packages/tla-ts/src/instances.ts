@@ -417,9 +417,9 @@ export const forEachChild = (
 };
 
 export interface BoundSubstitutions {
-  lets: WeakSet<Expression>;
+  lets: WeakMap<Expression, Instantiation>;
   references: WeakMap<Expression, Expression>;
-  calls: WeakSet<Expression>;
+  calls: WeakMap<Expression, Instantiation | Instantiation[]>;
 }
 
 interface Instantiation {
@@ -559,7 +559,9 @@ const renameParams = (definition: Definition, rename: (name: string) => string):
 
 const renameNames = (
   expression: Expression,
+  source: Expression,
   bound: Map<string, string>,
+  rewrite: Rewrite,
   rename: (name: string) => string,
 ): Expression => {
   const getBoundName = (name: string) => bound.get(name) ?? name;
@@ -573,8 +575,8 @@ const renameNames = (
       return { ...expression, params: expression.params.map(getBoundName) };
     case "Lambda":
       return { ...expression, params: expression.params.map(rename) };
-    case "Let":
-      return {
+    case "Let": {
+      const renamed = {
         ...expression,
         definitions: expression.definitions.map((definition) =>
           withSource(
@@ -583,6 +585,11 @@ const renameNames = (
           ),
         ),
       };
+      const lets = rewrite.instantiation.boundSubstitutions.lets;
+      const owner = rewrite.binding && lets.get(source);
+      if (owner) lets.set(renamed, owner);
+      return renamed;
+    }
     case "Forall":
     case "Exists":
     case "FunctionConstruction":
@@ -708,10 +715,17 @@ const getInstanceOperator = (
 const getCopy = (rewrite: Rewrite, key: string) =>
   rewrite.instantiation.isParameterized(key) ? copyDefinition(rewrite, key) : undefined;
 
-const markCall = (rewrite: Rewrite, reference: Expression) => {
+const markCall = (rewrite: Rewrite, source: Expression, reference: Expression) => {
   if (rewrite.binding) {
     rewrite.binding.isReaching = true;
-    rewrite.instantiation.boundSubstitutions.calls.add(reference);
+    const calls = rewrite.instantiation.boundSubstitutions.calls;
+    const owners = calls.get(source);
+    calls.set(
+      reference,
+      owners === undefined
+        ? rewrite.instantiation
+        : [...(Array.isArray(owners) ? owners : [owners]), rewrite.instantiation],
+    );
   }
   return reference;
 };
@@ -808,7 +822,7 @@ const substituteExpression = (
     const copy = getCopy(rewrite, expression.name);
     if (copy === undefined) return expression;
     if (params.length === 0) {
-      return markCall(rewrite, {
+      return markCall(rewrite, expression, {
         ...expression,
         name: copy,
         resolution,
@@ -824,10 +838,10 @@ const substituteExpression = (
         expression.location,
         resolution,
       );
-      markCall(rewrite, operator.body);
+      markCall(rewrite, expression, operator.body);
       return operator;
     }
-    return markCall(rewrite, {
+    return markCall(rewrite, expression, {
       kind: "Apply",
       operator: copy,
       args: createLocalArguments(params, expression.location),
@@ -893,8 +907,14 @@ const substituteExpression = (
       );
     }
     const copy = getCopy(rewrite, expression.operator);
-    if (copy === undefined) return markContextual({ ...expression, args });
-    return markCall(rewrite, {
+    if (copy === undefined) {
+      const calls = instantiation.boundSubstitutions.calls;
+      const owners = rewrite.binding && calls.get(expression);
+      const kept = markContextual({ ...expression, args });
+      if (owners) calls.set(kept, owners);
+      return kept;
+    }
+    return markCall(rewrite, expression, {
       ...expression,
       operator: copy,
       args: [...createLocalArguments(params, expression.location), ...args],
@@ -922,10 +942,10 @@ const substituteExpression = (
         expression.location,
         resolution,
       );
-      markCall(rewrite, operator.body);
+      markCall(rewrite, expression, operator.body);
       return operator;
     }
-    return markCall(rewrite, { ...expression, operator: copy });
+    return markCall(rewrite, expression, { ...expression, operator: copy });
   }
   const rename = createRenamer(rewrite);
   const mapped = mapChildren(expression, (child, names) =>
@@ -933,7 +953,7 @@ const substituteExpression = (
       ? recurse(child)
       : substitute(child, rewrite, bindNames(bound, names, rename)),
   );
-  return renameNames(mapped, bound, rename);
+  return renameNames(mapped, expression, bound, rewrite, rename);
 };
 
 const getFunctionBody = (definition: FunctionDefinition): Expression =>
@@ -1008,7 +1028,7 @@ const copyDefinition = (rewrite: Rewrite, key: string): string => {
             location: { line: mapped.body.location.line, column: mapped.body.location.column },
           };
     const lets = instantiation.boundSubstitutions.lets;
-    if (body !== mapped.body) lets.add(body);
+    if (body !== mapped.body) lets.set(body, instantiation);
     const copied = withInstanceParams({ ...mapped, body }, instantiation.params);
     const carried =
       definition.body.kind === "Let" && lets.has(definition.body)
@@ -1086,7 +1106,8 @@ export const createInstantiation = (instantiation: Instantiation) => {
         const operator = getOperatorDefinition(definition);
         const body = withSubstitutionFrames(operator.body, [frame]);
         const lets = instantiation.boundSubstitutions.lets;
-        if (lets.has(operator.body)) lets.add(body);
+        const owner = lets.get(operator.body);
+        if (owner) lets.set(body, owner);
         return { ...operator, body };
       },
       reservedKey,

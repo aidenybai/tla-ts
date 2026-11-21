@@ -122,11 +122,13 @@ export const withExpandedSubstitutions = (
   const lets = environment.boundSubstitutions.lets;
   const wrapped = substitutions.reduceRight((body: Expression, substitution) => {
     const bound = { ...substitution, body };
-    lets.add(bound);
+    const owner = lets.get(substitution);
+    if (owner) lets.set(bound, owner);
     return bound;
   }, expression);
   const framed = withSubstitutionFrames(wrapped, frames);
-  if (lets.has(wrapped)) lets.add(framed);
+  const wrappedOwner = lets.get(wrapped);
+  if (wrappedOwner) lets.set(framed, wrappedOwner);
   return framed;
 };
 
@@ -467,13 +469,17 @@ export const expandTemporal = (
   if (expression.kind === "Selection") return expand(expression.expression, scope);
   if (expression.kind === "Let") {
     const bound = bindLetDefinitions(expression, scope, environment);
-    const impure = environment.boundSubstitutions.lets.has(expression)
+    const lets = environment.boundSubstitutions.lets;
+    const owner = lets.get(expression);
+    const impure = owner
       ? getReevaluatedDefinitions(expression.definitions, environment).impure
       : new Set<Definition>();
     const definitions = expression.definitions.filter((definition) => impure.has(definition));
+    const substitution = { ...expression, definitions };
+    if (owner && definitions.length > 0) lets.set(substitution, owner);
     const substitutions =
       definitions.length > 0
-        ? [...expansion.substitutions, { expression: { ...expression, definitions }, scope: bound }]
+        ? [...expansion.substitutions, { expression: substitution, scope: bound }]
         : expansion.substitutions;
     return expand(expression.body, bound, undefined, undefined, undefined, substitutions);
   }
