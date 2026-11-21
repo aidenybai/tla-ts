@@ -2783,6 +2783,10 @@ ASSUME TLCFP(a) = -887695703
       "Init == x = 0\nK(b) == G(b) /\\ x = 0\nBoth == K(P(1, x))\nSpec == Init /\\ Both /\\ [][Next]_<<x, y>>",
       1,
     ],
+    [
+      "H(b) == b /\\ b\nInit == x = 0 /\\ y = 0 /\\ H(P(1, TRUE))\nSpec == Init /\\ [][Next]_<<x, y>>",
+      1,
+    ],
   ])(
     "binds an argument under %j cached in a state-level definition, as getInitStates does, and uncached in an application the spec takes apart",
     async (definitions, count) => {
@@ -2795,6 +2799,20 @@ ASSUME TLCFP(a) = -887695703
       expect(printed).toEqual(Array.from({ length: count }, () => "1"));
     },
   );
+
+  it("evaluates a state-level Init's LET at each read when it rebuilds the trace, as TLC takes Init whole", async () => {
+    const printed: string[] = [];
+    const result = await check({
+      source:
+        "---- MODULE M ----\nEXTENDS Naturals, TLC\nVARIABLES x, y\nInit == LET a == PrintT(0) IN x = a /\\ y = a /\\ a = a\nNext == x' = (x + 1) % 2 /\\ y' = y\nSpec == Init /\\ [][Next]_<<x, y>>\n====\n",
+      config: "SPECIFICATION Spec\n",
+      onPrint: (text) => printed.push(text),
+    });
+    expect([printed, result.failure?.traceOutput]).toEqual([
+      ["0", "0", "0", "0"],
+      ["0", "0", "0", "0"],
+    ]);
+  });
 
   it("reads TLCGet in every state through a constant substituted with it, as TLC's level bound does", async () => {
     const prints: string[] = [];
