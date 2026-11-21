@@ -21,15 +21,12 @@ const Page = () => (
       <Section.Root>
         <Section.Title>Next steps</Section.Title>
         <p className="text-pretty">
-          The <Link href="/playground">playground</Link> shows more TypeScript files beside the TLA+
-          that <Link href="/">TLA-ts</Link> writes for them.
-        </p>
-        <p className="text-pretty">
-          For the rest of the language, read{" "}
+          Try more files in the <Link href="/playground">playground</Link>. For the full language,
+          read{" "}
           <Link href="https://lamport.azurewebsites.net/tla/summary-standalone.pdf">
             Leslie Lamport's summary of TLA+
-          </Link>{" "}
-          or <Link href="https://learntla.com">Learn TLA+</Link> by Hillel Wayne.
+          </Link>
+          .
         </p>
       </Section.Root>
     </div>
