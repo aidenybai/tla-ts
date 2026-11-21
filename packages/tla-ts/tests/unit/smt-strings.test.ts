@@ -149,6 +149,27 @@ describe("simplify over strings and regular expressions", () => {
       ]).join("\n"),
     ).toBe(["2", '"Hi"', "128512", '"\\u{3bb}"', "3"].join("\n"));
   });
+
+  it("compares the string literals of an if-then-else as values", () => {
+    expect(
+      run([
+        "(declare-const s0 String)",
+        "(declare-const b Bool)",
+        "(declare-const c Bool)",
+        '(simplify (= "" (ite b "11" s0)))',
+        '(simplify (= (ite b "11" s0) "11"))',
+        '(simplify (= (ite b "11" (ite c "" "a")) "11"))',
+        '(simplify (= (ite b "a" "b") (ite c "a" "c")))',
+        '(simplify (= (ite b "a" (ite c "b" "c")) "d"))',
+      ]),
+    ).toEqual([
+      '(and (= "" s0) (not b))',
+      '(or b (= s0 "11"))',
+      "b",
+      "(and (or b c) (or c (not b)) (or b (not c)))",
+      "false",
+    ]);
+  });
 });
 
 describe("the theory of sequences", () => {

@@ -1,5 +1,3 @@
-// Ported from tlapm's src/backend/isabelle.ml (BSD licensed, see LICENSE-tlapm).
-
 import { TlapmBugError, TlaProverError, TlaUnsupportedError } from "../../errors";
 import { createContext, getBoundName, popNames, pushName } from "../../obligations/printer";
 import type { Bound, Builtin, Expr, Sequent } from "../../obligations/expression";

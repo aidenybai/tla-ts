@@ -1,5 +1,3 @@
-// Ported from Zenon's index.ml, as shipped in tlapm. Copyright 2004 INRIA, see LICENSE.
-
 import {
   getStringName,
   isApp,
@@ -264,8 +262,11 @@ export const createIndex = (exprs: Expressions) => {
       const suspect = group[0];
       const count = suspect.records.length;
       const missing = [
-        ...Array.from({ length: count - suspect.cursor }, (_, offset) => suspect.cursor + offset),
-        ...Array.from({ length: suspect.cursor }, (_, offset) => offset),
+        ...Array.from(
+          { length: count - suspect.cursor },
+          (_value, offset) => suspect.cursor + offset,
+        ),
+        ...Array.from({ length: suspect.cursor }, (_value, offset) => offset),
       ].find((index) => !suspect.records[index].isPresent);
       if (missing === undefined) return suspect.proof;
       suspects = [group.slice(1), ...suspects.slice(1)];
@@ -282,6 +283,8 @@ export const createIndex = (exprs: Expressions) => {
     getGoalness,
     findPositive: (symbol: string) => withGoalness(getLatestFirst(positive, symbol)),
     findNegative: (symbol: string) => withGoalness(getLatestFirst(negative, symbol)),
+    getPositive: (symbol: string) => positive.get(symbol),
+    getNegative: (symbol: string) => negative.get(symbol),
     findEqualRight: (term: Expr) => getLatestFirst(equalLeftRight, term),
     findEqualLeft: (term: Expr) => getLatestFirst(equalRightLeft, term),
     findDisequalities: (term: Expr) => [

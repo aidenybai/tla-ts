@@ -1,4 +1,3 @@
-// Ported from Z3 (src/muz/base/rule_properties.cpp), MIT license, see z3-license.txt.
 import { SmtTacticError } from "../../../../errors";
 import {
   type AstManager,
@@ -275,6 +274,28 @@ export class RuleProperties {
     if (first.done !== true)
       throw new SmtTacticError(
         `Uninterpreted '${getSymbolName(this.manager.funcDecls[first.value[0]].name)}' in ${first.value[1].display(this.context)}`,
+      );
+  }
+
+  checkQuantifierFree() {
+    const first = this.quantifiers.entries().next();
+    if (first.done !== true)
+      throw new SmtTacticError(
+        `cannot process quantifier in rule ${first.value[1].display(this.context)}`,
+      );
+  }
+
+  checkNestedFree() {
+    const rules = this.interpretedPredicateRules;
+    if (rules.length > 0)
+      throw new SmtTacticError(`Rule contains nested predicates ${rules[0].display(this.context)}`);
+  }
+
+  checkInfiniteSorts() {
+    const rules = this.infiniteSortRules;
+    if (rules.length > 0)
+      throw new SmtTacticError(
+        `Rule contains infinite sorts in rule ${rules[rules.length - 1].display(this.context)}`,
       );
   }
 

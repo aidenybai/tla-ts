@@ -5,9 +5,14 @@ type Bank = "E" | "W";
 const missionaries = new Set<Person>(["m1", "m2", "m3"]);
 const cannibals = new Set<Person>(["c1", "c2", "c3"]);
 
+// A Set keeps its elements in the order they were added, so each bank holds them sorted, as
+// TLA+'s sets hold no order.
+const getSorted = (people: Set<Person>) =>
+  new Set([...people].sort((left, right) => (left < right ? -1 : 1)));
+
 let bank_of_boat: Bank = "E";
 let who_is_on_bank: Record<Bank, Set<Person>> = {
-  E: missionaries.union(cannibals),
+  E: getSorted(missionaries.union(cannibals)),
   W: new Set(),
 };
 
@@ -20,8 +25,8 @@ const otherBank = (bank: Bank) => (bank === "E" ? "W" : "E");
 export const move = (people: Set<Person>) => {
   if (!people.isSubsetOf(who_is_on_bank[bank_of_boat])) return;
   if (people.size !== 1 && people.size !== 2) return;
-  const newThisBank = who_is_on_bank[bank_of_boat].difference(people);
-  const newOtherBank = who_is_on_bank[otherBank(bank_of_boat)].union(people);
+  const newThisBank = getSorted(who_is_on_bank[bank_of_boat].difference(people));
+  const newOtherBank = getSorted(who_is_on_bank[otherBank(bank_of_boat)].union(people));
   if (isSafe(newThisBank) && isSafe(newOtherBank)) {
     who_is_on_bank[otherBank(bank_of_boat)] = newOtherBank;
     who_is_on_bank[bank_of_boat] = newThisBank;

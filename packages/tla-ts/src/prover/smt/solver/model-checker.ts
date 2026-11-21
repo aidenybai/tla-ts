@@ -1,4 +1,3 @@
-// Ported from Z3 (src/smt/smt_model_checker.cpp), MIT license, see z3-license.txt.
 import { SmtInvariantError } from "../../../errors";
 import { KIND_APP, OP_NOT, OP_OR, SORT_BOOL } from "./ast";
 import { AssertedFormulas } from "./asserted-formulas";
@@ -30,24 +29,34 @@ class AuxContext {
     this.context = new Context(parent.manager, {
       ...parent.params,
       relevancyLevel: 0,
+      isDelayingNewCaseSplits: false,
       isArrayFakeSupport: true,
     });
     this.context.config = { ...parent.config, relevancyLevel: 0 };
     for (const theory of parent.theories) this.context.registerFamily(theory.id);
-    this.context.setupContext(parent.setup, false, this.asserted);
+    // Z3 gives the aux context no logic, so its setup adds every theory.
+    this.context.setupContext(
+      parent.setup === undefined ? undefined : { ...parent.setup, logic: undefined },
+      false,
+      this.asserted,
+    );
+  }
+
+  release() {
+    this.context.release(this.asserted);
   }
 
   push() {
-    this.context.push();
-    this.asserted.push();
+    this.context.popToBaseLevel();
+    this.context.internalizeAndPush(this.asserted);
   }
 
   pop() {
     this.context.pop(1);
-    this.asserted.pop();
   }
 
   assert(formula: number) {
+    if (this.context.checkCanceled()) return;
     this.context.popToBaseLevel();
     this.asserted.assertExpr(formula);
   }
@@ -56,7 +65,7 @@ class AuxContext {
     const context = this.context;
     context.popToBaseLevel();
     const result = context.checkResearching(this.asserted, []);
-    return result === L_TRUE ? context.getModel() : result === L_FALSE ? "unsat" : "unknown";
+    return result === L_TRUE ? context.getSatModel() : result === L_FALSE ? "unsat" : "unknown";
   }
 }
 
@@ -76,6 +85,11 @@ export class ModelChecker {
     private qmanager: DefaultQuantifierManager,
   ) {
     this.pinnedExprs = new RefVector(context.manager);
+  }
+
+  release() {
+    this.aux?.release();
+    this.pinnedExprs.reset();
   }
 
   private get manager() {
@@ -193,10 +207,8 @@ export class ModelChecker {
     return true;
   }
 
-  private checkQuantifier(quantifier: number, model: ProtoModel) {
+  private checkQuantifier(aux: AuxContext, quantifier: number, model: ProtoModel) {
     const manager = this.manager;
-    const aux = this.aux ?? new AuxContext(this.context);
-    this.aux = aux;
     aux.push();
     const sks = new RefVector(manager);
     const isSatisfied = this.checkInScope(aux, quantifier, model, sks);
@@ -242,19 +254,18 @@ export class ModelChecker {
     diseqs.reset();
   }
 
-  private checkQuantifiers(model: ProtoModel) {
+  private checkQuantifiers(aux: AuxContext, model: ProtoModel) {
     const context = this.context;
     let isFoundRelevant = false;
     let numFailures = 0;
     for (const quantifier of this.qmanager.quantifiers) {
-      if (context.checkCanceled()) return { isFoundRelevant, numFailures: numFailures + 1 };
       if (
         !context.isRelevant(quantifier) ||
         context.getAssignment(context.getLiteral(quantifier)) !== L_TRUE
       )
         continue;
       isFoundRelevant = true;
-      if (!this.checkQuantifier(quantifier, model)) numFailures++;
+      if (!this.checkQuantifier(aux, quantifier, model)) numFailures++;
     }
     return { isFoundRelevant, numFailures };
   }
@@ -265,12 +276,14 @@ export class ModelChecker {
     if (this.iterationIndex >= this.context.params.mbqiMaxIterations) return false;
     this.value2expr = null;
     model.compress();
-    const first = this.checkQuantifiers(model);
+    const aux = this.aux ?? new AuxContext(this.context);
+    this.aux = aux;
+    const first = this.checkQuantifiers(aux, model);
     if (first.isFoundRelevant) this.iterationIndex++;
     this.maxCexs += MBQI_MAX_CEXS;
     let numFailures = first.numFailures;
     if (numFailures === 0 && !this.context.validateModel(model))
-      numFailures = 1 + this.checkQuantifiers(model).numFailures;
+      numFailures = 1 + this.checkQuantifiers(aux, model).numFailures;
     if (numFailures === 0) model.cleanup();
     return numFailures === 0;
   }

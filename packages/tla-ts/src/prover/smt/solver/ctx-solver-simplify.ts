@@ -1,7 +1,6 @@
-// Ported from Z3 (src/smt/tactic/ctx_solver_simplify_tactic.cpp,
-// src/ast/rewriter/mk_simplified_app.cpp), MIT license, see z3-license.txt.
 import { type AstManager, SORT_BOOL, SORT_INT } from "./ast";
 import type { Goal } from "./goal";
+import { ObjMap } from "./hashtable";
 import { L_FALSE } from "./lbool";
 import { RefVector } from "./ref-vector";
 import { Rewriter, TACTIC_REWRITER_OPTIONS } from "./rewriter";
@@ -17,15 +16,21 @@ interface ExprPos {
   expr: number;
 }
 
-export const createCtxSolverSimplify = (manager: AstManager, params: KernelParams) => {
+// The first kernel reads some parameters before using_params updates them.
+export const createCtxSolverSimplify = (
+  manager: AstManager,
+  frontParams: KernelParams,
+  params: KernelParams,
+) => {
+  let kernel = new SmtKernel(manager, frontParams);
+  kernel.updateParams(params);
   const boolFn = manager.mkFuncDecl(FRESH_SYMBOL, [SORT_INT], SORT_BOOL);
-  const fns = new Map<number, number>();
-  return (goal: Goal) => {
+  const fns = new ObjMap<number>((sort) => manager.getSortHash(sort));
+  const reduceGoal = (goal: Goal) => {
     if (goal.isProofsEnabled || goal.isInconsistent) {
       goal.depth++;
       return;
     }
-    const kernel = new SmtKernel(manager, params);
     const rewriter = new Rewriter(manager, TACTIC_REWRITER_OPTIONS);
     const trail = new RefVector(manager);
     const pin = (expr: number) => {
@@ -48,9 +53,12 @@ export const createCtxSolverSimplify = (manager: AstManager, params: KernelParam
       kernel.pop(1);
       if (result === L_FALSE) return manager.trueExpr;
       kernel.push();
-      kernel.assertExpr(pin(manager.mkNot(name)));
+      const negation = manager.mkNot(name);
+      manager.incRef(negation);
+      kernel.assertExpr(negation);
       result = kernel.check();
       kernel.pop(1);
+      manager.decRef(negation);
       return result === L_FALSE ? manager.falseExpr : undefined;
     };
     const getLeaf = (expr: number, name: number) => {
@@ -65,7 +73,9 @@ export const createCtxSolverSimplify = (manager: AstManager, params: KernelParam
       const cache = new Map<number, ExprPos>();
       let childId = 0;
       const top = mkFresh(SORT_BOOL);
-      kernel.assertExpr(pin(manager.mkNot(pin(manager.mkEq(fml, top)))));
+      let assumption = manager.mkNot(manager.mkEq(fml, top));
+      manager.incRef(assumption);
+      kernel.assertExpr(assumption);
       todo.push({ parent: 0, self: 0, index: 0, expr: fml });
       names.push(top);
       kernel.push();
@@ -98,7 +108,11 @@ export const createCtxSolverSimplify = (manager: AstManager, params: KernelParam
           result = pin(rewriter.mkApp(manager.decls[expr], args, manager.sorts[expr]));
           if (child !== undefined) {
             kernel.push();
-            kernel.assertExpr(pin(manager.mkEq(result, name)));
+            const equation = manager.mkEq(result, name);
+            manager.incRef(equation);
+            manager.decRef(assumption);
+            assumption = equation;
+            kernel.assertExpr(assumption);
             continue;
           }
         }
@@ -107,18 +121,38 @@ export const createCtxSolverSimplify = (manager: AstManager, params: KernelParam
         names.pop();
         kernel.pop(1);
       }
-      return manager.limit.inc() ? cache.get(fml)?.expr : undefined;
+      const result = manager.limit.inc() ? cache.get(fml)?.expr : undefined;
+      if (result !== undefined) {
+        manager.incRef(result);
+        manager.decRef(fml);
+      }
+      manager.decRef(assumption);
+      trail.reset();
+      return result ?? fml;
     };
-    const fml = pin(manager.mkAnd([...goal.forms.items]));
+    const fml = manager.mkAnd([...goal.forms.items]);
+    manager.incRef(fml);
     kernel.push();
     const result = reduce(fml);
     kernel.pop(1);
     rewriter.release();
-    if (result !== undefined && manager.limit.inc()) {
+    if (manager.limit.inc()) {
       goal.reset();
       goal.assert(result);
     }
-    trail.reset();
+    manager.decRef(result);
     goal.depth++;
+  };
+  return {
+    run: (goal: Goal) => {
+      reduceGoal(goal);
+      kernel.release();
+      kernel = new SmtKernel(manager, params);
+    },
+    release: () => {
+      for (const fn of fns.values()) manager.decDeclRef(fn);
+      manager.decDeclRef(boolFn);
+      kernel.release();
+    },
   };
 };

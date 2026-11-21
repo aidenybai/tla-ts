@@ -1,7 +1,13 @@
-// Ported from Z3 (src/smt/theory_pb.h, src/smt/theory_pb.cpp, src/ast/rewriter/pb_rewriter_def.h),
-// MIT license, see z3-license.txt.
-import { SmtInvariantError, SmtUnsupportedError } from "../../../errors";
-import { FAMILY_PB, OP_AT_LEAST_K, OP_AT_MOST_K, OP_PB_EQ, OP_PB_GE, OP_PB_LE } from "./ast";
+import { SmtInvariantError } from "../../../errors";
+import {
+  FAMILY_PB,
+  OP_AT_LEAST_K,
+  OP_AT_MOST_K,
+  OP_PB_AUX_BOOL,
+  OP_PB_EQ,
+  OP_PB_GE,
+  OP_PB_LE,
+} from "./ast";
 import { mkNot } from "./ast-util";
 import { BinJustification, CLS_TH_LEMMA } from "./clause";
 import type { Context } from "./context";
@@ -223,7 +229,6 @@ class Card {
   constructor(
     public lit: Literal,
     public k: number,
-    readonly isAux: boolean,
   ) {}
 
   get size() {
@@ -311,6 +316,10 @@ export class TheoryPb extends Theory {
     const context = this.context;
     const manager = this.manager;
     if (context.isBInternalized(atom)) return true;
+    if (manager.getOp(atom) === OP_PB_AUX_BOOL) {
+      context.setVarTheory(context.mkBoolVar(atom), this.id);
+      return true;
+    }
     if (this.internalizeCard(atom)) return true;
     const boolVar = context.mkBoolVar(atom);
     context.setVarTheory(boolVar, this.id);
@@ -319,7 +328,7 @@ export class TheoryPb extends Theory {
     const args = manager.getArgs(atom);
     const op = manager.getOp(atom);
     if (op === OP_PB_EQ) {
-      const coeffs = args.map((_, index) => getPbCoeff(manager, decl, index));
+      const coeffs = args.map((_value, index) => getPbCoeff(manager, decl, index));
       const sum = coeffs.reduce((total, coeff) => total.add(coeff), Rational.zero);
       const k = getPbK(manager, decl);
       const le = mkPbGe(
@@ -397,8 +406,14 @@ export class TheoryPb extends Theory {
       hasBoolVar = true;
       isNot = !isNot;
     }
-    if (!hasBoolVar)
-      throw new SmtUnsupportedError("pseudo-Boolean arguments that another theory owns");
+    if (!hasBoolVar) {
+      const proxy = manager.mkPbAuxBool();
+      const definition = manager.mkEq(proxy, arg);
+      context.internalize(definition, false);
+      boolVar = context.getBoolVar(proxy);
+      context.mkThAxiom([mkLiteral(context.getBoolVar(definition))]);
+      context.markAsRelevant(proxy);
+    }
     return mkLiteral(boolVar, isNot);
   }
 
@@ -475,7 +490,7 @@ export class TheoryPb extends Theory {
       context.mkThAxiom([negate(lit)]);
       return true;
     }
-    const card = new Card(lit, bound, manager.getOp(atom) === OP_AT_LEAST_K);
+    const card = new Card(lit, bound);
     for (const arg of args) card.addArg(this.compileArg(arg));
     if (bound === card.size) this.card2conjunction(card);
     else if (card.size === 1) this.card2disjunction(card);

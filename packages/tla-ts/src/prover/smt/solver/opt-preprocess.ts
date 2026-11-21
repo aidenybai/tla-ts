@@ -1,4 +1,3 @@
-// Ported from Z3 (src/opt/opt_preprocess.cpp), MIT license, see z3-license.txt.
 import { type AstManager, OP_OR, SORT_BOOL } from "./ast";
 import { mkNot } from "./ast-util";
 import { ObjMap } from "./hashtable";
@@ -91,7 +90,7 @@ export class Preprocess {
       if (dual.size !== soft.size) soft = this.dualize(dual, fmls);
     }
     return {
-      soft: [...soft].map(([expr, weight]) => ({ expr, weight, value: L_UNDEF })),
+      soft: [...soft].map((entry) => ({ expr: entry[0], weight: entry[1], value: L_UNDEF })),
       lower: lower.value,
     };
   }

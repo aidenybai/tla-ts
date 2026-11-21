@@ -1,4 +1,3 @@
-// Ported from Z3 (src/tactic/arith/add_bounds_tactic.cpp), MIT license, see z3-license.txt.
 import {
   type AstManager,
   KIND_APP,
@@ -32,7 +31,7 @@ export const addBounds = (manager: AstManager, goal: Goal, lower: Rational, uppe
   };
   const size = goal.forms.size;
   for (let index = 0; index < size; index++) {
-    const form = goal.forms.items[index];
+    const form = goal.forms.get(index);
     if (visited.has(form)) continue;
     visited.add(form);
     const exprs = [form];

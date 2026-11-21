@@ -1,7 +1,8 @@
-import type { LivenessChecker } from "./liveness-checker";
+import type { LivenessChecker, LivenessChecks } from "./liveness-checker";
 
 export const EXIT_STATUS = {
   success: 0,
+  abort: 1,
   assumptionViolation: 10,
   deadlock: 11,
   safetyViolation: 12,
@@ -21,12 +22,12 @@ export const UNSETTLED_AWAIT_EXIT_CODE = 13;
 export const UNSETTLED_AWAIT_WARNING = "Detected unsettled top-level await at ";
 // Node's exit status for a script that throws or rejects with what nothing handles.
 export const UNCAUGHT_EXCEPTION_EXIT_CODE = 1;
-// Where Node says that an ES module threw, and that a promise rejected with what nothing handles,
+// Where Node 26 says that an ES module threw, and that a promise rejected with what nothing handles,
 // both in its own code, and what it prints after a primitive that nothing catches.
 export const MODULE_UNCAUGHT_LOCATION =
-  "node:internal/modules/run_main:107\n    triggerUncaughtException(\n    ^";
+  "node:internal/modules/run_main:111\n    triggerUncaughtException(\n    ^";
 export const UNHANDLED_REJECTION_LOCATION =
-  "node:internal/process/promises:392\n      new UnhandledPromiseRejection(reason);\n      ^";
+  "node:internal/process/promises:322\n      new UnhandledPromiseRejection(reason);\n      ^";
 export const UNHANDLED_REJECTION_PREFIX =
   "UnhandledPromiseRejection: This error originated either by throwing inside of an async function without a catch block, or by rejecting a promise which was not handled with .catch(). The promise rejected with the reason ";
 export const UNHANDLED_REJECTION_SUFFIX = ". {\n  code: 'ERR_UNHANDLED_REJECTION'\n}";
@@ -35,13 +36,13 @@ export const TRACE_UNCAUGHT_HINT =
 
 const MESSAGE_EXIT_STATUSES = new Map<number, number>([
   ...[
-    ...Array.from({ length: 24 }, (_, index) => 2222 + index),
+    ...Array.from({ length: 24 }, (_value, index) => 2222 + index),
     2272,
     2273,
     2274,
     2280,
     2281,
-    ...Array.from({ length: 7 }, (_, index) => 5001 + index),
+    ...Array.from({ length: 7 }, (_value, index) => 5001 + index),
   ].map((code): [number, number] => [code, EXIT_STATUS.configParseError]),
   [2253, EXIT_STATUS.livenessEvaluationFailure],
   [2109, EXIT_STATUS.specEvaluationFailure],
@@ -79,7 +80,7 @@ export const setExitCode = <Thrown>(error: Thrown, code: number) => {
 
 export const getExitCode = (error: Error) => exitCodes.get(error);
 
-const withErrorExitCode = <Result>(run: () => Result) => {
+export const withErrorExitCode = <Result>(run: () => Result) => {
   try {
     return run();
   } catch (error) {
@@ -87,21 +88,35 @@ const withErrorExitCode = <Result>(run: () => Result) => {
   }
 };
 
+const withCheckerExitCode = (checker: LivenessChecker): LivenessChecker => ({
+  branches: checker.branches,
+  solutions: checker.solutions,
+  addInitialState: checker.addInitialState,
+  addState: (index, state, successors, tracing) =>
+    withErrorExitCode(() => checker.addState(index, state, successors, tracing)),
+  storeState: checker.storeState,
+  getStateCounts: checker.getStateCounts,
+  findViolation: () => withErrorExitCode(() => checker.findViolation()),
+  getViolatedProperties: (path, cycleStart) =>
+    withErrorExitCode(() => checker.getViolatedProperties(path, cycleStart)),
+});
+
 export const withLivenessExitCode = (
   create: () => LivenessChecker | undefined,
 ): LivenessChecker | undefined => {
   const checker = withErrorExitCode(create);
+  return checker && withCheckerExitCode(checker);
+};
+
+export const withLivenessChecksExitCode = (
+  create: () => LivenessChecks | undefined,
+): LivenessChecks | undefined => {
+  const checks = withErrorExitCode(create);
   return (
-    checker && {
-      branches: checker.branches,
-      solutions: checker.solutions,
-      addInitialState: (index, state, tracing) =>
-        withErrorExitCode(() => checker.addInitialState(index, state, tracing)),
-      addState: (index, state, successors, tracing) =>
-        withErrorExitCode(() => checker.addState(index, state, successors, tracing)),
-      findViolation: () => withErrorExitCode(() => checker.findViolation()),
-      getViolatedProperties: (path, cycleStart) =>
-        withErrorExitCode(() => checker.getViolatedProperties(path, cycleStart)),
+    checks && {
+      solutions: checks.solutions,
+      findTraceViolation: (trace, fingerprints) =>
+        withErrorExitCode(() => checks.findTraceViolation(trace, fingerprints)),
     }
   );
 };

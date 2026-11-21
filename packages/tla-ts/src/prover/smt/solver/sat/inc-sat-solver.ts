@@ -1,17 +1,32 @@
-// Ported from Z3 (src/sat/sat_solver/inc_sat_solver.cpp), MIT license, see z3-license.txt.
-import { SmtTacticError, SmtUnsupportedError } from "../../../../errors";
+import { SmtCanceledError, SmtTacticError } from "../../../../errors";
 import { type AstManager, OP_AND, OP_EQ, OP_IMPLIES, OP_NOT, OP_OR, SORT_BOOL } from "../ast";
+import { mkNot } from "../ast-util";
 import { BitBlasterRewriter } from "../bit-blast-tactic";
-import { Goal } from "../goal";
+import { decConverterRefs, Goal, incConverterRefs, mkDependencyLeaf } from "../goal";
 import { L_FALSE, L_TRUE, L_UNDEF } from "../lbool";
 import { ProtoModel } from "../proto-model";
+import { PropagateValuesTactic } from "../propagate-values";
 import { RefVector } from "../ref-vector";
+import {
+  DEFAULT_PRINT_OPTIONS,
+  formatSort,
+  getQuotedName,
+  mkSeq1,
+  mkSeq5,
+  mkText,
+  renderFormat,
+} from "../smt2-printer";
 import type { ThSolverFactory } from "../euf/euf-solver";
-import { convertModel, mkIncSatEufPreprocess, mkIncSatPreprocess } from "../tactic";
+import {
+  applyDefinitions,
+  convertModel,
+  mkIncSatEufPreprocess,
+  mkIncSatPreprocess,
+} from "../tactic";
 import type { SatParams } from "./config";
 import { Goal2Sat } from "./goal2sat";
 import { getConsequences } from "./consequences";
-import { isLiteral, sat2goal } from "./sat2goal";
+import { isLiteral, Sat2GoalConverter, sat2goal } from "./sat2goal";
 import { Solver } from "./solver";
 
 const BIT_BLAST_PARAMS = {
@@ -25,6 +40,8 @@ interface Scope {
   readonly converters: Goal["converters"];
   readonly fmlsSize: number;
   readonly fmlsHead: number;
+  readonly namesSize: number;
+  readonly hasUninterpreted: boolean;
 }
 
 export class IncSatSolver {
@@ -32,6 +49,7 @@ export class IncSatSolver {
   private readonly goal2sat: Goal2Sat;
   private readonly fmls: RefVector;
   private fmlsHead = 0;
+  private readonly names: RefVector;
   private isCnf = true;
   private readonly core: RefVector;
   private dep2asm = new Map<number, number>();
@@ -39,10 +57,13 @@ export class IncSatSolver {
   private bitBlaster: BitBlasterRewriter | undefined;
   // m_mcs.back(), the model converters of the preprocessed goals.
   private readonly converters: Goal;
+  private readonly satConverter: Sat2GoalConverter;
   private isInternalizedConverted = false;
   private readonly internalized: RefVector;
+  // Z3 frees what the propagate-values of its preprocessing holds only when it resets the preprocessing.
+  private readonly propagator: PropagateValuesTactic;
   private hasUninterpreted = false;
-  private models: ProtoModel[] = [];
+  private subgoals: Goal[] = [];
   private scopes: Scope[] = [];
   reasonUnknown = "no reason given";
   wasUnknown = false;
@@ -63,9 +84,12 @@ export class IncSatSolver {
     );
     if (mkThSolver !== null) this.goal2sat.ensureEuf();
     this.fmls = new RefVector(manager);
+    this.names = new RefVector(manager);
     this.core = new RefVector(manager);
     this.converters = new Goal(manager);
+    this.satConverter = new Sat2GoalConverter(manager);
     this.internalized = new RefVector(manager);
+    this.propagator = new PropagateValuesTactic(manager);
   }
 
   private isClause(expr: number): boolean {
@@ -88,37 +112,80 @@ export class IncSatSolver {
     this.fmls.push(expr);
   }
 
-  // Outside sat.euf, a scope would also need the scopes of the bit-blaster.
+  assertNamed(expr: number, name: number) {
+    const manager = this.manager;
+    this.names.push(name);
+    if (this.isCnf && isLiteral(manager, expr) && isLiteral(manager, name))
+      return this.assertExpr(manager.mkApp(OP_OR, [mkNot(manager, name), expr], SORT_BOOL));
+    if (
+      this.isCnf &&
+      manager.getOp(expr) === OP_OR &&
+      this.isClause(expr) &&
+      isLiteral(manager, name)
+    )
+      return this.assertExpr(
+        manager.mkApp(OP_OR, [mkNot(manager, name), ...manager.getArgs(expr)], SORT_BOOL),
+      );
+    this.isCnf = false;
+    this.assertExpr(manager.mkApp(OP_IMPLIES, [name, expr], SORT_BOOL));
+  }
+
   push() {
-    if (this.goal2sat.euf === null) throw new SmtUnsupportedError("push on the SAT solver");
-    this.internalizeFormulas();
-    this.goal2sat.push();
-    this.solver.userPush();
-    this.scopes.push({
-      converters: this.converters.converters,
-      fmlsSize: this.fmls.size,
-      fmlsHead: this.fmlsHead,
-    });
+    try {
+      this.internalizeFormulas();
+    } finally {
+      this.goal2sat.push();
+      this.solver.userPush();
+      this.bitBlaster?.push();
+      incConverterRefs(this.converters.converters);
+      this.scopes.push({
+        converters: this.converters.converters,
+        fmlsSize: this.fmls.size,
+        fmlsHead: this.fmlsHead,
+        namesSize: this.names.size,
+        hasUninterpreted: this.hasUninterpreted,
+      });
+    }
   }
 
   pop(numScopes: number) {
     const count = Math.min(numScopes, this.scopes.length);
+    this.bitBlaster?.pop(count);
     this.goal2sat.pop(count);
     this.solver.userPop(count);
     for (let index = 0; index < count; index++) {
       const scope = this.scopes.pop() as Scope;
+      this.converters.releaseConverters();
       this.converters.converters = scope.converters;
       this.fmlsHead = scope.fmlsHead;
       this.fmls.shrink(scope.fmlsSize);
+      this.names.shrink(scope.namesSize);
+      this.hasUninterpreted = scope.hasUninterpreted;
     }
+  }
+
+  private getBitBlaster() {
+    const bitBlaster = (this.bitBlaster ??= new BitBlasterRewriter(this.manager, BIT_BLAST_PARAMS));
+    while (bitBlaster.getNumScopes() < this.scopes.length) bitBlaster.push();
+    return bitBlaster;
   }
 
   private checkUninterpreted() {
     if (this.goal2sat.unhandledFuns.length === 0) return L_TRUE;
     this.hasUninterpreted = true;
     const manager = this.manager;
-    const names = this.goal2sat.unhandledFuns.map((decl) => manager.funcDecls[decl].name);
-    this.reasonUnknown = `(sat.giveup interpreted functions sent to SAT solver (${names.join(" ")}))`;
+    const funs = this.goal2sat.unhandledFuns.map((fun) => {
+      const declaration = mkSeq1(
+        [
+          mkText(getQuotedName(manager.funcDecls[fun.decl].name)),
+          mkSeq5(fun.domain.map((sort) => formatSort(manager, sort))),
+          formatSort(manager, fun.range),
+        ],
+        "declare-fun",
+      );
+      return `${renderFormat(declaration, DEFAULT_PRINT_OPTIONS)}\n`;
+    });
+    this.reasonUnknown = `(sat.giveup interpreted functions sent to SAT solver ${funs.join("")})`;
     return L_UNDEF;
   }
 
@@ -126,34 +193,46 @@ export class IncSatSolver {
     this.solver.popToBaseLevel();
     if (this.solver.isInconsistent) return L_FALSE;
     this.goal2sat.run(forms);
+    this.satConverter.flushSmc(this.solver, this.goal2sat.atoms);
     return this.checkUninterpreted();
   }
 
   private internalizeGoal(goal: Goal) {
     this.solver.popToBaseLevel();
     if (this.solver.isInconsistent) return L_FALSE;
-    const bitBlaster = (this.bitBlaster ??= new BitBlasterRewriter(this.manager, BIT_BLAST_PARAMS));
+    this.resetSubgoals();
+    this.propagator.cleanup();
+    const bitBlaster = this.getBitBlaster();
     const subgoals = (() => {
       if (this.isCnf) return [goal];
       try {
         const goals = (
           this.goal2sat.euf === null
-            ? mkIncSatPreprocess(this.manager, bitBlaster)
-            : mkIncSatEufPreprocess(this.manager)
+            ? mkIncSatPreprocess(this.manager, bitBlaster, this.propagator)
+            : mkIncSatEufPreprocess(this.manager, this.propagator)
         )(goal);
         this.isCnf = true;
         return goals;
       } catch (error) {
+        this.propagator.cleanup();
         this.releaseBitBlaster();
-        if (!(error instanceof SmtTacticError)) throw error;
-        this.reasonUnknown = error.message;
+        if (!(error instanceof SmtTacticError || error instanceof SmtCanceledError)) throw error;
+        // The tactics of the preprocessing report a limit that stops their rewriters as a tactic_exception.
+        this.reasonUnknown =
+          error instanceof SmtCanceledError ? this.manager.limit.getCancelMessage() : error.message;
         return undefined;
       }
     })();
+    this.subgoals = subgoals ?? [];
+    if (!this.subgoals.includes(goal)) {
+      goal.release();
+    }
     if (subgoals?.length !== 1) return L_UNDEF;
     const subgoal = subgoals[0];
+    incConverterRefs(subgoal.converters);
     this.converters.converters = [...this.converters.converters, ...subgoal.converters];
-    this.goal2sat.run(subgoal.forms.items);
+    this.goal2sat.runGoal(subgoal, this.dep2asm);
+    this.satConverter.flushSmc(this.solver, this.goal2sat.atoms);
     return this.checkUninterpreted();
   }
 
@@ -172,15 +251,27 @@ export class IncSatSolver {
   }
 
   private internalizeAssumptions(assumptions: readonly number[]) {
+    const manager = this.manager;
+    const all = [...assumptions, ...this.names.items];
     this.asms = [];
+    if (all.length === 0) return L_TRUE;
+    this.isCnf &&= all.every((assumption) => isLiteral(manager, assumption));
+    if (this.isCnf) this.goal2sat.assumptions(all, this.dep2asm);
+    else {
+      const goal = new Goal(manager);
+      goal.isCoresEnabled = true;
+      for (const assumption of all) goal.assert(assumption, mkDependencyLeaf(assumption));
+      const result = this.internalizeGoal(goal);
+      if (result !== L_TRUE) return result;
+    }
     const seen = new Set<number>();
-    for (const assumption of assumptions) {
-      const lit = this.goal2sat.getAssumptionLit(assumption);
-      this.dep2asm.set(assumption, lit);
-      if (seen.has(lit)) continue;
+    for (const assumption of all) {
+      const lit = this.dep2asm.get(assumption);
+      if (lit === undefined || seen.has(lit)) continue;
       seen.add(lit);
       this.asms.push(lit);
     }
+    return L_TRUE;
   }
 
   check(assumptions: readonly number[] = []) {
@@ -204,10 +295,20 @@ export class IncSatSolver {
     this.dep2asm = new Map();
     const internalized = this.internalizeFormulas();
     if (internalized !== L_TRUE) return internalized;
-    this.internalizeAssumptions(literals);
+    const internalizedAssumptions = this.internalizeAssumptions(literals);
+    if (internalizedAssumptions !== L_TRUE) return internalizedAssumptions;
     this.reasonUnknown = "no reason given";
     this.isInternalizedConverted = false;
-    const result = this.solver.check(this.asms);
+    const result = (() => {
+      try {
+        return this.solver.check(this.asms);
+      } catch (error) {
+        if (!(error instanceof SmtCanceledError)) throw error;
+        // check_sat_core counts a step to see whether the limit stopped the search.
+        manager.limit.inc();
+        return L_UNDEF;
+      }
+    })();
     if (result === L_TRUE && this.hasUninterpreted) {
       this.reasonUnknown = "(sat.giveup has-uninterpreted)";
       return L_UNDEF;
@@ -240,20 +341,20 @@ export class IncSatSolver {
 
   getConsequences(assumptions: readonly number[], vars: readonly number[]) {
     const manager = this.manager;
-    this.bitBlaster ??= new BitBlasterRewriter(manager, BIT_BLAST_PARAMS);
+    this.propagator.cleanup();
+    this.getBitBlaster();
     this.dep2asm = new Map();
     this.solver.popToBaseLevel();
     const consequences: number[] = [];
     const internalized = this.internalizeFormulas();
     if (internalized !== L_TRUE) return { result: internalized, consequences };
-    if (!assumptions.every((assumption) => isLiteral(this.manager, assumption)))
-      throw new SmtUnsupportedError("get-consequences assumptions that are not literals");
-    this.internalizeAssumptions(assumptions);
-    const found = getConsequences(
-      this.solver,
-      this.asms,
-      vars.flatMap((expr) => this.internalizeVar(expr).filter((boolVar) => boolVar !== undefined)),
+    const boolVars = vars.flatMap((expr) =>
+      this.internalizeVar(expr).filter((boolVar) => boolVar !== undefined),
     );
+    const internalizedAssumptions = this.internalizeAssumptions(assumptions);
+    if (internalizedAssumptions !== L_TRUE)
+      return { result: internalizedAssumptions, consequences };
+    const found = getConsequences(this.solver, this.asms, boolVars);
     if (found.result === L_FALSE && this.asms.length > 0) this.extractCore(new Map());
     if (found.result === L_FALSE) return { result: found.result, consequences };
     const boolVar2conseq = new Map<number, number[]>();
@@ -301,25 +402,25 @@ export class IncSatSolver {
     return this.core.items;
   }
 
-  getModel() {
+  mkModel() {
     const manager = this.manager;
     if (!this.solver.isModelCurrent || this.fmls.size > this.fmlsHead) return null;
     const euf = this.goal2sat.euf;
-    // The euf solver fills a model rather than a proto_model, so its declarations keep their order.
-    const model = euf === null ? new ProtoModel(manager) : new ProtoModel(manager).mkModel();
+    const model = new ProtoModel(manager).mkModel();
     for (const [expr, boolVar] of this.goal2sat.atoms) {
       if (!manager.isUninterpretedConst(expr)) continue;
       const value = this.solver.model[boolVar];
       if (value === L_TRUE) model.registerConst(manager.decls[expr], manager.trueExpr);
       else if (value === L_FALSE) model.registerConst(manager.decls[expr], manager.falseExpr);
     }
-    const converted = convertModel(
-      this.converters,
-      euf === null ? model.mkModel() : euf.updateModel(model),
-    );
-    converted.incRef();
-    this.models.push(converted);
-    return converted;
+    if (this.satConverter.entries.length > 0) applyDefinitions(this.satConverter.entries, model);
+    return convertModel(this.converters, euf === null ? model : euf.updateModel(model));
+  }
+
+  getModel() {
+    const model = this.mkModel();
+    model?.incRef();
+    return model;
   }
 
   findMutexes(vars: readonly number[]) {
@@ -347,10 +448,10 @@ export class IncSatSolver {
     if (this.fmlsHead !== this.fmls.size) return this.fmls.items;
     if (this.isInternalizedConverted) return this.internalized.items;
     const goal = new Goal(this.manager);
-    sat2goal(this.manager, this.solver, this.goal2sat.atoms, goal);
+    sat2goal(this.manager, this.solver, this.goal2sat.atoms, goal, this.satConverter);
     this.internalized.reset();
     for (const form of goal.forms.items) this.internalized.push(form);
-    this.converters.converters = [...this.converters.converters, ...goal.converters];
+    goal.reset();
     this.isInternalizedConverted = true;
     return this.internalized.items;
   }
@@ -359,16 +460,33 @@ export class IncSatSolver {
   // asserted formulas are internalized.
   getConverters(): Goal["converters"] {
     this.getAssertions();
-    return this.isInternalizedConverted ? this.converters.converters : [];
+    if (!this.isInternalizedConverted) return [];
+    incConverterRefs(this.converters.converters);
+    return [
+      ...this.converters.converters,
+      { definitions: this.satConverter.copyEntries(), refs: 1 },
+    ];
+  }
+
+  private resetSubgoals() {
+    for (const subgoal of this.subgoals) {
+      subgoal.release();
+    }
+    this.subgoals = [];
   }
 
   release() {
-    for (const model of this.models) model.decRef();
-    this.models = [];
+    for (const scope of this.scopes) decConverterRefs(this.manager, scope.converters);
+    this.converters.releaseConverters();
+    this.resetSubgoals();
     this.fmls.reset();
+    this.names.reset();
     this.core.reset();
     this.internalized.reset();
+    this.satConverter.release();
+    this.propagator.cleanup();
     this.releaseBitBlaster();
+    this.goal2sat.release();
   }
 
   private releaseBitBlaster() {

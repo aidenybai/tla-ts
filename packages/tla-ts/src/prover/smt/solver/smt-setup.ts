@@ -1,22 +1,25 @@
-// Ported from Z3 (src/smt/smt_setup.cpp, src/params/smt_params.cpp), MIT license, see
-// z3-license.txt. Of the parameters a setup picks, the port takes those in SmtConfig and the MBQI
-// that setup_AUFLIA and setup_AUFLIRA turn on. The port has one arithmetic solver, so it stands in
-// for the legacy ones the setups for difference logic pick, and one array solver, which is
-// theory_array_full.
+// Of the parameters a setup picks, the port takes those in SmtConfig and the MBQI that setup_AUFLIA
+// and setup_AUFLIRA turn on. The port has one arithmetic solver, so it stands in for the legacy
+// ones the setups for difference logic pick.
 import {
   type AstManager,
   FAMILY_ARITH,
   FAMILY_ARRAY,
   FAMILY_BV,
   FAMILY_CHAR,
+  FAMILY_DATALOG_RELATION,
   FAMILY_DATATYPE,
+  FAMILY_FF,
   FAMILY_FINITE_SET,
   FAMILY_FPA,
   FAMILY_POLY,
   FAMILY_RECFUN,
   FAMILY_SEQ,
+  FAMILY_SPECIAL_RELATIONS,
 } from "./ast";
+import { SmtDefaultError } from "../../../errors";
 import { collectStaticFeatures, isDense, type StaticFeatures } from "./static-features";
+import { Rational } from "./rational";
 
 const AUFLIA_LOGICS = new Set([
   "AUFLIA",
@@ -94,7 +97,7 @@ export interface SmtConfig {
   // comes after them all.
   theories: number[];
   // A setup that leaves it keeps the relevancy the context was made with.
-  relevancyLevel: 0 | 2 | undefined;
+  relevancyLevel: number | undefined;
   phaseSelection: number;
   restartStrategy: number;
   restartFactor: number;
@@ -103,6 +106,16 @@ export interface SmtConfig {
   isNnfCnf: boolean;
   isEq2Ineq: boolean;
   isFindingMacros: boolean;
+  isUsingPatternDatabase: boolean;
+  isEliminatingTermIte: boolean;
+  isLiftingNonGroundIte: boolean;
+  isEliminatingBounds: boolean;
+  isArithPropagatingEqs: boolean;
+  arithPropagationThreshold: number;
+  isArithBoundPropagating: boolean;
+  qiLazyThreshold: number;
+  arrayLazyIeqDelay: number | undefined;
+  isArraySimple: boolean;
 }
 
 const UNKNOWN_THEORIES = [
@@ -111,10 +124,13 @@ const UNKNOWN_THEORIES = [
   FAMILY_BV,
   FAMILY_DATATYPE,
   FAMILY_RECFUN,
+  FAMILY_DATALOG_RELATION,
   FAMILY_SEQ,
   FAMILY_CHAR,
   FAMILY_FPA,
+  FAMILY_FF,
   FAMILY_FINITE_SET,
+  FAMILY_SPECIAL_RELATIONS,
   FAMILY_POLY,
 ];
 
@@ -130,6 +146,16 @@ export const DEFAULT_CONFIG: SmtConfig = {
   isNnfCnf: true,
   isEq2Ineq: false,
   isFindingMacros: false,
+  isUsingPatternDatabase: false,
+  isEliminatingTermIte: false,
+  isLiftingNonGroundIte: false,
+  isEliminatingBounds: false,
+  isArithPropagatingEqs: true,
+  arithPropagationThreshold: Infinity,
+  isArithBoundPropagating: true,
+  qiLazyThreshold: 20,
+  arrayLazyIeqDelay: undefined,
+  isArraySimple: false,
 };
 
 // setup_unknown(), which closes with setup_relevancy.
@@ -146,15 +172,23 @@ const setupQfUf = (config: SmtConfig) => {
   config.randomInitialActivity = IA_RANDOM;
 };
 
+const setupQfUfByFeatures = (config: SmtConfig, features: StaticFeatures) => {
+  if (isArith(features))
+    throw new SmtDefaultError(
+      "Benchmark constrains arithmetic, but specified logic does not support it.",
+    );
+  setupQfUf(config);
+};
+
 const setupQfDt = (config: SmtConfig) => {
   setupQfUf(config);
   config.theories.push(FAMILY_DATATYPE, FAMILY_RECFUN);
 };
 
-// The parameters smt_params::setup_QF_IDL, setup_QF_RDL and setup_QF_LIA share.
 const setupDiffLogicParams = (config: SmtConfig) => {
   config.relevancyLevel = 0;
   config.isEq2Ineq = true;
+  config.isArithPropagatingEqs = false;
   config.isNnfCnf = false;
 };
 
@@ -163,27 +197,47 @@ const setupQfLia = (config: SmtConfig) => {
   config.theories.push(FAMILY_ARITH);
 };
 
+const checkNoUninterpretedFunctions = (features: StaticFeatures) => {
+  if (features.numUninterpretedFunctions !== 0)
+    throw new SmtDefaultError(
+      "Benchmark contains uninterpreted function symbols, but specified logic does not support them.",
+    );
+};
+
 const setupQfLiaByFeatures = (config: SmtConfig, features: StaticFeatures) => {
+  checkNoUninterpretedFunctions(features);
   setupDiffLogicParams(config);
   if (features.maxIteTreeDepth > 50) {
     config.isEq2Ineq = false;
+    config.isArithPropagatingEqs = true;
     config.relevancyLevel = 2;
-  } else if (features.numClauses === features.numUnits) config.relevancyLevel = 2;
-  else {
+  } else if (features.numClauses === features.numUnits) {
+    config.relevancyLevel = 2;
+    config.isEliminatingTermIte = true;
+  } else {
+    config.isEliminatingTermIte = true;
     config.isRestartAdaptive = false;
     config.restartStrategy = RS_GEOMETRIC;
     config.restartFactor = 1.5;
   }
+  if (
+    features.numBinClauses + features.numUnits === features.numClauses &&
+    features.isCnf &&
+    features.arithKSum.compare(Rational.of(100000n)) > 0
+  )
+    config.isArithBoundPropagating = false;
   config.theories.push(FAMILY_ARITH);
 };
 
 const setupQfLra = (config: SmtConfig) => {
   setupDiffLogicParams(config);
+  config.isEliminatingTermIte = true;
   config.phaseSelection = PS_THEORY;
   config.theories.push(FAMILY_ARITH);
 };
 
 const setupQfLraByFeatures = (config: SmtConfig, features: StaticFeatures) => {
+  checkNoUninterpretedFunctions(features);
   setupQfLra(config);
   if (features.arithKSum.num > 2000000n && features.arithKSum.den > 500n) config.relevancyLevel = 2;
   if (features.isCnf) return;
@@ -192,6 +246,13 @@ const setupQfLraByFeatures = (config: SmtConfig, features: StaticFeatures) => {
 };
 
 const setupQfRdlByFeatures = (config: SmtConfig, features: StaticFeatures) => {
+  if (!isInDiffLogic(features))
+    throw new SmtDefaultError("Benchmark is not in QF_RDL (real difference logic).");
+  if (features.hasInt)
+    throw new SmtDefaultError(
+      "Benchmark has integer variables but it is marked as QF_RDL (real difference logic).",
+    );
+  checkNoUninterpretedFunctions(features);
   setupDiffLogicParams(config);
   if (isDense(features)) {
     config.restartStrategy = RS_GEOMETRIC;
@@ -202,6 +263,13 @@ const setupQfRdlByFeatures = (config: SmtConfig, features: StaticFeatures) => {
 };
 
 const setupQfIdlByFeatures = (config: SmtConfig, features: StaticFeatures, setup: SmtSetup) => {
+  if (!isInDiffLogic(features))
+    throw new SmtDefaultError("Benchmark is not in QF_IDL (integer difference logic).");
+  if (features.hasReal)
+    throw new SmtDefaultError(
+      "Benchmark has real variables but it is marked as QF_IDL (integer difference logic).",
+    );
+  checkNoUninterpretedFunctions(features);
   setupDiffLogicParams(config);
   if (features.numUninterpretedConstants > 5000) config.relevancyLevel = 2;
   else if (features.isCnf && !isDense(features)) config.phaseSelection = PS_CACHING_CONSERVATIVE2;
@@ -218,7 +286,9 @@ const setupQfIdlByFeatures = (config: SmtConfig, features: StaticFeatures, setup
 };
 
 const setupQfUfIdl = (config: SmtConfig) => {
-  setupDiffLogicParams(config);
+  config.relevancyLevel = 0;
+  config.isNnfCnf = false;
+  config.isEq2Ineq = true;
   config.restartStrategy = RS_GEOMETRIC;
   config.restartFactor = 1.5;
   config.isRestartAdaptive = false;
@@ -226,10 +296,15 @@ const setupQfUfIdl = (config: SmtConfig) => {
 };
 
 const setupQfUfIdlByFeatures = (config: SmtConfig, features: StaticFeatures) => {
+  if (features.hasReal)
+    throw new SmtDefaultError(
+      "Benchmark has real variables but it is marked as QF_UFIDL (uninterpreted functions and difference logic).",
+    );
   config.relevancyLevel = 0;
   config.isNnfCnf = false;
   if (features.numUninterpretedFunctions === 0) {
     config.isEq2Ineq = true;
+    config.isArithPropagatingEqs = false;
     if (isDense(features)) {
       config.restartStrategy = RS_GEOMETRIC;
       config.theories.push(FAMILY_ARITH);
@@ -242,10 +317,15 @@ const setupQfUfIdlByFeatures = (config: SmtConfig, features: StaticFeatures) => 
   config.theories.push(FAMILY_ARITH);
 };
 
-const setupQfUfLia = (config: SmtConfig) => {
+const setupQfUfLra = (config: SmtConfig) => {
   config.theories.push(FAMILY_ARITH);
   config.relevancyLevel = 0;
   config.isNnfCnf = false;
+};
+
+const setupQfUfLia = (config: SmtConfig) => {
+  setupQfUfLra(config);
+  config.arithPropagationThreshold = 1000;
 };
 
 const setupQfBv = (config: SmtConfig) => {
@@ -255,11 +335,16 @@ const setupQfBv = (config: SmtConfig) => {
 };
 
 const setupQfUfLiaByFeatures = (config: SmtConfig, features: StaticFeatures) => {
+  if (features.hasReal)
+    throw new SmtDefaultError(
+      "Benchmark has real variables but it is marked as QF_UFLIA (uninterpreted functions and linear integer arithmetic).",
+    );
   setupQfUfLia(config);
   if (features.hasBv) setupQfBv(config);
 };
 
 const setupQfAufBv = (config: SmtConfig) => {
+  config.isArraySimple = false;
   config.relevancyLevel = 0;
   config.isNnfCnf = false;
   config.theories.push(FAMILY_BV, FAMILY_ARRAY);
@@ -271,11 +356,13 @@ const setupQfFp = (config: SmtConfig) => {
 };
 
 const setupQfAx = (config: SmtConfig) => {
+  config.isArraySimple = true;
   config.isNnfCnf = false;
   config.theories.push(FAMILY_ARRAY);
 };
 
 const setupQfAxByFeatures = (config: SmtConfig, features: StaticFeatures) => {
+  config.isArraySimple = !features.hasExtArrays;
   config.isNnfCnf = false;
   if (features.numClauses === features.numUnits) {
     config.relevancyLevel = 0;
@@ -285,6 +372,7 @@ const setupQfAxByFeatures = (config: SmtConfig, features: StaticFeatures) => {
 };
 
 const setupQfAufLia = (config: SmtConfig) => {
+  config.isArraySimple = true;
   config.isNnfCnf = false;
   config.relevancyLevel = 2;
   config.restartStrategy = RS_GEOMETRIC;
@@ -294,6 +382,7 @@ const setupQfAufLia = (config: SmtConfig) => {
 };
 
 const setupQfAufLiaByFeatures = (config: SmtConfig, features: StaticFeatures) => {
+  config.isArraySimple = !features.hasExtArrays;
   config.isNnfCnf = false;
   config.relevancyLevel = 0;
   if (features.numClauses === features.numUnits) config.phaseSelection = PS_ALWAYS_FALSE;
@@ -306,27 +395,46 @@ const setupQfAufLiaByFeatures = (config: SmtConfig, features: StaticFeatures) =>
   config.theories.push(FAMILY_ARITH, FAMILY_ARRAY);
 };
 
-const setupAufLia = (config: SmtConfig) => {
+const setupAufLia = (config: SmtConfig, isArraySimple = true) => {
+  config.isArraySimple = isArraySimple;
+  config.isUsingPatternDatabase = true;
   config.phaseSelection = PS_ALWAYS_FALSE;
   config.restartStrategy = RS_GEOMETRIC;
   config.restartFactor = 1.5;
+  config.isEliminatingBounds = true;
+  config.qiLazyThreshold = 20;
+  config.isLiftingNonGroundIte = true;
   config.theories.push(FAMILY_ARITH, FAMILY_ARRAY);
 };
 
-const setupAufLira = (config: SmtConfig) => {
+const setupAufLiaByFeatures = (config: SmtConfig, features: StaticFeatures) => {
+  if (features.hasReal)
+    throw new SmtDefaultError(
+      "Benchmark has real variables but it is marked as AUFLIA (arrays, uninterpreted functions and linear integer arithmetic).",
+    );
+  setupAufLia(config);
+};
+
+const setupAufLira = (config: SmtConfig, isArraySimple = true) => {
+  config.isArraySimple = isArraySimple;
   config.phaseSelection = PS_ALWAYS_FALSE;
+  config.isEliminatingBounds = true;
+  config.qiLazyThreshold = 20;
   config.isFindingMacros = true;
+  config.isLiftingNonGroundIte = true;
+  config.arrayLazyIeqDelay = 4;
   config.theories.push(FAMILY_ARITH, FAMILY_ARRAY);
 };
 
 const setupLra = (config: SmtConfig) => {
   config.relevancyLevel = 0;
+  config.isArithPropagatingEqs = false;
+  config.isEliminatingTermIte = true;
   config.theories.push(FAMILY_ARITH);
 };
 
-// setup_ff, without the finite field theory the port does not have.
 const setupFf = (config: SmtConfig) => {
-  config.theories.push(FAMILY_BV);
+  config.theories.push(FAMILY_BV, FAMILY_FF);
 };
 
 const setupQfBvre = (config: SmtConfig) => {
@@ -343,7 +451,7 @@ const DEFAULT_SETUPS = new Map<string, (config: SmtConfig) => void>([
   ["QF_LRA", setupQfLra],
   ["QF_LIA", setupQfLia],
   ["QF_UFLIA", setupQfUfLia],
-  ["QF_UFLRA", setupQfUfLia],
+  ["QF_UFLRA", setupQfUfLra],
   ["QF_AX", setupQfAx],
   ["QF_AUFLIA", setupQfAufLia],
   ["QF_BV", setupQfBv],
@@ -384,21 +492,23 @@ const isArith = (features: StaticFeatures) =>
   features.numArithIneqs > 0 || features.numArithTerms > 0 || features.numArithEqs > 0;
 
 const setupQuantified = (config: SmtConfig, features: StaticFeatures) => {
-  if (features.hasReal) setupAufLira(config);
-  else setupAufLia(config);
+  if (features.hasReal) setupAufLira(config, false);
+  else setupAufLia(config, false);
   config.theories.push(
     FAMILY_DATATYPE,
     FAMILY_BV,
+    FAMILY_DATALOG_RELATION,
     FAMILY_SEQ,
     FAMILY_CHAR,
     FAMILY_FINITE_SET,
     FAMILY_FPA,
+    FAMILY_FF,
     FAMILY_RECFUN,
+    FAMILY_SPECIAL_RELATIONS,
     FAMILY_POLY,
   );
 };
 
-// setup_unknown(static_features&), without the finite fields the port does not have.
 const setupUnknownByFeatures = (config: SmtConfig, features: StaticFeatures, setup: SmtSetup) => {
   const hasUf = features.numUninterpretedFunctions > 0;
   const numTheories = features.numTheories + (hasUf ? 1 : 0);
@@ -419,7 +529,7 @@ const setupUnknownByFeatures = (config: SmtConfig, features: StaticFeatures, set
     else setupQfLiaByFeatures(config, features);
   } else if (isTwoWithUf && isArith(features)) {
     if (!features.hasReal && isLinear) setupQfUfLiaByFeatures(config, features);
-    else if (!features.hasInt && isLinear) setupQfUfLia(config);
+    else if (!features.hasInt && isLinear) setupQfUfLra(config);
     else setupUnknown(config, features);
   } else if (numTheories === 1 && features.hasBv) setupQfBv(config);
   else if (numTheories === 1 && features.hasFpa) setupQfFp(config);
@@ -436,29 +546,29 @@ const AUTO_SETUPS = new Map<
   string,
   (config: SmtConfig, features: StaticFeatures, setup: SmtSetup) => void
 >([
-  ["QF_UF", setupQfUf],
+  ["QF_UF", setupQfUfByFeatures],
   ["QF_RDL", setupQfRdlByFeatures],
   ["QF_IDL", setupQfIdlByFeatures],
   ["QF_UFIDL", setupQfUfIdlByFeatures],
   ["QF_LRA", setupQfLraByFeatures],
   ["QF_LIA", setupQfLiaByFeatures],
   ["QF_UFLIA", setupQfUfLiaByFeatures],
-  ["QF_UFLRA", setupQfUfLia],
+  ["QF_UFLRA", setupQfUfLra],
   ["QF_AX", setupQfAxByFeatures],
   ["QF_BVRE", setupQfBvre],
   ["QF_AUFLIA", setupQfAufLiaByFeatures],
   ["QF_S", setupUnknown],
   ["QF_SLIA", setupUnknown],
-  ["AUFLIA", setupAufLia],
-  ["AUFLIRA", setupAufLira],
-  ["AUFNIRA", setupAufLira],
-  ["AUFLIA+", setupAufLia],
-  ["AUFLIA-", setupAufLia],
-  ["AUFLIRA+", setupAufLira],
-  ["AUFLIRA-", setupAufLira],
-  ["AUFNIRA+", setupAufLira],
-  ["AUFNIRA-", setupAufLira],
-  ["UFNIA", setupAufLia],
+  ["AUFLIA", setupAufLiaByFeatures],
+  ["AUFLIRA", (config) => setupAufLira(config)],
+  ["AUFNIRA", (config) => setupAufLira(config)],
+  ["AUFLIA+", (config) => setupAufLia(config)],
+  ["AUFLIA-", (config) => setupAufLia(config)],
+  ["AUFLIRA+", (config) => setupAufLira(config)],
+  ["AUFLIRA-", (config) => setupAufLira(config)],
+  ["AUFNIRA+", (config) => setupAufLira(config)],
+  ["AUFNIRA-", (config) => setupAufLira(config)],
+  ["UFNIA", (config) => setupAufLia(config)],
   ["QF_DT", setupQfDt],
   ["LRA", setupLra],
   ["QF_FF", setupFf],

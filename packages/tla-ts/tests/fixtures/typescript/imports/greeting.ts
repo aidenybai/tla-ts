@@ -1,5 +1,5 @@
-import * as english from "./english";
-import * as latin from "./latin";
+import * as english from "./english.ts";
+import * as latin from "./latin.ts";
 
 export const pickGreeting = (isLatin: boolean) => (isLatin ? latin : english);
 

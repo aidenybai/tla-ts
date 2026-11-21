@@ -1,5 +1,3 @@
-// Ported from Z3 (src/muz/transforms/dl_mk_coi_filter.cpp, src/muz/dataflow/dataflow.h,
-// src/muz/dataflow/reachability.h), MIT license, see z3-license.txt.
 import { ObjHashtable, ObjMap } from "../hashtable";
 import type { DatalogContext } from "./dl-context";
 import type { Rule } from "./dl-rule";
@@ -93,7 +91,7 @@ export class MkCoiFilter implements RuleTransformerPlugin {
         newTail.push(rule.tail[index]);
         newNegated.push(false);
       }
-      result.addRule(this.context.ruleManager.mk(rule.head, newTail, newNegated, "", false));
+      result.addRule(this.context.ruleManager.mk(rule.head, newTail, newNegated, undefined, false));
     }
     if (result.rules.length === source.rules.length) return undefined;
     result.close();

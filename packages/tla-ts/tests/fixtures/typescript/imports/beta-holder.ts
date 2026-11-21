@@ -1,3 +1,3 @@
-import * as beta from "./beta";
+import * as beta from "./beta.ts";
 
 export const getBeta = () => beta;

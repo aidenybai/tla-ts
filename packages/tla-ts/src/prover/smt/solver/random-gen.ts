@@ -1,4 +1,3 @@
-// Ported from Z3 (src/util/util.h), MIT license, see z3-license.txt.
 export class RandomGen {
   constructor(private seed: number) {}
 

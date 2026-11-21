@@ -1,6 +1,3 @@
-// Ported from Z3 (src/muz/spacer/spacer_ind_lemma_generalizer.cpp,
-// src/muz/spacer/spacer_generalizers.cpp, src/muz/spacer/spacer_util.cpp), MIT license, see
-// z3-license.txt.
 import { MBQI_MAX_ITERATIONS } from "../context";
 import { SmtUnsupportedError } from "../../../../errors";
 import {

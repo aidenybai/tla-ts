@@ -1,5 +1,3 @@
-// Ported from Z3 (src/tactic/probe.cpp, src/tactic/arith/probe_arith.cpp), MIT license, see
-// z3-license.txt.
 import { SmtParseError, SmtUnsupportedError } from "../../../errors";
 import {
   type AstManager,
@@ -47,9 +45,11 @@ import {
 } from "./ast";
 import { getAckrBound } from "./ackr-helper";
 import { BoundManager } from "./bound-manager";
+import { Expr2Polynomial } from "./expr2polynomial";
+import { PolynomialManager, PolynomialRef } from "./nlsat/polynomial";
 import { findNonPb } from "./pb2bv-tactic";
 import type { Goal } from "./goal";
-import { isSymbol, type SExpr, type SmtToken } from "./smtlib-parser";
+import { isSymbol, type SExpr } from "./smtlib-parser";
 
 export interface Probe {
   (goal: Goal): number;
@@ -59,8 +59,7 @@ const forEachExpr = (goal: Goal, visit: (expr: number) => void) => {
   const manager = goal.manager;
   const visited = new Set<number>();
   const todo = [...goal.forms.items].reverse();
-  while (todo.length > 0) {
-    const expr = todo.pop() as number;
+  for (let expr = todo.pop(); expr !== undefined; expr = todo.pop()) {
     if (visited.has(expr)) continue;
     visited.add(expr);
     visit(expr);
@@ -154,8 +153,8 @@ const mkNonQffp = (isLra: boolean) => (manager: AstManager, expr: number) => {
   return isLra ? sort !== SORT_REAL : !(sort === SORT_REAL && manager.isNumeral(expr));
 };
 
-// Ported from Z3 (src/tactic/fpa/qffp_tactic.cpp). Z3 rejects every application of the basic family
-// before it would accept one, so the goal must not have a Boolean connective.
+// Z3 rejects every application of the basic family before it would accept one, so the goal must not
+// have a Boolean connective.
 const isNonFpQfnra = (manager: AstManager, expr: number) => {
   if (!isApp(manager, expr)) return true;
   const family = manager.getFamily(expr);
@@ -176,6 +175,8 @@ const isNonFpQfnra = (manager: AstManager, expr: number) => {
 const INTERNAL_PROBES = new Map<string, Probe>([
   ["is-fp-qfnra", mkTest(isNonFpQfnra)],
   ["memory", () => 0],
+  ["has-ff", () => 0],
+  ["ff-small-field", () => 0],
 ]);
 
 const LINEAR_OPS = [OP_LE, OP_GE, OP_LT, OP_GT, OP_ADD, OP_NUM];
@@ -195,7 +196,8 @@ const mkNonLira =
     )
       return true;
     const family = manager.getFamily(expr);
-    if (family === FAMILY_BASIC || (isArray && family === FAMILY_ARRAY)) return false;
+    if (family === FAMILY_BASIC) return false;
+    // Z3's is-qfauflia allows array-sorted symbols but no array operation such as select.
     if (family !== FAMILY_ARITH)
       return isArray ? !manager.isUninterpreted(expr) : !manager.isUninterpretedConst(expr);
     const op = manager.getOp(expr);
@@ -363,6 +365,65 @@ const hasPatterns: Probe = (goal) => {
   );
 };
 
+const mkArithDegreeProbe =
+  (isAverage: boolean): Probe =>
+  (goal) => {
+    const manager = goal.manager;
+    let variableCount = 0;
+    const expr2poly = new Expr2Polynomial(
+      manager,
+      new PolynomialManager(manager.limit),
+      new Map(),
+      () => variableCount++,
+    );
+    let maxDegree = 0;
+    let accDegree = 0;
+    let counter = 0;
+    const updateDegree = (polynomial: PolynomialRef) => {
+      const degree = expr2poly.pm.totalDegree(polynomial.get());
+      if (degree > maxDegree) maxDegree = degree;
+      accDegree += degree;
+      counter++;
+    };
+    const process = (expr: number) => {
+      const first = new PolynomialRef(expr2poly.pm);
+      const second = new PolynomialRef(expr2poly.pm);
+      expr2poly.toPolynomial(manager.getArg(expr, 0), first);
+      expr2poly.toPolynomial(manager.getArg(expr, 1), second);
+      updateDegree(first);
+      updateDegree(second);
+      second.reset();
+      first.reset();
+    };
+    forEachExpr(goal, (expr) => {
+      const op = manager.getOp(expr);
+      if (op === OP_LE || op === OP_LT || op === OP_GT || op === OP_GE) process(expr);
+      if (op === OP_EQ && isArithSort(manager.sorts[manager.getArg(expr, 0)])) process(expr);
+    });
+    expr2poly.release();
+    return isAverage ? (counter === 0 ? 0 : accDegree / counter) : maxDegree;
+  };
+
+const getBitsize = (value: bigint) => (value < 0n ? -value : value).toString(2).length;
+
+const mkArithBwProbe =
+  (isAverage: boolean): Probe =>
+  (goal) => {
+    const manager = goal.manager;
+    let maxBitWidth = 0;
+    let accBitWidth = 0;
+    let counter = 0;
+    forEachExpr(goal, (expr) => {
+      if (!manager.isNumeral(expr)) return;
+      const value = manager.getRationalValue(expr);
+      const bitWidth = getBitsize(value.num) + (value.den === 1n ? 0 : getBitsize(value.den));
+      if (bitWidth > maxBitWidth) maxBitWidth = bitWidth;
+      accBitWidth += bitWidth;
+      counter++;
+    });
+    return isAverage ? (counter === 0 ? 0 : accBitWidth / counter) : maxBitWidth;
+  };
+
 const NAMED_PROBES = new Map<string, Probe>([
   ["depth", (goal) => goal.depth],
   ["size", (goal) => goal.forms.size],
@@ -438,11 +499,13 @@ const NAMED_PROBES = new Map<string, Probe>([
       ),
   ],
   ["ackr-bound-probe", getAckrBound],
+  ["arith-max-deg", mkArithDegreeProbe(false)],
+  ["arith-avg-deg", mkArithDegreeProbe(true)],
+  ["arith-max-bw", mkArithBwProbe(false)],
+  ["arith-avg-bw", mkArithBwProbe(true)],
 ]);
 
-const UNPORTED_PROBES = new Set(
-  "memory arith-max-deg arith-avg-deg arith-max-bw arith-avg-bw".split(" "),
-);
+const UNPORTED_PROBES = new Set(["memory"]);
 
 const BINARY_PROBES = new Map<string, (first: number, second: number) => number>([
   ["=", (first, second) => Number(first === second)],
@@ -463,52 +526,81 @@ const NARY_PROBES = new Map<string, (first: number, second: number) => number>([
   ["*", (first, second) => first * second],
 ]);
 
-export const compileProbe = (sexpr: SExpr, end: SmtToken, isInternal = false): Probe => {
-  if (sexpr.kind === "numeral") {
-    const value = Number(sexpr.text);
-    if (value > 2 ** 31 - 1)
+export const compileProbe = (sexpr: SExpr, isInternal = false): Probe => {
+  // A decimal is a numeral of the s-expression, which is_int32 rejects unless it is whole.
+  if (sexpr.kind === "numeral" || sexpr.kind === "decimal") {
+    const [whole, fraction = ""] = sexpr.text.split(".");
+    const value = Number(whole);
+    if (!/^0*$/.test(fraction) || value > 2 ** 31 - 1)
       throw new SmtParseError(
         "invalid probe, constant is too big to fit in a fixed size integer",
-        end,
+        sexpr,
       );
     return () => value;
   }
   if (sexpr.kind !== "list") {
-    if (!isSymbol(sexpr)) throw new SmtParseError("invalid probe, unexpected input", end);
+    if (!isSymbol(sexpr)) throw new SmtParseError("invalid probe, unexpected input", sexpr);
     const named =
       NAMED_PROBES.get(sexpr.text) ?? (isInternal ? INTERNAL_PROBES.get(sexpr.text) : undefined);
     if (named !== undefined) return named;
     if (UNPORTED_PROBES.has(sexpr.text)) throw new SmtUnsupportedError(`the probe ${sexpr.text}`);
-    throw new SmtParseError(`invalid probe, unknown builtin probe ${sexpr.text}`, end);
+    throw new SmtParseError(`invalid probe, unknown builtin probe ${sexpr.text}`, sexpr);
   }
   const head = sexpr.items[0];
-  if (head === undefined) throw new SmtParseError("invalid probe, arguments expected", end);
-  if (!isSymbol(head)) throw new SmtParseError("invalid probe, symbol expected", end);
+  if (head === undefined) throw new SmtParseError("invalid probe, arguments expected", sexpr.end);
+  if (!isSymbol(head)) throw new SmtParseError("invalid probe, symbol expected", sexpr.end);
   const children = sexpr.items.slice(1);
   if (head.text === "not") {
     if (children.length !== 1)
-      throw new SmtParseError("invalid probe expression, one argument expected", end);
-    const child = compileProbe(children[0], end, isInternal);
+      throw new SmtParseError("invalid probe expression, one argument expected", sexpr.end);
+    const child = compileProbe(children[0], isInternal);
     return (goal) => Number(child(goal) === 0);
   }
   const binary = BINARY_PROBES.get(head.text);
   if (binary !== undefined) {
     if (children.length !== 2)
-      throw new SmtParseError("invalid probe expression, two arguments expected", end);
-    const first = compileProbe(children[0], end, isInternal);
-    const second = compileProbe(children[1], end, isInternal);
+      throw new SmtParseError("invalid probe expression, two arguments expected", sexpr.end);
+    const first = compileProbe(children[0], isInternal);
+    const second = compileProbe(children[1], isInternal);
     return (goal) => binary(first(goal), second(goal));
   }
   const nary = NARY_PROBES.get(head.text);
   if (nary === undefined)
-    throw new SmtParseError(`invalid probe, unknown probe expression ${head.text}`, end);
+    throw new SmtParseError(`invalid probe, unknown probe expression ${head.text}`, sexpr.end);
   if (children.length === 0)
-    throw new SmtParseError("invalid probe, at least one argument expected", end);
-  const probes = children.map((child) => compileProbe(child, end, isInternal));
+    throw new SmtParseError("invalid probe, at least one argument expected", sexpr.end);
+  const probes = children.map((child) => compileProbe(child, isInternal));
+  // Deviation from Z3: MK_NARY_PROBE applies the operator to its first argument twice.
   return (goal) => probes.map((probe) => probe(goal)).reduce(nary);
 };
 
-export const formatProbeValue = (value: number) =>
-  Number.isInteger(value) && Math.abs(value) < 1e6
-    ? String(value)
-    : String(Number(value.toPrecision(6)));
+// An ostream prints a double as %g does: its exact value to six digits, and a tie to even.
+export const formatDouble = (value: number) => {
+  if (!Number.isFinite(value)) return Number.isNaN(value) ? "nan" : value < 0 ? "-inf" : "inf";
+  const view = new DataView(new ArrayBuffer(8));
+  view.setFloat64(0, Math.abs(value));
+  const bits = view.getBigUint64(0);
+  const biased = Number(bits >> 52n);
+  const shift = Math.max(biased, 1) - 1075;
+  const mantissa = (bits & 0xfffffffffffffn) | (biased === 0 ? 0n : 1n << 52n);
+  const exact = shift < 0 ? mantissa * 5n ** BigInt(-shift) : mantissa << BigInt(shift);
+  const sign = value < 0 || Object.is(value, -0) ? "-" : "";
+  if (exact === 0n) return `${sign}0`;
+  const length = exact.toString().length;
+  const unit = 10n ** BigInt(Math.max(length - 6, 0));
+  const quotient = (exact * 10n ** BigInt(Math.max(6 - length, 0))) / unit;
+  const remainder = 2n * (exact % unit);
+  const rounded =
+    remainder > unit || (remainder === unit && quotient % 2n === 1n) ? quotient + 1n : quotient;
+  const isCarried = rounded === 1000000n;
+  const digits = String(isCarried ? 100000n : rounded);
+  const exponent = length - 1 + Math.min(shift, 0) + (isCarried ? 1 : 0);
+  const trimZeros = (text: string) => text.replace(/\.?0*$/, "");
+  if (exponent < -4 || exponent >= 6)
+    return `${sign}${trimZeros(`${digits[0]}.${digits.slice(1)}`)}e${exponent < 0 ? "-" : "+"}${String(Math.abs(exponent)).padStart(2, "0")}`;
+  return `${sign}${trimZeros(
+    exponent < 0
+      ? `0.${"0".repeat(-exponent - 1)}${digits}`
+      : `${digits.slice(0, exponent + 1)}.${digits.slice(exponent + 1)}`,
+  )}`;
+};

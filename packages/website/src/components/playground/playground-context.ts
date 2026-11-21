@@ -1,10 +1,12 @@
 import { useEffect, useMemo, useRef } from "react";
 import outlines from "virtual:outlines";
 import { createPartsContext } from "@/lib/utils";
+import { BUILT_OUTPUT_LINES } from "@/lib/compilation";
 import { getHighlightColors } from "@/lib/highlight-colors";
 import { getLineMarks } from "@/lib/line-marks";
 import type { Mark } from "@/lib/site-data";
 import { useCompile } from "@/hooks/use-compile";
+import { useIsHydrated } from "@/hooks/use-is-hydrated";
 import { useMediaQuery } from "@/hooks/use-media-query";
 import { usePlaygroundFile } from "@/hooks/use-playground-file";
 import { usePlaygroundView } from "@/lib/playground-view";
@@ -19,6 +21,7 @@ export const usePlaygroundState = () => {
   const isWide = useMediaQuery("(min-width: 48rem)");
   const workspaceRef = useRef<HTMLElement>(null);
   const runButtonRef = useRef<HTMLButtonElement>(null);
+  const isHydrated = useIsHydrated();
 
   const compilation = compiler.compilation;
   const isMapped = !compiler.isCompiling && compiler.error === undefined;
@@ -54,6 +57,7 @@ export const usePlaygroundState = () => {
       config: compilation.config,
       modules: compilation.modules,
       isSearchShown: true,
+      typescript: { source: file.source, fileName: file.fileName },
     });
   };
   const discardRun = () => {
@@ -86,7 +90,10 @@ export const usePlaygroundState = () => {
     },
     startCompiler: compiler.start,
     isSkeleton,
-    outputLines: compiler.tla?.lines ?? (isSkeleton ? outline : []),
+    outputLines: (compiler.tla?.lines ?? (isSkeleton ? outline : [])).slice(
+      0,
+      isHydrated ? undefined : BUILT_OUTPUT_LINES,
+    ),
     outputLineMarks,
     isOutputStale: compiler.tla !== undefined && (compiler.isCompiling || Boolean(compiler.error)),
     error: compiler.error,

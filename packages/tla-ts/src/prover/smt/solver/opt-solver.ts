@@ -1,9 +1,8 @@
-// Ported from Z3 (src/opt/opt_solver.cpp, src/opt/opt_search.h), MIT license, see z3-license.txt.
-import { SmtCanceledError, SmtInvariantError } from "../../../errors";
+import { SmtCanceledError, SmtDefaultError, SmtInvariantError } from "../../../errors";
 import { type AstManager, FAMILY_ARITH, FAMILY_PB } from "./ast";
 import { InfEps } from "./inf-eps";
 import { L_FALSE, L_TRUE, L_UNDEF } from "./lbool";
-import { AlgebraicManager } from "./nlsat/algebraic";
+import type { AlgebraicManager } from "./nlsat/algebraic";
 import type { ParetoSolver } from "./opt-pareto";
 import type { ProtoModel } from "./proto-model";
 import { Rational } from "./rational";
@@ -41,7 +40,6 @@ export const getModelValueBound = (
 
 export class OptSolver {
   private readonly kernel: SmtKernel;
-  private readonly am = new AlgebraicManager();
   private model: ProtoModel | null = null;
   private objectiveVars: number[] = [];
   private objectiveValues: InfEps[] = [];
@@ -78,7 +76,7 @@ export class OptSolver {
   }
 
   private getContextModel() {
-    return this.hold(this.kernel.context.getModel());
+    return this.hold(this.kernel.context.getSatModel());
   }
 
   // get_optimizer makes an arithmetic theory when the setup made none.
@@ -131,6 +129,10 @@ export class OptSolver {
     return this.kernel.context.unsatCore;
   }
 
+  get reasonUnknown() {
+    return this.kernel.context.getLastFailureMessage();
+  }
+
   findMutexes(vars: readonly number[]) {
     const mutexes = this.kernel.context.findMutexes(vars);
     for (const mutex of mutexes) for (const literal of mutex) this.pinned.push(literal);
@@ -166,7 +168,7 @@ export class OptSolver {
 
   private getModelValueLowerBound(model: ProtoModel, index: number) {
     const value = model.eval(this.objectiveTerms[index], false);
-    const bound = getModelValueBound(this.manager, this.am, value, true);
+    const bound = getModelValueBound(this.manager, this.manager.am, value, true);
     this.manager.decRef(value);
     return bound;
   }
@@ -230,7 +232,8 @@ export class OptSolver {
     try {
       this.kernel.push();
     } catch (error) {
-      if (!(error instanceof SmtCanceledError)) throw error;
+      const isPushCanceled = error instanceof SmtDefaultError && error.message === "push canceled";
+      if (!(error instanceof SmtCanceledError || isPushCanceled)) throw error;
       return L_UNDEF;
     }
     limit.push(this.dualBoundRlimit);

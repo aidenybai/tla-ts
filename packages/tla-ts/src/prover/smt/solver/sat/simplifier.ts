@@ -1,6 +1,3 @@
-// Ported from Z3 (src/sat/sat_simplifier.h, src/sat/sat_simplifier.cpp,
-// src/sat/sat_simplifier_params.pyg, src/sat/sat_clause_set.h, src/sat/sat_clause_set.cpp,
-// src/util/heap.h, src/util/util.h), MIT license, see z3-license.txt.
 import { L_FALSE, L_TRUE, L_UNDEF } from "../lbool";
 import type { RandomGen } from "../random-gen";
 import { type ClauseArena, NULL_LITERAL, UINT_MAX } from "./clause";
@@ -1273,7 +1270,7 @@ export class Simplifier {
     for (const wlist of solver.watches) {
       solver.checkpoint();
       const size = wlist.size;
-      const order = Array.from({ length: size }, (_, index) => index);
+      const order = Array.from({ length: size }, (_value, index) => index);
       const getRank = (index: number) =>
         wlist.isBinary(index)
           ? 2 * wlist.getLiteral(index) + (wlist.isLearned(index) ? 1 : 0)

@@ -1,4 +1,4 @@
-import * as Combiner from "./namespace-maker";
+import * as Combiner from "./namespace-maker.ts";
 
 const box = { seen: "" };
 const sum = Combiner.make<number>((self, that) => self + that, 0);

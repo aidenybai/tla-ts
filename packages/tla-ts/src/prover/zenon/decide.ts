@@ -1,5 +1,3 @@
-// Ported from Zenon's main.ml, as shipped in tlapm. Copyright 1997 INRIA, see LICENSE.
-
 import { TlaZenonError } from "../../errors";
 import type { DecideOptions, Decision } from "../verdict";
 import { checkProof } from "./check/check";

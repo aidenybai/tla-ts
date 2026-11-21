@@ -1,4 +1,8 @@
 const WORKER_THREADS_MODULE = "node:worker_threads";
+
+// The stack, in MB, of each thread that checks a spec, measured to hold the deepest evaluations
+// of Effect's modules on ESCore with room to spare. Node gives its main thread about 1 MB.
+export const CHECK_STACK_MB = 8;
 const BUN_JSC_MODULE = "bun:jsc";
 
 interface PortEvent {
@@ -43,7 +47,7 @@ export const spawnWorker = async (
   const threads: typeof import("node:worker_threads") = await import(
     /* @vite-ignore */ /* webpackIgnore: true */ WORKER_THREADS_MODULE
   );
-  const worker = new threads.Worker(url);
+  const worker = new threads.Worker(url, { resourceLimits: { stackSizeMb: CHECK_STACK_MB } });
   worker.on("message", onMessage);
   worker.on("error", onError);
   return {

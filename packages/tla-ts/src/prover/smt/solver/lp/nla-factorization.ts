@@ -1,4 +1,3 @@
-// Ported from Z3 (src/math/lp/factorization.h), MIT license, see z3-license.txt.
 import type { Monic } from "./nla-emonics";
 import { signToRat } from "./nla-types";
 

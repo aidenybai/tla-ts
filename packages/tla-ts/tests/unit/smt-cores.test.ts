@@ -180,4 +180,96 @@ describe("runSmtlibScript orders cores and terms as Z3 does", () => {
       ")",
     ]);
   });
+
+  it("minimizes the core with checks of the kernel under smt.core.minimize", () => {
+    expect(
+      run([
+        "(set-option :produce-unsat-cores true)",
+        "(set-option :smt.core.minimize true)",
+        "(set-logic QF_LIA)",
+        "(declare-const b0 Bool)",
+        "(declare-const b1 Bool)",
+        "(declare-const x Int)",
+        "(assert (! (> x 2) :named n1))",
+        "(check-sat-assuming ((not b0) b1 (< x 0) b0))",
+        "(get-unsat-core)",
+        "(get-unsat-core)",
+        "(check-sat-assuming ((< x 0) b1))",
+        "(get-unsat-core)",
+      ]),
+    ).toEqual(["unsat", "((not b0) b0)", "()", "unsat", "((< x 0) n1)"]);
+  });
+
+  it("minimizes the cores of the qsat kernels under smt.core.minimize", () => {
+    expect(
+      run([
+        "(set-option :smt.core.minimize true)",
+        "(declare-const a Real)",
+        "(declare-const b Real)",
+        "(declare-const c Real)",
+        "(declare-const p Bool)",
+        "(declare-const q Bool)",
+        "(declare-const s Bool)",
+        "(assert (exists ((x Real)) (forall ((y Real)) (exists ((z Real)) (or (or (or (< b -3) (<= (+ (* -3 x) (* -2 b) z) 5) (not s)) (and (<= (* -2 c) -2) (< c -2))) (or (or (>= (+ y a) -5) (< x 0)) (or (>= (+ z z x) -4) (= (+ c (* -2 a)) -2) (< (+ y a a) -5))))))))",
+        "(assert (or (<= (+ b c) -2) (< (+ c (* -2 a)) 0)))",
+        "(check-sat-using (then qe2 smt))",
+        "(get-model)",
+      ]),
+    ).toEqual([
+      "sat",
+      "(",
+      "  (define-fun c () Real",
+      "    0.0)",
+      "  (define-fun b () Real",
+      "    (- 2.0))",
+      "  (define-fun a () Real",
+      "    0.0)",
+      "  (define-fun p () Bool",
+      "    false)",
+      "  (define-fun q () Bool",
+      "    false)",
+      "  (define-fun s () Bool",
+      "    false)",
+      ")",
+    ]);
+  });
+
+  it("answers the incremental checks of QF_BV with the SAT solver", () => {
+    expect(
+      run([
+        "(set-option :produce-unsat-cores true)",
+        "(set-logic QF_BV)",
+        "(declare-const b0 Bool)",
+        "(declare-const b1 Bool)",
+        "(assert (not b0))",
+        "(assert (! b0 :named n2))",
+        "(check-sat-assuming (n2))",
+        "(get-unsat-core)",
+        "(check-sat-assuming ((not b1) b1))",
+        "(get-unsat-core)",
+        "(reset)",
+        "(set-logic QF_BV)",
+        "(declare-const v (_ BitVec 4))",
+        "(declare-const w (_ BitVec 4))",
+        "(assert (bvult v w))",
+        "(check-sat)",
+        "(assert (bvugt (bvmul v v) #x3))",
+        "(check-sat)",
+        "(get-model)",
+      ]),
+    ).toEqual([
+      "unsat",
+      "(b0)",
+      "unsat",
+      "((not b1) b1)",
+      "sat",
+      "sat",
+      "(",
+      "  (define-fun w () (_ BitVec 4)",
+      "    #xc)",
+      "  (define-fun v () (_ BitVec 4)",
+      "    #xb)",
+      ")",
+    ]);
+  });
 });

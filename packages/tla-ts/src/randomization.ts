@@ -5,7 +5,6 @@ import type { CheckerRuntime } from "./runtime";
 import { getEnumeratedFactors, getRandomSubset, type JavaRandom } from "./tlc/random";
 import {
   createSet,
-  createTuple,
   getCardinality,
   isTlcEnumerable,
   isEnumerable,
@@ -126,6 +125,7 @@ export const createRandomSubsetSet = (runtime: CheckerRuntime) =>
 export const createRandomizationOperators = (runtime: CheckerRuntime): Builtin[] => [
   overrideWithJava(
     defineOperator("RandomSubset", 2, (args) => {
+      // Deviation from TLC: Randomization#RandomSubset passes a negative count to new ValueVec, which throws a NegativeArraySizeException.
       const count = getCount(getValue(args, 0, "RandomSubset"), "first", "RandomSubset");
       const set = getValue(args, 1, "RandomSubset");
       if (!isTlcEnumerable(set) || !isFiniteSet(set)) {
@@ -146,12 +146,4 @@ export const createRandomizationOperators = (runtime: CheckerRuntime): Builtin[]
     RANDOM_SUBSET_SIGNATURE,
   ),
   defineOperator("RandomSetOfSubsets", 3, (args) => getRandomSetOfSubsets(args, runtime)),
-  defineOperator("TestRandomSetOfSubsets", 3, (args) =>
-    createTuple(
-      Array.from(
-        { length: 5 },
-        () => toFiniteSet(getRandomSetOfSubsets(args, runtime)).elements.length,
-      ),
-    ),
-  ),
 ];

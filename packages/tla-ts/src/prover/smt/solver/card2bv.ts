@@ -1,5 +1,3 @@
-// Ported from Z3 (src/ast/simplifiers/card2bv.cpp, src/ast/rewriter/pb2bv_rewriter.cpp), MIT
-// license, see z3-license.txt.
 import { SmtUnsupportedError } from "../../../errors";
 import {
   type AstManager,
@@ -19,6 +17,8 @@ import {
 import type { Goal } from "./goal";
 import { Rational } from "./rational";
 import { Rewriter, type RewriterOptions } from "./rewriter";
+import { type DependentExprState, runSimplifier } from "./dependent-expr-state";
+import { RewriterTpl } from "./rewriter-tpl";
 
 interface Bound {
   value: Rational;
@@ -71,8 +71,7 @@ const isPb = (manager: AstManager, first: number, second: number) => {
 export const checkPbFree = (manager: AstManager, form: number) => {
   const visited = new Set<number>();
   const todo = [form];
-  while (todo.length > 0) {
-    const expr = todo.pop() as number;
+  for (let expr = todo.pop(); expr !== undefined; expr = todo.pop()) {
     if (visited.has(expr)) continue;
     visited.add(expr);
     if (manager.kinds[expr] === KIND_QUANTIFIER) {
@@ -93,20 +92,36 @@ export const checkPbFree = (manager: AstManager, form: number) => {
   }
 };
 
-export const card2bv = (manager: AstManager, goal: Goal, options: RewriterOptions) => {
-  if (!goal.isProofsEnabled) {
-    const rewriter = new Rewriter(manager, options);
-    const size = goal.forms.size;
-    for (let index = 0; index < size && !goal.isInconsistent; index++) {
-      const form = goal.forms.items[index];
-      const rewritten = rewriter.rewrite(form);
-      checkPbFree(manager, rewritten);
-      if (rewritten !== form) goal.update(index, rewritten);
-      manager.decRef(rewritten);
-    }
-    rewriter.release();
+// The port has no encoding to rewrite to, but the walk still counts its steps of the limit.
+export class CardPbRewriter extends RewriterTpl {
+  isRewritingPatterns() {
+    return false;
   }
-  goal.elimTrue();
-  goal.elimRedundancies();
-  goal.depth++;
-};
+}
+
+export const createCard2Bv =
+  (manager: AstManager, options: RewriterOptions) => (state: DependentExprState) => {
+    const rewriter = new Rewriter(manager, options);
+    const pbRewriter = new CardPbRewriter(manager);
+    let simplified = -1;
+    return {
+      reduce: () => {
+        state.rewriteEach((form) => {
+          const next = rewriter.rewrite(form);
+          if (simplified !== -1) manager.decRef(simplified);
+          simplified = next;
+          const rewritten = pbRewriter.rewrite(simplified);
+          checkPbFree(manager, rewritten);
+          return rewritten;
+        });
+        if (simplified !== -1) manager.decRef(simplified);
+      },
+      release: () => {
+        rewriter.release();
+        pbRewriter.release();
+      },
+    };
+  };
+
+export const card2bv = (manager: AstManager, goal: Goal, options: RewriterOptions) =>
+  runSimplifier(goal, false, createCard2Bv(manager, options));

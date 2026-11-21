@@ -41,15 +41,18 @@ describe("nested and trailing modules match TLC", () => {
     expect(result.violation?.trace).toHaveLength(4);
   });
 
-  it("overrides definitions of other modules but not of the root module for scoped overrides", async () => {
-    const results = await Promise.all(
-      ["Scoped.cfg", "ScopedRoot.cfg"].map((configName) => checkNested(configName, "Scoped")),
-    );
-    results.forEach((result) => {
-      expect(result.status).toBe("invariant-violation");
-      expect(result.violation?.trace).toHaveLength(5);
-      expect([result.generatedStates, result.distinctStates]).toEqual([5, 5]);
-    });
+  it("overrides definitions of other modules for scoped overrides", async () => {
+    const result = await checkNested("Scoped.cfg", "Scoped");
+    expect(result.status).toBe("invariant-violation");
+    expect(result.violation?.trace).toHaveLength(5);
+    expect([result.generatedStates, result.distinctStates]).toEqual([5, 5]);
+  });
+
+  it("gives a scoped <- the [Mod] value of a root definition, where TLC evaluates its body", async () => {
+    const result = await checkNested("ScopedRoot.cfg", "Scoped");
+    expect(result.status).toBe("invariant-violation");
+    expect(result.violation?.trace).toHaveLength(2);
+    expect([result.generatedStates, result.distinctStates]).toEqual([2, 2]);
   });
 
   it("does not assign constants through scoped values", async () => {
@@ -269,6 +272,27 @@ describe("nested module scoping matches SANY", () => {
             location: "Unknown location",
             message:
               "File name 'test' does not match the name 'Foo' of the top level module it contains.",
+          },
+        ],
+        true,
+      ),
+    );
+  });
+
+  it("reads a module's name right after MODULE in its header", async () => {
+    expect(
+      (await checkSource("EXTENDS Foo\nASSUME A = 1", { Foo: "---- MODULEFoo ----\nA == 1\n====" }))
+        .status,
+    ).toBe("success");
+    await expect(
+      checkSource("EXTENDS test", { test: "---- MODULE_test ----\nA == 1\n====" }),
+    ).rejects.toThrow(
+      createSanyError(
+        [
+          {
+            location: "Unknown location",
+            message:
+              "File name 'test' does not match the name '_test' of the top level module it contains.",
           },
         ],
         true,

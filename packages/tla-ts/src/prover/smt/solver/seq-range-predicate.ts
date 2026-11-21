@@ -1,5 +1,3 @@
-// Ported from Z3 (src/ast/rewriter/seq_range_predicate.cpp,
-// src/ast/rewriter/seq_range_collapse.cpp), MIT license, see z3-license.txt.
 import {
   type AstManager,
   FAMILY_CHAR,

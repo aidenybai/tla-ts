@@ -1,4 +1,3 @@
-// Ported from Z3 (src/qe/mbp/mbp_basic_tg.cpp), MIT license, see z3-license.txt.
 import { OP_AND, OP_DISTINCT, OP_IMPLIES, OP_ITE, OP_OR } from "../ast";
 import { isAppOf, mkNot } from "../ast-util";
 import type { MbpContext } from "./mbp-plugin";

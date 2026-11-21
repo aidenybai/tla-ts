@@ -1,5 +1,3 @@
-// Ported from Zenon's expr.ml, as shipped in tlapm. Copyright 2002 INRIA, see LICENSE.
-
 import { TlaZenonError } from "../../errors";
 import { combine, createHasher, toInt63, type Int63 } from "./ocaml";
 
@@ -242,6 +240,27 @@ export const compareExprs = (left: Expr, right: Expr): number => {
   }
   return 0;
 };
+
+const NO_PAIRS: readonly [Expr, Expr][] = [];
+
+const xpreunify = (
+  accu: readonly [Expr, Expr][],
+  left: Expr,
+  right: Expr,
+): readonly [Expr, Expr][] | undefined => {
+  if (left === right) return accu;
+  if (left.kind === "app" && right.kind === "app" && left.symbol === right.symbol) {
+    let current: readonly [Expr, Expr][] | undefined = accu;
+    for (let index = 0; index < left.args.length && current !== undefined; index++)
+      current = xpreunify(current, left.args[index], right.args[index]);
+    return current;
+  }
+  if (left.kind === "meta") return [[left.args[0], right], ...accu];
+  if (right.kind === "meta") return [[right.args[0], left], ...accu];
+  return undefined;
+};
+
+export const preunify = (left: Expr, right: Expr) => xpreunify(NO_PAIRS, left, right) ?? NO_PAIRS;
 
 type Substitution = [Expr, Expr][];
 

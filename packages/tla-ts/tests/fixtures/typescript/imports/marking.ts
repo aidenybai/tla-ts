@@ -1,4 +1,4 @@
-import { type Branch, mark } from "./marks";
+import { type Branch, mark } from "./marks.ts";
 
 const inner: Branch = { items: [2], marked: false };
 const tree: Branch = { items: [1, inner], marked: false };

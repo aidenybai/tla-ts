@@ -1,5 +1,3 @@
-// Ported from Isabelle2025's Provers/classical.ML. Copyright (c) 1986-2025 University of Cambridge, Technische Universitaet Muenchen, and contributors, see LICENSE.
-
 import { TlaIsabelleError } from "../../../errors";
 import { revcutRl, thinRl, zeroVarIndexes, makeElim } from "../pure/drule";
 import { selectGoal } from "../pure/goal";

@@ -1,5 +1,3 @@
-// Ported from Z3 (src/tactic/fpa/fpa2bv_tactic.cpp, src/tactic/fpa/fpa2bv_model_converter.cpp,
-// src/ast/fpa/bv2fpa_converter.cpp), MIT license, see z3-license.txt.
 import type { AstManager } from "./ast";
 import { TACTIC_ARITH_OPTIONS } from "./arith-rewriter";
 import { convertMinMaxSpecials, convertUf2BvUf } from "./bv2fpa-converter";
@@ -47,8 +45,10 @@ const convertModel = (converter: Fpa2BvConverter, source: ProtoModel) => {
     if (interp.elseExpr !== null) copied.setElse(interp.elseExpr);
     target.registerFunc(decl, copied);
   }
-  for (const sort of source.getUninterpretedSorts())
+  for (const sort of source.getUninterpretedSorts()) {
     for (const value of source.getKnownUniverse(sort)) target.registerValue(value);
+    target.registerUsort(sort, source.getKnownUniverse(sort));
+  }
   return target;
 };
 
@@ -63,11 +63,15 @@ export const runFpa2Bv = (manager: AstManager) => (goal: Goal) => {
   const rewriter = new Fpa2BvRewriter(manager, converter);
   const size = goal.forms.size;
   for (let index = 0; !goal.isInconsistent && index < size; index++) {
-    const result = rewriter.rewrite(goal.forms.items[index]);
+    const result = rewriter.rewrite(goal.forms.get(index));
     goal.update(index, result, goal.getDependency(index));
     manager.decRef(result);
   }
-  goal.addModelConversion((model) => convertModel(converter, model));
+  if (goal.isModelsEnabled)
+    goal.addModelConversion(
+      (model) => convertModel(converter, model),
+      () => converter.reset(),
+    );
   goal.depth++;
   for (const assertion of converter.extraAssertions.items) goal.assert(assertion);
   rewriter.release();

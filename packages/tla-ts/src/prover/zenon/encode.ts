@@ -1,5 +1,3 @@
-// A port of tlapm's Backend.Zenon.
-
 import { TlapmBugError, TlaProverError, TlaUnsupportedError } from "../../errors";
 import { createContext, getBoundName, popNames, pushName } from "../../obligations/printer";
 import type { Bound, Builtin, Expr, Hyp, Sequent } from "../../obligations/expression";

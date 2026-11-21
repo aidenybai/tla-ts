@@ -1,10 +1,9 @@
-// Ported from Z3 (src/ast/ast.h, src/ast/ast.cpp), MIT license, see z3-license.txt.
 import { SmtInvariantError } from "../../../errors";
 import { FlatLiterals } from "./flat-literals";
 import { astArrayHash, bytesHash, combineHash, getCompositeHash, mkMix, stringHash } from "./hash";
 import { ObjMap } from "./hashtable";
 import { Rational } from "./rational";
-import { grow, shrink } from "./array";
+import { grow, setAt, shrink } from "./array";
 import type { DatatypeDef } from "./datatype-decl-plugin";
 import { AlgebraicManager, Anum } from "./nlsat/algebraic";
 import type { Mpf } from "./mpf";
@@ -37,6 +36,9 @@ export const FAMILY_LABEL = 11;
 export const FAMILY_PB = 12;
 export const FAMILY_RECFUN = 13;
 export const FAMILY_POLY = 14;
+export const FAMILY_DATALOG_RELATION = 15;
+export const FAMILY_FF = 16;
+export const FAMILY_SPECIAL_RELATIONS = 17;
 
 export const OP_TRUE = 0;
 export const OP_FALSE = 1;
@@ -299,7 +301,6 @@ export const OP_INTERNAL_STRING_STRIDOF = SEQ_OP_BASE + 64;
 export const OP_INTERNAL_STRING_POWER = SEQ_OP_BASE + 65;
 export const OP_INTERNAL_REGEXP_EMPTY = SEQ_OP_BASE + 66;
 export const OP_INTERNAL_REGEXP_FULL_CHAR = SEQ_OP_BASE + 67;
-export const OP_RE_IS_NULLABLE = SEQ_OP_BASE + 68;
 export const OP_SEQ_SKOLEM = SEQ_OP_BASE + 69;
 const CHAR_OP_BASE = 600;
 export const OP_CHAR_CONST = CHAR_OP_BASE;
@@ -317,6 +318,7 @@ export const OP_AT_LEAST_K = PB_OP_BASE + 1;
 export const OP_PB_LE = PB_OP_BASE + 2;
 export const OP_PB_GE = PB_OP_BASE + 3;
 export const OP_PB_EQ = PB_OP_BASE + 4;
+export const OP_PB_AUX_BOOL = PB_OP_BASE + 5;
 const RECFUN_OP_BASE = 900;
 export const OP_FUN_DEFINED = RECFUN_OP_BASE;
 export const OP_FUN_CASE_PRED = RECFUN_OP_BASE + 1;
@@ -436,6 +438,35 @@ const BUILTIN_DECLS: [string, number, number, number][] = [
   ["asin-u", FAMILY_ARITH, OP_U_ASIN, SORT_REAL],
   ["acos-u", FAMILY_ARITH, OP_U_ACOS, SORT_REAL],
 ];
+
+const SORTED_ARITH_DECLS: [string, number, number, number, number][] = [
+  ["<=", OP_LE, SORT_BOOL, 13, SORT_REAL],
+  [">=", OP_GE, SORT_BOOL, 14, SORT_REAL],
+  ["<", OP_LT, SORT_BOOL, 15, SORT_REAL],
+  [">", OP_GT, SORT_BOOL, 16, SORT_REAL],
+  ["+", OP_ADD, SORT_REAL, 21, SORT_REAL],
+  ["-", OP_SUB, SORT_REAL, 22, SORT_REAL],
+  ["*", OP_MUL, SORT_REAL, 23, SORT_REAL],
+  ["-", OP_UMINUS, SORT_REAL, 25, SORT_REAL],
+  ["to_real", OP_TO_REAL, SORT_REAL, 44, SORT_REAL],
+  ["to_int", OP_TO_INT, SORT_INT, 46, SORT_INT],
+  ["^", OP_POWER, SORT_REAL, 49, SORT_REAL],
+  ["abs", OP_ABS, SORT_REAL, 51, SORT_REAL],
+];
+
+const INT_ARITH_DECLS = new Int32Array(BUILTIN_DECLS.length).fill(-1);
+const REAL_ARITH_DECLS = new Int32Array(BUILTIN_DECLS.length).fill(-1);
+SORTED_ARITH_DECLS.forEach((entry, index) => {
+  const decl = BUILTIN_DECLS.length + index;
+  INT_ARITH_DECLS[entry[1]] = entry[4] === SORT_REAL ? entry[1] : decl;
+  REAL_ARITH_DECLS[entry[1]] = entry[4] === SORT_REAL ? decl : entry[1];
+});
+
+const hasRealArg = (sorts: Int32Array, args: number[], start: number) => {
+  for (let index = start; index < args.length; index++)
+    if (sorts[args[index]] === SORT_REAL) return true;
+  return false;
+};
 
 const Z3_BASIC_FAMILY = 0;
 const Z3_LABEL_FAMILY = 1;
@@ -558,9 +589,11 @@ const Z3_SMALL_IDS = new Map([
   [OP_U_ACOS, 71],
 ]);
 
-const FIRST_DECLARED_SMALL_ID = 143;
+const FIRST_FREE_SMALL_ID = 142;
 
-const FIRST_FREE_ID = 22;
+const NUM_QI_COST_VARS = 15;
+const QI_COST_GENERATION = 6;
+const QI_COST_WEIGHT = 8;
 const MAX_SMALL_NUM_TO_CACHE = 16;
 const NUM_FINITE_SET_PLUGIN_SORTS = 7;
 
@@ -588,6 +621,7 @@ const SIGNATURE_DIV0 = 2;
 const SIGNATURE_MODEL_VALUE = 3;
 const SIGNATURE_NUMERAL = 4;
 const SIGNATURE_ALGEBRAIC = 5;
+const SIGNATURE_DISTINCT = 6;
 
 interface AlgebraicNumeral {
   value: Anum;
@@ -612,7 +646,11 @@ const hasOwnDeclHash = (family: number) =>
   family === FAMILY_RECFUN;
 
 // The declarations that Z3 makes once and counts references to, rather than on each use.
-const isDeclaredFamily = (family: number) => family === FAMILY_USER || family === FAMILY_RECFUN;
+export const isDeclared = (funcDecl: FuncDecl) =>
+  funcDecl.family === FAMILY_USER ||
+  funcDecl.family === FAMILY_RECFUN ||
+  funcDecl.family === FAMILY_ARRAY ||
+  funcDecl.op === OP_PB_AUX_BOOL;
 
 export class AstManager {
   private numNodes = 0;
@@ -645,6 +683,9 @@ export class AstManager {
   private sortSizes: bigint[] = [2n, SORT_SIZE_INFINITE, SORT_SIZE_INFINITE];
   private arraySorts = new Map<string, number>();
   private arrayDecls = new Map<string, number>();
+  private eqDecls: (number | undefined)[] = [];
+  private iteDecls: (number | undefined)[] = [];
+  private distinctDecls: ((number | undefined)[] | undefined)[] = [];
   readonly datatypeDefs = new Map<string, DatatypeDef>();
   hasNestedRecDatatype = false;
   datatypeConstructors: number[][] = [];
@@ -675,6 +716,7 @@ export class AstManager {
   private charSort = -1;
   private stringSort = -1;
   private reglanSort = -1;
+  private isSeqPluginInitialized = false;
   private seqSorts = new Map<string, number>();
   private seqDecls = new Map<string, number>();
   private stringValues: number[][] = [];
@@ -693,12 +735,11 @@ export class AstManager {
   private appHandles = new Int32Array(1024).fill(-1);
   private appHashes = new Int32Array(1024);
   private numApps = 0;
-  private nextSmallId = FIRST_DECLARED_SMALL_ID;
+  private nextSmallId = FIRST_FREE_SMALL_ID;
   private freeSmallIds: number[] = [];
-  private numDecls = FIRST_DECLARED_SMALL_ID;
+  private numDecls = FIRST_FREE_SMALL_ID;
   private signatureDecls = new Map<number | string, SignatureDecl>();
   private declRefCounts: number[] = [];
-  readonly macros = new ObjMap<number>((decl) => this.declHashes[decl]);
   // The recfun plugin's definitions by declaration, and their cases by case predicate.
   readonly recFunDefs = new ObjMap<RecFunDef>((decl) => this.declHashes[decl]);
   readonly recFunCases = new Map<number, RecFunCase>();
@@ -722,6 +763,7 @@ export class AstManager {
   readonly falseExpr: number;
   readonly piExpr: number;
   readonly eulerExpr: number;
+  private startupExprs: number[];
   isHiDiv0 = true;
   maxChar = 196607;
   charBits = 18;
@@ -740,6 +782,28 @@ export class AstManager {
         smallId: Z3_SMALL_IDS.get(builtin[2]) ?? -1,
         parameters: [],
       });
+    for (const entry of SORTED_ARITH_DECLS)
+      this.funcDecls.push({
+        name: entry[0],
+        family: FAMILY_ARITH,
+        op: entry[1],
+        domain: [],
+        range: entry[2],
+        isSkolem: false,
+        smallId: entry[3],
+        parameters: [],
+      });
+    // Each has one signature in Z3, and a model's tables hash its declaration as a user's.
+    for (const entry of Z3_BUILTINS)
+      if (entry[0] === OP_DIV0 || entry[0] === OP_IDIV0 || entry[0] === OP_MOD0) {
+        const range = this.funcDecls[entry[0]].range;
+        this.declHashes[entry[0]] = this.getFuncDeclHash(
+          entry[1][0],
+          [range, range],
+          range,
+          getInfoHash(Z3_ARITH_FAMILY, entry[1][1], []),
+        );
+      }
     this.trueExpr = this.mkApp(OP_TRUE, [], SORT_BOOL);
     this.falseExpr = this.mkApp(OP_FALSE, [], SORT_BOOL);
     this.incRef(this.trueExpr);
@@ -748,7 +812,9 @@ export class AstManager {
     this.eulerExpr = this.mkApp(OP_E, [], SORT_REAL);
     this.incRef(this.piExpr);
     this.incRef(this.eulerExpr);
-    this.nextId = FIRST_FREE_ID;
+    // Z3 makes its first smt solver before any declared term, so the manager makes its terms first.
+    this.startupExprs = [this.mkBvNumeral(0n, 1), ...this.mkQiCostExprs()];
+    for (const expr of this.startupExprs) this.incRef(expr);
   }
 
   getRefCount(expr: number) {
@@ -756,7 +822,7 @@ export class AstManager {
   }
 
   getNumAsts() {
-    return this.numLive + FIRST_FREE_ID - 4 + this.numDecls;
+    return this.numLive + 1 + this.numDecls;
   }
 
   private getSignatureDecl(key: number | string) {
@@ -779,27 +845,29 @@ export class AstManager {
     this.numDecls--;
   }
 
-  mkMacro(name: string, expr: number) {
-    const decl = this.funcDecls.length;
-    this.declHashes[decl] = this.getFuncDeclHash(
-      name,
-      [],
-      this.sorts[expr],
-      getInfoHash(Z3_RECFUN_FAMILY, 0, [0]),
+  // Last to first, so the next expressions take the ids in order, as if Z3 never made them.
+  dropStartupExprs() {
+    for (const expr of this.startupExprs.reverse()) this.decRef(expr);
+    this.startupExprs = [];
+  }
+
+  mkQiCostExprs(cost?: Rational) {
+    const vars = Array.from({ length: NUM_QI_COST_VARS }, (_value, index) =>
+      this.mkVar(index, SORT_REAL),
     );
-    this.funcDecls.push({
-      name,
-      family: FAMILY_USER,
-      op: OP_UNINTERPRETED,
-      domain: [],
-      range: this.sorts[expr],
-      isSkolem: false,
-      smallId: this.mkSmallId(),
-      parameters: [],
-    });
-    this.declRefCounts[decl] = 1;
-    this.mkSmallId();
-    this.macros.set(decl, expr);
+    return [
+      ...vars,
+      cost === undefined
+        ? this.mkApp(OP_ADD, [vars[QI_COST_WEIGHT], vars[QI_COST_GENERATION]], SORT_REAL)
+        : this.mkNumeralOfSort(cost, SORT_REAL),
+    ];
+  }
+
+  eraseRecFunDef(decl: number) {
+    const def = this.recFunDefs.get(decl);
+    if (def === undefined) return;
+    for (const recFunCase of def.cases) this.recFunCases.delete(recFunCase.pred);
+    this.recFunDefs.delete(decl);
   }
 
   // recfun::def: the declaration of a defined function, which the definition holds.
@@ -858,18 +926,20 @@ export class AstManager {
 
   private getSignature(expr: number) {
     const decl = this.decls[expr];
-    if (decl === OP_NUM || this.funcDecls[decl].op === OP_BV_NUM)
-      return 8 * this.values[expr] + SIGNATURE_NUMERAL;
-    if (decl === OP_EQ) return 8 * this.sorts[this.getArg(expr, 0)] + SIGNATURE_EQ;
-    if (decl === OP_ITE) return 8 * this.sorts[expr] + SIGNATURE_ITE;
+    const funcDecl = this.funcDecls[decl];
+    const op = funcDecl.op;
+    if (decl === OP_NUM || op === OP_BV_NUM) return 8 * this.values[expr] + SIGNATURE_NUMERAL;
+    if (op === OP_EQ) return 8 * decl + SIGNATURE_EQ;
+    if (op === OP_ITE) return 8 * decl + SIGNATURE_ITE;
+    if (op === OP_DISTINCT) return 8 * decl + SIGNATURE_DISTINCT;
     if (decl === OP_DIV0 || decl === OP_IDIV0 || decl === OP_MOD0) return 8 * decl + SIGNATURE_DIV0;
     if (decl === OP_POWER0)
       return 8 * (decl + 64 * this.sorts[this.getArg(expr, 0)]) + SIGNATURE_DIV0;
     if (decl === OP_ALGEBRAIC_NUM) return 8 * this.getAlgebraicId(expr) + SIGNATURE_ALGEBRAIC;
-    if (decl === OP_DISTINCT || decl === OP_PATTERN)
+    if (decl === OP_PATTERN)
       return `${decl}:${this.mapArgs(expr, (arg) => this.sorts[arg]).join(",")}`;
-    if (this.funcDecls[decl].family === FAMILY_MODEL_VALUE) return 8 * decl + SIGNATURE_MODEL_VALUE;
-    if (UNCACHED_BV_OPS.has(this.funcDecls[decl].op)) return `bv${decl}`;
+    if (funcDecl.family === FAMILY_MODEL_VALUE) return 8 * decl + SIGNATURE_MODEL_VALUE;
+    if (UNCACHED_BV_OPS.has(op)) return `bv${decl}`;
     return null;
   }
 
@@ -882,7 +952,7 @@ export class AstManager {
 
   private holdDecl(expr: number) {
     const decl = this.decls[expr];
-    if (isDeclaredFamily(this.funcDecls[decl].family)) {
+    if (isDeclared(this.funcDecls[decl])) {
       this.incDeclRef(decl);
       return;
     }
@@ -894,14 +964,16 @@ export class AstManager {
       return;
     }
     const smallId = this.mkSmallId();
-    this.signatureDecls.set(key, { smallId, refCount: decl === OP_EQ || decl === OP_ITE ? 2 : 1 });
-    if (decl !== OP_NUM && this.funcDecls[decl].family === FAMILY_MODEL_VALUE)
-      this.funcDecls[decl].smallId = smallId;
+    const funcDecl = this.funcDecls[decl];
+    const isCached = funcDecl.op === OP_EQ || funcDecl.op === OP_ITE;
+    this.signatureDecls.set(key, { smallId, refCount: isCached ? 2 : 1 });
+    if (isCached || funcDecl.op === OP_DISTINCT || funcDecl.family === FAMILY_MODEL_VALUE)
+      funcDecl.smallId = smallId;
   }
 
   private releaseDecl(expr: number) {
     const decl = this.decls[expr];
-    if (isDeclaredFamily(this.funcDecls[decl].family)) {
+    if (isDeclared(this.funcDecls[decl])) {
       this.declRefCounts[decl]--;
       if (this.declRefCounts[decl] > 0) return -1;
       this.deletedDecls.add(decl);
@@ -966,6 +1038,10 @@ export class AstManager {
     return result;
   }
 
+  get isHoldingTemporaries() {
+    return this.temporariesMark !== -1;
+  }
+
   beginTemporaries() {
     const outer = this.temporariesMark;
     this.temporariesMark = this.temporaries.length;
@@ -984,9 +1060,11 @@ export class AstManager {
   withoutTemporaries<T>(body: () => T) {
     const outer = this.temporariesMark;
     this.temporariesMark = -1;
-    const result = body();
-    this.temporariesMark = outer;
-    return result;
+    try {
+      return body();
+    } finally {
+      this.temporariesMark = outer;
+    }
   }
 
   releaseLater(expr: number) {
@@ -1100,20 +1178,6 @@ export class AstManager {
       this.algebraicNumerals[this.values[expr]].id = this.mkAlgebraicId();
     this.registerNode(expr);
     return expr;
-  }
-
-  mkSort(name: SmtSymbol) {
-    const sort = this.addSort(
-      getSymbolName(name),
-      FAMILY_USER,
-      [],
-      combineHash(
-        getSymbolHash(name),
-        getInfoHash(Z3_USER_SORT_FAMILY, this.getUserSortKind(name), []),
-      ),
-    );
-    this.mkSmallId();
-    return sort;
   }
 
   mkBvSort(width: number) {
@@ -1291,7 +1355,7 @@ export class AstManager {
     return this.sortNames.length - 1;
   }
 
-  // Z3 makes the Char, String and RegLan sorts at startup, so they take no small id.
+  // Z3 makes the Char and String sorts at startup, so they take no small id.
   mkCharSort() {
     if (this.charSort === -1)
       this.charSort = this.addSort(
@@ -1316,8 +1380,18 @@ export class AstManager {
     return this.stringSort;
   }
 
+  initSeqPlugin() {
+    if (this.isSeqPluginInitialized) return;
+    this.isSeqPluginInitialized = true;
+    const element = this.mkTypeParameter(0);
+    this.mkReSort(this.mkSeqSort(element));
+    this.mkReSort(this.mkStringSort());
+    this.mkArraySort([element, SORT_BOOL]);
+  }
+
   mkSeqSort(element: number) {
     if (element === this.mkCharSort()) return this.mkStringSort();
+    this.initSeqPlugin();
     const key = `s${element}`;
     const existing = this.seqSorts.get(key);
     if (existing !== undefined) return existing;
@@ -1336,6 +1410,7 @@ export class AstManager {
   }
 
   mkReSort(seq: number) {
+    this.initSeqPlugin();
     const isReglan = seq === this.mkStringSort();
     if (isReglan && this.reglanSort !== -1) return this.reglanSort;
     const key = `r${seq}`;
@@ -1350,11 +1425,9 @@ export class AstManager {
         getInfoHash(Z3_SEQ_FAMILY, Z3_RE_SORT, [this.sortHashes[seq]]),
       ),
     );
+    this.mkSmallId();
     if (isReglan) this.reglanSort = sort;
-    else {
-      this.mkSmallId();
-      this.seqSorts.set(key, sort);
-    }
+    else this.seqSorts.set(key, sort);
     return sort;
   }
 
@@ -1525,7 +1598,10 @@ export class AstManager {
   mkArrayDecl(op: number, name: string, parameters: number[], domain: number[], range: number) {
     const key = `${op}:${parameters.join(",")}:${domain.join(",")}`;
     const existing = this.arrayDecls.get(key);
-    if (existing !== undefined) return existing;
+    if (existing !== undefined) {
+      if (this.deletedDecls.delete(existing)) this.funcDecls[existing].smallId = this.mkSmallId();
+      return existing;
+    }
     const parameterHashes = parameters.map((parameter) =>
       op === OP_CONST_ARRAY
         ? this.sortHashes[parameter]
@@ -1543,6 +1619,7 @@ export class AstManager {
       parameters,
       getInfoHash(Z3_ARRAY_FAMILY, op - ARRAY_OP_BASE, parameterHashes),
     );
+    this.declRefCounts[decl] = 0;
     this.arrayDecls.set(key, decl);
     return decl;
   }
@@ -1630,8 +1707,9 @@ export class AstManager {
     parameterHashes: number[],
     domain: number[],
     range: number,
+    z3Parameters: (number | string)[] = parameters,
   ) {
-    const key = `${op}:${name}:${parameters.join(",")}:${domain.join(",")}:${range}`;
+    const key = `${op}:${name}:${z3Parameters.join(",")}:${domain.join(",")}:${range}`;
     const existing = this.datatypeDecls.get(key);
     if (existing !== undefined) return existing;
     const decl = this.addDecl(
@@ -1733,7 +1811,7 @@ export class AstManager {
       throw new SmtInvariantError(`the operator ${op} has no Z3 declaration`);
     const argSort = op === OP_ITE ? this.sorts[args[1]] : this.sorts[args[0]];
     const arity = builtin[2] === -1 ? args.length : builtin[2];
-    const domain = Array.from({ length: arity }, (_, index) =>
+    const domain = Array.from({ length: arity }, (_value, index) =>
       op === OP_PATTERN
         ? this.sorts[args[index]]
         : op === OP_ITE && index === 0
@@ -1874,6 +1952,20 @@ export class AstManager {
     return decl;
   }
 
+  mkPbAuxBool() {
+    const decl = this.addDecl(
+      this.mkFreshVarName("pb"),
+      FAMILY_PB,
+      OP_PB_AUX_BOOL,
+      [],
+      SORT_BOOL,
+      [],
+      getInfoHash(Z3_PB_FAMILY, OP_PB_AUX_BOOL - PB_OP_BASE, []),
+    );
+    this.declRefCounts[decl] = 0;
+    return this.mkApp(decl, [], SORT_BOOL);
+  }
+
   mkFreshVarName(prefix: string | null) {
     return `${prefix ?? "var"}!${this.mkFreshId()}`;
   }
@@ -1958,8 +2050,46 @@ export class AstManager {
     return id;
   }
 
-  mkApp(decl: number, args: number[], sort: number, start = 0) {
-    const funcDecl = this.funcDecls[decl];
+  private getBasicDecl(op: number, args: number[], start: number) {
+    const sort =
+      start < args.length ? this.sorts[args[op === OP_ITE ? start + 1 : start]] : SORT_BOOL;
+    if (op !== OP_DISTINCT)
+      return this.getBasicDeclAt(op === OP_EQ ? this.eqDecls : this.iteDecls, sort, op, sort);
+    const byArity = this.distinctDecls[sort] ?? [];
+    setAt(this.distinctDecls, sort, byArity);
+    return this.getBasicDeclAt(byArity, args.length - start, op, sort);
+  }
+
+  private getBasicDeclAt(decls: (number | undefined)[], index: number, op: number, sort: number) {
+    const existing = decls[index];
+    if (existing !== undefined) return existing;
+    const decl = this.funcDecls.length;
+    this.funcDecls.push({
+      name: this.funcDecls[op].name,
+      family: FAMILY_BASIC,
+      op,
+      domain: [],
+      range: op === OP_ITE ? sort : SORT_BOOL,
+      isSkolem: false,
+      smallId: -1,
+      parameters: [],
+    });
+    setAt(decls, index, decl);
+    return decl;
+  }
+
+  mkApp(requestedDecl: number, args: number[], sort: number, start = 0) {
+    const requested = this.funcDecls[requestedDecl];
+    const decl =
+      requested.family === FAMILY_ARITH && REAL_ARITH_DECLS[requested.op] !== -1
+        ? hasRealArg(this.sorts, args, start)
+          ? REAL_ARITH_DECLS[requested.op]
+          : INT_ARITH_DECLS[requested.op]
+        : requested.family === FAMILY_BASIC &&
+            (requested.op === OP_EQ || requested.op === OP_ITE || requested.op === OP_DISTINCT)
+          ? this.getBasicDecl(requested.op, args, start)
+          : requestedDecl;
+    const funcDecl = decl === requestedDecl ? requested : this.funcDecls[decl];
     if (
       decl === OP_NUM ||
       decl === OP_ALGEBRAIC_NUM ||
@@ -2052,7 +2182,7 @@ export class AstManager {
   }
 
   get am() {
-    this.algebraicManager ??= new AlgebraicManager();
+    this.algebraicManager ??= new AlgebraicManager(this.limit);
     return this.algebraicManager;
   }
 
@@ -2513,8 +2643,6 @@ export class AstManager {
   }
 
   mkNot(expr: number) {
-    if (expr === this.trueExpr) return this.falseExpr;
-    if (expr === this.falseExpr) return this.trueExpr;
     return this.mkApp(OP_NOT, [expr], SORT_BOOL);
   }
 

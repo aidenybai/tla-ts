@@ -1,5 +1,3 @@
-// Ported from Z3 (src/ast/substitution/substitution.cpp, src/ast/substitution/unifier.cpp), MIT
-// license, see z3-license.txt.
 import { type AstManager, KIND_APP, KIND_VAR } from "../ast";
 import { VarShifter } from "../rewriter-tpl";
 

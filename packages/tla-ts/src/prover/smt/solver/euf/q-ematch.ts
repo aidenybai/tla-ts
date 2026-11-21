@@ -1,8 +1,7 @@
-// Ported from Z3 (src/sat/smt/q_clause.h, src/sat/smt/q_eval.cpp, src/sat/smt/q_queue.cpp,
-// src/sat/smt/q_ematch.cpp, src/util/dlist.h), MIT license, see z3-license.txt.
 import { KIND_VAR, OP_DISTINCT, OP_EQ, QUANTIFIER_EXISTS, QUANTIFIER_FORALL } from "../ast";
 import { flattenOrVector, mkNot } from "../ast-util";
 import { PatternInferenceRw } from "../asserted-formulas";
+import { getDoubleParameter } from "../gparams";
 import { L_FALSE, L_TRUE, L_UNDEF } from "../lbool";
 import { DefinedNames, Nnf } from "../nnf";
 import { PatternInference } from "../pattern-inference";
@@ -288,9 +287,6 @@ class Eval {
   }
 }
 
-const EAGER_COST_THRESHOLD = 10;
-const LAZY_COST_THRESHOLD = 20;
-
 interface QueueEntry {
   readonly binding: Binding;
   readonly cost: number;
@@ -302,12 +298,16 @@ class Queue {
   private newEntries: QueueEntry[] = [];
   private delayedEntries: QueueEntry[] = [];
   private subst: VarSubst;
+  private readonly eagerCostThreshold: number;
 
+  // queue::setup reads the eager threshold once, and lazy_propagate reads the lazy one each time.
   constructor(
     private ematch: Ematch,
     private ctx: EufSolver,
+    private readonly parameters: ReadonlyMap<string, string>,
   ) {
     this.subst = new VarSubst(ctx.manager, true);
+    this.eagerCostThreshold = getDoubleParameter(parameters, "smt.qi.eager_threshold") ?? 10;
   }
 
   insert(binding: Binding) {
@@ -347,7 +347,7 @@ class Queue {
     for (const entry of this.newEntries) {
       if (!manager.limit.inc()) break;
       const binding = entry.binding;
-      if (entry.cost <= EAGER_COST_THRESHOLD) this.instantiate(entry);
+      if (entry.cost <= this.eagerCostThreshold) this.instantiate(entry);
       else if (this.ematch.evaluate(binding.nodes, binding.clause) === L_FALSE)
         this.instantiate(entry);
       else {
@@ -361,10 +361,11 @@ class Queue {
 
   lazyPropagate() {
     if (this.delayedEntries.length === 0) return false;
+    const lazyCostThreshold = getDoubleParameter(this.parameters, "smt.qi.lazy_threshold") ?? 20;
     let isInstantiated = false;
     for (let index = 0; index < this.delayedEntries.length; index++) {
       const entry = this.delayedEntries[index];
-      if (entry.isInstantiated || entry.cost > LAZY_COST_THRESHOLD) continue;
+      if (entry.isInstantiated || entry.cost > lazyCostThreshold) continue;
       isInstantiated = true;
       this.ctx.trail.push(() => (this.delayedEntries[index].isInstantiated = false));
       this.instantiate(entry);
@@ -395,20 +396,25 @@ export class Ematch {
   private names: DefinedNames;
   private nnf: Nnf;
   private subst: VarSubst;
+  readonly isEnabled: boolean;
 
   constructor(
     private ctx: EufSolver,
     private qs: QSolver,
+    parameters: ReadonlyMap<string, string>,
   ) {
     const manager = ctx.manager;
     this.eval = new Eval(ctx);
-    this.queue = new Queue(this, ctx);
+    this.queue = new Queue(this, ctx, parameters);
     this.inferPatterns = new PatternInferenceRw(manager, new PatternInference(manager));
     this.names = new DefinedNames(manager);
     this.nnf = new Nnf(manager, this.names);
     this.subst = new VarSubst(manager, true);
-    ctx.egraph.onMerge.push((root, other) => this.onMerge(root, other));
-    ctx.egraph.onMake = (node) => this.mam.addNode(node, false);
+    this.isEnabled = parameters.get("smt.ematching") !== "false";
+    if (this.isEnabled) {
+      ctx.egraph.onMerge.push((root, other) => this.onMerge(root, other));
+      ctx.egraph.onMake = (node) => this.mam.addNode(node, false);
+    }
     this.mam = new Mam(ctx, this.onBinding);
   }
 
@@ -495,8 +501,7 @@ export class Ematch {
     const manager = this.ctx.manager;
     const todo = [expr];
     const marked = new Set<number>();
-    while (todo.length > 0) {
-      const term = todo.pop() as number;
+    for (let term = todo.pop(); term !== undefined; term = todo.pop()) {
       if (marked.has(term)) continue;
       marked.add(term);
       if (manager.isGroundApp(term)) {
@@ -765,7 +770,7 @@ export class Ematch {
   }
 
   unitPropagate() {
-    return this.propagateAll(false);
+    return this.isEnabled && this.propagateAll(false);
   }
 
   private propagateClause(clause: Clause, isFlushing: boolean) {

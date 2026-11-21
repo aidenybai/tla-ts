@@ -14,7 +14,10 @@ import {
   UNSETTLED_AWAIT_EXIT_CODE,
   UNSETTLED_AWAIT_WARNING,
 } from "../exit-codes";
+import { getEscoreRuntime } from "../compile";
+import { TlaStrippingError } from "../errors";
 import { parseModule } from "../parser";
+import { foldNames } from "../typescript/spec/library";
 
 // A spec tla-ts compiled from the TypeScript file at path. specPath is where its module would be
 // if it were a file, though tla-ts checks it without writing one.
@@ -26,10 +29,11 @@ export interface CompiledInput {
   loadModule: (name: string) => string | undefined;
   preparedModules: PreparedModule[];
   isScript: boolean;
-  // Whether the check takes the spec's modules prepared, as ESCore's runtime is.
-  isPrepared: boolean;
   notes: string[];
 }
+
+// Whether a path names a file that Node runs, TypeScript or JavaScript, which tla-ts compiles.
+export const isProgramPath = (path: string) => /\.(?:[cm]?[jt]s|[jt]sx)$/.test(path);
 
 // The escapes of a string that TLC prints.
 const TLC_ESCAPES = new Map([
@@ -59,36 +63,171 @@ export const getNodeExit = (message: string, path: string) => {
     : undefined;
 };
 
+// The prototypes whose objects Node's inspect names by the constructor it knows, whatever their
+// constructor property says (wellKnownPrototypes of lib/internal/util/inspect.js).
+const WELL_KNOWN_PROTOTYPES = [
+  "Array",
+  "ArrayBuffer",
+  "Function",
+  "Map",
+  "Set",
+  "Object",
+  "TypedArray",
+  "RegExp",
+  "Date",
+  "DataView",
+  "Error",
+  "AggregateError",
+  "RangeError",
+  "TypeError",
+  "Boolean",
+  "Number",
+  "String",
+  "Promise",
+  "WeakMap",
+  "WeakSet",
+];
+
+// What Node prints of an error that nothing caught, but the lines of its stack's frames, which
+// tla-ts doesn't print: the inspection of the error that a fatal exception prints (afterInspector
+// of lib/internal/errors.js, and formatError of lib/internal/util/inspect.js), of an error whose
+// properties are data and whose own keys Node hides, or Empty where tla-ts can't tell what Node
+// prints. An error's stack that no read wrote yet is its header and, where V8 captured a frame, a
+// frame, which is all that Node's inspect reads of it but for the frames.
+const ERROR_TEXT = String.raw`NodeStartsWith(u, p) == Len(u) >= Len(p) /\ SubSeq(u, 1, Len(p)) = p
+NodeEndsWith(u, p) == Len(u) >= Len(p) /\ SubSeq(u, Len(u) - Len(p) + 1, Len(u)) = p
+NodeIncludes(u, p) == StringIndexOf(u, p, 0) # -1
+\* The value of the property k that the object o has or inherits, which no accessor gives, as Get
+\* gives it, or Empty where an accessor does.
+RECURSIVE NodeDataGet(_, _, _)
+NodeDataGet(s, o, k) ==
+  IF o = Null THEN Undefined ELSE
+  LET d == OrdinaryGetOwnProperty(O(s, o), k) IN
+  IF d = Absent THEN NodeDataGet(s, O(s, o).proto, k) ELSE IF IsDataDescriptor(d) THEN d.value ELSE Empty
+\* getNodeConstructorName: the name of the first constructor of the prototypes of v, or Empty.
+RECURSIVE NodeConstructorName(_, _, _)
+NodeConstructorName(s, v, p) ==
+  IF p = Null THEN Empty ELSE
+  LET known == {k \in {${WELL_KNOWN_PROTOTYPES.map((name) => `<<"${name}Prototype", N("${name}")>>`).join(", ")}} :
+                  k[1] \in DOMAIN s.realm /\ SameValue(p, Intrinsic(s, k[1]))}
+      d == OrdinaryGetOwnProperty(O(s, p), SV("constructor"))
+      f == IF d # Absent /\ IsDataDescriptor(d) /\ IsCallable(s, d.value) THEN d.value ELSE Empty
+      name == IF f = Empty THEN Empty ELSE NodeDataGet(s, f, SV("name"))
+      instance == IF f = Empty \/ name = Empty \/ ~IsString(name) \/ name.value = <<>> THEN Empty
+                  ELSE IF ~SameValue(NodeDataGet(s, f, SymHasInstance), NodeDataGet(s, Intrinsic(s, "FunctionPrototype"), SymHasInstance)) THEN Empty
+                  ELSE LET h == OrdinaryHasInstance(s, f, v) IN IF IsAbrupt(h) THEN False ELSE Val(h)
+  IN IF known # {} THEN (CHOOSE k \in known : TRUE)[2]
+     ELSE IF f # Empty /\ (name = Empty \/ (IsString(name) /\ name.value # <<>> /\ instance = Empty)) THEN Empty
+     ELSE IF instance = True THEN name.value
+     ELSE NodeConstructorName(s, v, O(s, p).proto)
+\* improveStack: the stack with the constructor's name where the error's name ends in Error.
+NodeImproveStack(stack, constructor, name, tag) ==
+  LET dot == StringLastIndexOf(tag, <<46>>, Len(tag) - 1)
+      prefix == IF tag = <<>> THEN constructor
+                ELSE IF constructor = (IF dot >= 1 THEN SubSeq(tag, dot + 2, Len(tag)) ELSE tag) THEN tag
+                ELSE constructor \o N(" [") \o tag \o N("]")
+      len == Len(name)
+  IN IF NodeEndsWith(name, N("Error")) /\ NodeStartsWith(stack, name) /\ (Len(stack) = len \/ stack[len + 1] \in {10, 58}) /\ name # prefix
+     THEN IF NodeIncludes(prefix, name) THEN prefix \o SubSeq(stack, len + 1, Len(stack))
+          ELSE prefix \o N(" [") \o name \o N("]") \o SubSeq(stack, len + 1, Len(stack))
+     ELSE stack
+\* The stack that Node's inspect reads, but for its frames past the first, or Empty.
+NodeErrorStack(s, v) ==
+  LET o == O(s, v) IN
+  IF "stack" \in DOMAIN o.slots THEN (IF IsString(o.slots.stack) THEN o.slots.stack.value ELSE Empty)
+  ELSE IF "trace" \notin DOMAIN o.slots \/ "dropped" \in DOMAIN o.slots.trace THEN Empty ELSE
+  LET t == o.slots.trace
+      h == IF t.limit < 0 THEN ErrorBuiltin(s, Undefined, "toString", v, <<>>, Undefined) ELSE StackHeader(s, v, t)
+  IN IF IsAbrupt(h) THEN Empty
+     ELSE IF t.limit < 1 THEN Val(h).value
+     ELSE Val(h).value \o (IF WalkFrames(h.s, [t EXCEPT !.limit = 1], t.callers, <<>>, [NoFrames EXCEPT !.isText = FALSE]).count = 1 THEN N("\n    at ") ELSE <<>>)
+NodeErrorText(s, v) ==
+  LET o == O(s, v)
+      own == OrdinaryGetOwnProperty(o, SV("stack"))
+  IN IF o.class # "error" \/ ProxyOnChain(s, v) \/ own = Absent \/ IsDataDescriptor(own)
+        \/ ~SameValue(own.get, O(s, Intrinsic(s, "ErrorPrototype")).slots.stackGet) THEN Empty ELSE
+  LET stack == NodeErrorStack(s, v)
+      m == NodeDataGet(s, v, SV("message"))
+      n == NodeDataGet(s, v, SV("name"))
+      tagged == NodeDataGet(s, v, SymToStringTag)
+      ownTag == OrdinaryGetOwnProperty(o, SymToStringTag)
+  IN IF stack = Empty \/ stack = <<>> \/ m = Empty \/ n = Empty \/ tagged = Empty
+        \/ ~(IsString(m) \/ m = Undefined) \/ ~(IsString(n) \/ n = Undefined) THEN Empty ELSE
+  LET message == IF IsString(m) THEN m.value ELSE <<>>
+      name == IF IsString(n) THEN n.value ELSE N("Error")
+      tag == IF ~IsString(tagged) \/ (ownTag # Absent /\ ownTag.enumerable = True) THEN <<>> ELSE tagged.value
+      keys == OwnKeysOf(o)
+      isHidden(k) ==
+        LET d == o.props[PropBucket(k)][k] IN
+        /\ k \notin {SV("cause"), SV("errors"), SV("error"), SV("suppressed")}
+        /\ (d.enumerable = False
+            \/ k = SV("stack")
+            \/ (k = SV("message") /\ (~IsString(m) \/ NodeIncludes(stack, message)))
+            \/ (k = SV("name") /\ (~IsString(n) \/ NodeIncludes(stack, name))))
+      constructor == NodeConstructorName(s, v, v)
+  IN IF ~(\A i \in DOMAIN keys : isHidden(keys[i])) \/ constructor = Empty THEN Empty ELSE
+  LET improved == NodeImproveStack(stack, constructor, name, tag)
+      found == IF message = <<>> THEN -1 ELSE StringIndexOf(improved, message, 0)
+      pos == IF found <= 0 THEN 0 ELSE found + Len(message)
+      start == StringIndexOf(improved, N("\n    at"), pos)
+  IN IF start = -1 THEN <<91>> \o improved \o <<93>> ELSE SubSeq(improved, 1, start)
+\* Where Node says an error that a promise rejected with, or that an ES module threw, was made: the
+\* first frame of its stack, in the entry's code, or Empty.
+NodeErrorSource(s, v) ==
+  LET o == O(s, v) IN
+  IF "trace" \notin DOMAIN o.slots \/ "dropped" \in DOMAIN o.slots.trace \/ o.slots.trace.limit < 1 THEN Empty ELSE
+  LET w == WalkFrames(s, [o.slots.trace EXCEPT !.limit = 1], o.slots.trace.callers, <<>>, [NoFrames EXCEPT !.isText = FALSE]) IN
+  IF w.count # 1 \/ w.positions[1] = <<>> \/ w.positions[1][1] # 1 \/ w.positions[1][2] > Len(EntryLines) THEN Empty ELSE
+  LET line == EntryLines[w.positions[1][2]]
+      column == w.positions[1][3]
+  IN IF column > Len(line) + 1 THEN Empty
+     ELSE EntryUrl \o <<58>> \o NumToString(NumFromInt(w.positions[1][2])) \o <<10>> \o line \o <<10>>
+          \o [i \in 1..(column - 1) |-> IF line[i] = 9 THEN 9 ELSE 32] \o <<94>>`;
+
 // The steps of a script's spec as the CLI checks it on ESCore: where the script leaves an exception
-// uncaught, Init fails with what Node prints, as getNodeExit reads it, for a primitive that a throw
-// statement of siteTexts throws, that the entry module's evaluation rejects with, or that another
-// promise rejects with, and Node's warning where the entry module's top-level await never settles,
-// unsettledText, where it has one. It stops at an object, whose stack V8 writes, at a throw that
-// Node says it threw in code that siteTexts leaves out, and at an await it can't tell.
+// uncaught, Init fails with what Node prints, as getNodeExit reads it, for an error or a primitive
+// that a throw statement of siteLocations throws, that the entry module's evaluation rejects with,
+// or that another promise rejects with, which Node says it threw where the entry's code made an
+// error, and Node's warning where the entry module's top-level await never settles,
+// unsettledText, where it has one. It stops at a throw that Node says it threw in code that
+// siteLocations leaves out, at an await it can't tell, and at an object whose text it can't tell.
 const getEscoreScriptSteps = (
-  siteTexts: ReadonlyMap<number, string>,
+  siteLocations: ReadonlyMap<number, string>,
   unsettledText: string | undefined,
+  url: string,
+  lines: readonly string[],
 ) => {
   const getText = (text: string) => JSON.stringify(text);
+  const getUnits = (text: string) =>
+    `<<${Array.from({ length: text.length }, (_, index) => text.charCodeAt(index)).join(", ")}>>`;
   const stop = getText("tla-ts can't print what Node prints for this uncaught exception");
   return `VARIABLE programDone
-ThrowSiteText(site) ==
-  CASE ${[...siteTexts].map(([index, text]) => `site = <<1, ${index}>> -> ${getText(text)}\n    [] `).join("")}OTHER -> Empty
+ThrowSiteLocation(site) ==
+  CASE ${[...siteLocations].map(([index, text]) => `site = <<1, ${index}>> -> ${getText(text)}\n    [] `).join("")}OTHER -> Empty
+EntryUrl == ${getUnits(url)}
+EntryLines == <<${lines.map(getUnits).join(", ")}>>
 UnitCharacters == <<${Array.from({ length: 95 }, (_, index) => getText(String.fromCharCode(index + 32))).join(", ")}>>
 RECURSIVE UnitsToText(_)
 UnitsToText(units) ==
-  IF units = <<>> THEN "" ELSE (IF Head(units) = 10 THEN "\\n" ELSE UnitCharacters[Head(units) - 31]) \\o UnitsToText(Tail(units))
+  IF units = <<>> THEN "" ELSE (CASE Head(units) = 9 -> "\\t" [] Head(units) = 10 -> "\\n" [] OTHER -> UnitCharacters[Head(units) - 31]) \\o UnitsToText(Tail(units))
 NodeText(units) ==
-  IF \\A i \\in DOMAIN units : units[i] = 10 \\/ (units[i] >= 32 /\\ units[i] <= 126) THEN UnitsToText(units) ELSE Empty
+  IF units # Empty /\\ \\A i \\in DOMAIN units : units[i] \\in {9, 10} \\/ (units[i] >= 32 /\\ units[i] <= 126) THEN UnitsToText(units) ELSE Empty
+${foldNames(ERROR_TEXT)}
 NodeUncaughtText(r) ==
   LET where == r.c.target
-      text == IF IsObject(r.c.value) \\/ IsSymbol(r.c.value) THEN Empty ELSE NodeText(PrimitiveToUnits(r.c.value))
+      v == r.c.value
+      text == IF IsObject(v) \\/ IsSymbol(v) THEN Empty ELSE NodeText(PrimitiveToUnits(v))
+      errorText == IF IsObject(v) THEN NodeText(NodeErrorText(r.s, v)) ELSE Empty
+      source == IF IsObject(v) /\\ where # Empty /\\ where.kind \\in {"module", "rejection"} THEN NodeText(NodeErrorSource(r.s, v)) ELSE Empty
   IN CASE where # Empty /\\ where.kind = "unsettled" -> ${unsettledText === undefined ? stop : getText(unsettledText)}
-       [] text = Empty \\/ where = Empty -> ${stop}
+       [] where = Empty \\/ (IsObject(v) /\\ errorText = Empty) \\/ (~IsObject(v) /\\ text = Empty) -> ${stop}
+       [] IsObject(v) /\\ where.kind \\in {"module", "rejection"} /\\ source # Empty -> source \\o "\\n\\n" \\o errorText
+       [] IsObject(v) /\\ where.kind = "throw" /\\ ThrowSiteLocation(where.site) # Empty -> ThrowSiteLocation(where.site) \\o "\\n\\n" \\o errorText
+       [] IsObject(v) -> ${stop}
        [] where.kind = "module" -> ${getText(`\n${MODULE_UNCAUGHT_LOCATION}\n`)} \\o text \\o ${getText(`\n${TRACE_UNCAUGHT_HINT}`)}
        [] where.kind = "rejection" ->
             ${getText(`${UNHANDLED_REJECTION_LOCATION}\n\n${UNHANDLED_REJECTION_PREFIX}"`)} \\o text \\o ${getText(`"${UNHANDLED_REJECTION_SUFFIX}`)}
-       [] ThrowSiteText(where.site) # Empty -> ThrowSiteText(where.site) \\o text \\o ${getText(`\n${TRACE_UNCAUGHT_HINT}`)}
+       [] where.kind = "throw" /\\ ThrowSiteLocation(where.site) # Empty -> "\\n" \\o ThrowSiteLocation(where.site) \\o "\\n" \\o text \\o ${getText(`\n${TRACE_UNCAUGHT_HINT}`)}
        [] OTHER -> ${stop}
 Init ==
   LET r == ApplyTo(RunProgram, InitialState) IN
@@ -97,35 +236,64 @@ Init ==
 Next == UNCHANGED programDone`;
 };
 
-// A TypeScript file compiled by specializing ESCore, which TLA_TS_ESCORE asks for: a script with
-// the steps above, and a model as escore-models compiles one. Node says where a script's throw
-// statement threw by the file's URL, as it runs a TypeScript file, and an ES module's at its own
-// code, but for a throw in a function, which a timer might have called.
-const compileEscoreFile = async (path: string): Promise<CompiledInput> => {
+// A TypeScript or JavaScript file compiled by specializing ESCore: a script with the steps above,
+// and a model as compileModelToEscore compiles one. Node says where a script's throw statement
+// threw by the file's URL, as it runs a TypeScript file, and an ES module's at its own code, but
+// for a throw in a function, which a timer might have called.
+const compileEscoreEntry = async (path: string): Promise<CompiledInput> => {
+  // The TypeScript compiler takes a while to load, so only a TypeScript or JavaScript input loads
+  // it.
   const ts = (await import("@typescript/typescript6")).default;
   const { compileToEscore } = await import("../typescript/spec/compile");
   const { compileModelToEscore } = await import("../typescript/spec/model");
-  const { prepareRuntime } = await import("../typescript/spec/prepare");
   const { isScript } = await import("../typescript/context");
-  const { getNodeLocation, isEsModule } = await import("../typescript/exceptions");
-  const runtime = prepareRuntime(join(import.meta.dirname, "../../ecmascript"));
+  const { getModuleFormat } = await import("../typescript/spec/resolve");
+  const { getJsxText } = await import("../typescript/program");
+  const { stripTypes } = await import("../typescript/spec/strip-types");
+  const runtime = await getEscoreRuntime();
   const source = readFileSync(path, "utf8");
-  const sourceFile = ts.createSourceFile(path, source, ts.ScriptTarget.ESNext, true);
-  const isModule = isEsModule(sourceFile);
+  // The code that Node runs, whose lines it shows: the file's text, with its JSX the calls it
+  // compiles to, and a TypeScript file's types stripped, which keeps every position.
+  const text = getJsxText(path, source);
+  const sourceFile = ts.createSourceFile(path, text, ts.ScriptTarget.ESNext, true);
+  const code = /\.[cm]?tsx?$/.test(path)
+    ? stripTypes(ts.createSourceFile(path, text, ts.ScriptTarget.ESNext, true, ts.ScriptKind.TS))
+    : text;
+  const lines = code.split(/\r\n|[\n\r\u2028\u2029]/);
+  // Node runs a file as an ES module or as CommonJS, as TypeScript and the file's syntax tell, and
+  // names it by its URL, but a CommonJS file of JavaScript by its path.
+  const isModule = getModuleFormat(path, text) === "module";
+  const url =
+    isModule || /\.[cm]?tsx?$/.test(path)
+      ? pathToFileURL(realpathSync(path)).href
+      : realpathSync(path);
+  // Where Node says code is: the file's URL and the line, then the line, with a caret under the
+  // node, whose padding has a tab where the line's UTF-8 has one (GetErrorSource of
+  // src/node_errors.cc).
+  const getLocation = (node: Node) => {
+    const start = sourceFile.getLineAndCharacterOfPosition(node.getStart());
+    const bytes = Buffer.from(lines[start.line], "utf8");
+    const padding = Array.from({ length: start.character }, (_, index) =>
+      bytes[index] === 9 ? "\t" : " ",
+    ).join("");
+    const location = `${url}:${start.line + 1}\n${lines[start.line]}\n${padding}^`;
+    // A TLA+ string holds only the characters that Node's text then has.
+    return /^[\t\n\x20-\x7e]*$/.test(location) ? location : undefined;
+  };
   const throws: ThrowStatement[] = [];
   const collect = (node: Node): void => {
     if (ts.isThrowStatement(node)) throws.push(node);
     ts.forEachChild(node, collect);
   };
   collect(sourceFile);
-  const siteTexts = new Map(
-    throws.flatMap((statement, index) =>
-      !isModule
-        ? [[index + 1, `\n${getNodeLocation(statement, false)}\n`] as const]
-        : ts.findAncestor(statement, ts.isFunctionLike) === undefined
-          ? [[index + 1, `\n${MODULE_UNCAUGHT_LOCATION}\n`] as const]
-          : [],
-    ),
+  // Node says where a script's throw threw, and an ES module's where its error was made.
+  const siteLocations = new Map(
+    isModule
+      ? []
+      : throws.flatMap((statement, index) => {
+          const location = getLocation(statement);
+          return location === undefined ? [] : [[index + 1, location] as const];
+        }),
   );
   // Node says where the entry module awaits once nothing is left to run, which tla-ts tells where
   // its top level awaits at one place.
@@ -143,18 +311,18 @@ const compileEscoreFile = async (path: string): Promise<CompiledInput> => {
     ts.forEachChild(node, collectAwaits);
   };
   collectAwaits(sourceFile);
-  const unsettledText =
-    awaits.length === 1
-      ? `${UNSETTLED_AWAIT_WARNING}${getNodeLocation(awaits[0], true)}`
-      : undefined;
-  const isScriptFile = isScript(sourceFile);
-  const model = isScriptFile ? undefined : compileModelToEscore(source, path, runtime);
+  const awaited = awaits.length === 1 ? getLocation(awaits[0]) : undefined;
+  const unsettledText = awaited === undefined ? undefined : `${UNSETTLED_AWAIT_WARNING}${awaited}`;
+  // A module whose exported functions the model calls none of runs as a script.
+  const model = isScript(sourceFile) ? undefined : compileModelToEscore(source, path, runtime);
+  const isScriptFile = model === undefined || model.isScript;
   const spec =
-    model ??
-    compileToEscore(source, path, runtime, isModule, {
-      steps: getEscoreScriptSteps(siteTexts, unsettledText),
-      entries: [],
-    });
+    model !== undefined && !model.isScript
+      ? model
+      : compileToEscore(source, path, runtime, true, {
+          steps: getEscoreScriptSteps(siteLocations, unsettledText, url, lines),
+          entries: [],
+        });
   return {
     path,
     specPath: join(dirname(path), `${spec.name}.tla`),
@@ -163,29 +331,64 @@ const compileEscoreFile = async (path: string): Promise<CompiledInput> => {
     loadModule: spec.loadModule,
     preparedModules: spec.preparedModules,
     isScript: isScriptFile,
-    isPrepared: true,
     notes: model?.notes ?? [],
   };
 };
 
-export const compileTypeScriptFile = async (path: string): Promise<CompiledInput> => {
-  if (process.env.TLA_TS_ESCORE !== undefined) return compileEscoreFile(path);
-  // The TypeScript compiler takes a while to load, so only a TypeScript input loads it.
-  const compiled = (await import("../typescript/compile")).compile(
-    readFileSync(path, "utf8"),
-    path,
-    undefined,
-    true,
-  );
+// Where Node's type stripping rejects the syntax of a file that it loads as CommonJS, the spec of a
+// program that fails as Node does, with Node's SyntaxError: where the file's code is, with the
+// line before and the line after, a caret under each character of the syntax, and the error's
+// code. A file that Node loads as an ES module fails in Node's own code, whose place in Node's
+// text tla-ts can't tell, and the error stops there, as does one at syntax across lines.
+const compileRejection = async (path: string, error: TlaStrippingError) => {
+  const ts = (await import("@typescript/typescript6")).default;
+  const { compileToEscore } = await import("../typescript/spec/compile");
+  const text = readFileSync(path, "utf8");
+  const sourceFile = ts.createSourceFile(path, text, ts.ScriptTarget.ESNext, true);
+  const start = sourceFile.getLineAndCharacterOfPosition(error.start);
+  const end = sourceFile.getLineAndCharacterOfPosition(error.end);
+  const lines = text.split(/\r\n|[\n\r\u2028\u2029]/);
+  const isModule =
+    ts.getImpliedNodeFormatForFile(path, undefined, ts.sys, {
+      moduleResolution: ts.ModuleResolutionKind.NodeNext,
+    }) === ts.ModuleKind.ESNext;
+  const shown = [
+    ...(start.line > 0 ? [lines[start.line - 1]] : []),
+    lines[start.line],
+    `${lines[start.line].slice(0, start.character).replace(/[^\t]/g, " ")}${"^".repeat(end.character - start.character)}`,
+    ...(start.line + 2 < lines.length || (lines[start.line + 1] ?? "") !== ""
+      ? [lines[start.line + 1]]
+      : []),
+  ];
+  const message = `${pathToFileURL(realpathSync(path)).href}:${start.line + 1}\n${shown.join("\n")}\n\nSyntaxError [${error.code}]: ${error.reason} {\n  code: '${error.code}'\n}`;
+  if (
+    isModule ||
+    realpathSync(error.fileName) !== realpathSync(path) ||
+    start.line !== end.line ||
+    !/^[\t\n\x20-\x7e]*$/.test(message)
+  ) {
+    throw error;
+  }
+  const spec = compileToEscore("", path, await getEscoreRuntime(), false, {
+    steps: `VARIABLE programDone\nInit == Assert(FALSE, ${JSON.stringify(message)}) /\\ programDone = TRUE\nNext == UNCHANGED programDone`,
+    entries: [],
+  });
   return {
     path,
-    specPath: join(dirname(path), `${compiled.name}.tla`),
-    source: compiled.source,
-    config: compiled.config,
-    loadModule: compiled.loadModule,
-    preparedModules: compiled.preparedModules,
-    isScript: compiled.isScript,
-    isPrepared: false,
-    notes: compiled.notes,
+    specPath: join(dirname(path), `${spec.name}.tla`),
+    source: parseModule(spec.source),
+    config: spec.config,
+    loadModule: spec.loadModule,
+    preparedModules: spec.preparedModules,
+    isScript: true,
+    isPrepared: true,
+    notes: [],
   };
 };
+
+// A TypeScript or JavaScript file compiled by specializing ESCore (see compileEscoreEntry), or,
+// where Node's type stripping rejects it, a program that fails as Node does.
+export const compileTypeScriptFile = (path: string): Promise<CompiledInput> =>
+  compileEscoreEntry(path).catch((error: unknown) =>
+    error instanceof TlaStrippingError ? compileRejection(path, error) : Promise.reject(error),
+  );

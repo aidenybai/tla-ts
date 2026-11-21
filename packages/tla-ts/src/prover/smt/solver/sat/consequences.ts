@@ -1,4 +1,3 @@
-// Ported from Z3 (src/sat/sat_solver.cpp, src/util/uint_set.h), MIT license, see z3-license.txt.
 import { SmtUnsupportedError } from "../../../../errors";
 import { getIdentityHash, ObjHashtable } from "../hashtable";
 import { L_FALSE, L_TRUE, L_UNDEF } from "../lbool";

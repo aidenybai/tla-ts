@@ -1,4 +1,5 @@
 import type { CheckOptions, TraceStep, Violation } from "./check";
+import type { CoverageOutput } from "./coverage";
 import {
   isStackOverflow,
   TlaEvaluationError,
@@ -7,14 +8,27 @@ import {
   TlaStackOverflowError,
   TlaTooManyStatesError,
   TlaUnsupportedError,
+  TlaSetBoundError,
   UNEXPECTED_EVAL_EXCEPTION,
   UNEXPECTED_EXCEPTION,
+  WRONG_INVOCATION_EXCEPTION,
 } from "./errors";
-import { EXIT_STATUS, getMessageExitStatus, withLivenessExitCode } from "./exit-codes";
-import { createLivenessChecker, type LivenessChecker } from "./liveness-checker";
-import { getIncompleteSuccessorMessage, prepareSearch, reportAssumptionViolation } from "./search";
+import type { State } from "./evaluate";
+import { EXIT_STATUS, getMessageExitStatus, withLivenessChecksExitCode } from "./exit-codes";
+import { getHashMapOrder } from "./java-hash";
+import { createLivenessChecks } from "./liveness-checker";
+import {
+  addActionCoverage,
+  createOutputCapture,
+  getIncompleteSuccessorMessage,
+  prepareSearch,
+  reportAssumptionViolation,
+  STOP_WALK,
+  walkCoveredSuccessors,
+  type CliSettings,
+} from "./search";
 import { getActionLabel, toActionValue, type SpecAction } from "./spec-description";
-import { forEachInitialState, forEachSuccessor } from "./successors";
+import { forEachInitialState, forEachSuccessor, type Successor } from "./successors";
 import {
   formatInnerMessage,
   formatNestedMessage,
@@ -25,15 +39,24 @@ import {
   isHeadedError,
   MESSAGE_CODE,
   withUnexpectedException,
+  type FailureMessage,
 } from "./tlc/messages";
 import { createJavaRandom, nextPrime, type JavaRandom } from "./tlc/random";
-import { createCounterExample } from "./tlc/tlcext-operators";
+import { replayInitialStates } from "./tlc/replay";
 import {
+  createActionRecord,
+  createCounterExample,
+  createTlcRecord,
+  type CounterExampleLoop,
+} from "./tlc/tlcext-operators";
+import {
+  computeLikeTlcOnFailure,
   createModelValue,
   createRecord,
   formatState,
   getSetBound,
-  isSameValue,
+  markNormalized,
+  valuesEqual,
   type Value,
 } from "./values";
 
@@ -43,6 +66,8 @@ export interface SimulationOptions extends CheckOptions {
   aril: bigint;
   isGenerating: boolean;
   scheduler: "random" | "rl" | "rlaction";
+  /** TLC's -difftrace, which also drops the steps of a printed behavior that repeat a fingerprint. */
+  isDiffTrace?: boolean;
   onSimulation: (output: SimulationOutput) => void;
 }
 
@@ -57,7 +82,8 @@ export interface SimulationStatistics {
 
 export type SimulationOutput =
   | { kind: "message"; code: number; isError: boolean; message: string; toolMessage: string }
-  | { kind: "behavior"; trace: TraceStep[]; isLastStateOnly: boolean }
+  | { kind: "behavior"; trace: TraceStep[]; levels: number[]; isLastStateOnly: boolean }
+  | CoverageOutput
   | { kind: "progress"; statistics: SimulationStatistics }
   | { kind: "summary"; statistics: SimulationStatistics };
 
@@ -67,6 +93,7 @@ interface TraceNode {
   predecessor: TraceNode | undefined;
   level: number;
   deferred?: (next: Value[]) => void;
+  incomplete?: State;
 }
 
 interface WorkerError {
@@ -77,6 +104,8 @@ interface WorkerError {
   isException: boolean;
   isSummarized: boolean;
   violation?: Violation;
+  failures?: FailureMessage[];
+  counterExample?: Value;
 }
 
 const FATAL_CODES = new Set<number>([
@@ -91,14 +120,25 @@ const RL_ALPHA = 0.3;
 const RL_GAMMA = 0.7;
 const RL_REWARD = -10;
 
-const isSameState = (left: Value[], right: Value[]) =>
-  left.every((value, index) => isSameValue(value, right[index]));
+const isUnequal = () => false;
 
-const getTrace = (last: TraceNode) => {
+// TLC's SimulationWorker#getTrace drops a step its TLCState#equals finds stuttering, which sorts the records it compares.
+const isRepeatedState = (state: Value[], predecessor: Value[], order: number[]) => {
+  for (let position = 0; position < order.length; position++) {
+    const index = order[position];
+    // Deviation from TLC: TLCState#equals fails on values it can't compare, so TLC's simulation reports that failure in place of the violation, or hangs.
+    if (!computeLikeTlcOnFailure(valuesEqual, isUnequal, state[index], predecessor[index])) {
+      return false;
+    }
+  }
+  return true;
+};
+
+const getTrace = (last: TraceNode, order: number[]) => {
   const trace: TraceNode[] = [];
   for (let node: TraceNode | undefined = last; node; node = node.predecessor) {
     const predecessor = node.predecessor;
-    if (predecessor && isSameState(node.state, predecessor.state)) continue;
+    if (predecessor && isRepeatedState(node.state, predecessor.state, order)) continue;
     trace.unshift(node);
   }
   trace.forEach((node, index) => {
@@ -106,57 +146,6 @@ const getTrace = (last: TraceNode) => {
     node.level = index + 1;
   });
   return trace;
-};
-
-const findTemporalViolation = (
-  trace: TraceNode[],
-  getFingerprint: (state: Value[]) => bigint,
-  createChecker: (successors: number[][], states: Value[][]) => LivenessChecker | undefined,
-) => {
-  const fingerprints = trace.map((node) => getFingerprint(node.state));
-  const indices = new Map<bigint, number>();
-  const states: Value[][] = [];
-  const successors: number[][] = [];
-  fingerprints.forEach((fingerprint, position) => {
-    if (!indices.has(fingerprint)) {
-      indices.set(fingerprint, states.length);
-      states.push(trace[position].state);
-      successors.push([]);
-    }
-    if (position === 0) return;
-    const source = indices.get(fingerprints[position - 1]) ?? 0;
-    const target = indices.get(fingerprint) ?? 0;
-    if (source !== target && !successors[source].includes(target)) {
-      successors[source].push(target);
-    }
-  });
-  const checker = createChecker(successors, states);
-  if (!checker) return undefined;
-  checker.addInitialState(0, states[0]);
-  states.forEach((state, index) =>
-    checker.addState(
-      index,
-      state,
-      successors[index].map((successor) => ({ index: successor, state: states[successor] })),
-    ),
-  );
-  const lasso = checker.findViolation();
-  if (!lasso) return undefined;
-  const getLength = (path: number[]) =>
-    path.filter((index, position) => position === 0 || index !== path[position - 1]).length;
-  const path = [...lasso.prefix, ...lasso.cycle];
-  const length = getLength(path);
-  const cyclePosition = getLength(path.slice(0, lasso.prefix.length + 1));
-  const isStuttering =
-    fingerprints[length - 1] === getFingerprint(states[path[lasso.prefix.length]]);
-  return {
-    length,
-    loopStart: isStuttering ? length - 1 : cyclePosition - 1,
-    properties: checker.getViolatedProperties(
-      trace.slice(0, length).map((node) => node.state),
-      cyclePosition - 1,
-    ),
-  };
 };
 
 const createScheduler = (
@@ -218,13 +207,15 @@ const createScheduler = (
   };
 };
 
-export const simulate = (options: SimulationOptions): number => {
+export const simulate = (options: SimulationOptions & CliSettings): number => {
   const output = options.onSimulation;
-  const prepared = prepareSearch(options);
+  const capture = createOutputCapture(options.onPrint ?? console.log);
+  const prepared = prepareSearch({ ...options, onPrint: capture.print });
   const config = prepared.config;
   const specification = prepared.specification;
   const environment = prepared.environment;
   const runtime = environment.runtime;
+  capture.captureMessages(runtime, options.errorCodes);
   const search = prepared.search;
   const seed = options.seed ?? 0n;
   const traceDepth = options.traceDepth === -1 ? INFINITE_DEPTH : options.traceDepth;
@@ -242,23 +233,32 @@ export const simulate = (options: SimulationOptions): number => {
   };
   const reportMessage = (code: number, text: string, toolText = text, isError = true) =>
     output({ kind: "message", code, isError, message: text, toolMessage: toolText });
-  const printSummary = () => output({ kind: "summary", statistics: { ...statistics } });
+  const reportCoverage = () => {
+    const report = prepared.getCoverage();
+    if (report) output({ kind: "coverage", coverage: report });
+  };
+  const printSummary = () => {
+    reportCoverage();
+    output({ kind: "summary", statistics: { ...statistics } });
+  };
   const nodes = new WeakMap<(Value | undefined)[], TraceNode>();
   const description = prepared.getDescription();
   const initActions = description.inits;
   const nextActions = description.actions;
+  const coverage = prepared.coverage;
+  const covered = coverage && addActionCoverage(coverage, environment, description);
   let traceCount = 0;
   let currentTrace = 0;
+  // TLC's Simulator computes the initial states, prints the behaviors and checks the postcondition on its own thread, where TLCGet("diameter") is 0.
+  let isOnWorker = false;
+  let evaluatedAction: SpecAction | undefined;
+  runtime.getSuccessorAction = () => evaluatedAction;
   runtime.getLevel = (state) => nodes.get(state)?.level ?? 0;
-  runtime.getBehavior = (state) => {
-    const node = nodes.get(state);
-    return node ? getTrace(node).map((step) => step.state) : [state];
-  };
   runtime.getSimulationValue = (key, state) => {
     const node = state && nodes.get(state);
     switch (key) {
       case "diameter":
-        return currentTrace === 0 ? 0 : traceCount + 1;
+        return isOnWorker ? traceCount + 1 : 0;
       case "generated":
       case "distinct":
       case "queue":
@@ -266,7 +266,7 @@ export const simulate = (options: SimulationOptions): number => {
       case "action":
         return node && toActionValue(node.action);
       case "config":
-        return createRecord([
+        return createTlcRecord([
           ["mode", options.isGenerating ? "generate" : "simulate"],
           ["depth", traceDepth === INFINITE_DEPTH ? -1 : traceDepth],
           ["traces", Number(BigInt.asIntN(32, traceLimit))],
@@ -282,14 +282,19 @@ export const simulate = (options: SimulationOptions): number => {
         for (let step = node; step && step.level > 1; step = step.predecessor) {
           actions.set(step.action.name, (actions.get(step.action.name) ?? 0) + 1);
         }
-        return createRecord([
+        // TLC's SimulationWorker counts the actions of a behavior in a HashMap.
+        const counts = getHashMapOrder([...actions.keys()]).map((name): [string, Value] => [
+          name,
+          actions.get(name) ?? 0,
+        ]);
+        return createTlcRecord([
           ["traces", statistics.traces],
           ["duration", Math.floor((Date.now() - runtime.startedAt) / 1000)],
           ["generated", statistics.generatedStates],
           [
             "behavior",
-            createRecord([
-              ["actions", createRecord([...actions])],
+            createTlcRecord([
+              ["actions", createTlcRecord(counts)],
               ["id", currentTrace],
             ]),
           ],
@@ -309,8 +314,12 @@ export const simulate = (options: SimulationOptions): number => {
   if (!search) {
     throw new TlaUnsupportedError("tla-ts can't simulate a specification without variables");
   }
-  const reportPostcondition = (isAfterViolation: boolean) => {
-    const postcondition = search.findPostconditionViolation(isAfterViolation);
+  runtime.getBehavior = (state) => {
+    const node = nodes.get(state);
+    return node ? getTrace(node, search.getTlcOrder()).map((step) => step.state) : [state];
+  };
+  const reportPostcondition = () => {
+    const postcondition = search.findPostconditionViolation();
     if (!postcondition) return undefined;
     if (postcondition.counts !== undefined) (options.onPrint ?? console.log)(postcondition.counts);
     reportMessage(
@@ -320,19 +329,12 @@ export const simulate = (options: SimulationOptions): number => {
     );
     return postcondition;
   };
-  const temporalProperties = search.properties.liveness;
-  const createTemporalChecker = (successors: number[][], states: Value[][]) =>
-    withLivenessExitCode(() =>
-      withUnexpectedException(() =>
-        createLivenessChecker(temporalProperties, search.spec.temporals, environment, {
-          getFingerprint: (successor) =>
-            Number(BigInt.asIntN(32, runtime.getFingerprint(successor.state))),
-          getSuccessors: (index) =>
-            successors[index].map((successor) => ({ index: successor, state: states[successor] })),
-        }),
-      ),
-    );
-  const branches = createTemporalChecker([], [])?.branches;
+  const livenessChecks = withLivenessChecksExitCode(() =>
+    withUnexpectedException(() =>
+      createLivenessChecks(search.properties.liveness, search.spec.temporals, environment),
+    ),
+  );
+  const branches = livenessChecks?.solutions.length;
   if (branches) options.onProgress?.({ kind: "liveness-prepared", branches });
   const assumptionStatus = reportAssumptionViolation(
     specification.assumptions,
@@ -348,26 +350,41 @@ export const simulate = (options: SimulationOptions): number => {
   };
   const toRecord = (state: (Value | undefined)[]) =>
     search.toRecord(state.map((value) => value ?? createModelValue("null")));
-  const toTraceSteps = (trace: TraceNode[]): TraceStep[] =>
-    trace.map((node, index) => ({
-      action: node.action.name,
-      label: getActionLabel(node.action, options.version, node.level === 1),
-      state:
-        config.alias === undefined || !node.state.every((value) => value !== undefined)
-          ? toRecord(node.state)
-          : search.evaluateAlias(
-              config.alias,
-              node.state,
-              (trace[index + 1] ?? node).state,
-              options.isTool ?? false,
-            ),
-    }));
-  const getCounterExample = (trace: TraceNode[]) =>
+  const toTraceSteps = (
+    trace: TraceNode[],
+    positions = trace.map((_node, index) => index),
+    isAliased = true,
+  ): TraceStep[] =>
+    positions.map((position) => {
+      const node = trace[position];
+      const successor = trace[position + 1] ?? node;
+      return {
+        action: node.action.name,
+        label: getActionLabel(node.action, options.version, node.level === 1),
+        state:
+          config.alias === undefined || !isAliased
+            ? toRecord(node.state)
+            : search.evaluateAlias(
+                config.alias,
+                node.incomplete ?? node.state,
+                successor.incomplete ?? successor.state,
+                options.isTool ?? false,
+              ),
+      };
+    });
+  const getCounterExample = (
+    trace: TraceNode[],
+    steps = toTraceSteps(trace),
+    loop?: CounterExampleLoop,
+  ) =>
     createCounterExample(
-      trace.map((node) => search.toRecord(node.state)),
+      steps.map((step) => step.state),
       trace.slice(1).map((node) => toActionValue(node.action)),
-      undefined,
+      loop,
     );
+  // TLC's Simulator binds CounterExample to an initial state that violates an invariant, not to its alias.
+  const getInitialCounterExample = (node: TraceNode) =>
+    createCounterExample([toRecord(node.state)], [], undefined);
 
   const initialStates: TraceNode[] = [];
   const isComplete = (state: (Value | undefined)[]): state is Value[] =>
@@ -401,7 +418,13 @@ export const simulate = (options: SimulationOptions): number => {
     return false;
   };
   try {
-    if (init) forEachInitialState(init, environment, addGenerated, search.spec.scope, addGenerated);
+    if (covered) {
+      replayInitialStates(covered.inits, environment, addGenerated, (partial) =>
+        addGenerated([...partial]),
+      );
+    } else if (init) {
+      forEachInitialState(init, environment, addGenerated, search.spec.scope, addGenerated);
+    }
   } catch (error) {
     return reportInitialException(error, undefined);
   }
@@ -412,6 +435,7 @@ export const simulate = (options: SimulationOptions): number => {
     undefined,
     false,
   );
+  const generatedNodes: TraceNode[] = [];
   for (const state of generated) {
     if (!isComplete(state)) {
       reportMessage(
@@ -429,22 +453,11 @@ export const simulate = (options: SimulationOptions): number => {
           MESSAGE_CODE.invariantViolatedInitial,
           `Invariant ${violated.name} is violated by the initial state:\n${formatState(alias)}`,
         );
-        runtime.counterExample = getCounterExample([node]);
-        reportPostcondition(true);
+        runtime.counterExample = getInitialCounterExample(node);
+        reportPostcondition();
         return EXIT_STATUS.safetyViolation;
       }
-      // Deviation from TLC: its simulator checks no implied init, tla-ts checks them after invariants.
-      const predicate = search.findFailedInitialPredicate(state);
-      if (predicate) {
-        const alias = toTraceSteps([node])[0].state;
-        reportMessage(
-          MESSAGE_CODE.propertyViolatedInitial,
-          `Property ${predicate.name} is violated by the initial state:\n${formatState(alias)}`,
-        );
-        runtime.counterExample = getCounterExample([node]);
-        reportPostcondition(true);
-        return EXIT_STATUS.livenessViolation;
-      }
+      generatedNodes.push(node);
       if (search.satisfiesConstraints(state)) {
         search.trackStatePossible(state);
         initialStates.push(node);
@@ -467,12 +480,32 @@ export const simulate = (options: SimulationOptions): number => {
     );
     return EXIT_STATUS.error;
   }
+  // Deviation from TLC: its simulator checks no implied init, tla-ts checks them after TLC's own checks of the initial states.
+  for (const node of generatedNodes) {
+    try {
+      const predicate = search.findFailedInitialPredicate(node.state);
+      if (predicate) {
+        const alias = toTraceSteps([node])[0].state;
+        reportMessage(
+          MESSAGE_CODE.propertyViolatedInitial,
+          `Property ${predicate.name} is violated by the initial state:\n${formatState(alias)}`,
+        );
+        runtime.counterExample = getInitialCounterExample(node);
+        reportPostcondition();
+        return EXIT_STATUS.livenessViolation;
+      }
+    } catch (error) {
+      return reportInitialException(error, node.state);
+    }
+  }
   reportMessage(
     MESSAGE_CODE.initGenerated1,
     `Finished computing initial states: ${initialStates.length} distinct state generated at ${formatTlcDate(new Date())}.`,
     undefined,
     false,
   );
+  // TLC's Simulator deep-normalizes the initial states, which sorts their records.
+  initialStates.forEach((node) => node.state.forEach(markNormalized));
 
   const toWorkerError = (code: number, text: string, node: TraceNode): WorkerError => ({
     code,
@@ -482,75 +515,102 @@ export const simulate = (options: SimulationOptions): number => {
     isException: false,
     isSummarized: true,
   });
-  const getSuccessors = (current: TraceNode, action: SpecAction) => {
-    const successors: TraceNode[] = [];
+  const generator = options.isGenerating ? { random: workerRandom, kept: 0 } : undefined;
+  const getSuccessors = (current: TraceNode, index: number) => {
+    const action = nextActions[index];
+    const coveredAction = covered?.actions[index];
+    const keptSuccessors: TraceNode[] = [];
+    if (generator) generator.kept = 0;
     let failure: WorkerError | undefined;
     runtime.deferred = undefined;
+    evaluatedAction = action;
+    const visit = (successor: Successor) => {
+      const node = toNode(successor.state, action, current);
+      node.deferred = runtime.deferred;
+      runtime.deferred = undefined;
+      statistics.generatedStates++;
+      try {
+        const violated = search.findViolatedInvariant(node.state, current.state);
+        if (violated) {
+          failure = toWorkerError(
+            MESSAGE_CODE.invariantViolatedBehavior,
+            `Invariant ${violated.name} is violated.`,
+            node,
+          );
+          return true;
+        }
+        const property = search.findViolatedActionProperty(current.state, node.state);
+        if (property) {
+          failure = toWorkerError(
+            MESSAGE_CODE.actionPropertyViolatedBehavior,
+            `Action property ${property.name} is violated.`,
+            node,
+          );
+          return true;
+        }
+      } catch (error) {
+        if (!(error instanceof TlaEvaluationError) || !isHeadedError(error)) throw error;
+        const text = getFailureMessage(error, true);
+        failure = {
+          ...toWorkerError(text.code, text.message, node),
+          toolMessage: text.toolMessage,
+        };
+        return true;
+      }
+      if (!search.satisfiesConstraints(node.state, current.state)) return false;
+      search.trackStatePossible(node.state);
+      if (!search.satisfiesActionConstraints(current.state, node.state)) return false;
+      search.trackActionPossible(current.state, node.state);
+      if (keptSuccessors.length === getSetBound()) throw new TlaTooManyStatesError();
+      if (coverage && coveredAction) coverage.secondary[coveredAction.node]++;
+      keptSuccessors.push(node);
+      if (generator) generator.kept++;
+      return false;
+    };
     try {
-      forEachSuccessor(
-        action.expression,
-        current.state,
-        environment,
-        (successor) => {
-          const node = toNode(successor.state, action, current);
-          node.deferred = runtime.deferred;
-          runtime.deferred = undefined;
-          statistics.generatedStates++;
-          try {
-            const violated = search.findViolatedInvariant(node.state, current.state);
-            if (violated) {
-              failure = toWorkerError(
-                MESSAGE_CODE.invariantViolatedBehavior,
-                `Invariant ${violated.name} is violated.`,
-                node,
-              );
-              return true;
-            }
-            const property = search.findViolatedActionProperty(current.state, node.state);
-            if (property) {
-              failure = toWorkerError(
-                MESSAGE_CODE.actionPropertyViolatedBehavior,
-                `Action property ${property.name} is violated.`,
-                node,
-              );
-              return true;
-            }
-          } catch (error) {
-            if (!(error instanceof TlaEvaluationError) || !isHeadedError(error)) throw error;
-            const text = getFailureMessage(error, true);
-            failure = {
-              ...toWorkerError(text.code, text.message, node),
-              toolMessage: text.toolMessage,
-            };
-            return true;
-          }
-          if (!search.satisfiesConstraints(node.state, current.state)) return false;
-          search.trackStatePossible(node.state);
-          if (!search.satisfiesActionConstraints(current.state, node.state)) return false;
-          search.trackActionPossible(current.state, node.state);
-          if (successors.length === getSetBound()) throw new TlaTooManyStatesError();
-          successors.push(node);
-          return false;
-        },
-        action.scope,
-        options.isGenerating ? workerRandom : undefined,
-      );
+      if (coverage && coveredAction) {
+        walkCoveredSuccessors(
+          coverage,
+          coveredAction,
+          current.state,
+          environment,
+          (state) => {
+            if (visit({ state, action: action.name })) throw STOP_WALK;
+          },
+          undefined,
+          generator,
+        );
+      } else {
+        forEachSuccessor(
+          action.expression,
+          current.state,
+          environment,
+          visit,
+          action.scope,
+          generator,
+        );
+      }
     } catch (error) {
+      if (error === STOP_WALK) return { successors: keptSuccessors, error: failure };
       if (!(error instanceof TlaIncompleteSuccessorError)) throw error;
       const node = toNode(
         error.state.map((value) => value ?? createModelValue("null")),
         action,
         current,
       );
+      node.incomplete = error.state;
       const text = getIncompleteSuccessorMessage(
         error.variables,
         action.name,
         nextActions.length,
         options.version,
       );
-      return { successors, error: toWorkerError(MESSAGE_CODE.incompleteSuccessor, text, node) };
+      return {
+        successors: keptSuccessors,
+        error: toWorkerError(MESSAGE_CODE.incompleteSuccessor, text, node),
+      };
     }
-    return { successors, error: failure };
+    return { successors: keptSuccessors, error: failure };
   };
   let currentNode = initialStates[0];
   const scheduler = createScheduler(
@@ -560,18 +620,37 @@ export const simulate = (options: SimulationOptions): number => {
     runtime.getFingerprint,
     search.getReward,
   );
-  const getTemporalViolation = (last: TraceNode): Violation | undefined => {
-    if (temporalProperties.length === 0) return undefined;
-    const trace = getTrace(last);
-    const found = findTemporalViolation(trace, runtime.getFingerprint, createTemporalChecker);
+  const getTemporalViolation = (last: TraceNode): WorkerError | undefined => {
+    if (!livenessChecks) return undefined;
+    const trace = getTrace(last, search.getTlcOrder());
+    // TLC's LiveCheck#checkTrace fingerprints each state, which sorts its records.
+    for (let position = 0; position < trace.length; position++) {
+      trace[position].state.forEach(markNormalized);
+    }
+    const found = livenessChecks.findTraceViolation(
+      trace.map((node) => node.state),
+      trace.map((node) => runtime.getFingerprint(node.state)),
+    );
     if (!found) return undefined;
-    const back = trace[found.length];
+    const back = found.backPosition === undefined ? undefined : trace[found.backPosition];
+    const lasso = found.positions.map((position) => trace[position]);
+    const loopStart = back ? found.cyclePosition - 1 : lasso.length - 1;
+    // Deviation from TLC: LiveCheck1#printErrorTrace gives the ALIAS each state's predecessor as its successor, which throws a NullPointerException at the initial state.
+    // Deviation from TLC: LiveCheck1#printErrorTrace rebuilds the cycle from aliased states, which throws a NullPointerException for an ALIAS that drops a variable.
+    const steps = toTraceSteps(lasso);
+    const loopAction = back ? toActionValue(back.action) : createActionRecord(undefined);
     return {
-      name: found.properties[0],
-      properties: found.properties,
-      trace: toTraceSteps(trace.slice(0, found.length)),
-      loopStart: found.loopStart,
-      loopLabel: back && getActionLabel(back.action, options.version, back.level === 1),
+      ...toWorkerError(MESSAGE_CODE.temporalPropertyViolated, "", last),
+      isException: true,
+      violation: {
+        name: found.properties[0],
+        properties: found.properties,
+        trace: steps,
+        loopStart,
+        loopLabel: back && getActionLabel(back.action, options.version, back.level === 1),
+      },
+      failures: found.failures.map((failure) => toException(failure, last)),
+      counterExample: getCounterExample(lasso, steps, { start: loopStart, action: loopAction }),
     };
   };
   const simulateTrace = (): WorkerError | "stopped" | undefined => {
@@ -582,7 +661,8 @@ export const simulate = (options: SimulationOptions): number => {
       const prime = nextPrime(workerRandom);
       let successors: TraceNode[] = [];
       for (let attempt = 0; attempt < nextActions.length; attempt++) {
-        const result = getSuccessors(currentNode, nextActions[actionIndex]);
+        const result = getSuccessors(currentNode, actionIndex);
+        // Deviation from TLC: TLCSet("exit") interrupts TLC's SimulationWorker, whose BlockingQueue#put then drops a violation found in the same step.
         if (result.error) return result.error;
         successors = result.successors;
         if (successors.length > 0) break;
@@ -600,13 +680,7 @@ export const simulate = (options: SimulationOptions): number => {
     }
     if (runtime.isStopped) return "stopped";
     const violation = getTemporalViolation(currentNode);
-    if (violation) {
-      return {
-        ...toWorkerError(MESSAGE_CODE.temporalPropertyViolated, "", currentNode),
-        isException: true,
-        violation,
-      };
-    }
+    if (violation) return violation;
     const length = Math.min(traceDepth, currentNode.level);
     const delta = length - statistics.levelMean;
     statistics.levelMean += Math.trunc(delta / Math.max(statistics.traces, 1));
@@ -638,10 +712,34 @@ export const simulate = (options: SimulationOptions): number => {
     };
   };
 
+  const getDiffTracePositions = (trace: TraceNode[]) => {
+    const positions = [0];
+    for (let position = 1; position < trace.length; position++) {
+      const current = trace[position].state;
+      const last = trace[position - 1].state;
+      current.forEach(markNormalized);
+      last.forEach(markNormalized);
+      try {
+        // Deviation from TLC: TLCStateMut#fingerPrint throws a NullPointerException on the incomplete state of a successor error.
+        if (
+          trace[position].incomplete ||
+          runtime.getFingerprint(current) !== runtime.getFingerprint(last)
+        ) {
+          positions.push(position);
+        }
+      } catch (error) {
+        return { positions, failure: toException(error, trace[position]) };
+      }
+    }
+    return { positions, failure: undefined };
+  };
+
+  const getSimulatorRandom = runtime.getRandom;
   const enumerableRandom = createJavaRandom(seed);
   runtime.getRandom = () => enumerableRandom;
   const errors: WorkerError[] = [];
   const isContinued = options.isContinued ?? false;
+  isOnWorker = true;
   while (true) {
     statistics.traces++;
     currentTrace = statistics.traces;
@@ -664,37 +762,77 @@ export const simulate = (options: SimulationOptions): number => {
       break;
     }
   }
+  isOnWorker = false;
+  runtime.getRandom = getSimulatorRandom;
   const printed = errors.findIndex(
     (error) => error.isException || !isContinued || FATAL_CODES.has(error.code),
   );
   const reported = printed === -1 ? errors : errors.slice(0, printed + 1);
-  reported.forEach((error) => {
+  for (const error of reported) {
     if (error.violation) {
+      error.failures?.forEach((failure) =>
+        reportMessage(failure.code, failure.message, failure.toolMessage),
+      );
       options.onProgress?.({
         kind: "violation",
         status: "liveness-violation",
         violation: error.violation,
       });
       printSummary();
-      return;
+      continue;
     }
     reportMessage(error.code, error.message, error.toolMessage);
+    const trace = getTrace(error.node, search.getTlcOrder());
+    const isLastStateOnly = traceDepth === INFINITE_DEPTH;
+    // Deviation from TLC: StatePrinter fingerprints each state it prints, so a state whose VIEW or function fails to fingerprint crashes TLC without -difftrace too.
+    const shown =
+      options.isDiffTrace && !isLastStateOnly
+        ? getDiffTracePositions(trace)
+        : { positions: trace.map((_node, index) => index), failure: undefined };
     output({
       kind: "behavior",
-      trace: toTraceSteps(getTrace(error.node)),
-      isLastStateOnly: traceDepth === INFINITE_DEPTH,
+      // TLC prints the error state of an unbounded behavior alone, as TLCState#toString does, without the alias.
+      trace: shown.positions.map((position) => {
+        const captured = capture.captureOutput(
+          () => toTraceSteps(trace, [position], !isLastStateOnly)[0],
+        );
+        return captured.lines.length > 0
+          ? { ...captured.result, aliasOutput: captured.lines }
+          : captured.result;
+      }),
+      levels: shown.positions.map((position) => trace[position].level),
+      isLastStateOnly,
     });
+    const failure = shown.failure;
+    if (failure) {
+      reportMessage(failure.code, failure.message, failure.toolMessage);
+      return getMessageExitStatus(failure.code);
+    }
+    const omitted = trace.length - shown.positions.length;
+    if (omitted > 0) {
+      reportMessage(
+        MESSAGE_CODE.general,
+        `difftrace requested: Shortened behavior by omitting finite stuttering (${omitted} states), which is an artifact of simulation mode.\n`,
+        undefined,
+        false,
+      );
+    }
     if (error.isSummarized) printSummary();
-  });
+  }
   const last = reported[reported.length - 1];
   const errorStatus = last ? getMessageExitStatus(last.code) : EXIT_STATUS.success;
-  if (last) runtime.counterExample = getCounterExample(getTrace(last.node));
-  const postcondition = reportPostcondition(last !== undefined);
+  if (last) {
+    runtime.counterExample =
+      last.counterExample ?? getCounterExample(getTrace(last.node, search.getTlcOrder()));
+  }
+  const postcondition = reportPostcondition();
   const postconditionStatus = postcondition
     ? getMessageExitStatus(postcondition.code)
     : EXIT_STATUS.success;
   const status = Math.max(errorStatus, postconditionStatus);
   output({ kind: "progress", statistics: { ...statistics } });
+  // TLC's ProgressReport prints the coverage again with its last progress unless -coverage spans more progress reports.
+  if (options.coverage !== undefined && options.coverage <= 1) reportCoverage();
   if (status === EXIT_STATUS.success) printSummary();
   return status;
 };
@@ -706,4 +844,8 @@ const toEvaluationError = (error: unknown) => {
 };
 
 const getUnexpectedPrefix = (error: TlaEvaluationError) =>
-  isEvalException(error) ? UNEXPECTED_EVAL_EXCEPTION : UNEXPECTED_EXCEPTION;
+  isEvalException(error)
+    ? UNEXPECTED_EVAL_EXCEPTION
+    : error instanceof TlaSetBoundError
+      ? WRONG_INVOCATION_EXCEPTION
+      : UNEXPECTED_EXCEPTION;

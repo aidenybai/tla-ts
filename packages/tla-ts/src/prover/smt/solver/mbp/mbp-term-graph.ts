@@ -1,4 +1,3 @@
-// Ported from Z3 (src/qe/mbp/mbp_term_graph.cpp), MIT license, see z3-license.txt.
 import { type AstManager, KIND_APP, OP_AND, OP_DISTINCT, OP_EQ, SORT_BOOL } from "../ast";
 import { getNumExprs, isAppOf } from "../ast-util";
 import { RefVector } from "../ref-vector";

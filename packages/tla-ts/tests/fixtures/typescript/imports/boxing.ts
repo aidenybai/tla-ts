@@ -1,5 +1,5 @@
-import * as boxes from "./boxes";
-import { box } from "./boxes";
+import * as boxes from "./boxes.ts";
+import { box } from "./boxes.ts";
 
 let log = "";
 log += boxes.limit;

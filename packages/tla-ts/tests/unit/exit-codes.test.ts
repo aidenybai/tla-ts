@@ -57,6 +57,17 @@ describe("CLI exit codes match TLC", () => {
     expect(await getFailureExitCode(STEP, config)).toBe(151);
   });
 
+  it("exits with 255 for a symmetry that fails to evaluate", async () => {
+    const config = "INIT Init\nNEXT Next\nSYMMETRY P";
+    expect(await getFailureExitCode(`${STEP}\nP == {1 \\div 0}`, config)).toBe(255);
+    expect(await getFailureExitCode(`${STEP}\nP == {CHOOSE v \\in {} : TRUE}`, config)).toBe(255);
+  });
+
+  it("exits with 151 for a symmetry whose parameter is undefined in its body", async () => {
+    const config = "INIT Init\nNEXT Next\nSYMMETRY P";
+    expect(await getFailureExitCode(`${STEP}\nP(S) == Permutations(S)`, config)).toBe(151);
+  });
+
   it("exits with 255 for a box over a state predicate in the specification", async () => {
     const config = "SPECIFICATION Spec";
     expect(
@@ -98,9 +109,12 @@ describe("CLI exit codes match TLC", () => {
     expect(await getFailureExitCode(definitions, "SPECIFICATION Spec\nPROPERTY Prop")).toBe(code);
   });
 
-  it("exits with 255 when a liveness property fails to evaluate", async () => {
-    const definitions = `${STEP}\nSpec == Init /\\ [][Next]_x /\\ WF_x(Next)\nProp == <>(1 \\div 0 = x)`;
-    expect(await getFailureExitCode(definitions, "SPECIFICATION Spec\nPROPERTY Prop")).toBe(255);
+  it.each([
+    ["a standard-module failure", "1 \\div 0 = x", 255],
+    ["an Assert", 'x < 2 \\/ Assert(x < 0, "a")', 14],
+  ])("exits for %s in a liveness property", async (_, predicate, code) => {
+    const definitions = `${STEP}\nSpec == Init /\\ [][Next]_x /\\ WF_x(Next)\nProp == <>(${predicate})`;
+    expect(await getFailureExitCode(definitions, "SPECIFICATION Spec\nPROPERTY Prop")).toBe(code);
   });
 
   it("exits with 255 for a temporal quantifier over variables in the specification", async () => {

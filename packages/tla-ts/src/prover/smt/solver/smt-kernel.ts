@@ -1,32 +1,53 @@
-// Ported from Z3 (src/smt/smt_kernel.cpp, src/smt/smt_context.cpp), MIT license, see
-// z3-license.txt.
-import { SmtCanceledError } from "../../../errors";
 import { type AstManager } from "./ast";
 import type { SmtSetup } from "./smt-setup";
 import { AssertedFormulas } from "./asserted-formulas";
 import { Context } from "./context";
+import { L_TRUE } from "./lbool";
+import { Mus } from "./mus";
+import { RefVector } from "./ref-vector";
 import type { KernelParams } from "./solver";
 
 export class SmtKernel {
   readonly context: Context;
   private asserted: AssertedFormulas;
-  private isSetUp = false;
+  isSetUp = false;
   private setup: SmtSetup | undefined;
+  private isCoreMinimizing: boolean;
+  private scopeCount = 0;
 
   constructor(manager: AstManager, params: KernelParams) {
-    this.asserted = new AssertedFormulas(manager, params.isFindingMacros);
+    this.asserted = new AssertedFormulas(manager, params.isFindingMacros, params.isEmatching);
     this.context = new Context(manager, {
       isMbqi: params.isMbqi,
       mbqiMaxIterations: params.mbqiMaxIterations,
+      isEmatching: params.isEmatching,
       relevancyLevel: params.relevancyLevel ?? 2,
+      isDelayingNewCaseSplits: params.isDelayingNewCaseSplits,
+      randomSeed: params.randomSeed,
+      intHammerPeriod: params.intHammerPeriod,
+      isArithPropagatingEqs: params.isArithPropagatingEqs,
+      qiCost: params.qiCost,
+      qiEagerThreshold: params.qiEagerThreshold,
+      qiLazyThreshold: params.qiLazyThreshold,
     });
     this.setup = params.setup;
+    this.isCoreMinimizing = params.isCoreMinimizing ?? false;
+  }
+
+  // As in Z3, a kernel not yet set up reads auto_config again.
+  updateParams(params: KernelParams) {
+    if (!this.isSetUp) this.setup = params.setup;
+    this.isCoreMinimizing = params.isCoreMinimizing ?? false;
+    this.context.updateParams(params);
+    this.asserted.updateParams(this.context.config, params.isEmatching);
   }
 
   private setupContext(isUsingStaticFeatures: boolean) {
-    if (this.isSetUp) return;
-    this.isSetUp = true;
-    this.context.setupContext(this.setup, isUsingStaticFeatures, this.asserted);
+    if (this.isSetUp) {
+      this.context.keepRelevancyLevel();
+      return;
+    }
+    this.isSetUp = this.context.setupContext(this.setup, isUsingStaticFeatures, this.asserted);
   }
 
   // context::copy sets up and internalizes a copy as soon as it makes it.
@@ -39,7 +60,9 @@ export class SmtKernel {
     this.asserted.isPreprocessing = isPreprocessing;
   }
 
+  // context::assert_expr_core counts a step, and drops the formula once the limit is spent.
   assertExpr(expr: number) {
+    if (this.context.checkCanceled()) return;
     this.context.popToBaseLevel();
     this.asserted.assertExpr(expr);
   }
@@ -48,15 +71,12 @@ export class SmtKernel {
     const context = this.context;
     context.popToBaseLevel();
     this.setupContext(false);
-    context.internalizeAssertions(this.asserted);
-    const limit = context.manager.limit;
-    if (!limit.inc()) throw new SmtCanceledError();
-    const wasSuspended = limit.isSuspended;
-    limit.isSuspended = true;
-    if (!context.isInconsistent()) context.propagate();
-    limit.isSuspended = wasSuspended;
-    context.push();
-    this.asserted.push();
+    context.internalizeAndPush(this.asserted);
+    this.scopeCount++;
+  }
+
+  release() {
+    this.context.release(this.asserted);
   }
 
   getAssertions() {
@@ -64,8 +84,10 @@ export class SmtKernel {
   }
 
   pop(numScopes: number) {
-    this.context.pop(numScopes);
-    for (let index = 0; index < numScopes; index++) this.asserted.pop();
+    const count = Math.min(numScopes, this.scopeCount);
+    if (count === 0) return;
+    this.context.pop(count);
+    this.scopeCount -= count;
   }
 
   initAssumptions(assumptions: number[]) {
@@ -81,5 +103,23 @@ export class SmtKernel {
   setupAndCheck() {
     this.setupContext(true);
     return this.check();
+  }
+
+  getUnsatCore(core: RefVector) {
+    for (const expr of this.context.unsatCore) core.push(expr);
+    if (!this.isCoreMinimizing) return;
+    const manager = this.context.manager;
+    const mus = new Mus(manager, {
+      checkSat: (assumptions) => this.check(assumptions),
+      getUnsatCore: () => this.context.unsatCore,
+    });
+    for (const literal of core.items) mus.addSoft(literal);
+    const minimized = new RefVector(manager);
+    if (mus.getMus(minimized) === L_TRUE) {
+      core.reset();
+      for (const literal of minimized.items) core.push(literal);
+    }
+    minimized.reset();
+    mus.reset();
   }
 }

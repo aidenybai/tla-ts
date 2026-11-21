@@ -66,6 +66,19 @@ describe("_POSSIBLE matches TLC", () => {
     );
   });
 
+  it("pretty-prints the counts _PrintCounts and _CheckName print, as TLC's PrintT does", async () => {
+    const lines: string[] = [];
+    const result = await check({
+      source:
+        '---- MODULE M ----\nEXTENDS Naturals, TLC, _Possible\nVARIABLE x\nInit == x = 0\nNext == x\' = (x + 1) % 3 /\\ _Track(x = 1, "ReachesTheFirstLongState") /\\ _Track(x = 2, "ReachesTheSecondLongState") /\\ _Track(x = 7, "ReachesTheThirdLongStateNever")\nPost == _PrintCounts /\\ _CheckName("ReachesTheThirdLongStateNever")\n====',
+      config: "INIT Init\nNEXT Next\nPOSTCONDITION Post",
+      onPrint: (text) => lines.push(text),
+    });
+    const counts =
+      "[ ReachesTheFirstLongState |-> 1,\n  ReachesTheSecondLongState |-> 1,\n  ReachesTheThirdLongStateNever |-> 0 ]";
+    expect([result.status, lines]).toEqual(["postcondition-violation", [counts, counts]]);
+  });
+
   it("checks _POSSIBLE after a violation without changing its status", async () => {
     const result = await checkModule(
       "Unreachable == x = 5\nInv == x < 2",
@@ -79,6 +92,20 @@ describe("_POSSIBLE matches TLC", () => {
         message: `The _POSSIBLE predicate Unreachable at line 6, col 16 to line 6, col 20 of module M ${NEVER_WITNESSED}`,
         counts: "[Unreachable |-> 0]",
       },
+    ]);
+  });
+
+  it("locates a parenthesized _POSSIBLE or POSTCONDITION at the expression inside the parentheses, as SANY does", async () => {
+    const source =
+      '---- MODULE M ----\nEXTENDS Naturals, TLC\nVARIABLE x\nInit == x = 0\nNext == x\' = (x + 1) % 3\nPost == ((TLCGet("level") < 0))\nPoss == (x = 5)\n====';
+    const results = await Promise.all(
+      ["POSTCONDITION Post", "_POSSIBLE Poss"].map((line) =>
+        check({ source, config: `INIT Init\nNEXT Next\n${line}` }),
+      ),
+    );
+    expect(results.map((result) => result.violation?.message)).toEqual([
+      "Postcondition Post at line 6, col 11 to line 6, col 29 of module M is false.",
+      `The _POSSIBLE predicate Poss at line 7, col 10 to line 7, col 14 of module M ${NEVER_WITNESSED}`,
     ]);
   });
 
@@ -111,6 +138,23 @@ describe("_POSSIBLE matches TLC", () => {
       undefined,
     ]);
   });
+
+  it.each([
+    "F(p) == x = 1\nH == F(x')",
+    "H == LET A == x' = x IN x = 1",
+    "F(p) == x = 1\nH == F([]TRUE)",
+    "G(Op(_)) == x = 1\nK(a) == x' = a\nH == G(K)",
+    "H == LET A == []TRUE IN x = 1",
+  ])(
+    "witnesses %j in a terminal state, as TLC tracks a predicate SANY levels as a state predicate",
+    async (body) => {
+      const result = await check({
+        source: `---- MODULE M ----\nEXTENDS Naturals\nVARIABLE x\nInit == x = 0\nNext == x = 0 /\\ x' = 1\n${body}\n====`,
+        config: "INIT Init\nNEXT Next\nCHECK_DEADLOCK FALSE\n_POSSIBLE H",
+      });
+      expect(result.status).toBe("success");
+    },
+  );
 
   it("rejects predicates TLC cannot track", async () => {
     const body = "AtOne == x = 1\nConstant == TRUE\nArgument(n) == x = n\nTemporal == <>(x = 1)";

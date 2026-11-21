@@ -1,5 +1,3 @@
-// Ported from Z3 (src/sat/sat_cleaner.h, src/sat/sat_cleaner.cpp), MIT license, see
-// z3-license.txt.
 import { L_FALSE, L_TRUE, L_UNDEF } from "../lbool";
 import type { Solver } from "./solver";
 import { WATCH_EXT_CONSTRAINT } from "./watch-list";

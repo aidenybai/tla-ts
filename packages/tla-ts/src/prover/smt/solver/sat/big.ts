@@ -1,4 +1,3 @@
-// Ported from Z3 (src/sat/sat_big.h, src/sat/sat_big.cpp), MIT license, see z3-license.txt.
 import type { RandomGen } from "../random-gen";
 import { NULL_LITERAL } from "./clause";
 import type { Solver } from "./solver";

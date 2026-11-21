@@ -81,6 +81,8 @@ npx tla-ts Counter.tla
 npx tla-ts tlapm Module.tla
 ```
 
+The CLI takes JavaScript and TypeScript files of every kind: `.js`, `.mjs`, `.cjs`, `.jsx`, `.ts`, `.mts`, `.cts`, and `.tsx`. It loads each one as Node does: `.mjs` and `.mts` as ES modules, `.cjs` and `.cts` as CommonJS, and `.js` and `.ts` by the `type` of the nearest `package.json`, or by their syntax where that names no type. Imports resolve as TypeScript resolves them under the project's `tsconfig.json`. JSX compiles as TypeScript emits it under the project's `jsx` setting. Without a `tsconfig.json`, JSX compiles for React's automatic runtime (`react-jsx`), as a bundler does.
+
 For a TLA+ spec, TLA-ts reads `Counter.cfg` from the same folder and takes TLC's options.
 
 ## API
@@ -95,8 +97,10 @@ const result = await check(spec);
 | Option      | Description                                                                   |
 | ----------- | ----------------------------------------------------------------------------- |
 | `source`    | The text of the TypeScript file                                               |
-| `fileName`  | The path of the file. Imports resolve from it, and the module takes its name  |
+| `fileName`  | The path of the file. Imports resolve from it                                 |
 | `libraries` | TypeScript's built-in `lib.*.d.ts` files by name. Pass them only in a browser |
+
+`compile` runs in Node only. In a browser it throws a `TlaTypeScriptError`.
 
 ### `check`
 
@@ -181,6 +185,8 @@ Wall time on 8 workers, also including startup. Each time is the median of 3 run
 | [Buffered random access file](https://github.com/tlaplus/Examples/tree/0cab2b3/specifications/braf)                   |           3,316 |  4.70 s | 3.61 s |    1.3× |
 
 ## Development
+
+The toolchain needs Node 26. vite-plus runs the version in `.node-version` once you enable its managed mode with `vp env on node`.
 
 ```shell
 pnpm install

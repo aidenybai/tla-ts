@@ -1,4 +1,3 @@
-// Ported from Z3 (src/smt/smt_quantifier.cpp), MIT license, see z3-license.txt.
 import { CHECK_MODEL_RESTART, CHECK_MODEL_SAT, CHECK_MODEL_UNKNOWN, type Context } from "./context";
 import { FC_CONTINUE, FC_DONE } from "./theory";
 import { Mam } from "./e-matching";
@@ -11,11 +10,6 @@ import { QiQueue } from "./qi-queue";
 const QI_MAX_EAGER_MULTIPATTERNS = 0;
 const QI_MAX_LAZY_MULTIPATTERN_MATCHING = 2;
 
-interface Mbqi {
-  finder: ModelFinder;
-  checker: ModelChecker;
-}
-
 export class DefaultQuantifierManager {
   readonly quantifiers: number[] = [];
   private generations = new Map<number, number>();
@@ -24,20 +18,24 @@ export class DefaultQuantifierManager {
   private lazyMam: Mam;
   private isActive = false;
   private lazyMatchingIndex = 0;
-  private mbqi: Mbqi | null = null;
+  private newEnodeQhead = 0;
+  private finder: ModelFinder;
+  private checker: ModelChecker;
 
-  constructor(
-    private context: Context,
-    isMbqi: boolean,
-  ) {
+  constructor(private context: Context) {
     this.qiQueue = new QiQueue(context);
     const onMatch = (quantifier: number, bindings: Enode[], maxGeneration: number) =>
       this.addInstance(quantifier, bindings, maxGeneration);
     this.mam = new Mam(context, onMatch);
     this.lazyMam = new Mam(context, onMatch);
-    if (!isMbqi) return;
-    const finder = new ModelFinder(context);
-    this.mbqi = { finder, checker: new ModelChecker(context, finder, this) };
+    this.finder = new ModelFinder(context);
+    this.checker = new ModelChecker(context, this.finder, this);
+  }
+
+  release() {
+    this.checker.release();
+    this.finder.release();
+    this.qiQueue.release();
   }
 
   getNumInstances() {
@@ -47,7 +45,7 @@ export class DefaultQuantifierManager {
   add(quantifier: number, generation: number) {
     this.quantifiers.push(quantifier);
     this.generations.set(quantifier, generation);
-    this.mbqi?.finder.registerQuantifier(quantifier);
+    if (this.context.params.isMbqi) this.finder.registerQuantifier(quantifier);
   }
 
   del(quantifier: number) {
@@ -65,6 +63,7 @@ export class DefaultQuantifierManager {
 
   assignEh(quantifier: number) {
     this.isActive = true;
+    if (this.context.params.isEmatching === false) return;
     const manager = this.context.manager;
     const patterns = manager
       .getQuantifier(quantifier)
@@ -85,12 +84,16 @@ export class DefaultQuantifierManager {
     return this.isActive && (this.mam.isShared(node) || this.lazyMam.isShared(node));
   }
 
+  private isUsingEmatching() {
+    return this.context.params.isEmatching !== false && this.quantifiers.length > 0;
+  }
+
   addEqEh(first: Enode, second: Enode) {
-    if (this.quantifiers.length > 0) this.mam.addEqEh(first, second);
+    if (this.isUsingEmatching()) this.mam.addEqEh(first, second);
   }
 
   relevantEh(node: Enode) {
-    if (this.quantifiers.length === 0) return;
+    if (!this.isUsingEmatching()) return;
     this.mam.relevantEh(node, false);
     this.lazyMam.relevantEh(node, true);
   }
@@ -98,14 +101,14 @@ export class DefaultQuantifierManager {
   push() {
     this.mam.pushScope();
     this.lazyMam.pushScope();
-    this.mbqi?.finder.pushScope();
+    this.finder.pushScope();
     this.qiQueue.push();
   }
 
   pop(numScopes: number) {
     this.mam.popScope(numScopes);
     this.lazyMam.popScope(numScopes);
-    this.mbqi?.finder.popScope(numScopes);
+    this.finder.popScope(numScopes);
     this.qiQueue.pop(numScopes);
   }
 
@@ -114,7 +117,24 @@ export class DefaultQuantifierManager {
   }
 
   propagate() {
-    if (this.isActive) this.mam.match();
+    if (this.isActive) {
+      this.mam.match();
+      const enodes = this.context.enodes;
+      if (
+        !this.context.relevancy.isEnabled &&
+        this.isUsingEmatching() &&
+        enodes.length > this.newEnodeQhead
+      ) {
+        const saved = this.newEnodeQhead;
+        this.context.pushTrail(() => {
+          this.newEnodeQhead = saved;
+        });
+        for (; this.newEnodeQhead < enodes.length; this.newEnodeQhead++) {
+          this.mam.relevantEh(enodes[this.newEnodeQhead], false);
+          this.lazyMam.relevantEh(enodes[this.newEnodeQhead], true);
+        }
+      }
+    }
     this.qiQueue.instantiate();
   }
 
@@ -131,7 +151,7 @@ export class DefaultQuantifierManager {
   finalCheckEh(isFull: boolean) {
     if (!isFull) return FC_DONE;
     let result = this.qiQueue.finalCheckEh() ? FC_DONE : FC_CONTINUE;
-    if (this.quantifiers.length > 0 && this.lazyMatchingIndex < QI_MAX_LAZY_MULTIPATTERN_MATCHING) {
+    if (this.isUsingEmatching() && this.lazyMatchingIndex < QI_MAX_LAZY_MULTIPATTERN_MATCHING) {
       this.lazyMam.rematch();
       const saved = this.lazyMatchingIndex;
       this.context.pushTrail(() => {
@@ -145,27 +165,28 @@ export class DefaultQuantifierManager {
 
   initSearchEh() {
     this.lazyMatchingIndex = 0;
-    this.mbqi?.checker.initSearchEh();
+    this.checker.initSearchEh();
     this.qiQueue.initSearchEh();
   }
 
   restartEh() {
-    this.mbqi?.finder.restartEh();
-    this.mbqi?.checker.restartEh();
+    if (!this.context.params.isMbqi) return;
+    this.finder.restartEh();
+    this.checker.restartEh();
   }
 
   isModelBased() {
-    return this.mbqi !== null;
+    return this.context.params.isMbqi;
   }
 
   adjustModel(model: ProtoModel) {
-    this.mbqi?.finder.fixModel(model);
+    if (this.context.params.isMbqi) this.finder.fixModel(model);
   }
 
   checkModel(model: ProtoModel, root2value: Map<Enode, number>) {
-    const checker = this.mbqi?.checker;
     if (this.quantifiers.length === 0) return CHECK_MODEL_SAT;
-    if (checker === undefined) return CHECK_MODEL_UNKNOWN;
+    if (!this.context.params.isMbqi) return CHECK_MODEL_UNKNOWN;
+    const checker = this.checker;
     if (checker.check(model, root2value)) return CHECK_MODEL_SAT;
     return checker.hasNewInstances() ? CHECK_MODEL_RESTART : CHECK_MODEL_UNKNOWN;
   }

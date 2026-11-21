@@ -4,6 +4,7 @@ import {
   CONSTANT_DECL_KIND,
   getContextSymbol,
   getSymbolArity,
+  isAbsent,
   type AssumeProveNode,
   type Context,
   type ExprNode,
@@ -318,6 +319,7 @@ export const createSelectorResolver =
               allArgs.push(...walk.definitionArgs);
               walk.definitionArityFound = 0;
               walk.definitionArgs = [];
+              // Deviation from SANY: Generator#selectorToNode throws NullPointerException on an instance's substitutions around a definition whose body failed; tla-ts fails the selection as SANY does without the instance.
               let body: LevelNode | undefined = definition.body;
               while (body?.kind === "SubstIn") {
                 substInPrefix.push(body);
@@ -382,7 +384,7 @@ export const createSelectorResolver =
                 "`!:' can be used only after a name and either at the end after an\noperator name or before an operator name.",
               );
             }
-          } else if (node === undefined) {
+          } else if (node === undefined || isAbsent(node)) {
             return generator.addError(
               getItemLocation(),
               "Subexpression selection failed, probably due to an error in the selected expression.",
@@ -413,7 +415,11 @@ export const createSelectorResolver =
               const number = getArgNumber(item.op, operator.arity);
               if (number === -1) return addNonexistentError();
               walk.node = operands[number - 1];
-            } else if (operator.kind === "OpDef" && operator.defKind === "BuiltIn") {
+            } else if (
+              operator.kind === "OpDef" &&
+              operator.defKind === "BuiltIn" &&
+              node.nullKind !== "null"
+            ) {
               if (operator.name === "$RcdConstructor" || operator.name === "$SetOfRcds") {
                 if (operandNumber === -1) return addNonexistentError();
                 const pair = operands[operandNumber - 1];
@@ -438,7 +444,7 @@ export const createSelectorResolver =
                   );
                 }
                 walk.node = pair.operands[number - 1];
-                if (walk.node === undefined)
+                if (walk.node === undefined || isAbsent(walk.node))
                   return generator.addError(
                     getItemLocation(),
                     "Selecting OTHER in a CASE statement.",
@@ -476,7 +482,7 @@ export const createSelectorResolver =
             } else {
               return generator.addError(
                 getItemLocation(),
-                `Choosing operand \`${item.name}' of subexpression with no operands.`,
+                `Choosing operand \`${getSelectorItemName(item)}' of subexpression with no operands.`,
               );
             }
           } else if (node.kind === "AssumeProve") {
@@ -517,6 +523,7 @@ export const createSelectorResolver =
               );
             }
             if (item.op !== "Null" && item.op !== "@") {
+              // Deviation from SANY: Generator#selectorToNode names a numbered selector here by its syntax node, N_StructOp; tla-ts names it by its number.
               return generator.addError(
                 getItemLocation(),
                 `Cannot use !${item.name} to select subexpression of a LAMBDA.`,
@@ -542,10 +549,10 @@ export const createSelectorResolver =
               "Selecting subexpression of expression that has none.",
             );
           }
-          if (walk.node === undefined)
+          if (walk.node === undefined || isAbsent(walk.node))
             return generator.addError(
               getItemLocation(),
-              `An unexpected null node specified by '${item.name}'.\nThis is probably due to a previous error.`,
+              `An unexpected null node specified by '${getSelectorItemName(items[walk.index])}'.\nThis is probably due to a previous error.`,
             );
           if (walk.index !== items.length - 1) {
             const next = items[walk.index + 1];
@@ -658,7 +665,10 @@ export const createSelectorResolver =
       }
     }
     if (!isFact) {
-      if (current.kind === "ThmOrAssumpDef" && current.body.kind === "AssumeProve")
+      if (
+        (current.kind === "ThmOrAssumpDef" && current.body.kind === "AssumeProve") ||
+        (current.kind === "Label" && current.isAssumeProve)
+      )
         return generator.addError(location, "ASSUME/PROVE used where an expression is required.");
       if (current.kind === "ThmOrAssumpDef" && current.body.kind === "OpAppl") {
         const step = PROOF_STEP_OPERATORS.get(current.body.operator.name);

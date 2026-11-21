@@ -1,4 +1,3 @@
-// Ported from Z3 (src/smt/proto_model/proto_model.cpp, src/model/func_interp.cpp, src/model/value_factory.cpp, src/model/model_core.cpp, src/model/datatype_factory.cpp), MIT license, see z3-license.txt.
 import { TermEnumeration } from "./term-enumeration";
 import {
   type AstManager,
@@ -29,7 +28,7 @@ import {
 } from "./datatype-decl-plugin";
 import { mkArrayApp, mkAsArray } from "./array-decl-plugin";
 import { mkFpNumeral, mkRmNumeral } from "./fpa-decl-plugin";
-import { MPF_ROUND_TOWARD_ZERO, mkZero } from "./mpf";
+import { MPF_ROUND_TOWARD_ZERO, mkNan, mkZero } from "./mpf";
 import { RandomGen } from "./random-gen";
 import { mkEmptySeq, mkSeqApp } from "./seq-decl-plugin";
 import { Rational } from "./rational";
@@ -46,7 +45,7 @@ export const getManagerSomeValue = (manager: AstManager, sort: number): number =
   if (sort === SORT_BOOL) return manager.falseExpr;
   if (manager.isRmSort(sort)) return mkRmNumeral(manager, MPF_ROUND_TOWARD_ZERO);
   if (manager.isFpSort(sort))
-    return mkFpNumeral(manager, mkZero(manager.getEbits(sort), manager.getSbits(sort), false));
+    return mkFpNumeral(manager, mkNan(manager.getEbits(sort), manager.getSbits(sort)));
   if (isArithSort(sort)) return manager.mkNumeralOfSort(Rational.zero, sort);
   if (manager.isBvSort(sort)) return manager.mkBvNumeral(0n, manager.getBvSize(sort));
   if (manager.isArraySort(sort))
@@ -79,6 +78,7 @@ export class FuncInterp {
   private entryTable = new Map<string, FuncEntry>();
   elseExpr: number | null = null;
   private interp: number | null = null;
+  private arrayInterp: number | null = null;
 
   constructor(
     private manager: AstManager,
@@ -126,7 +126,9 @@ export class FuncInterp {
 
   private resetInterpCache() {
     if (this.interp !== null) this.manager.decRef(this.interp);
+    if (this.arrayInterp !== null) this.manager.decRef(this.arrayInterp);
     this.interp = null;
+    this.arrayInterp = null;
   }
 
   private releaseEntry(entry: FuncEntry) {
@@ -245,8 +247,17 @@ export class FuncInterp {
     return this.entries.length + 1 === 2;
   }
 
-  // get_array_interp: an interpretation that is not ground becomes a lambda.
+  // Z3 keeps the array, so the subterms it shares with other values stay shared.
   getArrayInterp(decl: number) {
+    if (this.arrayInterp !== null) return this.arrayInterp;
+    const arrayInterp = this.mkArrayInterp(decl);
+    if (arrayInterp === undefined) return undefined;
+    this.manager.incRef(arrayInterp);
+    this.arrayInterp = arrayInterp;
+    return arrayInterp;
+  }
+
+  private mkArrayInterp(decl: number) {
     const manager = this.manager;
     const elseExpr = this.elseExpr;
     if (elseExpr === null) return undefined;
@@ -268,11 +279,11 @@ export class FuncInterp {
       const lambda = manager.mkQuantifier({
         kind: QUANTIFIER_LAMBDA,
         sorts: [...domain],
-        names: domain.map((_, index) => index),
+        names: domain.map((_value, index) => index),
         body,
         patterns: [],
         noPatterns: [],
-        weight: 0,
+        weight: 1,
         qid: "",
       });
       manager.decRef(body);
@@ -333,8 +344,8 @@ export class ProtoModel {
   // array_factory::m_ranges: the ranges whose fresh value an array's fresh value is waiting for.
   private freshArrayRanges: number[] = [];
   private finiteSorts = new Set<number>();
-  // model::m_usort2universe, the universes registered in order.
-  private universes = new Map<number, RefVector>();
+  private universes: ObjMap<RefVector>;
+  private universeSorts: number[] = [];
   private boolRandom: RandomGen;
   private evaluator: ModelEvaluator;
   private rewriter: Rewriter;
@@ -349,6 +360,7 @@ export class ProtoModel {
     this.boolRandom = new RandomGen(manager.getNumAsts());
     this.constInterps = new ObjMap((decl) => manager.getDeclHash(decl));
     this.funcInterps = new ObjMap((decl) => manager.getDeclHash(decl));
+    this.universes = new ObjMap((sort) => manager.getSortHash(sort));
     this.userSortValues = new RefVector(manager);
     this.arithValues = new RefVector(manager);
     this.bvValues = new RefVector(manager);
@@ -387,8 +399,6 @@ export class ProtoModel {
   // variables a function interpretation numbers from the first argument.
   addRecFuns() {
     const manager = this.manager;
-    for (const entry of manager.macros)
-      if (!this.constInterps.has(entry[0])) this.registerConst(entry[0], entry[1]);
     for (const def of manager.recFunDefs.values()) {
       if (def.rhs === -1 || this.constInterps.has(def.decl) || this.funcInterps.has(def.decl))
         continue;
@@ -435,6 +445,14 @@ export class ProtoModel {
     this.evaluator.reset();
   }
 
+  getModelCompletion() {
+    return this.evaluator.getModelCompletion();
+  }
+
+  setModelCompletion(isModelCompletion: boolean) {
+    this.evaluator.setModelCompletion(isModelCompletion);
+  }
+
   // model::unfold_as_array: the array an as-array denotes, from its function's interpretation.
   unfoldAsArray(expr: number) {
     const manager = this.manager;
@@ -446,8 +464,15 @@ export class ProtoModel {
   registerUsort(sort: number, universe: readonly number[]) {
     const values = new RefVector(this.manager);
     for (const value of universe) values.push(value);
-    this.universes.get(sort)?.reset();
+    const old = this.universes.get(sort);
+    if (old === undefined) this.universeSorts.push(sort);
+    else old.reset();
     this.universes.set(sort, values);
+  }
+
+  // Z3 copies universes in the hash order of its sort map, not in registration order.
+  copyUsortInterps(source: ProtoModel) {
+    for (const entry of source.universes) this.registerUsort(entry[0], entry[1].items);
   }
 
   getUniverse(sort: number): readonly number[] | undefined {
@@ -519,6 +544,8 @@ export class ProtoModel {
     const manager = this.manager;
     if (this.charFactory !== undefined && manager.isCharSort(sort))
       return manager.mkChar(this.charFactory.getSomeValue());
+    if (manager.isFpSort(sort) && !this.isFinal)
+      return mkFpNumeral(manager, mkZero(manager.getEbits(sort), manager.getSbits(sort), false));
     if (
       manager.isFpSort(sort) ||
       manager.isRmSort(sort) ||
@@ -708,6 +735,7 @@ export class ProtoModel {
   }
 
   getUninterpretedSorts() {
+    if (this.isFinal) return [...this.universeSorts];
     return [...this.values.keys()].filter((sort) => this.manager.isUninterpretedSort(sort));
   }
 
@@ -897,7 +925,9 @@ export class ProtoModel {
         }
         return rewriter.mkApp(decl, args, manager.sorts[current]);
       });
-      trail.pushOwned(result);
+      // Z3 trails only the terms that change, so the rewriter caches no other subterm.
+      if (result === current) manager.decRef(result);
+      else trail.pushOwned(result);
       cache.set(current, result);
     }
     const result = rewriter.rewrite(cache.get(expr) as number);
@@ -1024,6 +1054,7 @@ export class ProtoModel {
     this.arithValues.reset();
     this.bvValues.reset();
     this.datatypeValues.reset();
+    for (const enumeration of this.freshEnumerations.values()) enumeration.release();
     this.enumeratedTerms.reset();
     for (const entry of this.constInterps) {
       this.manager.decDeclRef(entry[0]);
@@ -1038,13 +1069,11 @@ export class ProtoModel {
   copy() {
     const model = new ProtoModel(this.manager);
     model.isFinal = this.isFinal;
-    for (const decl of this.constDecls)
-      model.registerConst(decl, this.constInterps.get(decl) as number);
-    for (const decl of this.funcDecls)
-      model.registerFunc(decl, (this.funcInterps.get(decl) as FuncInterp).copy());
+    for (const entry of this.constInterps) model.registerConst(entry[0], entry[1]);
+    for (const entry of this.funcInterps) model.registerFunc(entry[0], entry[1].copy());
     for (const sort of this.getUninterpretedSorts())
       for (const value of this.getKnownUniverse(sort)) model.registerValue(value);
-    for (const entry of this.universes) model.registerUsort(entry[0], entry[1].items);
+    model.copyUsortInterps(this);
     return model;
   }
 
@@ -1059,8 +1088,10 @@ export class ProtoModel {
     this.funcInterps.clear();
     this.funcDecls = [];
     for (const entry of this.values)
-      if (!isArithSort(entry[0])) for (const value of entry[1]) model.registerValue(value);
-    for (const entry of this.universes) model.registerUsort(entry[0], entry[1].items);
+      if (this.manager.isUninterpretedSort(entry[0]))
+        for (const value of entry[1]) model.registerValue(value);
+    for (const sort of this.getUninterpretedSorts())
+      model.registerUsort(sort, this.getKnownUniverse(sort));
     return model;
   }
 

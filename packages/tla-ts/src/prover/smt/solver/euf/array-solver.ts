@@ -1,8 +1,5 @@
-// Ported from Z3 (src/sat/smt/array_solver.cpp, src/sat/smt/array_model.cpp), MIT license, see
-// z3-license.txt.
 import { mkArrayApp, mkAsArray } from "../array-decl-plugin";
 import {
-  type AstManager,
   OP_ARRAY_DEFAULT,
   OP_ARRAY_EXT,
   OP_AS_ARRAY,
@@ -12,7 +9,7 @@ import {
 } from "../ast";
 import { L_FALSE, L_UNDEF } from "../lbool";
 import { getCompositeHash } from "../hash";
-import { ObjMap } from "../hashtable";
+import { KeyedHashtable } from "../hashtable";
 import { FuncInterp, type ProtoModel } from "../proto-model";
 import { CR_CONTINUE, CR_DONE, CR_GIVEUP } from "../sat/solver";
 import { hasLargeDomain } from "../theory-array";
@@ -26,48 +23,11 @@ const getSelectKey = (select: Enode) =>
     .map((arg) => arg.root.owner)
     .join(",");
 
-// select_set: a ptr_hashtable of selects that hashes and compares them by the roots of their
-// indices, and iterates them in its slot order.
-class SelectSet {
-  private firsts = new Map<number, Enode>();
-  private keys = new Map<string, number>();
-  private table: ObjMap<Enode>;
-
-  constructor(manager: AstManager) {
-    this.table = new ObjMap((key) =>
-      getCompositeHash(
-        (this.firsts.get(key) as Enode).args.slice(1).map((arg) => manager.ids[arg.root.owner]),
-        0,
-      ),
-    );
-  }
-
-  has(select: Enode) {
-    return this.keys.has(getSelectKey(select));
-  }
-
-  insert(select: Enode) {
-    const key = getSelectKey(select);
-    const existing = this.keys.get(key);
-    if (existing !== undefined) {
-      this.table.set(existing, select);
-      return;
-    }
-    this.keys.set(key, select.owner);
-    this.firsts.set(select.owner, select);
-    this.table.set(select.owner, select);
-  }
-
-  values() {
-    return this.table.values();
-  }
-}
-
 export class ArraySolver extends ArrayAxioms {
   private defaults: (Enode | null)[] = [];
   private elseValues: (number | null)[] = [];
   private parents: number[] = [];
-  private selects = new Map<Enode, SelectSet>();
+  private selects = new Map<Enode, KeyedHashtable<Enode>>();
 
   override check() {
     this.forcePush();
@@ -244,7 +204,14 @@ export class ArraySolver extends ArrayAxioms {
     const root = node.root;
     const existing = this.selects.get(root);
     if (existing !== undefined) return existing;
-    const created = new SelectSet(this.manager);
+    const created = new KeyedHashtable(
+      (select: Enode) =>
+        getCompositeHash(
+          select.args.slice(1).map((arg) => this.manager.ids[arg.root.owner]),
+          0,
+        ),
+      getSelectKey,
+    );
     this.selects.set(root, created);
     return created;
   }

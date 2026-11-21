@@ -1,8 +1,6 @@
 import type { Expression, SourceLocation, SourceRange } from "../ast";
-import { TlaSyntaxError } from "../errors";
 import { readAtAsIdentifier, tokenize, type Token } from "../lexer";
 import { getTabStop } from "./lexer";
-import { getSanyParseError } from "./parse-error";
 import type { SanyLocation } from "./nodes";
 
 export interface SourceFile {
@@ -28,7 +26,9 @@ export const createSourceFile = (name: string, source: string): SourceFile => {
     .map(readAtAsIdentifier);
   const lineOffsets = [0, 0];
   for (let index = 0; index < source.length; index++) {
-    if (source[index] === "\n") lineOffsets.push(index + 1);
+    if (source[index] === "\n" || (source[index] === "\r" && source[index + 1] !== "\n")) {
+      lineOffsets.push(index + 1);
+    }
   }
   return {
     name,
@@ -150,34 +150,6 @@ export const getTokenSource = (file: SourceFile, index: number) => {
   const token = file.tokens[index];
   const start = getOffset(file, token.line, token.column);
   return file.source.slice(start, getOffset(file, token.line, token.endColumn) + 1);
-};
-
-export const isBoxToken = (file: SourceFile, index: number) => {
-  const box = file.tokens[index];
-  const next = file.tokens[index + 1];
-  return (
-    box?.kind === "Operator" &&
-    box.text === "[]" &&
-    next?.kind === "Keyword" &&
-    (next.text === "ASSUME" || next.text === "PROVE") &&
-    next.line === box.line &&
-    next.column === box.endColumn + 1
-  );
-};
-
-// HACK: the tla-ts parser has no []ASSUME or []PROVE, so it parses the source with each such []
-// blanked out, which keeps every other token where it was.
-export const getUnboxedSource = (source: string) => {
-  const file = createSourceFile("", source);
-  const unboxed = file.tokens.reduce((text, token, index) => {
-    if (!isBoxToken(file, index)) return text;
-    const offset = getOffset(file, token.line, token.column);
-    return `${text.slice(0, offset)}  ${text.slice(offset + 2)}`;
-  }, source);
-  if (unboxed !== source && getSanyParseError(source) !== undefined) {
-    throw new TlaSyntaxError("SANY rejects a []ASSUME or []PROVE outside an ASSUME/PROVE");
-  }
-  return unboxed;
 };
 
 export const getPreComments = (file: SourceFile, index: number) => {

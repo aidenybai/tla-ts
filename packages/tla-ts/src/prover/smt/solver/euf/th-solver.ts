@@ -1,5 +1,3 @@
-// Ported from Z3 (src/sat/smt/sat_th.h, src/sat/smt/sat_th.cpp, src/util/trail.h), MIT license,
-// see z3-license.txt.
 import { SmtCanceledError } from "../../../../errors";
 import { mkNot } from "../ast-util";
 import type { ProtoModel } from "../proto-model";
@@ -26,10 +24,6 @@ export class TrailStack {
     const lim = this.scopes[this.scopes.length - numScopes];
     this.scopes.length -= numScopes;
     while (this.undos.length > lim) (this.undos.pop() as () => void)();
-  }
-
-  get numScopes() {
-    return this.scopes.length;
   }
 }
 
@@ -110,9 +104,6 @@ export abstract class ThSolver {
   }
   isBetaRedex(_parent: Enode, _node: Enode) {
     return false;
-  }
-  isFixed(_thVar: number, _lits: number[]): number {
-    return -1;
   }
   addValue(_node: Enode, _model: ProtoModel, _values: (number | undefined)[]) {}
   addDep(node: Enode, deps: Dependencies) {

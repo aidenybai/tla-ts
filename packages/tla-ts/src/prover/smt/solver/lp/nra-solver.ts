@@ -1,14 +1,9 @@
-// Ported from Z3 (src/math/lp/nra_solver.cpp, src/math/lp/nla_coi.cpp), MIT license, see
-// z3-license.txt.
-// Deviations from Z3: unsupported nlsat input answers unknown where Z3 exits (levelwise.cpp,
-// add_linear_approximations), check_assignment has no satisfied branch and no add_mul_def, the
-// budget counts only nlsat's own steps, and transcendental functions are not supported.
-import { NlsatUnsupportedError, SmtInvariantError } from "../../../../errors";
+import { SmtCanceledError, SmtInvariantError } from "../../../../errors";
 import { L_FALSE, L_TRUE, L_UNDEF } from "../lbool";
 import { Rational, getLcm } from "../rational";
 import { Anum } from "../nlsat/algebraic";
 import { NlsatSolver } from "../nlsat/solver";
-import type { Polynomial } from "../nlsat/polynomial";
+import { type Polynomial, PolynomialRef, PolynomialRefVector } from "../nlsat/polynomial";
 import { isIneqAtom } from "../nlsat/types";
 import {
   KIND_EQ,
@@ -88,24 +83,33 @@ const hasLargeDyadicDenominator = (value: Rational) => {
   return den >= 1n << 24n && (den & (den - 1n)) === 0n;
 };
 
+const getSortedVars = (vars: readonly number[]) =>
+  [...vars].sort((first, second) => first - second);
+
 const isDyadicArtifact = (lra: LarSolver, constraint: LarConstraint) =>
   constraint.isAuxiliary &&
   (hasLargeDyadicDenominator(constraint.rhs.x) ||
     getConstraintCoeffs(lra, constraint).some((entry) => hasLargeDyadicDenominator(entry[1])));
 
 export class NraSolver {
-  private solver = new NlsatSolver();
+  private solver: NlsatSolver;
   private values: Anum[] = [];
   private lp2nl = new Map<number, number>();
+  private literal2constraint = new Map<number, number>();
+  private vars2mon = new Map<string, number>();
 
-  constructor(private core: NlaCore) {}
+  constructor(private core: NlaCore) {
+    this.solver = new NlsatSolver(core.nraLimit);
+  }
 
   get am() {
     return this.solver.am;
   }
 
-  get steps() {
-    return this.solver.steps;
+  private reset() {
+    this.solver = new NlsatSolver(this.core.nraLimit);
+    this.values = [];
+    this.lp2nl.clear();
   }
 
   private mkDefinitions(isIncluded: (lpVar: number) => boolean) {
@@ -113,53 +117,48 @@ export class NraSolver {
     const lra = core.lra;
     const solver = this.solver;
     const pm = solver.pm;
-    const definitions: (Polynomial | null)[] = [];
+    const definitions = new PolynomialRefVector(pm);
     const denominators: bigint[] = [];
+    const p = new PolynomialRef(pm);
+    const constant = new PolynomialRef(pm);
+    const product = new PolynomialRef(pm);
     for (let lpVar = 0; lpVar < lra.columns.length; lpVar++) {
       if (!isIncluded(lpVar)) {
-        definitions.push(null);
+        definitions.push(pm.zero);
         denominators.push(0n);
         continue;
       }
       const variable = solver.mkVar(lra.isInt(lpVar));
       this.lp2nl.set(lpVar, variable);
+      let denominator = 1n;
       if (core.emons.isMonicVar(lpVar)) {
-        let definition: Polynomial | null = null;
-        let denominator = 1n;
-        for (const factor of core.emons.get(lpVar).vars) {
+        for (const [index, factor] of core.emons.get(lpVar).vars.entries()) {
           denominator = denominators[factor] * denominator;
-          definition =
-            definition === null ? definitions[factor] : pm.mul(definition, definitions[factor]!);
+          p.set(index === 0 ? definitions.get(factor) : pm.mul(p.get(), definitions.get(factor)));
         }
-        definitions.push(definition ?? pm.mkVar(variable));
-        denominators.push(denominator);
-        continue;
-      }
-      if (lra.hasTerm(lpVar)) {
+      } else if (lra.hasTerm(lpVar)) {
         const term = [...lra.getTerm(lpVar).coeffs];
-        const denominator = term.reduce(
-          (result, entry) => getLcm(entry[1].div(Rational.of(denominators[entry[0]])).den, result),
-          1n,
-        );
-        let definition: Polynomial | null = null;
-        for (const entry of term) {
+        for (const entry of term)
+          denominator = getLcm(entry[1].div(Rational.of(denominators[entry[0]])).den, denominator);
+        for (const [index, entry] of term.entries()) {
           const coeff = entry[1].mul(Rational.of(denominator, denominators[entry[0]]));
-          const scaled = pm.mul(pm.mkConst(coeff.num), definitions[entry[0]]!);
-          definition = definition === null ? scaled : pm.add(definition, scaled);
+          constant.set(pm.mkConst(coeff.num));
+          product.set(pm.mul(constant.get(), definitions.get(entry[0])));
+          p.set(index === 0 ? product.get() : pm.add(p.get(), product.get()));
+          product.reset();
+          constant.reset();
         }
-        definitions.push(definition ?? pm.zero);
-        denominators.push(denominator);
-        continue;
-      }
-      definitions.push(pm.mkVar(variable));
-      denominators.push(1n);
+      } else p.set(pm.mkVar(variable));
+      definitions.push(p.getOrNull() ?? pm.zero);
+      denominators.push(denominator);
+      p.reset();
     }
     return { definitions, denominators };
   }
 
   private addConstraint(
     constraintIndex: number,
-    definitions: readonly (Polynomial | null)[],
+    definitions: PolynomialRefVector,
     denominators: readonly bigint[],
   ) {
     const lra = this.core.lra;
@@ -172,23 +171,32 @@ export class NraSolver {
       (result, entry) => getLcm(result, entry[1].div(Rational.of(denominators[entry[0]])).den),
       rhs.den,
     );
-    let polynomial = pm.mkConst(-(rhs.num * denominator) / rhs.den);
+    const p = new PolynomialRef(pm);
+    const poly = new PolynomialRef(pm);
+    const constant = new PolynomialRef(pm);
+    p.set(pm.mkConst(-(rhs.num * denominator) / rhs.den));
     for (const entry of coeffs) {
       const coeff = entry[1].mul(Rational.of(denominator, denominators[entry[0]]));
-      polynomial = pm.add(polynomial, pm.mul(definitions[entry[0]]!, pm.mkConst(coeff.num)));
+      poly.set(definitions.get(entry[0]));
+      constant.set(pm.mkConst(coeff.num));
+      poly.set(pm.mul(poly.get(), constant.get()));
+      constant.reset();
+      p.set(pm.add(p.get(), poly.get()));
+      poly.reset();
     }
     const kind = constraint.kind;
     const literal =
       kind === KIND_LE
-        ? solver.mkIneqLiteral("GT", [polynomial], [false]) ^ 1
+        ? solver.mkIneqLiteral("GT", [p.get()], [false]) ^ 1
         : kind === KIND_GE
-          ? solver.mkIneqLiteral("LT", [polynomial], [false]) ^ 1
+          ? solver.mkIneqLiteral("LT", [p.get()], [false]) ^ 1
           : solver.mkIneqLiteral(
               kind === KIND_LT ? "LT" : kind === KIND_GT ? "GT" : "EQ",
-              [polynomial],
+              [p.get()],
               [false],
             );
     solver.mkExternalClause([literal], constraintIndex);
+    p.reset();
     return literal;
   }
 
@@ -208,13 +216,20 @@ export class NraSolver {
     if (transcendentals.piVar !== NULL_LPVAR) solver.addPi(this.getNlVar(transcendentals.piVar));
   }
 
-  check(maxConflicts: number, budget: number) {
+  check(maxConflicts: number) {
+    try {
+      return this.checkCore(maxConflicts);
+    } catch (error) {
+      if (error instanceof SmtCanceledError && this.core.nraLimit.isExhausted()) return L_UNDEF;
+      throw error;
+    }
+  }
+
+  private checkCore(maxConflicts: number) {
     const core = this.core;
     const lra = core.lra;
-    this.solver = new NlsatSolver(core.limit, budget);
+    this.reset();
     this.solver.maxConflicts = maxConflicts;
-    this.values = [];
-    this.lp2nl.clear();
     const cone = getConeOfInfluence(core);
     const definitions = this.mkDefinitions((lpVar) => cone.vars.has(lpVar));
     const skipped = new Set<number>();
@@ -225,15 +240,9 @@ export class NraSolver {
       }
       this.addConstraint(constraintIndex, definitions.definitions, definitions.denominators);
     }
+    definitions.definitions.reset();
     this.registerTranscendentals();
-    const result = (() => {
-      try {
-        return this.solver.check();
-      } catch (error) {
-        if (error instanceof NlsatUnsupportedError) return L_UNDEF;
-        throw error;
-      }
-    })();
+    const result = this.solver.check();
     if (result === L_TRUE) {
       this.solver.restoreOrder();
       core.setUseNraModel(true);
@@ -321,50 +330,92 @@ export class NraSolver {
             : sign === 0;
   }
 
-  private getClause() {
+  private setupAssignmentSolver() {
     const core = this.core;
     const lra = core.lra;
-    this.solver = new NlsatSolver(core.limit);
-    this.lp2nl.clear();
+    this.reset();
+    this.literal2constraint.clear();
+    this.vars2mon.clear();
     const cone = getConeOfInfluence(core);
     const definitions = this.mkDefinitions(() => true);
-    const values = lra.columns.map((_column, lpVar) => new Anum(core.val(lpVar)));
-    this.values = values;
-    const literalConstraints = new Map<number, number>();
+    for (let lpVar = 0; lpVar < lra.columns.length; lpVar++) {
+      this.values.push(new Anum(core.val(lpVar)));
+      if (core.emons.isMonicVar(lpVar))
+        this.vars2mon.set(getSortedVars(core.emons.get(lpVar).vars).join(","), lpVar);
+    }
     for (const constraintIndex of cone.constraints) {
       const literal = this.addConstraint(
         constraintIndex,
         definitions.definitions,
         definitions.denominators,
       );
-      literalConstraints.set(literal, constraintIndex);
+      this.literal2constraint.set(literal, constraintIndex);
     }
+    definitions.definitions.reset();
     this.registerTranscendentals();
-    const result = this.solver.checkAssignment(values);
-    if (result.result !== L_FALSE) return null;
-    return { clause: result.clause, literalConstraints };
+  }
+
+  private processPolynomialCheckAssignment(
+    polynomial: Polynomial,
+    nl2lp: readonly number[],
+    term: LarTerm,
+  ) {
+    let bound = Rational.zero;
+    for (let index = 0; index < polynomial.size; index++) {
+      const monomial = polynomial.ms[index];
+      const coeff = Rational.of(polynomial.as[index]);
+      // Like Z3, this drops degrees: only an axiom's ¬best can be nonlinear, and ¬cell is valid alone.
+      if (monomial.size === 0) bound = bound.sub(coeff);
+      else if (monomial.size === 1) term.addMonomial(coeff, nl2lp[monomial.vars[0]]);
+      else {
+        const vars = getSortedVars(monomial.vars.map((variable) => nl2lp[variable]));
+        term.addMonomial(coeff, this.vars2mon.get(vars.join(",")) ?? this.core.addMulDef(vars));
+      }
+    }
+    return bound;
+  }
+
+  private reverseLp2nl() {
+    const nl2lp: number[] = [];
+    for (const entry of this.lp2nl) nl2lp[entry[1]] = entry[0];
+    return nl2lp;
   }
 
   checkAssignment() {
-    const clause = (() => {
-      try {
-        return this.getClause();
-      } catch (error) {
-        if (error instanceof NlsatUnsupportedError) return null;
-        throw error;
-      }
-    })();
-    if (clause === null) return L_UNDEF;
-    return this.addLemma(clause.clause, clause.literalConstraints);
+    try {
+      return this.checkAssignmentCore();
+    } catch (error) {
+      if (error instanceof SmtCanceledError && this.core.nraLimit.isExhausted()) return L_UNDEF;
+      throw error;
+    }
   }
 
-  private addLemma(clause: number[], literalConstraints: ReadonlyMap<number, number>) {
+  private checkAssignmentCore() {
+    const core = this.core;
+    const lra = core.lra;
+    this.setupAssignmentSolver();
+    const result = this.solver.checkAssignment(this.values);
+    if (result.result === L_TRUE) {
+      core.setUseNraModel(true);
+      lra.initModel();
+      for (const constraint of lra.constraints.constraints)
+        if (constraint.isActive && !this.isConstraintSatisfied(constraint)) return L_UNDEF;
+      for (const monic of core.emons.monics)
+        if (!this.isMonicSatisfied(monic.variable, monic.vars)) return L_UNDEF;
+      core.setUseNraModel(true);
+    }
+    if (result.result === L_FALSE) return this.addLemma(result.clause);
+    return result.result;
+  }
+
+  private addLemma(clause: readonly number[]) {
     const core = this.core;
     const solver = this.solver;
-    const pm = solver.pm;
+    const nl2lp = this.reverseLp2nl();
+    let result = L_FALSE;
     const lemma = new LemmaBuilder(core);
     for (const literal of clause) {
-      const constraintIndex = literalConstraints.get(literal ^ 1);
+      const constraintIndex = this.literal2constraint.get(literal ^ 1);
       if (constraintIndex !== undefined) {
         const explanation = new Explanation();
         explanation.push(constraintIndex);
@@ -373,23 +424,12 @@ export class NraSolver {
       }
       const atom = solver.getAtom(literal);
       if (atom === null) throw new SmtInvariantError(`nlsat literal ${literal} has no atom`);
-      if (
-        !isIneqAtom(atom) ||
-        atom.polynomials.length !== 1 ||
-        pm.totalDegree(atom.polynomials[0]) > 1
-      ) {
-        core.lemmas.pop();
-        return L_UNDEF;
+      if (!isIneqAtom(atom) || atom.polynomials.length !== 1) {
+        result = L_UNDEF;
+        break;
       }
-      const polynomial = atom.polynomials[0];
       const term = new LarTerm();
-      let bound = Rational.zero;
-      for (let index = 0; index < polynomial.size; index++) {
-        const monomial = polynomial.ms[index];
-        const coeff = Rational.of(polynomial.as[index]);
-        if (monomial.size === 0) bound = bound.sub(coeff);
-        else term.addMonomial(coeff, monomial.vars[0]);
-      }
+      const bound = this.processPolynomialCheckAssignment(atom.polynomials[0], nl2lp, term);
       const isNegated = (literal & 1) === 1;
       const kind =
         atom.kind === "EQ"
@@ -405,12 +445,13 @@ export class NraSolver {
               : KIND_GT;
       const ineq = mkIneq(term, kind, bound);
       if (core.ineqHolds(ineq)) {
-        core.lemmas.pop();
-        return L_UNDEF;
+        result = L_UNDEF;
+        break;
       }
       lemma.addIneq(ineq);
     }
-    core.isCheckFeasible = true;
-    return L_FALSE;
+    if (result === L_FALSE) core.isCheckFeasible = true;
+    if (result === L_UNDEF) core.lemmas.pop();
+    return result;
   }
 }

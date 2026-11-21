@@ -1,5 +1,6 @@
 import { toEnumeratedSet } from "../builtins";
 import { TlaEvaluationError } from "../errors";
+import { prettyPrint } from "../pretty-print";
 import type { TlcVersion } from "./version";
 import {
   createRecord,
@@ -226,7 +227,7 @@ export const getRandomElement = (set: Value, random: JavaRandom): Value => {
     const offset = Math.floor(random.nextDouble() * size);
     if (offset >= size) {
       throw new TlaEvaluationError(
-        `Attempted to retrieve out-of-bounds element from the interval value ${formatValue(set)}.`,
+        `Attempted to retrieve out-of-bounds element from the interval value ${prettyPrint(formatValue(set))}.`,
       );
     }
     return set.low + offset;

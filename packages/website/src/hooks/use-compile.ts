@@ -1,6 +1,11 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { compilations, initial } from "virtual:compilations";
-import type { CompileRequest, CompileResponse } from "@/lib/compile-worker";
+import {
+  type CompileRequest,
+  type CompileResponse,
+  compileOnEscore,
+  listenToCompiles,
+} from "@/lib/escore-worker";
 import type { createHighlighter } from "@/lib/highlighter";
 
 interface CompileState {
@@ -17,33 +22,31 @@ export const useCompile = (source: string, fileName: string) => {
   const [precompiled, setPrecompiled] = useState(() => new Map([[initial.fileName, initial]]));
   const [isStarted, setIsStarted] = useState(false);
   const [highlight, setHighlight] = useState<Awaited<ReturnType<typeof createHighlighter>>>();
-  const workerRef = useRef<Worker | undefined>(undefined);
+  const workerRef = useRef<Pick<Worker, "postMessage"> | undefined>(undefined);
   const built = precompiled.get(fileName);
   const isEdited =
     compilations[fileName] === undefined || (built !== undefined && built.source !== source);
 
   useEffect(() => {
     if (!isStarted) return;
-    const worker = new Worker(new URL("../lib/compile-worker.ts", import.meta.url), {
-      type: "module",
-    });
     const receive = (response: CompileResponse) =>
       setState((previous) => ({
         response,
         compiled: response.compilation ? response : previous.compiled,
       }));
-    worker.onmessage = (event: MessageEvent<CompileResponse>) => receive(event.data);
-    worker.onerror = (event) => receive({ source: "", fileName: "", error: event.message });
-    workerRef.current = worker;
+    // The worker that checks compiles too.
+    workerRef.current = { postMessage: compileOnEscore };
     void import("@/lib/highlighter")
       .then((loaded) => loaded.createHighlighter())
       .then((nextHighlight) => setHighlight(() => nextHighlight));
-    return () => worker.terminate();
+    return listenToCompiles(receive);
   }, [isStarted]);
 
+  const isBuilt = built?.source === source;
+  // A file that the site built needs no compile.
   useEffect(() => {
-    workerRef.current?.postMessage({ source, fileName } satisfies CompileRequest);
-  }, [source, fileName, isStarted]);
+    if (!isBuilt) workerRef.current?.postMessage({ source, fileName } satisfies CompileRequest);
+  }, [source, fileName, isStarted, isBuilt]);
 
   // The compiler and the highlighter are large downloads. A page that loaded fast fetches them
   // at once. A slow one waits until they are needed, so they do not hold up the page or a run.
@@ -57,7 +60,6 @@ export const useCompile = (source: string, fileName: string) => {
     );
   }, [fileName]);
 
-  const isBuilt = built?.source === source;
   // An edit keeps the last output on screen until its own lands. Another file's does not.
   const compilation =
     !isBuilt && state.compiled?.fileName === fileName

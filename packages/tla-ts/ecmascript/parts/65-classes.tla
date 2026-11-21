@@ -123,13 +123,16 @@ MethodDefinitionThen(obj, n, enumerable, m) ==
 \* Private environments (§9.2) are values: [outer, names] with names from a private identifier's
 \* name to its Private Name. A Private Name is [type |-> "private", id, description].
 NewPrivateEnvironment(s, outer, names) ==
-  LET ids == [i \in 1..Len(names) |-> s.privateCount + i]
-      distinct == Dedupe(names)
-  IN [s |-> [s EXCEPT !.privateCount = @ + Len(distinct)],
+  LET first == IF names = <<>> THEN <<>> ELSE FirstIndexes(names, 1, Len(names))
+  IN [s |-> [s EXCEPT !.privateCount = @ + Len(names)],
       env |-> [outer |-> outer,
-               names |-> [name \in Range(distinct) |->
-                            [type |-> "private", id |-> s.privateCount + IndexOf(distinct, name),
-                             description |-> <<35>> \o name]]]]
+               names |-> [name \in DOMAIN first |->
+                            [type |-> "private", id |-> s.privateCount + first[name], description |-> <<35>> \o name]]]]
+\* The index in seq of each of its values first from lo to hi, in halves, so that thousands of them
+\* nest log n deep rather than n.
+FirstIndexes(seq, lo, hi) ==
+  IF lo = hi THEN seq[lo] :> lo
+  ELSE FirstIndexes(seq, lo, (lo + hi) \div 2) @@ FirstIndexes(seq, (lo + hi) \div 2 + 1, hi)
 
 ResolvePrivateIdentifier(s, ctx, name) == ResolvePrivateIn(ctx.priv, name)
 ResolvePrivateIn(env, name) ==

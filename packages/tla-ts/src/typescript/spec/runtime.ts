@@ -1,8 +1,9 @@
-import { runInNewContext } from "node:vm";
 import { TlaError } from "../../errors";
 import type { GeneratedDefinition, Library } from "./library";
+import type { HostRealm } from "./realm";
+import { CALENDAR_TABLES } from "../calendars";
 import { DATE_FORMATS } from "../date-formats";
-import { TIME_ZONES } from "../time-zones";
+import { REJECTED_TIME_ZONES, TIME_ZONE_DATA, TIME_ZONES } from "../time-zones";
 
 // The ESCore operators that a compiled spec defines its own way, each a port of ESCore's with
 // what the parse node gave as a parameter: a function's code is the record [id, strict, kind,
@@ -27,17 +28,15 @@ const DEFINITIONS = [
   `UpdateValueThen(isIncrement, isPostfix, r) ==
   IF IsAbrupt(r) THEN r ELSE
   IF Val(r).type # "reference" THEN ThrowError(r.s, "ReferenceError") ELSE
-  LET ref == ToKeyedReference(r.s, Val(r)) IN
-  IF IsAbrupt(ref) THEN ref ELSE
-  LET old == GetValue(ref.s, Val(ref)) IN
+  LET old == GetValue(r.s, Val(r)) IN
   IF IsAbrupt(old) THEN old ELSE
-  LET num == IF IsNumber(Val(old)) THEN old ELSE ToNumeric(old.s, Val(old)) IN
+  LET num == IF IsNumber(Val(old)) /\\ Val(old) # HostTime THEN old ELSE ToNumeric(old.s, Val(old)) IN
   IF IsAbrupt(num) THEN num ELSE
   LET v == Val(num)
       new == IF IsNumber(v)
              THEN Num(IF isIncrement THEN NumAdd(v.value, NumFromInt(1)) ELSE NumSub(v.value, NumFromInt(1)))
              ELSE BigInt(IF isIncrement THEN BigIntAdd(v.value, BigIntFromInt(1)) ELSE BigIntSub(v.value, BigIntFromInt(1)))
-      p == PutValue(num.s, Val(ref), new)
+      p == PutValue(num.s, Val(r), new)
   IN IF IsAbrupt(p) THEN p ELSE Ok(p.s, IF isPostfix THEN v ELSE new)`,
   // A call's function and this value, from the result r of evaluating its callee.
   `CalleeThen(r) ==
@@ -67,6 +66,66 @@ const DEFINITIONS = [
   LET r == Call([s EXCEPT !.timers = Tail(@), !.task = [kind |-> "timer"]], Head(s.timers), Undefined, <<>>) IN IF IsAbrupt(r) THEN r ELSE
   LET j == RunJobs(r.s) IN IF IsAbrupt(j) THEN j ELSE
   LET u == UnhandledRejection(j.s) IN IF IsAbrupt(u) THEN u ELSE RunTimers(u.s)`,
+  // An error that ESCore throws with V8's message, which, as V8's, is the error's own property.
+  `ThrowMessage(s, kind, units) ==
+  LET a == Alloc(s, MakeObject(Obj(s.realm[kind \\o "Prototype"]), "error", [data |-> Empty]))
+      m == CreateMethodProperty(InstallStack(a.s, a.v), a.v, SV("message"), Str(units))
+  IN ThrowValue(m.s, a.v)`,
+  // A key as V8 writes it in a message, or Empty for one that V8 writes as its object.
+  `MessageKey(s, k) ==
+  CASE k.type = "symbol" -> SymbolDescriptiveString(s, k).value
+    [] k.type \\in {"string", "number", "boolean", "undefined", "null"} /\\ k # HostTime -> PrimitiveToUnits(k)
+    [] OTHER -> Empty`,
+  // V8's object in a message: an array as [object Array], an object of Object.prototype as
+  // #<Object>, and one of no prototype as [object Object], or Empty for another.
+  `ObjectDisplay(s, o) ==
+  CASE O(s, o).class = "array" /\\ O(s, o).proto = Intrinsic(s, "ArrayPrototype") -> N("[object Array]")
+    [] O(s, o).class = "ordinary" /\\ O(s, o).proto = Intrinsic(s, "ObjectPrototype") -> N("#<Object>")
+    [] O(s, o).class = "ordinary" /\\ O(s, o).proto = Null -> N("[object Object]")
+    [] OTHER -> Empty`,
+  // Whether no object on a prototype chain of plain objects and arrays holds the key k.
+  `NoneOnChain(s, p, k) ==
+  p = Null \\/ (O(s, p).class \\in {"ordinary", "array", "immutableProto"} /\\ OrdinaryGetOwnProperty(O(s, p), k) = Absent /\\ NoneOnChain(s, O(s, p).proto, k))`,
+  // The TypeError of a strict write of k to o that [[Set]] refused, with V8's message where its
+  // cause is the object's own: a read-only property, a getter without a setter, or an object
+  // that takes no new property.
+  `SetFailure(s, o, k) ==
+  IF ~IsObject(o) \\/ O(s, o).class \\notin {"ordinary", "array"} \\/ MessageKey(s, k) = Empty THEN ThrowTypeError(s)
+  ELSE LET own == OrdinaryGetOwnProperty(O(s, o), k)
+           display == ObjectDisplay(s, o)
+       IN CASE own = Absent /\\ ~O(s, o).ext /\\ NoneOnChain(s, O(s, o).proto, k) ->
+                 ThrowMessage(s, "TypeError", N("Cannot add property ") \\o MessageKey(s, k) \\o N(", object is not extensible"))
+            [] own # Absent /\\ own.writable = False /\\ display # Empty ->
+                 ThrowMessage(s, "TypeError", N("Cannot assign to read only property '") \\o MessageKey(s, k) \\o N("' of object '") \\o display \\o N("'"))
+            [] own # Absent /\\ IsAccessorDescriptor(own) /\\ own.set = Undefined /\\ display # Empty ->
+                 ThrowMessage(s, "TypeError", N("Cannot set property ") \\o MessageKey(s, k) \\o N(" of ") \\o display \\o N(" which has only a getter"))
+            [] OTHER -> ThrowTypeError(s)`,
+  // The TypeError of Object.defineProperty that [[DefineOwnProperty]] refused on a plain object.
+  `DefineFailure(s, o, k) ==
+  IF ~IsObject(o) \\/ O(s, o).class # "ordinary" \\/ MessageKey(s, k) = Empty THEN ThrowTypeError(s)
+  ELSE IF OrdinaryGetOwnProperty(O(s, o), k) = Absent
+  THEN IF O(s, o).ext THEN ThrowTypeError(s) ELSE ThrowMessage(s, "TypeError", N("Cannot define property ") \\o MessageKey(s, k) \\o N(", object is not extensible"))
+  ELSE ThrowMessage(s, "TypeError", N("Cannot redefine property: ") \\o MessageKey(s, k))`,
+  // GetIterator of a value that V8 names by its text where it isn't iterable.
+  `GetIteratorNamed(s, v, text) ==
+  IF IsNullish(v) THEN ThrowMessage(s, "TypeError", text \\o N(" is not iterable"))
+  ELSE LET f == GetValueProperty(s, v, SymIterator) IN
+  IF IsAbrupt(f) THEN f
+  ELSE IF ~IsCallable(f.s, Val(f)) THEN ThrowMessage(f.s, "TypeError", text \\o N(" is not iterable"))
+  ELSE LET it == Call(f.s, Val(f), v, <<>>) IN
+  IF IsAbrupt(it) THEN it
+  ELSE IF ~IsObject(Val(it)) THEN ThrowMessage(it.s, "TypeError", N("Result of the Symbol.iterator method is not an object"))
+  ELSE LET next == Get(it.s, Val(it), SV("next")) IN
+       IF IsAbrupt(next) THEN next ELSE Ok(next.s, JsIterator(Val(it), Val(next)))`,
+  // GetIterator of a call's spread argument, where V8 names no text but for a nullish value.
+  `GetIteratorSpread(s, v) ==
+  IF IsNullish(v) THEN GetIterator(s, v, "sync")
+  ELSE LET f == GetValueProperty(s, v, SymIterator) IN
+  IF IsAbrupt(f) THEN f
+  ELSE IF ~IsCallable(f.s, Val(f)) THEN ThrowMessage(f.s, "TypeError", N("Spread syntax requires ...iterable[Symbol.iterator] to be a function"))
+  ELSE GetIteratorFromMethod(f.s, v, Val(f))`,
+  `IsIntegralNumber(v) == v.type = "number" /\\ v # HostTime /\\ NumIsFinite(v.value) /\\ NumIsIntegral(v.value)`,
+  `BeforeInitialization(name) == N("Cannot access '") \\o name \\o N("' before initialization")`,
   // An error's own stack accessor, as V8 gives each error one, of the two functions that the realm
   // keeps in the slots of %Error.prototype%.
   `InstallStack(s, o) ==
@@ -85,6 +144,14 @@ const DEFINITIONS = [
                [] e.kind = "getter" -> AccessorDesc(e.get, Absent, enumerable, TRUE)
                [] OTHER -> AccessorDesc(Absent, e.set, enumerable, TRUE))
   IN IF IsAbrupt(d) THEN d ELSE Ok(d.s, e)`,
+  // DefineElementOn of each of a class's methods in order, in halves, so that thousands of them
+  // nest log n deep rather than n.
+  `DefineElementsOn(s, home, elements) ==
+  CASE elements = <<>> -> Ok(s, Empty)
+    [] Len(elements) = 1 -> DefineElementOn(home, Ok(s, elements[1]), FALSE)
+    [] OTHER ->
+         LET first == DefineElementsOn(s, home, SubSeq(elements, 1, Len(elements) \\div 2)) IN
+         IF IsAbrupt(first) THEN first ELSE DefineElementsOn(first.s, home, SubSeq(elements, Len(elements) \\div 2 + 1, Len(elements)))`,
   `ClassParents(s, superclass) ==
   IF superclass = Null THEN Ok(s, [proto |-> Null, ctor |-> Intrinsic(s, "FunctionPrototype")])
   ELSE IF ~IsConstructor(s, superclass) THEN ThrowTypeError(s)
@@ -104,8 +171,19 @@ const DEFINITIONS = [
                               DataDesc(Intrinsic(s, "ArrayProto_values"), TRUE, FALSE, TRUE))
       withCallee == PutProp(withIterator, SV("callee"), DataDesc(f, TRUE, FALSE, TRUE))
   IN Alloc(s, withCallee)`,
-  // The realm's tables, folded in halves so that building the realm nests log n deep, not n.
-  `AddRealmProperties(s, ps) == AddRealmPropertiesIn(s, ps, 1, Len(ps))`,
+  // The realm's tables, folded in halves so that building the realm nests log n deep, not n, and
+  // with each built-in's keys then in the order of the host's.
+  `AddRealmProperties(s, ps) == OrderRealmKeys(AddRealmPropertiesIn(s, ps, 1, Len(ps)), 1)`,
+  // V8 creates the properties of its built-ins in an order of its own, which their own keys give.
+  // Each built-in that HostKeyOrders lists has the keys it lists first, in that order, and then
+  // its others.
+  `OrderRealmKeys(s, i) ==
+  IF i > Len(HostKeyOrders) THEN s
+  ELSE LET order == HostKeyOrders[i].keys
+           v == Intrinsic(s, HostKeyOrders[i].name)
+           keys == O(s, v).keys
+       IN OrderRealmKeys(SetO(s, v, [O(s, v) EXCEPT !.keys = SelectSeq(order, LAMBDA k : k \\in Range(keys)) \\o
+                                                        SelectSeq(keys, LAMBDA k : k \\notin Range(order))]), i + 1)`,
   `AddRealmPropertiesIn(s, ps, lo, hi) ==
   IF lo > hi THEN s
   ELSE IF lo = hi THEN AddRealmProperty(s, ps[lo])
@@ -143,13 +221,13 @@ const DEFINITIONS = [
   // environment e: a declarative binding's value, or that of a global environment's declarative
   // part, as GetBindingValue reads it, and any other through the reference.
   `IdentifierValue(s, e, name, strict) ==
-  IF e = 0 THEN ThrowError(s, "ReferenceError") ELSE
+  IF e = 0 THEN NotDefined(s, name) ELSE
   LET env == E(s, e) IN
   IF IsDeclarativeKind(env.kind) /\\ name \\notin DOMAIN env.b THEN IdentifierValue(s, env.outer, name, strict)
   ELSE IF env.kind \\in {"declarative", "catch", "function"} \\/ (env.kind = "module" /\\ env.b[name].value.type # "import") THEN
-    IF env.b[name].init THEN Ok(s, env.b[name].value) ELSE ThrowError(s, "ReferenceError")
+    IF env.b[name].init THEN Ok(s, env.b[name].value) ELSE ThrowMessage(s, "ReferenceError", BeforeInitialization(name))
   ELSE IF env.kind = "global" /\\ name \\in DOMAIN E(s, env.declRec).b THEN
-    IF E(s, env.declRec).b[name].init THEN Ok(s, E(s, env.declRec).b[name].value) ELSE ThrowError(s, "ReferenceError")
+    IF E(s, env.declRec).b[name].init THEN Ok(s, E(s, env.declRec).b[name].value) ELSE ThrowMessage(s, "ReferenceError", BeforeInitialization(name))
   ELSE GetValueThen(GetIdentifierReference(s, e, name, strict))`,
   // A compiled module's code gives the entries and requests that ParseModule (§16.2.1.7.1) reads
   // of the module's parse node, which ModuleNode gives the program's modules as.
@@ -423,13 +501,30 @@ const DEFINITIONS = [
            ELSE DefinePropertyOrThrow(value.s, Intrinsic(s, p.owner), Str(p.name), DataDesc(Val(value), p.writable, p.enumerable, p.configurable))
   IN IF IsAbrupt(d) THEN d ELSE DefineHostWith(d.s, handler, Tail(properties))`,
   // import.meta of module m, as Node gives it: an object without a prototype whose dirname,
-  // filename, resolve, and url, which the runtime leaves out, are accessors that stop, and whose
-  // main tells whether m is the entry, the module the host loaded first.
+  // filename, and url are where the host loaded m from, whose resolve, which the runtime leaves
+  // out, stops, and whose main tells whether m is the entry, the module the host loaded first. Of a
+  // module the host gives no file of, the properties but main are accessors that stop.
   `ImportMeta(s, m) ==
   LET o == OrdinaryObjectCreate(s, Null)
-      stop == CreateBuiltinFunction(o.s, <<"Module", "hostStop">>, 0, <<>>, N("import.meta"))
-      d == DefineMetaProperties(stop.s, Val(o), Val(stop), <<N("dirname"), N("filename"), N("main"), N("resolve"), N("url")>>, m = 1)
-  IN IF IsAbrupt(d) THEN d ELSE Ok(d.s, Val(o))`,
+      file == ModuleAt(s, m).node.file
+      path == HostFilePath(file)
+      url == HostFileLocation(file)
+      slash == {i \\in DOMAIN path : path[i] = 47 /\\ \\A j \\in DOMAIN path : path[j] = 47 => j <= i}
+      directory == IF slash = {} THEN N(".") ELSE LET i == CHOOSE i \\in slash : TRUE IN IF i = 1 THEN N("/") ELSE SubSeq(path, 1, i - 1)
+  IN IF path = Empty \\/ url = Empty THEN
+       LET stop == CreateBuiltinFunction(o.s, <<"Module", "hostStop">>, 0, <<>>, N("import.meta"))
+           d == DefineMetaProperties(stop.s, Val(o), Val(stop), <<N("dirname"), N("filename"), N("main"), N("resolve"), N("url")>>, m = 1)
+       IN IF IsAbrupt(d) THEN d ELSE Ok(d.s, Val(o))
+     ELSE
+       LET resolve == CreateBuiltinFunction(o.s, <<"Module", "hostStop">>, 1, N("resolve"), N("import.meta.resolve"))
+           d == DefineDataProperties(resolve.s, Val(o),
+                  <<<<N("dirname"), Str(directory)>>, <<N("filename"), Str(path)>>, <<N("main"), Bool(m = 1)>>,
+                    <<N("resolve"), Val(resolve)>>, <<N("url"), Str(url)>>>>)
+       IN IF IsAbrupt(d) THEN d ELSE Ok(d.s, Val(o))`,
+  `DefineDataProperties(s, o, pairs) ==
+  IF pairs = <<>> THEN Ok(s, Empty) ELSE
+  LET d == DefinePropertyOrThrow(s, o, Str(Head(pairs)[1]), DataDesc(Head(pairs)[2], TRUE, TRUE, TRUE))
+  IN IF IsAbrupt(d) THEN d ELSE DefineDataProperties(d.s, o, Tail(pairs))`,
   `DefineMetaProperties(s, o, stop, names, isMain) ==
   IF names = <<>> THEN Ok(s, Empty) ELSE
   LET d == DefinePropertyOrThrow(s, o, Str(Head(names)),
@@ -518,7 +613,11 @@ const DEFINITIONS = [
   IF ~IsString(id) \\/ id.value \\notin DOMAIN ModuleNode(referrer).targets
   THEN Assert(FALSE, "tla-ts can't require a module other than a file that a string names")
   ELSE RequireFile(s, ModuleNode(referrer).targets[id.value])`,
-  `Unsupported(s, what) == Assert(FALSE, "tla-ts can't run a part of ECMAScript that ESCore leaves out")`,
+  // A part of ECMAScript that ESCore leaves out, by the reason that ESCore gives after
+  // "Unsupported: ", or none.
+  `Unsupported(s, what) ==
+  Assert(FALSE, IF Len(what) <= 13 THEN "tla-ts can't run a part of ECMAScript that ESCore leaves out"
+                ELSE "tla-ts can't model " \\o UnitsText(SubSeq(what, 14, Len(what))))`,
 ];
 
 // The characters that a TLA+ string can hold, as a string spells each, by code unit.
@@ -567,6 +666,13 @@ const STACK_DEFINITIONS = [
   IF IsAbrupt(r) THEN r
   ELSE IF ~IsCallable(r.s, f) THEN ThrowTypeError(r.s)
   ELSE CallObjectAt(r.s, f, this, Val(r), site)`,
+  // A call or a new whose callee V8 names by its text where it isn't callable or a constructor.
+  `CallNamedAt(site, f, this, r, text) ==
+  IF ~IsAbrupt(r) /\\ ~IsCallable(r.s, f) THEN ThrowMessage(r.s, "TypeError", text \\o N(" is not a function"))
+  ELSE CallArgumentsAt(site, f, this, r)`,
+  `NewNamedAt(site, constructor, r, text) ==
+  IF ~IsAbrupt(r) /\\ ~IsConstructor(r.s, constructor) THEN ThrowMessage(r.s, "TypeError", text \\o N(" is not a constructor"))
+  ELSE NewArgumentsAt(site, constructor, r)`,
   `NewArgumentsAt(site, constructor, r) ==
   IF IsAbrupt(r) THEN r
   ELSE IF ~IsConstructor(r.s, constructor) THEN ThrowTypeError(r.s)
@@ -639,6 +745,14 @@ const STACK_DEFINITIONS = [
   // writes the header of Error.prototype.toString, which reads the error's name and message, and
   // the frames V8 captured.
   `FormatStack(s, error, t) ==
+  LET header == StackHeader(s, error, t) IN IF IsAbrupt(header) THEN header ELSE
+  Ok(header.s, Str(Val(header).value \\o JoinFrames(WalkFrames(header.s, t, t.callers, <<>>, NoFrames).lines)))`,
+  // The walk of a stack's frames before it counts one: their lines, where it writes them, and
+  // their positions.
+  `NoFrames == [skipping |-> TRUE, count |-> 0, isText |-> TRUE, lines |-> <<>>, positions |-> <<>>]`,
+  // The header of an error's stack as Node writes it, Error.prototype.toString's, where no
+  // Error.prepareStackTrace of a program writes it instead.
+  `StackHeader(s, error, t) ==
   IF t.realm # 1 \\/ s.realmId # 1 THEN Assert(FALSE, "tla-ts can't read the stack of an error of another realm as Node writes it") ELSE
   LET e == Get(s, Intrinsic(s, "GlobalObject"), SV("Error")) IN IF IsAbrupt(e) THEN e ELSE
   LET p == CASE IsNullish(Val(e)) -> Ok(e.s, Undefined)
@@ -648,8 +762,7 @@ const STACK_DEFINITIONS = [
   LET q == Get(p.s, Intrinsic(p.s, "Error"), SV("prepareStackTrace")) IN IF IsAbrupt(q) THEN q ELSE
   IF IsCallable(q.s, Val(p)) \\/ IsCallable(q.s, Val(q)) THEN Assert(FALSE, "tla-ts can't run a program's Error.prepareStackTrace") ELSE
   IF ProxyOnChain(q.s, error) THEN Assert(FALSE, "tla-ts can't ask a proxy whether an error is one of Node's") ELSE
-  LET header == ErrorBuiltin(q.s, Undefined, "toString", error, <<>>, Undefined) IN IF IsAbrupt(header) THEN header ELSE
-  Ok(header.s, Str(Val(header).value \\o JoinFrames(WalkFrames(header.s, t, t.callers, <<>>, [skipping |-> TRUE, count |-> 0, lines |-> <<>>]))))`,
+  ErrorBuiltin(q.s, Undefined, "toString", error, <<>>, Undefined)`,
   `ProxyOnChain(s, o) == o # Null /\\ (O(s, o).class = "proxy" \\/ ProxyOnChain(s, O(s, o).proto))`,
   `JoinFrames(lines) == IF lines = <<>> THEN <<>> ELSE <<10>> \\o N("    at ") \\o Head(lines) \\o JoinFrames(Tail(lines))`,
   // The built-ins that run a function with no frame of their own on V8's stack, and those whose
@@ -668,9 +781,10 @@ const STACK_DEFINITIONS = [
   // The frames of a stack, from the frame of the call e, whose position is pos, down
   // (CallSiteBuilder): a frame of a built-in that V8 hides counts for nothing, as a class's default
   // constructor that a derived class's super calls, which V8 skips; and one that tla-ts can't tell
-  // stops, but where V8 skips it anyway.
+  // stops, but where V8 skips it anyway. The walk gives the lines of the frames it counts, and
+  // their positions.
   `WalkFrames(s, t, e, pos, r) ==
-  IF r.count >= t.limit THEN r.lines
+  IF r.count >= t.limit THEN r
   ELSE IF e = Null THEN BottomFrames(s, t, pos, r)
   ELSE LET o == O(s, e.f)
            frame == [kind |-> o.class, f |-> e.f, this |-> e.this, isNew |-> e.isNew, pos |-> pos]
@@ -683,6 +797,9 @@ const STACK_DEFINITIONS = [
                  IF SameValue(e.this, e.f) THEN WalkFrames(s, t, e.next, e.site, VisitFrame(s, t, [frame EXCEPT !.kind = "default"], r))
                  ELSE WalkFrames(s, t, e.next, e.site, r)
             [] r.skipping /\\ t.target # Empty /\\ ~SameValue(e.f, t.target) -> WalkFrames(s, t, e.next, e.site, r)
+            \\* An await's resumption, of which V8 shows the resumed code's frame, at its position.
+            [] ~r.isText /\\ o.class = "builtin" /\\ o.slots.id \\in {<<"Await", "fulfilled">>, <<"Await", "rejected">>} ->
+                 WalkFrames(s, t, e.next, e.site, VisitFrame(s, t, [kind |-> "top", pos |-> pos], r))
             [] OTHER -> Assert(FALSE, "tla-ts can't tell whether Node shows this frame of a stack")`,
   // The frame of a generator's body, which its function has, with its this value.
   `GeneratorFrame(s, gen, pos) ==
@@ -694,23 +811,26 @@ const STACK_DEFINITIONS = [
   IF r.count >= t.limit THEN r
   ELSE IF r.skipping THEN
     IF t.target = Empty \\/ (frame.kind \\in {"function", "builtin", "default"} /\\ SameValue(frame.f, t.target)) THEN [r EXCEPT !.skipping = FALSE] ELSE r
-  ELSE [r EXCEPT !.count = @ + 1, !.lines = Append(@, FrameText(s, frame))]`,
+  ELSE [r EXCEPT !.count = @ + 1, !.lines = IF r.isText THEN Append(@, FrameText(s, frame)) ELSE @,
+                 !.positions = Append(@, IF frame.kind = "host" THEN <<>> ELSE frame.pos)]`,
   // The frames below a program's: the top level of an entry module and the host's frames that run
   // it, nothing below a promise job's function but async frames, which stop, and in a job, code at
-  // the top level, which a resumed async body or module is, stops.
+  // the top level, which a resumed async body or module is, stops, but for a walk of positions
+  // alone, which takes its position.
   `BottomFrames(s, t, pos, r) ==
   CASE t.task.kind = "main" ->
          LET top == VisitFrame(s, t, [kind |-> "top", pos |-> pos], r) IN
-         IF top.count >= t.limit THEN top.lines
+         IF top.count >= t.limit THEN top
          ELSE IF HostEntryFrames(1) = Empty THEN Assert(FALSE, "tla-ts can't tell the frames that Node runs this program from")
-         ELSE VisitHostFrames(s, t, HostEntryFrames(1), top).lines
+         ELSE VisitHostFrames(s, t, HostEntryFrames(1), top)
     [] t.task.kind = "reaction" /\\ pos = <<>> ->
          IF t.task.promise # Empty /\\ O(s, t.task.promise).slots.state = "pending" /\\
             Len(O(s, t.task.promise).slots.fulfillReactions) = 1 /\\
             O(s, t.task.promise).slots.fulfillReactions[1].handler # Empty /\\
             O(s, O(s, t.task.promise).slots.fulfillReactions[1].handler).class = "builtin"
          THEN Assert(FALSE, "tla-ts can't write the async frames of a stack as Node does")
-         ELSE r.lines
+         ELSE r
+    [] ~r.isText /\\ pos # <<>> -> VisitFrame(s, t, [kind |-> "top", pos |-> pos], r)
     [] OTHER -> Assert(FALSE, "tla-ts can't tell the frames below this job's as Node writes them")`,
   `VisitHostFrames(s, t, lines, r) ==
   IF lines = <<>> THEN r ELSE VisitHostFrames(s, t, Tail(lines), VisitFrame(s, t, [kind |-> "host", text |-> Head(lines)], r))`,
@@ -891,6 +1011,20 @@ export const RUNTIME_DEFINITIONS: GeneratedDefinition[] = [
   ...STACK_DEFINITIONS,
   // The code units of a TLA+ string's characters.
   `StringUnits(t) == [i \\in 1..Len(t) |-> CharacterUnits[SubSeq(t, i, i)]]`,
+  // The code units of runs of consecutive code points, the ith from starts[i] to the code unit
+  // ends[i], each code point below 65536 one code unit and each from there a surrogate pair.
+  `CodeUnitsOfRuns(starts, ends) ==
+  [k \\in 1..ends[Len(ends)] |->
+     LET i == RunOfUnit(ends, k, 1, Len(ends))
+         offset == k - 1 - (IF i = 1 THEN 0 ELSE ends[i - 1])
+     IN IF starts[i] < 65536 THEN starts[i] + offset
+        ELSE LET c == starts[i] + (offset \\div 2) - 65536 IN
+             IF (offset % 2) = 0 THEN 55296 + (c \\div 1024) ELSE 56320 + (c % 1024)]`,
+  // The run of ends that holds the code unit k: the first that ends at or after it.
+  `RunOfUnit(ends, k, lo, hi) ==
+  IF lo = hi THEN lo
+  ELSE LET mid == (lo + hi) \\div 2 IN
+       IF ends[mid] >= k THEN RunOfUnit(ends, k, lo, mid) ELSE RunOfUnit(ends, k, mid + 1, hi)`,
   // The code unit of each character that a TLA+ string can hold.
   `CharacterUnits ==
   LET characters == <<${[...CHARACTERS.values()].map((character) => `"${character}"`).join(", ")}>>
@@ -949,10 +1083,162 @@ export const LOCALE_METHODS = [
 // toLocaleUpperCase differ from toLowerCase and toUpperCase.
 const TAILORED_CASING = new Set(["az", "el", "hy", "lt", "tr"]);
 
+// The host's local time is UTC's where its default time zone is UTC, whose name V8 writes after a
+// date's offset in the host's default locale. In another time zone a compiled spec stops at local
+// time, which ESCore keeps as UTC's. The runtime reads these facts of the host's realm through
+// HostRealmFact, which each program's code defines, so that the runtime, and the graph that a build
+// prepares of it, is the same in every time zone and locale.
+const LOCAL_TIME_STOP = `Assert(FALSE, "tla-ts can't tell the host's local time, whose time zone isn't UTC")`;
+export const getHostRealmFacts = (realm: HostRealm) =>
+  `HostRealmFact(name) ==
+  CASE name = "isUtc" -> ${realm.timeZone === "UTC" ? "TRUE" : "FALSE"}
+    [] name = "zoneName" -> <<${Array.from(realm.zoneName, (character) => character.charCodeAt(0)).join(", ")}>>
+    [] name = "tailorsCase" -> ${TAILORED_CASING.has(new Intl.Locale(realm.locale).language) ? "TRUE" : "FALSE"}`;
+const CLOCK_STOP = `Assert(FALSE, "tla-ts can't read the host's clock, whose time each run reads anew")`;
+// What Date.now gives, and the time value of a Date that new Date() makes: a Number without a
+// value, HostTime, which a program may store, pass, and return, as its outcome is then the same at
+// every time, and at whose first reading a compiled spec stops. These operations read a Number's
+// value, each from the values that it takes: the conversions, comparisons, and arithmetic, and
+// the built-ins that read a Number argument without converting it.
+const HOST_TIME_READERS = [
+  ["ToBooleanValue", "<<v>>"],
+  ["PrimitiveToNumber", "<<v>>"],
+  ["PrimitiveToUnits", "<<v>>"],
+  ["SameValue", "<<x, y>>"],
+  ["SameValueZero", "<<x, y>>"],
+  ["IsStrictlyEqual", "<<x, y>>"],
+  ["IsLooselyEqual", "<<x, y>>"],
+  ["IsLessThanPrimitive", "<<px, py>>"],
+  ["ApplyStringOrNumericBinaryOperator", "<<lval, rval>>"],
+  ["NumericBinary", "<<lval, rval>>"],
+  ["RelationalRightThen", "<<lv, Val(r)>>"],
+  ["ThisNumberValue", "<<v>>"],
+  ["CanonicalizeKeyedCollectionKey", "<<key>>"],
+  ["JSONStringify", "<<space>>"],
+  ["IncludesMethod", "<<search, skipped>>"],
+  ["NumberBuiltin", "args"],
+  ["ArrayConstructor", "args"],
+  ["TypedArrayCreateFromConstructor", "argList"],
+  ["CreateHelper", "args"],
+  ["BigIntBuiltin", "args"],
+];
+
+// The patches that the runtime makes of ESCore for a host's realm.
 const HOST_PATCHES = [
   { name: "ParseDate", from: "ParseDate(u) ==", to: "ParseSpecDate(u) ==" },
+  {
+    name: "LocalTime",
+    from: "LocalTime(t) == t",
+    to: `LocalTime(t) == IF HostRealmFact("isUtc") THEN t ELSE ${LOCAL_TIME_STOP}`,
+  },
+  {
+    name: "UTC",
+    from: "UTC(t) == IF NumIsFinite(t) THEN t ELSE NaN",
+    to: `UTC(t) == IF ~HostRealmFact("isUtc") THEN ${LOCAL_TIME_STOP} ELSE IF NumIsFinite(t) THEN t ELSE NaN`,
+  },
+  {
+    name: "TimeZoneString",
+    from: `N("+0000")`,
+    to: `N("+0000") \\o HostRealmFact("zoneName")`,
+  },
+  {
+    name: "TemporalNowBuiltin",
+    from: `CASE m = "timeZoneId" -> Ok(s, Str(UTCTimeZone.id))`,
+    to: `CASE m = "timeZoneId" -> IF HostRealmFact("isUtc") THEN Ok(s, Str(UTCTimeZone.id)) ELSE ${LOCAL_TIME_STOP}`,
+  },
+  // What the host picks at random or reads from its clock differs from run to run, so a compiled
+  // spec stops where a program reads it: Math.random, the time that Date.now gives and a Date that
+  // new Date() makes holds, Date called as a function, and Temporal.Now's clock.
+  {
+    name: "MathBuiltin",
+    from: `[] m = "random" -> MathRandom(s)`,
+    to: `[] m = "random" -> Assert(FALSE, "tla-ts can't run Math.random, whose value the host picks at random")`,
+  },
+  {
+    name: "DateConstructor",
+    from: `IF nt = Undefined THEN Ok(Tick(s), Str(ToDateString(SystemTime(s))))
+  ELSE
+    LET tv ==
+          CASE Len(args) = 0 -> Ok(Tick(s), Num(SystemTime(s)))`,
+    to: `IF nt = Undefined THEN ${CLOCK_STOP}
+  ELSE
+    LET tv ==
+          CASE Len(args) = 0 \\/ (Len(args) = 1 /\\ args[1] = HostTime) -> Ok(s, HostTime)`,
+  },
+  {
+    name: "ThisTimeValue",
+    from: `THEN Ok(s, O(s, v).slots.data)`,
+    to: `THEN IF O(s, v).slots.data = HostTime THEN ${CLOCK_STOP} ELSE Ok(s, O(s, v).slots.data)`,
+  },
+  {
+    name: "DateBuiltin",
+    from: `[] m = "now" -> Ok(Tick(s), Num(SystemTime(s)))`,
+    to: `[] m = "now" -> Ok(s, HostTime)`,
+  },
+  {
+    name: "SystemUTCEpochNanoseconds",
+    from: "TIMul(TI(s.clock), TI(1000000))",
+    to: CLOCK_STOP,
+  },
+  // JSON.stringify writes a Number that it serializes by its value.
+  {
+    name: "SerializeJSONProperty",
+    from: "[] IsNumber(v) -> Ok(t,",
+    to: `[] v = HostTime -> ${CLOCK_STOP}
+       [] IsNumber(v) -> Ok(t,`,
+  },
+  // A WeakRef keeps its target through the job that made or last dereferenced it, the main job for
+  // a compiled spec, after which the host may collect a target that nothing else reaches, and run
+  // a registry's callback for a target it collects, at a time no run fixes.
+  {
+    name: "WeakRefBuiltin",
+    from: `ELSE Ok(s, O(s, this).slots.weakRefTarget)`,
+    to: `ELSE IF s.task.kind # "main" THEN Assert(FALSE, "tla-ts can't tell whether the host collected a WeakRef's target after the job that kept it")
+                  ELSE Ok(s, O(s, this).slots.weakRefTarget)`,
+  },
+  {
+    name: "FinalizationRegistryBuiltin",
+    from: `ELSE Ok(SetO(s, this, [O(s, this) EXCEPT !.slots.cells =
+                   Append(@, [target |-> a1, heldValue |-> Arg(args, 2),
+                              unregisterToken |-> IF token = Undefined THEN Empty ELSE token])]), Undefined)`,
+    to: `ELSE Assert(FALSE, "tla-ts can't tell when the host collects a registered target, which runs the registry's callback")`,
+  },
+  // Node resolves the promise of an Atomics.waitAsync that a notify wakes in a task of its own,
+  // after the jobs, at no fixed place among its timers, where ESCore's notify resolves it at once.
+  // It times a wait out on V8's clock, apart from its timers, and exits without timing it out where
+  // nothing else keeps it running, so a compiled spec stops where a timeout would run the
+  // promise's reactions, or where the host's timers wait too.
+  {
+    name: "NotifyWaiters",
+    from: `  IN [s |-> ResolveWaiters(`,
+    to: `  IN IF woken # <<>> THEN Assert(FALSE, "tla-ts can't tell when the host resolves a wait that a notify wakes, which it does in a task of its own") ELSE
+     [s |-> ResolveWaiters(`,
+  },
+  {
+    name: "TimeOutWaiter",
+    from: `  IN ResolveWaiters(`,
+    to: `  IN IF s.timers # <<>> \\/ O(s, w.capability.promise).slots.fulfillReactions # <<>>
+     THEN Assert(FALSE, "tla-ts can't tell whether the host times out this wait, which it may leave as it exits")
+     ELSE ResolveWaiters(`,
+  },
+  // V8 keeps RegExp's legacy static properties as strings, empty ones before any match, for any
+  // receiver and after a subclass's match too, where the legacy RegExp features proposal, as
+  // ESCore has it, throws.
+  {
+    name: "RegExpBuiltin",
+    from: `IF ~SameValue(this, Intrinsic(s, "RegExp")) \\/ value = Empty THEN ThrowTypeError(s) ELSE Ok(s, Str(value))`,
+    to: `IF ~SameValue(this, Intrinsic(s, "RegExp")) \\/ value = Empty THEN Assert(FALSE, "tla-ts can't read a legacy static property of RegExp where V8 keeps a value that ESCore leaves out") ELSE Ok(s, Str(value))`,
+  },
+  {
+    name: "RegExpBuiltin",
+    from: `[] m = "legacySetInput" ->
+         IF ~SameValue(this, Intrinsic(s, "RegExp")) THEN ThrowTypeError(s) ELSE`,
+    to: `[] m = "legacySetInput" ->
+         IF ~SameValue(this, Intrinsic(s, "RegExp")) THEN Assert(FALSE, "tla-ts can't set RegExp.input on another receiver, as V8 does") ELSE`,
+  },
   // ESCore runs toLocaleLowerCase and toLocaleUpperCase as toLowerCase and toUpperCase, which the
-  // host does too in its default locale, unless that locale tailors case, and in no locale given.
+  // host does too in its default locale, unless that locale tailors case, and in the locales given
+  // as HostIntl answers.
   {
     name: "StringProperties",
     from: `SV("toLocaleLowerCase"), "String", "toLowerCase", 0),\n     M("StringPrototype", SV("toLocaleUpperCase"), "String", "toUpperCase", 0)`,
@@ -962,7 +1248,9 @@ const HOST_PATCHES = [
     name: "StringMethod",
     from: `    [] m = "toLowerCase" ->`,
     to: `    [] m \\in {"toLocaleLowerCase", "toLocaleUpperCase"} ->
-         IF Arg(args, 1) # Undefined \\/ ${TAILORED_CASING.has(new Intl.Locale(new Intl.DateTimeFormat().resolvedOptions().locale).language) ? "TRUE" : "FALSE"} THEN Unsupported(s, <<>>)
+         LET isTailored == HostRealmFact("tailorsCase") IN
+         IF Arg(args, 1) # Undefined THEN IntlTransformCase(s, m, units, Arg(args, 1), isTailored)
+         ELSE IF isTailored THEN Unsupported(s, <<>>)
          ELSE Ok(s, Str(IF m = "toLocaleLowerCase" THEN ToLowercase(units) ELSE ToUppercase(units)))
     [] m = "toLowerCase" ->`,
   },
@@ -1304,103 +1592,306 @@ const HOST_PATCHES = [
   },
 ];
 
-export const getHostDefinitions = (library: Library): GeneratedDefinition[] => [
-  ...HOST_PATCHES.map((patch) => {
-    const definition = library.definitions.get(patch.name);
-    if (definition === undefined || !definition.text.includes(patch.from)) {
-      throw new TlaError(`ESCore's ${patch.name} no longer reads as the compiled spec patches it`);
-    }
-    return {
-      name: patch.name === "ParseDate" ? "ParseSpecDate" : patch.name,
-      arity: definition.arity,
-      text: definition.text.replace(patch.from, patch.to),
-    };
-  }),
-  {
-    name: "ParseDate",
-    arity: 1,
-    text: `ParseDate(u) ==
+export const getHostDefinitions = (library: Library): GeneratedDefinition[] =>
+  [
+    `HostTime == [type |-> "number", host |-> "clock"]`,
+    `HostTimeIn(values) == \\E i \\in DOMAIN values : values[i] = HostTime`,
+    ...HOST_TIME_READERS.map((reader) => {
+      const definition = library.definitions.get(reader[0]);
+      if (definition === undefined || !definition.text.startsWith(`${reader[0]}(`)) {
+        throw new TlaError(`ESCore's ${reader[0]} no longer reads as the compiled spec patches it`);
+      }
+      return `${definition.text.replace(" ==", ` ==\n  IF HostTimeIn(${reader[1]}) THEN ${CLOCK_STOP} ELSE`)}`;
+    }),
+  ]
+    .map((text) => {
+      const header = /^([A-Z][A-Za-z0-9_]*)(?:\((.*?)\))?\s*==/.exec(text);
+      return {
+        name: header?.[1] ?? "",
+        arity: header?.[2] === undefined ? 0 : header[2].split(",").length,
+        text,
+      };
+    })
+    .concat([
+      // Each definition with its patches applied in turn.
+      ...[...Map.groupBy(HOST_PATCHES, (patch) => patch.name)].map((entry) => {
+        const definition = library.definitions.get(entry[0]);
+        const text = entry[1].reduce((current, patch) => {
+          if (!current.includes(patch.from)) {
+            throw new TlaError(
+              `ESCore's ${entry[0]} no longer reads as the compiled spec patches it`,
+            );
+          }
+          return current.replace(patch.from, patch.to);
+        }, definition?.text ?? "");
+        return {
+          name: entry[0] === "ParseDate" ? "ParseSpecDate" : entry[0],
+          arity: definition?.arity ?? 0,
+          text,
+        };
+      }),
+      {
+        name: "ParseDate",
+        arity: 1,
+        text: `ParseDate(u) ==
   LET t == ParseSpecDate(u) IN
-  IF t = NaN THEN Assert(FALSE, "tla-ts can't tell whether the host reads this date string") ELSE t`,
+  IF t # NaN THEN t ELSE
+  LET h == HostParseDate(u) IN
+  IF h.found THEN h.time ELSE Assert(FALSE, "tla-ts can't tell whether the host reads this date string")`,
+      },
+    ]);
+
+// V8's message for an error that ESCore throws itself, where V8's template and what it inserts
+// are exact: each patch puts ThrowMessage, which throws the error with that message as its own
+// property, in place of ESCore's throw, which leaves the message to the host. ESCore's other
+// throws keep the host's message, at whose reading a compiled spec stops.
+const MESSAGE_PATCHES: { name: string; from: string; to: string; isEvery?: boolean }[] = [
+  {
+    name: "GetValue",
+    from: `ELSE IF IsUnresolvableReference(v) THEN ThrowError(s, "ReferenceError")
+  ELSE IF IsPropertyReference(v) THEN`,
+    to: `ELSE IF IsUnresolvableReference(v) THEN NotDefined(s, v.name.value)
+  ELSE IF IsPropertyReference(v) /\\ IsNullish(v.base) /\\ MessageKey(s, v.name) # Empty
+  THEN ThrowMessage(s, "TypeError", N("Cannot read properties of ") \\o PrimitiveToUnits(v.base) \\o N(" (reading '") \\o MessageKey(s, v.name) \\o N("')"))
+  ELSE IF IsPropertyReference(v) THEN`,
+  },
+  {
+    name: "GetValue",
+    from: `ELSE IF v.base.type = "local" THEN LocalValue(s, v.base.slot)`,
+    to: `ELSE IF v.base.type = "local" THEN LocalValue(s, v.base.slot, v.name.value)`,
+  },
+  {
+    name: "PutValue",
+    from: `IF s.frame[v.base.slot] = Empty THEN ThrowError(s, "ReferenceError")
+    ELSE IF v.base.constant THEN ThrowTypeError(s)`,
+    to: `IF s.frame[v.base.slot] = Empty THEN ThrowMessage(s, "ReferenceError", BeforeInitialization(v.name.value))
+    ELSE IF v.base.constant THEN ThrowMessage(s, "TypeError", N("Assignment to constant variable."))`,
+  },
+  {
+    name: "PutValue",
+    from: `IF v.strict THEN ThrowError(s, "ReferenceError")`,
+    to: `IF v.strict THEN NotDefined(s, v.name.value)`,
+  },
+  {
+    name: "PutValue",
+    from: `  ELSE IF IsPropertyReference(v) THEN
+    LET base == ToObject(s, v.base) IN`,
+    to: `  ELSE IF IsPropertyReference(v) /\\ IsNullish(v.base) /\\ MessageKey(s, v.name) # Empty
+  THEN ThrowMessage(s, "TypeError", N("Cannot set properties of ") \\o PrimitiveToUnits(v.base) \\o N(" (setting '") \\o MessageKey(s, v.name) \\o N("')"))
+  ELSE IF IsPropertyReference(v) THEN
+    LET base == ToObject(s, v.base) IN`,
+  },
+  {
+    name: "GetBindingValue",
+    from: `IF ~env.b[name].init THEN ThrowError(s, "ReferenceError")`,
+    to: `IF ~env.b[name].init THEN ThrowMessage(s, "ReferenceError", BeforeInitialization(name))`,
+  },
+  {
+    name: "SetMutableBinding",
+    from: `IF ~bind.init THEN ThrowError(s, "ReferenceError")`,
+    to: `IF ~bind.init THEN ThrowMessage(s, "ReferenceError", BeforeInitialization(name))`,
+  },
+  {
+    name: "SetMutableBinding",
+    from: `ELSE IF strict \\/ bind.strict THEN ThrowTypeError(s)`,
+    to: `ELSE IF strict \\/ bind.strict THEN ThrowMessage(s, "TypeError", N("Assignment to constant variable."))`,
+  },
+  {
+    name: "ToNumber",
+    from: `[] v.type \\in {"symbol", "bigint"} -> ThrowTypeError(s)`,
+    to: `[] v.type \\in {"symbol", "bigint"} -> ThrowMessage(s, "TypeError", IF v.type = "symbol" THEN N("Cannot convert a Symbol value to a number") ELSE N("Cannot convert a BigInt value to a number"))`,
+  },
+  {
+    name: "ToStr",
+    from: `[] v.type = "symbol" -> ThrowTypeError(s)`,
+    to: `[] v.type = "symbol" -> ThrowMessage(s, "TypeError", N("Cannot convert a Symbol value to a string"))`,
+  },
+  {
+    name: "NumericBinary",
+    from: `IN IF a.type # b.type THEN ThrowTypeError(rn.s)`,
+    to: `IN IF a.type # b.type THEN ThrowMessage(rn.s, "TypeError", N("Cannot mix BigInt and other types, use explicit conversions"))`,
+  },
+  {
+    name: "BigIntOperationResult",
+    from: `CASE op \\in {"/", "%"} /\\ BigIntIsZero(b) -> ThrowError(s, "RangeError")
+    [] op = "**" /\\ b.neg -> ThrowError(s, "RangeError")`,
+    to: `CASE op \\in {"/", "%"} /\\ BigIntIsZero(b) -> ThrowMessage(s, "RangeError", N("Division by zero"))
+    [] op = "**" /\\ b.neg -> ThrowMessage(s, "RangeError", N("Exponent must be positive"))`,
+  },
+  {
+    name: "StringBuiltin",
+    from: `    [] OTHER ->
+         LET o == RequireObjectCoercible(s, this) IN`,
+    to: `    [] OTHER ->
+         IF IsNullish(this) THEN ThrowMessage(s, "TypeError", N("String.prototype") \\o (IF m = "iterator" THEN N("[Symbol.iterator]") ELSE N(".") \\o StringUnits(m)) \\o N(" called on null or undefined")) ELSE
+         LET o == RequireObjectCoercible(s, this) IN`,
+  },
+  {
+    name: "StringBuiltin",
+    from: `         LET o == RequireObjectCoercible(s, this) IN IF IsAbrupt(o) THEN o ELSE StringRegExpMethod(o.s, this, m, args)`,
+    to: `         IF IsNullish(this) THEN ThrowMessage(s, "TypeError", N("String.prototype.") \\o StringUnits(m) \\o N(" called on null or undefined"))
+         ELSE LET o == RequireObjectCoercible(s, this) IN IF IsAbrupt(o) THEN o ELSE StringRegExpMethod(o.s, this, m, args)`,
+  },
+  {
+    name: "StringMethod",
+    from: `ELSE IF NumLess(Val(n).value, PosZero) \\/ Val(n).value = PosInf THEN ThrowError(n.s, "RangeError")`,
+    to: `ELSE IF (NumLess(Val(n).value, PosZero) \\/ Val(n).value = PosInf) /\\ a1.type \\in {"number", "string", "boolean", "undefined", "null"} /\\ a1 # HostTime
+         THEN ThrowMessage(n.s, "RangeError", N("Invalid count value: ") \\o NumToString(PrimitiveToNumber(a1).value))
+         ELSE IF NumLess(Val(n).value, PosZero) \\/ Val(n).value = PosInf THEN ThrowError(n.s, "RangeError")`,
+  },
+  {
+    name: "StringFromCodePoint",
+    from: `IF ~NumIsFinite(x) \\/ ~NumIsIntegral(x) THEN ThrowError(n.s, "RangeError")
+       ELSE IF NumLess(x, PosZero) \\/ NumLess(NumFromInt(1114111), x) THEN ThrowError(n.s, "RangeError")`,
+    to: `IF ~NumIsFinite(x) \\/ ~NumIsIntegral(x) \\/ NumLess(x, PosZero) \\/ NumLess(NumFromInt(1114111), x)
+       THEN ThrowMessage(n.s, "RangeError", N("Invalid code point ") \\o NumToString(x))`,
+  },
+  {
+    name: "ArrayMethod",
+    from: `ELSE IF NumIsZero(len) /\\ Len(args) < 2 THEN ThrowTypeError(s)`,
+    to: `ELSE IF NumIsZero(len) /\\ Len(args) < 2 THEN ThrowMessage(s, "TypeError", N("Reduce of empty array with no initial value"))`,
+  },
+  {
+    name: "ArrayMethod",
+    from: `ELSE IF ~Val(init).stop THEN ThrowTypeError(init.s)`,
+    to: `ELSE IF ~Val(init).stop THEN ThrowMessage(init.s, "TypeError", N("Reduce of empty array with no initial value"))`,
+  },
+  {
+    name: "ObjectBuiltin",
+    from: `LET o == ToObject(s, a1) IN IF IsAbrupt(o) THEN o ELSE`,
+    to: `IF IsNullish(a1) THEN ThrowMessage(s, "TypeError", N("Cannot convert undefined or null to object")) ELSE
+         LET o == ToObject(s, a1) IN IF IsAbrupt(o) THEN o ELSE`,
+    isEvery: true,
+  },
+  {
+    name: "ObjectBuiltin",
+    from: `[] m = "setPrototypeOf" ->
+         IF IsNullish(a1) THEN ThrowTypeError(s)`,
+    to: `[] m = "setPrototypeOf" ->
+         IF IsNullish(a1) THEN ThrowMessage(s, "TypeError", N("Object.setPrototypeOf called on null or undefined"))`,
+  },
+  {
+    name: "PutValue",
+    from: `ELSE IF Val(r) = False /\\ v.strict THEN ThrowTypeError(r.s)`,
+    to: `ELSE IF Val(r) = False /\\ v.strict THEN SetFailure(r.s, Val(base), Val(k))`,
+  },
+  {
+    name: "Set",
+    from: `ELSE IF Val(r) = False /\\ throw THEN ThrowTypeError(r.s)`,
+    to: `ELSE IF Val(r) = False /\\ throw THEN SetFailure(r.s, v, k)`,
+  },
+  {
+    name: "ObjectBuiltin",
+    from: `LET r == DefinePropertyOrThrow(d.s, a1, Val(k), Val(d)) IN`,
+    to: `LET r == LET defined == DefineOwnProperty(d.s, a1, Val(k), Val(d)) IN
+                   IF IsAbrupt(defined) \\/ Val(defined) = True THEN defined ELSE DefineFailure(defined.s, a1, Val(k)) IN`,
+  },
+  {
+    name: "ForInOfHeadThen",
+    from: `  ELSE LET it == GetIterator(r.s, Val(r), IF loop.iterationKind = "async-iterate" THEN "async" ELSE "sync") IN`,
+    to: `  ELSE LET it == IF loop.iterationKind = "iterate" /\\ "text" \\in DOMAIN loop /\\ loop.text # Empty
+                 THEN GetIteratorNamed(r.s, Val(r), loop.text)
+                 ELSE GetIterator(r.s, Val(r), IF loop.iterationKind = "async-iterate" THEN "async" ELSE "sync") IN`,
+  },
+  {
+    name: "InitializeTypedArrayFromArrayBuffer",
+    from: `  IN IF IsAbrupt(off) THEN off
+     ELSE IF ~NumIsZero(NumRemainder(Val(off).value, NumFromInt(size))) THEN ThrowError(off.s, "RangeError")`,
+    to: `  IN IF IsAbrupt(off) /\\ IsIntegralNumber(byteOffset) THEN ThrowMessage(s, "RangeError", N("Start offset ") \\o NumToString(byteOffset.value) \\o N(" is outside the bounds of the buffer"))
+     ELSE IF IsAbrupt(off) THEN off
+     ELSE IF ~NumIsZero(NumRemainder(Val(off).value, NumFromInt(size))) THEN ThrowMessage(off.s, "RangeError", N("start offset of ") \\o TypedArrayNameUnits(O(s, ta).slots.name) \\o N(" should be a multiple of ") \\o IntUnits(size))`,
+  },
+  {
+    name: "InitializeTypedArrayFromArrayBuffer",
+    from: `     IF IsAbrupt(newLength) THEN newLength`,
+    to: `     IF IsAbrupt(newLength) /\\ IsIntegralNumber(length) THEN ThrowMessage(off.s, "RangeError", N("Invalid typed array length: ") \\o NumToString(length.value))
+     ELSE IF IsAbrupt(newLength) THEN newLength`,
+  },
+  {
+    name: "InitializeTypedArrayFromArrayBuffer",
+    from: `          IN IF NumLess(NumFromInt(bufferByteLength), offset) THEN ThrowError(t, "RangeError")`,
+    to: `          IN IF NumLess(NumFromInt(bufferByteLength), offset) THEN ThrowMessage(t, "RangeError", N("Start offset ") \\o NumToString(offset) \\o N(" is outside the bounds of the buffer"))`,
+  },
+  {
+    name: "InitializeTypedArrayFromArrayBuffer",
+    from: `               IF bufferByteLength % size # 0 THEN ThrowError(t, "RangeError")`,
+    to: `               IF bufferByteLength % size # 0 THEN ThrowMessage(t, "RangeError", N("byte length of ") \\o TypedArrayNameUnits(O(s, ta).slots.name) \\o N(" should be a multiple of ") \\o IntUnits(size))`,
+  },
+  {
+    name: "InitializeTypedArrayFromArrayBuffer",
+    from: `                     NumToSmallInt(offset) + NumToSmallInt(Val(newLength).value) * size > bufferByteLength
+             THEN ThrowError(t, "RangeError")`,
+    to: `                     NumToSmallInt(offset) + NumToSmallInt(Val(newLength).value) * size > bufferByteLength
+             THEN ThrowMessage(t, "RangeError", N("Invalid typed array length: ") \\o NumToString(Val(newLength).value))`,
+  },
+  {
+    name: "TypedArrayConstruct",
+    from: `  ELSE LET n == ToIndex(s, args[1]) IN IF IsAbrupt(n) THEN n ELSE`,
+    to: `  ELSE LET n == ToIndex(s, args[1]) IN
+       IF IsAbrupt(n) /\\ IsIntegralNumber(args[1]) THEN ThrowMessage(s, "RangeError", N("Invalid typed array length: ") \\o NumToString(args[1].value))
+       ELSE IF IsAbrupt(n) THEN n ELSE`,
+  },
+  {
+    name: "TypedArrayBuiltin",
+    from: `         ELSE IF NumLess(Val(offset).value, PosZero) THEN ThrowError(offset.s, "RangeError")`,
+    to: `         ELSE IF NumLess(Val(offset).value, PosZero) THEN ThrowMessage(offset.s, "RangeError", N("offset is out of bounds"))`,
+  },
+  {
+    name: "SetTypedArrayFromTypedArray",
+    from: `  THEN ThrowError(sourceLength.s, "RangeError")`,
+    to: `  THEN ThrowMessage(sourceLength.s, "RangeError", N("offset is out of bounds"))`,
+  },
+  {
+    name: "SetTypedArrayFromArrayLike",
+    from: `  THEN ThrowError(sourceLength.s, "RangeError")`,
+    to: `  THEN ThrowMessage(sourceLength.s, "RangeError", N("offset is out of bounds"))`,
   },
 ];
 
-// The host whose behavior a compiled spec models is the one that compiles it, running a script in
-// a new context of its virtual machine, as the reference a program runs on: the global object of
-// such a context, which has ECMAScript's globals and the host's own, such as Intl and console, and
-// not Node's module globals, such as process and global.
-const HOST_GLOBAL: object = runInNewContext("globalThis");
-
-// The host's timers, which a host adds to a script's context to run its jobs later.
-const HOST_TIMERS = ["setInterval", "setImmediate", "queueMicrotask"];
-
-// The object an intrinsic of ESCore's names in the host, if it has one.
-const getHostObject = (owner: string): object | undefined => {
-  if (owner === "GlobalObject") return HOST_GLOBAL;
-  const isPrototype = owner.endsWith("Prototype");
-  const base = isPrototype ? owner.slice(0, -"Prototype".length) : owner;
-  // An intrinsic of a namespace, such as TemporalPlainDate or IntlCollator, is the namespace's.
-  const namespace = ["Temporal", "Intl"].find((name) => base.startsWith(name) && base !== name);
-  const holder: unknown =
-    namespace === undefined ? HOST_GLOBAL : Reflect.get(HOST_GLOBAL, namespace);
-  const found: unknown =
-    base === "TypedArray"
-      ? Object.getPrototypeOf(Reflect.get(HOST_GLOBAL, "Int8Array"))
-      : typeof holder === "object" && holder !== null
-        ? Reflect.get(holder, namespace === undefined ? base : base.slice(namespace.length))
-        : undefined;
-  if ((typeof found !== "object" && typeof found !== "function") || found === null)
-    return undefined;
-  const object: unknown = isPrototype ? Reflect.get(found, "prototype") : found;
-  return (typeof object === "object" || typeof object === "function") && object !== null
-    ? object
-    : undefined;
-};
-
-// The realm's properties that the host lacks, such as proposals engine262 has and Node doesn't,
-// which the spec's realm leaves out, so that a program that tests for one takes the host's path.
-const getMissingProperties = (library: Library) =>
-  library.properties.filter((property) => {
-    const object = getHostObject(property.owner);
-    return object !== undefined && !(property.key in object);
-  });
-
-// The host's globals that ESCore's realm lacks, such as Intl, at whose names a compile stops: a
-// script's, of a new context, and a module's, which the host runs in its own context, whose
-// global object has the host's globals too, such as process.
-export const getHostOnlyGlobals = (library: Library, host: object = HOST_GLOBAL) => {
-  const realm = new Set([
-    ...library.properties
-      .filter((property) => property.owner === "GlobalObject")
-      .map((property) => property.key),
-    "setTimeout",
-    // The parameters of the function that Node wraps a CommonJS module's code in, which the process
-    // that compiles may hold as globals.
-    "exports",
+// ESCore's definitions with V8's messages in place, each from the text that the runtime's other
+// overrides give it, or else ESCore's.
+export const getMessageDefinitions = (
+  library: Library,
+  overrides: readonly GeneratedDefinition[],
+  realm: HostRealm,
+): GeneratedDefinition[] => {
+  const patched = new Map(overrides.map((definition) => [definition.name, definition]));
+  const changed = new Map<string, GeneratedDefinition>();
+  for (const patch of MESSAGE_PATCHES) {
+    const definition =
+      changed.get(patch.name) ?? patched.get(patch.name) ?? library.definitions.get(patch.name);
+    if (definition === undefined || !definition.text.includes(patch.from)) {
+      throw new TlaError(`ESCore's ${patch.name} no longer reads as the compiled spec patches it`);
+    }
+    changed.set(patch.name, {
+      ...definition,
+      text:
+        patch.isEvery === true
+          ? definition.text.replaceAll(patch.from, patch.to)
+          : definition.text.replace(patch.from, patch.to),
+    });
+  }
+  // A name that Node's own context or a CommonJS module's wrapper binds, which a script's new
+  // context lacks, so that the error of reading it is one that Node's run of the file may not
+  // throw, keeps the host's message.
+  const hostNames = [
+    ...realm.moduleGlobals.map((global) => global.name),
     "require",
     "module",
+    "exports",
     "__filename",
     "__dirname",
-  ]);
-  return [...Object.getOwnPropertyNames(host), ...HOST_TIMERS].filter((name) => !realm.has(name));
-};
-
-// The properties of the host's built-ins whose keys ESCore's realm has nowhere, such as V8's
-// Error.captureStackTrace, by the intrinsic that holds each, with the host's descriptor of it.
-export const getHostOnlyProperties = (library: Library) => {
-  const known = new Set(
-    [...library.definitions.values()].flatMap((definition) =>
-      [...definition.text.matchAll(/\bSV\("([^"]+)"\)/g)].map((match) => match[1]),
-    ),
-  );
-  return [...new Set(library.properties.map((property) => property.owner))].flatMap((owner) => {
-    const object = owner === "GlobalObject" ? undefined : getHostObject(owner);
-    return object === undefined
-      ? []
-      : Object.getOwnPropertyNames(object)
-          .filter((key) => !known.has(key))
-          .map((key) => ({ owner, key, descriptor: Object.getOwnPropertyDescriptor(object, key) }));
-  });
+  ];
+  return [
+    ...changed.values(),
+    {
+      name: "NotDefined",
+      arity: 2,
+      text: `NotDefined(s, name) ==
+  IF name \\in {${hostNames.map(getUnitsOf).join(", ")}} THEN ThrowError(s, "ReferenceError")
+  ELSE ThrowMessage(s, "ReferenceError", name \\o N(" is not defined"))`,
+    },
+  ];
 };
 
 // ESCore's operators that a compiled function's frame changes (see locals.ts): those on Reference
@@ -1497,8 +1988,8 @@ export const getLocalDefinitions = (library: Library): GeneratedDefinition[] => 
   },
   {
     name: "LocalValue",
-    arity: 2,
-    text: `LocalValue(s, slot) == IF s.frame[slot] = Empty THEN ThrowError(s, "ReferenceError") ELSE Ok(s, s.frame[slot])`,
+    arity: 3,
+    text: `LocalValue(s, slot, name) == IF s.frame[slot] = Empty THEN ThrowMessage(s, "ReferenceError", BeforeInitialization(name)) ELSE Ok(s, s.frame[slot])`,
   },
   {
     name: "LocalInitialize",
@@ -1507,14 +1998,24 @@ export const getLocalDefinitions = (library: Library): GeneratedDefinition[] => 
   },
 ];
 
-export const getRealmDefinitions = (library: Library): GeneratedDefinition[] => {
+export const getRealmDefinitions = (library: Library, realm: HostRealm): GeneratedDefinition[] => {
   const all = library.definitions.get("RealmProperties")?.text ?? "";
   // Node has no Error.prototype.stack: each error has its own stack accessor, whose functions the
   // realm makes in its place (InstallStack).
-  const missing = getMissingProperties(library)
+  const missing = realm.missingProperties
     .filter((property) => property.owner !== "ErrorPrototype" || property.key !== "stack")
     .map((property) => `<<"${property.owner}", Str(${getUnitsOf(property.key)})>>`);
   return [
+    {
+      name: "HostKeyOrders",
+      arity: 0,
+      text: `HostKeyOrders == <<${realm.keyOrders
+        .map(
+          (order) =>
+            `[name |-> "${order.owner}", keys |-> <<${order.keys.map((key) => (typeof key === "string" ? `Str(${getUnitsOf(key)})` : `Sym(${key})`)).join(", ")}>>]`,
+        )
+        .join(",\n  ")}>>`,
+    },
     {
       name: "HostRealmProperties",
       arity: 0,
@@ -1536,29 +2037,36 @@ const getZoneNames = (text: string) =>
     ...[...match[1].matchAll(/\[!?([^\]=]+)\]/g)].map((annotation) => annotation[1]),
   ]);
 
-// Whether the host has no time zone of a name, which only a host with Temporal can tell.
-const isRejectedZone = (name: string) => {
-  const temporal: unknown = Reflect.get(HOST_GLOBAL, "Temporal");
-  if (typeof temporal !== "object" || temporal === null) return false;
-  const zoned: unknown = Reflect.get(temporal, "ZonedDateTime");
-  if (typeof zoned !== "function") return false;
-  try {
-    Reflect.construct(zoned, [0n, name]);
-    return false;
-  } catch {
-    return true;
-  }
-};
-
-// The program's HostTimeZone: the recorded table's entries of the time zones its strings name, and
-// for the other names in them that the host rejects, "rejected". Any other name may be one that the
-// host has and the table leaves out.
-export const getHostTimeZone = (text: string) => {
-  const keys = [...new Set(getZoneNames(text).map((name) => name.toLowerCase()))].sort();
+// The program's HostTimeZone: the recorded table's entries of the time zones its strings name, of
+// each zone whose name a string of it starts with where the string ends at a "/", a "-", or a "+",
+// as a name a program joins of parts may, and of every zone where it asks Intl for the zones the host
+// supports, and for the other names in them that the host rejects, and the recorded names of such a
+// prefix and up to three digits that it rejects, "rejected". Any other name may be one that the host
+// has and the table leaves out.
+export const getHostTimeZone = (text: string, realm: HostRealm) => {
+  const names = [...new Set(getZoneNames(text).map((name) => name.toLowerCase()))];
+  const prefixes = names.filter((name) => /[/+-]$/.test(name));
+  // A host whose realm was recorded answers none of Intl's questions.
+  const supported =
+    /\bsupportedValuesOf\b/.test(text) && realm.getLocale !== undefined
+      ? Intl.supportedValuesOf("timeZone").map((zone) => zone.toLowerCase())
+      : [];
+  const keys = [
+    ...new Set([
+      ...names,
+      ...supported,
+      ...Object.keys(TIME_ZONES).filter((key) => prefixes.some((prefix) => key.startsWith(prefix))),
+    ]),
+  ].sort();
   const entries = keys.filter((key) => Object.hasOwn(TIME_ZONES, key));
-  const rejected = keys.filter((key) => !Object.hasOwn(TIME_ZONES, key) && isRejectedZone(key));
+  const rejected = [
+    ...names.filter(
+      (key) => !Object.hasOwn(TIME_ZONES, key) && realm.isRejectedZone?.(key) === true,
+    ),
+    ...REJECTED_TIME_ZONES.filter((name) => prefixes.some((prefix) => name.startsWith(prefix))),
+  ];
   const getEntry = (key: string) => {
-    const table = TIME_ZONES[key];
+    const table = { ...TIME_ZONES[key], ...TIME_ZONE_DATA[TIME_ZONES[key].data] };
     const days = table.times.map((time) => Math.floor(time / 86400));
     return `[found |-> "zone", id |-> ${getUnitsOf(table.id)}, primary |-> ${getUnitsOf(table.primary)}, offsets |-> <<${table.offsets.join(", ")}>>, days |-> <<${days.join(", ")}>>, seconds |-> <<${table.times.map((time, index) => time - days[index] * 86400).join(", ")}>>, isFinal |-> ${table.isFinal ? "TRUE" : "FALSE"}, rule |-> <<${table.rule.join(", ")}>>]`;
   };
@@ -1575,18 +2083,19 @@ export const getHostTimeZone = (text: string) => {
 
 // The program's HostDateFormat: the English patterns of Temporal's toLocaleString that Node 26
 // recorded (date-formats.ts) for the kinds of object the program names, where it formats a Temporal
-// object, and the host's default locale and time zone are the table's, English and UTC. Any other
-// key may be one that the host formats and the table leaves out.
-export const getHostDateFormat = (words: ReadonlySet<string>) => {
-  const defaults = new Intl.DateTimeFormat().resolvedOptions();
+// object, and of an Intl.DateTimeFormat's format, where it formats with one, and the host's default
+// locale and time zone are the table's, English and UTC. Any other key may be one that the host
+// formats and the table leaves out.
+export const getHostDateFormat = (words: ReadonlySet<string>, realm: HostRealm) => {
+  const isTemporal = words.has("Temporal") && words.has("toLocaleString");
+  const isFormat = words.has("DateTimeFormat") && words.has("format");
   const entries =
-    words.has("Temporal") &&
-    words.has("toLocaleString") &&
-    defaults.locale === "en-US" &&
-    defaults.timeZone === "UTC"
+    realm.locale === "en-US" && realm.timeZone === "UTC"
       ? Object.entries(DATE_FORMATS).filter(([key]) => {
           const kind = key.slice(0, key.indexOf("|"));
-          return kind !== "DateTimeFormat" && words.has(kind);
+          return kind.startsWith("DateTimeFormat")
+            ? isFormat && (kind === "DateTimeFormat" || words.has("Temporal"))
+            : isTemporal && words.has(kind);
         })
       : [];
   const getEntry = (format: (typeof DATE_FORMATS)[string]) =>
@@ -1598,61 +2107,115 @@ export const getHostDateFormat = (words: ReadonlySet<string>) => {
     : `HostDateFormat(key) ==\n  LET table == ${entries.map(([key, format]) => `("${key}" :> ${getEntry(format)})`).join("\n    @@ ")}\n  IN IF key \\in DOMAIN table THEN table[key] ELSE [found |-> "unknown"]`;
 };
 
-// The services of Intl whose supportedLocalesOf HostLocale answers for.
-const LOCALE_SERVICES = [
-  "Collator",
-  "DateTimeFormat",
-  "DisplayNames",
-  "DurationFormat",
-  "ListFormat",
-  "NumberFormat",
-  "PluralRules",
-  "RelativeTimeFormat",
-  "Segmenter",
-];
-
-// What the host's Intl gives of a tag: its canonical form and the services that support it with
-// each locale matcher, or undefined where it isn't a structurally valid language tag.
-const getLocale = (tag: string) => {
-  const canonical = (() => {
-    try {
-      return Intl.getCanonicalLocales(tag)[0];
-    } catch {
-      return undefined;
-    }
-  })();
-  if (canonical === undefined) return undefined;
-  const getSupported = (localeMatcher: string) =>
-    LOCALE_SERVICES.filter((service) => {
-      const supported: unknown = Reflect.apply(
-        Reflect.get(Reflect.get(Intl, service), "supportedLocalesOf"),
-        undefined,
-        [canonical, { localeMatcher }],
-      );
-      return Array.isArray(supported) && supported.length > 0;
-    });
-  const lookup = getSupported("lookup");
-  const bestFit = getSupported("best fit");
-  return {
-    canonical,
-    lookup,
-    bestFit,
-    differs: LOCALE_SERVICES.filter(
-      (service) => lookup.includes(service) !== bestFit.includes(service),
+// The program's HostCalendarYear and HostCalendarMonthDay: the recorded tables (calendars.ts) of
+// the Chinese and Dangi calendars that its text names, where it names Temporal. Each run of
+// consecutive years, and each calendar's month-days, is a definition of its own, which a check
+// reads once. Any other year stops, which the host computes astronomically.
+export const getHostCalendars = (text: string, words: ReadonlySet<string>) => {
+  const names = words.has("Temporal")
+    ? Object.keys(CALENDAR_TABLES).filter((name) => new RegExp(name, "i").test(text))
+    : [];
+  const tables = names.map((name, index) => {
+    const years = [...CALENDAR_TABLES[name].years].sort((left, right) => left[0] - right[0]);
+    const runs = years.reduce<number[][][]>((grouped, year) => {
+      const run = grouped.at(-1);
+      if (run !== undefined && run[run.length - 1][0] === year[0] - 1) run.push(year);
+      else grouped.push([year]);
+      return grouped;
+    }, []);
+    const monthDays = CALENDAR_TABLES[name].monthDays.flatMap((row, code) =>
+      row.map((entry, day) => ({
+        days: entry[0],
+        isKept: entry[1] === (code >> 1) + 1 && entry[2] === code % 2 && entry[3] === day + 1,
+      })),
+    );
+    return {
+      units: getUnitsOf(name),
+      runs: runs.map((run, position) => ({
+        name: `CalendarYears${index + 1}x${position + 1}`,
+        first: run[0][0],
+        last: run[run.length - 1][0],
+        text: `<<${run.map((year) => `[found |-> "year", start |-> ${year[1]}, leap |-> ${year[2]}, long |-> ${year[3]}]`).join(", ")}>>`,
+      })),
+      monthDays: {
+        name: `CalendarMonthDays${index + 1}`,
+        kept: `CalendarMonthDaysKept${index + 1}`,
+        days: `<<${monthDays.map((entry) => entry.days).join(", ")}>>`,
+        isKept: `<<${monthDays.map((entry) => (entry.isKept ? "TRUE" : "FALSE")).join(", ")}>>`,
+      },
+    };
+  });
+  const yearArms = tables.flatMap((table) =>
+    table.runs.map(
+      (run) =>
+        `key[1] = ${table.units} /\\ key[2] >= ${run.first} /\\ key[2] <= ${run.last} -> ${run.name}[key[2] - (${run.first - 1})]`,
     ),
-  };
+  );
+  const monthDayArms = tables.map(
+    (table) =>
+      `key[1] = ${table.units} -> [found |-> "monthDay", days |-> ${table.monthDays.name}[index], isKept |-> ${table.monthDays.kept}[index]]`,
+  );
+  return [
+    ...tables.flatMap((table) => [
+      ...table.runs.map((run) => ({
+        name: run.name,
+        arity: 0,
+        text: `${run.name} == ${run.text}`,
+      })),
+      {
+        name: table.monthDays.name,
+        arity: 0,
+        text: `${table.monthDays.name} == ${table.monthDays.days}`,
+      },
+      {
+        name: table.monthDays.kept,
+        arity: 0,
+        text: `${table.monthDays.kept} == ${table.monthDays.isKept}`,
+      },
+    ]),
+    {
+      name: "HostCalendarYear",
+      arity: 1,
+      text:
+        yearArms.length === 0
+          ? `HostCalendarYear(key) == [found |-> "unknown"]`
+          : `HostCalendarYear(key) ==\n  CASE ${yearArms.join("\n    [] ")}\n    [] OTHER -> [found |-> "unknown"]`,
+    },
+    {
+      name: "HostCalendarMonthDay",
+      arity: 1,
+      text:
+        monthDayArms.length === 0
+          ? `HostCalendarMonthDay(key) == [found |-> "unknown"]`
+          : `HostCalendarMonthDay(key) ==\n  LET index == ((key[2] - 1) * 2 + (IF key[3] THEN 1 ELSE 0)) * 30 + key[4] IN\n  CASE ~(key[2] \\in 1..12 /\\ key[4] \\in 1..30) -> [found |-> "unknown"]\n    [] ${monthDayArms.join("\n    [] ")}\n    [] OTHER -> [found |-> "unknown"]`,
+    },
+  ];
 };
 
-// The program's HostLocale: for each string it writes that may be a locale tag, and each one's
-// canonical form, what the host's Intl gives of it, where the program names Intl. Any other tag
-// stops, which the host may hold data of.
-export const getHostLocale = (text: string, words: ReadonlySet<string>) => {
-  const tags = words.has("Intl")
-    ? [...new Set([...text.matchAll(/["'`]([A-Za-z0-9_-]{1,60})["'`]/g)].map((match) => match[1]))]
-    : [];
+// The program's HostLocale: for each string it writes that may be a locale tag, the host's default
+// locale, and each string of the host's Intl answers (answers), which the program may pass back,
+// and each one's canonical form, what the host's Intl gives of it, where the program names Intl or a
+// method that reads it, as the host answers it, or a recorded realm recorded it for its tags. Any
+// other tag stops, which the host may hold data of.
+export const getHostLocale = (
+  text: string,
+  words: ReadonlySet<string>,
+  answers: ReadonlySet<string>,
+  realm: HostRealm,
+) => {
+  if (!["Intl", "toLocaleString", "localeCompare"].some((word) => words.has(word)))
+    return `HostLocale(tag) == [found |-> "unknown"]`;
+  const recorded = new Map(realm.recordedLocales.map((entry) => [entry.tag, entry]));
+  const tags = [
+    ...new Set([
+      ...[...text.matchAll(/["'`]([A-Za-z0-9_-]{1,60})["'`]/g)].map((match) => match[1]),
+      realm.locale,
+      ...[...answers].filter((answer) => /^[A-Za-z0-9-]{2,60}$/.test(answer)),
+    ]),
+  ].filter((tag) => realm.getLocale !== undefined || recorded.has(tag));
   const entries = new Map<string, string>();
   for (const tag of tags) {
-    const locale = getLocale(tag);
+    const locale = realm.getLocale === undefined ? recorded.get(tag)?.locale : realm.getLocale(tag);
     if (locale === undefined) {
       entries.set(tag, `[found |-> "invalid"]`);
       continue;

@@ -1,5 +1,5 @@
 import ts from "@typescript/typescript6";
-import { TlaTypeScriptError } from "../errors";
+import { isStackOverflow, TlaTypeScriptError } from "../errors";
 import { isModuleFile, isStrictCode } from "./context";
 
 const reject = (message: string, node: ts.Node): never => {
@@ -12,14 +12,14 @@ const isLexical = (statement: ts.Statement, isFunctionBody: boolean) =>
   (ts.isVariableStatement(statement) &&
     (statement.declarationList.flags & ts.NodeFlags.BlockScoped) !== 0);
 
-export const getBindingNames = (name: ts.BindingName): string[] =>
+const getBindingNames = (name: ts.BindingName): string[] =>
   ts.isIdentifier(name)
     ? [name.text]
     : name.elements.flatMap((element) =>
         ts.isBindingElement(element) ? getBindingNames(element.name) : [],
       );
 
-export const getLexicalNames = (statements: readonly ts.Statement[], isFunctionBody: boolean) =>
+const getLexicalNames = (statements: readonly ts.Statement[], isFunctionBody: boolean) =>
   statements
     .filter((statement) => isLexical(statement, isFunctionBody))
     .flatMap((statement) => {
@@ -39,7 +39,7 @@ export const getLexicalNames = (statements: readonly ts.Statement[], isFunctionB
 // nested functions.
 // Code that a declare holds, as declare global does, which only types the host's values and never
 // runs.
-export const isAmbientCode = (node: ts.Node) =>
+const isAmbientCode = (node: ts.Node) =>
   ts.findAncestor(
     node,
     (ancestor) =>
@@ -49,7 +49,7 @@ export const isAmbientCode = (node: ts.Node) =>
       ),
   ) !== undefined;
 
-export const getVarNames = (node: ts.Node): string[] => {
+const getVarNames = (node: ts.Node): string[] => {
   if (ts.isFunctionLike(node) || ts.isClassLike(node) || isAmbientCode(node)) return [];
   const own =
     ts.isVariableDeclarationList(node) && (node.flags & ts.NodeFlags.BlockScoped) === 0
@@ -86,12 +86,6 @@ const rejectRedeclaration = (
     duplicates.find((name) => !isFunctionsOnly(name)) ??
     [...statements.flatMap(getVarNames), ...others].find((name) => lexical.includes(name));
   if (clash !== undefined) reject(`Identifier '${clash}' has already been declared`, node);
-  if (duplicates.length > 0) {
-    throw new TlaTypeScriptError(
-      "tla-ts can't run a block that declares a function twice outside strict mode",
-      node,
-    );
-  }
 };
 
 // Whether a node is the target of an assignment, or part of a destructuring assignment's pattern.
@@ -136,8 +130,8 @@ const isBodyOf = (node: ts.Statement) => {
 };
 
 // A let or a const that is a with statement's body, which the statement's rewrite would put in a
-// block. Where a line break follows a let, other than before a bracket, JavaScript reads the let
-// as a name, where TypeScript reads a declaration.
+// block. A compile gives a let that a line break follows there the semicolon that JavaScript reads
+// after it, as the name let, before it parses the file.
 const rejectLexicalWithBody = (node: ts.Node) => {
   if (
     !ts.isVariableStatement(node) ||
@@ -145,21 +139,6 @@ const rejectLexicalWithBody = (node: ts.Node) => {
     (node.declarationList.flags & ts.NodeFlags.BlockScoped) === 0
   ) {
     return;
-  }
-  const name = node.declarationList.declarations.at(0)?.name;
-  if (
-    (node.declarationList.flags & ts.NodeFlags.Let) !== 0 &&
-    name !== undefined &&
-    !ts.isArrayBindingPattern(name) &&
-    node
-      .getSourceFile()
-      .text.slice(node.declarationList.getStart() + "let".length, name.getStart())
-      .includes("\n")
-  ) {
-    throw new TlaTypeScriptError(
-      "tla-ts can't read a let that a line break follows as a name",
-      node,
-    );
   }
   reject("A declaration can't be the body of a statement", node);
 };
@@ -183,7 +162,7 @@ const isSloppyFunctionBody = (node: ts.Statement) => {
 
 // The SyntaxError of a regular expression literal that JavaScript rejects, as Node reads its
 // grammar, or undefined where JavaScript accepts it.
-export const getRegularExpressionError = (node: ts.RegularExpressionLiteral) => {
+const getRegularExpressionError = (node: ts.RegularExpressionLiteral) => {
   const text = node.text;
   const end = text.lastIndexOf("/");
   try {
@@ -213,9 +192,168 @@ const isPropertyName = (node: ts.Identifier) => {
   );
 };
 
-// Rejects programs that JavaScript rejects as it parses, where TypeScript accepts them, and stops at
-// those that it accepts only outside strict mode, where tla-ts doesn't follow them.
+const getNodeAt = (node: ts.Node, position: number): ts.Node =>
+  ts.forEachChild(node, (child) =>
+    child.getStart() <= position && position < child.getEnd()
+      ? getNodeAt(child, position)
+      : undefined,
+  ) ?? node;
+
+// TypeScript's error for a redeclared block-scoped variable, which it reports outside strict mode
+// of code that Annex B allows, such as a function declaration that an if statement's branch is,
+// beside a let of its name.
+const REDECLARED_ERROR = 2451;
+
+// TypeScript's errors for JavaScript that Node runs: a var in a catch block that redeclares the
+// catch's parameter, as Annex B allows.
+const NODE_ACCEPTED_ERRORS = new Set([2492]);
+
+// The file of TypeScript's own checks of a file's JavaScript.
+const GRAMMAR_PATH = "/tla-ts/grammar.js";
+
+// Rejects the first of TypeScript's errors in a file read as plain JavaScript, past its syntax
+// errors, which its parser reports: the errors of its binder and checker that it reports in
+// JavaScript that it doesn't type check, which are those that ECMAScript makes early errors, but
+// for those of code that Node runs. The file is a module where its
+// implied format makes it one, and strict code where it says so.
+const rejectGrammarErrors = (sourceFile: ts.SourceFile) => {
+  const file = ts.createSourceFile(
+    GRAMMAR_PATH,
+    sourceFile.text,
+    { languageVersion: ts.ScriptTarget.ESNext, impliedNodeFormat: sourceFile.impliedNodeFormat },
+    true,
+    ts.ScriptKind.JS,
+  );
+  const program = ts.createProgram({
+    rootNames: [GRAMMAR_PATH],
+    options: {
+      allowJs: true,
+      noLib: true,
+      noResolve: true,
+      types: [],
+      target: ts.ScriptTarget.ESNext,
+      module: ts.ModuleKind.ESNext,
+      moduleDetection: ts.ModuleDetectionKind.Legacy,
+      alwaysStrict: false,
+      ignoreDeprecations: "6.0",
+    },
+    // A host of the one file, which needs no file system, so that a browser checks the file too.
+    host: {
+      getSourceFile: (fileName) => (fileName === GRAMMAR_PATH ? file : undefined),
+      fileExists: (fileName) => fileName === GRAMMAR_PATH,
+      readFile: () => undefined,
+      getDefaultLibFileName: () => "lib.d.ts",
+      writeFile: () => {},
+      getCurrentDirectory: () => "/",
+      getCanonicalFileName: (fileName) => fileName,
+      useCaseSensitiveFileNames: () => true,
+      getNewLine: () => "\n",
+    },
+  });
+  // TypeScript's checker infers the file's types to report these, which can recurse past any
+  // stack on a large program, where only V8 could tell.
+  const getDiagnostics = () => {
+    try {
+      return program.getSemanticDiagnostics(file);
+    } catch (error) {
+      if (!isStackOverflow(error)) throw error;
+      throw new TlaTypeScriptError(
+        "tla-ts can't tell whether Node rejects a file's syntax without a Node to parse it",
+        sourceFile,
+      );
+    }
+  };
+  const diagnostic = getDiagnostics().find(
+    (candidate) =>
+      candidate.category === ts.DiagnosticCategory.Error &&
+      !NODE_ACCEPTED_ERRORS.has(candidate.code) &&
+      (candidate.code !== REDECLARED_ERROR ||
+        isStrictCode(getNodeAt(sourceFile, candidate.start ?? 0))),
+  );
+  if (diagnostic !== undefined) {
+    reject(
+      ts.flattenDiagnosticMessageText(diagnostic.messageText, " "),
+      getNodeAt(sourceFile, diagnostic.start ?? 0),
+    );
+  }
+};
+
+// The program that Node runs under Bun to parse a script as vm does, which prints what --check
+// prints for a module: the line of the SyntaxError, then the error.
+const SCRIPT_CHECK = `const vm = require("node:vm");
+try {
+  new vm.Script(require("node:fs").readFileSync(0, "utf8"), { filename: "[stdin]" });
+} catch (error) {
+  if (!(error instanceof SyntaxError)) throw error;
+  console.error(error.stack.split("\\n")[0]);
+  console.error("SyntaxError: " + error.message);
+  process.exit(1);
+}`;
+
+// V8's parse of a file's JavaScript, as Node parses it as it loads the file, which runs nothing of
+// it: the SyntaxError it throws and its line, or none where it accepts the file, or undefined where
+// no Node is at hand. A module parses through Node's loader, as vm parses modules only under a
+// flag. Bun's vm parses with JavaScriptCore, so under Bun a Node on the path parses the file.
+const getNodeParse = (sourceFile: ts.SourceFile) => {
+  const host = globalThis.process;
+  const vm = host?.getBuiltinModule?.("node:vm");
+  if (vm === undefined) return undefined;
+  const isBun = host.versions.bun !== undefined;
+  // A file of import and export declarations parses as a module, as a model's file does, which
+  // its compile reads as a script.
+  const isScript =
+    sourceFile.impliedNodeFormat !== ts.ModuleKind.ESNext && !ts.isExternalModule(sourceFile);
+  if (isScript && !isBun) {
+    try {
+      new vm.Script(sourceFile.text, { filename: sourceFile.fileName });
+      return { error: undefined };
+    } catch (error) {
+      if (!(error instanceof SyntaxError)) throw error;
+      const line = /:(\d+)$/.exec(error.stack?.split("\n")[0] ?? "")?.[1];
+      return { error: { message: error.message, line: Number(line ?? 1) } };
+    }
+  }
+  const run = host
+    .getBuiltinModule("node:child_process")
+    .spawnSync(
+      isBun ? "node" : host.execPath,
+      isScript ? ["-e", SCRIPT_CHECK] : ["--input-type=module", "--check"],
+      { input: sourceFile.text, encoding: "utf8" },
+    );
+  if (run.error !== undefined) return undefined;
+  if (run.status === 0) return { error: undefined };
+  const lines = run.stderr.split("\n");
+  const message = lines.find((line) => line.startsWith("SyntaxError: "));
+  const line = /:(\d+)$/.exec(lines.find((inner) => /:\d+$/.test(inner)) ?? "")?.[1];
+  return message === undefined
+    ? undefined
+    : { error: { message: message.slice("SyntaxError: ".length), line: Number(line ?? 1) } };
+};
+
+// Rejects programs that JavaScript rejects as it parses, as V8 does where Node is at hand and else
+// where TypeScript's parser accepts them.
 export const rejectEarlyErrors = (sourceFile: ts.SourceFile) => {
+  const parse = getNodeParse(sourceFile);
+  if (parse === undefined) {
+    rejectTypeScriptEarlyErrors(sourceFile);
+    return;
+  }
+  if (parse.error !== undefined) {
+    // V8 gives some errors line 0, as a rest element's initializer, so a line outside the file
+    // places the error at its start.
+    const lineStarts = sourceFile.getLineStarts();
+    reject(parse.error.message, getNodeAt(sourceFile, lineStarts[parse.error.line - 1] ?? 0));
+  }
+  const visit = (node: ts.Node): void => {
+    rejectLexicalWithBody(node);
+    ts.forEachChild(node, visit);
+  };
+  visit(sourceFile);
+};
+
+// Rejects what JavaScript rejects as it parses where TypeScript's parser accepts it, as tla-ts's own
+// checks and TypeScript's find it.
+const rejectTypeScriptEarlyErrors = (sourceFile: ts.SourceFile) => {
   // A module's imports and top-level functions are lexical declarations too, which no other
   // declaration repeats.
   if (isModuleFile(sourceFile)) {
@@ -278,22 +416,15 @@ export const rejectEarlyErrors = (sourceFile: ts.SourceFile) => {
             parameter.initializer === undefined &&
             parameter.dotDotDotToken === undefined,
         );
-      if (duplicate !== undefined && isSloppyDuplicate) {
-        throw new TlaTypeScriptError(
-          "tla-ts can't run a function that names a parameter twice outside strict mode",
-          node,
-        );
-      }
-      if (duplicate !== undefined)
+      if (duplicate !== undefined && !isSloppyDuplicate) {
         reject("Duplicate parameter name not allowed in this context", node);
-    }
-    if ((ts.isClassDeclaration(node) || ts.isFunctionDeclaration(node)) && isBodyOf(node)) {
-      if (isSloppyFunctionBody(node)) {
-        throw new TlaTypeScriptError(
-          "tla-ts can't run a function declaration that is a statement's body outside strict mode",
-          node,
-        );
       }
+    }
+    if (
+      (ts.isClassDeclaration(node) || ts.isFunctionDeclaration(node)) &&
+      isBodyOf(node) &&
+      !isSloppyFunctionBody(node)
+    ) {
       reject("A declaration can't be the body of a statement", node);
     }
     rejectLexicalWithBody(node);
@@ -395,11 +526,9 @@ export const rejectEarlyErrors = (sourceFile: ts.SourceFile) => {
     if (
       ts.isIdentifier(node) &&
       (node.text === "arguments" || node.text === "eval") &&
-      isAssigned(node)
+      isAssigned(node) &&
+      isStrictCode(node)
     ) {
-      if (!isStrictCode(node)) {
-        throw new TlaTypeScriptError(`tla-ts can't write ${node.text} outside strict mode`, node);
-      }
       reject(`Unexpected ${node.text} in strict mode`, node);
     }
     // TypeScript reports an import call that an operator such as -= or ++ assigns only as an operand
@@ -416,4 +545,5 @@ export const rejectEarlyErrors = (sourceFile: ts.SourceFile) => {
     ts.forEachChild(node, visit);
   };
   visit(sourceFile);
+  rejectGrammarErrors(sourceFile);
 };

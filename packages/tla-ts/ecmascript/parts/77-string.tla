@@ -178,6 +178,10 @@ StringMethod(s, units, m, args) ==
                          [] OTHER -> NumToSmallInt(NumToIntegerOrInfinity(x))
          IN Ok(n.s, IntV(IF maxStart < 0 THEN -1 ELSE StringLastIndexOf(units, Val(search).value, start)))
     [] m = "isWellFormed" -> Ok(s, Bool(IsStringWellFormedUnicode(units, 0)))
+    \* ECMA-402 §19.1.1, where the host has Intl.
+    [] m = "localeCompare" /\ HostIntl(<<"none">>).found # "none" ->
+         LET that == ToStr(s, a1) IN IF IsAbrupt(that) THEN that
+         ELSE IntlLocaleCompare(that.s, units, Val(that).value, Arg(args, 2), Arg(args, 3))
     [] m = "localeCompare" ->
          LET that == ToStr(s, a1) IN IF IsAbrupt(that) THEN that ELSE
          LET x == Normalize(units, "NFC")
@@ -365,12 +369,19 @@ ReplaceAt(s, units, search, positions, replaceValue, endOfLastMatch, acc) ==
           ELSE ReplaceAt(replacement.s, units, search, Tail(positions), replaceValue, p + Len(search),
                          acc \o SubSeq(units, endOfLastMatch + 1, p) \o Val(replacement).value)
 
+\* The most code units of a string that a replacement builds, past which tla-ts can't hold the
+\* string in the default heap, well short of V8's limit of 2^29 - 24, past which Node throws a
+\* RangeError: a template of n captures makes n copies of a long capture at once.
+SubstitutionUnitsLimit == 2 ^ 22
+
 \* GetSubstitution (§22.1.3.19.1) over the rest of the template, appending to acc. captures holds
 \* String values or Undefined, and namedCaptures is an object or Undefined.
 GetSubstitution(s, matched, str, position, captures, namedCaptures, rest, acc) ==
   IF rest = <<>> THEN Ok(s, Str(acc))
   ELSE LET Next(n, replacement) ==
-             GetSubstitution(s, matched, str, position, captures, namedCaptures, SubSeq(rest, n + 1, Len(rest)), acc \o replacement)
+             IF Len(acc) + Len(replacement) > SubstitutionUnitsLimit
+             THEN Unsupported(s, N("Unsupported: a replacement longer than tla-ts holds"))
+             ELSE GetSubstitution(s, matched, str, position, captures, namedCaptures, SubSeq(rest, n + 1, Len(rest)), acc \o replacement)
            c == IF Len(rest) >= 2 /\ rest[1] = 36 THEN rest[2] ELSE 0
        IN CASE c = 36 -> Next(2, <<36>>)
             [] c = 96 -> Next(2, SubSeq(str, 1, position))

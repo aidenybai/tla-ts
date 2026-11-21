@@ -1,4 +1,4 @@
-import { getJavaHashCode } from "../java-hash";
+import { getHashMapOrder } from "../java-hash";
 import { formatValue, type Value } from "../values";
 import { zeroPad } from "./messages";
 
@@ -17,20 +17,6 @@ const SEPARATOR = "\n----\n";
 const CLOSING_TAG = `${"=".repeat(77)}\n`;
 const LASSO_START = "_TTraceLassoStart";
 const LASSO_END = "_TTraceLassoEnd";
-
-const getHashMapHash = (text: string) => {
-  const hash = getJavaHashCode(text);
-  return hash ^ (hash >>> 16);
-};
-
-const getHashOrder = (names: string[]) => {
-  const unique = [...new Set(names)];
-  const capacity = 2 ** Math.max(4, Math.ceil(Math.log2(unique.length / 0.75)));
-  return unique
-    .map((name, index) => ({ name, index, bucket: getHashMapHash(name) & (capacity - 1) }))
-    .sort((left, right) => left.bucket - right.bucket || left.index - right.index)
-    .map((entry) => entry.name);
-};
 
 const formatJavaDate = (date: Date) => {
   const getPart = (options: Intl.DateTimeFormatOptions, type: Intl.DateTimeFormatPartTypes) =>
@@ -57,7 +43,7 @@ const getConjunction = (state: [string, string][], prefix?: string) =>
   indent(
     [
       ...(prefix === undefined ? [] : [prefix]),
-      ...state.map(([name, value]) => `${name} = (${value})`),
+      ...state.map((assignment) => `${assignment[0]} = (${assignment[1]})`),
     ].join("\n/\\\n"),
     2,
   );
@@ -102,7 +88,7 @@ ${examples}`;
 export const writeTraceSpec = (input: TraceSpecInput) => {
   const loopStart = input.loopStart;
   const states = input.states.map((state) =>
-    getHashOrder(Object.keys(state)).map((name): [string, string] => [
+    getHashMapOrder(Object.keys(state)).map((name): [string, string] => [
       name,
       formatValue(state[name]),
     ]),
@@ -127,11 +113,11 @@ export const writeTraceSpec = (input: TraceSpecInput) => {
     ...(isLasso ? [LASSO_START, LASSO_END] : []),
   ];
   const teConstantsModule = `${specName}_TEConstants`;
-  const constantModules = getHashOrder([
+  const constantModules = getHashMapOrder([
     "TLC",
     ...(teConstants.length > 0 ? [teConstantsModule] : []),
   ]);
-  const extendedModules = getHashOrder([
+  const extendedModules = getHashMapOrder([
     "Toolbox",
     "TLCExt",
     "Naturals",
@@ -180,18 +166,18 @@ ${lassoStep}${variables
     \\*         IN J!JsonSerialize("${input.module}.json", _TETrace)
 
 `;
-  const isViewed =
-    isLasso && new Set(states.map((state) => JSON.stringify(state))).size < states.length;
-  const view = isViewed
+  // MCError#isLassoWithDuplicates counts the state a lasso goes back to, so TLC views every lasso.
+  const view = isLasso
     ? {
         config: "\nVIEW\n    _view\n",
         definition: `\n_view ==\n${INDENT}<<${variables.join(", ")}, IF TLCGet("level") = ${LASSO_END} + 1 THEN ${LASSO_START} ELSE TLCGet("level")>>\n`,
       }
     : { config: "", definition: "" };
-  const deserializedTrace = `\n${getPrimer(traceModule, getHashOrder(["IOUtils", ...constantModules, specName]))}trace == IODeserialize("${input.module}.bin", TRUE)\n\n${CLOSING_TAG}`;
+  const deserializedTrace = `\n${getPrimer(traceModule, getHashMapOrder(["IOUtils", ...constantModules, specName]))}trace == IODeserialize("${input.module}.bin", TRUE)\n\n${CLOSING_TAG}`;
   const traceFunction = `${INDENT}<<\n${states
     .map(
-      (state) => `${INDENT}([${state.map(([name, value]) => `${name} |-> ${value}`).join(",")}])`,
+      (state) =>
+        `${INDENT}([${state.map((assignment) => `${assignment[0]} |-> ${assignment[1]}`).join(",")}])`,
     )
     .join(",\n")}\n${INDENT}>>${SEPARATOR}\n`;
 
@@ -218,7 +204,7 @@ ${lassoStep}${variables
     " In this case, it is advised to uncomment the module below to deserialize the\n",
     " trace from a generated binary file.\n",
     `\n\\*${deserializedTrace.replaceAll("\n", "\n\\*")}\n\n`,
-    getPrimer(traceModule, getHashOrder([...constantModules, specName])),
+    getPrimer(traceModule, getHashMapOrder([...constantModules, specName])),
     `trace == \n${traceFunction}\n`,
     ...(teConstants.length > 0
       ? [

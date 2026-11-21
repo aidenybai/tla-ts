@@ -1,8 +1,10 @@
-import { readFileSync } from "node:fs";
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { pathToFileURL } from "node:url";
 import { Worker } from "node:worker_threads";
 import { afterAll, beforeAll, describe, expect, it } from "vite-plus/test";
+import { check } from "../../src";
 
 interface ModelResult {
   status: string;
@@ -12,8 +14,8 @@ interface ModelResult {
   trace: Record<string, string>[] | undefined;
 }
 
-// ESCore's evaluation nests deeper than a test's stack, so checks run on one worker with the
-// stack that test262-engine262 gives ESCore, which prepares ESCore's runtime once for them all.
+// ESCore's evaluation nests deeper than a test's stack, so checks run on one worker with a
+// 256 MB stack, which prepares ESCore's runtime once for them all.
 const worker = new Worker(
   `const { register } = require("node:module");
   const { parentPort, workerData } = require("node:worker_threads");
@@ -40,9 +42,27 @@ const worker = new Worker(
       // spec.mutation replaces text in ESCanonicalPlain where the model compares canonical forms,
       // and in the model's code otherwise.
       const isCompared = spec.mode === "compared";
-      const code = compiled
-        .loadModule("ProgramCode")
-        .replace(isCompared ? "" : (spec.mutation?.[0] ?? ""), isCompared ? "" : (spec.mutation?.[1] ?? ""));
+      const isOperators = spec.mode === "operators";
+      const mutate = (text, isMutated) =>
+        isMutated ? text.replace(spec.mutation?.[0] ?? "", spec.mutation?.[1] ?? "") : text;
+      // A mutation runs ESNative's TLA+, which tla-ts otherwise runs natively where it can, as the
+      // module ESNativeTla.
+      const nativeName = spec.mutation !== undefined && !isCompared && !isOperators ? "ESNativeTla" : "ESNative";
+      const code = mutate(compiled.loadModule("ProgramCode"), !isCompared && !isOperators).replace(
+        /^(EXTENDS .*)ESNative$/m,
+        "$1" + nativeName,
+      );
+      const native = compiled.loadModule("ESNative") ?? "";
+      const nativeTla = mutate(native.replace("MODULE ESNative", "MODULE " + nativeName), !isCompared && !isOperators);
+      // The operators mode compares ESNative's operators with their TLA+, as the module
+      // ESNativePlain whose definitions take other names, on every argument of a pool.
+      const nativeNames = [...native.matchAll(/^([A-Z]\\w*)(?:\\(.*\\))? ==/gm)].map((match) => match[1]);
+      const nativePlain = mutate(
+        native
+          .replace("MODULE ESNative", "MODULE ESNativePlain")
+          .replace(new RegExp("\\\\b(" + nativeNames.join("|") + ")\\\\b", "g"), "Plain$1"),
+        isOperators,
+      );
       // A raw model's steps end in the state they leave, and a compared model's compute the
       // canonical form both natively and with ESCanonical's TLA+, as the module ESCanonicalPlain
       // whose definitions take other names, which tla-ts runs as written, with spec.mutation
@@ -72,11 +92,34 @@ const worker = new Worker(
           : spec.mode === "lowered"
             ? escore + "(a)"
             : line,
-      ).replace("\\nEXTENDS ESRuntime, ESCanonical\\n", spec.mode === "compared" ? "\\nEXTENDS ESRuntime, ESCanonical, ESCanonicalPlain\\n" : "\\nEXTENDS ESRuntime, ESCanonical\\n");
+      // A native guard's domain is ESCore's, and in the lowered mode the domain is ESCore's alone.
+      ).replace(/^  IF n\\.type # "bail" (.*) THEN (\\{.*\\}) ELSE (\\w+)\\(a\\)$/gm, (line, test, native, escore) =>
+        spec.mode === "native"
+          ? "  LET domain == " + escore + "(a) IN IF n.type # \\"bail\\" " + test + " THEN IF domain = " + native + " THEN domain ELSE Assert(FALSE, \\"the native call differs from ESCore's\\") ELSE domain"
+          : spec.mode === "lowered"
+            ? "  " + escore + "(a)"
+            : line,
+      // A lowered model's lowered converters check that each gives what lowering the objects of
+      // its converter gives.
+      ).replace(/^LowerConvert(\\d+)\\(x\\) == (.*)$/gm, (line, number, body) =>
+        spec.mode === "lowered"
+          ? "LowerConvert" + number + "(x) == LET d == (" + body + ") IN LET c == Convert" + number + "(ModelBase, x) IN IF d = LowerValue(c.s, c.v, 0).v THEN d ELSE Assert(FALSE, \\"the lowered converter differs\\")"
+          : line,
+      ).replace("\\nEXTENDS ESRuntime, ESCanonical", spec.mode === "compared" ? "\\nEXTENDS ESRuntime, ESCanonical, ESCanonicalPlain" : "\\nEXTENDS ESRuntime, ESCanonical")
+        .replace(/^(EXTENDS .*)$/m, (line) => (isOperators ? line + ", ESNativePlain" : line))
+        .replace(/\\n====\\n$/, isOperators ? "\\n" + spec.operators + "\\n====\\n" : "\\n====\\n");
       const result = await loaded.check({
         ...compiled,
         loadModule: (name) =>
-          name === "ProgramCode" ? changed : name === "ESCanonicalPlain" ? plain : compiled.loadModule(name),
+          name === "ProgramCode"
+            ? changed
+            : name === "ESCanonicalPlain"
+              ? plain
+              : name === nativeName
+                ? nativeTla
+                : name === "ESNativePlain"
+                  ? nativePlain
+                  : compiled.loadModule(name),
         workers: 1,
         onPrint: () => {},
       });
@@ -85,7 +128,7 @@ const worker = new Worker(
         status: result.status,
         distinct: result.distinctStates,
         generated: result.generatedStates,
-        message: result.failure?.message,
+        message: result.failure?.message ?? result.violation?.message,
         trace: result.violation?.trace.map((step) =>
           Object.fromEntries(Object.entries(step.state).map((entry) => [entry[0], loaded.formatValue(entry[1])])),
         ),
@@ -117,16 +160,19 @@ beforeAll(() => ready, 60_000);
 
 // Checks a module's model on ESCore, with its steps' states lowered where the module lets them,
 // raw, canonical where the native canonical form and ESCanonical's TLA+ compare equal, lowered
-// where each lowered state materializes to the canonical state it lowers, or lowered where each
-// native call gives what ESCore's gives.
+// where each lowered state materializes to the canonical state it lowers and each lowered
+// converter gives what lowering its converter's objects gives, lowered where each native call
+// gives what ESCore's gives, or with the assumptions operators, which read ESNative's operators
+// and their TLA+ as PlainX.
 const checkModel = (
   source: string,
   fileName = "spec.ts",
-  mode: "canonical" | "raw" | "compared" | "lowered" | "native" = "canonical",
+  mode: "canonical" | "raw" | "compared" | "lowered" | "native" | "operators" = "canonical",
   mutation?: [string, string],
+  operators?: string,
 ) =>
   new Promise<ModelResult>((resolve) => {
-    worker.postMessage({ id: pending.length, source, fileName, mode, mutation });
+    worker.postMessage({ id: pending.length, source, fileName, mode, mutation, operators });
     pending.push(resolve);
   });
 
@@ -135,6 +181,403 @@ const EXAMPLES = join(import.meta.dirname, "../fixtures/typescript/examples");
 const getCounts = (result: ModelResult) => [result.status, result.distinct, result.generated];
 
 describe("checks a module's exported functions as a model on ESCore", () => {
+  // A model without state variables or actions has no state, whose invariants TLC checks once, as
+  // it checks a spec without variables.
+  describe("checks the calls of a model without state", () => {
+    const getSource = (expected: number) =>
+      `const memo = [1, 2];\nexport const isTotal = () => memo.reduce((sum, value) => sum + value, 0) === ${expected};\n`;
+
+    it("agrees with Node", async () => {
+      expect(getCounts(await checkModel(getSource(3)))).toEqual(["success", 0, 0]);
+    });
+
+    it("rejects another result", async () => {
+      expect((await checkModel(getSource(4))).message).toContain(
+        "The invariant of isTotal is equal to FALSE",
+      );
+    });
+  });
+
+  // Each function that a check only calls returns, whatever today's spec names its result.
+  describe("checks each call of functions that only return", () => {
+    const getSource = (thrown: number) =>
+      `export const twice = (n: 0 | 1) => n * 2;\nexport const thrice = (n: 0 | 1) => {\n  if ((n as number) === ${thrown}) throw new Error("thrown");\n  return n * 3;\n};\n`;
+
+    it("agrees with Node", async () => {
+      expect((await checkModel(getSource(2))).status).toBe("success");
+    });
+
+    it("rejects another result", async () => {
+      expect((await checkModel(getSource(1))).status).toBe("assumption-violation");
+    });
+  });
+
+  // A parameter whose type has more values than TLC puts in a set, as the compiled glob that
+  // Effect's internal glob module matches, takes values tla-ts can't list, and the rest still run.
+  describe("calls no function whose parameter has more values than TLC lists", () => {
+    const getSource = (thrown: number) =>
+      `export const isCode = (codes: [number, number, number, number, number, number, number, number]) => codes.length === 8;\nexport const twice = (n: 0 | 1) => {\n  if ((n as number) === ${thrown}) throw new Error("thrown");\n  return n * 2;\n};\n`;
+
+    it("agrees with Node", async () => {
+      expect(getCounts(await checkModel(getSource(2)))).toEqual(["success", 0, 0]);
+    });
+
+    it("rejects another result", async () => {
+      expect((await checkModel(getSource(1))).status).toBe("assumption-violation");
+    });
+  });
+
+  // A WeakMap in the state keeps the entries whose keys a step can still read, and drops the rest,
+  // as the host's collector may, so a step that adds an entry no code can read leaves the state as
+  // it was, as bippy's cache of component frames does.
+  describe("keeps the entries of a WeakMap that a step can read", () => {
+    const getSource = (operator: string) =>
+      `const keys = [{}, {}];\nconst cache = new WeakMap<object, number>();\nlet count = 0;\nexport const tick = () => {\n  cache.set({}, count);\n  if (count < 2) {\n    cache.set(keys[count], count);\n    count += 1;\n  }\n};\nexport const isCached = () =>\n  count ${operator} 2 && keys.slice(0, count).every((key, index) => cache.get(key) === index);\n`;
+
+    it("agrees with Node", async () => {
+      expect(getCounts(await checkModel(getSource("<=")))).toEqual(["success", 3, 4]);
+    });
+
+    it("rejects another result", async () => {
+      expect(getCounts(await checkModel(getSource("<")))).toEqual(["invariant-violation", 3, 3]);
+    });
+
+    it("numbers the state natively as ESCanonical does", async () => {
+      expect(getCounts(await checkModel(getSource("<="), "spec.ts", "compared"))).toEqual([
+        "success",
+        3,
+        4,
+      ]);
+    });
+  });
+
+  // A WeakRef in the state keeps its target where a step can still reach it, and a
+  // FinalizationRegistry its callback, as bippy's registry of fibers does. A target that nothing
+  // else reaches the host may collect at any time after the step, which a check can't tell, so it
+  // stops, as it does where a program registers a target.
+  describe("keeps the WeakRefs whose targets a step reaches, and a FinalizationRegistry", () => {
+    const getSource = (operator: string, target = "fibers[count]") =>
+      `const fibers = [{ id: 1 }, { id: 2 }];\nconst registry = new FinalizationRegistry<number>(() => {});\nconst refs: WeakRef<object>[] = [];\nlet count = 0;\nexport const tick = () => {\n  if (count < 2) {\n    refs.push(new WeakRef(${target}));\n    count += 1;\n  }\n};\nexport const isHeld = () =>\n  count ${operator} 2 &&\n  registry instanceof FinalizationRegistry &&\n  refs.every((ref, index) => ref.deref() === fibers[index]);\n`;
+
+    it("agrees with Node", async () => {
+      expect(getCounts(await checkModel(getSource("<=")))).toEqual(["deadlock", 3, 3]);
+    });
+
+    it("rejects another result", async () => {
+      expect(getCounts(await checkModel(getSource("<")))).toEqual(["invariant-violation", 3, 3]);
+    });
+
+    it("numbers the state natively as ESCanonical does", async () => {
+      expect(getCounts(await checkModel(getSource("<="), "spec.ts", "compared"))).toEqual([
+        "deadlock",
+        3,
+        3,
+      ]);
+    });
+
+    it("stops where a WeakRef's target is an object nothing else reaches", async () => {
+      expect((await checkModel(getSource("<=", "{}"))).message).toContain(
+        "tla-ts can't keep a WeakRef whose target nothing else reaches",
+      );
+    });
+  });
+
+  // A RegExp in the state keeps its pattern, and its lastIndex as a step leaves it, as a module's
+  // constant pattern does.
+  describe("keeps a RegExp that a step uses", () => {
+    const getSource = (operator: string) =>
+      `const pattern = /a/g;\nlet count = 0;\nexport const tick = () => {\n  if (count < 2 && pattern.test("aa")) count += 1;\n};\nexport const isSmall = () => count ${operator} 2 && pattern.lastIndex === count;\n`;
+
+    it("agrees with Node", async () => {
+      expect(getCounts(await checkModel(getSource("<=")))).toEqual(["deadlock", 3, 3]);
+    });
+
+    it("rejects another result", async () => {
+      expect(getCounts(await checkModel(getSource("<")))).toEqual(["invariant-violation", 3, 3]);
+    });
+
+    it("numbers the state natively as ESCanonical does", async () => {
+      expect(getCounts(await checkModel(getSource("<="), "spec.ts", "compared"))).toEqual([
+        "deadlock",
+        3,
+        3,
+      ]);
+    });
+  });
+
+  // A typed array in the state keeps the ArrayBuffer it views, as a module's constant bytes do.
+  describe("keeps a typed array that a step writes", () => {
+    const getSource = (operator: string) =>
+      `const bytes = new Uint8Array(2);\nlet count = 0;\nexport const tick = () => {\n  if (count < 2) {\n    bytes[count] = 1;\n    count += 1;\n  }\n};\nexport const isSmall = () => count ${operator} 2 && bytes[0] + bytes[1] === count;\n`;
+
+    it("agrees with Node", async () => {
+      expect(getCounts(await checkModel(getSource("<=")))).toEqual(["deadlock", 3, 3]);
+    });
+
+    it("rejects another result", async () => {
+      expect(getCounts(await checkModel(getSource("<")))).toEqual(["invariant-violation", 3, 3]);
+    });
+
+    it("numbers the state natively as ESCanonical does", async () => {
+      expect(getCounts(await checkModel(getSource("<="), "spec.ts", "compared"))).toEqual([
+        "deadlock",
+        3,
+        3,
+      ]);
+    });
+  });
+
+  // A function that ESCore's runtime names an operator after, as Effect's SchemaGetter exports
+  // BigInt, gets a name of its own in the spec, which still calls it.
+  describe("checks a function named as one of the runtime's operators", () => {
+    const getSource = (thrown: number) =>
+      `export function BigInt(n: 0 | 1) {\n  if ((n as number) === ${thrown}) throw new Error("thrown");\n  return n;\n}\n`;
+
+    it("agrees with Node", async () => {
+      expect((await checkModel(getSource(2))).status).toBe("success");
+    });
+
+    it("rejects another result", async () => {
+      expect((await checkModel(getSource(1))).status).toBe("assumption-violation");
+    });
+  });
+
+  // A model with state and no action takes no step, so TLC checks no deadlock of it, as a deadlock
+  // there tells nothing, as of a library module whose functions tla-ts calls none of as actions.
+  describe("checks no deadlock of a model with state and no action", () => {
+    const getSource = (operator: string) =>
+      `let count = 0;\nexport const isSmall = () => count ${operator} 0;\n`;
+
+    it("agrees with Node", async () => {
+      expect(getCounts(await checkModel(getSource("<=")))).toEqual(["success", 1, 1]);
+    });
+
+    it("rejects another result", async () => {
+      expect(getCounts(await checkModel(getSource("<")))).toEqual(["invariant-violation", 1, 1]);
+    });
+  });
+
+  // A model with an action keeps the check, even where no call of it ever writes, as a deadlock
+  // there is a finding: no step can run.
+  describe("checks the deadlock of a model whose action never writes", () => {
+    const getSource = (bound: number) =>
+      `let count = 0;\nexport const tick = (n: 0 | 1) => {\n  if (n > ${bound} && count < 1) count += 1;\n};\nexport const isSmall = () => count <= 1;\n`;
+
+    it("agrees with Node", async () => {
+      expect(getCounts(await checkModel(getSource(1)))).toEqual(["deadlock", 1, 1]);
+    });
+
+    it("rejects another result", async () => {
+      expect(getCounts(await checkModel(getSource(0)))).toEqual(["deadlock", 2, 2]);
+    });
+  });
+
+  // A step settles the jobs that its program queues, which a program that names then only in a
+  // comment queues none of.
+  describe("settles a step of a program that queues no jobs", () => {
+    const getSource = (limit: number) =>
+      `// Each step then counts one more.\nlet count = 0;\nexport const step = () => {\n  if (count < 2) count++;\n};\nexport const isSmall = () => count < ${limit};\n`;
+
+    it("agrees with Node", async () => {
+      expect(getCounts(await checkModel(getSource(3)))).toEqual(["deadlock", 3, 3]);
+    });
+
+    it("rejects another result", async () => {
+      expect(getCounts(await checkModel(getSource(2)))).toEqual(["invariant-violation", 3, 3]);
+    });
+  });
+
+  // A model that imports a file runs as an ES module, with the module it imports beside it. A
+  // model without state checks only that its functions' calls return, as today's spec does, which
+  // fails as an assumption where one throws.
+  describe("checks the exported functions of a model that imports a file", () => {
+    const STOPPED_ASSUMPTION = ["assumption-violation", 0, 0];
+    const directory = mkdtempSync(join(tmpdir(), "tla-ts-escore-plan-"));
+    afterAll(() => rmSync(directory, { recursive: true, force: true }));
+    writeFileSync(
+      join(directory, "flip.ts"),
+      "export const flip = (value: 0 | 1) => (value === 0 ? 1 : 0);\n",
+    );
+    const check = (body: string) => {
+      const source = `import { flip } from "./flip.ts";\n${body}`;
+      writeFileSync(join(directory, "model.ts"), source);
+      return checkModel(source, join(directory, "model.ts"));
+    };
+
+    it("agrees with Node", async () => {
+      expect(
+        getCounts(
+          await check(
+            'export const undo = (value: 0 | 1) => {\n  if (flip(flip(value)) !== value) throw new Error("undone");\n  return value;\n};\n',
+          ),
+        ),
+      ).toEqual(["success", 0, 0]);
+    });
+
+    it("rejects another result", async () => {
+      expect(
+        getCounts(
+          await check(
+            'export const undo = (value: 0 | 1) => {\n  if (flip(value) !== value) throw new Error("undone");\n  return value;\n};\n',
+          ),
+        ),
+      ).toEqual(STOPPED_ASSUMPTION);
+    });
+
+    it("fails where a call that only returns throws for a value it takes", async () => {
+      const result = await check(
+        'export const twice = (value: 0 | 1 | 2) => {\n  if (value === 2) throw new RangeError("two");\n  return flip(flip(value));\n};\n',
+      );
+      expect(getCounts(result)).toEqual(STOPPED_ASSUMPTION);
+    });
+
+    // The module records and the module's environment stay in the state, which the canonical
+    // form numbers both natively and in TLA+ alike.
+    describe("keeps the state of a module whose step writes it", () => {
+      const getBody = (operator: string) =>
+        `let count = 0;\nexport const tick = () => {\n  count = count === flip(0) + 1 ? 0 : count + 1;\n};\nexport const isBounded = () => count ${operator} 2;\n`;
+
+      it("agrees with Node", async () => {
+        expect(getCounts(await check(getBody("<=")))).toEqual(["success", 3, 4]);
+      });
+
+      it("rejects another result", async () => {
+        expect(getCounts(await check(getBody("<")))).toEqual(["invariant-violation", 3, 3]);
+      });
+
+      it("numbers the state natively as ESCanonical does", async () => {
+        const source = `import { flip } from "./flip.ts";\n${getBody("<=")}`;
+        writeFileSync(join(directory, "compared.ts"), source);
+        expect(
+          getCounts(await checkModel(source, join(directory, "compared.ts"), "compared")),
+        ).toEqual(["success", 3, 4]);
+      });
+    });
+
+    // A parameter of a literal's type or undefined takes each value of its set, by the set it's in.
+    describe("passes a value of a union with undefined", () => {
+      const getBody = (bound: number) =>
+        `export const short = (text: "a" | "bb" | undefined) => {\n  if (flip(0) !== 1 || (text !== undefined && text.length >= ${bound})) throw new Error("long");\n  return text;\n};\n`;
+
+      it("agrees with Node", async () => {
+        expect(getCounts(await check(getBody(3)))).toEqual(["success", 0, 0]);
+      });
+
+      it("rejects another result", async () => {
+        expect(getCounts(await check(getBody(2)))).toEqual(STOPPED_ASSUMPTION);
+      });
+    });
+
+    // A function whose name a definition of the spec may take, as ESCore's do, gets one of its own.
+    describe("calls a function whose name TLA+ takes another for", () => {
+      const getBody = (operator: string) =>
+        `export const Undone = (value: 0 | 1) => {\n  if (flip(${operator}) !== value) throw new Error("undone");\n  return value;\n};\nexport const heap = () => flip(1);\n`;
+
+      it("agrees with Node", async () => {
+        expect(getCounts(await check(getBody("flip(value)")))).toEqual(["success", 0, 0]);
+      });
+
+      it("rejects another result", async () => {
+        expect(getCounts(await check(getBody("value")))).toEqual(STOPPED_ASSUMPTION);
+      });
+    });
+
+    // A global of the host that ESCore lacks is a built-in that stops where a program calls it,
+    // which the state keeps, as it refers to nothing.
+    describe("keeps the host's globals that stop where a program calls them", () => {
+      const getBody = (operator: string) =>
+        `let count = 0;\nconst later = typeof setImmediate;\nexport const tick = () => {\n  if (count < 2 && later === "function") count += flip(0);\n};\nexport const isSmall = () => count ${operator} 2;\n`;
+
+      it("agrees with Node", async () => {
+        expect(getCounts(await check(getBody("<=")))).toEqual(["deadlock", 3, 3]);
+      });
+
+      it("rejects another result", async () => {
+        expect(getCounts(await check(getBody("<")))).toEqual(["invariant-violation", 3, 3]);
+      });
+
+      it("numbers the state natively as ESCanonical does", async () => {
+        const source = `import { flip } from "./flip.ts";\n${getBody("<=")}`;
+        writeFileSync(join(directory, "host.ts"), source);
+        expect(getCounts(await checkModel(source, join(directory, "host.ts"), "compared"))).toEqual(
+          ["deadlock", 3, 3],
+        );
+      });
+    });
+
+    // The host's console and process, which a module reads, hold built-ins whose data is a value,
+    // such as console.createTask's function that runs a task, as bippy's core module reads them.
+    describe("keeps the host's console and process", () => {
+      const getBody = (operator: string) =>
+        `let count = 0;\nconst host = [console, process];\nexport const tick = () => {\n  if (count < 2 && typeof host[0].log === "function") count += flip(0);\n};\nexport const isSmall = () => count ${operator} 2;\n`;
+
+      it("agrees with Node", async () => {
+        expect(getCounts(await check(getBody("<=")))).toEqual(["deadlock", 3, 3]);
+      });
+
+      it("rejects another result", async () => {
+        expect(getCounts(await check(getBody("<")))).toEqual(["invariant-violation", 3, 3]);
+      });
+
+      it("numbers the state natively as ESCanonical does", async () => {
+        const source = `import { flip } from "./flip.ts";\n${getBody("<=")}`;
+        writeFileSync(join(directory, "console.ts"), source);
+        expect(
+          getCounts(await checkModel(source, join(directory, "console.ts"), "compared")),
+        ).toEqual(["deadlock", 3, 3]);
+      });
+    });
+
+    // A class without a constructor of its own has a built-in one, which holds the class's
+    // fields, and which the canonical form numbers natively and in TLA+ alike.
+    describe("keeps a class whose constructor is the default one", () => {
+      writeFileSync(join(directory, "box.ts"), "export class Box {\n  size = 1;\n}\n");
+      const getSource = (operator: string) =>
+        `import { Box } from "./box.ts";\nlet made = 0;\nlet last: Box | undefined = undefined;\nexport const make = () => {\n  if (made < 2) {\n    last = new Box();\n    made += last.size;\n  }\n};\nexport const isSmall = () => made ${operator} 2;\n`;
+      const checkBox = (operator: string, mode: "canonical" | "compared" = "canonical") => {
+        const source = getSource(operator);
+        writeFileSync(join(directory, "boxes.ts"), source);
+        return checkModel(source, join(directory, "boxes.ts"), mode);
+      };
+
+      it("agrees with Node", async () => {
+        expect(getCounts(await checkBox("<="))).toEqual(["deadlock", 3, 3]);
+      });
+
+      it("rejects another result", async () => {
+        expect(getCounts(await checkBox("<"))).toEqual(["invariant-violation", 3, 3]);
+      });
+
+      it("numbers the state natively as ESCanonical does", async () => {
+        expect(getCounts(await checkBox("<=", "compared"))).toEqual(["deadlock", 3, 3]);
+      });
+    });
+
+    // A function that a cast gives, and one that a list of the module's names exports.
+    describe("calls a function that a cast gives or a list exports", () => {
+      const getBody = (operator: string) =>
+        `const Undone = ((value: 0 | 1) => {\n  if (flip(${operator}) !== value) throw new Error("undone");\n  return value;\n}) as (value: 0 | 1) => number;\nexport { Undone };\n`;
+
+      it("agrees with Node", async () => {
+        expect(getCounts(await check(getBody("flip(value)")))).toEqual(["success", 0, 0]);
+      });
+
+      it("rejects another result", async () => {
+        expect(getCounts(await check(getBody("value")))).toEqual(STOPPED_ASSUMPTION);
+      });
+    });
+
+    it("calls none of the functions whose parameters take values it can't list", async () => {
+      expect(
+        getCounts(
+          await check(
+            "export const isSame = (get: () => 0 | 1) => flip(get()) === get();\nexport const isFlipped = () => flip(0) === 1;\n",
+          ),
+        ),
+      ).toEqual(["success", 0, 0]);
+    });
+  });
+
   describe("checks the port of DieHard.tla as TLC checks the ESCore model", () => {
     const path = join(EXAMPLES, "die-hard/die-hard.ts");
     const source = readFileSync(path, "utf8");
@@ -207,6 +650,68 @@ describe("checks a module's exported functions as a model on ESCore", () => {
 
     it("fails where the initial state doesn't", async () => {
       expect(getCounts(await checkModel(getSource(1)))).toEqual(["invariant-violation", 1, 1]);
+    });
+  });
+
+  describe("stops where an action counts on forever and the model checks nothing", () => {
+    const ENDLESS = "tla-ts can't check a model whose states never end";
+
+    it.each([
+      [
+        "in a for-in over an object literal with a key",
+        "() => { for (const key in { a: 1 }) count++; }",
+      ],
+      ["by a defaulted parameter of literals", "(amount: 1 | 2 = 1) => { count += amount; }"],
+    ])("counting %s", async (_title, action) => {
+      const result = await checkModel(`let count = 0;\nexport const step = ${action};\n`);
+      expect([result.status, result.message]).toEqual([
+        "stopped",
+        expect.stringContaining(ENDLESS),
+      ]);
+    });
+
+    it.each([
+      [
+        "a for-in over an object literal without a key",
+        "() => { for (const key in {}) count++; }",
+        1,
+      ],
+      [
+        "a guard that bounds a for-in",
+        "() => { if (count < 2) for (const key in { a: 1 }) count++; }",
+        3,
+      ],
+      [
+        "a guard that bounds a parameter's count",
+        "(amount: 1 | 2 = 1) => { if (count < 4) count += amount; }",
+        6,
+      ],
+    ])("checks the model where %s", async (_title, action, distinct) => {
+      const result = await checkModel(`let count = 0;\nexport const step = ${action};\n`);
+      expect([result.status, result.distinct]).toEqual(["deadlock", distinct]);
+    });
+  });
+
+  describe("runs a step that reads a binding of the module's declarations", () => {
+    const getSource = (declaration: string) => `
+      ${declaration}
+      let seen = new Set<number>();
+      export const take = () => {
+        if (seen.size > 0) return;
+        pending.add(1);
+        seen = new Set(pending);
+      };
+    `;
+
+    it("throws where a declare binds nothing, as Node does", async () => {
+      const result = await checkModel(getSource("declare const pending: Set<number>;"));
+      expect([result.status, result.distinct]).toEqual(["error", 1]);
+      expect(result.message).toContain('"pending is not defined"');
+    });
+
+    it("takes the step where the module binds it", async () => {
+      const result = await checkModel(getSource("const pending = new Set<number>();"));
+      expect([result.status, result.distinct]).toEqual(["deadlock", 2]);
     });
   });
 
@@ -375,6 +880,90 @@ describe("checks a module's exported functions as a model on ESCore", () => {
     });
   });
 
+  describe("lowers the values an initial state chooses without making them on the heap", () => {
+    const source = `
+      type Key = "a" | "b";
+      let slot!: { owner: Key | null; count: 0 | 1 };
+      let pair!: [Key, boolean];
+      let seen!: Set<Key>;
+      let totals!: Map<Key, 0 | 1>;
+      export const bump = () => {
+        if (slot.count === 1) return;
+        slot.count = 1;
+      };
+      export const isPaired = () => pair.length === 2 && slot.count <= 1;
+    `;
+
+    it("gives what lowering the converted objects gives, as TLC counts", async () => {
+      const counts = ["deadlock", 864, 891];
+      expect(getCounts(await checkModel(source, "spec.ts", "lowered"))).toEqual(counts);
+      expect(getCounts(await checkModel(source))).toEqual(counts);
+    });
+
+    it("tells a lowered converter that flips a number", async () => {
+      const result = await checkModel(source, "spec.ts", "lowered", [
+        "(x) == IntV(x)",
+        "(x) == IntV(1 - x)",
+      ]);
+      expect(result.message).toContain("the lowered converter differs");
+    });
+  });
+
+  describe("checks an invariant's level through the runtime's prepared levels", () => {
+    const source = `
+      let count = 0;
+      export const step = () => {
+        if (count < 2) count += 1;
+      };
+      export const isSmall = () => count <= 2;
+    `;
+
+    it("checks a state predicate, as TLC counts", async () => {
+      expect(getCounts(await checkModel(source))).toEqual(["deadlock", 3, 3]);
+    });
+
+    it("tells an invariant that reads the next state", async () => {
+      const result = await checkModel(source, "spec.ts", "canonical", [
+        "isSmall == ApplyTo(",
+        "isSmall == model' = model /\\ ApplyTo(",
+      ]);
+      expect(result.message).toContain("The invariant isSmall is not a state predicate");
+    });
+  });
+
+  describe("computes a model's initial states once, as a constant", () => {
+    const source = `
+      /** @noDeadlock */
+      let count!: 0 | 1 | 2;
+      /** @initially */
+      export const isSmall = () => count <= 1;
+      export const step = () => {
+        if (count === 0) return;
+        count -= 1;
+      };
+    `;
+
+    it("starts from each initial state, as TLC counts", async () => {
+      expect(getCounts(await checkModel(source))).toEqual(["success", 2, 3]);
+    });
+
+    it("tells a constant that drops an initial state", async () => {
+      const result = await checkModel(source, "spec.ts", "canonical", [
+        "InitialSet == ApplyTo(InitialStates, InitialState)",
+        "InitialSet == LET all == ApplyTo(InitialStates, InitialState) IN all \\ {CHOOSE m \\in all : TRUE}",
+      ]);
+      expect(getCounts(result)).toEqual(["success", 2, 2]);
+    });
+
+    it("keeps the initial states that hold each @initially check", async () => {
+      const result = await checkModel(source, "spec.ts", "canonical", [
+        "InitialHolds(m) ==\n  ",
+        "InitialHolds(m) ==\n  TRUE \\/ ",
+      ]);
+      expect(getCounts(result)).toEqual(["success", 3, 5]);
+    });
+  });
+
   describe("runs a lowered model's functions natively, as ESCore runs them", () => {
     const source = `
       type Key = "a" | "b";
@@ -485,6 +1074,519 @@ describe("checks a module's exported functions as a model on ESCore", () => {
         "LAMBDA i : ~LTruthy(rs[i])",
       ]);
       expect(result.message).toContain("the native call differs from ESCore's");
+    });
+  });
+
+  // TypeScript's type of a parameter gives the values that a step passes it, as docs/typescript.md
+  // lists them. A step keeps the key of the value it was passed, so the model has one state for
+  // each value besides the initial one, and an invariant holds where each key is one that the
+  // list gives.
+  describe("passes a parameter every value of its type", () => {
+    const key = (value: unknown) =>
+      JSON.stringify(value, (_, inner) =>
+        inner instanceof Set
+          ? ["set", ...[...inner].sort()]
+          : inner instanceof Map
+            ? ["map", ...[...inner].sort()]
+            : inner,
+      );
+    const getSource = (type: string, values: unknown[]) => `
+      const key = ${key.toString()};
+      const listed = new Set<string>(${JSON.stringify(values.map(key))});
+      let last = "";
+      export const see = (value: ${type}) => {
+        last = key(value);
+      };
+      export const isListed = () => last === "" || listed.has(last);
+    `;
+    const TYPES: [string, unknown[]][] = [
+      ["boolean", [false, true]],
+      ['"a" | "b" | null', ["a", "b", null]],
+      ["number", [-3, -2, -1, 0, 1, 2, 3]],
+      ["string", ["", "a", "b"]],
+      [
+        "[0 | 1, boolean]",
+        [
+          [0, false],
+          [0, true],
+          [1, false],
+          [1, true],
+        ],
+      ],
+      [
+        "{ a: 0 | 1; b: true }",
+        [
+          { a: 0, b: true },
+          { a: 1, b: true },
+        ],
+      ],
+      ["true[]", [[], [true], [true, true], [true, true, true]]],
+      ["Set<0 | 1>", [new Set(), new Set([0]), new Set([1]), new Set([0, 1])]],
+      ['Map<"a", 0 | 1>', [new Map(), new Map([["a", 0]]), new Map([["a", 1]])]],
+    ];
+
+    it.each(TYPES)("passes each value of %s", async (type, values) => {
+      const result = await checkModel(getSource(type, values));
+      expect(result.status).not.toBe("invariant-violation");
+      expect(result.distinct).toBe(values.length + 1);
+    });
+
+    it.each(TYPES)(
+      "rejects a list of the values of %s that leaves one out",
+      async (type, values) => {
+        expect((await checkModel(getSource(type, values.slice(1)))).status).toBe(
+          "invariant-violation",
+        );
+      },
+    );
+
+    it("checks the other functions where a parameter's type has values it can't list", async () => {
+      const result = await checkModel(`
+        let count = 0;
+        export const run = (step: () => void) => { step(); count++; };
+        export const increment = () => { if (count < 2) count++; };
+        export const isBounded = () => count <= 2;
+      `);
+      expect(result.status).not.toBe("stopped");
+      expect(result.status).not.toBe("invariant-violation");
+    });
+  });
+
+  describe("spreads an array or a Set into an array literal natively, as ESCore does", () => {
+    const source = `
+      type Key = "a" | "b" | "c";
+      let seen = new Set<Key>();
+      let order: Key[] = [];
+      export const add = (key: Key) => {
+        if (order.length >= 2 || seen.has(key)) return;
+        seen.add(key);
+        order = [...order, key];
+      };
+      export const isOrdered = () =>
+        [...seen].every((key) => order.includes(key)) &&
+        [...seen].filter((key) => key !== "a").length <= 2 &&
+        [0, ...order, 1].length === order.length + 2 &&
+        [...order, ...order].slice(order.length).every((key) => seen.has(key));
+    `;
+
+    it("gives what ESCore gives in every call, as TLC counts", async () => {
+      const counts = ["deadlock", 10, 10];
+      expect(getCounts(await checkModel(source, "spec.ts", "native"))).toEqual(counts);
+      expect(getCounts(await checkModel(source, "spec.ts", "compared"))).toEqual(counts);
+    });
+
+    it("tells a spread that drops the last element", async () => {
+      const result = await checkModel(source, "spec.ts", "native", [
+        "THEN v.elems\n",
+        "THEN SubSeq(v.elems, 1, Len(v.elems) - 1)\n",
+      ]);
+      expect(result.message).toContain("the native call differs from ESCore's");
+    });
+  });
+
+  describe("runs a Set's methods of another Set, new Set and iterators natively, as ESCore does", () => {
+    const source = `
+      type Key = "a" | "b";
+      const keys = new Set<Key>(["a", "b"]);
+      let seen = new Set<Key>();
+      let queue: [Key, number][] = [];
+      let counts: Record<Key, number> = { a: 0, b: 0 };
+
+      const total = (rest: Set<Key>): number => {
+        const first = rest.values().find(() => true);
+        return first === undefined ? 0 : counts[first] + total(rest.difference(new Set([first])));
+      };
+
+      export const take = (key: Key) => {
+        if (!keys.difference(seen).has(key)) return;
+        const next = seen.union(new Set([key]));
+        seen = next;
+        queue.push([key, counts[key]]);
+      };
+
+      export const serve = () => {
+        if (queue.length === 0 || counts[queue[0][0]] >= 1) return;
+        const head = queue[0];
+        queue.shift();
+        counts[head[0]] += 1;
+        seen = seen.difference(new Set([head[0]]));
+      };
+
+      export const isBounded = () =>
+        total(keys) <= 2 &&
+        Object.values(counts).every((count) => count <= 1) &&
+        new Set(keys.values().filter((key) => seen.has(key))).size === seen.intersection(keys).size &&
+        seen.isSubsetOf(keys) &&
+        keys.isSupersetOf(seen) &&
+        (seen.size === 0 || !seen.isDisjointFrom(keys)) &&
+        seen.symmetricDifference(keys).size + seen.size === 2;
+
+      /** @always */
+      export const isShort = () => queue.length <= 2;
+    `;
+
+    it("gives what ESCore gives in every call and every guard, as TLC counts", async () => {
+      const counts = ["deadlock", 18, 22];
+      expect(getCounts(await checkModel(source, "spec.ts", "native"))).toEqual(counts);
+      expect(getCounts(await checkModel(source, "spec.ts", "compared"))).toEqual(counts);
+    });
+
+    it("tells a union that puts the other Set's elements first", async () => {
+      const result = await checkModel(source, "spec.ts", "native", [
+        'm = "union" -> LSet(a \\o SelectSeq(b, LAMBDA e : ~LHas(a, e)))',
+        'm = "union" -> LSet(SelectSeq(b, LAMBDA e : ~LHas(a, e)) \\o a)',
+      ]);
+      expect(result.message).toContain("the native call differs from ESCore's");
+    }, 120_000);
+
+    it("tells a subset test that leaves out a Set of the same size", async () => {
+      const result = await checkModel(source, "spec.ts", "native", [
+        '[] m = "isSubsetOf" -> Bool(Len(a) <= Len(b)',
+        '[] m = "isSubsetOf" -> Bool(Len(a) < Len(b)',
+      ]);
+      expect(result.message).toContain("the native call differs from ESCore's");
+    }, 120_000);
+  });
+
+  describe("takes a parameter's computed domain from its guard, natively, as ESCore does", () => {
+    // Today's domain of step is its TLA+ of choices, which reads its TLA+ of bits; the guard's
+    // Set is the module's own code.
+    const source = `
+      const bits = (x: number, bit: number): number =>
+        x === 0 ? 0 : 2 ** bit * (x % 2) + bits(Math.floor(x / 2), bit + 1);
+      const choices = () => new Set([1, 2, 3].filter((value) => bits(value, 0) === value));
+      let total = 0;
+      export const add = (step: number) => {
+        if (!choices().has(step)) return;
+        if (total >= 4) return;
+        total += step;
+      };
+      export const isSmall = () => total <= 6;
+    `;
+
+    it("gives what ESCore gives in every call and every guard, as TLC counts", async () => {
+      const counts = ["deadlock", 7, 13];
+      expect(getCounts(await checkModel(source, "spec.ts", "native"))).toEqual(counts);
+      expect(getCounts(await checkModel(source, "spec.ts", "compared"))).toEqual(counts);
+    });
+
+    it("tells a floor that gives 0 of an integer", async () => {
+      const result = await checkModel(source, "spec.ts", "native", [
+        "THEN Num(MathOf(m, a.value))",
+        'THEN Num(IF m = "floor" /\\ a.value.k = "int" THEN NumFromInt(0) ELSE MathOf(m, a.value))',
+      ]);
+      expect(result.message).toContain("the native call differs from ESCore's");
+    });
+  });
+
+  describe("takes no step on a call that writes nothing, as today's compiler and Node's runs do", () => {
+    const fairness = (tag: string) => `
+      /** @noDeadlock */
+      let x: 0 | 1 = 0;
+      let y: 0 | 1 = 0;
+      ${tag}
+      export const work = () => {
+        if (x === 1) y = 1;
+      };
+      /** @fair */
+      export const spin = () => {
+        x = x === 0 ? 1 : 0;
+      };
+      /** @eventually */
+      export const isWorked = () => y === 1;
+    `;
+
+    it("deadlocks where the only call writes nothing, and steps where it writes what it holds", async () => {
+      const written = (body: string) => `
+        let x = 0;
+        export const step = () => {
+          ${body}
+        };
+        export const isSmall = () => x <= 2;
+      `;
+      expect(getCounts(await checkModel(written("if (x < 2) x += 1;")))).toEqual([
+        "deadlock",
+        3,
+        3,
+      ]);
+      expect(getCounts(await checkModel(written("if (x < 2) x += 1; else x = x;")))).toEqual([
+        "success",
+        3,
+        4,
+      ]);
+    });
+
+    it("needs strong fairness for a call that writes in every other state", async () => {
+      expect(getCounts(await checkModel(fairness("/** @fair */")))).toEqual([
+        "liveness-violation",
+        4,
+        7,
+      ]);
+      expect(getCounts(await checkModel(fairness("/** @strongFair */")))).toEqual([
+        "success",
+        4,
+        7,
+      ]);
+    });
+
+    it("tells a step that a call writing nothing takes", async () => {
+      const source = `
+        let x = 0;
+        export const step = () => {
+          if (x < 2) x += 1;
+        };
+        export const isSmall = () => x <= 2;
+      `;
+      const result = await checkModel(source, "spec.ts", "canonical", [
+        "IF n.w THEN {n.m} ELSE {}",
+        "IF n.w THEN {n.m} ELSE {a[1]}",
+      ]);
+      expect(getCounts(result)).toEqual(["success", 3, 4]);
+    });
+  });
+
+  describe("checks a model without state natively, in the state its top level leaves", () => {
+    // A port of Stones.tla with 2 stones of a weight of 4.
+    const source = `
+      const w = 4;
+      const n = 2;
+      const getRange = (low: number, high: number) =>
+        Array.from({ length: high - low + 1 }, (_, index) => low + index);
+      const weighs = (seq: number[], wt: number): boolean =>
+        seq.length === 0 ? wt === 0 : [-1, 0, 1].some((coef) => weighs(seq.slice(1), wt - coef * seq[0]));
+      const hasSolution = (seq: number[], wt: number): boolean => {
+        if (seq.length === n) return getRange(1, w).every((weight) => weighs(seq, weight));
+        const r = n - seq.length;
+        const max = seq.length === 0 ? wt : seq[0];
+        return getRange(1, max).some(
+          (x) => r - 1 <= wt - x && wt <= x * r && hasSolution([x, ...seq], wt - x),
+        );
+      };
+      /** @assume */
+      export const isSolvable = () => hasSolution([], w);
+    `;
+    it("gives what ESCore gives in every call, as TLC does", async () => {
+      for (const mode of ["native", "lowered", "raw"] as const) {
+        expect(getCounts(await checkModel(source, "spec.ts", mode))).toEqual(["success", 0, 0]);
+      }
+    });
+
+    it("tells an every that fails where each element passes", async () => {
+      const result = await checkModel(source, "spec.ts", "native", [
+        "IN IF i = 0 THEN True ELSE IF rs[i].type",
+        "IN IF i = 0 THEN False ELSE IF rs[i].type",
+      ]);
+      // An assumption reports no message of the Assert that its comparison fails.
+      expect(result.status).toBe("assumption-violation");
+    });
+  });
+
+  describe("runs ESNative's operators natively, as their TLA+ runs them", () => {
+    // A model that lowers its state, whose module ESNative the checks read.
+    const source = `
+      let count = 0;
+      export const step = () => {
+        if (count < 1) count += 1;
+      };
+    `;
+    // Every operator that tla-ts runs natively, on every argument of a pool of lowered values:
+    // integers at ESNumber's limits, the other kinds of Number, strings, objects, arrays, Sets,
+    // Maps, a BigInt, and LBail.
+    const operators = String.raw`
+PoolNumber(k, neg, i, m, e) == [type |-> "number", value |-> [k |-> k, neg |-> neg, i |-> i, m |-> m, e |-> e]]
+PoolInt(i) == PoolNumber("int", i < 0, i, <<>>, 0)
+PoolInts == {PoolInt(i) : i \in {0, 1, -1, 2, -2, 7, -7, 32767, -32767, 32768, -32768, 65535, 1073741823, -1073741823}}
+PoolNumbers == PoolInts \cup {PoolNumber("nzero", TRUE, 0, <<>>, 0), PoolNumber("nan", FALSE, 0, <<>>, 0),
+  PoolNumber("inf", FALSE, 0, <<>>, 0), PoolNumber("inf", TRUE, 0, <<>>, 0), PoolNumber("fin", FALSE, 0, <<1>>, -1)}
+PoolStrings == {[type |-> "string", value |-> u] : u \in {<<>>, <<97>>, <<98>>, <<48>>, <<108, 101, 110, 103, 116, 104>>, <<115, 105, 122, 101>>}}
+PoolPrimitives == PoolNumbers \cup PoolStrings \cup {[type |-> "undefined"], [type |-> "null"],
+  [type |-> "boolean", value |-> TRUE], [type |-> "boolean", value |-> FALSE],
+  [type |-> "bigint", value |-> [neg |-> FALSE, mag |-> <<>>]], [type |-> "bigint", value |-> [neg |-> FALSE, mag |-> <<3>>]]}
+PoolComposites == {[type |-> "lobject", keys |-> <<>>, vals |-> <<>>],
+  [type |-> "lobject", keys |-> <<<<97>>>>, vals |-> <<97>> :> PoolInt(1)],
+  [type |-> "lobject", keys |-> <<<<97>>, <<98>>>>, vals |-> (<<97>> :> PoolInt(1)) @@ (<<98>> :> [type |-> "lobject", keys |-> <<>>, vals |-> <<>>])],
+  [type |-> "larray", elems |-> <<>>], [type |-> "larray", elems |-> <<PoolInt(1), PoolInt(0)>>],
+  [type |-> "larray", elems |-> <<[type |-> "string", value |-> <<97>>], [type |-> "null"], PoolInt(2)>>],
+  [type |-> "lset", elems |-> <<PoolInt(1)>>], [type |-> "lmap", keys |-> <<PoolInt(1)>>, vals |-> <<PoolInt(2)>>]}
+PoolBail == [type |-> "bail"]
+Pool == PoolPrimitives \cup PoolComposites \cup {PoolBail}
+PoolKeys == {<<97>>, <<98>>, <<99>>, <<108, 101, 110, 103, 116, 104>>, <<115, 105, 122, 101>>}
+PoolArithmetic == {"+", "-", "*", "/", "%", "**"}
+PoolRelations == {"<", ">", "<=", ">="}
+PoolResults == {PoolBail, [type |-> "ok", m |-> 0, w |-> FALSE, v |-> PoolInt(1)]}
+PoolIndices == {[type |-> "undefined"], PoolInt(-5), PoolInt(-1), PoolInt(0), PoolInt(1), PoolInt(5),
+  PoolNumber("nan", FALSE, 0, <<>>, 0), PoolNumber("fin", FALSE, 0, <<1>>, -1), [type |-> "string", value |-> <<48>>]}
+PoolLists == {<<>>, <<PoolInt(1)>>, <<PoolBail>>, <<PoolInt(1), PoolBail>>, <<[type |-> "null"], PoolInt(3)>>}
+PoolSets == {[type |-> "lset", elems |-> <<>>], [type |-> "lset", elems |-> <<PoolInt(1)>>],
+  [type |-> "lset", elems |-> <<PoolInt(2), PoolInt(1)>>],
+  [type |-> "lset", elems |-> <<[type |-> "string", value |-> <<97>>], PoolInt(1), [type |-> "null"]>>],
+  [type |-> "lset", elems |-> <<PoolNumber("nan", FALSE, 0, <<>>, 0), PoolInt(0)>>],
+  [type |-> "lset", elems |-> <<PoolNumber("nzero", TRUE, 0, <<>>, 0)>>],
+  [type |-> "lset", elems |-> <<[type |-> "larray", elems |-> <<>>]>>], [type |-> "larray", elems |-> <<>>]}
+PoolSetMethods == {"union", "intersection", "difference", "symmetricDifference", "isSubsetOf",
+  "isSupersetOf", "isDisjointFrom", "has"}
+PoolCallbacks(c, F(_, _)) ==
+  /\ c.type = "larray" => LResults(c.elems, F) = PlainLResults(c.elems, F)
+  /\ LEvery(c, F) = PlainLEvery(c, F)
+  /\ LSome(c, F) = PlainLSome(c, F)
+  /\ LMap(c, F) = PlainLMap(c, F)
+  /\ LFilter(c, F) = PlainLFilter(c, F)
+ASSUME \A v \in Pool :
+  /\ IsLComposite(v) = PlainIsLComposite(v)
+  /\ LIsPrimitive(v) = PlainLIsPrimitive(v)
+  /\ LNumber(v) = PlainLNumber(v)
+  /\ LOwn(v) = PlainLOwn(v)
+  /\ LTruthy(v) = PlainLTruthy(v)
+  /\ LNot(v) = PlainLNot(v)
+  /\ \A k \in PoolKeys : LGet(v, k) = PlainLGet(v, k)
+  /\ \A i \in Pool, n \in 0..3 : LIsIndex(v, i, n) = PlainLIsIndex(v, i, n)
+  /\ \A i \in Pool : LIndex(v, i) = PlainLIndex(v, i)
+  /\ \A b \in Pool, op \in PoolArithmetic : LArith(op, v, b) = PlainLArith(op, v, b)
+  /\ \A b \in Pool, op \in PoolRelations : LRelation(op, v, b) = PlainLRelation(op, v, b)
+  /\ \A b \in Pool : LStrict(v, b) = PlainLStrict(v, b)
+  /\ \A o \in Pool, k \in PoolKeys : LPut(o, k, v) = PlainLPut(o, k, v)
+  /\ \A c \in Pool, k \in Pool : LAssign(c, k, v) = PlainLAssign(c, k, v)
+  /\ \A s \in PoolIndices, e \in PoolIndices : LSlice(v, s, e) = PlainLSlice(v, s, e)
+  /\ PoolCallbacks(v, LAMBDA x, i : x)
+  /\ PoolCallbacks(v, LAMBDA x, i : i)
+  /\ PoolCallbacks(v, LAMBDA x, i : PoolBail)
+  /\ PoolCallbacks(v, LAMBDA x, i : IF i = PoolInt(1) THEN PoolBail ELSE [type |-> "boolean", value |-> i = PoolInt(0)])
+ASSUME \A c \in PoolSets, o \in PoolSets, m \in PoolSetMethods : LSetMethod(c, m, o) = PlainLSetMethod(c, m, o)
+ASSUME \A r \in PoolResults : LValue(r) = PlainLValue(r)
+ASSUME \A list \in PoolLists : LArray(list) = PlainLArray(list)
+RECURSIVE PlainSetToSeq(_)
+PlainSetToSeq(set) == IF set = {} THEN <<>> ELSE LET x == CHOOSE x \in set : TRUE IN <<x>> \o PlainSetToSeq(set \ {x})
+ASSUME \A t \in {"", "a", "ab\n", "Z~ \t", "\\\""} : StringUnits(t) = [i \in 1..Len(t) |-> CharacterUnits[SubSeq(t, i, i)]]
+ASSUME \A x \in SUBSET {"m1", "c1", "b"} : SetToSeq(x) = PlainSetToSeq(x)
+ASSUME \A x \in {{3, 1, -2}, 1..4} : SetToSeq(x) = PlainSetToSeq(x)
+ASSUME SetToSeq({{2}, {}, {1, 0}}) = PlainSetToSeq({{2}, {}, {1, 0}})
+ASSUME SetToSeq({<<1>>, <<>>, <<0, 1>>}) = PlainSetToSeq({<<1>>, <<>>, <<0, 1>>})`;
+
+    it("agrees with the TLA+ on every argument of the pool", async () => {
+      const result = await checkModel(source, "spec.ts", "operators", undefined, operators);
+      expect(result.message).toBeUndefined();
+      expect(getCounts(result)).toEqual(["deadlock", 2, 2]);
+    });
+
+    it("tells a TLA+ that gives another result", async () => {
+      const result = await checkModel(
+        source,
+        "spec.ts",
+        "operators",
+        ["[] OTHER -> PlainLBail\nPlainLIsIndex", '[] OTHER -> [type |-> "other"]\nPlainLIsIndex'],
+        operators,
+      );
+      expect(result.status).toBe("assumption-violation");
+    });
+
+    it("tells a Set method whose TLA+ gives another result", async () => {
+      const result = await checkModel(
+        source,
+        "spec.ts",
+        "operators",
+        ['[] m = "isDisjointFrom" -> Bool(~\\E', '[] m = "isDisjointFrom" -> Bool(\\E'],
+        operators,
+      );
+      expect(result.status).toBe("assumption-violation");
+    });
+  });
+
+  describe("checks an assumption of a lowered model in its lowered start state", () => {
+    const getSource = (floor: number) => `
+      let count = 0;
+      export const step = () => {
+        count = 1 - count;
+      };
+      /** @assume */
+      export const isLikeJavaScript = () =>
+        Math.trunc(-7 / 2) === -3 && Math.floor(-7 / 2) === ${floor} && \`\${"a"}-\${1}\` === "a-1";
+    `;
+
+    it("agrees with Node", async () => {
+      expect(getCounts(await checkModel(getSource(-4)))).toEqual(["success", 2, 3]);
+    });
+
+    it("rejects another result", async () => {
+      expect((await checkModel(getSource(-3))).status).toBe("assumption-violation");
+    });
+  });
+
+  describe("calls a check that today's compiler names apart from a result in its body", () => {
+    const getSource = (expected: string) => `
+      const flip = function (body: (a: number, b: number) => number) {
+        const held = body;
+        return (a: number, b: number) => held(b, a);
+      };
+      export const minus = flip((self: number, that: number) => self - that);
+      export const run = (value: 1 | 2) => {
+        const result = minus(value, 10);
+        if (result !== ${expected}) throw new Error("result " + result);
+        return result;
+      };
+    `;
+
+    it("agrees with Node", async () => {
+      expect(getCounts(await checkModel(getSource("10 - value")))).toEqual(["success", 0, 0]);
+    });
+
+    it("rejects another result", async () => {
+      expect((await checkModel(getSource("value - 10"))).message).toContain('"result 9"');
+    });
+  });
+
+  describe("checks the port of SimpleAllocator.tla under its symmetry as tla-ts checks the original", () => {
+    const directory = join(import.meta.dirname, "../fixtures/typescript/simple-allocator");
+    const path = join(directory, "simple-allocator.ts");
+    const source = readFileSync(path, "utf8");
+
+    it("finds the original's states, one for each permutation of clients and resources", async () => {
+      const original = await check({
+        source: readFileSync(join(directory, "SimpleAllocator.tla"), "utf8"),
+        config: readFileSync(join(directory, "SimpleAllocator.cfg"), "utf8"),
+      });
+      expect([original.status, original.distinctStates, original.generatedStates]).toEqual([
+        "success",
+        50,
+        226,
+      ]);
+      expect(getCounts(await checkModel(source, path))).toEqual(["success", 50, 226]);
+    });
+
+    it("finds the violation of ResourceMutex where a client takes a resource another holds", async () => {
+      const result = await checkModel(source.replace(" || !given.isDisjointFrom(taken)", ""), path);
+      expect(result.message).toContain('"two clients hold a resource"');
+    });
+
+    it.each([
+      [
+        "names a value",
+        "if (unsat[c].size",
+        'if (c === "c1" || unsat[c].size',
+        'names the value "c1"',
+      ],
+      [
+        "reads a value's text",
+        "if (unsat[c].size",
+        "if (c.length > 2 || unsat[c].size",
+        "reads a property",
+      ],
+      [
+        "iterates a Set",
+        "  taken = taken.union(given);",
+        "  for (const r of given) taken.add(r);",
+        "iterates",
+      ],
+      ["destructures a Set", "  taken = taken.union(given);", "  const [r] = given;", "iterates"],
+      [
+        "calls a function that reads text",
+        "if (unsat[c].size",
+        "if (Number(c) === 0 || unsat[c].size",
+        "calls a function",
+      ],
+    ])("stops where the program %s, which tells the values apart", async (_, from, to, reason) => {
+      const result = await checkModel(source.replace(from, to), path);
+      expect(result.status).toBe("stopped");
+      expect(result.message).toContain(`tla-ts can't check a symmetric model that ${reason}`);
     });
   });
 });

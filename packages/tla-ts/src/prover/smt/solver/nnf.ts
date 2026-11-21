@@ -1,4 +1,3 @@
-// Ported from Z3 (src/ast/normal_forms/nnf.cpp, name_exprs.cpp, defined_names.cpp), MIT license, see z3-license.txt.
 import { ActCache } from "./act-cache";
 import {
   type AstManager,
@@ -15,6 +14,7 @@ import {
   OP_OR,
   OP_XOR,
   SORT_BOOL,
+  type SmtSymbol,
   QUANTIFIER_FORALL,
 } from "./ast";
 import { mkNot } from "./ast-util";
@@ -28,7 +28,10 @@ export class DefinedNames {
   private nameRefs: RefVector;
   private lims: number[] = [];
 
-  constructor(private manager: AstManager) {
+  constructor(
+    private manager: AstManager,
+    private prefix: SmtSymbol | null = "z3name",
+  ) {
     this.exprs = new RefVector(manager);
     this.nameRefs = new RefVector(manager);
   }
@@ -37,9 +40,10 @@ export class DefinedNames {
     this.lims.push(this.exprs.size);
   }
 
-  pop() {
-    const size = this.lims[this.lims.length - 1];
-    this.lims.pop();
+  pop(numScopes: number) {
+    const newLevel = this.lims.length - numScopes;
+    const size = this.lims[newLevel];
+    this.lims.length = newLevel;
     while (this.exprs.size > size) {
       this.names.delete(this.exprs.items[this.exprs.size - 1]);
       this.exprs.shrink(this.exprs.size - 1);
@@ -69,7 +73,7 @@ export class DefinedNames {
     const varSorts = freeVarSorts.map((sort) => sort ?? SORT_BOOL);
     const sort = manager.sorts[expr];
     const name = manager.mkApp(
-      manager.mkFreshFuncDecl("z3name", varSorts, sort),
+      manager.mkFreshFuncDecl(this.prefix, varSorts, sort),
       freeVarSorts.map((varSort, index) =>
         varSort === undefined ? manager.trueExpr : manager.mkVar(index, varSort),
       ),

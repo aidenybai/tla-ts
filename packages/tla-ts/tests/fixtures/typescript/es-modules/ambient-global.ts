@@ -1,4 +1,4 @@
-import { makeHook } from "./ambient-global-hook";
+import { makeHook } from "./ambient-global-hook.ts";
 
 const shared = { hook: makeHook() };
 let caught = "none";

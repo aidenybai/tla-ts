@@ -1,4 +1,3 @@
-// Ported from Z3 (src/tactic/arith/nla2bv_tactic.cpp), MIT license, see z3-license.txt.
 import { SmtTacticError } from "../../../errors";
 import {
   type AstManager,
@@ -125,7 +124,7 @@ class Nla2Bv {
     const manager = this.manager;
     const goal = this.goal;
     for (let index = 0; index < goal.forms.size; index++) {
-      const result = rewriter.rewrite(goal.forms.items[index]);
+      const result = rewriter.rewrite(goal.forms.get(index));
       if (isReal && this.bv2real.containsBv2Real(result)) {
         manager.decRef(result);
         rewriter.release();
@@ -149,7 +148,7 @@ class Nla2Bv {
     const goal = this.goal;
     const replacer = new SubstReplacer(manager, this.substitution);
     for (let index = 0; index < goal.forms.size; index++) {
-      const result = replacer.rewrite(goal.forms.items[index]);
+      const result = replacer.rewrite(goal.forms.get(index));
       goal.update(index, result);
       manager.decRef(result);
     }

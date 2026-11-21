@@ -1,5 +1,3 @@
-// Ported from Z3 (src/qe/qe.cpp, src/qe/qe_tactic.cpp, src/qe/qe_bool_plugin.cpp,
-// src/qe/qe_bv_plugin.cpp), MIT license, see z3-license.txt.
 import { SmtInvariantError, SmtUnsupportedError } from "../../../errors";
 import {
   type AstManager,
@@ -318,7 +316,8 @@ class SearchTree {
   }
 
   consumeVars(vars: number[]) {
-    while (vars.length > 0) this.vars.push(vars.pop() as number);
+    for (let variable = vars.pop(); variable !== undefined; variable = vars.pop())
+      this.vars.push(variable);
   }
 
   isUnit() {
@@ -447,7 +446,7 @@ const partitionVars = (contains: readonly ContainsApp[], args: readonly number[]
   }
   if (nonSharedVars.length === 0) return undefined;
   const root0 = find(0);
-  if (!nonSharedVars.some((_, index) => index > 0 && find(index) !== root0)) return undefined;
+  if (!nonSharedVars.some((_value, index) => index > 0 && find(index) !== root0)) return undefined;
   const roots: number[] = partition.length > 0 ? [-1] : [];
   for (const [index, x] of nonSharedVars.entries()) {
     const root = nonSharedVars[find(index)];
@@ -678,6 +677,7 @@ class QuantElimPlugin implements QeSolverContext {
       mbqiMaxIterations: MBQI_MAX_ITERATIONS,
       isFindingMacros: false,
       relevancyLevel: 0,
+      isDelayingNewCaseSplits: false,
     });
     this.root = new SearchTree(manager, undefined, manager.trueExpr);
     this.current = this.root;
@@ -1472,7 +1472,7 @@ export const runQe = (manager: AstManager) => (goal: Goal) => {
     for (let index = 0; index < goal.forms.size; index++) {
       manager.limit.checkpoint();
       if (goal.isInconsistent) break;
-      const formula = goal.forms.items[index];
+      const formula = goal.forms.get(index);
       if (!manager.hasQuantifierFlags[formula]) continue;
       if (hasUnsupportedSort(manager, formula))
         throw new SmtUnsupportedError("quantifier elimination over arrays or datatypes");

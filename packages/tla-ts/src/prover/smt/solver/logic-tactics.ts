@@ -1,7 +1,3 @@
-// Ported from Z3 (src/tactic/smtlogics/*.cpp, src/tactic/portfolio/default_tactic.cpp,
-// src/tactic/ufbv/ufbv_tactic.cpp, src/nlsat/tactic/qfnra_nlsat_tactic.cpp), MIT license, see
-// z3-license.txt.
-
 interface QfnraSolver {
   simpleCheck: number;
   heuristic?: number;
@@ -23,31 +19,35 @@ const QFLIA_PREAMBLE =
   ":lia2card.max_range 1 :lia2card.max_ite_nesting 1) elim-uncnstr)";
 
 const getNoCutSmt = (seed: number) =>
-  `(using-params smt :smt.logic QF_LIA :arith.branch_cut_ratio 10000000 :random_seed ${seed})`;
+  "(annotate (using-params smt :auto_config false :smt.logic QF_LIA " +
+  `:arith.branch_cut_ratio 10000000 :random_seed ${seed}))`;
 
 const LIA2SAT =
-  "(and-then (fail-if is-unbounded) (fail-if produce-proofs) (fail-if produce-unsat-cores) " +
-  "propagate-ineqs normalize-bounds lia2pb (using-params pb2bv :pb2bv_all_clauses_limit 8) " +
-  `(fail-if (not is-qfbv)) (using-params ${BV2SAT} :ite_extra true))`;
+  "(annotate (and-then (fail-if is-unbounded) (fail-if produce-proofs) " +
+  "(fail-if produce-unsat-cores) propagate-ineqs normalize-bounds lia2pb " +
+  "(using-params pb2bv :pb2bv_all_clauses_limit 8) (fail-if (not is-qfbv)) " +
+  `(using-params ${BV2SAT} :ite_extra true)))`;
 
 const ILP_MODEL_FINDER =
-  "(and-then (fail-if (not (and is-ilp is-unbounded))) (fail-if produce-proofs) " +
+  "(annotate (and-then (fail-if (not (and is-ilp is-unbounded))) (fail-if produce-proofs) " +
   `(fail-if produce-unsat-cores) propagate-ineqs (or-else (try-for ${getNoCutSmt(100)} 2000) ` +
   `(and-then (using-params add-bounds :add_bound_lower -16 :add_bound_upper 15) ` +
   `(try-for ${LIA2SAT} 5000)) (try-for ${getNoCutSmt(200)} 5000) (and-then ` +
   `(using-params add-bounds :add_bound_lower -32 :add_bound_upper 31) (try-for ${LIA2SAT} ` +
-  "10000))) fail-if-undecided)";
+  "10000))) fail-if-undecided))";
 
 const PB =
-  "(and-then (fail-if (not is-pb)) (fail-if produce-proofs) (fail-if produce-unsat-cores) " +
-  "(or-else (and-then (fail-if (>= num-exprs 80000)) (fail-if (not is-ilp)) " +
-  "fail-if-undecided) (and-then (using-params pb2bv :pb2bv_all_clauses_limit 8) " +
-  `(fail-if (not is-qfbv)) (using-params ${BV2SAT} :ite_extra true))))`;
+  "(annotate (and-then (fail-if (not is-pb)) (fail-if produce-proofs) " +
+  "(fail-if produce-unsat-cores) (or-else (and-then (fail-if (>= num-exprs 80000)) " +
+  "(fail-if (not is-ilp)) fail-if-undecided) (and-then " +
+  "(using-params pb2bv :pb2bv_all_clauses_limit 8) (fail-if (not is-qfbv)) " +
+  `(using-params ${BV2SAT} :ite_extra true)))))`;
 
 const BOUNDED =
-  `(and-then (fail-if is-unbounded) (or-else (try-for ${getNoCutSmt(100)} 5000) (try-for ` +
-  "(using-params smt :arith.branch_cut_ratio 10000000 :random_seed 200 :relevancy 0) 5000) " +
-  `(try-for ${getNoCutSmt(300)} 15000)) fail-if-undecided)`;
+  `(annotate (and-then (fail-if is-unbounded) (or-else (try-for ${getNoCutSmt(100)} 5000) ` +
+  "(try-for (annotate (using-params smt :auto_config false :arith.branch_cut_ratio 10000000 " +
+  ":random_seed 200 :relevancy 0)) 5000) " +
+  `(try-for ${getNoCutSmt(300)} 15000)) fail-if-undecided))`;
 
 const QFLIA =
   `(using-params (and-then ${QFLIA_PREAMBLE} (using-params simplify :arith_lhs true) ` +
@@ -85,8 +85,8 @@ const getQfnraSolver = (solver: QfnraSolver) =>
       `${solver.simpleCheck})`,
     ...(solver.heuristic === undefined ? [] : [`(try-for ${QFNRA_NLSAT} ${solver.heuristic})`]),
     ...solver.orders.map(
-      ([strategy, limit]) =>
-        `(try-for (using-params ${QFNRA_NLSAT} :variable_ordering_strategy ${strategy}) ${limit})`,
+      (order) =>
+        `(try-for (using-params ${QFNRA_NLSAT} :variable_ordering_strategy ${order[0]}) ${order[1]})`,
     ),
     `(using-params smt :use_ls true :ls_time ${solver.ls})`,
     `(and-then (try-for (using-params smt :arith.greatest_error_pivot true) ${solver.smt}) ` +
@@ -227,7 +227,8 @@ const UFBV_PREPROCESSOR =
   `(and-then ${DER_FP} simplify) simplify)`;
 
 const UFBV =
-  `(using-params (and-then (repeat ${UFBV_PREPROCESSOR} 2) smt) :mbqi true ` +
+  `(using-params (and-then (repeat ${UFBV_PREPROCESSOR} 2) (using-params smt :auto_config false)) ` +
+  ":mbqi true " +
   ":mbqi.max_iterations 4294967295 :elim_and true)";
 
 const QFBV_PREAMBLE =
@@ -260,6 +261,12 @@ export const QFUFBV_ACKR_PREAMBLE =
   ":pull_cheap_ite true :push_ite_bv false :local_ctx true :local_ctx_limit 10000000 " +
   ":ite_extra_rules true :mul2concat true :flat_and_or false))";
 
+const QFUFBV =
+  "(using-params (and-then (and-then (using-params simplify :flat_and_or false) (using-params " +
+  "propagate-values :flat_and_or false) solve-eqs elim-uncnstr (if-no-proofs (if-no-unsat-cores " +
+  "reduce-args)) (if-no-proofs (if-no-unsat-cores reduce-bv-size)) max-bv-sharing (if-no-proofs " +
+  "(if-no-unsat-cores ackermannize_bv))) (if is-qfbv qfbv smt)) :elim_and true :blast_distinct true)";
+
 const QFAUFLIA =
   "(and-then (using-params (and-then simplify propagate-values solve-eqs elim-uncnstr simplify) " +
   ":elim_and true :som true :sort_store true) (using-params smt :array.simplify false))";
@@ -270,10 +277,13 @@ const QFUF =
   "symmetry-reduce)) smt)";
 
 const DEFAULT =
-  "(and-then simplify (if (and is-propositional (not produce-proofs)) qffd (if is-qfbv qfbv " +
-  "(if is-qfaufbv qfaufbv (if is-qflia qflia (if is-qfauflia qfauflia (if is-qflra qflra (if " +
-  "is-qfnra qfnra (if is-qfnia qfnia (if is-lira lira (if is-nra nra (if is-qffp qffp (if " +
-  `is-qffplra qffplra (and-then ${QFLIA_PREAMBLE} smt))))))))))))))`;
+  "(if has-ff (and-then ff-unique ff-simplify (or-else ff-solve ff-sat (if ff-small-field smt " +
+  "(using-params smt :relevancy 0)))) (and-then simplify (if (and is-propositional (not " +
+  "produce-proofs)) (lazy qffd) (if is-qfbv (lazy qfbv) (if is-qfaufbv (lazy qfaufbv) (if " +
+  "is-qflia (lazy qflia) (if is-qfauflia (lazy qfauflia) (if is-qflra (lazy qflra) (if is-qfnra " +
+  "(lazy qfnra) (if is-qfnia (lazy qfnia) (if is-lira (lazy lira) (if is-nra (lazy nra) (if " +
+  "is-qffp (lazy qffp) (if is-qffplra (lazy qffplra) (and-then " +
+  `${QFLIA_PREAMBLE} (lazy smt))))))))))))))))`;
 
 const QFFP_SIMPLIFY = "(using-params simplify :arith_lhs true :elim_and true)";
 
@@ -299,13 +309,14 @@ export const LOGIC_TACTICS: ReadonlyMap<string, string> = new Map([
   [
     "auflia",
     `(and-then ${QUANT_PREPROCESSOR(false)} (or-else (and-then (fail-if (> num-exprs 128)) ` +
-      "(using-params smt :qi.cost 0) fail-if-undecided) smt))",
+      '(using-params smt :qi.cost "0") fail-if-undecided) smt))',
   ],
   ["ufnia", `(and-then ${QUANT_PREPROCESSOR(false)} qe-light smt)`],
   ["ufbv", UFBV],
   ["bv", UFBV],
   ["qfbv", QFBV],
   ["qfaufbv", QFAUFBV],
+  ["qfufbv", QFUFBV],
   ["qfauflia", QFAUFLIA],
   ["qfuf", QFUF],
   ["qffp", QFFP],
@@ -314,28 +325,29 @@ export const LOGIC_TACTICS: ReadonlyMap<string, string> = new Map([
   ["default", DEFAULT],
 ]);
 
+// mk_tactic_for_logic annotates only some logics, so cleanup reaches the others' tactics.
 const LOGIC_STRATEGIES = new Map([
   ["QF_UF", "qfuf"],
   ["QF_BV", "qfbv"],
-  ["QF_IDL", "qfidl"],
-  ["QF_LIA", "qflia"],
-  ["QF_LRA", "qflra"],
-  ["QF_NIA", "qfnia"],
-  ["QF_NRA", "qfnra"],
-  ["QF_NTA", "qfnra"],
-  ["QF_AUFLIA", "qfauflia"],
-  ["QF_AUFBV", "qfaufbv"],
-  ["QF_ABV", "qfaufbv"],
-  ["QF_UFBV", "qfufbv"],
-  ["AUFLIA", "auflia"],
-  ["AUFLIRA", "auflira"],
+  ["QF_IDL", "(annotate qfidl)"],
+  ["QF_LIA", "(annotate qflia)"],
+  ["QF_LRA", "(annotate qflra)"],
+  ["QF_NIA", "(annotate qfnia)"],
+  ["QF_NRA", "(annotate qfnra)"],
+  ["QF_NTA", "(annotate qfnra)"],
+  ["QF_AUFLIA", "(annotate qfauflia)"],
+  ["QF_AUFBV", "(annotate qfaufbv)"],
+  ["QF_ABV", "(annotate qfaufbv)"],
+  ["QF_UFBV", "(annotate qfufbv)"],
+  ["AUFLIA", "(annotate auflia)"],
+  ["AUFLIRA", "(annotate auflira)"],
   ["AUFNIRA", "aufnira"],
   ["UFNIA", "ufnia"],
   ["UFLRA", "uflra"],
   ["LRA", "lra"],
   ["NRA", "nra"],
   ["LIA", "lia"],
-  ["UFBV", "ufbv"],
+  ["UFBV", "(annotate ufbv)"],
   ["BV", "bv"],
   ["QF_FP", "qffp"],
   ["QF_FPBV", "qffpbv"],

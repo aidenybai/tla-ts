@@ -1,5 +1,3 @@
-// Ported from Isabelle2025's Pure/General/table.ML. Copyright (c) 1986-2025 University of Cambridge, Technische Universitaet Muenchen, and contributors, see LICENSE.
-
 export type Compare<Key> = (left: Key, right: Key) => number;
 
 type Node<Key, Value> =

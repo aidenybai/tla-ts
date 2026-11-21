@@ -1,6 +1,3 @@
-// Ported from Z3 (src/sat/smt/q_model_fixer.h, src/sat/smt/q_model_fixer.cpp,
-// src/model/arith_value_order.h, src/ast/macros/quantifier_macro_info.cpp), MIT license, see
-// z3-license.txt.
 import { SmtInvariantError } from "../../../../errors";
 import {
   type AstManager,

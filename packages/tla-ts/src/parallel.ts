@@ -8,7 +8,9 @@ import {
 } from "./check";
 import { parseConfig, type ModelConfig } from "./config";
 import { TlaEvaluationError } from "./errors";
+import type { RuntimeInvariant } from "./environment";
 import { isImpure } from "./evaluate";
+import { printModule } from "./printer";
 import {
   createSharedFingerprints,
   growSharedFingerprints,
@@ -24,6 +26,7 @@ import {
   reportInitialStatesProgress,
   reportStartup,
 } from "./search";
+import { getSpecDescription } from "./spec-description";
 import { getInitialStates } from "./successors";
 import { getFingerprintDistance, OUT_DEGREE_BUCKETS } from "./tlc/summary";
 import { createStateEncoder, type EncodedStates } from "./transfer";
@@ -43,6 +46,7 @@ export interface StartMessage extends Pick<
 > {
   type: "start";
   config: ModelConfig;
+  runtimeInvariants: RuntimeInvariant[];
   modules: [string, string | undefined][];
   classes: [string, Uint8Array | undefined][];
   index: number;
@@ -72,6 +76,15 @@ export type CoordinatorMessage =
   | { type: "resize"; fingerprints: SharedFingerprints };
 
 export const check = async (options: CheckOptions): Promise<CheckResult> => {
+  // TLC ranks the strings of the root's tokens, which a parsed module lacks, before those of the
+  // modules it extends, and a prepared module's values hold the order that its preparation ranked
+  // from the root's text, so a parsed root with them is checked from its text, as the CLI does.
+  if (
+    typeof options.source !== "string" &&
+    options.preparedModules?.some((prepared) => (prepared.values?.size ?? 0) > 0)
+  ) {
+    return check({ ...options, source: printModule(options.source) });
+  }
   const config =
     typeof options.config === "string"
       ? parseConfig(options.config, options.version)
@@ -146,7 +159,11 @@ export const check = async (options: CheckOptions): Promise<CheckResult> => {
     specification.variableLocations,
     () => created.order.getDeclarationOrder("variable"),
     report,
+    [],
+    specification.runtimeInvariants,
   );
+  // Tool's constructor describes the specification before TLC creates the checker.
+  getSpecDescription(config, environment, specification.instanceActions);
   if (findAssumptionViolation(specification.assumptions, environment)) return fallBack();
   if (
     !search ||
@@ -273,6 +290,7 @@ export const check = async (options: CheckOptions): Promise<CheckResult> => {
       type: "start",
       source: options.source,
       config,
+      runtimeInvariants: specification.runtimeInvariants,
       modules: [...modules],
       classes: [...classes],
       index,

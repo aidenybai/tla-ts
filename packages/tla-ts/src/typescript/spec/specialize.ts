@@ -16,6 +16,12 @@ interface Code {
   (state: string, context: string): string;
 }
 
+// TLA+ text of ArrayAccumulation into an array from an index, in a state and the context ctx,
+// whose result is a record [s, c] with the next index.
+interface ElementsCode {
+  (state: string, array: string, index: string): string;
+}
+
 interface Scope {
   isStrict: boolean;
   // The code ids of the functions that the scope's code is in, outermost first.
@@ -124,7 +130,7 @@ const getNumberRecord = (
 ) =>
   `[k |-> "${kind}", neg |-> ${isNegative ? "TRUE" : "FALSE"}, i |-> ${integer}, m |-> ${getLimbs(mantissa)}, e |-> ${exponent}]`;
 
-// A Number as ESNumber's canonical record, as test262-parse-node gives a literal.
+// A Number as ESNumber's canonical record, the record that a numeric literal gives.
 export const getNumber = (value: number) => {
   const view = new DataView(new ArrayBuffer(8));
   view.setFloat64(0, value);
@@ -253,13 +259,29 @@ const containsExpression = (node: ts.Node): boolean =>
 const isLexical = (list: ts.VariableDeclarationList) =>
   (list.flags & ts.NodeFlags.BlockScoped) !== 0;
 
-const isConst = (list: ts.VariableDeclarationList) =>
-  (list.flags & ts.NodeFlags.BlockScoped) === ts.NodeFlags.Const;
-
 const isUsing = (list: ts.VariableDeclarationList) => {
   const kind = list.flags & ts.NodeFlags.BlockScoped;
   return kind === ts.NodeFlags.Using || kind === ts.NodeFlags.AwaitUsing;
 };
+
+// IsConstantDeclaration (§8.2.4): a const, using, or await using declaration.
+const isConst = (list: ts.VariableDeclarationList) =>
+  (list.flags & ts.NodeFlags.BlockScoped) === ts.NodeFlags.Const || isUsing(list);
+
+// The kind of the resources that a declaration's bindings add (DeclarationKind in ESCore).
+const getResourceKind = (list: ts.VariableDeclarationList) =>
+  (list.flags & ts.NodeFlags.BlockScoped) === ts.NodeFlags.AwaitUsing
+    ? "async-dispose"
+    : isUsing(list)
+      ? "sync-dispose"
+      : "normal";
+
+// Whether a statement list declares resources in the environment that it runs in (HasUsing in
+// ESCore).
+const hasUsing = (statements: readonly ts.Statement[]) =>
+  statements.some(
+    (statement) => ts.isVariableStatement(statement) && isUsing(statement.declarationList),
+  );
 
 // VarScopedDeclarations (§8.2.7) of a function body or script: the var names, and the function
 // declarations at its top level, in order.
@@ -326,12 +348,6 @@ const getLexicalDeclarations = (statements: readonly ts.Statement[], isBlock: bo
   statements.flatMap((statement): LexicalDeclaration[] => {
     const inner = ts.isLabeledStatement(statement) ? statement.statement : statement;
     if (ts.isVariableStatement(inner) && isLexical(inner.declarationList)) {
-      if (isUsing(inner.declarationList)) {
-        throw new TlaTypeScriptError(
-          "tla-ts can't compile a using declaration to ESCore yet",
-          inner,
-        );
-      }
       return [
         {
           names: getDeclaredNames(inner.declarationList),
@@ -455,7 +471,12 @@ const getDeclaredName = (node: ts.FunctionDeclaration | ts.ClassDeclaration) =>
 // Whether a module's code awaits outside its functions (HasTopLevelAwait, §16.2.1.7.1), where a
 // computed key of a method or a field still runs.
 const hasTopLevelAwait = (node: ts.Node): boolean => {
-  if (ts.isAwaitExpression(node) || (ts.isForOfStatement(node) && node.awaitModifier !== undefined))
+  if (
+    ts.isAwaitExpression(node) ||
+    (ts.isForOfStatement(node) && node.awaitModifier !== undefined) ||
+    (ts.isVariableDeclarationList(node) &&
+      (node.flags & ts.NodeFlags.BlockScoped) === ts.NodeFlags.AwaitUsing)
+  )
     return true;
   if (ts.isClassStaticBlockDeclaration(node)) return false;
   if (ts.isFunctionLike(node) || ts.isPropertyDeclaration(node)) {
@@ -930,8 +951,38 @@ export const specialize = (
 
   // A node's source text, as its file's number and the range of the file's text it spans, which
   // SourceUnits makes code units of when a program reads it.
-  const getSourceText = (node: ts.Node) =>
-    `<<${fileNumbers.get(node.getSourceFile())}, ${node.getStart() + 1}, ${node.getEnd()}>>`;
+  // The call or new of a callee that V8 names by its source text where the callee isn't callable,
+  // as a name or a chain of property names, and otherwise the call that ESCore's message leaves
+  // to the host.
+  // The text that V8 prints of an expression in a message, a name or a chain of property names,
+  // or undefined for another.
+  const getPrintedText = (node: ts.Expression) =>
+    /^[A-Za-z_$][\w$]*(?:\.[A-Za-z_$][\w$]*)*$/.test(node.getText()) &&
+    !/^super\b/.test(node.getText())
+      ? node.getText()
+      : undefined;
+  const getNamedCall = (callee: ts.Expression, call: string, args: string) =>
+    getPrintedText(callee) !== undefined
+      ? `${call === "CallArgumentsAt" ? "CallNamedAt" : "NewNamedAt"}(${args}, ${getUnits(callee.getText())})`
+      : `${call}(${args})`;
+
+  // A function's or a class's source text, which starts at async where the code says it, after
+  // the modifiers that ECMAScript's syntax leaves out of it, such as static and export, and the
+  // ones whose text Node strips, such as private.
+  const getSourceText = (node: ts.Node) => {
+    const modifiers = ts.canHaveModifiers(node) ? (ts.getModifiers(node) ?? []) : [];
+    const async = modifiers.find((modifier) => modifier.kind === ts.SyntaxKind.AsyncKeyword);
+    const last = modifiers.at(-1);
+    const start =
+      async?.getStart() ??
+      (last === undefined
+        ? node.getStart()
+        : (node
+            .getChildren()
+            .find((child) => child.pos >= last.end)
+            ?.getStart() ?? node.getStart()));
+    return `<<${fileNumbers.get(node.getSourceFile())}, ${start + 1}, ${node.getEnd()}>>`;
+  };
 
   // A function's code record, which the module evaluates once, as it has no parameters.
   // A bare code runs without the environment that a call makes for it (OrdinaryCallRun).
@@ -971,9 +1022,11 @@ export const specialize = (
     }
     if (
       (fn.kind === "method" || fn.kind === "get" || fn.kind === "set") &&
-      (ts.isMethodDeclaration(node) || ts.isAccessor(node))
+      (ts.isMethodDeclaration(node) || ts.isAccessor(node) || ts.isConstructorDeclaration(node))
     ) {
-      const key = getKeyName(node.name);
+      const key = ts.isConstructorDeclaration(node)
+        ? { name: "constructor", isComputed: false }
+        : getKeyName(node.name);
       return getNaming(node, "static", {
         name: fn.kind === "method" ? key.name : `${fn.kind} ${key.name ?? ""}`,
         isComputed: key.isComputed,
@@ -1143,7 +1196,7 @@ export const specialize = (
       if (ts.isSpreadElement(argument)) {
         steps.push(
           `LET ${name} == ${value(argument.expression, scope)(state, "ctx")} IN IF IsAbrupt(${name}) THEN ${name} ELSE`,
-          `LET ${name}i == GetIterator(${name}.s, Val(${name}), "sync") IN IF IsAbrupt(${name}i) THEN ${name}i ELSE`,
+          `LET ${name}i == GetIteratorSpread(${name}.s, Val(${name})) IN IF IsAbrupt(${name}i) THEN ${name}i ELSE`,
           `LET ${name}l == IteratorToList(${name}i.s, Val(${name}i), <<>>) IN IF IsAbrupt(${name}l) THEN ${name}l ELSE`,
         );
         values.push(`Val(${name}l)`);
@@ -1207,7 +1260,7 @@ export const specialize = (
           : `IF IsNullish(Val(c)) THEN Abrupt(c.s, Completion("nullish", Undefined, Empty)) ELSE `;
       return defineCode(
         "Call",
-        `LET c == ${fn("s", "ctx")} IN IF IsAbrupt(c) THEN c ELSE ${shortCircuit}CallArgumentsAt(${getCallSite(node)}, Val(c), Undefined, ${args("c.s", "ctx")})`,
+        `LET c == ${fn("s", "ctx")} IN IF IsAbrupt(c) THEN c ELSE ${shortCircuit}${getNamedCall(node.expression, "CallArgumentsAt", `${getCallSite(node)}, Val(c), Undefined, ${args("c.s", "ctx")}`)}`,
       );
     }
     const base = reference(node.expression, scope);
@@ -1217,7 +1270,7 @@ export const specialize = (
         : `IF IsNullish(Val(c).f) THEN Abrupt(c.s, Completion("nullish", Undefined, Empty)) ELSE `;
     return defineCode(
       "Call",
-      `LET c == CalleeThen(${base("s", "ctx")}) IN IF IsAbrupt(c) THEN c ELSE ${shortCircuit}CallArgumentsAt(${getCallSite(node)}, Val(c).f, Val(c).this, ${args("c.s", "ctx")})`,
+      `LET c == CalleeThen(${base("s", "ctx")}) IN IF IsAbrupt(c) THEN c ELSE ${shortCircuit}${getNamedCall(node.expression, "CallArgumentsAt", `${getCallSite(node)}, Val(c).f, Val(c).this, ${args("c.s", "ctx")}`)}`,
     );
   };
 
@@ -1507,7 +1560,7 @@ export const specialize = (
       return slot === undefined
         ? (state, context) =>
             `IdentifierValue(${state}, ${getLex(context)}, ${getUnits(node.text)}, ${getBool(scope.isStrict)})`
-        : (state) => `LocalValue(${state}, ${slot})`;
+        : (state) => `LocalValue(${state}, ${slot}, ${getUnits(node.text)})`;
     }
     if (ts.isPropertyAccessExpression(node) || ts.isElementAccessExpression(node)) {
       const ref = reference(node, scope);
@@ -1534,7 +1587,7 @@ export const specialize = (
       const args = argumentList(node.arguments ?? [], scope);
       return defineCode(
         "New",
-        `LET r == ${callee("s", "ctx")} IN IF IsAbrupt(r) THEN r ELSE NewArgumentsAt(${getCallSite(node)}, Val(r), ${args("r.s", "ctx")})`,
+        `LET r == ${callee("s", "ctx")} IN IF IsAbrupt(r) THEN r ELSE ${getNamedCall(node.expression, "NewArgumentsAt", `${getCallSite(node)}, Val(r), ${args("r.s", "ctx")}`)}`,
       );
     }
     if (ts.isMetaProperty(node)) {
@@ -1692,18 +1745,19 @@ export const specialize = (
     if (operator === ts.SyntaxKind.EqualsToken) {
       return defineCode("Assign", `${head} PutValueThen(Val(t), ${assigned("t.s", "ctx")})`);
     }
-    const old = `LET ref == ToKeyedReference(t.s, Val(t)) IN IF IsAbrupt(ref) THEN ref ELSE LET old == GetValue(ref.s, Val(ref)) IN IF IsAbrupt(old) THEN old ELSE`;
+    // GetValue and PutValue each convert the key, as V8 does (§13.15.2).
+    const old = `LET old == GetValue(t.s, Val(t)) IN IF IsAbrupt(old) THEN old ELSE`;
     const test = LOGICAL_TESTS.get(operator);
     if (test !== undefined) {
       return defineCode(
         "Assign",
-        `${head} ${old} IF ${test("Val(old)")} THEN old ELSE PutValueThen(Val(ref), ${assigned("old.s", "ctx")})`,
+        `${head} ${old} IF ${test("Val(old)")} THEN old ELSE PutValueThen(Val(t), ${assigned("old.s", "ctx")})`,
       );
     }
     const right = value(node.right, scope);
     return defineCode(
       "Assign",
-      `${head} ${old} CompoundThen(Val(ref), Val(old), "${COMPOUND_OPERATORS.get(operator)}", ${right("old.s", "ctx")})`,
+      `${head} ${old} CompoundThen(Val(t), Val(old), "${COMPOUND_OPERATORS.get(operator)}", ${right("old.s", "ctx")})`,
     );
   };
 
@@ -1763,44 +1817,73 @@ export const specialize = (
   };
 
   // Array initializers (§13.2.4).
-  const arrayLiteral = (node: ts.ArrayLiteralExpression, scope: Scope): Code => {
-    const steps = [`LET a == ArrayCreate(s, 0, Intrinsic(s, "ArrayPrototype")) IN`];
-    let state = "a.s";
-    let index = "0";
-    let staticIndex: number | undefined = 0;
-    node.elements.forEach((element, position) => {
-      const name = `e${position + 1}`;
-      if (ts.isOmittedExpression(element)) {
+  const arrayLiteral = (node: ts.ArrayLiteralExpression, scope: Scope): Code =>
+    defineCode(
+      "Array",
+      `LET a == ArrayCreate(s, 0, Intrinsic(s, "ArrayPrototype")) IN\n  ArrayLiteralThen(Val(a), ${arrayElements(node.elements, scope, 0)("a.s", "Val(a)", "0")})`,
+    );
+
+  // ArrayAccumulation (§13.2.4.1) of the elements into array from index, whose result is the next
+  // index. start is the index when it's known before the code runs. A list of more than 64 runs as
+  // its halves, each a list, so that thousands of elements nest log n deep rather than n.
+  const arrayElements = (
+    elements: readonly ts.Expression[],
+    scope: Scope,
+    start: number | undefined,
+  ): ElementsCode => {
+    if (elements.length > 64) {
+      const middle = Math.ceil(elements.length / 2);
+      const first = arrayElements(elements.slice(0, middle), scope, start);
+      const rest = arrayElements(
+        elements.slice(middle),
+        scope,
+        start === undefined || elements.slice(0, middle).some(ts.isSpreadElement)
+          ? undefined
+          : start + middle,
+      );
+      const name = define(
+        "Elements",
+        ["s", "ctx", "array", "i"],
+        `LET q == ${first("s", "array", "i")} IN IF IsAbrupt(q) THEN q ELSE ${rest("q.s", "array", "Val(q)")}`,
+      );
+      return (state, array, index) => `${name}(${state}, ctx, ${array}, ${index})`;
+    }
+    return (initialState, array, initialIndex) => {
+      const steps: string[] = [];
+      let state = initialState;
+      let staticIndex = start;
+      let index = start === undefined ? initialIndex : String(start);
+      elements.forEach((element, position) => {
+        const name = `e${position + 1}`;
+        if (ts.isOmittedExpression(element)) {
+          index = staticIndex === undefined ? `${index} + 1` : String(staticIndex + 1);
+          staticIndex = staticIndex === undefined ? undefined : staticIndex + 1;
+          return;
+        }
+        if (ts.isSpreadElement(element)) {
+          steps.push(
+            `LET ${name} == ${value(element.expression, scope)(state, "ctx")} IN IF IsAbrupt(${name}) THEN ${name} ELSE`,
+            `LET ${name}i == ${getPrintedText(element.expression) === undefined ? `GetIterator(${name}.s, Val(${name}), "sync")` : `GetIteratorNamed(${name}.s, Val(${name}), ${getUnits(getPrintedText(element.expression) ?? "")})`} IN IF IsAbrupt(${name}i) THEN ${name}i ELSE`,
+            `LET ${name}p == SpreadIntoArray(${name}i.s, ${array}, Val(${name}i), ${index}) IN IF IsAbrupt(${name}p) THEN ${name}p ELSE`,
+          );
+          state = `${name}p.s`;
+          index = `Val(${name}p)`;
+          staticIndex = undefined;
+          return;
+        }
+        const key =
+          staticIndex === undefined
+            ? `Str(NumToString(NumFromInt(${index})))`
+            : getStr(String(staticIndex));
+        steps.push(
+          `LET ${name} == ArrayElementResult(${array}, ${key}, ${value(element, scope)(state, "ctx")}) IN IF IsAbrupt(${name}) THEN ${name} ELSE`,
+        );
+        state = `${name}.s`;
         index = staticIndex === undefined ? `${index} + 1` : String(staticIndex + 1);
         staticIndex = staticIndex === undefined ? undefined : staticIndex + 1;
-        return;
-      }
-      if (ts.isSpreadElement(element)) {
-        steps.push(
-          `LET ${name} == ${value(element.expression, scope)(state, "ctx")} IN IF IsAbrupt(${name}) THEN ${name} ELSE`,
-          `LET ${name}i == GetIterator(${name}.s, Val(${name}), "sync") IN IF IsAbrupt(${name}i) THEN ${name}i ELSE`,
-          `LET ${name}p == SpreadIntoArray(${name}i.s, Val(a), Val(${name}i), ${index}) IN IF IsAbrupt(${name}p) THEN ${name}p ELSE`,
-        );
-        state = `${name}p.s`;
-        index = `Val(${name}p)`;
-        staticIndex = undefined;
-        return;
-      }
-      const key =
-        staticIndex === undefined
-          ? `Str(NumToString(NumFromInt(${index})))`
-          : getStr(String(staticIndex));
-      steps.push(
-        `LET ${name} == ArrayElementResult(Val(a), ${key}, ${value(element, scope)(state, "ctx")}) IN IF IsAbrupt(${name}) THEN ${name} ELSE`,
-      );
-      state = `${name}.s`;
-      index = staticIndex === undefined ? `${index} + 1` : String(staticIndex + 1);
-      staticIndex = staticIndex === undefined ? undefined : staticIndex + 1;
-    });
-    return defineCode(
-      "Array",
-      `${steps.join("\n  ")}\n  ArrayLiteralThen(Val(a), Ok(${state}, ${index}))`,
-    );
+      });
+      return [...steps, `Ok(${state}, ${index})`].join("\n  ");
+    };
   };
 
   // Object initializers (§13.2.5).
@@ -1894,13 +1977,20 @@ export const specialize = (
     `ResolvePrivateIdentifier(${state}, ${context}, ${getUnits(name.text.slice(1))})`;
 
   // ClassElementEvaluation (§15.7.13) of a method, getter, or setter: its element record, with
-  // the closure's home object home.
+  // the closure's home object home. TypeScript parses a static method named constructor as a
+  // constructor.
   const classElement = (
-    node: ts.MethodDeclaration | ts.GetAccessorDeclaration | ts.SetAccessorDeclaration,
+    node:
+      | ts.MethodDeclaration
+      | ts.GetAccessorDeclaration
+      | ts.SetAccessorDeclaration
+      | ts.ConstructorDeclaration,
     scope: Scope,
   ) => {
     const flavor = getFlavor(node);
-    const key = propertyKey(node.name, scope);
+    const key: Code = ts.isConstructorDeclaration(node)
+      ? (state) => `Ok(${state}, ${getStr("constructor")})`
+      : propertyKey(node.name, scope);
     const kind = ts.isGetAccessorDeclaration(node)
       ? "get"
       : ts.isSetAccessorDeclaration(node)
@@ -2337,9 +2427,12 @@ export const specialize = (
     const heritage = node.heritageClauses?.find(
       (clause) => clause.token === ts.SyntaxKind.ExtendsKeyword,
     )?.types[0]?.expression;
-    const constructor = node.members.find(ts.isConstructorDeclaration);
+    // TypeScript parses a static method named constructor as a constructor.
+    const isConstructor = (member: ts.ClassElement): member is ts.ConstructorDeclaration =>
+      ts.isConstructorDeclaration(member) && !hasModifier(member, ts.SyntaxKind.StaticKeyword);
+    const constructor = node.members.find(isConstructor);
     const elements = node.members.filter(
-      (member) => !ts.isConstructorDeclaration(member) && !ts.isSemicolonClassElement(member),
+      (member) => !isConstructor(member) && !ts.isSemicolonClassElement(member),
     );
     for (const element of elements) {
       if (ts.canHaveDecorators(element) && ts.getDecorators(element)?.length)
@@ -2374,10 +2467,7 @@ export const specialize = (
       `    s3 == SetO(s2, F, [O(s2, F) EXCEPT !.slots = [ctorKind |-> "${heritage === undefined ? "base" : "derived"}", sourceText |-> ${getSourceText(node)}] @@ @])`,
       `    s4 == CreateMethodProperty(s3, Val(proto), SV("constructor"), F).s IN`,
     ];
-    let state = "s4";
-    const records: { name: string; isStatic: boolean; kind: "method" | "field" | "staticBlock" }[] =
-      [];
-    elements.forEach((element, index) => {
+    const records = elements.map((element, index) => {
       const isStatic =
         ts.isClassStaticBlockDeclaration(element) ||
         (ts.canHaveModifiers(element) &&
@@ -2386,56 +2476,98 @@ export const specialize = (
             ?.some((modifier) => modifier.kind === ts.SyntaxKind.StaticKeyword) ??
             false));
       const home = isStatic ? "F" : "Val(proto)";
-      const recordName = `c${index + 1}`;
-      const element_ =
+      const name = `Val(els)[${index + 1}]`;
+      if (
         ts.isMethodDeclaration(element) ||
         ts.isGetAccessorDeclaration(element) ||
-        ts.isSetAccessorDeclaration(element)
-          ? { kind: "method" as const, text: classElement(element, scope)(state, "cctx", home) }
-          : ts.isPropertyDeclaration(element)
-            ? { kind: "field" as const, text: classField(element, scope)(state, "cctx", home) }
-            : ts.isClassStaticBlockDeclaration(element)
-              ? {
-                  kind: "staticBlock" as const,
-                  text: `LET f == CodeFunctionCreate(${state}, Intrinsic(${state}, "FunctionPrototype"), ${functionCode({ node: element, parameters: [], body: element.body, kind: "staticBlock" }, scope)}, FALSE, cctx.lex, cctx.priv) IN Ok(MakeMethod(f.s, f.v, F), [kind |-> "staticBlock", body |-> f.v])`,
-                }
-              : undefined;
-      if (element_ === undefined)
-        throw new TlaTypeScriptError(
-          "tla-ts can't compile this class element to ESCore yet",
-          element,
+        ts.isSetAccessorDeclaration(element) ||
+        ts.isConstructorDeclaration(element)
+      ) {
+        const code = classElement(element, scope);
+        return {
+          name,
+          isStatic,
+          kind: "method",
+          getText: (state: string) => code(state, "cctx", home),
+        };
+      }
+      if (ts.isPropertyDeclaration(element)) {
+        const code = classField(element, scope);
+        return {
+          name,
+          isStatic,
+          kind: "field",
+          getText: (state: string) => code(state, "cctx", home),
+        };
+      }
+      if (ts.isClassStaticBlockDeclaration(element)) {
+        const code = functionCode(
+          { node: element, parameters: [], body: element.body, kind: "staticBlock" },
+          scope,
         );
-      steps.push(
-        `LET ${recordName} == ${element_.text} IN IF IsAbrupt(${recordName}) THEN ${recordName} ELSE`,
+        return {
+          name,
+          isStatic,
+          kind: "staticBlock",
+          getText: (state: string) =>
+            `LET f == CodeFunctionCreate(${state}, Intrinsic(${state}, "FunctionPrototype"), ${code}, FALSE, cctx.lex, cctx.priv) IN Ok(MakeMethod(f.s, f.v, F), [kind |-> "staticBlock", body |-> f.v])`,
+        };
+      }
+      throw new TlaTypeScriptError(
+        "tla-ts can't compile this class element to ESCore yet",
+        element,
       );
-      state = `${recordName}.s`;
-      records.push({ name: recordName, isStatic, kind: element_.kind });
     });
+    const getRecords = (list: typeof records) => getSequence(list.map((record) => record.name));
     // The methods, getters, and setters, static ones first, as DecorateElements defines them.
     const methods = records.filter((record) => record.kind === "method");
-    [
-      ...methods.filter((record) => record.isStatic),
-      ...methods.filter((record) => !record.isStatic),
-    ].forEach((record) => {
-      steps.push(
-        `LET ${record.name}d == DefineElementOn(${record.isStatic ? "F" : "Val(proto)"}, Ok(${state}, Val(${record.name})), FALSE) IN IF IsAbrupt(${record.name}d) THEN ${record.name}d ELSE`,
-      );
-      state = `${record.name}d.s`;
-    });
+    steps.push(
+      `LET els == ${classElements(records.map((record) => record.getText))("s4")} IN IF IsAbrupt(els) THEN els ELSE`,
+      `LET ds == DefineElementsOn(els.s, F, ${getRecords(methods.filter((record) => record.isStatic))}) IN IF IsAbrupt(ds) THEN ds ELSE`,
+      `LET di == DefineElementsOn(ds.s, Val(proto), ${getRecords(methods.filter((record) => !record.isStatic))}) IN IF IsAbrupt(di) THEN di ELSE`,
+    );
+    const state = "di.s";
     const instanceFields = records.filter((record) => record.kind === "field" && !record.isStatic);
     const statics = records.filter((record) => record.kind !== "method" && record.isStatic);
-    const getRecords = (list: typeof records) =>
-      getSequence(list.map((record) => `Val(${record.name})`));
     // The private methods and accessors go on each instance as it's made, and the static ones on
     // the class now (§15.7.14 steps 30-34).
     steps.push(
       `LET sf == SetO(${state}, F, [O(${state}, F) EXCEPT !.slots = [privateMethods |-> PrivateMethodsOf(${getRecords(methods.filter((record) => !record.isStatic))}, <<>>), fields |-> ${getRecords(instanceFields)}, initializers |-> Empty] @@ @]) IN`,
       `LET sm == AddPrivateMethods(sf, F, PrivateMethodsOf(${getRecords(methods.filter((record) => record.isStatic))}, <<>>)) IN IF IsAbrupt(sm) THEN sm ELSE`,
       `LET sb == ${binding === undefined ? "sm.s" : `InitializeBinding(sm.s, env.e, ${getUnits(binding)}, F).s`} IN`,
-      `LET st == StaticElementsEvaluation(sb, F, ${getSequence(statics.map((record) => `Val(${record.name})`))}) IN IF IsAbrupt(st) THEN st ELSE Ok(st.s, F)`,
+      `LET st == StaticElementsEvaluation(sb, F, ${getRecords(statics)}) IN IF IsAbrupt(st) THEN st ELSE Ok(st.s, F)`,
     );
     const name = define("Class", ["s", "ctx", "name"], steps.join("\n  "));
     return (current, context, className_) => `${name}(${current}, ${context}, ${className_})`;
+  };
+
+  // The records of a class's elements in order, from ClassElementEvaluation (§15.7.14 step 26),
+  // as the value of the result, in the class's cctx with its constructor F and prototype proto. A
+  // list of more than 64 runs as its halves, each a list, so that thousands of elements nest log n
+  // deep rather than n.
+  const classElements = (elements: ((state: string) => string)[]): ((state: string) => string) => {
+    if (elements.length > 64) {
+      const middle = Math.ceil(elements.length / 2);
+      const first = classElements(elements.slice(0, middle));
+      const rest = classElements(elements.slice(middle));
+      const name = define(
+        "ClassElements",
+        ["s", "cctx", "F", "proto"],
+        `LET q == ${first("s")} IN IF IsAbrupt(q) THEN q ELSE LET r == ${rest("q.s")} IN IF IsAbrupt(r) THEN r ELSE Ok(r.s, Val(q) \\o Val(r))`,
+      );
+      return (state) => `${name}(${state}, cctx, F, proto)`;
+    }
+    return (initial) => {
+      const steps = elements.map(
+        (getText, index) =>
+          `LET c${index + 1} == ${getText(index === 0 ? initial : `c${index}.s`)} IN IF IsAbrupt(c${index + 1}) THEN c${index + 1} ELSE`,
+      );
+      const state = elements.length === 0 ? initial : `c${elements.length}.s`;
+      return [
+        ...steps,
+        `Ok(${state}, ${getSequence(elements.map((_, index) => `Val(c${index + 1})`))})`,
+      ].join("\n  ");
+    };
   };
 
   // The completion of a statement (§14).
@@ -2540,6 +2672,9 @@ export const specialize = (
   // Variable statements (§14.3.2.1) and let and const declarations (§14.3.1.2).
   const declarationList = (list: ts.VariableDeclarationList, scope: Scope): Code => {
     const isLet = isLexical(list);
+    const kind = getResourceKind(list);
+    // A using declaration reads its values' @@dispose or @@asyncDispose.
+    if (kind !== "normal") words.add(kind === "sync-dispose" ? "dispose" : "asyncDispose");
     const steps: string[] = [];
     let state = "s";
     list.declarations.forEach((declaration, index) => {
@@ -2573,7 +2708,9 @@ export const specialize = (
           isLet
             ? assigned === undefined
               ? `InitializeReferencedBinding(${lhs}.s, Val(${lhs}), Undefined)`
-              : `InitializeReferencedThen(Val(${lhs}), ${assigned})`
+              : kind === "normal"
+                ? `InitializeReferencedThen(Val(${lhs}), ${assigned})`
+                : `InitializeThen("${kind}", Val(${lhs}), ${assigned})`
             : `PutValueThen(Val(${lhs}), ${assigned})`
         } IN IF IsAbrupt(${result}) THEN ${result} ELSE`,
       );
@@ -2586,7 +2723,27 @@ export const specialize = (
   // A statement list's evaluation (§14.2.2): the completion of the last statement that has a
   // value, each statement in its own operator.
   const statementList = (statements: readonly ts.Statement[], scope: Scope): Code => {
+    const list = statementSequence(statements, scope);
+    // A block's, function body's, or module's resources are disposed of once its statements
+    // complete (EvaluateDisposing in ESCore).
+    return hasUsing(statements)
+      ? (state, context) => `DisposeThen(${context}.lex, ${list(state, context)})`
+      : list;
+  };
+
+  // The statements in order, each in an operator of its own. A list of more than 64 runs as its
+  // halves, each a list, so that thousands of statements nest log n deep rather than n.
+  const statementSequence = (statements: readonly ts.Statement[], scope: Scope): Code => {
     if (statements.length === 0) return (state) => `Ok(${state}, Empty)`;
+    if (statements.length > 64) {
+      const middle = Math.ceil(statements.length / 2);
+      const first = statementSequence(statements.slice(0, middle), scope);
+      const rest = statementSequence(statements.slice(middle), scope);
+      return defineCode(
+        "Statements",
+        `LET q == ${first("s", "ctx")} IN IF IsAbrupt(q) THEN q ELSE StatementResult(${rest("q.s", "ctx")}, Val(q))`,
+      );
+    }
     const codes = statements.map((current) => statement(current, scope, []));
     // Each statement's result, its value Empty's where it has none, of the statement before it.
     const results = codes.map(
@@ -2720,7 +2877,7 @@ export const specialize = (
       }
       return defineCode(
         "For",
-        `LET env == NewDeclarativeEnvironment(s, ctx.lex) loopCtx == WithLex(ctx, env.e) IN BreakTargetThen(ForDeclarationThen(loopCtx, [id |-> ${id}, labels |-> ${labelSet}, lets |-> ${lets}], ${declaration(resetSlots(`BlockBindNames(env.s, env.e, ${getSequence(names.map(getUnits))}, ${getBool(isConst(initializer))})`, slots), "loopCtx")}))`,
+        `LET env == NewDeclarativeEnvironment(s, ctx.lex) loopCtx == WithLex(ctx, env.e) IN BreakTargetThen(${isUsing(initializer) ? "DisposeThen(env.e, " : "("}ForDeclarationThen(loopCtx, [id |-> ${id}, labels |-> ${labelSet}, lets |-> ${lets}], ${declaration(resetSlots(`BlockBindNames(env.s, env.e, ${getSequence(names.map(getUnits))}, ${getBool(isConst(initializer))})`, slots), "loopCtx")})))`,
       );
     }
     const init =
@@ -2754,9 +2911,24 @@ export const specialize = (
     let bind: string;
     let tdz: string[] = [];
     let tdzSlots: number[] = [];
-    if (ts.isVariableDeclarationList(initializer)) {
+    if (ts.isVariableDeclarationList(initializer) && initializer.declarations.length === 0) {
+      // TypeScript parses the identifier let as the head of a for-in statement outside strict
+      // mode as a let declaration of no names.
+      if (!isEnumerate || scope.isStrict) {
+        throw new TlaTypeScriptError("tla-ts can't compile a declaration of no names", node);
+      }
+      words.add("let");
+      if (!moduleNames.has("let")) identifiers.add("let");
+      bind = `ResultThen(ctx, AssignToThen(Val(value), ResolveBinding(value.s, ctx, ${getUnits("let")}, FALSE)))`;
+    } else if (ts.isVariableDeclarationList(initializer)) {
       const declaration = initializer.declarations[0];
-      if (declaration.initializer !== undefined) {
+      if (
+        declaration.initializer !== undefined &&
+        (!isEnumerate ||
+          scope.isStrict ||
+          isLexical(initializer) ||
+          !ts.isIdentifier(declaration.name))
+      ) {
         throw new TlaTypeScriptError(
           "tla-ts can't compile an initializer in a for-in head to ESCore yet",
           node,
@@ -2770,7 +2942,14 @@ export const specialize = (
         bind = `ResultThen(ctx, LocalInitialize(value.s, ${slot}, Val(value)))`;
       } else if (isLexical(initializer)) {
         tdz = names;
-        bind = `LET env == NewDeclarativeEnvironment(value.s, ctx.lex) iterCtx == WithLex(ctx, env.e) s1 == BlockBindNames(env.s, env.e, ${getSequence(names.map(getUnits))}, ${getBool(isConst(initializer))}) IN ResultThen(iterCtx, ${pattern("s1", "iterCtx", "Val(value)", "env.e")})`;
+        // A using declaration's binding adds its value's resource first (ForInOfBind in ESCore).
+        const kind = getResourceKind(initializer);
+        if (kind !== "normal") words.add(kind === "sync-dispose" ? "dispose" : "asyncDispose");
+        bind = `LET env == NewDeclarativeEnvironment(value.s, ctx.lex) iterCtx == WithLex(ctx, env.e) s1 == BlockBindNames(env.s, env.e, ${getSequence(names.map(getUnits))}, ${getBool(isConst(initializer))}) IN ResultThen(iterCtx, ${
+          kind === "normal"
+            ? pattern("s1", "iterCtx", "Val(value)", "env.e")
+            : `LET added == AddDisposableResource(s1, env.e, Val(value), "${kind}") IN IF IsAbrupt(added) THEN added ELSE ${pattern("added.s", "iterCtx", "Val(value)", "env.e")}`
+        })`;
       } else if (ts.isIdentifier(declaration.name)) {
         bind = `ResultThen(ctx, AssignToThen(Val(value), ${nameReference(declaration.name, scope)("value.s", "ctx")}))`;
       } else {
@@ -2791,16 +2970,28 @@ export const specialize = (
       "LET done == IteratorComplete(r.s, Val(r)) IN IF IsAbrupt(done) THEN done ELSE IF Val(done) THEN Ok(done.s, v) ELSE",
       `LET value == Get(done.s, Val(r), SV("value")) IN IF IsAbrupt(value) THEN value ELSE`,
       `LET bound == ${bind} IN IF IsAbrupt(bound) THEN ForInOfClose(loop, it, bound) ELSE`,
-      `ForInOfStatementThen(ctx, loop, it, v, ${body("bound.s", "Val(bound)")})`,
+      `ForInOfStatementThen(ctx, loop, it, v, ${
+        ts.isVariableDeclarationList(initializer) && isUsing(initializer)
+          ? `DisposeThen(Val(bound).lex, ${body("bound.s", "Val(bound)")})`
+          : body("bound.s", "Val(bound)")
+      })`,
     ].join("\n    ");
     const expression = value(node.expression, scope);
+    // §B.3.5: a var's initializer in a for-in head assigns the var before the head's expression.
+    const initialized =
+      ts.isVariableDeclarationList(initializer) &&
+      initializer.declarations[0]?.initializer !== undefined
+        ? declarationList(initializer, scope)
+        : undefined;
     const head =
-      tdz.length === 0
-        ? `${expression(resetSlots("s", tdzSlots), "ctx")}`
-        : `LET env == NewDeclarativeEnvironment(s, ctx.lex) IN ${expression(`BlockBindNames(env.s, env.e, ${getSequence(tdz.map(getUnits))}, FALSE)`, "WithLex(ctx, env.e)")}`;
+      initialized !== undefined
+        ? `LET d == ${initialized("s", "ctx")} IN IF IsAbrupt(d) THEN d ELSE ${expression("d.s", "ctx")}`
+        : tdz.length === 0
+          ? `${expression(resetSlots("s", tdzSlots), "ctx")}`
+          : `LET env == NewDeclarativeEnvironment(s, ctx.lex) IN ${expression(`BlockBindNames(env.s, env.e, ${getSequence(tdz.map(getUnits))}, FALSE)`, "WithLex(ctx, env.e)")}`;
     return defineCode(
       "ForInOf",
-      `BreakTargetThen(ForInOfHeadThen(ctx, [id |-> ${id}, labels |-> ${labelSet}, lets |-> <<>>, it |-> Empty, iterationKind |-> "${isEnumerate ? "enumerate" : isAwait ? "async-iterate" : "iterate"}", iteratorKind |-> "${isAwait ? "async" : "sync"}"], ${head}))`,
+      `BreakTargetThen(ForInOfHeadThen(ctx, [id |-> ${id}, labels |-> ${labelSet}, lets |-> <<>>, it |-> Empty, iterationKind |-> "${isEnumerate ? "enumerate" : isAwait ? "async-iterate" : "iterate"}", iteratorKind |-> "${isAwait ? "async" : "sync"}", text |-> ${isEnumerate || isAwait || getPrintedText(node.expression) === undefined ? "Empty" : getUnits(getPrintedText(node.expression) ?? "")}], ${head}))`,
     );
   };
 

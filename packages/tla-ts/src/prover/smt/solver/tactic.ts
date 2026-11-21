@@ -1,31 +1,23 @@
-// Ported from Z3 (src/cmd_context/tactic_cmds.cpp, src/tactic/tactical.cpp, src/tactic/tactic.cpp),
-// MIT license, see z3-license.txt.
 import {
   SmtCanceledError,
   SmtParseError,
+  SmtDefaultError,
+  SmtRewriterCanceledError,
   SmtTacticError,
   SmtUnsupportedError,
 } from "../../../errors";
-import {
-  type AstManager,
-  KIND_APP,
-  OP_DIV0,
-  OP_IDIV0,
-  OP_ITE,
-  OP_MOD0,
-  OP_POWER0,
-  SORT_BOOL,
-} from "./ast";
+import { type AstManager, OP_DIV0, OP_IDIV0, OP_MOD0, OP_OR, OP_POWER0, SORT_BOOL } from "./ast";
 import { createQfufbvAckrTactic, runAckermannizeBv } from "./ackermannize-bv-tactic";
-import { AssertedFormulas } from "./asserted-formulas";
 import { createAigTactic } from "./aig-tactic";
+import { blastTermIte } from "./blast-term-ite";
 import { card2bv } from "./card2bv";
-import { Context, MBQI_MAX_ITERATIONS } from "./context";
+import { type Context, MBQI_MAX_ITERATIONS } from "./context";
 import { ctxSimplify } from "./ctx-simplify";
 import { createCtxSolverSimplify } from "./ctx-solver-simplify";
 import {
   type Definition,
   type Dependency,
+  decConverterRefs,
   Goal,
   getDependencyValues,
   joinDependencies,
@@ -34,18 +26,23 @@ import {
 import type { AckrSolver } from "./lackr";
 import { L_FALSE, L_TRUE, L_UNDEF } from "./lbool";
 import { DerRewriter } from "./der";
+import { finishSimplifier, runSimplifier } from "./dependent-expr-state";
 import { fixDlVar } from "./fix-dl-var";
 import { runFpa2Bv } from "./fpa2bv-tactic";
 import { type BitBlasterRewriter, runBitBlast } from "./bit-blast-tactic";
 import { runMaxBvSharing } from "./max-bv-sharing-tactic";
-import { runBvBoundChk } from "./bv-bound-chk";
+import { BvBoundChkTactic } from "./bv-bound-chk";
 import { runBvDivremBounds } from "./bv-divrem-bounds";
-import { runBv1Blast } from "./bv1-blast";
+import { createBv1Blast } from "./bv1-blast";
 import { runReduceBvSize } from "./reduce-bv-size";
 import { createSatTactic } from "./sat/sat-tactic";
 import { mkThSolver } from "./euf/th-solvers";
+import { getHammerPeriod } from "./lp/lp-settings";
+import { getDoubleParameter } from "./gparams";
+import { ObjMap } from "./hashtable";
 import { createFdTactic } from "./fd-solver";
 import { elimUncnstr } from "./elim-uncnstr";
+import { runElimTermIte } from "./elim-term-ite-tactic";
 import { rewriteUfbv } from "./demodulator";
 import { distributeForall } from "./distribute-forall";
 import { createDt2BvTactic } from "./dt2bv-tactic";
@@ -70,12 +67,13 @@ import { Rational } from "./rational";
 import { runNlsat } from "./nlsat-tactic";
 import { runNlqsat } from "./nlqsat";
 import { occf } from "./occf";
-import { propagateValues } from "./propagate-values";
+import { PropagateValuesTactic } from "./propagate-values";
 import { purifyArith } from "./purify-arith";
 import { ModelEvaluator } from "./model-evaluator";
 import { FuncInterp, ProtoModel } from "./proto-model";
+import { SmtKernel } from "./smt-kernel";
 import { isMbqiByFeatures, type SmtSetup } from "./smt-setup";
-import { compileProbe, formatProbeValue, isQfufbv, type Probe } from "./probes";
+import { compileProbe, formatDouble, isQfufbv, type Probe } from "./probes";
 import { runHorn } from "./muz/horn-tactic";
 import { runQe } from "./qe";
 import { applyQeLite } from "./qe-lite";
@@ -84,11 +82,12 @@ import { simplifyGoal } from "./quant-tactics";
 import { SolveEqs } from "./solve-eqs";
 import { RefVector } from "./ref-vector";
 import { type RewriterOptions, TACTIC_REWRITER_OPTIONS } from "./rewriter";
-import { lia2card } from "./lia2card";
+import { createLia2Card } from "./lia2card";
 import { LOGIC_TACTICS, QFAUFBV, QFUFBV_ACKR_PREAMBLE } from "./logic-tactics";
 import {
   createCommandReader,
   isSymbol,
+  isUnsigned,
   type SExpr,
   type SmtList,
   type SmtToken,
@@ -101,6 +100,7 @@ const PARAM_BOOL = 0;
 const PARAM_UINT = 1;
 const PARAM_SYMBOL = 2;
 const PARAM_NUMERAL = 3;
+const PARAM_STRING = 4;
 
 export type TacticParam = boolean | number | string;
 export type TacticParams = ReadonlyMap<string, TacticParam>;
@@ -112,11 +112,37 @@ interface ParamDescr {
   isPorted: boolean;
 }
 
-type ParamDescrs = ReadonlyMap<string, ParamDescr>;
+interface ParamDescrs {
+  get(name: string): ParamDescr | undefined;
+}
 
 export interface Tactic {
   (goal: Goal): Goal[];
+  cleanup?: () => void;
 }
+
+// A property on a function is slow to add, so a tactic that has nothing to clean goes without one.
+const withCleanup = (run: (goal: Goal) => Goal[], cleanup: (() => void) | undefined): Tactic =>
+  cleanup === undefined ? run : Object.assign(run, { cleanup });
+
+const hasCleanup = (tactics: Tactic[]) => tactics.some((tactic) => tactic.cleanup !== undefined);
+
+// binary_tactical and unary_tactical reach their children only after a run.
+const withGuardedCleanup = (run: (goal: Goal) => Goal[], children: Tactic[]) => {
+  if (!hasCleanup(children)) return run;
+  let isClean = true;
+  return withCleanup(
+    (goal) => {
+      isClean = false;
+      return run(goal);
+    },
+    () => {
+      if (isClean) return;
+      for (const child of children) child.cleanup?.();
+      isClean = true;
+    },
+  );
+};
 
 export interface TacticEnvironment {
   manager: AstManager;
@@ -127,7 +153,15 @@ export interface TacticEnvironment {
   write: (text: string, isDiagnostic: boolean) => void;
   parameters: ReadonlyMap<string, string>;
   hasDefinitions: () => boolean;
+  destructors: (() => void)[];
+  inits: (() => void)[];
 }
+
+// Z3's and-then frees its last tactic first.
+export const destroyTactics = (destructors: (() => void)[]) => {
+  for (let index = destructors.length - 1; index >= 0; index--) destructors[index]();
+  destructors.length = 0;
+};
 
 // A tactic that tracks dependencies keeps the dependency of every formula it changes, so the goal
 // gets the assertion names only for those.
@@ -138,18 +172,34 @@ interface TacticBuilder {
   build: (params: TacticParams) => Tactic;
 }
 
+interface CompileState {
+  frames: TacticBuilder[][];
+  unportedError: SmtUnsupportedError | undefined;
+}
+
 interface NamedTactic {
   descrs: ParamDescrs;
   isRejectingUnknown?: boolean;
   isTrackingDependencies?: boolean;
+  isCatchingRewriterCancel?: boolean;
   build: (environment: TacticEnvironment, params: TacticParams) => Tactic;
 }
 
+const catchRewriterCancel = (tactic: Tactic) =>
+  withCleanup((goal) => {
+    try {
+      return tactic(goal);
+    } catch (error) {
+      if (error instanceof SmtRewriterCanceledError) throw new SmtCanceledError();
+      throw error;
+    }
+  }, tactic.cleanup);
+
 const getDescrs = (module: string, entries: [string, number, TacticParam, boolean?][]) =>
   new Map(
-    entries.map(([name, kind, defaultValue, isPorted]) => [
-      name,
-      { kind, module, defaultValue, isPorted: isPorted ?? false },
+    entries.map((entry) => [
+      entry[0],
+      { kind: entry[1], module, defaultValue: entry[2], isPorted: entry[3] ?? false },
     ]),
   );
 
@@ -178,7 +228,7 @@ const REWRITER_DESCRS = getDescrs("rewriter", [
   ["sort_sums", PARAM_BOOL, false, true],
   ["gcd_rounding", PARAM_BOOL, false, true],
   ["arith_lhs", PARAM_BOOL, false, true],
-  ["arith_ineq_lhs", PARAM_BOOL, false],
+  ["arith_ineq_lhs", PARAM_BOOL, false, true],
   ["elim_to_real", PARAM_BOOL, false],
   ["push_to_real", PARAM_BOOL, true],
   ["eq2ineq", PARAM_BOOL, false],
@@ -237,9 +287,7 @@ const getUint = (params: TacticParams, name: string, defaultValue: number) => {
 
 const getNumeral = (params: TacticParams, name: string, defaultValue: string) => {
   const value = params.get(name);
-  const parts = (typeof value === "string" ? value : defaultValue).split(".");
-  const fraction = parts[1] ?? "";
-  return Rational.of(BigInt(parts[0] + fraction), 10n ** BigInt(fraction.length));
+  return Rational.fromDecimal(typeof value === "string" ? value : defaultValue);
 };
 
 export const getRewriterOptions = (manager: AstManager, params: TacticParams): RewriterOptions => ({
@@ -249,7 +297,7 @@ export const getRewriterOptions = (manager: AstManager, params: TacticParams): R
   isSortingStore: getBool(params, "sort_store", false),
   isPullingCheapIte: getBool(params, "pull_cheap_ite", false),
   isPushingIteBv: getBool(params, "push_ite_bv", false),
-  isKeepingDistinct: !getBool(params, "blast_distinct", false),
+  isBlastingDistinct: getBool(params, "blast_distinct", false),
   blastDistinctThreshold: getUint(params, "blast_distinct_threshold", UINT_MAX),
   localCtxLimit: getBool(params, "local_ctx", false)
     ? getUint(params, "local_ctx_limit", UINT_MAX)
@@ -257,7 +305,8 @@ export const getRewriterOptions = (manager: AstManager, params: TacticParams): R
   arith: {
     isSom: getBool(params, "flat", true) && getBool(params, "som", false),
     isSortSums: getBool(params, "sort_sums", false),
-    isArithIneqLhs: getBool(params, "arith_lhs", false),
+    isArithLhs: getBool(params, "arith_lhs", false),
+    isArithIneqLhs: getBool(params, "arith_ineq_lhs", false),
     isGcdRounding: getBool(params, "gcd_rounding", false),
     isAnumSimp: getBool(params, "algebraic_number_evaluator", true),
     isExpandPower: getBool(params, "expand_power", false),
@@ -282,20 +331,62 @@ const SMT_DESCRS = getDescrs("smt", [
   ["mbqi", PARAM_BOOL, true, true],
   ["mbqi.max_iterations", PARAM_UINT, MBQI_MAX_ITERATIONS, true],
   ["arith.nl.rounds", PARAM_UINT, 1024, true],
+  ["arith.branch_cut_ratio", PARAM_UINT, 2, true],
+  ["random_seed", PARAM_UINT, 0, true],
+  ["auto_config", PARAM_BOOL, true, true],
+  ["ematching", PARAM_BOOL, true, true],
+  ["mbqi.id", PARAM_STRING, ""],
+  ["qi.cost", PARAM_STRING, "(+ weight generation)", true],
+  ["qi.eager_threshold", PARAM_NUMERAL, "10", true],
+  ["qi.lazy_threshold", PARAM_NUMERAL, "20", true],
+  ["relevancy", PARAM_UINT, 2, true],
 ]);
+
+const getSmtDouble = (environment: TacticEnvironment, params: TacticParams, name: string) =>
+  params.has(name)
+    ? getNumeral(params, name, "0").toDouble()
+    : getDoubleParameter(environment.parameters, `smt.${name}`);
+
+const isEmatching = (environment: TacticEnvironment, params: TacticParams) =>
+  getBool(params, "ematching", getParameter(environment, "smt.ematching", "true") !== "false");
+
+const getRelevancyLevel = (environment: TacticEnvironment, params: TacticParams) =>
+  getUint(params, "relevancy", Number(getParameter(environment, "smt.relevancy", "2")));
 
 // The dependencies are assertion names, which are Boolean constants, so each one is its own
 // assumption.
 const getKernelParams = (environment: TacticEnvironment, params: TacticParams, goal: Goal) => {
   const manager = environment.manager;
   const hasQuantifiers = goal.forms.items.some((form) => manager.hasQuantifierFlags[form]);
+  // smt_params ands the auto_config of the tactic with the global one, which smt does not scope.
+  const setup = {
+    ...environment.setup,
+    isAutoConfig:
+      getBool(
+        params,
+        "auto_config",
+        getParameter(environment, "smt.auto_config", "true") !== "false",
+      ) && getParameter(environment, "auto_config", "true") !== "false",
+  };
   return {
-    isMbqi:
-      getBool(params, "mbqi", environment.isMbqi) ||
-      isMbqiByFeatures(environment.setup, hasQuantifiers),
+    isMbqi: getBool(params, "mbqi", environment.isMbqi) || isMbqiByFeatures(setup, hasQuantifiers),
     mbqiMaxIterations: getUint(params, "mbqi.max_iterations", environment.mbqiMaxIterations),
     isFindingMacros: environment.isFindingMacros,
-    setup: environment.setup,
+    isEmatching: isEmatching(environment, params),
+    relevancyLevel: getRelevancyLevel(environment, params),
+    setup,
+    randomSeed: getUint(
+      params,
+      "random_seed",
+      Number(getParameter(environment, "smt.random_seed", "0")),
+    ),
+    intHammerPeriod: getHammerPeriod(environment.parameters),
+    isArithPropagatingEqs: getParameter(environment, "smt.arith.propagate_eqs", "true") !== "false",
+    qiCost: params.has("qi.cost")
+      ? String(params.get("qi.cost"))
+      : environment.parameters.get("smt.qi.cost"),
+    qiEagerThreshold: getSmtDouble(environment, params, "qi.eager_threshold"),
+    qiLazyThreshold: getSmtDouble(environment, params, "qi.lazy_threshold"),
   };
 };
 
@@ -341,27 +432,64 @@ export const getSatParams = (parameters: ReadonlyMap<string, string>) =>
       }),
   );
 
+export const getSmtTacticFailure = (context: Context) =>
+  context.checkCanceled()
+    ? "canceled"
+    : `smt tactic failed to show goal to be sat/unsat ${context.getLastFailureMessage()}`;
+
 // sat_params reads what using-params leaves unset from the sat module's global parameters.
 const getSatTacticParams = (environment: TacticEnvironment, params: TacticParams) =>
   new Map([...getSatParams(environment.parameters), ...params]);
 
+const runSat = (environment: TacticEnvironment, params: TacticParams) => (goal: Goal) => {
+  const satParams = getSatTacticParams(environment, params);
+  return createSatTactic(
+    environment.manager,
+    satParams,
+    satParams.get("euf") === true ? mkThSolver(environment.parameters) : null,
+  )(goal);
+};
+
 const runSmt = (environment: TacticEnvironment, params: TacticParams) => (goal: Goal) => {
   const manager = environment.manager;
   // mk_smt_tactic: with sat.euf, the smt tactic is the sat tactic.
-  if (environment.parameters.get("sat.euf") === "true")
-    return createSatTactic(manager, getSatParams(environment.parameters), mkThSolver)(goal);
+  if (environment.parameters.get("sat.euf") === "true") return runSat(environment, params)(goal);
   const kernelParams = getKernelParams(environment, params, goal);
-  const extracted = extractClauses(manager, goal);
+  // Without unsat cores, smt_tactic asserts the goal's formulas, which only the goal holds.
+  const extracted = goal.isCoresEnabled
+    ? extractClauses(manager, goal)
+    : { clauses: new RefVector(manager), assumptions: [] };
   const solved =
     extracted.assumptions.length === 0
       ? solveGoal(manager, goal.forms.items, kernelParams)
       : solveAssuming(manager, extracted.clauses.items, extracted.assumptions, kernelParams);
-  extracted.clauses.reset();
-  if (solved.result === L_UNDEF) throw new SmtTacticError(solved.context.getLastFailureMessage());
+  const context = solved.context;
+  const release = () => {
+    extracted.clauses.reset();
+    context.release(solved.asserted);
+  };
+  if (solved.result === L_UNDEF) {
+    const reasonUnknown = solved.reasonUnknown ?? getSmtTacticFailure(context);
+    release();
+    throw new SmtTacticError(reasonUnknown);
+  }
   goal.reset();
-  if (solved.result === L_FALSE)
-    goal.assert(environment.manager.falseExpr, mkCoreDependency(solved.context.unsatCore));
-  else goal.model = solved.context.getModel();
+  if (solved.result === L_FALSE) {
+    goal.assert(environment.manager.falseExpr, mkCoreDependency(context.unsatCore));
+    release();
+    return [goal];
+  }
+  const model = goal.isModelsEnabled ? context.getModel() : undefined;
+  if (model !== undefined) {
+    model.incRef();
+    goal.addModelConversion(
+      () => model.copy(),
+      () => model.decRef(),
+    );
+  }
+  const isCanceled = context.checkCanceled();
+  release();
+  if (isCanceled) throw new SmtTacticError("canceled");
   return [goal];
 };
 
@@ -399,57 +527,95 @@ const runParallelSmt = (environment: TacticEnvironment) => (goal: Goal) => {
   return [goal];
 };
 
-const createTacticSolver = (manager: AstManager, getTactic: () => Tactic): AckrSolver => {
+const createTacticSolver = (environment: TacticEnvironment, strategy: string): AckrSolver => {
+  const manager = environment.manager;
+  const destructors: (() => void)[] = [];
+  const inits: (() => void)[] = [];
+  const tactic = compileInternalTactic({ ...environment, destructors, inits }, strategy);
   const assertions = new RefVector(manager);
   let model: ProtoModel | undefined;
+  let converters: Goal["converters"] = [];
   return {
     assert: (expr) => assertions.push(expr),
+    // tactic2solver cleans its tactic before the goal is built and again before it is freed.
     check: () => {
       model?.decRef();
       model = undefined;
+      tactic.cleanup?.();
+      for (const init of inits) init();
       const goal = new Goal(manager);
       for (const assertion of assertions.items) goal.assert(assertion);
-      const checked = checkSatUsing(getTactic(), goal);
+      const checked = checkSatUsing(tactic, goal);
+      // tactic2solver keeps the goal's model converter until its next check.
+      decConverterRefs(manager, converters);
+      converters = goal.converters;
+      goal.converters = [];
       model = checked.model;
       model?.incRef();
+      tactic.cleanup?.();
+      goal.reset();
       return checked.status;
     },
     getModel: () => model as ProtoModel,
     release: () => {
+      decConverterRefs(manager, converters);
+      destroyTactics(destructors);
       model?.decRef();
       assertions.reset();
     },
   };
 };
 
-// Each clause gets a fresh context, where Z3 pushes a scope on one context.
-const runUnitSubsume = (environment: TacticEnvironment) => (goal: Goal) => {
+const runUnitSubsume = (environment: TacticEnvironment) => {
   const manager = environment.manager;
-  const clauses = goal.forms.items.map(() => manager.mkFreshConst("#clause", SORT_BOOL));
-  const definitions = goal.forms.items.map((form, index) => manager.mkEq(clauses[index], form));
-  for (const expr of [...clauses, ...definitions]) manager.incRef(expr);
-  const deleted: number[] = [];
-  for (const [index, clause] of clauses.entries()) {
-    const asserted = new AssertedFormulas(manager);
-    const context = new Context(manager, {
-      isMbqi: environment.isMbqi,
-      mbqiMaxIterations: environment.mbqiMaxIterations,
-      relevancyLevel: 2,
-    });
-    for (const definition of definitions) asserted.assertExpr(definition);
-    for (const [other, otherClause] of clauses.entries())
-      if (other === index) asserted.assertExpr(manager.mkNot(clause));
-      else if (!deleted.includes(other)) asserted.assertExpr(otherClause);
-    // The context has no logic, so setup_default picks setup_unknown.
-    context.setupContext(undefined, false, asserted);
-    context.internalizeAssertions(asserted);
-    if (!context.isInconsistent()) context.propagate();
-    if (context.isInconsistent()) deleted.push(index);
-  }
-  for (const index of deleted) goal.update(index, manager.trueExpr);
-  goal.elimTrue();
-  for (const expr of [...clauses, ...definitions]) manager.decRef(expr);
-  return [goal];
+  const kernel = new SmtKernel(manager, {
+    isMbqi: environment.isMbqi,
+    mbqiMaxIterations: environment.mbqiMaxIterations,
+    isFindingMacros: environment.isFindingMacros,
+    isEmatching: getParameter(environment, "smt.ematching", "true") !== "false",
+    relevancyLevel: Number(getParameter(environment, "smt.relevancy", "2")),
+  });
+  const clauses = new RefVector(manager);
+  environment.destructors.push(() => {
+    clauses.reset();
+    kernel.release();
+  });
+  return (goal: Goal) => {
+    if (goal.isProofsEnabled)
+      throw new SmtTacticError("unit-subsume-simplify does not support proof production");
+    const count = goal.forms.size;
+    kernel.push();
+    for (let index = 0; index < count; index++) {
+      if (index === clauses.size) clauses.push(manager.mkFreshConst("#clause", SORT_BOOL));
+      const definition = manager.mkEq(clauses.items[index], goal.forms.get(index));
+      manager.incRef(definition);
+      kernel.assertExpr(definition);
+      manager.decRef(definition);
+    }
+    kernel.push();
+    const isDeleted = Array.from({ length: count }, () => false);
+    const deleted: number[] = [];
+    for (let index = 0; index < count; index++) {
+      kernel.push();
+      for (let other = 0; other < count; other++)
+        if (other === index) {
+          const negated = manager.mkNot(clauses.items[other]);
+          manager.incRef(negated);
+          kernel.assertExpr(negated);
+          manager.decRef(negated);
+        } else if (!isDeleted[other]) kernel.assertExpr(clauses.items[other]);
+      kernel.push();
+      const isUnsat = kernel.context.isInconsistent();
+      kernel.pop(2);
+      if (!isUnsat) continue;
+      isDeleted[index] = true;
+      deleted.push(index);
+    }
+    for (const index of deleted) goal.update(index, manager.trueExpr);
+    goal.elimTrue();
+    kernel.pop(2);
+    return [goal];
+  };
 };
 
 const inPlace = (run: (goal: Goal) => void) => (goal: Goal) => {
@@ -457,19 +623,50 @@ const inPlace = (run: (goal: Goal) => void) => (goal: Goal) => {
   return [goal];
 };
 
-const runDer = (manager: AstManager) => (goal: Goal) => {
-  const rewriter = new DerRewriter(manager);
-  const size = goal.forms.size;
-  for (let index = 0; !goal.isInconsistent && index < size; index++) {
-    const result = rewriter.rewrite(goal.forms.items[index]);
-    goal.update(index, result);
-    manager.decRef(result);
+const selectClause = (goal: Goal, isLargest: boolean) => {
+  const manager = goal.manager;
+  let position = -1;
+  let length = 0;
+  for (let index = 0; index < goal.forms.size; index++) {
+    const form = goal.forms.get(index);
+    if (manager.getOp(form) !== OP_OR) continue;
+    const currentLength = manager.getNumArgs(form);
+    if (currentLength < 2) continue;
+    if (!isLargest) return index;
+    if (currentLength > length) {
+      position = index;
+      length = currentLength;
+    }
   }
-  goal.elimTrue();
-  goal.elimRedundancies();
-  goal.depth++;
-  rewriter.der.release();
-  rewriter.release();
+  return position;
+};
+
+const runSplitClause = (isLargest: boolean) => (goal: Goal) => {
+  const manager = goal.manager;
+  const position = selectClause(goal, isLargest);
+  if (position === -1)
+    throw new SmtTacticError("split-clause tactic failed, goal does not contain any clause");
+  if (goal.isProofsEnabled) throw new SmtUnsupportedError("the proofs of split-clause");
+  const dependency = goal.dependencies[position];
+  return manager.getArgs(goal.forms.get(position)).map((literal) => {
+    const subgoal = goal.copy();
+    subgoal.update(position, literal, dependency);
+    subgoal.depth++;
+    return subgoal;
+  });
+};
+
+const runDer = (manager: AstManager) => (goal: Goal) => {
+  runSimplifier(goal, true, (state) => {
+    const rewriter = new DerRewriter(manager);
+    return {
+      reduce: () => state.rewriteEach((form) => rewriter.rewrite(form)),
+      release: () => {
+        rewriter.der.release();
+        rewriter.release();
+      },
+    };
+  });
   return [goal];
 };
 
@@ -509,10 +706,16 @@ const runNnf = (manager: AstManager, params: TacticParams) => (goal: Goal) => {
   const nnf = new Nnf(manager, names, mode, getBool(params, "ignore_labels", false));
   const definitions = new RefVector(manager);
   const size = goal.forms.size;
-  for (let index = 0; !goal.isInconsistent && index < size; index++) {
-    const result = nnf.apply(goal.forms.items[index], definitions);
-    goal.update(index, result);
-    manager.decRef(result);
+  try {
+    for (let index = 0; !goal.isInconsistent && index < size; index++) {
+      const result = nnf.apply(goal.forms.get(index), definitions);
+      goal.update(index, result, goal.getDependency(index));
+      manager.decRef(result);
+    }
+  } catch (error) {
+    // Z3's nnf stops at the limit with a default_exception, which or-else lets pass.
+    if (!(error instanceof SmtCanceledError)) throw error;
+    throw new SmtDefaultError(manager.limit.getCancelMessage());
   }
   for (const definition of definitions.items) {
     if (goal.isInconsistent) break;
@@ -596,14 +799,75 @@ const SAT_DESCRS = getDescrs("sat", [
   ["probing_binary", PARAM_BOOL, true, true],
   ["local_search", PARAM_BOOL, false],
   ["threads", PARAM_UINT, 1],
-  ["euf", PARAM_BOOL, false],
+  ["euf", PARAM_BOOL, false, true],
   ["cardinality.solver", PARAM_BOOL, true],
+  ["anf", PARAM_BOOL, false],
+  ["anf.delay", PARAM_UINT, 2],
+  ["anf.exlin", PARAM_BOOL, false],
+  ["bca", PARAM_BOOL, false],
+  ["branching.anti_exploration", PARAM_BOOL, false],
+  ["branching.heuristic", PARAM_SYMBOL, "vsids"],
+  ["cardinality.encoding", PARAM_SYMBOL, "grouped"],
+  ["core.minimize", PARAM_BOOL, false],
+  ["core.minimize_partial", PARAM_BOOL, false],
+  ["ddfw.init_clause_weight", PARAM_UINT, 8],
+  ["ddfw.reinit_base", PARAM_UINT, 10000],
+  ["ddfw.restart_base", PARAM_UINT, 100000],
+  ["ddfw.threads", PARAM_UINT, 0],
+  ["ddfw.use_reward_pct", PARAM_UINT, 15],
+  ["ddfw_search", PARAM_BOOL, false],
+  ["dimacs.core", PARAM_BOOL, false],
+  ["drat.activity", PARAM_BOOL, false],
+  ["drat.binary", PARAM_BOOL, false],
+  ["drat.check_sat", PARAM_BOOL, false],
+  ["drat.check_unsat", PARAM_BOOL, false],
+  ["drat.disable", PARAM_BOOL, false],
+  ["drat.file", PARAM_SYMBOL, ""],
+  ["inprocess.out", PARAM_SYMBOL, ""],
+  ["local_search_dbg_flips", PARAM_BOOL, false],
+  ["local_search_mode", PARAM_SYMBOL, "wsat"],
+  ["local_search_threads", PARAM_UINT, 0],
+  ["lookahead.cube.cutoff", PARAM_SYMBOL, "depth"],
+  ["lookahead.cube.depth", PARAM_UINT, 1],
+  ["lookahead.cube.fraction", PARAM_NUMERAL, "0.4"],
+  ["lookahead.cube.freevars", PARAM_NUMERAL, "0.8"],
+  ["lookahead.cube.psat.clause_base", PARAM_NUMERAL, "2"],
+  ["lookahead.cube.psat.trigger", PARAM_NUMERAL, "5"],
+  ["lookahead.cube.psat.var_exp", PARAM_NUMERAL, "1"],
+  ["lookahead.delta_fraction", PARAM_NUMERAL, "1.0"],
+  ["lookahead.double", PARAM_BOOL, true],
+  ["lookahead.global_autarky", PARAM_BOOL, false],
+  ["lookahead.preselect", PARAM_BOOL, false],
+  ["lookahead.reward", PARAM_SYMBOL, "march_cu"],
+  ["lookahead.use_learned", PARAM_BOOL, false],
+  ["lookahead_scores", PARAM_BOOL, false],
+  ["lookahead_simplify", PARAM_BOOL, false],
+  ["lookahead_simplify.bca", PARAM_BOOL, true],
+  ["pb.lemma_format", PARAM_SYMBOL, "cardinality"],
+  ["pb.min_arity", PARAM_UINT, 9],
+  ["pb.resolve", PARAM_SYMBOL, "cardinality"],
+  ["pb.solver", PARAM_SYMBOL, "solver"],
+  ["phase.sticky", PARAM_BOOL, true],
+  ["prob_search", PARAM_BOOL, false],
+  ["propagate.prefetch", PARAM_BOOL, true],
+  ["random_freq", PARAM_NUMERAL, "0.01"],
+  ["reorder.activity_scale", PARAM_UINT, 100],
+  ["reorder.base", PARAM_UINT, UINT_MAX],
+  ["reorder.itau", PARAM_NUMERAL, "4.0"],
+  ["restart.emafastglue", PARAM_NUMERAL, "0.03"],
+  ["restart.emaslowglue", PARAM_NUMERAL, "1e-05"],
+  ["restart.factor", PARAM_NUMERAL, "1.5"],
+  ["restart.margin", PARAM_NUMERAL, "1.1"],
+  ["retain_blocked_clauses", PARAM_BOOL, true],
+  ["smt", PARAM_BOOL, false],
+  ["smt.proof.check", PARAM_BOOL, false],
 ]);
 
 const NAMED_TACTICS = new Map<string, NamedTactic>([
   [
     "simplify",
     {
+      isCatchingRewriterCancel: true,
       descrs: REWRITER_DESCRS,
       isTrackingDependencies: true,
       build: (environment, params) =>
@@ -615,6 +879,7 @@ const NAMED_TACTICS = new Map<string, NamedTactic>([
   [
     "elim-and",
     {
+      isCatchingRewriterCancel: true,
       descrs: REWRITER_DESCRS,
       isTrackingDependencies: true,
       build: (environment, params) =>
@@ -629,15 +894,24 @@ const NAMED_TACTICS = new Map<string, NamedTactic>([
   [
     "propagate-values",
     {
+      isCatchingRewriterCancel: true,
       descrs: new Map([
         ...REWRITER_DESCRS,
         ...getDescrs("", [["max_rounds", PARAM_UINT, 4, true]]),
       ]),
       isTrackingDependencies: true,
-      build: (environment, params) =>
-        inPlace((goal) =>
-          propagateValues(environment.manager, goal, getUint(params, "max_rounds", 4)),
-        ),
+      build: (environment, params) => {
+        const tactic = new PropagateValuesTactic(
+          environment.manager,
+          getUint(params, "max_rounds", 4),
+          getRewriterOptions(environment.manager, params),
+        );
+        environment.destructors.push(() => tactic.release());
+        return withCleanup(
+          inPlace((goal) => tactic.run(goal)),
+          () => tactic.cleanup(),
+        );
+      },
     },
   ],
   [
@@ -649,6 +923,7 @@ const NAMED_TACTICS = new Map<string, NamedTactic>([
         ["max_depth", PARAM_UINT, 1024, true],
         ["propagate_eq", PARAM_BOOL, false],
       ]),
+      isTrackingDependencies: true,
       build: (environment, params) =>
         inPlace((goal) =>
           ctxSimplify(
@@ -665,24 +940,41 @@ const NAMED_TACTICS = new Map<string, NamedTactic>([
     {
       descrs: SMT_DESCRS,
       isRejectingUnknown: false,
-      build: (environment, params) =>
-        inPlace(
-          createCtxSolverSimplify(environment.manager, {
-            isMbqi: getBool(params, "mbqi", environment.isMbqi),
-            mbqiMaxIterations: getUint(
-              params,
-              "mbqi.max_iterations",
-              environment.mbqiMaxIterations,
-            ),
-            isFindingMacros: environment.isFindingMacros,
-          }),
-        ),
+      build: (environment, params) => {
+        const getSimplifierParams = (tacticParams: TacticParams) => ({
+          isMbqi: getBool(tacticParams, "mbqi", environment.isMbqi),
+          mbqiMaxIterations: getUint(
+            tacticParams,
+            "mbqi.max_iterations",
+            environment.mbqiMaxIterations,
+          ),
+          isFindingMacros: environment.isFindingMacros,
+          isEmatching: isEmatching(environment, tacticParams),
+          relevancyLevel: getRelevancyLevel(environment, tacticParams),
+          qiCost: tacticParams.has("qi.cost")
+            ? String(tacticParams.get("qi.cost"))
+            : environment.parameters.get("smt.qi.cost"),
+          qiEagerThreshold: getSmtDouble(environment, tacticParams, "qi.eager_threshold"),
+          qiLazyThreshold: getSmtDouble(environment, tacticParams, "qi.lazy_threshold"),
+        });
+        const simplifier = createCtxSolverSimplify(
+          environment.manager,
+          getSimplifierParams(new Map()),
+          getSimplifierParams(params),
+        );
+        environment.destructors.push(simplifier.release);
+        return inPlace(simplifier.run);
+      },
     },
   ],
-  ["unit-subsume-simplify", { descrs: new Map(), build: runUnitSubsume }],
+  [
+    "unit-subsume-simplify",
+    { isTrackingDependencies: true, descrs: new Map(), build: runUnitSubsume },
+  ],
   [
     "purify-arith",
     {
+      isCatchingRewriterCancel: true,
       descrs: new Map([
         ...REWRITER_DESCRS,
         ...getDescrs("", [
@@ -691,48 +983,40 @@ const NAMED_TACTICS = new Map<string, NamedTactic>([
           ["elim_inverses", PARAM_BOOL, true, true],
         ]),
       ]),
+      isTrackingDependencies: true,
       build: (environment, params) => {
         const manager = environment.manager;
-        const snf = runNnf(manager, new Map());
         const elimRemParams = new Map([...params, ["elim_rem", true]]);
-        return (goal) => {
-          snf(goal);
-          simplifyGoal(manager, goal, getRewriterOptions(manager, elimRemParams));
-          purifyArith(manager, goal, {
-            isComplete: getBool(params, "complete", true),
-            isElimRootObjects: getBool(params, "elim_root_objects", true),
-            isElimInverses: getBool(params, "elim_inverses", true),
-          });
-          simplifyGoal(manager, goal, getRewriterOptions(manager, params));
-          return [goal];
-        };
+        return [
+          runNnf(manager, new Map()),
+          inPlace((goal) =>
+            simplifyGoal(manager, goal, getRewriterOptions(manager, elimRemParams)),
+          ),
+          inPlace((goal) =>
+            purifyArith(manager, goal, {
+              isComplete: getBool(params, "complete", true),
+              isElimRootObjects: getBool(params, "elim_root_objects", true),
+              isElimInverses: getBool(params, "elim_inverses", true),
+            }),
+          ),
+          inPlace((goal) => simplifyGoal(manager, goal, getRewriterOptions(manager, params))),
+        ].reduceRight((second, first) => runAndThen(first, second));
       },
     },
   ],
   [
     "elim-term-ite",
     {
+      isTrackingDependencies: true,
       descrs: getDescrs("", [["max_memory", PARAM_UINT, UINT_MAX, true]]),
-      build: (environment) =>
-        inPlace((goal) => {
-          const manager = environment.manager;
-          const seen = new Set<number>();
-          const todo = [...goal.forms.items];
-          for (let expr = todo.pop(); expr !== undefined; expr = todo.pop()) {
-            if (seen.has(expr) || manager.kinds[expr] !== KIND_APP) continue;
-            seen.add(expr);
-            if (manager.getOp(expr) === OP_ITE && manager.sorts[expr] !== SORT_BOOL)
-              throw new SmtUnsupportedError("elim-term-ite on a goal it changes");
-            manager.pushArgs(expr, todo);
-          }
-          goal.depth++;
-        }),
+      build: (environment) => runElimTermIte(environment.manager),
     },
   ],
   [
     "tseitin-cnf-core",
     {
       descrs: TSEITIN_DESCRS,
+      isTrackingDependencies: true,
       build: (environment) => inPlace((goal) => tseitinCnf(environment.manager, goal)),
     },
   ],
@@ -740,6 +1024,7 @@ const NAMED_TACTICS = new Map<string, NamedTactic>([
     "tseitin-cnf",
     {
       descrs: TSEITIN_DESCRS,
+      isTrackingDependencies: true,
       build: (environment, params) =>
         inPlace((goal) => {
           const manager = environment.manager;
@@ -752,9 +1037,9 @@ const NAMED_TACTICS = new Map<string, NamedTactic>([
             simplifyGoal(manager, goal, {
               ...getRewriterOptions(manager, params),
               isEliminatingAnd: true,
-              isKeepingDistinct: false,
+              isBlastingDistinct: true,
             });
-            tseitinCnf(manager, goal);
+            if (!goal.isDecided()) tseitinCnf(manager, goal);
           } finally {
             original.reset();
           }
@@ -764,21 +1049,19 @@ const NAMED_TACTICS = new Map<string, NamedTactic>([
   [
     "qe-light",
     {
+      isCatchingRewriterCancel: true,
       descrs: new Map(),
       build: (environment) =>
-        inPlace((goal) => {
-          if (!goal.isProofsEnabled) applyQeLite(environment.manager, goal);
-          else {
-            goal.elimTrue();
-            goal.elimRedundancies();
-          }
-          goal.depth++;
-        }),
+        inPlace((goal) =>
+          goal.isProofsEnabled ? finishSimplifier(goal) : applyQeLite(environment.manager, goal),
+        ),
     },
   ],
   [
     "solve-eqs",
     {
+      isCatchingRewriterCancel: true,
+      isTrackingDependencies: true,
       // Z3 never counts the occurrences that solve_eqs_max_occs bounds, so the bound has no effect.
       descrs: getDescrs("", [
         ["solve_eqs_max_occs", PARAM_UINT, UINT_MAX, true],
@@ -805,12 +1088,14 @@ const NAMED_TACTICS = new Map<string, NamedTactic>([
   [
     "elim-uncnstr",
     {
+      isTrackingDependencies: true,
       descrs: getDescrs("", [
         ["max_memory", PARAM_UINT, UINT_MAX, true],
         ["max_steps", PARAM_UINT, UINT_MAX],
       ]),
       build: (environment) => {
         const bodies = new RefVector(environment.manager);
+        environment.destructors.push(() => bodies.reset());
         return inPlace((goal) => elimUncnstr(environment.manager, goal, bodies));
       },
     },
@@ -820,26 +1105,28 @@ const NAMED_TACTICS = new Map<string, NamedTactic>([
     {
       isTrackingDependencies: true,
       descrs: getDescrs("", [["compile_equality", PARAM_BOOL, true, true]]),
-      build: (environment, params) =>
-        inPlace((goal) =>
-          lia2card(
-            environment.manager,
-            goal,
-            getUint(params, "lia2card.max_range", 100),
-            getUint(params, "lia2card.max_ite_nesting", 4),
-            getBool(params, "compile_equality", true),
-          ),
-        ),
+      build: (environment, params) => {
+        const tactic = createLia2Card(
+          environment.manager,
+          getUint(params, "lia2card.max_range", 100),
+          getUint(params, "lia2card.max_ite_nesting", 4),
+          getBool(params, "compile_equality", true),
+        );
+        environment.destructors.push(tactic.release);
+        return inPlace(tactic.run);
+      },
     },
   ],
   [
     "card2bv",
     {
+      isCatchingRewriterCancel: true,
       descrs: getDescrs("", [
         ["keep_cardinality_constraints", PARAM_BOOL, false, true],
         ["pb.solver", PARAM_SYMBOL, "solver", true],
         ["cardinality.encoding", PARAM_SYMBOL, "none", true],
       ]),
+      isTrackingDependencies: true,
       build: (environment, params) =>
         inPlace((goal) => {
           checkParams(REWRITER_DESCRS, params);
@@ -850,10 +1137,12 @@ const NAMED_TACTICS = new Map<string, NamedTactic>([
   [
     "normalize-bounds",
     {
+      isCatchingRewriterCancel: true,
       descrs: getDescrs("", [
         ["produce_models", PARAM_BOOL, false, true],
         ["norm_int_only", PARAM_BOOL, true, true],
       ]),
+      isTrackingDependencies: true,
       build: (environment, params) =>
         inPlace((goal) => {
           checkParams(REWRITER_DESCRS, params);
@@ -869,6 +1158,8 @@ const NAMED_TACTICS = new Map<string, NamedTactic>([
   [
     "propagate-ineqs",
     {
+      isCatchingRewriterCancel: true,
+      isTrackingDependencies: true,
       descrs: getDescrs("", [["bound_max_refinements", PARAM_UINT, 16, true]]),
       build: (environment) => inPlace((goal) => propagateIneqs(environment.manager, goal)),
     },
@@ -876,6 +1167,7 @@ const NAMED_TACTICS = new Map<string, NamedTactic>([
   [
     "lia2pb",
     {
+      isCatchingRewriterCancel: true,
       descrs: new Map([
         ...REWRITER_DESCRS,
         ...getDescrs("", [
@@ -900,7 +1192,7 @@ const NAMED_TACTICS = new Map<string, NamedTactic>([
     "pb2bv",
     {
       descrs: new Map([
-        ...[...REWRITER_DESCRS].filter(([name]) => BOOL_REWRITER_PARAMS.includes(name)),
+        ...[...REWRITER_DESCRS].filter((entry) => BOOL_REWRITER_PARAMS.includes(entry[0])),
         ...getDescrs("", [
           ["max_memory", PARAM_UINT, UINT_MAX, true],
           ["pb2bv_all_clauses_limit", PARAM_UINT, 8, true],
@@ -910,6 +1202,7 @@ const NAMED_TACTICS = new Map<string, NamedTactic>([
           ["cardinality.encoding", PARAM_SYMBOL, "none", true],
         ]),
       ]),
+      isTrackingDependencies: true,
       build: (environment, params) =>
         runPb2Bv(environment.manager, params, getRewriterOptions(environment.manager, params)),
     },
@@ -918,6 +1211,7 @@ const NAMED_TACTICS = new Map<string, NamedTactic>([
     "diff-neq",
     {
       descrs: getDescrs("", [["diff_neq_max_k", PARAM_UINT, 1024, true]]),
+      isTrackingDependencies: true,
       build: (environment, params) =>
         inPlace((goal) =>
           diffNeq(environment.manager, goal, getUint(params, "diff_neq_max_k", 1024)),
@@ -971,6 +1265,7 @@ const NAMED_TACTICS = new Map<string, NamedTactic>([
         ["add_bound_lower", PARAM_NUMERAL, "-2", true],
         ["add_bound_upper", PARAM_NUMERAL, "2", true],
       ]),
+      isTrackingDependencies: true,
       build: (environment, params) =>
         inPlace((goal) =>
           addBounds(
@@ -985,6 +1280,7 @@ const NAMED_TACTICS = new Map<string, NamedTactic>([
   [
     "cofactor-term-ite",
     {
+      isCatchingRewriterCancel: true,
       descrs: getDescrs("", [["cofactor_equalities", PARAM_BOOL, true, true]]),
       build: (environment, params) =>
         inPlace((goal) =>
@@ -1006,6 +1302,7 @@ const NAMED_TACTICS = new Map<string, NamedTactic>([
         ["nla2bv_root", PARAM_UINT, 2, true],
         ["nla2bv_divisor", PARAM_UINT, 2, true],
       ]),
+      isTrackingDependencies: true,
       build: (environment, params) =>
         inPlace((goal) =>
           nla2bv(environment.manager, goal, {
@@ -1020,6 +1317,7 @@ const NAMED_TACTICS = new Map<string, NamedTactic>([
   [
     "fix-dl-var",
     {
+      isCatchingRewriterCancel: true,
       isTrackingDependencies: true,
       descrs: REWRITER_DESCRS,
       build: (environment, params) =>
@@ -1031,6 +1329,7 @@ const NAMED_TACTICS = new Map<string, NamedTactic>([
   [
     "factor",
     {
+      isCatchingRewriterCancel: true,
       isTrackingDependencies: true,
       descrs: getDescrs("", [
         ["split_factors", PARAM_BOOL, true, true],
@@ -1044,11 +1343,30 @@ const NAMED_TACTICS = new Map<string, NamedTactic>([
         ),
     },
   ],
-  ["der", { descrs: new Map(), build: (environment) => runDer(environment.manager) }],
+  [
+    "der",
+    {
+      isCatchingRewriterCancel: true,
+      isTrackingDependencies: true,
+      descrs: new Map(),
+      build: (environment) => runDer(environment.manager),
+    },
+  ],
+  [
+    "blast-term-ite",
+    {
+      isCatchingRewriterCancel: true,
+      isTrackingDependencies: true,
+      descrs: new Map(),
+      build: (environment) => inPlace((goal) => blastTermIte(environment.manager, goal)),
+    },
+  ],
   [
     "distribute-forall",
     {
+      isCatchingRewriterCancel: true,
       descrs: new Map(),
+      isTrackingDependencies: true,
       build: (environment) => inPlace((goal) => distributeForall(environment.manager, goal)),
     },
   ],
@@ -1073,6 +1391,7 @@ const NAMED_TACTICS = new Map<string, NamedTactic>([
         ["max_memory", PARAM_UINT, UINT_MAX, true],
         ["produce_models", PARAM_BOOL, false, true],
       ]),
+      isTrackingDependencies: true,
       build: (environment) => inPlace((goal) => rewriteUfbv(environment.manager, goal)),
     },
   ],
@@ -1080,6 +1399,7 @@ const NAMED_TACTICS = new Map<string, NamedTactic>([
     "reduce-args",
     {
       descrs: new Map(),
+      isTrackingDependencies: true,
       build: (environment) => inPlace((goal) => reduceArgs(environment.manager, goal)),
     },
   ],
@@ -1102,20 +1422,33 @@ const NAMED_TACTICS = new Map<string, NamedTactic>([
   [
     "dom-simplify",
     {
+      isCatchingRewriterCancel: true,
+      isTrackingDependencies: true,
       descrs: new Map(),
       build: (environment) => inPlace((goal) => domSimplify(environment.manager, goal)),
+    },
+  ],
+  [
+    "split-clause",
+    {
+      descrs: getDescrs("", [["split_largest_clause", PARAM_BOOL, false, true]]),
+      isTrackingDependencies: true,
+      build: (_environment, params) =>
+        runSplitClause(getBool(params, "split_largest_clause", false)),
     },
   ],
   [
     "occf",
     {
       descrs: new Map(),
+      isTrackingDependencies: true,
       build: (environment) => inPlace((goal) => occf(environment.manager, goal)),
     },
   ],
   [
     "fpa2bv",
     {
+      isCatchingRewriterCancel: true,
       descrs: new Map(),
       isTrackingDependencies: true,
       build: (environment) => runFpa2Bv(environment.manager),
@@ -1129,6 +1462,7 @@ const NAMED_TACTICS = new Map<string, NamedTactic>([
         ["max_steps", PARAM_UINT, UINT_MAX, true],
         ["max_bits", PARAM_UINT, 4, true],
       ]),
+      isTrackingDependencies: true,
       build: (environment, params) =>
         runElimSmallBv(
           environment.manager,
@@ -1137,11 +1471,29 @@ const NAMED_TACTICS = new Map<string, NamedTactic>([
         ),
     },
   ],
-  ["dt2bv", { descrs: new Map(), build: (environment) => createDt2BvTactic(environment.manager) }],
-  ["eq2bv", { descrs: new Map(), build: (environment) => createEq2BvTactic(environment.manager) }],
+  [
+    "dt2bv",
+    {
+      descrs: new Map(),
+      isTrackingDependencies: true,
+      build: (environment) => {
+        const tactic = createDt2BvTactic(environment.manager);
+        return withCleanup(tactic.run, tactic.cleanup);
+      },
+    },
+  ],
+  [
+    "eq2bv",
+    {
+      descrs: new Map(),
+      isTrackingDependencies: true,
+      build: (environment) => createEq2BvTactic(environment.manager),
+    },
+  ],
   [
     "bit-blast",
     {
+      isCatchingRewriterCancel: true,
       descrs: getDescrs("", [
         ["max_memory", PARAM_UINT, UINT_MAX, true],
         ["max_steps", PARAM_UINT, UINT_MAX],
@@ -1150,6 +1502,7 @@ const NAMED_TACTICS = new Map<string, NamedTactic>([
         ["blast_quant", PARAM_BOOL, false, true],
         ["blast_full", PARAM_BOOL, false, true],
       ]),
+      isTrackingDependencies: true,
       build: (environment, params) =>
         runBitBlast(environment.manager, {
           isBlastingMul: getBool(params, "blast_mul", true),
@@ -1161,38 +1514,70 @@ const NAMED_TACTICS = new Map<string, NamedTactic>([
   ],
   [
     "max-bv-sharing",
-    { descrs: new Map(), build: (environment) => runMaxBvSharing(environment.manager) },
+    {
+      isCatchingRewriterCancel: true,
+      descrs: new Map(),
+      isTrackingDependencies: true,
+      build: (environment) => runMaxBvSharing(environment.manager),
+    },
   ],
   [
     "bv_bound_chk",
     {
       descrs: new Map(),
-      build: (environment, params) =>
-        runBvBoundChk(environment.manager, getUint(params, "bv_ineq_consistency_test_max", 0)),
+      isTrackingDependencies: true,
+      build: (environment, params) => {
+        const tactic = new BvBoundChkTactic(
+          environment.manager,
+          getUint(params, "bv_ineq_consistency_test_max", 0),
+        );
+        environment.destructors.push(() => tactic.release());
+        return withCleanup(
+          (goal) => tactic.run(goal),
+          () => tactic.cleanup(),
+        );
+      },
     },
   ],
   [
     "bv-divrem-bounds",
-    { descrs: new Map(), build: (environment) => runBvDivremBounds(environment.manager) },
+    {
+      isCatchingRewriterCancel: true,
+      descrs: new Map(),
+      isTrackingDependencies: true,
+      build: (environment) => runBvDivremBounds(environment.manager),
+    },
   ],
   [
     "reduce-bv-size",
-    { descrs: new Map(), build: (environment) => runReduceBvSize(environment.manager) },
+    {
+      descrs: new Map(),
+      isTrackingDependencies: true,
+      build: (environment) => runReduceBvSize(environment.manager),
+    },
   ],
   [
     "bv1-blast",
     {
+      isCatchingRewriterCancel: true,
       descrs: getDescrs("", [
         ["max_memory", PARAM_UINT, UINT_MAX, true],
         ["max_steps", PARAM_UINT, UINT_MAX],
       ]),
-      build: (environment) => runBv1Blast(environment.manager),
+      isTrackingDependencies: true,
+      build: (environment) => {
+        const tactic = createBv1Blast(environment.manager);
+        environment.inits.push(tactic.init);
+        environment.destructors.push(tactic.release);
+        return tactic.run;
+      },
     },
   ],
   [
     "ackermannize_bv",
     {
       descrs: getDescrs("rewriter", [["div0_ackermann_limit", PARAM_UINT, 1000, true]]),
+      isTrackingDependencies: true,
       build: (environment, params) =>
         runAckermannizeBv(
           environment.manager,
@@ -1210,11 +1595,11 @@ const NAMED_TACTICS = new Map<string, NamedTactic>([
         const manager = environment.manager;
         const preamble = createCommandReader(QFUFBV_ACKR_PREAMBLE).read() as SmtList;
         return runAndThen(
-          compile(environment, preamble, preamble.end, true).build(params),
+          compile(environment, preamble, true).build(params),
           runCond(
             isQfufbv,
             createQfufbvAckrTactic(manager, getRewriterOptions(manager, new Map()), true, () =>
-              createTacticSolver(manager, () => compileInternalTactic(environment, QFAUFBV)),
+              createTacticSolver(environment, QFAUFBV),
             ),
             runSmt(environment, params),
           ),
@@ -1225,6 +1610,7 @@ const NAMED_TACTICS = new Map<string, NamedTactic>([
   [
     "smt",
     {
+      isCatchingRewriterCancel: true,
       descrs: SMT_DESCRS,
       isRejectingUnknown: false,
       isTrackingDependencies: true,
@@ -1291,7 +1677,7 @@ const NAMED_TACTICS = new Map<string, NamedTactic>([
     {
       descrs: new Map(),
       isRejectingUnknown: false,
-      build: (environment) => runQsat(environment.manager, QSAT_SAT),
+      build: (environment) => runQsat(environment, QSAT_SAT),
     },
   ],
   [
@@ -1299,7 +1685,7 @@ const NAMED_TACTICS = new Map<string, NamedTactic>([
     {
       descrs: new Map(),
       isRejectingUnknown: false,
-      build: (environment) => runQsat(environment.manager, QSAT_QE),
+      build: (environment) => runQsat(environment, QSAT_QE),
     },
   ],
   [
@@ -1307,16 +1693,15 @@ const NAMED_TACTICS = new Map<string, NamedTactic>([
     {
       descrs: new Map(),
       isRejectingUnknown: false,
-      build: (environment) => runQsat(environment.manager, QSAT_QE_REC),
+      build: (environment) => runQsat(environment, QSAT_QE_REC),
     },
   ],
   [
     "sat",
     {
       descrs: SAT_DESCRS,
-      isRejectingUnknown: false,
-      build: (environment, params) =>
-        createSatTactic(environment.manager, getSatTacticParams(environment, params)),
+      isTrackingDependencies: true,
+      build: runSat,
     },
   ],
   [
@@ -1324,27 +1709,31 @@ const NAMED_TACTICS = new Map<string, NamedTactic>([
     {
       descrs: SAT_DESCRS,
       isRejectingUnknown: false,
-      build: (environment, params) =>
-        createFdTactic(environment.manager, getSatTacticParams(environment, params)),
+      build: (environment, params) => (goal) =>
+        createFdTactic(environment.manager, getSatTacticParams(environment, params))(goal),
     },
   ],
   [
     "psat",
     {
       descrs: SAT_DESCRS,
-      isRejectingUnknown: false,
-      build: (environment, params) =>
-        createSatTactic(environment.manager, getSatTacticParams(environment, params)),
+      isTrackingDependencies: true,
+      build: runSat,
     },
   ],
   [
     "snf",
-    { descrs: NNF_DESCRS, build: (environment, params) => runNnf(environment.manager, params) },
+    {
+      descrs: NNF_DESCRS,
+      isTrackingDependencies: true,
+      build: (environment, params) => runNnf(environment.manager, params),
+    },
   ],
   [
     "nnf",
     {
       descrs: NNF_DESCRS,
+      isTrackingDependencies: true,
       build: (environment, params) =>
         runNnf(environment.manager, new Map([...params, ["mode", "full"]])),
     },
@@ -1383,20 +1772,19 @@ const NAMED_TACTICS = new Map<string, NamedTactic>([
 
 const UNPORTED_TACTICS = new Set(
   (
-    "blast-term-ite " +
     "bv-slice bvarray2uf collect-statistics " +
     "degree-shift demodulator " +
     "elim-predicates elim-uncnstr2 " +
     "euf-completion ff-sat ff-simplify ff-solve ff-unique ff2bv fold-unfold fpa2bv " +
     "horn-simplify injectivity pb-preprocess pqffd propagate-bv-bounds " +
-    "propagate-bv-bounds2 propagate-values2 qfbv-sls qfufbv recover-01 reduce-args2 " +
+    "propagate-bv-bounds2 propagate-values2 qfbv-sls recover-01 reduce-args2 " +
     "sat-preprocess sls-smt smtfd solver-subsumption special-relations " +
-    "split-clause subpaving symmetry-reduce"
+    "subpaving symmetry-reduce"
   ).split(" "),
 );
 
-const isUnsigned = (sexpr: SExpr | undefined): sexpr is SmtToken =>
-  sexpr?.kind === "numeral" && BigInt(sexpr.text) <= BigInt(UINT_MAX);
+const isUnsignedNumeral = (sexpr: SExpr | undefined): sexpr is SmtToken =>
+  sexpr?.kind === "numeral" && isUnsigned(sexpr.text);
 
 const getParamName = (keyword: string) =>
   keyword.replace(/^:/, "").toLowerCase().replaceAll("-", "_");
@@ -1417,16 +1805,20 @@ const parseParamValue = (kind: number, value: SExpr) =>
   kind === PARAM_BOOL
     ? isSymbol(value, "true") || (isSymbol(value, "false") ? false : undefined)
     : kind === PARAM_UINT
-      ? isUnsigned(value)
+      ? isUnsignedNumeral(value)
         ? Number(value.text)
         : undefined
       : kind === PARAM_NUMERAL
         ? value.kind === "numeral" || value.kind === "decimal"
           ? value.text
           : undefined
-        : isSymbol(value)
-          ? value.text
-          : undefined;
+        : kind === PARAM_STRING
+          ? value.kind === "string"
+            ? value.text
+            : undefined
+          : isSymbol(value)
+            ? value.text
+            : undefined;
 
 const getUntypedParamValue = (value: SExpr) =>
   value.kind === "list"
@@ -1446,27 +1838,33 @@ const checkParams = (descrs: ParamDescrs, params: TacticParams) => {
   }
 };
 
+// sexpr2tactic reports an error at the s-expression: a list at its closing parenthesis.
+const getSexprPosition = (sexpr: SExpr) => (sexpr.kind === "list" ? sexpr.end : sexpr);
+
 const getParams = (
   builder: TacticBuilder,
   items: SExpr[],
-  end: SmtToken,
   isInternal: boolean,
 ): Map<string, TacticParam> => {
   const params = new Map<string, TacticParam>();
   for (let index = 2; index < items.length; index += 2) {
     const keyword = items[index];
     if (keyword.kind !== "keyword")
-      throw new SmtParseError("invalid using-params combinator, keyword expected", end);
+      throw new SmtParseError(
+        "invalid using-params combinator, keyword expected",
+        getSexprPosition(keyword),
+      );
     const value = items[index + 1];
     if (value === undefined)
-      throw new SmtParseError("invalid using-params combinator, parameter value expected", end);
+      throw new SmtParseError("invalid using-params combinator, parameter value expected", keyword);
     const found = findParam(builder.descrs, getParamName(keyword.text));
     if (isInternal) {
       const parsed =
         found === undefined
           ? getUntypedParamValue(value)
           : parseParamValue(found.descr.kind, value);
-      if (parsed === undefined) throw new SmtParseError("invalid parameter value", end);
+      if (parsed === undefined)
+        throw new SmtParseError("invalid parameter value", getSexprPosition(value));
       params.set(found?.name ?? getParamName(keyword.text), parsed);
       continue;
     }
@@ -1475,9 +1873,11 @@ const getParams = (
         throw new SmtUnsupportedError(`the parameter ${keyword.text} of the tactic`);
       throw new SmtParseError(
         `invalid using-params combinator, unknown parameter ${getParamName(keyword.text)}`,
-        end,
+        getSexprPosition(value),
       );
     }
+    if (found.descr.kind === PARAM_STRING)
+      throw new SmtDefaultError("invalid using-params combinator, unsupported parameter kind");
     const parsed = parseParamValue(found.descr.kind, value);
     if (parsed === undefined)
       throw new SmtParseError(
@@ -1488,7 +1888,7 @@ const getParams = (
             : found.descr.kind === PARAM_NUMERAL
               ? "invalid parameter value, numeral expected"
               : "invalid parameter value, symbol expected",
-        end,
+        getSexprPosition(value),
       );
     if (isUnportedParam(found.descr, parsed))
       throw new SmtUnsupportedError(`the parameter ${found.name} of the tactic`);
@@ -1498,7 +1898,15 @@ const getParams = (
 };
 
 const mergeDescrs = (builders: TacticBuilder[]) => ({
-  descrs: new Map(builders.flatMap((builder) => [...builder.descrs])),
+  descrs: {
+    get: (name: string) => {
+      for (let index = 0; index < builders.length; index++) {
+        const descr = builders[index].descrs.get(name);
+        if (descr !== undefined) return descr;
+      }
+      return undefined;
+    },
+  },
   isRejectingUnknown: builders.every((builder) => builder.isRejectingUnknown),
   isTrackingDependencies: builders.every((builder) => builder.isTrackingDependencies),
 });
@@ -1507,34 +1915,79 @@ const isDecidedSat = (goals: Goal[]) => goals.length === 1 && goals[0].isDecided
 
 const isDecidedUnsat = (goals: Goal[]) => goals.length === 1 && goals[0].isDecidedUnsat();
 
-const runAndThen = (first: Tactic, second: Tactic) => (goal: Goal) => {
-  const goals = first(goal);
-  if (goals.length === 1) return goals[0].isDecided() ? goals : second(goals[0]);
-  const results: Goal[] = [];
-  for (const subgoal of goals) {
-    const subresults = second(subgoal);
-    if (isDecidedSat(subresults)) return subresults;
-    if (!isDecidedUnsat(subresults)) results.push(...subresults);
-  }
-  if (results.length > 0) return results;
+// Deviation from Z3: and_then and repeat join the subgoals' cores, where Z3 answers an empty core.
+const assertUnsat = (goal: Goal, unsatGoals: Goal[]) => {
   goal.resetAll();
-  goal.assert(goal.manager.falseExpr);
+  goal.assert(
+    goal.manager.falseExpr,
+    unsatGoals.reduce<Dependency | undefined>(
+      (core, unsatGoal) => joinDependencies(unsatGoal.getDependency(0), core),
+      undefined,
+    ),
+  );
   return [goal];
 };
 
-const runOrElse = (tactics: Tactic[]) => (goal: Goal) => {
-  const original = goal.copy();
-  for (const tactic of tactics.slice(0, -1)) {
-    try {
-      return tactic(goal);
-    } catch (error) {
-      if (!(error instanceof SmtTacticError)) throw error;
-    }
-    goal.resetAll();
-    goal.copyFrom(original);
-  }
-  return (tactics.at(-1) as Tactic)(goal);
-};
+const runAndThen = (first: Tactic, second: Tactic) =>
+  withGuardedCleanup(
+    (goal) => {
+      const goals = first(goal);
+      if (goals.length === 1) {
+        const subgoal = goals[0];
+        if (subgoal.isDecided()) return goals;
+        let subresults: Goal[] = [];
+        try {
+          subresults = second(subgoal);
+          return subresults;
+        } finally {
+          if (subgoal !== goal && !subresults.includes(subgoal)) subgoal.release();
+        }
+      }
+      const results: Goal[] = [];
+      const unsatGoals: Goal[] = [];
+      try {
+        for (const subgoal of goals) {
+          const subresults = second(subgoal);
+          if (isDecidedSat(subresults)) return subresults;
+          (isDecidedUnsat(subresults) ? unsatGoals : results).push(...subresults);
+        }
+      } catch (error) {
+        for (const subgoal of goals) if (!results.includes(subgoal)) subgoal.release();
+        for (const result of results) result.release();
+        throw error;
+      }
+      return results.length > 0 ? results : assertUnsat(goal, unsatGoals);
+    },
+    [first, second],
+  );
+
+// nary_tactical cleans every child, tried or not.
+const runOrElse = (tactics: Tactic[]) =>
+  withCleanup(
+    (goal) => {
+      const original = goal.copy();
+      try {
+        for (const tactic of tactics.slice(0, -1)) {
+          try {
+            return tactic(goal);
+          } catch (error) {
+            if (!(error instanceof SmtTacticError || error instanceof SmtCanceledError))
+              throw error;
+          }
+          goal.resetAll();
+          goal.copyFrom(original);
+        }
+        return tactics[tactics.length - 1](goal);
+      } finally {
+        original.release();
+      }
+    },
+    hasCleanup(tactics)
+      ? () => {
+          for (const tactic of tactics) tactic.cleanup?.();
+        }
+      : undefined,
+  );
 
 const isEqualGoal = (first: Goal, second: Goal) => {
   if (first.forms.size !== second.forms.size) return false;
@@ -1549,63 +2002,95 @@ const runRepeat = (tactic: Tactic, maxDepth: number) => {
   const run = (depth: number, goal: Goal): Goal[] => {
     if (depth > maxDepth) return [goal];
     const original = goal.copy();
-    const goals = tactic(goal);
-    if (goals.length === 1 && isEqualGoal(original, goals[0])) return goals;
+    const step = (() => {
+      try {
+        const results = tactic(goal);
+        return { results, isEqual: results.length === 1 && isEqualGoal(original, results[0]) };
+      } finally {
+        original.release();
+      }
+    })();
+    const goals = step.results;
+    if (step.isEqual) return goals;
     if (goals.length === 1) return goals[0].isDecided() ? goals : run(depth + 1, goals[0]);
     const results: Goal[] = [];
+    const unsatGoals: Goal[] = [];
     for (const subgoal of goals) {
       const subresults = run(depth + 1, subgoal);
       if (isDecidedSat(subresults)) return subresults;
-      if (!isDecidedUnsat(subresults)) results.push(...subresults);
+      (isDecidedUnsat(subresults) ? unsatGoals : results).push(...subresults);
     }
-    if (results.length > 0) return results;
-    goal.resetAll();
-    goal.assert(goal.manager.falseExpr);
-    return [goal];
+    return results.length > 0 ? results : assertUnsat(goal, unsatGoals);
   };
   return (goal: Goal) => run(0, goal);
 };
 
-const runCond = (probe: Probe, onTrue: Tactic, onFalse: Tactic) => (goal: Goal) =>
-  probe(goal) === 0 ? onFalse(goal) : onTrue(goal);
+const runCond = (probe: Probe, onTrue: Tactic, onFalse: Tactic) =>
+  withGuardedCleanup(
+    (goal) => (probe(goal) === 0 ? onFalse(goal) : onTrue(goal)),
+    [onTrue, onFalse],
+  );
 
-const checkHasArgument = (list: SmtList, combinator: string, end: SmtToken) => {
+const checkHasArgument = (list: SmtList, combinator: string) => {
   if (list.items.length < 2)
     throw new SmtParseError(
       `invalid ${combinator} combinator, at least one argument expected`,
-      end,
+      list.end,
     );
+};
+
+const buildFirstToLast = (
+  environment: TacticEnvironment,
+  children: TacticBuilder[],
+  params: TacticParams,
+) => {
+  const destructors = environment.destructors;
+  const built = children.map((child) => {
+    const start = destructors.length;
+    const tactic = child.build(params);
+    return { tactic, destructors: destructors.splice(start) };
+  });
+  destructors.push(() => {
+    for (const child of built) destroyTactics(child.destructors);
+  });
+  return built.map((child) => child.tactic);
 };
 
 const compile = (
   environment: TacticEnvironment,
   sexpr: SExpr,
-  end: SmtToken,
   isInternal: boolean,
+  state: CompileState = { frames: [], unportedError: undefined },
 ): TacticBuilder => {
+  const frames = state.frames;
   if (sexpr.kind !== "list") {
-    if (!isSymbol(sexpr)) throw new SmtParseError("invalid tactic, unexpected input", end);
-    const named = NAMED_TACTICS.get(sexpr.text);
-    if (named !== undefined)
+    if (!isSymbol(sexpr)) throw new SmtParseError("invalid tactic, unexpected input", sexpr);
+    // mk_smt_tactic makes the sat tactic under sat.euf, with its parameters.
+    const named = NAMED_TACTICS.get(
+      sexpr.text === "smt" && environment.parameters.get("sat.euf") === "true" ? "sat" : sexpr.text,
+    );
+    if (named !== undefined) {
       return {
         descrs: named.descrs,
         isRejectingUnknown: named.isRejectingUnknown ?? true,
         isTrackingDependencies: named.isTrackingDependencies ?? false,
         build: (params) => {
-          const tactic = named.build(environment, params);
+          const built = named.build(environment, params);
+          const tactic = named.isCatchingRewriterCancel ? catchRewriterCancel(built) : built;
           if (!isInternal) return tactic;
-          return (goal) => {
+          return withCleanup((goal) => {
             checkParams(named.descrs, params);
             return tactic(goal);
-          };
+          }, tactic.cleanup);
         },
       };
+    }
     const strategy = LOGIC_TACTICS.get(sexpr.text);
     if (strategy !== undefined)
-      return compile(environment, createCommandReader(strategy).read() as SmtList, end, true);
+      return compile(environment, createCommandReader(strategy).read() as SmtList, true, state);
     if (UNPORTED_TACTICS.has(sexpr.text)) {
       const error = new SmtUnsupportedError(`the tactic ${sexpr.text}`);
-      if (!isInternal) throw error;
+      if (!isInternal) state.unportedError ??= error;
       return {
         descrs: new Map(),
         isRejectingUnknown: false,
@@ -1615,14 +2100,21 @@ const compile = (
         },
       };
     }
-    throw new SmtParseError(`invalid tactic, unknown tactic ${sexpr.text}`, end);
+    throw new SmtParseError(`invalid tactic, unknown tactic ${sexpr.text}`, sexpr);
   }
   const head = sexpr.items[0];
-  if (head === undefined) throw new SmtParseError("invalid tactic, arguments expected", end);
-  if (!isSymbol(head)) throw new SmtParseError("invalid tactic, symbol expected", end);
+  if (head === undefined) throw new SmtParseError("invalid tactic, arguments expected", sexpr.end);
+  if (!isSymbol(head)) throw new SmtParseError("invalid tactic, symbol expected", sexpr.end);
   const compileChildren = (combinator: string) => {
-    checkHasArgument(sexpr, combinator, end);
-    return sexpr.items.slice(1).map((child) => compile(environment, child, end, isInternal));
+    checkHasArgument(sexpr, combinator);
+    return compileFrame(sexpr.items.slice(1));
+  };
+  const compileFrame = (children: SExpr[]) => {
+    const frame: TacticBuilder[] = [];
+    frames.push(frame);
+    for (const child of children) frame.push(compile(environment, child, isInternal, state));
+    frames.pop();
+    return frame;
   };
   switch (head.text) {
     case "then":
@@ -1641,7 +2133,7 @@ const compile = (
       if (children.length === 1) return children[0];
       return {
         ...mergeDescrs(children),
-        build: (params) => runOrElse(children.map((child) => child.build(params))),
+        build: (params) => runOrElse(buildFirstToLast(environment, children, params)),
       };
     }
     // Z3 runs these children in threads, and running them in order is one schedule it may pick.
@@ -1651,7 +2143,7 @@ const compile = (
       if (children.length === 1) return children[0];
       return {
         ...mergeDescrs(children),
-        build: (params) => runOrElse(children.map((child) => child.build(params))),
+        build: (params) => runOrElse(buildFirstToLast(environment, children, params)),
       };
     }
     case "par-then": {
@@ -1672,27 +2164,43 @@ const compile = (
     // The timeout is not ported, so the child runs to the end.
     case "try-for": {
       if (sexpr.items.length !== 3)
-        throw new SmtParseError("invalid try-for combinator, two arguments expected", end);
-      if (!isUnsigned(sexpr.items[2]))
+        throw new SmtParseError("invalid try-for combinator, two arguments expected", sexpr.end);
+      if (!isUnsignedNumeral(sexpr.items[2]))
         throw new SmtParseError(
           "invalid try-for combinator, second argument must be an unsigned integer",
-          end,
+          sexpr.end,
         );
-      return compile(environment, sexpr.items[1], end, isInternal);
+      const child = compile(environment, sexpr.items[1], isInternal, state);
+      return {
+        ...child,
+        build: (params) => {
+          const tactic = child.build(params);
+          return (goal) => {
+            try {
+              return tactic(goal);
+            } catch (error) {
+              if (error instanceof SmtDefaultError) throw new SmtTacticError(error.message);
+              if (error instanceof SmtCanceledError)
+                throw new SmtTacticError(goal.manager.limit.getCancelMessage());
+              throw error;
+            }
+          };
+        },
+      };
     }
     case "fail-if-branching": {
       if (sexpr.items.length !== 3 && sexpr.items.length !== 2)
         throw new SmtParseError(
           "invalid fail-if-branching combinator, one or two arguments expected",
-          end,
+          sexpr.end,
         );
       const bound = sexpr.items[2];
-      if (bound !== undefined && !isUnsigned(bound))
+      if (bound !== undefined && !isUnsignedNumeral(bound))
         throw new SmtParseError(
           "invalid fail-if-branching combinator, second argument must be an unsigned integer",
-          end,
+          sexpr.end,
         );
-      const child = compile(environment, sexpr.items[1], end, isInternal);
+      const child = compile(environment, sexpr.items[1], isInternal, state);
       const threshold = bound === undefined ? 1 : Number(bound.text);
       return {
         ...mergeDescrs([child]),
@@ -1710,11 +2218,17 @@ const compile = (
     case "if-no-unsat-cores":
     case "if-no-models": {
       if (sexpr.items.length !== 2)
-        throw new SmtParseError(`invalid ${head.text} combinator, one argument expected`, end);
-      const child = compile(environment, sexpr.items[1], end, isInternal);
+        throw new SmtParseError(
+          `invalid ${head.text} combinator, one argument expected`,
+          sexpr.end,
+        );
+      const child = compile(environment, sexpr.items[1], isInternal, state);
       const isSkipping = (goal: Goal) =>
-        head.text === "if-no-models" ||
-        (head.text === "if-no-proofs" ? goal.isProofsEnabled : goal.isCoresEnabled);
+        head.text === "if-no-models"
+          ? goal.isModelsEnabled
+          : head.text === "if-no-proofs"
+            ? goal.isProofsEnabled
+            : goal.isCoresEnabled;
       return {
         ...mergeDescrs([child]),
         build: (params) => {
@@ -1725,14 +2239,17 @@ const compile = (
     }
     case "repeat": {
       if (sexpr.items.length !== 3 && sexpr.items.length !== 2)
-        throw new SmtParseError("invalid repeat combinator, one or two arguments expected", end);
+        throw new SmtParseError(
+          "invalid repeat combinator, one or two arguments expected",
+          sexpr.end,
+        );
       const bound = sexpr.items[2];
-      if (bound !== undefined && !isUnsigned(bound))
+      if (bound !== undefined && !isUnsignedNumeral(bound))
         throw new SmtParseError(
           "invalid repeat combinator, second argument must be an unsigned integer",
-          end,
+          sexpr.end,
         );
-      const child = compile(environment, sexpr.items[1], end, isInternal);
+      const child = compile(environment, sexpr.items[1], isInternal, state);
       const maxDepth = bound === undefined ? UINT_MAX : Number(bound.text);
       return {
         ...mergeDescrs([child]),
@@ -1742,33 +2259,82 @@ const compile = (
     case "!":
     case "using-params":
     case "with": {
-      checkHasArgument(sexpr, "using-params", end);
-      const child = compile(environment, sexpr.items[1], end, isInternal);
+      checkHasArgument(sexpr, "using-params");
+      const child = compile(environment, sexpr.items[1], isInternal, state);
       if (sexpr.items.length === 2) return child;
-      const own = getParams(child, sexpr.items, end, isInternal);
+      frames.push([child]);
+      const own = getParams(child, sexpr.items, isInternal);
+      frames.pop();
       return {
         ...mergeDescrs([child]),
-        build: (params) => child.build(new Map([...params, ...own])),
+        build: (params) => {
+          const start = environment.inits.length;
+          const tactic = child.build(new Map([...params, ...own]));
+          for (const init of environment.inits.slice(start)) init();
+          return withGuardedCleanup(tactic, [tactic]);
+        },
       };
     }
     case "skip-if-failed": {
       if (sexpr.items.length !== 2)
-        throw new SmtParseError("invalid skip-if-failed combinator, one argument expected", end);
-      const child = compile(environment, sexpr.items[1], end, isInternal);
+        throw new SmtParseError(
+          "invalid skip-if-failed combinator, one argument expected",
+          sexpr.end,
+        );
+      const child = compile(environment, sexpr.items[1], isInternal, state);
       return {
         ...mergeDescrs([child]),
         build: (params) => runOrElse([child.build(params), (goal) => [goal]]),
+      };
+    }
+    // annotate_tactical never passes cleanup on to its child.
+    case "annotate": {
+      if (!isInternal)
+        throw new SmtParseError(`invalid tactic, unknown tactic combinator annotate`, sexpr.end);
+      const child = compile(environment, sexpr.items[1], isInternal, state);
+      return {
+        ...mergeDescrs([child]),
+        build: (params) => {
+          const tactic = child.build(params);
+          return (goal) => tactic(goal);
+        },
+      };
+    }
+    case "lazy": {
+      if (!isInternal)
+        throw new SmtParseError(`invalid tactic, unknown tactic combinator lazy`, sexpr.end);
+      return {
+        descrs: new Map(),
+        isRejectingUnknown: true,
+        isTrackingDependencies: false,
+        build: (params) => {
+          let tactic: Tactic | undefined;
+          let destructors: (() => void)[] = [];
+          environment.destructors.push(() => destroyTactics(destructors));
+          return withCleanup(
+            (goal) => {
+              if (tactic === undefined) {
+                const start = environment.destructors.length;
+                tactic = compile(environment, sexpr.items[1], isInternal).build(params);
+                destructors = environment.destructors.splice(start);
+              }
+              return tactic(goal);
+            },
+            () => tactic?.cleanup?.(),
+          );
+        },
       };
     }
     case "if":
     case "ite":
     case "cond": {
       if (sexpr.items.length !== 4)
-        throw new SmtParseError("invalid if/conditional combinator, three arguments expected", end);
-      const probe = compileProbe(sexpr.items[1], end, isInternal);
-      const children = sexpr.items
-        .slice(2)
-        .map((child) => compile(environment, child, end, isInternal));
+        throw new SmtParseError(
+          "invalid if/conditional combinator, three arguments expected",
+          sexpr.end,
+        );
+      const probe = compileProbe(sexpr.items[1], isInternal);
+      const children = compileFrame(sexpr.items.slice(2));
       return {
         ...mergeDescrs(children),
         build: (params) => runCond(probe, children[0].build(params), children[1].build(params)),
@@ -1776,9 +2342,9 @@ const compile = (
     }
     case "when": {
       if (sexpr.items.length !== 3)
-        throw new SmtParseError("invalid when combinator, two arguments expected", end);
-      const probe = compileProbe(sexpr.items[1], end, isInternal);
-      const child = compile(environment, sexpr.items[2], end, isInternal);
+        throw new SmtParseError("invalid when combinator, two arguments expected", sexpr.end);
+      const probe = compileProbe(sexpr.items[1], isInternal);
+      const child = compile(environment, sexpr.items[2], isInternal, state);
       return {
         ...mergeDescrs([child]),
         build: (params) => runCond(probe, child.build(params), (goal) => [goal]),
@@ -1786,8 +2352,8 @@ const compile = (
     }
     case "fail-if": {
       if (sexpr.items.length !== 2)
-        throw new SmtParseError("invalid fail-if tactic, one argument expected", end);
-      const probe = compileProbe(sexpr.items[1], end, isInternal);
+        throw new SmtParseError("invalid fail-if tactic, one argument expected", sexpr.end);
+      const probe = compileProbe(sexpr.items[1], isInternal);
       return {
         descrs: new Map(),
         isRejectingUnknown: true,
@@ -1800,7 +2366,7 @@ const compile = (
     }
     case "echo": {
       if (sexpr.items.length < 2)
-        throw new SmtParseError("invalid echo tactic, must have at least one argument", end);
+        throw new SmtParseError("invalid echo tactic, must have at least one argument", sexpr.end);
       const pieces = sexpr.items.slice(1).map((piece, index, all): Tactic => {
         const newline = index === all.length - 1 ? "\n" : "";
         if (piece.kind === "string")
@@ -1808,9 +2374,9 @@ const compile = (
             environment.write(piece.text + newline, false);
             return [goal];
           };
-        const probe = compileProbe(piece, end, isInternal);
+        const probe = compileProbe(piece, isInternal);
         return (goal) => {
-          environment.write(formatProbeValue(probe(goal)) + newline, true);
+          environment.write(formatDouble(probe(goal)) + newline, true);
           return [goal];
         };
       });
@@ -1822,22 +2388,26 @@ const compile = (
       };
     }
     default:
-      throw new SmtParseError(`invalid tactic, unknown tactic combinator ${head.text}`, end);
+      throw new SmtParseError(`invalid tactic, unknown tactic combinator ${head.text}`, sexpr.end);
   }
 };
 
 // inc_sat_solver's init_preprocess, with sat.euf.
-export const mkIncSatEufPreprocess = (manager: AstManager) =>
+export const mkIncSatEufPreprocess = (manager: AstManager, propagator: PropagateValuesTactic) =>
   runAndThen(
     inPlace((goal) => simplifyGoal(manager, goal, getRewriterOptions(manager, new Map()))),
-    inPlace((goal) => propagateValues(manager, goal)),
+    inPlace((goal) => propagator.run(goal)),
   );
 
 // inc_sat_solver's init_preprocess, without sat.euf.
-export const mkIncSatPreprocess = (manager: AstManager, bitBlaster: BitBlasterRewriter) =>
+export const mkIncSatPreprocess = (
+  manager: AstManager,
+  bitBlaster: BitBlasterRewriter,
+  propagator: PropagateValuesTactic,
+) =>
   [
     inPlace((goal) => simplifyGoal(manager, goal, getRewriterOptions(manager, new Map()))),
-    inPlace((goal) => propagateValues(manager, goal)),
+    inPlace((goal) => propagator.run(goal)),
     inPlace((goal) => card2bv(manager, goal, getRewriterOptions(manager, new Map()))),
     inPlace((goal) =>
       simplifyGoal(
@@ -1870,29 +2440,47 @@ export const mkIncSatPreprocess = (manager: AstManager, bitBlaster: BitBlasterRe
     ),
   ].reduceRight((second, first) => runAndThen(first, second));
 
-export const compileTactic = (environment: TacticEnvironment, sexpr: SExpr, end: SmtToken) =>
-  compile(environment, sexpr, end, false);
-
-export const compileInternalTactic = (environment: TacticEnvironment, text: string) => {
-  const list = createCommandReader(`(${text})`).read() as SmtList;
-  return compile(environment, list.items[0], list.end, true).build(new Map());
+// Z3 makes each tactic as it reads it, so a parse error frees those read so far, innermost first.
+export const compileTactic = (environment: TacticEnvironment, sexpr: SExpr) => {
+  const state: CompileState = { frames: [], unportedError: undefined };
+  const builder = (() => {
+    try {
+      return compile(environment, sexpr, false, state);
+    } catch (error) {
+      const destructors = environment.destructors;
+      const built = state.frames.map((frame) =>
+        frame.map((child) => {
+          const start = destructors.length;
+          child.build(new Map());
+          return destructors.splice(start);
+        }),
+      );
+      for (const frame of built.reverse()) for (const tactic of frame) destroyTactics(tactic);
+      throw error;
+    }
+  })();
+  if (state.unportedError !== undefined) throw state.unportedError;
+  return builder;
 };
+
+export const compileInternalTactic = (environment: TacticEnvironment, text: string) =>
+  compile(environment, createCommandReader(text).readSExpr(), true).build(new Map());
 
 interface TacticCheck {
   status: number;
   model: ProtoModel | undefined;
   core: Dependency | undefined;
-  // What check_sat leaves in reason_unknown, or undefined where the port does not track it.
   reasonUnknown: string | undefined;
+  isConversionCanceled: boolean;
 }
 
 // The port's declarations of division by zero leave out their domain; Z3's have two arguments.
 const DIVISION_BY_ZERO_DECLS = new Set([OP_DIV0, OP_IDIV0, OP_MOD0, OP_POWER0]);
 
 // A constant of an uninterpreted sort the model lacks puts its value in that sort's universe.
-const applyDefinitions = (definitions: Definition[], model: ProtoModel) => {
+export const applyDefinitions = (definitions: readonly Definition[], model: ProtoModel) => {
   const manager = model.manager;
-  const universe: number[] = [];
+  const universes = new ObjMap<number[]>((sort) => manager.getSortHash(sort));
   let evaluator = new ModelEvaluator(manager, model);
   evaluator.setModelCompletion(true);
   for (let index = definitions.length - 1; index >= 0; index--) {
@@ -1924,12 +2512,11 @@ const applyDefinitions = (definitions: Definition[], model: ProtoModel) => {
     const old = model.constInterps.get(definition.decl);
     if (old !== value) model.registerConst(definition.decl, value);
     const sort = manager.sorts[value];
-    if (
-      manager.isUninterpretedSort(sort) &&
-      !model.getUninterpretedSorts().includes(sort) &&
-      !universe.includes(value)
-    )
-      universe.push(value);
+    if (manager.isUninterpretedSort(sort) && !model.getUninterpretedSorts().includes(sort)) {
+      const values = universes.get(sort) ?? [];
+      if (!values.includes(value)) values.push(value);
+      universes.set(sort, values);
+    }
     manager.decRef(value);
     if (old !== undefined && old !== value) {
       evaluator.release();
@@ -1938,51 +2525,123 @@ const applyDefinitions = (definitions: Definition[], model: ProtoModel) => {
     }
   }
   evaluator.release();
-  for (const value of universe) model.registerValue(value);
+  for (const entry of universes) {
+    for (const value of entry[1]) model.registerValue(value);
+    model.registerUsort(entry[0], entry[1]);
+  }
+  return model;
+};
+
+const applyConverter = (entry: Goal["converters"][number], model: ProtoModel) => {
+  if ("convert" in entry) {
+    const converted = entry.convert(model);
+    // The model_ref that the converter assigns frees the model it replaced.
+    if (converted !== model) {
+      model.incRef();
+      model.decRef();
+    }
+    return converted;
+  }
+  if ("definitions" in entry) return applyDefinitions(entry.definitions, model);
+  model.unregisterDecl(entry.decl);
   return model;
 };
 
 export const convertModel = (goal: Goal, model: ProtoModel) =>
-  goal.converters.reduceRight((converted, entry) => {
-    if ("convert" in entry) return entry.convert(converted);
-    if ("definitions" in entry) return applyDefinitions(entry.definitions, converted);
-    converted.unregisterDecl(entry.decl);
-    return converted;
-  }, model);
+  goal.converters.reduceRight((converted, entry) => applyConverter(entry, converted), model);
 
-export const checkSatUsing = (tactic: Tactic, goal: Goal): TacticCheck => {
-  const undecided = { status: L_UNDEF, model: undefined, core: undefined };
+const getConvertedModel = (goal: Goal) => {
+  let model = goal.model?.copy() ?? new ProtoModel(goal.manager).mkModel();
+  for (let index = goal.converters.length - 1; index >= 0; index--) {
+    try {
+      model = applyConverter(goal.converters[index], model);
+    } catch (error) {
+      if (!(error instanceof SmtCanceledError)) throw error;
+      return { model, isCanceled: true };
+    }
+  }
+  return { model, isCanceled: false };
+};
+
+const getTacticCheck = (goal: Goal, goals: Goal[] | string | undefined): TacticCheck => {
+  const undecided = {
+    status: L_UNDEF,
+    model: undefined,
+    core: undefined,
+    isConversionCanceled: false,
+  };
+  if (goals === undefined) return { ...undecided, reasonUnknown: undefined };
+  if (typeof goals === "string") return { ...undecided, reasonUnknown: goals };
+  if (isDecidedUnsat(goals))
+    return { ...undecided, status: L_FALSE, core: goals[0].getDependency(0), reasonUnknown: "" };
+  const isSat = isDecidedSat(goals);
+  const converted =
+    isSat ||
+    (goal.isModelsEnabled &&
+      goals.length > 0 &&
+      (goals[0].model !== undefined || goals[0].converters.length > 0))
+      ? getConvertedModel(goals[0])
+      : undefined;
+  const model = converted?.model;
+  if (converted?.isCanceled === true)
+    return { ...undecided, model, reasonUnknown: undefined, isConversionCanceled: true };
+  if (isSat)
+    return goal.manager.limit.inc()
+      ? { ...undecided, status: L_TRUE, model, reasonUnknown: "" }
+      : { ...undecided, model, reasonUnknown: "canceled" };
+  return {
+    ...undecided,
+    model,
+    reasonUnknown:
+      goals.length === 1 && goals[0].reasonUnknown !== "" ? goals[0].reasonUnknown : "unknown",
+  };
+};
+
+const exec = (tactic: Tactic, goal: Goal) => {
+  try {
+    const goals = tactic(goal);
+    tactic.cleanup?.();
+    return goals;
+  } catch (error) {
+    if (
+      error instanceof SmtTacticError ||
+      (error instanceof SmtCanceledError && !(error instanceof SmtRewriterCanceledError))
+    )
+      tactic.cleanup?.();
+    throw error;
+  }
+};
+
+export const checkSatUsing = (tactic: Tactic, goal: Goal) => {
   const goals = (() => {
     try {
-      return tactic(goal);
+      return exec(tactic, goal);
     } catch (error) {
-      if (error instanceof SmtTacticError) return error.message;
+      if (error instanceof SmtTacticError || error instanceof SmtDefaultError) return error.message;
       if (error instanceof SmtCanceledError) return undefined;
       throw error;
     }
   })();
-  if (typeof goals === "string") return { ...undecided, reasonUnknown: goals };
-  if (goals !== undefined && isDecidedSat(goals)) {
-    const model = convertModel(goals[0], goals[0].model ?? new ProtoModel(goal.manager));
-    return goal.manager.limit.inc()
-      ? { status: L_TRUE, model, core: undefined, reasonUnknown: "" }
-      : { ...undecided, model, reasonUnknown: "canceled" };
+  try {
+    return getTacticCheck(goal, goals);
+  } finally {
+    if (Array.isArray(goals))
+      for (const result of goals)
+        if (result !== goal) {
+          result.release();
+        }
   }
-  if (goals !== undefined && isDecidedUnsat(goals))
-    return {
-      status: L_FALSE,
-      model: undefined,
-      core: goals[0].getDependency(0),
-      reasonUnknown: "",
-    };
-  return { ...undecided, reasonUnknown: undefined };
 };
 
 export const applyTactic = (tactic: Tactic, goal: Goal) => {
   try {
-    return tactic(goal);
+    return exec(tactic, goal);
   } catch (error) {
-    if (error instanceof SmtCanceledError) throw new SmtTacticError("canceled");
+    // apply_tactic_cmd only catches tactic_exception, so a rewriter_exception fails the command.
+    if (error instanceof SmtRewriterCanceledError)
+      throw new SmtDefaultError(goal.manager.limit.getCancelMessage());
+    if (error instanceof SmtCanceledError)
+      throw new SmtTacticError(goal.manager.limit.getCancelMessage());
     throw error;
   }
 };

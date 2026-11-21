@@ -1,8 +1,6 @@
 import ts from "@typescript/typescript6";
 import { TlaTypeScriptError } from "../errors";
 
-export const isJsxFile = (fileName: string) => fileName.endsWith(ts.Extension.Tsx);
-
 const isJsxRoot = (node: ts.Node) =>
   ts.isJsxElement(node) || ts.isJsxSelfClosingElement(node) || ts.isJsxFragment(node);
 

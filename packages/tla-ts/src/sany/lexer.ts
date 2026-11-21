@@ -234,56 +234,87 @@ export const getKind = (name: string) => {
 const LITERALS = new Map(
   KINDS.flatMap((entry, kind) => entry.slice(1).map((image): [string, number] => [image, kind])),
 );
-const LONGEST_LITERAL = Math.max(...[...LITERALS.keys()].map((image) => image.length));
-const LITERAL_LENGTHS = Array.from(
-  { length: LONGEST_LITERAL },
-  (_value, index) => LONGEST_LITERAL - index,
+const LITERAL_LENGTHS = new Map(
+  [...Map.groupBy(LITERALS.keys(), (image) => image[0])].map((entry): [string, number[]] => [
+    entry[0],
+    [...new Set(entry[1].map((image) => image.length))].sort((left, right) => right - left),
+  ]),
 );
 
-const BEGIN_MODULE = /----+ *MODULE/y;
-const IDENTIFIER_PATTERNS = [
-  /_\w*[A-Za-z]\w*/y,
-  /[0-9]\w*[A-Za-z]\w*/y,
-  /[WS](?:[a-zA-EG-Z_0-9]\w*)?/y,
-  /[WS]F(?:[A-Za-z0-9]\w*)?/y,
-  /[a-zA-RT-VX-Z]\w*/y,
-  /@|ℕ|ℤ|ℝ/y,
-];
-const getJunctionPatterns = (junction: string) =>
-  [/[0-9][A-Za-z0-9]*/, /[WS][a-zA-EG-Z0-9][A-Za-z0-9]*/, /[a-zA-RT-VX-Z][A-Za-z0-9]*/].map(
-    (prefix) => new RegExp(`${prefix.source}${junction}`, "y"),
+interface TokenPattern {
+  firsts: string;
+  kind: number;
+  regex: RegExp;
+}
+
+type PatternSource = [kind: string, firsts: string, rest: string];
+
+const createPatterns = (patterns: PatternSource[]) => {
+  const tokenPatterns = patterns.map((pattern): TokenPattern => ({
+    firsts: pattern[1],
+    kind: getKind(pattern[0]),
+    regex: new RegExp(`[${pattern[1].replace(/[\\\]^-]/g, "\\$&")}]${pattern[2]}`, "y"),
+  }));
+  return new Map(
+    [...new Set(patterns.flatMap((pattern) => [...pattern[1]]))].map(
+      (first): [string, TokenPattern[]] => [
+        first,
+        tokenPatterns.filter((pattern) => pattern.firsts.includes(first)),
+      ],
+    ),
   );
-const BAND_PATTERNS = getJunctionPatterns(String.raw`\.\/\\`);
-const BOR_PATTERNS = getJunctionPatterns(String.raw`\.\\\/`);
-const STEP = String.raw`<(?:[0-9]+|\+|\*)>`;
+};
 
-const SPEC_PATTERNS: [string, RegExp[]][] = [
-  ["_BM0", [BEGIN_MODULE]],
-  ["SEPARATOR", [/----+/y]],
-  ["END_MODULE", [/====+/y]],
-  ["NUMBER_LITERAL", [/[0-9]+|\\[oO][0-7]+|\\[bB][01]+|\\[hH][0-9a-fA-F]+/y]],
-  ["STRING_LITERAL", [/"(?:[^"\n\r\\]|\\[ntrf\\"])*"/y]],
-  ["BAND", BAND_PATTERNS],
-  ["BOR", BOR_PATTERNS],
-  ["IDENTIFIER", IDENTIFIER_PATTERNS],
-  ["ProofStepLexeme", [/<[0-9]+>\w+/y]],
-  ["ProofImplicitStepLexeme", [/<[+*]>[A-Za-z0-9]+/y]],
-  ["ProofStepDotLexeme", [new RegExp(String.raw`${STEP}\w+\.+`, "y")]],
-  ["BareLevelLexeme", [new RegExp(STEP, "y")]],
-  ["UnnumberedStepLexeme", [new RegExp(String.raw`${STEP}(?:\*\.*|-\.*|\.+)`, "y")]],
+const DIGITS = "0123456789";
+const UPPERCASE = "ABCDEFGHIJKLMNOPQRSTUVWXYZ";
+const LETTERS_BUT_SW = `${UPPERCASE}${UPPERCASE.toLowerCase()}`.replace(/[SW]/g, "");
+const BEGIN_MODULE = "---+ *MODULE";
+const IDENTIFIER_PATTERNS: PatternSource[] = [
+  ["IDENTIFIER", "_", String.raw`\w*[A-Za-z]\w*`],
+  ["IDENTIFIER", DIGITS, String.raw`\w*[A-Za-z]\w*`],
+  ["IDENTIFIER", "WS", String.raw`(?:[a-zA-EG-Z_0-9]\w*)?`],
+  ["IDENTIFIER", "WS", String.raw`F(?:[A-Za-z0-9]\w*)?`],
+  ["IDENTIFIER", LETTERS_BUT_SW, String.raw`\w*`],
+  ["IDENTIFIER", "@ℕℤℝ", ""],
 ];
+const getJunctionPatterns = (kind: string, junction: string): PatternSource[] => [
+  [kind, DIGITS, `[A-Za-z0-9]*${junction}`],
+  [kind, "WS", `[a-zA-EG-Z0-9][A-Za-z0-9]*${junction}`],
+  [kind, LETTERS_BUT_SW, `[A-Za-z0-9]*${junction}`],
+];
+const BAND_PATTERNS = getJunctionPatterns("BAND", String.raw`\.\/\\`);
+const BOR_PATTERNS = getJunctionPatterns("BOR", String.raw`\.\\\/`);
+const STEP = String.raw`(?:[0-9]+|\+|\*)>`;
 
-const DEFAULT_PATTERNS: [string, RegExp[]][] = [
-  ["BEGIN_PRAGMA", [/--->/y]],
-  ["_BM1", [BEGIN_MODULE]],
-];
-const PRAGMA_PATTERNS: [string, RegExp[]][] = [
-  ["NUMBER", [/[0-9]+/y]],
-  ["_BM2", [BEGIN_MODULE]],
-  ["BAND", BAND_PATTERNS],
-  ["BOR", BOR_PATTERNS],
-  ["IDENTIFIER", IDENTIFIER_PATTERNS],
-];
+const SPEC_PATTERNS = createPatterns([
+  ["_BM0", "-", BEGIN_MODULE],
+  ["SEPARATOR", "-", "---+"],
+  ["END_MODULE", "=", "===+"],
+  ["NUMBER_LITERAL", DIGITS, "[0-9]*"],
+  ["NUMBER_LITERAL", "\\", "[oO][0-7]+"],
+  ["NUMBER_LITERAL", "\\", "[bB][01]+"],
+  ["NUMBER_LITERAL", "\\", "[hH][0-9a-fA-F]+"],
+  ["STRING_LITERAL", '"', String.raw`(?:[^"\n\r\\]|\\[ntrf\\"])*"`],
+  ...BAND_PATTERNS,
+  ...BOR_PATTERNS,
+  ...IDENTIFIER_PATTERNS,
+  ["ProofStepLexeme", "<", String.raw`[0-9]+>\w+`],
+  ["ProofImplicitStepLexeme", "<", String.raw`[+*]>[A-Za-z0-9]+`],
+  ["ProofStepDotLexeme", "<", String.raw`${STEP}\w+\.+`],
+  ["BareLevelLexeme", "<", STEP],
+  ["UnnumberedStepLexeme", "<", String.raw`${STEP}(?:\*\.*|-\.*|\.+)`],
+]);
+const DEFAULT_PATTERNS = createPatterns([
+  ["BEGIN_PRAGMA", "-", "-->"],
+  ["_BM1", "-", BEGIN_MODULE],
+]);
+const PRAGMA_PATTERNS = createPatterns([
+  ["NUMBER", DIGITS, "[0-9]*"],
+  ["_BM2", "-", BEGIN_MODULE],
+  ...BAND_PATTERNS,
+  ...BOR_PATTERNS,
+  ...IDENTIFIER_PATTERNS,
+]);
 
 const getMatchLength = (pattern: RegExp, source: string, offset: number) => {
   pattern.lastIndex = offset;
@@ -300,16 +331,16 @@ const getLongerMatch = (best: TokenMatch, match: TokenMatch) =>
     ? match
     : best;
 
-const matchPatterns = (patterns: [string, RegExp[]][], source: string, offset: number) =>
-  patterns
-    .map(([name, regexes]) => ({
-      kind: getKind(name),
-      length: Math.max(...regexes.map((regex) => getMatchLength(regex, source, offset))),
+const matchPatterns = (patterns: Map<string, TokenPattern[]>, source: string, offset: number) =>
+  (patterns.get(source[offset]) ?? [])
+    .map((pattern) => ({
+      kind: pattern.kind,
+      length: getMatchLength(pattern.regex, source, offset),
     }))
     .reduce(getLongerMatch, { kind: -1, length: 0 });
 
 const matchSpecToken = (source: string, offset: number) => {
-  const literalLength = LITERAL_LENGTHS.find((length) =>
+  const literalLength = LITERAL_LENGTHS.get(source[offset])?.find((length) =>
     LITERALS.has(source.slice(offset, offset + length)),
   );
   const pattern = matchPatterns(SPEC_PATTERNS, source, offset);
@@ -355,6 +386,15 @@ const getPositions = (source: string) => {
   return { lines, columns };
 };
 
+// JavaCC places the end of the file at the file's last character.
+export const getEndOfFile = (source: string) => {
+  const positions = getPositions(source);
+  return {
+    line: positions.lines[source.length - 1] ?? 0,
+    column: positions.columns[source.length - 1] ?? 0,
+  };
+};
+
 const STRING_PREFIX = /"(?:[^"\n\r\\]|\\[ntrf\\"])*\\?/y;
 const LITERAL_PREFIXES = new Set(
   [...LITERALS.keys()].flatMap((image) =>
@@ -371,10 +411,16 @@ const getTokenPrefix = (source: string, offset: number) => {
   );
 };
 
-export const createSanyLexer = (source: string) => {
+interface SanyLexicalError {
+  message: string;
+  beginLine: number;
+  endLine: number;
+}
+
+export const createSanyLexer = (source: string, startMode = "DEFAULT") => {
   const positions = getPositions(source);
   let nextOffset = 0;
-  let mode = "DEFAULT";
+  let mode = startMode;
   const createToken = (kind: number, start: number, length: number): SanyToken => ({
     kind,
     image: source.slice(start, start + length),
@@ -382,19 +428,18 @@ export const createSanyLexer = (source: string) => {
     beginColumn: positions.columns[start] ?? 0,
     next: undefined,
   });
-  // JavaCC places the end of the file at the file's last character.
-  const getEndOfFile = () => createToken(getKind("EOF"), source.length - 1, 0);
-  const getLexicalError = (start: number, end: number, after: string) => {
+  const createEndOfFile = () => createToken(getKind("EOF"), source.length - 1, 0);
+  const getLexicalError = (start: number, end: number, after: string): SanyLexicalError => {
     const index = end - 1;
     const line = positions.lines[index];
     const column = positions.columns[index];
-    if (end < source.length) return formatLexicalError(line, column, source[index], after);
-    if (positions.lines[start] !== line) {
-      return `Lexical {error: EOF reached, possibly open comment starting around line ${positions.lines[start]}`;
-    }
-    return source[index] === "\n" || source[index] === "\r"
-      ? formatLexicalError(line + 1, 0, undefined, after)
-      : formatLexicalError(line, column + 1, undefined, after);
+    const message =
+      end < source.length
+        ? formatLexicalError(line, column, source[index], after)
+        : source[index] === "\n" || source[index] === "\r"
+          ? formatLexicalError(line + 1, 0, undefined, after)
+          : formatLexicalError(line, column + 1, undefined, after);
+    return { message, beginLine: positions.lines[start], endLine: line };
   };
   const skipComment = () => {
     const start = nextOffset;
@@ -425,7 +470,7 @@ export const createSanyLexer = (source: string) => {
     nextOffset = offset;
     return chainStart === source.length ? undefined : getLexicalError(chainStart, offset, "");
   };
-  const getSkippingToken = (patterns: [string, RegExp[]][]): SanyToken => {
+  const getSkippingToken = (patterns: Map<string, TokenPattern[]>): SanyToken => {
     while (nextOffset < source.length) {
       const match = matchPatterns(patterns, source, nextOffset);
       if (match.length > 0) {
@@ -437,9 +482,9 @@ export const createSanyLexer = (source: string) => {
       }
       nextOffset++;
     }
-    return getEndOfFile();
+    return createEndOfFile();
   };
-  const getNextToken = (): SanyToken | string => {
+  const getNextToken = (): SanyToken | SanyLexicalError => {
     if (mode === "DEFAULT") return getSkippingToken(DEFAULT_PATTERNS);
     if (mode === "PRAGMA") return getSkippingToken(PRAGMA_PATTERNS);
     while (nextOffset < source.length) {
@@ -462,7 +507,7 @@ export const createSanyLexer = (source: string) => {
         return token;
       }
     }
-    return getEndOfFile();
+    return createEndOfFile();
   };
   return getNextToken;
 };
@@ -487,7 +532,7 @@ export const escapeLexeme = (text: string) =>
       (character === "\0" ? "" : `\\u${character.charCodeAt(0).toString(16).padStart(4, "0")}`),
   );
 
-export const formatLexicalError = (
+const formatLexicalError = (
   line: number,
   column: number,
   character: string | undefined,
@@ -499,7 +544,7 @@ export const getSany174LexicalError = (source: string) => {
   const readToken = createSanyLexer(source);
   for (
     let token = readToken();
-    typeof token !== "string" && token.kind !== getKind("EOF");
+    "kind" in token && token.kind !== getKind("EOF");
     token = readToken()
   ) {
     const index = token.image.split("").findIndex((character) => {

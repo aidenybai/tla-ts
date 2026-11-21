@@ -58,6 +58,41 @@ describe("datalog queries", () => {
     ).toEqual(["sat"]);
   });
 
+  // spacer marks the datalog context BOUNDED when it reaches fp.spacer.max_level, and only
+  // dl_query_cmd prints that status.
+  it.each([
+    ["spacer", []],
+    ["gpdr", ["(set-option :fp.spacer.gpdr true)"]],
+  ])("answers bounded when %s stops at the maximum level", (_name, options) => {
+    expect(
+      run([
+        ...options,
+        "(set-option :fp.spacer.max_level 2)",
+        ...COUNTER_RELATIONS,
+        "(rule (=> (and (reach x) (= x 5)) bad))",
+        "(query bad)",
+        "(query reach)",
+      ]),
+    ).toEqual(["bounded", "sat"]);
+  });
+
+  // dl_context copies the fp parameters when its first declare-rel, declare-var, rule or query
+  // makes the datalog context, so a later bound on the levels doesn't stop spacer.
+  it.each([
+    ["relation", COUNTER_RELATIONS[0]],
+    ["variable", COUNTER_RELATIONS[2]],
+  ])("ignores fp parameters set after the first declared %s", (_name, declaration) => {
+    expect(
+      run([
+        declaration,
+        "(set-option :fp.spacer.max_level 2)",
+        ...COUNTER_RELATIONS.filter((line) => line !== declaration),
+        "(rule (=> (and (reach x) (= x 5)) bad))",
+        "(query bad)",
+      ]),
+    ).toEqual(["sat"]);
+  });
+
   it("answers unsat for an unreachable relation", () => {
     expect(
       run([...COUNTER_RELATIONS, "(rule (=> (and (reach x) (> x 5)) bad))", "(query bad)"]),
@@ -224,6 +259,18 @@ describe("rule errors", () => {
     );
   });
 
+  it("names a rule || with the empty symbol rather than the null one", () => {
+    expect(
+      run([
+        "(declare-fun f (Int) Int)",
+        "(declare-rel p (Int))",
+        "(declare-var x Int)",
+        "(rule (=> (= x (f 1)) (p x)) ||)",
+        "(query p)",
+      ]),
+    ).toEqual(getFailedQuery("Uninterpreted 'f' in :\np(#0) :- \n (= (:var 0) (f 1)).\n"));
+  });
+
   it("visits the patterns of a quantifier", () => {
     expect(
       run([
@@ -268,6 +315,20 @@ describe("rule errors", () => {
         "cannot process EXISTS quantifier in rule r2:\np(#1) :- \n p(#0),\n (= (:var 1) (+ 1 (:var 0))),\n (let ((a!1 (exists ((y Int)) (forall ((z Int)) (> (* y z (:var 2)) (:var 2))))))\n  (= a!1 true)).\n",
       ),
     );
+  });
+
+  it("rejects a quantifier in a query that the datalog engine answers", () => {
+    expect(
+      run([
+        "(set-logic HORN)",
+        "(assert (exists ((x (_ BitVec 4))) (= (bvadd x #x1) #x0)))",
+        "(check-sat)",
+        "(get-info :reason-unknown)",
+      ]),
+    ).toEqual([
+      "unknown",
+      '(:reason-unknown "cannot process quantifier in rule <null>:\nquery!0() :- \n (let ((a!1 (= (exists ((x (_ BitVec 4))) (= (bvadd x #x1) #x0)) true)))\n  (not a!1)).\n")',
+    ]);
   });
 
   it("prints the term a recursive predicate is nested in", () => {

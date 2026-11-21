@@ -27,8 +27,27 @@ ElementRefs(e, r) ==
       ELSE IF e.decorators # <<>> \/ e.extra # Empty THEN ModelStop("a decorated class element")
       ELSE MaybeRef(e.init, r) \o ConcatMap(e.initializers, LAMBDA x : MaybeRef(x, r)))
 ValueRefs(seq, r) == ConcatMap(seq, LAMBDA x : MaybeRef(x, r))
-\* The classes whose slots hold no object or environment, but an ordinary object's initializers.
-PlainClasses == {"ordinary", "array", "error", "boolean", "number", "string", "date", "bigint", "symbol"}
+\* The classes whose slots hold no object or environment, but an ordinary object's initializers. A
+\* RegExp's hold its source, its flags, and its compiled pattern, and an ArrayBuffer's its bytes.
+PlainClasses == {"ordinary", "array", "error", "boolean", "number", "string", "date", "bigint", "symbol", "namespace", "regexp", "arrayBuffer"}
+\* The classes that view an ArrayBuffer, which their slots' buffer holds.
+ViewClasses == {"typedArray", "dataView"}
+\* The built-in functions whose data is a value: the cell of a promise's resolving functions or
+\* capability, and the host's: process.getBuiltinModule's proxy of async_hooks, console.createTask's
+\* function that runs a task, the getter of a global's value, and the traps of the proxies that
+\* stand for process.hrtime, an AsyncResource, and a TextEncoder, of the value each one reads.
+ObjectDataBuiltins ==
+  {<<"Promise", "resolveFunction">>, <<"Promise", "rejectFunction">>, <<"Promise", "capabilityExecutor">>,
+   <<"Module", "getBuiltinModule">>, <<"Module", "createTask">>, <<"Module", "hostGlobal">>,
+   <<"Module", "hrtimeGet">>, <<"Module", "asyncResourceGet">>, <<"Module", "textEncoderGet">>}
+\* The host's AsyncResource constructor, whose data is a record of the functions run and destroy.
+AsyncResourceBuiltin == <<"Module", "asyncResource">>
+BuiltinSlots == {"id", "constructor", "data", "realm", "initialName"}
+\* The built-in functions whose data refers to nothing: the host's that stop, whose data is a name,
+\* and the RegExp constructor, whose data is the strings of its last match, as RegExp.$1 reads.
+NamedBuiltins == {<<"Module", "hostStop">>, <<"Module", "hostQuietConstructor">>, <<"RegExp", "constructor">>}
+\* The slots of a class's default constructor, a built-in that holds the class's elements.
+DefaultConstructorSlots == BuiltinSlots \cup {"ctorKind", "sourceText", "privateMethods", "fields", "initializers"}
 SlotRefs(o, r) ==
   CASE o.class \in PlainClasses ->
          IF "initializers" \in DOMAIN o.slots THEN ValueRefs(o.slots.initializers, r) ELSE <<>>
@@ -41,7 +60,23 @@ SlotRefs(o, r) ==
     [] o.class = "map" ->
          ConcatMap(o.slots.mapData, LAMBDA e : IF e = Empty THEN <<>> ELSE MaybeRef(e.key, r) \o MaybeRef(e.value, r))
     [] o.class = "set" -> ValueRefs(o.slots.setData, r)
+    [] o.class \in ViewClasses -> MaybeRef(o.slots.buffer, r)
+    [] o.class \in {"weakMap", "weakSet", "weakRef"} -> <<>>
+    \* A registry holds no cell, as the runtime stops where a program registers a target.
+    [] o.class = "finalizationRegistry" /\ o.slots.cells = <<>> -> ObjectRef(o.slots.cleanupCallback, r)
     [] o.class = "proxy" -> MaybeRef(o.slots.target, r) \o MaybeRef(o.slots.handler, r)
+    [] o.class = "promise" ->
+         IF o.slots.state = "pending" THEN ModelStop("a pending promise") ELSE MaybeRef(o.slots.result, r)
+    [] o.class = "cell" /\ DOMAIN o.slots = {"promise"} -> MaybeRef(o.slots.promise, r)
+    [] o.class = "cell" /\ DOMAIN o.slots = {"resolve", "reject"} -> MaybeRef(o.slots.resolve, r) \o MaybeRef(o.slots.reject, r)
+    [] o.class = "builtin" /\ DOMAIN o.slots = BuiltinSlots /\ o.slots.id \in ObjectDataBuiltins -> ObjectRef(o.slots.data, r)
+    [] o.class = "builtin" /\ DOMAIN o.slots = BuiltinSlots /\ o.slots.id = AsyncResourceBuiltin ->
+         ObjectRef(o.slots.data.run, r) \o ObjectRef(o.slots.data.destroy, r)
+    [] o.class = "builtin" /\ DOMAIN o.slots = BuiltinSlots /\ (o.slots.data = Empty \/ o.slots.id \in NamedBuiltins) -> <<>>
+    [] o.class = "builtin" /\ DOMAIN o.slots = DefaultConstructorSlots /\ o.slots.id = <<"Class", "default">> ->
+         ConcatMap(o.slots.fields, LAMBDA e : ElementRefs(e, r))
+         \o ConcatMap(o.slots.privateMethods, LAMBDA e : ElementRefs(e, r))
+         \o (IF o.slots.initializers = Empty THEN <<>> ELSE ValueRefs(o.slots.initializers, r))
     [] OTHER -> ModelStop("an object of class " \o o.class)
 ObjectRefs(o, r) ==
   MaybeRef(o.proto, r)
@@ -56,7 +91,16 @@ EnvironmentRefs(env, r) ==
             BindingRefs(env.b, r) \o MaybeRef(env.this, r) \o ObjectRef(env.fn, r) \o MaybeRef(env.newTarget, r)
        [] env.kind = "object" -> ObjectRef(env.obj, r)
        [] env.kind = "global" -> MaybeRef(env.this, r)
+       [] env.kind = "module" -> BindingRefs(env.b, r)
        [] OTHER -> ModelStop("an environment of kind " \o env.kind)
+\* What a module record refers to: its environment, its namespaces, its import.meta, a synthetic
+\* module's value, its module source, the capability of its evaluation, and what it threw.
+ModuleRefs(m, r) ==
+  (IF m.env = 0 THEN <<>> ELSE EnvironmentRef(m.env, r))
+  \o MaybeRef(m.namespace, r) \o MaybeRef(m.deferredNamespace, r) \o MaybeRef(m.meta, r)
+  \o MaybeRef(m.value, r) \o MaybeRef(m.moduleSource, r) \o MaybeRef(m.error, r)
+  \o (IF m.capability = Empty THEN <<>>
+      ELSE ObjectRef(m.capability.promise, r) \o MaybeRef(m.capability.resolve, r) \o MaybeRef(m.capability.reject, r))
 NodeRefs(s, n, r) == IF n > 0 THEN ObjectRefs(HeapGet(s.objs, n), r) ELSE EnvironmentRefs(HeapGet(s.envs, -n), r)
 \* The realm's objects that differ from the realm's start, by id, which a page equal to its start
 \* holds none of.
@@ -83,6 +127,29 @@ CanonicalWalk(s, queue, walk, r) ==
                               objects |-> walk.objects + (IF isObject THEN 1 ELSE 0),
                               environments |-> walk.environments + (IF isObject THEN 0 ELSE 1)],
                              r)
+\* Whether the walk reached an object that a WeakMap or a WeakSet holds as a key, which a step can
+\* still read the entry by. An entry whose key nothing else reaches no code can read once the step
+\* ends, so the canonical form drops it, as the host's collector may.
+IsWeakKeyReached(k, number, r) ==
+  IF k.type # "object" THEN ModelStop("a weak collection keyed by a symbol")
+  ELSE k.id <= r.objects \/ k.id \in DOMAIN number
+WeakKeyNumber(k, number, r) == IF k.id <= r.objects THEN k.id ELSE number[k.id]
+\* The objects that the values of the walked WeakMaps' reached entries refer to, by the walk's order
+\* of the WeakMaps and each one's keys by their new numbers.
+WeakEntryRefs(s, walk, r) ==
+  ConcatMap(SelectSeq(walk.order, LAMBDA n : n > 0), LAMBDA n :
+    LET o == HeapGet(s.objs, n) IN
+    IF o.class # "weakMap" THEN <<>>
+    ELSE LET data == o.slots.weakMapData
+             keys == {k \in DOMAIN data : IsWeakKeyReached(k, walk.number, r)}
+         IN ConcatMap(SortInts({WeakKeyNumber(k, walk.number, r) : k \in keys}), LAMBDA i :
+              MaybeRef(data[CHOOSE k \in keys : WeakKeyNumber(k, walk.number, r) = i], r)))
+\* The walk, then again from the objects that the reached entries of its WeakMaps refer to, until
+\* it reaches no more.
+RECURSIVE CanonicalClosure(_, _, _)
+CanonicalClosure(s, walk, r) ==
+  LET more == SelectSeq(WeakEntryRefs(s, walk, r), LAMBDA n : n \notin DOMAIN walk.number)
+  IN IF more = <<>> THEN walk ELSE CanonicalClosure(s, CanonicalWalk(s, more, walk, r), r)
 RenameValue(v, number, r) == IF v.type = "object" /\ v.id > r.objects THEN Obj(number[v.id]) ELSE v
 RenameMaybe(v, number, r) == IF v = Absent \/ v = Empty THEN v ELSE RenameValue(v, number, r)
 RenameEnvironment(e, number, r) == IF e > r.environments THEN number[-e] ELSE e
@@ -112,7 +179,34 @@ RenameSlots(o, number, r) ==
          [o.slots EXCEPT !.mapData = LET kept == SelectSeq(@, LAMBDA e : e # Empty)
                                      IN [i \in DOMAIN kept |-> [key |-> RenameMaybe(kept[i].key, number, r), value |-> RenameMaybe(kept[i].value, number, r)]]]
     [] o.class = "set" -> [o.slots EXCEPT !.setData = RenameValues(SelectSeq(@, LAMBDA e : e # Empty), number, r)]
+    [] o.class = "weakMap" ->
+         LET data == o.slots.weakMapData
+             keys == {k \in DOMAIN data : IsWeakKeyReached(k, number, r)}
+         IN [o.slots EXCEPT !.weakMapData =
+               [k \in {RenameValue(x, number, r) : x \in keys} |->
+                  RenameMaybe(data[CHOOSE x \in keys : RenameValue(x, number, r) = k], number, r)]]
+    [] o.class \in ViewClasses -> [o.slots EXCEPT !.buffer = RenameMaybe(@, number, r)]
+    [] o.class = "weakRef" ->
+         IF IsWeakKeyReached(o.slots.weakRefTarget, number, r)
+         THEN [o.slots EXCEPT !.weakRefTarget = RenameValue(@, number, r)]
+         ELSE ModelStop("a WeakRef whose target nothing else reaches")
+    [] o.class = "finalizationRegistry" -> [o.slots EXCEPT !.cleanupCallback = RenameValue(@, number, r)]
+    [] o.class = "weakSet" ->
+         [o.slots EXCEPT !.weakSetData =
+            {RenameValue(x, number, r) : x \in {k \in @ : IsWeakKeyReached(k, number, r)}}]
     [] o.class = "proxy" -> [o.slots EXCEPT !.target = RenameMaybe(@, number, r), !.handler = RenameMaybe(@, number, r)]
+    [] o.class = "promise" -> [o.slots EXCEPT !.result = RenameMaybe(@, number, r)]
+    [] o.class = "cell" ->
+         IF DOMAIN o.slots = {"promise"} THEN [o.slots EXCEPT !.promise = RenameMaybe(@, number, r)]
+         ELSE [o.slots EXCEPT !.resolve = RenameMaybe(@, number, r), !.reject = RenameMaybe(@, number, r)]
+    [] o.class = "builtin" /\ o.slots.id = <<"Class", "default">> /\ "fields" \in DOMAIN o.slots ->
+         [o.slots EXCEPT !.fields = RenameElements(@, number, r), !.privateMethods = RenameElements(@, number, r),
+                         !.initializers = IF @ = Empty THEN @ ELSE RenameValues(@, number, r)]
+    [] o.class = "builtin" ->
+         CASE o.slots.id \in ObjectDataBuiltins -> [o.slots EXCEPT !.data = RenameValue(@, number, r)]
+           [] o.slots.id = AsyncResourceBuiltin ->
+                [o.slots EXCEPT !.data.run = RenameValue(@, number, r), !.data.destroy = RenameValue(@, number, r)]
+           [] OTHER -> o.slots
 RenameObject(o, number, r) ==
   [o EXCEPT !.proto = RenameMaybe(@, number, r),
             !.props = [b \in {c \in DOMAIN @ : DOMAIN @[c] # {}} |-> [k \in DOMAIN @[b] |-> RenameDescriptor(@[b][k], number, r)]],
@@ -121,12 +215,20 @@ RenameObject(o, number, r) ==
 RenameBindings(b, number, r) == [name \in DOMAIN b |-> [b[name] EXCEPT !.value = RenameMaybe(@, number, r)]]
 RenameEnvironmentRecord(env, number, r) ==
   LET outer == [env EXCEPT !.outer = RenameEnvironment(@, number, r)] IN
-  CASE env.kind \in {"declarative", "catch"} -> [outer EXCEPT !.b = RenameBindings(@, number, r)]
+  CASE env.kind \in {"declarative", "catch", "module"} -> [outer EXCEPT !.b = RenameBindings(@, number, r)]
     [] env.kind = "function" ->
          [outer EXCEPT !.b = RenameBindings(@, number, r), !.this = RenameMaybe(@, number, r),
                        !.fn = RenameValue(@, number, r), !.newTarget = RenameMaybe(@, number, r)]
     [] env.kind = "object" -> [outer EXCEPT !.obj = RenameValue(@, number, r)]
     [] env.kind = "global" -> [outer EXCEPT !.this = RenameMaybe(@, number, r)]
+RenameModule(m, number, r) ==
+  [m EXCEPT !.env = IF @ = 0 THEN 0 ELSE RenameEnvironment(@, number, r),
+            !.namespace = RenameMaybe(@, number, r), !.deferredNamespace = RenameMaybe(@, number, r),
+            !.meta = RenameMaybe(@, number, r), !.value = RenameMaybe(@, number, r),
+            !.moduleSource = RenameMaybe(@, number, r), !.error = RenameMaybe(@, number, r),
+            !.capability = IF @ = Empty THEN @
+                           ELSE [promise |-> RenameValue(@.promise, number, r), resolve |-> RenameMaybe(@.resolve, number, r),
+                                 reject |-> RenameMaybe(@.reject, number, r)]]
 RECURSIVE RenameObjectsIn(_, _, _, _)
 RenameObjectsIn(h, ids, number, r) ==
   IF ids = <<>> THEN h ELSE RenameObjectsIn(HeapSet(h, Head(ids), RenameObject(HeapGet(h, Head(ids)), number, r)), Tail(ids), number, r)
@@ -136,15 +238,17 @@ RenameEnvironmentsIn(h, ids, number, r) ==
 \* The canonical form of the state s that a step ends in, whose jobs, timers, and calls all ended,
 \* of a realm whose start is the state initial.
 CanonicalStateOf(s, initial) ==
-  IF s.jobs # <<>> \/ s.timers # <<>> \/ s.callers # Null \/ Len(s.realms) > 1 \/ s.waiters # <<>> \/ s.disposables # <<>> \/ s.modules # <<>>
+  IF s.jobs # <<>> \/ s.timers # <<>> \/ s.callers # Null \/ Len(s.realms) > 1 \/ s.waiters # <<>> \/ s.disposables # <<>>
   THEN ModelStop("pending work")
+  ELSE IF s.required # <<>> THEN ModelStop("a module that require loaded")
   ELSE
   LET r == [objects |-> initial.objs.size, environments |-> initial.envs.size]
       changed == ChangedRealmObjects(s, initial)
       roots == ConcatMap([e \in 1..r.environments |-> e], LAMBDA e : EnvironmentRefs(HeapGet(s.envs, e), r))
                \o ConcatMap(changed, LAMBDA i : ObjectRefs(HeapGet(s.objs, i), r))
                \o ConcatMap(SortInts(DOMAIN s.templates), LAMBDA k : ObjectRef(s.templates[k], r))
-      walk == CanonicalWalk(s, roots, [number |-> <<>>, order |-> <<>>, objects |-> 0, environments |-> 0], r)
+               \o ConcatMap(s.modules, LAMBDA m : ModuleRefs(m, r))
+      walk == CanonicalClosure(s, CanonicalWalk(s, roots, [number |-> <<>>, order |-> <<>>, objects |-> 0, environments |-> 0], r), r)
       number == walk.number
       objects == SelectSeq(walk.order, LAMBDA n : n > 0)
       environments == SelectSeq(walk.order, LAMBDA n : n < 0)
@@ -156,6 +260,7 @@ CanonicalStateOf(s, initial) ==
         !.envs = envs,
         !.envsHeld = envs.size,
         !.templates = [k \in DOMAIN @ |-> RenameValue(@[k], number, r)],
+        !.modules = [i \in DOMAIN @ |-> RenameModule(@[i], number, r)],
         !.hoisted = {<<RenameEnvironment(pair[1], number, r), pair[2]>> : pair \in {p \in @ : p[1] <= r.environments \/ -p[1] \in DOMAIN number}},
         !.out = <<>>]
 ====

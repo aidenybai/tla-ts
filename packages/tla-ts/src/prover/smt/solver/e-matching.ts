@@ -1,4 +1,3 @@
-// Ported from Z3 (src/smt/mam.cpp), MIT license, see z3-license.txt.
 import { type AstManager, KIND_VAR } from "./ast";
 import type { Context } from "./context";
 import type { Enode } from "./enode";
@@ -83,10 +82,11 @@ export class Mam implements LabelHasher {
   }
 
   getLabelHash(decl: number) {
-    const cached = this.labelHashes[decl];
+    const smallId = this.manager.funcDecls[decl].smallId;
+    const cached = this.labelHashes[smallId];
     if (cached !== undefined) return cached;
-    const hash = mkMix(17, 3, this.manager.funcDecls[decl].smallId) & 63;
-    setAt(this.labelHashes, decl, hash);
+    const hash = mkMix(17, 3, smallId) & 63;
+    setAt(this.labelHashes, smallId, hash);
     return hash;
   }
 

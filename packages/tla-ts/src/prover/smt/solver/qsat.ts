@@ -1,5 +1,9 @@
-// Ported from Z3 (src/qe/qsat.cpp), MIT license, see z3-license.txt.
-import { SmtInvariantError, SmtTacticError, SmtUnsupportedError } from "../../../errors";
+import {
+  SmtDefaultError,
+  SmtInvariantError,
+  SmtTacticError,
+  SmtUnsupportedError,
+} from "../../../errors";
 import {
   type AstManager,
   FAMILY_BASIC,
@@ -23,6 +27,7 @@ import { QuantifierHoister } from "./quant-hoist";
 import { hasSubterm } from "./recfun-decl-plugin";
 import { RefVector } from "./ref-vector";
 import { SmtKernel } from "./smt-kernel";
+import type { TacticEnvironment } from "./tactic";
 
 export const NO_LEVEL = -1;
 
@@ -315,7 +320,10 @@ class Kernel {
   private lastAssert = -1;
   private trail: RefVector;
 
-  constructor(private manager: AstManager) {
+  constructor(
+    private manager: AstManager,
+    private isCoreMinimizing: boolean,
+  ) {
     this.trail = new RefVector(manager);
   }
 
@@ -325,6 +333,8 @@ class Kernel {
       mbqiMaxIterations: MBQI_MAX_ITERATIONS,
       isFindingMacros: false,
       relevancyLevel: 0,
+      isDelayingNewCaseSplits: false,
+      isCoreMinimizing: this.isCoreMinimizing,
     });
     this.lastAssert = -1;
     this.trail.reset();
@@ -352,7 +362,7 @@ class Kernel {
 
   getCore(core: RefVector) {
     core.reset();
-    for (const expr of this.solver.context.unsatCore) core.push(expr);
+    this.solver.getUnsatCore(core);
   }
 
   reasonUnknown() {
@@ -384,10 +394,11 @@ class Qsat {
   constructor(
     private manager: AstManager,
     private mode: number,
+    isCoreMinimizing: boolean,
   ) {
     this.mbp = new Mbproj(manager);
-    this.fa = new Kernel(manager);
-    this.ex = new Kernel(manager);
+    this.fa = new Kernel(manager, isCoreMinimizing);
+    this.ex = new Kernel(manager, isCoreMinimizing);
     this.predAbs = new PredAbs(manager);
     this.answer = new RefVector(manager);
     this.asms = new RefVector(manager);
@@ -537,7 +548,7 @@ class Qsat {
     for (const innerVar of vars.items) this.predAbs.hidden.push(manager.decls[innerVar]);
     for (const innerVar of vars.items)
       if (manager.isUninterpretedSort(manager.sorts[innerVar]))
-        throw new SmtTacticError("qsat does not apply to uninterpreted sorts");
+        throw new SmtDefaultError("qsat does not apply to uninterpreted sorts");
   }
 
   private initializeLevels() {
@@ -805,8 +816,12 @@ class Qsat {
   }
 }
 
-export const runQsat = (manager: AstManager, mode: number) => (goal: Goal) => {
-  const qsat = new Qsat(manager, mode);
+export const runQsat = (environment: TacticEnvironment, mode: number) => (goal: Goal) => {
+  const qsat = new Qsat(
+    environment.manager,
+    mode,
+    environment.parameters.get("smt.core.minimize") === "true",
+  );
   try {
     return qsat.apply(goal);
   } finally {

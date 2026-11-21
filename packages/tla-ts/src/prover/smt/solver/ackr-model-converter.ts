@@ -1,4 +1,3 @@
-// Ported from Z3 (src/ackermannization/ackr_model_converter.cpp), MIT license, see z3-license.txt.
 import { type AstManager, OP_CONST_ARRAY, OP_SELECT, OP_STORE } from "./ast";
 import type { AckrInfo } from "./ackr-helper";
 import { mkArrayApp } from "./array-decl-plugin";
@@ -73,6 +72,7 @@ const convert = (info: AckrInfo, source: ProtoModel, target: ProtoModel) => {
   for (const entry of source.funcInterps) target.registerFunc(entry[0], entry[1].copy());
   for (const sort of source.getUninterpretedSorts())
     for (const value of source.getKnownUniverse(sort)) target.registerValue(value);
+  target.copyUsortInterps(source);
   const interpretations = new ObjMap<FuncInterp>((decl) => manager.getDeclHash(decl));
   const arrayInterpretations = new ObjMap<number>((expr) => manager.hashes[expr]);
   const converter = { manager, info, evaluator: new ModelEvaluator(manager, source) };

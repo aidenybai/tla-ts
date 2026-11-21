@@ -10,6 +10,7 @@
 \*           units or None, and the path of Disjunction alternatives the group is in
 \*   path    the alternatives the parser is in, as <<start of the Disjunction, alternative>> pairs
 \*   decs    the numbers of the DecimalEscapes, and refs the GroupNames of \k escapes
+\*   singles the code points that are a whole ClassString of a ClassStringDisjunction
 \*   err     whether the parser found a Syntax Error
 \* Each parse operator returns [p, n]: the state after it and the node it parsed. A parsed character
 \* is its CharacterValue (§22.2.1.8). Outside UnicodeMode, it parses the grammar of §B.1.2.
@@ -65,10 +66,10 @@ ParsePattern(units, u, v) ==
                /\ i < j /\ p.groups[i].name # None /\ p.groups[i].name = p.groups[j].name
                /\ RxMightBothParticipate(p.groups[i].path, p.groups[j].path)
      THEN [ok |-> FALSE]
-     ELSE [ok |-> TRUE, pattern |-> [d |-> d.n, groups |-> p.groups]]
+     ELSE [ok |-> TRUE, pattern |-> [d |-> d.n, groups |-> p.groups, singles |-> p.singles]]
 RxParse(units, u, v, named, captures) ==
   RxDisjunction([src |-> units, pos |-> 0, u |-> u \/ v, v |-> v, named |-> named, captures |-> captures,
-                 groups |-> <<>>, path |-> <<>>, decs |-> <<>>, refs |-> <<>>, err |-> FALSE])
+                 groups |-> <<>>, path |-> <<>>, decs |-> <<>>, refs |-> <<>>, singles |-> {}, err |-> FALSE])
 
 \* MightBothParticipate (§22.2.1.3): two groups can't both participate in a match only when they are
 \* in different alternatives of one Disjunction.
@@ -426,7 +427,10 @@ RxClassSetOperand(p) ==
       class == IF RxIsAt(p, N("\\")) THEN RxCharacterClassEscape(RxSkip(p, 1)) ELSE RxNode(p, None)
       c == RxClassSetCharacter(p)
   IN CASE RxIsAt(p, N("[")) -> RxBracketed(p, "nested")
-       [] RxIsAt(p, N("\\q{")) -> IF strings.p.err THEN strings ELSE RxClose(strings.p, N("}"), [t |-> "strings", strs |-> strings.n])
+       [] RxIsAt(p, N("\\q{")) ->
+            IF strings.p.err THEN strings
+            ELSE RxClose([strings.p EXCEPT !.singles = @ \cup {strings.n[i][1] : i \in {j \in DOMAIN strings.n : Len(strings.n[j]) = 1}}],
+                         N("}"), [t |-> "strings", strs |-> strings.n])
        [] RxIsAt(p, N("\\q")) -> RxError(p)
        [] class.p.err \/ class.n # None -> class
        [] c.p.err -> c

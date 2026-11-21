@@ -1,5 +1,6 @@
 interface LocalResolution {
   kind: "Local";
+  isSelf?: boolean;
 }
 
 export interface SourceLocation {
@@ -40,6 +41,7 @@ interface IdentifierExpression {
   selectorRanges?: SourceRange[];
   location: SourceLocation;
   resolution?: LocalResolution;
+  writtenKey?: string;
 }
 
 export interface ApplyExpression {
@@ -53,6 +55,7 @@ export interface ApplyExpression {
   argumentRanges?: (SourceRange | undefined)[];
   location: SourceLocation;
   resolution?: LocalResolution;
+  writtenKey?: string;
 }
 
 interface OperatorReferenceExpression {
@@ -122,6 +125,7 @@ export interface LetExpression {
   kind: "Let";
   definitions: Definition[];
   instances?: Instance[];
+  recursive?: Declaration[];
   body: Expression;
   location: SourceLocation;
 }
@@ -192,6 +196,7 @@ export interface FunctionConstructionExpression {
   body: Expression;
   location: SourceLocation;
   isRecursive?: boolean;
+  definition?: FunctionDefinition;
 }
 
 interface FunctionSetExpression {
@@ -215,11 +220,12 @@ interface RecordExpression {
 
 export type ExceptPathStep =
   | { kind: "Field"; name: string }
-  | { kind: "Index"; args: Expression[] };
+  | { kind: "Index"; args: Expression[]; tupleRange: SourceRange };
 
 interface ExceptUpdate {
   path: ExceptPathStep[];
   value: Expression;
+  range: SourceRange;
 }
 
 interface ExceptExpression {
@@ -231,6 +237,13 @@ interface ExceptExpression {
 
 interface ExceptAtExpression {
   kind: "ExceptAt";
+  location: SourceLocation;
+}
+
+interface EnabledVariableExpression {
+  kind: "EnabledVariable";
+  name: string;
+  substitution: Expression;
   location: SourceLocation;
 }
 
@@ -306,6 +319,12 @@ interface SubexpressionExpression {
   location: SourceLocation;
 }
 
+interface SelectionExpression {
+  kind: "Selection";
+  expression: Expression;
+  location: SourceLocation;
+}
+
 export type Expression =
   | NumberExpression
   | DecimalExpression
@@ -333,6 +352,7 @@ export type Expression =
   | RecordExpression
   | ExceptExpression
   | ExceptAtExpression
+  | EnabledVariableExpression
   | FunctionApplicationExpression
   | BracketExpression
   | FieldAccessExpression
@@ -341,7 +361,8 @@ export type Expression =
   | ActionExpression
   | FairnessExpression
   | LabelExpression
-  | SubexpressionExpression;
+  | SubexpressionExpression
+  | SelectionExpression;
 
 export interface OperatorParam {
   name: string;
@@ -359,6 +380,7 @@ export interface OperatorDefinition {
   isLocal: boolean;
   isRecursive: boolean;
   location: SourceLocation;
+  theoremRange?: SourceRange;
 }
 
 export interface FunctionDefinition {
@@ -372,7 +394,25 @@ export interface FunctionDefinition {
   location: SourceLocation;
 }
 
-export type Definition = OperatorDefinition | FunctionDefinition;
+// An ASSUME/PROVE theorem as an operator: its body is TLC's runtime form, and SANY levels its whole statement.
+export interface TheoremDefinition extends OperatorDefinition {
+  statement: AssumeProve;
+}
+
+export interface LetSubstituteDefinition extends OperatorDefinition {
+  isLetSubstitute: true;
+}
+
+export interface StandardAliasDefinition extends OperatorDefinition {
+  standardDefinition: Definition;
+}
+
+export type Definition =
+  | OperatorDefinition
+  | FunctionDefinition
+  | TheoremDefinition
+  | LetSubstituteDefinition
+  | StandardAliasDefinition;
 
 export interface Declaration {
   name: string;
@@ -403,6 +443,7 @@ export interface Instance {
   location: SourceLocation;
   instanceRange: SourceRange;
   definitionRange?: SourceRange;
+  head?: SourceRange;
 }
 
 export interface NewSymbol {
@@ -415,8 +456,16 @@ export interface NewSymbol {
   location: SourceLocation;
 }
 
+interface AssumeProveLabel {
+  name: string;
+  location: SourceLocation;
+}
+
 export interface AssumeProve {
   kind: "AssumeProve";
+  label?: AssumeProveLabel;
+  isBoxed?: boolean;
+  isProveBoxed?: boolean;
   assumptions: (Expression | NewSymbol | AssumeProve)[];
   conclusion: Expression;
   location: SourceLocation;
@@ -515,7 +564,27 @@ export interface Module {
   theorems: Theorem[];
   uses: UseOrHide[];
   units: ModuleUnit[];
+  hasRecursiveLet: boolean;
 }
+
+const functionConstructions = new WeakMap<FunctionDefinition, Expression>();
+
+export const getFunctionConstruction = (definition: FunctionDefinition) => {
+  const known = functionConstructions.get(definition);
+  if (known) return known;
+  const construction: Expression = {
+    kind: "FunctionConstruction",
+    bounds: definition.bounds,
+    body: definition.body,
+    location: definition.location,
+    definition,
+  };
+  functionConstructions.set(definition, construction);
+  return construction;
+};
+
+export const isRecursiveConstruction = (expression: FunctionConstructionExpression) =>
+  expression.isRecursive || expression.definition?.isSelfReferential === true;
 
 export const getDefinitionExpressions = (definition: Definition) =>
   definition.kind === "Function"
@@ -535,6 +604,8 @@ export const getChildren = (expression: Expression): Expression[] => {
       return expression.args;
     case "Lambda":
       return [expression.body];
+    case "EnabledVariable":
+      return [expression.substitution];
     case "And":
     case "Or":
       return expression.operands;
@@ -600,6 +671,8 @@ export const getChildren = (expression: Expression): Expression[] => {
       return [expression.body];
     case "Subexpression":
       return expression.selectors.flatMap((selector) => ("args" in selector ? selector.args : []));
+    case "Selection":
+      return [expression.expression];
   }
 };
 
@@ -613,3 +686,46 @@ export const getReferencedName = (expression: Expression) => {
 export const isLocallyResolved = (expression: Expression) =>
   (expression.kind === "Identifier" || expression.kind === "Apply") &&
   expression.resolution?.kind === "Local";
+
+const ASSUME_PROVE_OPERATOR = "$AssumeProve";
+
+const NEW_DECLARATION = "$New";
+
+// Deviation from TLC: TLC never processes the numbers in an ASSUME/PROVE, so a clause selected with arguments, as P(1)!T!1, fails with a NullPointerException.
+export const getAssumeProveExpression = (assumeProve: AssumeProve): Expression => {
+  const assumptions = assumeProve.assumptions;
+  const declarationIndex = assumptions.findIndex((assumption) => assumption.kind === "NewSymbol");
+  const clauses =
+    declarationIndex === -1
+      ? [...assumptions, assumeProve.conclusion]
+      : assumptions.slice(0, declarationIndex + 1);
+  return {
+    kind: "Apply",
+    operator: ASSUME_PROVE_OPERATOR,
+    args: clauses.map((clause) =>
+      clause.kind === "NewSymbol"
+        ? { kind: "Identifier", name: NEW_DECLARATION, location: clause.location }
+        : clause.kind === "AssumeProve" && clause.label
+          ? {
+              kind: "Label",
+              name: clause.label.name,
+              params: [],
+              body: getAssumeProveExpression(clause),
+              location: clause.label.location,
+            }
+          : clause.kind === "AssumeProve"
+            ? getAssumeProveExpression(clause)
+            : clause,
+    ),
+    location: assumeProve.location,
+  };
+};
+
+export const isAssumeProve = (expression: Expression) =>
+  expression.kind === "Apply" && expression.operator === ASSUME_PROVE_OPERATOR;
+
+export const getAssumeProveBody = (body: Expression): Expression | undefined =>
+  body.kind === "Let" ? getAssumeProveBody(body.body) : isAssumeProve(body) ? body : undefined;
+
+export const isNewDeclaration = (expression: Expression | undefined) =>
+  expression?.kind === "Identifier" && expression.name === NEW_DECLARATION;

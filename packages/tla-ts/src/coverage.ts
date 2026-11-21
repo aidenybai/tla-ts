@@ -1,4 +1,5 @@
 import {
+  getFunctionConstruction,
   isLocallyResolved,
   type Bound,
   type Definition,
@@ -7,10 +8,25 @@ import {
   type SourceRange,
 } from "./ast";
 import { formatRange } from "./errors";
-import type { Environment, Scope } from "./evaluate";
+import {
+  frameSubstitutions,
+  isSubstitutionDefinition,
+  substitutedExpressions,
+  substitutionFrames,
+  syntheticIdentifiers,
+  type Substitution,
+} from "./instances";
+import { SELECTION_NAME } from "./resolve";
+import { getRootKey, type Environment, type Scope } from "./evaluate";
 import { getJavaHashCode } from "./java-hash";
 import { getTlcFingerprint } from "./tlc/fingerprint";
-import type { Value } from "./values";
+import {
+  getCardinality,
+  isEmptySet,
+  isReducibleSet,
+  type IntervalValue,
+  type Value,
+} from "./values";
 
 export type CoverageKind = "init" | "next" | "invariant" | "constraint" | "implied";
 
@@ -42,11 +58,31 @@ export interface Coverage {
   values: WeakMap<object, number>;
   registers: Uint8Array;
   relations: CoverageRelation[];
+  substitutionNodes: Map<number, Map<Substitution, number>>;
+  frames: CoverageFrame[];
+  nextState: NextStateMode;
+  isEnabled: boolean;
+  cachedInEnabled: WeakMap<object, boolean>;
 }
+
+export interface CoverageFrame {
+  frame: Expression;
+  root: number;
+  isCached: boolean;
+  counted: Substitution[];
+  countedWithoutNext: Substitution[];
+}
+
+export type NextStateMode = "given" | "empty" | "primed";
 
 export interface CoverageReport {
   variables: CoverageVariable[];
   relations: CoverageRelationReport[];
+}
+
+export interface CoverageOutput {
+  kind: "coverage";
+  coverage: CoverageReport;
 }
 
 interface CoverageVariable {
@@ -81,6 +117,15 @@ interface Resolved {
   scope: Local | undefined;
 }
 
+export const letDefinitions = new WeakMap<Scope, Definition>();
+
+export const getLetDefinition = (name: string | undefined, scope: Scope | undefined) => {
+  for (let node = scope; node; node = node.parent) {
+    if (node.name === name) return letDefinitions.get(node);
+  }
+  return undefined;
+};
+
 const STANDARD_MODULES = new Set([
   "FiniteSets",
   "Sequences",
@@ -95,6 +140,9 @@ const STANDARD_MODULES = new Set([
 
 const REGISTER_BITS = 10;
 const REGISTERS = 1 << REGISTER_BITS;
+
+// TLC's CostModel.DO_NOT_RECORD counts nothing under it, while a value with its own cost model still counts.
+export const DO_NOT_RECORD = -2;
 
 export const createCoverage = (variableCount: number): Coverage => ({
   current: -1,
@@ -116,6 +164,22 @@ export const createCoverage = (variableCount: number): Coverage => ({
   values: new WeakMap(),
   registers: new Uint8Array(variableCount * REGISTERS),
   relations: [],
+  substitutionNodes: new Map(),
+  frames: [],
+  nextState: "given",
+  isEnabled: false,
+  cachedInEnabled: new WeakMap(),
+});
+
+export const createCoverageEnvironment = (
+  environment: Environment,
+  coverage: Coverage,
+): Environment => ({
+  ...environment,
+  evaluators: new WeakMap(),
+  entryEvaluators: new WeakMap(),
+  definitionEvaluators: new WeakMap(),
+  coverage,
 });
 
 const addNode = (
@@ -154,6 +218,10 @@ const findCoverageRelation = (coverage: Coverage, kind: CoverageKind, expression
     (relation) => relation.kind === kind && relation.expression === expression,
   )?.node;
 
+const getRelationRange = (expression: Expression) =>
+  expression.location.range ??
+  (expression.kind === "Let" ? expression.body.location.range : undefined);
+
 export const addCoverageRelation = (
   coverage: Coverage,
   kind: CoverageKind,
@@ -163,7 +231,7 @@ export const addCoverageRelation = (
 ) => {
   const shared = kind === "next" ? findCoverageRelation(coverage, kind, expression) : undefined;
   if (shared !== undefined) return shared;
-  const node = addNode(coverage, undefined, expression.location.range, -1, false);
+  const node = addNode(coverage, undefined, getRelationRange(expression), -1, false);
   coverage.relations.push({ kind, label, expression, scope, node });
   return node;
 };
@@ -177,19 +245,34 @@ const isSameRange = (left: SourceRange | undefined, right: SourceRange | undefin
   left.end.line === right.end.line &&
   left.end.column === right.end.column;
 
+// TLC's Action#pred for an instance's action is the SubstInNode, which SANY locates at the instance's definition.
+const getPredicateRange = (expression: Expression) =>
+  (substitutionFrames.get(expression) ?? []).find((frame) => frameSubstitutions.has(frame))
+    ?.location.range ?? expression.location.range;
+
 export const getCoverageLabel = (
   name: string | undefined,
   expression: Expression,
   environment: Environment,
+  actionHead?: SourceRange,
+  actionBody?: SourceRange,
 ) => {
-  const definition = name === undefined ? undefined : environment.definitions.get(name);
-  const head = definition?.kind === "Operator" ? definition.head : undefined;
-  const range = expression.location.range;
-  if (!definition || !head) return `Action ${range ? formatRange(range) : "Unknown location"}`;
-  if (isSameRange(definition.body.location.range, range) || !range) {
-    return `${definition.name} ${formatRange(head)}`;
+  const definition =
+    name === undefined || actionHead
+      ? undefined
+      : environment.definitions.get(getRootKey(name, environment));
+  const head = actionHead ?? (definition?.kind === "Operator" ? definition.head : undefined);
+  const range = getRelationRange(expression);
+  const actual = getPredicateRange(expression) ?? range;
+  const label = actionHead ? name : definition?.name;
+  if (label === undefined || !head) {
+    return `Action ${actual ? formatRange(actual) : "Unknown location"}`;
   }
-  return `${definition.name} ${formatRange(head)} (${range.start.line} ${range.start.column} ${range.end.line} ${range.end.column})`;
+  const isBody = actionHead
+    ? isSameRange(actionBody, getPredicateRange(expression))
+    : definition && isSameRange(getRelationRange(definition.body), range);
+  if (isBody || !actual) return `${label} ${formatRange(head)}`;
+  return `${label} ${formatRange(head)} (${actual.start.line} ${actual.start.column} ${actual.end.line} ${actual.end.column})`;
 };
 
 const getRangeKey = (range: SourceRange) =>
@@ -233,9 +316,27 @@ const bindNames = (names: string[], locals: Local | undefined) =>
     locals,
   );
 
+const bindLocalDefinitions = (definitions: Definition[], locals: Local | undefined) => {
+  const inner = definitions.reduce<Local | undefined>(
+    (parent, definition) => ({ name: definition.name, definition, scope: undefined, parent }),
+    locals,
+  );
+  for (let local = inner; local !== locals && local; local = local.parent) local.scope = inner;
+  return inner;
+};
+
 const getBoundNames = (bounds: Bound[]) =>
   bounds.flatMap((bound) =>
     bound.pattern.kind === "Name" ? [bound.pattern.name] : bound.pattern.names,
+  );
+
+const getSubstitutedRange = (expression: Expression) =>
+  substitutionFrames.get(expression)?.find((frame) => !frameSubstitutions.has(frame))?.location
+    .range;
+
+export const getEnteredFrames = (expression: Expression, frames: Expression[]) =>
+  (substitutionFrames.get(expression) ?? []).filter(
+    (frame) => frameSubstitutions.has(frame) && !frames.includes(frame),
   );
 
 export const buildCoverage = (
@@ -245,6 +346,7 @@ export const buildCoverage = (
 ) => {
   const primed = new Set(primedRanges.map(getRangeKey));
   const stack: number[] = [];
+  const frames: Expression[] = [];
   const definitions: (Definition | undefined)[] = [];
   const walking: Definition[] = [];
   const letBodies = new Map<Expression, Expression>();
@@ -302,10 +404,12 @@ export const buildCoverage = (
       definition.kind === "Function"
         ? getBoundNames(definition.bounds)
         : definition.params.map((param) => param.name);
-    walk(definition.body, bindNames(names, resolved.scope));
     if (definition.kind === "Function") {
-      getBoundSets(definition.bounds).forEach((set) => walk(set, resolved.scope));
-    }
+      enter(getFunctionConstruction(definition), definition.location.range, () => {
+        walk(definition.body, bindNames(names, resolved.scope));
+        getBoundSets(definition.bounds).forEach((set) => walk(set, resolved.scope));
+      });
+    } else walk(definition.body, bindNames(names, resolved.scope));
     walking.pop();
   };
 
@@ -363,10 +467,40 @@ export const buildCoverage = (
       count < expression.operands.length,
     );
 
+  const walkSubstitutions = (expression: Expression, locals: Local | undefined) => {
+    const entered = getEnteredFrames(expression, frames);
+    const parent = stack.at(-1) ?? -1;
+    entered.forEach((frame) => {
+      frameSubstitutions
+        .get(frame)?.()
+        .forEach((substitution) => {
+          walk(substitution.replacement, locals);
+          const node = parent === -1 ? -1 : coverage.lastChild[parent];
+          if (node === -1 || coverage.expressions[node] !== substitution.replacement) return;
+          const root = coverage.roots[node];
+          const nodes = coverage.substitutionNodes.get(root) ?? new Map<Substitution, number>();
+          coverage.substitutionNodes.set(root, nodes.set(substitution, node));
+        });
+      frames.push(frame);
+    });
+    return entered.length;
+  };
+
   const walk = (expression: Expression, locals: Local | undefined): void => {
+    const entered = walkSubstitutions(expression, locals);
+    walkExpression(expression, locals);
+    frames.length -= entered;
+  };
+
+  const walkExpression = (expression: Expression, locals: Local | undefined): void => {
     const range = expression.location.range;
     const walkAll = (expressions: Expression[]) =>
       expressions.forEach((item) => walk(item, locals));
+    const substitution = substitutedExpressions.get(expression);
+    if (substitution && substitution.replacement !== expression) {
+      enter(expression, getSubstitutedRange(expression), () => undefined);
+      return;
+    }
     switch (expression.kind) {
       case "Number":
       case "Decimal":
@@ -380,30 +514,37 @@ export const buildCoverage = (
       case "Lambda":
         walk(expression.body, bindNames(expression.params, locals));
         return;
+      case "EnabledVariable": {
+        const entered = walkSubstitutions(expression.substitution, locals);
+        enter(expression, getSubstitutedRange(expression.substitution), () => undefined);
+        frames.length -= entered;
+        return;
+      }
+      case "Selection":
+        if (range === undefined) walk(expression.expression, locals);
+        else enter(expression, range, () => walk(expression.expression, locals));
+        return;
       case "Let": {
-        const inner = expression.definitions.reduce<Local | undefined>(
-          (parent, definition) => ({ name: definition.name, definition, scope: undefined, parent }),
-          locals,
-        );
-        for (let local = inner; local !== locals && local; local = local.parent) {
-          local.scope = inner;
-        }
+        const inner = bindLocalDefinitions(expression.definitions, locals);
         expression.definitions.forEach((definition) => {
           if (definition.kind === "Operator") letBodies.set(definition.body, expression.body);
         });
-        getHashtableOrder(expression.definitions).forEach((definition) =>
-          walkDefinition({ definition, scope: inner }),
-        );
+        getHashtableOrder(expression.definitions).forEach((definition) => {
+          if (definition.name === SELECTION_NAME || isSubstitutionDefinition(definition)) return;
+          walkDefinition({ definition, scope: inner });
+        });
         walk(expression.body, inner);
         return;
       }
       case "Identifier": {
+        if (syntheticIdentifiers.has(expression)) return;
         const resolved = resolve(expression, expression.name, locals);
+        const isSubstituted = resolved && isSubstitutionDefinition(resolved.definition);
         enter(
           expression,
-          range,
+          (isSubstituted && getSubstitutedRange(expression)) || range,
           () => {
-            if (resolved) walkDefinition(resolved);
+            if (resolved && !isSubstituted) walkDefinition(resolved);
           },
           false,
           resolved?.definition,
@@ -417,9 +558,11 @@ export const buildCoverage = (
           range,
           () => {
             if (resolved) walkDefinition(resolved);
-            expression.args.forEach((argument, index) =>
-              walkArgument(argument, index, resolved?.definition, locals),
-            );
+            expression.args.forEach((argument, index) => {
+              if (!syntheticIdentifiers.has(argument)) {
+                walkArgument(argument, index, resolved?.definition, locals);
+              }
+            });
           },
           false,
           resolved?.definition,
@@ -508,12 +651,28 @@ export const buildCoverage = (
       case "Except":
         enter(expression, range, () => {
           walk(expression.function, locals);
-          expression.updates.forEach((update) => {
-            update.path.forEach((step) => {
-              if (step.kind === "Index") walkAll(step.args);
-            });
-            walk(update.value, locals);
-          });
+          // SANY locates an update's $Pair and the $Seq of its selectors both at its ExceptSpec.
+          expression.updates.forEach((update) =>
+            enter(
+              undefined,
+              update.range,
+              () => {
+                enter(
+                  undefined,
+                  update.range,
+                  () =>
+                    update.path.forEach((step) => {
+                      if (step.kind !== "Index") return;
+                      if (step.args.length === 1) walkAll(step.args);
+                      else enter(undefined, step.tupleRange, () => walkAll(step.args), true);
+                    }),
+                  true,
+                );
+                walk(update.value, locals);
+              },
+              true,
+            ),
+          );
         });
         return;
       case "Prime":
@@ -551,9 +710,18 @@ export const buildCoverage = (
     }
   };
 
+  const getScopeLocals = (scope: Scope | undefined) => {
+    const scoped: Definition[] = [];
+    for (let node = scope; node; node = node.parent) {
+      const definition = letDefinitions.get(node);
+      if (definition) scoped.unshift(definition);
+    }
+    return bindLocalDefinitions(scoped, undefined);
+  };
+
   coverage.relations.forEach((relation) => {
     stack.push(relation.node);
-    walk(relation.expression, undefined);
+    walk(relation.expression, getScopeLocals(relation.scope));
     stack.pop();
   });
 };
@@ -576,6 +744,7 @@ export const getCoverageNode = (coverage: Coverage, node: number, expression: Ex
   const recursive = coverage.recursive[node];
   const inner = recursive === -1 ? -1 : findChild(coverage, recursive, expression);
   if (inner !== -1) return inner;
+  // Deviation from TLC: OpApplNodeWrapper#get also warns (2776) on this fallback, a lookup bug it asks users to report.
   return coverage.lets[node]?.find((item) => coverage.expressions[item] === expression) ?? node;
 };
 
@@ -597,9 +766,261 @@ export const runAtCoverageNode = <Result>(
   }
 };
 
+export const enterFrames = (
+  coverage: Coverage,
+  frames: Expression[],
+  node: number,
+  isCached: boolean,
+) => {
+  const root = node < 0 ? -1 : coverage.roots[node];
+  let entered = 0;
+  for (let index = 0; index < frames.length; index++) {
+    const frame = frames[index];
+    if (!frameSubstitutions.has(frame) || findFrame(coverage, frame, root)) continue;
+    coverage.frames.push({ frame, root, isCached, counted: [], countedWithoutNext: [] });
+    entered++;
+  }
+  return entered;
+};
+
+const findFrame = (coverage: Coverage, frame: Expression, root: number | undefined) => {
+  for (let index = coverage.frames.length - 1; index >= 0; index--) {
+    const entry = coverage.frames[index];
+    if (entry.frame === frame && (root === undefined || entry.root === root)) return entry;
+  }
+  return undefined;
+};
+
+export const exitFrames = (coverage: Coverage, entered: number) => {
+  coverage.frames.length -= entered;
+};
+
+export const getCoverageFrames = (coverage: Coverage) =>
+  coverage.frames.length === 0 ? undefined : coverage.frames.slice();
+
+export const runInCoverageFrames = <Result>(
+  coverage: Coverage,
+  node: number,
+  frames: CoverageFrame[] | undefined,
+  run: () => Result,
+): Result => {
+  if (!frames) return runAtCoverageNode(coverage, node, run);
+  const length = coverage.frames.length;
+  coverage.frames.push(...frames);
+  try {
+    return runAtCoverageNode(coverage, node, run);
+  } finally {
+    coverage.frames.length = length;
+  }
+};
+
+export const getSubstitutionNode = (coverage: Coverage, substitution: Substitution) => {
+  const entry = findFrame(coverage, substitution.frame, undefined);
+  if (!entry) return -1;
+  const substitutionNode = coverage.substitutionNodes.get(entry.root)?.get(substitution) ?? -1;
+  if (!entry.isCached || coverage.nextState === "primed") return substitutionNode;
+  // LazyValue#getValue reuses a value cached without a next state for any next state, but not the reverse.
+  if (entry.countedWithoutNext.includes(substitution)) return -1;
+  if (coverage.nextState === "empty") {
+    entry.countedWithoutNext.push(substitution);
+    return substitutionNode;
+  }
+  if (entry.counted.includes(substitution)) return -1;
+  entry.counted.push(substitution);
+  return substitutionNode;
+};
+
 export const costCoverage = (coverage: Coverage, value: Value, cost: number) => {
   const node = typeof value === "object" ? coverage.values.get(value) : undefined;
   if (node !== undefined) coverage.secondary[node] += cost;
+};
+
+export const chargeSetOperation = (
+  coverage: Coverage,
+  operator: string,
+  left: Value,
+  right: Value,
+  result: Value,
+): Value => {
+  const receiver = isReducibleSet(left)
+    ? left
+    : operator !== "\\" && isReducibleSet(right)
+      ? right
+      : undefined;
+  if (receiver === undefined || typeof result !== "object") return result;
+  const other = receiver === left ? right : left;
+  if (operator === "\\cup") {
+    if (isEmptySet(receiver) || !isReducibleSet(other)) return result;
+    const otherNode = coverage.values.get(other);
+    if (otherNode !== undefined) coverage.secondary[otherNode] += getCardinality(other) + 1;
+  }
+  const node = operator === "\\cup" ? undefined : coverage.values.get(receiver);
+  if (coverage.values.get(result) === node) return result;
+  const isShared = result === left || result === right || coverage.values.has(result);
+  const charged = isShared ? { ...result } : result;
+  if (node !== undefined) coverage.values.set(charged, node);
+  return charged;
+};
+
+interface ChargedEnumerator {
+  next: () => boolean;
+  reset: () => void;
+}
+
+const createListEnumerator = (coverage: Coverage, node: number | undefined, size: number) => {
+  let position = 0;
+  return {
+    next: () => {
+      if (node !== undefined) coverage.secondary[node]++;
+      return position++ < size;
+    },
+    reset: () => {
+      position = 0;
+    },
+  };
+};
+
+const createProductEnumerator = (
+  coverage: Coverage,
+  node: number,
+  sets: Value[],
+): ChargedEnumerator => {
+  if (sets.some((set) => isEmptySet(set))) return { next: () => false, reset: () => undefined };
+  const enumerators = sets.map((set) =>
+    createEnumerator(coverage, set, getCardinality(set), false),
+  );
+  const advance = () => {
+    for (let index = enumerators.length - 1; index > 0; index--) {
+      if (enumerators[index].next()) return true;
+      enumerators[index].reset();
+      enumerators[index].next();
+    }
+    return enumerators.length > 0 && enumerators[0].next();
+  };
+  let isDone = !enumerators.every((enumerator) => enumerator.next());
+  return {
+    next: () => {
+      if (isDone) return false;
+      coverage.secondary[node] += Math.max(enumerators.length, 1);
+      isDone = !advance();
+      return true;
+    },
+    reset: () => {
+      enumerators.forEach((enumerator) => {
+        enumerator.reset();
+        enumerator.next();
+      });
+      isDone = false;
+    },
+  };
+};
+
+export const createProductSetEnumerator = (coverage: Coverage, set: Value) => {
+  const node = typeof set === "object" ? coverage.values.get(set) : undefined;
+  if (node === undefined || typeof set !== "object") return undefined;
+  if (set.kind === "RecordSet") return createProductEnumerator(coverage, node, set.sets);
+  if (set.kind !== "FunctionSet") return undefined;
+  return createProductEnumerator(
+    coverage,
+    node,
+    Array.from({ length: getCardinality(set.domain) }, () => set.range),
+  );
+};
+
+const createEnumerator = (
+  coverage: Coverage,
+  set: Value,
+  size: number,
+  isNormalized: boolean,
+): ChargedEnumerator => {
+  const node = typeof set === "object" ? coverage.values.get(set) : undefined;
+  if (
+    typeof set === "object" &&
+    (set.kind === "Subset" || (!isNormalized && set.kind === "FilteredSet"))
+  ) {
+    return createListEnumerator(coverage, undefined, size);
+  }
+  const elements = createProductSetEnumerator(coverage, set);
+  if (!elements || node === undefined) return createListEnumerator(coverage, node, size);
+  if (!isNormalized) return elements;
+  let count = 0;
+  while (elements.next()) count++;
+  coverage.secondary[node] += count;
+  return createListEnumerator(coverage, node, count);
+};
+
+export const tagSubset = (coverage: Coverage, set: Value, subset: Value) => {
+  const node =
+    typeof set === "object" && set.kind === "Subset" ? coverage.values.get(set) : undefined;
+  if (node !== undefined && typeof subset === "object") coverage.values.set(subset, node);
+};
+
+const RANDOMLY_INDEXED_KINDS = new Set<string>([
+  "Set",
+  "MixedSet",
+  "Interval",
+  "FunctionSet",
+  "RecordSet",
+  "ProductSet",
+]);
+
+// TLC's EnumerableValue#elements(Ordering.RANDOMIZED) draws indices, but a value class without its own k-out-of-n enumerator draws the whole set first, and SubsetValue converts itself to a SetEnumValue.
+export const chargeRandomOrder = (coverage: Coverage, set: Value, size: number, order: Value[]) => {
+  if (typeof set !== "object" || RANDOMLY_INDEXED_KINDS.has(set.kind)) return;
+  if (set.kind !== "Subset") {
+    const enumerator = createEnumerator(coverage, set, size, false);
+    for (let position = 0; position <= size; position++) enumerator.next();
+    return;
+  }
+  const node = coverage.values.get(set);
+  if (node !== undefined) coverage.secondary[node] += size;
+  for (let position = 0; position < order.length; position++) {
+    tagSubset(coverage, set, order[position]);
+  }
+};
+
+export const createChargedEnumerator = (
+  coverage: Coverage,
+  set: Value,
+  list: Value[] | IntervalValue,
+  isNormalized: boolean,
+) => {
+  const size = Array.isArray(list) ? list.length : list.high - list.low + 1;
+  if (typeof set !== "object" || set.kind !== "Subset" || !Array.isArray(list)) {
+    return createEnumerator(coverage, set, size, isNormalized);
+  }
+  list.forEach((subset) => tagSubset(coverage, set, subset));
+  return createListEnumerator(coverage, undefined, size);
+};
+
+const chargeBindings = (enumerators: ChargedEnumerator[]) => {
+  enumerators.every((enumerator) => enumerator.next());
+  return () => {
+    for (let index = 0; index < enumerators.length; index++) {
+      if (enumerators[index].next() || index === enumerators.length - 1) return;
+      enumerators[index].reset();
+      enumerators[index].next();
+    }
+  };
+};
+
+export const chargeContexts = (
+  coverage: Coverage,
+  sets: Value[],
+  lists: (Value[] | IntervalValue)[],
+) =>
+  chargeBindings(
+    sets.map((set, index) => createChargedEnumerator(coverage, set, lists[index], true)),
+  );
+
+export const chargeFunctionConstruction = (coverage: Coverage, node: number, sets: Value[]) => {
+  const sizes = sets.map((set) => getCardinality(set));
+  const advance = chargeBindings(
+    sets.map((set, index) => createEnumerator(coverage, set, sizes[index], false)),
+  );
+  const size = sizes.reduce((product, setSize) => product * setSize, 1);
+  for (let index = 0; index < size; index++) advance();
+  coverage.secondary[node] += size;
 };
 
 const getLeadingZeros = (value: bigint) => {
@@ -765,21 +1186,20 @@ const compareRanges = (left: SourceRange | undefined, right: SourceRange | undef
   );
 };
 
+// Deviation from TLC: CostModelCreator#report keeps one action per location, so it drops all but one action of an instance.
+const compareActions = (left: CoverageRelation, right: CoverageRelation) =>
+  compareRanges(getPredicateRange(left.expression), getPredicateRange(right.expression)) ||
+  compareRanges(left.expression.location.range, right.expression.location.range);
+
 const getReportedRelations = (coverage: Coverage) =>
   KIND_ORDER.flatMap((kind) => {
     const relations = coverage.relations.filter((relation) => relation.kind === kind);
     if (kind !== "next") return relations;
     return relations
-      .toSorted((left, right) =>
-        compareRanges(left.expression.location.range, right.expression.location.range),
-      )
+      .toSorted(compareActions)
       .filter(
         (relation, index, sorted) =>
-          index === 0 ||
-          compareRanges(
-            sorted[index - 1].expression.location.range,
-            relation.expression.location.range,
-          ) !== 0,
+          index === 0 || compareActions(sorted[index - 1], relation) !== 0,
       );
   });
 

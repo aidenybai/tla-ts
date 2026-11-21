@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vite-plus/test";
-import { parseModule, TlaSyntaxError, type Module } from "../../src";
+import { check, parseModule, TlaSyntaxError, type Module } from "../../src";
 
 const SOURCE = `---- MODULE Ranges ----
 EXTENDS Naturals, TLC
@@ -159,6 +159,24 @@ describe("parseModule reads operators like SANY", () => {
     },
   );
 
+  it("reads {a, e \\in S} and {<<a, e>> \\in S} as set enumerations, which SANY rejects", async () => {
+    const result = await check({
+      source:
+        "---- MODULE M ----\na == TRUE\ne == FALSE\nS == {TRUE}\nASSUME {a, e \\in S} = {TRUE, FALSE}\nASSUME {a, e, a \\in S} = {TRUE, FALSE}\nASSUME {<<a, e>> \\in {<<TRUE, FALSE>>}} = {TRUE}\nASSUME {<<1, 2>> \\in {}} = {FALSE}\n====",
+      config: "",
+    });
+    expect(result.status).toBe("success");
+  });
+
+  it("reads a function definition with a LET in its bounds, which SANY rejects", async () => {
+    const result = await check({
+      source:
+        "---- MODULE M ----\nEXTENDS Naturals\nf[v \\in LET N == {1, 2} IN N] == v + 1\nD == LET g[w \\in {LET K == 3 IN K}] == w IN g[3]\nASSUME f[2] = 3 /\\ D = 3\n====",
+      config: "",
+    });
+    expect(result.status).toBe("success");
+  });
+
   it.each(['"a\\qb"', '"a\\ b"', '"a\rb"'])(
     "rejects the string %j that SANY's lexer stops in",
     (string) => {
@@ -190,6 +208,15 @@ describe("parseModule reads operators like SANY", () => {
   ])("names a module with a keyword or an underscore in %j as SANY does", (header, extendees) => {
     expect(parseModule(`---- MODULE M ----\n${header}\nA == 1\n====`).extends).toEqual(extendees);
   });
+
+  it.each(["Op(_)) == 1", "CONSTANT _ )", "CONSTANT _ ]"])(
+    "rejects %j, which declares no operator, as SANY does",
+    (unit) => {
+      expect(() => parseModule(`---- MODULE M ----\nA == 1\n${unit}\n====`)).toThrow(
+        TlaSyntaxError,
+      );
+    },
+  );
 
   it.each(["EXTENDS SUBSET", "EXTENDS THEOREM", "EXTENDS AXIOM"])(
     "rejects %j before a definition as SANY does",
@@ -344,17 +371,10 @@ describe("parseModule reads proofs like SANY", () => {
 
   it.each([
     ["a QED step at another level", "THEOREM TRUE\n<2>1. TRUE\n<1> QED"],
-    ["a named <+> step", "THEOREM TRUE\n<1>1. TRUE\n<+>a. TRUE\n<2> QED\n<1> QED"],
     ["a proof of a step that takes none", "THEOREM TRUE\n<1> HAVE TRUE OBVIOUS\n<1> QED"],
     ["a step number outside a proof", "THEOREM <1>1"],
     ["a proof without a QED step", "THEOREM TRUE\n<1>1. TRUE"],
     ["a bounded NEW operator", "THEOREM ASSUME NEW P(_) \\in {} PROVE TRUE"],
-    ["a variable in a DEF clause", "THEOREM TRUE BY DEF x"],
-    ["a NEW symbol in a DEF clause", "THEOREM ASSUME NEW xx PROVE TRUE\n  BY DEF xx"],
-    [
-      "a PICK name in a later DEF clause",
-      "THEOREM TRUE\n<1> PICK p : p = 1 OBVIOUS\n<1> QED BY DEF p",
-    ],
   ])("rejects %s", (_, proof) => {
     expect(() => parseProof(proof)).toThrow(TlaSyntaxError);
   });

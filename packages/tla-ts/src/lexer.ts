@@ -1,4 +1,5 @@
 import { TlaSyntaxError } from "./errors";
+import { getEndOfFile } from "./sany/lexer";
 
 type TokenKind =
   | "Identifier"
@@ -323,7 +324,7 @@ export const getNumeralValue = (text: string) =>
     ? parseInt(text.slice(2), NUMBER_BASES.get(text[1].toLowerCase()))
     : Number(text);
 
-const MODULE_HEADER = /-{4,} *MODULE\b/;
+const MODULE_HEADER = /-{4,} *MODULE/;
 
 const CODE_TAB = 9;
 const CODE_NEWLINE = 10;
@@ -402,7 +403,7 @@ const matchUnicodeOperator = (source: string, index: number) => {
   return UNICODE_OPERATORS.has(single) ? single : undefined;
 };
 
-export const matchOperator = (source: string, index: number): OperatorMatch | undefined => {
+const matchOperator = (source: string, index: number): OperatorMatch | undefined => {
   const code = source.charCodeAt(index);
   if (code === CODE_BACKSLASH && isInClass(source.charCodeAt(index + 1), LETTER)) {
     const word = source.slice(index + 1, skipClass(source, index + 1, LETTER));
@@ -421,12 +422,6 @@ export const matchOperator = (source: string, index: number): OperatorMatch | un
 };
 
 const UNICODE_NAMES = new Set(["ℕ", "ℤ", "ℝ"]);
-export const matchUnicodeToken = (source: string, index: number): OperatorMatch | undefined => {
-  const token = [source.slice(index, index + 2), source[index]].find(
-    (candidate) => UNICODE_OPERATORS.has(candidate) || UNICODE_NAMES.has(candidate),
-  );
-  return token === undefined ? undefined : { text: token, length: token.length };
-};
 
 export const skipWhile = (
   source: string,
@@ -468,7 +463,7 @@ const BASED_NUMBER_DIGITS = new Map([
 ]);
 
 // tlapm's lexer reads only \b, \o and \h, and SANY's their capitals too.
-export const matchBasedNumber = (source: string, index: number, isTlapm = false) => {
+const matchBasedNumber = (source: string, index: number, isTlapm = false) => {
   if (source.charCodeAt(index) !== CODE_BACKSLASH) return 0;
   const base = source.charAt(index + 1);
   const digits = BASED_NUMBER_DIGITS.get(isTlapm ? base : base.toLowerCase());
@@ -479,12 +474,21 @@ export const matchBasedNumber = (source: string, index: number, isTlapm = false)
 
 export const tokenize = (source: string, isTlapm = false): Token[] => {
   const headerMatch = MODULE_HEADER.exec(source);
-  if (!headerMatch)
-    throw new TlaSyntaxError("Expected a module header such as ---- MODULE Name ----");
+  if (!headerMatch) {
+    // SANY skips the text before a module header, so it fails at the end of the file.
+    const end = getEndOfFile(source);
+    const reason = "Expected a module header such as ---- MODULE Name ----";
+    throw new TlaSyntaxError(`${reason} at line ${end.line}, column ${end.column}`, undefined, {
+      reason,
+      line: end.line,
+      column: end.column,
+      isEnd: true,
+    });
+  }
   const tokens: Token[] = [];
   // Each name is one string object, so looking a name up in a scope compares pointers.
   const names = new Map<string, string>();
-  const prefixLines = source.slice(0, headerMatch.index).split("\n");
+  const prefixLines = source.slice(0, headerMatch.index).split(/\r\n?|\n/);
   let index = headerMatch.index;
   let line = prefixLines.length;
   let lineStart = headerMatch.index - prefixLines[prefixLines.length - 1].length;
@@ -518,7 +522,11 @@ export const tokenize = (source: string, isTlapm = false): Token[] => {
   };
   const advanceOver = (length: number) => {
     for (let offset = 0; offset < length; offset++) {
-      if (source.charCodeAt(index) === CODE_NEWLINE) {
+      const code = source.charCodeAt(index);
+      if (
+        code === CODE_NEWLINE ||
+        (code === CODE_RETURN && source.charCodeAt(index + 1) !== CODE_NEWLINE)
+      ) {
         line++;
         lineStart = index + 1;
       }
@@ -564,8 +572,12 @@ export const tokenize = (source: string, isTlapm = false): Token[] => {
     if (code === CODE_DASH && source.startsWith("----", index)) {
       const length = skipWhile(source, index, (next) => next === "-") - index;
       const keyword = skipWhile(source, index + length, (next) => next === " ");
-      if (source.startsWith("MODULE", keyword)) moduleDepth++;
       pushToken("Separator", "----", length);
+      if (!source.startsWith("MODULE", keyword)) continue;
+      // SANY and tlapm lex a module header through MODULE, so a name may follow it without a space.
+      moduleDepth++;
+      advanceOver(keyword - index);
+      pushToken("Keyword", "MODULE", 6);
       continue;
     }
     if (code === CODE_EQUALS && source.startsWith("====", index)) {
@@ -619,7 +631,7 @@ export const tokenize = (source: string, isTlapm = false): Token[] => {
       if (digitsEnd === wordEnd) {
         const fractionEnd =
           source.charCodeAt(wordEnd) === CODE_DOT ? skipClass(source, wordEnd + 1, DIGIT) : wordEnd;
-        const isDecimal = fractionEnd > wordEnd + 1;
+        const isDecimal = isTlapm && fractionEnd > wordEnd + 1;
         const number = isDecimal ? source.slice(index, fractionEnd) : word;
         pushToken(isDecimal ? "Decimal" : "Number", number, number.length);
         continue;

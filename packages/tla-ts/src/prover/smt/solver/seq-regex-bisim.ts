@@ -1,4 +1,3 @@
-// Ported from Z3 (src/ast/rewriter/seq_regex_bisim.cpp), MIT license, see z3-license.txt.
 import { type AstManager, OP_RE_XOR } from "./ast";
 import { L_FALSE, L_TRUE, L_UNDEF } from "./lbool";
 import { RefVector } from "./ref-vector";
@@ -118,7 +117,7 @@ export class RegexBisim {
       this.worklist.pop();
       const cofactors = new RefVector(manager);
       derive.derivativeCofactors(regex, cofactors);
-      const leaves = cofactors.items.filter((_, index) => index % 2 === 1);
+      const leaves = cofactors.items.filter((_value, index) => index % 2 === 1);
       const status = this.areLeavesEquivalent(leaves);
       if (status === L_TRUE)
         for (const leaf of leaves) {

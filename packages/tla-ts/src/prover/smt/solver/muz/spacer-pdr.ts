@@ -1,4 +1,3 @@
-// Ported from Z3 (src/muz/spacer/spacer_pdr.cpp), MIT license, see z3-license.txt.
 import { SmtUnsupportedError } from "../../../../errors";
 import { L_FALSE, L_TRUE, L_UNDEF } from "../lbool";
 import { L_GAVE_UP, type Pob, type SpacerContext } from "./spacer-context";
@@ -211,6 +210,7 @@ export const gpdrSolveCore = (context: SpacerContext) => {
     if (reachable !== L_FALSE) return reachable;
     if (level > 0 && context.propagate(context.expandedLevel, level)) return L_FALSE;
   }
+  context.datalogContext.isBounded = true;
   return L_UNDEF;
 };
 

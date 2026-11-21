@@ -1,12 +1,10 @@
-// Ported from Z3 (src/tactic/dependent_expr_state_tactic.h,
-// src/ast/simplifiers/dependent_expr_state.h, src/ast/simplifiers/dependent_expr_state.cpp), MIT
-// license, see z3-license.txt.
 import type { AstManager } from "./ast";
-import type { Goal } from "./goal";
+import type { Definition, Goal } from "./goal";
 
 // The formula read last stays referenced, as m_dep, until the next read or the end of the tactic.
 export class DependentExprState {
   private held = -1;
+  qhead = 0;
 
   constructor(
     readonly manager: AstManager,
@@ -14,7 +12,7 @@ export class DependentExprState {
   ) {}
 
   get(index: number) {
-    const form = this.goal.forms.items[index];
+    const form = this.goal.forms.get(index);
     this.manager.incRef(form);
     if (this.held !== -1) this.manager.decRef(this.held);
     this.held = form;
@@ -25,7 +23,7 @@ export class DependentExprState {
   forEachIndex(visit: (index: number) => void) {
     const goal = this.goal;
     const end = goal.forms.size;
-    for (let index = 0; index !== end;) {
+    for (let index = this.qhead; index !== end;) {
       visit(index);
       index =
         !this.manager.limit.inc() || goal.isInconsistent || index >= goal.forms.size
@@ -39,15 +37,18 @@ export class DependentExprState {
     const manager = this.manager;
     const goal = this.goal;
     let rewritten = -1;
-    this.forEachIndex((index) => {
-      const form = this.get(index);
-      const next = rewrite(form);
-      if (next === -1) return;
+    try {
+      this.forEachIndex((index) => {
+        const form = this.get(index);
+        const next = rewrite(form);
+        if (next === -1) return;
+        if (rewritten !== -1) manager.decRef(rewritten);
+        rewritten = next;
+        if (rewritten !== form) goal.update(index, rewritten, goal.getDependency(index));
+      });
+    } finally {
       if (rewritten !== -1) manager.decRef(rewritten);
-      rewritten = next;
-      if (rewritten !== form) goal.update(index, rewritten, goal.getDependency(index));
-    });
-    if (rewritten !== -1) manager.decRef(rewritten);
+    }
   }
 
   hasQuantifiers() {
@@ -63,6 +64,13 @@ export class DependentExprState {
   }
 }
 
+export const finishSimplifier = (goal: Goal, definitions: Definition[] = []) => {
+  goal.elimTrue();
+  goal.elimRedundancies();
+  goal.depth++;
+  if (goal.isModelsEnabled) goal.addDefinitions(definitions);
+};
+
 interface Simplifier {
   reduce(): void;
   release(): void;
@@ -75,10 +83,11 @@ export const runSimplifier = (
 ) => {
   const state = new DependentExprState(goal.manager, goal);
   const simplifier = create(state);
-  if (!goal.isProofsEnabled || isSupportingProofs) simplifier.reduce();
-  goal.elimTrue();
-  goal.elimRedundancies();
-  goal.depth++;
-  simplifier.release();
-  state.release();
+  try {
+    if (!goal.isProofsEnabled || isSupportingProofs) simplifier.reduce();
+    finishSimplifier(goal);
+  } finally {
+    simplifier.release();
+    state.release();
+  }
 };

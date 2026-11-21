@@ -1,4 +1,4 @@
-import { AXIOM, Item } from "./reasons";
+import { AXIOM, Item } from "./reasons.ts";
 
 const first = new Item(1);
 const second = new Item(2);

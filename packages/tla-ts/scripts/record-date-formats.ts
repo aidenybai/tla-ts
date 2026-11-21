@@ -1,5 +1,6 @@
-// Records how Temporal's toLocaleString, and an Intl.DateTimeFormat's format of a Date in UTC,
-// format each kind of object in English into src/typescript/date-formats.ts: for each option bag of
+// Records how Temporal's toLocaleString, and an Intl.DateTimeFormat's format of a Date in UTC and
+// of a Temporal object, format each kind of object in English into src/typescript/date-formats.ts:
+// for each option bag of
 // a set it enumerates, the error that Node throws, or the pattern of parts that its output follows,
 // where the pattern gives Node's output for every sample date and time that it checks.
 // Usage: bun scripts/run.ts record-date-formats (with a Node that has Temporal)
@@ -83,6 +84,10 @@ const KINDS = [
   "PlainMonthDay",
   "Instant",
   "DateTimeFormat",
+  // An Intl.DateTimeFormat's format of a Temporal object of each kind but an instant.
+  ...["PlainDate", "PlainTime", "PlainDateTime", "PlainYearMonth", "PlainMonthDay"].map(
+    (kind) => `DateTimeFormat.${kind}`,
+  ),
 ];
 const CALENDARS = ["iso8601", "gregory"];
 
@@ -125,6 +130,14 @@ const format = (kind: string, calendar: string, sample: Sample, bag: Record<stri
         sample.millisecond,
       );
       return { text: new Intl.DateTimeFormat("en", { timeZone: "UTC", ...bag }).format(time) };
+    }
+    if (kind.startsWith("DateTimeFormat.")) {
+      const object = make(kind.slice("DateTimeFormat.".length), calendar, sample);
+      return {
+        text: new Intl.DateTimeFormat("en", { timeZone: "UTC", ...bag }).format(
+          object as Temporal.PlainDate,
+        ),
+      };
     }
     return { text: make(kind, calendar, sample).toLocaleString("en", bag) };
   } catch (error) {
@@ -329,7 +342,7 @@ const getKey = (kind: string, calendar: string, bag: Record<string, Value>) =>
 const entries: string[] = [];
 for (const kind of KINDS) {
   for (const calendar of kind === "DateTimeFormat" ? ["gregory"] : CALENDARS) {
-    for (const bag of kind === "DateTimeFormat" ? [...BAGS, ...FORMAT_BAGS] : BAGS) {
+    for (const bag of kind.startsWith("DateTimeFormat") ? [...BAGS, ...FORMAT_BAGS] : BAGS) {
       const first = format(kind, calendar, FIRST, bag);
       const key = getKey(kind, calendar, bag);
       if (first.error !== undefined) {
@@ -412,8 +425,6 @@ export interface DateFormat {
   styles?: string[];
   isZoned?: boolean;
 }
-
-export const DATE_FORMAT_KEYS = ${JSON.stringify(KEYS)};
 
 export const DATE_FORMATS: Record<string, DateFormat> = {
 `;

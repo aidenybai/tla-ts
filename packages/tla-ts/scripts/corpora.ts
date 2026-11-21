@@ -48,9 +48,28 @@ export const listFiles = (directory: string, isSorted = false): string[] => {
 
 export const TEST262_DIRECTORY = join(CORPORA_DIRECTORY, "test262", "test");
 
-// test262's tests, without the fixture files that its module tests import.
-export const listTest262Files = () =>
-  listFiles(TEST262_DIRECTORY).filter((path) => path.endsWith(".js") && !path.includes("_FIXTURE"));
+// test262's tests, without the fixture files that its module tests import, among those whose ids
+// may start with one of the prefixes given: the entries of each prefix's directory that start as
+// its last part does, or every test where none is given.
+export const listTest262Files = (prefixes: readonly string[] = []) =>
+  (prefixes.length === 0
+    ? listFiles(TEST262_DIRECTORY)
+    : [
+        ...new Set(
+          prefixes.flatMap((prefix) => {
+            const directory = join(TEST262_DIRECTORY, dirname(prefix));
+            return existsSync(directory)
+              ? readdirSync(directory)
+                  .filter((entry) => entry.startsWith(basename(prefix)))
+                  .flatMap((entry) => {
+                    const path = join(directory, entry);
+                    return statSync(path).isDirectory() ? listFiles(path) : [path];
+                  })
+              : [];
+          }),
+        ),
+      ]
+  ).filter((path) => path.endsWith(".js") && !path.includes("_FIXTURE"));
 
 export interface CorpusModule {
   id: string;

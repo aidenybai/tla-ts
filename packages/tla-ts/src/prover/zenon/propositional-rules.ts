@@ -1,5 +1,3 @@
-// Ported from Zenon's prove.ml, as shipped in tlapm. Copyright 2002 INRIA, see LICENSE.
-
 import { getStringValue } from "./equality-rules";
 import { isApp, type Expr, type Expressions } from "./expr";
 import { insertNode, type Queue } from "./node";

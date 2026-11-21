@@ -1,40 +1,28 @@
-import { useEffect, useRef, useState } from "react";
-import { getErrorResult } from "@/lib/run-error";
+import { useEffect, useState } from "react";
+import { runOnEscore, startEscoreWorker, stopEscoreRun } from "@/lib/escore-worker";
 import type { RunRequest, RunResult } from "@/lib/run-worker";
-
-const createWorker = () =>
-  new Worker(new URL("../lib/run-worker.ts", import.meta.url), { type: "module" });
 
 export const useRun = (isWarm = false) => {
   const [result, setResult] = useState<RunResult | undefined>(undefined);
   const [isRunning, setIsRunning] = useState(false);
-  const workerRef = useRef<Worker | undefined>(undefined);
 
   const stop = () => {
-    workerRef.current?.terminate();
-    workerRef.current = undefined;
+    stopEscoreRun();
     setIsRunning(false);
   };
 
   // A warm runner loads the checker ahead of the first run, which then starts at once.
   useEffect(() => {
-    if (isWarm) workerRef.current = createWorker();
-    return () => workerRef.current?.terminate();
+    if (isWarm) startEscoreWorker();
   }, [isWarm]);
 
   const run = (request: RunRequest) => {
-    const idle = isRunning ? undefined : workerRef.current;
-    if (idle === undefined) stop();
-    const worker = idle ?? createWorker();
-    const finish = (nextResult: RunResult) => {
-      setResult(nextResult);
-      stop();
-    };
-    worker.onmessage = (event: MessageEvent<RunResult>) => finish(event.data);
-    worker.onerror = (event) => finish(getErrorResult(event.message));
-    workerRef.current = worker;
+    stopEscoreRun();
     setIsRunning(true);
-    worker.postMessage(request);
+    runOnEscore(request, (nextResult) => {
+      setResult(nextResult);
+      setIsRunning(false);
+    });
   };
 
   return { result, isRunning, run, stop, reset: () => setResult(undefined) };

@@ -1,5 +1,3 @@
-// A port of tlapm's obligation printer (E_fmt, Fmtutil and Ctx).
-
 import { TlaProofError } from "../errors";
 import {
   getHypName,
@@ -432,26 +430,26 @@ const createPrinter = (hyps: Hyp[] = [], options: PrinterOptions = {}) => {
         );
       case "Choose": {
         const domainDoc = expression.domain && printExpr(expression.domain);
-        return withNames(context, [expression.name], ([name]) =>
+        return withNames(context, [expression.name], (names) =>
           createBig(
             domainDoc
               ? format(
                   "@[<b2>CHOOSE @[<b2>%s \\in@ %a@] :@ %a@]",
-                  name,
+                  names[0],
                   domainDoc,
                   printExpr(expression.body),
                 )
-              : format("@[<b2>CHOOSE %s :@ %a@]", name, printExpr(expression.body)),
+              : format("@[<b2>CHOOSE %s :@ %a@]", names[0], printExpr(expression.body)),
           ),
         );
       }
       case "SetSt": {
         const domainDoc = printExpr(expression.domain);
-        return withNames(context, [expression.name], ([name]) =>
+        return withNames(context, [expression.name], (names) =>
           createAtom(
             format(
               "@[<b3>{@[<b2>%s \\in@ %a@] :@ %a}@]",
-              name,
+              names[0],
               domainDoc,
               printExpr(expression.body),
             ),

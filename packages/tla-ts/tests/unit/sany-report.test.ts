@@ -39,6 +39,796 @@ Spec == Init /\\ [][Next]_x
     expect(report).toEqual({ text: "", isFailed: false });
   });
 
+  it("reports the prime standing alone as an operator that needs an argument", () => {
+    const report = getReport({
+      M: "---- MODULE M ----\nEXTENDS Naturals\nf == {'} /\\ <<', 1>> /\\ 1 + ' = 2 /\\ '(1, 2) /\\ ''\n====\n",
+    });
+    expect(report.text).toBe(
+      joinLines([
+        "Semantic errors:",
+        "",
+        "*** Errors: 5",
+        "",
+        ...[
+          "line 3, col 7 to line 3, col 7",
+          "line 3, col 15 to line 3, col 15",
+          "line 3, col 29 to line 3, col 29",
+          "line 3, col 39 to line 3, col 44",
+          "line 3, col 49 to line 3, col 49",
+        ].flatMap((range) => [
+          `${range} of module M`,
+          "",
+          "The operator ' requires 1 arguments.",
+          "",
+          "",
+        ]),
+      ]),
+    );
+  });
+
+  it("reports a selector after an operator symbol as SANY does", () => {
+    const report = getReport({
+      M: "---- MODULE M ----\nf == '!x /\\ ^#!x /\\ \\cup!x /\\ -.!x /\\ ^+!x /\\ ^#(1)!x /\\ \\union!1 /\\ '(1)!1 /\\ \\X!1\n====\n",
+    });
+    expect(report.text).toBe(
+      joinLines([
+        "Semantic errors:",
+        "",
+        "*** Errors: 9",
+        "",
+        ...[
+          ["line 2, col 6 to line 2, col 6", "Cannot take subexpression of `''."],
+          ["line 2, col 13 to line 2, col 16", "Unknown operator: `^#!x'."],
+          ["line 2, col 21 to line 2, col 24", "Cannot take subexpression of `\\union'."],
+          ["line 2, col 31 to line 2, col 34", "Unknown operator: `-.!x'."],
+          ["line 2, col 39 to line 2, col 42", "Unknown operator: `^+!x'."],
+          ["line 2, col 47 to line 2, col 53", "Unknown operator: `^#!x'."],
+          ["line 2, col 58 to line 2, col 63", "Cannot take subexpression of `\\union'."],
+          ["line 2, col 70 to line 2, col 70", "Cannot take subexpression of `''."],
+          ["line 2, col 80 to line 2, col 81", "Cannot take subexpression of `\\times'."],
+        ].flatMap((error) => [`${error[0]} of module M`, "", error[1], "", ""]),
+      ]),
+    );
+  });
+
+  it("reports a selection into an expression that failed to resolve as SANY does", () => {
+    const report = getReport({
+      M: "---- MODULE M ----\nVARIABLE x\nOp(a) == a + zz\nV == x\nS(a) == {zz + 1}\nC == CASE TRUE -> zz + 1\nf == Op(2)!1 /\\ V!1 /\\ S(2)!1 /\\ Op(2)!: /\\ C!1!2 /\\ Op(2)!<<\n====\n",
+    });
+    expect(report.text).toBe(
+      joinLines([
+        "Semantic errors:",
+        "",
+        "*** Errors: 12",
+        "",
+        ...[
+          [
+            "line 3, col 12 to line 3, col 12",
+            "Could not find declaration or definition of symbol '+'.",
+          ],
+          ["line 3, col 10 to line 3, col 15", "Couldn't resolve infix operator symbol `+'."],
+          [
+            "line 5, col 13 to line 5, col 13",
+            "Could not find declaration or definition of symbol '+'.",
+          ],
+          ["line 5, col 10 to line 5, col 15", "Couldn't resolve infix operator symbol `+'."],
+          [
+            "line 6, col 22 to line 6, col 22",
+            "Could not find declaration or definition of symbol '+'.",
+          ],
+          ["line 6, col 19 to line 6, col 24", "Couldn't resolve infix operator symbol `+'."],
+          [
+            "line 7, col 12 to line 7, col 12",
+            "Subexpression selection failed, probably due to an error in the selected expression.",
+          ],
+          [
+            "line 7, col 19 to line 7, col 19",
+            "Choosing operand `argument selector 1' of subexpression with no operands.",
+          ],
+          [
+            "line 7, col 29 to line 7, col 29",
+            "An unexpected null node specified by 'argument selector 1'.\nThis is probably due to a previous error.",
+          ],
+          [
+            "line 7, col 40 to line 7, col 40",
+            "An unexpected null node specified by ':'.\nThis is probably due to a previous error.",
+          ],
+          ["line 7, col 49 to line 7, col 49", "Selecting OTHER in a CASE statement."],
+          [
+            "line 7, col 60 to line 7, col 61",
+            "Subexpression selection failed, probably due to an error in the selected expression.",
+          ],
+        ].flatMap((error) => [`${error[0]} of module M`, "", error[1], "", ""]),
+      ]),
+    );
+  });
+
+  it("reports a selection into a definition whose own selection failed as SANY does", () => {
+    const report = getReport({
+      M: "---- MODULE M ----\nEXTENDS Naturals\nG(a) == a + 1\nF == G(1)!7\nK == F!1\n====\n",
+    });
+    expect(report.text).toBe(
+      joinLines([
+        "Semantic errors:",
+        "",
+        "*** Errors: 2",
+        "",
+        ...[
+          [
+            "line 4, col 11 to line 4, col 11",
+            "Nonexistent operand specified by `argument selector 7'.",
+          ],
+          [
+            "line 5, col 8 to line 5, col 8",
+            "Choosing operand `argument selector 1' of subexpression with no operands.",
+          ],
+        ].flatMap((error) => [`${error[0]} of module M`, "", error[1], "", ""]),
+      ]),
+    );
+  });
+
+  it("reports an @ fact as an unknown operator as SANY does", () => {
+    const report = getReport({ M: "---- MODULE M ----\nUSE @\nTHEOREM TRUE\nBY @\n====\n" });
+    expect(report.text).toBe(
+      joinLines([
+        "Semantic errors:",
+        "",
+        "*** Errors: 2",
+        "",
+        ...["line 2, col 5 to line 2, col 5", "line 4, col 4 to line 4, col 4"].flatMap((range) => [
+          `${range} of module M`,
+          "",
+          "Unknown operator: `@'.",
+          "",
+          "",
+        ]),
+      ]),
+    );
+  });
+
+  it("ends a line at a lone CR as SANY does", () => {
+    const report = getReport({
+      M: "---- MODULE M ----\rVARIABLE x\rA == y\rB ==\r  /\\ x = 1\r  /\\ z\r====\r",
+    });
+    expect(report.text).toBe(
+      joinLines([
+        "Semantic errors:",
+        "",
+        "*** Errors: 2",
+        "",
+        ...[
+          ["line 3, col 6 to line 3, col 6", "y"],
+          ["line 6, col 6 to line 6, col 6", "z"],
+        ].flatMap((error) => [
+          `${error[0]} of module M`,
+          "",
+          `Unknown operator: \`${error[1]}'.`,
+          "",
+          "",
+        ]),
+      ]),
+    );
+  });
+
+  it("passes an operator whose definition has fewer parameters than its RECURSIVE declaration, where SANY crashes", () => {
+    const report = getReport({
+      M: "---- MODULE M ----\nRECURSIVE R(_, _)\nR == 1\nL(P(_, _)) == 1\nA == L(R)\n====\n",
+    });
+    expect(report.text).toBe(
+      joinLines([
+        "Semantic errors:",
+        "",
+        "*** Errors: 1",
+        "",
+        "line 3, col 1 to line 3, col 6 of module M",
+        "",
+        "Definition of R has different arity than its RECURSIVE declaration.",
+        "",
+        "",
+      ]),
+    );
+  });
+
+  it("declares the operator symbols of a LET's RECURSIVE statements, as SANY does", () => {
+    const report = getReport({
+      M: "---- MODULE M ----\nR ==\n  LET\n    RECURSIVE _**_\n    x ** y == x ** y\n    RECURSIVE _^#\n    x^# == x^#\n  IN 1 ** 2\nS == LET RECURSIVE _++_ IN 1\n====\n",
+    });
+    expect(report.text).toBe(
+      joinLines([
+        "Semantic errors:",
+        "",
+        "*** Errors: 1",
+        "",
+        "line 9, col 20 to line 9, col 23 of module M",
+        "",
+        "Symbol ++ declared in RECURSIVE statement but not defined.",
+        "",
+        "",
+      ]),
+    );
+  });
+
+  it("locates the tuple of an EXCEPT path at the part of its update SANY picks", () => {
+    const report = getReport({
+      M: "---- MODULE M ----\nVARIABLE x\nf == [v \\in {1} |-> v]\nB == [f EXCEPT ![1][[]x, 2] = 1]\nC == [f EXCEPT ![1][2][[]x, 3] = ((1))]\n====\n",
+    });
+    expect(report.text).toBe(
+      joinLines([
+        "Semantic errors:",
+        "",
+        "*** Errors: 2",
+        "",
+        "line 4, col 29 to line 4, col 29 of module M",
+        "",
+        "Level error in applying operator $Tuple:",
+        "The level of argument 1 exceeds the maximum level allowed by the operator.",
+        "",
+        "",
+        "line 5, col 34 to line 5, col 38 of module M",
+        "",
+        "Level error in applying operator $Tuple:",
+        "The level of argument 1 exceeds the maximum level allowed by the operator.",
+        "",
+        "",
+      ]),
+    );
+  });
+
+  it("locates the tuple of a late EXCEPT path component at the component, where SANY crashes", () => {
+    const report = getReport({
+      M: "---- MODULE M ----\nVARIABLE x\nf == [v \\in {1} |-> v]\nA == [f EXCEPT ![1][2][3][[]x, 4] = 1]\n====\n",
+    });
+    expect(report.text).toBe(
+      joinLines([
+        "Semantic errors:",
+        "",
+        "*** Errors: 1",
+        "",
+        "line 4, col 26 to line 4, col 33 of module M",
+        "",
+        "Level error in applying operator $Tuple:",
+        "The level of argument 1 exceeds the maximum level allowed by the operator.",
+        "",
+        "",
+      ]),
+    );
+  });
+
+  it("keeps a label it rejects out of the HIDE fact check, as SANY does", () => {
+    const report = getReport({
+      M: "---- MODULE M ----\nA == 1\nTHEOREM T == TRUE\nHIDE lab:: A, T\nUSE lab:: A\nASSUME lab:: TRUE\n====\n",
+    });
+    expect(report.text).toBe(
+      joinLines([
+        "Semantic errors:",
+        "",
+        "*** Errors: 3",
+        "",
+        ...[
+          "line 4, col 6 to line 4, col 12",
+          "line 5, col 5 to line 5, col 11",
+          "line 6, col 8 to line 6, col 17",
+        ].flatMap((location) => [
+          `${location} of module M`,
+          "",
+          "Label not in definition or proof step.",
+          "",
+          "",
+        ]),
+      ]),
+    );
+  });
+
+  it("rejects the arguments of a name after a prefix in a DEF clause entry, where SANY crashes", () => {
+    const report = getReport({
+      M: "---- MODULE M ----\nA == 1\nB == 2\nTHEOREM TRUE BY DEF A!B(1)\n====\n",
+    });
+    expect(report.text).toBe(
+      joinLines([
+        "Semantic errors:",
+        "",
+        "*** Errors: 3",
+        "",
+        ...[
+          ["line 4, col 23 to line 4, col 23", "Selector `B' should not have argument(s)."],
+          [
+            "line 4, col 21 to line 4, col 26",
+            "DEF clause entry should describe a defined operator.",
+          ],
+          ["line 4, col 14 to line 4, col 26", "Empty BY"],
+        ].flatMap((error) => [`${error[0]} of module M`, "", error[1], "", ""]),
+      ]),
+    );
+  });
+
+  it("rejects a DEF clause entry whose first child nests, where SANY reports line 2147483647", () => {
+    const report = getReport({
+      M: "---- MODULE M ----\nA == 1\nB == 2\nf == [x \\in {1} |-> x]\nF(x) == x\nTHEOREM TRUE BY DEF A + B + A, A /\\ B /\\ A, f[1] + B, A'', F(A)[1], A\n====\n",
+    });
+    expect(report.text).toBe(
+      joinLines([
+        "Semantic errors:",
+        "",
+        "*** Errors: 5",
+        "",
+        ...[
+          "line 6, col 21 to line 6, col 29",
+          "line 6, col 32 to line 6, col 42",
+          "line 6, col 45 to line 6, col 52",
+          "line 6, col 55 to line 6, col 57",
+          "line 6, col 60 to line 6, col 66",
+        ].flatMap((location) => [
+          `${location} of module M`,
+          "",
+          "DEF clause entry should describe a defined operator.",
+          "",
+          "",
+        ]),
+      ]),
+    );
+  });
+
+  it("looks up the name a binder declares in a DEF clause entry, and rejects decimals, as SANY does", () => {
+    const DEF_ERROR = "DEF clause entry should describe a defined operator.";
+    const report = getReport({
+      M: "---- MODULE M ----\nCONSTANT K\nA == 1\nB == 2\nTHEOREM TRUE BY DEF CHOOSE v : TRUE, \\E v, w : TRUE, {v \\in {} : TRUE}, A\nTHEOREM TRUE BY DEF CHOOSE <<a, b>> \\in {} : TRUE, {<<a, b>> \\in {} : TRUE}, 12.50, A\nTHEOREM TRUE BY DEF CHOOSE A : TRUE, CHOOSE K : TRUE, \\AA v : TRUE\n====\n",
+    });
+    expect(report.text).toBe(
+      joinLines([
+        "Semantic errors:",
+        "",
+        "*** Errors: 18",
+        "",
+        ...[
+          ["line 5, col 28 to line 5, col 28", "Unknown operator: `v'."],
+          ["line 5, col 21 to line 5, col 35", DEF_ERROR],
+          ["line 5, col 41 to line 5, col 41", "Unknown operator: `v'."],
+          ["line 5, col 38 to line 5, col 51", DEF_ERROR],
+          ["line 5, col 55 to line 5, col 55", "Unknown operator: `v'."],
+          ["line 5, col 54 to line 5, col 70", DEF_ERROR],
+          ["line 6, col 28 to line 6, col 35", "Unexpected token found."],
+          [
+            "line 6, col 28 to line 6, col 35",
+            "Need name or step number here, not `N_IdentifierTuple'.",
+          ],
+          ["line 6, col 21 to line 6, col 49", DEF_ERROR],
+          ["line 6, col 53 to line 6, col 60", "Unexpected token found."],
+          [
+            "line 6, col 53 to line 6, col 60",
+            "Need name or step number here, not `N_IdentifierTuple'.",
+          ],
+          ["line 6, col 52 to line 6, col 75", DEF_ERROR],
+          ["line 6, col 80 to line 6, col 80", "Unexpected token found."],
+          ["line 6, col 80 to line 6, col 80", "Need name or step number here, not `.'."],
+          ["line 6, col 78 to line 6, col 82", DEF_ERROR],
+          ["line 7, col 38 to line 7, col 52", DEF_ERROR],
+          ["line 7, col 59 to line 7, col 59", "Unknown operator: `v'."],
+          ["line 7, col 55 to line 7, col 66", DEF_ERROR],
+        ].flatMap((error) => [`${error[0]} of module M`, "", error[1], "", ""]),
+      ]),
+    );
+  });
+
+  it("reads a decimal's point and parts as separate tokens, as SANY does", () => {
+    const DEF_ERRORS = ["Unexpected token found.", "Need name or step number here, not `.'."];
+    const report = getReport({
+      M: "---- MODULE M ----\nVARIABLE x\nA == 1\nTHEOREM TRUE BY DEF 12 . 50, A\nTHEOREM TRUE BY DEF 1\n  .2, A\nB == 1.(* c *)2 + 1.5x\n====\n",
+    });
+    expect(report.text).toBe(
+      joinLines([
+        "Semantic errors:",
+        "",
+        "*** Errors: 8",
+        "",
+        ...[
+          ...DEF_ERRORS.map((message) => ["line 4, col 24 to line 4, col 24", message]),
+          [
+            "line 4, col 21 to line 4, col 27",
+            "DEF clause entry should describe a defined operator.",
+          ],
+          ...DEF_ERRORS.map((message) => ["line 6, col 3 to line 6, col 3", message]),
+          [
+            "line 5, col 21 to line 6, col 4",
+            "DEF clause entry should describe a defined operator.",
+          ],
+          [
+            "line 7, col 17 to line 7, col 17",
+            "Could not find declaration or definition of symbol '+'.",
+          ],
+          ["line 7, col 6 to line 7, col 22", "Couldn't resolve infix operator symbol `+'."],
+        ].flatMap((error) => [`${error[0]} of module M`, "", error[1], "", ""]),
+      ]),
+    );
+  });
+
+  it.each([
+    ["\\b1.1", "\\b1", 6],
+    ["1 . \\h1F", "\\h1F", 10],
+  ])("rejects the decimal %s with a based part, where SANY crashes", (decimal, part, column) => {
+    const report = getReport({ M: `---- MODULE M ----\nA == ${decimal}\n====\n` });
+    expect(report.isFailed).toBe(true);
+    expect(report.text).toContain(
+      `***Parse Error***\nExpected decimal digits but found ${part} at line 2, column ${column}\n`,
+    );
+  });
+
+  it.each(["{a, e \\in S}", "{a, e, a \\in S}", "{<<1, 2>> \\in S}", "{<<a, e>> \\in S}"])(
+    "reads %s as a set enumeration, which SANY's lookahead reads as a bound",
+    (set) => {
+      const report = getReport({ M: `---- MODULE M ----\nCONSTANTS a, e, S\nX == ${set}\n====\n` });
+      expect(report.isFailed).toBe(false);
+    },
+  );
+
+  it("reports DEF clause entries of bracketed, quantified and infix shapes as SANY does", () => {
+    const report = getReport({
+      M: "---- MODULE M ----\nA == 1\nB == 2\nTHEOREM TRUE BY DEF CASE A -> 1 [] OTHER -> 2, [a |-> 1], [a : {}], A\nTHEOREM TRUE BY DEF [v \\in {} |-> 1], \\A v, w \\in {} : TRUE, A\nTHEOREM TRUE BY DEF LET Q == 1 IN Q, A \\X B, A /\\ B, {A \\/ B}, A\nTHEOREM TRUE BY DEF [A EXCEPT ![1] = 2], [A -> B], {A : v \\in {}}, WF_A(B), A\nTHEOREM TRUE BY DEF /\\ A\n                    /\\ B\n====\n",
+    });
+    expect(report.text).toBe(
+      joinLines([
+        "Semantic errors:",
+        "",
+        "*** Errors: 46",
+        "",
+        "line 4, col 26 to line 4, col 31 of module M",
+        "",
+        "Unexpected token found.",
+        "",
+        "",
+        "line 4, col 26 to line 4, col 31 of module M",
+        "",
+        "Need name or step number here, not `N_CaseArm'.",
+        "",
+        "",
+        "line 4, col 21 to line 4, col 45 of module M",
+        "",
+        "DEF clause entry should describe a defined operator.",
+        "",
+        "",
+        "line 4, col 49 to line 4, col 55 of module M",
+        "",
+        "Unexpected token found.",
+        "",
+        "",
+        "line 4, col 49 to line 4, col 55 of module M",
+        "",
+        "Need name or step number here, not `N_FieldVal'.",
+        "",
+        "",
+        "line 4, col 48 to line 4, col 56 of module M",
+        "",
+        "DEF clause entry should describe a defined operator.",
+        "",
+        "",
+        "line 4, col 60 to line 4, col 65 of module M",
+        "",
+        "Unexpected token found.",
+        "",
+        "",
+        "line 4, col 60 to line 4, col 65 of module M",
+        "",
+        "Need name or step number here, not `N_FieldSet'.",
+        "",
+        "",
+        "line 4, col 59 to line 4, col 66 of module M",
+        "",
+        "DEF clause entry should describe a defined operator.",
+        "",
+        "",
+        "line 5, col 22 to line 5, col 29 of module M",
+        "",
+        "Unexpected token found.",
+        "",
+        "",
+        "line 5, col 22 to line 5, col 29 of module M",
+        "",
+        "Need name or step number here, not `N_QuantBound'.",
+        "",
+        "",
+        "line 5, col 21 to line 5, col 36 of module M",
+        "",
+        "DEF clause entry should describe a defined operator.",
+        "",
+        "",
+        "line 5, col 42 to line 5, col 52 of module M",
+        "",
+        "Unexpected token found.",
+        "",
+        "",
+        "line 5, col 42 to line 5, col 52 of module M",
+        "",
+        "Need name or step number here, not `N_QuantBound'.",
+        "",
+        "",
+        "line 5, col 39 to line 5, col 59 of module M",
+        "",
+        "DEF clause entry should describe a defined operator.",
+        "",
+        "",
+        "line 6, col 25 to line 6, col 30 of module M",
+        "",
+        "Unexpected token found.",
+        "",
+        "",
+        "line 6, col 25 to line 6, col 30 of module M",
+        "",
+        "Need name or step number here, not `N_LetDefinitions'.",
+        "",
+        "",
+        "line 6, col 21 to line 6, col 35 of module M",
+        "",
+        "DEF clause entry should describe a defined operator.",
+        "",
+        "",
+        "line 6, col 38 to line 6, col 43 of module M",
+        "",
+        "Was expecting a GeneralId.",
+        "",
+        "",
+        "line 6, col 40 to line 6, col 41 of module M",
+        "",
+        "Unexpected token found.",
+        "",
+        "",
+        "line 6, col 40 to line 6, col 41 of module M",
+        "",
+        "Need name or step number here, not `N_GenInfixOp'.",
+        "",
+        "",
+        "line 6, col 38 to line 6, col 43 of module M",
+        "",
+        "DEF clause entry should describe a defined operator.",
+        "",
+        "",
+        "line 6, col 46 to line 6, col 51 of module M",
+        "",
+        "Was expecting a GeneralId.",
+        "",
+        "",
+        "line 6, col 48 to line 6, col 49 of module M",
+        "",
+        "Unexpected token found.",
+        "",
+        "",
+        "line 6, col 48 to line 6, col 49 of module M",
+        "",
+        "Need name or step number here, not `N_GenInfixOp'.",
+        "",
+        "",
+        "line 6, col 46 to line 6, col 51 of module M",
+        "",
+        "DEF clause entry should describe a defined operator.",
+        "",
+        "",
+        "line 6, col 55 to line 6, col 60 of module M",
+        "",
+        "Unexpected token found.",
+        "",
+        "",
+        "line 6, col 55 to line 6, col 60 of module M",
+        "",
+        "Need name or step number here, not `N_InfixExpr'.",
+        "",
+        "",
+        "line 6, col 54 to line 6, col 61 of module M",
+        "",
+        "DEF clause entry should describe a defined operator.",
+        "",
+        "",
+        "line 7, col 22 to line 7, col 22 of module M",
+        "",
+        "Unexpected token found.",
+        "",
+        "",
+        "line 7, col 22 to line 7, col 22 of module M",
+        "",
+        "Need name or step number here, not `N_GeneralId'.",
+        "",
+        "",
+        "line 7, col 21 to line 7, col 39 of module M",
+        "",
+        "DEF clause entry should describe a defined operator.",
+        "",
+        "",
+        "line 7, col 43 to line 7, col 43 of module M",
+        "",
+        "Unexpected token found.",
+        "",
+        "",
+        "line 7, col 43 to line 7, col 43 of module M",
+        "",
+        "Need name or step number here, not `N_GeneralId'.",
+        "",
+        "",
+        "line 7, col 42 to line 7, col 49 of module M",
+        "",
+        "DEF clause entry should describe a defined operator.",
+        "",
+        "",
+        "line 7, col 53 to line 7, col 53 of module M",
+        "",
+        "Unexpected token found.",
+        "",
+        "",
+        "line 7, col 53 to line 7, col 53 of module M",
+        "",
+        "Need name or step number here, not `N_GeneralId'.",
+        "",
+        "",
+        "line 7, col 52 to line 7, col 65 of module M",
+        "",
+        "DEF clause entry should describe a defined operator.",
+        "",
+        "",
+        "line 7, col 71 to line 7, col 71 of module M",
+        "",
+        "Unexpected token found.",
+        "",
+        "",
+        "line 7, col 71 to line 7, col 71 of module M",
+        "",
+        "Need name or step number here, not `N_GeneralId'.",
+        "",
+        "",
+        "line 7, col 68 to line 7, col 74 of module M",
+        "",
+        "DEF clause entry should describe a defined operator.",
+        "",
+        "",
+        "line 8, col 21 to line 9, col 24 of module M",
+        "",
+        "Was expecting a GeneralId.",
+        "",
+        "",
+        "line 9, col 21 to line 9, col 24 of module M",
+        "",
+        "Unexpected token found.",
+        "",
+        "",
+        "line 9, col 21 to line 9, col 24 of module M",
+        "",
+        "Need name or step number here, not `N_ConjItem'.",
+        "",
+        "",
+        "line 8, col 21 to line 9, col 24 of module M",
+        "",
+        "DEF clause entry should describe a defined operator.",
+        "",
+        "",
+        "line 8, col 14 to line 9, col 24 of module M",
+        "",
+        "Empty BY",
+        "",
+        "",
+      ]),
+    );
+  });
+
+  it("rejects a number or a string as a DEF clause entry, where SANY crashes", () => {
+    const report = getReport({
+      M: '---- MODULE M ----\nA == 1\nTHEOREM TRUE BY DEF 1, "s", A\n====\n',
+    });
+    expect(report.text).toBe(
+      joinLines([
+        "Semantic errors:",
+        "",
+        "*** Errors: 2",
+        "",
+        "line 3, col 21 to line 3, col 21 of module M",
+        "",
+        "DEF clause entry should describe a defined operator.",
+        "",
+        "",
+        "line 3, col 24 to line 3, col 26 of module M",
+        "",
+        "DEF clause entry should describe a defined operator.",
+        "",
+        "",
+      ]),
+    );
+  });
+
+  it("level-checks the recursive sections of a file's modules before the modules, apart, as SANY does", () => {
+    expect(
+      getReport({
+        M: "---- MODULE M ----\n---- MODULE Inner ----\nVARIABLE w\nRECURSIVE S(_)\nS(p) == IF p THEN []w ELSE S(p)\n====\nRECURSIVE R(_)\nR(p) == IF p THEN 1 ELSE R(p)\nASSUME R(TRUE)\n====\n",
+      }),
+    ).toEqual({ text: "", isFailed: false });
+    expect(
+      getReport({
+        M: "---- MODULE M ----\nVARIABLE v\n---- MODULE Inner ----\nVARIABLE w\nRECURSIVE S(_)\nS(p) == {<>w} \\cup S(p)\nA == {[]w}\n====\nRECURSIVE R(_)\nR(p) == {[]v} \\cup R(p)\nC == {<>v}\n====\n",
+      }).text,
+    ).toBe(
+      joinLines([
+        "Semantic errors:",
+        "",
+        "*** Errors: 6",
+        "",
+        "line 6, col 9 to line 6, col 13 of module M",
+        "",
+        "Level error in applying operator $SetEnumerate:",
+        "The level of argument 1 exceeds the maximum level allowed by the operator.",
+        "",
+        "",
+        "line 6, col 9 to line 6, col 23 of module M",
+        "",
+        "Level error in applying operator \\union:",
+        "The level of argument 2 exceeds the maximum level allowed by the operator.",
+        "",
+        "",
+        "line 10, col 9 to line 10, col 13 of module M",
+        "",
+        "Level error in applying operator $SetEnumerate:",
+        "The level of argument 1 exceeds the maximum level allowed by the operator.",
+        "",
+        "",
+        "line 10, col 9 to line 10, col 23 of module M",
+        "",
+        "Level error in applying operator \\union:",
+        "The level of argument 2 exceeds the maximum level allowed by the operator.",
+        "",
+        "",
+        "line 7, col 6 to line 7, col 10 of module M",
+        "",
+        "Level error in applying operator $SetEnumerate:",
+        "The level of argument 1 exceeds the maximum level allowed by the operator.",
+        "",
+        "",
+        "line 11, col 6 to line 11, col 10 of module M",
+        "",
+        "Level error in applying operator $SetEnumerate:",
+        "The level of argument 1 exceeds the maximum level allowed by the operator.",
+        "",
+        "",
+      ]),
+    );
+  });
+
+  // Deviation from SANY: it reports only the first row, since ThmOrAssumpDefNode#levelCheck never sets a theorem's weights.
+  it.each([
+    ["D == c = 1", "ASSUME I(x)!D", "line 8, col 1 to line 8, col 13"],
+    ["THEOREM T == ASSUME c = 1 PROVE TRUE", "ASSUME I(x)!T", "line 8, col 1 to line 8, col 13"],
+    ["THEOREM T == c = 1", "ASSUME I(x)!T", "line 8, col 1 to line 8, col 13"],
+    [
+      "THEOREM T == ASSUME NEW z, c = 1 PROVE z = z",
+      "ASSUME I(x)!T",
+      "line 8, col 1 to line 8, col 13",
+    ],
+    [
+      "THEOREM T == ASSUME c = 1, NEW z PROVE z = z",
+      "ASSUME I(x)!T",
+      "line 8, col 1 to line 8, col 13",
+    ],
+    [
+      "THEOREM T == ASSUME c = 1 PROVE TRUE",
+      "D == I(x)!T\nASSUME D",
+      "line 9, col 1 to line 9, col 8",
+    ],
+  ])(
+    "levels %j applied through a parameterized instance by its argument in %j",
+    (lines, use, range) => {
+      expect(
+        getReport({
+          M: `---- MODULE M ----\nVARIABLE x\n---- MODULE L ----\nCONSTANT c\n${lines}\n====\nI(p) == INSTANCE L WITH c <- p\n${use}\nInit == x = 0\nNext == x' = x\n====\n`,
+        }),
+      ).toEqual({
+        text: joinLines([
+          "Semantic errors:",
+          "",
+          "*** Errors: 1",
+          "",
+          `${range} of module M`,
+          "",
+          "Level error: assumptions must be level 0 (Constant), ",
+          "but this one has level 1.",
+          "",
+          "",
+        ]),
+        isFailed: true,
+      });
+    },
+  );
+
   it("parses a module once the module that names it reaches it, though another loaded it", () => {
     const report = getReport(
       {
@@ -59,6 +849,53 @@ Spec == Init /\\ [][Next]_x
         ...["Root", "A", "B", "C", "F", "E", "G", "D"].map((name) => `Parsing file ${name}.tla`),
         ...order.map((name) => `Semantic processing of module ${name}`),
         ...order.map((name) => `Linting of module ${name}`),
+      ]),
+      isFailed: false,
+    });
+  });
+
+  it("loads the modules that LETs, substitutions, proofs and inner modules instantiate as SANY does", () => {
+    const leaves = Object.fromEntries(
+      ["A", "C", "D", "E", "F", "G", "H"].map((name) => [
+        name,
+        `---- MODULE ${name} ----\nK == TRUE\n====\n`,
+      ]),
+    );
+    const report = getReport(
+      {
+        M: "---- MODULE M ----\n---- MODULE Inner ----\nTHEOREM TRUE\n<1> N == INSTANCE A\n<1> QED\n====\nI == INSTANCE P WITH q <- LET N == INSTANCE C IN N!K\nASSUME LET N == INSTANCE D IN N!K\nUSE LET N == INSTANCE E IN N!K\nTHEOREM ASSUME NEW v \\in LET N == INSTANCE F IN {N!K} PROVE TRUE\n<1>1. PICK w \\in LET N == INSTANCE G IN {N!K} : TRUE\n<1> QED BY LET N == INSTANCE H IN N!K\n====\n",
+        P: "---- MODULE P ----\nCONSTANT q\nK == q\n====\n",
+        ...leaves,
+      },
+      { describeFile: (name) => `${name}.tla` },
+    );
+    const order = ["P", "C", "D", "E", "F", "G", "H", "A"];
+    expect(report).toEqual({
+      text: joinLines([
+        ...["M", ...order].map((name) => `Parsing file ${name}.tla`),
+        ...[...order, "M"].map((name) => `Semantic processing of module ${name}`),
+        ...[...order, "M"].map((name) => `Linting of module ${name}`),
+      ]),
+      isFailed: false,
+    });
+  });
+
+  it("loads the modules that a LET instantiates in source order as SANY does", () => {
+    const order = ["Q", "R", "S"];
+    const report = getReport(
+      {
+        L: "---- MODULE L ----\nX == LET A == LET N == INSTANCE Q IN N!K\n         M == INSTANCE R\n         B == LET N == INSTANCE S IN N!K\n     IN TRUE\n====\n",
+        ...Object.fromEntries(
+          order.map((name) => [name, `---- MODULE ${name} ----\nK == TRUE\n====\n`]),
+        ),
+      },
+      { describeFile: (name) => `${name}.tla` },
+    );
+    expect(report).toEqual({
+      text: joinLines([
+        ...["L", ...order].map((name) => `Parsing file ${name}.tla`),
+        ...[...order, "L"].map((name) => `Semantic processing of module ${name}`),
+        ...[...order, "L"].map((name) => `Linting of module ${name}`),
       ]),
       isFailed: false,
     });
@@ -147,17 +984,37 @@ Spec == Init /\\ [][Next]_x
     [
       "F(a) == a\nx == F(\\in)",
       "line 3, col 8 to line 3, col 10",
-      "Unsupported expression type `N_GenInfixOp'.",
+      "The operator \\in requires 2 arguments.",
+    ],
+    [
+      "F(a) == a\nx == F(\\cup)",
+      "line 3, col 8 to line 3, col 11",
+      "The operator \\union requires 2 arguments.",
     ],
     [
       "F(a) == a\nx == F(SUBSET)",
       "line 3, col 8 to line 3, col 13",
-      "Unsupported expression type `N_GenNonExpPrefixOp'.",
+      "The operator SUBSET requires 1 arguments.",
+    ],
+    [
+      "F(a) == a\nx == F(\\lnot)",
+      "line 3, col 8 to line 3, col 12",
+      "The operator \\lnot requires 1 arguments.",
+    ],
+    [
+      "F(a) == a\nx == F(')",
+      "line 3, col 8 to line 3, col 8",
+      "The operator ' requires 1 arguments.",
     ],
     [
       "F(a) == a\nx == F(^#)",
       "line 3, col 8 to line 3, col 9",
-      "Unsupported expression type `N_GenPostfixOp'.",
+      "Could not find declaration or definition of symbol '^#'.",
+    ],
+    [
+      "F(a) == a\nx == F(=<)",
+      "line 3, col 8 to line 3, col 9",
+      "Could not find declaration or definition of symbol '=<'.",
     ],
     [
       "F(a) == a\nx == F(LAMBDA y : y)",
@@ -238,6 +1095,102 @@ Spec == Init /\\ [][Next]_x
     );
   });
 
+  it("reports an operator substitution that is undefined or parenthesized as SANY does", () => {
+    const report = getReport({
+      M: "---- MODULE M ----\nG(a) == a\nI == INSTANCE R WITH Op <- +\nJ == INSTANCE R WITH Op <- (G)\n====\n",
+      R: "---- MODULE R ----\nCONSTANT Op(_)\n====\n",
+    });
+    expect(report.text).toContain(
+      joinLines([
+        "*** Errors: 3",
+        "",
+        "line 3, col 28 to line 3, col 28 of module M",
+        "",
+        "Could not find declaration or definition of symbol '+'.",
+        "",
+        "",
+        "In module --TLA+ BUILTINS--",
+        "",
+        "An operator must be substituted for symbol 'Op', and it must have arity 1.",
+        "",
+        "",
+        "line 4, col 28 to line 4, col 30 of module M",
+        "",
+        "Arity 1 operator (not an expression) is expected ",
+        "to substitute for CONSTANT 'Op'.",
+      ]),
+    );
+  });
+
+  it("substitutes for an operator CONSTANT named by a synonym, which SANY rejects", () => {
+    const report = getReport({
+      M: "---- MODULE M ----\nG(a, b) == a\nI == INSTANCE R WITH <= <- G\n====\n",
+      R: "---- MODULE R ----\nCONSTANT _ <= _\n====\n",
+    });
+    expect(report).toEqual({ text: "", isFailed: false });
+  });
+
+  it.each([
+    [
+      "rejects as multiply defined",
+      "---- MODULE M ----\n---- MODULE Inner ----\nK == 1\n====\nD == LET N == INSTANCE Inner IN N!K\n====\n",
+    ],
+    [
+      "fails to parse when it has an inner module of its own",
+      "---- MODULE M ----\n---- MODULE Inner ----\n---- MODULE Nested ----\nJ == 1\n====\nK == 1\n====\nD == LET N == INSTANCE Inner IN N!K\n====\n",
+    ],
+  ])("accepts an inner module that only a LET instantiates, which SANY %s", (_title, source) => {
+    expect(getReport({ M: source })).toEqual({ text: "", isFailed: false });
+  });
+
+  it.each([
+    "f[v \\in LET N == 1 IN {N}] == v",
+    "D == LET f[v \\in {LET N == 1 IN N}] == v IN f[1]",
+    "THEOREM TRUE\n<1> DEFINE f[v \\in [a : LET N == 1 IN {N}]] == v\n<1> QED",
+  ])("accepts a function definition with a LET in its bounds in %j, which SANY rejects", (unit) => {
+    const report = getReport({ M: `---- MODULE M ----\n${unit}\n====\n` });
+    expect(report).toEqual({ text: "", isFailed: false });
+  });
+
+  it("checks the proof of a labeled temporal theorem or step, which SANY skips", () => {
+    const report = getReport({
+      M: "---- MODULE M ----\nVARIABLE x\nTHEOREM T == t :: [](x = 0)\n<1>1. HAVE x = 1\n<1>2. s :: [](x = 0)\n  <2>1. CASE x = 1\n    OBVIOUS\n  <2> QED\n<1> QED\n====\n",
+    });
+    expect(report).toEqual({
+      text: joinLines([
+        "Semantic errors:",
+        "",
+        "*** Errors: 2",
+        "",
+        "line 6, col 9 to line 6, col 18 of module M",
+        "",
+        "Non-constant CASE for temporal goal.",
+        "",
+        "",
+        "line 4, col 7 to line 4, col 16 of module M",
+        "",
+        "Non-constant TAKE, WITNESS, or HAVE for temporal goal.",
+        "",
+        "",
+      ]),
+      isFailed: true,
+    });
+  });
+
+  it("accepts a definition after a field named THEOREM, AXIOM or DOMAIN, which SANY rejects", () => {
+    const report = getReport({
+      M: "---- MODULE M ----\nr == [a |-> 1]\nF == r.THEOREM\nG == [r EXCEPT !.AXIOM = 1]\nH == r.DOMAIN\nI == 1\n====\n",
+    });
+    expect(report).toEqual({ text: "", isFailed: false });
+  });
+
+  it("accepts an operator substituted before a LEMMA, which SANY rejects", () => {
+    const report = getReport({
+      M: "---- MODULE M ----\nEXTENDS Integers\n---- MODULE Inner ----\nCONSTANT G(_, _)\n====\nI == INSTANCE Inner WITH G <- -\nLEMMA TRUE\n====\n",
+    });
+    expect(report).toEqual({ text: "", isFailed: false });
+  });
+
   it.each([
     ["VARIABLES x,\n  y", "line 4, col 1 to line 5, col 3", "A VARIABLE declaration"],
     ["CONSTANT C", "line 4, col 1 to line 4, col 10", "A declaration"],
@@ -266,10 +1219,132 @@ Spec == Init /\\ [][Next]_x
     );
   });
 
+  it("rejects the declarations of an inner module in a recursive definition section like SANY", () => {
+    const report = getReport({
+      M: "---- MODULE M ----\nRECURSIVE F(_)\n---- MODULE Inner ----\nCONSTANT c\nVARIABLE v\n====\n====\n",
+    });
+    expect(report.text).toBe(
+      joinLines([
+        "Semantic errors:",
+        "",
+        "*** Errors: 4",
+        "",
+        "line 3, col 1 to line 6, col 4 of module M",
+        "",
+        "A MODULE  may not appear within a recursive definition section.",
+        "",
+        "",
+        "line 4, col 1 to line 4, col 10 of module M",
+        "",
+        "A declaration may not appear within a recursive definition section.",
+        "",
+        "",
+        "line 5, col 1 to line 5, col 10 of module M",
+        "",
+        "A VARIABLE declaration may not appear within a recursive definition section.",
+        "",
+        "",
+        "line 2, col 11 to line 2, col 14 of module M",
+        "",
+        "Symbol F declared in RECURSIVE statement but not defined.",
+        "",
+        "",
+      ]),
+    );
+  });
+
+  it("reports an instance's substitution into a RECURSIVE operator that nothing defines like SANY", () => {
+    const report = getReport({
+      M: "---- MODULE M ----\n---- MODULE A ----\nCONSTANT c\nRECURSIVE G\n====\nI == INSTANCE A WITH c <- 1\nINSTANCE A WITH c <- 2\n====\n",
+    });
+    expect(report.text).toBe(
+      joinLines([
+        "Semantic errors:",
+        "",
+        "*** Errors: 3",
+        "",
+        "line 4, col 11 to line 4, col 11 of module M",
+        "",
+        "Symbol G declared in RECURSIVE statement but not defined.",
+        "",
+        "",
+        "line 6, col 1 to line 6, col 27 of module M",
+        "",
+        "Substitution error, probably due to error ",
+        "in module being instantiated.",
+        "",
+        "",
+        "line 7, col 1 to line 7, col 22 of module M",
+        "",
+        "Substitution error, probably due to error ",
+        "in module being instantiated.",
+        "",
+        "",
+      ]),
+    );
+  });
+
+  it("closes the outer module's recursive definition section at the end of an inner module like SANY", () => {
+    const report = getReport({
+      M: "---- MODULE M ----\nRECURSIVE F(_)\n---- MODULE Inner ----\nCONSTANT c\n====\nCONSTANT d\n====\n",
+    });
+    expect(report.text).toBe(
+      joinLines([
+        "Semantic errors:",
+        "",
+        "*** Errors: 3",
+        "",
+        "line 3, col 1 to line 5, col 4 of module M",
+        "",
+        "A MODULE  may not appear within a recursive definition section.",
+        "",
+        "",
+        "line 4, col 1 to line 4, col 10 of module M",
+        "",
+        "A declaration may not appear within a recursive definition section.",
+        "",
+        "",
+        "line 2, col 11 to line 2, col 14 of module M",
+        "",
+        "Symbol F declared in RECURSIVE statement but not defined.",
+        "",
+        "",
+      ]),
+    );
+  });
+
+  it.each(["CONSTANT d\nF(x) == x", "F(x) == x\nCONSTANT d"])(
+    "goes on past a recursive definition an inner module closed, where SANY throws WrongInvocationException (%s)",
+    (after) => {
+      const report = getReport({
+        M: `---- MODULE M ----\nRECURSIVE F(_)\n---- MODULE Inner ----\nCONSTANT c\n====\n${after}\n====\n`,
+      });
+      expect(report.text).toBe(
+        joinLines([
+          "Semantic errors:",
+          "",
+          "*** Errors: 2",
+          "",
+          "line 3, col 1 to line 5, col 4 of module M",
+          "",
+          "A MODULE  may not appear within a recursive definition section.",
+          "",
+          "",
+          "line 4, col 1 to line 4, col 10 of module M",
+          "",
+          "A declaration may not appear within a recursive definition section.",
+          "",
+          "",
+        ]),
+      );
+    },
+  );
+
   it.each([
     ["RECURSIVE F(_)\nF == 1\nA == F(1)", "line 5, col 6 to line 5, col 9", 1, 0],
     ["RECURSIVE F\nF(x) == 1\nA == F", "line 5, col 6 to line 5, col 6", 0, 1],
     ["RECURSIVE F(_, _)\nF(x) == x\nA == F(1, 2)", "line 5, col 6 to line 5, col 12", 2, 1],
+    ["RECURSIVE F(_, _)\nF == 1\nA == F(F(F, 1), 1)", "line 5, col 6 to line 5, col 18", 2, 0],
   ])("reports %j as given the wrong number of arguments", (body, range, given, required) => {
     const report = getReport({ M: `---- MODULE M ----\nEXTENDS Naturals\n${body}\n====\n` });
     expect(report.text).toContain("*** Errors: 2\n");
@@ -444,6 +1519,24 @@ Spec == Init /\\ [][Next]_x
     },
   );
 
+  it("ends a CASE at the []PROVE after it as SANY does", () => {
+    const getTheoremReport = (statement: string) =>
+      getReport({ M: `---- MODULE M ----\nVARIABLE x\nTHEOREM T == ${statement}\n====\n` });
+    expect(getTheoremReport("[]ASSUME CASE x = 1 -> TRUE [] x = 2 -> TRUE []PROVE TRUE")).toEqual({
+      text: "",
+      isFailed: false,
+    });
+    const report = getTheoremReport("ASSUME CASE x = 1 -> TRUE []PROVE TRUE");
+    expect(report.isFailed).toBe(true);
+    expect(report.text).toContain(
+      joinLines([
+        "line 3, col 14 to line 3, col 19 of module M",
+        "",
+        "ASSUME matched by []PROVE instead of PROVE",
+      ]),
+    );
+  });
+
   it("reports a []ASSUME matched by PROVE in an ASSUME's scope with both errors as SANY does", () => {
     const report = getReport({
       Box: "---- MODULE Box ----\nTHEOREM T == ASSUME NEW J PROVE TRUE\n<1>1 []ASSUME TRUE PROVE TRUE\n<1> QED\n====\n",
@@ -482,6 +1575,132 @@ Spec == Init /\\ [][Next]_x
     const report = getReport({ M: `---- MODULE M ----\nCONSTANT S\n${unit}\n====\n` });
     expect(report.isFailed).toBe(true);
     expect(report.text).toContain(`\n\n${error}\n`);
+  });
+
+  it.each([
+    "THEOREM T == ASSUME a :: ASSUME 1 = 1 PROVE 2 = 2 PROVE TRUE\nX == T!a!2",
+    "THEOREM T == ASSUME a :: ASSUME TRUE PROVE TRUE PROVE TRUE\nX == T!a!1",
+    "THEOREM T == ASSUME a :: ASSUME TRUE PROVE b :: TRUE PROVE TRUE\nX == T!a!b",
+    "THEOREM T == ASSUME a :: ASSUME TRUE PROVE TRUE PROVE TRUE\nTHEOREM U == TRUE\nPROOF BY T!a",
+    "THEOREM T == ASSUME ASSUME a :: ASSUME TRUE PROVE TRUE PROVE TRUE PROVE TRUE\nTHEOREM U == TRUE\nPROOF BY T!a",
+  ])("selects through the labeled nested ASSUME/PROVE in %j as SANY does", (source) => {
+    expect(getReport({ M: `---- MODULE M ----\n${source}\n====\n` }).isFailed).toBe(false);
+  });
+
+  const labeled = "a :: ASSUME TRUE PROVE TRUE";
+  it.each([
+    [
+      `THEOREM T == ASSUME a :: TRUE, ${labeled} PROVE TRUE`,
+      "line 2, col 32 to line 2, col 58",
+      "Duplicate label `a'.",
+    ],
+    [
+      `THEOREM T == ASSUME ${labeled} PROVE a :: TRUE`,
+      "line 2, col 55 to line 2, col 63",
+      "Duplicate label `a'.",
+    ],
+    [
+      `THEOREM T == ASSUME ${labeled} PROVE TRUE\nX == T!1`,
+      "line 3, col 6 to line 3, col 8",
+      "ASSUME/PROVE used where an expression is required.",
+    ],
+    [
+      "THEOREM T == ASSUME a :: ASSUME b :: ASSUME TRUE PROVE TRUE PROVE TRUE PROVE TRUE\nX == T!a!b",
+      "line 3, col 6 to line 3, col 10",
+      "ASSUME/PROVE used where an expression is required.",
+    ],
+    [
+      `THEOREM T == TRUE\n<1>1. ASSUME ${labeled} PROVE TRUE\n  OBVIOUS\n<1>2. <1>1!a\n  OBVIOUS\n<1> QED`,
+      "line 5, col 7 to line 5, col 12",
+      "ASSUME/PROVE used where an expression is required.",
+    ],
+    [
+      "THEOREM T == ASSUME a :: ASSUME TRUE PROVE b :: TRUE PROVE TRUE\nX == T!b",
+      "line 3, col 8 to line 3, col 8",
+      "Cannot find label `b'.",
+    ],
+    [
+      `THEOREM T == ASSUME ${labeled} PROVE TRUE\nX == T!a!3`,
+      "line 3, col 10 to line 3, col 10",
+      "Nonexistent operand specified by `argument selector 3'.",
+    ],
+    [
+      `THEOREM T == ASSUME ${labeled} PROVE TRUE\nX == T!a!:`,
+      "line 3, col 10 to line 3, col 10",
+      "`!:' can be used only after a name and either at the end after an\noperator name or before an operator name.",
+    ],
+    [
+      "THEOREM T == ASSUME a :: ASSUME NEW y, b :: ASSUME TRUE PROVE TRUE PROVE TRUE PROVE TRUE",
+      "line 2, col 40 to line 2, col 66",
+      "Label not allowed within scope of declaration in nested ASSUME/PROVE.",
+    ],
+    [
+      "THEOREM T == ASSUME NEW x, a :: ASSUME x = 1 PROVE TRUE PROVE TRUE\nTHEOREM U == TRUE\nPROOF BY T!a",
+      "line 4, col 12 to line 4, col 12",
+      "Accessing subexpression labeled `a' of ASSUME/PROVE clause within the scope of a declaration\n from outside that declaration's scope.",
+    ],
+  ])("checks the labeled nested ASSUME/PROVE in %j as SANY does", (source, location, message) => {
+    expect(getReport({ M: `---- MODULE M ----\n${source}\n====\n` }).text).toContain(
+      joinLines(["*** Errors: 1", "", `${location} of module M`, "", message]),
+    );
+  });
+
+  it("fails a selection into a failed definition through an instance as SANY does without one", () => {
+    const error =
+      "Subexpression selection failed, probably due to an error in the selected expression.";
+    expect(
+      getReport({ M: "---- MODULE M ----\na ## b == a ## b\nU == ##(1, 2)!1\n====\n" }).text,
+    ).toContain(`line 3, col 15 to line 3, col 15 of module M\n\n${error}\n`);
+    expect(
+      getReport({
+        M: "---- MODULE M ----\n---- MODULE Inner ----\nCONSTANT c\na ## b == a ## b\n====\nI == INSTANCE Inner WITH c <- 1\nU == I!##(1, 2)!1\n====\n",
+      }).text,
+    ).toContain(`line 7, col 17 to line 7, col 17 of module M\n\n${error}\n`);
+  });
+
+  it.each([
+    ["Op0 == lab:: 1 |- 2\nU == Op0!1", "line 3, col 6 to line 3, col 8", "Op0"],
+    [
+      "Op0 == {lab:: 1 |- 2}\nU == Op0!1!1",
+      "line 3, col 10 to line 3, col 10",
+      "argument selector 1",
+    ],
+  ])(
+    "reports a selection through a failed label in %j at the selector before it",
+    (unit, location, name) => {
+      expect(getReport({ M: `---- MODULE M ----\n${unit}\n====\n` }).text).toContain(
+        `${location} of module M\n\nAn unexpected null node specified by '${name}'.\nThis is probably due to a previous error.\n`,
+      );
+    },
+  );
+
+  it("rejects a LET without definitions", () => {
+    const report = getReport({ M: "---- MODULE M ----\nD0 ==\n  LET\n  IN 1\n====\n" });
+    expect(report.isFailed).toBe(true);
+    expect(report.text).toContain(
+      '***Parse Error***\nEncountered "IN" at line 4, column 3 and token "LET" \n\nResidual stack trace follows:\nLet Definitions starting at line 4, column 3.\n',
+    );
+  });
+
+  it.each([
+    [
+      "RECURSIVE _ ^# _",
+      'Was expecting "==== or more Module body"\nEncountered "_" at line 3, column 16 and token "^#" ',
+    ],
+    [
+      "RECURSIVE _ ++",
+      'Was expecting "_"\nEncountered "Beginning of definition" at line 4, column 1 and token "++" ',
+    ],
+    [
+      "F(_ ^+ _) == 1",
+      'Was expecting "COMMA or )"\nEncountered "_" at line 3, column 8 and token "^+" ',
+    ],
+  ])("rejects the operator symbol declaration %j of the wrong fixity", (unit, error) => {
+    const report = getReport({
+      M: `---- MODULE M ----\nEXTENDS Naturals\n${unit}\nx == 1\n====\n`,
+    });
+    expect(report.isFailed).toBe(true);
+    expect(report.text).toContain(`***Parse Error***\n${error}\n`);
   });
 
   it("reports a file without a module as a parse error", () => {
@@ -593,6 +1812,30 @@ Spec == Init /\\ [][Next]_x
     const report = getReport({ Hidden: "---- MODULE Hidden ----\nHIDE bar\n====\n" });
     expect(report.text).toContain(
       "In module --TLA+ BUILTINS--\n\nThe only expression allowed as a fact in a HIDE is \nthe name of a theorem, assumption, or step.",
+    );
+  });
+
+  it("reports a HIDE fact whose operator SANY can't resolve, where SANY crashes", () => {
+    const report = getReport({ Hidden: "---- MODULE Hidden ----\nVARIABLE x\nHIDE -x\n====\n" });
+    expect(report.text).toContain(
+      joinLines([
+        "*** Errors: 3",
+        "",
+        "line 3, col 6 to line 3, col 6 of module Hidden",
+        "",
+        "Could not find declaration or definition of symbol '-.'.",
+        "",
+        "",
+        "line 3, col 6 to line 3, col 7 of module Hidden",
+        "",
+        "Couldn't resolve prefix operator symbol `-.'.",
+        "",
+        "",
+        "In module --TLA+ BUILTINS--",
+        "",
+        "The only expression allowed as a fact in a HIDE is ",
+        "the name of a theorem, assumption, or step.",
+      ]),
     );
   });
 
@@ -847,6 +2090,26 @@ Spec == Init /\\ [][Next]_x
     );
   });
 
+  it("reads an @ that starts a conjunction or disjunction step as the previous step's right side, like SANY", () => {
+    const report = getReport({
+      At: "---- MODULE At ----\nTHEOREM T == TRUE\n<1>1. 1 = 1 OBVIOUS\n<1>2. @ /\\ TRUE OBVIOUS\n<1>3. @ \\/ TRUE OBVIOUS\n<1>4. (@) = 1 OBVIOUS\n<1> QED\n====\n",
+    });
+    expect(report).toEqual({
+      text: joinLines([
+        "Semantic errors:",
+        "",
+        "*** Errors: 1",
+        "",
+        "line 6, col 8 to line 6, col 8 of module At",
+        "",
+        "@ used where its meaning is not defined.",
+        "",
+        "",
+      ]),
+      isFailed: true,
+    });
+  });
+
   it("reports a substitution above the level the instantiated module allows", () => {
     const report = getReport({
       Outer: "---- MODULE Outer ----\nVARIABLE x\nI == INSTANCE Inner WITH C <- [](x = 0)\n====\n",
@@ -906,6 +2169,33 @@ Spec == Init /\\ [][Next]_x
     expect(report.isFailed).toBe(true);
     expect(report.text).toBe(
       joinLines(["Semantic errors:", "", "*** Errors: 1", "", ...error, "", ""]),
+    );
+  });
+
+  it("reports references in the scope of a NEW to a theorem another module instantiates", () => {
+    const report = getReport({
+      M: "---- MODULE M ----\nI == INSTANCE Inner\nU == I!T!2\nV == I!T!lab\n====\n",
+      Inner: "---- MODULE Inner ----\nTHEOREM T == ASSUME NEW y, y = 1 PROVE lab:: y = y\n====\n",
+    });
+    expect(report.text).toBe(
+      joinLines([
+        "Semantic errors:",
+        "",
+        "*** Errors: 2",
+        "",
+        "line 3, col 10 to line 3, col 10 of module M",
+        "",
+        "Accessing ASSUME/PROVE clause within the scope of a declaration",
+        " from outside that declaration's scope.",
+        "",
+        "",
+        "line 4, col 10 to line 4, col 12 of module M",
+        "",
+        "Accessing subexpression labeled `lab' of ASSUME/PROVE clause within the scope of a declaration",
+        " from outside that declaration's scope.",
+        "",
+        "",
+      ]),
     );
   });
 

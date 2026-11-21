@@ -1,4 +1,3 @@
-// Ported from Z3 (src/smt/theory_lra.cpp, src/smt/arith_eq_adapter.cpp, src/math/lp/lp_api.h), MIT license, see z3-license.txt.
 import { shrink } from "./array";
 import { coeffsToApp, getTermCoeffs } from "./arith-terms";
 import { OP_GE, OP_GT, OP_LE, SORT_BOOL, SORT_INT, SORT_REAL } from "./ast";
@@ -231,7 +230,7 @@ export class TheoryLra extends TheoryLraFinalCheck {
   }
 
   initSearchEh() {
-    this.numConflicts = 0;
     this.restartPairs = [];
+    this.numConflicts = 0;
   }
 }

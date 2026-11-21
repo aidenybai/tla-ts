@@ -1,5 +1,3 @@
-// Ported from Z3 (src/ast/converters/horn_subsume_model_converter.cpp, del_rule of
-// src/muz/base/dl_util.cpp), MIT license, see z3-license.txt.
 import {
   FAMILY_USER,
   KIND_APP,
@@ -66,7 +64,7 @@ export class HornSubsumeModelConverter {
     const quantified = manager.mkQuantifier({
       kind: QUANTIFIER_EXISTS,
       sorts: sorts.reverse(),
-      names: sorts.map((_, index) => sorts.length - index - 1),
+      names: sorts.map((_value, index) => sorts.length - index - 1),
       body: substituted,
       patterns: [],
       noPatterns: [],

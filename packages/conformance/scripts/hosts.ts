@@ -9,7 +9,7 @@ import {
   writeFileSync,
 } from "node:fs";
 import { availableParallelism, tmpdir } from "node:os";
-import { dirname, join } from "node:path";
+import { basename, dirname, join } from "node:path";
 import { getBackendInput, type SuiteTest, type TestContext } from "./test-file";
 import {
   getBackend,
@@ -200,11 +200,19 @@ const runTlc = async (
   const configFile = `${test.moduleName}.cfg`;
   writeFileSync(join(directory, test.fileName), context.source);
   writeFileSync(join(directory, configFile), context.config);
+  // Java TLC makes a tlc-<random> directory in java.io.tmpdir on every run and never removes it.
+  const javaDirectory = join(directory, ".java");
+  const isJava = basename(command[0]) === "java";
+  if (isJava) mkdirSync(javaDirectory);
   const result = await spawnRun({
     command: [
-      ...command.map((argument) =>
-        argument === "-Xss2m" && test.metadata.stack ? `-Xss${test.metadata.stack}` : argument,
-      ),
+      command[0],
+      ...(isJava ? [`-Djava.io.tmpdir=${javaDirectory}`] : []),
+      ...command
+        .slice(1)
+        .map((argument) =>
+          argument === "-Xss2m" && test.metadata.stack ? `-Xss${test.metadata.stack}` : argument,
+        ),
       ...(isExitOnly ? [] : ["-tool"]),
       ...DETERMINISTIC_ARGUMENTS,
       "-metadir",
@@ -292,15 +300,16 @@ export const runTest = async (
   const command = getSuiteCommand(host, test);
   if (!command) throw new Error(`The host has no command for ${test.id}`);
   const directory = realpathSync(mkdtempSync(join(tmpdir(), "conformance-")));
-  copyIncludes(test, directory);
-  const result =
-    test.kind === "backend" || command === "oracle"
+  try {
+    copyIncludes(test, directory);
+    return test.kind === "backend" || command === "oracle"
       ? await runBackend(command, test, directory, limits)
       : test.kind === "tlc"
         ? await runTlc(command, test, context, directory, limits)
         : await runTlapm(command, test, directory, limits);
-  rmSync(directory, { recursive: true, force: true });
-  return result;
+  } finally {
+    rmSync(directory, { recursive: true, force: true });
+  }
 };
 
 export const createProgress = (interval: number) => {

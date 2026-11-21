@@ -1,7 +1,6 @@
-// Ported from Z3 (src/ast/fpa/fpa2bv_converter.cpp), MIT license, see z3-license.txt.
 // A statement that discards its result builds a term that upstream builds and never uses, so the
 // terms after it get the ids Z3 gives them.
-import { SmtUnsupportedError } from "../../../errors";
+import { SmtCanceledError, SmtUnsupportedError } from "../../../errors";
 import {
   type AstManager,
   OP_BADD,
@@ -1295,17 +1294,15 @@ export class Fpa2BvConverter {
   }
 
   mkIsNegative(x: number) {
-    const manager = this.manager;
     const isNan = this.mkIsNan(x);
     const isNeg = this.mkIsNeg(x);
-    return this.mkAnd(manager.mkNot(isNan), isNeg);
+    return this.mkAnd(this.manager.mkNot(isNan), isNeg);
   }
 
   mkIsPositive(x: number) {
-    const manager = this.manager;
     const isNan = this.mkIsNan(x);
     const isPos = this.mkIsPos(x);
-    return this.mkAnd(manager.mkNot(isNan), isPos);
+    return this.mkAnd(this.manager.mkNot(isNan), isPos);
   }
 
   mkToFp(sort: number, args: number[]) {
@@ -1441,6 +1438,8 @@ export class Fpa2BvConverter {
     const manager = this.manager;
     const ebits = manager.getEbits(sort);
     const sbits = manager.getSbits(sort);
+    // Deviation from Z3: it runs out of memory from an exponent width of 31, where this gives up as at a resource limit.
+    if (ebits > 30) throw new SmtCanceledError();
     const x =
       manager.sorts[input] === SORT_INT ? manager.mkApp(OP_TO_REAL, [input], SORT_REAL) : input;
     const real = (op: number, ...args: number[]) => manager.mkApp(op, args, SORT_REAL);

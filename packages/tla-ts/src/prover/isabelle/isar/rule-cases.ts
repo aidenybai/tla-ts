@@ -1,5 +1,3 @@
-// Ported from Isabelle2025's Pure/Isar/rule_cases.ML. Copyright (c) 1986-2025 University of
-// Cambridge, Technische Universitaet Muenchen, and contributors, see LICENSE.
 // The cases here are common ones: no rule structure outlines nested cases.
 
 import { TlaIsabelleError } from "../../../errors";
@@ -77,7 +75,7 @@ export const getCases = (rule: CasesRule): [CaseInfo, number] => {
   const names = lookupTag(rule.tags, "case_names");
   const cases =
     names === undefined
-      ? Array.from({ length: Math.max(nprems(rule.rule) - consumes, 0) }, (_, index) => ({
+      ? Array.from({ length: Math.max(nprems(rule.rule) - consumes, 0) }, (_value, index) => ({
           name: String(index + 1),
           concls: [] as string[],
         }))
@@ -140,11 +138,13 @@ const extractCase = (
   return {
     fixes,
     assumes: [{ name: "", props: stripAssumsHyp(prop).flatMap(destConjunctions).map(absFixes) }],
-    binds: [[CASE_CONCL, concl] as [string, Term], ...destBinops(concls, concl)].map((bind) => ({
-      name: bind[0],
-      index: 0,
-      term: absFixes(bind[1]),
-    })),
+    binds: [[CASE_CONCL, concl] satisfies [string, Term], ...destBinops(concls, concl)].map(
+      (bind) => ({
+        name: bind[0],
+        index: 0,
+        term: absFixes(bind[1]),
+      }),
+    ),
     cases: [],
   };
 };

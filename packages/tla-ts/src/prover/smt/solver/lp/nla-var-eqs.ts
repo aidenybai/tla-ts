@@ -1,4 +1,3 @@
-// Ported from Z3 (src/math/lp/var_eqs.h, src/math/lp/nla_defs.h), MIT license, see z3-license.txt.
 import type { Dependency } from "./dependency";
 import type { Explanation } from "./explanation";
 import { TrailStack, UnionFind, type UnionFindHandler } from "./union-find";

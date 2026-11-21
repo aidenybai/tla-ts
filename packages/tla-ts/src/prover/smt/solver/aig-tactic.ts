@@ -1,4 +1,3 @@
-// Ported from Z3 (src/tactic/aig/aig_tactic.cpp), MIT license, see z3-license.txt.
 import { SmtTacticError } from "../../../errors";
 import type { AstManager } from "./ast";
 import { AigManager } from "./aig";
@@ -25,7 +24,7 @@ export const createAigTactic =
     };
     const forms = new RefVector(manager);
     for (let index = 0; index < goal.forms.size; index++) {
-      const form = goal.forms.items[index];
+      const form = goal.forms.get(index);
       const dependency = goal.getDependency(index);
       if (dependency === undefined) {
         forms.push(form);

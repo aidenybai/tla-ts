@@ -1,0 +1,25 @@
+strict digraph DiskGraph {
+node [shape=box,style=rounded]
+nodesep=0.35;
+subgraph cluster_graph {
+color="white";
+1721042995228635026 [label="/\\ sum = 0\n/\\ y = 0\n/\\ odd = 0",style = filled]
+1721042995228635026 -> 6980719983254260540 [label="",color="black",fontcolor="black"];
+6980719983254260540 [label="/\\ sum = 1\n/\\ odd = 1",tooltip="/\\ x = 1\n/\\ y = 0"];
+6980719983254260540 -> -439630751057205554 [label="",color="black",fontcolor="black"];
+-439630751057205554 [label="/\\ sum = 2\n/\\ odd = 0",tooltip="/\\ x = 2\n/\\ y = 0"];
+-439630751057205554 -> 3540095646597903010 [label="",color="black",fontcolor="black"];
+3540095646597903010 [label="/\\ sum = 1\n/\\ y = 1",tooltip="/\\ x = 0\n/\\ y = 1"];
+3540095646597903010 -> 5053833254051665420 [label="",color="black",fontcolor="black"];
+5053833254051665420 [label="/\\ sum = 2\n/\\ odd = 1",tooltip="/\\ x = 1\n/\\ y = 1"];
+5053833254051665420 -> -2367570215144997890 [label="",color="black",fontcolor="black"];
+-2367570215144997890 [label="/\\ sum = 3\n/\\ odd = 0",tooltip="/\\ x = 2\n/\\ y = 1"];
+-2367570215144997890 -> 1721042995228635026 [label="",color="black",fontcolor="black"];
+{rank = same; 1721042995228635026;}
+{rank = same; 6980719983254260540;}
+{rank = same; -439630751057205554;}
+{rank = same; 3540095646597903010;}
+{rank = same; 5053833254051665420;}
+{rank = same; -2367570215144997890;}
+}
+}

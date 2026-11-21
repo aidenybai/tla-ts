@@ -158,8 +158,7 @@ export const getShard = <Item>(items: Item[], shard: string | undefined) => {
 
 const ALL_CONTEXTS = "all";
 
-export const formatYaml = (value: unknown) =>
-  dump(value, { lineWidth: -1, noRefs: true }).trimEnd();
+const formatYaml = (value: unknown) => dump(value, { lineWidth: -1, noRefs: true }).trimEnd();
 
 export const getRecording = (test: SuiteTest, context: string) =>
   test.recordings?.[context] ?? test.recordings?.[ALL_CONTEXTS];

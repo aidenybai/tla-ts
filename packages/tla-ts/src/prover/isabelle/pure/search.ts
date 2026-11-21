@@ -1,5 +1,3 @@
-// Ported from Isabelle2025's Pure/search.ML. Copyright (c) 1986-2025 University of Cambridge, Technische Universitaet Muenchen, and contributors, see LICENSE.
-
 import { listOfSeq, makeSeq, seqOfList } from "./seq";
 import { eqThm, hasFewerPrems, noTac, orElse, type GoalTactic, type Tactic } from "./tactical";
 import { termOrd } from "./term-ord";

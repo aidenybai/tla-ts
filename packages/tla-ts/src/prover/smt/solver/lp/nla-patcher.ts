@@ -1,4 +1,3 @@
-// Ported from Z3 (src/math/lp/nla_patcher.{h,cpp}, src/util/mpz.cpp is_perfect_square), MIT license, see z3-license.txt.
 import { Rational } from "../rational";
 import type { Impq } from "./numeric-pair";
 import type { NlaCore } from "./nla-core";

@@ -1,4 +1,3 @@
-// Ported from Z3 (src/smt/mam.cpp), MIT license, see z3-license.txt.
 import type { Context } from "./context";
 import type { Enode } from "./enode";
 import {
@@ -259,7 +258,7 @@ export class Interpreter {
         this.maxGeneration = point.oldMaxGeneration;
         if (sinceLastCheck++ > 100) {
           sinceLastCheck = 0;
-          if (context.checkCanceled()) {
+          if (context.isResourceLimitExceeded()) {
             this.top = 0;
             return false;
           }
@@ -334,6 +333,7 @@ export class Interpreter {
             bindings.push(binding);
             this.updateMaxGeneration(binding);
           }
+          if (context.checkCanceled()) return false;
           this.onMatch(instr.quantifier, bindings, this.maxGeneration);
           break;
         }
@@ -372,7 +372,7 @@ export class Interpreter {
     const seen = tree.isFilteringCandidates ? new Set<Enode>() : null;
     for (const node of tree.candidates) {
       if (seen?.has(node) || !node.isCgr()) continue;
-      if (context.checkCanceled() || !this.executeCore(tree, node)) return false;
+      if (context.isResourceLimitExceeded() || !this.executeCore(tree, node)) return false;
       seen?.add(node);
     }
     return true;

@@ -1,4 +1,3 @@
-// Ported from Z3 (src/smt/smt_relevancy.h, src/smt/smt_relevancy.cpp), MIT license, see z3-license.txt.
 import { type AstManager, KIND_APP, OP_AND, OP_IMPLIES, OP_ITE, OP_OR } from "./ast";
 import type { Enode } from "./enode";
 import { shrink } from "./array";
@@ -82,6 +81,13 @@ export class RelevancyPropagator {
     if (head >= this.heads.length) return;
     for (let cell = this.heads[head]; cell !== 0; cell = this.trailNext[cell - 1])
       this.trailHandlers[cell - 1]();
+  }
+
+  release() {
+    const manager = this.context.manager;
+    for (let index = this.trailExprs.length - 1; index >= 0; index--)
+      manager.decRef(this.trailExprs[index]);
+    for (const expr of this.relevantExprs) manager.decRef(expr);
   }
 
   push() {

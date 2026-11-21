@@ -1,5 +1,3 @@
-// Ported from Z3 (src/tactic/bv/max_bv_sharing_tactic.h, src/ast/simplifiers/max_bv_sharing.cpp),
-// MIT license, see z3-license.txt.
 import type { AstManager } from "./ast";
 import { runSimplifier } from "./dependent-expr-state";
 import type { Goal } from "./goal";

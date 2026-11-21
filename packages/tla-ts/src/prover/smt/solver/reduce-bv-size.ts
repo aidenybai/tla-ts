@@ -1,4 +1,3 @@
-// Ported from Z3 (src/tactic/bv/bv_size_reduction_tactic.cpp), MIT license, see z3-license.txt.
 import { SmtTacticError } from "../../../errors";
 import { type AstManager, OP_CONCAT, OP_SIGN_EXT, OP_SLEQ } from "./ast";
 import { mkBvApp } from "./bv-decl-plugin";
@@ -100,7 +99,7 @@ export const runReduceBvSize = (manager: AstManager) => (goal: Goal) => {
     let rewritten = -1;
     const size = goal.forms.size;
     for (let index = 0; index < size && !goal.isInconsistent; index++) {
-      const next = replacer.rewrite(goal.forms.items[index]);
+      const next = replacer.rewrite(goal.forms.get(index));
       if (rewritten !== -1) manager.decRef(rewritten);
       rewritten = next;
       goal.update(index, rewritten);

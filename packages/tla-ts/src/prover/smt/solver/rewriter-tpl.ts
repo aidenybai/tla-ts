@@ -1,4 +1,4 @@
-// Ported from Z3 (src/ast/rewriter/rewriter.h, rewriter.cpp, rewriter_def.h), MIT license, see z3-license.txt.
+import { SmtRewriterCanceledError } from "../../../errors";
 import { ActCache } from "./act-cache";
 import { KIND_APP, KIND_QUANTIFIER, KIND_VAR, OP_ITE, type AstManager } from "./ast";
 import { grow, shrink } from "./array";
@@ -122,13 +122,14 @@ class RewriterCore {
     this.scopes = [];
   }
 
-  protected releaseCaches() {
+  protected releaseCore() {
     for (const cache of this.caches) cache.reset();
+    this.numFrames = 0;
+    this.shrinkResults(0);
   }
 
   protected cleanupCore() {
-    this.releaseCaches();
-    this.shrinkResults(0);
+    this.releaseCore();
     this.caches = [new ActCache(this.manager, this.manager.getNumAsts())];
     this.frames = [];
     this.numFrames = 0;
@@ -248,7 +249,7 @@ abstract class VarShifterCore extends RewriterCore {
   }
 
   release() {
-    this.releaseCaches();
+    this.releaseCore();
   }
 }
 
@@ -390,7 +391,7 @@ class RewriterEngine extends SubstCore {
     this.setLastResult(-1);
     this.invShifter.release();
     this.shifter.release();
-    this.releaseCaches();
+    this.releaseCore();
   }
 
   rewrite(expr: number): number {
@@ -404,10 +405,10 @@ class RewriterEngine extends SubstCore {
       }
       this.root = expr;
       this.numQvars = 0;
-      manager.limit.checkpoint();
+      if (!manager.limit.inc()) throw new SmtRewriterCanceledError();
       if (!this.visit(expr, Infinity))
         while (this.numFrames > 0) {
-          manager.limit.checkpoint();
+          if (!manager.limit.inc()) throw new SmtRewriterCanceledError();
           if (this.isCheckingSteps) this.config.checkMaxSteps();
           const frame = this.frames[this.numFrames - 1];
           const curr = frame.curr;
@@ -860,7 +861,7 @@ export class BetaReducer extends SubstCore {
   release() {
     this.setLastResult(-1);
     this.shifter.release();
-    this.releaseCaches();
+    this.releaseCore();
   }
 
   rewrite(expr: number): number {
@@ -874,10 +875,10 @@ export class BetaReducer extends SubstCore {
       }
       this.root = expr;
       this.numQvars = 0;
-      manager.limit.checkpoint();
+      if (!manager.limit.inc()) throw new SmtRewriterCanceledError();
       if (!this.visit(expr))
         while (this.numFrames > 0) {
-          manager.limit.checkpoint();
+          if (!manager.limit.inc()) throw new SmtRewriterCanceledError();
           const top = this.numFrames - 1;
           const curr = this.frameExprs[top];
           if (

@@ -2,7 +2,11 @@ import { spawnSync } from "node:child_process";
 import { join } from "node:path";
 
 const PACKAGE_DIRECTORY = join(import.meta.dirname, "..");
-const OUT_DIRECTORY = join(PACKAGE_DIRECTORY, ".scripts");
+// `--build <directory>` builds the script into that directory, with the graphs it reads written in,
+// and runs nothing, for runs that start the bundle themselves, with the node on the PATH.
+const buildIndex = process.argv.indexOf("--build");
+const buildDirectory = buildIndex === -1 ? undefined : process.argv[buildIndex + 1];
+const OUT_DIRECTORY = join(PACKAGE_DIRECTORY, buildDirectory ?? ".scripts");
 
 const WORKER_ENTRIES = [
   "src/parallel-worker.ts",
@@ -29,15 +33,6 @@ const build = spawnSync(
   { cwd: PACKAGE_DIRECTORY, stdio: ["ignore", "ignore", "inherit"] },
 );
 if (build.status !== 0) process.exit(build.status ?? 1);
-const graph = spawnSync(
-  process.execPath,
-  ["scripts/prelude-graph.ts", OUT_DIRECTORY, "--if-present"],
-  {
-    cwd: PACKAGE_DIRECTORY,
-    stdio: ["ignore", "ignore", "inherit"],
-  },
-);
-if (graph.status !== 0) process.exit(graph.status ?? 1);
 // ESCore's runtime is prepared on the host that runs the bundles, as its realm is the host's.
 const runtimeGraph = spawnSync(
   "node",
@@ -46,6 +41,7 @@ const runtimeGraph = spawnSync(
 );
 if (runtimeGraph.status !== 0) process.exit(runtimeGraph.status ?? 1);
 
+if (buildDirectory !== undefined) process.exit(0);
 const run = spawnSync("node", [join(OUT_DIRECTORY, `${name}.js`), ...process.argv.slice(3)], {
   stdio: "inherit",
 });
