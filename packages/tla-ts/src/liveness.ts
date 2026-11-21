@@ -103,6 +103,7 @@ interface Expansion {
   path: string[];
   expanding: Set<Definition>;
   isSubstituted: boolean;
+  isInitPredicate: boolean;
   frames: Expression[];
   substitutions: ExpandedSubstitutions[];
 }
@@ -392,6 +393,7 @@ export const expandTemporal = (
     path: [],
     expanding: new Set(),
     isSubstituted: false,
+    isInitPredicate: false,
     frames: [],
     substitutions: [],
   },
@@ -414,6 +416,13 @@ export const expandTemporal = (
       isSubstituted:
         expansion.isSubstituted ||
         (definition !== undefined && environment.substitutedDefinitions.has(definition)),
+      // SpecProcessor#processConfigSpec takes a state-level definition whole as an initial predicate, which getInitStates evaluates with cached arguments.
+      isInitPredicate:
+        expansion.isInitPredicate ||
+        (!isProperty &&
+          definition?.kind === "Operator" &&
+          definition.params.length === 0 &&
+          getLevelBound(definition.body, undefined, environment) === VARIABLE_LEVEL),
       frames: [
         ...expansion.frames,
         ...(substitutionFrames.get(child) ?? []).filter(
@@ -548,7 +557,9 @@ export const expandTemporal = (
     if (isExpandable) {
       return expand(
         operator.body,
-        bindUncachedArguments(operator, expression.args, context),
+        expansion.isInitPredicate
+          ? bindOperatorArguments(operator, expression.args, context)
+          : bindUncachedArguments(operator, expression.args, context),
         getReferenceName(expression, expression.operator, environment) ??
           (expansion.isSubstituted && definition
             ? definition.name

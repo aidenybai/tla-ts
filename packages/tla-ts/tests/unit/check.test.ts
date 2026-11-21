@@ -2221,6 +2221,28 @@ ASSUME TLCFP(a) = -887695703
     expect(printed).toEqual(['"c"', '"c"', '"c"', '"c"', '"c"']);
   });
 
+  it.each([
+    ["Init == /\\ x = 0\n        /\\ G(P(1, x))\nSpec == Init /\\ [][Next]_<<x, y>>", 1],
+    ["Init == x = 0\nSpec == Init /\\ G(P(1, x)) /\\ [][Next]_<<x, y>>", 2],
+    ["Init == x \\in {0, 1} /\\ G(P(1, x))\nSpec == Init /\\ [][Next]_<<x, y>>", 2],
+    ["Init == x = 0\nK(b) == G(b)\nSpec == Init /\\ K(P(1, x)) /\\ [][Next]_<<x, y>>", 2],
+    [
+      "Init == x = 0\nK(b) == G(b) /\\ x = 0\nBoth == K(P(1, x))\nSpec == Init /\\ Both /\\ [][Next]_<<x, y>>",
+      1,
+    ],
+  ])(
+    "binds an argument under %j cached in a state-level definition, as getInitStates does, and uncached in an application the spec takes apart",
+    async (definitions, count) => {
+      const printed: string[] = [];
+      await check({
+        source: `---- MODULE M ----\nEXTENDS Integers, TLC\nP(m, v) == IF PrintT(m) THEN v ELSE v\nVARIABLES x, y\nG(a) == /\\ a = 0\n        /\\ y = 0\n        /\\ a = 0\nNext == UNCHANGED <<x, y>>\n${definitions}\n====\n`,
+        config: "SPECIFICATION Spec\n",
+        onPrint: (text) => printed.push(text),
+      });
+      expect(printed).toEqual(Array.from({ length: count }, () => "1"));
+    },
+  );
+
   it("reads TLCGet in every state through a constant substituted with it, as TLC's level bound does", async () => {
     const prints: string[] = [];
     await check({
