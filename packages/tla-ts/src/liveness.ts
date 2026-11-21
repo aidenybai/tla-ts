@@ -46,6 +46,8 @@ import {
 } from "./evaluate";
 import { getLetDefinition, letDefinitions } from "./coverage";
 import {
+  frameSubstitutions,
+  getActionPredicate,
   getSubstitutedName,
   getSubstitutedOccurrence,
   mapChildren,
@@ -94,6 +96,7 @@ interface ExpandedExpression extends ScopedExpression {
   theorem?: TheoremReference;
   argumentFreeDefinition?: Definition;
   substitutions: LetExpression[];
+  predicate: Expression;
 }
 
 export interface TemporalProperty extends ScopedExpression {
@@ -434,6 +437,7 @@ export const expandTemporal = (
   const getLeaf = (
     theorem?: TheoremReference,
     argumentFreeDefinition?: Definition,
+    whole = expression,
   ): ExpandedExpression[] => [
     {
       expression,
@@ -446,6 +450,9 @@ export const expandTemporal = (
       substitutions: expansion.substitutions.flatMap((item) =>
         isWithinScope(item.scope, scope) ? [item.expression] : [],
       ),
+      predicate:
+        expansion.frames.find((frame) => frameSubstitutions.has(frame)) ??
+        getActionPredicate(whole),
     },
   ];
   // An instanced body reaches the theorem its module named, and a direct reference the one its INSTANCE made.
@@ -540,7 +547,7 @@ export const expandTemporal = (
         definition.kind === "Operator" &&
         getLevelBound(definition.body, undefined, environment) === VARIABLE_LEVEL
       ) {
-        return getLeaf();
+        return getLeaf(undefined, undefined, definition.body);
       }
       return expand(
         getOpDefBody(definition),

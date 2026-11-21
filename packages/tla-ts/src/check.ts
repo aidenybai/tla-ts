@@ -1402,7 +1402,13 @@ const searchStates = (
           if (error !== STOP_WALK) throw error;
         }
       } else {
-        forEachInitialState(spec.init, environment, onInitialState, spec.scope);
+        forEachInitialState(
+          spec.init,
+          environment,
+          onInitialState,
+          spec.scope,
+          spec.initPredicates,
+        );
       }
       if (overflowState) {
         outcome = reportInitialFailure(createStackOverflowError(), overflowState);

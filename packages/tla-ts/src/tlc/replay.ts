@@ -55,7 +55,12 @@ import {
   setTrace,
   type Value,
 } from "../values";
-import { isSubstitutionDefinition, substitutedExpressions, substitutionFrames } from "../instances";
+import {
+  getActionPredicate,
+  isSubstitutionDefinition,
+  substitutedExpressions,
+  substitutionFrames,
+} from "../instances";
 import { getKeyName } from "../resolve";
 import { CORE_OPERATORS } from "../standard-modules";
 import type { SuccessorGenerator } from "../successors";
@@ -78,6 +83,7 @@ interface ActionItem {
 interface RunKind {
   isInit: boolean;
   isEnabled: boolean;
+  initPredicates?: ReadonlyMap<Expression, Expression>;
 }
 
 interface Replay {
@@ -313,7 +319,13 @@ export const holdsValue = (run: RunKind, expression: Expression, value: Value, i
   const message =
     isWalked && LITERAL_KINDS.has(expression.kind)
       ? getRelationMessage(run, expression)
-      : getExpectedBooleanMessage(run, formatValue(value), expression);
+      : getExpectedBooleanMessage(
+          run,
+          formatValue(value),
+          isWalked
+            ? expression
+            : (run.initPredicates?.get(expression) ?? getActionPredicate(expression)),
+        );
   throw run.isInit && isWalked && isBuiltInOperation(expression)
     ? new TlaUncodedError(message)
     : createRunError(run, message);

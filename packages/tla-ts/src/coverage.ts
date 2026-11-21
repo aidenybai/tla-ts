@@ -10,6 +10,7 @@ import {
 import { formatRange } from "./errors";
 import {
   frameSubstitutions,
+  getActionPredicate,
   isSubstitutionDefinition,
   substitutedExpressions,
   substitutionFrames,
@@ -265,10 +266,8 @@ const isSameRange = (left: SourceRange | undefined, right: SourceRange | undefin
   left.end.line === right.end.line &&
   left.end.column === right.end.column;
 
-// TLC's Action#pred for an instance's action is the SubstInNode, which SANY locates at the instance's definition.
 const getPredicateRange = (expression: Expression) =>
-  (substitutionFrames.get(expression) ?? []).find((frame) => frameSubstitutions.has(frame))
-    ?.location.range ?? expression.location.range;
+  getActionPredicate(expression).location.range ?? expression.location.range;
 
 export const getCoverageLabel = (
   name: string | undefined,

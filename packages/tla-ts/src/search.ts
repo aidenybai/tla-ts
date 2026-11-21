@@ -86,7 +86,12 @@ import {
 import { getLiveExpressions } from "./liveness-checker";
 import { prettyPrint, prettyPrintT } from "./pretty-print";
 import { parenthesizedRanges } from "./parser";
-import { getOperatorDefinition, getSubstitutedName, substitutionFrames } from "./instances";
+import {
+  getActionPredicate,
+  getOperatorDefinition,
+  getSubstitutedName,
+  substitutionFrames,
+} from "./instances";
 import { getPossibleCounts, type CheckerRuntime } from "./runtime";
 import { createIncompleteSuccessorError, type SuccessorGenerator } from "./successors";
 import {
@@ -197,6 +202,7 @@ interface ActionProperty {
 
 interface Specification {
   init: Expression | undefined;
+  initPredicates: ReadonlyMap<Expression, Expression>;
   next: Expression | undefined;
   scope: Scope | undefined;
   temporals: ScopedExpression[];
@@ -435,6 +441,7 @@ const getSpecification = (
     };
     return {
       init: getOperator(config.init, "initial predicate"),
+      initPredicates: new Map(),
       next: getOperator(config.next, "next state action"),
       scope: undefined,
       temporals: [],
@@ -446,7 +453,7 @@ const getSpecification = (
       "The configuration file cannot specify both INIT/NEXT and SPECIFICATION fields.",
     );
   }
-  const initConjuncts: ScopedExpression[] = [];
+  const initConjuncts: (ScopedExpression & { predicate: Expression })[] = [];
   const nextActions: ScopedExpression[] = [];
   const temporals: ScopedExpression[] = [];
   const specificationKey = getRootKey(config.specification, environment);
@@ -582,11 +589,15 @@ const getSpecification = (
           location: item.expression.location,
           resolution: { kind: "Local" },
         };
+  const operands = initConjuncts.map(getReference);
   return {
-    init:
-      initConjuncts.length === 0
-        ? undefined
-        : { kind: "And", operands: initConjuncts.map(getReference), location: START },
+    init: operands.length === 0 ? undefined : { kind: "And", operands, location: START },
+    initPredicates: new Map(
+      initConjuncts.map((item, index): [Expression, Expression] => [
+        operands[index],
+        item.predicate,
+      ]),
+    ),
     next: nextActions.length === 0 ? undefined : getReference(nextActions[0], initConjuncts.length),
     scope,
     temporals,
@@ -958,7 +969,8 @@ const getExpectedValue = (kind: string, expression: Expression, environment: Env
       : undefined;
   const body = definition ? getOpDefBody(definition) : expression;
   const range = definition?.kind === "Operator" ? definition.bodyRange : undefined;
-  const location = range && body.kind !== "Number" ? formatRange(range) : describeNode(body);
+  const location =
+    range && body.kind !== "Number" ? formatRange(range) : describeNode(getActionPredicate(body));
   return `TLC expected a ${kind} value, but did not find one. ${location}`;
 };
 

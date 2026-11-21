@@ -97,6 +97,7 @@ interface Run {
   generator: SuccessorGenerator | undefined;
   successors: number;
   onUnsatisfied?: (state: Value[], conjunct: Expression) => void;
+  initPredicates?: ReadonlyMap<Expression, Expression>;
 }
 
 type Continuation = (partial: State, action: string | undefined) => void;
@@ -1323,6 +1324,7 @@ export const forEachInitialState = (
   environment: Environment,
   onState: (state: Value[]) => boolean,
   scope?: Scope,
+  initPredicates?: ReadonlyMap<Expression, Expression>,
   onIncomplete?: (state: State) => boolean,
 ) => {
   const run: Run = {
@@ -1333,6 +1335,7 @@ export const forEachInitialState = (
     isStopped: false,
     generator: undefined,
     successors: 0,
+    initPredicates,
   };
   getRunner(expression, environment, true)(
     run,

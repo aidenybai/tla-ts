@@ -3240,14 +3240,22 @@ ASSUME TLCFP(a) = -887695703
     },
   );
 
-  const WHOLE_MODULE =
-    '---- MODULE N ----\nEXTENDS Naturals\nCONSTANT k\nVARIABLES x, y\nTwo == 2\nStr == "a"\nSum == 1 + 1\nBad == x + 1\nInit == x = k /\\ y = 0\nInitSum == x = k /\\ y = 0 /\\ (1 + 1)\nInv == [](x + 1)\n====\n';
+  const WHOLE_MODULES = new Map([
+    [
+      "N",
+      '---- MODULE N ----\nEXTENDS Naturals\nCONSTANT k\nVARIABLES x, y\nTwo == 2\nStr == "a"\nSum == 1 + 1\nBad == x + 1\nInit == x = k /\\ y = 0\nInitSum == x = k /\\ y = 0 /\\ (1 + 1)\nInv == [](x + 1)\nInner == INSTANCE O WITH m <- k\nInitIn == x = 0 /\\ y = 0 /\\ Inner!BadM\nInvIn == [](Inner!BadM)\nSpecN == x = k /\\ y = 0 /\\ (1 + 1) /\\ [][UNCHANGED <<x, y>>]_<<x, y>>\n====\n',
+    ],
+    [
+      "O",
+      "---- MODULE O ----\nEXTENDS Naturals\nCONSTANT m\nVARIABLES x, y\nBadM == x + m\n====\n",
+    ],
+  ]);
   const UNCHANGED_STEP = "[][UNCHANGED <<x, y>>]_<<x, y>>";
   const getWholeFailure = async (definitions: string, property: string, coverage?: number) => {
     const result = await check({
       source: `---- MODULE M ----\nEXTENDS Naturals\nVARIABLES x, y\nI(j) == INSTANCE N WITH k <- j\nJ == INSTANCE N WITH k <- 0\n${definitions}\n====\n`,
       config: `SPECIFICATION Spec\n${property}`,
-      loadModule: (name) => (name === "N" ? WHOLE_MODULE : undefined),
+      loadModule: (name) => WHOLE_MODULES.get(name),
       coverage,
     });
     return result.failure?.message;
@@ -3288,6 +3296,107 @@ ASSUME TLCFP(a) = -887695703
       ]).toEqual([message, message]);
     },
   );
+
+  const INSTANCE_LINE = "line 4, col 1 to line 4, col 30 of module M";
+  const UNPARAMETERIZED_LINE = "line 5, col 1 to line 5, col 27 of module M";
+  const getWholeMessage = (found: number, location: string) =>
+    `In computing initial states, TLC expected a boolean expression,\nbut instead found ${found}.\n${location}`;
+  it.each([
+    [`Spec == I(0)!Init /\\ I(0)!Sum /\\ ${UNCHANGED_STEP}`, "", getWholeMessage(2, INSTANCE_LINE)],
+    [`Spec == I(0)!InitSum /\\ ${UNCHANGED_STEP}`, "", getWholeMessage(2, INSTANCE_LINE)],
+    [
+      `Bad == x + 1\nSpec == x = 0 /\\ y = 0 /\\ Bad /\\ ${UNCHANGED_STEP}`,
+      "",
+      getWholeMessage(1, "line 6, col 8 to line 6, col 12 of module M"),
+    ],
+    [
+      `Spec == x = 0 /\\ y = 0 /\\ J!Bad /\\ ${UNCHANGED_STEP}`,
+      "",
+      getWholeMessage(1, UNPARAMETERIZED_LINE),
+    ],
+    [
+      `Spec == x = 0 /\\ y = 0 /\\ I(0)!Bad /\\ ${UNCHANGED_STEP}`,
+      "",
+      getWholeMessage(1, INSTANCE_LINE),
+    ],
+    [
+      `Spec == x = 0 /\\ y = 0 /\\ J!Inner!BadM /\\ ${UNCHANGED_STEP}`,
+      "",
+      getWholeMessage(0, UNPARAMETERIZED_LINE),
+    ],
+    [
+      `Spec == x = 0 /\\ y = 0 /\\ I(0)!Inner!BadM /\\ ${UNCHANGED_STEP}`,
+      "",
+      getWholeMessage(0, INSTANCE_LINE),
+    ],
+    [`Spec == I(0)!InitIn /\\ ${UNCHANGED_STEP}`, "", getWholeMessage(0, INSTANCE_LINE)],
+    ["Spec == J!SpecN", "", getWholeMessage(2, UNPARAMETERIZED_LINE)],
+    [
+      `Bad == x + 1\nSpec == LET G == 1 IN x = 0 /\\ y = 0 /\\ Bad /\\ ${UNCHANGED_STEP}`,
+      "",
+      getWholeMessage(1, "line 6, col 8 to line 6, col 12 of module M"),
+    ],
+    [
+      `Spec == x = 0 /\\ y = 0 /\\ ${UNCHANGED_STEP}\nProp == I(0)!Inv`,
+      "PROPERTY Prop\n",
+      `TLC expected a boolean value, but did not find one. ${INSTANCE_LINE}`,
+    ],
+    [
+      `Spec == x = 0 /\\ y = 0 /\\ ${UNCHANGED_STEP}\nProp == J!Inv`,
+      "PROPERTY Prop\n",
+      `TLC expected a boolean value, but did not find one. ${UNPARAMETERIZED_LINE}`,
+    ],
+    [
+      `Spec == x = 0 /\\ y = 0 /\\ ${UNCHANGED_STEP}\nProp == []<>(x = 0) /\\ I(0)!Sum`,
+      "PROPERTY Prop\n",
+      `TLC expected a boolean value, but did not find one. ${INSTANCE_LINE}`,
+    ],
+    [
+      `Spec == x = 0 /\\ y = 0 /\\ ${UNCHANGED_STEP}\nProp == J!InvIn`,
+      "PROPERTY Prop\n",
+      `TLC expected a boolean value, but did not find one. ${UNPARAMETERIZED_LINE}`,
+    ],
+  ])(
+    "reports the conjunct TLC evaluates whole in %j at the pred of its Action, the outermost instance or the body of a definition it takes whole, with and without coverage, as TLC does",
+    async (definitions, property, message) => {
+      expect([
+        await getWholeFailure(definitions, property),
+        await getWholeFailure(definitions, property, 1),
+      ]).toEqual([message, message]);
+    },
+  );
+
+  it.each([
+    [
+      `Spec == I(0)!Sum /\\ x = 0 /\\ y = 0 /\\ ${UNCHANGED_STEP}`,
+      getWholeMessage(2, "line 7, col 8 to line 7, col 12 of module N"),
+    ],
+    [
+      `Spec == J!InitSum /\\ ${UNCHANGED_STEP}`,
+      getWholeMessage(2, "line 10, col 31 to line 10, col 35 of module N"),
+    ],
+    [
+      `Spec == J!InitIn /\\ ${UNCHANGED_STEP}`,
+      getWholeMessage(0, "line 13, col 29 to line 13, col 38 of module N"),
+    ],
+  ])(
+    "reports a conjunct TLC walks to in %j at its own location, with and without coverage, as TLC does",
+    async (definitions, message) => {
+      expect([
+        await getWholeFailure(definitions, ""),
+        await getWholeFailure(definitions, "", 1),
+      ]).toEqual([message, message]);
+    },
+  );
+
+  it("reports a literal that a LET's scope passes to an initial conjunct by its text, as TLC does", async () => {
+    expect(
+      await getWholeFailure(
+        `F(a) == a\nSpec == LET G == 1 IN x = 0 /\\ y = 0 /\\ F(2) /\\ ${UNCHANGED_STEP}`,
+        "",
+      ),
+    ).toBe(getWholeMessage(2, "2"));
+  });
 
   it('describes an application of a definition whose body is a literal in TLCGet("spec") whole, as TLC does', async () => {
     const prints: string[] = [];
