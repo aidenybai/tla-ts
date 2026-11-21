@@ -73,17 +73,20 @@ export interface FunctionSetValue extends LazySet {
   kind: "FunctionSet";
   domain: Value;
   range: Value;
+  hasFilter: boolean;
 }
 
 export interface RecordSetValue extends LazySet {
   kind: "RecordSet";
   names: string[];
   sets: Value[];
+  hasFilter: boolean;
 }
 
 export interface ProductSetValue extends LazySet {
   kind: "ProductSet";
   factors: Value[];
+  hasFilter: boolean;
 }
 
 export interface SequenceSetValue extends LazySet {
@@ -96,6 +99,7 @@ export interface SetOperationValue extends LazySet {
   operator: "\\cup" | "\\cap" | "\\";
   left: Value;
   right: Value;
+  hasFilter: boolean;
 }
 
 interface FilteredSetSource {
@@ -410,7 +414,6 @@ export const setStringOrder = (texts: Iterable<string>) => {
   isWrittenOrderUsed = false;
   hasLambda = false;
   hasStreamedSet = false;
-  hasFilteredSet = false;
   for (const text of texts) rankString(text);
 };
 
@@ -754,13 +757,6 @@ export const markStreamedSet = <Streamed extends UnionValue | SetOperationValue>
   value: Streamed,
 ) => {
   hasStreamedSet = true;
-  return value;
-};
-
-let hasFilteredSet = false;
-
-export const markFilteredSet = <Filtered extends FilteredSetValue>(value: Filtered) => {
-  hasFilteredSet = true;
   return value;
 };
 
@@ -1945,23 +1941,79 @@ interface CupStream {
 type OpenedStream = ElementStream | CupStream;
 
 // TLC's enumerators of [S -> T], [a : S] and S \X T read ahead and reset their components, which shows when a component evaluates a predicate.
+// hasFilter records an unconverted filter when the set was built. The filter can convert later, as TLC's SetPredValue does once it caches its elements.
 const isPredicated = (value: Value): boolean => {
-  if (!hasFilteredSet || typeof value !== "object") return false;
+  if (typeof value !== "object") return false;
   switch (value.kind) {
     case "FilteredSet":
       return value.isCached !== true;
     case "SetOperation":
-      return value.isCached !== true && (isPredicated(value.left) || isPredicated(value.right));
+      return (
+        value.hasFilter &&
+        value.isCached !== true &&
+        (isPredicated(value.left) || isPredicated(value.right))
+      );
     case "FunctionSet":
-      return value.isCached !== true && !value.enumerated && isPredicated(value.range);
+      return (
+        value.hasFilter && value.isCached !== true && !value.enumerated && isPredicated(value.range)
+      );
     case "RecordSet":
-      return value.isCached !== true && !value.enumerated && value.sets.some(isPredicated);
+      return (
+        value.hasFilter &&
+        value.isCached !== true &&
+        !value.enumerated &&
+        hasPredicatedSet(value.sets)
+      );
     case "ProductSet":
-      return value.isCached !== true && !value.enumerated && value.factors.some(isPredicated);
+      return (
+        value.hasFilter &&
+        value.isCached !== true &&
+        !value.enumerated &&
+        hasPredicatedSet(value.factors)
+      );
     default:
       return false;
   }
 };
+
+const hasPredicatedSet = (sets: Value[]) => {
+  for (let index = 0; index < sets.length; index++) {
+    if (isPredicated(sets[index])) return true;
+  }
+  return false;
+};
+
+export const createFunctionSet = (domain: Value, range: Value): FunctionSetValue => ({
+  kind: "FunctionSet",
+  domain,
+  range,
+  hasFilter: isPredicated(range),
+});
+
+export const createRecordSet = (names: string[], sets: Value[]): RecordSetValue => ({
+  kind: "RecordSet",
+  names,
+  sets,
+  hasFilter: hasPredicatedSet(sets),
+});
+
+export const createProductSet = (factors: Value[]): ProductSetValue => ({
+  kind: "ProductSet",
+  factors,
+  hasFilter: hasPredicatedSet(factors),
+});
+
+export const createSetOperation = (
+  operator: SetOperationValue["operator"],
+  left: Value,
+  right: Value,
+): SetOperationValue => ({
+  kind: "SetOperation",
+  operator,
+  left,
+  right,
+  hasFilter: isPredicated(left) || isPredicated(right),
+});
 
 const getPredicatedProduct = (value: ObjectValue) =>
   (value.kind === "FunctionSet" || value.kind === "RecordSet" || value.kind === "ProductSet") &&
