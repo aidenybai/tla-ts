@@ -12,12 +12,14 @@ import {
   createChargedEnumerator,
   enterFrames,
   exitFrames,
+  getChargedBound,
   getCoverageNode,
   getEnteredFrames,
   hideFrames,
   restoreFrames,
   runAtCoverageNode,
   runReportedInto,
+  type ChargedBound,
   type Coverage,
 } from "../coverage";
 import {
@@ -827,10 +829,15 @@ const getBindings = (
 ) => {
   const bindings: (Scope | undefined)[] = [];
   const version = replay.environment.runtime.version;
+  const coverage = replay.coverage;
   const bounded = runAt(replay, node, () =>
-    mapBoundSets(expression.bounds, (set) => {
+    mapBoundSets(expression.bounds, (set): ChargedBound => {
       const value = evaluate(set, context);
-      return { value, elements: getQuantifierElements(value, set, version) };
+      return coverage
+        ? getChargedBound(coverage, value, version !== "1.7.4", () =>
+            getQuantifierElements(value, set, version),
+          )
+        : { kind: "Listed", value, elements: getQuantifierElements(value, set, version) };
     }),
   );
   const sets = bounded.map((item) => item.elements);
@@ -838,14 +845,7 @@ const getBindings = (
     bindings.push(bound);
     return false;
   });
-  const coverage = replay.coverage;
-  const charge =
-    coverage &&
-    chargeContexts(
-      coverage,
-      bounded.map((item) => item.value),
-      sets,
-    );
+  const charge = coverage && chargeContexts(coverage, bounded);
   return { bindings, charge };
 };
 

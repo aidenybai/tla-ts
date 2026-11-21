@@ -2430,6 +2430,195 @@ const somePulledElement = (stream: ElementStream, visit: (element: Value) => boo
   return false;
 };
 
+export interface ChargeTable {
+  values: WeakMap<object, number>;
+  secondary: number[];
+}
+
+interface PlainStream {
+  kind: "Plain";
+  part: ElementStream;
+}
+
+interface ChargedLeafStream {
+  kind: "ChargedLeaf";
+  node: number;
+  part: ElementStream;
+}
+
+interface ChargedProductStream {
+  kind: "ChargedProduct";
+  node: number;
+  set: FunctionSetValue | RecordSetValue | ProductSetValue;
+  domain: Value[];
+  parts: ChargedStream[];
+  current: Value[];
+  isDone: boolean;
+}
+
+type ChargedStream = PlainStream | ChargedLeafStream | ChargedProductStream;
+
+const EMPTY_CHARGED_STREAM: PlainStream = { kind: "Plain", part: EMPTY_STREAM };
+
+export const getValueNode = (charges: ChargeTable, value: Value) =>
+  typeof value !== "object"
+    ? undefined
+    : (charges.values.get(value) ?? (value.kind === "Set" ? value.costNode : undefined));
+
+const getChargedProduct = (charges: ChargeTable, value: Value) => {
+  if (typeof value !== "object") return undefined;
+  const product = getPredicatedProduct(value);
+  return product !== undefined &&
+    getCombinedSets(product)?.every((set) => isChargedPart(charges, set)) === true
+    ? product
+    : undefined;
+};
+
+const isChargedPart = (charges: ChargeTable, value: Value): boolean => {
+  if (typeof value !== "object") return true;
+  if (value.kind === "SetOperation") return false;
+  if (value.kind !== "FunctionSet" && value.kind !== "RecordSet" && value.kind !== "ProductSet") {
+    return true;
+  }
+  return (
+    getValueNode(charges, value) === undefined || getChargedProduct(charges, value) !== undefined
+  );
+};
+
+const openChargedPart = (charges: ChargeTable, value: Value): ChargedStream => {
+  const node =
+    typeof value !== "object" || value.kind === "FilteredSet" || value.kind === "Subset"
+      ? undefined
+      : getValueNode(charges, value);
+  const product =
+    node === undefined || typeof value !== "object" ? undefined : getPredicatedProduct(value);
+  if (node !== undefined && product !== undefined) {
+    const sets = setTrace.sets;
+    sets?.push(product);
+    const stream = openChargedProduct(charges, product, node);
+    sets?.pop();
+    return stream;
+  }
+  const part = openPart(value);
+  return node === undefined ? { kind: "Plain", part } : { kind: "ChargedLeaf", node, part };
+};
+
+const openChargedProduct = (
+  charges: ChargeTable,
+  value: FunctionSetValue | RecordSetValue | ProductSetValue,
+  node: number,
+): ChargedStream => {
+  if (!isVersion174 && isEmptySet(value)) return EMPTY_CHARGED_STREAM;
+  const stream: ChargedProductStream = {
+    kind: "ChargedProduct",
+    node,
+    set: value,
+    domain: [],
+    parts: [],
+    current: [],
+    isDone: false,
+  };
+  if (value.kind === "FunctionSet") {
+    openOperandStream(value.domain, true);
+    if (isOverriddenSet(value.domain)) {
+      throw new TlaEvaluationError(describeUnenumerableFunctionSet("domain D", value.domain));
+    }
+    stream.domain = getFunctionDomain(value.domain);
+    if ((stream.domain.length > 0 || isVersion174) && isOverriddenSet(value.range)) {
+      throw new TlaEvaluationError(describeUnenumerableFunctionSet("range R", value.range));
+    }
+  }
+  const sets =
+    value.kind === "FunctionSet"
+      ? stream.domain.map(() => value.range)
+      : value.kind === "RecordSet"
+        ? value.sets
+        : value.factors;
+  for (let index = 0; index < sets.length; index++) {
+    if (value.kind !== "FunctionSet" && isOverriddenSet(sets[index])) {
+      throw new TlaEvaluationError(describeUnenumerableComponent(value, index));
+    }
+    const part = openChargedPart(charges, sets[index]);
+    const element = getNextChargedElement(charges, part);
+    if (element === undefined) return EMPTY_CHARGED_STREAM;
+    stream.parts.push(part);
+    stream.current.push(element);
+  }
+  return stream;
+};
+
+const restartChargedPart = (charges: ChargeTable, stream: ChargedProductStream, index: number) => {
+  resetChargedStream(charges, stream.parts[index]);
+  const element = getNextChargedElement(charges, stream.parts[index]);
+  if (element === undefined) stream.isDone = true;
+  else stream.current[index] = element;
+};
+
+const resetChargedStream = (charges: ChargeTable, stream: ChargedStream) => {
+  if (stream.kind !== "ChargedProduct") {
+    resetStream(stream.part);
+    return;
+  }
+  stream.isDone = false;
+  for (let index = 0; index < stream.parts.length; index++)
+    restartChargedPart(charges, stream, index);
+};
+
+const getNextChargedElement = (charges: ChargeTable, stream: ChargedStream): Value | undefined => {
+  switch (stream.kind) {
+    case "Plain":
+      return getNextElement(stream.part);
+    case "ChargedLeaf":
+      charges.secondary[stream.node]++;
+      return getNextElement(stream.part);
+    case "ChargedProduct": {
+      if (stream.isDone) return undefined;
+      const elements = [...stream.current];
+      charges.secondary[stream.node] += Math.max(stream.parts.length, 1);
+      stream.isDone = stream.parts.length === 0;
+      for (let index = stream.parts.length - 1; index >= 0 && !stream.isDone; index--) {
+        const element = getNextChargedElement(charges, stream.parts[index]);
+        if (element !== undefined) {
+          stream.current[index] = element;
+          break;
+        }
+        if (index === 0) stream.isDone = true;
+        else restartChargedPart(charges, stream, index);
+      }
+      const set = stream.set;
+      return set.kind === "FunctionSet"
+        ? createSortedFunction(stream.domain, elements)
+        : set.kind === "RecordSet"
+          ? createRecord(set.names.map((name, index): [string, Value] => [name, elements[index]]))
+          : createTuple(elements);
+    }
+  }
+};
+
+// TLC's toSetEnum drains the enumerator of [S -> T], [a : S] or S \X T, which charges each element its width, then charges the set its size.
+export const drainChargedSet = (charges: ChargeTable, value: Value) => {
+  const node = getValueNode(charges, value);
+  const product = node === undefined ? undefined : getChargedProduct(charges, value);
+  if (product === undefined || node === undefined) return undefined;
+  const sets = setTrace.sets;
+  sets?.push(product);
+  const stream = openChargedProduct(charges, product, node);
+  sets?.pop();
+  const elements: Value[] = [];
+  for (
+    let element = getNextChargedElement(charges, stream);
+    element !== undefined;
+    element = getNextChargedElement(charges, stream)
+  ) {
+    addBoundedElement(elements, element);
+  }
+  charges.secondary[node] += elements.length;
+  const sorted = isStreamedApart(product) ? sortLikeTlc(elements) : elements;
+  const set = product.kind === "RecordSet" ? createSet(sorted) : createSortedSet(sorted);
+  product.enumerated = set;
+  return set.elements;
+};
+
 const getProductStream = (
   value: FunctionSetValue | RecordSetValue | ProductSetValue,
   opened: OpenedStream | undefined,

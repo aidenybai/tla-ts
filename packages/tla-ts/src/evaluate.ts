@@ -37,16 +37,17 @@ import {
   costCoverage,
   countArgumentTuple,
   countCoverage,
-  createChargedEnumerator,
+  createBoundEnumerator,
   createProductSetEnumerator,
   enterFrames,
   exitFrames,
+  getChargedBound,
   getCoverageFrames,
   getCoverageNode,
   getSubstitutionNode,
-  getValueNode,
   runAtCoverageNode,
   runInCoverageFrames,
+  type ChargedEnumerator,
   type Coverage,
   type NextStateMode,
 } from "./coverage";
@@ -101,6 +102,7 @@ import {
   getIntervalElements,
   getLazySubsets,
   getStreamedElements,
+  getValueNode,
   normalizeShallowly,
   getFunctionClass,
   getNormalizedSetElements,
@@ -707,19 +709,15 @@ const forEachChargedBinding = (
   coverage: Coverage,
   visit: (scope: Scope | undefined) => boolean,
 ) => {
+  const version = context.environment.runtime.version;
   const bounded = mapBoundSets(bounds, (set) => {
     const value = evaluate(set, context);
-    return {
-      value,
-      elements: getQuantifierElements(value, set, context.environment.runtime.version),
-    };
+    return getChargedBound(coverage, value, version !== "1.7.4", () =>
+      getQuantifierElements(value, set, version),
+    );
   });
+  const charge = chargeContexts(coverage, bounded);
   const sets = bounded.map((item) => item.elements);
-  const charge = chargeContexts(
-    coverage,
-    bounded.map((item) => item.value),
-    sets,
-  );
   return forEachBoundElement(bounds, sets, context.scope, (scope) => {
     charge();
     return visit(scope);
@@ -2778,19 +2776,34 @@ export const expectFilterPredicate = (
   return value;
 };
 
-export const getChoiceElements = (
-  base: Value,
-  expression: Expression & { kind: "Choose" },
-  set: Expression,
-  version: TlcVersion,
-) => {
+const normalizeChoices = (base: Value, expression: Expression & { kind: "Choose" }) => {
   if (!isSetValue(base) || isOverriddenSet(base)) {
     throw new TlaEvaluationError(
       `Attempted to compute the value of an expression of\nform CHOOSE x \\in S: P, but S was not enumerable.\n${describeRange(expression)}`,
     );
   }
   normalizeShallowly(base);
+};
+
+export const getChoiceElements = (
+  base: Value,
+  expression: Expression & { kind: "Choose" },
+  set: Expression,
+  version: TlcVersion,
+) => {
+  normalizeChoices(base, expression);
   return getNormalizedElements(base, set, version);
+};
+
+const getChargedChoices = (
+  coverage: Coverage,
+  base: Value,
+  expression: Expression & { kind: "Choose" },
+  set: Expression,
+  version: TlcVersion,
+) => {
+  normalizeChoices(base, expression);
+  return getChargedBound(coverage, base, true, () => getNormalizedElements(base, set, version));
 };
 
 export const createNoChoiceError = (expression: Expression & { kind: "Choose" }) =>
@@ -2850,10 +2863,11 @@ const compileSetComprehension = (
   const body = getEvaluator(expression.body, environment);
   const evaluateSet = getEvaluator(set, environment);
   const coverage = environment.coverage;
-  return (context) => {
-    const base = evaluateSet(context);
-    const elements = getChoiceElements(base, expression, set, context.environment.runtime.version);
-    const enumerator = coverage && createChargedEnumerator(coverage, base, elements, true);
+  const choose = (
+    context: Context,
+    elements: ReturnType<typeof getQuantifierElements>,
+    enumerator: ChargedEnumerator | undefined,
+  ) => {
     let chosen: Value | undefined;
     const pattern = expression.pattern;
     someElement(elements, (element) => {
@@ -2875,6 +2889,24 @@ const compileSetComprehension = (
     enumerator?.next();
     throw createNoChoiceError(expression);
   };
+  if (coverage) {
+    return (context) => {
+      const bound = getChargedChoices(
+        coverage,
+        evaluateSet(context),
+        expression,
+        set,
+        context.environment.runtime.version,
+      );
+      return choose(context, bound.elements, createBoundEnumerator(coverage, bound));
+    };
+  }
+  return (context) =>
+    choose(
+      context,
+      getChoiceElements(evaluateSet(context), expression, set, context.environment.runtime.version),
+      undefined,
+    );
 };
 
 export const getSortedFields = (fields: RecordField[]) =>

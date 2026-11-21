@@ -22,9 +22,11 @@ import { describeNode, getRootKey, type Environment, type Scope } from "./evalua
 import { getJavaHashCode } from "./java-hash";
 import { getTlcFingerprint } from "./tlc/fingerprint";
 import {
+  drainChargedSet,
   getCardinality,
   getDomainInterval,
   getStreamedElements,
+  getValueNode,
   isElementOf,
   isElementOfWith,
   isEmptySet,
@@ -906,11 +908,6 @@ export const getSubstitutionNode = (
   return substitutionNode;
 };
 
-export const getValueNode = (coverage: Coverage, value: Value) =>
-  typeof value !== "object"
-    ? undefined
-    : (coverage.values.get(value) ?? (value.kind === "Set" ? value.costNode : undefined));
-
 export const costCoverage = (coverage: Coverage, value: Value, cost: number) => {
   const node = getValueNode(coverage, value);
   if (node !== undefined) coverage.secondary[node] += cost;
@@ -1000,7 +997,7 @@ export const chargeSetOperation = (
   return charged;
 };
 
-interface ChargedEnumerator {
+export interface ChargedEnumerator {
   next: () => boolean;
   reset: () => void;
 }
@@ -1310,14 +1307,39 @@ const chargeBindings = (enumerators: ChargedEnumerator[]) => {
   };
 };
 
-export const chargeContexts = (
+interface ListedBound {
+  kind: "Listed";
+  value: Value;
+  elements: Value[] | IntervalValue;
+}
+
+interface DrainedBound {
+  kind: "Drained";
+  value: Value;
+  elements: Value[];
+}
+
+export type ChargedBound = ListedBound | DrainedBound;
+
+export const getChargedBound = (
   coverage: Coverage,
-  sets: Value[],
-  lists: (Value[] | IntervalValue)[],
-) =>
-  chargeBindings(
-    sets.map((set, index) => createChargedEnumerator(coverage, set, lists[index], true)),
-  );
+  value: Value,
+  isNormalized: boolean,
+  getElements: () => Value[] | IntervalValue,
+): ChargedBound => {
+  const drained = isNormalized ? drainChargedSet(coverage, value) : undefined;
+  return drained === undefined
+    ? { kind: "Listed", value, elements: getElements() }
+    : { kind: "Drained", value, elements: drained };
+};
+
+export const createBoundEnumerator = (coverage: Coverage, bound: ChargedBound) =>
+  bound.kind === "Drained"
+    ? createListEnumerator(coverage, getValueNode(coverage, bound.value), bound.elements.length)
+    : createChargedEnumerator(coverage, bound.value, bound.elements, true);
+
+export const chargeContexts = (coverage: Coverage, bounds: ChargedBound[]) =>
+  chargeBindings(bounds.map((bound) => createBoundEnumerator(coverage, bound)));
 
 export const chargeFunctionConstruction = (coverage: Coverage, node: number, sets: Value[]) => {
   const sizes = sets.map((set) => getCardinality(set));
