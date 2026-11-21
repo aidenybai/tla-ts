@@ -104,6 +104,38 @@ describe("printing matches TLC", () => {
     expect((await checkPrinting(`ASSUME ${expression}`)).result.violation?.message).toBe(message);
   });
 
+  it.each([
+    [
+      "LET F == [n \\in UNION {1..1, {3}} |-> Print(n, n)] IN PrintT(<<F, F>>)",
+      ["1  1", "3  3", "1  1", "3  3", "<<(1 :> 1 @@ 3 :> 3), (1 :> 1 @@ 3 :> 3)>>"],
+    ],
+    [
+      "LET F == [n \\in UNION {1..1, {2}} |-> Print(n, n)] IN PrintT(<<F, F>>)",
+      ["1  1", "2  2", "1  1", "2  2", "<<<<1, 2>>, <<1, 2>>>>"],
+    ],
+    [
+      "LET F == [n \\in UNION {1..1, {3}} |-> Print(n, n)] IN PrintT([a |-> F, b |-> F])",
+      ["1  1", "3  3", "1  1", "3  3", "[a |-> (1 :> 1 @@ 3 :> 3), b |-> (1 :> 1 @@ 3 :> 3)]"],
+    ],
+    [
+      "LET F == [n \\in UNION {1..1, {3}} |-> Print(n, n)] IN PrintT(<<[a |-> {F}], F>>)",
+      ["1  1", "3  3", "1  1", "3  3", "<<[a |-> {(1 :> 1 @@ 3 :> 3)}], (1 :> 1 @@ 3 :> 3)>>"],
+    ],
+    [
+      "LET F == [n \\in UNION {1..1, {3}} |-> Print(n, n)] IN PrintT({[a |-> F, b |-> F]})",
+      ["1  1", "3  3", "{[a |-> (1 :> 1 @@ 3 :> 3), b |-> (1 :> 1 @@ 3 :> 3)]}"],
+    ],
+    [
+      "LET F == [n \\in UNION {1..1, {3}} |-> Print(n, n)] IN Print(F, F) = F",
+      ["1  1", "3  3", "1  1", "3  3", "(1 :> 1 @@ 3 :> 3)  (1 :> 1 @@ 3 :> 3)", "1  1", "3  3"],
+    ],
+  ])(
+    "converts each copy of a lazy function it prints on its own, as TLC's deepCopy does, in %s",
+    async (expression, printed) => {
+      expect((await checkPrinting(`ASSUME ${expression}`)).printed).toEqual(printed);
+    },
+  );
+
   it("evaluates each bound set of a function constructor once", async () => {
     expect(
       (await checkPrinting("ASSUME PrintT([m \\in {}, n \\in Print(SUBSET {1, 2}, {1}) |-> 0])"))

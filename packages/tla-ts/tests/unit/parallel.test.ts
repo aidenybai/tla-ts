@@ -1,6 +1,10 @@
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { describe, expect, it } from "vite-plus/test";
+import { check } from "../../src";
+import { getJavaClassName } from "../../src/builtins";
+import { createStateDecoder, createStateEncoder } from "../../src/transfer";
+import { formatValue } from "../../src/values";
 
 const FIXTURES = join(import.meta.dirname, "../fixtures");
 const DIST = join(import.meta.dirname, "../../dist/index.js");
@@ -213,5 +217,48 @@ describe("check with workers matches TLC", () => {
     const result = await checkFixtureInParallel("strings", "RuntimeStrings", 2);
     expect(result.status).toBe("success");
     expect(getCounts(result)).toEqual([115, 97, 6]);
+  });
+
+  it("explores states that hold functions over SUBSET", async () => {
+    const result = await tlaTs.check({
+      source:
+        "---- MODULE M ----\nEXTENDS Naturals\nVARIABLES x, y\nInit == x = 0 /\\ y = [s \\in SUBSET (1..2) |-> 0]\nNext == \\E q \\in 1..2 :\n          /\\ x' = (x + q) % 5\n          /\\ y' = [s \\in SUBSET (1..2) |-> IF q \\in s THEN (y[s] + 1) % 3 ELSE y[s]]\n====",
+      config: "INIT Init\nNEXT Next",
+      workers: 2,
+    });
+    expect(result.status).toBe("success");
+    expect(getCounts(result)).toEqual([91, 45, 11]);
+  });
+
+  it.each([
+    [true, [2, 2, 2]],
+    [false, [3, 3, 3]],
+  ])(
+    "converts a function over SUBSET that a state holds to a string as TLC does with isLazyValueExpanded %s",
+    async (isLazyValueExpanded, counts) => {
+      const result = await tlaTs.check({
+        source:
+          '---- MODULE M ----\nEXTENDS Naturals, TLC\nVARIABLES y, s\nInit == y = [p \\in SUBSET (1..2) |-> 0] /\\ s = ""\nNext == \\/ s = "" /\\ s\' = ToString(y) /\\ UNCHANGED y\n        \\/ s = "[p \\\\in SUBSET (1..2) |-> <expression 0>]" /\\ s\' = "done" /\\ UNCHANGED y\n====',
+        config: "INIT Init\nNEXT Next\nCHECK_DEADLOCK FALSE",
+        workers: 2,
+        isLazyValueExpanded,
+      });
+      expect(getCounts(result)).toEqual(counts);
+    },
+  );
+
+  it("hands a worker a converted function over SUBSET as the FcnLambdaValue it is", async () => {
+    const result = await check({
+      source:
+        "---- MODULE M ----\nVARIABLE y\nInit == y = [p \\in SUBSET {1, 2} |-> 0]\nNext == UNCHANGED y\nInv == y[{}] = 1\n====",
+      config: "INIT Init\nNEXT Next\nINVARIANT Inv",
+    });
+    const encoder = createStateEncoder();
+    const isEncoded = encoder.encode(result.violation?.trace.map((step) => step.state.y) ?? []);
+    const decoded = createStateDecoder(1)(encoder.finish()).flat();
+    expect([
+      isEncoded,
+      decoded.map((innerValue) => [getJavaClassName(innerValue), formatValue(innerValue)]),
+    ]).toEqual([true, [["FcnLambdaValue", "({} :> 0 @@ {1} :> 0 @@ {2} :> 0 @@ {1, 2} :> 0)"]]]);
   });
 });

@@ -53,10 +53,10 @@ import {
   getCardinality,
   getFunctionDomain,
   isBeyondSetBound,
+  isEqualLikeTlc,
   isReducibleSet,
   isTlcInteger,
   toFiniteSet,
-  valuesEqual,
   type Value,
 } from "./values";
 
@@ -113,7 +113,7 @@ const createGeneratedHelpers = () => ({
   set: createEnumeratedSet,
   record: createSortedRecord,
   writtenRecord: createWrittenRecord,
-  equal: valuesEqual,
+  equal: isEqualLikeTlc,
   enumerate: getQuantifierElements,
   choiceElements: getChoiceElements,
   noChoice: (expression: Expression & { kind: "Choose" }): never => {
@@ -485,7 +485,7 @@ const generateExpression = (generator: Generator, expression: Expression, frame:
         expression: expression.expression,
         location: expression.location,
       });
-      return `equal(${primed}, ${generate(expression.expression)})`;
+      return `equal(${generate(expression.expression)}, ${primed})`;
     }
     case "Forall":
     case "Exists":
