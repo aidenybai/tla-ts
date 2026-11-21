@@ -54,7 +54,12 @@ interface SmtCheck {
 // The context makes its asserted formulas first, and asserts the formulas. It makes the theories
 // next, before the formulas are reduced.
 export const solveGoal = (manager: AstManager, forms: number[], params: KernelParams) => {
-  const asserted = new AssertedFormulas(manager, params.isFindingMacros, params.isEmatching);
+  const asserted = new AssertedFormulas(
+    manager,
+    params.isFindingMacros,
+    params.isEmatching,
+    params.isProofsEnabled,
+  );
   const context = new Context(manager, {
     isMbqi: params.isMbqi,
     mbqiMaxIterations: params.mbqiMaxIterations,
@@ -104,7 +109,12 @@ export const solveAssuming = (
   assumptions: number[],
   params = DEFAULT_KERNEL_PARAMS,
 ) => {
-  const asserted = new AssertedFormulas(manager, params.isFindingMacros, params.isEmatching);
+  const asserted = new AssertedFormulas(
+    manager,
+    params.isFindingMacros,
+    params.isEmatching,
+    params.isProofsEnabled,
+  );
   const context = new Context(manager, {
     isMbqi: params.isMbqi,
     mbqiMaxIterations: params.mbqiMaxIterations,

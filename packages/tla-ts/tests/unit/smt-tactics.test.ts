@@ -1528,6 +1528,42 @@ describe("preprocessing with proofs, as Z3 5.3.2 runs it", () => {
       "(:rlimit 44)",
     ]);
   });
+
+  it("skips propagate-values in the kernel", () => {
+    expect(
+      run([
+        "(set-option :produce-proofs true)",
+        "(declare-sort U 0)",
+        "(declare-const a0 U)",
+        "(declare-const a1 U)",
+        "(declare-const a2 U)",
+        "(assert (distinct a0 a1 a2))",
+        "(check-sat)",
+        "(get-info :rlimit)",
+      ]),
+    ).toEqual(["sat", "(:rlimit 64)"]);
+  });
+
+  it("skips flatten-clauses in the kernel", () => {
+    expect(
+      run([
+        "(set-option :produce-proofs true)",
+        "(declare-sort U 0)",
+        "(declare-const a Bool)",
+        "(declare-const b Bool)",
+        "(declare-const r Bool)",
+        "(declare-const u U)",
+        "(declare-const v U)",
+        "(declare-const w U)",
+        "(assert (ite a (= u v) (= v w)))",
+        "(assert (or (not (or a b)) r))",
+        "(assert (not (= u w)))",
+        "(check-sat)",
+        "(get-info :rlimit)",
+        "(get-value (a b r))",
+      ]),
+    ).toEqual(["sat", "(:rlimit 274)", "((a false)\n (b false)\n (r false))"]);
+  });
 });
 
 describe("qfufbv, as Z3 5.3.2 answers QF_UFBV", () => {
