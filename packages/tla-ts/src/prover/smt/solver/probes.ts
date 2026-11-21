@@ -63,8 +63,9 @@ const forEachGoalExpr = <T>(
   isIgnoringPatterns = false,
 ) => {
   const visited = new Set<number>();
-  for (const form of goal.forms.items) {
-    const result = forEachExpr(goal.manager, form, visit, visited, isIgnoringPatterns);
+  const forms = goal.forms.items;
+  for (let index = 0; index < forms.length; index++) {
+    const result = forEachExpr(goal.manager, forms[index], visit, visited, isIgnoringPatterns);
     if (result !== undefined) return result;
   }
   return undefined;
