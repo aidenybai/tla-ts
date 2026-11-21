@@ -1,3 +1,4 @@
+import { SmtRewriterCanceledError } from "../../../errors";
 import { TermEnumeration } from "./term-enumeration";
 import {
   type AstManager,
@@ -439,6 +440,16 @@ export class ProtoModel {
   eval(expr: number, isModelCompletion: boolean) {
     this.evaluator.setModelCompletion(isModelCompletion);
     return this.evaluator.rewrite(expr);
+  }
+
+  // proto_model::eval, which catches the evaluator's rewriter_exception.
+  tryEval(expr: number, isModelCompletion: boolean) {
+    try {
+      return this.eval(expr, isModelCompletion);
+    } catch (error) {
+      if (error instanceof SmtRewriterCanceledError) return undefined;
+      throw error;
+    }
   }
 
   resetEvalCache() {

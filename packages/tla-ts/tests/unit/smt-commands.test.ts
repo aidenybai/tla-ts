@@ -1,3 +1,5 @@
+import { readFileSync } from "node:fs";
+import { join } from "node:path";
 import { describe, expect, it } from "vite-plus/test";
 import { runSmtlibScript } from "../../src/prover/smt/solver/smtlib-script";
 
@@ -291,6 +293,14 @@ const MBQI_UNDER_PUSH = [
   "(assert (p a))",
   "(assert (not (= (f a) b)))",
 ];
+
+const SMT_FIXTURES = join(import.meta.dirname, "../fixtures/smt");
+
+// A tlapm obligation from tlaplus/Examples' MisraReachability, with its goal checked under a push.
+const REACHABLE_PROOFS = readFileSync(join(SMT_FIXTURES, "ReachableProofs-40-push.smt2"), "utf8");
+
+const readZ3Output = (name: string) =>
+  readFileSync(join(SMT_FIXTURES, name), "utf8").trimEnd().split("\n");
 
 const CHECK_AND_MODEL = [
   "(check-sat)",
@@ -1043,6 +1053,12 @@ describe("runSmtlibScript runs its commands as Z3 does", () => {
       "(:rlimit 344)",
       '(error "line 18 column 10: model is not available")',
     ]);
+  });
+
+  it("gives up on a quantifier when the limit stops its evaluation in the model", () => {
+    expect(run(["(set-option :rlimit 4000)", REACHABLE_PROOFS])).toEqual(
+      readZ3Output("ReachableProofs-40-push-4000.z3out"),
+    );
   });
 
   it("reports the limit that stops a push of ctx-solver-simplify as its reason", () => {

@@ -156,7 +156,8 @@ export class ModelChecker {
   private assertNegQM(aux: AuxContext, quantifier: number, model: ProtoModel, sks: RefVector) {
     const manager = this.manager;
     const data = manager.getQuantifier(quantifier);
-    const body = model.eval(data.body, true);
+    const body = model.tryEval(data.body, true);
+    if (body === undefined) return false;
     const numDecls = data.sorts.length;
     sks.resize(numDecls);
     for (let index = 0; index < numDecls; index++) {
@@ -182,6 +183,7 @@ export class ModelChecker {
     manager.decRef(skBody);
     subst.release();
     manager.decRef(body);
+    return true;
   }
 
   private addInstance(quantifier: number, cex: ProtoModel, sks: number[], isUsingInv: boolean) {
@@ -225,7 +227,7 @@ export class ModelChecker {
 
   private checkInScope(aux: AuxContext, quantifier: number, model: ProtoModel, skRefs: RefVector) {
     const flatQ = this.modelFinder.getFlatQuantifier(quantifier);
-    this.assertNegQM(aux, flatQ, model, skRefs);
+    if (!this.assertNegQM(aux, flatQ, model, skRefs)) return false;
     const sks = skRefs.items;
     const completeCex = aux.check();
     if (completeCex === "unsat") return true;
