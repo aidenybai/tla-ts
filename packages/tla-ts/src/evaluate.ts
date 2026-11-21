@@ -37,7 +37,6 @@ import {
   createChargedEnumerator,
   createChargedMembership,
   createProductSetEnumerator,
-  DO_NOT_RECORD,
   enterFrames,
   exitFrames,
   getCoverageFrames,
@@ -703,16 +702,6 @@ const keepLambda = (lambda: LazyFunction) => Object.assign(lambda.value, { lambd
 
 export const getLazyFunction = (value: Value) =>
   isKeptLazyFunction(value) ? value.lambda : undefined;
-
-// FcnLambdaValue#takeExcept copies the function without its cost model.
-const getUnrecordedApply = (functionValue: Value, coverage: Coverage) => {
-  const lambda = getLazyFunction(functionValue);
-  if (!lambda) return undefined;
-  return (argument: Value) =>
-    coverage.current === -1
-      ? lambda.compute(argument, lambda.value)
-      : runAtCoverageNode(coverage, DO_NOT_RECORD, () => lambda.compute(argument, lambda.value));
-};
 
 // SANY makes the arguments of f[a, b] a $Tuple at the application's location, which TLC's call stack holds while they evaluate.
 export const getArgumentTuple = (
@@ -2416,7 +2405,6 @@ const compileExcept = (
   const isKeptLazyExpression = keptLazyExpressions.has(expression);
   if (isKeptLazyExpression) keepLazy(expression.function);
   const evaluateFunction = getEvaluator(expression.function, environment);
-  const coverage = environment.coverage;
   const updates = expression.updates.map((update) => ({
     path: update.path.map((step): CompiledStep =>
       step.kind === "Field"
@@ -2449,7 +2437,6 @@ const compileExcept = (
       getKey(path[depth], context),
       (previous) => update(previous, path, depth + 1, context, value),
       isKeptLazyExpression && depth === 0,
-      coverage && getUnrecordedApply(current, coverage),
     );
   };
   return (context) => {

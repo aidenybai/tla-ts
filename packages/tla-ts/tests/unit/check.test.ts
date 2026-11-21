@@ -4716,12 +4716,20 @@ ASSUME TLCFP(a) = -887695703
     expect(result.failure?.fingerprint?.reason).toBe("The second argument of \\div is 0.");
   });
 
-  it("counts no application of the copy EXCEPT makes of a lazy function, as FcnLambdaValue#takeExcept drops the cost model", async () => {
+  it("counts the applications of the copy EXCEPT makes of a lazy function, though TLC's FcnLambdaValue#takeExcept drops the cost model", async () => {
     const lines = await getCoverageLines(
       "---- MODULE M ----\nEXTENDS Naturals\nVARIABLE x\nInit == LET f[n \\in 0..2] == 10 \\div (n + 1) IN x = [f EXCEPT ![2] = 0][1]\nNext == UNCHANGED x\n====",
       "INIT Init\nNEXT Next",
     );
-    expect(lines?.[0]).toEqual(["line 4, col 49 to line 4, col 74 of module M: 1"]);
+    expect(lines?.[0]).toEqual([
+      "line 4, col 49 to line 4, col 74 of module M: 1",
+      "|line 4, col 53 to line 4, col 74 of module M: 1",
+      "||line 4, col 53 to line 4, col 71 of module M: 1",
+      "|||line 4, col 54 to line 4, col 54 of module M: 1",
+      "||||line 4, col 13 to line 4, col 44 of module M: 1",
+      "|||||line 4, col 30 to line 4, col 44 of module M: 2",
+      "|||||line 4, col 21 to line 4, col 24 of module M: 1",
+    ]);
   });
 
   it.each([
@@ -4803,10 +4811,10 @@ ASSUME TLCFP(a) = -887695703
         "||line 6, col 23 to line 6, col 41 of module M: 9",
         "|||line 6, col 24 to line 6, col 24 of module M: 9",
         "||||line 4, col 1 to line 4, col 50 of module M: 9",
-        "|||||line 4, col 18 to line 4, col 50 of module M: 36",
-        "||||||line 4, col 21 to line 4, col 25 of module M: 36",
+        "|||||line 4, col 18 to line 4, col 50 of module M: 45",
+        "||||||line 4, col 21 to line 4, col 25 of module M: 45",
         "||||||line 4, col 32 to line 4, col 32 of module M: 18",
-        "||||||line 4, col 39 to line 4, col 50 of module M: 18",
+        "||||||line 4, col 39 to line 4, col 50 of module M: 27",
         "|||||line 4, col 9 to line 4, col 12 of module M: 9",
       ],
     ],
@@ -4820,14 +4828,14 @@ ASSUME TLCFP(a) = -887695703
         "||line 4, col 71 to line 4, col 89 of module M: 1",
         "|||line 4, col 72 to line 4, col 72 of module M: 1",
         "||||line 4, col 13 to line 4, col 62 of module M: 1",
-        "|||||line 4, col 30 to line 4, col 62 of module M: 4",
-        "||||||line 4, col 33 to line 4, col 37 of module M: 4",
-        "||||||line 4, col 51 to line 4, col 62 of module M: 2",
+        "|||||line 4, col 30 to line 4, col 62 of module M: 5",
+        "||||||line 4, col 33 to line 4, col 37 of module M: 5",
+        "||||||line 4, col 51 to line 4, col 62 of module M: 3",
         "|||||line 4, col 21 to line 4, col 24 of module M: 1",
       ],
     ],
   ])(
-    "counts the applications the copy EXCEPT makes of a recursive function of %s makes of the function, which keeps its cost model",
+    "counts the applications of the copy EXCEPT makes of a recursive function of %s, though TLC's FcnLambdaValue#takeExcept drops the copy's cost model",
     async (_name, definitions, relation, expected) => {
       const lines = await getCoverageLines(
         `---- MODULE M ----\nEXTENDS Naturals\nVARIABLE x\n${definitions}\n====`,
@@ -4897,11 +4905,11 @@ ASSUME TLCFP(a) = -887695703
         "|line 6, col 37 to line 6, col 59 of module M: 2",
         "||line 6, col 39 to line 6, col 57 of module M: 2",
         "|||line 6, col 40 to line 6, col 40 of module M: 2",
-        "||||line 4, col 1 to line 4, col 50 of module M: 2",
-        "|||||line 4, col 18 to line 4, col 50 of module M: 10",
-        "||||||line 4, col 21 to line 4, col 25 of module M: 10",
-        "||||||line 4, col 32 to line 4, col 32 of module M: 6",
-        "||||||line 4, col 39 to line 4, col 50 of module M: 4",
+        "||||line 4, col 1 to line 4, col 50 of module M: 2:6",
+        "|||||line 4, col 18 to line 4, col 50 of module M: 16",
+        "||||||line 4, col 21 to line 4, col 25 of module M: 16",
+        "||||||line 4, col 32 to line 4, col 32 of module M: 8",
+        "||||||line 4, col 39 to line 4, col 50 of module M: 8",
         "|||||line 4, col 9 to line 4, col 12 of module M: 2",
       ],
     ],
@@ -4917,16 +4925,16 @@ ASSUME TLCFP(a) = -887695703
         "||line 6, col 39 to line 6, col 85 of module M: 2",
         "|||line 6, col 40 to line 6, col 58 of module M: 2",
         "||||line 6, col 41 to line 6, col 41 of module M: 2",
-        "|||||line 4, col 1 to line 4, col 50 of module M: 2",
-        "||||||line 4, col 18 to line 4, col 50 of module M: 14",
-        "|||||||line 4, col 21 to line 4, col 25 of module M: 14",
-        "|||||||line 4, col 32 to line 4, col 32 of module M: 8",
-        "|||||||line 4, col 39 to line 4, col 50 of module M: 6",
+        "|||||line 4, col 1 to line 4, col 50 of module M: 2:6",
+        "||||||line 4, col 18 to line 4, col 50 of module M: 22",
+        "|||||||line 4, col 21 to line 4, col 25 of module M: 22",
+        "|||||||line 4, col 32 to line 4, col 32 of module M: 10",
+        "|||||||line 4, col 39 to line 4, col 50 of module M: 12",
         "||||||line 4, col 9 to line 4, col 12 of module M: 2",
       ],
     ],
   ])(
-    "counts the body of a recursive function at the keys %s replaces when TLC fingerprints a state holding the copy, as FcnLambdaValue#toFcnRcd evaluates every key",
+    "counts the body of a recursive function at the keys %s replaces when TLC fingerprints a state holding the copy, as FcnLambdaValue#toFcnRcd evaluates every key, though TLC's FcnLambdaValue#takeExcept drops the copy's cost model",
     async (_title, copy, expected) => {
       const lines = await getCoverageLines(
         `---- MODULE M ----\nEXTENDS Naturals\nVARIABLES x, y\ng[n \\in 0..2] == IF n = 0 THEN x ELSE g[n - 1] + 1\nInit == x = 0 /\\ y = <<>>\nNext == x < 2 /\\ x' = x + 1 /\\ y' = <<${copy}>>\n====`,
@@ -4935,6 +4943,28 @@ ASSUME TLCFP(a) = -887695703
       expect(lines?.[1]).toEqual(expected);
     },
   );
+
+  it("charges the domain of the copy EXCEPT makes of a recursive function when TLC fingerprints a state holding it, as FcnParams#elements charges each bound set", async () => {
+    const lines = await getCoverageLines(
+      "---- MODULE M ----\nEXTENDS Naturals\nVARIABLES x, y\ng[n \\in {0, 1, 2}] == IF n = 0 THEN x ELSE g[n - 1] + 1\nInit == x = 0 /\\ y = <<>>\nNext == x < 2 /\\ x' = x + 1 /\\ y' = <<[g EXCEPT ![1] = 7]>>\n====",
+      "INIT Init\nNEXT Next\nCHECK_DEADLOCK FALSE",
+    );
+    expect(lines?.[1]).toEqual([
+      "line 6, col 9 to line 6, col 13 of module M: 2",
+      "|line 6, col 9 to line 6, col 9 of module M: 3",
+      "line 6, col 18 to line 6, col 27 of module M: 2",
+      "line 6, col 32 to line 6, col 59 of module M: 2",
+      "|line 6, col 37 to line 6, col 59 of module M: 2",
+      "||line 6, col 39 to line 6, col 57 of module M: 2",
+      "|||line 6, col 40 to line 6, col 40 of module M: 2",
+      "||||line 4, col 1 to line 4, col 55 of module M: 2:6",
+      "|||||line 4, col 23 to line 4, col 55 of module M: 16",
+      "||||||line 4, col 26 to line 4, col 30 of module M: 16",
+      "||||||line 4, col 37 to line 4, col 37 of module M: 8",
+      "||||||line 4, col 44 to line 4, col 55 of module M: 8",
+      "|||||line 4, col 9 to line 4, col 17 of module M: 2:8",
+    ]);
+  });
 
   it.each([
     ["an EXCEPT copy of it", "[g EXCEPT ![1] = 7]", ["1", "0", "1", "2"]],

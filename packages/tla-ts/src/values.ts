@@ -3534,7 +3534,6 @@ export const updateFunction = (
   argument: Value,
   update: (previous: Value) => Value,
   isKeptLazy: boolean,
-  applyUnrecorded: ((argument: Value) => Value) | undefined,
 ): Value => {
   const isLazy =
     typeof functionValue === "object" &&
@@ -3549,20 +3548,22 @@ export const updateFunction = (
     }
     if (!isElementOf(argument, functionValue.domain)) return functionValue;
     const updated = update(functionValue.apply(argument));
-    const apply = applyUnrecorded ?? functionValue.apply;
+    // Deviation from TLC: FcnLambdaValue#takeExcept builds its copy with new FcnLambdaValue(this), which drops cm, so the EXCEPT copy counts nothing.
     const copy: LazyFunctionCopy = {
       kind: "LazyFunction",
       domain: functionValue.domain,
-      apply: (key) => (isEqualLikeTlc(argument, key) ? updated : apply(key)),
+      apply: (key) => (isEqualLikeTlc(argument, key) ? updated : functionValue.apply(key)),
       source: functionValue.source,
       boundTupleLengths: functionValue.boundTupleLengths,
       isApplicationObserved: functionValue.isApplicationObserved,
       original: functionValue,
       replacedKey: argument,
       replacement: updated,
-      applyBody: isLazyFunctionCopy(functionValue) ? functionValue.applyBody : apply,
+      applyBody: isLazyFunctionCopy(functionValue) ? functionValue.applyBody : functionValue.apply,
     };
-    return copy;
+    return isCountedLazyFunction(functionValue)
+      ? Object.assign(copy, { costModel: functionValue.costModel })
+      : copy;
   }
   if (!isFunctionValue(functionValue)) {
     throw new TlaEvaluationError(
@@ -3935,7 +3936,7 @@ export const formatNormalizedCopies = (values: Value[]) => {
           return isCopied ? { ...value, enumerated } : value;
         }
         normalizeInner(value.domain);
-        // Deviation from TLC: FcnLambdaValue#deepCopy drops cm, so PrintT's copy counts nothing.
+        // Deviation from TLC: FcnLambdaValue#deepCopy builds its copy with new FcnLambdaValue(this), which drops cm, so PrintT's copy counts nothing.
         return isCopied ? { ...value } : value;
       case "SetOperation":
         normalizeInner(value.left);

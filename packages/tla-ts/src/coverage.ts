@@ -144,9 +144,6 @@ const STANDARD_MODULES = new Set([
 const REGISTER_BITS = 10;
 const REGISTERS = 1 << REGISTER_BITS;
 
-// TLC's CostModel.DO_NOT_RECORD counts nothing under it, while a value with its own cost model still counts.
-export const DO_NOT_RECORD = -2;
-
 export const createCoverage = (variableCount: number): Coverage => ({
   current: -1,
   expressions: [],
