@@ -141,6 +141,7 @@ export const PlaygroundArrows = () => {
       }
       hoveredName={hoveredName}
       colors={playground.colors}
+      className="max-md:hidden"
     />
   );
 };
