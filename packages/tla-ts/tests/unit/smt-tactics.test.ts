@@ -1564,6 +1564,28 @@ describe("preprocessing with proofs, as Z3 5.3.2 runs it", () => {
       ]),
     ).toEqual(["sat", "(:rlimit 274)", "((a false)\n (b false)\n (r false))"]);
   });
+
+  it("skips them in the model checker's auxiliary context", () => {
+    expect(
+      run([
+        "(set-option :produce-proofs true)",
+        "(set-option :auto_config false)",
+        "(set-option :smt.mbqi true)",
+        "(declare-sort U 0)",
+        "(declare-fun f (U) U)",
+        "(declare-fun h (U) Int)",
+        "(declare-const a U)",
+        "(declare-const b U)",
+        "(declare-const c Bool)",
+        "(assert (forall ((x U)) (or (= (f x) a) (= (f x) b))))",
+        "(assert (forall ((x U)) (=> (= (f x) x) (> (h x) 3))))",
+        "(assert (or (not (or c (= a b))) (> (h a) 0)))",
+        "(assert (not (= a b)))",
+        "(check-sat)",
+        "(get-info :rlimit)",
+      ]),
+    ).toEqual(["sat", "(:rlimit 1712)"]);
+  });
 });
 
 describe("qfufbv, as Z3 5.3.2 answers QF_UFBV", () => {
