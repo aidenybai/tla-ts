@@ -387,6 +387,21 @@ describe("checks a module's exported functions as a model on ESCore", () => {
     });
   });
 
+  // A step runs the jobs of a program that names then but not Promise, as Solid's server build
+  // does, with the promises' operators that run them.
+  describe("settles a step of a program that names then but not Promise", () => {
+    const getSource = (limit: number) =>
+      `const box = { then: 1 };\nlet count = 0;\nexport const tick = () => {\n  if (count < 2) count += box.then;\n};\nexport const isSmall = () => count < ${limit};\n`;
+
+    it("agrees with Node", async () => {
+      expect(getCounts(await checkModel(getSource(3)))).toEqual(["deadlock", 3, 3]);
+    });
+
+    it("rejects another result", async () => {
+      expect(getCounts(await checkModel(getSource(2)))).toEqual(["invariant-violation", 3, 3]);
+    });
+  });
+
   // A step settles the jobs that its program queues, which a program that names then only in a
   // comment queues none of.
   describe("settles a step of a program that queues no jobs", () => {
