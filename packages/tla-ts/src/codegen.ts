@@ -75,6 +75,7 @@ interface Generator {
   references: unknown[];
   helpers: string[];
   counter: number;
+  hasEmptied: boolean;
 }
 
 const GENERATED_KINDS = new Set([
@@ -134,7 +135,6 @@ const createGeneratedHelpers = () => ({
     throw createUnassignedError(name, expression);
   },
   prime: toNextContext,
-  empty: toEmptyContext,
   keepLazyContext: toKeepLazyContext,
   extend: (context: Context, names: string[], values: Value[]): Context => ({
     environment: context.environment,
@@ -212,9 +212,13 @@ const generateHelper = (
     locals: new Map(frame.locals),
   };
   const parameters = outerLocals.map((local) => `, ${local}`).join("");
+  const hasOuterEmptied = generator.hasEmptied;
+  generator.hasEmptied = false;
+  const body = build(bodyFrame);
   generator.helpers.push(
-    `function ${name}(context, state, next${parameters}) { let primed; let emptied; let applied; ${build(bodyFrame)} }`,
+    `function ${name}(context, state, next${parameters}) { let primed;${generator.hasEmptied ? " let emptied;" : ""} let applied; ${body} }`,
   );
+  generator.hasEmptied = hasOuterEmptied;
   return `${name}(${frame.context}, ${frame.state}, ${frame.isPrimed ? "undefined" : frame.next}${parameters})`;
 };
 
@@ -488,8 +492,9 @@ const generateExpression = (generator: Generator, expression: Expression, frame:
         expression: expression.expression,
         location: expression.location,
       });
+      generator.hasEmptied = true;
       const empty = generate(expression.expression, {
-        context: `(emptied ??= empty(${frame.context}))`,
+        context: `(emptied ??= ${addReference(generator, toEmptyContext)}(${frame.context}))`,
         state: frame.state,
         next: "undefined",
         isPrimed: false,
@@ -566,7 +571,13 @@ export const generateEvaluator = (
   }
   isCodeGenerationAllowed ??= getIsCodeGenerationAllowed();
   if (!isCodeGenerationAllowed) return undefined;
-  const generator: Generator = { environment, references: [], helpers: [], counter: 0 };
+  const generator: Generator = {
+    environment,
+    references: [],
+    helpers: [],
+    counter: 0,
+    hasEmptied: false,
+  };
   const frame: Frame = {
     context: "context",
     state: "state",
@@ -576,7 +587,7 @@ export const generateEvaluator = (
   };
   const body = generateExpression(generator, expression, frame);
   const referenceNames = generator.references.map((_reference, index) => `reference${index}`);
-  const source = `${generator.helpers.join("\n")}\nreturn (context) => { const state = context.state; const next = context.next; let primed; let emptied; let applied; return ${body}; };`;
+  const source = `${generator.helpers.join("\n")}\nreturn (context) => { const state = context.state; const next = context.next; let primed;${generator.hasEmptied ? " let emptied;" : ""} let applied; return ${body}; };`;
   generatedHelpers ??= createGeneratedHelpers();
   const factory = new Function(...Object.keys(generatedHelpers), ...referenceNames, source);
   return factory(...Object.values(generatedHelpers), ...generator.references);
