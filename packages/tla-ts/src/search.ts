@@ -549,6 +549,7 @@ const getSpecification = (
               cache: undefined,
               isStreamed: false,
               isRebuilt: false,
+              isUncached: false,
             },
             parent,
           },

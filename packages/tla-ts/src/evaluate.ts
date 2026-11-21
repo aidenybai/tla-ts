@@ -169,8 +169,8 @@ export interface Thunk {
   cache: Value | undefined;
   isStreamed: boolean;
   isRebuilt: boolean;
+  isUncached: boolean;
   isReleased?: boolean;
-  isUncached?: boolean;
 }
 
 type Binding =
@@ -1176,7 +1176,9 @@ const evaluateOperatorArgument = (expression: Expression, context: Context): Ope
   const scope = context.scope;
   if (operator.kind !== "Closure" || scope === undefined) return operator;
   const called = getCalledBody(expression, operator.body, context.environment);
-  return called === undefined ? operator : { ...operator, body: called, scope };
+  return called === undefined
+    ? operator
+    : { kind: "Closure", name: operator.name, params: operator.params, body: called, scope };
 };
 
 const callOperatorWithValues = (operator: Operator, args: Value[], context: Context): Value => {
@@ -1234,6 +1236,7 @@ const createThunk = (expression: Expression, context: Context): Thunk => ({
   cache: undefined,
   isStreamed: false,
   isRebuilt: false,
+  isUncached: false,
 });
 
 export const findGlobalName = (name: string, environment: Environment): GlobalName | undefined => {
@@ -1349,7 +1352,11 @@ export const bindUncachedArguments = (closure: Closure, args: Expression[], cont
     closure,
     args,
     context,
-    args.map((arg) => (inner) => ({ ...createThunk(arg, inner), isUncached: true })),
+    args.map((arg) => (inner) => {
+      const thunk = createThunk(arg, inner);
+      thunk.isUncached = true;
+      return thunk;
+    }),
   );
 
 const callOperator = (
@@ -1458,6 +1465,7 @@ export const bindDefinitions = (
           isRebuilt:
             (definition.kind === "Operator" || !definition.isSelfReferential) &&
             reevaluated?.isFunctionRebuilt === true,
+          isUncached: false,
         };
   }
   const coverage = context.environment.coverage;
@@ -1564,7 +1572,13 @@ const compileUnchanged = (evaluator: Evaluator, coverage: Coverage | undefined):
   coverage
     ? (context) =>
         valuesEqual(
-          evaluateWithNextState(coverage, "empty", evaluator, { ...context, next: undefined }),
+          evaluateWithNextState(coverage, "empty", evaluator, {
+            environment: context.environment,
+            scope: context.scope,
+            state: context.state,
+            next: undefined,
+            isKeepLazy: context.isKeepLazy,
+          }),
           evaluateWithNextState(coverage, "primed", evaluator, toNextContext(context)),
         )
     : (context) => valuesEqual(evaluator(context), evaluator(toNextContext(context)));
