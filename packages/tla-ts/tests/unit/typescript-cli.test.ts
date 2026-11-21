@@ -46,6 +46,39 @@ const runNode = (directory: string, file: string) =>
   spawnSync(process.execPath, [file], { cwd: directory, encoding: "utf8" });
 
 describe("the CLI with TypeScript files", () => {
+  // ESCore parses each character of a JSON string and each element of a JSON array in a loop of its
+  // own, which overflowed the check's stack where its CASE nested a call for each one.
+  const getLongInputs = (offset: number) => ({
+    "string.ts": `const text = JSON.parse(JSON.stringify("a".repeat(20000)));\nif (text.length !== ${20000 + offset}) throw new Error("length");\n`,
+    "array.ts": `const items = JSON.parse("[" + "0,".repeat(7999) + "0]");\nif (items.length !== ${8000 + offset}) throw new Error("length");\n`,
+  });
+
+  it.each(["string.ts", "array.ts"] as const)(
+    "checks %s, which loops over a long input, as Node runs it",
+    (file) => {
+      const directory = copyFixtures("passing");
+      writeFileSync(join(directory, file), getLongInputs(0)[file]);
+      expect(runNode(directory, file).status).toBe(0);
+      const result = runCli(directory, [file]);
+      expect(result.status).toBe(0);
+      expect(result.stdout).toContain("Model checking completed. No error has been found.");
+    },
+  );
+
+  it.each(["string.ts", "array.ts"] as const)(
+    "stops where %s, which loops over a long input, throws as Node does",
+    (file) => {
+      const directory = copyFixtures("passing");
+      writeFileSync(join(directory, file), getLongInputs(1)[file]);
+      expect(runNode(directory, file).status).toBe(1);
+      const result = runCli(directory, [file]);
+      expect(result.status).toBe(75);
+      expect(result.stdout).toContain(
+        "tla-ts can't print what Node prints for this uncaught exception",
+      );
+    },
+  );
+
   it("checks a TypeScript file without writing the TLA+ spec and config it compiles to", () => {
     const directory = copyFixtures("passing");
     const files = readdirSync(directory);

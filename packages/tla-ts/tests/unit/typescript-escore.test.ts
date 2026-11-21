@@ -3672,9 +3672,8 @@ if (view !== "${expected}") throw new Error(view);
     });
   });
 
-  // TLC swallows what a definition throws as it starts, a stack overflow included, which would
-  // leave ESCore's realm without its value.
-  it("stops with a named error where the realm's evaluation runs out of stack", async () => {
+  // The realm's recursions over its intrinsics run as loops, so it starts within a small stack.
+  it("starts ESCore's realm within a 1 MB stack", async () => {
     const shallow = new Worker(
       `const { register } = require("node:module");
       const { parentPort, workerData } = require("node:worker_threads");
@@ -3702,10 +3701,6 @@ if (view !== "${expected}") throw new Error(view);
       shallow.once("message", resolve),
     );
     await shallow.terminate();
-    expect(thrown).toEqual({
-      name: "TlaError",
-      message:
-        "tla-ts can't start ESCore's realm, whose evaluation ran out of stack: run Node with a deeper stack, as with --stack-size=4000",
-    });
+    expect(thrown).toEqual({ name: undefined, message: undefined });
   }, 300_000);
 });
