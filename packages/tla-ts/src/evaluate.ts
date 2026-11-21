@@ -269,6 +269,8 @@ export interface Context {
   state: State | undefined;
   next: State | undefined;
   isKeepLazy?: boolean;
+  // Evaluating under a prime, where TLC's s1 is TLCState.Null.
+  isPrimed: boolean;
 }
 
 export type Evaluator = (context: Context) => Value;
@@ -468,6 +470,7 @@ export const toKeepLazyContext = (context: Context): Context =>
         state: context.state,
         next: context.next,
         isKeepLazy: true,
+        isPrimed: context.isPrimed,
       };
 
 const withScope = (context: Context, scope: Scope | undefined): Context => ({
@@ -476,6 +479,7 @@ const withScope = (context: Context, scope: Scope | undefined): Context => ({
   state: context.state,
   next: context.next,
   isKeepLazy: context.isKeepLazy,
+  isPrimed: context.isPrimed,
 });
 
 export const expectBoolean = (value: Value, description: string) => {
@@ -1084,7 +1088,13 @@ const evaluateAtStartup = (
   environment: Environment,
 ) => {
   // SpecProcessor#evalConstantDefn evaluates in TLCState.Empty, before any checker exists.
-  const context = { environment, scope: undefined, state: EMPTY_STATE, next: undefined };
+  const context = {
+    environment,
+    scope: undefined,
+    state: EMPTY_STATE,
+    next: undefined,
+    isPrimed: false,
+  };
   const value = environment.runtime.evaluateAtStartup(() =>
     toStartupValue(definition, compileDefinitionBody(definition, environment)(context)),
   );
@@ -1569,7 +1579,12 @@ export const bindDefinitions = (
 const evaluateLocalIdentifier = (name: string, expression: Expression, context: Context): Value => {
   const binding = lookupScope(context.scope, name);
   if (binding?.kind === "Value") return binding.value;
-  if (binding?.kind === "Thunk") return forceThunk(binding, context);
+  if (binding?.kind === "Thunk") {
+    // Tool#evalAppl reads a LazyValue afresh, and stores nothing, where s1 is TLCState.Null, as under a prime.
+    return context.isPrimed && !binding.isReleased
+      ? evaluate(binding.expression, withScope(context, binding.scope))
+      : forceThunk(binding, context);
+  }
   if (binding?.kind === "Operator") {
     if (getArity(binding.operator) === 0) {
       return callOperatorWithValues(binding.operator, [], context);
@@ -1640,6 +1655,7 @@ export const toNextContext = (context: Context): Context => ({
   state: context.next,
   next: undefined,
   isKeepLazy: context.isKeepLazy,
+  isPrimed: true,
 });
 
 const evaluateWithNextState = (
@@ -1672,6 +1688,7 @@ const compileUnchanged = (
           state: context.state,
           next: undefined,
           isKeepLazy: context.isKeepLazy,
+          isPrimed: false,
         }),
         evaluateWithNextState(coverage, "primed", evaluator, toNextContext(context)),
       );
@@ -2122,6 +2139,7 @@ const compileClosureCall = (
       state: context.state,
       next: context.next,
       isKeepLazy: context.isKeepLazy,
+      isPrimed: context.isPrimed,
     });
   };
   if (called === undefined) return call;
@@ -2136,6 +2154,7 @@ const compileClosureCall = (
       state: context.state,
       next: context.next,
       isKeepLazy: context.isKeepLazy,
+      isPrimed: context.isPrimed,
     });
   };
 };

@@ -130,7 +130,13 @@ export const getSymmetryGroup = (
     throw createSymmetryError(`The symmetry function ${name} must specify a set of permutations.`);
   }
   const evaluateConstant = (expression: Expression) =>
-    evaluate(expression, { environment, scope: undefined, state: undefined, next: undefined });
+    evaluate(expression, {
+      environment,
+      scope: undefined,
+      state: undefined,
+      next: undefined,
+      isPrimed: false,
+    });
   const value = (() => {
     try {
       return withUnexpectedException(() => evaluateConstant(definition.body));

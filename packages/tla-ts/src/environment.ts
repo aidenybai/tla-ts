@@ -672,6 +672,7 @@ export const createEnvironment = (
         state: context.state,
         next: context.next,
         isKeepLazy: context.isKeepLazy,
+        isPrimed: context.isPrimed,
       });
     };
     getJavaOverrides(name, options.print, runtime, options.files, evaluateReplaced)?.forEach(

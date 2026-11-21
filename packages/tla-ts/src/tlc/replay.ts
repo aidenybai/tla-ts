@@ -137,8 +137,14 @@ const evaluateOperatorAt = (
 
 const getContext = (replay: Replay, scope: Scope | undefined, partial: State): Context =>
   replay.isInit
-    ? { environment: replay.environment, scope, state: partial, next: undefined }
-    : { environment: replay.environment, scope, state: replay.current, next: partial };
+    ? { environment: replay.environment, scope, state: partial, next: undefined, isPrimed: false }
+    : {
+        environment: replay.environment,
+        scope,
+        state: replay.current,
+        next: partial,
+        isPrimed: false,
+      };
 
 const isComplete = (partial: State): partial is Value[] => !partial.includes(undefined);
 
@@ -185,6 +191,7 @@ const bindLetDefinitions = (
     scope,
     state: undefined,
     next: undefined,
+    isPrimed: false,
   });
 
 const getVariable = (
@@ -398,6 +405,7 @@ const evaluateInPartial = (
       scope,
       state: partial,
       next: undefined,
+      isPrimed: true,
     });
   } catch (error) {
     if (replay.isEnabled && error instanceof TlaUnassignedError) return error;
@@ -411,6 +419,7 @@ const isChanged = (replay: Replay, item: ActionItem, partial: State) => {
     scope: item.scope,
     state: replay.current,
     next: partial,
+    isPrimed: false,
   });
   const after = evaluateInPartial(replay, item.node, item.expression, item.scope, partial);
   if (after instanceof TlaUnassignedError) {
@@ -1071,6 +1080,7 @@ const visitUnchanged = (
             scope,
             state: replay.current,
             next: partial,
+            isPrimed: false,
           })
         : replay.current?.[index];
       if (value === undefined) return false;
@@ -1113,6 +1123,7 @@ const visitUnchanged = (
       scope,
       state: replay.current,
       next: partial,
+      isPrimed: false,
     });
     const callStack = replay.callStack;
     const depth = callStack?.expressions.length ?? 0;
@@ -1249,6 +1260,7 @@ export const getPrimedRanges = (actions: ReplayAction[], environment: Environmen
     scope,
     state: undefined,
     next: undefined,
+    isPrimed: false,
   });
   const frames: Expression[] = [];
   const collectUnchanged = (expression: Expression, scope: Scope | undefined): void => {

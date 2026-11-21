@@ -121,8 +121,8 @@ const nextRunners = new WeakMap<Expression, Runner>();
 
 const getContext = (run: Run, scope: Scope | undefined, partial: State) =>
   run.isInit
-    ? { environment: run.environment, scope, state: partial, next: undefined }
-    : { environment: run.environment, scope, state: run.current, next: partial };
+    ? { environment: run.environment, scope, state: partial, next: undefined, isPrimed: false }
+    : { environment: run.environment, scope, state: run.current, next: partial, isPrimed: false };
 
 const assign = (partial: State, index: number, value: Value) => {
   const copy = partial.slice();

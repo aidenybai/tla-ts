@@ -2227,6 +2227,76 @@ ASSUME TLCFP(a) = -887695703
     },
   );
 
+  const PRIMED_READS = [
+    "---- MODULE Q ----",
+    "EXTENDS TLC, Naturals",
+    "CONSTANT d",
+    "VARIABLE w",
+    "Op2 == d = d /\\ w = w",
+    "Op1 == Op2 /\\ Op2",
+    "A2 == d = d /\\ w' = (w + 1) % 2",
+    "A1 == A2 /\\ A2",
+    "====",
+    "",
+  ].join("\n");
+  const ACTION_CHECK = "INIT Init\nNEXT Step\nACTION_CONSTRAINT Check\n";
+  const LIVE_CHECK = "SPECIFICATION Spec\nPROPERTY Live\n";
+  const getPrints = (text: string, count: number) => Array.from({ length: count }, () => text);
+
+  it.each([
+    ["Check == (J!Op1)'", ACTION_CHECK, getPrints('"d"', 8)],
+    ["Check == J!Op1 /\\ (J!Op1)'", ACTION_CHECK, getPrints('"d"', 10)],
+    ["Check == (J!Op1)' /\\ J!Op1", ACTION_CHECK, getPrints('"d"', 10)],
+    ["Check == UNCHANGED J!Op1 \\/ TRUE", ACTION_CHECK, getPrints('"d"', 10)],
+    ["Ap(a) == a' /\\ a'\nCheck == Ap(J!Op2)", ACTION_CHECK, getPrints('"d"', 8)],
+    ["Ap(a) == a /\\ a' /\\ a\nCheck == Ap(J!Op2)", ACTION_CHECK, getPrints('"d"', 6)],
+    ["Check == LET t == PrintT(\"t\") IN t' /\\ t'", ACTION_CHECK, getPrints('"t"', 4)],
+    ['Check == LET t == PrintT("t") IN t /\\ t\' /\\ t', ACTION_CHECK, getPrints('"t"', 4)],
+    [
+      'Check == LET t == PrintT("t") /\\ y \\in 0..1 IN (UNCHANGED t \\/ TRUE) /\\ (UNCHANGED t \\/ TRUE)',
+      ACTION_CHECK,
+      getPrints('"t"', 6),
+    ],
+    [
+      "Check == LET t == PrintT(\"t\") /\\ y \\in 0..1 IN t /\\ ENABLED (y' = y /\\ t') /\\ t",
+      "INIT Init\nNEXT Step\nINVARIANT Check\n",
+      getPrints('"t"', 4),
+    ],
+    ["Next == J!A1 /\\ J!Op1'", "INIT Init\nNEXT Next\n", getPrints('"d"', 16)],
+    ["Next == Step /\\ UNCHANGED (J!Op2 \\/ TRUE)", "INIT Init\nNEXT Next\n", getPrints('"d"', 6)],
+    ["Live == [][(J!Op2)']_y", LIVE_CHECK, getPrints('"d"', 4)],
+    ["Live == []<><<Step>>_<<y, J!Op2>>", LIVE_CHECK, getPrints('"d"', 12)],
+    ["Live == []<><<Step>>_<<J!Op2, y>>", LIVE_CHECK, getPrints('"d"', 12)],
+    [
+      "Check == LET r == RandomElement(1..1000) IN PrintT(<<r', r'>>)",
+      ACTION_CHECK,
+      ["<<773, 379>>", "<<484, 436>>"],
+    ],
+    [
+      "Check == LET r == RandomElement(1..1000) IN PrintT(<<r, r', r>>)",
+      ACTION_CHECK,
+      ["<<773, 379, 773>>", "<<484, 436, 484>>"],
+    ],
+    [
+      "Ap(a) == PrintT(<<a, a', a>>)\nCheck == Ap(RandomElement(1..1000))",
+      ACTION_CHECK,
+      ["<<773, 379, 773>>", "<<484, 436, 484>>"],
+    ],
+  ])(
+    "evaluates a lazy value read under a prime in %j afresh and keeps what it read before, as TLC's Tool#evalAppl does",
+    async (definitions, config, expected) => {
+      const printed: string[] = [];
+      await check({
+        source: `---- MODULE M ----\nEXTENDS TLC, Naturals\nVARIABLE y\nJ == INSTANCE Q WITH d <- PrintT("d"), w <- y\nInit == y = 0\nStep == y' = (y + 1) % 2\nSpec == Init /\\ [][Step]_y /\\ WF_y(Step)\n${definitions}\n====\n`,
+        config,
+        seed: 4n,
+        loadModule: (name) => (name === "Q" ? PRIMED_READS : undefined),
+        onPrint: (text) => printed.push(text),
+      });
+      expect(printed).toEqual(expected);
+    },
+  );
+
   it("records the nested instance a call from one instanced definition to another enters, as TLC does", async () => {
     const result = await check(getInnerCallCheck(EXPLICIT, "I!YErr", NESTED_CALLS));
     const ranges = result.failure?.callStack?.flatMap((expression, index, expressions) => {

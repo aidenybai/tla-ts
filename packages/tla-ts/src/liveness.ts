@@ -169,6 +169,7 @@ const getConstantContext = (environment: Environment, scope: Scope | undefined):
   scope,
   state: undefined,
   next: undefined,
+  isPrimed: false,
 });
 
 const createCannotHandleError = (expression: Expression, inner?: string) =>
@@ -978,7 +979,7 @@ export interface LiveAtoms<State> {
 
 export const getInterpretedAtoms = (environment: Environment): LiveAtoms<Value[]> => ({
   holdsState: (atom, state) => {
-    const context = { environment, scope: atom.scope, state, next: undefined };
+    const context = { environment, scope: atom.scope, state, next: undefined, isPrimed: false };
     const value =
       atom.kind === "State" ? evaluate(atom.expression, context) : isEnabled(atom.step, context);
     if (typeof value !== "boolean") {
@@ -992,12 +993,13 @@ export const getInterpretedAtoms = (environment: Environment): LiveAtoms<Value[]
     if (
       subscript &&
       isEqualLikeTlc(
-        evaluate(subscript, { environment, scope, state, next: undefined }),
-        evaluate(subscript, { environment, scope, state: next, next: undefined }),
+        evaluate(subscript, { environment, scope, state, next: undefined, isPrimed: false }),
+        // LNAction#eval reads the subscript in the second state with TLCState.Null.
+        evaluate(subscript, { environment, scope, state: next, next: undefined, isPrimed: true }),
       )
     )
       return false;
-    const value = evaluate(atom.expression, { environment, scope, state, next });
+    const value = evaluate(atom.expression, { environment, scope, state, next, isPrimed: false });
     if (typeof value !== "boolean") {
       throw new TlaEvaluationError("Encountered an action predicate that's not a boolean.");
     }
