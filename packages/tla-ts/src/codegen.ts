@@ -39,7 +39,6 @@ import {
   getSortedFields,
   getUnchangedVariables,
   hasDuplicateFields,
-  isUnchangedState,
   type Context,
   type Environment,
   type Evaluator,
@@ -117,7 +116,6 @@ const createGeneratedHelpers = () => ({
   record: createSortedRecord,
   writtenRecord: createWrittenRecord,
   equal: isEqualLikeTlc,
-  unchangedState: isUnchangedState,
   enumerate: getQuantifierElements,
   choiceElements: getChoiceElements,
   noChoice: (expression: Expression & { kind: "Choose" }): never => {
@@ -498,13 +496,27 @@ const generateExpression = (generator: Generator, expression: Expression, frame:
         locals: frame.locals,
       });
       const evaluated = `equal(${empty}, ${primed})`;
-      const variables = getUnchangedVariables(expression.expression, generator.environment);
-      if (!variables) return evaluated;
-      const indexes = addReference(
-        generator,
-        variables.map((variable) => variable.index),
-      );
-      return `(unchangedState(${indexes}, ${frame.state}, ${frame.next}) ?? ${evaluated})`;
+      const subscript = expression.expression;
+      const variables = getUnchangedVariables(subscript, generator.environment);
+      if (
+        !variables ||
+        (subscript.kind === "Identifier" && generator.environment.variableIndex.has(subscript.name))
+      ) {
+        return evaluated;
+      }
+      const isAssigned = variables
+        .map(
+          (variable) =>
+            `${frame.state}?.[${variable.index}] !== undefined && ${frame.next}?.[${variable.index}] !== undefined`,
+        )
+        .join(" && ");
+      const isUnchanged = variables
+        .map(
+          (variable) =>
+            `equal(${frame.state}[${variable.index}], ${frame.next}[${variable.index}])`,
+        )
+        .join(" && ");
+      return `(${isAssigned} ? ${isUnchanged} : ${evaluated})`;
     }
     case "Forall":
     case "Exists":
