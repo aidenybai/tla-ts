@@ -1305,6 +1305,54 @@ describe("runSmtlibScript prints what Z3 prints", () => {
         ),
       ).toEqual(["  ;; universe for B:", "  ;; universe for Key:"]);
     });
+
+    it("as bit_blaster_model_converter copies them again, in the copy's hash order", () => {
+      expect(
+        getUniverseHeaders(
+          run([
+            ...TWO_SORTS,
+            "(declare-const bv (_ BitVec 2))",
+            "(assert (not (= x y)))",
+            "(assert (not (= u v)))",
+            "(assert (bvult bv #b10))",
+            "(check-sat-using (then bit-blast smt))",
+            "(get-model)",
+          ]),
+        ),
+      ).toEqual(["  ;; universe for Key:", "  ;; universe for B:"]);
+    });
+
+    it("as ackr_model_converter copies them again, in the copy's hash order", () => {
+      expect(
+        getUniverseHeaders(
+          run([
+            ...TWO_SORTS,
+            "(assert (not (= x y)))",
+            "(assert (not (= u v)))",
+            "(check-sat-using (then ackermannize_bv smt))",
+            "(get-model)",
+          ]),
+        ),
+      ).toEqual(["  ;; universe for Key:", "  ;; universe for B:"]);
+    });
+
+    it("as eq2bv's model converter copies them again, in the copy's hash order", () => {
+      expect(
+        getUniverseHeaders(
+          run([
+            ...TWO_SORTS,
+            "(declare-const i Int)",
+            "(assert (not (= x y)))",
+            "(assert (not (= u v)))",
+            "(assert (and (<= 0 i) (<= i 2)))",
+            "(assert (not (= i 1)))",
+            "(assert (not (= i 0)))",
+            "(check-sat-using (then eq2bv smt))",
+            "(get-model)",
+          ]),
+        ),
+      ).toEqual(["  ;; universe for Key:", "  ;; universe for B:"]);
+    });
   });
 
   it("orders sat.euf model dependencies by expression id", () => {
