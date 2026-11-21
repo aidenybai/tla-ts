@@ -616,11 +616,15 @@ describe("the quantifier solver of sat.euf, as Z3 5.3.2 reads smt.ematching and 
       assertion,
       "(check-sat-using sat)",
       "(get-info :reason-unknown)",
+      "(get-info :rlimit)",
     ]);
   const GIVE_UP = ["unknown", '(:reason-unknown "incomplete theory quant")'];
 
   it("gives up without mbqi once e-matching has nothing left", () => {
-    expect(getOutput(["(set-option :smt.mbqi false)"], "(assert (< a 0))")).toEqual(GIVE_UP);
+    expect(getOutput(["(set-option :smt.mbqi false)"], "(assert (< a 0))")).toEqual([
+      ...GIVE_UP,
+      "(:rlimit 99)",
+    ]);
   });
 
   it("gives up without e-matching or mbqi", () => {
@@ -629,7 +633,15 @@ describe("the quantifier solver of sat.euf, as Z3 5.3.2 reads smt.ematching and 
         ["(set-option :smt.mbqi false)", "(set-option :smt.ematching false)"],
         "(assert (< (f a) (g a)))",
       ),
-    ).toEqual(GIVE_UP);
+    ).toEqual([...GIVE_UP, "(:rlimit 98)"]);
+  });
+
+  it("counts a step for each term that e_internalize visits", () => {
+    expect(getOutput([], "(assert (< (f a) (g a)))")).toEqual([
+      "unsat",
+      '(:reason-unknown "")',
+      "(:rlimit 87)",
+    ]);
   });
 });
 

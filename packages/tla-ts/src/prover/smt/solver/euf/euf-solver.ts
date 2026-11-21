@@ -1,4 +1,4 @@
-import { SmtInvariantError, SmtUnsupportedError } from "../../../../errors";
+import { SmtCanceledError, SmtInvariantError, SmtUnsupportedError } from "../../../../errors";
 import {
   type AstManager,
   FAMILY_BASIC,
@@ -238,6 +238,7 @@ export class EufSolver implements SatExtension {
     const base = stack.length;
     this.visit(expr);
     loop: while (stack.length > base) {
+      if (!manager.limit.inc()) throw new SmtCanceledError();
       const frame = stack[stack.length - 1];
       const current = frame.expr;
       if (this.egraph.find(current) !== undefined) {
