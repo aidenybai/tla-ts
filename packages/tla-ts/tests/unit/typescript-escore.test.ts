@@ -95,6 +95,35 @@ const checkModule = (source: string) =>
 const THREW = "the script threw an exception";
 
 describe("compiles scripts by specializing ESCore", () => {
+  // Each set puts a key into a WeakMap's table with @@, which finds an object's key without
+  // comparing it with each key the table holds.
+  describe("sets and gets the keys of a WeakMap that grows a key at a time", () => {
+    const getSource = (expected: string) => `
+      const map = new WeakMap<object, object>();
+      const head = {};
+      let key: object | undefined = head;
+      for (let index = 0; index < 300; index++) {
+        const next = {};
+        map.set(key as object, next);
+        key = next;
+      }
+      map.set(head, map.get(head) as object);
+      let count = 0;
+      for (key = head; key !== undefined; key = map.get(key)) count++;
+      if (String(count) !== "${expected}") throw new Error(String(count));
+    `;
+
+    it("agrees with Node", async () => {
+      expect(() => runInNewContext(stripTypeScriptTypes(getSource("301")))).not.toThrow();
+      expect((await checkScript(getSource("301"))).message).toBeUndefined();
+    });
+
+    it("rejects another result", async () => {
+      expect(() => runInNewContext(stripTypeScriptTypes(getSource("300")))).toThrow("301");
+      expect((await checkScript(getSource("300"))).message).toContain(THREW);
+    });
+  });
+
   describe("runs closures that keep their environments", () => {
     const getSource = (expected: string) => `
       const makeCounter = () => {
@@ -3672,9 +3701,8 @@ if (view !== "${expected}") throw new Error(view);
     });
   });
 
-  // TLC swallows what a definition throws as it starts, a stack overflow included, which would
-  // leave ESCore's realm without its value.
-  it("stops with a named error where the realm's evaluation runs out of stack", async () => {
+  // The realm's recursions over its intrinsics run as loops, so it starts within a small stack.
+  it("starts ESCore's realm within a 1 MB stack", async () => {
     const shallow = new Worker(
       `const { register } = require("node:module");
       const { parentPort, workerData } = require("node:worker_threads");
@@ -3702,10 +3730,6 @@ if (view !== "${expected}") throw new Error(view);
       shallow.once("message", resolve),
     );
     await shallow.terminate();
-    expect(thrown).toEqual({
-      name: "TlaError",
-      message:
-        "tla-ts can't start ESCore's realm, whose evaluation ran out of stack: run Node with a deeper stack, as with --stack-size=4000",
-    });
+    expect(thrown).toEqual({ name: undefined, message: undefined });
   }, 300_000);
 });

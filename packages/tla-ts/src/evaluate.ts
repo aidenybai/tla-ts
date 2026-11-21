@@ -64,7 +64,6 @@ import {
 import {
   contextualApplications,
   frameSubstitutions,
-  isSubstitutionDefinition,
   substitutedExpressions,
   substitutionFrames,
   type BoundSubstitutions,
@@ -191,6 +190,7 @@ export interface Thunk {
   cache: Value | undefined;
   isStreamed: boolean;
   isRebuilt: boolean;
+  isUncached: boolean;
   isReleased?: boolean;
   // Whether a step or a replay of one bound the thunk, so it may run the thunk's expression again in
   // its scope rather than read the cached value.
@@ -244,6 +244,8 @@ export interface Environment {
   getPreparedLevels: (name: string) => OperatorLevels | undefined;
   instances: InstanceLevels;
   recursiveSections: WeakMap<Definition, SectionMember[]>;
+  // The modules of ESCore's runtime, whose recursions are tla-ts's own rather than a spec's.
+  runtimeModules: ReadonlySet<string>;
   callStack?: CallStack;
   coverage?: Coverage;
 }
@@ -1170,7 +1172,7 @@ const forceThunk = (thunk: Thunk, context: Context) => {
           )
         : evaluate(thunk.expression, withScope(context, thunk.scope));
   if (isUncached) return value;
-  if (!thunk.isStreamed || isSettledValue(value)) {
+  if (!thunk.isUncached && (!thunk.isStreamed || isSettledValue(value))) {
     thunk.cache = value;
     thunk.state = context.state;
     thunk.next = context.next;
@@ -1251,7 +1253,19 @@ const evaluateOperatorArgument = (expression: Expression, context: Context): Ope
       `Expected an operator argument at ${describeLocation(expression)}`,
     );
   }
-  return operator;
+  const scope = context.scope;
+  if (operator.kind !== "Closure" || scope === undefined) return operator;
+  const called = getCalledBody(expression, operator.body, context.environment);
+  return called === undefined
+    ? operator
+    : {
+        kind: "Closure",
+        name: operator.name,
+        params: operator.params,
+        body: called,
+        scope,
+        site: undefined,
+      };
 };
 
 const callOperatorWithValues = (operator: Operator, args: Value[], context: Context): Value => {
@@ -1331,6 +1345,7 @@ const createThunk = (
   isStreamed: false,
   isRebuilt: false,
   isNamed: context.isNaming === true,
+  isUncached: false,
 });
 
 export const findGlobalName = (name: string, environment: Environment): GlobalName | undefined => {
@@ -1370,6 +1385,17 @@ const getBoundDefinitions = (expression: Expression & { kind: "Let" }, environme
         (definition) => !isStoredSubstitute(definition.body, environment),
       )
     : expression.definitions;
+
+export const getCalledBody = (
+  expression: Expression,
+  body: Expression,
+  environment: Environment,
+) =>
+  body.kind === "Let" &&
+  environment.boundSubstitutions.calls.has(expression) &&
+  environment.boundSubstitutions.lets.has(body)
+    ? body.body
+    : undefined;
 
 const compileArgumentBinder = (argument: Expression, environment: Environment): ArgumentBinder => {
   const isLiteral =
@@ -1430,6 +1456,43 @@ export const bindOperatorArguments = (
   return scope;
 };
 
+const createCaseConditionError = (condition: Expression, value: Value) =>
+  new TlaEvaluationError(
+    `A non-boolean expression (${getKindString(value)}) was used as a condition of a CASE. ${describeNode(condition)}`,
+  );
+
+const createCaseExhaustedError = (expression: Expression) =>
+  new TlaEvaluationError(
+    `Attempted to evaluate a CASE with no conditions true.\n${describeRange(expression)}`,
+  );
+
+// A call of one of ESCore's runtime operators binds each argument that isn't a name or a literal to
+// its value, so that a loop's accumulator doesn't nest a thunk in the last turn's at each turn.
+const bindArgumentValues = (
+  callee: Closure,
+  step: TailStep & { kind: "Call" },
+  context: Context,
+): Scope | undefined => {
+  const args = step.expression.args;
+  if (args.length !== callee.params.length) throw createArityError(callee, args.length);
+  let scope = callee.scope;
+  for (let index = 0; index < args.length; index++) {
+    const param = callee.params[index];
+    const arg = args[index];
+    const binding: Binding =
+      param.arity > 0
+        ? { kind: "Operator", operator: evaluateOperatorArgument(arg, context) }
+        : arg.kind === "Identifier" || arg.kind === "String" || arg.kind === "Number"
+          ? step.binders[index](context)
+          : {
+              kind: "Value",
+              value: (step.values[index] ??= getEntryEvaluator(arg, context.environment))(context),
+            };
+    scope = { name: param.name, binding, parent: scope };
+  }
+  return scope;
+};
+
 // TLC calls an operator in its own body as a nested Java call. A call in the tail of the body runs
 // here as the next turn of a loop instead, so that a deep recursion, such as a loop that tla-ts
 // compiles from TypeScript, needn't fit on the stack. A recursion past this many turns overflows,
@@ -1447,6 +1510,12 @@ export type TailStep =
       alternative: TailStep;
     }
   | {
+      kind: "Case";
+      expression: Expression & { kind: "Case" };
+      arms: { source: Expression; condition: Evaluator; body: TailStep }[];
+      other: TailStep | undefined;
+    }
+  | {
       kind: "Let";
       definitions: Definition[];
       sites: (CodeSite | undefined)[] | undefined;
@@ -1456,6 +1525,9 @@ export type TailStep =
       kind: "Call";
       expression: Expression & { kind: "Apply" };
       binders: ArgumentBinder[];
+      // The evaluator of each argument that a call of one of ESCore's runtime operators binds to its
+      // value, compiled at the first such call.
+      values: (Evaluator | undefined)[];
       evaluator: Evaluator;
       // The LET operator whose body the call enters, or none for a call of the body's own operator.
       entered: { body: Expression; step: TailStep } | undefined;
@@ -1489,6 +1561,15 @@ const collectTailOperators = (
     collectTailOperators(expression.alternative, name, operators, collected, visited);
     return;
   }
+  if (expression.kind === "Case") {
+    expression.arms.forEach((arm) =>
+      collectTailOperators(arm.body, name, operators, collected, visited),
+    );
+    if (expression.other) {
+      collectTailOperators(expression.other, name, operators, collected, visited);
+    }
+    return;
+  }
   if (expression.kind === "Let") {
     if (expression.definitions.some((definition) => definition.name === name)) return;
     collectTailOperators(
@@ -1513,6 +1594,7 @@ const compileTailStep = (
   operators: ReadonlyMap<string, Definition>,
   environment: Environment,
   entries: ReadonlyMap<Definition, TailStep | undefined>,
+  isRuntime: boolean,
 ): TailStep | undefined => {
   if (expression.kind === "If") {
     const consequent = compileTailStep(
@@ -1521,6 +1603,7 @@ const compileTailStep = (
       operators,
       environment,
       entries,
+      isRuntime,
     );
     const alternative = compileTailStep(
       expression.alternative,
@@ -1528,6 +1611,7 @@ const compileTailStep = (
       operators,
       environment,
       entries,
+      isRuntime,
     );
     if (consequent === undefined && alternative === undefined) return undefined;
     return {
@@ -1544,6 +1628,26 @@ const compileTailStep = (
       },
     };
   }
+  // A spec's CASE recursion nests as TLC's does, and overflows where the stack runs out.
+  if (expression.kind === "Case" && isRuntime) {
+    const compile = (body: Expression) =>
+      compileTailStep(body, name, operators, environment, entries, isRuntime);
+    const arms = expression.arms.map((arm) => compile(arm.body));
+    const other = expression.other && compile(expression.other);
+    if (arms.every((arm) => arm === undefined) && other === undefined) return undefined;
+    const orOther = (step: TailStep | undefined, body: Expression): TailStep =>
+      step ?? { kind: "Other", evaluator: getEntryEvaluator(body, environment) };
+    return {
+      kind: "Case",
+      expression,
+      arms: expression.arms.map((arm, index) => ({
+        source: arm.condition,
+        condition: getEntryEvaluator(arm.condition, environment),
+        body: orOther(arms[index], arm.body),
+      })),
+      other: expression.other && orOther(other, expression.other),
+    };
+  }
   if (expression.kind === "Let") {
     if (expression.definitions.some((definition) => definition.name === name)) return undefined;
     const body = compileTailStep(
@@ -1552,6 +1656,7 @@ const compileTailStep = (
       withLetOperators(operators, expression),
       environment,
       entries,
+      isRuntime,
     );
     const definitions = getBoundDefinitions(expression, environment);
     return body && { kind: "Let", definitions, sites: getLetSites(definitions), body };
@@ -1564,6 +1669,7 @@ const compileTailStep = (
     kind: "Call",
     expression,
     binders: expression.args.map((arg) => compileArgumentBinder(arg, environment)),
+    values: expression.args.map(() => undefined),
     evaluator: getEntryEvaluator(expression, environment),
     entered:
       operator === undefined || entered === undefined
@@ -1576,23 +1682,43 @@ const compileTailStep = (
 // operator that the tail enters compiles once, into a table that every path through the body reads,
 // as the branches of a body may all enter one operator.
 const compileTailCalls = (name: string, body: Expression, environment: Environment) => {
+  const isRuntime = isRuntimeBody(body, environment);
   const collected = new Map<Definition, ReadonlyMap<string, Definition>>();
   collectTailOperators(body, name, new Map(), collected, new Set());
   const entries = new Map<Definition, TailStep | undefined>();
   collected.forEach((operators, operator) =>
-    entries.set(operator, compileTailStep(operator.body, name, operators, environment, entries)),
+    entries.set(
+      operator,
+      compileTailStep(operator.body, name, operators, environment, entries, isRuntime),
+    ),
   );
-  return compileTailStep(body, name, new Map(), environment, entries);
+  return compileTailStep(body, name, new Map(), environment, entries, isRuntime);
 };
+
+// Whether a body is one of ESCore's runtime operators, whose recursions are tla-ts's own.
+const isRuntimeBody = (body: Expression, environment: Environment) =>
+  environment.runtimeModules.has(body.location.range?.module ?? "");
 
 const evaluateTailCalls = (closure: Closure, body: TailStep, bodyContext: Context): Value => {
   let context = bodyContext;
   let step = body;
-  for (let turn = 0; turn < TAIL_CALL_LIMIT;) {
+  // ESCore's runtime loops as long as its JavaScript program does; a spec's recursion overflows.
+  const isRuntime = isRuntimeBody(closure.body, bodyContext.environment);
+  const limit = isRuntime ? Infinity : TAIL_CALL_LIMIT;
+  for (let turn = 0; turn < limit;) {
     if (step.kind === "If") {
       const value = step.condition(context);
       if (typeof value !== "boolean") throw createConditionError(step.expression, value);
       step = value ? step.consequent : step.alternative;
+    } else if (step.kind === "Case") {
+      const arm = step.arms.find((candidate) => {
+        const value = candidate.condition(context);
+        if (typeof value !== "boolean") throw createCaseConditionError(candidate.source, value);
+        return value;
+      });
+      if (arm) step = arm.body;
+      else if (step.other) step = step.other;
+      else throw createCaseExhaustedError(step.expression);
     } else if (step.kind === "Let") {
       context = withScope(
         context,
@@ -1608,7 +1734,9 @@ const evaluateTailCalls = (closure: Closure, body: TailStep, bodyContext: Contex
       if (!isEntered) return step.evaluator(context);
       context = withScope(
         context,
-        bindOperatorArguments(callee, step.expression.args, context, step.binders),
+        isRuntime
+          ? bindArgumentValues(callee, step, context)
+          : bindOperatorArguments(callee, step.expression.args, context, step.binders),
       );
       step = entered?.step ?? body;
       turn += entered === undefined ? 1 : 0;
@@ -1636,6 +1764,19 @@ const getTailCalls = (closure: Closure, environment: Environment) => {
     ? compileTailCalls(closure.name, closure.body, environment)
     : undefined;
 };
+
+// SpecProcessor#getOpContext and Liveness#astToLiveAppl bind the arguments of an operator they take apart as uncachable LazyValues.
+export const bindUncachedArguments = (closure: Closure, args: Expression[], context: Context) =>
+  bindOperatorArguments(
+    closure,
+    args,
+    context,
+    args.map((arg) => (inner) => {
+      const thunk = createThunk(arg, inner, undefined);
+      thunk.isUncached = true;
+      return thunk;
+    }),
+  );
 
 const callOperator = (
   operator: Operator,
@@ -1756,6 +1897,7 @@ export const bindDefinitions = (
             (definition.kind === "Operator" || !definition.isSelfReferential) &&
             reevaluated?.isFunctionRebuilt === true,
           isNamed: context.isNaming === true,
+          isUncached: false,
         };
   }
   const coverage = context.environment.coverage;
@@ -1863,7 +2005,13 @@ const compileUnchanged = (evaluator: Evaluator, coverage: Coverage | undefined):
   coverage
     ? (context) =>
         isReceiverEqual(
-          evaluateWithNextState(coverage, "empty", evaluator, context),
+          evaluateWithNextState(coverage, "empty", evaluator, {
+            environment: context.environment,
+            scope: context.scope,
+            state: context.state,
+            next: undefined,
+            isKeepLazy: context.isKeepLazy,
+          }),
           evaluateWithNextState(coverage, "primed", evaluator, toNextContext(context)),
         )
     : (context) => isReceiverEqual(evaluator(context), evaluator(toNextContext(context)));
@@ -2142,11 +2290,14 @@ export const getEntryEvaluator = (expression: Expression, environment: Environme
   if (environment.callStack || environment.coverage) return getEvaluator(expression, environment);
   const compiled = environment.entryEvaluators.get(expression);
   if (compiled) return compiled;
-  const entry =
-    expression.kind === "Let" && getBoundDefinitions(expression, environment).length === 0
-      ? expression.body
-      : expression;
-  const evaluator = generateEvaluator(entry, environment) ?? getEvaluator(entry, environment);
+  const isBound = expression.kind === "Let" && environment.boundSubstitutions.lets.has(expression);
+  const entry = isBound ? expression.body : expression;
+  const body = generateEvaluator(entry, environment) ?? getEvaluator(entry, environment);
+  const definitions = isBound ? getBoundDefinitions(expression, environment) : [];
+  const evaluator: Evaluator =
+    definitions.length === 0
+      ? body
+      : (context) => body(withScope(context, bindDefinitions(definitions, context)));
   environment.entryEvaluators.set(expression, evaluator);
   return evaluator;
 };
@@ -2178,7 +2329,18 @@ const compileIdentifier = (
   if (global?.kind === "Definition") {
     const definition = global.definition;
     let compiled: Evaluator | undefined;
-    return (context) => (compiled ??= getDefinitionEvaluator(definition, environment))(context);
+    const evaluateDefinition: Evaluator = (context) =>
+      (compiled ??= getDefinitionEvaluator(definition, environment))(context);
+    const called = getCalledBody(expression, definition.body, environment);
+    if (called === undefined) return evaluateDefinition;
+    const definitionId = environment.facts.ids.get(definition);
+    const startupValues = environment.startupValues;
+    let calledBody: Evaluator | undefined;
+    return (context) =>
+      context.scope === undefined
+        ? evaluateDefinition(context)
+        : ((definitionId === undefined ? undefined : startupValues[definitionId]) ??
+          (calledBody ??= getEntryEvaluator(called, environment))(context));
   }
   if (expression.resolution?.isSelf) {
     return (context) => {
@@ -2250,7 +2412,7 @@ export const compileArgumentScope = (
   closure: Closure,
   args: Expression[],
   environment: Environment,
-): ((context: Context) => Scope | undefined) => {
+): ((context: Context, outer?: Scope) => Scope | undefined) => {
   if (args.length !== closure.params.length) {
     return () => {
       throw createArityError(closure, args.length);
@@ -2261,17 +2423,19 @@ export const compileArgumentScope = (
     if (params[index].arity === 0) return compileArgumentBinder(arg, environment);
     if (arg.kind !== "Identifier" || isLocallyResolved(arg)) return undefined;
     // An operator argument that names a global definition resolves here, once, to a closure whose
-    // code site keeps what its calls compile.
+    // code site keeps what its calls compile, but for one whose body runs in its caller's scope.
     const operator = resolveGlobalOperator(arg.name, environment);
-    if (operator?.kind !== "Closure") return undefined;
+    if (operator?.kind !== "Closure" || getCalledBody(arg, operator.body, environment)) {
+      return undefined;
+    }
     const binding: Binding = {
       kind: "Operator",
       operator: { ...operator, site: createCodeSite(operator.body) },
     };
     return () => binding;
   });
-  return (context) => {
-    let scope = closure.scope;
+  return (context, outer = closure.scope) => {
+    let scope = outer;
     for (let index = 0; index < args.length; index++) {
       const binder = binders[index];
       const binding: Binding = binder
@@ -2287,10 +2451,11 @@ const compileClosureCall = (
   closure: Closure,
   args: Expression[],
   environment: Environment,
+  called: Expression | undefined,
 ): Evaluator => {
   const bindArguments = compileArgumentScope(closure, args, environment);
   let body: Evaluator | undefined;
-  return (context) => {
+  const call: Evaluator = (context) => {
     if (body === undefined) {
       const tail =
         environment.callStack || environment.coverage
@@ -2303,6 +2468,21 @@ const compileClosureCall = (
     return body({
       environment,
       scope: bindArguments(context),
+      state: context.state,
+      next: context.next,
+      isKeepLazy: context.isKeepLazy,
+      isPrimed: context.isPrimed,
+    });
+  };
+  if (called === undefined) return call;
+  let calledBody: Evaluator | undefined;
+  return (context) => {
+    const scope = context.scope;
+    if (scope === undefined) return call(context);
+    calledBody ??= getEntryEvaluator(called, environment);
+    return calledBody({
+      environment,
+      scope: bindArguments(context, scope),
       state: context.state,
       next: context.next,
       isKeepLazy: context.isKeepLazy,
@@ -2370,7 +2550,14 @@ const compileApply = (
   const global = isLocallyResolved(expression)
     ? undefined
     : resolveGlobalOperator(expression.operator, environment);
-  if (global?.kind === "Closure") return compileClosureCall(global, args, environment);
+  if (global?.kind === "Closure") {
+    return compileClosureCall(
+      global,
+      args,
+      environment,
+      getCalledBody(expression, global.body, environment),
+    );
+  }
   if (global?.kind === "Builtin" && global.name === "DOMAIN") {
     const operand = getEvaluator(args[0], environment);
     const domain = getDomainOperator(expression);
@@ -3106,16 +3293,12 @@ const compile = (expression: Expression, environment: Environment): Evaluator =>
         for (const arm of arms) {
           const value = arm.condition(context);
           if (typeof value !== "boolean") {
-            throw new TlaEvaluationError(
-              `A non-boolean expression (${getKindString(value)}) was used as a condition of a CASE. ${describeNode(arm.source)}`,
-            );
+            throw createCaseConditionError(arm.source, value);
           }
           if (value) return arm.body(context);
         }
         if (other) return other(context);
-        throw new TlaEvaluationError(
-          `Attempted to evaluate a CASE with no conditions true.\n${describeRange(expression)}`,
-        );
+        throw createCaseExhaustedError(expression);
       };
     }
     case "Let": {
@@ -3123,13 +3306,8 @@ const compile = (expression: Expression, environment: Environment): Evaluator =>
       const definitions = getBoundDefinitions(expression, environment);
       if (definitions.length === 0) return body;
       const sites = getLetSites(definitions);
-      const substituted = environment.coverage ? definitions.filter(isSubstitutionDefinition) : [];
-      const reevaluated =
-        substituted.length > 0
-          ? { impure: new Set(substituted), streamed: new Set<Definition>() }
-          : undefined;
       return (context) =>
-        body(withScope(context, bindDefinitions(definitions, context, reevaluated, sites)));
+        body(withScope(context, bindDefinitions(definitions, context, undefined, sites)));
     }
     case "Forall":
     case "Exists":

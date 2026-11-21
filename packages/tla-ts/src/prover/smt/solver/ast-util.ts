@@ -1,6 +1,7 @@
 import {
   KIND_APP,
   KIND_QUANTIFIER,
+  KIND_VAR,
   OP_ADD,
   OP_AND,
   OP_DIV,
@@ -152,6 +153,42 @@ export const getNumExprs = (manager: AstManager, root: number) => {
     }
   }
   return count;
+};
+
+const getChildren = (manager: AstManager, expr: number) => {
+  if (manager.kinds[expr] === KIND_APP) return manager.getArgs(expr);
+  if (manager.kinds[expr] === KIND_VAR) return [];
+  const data = manager.getQuantifier(expr);
+  return [data.body, ...data.patterns, ...data.noPatterns];
+};
+
+export const forEachExpr = <T>(
+  manager: AstManager,
+  root: number,
+  visit: (expr: number) => T | undefined,
+) => {
+  const visited = new Set([root]);
+  const exprs = [root];
+  const children = [getChildren(manager, root)];
+  const nextChildren = [0];
+  while (exprs.length > 0) {
+    const top = exprs.length - 1;
+    const child = children[top][nextChildren[top]++];
+    if (child === undefined) {
+      const result = visit(exprs[top]);
+      if (result !== undefined) return result;
+      exprs.pop();
+      children.pop();
+      nextChildren.pop();
+      continue;
+    }
+    if (visited.has(child)) continue;
+    visited.add(child);
+    exprs.push(child);
+    children.push(getChildren(manager, child));
+    nextChildren.push(0);
+  }
+  return undefined;
 };
 
 export const getExtendedNumeral = (manager: AstManager, expr: number) => {
