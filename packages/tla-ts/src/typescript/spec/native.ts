@@ -156,6 +156,15 @@ LSlice(c, start, end) ==
       f == LRelative(end, n, n)
   IN IF k < 0 \/ f < 0 THEN LBail
      ELSE LArray([j \in 1..(IF f > k THEN f - k ELSE 0) |-> c.elems[k + j]])
+\* Array.prototype.with, a new array of an array's elements with one at an index, relative to the
+\* end where it's negative, replaced: of primitives alone, so that no two arrays hold one object, and
+\* LBail where the index isn't an integer or lies outside the array, where with throws.
+LWith(c, i, v) ==
+  IF c.type # "larray" \/ v.type = "bail" \/ IsLComposite(v) \/ ~(i.type = "number" /\ i.value.k = "int")
+     \/ \E k \in DOMAIN c.elems : IsLComposite(c.elems[k]) THEN LBail
+  ELSE LET n == Len(c.elems)
+           k == IF i.value.i < 0 THEN n + i.value.i ELSE i.value.i
+       IN IF k < 0 \/ k >= n THEN LBail ELSE LArray([c.elems EXCEPT ![k + 1] = v])
 \* Array.from of an array-like object of a length alone, which reads undefined at each index.
 LFrom(length, F(_, _)) ==
   IF length.type = "number" /\ length.value.k = "int" /\ length.value.i >= 0 /\ length.value.i <= 65536
@@ -212,6 +221,39 @@ LSetMethod(c, m, o) ==
 // counts a call of a mutator on what existed before it as a write, as ModelCallBuiltin does.
 const METHODS = new Set(["push", "pop", "shift", "includes", "has", "add", "delete", "get", "set"]);
 const MUTATORS = new Set(["push", "pop", "shift", "add", "delete", "set"]);
+
+// The built-in methods that change nothing, whose receiver a read-only parameter may give.
+const READING_METHODS = new Set([
+  "every",
+  "some",
+  "map",
+  "filter",
+  "find",
+  "slice",
+  "includes",
+  "has",
+  "get",
+  "with",
+  "values",
+]);
+
+// The binary operators that read their operands and give a new value.
+const READING_OPERATORS = new Set([
+  ts.SyntaxKind.EqualsEqualsEqualsToken,
+  ts.SyntaxKind.ExclamationEqualsEqualsToken,
+  ts.SyntaxKind.EqualsEqualsToken,
+  ts.SyntaxKind.ExclamationEqualsToken,
+  ts.SyntaxKind.LessThanToken,
+  ts.SyntaxKind.LessThanEqualsToken,
+  ts.SyntaxKind.GreaterThanToken,
+  ts.SyntaxKind.GreaterThanEqualsToken,
+  ts.SyntaxKind.PlusToken,
+  ts.SyntaxKind.MinusToken,
+  ts.SyntaxKind.AsteriskToken,
+  ts.SyntaxKind.SlashToken,
+  ts.SyntaxKind.PercentToken,
+  ts.SyntaxKind.AsteriskAsteriskToken,
+]);
 
 // The array methods that call an arrow function on each element, by their operators.
 const CALLBACK_METHODS = new Map([
@@ -356,6 +398,122 @@ export const getNativeFunctions = (
     return `${prefix === "Native" ? prefix : `nv${prefix}`}${count}`;
   };
   const isBinding = (name: string, scope: Scope) => !scope.locals.has(name) && bindings.has(name);
+  // Whether a function only reads a parameter: each use of it, and of each property or element it
+  // reads of it, ends in a comparison, an operation, a condition, an index, the receiver of a method
+  // that changes nothing, or a read-only parameter of another module function. A store, a return,
+  // an update, a delete, a use in a nested function, `arguments`, or any other use makes it
+  // not read-only.
+  const isReadOnlyParameter = (
+    fn: FunctionNode,
+    index: number,
+    visiting: Set<FunctionNode> = new Set(),
+  ): boolean => {
+    const param = fn.parameters[index];
+    if (param === undefined || !ts.isIdentifier(param.name) || param.dotDotDotToken !== undefined) {
+      return false;
+    }
+    if (param.initializer !== undefined || fn.body === undefined) return false;
+    // A function that calls itself passes the parameter on to a parameter this check reads.
+    if (visiting.has(fn)) return true;
+    const inner = new Set([...visiting, fn]);
+    const name = param.name.text;
+    let isReadOnly = true;
+    const visit = (node: ts.Node, isNested: boolean) => {
+      if (!isReadOnly) return;
+      if (ts.isIdentifier(node) && node.text === "arguments") isReadOnly = false;
+      const declared =
+        ts.isVariableDeclaration(node) ||
+        ts.isParameter(node) ||
+        ts.isFunctionDeclaration(node) ||
+        ts.isBindingElement(node)
+          ? node.name
+          : undefined;
+      // A destructuring, or a declaration of the name, could bind the name again.
+      const isRedeclared =
+        declared !== undefined &&
+        node !== param &&
+        (!ts.isIdentifier(declared) || declared.text === name);
+      if (isRedeclared) isReadOnly = false;
+      if (ts.isIdentifier(node) && node.text === name && node !== param.name && !isNameOnly(node)) {
+        if (isNested || !isReadUse(node, inner)) isReadOnly = false;
+      }
+      ts.forEachChild(node, (child) =>
+        visit(
+          child,
+          isNested ||
+            ts.isArrowFunction(child) ||
+            ts.isFunctionExpression(child) ||
+            ts.isFunctionDeclaration(child),
+        ),
+      );
+    };
+    visit(fn.body, false);
+    return isReadOnly;
+  };
+  // An identifier that names a property, not a binding.
+  const isNameOnly = (node: ts.Identifier) => {
+    const parent = node.parent;
+    return (
+      (ts.isPropertyAccessExpression(parent) && parent.name === node) ||
+      (ts.isPropertyAssignment(parent) && parent.name === node) ||
+      (ts.isMethodDeclaration(parent) && parent.name === node)
+    );
+  };
+  // Whether a use of a read-only parameter, followed through the reads it makes, only reads.
+  const isReadUse = (node: ts.Expression, visiting: Set<FunctionNode>): boolean => {
+    const parent = node.parent;
+    if (
+      ts.isParenthesizedExpression(parent) ||
+      ts.isAsExpression(parent) ||
+      ts.isNonNullExpression(parent) ||
+      ts.isSatisfiesExpression(parent)
+    ) {
+      return isReadUse(parent, visiting);
+    }
+    if (ts.isPropertyAccessExpression(parent) && parent.expression === node) {
+      const call = parent.parent;
+      return ts.isCallExpression(call) && call.expression === parent
+        ? READING_METHODS.has(parent.name.text) && isReadUse(call, visiting)
+        : isReadUse(parent, visiting);
+    }
+    if (ts.isElementAccessExpression(parent)) {
+      return parent.argumentExpression === node || isReadUse(parent, visiting);
+    }
+    if (ts.isCallExpression(parent) && parent.expression !== node) {
+      const callee = ts.isIdentifier(parent.expression)
+        ? functions.get(parent.expression.text)
+        : undefined;
+      return (
+        callee !== undefined &&
+        isReadOnlyParameter(callee, parent.arguments.indexOf(node), visiting)
+      );
+    }
+    if (ts.isBinaryExpression(parent)) {
+      const kind = parent.operatorToken.kind;
+      if (
+        kind === ts.SyntaxKind.AmpersandAmpersandToken ||
+        kind === ts.SyntaxKind.BarBarToken ||
+        kind === ts.SyntaxKind.QuestionQuestionToken
+      ) {
+        return isReadUse(parent, visiting);
+      }
+      return READING_OPERATORS.has(kind);
+    }
+    if (ts.isPrefixUnaryExpression(parent)) {
+      return (
+        parent.operator !== ts.SyntaxKind.PlusPlusToken &&
+        parent.operator !== ts.SyntaxKind.MinusMinusToken
+      );
+    }
+    if (ts.isConditionalExpression(parent)) {
+      return parent.condition === node || isReadUse(parent, visiting);
+    }
+    return (
+      ts.isTypeOfExpression(parent) ||
+      ((ts.isIfStatement(parent) || ts.isWhileStatement(parent) || ts.isDoStatement(parent)) &&
+        parent.expression === node)
+    );
+  };
   // A literal's value, defined once as a constant of its own, before the code that reads it.
   const constants = new Map<string, string>();
   const getConstant = (text: string) => {
@@ -472,7 +630,14 @@ export const getNativeFunctions = (
     const callee = getCallee(node.expression, scope);
     if (callee !== undefined) {
       const fn = functions.get((node.expression as ts.Identifier).text);
-      const args = compileArguments(node.arguments, scope, false);
+      const values = node.arguments.map((arg, index) =>
+        ts.isObjectLiteralExpression(arg) && fn !== undefined && isReadOnlyParameter(fn, index)
+          ? compileObjectLiteral(arg, scope, true)
+          : compileExpression(arg, scope),
+      );
+      const args = values.some((value) => value === undefined)
+        ? undefined
+        : values.map((value) => value?.text ?? "");
       if (!callee.isPure || args === undefined || fn === undefined) return undefined;
       if (args.length > fn.parameters.length) return undefined;
       const padded = [...args, ...fn.parameters.slice(args.length).map(() => "Undefined")];
@@ -578,6 +743,13 @@ export const getNativeFunctions = (
               isFresh: method === "map",
             };
       }
+      if (method === "with") {
+        const receiver = compileExpression(node.expression.expression, scope);
+        const args = compileArguments(node.arguments, scope, false);
+        return receiver === undefined || args?.length !== 2
+          ? undefined
+          : { text: `LWith(${receiver.text}, ${args[0]}, ${args[1]})`, isFresh: true };
+      }
       // A method that doesn't change its receiver, on any lowered value.
       if (!METHODS.has(method) || MUTATORS.has(method)) return undefined;
       const receiver = compileExpression(node.expression.expression, scope);
@@ -589,6 +761,39 @@ export const getNativeFunctions = (
       };
     }
     return undefined;
+  };
+
+  // An object literal, which owns each composite it holds unless it's borrowed: passed to a
+  // parameter that only reads it, so that no two places can write one object.
+  const compileObjectLiteral = (
+    node: ts.ObjectLiteralExpression,
+    scope: Scope,
+    isBorrowed: boolean,
+  ): Value | undefined => {
+    let text = "LEmptyObject";
+    for (const property of node.properties) {
+      if (ts.isSpreadAssignment(property)) {
+        const value = compileExpression(property.expression, scope);
+        if (value === undefined) return undefined;
+        text = `LSpread(${text}, ${value.text})`;
+        continue;
+      }
+      const name = property.name;
+      const key =
+        name !== undefined && (ts.isIdentifier(name) || ts.isStringLiteral(name))
+          ? name.text
+          : undefined;
+      if (key === undefined || key === "__proto__" || isIndexKey(key)) return undefined;
+      const value = ts.isPropertyAssignment(property)
+        ? compileExpression(property.initializer, scope)
+        : ts.isShorthandPropertyAssignment(property) &&
+            property.objectAssignmentInitializer === undefined
+          ? compileExpression(property.name, scope)
+          : undefined;
+      if (value === undefined) return undefined;
+      text = `LPut(${text}, ${getUnits(key)}, ${value.isFresh || isBorrowed ? value.text : `LOwn(${value.text})`})`;
+    }
+    return { text, isFresh: true };
   };
 
   const compileExpression = (node: ts.Expression, scope: Scope): Value | undefined => {
@@ -694,32 +899,7 @@ export const getNativeFunctions = (
       }
       return undefined;
     }
-    if (ts.isObjectLiteralExpression(node)) {
-      let text = "LEmptyObject";
-      for (const property of node.properties) {
-        if (ts.isSpreadAssignment(property)) {
-          const value = compileExpression(property.expression, scope);
-          if (value === undefined) return undefined;
-          text = `LSpread(${text}, ${value.text})`;
-          continue;
-        }
-        const name = property.name;
-        const key =
-          name !== undefined && (ts.isIdentifier(name) || ts.isStringLiteral(name))
-            ? name.text
-            : undefined;
-        if (key === undefined || key === "__proto__" || isIndexKey(key)) return undefined;
-        const value = ts.isPropertyAssignment(property)
-          ? compileExpression(property.initializer, scope)
-          : ts.isShorthandPropertyAssignment(property) &&
-              property.objectAssignmentInitializer === undefined
-            ? compileExpression(property.name, scope)
-            : undefined;
-        if (value === undefined) return undefined;
-        text = `LPut(${text}, ${getUnits(key)}, ${value.isFresh ? value.text : `LOwn(${value.text})`})`;
-      }
-      return { text, isFresh: true };
-    }
+    if (ts.isObjectLiteralExpression(node)) return compileObjectLiteral(node, scope, false);
     if (ts.isArrayLiteralExpression(node)) {
       if (node.elements.some(ts.isOmittedExpression)) return undefined;
       // A spread of an array or a Set gives its elements, and each run of other elements
