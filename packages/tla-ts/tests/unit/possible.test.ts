@@ -139,6 +139,23 @@ describe("_POSSIBLE matches TLC", () => {
     ]);
   });
 
+  it.each([
+    "F(p) == x = 1\nH == F(x')",
+    "H == LET A == x' = x IN x = 1",
+    "F(p) == x = 1\nH == F([]TRUE)",
+    "G(Op(_)) == x = 1\nK(a) == x' = a\nH == G(K)",
+    "H == LET A == []TRUE IN x = 1",
+  ])(
+    "witnesses %j in a terminal state, as TLC tracks a predicate SANY levels as a state predicate",
+    async (body) => {
+      const result = await check({
+        source: `---- MODULE M ----\nEXTENDS Naturals\nVARIABLE x\nInit == x = 0\nNext == x = 0 /\\ x' = 1\n${body}\n====`,
+        config: "INIT Init\nNEXT Next\nCHECK_DEADLOCK FALSE\n_POSSIBLE H",
+      });
+      expect(result.status).toBe("success");
+    },
+  );
+
   it("rejects predicates TLC cannot track", async () => {
     const body = "AtOne == x = 1\nConstant == TRUE\nArgument(n) == x = n\nTemporal == <>(x = 1)";
     const cases = [

@@ -189,6 +189,16 @@ describe("INSTANCE matches TLC", () => {
       "---- MODULE W ----\nEXTENDS N\n====\nI == INSTANCE N WITH c <- 1",
       ["N1", "P1"],
     ],
+    [
+      "a LET whose instance's definitions don't read a variable's substitute",
+      '---- MODULE P ----\nVARIABLE v\nN2(a) == PrintT(a)\n====\nI == INSTANCE P WITH v <- x\nD == LET K == INSTANCE P WITH v <- x IN K!N2("D")',
+      ["D"],
+    ],
+    [
+      "no LET whose instance's definition reads a variable's substitute",
+      '---- MODULE P ----\nVARIABLE v\nN2(a) == PrintT(a)\nFv == v\n====\nI == INSTANCE P WITH v <- x\nD == LET K == INSTANCE P WITH v <- x IN K!N2("D")',
+      [],
+    ],
   ])("evaluates %s at startup, as TLC does", async (_name, lines, expected) => {
     const prints: string[] = [];
     const result = await check({
@@ -203,6 +213,15 @@ describe("INSTANCE matches TLC", () => {
       onPrint: (text) => prints.push(text),
     });
     expect([result.status, prints]).toEqual(["success", expected.map((text) => `"${text}"`)]);
+  });
+
+  it("checks a named instance of a module whose own instance substitutes an expression of the variable it substitutes, as TLC does", async () => {
+    const result = await check({
+      source:
+        "---- MODULE M ----\nEXTENDS Naturals\nVARIABLE x\n---- MODULE Inner ----\nVARIABLE v\nGet == v\n====\n---- MODULE Mid ----\nVARIABLE v\nJ == INSTANCE Inner WITH v <- v + 0\nVal == J!Get\n====\nI == INSTANCE Mid WITH v <- x + 0\nInit == x = 0\nNext == x' = x\nInv == I!Val = 0\n====",
+      config: "INIT Init\nNEXT Next\nINVARIANT Inv",
+    });
+    expect(result.status).toBe("success");
   });
 
   it("reports violations through instantiated operators", async () => {
