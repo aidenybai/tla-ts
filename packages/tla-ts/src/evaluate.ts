@@ -1611,7 +1611,12 @@ const traceEvaluator =
     setTrace.callStack = callStack;
     try {
       const computed = evaluator(context);
-      const value = isRebindable(computed) ? computed.rebind(environment) : computed;
+      // CallStackTool#eval hands out each FcnLambdaValue as a copy, so a record that one reference builds never reaches the next.
+      const value = isRebindable(computed)
+        ? computed.rebind(environment)
+        : typeof computed === "object" && computed.kind === "LazyFunction"
+          ? { ...computed }
+          : computed;
       callStack.values.set(expression, value);
       if (typeof value === "object" && value.kind !== "FilteredSet" && isSourced(expression)) {
         callStack.sources.set(value, expression);

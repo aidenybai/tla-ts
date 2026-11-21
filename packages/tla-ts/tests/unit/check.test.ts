@@ -5594,6 +5594,28 @@ ASSUME TLCFP(a) = -887695703
     expect(result.failure?.fingerprint?.reason).toBe("The second argument of \\div is 0.");
   });
 
+  const checkConvertedLazy = async (init: string, next: string) => {
+    const lines: string[] = [];
+    const result = await check({
+      source: `---- MODULE M ----\nEXTENDS Integers, TLC\nVARIABLES x, f\nInit == ${init}\nNext == ${next}\n====`,
+      config: "INIT Init\nNEXT Next\nCHECK_DEADLOCK FALSE",
+      onPrint: (text) => lines.push(text),
+    });
+    return [lines, result.failure?.traceOutput];
+  };
+
+  it("applies a lazy function an operator argument holds again at each reference when it replays a failure, as TLC's CallStackTool copies each FcnLambdaValue it evaluates", async () => {
+    expect(
+      await checkConvertedLazy(
+        "x = 0 /\\ f = 0",
+        `x < 1 /\\ x' = 1 /\\ f' = 0 /\\ LET Op(g) == g = [s \\in {{}, {1}} |-> TRUE] /\\ PrintT(g[{}]) /\\ 1 = "a" IN Op([s \\in SUBSET {1} |-> PrintT(s)])`,
+      ),
+    ).toEqual([
+      ["{}", "{1}", "TRUE"],
+      ["{}", "{1}", "{}", "TRUE"],
+    ]);
+  });
+
   it("counts the applications of the copy EXCEPT makes of a lazy function, though TLC's FcnLambdaValue#takeExcept drops the cost model", async () => {
     const lines = await getCoverageLines(
       "---- MODULE M ----\nEXTENDS Naturals\nVARIABLE x\nInit == LET f[n \\in 0..2] == 10 \\div (n + 1) IN x = [f EXCEPT ![2] = 0][1]\nNext == UNCHANGED x\n====",
