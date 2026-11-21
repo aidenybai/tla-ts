@@ -45,10 +45,10 @@ const convertModel = (converter: Fpa2BvConverter, source: ProtoModel) => {
     if (interp.elseExpr !== null) copied.setElse(interp.elseExpr);
     target.registerFunc(decl, copied);
   }
-  for (const sort of source.getUninterpretedSorts())
+  for (const sort of source.getUninterpretedSorts()) {
     for (const value of source.getKnownUniverse(sort)) target.registerValue(value);
-  for (const sort of source.getUninterpretedSorts())
     target.registerUsort(sort, source.getKnownUniverse(sort));
+  }
   return target;
 };
 
