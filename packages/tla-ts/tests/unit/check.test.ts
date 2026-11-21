@@ -3240,6 +3240,66 @@ ASSUME TLCFP(a) = -887695703
     },
   );
 
+  const WHOLE_MODULE =
+    '---- MODULE N ----\nEXTENDS Naturals\nCONSTANT k\nVARIABLES x, y\nTwo == 2\nStr == "a"\nSum == 1 + 1\nBad == x + 1\nInit == x = k /\\ y = 0\nInitSum == x = k /\\ y = 0 /\\ (1 + 1)\nInv == [](x + 1)\n====\n';
+  const UNCHANGED_STEP = "[][UNCHANGED <<x, y>>]_<<x, y>>";
+  const getWholeFailure = async (definitions: string, property: string, coverage?: number) => {
+    const result = await check({
+      source: `---- MODULE M ----\nEXTENDS Naturals\nVARIABLES x, y\nI(j) == INSTANCE N WITH k <- j\nJ == INSTANCE N WITH k <- 0\n${definitions}\n====\n`,
+      config: `SPECIFICATION Spec\n${property}`,
+      loadModule: (name) => (name === "N" ? WHOLE_MODULE : undefined),
+      coverage,
+    });
+    return result.failure?.message;
+  };
+
+  it.each([
+    [
+      `Spec == I(0)!Init /\\ I(0)!Two /\\ ${UNCHANGED_STEP}`,
+      "",
+      "In computing initial states, TLC expected a boolean expression,\nbut instead found 2.\nline 6, col 22 to line 6, col 29 of module M",
+    ],
+    [
+      `Spec == I(0)!Init /\\ I(0)!Str /\\ ${UNCHANGED_STEP}`,
+      "",
+      'In computing initial states, TLC expected a boolean expression,\nbut instead found "a".\nline 6, col 22 to line 6, col 29 of module M',
+    ],
+    [
+      `Two(a) == 2\nSpec == x = 0 /\\ y = 0 /\\ Two(1) /\\ ${UNCHANGED_STEP}`,
+      "",
+      "In computing initial states, TLC expected a boolean expression,\nbut instead found 2.\nline 7, col 27 to line 7, col 32 of module M",
+    ],
+    [
+      `Spec == LET F(a) == 2 IN x = 0 /\\ y = 0 /\\ F(1) /\\ ${UNCHANGED_STEP}`,
+      "",
+      "In computing initial states, TLC expected a boolean expression,\nbut instead found 2.\nline 6, col 44 to line 6, col 47 of module M",
+    ],
+    [
+      `Two(a) == 2\nSpec == x = 0 /\\ y = 0 /\\ ${UNCHANGED_STEP}\nProp == []<>(x = 0) /\\ Two(1)`,
+      "PROPERTY Prop\n",
+      "TLC expected a boolean value, but did not find one. line 8, col 24 to line 8, col 29 of module M",
+    ],
+  ])(
+    "takes an application in %j whole when the definition's body is a literal, with and without coverage, as TLC does",
+    async (definitions, property, message) => {
+      expect([
+        await getWholeFailure(definitions, property),
+        await getWholeFailure(definitions, property, 1),
+      ]).toEqual([message, message]);
+    },
+  );
+
+  it('describes an application of a definition whose body is a literal in TLCGet("spec") whole, as TLC does', async () => {
+    const prints: string[] = [];
+    await check({
+      source:
+        '---- MODULE M ----\nEXTENDS Naturals, TLC\nVARIABLES x, y\nTwo(a) == 2\nSpec == x = 0 /\\ y = 0 /\\ [][UNCHANGED <<x, y>>]_<<x, y>>\nProp == []<>(x = 0) /\\ Two(1)\nASSUME PrintT({<<i.location.beginColumn, i.location.endColumn>> : i \\in TLCGet("spec").impliedinits})\n====\n',
+      config: "SPECIFICATION Spec\nPROPERTY Prop\n",
+      onPrint: (text) => prints.push(text),
+    });
+    expect(prints).toEqual(["{<<24, 29>>}"]);
+  });
+
   it("applies an operator to each value @ takes in the same state", async () => {
     const result = await check({
       source:

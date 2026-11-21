@@ -583,6 +583,8 @@ export const expandTemporal = (
       if (isArgumentFree && definition && getLookupValue(definition, environment) !== undefined) {
         return getLeaf(undefined, definition);
       }
+      // SymbolNodeValueLookupProvider#lookup gives an applied definition as its literal body, which SpecProcessor takes whole.
+      if (getBodyLiteral(operator.body, environment) !== undefined) return getLeaf();
       const bound = bindUncachedArguments(operator, expression.args, context);
       if (
         !isProperty &&

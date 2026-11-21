@@ -30,6 +30,7 @@ import {
   describeNode,
   evaluate,
   forEachBinding,
+  getBodyLiteral,
   getDefinition,
   getRootKey,
   getStartupValue,
@@ -564,7 +565,8 @@ const describeSpecification = (
     !isTlc174 &&
     !substitutionFrame &&
     expression.kind === "Apply" &&
-    called.params.length === expression.args.length
+    called.params.length === expression.args.length &&
+    getBodyLiteral(called.body, environment) === undefined
   ) {
     recurse(
       called.body,
@@ -617,7 +619,11 @@ const describeProperty = (
   }
   const called = resolveClosure(expression, scope, environment);
   if (called && isConstantDefinition(called, environment)) return;
-  if (called && called.params.length === getArguments(expression).length) {
+  if (
+    called &&
+    called.params.length === getArguments(expression).length &&
+    getBodyLiteral(called.body, environment) === undefined
+  ) {
     recurse(called.body, getCallScope(called, expression, scope, environment));
     return;
   }
