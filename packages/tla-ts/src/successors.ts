@@ -34,6 +34,8 @@ import {
   getMissingArgumentDescriber,
   getReevaluatedDefinitions,
   getStartupValue,
+  getUnchangedVariables,
+  getZeroArityBody,
   lookupScope,
   mapBoundSets,
   resolveApplyOperator,
@@ -44,12 +46,14 @@ import {
   type Evaluator,
   type Scope,
   type State,
+  type UnchangedVariable,
 } from "./evaluate";
 import { forEachChild } from "./instances";
 import { getRandomSubset, nextPrime, type JavaRandom } from "./tlc/random";
 import {
   bindUnchangedApplication,
   createRunError,
+  createUnassignedConjunctError,
   findChangedVariable,
   getCaseGuardMessage,
   getCaseOtherMessage,
@@ -60,13 +64,10 @@ import {
   getImpliesConditionMessage,
   getNonFunctionMessage,
   getRelationMessage,
-  getUnchangedVariables,
-  getZeroArityBody,
   holdsValue,
   isAssignedShortcut,
   replayEnabled,
   warnChangedUnchanged,
-  type UnchangedVariable,
 } from "./tlc/replay";
 import {
   applyFunction,
@@ -249,7 +250,8 @@ const isGuard = (expression: Expression, environment: Environment, isInit: boole
   if (ACTION_KINDS.has(expression.kind)) return false;
   if (expression.kind === "Identifier") {
     return (
-      environment.variableIndex.has(expression.name) || environment.constants.has(expression.name)
+      (!isInit && environment.variableIndex.has(expression.name)) ||
+      environment.constants.has(expression.name)
     );
   }
   if (expression.kind !== "Apply") return true;
@@ -766,6 +768,10 @@ const compileIdentifier = (
   const actionName =
     definition && (environment.instanceNames.get(expression.name) ?? definition.name);
   const called = definition && getCalledBody(expression, definition.body, environment);
+  const variableIndex =
+    isInit && !isLocallyResolved(expression)
+      ? environment.variableIndex.get(expression.name)
+      : undefined;
   let bodyRunner: Runner | undefined;
   let calledRunner: Runner | undefined;
   return (run, scope, partial, action, isFixed, onComplete) => {
@@ -798,7 +804,9 @@ const compileIdentifier = (
       !definition ||
       (expression.location.range && getStartupValue(definition, environment) !== undefined)
     ) {
-      // Deviation from TLC: Tool#getInitStates prints an unassigned variable's declaration as the non-boolean value it found.
+      if (!binding && variableIndex !== undefined && partial[variableIndex] === undefined) {
+        throw createUnassignedConjunctError(run, expression, variableIndex);
+      }
       guard(run, scope, partial, action, isFixed, onComplete);
       return;
     }
@@ -1167,8 +1175,10 @@ const compileAction = (
     case "Let": {
       const body = getChildRunner(expression.body);
       const reevaluated = getReevaluatedDefinitions(expression.definitions, environment);
-      // TLC's Tool#enabled binds a LET's definitions to lazy values it caches, where Tool#getNextStates evaluates them at every use.
-      const cached = { impure: new Set<Definition>(), streamed: reevaluated.streamed };
+      // TLC's Tool#enabled binds a LET's definitions to lazy values it caches, where Tool#getNextStates evaluates them at every use. Both bind an instance's substitutions with getVal(..., false), which caches nothing.
+      const cached = environment.boundSubstitutions.lets.has(expression)
+        ? reevaluated
+        : { impure: new Set<Definition>(), streamed: reevaluated.streamed };
       return (run, scope, partial, action, isFixed, onComplete) =>
         body(
           run,

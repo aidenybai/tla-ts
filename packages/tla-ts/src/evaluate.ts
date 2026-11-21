@@ -14,6 +14,7 @@ import {
   type NumberExpression,
   type OperatorParam,
   type RecordField,
+  type SourceLocation,
   type SourceRange,
 } from "./ast";
 import { getKindString } from "./builtins";
@@ -200,6 +201,7 @@ export interface Environment {
   instanceNames: Map<string, string>;
   variables: string[];
   variableIndex: Map<string, number>;
+  variableLocations: SourceLocation[];
   facts: DefinitionFacts;
   startupValues: (Value | undefined)[];
   tlcEvalValues: WeakMap<Expression, Value>;
@@ -524,6 +526,56 @@ export const expectBooleanBody = (value: Value, expression: Expression) => {
 
 export const getDefinition = (name: string, environment: Environment) =>
   environment.definitions.get(environment.substitutions.get(name) ?? name);
+
+export const getZeroArityBody = (name: string, environment: Environment) => {
+  if (environment.constants.has(name)) return undefined;
+  const definition = getDefinition(name, environment);
+  return definition?.kind === "Operator" && definition.params.length === 0 ? definition : undefined;
+};
+
+export interface UnchangedVariable {
+  index: number;
+  expression: Expression;
+}
+
+export const getUnchangedVariables = (
+  expression: Expression,
+  environment: Environment,
+  visited = new Set<string>(),
+  written = expression,
+): UnchangedVariable[] | undefined => {
+  if (expression.kind === "Tuple") {
+    const variables = expression.elements.map((element) =>
+      getUnchangedVariables(element, environment, visited),
+    );
+    return variables.every((item) => item !== undefined) ? variables.flat() : undefined;
+  }
+  if (expression.kind !== "Identifier" || visited.has(expression.name)) return undefined;
+  const index = environment.variableIndex.get(expression.name);
+  if (index !== undefined) return [{ index, expression: written }];
+  const definition = getZeroArityBody(expression.name, environment);
+  if (!definition) return undefined;
+  visited.add(expression.name);
+  return getUnchangedVariables(definition.body, environment, visited, written);
+};
+
+export const isUnchangedState = (
+  indexes: number[],
+  state: State | undefined,
+  next: State | undefined,
+) => {
+  if (state === undefined || next === undefined) return undefined;
+  for (let index = 0; index < indexes.length; index++) {
+    if (state[indexes[index]] === undefined || next[indexes[index]] === undefined) return undefined;
+  }
+  for (let index = 0; index < indexes.length; index++) {
+    const value = state[indexes[index]];
+    const nextValue = next[indexes[index]];
+    if (value === undefined || nextValue === undefined) return undefined;
+    if (!isReceiverEqual(value, nextValue)) return false;
+  }
+  return true;
+};
 
 export const getBuiltin = (name: string, environment: Environment) =>
   environment.builtins.get(environment.substitutions.get(name) ?? name);
@@ -990,6 +1042,17 @@ export const getStartupValue = (definition: Definition, environment: Environment
   return definitionId === undefined ? undefined : environment.startupValues[definitionId];
 };
 
+export const getBodyLiteral = (body: Expression, environment: Environment): Value | undefined => {
+  if (body.kind === "Let" && environment.boundSubstitutions.lets.has(body)) {
+    return getBodyLiteral(body.body, environment);
+  }
+  return body.kind === "Number" || body.kind === "String" ? body.value : undefined;
+};
+
+export const getLookupValue = (definition: Definition, environment: Environment) =>
+  getStartupValue(definition, environment) ??
+  (definition.kind === "Operator" ? getBodyLiteral(definition.body, environment) : undefined);
+
 export interface StartupSubstitute {
   key: string;
   target: string;
@@ -1295,12 +1358,15 @@ export const getCalledBody = (
   expression: Expression,
   body: Expression,
   environment: Environment,
-) =>
-  body.kind === "Let" &&
-  environment.boundSubstitutions.calls.has(expression) &&
-  environment.boundSubstitutions.lets.has(body)
-    ? body.body
-    : undefined;
+): Expression | undefined => {
+  if (body.kind !== "Let") return undefined;
+  const owners = environment.boundSubstitutions.calls.get(expression);
+  if (owners === undefined) return undefined;
+  const owner = environment.boundSubstitutions.lets.get(body);
+  const isOwned =
+    owner !== undefined && (owners === owner || (Array.isArray(owners) && owners.includes(owner)));
+  return isOwned ? (getCalledBody(expression, body.body, environment) ?? body.body) : undefined;
+};
 
 const compileArgumentBinder = (argument: Expression, environment: Environment): ArgumentBinder => {
   const isLiteral =
@@ -1494,7 +1560,12 @@ export const bindDefinitions = (
 const evaluateLocalIdentifier = (name: string, expression: Expression, context: Context): Value => {
   const binding = lookupScope(context.scope, name);
   if (binding?.kind === "Value") return binding.value;
-  if (binding?.kind === "Thunk") return forceThunk(binding, context);
+  if (binding?.kind === "Thunk") {
+    // Tool#evalAppl reads a LazyValue afresh, and stores nothing, where s1 is TLCState.Null, as under a prime.
+    return context.next === NULL_STATE && !binding.isReleased
+      ? evaluate(binding.expression, withScope(context, binding.scope))
+      : forceThunk(binding, context);
+  }
   if (binding?.kind === "Operator") {
     if (getArity(binding.operator) === 0) {
       return callOperatorWithValues(binding.operator, [], context);
@@ -1559,10 +1630,22 @@ const isRebindable = (value: Value): value is RebindableFilteredSet | Rebindable
   (value.kind === "FilteredSet" || value.kind === "LazyFunction") &&
   "rebind" in value;
 
+// Holds undefined, as a state's slots do, so V8 gives it the states' elements kind.
+export const NULL_STATE: State = [undefined];
+
 export const toNextContext = (context: Context): Context => ({
   environment: context.environment,
   scope: context.scope,
   state: context.next,
+  next: NULL_STATE,
+  isKeepLazy: context.isKeepLazy,
+});
+
+// TLC evaluates the first side of UNCHANGED, [A]_e and <A>_e with s1 as TLCState.Empty.
+export const toEmptyContext = (context: Context): Context => ({
+  environment: context.environment,
+  scope: context.scope,
+  state: context.state,
   next: undefined,
   isKeepLazy: context.isKeepLazy,
 });
@@ -1582,20 +1665,30 @@ const evaluateWithNextState = (
   }
 };
 
-const compileUnchanged = (evaluator: Evaluator, coverage: Coverage | undefined): Evaluator =>
-  coverage
-    ? (context) =>
-        isReceiverEqual(
-          evaluateWithNextState(coverage, "empty", evaluator, {
-            environment: context.environment,
-            scope: context.scope,
-            state: context.state,
-            next: undefined,
-            isKeepLazy: context.isKeepLazy,
-          }),
-          evaluateWithNextState(coverage, "primed", evaluator, toNextContext(context)),
-        )
-    : (context) => isReceiverEqual(evaluator(context), evaluator(toNextContext(context)));
+const compileUnchanged = (
+  evaluator: Evaluator,
+  expression: Expression,
+  environment: Environment,
+): Evaluator => {
+  const coverage = environment.coverage;
+  if (coverage) {
+    return (context) =>
+      isReceiverEqual(
+        evaluateWithNextState(coverage, "empty", evaluator, toEmptyContext(context)),
+        evaluator(toNextContext(context)),
+      );
+  }
+  const evaluateUnchanged: Evaluator = (context) =>
+    isReceiverEqual(evaluator(toEmptyContext(context)), evaluator(toNextContext(context)));
+  // The tracing replay evaluates the subscript, whose tuple TLC names in the frames.
+  const variables = environment.callStack
+    ? undefined
+    : getUnchangedVariables(expression, environment);
+  if (!variables) return evaluateUnchanged;
+  const indexes = variables.map((variable) => variable.index);
+  return (context) =>
+    isUnchangedState(indexes, context.state, context.next) ?? evaluateUnchanged(context);
+};
 
 const traceEvaluator =
   (
@@ -1810,7 +1903,7 @@ const countSubstitution =
   (substitution: Substitution, evaluator: Evaluator, coverage: Coverage): Evaluator =>
   (context) => {
     const outer = coverage.current;
-    const node = getSubstitutionNode(coverage, substitution);
+    const node = getSubstitutionNode(coverage, substitution, context.next === NULL_STATE);
     coverage.current = node === -1 && outer < 0 ? outer : node;
     try {
       return evaluator(context);
@@ -1941,13 +2034,13 @@ const compileIdentifier = (
   }
   const coverage = environment.coverage;
   if (!coverage) return (context) => evaluateLocalIdentifier(name, expression, context);
-  // TLC's Tool#evalAppl evaluates a LazyValue afresh where it reads it primed, and LazyValue#getValue reuses a value only under the EvalControl it computed it under.
+  // TLC's Tool#evalAppl evaluates a LazyValue afresh where s1 is TLCState.Null, and LazyValue#getValue reuses a value only under the EvalControl it computed it under.
   return (context) => {
     const binding = lookupScope(context.scope, name);
     if (binding?.kind !== "Thunk" || binding.isReleased) {
       return evaluateLocalIdentifier(name, expression, context);
     }
-    if (coverage.nextState === "primed") return evaluateCoveredThunk(binding, context, coverage);
+    if (context.next === NULL_STATE) return evaluateCoveredThunk(binding, context, coverage);
     if (coverage.cachedInEnabled.get(binding) !== coverage.isEnabled) binding.cache = undefined;
     const value = forceThunk(binding, context);
     coverage.cachedInEnabled.set(binding, coverage.isEnabled);
@@ -2879,13 +2972,14 @@ const compile = (expression: Expression, environment: Environment): Evaluator =>
     }
     case "Prime": {
       const inner = getChildEvaluator(expression.expression);
-      const coverage = environment.coverage;
-      return coverage
-        ? (context) => evaluateWithNextState(coverage, "primed", inner, toNextContext(context))
-        : (context) => inner(toNextContext(context));
+      return (context) => inner(toNextContext(context));
     }
     case "Unchanged":
-      return compileUnchanged(getChildEvaluator(expression.expression), environment.coverage);
+      return compileUnchanged(
+        getChildEvaluator(expression.expression),
+        expression.expression,
+        environment,
+      );
     case "If": {
       const condition = getChildEvaluator(expression.condition);
       const consequent = getChildEvaluator(expression.consequent);
@@ -2999,7 +3093,7 @@ const compile = (expression: Expression, environment: Environment): Evaluator =>
       const index = environment.variableIndex.get(name) ?? -1;
       const substitution = getChildEvaluator(expression.substitution);
       return (context) => {
-        if (context.next !== undefined) return substitution(context);
+        if (context.next !== NULL_STATE) return substitution(context);
         const value = context.state?.[index];
         if (value === undefined) throw createUnassignedError(name, expression);
         return value;
@@ -3067,7 +3161,8 @@ const compile = (expression: Expression, environment: Environment): Evaluator =>
       const action = getChildEvaluator(expression.action);
       const unchanged = compileUnchanged(
         getChildEvaluator(expression.subscript),
-        environment.coverage,
+        expression.subscript,
+        environment,
       );
       const isBox = expression.kind === "BoxAction";
       const form = isBox ? "[A]_e" : "<A>_e";
