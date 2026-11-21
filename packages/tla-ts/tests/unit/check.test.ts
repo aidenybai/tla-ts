@@ -1334,6 +1334,24 @@ ASSUME TLCFP(a) = -887695703
     expect([result.status, result.distinctStates]).toEqual(["success", 1]);
   });
 
+  it("keeps the tuple of a lazy function whose body names a LET definition that reaches an Assert", async () => {
+    const result = await check({
+      source:
+        '---- MODULE M ----\nEXTENDS Naturals, Sequences, TLC\nVARIABLE x\nRECURSIVE Nest(_)\nNest(k) == IF k = 0 THEN <<0, 0>> ELSE LET g == IF Assert(k > 0, "k is positive") THEN Nest(k - 1) ELSE <<>> f[i \\in 1..2] == IF i = 0 THEN f[i] ELSE Len(g) IN f\nInit == x = Len(Nest(30))\nNext == UNCHANGED x\n====',
+      config: "INIT Init\nNEXT Next",
+    });
+    expect([result.status, result.distinctStates]).toEqual(["success", 1]);
+  });
+
+  it("keeps the tuple of a lazy function whose body names a parameter when the only lazy function with an effect reaches an Assert", async () => {
+    const result = await check({
+      source:
+        '---- MODULE M ----\nEXTENDS Naturals, Sequences, TLC\nVARIABLE x\nRECURSIVE Nest(_)\nNest(k) == IF k = 0 THEN <<0, 0>> ELSE LET g == Nest(k - 1) f[i \\in 1..2] == IF i = 0 THEN f[i] ELSE Len(g) IN f\nChecked(n) == LET v == IF Assert(n > 0, "n is positive") THEN n ELSE 0 IN [i \\in 1..2 |-> v]\nInit == x = Len(Nest(30)) /\\ Checked(1)[1] = 1\nNext == UNCHANGED x\n====',
+      config: "INIT Init\nNEXT Next",
+    });
+    expect([result.status, result.distinctStates]).toEqual(["success", 1]);
+  });
+
   it("applies a lazy function again each time a tuple is compared with it when a definition that prints is passed to it by name", async () => {
     const printed: string[] = [];
     await check({

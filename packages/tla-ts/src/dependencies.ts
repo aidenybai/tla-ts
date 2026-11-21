@@ -486,7 +486,12 @@ const closeRows = (local: Uint32Array, words: number, edges: EdgeLists, mask: nu
 };
 
 const PURITY_MASK = IMPURE | REPEATED_EFFECT | STREAMED | RANDOM | TLC_EVAL;
-const EFFECT_MASK = IMPURE | RANDOM;
+// FcnLambdaValue#apply evaluates the body again at each application, as an uncached LazyValue
+// evaluates its expression again at each reference. Only what a second evaluation shows tells that
+// apart from keeping the first result: output, TLCSet's registers, TLCGet and JavaTime read again,
+// or other random draws. An Assert that holds holds again, and one that fails throws its
+// EvalException the first time, as any error does.
+const EFFECT_MASK = REPEATED_EFFECT | RANDOM;
 // TLC streams a fresh \cup or UNION as it streams the startup value.
 const SHOWN_MASK = IMPURE | REPEATED_EFFECT | RANDOM | TLC_EVAL;
 
@@ -864,8 +869,7 @@ const EFFECT_FLAGS = {
   any: IMPURE,
   repeated: REPEATED_EFFECT,
   streamed: STREAMED,
-  // What a second evaluation shows: output again, or other random draws.
-  replayed: REPEATED_EFFECT | RANDOM,
+  replayed: EFFECT_MASK,
   varying: EFFECT_MASK,
 };
 
