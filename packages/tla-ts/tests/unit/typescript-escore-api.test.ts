@@ -18,10 +18,12 @@ interface Outcome {
 }
 
 // ESCore's evaluation nests deeper than a test's stack, so the API runs on a worker with a 256 MB
-// stack. A request compiles with the public compile, or on ESCore
-// from a realm that Node recorded and that went through JSON, as a browser reads it.
-const worker = new Worker(
-  `const { register } = require("node:module");
+// stack, or with 8 MB, as the CLI's thread has. A request compiles with the public compile, or on
+// ESCore from a realm that Node recorded and that went through JSON, as a browser reads it, and, as
+// in a browser, without Node's built-in modules, which a browser's process, where it has one, lacks.
+const createApi = (stackSizeMb: number) => {
+  const worker = new Worker(
+    `const { register } = require("node:module");
   const { parentPort, workerData } = require("node:worker_threads");
   // HACK: Node strips the types of tla-ts's sources, whose imports leave out the extension.
   register("data:text/javascript," + encodeURIComponent(\`export const resolve = (specifier, context, next) =>
@@ -50,10 +52,16 @@ const worker = new Worker(
     const modules = await loading;
     const [compile, parallel, values, errors, api] = modules;
     const options = { source: request.source, fileName: request.fileName };
+    const getBuiltinModule = process.getBuiltinModule;
     try {
+      // HACK: a browser has no Node to parse a file for its early errors, which tla-ts reaches
+      // through process.getBuiltinModule.
+      const runtime = request.isRecorded ? getRecorded(modules) : undefined;
+      if (request.isRecorded) process.getBuiltinModule = undefined;
       const spec = request.isRecorded
-        ? api.compileEscore(options, getRecorded(modules))
+        ? api.compileEscore(options, runtime)
         : await compile.compile(options);
+      process.getBuiltinModule = getBuiltinModule;
       const result = await parallel.check({ ...spec, onPrint: () => {} });
       parentPort.postMessage({
         id: request.id,
@@ -68,34 +76,38 @@ const worker = new Worker(
         },
       });
     } catch (error) {
+      process.getBuiltinModule = getBuiltinModule;
       parentPort.postMessage({
         id: request.id,
         outcome: { error: { name: error.constructor.name, isTlaError: error instanceof errors.TlaError, message: error.message } },
       });
     }
   });`,
-  {
-    eval: true,
-    workerData: {
-      source: pathToFileURL(join(import.meta.dirname, "../../src")).href,
-      directory: join(import.meta.dirname, "../../ecmascript"),
+    {
+      eval: true,
+      workerData: {
+        source: pathToFileURL(join(import.meta.dirname, "../../src")).href,
+        directory: join(import.meta.dirname, "../../ecmascript"),
+      },
+      resourceLimits: { stackSizeMb },
     },
-    resourceLimits: { stackSizeMb: 256 },
-  },
-);
-worker.unref();
-afterAll(() => worker.terminate());
+  );
+  worker.unref();
+  afterAll(() => worker.terminate());
+  const pending: ((outcome: Outcome) => void)[] = [];
+  worker.on("message", (response: { id: number; outcome: Outcome }) =>
+    pending[response.id](response.outcome),
+  );
+  return (source: string, fileName: string, isRecorded = false) =>
+    new Promise<Outcome>((resolve) => {
+      worker.postMessage({ id: pending.length, source, fileName, isRecorded });
+      pending.push(resolve);
+    });
+};
 
-const pending: ((outcome: Outcome) => void)[] = [];
-worker.on("message", (response: { id: number; outcome: Outcome }) =>
-  pending[response.id](response.outcome),
-);
+const getOutcome = createApi(256);
 
-const getOutcome = (source: string, fileName: string, isRecorded = false) =>
-  new Promise<Outcome>((resolve) => {
-    worker.postMessage({ id: pending.length, source, fileName, isRecorded });
-    pending.push(resolve);
-  });
+const getCliStackOutcome = createApi(8);
 
 // The worker prepares ESCore's runtime before the first check, which takes longer than a check.
 beforeAll(
@@ -273,6 +285,36 @@ describe("compile on ESCore from a recorded realm as from Node's", () => {
       expect(recorded).toEqual(await getOutcome(source, "entries.ts"));
       expect(getFailure(recorded)).toContain('[\\"b2\\",\\"a1\\"]');
     });
+  });
+
+  // Without a Node to parse a file, as in a browser, TypeScript's checks find its early errors,
+  // whose inference of a long chain of JSDoc types, as a large program's code makes, can run out
+  // of stack, where only V8 could tell.
+  describe("check a file's early errors without a Node to parse it", () => {
+    const getSource = (expected: number) =>
+      `const kind = [0].length - 1;\nif (kind !== ${expected}) throw new RangeError("kind " + kind);\n`;
+
+    it("agrees with Node", async () => {
+      expect(runNode({ "kinds.js": getSource(0) }, "kinds.js").status).toBe(0);
+      expect(await getOutcome(getSource(0), "kinds.js", true)).toMatchObject({
+        status: "success",
+      });
+    });
+
+    it("rejects another result", async () => {
+      expect(runNode({ "kinds.js": getSource(1) }, "kinds.js").stderr).toContain(
+        "RangeError: kind 0",
+      );
+      expect(getFailure(await getOutcome(getSource(1), "kinds.js", true))).toContain('"kind 0"');
+    });
+
+    // On the CLI's stack, TypeScript's checker runs out of stack on a chain of ten thousand types.
+    it("stops where TypeScript's checks run out of stack", async () => {
+      const source = `${Array.from({ length: 10000 }, (_, index) => `/** @typedef {Kind${index + 1} | ${index}} Kind${index} */`).join("\n")}\n/** @typedef {10000} Kind10000 */\n/** @type {Kind0} */\nconst kind = [0].length - 1;\n`;
+      expect(getFailure(await getCliStackOutcome(source, "kinds.js", true))).toContain(
+        "tla-ts can't tell whether Node rejects a file's syntax without a Node to parse it",
+      );
+    }, 120_000);
   });
 
   describe("answer a locale tag that the realm recorded, and stop at another", () => {
