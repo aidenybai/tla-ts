@@ -1146,6 +1146,32 @@ describe("runSmtlibScript runs its commands as Z3 does", () => {
     ).toEqual(["unknown", '(:reason-unknown "canceled")', "(:rlimit 424)"]);
   });
 
+  it("stops searching when the model check's push cancels the search", () => {
+    expect(
+      run([
+        "(declare-sort U 0)",
+        "(declare-fun mem (U U) Bool)",
+        "(declare-fun s () U)",
+        "(declare-fun t () U)",
+        "(push 1)",
+        "(assert (forall ((x U)) (=> (mem x s) (mem x t))))",
+        "(assert (not (= s t)))",
+        "(set-option :rlimit 172)",
+        "(check-sat)",
+        "(set-option :rlimit 0)",
+        "(declare-fun p1 () Bool)",
+        "(declare-fun p2 () Bool)",
+        "(declare-fun p3 () Bool)",
+        "(declare-fun p4 () Bool)",
+        "(declare-fun p5 () Bool)",
+        "(assert (or p5 p1 p3))",
+        "(assert (or p2 p3 (not p4)))",
+        "(check-sat)",
+        "(get-info :rlimit)",
+      ]),
+    ).toEqual(["unknown", "sat", "(:rlimit 382)"]);
+  });
+
   it("finishes base-level propagation past the limit and finds the conflict", () => {
     expect(run([CIGARETTE_SMOKERS, "(get-info :rlimit)", "(get-info :reason-unknown)"])).toEqual([
       "unsat",

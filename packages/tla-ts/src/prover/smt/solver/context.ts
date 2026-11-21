@@ -1835,12 +1835,15 @@ export class Context extends Internalizer {
     this.caseSplitQueue.initSearchEh();
     if (this.manager.hasTypeVars) this.registerFamily(FAMILY_POLY);
     this.isSearching = true;
-    const currentLevel = this.scopeLevel;
-    let result: number | undefined;
-    while (result === undefined) result = this.restart(this.boundedSearch(), currentLevel);
-    this.caseSplitQueue.endSearchEh();
-    this.isSearching = false;
-    return result;
+    try {
+      const currentLevel = this.scopeLevel;
+      let result: number | undefined;
+      while (result === undefined) result = this.restart(this.boundedSearch(), currentLevel);
+      this.caseSplitQueue.endSearchEh();
+      return result;
+    } finally {
+      this.isSearching = false;
+    }
   }
 
   getNumConflicts() {
