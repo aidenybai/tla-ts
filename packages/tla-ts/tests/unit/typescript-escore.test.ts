@@ -2671,6 +2671,18 @@ describe("compiles scripts by specializing ESCore", () => {
       );
       expect((await checkScript("namespace N { export type T = 1; }")).message).toBeUndefined();
     });
+
+    it.each([
+      ["an object's", "const holder = { get a(PARAMETER) { return 1; } };\nholder.a;"],
+      ["a class's", "class Holder { get a(PARAMETER) { return 1; } }\nnew Holder().a;"],
+    ])("rejects a parameter of %s getter as Node does, but this", async (_title, source) => {
+      expect((await checkScript(source.replace("PARAMETER", "value = null"))).message).toContain(
+        "A `get` accessor cannot have parameters",
+      );
+      expect(
+        (await checkScript(source.replace("PARAMETER", "this: unknown"))).message,
+      ).toBeUndefined();
+    });
   });
 
   describe("keeps a date's local time as a host in UTC does", () => {
