@@ -18,7 +18,7 @@ export interface Checked {
 }
 
 // ESCore's evaluation nests deeper than a test's stack, so the public compile runs on a worker
-// with the stack that test262-engine262 gives ESCore, which prepares ESCore's runtime once.
+// with a 256 MB stack, which prepares ESCore's runtime once.
 const WORKER = `const { register } = require("node:module");
 const { parentPort, workerData } = require("node:worker_threads");
 // HACK: Node strips the types of tla-ts's sources, whose imports leave out the extension.

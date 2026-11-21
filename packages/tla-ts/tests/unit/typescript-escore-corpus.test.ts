@@ -107,8 +107,8 @@ const corpus: Corpus = JSON.parse(
   readFileSync(join(PACKAGE, "tests/fixtures/typescript/escore-corpus.json"), "utf8"),
 );
 
-// ESCore's evaluation nests deeper than a test's stack, so checks run on workers with the stack
-// that test262-engine262 gives ESCore, each of which prepares ESCore's runtime once. A script's
+// ESCore's evaluation nests deeper than a test's stack, so checks run on workers with a 256 MB
+// stack, each of which prepares ESCore's runtime once. A script's
 // steps fail with what it threw: an error's message, or the value as a string.
 const WORKER = String.raw`const { register } = require("node:module");
 const { parentPort, workerData } = require("node:worker_threads");

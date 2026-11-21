@@ -130,7 +130,7 @@ const getNumberRecord = (
 ) =>
   `[k |-> "${kind}", neg |-> ${isNegative ? "TRUE" : "FALSE"}, i |-> ${integer}, m |-> ${getLimbs(mantissa)}, e |-> ${exponent}]`;
 
-// A Number as ESNumber's canonical record, as test262-parse-node gives a literal.
+// A Number as ESNumber's canonical record, the record that a numeric literal gives.
 export const getNumber = (value: number) => {
   const view = new DataView(new ArrayBuffer(8));
   view.setFloat64(0, value);

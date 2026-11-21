@@ -17,8 +17,8 @@ interface Outcome {
   error?: { name: string; isTlaError: boolean; message: string };
 }
 
-// ESCore's evaluation nests deeper than a test's stack, so the API runs on a worker with the stack
-// that test262-engine262 gives ESCore. A request compiles with the public compile, or on ESCore
+// ESCore's evaluation nests deeper than a test's stack, so the API runs on a worker with a 256 MB
+// stack. A request compiles with the public compile, or on ESCore
 // from a realm that Node recorded and that went through JSON, as a browser reads it.
 const worker = new Worker(
   `const { register } = require("node:module");

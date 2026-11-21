@@ -14,8 +14,8 @@ interface ModelResult {
   trace: Record<string, string>[] | undefined;
 }
 
-// ESCore's evaluation nests deeper than a test's stack, so checks run on one worker with the
-// stack that test262-engine262 gives ESCore, which prepares ESCore's runtime once for them all.
+// ESCore's evaluation nests deeper than a test's stack, so checks run on one worker with a
+// 256 MB stack, which prepares ESCore's runtime once for them all.
 const worker = new Worker(
   `const { register } = require("node:module");
   const { parentPort, workerData } = require("node:worker_threads");
