@@ -1003,10 +1003,15 @@ const copyDefinition = (rewrite: Rewrite, key: string): string => {
             // TLC has no such LET, so the call stack it prints has no position for it.
             location: { line: mapped.body.location.line, column: mapped.body.location.column },
           };
-    if (body !== mapped.body) instantiation.boundSubstitutions.lets.add(body);
+    const lets = instantiation.boundSubstitutions.lets;
+    if (body !== mapped.body) lets.add(body);
     const copied = withInstanceParams({ ...mapped, body }, instantiation.params);
-    const frames = substitutionFrames.get(definition.body);
-    if (frames && copied.kind === "Operator") {
+    const carried =
+      definition.body.kind === "Let" && lets.has(definition.body)
+        ? substitutionFrames.get(definition.body.body)
+        : undefined;
+    const frames = [...(substitutionFrames.get(definition.body) ?? []), ...(carried ?? [])];
+    if (frames.length > 0 && copied.kind === "Operator") {
       substitutionFrames.set(body === mapped.body ? copied.body : mapped.body, frames);
     }
     return copied;

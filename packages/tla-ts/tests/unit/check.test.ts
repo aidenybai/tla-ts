@@ -2012,6 +2012,42 @@ ASSUME TLCFP(a) = -887695703
     ]);
   });
 
+  it("records the INSTANCE of each module between an instance and a definition three instances down, where every level binds its substitutes, as TLC does", async () => {
+    const modules = new Map([
+      [
+        "P",
+        '---- MODULE P ----\nEXTENDS TLC\nCONSTANT c\nVARIABLE z\nJ == INSTANCE R WITH b <- PrintT(<<"b", c>>), v <- z\n====\n',
+      ],
+      [
+        "R",
+        '---- MODULE R ----\nEXTENDS TLC\nCONSTANT b\nVARIABLE v\nK == INSTANCE Q WITH d <- PrintT(<<"d", b>>), w <- v\n====\n',
+      ],
+      [
+        "Q",
+        '---- MODULE Q ----\nEXTENDS TLC, Naturals\nCONSTANT d\nVARIABLE w\nIn == d /\\ w = w\nErr == d /\\ w + "a" = 1\nOutErr == In /\\ Err\n====\n',
+      ],
+    ]);
+    const result = await check({
+      source:
+        '---- MODULE M ----\nEXTENDS TLC, Naturals\nVARIABLE y\nInit == y = 0\nNext == y\' = (y + 1) % 2\nI == INSTANCE P WITH c <- PrintT("c"), z <- y\nInv == I!J!K!OutErr\n====\n',
+      config: "INIT Init\nNEXT Next\nINVARIANT Inv\n",
+      loadModule: (name) => modules.get(name),
+      onPrint: () => {},
+    });
+    expect(formatCallStackLines(result)?.filter((line) => line !== "")).toEqual([
+      "Line 4, column 9 to line 4, column 13 in M",
+      "Line 7, column 8 to line 7, column 19 in M",
+      "Line 6, column 1 to line 6, column 45 in M",
+      "Line 5, column 1 to line 5, column 52 in P",
+      "Line 5, column 1 to line 5, column 52 in R",
+      "Line 7, column 11 to line 7, column 19 in Q",
+      "Line 7, column 17 to line 7, column 19 in Q",
+      "Line 6, column 8 to line 6, column 23 in Q",
+      "Line 6, column 13 to line 6, column 23 in Q",
+      "Line 6, column 13 to line 6, column 19 in Q",
+    ]);
+  });
+
   it.each([
     [
       "CONSTANT N <- D",
