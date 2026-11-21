@@ -313,6 +313,7 @@ const createTheoremDefinition = (
   isLeibniz: false,
   opLevelCond: [],
   maxLevels: [],
+  weights: [],
   minMaxLevel: [],
 });
 

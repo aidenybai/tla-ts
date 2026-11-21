@@ -55,7 +55,7 @@ export type OnBinding = (
   maxGeneration: number,
 ) => void;
 
-const isAcDecl = (manager: AstManager, decl: number) => {
+export const isAcDecl = (manager: AstManager, decl: number) => {
   const info = manager.funcDecls[decl];
   if (info.family === FAMILY_BASIC)
     return info.op === OP_AND || info.op === OP_OR || info.op === OP_XOR;
@@ -573,10 +573,11 @@ export class Mam implements LabelHasher<Enode> {
   }
 
   getLabelHash(decl: number) {
-    const cached = this.labelHashes[decl];
+    const smallId = this.manager.funcDecls[decl].smallId;
+    const cached = this.labelHashes[smallId];
     if (cached !== undefined) return cached;
-    const hash = mkMix(17, 3, this.manager.funcDecls[decl].smallId) & 63;
-    this.labelHashes[decl] = hash;
+    const hash = mkMix(17, 3, smallId) & 63;
+    this.labelHashes[smallId] = hash;
     return hash;
   }
 

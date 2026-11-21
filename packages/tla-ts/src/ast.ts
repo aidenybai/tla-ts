@@ -391,7 +391,20 @@ export interface FunctionDefinition {
   location: SourceLocation;
 }
 
-export type Definition = OperatorDefinition | FunctionDefinition;
+// An ASSUME/PROVE theorem as an operator: its body is TLC's runtime form, and SANY levels its whole statement.
+export interface TheoremDefinition extends OperatorDefinition {
+  statement: AssumeProve;
+}
+
+export interface LetSubstituteDefinition extends OperatorDefinition {
+  isLetSubstitute: true;
+}
+
+export type Definition =
+  | OperatorDefinition
+  | FunctionDefinition
+  | TheoremDefinition
+  | LetSubstituteDefinition;
 
 export interface Declaration {
   name: string;

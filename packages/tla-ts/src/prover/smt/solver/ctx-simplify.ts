@@ -49,7 +49,7 @@ class CtxSimplifier {
   private simplifyForm(goal: Goal, index: number, isAsserted: boolean) {
     const manager = this.manager;
     this.depth = 0;
-    const result = this.simplify(goal.forms.items[index]);
+    const result = this.simplify(goal.forms.get(index));
     const dependency = goal.getDependency(index);
     if (
       isAsserted &&

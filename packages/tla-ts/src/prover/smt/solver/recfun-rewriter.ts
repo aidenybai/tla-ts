@@ -72,6 +72,21 @@ const isDecreasingArg = (
   return true;
 };
 
+export const isRecFunWithGroundRecursionArgs = (manager: AstManager, expr: number) => {
+  const decl = manager.decls[expr];
+  if (!isDefinedApp(manager, expr) || !manager.recFunDefs.has(decl)) return false;
+  let hasDecreasing = false;
+  for (let index = 0; index < manager.getNumArgs(expr); index++) {
+    const arg = manager.getArg(expr, index);
+    const sort = manager.sorts[arg];
+    if (!manager.isGroundApp(arg)) {
+      if (!manager.isUninterpretedSort(sort)) return false;
+    } else if (manager.isDatatypeSort(sort) && isDecreasingArg(manager, decl, index, true))
+      hasDecreasing = true;
+  }
+  return hasDecreasing;
+};
+
 // recfun_rewriter::mk_app_core, which unfolds a body with uninterpreted functions only with
 // unfold_recursive_functions, which only the model evaluator sets.
 export const mkRecFunApp = (

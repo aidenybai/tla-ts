@@ -920,6 +920,52 @@ describe("tactics where Z3 5.3.2 fails", () => {
   });
 });
 
+describe("a canceled rewrite, as Z3 5.3.2 reports it", () => {
+  it("fails the apply command unless the tactic catches the rewriter's cancel", () => {
+    expect(
+      run([
+        "(declare-const a Int)",
+        "(declare-const b Int)",
+        "(declare-const p Bool)",
+        "(assert (> (ite p a b) 0))",
+        "(set-option :rlimit 1)",
+        "(apply elim-term-ite)",
+        "(apply der)",
+        "(apply (or-else elim-term-ite skip))",
+        "(set-option :rlimit 0)",
+        "(apply elim-term-ite)",
+      ]),
+    ).toEqual([
+      '(error "line 6 column 20: max. resource limit exceeded")',
+      '(error "tactic failed: max. resource limit exceeded")',
+      "(goals\n(goal\n  (> (ite p a b) 0)\n  :precision precise :depth 0)\n)",
+      "(goals\n(goal\n  (> k!0 0)\n  (or (not p) (= k!0 a))\n  (or p (= k!0 b))\n  :precision precise :depth 1)\n)",
+    ]);
+  });
+});
+
+describe("the resource limit, as the simplifiers of Z3 5.3.2 stop at it", () => {
+  it("stops qe-light between formulas without failing", () => {
+    expect(
+      run([
+        "(declare-const a Int)",
+        "(declare-const b Int)",
+        "(declare-fun f (Int) Int)",
+        "(assert (> a 0))",
+        "(assert (> b a))",
+        "(assert (forall ((x Int)) (or (> (f x) 0) (and (< x a) (= x 3)))))",
+        "(set-option :rlimit 1)",
+        "(apply qe-light)",
+        "(set-option :rlimit 2)",
+        "(apply qe-light)",
+      ]),
+    ).toEqual([
+      "(goals\n(goal\n  (> a 0)\n  (> b a)\n  (forall ((x Int)) (or (> (f x) 0) (and (< x a) (= x 3))))\n  :precision precise :depth 1)\n)",
+      '(error "tactic failed: max. resource limit exceeded")',
+    ]);
+  });
+});
+
 describe("the logic check names a theory as Z3 does", () => {
   // check_logic prints m.get_family_name(fid), and the label family is a builtin it accepts.
   it("names the recfun family and accepts a label", () => {
@@ -977,6 +1023,21 @@ describe("the floating-point conversions round as Z3 does", () => {
         "(check-sat)",
       ]),
     ).toEqual(["unknown"]);
+  });
+});
+
+describe("fpa2bv, as Z3 5.3.2 builds its terms", () => {
+  it("keeps the negation of true and false", () => {
+    expect(
+      run([
+        "(declare-const p Bool)",
+        "(assert (or p (fp.isNegative (_ NaN 2 3))))",
+        "(assert (or p (fp.isPositive (fp #b0 #b11 #b01))))",
+        "(apply fpa2bv)",
+      ]),
+    ).toEqual([
+      "(goals\n(goal\n  (or p (and (not true) false))\n  (or p (and (not true) true))\n  :precision precise :depth 1)\n)",
+    ]);
   });
 });
 
@@ -1145,6 +1206,39 @@ describe("tseitin-cnf, as Z3 5.3.2 composes it", () => {
       "(goals\n(goal\n  (not true)\n  :precision precise :depth 1)\n)",
       "(goals\n(goal\n  (not false)\n  :precision precise :depth 1)\n)",
       "(goals\n(goal\n  (or p (not true))\n  :precision precise :depth 1)\n)",
+    ]);
+  });
+});
+
+describe("der, as Z3 5.3.2 eliminates a variable", () => {
+  it("negates the other side of an equivalence with mk_not, which drops a double negation", () => {
+    expect(
+      run([
+        "(declare-const p Bool)",
+        "(declare-fun f (Bool) Bool)",
+        "(assert (forall ((x Bool)) (or (= x (not p)) (f x))))",
+        "(assert (forall ((x Bool)) (or (= x true) (f x))))",
+        "(assert (forall ((x Bool)) (or (= (not p) x) (f x) p)))",
+        "(apply der)",
+      ]),
+    ).toEqual([
+      "(goals\n(goal\n  (f p)\n  (f false)\n  (or p (f p))\n  :precision precise :depth 1)\n)",
+    ]);
+  });
+});
+
+describe("occf, as Z3 5.3.2 negates a constraint", () => {
+  it("keeps the negation of true, since ast_manager::mk_not folds nothing", () => {
+    expect(
+      run([
+        "(declare-const a Int)",
+        "(declare-const b Int)",
+        "(assert (or (> a 0) (not true) (> b 0)))",
+        "(assert (or (> a 1) true (> b 1)))",
+        "(apply occf)",
+      ]),
+    ).toEqual([
+      "(goals\n(goal\n  (or (not k!0) k!1 (> a 0))\n  (or k!0 k!2 (> a 1))\n  (or k!0 (not true))\n  (or (not k!1) (> b 0))\n  (or (not k!0) true)\n  (or (not k!2) (> b 1))\n  :precision precise :depth 1)\n)",
     ]);
   });
 });
@@ -2648,6 +2742,45 @@ describe("the goals of a tactic free what Z3 5.3.2 frees", () => {
     ).toEqual(["sat", "sat", "((a 5)\n (b 2))"]);
   });
 
+  it("reroots the formulas that or-else restores at the first long read, as Z3 reads them", () => {
+    expect(
+      run([
+        ...["x0", "x1", "x2", "x3", "x4", "x5", "x6", "x7"].map(
+          (name) => `(declare-const ${name} Int)`,
+        ),
+        "(declare-const p Bool)",
+        "(declare-const r Bool)",
+        "(assert (and (and (< x6 0) p) (>= x5 x2)))",
+        "(assert (and (< x4 x5) (and (>= 1 x7) (<= x3 x3))))",
+        "(assert (<= x0 x1))",
+        "(assert (<= x2 x6))",
+        "(assert (and r (< x7 (>= x6 x1))))",
+        "(assert (or (<= x5 (ite true x6 x6)) (< x5 (- x0 x2))))",
+        "(assert (< x6 x3))",
+        "(apply (or-else (then nnf fail) simplify))",
+      ]),
+    ).toEqual([
+      [
+        "(goals",
+        "(goal",
+        "  (not (<= 0 x6))",
+        "  p",
+        "  (>= x5 x2)",
+        "  (not (<= x5 x4))",
+        "  (>= 1 x7)",
+        "  (<= x0 x1)",
+        "  (<= x2 x6)",
+        "  r",
+        "  (not (<= (ite (>= x6 x1) 1 0) x7))",
+        "  (let ((a!1 (not (<= (+ x0 (* (- 1) x2)) x5))))",
+        "    (or (<= x5 x6) a!1))",
+        "  (not (<= x3 x6))",
+        "  :precision precise :depth 1)",
+        ")",
+      ].join("\n"),
+    ]);
+  });
+
   it("leaves the formulas of the smt tactic to the goal alone without unsat cores", () => {
     expect(
       run([
@@ -3013,6 +3146,163 @@ describe("the goals of a tactic free what Z3 5.3.2 frees", () => {
       ].join("\n"),
     ]);
   });
+
+  it("frees the negated condition of each step of cofactor-term-ite as the step ends", () => {
+    expect(
+      run([
+        "(declare-const x2 Int)",
+        "(declare-const x3 Int)",
+        "(declare-const x4 Int)",
+        "(declare-const x5 Int)",
+        "(declare-const x6 Int)",
+        "(declare-const x7 Int)",
+        "(declare-const q Bool)",
+        "(assert q)",
+        "(assert (= 3 x6))",
+        "(assert (< (= x5 2) (ite q x2 x7)))",
+        "(assert (or true true))",
+        "(assert (< 0 (- x4 (ite (<= x7 x3) x4 x7))))",
+        "(assert (<= x3 (- x4 x6)))",
+        "(assert (<= true x5))",
+        "(assert (<= true x7))",
+        "(assert (or (or (<= true x3) (< (- x4 x2) x2)) (< (+ x4 x2) x5)))",
+        "(assert q)",
+        "(assert q)",
+        "(assert (and (>= x2 x2) (< x6 x3)))",
+        "(assert (>= true 0))",
+        "(assert (< x2 true))",
+        "(apply (or-else (then cofactor-term-ite fail) simplify))",
+      ]),
+    ).toEqual([
+      [
+        "(goals",
+        "(goal",
+        "  q",
+        "  (= 3 x6)",
+        "  (not (<= (ite q x2 x7) (ite (= x5 2) 1 0)))",
+        "  (let ((a!1 (+ x4 (* (- 1) (ite (<= x7 x3) x4 x7)))))",
+        "    (not (<= a!1 0)))",
+        "  (<= x3 (+ x4 (* (- 1) x6)))",
+        "  (<= 1 x5)",
+        "  (<= 1 x7)",
+        "  (or (not (<= x5 (+ x4 x2))) (not (<= (* 2 x2) x4)) (<= 1 x3))",
+        "  (not (<= x3 x6))",
+        "  (not (<= 1 x2))",
+        "  :precision precise :depth 1)",
+        ")",
+      ].join("\n"),
+    ]);
+  });
+});
+
+describe("unit-subsume-simplify, as Z3 5.3.2 keeps its context", () => {
+  it("finds macros in its context when smt.macro_finder is set", () => {
+    expect(
+      run([
+        "(set-option :smt.macro_finder true)",
+        "(declare-fun f (Int) Int)",
+        "(declare-const p Bool)",
+        "(declare-const q Bool)",
+        "(assert (forall ((x Int)) (> (f (+ x 1)) 0)))",
+        "(assert (or (> (f 5) 0) p))",
+        "(assert (or q (> (f 7) 0) p))",
+        "(apply unit-subsume-simplify)",
+        "(get-info :rlimit)",
+      ]),
+    ).toEqual([
+      "(goals\n(goal\n  (forall ((x Int)) (> (f (+ x 1)) 0))\n  (or (> (f 5) 0) p)\n  (or q (> (f 7) 0) p)\n  :precision precise :depth 0)\n)",
+      "(:rlimit 784)",
+    ]);
+  });
+
+  it("propagates in its context at the smt.relevancy level", () => {
+    expect(
+      run([
+        "(set-option :smt.relevancy 1)",
+        "(declare-fun f (Int) Int)",
+        "(declare-fun g (Int) Int)",
+        "(declare-const p Bool)",
+        "(declare-const q Bool)",
+        "(declare-const a Int)",
+        "(declare-const b Int)",
+        "(assert (forall ((x Int)) (! (> (f x) (g x)) :pattern ((f x)))))",
+        "(assert (forall ((x Int)) (! (> (g x) x) :pattern ((g x)))))",
+        "(assert (or (> (f a) a) p))",
+        "(assert (or q (< (f b) b) (> (g a) 0)))",
+        "(assert (or (and (> a 0) (< b 0)) q (= (f a) (g b))))",
+        "(apply unit-subsume-simplify)",
+        "(get-info :rlimit)",
+      ]),
+    ).toEqual([
+      [
+        "(goals",
+        "(goal",
+        "  (forall ((x Int)) (! (> (f x) (g x)) :pattern ((f x))))",
+        "  (forall ((x Int)) (! (> (g x) x) :pattern ((g x))))",
+        "  (or q (< (f b) b) (> (g a) 0))",
+        "  (or (and (> a 0) (< b 0)) q (= (f a) (g b)))",
+        "  :precision precise :depth 0)",
+        ")",
+      ].join("\n"),
+      "(:rlimit 1861)",
+    ]);
+  });
+
+  it("makes its context with the tactic, even when the tactic never runs", () => {
+    expect(
+      run([
+        "(declare-const a Int)",
+        "(apply (or-else skip unit-subsume-simplify))",
+        "(get-info :rlimit)",
+      ]),
+    ).toEqual(["(goals\n(goal\n  :precision precise :depth 0)\n)", "(:rlimit 2)"]);
+  });
+
+  it("keeps its clause constants from one goal to the next", () => {
+    expect(
+      run([
+        "(declare-const p Bool)",
+        "(declare-const q Bool)",
+        "(declare-const a Int)",
+        "(declare-const b Int)",
+        "(assert (or p q))",
+        "(assert (or p (not q)))",
+        "(assert (> (ite q a b) 0))",
+        "(apply (then split-clause unit-subsume-simplify elim-term-ite))",
+        "(get-info :rlimit)",
+      ]),
+    ).toEqual([
+      [
+        "(goals",
+        "(goal",
+        "  p",
+        "  (> k!3 0)",
+        "  (or (not q) (= k!3 a))",
+        "  (or q (= k!3 b))",
+        "  :precision precise :depth 2)",
+        "(goal",
+        "  q",
+        "  (or p (not q))",
+        "  (> k!4 0)",
+        "  (or (not q) (= k!4 a))",
+        "  (or q (= k!4 b))",
+        "  :precision precise :depth 2)",
+        ")",
+      ].join("\n"),
+      "(:rlimit 728)",
+    ]);
+  });
+
+  it("fails on a goal with proofs", () => {
+    expect(
+      run([
+        "(set-option :produce-proofs true)",
+        "(declare-const p Bool)",
+        "(assert p)",
+        "(apply unit-subsume-simplify)",
+      ]),
+    ).toEqual(['(error "tactic failed: unit-subsume-simplify does not support proof production")']);
+  });
 });
 
 describe("ctx-solver-simplify, as Z3 5.3.2 keeps its kernel", () => {
@@ -3024,6 +3314,93 @@ describe("ctx-solver-simplify, as Z3 5.3.2 keeps its kernel", () => {
         "(get-info :rlimit)",
       ]),
     ).toEqual(["(goals\n(goal\n  :precision precise :depth 0)\n)", "(:rlimit 2)"]);
+  });
+
+  it("makes its kernel as the tactic is read, even when the rest of the tactic fails to parse", () => {
+    expect(
+      run([
+        "(declare-const a Int)",
+        "(assert (> a 0))",
+        "(apply (then ctx-solver-simplify foo))",
+        "(get-info :rlimit)",
+        '(apply (using-params ctx-solver-simplify :qi.cost "(+ weight 30)"))',
+        "(get-info :rlimit)",
+      ]),
+    ).toEqual([
+      '(error "line 3 column 33: invalid tactic, unknown tactic foo")',
+      "(:rlimit 9)",
+      '(error "line 5 column 66: invalid using-params combinator, unsupported parameter kind")',
+      "(:rlimit 10)",
+    ]);
+  });
+
+  it("frees its fresh functions with the tactic, so later declarations reuse their ids", () => {
+    expect(
+      run([
+        "(declare-const a Int)",
+        "(declare-fun f (Int) Int)",
+        "(assert (> (f a) a))",
+        "(apply ctx-solver-simplify)",
+        "(declare-fun g (Int) Int)",
+        "(declare-fun h (Int) Int)",
+        "(declare-fun c () Int)",
+        "(declare-fun d () Int)",
+        "(assert (= (g c) (h d)))",
+        "(assert (= (g d) (h c)))",
+        "(assert (distinct (g c) (g d)))",
+        "(assert (forall ((x Int)) (>= (g x) (h x))))",
+        "(check-sat)",
+        "(get-info :rlimit)",
+      ]),
+    ).toEqual([
+      "(goals\n(goal\n  (not (<= (f a) a))\n  :precision precise :depth 1)\n)",
+      "unsat",
+      "(:rlimit 1403)",
+    ]);
+  });
+
+  it("frees the tactics read before a parse error from the innermost combinator out", () => {
+    const check = [
+      "(declare-fun g (Int) Int)",
+      "(declare-fun h (Int) Int)",
+      "(declare-fun c () Int)",
+      "(declare-fun d () Int)",
+      "(assert (= (g c) (h d)))",
+      "(assert (= (g d) (h c)))",
+      "(assert (distinct (g c) (g d)))",
+      "(assert (forall ((x Int)) (>= (g x) (h x))))",
+      "(check-sat)",
+      "(get-info :rlimit)",
+    ];
+    expect(
+      run(["(declare-const a Int)", "(apply (then ctx-solver-simplify qfbv foo))", ...check]),
+    ).toEqual([
+      '(error "line 2 column 38: invalid tactic, unknown tactic foo")',
+      "unsat",
+      "(:rlimit 710)",
+    ]);
+    expect(
+      run([
+        "(declare-const a Int)",
+        "(apply (then ctx-solver-simplify (then qfbv foo)))",
+        ...check,
+      ]),
+    ).toEqual([
+      '(error "line 2 column 44: invalid tactic, unknown tactic foo")',
+      "unsat",
+      "(:rlimit 686)",
+    ]);
+    expect(
+      run([
+        "(declare-const a Int)",
+        "(apply (then (or-else ctx-solver-simplify qfbv) foo))",
+        ...check,
+      ]),
+    ).toEqual([
+      '(error "line 2 column 48: invalid tactic, unknown tactic foo")',
+      "unsat",
+      "(:rlimit 710)",
+    ]);
   });
 
   it("makes a new kernel after each run", () => {

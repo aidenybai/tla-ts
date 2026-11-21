@@ -137,7 +137,7 @@ export const fixDlVar = (manager: AstManager, goal: Goal, options: RewriterOptio
   rewriter.setSubstitution(new Map([[variable, zero]]));
   const size = goal.forms.size;
   for (let index = 0; index < size && !goal.isInconsistent; index++) {
-    const rewritten = rewriter.rewrite(goal.forms.items[index]);
+    const rewritten = rewriter.rewrite(goal.forms.get(index));
     goal.update(index, rewritten, goal.getDependency(index));
     manager.decRef(rewritten);
   }

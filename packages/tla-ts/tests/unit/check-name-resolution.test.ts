@@ -576,6 +576,10 @@ describe("name resolution matches SANY", () => {
       "---- MODULE Inner ----\nK == 1\n====\nF == LET N == INSTANCE Inner IN N!K",
     ],
     [
+      "an inner module with an inner module of its own that only a LET instantiates, which SANY fails to parse",
+      "---- MODULE Inner ----\n---- MODULE Nested ----\nJ == 1\n====\nK == 1\n====\nF == LET N == INSTANCE Inner IN N!K",
+    ],
+    [
       "a definition after a field named THEOREM, AXIOM or DOMAIN, which SANY rejects",
       "r == [a |-> 1]\nF == r.THEOREM\nG == [r EXCEPT !.AXIOM = 1]\nH == r.DOMAIN\nI == 1",
     ],
@@ -1469,6 +1473,88 @@ describe("name resolution matches SANY", () => {
       ],
     ],
     [
+      "---- MODULE L2 ----\nTHEOREM T2 == ASSUME NEW q PROVE q\n====\n---- MODULE L1 ----\nJ1 == INSTANCE L2\n====\nINSTANCE L1\nE == J1!T2!: /\\ J1!T2!1 /\\ J1!T2!2\nF == J1!G!1",
+      [
+        ["line 9, col 6 to line 9, col 12", "Selected ASSUME/PROVE instead of expression."],
+        [
+          "line 9, col 17 to line 9, col 23",
+          "Selected a NEW declaration as an expression or operator.",
+        ],
+        [
+          "line 9, col 34 to line 9, col 34",
+          "Accessing ASSUME/PROVE clause within the scope of a declaration\n from outside that declaration's scope.",
+        ],
+        ["line 10, col 6 to line 10, col 9", "Unknown operator: `J1!G'."],
+      ],
+    ],
+    [
+      "EXTENDS Naturals\n---- MODULE In ----\nCONSTANT c\nTHEOREM T == t :: (c = 1)\nTHEOREM U == ASSUME NEW y PROVE y = c\n====\nI0 == INSTANCE In WITH c <- 1\nD == LET K == INSTANCE In WITH c <- 1 IN K!U!1\nTHEOREM ASSUME NEW e PROVE LET K == INSTANCE In WITH c <- e IN K!T!1 /\\ K!U!:\nTHEOREM TRUE\n<1> K == INSTANCE In WITH c <- 1\n<1>1. K!T!: /\\ K!U!1\n  OBVIOUS\n<1> QED",
+      [
+        [
+          "line 9, col 42 to line 9, col 46",
+          "Selected a NEW declaration as an expression or operator.",
+        ],
+        ["line 10, col 73 to line 10, col 77", "Selected ASSUME/PROVE instead of expression."],
+        [
+          "line 13, col 16 to line 13, col 20",
+          "Selected a NEW declaration as an expression or operator.",
+        ],
+      ],
+    ],
+    [
+      "THEOREM TRUE\n<1>1. s :: (LET a == 1 IN a = 1)\n  OBVIOUS\n<1>2. <1>1!2 /\\ <1>1!s!1 /\\ <1>1!s!2\n  OBVIOUS\n<1>3. LET b == 1 IN b = 1\n  OBVIOUS\n<1>4. <1>3!1 /\\ <1>3!>> /\\ <1>3!1!3\n  OBVIOUS\n<1> QED",
+      [
+        ["line 5, col 12 to line 5, col 12", "A LET/IN expression has only one operand."],
+        ["line 5, col 36 to line 5, col 36", "A LET/IN expression has only one operand."],
+        ["line 9, col 22 to line 9, col 23", "A LET/IN expression has only one operand."],
+        [
+          "line 9, col 35 to line 9, col 35",
+          "Nonexistent operand specified by `argument selector 3'.",
+        ],
+      ],
+    ],
+    [
+      "VARIABLE z\n---- MODULE Inner ----\nCONSTANT c\nVARIABLE y\na \\star b == c\nD(p) == y\nE == c\n====\nI == INSTANCE Inner WITH c <- z, y <- z\nU == I!\\star(1, 2)!1\nV == I!D(1)!1\nW == I!E!1",
+      [
+        [
+          "line 11, col 20 to line 11, col 20",
+          "Nonexistent operand specified by `argument selector 1'.",
+        ],
+        [
+          "line 12, col 13 to line 12, col 13",
+          "Choosing operand `argument selector 1' of subexpression with no operands.",
+        ],
+        [
+          "line 13, col 10 to line 13, col 10",
+          "Nonexistent operand specified by `argument selector 1'.",
+        ],
+      ],
+    ],
+    [
+      "---- MODULE In ----\nCONSTANT k\nD5 == (D5!1)\n====\nI == INSTANCE In WITH k <- 1\nJ(p) == INSTANCE In WITH k <- p\nE == I!D5!2\nF == J(TRUE)!D5!2",
+      [
+        ["line 4, col 8 to line 4, col 9", "Unknown operator: `D5'."],
+        ...["line 8, col 11 to line 8, col 11", "line 9, col 17 to line 9, col 17"].map(
+          (location) => [
+            location,
+            "Choosing operand `argument selector 2' of subexpression with no operands.",
+          ],
+        ),
+      ],
+    ],
+    [
+      "THEOREM T == t :: (T!t)\nD == t :: Undefined\nE == T!1 /\\ D!1 /\\ T!1!1\nTHEOREM U == u :: (U!1)\nF == U!1",
+      [
+        ["line 2, col 20 to line 2, col 22", "Unknown operator: `T!t'."],
+        ["line 3, col 11 to line 3, col 19", "Unknown operator: `Undefined'."],
+        ["line 4, col 8 to line 4, col 8", noOperands],
+        ["line 4, col 15 to line 4, col 15", noOperands],
+        ["line 4, col 22 to line 4, col 22", noOperands],
+        ["line 5, col 20 to line 5, col 20", "Unknown operator: `U'."],
+        ["line 6, col 8 to line 6, col 8", noOperands],
+      ],
+    ],
+    [
       "VARIABLE y\nASSUME AS == TRUE\nOp == {y, y', AS}\nA == Op!1!1 /\\ Op!2!1!1 /\\ Op!3!1\nTHEOREM T == TRUE\n<1>1. TRUE OBVIOUS\n<1>2. {<1>1, 1} OBVIOUS\n<1>3. <1>2!1!1 OBVIOUS\n<1>4. QED",
       [
         ["line 5, col 11 to line 5, col 11", noOperands],
@@ -1853,6 +1939,53 @@ describe("name resolution matches SANY", () => {
           errors.map((error) => ({
             location: error[0].startsWith("In module") ? error[0] : `${error[0]} of module M`,
             message: error[1],
+          })),
+        ),
+      );
+    },
+  );
+
+  it.each([
+    [
+      "---- MODULE P ----\nCONSTANT ba, ab\nVARIABLE v\n====\nK == INSTANCE P",
+      6,
+      [
+        "Substitution missing for symbol v declared at line 4, col 10 to line 4, col 10 of module M \nand instantiated in module M.",
+        "Substitution missing for symbol ab declared at line 3, col 14 to line 3, col 15 of module M \nand instantiated in module M.",
+        "Substitution missing for symbol ba declared at line 3, col 10 to line 3, col 11 of module M \nand instantiated in module M.",
+      ],
+    ],
+    [
+      "---- MODULE P ----\nCONSTANT c, d\n====\nK == INSTANCE P",
+      5,
+      [
+        "Substitution missing for symbol d declared at line 3, col 13 to line 3, col 13 of module M \nand instantiated in module M.",
+        "Substitution missing for symbol c declared at line 3, col 10 to line 3, col 10 of module M \nand instantiated in module M.",
+      ],
+    ],
+    [
+      "---- MODULE P ----\nCONSTANT Foo, Bar, Baz\n====\nFoo(a) == a\nBar(a) == a\nBaz(a) == a\nK == INSTANCE P",
+      8,
+      ["Bar", "Baz", "Foo"].map(
+        (name) =>
+          `Wrong number of arguments (0) given to operator '${name}', \nwhich requires 1 arguments.`,
+      ),
+    ],
+    [
+      "---- MODULE P ----\nCONSTANT c(_), d(_)\n====\nc == 1\nd == 2\nK == INSTANCE P",
+      7,
+      ["d", "c"].map(
+        (name) => `An operator must be substituted for symbol '${name}', and it must have arity 1.`,
+      ),
+    ],
+  ])(
+    "reports the errors of the instance in %j in the order of the instanced module's symbol table, as SANY does",
+    async (source, line, messages) => {
+      await expect(checkNames(source)).rejects.toThrow(
+        createSanyError(
+          messages.map((message) => ({
+            location: `line ${line}, col 1 to line ${line}, col 15 of module M`,
+            message,
           })),
         ),
       );
@@ -6473,6 +6606,33 @@ describe("name resolution matches SANY", () => {
           "line 7, col 1 to line 7, col 22",
           "Substitution error, probably due to error \nin module being instantiated.",
         ],
+      ],
+    ],
+    [
+      "LET and proof instances",
+      "---- MODULE Inner ----\nCONSTANT c\nL == 1 ++ 2\nTHEOREM T == 1 ++ 2\n====\nI0 == INSTANCE Inner WITH c <- 1\nD == LET K == INSTANCE Inner WITH c <- 1 IN TRUE\nTHEOREM ASSUME NEW CONSTANT y PROVE LET K == INSTANCE Inner WITH c <- y IN TRUE\nTHEOREM TRUE\n<1> N == INSTANCE Inner WITH c <- 1\n<1>1. LET K == INSTANCE Inner WITH c <- 1 IN TRUE\n  OBVIOUS\n<1> INSTANCE Inner WITH c <- 1\n<1> QED",
+      [
+        [
+          "line 4, col 8 to line 4, col 9",
+          "Could not find declaration or definition of symbol '++'.",
+        ],
+        ["line 4, col 6 to line 4, col 11", "Couldn't resolve infix operator symbol `++'."],
+        [
+          "line 5, col 16 to line 5, col 17",
+          "Could not find declaration or definition of symbol '++'.",
+        ],
+        ["line 5, col 14 to line 5, col 19", "Couldn't resolve infix operator symbol `++'."],
+        ...[
+          "line 7, col 1 to line 7, col 32",
+          "line 8, col 10 to line 8, col 40",
+          "line 9, col 41 to line 9, col 71",
+          "line 11, col 5 to line 11, col 35",
+          "line 12, col 11 to line 12, col 41",
+          "line 14, col 5 to line 14, col 30",
+        ].flatMap((location) => [
+          [location, "Substitution error, probably due to error \nin module being instantiated."],
+          [location, "Substitution error, probably due to error in module being instantiated."],
+        ]),
       ],
     ],
   ])("reports a body SANY fails to generate in %s", async (_description, source, errors) => {

@@ -1294,17 +1294,15 @@ export class Fpa2BvConverter {
   }
 
   mkIsNegative(x: number) {
-    const manager = this.manager;
     const isNan = this.mkIsNan(x);
     const isNeg = this.mkIsNeg(x);
-    return this.mkAnd(manager.mkNot(isNan), isNeg);
+    return this.mkAnd(this.manager.mkNot(isNan), isNeg);
   }
 
   mkIsPositive(x: number) {
-    const manager = this.manager;
     const isNan = this.mkIsNan(x);
     const isPos = this.mkIsPos(x);
-    return this.mkAnd(manager.mkNot(isNan), isPos);
+    return this.mkAnd(this.manager.mkNot(isNan), isPos);
   }
 
   mkToFp(sort: number, args: number[]) {

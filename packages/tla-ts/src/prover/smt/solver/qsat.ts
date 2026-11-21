@@ -333,6 +333,7 @@ class Kernel {
       mbqiMaxIterations: MBQI_MAX_ITERATIONS,
       isFindingMacros: false,
       relevancyLevel: 0,
+      isDelayingNewCaseSplits: false,
       isCoreMinimizing: this.isCoreMinimizing,
     });
     this.lastAssert = -1;

@@ -143,6 +143,107 @@ describe("INSTANCE matches TLC", () => {
     expect(prints).toEqual(['"g"', '"h"', '"h"', '"g"', '"K"', '"h"', '"g"', '"L"']);
   });
 
+  it.each([
+    [
+      "an enclosing module's definitions before its inner module's",
+      'A == PrintT("A")\n---- MODULE P ----\nP1 == PrintT("P1")\n====\nC == PrintT("C")',
+      ["A", "C", "P1"],
+    ],
+    [
+      "inner modules in the order of SANY's context",
+      '---- MODULE P ----\nP1 == PrintT("P1")\n====\n---- MODULE Q ----\nQ1 == PrintT("Q1")\n====',
+      ["Q1", "P1"],
+    ],
+    [
+      "an inner module's own inner module after it",
+      '---- MODULE P ----\nP1 == PrintT("P1")\n---- MODULE Q ----\nQ1 == PrintT("Q1")\n====\nP2 == PrintT("P2")\n====',
+      ["P1", "P2", "Q1"],
+    ],
+    [
+      "an instance's copies before the instanced inner module's definitions",
+      '---- MODULE P ----\nFoo == PrintT("Foo")\nBar == PrintT("Bar")\nBaz == PrintT("Baz")\n====\nI == INSTANCE P',
+      ["Bar", "Baz", "Foo", "Foo", "Bar", "Baz"],
+    ],
+    [
+      "no inner module of a module instanced with a parameter",
+      "I == INSTANCE N WITH c <- 1",
+      ["N1"],
+    ],
+    [
+      "nothing of a module that only a LET instances with a parameter",
+      "D == LET K == INSTANCE N WITH c <- 1 IN K!N1",
+      [],
+    ],
+    [
+      "nothing of a module that only a proof step instances with a parameter",
+      "THEOREM TRUE\n<1>1. INSTANCE N WITH c <- 1\n<1>2. QED",
+      [],
+    ],
+    [
+      "what an inner module EXTENDS when it visits that module",
+      '---- MODULE U ----\nUA == PrintT("UA")\n====\n---- MODULE V ----\nEXTENDS U\nVA == PrintT("VA")\n====',
+      ["UA", "VA"],
+    ],
+    [
+      "what an inner module EXTENDS through another",
+      '---- MODULE U ----\nUA == PrintT("UA")\n====\n---- MODULE V ----\nEXTENDS U\nVA == PrintT("VA")\n====\n---- MODULE W ----\nEXTENDS V\nWA == PrintT("WA")\n====',
+      ["UA", "VA", "WA"],
+    ],
+    [
+      "a failing inner definition again in each module that EXTENDS it",
+      '---- MODULE U ----\nUX == PrintT("UX") /\\ (CHOOSE n \\in {} : TRUE)\n====\n---- MODULE V ----\nEXTENDS U\nVA == PrintT("VA")\n====',
+      ["UX", "VA", "UX"],
+    ],
+    [
+      "a failing file definition again in each module that EXTENDS it",
+      "---- MODULE W ----\nEXTENDS F\n====",
+      ["FX", "FX"],
+    ],
+    [
+      "no inherited definition of a module instanced with a parameter",
+      '---- MODULE U ----\nCONSTANT u\nUA == PrintT("UA")\n====\n---- MODULE V ----\nEXTENDS U\nVA == PrintT("VA")\n====\nI == INSTANCE U WITH u <- 1',
+      ["UA", "VA"],
+    ],
+    [
+      "the inner modules but not the definitions an inner module EXTENDS from a module instanced with a parameter",
+      "---- MODULE W ----\nEXTENDS N\n====\nI == INSTANCE N WITH c <- 1",
+      ["N1", "P1"],
+    ],
+    [
+      "a LET whose instance's definitions don't read a variable's substitute",
+      '---- MODULE P ----\nVARIABLE v\nN2(a) == PrintT(a)\n====\nI == INSTANCE P WITH v <- x\nD == LET K == INSTANCE P WITH v <- x IN K!N2("D")',
+      ["D"],
+    ],
+    [
+      "no LET whose instance's definition reads a variable's substitute",
+      '---- MODULE P ----\nVARIABLE v\nN2(a) == PrintT(a)\nFv == v\n====\nI == INSTANCE P WITH v <- x\nD == LET K == INSTANCE P WITH v <- x IN K!N2("D")',
+      [],
+    ],
+  ])("evaluates %s at startup, as TLC does", async (_name, lines, expected) => {
+    const prints: string[] = [];
+    const result = await check({
+      source: `---- MODULE M ----\nEXTENDS TLC\nVARIABLE x\n${lines}\nInit == x = 0\nNext == UNCHANGED x\n====`,
+      config: "INIT Init\nNEXT Next",
+      loadModule: (name) =>
+        name === "N"
+          ? '---- MODULE N ----\nEXTENDS TLC\nCONSTANT c\nN1 == PrintT("N1")\n---- MODULE P ----\nP1 == PrintT("P1")\n====\n===='
+          : name === "F"
+            ? '---- MODULE F ----\nEXTENDS TLC\nFX == PrintT("FX") /\\ (CHOOSE n \\in {} : TRUE)\n===='
+            : undefined,
+      onPrint: (text) => prints.push(text),
+    });
+    expect([result.status, prints]).toEqual(["success", expected.map((text) => `"${text}"`)]);
+  });
+
+  it("checks a named instance of a module whose own instance substitutes an expression of the variable it substitutes, as TLC does", async () => {
+    const result = await check({
+      source:
+        "---- MODULE M ----\nEXTENDS Naturals\nVARIABLE x\n---- MODULE Inner ----\nVARIABLE v\nGet == v\n====\n---- MODULE Mid ----\nVARIABLE v\nJ == INSTANCE Inner WITH v <- v + 0\nVal == J!Get\n====\nI == INSTANCE Mid WITH v <- x + 0\nInit == x = 0\nNext == x' = x\nInv == I!Val = 0\n====",
+      config: "INIT Init\nNEXT Next\nINVARIANT Inv",
+    });
+    expect(result.status).toBe("success");
+  });
+
   it("reports violations through instantiated operators", async () => {
     const result = await checkInstances("Violation.cfg");
     expect(result.status).toBe("invariant-violation");
@@ -431,6 +532,79 @@ describe("INSTANCE matches TLC", () => {
           : undefined,
     });
     expect(result.violation?.name).toBe("I!Rising");
+  });
+
+  it.each([
+    ["v <- (x = 1)", "I!Dv", "I!Dv"],
+    ["v <- (x = 0)", "I!Ev", "v"],
+    ["v <- x", "I!Gv", "G"],
+  ])(
+    "names a property that reaches the substitute in %s through %s as TLC does",
+    async (substitution, property, name) => {
+      const result = await check({
+        source: `---- MODULE M ----\nEXTENDS Naturals\nVARIABLE x\nInit == x = 0\nNext == x' = (x + 1) % 2\nI == INSTANCE L WITH ${substitution}\nProp == ${property}\n====`,
+        config: "INIT Init\nNEXT Next\nPROPERTY Prop",
+        loadModule: (module) =>
+          module === "L"
+            ? "---- MODULE L ----\nVARIABLE v\nDv == v\nEv == [](v)\nGv == LET G == v = 0 IN [](G)\n===="
+            : undefined,
+      });
+      expect(result.violation?.name).toBe(name);
+    },
+  );
+
+  it.each([
+    ["v <- (x = 1 /\\ x >= 0)", "I!Dv", undefined, "I!Dv"],
+    ["v <- (\\A k \\in {1} : x = k)", "I!Dv", undefined, "I!Dv"],
+    ["v <- One", "I!Dv", undefined, "I!Dv"],
+    ["v <- One", "I!Av", undefined, "line 4, col 7 to line 4, col 7 of module L"],
+    ["v <- One", "I!Kv", undefined, "G"],
+    ["v <- (x = 1)", "I!Dv", 1, "I!Dv"],
+    ["v <- (x = 1)", "I!Kv", 1, "G"],
+  ])(
+    "names a property that reaches the VARIABLE substitute in %s through %s, with coverage %s, as TLC does",
+    async (substitution, property, coverage, name) => {
+      const result = await check({
+        source: `---- MODULE M ----\nEXTENDS Naturals\nVARIABLE x\nInit == x = 0\nNext == x' = (x + 1) % 2\nOne == x = 1\nI == INSTANCE L WITH ${substitution}\nProp == ${property}\n====`,
+        config: "INIT Init\nNEXT Next\nPROPERTY Prop",
+        coverage,
+        loadModule: (module) =>
+          module === "L"
+            ? "---- MODULE L ----\nVARIABLE v\nDv == v\nAv == v /\\ TRUE\nKv == LET G == v IN G\n===="
+            : undefined,
+      });
+      expect(result.violation?.name).toBe(name);
+    },
+  );
+
+  // Deviation from TLC: it rejects each row, though it checks [](x \in {0, 1}), [](x = 0) and x = 1 written without the instance this way.
+  it.each([
+    ["[](x \\in {0, 1})", "success", undefined],
+    ["[](x = 0)", "invariant-violation", "I!D"],
+    ["(x = 1)", "liveness-violation", "I!D"],
+  ])(
+    "checks a property that is the constant c <- %s of an instance, which TLC rejects as 'The operator c ... cannot be used as a property'",
+    async (substitute, status, name) => {
+      const result = await check({
+        source: `---- MODULE M ----\nEXTENDS Naturals\nVARIABLE x\nInit == x = 0\nNext == x' = (x + 1) % 2\nI == INSTANCE L WITH c <- ${substitute}\nProp == I!D\n====`,
+        config: "INIT Init\nNEXT Next\nPROPERTY Prop",
+        loadModule: (module) =>
+          module === "L" ? "---- MODULE L ----\nCONSTANT c\nD == c\n====" : undefined,
+      });
+      expect([result.status, result.violation?.name]).toEqual([status, name]);
+    },
+  );
+
+  // Deviation from TLC: it rejects the spec, though it checks Init /\ [][Next]_x /\ WF_x(Next) written without the instance this way.
+  it("takes fairness that is the constant c <- WF_x(Next) of an instance, which TLC rejects as 'The operator c ... cannot be used as a spec'", async () => {
+    const result = await check({
+      source:
+        "---- MODULE M ----\nEXTENDS Naturals\nVARIABLE x\nInit == x = 0\nNext == x' = (x + 1) % 2\nI == INSTANCE L WITH c <- WF_x(Next)\nSpec == Init /\\ [][Next]_x /\\ I!D\nLive == <>(x = 1)\n====",
+      config: "SPECIFICATION Spec\nPROPERTY Live",
+      loadModule: (module) =>
+        module === "L" ? "---- MODULE L ----\nCONSTANT c\nD == c\n====" : undefined,
+    });
+    expect(result.status).toBe("success");
   });
 
   it.each([

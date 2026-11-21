@@ -21,6 +21,7 @@ export class SmtKernel {
       isMbqi: params.isMbqi,
       mbqiMaxIterations: params.mbqiMaxIterations,
       relevancyLevel: params.relevancyLevel ?? 2,
+      isDelayingNewCaseSplits: params.isDelayingNewCaseSplits,
       randomSeed: params.randomSeed,
       intHammerPeriod: params.intHammerPeriod,
       isArithPropagatingEqs: params.isArithPropagatingEqs,
@@ -41,7 +42,10 @@ export class SmtKernel {
   }
 
   private setupContext(isUsingStaticFeatures: boolean) {
-    if (this.isSetUp) return;
+    if (this.isSetUp) {
+      this.context.keepRelevancyLevel();
+      return;
+    }
     this.isSetUp = this.context.setupContext(this.setup, isUsingStaticFeatures, this.asserted);
   }
 
@@ -82,7 +86,6 @@ export class SmtKernel {
     const count = Math.min(numScopes, this.scopeCount);
     if (count === 0) return;
     this.context.pop(count);
-    for (let index = 0; index < count; index++) this.asserted.pop();
     this.scopeCount -= count;
   }
 

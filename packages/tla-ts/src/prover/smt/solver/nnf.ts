@@ -40,9 +40,10 @@ export class DefinedNames {
     this.lims.push(this.exprs.size);
   }
 
-  pop() {
-    const size = this.lims[this.lims.length - 1];
-    this.lims.pop();
+  pop(numScopes: number) {
+    const newLevel = this.lims.length - numScopes;
+    const size = this.lims[newLevel];
+    this.lims.length = newLevel;
     while (this.exprs.size > size) {
       this.names.delete(this.exprs.items[this.exprs.size - 1]);
       this.exprs.shrink(this.exprs.size - 1);

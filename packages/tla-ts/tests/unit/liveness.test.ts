@@ -83,6 +83,26 @@ describe("liveness matches TLC", () => {
     expect(violation?.loopStart).toBeLessThan(violation?.trace.length ?? 0);
   });
 
+  it("reports a cycle that steps back to its first state between tableau nodes as a loop, where TLC prints stuttering", async () => {
+    const result = await check({
+      source:
+        "---- MODULE M ----\nEXTENDS Integers\nVARIABLE x\nNext == (x < 2 /\\ x' = x + 1) \\/ (x = 2 /\\ x' = 0)\nSpec == x = 0 /\\ [][Next]_x /\\ WF_x(Next)\nProp == ~((x = 1) ~> (x = 0))\n====",
+      config: "SPECIFICATION Spec\nPROPERTY Prop",
+    });
+    expect([
+      result.violation?.trace.map((step) => [step.label, step.state.x]),
+      result.violation?.loopStart,
+    ]).toEqual([
+      [
+        [undefined, 0],
+        ["Next line 4, col 10 to line 4, col 28 of module M", 1],
+        ["Next line 4, col 10 to line 4, col 28 of module M", 2],
+        ["Next line 4, col 35 to line 4, col 49 of module M", 0],
+      ],
+      0,
+    ]);
+  });
+
   it("follows a step from a state a VIEW merges to a state the search stores later, as TLC does", async () => {
     const result = await check({
       source: [

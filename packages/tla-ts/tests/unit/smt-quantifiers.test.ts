@@ -1,4 +1,6 @@
+import { createHash } from "node:crypto";
 import { describe, expect, it } from "vite-plus/test";
+import { PATTERN_DATABASE } from "../../src/prover/smt/solver/pattern-database-text";
 import { runSmtlibScript } from "../../src/prover/smt/solver/smtlib-script";
 
 const run = (lines: string[]) => {
@@ -202,6 +204,116 @@ describe("the model finder, as Z3 5.3.2 cleans up its instantiation sets", () =>
       ]),
     ).toEqual(["sat", "(:rlimit 1301)", "sat", "(:rlimit 2581)"]);
   });
+
+  it("frees the bound the quantifier analyzer makes before it adds one to it", () => {
+    expect(
+      run([
+        "(set-option :auto_config false)",
+        "(set-option :smt.mbqi true)",
+        "(declare-fun f (Int) Int)",
+        "(assert (forall ((x0 Int) (x1 Int)) (<= x1 (f 2))))",
+        "(check-sat)",
+        "(get-info :rlimit)",
+      ]),
+    ).toEqual(["unsat", "(:rlimit 378)"]);
+  });
+
+  it("counts the steps that rename the variables of a macro candidate", () => {
+    expect(
+      run([
+        "(set-option :auto_config false)",
+        "(set-option :smt.mbqi true)",
+        "(declare-fun g (Int Int) Int)",
+        "(declare-const a Int)",
+        "(assert (forall ((x Int) (y Int)) (or (= (+ x 1) a) (<= y x) (= (g x y) 0))))",
+        "(assert (= (g 1 0) 1))",
+        "(check-sat)",
+        "(get-info :rlimit)",
+      ]),
+    ).toEqual(["sat", "(:rlimit 588)"]);
+  });
+
+  it("instantiates a variable that indexes an array with the indices of the array's selects", () => {
+    expect(
+      run([
+        "(set-option :auto_config false)",
+        "(set-option :smt.mbqi true)",
+        "(declare-fun p (Int) Bool)",
+        "(declare-fun A () (Array Int Int))",
+        "(assert (forall ((x Int)) (or (p x) (> (select A x) 0))))",
+        "(assert (not (p 2)))",
+        "(assert (< (select A 5) 0))",
+        "(check-sat)",
+        "(get-info :rlimit)",
+        "(get-model)",
+      ]),
+    ).toEqual([
+      "sat",
+      "(:rlimit 686)",
+      "(",
+      "  (define-fun A () (Array Int Int)",
+      "    (store ((as const (Array Int Int)) (- 1)) 2 1))",
+      "  (define-fun p ((x!0 Int)) Bool",
+      "    (not (= x!0 2)))",
+      ")",
+    ]);
+  });
+
+  it("interprets an array as a lambda of the default weight", () => {
+    expect(
+      run([
+        "(set-option :auto_config false)",
+        "(set-option :smt.mbqi true)",
+        "(declare-fun p (Int) Bool)",
+        "(declare-fun A () (Array Int Int))",
+        "(declare-fun B () (Array Int Bool))",
+        "(assert (forall ((x Int)) (or (p x) (> (select A x) 0) (select B x))))",
+        "(assert (not (p 2)))",
+        "(assert (not (p 7)))",
+        "(assert (< (select A 5) 0))",
+        "(assert (not (select B 4)))",
+        "(check-sat)",
+        "(get-info :rlimit)",
+        "(get-model)",
+      ]),
+    ).toEqual([
+      "sat",
+      "(:rlimit 1702)",
+      "(",
+      "  (define-fun B () (Array Int Bool)",
+      "    ((as const (Array Int Bool)) false))",
+      "  (define-fun A () (Array Int Int)",
+      "    (lambda ((x!1 Int))",
+      "  (let ((a!1 (ite (and (not (= x!1 2)) (= x!1 4)) 11798 (ite (= x!1 2) 1 3))))",
+      "  (let ((a!2 (ite (and (not (= x!1 2)) (not (= x!1 4)) (not (= x!1 5)))",
+      "                  8856",
+      "                  a!1)))",
+      "    (ite (and (not (= x!1 2)) (not (= x!1 4)) (= x!1 5)) (- 1) a!2)))))",
+      "  (define-fun p ((x!0 Int)) Bool",
+      "    (and (not (= x!0 2)) (not (= x!0 4)) (= x!0 5)))",
+      ")",
+    ]);
+  });
+});
+
+describe("the model finder, as Z3 5.3.2 reads a recursive function", () => {
+  it("treats a call with a ground recursion argument as uninterpreted", () => {
+    expect(
+      run([
+        "(declare-datatypes ((L 0)) (((nil) (cons (hd Int) (tl L)))))",
+        "(declare-sort U 0)",
+        "(declare-fun val (U) Int)",
+        "(define-fun-rec mem ((u U) (l L)) Bool (ite ((_ is nil) l) false (or (= (val u) (hd l)) (mem u (tl l)))))",
+        "(declare-const a U)",
+        "(declare-const b U)",
+        "(declare-const c U)",
+        "(assert (distinct (val a) (val b) (val c)))",
+        "(assert (forall ((x U)) (mem x (cons 1 (cons 2 nil)))))",
+        "(check-sat)",
+        "(get-info :rlimit)",
+      ]),
+    ).toEqual(["unsat", "(:rlimit 5028)"]);
+  });
 });
 
 describe("e-matching, as Z3 5.3.2 counts its steps", () => {
@@ -274,6 +386,24 @@ describe("e-matching, as Z3 5.3.2 counts its steps", () => {
     expect(getOutput("10.00000001")).toEqual(["unsat", "(:rlimit 641)"]);
     expect(getOutput("20.0000001")).toEqual(["unsat", "(:rlimit 661)"]);
     expect(getOutput("18446744073709551616")).toEqual(["unsat", "(:rlimit 641)"]);
+  });
+
+  it("keeps a real sum out of the code tree of an integer sum", () => {
+    expect(
+      run([
+        "(set-option :auto_config false)",
+        "(set-option :smt.mbqi true)",
+        "(declare-fun p (Int) Bool)",
+        "(declare-fun a () Int)",
+        "(declare-fun b () Int)",
+        "(declare-fun x () Real)",
+        "(assert (<= a x))",
+        "(assert (forall ((x0 Int)) (p (+ 1 x0))))",
+        "(assert (=> (<= b x) (>= 2 b)))",
+        "(check-sat)",
+        "(get-info :rlimit)",
+      ]),
+    ).toEqual(["sat", "(:rlimit 848)"]);
   });
 });
 
@@ -364,6 +494,64 @@ describe("the instantiation thresholds, as Z3 5.3.2 reads them", () => {
   });
 });
 
+const BOUNDED_BELOW = [
+  "(declare-fun f (Int) Int)",
+  "(declare-fun g (Int) Int)",
+  "(assert (forall ((x Int)) (! (> (f x) (g x)) :pattern ((f x)))))",
+  "(assert (forall ((x Int)) (! (> (g x) x) :pattern ((g x)))))",
+];
+
+const getBoundCheck = (argument: number) => [
+  "(push)",
+  `(assert (< (f ${argument}) 2))`,
+  "(check-sat)",
+  "(get-info :rlimit)",
+  "(pop)",
+];
+
+describe("relevancy, as Z3 5.3.2 reads smt.relevancy", () => {
+  it("matches each new term when relevancy is off", () => {
+    expect(
+      run([
+        "(set-option :auto_config false)",
+        "(set-option :smt.mbqi false)",
+        "(set-option :smt.relevancy 0)",
+        ...BOUNDED_BELOW,
+        "(assert (< (f 3) 2))",
+        "(check-sat)",
+        "(get-info :rlimit)",
+      ]),
+    ).toEqual(["unsat", "(:rlimit 546)"]);
+  });
+
+  it("reads relevancy as a parameter of the smt tactic", () => {
+    expect(
+      run([
+        "(set-option :auto_config false)",
+        ...BOUNDED_BELOW,
+        "(assert (< (f 3) 2))",
+        "(check-sat-using (using-params smt :relevancy 1))",
+        "(get-info :rlimit)",
+      ]),
+    ).toEqual(["unsat", "(:rlimit 412)"]);
+  });
+
+  it("keeps the lowest level a check has used", () => {
+    expect(
+      run([
+        "(set-option :auto_config false)",
+        "(set-option :smt.mbqi false)",
+        ...BOUNDED_BELOW,
+        ...getBoundCheck(3),
+        "(set-option :smt.relevancy 0)",
+        ...getBoundCheck(5),
+        "(set-option :smt.relevancy 2)",
+        ...getBoundCheck(7),
+      ]),
+    ).toEqual(["unsat", "(:rlimit 394)", "unsat", "(:rlimit 548)", "unsat", "(:rlimit 707)"]);
+  });
+});
+
 describe("the model checker, as Z3 5.3.2 counts its steps", () => {
   it("pushes its context as the kernel does", () => {
     expect(
@@ -405,6 +593,33 @@ describe("the model checker, as Z3 5.3.2 counts its steps", () => {
         "(get-info :rlimit)",
       ]),
     ).toEqual(["sat", "(:rlimit 362)"]);
+  });
+
+  it("sets up its context with every theory, whatever the logic", () => {
+    expect(
+      run([
+        "(set-logic AUFLIRA)",
+        "(set-option :smt.qi.max_multi_patterns 3)",
+        "(set-option :smt.array.extensional false)",
+        "(declare-fun f (Int) Int)",
+        "(declare-fun g (Int Int) Int)",
+        "(declare-fun p (Int) Bool)",
+        "(declare-fun A () (Array Int Int))",
+        "(declare-fun B () (Array Int Int))",
+        "(declare-fun a () Int)",
+        "(declare-fun b () Int)",
+        "(declare-fun c () Int)",
+        "(declare-fun r (Int) Real)",
+        "(declare-fun x () Real)",
+        "(assert (forall ((x0 Int)) (! (=> (and (<= (r (* 1 c)) (+ x (to_real c))) (< (+ 3 x0) (+ c x0))) (=> (> x0 b) (< (r (g a c)) (+ x (to_real b))))) :weight 0 :qid ax0)))",
+        "(assert (forall ((x0 Int)) (! (p (+ b c)) :weight 0 :qid ax1)))",
+        "(assert (forall ((x0 Int)) (<= (r (+ b x0)) (+ x (to_real c)))))",
+        "(assert (or (and (< (+ b 3) c) (= (r (f b)) (+ x (to_real c)))) (and (p c) (< (r c) (+ x (to_real 2))))))",
+        "(assert (or (=> (<= (f 1) (f 0)) (p (+ a b))) (or (>= (+ c b) (+ b a)) (> (f a) (f c)))))",
+        "(check-sat)",
+        "(get-info :rlimit)",
+      ]),
+    ).toEqual(["sat", "(:rlimit 4128)"]);
   });
 });
 
@@ -457,5 +672,68 @@ describe("the preprocessing setup_AUFLIA turns on, as Z3 5.3.2 runs it", () => {
       "      6))",
       ")",
     ]);
+  });
+});
+
+describe("the pattern database setup_AUFLIA turns on, as Z3 5.3.2 loads it", () => {
+  it("holds the bytes of Z3's ast/pattern/database.smt2", () => {
+    expect(createHash("sha256").update(PATTERN_DATABASE).digest("hex")).toBe(
+      "3b19a7e9f88910f7796f7ead70160a6a636fa33a27b812d3d51c90a3080b2bec",
+    );
+  });
+
+  it("loads it at the first universal quantifier, though that one has patterns", () => {
+    expect(
+      run([
+        "(set-logic AUFLIA)",
+        "(set-option :smt.mbqi false)",
+        "(set-option :smt.qi.lazy_threshold 10.0)",
+        "(set-option :smt.qi.max_multi_patterns 1)",
+        "(declare-fun f (Int) Int)",
+        "(declare-fun g (Int Int) Int)",
+        "(declare-fun p (Int) Bool)",
+        "(declare-fun A () (Array Int Int))",
+        "(declare-fun B () (Array Int Int))",
+        "(declare-fun a () Int)",
+        "(declare-fun b () Int)",
+        "(declare-fun c () Int)",
+        "(assert (forall ((x0 Int)) (! (or (and (>= (* -2 a) (+ c x0)) (p (+ 3 a))) (=> (<= (+ -2 c) b) (p (g b a)))) :pattern ((p x0)))))",
+        "(assert (or (or (< 1 (g 2 b)) (p (+ b b))) (=> (> (* 1 b) (+ a -2)) (> a (+ c c)))))",
+        "(assert (and (> (+ 1 a) (+ c c)) (= a (* 2 0))))",
+        "(check-sat)",
+        "(get-info :rlimit)",
+        "(assert (< (+ 3 a) 2))",
+        "(check-sat)",
+        "(get-info :rlimit)",
+      ]),
+    ).toEqual(["sat", "(:rlimit 1165)", "unsat", "(:rlimit 1368)"]);
+  });
+
+  it("gives a quantifier the weight of the database entry it matches", () => {
+    const getOutput = (weight: number) =>
+      run([
+        "(set-option :smt.mbqi false)",
+        "(declare-sort U 0)",
+        "(declare-fun f (U) U)",
+        "(declare-fun g (U) U)",
+        "(declare-fun h (U U) U)",
+        "(declare-fun p (U) Bool)",
+        "(declare-const c0 U)",
+        "(declare-const c1 U)",
+        "(declare-const c2 U)",
+        "(assert (forall ((x U)) (! (= (f x) (h c0 c2)) :pattern ((f x)) :pattern ((g x)) :qid q0)))",
+        "(assert (forall ((x U)) (! (p (f x)) :pattern ((f x)))))",
+        `(assert (forall ((x U)) (! (= (g (f x)) x) :pattern ((g (f x))) :weight ${weight})))`,
+        "(assert (p (f c1)))",
+        "(assert (p (h (f c0) (f c0))))",
+        "(check-sat)",
+        "(get-info :rlimit)",
+        "(assert (= c0 (h c2 c1)))",
+        "(check-sat)",
+        "(get-info :rlimit)",
+      ]);
+    const expected = ["sat", "(:rlimit 2378)", "unknown", "(:rlimit 2810)"];
+    expect(getOutput(5)).toEqual(expected);
+    expect(getOutput(0)).toEqual(expected);
   });
 });

@@ -7,7 +7,7 @@ import {
   QUANTIFIER_FORALL,
   QUANTIFIER_LAMBDA,
 } from "./ast";
-import { flattenAndVector, flattenOrVector } from "./ast-util";
+import { flattenAndVector, flattenOrVector, mkNot } from "./ast-util";
 import { RefVector } from "./ref-vector";
 import { RewriterTpl } from "./rewriter-tpl";
 import { collectUsedVars, elimUnusedVars, VarSubst } from "./var-subst";
@@ -31,7 +31,7 @@ const getVarDefinition = (
     const lhs = isSwapped ? manager.getArg(eq, 1) : manager.getArg(eq, 0);
     const rhs = isSwapped ? manager.getArg(eq, 0) : manager.getArg(eq, 1);
     if (!isBoundVar(lhs)) return undefined;
-    return { index: manager.values[lhs], definition: isNegated ? manager.mkNot(rhs) : rhs };
+    return { index: manager.values[lhs], definition: isNegated ? mkNot(manager, rhs) : rhs };
   };
   if (isForall) {
     if (manager.isNot(literal) && manager.getOp(manager.getArg(literal, 0)) === OP_EQ)

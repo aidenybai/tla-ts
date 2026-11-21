@@ -74,17 +74,20 @@ export interface FunctionSetValue extends LazySet {
   kind: "FunctionSet";
   domain: Value;
   range: Value;
+  hasFilter: boolean;
 }
 
 export interface RecordSetValue extends LazySet {
   kind: "RecordSet";
   names: string[];
   sets: Value[];
+  hasFilter: boolean;
 }
 
 export interface ProductSetValue extends LazySet {
   kind: "ProductSet";
   factors: Value[];
+  hasFilter: boolean;
 }
 
 export interface SequenceSetValue extends LazySet {
@@ -97,6 +100,7 @@ export interface SetOperationValue extends LazySet {
   operator: "\\cup" | "\\cap" | "\\";
   left: Value;
   right: Value;
+  hasFilter: boolean;
 }
 
 interface FilteredSetSource {
@@ -137,6 +141,8 @@ export interface LazyFunctionValue {
   domain: Value;
   apply: (argument: Value) => Value;
   boundTupleLengths?: (number | undefined)[];
+  // Set when an application has an effect or is counted under -coverage, so converting to a tuple applies again as TLC does.
+  isApplicationObserved: boolean;
   source?: LazyFunctionSource;
   functionClass?: FunctionClass;
   enumerated?: FunctionValue;
@@ -1081,8 +1087,11 @@ const compareTlcFunctions = (
 };
 
 const compareElementsLikeTlc = (left: Value[], right: Value[], isEquality: boolean) => {
+  const sets = setTrace.sets;
   for (let index = 0; index < left.length; index++) {
+    sets?.push(left[index]);
     const comparison = compareOrEqualLikeTlc(left[index], right[index], isEquality);
+    sets?.pop();
     if (comparison !== 0) return comparison;
   }
   return 0;
@@ -1243,32 +1252,54 @@ export const markNormalized = (value: Value): void => {
 
 export const normalizeShallowly = (value: Value): void => {
   if (typeof value !== "object" || isCachedSet(value)) return;
+  if (value.kind === "Set") {
+    value.flags |= VALUE_NORMALIZED;
+    return;
+  }
+  if (value.kind === "MixedSet") {
+    toFiniteSet(value);
+    return;
+  }
+  const sets = setTrace.sets;
+  sets?.push(value);
   switch (value.kind) {
-    case "Set":
-      value.flags |= VALUE_NORMALIZED;
-      return;
-    case "MixedSet":
-      toFiniteSet(value);
-      return;
     case "FilteredSet":
     case "Subset":
-      return normalizeShallowly(value.base);
+      normalizeShallowly(value.base);
+      break;
     case "SetOperation":
-      if (value.operator === "\\cup") return;
-      normalizeShallowly(value.left);
-      return normalizeShallowly(value.right);
+      if (value.operator !== "\\cup") {
+        normalizeShallowly(value.left);
+        normalizeShallowly(value.right);
+      }
+      break;
     case "FunctionSet":
       normalizeShallowly(value.domain);
-      return normalizeShallowly(value.range);
+      normalizeShallowly(value.range);
+      break;
     case "RecordSet":
-      return value.sets.forEach(normalizeShallowly);
+      value.sets.forEach(normalizeShallowly);
+      break;
     case "ProductSet":
-      return value.factors.forEach(normalizeShallowly);
+      value.factors.forEach(normalizeShallowly);
   }
+  sets?.pop();
 };
 
+const isUnenumeratedSet = (value: Value): value is ConvertibleSetValue =>
+  typeof value === "object" && isLazySet(value) && value.enumerated === undefined;
+
+// TLC's SetEnumValue#equals enumerates the right side before it sorts a set literal on the left.
+const isFailingLikeTlc = (left: Value, right: Value) =>
+  typeof left === "object" &&
+  isSetValue(left) &&
+  !isModelValue(right) &&
+  (isComparedByClass(left, right) ||
+    (isSetValue(right) &&
+      (isUnenumeratedSet(left) ? left.kind !== "MixedSet" : isUnenumeratedSet(right))));
+
 export const isEqualLikeTlc = (left: Value, right: Value) =>
-  computeLikeTlcOnFailure(valuesEqual, equalsLikeTlc, left, right);
+  computeLikeTlcOnFailure(valuesEqual, equalsLikeTlc, left, right, isFailingLikeTlc);
 
 // TLC's ValueVec#sort compares each element with the ones before it, which orders what lazy elements evaluate.
 const isStrictlySorted = (elements: Value[]) => {
@@ -1671,6 +1702,10 @@ const getUnionSets = (
   return getElements(value.base);
 };
 
+// TLC's UnionValue streams S into UNION S, so -maxSetSize doesn't bound S.
+const getUnionBase = (base: Value) =>
+  typeof base === "object" && base.kind === "Set" ? base.elements : getStreamedElements(base);
+
 const getUnionSet = (set: Value, index: number, union: UnionValue) => {
   if (isTlcEnumerable(set)) return set;
   throw new TlaEvaluationError(
@@ -1824,26 +1859,54 @@ export const getLazySubsets = (value: Value): Value[] | undefined => {
   });
 };
 
-const getSortedSubsets = (base: Value[]) => {
-  const subsets: Value[] = [];
+const someSubset = (base: Value[], visit: (subset: Value) => boolean) => {
   for (let size = 0; size <= base.length; size++) {
     const indices = Array.from({ length: size }, (_value, index) => index);
     do {
-      subsets.push(createSortedSet(indices.map((index) => base[index])));
+      if (visit(createSortedSet(indices.map((index) => base[index])))) return true;
     } while (advanceCombination(indices, base.length));
   }
+  return false;
+};
+
+const getSortedSubsets = (base: Value[]) => {
+  const subsets: Value[] = [];
+  someSubset(base, (subset) => {
+    subsets.push(subset);
+    return false;
+  });
   return subsets;
 };
 
+const getSubsetBase = (value: SubsetValue) => {
+  if (getCardinality(value.base) === 0) return [];
+  if (!isSetValue(value.base)) {
+    throw new TlaEvaluationError(
+      `Attempted to compute the value of an expression of form\nSUBSET S, but S is a non-enumerable value:\n${prettyPrint(formatValue(value.base))}`,
+    );
+  }
+  return toFiniteSet(value.base).elements;
+};
+
+const describeUnenumerableFunctionSet = (part: string, set: Value) =>
+  `Attempted to enumerate a set of the form [D -> R],but the ${part}:\n${prettyPrint(formatValue(set))}\ncannot be enumerated.`;
+
+const describeUnenumerableComponent = (value: RecordSetValue | ProductSetValue, index: number) =>
+  value.kind === "RecordSet"
+    ? `Attempted to enumerate a set of the form [l1 : v1, ..., ln : vn],\nbut can't enumerate the value of the \`${value.names[index]}' field:\n${prettyPrint(formatValue(value.sets[index]))}`
+    : `Attempted to enumerate a set of the form s1 \\X s2 ... \\X sn,\nbut can't enumerate s${index}:\n${prettyPrint(formatValue(value.factors[index]))}`;
+
 const getComponentElements = (
-  sets: Value[],
+  value: RecordSetValue | ProductSetValue,
   getElements: (set: Value) => Value[],
-  describeUnenumerable: (set: Value, index: number) => string,
 ) => {
+  const sets = value.kind === "RecordSet" ? value.sets : value.factors;
   const lists: Value[][] = [];
   for (let index = 0; index < sets.length; index++) {
     const set = sets[index];
-    if (isOverriddenSet(set)) throw new TlaEvaluationError(describeUnenumerable(set, index));
+    if (isOverriddenSet(set)) {
+      throw new TlaEvaluationError(describeUnenumerableComponent(value, index));
+    }
     const elements = getElements(set);
     if (elements.length === 0) return [[]];
     lists.push(elements);
@@ -1851,7 +1914,7 @@ const getComponentElements = (
   return lists;
 };
 
-const enumerateSetOperation = (value: SetOperationValue, isMembershipFramed: boolean) => {
+const enumerateSetOperation = (value: SetOperationValue, opened: OpenedStream | undefined) => {
   if (value.operator === "\\cap" && !isTlcEnumerable(value.left) && !isTlcEnumerable(value.right)) {
     throw new TlaEvaluationError(
       `Attempted to enumerate S \\cap T when neither S:\n${prettyPrint(formatValue(value.left))}\nnor T:\n${prettyPrint(formatValue(value.right))}\nis enumerable`,
@@ -1863,24 +1926,21 @@ const enumerateSetOperation = (value: SetOperationValue, isMembershipFramed: boo
     );
   }
   if (value.operator === "\\cup") {
-    return toFiniteSet(createEnumeratedSet(listUnionLikeTlc(value))).elements;
+    return toFiniteSet(createEnumeratedSet(listUnionLikeTlc(value, opened))).elements;
   }
   const isLeftEnumerated = value.operator === "\\" || isTlcEnumerable(value.left);
   const enumerated = isLeftEnumerated ? value.left : value.right;
   const other = isLeftEnumerated ? value.right : value.left;
-  const sets = setTrace.sets;
   const kept: Value[] = [];
-  forEachElement(
-    typeof enumerated === "object" && enumerated.kind === "Interval"
-      ? enumerated
-      : getStreamedElements(enumerated),
-    (element) => {
-      if (!isMembershipFramed) sets?.pop();
-      const isElement = isElementOf(element, other);
-      if (!isMembershipFramed) sets?.push(value);
-      if (isElement === (value.operator === "\\cap")) addBoundedElement(kept, element);
-    },
-  );
+  const keep = (element: Value) => {
+    if (isElementOf(element, other) === (value.operator === "\\cap")) {
+      addBoundedElement(kept, element);
+    }
+    return false;
+  };
+  if (typeof enumerated === "object" && enumerated.kind === "Interval")
+    forEachElement(enumerated, keep);
+  else someOpenedElement(enumerated, opened ?? openSetStream(enumerated), keep);
   return toFiniteSet(createEnumeratedSet(kept)).elements;
 };
 
@@ -1896,17 +1956,16 @@ const getUnboundedElements = (value: Value): Value[] => {
   ) {
     return toFiniteSet(value).elements;
   }
-  const sets = setTrace.sets;
-  sets?.push(value);
+  // TLC's toSetEnum frames the set only as its elements() opens it.
+  const opened = setTrace.sets ? openOperandStream(value, false) : undefined;
   const isOuterSorting = isSortingLiteral;
   isSortingLiteral = false;
   let elements: Value[];
   try {
-    elements = enumerateSet(value, false);
+    elements = enumerateSet(value, false, undefined, opened);
   } finally {
     isSortingLiteral = isOuterSorting;
   }
-  sets?.pop();
   const set = value.kind === "RecordSet" ? createSet(elements) : createSortedSet(elements);
   if (elements.length <= getMaximumSetSize()) value.enumerated = set;
   return set.elements;
@@ -1924,9 +1983,16 @@ const enumerateSet = (
   value: Value,
   isBounded = true,
   getElements = isBounded ? getCollectedComponent : getUnboundedElements,
+  opened?: OpenedStream,
 ): Value[] => {
   if (typeof value !== "object")
     throw new TlaEvaluationError(`Expected a set but found ${formatValue(value)}`);
+  const product = getPredicatedProduct(value);
+  if (product) {
+    const elements = getPulledElements(getProductStream(product, opened), isBounded);
+    // TLC's toSetEnum collects the stream, which S \cup T and UNION S leave unsorted, and normalizes it.
+    return isStreamedApart(product) ? sortLikeTlc(elements) : elements;
+  }
   switch (value.kind) {
     case "Set":
       return value.elements;
@@ -1938,13 +2004,7 @@ const enumerateSet = (
         ? getIntervalDomain(value.high)
         : new IntervalElements(value);
     case "Subset": {
-      if (getCardinality(value.base) === 0) return getSortedSubsets([]);
-      if (!isSetValue(value.base)) {
-        throw new TlaEvaluationError(
-          `Attempted to compute the value of an expression of form\nSUBSET S, but S is a non-enumerable value:\n${prettyPrint(formatValue(value.base))}`,
-        );
-      }
-      const base = toFiniteSet(value.base).elements;
+      const base = getSubsetBase(value);
       if (base.length > MAXIMUM_ENUMERATED_SUBSET_BASE) {
         throw new TlaEvaluationError(describeOverflow(value));
       }
@@ -1953,15 +2013,11 @@ const enumerateSet = (
     case "FunctionSet": {
       if (!isVersion174 && isEmptySet(value)) return [];
       if (isOverriddenSet(value.domain)) {
-        throw new TlaEvaluationError(
-          `Attempted to enumerate a set of the form [D -> R],but the domain D:\n${prettyPrint(formatValue(value.domain))}\ncannot be enumerated.`,
-        );
+        throw new TlaEvaluationError(describeUnenumerableFunctionSet("domain D", value.domain));
       }
       const domain = getFunctionDomain(value.domain);
       if ((domain.length > 0 || isVersion174) && isOverriddenSet(value.range)) {
-        throw new TlaEvaluationError(
-          `Attempted to enumerate a set of the form [D -> R],but the range R:\n${prettyPrint(formatValue(value.range))}\ncannot be enumerated.`,
-        );
+        throw new TlaEvaluationError(describeUnenumerableFunctionSet("range R", value.range));
       }
       const range = domain.length === 0 ? [] : getElements(value.range);
       return getCartesianProduct(
@@ -1971,24 +2027,14 @@ const enumerateSet = (
     }
     case "RecordSet": {
       if (!isVersion174 && isEmptySet(value)) return [];
-      const fields = getComponentElements(
-        value.sets,
-        getElements,
-        (set, index) =>
-          `Attempted to enumerate a set of the form [l1 : v1, ..., ln : vn],\nbut can't enumerate the value of the \`${value.names[index]}' field:\n${prettyPrint(formatValue(set))}`,
-      );
+      const fields = getComponentElements(value, getElements);
       return getCartesianProduct(fields, isBounded).map((combination) =>
         createRecord(value.names.map((name, index): [string, Value] => [name, combination[index]])),
       );
     }
     case "ProductSet": {
       if (!isVersion174 && isEmptySet(value)) return [];
-      const factors = getComponentElements(
-        value.factors,
-        getElements,
-        (factor, index) =>
-          `Attempted to enumerate a set of the form s1 \\X s2 ... \\X sn,\nbut can't enumerate s${index}:\n${prettyPrint(formatValue(factor))}`,
-      );
+      const factors = getComponentElements(value, getElements);
       return getCartesianProduct(factors, isBounded).map(createTuple);
     }
     case "FilteredSet": {
@@ -1997,27 +2043,32 @@ const enumerateSet = (
           `Attempted to enumerate { x \\in S : p(x) } when S:\n${prettyPrint(formatValue(value.base))}\nis not enumerable`,
         );
       }
-      const test = value.startPass?.(true) ?? ((element: Value) => value.test(element, false));
+      const test = getPassTest(value, true);
       const kept: Value[] = [];
-      const elements = getStreamedElements(value.base);
-      for (let index = 0; index < elements.length; index++) {
-        if (!test(elements[index])) continue;
-        if (isBounded) addBoundedElement(kept, elements[index]);
-        else kept.push(elements[index]);
-      }
+      someOpenedElement(value.base, opened ?? openSetStream(value.base), (element) => {
+        if (!test(element)) return false;
+        if (isBounded) addBoundedElement(kept, element);
+        else kept.push(element);
+        return false;
+      });
       return toFiniteSet(createEnumeratedSet(kept)).elements;
     }
     case "Union": {
       const elements: Value[] = [];
-      getUnionSets(value).forEach((set, index) => {
-        const unionSet = getUnionSet(set, index, value);
-        if (isBeyondSetBound(unionSet)) throw new TlaSetBoundError(getSetBoundMessage());
-        getStreamedElements(unionSet).forEach((element) => addBoundedElement(elements, element));
-      });
+      (opened ? getOpenedUnionSets(value, opened) : getUnionSets(value, getUnionBase)).forEach(
+        (set, index) => {
+          const unionSet = getUnionSet(set, index, value);
+          if (isBeyondSetBound(unionSet)) throw new TlaSetBoundError(getSetBoundMessage());
+          (opened && index === 0 && isEnumeratedSet(value.base)
+            ? getOpenedElements(unionSet, opened)
+            : getStreamedElements(unionSet)
+          ).forEach((element) => addBoundedElement(elements, element));
+        },
+      );
       return toFiniteSet(createEnumeratedSet(elements)).elements;
     }
     case "SetOperation":
-      return enumerateSetOperation(value, true);
+      return enumerateSetOperation(value, opened);
     case "InfiniteSet":
     case "SequenceSet":
       throw new TlaEvaluationError(
@@ -2060,93 +2111,452 @@ export const toFiniteSet = (value: Value): SetValue => {
   return set;
 };
 
-const openStream = (value: Value): void => {
-  if (typeof value !== "object" || isCachedSet(value)) return;
+interface ListStream {
+  kind: "List";
+  elements: Value[];
+  position: number;
+}
+
+interface FilterStream {
+  kind: "Filter";
+  set: FilteredSetValue;
+  base: ElementStream;
+  test: (element: Value) => boolean;
+}
+
+interface ProductStream {
+  kind: "Product";
+  set: FunctionSetValue | RecordSetValue | ProductSetValue;
+  domain: Value[];
+  parts: ElementStream[];
+  current: Value[];
+  isDone: boolean;
+}
+
+type ElementStream = ListStream | FilterStream | ProductStream;
+
+interface CupStream {
+  kind: "Cup";
+  left: OpenedStream | undefined;
+  right: OpenedStream | undefined;
+}
+
+type OpenedStream = ElementStream | CupStream;
+
+// TLC's enumerators of [S -> T], [a : S] and S \X T read ahead and reset their components, which shows when a component evaluates a predicate.
+// hasFilter records an unconverted filter when the set was built. The filter can convert later, as TLC's SetPredValue does once it caches its elements.
+const isPredicated = (value: Value): boolean => {
+  if (typeof value !== "object") return false;
   switch (value.kind) {
-    case "MixedSet":
-      toFiniteSet(value);
-      return;
     case "FilteredSet":
-      if (!isTlcEnumerable(value.base)) toFiniteSet(value);
-      return openStream(value.base);
-    case "Union":
-      if (!isEnumeratedSet(value.base) && isTlcEnumerable(value.base)) {
-        return openStream(value.base);
-      }
-      getUnionSets(value)
-        .slice(0, 1)
-        .forEach((set) => openStream(getUnionSet(set, 0, value)));
-      return;
+      return value.isCached !== true;
     case "SetOperation":
-      if (value.operator === "\\" && !isTlcEnumerable(value.left)) toFiniteSet(value);
-      if (
-        value.operator === "\\cup" &&
-        (!isTlcEnumerable(value.left) || !isTlcEnumerable(value.right))
-      ) {
-        toFiniteSet(value);
-      }
-      if (value.operator !== "\\cap" || isTlcEnumerable(value.left)) openStream(value.left);
-      else openStream(value.right);
-      if (value.operator === "\\cup") openStream(value.right);
+      return (
+        value.hasFilter &&
+        value.isCached !== true &&
+        (isPredicated(value.left) || isPredicated(value.right))
+      );
+    case "FunctionSet":
+      return (
+        value.hasFilter && value.isCached !== true && !value.enumerated && isPredicated(value.range)
+      );
+    case "RecordSet":
+      return (
+        value.hasFilter &&
+        value.isCached !== true &&
+        !value.enumerated &&
+        hasPredicatedSet(value.sets)
+      );
+    case "ProductSet":
+      return (
+        value.hasFilter &&
+        value.isCached !== true &&
+        !value.enumerated &&
+        hasPredicatedSet(value.factors)
+      );
+    default:
+      return false;
   }
 };
 
-const listUnionLikeTlc = (union: SetOperationValue) => {
+const hasPredicatedSet = (sets: Value[]) => {
+  for (let index = 0; index < sets.length; index++) {
+    if (isPredicated(sets[index])) return true;
+  }
+  return false;
+};
+
+export const createFunctionSet = (domain: Value, range: Value): FunctionSetValue => ({
+  kind: "FunctionSet",
+  domain,
+  range,
+  hasFilter: isPredicated(range),
+});
+
+export const createRecordSet = (names: string[], sets: Value[]): RecordSetValue => ({
+  kind: "RecordSet",
+  names,
+  sets,
+  hasFilter: hasPredicatedSet(sets),
+});
+
+export const createProductSet = (factors: Value[]): ProductSetValue => ({
+  kind: "ProductSet",
+  factors,
+  hasFilter: hasPredicatedSet(factors),
+});
+
+export const createSetOperation = (
+  operator: SetOperationValue["operator"],
+  left: Value,
+  right: Value,
+): SetOperationValue => ({
+  kind: "SetOperation",
+  operator,
+  left,
+  right,
+  hasFilter: isPredicated(left) || isPredicated(right),
+});
+
+const getPredicatedProduct = (value: ObjectValue) =>
+  (value.kind === "FunctionSet" || value.kind === "RecordSet" || value.kind === "ProductSet") &&
+  isPredicated(value)
+    ? value
+    : undefined;
+
+const EMPTY_STREAM: ListStream = { kind: "List", elements: [], position: 0 };
+
+const getPassTest = (value: FilteredSetValue, isMaterialized: boolean) =>
+  value.startPass?.(isMaterialized) ?? ((element: Value) => value.test(element, false));
+
+// TLC's elements() checks that the set has an element and reads the first element of each component, which nextElement continues.
+const openProductStream = (
+  value: FunctionSetValue | RecordSetValue | ProductSetValue,
+): ElementStream => {
+  if (!isVersion174 && isEmptySet(value)) return EMPTY_STREAM;
+  const stream: ProductStream = {
+    kind: "Product",
+    set: value,
+    domain: [],
+    parts: [],
+    current: [],
+    isDone: false,
+  };
+  if (value.kind === "FunctionSet") {
+    openOperandStream(value.domain, true);
+    if (isOverriddenSet(value.domain)) {
+      throw new TlaEvaluationError(describeUnenumerableFunctionSet("domain D", value.domain));
+    }
+    stream.domain = getFunctionDomain(value.domain);
+    if ((stream.domain.length > 0 || isVersion174) && isOverriddenSet(value.range)) {
+      throw new TlaEvaluationError(describeUnenumerableFunctionSet("range R", value.range));
+    }
+  }
+  const sets =
+    value.kind === "FunctionSet"
+      ? stream.domain.map(() => value.range)
+      : value.kind === "RecordSet"
+        ? value.sets
+        : value.factors;
+  for (let index = 0; index < sets.length; index++) {
+    if (value.kind !== "FunctionSet" && isOverriddenSet(sets[index])) {
+      throw new TlaEvaluationError(describeUnenumerableComponent(value, index));
+    }
+    const part = openPart(sets[index]);
+    const element = getNextElement(part);
+    if (element === undefined) return EMPTY_STREAM;
+    stream.parts.push(part);
+    stream.current.push(element);
+  }
+  return stream;
+};
+
+const openPart = (value: Value): ElementStream => {
+  const sets = setTrace.sets;
+  if (typeof value === "object" && value.kind === "FilteredSet" && !isCachedSet(value)) {
+    sets?.push(value);
+    if (!isTlcEnumerable(value.base)) toFiniteSet(value);
+    const stream: FilterStream = {
+      kind: "Filter",
+      set: value,
+      base: openPart(value.base),
+      test: getPassTest(value, false),
+    };
+    sets?.pop();
+    return stream;
+  }
+  const product = typeof value === "object" ? getPredicatedProduct(value) : undefined;
+  if (product === undefined) {
+    return { kind: "List", elements: getStreamedElements(value), position: 0 };
+  }
+  sets?.push(product);
+  const stream = openProductStream(product);
+  sets?.pop();
+  return stream;
+};
+
+const restartPart = (stream: ProductStream, index: number) => {
+  resetStream(stream.parts[index]);
+  const element = getNextElement(stream.parts[index]);
+  if (element === undefined) stream.isDone = true;
+  else stream.current[index] = element;
+};
+
+const resetStream = (stream: ElementStream): void => {
+  switch (stream.kind) {
+    case "List":
+      stream.position = 0;
+      return;
+    case "Filter":
+      resetStream(stream.base);
+      stream.test = getPassTest(stream.set, false);
+      return;
+    case "Product":
+      stream.isDone = false;
+      for (let index = 0; index < stream.parts.length; index++) restartPart(stream, index);
+  }
+};
+
+const getNextElement = (stream: ElementStream): Value | undefined => {
+  switch (stream.kind) {
+    case "List":
+      return stream.position < stream.elements.length
+        ? stream.elements[stream.position++]
+        : undefined;
+    case "Filter":
+      for (
+        let element = getNextElement(stream.base);
+        element !== undefined;
+        element = getNextElement(stream.base)
+      ) {
+        if (stream.test(element)) return element;
+      }
+      return undefined;
+    case "Product": {
+      if (stream.isDone) return undefined;
+      const elements = [...stream.current];
+      stream.isDone = stream.parts.length === 0;
+      for (let index = stream.parts.length - 1; index >= 0 && !stream.isDone; index--) {
+        const element = getNextElement(stream.parts[index]);
+        if (element !== undefined) {
+          stream.current[index] = element;
+          break;
+        }
+        if (index === 0) stream.isDone = true;
+        else restartPart(stream, index);
+      }
+      const set = stream.set;
+      return set.kind === "FunctionSet"
+        ? createSortedFunction(stream.domain, elements)
+        : set.kind === "RecordSet"
+          ? createRecord(set.names.map((name, index): [string, Value] => [name, elements[index]]))
+          : createTuple(elements);
+    }
+  }
+};
+
+const somePulledElement = (stream: ElementStream, visit: (element: Value) => boolean) => {
+  for (
+    let element = getNextElement(stream);
+    element !== undefined;
+    element = getNextElement(stream)
+  ) {
+    if (visit(element)) return true;
+  }
+  return false;
+};
+
+const getProductStream = (
+  value: FunctionSetValue | RecordSetValue | ProductSetValue,
+  opened: OpenedStream | undefined,
+) => (opened === undefined || opened.kind === "Cup" ? openProductStream(value) : opened);
+
+const getPulledElements = (stream: ElementStream, isBounded: boolean) => {
+  const elements: Value[] = [];
+  somePulledElement(stream, (element) => {
+    if (isBounded) addBoundedElement(elements, element);
+    else elements.push(element);
+    return false;
+  });
+  return elements;
+};
+
+const openStream = (value: Value, isEager: boolean): OpenedStream | undefined => {
+  if (typeof value !== "object" || isCachedSet(value)) return undefined;
+  switch (value.kind) {
+    case "MixedSet":
+      toFiniteSet(value);
+      return undefined;
+    case "FilteredSet":
+      if (!isTlcEnumerable(value.base)) toFiniteSet(value);
+      return openOperandStream(value.base, isEager);
+    case "Union": {
+      if (!isEnumeratedSet(value.base) && isTlcEnumerable(value.base)) {
+        return openOperandStream(value.base, isEager);
+      }
+      const unionSets = getUnionSets(value);
+      return unionSets.length > 0
+        ? openOperandStream(getUnionSet(unionSets[0], 0, value), isEager)
+        : undefined;
+    }
+    case "SetOperation": {
+      if (value.operator === "\\" && !isTlcEnumerable(value.left)) toFiniteSet(value);
+      if (
+        value.operator === "\\cap" &&
+        !isTlcEnumerable(value.left) &&
+        !isTlcEnumerable(value.right)
+      ) {
+        toFiniteSet(value);
+      }
+      if (value.operator === "\\cup") {
+        if (!isTlcEnumerable(value.left) || !isTlcEnumerable(value.right)) toFiniteSet(value);
+        const left = openOperandStream(value.left, true);
+        const right = openOperandStream(value.right, true);
+        return left || right ? { kind: "Cup", left, right } : undefined;
+      }
+      return openOperandStream(
+        value.operator === "\\cap" && !isTlcEnumerable(value.left) ? value.right : value.left,
+        isEager,
+      );
+    }
+    case "FunctionSet":
+    case "RecordSet":
+    case "ProductSet":
+      if (isPredicated(value)) return openProductStream(value);
+      if (isEager) openCombinedStream(value);
+      return undefined;
+    case "Subset":
+      if (isEager) openCombinedStream(value);
+      return undefined;
+    default:
+      return undefined;
+  }
+};
+
+// TLC's elements() does this work up front, which shows only in frames or before S \cup T streams its other operand.
+const openCombinedStream = (
+  value: SubsetValue | FunctionSetValue | RecordSetValue | ProductSetValue,
+) => {
+  switch (value.kind) {
+    case "Subset": {
+      const base = value.base;
+      if (value.enumerated || (typeof base === "object" && base.kind === "Set")) return;
+      if (typeof base === "object" && base.kind === "Interval") {
+        getCardinality(base);
+        return;
+      }
+      getSubsetBase(value);
+      return;
+    }
+    case "FunctionSet": {
+      if (value.enumerated || isEmptySet(value)) return;
+      const domain = value.domain;
+      openOperandStream(domain, true);
+      if (isOverriddenSet(domain)) {
+        throw new TlaEvaluationError(describeUnenumerableFunctionSet("domain D", domain));
+      }
+      if (typeof domain === "object" && isLazySet(domain)) toFiniteSet(domain);
+      if (isEmptySet(domain)) return;
+      if (isOverriddenSet(value.range)) {
+        throw new TlaEvaluationError(describeUnenumerableFunctionSet("range R", value.range));
+      }
+      openOperandStream(value.range, true);
+      return;
+    }
+    case "RecordSet":
+    case "ProductSet": {
+      if (value.enumerated || isEmptySet(value)) return;
+      const sets = value.kind === "RecordSet" ? value.sets : value.factors;
+      for (let index = 0; index < sets.length; index++) {
+        if (isOverriddenSet(sets[index])) {
+          throw new TlaEvaluationError(describeUnenumerableComponent(value, index));
+        }
+        openOperandStream(sets[index], true);
+      }
+    }
+  }
+};
+
+const openOperandStream = (value: Value, isEager: boolean) => {
+  const sets = setTrace.sets;
+  sets?.push(value);
+  const opened = openStream(value, isEager || sets !== undefined);
+  sets?.pop();
+  return opened;
+};
+
+const openSetStream = (value: Value) =>
+  typeof value !== "object" || isCachedSet(value) ? undefined : openOperandStream(value, false);
+
+const listUnionLikeTlc = (union: SetOperationValue, opened: OpenedStream | undefined) => {
   if (!isTlcEnumerable(union.left) || !isTlcEnumerable(union.right)) {
     throw new TlaEvaluationError(
       `Attempted to enumerate S \\cup T when S:\n${prettyPrint(formatValue(union.left))}\nand T:\n${prettyPrint(formatValue(union.right))}\nare not both enumerable`,
     );
   }
-  openStream(union.left);
-  openStream(union.right);
+  const cup = opened?.kind === "Cup" ? opened : undefined;
+  const left = cup ? cup.left : openOperandStream(union.left, true);
+  const right = cup ? cup.right : openOperandStream(union.right, true);
   if (isBeyondSetBound(union.left)) throw new TlaSetBoundError(getSetBoundMessage());
-  const left = getStreamedElements(union.left);
-  const right = isBeyondSetBound(union.right) ? undefined : getStreamedElements(union.right);
-  if (!right || left.length + right.length > getMaximumSetSize()) {
-    throw new TlaSetBoundError(getSetBoundMessage());
-  }
-  return [...left, ...right];
-};
-
-export const getNormalizedSetElements = (value: Value, isBounded: boolean) => {
-  if (typeof value !== "object" || value.kind !== "SetOperation" || value.enumerated) {
-    return isBounded ? toFiniteSet(value).elements : getUnboundedElements(value);
-  }
-  // TLC's toSetEnum tests membership outside the frame of S \ T and S \cap T, which their normalize keeps.
-  const elements =
-    value.operator === "\\cup"
-      ? toFiniteSet(createEnumeratedSet(callTracedMethod(value, () => listUnionLikeTlc(value))))
-          .elements
-      : callTracedMethod(value, () => enumerateSetOperation(value, false));
-  value.enumerated = createSortedSet(elements);
+  const elements: Value[] = [];
+  const add = (element: Value) => {
+    addBoundedElement(elements, element);
+    return false;
+  };
+  someOpenedElement(union.left, left, add);
+  if (isBeyondSetBound(union.right)) throw new TlaSetBoundError(getSetBoundMessage());
+  someOpenedElement(union.right, right, add);
   return elements;
 };
 
-export const someStreamedElement = (value: Value, visit: (element: Value) => boolean): boolean => {
-  if (typeof value !== "object" || isCachedSet(value)) {
-    return toFiniteSet(value).elements.some(visit);
+export const getNormalizedSetElements = (value: Value, isBounded: boolean) => {
+  if (
+    typeof value !== "object" ||
+    (value.kind !== "SetOperation" &&
+      value.kind !== "Union" &&
+      (!isBounded ||
+        (value.kind !== "FunctionSet" &&
+          value.kind !== "RecordSet" &&
+          value.kind !== "ProductSet"))) ||
+    value.enumerated
+  ) {
+    return isBounded ? toFiniteSet(value).elements : getUnboundedElements(value);
   }
-  const sets = setTrace.sets;
-  sets?.push(value);
-  openStream(value);
-  const isFound = someElementOfStream(value, (element) => {
-    sets?.pop();
-    const isAccepted = visit(element);
-    sets?.push(value);
-    return isAccepted;
-  });
-  sets?.pop();
-  return isFound;
+  // TLC frames the set as its elements() opens the stream, but not as toSetEnum collects it.
+  const elements = enumerateSet(
+    value,
+    true,
+    undefined,
+    setTrace.sets ? openOperandStream(value, false) : undefined,
+  );
+  const set = value.kind === "RecordSet" ? createSet(elements) : createSortedSet(elements);
+  value.enumerated = set;
+  return set.elements;
 };
 
-export const getStreamedElements = (value: Value) => {
+const someOpenedElement = (
+  value: Value,
+  opened: OpenedStream | undefined,
+  visit: (element: Value) => boolean,
+) =>
+  typeof value !== "object" || isCachedSet(value)
+    ? toFiniteSet(value).elements.some(visit)
+    : someElementOfStream(value, visit, opened);
+
+// TLC frames a set as its elements() opens the stream, but not as it streams it.
+export const someStreamedElement = (value: Value, visit: (element: Value) => boolean): boolean =>
+  someOpenedElement(value, openSetStream(value), visit);
+
+const getOpenedElements = (value: Value, opened: OpenedStream | undefined) => {
   const elements: Value[] = [];
-  someStreamedElement(value, (element) => {
+  someOpenedElement(value, opened, (element) => {
     elements.push(element);
     return false;
   });
   return elements;
 };
+
+export const getStreamedElements = (value: Value) => getOpenedElements(value, openSetStream(value));
 
 const getCombinedSets = (value: ObjectValue) =>
   value.kind === "ProductSet"
@@ -2197,43 +2607,76 @@ const isStreamedApart = (value: Value): boolean => {
   return getCombinedSets(value)?.some(isStreamedApart) ?? false;
 };
 
-const someElementOfStream = (value: ObjectValue, visit: (element: Value) => boolean): boolean => {
+// UNION S opens S, or the first set of S when S is enumerated, as its elements() opens the stream.
+const getOpenedUnionSets = (value: UnionValue, opened: OpenedStream | undefined) =>
+  getUnionSets(value, (base) =>
+    isEnumeratedSet(base) ? getUnionBase(base) : getOpenedElements(base, opened),
+  );
+
+const someElementOfStream = (
+  value: ObjectValue,
+  visit: (element: Value) => boolean,
+  opened: OpenedStream | undefined,
+): boolean => {
   if (value.kind === "Union") {
-    return getUnionSets(value, getStreamedElements).some((set, index) =>
-      someStreamedElement(getUnionSet(set, index, value), visit),
-    );
+    return getOpenedUnionSets(value, opened).some((set, index) => {
+      const unionSet = getUnionSet(set, index, value);
+      return index === 0 && isEnumeratedSet(value.base)
+        ? someOpenedElement(unionSet, opened, visit)
+        : someStreamedElement(unionSet, visit);
+    });
   }
   if (value.kind === "FilteredSet" && isTlcEnumerable(value.base)) {
     const test = value.startPass?.(false);
-    if (test) return someStreamedElement(value.base, (element) => test(element) && visit(element));
-    return someStreamedElement(
+    if (test) {
+      return someOpenedElement(value.base, opened, (element) => test(element) && visit(element));
+    }
+    return someOpenedElement(
       value.base,
+      opened,
       (element) => value.test(element, false) && visit(element),
     );
+  }
+  if (
+    (value.kind === "FunctionSet" || value.kind === "RecordSet" || value.kind === "ProductSet") &&
+    opened !== undefined
+  ) {
+    return somePulledElement(getProductStream(value, opened), visit);
   }
   const components = getCombinedSets(value);
   if (components?.some(isStreamedApart)) {
     return enumerateSet(value, false, getStreamedElements).some(visit);
   }
+  if (
+    value.kind === "Subset" &&
+    value.enumerated === undefined &&
+    getCardinality(value.base) > MAXIMUM_BUILT_SUBSET_BASE
+  ) {
+    return someSubset(getSubsetBase(value), visit);
+  }
   if (value.kind !== "SetOperation") return getUnboundedElements(value).some(visit);
   if (value.operator === "\\cup") {
-    return !isTlcEnumerable(value.left) || !isTlcEnumerable(value.right)
-      ? toFiniteSet(value).elements.some(visit)
-      : someStreamedElement(value.left, visit) || someStreamedElement(value.right, visit);
+    if (!isTlcEnumerable(value.left) || !isTlcEnumerable(value.right)) {
+      return toFiniteSet(value).elements.some(visit);
+    }
+    const cup = opened?.kind === "Cup" ? opened : undefined;
+    return (
+      someOpenedElement(value.left, cup?.left, visit) ||
+      someOpenedElement(value.right, cup?.right, visit)
+    );
   }
   const isLeftEnumerated = value.operator === "\\" || isTlcEnumerable(value.left);
   const enumerated = isLeftEnumerated ? value.left : value.right;
   const other = isLeftEnumerated ? value.right : value.left;
   if (!isTlcEnumerable(enumerated)) return toFiniteSet(value).elements.some(visit);
-  const sets = setTrace.sets;
-  return someStreamedElement(enumerated, (element) => {
-    // TLC's Enumerator#nextElement tests membership outside the frame of the set operation.
-    sets?.pop();
-    const isElement = isElementOf(element, other);
-    sets?.push(value);
-    return isElement === (value.operator === "\\cap") && visit(element);
-  });
+  return someOpenedElement(
+    enumerated,
+    opened,
+    (element) => isElementOf(element, other) === (value.operator === "\\cap") && visit(element),
+  );
 };
+
+const isAnyElement = () => true;
 
 export const isEmptySet = (value: Value): boolean => {
   if (typeof value !== "object" || !isSetValue(value)) {
@@ -2263,7 +2706,7 @@ export const isEmptySet = (value: Value): boolean => {
     case "Union":
       return getUnionSets(value).every((set, index) => isEmptySet(getUnionSet(set, index, value)));
     default:
-      return getUnboundedElements(value).length === 0;
+      return !someStreamedElement(value, isAnyElement);
   }
 };
 
@@ -2310,6 +2753,27 @@ export const getCardinality = (value: Value, version?: TlcVersion): number => {
       throw new TlaEvaluationError(
         `Attempted to compute the number of elements in the overridden value ${prettyPrint(formatValue(value))}.`,
       );
+    case "Subset":
+    case "FunctionSet":
+    case "RecordSet":
+    case "ProductSet": {
+      const sets = setTrace.sets;
+      sets?.push(value);
+      const size = getCombinedCardinality(value, version);
+      sets?.pop();
+      return size;
+    }
+    default:
+      cacheSet(value);
+      return toFiniteSet(value).elements.length;
+  }
+};
+
+const getCombinedCardinality = (
+  value: SubsetValue | FunctionSetValue | RecordSetValue | ProductSetValue,
+  version: TlcVersion | undefined,
+) => {
+  switch (value.kind) {
     case "Subset": {
       const size = getCardinality(value.base, version);
       if (size >= 31) throw new TlaEvaluationError(describeOverflow(value));
@@ -2342,9 +2806,6 @@ export const getCardinality = (value: Value, version?: TlcVersion): number => {
         () =>
           `Overflow when computing the number of elements in ${prettyPrint(formatValue(value))}`,
       );
-    default:
-      cacheSet(value);
-      return toFiniteSet(value).elements.length;
   }
 };
 
@@ -2448,23 +2909,48 @@ export const createUnsortedCopy = (set: SetValue, added: Value[]): SetValue => {
   return copy;
 };
 
+const isSequenceDomain = (keys: Value[]) => keys.every((key, index) => key === index + 1);
+
+// TLC's FcnLambdaValue#toTuple applies the function at 1, 2, ... until a key breaks the run, and caches nothing.
+const getAppliedSequenceElements = (value: LazyFunctionValue) => {
+  const keys = getUnboundedElements(value.domain);
+  const elements: Value[] = [];
+  for (let index = 0; index < keys.length; index++) {
+    if (keys[index] !== index + 1) return undefined;
+    elements.push(value.apply(keys[index]));
+  }
+  if (isCountedLazyFunction(value)) {
+    value.costModel.secondary[value.costModel.node] += keys.length;
+  }
+  return elements;
+};
+
+const hasSequenceDomain = (value: LazyFunctionValue) =>
+  typeof value.domain === "object" && value.domain.kind === "Interval"
+    ? value.domain.low === 1 || value.domain.high < value.domain.low
+    : isSequenceDomain(getUnboundedElements(value.domain));
+
 export const getSequenceElements = (value: Value): Value[] | undefined => {
   if (typeof value !== "object" || !isFunctionValue(value)) return undefined;
-  if (
-    value.kind === "LazyFunction" &&
-    (!isSetValue(value.domain) || isOverriddenSet(value.domain))
-  ) {
-    throw new TlaEvaluationError(
-      "To convert a function of form [x \\in S |-> f(x)] to a tuple, the set S must be enumerable.",
-    );
+  if (value.kind === "LazyFunction") {
+    if (value.boundTupleLengths !== undefined) return undefined;
+    if (!isSetValue(value.domain) || isOverriddenSet(value.domain)) {
+      throw new TlaEvaluationError(
+        "To convert a function of form [x \\in S |-> f(x)] to a tuple, the set S must be enumerable.",
+      );
+    }
+    // Applying once and keeping the values is the same as TLC's toTuple when nothing observes an application.
+    if (!value.enumerated && (value.isApplicationObserved || !hasSequenceDomain(value))) {
+      return getAppliedSequenceElements(value);
+    }
   }
   const functionValue = toFiniteFunction(value);
-  return isSequenceDomain(functionValue.domain) ? functionValue.range : undefined;
+  return isSortedSequenceDomain(functionValue.domain) ? functionValue.range : undefined;
 };
 
 // A function's domain is sorted and of values that compare with each other, so one that starts at 1
 // and ends at its length holds only integers, each once, and is 1..n.
-const isSequenceDomain = (domain: Value[]) =>
+const isSortedSequenceDomain = (domain: Value[]) =>
   domain.length === 0 || (domain[0] === 1 && domain[domain.length - 1] === domain.length);
 
 const describeNonSetMembership = (element: Value, value: Value) => {
@@ -2495,6 +2981,7 @@ export const computeLikeTlcOnFailure = <Left, Right, Result>(
   computeLikeTlc: (left: Left, right: Right, error: TlaEvaluationError) => Result,
   left: Left,
   right: Right,
+  isFailingLikeTlc?: (left: Left, right: Right) => boolean,
 ): Result => {
   const sets = setTrace.sets;
   const callStack = setTrace.callStack;
@@ -2503,7 +2990,7 @@ export const computeLikeTlcOnFailure = <Left, Right, Result>(
   try {
     return compute(left, right);
   } catch (error) {
-    if (!(error instanceof TlaEvaluationError)) throw error;
+    if (!(error instanceof TlaEvaluationError) || isFailingLikeTlc?.(left, right)) throw error;
     if (sets) sets.length = depth;
     if (callStack && trace) {
       callStack.expressions.length = trace.length;
@@ -3024,6 +3511,7 @@ export const updateFunction = (
         apply: (key) => (isEqualLikeTlc(argument, key) ? updated : apply(key)),
         source: functionValue.source,
         boundTupleLengths: functionValue.boundTupleLengths,
+        isApplicationObserved: functionValue.isApplicationObserved,
         original: functionValue,
         replacedKey: argument,
         replacement: updated,
