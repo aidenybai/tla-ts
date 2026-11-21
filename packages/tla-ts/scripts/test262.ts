@@ -496,8 +496,7 @@ vm.runInThisContext(require("node:fs").readFileSync(path, "utf8"), {
   importModuleDynamically: vm.constants.USE_MAIN_CONTEXT_DEFAULT_LOADER,
 });`;
 
-const getModulePath = (path: string) =>
-  join(MODULE_DIRECTORY, relative(TEST262_DIRECTORY, path)).replace(/\.js$/, ".ts");
+const getModulePath = (path: string) => join(MODULE_DIRECTORY, relative(TEST262_DIRECTORY, path));
 
 // The fixtures that a test imports, by path, each through a static import of a relative path or
 // an import() of one, or undefined where a file imports statically another way, such as with
@@ -702,12 +701,12 @@ const runTest = async (path: string): Promise<TestRun> => {
   if (fixtures === undefined) {
     return { id, outcome: "skipped", reason: "a test that imports other than from a fixture" };
   }
-  // A fixture is a module, so its code is strict.
+  // A fixture is a module, so its code is strict, and it is the JavaScript that Node loads, which
+  // TypeScript reads too.
   fixtures.forEach((text, fixture) => {
     const modulePath = getModulePath(fixture);
     mkdirSync(dirname(modulePath), { recursive: true });
-    writeFileSync(modulePath, `"use strict"; ${text}`);
-    writeFileSync(modulePath.replace(/\.ts$/, ".js"), transpileModule(text));
+    writeFileSync(modulePath, transpileModule(text));
   });
   const programPath = isLinked ? getModulePath(path) : PROGRAM_PATH;
   if (isLinked) mkdirSync(dirname(programPath), { recursive: true });
@@ -716,10 +715,13 @@ const runTest = async (path: string): Promise<TestRun> => {
   // A noStrict test runs outside strict mode, as a script, and any other runs in strict mode, as
   // Node runs it as a module.
   const program = isSloppy ? body : `"use strict"; ${body}`;
-  const compiledPath = isLinked ? programPath : "test262.ts";
   // A program that TypeScript's parser rejects is one that TypeScript's emitter may fail to print
-  // for Node, and that tla-ts doesn't compile.
-  const parseError = getParseError(program, compiledPath, ts.ModuleDetectionKind.Force);
+  // for Node, and that tla-ts doesn't compile. The harness is TypeScript, so it parses as such.
+  const parseError = getParseError(
+    program,
+    isLinked ? programPath.replace(/\.js$/, ".ts") : "test262.ts",
+    ts.ModuleDetectionKind.Force,
+  );
   if (parseError !== undefined) {
     return {
       id,
@@ -728,18 +730,16 @@ const runTest = async (path: string): Promise<TestRun> => {
     };
   }
   const nodeError = metadata.isModule
-    ? getModuleError(body, isLinked ? programPath.replace(/\.ts$/, ".js") : undefined)
+    ? getModuleError(body, isLinked ? programPath : undefined)
     : isImporting
-      ? getScriptError(body, programPath.replace(/\.ts$/, ".js"), isSloppy)
+      ? getScriptError(body, programPath, isSloppy)
       : await getNodeError(body, isSloppy);
   if (nodeError !== undefined) {
     return { id, outcome: "skipped", reason: `Node fails: ${getFirstLine(nodeError)}` };
   }
-  // A linked test's own file is on disk, as its fixtures are, so that TypeScript resolves an
-  // import of the test's .js path to the test's code rather than to the .js that Node runs.
-  if (isLinked) writeFileSync(programPath, program);
-  // Any other test runs as the JavaScript that TypeScript emits, which type stripping never reads.
-  return checkProgram(id, program, isLinked ? compiledPath : "test262.js", metadata.isModule);
+  // A test runs as the JavaScript that TypeScript emits, which a linked test's own file holds, as
+  // Node loads it, and which type stripping never reads.
+  return checkProgram(id, program, isLinked ? programPath : "test262.js", metadata.isModule);
 };
 
 const getReasonKind = (reason: string) =>
