@@ -2028,7 +2028,10 @@ export const getLocalDefinitions = (library: Library): GeneratedDefinition[] => 
   // (InstantiateCode) and bound by its mode, in their order: in a frame's slot, as a var's mutable
   // binding, or as a lexical one that a script or module initializes. Its call of itself is in its
   // tail, with the state the argument itself, which the call evaluates rather than chains, so it
-  // runs as a loop however many declarations a scope has.
+  // runs as a loop however many declarations a scope has. The tail loop binds an argument that is a
+  // name, such as a LET's, to that name's lazy value, so a state passed as a LET's name would chain
+  // each turn's state on the last one's, and overflow the stack as the last one is read: keep the
+  // state's expression in the call.
   {
     name: "InstantiateDeclarations",
     arity: 5,
