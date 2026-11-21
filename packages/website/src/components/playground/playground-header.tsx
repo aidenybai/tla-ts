@@ -1,26 +1,16 @@
 import { CaretDown, GearSix } from "@phosphor-icons/react";
 import type { ReactNode } from "react";
 import { cn } from "cn";
-import { PLAYGROUND_EXAMPLES } from "../playground-examples";
-import { usePlaygroundView } from "../playground-view";
-import { useIsHydrated } from "../use-is-hydrated";
-import { Logo } from "./logo";
-import { usePlayground } from "./playground";
-import { RunIcon } from "./run-icon";
-import { useTheme } from "./theme-switcher";
-import { Button } from "./ui/button";
-import { buttonVariants } from "./ui/button-variants";
-import {
-  DropdownMenu,
-  DropdownMenuContent,
-  DropdownMenuGroup,
-  DropdownMenuItem,
-  DropdownMenuLabel,
-  DropdownMenuRadioGroup,
-  DropdownMenuRadioItem,
-  DropdownMenuSeparator,
-  DropdownMenuTrigger,
-} from "./ui/dropdown-menu";
+import { PLAYGROUND_EXAMPLES } from "@/lib/playground-examples";
+import { usePlaygroundView } from "@/lib/playground-view";
+import { useIsHydrated } from "@/hooks/use-is-hydrated";
+import { Logo } from "@/components/logo";
+import { usePlayground } from "./playground-context";
+import { RunIcon } from "@/components/run-icon";
+import { useTheme } from "@/components/theme-switcher";
+import { Button } from "@/components/ui/button";
+import { buttonVariants } from "@/components/ui/button-variants";
+import { DropdownMenu } from "@/components/ui/dropdown-menu";
 
 const APPLE_PLATFORM = /Mac|iPhone|iPad/;
 
@@ -50,54 +40,54 @@ export const PlaygroundSettings = () => {
   const view = usePlaygroundView();
   const theme = useTheme();
   return (
-    <DropdownMenu>
-      <DropdownMenuTrigger aria-label="Settings" className={cn(buttonVariants({ size: "icon" }))}>
+    <DropdownMenu.Root>
+      <DropdownMenu.Trigger aria-label="Settings" className={cn(buttonVariants({ size: "icon" }))}>
         <GearSix />
-      </DropdownMenuTrigger>
-      <DropdownMenuContent align="end">
-        <DropdownMenuItem
+      </DropdownMenu.Trigger>
+      <DropdownMenu.Content align="end">
+        <DropdownMenu.Item
           onClick={() => view.setIsArrowsShown(!view.isArrowsShown)}
           className="max-md:hidden"
         >
           {view.isArrowsShown ? "Hide arrows" : "Show arrows"}
-        </DropdownMenuItem>
-        <DropdownMenuSeparator className="max-md:hidden" />
-        <DropdownMenuGroup>
-          <DropdownMenuLabel>Theme</DropdownMenuLabel>
-          <DropdownMenuRadioGroup value={theme.theme} onValueChange={theme.setTheme}>
-            <DropdownMenuRadioItem value="system">System</DropdownMenuRadioItem>
-            <DropdownMenuRadioItem value="light">Light</DropdownMenuRadioItem>
-            <DropdownMenuRadioItem value="dark">Dark</DropdownMenuRadioItem>
-          </DropdownMenuRadioGroup>
-        </DropdownMenuGroup>
-      </DropdownMenuContent>
-    </DropdownMenu>
+        </DropdownMenu.Item>
+        <DropdownMenu.Separator className="max-md:hidden" />
+        <DropdownMenu.Group>
+          <DropdownMenu.Label>Theme</DropdownMenu.Label>
+          <DropdownMenu.RadioGroup value={theme.theme} onValueChange={theme.setTheme}>
+            <DropdownMenu.RadioItem value="system">System</DropdownMenu.RadioItem>
+            <DropdownMenu.RadioItem value="light">Light</DropdownMenu.RadioItem>
+            <DropdownMenu.RadioItem value="dark">Dark</DropdownMenu.RadioItem>
+          </DropdownMenu.RadioGroup>
+        </DropdownMenu.Group>
+      </DropdownMenu.Content>
+    </DropdownMenu.Root>
   );
 };
 
 export const PlaygroundFiles = () => {
   const playground = usePlayground();
   return (
-    <DropdownMenu>
-      <DropdownMenuTrigger className={cn(buttonVariants(), "min-w-0 shrink text-foreground")}>
+    <DropdownMenu.Root>
+      <DropdownMenu.Trigger className={cn(buttonVariants(), "min-w-0 shrink text-foreground")}>
         <span data-file-name className="truncate">
           {playground.fileName}
         </span>
         <CaretDown className="size-3.5 text-faint" />
-      </DropdownMenuTrigger>
-      <DropdownMenuContent align="end">
-        <DropdownMenuRadioGroup
+      </DropdownMenu.Trigger>
+      <DropdownMenu.Content align="end">
+        <DropdownMenu.RadioGroup
           value={playground.fileName}
           onValueChange={(fileName) => playground.selectExample(String(fileName))}
         >
           {PLAYGROUND_EXAMPLES.map((example) => (
-            <DropdownMenuRadioItem key={example.fileName} value={example.fileName}>
+            <DropdownMenu.RadioItem key={example.fileName} value={example.fileName}>
               {example.fileName}
-            </DropdownMenuRadioItem>
+            </DropdownMenu.RadioItem>
           ))}
-        </DropdownMenuRadioGroup>
-      </DropdownMenuContent>
-    </DropdownMenu>
+        </DropdownMenu.RadioGroup>
+      </DropdownMenu.Content>
+    </DropdownMenu.Root>
   );
 };
 

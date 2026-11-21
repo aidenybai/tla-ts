@@ -1,7 +1,7 @@
 import { useMemo, useRef } from "react";
-import { getLineHoveredName, getLineMarks } from "../line-marks";
-import type { Mark, Token } from "../site-data";
-import { CodeLine, LineNumber } from "./code-line";
+import { getLineHoveredName, getLineMarks } from "@/lib/line-marks";
+import type { Mark, Token } from "@/lib/site-data";
+import { CodeLine, LineNumber } from "@/components/code-line";
 
 interface CodeEditorProps {
   label: string;

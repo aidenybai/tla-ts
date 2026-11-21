@@ -1,5 +1,5 @@
 import { useMemo } from "react";
-import { getPath, type Search } from "./search";
+import { getPath, type Search } from "@/lib/search";
 
 // The steps from the first state to the hovered one.
 export const useSearchPath = (search: Search | undefined, hoveredStateId: string | undefined) => {

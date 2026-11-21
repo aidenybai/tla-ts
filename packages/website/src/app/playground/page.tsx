@@ -1,6 +1,10 @@
-import { Playground } from "./components/playground-parts";
+import { Playground } from "@/components/playground/playground";
+import { startEscoreWorker } from "@/lib/escore-worker";
 
-export const PlaygroundPage = () => (
+// The checker loads ESCore as the page's code loads, before the page renders.
+startEscoreWorker();
+
+const Page = () => (
   <Playground.Root>
     <Playground.Header>
       <Playground.Settings />
@@ -14,3 +18,5 @@ export const PlaygroundPage = () => (
     </Playground.Workspace>
   </Playground.Root>
 );
+
+export default Page;

@@ -1,24 +1,20 @@
-import { useEffect, useMemo, useRef, type ReactNode } from "react";
+import { useEffect, useMemo, useRef } from "react";
 import outlines from "virtual:outlines";
 import { createPartsContext } from "@/lib/utils";
-import { BUILT_OUTPUT_LINES } from "../compilation";
-import { getHighlightColors } from "../highlight-colors";
-import { getLineMarks } from "../line-marks";
-import type { Mark } from "../site-data";
-import { useCompile } from "../use-compile";
-import { useIsHydrated } from "../use-is-hydrated";
-import { useMediaQuery } from "../use-media-query";
-import { usePlaygroundFile } from "../use-playground-file";
-import { usePlaygroundView } from "../playground-view";
-import { useRun } from "../use-run";
+import { BUILT_OUTPUT_LINES } from "@/lib/compilation";
+import { getHighlightColors } from "@/lib/highlight-colors";
+import { getLineMarks } from "@/lib/line-marks";
+import type { Mark } from "@/lib/site-data";
+import { useCompile } from "@/hooks/use-compile";
+import { useIsHydrated } from "@/hooks/use-is-hydrated";
+import { useMediaQuery } from "@/hooks/use-media-query";
+import { usePlaygroundFile } from "@/hooks/use-playground-file";
+import { usePlaygroundView } from "@/lib/playground-view";
+import { useRun } from "@/hooks/use-run";
 
 const NO_MARKS: Mark[] = [];
 
-// Runs as the page is parsed, before React loads. The page is built with one file, so a link to
-// another hides the built one.
-const SHARED_SCRIPT = `if (/[#&](file|code)=/.test(location.hash)) document.documentElement.dataset.shared = "";`;
-
-const usePlaygroundState = () => {
+export const usePlaygroundState = () => {
   const file = usePlaygroundFile();
   const compiler = useCompile(file.source, file.fileName);
   const runner = useRun(true);
@@ -112,37 +108,7 @@ const usePlaygroundState = () => {
   };
 };
 
-const playgroundContext =
+export const playgroundContext =
   createPartsContext<ReturnType<typeof usePlaygroundState>>("Playground.Root");
 
 export const usePlayground = playgroundContext.useParts;
-
-interface PartProps {
-  children: ReactNode;
-}
-
-export const PlaygroundRoot = (props: PartProps) => {
-  const isHydrated = useIsHydrated();
-  return (
-    <playgroundContext.PartsContext value={usePlaygroundState()}>
-      <div className="flex h-dvh flex-col text-prose">
-        {!isHydrated && <script dangerouslySetInnerHTML={{ __html: SHARED_SCRIPT }} />}
-        {props.children}
-      </div>
-    </playgroundContext.PartsContext>
-  );
-};
-
-export const PlaygroundWorkspace = (props: PartProps) => {
-  const playground = usePlayground();
-  const isHoveringName = usePlaygroundView((view) => view.hoveredName !== undefined);
-  return (
-    <main
-      ref={playground.workspaceRef}
-      data-hovering-name={isHoveringName ? "" : undefined}
-      className="relative min-h-0 flex-1 overflow-hidden"
-    >
-      {props.children}
-    </main>
-  );
-};
