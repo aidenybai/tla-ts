@@ -13,7 +13,6 @@ import {
   createLevelAnalyzer,
   createProofChecker,
   getArgumentKey,
-  parseArgumentParamKey,
   putArgConstraint,
   putConstraint,
   TEMPORAL_LEVEL,
@@ -139,7 +138,7 @@ export const createInstanceChecker = (
       variables: module.levelVariables,
       constraints: new Map(),
       argConstraints: new Map(),
-      argParams: new Set(),
+      argParams: new Map(),
     };
     if (!levels.isConstant) {
       module.constants.forEach((constant) => putConstraint(levels.constraints, constant.key, 0));
@@ -152,9 +151,8 @@ export const createInstanceChecker = (
       data.argConstraints.forEach((value, key) =>
         putArgConstraint(levels.argConstraints, key, value),
       );
-      data.argParams.forEach((key) => {
-        const parameter = parseArgumentParamKey(key);
-        if (isKept(parameter.operator, parameter.param)) levels.argParams.add(key);
+      data.argParams.forEach((parameter, key) => {
+        if (isKept(parameter.operator, parameter.param)) levels.argParams.set(key, parameter);
       });
     };
     definitions.forEach((definition) =>
@@ -256,8 +254,7 @@ export const createInstanceChecker = (
         }
       }
     });
-    levels.argParams.forEach((key) => {
-      const parameter = parseArgumentParamKey(key);
+    levels.argParams.forEach((parameter) => {
       const substitute = substituted.find((item) => item.key === parameter.operator);
       const argument = substituted.find((item) => item.key === parameter.param);
       if (!substitute?.operator || !argument) return;

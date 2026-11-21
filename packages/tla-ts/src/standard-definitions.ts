@@ -95,7 +95,7 @@ export const STANDARD_LEVELS = new Map(
       params: new Set(),
       constraints: new Map(),
       argConstraints: new Map(),
-      argParams: new Set(),
+      argParams: new Map(),
       formals: signature[2].map((arity, index) => ({ name: `$${index}`, arity })),
       maxLevels: signature[3],
       weights: signature[4],

@@ -38,7 +38,7 @@ export interface LevelData {
   params: Set<string>;
   constraints: Map<string, number>;
   argConstraints: Map<string, number>;
-  argParams: Set<string>;
+  argParams: ArgumentParams;
 }
 
 export interface OperatorLevels extends LevelData {
@@ -67,18 +67,22 @@ export interface ModuleLevels {
   variables: Set<string>;
   constraints: Map<string, number>;
   argConstraints: Map<string, number>;
-  argParams: Set<string>;
+  argParams: ArgumentParams;
 }
 
 interface InstancedDefinition extends ModuleLevels {
   source: OperatorLevels;
 }
 
-interface ArgumentParam {
+export interface ArgumentParam {
   operator: string;
   index: number;
   param: string;
 }
+
+// The parameters of an operator's arguments that a definition's level depends on, each by its key,
+// operator, index, and parameter, with the parts it was made of, which the analysis reads as it is.
+export type ArgumentParams = Map<string, ArgumentParam>;
 
 interface SubstitutedSource {
   constraints: [string, number][];
@@ -106,7 +110,7 @@ interface FoundOriginal {
 
 export interface LetInstance extends InstanceSubstitutes {
   copies: Map<string, InstanceCopy>;
-  getArgParams: () => Set<string>;
+  getArgParams: () => ArgumentParams;
   getSubstitutionNames: () => string[];
   substitutesCheck: InstanceLevelCheck["substitutesCheck"];
 }
@@ -210,19 +214,27 @@ export const getArgumentKey = (operator: string, index: number) =>
 const getArgumentParamKey = (operator: string, index: number, param: string) =>
   `${operator}${SEPARATOR}${index}${SEPARATOR}${param}`;
 
-export const parseArgumentParamKey = (key: string) => {
+// The operator and the index of an argument constraint's key.
+export const parseArgumentKey = (key: string) => {
   const parts = key.split(SEPARATOR);
-  return { operator: parts[0], index: Number(parts[1]), param: parts[2] };
+  return { operator: parts[0], index: Number(parts[1]) };
 };
 
-const renameArgumentParam = (key: string, rename: (name: string) => string) => {
-  const parameter = parseArgumentParamKey(key);
-  return {
-    operator: rename(parameter.operator),
-    index: parameter.index,
-    param: rename(parameter.param),
-  };
+export const addArgumentParam = (
+  params: ArgumentParams,
+  operator: string,
+  index: number,
+  param: string,
+) => {
+  const key = getArgumentParamKey(operator, index, param);
+  if (!params.has(key)) params.set(key, { operator, index, param });
 };
+
+const renameArgumentParam = (parameter: ArgumentParam, rename: (name: string) => string) => ({
+  operator: rename(parameter.operator),
+  index: parameter.index,
+  param: rename(parameter.param),
+});
 
 const getFormalRenamer = (formals: OperatorParam[], sourceFormals: OperatorParam[]) => {
   const prefix = formals.length - sourceFormals.length;
@@ -241,7 +253,7 @@ const createData = (level = 0): LevelData => ({
   params: new Set(),
   constraints: new Map(),
   argConstraints: new Map(),
-  argParams: new Set(),
+  argParams: new Map(),
 });
 
 export const putConstraint = (constraints: Map<string, number>, name: string, level: number) =>
@@ -253,7 +265,7 @@ export const putArgConstraint = (constraints: Map<string, number>, key: string, 
 const mergeConstraints = (data: LevelData, part: LevelData) => {
   part.constraints.forEach((value, key) => putConstraint(data.constraints, key, value));
   part.argConstraints.forEach((value, key) => putArgConstraint(data.argConstraints, key, value));
-  part.argParams.forEach((key) => data.argParams.add(key));
+  part.argParams.forEach((parameter, key) => data.argParams.set(key, parameter));
 };
 
 const createSignature = (
@@ -440,11 +452,12 @@ const toOperatorLevels = (
     if (!isFormal(key)) levels.constraints.set(key, value);
   });
   data.argConstraints.forEach((value, key) => {
-    if (!isFormal(parseArgumentParamKey(key).operator)) levels.argConstraints.set(key, value);
+    if (!isFormal(parseArgumentKey(key).operator)) levels.argConstraints.set(key, value);
   });
-  data.argParams.forEach((key) => {
-    const parameter = parseArgumentParamKey(key);
-    if (!isFormal(parameter.operator) || !isFormal(parameter.param)) levels.argParams.add(key);
+  data.argParams.forEach((parameter, key) => {
+    if (!isFormal(parameter.operator) || !isFormal(parameter.param)) {
+      levels.argParams.set(key, parameter);
+    }
   });
   return levels;
 };
@@ -685,7 +698,7 @@ export const createLevelAnalyzer = (context: LevelContext) => {
     operands.forEach((operand, index) => {
       operand.data.params.forEach((param) => {
         data.params.add(param);
-        data.argParams.add(getArgumentParamKey(name, index, param));
+        addArgumentParam(data.argParams, name, index, param);
       });
       putArgConstraint(data.argConstraints, getArgumentKey(name, index), operand.data.level);
       mergeConstraints(data, operand.data);
@@ -798,8 +811,7 @@ export const createLevelAnalyzer = (context: LevelContext) => {
         }),
       );
     });
-    operator.argParams.forEach((key) => {
-      const parameter = parseArgumentParamKey(key);
+    operator.argParams.forEach((parameter) => {
       const argument = getOperand(parameter.operator);
       if (argument?.kind === "Operator") {
         putConstraint(
@@ -840,8 +852,7 @@ export const createLevelAnalyzer = (context: LevelContext) => {
         }),
       );
     });
-    operator.argParams.forEach((key) => {
-      const parameter = parseArgumentParamKey(key);
+    operator.argParams.forEach((parameter) => {
       const argument = getOperand(parameter.operator);
       if (argument) {
         putArgConstraint(
@@ -853,29 +864,28 @@ export const createLevelAnalyzer = (context: LevelContext) => {
     });
 
     operands.forEach((operand) =>
-      operand.data.argParams.forEach((key) => {
-        if (!isBound(parseArgumentParamKey(key).param)) data.argParams.add(key);
+      operand.data.argParams.forEach((parameter, key) => {
+        if (!isBound(parameter.param)) data.argParams.set(key, parameter);
       }),
     );
-    ranges.forEach((range) => range.argParams.forEach((key) => data.argParams.add(key)));
-    operator.argParams.forEach((key) => {
-      const parameter = parseArgumentParamKey(key);
+    ranges.forEach((range) =>
+      range.argParams.forEach((parameter, key) => data.argParams.set(key, parameter)),
+    );
+    operator.argParams.forEach((parameter, key) => {
       const argument = getOperand(parameter.operator);
       if (!argument) {
         const value = getOperand(parameter.param);
         if (!value) {
-          data.argParams.add(key);
+          data.argParams.set(key, parameter);
           return;
         }
         value.data.params.forEach((param) =>
-          data.argParams.add(getArgumentParamKey(parameter.operator, parameter.index, param)),
+          addArgumentParam(data.argParams, parameter.operator, parameter.index, param),
         );
         return;
       }
       if (argument.kind === "Declared") {
-        data.argParams.add(
-          getArgumentParamKey(argument.declared.name, parameter.index, parameter.param),
-        );
+        addArgumentParam(data.argParams, argument.declared.name, parameter.index, parameter.param);
       }
     });
     operands.forEach((operand, operandIndex) => {
@@ -885,7 +895,7 @@ export const createLevelAnalyzer = (context: LevelContext) => {
         Array.from({ length: declared.arity }, (_value, argumentIndex) => {
           if (!hasCondition(operandIndex, otherIndex, argumentIndex)) return;
           other.data.params.forEach((param) =>
-            data.argParams.add(getArgumentParamKey(declared.name, argumentIndex, param)),
+            addArgumentParam(data.argParams, declared.name, argumentIndex, param),
           );
         }),
       );
@@ -1023,23 +1033,23 @@ export const createLevelAnalyzer = (context: LevelContext) => {
     const operands = getSubstitutes(instance, scope);
     const getParams = (param: string) => operands.get(param)?.data.params ?? [param];
     return [
-      ...[...instance.getArgParams()].flatMap((key) => {
-        const parameter = parseArgumentParamKey(key);
+      ...[...instance.getArgParams()].flatMap((entry): [string, ArgumentParam][] => {
+        const parameter = entry[1];
         const operator = operands.get(parameter.operator);
-        if (!operator) return [key];
+        if (!operator) return [entry];
         return operator.kind === "Declared"
-          ? [...getParams(parameter.param)].map((param) =>
+          ? [...getParams(parameter.param)].map((param): [string, ArgumentParam] => [
               getArgumentParamKey(operator.declared.name, parameter.index, param),
-            )
+              { operator: operator.declared.name, index: parameter.index, param },
+            ])
           : [];
       }),
       ...[...operands.values()].flatMap((operand) => [...operand.data.argParams]),
-    ].filter((key) => {
-      const parameter = parseArgumentParamKey(key);
-      return instance.params.every(
-        (param) => param.name !== parameter.operator && param.name !== parameter.param,
-      );
-    });
+    ].filter((entry) =>
+      instance.params.every(
+        (param) => param.name !== entry[1].operator && param.name !== entry[1].param,
+      ),
+    );
   };
 
   const enterLet = (expression: LetExpression, scope: Scope) => {
@@ -1138,10 +1148,12 @@ export const createLevelAnalyzer = (context: LevelContext) => {
       params: new Set(body.params),
       constraints: new Map(body.constraints),
       argConstraints: new Map(body.argConstraints),
-      argParams: new Set(body.argParams),
+      argParams: new Map(body.argParams),
     };
     entered.instances?.forEach((instance) =>
-      getInstanceArgParams(instance, entered.inner).forEach((key) => data.argParams.add(key)),
+      getInstanceArgParams(instance, entered.inner).forEach((entry) =>
+        data.argParams.set(entry[0], entry[1]),
+      ),
     );
     definitions.forEach((levels) => mergeConstraints(data, levels));
     return data;
@@ -1538,7 +1550,7 @@ export const createLevelAnalyzer = (context: LevelContext) => {
       getParams(entry[0]).forEach((name) => putConstraint(data.constraints, name, level));
     });
     source.argConstraints.forEach((entry) => {
-      const parameter = parseArgumentParamKey(entry[0]);
+      const parameter = parseArgumentKey(entry[0]);
       const operator = operands.get(parameter.operator);
       if (!operator) putArgConstraint(data.argConstraints, entry[0], entry[1]);
       else if (operator.kind === "Declared") {
@@ -1572,7 +1584,7 @@ export const createLevelAnalyzer = (context: LevelContext) => {
         );
       }
       (operator === undefined ? [parameter.param] : getParams(parameter.param)).forEach((name) =>
-        data.argParams.add(getArgumentParamKey(target, parameter.index, name)),
+        addArgumentParam(data.argParams, target, parameter.index, name),
       );
     });
   };
@@ -1606,7 +1618,7 @@ export const createLevelAnalyzer = (context: LevelContext) => {
       {
         constraints: [...instanced.constraints],
         argConstraints: [...instanced.argConstraints],
-        argParams: [...instanced.argParams].map(parseArgumentParamKey),
+        argParams: [...instanced.argParams.values()],
       },
       operands,
       instanced,
@@ -1618,11 +1630,12 @@ export const createLevelAnalyzer = (context: LevelContext) => {
       if (!isParam(name)) data.constraints.set(name, level);
     });
     substituted.argConstraints.forEach((level, key) => {
-      if (!isParam(parseArgumentParamKey(key).operator)) data.argConstraints.set(key, level);
+      if (!isParam(parseArgumentKey(key).operator)) data.argConstraints.set(key, level);
     });
-    substituted.argParams.forEach((key) => {
-      const parameter = parseArgumentParamKey(key);
-      if (!isParam(parameter.operator) && !isParam(parameter.param)) data.argParams.add(key);
+    substituted.argParams.forEach((parameter, key) => {
+      if (!isParam(parameter.operator) && !isParam(parameter.param)) {
+        data.argParams.set(key, parameter);
+      }
     });
     return data;
   };
@@ -1653,7 +1666,9 @@ export const createLevelAnalyzer = (context: LevelContext) => {
           ),
         ],
         argParams: [
-          ...[...source.argParams].map((key) => renameArgumentParam(key, rename)),
+          ...[...source.argParams.values()].map((parameter) =>
+            renameArgumentParam(parameter, rename),
+          ),
           ...names.flatMap((operator, operatorIndex) =>
             names.flatMap((param, paramIndex) =>
               Array.from({ length: source.formals[operatorIndex].arity }, (_value, index) => index)
@@ -1752,10 +1767,12 @@ export const createLevelAnalyzer = (context: LevelContext) => {
           entry[1],
         ]),
         argConstraints: [...original.argConstraints].map((entry): [string, number] => {
-          const parameter = parseArgumentParamKey(entry[0]);
+          const parameter = parseArgumentKey(entry[0]);
           return [getArgumentKey(rename(parameter.operator), parameter.index), entry[1]];
         }),
-        argParams: [...original.argParams].map((key) => renameArgumentParam(key, rename)),
+        argParams: [...original.argParams.values()].map((parameter) =>
+          renameArgumentParam(parameter, rename),
+        ),
       },
       getSubstitutes(copy, scope),
       instancedLevels,
@@ -1859,7 +1876,7 @@ export const createLevelAnalyzer = (context: LevelContext) => {
       ...levels,
       level: Math.max(prior.level, levels.level),
       params: new Set([...prior.params, ...levels.params]),
-      argParams: new Set([...prior.argParams, ...levels.argParams]),
+      argParams: new Map([...prior.argParams, ...levels.argParams]),
       maxLevels: levels.maxLevels.map((level, index) => Math.min(level, prior.maxLevels[index])),
       weights: levels.weights.map((weight, index) => Math.max(weight, prior.weights[index])),
       nonLeibniz: new Set([...prior.nonLeibniz, ...levels.nonLeibniz]),
