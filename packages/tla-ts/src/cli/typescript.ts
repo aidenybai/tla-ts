@@ -41,6 +41,28 @@ const TLC_ESCAPES = new Map([
   ["t", "\t"],
 ]);
 
+// The escapes of a TLA+ string literal, which TLC reads and prints.
+const TLA_ESCAPES = new Map([
+  ['"', '\\"'],
+  ["\\", "\\\\"],
+  ["\n", "\\n"],
+  ["\t", "\\t"],
+]);
+
+// Whether a TLA+ string holds a text as Node writes it, which TLC prints as it holds it: a text of
+// no control character but a tab or a line feed, and of no surrogate without its pair, which Node
+// writes as U+FFFD.
+const isNodeText = (text: string) =>
+  text.isWellFormed() &&
+  [...text].every((character) => {
+    const code = character.codePointAt(0) ?? 0;
+    return code === 9 || code === 10 || (code >= 32 && code < 127) || code > 159;
+  });
+
+// The TLA+ string literal of a text.
+const getTlaString = (text: string) =>
+  `"${text.replace(/["\\\n\t]/g, (character) => TLA_ESCAPES.get(character) ?? character)}"`;
+
 // What Node writes to stderr and the code it exits with, for the script at path whose spec fails an
 // Assert with what Node reports: a top-level await that never settles, or a throw or a rejection
 // that nothing handles.
@@ -178,11 +200,12 @@ NodeErrorSource(s, v) ==
   IF "trace" \notin DOMAIN o.slots \/ "dropped" \in DOMAIN o.slots.trace \/ o.slots.trace.limit < 1 THEN Empty ELSE
   LET w == WalkFrames(s, [o.slots.trace EXCEPT !.limit = 1], o.slots.trace.callers, <<>>, [NoFrames EXCEPT !.isText = FALSE]) IN
   IF w.count # 1 \/ w.positions[1] = <<>> \/ w.positions[1][1] # 1 \/ w.positions[1][2] > Len(EntryLines) THEN Empty ELSE
-  LET line == EntryLines[w.positions[1][2]]
+  LET n == w.positions[1][2]
+      line == EntryLines[n]
       column == w.positions[1][3]
   IN IF column > Len(line) + 1 THEN Empty
-     ELSE EntryUrl \o <<58>> \o NumToString(NumFromInt(w.positions[1][2])) \o <<10>> \o line \o <<10>>
-          \o [i \in 1..(column - 1) |-> IF line[i] = 9 THEN 9 ELSE 32] \o <<94>>`;
+     ELSE EntryUrl \o <<58>> \o NumToString(NumFromInt(n)) \o <<10>> \o line \o <<10>>
+          \o [i \in 1..(column - 1) |-> IF n \in DOMAIN EntryPads THEN EntryPads[n][i] ELSE IF line[i] = 9 THEN 9 ELSE 32] \o <<94>>`;
 
 // The steps of a script's spec as the CLI checks it on ESCore: where the script leaves an exception
 // uncaught, Init fails with what Node prints, as getNodeExit reads it, for an error or a primitive
@@ -197,21 +220,52 @@ const getEscoreScriptSteps = (
   url: string,
   lines: readonly string[],
 ) => {
-  const getText = (text: string) => JSON.stringify(text);
   const getUnits = (text: string) =>
     `<<${Array.from({ length: text.length }, (_, index) => text.charCodeAt(index)).join(", ")}>>`;
-  const stop = getText("tla-ts can't print what Node prints for this uncaught exception");
+  const getFunction = (pairs: string[]) =>
+    pairs.length === 0 ? "[key \\in {} |-> Empty]" : pairs.join(" @@ ");
+  const stop = getTlaString("tla-ts can't print what Node prints for this uncaught exception");
+  // The characters that Node's text may hold: a tab, a line feed, the printable ASCII, and the
+  // characters of the entry's code, by code unit, or by the pair of surrogates of one past U+FFFF.
+  const characters = [
+    ...new Set([
+      "\t",
+      "\n",
+      ...Array.from({ length: 95 }, (_, index) => String.fromCharCode(index + 32)),
+      ...lines.join(""),
+    ]),
+  ].filter(isNodeText);
+  // A line where a tab's place in its UTF-8 isn't its place in its code units, whose padding Node
+  // writes with a tab where the UTF-8 has one.
+  const pads = lines.flatMap((line, index) => {
+    const bytes = Buffer.from(line, "utf8");
+    const pad = Array.from({ length: line.length }, (_, position) =>
+      bytes[position] === 9 ? 9 : 32,
+    );
+    return pad.some((unit, position) => (unit === 9) !== (line.charCodeAt(position) === 9))
+      ? [`${index + 1} :> <<${pad.join(", ")}>>`]
+      : [];
+  });
   return `VARIABLE programDone
 ThrowSiteLocation(site) ==
-  CASE ${[...siteLocations].map(([index, text]) => `site = <<1, ${index}>> -> ${getText(text)}\n    [] `).join("")}OTHER -> Empty
+  CASE ${[...siteLocations].map(([index, text]) => `site = <<1, ${index}>> -> ${getTlaString(text)}\n    [] `).join("")}OTHER -> Empty
 EntryUrl == ${getUnits(url)}
 EntryLines == <<${lines.map(getUnits).join(", ")}>>
-UnitCharacters == <<${Array.from({ length: 95 }, (_, index) => getText(String.fromCharCode(index + 32))).join(", ")}>>
+EntryPads == ${getFunction(pads)}
+UnitCharacters == ${getFunction(characters.filter((character) => character.length === 1).map((character) => `${character.charCodeAt(0)} :> ${getTlaString(character)}`))}
+PairCharacters == ${getFunction(characters.filter((character) => character.length === 2).map((character) => `<<${character.charCodeAt(0)}, ${character.charCodeAt(1)}>> :> ${getTlaString(character)}`))}
 RECURSIVE UnitsToText(_)
 UnitsToText(units) ==
-  IF units = <<>> THEN "" ELSE (CASE Head(units) = 9 -> "\\t" [] Head(units) = 10 -> "\\n" [] OTHER -> UnitCharacters[Head(units) - 31]) \\o UnitsToText(Tail(units))
-NodeText(units) ==
-  IF units # Empty /\\ \\A i \\in DOMAIN units : units[i] \\in {9, 10} \\/ (units[i] >= 32 /\\ units[i] <= 126) THEN UnitsToText(units) ELSE Empty
+  IF units = <<>> THEN "" ELSE
+  IF Len(units) > 1 /\\ <<units[1], units[2]>> \\in DOMAIN PairCharacters
+  THEN PairCharacters[<<units[1], units[2]>>] \\o UnitsToText(SubSeq(units, 3, Len(units)))
+  ELSE UnitCharacters[Head(units)] \\o UnitsToText(Tail(units))
+RECURSIVE IsNodeText(_)
+IsNodeText(units) ==
+  \\/ units = <<>>
+  \\/ Len(units) > 1 /\\ <<units[1], units[2]>> \\in DOMAIN PairCharacters /\\ IsNodeText(SubSeq(units, 3, Len(units)))
+  \\/ Head(units) \\in DOMAIN UnitCharacters /\\ IsNodeText(Tail(units))
+NodeText(units) == IF units # Empty /\\ IsNodeText(units) THEN UnitsToText(units) ELSE Empty
 ${foldNames(ERROR_TEXT)}
 NodeUncaughtText(r) ==
   LET where == r.c.target
@@ -219,15 +273,15 @@ NodeUncaughtText(r) ==
       text == IF IsObject(v) \\/ IsSymbol(v) THEN Empty ELSE NodeText(PrimitiveToUnits(v))
       errorText == IF IsObject(v) THEN NodeText(NodeErrorText(r.s, v)) ELSE Empty
       source == IF IsObject(v) /\\ where # Empty /\\ where.kind \\in {"module", "rejection"} THEN NodeText(NodeErrorSource(r.s, v)) ELSE Empty
-  IN CASE where # Empty /\\ where.kind = "unsettled" -> ${unsettledText === undefined ? stop : getText(unsettledText)}
+  IN CASE where # Empty /\\ where.kind = "unsettled" -> ${unsettledText === undefined ? stop : getTlaString(unsettledText)}
        [] where = Empty \\/ (IsObject(v) /\\ errorText = Empty) \\/ (~IsObject(v) /\\ text = Empty) -> ${stop}
        [] IsObject(v) /\\ where.kind \\in {"module", "rejection"} /\\ source # Empty -> source \\o "\\n\\n" \\o errorText
        [] IsObject(v) /\\ where.kind = "throw" /\\ ThrowSiteLocation(where.site) # Empty -> ThrowSiteLocation(where.site) \\o "\\n\\n" \\o errorText
        [] IsObject(v) -> ${stop}
-       [] where.kind = "module" -> ${getText(`\n${MODULE_UNCAUGHT_LOCATION}\n`)} \\o text \\o ${getText(`\n${TRACE_UNCAUGHT_HINT}`)}
+       [] where.kind = "module" -> ${getTlaString(`\n${MODULE_UNCAUGHT_LOCATION}\n`)} \\o text \\o ${getTlaString(`\n${TRACE_UNCAUGHT_HINT}`)}
        [] where.kind = "rejection" ->
-            ${getText(`${UNHANDLED_REJECTION_LOCATION}\n\n${UNHANDLED_REJECTION_PREFIX}"`)} \\o text \\o ${getText(`"${UNHANDLED_REJECTION_SUFFIX}`)}
-       [] where.kind = "throw" /\\ ThrowSiteLocation(where.site) # Empty -> "\\n" \\o ThrowSiteLocation(where.site) \\o "\\n" \\o text \\o ${getText(`\n${TRACE_UNCAUGHT_HINT}`)}
+            ${getTlaString(`${UNHANDLED_REJECTION_LOCATION}\n\n${UNHANDLED_REJECTION_PREFIX}"`)} \\o text \\o ${getTlaString(`"${UNHANDLED_REJECTION_SUFFIX}`)}
+       [] where.kind = "throw" /\\ ThrowSiteLocation(where.site) # Empty -> "\\n" \\o ThrowSiteLocation(where.site) \\o "\\n" \\o text \\o ${getTlaString(`\n${TRACE_UNCAUGHT_HINT}`)}
        [] OTHER -> ${stop}
 Init ==
   LET r == ApplyTo(RunProgram, InitialState) IN
@@ -277,8 +331,7 @@ const compileEscoreEntry = async (path: string): Promise<CompiledInput> => {
       bytes[index] === 9 ? "\t" : " ",
     ).join("");
     const location = `${url}:${start.line + 1}\n${lines[start.line]}\n${padding}^`;
-    // A TLA+ string holds only the characters that Node's text then has.
-    return /^[\t\n\x20-\x7e]*$/.test(location) ? location : undefined;
+    return isNodeText(location) ? location : undefined;
   };
   const throws: ThrowStatement[] = [];
   const collect = (node: Node): void => {
@@ -365,12 +418,12 @@ const compileRejection = async (path: string, error: TlaStrippingError) => {
     isModule ||
     realpathSync(error.fileName) !== realpathSync(path) ||
     start.line !== end.line ||
-    !/^[\t\n\x20-\x7e]*$/.test(message)
+    !isNodeText(message)
   ) {
     throw error;
   }
   const spec = compileToEscore("", path, await getEscoreRuntime(), false, {
-    steps: `VARIABLE programDone\nInit == Assert(FALSE, ${JSON.stringify(message)}) /\\ programDone = TRUE\nNext == UNCHANGED programDone`,
+    steps: `VARIABLE programDone\nInit == Assert(FALSE, ${getTlaString(message)}) /\\ programDone = TRUE\nNext == UNCHANGED programDone`,
     entries: [],
   });
   return {

@@ -509,6 +509,51 @@ describe("the CLI with TypeScript files", () => {
     ]);
   });
 
+  // Node writes a throw's line, a caret under its place, and the error, as UTF-8 of any character
+  // of the file's code: the caret's padding is as long as the line's code units before it, with a
+  // tab where the line's UTF-8 has one.
+  describe.each([
+    ["script", "cjs"],
+    ["module", "mjs"],
+  ])("prints an uncaught error on a line of é, €, and 😀 in a %s as Node does", (_, extension) => {
+    const getScripts = (length: number) => ({
+      [`plain.${extension}`]: `const word = "é€😀";\nif (word.length !== ${length}) throw new Error("é€😀 " + word.length);\n`,
+      [`tabs.${extension}`]: `const word = "😀\\té";\tif (word.length !== ${length}) throw new Error(word + " €");\n`,
+    });
+
+    it.each(Object.keys(getScripts(4)))("agrees with Node on %s", (file) => {
+      const directory = copyFixtures("passing");
+      writeFileSync(join(directory, file), getScripts(4)[file]);
+      expect(runNode(directory, file).status).toBe(0);
+      expect(getExit(runCli(directory, [file]))).toEqual([0, ""]);
+    });
+
+    it.each(Object.keys(getScripts(5)))("rejects another result on %s", (file) => {
+      const directory = copyFixtures("passing");
+      writeFileSync(join(directory, file), getScripts(5)[file]);
+      const result = runCli(directory, [file]);
+      expect(getExit(result)).toEqual(getExit(runNode(directory, file)));
+      expect(result.status).toBe(1);
+    });
+  });
+
+  // A TLA+ string holds no surrogate without its pair, which Node writes as U+FFFD, and tla-ts
+  // writes no control character but a tab or a line feed, nor one that the file's code lacks.
+  it.each([
+    ["a lone surrogate", 'throw new Error("\\ud800");\n'],
+    ["a control character", 'throw new Error("a\\u0001b");\n'],
+    ["a character that the code lacks", "throw new Error(String.fromCharCode(233));\n"],
+  ])("stops where an uncaught error's message holds %s", (_, source) => {
+    const directory = copyFixtures("passing");
+    writeFileSync(join(directory, "text.cjs"), source);
+    expect(runNode(directory, "text.cjs").status).toBe(1);
+    const result = runCli(directory, ["text.cjs"]);
+    expect(result.status).not.toBe(1);
+    expect(result.stdout).toContain(
+      "tla-ts can't print what Node prints for this uncaught exception",
+    );
+  });
+
   it("stops where a script leaves an error uncaught whose properties Node prints", () => {
     const directory = copyFixtures("passing");
     writeFileSync(join(directory, "error.ts"), 'throw new RangeError("total", { cause: 1 });\n');
