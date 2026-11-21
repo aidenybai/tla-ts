@@ -66,16 +66,13 @@ describe("the CLI with TypeScript files", () => {
   );
 
   it.each(["string.ts", "array.ts"] as const)(
-    "stops where %s, which loops over a long input, throws as Node does",
+    "exits with Node's code and stderr where %s, which loops over a long input, throws",
     (file) => {
       const directory = copyFixtures("passing");
       writeFileSync(join(directory, file), getLongInputs(1)[file]);
-      expect(runNode(directory, file).status).toBe(1);
       const result = runCli(directory, [file]);
-      expect(result.status).toBe(75);
-      expect(result.stdout).toContain(
-        "tla-ts can't print what Node prints for this uncaught exception",
-      );
+      expect(getExit(result)).toEqual(getExit(runNode(directory, file)));
+      expect(result.status).toBe(1);
     },
   );
 

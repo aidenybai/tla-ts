@@ -71,7 +71,7 @@ Node.js v26.13.1
 
 It does so for a thrown primitive and for a promise rejected with a primitive, where it exits with 1. Where a top-level `await` never settles, it writes Node's warning and exits with 13. A script that leaves a promise pending with no `await` on it ends, as in Node.
 
-An uncaught `Error` object stops the check with `tla-ts can't print what Node prints for this uncaught exception`, since V8 writes the error's stack.
+An uncaught `Error` object writes what Node writes, except the frames of its stack, and exits with 1. Where Node throws it from code whose location tla-ts can't tell, or where tla-ts can't tell the object's text, the check stops with `tla-ts can't print what Node prints for this uncaught exception`.
 
 ## Models
 
