@@ -280,6 +280,27 @@ describe("evaluation errors match TLC", () => {
   });
 
   it.each([
+    ['{1} # ((UNION {1..2, {x}} \\ {"a"}) \\ {x})', ["SetEnumeration", "SetEnumeration"]],
+    ['{1} # UNION {UNION {1..2, {x}} \\ {"a"}}', ["SetEnumeration", "SetEnumeration"]],
+    [
+      '<<{1}>> # <<((UNION {1..2, {x}} \\ {"a"}) \\ {x})>>',
+      ["Tuple", "SetEnumeration", "SetEnumeration"],
+    ],
+  ])(
+    "frames the set that %s converts as an argument only as its stream opens, like TLC",
+    async (invariant, sources) => {
+      const result = await check({
+        source: `---- MODULE M ----\nEXTENDS Integers\nVARIABLE x\nInit == x = 0\nNext == x' = (x + 1) % 3\nInv == ${invariant}\n====`,
+        config: "INIT Init\nNEXT Next\nINVARIANT Inv",
+      });
+      expect([
+        result.failure?.fingerprint?.reason,
+        result.failure?.fingerprint?.sources.map((source) => source.kind),
+      ]).toEqual(['Attempted to check equality of string "a" with non-string:\n0', sources]);
+    },
+  );
+
+  it.each([
     ["x = [k \\in {1, 2} |-> k \\div 0]", "x' = x", ["FunctionConstruction"]],
     ["x = 0", "x' = [k \\in 1..2 |-> k \\div 0]", ["FunctionConstruction"]],
     ["x = 0", "x' = [k \\in {1, 2} |-> <<1, 2>>[k + 1]]", ["FunctionConstruction", "Tuple"]],
@@ -4286,6 +4307,159 @@ describe("evaluation errors match TLC", () => {
     ],
   ])(
     "evaluates a filter under an operand of S \\cup T as TLC's enumerators do: %s",
+    async (next, printed, traceOutput) => {
+      const lines: string[] = [];
+      const result = await check({
+        source: `---- MODULE M ----\nEXTENDS Integers, FiniteSets, TLC\nVARIABLE x\nInit == x = 0\nNext == ${next}\n====`,
+        config: "INIT Init\nNEXT Next",
+        onPrint: (text) => lines.push(text),
+      });
+      expect([lines, result.failure?.traceOutput]).toEqual([printed, traceOutput]);
+    },
+  );
+
+  const PRINTED_SELECTED = ["<<1, 0>>", "<<1, 0>>", "<<1, 0>>", "<<2, 0>>", "<<1, 0>>", "<<2, 0>>"];
+  const PRINTED_CUP_RESETS = [
+    "<<1, 0>>",
+    "<<2, 0>>",
+    "<<1, 0>>",
+    "<<1, 0>>",
+    "<<2, 0>>",
+    "<<2, 0>>",
+    "<<1, 0>>",
+    "<<2, 0>>",
+  ];
+  const PRINTED_FILTER_RANGE = "{t \\in (1..2) \\X {0} : PrintT(t)}";
+  const PRINTED_FILTER_PAIR = ["<<1, 0>>", "<<2, 0>>"];
+
+  it.each([
+    [
+      `x' = x /\\ \\E e \\in [{1, 2} -> ${PRINTED_FILTER_RANGE} \\ {<<2, 0>>}] : FALSE`,
+      PRINTED_SELECTED,
+      undefined,
+    ],
+    [
+      `x' = x /\\ \\E e \\in [{1, 2} -> ${PRINTED_FILTER_RANGE} \\cap ({1} \\X {0, 1})] : FALSE`,
+      PRINTED_SELECTED,
+      undefined,
+    ],
+    [
+      `x' \\in [{1, 2} -> ${PRINTED_FILTER_RANGE} \\ {<<2, 0>>}]`,
+      [...PRINTED_SELECTED, ...PRINTED_SELECTED],
+      undefined,
+    ],
+    [
+      `x' = x /\\ \\E e \\in [{1, 2} -> UNION {${PRINTED_FILTER_RANGE}}] : FALSE`,
+      PRINTED_RESETS,
+      undefined,
+    ],
+    [
+      `x' = x /\\ \\E e \\in [{1, 2} -> ${PRINTED_FILTER_RANGE} \\cup {9}] : FALSE`,
+      PRINTED_CUP_RESETS,
+      PRINTED_CUP_RESETS,
+    ],
+    [
+      `x' = x /\\ \\E f \\in [{1, 2} -> {t \\in (1..2) \\X {0} : t[1] > 1} \\cup {<<0, 0>>}] : PrintT(f) /\\ FALSE`,
+      [
+        "<<<<0, 0>>, <<0, 0>>>>",
+        "<<<<0, 0>>, <<2, 0>>>>",
+        "<<<<2, 0>>, <<0, 0>>>>",
+        "<<<<2, 0>>, <<2, 0>>>>",
+      ],
+      undefined,
+    ],
+    [
+      `LET P(t) == PrintT(t) IN x' = x /\\ \\E e \\in [{1, 2} -> {t \\in (1..2) \\X {0} : P(t)} \\ {<<2, 0>>}] : FALSE`,
+      PRINTED_SELECTED,
+      undefined,
+    ],
+    [
+      `LET Filter(S, P(_)) == {t \\in S : P(t)} IN x' = x /\\ \\E e \\in [{1, 2} -> Filter((1..2) \\X {0}, LAMBDA t : PrintT(t)) \\ {<<2, 0>>}] : FALSE`,
+      PRINTED_SELECTED,
+      undefined,
+    ],
+  ])(
+    "evaluates a filter under a component S \\cup T, S \\cap T, S \\ T or UNION S of [S -> T] as TLC's enumerators reset it: %s",
+    async (next, printed, traceOutput) => {
+      const lines: string[] = [];
+      const result = await check({
+        source: `---- MODULE M ----\nEXTENDS Integers, FiniteSets, TLC\nVARIABLE x\nInit == x = 0\nNext == ${next}\n====`,
+        config: "INIT Init\nNEXT Next",
+        onPrint: (text) => lines.push(text),
+      });
+      expect([lines, result.failure?.traceOutput]).toEqual([printed, traceOutput]);
+    },
+  );
+
+  it("fails where TLC's enumerator of S \\X T reaches a failure, past a pure filter that fails in a component S \\cup T", async () => {
+    const result = await check({
+      source: `---- MODULE M ----\nEXTENDS Integers, FiniteSets, TLC\nVARIABLE x\nInit == x = 0\nNext == x' \\in (((1..2) \\cup {t \\in (1..2) \\X {0} : IF t[1] = 2 THEN 1 = "a" ELSE TRUE}) \\X SUBSET {1, "a"})\n====`,
+      config: "INIT Init\nNEXT Next",
+    });
+    expect([
+      result.failure?.fingerprint?.reason,
+      result.failure?.fingerprint?.sources.map((source) => source.kind),
+    ]).toEqual([
+      'Attempted to compare string "a" with non-string:\n1',
+      ["Product", "Apply", "SetEnumeration"],
+    ]);
+  });
+
+  it("fails where TLC's enumerator of S \\X T reaches a failure, before a filter that prints through a LET operator in a component S \\cup T", async () => {
+    const lines: string[] = [];
+    const result = await check({
+      source: `---- MODULE M ----\nEXTENDS Integers, FiniteSets, TLC\nVARIABLE x\nInit == x = 0\nNext == LET P(t) == PrintT(t) IN x' \\in (((1..2) \\cup {t \\in (1..2) \\X {0} : P(t) /\\ IF t[1] = 2 THEN 1 = "a" ELSE TRUE}) \\X SUBSET {1, "a"})\n====`,
+      config: "INIT Init\nNEXT Next",
+      onPrint: (text) => lines.push(text),
+    });
+    expect([
+      lines,
+      result.failure?.fingerprint?.reason,
+      result.failure?.fingerprint?.sources.map((source) => source.kind),
+    ]).toEqual([
+      [],
+      'Attempted to compare string "a" with non-string:\n1',
+      ["Product", "Apply", "SetEnumeration"],
+    ]);
+  });
+
+  const PRINTED_TWICE = [...PRINTED_FILTER_PAIR, ...PRINTED_FILTER_PAIR];
+  const PRINTED_FUNCTION_SET_TWICE = [...PRINTED_PASS, ...PRINTED_PASS];
+
+  it.each([
+    [
+      `x' = x /\\ \\E e \\in UNION {[{1} -> ${PRINTED_FILTER}], {1}} : FALSE`,
+      PRINTED_FUNCTION_SET_TWICE,
+      PRINTED_FUNCTION_SET_TWICE,
+    ],
+    [
+      `x' = x /\\ \\E e \\in UNION {${PRINTED_FILTER_RANGE}, {t \\in (3..4) \\X {0} : PrintT(t)}} : FALSE`,
+      ["<<3, 0>>", "<<4, 0>>", ...PRINTED_TWICE],
+      undefined,
+    ],
+    [
+      `LET F == ${PRINTED_FILTER_RANGE} IN x' = x /\\ {F, {<<9, 0>>}} = {{<<9, 0>>}, F} /\\ \\E e \\in F : FALSE`,
+      [...PRINTED_TWICE, ...PRINTED_TWICE],
+      undefined,
+    ],
+    [
+      `x' = x /\\ \\E S \\in {${PRINTED_FILTER_RANGE}, {<<9, 0>>}} : S # {<<1, 0>>} /\\ \\E e \\in S : FALSE`,
+      PRINTED_TWICE,
+      undefined,
+    ],
+    [
+      `x' = x /\\ \\E e \\in [a : UNION {${PRINTED_FILTER_RANGE}, {<<5, 0>>}}, b : {t \\in (1..2) : PrintT(t)} \\ {2}] : FALSE`,
+      ["1", "2", ...PRINTED_TWICE],
+      undefined,
+    ],
+    [`x' = {${PRINTED_FILTER_RANGE}, {<<9, 0>>}}`, [...PRINTED_TWICE, ...PRINTED_TWICE], undefined],
+    [
+      `LET P(t) == PrintT(t) IN x' = x /\\ \\E S \\in {{t \\in (1..2) \\X {0} : P(t)}, {<<9, 0>>}} : S # {<<1, 0>>} /\\ \\E e \\in S : FALSE`,
+      PRINTED_TWICE,
+      undefined,
+    ],
+  ])(
+    "sorts a set literal that holds a filter only when TLC normalizes it, and converts the filter again where TLC's toSetEnum keeps nothing: %s",
     async (next, printed, traceOutput) => {
       const lines: string[] = [];
       const result = await check({

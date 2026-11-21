@@ -49,6 +49,7 @@ import {
   formatValue,
   getLazyFunctionNode,
   getStreamedElements,
+  isElementOf,
   isEqualLikeTlc,
   isTlcEnumerable,
   setTrace,
@@ -680,8 +681,8 @@ const visitAssignment = (
     expression.operator !== "\\subseteq"
       ? value
       : replay.coverage
-        ? { kind: "Subset", base: value, costNode: node }
-        : { kind: "Subset", base: value };
+        ? { kind: "Subset", base: value, costNode: node, secondary: replay.coverage.secondary }
+        : { kind: "Subset", base: value, costNode: undefined, secondary: undefined };
   if (typeof set === "object" && set !== value) {
     replay.callStack?.sources.set(set, source);
     replay.coverage?.values.set(set, node);
@@ -974,6 +975,7 @@ const visitApplication = (
                   evaluateArgument(expression, context),
                 )
               : evaluateArgument(expression, context),
+            replay.coverage ? replay.coverage.isMember : isElementOf,
           ),
         );
         // Tool#getNextStates runs the body with the function's cost model, but getInitStates and enabled with the application's.
