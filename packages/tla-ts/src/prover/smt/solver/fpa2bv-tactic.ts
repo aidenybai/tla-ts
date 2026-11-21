@@ -47,6 +47,8 @@ const convertModel = (converter: Fpa2BvConverter, source: ProtoModel) => {
   }
   for (const sort of source.getUninterpretedSorts())
     for (const value of source.getKnownUniverse(sort)) target.registerValue(value);
+  for (const sort of source.getUninterpretedSorts())
+    target.registerUsort(sort, source.getKnownUniverse(sort));
   return target;
 };
 

@@ -39,6 +39,7 @@ import { createSatTactic } from "./sat/sat-tactic";
 import { mkThSolver } from "./euf/th-solvers";
 import { getHammerPeriod } from "./lp/lp-settings";
 import { getDoubleParameter } from "./gparams";
+import { ObjMap } from "./hashtable";
 import { createFdTactic } from "./fd-solver";
 import { elimUncnstr } from "./elim-uncnstr";
 import { runElimTermIte } from "./elim-term-ite-tactic";
@@ -2479,7 +2480,7 @@ const DIVISION_BY_ZERO_DECLS = new Set([OP_DIV0, OP_IDIV0, OP_MOD0, OP_POWER0]);
 // A constant of an uninterpreted sort the model lacks puts its value in that sort's universe.
 export const applyDefinitions = (definitions: readonly Definition[], model: ProtoModel) => {
   const manager = model.manager;
-  const universe: number[] = [];
+  const universes = new ObjMap<number[]>((sort) => manager.getSortHash(sort));
   let evaluator = new ModelEvaluator(manager, model);
   evaluator.setModelCompletion(true);
   for (let index = definitions.length - 1; index >= 0; index--) {
@@ -2511,12 +2512,11 @@ export const applyDefinitions = (definitions: readonly Definition[], model: Prot
     const old = model.constInterps.get(definition.decl);
     if (old !== value) model.registerConst(definition.decl, value);
     const sort = manager.sorts[value];
-    if (
-      manager.isUninterpretedSort(sort) &&
-      !model.getUninterpretedSorts().includes(sort) &&
-      !universe.includes(value)
-    )
-      universe.push(value);
+    if (manager.isUninterpretedSort(sort) && !model.getUninterpretedSorts().includes(sort)) {
+      const values = universes.get(sort) ?? [];
+      if (!values.includes(value)) values.push(value);
+      universes.set(sort, values);
+    }
     manager.decRef(value);
     if (old !== undefined && old !== value) {
       evaluator.release();
@@ -2525,7 +2525,10 @@ export const applyDefinitions = (definitions: readonly Definition[], model: Prot
     }
   }
   evaluator.release();
-  for (const value of universe) model.registerValue(value);
+  for (const entry of universes) {
+    for (const value of entry[1]) model.registerValue(value);
+    model.registerUsort(entry[0], entry[1]);
+  }
   return model;
 };
 

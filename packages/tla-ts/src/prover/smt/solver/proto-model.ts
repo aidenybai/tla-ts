@@ -344,8 +344,9 @@ export class ProtoModel {
   // array_factory::m_ranges: the ranges whose fresh value an array's fresh value is waiting for.
   private freshArrayRanges: number[] = [];
   private finiteSorts = new Set<number>();
-  // model::m_usort2universe, the universes registered in order.
-  private universes = new Map<number, RefVector>();
+  // model::m_usort2universe, and m_usorts, its sorts in the order they were registered.
+  private universes: ObjMap<RefVector>;
+  private usorts: number[] = [];
   private boolRandom: RandomGen;
   private evaluator: ModelEvaluator;
   private rewriter: Rewriter;
@@ -360,6 +361,7 @@ export class ProtoModel {
     this.boolRandom = new RandomGen(manager.getNumAsts());
     this.constInterps = new ObjMap((decl) => manager.getDeclHash(decl));
     this.funcInterps = new ObjMap((decl) => manager.getDeclHash(decl));
+    this.universes = new ObjMap((sort) => manager.getSortHash(sort));
     this.userSortValues = new RefVector(manager);
     this.arithValues = new RefVector(manager);
     this.bvValues = new RefVector(manager);
@@ -463,8 +465,15 @@ export class ProtoModel {
   registerUsort(sort: number, universe: readonly number[]) {
     const values = new RefVector(this.manager);
     for (const value of universe) values.push(value);
-    this.universes.get(sort)?.reset();
+    const old = this.universes.get(sort);
+    if (old === undefined) this.usorts.push(sort);
+    else old.reset();
     this.universes.set(sort, values);
+  }
+
+  // copy_usort_interps walks m_usort2universe, so the copy registers the sorts in its hash order.
+  copyUsortInterps(source: ProtoModel) {
+    for (const entry of source.universes) this.registerUsort(entry[0], entry[1].items);
   }
 
   getUniverse(sort: number): readonly number[] | undefined {
@@ -726,7 +735,9 @@ export class ProtoModel {
     return this.funcDecls;
   }
 
+  // A model lists the sorts of its universes, and a proto_model the sorts its factory has values of.
   getUninterpretedSorts() {
+    if (this.isFinal) return [...this.usorts];
     return [...this.values.keys()].filter((sort) => this.manager.isUninterpretedSort(sort));
   }
 
@@ -1064,7 +1075,7 @@ export class ProtoModel {
     for (const entry of this.funcInterps) model.registerFunc(entry[0], entry[1].copy());
     for (const sort of this.getUninterpretedSorts())
       for (const value of this.getKnownUniverse(sort)) model.registerValue(value);
-    for (const entry of this.universes) model.registerUsort(entry[0], entry[1].items);
+    model.copyUsortInterps(this);
     return model;
   }
 
@@ -1081,7 +1092,8 @@ export class ProtoModel {
     for (const entry of this.values)
       if (this.manager.isUninterpretedSort(entry[0]))
         for (const value of entry[1]) model.registerValue(value);
-    for (const entry of this.universes) model.registerUsort(entry[0], entry[1].items);
+    for (const sort of this.getUninterpretedSorts())
+      model.registerUsort(sort, this.getKnownUniverse(sort));
     return model;
   }
 
