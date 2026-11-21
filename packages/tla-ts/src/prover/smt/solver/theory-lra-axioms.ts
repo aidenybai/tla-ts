@@ -292,11 +292,11 @@ export abstract class TheoryLraAxioms extends TheoryLraState {
       const isDivisorNonnegative = this.mkLiteral(manager.mkApp(OP_GE, [divisor, zero], SORT_BOOL));
       const isDivisorNonpositive = this.mkLiteral(manager.mkApp(OP_LE, [divisor, zero], SORT_BOOL));
       const consequents = [
-        manager.mkApp(OP_GE, [quotient, zero], SORT_BOOL),
-        manager.mkApp(OP_LE, [quotient, zero], SORT_BOOL),
-        manager.mkApp(OP_GE, [remainder, zero], SORT_BOOL),
-        manager.mkApp(OP_LE, [remainder, zero], SORT_BOOL),
-      ].map((atom) => this.mkLiteral(atom));
+        this.mkLiteral(manager.mkApp(OP_GE, [quotient, zero], SORT_BOOL)),
+        this.mkLiteral(manager.mkApp(OP_LE, [quotient, zero], SORT_BOOL)),
+        this.mkLiteral(manager.mkApp(OP_GE, [remainder, zero], SORT_BOOL)),
+        this.mkLiteral(manager.mkApp(OP_LE, [remainder, zero], SORT_BOOL)),
+      ];
       for (const antecedent of [isDivisorNonnegative, isDivisorNonpositive])
         for (const consequent of consequents) this.mkAxiom([antecedent, consequent]);
       return;

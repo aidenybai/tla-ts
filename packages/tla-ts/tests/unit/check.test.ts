@@ -1288,6 +1288,85 @@ ASSUME TLCFP(a) = -887695703
     },
   );
 
+  it.each([
+    [
+      "a LAMBDA argument",
+      "LET Tup(P(_)) == [n \\in UNION {1..1, {2}} |-> IF P(n) THEN n ELSE 0] IN LET F == Tup(LAMBDA n : PrintT(n)) IN <<1, 2>> = F /\\ <<1, 2>> = F",
+      ["1", "2", "1", "2", "TRUE"],
+    ],
+    [
+      "a LET operator",
+      "LET P(n) == PrintT(n) IN LET F == [n \\in UNION {1..1, {2}} |-> IF P(n) THEN n ELSE 0] IN <<1, 2>> = F /\\ <<1, 2>> = F",
+      ["1", "2", "1", "2", "TRUE"],
+    ],
+    [
+      "an operator argument",
+      "LET Op(h) == [n \\in UNION {1..1, {2}} |-> h[{}] /\\ n = 1] IN LET F == Op([s \\in SUBSET {1} |-> PrintT(s)]) IN <<TRUE, FALSE>> = F /\\ <<TRUE, FALSE>> = F",
+      ["{}", "{}", "{}", "{}", "TRUE"],
+    ],
+    [
+      "a LAMBDA argument of a recursive function",
+      "LET Op(P(_)) == LET r[n \\in 1..2] == IF n = 1 THEN P(n) ELSE r[n - 1] IN r IN LET F == Op(LAMBDA n : PrintT(n)) IN <<TRUE, TRUE>> = F /\\ <<TRUE, TRUE>> = F",
+      ["1", "1", "1", "1", "TRUE"],
+    ],
+  ])(
+    "applies a lazy function again each time a tuple is compared with it, as TLC does, when its body prints through %s",
+    async (_name, expression, printed) => {
+      expect((await checkLazyTuple(expression)).printed).toEqual(printed);
+    },
+  );
+
+  it("keeps the tuple of a lazy function whose body names a LET definition when nothing in the spec prints or draws", async () => {
+    const result = await check({
+      source:
+        "---- MODULE M ----\nEXTENDS Naturals, Sequences\nVARIABLE x\nRECURSIVE Nest(_)\nNest(k) == IF k = 0 THEN <<0, 0>> ELSE LET g == Nest(k - 1) f[i \\in 1..2] == IF i = 0 THEN f[i] ELSE Len(g) IN f\nInit == x = Len(Nest(26))\nNext == UNCHANGED x\n====",
+      config: "INIT Init\nNEXT Next",
+    });
+    expect([result.status, result.distinctStates]).toEqual(["success", 1]);
+  });
+
+  it("keeps the tuple of a lazy function whose body names a LET definition when the only effects are an unrelated Assert and a TLCGet constraint", async () => {
+    const result = await check({
+      source:
+        '---- MODULE M ----\nEXTENDS Naturals, Sequences, TLC\nVARIABLE x\nRECURSIVE Nest(_)\nNest(k) == IF k = 0 THEN <<0, 0>> ELSE LET g == Nest(k - 1) f[i \\in 1..2] == IF i = 0 THEN f[i] ELSE Len(g) IN f\nInit == x = Len(Nest(26))\nNext == Assert(x = 2, "x is 2") /\\ UNCHANGED x\nDepth == TLCGet("level") < 5\n====',
+      config: "INIT Init\nNEXT Next\nCONSTRAINT Depth",
+    });
+    expect([result.status, result.distinctStates]).toEqual(["success", 1]);
+  });
+
+  it("applies a lazy function again each time a tuple is compared with it when a definition that prints is passed to it by name", async () => {
+    const printed: string[] = [];
+    await check({
+      source:
+        "---- MODULE M ----\nEXTENDS Integers, TLC\nVARIABLE x\nShow(n) == PrintT(n)\nTup(P(_)) == [n \\in UNION {1..1, {2}} |-> IF P(n) THEN n ELSE 0]\nInit == x = 0 /\\ LET F == Tup(Show) IN <<1, 2>> = F /\\ <<1, 2>> = F\nNext == UNCHANGED x\n====",
+      config: "INIT Init\nNEXT Next",
+      onPrint: (text) => printed.push(text),
+    });
+    expect(printed).toEqual(["1", "2", "1", "2"]);
+  });
+
+  it("applies a lazy function again each time a tuple is compared with it when its body names a LET definition that holds a lazy function TLC evaluates once", async () => {
+    const printed: string[] = [];
+    await check({
+      source:
+        "---- MODULE M ----\nEXTENDS Integers, TLC\nVARIABLE x\nG == [s \\in SUBSET {1} |-> PrintT(s)]\nInit == x = 0 /\\ LET g == G IN LET F == [n \\in UNION {1..1, {2}} |-> g[{}] /\\ n = 1] IN <<TRUE, FALSE>> = F /\\ <<TRUE, FALSE>> = F\nNext == UNCHANGED x\n====",
+      config: "INIT Init\nNEXT Next",
+      onPrint: (text) => printed.push(text),
+    });
+    expect(printed).toEqual(["{}", "{}", "{}", "{}"]);
+  });
+
+  it("applies a lazy function again each time a tuple is compared with it when only an ASSUME prints, through a LAMBDA argument", async () => {
+    const printed: string[] = [];
+    await check({
+      source:
+        "---- MODULE M ----\nEXTENDS Integers, TLC\nTup(P(_)) == [n \\in UNION {1..1, {2}} |-> IF P(n) THEN n ELSE 0]\nASSUME LET F == Tup(LAMBDA n : PrintT(n)) IN <<1, 2>> = F /\\ <<1, 2>> = F\nVARIABLE x\nInit == x = 0\nNext == UNCHANGED x\n====",
+      config: "INIT Init\nNEXT Next",
+      onPrint: (text) => printed.push(text),
+    });
+    expect(printed).toEqual(["1", "2", "1", "2"]);
+  });
+
   it("applies a lazy function a tuple is compared with again when TLC replays its error", async () => {
     const lazyTuple = await checkLazyTuple(
       "<<1, 2>> # [n \\in UNION {1..1, {3}} |-> PrintT(n) /\\ 1 \\div (n - 3) = 0]",
@@ -6355,6 +6434,298 @@ ASSUME TLCFP(a) = -887695703
     ]);
     expect(result.failure?.fingerprint?.reason).toBe("The second argument of \\div is 0.");
   });
+
+  const checkConvertedLazy = async (init: string, next: string) => {
+    const lines: string[] = [];
+    const result = await check({
+      source: `---- MODULE M ----\nEXTENDS Integers, TLC\nVARIABLES x, f\nInit == ${init}\nNext == ${next}\n====`,
+      config: "INIT Init\nNEXT Next\nCHECK_DEADLOCK FALSE",
+      onPrint: (text) => lines.push(text),
+    });
+    return [lines, result.failure?.traceOutput];
+  };
+
+  it("applies a lazy function an operator argument holds again at each reference when it replays a failure, as TLC's CallStackTool copies each FcnLambdaValue it evaluates", async () => {
+    expect(
+      await checkConvertedLazy(
+        "x = 0 /\\ f = 0",
+        `x < 1 /\\ x' = 1 /\\ f' = 0 /\\ LET Op(g) == g = [s \\in {{}, {1}} |-> TRUE] /\\ PrintT(g[{}]) /\\ 1 = "a" IN Op([s \\in SUBSET {1} |-> PrintT(s)])`,
+      ),
+    ).toEqual([
+      ["{}", "{1}", "TRUE"],
+      ["{}", "{1}", "{}", "TRUE"],
+    ]);
+  });
+
+  it.each([
+    [
+      "a state",
+      "x = 0 /\\ f = [s \\in SUBSET {1} |-> PrintT(s)]",
+      "x < 1 /\\ x' = 1 /\\ f' = f /\\ PrintT([f EXCEPT ![{1}] = FALSE][{}])",
+      ["{}", "{1}", "TRUE"],
+      undefined,
+    ],
+    [
+      "an operator argument",
+      "x = 0 /\\ f = 0",
+      "x < 1 /\\ x' = 1 /\\ f' = 0 /\\ LET Op(h) == h = [s \\in {{}, {1}} |-> TRUE] /\\ PrintT([h EXCEPT ![{1}] = ~@][{1}]) IN Op([s \\in SUBSET {1} |-> PrintT(s)])",
+      ["{}", "{1}", "FALSE"],
+      undefined,
+    ],
+    [
+      "an operator argument of a failing step",
+      "x = 0 /\\ f = 0",
+      `x < 1 /\\ x' = 1 /\\ f' = 0 /\\ LET Op(h) == h = [s \\in {{}, {1}} |-> TRUE] /\\ PrintT([h EXCEPT ![{1}] = ~@][{1}]) /\\ 1 = "a" IN Op([s \\in SUBSET {1} |-> PrintT(s)])`,
+      ["{}", "{1}", "FALSE"],
+      ["{}", "{1}", "{1}", "FALSE"],
+    ],
+  ])(
+    "takes an EXCEPT of the lazy function %s holds on the record its conversion built, as TLC's FcnLambdaValue#takeExcept does",
+    async (_holder, init, next, printed, traceOutput) => {
+      expect(await checkConvertedLazy(init, next)).toEqual([printed, traceOutput]);
+    },
+  );
+
+  it.each([
+    [
+      "an operator argument",
+      "x < 1 /\\ f' = 0 /\\ LET Op(g) == g = [s \\in {{}, {1}} |-> s = {}] /\\ g[{}] /\\ x' = 1 IN Op([s \\in SUBSET {1} |-> PrintT(s) /\\ s = {}])",
+      undefined,
+    ],
+    [
+      "a bound variable",
+      "x < 1 /\\ f' = 0 /\\ \\E g \\in {[s \\in SUBSET {1} |-> PrintT(s) /\\ s = {}]} : g = [s \\in {{}, {1}} |-> s = {}] /\\ g[{}] /\\ x' = 1",
+      undefined,
+    ],
+    [
+      "an operator argument of a failing step",
+      `x < 1 /\\ f' = 0 /\\ LET Op(g) == g = [s \\in {{}, {1}} |-> s = {}] /\\ g[{}] /\\ x' = 1 /\\ 1 = "a" IN Op([s \\in SUBSET {1} |-> PrintT(s) /\\ s = {}])`,
+      ["{}", "{1}", "{}"],
+    ],
+  ])(
+    "applies the record a conversion built of the lazy function %s holds as an action, as TLC's getNextStates does",
+    async (_holder, next, traceOutput) => {
+      expect(await checkConvertedLazy("x = 0 /\\ f = 0", next)).toEqual([
+        ["{}", "{1}"],
+        traceOutput,
+      ]);
+    },
+  );
+
+  it.each([
+    [
+      "a step",
+      "x < 1 /\\ f' = 0 /\\ (IF PrintT(\"e\") THEN <<TRUE>> ELSE 0)[1] /\\ x' = 1",
+      undefined,
+    ],
+    [
+      "a failing step",
+      `x < 1 /\\ f' = 0 /\\ (IF PrintT("e") THEN <<TRUE>> ELSE 0)[1] /\\ x' = 1 /\\ 1 = "a"`,
+      ['"e"'],
+    ],
+  ])(
+    "evaluates the function %s applies as an action once, as TLC's getNextStates does",
+    async (_step, next, traceOutput) => {
+      expect(await checkConvertedLazy("x = 0 /\\ f = 0", next)).toEqual([['"e"'], traceOutput]);
+    },
+  );
+
+  it.each([
+    [
+      "a state",
+      "x = 0 /\\ f = [s \\in {{}, {1}} |-> s = {}]",
+      "x < 1 /\\ f' = f /\\ f[{}] /\\ x' = 1",
+      [
+        "line 5, col 9 to line 5, col 13 of module M: 1",
+        "|line 5, col 9 to line 5, col 9 of module M: 2",
+        "line 5, col 18 to line 5, col 23 of module M: 1",
+        "line 5, col 28 to line 5, col 32 of module M: 1",
+        "line 5, col 37 to line 5, col 42 of module M: 1",
+      ],
+    ],
+    [
+      "a bound identifier",
+      "x = 0 /\\ f = 0",
+      "x < 1 /\\ f' = 0 /\\ \\E g \\in {[s \\in {{}, {1}} |-> s = {}]} : g[{}] /\\ x' = 1",
+      [
+        "line 5, col 9 to line 5, col 13 of module M: 1",
+        "|line 5, col 9 to line 5, col 9 of module M: 2",
+        "line 5, col 18 to line 5, col 23 of module M: 1",
+        "line 5, col 70 to line 5, col 84 of module M: 1",
+        "line 5, col 37 to line 5, col 66 of module M: 1:2",
+        "|line 5, col 38 to line 5, col 65 of module M: 1:2",
+        "||line 5, col 59 to line 5, col 64 of module M: 2",
+        "||line 5, col 45 to line 5, col 53 of module M: 1:3",
+        "|||line 5, col 46 to line 5, col 47 of module M: 1",
+        "|||line 5, col 50 to line 5, col 52 of module M: 1",
+      ],
+    ],
+  ])(
+    "counts the function %s holds and its argument once as an action applies it, as TLC's getNextStates does",
+    async (_holder, init, next, expected) => {
+      const lines = await getCoverageLines(
+        `---- MODULE M ----\nEXTENDS Integers\nVARIABLES x, f\nInit == ${init}\nNext == ${next}\n====`,
+        "INIT Init\nNEXT Next\nCHECK_DEADLOCK FALSE",
+      );
+      expect(lines?.at(-1)).toEqual(expected);
+    },
+  );
+
+  it.each([
+    [
+      "a function compared with a tuple",
+      "x = 0 /\\ f = 0",
+      "x < 1 /\\ f' = 0 /\\ \\E g \\in {[i \\in 1..2 |-> i = 1]} : g = <<TRUE, FALSE>> /\\ x' = 1",
+      [
+        "line 5, col 9 to line 5, col 13 of module M: 1",
+        "|line 5, col 9 to line 5, col 9 of module M: 2",
+        "line 5, col 18 to line 5, col 23 of module M: 1",
+        "line 5, col 64 to line 5, col 82 of module M: 2",
+        "|line 5, col 64 to line 5, col 64 of module M: 1",
+        "|line 5, col 68 to line 5, col 82 of module M: 1:2",
+        "||line 5, col 70 to line 5, col 73 of module M: 1",
+        "||line 5, col 76 to line 5, col 80 of module M: 1",
+        "line 5, col 87 to line 5, col 92 of module M: 1",
+        "line 5, col 37 to line 5, col 60 of module M: 1:2",
+        "|line 5, col 38 to line 5, col 59 of module M: 1:2",
+        "||line 5, col 54 to line 5, col 58 of module M: 2",
+        "||line 5, col 45 to line 5, col 48 of module M: 1",
+      ],
+    ],
+    [
+      "a function compared with a record",
+      "x = 0 /\\ f = 0",
+      'x < 1 /\\ f\' = 0 /\\ \\E g \\in {[s \\in {"a", "b"} |-> s = "a"]} : g = [a |-> TRUE, b |-> FALSE] /\\ x\' = 1',
+      [
+        "line 5, col 9 to line 5, col 13 of module M: 1",
+        "|line 5, col 9 to line 5, col 9 of module M: 2",
+        "line 5, col 18 to line 5, col 23 of module M: 1",
+        "line 5, col 72 to line 5, col 100 of module M: 2",
+        "|line 5, col 72 to line 5, col 72 of module M: 1",
+        "|line 5, col 76 to line 5, col 100 of module M: 1:2",
+        "||line 5, col 77 to line 5, col 86 of module M: 1",
+        "||line 5, col 89 to line 5, col 99 of module M: 1",
+        "line 5, col 105 to line 5, col 110 of module M: 1",
+        "line 5, col 37 to line 5, col 68 of module M: 1:2",
+        "|line 5, col 38 to line 5, col 67 of module M: 1:2",
+        "||line 5, col 60 to line 5, col 66 of module M: 2",
+        "||line 5, col 45 to line 5, col 54 of module M: 1:3",
+      ],
+    ],
+    [
+      "a tuple compared with a function over a set other than 1..n",
+      "x = 0 /\\ f = 0",
+      "x < 1 /\\ f' = 0 /\\ \\E g \\in {<<TRUE>>} : g # [i \\in {2} |-> TRUE] /\\ x' = 1",
+      [
+        "line 5, col 9 to line 5, col 13 of module M: 1",
+        "|line 5, col 9 to line 5, col 9 of module M: 2",
+        "line 5, col 18 to line 5, col 23 of module M: 1",
+        "line 5, col 50 to line 5, col 73 of module M: 2",
+        "|line 5, col 50 to line 5, col 50 of module M: 1",
+        "|line 5, col 54 to line 5, col 73 of module M: 1:1",
+        "||line 5, col 69 to line 5, col 72 of module M: 1",
+        "||line 5, col 61 to line 5, col 63 of module M: 1:2",
+        "line 5, col 78 to line 5, col 83 of module M: 1",
+        "line 5, col 37 to line 5, col 46 of module M: 1:2",
+        "|line 5, col 38 to line 5, col 45 of module M: 1:1",
+        "||line 5, col 40 to line 5, col 43 of module M: 1",
+      ],
+    ],
+    [
+      "a tuple compared with a function over a set of 1..n",
+      "x = 0 /\\ f = 0",
+      "x < 1 /\\ f' = 0 /\\ x' = 1 /\\ <<1, 2>> = [i \\in {1, 2} |-> i]",
+      [
+        "line 5, col 9 to line 5, col 13 of module M: 1",
+        "|line 5, col 9 to line 5, col 9 of module M: 2",
+        "line 5, col 18 to line 5, col 23 of module M: 1",
+        "line 5, col 28 to line 5, col 33 of module M: 1",
+        "line 5, col 38 to line 5, col 68 of module M: 1",
+        "|line 5, col 38 to line 5, col 45 of module M: 1",
+        "|line 5, col 49 to line 5, col 68 of module M: 1:4",
+        "||line 5, col 67 to line 5, col 67 of module M: 2",
+        "||line 5, col 56 to line 5, col 61 of module M: 1:3",
+      ],
+    ],
+    [
+      "a record compared with a function over strings",
+      "x = 0 /\\ f = 0",
+      'x < 1 /\\ f\' = 0 /\\ x\' = 1 /\\ [a |-> 1] # [s \\in {"a", "b"} |-> 1]',
+      [
+        "line 5, col 9 to line 5, col 13 of module M: 1",
+        "|line 5, col 9 to line 5, col 9 of module M: 2",
+        "line 5, col 18 to line 5, col 23 of module M: 1",
+        "line 5, col 28 to line 5, col 33 of module M: 1",
+        "line 5, col 38 to line 5, col 73 of module M: 1",
+        "|line 5, col 38 to line 5, col 46 of module M: 1",
+        "|line 5, col 50 to line 5, col 73 of module M: 1:4",
+        "||line 5, col 57 to line 5, col 66 of module M: 1:3",
+      ],
+    ],
+    [
+      "an assigned variable compared with a tuple",
+      "x = 0 /\\ f = 0",
+      "x < 1 /\\ f' = [i \\in 1..2 |-> i] /\\ f' = <<1, 2>> /\\ x' = 1",
+      [
+        "line 5, col 9 to line 5, col 13 of module M: 1",
+        "|line 5, col 9 to line 5, col 9 of module M: 2",
+        "line 5, col 18 to line 5, col 40 of module M: 1",
+        "|line 5, col 23 to line 5, col 40 of module M: 1:2",
+        "||line 5, col 39 to line 5, col 39 of module M: 2",
+        "||line 5, col 30 to line 5, col 33 of module M: 1",
+        "line 5, col 45 to line 5, col 57 of module M: 1",
+        "|line 5, col 50 to line 5, col 57 of module M: 1:2",
+        "line 5, col 62 to line 5, col 67 of module M: 1",
+      ],
+    ],
+    [
+      "an unchanged function compared with its assigned tuple",
+      "x = 0 /\\ f = [i \\in 1..2 |-> i]",
+      "x < 1 /\\ f' = <<1, 2>> /\\ UNCHANGED f /\\ x' = 1",
+      [
+        "line 5, col 9 to line 5, col 13 of module M: 1",
+        "|line 5, col 9 to line 5, col 9 of module M: 2",
+        "line 5, col 18 to line 5, col 30 of module M: 1",
+        "|line 5, col 23 to line 5, col 30 of module M: 1:2",
+        "line 5, col 35 to line 5, col 45 of module M: 1",
+        "line 5, col 50 to line 5, col 55 of module M: 1",
+      ],
+    ],
+  ])(
+    "charges what TLC's equals converts its length under -coverage, for %s",
+    async (_compared, init, next, expected) => {
+      const lines = await getCoverageLines(
+        `---- MODULE M ----\nEXTENDS Integers\nVARIABLES x, f\nInit == ${init}\nNext == ${next}\n====`,
+        "INIT Init\nNEXT Next\nCHECK_DEADLOCK FALSE",
+      );
+      expect(lines?.at(-1)).toEqual(expected);
+    },
+  );
+
+  it.each([
+    [
+      "a non-function",
+      "x = 0 /\\ f = 0",
+      "x < 1 /\\ f' = 0 /\\ (IF PrintT(\"e\") THEN 0 ELSE 0)[{}] /\\ x' = 1",
+      "In computing next states, a non-function (an integer) was applied as a function.\nline 5, col 28 to line 5, col 61 of module M",
+    ],
+    [
+      "a function to a non-boolean",
+      "x = 0 /\\ f = [s \\in {{}, {1}} |-> 1]",
+      "x < 1 /\\ f' = f /\\ f[{}] /\\ x' = 1",
+      "In computing next states, TLC expected a boolean expression,\nbut didn't find one.\nline 5, col 28 to line 5, col 32 of module M",
+    ],
+  ])(
+    "fails on applying %s as an action under -coverage, as TLC's getNextStates does",
+    async (_applied, init, next, message) => {
+      const result = await check({
+        source: `---- MODULE M ----\nEXTENDS Integers, TLC\nVARIABLES x, f\nInit == ${init}\nNext == ${next}\n====`,
+        config: "INIT Init\nNEXT Next\nCHECK_DEADLOCK FALSE",
+        coverage: 1,
+      });
+      expect(result.failure?.message).toBe(`${UNEXPECTED_EXCEPTION}${message}`);
+    },
+  );
 
   it("counts the applications of the copy EXCEPT makes of a lazy function, though TLC's FcnLambdaValue#takeExcept drops the cost model", async () => {
     const lines = await getCoverageLines(
