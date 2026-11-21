@@ -65,6 +65,7 @@ import {
   isSubstitutionDefinition,
   substitutedExpressions,
   substitutionFrames,
+  type BoundSubstitutions,
   type Substitution,
 } from "./instances";
 import { prettyPrint } from "./pretty-print";
@@ -198,6 +199,7 @@ export interface Environment {
   tlcEvalValues: WeakMap<Expression, Value>;
   substitutedDefinitions: Set<Definition>;
   enabledSubstitutions: WeakSet<Expression>;
+  boundSubstitutions: BoundSubstitutions;
   instanceParams: Set<OperatorParam>;
   evaluators: WeakMap<Expression, Evaluator>;
   entryEvaluators: WeakMap<Expression, Evaluator>;
@@ -1241,6 +1243,24 @@ export const findGlobalName = (name: string, environment: Environment): GlobalNa
   return undefined;
 };
 
+// A substitute that startup stored reads the same value whether a copy binds it once or reads it at each reference.
+const isStoredSubstitute = (
+  substitute: Expression | undefined,
+  environment: Environment,
+): substitute is Expression & { kind: "Identifier" } =>
+  environment.coverage === undefined &&
+  substitute?.kind === "Identifier" &&
+  !isLocallyResolved(substitute) &&
+  environment.substitutions.has(substitute.name) &&
+  !environment.reevaluatedSubstitutes.has(substitute.name);
+
+const getBoundDefinitions = (expression: Expression & { kind: "Let" }, environment: Environment) =>
+  environment.boundSubstitutions.lets.has(expression)
+    ? expression.definitions.filter(
+        (definition) => !isStoredSubstitute(definition.body, environment),
+      )
+    : expression.definitions;
+
 const compileArgumentBinder = (argument: Expression, environment: Environment): ArgumentBinder => {
   const isLiteral =
     argument.kind === "String" || (argument.kind === "Number" && isTlcInteger(argument.value));
@@ -1257,6 +1277,10 @@ const compileArgumentBinder = (argument: Expression, environment: Environment): 
     };
   }
   if (argument.kind === "Identifier" && !argument.resolution?.isSelf) {
+    const substitute = environment.boundSubstitutions.references.get(argument);
+    if (isStoredSubstitute(substitute, environment)) {
+      return compileArgumentBinder(substitute, environment);
+    }
     const global = isLocallyResolved(argument)
       ? undefined
       : findGlobalName(argument.name, environment);
@@ -1768,8 +1792,11 @@ export const getEntryEvaluator = (expression: Expression, environment: Environme
   if (environment.callStack || environment.coverage) return getEvaluator(expression, environment);
   const compiled = environment.entryEvaluators.get(expression);
   if (compiled) return compiled;
-  const evaluator =
-    generateEvaluator(expression, environment) ?? getEvaluator(expression, environment);
+  const entry =
+    expression.kind === "Let" && getBoundDefinitions(expression, environment).length === 0
+      ? expression.body
+      : expression;
+  const evaluator = generateEvaluator(entry, environment) ?? getEvaluator(entry, environment);
   environment.entryEvaluators.set(expression, evaluator);
   return evaluator;
 };
@@ -1781,6 +1808,9 @@ const compileIdentifier = (
   expression: Expression & { kind: "Identifier" },
   environment: Environment,
 ): Evaluator => {
+  const substitute = environment.boundSubstitutions.references.get(expression);
+  if (isStoredSubstitute(substitute, environment))
+    return compileIdentifier(substitute, environment);
   const name = expression.name;
   const global = isLocallyResolved(expression) ? undefined : findGlobalName(name, environment);
   if (global?.kind === "Variable") {
@@ -2716,15 +2746,15 @@ const compile = (expression: Expression, environment: Environment): Evaluator =>
     }
     case "Let": {
       const body = getChildEvaluator(expression.body);
-      const substituted = environment.coverage
-        ? expression.definitions.filter(isSubstitutionDefinition)
-        : [];
+      const definitions = getBoundDefinitions(expression, environment);
+      if (definitions.length === 0) return body;
+      const substituted = environment.coverage ? definitions.filter(isSubstitutionDefinition) : [];
       const reevaluated =
         substituted.length > 0
           ? { impure: new Set(substituted), streamed: new Set<Definition>() }
           : undefined;
       return (context) =>
-        body(withScope(context, bindDefinitions(expression.definitions, context, reevaluated)));
+        body(withScope(context, bindDefinitions(definitions, context, reevaluated)));
     }
     case "Forall":
     case "Exists":

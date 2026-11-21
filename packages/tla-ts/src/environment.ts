@@ -55,6 +55,7 @@ import {
   substitutedExpressions,
   withInstanceParams,
   withSubstitutionFrames,
+  type BoundSubstitutions,
   type Substitution,
 } from "./instances";
 import { overrideDefinitions, type JavaOverride } from "./java-overrides";
@@ -67,6 +68,7 @@ import {
   getBoundNames,
   getFunctionArity,
   getInstanceBinding,
+  getKeyName,
   getParamArities,
   getRecursiveCount,
   getRecursiveDefinitions,
@@ -321,6 +323,7 @@ export const createEnvironment = (
   const copySources = new Map<string, CopySource>();
   const substitutedDefinitions = new Set<Definition>();
   const enabledSubstitutions = new WeakSet<Expression>();
+  const boundSubstitutions: BoundSubstitutions = { lets: new WeakSet(), references: new WeakMap() };
   const goalOperands = new WeakMap<Expression, Expression[]>();
   const goalSelections = new WeakMap<Expression, Expression>();
   const subexpressionRecords: SubexpressionRecords = {
@@ -328,6 +331,12 @@ export const createEnvironment = (
     instanceReferences: new WeakMap(),
   };
   const instanceParams = new Set<OperatorParam>();
+  // An unscoped CONSTANT N <- D substitutes the root's N, whose key exists only once the root links, so an instance tells it by name.
+  const substitutedNames = new Set(
+    config.substitutions.flatMap((substitution) =>
+      substitution.module === undefined ? [substitution.name] : [],
+    ),
+  );
   const builtins = new Map<string, Builtin>(
     CORE_OPERATORS.map((operator) => [operator.name, operator]),
   );
@@ -859,9 +868,20 @@ export const createEnvironment = (
         }),
       ),
       enabledSubstitutions,
+      boundSubstitutions,
       getDefinition: getLinkedDefinition,
       getOuterDefinition: (key) =>
         module.definitions.find((definition) => unit.getKey(definition) === key),
+      isSubstitutedConstant: (key) => {
+        const name = getKeyName(key);
+        const symbol = resolved.get(name);
+        return (
+          symbol?.kind === "Constant" &&
+          symbol.arity === 0 &&
+          symbol.key === key &&
+          substitutedNames.has(name)
+        );
+      },
       isParameterized: (key) => parameterized.get(key) === true,
       addDefinition: (source, name, create, reservedKey) => {
         const key = reservedKey ?? createName(`${name}@${module.name}`);
@@ -1147,8 +1167,10 @@ export const createEnvironment = (
       ),
       substitutedVariables: new Set(linked.variables),
       enabledSubstitutions,
+      boundSubstitutions,
       getDefinition: getLinkedDefinition,
       getOuterDefinition: () => undefined,
+      isSubstitutedConstant: () => false,
       isParameterized: (key) => parameterized.get(key) === true,
       addDefinition: (source, name, create) => {
         const key = `${name}${KEY_SEPARATOR}${instance.module}${suffix}.${copies.length}`;
@@ -1892,6 +1914,7 @@ export const createEnvironment = (
     tlcEvalValues: new WeakMap(),
     substitutedDefinitions,
     enabledSubstitutions,
+    boundSubstitutions,
     instanceParams,
     evaluators: new WeakMap(),
     entryEvaluators: new WeakMap(),

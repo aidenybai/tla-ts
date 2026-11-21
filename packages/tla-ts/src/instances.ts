@@ -428,13 +428,21 @@ export const forEachChild = (
   }
 };
 
+// The LET a copy binds its substitutions in, and each reference to one of them with the substitution it reads.
+export interface BoundSubstitutions {
+  lets: WeakSet<Expression>;
+  references: WeakMap<Expression, Expression>;
+}
+
 interface Instantiation {
   params: OperatorParam[];
   substitutions: Map<string, Expression>;
   substitutedVariables: Set<string>;
   enabledSubstitutions: WeakSet<Expression>;
+  boundSubstitutions: BoundSubstitutions;
   getDefinition: (key: string) => Definition | undefined;
   getOuterDefinition: (key: string) => Definition | undefined;
+  isSubstitutedConstant: (key: string) => boolean;
   isParameterized: (key: string) => boolean;
   addDefinition: (
     source: string,
@@ -502,13 +510,14 @@ const isBoundOnce = (replacement: Expression, instantiation: Instantiation) => {
       replacement.kind !== "String"
     );
   }
-  const definition = isLocallyResolved(replacement)
-    ? undefined
-    : instantiation.getOuterDefinition(replacement.name);
+  if (isLocallyResolved(replacement)) return false;
+  const definition = instantiation.getOuterDefinition(replacement.name);
+  // Spec#lookup gives a constant the configuration substitutes its substitute's OpDefNode, which Tool#evalImplSubstInKind binds as a cachable LazyValue.
   return (
-    definition?.kind === "Operator" &&
-    definition.params.length === 0 &&
-    !isVariableAlias(definition.body)
+    instantiation.isSubstitutedConstant(replacement.name) ||
+    (definition?.kind === "Operator" &&
+      definition.params.length === 0 &&
+      !isVariableAlias(definition.body))
   );
 };
 
@@ -790,10 +799,12 @@ const substituteExpression = (
     if (replacement && bindings) {
       const name = getSubstitutionName(expression.name);
       bindings.set(name, replacement);
-      return withSubstitutionFrames(
+      const reference = withSubstitutionFrames(
         createLocalIdentifier(name, expression.location),
         substitutionFrames.get(expression) ?? [],
       );
+      instantiation.boundSubstitutions.references.set(reference, replacement);
+      return reference;
     }
     const copy = getCopy(rewrite, expression.name);
     if (copy === undefined) return expression;
@@ -991,6 +1002,7 @@ const copyDefinition = (rewrite: Rewrite, key: string): string => {
             // TLC has no such LET, so the call stack it prints has no position for it.
             location: { line: mapped.body.location.line, column: mapped.body.location.column },
           };
+    if (body !== mapped.body) instantiation.boundSubstitutions.lets.add(body);
     const copied = withInstanceParams({ ...mapped, body }, instantiation.params);
     const frames = substitutionFrames.get(definition.body);
     if (frames && copied.kind === "Operator") substitutionFrames.set(copied.body, frames);

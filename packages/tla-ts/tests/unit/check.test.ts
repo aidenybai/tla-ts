@@ -1640,6 +1640,84 @@ ASSUME TLCFP(a) = -887695703
     ]);
   });
 
+  it.each([
+    [
+      "an assumption",
+      "c",
+      "I == INSTANCE P WITH z <- y",
+      "ASSUME I!Two",
+      "y' = (y + 1) % 2",
+      "",
+      2,
+    ],
+    [
+      "an invariant",
+      "c",
+      "I == INSTANCE P WITH z <- y",
+      "Inv == I!Two",
+      "y' = (y + 1) % 2",
+      "INVARIANT Inv",
+      2,
+    ],
+    [
+      "an action property",
+      "c",
+      "I == INSTANCE P WITH z <- y",
+      "Prop == [][I!Act]_y",
+      "y' = (y + 1) % 2",
+      "PROPERTY Prop",
+      3,
+    ],
+    [
+      "an action property through WITH c <- N",
+      "N",
+      "I == INSTANCE P WITH c <- N, z <- y",
+      "Prop == [][I!Act]_y",
+      "y' = (y + 1) % 2",
+      "PROPERTY Prop",
+      3,
+    ],
+    [
+      "the next-state relation, at each reference",
+      "c",
+      "I == INSTANCE P WITH z <- y",
+      "",
+      "I!Flip",
+      "",
+      6,
+    ],
+  ])(
+    "evaluates an instance's substitution of a substituted constant in %s as TLC's LazyValue does",
+    async (_title, constant, instance, definitions, next, checked, count) => {
+      const printed: string[] = [];
+      await check({
+        source: `---- MODULE M ----\nEXTENDS TLC, Naturals\nCONSTANT ${constant}\nVARIABLE y\nD == PrintT("c")\n${instance}\n${definitions}\nInit == y = 0\nNext == ${next}\n====\n`,
+        config: `INIT Init\nNEXT Next\nCONSTANT ${constant} <- D\n${checked}`,
+        loadModule: (name) =>
+          name === "P"
+            ? "---- MODULE P ----\nEXTENDS TLC, Naturals\nCONSTANT c\nVARIABLE z\nTwo == c /\\ c\nAct == c /\\ c /\\ z' = z\nFlip == c /\\ c /\\ z' = (z + 1) % 2\nStep == c /\\ z' = (z + 1) % 2 /\\ c\n====\n"
+            : undefined,
+        onPrint: (text) => printed.push(text),
+      });
+      expect(printed).toEqual(Array.from({ length: count }, () => '"c"'));
+    },
+  );
+
+  it("applies an instance's operator parameter that a substituted operator constant replaces, as TLC does", async () => {
+    const printed: string[] = [];
+    await check({
+      source:
+        "---- MODULE M ----\nEXTENDS TLC, Naturals\nCONSTANT C(_)\nVARIABLE y\nInc(a) == a + 1\nI == INSTANCE P WITH Op <- C\nASSUME PrintT(<<I!Two, I!Three>>)\nInit == y = 0\nNext == y' = (y + 1) % 2\n====\n",
+      config: "INIT Init\nNEXT Next\nCONSTANT C <- Inc\n",
+      loadModule: (name) =>
+        name === "P"
+          ? "---- MODULE P ----\nEXTENDS Naturals\nCONSTANT Op(_)\nAp(F(_), a) == F(a)\nTwo == Ap(Op, 1)\nThree == Op(2)\n====\n"
+          : undefined,
+      onPrint: (text) => printed.push(text),
+    });
+    expect(printed).toEqual(["<<2, 3>>"]);
+  });
+
   it("reads TLCGet in every state through a constant substituted with it, as TLC's level bound does", async () => {
     const prints: string[] = [];
     await check({
