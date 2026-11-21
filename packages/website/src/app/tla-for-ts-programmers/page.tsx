@@ -11,8 +11,9 @@ const Page = () => (
       <Hero.Title>TLA+ for TypeScript programmers</Hero.Title>
       <Hero.Body>
         <p>
-          Learn to read and write <Link href="https://github.com/tlaplus/tlaplus">TLA+</Link> by
-          translating one TypeScript file.
+          <Link href="https://github.com/tlaplus/tlaplus">TLA+</Link> is a language for describing
+          every way a program can run. This guide teaches its syntax by translating one TypeScript
+          file.
         </p>
       </Hero.Body>
     </Hero.Root>

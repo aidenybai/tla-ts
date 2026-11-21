@@ -17,11 +17,13 @@ export interface Lesson {
   blocks: (string | Comparison | Listing | Subheading)[];
 }
 
-// A string is a paragraph, and text between backticks in it is code.
+// A string is a paragraph, and text between backticks in it is code. The two sides of a comparison
+// are written row for row, because an arrow joins each row that has code on both sides.
 export const LESSONS: Lesson[] = [
   {
     title: "A like button",
     blocks: [
+      "This is the file we'll translate. It has one variable, two functions that change it, and one rule.",
       {
         language: "typescript",
         code: `let likes = 0;
@@ -36,7 +38,7 @@ export const unlike = () => {
 
 export const neverNegative = () => likes >= 0;`,
       },
-      "A test calls `like` and `unlike` in one order. A TLA+ model checker tries every order. This guide translates the file into TLA+ line by line.",
+      "The rule says `likes` never goes below zero. A test checks that for one sequence of calls. TLA+ checks it for every sequence.",
     ],
   },
   {
@@ -48,16 +50,18 @@ export const neverNegative = () => likes >= 0;`,
 
 Init == likes = 0`,
       },
-      "`VARIABLE` declares a value that changes. `==` defines a name, as `const` does. `=` compares, as `===` does. `Init` is a condition, not an assignment: the checker starts in every state where it's true.",
+      "`VARIABLE` declares `likes`. `Init` gives its starting value.",
+      "TLA+ has two equals signs. `==` defines a name, like `const`. `=` compares two values, like `===`.",
+      "So `Init` doesn't assign 0 to `likes`. It says `likes` equals 0 at the start.",
     ],
   },
   {
     title: "Steps",
     blocks: [
-      "Copying the TypeScript doesn't work:",
+      "`like` adds one to `likes`. The direct translation is wrong:",
       { language: "tlaplus", code: `Like == likes = likes + 1` },
-      "`=` compares, and no number equals itself plus one. This is false in every state, so `Like` never happens.",
-      "A step has a state before and a state after. A prime marks the value after.",
+      "`=` compares, so this asks if `likes` equals `likes + 1`. That's never true.",
+      "TLA+ has no assignment. To describe a change, you write the new value with a prime: `likes'`.",
       {
         typescript: `const like = () => {
   likes += 1;
@@ -73,8 +77,10 @@ const unlike = () => {
 Unlike ==
   likes' = likes - 1`,
       },
-      "A condition on a before and an after is called an action. `Next` lists the actions, joined with `\\/`, which is `||`. In every state, the checker tries each one.",
+      "`likes' = likes + 1` says the new value equals the old value plus one. A definition like this is called an action.",
+      '`Next` lists every action, separated by `\\/`, which means "or".',
       { language: "tlaplus", code: String.raw`Next == Like \/ Unlike` },
+      "At each step, the checker tries `Like` and it tries `Unlike`.",
     ],
   },
   {
@@ -86,13 +92,13 @@ Unlike ==
         tla: `NeverNegative ==
   likes >= 0`,
       },
-      "A rule that must be true in every state is called an invariant. It has no prime, because it reads one state.",
+      "`NeverNegative` must be true in every state. A rule like this is called an invariant.",
     ],
   },
   {
     title: "The module",
     blocks: [
-      "Save this as `Likes.tla`. `EXTENDS` is `import`, and even `+` needs it. `\\*` starts a comment.",
+      "Put the definitions in a file named `Likes.tla`.",
       {
         language: "tlaplus",
         code: String.raw`---- MODULE Likes ----
@@ -112,7 +118,8 @@ Next == Like \/ Unlike
 NeverNegative == likes >= 0
 ====`,
       },
-      "`Likes.cfg` tells the checker which definition is which:",
+      "The first and last lines mark where the module starts and ends. `EXTENDS Integers` imports `+`, `-`, and `>=`. `\\*` starts a comment.",
+      "Then tell the checker which definitions to use, in a file named `Likes.cfg`.",
       {
         language: "text",
         code: `INIT Init
@@ -124,7 +131,9 @@ INVARIANT NeverNegative`,
   {
     title: "The first run",
     blocks: [
+      "Run the checker:",
       { language: "shellscript", code: "npx tla-ts Likes.tla" },
+      "It finds a bug:",
       {
         language: "text",
         code: `Error: Invariant NeverNegative is violated.
@@ -135,13 +144,13 @@ likes = 0
 State 2: <Unlike line 11, col 11 to line 11, col 28 of module Likes>
 likes = -1`,
       },
-      "Nothing stops `Unlike` at zero.",
+      "Read the output from top to bottom. `likes` starts at 0. Then `Unlike` runs, and `likes` is -1. The rule is broken after one step.",
     ],
   },
   {
     title: "Guards",
     blocks: [
-      "A condition with no prime reads only the state before, so it decides whether the step can happen. `/\\` is `&&`, and a long condition can be a list with `/\\` at the start of each line.",
+      "`Unlike` must not run when `likes` is 0. In TypeScript, you return early. In TLA+, you add a condition:",
       {
         typescript: `const unlike = () => {
   if (likes === 0) return;
@@ -151,8 +160,9 @@ likes = -1`,
   /\ likes > 0
   /\ likes' = likes - 1`,
       },
-      "Now the checker finds no error, but it never stops. `Like` can always run again, so there's always a new state.",
-      "The checker visits every state, so a spec needs a finite number of them. Bound `Like` too:",
+      "`/\\` means \"and\". The first line has no prime, so it's about the current state. If it's false, `Unlike` can't run. A condition like this is called a guard.",
+      "Run the checker again. It finds no bug, but it never finishes. `Like` has no guard, so `likes` grows forever and the checker never runs out of states.",
+      "Give `Like` a guard too:",
       {
         typescript: `const like = () => {
   if (likes >= 3) return;
@@ -162,13 +172,13 @@ likes = -1`,
   /\ likes < 3
   /\ likes' = likes + 1`,
       },
-      "The checker finds 4 states, and the rule holds in each.",
+      "Now `likes` stays between 0 and 3. The checker visits all 4 states and reports no error.",
     ],
   },
   {
     title: "Sets and parameters",
     blocks: [
-      "A count lets one user like twice. Store who liked:",
+      "The counter has a second bug: one user can like twice. To fix it, store the users who liked.",
       {
         typescript: `type User = "ada" | "bob";
 const liked = new Set<User>();
@@ -190,18 +200,19 @@ Like(user) ==
 Unlike(user) ==
   liked' = liked \ {user}`,
       },
-      "Nothing mutates. Each action says what the set is after the step.",
-      '`\\E` means "there exists". It makes the checker try each action with each user.',
+      "`{}` is the empty set. `\\union` adds to a set, and `\\` removes from it.",
+      "`Like` and `Unlike` now take a user. `Next` has to say which users:",
       {
         language: "tlaplus",
         code: String.raw`Next == \E user \in Users : Like(user) \/ Unlike(user)`,
       },
-      "Two users make 4 possible sets, so this spec is finite with no guard.",
+      '`\\E user \\in Users` means "for some user in `Users`". The checker tries every user.',
     ],
   },
   {
     title: "The rest of the syntax",
     blocks: [
+      "These tables cover the rest. Each row is the same expression in both languages.",
       { heading: "Logic" },
       {
         typescript: `a === b
@@ -223,7 +234,7 @@ TRUE
 IF a THEN b ELSE c
 a \div b`,
       },
-      "A number is an integer of any size. TLA+ has no floats, no `null`, and no `undefined`.",
+      '`a => b` means "if `a`, then `b`". Numbers are integers. There are no floats, no `null`, and no `undefined`.',
       { heading: "Sets" },
       {
         typescript: `new Set([1, 2, 3])
@@ -243,7 +254,7 @@ a \intersect b
 a \ b
 a \subseteq b`,
       },
-      "`Cardinality` comes from the `FiniteSets` module. `1..3` is the set `{1, 2, 3}`.",
+      "`Cardinality` needs `EXTENDS FiniteSets`.",
       {
         typescript: `items.filter((x) => x > 1)
 items.map((x) => x * 2)
@@ -254,8 +265,9 @@ items.some((x) => x > 2)`,
 \A x \in items : x > 0
 \E x \in items : x > 2`,
       },
+      '`\\A` means "for all".',
       { heading: "Sequences" },
-      "A sequence counts from 1, not 0. These operators come from the `Sequences` module.",
+      "Sequences are arrays. They start at index 1.",
       {
         typescript: `[1, 2, 3]
 list[0]
@@ -270,7 +282,9 @@ Append(list, x)
 Tail(list)
 a \o b`,
       },
+      "These need `EXTENDS Sequences`.",
       { heading: "Records" },
+      "Records are objects.",
       {
         typescript: `{ name: "ada", likes: 0 }
 user.name
@@ -279,8 +293,9 @@ user.name
 user.name
 [user EXCEPT !.likes = 1]`,
       },
+      "`EXCEPT` copies a record and changes one field.",
       { heading: "Functions" },
-      "A function is a lookup table, closer to a `Map` than to a TypeScript function.",
+      "Functions are maps from keys to values.",
       {
         typescript: `{ ada: 0, bob: 0 }
 votes[name]
@@ -292,7 +307,7 @@ DOMAIN votes
 [votes EXCEPT ![name] = 1]`,
       },
       { heading: "Definitions" },
-      "A body is one expression, with no statements and no `return`.",
+      "A definition can take parameters. `LET` defines a local name.",
       {
         typescript: `const limit = 3;
 const twice = (n: number) => n * 2;
@@ -311,7 +326,7 @@ Area(w) ==
   {
     title: "What TLA-ts writes",
     blocks: [
-      "`npx tla-ts likes.ts` writes this module from the first file and checks it:",
+      "You don't have to write TLA+ by hand. Run `npx tla-ts likes.ts`, and TLA-ts writes this module and checks it:",
       {
         language: "tlaplus",
         code: String.raw`---- MODULE Likes ----
@@ -328,7 +343,7 @@ Spec == /\ Init
 neverNegative == likes >= 0
 ====`,
       },
-      "Two lines are new. `vars` lists the variables. `Spec` says that a run starts in `Init`, and that every step is a `Next` step or leaves `vars` unchanged.",
+      "It has two definitions this guide didn't cover. `vars` lists the variables. `Spec` combines `Init` and `Next` into one formula: start in `Init`, then take `Next` steps.",
     ],
   },
 ];
