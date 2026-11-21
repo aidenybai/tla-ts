@@ -5,6 +5,8 @@ import { join } from "node:path";
 import { pathToFileURL } from "node:url";
 import { Worker } from "node:worker_threads";
 import { afterAll, beforeAll, describe, expect, it } from "vite-plus/test";
+import { createLibrary, readEscoreFiles } from "../../src/typescript/spec/library";
+import { recordHostRealm } from "../../src/typescript/spec/realm";
 
 // What a compile and a check of a file give: the check's status, the violated name, the trace's
 // states and actions, and a failure's message, or the named error that either throws.
@@ -315,6 +317,91 @@ describe("compile on ESCore from a recorded realm as from Node's", () => {
         "tla-ts can't tell whether Node rejects a file's syntax without a Node to parse it",
       );
     }, 120_000);
+  });
+
+  // Under Bun, which records no host, the API compiles with a realm that Node recorded and that
+  // went through JSON, and with no Node to resolve a specifier, as on the website: a relative
+  // import that names its file loads it, as Node does, and any other stops, where Node may load
+  // another file or none, as for an extensionless name or a .js name of a TypeScript file.
+  describe("resolve an import under Bun, without Node's resolution, as Node would or stop", () => {
+    const directory = mkdtempSync(join(tmpdir(), "escore-api-bun-"));
+    afterAll(() => rmSync(directory, { recursive: true, force: true }));
+    const files = {
+      "two.mjs": "export const two = 2;\n",
+      "three.ts": "export const three = 3;\n",
+      "named.mjs":
+        'import { two } from "./two.mjs";\nif (two !== 2) throw new RangeError("two " + two);\n',
+      "wrong.mjs":
+        'import { two } from "./two.mjs";\nif (two !== 3) throw new RangeError("two " + two);\n',
+      "extensionless.mjs":
+        'import { three } from "./three";\nif (three !== 3) throw new Error("three");\n',
+      "typescript.mjs":
+        'import { three } from "./three.js";\nif (three !== 3) throw new Error("three");\n',
+    };
+    const source = pathToFileURL(join(import.meta.dirname, "../../src")).href;
+    // The outcome of each program, compiled and checked under Bun, by its file's name.
+    const outcomes: Record<string, { status: string; message?: string }> = {};
+    beforeAll(() => {
+      Object.entries(files).forEach((entry) => writeFileSync(join(directory, entry[0]), entry[1]));
+      const escoreFiles = readEscoreFiles(join(import.meta.dirname, "../../ecmascript"));
+      writeFileSync(
+        join(directory, "host.json"),
+        JSON.stringify({ files: escoreFiles, realm: recordHostRealm(createLibrary(escoreFiles)) }),
+      );
+      writeFileSync(
+        join(directory, "run.ts"),
+        `import { readFileSync } from "node:fs";
+import { compileEscore } from "${source}/typescript/spec/api.ts";
+import { prepareHostRuntime } from "${source}/typescript/spec/prepare.ts";
+import { check } from "${source}/parallel.ts";
+const runtime = prepareHostRuntime(JSON.parse(readFileSync(process.argv[2], "utf8")));
+const outcomes = {};
+for (const fileName of process.argv.slice(3)) {
+  try {
+    const spec = compileEscore({ source: readFileSync(fileName, "utf8"), fileName }, runtime);
+    const result = await check({ ...spec, workers: 1, onPrint: () => {} });
+    outcomes[fileName] = { status: result.status, message: result.failure?.message };
+  } catch (error) {
+    outcomes[fileName] = { status: "stopped", message: String(error?.message ?? error) };
+  }
+}
+console.log(JSON.stringify(outcomes));
+`,
+      );
+      const names = ["named.mjs", "wrong.mjs", "extensionless.mjs", "typescript.mjs"];
+      const run = spawnSync(
+        "bun",
+        [
+          join(directory, "run.ts"),
+          join(directory, "host.json"),
+          ...names.map((name) => join(directory, name)),
+        ],
+        { encoding: "utf8" },
+      );
+      Object.entries(JSON.parse(run.stdout) as typeof outcomes).forEach((entry) => {
+        outcomes[entry[0].slice(directory.length + 1)] = entry[1];
+      });
+    }, 300_000);
+    const runFile = (name: string) =>
+      spawnSync(process.execPath, [join(directory, name)], { encoding: "utf8" });
+
+    it("agrees with Node where the import names its file", () => {
+      expect(runFile("named.mjs").status).toBe(0);
+      expect(outcomes["named.mjs"]).toMatchObject({ status: "success" });
+    });
+
+    it("rejects another result", () => {
+      expect(runFile("wrong.mjs").stderr).toContain("RangeError: two 2");
+      expect(outcomes["wrong.mjs"].message).toContain('"two 2"');
+    });
+
+    it.each(["extensionless.mjs", "typescript.mjs"])(
+      "stops at the import of %s, whose file Node doesn't find",
+      (name) => {
+        expect(runFile(name).stderr).toContain("ERR_MODULE_NOT_FOUND");
+        expect(outcomes[name].message).toContain("tla-ts can't load the module ./three");
+      },
+    );
   });
 
   describe("answer a locale tag that the realm recorded, and stop at another", () => {

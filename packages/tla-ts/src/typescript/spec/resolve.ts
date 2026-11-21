@@ -13,10 +13,23 @@ const NODE_OPTIONS: ts.CompilerOptions = {
   moduleResolution: ts.ModuleResolutionKind.NodeNext,
 };
 
-// The module of a specifier that asks Node's ESM loader to resolve from a file, whose URL follows
-// it, as a module at that URL, whose import.meta.resolve takes the loader's resolution.
-const RESOLVER_SCHEME = "tla-ts-resolve:";
-const RESOLVER_QUERY = "?tla-ts-resolve";
+// A module that tla-ts gives Node's ESM loader for the time of a resolution, at a path that no
+// file has, whose import.meta.resolve of RESOLVE_REQUEST runs the loader's resolution of an import.
+const RESOLVER_URL = "file:///tla-ts-resolve.mjs";
+const RESOLVE_REQUEST = "tla-ts:resolve";
+
+// The codes of the errors that Node's resolution throws where it finds no file for a specifier.
+const RESOLUTION_ERRORS = new Set([
+  "MODULE_NOT_FOUND",
+  "ERR_MODULE_NOT_FOUND",
+  "ERR_PACKAGE_PATH_NOT_EXPORTED",
+  "ERR_PACKAGE_IMPORT_NOT_DEFINED",
+  "ERR_UNSUPPORTED_DIR_IMPORT",
+  "ERR_INVALID_MODULE_SPECIFIER",
+  "ERR_INVALID_PACKAGE_CONFIG",
+  "ERR_INVALID_PACKAGE_TARGET",
+  "ERR_UNSUPPORTED_RESOLVE_REQUEST",
+]);
 
 // Node's module, where Node runs this process, whose resolution the code that runs takes.
 const getNodeModule = () =>
@@ -24,13 +37,55 @@ const getNodeModule = () =>
     ? globalThis.process?.getBuiltinModule?.("node:module")
     : undefined;
 
-let isResolverHooked = false;
+// The URL that Node's ESM loader resolves an import of the file containingFile to: hooks, for the
+// time of the resolution, give the loader the resolver module, whose import.meta.resolve takes
+// the loader's own resolution from the file, with an import's conditions, and keep the error that
+// it throws where it finds no file, which import.meta.resolve would leave out.
+const resolveImport = (
+  module: NonNullable<ReturnType<typeof getNodeModule>>,
+  specifier: string,
+  containingFile: string,
+) => {
+  const url = process.getBuiltinModule("node:url");
+  const resolved: { url?: string; error?: unknown } = {};
+  const hooks = module.registerHooks({
+    resolve: (request, context, next) => {
+      if (request === RESOLVER_URL)
+        return { url: RESOLVER_URL, format: "module", shortCircuit: true };
+      if (request !== RESOLVE_REQUEST) return next(request, context);
+      try {
+        resolved.url = next(specifier, {
+          ...context,
+          parentURL: url.pathToFileURL(containingFile).href,
+        }).url;
+      } catch (error) {
+        resolved.error = error;
+      }
+      return { url: "data:,", shortCircuit: true };
+    },
+    load: (location, context, next) =>
+      location === RESOLVER_URL
+        ? {
+            format: "module",
+            source: `export const resolve = () => import.meta.resolve(${JSON.stringify(RESOLVE_REQUEST)});`,
+            shortCircuit: true,
+          }
+        : next(location, context),
+  });
+  const require = module.createRequire(containingFile);
+  try {
+    require(RESOLVER_URL).resolve();
+  } finally {
+    hooks.deregister();
+    delete require.cache[url.fileURLToPath(RESOLVER_URL)];
+  }
+  if (resolved.error !== undefined) throw resolved.error;
+  return resolved.url;
+};
 
-// The file that Node loads for a specifier of the file containingFile: require's resolution
-// (Module._resolveFilename), or the ESM loader's, which import.meta.resolve gives of a module at
-// the file's URL, of a file that exists and isn't a directory, as the loader's finalizeResolution
-// requires and import.meta.resolve leaves unchecked. Undefined where Node finds no file, as for a
-// built-in module.
+// The file that Node loads for a specifier of the file containingFile, by require's resolution
+// (Module._resolveFilename) or the ESM loader's, or undefined where Node finds no file, as for a
+// built-in module. An error of the resolution but Node's own for a missing file propagates.
 const resolveWithNode = (
   module: NonNullable<ReturnType<typeof getNodeModule>>,
   specifier: string,
@@ -38,47 +93,23 @@ const resolveWithNode = (
   isRequire: boolean,
 ) => {
   const url = process.getBuiltinModule("node:url");
-  const fs = process.getBuiltinModule("node:fs");
-  const require = module.createRequire(containingFile);
-  if (isRequire) {
-    try {
-      const found = require.resolve(specifier);
-      return found.startsWith("/") ? found : undefined;
-    } catch {
+  try {
+    if (isRequire) {
+      const found = module.createRequire(containingFile).resolve(specifier);
+      return process.getBuiltinModule("node:path").isAbsolute(found) ? found : undefined;
+    }
+    const found = resolveImport(module, specifier, containingFile);
+    return found?.startsWith("file:") === true ? url.fileURLToPath(found) : undefined;
+  } catch (error) {
+    if (
+      typeof error === "object" &&
+      error !== null &&
+      "code" in error &&
+      RESOLUTION_ERRORS.has(String(error.code))
+    ) {
       return undefined;
     }
-  }
-  if (!isResolverHooked) {
-    module.registerHooks({
-      resolve: (request, context, next) =>
-        request.startsWith(RESOLVER_SCHEME)
-          ? {
-              url: `${request.slice(RESOLVER_SCHEME.length)}${RESOLVER_QUERY}`,
-              format: "module",
-              shortCircuit: true,
-            }
-          : next(request, context),
-      load: (location, context, next) =>
-        location.endsWith(RESOLVER_QUERY)
-          ? {
-              format: "module",
-              source: "export const resolve = (specifier) => import.meta.resolve(specifier);",
-              shortCircuit: true,
-            }
-          : next(location, context),
-    });
-    isResolverHooked = true;
-  }
-  const resolver: { resolve: (request: string) => string } = require(
-    `${RESOLVER_SCHEME}${url.pathToFileURL(containingFile).href}`,
-  );
-  try {
-    const found = resolver.resolve(specifier);
-    if (!found.startsWith("file:")) return undefined;
-    const path = url.fileURLToPath(found);
-    return fs.statSync(path, { throwIfNoEntry: false })?.isFile() === true ? path : undefined;
-  } catch {
-    return undefined;
+    throw error;
   }
 };
 
