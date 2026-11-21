@@ -1141,6 +1141,7 @@ const COMPOSITE_SET_KINDS = new Set<string>([
 ]);
 
 // SubsetValue#member enumerates the element and UnionValue#member its set of sets, each until it decides, then once more to find the end.
+// Their enumerators charge each draw as they make it, so a member check that throws keeps the draws before it.
 export const createChargedMembership = (coverage: Coverage) => {
   const isMember = (element: Value, set: Value): boolean => {
     if (typeof set !== "object") return isElementOf(element, set);
@@ -1149,16 +1150,20 @@ export const createChargedMembership = (coverage: Coverage) => {
         ? isElementOfWith(element, set, isMember)
         : isElementOf(element, set);
     }
-    let drawn = 0;
-    const isElement = isElementOfWith(element, set, (item, inner) => {
-      drawn++;
-      return isMember(item, inner);
-    });
     const isSubset = set.kind === "Subset";
-    const enumerator = createEnumerator(coverage, isSubset ? element : set.base, drawn, false);
-    for (let index = 0; index < drawn; index++) enumerator.next();
-    if (isElement === isSubset) enumerator.next();
-    return isElement;
+    let drawn = 0;
+    let isElement: boolean | undefined;
+    try {
+      isElement = isElementOfWith(element, set, (item, inner) => {
+        drawn++;
+        return isMember(item, inner);
+      });
+      return isElement;
+    } finally {
+      const enumerator = createEnumerator(coverage, isSubset ? element : set.base, drawn, false);
+      for (let index = 0; index < drawn; index++) enumerator.next();
+      if (isElement === isSubset) enumerator.next();
+    }
   };
   return isMember;
 };

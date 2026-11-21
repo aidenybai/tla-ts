@@ -4193,6 +4193,47 @@ ASSUME TLCFP(a) = -887695703
 
   it.each([
     [
+      "UNION",
+      '"a" \\in UNION {{"b"}, 0..x + 2}',
+      [
+        "line 5, col 9 to line 5, col 13 of module M: 2",
+        "line 5, col 18 to line 5, col 27 of module M: 0",
+        "|line 5, col 23 to line 5, col 27 of module M: 2",
+        "line 5, col 32 to line 5, col 62 of module M: 2",
+        "|line 5, col 40 to line 5, col 62 of module M: 2",
+        "||line 5, col 46 to line 5, col 62 of module M: 2:4",
+        "|||line 5, col 47 to line 5, col 51 of module M: 2",
+        "|||line 5, col 54 to line 5, col 61 of module M: 2",
+      ],
+    ],
+    [
+      "SUBSET",
+      '{{}, {x}} \\in SUBSET (SUBSET {"b"})',
+      [
+        "line 5, col 9 to line 5, col 13 of module M: 2",
+        "line 5, col 18 to line 5, col 27 of module M: 0",
+        "|line 5, col 23 to line 5, col 27 of module M: 2",
+        "line 5, col 32 to line 5, col 66 of module M: 2",
+        "|line 5, col 32 to line 5, col 40 of module M: 2:4",
+        "||line 5, col 33 to line 5, col 34 of module M: 2:2",
+        "||line 5, col 37 to line 5, col 39 of module M: 2:2",
+        "|||line 5, col 38 to line 5, col 38 of module M: 2",
+        "|line 5, col 46 to line 5, col 66 of module M: 2",
+      ],
+    ],
+  ])(
+    "charges the draws a membership check in %s made before it failed, as TLC's enumerators charge each as they draw it",
+    async (_title, condition, expected) => {
+      const lines = await getCoverageLines(
+        `---- MODULE M ----\nEXTENDS Integers, FiniteSets, Sequences, TLC\nVARIABLE x\nInit == x = 0\nNext == x < 2 /\\ x' = x + 1 /\\ ${condition}\n====`,
+        "INIT Init\nNEXT Next\nCHECK_DEADLOCK FALSE",
+      );
+      expect(lines?.at(-1)).toEqual(expected);
+    },
+  );
+
+  it.each([
+    [
       "its body follows one argument",
       "VARIABLE x\nInit == x = 0\nNext == x < 2 /\\ [i \\in 0..2 |-> x' = x + i][IF x = 0 THEN 1 ELSE 2]",
       [
