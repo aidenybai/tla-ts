@@ -1544,7 +1544,7 @@ export const compileModelToEscore = (
     preparedModules: [
       ...compiled.preparedModules,
       ...["ESCanonical", ...(lowered === undefined ? [] : ["ESNative"])].flatMap(
-        (name) => runtime.extensions.get(name) ?? [],
+        (name) => runtime.getExtension(name) ?? [],
       ),
     ],
     loadModule: (name) =>
