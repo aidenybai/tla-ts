@@ -26,6 +26,7 @@ interface ConnectorProps {
   names: string[];
   hoveredName: string | undefined;
   colors: Record<string, string>;
+  className?: string;
 }
 
 // A name points at its first row in view, so code that is linked twice still gets an arrow when
@@ -134,7 +135,10 @@ export const Connector = (props: ConnectorProps) => {
       fill="none"
       strokeLinecap="round"
       strokeLinejoin="round"
-      className="pointer-events-none absolute inset-0 z-10 size-full overflow-hidden max-md:hidden"
+      className={cn(
+        "pointer-events-none absolute inset-0 z-10 size-full overflow-hidden",
+        props.className,
+      )}
     >
       {links.map((link) => (
         <g

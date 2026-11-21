@@ -1,6 +1,6 @@
-import { reference } from "virtual:site-data";
-import type { ReferenceBlock } from "@/lib/site-data";
+import type { ContentBlock, ContentSection } from "@/lib/site-data";
 import { Code } from "./code";
+import { Comparison } from "./comparison";
 import { Section } from "./section";
 import { InlineCode } from "@/components/ui/inline-code";
 
@@ -17,7 +17,7 @@ const Text = (props: TextProps) =>
     );
 
 interface BlockProps {
-  block: ReferenceBlock;
+  block: ContentBlock;
 }
 
 const Block = (props: BlockProps) => {
@@ -45,6 +45,9 @@ const Block = (props: BlockProps) => {
         </Code.Actions>
       </Code.Root>
     );
+  }
+  if (block.kind === "comparison") {
+    return <Comparison typescript={block.typescript} tla={block.tla} />;
   }
   return (
     <div className="overflow-x-auto">
@@ -77,8 +80,12 @@ const Block = (props: BlockProps) => {
   );
 };
 
-export const Reference = () =>
-  reference.map((section) => (
+interface ContentProps {
+  sections: ContentSection[];
+}
+
+export const Content = (props: ContentProps) =>
+  props.sections.map((section) => (
     <Section.Root key={section.title}>
       <Section.Title>{section.title}</Section.Title>
       {section.blocks

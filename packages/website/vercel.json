@@ -20,6 +20,10 @@
     {
       "source": "/playground",
       "destination": "/playground.html"
+    },
+    {
+      "source": "/tla-for-ts-developers",
+      "destination": "/tla-for-ts-developers.html"
     }
   ],
   "headers": [

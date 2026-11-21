@@ -13,12 +13,8 @@ import { getEscoreCompilation } from "./src/lib/escore";
 import { createHighlighter } from "./src/lib/highlighter";
 import { LOGO_PATH } from "./src/lib/logo";
 import { getPageFile } from "./src/router";
-import type {
-  Benchmark,
-  CompiledExample,
-  ReferenceBlock,
-  ReferenceSection,
-} from "./src/lib/site-data";
+import { LESSONS } from "./src/lib/tutorial";
+import type { Benchmark, CompiledExample, ContentBlock, ContentSection } from "./src/lib/site-data";
 
 const SITE_DATA = "virtual:site-data";
 const README_URL = new URL("../../README.md", import.meta.url);
@@ -119,14 +115,14 @@ const getCells = (row: string) =>
 
 const getReference = (
   highlight: Awaited<ReturnType<typeof createHighlighter>>,
-): ReferenceSection[] => {
+): ContentSection[] => {
   const readme = readFileSync(README_URL, "utf8");
   return REFERENCE_TITLES.map((title) => {
     const start = readme.indexOf(`## ${title}\n`);
     const body = readme.slice(readme.indexOf("\n", start), readme.indexOf("\n## ", start));
     return {
       title,
-      blocks: [...body.matchAll(REFERENCE_BLOCK)].map((match): ReferenceBlock => {
+      blocks: [...body.matchAll(REFERENCE_BLOCK)].map((match): ContentBlock => {
         const groups = match.groups ?? {};
         if (groups.code !== undefined) {
           return {
@@ -158,6 +154,35 @@ const siteData = (): Plugin => ({
       `export const install = ${JSON.stringify(highlight("npm install tla-ts", "shellscript"))};`,
       `export const reference = ${JSON.stringify(getReference(highlight))};`,
     ].join("\n");
+  },
+});
+
+const TUTORIAL = "virtual:tutorial";
+
+const tutorial = (): Plugin => ({
+  name: "tutorial",
+  resolveId: (id) => (id === TUTORIAL ? `\0${TUTORIAL}` : undefined),
+  async load(id) {
+    if (id !== `\0${TUTORIAL}`) return undefined;
+    this.addWatchFile(fileURLToPath(new URL("./src/lib/tutorial.ts", import.meta.url)));
+    const highlight = await createHighlighter();
+    return `export default ${JSON.stringify(
+      LESSONS.map((lesson): ContentSection => ({
+        title: lesson.title,
+        blocks: lesson.blocks.map((block): ContentBlock => {
+          if (typeof block === "string") return { kind: "paragraph", text: block };
+          if ("heading" in block) return { kind: "heading", text: block.heading };
+          if ("tla" in block) {
+            return {
+              kind: "comparison",
+              typescript: highlight(block.typescript, "typescript"),
+              tla: highlight(block.tla, "tlaplus"),
+            };
+          }
+          return { kind: "code", source: highlight(block.code, block.language) };
+        }),
+      })),
+    )};`;
   },
 });
 
@@ -334,14 +359,25 @@ const logoFiles = (): Plugin => ({
   },
 });
 
+// Each route but / is built from the HTML file of its name.
+const ROUTES = ["/playground", "/tla-for-ts-developers"];
+const ORIGIN = "https://tla-ts.com";
 const EMPTY_ROOT = '<div id="root"></div>';
 const STYLESHEET = /<link rel="stylesheet"[^>]*href="\/([^"]+\.css)"[^>]*>/;
 
 const pages = (): Plugin => ({
   name: "pages",
+  generateBundle() {
+    this.emitFile({
+      type: "asset",
+      fileName: "sitemap.xml",
+      source: `<?xml version="1.0" encoding="UTF-8"?>\n<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">\n${["/", ...ROUTES].map((route) => `  <url><loc>${ORIGIN}${route}</loc></url>`).join("\n")}\n</urlset>\n`,
+    });
+  },
   configureServer(server) {
     server.middlewares.use((request, _response, next) => {
-      if (request.url?.replace(/\/$/, "") === "/playground") request.url = "/playground.html";
+      const route = request.url?.replace(/\/$/, "");
+      if (route !== undefined && ROUTES.includes(route)) request.url = `${route}.html`;
       next();
     });
   },
@@ -384,6 +420,7 @@ export default defineConfig({
     react(),
     tailwindcss(),
     siteData(),
+    tutorial(),
     outlines(),
     compilations(),
     typescriptLibraries(),
@@ -393,10 +430,9 @@ export default defineConfig({
   ],
   build: {
     rollupOptions: {
-      input: [
-        fileURLToPath(new URL("./index.html", import.meta.url)),
-        fileURLToPath(new URL("./playground.html", import.meta.url)),
-      ],
+      input: ["/index", ...ROUTES].map((route) =>
+        fileURLToPath(new URL(`.${route}.html`, import.meta.url)),
+      ),
     },
   },
   resolve: {
