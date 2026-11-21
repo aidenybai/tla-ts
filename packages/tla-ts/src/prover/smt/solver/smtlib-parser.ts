@@ -1023,7 +1023,7 @@ export const createSmtlibReader = (
   const unrooted: number[] = [];
   const pending: number[] = [];
 
-  // cmd_context's m_func_decls, which keeps its capacity and its deleted slots after a pop.
+  // A pop erases names from the dictionary but keeps its capacity and deleted slots, as Z3's does.
   const funcNames: string[] = [];
   const funcNameIndexes = new Map<string, number>();
   const funcNameCounts: number[] = [];

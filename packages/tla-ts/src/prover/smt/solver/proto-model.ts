@@ -442,7 +442,6 @@ export class ProtoModel {
     return this.evaluator.rewrite(expr);
   }
 
-  // proto_model::eval, which catches the evaluator's rewriter_exception.
   tryEval(expr: number, isModelCompletion: boolean) {
     try {
       return this.eval(expr, isModelCompletion);
