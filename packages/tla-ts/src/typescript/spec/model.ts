@@ -11,6 +11,7 @@ import { compileToEscore, type EscoreSpec } from "./compile";
 import { frameModel, type StateVariable } from "./frame";
 import { foldNames } from "./library";
 import type { EscoreRuntime } from "./prepare";
+import { getModuleFormat } from "./resolve";
 
 export interface EscoreModel extends EscoreSpec {
   isScript: false;
@@ -283,13 +284,29 @@ export const compileModelToEscore = (
   const text = getJsxText(fileName, source);
   const file = ts.createSourceFile(fileName, text, ts.ScriptTarget.ESNext, true);
   // A model that imports files runs as the ES module it is, whose frame TypeScript's checker gives.
-  const isModule = file.statements.some(
-    (statement) =>
-      (ts.isImportDeclaration(statement) && statement.importClause?.isTypeOnly !== true) ||
-      (ts.isExportDeclaration(statement) &&
-        statement.moduleSpecifier !== undefined &&
-        !statement.isTypeOnly),
-  );
+  // The names that the file's code reads, of which a host's global may be one.
+  const identifiers = new Set<string>();
+  const collect = (node: ts.Node): void => {
+    if (ts.isIdentifier(node)) identifiers.add(node.text);
+    ts.forEachChild(node, collect);
+  };
+  collect(file);
+  // An ES module of Node's that reads a global of the host's, such as console or queueMicrotask,
+  // which a script's realm lacks, runs as the module it is too.
+  const hostGlobals = [
+    ...runtime.realm.scriptGlobals,
+    ...runtime.realm.moduleGlobals.map((global) => global.name),
+  ];
+  const isModule =
+    file.statements.some(
+      (statement) =>
+        (ts.isImportDeclaration(statement) && statement.importClause?.isTypeOnly !== true) ||
+        (ts.isExportDeclaration(statement) &&
+          statement.moduleSpecifier !== undefined &&
+          !statement.isTypeOnly),
+    ) ||
+    (getModuleFormat(fileName, text) === "module" &&
+      hostGlobals.some((name) => identifiers.has(name)));
   const today = frameModel(source, fileName, library, runtime.names);
   if (today.isScript) return { isScript: true, notes: today.notes };
   const module = today.source;

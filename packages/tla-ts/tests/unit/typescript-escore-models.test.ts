@@ -372,6 +372,55 @@ describe("checks a module's exported functions as a model on ESCore", () => {
     });
   });
 
+  // A variable without an initializer whose type has values TLC can't list, as Solid's
+  // SuspenseContext, starts at undefined, as Node starts it.
+  describe("starts a variable of a type it can't list at undefined", () => {
+    const getSource = (operator: string) =>
+      `let handler: (() => number) | undefined;\nlet count = 0;\nexport const tick = () => {\n  if (count < 2) count += handler === undefined ? 1 : handler();\n};\nexport const isSmall = () => count ${operator} 2;\n`;
+
+    it("agrees with Node", async () => {
+      expect(getCounts(await checkModel(getSource("<=")))).toEqual(["deadlock", 3, 3]);
+    });
+
+    it("rejects another result", async () => {
+      expect(getCounts(await checkModel(getSource("<")))).toEqual(["invariant-violation", 3, 3]);
+    });
+  });
+
+  // A step runs the jobs of a program that names then but not Promise, as Solid's server build
+  // does, with the promises' operators that run them.
+  describe("settles a step of a program that names then but not Promise", () => {
+    const getSource = (limit: number) =>
+      `const box = { then: 1 };\nlet count = 0;\nexport const tick = () => {\n  if (count < 2) count += box.then;\n};\nexport const isSmall = () => count < ${limit};\n`;
+
+    it("agrees with Node", async () => {
+      expect(getCounts(await checkModel(getSource(3)))).toEqual(["deadlock", 3, 3]);
+    });
+
+    it("rejects another result", async () => {
+      expect(getCounts(await checkModel(getSource(2)))).toEqual(["invariant-violation", 3, 3]);
+    });
+  });
+
+  // An ES module that reads a host's global that a script's realm lacks, as Solid's build reads
+  // queueMicrotask and console, runs as the module it is, where the host's globals are.
+  describe("checks an ES module that reads the host's console", () => {
+    const getSource = (operator: string) =>
+      `let count = 0;\nexport const tick = () => {\n  if (count < 2 && typeof console.warn === "function") count += 1;\n};\nexport const isSmall = () => count ${operator} 2;\n`;
+
+    it("agrees with Node", async () => {
+      expect(getCounts(await checkModel(getSource("<="), "spec.mts"))).toEqual(["deadlock", 3, 3]);
+    });
+
+    it("rejects another result", async () => {
+      expect(getCounts(await checkModel(getSource("<"), "spec.mts"))).toEqual([
+        "invariant-violation",
+        3,
+        3,
+      ]);
+    });
+  });
+
   // A step settles the jobs that its program queues, which a program that names then only in a
   // comment queues none of.
   describe("settles a step of a program that queues no jobs", () => {

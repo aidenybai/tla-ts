@@ -167,7 +167,7 @@ Other types have no finite set of values:
 
 tla-ts calls no exported function with a parameter of such a type, and prints a line that names it, such as `tla-ts calls no apply: its parameter transform takes values it can't list`. It also calls no exported function without parameters whose every call throws. Where it calls no exported function at all, the compile stops with `tla-ts compiles a script, not a model, to ESCore this way`.
 
-A state variable of such a type with no initializer stops the compile, as in `tla-ts can't start count at every value of its type: … Give count an initializer`.
+A state variable of such a type with no initializer starts at `undefined`, as Node starts it, and tla-ts prints a line that names it, such as `tla-ts starts count at undefined, as Node does: …`.
 
 ### Guards
 

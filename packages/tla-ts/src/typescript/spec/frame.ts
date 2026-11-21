@@ -774,17 +774,14 @@ export const frameModel = (
   };
   const getType = (node: ts.ParameterDeclaration | ts.VariableDeclaration) =>
     checker.getTypeAtLocation(node.name);
-  // The values that a parameter of an exported function, or a variable with no initializer, ranges
-  // over, which TLC lists.
-  const getDomain = (node: ts.ParameterDeclaration | ts.VariableDeclaration) => {
+  // The values that a parameter of an exported function ranges over, which TLC lists.
+  const getDomain = (node: ts.ParameterDeclaration) => {
     const domain = findDomain(getType(node));
     if (!isInfinite(domain)) return domain;
     const name = ts.isIdentifier(node.name) ? node.name.text : undefined;
     if (name === undefined) throw new TlaTypeScriptError(domain.message, node);
     throw new TlaTypeScriptError(
-      ts.isParameter(node)
-        ? `tla-ts can't choose every value of the parameter ${name}: ${domain.message}. Give ${name} a finite type, such as a union of literals, or records and tuples of them, or call the function from a script instead`
-        : `tla-ts can't start ${name} at every value of its type: ${domain.message}. Give ${name} an initializer`,
+      `tla-ts can't choose every value of the parameter ${name}: ${domain.message}. Give ${name} a finite type, such as a union of literals, or records and tuples of them, or call the function from a script instead`,
       node,
     );
   };
@@ -926,11 +923,19 @@ export const frameModel = (
     ].map((section) => [section, []]),
   );
   const list = (section: string, name: string) => sections.get(section)?.push(name);
-  // A state variable starts at its initializer, or at every value of its type without one.
+  // A state variable starts at its initializer, or at every value of its type without one, or at
+  // undefined, as Node starts it, where its type has values TLC can't list.
   variables.forEach((variable) => {
     const declaration = variable.declared.declaration;
     if (ts.isVariableDeclaration(declaration) && declaration.initializer === undefined) {
-      init.push(`${variable.name} \\in ${getDomain(declaration)}`);
+      const domain = findDomain(getType(declaration));
+      if (isInfinite(domain)) {
+        notes.push(
+          `tla-ts starts ${variable.declared.name} at undefined, as Node does: ${domain.message}`,
+        );
+      } else {
+        init.push(`${variable.name} \\in ${domain}`);
+      }
     }
   });
   const quantify = (quantifier: string, bounds: string[], body: string) =>

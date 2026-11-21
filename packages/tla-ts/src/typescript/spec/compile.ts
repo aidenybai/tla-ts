@@ -633,6 +633,8 @@ export const compileToEscore = (
     program.identifiers.has("setTimeout");
   const isIncluded = (gate: EscoreRuntime["gates"][number]) =>
     ((isModule || files.length > 1) && MODULE_GROUPS.has(gate.group)) ||
+    // A program that queues jobs runs them, as RunJobs of the promises' group does.
+    (isQueuing && gate.group === "86-promise.tla") ||
     // A JSON file's exports are what JSON.parse gives.
     (gate.group === "77-json.tla" && files.some((file) => file.kind === "json")) ||
     // A TextEncoder's encode makes a Uint8Array.
