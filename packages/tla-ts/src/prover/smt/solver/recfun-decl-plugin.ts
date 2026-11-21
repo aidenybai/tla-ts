@@ -232,7 +232,7 @@ const redirectIte = (manager: AstManager, def: RecFunDef, rhs: number) => {
     );
     const newBody = manager.mkApp(decl, vars, manager.sorts[maxExpr]);
     manager.incRef(newBody);
-    setRecFunDefinition(manager, manager.recFunDefs.get(decl)!, false, maxExpr);
+    setRecFunDefinition(manager, manager.recFunDefs.get(decl)!, false, vars, maxExpr);
     const subst = new ExprSafeReplace(manager);
     subst.insert(maxExpr, newBody);
     const replaced = subst.apply(result);
@@ -250,11 +250,14 @@ export const setRecFunDefinition = (
   manager: AstManager,
   def: RecFunDef,
   isMacro: boolean,
+  vars: number[],
   rhs: number,
 ) => {
   if (!isMacro) manager.hasRecDefs = true;
   const redirected = isMacro ? rhs : redirectIte(manager, def, rhs);
   if (isMacro) manager.incRef(redirected);
+  for (const variable of vars) manager.incRef(variable);
+  def.vars = vars;
   def.isMacro = isMacro;
   computeCases(manager, def, isMacro, redirected);
   manager.decRef(redirected);

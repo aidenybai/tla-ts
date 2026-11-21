@@ -9,6 +9,7 @@ import {
   getSymbolHash,
   FAMILY_ARITH,
   FAMILY_BASIC,
+  FAMILY_RECFUN,
   FAMILY_USER,
   KIND_APP,
   KIND_QUANTIFIER,
@@ -1024,6 +1025,8 @@ export const createSmtlibReader = (
 
   const scopedFuncs: number[] = [];
   const scopedFuncStarts: number[] = [];
+  const scopedMacros: number[] = [];
+  const scopedMacroStarts: number[] = [];
 
   const pushUndo = (restore: () => void) => {
     if (!options.isGlobalDecls) undo.push(restore);
@@ -2387,11 +2390,9 @@ export const createSmtlibReader = (
         `invalid named expression, declaration already defined with this name ${name}`,
         at,
       );
-    manager.incRef(expr);
     lastNamed.name = name;
     lastNamed.expr = expr;
     defineMacroFunc(name, [], expr);
-    insertMacro(name, { domain: [], range: manager.sorts[expr], body: expr });
   };
 
   // push_app_frame's parse_qualified_identifier_core, on a head that is (_ <symbol> <index>*) or
@@ -3290,32 +3291,45 @@ export const createSmtlibReader = (
         `invalid function definition, sort mismatch. Expcected ${manager.getSortName(range)} but function body has sort ${manager.getSortName(manager.sorts[parsedBody])}`,
         next,
       );
-    setRecFunDefinition(manager, manager.recFunDefs.get(decl)!, false, parsedBody);
+    const vars = bound.varSorts.map((sort, index) =>
+      manager.mkVar(bound.varSorts.length - 1 - index, sort),
+    );
+    setRecFunDefinition(manager, manager.recFunDefs.get(decl)!, false, vars, parsedBody);
     shrinkRefs(exprStack, start);
   };
 
   // parse_define and insert_macro: Z3 declares a macro as a recursive function with one case, which
-  // a reference without arguments takes as an array. The reference that the body with its variables
-  // reversed keeps stands for Z3's macro_decls, and those of the variables for the definition's.
+  // a reference without arguments takes as an array. Z3's macro_decls holds the body with its
+  // variables reversed, and the definition holds the body as it was parsed.
   const defineMacroFunc = (name: string, domain: number[], body: number) => {
     const count = domain.length;
+    const mkHeldVar = (index: number, sort: number) => {
+      const variable = manager.mkVar(index, sort);
+      manager.incRef(variable);
+      return variable;
+    };
+    let macroBody = body;
+    manager.incRef(body);
     if (count > 1) {
       const subst = new VarSubst(manager, true);
-      subst.apply(
-        body,
-        domain.map((sort, index) => manager.mkVar(index, sort)),
-      );
+      const parsedVars = domain.map((sort, index) => mkHeldVar(index, sort));
+      macroBody = subst.apply(body, parsedVars);
+      manager.decRef(body);
+      for (const variable of parsedVars) manager.decRef(variable);
       subst.release();
     }
-    for (const [index, sort] of domain.entries()) manager.incRef(manager.mkVar(index, sort));
-    const reversedVars = domain.map((_value, index) =>
-      manager.mkVar(index, domain[count - index - 1]),
-    );
-    for (const reversedVar of reversedVars) manager.incRef(reversedVar);
+    insertMacro(name, { domain, range: manager.sorts[body], body });
+    if (!options.isGlobalDecls) scopedMacros.push(macroBody);
+    const vars: number[] = [];
+    const reversedVars: number[] = [];
+    for (let index = 0; index < count; index++) {
+      vars.push(mkHeldVar(index, domain[index]));
+      reversedVars.push(mkHeldVar(index, domain[count - index - 1]));
+    }
     const decl = manager.mkRecFuncDecl(name, domain, manager.sorts[body]);
-    for (const reversedVar of reversedVars) manager.decRef(reversedVar);
-    setRecFunDefinition(manager, manager.recFunDefs.get(decl)!, true, body);
+    setRecFunDefinition(manager, manager.recFunDefs.get(decl)!, true, vars, body);
     declareFunc(name, funcs.get(name) ?? [], decl);
+    for (const variable of [...reversedVars, ...vars]) manager.decRef(variable);
   };
 
   const declareCommand = (list: SmtList) => {
@@ -3438,8 +3452,6 @@ export const createSmtlibReader = (
             : "invalid function/constant definition, sort mismatch",
           extra ?? list.end,
         );
-      manager.incRef(body);
-      insertMacro(symbol.text, { domain: bound.varSorts, range, body });
       defineMacroFunc(symbol.text, bound.varSorts, body);
       expectEnd(
         extra,
@@ -3512,6 +3524,7 @@ export const createSmtlibReader = (
     releasePending();
     scopeStarts.push(undo.length);
     scopedFuncStarts.push(scopedFuncs.length);
+    scopedMacroStarts.push(scopedMacros.length);
   };
 
   const pop = (count: number) => {
@@ -3520,8 +3533,11 @@ export const createSmtlibReader = (
     // Z3 frees a popped scope's declarations in the order they were made, not in reverse.
     for (const decl of scopedFuncs.splice(funcStart)) {
       manager.eraseRecFunDef(decl);
-      if (manager.funcDecls[decl].family === FAMILY_USER) manager.decDeclRef(decl);
+      const family = manager.funcDecls[decl].family;
+      if (family === FAMILY_USER || family === FAMILY_RECFUN) manager.decDeclRef(decl);
     }
+    const macroStart = scopedMacroStarts.splice(scopedMacroStarts.length - count)[0];
+    for (const macroBody of scopedMacros.splice(macroStart)) manager.decRef(macroBody);
     const start = scopeStarts.splice(scopeStarts.length - count)[0];
     for (const restore of undo.splice(start).reverse()) restore();
     // cmd_context::pop resets the plugin through its datatype handler.

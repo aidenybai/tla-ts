@@ -2760,6 +2760,53 @@ describe("pop, as Z3 5.3.2 frees the declarations of a scope", () => {
       ]),
     ).toEqual(["unsat", "(:rlimit 603)"]);
   });
+
+  it("frees the macros and named terms of the scopes it pops, as erase_macro does", () => {
+    const define = "(define-fun m2 ((x Int)) Int (* 2 x))";
+    expect(
+      run(["(push 1)", define, "(declare-fun k (Int) Int)", "(pop 1)", ...POPPED_CHECK]),
+    ).toEqual(["unsat", "(:rlimit 590)"]);
+    expect(
+      run([
+        "(push 1)",
+        define,
+        "(declare-fun e () Int)",
+        "(assert (> (m2 e) 4))",
+        "(pop 1)",
+        ...POPPED_CHECK,
+      ]),
+    ).toEqual(["unsat", "(:rlimit 562)"]);
+    expect(
+      run([
+        "(declare-fun e () Int)",
+        "(push 1)",
+        "(assert (! (> e 0) :named n1))",
+        "(declare-fun k (Int) Int)",
+        "(pop 1)",
+        ...POPPED_CHECK,
+      ]),
+    ).toEqual(["unsat", "(:rlimit 598)"]);
+  });
+
+  it("frees the recursive definitions of the scopes it pops, as erase_def does", () => {
+    expect(
+      run([
+        "(push 1)",
+        "(define-fun-rec sumto ((n Int)) Int (ite (<= n 0) 0 (+ n (sumto (- n 1)))))",
+        "(declare-fun e () Int)",
+        "(pop 1)",
+        ...POPPED_CHECK,
+      ]),
+    ).toEqual(["unsat", "(:rlimit 586)"]);
+    expect(
+      run([
+        "(push 1)",
+        "(define-funs-rec ((ev ((n Int)) Bool) (od ((n Int)) Bool)) ((ite (= n 0) true (od (- n 1))) (ite (= n 0) false (ev (- n 1)))))",
+        "(pop 1)",
+        ...POPPED_CHECK,
+      ]),
+    ).toEqual(["unsat", "(:rlimit 548)"]);
+  });
 });
 
 describe(":global-declarations, as Z3 5.3.2 keeps declarations through a pop", () => {
