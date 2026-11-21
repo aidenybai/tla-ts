@@ -2491,6 +2491,8 @@ export const getLazyFilter = (
     predicate: predicateNode,
   };
   const coverage = environment.coverage;
+  const isTestObserved =
+    isExpressionImpure([expression.predicate], environment, "varying") || coverage !== undefined;
   const createFiltered = (
     base: Value,
     context: Context,
@@ -2521,12 +2523,17 @@ export const getLazyFilter = (
         getEvaluator(expression.predicate, tracing),
         -1,
       );
-    if (!coverage || node < 0) return { kind: "FilteredSet", base, test, source, rebind };
+    if (!coverage || node < 0) {
+      return isTestObserved
+        ? { kind: "FilteredSet", base, test, isTestObserved, source, rebind }
+        : { kind: "FilteredSet", base, test, source, rebind };
+    }
     return {
       kind: "FilteredSet",
       base,
       test: (element, isMember) =>
         runAtCoverageNode(coverage, isMember ? -1 : node, () => test(element, isMember)),
+      isTestObserved: true,
       startPass: (isMaterialized) => {
         const draws = createProductSetEnumerator(coverage, base, undefined);
         return (element) => {

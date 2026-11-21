@@ -113,6 +113,8 @@ export interface FilteredSetValue extends LazySet {
   kind: "FilteredSet";
   base: Value;
   test: (element: Value, isMember: boolean) => boolean;
+  // Set when the predicate has an effect or is counted under -coverage, so running it again on TLC's resets shows. A pure filter leaves it out.
+  isTestObserved?: true;
   startPass?: (isMaterialized: boolean) => (element: Value) => boolean;
   source?: FilteredSetSource;
 }
@@ -1132,7 +1134,7 @@ const getSetElementsLikeTlc = (left: SetValue | MixedSetValue, right: Value) => 
     ? right
     : typeof right === "object" && right.kind === "Subset" && right.secondary !== undefined
       ? toChargedSet(right, false)
-      : toFiniteSet(right, false);
+      : toArgumentSet(right);
   return { elements: toFiniteSet(left).elements, otherElements: toFiniteSet(other).elements };
 };
 
@@ -1958,15 +1960,14 @@ const enumerateSet = (
   }
 };
 
-// TLC's SetEnumValue#compareTo and equals convert their argument with toSetEnum, which keeps nothing, so a filter inside runs again on the next conversion.
-export const toFiniteSet = (value: Value, isKept = true): SetValue => {
+export const toFiniteSet = (value: Value): SetValue => {
   if (typeof value === "object" && value.kind === "Set") return value;
   if (typeof value === "object" && value.kind === "Interval") {
     return createSortedSet(enumerateSet(value));
   }
   const lazy = typeof value === "object" && isLazySet(value) ? value : undefined;
   if (lazy?.enumerated) return lazy.enumerated;
-  if (isSortingLiteral && lazy !== undefined && isPredicated(lazy)) {
+  if (isSortingLiteral && lazy !== undefined && isPredicated(lazy) && hasObservedFilter(lazy)) {
     throw new TlaEvaluationError("The set literal holds a filter");
   }
   const sets = setTrace.sets;
@@ -1990,7 +1991,22 @@ export const toFiniteSet = (value: Value, isKept = true): SetValue => {
       value.kind === "FunctionSet" ||
       value.kind === "Subset");
   const set = isSorted ? createSortedSet(elements) : createSet(elements);
-  if (lazy && (isKept || !isPredicated(lazy))) lazy.enumerated = set;
+  if (lazy) lazy.enumerated = set;
+  return set;
+};
+
+// TLC's SetEnumValue#compareTo and equals convert their argument with toSetEnum, which keeps nothing, so a filter inside runs again on the next conversion.
+const toArgumentSet = (value: Value) => {
+  const lazy =
+    typeof value === "object" &&
+    isLazySet(value) &&
+    !value.enumerated &&
+    isPredicated(value) &&
+    hasObservedFilter(value)
+      ? value
+      : undefined;
+  const set = toFiniteSet(value);
+  if (lazy) lazy.enumerated = undefined;
   return set;
 };
 
@@ -2115,6 +2131,38 @@ const hasPredicatedSet = (sets: Value[]) => {
   return false;
 };
 
+// Running a pure filter again gives the same elements, so only a filter whose runs show needs TLC's repeated runs.
+const hasObservedFilter = (value: Value): boolean => {
+  if (typeof value !== "object") return false;
+  switch (value.kind) {
+    case "FilteredSet":
+      return value.isTestObserved === true || hasObservedFilter(value.base);
+    case "SetOperation":
+      return hasObservedFilter(value.left) || hasObservedFilter(value.right);
+    case "Union":
+      return (
+        typeof value.base === "object" &&
+        (value.base.kind === "Set" || value.base.kind === "MixedSet") &&
+        hasObservedSet(value.base.elements)
+      );
+    case "FunctionSet":
+      return hasObservedFilter(value.range);
+    case "RecordSet":
+      return hasObservedSet(value.sets);
+    case "ProductSet":
+      return hasObservedSet(value.factors);
+    default:
+      return false;
+  }
+};
+
+const hasObservedSet = (sets: Value[]) => {
+  for (let index = 0; index < sets.length; index++) {
+    if (hasObservedFilter(sets[index])) return true;
+  }
+  return false;
+};
+
 export const createFunctionSet = (domain: Value, range: Value): FunctionSetValue => ({
   kind: "FunctionSet",
   domain,
@@ -2219,17 +2267,29 @@ const openPart = (value: Value): ElementStream => {
     (value.kind === "SetOperation" || value.kind === "Union") &&
     isPredicated(value)
   ) {
-    sets?.push(value);
-    const stream = value.kind === "Union" ? openUnionPart(value) : openOperationPart(value);
-    sets?.pop();
-    return stream;
+    // A pure filter collected once gives the elements TLC's enumerator gives on each reset. TLC fails only as the stream reaches a failing element, so a failure streams, and so does the traced replay of one.
+    return hasObservedFilter(value) || setTrace.sets !== undefined
+      ? openStreamedPart(value)
+      : computeLikeTlcOnFailure(openListPart, openStreamedPart, value, undefined);
   }
   const product = typeof value === "object" ? getPredicatedProduct(value) : undefined;
-  if (product === undefined) {
-    return { kind: "List", elements: getStreamedElements(value), position: 0 };
-  }
+  if (product === undefined) return openListPart(value);
   sets?.push(product);
   const stream = openProductStream(product);
+  sets?.pop();
+  return stream;
+};
+
+const openListPart = (value: Value): ElementStream => ({
+  kind: "List",
+  elements: getStreamedElements(value),
+  position: 0,
+});
+
+const openStreamedPart = (value: SetOperationValue | UnionValue) => {
+  const sets = setTrace.sets;
+  sets?.push(value);
+  const stream = value.kind === "Union" ? openUnionPart(value) : openOperationPart(value);
   sets?.pop();
   return stream;
 };

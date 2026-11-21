@@ -4239,6 +4239,16 @@ describe("evaluation errors match TLC", () => {
       PRINTED_CUP_RESETS,
       PRINTED_CUP_RESETS,
     ],
+    [
+      `x' = x /\\ \\E f \\in [{1, 2} -> {t \\in (1..2) \\X {0} : t[1] > 1} \\cup {<<0, 0>>}] : PrintT(f) /\\ FALSE`,
+      [
+        "<<<<0, 0>>, <<0, 0>>>>",
+        "<<<<0, 0>>, <<2, 0>>>>",
+        "<<<<2, 0>>, <<0, 0>>>>",
+        "<<<<2, 0>>, <<2, 0>>>>",
+      ],
+      undefined,
+    ],
   ])(
     "evaluates a filter under a component S \\cup T, S \\cap T, S \\ T or UNION S of [S -> T] as TLC's enumerators reset it: %s",
     async (next, printed, traceOutput) => {
@@ -4251,6 +4261,20 @@ describe("evaluation errors match TLC", () => {
       expect([lines, result.failure?.traceOutput]).toEqual([printed, traceOutput]);
     },
   );
+
+  it("fails where TLC's enumerator of S \\X T reaches a failure, past a pure filter that fails in a component S \\cup T", async () => {
+    const result = await check({
+      source: `---- MODULE M ----\nEXTENDS Integers, FiniteSets, TLC\nVARIABLE x\nInit == x = 0\nNext == x' \\in (((1..2) \\cup {t \\in (1..2) \\X {0} : IF t[1] = 2 THEN 1 = "a" ELSE TRUE}) \\X SUBSET {1, "a"})\n====`,
+      config: "INIT Init\nNEXT Next",
+    });
+    expect([
+      result.failure?.fingerprint?.reason,
+      result.failure?.fingerprint?.sources.map((source) => source.kind),
+    ]).toEqual([
+      'Attempted to compare string "a" with non-string:\n1',
+      ["Product", "Apply", "SetEnumeration"],
+    ]);
+  });
 
   const PRINTED_TWICE = [...PRINTED_FILTER_PAIR, ...PRINTED_FILTER_PAIR];
   const PRINTED_FUNCTION_SET_TWICE = [...PRINTED_PASS, ...PRINTED_PASS];
