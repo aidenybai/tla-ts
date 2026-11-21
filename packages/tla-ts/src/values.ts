@@ -2991,7 +2991,7 @@ export const createUnsortedCopy = (set: SetValue, added: Value[]): SetValue => {
   return copy;
 };
 
-const isSequenceDomain = (keys: Value[]) => keys.every((key, index) => key === index + 1);
+export const isSequenceDomain = (keys: Value[]) => keys.every((key, index) => key === index + 1);
 
 // TLC's FcnLambdaValue#toTuple applies the function at 1, 2, ... until a key breaks the run, and caches nothing.
 const getAppliedSequenceElements = (value: LazyFunctionValue) => {

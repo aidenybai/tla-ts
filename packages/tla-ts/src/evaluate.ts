@@ -29,6 +29,7 @@ import { EXIT_STATUS, setExitCode } from "./exit-codes";
 import { generateEvaluator } from "./codegen";
 import {
   chargeContexts,
+  chargeEquality,
   chargeFunctionConstruction,
   chargeSetOperation,
   chargeSetOperationSize,
@@ -1760,6 +1761,8 @@ const getTaggedValueTest = (expression: Expression): ((value: Value) => boolean)
     case "Tuple":
     case "Record":
       return () => true;
+    case "FunctionConstruction":
+      return (value) => typeof value === "object" && value.kind === "Function";
     case "SetMap":
       return isReducibleSet;
     case "SetFilter":
@@ -2174,6 +2177,24 @@ const compileApply = (
     };
   }
   const coverage = environment.coverage;
+  const combine = global?.kind === "Builtin" ? global.evaluateBinary : undefined;
+  if (
+    coverage &&
+    combine &&
+    (expression.operator === "=" || expression.operator === "#") &&
+    args.length === 2 &&
+    isValueArgument(args[0], environment) &&
+    isValueArgument(args[1], environment)
+  ) {
+    const left = getEvaluator(args[0], environment);
+    const right = getEvaluator(args[1], environment);
+    return (context) => {
+      const leftValue = left(context);
+      const rightValue = right(context);
+      if (typeof leftValue === "object") chargeEquality(coverage, leftValue, rightValue);
+      return combine(leftValue, rightValue);
+    };
+  }
   if (
     coverage &&
     global?.kind === "Builtin" &&
@@ -2221,7 +2242,6 @@ const compileApply = (
       };
     };
   }
-  const combine = global?.kind === "Builtin" ? global.evaluateBinary : undefined;
   if (coverage && combine && SET_OPERATORS.has(expression.operator) && args.length === 2) {
     const left = getEvaluator(args[0], environment);
     const right = getEvaluator(args[1], environment);

@@ -22,12 +22,15 @@ import { getJavaHashCode } from "./java-hash";
 import { getTlcFingerprint } from "./tlc/fingerprint";
 import {
   getCardinality,
+  getDomainInterval,
   getStreamedElements,
   isElementOf,
   isElementOfWith,
   isEmptySet,
   isReducibleSet,
+  isSequenceDomain,
   isTlcEnumerable,
+  type FunctionValue,
   type IntervalValue,
   type SetOperationValue,
   type Value,
@@ -857,6 +860,50 @@ export const getValueNode = (coverage: Coverage, value: Value) =>
 export const costCoverage = (coverage: Coverage, value: Value, cost: number) => {
   const node = getValueNode(coverage, value);
   if (node !== undefined) coverage.secondary[node] += cost;
+};
+
+const chargeConversion = (coverage: Coverage, value: FunctionValue) =>
+  costCoverage(coverage, value, value.range.length);
+
+// FcnRcdValue#toTuple charges a function only when its domain isn't an interval.
+const isTupleConvertible = (coverage: Coverage, value: Value) => {
+  if (typeof value !== "object") return false;
+  if (value.kind === "LazyFunction") return true;
+  if (value.kind !== "Function") return false;
+  if (value.functionClass !== undefined) {
+    return value.functionClass === "tuple" || value.range.length === 0;
+  }
+  const interval = getDomainInterval(value.domain);
+  if (interval !== undefined) return interval.low === 1 || interval.low > interval.high;
+  if (!isSequenceDomain(value.domain)) return false;
+  chargeConversion(coverage, value);
+  return true;
+};
+
+// TLC's equals converts the other side with toTuple, toRcd or toFcnRcd, which charge the converted value its length, and a tuple whose other side has no tuple form converts itself.
+export const chargeEquality = (coverage: Coverage, left: Value, right: Value) => {
+  if (typeof left !== "object" || (left.kind !== "Function" && left.kind !== "LazyFunction")) {
+    return;
+  }
+  const isRightFunction = typeof right === "object" && right.kind === "Function";
+  if (left.kind === "LazyFunction" || left.functionClass === undefined) {
+    if (isRightFunction && right.functionClass !== undefined) chargeConversion(coverage, right);
+    return;
+  }
+  if (left.functionClass === "record") {
+    if (
+      isRightFunction &&
+      right.functionClass === undefined &&
+      getDomainInterval(right.domain) === undefined &&
+      right.domain.every((key) => typeof key === "string")
+    ) {
+      chargeConversion(coverage, right);
+    }
+    return;
+  }
+  if (isTupleConvertible(coverage, right)) return;
+  chargeConversion(coverage, left);
+  if (isRightFunction && right.functionClass === "record") chargeConversion(coverage, right);
 };
 
 export const chargeSetOperation = (
