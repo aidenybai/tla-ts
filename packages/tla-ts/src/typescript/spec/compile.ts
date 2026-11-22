@@ -56,12 +56,19 @@ interface CodeDefinition {
 }
 
 // The most characters of a program's TLA+ code that a check parses and runs within Node's default
-// heap. The heap that a check of Effect's modules took at its peak grew by 47 bytes per character
-// of code past a base of 1.9 GB (Effect.ts, 13.9 million characters, at 2,571 MB, to
-// devtools/index.ts, 43.2 million, at 3,959 MB), where Node 26 gives this machine's heap 4,192 MB
-// (v8.getHeapStatistics().heap_size_limit): 31 million characters keep the peak within 80% of it.
-// Effect's eventlog/EventLogMessage.ts, of 46.1 million, ran out of the heap.
-const MOST_CODE_CHARACTERS = 31_000_000;
+// heap, which Node 26 gives this machine as 4,192 MB (v8.getHeapStatistics().heap_size_limit), so
+// that the peak of a check's heap stays within 80% of it, 3,354 MB. The peaks of Effect's modules,
+// by the characters of their code:
+//
+//   Effect.ts                      13.9 million   1,537 MB
+//   devtools/DevToolsSchema.ts     36.4 million   2,911 MB
+//   Schema.ts                      36.4 million   3,312 MB
+//   devtools/index.ts              43.2 million   3,590 MB
+//   eventlog/EventLogMessage.ts    46.1 million   3,685 MB
+//
+// A line through them gives 68 bytes a character past 607 MB, but Schema.ts peaks 226 MB above it,
+// so the bound is where the worst of them stays within 80%.
+const MOST_CODE_CHARACTERS = 37_000_000;
 
 // A program's definitions with each one whose text is another's but for its name and the names of
 // definitions merged before it merged into the first, but for the hooks, which the config names,
