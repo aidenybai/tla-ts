@@ -61,7 +61,12 @@ import { isSupportedLogic, logicHasSeq } from "./smt-logics";
 import { getVerdict, solveAssertions, solveAssuming } from "./solver";
 import { getConsequences } from "./smt-consequences";
 import { FdSolver } from "./fd-solver";
-import { getDoubleParameter, getParameterValue, isDoubleParameter } from "./gparams";
+import {
+  getDoubleParameter,
+  getParameterDefault,
+  getParameterValue,
+  isDoubleParameter,
+} from "./gparams";
 import { formatDouble } from "./probes";
 import { getGlobalSmtParams, SmtKernel } from "./smt-kernel";
 import { RefVector } from "./ref-vector";
@@ -205,14 +210,6 @@ const SIMPLIFY_UINT_PARAMETERS = new Set([
   "max_degree",
   "local_ctx_limit",
   "blast_distinct_threshold",
-]);
-
-const PARAMETER_DEFAULTS = new Map([
-  ["auto_config", "true"],
-  ["smt.relevancy", "2"],
-  ["smt.mbqi", "true"],
-  ["rlimit", "0"],
-  ["rewriter.hi_div0", "true"],
 ]);
 
 const UNPORTED_PARAMETER_DEFAULTS = new Map([
@@ -2382,13 +2379,21 @@ export const runSmtlibScript = (
           [":error-behavior", settings.isExitingOnError ? "immediate-exit" : "continued-execution"],
         ]);
         const name = getParameterName(option.text);
+        const isBuiltin = BUILTIN_OPTIONS.has(option.text);
         const value =
-          builtinValues.get(option.text) ??
-          (BUILTIN_OPTIONS.has(option.text)
-            ? undefined
-            : (settings.parameters.get(name) ?? PARAMETER_DEFAULTS.get(name)));
-        if (value === undefined) throw new SmtUnsupportedError(`the option ${option.text}`);
-        print(isDoubleParameter(name) ? formatDouble(Number(value)) : String(value));
+          builtinValues.get(option.text) ?? (isBuiltin ? undefined : settings.parameters.get(name));
+        if (value !== undefined) {
+          print(isDoubleParameter(name) ? formatDouble(Number(value)) : String(value));
+          return;
+        }
+        if (isBuiltin) throw new SmtUnsupportedError(`the option ${option.text}`);
+        const defaultValue = getParameterDefault(name);
+        if (defaultValue !== undefined) {
+          print(defaultValue);
+          return;
+        }
+        print("unsupported");
+        printDiagnostic(`; ${option.text} line: ${list.line} position: ${list.column}`);
       },
     ],
     [

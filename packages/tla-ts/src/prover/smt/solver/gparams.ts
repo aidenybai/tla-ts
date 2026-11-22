@@ -88,6 +88,12 @@ export const isDoubleParameter = (name: string) => {
   return findZ3Parameter(split.moduleName, split.parameterName)?.kind === PARAM_DOUBLE;
 };
 
+export const getParameterDefault = (name: string) => {
+  const split = splitParameterName(name);
+  const defaultValue = findZ3Parameter(split.moduleName, split.parameterName)?.defaultValue;
+  return defaultValue === "" ? "default" : defaultValue;
+};
+
 export const getDoubleParameter = (parameters: ReadonlyMap<string, string>, name: string) => {
   const value = parameters.get(name);
   return value === undefined ? undefined : Number(value);

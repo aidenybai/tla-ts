@@ -970,6 +970,43 @@ describe("messages of the reader, as Z3 5.3.2 prints them", () => {
     ]);
   });
 
+  it("gets a parameter set-option left unset as its default in Z3's registry", () => {
+    expect(
+      run([
+        "(get-option :smt.logic)",
+        "(get-option :smt.arith.nl.transcendental_tolerance)",
+        "(get-option :foo)",
+        "(get-option :bogus.x)",
+        "(get-option :smt.foo)",
+        "(get-option :sat.restart.factor)",
+        "(set-option :sat.restart.factor 2.5)",
+        "(get-option :sat.restart.factor)",
+        "(get-option :mbqi)",
+        "(get-option :model_validate)",
+        "(get-option :Smt.Random-Seed)",
+        "(get-option :timeout)",
+        "(get-option :smt.qi.cost)",
+      ]),
+    ).toEqual([
+      "default",
+      "0.0000001",
+      "unsupported",
+      "; :foo line: 3 position: 0",
+      "unsupported",
+      "; :bogus.x line: 4 position: 0",
+      "unsupported",
+      "; :smt.foo line: 5 position: 0",
+      "1.5",
+      "2.5",
+      "unsupported",
+      "; :mbqi line: 9 position: 0",
+      "false",
+      "0",
+      "4294967295",
+      "(+ weight generation)",
+    ]);
+  });
+
   it("checks the arguments of set-option as parse_ext_cmd reads them", () => {
     expect(
       run([
