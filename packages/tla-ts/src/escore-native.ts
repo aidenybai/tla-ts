@@ -1043,5 +1043,47 @@ export const createEsRuntimeOperators = (callReplaced: CallReplaced): Builtin[] 
     ),
     createBindingOperator(callReplaced, "HasBinding", 3, getHasBinding),
     createBindingOperator(callReplaced, "GetBindingValue", 4, getBindingValue),
+    // KeyIndex(list, v): the first index of the list whose entry isn't Empty and is SameValueZero to
+    // v, or 0, where each entry it reaches compares exactly: a Number of kind "int" against
+    // another, or a value of another type of ESCore's, which SameValueZero compares as it is.
+    define("KeyIndex", 2, (args, context) => {
+      const list = getTuple(getValue(args[0]));
+      const value = getValue(args[1]);
+      const empty = getConstant(context, "Empty");
+      if (list === undefined || value === undefined || empty === undefined) return undefined;
+      if (!isModelValue(empty) || empty.type !== undefined) return undefined;
+      const type = getType(value);
+      if (type === undefined || !COMPARED_TYPES.has(type)) return undefined;
+      for (let index = 0; index < list.length; index++) {
+        const entry = list[index];
+        if (valuesEqual(entry, empty)) continue;
+        const entryType = getType(entry);
+        if (entryType === undefined || !COMPARED_TYPES.has(entryType)) return undefined;
+        if (entryType !== type) continue;
+        const isSame =
+          type !== "number"
+            ? valuesEqual(entry, value)
+            : isIntNumber(entry) && isIntNumber(value)
+              ? valuesEqual(entry, value)
+              : undefined;
+        if (isSame === undefined) return undefined;
+        if (isSame) return index + 1;
+      }
+      return 0;
+    }),
   ];
 };
+
+// The types of ESCore's values that SameValueZero compares as they are, but for Numbers, and whose
+// fields hold only integers and sequences of them, which compare without failing.
+const COMPARED_TYPES = new Set([
+  "undefined",
+  "null",
+  "boolean",
+  "string",
+  "number",
+  "symbol",
+  "object",
+]);
+
+const isIntNumber = (value: Value) => getField(getField(value, "value"), "k") === "int";
