@@ -1337,14 +1337,20 @@ const getInstances = (
   scope: LocalName | undefined,
   unit: Unit,
   prefixCount = names.length - 1,
-) =>
-  names.slice(0, prefixCount).map((_name, index) => {
-    const prefix = names.slice(0, index + 1).join("!");
-    const binding = lookupLocal(scope, prefix) ?? getModuleBinding(prefix, unit, undefined);
-    return binding?.kind === "Instance"
-      ? { name: prefix, arity: binding.arity, range: binding.range }
-      : undefined;
-  });
+) => {
+  const prefixes = names
+    .slice(0, prefixCount)
+    .map((_name, index) => names.slice(0, index + 1).join("!"));
+  const bindings = prefixes.map(
+    (prefix) => lookupLocal(scope, prefix) ?? getModuleBinding(prefix, unit, undefined),
+  );
+  const end = bindings.findIndex((binding) => binding !== undefined && binding.kind !== "Instance");
+  return bindings.map((binding, index) =>
+    binding?.kind === "Instance" && (end === -1 || index < end)
+      ? { name: prefixes[index], arity: binding.arity, range: binding.range }
+      : undefined,
+  );
+};
 
 const findInstance = (name: string, scope: LocalName | undefined, unit: Unit) =>
   getInstances(name.split("!"), scope, unit)[0];

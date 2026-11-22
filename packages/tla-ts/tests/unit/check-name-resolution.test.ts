@@ -4730,6 +4730,31 @@ describe("name resolution matches SANY", () => {
       })),
     ],
     [
+      "selections past a definition whose name LET and proof-step instances take again",
+      "---- MODULE K ----\nBaz == 1 = 1\n====\n---- MODULE Inner ----\nCONSTANT c\nJ(p) == INSTANCE K\n====\nN == INSTANCE Inner WITH c <- 1\nI == 1 = 1\nF == LET I(a) == INSTANCE Inner WITH c <- a IN I!J(1)!Baz\nTHEOREM TRUE\n<1> I == INSTANCE Inner WITH c <- 1\n<1> QED BY I!J!Baz",
+      [
+        {
+          location: "line 11, col 10 to line 11, col 43 of module M",
+          message:
+            "Multiply-defined symbol 'I': this definition or declaration conflicts \nwith the one at line 10, col 1 to line 10, col 10 of module M.",
+        },
+        {
+          location: "line 11, col 50 to line 11, col 50 of module M",
+          message: "Cannot find label `J'.",
+        },
+        {
+          location: "line 13, col 5 to line 13, col 35 of module M",
+          message:
+            "Multiply-defined symbol 'I': this definition or declaration conflicts \nwith the one at line 10, col 1 to line 10, col 10 of module M.",
+        },
+        {
+          location: "line 14, col 14 to line 14, col 14 of module M",
+          message: "Cannot find label `J'.",
+        },
+      ],
+      [],
+    ],
+    [
       "selections of names that LET and proof-step instances do not define",
       "---- MODULE Inner ----\nFoo == 2 = 2\nTHEOREM T == t :: 1 = 1\n====\nN == INSTANCE Inner\nF == LET I == INSTANCE Inner IN I!Nope\nG == LET I == INSTANCE Inner IN I!T!t\nTHEOREM TRUE\n<1> I == INSTANCE Inner\n<1>1. I!T!t\n  OBVIOUS\n<1> QED BY I!J!Baz",
       [
