@@ -478,6 +478,8 @@ export const runSmtlibScript = (
     isProducingUnsatCores: false,
     isProducingUnsatAssumptions: false,
     isProducingProofs: false,
+    isProducingAssignments: false,
+    randomSeed: 0,
     isExitingOnError: false,
     isInteractive: false,
     isDiagnosticOnStdout: false,
@@ -1421,9 +1423,11 @@ export const runSmtlibScript = (
     const isTrue = parameterValue === "true";
     if (optionName === ":smt.mbqi.max_iterations") settings.mbqiMaxIterations = Number(text);
     if (name === "memory_max_size") state.manager.limit.maxHeapSize = getMaxHeapSize();
-    // Z3 reads the parameters rlimit, model and unsat_core again whenever any parameter is set.
+    // Z3 reads the parameters rlimit, proof, model and unsat_core again whenever any parameter is set.
     const rlimit = settings.parameters.get("rlimit");
     if (rlimit !== undefined) settings.rlimit = Number(rlimit);
+    const proof = settings.parameters.get("proof");
+    if (proof !== undefined) settings.isProducingProofs = proof === "true";
     const model = settings.parameters.get("model");
     if (model !== undefined) settings.isProducingModels = model === "true";
     if (settings.parameters.get("unsat_core") === "true") settings.isProducingUnsatCores = true;
@@ -1494,7 +1498,7 @@ export const runSmtlibScript = (
       const isTrue = toBool();
       settings.isProducingModels = isTrue;
       state.isSolverProducingModels = isTrue;
-    } else if (keyword === ":produce-assignments") toBool();
+    } else if (keyword === ":produce-assignments") settings.isProducingAssignments = toBool();
     else if (keyword === ":global-decls" || keyword === ":global-declarations") {
       checkNotInitialized(":global-decls");
       settings.parserOptions.isGlobalDecls = toBool();
@@ -1523,7 +1527,7 @@ export const runSmtlibScript = (
         throw new SmtParseError("option value is too big to fit in a machine integer.", value);
       return Number(text);
     };
-    if (keyword === ":random-seed") toUnsigned();
+    if (keyword === ":random-seed") settings.randomSeed = toUnsigned();
     else if (keyword === ":reproducible-resource-limit") settings.rlimit = toUnsigned();
     else if (keyword === ":verbosity") {
       if (toUnsigned() !== 0) throw new SmtUnsupportedError("the option :verbosity");
@@ -2415,27 +2419,35 @@ export const runSmtlibScript = (
         const option = list.items[1];
         if (option?.kind !== "keyword")
           throw new SmtParseError("invalid command argument, keyword expected", option ?? list.end);
-        const builtinValues = new Map<string, boolean | string>([
+        const builtinValues = new Map<string, boolean | number | string>([
           [":print-success", settings.isPrintingSuccess],
-          [":produce-models", settings.isProducingModels],
-          [":produce-unsat-cores", settings.isProducingUnsatCores],
-          [":produce-unsat-assumptions", settings.isProducingUnsatAssumptions],
           [":interactive-mode", settings.isInteractive],
           [":produce-assertions", settings.isInteractive],
+          [":produce-proofs", settings.isProducingProofs],
+          [":produce-unsat-cores", settings.isProducingUnsatCores],
+          [":produce-models", settings.isProducingModels],
+          [":produce-assignments", settings.isProducingAssignments],
+          [":produce-unsat-assumptions", settings.isProducingUnsatAssumptions],
           [":global-decls", settings.parserOptions.isGlobalDecls],
           [":global-declarations", settings.parserOptions.isGlobalDecls],
-          [":int-real-coercions", true],
+          [":random-seed", settings.randomSeed],
+          [":verbosity", 0],
+          [":regular-output-channel", "stdout"],
+          [":diagnostic-output-channel", settings.isDiagnosticOnStdout ? "stdout" : "stderr"],
           [":error-behavior", settings.isExitingOnError ? "immediate-exit" : "continued-execution"],
+          [":int-real-coercions", true],
         ]);
-        const name = getParameterName(option.text);
-        const isBuiltin = BUILTIN_OPTIONS.has(option.text);
-        const value =
-          builtinValues.get(option.text) ?? (isBuiltin ? undefined : settings.parameters.get(name));
-        if (value !== undefined) {
-          print(isDoubleParameter(name) ? formatDouble(Number(value)) : String(value));
+        const builtinValue = builtinValues.get(option.text);
+        if (builtinValue !== undefined) {
+          print(String(builtinValue));
           return;
         }
-        if (isBuiltin) throw new SmtUnsupportedError(`the option ${option.text}`);
+        const name = getParameterName(option.text);
+        const value = settings.parameters.get(name);
+        if (value !== undefined) {
+          print(isDoubleParameter(name) ? formatDouble(Number(value)) : value);
+          return;
+        }
         const defaultValue = getParameterDefault(name);
         if (defaultValue !== undefined) {
           print(defaultValue);
