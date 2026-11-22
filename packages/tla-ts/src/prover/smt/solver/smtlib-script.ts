@@ -215,10 +215,13 @@ const PARAMETER_DEFAULTS = new Map([
   ["rewriter.hi_div0", "true"],
 ]);
 
-const ALLOCATION_PARAMETERS = new Set([
+const UNPORTED_PARAMETERS = new Set([
   "memory_max_alloc_count",
   "memory_high_watermark",
   "memory_high_watermark_mb",
+  "verbose",
+  "smt.qi.profile",
+  "smt.mbqi.trace",
 ]);
 
 const BUILTIN_OPTIONS = new Set([
@@ -2275,6 +2278,8 @@ export const runSmtlibScript = (
           settings.isDiagnosticOnStdout = value?.kind === "string" && value.text === "stdout";
         if (keyword === ":int-real-coercions" && !isTrue)
           throw new SmtUnsupportedError("the option :int-real-coercions false");
+        if (keyword === ":verbosity" && value?.kind === "numeral" && BigInt(value.text) !== 0n)
+          throw new SmtUnsupportedError("the option :verbosity");
         if (keyword === ":error-behavior") {
           if (!isSymbol(value, "immediate-exit") && !isSymbol(value, "continued-execution"))
             throw new SmtParseError(
@@ -2298,7 +2303,11 @@ export const runSmtlibScript = (
                 : value.text;
           const name = getParameterName(keyword);
           const parameterValue = getParameterValue(name, text, value);
-          if (ALLOCATION_PARAMETERS.has(name) && Number(parameterValue) !== 0)
+          if (
+            UNPORTED_PARAMETERS.has(name) &&
+            parameterValue !== "false" &&
+            Number(parameterValue) !== 0
+          )
             throw new SmtUnsupportedError(`the option :${name}`);
           settings.parameters.set(name, parameterValue);
           if (optionName === ":smt.mbqi.max_iterations") settings.mbqiMaxIterations = Number(text);

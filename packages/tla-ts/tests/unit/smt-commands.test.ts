@@ -4001,3 +4001,43 @@ describe("memory_max_size, as Z3 5.3.2 runs out of memory", () => {
     ).toEqual(["sat"]);
   });
 });
+
+describe("the options that turn on Z3's verbose output, which the port doesn't write", () => {
+  it("throws at smt.qi.profile, whose instance counts Z3 writes to stderr", () => {
+    expect(() => run(["(set-option :smt.qi.profile true)"])).toThrow(
+      new SmtUnsupportedError("the option :smt.qi.profile"),
+    );
+  });
+
+  it("throws at smt.mbqi.trace, whose checks Z3 writes to stderr", () => {
+    expect(() => run(["(set-option :smt.mbqi.trace true)"])).toThrow(
+      new SmtUnsupportedError("the option :smt.mbqi.trace"),
+    );
+  });
+
+  it("throws at a verbose level above 0", () => {
+    expect(() => run(["(set-option :verbose 1)"])).toThrow(
+      new SmtUnsupportedError("the option :verbose"),
+    );
+  });
+
+  it("throws at a verbosity above 0", () => {
+    expect(() => run(["(set-option :verbosity 1)"])).toThrow(
+      new SmtUnsupportedError("the option :verbosity"),
+    );
+  });
+
+  it("accepts them off, where Z3 writes nothing", () => {
+    expect(
+      run([
+        "(set-option :smt.qi.profile false)",
+        "(set-option :smt.mbqi.trace false)",
+        "(set-option :verbose 0)",
+        "(set-option :verbosity 0)",
+        "(declare-fun x () Int)",
+        "(assert (> x 0))",
+        "(check-sat)",
+      ]),
+    ).toEqual(["sat"]);
+  });
+});
