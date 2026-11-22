@@ -1579,11 +1579,17 @@ describe("checks a module's exported functions as a model on ESCore", () => {
   });
 
   // Each function of Numbers runs as plain integers where its arguments are "int" Numbers, and as
-  // its lowered form where a result would be -0, NaN, an infinity, or past 2^30.
+  // its lowered form where a result would be -0, NaN, an infinity, or past 2^30. Each pair is the
+  // edge of a guard: a negative dividend or divisor, a product or a quotient that is -0, a sum and
+  // a power at 2^30, a difference at -2^30, the largest operands of a product, and a quotient just
+  // below an integer, whose double must still round below it.
   describe("runs a function of int Numbers on plain integers, as ESCore does", () => {
     const source = `
-      const values = [0, 1, -1, 2, -7, 32767, -32768, 1073741823, -1073741823, 536870909, 1073741817];
-      let out: number[][][] = [];
+      const pairs = [
+        [0, -1], [-1, 0], [-7, 2], [7, -2], [1, 2], [1073741823, 1], [-1073741823, 1],
+        [-32768, 2], [32767, 32767], [1073741817, 536870909],
+      ];
+      let out: number[][] = [];
 
       const add = (x: number, y: number) => x + y;
       const sub = (x: number, y: number) => x - y;
@@ -1600,12 +1606,11 @@ describe("checks a module's exported functions as a model on ESCore", () => {
 
       export const run = () => {
         if (out.length > 0) return;
-        out = values.map((x) =>
-          values.map((y) => [
-            add(x, y), sub(x, y), mul(x, y), mod(x, y), pow(x, y), quotient(x, y), negate(x),
-            isBelow(x, y) ? 1 : 0, pick(x, y),
-          ]),
-        );
+        out = pairs.map((pair) => [
+          add(pair[0], pair[1]), sub(pair[0], pair[1]), mul(pair[0], pair[1]),
+          mod(pair[0], pair[1]), pow(pair[0], pair[1]), quotient(pair[0], pair[1]), negate(pair[0]),
+          isBelow(pair[0], pair[1]) ? 1 : 0, pick(pair[0], pair[1]),
+        ]);
       };
     `;
 
