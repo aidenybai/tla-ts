@@ -1214,7 +1214,7 @@ export const compileModelToEscore = (
         expression.definitions.some((definition) => /^result(_\d+)?$/.test(definition.name));
   // The state the module's top level leaves, lowered where the module lets it, in which a model
   // without state checks its functions, and any model its assumptions.
-  const started = lowered === undefined ? "ApplyTo(StartState, InitialState)" : "ModelInitial";
+  const started = lowered === undefined ? "ModelStartState" : "ModelInitial";
   const current = isStateless ? started : variable;
   const defined = new Set<string>();
   const defineInvariant = (name: string) => {
@@ -1380,11 +1380,7 @@ export const compileModelToEscore = (
   ];
   steps.push(
     ...(isStateless
-      ? [
-          "Init == TRUE",
-          "ModuleRuns(s) == StartState(s).objs.size > 0",
-          "ASSUME ApplyTo(ModuleRuns, InitialState)",
-        ]
+      ? ["Init == TRUE", "ModuleRuns == ModelStartState.objs.size > 0", "ASSUME ModuleRuns"]
       : lowered === undefined
         ? initialSteps
         : [...loweredInitialSteps, ...initialSteps.slice(2)]),
@@ -1496,6 +1492,9 @@ export const compileModelToEscore = (
           "LowerConverted(c) == LowerValue(c.s, c.v, 0).v",
           ...(native?.definitions ?? []),
         ]),
+    // The state the module's top level leaves, a constant, which a check evaluates once, as TLC
+    // evaluates a constant definition once as it starts, rather than at each value of a call.
+    "ModelStartState == ApplyTo(StartState, InitialState)",
     STEP_OF,
     ...steps,
     ...(isStateless ? [] : [`ModelAlias == ApplyTo(${alias}, ${variable})`]),
