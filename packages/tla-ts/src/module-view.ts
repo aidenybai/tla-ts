@@ -1,7 +1,7 @@
 import type { Definition, Expression, Module, ModuleUnit, SourceLocation } from "./ast";
 import type { Token } from "./lexer";
 import { parseModule } from "./parser";
-import { getParsedTexts, type PreparedModule } from "./tlc/order";
+import { getParsedTexts, type ModuleTexts, type PreparedModule } from "./tlc/order";
 
 // The body of a definition that a view stands in for one whose value the prepared module carries,
 // which a check never evaluates, and which fails if it did: CHOOSE from the empty set.
@@ -72,9 +72,25 @@ const getModuleView = (module: Module, isKept: (location: SourceLocation) => boo
 const getNameIds = (nameIds: ReadonlyMap<string, number>, names: string[]) =>
   Int32Array.from(new Set(names.flatMap((name) => nameIds.get(name) ?? [])));
 
-// The tables that a module's views are made of, which hold none of the prepared module but what
-// its views keep of it.
-const readModule = (prepared: PreparedModule) => {
+// The tables of a prepared module's views that its text, its units and its values give, which a
+// build records in the prepared module, so that a process reads them rather than computes them.
+export interface ViewTables {
+  nameIds: Map<string, number>;
+  nameUnits: number[][];
+  unitNameIds: Int32Array[];
+  unitReadIds: Int32Array[];
+  rootReadIds: Int32Array;
+  lineUnits: Int32Array;
+  // The line each unit starts at, after which the next one starts.
+  unitStarts: Int32Array;
+  unitTextsInOrder: ModuleTexts[];
+  unitTokenStarts: Int32Array;
+  // Whether each unit defines only operators without parameters whose values the module carries,
+  // which a view stands in.
+  isStoodIn: Uint8Array;
+}
+
+export const getViewTables = (prepared: PreparedModule): ViewTables => {
   // The lines of the module in units: the header, each top-level unit as the parser read it, and
   // the line that closes the module. A unit holds every line up to the next one, so its lines stay
   // together whatever their layout.
@@ -122,14 +138,11 @@ const readModule = (prepared: PreparedModule) => {
     nameIds,
     moduleUnits.filter((unit) => unit.names.length === 0).flatMap((unit) => unit.reads),
   );
-  // The unit of each line, and each unit's text, or the newlines that stand for it where a view
-  // leaves it out.
+  // The unit of each line.
   const lineUnits = new Int32Array(moduleLines.length);
   unitStarts.forEach((start, position) =>
     lineUnits.fill(position, start, start + moduleUnits[position].lines.length),
   );
-  const unitTexts = moduleUnits.map((unit) => unit.lines.join("\n"));
-  const unitBlanks = moduleUnits.map((unit) => "\n".repeat(unit.lines.length - 1));
   // Where each unit's tokens start in the module's tokens, which follow one another by line, and
   // where the last one ends.
   const unitTokenStarts = new Int32Array(moduleUnits.length + 1);
@@ -154,24 +167,47 @@ const readModule = (prepared: PreparedModule) => {
   const definitions = new Map(
     prepared.module.definitions.map((definition) => [definition.name, definition]),
   );
-  const isStoodIn = moduleUnits.map(
-    (unit, position) =>
-      unit.names.length > 0 &&
-      unit.names.every((name) => {
-        const definition = definitions.get(name);
-        return (
-          definition?.kind === "Operator" &&
-          definition.params.length === 0 &&
-          values.has(definition)
-        );
-      }) &&
-      !prepared.tokens
-        .slice(unitTokenStarts[position], unitTokenStarts[position + 1])
-        .some((token) => WIDE_TOKEN.test(token.text)),
+  const isStoodIn = Uint8Array.from(moduleUnits, (unit, position) =>
+    unit.names.length > 0 &&
+    unit.names.every((name) => {
+      const definition = definitions.get(name);
+      return (
+        definition?.kind === "Operator" && definition.params.length === 0 && values.has(definition)
+      );
+    }) &&
+    !prepared.tokens
+      .slice(unitTokenStarts[position], unitTokenStarts[position + 1])
+      .some((token) => WIDE_TOKEN.test(token.text))
+      ? 1
+      : 0,
   );
+  // A definition that a view stands in reads nothing in it.
+  isStoodIn.forEach((isUnitStoodIn, unit) => {
+    if (isUnitStoodIn === 1) unitReadIds[unit] = new Int32Array(0);
+  });
+  return {
+    nameIds,
+    nameUnits,
+    unitNameIds,
+    unitReadIds,
+    rootReadIds,
+    lineUnits,
+    unitStarts: Int32Array.from(unitStarts),
+    unitTextsInOrder,
+    unitTokenStarts,
+    isStoodIn,
+  };
+};
+
+// The tables that a module's views are made of, which hold none of the prepared module but what
+// its views keep of it.
+const readModule = (prepared: PreparedModule) => {
+  const tables = prepared.viewTables ?? getViewTables(prepared);
+  const isStoodIn = tables.isStoodIn;
+  const lineUnits = tables.lineUnits;
   const standIns = new Map<Definition, Definition>(
     prepared.module.definitions.flatMap((definition) =>
-      definition.kind === "Operator" && isStoodIn[lineUnits[definition.location.line - 1]]
+      definition.kind === "Operator" && isStoodIn[lineUnits[definition.location.line - 1]] === 1
         ? [[definition, withBody(definition, STAND_IN_BODY)]]
         : [],
     ),
@@ -184,41 +220,44 @@ const readModule = (prepared: PreparedModule) => {
       unit.kind === "Definition" ? { ...unit, definition: getStandIn(unit.definition) } : unit,
     ),
   };
+  const unitTextsInOrder = tables.unitTextsInOrder;
   // A view of a module that carries values adds all of the module's texts to TLC's order of
   // strings, which its values' strings keep the order of.
   const allTexts = prepared.texts ?? {
     parsed: unitTextsInOrder.flatMap((texts) => texts.parsed),
     strings: unitTextsInOrder.flatMap((texts) => texts.strings),
   };
+  const values = prepared.values ?? new Map();
   const viewValues = new Map([...values].map((entry) => [getStandIn(entry[0]), entry[1]]));
-  isStoodIn.forEach((isUnitStoodIn, unit) => {
-    if (isUnitStoodIn) unitReadIds[unit] = new Int32Array(0);
-  });
   // The tokens of each unit, which a view keeps, but for those of a definition it stands in.
-  const unitTokens = moduleUnits.map((_unit, unit) =>
-    isStoodIn[unit] ? [] : prepared.tokens.slice(unitTokenStarts[unit], unitTokenStarts[unit + 1]),
+  const unitTokenStarts = tables.unitTokenStarts;
+  const moduleLines = prepared.text.split("\n");
+  const unitLines = Array.from(tables.unitStarts, (start, unit) =>
+    moduleLines.slice(start, tables.unitStarts[unit + 1]),
   );
-  const hasValues = values.size > 0;
-  const name = prepared.name;
-  const levels = prepared.levels;
+  const unitTokens = unitLines.map((_lines, unit) =>
+    isStoodIn[unit] === 1
+      ? []
+      : prepared.tokens.slice(unitTokenStarts[unit], unitTokenStarts[unit + 1]),
+  );
   return {
-    nameIds,
-    nameUnits,
-    unitNameIds,
-    unitReadIds,
-    rootReadIds,
+    nameIds: tables.nameIds,
+    nameUnits: tables.nameUnits,
+    unitNameIds: tables.unitNameIds,
+    unitReadIds: tables.unitReadIds,
+    rootReadIds: tables.rootReadIds,
     lineUnits,
-    unitTexts,
-    unitBlanks,
+    unitTexts: unitLines.map((lines) => lines.join("\n")),
+    unitBlanks: unitLines.map((lines) => "\n".repeat(lines.length - 1)),
     unitTextsInOrder,
     unitTokens,
     module,
     values: viewValues,
     facts: prepared.facts,
     allTexts,
-    hasValues,
-    name,
-    levels,
+    hasValues: values.size > 0,
+    name: prepared.name,
+    levels: prepared.levels,
     hasLetInstances: prepared.hasLetInstances,
   };
 };

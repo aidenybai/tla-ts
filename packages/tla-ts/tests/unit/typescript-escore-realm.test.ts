@@ -349,7 +349,7 @@ describe("prepare ESCore's runtime from a recorded host as from Node's realm", (
 // The recorded graph defers each definition's body until a read of it, which then gives what the
 // live runtime parsed, for every definition of the runtime and its extensions.
 describe("reads each body of the recorded graph as the live runtime parsed it", () => {
-  it("gives every body alike", async () => {
+  it("gives every body alike, and the views the live runtime gives", async () => {
     const host = await recordHost();
     const comparer = new Worker(
       `${REGISTER}
@@ -362,25 +362,36 @@ describe("reads each body of the recorded graph as the live runtime parsed it", 
           runtime.getExtension("ESCanonical"),
           runtime.getExtension("ESNative"),
         ].map((prepared) => prepared.module);
-        const live = getModules(prepare.prepareRuntime(workerData.directory));
-        const read = getModules(prepare.prepareHostRuntime(JSON.parse(workerData.host)));
+        const liveRuntime = prepare.prepareRuntime(workerData.directory);
+        const readRuntime = prepare.prepareHostRuntime(JSON.parse(workerData.host));
+        const live = getModules(liveRuntime);
+        const read = getModules(readRuntime);
+        // A view that the recorded tables give is the one the live runtime's text gives.
+        const getViewShape = (runtime) => {
+          const view = runtime.getView("ToString(x) Completed(x) HeapGet(h, i)", []);
+          return [view.text, view.tokens.map((token) => [token.kind, token.text, token.line, token.column]), view.texts];
+        };
         const pairs = live.flatMap((module, index) =>
           module.definitions.map((definition, position) => [definition, read[index].definitions[position]]));
         parentPort.postMessage({
+          isViewAlike: isDeepStrictEqual(getViewShape(liveRuntime), getViewShape(readRuntime)),
           count: pairs.length,
           different: pairs.filter((pair) => !isDeepStrictEqual(pair[0].body, pair[1]?.body)).map((pair) => pair[0].name),
         });
       });`,
       { eval: true, workerData: { source, directory, host }, resourceLimits: { stackSizeMb: 256 } },
     );
-    const compared = await new Promise<{ count: number; different: string[] }>(
-      (resolve, reject) => {
-        comparer.once("message", resolve);
-        comparer.once("error", reject);
-      },
-    );
+    const compared = await new Promise<{
+      isViewAlike: boolean;
+      count: number;
+      different: string[];
+    }>((resolve, reject) => {
+      comparer.once("message", resolve);
+      comparer.once("error", reject);
+    });
     await comparer.terminate();
     expect(compared.different).toEqual([]);
+    expect(compared.isViewAlike).toBe(true);
     expect(compared.count).toBeGreaterThan(2500);
   }, 600_000);
 });

@@ -11,7 +11,7 @@ import { getParsedTexts, type PreparedModule } from "../../tlc/order";
 import { getPlainValues, getRankedStrings, readPlainValues, type Value } from "../../values";
 import { getPreparedFacts } from "../../dependencies";
 import { decodeGraph, encodeGraph, type EncodedGraph } from "../../graph-codec";
-import { createModuleView } from "../../module-view";
+import { createModuleView, getViewTables } from "../../module-view";
 import { getLetInstanceExpansion } from "../../instances";
 import {
   assembleRuntime,
@@ -277,6 +277,7 @@ const prepareModules = (
       ...valued,
       facts: getFacts(definitions),
       hasLetInstances: getLetInstanceExpansion(valued.module, () => []) !== undefined,
+      viewTables: isRuntime ? getViewTables(valued) : undefined,
     };
   });
 };
@@ -302,6 +303,7 @@ const encodePreparedModules = (modules: readonly PreparedModule[]) => {
       values: new Map(entries[index].map((entry) => [entry[0], plain[position++]])),
       facts: prepared.facts,
       hasLetInstances: prepared.hasLetInstances,
+      viewTables: prepared.viewTables,
     })),
   };
   // Each module definition's body is a segment of its own, which a check decodes as it first reads

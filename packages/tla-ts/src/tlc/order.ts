@@ -1,3 +1,4 @@
+import type { ViewTables } from "../module-view";
 import {
   type Definition,
   type Expression,
@@ -83,6 +84,8 @@ export interface PreparedModule {
   facts?: ReadonlyMap<string, PreparedFacts>;
   /** @internal Whether a LET of the module instantiates a module, as the build found. */
   hasLetInstances?: boolean;
+  /** @internal The tables of the module's views, which the build records. */
+  viewTables?: ViewTables;
 }
 
 interface ModuleUnit {
