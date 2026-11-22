@@ -763,9 +763,24 @@ export const compileToEscore = (
         {
           name: "HostTimeZone",
           arity: 1,
-          text: program.words.has("Temporal")
-            ? getHostTimeZone(files.map((file) => file.sourceFile.text).join("\n"), runtime.realm)
-            : `HostTimeZone(key) == [found |-> "unknown"]`,
+          // The zones of Temporal's objects and of Intl's timeZone option, which a program's code
+          // names and a model's steps may pass, as the strings its parameters take.
+          text:
+            program.words.has("Temporal") ||
+            files.some((file) => /\btimeZone\b/.test(file.sourceFile.text))
+              ? getHostTimeZone(
+                  [
+                    ...files.map((file) => file.sourceFile.text),
+                    // Each TLA+ string of the steps, on a line of its own.
+                    ...(typeof model.steps === "string"
+                      ? [...model.steps.matchAll(/"((?:[^"\\\n]|\\.)*)"/g)].map((found) =>
+                          JSON.stringify(found[1]),
+                        )
+                      : []),
+                  ].join("\n"),
+                  runtime.realm,
+                )
+              : `HostTimeZone(key) == [found |-> "unknown"]`,
         },
         {
           name: "HostDateFormat",
