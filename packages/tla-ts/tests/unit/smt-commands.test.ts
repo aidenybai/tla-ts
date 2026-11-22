@@ -1254,27 +1254,43 @@ describe("runSmtlibScript runs its commands as Z3 does", () => {
     ).toEqual(["unknown", "sat", "(:rlimit 2047)"]);
   });
 
-  it("goes on from the scopes that the limit leaves in ctx-simplify at the next check", () => {
+  it("goes on from the cache that the limit leaves in ctx-simplify at the next check", () => {
     expect(
       run([
-        "(declare-sort U 0)",
-        "(declare-fun g (U) U)",
-        "(declare-fun a () U)",
-        "(declare-fun b () U)",
-        "(assert (forall ((x U)) (not (= (g x) x))))",
-        "(assert (= (g a) b))",
-        "(assert (not (= a b)))",
-        "(set-option :rlimit 44)",
+        "(declare-fun c () Bool)",
+        "(declare-fun u () Int)",
+        "(declare-fun v () Int)",
+        "(assert (> (ite c u v) 5))",
+        "(assert (< (ite c u v) 100))",
+        "(set-option :rlimit 30)",
         "(check-sat)",
         "(set-option :rlimit 0)",
         "(check-sat)",
         "(get-info :rlimit)",
       ]),
-    ).toEqual(["unknown", "sat", "(:rlimit 923)"]);
+    ).toEqual(["unknown", "sat", "(:rlimit 364)"]);
   });
 
-  it("drops the facts that the limit leaves in ctx-simplify once a pop drops assertions", () => {
-    // Z3 answers unsat at the second check, though a = b = false, z = -1, x = 2 and y = 3 satisfy it.
+  // Deviation from Z3: it answers sat at the second check, and its model fails model_validate.
+  it("drops the facts that the limit leaves in ctx-simplify at the next check", () => {
+    expect(
+      run([
+        "(declare-fun c () Bool)",
+        "(declare-fun u () Int)",
+        "(declare-fun v () Int)",
+        "(assert (> (ite c u v) 5))",
+        "(assert (< (ite c u v) 3))",
+        "(set-option :rlimit 40)",
+        "(check-sat)",
+        "(set-option :rlimit 0)",
+        "(check-sat)",
+        "(get-info :rlimit)",
+      ]),
+    ).toEqual(["unknown", "unsat", "(:rlimit 258)"]);
+  });
+
+  // Deviation from Z3: it answers unsat at the second check, though a = b = false, z = -1, x = 2 and y = 3 satisfy it.
+  it("drops the facts that the limit leaves in ctx-simplify across a pop", () => {
     expect(
       run([
         "(declare-fun x () Int)",

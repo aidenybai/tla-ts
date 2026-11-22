@@ -424,7 +424,6 @@ interface ScriptState {
   isProofsEnabled: boolean | undefined;
   isIncremental: boolean;
   hasChecked: boolean;
-  numAssertionDrops: number;
   // The datalog context of the declare-rel, declare-var, rule and query commands.
   datalog: DatalogContext | undefined;
   // combined_solver's incremental smt kernel, which keeps one context across the checks, or
@@ -509,7 +508,6 @@ export const runSmtlibScript = (
       isProofsEnabled: undefined,
       isIncremental: false,
       hasChecked: false,
-      numAssertionDrops: 0,
       datalog: undefined,
       kernel: undefined,
       satSolver: undefined,
@@ -577,7 +575,6 @@ export const runSmtlibScript = (
         write: () => {},
         parameters: settings.parameters,
         hasDefinitions: () => state.reader.hasDefinitions(),
-        getNumAssertionDrops: () => state.numAssertionDrops,
         destructors: [],
         inits: [],
       },
@@ -1127,7 +1124,6 @@ export const runSmtlibScript = (
     write,
     parameters: settings.parameters,
     hasDefinitions: () => state.reader.hasDefinitions(),
-    getNumAssertionDrops: () => state.numAssertionDrops,
     destructors,
     inits,
   });
@@ -1720,7 +1716,6 @@ export const runSmtlibScript = (
           useSatSolver((solver) => solver.pop(count));
           state.fdSolver?.pop(count);
           state.reader.pop(count);
-          if (scope.assertions < state.assertions.length) state.numAssertionDrops++;
           restoreAssertions(scope.assertions);
           settings.rlimit = scope.rlimit;
           resetOptimizer();

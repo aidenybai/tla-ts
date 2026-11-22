@@ -33,6 +33,8 @@ export class CtxSimplifier {
 
   apply(goal: Goal) {
     if (goal.isInconsistent) return;
+    // Deviation from Z3: a run drops the facts that a canceled run left, from which Z3 answers sat on unsat goals.
+    this.pop(this.scopes.length);
     this.occs.clear();
     this.pinned.reset();
     this.countOccurrences(goal);
@@ -43,16 +45,15 @@ export class CtxSimplifier {
         this.simplifyForm(goal, index, false);
       return;
     }
-    const level = this.scopes.length;
     for (let index = 0; !goal.isInconsistent && index < size; index++)
       this.simplifyForm(goal, index, index < size - 1);
-    this.pop(this.scopes.length - level);
+    this.pop(this.scopes.length);
     this.countOccurrences(goal);
     for (let index = goal.forms.size; !goal.isInconsistent && index > 0;) {
       index--;
       this.simplifyForm(goal, index, index > 0);
     }
-    this.pop(this.scopes.length - level);
+    this.pop(this.scopes.length);
   }
 
   private simplifyForm(goal: Goal, index: number, isAsserted: boolean) {
