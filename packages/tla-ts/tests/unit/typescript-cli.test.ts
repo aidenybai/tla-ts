@@ -110,6 +110,35 @@ describe("the CLI with TypeScript files", () => {
     expect(result.stdout).toContain("Model checking completed. No error has been found.");
   });
 
+  // A model whose top level throws stops at the check that its module runs, with the message that
+  // Node throws, before any call of its functions.
+  describe("checks a model whose top level throws as Node throws", () => {
+    const getModel = (statement: string) =>
+      `export const twice = (n: 0 | 1) => n * 2;\n${statement}\n`;
+
+    it("agrees with Node", () => {
+      const directory = copyFixtures("passing");
+      writeFileSync(join(directory, "throws.ts"), getModel('throw new RangeError("boom");'));
+      const node = runNode(directory, "throws.ts");
+      expect(node.status).toBe(1);
+      expect(node.stderr).toContain("RangeError: boom");
+      const result = runCli(directory, ["throws.ts"]);
+      expect(result.status).toBe(10);
+      expect(result.stdout).toContain(
+        'The first argument of Assert evaluated to FALSE; the second argument was:\n"boom"',
+      );
+    });
+
+    it("rejects another result", () => {
+      const directory = copyFixtures("passing");
+      writeFileSync(join(directory, "throws.ts"), getModel("const isThrown = false;"));
+      expect(runNode(directory, "throws.ts").status).toBe(0);
+      const result = runCli(directory, ["throws.ts"]);
+      expect(result.status).toBe(0);
+      expect(result.stdout).not.toContain('"boom"');
+    });
+  });
+
   // A note names the kind of a parameter's type that keeps tla-ts from calling an export, or the
   // kinds of a union's values that TLC can't compare, beside the check of the exports that it calls.
   describe("names the kind of each parameter that it can't list the values of", () => {

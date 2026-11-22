@@ -226,6 +226,43 @@ describe("checks a module's exported functions as a model on ESCore", () => {
     });
   });
 
+  // A model without state calls each function, on each value of its parameters, from the state
+  // that its module's top level leaves, as a fresh import of the module in Node does.
+  describe("calls each function from the state the module's top level leaves", () => {
+    const directory = mkdtempSync(join(tmpdir(), "tla-ts-escore-started-"));
+    afterAll(() => rmSync(directory, { recursive: true, force: true }));
+    const getSource = (most: number) =>
+      `const sizes = [1, 2].map((size) => size * 2);\nexport const fits = (n: 0 | 1 | 2) => {\n  if (sizes[0] + n > ${most}) throw new Error("too big");\n  return sizes.length;\n};\n`;
+    // Whether each call throws in Node, each on a fresh import of the module.
+    const getThrows = async (most: number) => {
+      const path = join(directory, `fits-${most}.ts`);
+      writeFileSync(path, getSource(most));
+      return Promise.all(
+        [0, 1, 2].map(async (n) => {
+          const module = await import(`${pathToFileURL(path).href}?${n}`);
+          try {
+            module.fits(n);
+            return false;
+          } catch {
+            return true;
+          }
+        }),
+      );
+    };
+
+    it("agrees with Node", async () => {
+      expect(await getThrows(4)).toEqual([false, false, false]);
+      expect(getCounts(await checkModel(getSource(4)))).toEqual(["success", 0, 0]);
+    });
+
+    it("rejects another result", async () => {
+      expect(await getThrows(3)).toEqual([false, false, true]);
+      const result = await checkModel(getSource(3));
+      expect(result.status).toBe("assumption-violation");
+      expect(result.message).toContain('"too big"');
+    });
+  });
+
   // A parameter whose type has more values than TLC puts in a set, as the compiled glob that
   // Effect's internal glob module matches, takes values tla-ts can't list, and the rest still run.
   describe("calls no function whose parameter has more values than TLC lists", () => {
