@@ -51,6 +51,7 @@ import {
   createSortedRecord,
   createSortedSet,
   createTuple,
+  getFunctionClass,
   getMaximumSetSize,
   getStreamedElements,
   isEnumerable,
@@ -1703,8 +1704,12 @@ const compileIdentifier = (program: Program, name: string, frame: Frame): Compil
   if (global?.kind === "Value") return compileConstant(program, global.value);
   if (global?.kind === "Definition") {
     const definition = global.definition;
+    const startup = getStartupValue(definition, program.environment);
     // A function definition is the function its constructor builds.
     if (definition.kind === "Function") {
+      if (startup !== undefined && getFunctionClass(startup) !== "lambda") {
+        return compileConstant(program, startup);
+      }
       return inline(program, definition, () =>
         compileValue(
           program,
@@ -1722,11 +1727,7 @@ const compileIdentifier = (program: Program, name: string, frame: Frame): Compil
     if (definition.params.length > 0) return unsupported();
     if (isConstantLevel(definition, program.environment)) {
       // TLC evaluates a constant definition once, as it starts.
-      return compileConstant(
-        program,
-        getStartupValue(definition, program.environment) ??
-          evaluateConstant(program, definition.body),
-      );
+      return compileConstant(program, startup ?? evaluateConstant(program, definition.body));
     }
     return inline(program, definition, () =>
       compileValue(program, definition.body, { ...frame, scope: new Map() }),

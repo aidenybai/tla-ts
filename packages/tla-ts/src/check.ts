@@ -522,7 +522,8 @@ const searchStates = (
   const hasPostconditions =
     config.postconditions.length > 0 ||
     config.possible.length > 0 ||
-    specification.moduleOperators.some((operator) => operator.kind === "postcondition");
+    (options.moduleOperators ?? []).some((operator) => operator.kind === "postcondition") ||
+    options.traceSpec?.traceFile !== undefined;
   // A postcondition reads the statistics and the counterexample once the search ends, which the
   // tier's search gives as the interpreter's would, but the possible states need every state seen.
   const isTypedSearchable = config.possible.length === 0;
