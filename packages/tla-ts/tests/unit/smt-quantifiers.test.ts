@@ -687,6 +687,25 @@ describe("relevancy, as Z3 5.3.2 reads smt.relevancy", () => {
       ]),
     ).toEqual(["unsat", "(:rlimit 394)", "unsat", "(:rlimit 548)", "unsat", "(:rlimit 707)"]);
   });
+
+  it("matches the new terms from when MBQI registers a quantifier, before it is assigned", () => {
+    expect(
+      run([
+        "(set-option :auto_config false)",
+        "(set-option :smt.relevancy 0)",
+        "(set-option :smt.mbqi true)",
+        "(declare-fun f (Int) Int)",
+        "(declare-fun p (Int) Bool)",
+        "(declare-const a Int)",
+        "(assert (p (f 1)))",
+        "(assert (p (f 2)))",
+        "(assert (or (> a 3) (forall ((x Int)) (! (> (f x) x) :pattern ((f x))))))",
+        "(assert (or (< a 2) (forall ((x Int)) (! (=> (p x) (> (f x) 0)) :pattern ((p x))))))",
+        "(check-sat)",
+        "(get-info :rlimit)",
+      ]),
+    ).toEqual(["sat", "(:rlimit 2591)"]);
+  });
 });
 
 describe("e-matching, as Z3 5.3.2 reads smt.ematching", () => {

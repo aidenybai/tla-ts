@@ -45,8 +45,10 @@ export class DefaultQuantifierManager {
   add(quantifier: number, generation: number) {
     this.quantifiers.push(quantifier);
     this.generations.set(quantifier, generation);
-    if (this.context.params.isMbqi && this.isMbqiEnabled(quantifier))
+    if (this.context.params.isMbqi && this.isMbqiEnabled(quantifier)) {
+      this.isActive = true;
       this.finder.registerQuantifier(quantifier);
+    }
   }
 
   isMbqiEnabled(quantifier: number) {
