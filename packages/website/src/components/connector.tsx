@@ -4,6 +4,8 @@ import { cn } from "cn";
 // An arrow bends only this close to the other pane, so it stays off the code on other lines.
 const BEND_WIDTH_PX = 96;
 const HEAD_LENGTH_PX = 4;
+// How far past the pane's edge an arrow ends where its line is out of view.
+const OUT_OF_VIEW_PX = 48;
 
 interface Link {
   name: string;
@@ -26,6 +28,9 @@ interface ConnectorProps {
   names: string[];
   hoveredName: string | undefined;
   colors: Record<string, string>;
+  // The first line of the output that each name is on, which places a name whose line the output
+  // pane does not show.
+  outputLines?: Record<string, number>;
   className?: string;
 }
 
@@ -61,6 +66,27 @@ const getBoxes = (container: Element, paneName: string) => {
   return boxes;
 };
 
+// Where the arrow of a name ends when the output pane does not show the name's line: past the
+// pane's top or bottom, on the side the line is on.
+const getOutOfViewBox = (container: Element, line: number): Box | undefined => {
+  const pane = container.querySelector('[data-pane="output"]');
+  const view = pane?.getBoundingClientRect();
+  if (!pane || !view) return undefined;
+  const shown = [...pane.querySelectorAll<HTMLElement>("[data-line]")].flatMap((element) => {
+    const box = element.getBoundingClientRect();
+    return box.bottom > view.top && box.top < view.bottom
+      ? [{ number: Number(element.dataset.line), left: box.left }]
+      : [];
+  });
+  if (shown.length === 0) return undefined;
+  return {
+    left: shown[0].left,
+    right: shown[0].left,
+    middle: line < shown[0].number ? view.top - OUT_OF_VIEW_PX : view.bottom + OUT_OF_VIEW_PX,
+    isClipped: false,
+  };
+};
+
 // A steep curve has left its level end tangent well before the head, so the head takes the
 // direction the curve has one head length back.
 const getHeadAngle = (bendX: number, fromY: number, toX: number, toY: number) => {
@@ -86,6 +112,7 @@ export const Connector = (props: ConnectorProps) => {
   const svgRef = useRef<SVGSVGElement>(null);
   const [links, setLinks] = useState<Link[]>([]);
   const namesKey = props.names.join("\n");
+  const outputLines = props.outputLines;
 
   useLayoutEffect(() => {
     const container = svgRef.current?.parentElement;
@@ -98,7 +125,10 @@ export const Connector = (props: ConnectorProps) => {
       setLinks(
         names.flatMap((name) => {
           const source = sources.get(name);
-          const output = outputs.get(name);
+          const line = outputLines?.[name];
+          const output =
+            outputs.get(name) ??
+            (line === undefined ? undefined : getOutOfViewBox(container, line));
           if (!source || !output || source.isClipped) return [];
           const fromX = source.right - origin.left + 6;
           const fromY = source.middle - origin.top;
@@ -143,7 +173,7 @@ export const Connector = (props: ConnectorProps) => {
       lineObserver.disconnect();
       container.removeEventListener("scroll", updateOnScroll, { capture: true });
     };
-  }, [namesKey]);
+  }, [namesKey, outputLines]);
 
   return (
     <svg
