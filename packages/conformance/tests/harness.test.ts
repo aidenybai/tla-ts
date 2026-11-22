@@ -3,7 +3,13 @@ import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "nod
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { gunzipSync, gzipSync } from "node:zlib";
-import { createProgress, getHost, MissingHostFileError, runTest } from "../scripts/hosts";
+import {
+  createProgress,
+  getHost,
+  MissingHostFileError,
+  runTest,
+  UnknownHostError,
+} from "../scripts/hosts";
 import {
   getContexts,
   getCorrection,
@@ -254,6 +260,11 @@ describe("getHost", () => {
       new MissingHostFileError(cli, undefined),
     );
     expect(() => getHost(`node --stack-size=8000 ${cli}`)).toThrow(MissingHostFileError);
+  });
+
+  it("rejects a host that names neither a host nor a program", () => {
+    expect(() => getHost("constructor")).toThrow(new UnknownHostError("constructor"));
+    expect(() => getHost("constructor")).toThrow(UnknownHostError);
   });
 });
 

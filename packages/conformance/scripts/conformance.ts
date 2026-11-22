@@ -63,7 +63,7 @@ const limits = {
 };
 const isUpdatingBaseline = hasFlag("--update-baseline");
 const isVerbose = hasFlag("--verbose");
-const hostLabel = hostName in HOSTS ? hostName : "custom";
+const hostLabel = HOSTS.has(hostName) ? hostName : "custom";
 const baselinePath = join(import.meta.dirname, "../baselines", `${hostLabel}.json`);
 const baseline: Record<string, Verdict> = existsSync(baselinePath)
   ? JSON.parse(readFileSync(baselinePath, "utf8"))

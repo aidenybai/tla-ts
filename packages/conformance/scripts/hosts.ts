@@ -10,7 +10,7 @@ import {
   writeFileSync,
 } from "node:fs";
 import { availableParallelism, tmpdir } from "node:os";
-import { basename, dirname, isAbsolute, join } from "node:path";
+import { basename, delimiter, dirname, isAbsolute, join } from "node:path";
 import { getBackendInput, type SuiteTest, type TestContext } from "./test-file";
 import {
   getBackend,
@@ -69,35 +69,58 @@ export interface Host {
   backend?: string[] | "oracle";
 }
 
-export const HOSTS: Record<string, Host> = {
-  tlc: {
-    tlc: [
-      "java",
-      "-XX:+UseSerialGC",
-      "-XX:TieredStopAtLevel=1",
-      "-XX:-UsePerfData",
-      "-Xmx1g",
-      // The recordings come from macOS arm64, whose default thread stack is 2 MB.
-      "-Xss2m",
-      "-cp",
-      TLC_JAR,
-      "tlc2.TLC",
-    ],
-  },
-  tlapm: { tlapm: [TLAPM_BINARY], backend: "oracle" },
-  "tla-ts": {
-    tlc: TLA_TS,
-    tlapm: [...TLA_TS, "tlapm"],
-    backend: ["node", join(PACKAGE_DIRECTORY, ".scripts/tla-ts-backend.js")],
-  },
-};
+export const HOSTS = new Map<string, Host>([
+  [
+    "tlc",
+    {
+      tlc: [
+        "java",
+        "-XX:+UseSerialGC",
+        "-XX:TieredStopAtLevel=1",
+        "-XX:-UsePerfData",
+        "-Xmx1g",
+        // The recordings come from macOS arm64, whose default thread stack is 2 MB.
+        "-Xss2m",
+        "-cp",
+        TLC_JAR,
+        "tlc2.TLC",
+      ],
+    },
+  ],
+  ["tlapm", { tlapm: [TLAPM_BINARY], backend: "oracle" }],
+  [
+    "tla-ts",
+    {
+      tlc: TLA_TS,
+      tlapm: [...TLA_TS, "tlapm"],
+      backend: ["node", join(PACKAGE_DIRECTORY, ".scripts/tla-ts-backend.js")],
+    },
+  ],
+]);
+
+export class UnknownHostError extends Error {
+  constructor(name: string) {
+    super(
+      `Unknown host "${name}": it names none of ${[...HOSTS.keys()].join(", ")} and no program on PATH.`,
+    );
+    this.name = "UnknownHostError";
+  }
+}
 
 const QUOTED = /"([^"]*)"|'([^']*)'/g;
 const ARGUMENT = /(?:"[^"]*"|'[^']*'|[^\s"'])+/g;
 
 export const getHost = (name: string): Host => {
   const command = (name.match(ARGUMENT) ?? []).map((part) => part.replace(QUOTED, "$1$2"));
-  const host = HOSTS[name] ?? { tlc: command, tlapm: command, backend: command };
+  const namedHost = HOSTS.get(name);
+  const isProgramFound =
+    command.length > 0 &&
+    (isAbsolute(command[0]) ||
+      (process.env.PATH ?? "")
+        .split(delimiter)
+        .some((directory) => existsSync(join(directory, command[0]))));
+  if (!namedHost && !isProgramFound) throw new UnknownHostError(name);
+  const host = namedHost ?? { tlc: command, tlapm: command, backend: command };
   const missing = [host.tlc, host.tlapm, host.backend]
     .flatMap((hostCommand) => (Array.isArray(hostCommand) ? hostCommand : []))
     .find((argument) => isAbsolute(argument) && !existsSync(argument));
