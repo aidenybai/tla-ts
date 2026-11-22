@@ -59,7 +59,17 @@ for (const model of models) {
   rmSync(metadataDirectory, { recursive: true, force: true });
   const tlaTs = await time(
     process.execPath,
-    ["--max-old-space-size=6144", CLI_PATH, model.specPath, "-config", model.configPath],
+    [
+      "--max-old-space-size=6144",
+      CLI_PATH,
+      "-fp",
+      "0",
+      "-seed",
+      "0",
+      model.specPath,
+      "-config",
+      model.configPath,
+    ],
     model.directory,
   );
   timings.push({ id: model.id, tlc, tlaTs });

@@ -424,7 +424,7 @@ const searchStates = (
       rawConstants: config.rawConstants,
       states: trace.map((step) => getStepState(step)),
       loopStart,
-      modelValues: getModelValues().map((value) => value.name),
+      modelValues: getModelValues(),
       isDefined: (name) =>
         [...environment.constants.keys(), ...environment.definitions.keys()].some(
           (key) => getKeyName(key) === name,

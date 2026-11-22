@@ -74,6 +74,7 @@ export type CoordinatorMessage =
   | { type: "level" }
   | { type: "resize"; fingerprints: SharedFingerprints };
 
+/** Model checks a spec as TLC does. It runs one check at a time, so a callback must not start another check. */
 export const check = async (options: CheckOptions): Promise<CheckResult> => {
   const config =
     typeof options.config === "string"

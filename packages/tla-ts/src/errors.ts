@@ -194,11 +194,7 @@ export class TlaEndOfInputError extends TlaUncodedError {
   }
 }
 
-export class TlaCorruptTraceError extends TlaUncodedError {
-  constructor(path: string, problem: string) {
-    super(`The trace file ${path} ${problem}.`);
-  }
-}
+export class TlaCorruptTraceError extends TlaUncodedError {}
 
 export class TlaMissingCheckpointError extends TlaEvaluationError {
   constructor(directory: string) {

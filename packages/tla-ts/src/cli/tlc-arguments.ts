@@ -1,18 +1,19 @@
 import { closeSync, openSync } from "node:fs";
 import { availableParallelism } from "node:os";
 import type { ModuleOperator } from "../check";
+import { parseJavaDouble } from "../java-string";
 import { MAXIMUM_INTEGER } from "../values";
 
 export interface TlcArguments {
   specs: string[];
   configPath: string | undefined;
-  seed: bigint;
+  seed: bigint | undefined;
   aril: bigint;
   workers: number;
   coverage: number | undefined;
   livenessCheck: string;
   dump: string[] | undefined;
-  fingerprintIndex: number;
+  fingerprintIndex: number | undefined;
   maxSetSize: number | undefined;
   isLazyValueExpanded: boolean;
   isViewPrinted: boolean;
@@ -37,6 +38,11 @@ export interface TlcArguments {
   userFile: string | undefined;
   invariants: RuntimeInvariantTemplate[];
   moduleOperators: ModuleOperator[];
+}
+
+export interface SeededArguments extends TlcArguments {
+  seed: bigint;
+  fingerprintIndex: number;
 }
 
 export interface RuntimeInvariantTemplate {
@@ -158,27 +164,34 @@ const getOverlap = (suppressed: number[], errors: number[]) =>
     (left, right) => left - right,
   );
 
-const parseJavaInteger = (text: string, bits: 32 | 64) => {
-  if (!/^[+-]?\d+$/.test(text)) return undefined;
-  const value = BigInt(text);
-  return BigInt.asIntN(bits, value) === value ? value : undefined;
+const DECIMAL_DIGIT = /\p{Nd}/u;
+
+const getDigitValue = (code: number) => {
+  let offset = 0;
+  while (DECIMAL_DIGIT.test(String.fromCharCode(code - offset - 1))) offset++;
+  return offset % 10;
 };
 
-const parseJavaDouble = (text: string) =>
-  /^[+-]?(NaN|Infinity|(\d+\.?\d*|\.\d+)([eE][+-]?\d+)?[fFdD]?)$/.test(text.trim())
-    ? Number.parseFloat(text.trim().replace(/[fFdD]$/, ""))
-    : undefined;
+// Integer.parseInt and Long.parseLong read a decimal digit of any script, one UTF-16 unit at a time.
+const parseJavaInteger = (text: string, bits: 32 | 64) => {
+  const digits = text.replace(/\p{Nd}/gu, (digit) =>
+    digit.length === 1 ? String(getDigitValue(digit.charCodeAt(0))) : digit,
+  );
+  if (!/^[+-]?\d+$/.test(digits)) return undefined;
+  const value = BigInt(digits);
+  return BigInt.asIntN(bits, value) === value ? value : undefined;
+};
 
 const createDefaults = (): TlcArguments => ({
   specs: [],
   configPath: undefined,
-  seed: 0n,
+  seed: undefined,
   aril: 0n,
   workers: 1,
   coverage: undefined,
   livenessCheck: "default",
   dump: undefined,
-  fingerprintIndex: 0,
+  fingerprintIndex: undefined,
   maxSetSize: undefined,
   isLazyValueExpanded: true,
   isViewPrinted: false,
@@ -388,7 +401,7 @@ const VALUE_FLAGS: Record<string, ValueFlag> = {
     missing: "Error: fpset memory size required.",
     apply: (_parsed, text) => {
       const size = parseJavaDouble(text);
-      if (size === undefined || size < 0) {
+      if (size === undefined || size < 0 || Number.isNaN(size)) {
         return `Error: An positive integer or a fraction for fpset memory size/percentage required. But encountered ${text}`;
       }
       if (size > 1) {
@@ -650,3 +663,13 @@ export const parseTlcArguments = (args: string[]): TlcArguments | TlcArgumentsEr
   parsed.errorCodes = [...errorCodes.tlc, ...errorCodes.sany];
   return parsed;
 };
+
+const drawUint32 = () => BigInt(Math.floor(Math.random() * 2 ** 32));
+
+export const drawSeeds = (args: TlcArguments): SeededArguments => ({
+  ...args,
+  fingerprintIndex: args.fingerprintIndex ?? Math.floor(Math.random() * FINGERPRINT_POLYNOMIALS),
+  seed: args.seed ?? BigInt.asIntN(64, (drawUint32() << 32n) | drawUint32()),
+  // TLC seeds the simulator it draws a seed for without -aril.
+  aril: args.seed === undefined ? 0n : args.aril,
+});
