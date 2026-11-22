@@ -1,0 +1,8 @@
+---- MODULE Learning ----
+EXTENDS Naturals
+VARIABLE x
+Init == x = 0
+Next == \/ x < 2 /\ x' = x
+        \/ x < 4 /\ x' = x + 1
+        \/ x = 2 /\ x' = 7
+====

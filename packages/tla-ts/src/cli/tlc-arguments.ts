@@ -2,6 +2,7 @@ import { closeSync, openSync } from "node:fs";
 import { availableParallelism } from "node:os";
 import type { ModuleOperator } from "../check";
 import { parseJavaDouble } from "../java-string";
+import type { ActionStatistics } from "../tlc/action-graph";
 import { MAXIMUM_INTEGER } from "../values";
 
 export interface TlcArguments {
@@ -19,11 +20,14 @@ export interface TlcArguments {
   isViewPrinted: boolean;
   metadir: string | undefined;
   recoverDirectory: string | undefined;
+  isCheckpointRequested: boolean;
   mode: "model-check" | "simulate" | "generate";
   dfidDepth: number | undefined;
   traceDepth: number;
   traceCount: bigint | undefined;
   scheduler: "random" | "rl" | "rlaction";
+  actionStatistics: ActionStatistics | undefined;
+  behaviorFile: string | undefined;
   isTool: boolean;
   isContinued: boolean;
   isDeadlockChecked: boolean;
@@ -197,11 +201,14 @@ const createDefaults = (): TlcArguments => ({
   isViewPrinted: false,
   metadir: undefined,
   recoverDirectory: undefined,
+  isCheckpointRequested: false,
   mode: "model-check",
   dfidDepth: undefined,
   traceDepth: 100,
   traceCount: undefined,
   scheduler: "random",
+  actionStatistics: undefined,
+  behaviorFile: undefined,
   isTool: false,
   isContinued: false,
   isDeadlockChecked: true,
@@ -322,7 +329,9 @@ const VALUE_FLAGS: Record<string, ValueFlag> = {
     "checkpoint",
     "Error: checkpoint interval required.",
     "Error: An integer for checkpoint interval is required.",
-    () => {},
+    (parsed, minutes) => {
+      parsed.isCheckpointRequested = minutes > 0;
+    },
   ),
   "-depth": {
     missing: "Error: trace length required.",
@@ -480,14 +489,23 @@ export const parseTlcArguments = (args: string[]): TlcArguments | TlcArgumentsEr
         continue;
       }
       argumentIndex++;
-      const hasFile = options.split(",").some((option) => option.startsWith("file="));
-      parsed.scheduler = options.split(",").includes("sched=rl")
-        ? "rl"
-        : options.split(",").includes("sched=rlaction")
-          ? "rlaction"
-          : "random";
-      for (const option of options.split(",").filter((item) => item.startsWith("num="))) {
-        const count = option.replace("num=", "");
+      const simulateOptions = options.split(",");
+      const file = simulateOptions.findLast((option) => option.startsWith("file="));
+      if (file !== undefined) parsed.behaviorFile = file.replaceAll("file=", "");
+      // TLC sets a system property for each sched= and never clears it, and its Simulator takes rl over rlaction.
+      if (simulateOptions.includes("sched=rl")) {
+        parsed.scheduler = "rl";
+      } else if (simulateOptions.includes("sched=rlaction") && parsed.scheduler !== "rl") {
+        parsed.scheduler = "rlaction";
+      }
+      const statistics = simulateOptions.findLast(
+        (option) => option === "stats=basic" || option === "stats=full",
+      );
+      if (statistics !== undefined) {
+        parsed.actionStatistics = statistics === "stats=basic" ? "basic" : "full";
+      }
+      for (const option of simulateOptions.filter((item) => item.startsWith("num="))) {
+        const count = option.replaceAll("num=", "");
         parsed.traceCount = parseJavaInteger(count, 64);
         if (parsed.traceCount === undefined) {
           return {
@@ -498,7 +516,10 @@ export const parseTlcArguments = (args: string[]): TlcArguments | TlcArgumentsEr
         }
       }
       // TLC's default trace count is Long.MAX_VALUE, so it takes that num for a missing one.
-      if ((parsed.traceCount ?? MAXIMUM_LONG) === MAXIMUM_LONG && hasFile) {
+      if (
+        (parsed.traceCount ?? MAXIMUM_LONG) === MAXIMUM_LONG &&
+        parsed.behaviorFile !== undefined
+      ) {
         return reject(
           `Error: You need to specify a 'num' argument when using the 'file' argument, for example: '"num=5,file=test.txt"'.`,
         );

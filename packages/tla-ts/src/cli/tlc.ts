@@ -20,7 +20,9 @@ import {
   TlaFileError,
   TlaMissingCheckpointError,
   TlaSyntaxError,
+  createStackOverflowError,
   getUnexpectedException,
+  isStackOverflow,
   TlaSanyFatalError,
 } from "../errors";
 import { EXIT_STATUS } from "../exit-codes";
@@ -258,6 +260,9 @@ const checkSpec = async (
         )
       : new TlaMissingCheckpointError(recoverDirectory);
   }
+  if (args.isCheckpointRequested) {
+    throw new TlaFeatureUnsupportedError("tla-ts doesn't write checkpoints.");
+  }
   printStartupBanner(printer, args);
   const configPath = args.configPath ?? specPath.replace(/\.tla$/, ".cfg");
   if (!existsSync(configPath)) {
@@ -442,38 +447,13 @@ const checkSpec = async (
       writeFile: writeJavaFile,
       makeDirectory: makeJavaDirectory,
     };
-    if (args.mode !== "model-check") {
-      const status = simulate({
-        ...options,
-        traceDepth: args.traceDepth,
-        traceCount: args.traceCount,
-        aril: args.aril,
-        isGenerating: args.mode === "generate",
-        scheduler: args.scheduler,
-        isDiffTrace: args.isDiffTrace,
-        onSimulation: (output) => printSimulation(printer, output, timing.startTime),
-      });
-      printFinished();
-      return status;
-    }
-    if (args.dfidDepth !== undefined) {
-      const status = checkDepthFirst({
-        ...options,
-        maxDepth: args.dfidDepth,
-        onOutput: (output) => printDepthFirst(printer, output, timing.startTime),
-      });
-      printFinished();
-      return status;
-    }
-    const result = await check(options);
-    printResult(result, printer, timing);
-    printFinished();
-    if (traceSpec && result.traceSpec !== undefined) {
+    const writeTraceExplorationSpec = (text: string | undefined) => {
+      if (!traceSpec || text === undefined) return;
       const path = resolveJavaPath(traceSpec.directory, `${traceSpec.module}.tla`);
       makeJavaDirectory(traceSpec.directory);
       const failure = (() => {
         try {
-          writeJavaFile(path, result.traceSpec);
+          writeJavaFile(path, text);
           return undefined;
         } catch (error) {
           if (!(error instanceof TlaEvaluationError)) throw error;
@@ -487,9 +467,49 @@ const checkSpec = async (
           ? `Failed to generate trace exploration spec; error message: ${failure.message}`
           : `Trace exploration spec path: ${path}`,
       );
+    };
+    // Deviation from TLC: under -continue, its recorder appends every trace it prints to one trace spec, which is no behavior of the spec, so tla-ts writes the last trace's.
+    let recordedTraceSpec: string | undefined;
+    if (args.mode !== "model-check") {
+      const status = simulate({
+        ...options,
+        traceDepth: args.traceDepth,
+        traceCount: args.traceCount,
+        aril: args.aril,
+        isGenerating: args.mode === "generate",
+        scheduler: args.scheduler,
+        isDiffTrace: args.isDiffTrace,
+        actionStatistics: args.actionStatistics,
+        behaviorFile: args.behaviorFile,
+        onSimulation: (output) => {
+          if (output.kind === "trace-spec") recordedTraceSpec = output.text;
+          else printSimulation(printer, output, timing.startTime);
+        },
+      });
+      printFinished();
+      writeTraceExplorationSpec(recordedTraceSpec);
+      return status;
     }
+    if (args.dfidDepth !== undefined) {
+      const status = checkDepthFirst({
+        ...options,
+        maxDepth: args.dfidDepth,
+        onOutput: (output) => {
+          if (output.kind === "trace-spec") recordedTraceSpec = output.text;
+          else printDepthFirst(printer, output, timing.startTime);
+        },
+      });
+      printFinished();
+      writeTraceExplorationSpec(recordedTraceSpec);
+      return status;
+    }
+    const result = await check(options);
+    printResult(result, printer, timing);
+    printFinished();
+    writeTraceExplorationSpec(result.traceSpec);
     return result.failure?.exitCode ?? EXIT_CODES[result.status];
-  } catch (error) {
+  } catch (caught) {
+    const error = isStackOverflow(caught) ? createStackOverflowError() : caught;
     if (!(error instanceof TlaError)) throw error;
     if (error instanceof TlaSyntaxError) console.log(formatSanyErrors(error, fileName));
     if (!timing.isParsed) printCheckProgress(printer, { kind: "parsed" }, timing, directory);

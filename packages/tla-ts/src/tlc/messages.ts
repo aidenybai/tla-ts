@@ -40,6 +40,7 @@ export const MESSAGE_CODE = {
   errorState: 2120,
   behaviorUpToThisPoint: 2121,
   backToState: 2122,
+  reporterDied: 2124,
   subscriptUndetermined: 2139,
   subscriptMissingVariable: 2140,
   constantLevelInvariant: 2149,
@@ -103,13 +104,14 @@ export const MESSAGE_CODE = {
   moduleOverrideStdout: 20000,
 } as const;
 
-export const MESSAGE_LEVEL = { none: 0, error: 1, warning: 3, state: 4 } as const;
+export const MESSAGE_LEVEL = { none: 0, error: 1, tlcBug: 2, warning: 3, state: 4 } as const;
 
-type MessageLevel = (typeof MESSAGE_LEVEL)[keyof typeof MESSAGE_LEVEL];
+export type MessageLevel = (typeof MESSAGE_LEVEL)[keyof typeof MESSAGE_LEVEL];
 
 const LEVEL_PREFIXES: Record<MessageLevel, string> = {
   0: "",
   1: "Error: ",
+  2: "TLC Bug: ",
   3: "Warning: ",
   4: "State ",
 };

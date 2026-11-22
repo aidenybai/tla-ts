@@ -20,7 +20,7 @@ import type {
   Violation,
 } from "../check";
 import type { DepthFirstOutput } from "../dfid";
-import { TlaAliasFormatError } from "../errors";
+import { isStackOverflow, STACK_OVERFLOW_MESSAGE, TlaAliasFormatError } from "../errors";
 import type { SimulationOutput, SimulationStatistics } from "../simulate";
 import {
   formatProbability,
@@ -118,6 +118,11 @@ const printTrace = (
       );
     });
   } catch (error) {
+    // Deviation from TLC: it reports an overflow while it prints a trace as "TLC threw an unexpected exception" with a Java stack trace.
+    if (isStackOverflow(error)) {
+      printer.print(MESSAGE_CODE.general, MESSAGE_LEVEL.error, STACK_OVERFLOW_MESSAGE);
+      return;
+    }
     if (!(error instanceof TlaAliasFormatError)) throw error;
     printer.print(MESSAGE_CODE.general, MESSAGE_LEVEL.error, error.message);
   }
@@ -649,11 +654,7 @@ export const printSimulation = (
   const print = printer.print;
   switch (output.kind) {
     case "message":
-      print(
-        output.code,
-        output.isError ? MESSAGE_LEVEL.error : MESSAGE_LEVEL.none,
-        printer.isTool ? output.toolMessage : output.message,
-      );
+      print(output.code, output.level, printer.isTool ? output.toolMessage : output.message);
       return;
     case "coverage":
       printCoverage(printer, output.coverage, startTime);

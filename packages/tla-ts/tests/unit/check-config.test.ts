@@ -66,6 +66,27 @@ describe("parseConfig matches TLC", () => {
     );
   });
 
+  it("reads a set nested 10,000 deep, as TLC does", () => {
+    const depth = 10_000;
+    const config = parseConfig(`CONSTANT C = ${"{".repeat(depth)}{}, {2}${"}".repeat(depth)}`);
+    let value = config.constants[0].value;
+    let level = 0;
+    while (value.kind === "Set" && value.elements.length === 1) {
+      value = value.elements[0];
+      level++;
+    }
+    expect([level, value]).toEqual([
+      depth - 1,
+      {
+        kind: "Set",
+        elements: [
+          { kind: "Set", elements: [] },
+          { kind: "Set", elements: [{ kind: "Number", value: 2 }] },
+        ],
+      },
+    ]);
+  });
+
   it("reads values the way TLC does", () => {
     expect(parseConfig('CONSTANT S = "a b"').constants[0].value).toEqual({
       kind: "String",
