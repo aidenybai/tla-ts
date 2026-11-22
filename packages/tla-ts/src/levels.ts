@@ -1,5 +1,4 @@
 import {
-  getChildren,
   type AssumeProve,
   type Bound,
   type Definition,
@@ -39,6 +38,8 @@ export interface LevelData {
   constraints: Map<string, number>;
   argConstraints: Map<string, number>;
   argParams: Set<string>;
+  allParams: ReadonlySet<string>;
+  nonLeibnizParams: ReadonlySet<string>;
 }
 
 export interface OperatorLevels extends LevelData {
@@ -90,6 +91,8 @@ interface SubstitutedBody extends SubstitutedSource {
   level: number;
   isCorrect: boolean;
   params: string[];
+  allParams: ReadonlySet<string>;
+  nonLeibnizParams: ReadonlySet<string>;
 }
 
 interface Instanced {
@@ -232,6 +235,19 @@ const getFormalRenamer = (formals: OperatorParam[], sourceFormals: OperatorParam
 const getConditionKey = (operator: number, operand: number, argument: number) =>
   `${operator},${operand},${argument}`;
 
+const EMPTY_PARAMS: ReadonlySet<string> = new Set();
+
+const addParams = (target: Set<string> | undefined, params: ReadonlySet<string>) => {
+  if (params.size === 0) return target;
+  const result = target ?? new Set<string>();
+  params.forEach((param) => result.add(param));
+  return result;
+};
+
+// SANY's OpArgNode#levelCheck takes its operator's allParams but leaves its nonLeibnizParams empty.
+const getNonLeibnizParams = (operand: Operand) =>
+  operand.kind === "Operator" ? EMPTY_PARAMS : operand.data.nonLeibnizParams;
+
 const createData = (level = 0): LevelData => ({
   level,
   isCorrect: true,
@@ -239,6 +255,8 @@ const createData = (level = 0): LevelData => ({
   constraints: new Map(),
   argConstraints: new Map(),
   argParams: new Set(),
+  allParams: EMPTY_PARAMS,
+  nonLeibnizParams: EMPTY_PARAMS,
 });
 
 export const putConstraint = (constraints: Map<string, number>, name: string, level: number) =>
@@ -266,7 +284,7 @@ const createSignature = (
   weights,
   minMaxLevels: [],
   conditions: new Set(),
-  nonLeibniz: new Set(),
+  nonLeibniz: new Set(weights.flatMap((weight, index) => (weight === 0 ? [index] : []))),
 });
 
 const getMaxLevel = (operator: OperatorLevels, index: number) =>
@@ -308,10 +326,7 @@ const CORE_SIGNATURES = new Map(
     ] as const
   ).map((signature): [string, OperatorLevels] => [
     signature[0],
-    {
-      ...createSignature(signature[0], signature[1], [...signature[2]], [...signature[3]]),
-      nonLeibniz: new Set(signature[1] > 1 ? [0, 1] : []),
-    },
+    createSignature(signature[0], signature[1], [...signature[2]], [...signature[3]]),
   ]),
 );
 
@@ -389,21 +404,22 @@ const getDefinitionBody = (definition: Definition): Expression =>
       }
     : definition.body;
 
-const toOperatorLevels = (
-  name: string,
-  formals: OperatorParam[],
-  data: LevelData,
-  nonLeibnizNames: Set<string>,
-) => {
+const toOperatorLevels = (name: string, formals: OperatorParam[], data: LevelData) => {
   const isFormal = (param: string) => formals.some((formal) => formal.name === param);
+  const removeFormals = (params: ReadonlySet<string>) =>
+    formals.some((formal) => params.has(formal.name))
+      ? new Set([...params].filter((param) => !isFormal(param)))
+      : params;
   const levels: OperatorLevels = {
     ...createData(data.level),
     isCorrect: data.isCorrect,
     name,
     formals,
     nonLeibniz: new Set(
-      formals.flatMap((formal, index) => (nonLeibnizNames.has(formal.name) ? [index] : [])),
+      formals.flatMap((formal, index) => (data.nonLeibnizParams.has(formal.name) ? [index] : [])),
     ),
+    allParams: removeFormals(data.allParams),
+    nonLeibnizParams: removeFormals(data.nonLeibnizParams),
     maxLevels: formals.map((formal) =>
       Math.min(TEMPORAL_LEVEL, data.constraints.get(formal.name) ?? TEMPORAL_LEVEL),
     ),
@@ -673,6 +689,8 @@ export const createLevelAnalyzer = (context: LevelContext) => {
     const data = createData(Math.max(level, ...operands.map((operand) => operand.data.level)));
     data.isCorrect = operands.every((operand) => operand.data.isCorrect);
     data.params.add(name);
+    const allParams = new Set([name]);
+    let nonLeibnizParams: Set<string> | undefined;
     operands.forEach((operand, index) => {
       operand.data.params.forEach((param) => {
         data.params.add(param);
@@ -680,7 +698,11 @@ export const createLevelAnalyzer = (context: LevelContext) => {
       });
       putArgConstraint(data.argConstraints, getArgumentKey(name, index), operand.data.level);
       mergeConstraints(data, operand.data);
+      operand.data.allParams.forEach((param) => allParams.add(param));
+      nonLeibnizParams = addParams(nonLeibnizParams, getNonLeibnizParams(operand));
     });
+    data.allParams = allParams;
+    data.nonLeibnizParams = nonLeibnizParams ?? EMPTY_PARAMS;
     return data;
   };
 
@@ -762,6 +784,36 @@ export const createLevelAnalyzer = (context: LevelContext) => {
     });
     ranges.forEach((range) => range.params.forEach((param) => data.params.add(param)));
     bound.forEach((name) => data.params.delete(name));
+
+    let allParams = addParams(undefined, operator.allParams);
+    let nonLeibnizParams = addParams(undefined, operator.nonLeibnizParams);
+    operands.forEach((operand, index) => {
+      allParams = addParams(allParams, operand.data.allParams);
+      nonLeibnizParams = addParams(nonLeibnizParams, getNonLeibnizParams(operand));
+      if (operator.nonLeibniz.has(index)) {
+        nonLeibnizParams = addParams(nonLeibnizParams, operand.data.allParams);
+      }
+    });
+    ranges.forEach((range) => {
+      allParams = addParams(allParams, range.allParams);
+      nonLeibnizParams = addParams(nonLeibnizParams, range.nonLeibnizParams);
+    });
+    bound.forEach((name) => {
+      allParams?.delete(name);
+      nonLeibnizParams?.delete(name);
+    });
+    operands.forEach((operand, operandIndex) => {
+      if (operand.kind !== "Operator") return;
+      operand.data.nonLeibniz.forEach((argumentIndex) =>
+        operands.forEach((other, otherIndex) => {
+          if (hasCondition(operandIndex, otherIndex, argumentIndex)) {
+            nonLeibnizParams = addParams(nonLeibnizParams, other.data.allParams);
+          }
+        }),
+      );
+    });
+    data.allParams = allParams ?? EMPTY_PARAMS;
+    data.nonLeibnizParams = nonLeibnizParams ?? EMPTY_PARAMS;
 
     operator.constraints.forEach((value, key) => putConstraint(data.constraints, key, value));
     operands.forEach((operand) =>
@@ -915,6 +967,7 @@ export const createLevelAnalyzer = (context: LevelContext) => {
       if (resolved.kind === "Declared" && resolved.arity > 0) {
         const data = createData();
         data.params.add(name);
+        data.allParams = new Set([name]);
         return { kind: "Declared", data, declared: { name, arity: resolved.arity } };
       }
       if (expression.kind === "OperatorReference") return { kind: "Value", data: createData() };
@@ -1131,6 +1184,9 @@ export const createLevelAnalyzer = (context: LevelContext) => {
       constraints: new Map(body.constraints),
       argConstraints: new Map(body.argConstraints),
       argParams: new Set(body.argParams),
+      allParams: body.allParams,
+      // SANY's LetInNode#levelCheck copies its body's allParams but not its nonLeibnizParams.
+      nonLeibnizParams: EMPTY_PARAMS,
     };
     entered.instances?.forEach((instance) =>
       getInstanceArgParams(instance, entered.inner).forEach((key) => data.argParams.add(key)),
@@ -1425,76 +1481,12 @@ export const createLevelAnalyzer = (context: LevelContext) => {
     }
   };
 
-  const getNonLeibnizNames = (
-    expression: Expression,
-    scope: Scope,
-    isNonLeibniz = false,
-    names = new Set<string>(),
-  ): Set<string> => {
-    const visit = (child: Expression, isChildNonLeibniz = isNonLeibniz, childScope = scope) =>
-      getNonLeibnizNames(child, childScope, isChildNonLeibniz, names);
-    const visitOperator = (name: string, args: Expression[]) => {
-      const resolved = resolve(name, scope);
-      if (resolved.kind !== "Defined") {
-        if (isNonLeibniz) names.add(name);
-        args.forEach((arg) => visit(arg));
-        return;
-      }
-      args.forEach((arg, index) =>
-        visit(arg, isNonLeibniz || resolved.levels.nonLeibniz.has(index)),
-      );
-    };
-    switch (expression.kind) {
-      case "Identifier":
-        visitOperator(expression.name, []);
-        return names;
-      case "Apply":
-        visitOperator(expression.operator, expression.args);
-        return names;
-      case "Lambda":
-      case "Let":
-      case "Selection":
-        return names;
-      case "Prime":
-      case "Unchanged":
-      case "Enabled":
-      case "Always":
-      case "Eventually":
-      case "BoxAction":
-      case "AngleAction":
-      case "WeakFairness":
-      case "StrongFairness":
-        getChildren(expression).forEach((child) => visit(child, true));
-        return names;
-      case "UnboundedQuantifier":
-        visit(
-          expression.body,
-          isNonLeibniz || expression.isTemporal === true,
-          bindFormals(scope, toFormals(expression.names)),
-        );
-        return names;
-      default:
-        forEachChild(expression, (child, bound) =>
-          visit(child, isNonLeibniz, bindFormals(scope, toFormals(bound))),
-        );
-        return names;
-    }
-  };
-
   const analyzeOperator = (
     name: string,
     formals: OperatorParam[],
     body: Expression,
     scope: Scope,
-  ) => {
-    const inner = bindFormals(scope, formals);
-    return toOperatorLevels(
-      name,
-      formals,
-      analyze(body, inner),
-      getNonLeibnizNames(body.kind === "Selection" ? body.expression : body, inner),
-    );
-  };
+  ) => toOperatorLevels(name, formals, analyze(body, bindFormals(scope, formals)));
 
   const substitutes = new WeakMap<Map<string, Expression>, Map<string, Operand>>();
 
@@ -1582,6 +1574,22 @@ export const createLevelAnalyzer = (context: LevelContext) => {
     body.params.forEach((param) =>
       (operands.get(param)?.data.params ?? [param]).forEach((name) => data.params.add(name)),
     );
+    let allParams: Set<string> | undefined;
+    let nonLeibnizParams: Set<string> | undefined;
+    body.allParams.forEach((param) => {
+      const operand = operands.get(param);
+      const isNonLeibniz = body.nonLeibnizParams.has(param);
+      if (!operand) {
+        (allParams ??= new Set()).add(param);
+        if (isNonLeibniz) (nonLeibnizParams ??= new Set()).add(param);
+        return;
+      }
+      allParams = addParams(allParams, operand.data.allParams);
+      nonLeibnizParams = addParams(nonLeibnizParams, getNonLeibnizParams(operand));
+      if (isNonLeibniz) nonLeibnizParams = addParams(nonLeibnizParams, operand.data.allParams);
+    });
+    data.allParams = allParams ?? EMPTY_PARAMS;
+    data.nonLeibnizParams = nonLeibnizParams ?? EMPTY_PARAMS;
     addSubstitutedLevels(data, body, operands, instanced);
     return data;
   };
@@ -1623,14 +1631,16 @@ export const createLevelAnalyzer = (context: LevelContext) => {
     const instanced = context.instances.getInstanced(copy);
     const source = instanced.source;
     const formals = getFormals(definition);
-    const prefix = formals.length - source.formals.length;
     const rename = getFormalRenamer(formals, source.formals);
     const names = source.formals.map((formal) => rename(formal.name));
+    const nonLeibnizNames = names.filter((_name, index) => source.nonLeibniz.has(index));
     const data = applySubstitutes(
       {
         level: source.level,
         isCorrect: source.isCorrect,
         params: [...source.params, ...names.filter((_name, index) => source.weights[index] === 1)],
+        allParams: new Set([...source.allParams, ...nonLeibnizNames]),
+        nonLeibnizParams: new Set([...source.nonLeibnizParams, ...nonLeibnizNames]),
         constraints: [
           ...source.constraints,
           ...names.map((name, index): [string, number] => [name, source.maxLevels[index]]),
@@ -1660,16 +1670,7 @@ export const createLevelAnalyzer = (context: LevelContext) => {
       getSubstitutes(copy, scope),
       instanced,
     );
-    const nonLeibniz = new Set(names.filter((_name, index) => source.nonLeibniz.has(index)));
-    if (prefix > 0) {
-      const instanceParams = new Set(formals.slice(0, prefix).map((formal) => formal.name));
-      getNonLeibnizNames(getDefinitionBody(definition), bindFormals(scope, formals)).forEach(
-        (name) => {
-          if (instanceParams.has(name)) nonLeibniz.add(name);
-        },
-      );
-    }
-    return toOperatorLevels(definition.name, formals, data, nonLeibniz);
+    return toOperatorLevels(definition.name, formals, data);
   };
 
   const getGoalInstanced = (names: string[], scope: Scope): Instanced | undefined => {
@@ -1703,7 +1704,6 @@ export const createLevelAnalyzer = (context: LevelContext) => {
         "LAMBDA",
         formals,
         analyzeSubstituted(selection.body, instanced, bindFormals(scope, formals)),
-        new Set(),
       ),
       toOperands(args, scope),
     );
@@ -1739,6 +1739,8 @@ export const createLevelAnalyzer = (context: LevelContext) => {
         level: original.level,
         isCorrect: original.isCorrect,
         params: [...original.params].map(rename),
+        allParams: new Set([...original.allParams].map(rename)),
+        nonLeibnizParams: new Set([...original.nonLeibnizParams].map(rename)),
         constraints: [...original.constraints].map((entry): [string, number] => [
           rename(entry[0]),
           entry[1],
@@ -1840,7 +1842,7 @@ export const createLevelAnalyzer = (context: LevelContext) => {
     const levels = copy
       ? analyzeInstanced(definition, copy, scope)
       : "statement" in definition
-        ? toOperatorLevels(definition.name, [], analyzeStatement(definition.statement), new Set())
+        ? toOperatorLevels(definition.name, [], analyzeStatement(definition.statement))
         : analyzeOperator(
             definition.name,
             getFormals(definition),
@@ -1855,6 +1857,8 @@ export const createLevelAnalyzer = (context: LevelContext) => {
       maxLevels: levels.maxLevels.map((level, index) => Math.min(level, prior.maxLevels[index])),
       weights: levels.weights.map((weight, index) => Math.max(weight, prior.weights[index])),
       nonLeibniz: new Set([...prior.nonLeibniz, ...levels.nonLeibniz]),
+      allParams: new Set([...prior.allParams, ...levels.allParams]),
+      nonLeibnizParams: new Set([...prior.nonLeibnizParams, ...levels.nonLeibnizParams]),
     };
     definitionLevels.set(definition, merged);
     return merged;
