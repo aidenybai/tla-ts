@@ -8,7 +8,6 @@ import { ModelFinder } from "./model-finder";
 import type { ProtoModel } from "./proto-model";
 import { QiQueue } from "./qi-queue";
 
-const QI_MAX_EAGER_MULTIPATTERNS = 0;
 const QI_MAX_LAZY_MULTIPATTERN_MATCHING = 2;
 
 export class DefaultQuantifierManager {
@@ -70,7 +69,8 @@ export class DefaultQuantifierManager {
       .getQuantifier(quantifier)
       .patterns.map((pattern) => manager.getArgs(pattern));
     const hasUnaryPattern = patterns.some((pattern) => pattern.length === 1);
-    const numEagerMultiPatterns = QI_MAX_EAGER_MULTIPATTERNS + (hasUnaryPattern ? 0 : 1);
+    const numEagerMultiPatterns =
+      this.context.config.qiMaxEagerMultipatterns + (hasUnaryPattern ? 0 : 1);
     let multiPatternIndex = 0;
     for (const pattern of patterns) {
       const isUnary = pattern.length === 1;

@@ -215,13 +215,16 @@ const PARAMETER_DEFAULTS = new Map([
   ["rewriter.hi_div0", "true"],
 ]);
 
-const UNPORTED_PARAMETERS = new Set([
-  "memory_max_alloc_count",
-  "memory_high_watermark",
-  "memory_high_watermark_mb",
-  "verbose",
-  "smt.qi.profile",
-  "smt.mbqi.trace",
+const UNPORTED_PARAMETER_DEFAULTS = new Map([
+  ["memory_max_alloc_count", "0"],
+  ["memory_high_watermark", "0"],
+  ["memory_high_watermark_mb", "0"],
+  ["verbose", "0"],
+  ["smt.qi.profile", "false"],
+  ["smt.qi.profile_freq", "4294967295"],
+  ["smt.qi.max_instances", "4294967295"],
+  ["smt.qi.persist_instances", "false"],
+  ["smt.mbqi.trace", "false"],
 ]);
 
 const BUILTIN_OPTIONS = new Set([
@@ -2303,10 +2306,11 @@ export const runSmtlibScript = (
                 : value.text;
           const name = getParameterName(keyword);
           const parameterValue = getParameterValue(name, text, value);
+          const defaultValue = UNPORTED_PARAMETER_DEFAULTS.get(name);
           if (
-            UNPORTED_PARAMETERS.has(name) &&
-            parameterValue !== "false" &&
-            Number(parameterValue) !== 0
+            defaultValue !== undefined &&
+            parameterValue !== defaultValue &&
+            Number(parameterValue) !== Number(defaultValue)
           )
             throw new SmtUnsupportedError(`the option :${name}`);
           settings.parameters.set(name, parameterValue);

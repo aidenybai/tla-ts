@@ -316,6 +316,48 @@ describe("the model finder, as Z3 5.3.2 reads a recursive function", () => {
   });
 });
 
+const getGroundPatternScript = (options: string[], check: string) => [
+  "(set-option :auto_config false)",
+  "(set-option :smt.mbqi false)",
+  "(set-option :smt.qi.lazy_threshold 10.0)",
+  ...options,
+  "(declare-fun p (Int) Bool)",
+  "(declare-fun q (Int) Bool)",
+  "(declare-fun r (Int) Bool)",
+  "(declare-fun s (Int) Bool)",
+  "(declare-fun a (Int) Bool)",
+  "(declare-fun w (Int) Bool)",
+  "(declare-fun h (Int) Int)",
+  "(declare-fun m (Int Int) Int)",
+  "(assert (p 0))",
+  "(assert (a 0))",
+  "(assert (s 9))",
+  "(assert (not (q 100)))",
+  "(assert (forall ((x Int)) (! (=> (p x) (and (p (+ x 1)) (r x) (q (h x)))) :pattern ((p x)))))",
+  "(assert (forall ((y Int)) (! (or (not (a y)) (not (r 9)) (forall ((z Int)) (! (w z) :pattern ((m z (h 9)))))) :pattern ((a y)))))",
+  "(assert (forall ((x Int)) (! (=> (s x) (= (h x) 100)) :pattern ((h x)))))",
+  check,
+  "(get-info :rlimit)",
+];
+
+const getMultiPatternScript = (options: string[], check: string) => [
+  "(set-option :auto_config false)",
+  "(set-option :smt.mbqi false)",
+  ...options,
+  "(declare-fun p (Int Int) Bool)",
+  "(declare-fun q (Int) Int)",
+  "(declare-fun r (Int) Int)",
+  "(declare-fun h (Int) Int)",
+  "(declare-fun k (Int) Int)",
+  "(declare-const a Int)",
+  "(declare-const b Int)",
+  "(assert (forall ((x Int) (y Int)) (! (p x y) :pattern ((q x) (r y)) :pattern ((h x) (k y)))))",
+  "(assert (= (h a) (k b)))",
+  "(assert (not (p a b)))",
+  check,
+  "(get-info :rlimit)",
+];
+
 describe("e-matching, as Z3 5.3.2 counts its steps", () => {
   it("counts the steps of the matcher and of the instantiation queue", () => {
     const lines = [
@@ -407,30 +449,42 @@ describe("e-matching, as Z3 5.3.2 counts its steps", () => {
   });
 
   it("lowers a ground pattern term to the generation of its quantifier", () => {
+    expect(run(getGroundPatternScript([], "(check-sat)"))).toEqual(["unsat", "(:rlimit 1893)"]);
+  });
+
+  it("keeps the generation of a term under smt.qi.update_generation false", () => {
+    const options = ["(set-option :smt.qi.update_generation false)"];
+    expect(run(getGroundPatternScript(options, "(check-sat)"))).toEqual([
+      "unknown",
+      "(:rlimit 2025)",
+    ]);
+    expect(run(getGroundPatternScript(options, "(check-sat-using smt)"))).toEqual([
+      "unknown",
+      "(:rlimit 1727)",
+    ]);
+  });
+
+  it("matches smt.qi.max_multi_patterns more multi-patterns eagerly", () => {
+    const options = ["(set-option :smt.qi.max_multi_patterns 1)"];
+    expect(run(getMultiPatternScript([], "(check-sat)"))).toEqual(["unsat", "(:rlimit 385)"]);
+    expect(run(getMultiPatternScript(options, "(check-sat)"))).toEqual(["unsat", "(:rlimit 362)"]);
+    expect(run(getMultiPatternScript(options, "(check-sat-using smt)"))).toEqual([
+      "unsat",
+      "(:rlimit 266)",
+    ]);
+  });
+
+  it("matches smt.qi.max_multi_patterns more multi-patterns eagerly in sat.euf", () => {
+    const options = ["(set-option :sat.euf true)"];
+    expect(run(getMultiPatternScript(options, "(check-sat)"))).toEqual(["unsat", "(:rlimit 175)"]);
     expect(
-      run([
-        "(set-option :auto_config false)",
-        "(set-option :smt.mbqi false)",
-        "(set-option :smt.qi.lazy_threshold 10.0)",
-        "(declare-fun p (Int) Bool)",
-        "(declare-fun q (Int) Bool)",
-        "(declare-fun r (Int) Bool)",
-        "(declare-fun s (Int) Bool)",
-        "(declare-fun a (Int) Bool)",
-        "(declare-fun w (Int) Bool)",
-        "(declare-fun h (Int) Int)",
-        "(declare-fun m (Int Int) Int)",
-        "(assert (p 0))",
-        "(assert (a 0))",
-        "(assert (s 9))",
-        "(assert (not (q 100)))",
-        "(assert (forall ((x Int)) (! (=> (p x) (and (p (+ x 1)) (r x) (q (h x)))) :pattern ((p x)))))",
-        "(assert (forall ((y Int)) (! (or (not (a y)) (not (r 9)) (forall ((z Int)) (! (w z) :pattern ((m z (h 9)))))) :pattern ((a y)))))",
-        "(assert (forall ((x Int)) (! (=> (s x) (= (h x) 100)) :pattern ((h x)))))",
-        "(check-sat)",
-        "(get-info :rlimit)",
-      ]),
-    ).toEqual(["unsat", "(:rlimit 1893)"]);
+      run(
+        getMultiPatternScript(
+          [...options, "(set-option :smt.qi.max_multi_patterns 1)"],
+          "(check-sat)",
+        ),
+      ),
+    ).toEqual(["unsat", "(:rlimit 147)"]);
   });
 });
 

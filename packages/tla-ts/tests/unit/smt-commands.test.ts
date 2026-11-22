@@ -4041,3 +4041,36 @@ describe("the options that turn on Z3's verbose output, which the port doesn't w
     ).toEqual(["sat"]);
   });
 });
+
+describe("the quantifier options the port doesn't port", () => {
+  it("throws at smt.qi.profile_freq, whose instance counts Z3 writes to stderr", () => {
+    expect(() => run(["(set-option :smt.qi.profile_freq 3)"])).toThrow(
+      new SmtUnsupportedError("the option :smt.qi.profile_freq"),
+    );
+  });
+
+  it("throws at smt.qi.max_instances, which cancels Z3's search", () => {
+    expect(() => run(["(set-option :smt.qi.max_instances 3)"])).toThrow(
+      new SmtUnsupportedError("the option :smt.qi.max_instances"),
+    );
+  });
+
+  it("throws at smt.qi.persist_instances, which reasserts instances on a re-search", () => {
+    expect(() => run(["(set-option :smt.qi.persist_instances true)"])).toThrow(
+      new SmtUnsupportedError("the option :smt.qi.persist_instances"),
+    );
+  });
+
+  it("accepts them at Z3's defaults", () => {
+    expect(
+      run([
+        "(set-option :smt.qi.profile_freq 4294967295)",
+        "(set-option :smt.qi.max_instances 4294967295)",
+        "(set-option :smt.qi.persist_instances false)",
+        "(declare-fun x () Int)",
+        "(assert (> x 0))",
+        "(check-sat)",
+      ]),
+    ).toEqual(["sat"]);
+  });
+});

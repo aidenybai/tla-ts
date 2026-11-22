@@ -397,6 +397,7 @@ export class Ematch {
   private nnf: Nnf;
   private subst: VarSubst;
   readonly isEnabled: boolean;
+  private readonly maxEagerMultipatterns: number;
 
   constructor(
     private ctx: EufSolver,
@@ -411,6 +412,7 @@ export class Ematch {
     this.nnf = new Nnf(manager, this.names);
     this.subst = new VarSubst(manager, true);
     this.isEnabled = parameters.get("smt.ematching") !== "false";
+    this.maxEagerMultipatterns = Number(parameters.get("smt.qi.max_multi_patterns") ?? "0");
     if (this.isEnabled) {
       ctx.egraph.onMerge.push((root, other) => this.onMerge(root, other));
       ctx.egraph.onMake = (node) => this.mam.addNode(node, false);
@@ -756,7 +758,7 @@ export class Ematch {
     this.initClauseWatch(clause);
     const patterns = manager.getQuantifier(q).patterns;
     const hasUnaryPattern = patterns.some((pattern) => manager.getNumArgs(pattern) === 1);
-    const numEagerMultiPatterns = hasUnaryPattern ? 0 : 1;
+    const numEagerMultiPatterns = this.maxEagerMultipatterns + (hasUnaryPattern ? 0 : 1);
     let numMultiPatterns = 0;
     for (const pattern of patterns) {
       const isUnary = manager.getNumArgs(pattern) === 1;
