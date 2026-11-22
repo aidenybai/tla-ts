@@ -1,4 +1,5 @@
 import {
+  createClassCastError,
   createModuleArgumentError,
   defineLazyOperator,
   defineOperator,
@@ -66,13 +67,11 @@ const toRecord = (value: Value) => {
   return fields.length === functionValue.domain.length ? createRecord(fields) : undefined;
 };
 
-const createClassCastError = (value: Value, javaClass: string) => {
-  const valueClass = `tlc2.value.impl.${getJavaClassName(value)}`;
-  const targetClass = `tlc2.value.impl.${javaClass}`;
-  return new TlaEvaluationError(
-    `class ${valueClass} cannot be cast to class ${targetClass} (${valueClass} and ${targetClass} are in unnamed module of loader 'app')`,
+const createValueCastError = (value: Value, javaClass: string) =>
+  createClassCastError(
+    `tlc2.value.impl.${getJavaClassName(value)}`,
+    `tlc2.value.impl.${javaClass}`,
   );
-};
 
 const createUnsupportedError = (value: Value) =>
   new TlaEvaluationError(
@@ -182,7 +181,7 @@ export const getPath = (value: Value) => {
 
 const getStringOption = (options: Value, field: string) => {
   const value = applyFunction(options, field);
-  if (typeof value !== "string") throw createClassCastError(value, "StringValue");
+  if (typeof value !== "string") throw createValueCastError(value, "StringValue");
   return value;
 };
 
@@ -373,11 +372,11 @@ export const createIoUtilsOperators = (
         }
         const openOptions = applyFunction(options, "openOptions");
         if (getJavaClassName(openOptions) !== "TupleValue") {
-          throw createClassCastError(openOptions, "TupleValue");
+          throw createValueCastError(openOptions, "TupleValue");
         }
         const charset = getStringOption(options, "charset");
         const names = toFiniteFunction(openOptions).range.map((option) => {
-          if (typeof option !== "string") throw createClassCastError(option, "StringValue");
+          if (typeof option !== "string") throw createValueCastError(option, "StringValue");
           return option;
         });
         checkCharset(charset);

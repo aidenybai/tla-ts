@@ -1,15 +1,81 @@
-import { gzipSync } from "node:zlib";
-import { defineStateOperator, getValue, overrideWithJava } from "../builtins";
+import { constants, crc32, gzipSync, inflateRawSync } from "node:zlib";
+import {
+  createClassCastError,
+  defineOperator,
+  defineStateOperator,
+  getJavaClassName,
+  getValue,
+  overrideWithJava,
+} from "../builtins";
+import { TlaCorruptTraceError, TlaEvaluationError } from "../errors";
 import type { Builtin } from "../evaluate";
 import { getPath, type FileSystem } from "../json";
 import {
+  createFunction,
+  createRecord,
+  createSet,
+  createTuple,
   getFunctionClass,
   getModelValues,
   isSetValue,
+  rankString,
   toFiniteFunction,
   toFiniteSet,
   type Value,
 } from "../values";
+
+interface GzipHeader {
+  kind: "Header";
+  end: number;
+}
+
+interface MalformedHeader {
+  kind: "Malformed";
+  message: string;
+}
+
+interface CutShortHeader {
+  kind: "CutShort";
+}
+
+interface InflatedMember {
+  buffer: Uint8Array;
+  engine: { bytesWritten: number };
+}
+
+interface CompleteMember {
+  kind: "Complete";
+  output: Uint8Array;
+  end: number;
+}
+
+interface FailedMember {
+  kind: "Failed";
+  output: Uint8Array;
+  failure: TlaEvaluationError;
+}
+
+interface NameHandle {
+  kind: "Name";
+  name: string;
+}
+
+interface ValueHandle {
+  kind: "Value";
+  value: Value;
+}
+
+type Handle = NameHandle | ValueHandle;
+
+const GZIP_MAGIC = 0x8b1f;
+
+const GZIP_FLAGS = { headerCrc: 2, extra: 4, name: 8, comment: 16 };
+
+const GZIP_BUFFER_SIZE = 512;
+
+const STREAM_BUFFER_SIZE = 8192;
+
+const HANDLE_TABLE_SIZE = 16;
 
 const TAGS = {
   boolean: 0,
@@ -127,7 +193,324 @@ const serializeValue = (value: Value) => {
   return gzipSync(Uint8Array.from(bytes));
 };
 
+// Deviation from TLC: GZIPInputStream and BufferedDataInputStream throw an EOFException without a message, so TLC prints its stack trace.
+const createCutShortError = (path: string) => new TlaCorruptTraceError(path, "is cut short");
+
+const readUShort = (bytes: Uint8Array, position: number) =>
+  bytes[position] | (bytes[position + 1] << 8);
+
+const readUInt = (bytes: Uint8Array, position: number) =>
+  (readUShort(bytes, position) | (readUShort(bytes, position + 2) << 16)) >>> 0;
+
+const readGzipHeader = (
+  bytes: Uint8Array,
+  start: number,
+): GzipHeader | MalformedHeader | CutShortHeader => {
+  const cutShort: CutShortHeader = { kind: "CutShort" };
+  if (start + 2 > bytes.length) return cutShort;
+  if (readUShort(bytes, start) !== GZIP_MAGIC) {
+    return { kind: "Malformed", message: "Not in GZIP format" };
+  }
+  if (start + 3 > bytes.length) return cutShort;
+  if (bytes[start + 2] !== 8) {
+    return { kind: "Malformed", message: "Unsupported compression method" };
+  }
+  if (start + 10 > bytes.length) return cutShort;
+  const flags = bytes[start + 3];
+  let end = start + 10;
+  if (flags & GZIP_FLAGS.extra) {
+    if (end + 2 > bytes.length) return cutShort;
+    end += 2 + readUShort(bytes, end);
+    if (end > bytes.length) return cutShort;
+  }
+  for (const flag of [GZIP_FLAGS.name, GZIP_FLAGS.comment]) {
+    if (flags & flag) {
+      const terminator = bytes.indexOf(0, end);
+      if (terminator === -1) return cutShort;
+      end = terminator + 1;
+    }
+  }
+  if (flags & GZIP_FLAGS.headerCrc) {
+    if (end + 2 > bytes.length) return cutShort;
+    if (readUShort(bytes, end) !== (crc32(bytes.subarray(start, end)) & 0xffff)) {
+      return { kind: "Malformed", message: "Corrupt GZIP header" };
+    }
+    end += 2;
+  }
+  return { kind: "Header", end };
+};
+
+const isZlibError = (error: unknown, code: string): error is Error =>
+  error instanceof Error && "code" in error && error.code === code;
+
+const inflatePrefix = (bytes: Uint8Array, start: number, end: number) =>
+  inflateRawSync(bytes.subarray(start, end), { finishFlush: constants.Z_SYNC_FLUSH });
+
+const hasDataError = (bytes: Uint8Array, start: number, end: number) => {
+  try {
+    inflatePrefix(bytes, start, end);
+    return false;
+  } catch (error) {
+    if (isZlibError(error, "Z_DATA_ERROR")) return true;
+    throw error;
+  }
+};
+
+// GZIPInputStream inflates 512 input bytes at a time into reads of at most 8192 bytes, and a read that meets bad data returns none of it.
+const getOutputBeforeDataError = (bytes: Uint8Array, start: number, bufferStart: number) => {
+  let low = start;
+  let high = bytes.length;
+  while (high - low > 1) {
+    const middle = Math.floor((low + high) / 2);
+    if (hasDataError(bytes, start, middle)) high = middle;
+    else low = middle;
+  }
+  const chunkStart = Math.max(
+    start,
+    bufferStart + GZIP_BUFFER_SIZE * Math.floor((low - bufferStart) / GZIP_BUFFER_SIZE),
+  );
+  const chunkOutput = inflatePrefix(bytes, start, chunkStart).length;
+  const output = inflatePrefix(bytes, start, low);
+  return output.subarray(
+    0,
+    chunkOutput +
+      STREAM_BUFFER_SIZE * Math.floor((output.length - chunkOutput) / STREAM_BUFFER_SIZE),
+  );
+};
+
+const inflateMember = (
+  bytes: Uint8Array,
+  start: number,
+  bufferStart: number,
+): CompleteMember | FailedMember => {
+  try {
+    const member = inflateRawSync(bytes.subarray(start), {
+      info: true,
+    }) as unknown as InflatedMember;
+    return { kind: "Complete", output: member.buffer, end: start + member.engine.bytesWritten };
+  } catch (error) {
+    if (isZlibError(error, "Z_BUF_ERROR")) {
+      return {
+        kind: "Failed",
+        output: inflatePrefix(bytes, start, bytes.length),
+        failure: new TlaEvaluationError("Unexpected end of ZLIB input stream"),
+      };
+    }
+    if (!isZlibError(error, "Z_DATA_ERROR")) throw error;
+    return {
+      kind: "Failed",
+      output: getOutputBeforeDataError(bytes, start, bufferStart),
+      failure: new TlaEvaluationError(error.message),
+    };
+  }
+};
+
+const gunzipLikeJava = (bytes: Uint8Array, path: string) => {
+  const header = readGzipHeader(bytes, 0);
+  if (header.kind === "CutShort") throw createCutShortError(path);
+  if (header.kind === "Malformed") throw new TlaEvaluationError(header.message);
+  const members: Uint8Array[] = [];
+  const finish = (failure: TlaEvaluationError | undefined) => {
+    const data = new Uint8Array(members.reduce((total, member) => total + member.length, 0));
+    let offset = 0;
+    for (const member of members) {
+      data.set(member, offset);
+      offset += member.length;
+    }
+    return { data, failure };
+  };
+  let start = header.end;
+  let bufferStart = header.end;
+  while (true) {
+    const member = inflateMember(bytes, start, bufferStart);
+    members.push(member.output);
+    if (member.kind === "Failed") return finish(member.failure);
+    const trailer = member.end;
+    if (trailer + 4 > bytes.length) return finish(createCutShortError(path));
+    if (readUInt(bytes, trailer) !== crc32(member.output)) {
+      return finish(new TlaEvaluationError("Corrupt GZIP trailer"));
+    }
+    if (trailer + 8 > bytes.length) return finish(createCutShortError(path));
+    if (readUInt(bytes, trailer + 4) !== member.output.length % 2 ** 32) {
+      return finish(new TlaEvaluationError("Corrupt GZIP trailer"));
+    }
+    const next = readGzipHeader(bytes, trailer + 8);
+    if (next.kind !== "Header") return finish(undefined);
+    const bufferEnd = Math.min(
+      bytes.length,
+      bufferStart + GZIP_BUFFER_SIZE * Math.ceil((trailer - bufferStart) / GZIP_BUFFER_SIZE),
+    );
+    if (bufferEnd <= next.end) bufferStart = next.end;
+    start = next.end;
+  }
+};
+
+const deserializeValue = (bytes: Uint8Array, path: string) => {
+  const stream = gunzipLikeJava(bytes, path);
+  const data = stream.data;
+  const failure = stream.failure;
+  // ValueInputStream reads through two BufferedDataInputStreams, which fill 8192 bytes at a time and refill as they read the last.
+  const failureEnd =
+    STREAM_BUFFER_SIZE * Math.max(0, Math.ceil(data.length / STREAM_BUFFER_SIZE) - 1);
+  if (failure !== undefined && failureEnd === 0) throw failure;
+  const modelValues = getModelValues();
+  const handles: (Handle | undefined)[] = [];
+  let capacity = HANDLE_TABLE_SIZE;
+  let position = 0;
+  const readUnsignedByte = () => {
+    if (position === data.length) throw createCutShortError(path);
+    const byte = data[position++];
+    if (failure !== undefined && position === failureEnd) throw failure;
+    return byte;
+  };
+  const readByte = () => (readUnsignedByte() << 24) >> 24;
+  const readShort = () => (readByte() << 8) | readUnsignedByte();
+  const readInt = () => (readShort() << 16) | (readShort() & 0xffff);
+  const readNat = () => {
+    const first = readShort();
+    return first >= 0 ? first : -((first << 16) | (readShort() & 0xffff)) | 0;
+  };
+  // Deviation from TLC: createFromExternal allocates an array of the length the file gives before it reads the elements, so a length too large for the heap throws an OutOfMemoryError.
+  const checkLength = (length: number) => {
+    if (length < 0) throw new TlaEvaluationError(String(length));
+    return length;
+  };
+  const getIndex = () => {
+    if (handles.length >= capacity) capacity = handles.length * 2;
+    handles.push(undefined);
+    return handles.length - 1;
+  };
+  const getHandle = (index: number) => {
+    if (index < 0 || index >= capacity) {
+      throw new TlaEvaluationError(`Index ${index} out of bounds for length ${capacity}`);
+    }
+    const handle = handles[index];
+    // Deviation from TLC: HandleTable#getValue gives null for a value it hasn't read, and TLC fails on it later with a NullPointerException.
+    if (handle === undefined) {
+      throw new TlaCorruptTraceError(path, `refers to value ${index} before it defines that value`);
+    }
+    return handle;
+  };
+  const readUniqueString = () => {
+    readInt();
+    readInt();
+    const length = checkLength(readInt());
+    let text = "";
+    // Deviation from TLC: BufferedDataInputStream#readString sign-extends each byte, so TLC reads a character from U+0080 to U+00FF that its writer kept, such as é, as U+FF80 to U+FFFF.
+    for (let index = 0; index < length; index++) text += String.fromCharCode(readUnsignedByte());
+    return rankString(text);
+  };
+  const readExternal = (): Value => {
+    const kind = readByte();
+    if (kind === TAGS.boolean) return readByte() !== 0;
+    if (kind === TAGS.integer) return readInt();
+    if (kind === TAGS.string) {
+      const text = readUniqueString();
+      handles[getIndex()] = { kind: "Value", value: text };
+      return text;
+    }
+    if (kind === TAGS.modelValue) {
+      const index = readShort();
+      if (index < 0 || index >= modelValues.length) {
+        throw new TlaEvaluationError(
+          `Index ${index} out of bounds for length ${modelValues.length}`,
+        );
+      }
+      return modelValues[index];
+    }
+    if (kind === TAGS.interval) return { kind: "Interval", low: readInt(), high: readInt() };
+    if (kind === TAGS.record) {
+      const index = getIndex();
+      const length = checkLength(Math.abs(readInt()) | 0);
+      const fields: [string, Value][] = [];
+      for (let field = 0; field < length; field++) {
+        if (readByte() === TAGS.handle) {
+          const handle = getHandle(readNat());
+          if (handle.kind === "Value") {
+            throw createClassCastError(
+              `tlc2.value.impl.${getJavaClassName(handle.value)}`,
+              "util.UniqueString",
+            );
+          }
+          fields.push([handle.name, readExternal()]);
+        } else {
+          const nameIndex = getIndex();
+          const name = readUniqueString();
+          handles[nameIndex] = { kind: "Name", name };
+          fields.push([name, readExternal()]);
+        }
+      }
+      const record = createRecord(fields);
+      handles[index] = { kind: "Value", value: record };
+      return record;
+    }
+    if (kind === TAGS.function) {
+      const index = getIndex();
+      const nat = readNat();
+      const isInterval = readByte() === 0;
+      const length = checkLength(nat);
+      const pairs: [Value, Value][] = [];
+      if (isInterval) {
+        const low = readInt();
+        const high = readInt();
+        for (let element = 0; element < length; element++) {
+          pairs.push([low + element, readExternal()]);
+        }
+        // Deviation from TLC: FcnRcdValue#createFromExternal pairs an interval domain with however many values follow it.
+        if (high - low + 1 !== length) {
+          throw new TlaCorruptTraceError(
+            path,
+            `holds a function from ${low}..${high} with ${length} values`,
+          );
+        }
+      } else {
+        for (let element = 0; element < length; element++) {
+          pairs.push([readExternal(), readExternal()]);
+        }
+      }
+      const functionValue = createFunction(pairs);
+      handles[index] = { kind: "Value", value: functionValue };
+      return functionValue;
+    }
+    if (kind === TAGS.set) {
+      const index = getIndex();
+      const length = checkLength(Math.abs(readInt()) | 0);
+      const elements: Value[] = [];
+      for (let element = 0; element < length; element++) elements.push(readExternal());
+      const set = createSet(elements);
+      handles[index] = { kind: "Value", value: set };
+      return set;
+    }
+    if (kind === TAGS.tuple) {
+      const index = getIndex();
+      const length = checkLength(readNat());
+      const elements: Value[] = [];
+      for (let element = 0; element < length; element++) elements.push(readExternal());
+      const tuple = createTuple(elements);
+      handles[index] = { kind: "Value", value: tuple };
+      return tuple;
+    }
+    if (kind === TAGS.handle) {
+      const handle = getHandle(readNat());
+      if (handle.kind === "Name") {
+        throw createClassCastError("util.UniqueString", "tlc2.value.IValue");
+      }
+      return handle.value;
+    }
+    throw new TlaEvaluationError(`ValueInputStream: Can not unpickle a value of kind ${kind}`);
+  };
+  return readExternal();
+};
+
 export const createTlcTraceOperators = (files: FileSystem): Builtin[] => [
+  overrideWithJava(
+    defineOperator("_TLCTraceDeserialize", 1, (args) => {
+      const path = getPath(getValue(args, 0, "_TLCTraceDeserialize"));
+      const bytes = files.readFile?.(path);
+      return bytes === undefined ? createRecord([]) : deserializeValue(bytes, path);
+    }),
+    "public static final tlc2.value.IValue tlc2.module._TLCTrace.ioDeserialize(tlc2.value.impl.StringValue) throws java.io.IOException",
+  ),
   overrideWithJava(
     defineStateOperator("_TLCTraceSerialize", 2, (args) => {
       const path = getPath(getValue(args, 1, "_TLCTraceSerialize"));
