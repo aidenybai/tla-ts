@@ -633,17 +633,17 @@ describe("compiles scripts by specializing ESCore", () => {
   });
 
   describe("repeats a class of strings over a long string as RepeatMatcher does", () => {
-    const getSource = (expected: string) => `
+    const getSource = (expected: string, length = 4000) => `
       const result = [
-        /^[\\q{ab|c}]+$/v.test("ab".repeat(4000) + "c"),
+        /^[\\q{ab|c}]+$/v.test("ab".repeat(${length}) + "c"),
         /^[\\q{abc|ab|a}]+$/v.exec("abcab")?.[0],
         /^[\\q{ab|a}]+b$/v.exec("ab")?.[0],
         /[\\q{ab|a}]{2}/v.exec("aab")?.[0],
         /[\\q{xy|x}]{2,3}/v.exec("xyxyxyx")?.[0],
-        /^\\p{RGI_Emoji}+$/v.test("😀👍🏽".repeat(1000)),
+        /^\\p{RGI_Emoji}+$/v.test("😀👍🏽".repeat(${length / 4})),
         /[\\q{ab|a}]+?/v.exec("abab")?.[0],
-        /^[\\q{aa|1}]+$/iv.test("aA1".repeat(2000)),
-        /^[\\q{ab|c}]+$/v.test("ab".repeat(4000) + "d"),
+        /^[\\q{aa|1}]+$/iv.test("aA1".repeat(${length / 2})),
+        /^[\\q{ab|c}]+$/v.test("ab".repeat(${length}) + "d"),
         /[\\q{ab|a}]*c/v.exec("abaabc")?.[0],
         /^[\\q{abc|ab|a}]{2,4}c$/v.exec("abcabcabc")?.[0],
         /^(?:[\\q{ab|a}]{3})+$/v.test("abaab"),
@@ -670,6 +670,18 @@ describe("compiles scripts by specializing ESCore", () => {
         ).message,
       ).toContain(THREW);
     }, 600_000);
+
+    // The script's run reaches ESCore's Asserts, so the check's LET of it evaluates at each
+    // reference, as TLC's does, rather than run the script again at each reference to what it kept.
+    it("rejects another result over a shorter string in a check's time", async () => {
+      expect(
+        (
+          await checkScript(
+            getSource("true,abcab,ab,aab,xyxyxy,true,ab,true,false,abaabc,abcabc,true", 1200),
+          )
+        ).message,
+      ).toContain(THREW);
+    });
   });
 
   describe("stops where a code point folds to a ClassString of one code point under the i and v flags", () => {
