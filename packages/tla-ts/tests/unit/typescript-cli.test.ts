@@ -1158,9 +1158,8 @@ describe("the CLI with TypeScript files", () => {
     expect(result.stdout).toContain("tla-ts can't give the source text of the host's function");
   });
 
-  // A program whose TLA+ code passes the most that a check parses and runs within Node's default
-  // heap stops before the check reads it, as one of 150,000 numbers does, where a check would run out
-  // of memory, as one of Effect's modules did.
+  // A program whose TLA+ code passes the most that a check parses within Node's default heap stops
+  // before the check reads it, as one of 230,000 numbers does.
   describe("checks a program within the TLA+ code that Node's default heap holds", () => {
     const getScript = (count: number, expected: number) =>
       `const values = [${Array.from({ length: count }, (_, index) => `${index}.5`).join(", ")}];\nif (values.length !== ${expected}) throw new RangeError("length " + values.length);\n`;
@@ -1182,12 +1181,12 @@ describe("the CLI with TypeScript files", () => {
 
     it("stops at a program whose TLA+ code passes the bound", () => {
       const directory = copyFixtures("passing");
-      writeFileSync(join(directory, "values.mjs"), getScript(150_000, 150_000));
+      writeFileSync(join(directory, "values.mjs"), getScript(230_000, 230_000));
       expect(runNode(directory, "values.mjs").status).toBe(0);
       const result = runCli(directory, ["values.mjs"]);
       expect([0, 1]).not.toContain(result.status);
       expect(result.stderr).toContain(
-        "tla-ts can't check a program whose TLA+ spec has more than 33000000 characters",
+        "tla-ts can't check a program whose TLA+ spec has more than 55000000 characters",
       );
     });
   });
