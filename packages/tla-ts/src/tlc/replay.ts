@@ -1069,7 +1069,13 @@ const visitApplication = (
         return visit(
           replay,
           expression.action,
-          createItem("Changed", expression.subscript, scope, node, items),
+          createItem(
+            "Changed",
+            expression.subscript,
+            scope,
+            getNode(replay, node, expression.subscript),
+            items,
+          ),
           scope,
           partial,
           node,

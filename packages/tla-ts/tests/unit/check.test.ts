@@ -2745,6 +2745,86 @@ ASSUME TLCFP(a) = -887695703
     expect(reads.printed).toEqual(["<<773>>", "<<768>>", "<<484>>", "<<730>>"]);
   });
 
+  const SUBSCRIPTED_NEXT =
+    "VARIABLES y, z\nInit == y = 0 /\\ z = 0\nNext == \\/ /\\ <<y' = (y + 1) % 3>>_<<y, y + 1>>\n           /\\ <<z' = 1 - z>>_z\n        \\/ <<y' = y /\\ z' = z>>_<<y, z>>";
+  const SUBSCRIPTED_NEXT_STEPS = [
+    "line 7, col 14 to line 7, col 19 of module M: 0",
+    "|line 7, col 19 to line 7, col 19 of module M: 6",
+    "line 7, col 24 to line 7, col 29 of module M: 0",
+    "|line 7, col 29 to line 7, col 29 of module M: 6",
+    "line 7, col 33 to line 7, col 40 of module M: 12",
+  ];
+
+  it.each([
+    [
+      "VARIABLE y\nInit == y = 0\nNext == <<y' = (y + 1) % 3>>_y",
+      false,
+      [
+        ["line 4, col 9 to line 4, col 13 of module M: 1"],
+        [
+          "line 5, col 11 to line 5, col 26 of module M: 3",
+          "line 5, col 30 to line 5, col 30 of module M: 9",
+        ],
+      ],
+    ],
+    [
+      SUBSCRIPTED_NEXT,
+      false,
+      [
+        ["line 4, col 9 to line 4, col 22 of module M: 1"],
+        [
+          "line 5, col 17 to line 5, col 32 of module M: 6",
+          "line 5, col 36 to line 5, col 47 of module M: 18",
+          "|line 5, col 38 to line 5, col 38 of module M: 12",
+          "|line 5, col 41 to line 5, col 45 of module M: 12",
+          "line 6, col 17 to line 6, col 26 of module M: 6",
+          "line 6, col 30 to line 6, col 30 of module M: 18",
+        ],
+        SUBSCRIPTED_NEXT_STEPS,
+      ],
+    ],
+    [
+      SUBSCRIPTED_NEXT,
+      true,
+      [
+        ["line 4, col 9 to line 4, col 22 of module M: 1"],
+        [
+          "line 5, col 17 to line 5, col 32 of module M: 6",
+          "line 5, col 36 to line 5, col 47 of module M: 18",
+          "|line 5, col 38 to line 5, col 38 of module M: 12",
+          "|line 5, col 41 to line 5, col 45 of module M: 12",
+          "line 6, col 17 to line 6, col 26 of module M: 6",
+          "line 6, col 30 to line 6, col 30 of module M: 12",
+        ],
+        SUBSCRIPTED_NEXT_STEPS,
+      ],
+    ],
+    [
+      "VARIABLE y\nInit == y = 0\nNext == /\\ ENABLED <<y' = (y + 1) % 3>>_<<y, y + 1>>\n        /\\ y' = (y + 1) % 3",
+      false,
+      [
+        ["line 4, col 9 to line 4, col 13 of module M: 1"],
+        [
+          "line 5, col 12 to line 5, col 52 of module M: 6",
+          "|line 5, col 22 to line 5, col 37 of module M: 3",
+          "|line 5, col 41 to line 5, col 52 of module M: 6",
+          "line 6, col 12 to line 6, col 27 of module M: 3",
+        ],
+      ],
+    ],
+  ])(
+    "counts e of <<A>>_e in the next-state relation %j with warnings on (%s) at e, for each evaluation and each successor it lets through, as TLC's Tool#getNextStates conses e with its own cost model",
+    async (definitions, isWarningEnabled, lines) => {
+      const result = await check({
+        source: `---- MODULE M ----\nEXTENDS Naturals\n${definitions}\n====\n`,
+        config: "INIT Init\nNEXT Next\n",
+        coverage: 1,
+        isWarningEnabled,
+      });
+      expect(formatCoverage(result)).toEqual(lines);
+    },
+  );
+
   it("records the nested instance a call from one instanced definition to another enters, as TLC does", async () => {
     const result = await check(getInnerCallCheck(EXPLICIT, "I!YErr", NESTED_CALLS));
     const ranges = result.failure?.callStack?.flatMap((expression, index, expressions) => {
