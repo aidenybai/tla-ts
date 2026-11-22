@@ -34,6 +34,19 @@ Init ==
 Next == FALSE
 Spec == Init /\ [][Next]_vars`);
 
+// A declaration at the top level of the file, by where its text is, with the definitions of the
+// program's code that it compiles to.
+export interface SourceRegion {
+  name: string;
+  start: number;
+  end: number;
+  definitions: string[];
+}
+
+export interface EscoreCompiled extends CompiledSpec {
+  regions: SourceRegion[];
+}
+
 // What compile gives on ESCore: a script's spec, which runs it as Node does, or a model's, whose
 // steps call its exported functions, whose frame TypeScript's types give with its declaration
 // files, parsed once in library by a host that compiles many models. A host without a file
@@ -42,7 +55,7 @@ export const compileEscore = (
   options: CompileOptions,
   runtime: EscoreRuntime,
   library = options.libraries === undefined ? undefined : createLibrary(options.libraries),
-): CompiledSpec => {
+): EscoreCompiled => {
   const fileName = options.fileName ?? "spec.ts";
   const sourceFile = ts.createSourceFile(fileName, options.source, ts.ScriptTarget.ESNext, true);
   // A module whose exported functions the model calls none of runs as a script.
@@ -69,5 +82,28 @@ export const compileEscore = (
       : spec.config,
     loadModule: spec.loadModule,
     preparedModules: spec.preparedModules,
+    // The program's code is of the file as tla-ts rewrote it, so a region finds its declaration in
+    // the file's own text by the first name it declares.
+    regions: spec.regions.flatMap((region) => {
+      const declaration = sourceFile.statements.find((statement) =>
+        ts.isVariableStatement(statement)
+          ? statement.declarationList.declarations.some(
+              (declared) =>
+                ts.isIdentifier(declared.name) && declared.name.text === region.names[0],
+            )
+          : (ts.isFunctionDeclaration(statement) || ts.isClassDeclaration(statement)) &&
+            statement.name?.text === region.names[0],
+      );
+      return declaration === undefined
+        ? []
+        : [
+            {
+              name: region.names[0],
+              start: declaration.getStart(),
+              end: declaration.end,
+              definitions: region.definitions,
+            },
+          ];
+    }),
   };
 };

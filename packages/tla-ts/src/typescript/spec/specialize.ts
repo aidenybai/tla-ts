@@ -80,8 +80,16 @@ export interface ProgramFile {
   isRejected?: boolean;
 }
 
+// A declaration at the top level of the program's first file, with the definitions of the program's
+// code that it compiles to, which a host shows beside it.
+export interface ProgramRegion {
+  names: string[];
+  definitions: string[];
+}
+
 export interface SpecializedProgram {
   definitions: GeneratedDefinition[];
+  regions: ProgramRegion[];
   words: Set<string>;
   // The names the program's identifiers resolve, which may be the global object's.
   identifiers: Set<string>;
@@ -922,6 +930,30 @@ export const specialize = (
   const loops: { id: number; body: string }[] = [];
   let count = 0;
   let templateSites = 0;
+  const regions: ProgramRegion[] = [];
+  let isInRegion = false;
+  // Records the definitions that compiling a declaration at the top of the first file adds.
+  const inRegion = <Compiled>(node: ts.Node, compile: () => Compiled): Compiled => {
+    const names = ts.isVariableStatement(node)
+      ? getDeclaredNames(node.declarationList)
+      : (ts.isFunctionDeclaration(node) || ts.isClassDeclaration(node)) && node.name !== undefined
+        ? [node.name.text]
+        : [];
+    if (isInRegion || node.parent !== files[0].sourceFile || names.length === 0) return compile();
+    isInRegion = true;
+    const first = { definition: definitions.length, code: codes.length, loop: loops.length };
+    const compiled = compile();
+    isInRegion = false;
+    const added = [
+      ...definitions.slice(first.definition).map((definition) => definition.name),
+      ...codes.slice(first.code).map((code) => `Code${code.id}`),
+      ...loops.slice(first.loop).map((loop) => `Loop${loop.id}`),
+    ];
+    // A function declaration compiles where its scope instantiates it, and adds nothing where
+    // its statement runs.
+    if (added.length > 0) regions.push({ names, definitions: added });
+    return compiled;
+  };
   // The names that the top level of the module being compiled declares, which its code never
   // resolves to the global object's.
   let moduleNames: ReadonlySet<string> = new Set();
@@ -2144,17 +2176,18 @@ export const specialize = (
   };
 
   // InstantiateFunctionObject (§15.2.4): a result [s, c] with the function object.
-  const instantiateFunction = (node: ts.FunctionDeclaration, scope: Scope): Code => {
-    const flavor = getFlavor(node);
-    const code = functionCode(
-      { node, parameters: node.parameters, body: node.body, kind: "normal" },
-      scope,
-    );
-    return defineCode(
-      "Instantiate",
-      `LET f == CodeFunctionCreate(s, Intrinsic(s, "${FUNCTION_PROTOTYPES[flavor]}"), ${code}, FALSE, ctx.lex, ctx.priv) IN Ok(GiveFunctionPrototype(SetFunctionName(f.s, f.v, ${getStr(node.name?.text ?? "default")}, <<>>), "${FUNCTION_PRODUCTIONS[flavor]}Declaration", f.v), f.v)`,
-    );
-  };
+  const instantiateFunction = (node: ts.FunctionDeclaration, scope: Scope): Code =>
+    inRegion(node, () => {
+      const flavor = getFlavor(node);
+      const code = functionCode(
+        { node, parameters: node.parameters, body: node.body, kind: "normal" },
+        scope,
+      );
+      return defineCode(
+        "Instantiate",
+        `LET f == CodeFunctionCreate(s, Intrinsic(s, "${FUNCTION_PROTOTYPES[flavor]}"), ${code}, FALSE, ctx.lex, ctx.priv) IN Ok(GiveFunctionPrototype(SetFunctionName(f.s, f.v, ${getStr(node.name?.text ?? "default")}, <<>>), "${FUNCTION_PRODUCTIONS[flavor]}Declaration", f.v), f.v)`,
+      );
+    });
 
   // A function's code: the record that its function objects hold as their body, whose id
   // CallCode dispatches on to the body that FunctionDeclarationInstantiation (§10.2.11) and the
@@ -2640,7 +2673,9 @@ export const specialize = (
   };
 
   // The completion of a statement (§14).
-  const statement = (node: ts.Statement, scope: Scope, labels: string[]): Code => {
+  const statement = (node: ts.Statement, scope: Scope, labels: string[]): Code =>
+    inRegion(node, () => declaredStatement(node, scope, labels));
+  const declaredStatement = (node: ts.Statement, scope: Scope, labels: string[]): Code => {
     if (ts.isExpressionStatement(node)) return value(node.expression, scope);
     if (ts.isVariableStatement(node)) return declarationList(node.declarationList, scope);
     if (ts.isFunctionDeclaration(node)) {
@@ -3572,6 +3607,7 @@ export const specialize = (
       },
       ...definitions,
     ],
+    regions,
     words,
     identifiers,
     isAsync,
