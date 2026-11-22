@@ -43,6 +43,7 @@ describe("typed tier matches TLC", () => {
     ["SymmetricFunctions", 1361],
     ["SymmetricCounters", 1102],
     ["SubsetOrder", 20],
+    ["SubsetUnions", 1033],
     ["ActionProperties", 34],
     ["RecordMembership", 18],
     ["MaskGroups", 97],
@@ -163,6 +164,7 @@ describe("typed tier matches TLC", () => {
     ["LiveViolation", "invariant-violation", "Short", [21, 12, 1, 6, 6]],
     ["SymmetricViolation", "invariant-violation", "Few", [20, 9, 1, 6, 6]],
     ["ViolatedStep", "liveness-violation", "Monotone", [37, 23, 3, 8, 8]],
+    ["SubsetUnionViolation", "invariant-violation", "Small", [13, 13, 10, 3, 3]],
   ])(
     "reports where %s breaks a property as TLC does, as the interpreter does",
     async (name, status, property, counts) => {

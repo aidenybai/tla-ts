@@ -1975,6 +1975,8 @@ const compileKeys = (target: Compiled): Compiled | undefined => {
 const rejectStreamedBound = (program: Program, set: Expression, scope: TierScope) => {
   // compileBound streams a constant set to find its duplicates.
   if (isConstantExpression(program, set, scope)) return;
+  // TLC's SubsetValue#elements normalizes the base before it enumerates subsets, so none repeats.
+  if (set.kind === "Apply" && set.operator === "SUBSET") return;
   const visited = new Set<OperatorDefinition>();
   const check = (root: Expression, inner: TierScope) => {
     if (isExpressionImpure([root], program.environment, "streamed")) unsupported();
