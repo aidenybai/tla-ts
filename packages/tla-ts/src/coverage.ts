@@ -867,6 +867,15 @@ export const runInCoverageFrames = <Result>(
   }
 };
 
+export const runAtFrameDepth = <Result>(coverage: Coverage, depth: number, run: () => Result) => {
+  const hidden = coverage.frames.splice(depth);
+  try {
+    return run();
+  } finally {
+    coverage.frames.push(...hidden);
+  }
+};
+
 export const getSubstitutionNode = (
   coverage: Coverage,
   substitution: Substitution,

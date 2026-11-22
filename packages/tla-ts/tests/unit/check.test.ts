@@ -2825,6 +2825,98 @@ ASSUME TLCFP(a) = -887695703
     },
   );
 
+  const INSTANCE_OP2_LINES = [
+    "line 5, col 8 to line 5, col 12 of module Q: 4",
+    "|line 5, col 8 to line 5, col 8 of module Q: 2",
+    "|line 5, col 12 to line 5, col 12 of module Q: 2",
+    "line 5, col 17 to line 5, col 21 of module Q: 4",
+    "|line 5, col 17 to line 5, col 17 of module Q: 2",
+    "|line 5, col 21 to line 5, col 21 of module Q: 2",
+  ];
+  const INSTANCE_A2_LINES = [
+    "line 7, col 7 to line 7, col 11 of module Q: 4",
+    "|line 7, col 7 to line 7, col 7 of module Q: 2",
+    "|line 7, col 11 to line 7, col 11 of module Q: 2",
+    "line 7, col 16 to line 7, col 31 of module Q: 2",
+  ];
+
+  it.each([
+    [
+      "Next == J!Op2 /\\ <<Step>>_<<y, J!Op2>> /\\ J!Op2",
+      true,
+      10,
+      [
+        ...INSTANCE_OP2_LINES,
+        "line 8, col 20 to line 8, col 23 of module M: 2",
+        "line 8, col 27 to line 8, col 38 of module M: 4",
+        "line 8, col 43 to line 8, col 47 of module M: 2",
+        "|line 4, col 27 to line 4, col 37 of module M: 10",
+        "|line 4, col 45 to line 4, col 45 of module M: 10",
+        "|line 5, col 8 to line 5, col 21 of module Q: 2",
+      ],
+    ],
+    [
+      "Next == J!Op2 /\\ <<Step>>_<<y, J!Op2>> /\\ J!Op2",
+      false,
+      12,
+      [
+        ...INSTANCE_OP2_LINES,
+        "line 8, col 20 to line 8, col 23 of module M: 2",
+        "line 8, col 27 to line 8, col 38 of module M: 6",
+        "|line 8, col 29 to line 8, col 29 of module M: 4",
+        "|line 8, col 32 to line 8, col 36 of module M: 4",
+        "line 4, col 27 to line 4, col 37 of module M: 12",
+        "line 4, col 45 to line 4, col 45 of module M: 12",
+        ...INSTANCE_OP2_LINES,
+      ],
+    ],
+    [
+      "Next == J!Op2 /\\ <<Step>>_<<y, J!Op2>>",
+      false,
+      8,
+      [
+        ...INSTANCE_OP2_LINES,
+        "line 8, col 20 to line 8, col 23 of module M: 2",
+        "line 8, col 27 to line 8, col 38 of module M: 6",
+        "|line 8, col 29 to line 8, col 29 of module M: 4",
+        "|line 8, col 32 to line 8, col 36 of module M: 4",
+        "||line 4, col 27 to line 4, col 37 of module M: 8",
+        "||line 4, col 45 to line 4, col 45 of module M: 8",
+        "||line 5, col 8 to line 5, col 21 of module Q: 4",
+      ],
+    ],
+    [
+      "Next == J!A2 /\\ J!Op2",
+      true,
+      6,
+      [
+        ...INSTANCE_A2_LINES,
+        "line 8, col 17 to line 8, col 21 of module M: 2",
+        "|line 4, col 27 to line 4, col 37 of module M: 6",
+        "|line 4, col 45 to line 4, col 45 of module M: 4",
+        "|line 5, col 8 to line 5, col 21 of module Q: 2",
+      ],
+    ],
+    [
+      "Next == J!A1",
+      true,
+      8,
+      [
+        "line 4, col 27 to line 4, col 37 of module M: 8",
+        "line 4, col 45 to line 4, col 45 of module M: 6",
+        ...INSTANCE_A2_LINES,
+        "line 8, col 13 to line 8, col 14 of module Q: 2",
+      ],
+    ],
+  ])(
+    "counts J's substitutes in a conjunct of the next-state relation %j with warnings on (%s) as TLC does, which evaluates a conjunct after J!Op2 or J!A2 in the context it was consed with, outside J's substitutions",
+    async (definitions, isWarningEnabled, prints, lines) => {
+      expect(
+        await getLazyReads(definitions, NEXT_CHECK, { coverage: 1, isWarningEnabled }),
+      ).toEqual({ printed: getPrints('"d"', prints), lines });
+    },
+  );
+
   it("records the nested instance a call from one instanced definition to another enters, as TLC does", async () => {
     const result = await check(getInnerCallCheck(EXPLICIT, "I!YErr", NESTED_CALLS));
     const ranges = result.failure?.callStack?.flatMap((expression, index, expressions) => {

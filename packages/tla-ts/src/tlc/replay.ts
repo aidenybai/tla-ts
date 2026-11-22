@@ -15,6 +15,7 @@ import {
   getCoverageNode,
   getEnteredFrames,
   runAtCoverageNode,
+  runAtFrameDepth,
   runReportedInto,
   type Coverage,
 } from "../coverage";
@@ -83,6 +84,7 @@ interface ActionItem {
   expression: Expression;
   scope: Scope | undefined;
   node: number;
+  frameDepth: number;
   rest: ActionItem | undefined;
 }
 
@@ -401,6 +403,12 @@ const proceedItems = (
     if (isComplete(partial)) return addState(replay, partial, node);
     return replay.onIncomplete?.(partial) ?? false;
   }
+  const coverage = replay.coverage;
+  if (coverage && coverage.frames.length > items.frameDepth) {
+    return runAtFrameDepth(coverage, items.frameDepth, () =>
+      proceedItems(replay, items, partial, node),
+    );
+  }
   if (isComplete(partial) && isAssignedShortcut(replay)) {
     return proceedAssigned(replay, items, partial, node);
   }
@@ -467,7 +475,13 @@ const proceedAssigned = (
   partial: Value[],
   node: number,
 ): boolean => {
+  const coverage = replay.coverage;
   for (let item = items; item !== undefined; item = item.rest) {
+    if (coverage && coverage.frames.length > item.frameDepth) {
+      return runAtFrameDepth(coverage, item.frameDepth, () =>
+        proceedAssigned(replay, item, partial, node),
+      );
+    }
     if (item.kind === "Unchanged") {
       return visitUnchanged(replay, item.expression, item.rest, item.scope, partial, item.node);
     }
@@ -481,7 +495,6 @@ const proceedAssigned = (
             false,
           );
     if (!isHeld) {
-      const coverage = replay.coverage;
       if (coverage && replay.isInit) coverage.secondary[coverage.roots[node]]++;
       const current = replay.current;
       if (current && item.kind === "Predicate" && item.expression.kind === "Unchanged") {
@@ -681,12 +694,20 @@ const proceedWithValue = (
 };
 
 const createItem = (
+  replay: Replay,
   kind: ActionItem["kind"],
   expression: Expression,
   scope: Scope | undefined,
   node: number,
   rest: ActionItem | undefined,
-): ActionItem => ({ kind, expression, scope, node, rest });
+): ActionItem => ({
+  kind,
+  expression,
+  scope,
+  node,
+  frameDepth: replay.coverage?.frames.length ?? 0,
+  rest,
+});
 
 const visitAssignment = (
   replay: Replay,
@@ -861,7 +882,7 @@ const visitApplication = (
         const rest = operands
           .slice(1)
           .reduceRight<ActionItem | undefined>(
-            (tail, operand) => createItem("Predicate", operand, scope, node, tail),
+            (tail, operand) => createItem(replay, "Predicate", operand, scope, node, tail),
             items,
           );
         return visit(replay, operands[0], rest, scope, partial, node);
@@ -870,7 +891,7 @@ const visitApplication = (
       return visitAt(
         replay,
         getPrefix(expression, operands.length - 1),
-        createItem("Predicate", last, scope, node, items),
+        createItem(replay, "Predicate", last, scope, node, items),
         scope,
         partial,
         getPrefixNode(replay, node),
@@ -969,7 +990,7 @@ const visitApplication = (
       const rest = bounds
         .slice(1)
         .reduce<ActionItem | undefined>(
-          (tail, bound) => createItem("Predicate", expression.body, bound, node, tail),
+          (tail, bound) => createItem(replay, "Predicate", expression.body, bound, node, tail),
           items,
         );
       return visit(replay, expression.body, rest, bounds[0], partial, node);
@@ -1070,6 +1091,7 @@ const visitApplication = (
           replay,
           expression.action,
           createItem(
+            replay,
             "Changed",
             expression.subscript,
             scope,
@@ -1169,7 +1191,7 @@ const visitUnchanged = (
       const [first, ...others] = expression.elements;
       if (first === undefined) return proceed(replay, items, partial, node);
       const rest = others.reduceRight<ActionItem | undefined>(
-        (tail, element) => createItem("Unchanged", element, scope, node, tail),
+        (tail, element) => createItem(replay, "Unchanged", element, scope, node, tail),
         items,
       );
       return visitUnchanged(replay, first, rest, scope, partial, node);
@@ -1258,7 +1280,7 @@ export const replayEnabled = (
   const depth = callStack?.expressions.length ?? 0;
   try {
     if (expression.kind === "AngleAction" && expression.location === expression.action.location) {
-      const changed = createItem("Changed", expression.subscript, scope, node, undefined);
+      const changed = createItem(replay, "Changed", expression.subscript, scope, node, undefined);
       visit(replay, expression.action, changed, scope, getEmptyState(environment), node);
     } else {
       visit(replay, expression, undefined, scope, getEmptyState(environment), node);
@@ -1284,7 +1306,8 @@ export const replayInitialStates = (
   if (first === undefined) return;
   const replay = createReplay(environment, "init", undefined, onState, onIncomplete);
   const rest = others.reduceRight<ActionItem | undefined>(
-    (tail, init) => createItem("Predicate", init.expression, init.scope, init.node ?? -1, tail),
+    (tail, init) =>
+      createItem(replay, "Predicate", init.expression, init.scope, init.node ?? -1, tail),
     undefined,
   );
   visit(replay, first.expression, rest, first.scope, getEmptyState(environment), first.node ?? -1);
