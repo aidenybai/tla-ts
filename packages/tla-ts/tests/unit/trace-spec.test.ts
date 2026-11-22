@@ -40,6 +40,18 @@ describe("trace exploration spec", () => {
     expect(binary instanceof Uint8Array && gunzipSync(binary)[0]).toBe(RECORD_VALUE);
   });
 
+  it("lists a model value the configuration assigns once in the trace spec's configuration, where TLC repeats it", async () => {
+    const result = await check({
+      source:
+        "---- MODULE M ----\nCONSTANTS P, a\nVARIABLE x\nInit == x = a\nNext == x' \\in P\nInv == x = a\n====\n",
+      config: "CONSTANTS\n  P = {p1, p2}\n  a = a\nINIT Init\nNEXT Next\nINVARIANT Inv\n",
+      traceSpec: { module: "M_TTrace" },
+    });
+    expect(result.traceSpec).toContain(
+      "CONSTANTS\n    P = { p1 , p2 }\n    a = a\n    p1 = p1\n    p2 = p2\n\n",
+    );
+  });
+
   it("writes no binary trace without a file for it", async () => {
     const result = await checkFixture("Safety", "te_out");
     expect(result.written.size).toBe(0);
