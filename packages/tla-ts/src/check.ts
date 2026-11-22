@@ -723,6 +723,12 @@ const searchStates = (
       throw createIncompleteSuccessorError(successor, action, environment);
     }
   };
+  // The steps of Next answer a fair action that Next splits into only where they are the steps
+  // that ENABLED and the action would find again: with no coverage, symmetry or view, and a Next
+  // whose evaluation shows nothing when it runs again. An Assert that would fail there fails in
+  // Next first.
+  const isStepTaken =
+    !coverage && !search.isSymmetric && !search.isViewed && !search.isNextReplayed;
   const liveness = withLivenessExitCode(() =>
     withUnexpectedException(() =>
       createLivenessChecker(
@@ -799,6 +805,7 @@ const searchStates = (
           getGraphState: (index, state) => getGraphState(state, depths[index] ?? 1),
         },
         livenessDump?.createWriter,
+        isStepTaken ? nextActions : undefined,
       ),
     ),
   );
@@ -1220,6 +1227,7 @@ const searchStates = (
     current.candidate = successor.state;
     current.candidateLevel = depths[index] + 1;
     if (isCanonicalizedFirst) canonicalizeState(successor.state);
+    if (action && liveness?.isTakingSteps) liveness.takeStep(state, successor.state, action);
     const found = lookUpSuccessor(state, successor);
     if (source && found.isInModel) {
       stateWriter?.writeSuccessor(
@@ -1245,16 +1253,23 @@ const searchStates = (
     if (found.existing !== -1 && liveness) {
       const stored = states[found.existing];
       const isStored = stored.every((value, position) => value === successor.state[position]);
-      liveSuccessors.push({ index: found.existing, state: isStored ? stored : successor.state });
+      liveSuccessors.push({
+        index: found.existing,
+        state: isStored ? stored : successor.state,
+        action,
+      });
     }
     if (found.isSeen && found.existing === -1 && liveness) {
       liveSuccessors.push({
         index: getPendingIndex(found.hash, found.fingerprintState),
         state: successor.state,
+        action,
       });
     }
     const isNew = found.isInModel && !found.isSeen;
-    if (isNew && liveness) liveSuccessors.push({ index: states.length, state: successor.state });
+    if (isNew && liveness) {
+      liveSuccessors.push({ index: states.length, state: successor.state, action });
+    }
     unstoredFingerprint = isNew ? found.fingerprintState : undefined;
     if (isNew) {
       countDistinctState(depths[index] + 1);
@@ -1542,7 +1557,7 @@ const searchStates = (
     options.dump?.dot && (options.dump.actionLabels || options.dump.colorize),
   );
   // Tool's constructor evaluates the bounds and arguments it splits Next on once, which shows when they draw, print or read a register.
-  const isNextSplit = isNamingEdges || search.isNextReplayed;
+  const isNextSplit = isNamingEdges || search.isNextReplayed || liveness?.isTakingSteps === true;
   const forEachActionSuccessor = (
     state: Value[],
     onUnsatisfied:
@@ -1666,13 +1681,21 @@ const searchStates = (
       checked.postcondition,
     );
   };
+  // A state is expanded once Next has taken every step from it.
   const addLiveState = (
     index: number,
     liveSuccessors: LiveSuccessor[],
     source: GraphState | undefined,
+    isExpanded: boolean,
   ) => {
     if (liveness && source) stateWriter?.writeStuttering(source);
-    const accepted = liveness?.addState(index, states[index], liveSuccessors);
+    const accepted = liveness?.addState(
+      index,
+      states[index],
+      liveSuccessors,
+      undefined,
+      isExpanded,
+    );
     if (!liveness || !accepted) return undefined;
     // Deviation from TLC: under -continue, TLC's LiveCheck throws an InvariantViolatedException after it reports the property, which its Worker reports as unexpected.
     const steps = traces.getPathSteps(accepted);
@@ -1691,11 +1714,12 @@ const searchStates = (
     index: number,
     liveSuccessors: LiveSuccessor[],
     source: GraphState | undefined,
+    isExpanded: boolean,
   ) =>
     captureOutput(() => {
       try {
         return {
-          additional: addLiveState(index, liveSuccessors, source)?.violation,
+          additional: addLiveState(index, liveSuccessors, source, isExpanded)?.violation,
           isFailed: false,
           callStack: undefined,
         };
@@ -1771,7 +1795,7 @@ const searchStates = (
     current.isExpanding = false;
     const result = outcome;
     if (result?.violation && !is174) {
-      const live = addReportedLiveState(index, liveSuccessors, source);
+      const live = addReportedLiveState(index, liveSuccessors, source, false);
       return {
         ...result,
         violation: appendTraceOutput(result.violation, live.lines),
@@ -1787,7 +1811,7 @@ const searchStates = (
         name: "deadlock",
         ...traces.getStateTrace(index),
       });
-      const live = addReportedLiveState(index, liveSuccessors, source);
+      const live = addReportedLiveState(index, liveSuccessors, source, true);
       const reported = {
         ...deadlock,
         violation: deadlock.violation && appendTraceOutput(deadlock.violation, live.lines),
@@ -1802,7 +1826,7 @@ const searchStates = (
       return live.result.callStack ? { ...counted, liveCallStack: live.result.callStack } : counted;
     }
     try {
-      return addLiveState(index, liveSuccessors, source);
+      return addLiveState(index, liveSuccessors, source, true);
     } catch (error) {
       if (is174 && error instanceof TlaEvaluationError) {
         return createFailureResult(

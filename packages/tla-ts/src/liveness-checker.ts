@@ -4,6 +4,7 @@ import { hasRepeatedEffects, type Environment } from "./evaluate";
 import {
   evaluateOnLasso,
   getInterpretedAtoms,
+  isUnchangedStep,
   toLiveExpression,
   type LiveAtoms,
   type ScopedExpression,
@@ -22,6 +23,8 @@ import {
   type Solution,
   type Tableau,
 } from "./tableau";
+import { findCallActions, type SpecAction } from "./spec-description";
+import { hasLateBranches } from "./successors";
 import type { GraphState, LivenessWriter } from "./state-graph";
 import { findTraceLasso, type TraceLasso } from "./trace-liveness";
 import { isSameValue, type Value } from "./values";
@@ -29,6 +32,7 @@ import { isSameValue, type Value } from "./values";
 export interface LiveSuccessor<State = Value[]> {
   index: number;
   state: State;
+  action?: SpecAction;
 }
 
 export interface Lasso {
@@ -46,11 +50,30 @@ export interface LivenessChecker {
     state: Value[],
     successors: LiveSuccessor[],
     tracing?: Environment,
+    isExpanded?: boolean,
   ) => number[] | undefined;
+  // Whether some fair action is a call that Next splits into, whose steps each successor names.
+  isTakingSteps: boolean;
+  // Notes a step that Next took through an action, before the state constraints exclude any.
+  takeStep: (state: Value[], next: Value[], action: SpecAction) => void;
   storeState: (pending: number, index: number) => void;
   getStateCounts: () => number[];
   findViolation: () => Lasso | undefined;
   getViolatedProperties: (path: Value[][], cycleStart: number) => string[];
+}
+
+// The steps of the state that the search last expanded, by which the split actions of Next answer
+// the atoms of the fair actions they are calls of.
+interface Expansion {
+  state: Value[] | undefined;
+  isTaken: boolean;
+  enabled: Uint8Array;
+  steps: Map<Value[], SpecAction[]>;
+}
+
+interface EnabledTaker {
+  position: number;
+  atom: LiveAction;
 }
 
 export interface TraceViolation extends TraceLasso {
@@ -418,6 +441,7 @@ export const createLivenessChecker = (
   environment: Environment,
   search: SearchGraph<Value[]>,
   createWriter?: (isTableau: boolean) => LivenessWriter,
+  actions?: SpecAction[],
 ): LivenessChecker | undefined => {
   if (properties.length === 0) return undefined;
   const formula = getLiveFormula(properties, temporals, environment);
@@ -425,11 +449,69 @@ export const createLivenessChecker = (
   const solutions = getSolutions(formula);
   const tracing: Tracing = { atoms: getInterpretedAtoms(environment), replay: undefined };
   const liveAtoms = getLiveAtoms(solutions);
+  // A fair action <<A>>_v takes a step of the graph that changes v when A is a call that Next
+  // splits into and that call took the step, and ENABLED <<A>>_v holds when it took one from the
+  // state, constrained or not, as its enumeration in Tool#enabled would find it, unless the call
+  // branches where Next stops at the first branch that holds.
+  const takers = liveAtoms.map((): SpecAction[] => []);
+  const enabledTakers = new Map<SpecAction, EnabledTaker[]>();
+  liveAtoms.forEach((atom, position) => {
+    const enabled = atom.kind === "Action" ? atom.enabled : undefined;
+    const step = enabled?.step;
+    if (
+      !actions ||
+      atom.kind !== "Action" ||
+      !enabled ||
+      step?.kind !== "AngleAction" ||
+      step.action !== atom.expression ||
+      step.subscript !== atom.subscript
+    ) {
+      return;
+    }
+    const called = findCallActions(atom.expression, atom.scope, actions, environment);
+    const enabledPosition = liveAtoms.indexOf(enabled);
+    takers[position] = called;
+    if (
+      enabledPosition === -1 ||
+      called.some((action) => hasLateBranches(action.expression, environment))
+    ) {
+      return;
+    }
+    takers[enabledPosition] = called;
+    called.forEach((action) =>
+      enabledTakers.set(action, [
+        ...(enabledTakers.get(action) ?? []),
+        { position: enabledPosition, atom },
+      ]),
+    );
+  });
+  const expansion: Expansion = {
+    state: undefined,
+    isTaken: false,
+    enabled: new Uint8Array(liveAtoms.length),
+    steps: new Map(),
+  };
+  const startExpansion = (state: Value[]) => {
+    if (expansion.state === state) return;
+    expansion.state = state;
+    expansion.enabled.fill(0);
+  };
   const graph = createLiveGraph(
     solutions,
     {
       holds: (position, state, next) => {
         const atom = liveAtoms[position];
+        const taken = takers[position];
+        if (expansion.isTaken && state === expansion.state && taken.length > 0) {
+          if (atom.kind === "Enabled") return expansion.enabled[position] === 1;
+          const steps = expansion.steps.get(next);
+          if (atom.kind === "Action" && steps) {
+            return (
+              !isUnchangedStep(atom, state, next, environment) &&
+              steps.some((action) => taken.includes(action))
+            );
+          }
+        }
         return atom.kind === "Action"
           ? tracing.atoms.holdsAction(atom, state, next)
           : tracing.atoms.holdsState(atom, state);
@@ -470,8 +552,42 @@ export const createLivenessChecker = (
     solutions,
     addInitialState: (index, state, replay) =>
       traceWith(replay, () => graph.addInitialState(index, state)),
-    addState: (index, state, successors, replay) =>
-      traceWith(replay, () => graph.addState(index, state, successors, replay !== undefined)),
+    addState: (index, state, successors, replay, isExpanded = false) => {
+      startExpansion(state);
+      // Each step names its action once the search splits Next, unless it stopped part way.
+      expansion.isTaken =
+        isExpanded &&
+        replay === undefined &&
+        successors.every((successor) => successor.action !== undefined);
+      if (expansion.isTaken) {
+        const indexSteps = new Map<number, SpecAction[]>();
+        successors.forEach((successor) => {
+          const steps = indexSteps.get(successor.index) ?? [];
+          indexSteps.set(successor.index, [
+            ...steps,
+            ...(successor.action ? [successor.action] : []),
+          ]);
+        });
+        successors.forEach((successor) =>
+          expansion.steps.set(successor.state, indexSteps.get(successor.index) ?? []),
+        );
+      }
+      const result = traceWith(replay, () =>
+        graph.addState(index, state, successors, replay !== undefined),
+      );
+      expansion.isTaken = false;
+      expansion.steps.clear();
+      return result;
+    },
+    isTakingSteps: takers.some((taken) => taken.length > 0),
+    takeStep: (state, next, action) => {
+      startExpansion(state);
+      enabledTakers.get(action)?.forEach((taker) => {
+        if (!isUnchangedStep(taker.atom, state, next, environment)) {
+          expansion.enabled[taker.position] = 1;
+        }
+      });
+    },
     storeState: graph.storeState,
     getStateCounts: graph.getStateCounts,
     findViolation: graph.findViolation,

@@ -92,8 +92,10 @@ const withCheckerExitCode = (checker: LivenessChecker): LivenessChecker => ({
   branches: checker.branches,
   solutions: checker.solutions,
   addInitialState: checker.addInitialState,
-  addState: (index, state, successors, tracing) =>
-    withErrorExitCode(() => checker.addState(index, state, successors, tracing)),
+  addState: (index, state, successors, tracing, isExpanded) =>
+    withErrorExitCode(() => checker.addState(index, state, successors, tracing, isExpanded)),
+  isTakingSteps: checker.isTakingSteps,
+  takeStep: (state, next, action) => withErrorExitCode(() => checker.takeStep(state, next, action)),
   storeState: checker.storeState,
   getStateCounts: checker.getStateCounts,
   findViolation: () => withErrorExitCode(() => checker.findViolation()),

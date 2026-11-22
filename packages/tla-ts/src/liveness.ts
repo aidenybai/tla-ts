@@ -992,6 +992,28 @@ export interface LiveAtoms<State> {
   holdsAction: (atom: LiveAction, state: State, next: State) => boolean;
 }
 
+// Whether a step leaves the subscript of <<A>>_v unchanged, so that the step doesn't take it.
+export const isUnchangedStep = (
+  atom: LiveAction,
+  state: Value[],
+  next: Value[],
+  environment: Environment,
+) => {
+  const scope = atom.scope;
+  const subscript = atom.subscript;
+  // The tracing replay evaluates the subscript, whose tuple TLC names in the frames.
+  const variables = environment.callStack ? undefined : atom.subscriptVariables;
+  return (
+    subscript !== undefined &&
+    (variables
+      ? isUnchangedState(variables, state, next)
+      : isEqualLikeTlc(
+          evaluate(subscript, { environment, scope, state, next: undefined }),
+          evaluate(subscript, { environment, scope, state: next, next: NULL_STATE }),
+        ))
+  );
+};
+
 export const getInterpretedAtoms = (environment: Environment): LiveAtoms<Value[]> => ({
   holdsState: (atom, state) => {
     const context = { environment, scope: atom.scope, state, next: undefined };
@@ -1003,21 +1025,8 @@ export const getInterpretedAtoms = (environment: Environment): LiveAtoms<Value[]
     return value;
   },
   holdsAction: (atom, state, next) => {
-    const scope = atom.scope;
-    const subscript = atom.subscript;
-    // The tracing replay evaluates the subscript, whose tuple TLC names in the frames.
-    const variables = environment.callStack ? undefined : atom.subscriptVariables;
-    if (
-      subscript &&
-      (variables
-        ? isUnchangedState(variables, state, next)
-        : isEqualLikeTlc(
-            evaluate(subscript, { environment, scope, state, next: undefined }),
-            evaluate(subscript, { environment, scope, state: next, next: NULL_STATE }),
-          ))
-    )
-      return false;
-    const value = evaluate(atom.expression, { environment, scope, state, next });
+    if (isUnchangedStep(atom, state, next, environment)) return false;
+    const value = evaluate(atom.expression, { environment, scope: atom.scope, state, next });
     if (typeof value !== "boolean") {
       throw new TlaEvaluationError("Encountered an action predicate that's not a boolean.");
     }
