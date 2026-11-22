@@ -397,6 +397,9 @@ const getKernelParams = (environment: TacticEnvironment, params: TacticParams, g
       : environment.parameters.get("smt.qi.cost"),
     qiEagerThreshold: getSmtDouble(environment, params, "qi.eager_threshold"),
     qiLazyThreshold: getSmtDouble(environment, params, "qi.lazy_threshold"),
+    qiMaxEagerMultipatterns: Number(getParameter(environment, "smt.qi.max_multi_patterns", "0")),
+    isQiUpdatingGeneration:
+      getParameter(environment, "smt.qi.update_generation", "true") !== "false",
     isProofsEnabled: goal.isProofsEnabled,
   };
 };
@@ -976,6 +979,11 @@ const NAMED_TACTICS = new Map<string, NamedTactic>([
             : environment.parameters.get("smt.qi.cost"),
           qiEagerThreshold: getSmtDouble(environment, tacticParams, "qi.eager_threshold"),
           qiLazyThreshold: getSmtDouble(environment, tacticParams, "qi.lazy_threshold"),
+          qiMaxEagerMultipatterns: Number(
+            getParameter(environment, "smt.qi.max_multi_patterns", "0"),
+          ),
+          isQiUpdatingGeneration:
+            getParameter(environment, "smt.qi.update_generation", "true") !== "false",
         });
         const simplifier = createCtxSolverSimplify(
           environment.manager,

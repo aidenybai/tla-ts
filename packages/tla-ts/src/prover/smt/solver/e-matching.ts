@@ -294,8 +294,7 @@ export class Mam implements LabelHasher {
 
   getGroundEnode(expr: number, quantifier: number) {
     const context = this.context;
-    if (!context.isEInternalized(expr))
-      context.internalize(expr, false, context.qmanager.getGeneration(quantifier));
+    context.internalize(expr, false, context.qmanager.getGeneration(quantifier));
     return context.getEnode(expr) ?? null;
   }
 
