@@ -2118,7 +2118,7 @@ const checkFact = (fact: Fact, reference: Fact, scope: LocalName | undefined, un
     resolveExpression(fact, scope, unit);
     return hidden;
   }
-  if (isInstanceArityReported(fact, scope, unit)) return hidden;
+  if (isInstanceArityReported(fact, scope, unit)) return BUILTIN_LOCATION;
   const selected = checkReference(fact, scope, unit, "Fact");
   if (selected) {
     const node = selected.node;
