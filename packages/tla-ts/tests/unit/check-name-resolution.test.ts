@@ -4470,6 +4470,15 @@ describe("name resolution matches SANY", () => {
       [],
     ],
     [
+      "a selection past a constant's name into a definition that an unnamed instance imports",
+      "---- MODULE Inner ----\nFoo == 2 = 2\n====\n---- MODULE Base ----\nP == INSTANCE Inner\n====\nINSTANCE Base\nCONSTANT P\nF == P!Foo!1\nTHEOREM TRUE BY P!Foo!1",
+      ["10, col 6 to line 10, col 6", "11, col 17 to line 11, col 17"].map((range) => ({
+        location: `line ${range} of module M`,
+        message: "Cannot take subexpression of `P'.",
+      })),
+      [],
+    ],
+    [
       "an instance with the wrong number of arguments before a selector that is not a name",
       "---- MODULE Inner ----\nFoo == 1\n====\nI(a) == INSTANCE Inner\nJ == INSTANCE Inner\nX == I!:\nY == J(2)!1\nZ == I!<<\nW == J!:\nTHEOREM TRUE BY I!1",
       [

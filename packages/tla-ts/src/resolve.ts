@@ -1663,6 +1663,20 @@ const resolveExpression = (
   unit: Unit,
 ): void => {
   if (selections.has(expression) && !unit.isGenerated) {
+    const reference = selections.get(expression);
+    if (reference && isReference(reference)) {
+      const head = getSelectors(reference)[0];
+      const range = reference.selectorRanges?.[0];
+      const declared =
+        head.kind === "Name"
+          ? (lookupLocal(scope, head.name) ?? findSymbol(head.name, unit))
+          : undefined;
+      if (head.kind === "Name" && declared && !SELECTABLE_KINDS.has(declared.kind) && range) {
+        emptyExpressions.add(expression);
+        reportUnselectable(head.name, range, unit);
+        return;
+      }
+    }
     const failed = findNullSelection(nullSelections.get(expression));
     if (failed) {
       emptyExpressions.add(expression);
