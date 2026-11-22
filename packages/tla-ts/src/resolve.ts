@@ -2043,14 +2043,16 @@ const isSubexpressionReported = (
   }
   const name = names.slice(0, symbolIndex + 1).join("!");
   const symbol = symbolIndex > 0 ? findBinding(name, scope, unit) : undefined;
-  const argumentCount = expression.selectors
-    .slice(0, symbolIndex + 1)
-    .flatMap((selector) => ("args" in selector ? selector.args : [])).length;
+  const getArgumentCount = (end: number) =>
+    expression.selectors
+      .slice(0, end)
+      .flatMap((selector) => ("args" in selector ? selector.args : [])).length;
+  const argumentCount = getArgumentCount(symbolIndex + 1);
   const argumentRange = expression.argumentRanges?.[symbolIndex] ?? expression.location.range;
   if (symbol && symbol.arity !== argumentCount && argumentRange) {
     unit.errors.push({
       location: formatRange(argumentRange),
-      message: `The operator ${resolveSynonym(name)} requires ${symbol.arity} arguments.`,
+      message: `The operator ${resolveSynonym(name)} requires ${symbol.arity - getArgumentCount(symbolIndex)} arguments.`,
     });
     return true;
   }
