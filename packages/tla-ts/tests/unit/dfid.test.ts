@@ -294,3 +294,22 @@ it("warns about symmetry during liveness checking whenever the configuration dec
     { kind: "liveness-initializing", isSymmetric: true, isConstrained: false },
   ]);
 });
+
+it("reports an initial conjunct it evaluates whole at the instance that holds it, as TLC's Tool does", () => {
+  const outputs: DepthFirstOutput[] = [];
+  checkDepthFirst({
+    source:
+      "---- MODULE M ----\nEXTENDS Naturals\nVARIABLES x, y\nJ == INSTANCE N WITH k <- 0\nSpec == x = 0 /\\ y = 0 /\\ J!Bad /\\ [][UNCHANGED <<x, y>>]_<<x, y>>\n====\n",
+    config: "SPECIFICATION Spec\n",
+    loadModule: (name) =>
+      name === "N"
+        ? "---- MODULE N ----\nEXTENDS Naturals\nCONSTANT k\nVARIABLES x, y\nSum == 1 + 1\nBad == x + 1\nInit == x = k /\\ y = 0\n====\n"
+        : undefined,
+    maxDepth: 3,
+    onOutput: (output) => outputs.push(output),
+  });
+  expect(outputs.find((output) => output.kind === "message" && output.isError)).toMatchObject({
+    message:
+      "TLC threw an unexpected exception.\nThis was probably caused by an error in the spec or model.\nThe error occurred when TLC was computing initial states.\nThe exception was a java.lang.RuntimeException\n: In computing initial states, TLC expected a boolean expression,\nbut instead found 1.\nline 4, col 1 to line 4, col 27 of module M",
+  });
+});

@@ -522,7 +522,8 @@ const searchStates = (
   const hasPostconditions =
     config.postconditions.length > 0 ||
     config.possible.length > 0 ||
-    specification.moduleOperators.some((operator) => operator.kind === "postcondition");
+    (options.moduleOperators ?? []).some((operator) => operator.kind === "postcondition") ||
+    options.traceSpec?.traceFile !== undefined;
   // A postcondition reads the statistics and the counterexample once the search ends, which the
   // tier's search gives as the interpreter's would, but the possible states need every state seen.
   const isTypedSearchable = config.possible.length === 0;
@@ -1450,7 +1451,13 @@ const searchStates = (
           if (error !== STOP_WALK) throw error;
         }
       } else {
-        forEachInitialState(spec.init, environment, onInitialState, spec.scope);
+        forEachInitialState(
+          spec.init,
+          environment,
+          onInitialState,
+          spec.scope,
+          spec.initPredicates,
+        );
       }
       if (overflowState) {
         outcome = reportInitialFailure(createStackOverflowError(), overflowState);
@@ -1782,6 +1789,7 @@ const searchStates = (
           { outDegrees: getFailureOutDegrees() },
         );
       }
+      // Deviation from TLC: ModelChecker#doNextFailed prints no message for the FingerprintException that TupleValue#equals throws when Worker#doNextCheckLiveness compares a subscript, where tla-ts reports the comparison's error.
       const replay = getReplayFailure(environment, (tracing) =>
         liveness?.addState(index, state, liveSuccessors, tracing),
       );

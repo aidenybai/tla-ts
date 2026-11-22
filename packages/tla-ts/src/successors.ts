@@ -37,10 +37,12 @@ import {
   getStartupValue,
   getUnchangedVariables,
   getZeroArityBody,
+  isUnchangedState,
   lookupScope,
   mapBoundSets,
   resolveApplyOperator,
   resolveGlobalOperator,
+  toEmptyContext,
   toUnspecifiedSubscriptError,
   type Context,
   type Environment,
@@ -77,6 +79,7 @@ import {
   isElementOf,
   isEqualLikeTlc,
   isFunctionValue,
+  isReceiverEqual,
   isTlcEnumerable,
   someStreamedElement,
   type Value,
@@ -101,6 +104,7 @@ interface Run {
   generator: SuccessorGenerator | undefined;
   successors: number;
   onUnsatisfied?: (state: Value[], conjunct: Expression) => void;
+  initPredicates: ReadonlyMap<Expression, Expression> | undefined;
 }
 
 type Continuation = (partial: State, action: string | undefined) => void;
@@ -140,6 +144,36 @@ const holdsUnchanged = (run: Run, unchanged: Expression, context: Context) => {
     return holds(run, unchanged, context);
   } catch (error) {
     if (run.isEnabled && error instanceof TlaUnassignedError) return error;
+    throw error;
+  }
+};
+
+const toEmptyNextContext = (context: Context): Context => ({
+  environment: context.environment,
+  scope: context.scope,
+  state: context.next,
+  next: undefined,
+});
+
+const evaluatePrimed = (expression: Expression, context: Context) => {
+  const runtime = context.environment.runtime;
+  const outerControl = runtime.evalControl;
+  runtime.evalControl = "Primed";
+  try {
+    return evaluate(expression, context);
+  } finally {
+    runtime.evalControl = outerControl;
+  }
+};
+
+// Tool#enabledUnchanged evaluates the second side in s1 with TLCState.Empty under EvalControl.Primed, where a LazyValue's cache serves it.
+const holdsEnabledUnchanged = (expression: Expression, context: Context) => {
+  try {
+    const before = evaluate(expression, toEmptyContext(context));
+    const after = evaluatePrimed(expression, toEmptyNextContext(context));
+    return isReceiverEqual(before, after);
+  } catch (error) {
+    if (error instanceof TlaUnassignedError) return error;
     throw error;
   }
 };
@@ -674,7 +708,9 @@ const compileUnchanged = (expression: Expression, environment: Environment): Run
       return;
     }
     const context = getContext(run, scope, partial);
-    const isHeld = holdsUnchanged(run, unchanged, context);
+    const isHeld = run.isEnabled
+      ? holdsEnabledUnchanged(expression, context)
+      : holdsUnchanged(run, unchanged, context);
     if (!(isHeld instanceof TlaUnassignedError)) {
       if (isHeld) onComplete(partial, action);
       return;
@@ -1204,14 +1240,30 @@ const compileAction = (
       return compileUnchanged(expression.expression, environment);
     case "AngleAction": {
       const body = getChildRunner(expression.action);
+      const subscript = expression.subscript;
       const unchanged: Expression = {
         kind: "Unchanged",
-        expression: expression.subscript,
-        location: expression.subscript.location,
+        expression: subscript,
+        location: subscript.location,
       };
+      const indexes = getUnchangedVariables(subscript, environment)?.map(
+        (variable) => variable.index,
+      );
       return (run, scope, partial, action, isFixed, onComplete) =>
         body(run, scope, partial, action, isFixed, (nextPartial, nextAction) => {
-          const isHeld = holdsUnchanged(run, unchanged, getContext(run, scope, nextPartial));
+          const context = getContext(run, scope, nextPartial);
+          if (!run.isEnabled) {
+            // Tool#getNextStates evaluates a CHANGED item in s1 with TLCState.Empty, and Tool#enabled with TLCState.Null.
+            const isSame =
+              (indexes && isUnchangedState(indexes, context.state, nextPartial)) ??
+              isReceiverEqual(
+                evaluate(subscript, toEmptyContext(context)),
+                evaluate(subscript, toEmptyNextContext(context)),
+              );
+            if (!isSame) onComplete(nextPartial, nextAction);
+            return;
+          }
+          const isHeld = holdsUnchanged(run, unchanged, context);
           if (isHeld instanceof TlaUnassignedError) {
             throw toUnspecifiedSubscriptError(isHeld, run.environment.runtime.version);
           }
@@ -1288,29 +1340,37 @@ export const isEnabled = (expression: Expression, context: Context): boolean => 
     );
   }
   const environment = context.environment;
-  if (environment.callStack || (environment.coverage && environment.coverage.current >= 0)) {
-    return replayEnabled(expression, context.scope, state, environment);
+  const runtime = environment.runtime;
+  const outerControl = runtime.evalControl;
+  runtime.evalControl = "Enabled";
+  try {
+    if (environment.callStack || (environment.coverage && environment.coverage.current >= 0)) {
+      return replayEnabled(expression, context.scope, state, environment);
+    }
+    const run: Run = {
+      environment,
+      isInit: false,
+      isEnabled: true,
+      current: state,
+      isStopped: false,
+      generator: undefined,
+      successors: 0,
+      initPredicates: undefined,
+    };
+    getRunner(expression, environment, false)(
+      run,
+      context.scope,
+      getEmptyState(environment),
+      undefined,
+      false,
+      () => {
+        run.isStopped = true;
+      },
+    );
+    return run.isStopped;
+  } finally {
+    runtime.evalControl = outerControl;
   }
-  const run: Run = {
-    environment,
-    isInit: false,
-    isEnabled: true,
-    current: state,
-    isStopped: false,
-    generator: undefined,
-    successors: 0,
-  };
-  getRunner(expression, environment, false)(
-    run,
-    context.scope,
-    getEmptyState(environment),
-    undefined,
-    false,
-    () => {
-      run.isStopped = true;
-    },
-  );
-  return run.isStopped;
 };
 
 export const forEachInitialState = (
@@ -1318,6 +1378,7 @@ export const forEachInitialState = (
   environment: Environment,
   onState: (state: Value[]) => boolean,
   scope?: Scope,
+  initPredicates?: ReadonlyMap<Expression, Expression>,
   onIncomplete?: (state: State) => boolean,
 ) => {
   const run: Run = {
@@ -1328,6 +1389,7 @@ export const forEachInitialState = (
     isStopped: false,
     generator: undefined,
     successors: 0,
+    initPredicates,
   };
   getRunner(expression, environment, true)(
     run,
@@ -1401,6 +1463,7 @@ export const forEachSuccessor = (
     generator,
     successors: 0,
     onUnsatisfied,
+    initPredicates: undefined,
   };
   getRunner(expression, environment, false)(
     run,
@@ -1438,6 +1501,7 @@ export const hasIncompleteSuccessor = (
     isStopped: false,
     generator: undefined,
     successors: 0,
+    initPredicates: undefined,
   };
   // TLC's Tool#getState generates every successor of the action before it compares them.
   getRunner(expression, environment, false)(
