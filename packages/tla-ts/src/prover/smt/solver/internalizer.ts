@@ -719,7 +719,7 @@ export abstract class Internalizer {
   }
 
   private updateGeneration(node: Enode) {
-    if (node.isEq) return;
+    if (!this.config.isQiUpdatingGeneration || node.isEq) return;
     if (this.generation > 0 && this.generation < this.getGeneration(node)) {
       this.setGeneration(node, this.generation);
       if (node.usesCgTable()) this.stickyGenerations.set(node, this.generation);

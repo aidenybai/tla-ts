@@ -19,6 +19,8 @@ export const getGlobalSmtParams = (
     relevancyLevel,
     parameters.get("smt.auto_config") !== "false" && parameters.get("auto_config") !== "false",
   ),
+  qiMaxEagerMultipatterns: Number(parameters.get("smt.qi.max_multi_patterns") ?? "0"),
+  isQiUpdatingGeneration: parameters.get("smt.qi.update_generation") !== "false",
 });
 
 export class SmtKernel {
@@ -48,6 +50,8 @@ export class SmtKernel {
       qiCost: params.qiCost,
       qiEagerThreshold: params.qiEagerThreshold,
       qiLazyThreshold: params.qiLazyThreshold,
+      qiMaxEagerMultipatterns: params.qiMaxEagerMultipatterns,
+      isQiUpdatingGeneration: params.isQiUpdatingGeneration,
       isProofsEnabled: params.isProofsEnabled,
     });
     this.setup = params.setup;

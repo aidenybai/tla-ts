@@ -2,12 +2,12 @@ import { CHECK_MODEL_RESTART, CHECK_MODEL_SAT, CHECK_MODEL_UNKNOWN, type Context
 import { FC_CONTINUE, FC_DONE } from "./theory";
 import { Mam } from "./e-matching";
 import type { Enode } from "./enode";
+import type { ObjMap } from "./hashtable";
 import { ModelChecker } from "./model-checker";
 import { ModelFinder } from "./model-finder";
 import type { ProtoModel } from "./proto-model";
 import { QiQueue } from "./qi-queue";
 
-const QI_MAX_EAGER_MULTIPATTERNS = 0;
 const QI_MAX_LAZY_MULTIPATTERN_MATCHING = 2;
 
 export class DefaultQuantifierManager {
@@ -69,7 +69,8 @@ export class DefaultQuantifierManager {
       .getQuantifier(quantifier)
       .patterns.map((pattern) => manager.getArgs(pattern));
     const hasUnaryPattern = patterns.some((pattern) => pattern.length === 1);
-    const numEagerMultiPatterns = QI_MAX_EAGER_MULTIPATTERNS + (hasUnaryPattern ? 0 : 1);
+    const numEagerMultiPatterns =
+      this.context.config.qiMaxEagerMultipatterns + (hasUnaryPattern ? 0 : 1);
     let multiPatternIndex = 0;
     for (const pattern of patterns) {
       const isUnary = pattern.length === 1;
@@ -183,7 +184,7 @@ export class DefaultQuantifierManager {
     if (this.context.params.isMbqi) this.finder.fixModel(model);
   }
 
-  checkModel(model: ProtoModel, root2value: Map<Enode, number>) {
+  checkModel(model: ProtoModel, root2value: ObjMap<number>) {
     if (this.quantifiers.length === 0) return CHECK_MODEL_SAT;
     if (!this.context.params.isMbqi) return CHECK_MODEL_UNKNOWN;
     const checker = this.checker;
