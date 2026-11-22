@@ -1,5 +1,21 @@
 export const trimJava = (text: string) => text.replace(/^[\0-\x20]+|[\0-\x20]+$/g, "");
 
+const JAVA_DECIMAL = /^[+-]?(?:NaN|Infinity|(?:\d+\.?\d*|\.\d+)(?:[eE][+-]?\d+)?[fFdD]?)$/;
+const JAVA_HEXADECIMAL = /^([+-]?)0[xX]([0-9a-fA-F]*)(?:\.([0-9a-fA-F]*))?[pP]([+-]?\d+)[fFdD]?$/;
+
+export const parseJavaDouble = (text: string) => {
+  const trimmed = trimJava(text);
+  if (JAVA_DECIMAL.test(trimmed)) return Number(trimmed.replace(/[fFdD]$/, ""));
+  const hexadecimal = JAVA_HEXADECIMAL.exec(trimmed);
+  if (!hexadecimal) return undefined;
+  const fraction = hexadecimal[3] ?? "";
+  const digits = `${hexadecimal[2]}${fraction}`;
+  if (digits === "") return undefined;
+  const magnitude =
+    Number.parseInt(digits, 16) * 2 ** (Number(hexadecimal[4]) - 4 * fraction.length);
+  return hexadecimal[1] === "-" ? -magnitude : magnitude;
+};
+
 const REPLACEMENT_CHARACTER = 0xfffd;
 
 const CHUNK_SIZE = 8192;

@@ -49,7 +49,12 @@ import {
   zeroPad,
 } from "../tlc/messages";
 import { getRuntimeInvariants } from "./runtime-invariants";
-import { parseTlcArguments, type TlcArguments } from "./tlc-arguments";
+import {
+  drawSeeds,
+  parseTlcArguments,
+  type SeededArguments,
+  type TlcArguments,
+} from "./tlc-arguments";
 import {
   getClassPath,
   printCheckProgress,
@@ -237,7 +242,7 @@ const createMetadir = (args: TlcArguments) => {
 
 const checkSpec = async (
   specPath: string,
-  args: TlcArguments,
+  args: SeededArguments,
   dump: StateDump | undefined,
   java: JavaProperties,
   printer: MessagePrinter,
@@ -605,7 +610,7 @@ export const checkSpecs = async (args: string[], java: JavaProperties) => {
         if (paths.length > 1) {
           console.log(`Checking ${basename(specPath)} with ${basename(specPath, ".tla")}.cfg`);
         }
-        return checkSpec(specPath, parsed, dump, java, printer);
+        return checkSpec(specPath, drawSeeds(parsed), dump, java, printer);
       }, printer),
     );
   }

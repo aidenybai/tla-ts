@@ -32,6 +32,10 @@ const createFileReader = (files: Map<string, string>) => (path: string) => {
   return text === undefined ? undefined : new TextEncoder().encode(text);
 };
 
+const createFileWriter =
+  (files: Map<string, string>) => (path: string, content: string | Uint8Array) =>
+    files.set(path, typeof content === "string" ? content : new TextDecoder().decode(content));
+
 const getCoverageCounts = async (definitions: string, config: string) => {
   const result = await check({
     source: `---- MODULE M ----\nEXTENDS Integers\nVARIABLE x\n${definitions}\n====`,
@@ -987,7 +991,7 @@ ASSUME TLCFP(a) = -887695703
             ? "---- MODULE IOUtils ----\nLOCAL INSTANCE Integers\nSerialize(value, dest, options) ==\n  CHOOSE r \\in [exitValue : Int, stdout : STRING, stderr : STRING] : TRUE\n===="
             : undefined,
         readFile: createFileReader(files),
-        writeFile: (path, content) => files.set(path, String(content)),
+        writeFile: createFileWriter(files),
       });
       expect(files.get("old.json")).toBe(content);
     },
@@ -1010,7 +1014,7 @@ ASSUME TLCFP(a) = -887695703
           ? "---- MODULE IOUtils ----\nLOCAL INSTANCE Integers\nSerialize(value, dest, options) ==\n  CHOOSE r \\in [exitValue : Int, stdout : STRING, stderr : STRING] : TRUE\n===="
           : undefined,
       readFile: createFileReader(files),
-      writeFile: (path, content) => files.set(path, String(content)),
+      writeFile: createFileWriter(files),
     });
 
   const getSerializeError = (result: CheckResult) => {
@@ -1083,6 +1087,35 @@ ASSUME TLCFP(a) = -887695703
       const files = new Map([["old.json", "abcdefghij\n"]]);
       await checkSerialize("1, {<<>>, 0}", path, openOptions, files);
       expect(files.get(path)).toBe(content);
+    },
+  );
+
+  it.each([
+    ["1", '"WRITE"', "c3a9c3a9c3a9", "310ac3a9c3a9"],
+    ["12", '"WRITE"', "c3a9c3a9c3a9", "31320aa9c3a9"],
+    ["1, 2", '"WRITE"', "c3a9c3a9c3a9", "310a320ac3a9"],
+    ['"abcdefg"', '"WRITE"', "c3a9c3a9c3a9", "2261626364656667220a"],
+    ["1", '"APPEND"', "c3a9c3a9c3a9", "c3a9c3a9c3a9310a"],
+    ["1", '"APPEND"', "ff", "ff310a"],
+    ["1", '"WRITE"', "ffffffff", "310affff"],
+    ["1", '"WRITE", "TRUNCATE_EXISTING"', "c3a9c3a9c3a9", "310a"],
+  ])(
+    "writes the lines of <<%s>> with <<%s>> to a file of bytes %s byte by byte, as TLC's textSerialize does",
+    async (payload, openOptions, existing, expected) => {
+      let written = "";
+      await check({
+        source: `---- MODULE M ----\nEXTENDS Integers, TLC, IOUtils\nVARIABLE x\nInit == x = 0 /\\ Serialize(<<${payload}>>, "out.txt", [format |-> "NDJSON", charset |-> "UTF-8", openOptions |-> <<${openOptions}>>])\nNext == x' = x\n====`,
+        config: "INIT Init\nNEXT Next",
+        loadModule: (name) =>
+          name === "IOUtils"
+            ? "---- MODULE IOUtils ----\nLOCAL INSTANCE Integers\nSerialize(value, dest, options) ==\n  CHOOSE r \\in [exitValue : Int, stdout : STRING, stderr : STRING] : TRUE\n===="
+            : undefined,
+        readFile: () => Buffer.from(existing, "hex"),
+        writeFile: (_path, content) => {
+          written = Buffer.from(content).toString("hex");
+        },
+      });
+      expect(written).toBe(expected);
     },
   );
 
@@ -1694,6 +1727,29 @@ ASSUME TLCFP(a) = -887695703
         kind: "warning",
         code: 2300,
         text: "The set T has been defined to be a symmetry set but contains less than two elements.",
+      },
+    ]);
+  });
+
+  it("names a permuted set by its configuration name when the spec supplies its own FiniteSets, as TLC does", async () => {
+    const warnings: CheckProgress[] = [];
+    await check({
+      source:
+        "---- MODULE M ----\nEXTENDS TLC\nCONSTANTS A, V, a1, v1\nVARIABLE x\nMCA == {a1}\nMCV == {v1}\nSym == Permutations(MCA) \\cup Permutations(MCV)\nInit == x = 0\nNext == x' = x\n====",
+      config: "CONSTANTS a1 = a1 v1 = v1 A <- MCA V <- MCV\nINIT Init\nNEXT Next\nSYMMETRY Sym",
+      loadModule: (name) =>
+        name === "FiniteSets"
+          ? "---- MODULE FiniteSets ----\nLOCAL INSTANCE Naturals\nLOCAL INSTANCE Sequences\nIsFiniteSet(S) == \\E seq \\in Seq(S) : \\A s \\in S : \\E n \\in 1..Len(seq) : seq[n] = s\nCardinality(S) == LET CS[T \\in SUBSET S] == IF T = {} THEN 0 ELSE 1 + CS[T \\ {CHOOSE x : x \\in T}] IN CS[S]\n===="
+          : undefined,
+      onProgress: (progress) => {
+        if (progress.kind === "warning") warnings.push(progress);
+      },
+    });
+    expect(warnings).toEqual([
+      {
+        kind: "warning",
+        code: 2300,
+        text: "The sets A, and V have been defined to be a symmetry set but contain less than two elements.",
       },
     ]);
   });

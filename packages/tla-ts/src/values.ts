@@ -8,7 +8,7 @@ import {
 } from "./errors";
 import { getJavaHashCode } from "./java-hash";
 import { prettyPrint } from "./pretty-print";
-import { isEvalException } from "./tlc/messages";
+import { isEvalException, withProcessException } from "./tlc/messages";
 import type { TlcVersion } from "./tlc/version";
 
 export interface ModelValue {
@@ -1242,16 +1242,40 @@ export const getWrittenElements = (set: SetValue | MixedSetValue) =>
       ? set.elements
       : (set.writtenElements ?? set.elements);
 
-export const markNormalized = (value: Value): void => {
-  if (typeof value !== "object") return;
+const MAXIMUM_MARK_DEPTH = 1000;
+
+const markNormalizedWithin = (
+  value: Value,
+  depth: number,
+  deeper: Value[] | undefined,
+): Value[] | undefined => {
+  if (typeof value !== "object") return deeper;
+  if (depth === MAXIMUM_MARK_DEPTH) {
+    const pending = deeper ?? [];
+    pending.push(value);
+    return pending;
+  }
+  let pending = deeper;
   if (value.kind === "Set") {
     value.isNormalized = true;
-    value.elements.forEach(markNormalized);
+    for (let index = 0; index < value.elements.length; index++) {
+      pending = markNormalizedWithin(value.elements[index], depth + 1, pending);
+    }
   }
   if (value.kind === "Function") {
     value.writtenKeys = undefined;
-    value.domain.forEach(markNormalized);
-    value.range.forEach(markNormalized);
+    for (let index = 0; index < value.domain.length; index++) {
+      pending = markNormalizedWithin(value.domain[index], depth + 1, pending);
+      pending = markNormalizedWithin(value.range[index], depth + 1, pending);
+    }
+  }
+  return pending;
+};
+
+export const markNormalized = (value: Value): void => {
+  const deeper = markNormalizedWithin(value, 0, undefined);
+  for (let inner = deeper?.pop(); inner !== undefined; inner = deeper?.pop()) {
+    markNormalizedWithin(inner, 0, deeper);
   }
 };
 
@@ -4371,3 +4395,7 @@ export const formatState = (state: Record<string, Value>, previous?: Record<stri
     })
     .join("");
 };
+
+// TLCStateMut#toString evaluates the VIEW under -view, and what that throws while TLC reports an error escapes to TLC#process.
+export const formatErrorState = (state: Record<string, Value>) =>
+  withProcessException(() => formatState(state));
