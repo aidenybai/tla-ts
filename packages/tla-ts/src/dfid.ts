@@ -34,7 +34,14 @@ import { getTlcFingerprint } from "./tlc/fingerprint";
 import { createJavaRandom } from "./tlc/random";
 import { replayInitialStates, replaySuccessors, walkSuccessors } from "./tlc/replay";
 import { getOptimisticProbability, getActualProbability } from "./tlc/summary";
-import { createModelValue, formatState, getSetBound, isSameValue, type Value } from "./values";
+import {
+  createModelValue,
+  formatErrorState,
+  formatState,
+  getSetBound,
+  isSameValue,
+  type Value,
+} from "./values";
 
 export interface DepthFirstOptions extends CheckOptions {
   maxDepth: number;
@@ -667,7 +674,7 @@ export const checkDepthFirst = (options: DepthFirstOptions): number => {
     const initialState = errorState;
     const prefix = initialState ? "" : getUnexpectedMessage("computing initial states", inner);
     const suffix = initialState
-      ? `\nWhile working on the initial state:\n${formatState(toRecord(initialState))}`
+      ? `\nWhile working on the initial state:\n${formatErrorState(toRecord(initialState))}`
       : "";
     message(
       initialState ? MESSAGE_CODE.initialState : MESSAGE_CODE.general,

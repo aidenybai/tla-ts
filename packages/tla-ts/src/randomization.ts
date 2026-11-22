@@ -1,6 +1,7 @@
 import { createModuleArgumentError, defineOperator, getValue, overrideWithJava } from "./builtins";
 import { TlaEvaluationError } from "./errors";
 import type { Builtin, BuiltinArgument } from "./evaluate";
+import { parseJavaDouble } from "./java-string";
 import type { CheckerRuntime } from "./runtime";
 import { getEnumeratedFactors, getRandomSubset, type JavaRandom } from "./tlc/random";
 import {
@@ -65,22 +66,6 @@ const getRandomSetOfSubsets = (args: BuiltinArgument[], runtime: CheckerRuntime)
     elements.length === 0 ? 0 : size / elements.length,
     runtime.getRandom(),
   );
-};
-
-const JAVA_DECIMAL = /^[+-]?(?:NaN|Infinity|(?:\d+\.?\d*|\.\d+)(?:[eE][+-]?\d+)?[fFdD]?)$/;
-const JAVA_HEXADECIMAL = /^([+-]?)0[xX]([0-9a-fA-F]*)(?:\.([0-9a-fA-F]*))?[pP]([+-]?\d+)[fFdD]?$/;
-
-const parseJavaDouble = (text: string) => {
-  const trimmed = text.replace(/^[^!-\uffff]+|[^!-\uffff]+$/g, "");
-  if (JAVA_DECIMAL.test(trimmed)) return Number(trimmed.replace(/[fFdD]$/, ""));
-  const hexadecimal = JAVA_HEXADECIMAL.exec(trimmed);
-  if (!hexadecimal) return undefined;
-  const fraction = hexadecimal[3] ?? "";
-  const digits = `${hexadecimal[2]}${fraction}`;
-  if (digits === "") return undefined;
-  const magnitude =
-    Number.parseInt(digits, 16) * 2 ** (Number(hexadecimal[4]) - 4 * fraction.length);
-  return hexadecimal[1] === "-" ? -magnitude : magnitude;
 };
 
 // TLC's Java class names the operator RandomSubsetSetProbability in its errors.

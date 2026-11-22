@@ -56,7 +56,12 @@ import {
   zeroPad,
 } from "../tlc/messages";
 import { getRuntimeInvariants } from "./runtime-invariants";
-import { parseTlcArguments, type TlcArguments } from "./tlc-arguments";
+import {
+  drawSeeds,
+  parseTlcArguments,
+  type SeededArguments,
+  type TlcArguments,
+} from "./tlc-arguments";
 import {
   getClassPath,
   printCheckProgress,
@@ -251,7 +256,7 @@ const createMetadir = (args: TlcArguments) => {
 
 const checkSpec = async (
   specPath: string,
-  args: TlcArguments,
+  args: SeededArguments,
   dump: StateDump | undefined,
   java: JavaProperties,
   printer: MessagePrinter,
@@ -679,7 +684,14 @@ export const checkSpecs = async (args: string[], java: JavaProperties) => {
         try {
           const compiled = isTypeScript ? await compileTypeScriptFile(path) : undefined;
           compiled?.notes.forEach((note) => console.log(note));
-          return await checkSpec(compiled?.specPath ?? path, parsed, dump, java, printer, compiled);
+          return await checkSpec(
+            compiled?.specPath ?? path,
+            drawSeeds(parsed),
+            dump,
+            java,
+            printer,
+            compiled,
+          );
         } catch (error) {
           if (!isStackOverflow(error)) throw error;
           throw isTypeScript ? new TlaStackLimitError(CHECK_STACK_MB) : createStackOverflowError();

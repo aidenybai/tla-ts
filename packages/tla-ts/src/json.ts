@@ -51,11 +51,6 @@ const OPEN_OPTIONS = new Set([
 
 const UTF_8_NAMES = new Set(["utf-8", "utf8", "unicode-1-1-utf-8"]);
 
-const readUtf8 = (files: FileSystem, path: string) => {
-  const bytes = files.readFile?.(path);
-  return bytes === undefined ? undefined : decodeJavaUtf8(bytes);
-};
-
 const STANDARD_CHARSETS = new Set(["us-ascii", "iso-8859-1", "utf-16", "utf-16be", "utf-16le"]);
 
 const toRecord = (value: Value) => {
@@ -248,24 +243,23 @@ const serializeWithOptions = (
   if (options.has("DELETE_ON_CLOSE")) {
     throw new TlaUnsupportedError("IOUtils!Serialize does not support DELETE_ON_CLOSE");
   }
-  const existing = openLikeNio(() => readUtf8(files, path));
+  const existing = openLikeNio(() => files.readFile?.(path));
   if (existing === undefined && !options.has("CREATE") && !options.has("CREATE_NEW")) {
     throw new TlaEvaluationError(`java.nio.file.NoSuchFileException: ${path}`);
   }
   if (existing !== undefined && options.has("CREATE_NEW")) {
     throw new TlaEvaluationError(`java.nio.file.FileAlreadyExistsException: ${path}`);
   }
-  const write = (text: string) =>
-    openLikeNio(() =>
-      files.writeFile?.(
-        path,
-        existing === undefined || options.has("TRUNCATE_EXISTING")
-          ? text
-          : options.has("APPEND")
-            ? existing + text
-            : text + existing.slice(text.length),
-      ),
-    );
+  const kept =
+    existing === undefined || options.has("TRUNCATE_EXISTING") ? new Uint8Array() : existing;
+  const offset = options.has("APPEND") ? kept.length : 0;
+  const write = (text: string) => {
+    const bytes = new TextEncoder().encode(text);
+    const content = new Uint8Array(Math.max(kept.length, offset + bytes.length));
+    content.set(kept);
+    content.set(bytes, offset);
+    openLikeNio(() => files.writeFile?.(path, content));
+  };
   writeConverted(
     write,
     elements,
@@ -280,9 +274,9 @@ const makeParentDirectory = (files: FileSystem, path: string) => {
 };
 
 const readText = (files: FileSystem, path: string) => {
-  const text = readUtf8(files, path);
-  if (text === undefined) throw new TlaEvaluationError(`${path} (No such file or directory)`);
-  return text;
+  const bytes = files.readFile?.(path);
+  if (bytes === undefined) throw new TlaEvaluationError(`${path} (No such file or directory)`);
+  return decodeJavaUtf8(bytes);
 };
 
 export const createJsonOperators = (files: FileSystem): Builtin[] => [

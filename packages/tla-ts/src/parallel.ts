@@ -75,6 +75,7 @@ export type CoordinatorMessage =
   | { type: "level" }
   | { type: "resize"; fingerprints: SharedFingerprints };
 
+/** Model checks a spec as TLC does. It runs one check at a time, so a callback must not start another check. */
 export const check = async (options: CheckOptions): Promise<CheckResult> => {
   // TLC ranks the strings of the root's tokens, which a parsed module lacks, before those of the
   // modules it extends, and a prepared module's values hold the order that its preparation ranked

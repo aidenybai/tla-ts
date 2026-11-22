@@ -53,6 +53,38 @@ describe("trace exploration spec", () => {
   });
 
   it.each([
+    [
+      0,
+      "Servers, Values",
+      "Servers = {n1, n2, n3}\n    Values = {v}",
+      "    Servers = { n1 , n2 , n3 }\n    Values = { v }\n    n3 = n3\n    v = v\n    n1 = n1\n    n2 = n2\n",
+    ],
+    [
+      0,
+      "P, a",
+      "P = {p1, p2, p3, p4, p5, p6, p7, p8, p9, p10, p11, p12, p13}\n    a = a",
+      "    P = { p1 , p2 , p3 , p4 , p5 , p6 , p7 , p8 , p9 , p10 , p11 , p12 , p13 }\n    a = a\n    p8 = p8\n    p3 = p3\n    p4 = p4\n    p5 = p5\n    p9 = p9\n    p2 = p2\n    p12 = p12\n    p7 = p7\n    p11 = p11\n    p10 = p10\n    p1 = p1\n    p13 = p13\n    p6 = p6\n",
+    ],
+    [
+      7,
+      "P, a",
+      "P = {p1, p2, p3, p4, p5, p6, p7, p8, p9, p10, p11, p12, p13}\n    a = a",
+      "    P = { p1 , p2 , p3 , p4 , p5 , p6 , p7 , p8 , p9 , p10 , p11 , p12 , p13 }\n    a = a\n    p3 = p3\n    p5 = p5\n    p6 = p6\n    p4 = p4\n    p7 = p7\n    p1 = p1\n    p2 = p2\n    p8 = p8\n    p11 = p11\n    p13 = p13\n    p12 = p12\n    p9 = p9\n    p10 = p10\n",
+    ],
+  ])(
+    "lists the model values in TLC's HashSet order under -fp %i for constants %s",
+    async (fingerprintPolynomial, constants, assignments, listed) => {
+      const result = await check({
+        source: `---- MODULE M ----\nEXTENDS Naturals\nCONSTANTS ${constants}\nVARIABLE x\nInit == x = 0\nNext == x' = x + 1\nInv == x < 1\n====\n`,
+        config: `CONSTANTS\n    ${assignments}\nINIT Init\nNEXT Next\nINVARIANT Inv\n`,
+        fingerprintPolynomial,
+        traceSpec: { module: "M_TTrace" },
+      });
+      expect(result.traceSpec).toContain(`\nCONSTANTS\n${listed}\n`);
+    },
+  );
+
+  it.each([
     ["Missionaries = {m1, m2}\n  Cannibals = {c1, c2}", "", "m1, m2, c1, c2"],
     [
       "Missionaries = {m1, m2}\n  F(q2) = q1\n  Cannibals = {c1, c2}",

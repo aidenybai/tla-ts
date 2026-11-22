@@ -20,8 +20,7 @@ import type {
   Violation,
 } from "../check";
 import type { DepthFirstOutput } from "../dfid";
-import { TlaAliasFormatError, TlaEvaluationError } from "../errors";
-import { EXIT_STATUS, setExitCode } from "../exit-codes";
+import { TlaAliasFormatError } from "../errors";
 import type { SimulationOutput, SimulationStatistics } from "../simulate";
 import {
   formatProbability,
@@ -36,13 +35,12 @@ import {
   formatInnerMessage,
   formatNestedMessage,
   formatTlcDuration,
-  getUnexpectedPrefix,
   MESSAGE_CODE,
   MESSAGE_LEVEL,
   type MessagePrinter,
 } from "../tlc/messages";
-import { formatState, getDiffBase } from "../values";
-import type { TlcArguments } from "./tlc-arguments";
+import { formatErrorState, formatState, getDiffBase } from "../values";
+import type { SeededArguments } from "./tlc-arguments";
 
 const printInitialStatesProgress = (printer: MessagePrinter, count: number) =>
   printer.print(
@@ -554,17 +552,7 @@ export const printResult = (result: CheckResult, printer: MessagePrinter, timing
     if (failure.isCallStackFirst) printCallStack();
     const initialState =
       failure.initialState &&
-      (() => {
-        try {
-          return `While working on the initial state:\n${formatState(failure.initialState)}`;
-        } catch (error) {
-          if (!(error instanceof TlaEvaluationError)) throw error;
-          throw setExitCode(
-            new TlaEvaluationError(`${getUnexpectedPrefix(error)}${error.message}`),
-            EXIT_STATUS.error,
-          );
-        }
-      })();
+      `While working on the initial state:\n${formatErrorState(failure.initialState)}`;
     print(
       initialState ? MESSAGE_CODE.initialState : failure.code,
       MESSAGE_LEVEL.error,
@@ -628,7 +616,7 @@ export const printCommandLineError = (isTool: boolean, version: TlcVersion, mess
 };
 
 // TLC prints the JVM's default direct memory limit and its default fingerprint set and state queue.
-export const printStartupBanner = (printer: MessagePrinter, args: TlcArguments) => {
+export const printStartupBanner = (printer: MessagePrinter, args: SeededArguments) => {
   const workers = `${args.workers} worker${args.workers === 1 ? "" : "s"} on ${availableParallelism()} cores with ${Math.floor(getHeapStatistics().heap_size_limit / 1024 / 1024)}MB heap and 64MB offheap memory [pid: ${process.pid}] (${type()} ${release()} ${arch()}, Node.js ${process.versions.node} ${process.arch.endsWith("64") ? 64 : 32}bit`;
   if (args.mode === "model-check" && args.dfidDepth !== undefined) {
     printer.print(

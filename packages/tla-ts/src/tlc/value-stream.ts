@@ -10,10 +10,12 @@ import { TlaCorruptTraceError, TlaEvaluationError } from "../errors";
 import type { Builtin } from "../evaluate";
 import { getPath, type FileSystem } from "../json";
 import {
+  compareValues,
   createFunction,
   createRecord,
   createSet,
   createTuple,
+  formatValue,
   getFunctionClass,
   getModelValues,
   isSetValue,
@@ -221,7 +223,34 @@ const serializeValue = (value: Value) => {
 };
 
 // Deviation from TLC: GZIPInputStream and BufferedDataInputStream throw an EOFException without a message, so TLC prints its stack trace.
-const createCutShortError = (path: string) => new TlaCorruptTraceError(path, "is cut short");
+const createCutShortError = (path: string) =>
+  new TlaCorruptTraceError(`The trace file ${path} is cut short.`);
+
+// FcnRcdValue#sort and RecordValue#sort insertion-sort the keys and report the one at the position where they find a key twice.
+const getRepeatedKey = (written: Value[]) => {
+  const keys = [...written];
+  for (let index = 1; index < keys.length; index++) {
+    const comparison = compareValues(keys[0], keys[index]);
+    if (comparison === 0) return keys[index];
+    if (comparison > 0) {
+      const first = keys[0];
+      keys[0] = keys[index];
+      keys[index] = first;
+    }
+  }
+  for (let index = 2; index < keys.length; index++) {
+    const key = keys[index];
+    let position = index;
+    let comparison = -1;
+    while (position > 0 && (comparison = compareValues(key, keys[position - 1])) < 0) {
+      keys[position] = keys[position - 1];
+      position--;
+    }
+    if (comparison === 0) return keys[index];
+    keys[position] = key;
+  }
+  return undefined;
+};
 
 const readUShort = (bytes: Uint8Array, position: number) =>
   bytes[position] | (bytes[position + 1] << 8);
@@ -420,7 +449,9 @@ const deserializeValue = (bytes: Uint8Array, path: string) => {
     const handle = handles[index];
     // Deviation from TLC: HandleTable#getValue gives null for a value it hasn't read, and TLC fails on it later with a NullPointerException.
     if (handle === undefined) {
-      throw new TlaCorruptTraceError(path, `refers to value ${index} before it defines that value`);
+      throw new TlaCorruptTraceError(
+        `The trace file ${path} refers to value ${index} before it defines that value.`,
+      );
     }
     return handle;
   };
@@ -511,11 +542,25 @@ const deserializeValue = (bytes: Uint8Array, path: string) => {
   };
   const createComposite = (frame: Frame) => {
     if (frame.kind === "Record") {
+      const repeatedName = getRepeatedKey(frame.names);
+      // Deviation from TLC: RecordValue#createFromExternal keeps a repeated field, which TLC prints and fails on only where it first sorts the record, such as to fingerprint it.
+      if (repeatedName !== undefined) {
+        throw new TlaCorruptTraceError(
+          `Field name ${repeatedName} occurs multiple times in record.`,
+        );
+      }
       return createRecord(
         frame.names.map((name, offset): [string, Value] => [name, frame.values[offset]]),
       );
     }
     if (frame.kind === "Function") {
+      const repeatedKey = getRepeatedKey(frame.domain);
+      // Deviation from TLC: FcnRcdValue#createFromExternal keeps the keys as written, so TLC fails on a repeated key only where it first sorts a function marked unnormalized, and matches no state with a function marked normalized whose keys repeat or are out of order.
+      if (repeatedKey !== undefined) {
+        throw new TlaCorruptTraceError(
+          `The value\n${formatValue(repeatedKey)}\noccurs multiple times in the function domain.`,
+        );
+      }
       return createFunction(
         frame.domain.map((key, offset): [Value, Value] => [key, frame.values[offset]]),
       );
@@ -524,14 +569,14 @@ const deserializeValue = (bytes: Uint8Array, path: string) => {
       // Deviation from TLC: FcnRcdValue#createFromExternal pairs an interval domain with however many values follow it.
       if (frame.high - frame.low + 1 !== frame.length) {
         throw new TlaCorruptTraceError(
-          path,
-          `holds a function from ${frame.low}..${frame.high} with ${frame.length} values`,
+          `The trace file ${path} holds a function from ${frame.low}..${frame.high} with ${frame.length} values.`,
         );
       }
       return createFunction(
         frame.values.map((value, offset): [Value, Value] => [frame.low + offset, value]),
       );
     }
+    // Deviation from TLC: SetEnumValue#createFromExternal trusts the order of a set marked normalized, so TLC prints one written out of order or with a repeated element as written and matches no state with it.
     return frame.kind === "Set" ? createSet(frame.values) : createTuple(frame.values);
   };
   const addValue = (frame: Frame, value: Value) => {

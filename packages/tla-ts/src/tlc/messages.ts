@@ -12,7 +12,7 @@ import {
   UNEXPECTED_EXCEPTION,
   WRONG_INVOCATION_EXCEPTION,
 } from "../errors";
-import { setExitCode } from "../exit-codes";
+import { EXIT_STATUS, getMessageExitStatus, setExitCode } from "../exit-codes";
 import type { TlcVersion } from "./version";
 
 export const MESSAGE_CODE = {
@@ -460,7 +460,16 @@ export const withUnexpectedException = <Result>(compute: () => Result) => {
       throw new TlaEvaluationError(`${UNEXPECTED_EVAL_EXCEPTION}${error.message}`);
     }
     if (getCodedMessage(error.message)) throw error;
-    throw new TlaEvaluationError(`${UNEXPECTED_EXCEPTION}${error.message}`);
+    throw new TlaEvaluationError(`${getUnexpectedPrefix(error)}${error.message}`);
+  }
+};
+
+export const withProcessException = <Result>(compute: () => Result) => {
+  try {
+    return withUnexpectedException(compute);
+  } catch (error) {
+    const coded = error instanceof TlaEvaluationError ? getCodedMessage(error.message) : undefined;
+    throw setExitCode(error, coded ? getMessageExitStatus(coded.code) : EXIT_STATUS.error);
   }
 };
 

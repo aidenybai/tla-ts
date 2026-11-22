@@ -1,8 +1,8 @@
 import type { BoundPattern, Expression } from "./ast";
 import type { Substitution } from "./config";
 import { TlaConfigError, TlaEvaluationError, UNEXPECTED_EXCEPTION } from "./errors";
-import { EXIT_STATUS, getMessageExitStatus, setExitCode } from "./exit-codes";
-import { getCodedMessage, MESSAGE_CODE, withUnexpectedException } from "./tlc/messages";
+import { EXIT_STATUS, setExitCode } from "./exit-codes";
+import { MESSAGE_CODE, withProcessException } from "./tlc/messages";
 import {
   evaluate,
   getBuiltin,
@@ -106,7 +106,7 @@ const isPermutations = (
   expression: Expression,
 ): expression is Expression & { kind: "Apply"; args: [Expression] } =>
   expression.kind === "Apply" &&
-  expression.operator === "Permutations" &&
+  getKeyName(expression.operator) === "Permutations" &&
   expression.args.length === 1;
 
 export const getSymmetryGroup = (
@@ -131,15 +131,7 @@ export const getSymmetryGroup = (
   }
   const evaluateConstant = (expression: Expression) =>
     evaluate(expression, { environment, scope: undefined, state: undefined, next: undefined });
-  const value = (() => {
-    try {
-      return withUnexpectedException(() => evaluateConstant(definition.body));
-    } catch (error) {
-      const coded =
-        error instanceof TlaEvaluationError ? getCodedMessage(error.message) : undefined;
-      throw setExitCode(error, coded ? getMessageExitStatus(coded.code) : EXIT_STATUS.error);
-    }
-  })();
+  const value = withProcessException(() => evaluateConstant(definition.body));
   if (!isEnumeratedSet(value)) {
     throw createSymmetryError("The symmetry operator must specify a set of functions.");
   }
