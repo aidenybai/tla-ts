@@ -1018,21 +1018,6 @@ const getSymbolArity = (
     expression.resolution = local.isSelf ? SELF_RESOLUTION : LOCAL_RESOLUTION;
   }
   if (local) return local.arity;
-  const binding = unit.bindings.get(name);
-  if (binding?.goal?.statement.kind === "AssumeProve" && !binding.isSubstituted) {
-    return binding.arity;
-  }
-  const symbol = findSymbol(name, unit);
-  if (symbol) {
-    if (symbol.kind === "Theorem") unit.linkTheorem(symbol.key);
-    if (expression.kind === "Identifier") expression.name = symbol.key;
-    else expression.operator = symbol.key;
-    operandApplications.get(expression)?.forEach((application) => {
-      application.operator = symbol.key;
-    });
-    renamedArities.set(expression, symbol.arity);
-    return symbol.arity;
-  }
   const prefix = name.includes("!") ? name.slice(0, name.indexOf("!")) : "";
   const selected =
     prefix === "" ? undefined : (lookupLocal(scope, prefix) ?? findSymbol(prefix, unit));
@@ -1047,6 +1032,21 @@ const getSymbolArity = (
       unit,
     );
     return undefined;
+  }
+  const binding = unit.bindings.get(name);
+  if (binding?.goal?.statement.kind === "AssumeProve" && !binding.isSubstituted) {
+    return binding.arity;
+  }
+  const symbol = findSymbol(name, unit);
+  if (symbol) {
+    if (symbol.kind === "Theorem") unit.linkTheorem(symbol.key);
+    if (expression.kind === "Identifier") expression.name = symbol.key;
+    else expression.operator = symbol.key;
+    operandApplications.get(expression)?.forEach((application) => {
+      application.operator = symbol.key;
+    });
+    renamedArities.set(expression, symbol.arity);
+    return symbol.arity;
   }
   if (
     expression.kind !== "OperatorReference" &&

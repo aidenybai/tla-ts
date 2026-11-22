@@ -742,9 +742,11 @@ const getQualifiedSelectors = (
   counts: number[] | undefined,
   lookup: Lookup,
 ) => {
-  if (!name.includes("!") || lookup(name)) return undefined;
+  if (!name.includes("!")) return undefined;
   const parts = name.split("!");
-  if (!parts.some((_part, index) => lookup(parts.slice(0, index + 1).join("!")))) return undefined;
+  const prefixCount =
+    parts.findIndex((_part, index) => lookup(parts.slice(0, index + 1).join("!"))) + 1;
+  if (prefixCount === 0 || prefixCount === parts.length) return undefined;
   return getNameSelectors(name, args, counts);
 };
 

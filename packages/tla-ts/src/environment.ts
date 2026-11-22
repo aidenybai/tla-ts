@@ -1546,7 +1546,8 @@ export const createEnvironment = (
         bound.has(name) ||
         parsed.instances.some(
           (instance) =>
-            isBefore(instance.location, location) && instanced.get(instance)?.has(name) === true,
+            isBefore(instance.location, location) &&
+            (instance.name === name || instanced.get(instance)?.has(name) === true),
         ) ||
         declarations.some(
           (declaration) => declaration.name === name && isBefore(declaration.location, location),

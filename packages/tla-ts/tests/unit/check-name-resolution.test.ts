@@ -4436,6 +4436,40 @@ describe("name resolution matches SANY", () => {
       [],
     ],
     [
+      "selections whose first name SANY binds before an instance of that name",
+      "---- MODULE Inner ----\nFoo == 2 = 2\n====\nI == 1 = 1\nI == INSTANCE Inner\nASSUME J == 1 = 1\nJ == INSTANCE Inner\nCONSTANT K\nK == INSTANCE Inner\nL == INSTANCE Inner\nASSUME L == 1 = 1\nN == 1 = 1\nN(a) == INSTANCE Inner\nO == INSTANCE Inner\nCONSTANT O\nA == I!Foo\nB == J!Foo\nC == K!Foo\nD == L!Foo\nE == L!1!1\nG == O!Foo\nTHEOREM TRUE BY N(2)!Foo, O!Foo",
+      [
+        ...[
+          ["I", "6, col 1 to line 6, col 19", "5, col 1 to line 5, col 10"],
+          ["J", "8, col 1 to line 8, col 19", "7, col 1 to line 7, col 17"],
+          ["K", "10, col 1 to line 10, col 19", "9, col 10 to line 9, col 10"],
+          ["L", "12, col 1 to line 12, col 17", "11, col 1 to line 11, col 19"],
+          ["N", "14, col 1 to line 14, col 22", "13, col 1 to line 13, col 10"],
+          ["O", "16, col 10 to line 16, col 10", "15, col 1 to line 15, col 19"],
+        ].map((entry) => ({
+          location: `line ${entry[1]} of module M`,
+          message: `Multiply-defined symbol '${entry[0]}': this definition or declaration conflicts \nwith the one at line ${entry[2]} of module M.`,
+        })),
+        ...[
+          ["17, col 8 to line 17, col 10", "Cannot find label `Foo'."],
+          ["18, col 8 to line 18, col 10", "Cannot find label `Foo'."],
+          ["19, col 6 to line 19, col 6", "Cannot take subexpression of `K'."],
+          ["21, col 6 to line 21, col 6", "Unknown operator: `L'."],
+          ["23, col 18 to line 23, col 20", "The operator N requires 0 arguments."],
+        ].map((entry) => ({ location: `line ${entry[0]} of module M`, message: entry[1] })),
+      ],
+      [],
+    ],
+    [
+      "selections whose first name is a constant, where an unnamed instance imports the whole name",
+      "---- MODULE Inner ----\nFoo == 2 = 2\n====\n---- MODULE Base ----\nP == INSTANCE Inner\n====\nINSTANCE Base\nCONSTANT P\nF == P!Foo\nTHEOREM TRUE BY P!Foo",
+      ["10, col 6 to line 10, col 6", "11, col 17 to line 11, col 17"].map((range) => ({
+        location: `line ${range} of module M`,
+        message: "Cannot take subexpression of `P'.",
+      })),
+      [],
+    ],
+    [
       "an instance with the wrong number of arguments before a selector that is not a name",
       "---- MODULE Inner ----\nFoo == 1\n====\nI(a) == INSTANCE Inner\nJ == INSTANCE Inner\nX == I!:\nY == J(2)!1\nZ == I!<<\nW == J!:\nTHEOREM TRUE BY I!1",
       [
