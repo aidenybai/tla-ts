@@ -421,9 +421,26 @@ export const frameModel = (
       )
     );
   };
+  // The bindings of the module by the names that TLA+ gives them, where those differ.
+  const bindings = new Map<string, string>();
   // ESCore reads a state variable and calls an exported function by its binding's name, which
-  // TLA+ must take too.
+  // TLA+ must take too, but for a state variable whose name TLA+ can't spell, as $ or _ are, which
+  // takes a name that no binding of the module has.
   const getName = (declared: Declared, kind: string) => {
+    if (
+      kind === "state variable" &&
+      /^[\w$]+$/.test(declared.name) &&
+      !/^\w*[A-Za-z]\w*$/.test(declared.name)
+    ) {
+      const taken = new Set(declarations.map((other) => other.name));
+      const getRenamed = (): string => {
+        const candidate = names.getFresh(declared.name);
+        return taken.has(candidate) ? getRenamed() : candidate;
+      };
+      const renamed = getRenamed();
+      bindings.set(renamed, declared.name);
+      return renamed;
+    }
     const name = (kind === "state variable" ? fieldNames : names).getFresh(declared.name);
     if (name !== declared.name) {
       throw new TlaTypeScriptError(
@@ -526,7 +543,6 @@ export const frameModel = (
   });
   // An exported function whose name TLA+ takes for its own gets a name of its own, which a step
   // calls the function's binding by.
-  const bindings = new Map<string, string>();
   exported.forEach((definition) => {
     const name = names.getFresh(definition.name);
     if (name !== definition.name) bindings.set(name, definition.name);

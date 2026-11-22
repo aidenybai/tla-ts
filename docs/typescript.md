@@ -137,7 +137,7 @@ A model without state runs its top level as an assumption too, so a throw there 
 
 A collection that a helper changes in place through its parameter, as `add(line, lengths)` changes `lengths`, isn't a state variable. The check counts its value in the state, but a trace doesn't show it.
 
-The name of each state variable and exported function must be a name that TLA+ doesn't reserve. TLA+'s keywords, such as `CHOOSE`, and the model's own names, such as `Init`, `Next`, and `vars`, aren't, so the compile stops: `tla-ts can't name the state variable vars in TLA+, which takes the name for its own`.
+The name of each state variable and exported function must be a name that TLA+ doesn't reserve. TLA+'s keywords, such as `CHOOSE`, and the model's own names, such as `Init`, `Next`, and `vars`, aren't, so the compile stops: `tla-ts can't name the state variable vars in TLA+, which takes the name for its own`. A state variable whose name TLA+ can't spell, such as `$` or `_`, takes a name of its own in TLA+, and a trace shows it by its JavaScript name.
 
 ### Values of a type
 
