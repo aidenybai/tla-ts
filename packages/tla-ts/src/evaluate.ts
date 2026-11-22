@@ -2119,10 +2119,13 @@ const traceEvaluator =
     setTrace.callStack = callStack;
     try {
       const computed = evaluator(context);
-      // CallStackTool#eval hands out each FcnLambdaValue as a copy, so a record that one reference builds never reaches the next.
+      // CallStackTool#eval hands out each FcnLambdaValue as a copy, so a record that one reference
+      // builds never reaches the next, which shows only where an application shows.
       const value = isRebindable(computed)
         ? computed.rebind(environment)
-        : typeof computed === "object" && computed.kind === "LazyFunction"
+        : typeof computed === "object" &&
+            computed.kind === "LazyFunction" &&
+            computed.isApplicationObserved
           ? { ...computed }
           : computed;
       callStack.values.set(expression, value);

@@ -1352,6 +1352,20 @@ ASSUME TLCFP(a) = -887695703
     expect([result.status, result.distinctStates]).toEqual(["success", 1]);
   });
 
+  it("keeps the tuple of a lazy function that shows nothing when it replays a failure", async () => {
+    const result = await check({
+      source:
+        '---- MODULE M ----\nEXTENDS Naturals, Sequences\nVARIABLE x\nRECURSIVE Nest(_)\nNest(k) == IF k = 0 THEN <<0, 0>> ELSE LET g == Nest(k - 1) f[i \\in 1..2] == IF i = 0 THEN f[i] ELSE Len(g) IN f\nInit == x = Len(Nest(30)) /\\ 1 = "a"\nNext == UNCHANGED x\n====',
+      config: "INIT Init\nNEXT Next",
+    });
+    expect([result.status, result.failure?.message]).toEqual([
+      "error",
+      'Attempted to check equality of integer 1 with non-integer:\n"a"',
+    ]);
+    // The call stack is what the replay of the failure finds.
+    expect(result.failure?.callStack?.length).toBeGreaterThan(0);
+  });
+
   it("applies a lazy function again each time a tuple is compared with it when a definition that prints is passed to it by name", async () => {
     const printed: string[] = [];
     await check({
