@@ -36,8 +36,11 @@ const getBoxes = (container: Element, paneName: string) => {
   const pane = container.querySelector(`[data-pane="${paneName}"]`);
   const view = pane?.getBoundingClientRect();
   if (!pane || !view) return boxes;
+  // The names whose first row has ended, whose other words need no measuring.
+  const placed = new Set<string>();
   for (const element of pane.querySelectorAll<HTMLElement>("[data-region]")) {
     const name = element.dataset.region ?? "";
+    if (placed.has(name)) continue;
     const box = element.getBoundingClientRect();
     const middle = box.top + box.height / 2;
     const first = boxes.get(name);
@@ -45,7 +48,7 @@ const getBoxes = (container: Element, paneName: string) => {
       if (first.middle === middle) {
         first.right = box.right;
         first.isClipped = box.right > view.right;
-      }
+      } else placed.add(name);
     } else if (middle > view.top && box.bottom < view.bottom) {
       boxes.set(name, {
         left: element.closest("[data-line]")?.getBoundingClientRect().left ?? box.left,
@@ -115,15 +118,29 @@ export const Connector = (props: ConnectorProps) => {
       );
     };
     update();
-    const observer = new ResizeObserver(update);
+    // A scroll changes a pane's lines many times in a frame, and each measuring lays the page out.
+    let frame = 0;
+    const schedule = () => {
+      frame ||= requestAnimationFrame(() => {
+        frame = 0;
+        update();
+      });
+    };
+    const observer = new ResizeObserver(schedule);
     for (const element of container.querySelectorAll("[data-pane], [data-pane] > *"))
       observer.observe(element);
+    // A pane may hold only its lines in view, which change as it scrolls.
+    const lineObserver = new MutationObserver(schedule);
+    for (const element of container.querySelectorAll("[data-pane]"))
+      lineObserver.observe(element, { childList: true, subtree: true });
     const updateOnScroll = (event: Event) => {
-      if (event.target instanceof Element && event.target.matches("[data-pane]")) update();
+      if (event.target instanceof Element && event.target.matches("[data-pane]")) schedule();
     };
     container.addEventListener("scroll", updateOnScroll, { capture: true, passive: true });
     return () => {
+      cancelAnimationFrame(frame);
       observer.disconnect();
+      lineObserver.disconnect();
       container.removeEventListener("scroll", updateOnScroll, { capture: true });
     };
   }, [namesKey]);

@@ -14,7 +14,13 @@ import { createHighlighter } from "./src/lib/highlighter";
 import { LOGO_PATH } from "./src/lib/logo";
 import { getPageFile } from "./src/router";
 import { LESSONS } from "./src/lib/tutorial";
-import type { Benchmark, CompiledExample, ContentBlock, ContentSection } from "./src/lib/site-data";
+import type {
+  Benchmark,
+  CompiledExample,
+  ContentBlock,
+  ContentSection,
+  Source,
+} from "./src/lib/site-data";
 
 const SITE_DATA = "virtual:site-data";
 const README_URL = new URL("../../README.md", import.meta.url);
@@ -38,6 +44,25 @@ const getEscoreRuntime = () => (escoreRuntime ??= prepareHostRuntime(JSON.parse(
 
 const compileOnEscore = (source: string, fileName: string) =>
   getEscoreCompilation(source, fileName, getEscoreRuntime());
+
+// The code that builds a source: each distinct style once, and each run of tokens of one style as
+// its text with the style's number. ESCore's code of a program runs to a thousand lines, whose
+// tokens each with its own style would be most of what a page loads.
+const packSource = (source: Source, code = JSON.stringify(source.code)) => {
+  const styles: string[] = [];
+  const lines = source.lines.map((tokens) => {
+    const runs: [string, number][] = [];
+    for (const token of tokens) {
+      const style = JSON.stringify(token.style);
+      const number = styles.includes(style) ? styles.indexOf(style) : styles.push(style) - 1;
+      const last = runs.at(-1);
+      if (last?.[1] === number) last[0] += token.content;
+      else runs.push([token.content, number]);
+    }
+    return runs;
+  });
+  return `((styles) => ({ code: ${code}, lines: ${JSON.stringify(lines)}.map((line) => line.map((run) => ({ content: run[0], style: styles[run[1]] }))) }))([${styles.join(",")}])`;
+};
 
 const getExample = (
   path: string,
@@ -148,7 +173,13 @@ const siteData = (): Plugin => ({
     for (const path of [...paths, fileURLToPath(README_URL)]) this.addWatchFile(path);
     const highlight = await createHighlighter();
     return [
-      `export const examples = ${JSON.stringify(paths.map((path) => getExample(path, highlight)))};`,
+      `export const examples = [${paths
+        .map((path) => getExample(path, highlight))
+        .map(
+          (example) =>
+            `{ ...${JSON.stringify({ ...example, tla: undefined })}, tla: ${packSource(example.tla)} }`,
+        )
+        .join(",")}];`,
       `export const benchmarks = ${JSON.stringify(getBenchmarks())};`,
       `export const prompt = ${JSON.stringify(PROMPT.exec(readFileSync(README_URL, "utf8"))?.groups?.prompt)};`,
       `export const install = ${JSON.stringify(highlight("npm install tla-ts", "shellscript"))};`,
@@ -302,18 +333,13 @@ const compilations = (): Plugin => ({
     const highlight = await createHighlighter();
     const source = readFileSync(path, "utf8").trim();
     const compilation = compileOnEscore(source, getFileName(path));
-    return `export default ${JSON.stringify({
+    const built: Omit<Precompiled, "tla"> = {
       fileName: getFileName(path),
       source,
       typescript: highlight(source, "typescript").lines,
       compilation,
-      // ESCore's code of a program runs to hundreds of lines, which the site ships as plain text
-      // rather than with the styles of each token that highlighting gives.
-      tla: {
-        code: compilation.tla,
-        lines: compilation.tla.split("\n").map((content) => [{ content, style: {} }]),
-      },
-    } satisfies Precompiled)};`;
+    };
+    return `const built = ${JSON.stringify(built)};\nexport default { ...built, tla: ${packSource(highlight(compilation.tla, "tlaplus"), "built.compilation.tla")} };`;
   },
 });
 
