@@ -4126,27 +4126,69 @@ const getExpandedLazySet = (value: LazySetValue, isStrict: boolean) => {
   }
 };
 
-const formatLazySet = (value: LazySetValue, isStrict: boolean): string => {
-  const format = (inner: Value) => formatValue(inner, isStrict);
+interface FormattedValue {
+  kind: "Value";
+  value: Value;
+  isStrict: boolean;
+  isNormalized: boolean;
+}
+
+interface FormattedSetEnd {
+  kind: "SetEnd";
+  sets: Value[] | undefined;
+}
+
+type FormatPart = string | FormattedValue | FormattedSetEnd;
+
+const getListParts = <Item>(
+  open: string,
+  items: readonly Item[],
+  separator: string,
+  close: string,
+  getItemParts: (item: Item, index: number) => FormatPart[],
+) => {
+  const parts: FormatPart[] = [open];
+  for (let index = 0; index < items.length; index++) {
+    if (index > 0) parts.push(separator);
+    parts.push(...getItemParts(items[index], index));
+  }
+  parts.push(close);
+  return parts;
+};
+
+const getLazySetParts = (value: LazySetValue, isStrict: boolean): FormatPart[] => {
+  const format = (inner: Value): FormattedValue => ({
+    kind: "Value",
+    value: inner,
+    isStrict,
+    isNormalized: false,
+  });
   switch (value.kind) {
     case "Subset":
       return typeof value.base === "object" && value.base.kind === "Interval"
-        ? `SUBSET (${format(value.base)})`
-        : `SUBSET ${format(value.base)}`;
+        ? ["SUBSET (", format(value.base), ")"]
+        : ["SUBSET ", format(value.base)];
     case "FunctionSet":
-      return `[${format(value.domain)} -> ${format(value.range)}]`;
+      return ["[", format(value.domain), " -> ", format(value.range), "]"];
     case "RecordSet":
-      return `[${value.names.map((name, index) => `${name}: ${format(value.sets[index])}`).join(", ")}]`;
+      return getListParts("[", value.names, ", ", "]", (name, index) => [
+        `${name}: `,
+        format(value.sets[index]),
+      ]);
     case "ProductSet":
-      return `(${value.factors.map(format).join(" \\X ")})`;
+      return getListParts("(", value.factors, " \\X ", ")", (factor) => [format(factor)]);
     case "SetOperation":
-      return `${format(value.left)} ${value.operator} ${format(value.right)}`;
+      return [format(value.left), ` ${value.operator} `, format(value.right)];
     case "FilteredSet":
       return value.source
-        ? `{${value.source.names} \\in ${format(value.base)} : <expression ${value.source.predicate}> }`
-        : `{x \\in ${format(value.base)} : ...}`;
+        ? [
+            `{${value.source.names} \\in `,
+            format(value.base),
+            ` : <expression ${value.source.predicate}> }`,
+          ]
+        : ["{x \\in ", format(value.base), " : ...}"];
     case "Union":
-      return formatUnion(value, isStrict);
+      return ["UNION(", format(value.base), ")"];
   }
 };
 
@@ -4232,22 +4274,27 @@ export const formatNormalizedCopies = (values: Value[]) => {
   return copies.map((value) => formatValue(value, true, true));
 };
 
-export const formatValue = (value: Value, isStrict = false, isNormalized = false): string => {
-  const format = (inner: Value) => formatValue(inner, isStrict, isNormalized);
-  if (typeof value === "boolean") return value ? "TRUE" : "FALSE";
-  if (typeof value === "number") return String(value);
-  if (typeof value === "string") return formatString(value);
+const getValueParts = (value: Value, isStrict: boolean, isNormalized: boolean): FormatPart[] => {
+  const format = (inner: Value): FormattedValue => ({
+    kind: "Value",
+    value: inner,
+    isStrict,
+    isNormalized,
+  });
+  if (typeof value === "boolean") return [value ? "TRUE" : "FALSE"];
+  if (typeof value === "number") return [String(value)];
+  if (typeof value === "string") return [formatString(value)];
   switch (value.kind) {
     case "ModelValue":
-      return value.name;
+      return [value.name];
     case "Set":
-      return `{${value.elements.map(format).join(", ")}}`;
+      return getListParts("{", value.elements, ", ", "}", (element) => [format(element)]);
     case "MixedSet":
-      return format(toFiniteSet(value));
+      return [format(toFiniteSet(value))];
     case "Interval":
-      return value.low <= value.high ? `${value.low}..${value.high}` : "{}";
+      return [value.low <= value.high ? `${value.low}..${value.high}` : "{}"];
     case "InfiniteSet":
-      return value.name === "Any" ? "ANY" : value.name;
+      return [value.name === "Any" ? "ANY" : value.name];
     case "Subset":
     case "FunctionSet":
     case "RecordSet":
@@ -4258,13 +4305,12 @@ export const formatValue = (value: Value, isStrict = false, isNormalized = false
       const sets = setTrace.sets;
       sets?.push(value);
       const expanded = printing.isExpanded ? getExpandedLazySet(value, isStrict) : undefined;
-      const formatted = expanded ? format(expanded) : formatLazySet(value, isStrict);
-      sets?.pop();
-      return formatted;
+      const setEnd: FormattedSetEnd = { kind: "SetEnd", sets };
+      return expanded ? [format(expanded), setEnd] : [...getLazySetParts(value, isStrict), setEnd];
     }
 
     case "SequenceSet":
-      return `Seq(${format(value.base)})`;
+      return ["Seq(", format(value.base), ")"];
     case "Function":
     case "LazyFunction": {
       const functionValue =
@@ -4275,24 +4321,31 @@ export const formatValue = (value: Value, isStrict = false, isNormalized = false
             : undefined;
       if (functionValue === undefined) {
         const source = value.kind === "LazyFunction" ? value.source : undefined;
-        if (!source) return "<function>";
-        const parameters = source.parameters
-          .map((parameter) => `${parameter.name} \\in ${formatValue(parameter.domain)}`)
-          .join(", ");
-        return `[${parameters} |-> <expression ${source.body}>]`;
+        if (!source) return ["<function>"];
+        return [
+          ...getListParts("[", source.parameters, ", ", "", (parameter) => [
+            `${parameter.name} \\in `,
+            { kind: "Value", value: parameter.domain, isStrict: false, isNormalized: false },
+          ]),
+          ` |-> <expression ${source.body}>]`,
+        ];
       }
       if (
         functionValue.domain.length === 0 &&
         isVersion174 &&
         getFunctionClass(value) !== "tuple"
       ) {
-        return "<< >>";
+        return ["<< >>"];
       }
-      const formatRange = (inner: Value) =>
-        formatValue(inner, isStrict, isNormalized && getFunctionClass(value) !== "lambda");
-      if (functionValue.domain.length === 0 && getFunctionClass(value) === "record") return "[]";
+      const formatRange = (inner: Value): FormattedValue => ({
+        kind: "Value",
+        value: inner,
+        isStrict,
+        isNormalized: isNormalized && getFunctionClass(value) !== "lambda",
+      });
+      if (functionValue.domain.length === 0 && getFunctionClass(value) === "record") return ["[]"];
       if (functionValue.domain.every((key, index) => key === index + 1)) {
-        return `<<${functionValue.range.map(formatRange).join(", ")}>>`;
+        return getListParts("<<", functionValue.range, ", ", ">>", (inner) => [formatRange(inner)]);
       }
       const pairs = isNormalized
         ? functionValue.domain.map((key, index) => [key, functionValue.range[index]])
@@ -4301,11 +4354,36 @@ export const formatValue = (value: Value, isStrict = false, isNormalized = false
         getFunctionClass(value) === "record" ||
         functionValue.domain.every((key) => typeof key === "string" && isFieldName(key))
       ) {
-        return `[${pairs.map((pair) => `${String(pair[0])} |-> ${formatRange(pair[1])}`).join(", ")}]`;
+        return getListParts("[", pairs, ", ", "]", (pair) => [
+          `${String(pair[0])} |-> `,
+          formatRange(pair[1]),
+        ]);
       }
-      return `(${pairs.map((pair) => `${format(pair[0])} :> ${formatRange(pair[1])}`).join(" @@ ")})`;
+      return getListParts("(", pairs, " @@ ", ")", (pair) => [
+        format(pair[0]),
+        " :> ",
+        formatRange(pair[1]),
+      ]);
     }
   }
+};
+
+export const formatValue = (value: Value, isStrict = false, isNormalized = false): string => {
+  let text = "";
+  const pending: FormatPart[] = [{ kind: "Value", value, isStrict, isNormalized }];
+  for (let part = pending.pop(); part !== undefined; part = pending.pop()) {
+    if (typeof part === "string") {
+      text += part;
+      continue;
+    }
+    if (part.kind === "SetEnd") {
+      part.sets?.pop();
+      continue;
+    }
+    const parts = getValueParts(part.value, part.isStrict, part.isNormalized);
+    for (let index = parts.length - 1; index >= 0; index--) pending.push(parts[index]);
+  }
+  return text;
 };
 
 const isUnchanged = (previous: Value | undefined, value: Value) => {

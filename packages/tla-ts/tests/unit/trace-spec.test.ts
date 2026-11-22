@@ -34,6 +34,18 @@ describe("trace exploration spec", () => {
     expect(stripDate(result.traceSpec)).toBe(stripDate(readFixture(`${name}_TTrace.tla`)));
   });
 
+  it("writes a trace whose last state nests 6,000 tuples", async () => {
+    const result = await check({
+      source: `---- MODULE M ----\nEXTENDS Naturals\nVARIABLES x, y\nInit == x = 0 /\\ y = 0\nNext == y' = y + 1 /\\ x' = ${"<< ".repeat(100)}x${" >>".repeat(100)}\nInv == y < 60\n====\n`,
+      config: "INIT Init\nNEXT Next\nINVARIANT Inv\n",
+      traceSpec: { module: "M_TTrace" },
+    });
+    expect(result.status).toBe("invariant-violation");
+    expect(result.traceSpec?.split("\n").find((line) => line.endsWith(",y |-> 60])"))).toBe(
+      `    ([x |-> ${"<<".repeat(6000)}0${">>".repeat(6000)},y |-> 60])`,
+    );
+  });
+
   it("records the trace in TLC's binary format through _TLCTrace", async () => {
     const result = await checkFixture("Safety", "te_out", "te_out.bin");
     const binary = result.written.get("te_out.bin");
