@@ -17,29 +17,31 @@ const DIE_HARDER_TRACE = readFixture("load-trace/MCDieHarder.bin");
 
 const DIE_HARDER_PAYLOAD = gunzipSync(DIE_HARDER_TRACE);
 
-const INPUT_FILE = { _TLCTraceInputFile: TRACE_PATH };
+type TraceModule = "_TLCTrace" | "_JsonTrace";
 
-const loadTrace = (source: string, config: string, trace: Uint8Array | undefined) =>
-  check({
+const loadTrace = (
+  source: string,
+  config: string,
+  trace: Uint8Array | undefined,
+  module: TraceModule = "_TLCTrace",
+) => {
+  const constants = { [`${module}InputFile`]: TRACE_PATH };
+  return check({
     source,
     config,
     loadModule: getModuleLoader("load-trace"),
     moduleOperators: [
-      {
-        kind: "constraint",
-        module: "_TLCTrace",
-        operator: "_TLCTraceConstraint",
-        constants: INPUT_FILE,
-      },
-      { kind: "view", module: "_TLCTrace", operator: "_TLCTraceView", constants: INPUT_FILE },
+      { kind: "constraint", module, operator: `${module}Constraint`, constants },
+      { kind: "view", module, operator: `${module}View`, constants },
     ],
     readFile: (path) => (path === TRACE_PATH ? trace : undefined),
   });
+};
 
 const loadDieHarder = (trace: Uint8Array | undefined) =>
   loadTrace(readText("load-trace/MCDieHarder.tla"), readText("load-trace/MCDieHarder.cfg"), trace);
 
-const dumpTrace = async (source: string, config: string) => {
+const dumpTrace = async (source: string, config: string, module: TraceModule = "_TLCTrace") => {
   let dumped: Uint8Array | undefined;
   await check({
     source,
@@ -48,14 +50,14 @@ const dumpTrace = async (source: string, config: string) => {
     moduleOperators: [
       {
         kind: "postcondition",
-        module: "_TLCTrace",
-        operator: "_TLCTrace",
-        constants: { _TLCTraceFile: TRACE_PATH },
+        module,
+        operator: module,
+        constants: { [`${module}File`]: TRACE_PATH },
       },
     ],
     onPrint: () => {},
     writeFile: (_path, content) => {
-      if (content instanceof Uint8Array) dumped = content;
+      dumped = typeof content === "string" ? new TextEncoder().encode(content) : content;
     },
   });
   return dumped;
@@ -276,6 +278,26 @@ describe("-loadTrace tlc matches TLC", () => {
       const source = getLatinSource(initial);
       const trace = await dumpTrace(source, LATIN_CONFIG);
       expect(getOutcome(await loadTrace(source, LATIN_CONFIG, trace))).toEqual(outcome);
+    },
+  );
+});
+
+describe("-loadTrace's _TLCState matches TLC", () => {
+  const LONG_SOURCE =
+    "---- MODULE Long ----\nEXTENDS Naturals\nVARIABLE x\nInit == x = 0\nNext == x' = x + 1\nInv == x < 300\n====";
+
+  const LONG_CONFIG = "INIT Init\nNEXT Next\nINVARIANT Inv";
+
+  it.each<TraceModule>(["_TLCTrace", "_JsonTrace"])(
+    "reads the current state in %s instead of rebuilding the trace to it",
+    async (module) => {
+      const trace = await dumpTrace(LONG_SOURCE, LONG_CONFIG, module);
+      expect(getOutcome(await loadTrace(LONG_SOURCE, LONG_CONFIG, trace, module))).toEqual({
+        status: "invariant-violation",
+        violation: "Inv",
+        generated: 301,
+        distinct: 301,
+      });
     },
   );
 });

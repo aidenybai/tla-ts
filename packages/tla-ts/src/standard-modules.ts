@@ -25,7 +25,11 @@ import { BAGS_OPERATORS } from "./bags";
 import { createIoUtilsOperators, createJsonOperators, type FileSystem } from "./json";
 import { createTlcTraceOperators } from "./tlc/value-stream";
 import { createRandomizationOperators, createRandomSubsetSet } from "./randomization";
-import { createPossibleOperators, createTlcExtOperators } from "./tlc/tlcext-operators";
+import {
+  createPossibleOperators,
+  createTlcExtOperators,
+  createTraceStateOperator,
+} from "./tlc/tlcext-operators";
 import { createTlcOperators } from "./tlc/tlc-operators";
 import { TLC_JAVA_METHODS } from "./tlc/jar-data";
 import {
@@ -641,7 +645,10 @@ export const getJavaOverrides = (
     ];
   }
   if (name === "IOUtils") return createIoUtilsOperators(files, evaluateReplaced);
-  if (name === "_TLCTrace") return createTlcTraceOperators(files);
+  if (name === "_TLCTrace") {
+    return [...createTlcTraceOperators(files), createTraceStateOperator(runtime)];
+  }
+  if (name === "_JsonTrace") return [createTraceStateOperator(runtime)];
   if (!getSanyStandardModules(runtime.version).has(name)) return undefined;
   const operators = getStandardOperators(name, print, runtime, files);
   return name === "Randomization" && operators

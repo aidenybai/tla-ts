@@ -412,6 +412,13 @@ export const createTlcExtOperators = (runtime: CheckerRuntime): Builtin[] => {
   ];
 };
 
+export const createTraceStateOperator = (runtime: CheckerRuntime) =>
+  defineLazyOperator("_TLCState", 1, (_args, context) =>
+    context?.state && isCompleteState(context.state)
+      ? createTlcRecord(Object.entries(runtime.toRecord(context.state)))
+      : createRecord([]),
+  );
+
 export const createPossibleOperators = (
   print: (text: string) => void,
   runtime: CheckerRuntime,
