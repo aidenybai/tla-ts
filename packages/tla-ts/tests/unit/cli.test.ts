@@ -54,6 +54,29 @@ const getSteadyLines = (output: string) =>
     .split("\n")
     .filter((line) => !STARTUP_LINE.test(line));
 
+// TLC prints only the behavior here, since the FingerprintException it throws has no message.
+const UNFINGERPRINTED_LIVE_SUBSCRIPT = [
+  "Starting... (_)",
+  "Implied-temporal checking--satisfiability problem has 1 branches.",
+  "Computing initial states...",
+  "Finished computing initial states: 1 distinct state generated at _.",
+  "Error: TLC threw an unexpected exception.",
+  "This was probably caused by an error in the spec or model.",
+  "See the User Output or TLC Console for clues to what happened.",
+  "The exception was a java.lang.RuntimeException",
+  ": Attempted to check equality of integer 0 with non-integer:",
+  "{1}",
+  "Error: The behavior up to this point is:",
+  "State 1: <Initial predicate>",
+  "/\\ x = 0",
+  "/\\ y = 0",
+  "",
+  "3 states generated, 3 distinct states found, 2 states left on queue.",
+  "The depth of the complete state graph search is 2.",
+  "The average outdegree of the complete state graph is 2 (minimum is 2, the maximum 2 and the 95th percentile is 2).",
+  "Finished in _ at (_)",
+];
+
 const TLC_REPORTS = [
   [
     "AssumptionFalse",
@@ -500,6 +523,8 @@ const TLC_REPORTS = [
       "Trace exploration spec path: ./UnfingerprintedImpliedAction_TTrace__.tla",
     ],
   ],
+  ["UnfingerprintedFairness", 255, UNFINGERPRINTED_LIVE_SUBSCRIPT],
+  ["UnfingerprintedLiveAction", 255, UNFINGERPRINTED_LIVE_SUBSCRIPT],
   [
     "UnfingerprintedProduct",
     75,
@@ -1533,7 +1558,9 @@ describe("the CLI takes several specs and globs", () => {
       "Checking UnfingerprintedDifference.tla with UnfingerprintedDifference.cfg",
       "Checking UnfingerprintedDifferenceStep.tla with UnfingerprintedDifferenceStep.cfg",
       "Checking UnfingerprintedEquality.tla with UnfingerprintedEquality.cfg",
+      "Checking UnfingerprintedFairness.tla with UnfingerprintedFairness.cfg",
       "Checking UnfingerprintedImpliedAction.tla with UnfingerprintedImpliedAction.cfg",
+      "Checking UnfingerprintedLiveAction.tla with UnfingerprintedLiveAction.cfg",
       "Checking UnfingerprintedProduct.tla with UnfingerprintedProduct.cfg",
       "Checking UnfingerprintedState.tla with UnfingerprintedState.cfg",
       "Checking UnspecifiedFairness.tla with UnspecifiedFairness.cfg",

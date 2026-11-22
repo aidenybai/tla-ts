@@ -15,6 +15,7 @@ import {
   getCoverageNode,
   getEnteredFrames,
   runAtCoverageNode,
+  runReportedInto,
   type Coverage,
 } from "../coverage";
 import {
@@ -59,7 +60,13 @@ import {
   setTrace,
   type Value,
 } from "../values";
-import { isSubstitutionDefinition, substitutedExpressions, substitutionFrames } from "../instances";
+import {
+  getActionPredicate,
+  getSubstitutedOccurrence,
+  isSubstitutionDefinition,
+  substitutedExpressions,
+  substitutionFrames,
+} from "../instances";
 import { getKeyName } from "../resolve";
 import { CORE_OPERATORS } from "../standard-modules";
 import type { SuccessorGenerator } from "../successors";
@@ -82,6 +89,7 @@ interface ActionItem {
 interface RunKind {
   isInit: boolean;
   isEnabled: boolean;
+  initPredicates?: ReadonlyMap<Expression, Expression>;
 }
 
 interface Replay {
@@ -323,7 +331,15 @@ export const holdsValue = (run: RunKind, expression: Expression, value: Value, i
   const message =
     isWalked && LITERAL_KINDS.has(expression.kind)
       ? getRelationMessage(run, expression)
-      : getExpectedBooleanMessage(run, formatValue(value), expression);
+      : getExpectedBooleanMessage(
+          run,
+          formatValue(value),
+          isWalked
+            ? expression
+            : (run.initPredicates?.get(expression) ??
+                getSubstitutedOccurrence(expression) ??
+                getActionPredicate(expression)),
+        );
   throw run.isInit && isWalked && isBuiltInOperation(expression)
     ? new TlaUncodedError(message)
     : createRunError(run, message);
@@ -403,13 +419,14 @@ const evaluateInPartial = (
   expression: Expression,
   scope: Scope | undefined,
   partial: State,
+  next: State | undefined,
 ) => {
   try {
     return evaluateAt(replay, node, expression, {
       environment: replay.environment,
       scope,
       state: partial,
-      next: NULL_STATE,
+      next,
     });
   } catch (error) {
     if (replay.isEnabled && error instanceof TlaUnassignedError) return error;
@@ -422,9 +439,17 @@ const isChanged = (replay: Replay, item: ActionItem, partial: State) => {
     environment: replay.environment,
     scope: item.scope,
     state: replay.current,
-    next: partial,
+    next: undefined,
   });
-  const after = evaluateInPartial(replay, item.node, item.expression, item.scope, partial);
+  // Tool#getNextStates evaluates a CHANGED item in s1 with TLCState.Empty, and Tool#enabled with TLCState.Null.
+  const after = evaluateInPartial(
+    replay,
+    item.node,
+    item.expression,
+    item.scope,
+    partial,
+    replay.isEnabled ? NULL_STATE : undefined,
+  );
   if (after instanceof TlaUnassignedError) {
     throw toUnspecifiedSubscriptError(after, replay.environment.runtime.version);
   }
@@ -958,14 +983,22 @@ const visitApplication = (
       return visit(replay, branch, items, scope, partial, node);
     }
     case "Case": {
-      const arm = expression.arms.find((candidate) => {
-        const value = evaluateAt(replay, node, candidate.condition, context);
-        if (typeof value === "boolean") return value;
-        throw createRunError(replay, getCaseGuardMessage(replay, value, candidate.body));
-      });
-      const body = arm?.body ?? expression.other;
-      if (body === undefined) throw createRunError(replay, getCaseOtherMessage(replay, expression));
-      return visit(replay, body, items, scope, partial, node);
+      const visitArm = () => {
+        const arm = expression.arms.find((candidate) => {
+          const value = evaluateAt(replay, node, candidate.condition, context);
+          if (typeof value === "boolean") return value;
+          throw createRunError(replay, getCaseGuardMessage(replay, value, candidate.body));
+        });
+        const body = arm?.body ?? expression.other;
+        if (body === undefined) {
+          throw createRunError(replay, getCaseOtherMessage(replay, expression));
+        }
+        return visit(replay, body, items, scope, partial, node);
+      };
+      // Tool#enabled evaluates a CASE's guards and arms in the CASE's CostModel, not their $Pair's, so OpApplNodeWrapper#get reports their costs into the CASE.
+      return replay.isEnabled && replay.coverage && node >= 0
+        ? runReportedInto(replay.coverage, node, visitArm)
+        : visitArm();
     }
     case "FunctionApplication": {
       const value = evaluateAt(
@@ -1154,12 +1187,16 @@ const visitUnchanged = (
       environment: replay.environment,
       scope,
       state: replay.current,
-      next: partial,
+      next: undefined,
     });
     const callStack = replay.callStack;
     const depth = callStack?.expressions.length ?? 0;
     const fingerprint = callStack?.fingerprint;
-    const after = evaluateInPartial(replay, node, expression, scope, partial);
+    const after = replay.isEnabled
+      ? replay.environment.runtime.runWithEvalControl("Primed", () =>
+          evaluateInPartial(replay, node, expression, scope, partial, undefined),
+        )
+      : evaluateInPartial(replay, node, expression, scope, partial, NULL_STATE);
     if (!(after instanceof TlaUnassignedError)) {
       return isEqualLikeTlc(before, after) && proceed(replay, items, partial, node);
     }
@@ -1213,9 +1250,6 @@ export const replayEnabled = (
   const replay = createReplay(environment, "enabled", state, found, found);
   const callStack = replay.callStack;
   const depth = callStack?.expressions.length ?? 0;
-  const coverage = replay.coverage;
-  const isOuterEnabled = coverage?.isEnabled ?? false;
-  if (coverage) coverage.isEnabled = true;
   try {
     if (expression.kind === "AngleAction" && expression.location === expression.action.location) {
       const changed = createItem("Changed", expression.subscript, scope, node, undefined);
@@ -1231,8 +1265,6 @@ export const replayEnabled = (
       callStack.isFrozen = false;
     }
     return true;
-  } finally {
-    if (coverage) coverage.isEnabled = isOuterEnabled;
   }
 };
 

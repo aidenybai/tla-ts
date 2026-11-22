@@ -31,6 +31,8 @@ import {
   getReevaluatedDefinitions,
   getRootKey,
   getStartupValue,
+  getUnchangedVariables,
+  isUnchangedState,
   lookupScope,
   resolveApplyOperator,
   resolveGlobalOperator,
@@ -44,6 +46,8 @@ import {
 } from "./evaluate";
 import { getLetDefinition, letDefinitions } from "./coverage";
 import {
+  frameSubstitutions,
+  getActionPredicate,
   getSubstitutedName,
   getSubstitutedOccurrence,
   mapChildren,
@@ -92,6 +96,7 @@ interface ExpandedExpression extends ScopedExpression {
   theorem?: TheoremReference;
   argumentFreeDefinition?: Definition;
   substitutions: LetExpression[];
+  predicate: Expression;
 }
 
 export interface TemporalProperty extends ScopedExpression {
@@ -432,6 +437,7 @@ export const expandTemporal = (
   const getLeaf = (
     theorem?: TheoremReference,
     argumentFreeDefinition?: Definition,
+    whole = expression,
   ): ExpandedExpression[] => [
     {
       expression,
@@ -444,6 +450,9 @@ export const expandTemporal = (
       substitutions: expansion.substitutions.flatMap((item) =>
         isWithinScope(item.scope, scope) ? [item.expression] : [],
       ),
+      predicate:
+        expansion.frames.find((frame) => frameSubstitutions.has(frame)) ??
+        getActionPredicate(whole),
     },
   ];
   // An instanced body reaches the theorem its module named, and a direct reference the one its INSTANCE made.
@@ -538,7 +547,7 @@ export const expandTemporal = (
         definition.kind === "Operator" &&
         getLevelBound(definition.body, undefined, environment) === VARIABLE_LEVEL
       ) {
-        return getLeaf();
+        return getLeaf(undefined, undefined, definition.body);
       }
       return expand(
         getOpDefBody(definition),
@@ -581,6 +590,8 @@ export const expandTemporal = (
       if (isArgumentFree && definition && getLookupValue(definition, environment) !== undefined) {
         return getLeaf(undefined, definition);
       }
+      // SymbolNodeValueLookupProvider#lookup gives an applied definition as its literal body, which SpecProcessor takes whole.
+      if (getBodyLiteral(operator.body, environment) !== undefined) return getLeaf();
       const bound = bindUncachedArguments(operator, expression.args, context);
       if (
         !isProperty &&
@@ -658,6 +669,8 @@ export const toLiveExpression = (
   environment: Environment,
 ): LiveExpression => {
   const is174 = environment.runtime.version === "1.7.4";
+  const getSubscriptVariables = (subscript: Expression) =>
+    getUnchangedVariables(subscript, environment)?.map((variable) => variable.index);
   const toAtom = (
     expression: Expression,
     scope: Scope | undefined,
@@ -680,10 +693,17 @@ export const toLiveExpression = (
         kind: "Action",
         expression: expression.action,
         subscript: expression.subscript,
+        subscriptVariables: getSubscriptVariables(expression.subscript),
         scope,
       };
     }
-    return { kind: "Action", expression, subscript: undefined, scope };
+    return {
+      kind: "Action",
+      expression,
+      subscript: undefined,
+      subscriptVariables: undefined,
+      scope,
+    };
   };
 
   let expansionDepth = 0;
@@ -947,6 +967,7 @@ export const toLiveExpression = (
           kind: "Action",
           expression: expression.action,
           subscript: expression.subscript,
+          subscriptVariables: getSubscriptVariables(expression.subscript),
           scope,
           enabled,
         };
@@ -989,12 +1010,16 @@ export const getInterpretedAtoms = (environment: Environment): LiveAtoms<Value[]
   holdsAction: (atom, state, next) => {
     const scope = atom.scope;
     const subscript = atom.subscript;
+    // The tracing replay evaluates the subscript, whose tuple TLC names in the frames.
+    const variables = environment.callStack ? undefined : atom.subscriptVariables;
     if (
       subscript &&
-      isEqualLikeTlc(
-        evaluate(subscript, { environment, scope, state, next: undefined }),
-        evaluate(subscript, { environment, scope, state: next, next: NULL_STATE }),
-      )
+      (variables
+        ? isUnchangedState(variables, state, next)
+        : isEqualLikeTlc(
+            evaluate(subscript, { environment, scope, state, next: undefined }),
+            evaluate(subscript, { environment, scope, state: next, next: NULL_STATE }),
+          ))
     )
       return false;
     const value = evaluate(atom.expression, { environment, scope, state, next });

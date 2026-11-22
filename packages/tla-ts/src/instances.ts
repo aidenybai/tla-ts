@@ -43,6 +43,10 @@ export const substitutedExpressions = new WeakMap<Expression, Substitution>();
 export const isSubstitutionDefinition = (definition: Definition) =>
   substitutedExpressions.has(definition.body) && !substitutionFrames.has(definition.body);
 
+// TLC's Action#pred for an instance's action is the SubstInNode, which SANY locates at the instance's definition.
+export const getActionPredicate = (expression: Expression) =>
+  substitutionFrames.get(expression)?.find((frame) => frameSubstitutions.has(frame)) ?? expression;
+
 const addFrames = (expression: Expression, frames: Expression[]) => {
   const copy = { ...expression };
   if (contextualApplications.has(expression)) contextualApplications.add(copy);

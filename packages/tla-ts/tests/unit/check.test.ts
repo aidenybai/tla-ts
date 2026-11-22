@@ -2440,6 +2440,36 @@ ASSUME TLCFP(a) = -887695703
   );
 
   it.each([
+    [
+      "Ap(a) == Step /\\ PrintT(<<a>>) /\\ (UNCHANGED (a + 0) \\/ TRUE) /\\ PrintT(<<a>>)\nNext == Ap(RandomElement(y..1000))",
+      [
+        "line 8, col 10 to line 8, col 30 of module M: 2",
+        "line 8, col 36 to line 8, col 52 of module M: 4",
+        "line 8, col 57 to line 8, col 60 of module M: 2",
+        "line 8, col 66 to line 8, col 78 of module M: 2",
+        "line 9, col 12 to line 9, col 33 of module M: 6",
+      ],
+    ],
+    [
+      "Ap(a) == Step /\\ PrintT(<<a>>) /\\ UNCHANGED (a > 0) /\\ PrintT(<<a>>)\nNext == Ap(RandomElement(y..1000))",
+      [
+        "line 8, col 10 to line 8, col 30 of module M: 2",
+        "line 8, col 35 to line 8, col 51 of module M: 6",
+        "line 8, col 56 to line 8, col 68 of module M: 2",
+        "line 9, col 12 to line 9, col 33 of module M: 6",
+      ],
+    ],
+  ])(
+    "evaluates the first side of an action's UNCHANGED in %j without the next state under coverage, as TLC's Tool#processUnchanged passes TLCState.Empty there",
+    async (definitions, lines) => {
+      expect(await getLazyReads(definitions, NEXT_CHECK, UNWARNED_COVERAGE)).toEqual({
+        printed: ["<<773>>", "<<379>>", "<<484>>", "<<436>>"],
+        lines,
+      });
+    },
+  );
+
+  it.each([
     ["Next == Step /\\ UNCHANGED (J!Op2 \\/ TRUE)", NEXT_CHECK, '"d"', 6],
     ["Live == []<><<Step>>_<<y, J!Op2>>", LIVE_CHECK, '"d"', 12],
     ["Live == []<><<Step>>_<<J!Op2, y>>", LIVE_CHECK, '"d"', 12],
@@ -2534,6 +2564,186 @@ ASSUME TLCFP(a) = -887695703
       expect((await getLazyReads(definitions, config)).printed).toEqual(getPrints('"d"', count));
     },
   );
+
+  it.each([
+    [
+      'Check == LET t == PrintT("t") /\\ y \\in 0..1 IN t /\\ ENABLED (y\' = y /\\ UNCHANGED (t \\/ TRUE)) /\\ t',
+      getPrints('"t"', 8),
+    ],
+    [
+      "Check == LET t == PrintT(\"t\") /\\ y \\in 0..1 IN t /\\ ENABLED (y' = y /\\ (t \\/ TRUE)' = (t \\/ TRUE)) /\\ t",
+      getPrints('"t"', 8),
+    ],
+    [
+      "Ap(a) == PrintT(<<a>>) /\\ ENABLED <<Step>>_<<y, a>> /\\ PrintT(<<a>>)\nCheck == Ap(RandomElement(1..1000))",
+      ["<<731>>", "<<680>>", "<<773>>", "<<769>>"],
+    ],
+    [
+      "Ap(a) == PrintT(<<a>>) /\\ ENABLED <<Step>>_<<y, a + 0>> /\\ PrintT(<<a>>)\nCheck == Ap(RandomElement(y..1000))",
+      ["<<731>>", "<<680>>", "<<773>>", "<<769>>"],
+    ],
+    [
+      "Ap(a) == PrintT(<<a>>) /\\ ENABLED (Step /\\ UNCHANGED (a > 0)) /\\ PrintT(<<a>>)\nCheck == Ap(RandomElement(y..1000))",
+      ["<<731>>", "<<680>>", "<<773>>", "<<769>>"],
+    ],
+  ])(
+    "reads a lazy value in %j afresh across ENABLED, as TLC's LazyValue#getCachedValue serves a value only under the EvalControl it cached it under",
+    async (definitions, expected) => {
+      expect((await getLazyReads(definitions, INVARIANT_CHECK)).printed).toEqual(expected);
+    },
+  );
+
+  const ENABLED_UNCHANGED = [
+    'Check == LET t == PrintT("t") /\\ y \\in 0..1 IN ENABLED (y\' = y /\\ UNCHANGED (t \\/ TRUE) /\\ UNCHANGED (t \\/ TRUE))',
+    "Check == ENABLED (y' = y /\\ UNCHANGED (J!Op2 \\/ TRUE))",
+    "Check == J!Op2 /\\ ENABLED (y' = y /\\ UNCHANGED (J!Op2 \\/ TRUE)) /\\ J!Op2",
+    "Next == Step /\\ ENABLED (y' = y /\\ UNCHANGED (J!Op2 \\/ TRUE))",
+  ];
+
+  it.each([
+    [ENABLED_UNCHANGED[0], INVARIANT_CHECK, getPrints('"t"', 8)],
+    [ENABLED_UNCHANGED[1], INVARIANT_CHECK, getPrints('"d"', 4)],
+    [ENABLED_UNCHANGED[2], INVARIANT_CHECK, getPrints('"d"', 8)],
+    [ENABLED_UNCHANGED[3], NEXT_CHECK, getPrints('"d"', 4)],
+  ])(
+    "reads a lazy value on the second side of UNCHANGED inside ENABLED in %j from its cache, as TLC's Tool#enabledUnchanged evaluates that side in s1 with TLCState.Empty",
+    async (definitions, config, expected) => {
+      expect((await getLazyReads(definitions, config)).printed).toEqual(expected);
+    },
+  );
+
+  it.each([
+    [
+      ENABLED_UNCHANGED[0],
+      INVARIANT_CHECK,
+      getPrints('"t"', 8),
+      [
+        "line 8, col 19 to line 8, col 43 of module M: 8",
+        "line 8, col 48 to line 8, col 113 of module M: 2",
+        "|line 8, col 57 to line 8, col 62 of module M: 2",
+        "|line 8, col 67 to line 8, col 87 of module M: 4",
+        "|line 8, col 92 to line 8, col 112 of module M: 4",
+      ],
+    ],
+    [
+      ENABLED_UNCHANGED[1],
+      INVARIANT_CHECK,
+      getPrints('"d"', 4),
+      [
+        "line 8, col 10 to line 8, col 54 of module M: 2",
+        "|line 8, col 19 to line 8, col 24 of module M: 2",
+        "|line 8, col 29 to line 8, col 53 of module M: 4",
+      ],
+    ],
+    [
+      ENABLED_UNCHANGED[2],
+      INVARIANT_CHECK,
+      getPrints('"d"', 8),
+      [
+        "line 8, col 10 to line 8, col 72 of module M: 2",
+        "|line 8, col 10 to line 8, col 63 of module M: 2",
+        "||line 8, col 10 to line 8, col 14 of module M: 2",
+        "||line 8, col 19 to line 8, col 63 of module M: 2",
+        "|||line 8, col 28 to line 8, col 33 of module M: 2",
+        "|||line 8, col 38 to line 8, col 62 of module M: 4",
+        "|line 8, col 68 to line 8, col 72 of module M: 2",
+        "||line 4, col 27 to line 4, col 37 of module M: 8",
+        "||line 4, col 45 to line 4, col 45 of module M: 8",
+        "||line 5, col 8 to line 5, col 21 of module Q: 2",
+      ],
+    ],
+    [
+      ENABLED_UNCHANGED[3],
+      NEXT_CHECK,
+      getPrints('"d"', 4),
+      [
+        "line 8, col 9 to line 8, col 12 of module M: 2",
+        "line 8, col 17 to line 8, col 61 of module M: 4",
+        "|line 8, col 26 to line 8, col 31 of module M: 2",
+        "|line 8, col 36 to line 8, col 60 of module M: 4",
+      ],
+    ],
+  ])(
+    "reads a lazy value on the second side of UNCHANGED inside ENABLED in %j from its cache under coverage too",
+    async (definitions, config, printed, lines) => {
+      expect(await getLazyReads(definitions, config, UNWARNED_COVERAGE)).toEqual({
+        printed,
+        lines,
+      });
+    },
+  );
+
+  const CHANGED_ITEMS = [
+    'Ap(a) == PrintT(<<a>>) /\\ <<Step>>_<<y, a /\\ TRUE>> /\\ PrintT(<<a>>)\nNext == Ap(PrintT("a") /\\ y \\in 0..1)',
+    "Ap(a) == PrintT(<<a>>) /\\ <<Step>>_<<y, a + 0>> /\\ PrintT(<<a>>)\nNext == Ap(RandomElement(y..1000))",
+    "Next == <<Step>>_<<y, J!Op2>>",
+  ];
+  const CHANGED_PRINTS = [
+    ['"a"', "<<TRUE>>", '"a"', '"a"', "<<TRUE>>", '"a"', "<<TRUE>>", '"a"', '"a"', "<<TRUE>>"],
+    ["<<773>>", "<<272>>", "<<484>>", "<<784>>"],
+    getPrints('"d"', 4),
+  ];
+
+  it.each([
+    [CHANGED_ITEMS[0], CHANGED_PRINTS[0]],
+    [CHANGED_ITEMS[1], CHANGED_PRINTS[1]],
+    [CHANGED_ITEMS[2], CHANGED_PRINTS[2]],
+    ["Next == J!Op2 /\\ <<Step>>_<<y, J!Op2>> /\\ J!Op2", getPrints('"d"', 10)],
+  ])(
+    "reads a lazy value on the second side of <<A>>_e in the next-state relation %j from its cache, as TLC's Tool#getNextStates evaluates that side in s1 with TLCState.Empty",
+    async (definitions, expected) => {
+      expect((await getLazyReads(definitions, NEXT_CHECK)).printed).toEqual(expected);
+    },
+  );
+
+  it.each([
+    [
+      CHANGED_ITEMS[0],
+      CHANGED_PRINTS[0],
+      [
+        "line 8, col 10 to line 8, col 22 of module M: 2",
+        "line 8, col 29 to line 8, col 32 of module M: 2",
+        "line 8, col 36 to line 8, col 51 of module M: 4",
+        "line 8, col 56 to line 8, col 68 of module M: 2",
+        "line 9, col 12 to line 9, col 36 of module M: 6",
+      ],
+    ],
+    [
+      CHANGED_ITEMS[1],
+      CHANGED_PRINTS[1],
+      [
+        "line 8, col 10 to line 8, col 22 of module M: 2",
+        "line 8, col 29 to line 8, col 32 of module M: 2",
+        "line 8, col 36 to line 8, col 47 of module M: 4",
+        "line 8, col 52 to line 8, col 64 of module M: 2",
+        "line 9, col 12 to line 9, col 33 of module M: 6",
+      ],
+    ],
+    [
+      CHANGED_ITEMS[2],
+      CHANGED_PRINTS[2],
+      [
+        "line 8, col 11 to line 8, col 14 of module M: 2",
+        "line 8, col 18 to line 8, col 29 of module M: 4",
+      ],
+    ],
+  ])(
+    "reads a lazy value on the second side of <<A>>_e in the next-state relation %j from its cache under coverage too",
+    async (definitions, printed, lines) => {
+      expect(
+        await getLazyReads(definitions, NEXT_CHECK, { coverage: 1, isWarningEnabled: true }),
+      ).toEqual({ printed, lines });
+    },
+  );
+
+  it("evaluates both sides of <<A>>_e in the next-state relation without the next state under coverage, as TLC's Tool#getNextStates passes TLCState.Empty there", async () => {
+    const reads = await getLazyReads(
+      "Ap(a) == Step /\\ PrintT(<<a>>) /\\ <<TRUE>>_<<y, a + 0>> /\\ PrintT(<<a>>)\nNext == Ap(RandomElement(y..1000))",
+      NEXT_CHECK,
+      UNWARNED_COVERAGE,
+    );
+    expect(reads.printed).toEqual(["<<773>>", "<<768>>", "<<484>>", "<<730>>"]);
+  });
 
   it("records the nested instance a call from one instanced definition to another enters, as TLC does", async () => {
     const result = await check(getInnerCallCheck(EXPLICIT, "I!YErr", NESTED_CALLS));
@@ -3319,6 +3529,364 @@ ASSUME TLCFP(a) = -887695703
     },
   );
 
+  const WHOLE_MODULES = new Map([
+    [
+      "N",
+      '---- MODULE N ----\nEXTENDS Naturals\nCONSTANT k\nVARIABLES x, y\nTwo == 2\nStr == "a"\nSum == 1 + 1\nBad == x + 1\nInit == x = k /\\ y = 0\nInitSum == x = k /\\ y = 0 /\\ (1 + 1)\nInv == [](x + 1)\nInner == INSTANCE O WITH m <- k\nInitIn == x = 0 /\\ y = 0 /\\ Inner!BadM\nInvIn == [](Inner!BadM)\nSpecN == x = k /\\ y = 0 /\\ (1 + 1) /\\ [][UNCHANGED <<x, y>>]_<<x, y>>\n====\n',
+    ],
+    [
+      "O",
+      "---- MODULE O ----\nEXTENDS Naturals\nCONSTANT m\nVARIABLES x, y\nBadM == x + m\n====\n",
+    ],
+  ]);
+  const UNCHANGED_STEP = "[][UNCHANGED <<x, y>>]_<<x, y>>";
+  const getWholeFailure = async (definitions: string, property: string, coverage?: number) => {
+    const result = await check({
+      source: `---- MODULE M ----\nEXTENDS Naturals\nVARIABLES x, y\nI(j) == INSTANCE N WITH k <- j\nJ == INSTANCE N WITH k <- 0\n${definitions}\n====\n`,
+      config: `SPECIFICATION Spec\n${property}`,
+      loadModule: (name) => WHOLE_MODULES.get(name),
+      coverage,
+    });
+    return result.failure?.message;
+  };
+
+  it.each([
+    [
+      `Spec == I(0)!Init /\\ I(0)!Two /\\ ${UNCHANGED_STEP}`,
+      "",
+      "In computing initial states, TLC expected a boolean expression,\nbut instead found 2.\nline 6, col 22 to line 6, col 29 of module M",
+    ],
+    [
+      `Spec == I(0)!Init /\\ I(0)!Str /\\ ${UNCHANGED_STEP}`,
+      "",
+      'In computing initial states, TLC expected a boolean expression,\nbut instead found "a".\nline 6, col 22 to line 6, col 29 of module M',
+    ],
+    [
+      `Two(a) == 2\nSpec == x = 0 /\\ y = 0 /\\ Two(1) /\\ ${UNCHANGED_STEP}`,
+      "",
+      "In computing initial states, TLC expected a boolean expression,\nbut instead found 2.\nline 7, col 27 to line 7, col 32 of module M",
+    ],
+    [
+      `Spec == LET F(a) == 2 IN x = 0 /\\ y = 0 /\\ F(1) /\\ ${UNCHANGED_STEP}`,
+      "",
+      "In computing initial states, TLC expected a boolean expression,\nbut instead found 2.\nline 6, col 44 to line 6, col 47 of module M",
+    ],
+    [
+      `Two(a) == 2\nSpec == x = 0 /\\ y = 0 /\\ ${UNCHANGED_STEP}\nProp == []<>(x = 0) /\\ Two(1)`,
+      "PROPERTY Prop\n",
+      "TLC expected a boolean value, but did not find one. line 8, col 24 to line 8, col 29 of module M",
+    ],
+  ])(
+    "takes an application in %j whole when the definition's body is a literal, with and without coverage, as TLC does",
+    async (definitions, property, message) => {
+      expect([
+        await getWholeFailure(definitions, property),
+        await getWholeFailure(definitions, property, 1),
+      ]).toEqual([message, message]);
+    },
+  );
+
+  const INSTANCE_LINE = "line 4, col 1 to line 4, col 30 of module M";
+  const UNPARAMETERIZED_LINE = "line 5, col 1 to line 5, col 27 of module M";
+  const getWholeMessage = (found: number, location: string) =>
+    `In computing initial states, TLC expected a boolean expression,\nbut instead found ${found}.\n${location}`;
+  it.each([
+    [`Spec == I(0)!Init /\\ I(0)!Sum /\\ ${UNCHANGED_STEP}`, "", getWholeMessage(2, INSTANCE_LINE)],
+    [`Spec == I(0)!InitSum /\\ ${UNCHANGED_STEP}`, "", getWholeMessage(2, INSTANCE_LINE)],
+    [
+      `Bad == x + 1\nSpec == x = 0 /\\ y = 0 /\\ Bad /\\ ${UNCHANGED_STEP}`,
+      "",
+      getWholeMessage(1, "line 6, col 8 to line 6, col 12 of module M"),
+    ],
+    [
+      `Spec == x = 0 /\\ y = 0 /\\ J!Bad /\\ ${UNCHANGED_STEP}`,
+      "",
+      getWholeMessage(1, UNPARAMETERIZED_LINE),
+    ],
+    [
+      `Spec == x = 0 /\\ y = 0 /\\ I(0)!Bad /\\ ${UNCHANGED_STEP}`,
+      "",
+      getWholeMessage(1, INSTANCE_LINE),
+    ],
+    [
+      `Spec == x = 0 /\\ y = 0 /\\ J!Inner!BadM /\\ ${UNCHANGED_STEP}`,
+      "",
+      getWholeMessage(0, UNPARAMETERIZED_LINE),
+    ],
+    [
+      `Spec == x = 0 /\\ y = 0 /\\ I(0)!Inner!BadM /\\ ${UNCHANGED_STEP}`,
+      "",
+      getWholeMessage(0, INSTANCE_LINE),
+    ],
+    [`Spec == I(0)!InitIn /\\ ${UNCHANGED_STEP}`, "", getWholeMessage(0, INSTANCE_LINE)],
+    ["Spec == J!SpecN", "", getWholeMessage(2, UNPARAMETERIZED_LINE)],
+    [
+      `Bad == x + 1\nSpec == LET G == 1 IN x = 0 /\\ y = 0 /\\ Bad /\\ ${UNCHANGED_STEP}`,
+      "",
+      getWholeMessage(1, "line 6, col 8 to line 6, col 12 of module M"),
+    ],
+    [
+      `Spec == x = 0 /\\ y = 0 /\\ ${UNCHANGED_STEP}\nProp == I(0)!Inv`,
+      "PROPERTY Prop\n",
+      `TLC expected a boolean value, but did not find one. ${INSTANCE_LINE}`,
+    ],
+    [
+      `Spec == x = 0 /\\ y = 0 /\\ ${UNCHANGED_STEP}\nProp == J!Inv`,
+      "PROPERTY Prop\n",
+      `TLC expected a boolean value, but did not find one. ${UNPARAMETERIZED_LINE}`,
+    ],
+    [
+      `Spec == x = 0 /\\ y = 0 /\\ ${UNCHANGED_STEP}\nProp == []<>(x = 0) /\\ I(0)!Sum`,
+      "PROPERTY Prop\n",
+      `TLC expected a boolean value, but did not find one. ${INSTANCE_LINE}`,
+    ],
+    [
+      `Spec == x = 0 /\\ y = 0 /\\ ${UNCHANGED_STEP}\nProp == J!InvIn`,
+      "PROPERTY Prop\n",
+      `TLC expected a boolean value, but did not find one. ${UNPARAMETERIZED_LINE}`,
+    ],
+  ])(
+    "reports the conjunct TLC evaluates whole in %j at the pred of its Action, the outermost instance or the body of a definition it takes whole, with and without coverage, as TLC does",
+    async (definitions, property, message) => {
+      expect([
+        await getWholeFailure(definitions, property),
+        await getWholeFailure(definitions, property, 1),
+      ]).toEqual([message, message]);
+    },
+  );
+
+  it.each([
+    [
+      `Spec == I(0)!Sum /\\ x = 0 /\\ y = 0 /\\ ${UNCHANGED_STEP}`,
+      getWholeMessage(2, "line 7, col 8 to line 7, col 12 of module N"),
+    ],
+    [
+      `Spec == J!InitSum /\\ ${UNCHANGED_STEP}`,
+      getWholeMessage(2, "line 10, col 31 to line 10, col 35 of module N"),
+    ],
+    [
+      `Spec == J!InitIn /\\ ${UNCHANGED_STEP}`,
+      getWholeMessage(0, "line 13, col 29 to line 13, col 38 of module N"),
+    ],
+  ])(
+    "reports a conjunct TLC walks to in %j at its own location, with and without coverage, as TLC does",
+    async (definitions, message) => {
+      expect([
+        await getWholeFailure(definitions, ""),
+        await getWholeFailure(definitions, "", 1),
+      ]).toEqual([message, message]);
+    },
+  );
+
+  const SUBSTITUTED_MODULES = new Map([
+    [
+      "N",
+      "---- MODULE N ----\nEXTENDS Naturals\nCONSTANT k\nVARIABLES x, y\nInitC == x = 0 /\\ y = 0 /\\ k\nInitW == k /\\ x = 0 /\\ y = 0\nNextC == x' = x /\\ y' = y /\\ k\nK == k\nInitK == x = 0 /\\ y = 0 /\\ K\nO == INSTANCE P WITH m <- k, w <- x\nInitO == O!InitP\n====\n",
+    ],
+    [
+      "P",
+      "---- MODULE P ----\nEXTENDS Naturals\nCONSTANT m\nVARIABLES x, y, w\nInitP == x = 0 /\\ y = 0 /\\ m\nInitPW == x = 0 /\\ y = 0 /\\ w\n====\n",
+    ],
+  ]);
+  const getSubstitutedFailure = async (instance: string, spec: string, coverage?: number) => {
+    const result = await check({
+      source: `---- MODULE M ----\nEXTENDS Naturals\nVARIABLES x, y\n${instance}\n${spec}\n====\n`,
+      config: "SPECIFICATION Spec\n",
+      loadModule: (name) => SUBSTITUTED_MODULES.get(name),
+      coverage,
+    });
+    return result.failure?.message;
+  };
+  const getNextMessage = (found: number, location: string) =>
+    `${UNEXPECTED_EXCEPTION}In computing next states, TLC expected a boolean expression,\nbut instead found ${found}.\n${location}`;
+  const SUBSTITUTED_NEXT = "Spec == x = 0 /\\ y = 0 /\\ [][J!NextC]_<<x, y>>";
+
+  it.each([
+    [
+      "J == INSTANCE N WITH k <- 0",
+      `Spec == J!InitC /\\ ${UNCHANGED_STEP}`,
+      getWholeMessage(0, "line 5, col 28 to line 5, col 28 of module N"),
+    ],
+    [
+      'J == INSTANCE N WITH k <- "a"',
+      `Spec == J!InitC /\\ ${UNCHANGED_STEP}`,
+      'In computing initial states, TLC expected a boolean expression,\nbut instead found "a".\nline 5, col 28 to line 5, col 28 of module N',
+    ],
+    [
+      "J == INSTANCE N WITH k <- 0",
+      `Spec == J!InitO /\\ ${UNCHANGED_STEP}`,
+      getWholeMessage(0, "line 5, col 28 to line 5, col 28 of module P"),
+    ],
+    [
+      "J == INSTANCE P WITH m <- 0, w <- x",
+      `Spec == J!InitPW /\\ ${UNCHANGED_STEP}`,
+      getWholeMessage(0, "line 6, col 29 to line 6, col 29 of module P"),
+    ],
+    [
+      "J == INSTANCE N WITH k <- 0",
+      SUBSTITUTED_NEXT,
+      getNextMessage(0, "line 7, col 30 to line 7, col 30 of module N"),
+    ],
+    [
+      "J == INSTANCE N WITH k <- 1 + 1",
+      `Spec == J!InitC /\\ ${UNCHANGED_STEP}`,
+      getWholeMessage(2, "line 5, col 28 to line 5, col 28 of module N"),
+    ],
+    [
+      "J == INSTANCE P WITH m <- 0, w <- x + 0",
+      `Spec == J!InitPW /\\ ${UNCHANGED_STEP}`,
+      getWholeMessage(0, "line 6, col 29 to line 6, col 29 of module P"),
+    ],
+    [
+      "J == INSTANCE N WITH k <- 1 + 1",
+      SUBSTITUTED_NEXT,
+      getNextMessage(2, "line 7, col 30 to line 7, col 30 of module N"),
+    ],
+    [
+      "J == INSTANCE N WITH k <- 0",
+      "Next == x' = x /\\ y' = y /\\ J!K\nSpec == x = 0 /\\ y = 0 /\\ [][Next]_<<x, y>>",
+      getNextMessage(0, "line 5, col 29 to line 5, col 31 of module M"),
+    ],
+  ])(
+    "reports a substituted name in %j %j that TLC evaluates once every variable is assigned at the name, with and without coverage, as TLC's ActionItemList holds it",
+    async (instance, spec, message) => {
+      expect([
+        await getSubstitutedFailure(instance, spec),
+        await getSubstitutedFailure(instance, spec, 1),
+      ]).toEqual([message, message]);
+    },
+  );
+
+  it.each([
+    [
+      "J == INSTANCE N WITH k <- 1 + 1",
+      getWholeMessage(2, "line 4, col 27 to line 4, col 31 of module M"),
+    ],
+    ["J == INSTANCE N WITH k <- 0", "The init state relation is not a boolean expression.\n0"],
+  ])(
+    "reports a substituted name in %j that TLC walks to at its substitute, as TLC does",
+    async (instance, message) => {
+      expect(await getSubstitutedFailure(instance, `Spec == J!InitW /\\ ${UNCHANGED_STEP}`)).toBe(
+        message,
+      );
+    },
+  );
+
+  it("reports a literal that a LET's scope passes to an initial conjunct by its text, as TLC does", async () => {
+    expect(
+      await getWholeFailure(
+        `F(a) == a\nSpec == LET G == 1 IN x = 0 /\\ y = 0 /\\ F(2) /\\ ${UNCHANGED_STEP}`,
+        "",
+      ),
+    ).toBe(getWholeMessage(2, "2"));
+  });
+
+  const checkTakenApart = (spec: string, coverage: number | undefined, prints: string[] = []) =>
+    check({
+      source: `---- MODULE M ----\nEXTENDS Naturals, TLC\nVARIABLES x, y\n${spec}\n====\n`,
+      config: "SPECIFICATION Spec\n",
+      coverage,
+      onPrint: (text) => prints.push(text),
+    });
+
+  it.each([
+    [
+      `F(a) == a\nSpec == LET G == 1 IN x = 0 /\\ y = 0 /\\ F(2) /\\ ${UNCHANGED_STEP}`,
+      getWholeMessage(2, "2"),
+    ],
+    [`F(a) == a\nSpec == x = 0 /\\ y = 0 /\\ F(2) /\\ ${UNCHANGED_STEP}`, getWholeMessage(2, "2")],
+    [
+      `F(a) == a\nSpec == x = 0 /\\ y = 0 /\\ F("s") /\\ ${UNCHANGED_STEP}`,
+      'In computing initial states, TLC expected a boolean expression,\nbut instead found "s".\nline 5, col 29 to line 5, col 31 of module M',
+    ],
+    [
+      `F(a, b) == a /\\ b\nSpec == x = 0 /\\ y = 0 /\\ F(TRUE, 2) /\\ ${UNCHANGED_STEP}`,
+      getWholeMessage(2, "2"),
+    ],
+  ])(
+    "follows a parameter of an application the specification takes apart in %j to its literal argument, with and without coverage, as SpecProcessor#processConfigSpec does",
+    async (spec, message) => {
+      const failures = [
+        (await checkTakenApart(spec, undefined)).failure?.message,
+        (await checkTakenApart(spec, 1)).failure?.message,
+      ];
+      expect(failures).toEqual([message, message]);
+    },
+  );
+
+  it.each([undefined, 1])(
+    "evaluates an argument of an application the specification takes apart at each read with coverage %j, as SpecProcessor#getOpContext binds it as an uncachable LazyValue",
+    async (coverage) => {
+      const prints: string[] = [];
+      await checkTakenApart(
+        `F(a) == x = a /\\ y = a\nSpec == F(PrintT(0)) /\\ ${UNCHANGED_STEP}`,
+        coverage,
+        prints,
+      );
+      expect(prints).toEqual(["0", "0"]);
+    },
+  );
+
+  it.each([
+    [
+      `Spec == x = 0 /\\ y = 0 /\\ 2 /\\ ${UNCHANGED_STEP}`,
+      [
+        "<Action line 4, col 9 to line 4, col 13 of module M>: 0:0",
+        "<Action line 4, col 18 to line 4, col 22 of module M>: 0:0",
+        "<Action 2>: 0:0",
+        "<Action line 4, col 35 to line 4, col 52 of module M>: 0:0",
+      ],
+    ],
+    [
+      `F(a) == a\nSpec == x = 0 /\\ y = 0 /\\ F(2) /\\ ${UNCHANGED_STEP}`,
+      [
+        "<Action line 5, col 9 to line 5, col 13 of module M>: 0:0",
+        "<Action line 5, col 18 to line 5, col 22 of module M>: 0:0",
+        "<Action 2>: 0:0",
+        "<Action line 5, col 38 to line 5, col 55 of module M>: 0:0",
+      ],
+    ],
+    [
+      `Spec == 2 /\\ x = 0 /\\ y = 0 /\\ ${UNCHANGED_STEP}`,
+      [
+        "<Action 2>: 0:0",
+        "<Action line 4, col 14 to line 4, col 18 of module M>: 0:0",
+        "<Action line 4, col 23 to line 4, col 27 of module M>: 0:0",
+        "<Action line 4, col 35 to line 4, col 52 of module M>: 0:0",
+      ],
+    ],
+    [
+      `Spec == x = 0 /\\ y = 0 /\\ "s" /\\ ${UNCHANGED_STEP}`,
+      [
+        "<Action line 4, col 9 to line 4, col 13 of module M>: 0:0",
+        "<Action line 4, col 18 to line 4, col 22 of module M>: 0:0",
+        "<Action line 4, col 27 to line 4, col 29 of module M>: 0:0",
+        "<Action line 4, col 37 to line 4, col 54 of module M>: 0:0",
+      ],
+    ],
+  ])(
+    "names the unnamed actions of %j under coverage as TLC's Action#toString does, a numeral by its text",
+    async (spec, labels) => {
+      const result = await checkTakenApart(spec, 1);
+      expect(
+        result.coverage?.relations.map(
+          (relation) => `<${relation.label}>: ${relation.distinct}:${relation.generated}`,
+        ),
+      ).toEqual(labels);
+    },
+  );
+
+  it('describes an application of a definition whose body is a literal in TLCGet("spec") whole, as TLC does', async () => {
+    const prints: string[] = [];
+    await check({
+      source:
+        '---- MODULE M ----\nEXTENDS Naturals, TLC\nVARIABLES x, y\nTwo(a) == 2\nSpec == x = 0 /\\ y = 0 /\\ [][UNCHANGED <<x, y>>]_<<x, y>>\nProp == []<>(x = 0) /\\ Two(1)\nASSUME PrintT({<<i.location.beginColumn, i.location.endColumn>> : i \\in TLCGet("spec").impliedinits})\n====\n',
+      config: "SPECIFICATION Spec\nPROPERTY Prop\n",
+      onPrint: (text) => prints.push(text),
+    });
+    expect(prints).toEqual(["{<<24, 29>>}"]);
+  });
+
   it("applies an operator to each value @ takes in the same state", async () => {
     const result = await check({
       source:
@@ -3993,6 +4561,116 @@ ASSUME TLCFP(a) = -887695703
       "||line 4, col 15 to line 4, col 19 of module M: 3",
       "||line 4, col 24 to line 4, col 42 of module M: 3",
       "||line 4, col 47 to line 4, col 57 of module M: 3",
+    ]);
+  });
+
+  const ENABLED_CASE_PREFIX = [
+    "line 7, col 8 to line 7, col 25 of module M: 3",
+    "|line 7, col 15 to line 7, col 24 of module M: 3",
+    "||line 7, col 17 to line 7, col 17 of module M: 3",
+    "||line 7, col 20 to line 7, col 22 of module M: 3",
+    "|||line 4, col 27 to line 4, col 27 of module M: 3",
+    "|||line 7, col 6 to line 7, col 14 of module N: 3",
+  ];
+
+  it.each([
+    [
+      "A == y' = y + 1 /\\ CASE y = 1 -> TRUE [] OTHER -> FALSE",
+      [
+        ...ENABLED_CASE_PREFIX,
+        "||||line 6, col 6 to line 6, col 15 of module N: 3",
+        "||||line 6, col 20 to line 6, col 55 of module N: 6",
+      ],
+    ],
+    [
+      "A == CASE y = 1 -> y' = 2 [] OTHER -> y' = 0",
+      [...ENABLED_CASE_PREFIX, "||||line 7, col 14 to line 7, col 14 of module N: 6"],
+    ],
+    [
+      "A == y' = y + 1 /\\ CASE y = 1 -> TRUE [] y # 1 -> FALSE",
+      [
+        ...ENABLED_CASE_PREFIX,
+        "||||line 6, col 6 to line 6, col 15 of module N: 3",
+        "||||line 6, col 20 to line 6, col 55 of module N: 10",
+      ],
+    ],
+    [
+      "A == y' = y + 1 /\\ CASE y = 1 -> TRUE [] OTHER -> y > 5",
+      [
+        ...ENABLED_CASE_PREFIX,
+        "||||line 6, col 6 to line 6, col 15 of module N: 3",
+        "||||line 6, col 20 to line 6, col 55 of module N: 8",
+      ],
+    ],
+    [
+      "A == y' = y + 1 /\\ CASE K!G = 2 -> TRUE [] OTHER -> FALSE",
+      [
+        ...ENABLED_CASE_PREFIX,
+        "||||line 6, col 6 to line 6, col 15 of module N: 3",
+        "||||line 6, col 20 to line 6, col 57 of module N: 12",
+        "|||||line 6, col 25 to line 6, col 39 of module N: 3",
+      ],
+    ],
+    [
+      "A == y' = y + 1 /\\ CASE F(y) = 2 -> TRUE [] OTHER -> FALSE",
+      [
+        ...ENABLED_CASE_PREFIX,
+        "||||line 6, col 6 to line 6, col 15 of module N: 3",
+        "||||line 6, col 20 to line 6, col 58 of module N: 15",
+      ],
+    ],
+    [
+      "A == y' = y + 1 /\\ IF y = 1 THEN TRUE ELSE FALSE",
+      ["line 7, col 8 to line 7, col 25 of module M: 3"],
+    ],
+  ])(
+    "counts the guards and arms of %j under ENABLED at the CASE, as TLC's Tool#enabledApplImpl evaluates them in the CASE's cost model and reports their costs there",
+    async (action, lines) => {
+      const result = await check({
+        source:
+          "---- MODULE M ----\nEXTENDS Naturals, TLC\nVARIABLE x\nI == INSTANCE N WITH y <- x\nInit == x = 0\nNext == x' = (x + 1) % 3\nInv == PrintT(<<x, I!E>>)\n====\n",
+        config: "INIT Init\nNEXT Next\nINVARIANT Inv\n",
+        coverage: 1,
+        onPrint: () => {},
+        loadModule: (name) =>
+          name === "N"
+            ? `---- MODULE N ----\nEXTENDS Naturals\nVARIABLE y\nF(a) == a + 1\nK == INSTANCE P WITH z <- y\n${action}\nE == ENABLED A\n====\n`
+            : name === "P"
+              ? "---- MODULE P ----\nEXTENDS Naturals\nVARIABLE z\nG == z + 1\n====\n"
+              : undefined,
+      });
+      expect(formatCoverage(result)?.at(-1)).toEqual(lines);
+    },
+  );
+
+  it("counts a CASE guard under ENABLED at the CASE without TLC's warnings that its lookups failed", async () => {
+    const warnings: CheckProgress[] = [];
+    const result = await check({
+      source:
+        "---- MODULE M ----\nEXTENDS Naturals, TLC\nVARIABLE x\nI == INSTANCE N WITH y <- x\nInit == x = 0\nNext == x' = (x + 1) % 3\nInv == PrintT(<<x, I!E>>)\n====\n",
+      config: "INIT Init\nNEXT Next\nINVARIANT Inv\n",
+      coverage: 1,
+      onPrint: () => {},
+      onProgress: (progress) => {
+        if (progress.kind === "warning") warnings.push(progress);
+      },
+      loadModule: (name) =>
+        name === "N"
+          ? "---- MODULE N ----\nEXTENDS Naturals\nVARIABLE y\nA == y' = y + 1 /\\ CASE y = 1 -> TRUE [] OTHER -> FALSE\nE == ENABLED A\n====\n"
+          : undefined,
+    });
+    expect([formatCoverage(result)?.at(-1), warnings]).toEqual([
+      [
+        "line 7, col 8 to line 7, col 25 of module M: 3",
+        "|line 7, col 15 to line 7, col 24 of module M: 3",
+        "||line 7, col 17 to line 7, col 17 of module M: 3",
+        "||line 7, col 20 to line 7, col 22 of module M: 3",
+        "|||line 4, col 27 to line 4, col 27 of module M: 3",
+        "|||line 5, col 6 to line 5, col 14 of module N: 3",
+        "||||line 4, col 6 to line 4, col 15 of module N: 3",
+        "||||line 4, col 20 to line 4, col 55 of module N: 6",
+      ],
+      [],
     ]);
   });
 
@@ -7449,6 +8127,125 @@ ASSUME TLCFP(a) = -887695703
       ],
     ]);
   });
+
+  const NESTED_MODULES = new Map([
+    [
+      "N",
+      "---- MODULE N ----\nEXTENDS Naturals\nCONSTANT k\nVARIABLES x, y\nInner == INSTANCE O WITH m <- k\nInitIn == x = 0 /\\ y = 0 /\\ Inner!BadM\nInitIn2 == Inner!InitO\nNextIn == Inner!NextO\nInitIn3 == Inner!InitD\nPlain == INSTANCE Q\nInitQ == Plain!InitQ\nSpecN == Inner!InitO /\\ [][UNCHANGED <<x, y>>]_<<x, y>>\nSpecO == Inner!SpecO\n====\n",
+    ],
+    [
+      "O",
+      "---- MODULE O ----\nEXTENDS Naturals\nCONSTANT m\nVARIABLES x, y\nBadM == x + m\nInitO == x = m /\\ y = 0\nNextO == x' = x /\\ y' = y\nDeep == INSTANCE P WITH n <- m\nInitD == Deep!InitP\nSpecO == InitO /\\ [][UNCHANGED <<x, y>>]_<<x, y>>\n====\n",
+    ],
+    ["P", "---- MODULE P ----\nCONSTANT n\nVARIABLES x, y\nInitP == x = n /\\ y = 0\n====\n"],
+    ["Q", "---- MODULE Q ----\nVARIABLES x, y\nInitQ == x = 0 /\\ y = 0\n====\n"],
+  ]);
+  const getInitRecord = (name: string, line: number, endColumn: number) =>
+    `[ coverage |-> [generated |-> 0, distinct |-> 0],\n    name |-> "${name}",\n    location |->\n        [ beginLine |-> ${line},\n          beginColumn |-> 1,\n          endLine |-> ${line},\n          endColumn |-> ${endColumn},\n          module |-> "M" ] ]`;
+
+  it.each([
+    [
+      `Spec == I(0)!InitIn /\\ ${UNCHANGED_STEP}`,
+      [
+        "<Action line 4, col 1 to line 4, col 30 of module M>: 0:0",
+        "<Action line 4, col 1 to line 4, col 30 of module M>: 0:0",
+        "<Inner!BadM line 5, col 1 to line 5, col 5 of module N (4 1 4 30)>: 0:0",
+        "<Action line 6, col 27 to line 6, col 44 of module M>: 0:0",
+      ],
+      `{ ${getInitRecord("Inner!BadM", 4, 30)},\n  ${getInitRecord("UnnamedAction", 4, 30)} }`,
+    ],
+    [
+      `Spec == I(0)!InitIn2 /\\ ${UNCHANGED_STEP}`,
+      [
+        "<Inner!InitO line 5, col 1 to line 5, col 5 of module N (4 1 4 30)>: 1:1",
+        "<Action line 6, col 28 to line 6, col 45 of module M>: 0:1",
+      ],
+      `{ ${getInitRecord("Inner!InitO", 4, 30)} }`,
+    ],
+    [
+      `Spec == I(0)!InitIn3 /\\ ${UNCHANGED_STEP}`,
+      [
+        "<Inner!InitD line 5, col 1 to line 5, col 5 of module N (4 1 4 30)>: 1:1",
+        "<Action line 6, col 28 to line 6, col 45 of module M>: 0:1",
+      ],
+      `{ ${getInitRecord("Inner!InitD", 4, 30)} }`,
+    ],
+    [
+      `Spec == I(0)!InitQ /\\ ${UNCHANGED_STEP}`,
+      [
+        "<Plain!InitQ line 10, col 1 to line 10, col 5 of module N (4 1 4 30)>: 1:1",
+        "<Action line 6, col 26 to line 6, col 43 of module M>: 0:1",
+      ],
+      `{ ${getInitRecord("Plain!InitQ", 4, 30)} }`,
+    ],
+    [
+      "Spec == J!SpecN",
+      [
+        "<Inner!InitO line 5, col 1 to line 5, col 5 of module N (5 1 5 27)>: 1:1",
+        "<Action line 5, col 1 to line 5, col 27 of module M>: 0:1",
+      ],
+      `{ ${getInitRecord("Inner!InitO", 5, 27)} }`,
+    ],
+    [
+      "Spec == I(0)!SpecN",
+      [
+        "<Inner!InitO line 5, col 1 to line 5, col 5 of module N (4 1 4 30)>: 1:1",
+        "<Action line 4, col 1 to line 4, col 30 of module M>: 0:1",
+      ],
+      `{ ${getInitRecord("Inner!InitO", 4, 30)} }`,
+    ],
+    [
+      `Spec == J!InitIn2 /\\ ${UNCHANGED_STEP}`,
+      [
+        "<J!InitIn2 line 5, col 1 to line 5, col 1 of module M>: 1:1",
+        "<Action line 6, col 25 to line 6, col 42 of module M>: 0:1",
+      ],
+      `{ ${getInitRecord("J!InitIn2", 5, 27)} }`,
+    ],
+    [
+      `Spec == I(0)!Inner!InitO /\\ ${UNCHANGED_STEP}`,
+      [
+        "<Action line 4, col 1 to line 4, col 30 of module M>: 0:0",
+        "<Action line 4, col 1 to line 4, col 30 of module M>: 1:1",
+        "<Action line 6, col 32 to line 6, col 49 of module M>: 0:1",
+      ],
+      `{ ${getInitRecord("UnnamedAction", 4, 30)} }`,
+    ],
+  ])(
+    "names the initial predicate %j reaches through an inner instance by the definition that instance adds to its module, as TLC names the OpDefNode the body refers to",
+    async (spec, labels, printed) => {
+      const prints: string[] = [];
+      const result = await check({
+        source: `---- MODULE M ----\nEXTENDS Naturals, TLC\nVARIABLES x, y\nI(j) == INSTANCE N WITH k <- j\nJ == INSTANCE N WITH k <- 0\n${spec}\nASSUME PrintT(TLCGet("spec").inits)\n====\n`,
+        config: "SPECIFICATION Spec\n",
+        coverage: 1,
+        onPrint: (text) => prints.push(text),
+        loadModule: (name) => NESTED_MODULES.get(name),
+      });
+      expect([
+        result.coverage?.relations.map(
+          (relation) => `<${relation.label}>: ${relation.distinct}:${relation.generated}`,
+        ),
+        prints,
+      ]).toEqual([labels, [printed]]);
+    },
+  );
+
+  it.each(["Spec == J!SpecO", "Spec == I(0)!SpecO", "Spec == J!SpecN"])(
+    "finds the variables of a subscript %j reaches through two instances, where TLC's SubscriptCollector loses the outer substitutes and warns",
+    async (spec) => {
+      const warnings: string[] = [];
+      const result = await check({
+        source: `---- MODULE M ----\nEXTENDS Naturals\nVARIABLES x, y\nI(j) == INSTANCE N WITH k <- j\nJ == INSTANCE N WITH k <- 0\n${spec}\n====\n`,
+        config: "SPECIFICATION Spec\n",
+        loadModule: (name) => NESTED_MODULES.get(name),
+        onProgress: (progress) => {
+          if (progress.kind === "warning") warnings.push(progress.text);
+        },
+      });
+      expect([result.status, warnings]).toEqual(["success", []]);
+    },
+  );
 
   it.each([
     [
