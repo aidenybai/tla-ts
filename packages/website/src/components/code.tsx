@@ -1,4 +1,4 @@
-import { useRef, type ReactNode } from "react";
+import { useRef, useState, type ReactNode } from "react";
 import { cn } from "cn";
 import { createPartsContext } from "@/lib/utils";
 import type { LineNote } from "@/lib/run-worker";
@@ -70,9 +70,18 @@ const CodeRoot = (props: RootProps) => {
   );
 };
 
-const CodeContent = () => {
+interface ContentProps {
+  // The most lines shown until the reader asks for the rest.
+  limit?: number;
+}
+
+const CodeContent = (props: ContentProps) => {
   const code = codeContext.useParts();
   const contentRef = useRef<HTMLElement>(null);
+  // The code that the reader opened in full, so other code starts within the limit again.
+  const [expandedCode, setExpandedCode] = useState<string>();
+  const isExpanded = expandedCode === code.source.code;
+  const hiddenCount = Math.max(0, code.source.lines.length - (props.limit ?? Infinity));
   const activeLine = code.path.at(0)?.line ?? code.activeLine;
   useTokenMorph(contentRef, code.source.code, code.highlights, code.onMorphEnd);
   if (!code.isMultiline)
@@ -82,36 +91,50 @@ const CodeContent = () => {
       </code>
     );
   return (
-    <code
-      ref={contentRef}
-      className="@container relative w-full min-w-0 font-mono text-code/[1.7] text-foreground"
-    >
-      {code.source.lines
-        .map((tokens, index) => ({ tokens, number: index + 1 }))
-        .map((line) => (
-          <CodeLine
-            key={line.number}
-            tokens={line.tokens}
-            note={code.notes.find((note) => note.line === line.number)}
-            isActive={activeLine === line.number}
-            isDimmed={
-              code.path.length > 0 && code.path.every((state) => state.line !== line.number)
-            }
-            aside={
-              code.search && (
-                <SearchCell
-                  search={code.search}
-                  line={line.number}
-                  path={code.path}
-                  onHover={code.onHoverState}
-                  className="xl:hidden"
-                />
-              )
-            }
-            className={cn("-mr-4 -ml-4 pr-4 pl-4", line.number <= 2 && "pr-14")}
-          />
-        ))}
-    </code>
+    <>
+      <code
+        ref={contentRef}
+        className="@container relative w-full min-w-0 font-mono text-code/[1.7] text-foreground"
+      >
+        {code.source.lines
+          .slice(0, isExpanded ? undefined : props.limit)
+          .map((tokens, index) => ({ tokens, number: index + 1 }))
+          .map((line) => (
+            <CodeLine
+              key={line.number}
+              tokens={line.tokens}
+              note={code.notes.find((note) => note.line === line.number)}
+              isActive={activeLine === line.number}
+              isDimmed={
+                code.path.length > 0 && code.path.every((state) => state.line !== line.number)
+              }
+              aside={
+                code.search && (
+                  <SearchCell
+                    search={code.search}
+                    line={line.number}
+                    path={code.path}
+                    onHover={code.onHoverState}
+                    className="xl:hidden"
+                  />
+                )
+              }
+              className={cn("-mr-4 -ml-4 pr-4 pl-4", line.number <= 2 && "pr-14")}
+            />
+          ))}
+      </code>
+      {hiddenCount > 0 && (
+        <Button
+          variant="link"
+          size="inline"
+          aria-expanded={isExpanded}
+          onClick={() => setExpandedCode(isExpanded ? undefined : code.source.code)}
+          className="text-sm text-muted-foreground"
+        >
+          {isExpanded ? "Show less" : `Show ${hiddenCount.toLocaleString("en-US")} more lines`}
+        </Button>
+      )}
+    </>
   );
 };
 
