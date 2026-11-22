@@ -531,6 +531,37 @@ describe("level checking matches SANY", () => {
     );
   });
 
+  it.each([
+    [
+      "U == LET L(Op(_)) == INSTANCE Inner WITH k <- x' IN L(Pr)!K\nW(Op(_)) == LET L == INSTANCE Inner WITH k <- x' IN L!K\nV == W(Pr)",
+      [
+        ["line 9, col 53 to line 9, col 59", "L!K"],
+        ["line 11, col 6 to line 11, col 10", "W"],
+      ],
+    ],
+    [
+      "W(Op(_)) == LET k == x' IN LET L == INSTANCE Inner IN L!K\nV == W(Pr)",
+      [["line 10, col 6 to line 10, col 10", "W"]],
+    ],
+  ])(
+    "levels a LET instance's definitions through an operator parameter it substitutes implicitly in %j like SANY",
+    async (definitions, errors) => {
+      await expect(
+        check({
+          source: `---- MODULE M ----\nVARIABLE x\n---- MODULE Inner ----\nCONSTANT Op(_), k\nK == Op(k)\n====\nPr(p) == p'\nI == INSTANCE Inner WITH Op <- LAMBDA p : p, k <- 1\n${definitions}\nInit == x = 0\nNext == x' = x\n====`,
+          config: "INIT Init\nNEXT Next",
+        }),
+      ).rejects.toThrow(
+        createSanyError(
+          errors.map((error) => ({
+            location: `${error[0]} of module M`,
+            message: `Level error in applying operator ${error[1]}:\nThe permitted level of argument 1 of the operator argument 1 \nmust be at least 2.`,
+          })),
+        ),
+      );
+    },
+  );
+
   it("names the builtin operator a level error applies like SANY", async () => {
     await expect(
       check({
