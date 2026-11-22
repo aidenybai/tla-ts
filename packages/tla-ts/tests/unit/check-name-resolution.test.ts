@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vite-plus/test";
 import { check, TlaSyntaxError } from "../../src";
-import { createSanyError } from "../../src/errors";
+import { createSanyError, type SanyError } from "../../src/errors";
 
 describe("name resolution matches SANY", () => {
   const checkNames = (source: string) =>
@@ -4557,6 +4557,37 @@ describe("name resolution matches SANY", () => {
         location: `line ${entry[1]}, col 1 to line ${entry[1]}, col ${entry[2]} of module M`,
         message: `Warning: the definition of '${entry[0]}' conflicts with \nits definition at line ${entry[3]}, col 1 to line ${entry[3]}, col ${entry[2]} of module M.`,
       })),
+    ],
+    ...[
+      ["a second instance", "INSTANCE L WITH c <- 2", 13, 1, 22, 14],
+      ["a proof-step instance", "THEOREM TRUE\n<1> INSTANCE L WITH c <- 2\n<1> QED", 14, 5, 26, 16],
+    ].map((entry): [string, string, SanyError[], SanyError[]] => [
+      `the definitions that ${entry[0]} imports again, in the order of SANY's symbol table`,
+      `---- MODULE L ----\nEXTENDS Naturals\nCONSTANT c\nCop(q) == q\nA == c\nB == c\nD(p) == p\nAXIOM X == c = c\nTHEOREM T == c = c\n====\nINSTANCE L WITH c <- 1\n${entry[1]}\nZ == U`,
+      [
+        {
+          location: `line ${entry[5]}, col 6 to line ${entry[5]}, col 6 of module M`,
+          message: "Unknown operator: `U'.",
+        },
+      ],
+      ["Cop", "D", "B", "A", "X", "T"].map((name) => ({
+        location: `line ${entry[2]}, col ${entry[3]} to line ${entry[2]}, col ${entry[4]} of module M`,
+        message: `Multiple declarations or definitions for symbol ${name}.  \nThis duplicates the one at line 12, col 1 to line 12, col 22 of module M.`,
+      })),
+    ]),
+    [
+      "definitions that conflict with what an instance imports, in the order of SANY's symbol table",
+      "---- MODULE L ----\nEXTENDS Naturals\nCONSTANT c\nCop(q) == q\nA == c\nB == c\nD(p) == p\nAXIOM X == c = c\nTHEOREM T == c = c\n====\nA(a) == a\nB(a) == a\nD == 1\nCop == 1\nINSTANCE L WITH c <- 1",
+      [
+        ["Cop", 15, 8],
+        ["D", 14, 6],
+        ["B", 13, 9],
+        ["A", 12, 9],
+      ].map((entry) => ({
+        location: "line 16, col 1 to line 16, col 22 of module M",
+        message: `Multiply-defined symbol '${entry[0]}': this definition or declaration conflicts \nwith the one at line ${entry[1]}, col 1 to line ${entry[1]}, col ${entry[2]} of module M.`,
+      })),
+      [],
     ],
   ])("rejects %s like SANY", async (_title, source, errors, warnings) => {
     await expect(checkNames(source)).rejects.toMatchObject({ sany: { errors, warnings } });

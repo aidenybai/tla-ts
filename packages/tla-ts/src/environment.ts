@@ -114,6 +114,7 @@ import {
 import { createInstanceChecker, type KeyedDeclaration } from "./substitution-levels";
 import { formatPrompt } from "./tlc/messages";
 import { createDefinitionFacts, isReevaluationShown } from "./dependencies";
+import { resolveSynonym } from "./tlc/jar-data";
 import { createTlcOrder, type TlcOrder } from "./tlc/order";
 import { isTlcInteger, type Value } from "./values";
 import type { TlcVersion } from "./tlc/version";
@@ -724,6 +725,14 @@ export const createEnvironment = (
     return declarations.toSorted(
       (left, right) => names.indexOf(left.name) - names.indexOf(right.name),
     );
+  };
+
+  // SANY adds an instanced module's definitions, then its theorems, in its symbol table's hash order.
+  const getSymbolTableSymbols = (instance: Instance, symbols: Symbols) => {
+    const names = order.getInstanceDefinitions(instance.module);
+    const prefixLength = instance.name === undefined ? 0 : instance.name.length + 1;
+    const getIndex = (name: string) => names.indexOf(resolveSynonym(name.slice(prefixLength)));
+    return new Map([...symbols].toSorted((left, right) => getIndex(left[0]) - getIndex(right[0])));
   };
 
   // SANY infers a substitution for each declaration the instancing module resolves, in the order of the instanced module's symbol table, and appends the others.
@@ -1452,11 +1461,14 @@ export const createEnvironment = (
         const linked = nested ?? getLinkedModule(instance.module, parsed.name);
         return {
           declarations: getSymbolTableOrdered(instance.module, linked.declarations),
-          symbols: getInstanceSymbols(
+          symbols: getSymbolTableSymbols(
             instance,
-            linked.exported,
-            linked.declarations,
-            (symbol) => symbol.key,
+            getInstanceSymbols(
+              instance,
+              linked.exported,
+              linked.declarations,
+              (symbol) => symbol.key,
+            ),
           ),
           instancer: parsed.name,
           getSubstitutionErrors: (substitutionCount) =>
@@ -1647,7 +1659,7 @@ export const createEnvironment = (
             getVisibleModules().get(instance.module),
             new Map(symbolsBefore),
           );
-          instanced.set(instance, symbols);
+          instanced.set(instance, getSymbolTableSymbols(instance, symbols));
           symbols.forEach((symbol, name) => {
             if (symbolsBefore.has(name)) return;
             visible.set(name, symbol);

@@ -101,6 +101,14 @@ const createEntry = (name: string, kind: SymbolKind, isLocal: boolean): SymbolEn
   isLocal,
 });
 
+const getInstancedEntries = (table: SymbolTable) => {
+  const entries = table.enumerate();
+  return [
+    ...entries.filter((entry) => entry.kind === "definition"),
+    ...entries.filter((entry) => entry.kind === "theorem"),
+  ];
+};
+
 const getDeclaredName = (tokens: Token[], start: number) => {
   const first = tokens[start];
   const second = tokens[start + 1];
@@ -423,11 +431,8 @@ const createContexts = (getParsed: ModuleSet) => {
       units.push({
         location: instance.location,
         apply: (table) => {
-          const instancee = getContext(instance.module).enumerate();
           const prefix = instance.name === undefined ? "" : `${instance.name}!`;
-          const definitions = instancee.filter((entry) => entry.kind === "definition");
-          const theorems = instancee.filter((entry) => entry.kind === "theorem");
-          [...definitions, ...theorems].forEach((entry) => {
+          getInstancedEntries(getContext(instance.module)).forEach((entry) => {
             if (entry.isLocal) return;
             table.put(createEntry(`${prefix}${entry.name}`, entry.kind, instance.isLocal));
           });
@@ -608,6 +613,7 @@ export interface TlcOrder {
   getDeclarationOrder: (kind: "variable" | "constant", module?: string) => string[];
   getDefinitionOrder: (module: string | undefined) => string[];
   getInstanceDeclarations: (module: string) => string[];
+  getInstanceDefinitions: (module: string) => string[];
   getInnerModuleOrder: (module: string | undefined) => string[];
   createDefinitionOrder: () => (name: string | undefined) => string[];
   parseModule: (source: string) => Module;
@@ -640,6 +646,8 @@ export const createTlcOrder = (source: string, loadModule: ModuleLoader): TlcOrd
         .enumerate()
         .filter((entry) => entry.kind === "constant" || entry.kind === "variable")
         .map((entry) => entry.name),
+    getInstanceDefinitions: (module) =>
+      getInstancedEntries(getContexts().getContext(module)).map((entry) => entry.name),
     // SANY's ModuleNode#getInnerModules walks the module's Context, so inherited modules come too.
     getInnerModuleOrder: (module) =>
       getContexts()
