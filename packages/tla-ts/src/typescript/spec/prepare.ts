@@ -9,7 +9,7 @@ import { parseModuleTokens } from "../../parser";
 import { createCheckEnvironment } from "../../search";
 import { getParsedTexts, type PreparedModule } from "../../tlc/order";
 import { getPlainValues, getRankedStrings, readPlainValues, type Value } from "../../values";
-import { getPreparedFacts } from "../../dependencies";
+import { getPreparedFacts, noteLetOwners } from "../../dependencies";
 import { decodeGraph, encodeGraph, type EncodedGraph } from "../../graph-codec";
 import { createModuleView, getViewTables } from "../../module-view";
 import { getLetInstanceExpansion } from "../../instances";
@@ -256,6 +256,7 @@ const prepareModules = (
         getPreparedFacts(definition, started.environment, started.environment.facts.words),
       ]),
     );
+  accepted.forEach((prepared) => prepared.module.definitions.forEach(noteLetOwners));
   return accepted.map((prepared) => {
     const isRuntime = prepared.name === "ESRuntime";
     const valued = {
@@ -390,6 +391,39 @@ const readPreparedModules = (
   ) {
     return undefined;
   }
+  // The facts number each definition's LET definitions by where they come in its body, which the
+  // graph notes as it decodes the body.
+  graph.modules.forEach((prepared) =>
+    prepared.module.definitions.forEach((definition) => {
+      const read = Object.getOwnPropertyDescriptor(definition, "body")?.get;
+      if (read === undefined) {
+        noteLetOwners(definition);
+        return;
+      }
+      Object.defineProperty(definition, "body", {
+        configurable: true,
+        enumerable: true,
+        get: () => {
+          Object.defineProperty(definition, "body", {
+            configurable: true,
+            enumerable: true,
+            writable: true,
+            value: read.call(definition),
+          });
+          noteLetOwners(definition);
+          return definition.body;
+        },
+        set: (body: Definition["body"]) => {
+          Object.defineProperty(definition, "body", {
+            configurable: true,
+            enumerable: true,
+            writable: true,
+            value: body,
+          });
+        },
+      });
+    }),
+  );
   const entries = graph.modules.map((prepared) => [...prepared.values]);
   const values = readPlainValues(entries.flat().map((entry) => entry[1]));
   let position = 0;
