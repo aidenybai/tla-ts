@@ -165,7 +165,7 @@ Other types have no finite set of values:
 - A tuple with optional or rest elements.
 - A type that holds itself.
 
-tla-ts calls no exported function with a parameter of such a type, and prints a line that names it, such as `tla-ts calls no apply: its parameter transform takes values it can't list`. It also calls no exported function without parameters whose every call throws. Where it calls no exported function at all, the compile stops with `tla-ts compiles a script, not a model, to ESCore this way`.
+tla-ts calls no exported function with a parameter of such a type, and prints a line that names it and the kind of its type, such as `tla-ts calls no apply: its parameter transform is a function, whose values tla-ts can't list`. The kinds it names are a type parameter, `any` or `unknown`, a function, an instance of a class, and an object with methods, alone or in a union. For any other type, the line gives the reason, as in `its parameter p takes values it can't list: …`. It also calls no exported function without parameters whose every call throws. Where it calls no exported function at all, the compile stops with `tla-ts compiles a script, not a model, to ESCore this way`.
 
 A state variable of such a type with no initializer starts at `undefined`, as Node starts it, and tla-ts prints a line that names it, such as `tla-ts starts count at undefined, as Node does: …`.
 

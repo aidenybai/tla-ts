@@ -1578,6 +1578,63 @@ describe("checks a module's exported functions as a model on ESCore", () => {
     });
   });
 
+  // Each function of Numbers runs as plain integers where its arguments are "int" Numbers, and as
+  // its lowered form where a result would be -0, NaN, an infinity, or past 2^30.
+  describe("runs a function of int Numbers on plain integers, as ESCore does", () => {
+    const source = `
+      const values = [0, 1, -1, 2, -7, 32767, -32768, 1073741823, -1073741823, 536870909, 1073741817];
+      let out: number[][][] = [];
+
+      const add = (x: number, y: number) => x + y;
+      const sub = (x: number, y: number) => x - y;
+      const mul = (x: number, y: number) => x * y;
+      const mod = (x: number, y: number) => x % y;
+      const pow = (x: number, y: number) => x ** y;
+      const quotient = (x: number, y: number) => Math.floor(x / y);
+      const negate = (x: number) => -x;
+      const isBelow = (x: number, y: number) => x < y && !(x === y);
+      const pick = (x: number, y: number) => {
+        if ((x <= y && y >= 0) || x !== 0) return x;
+        return y;
+      };
+
+      export const run = () => {
+        if (out.length > 0) return;
+        out = values.map((x) =>
+          values.map((y) => [
+            add(x, y), sub(x, y), mul(x, y), mod(x, y), pow(x, y), quotient(x, y), negate(x),
+            isBelow(x, y) ? 1 : 0, pick(x, y),
+          ]),
+        );
+      };
+    `;
+
+    it("gives what ESCore gives in every call, as TLC counts", async () => {
+      // The state before the run and after it, which the run leaves as it is.
+      const counts = ["deadlock", 2, 2];
+      expect(getCounts(await checkModel(source, "spec.ts", "native"))).toEqual(counts);
+      expect(getCounts(await checkModel(source, "spec.ts", "compared"))).toEqual(counts);
+    });
+
+    it.each([
+      ["a remainder of a negative dividend", ["\\/ a < 0 \\/ b <= 0", "\\/ b <= 0"]],
+      ["a product that is -0", ["\\/\n     ((a = 0 \\/ b = 0) /\\ (a < 0 \\/ b < 0))", ""]],
+      ["a sum past 2^30", ["ELSE PlainInt(a + b)", "ELSE a + b"]],
+      ["a power past 2^30", ["-PlainPowerBound[b] <= a", "-PlainPowerBound[b] - 1 <= a"]],
+      [
+        "a quotient by a negative divisor",
+        ["\\/ b <= 0 THEN PlainBail ELSE a \\div b", "\\/ b = 0 THEN PlainBail ELSE a \\div b"],
+      ],
+      [
+        "a negation of 0",
+        ["PlainNeg(a) == IF a = PlainBail \\/ a = 0", "PlainNeg(a) == IF a = PlainBail"],
+      ],
+    ] as const)("tells a plain form that lets through %s", async (_rule, mutation) => {
+      const result = await checkModel(source, "spec.ts", "native", [...mutation]);
+      expect(result.message).toContain("the native call differs from ESCore's");
+    });
+  });
+
   describe("runs a Map's keys and values, and a function passed by name, natively, as ESCore does", () => {
     const source = `
       type Slot = 1 | 2 | 3;
@@ -1838,10 +1895,11 @@ describe("checks a module's exported functions as a model on ESCore", () => {
       expect(getCounts(await checkModel(source, "spec.ts", "compared"))).toEqual(counts);
     });
 
+    // bits runs on plain integers, whose floor of a quotient is PlainFloorDiv's.
     it("tells a floor that gives 0 of an integer", async () => {
       const result = await checkModel(source, "spec.ts", "native", [
-        "THEN Num(MathOf(m, a.value))",
-        'THEN Num(IF m = "floor" /\\ a.value.k = "int" THEN NumFromInt(0) ELSE MathOf(m, a.value))',
+        "THEN PlainBail ELSE a \\div b",
+        "THEN PlainBail ELSE 0",
       ]);
       expect(result.message).toContain("the native call differs from ESCore's");
     });

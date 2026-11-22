@@ -43,7 +43,7 @@ interface SymbolTable {
 }
 
 interface ParsedModule {
-  tokens: Token[];
+  getTokens: () => TokenList;
   start: number;
   end: number;
   isNested: boolean;
@@ -147,21 +147,86 @@ const createEntry = (name: string, kind: SymbolKind, isLocal: boolean): SymbolEn
   isLocal,
 });
 
-const getDeclaredName = (tokens: Token[], start: number) => {
-  const first = tokens[start];
-  const second = tokens[start + 1];
-  if (first.text === "_" && second.kind === "Operator") {
-    return tokens[start + 2]?.text === "_"
-      ? { name: getCanonicalName(second.text), end: start + 3 }
-      : { name: second.text, end: start + 2 };
+// The tokens of a module as TLC's order reads them, by index: the lexer's tokens until the
+// module is parsed, and after that their kinds, texts and positions in flat arrays, which hold a
+// fraction of the memory that a module's millions of token objects take.
+interface TokenList {
+  length: number;
+  getKind: (index: number) => Token["kind"] | undefined;
+  getText: (index: number) => string | undefined;
+  getLine: (index: number) => number;
+  getColumn: (index: number) => number;
+}
+
+// The lexer's tokens from start to end, as a list.
+const listTokens = (tokens: Token[], start = 0, end = tokens.length): TokenList => ({
+  length: end - start,
+  getKind: (index) => (index >= 0 && index < end - start ? tokens[start + index].kind : undefined),
+  getText: (index) => (index >= 0 && index < end - start ? tokens[start + index].text : undefined),
+  getLine: (index) => tokens[start + index].line,
+  getColumn: (index) => tokens[start + index].column,
+});
+
+const TOKEN_KINDS: Token["kind"][] = [
+  "Identifier",
+  "Number",
+  "Decimal",
+  "String",
+  "Operator",
+  "Keyword",
+  "Step",
+  "Separator",
+  "ModuleEnd",
+  "End",
+];
+
+// The lexer's tokens in flat arrays, as a list that keeps none of the tokens' objects.
+const packTokens = (tokens: Token[]): TokenList => {
+  const kinds = new Uint8Array(tokens.length);
+  const lines = new Int32Array(tokens.length);
+  const columns = new Int32Array(tokens.length);
+  const texts = tokens.map((token, index) => {
+    kinds[index] = TOKEN_KINDS.indexOf(token.kind);
+    lines[index] = token.line;
+    columns[index] = token.column;
+    return token.text;
+  });
+  return {
+    length: tokens.length,
+    getKind: (index) =>
+      index >= 0 && index < texts.length ? TOKEN_KINDS[kinds[index]] : undefined,
+    getText: (index) => (index >= 0 && index < texts.length ? texts[index] : undefined),
+    getLine: (index) => lines[index],
+    getColumn: (index) => columns[index],
+  };
+};
+
+// The tokens of a list from start to end, as a list.
+const sliceTokens = (tokens: TokenList, start: number, end: number): TokenList => ({
+  length: end - start,
+  getKind: (index) =>
+    index >= 0 && index < end - start ? tokens.getKind(start + index) : undefined,
+  getText: (index) =>
+    index >= 0 && index < end - start ? tokens.getText(start + index) : undefined,
+  getLine: (index) => tokens.getLine(start + index),
+  getColumn: (index) => tokens.getColumn(start + index),
+});
+
+const getDeclaredName = (tokens: TokenList, start: number) => {
+  const first = tokens.getText(start) ?? "";
+  const second = tokens.getText(start + 1);
+  if (first === "_" && tokens.getKind(start + 1) === "Operator") {
+    return tokens.getText(start + 2) === "_"
+      ? { name: getCanonicalName(second ?? ""), end: start + 3 }
+      : { name: second ?? "", end: start + 2 };
   }
-  if (first.kind === "Operator") {
-    return { name: first.text === "-" ? "-." : getCanonicalName(first.text), end: start + 2 };
+  if (tokens.getKind(start) === "Operator") {
+    return { name: first === "-" ? "-." : getCanonicalName(first), end: start + 2 };
   }
-  if (second?.text !== "(") return { name: first.text, end: start + 1 };
+  if (second !== "(") return { name: first, end: start + 1 };
   let close = start + 2;
-  while (close < tokens.length && tokens[close].text !== ")") close++;
-  return { name: first.text, end: close + 1 };
+  while (close < tokens.length && tokens.getText(close) !== ")") close++;
+  return { name: first, end: close + 1 };
 };
 
 // The kind of symbol that each declaring keyword declares.
@@ -172,17 +237,20 @@ const DECLARATION_KINDS = new Map<string, SymbolKind>([
   ["VARIABLES", "variable"],
 ]);
 
-const getDeclarations = (tokens: Token[], start: number) => {
+const getDeclarations = (tokens: TokenList, start: number) => {
   const names: string[] = [];
   for (let index = start; ;) {
     const declared = getDeclaredName(tokens, index);
     names.push(declared.name);
-    if (tokens[declared.end]?.text !== ",") return names;
+    if (tokens.getText(declared.end) !== ",") return names;
     index = declared.end + 1;
   }
 };
 
-const getLocation = (token: Token) => ({ line: token.line, column: token.column });
+const getLocation = (tokens: TokenList, index: number) => ({
+  line: tokens.getLine(index),
+  column: tokens.getColumn(index),
+});
 
 interface ModuleReferences {
   key: string;
@@ -199,7 +267,7 @@ type ModuleSearch = (
 ) => [ModuleReferences, string] | undefined;
 
 const getModuleReferences = (
-  tokens: Token[],
+  tokens: TokenList,
   unit: string | undefined,
   innerModules: Map<string, ModuleReferences>,
 ) => {
@@ -214,23 +282,24 @@ const getModuleReferences = (
       allExtends,
     };
     for (let index = start + 1; index < tokens.length; index++) {
-      const token = tokens[index];
-      if (token.kind === "ModuleEnd") return { references, end: index };
-      if (token.kind === "Separator" && tokens[index + 1]?.text === "MODULE") {
-        const name = tokens[index + 2].text;
+      const kind = tokens.getKind(index);
+      const text = tokens.getText(index);
+      if (kind === "ModuleEnd") return { references, end: index };
+      if (kind === "Separator" && tokens.getText(index + 1) === "MODULE") {
+        const name = tokens.getText(index + 2) ?? "";
         const inner = read(index, `${key}/${name}`);
         innerModules.set(name, inner.references);
         references.inner.push(inner.references);
         index = inner.end;
         continue;
       }
-      if (tokens[index - 1]?.text === ".") continue;
-      if (token.text === "EXTENDS" && tokens[index - 3]?.text === "MODULE") {
+      if (tokens.getText(index - 1) === ".") continue;
+      if (text === "EXTENDS" && tokens.getText(index - 3) === "MODULE") {
         const names = getDeclarations(tokens, index + 1);
         references.extends.push(...names);
         names.forEach((name) => allExtends.add(name));
-      } else if (token.text === "INSTANCE" && tokens[index + 1]?.kind === "Identifier") {
-        references.instances.push(tokens[index + 1].text);
+      } else if (text === "INSTANCE" && tokens.getKind(index + 1) === "Identifier") {
+        references.instances.push(tokens.getText(index + 1) ?? "");
       }
     }
     return { references, end: tokens.length };
@@ -238,10 +307,10 @@ const getModuleReferences = (
   return read(0, unit ?? "").references;
 };
 
-const isAdjacent = (left: Token, right: Token | undefined) =>
-  right !== undefined &&
-  right.line === left.line &&
-  right.column === left.column + left.text.length;
+const isAdjacent = (tokens: TokenList, left: number, right: number) =>
+  right < tokens.length &&
+  tokens.getLine(right) === tokens.getLine(left) &&
+  tokens.getColumn(right) === tokens.getColumn(left) + (tokens.getText(left) ?? "").length;
 
 const STRING_ESCAPES: Record<string, string> = {
   "\\": "\\\\",
@@ -252,45 +321,57 @@ const STRING_ESCAPES: Record<string, string> = {
   "\f": "\\f",
 };
 
-export const getParsedTexts = (tokens: Token[]) => {
+const getTokenTexts = (tokens: TokenList) => {
   const texts: string[] = [];
   for (let index = 0; index < tokens.length; index++) {
-    const token = tokens[index];
+    const text = tokens.getText(index) ?? "";
     const isStepLabel =
-      token.text === "<" &&
-      isAdjacent(token, tokens[index + 1]) &&
-      /^(\d+|\*|\+)$/.test(tokens[index + 1].text) &&
-      tokens[index + 2]?.text === ">" &&
-      isAdjacent(tokens[index + 1], tokens[index + 2]);
+      text === "<" &&
+      isAdjacent(tokens, index, index + 1) &&
+      /^(\d+|\*|\+)$/.test(tokens.getText(index + 1) ?? "") &&
+      tokens.getText(index + 2) === ">" &&
+      isAdjacent(tokens, index + 1, index + 2);
     if (isStepLabel) {
-      index += isAdjacent(tokens[index + 2], tokens[index + 3]) ? 3 : 2;
+      index += isAdjacent(tokens, index + 2, index + 3) ? 3 : 2;
       continue;
     }
-    const isHeader = token.text === "MODULE" && tokens[index - 1]?.kind === "Separator";
+    const isHeader = text === "MODULE" && tokens.getKind(index - 1) === "Separator";
     if (isHeader) continue;
     texts.push(
-      token.kind === "String"
-        ? `"${token.text.replace(/[\\"\n\t\r\f]/g, (character) => STRING_ESCAPES[character])}"`
-        : token.text,
+      tokens.getKind(index) === "String"
+        ? `"${text.replace(/[\\"\n\t\r\f]/g, (character) => STRING_ESCAPES[character])}"`
+        : text,
     );
   }
   return texts;
 };
 
-const getModuleName = (tokens: Token[]) => tokens[2]?.text;
+export const getParsedTexts = (tokens: Token[]) => getTokenTexts(listTokens(tokens));
 
-const getRanges = (tokens: Token[]) => {
+const getModuleName = (tokens: TokenList) => tokens.getText(2);
+
+// The texts of a list's string literals, in their order.
+const getStrings = (tokens: TokenList) => {
+  const strings: string[] = [];
+  for (let index = 0; index < tokens.length; index++) {
+    if (tokens.getKind(index) === "String") strings.push(tokens.getText(index) ?? "");
+  }
+  return strings;
+};
+
+const getRanges = (tokens: TokenList) => {
   const ranges = new Map<string, { start: number; end: number }>();
   const open: { name: string; start: number }[] = [];
-  tokens.forEach((token, index) => {
-    if (token.kind === "Separator" && tokens[index + 1]?.text === "MODULE") {
-      open.push({ name: tokens[index + 2].text, start: index });
+  for (let index = 0; index < tokens.length; index++) {
+    const kind = tokens.getKind(index);
+    if (kind === "Separator" && tokens.getText(index + 1) === "MODULE") {
+      open.push({ name: tokens.getText(index + 2) ?? "", start: index });
     }
-    const closed = token.kind === "ModuleEnd" ? open.pop() : undefined;
+    const closed = kind === "ModuleEnd" ? open.pop() : undefined;
     if (closed && !ranges.has(closed.name)) {
       ranges.set(closed.name, { start: closed.start, end: index + 1 });
     }
-  });
+  }
   return ranges;
 };
 
@@ -299,19 +380,27 @@ const findModule = (modules: Module[], name: string): Module | undefined =>
   modules.map((module) => findModule(module.modules, name)).find(Boolean);
 
 interface ModuleText {
-  tokens: Token[];
+  getTokens: () => TokenList;
   ranges: Map<string, { start: number; end: number }>;
   getModule: () => Module;
 }
 
+// A module's text, read into its tokens, which, once the module is parsed, its list holds in flat
+// arrays rather than the lexer's objects.
 const readModuleText = (text: string | undefined): ModuleText => {
-  const tokens = text === undefined ? [] : tokenize(text);
+  let tokens = text === undefined ? [] : tokenize(text);
+  let list = listTokens(tokens);
   let parsedModule: Module | undefined;
   return {
-    tokens,
-    ranges: getRanges(tokens),
-    getModule: () =>
-      (parsedModule ??= text === undefined ? parseModule("") : parseModuleTokens(text, tokens)),
+    getTokens: () => list,
+    ranges: getRanges(list),
+    getModule: () => {
+      if (parsedModule !== undefined) return parsedModule;
+      parsedModule = text === undefined ? parseModule("") : parseModuleTokens(text, tokens);
+      list = packTokens(tokens);
+      tokens = [];
+      return parsedModule;
+    },
   };
 };
 
@@ -351,7 +440,7 @@ const createModuleSet = (
     if (cached) return cached;
     if (name === undefined && typeof source !== "string") {
       const file = {
-        tokens: [],
+        getTokens: () => listTokens([]),
         start: 0,
         end: 0,
         isNested: false,
@@ -373,15 +462,17 @@ const createModuleSet = (
           (rootText === undefined ? undefined : extractModule(rootText, name)));
     const moduleText = preparedModule
       ? {
-          tokens: preparedModule.tokens,
-          ranges: getRanges(preparedModule.tokens),
+          getTokens: () => listTokens(preparedModule.tokens),
+          ranges: getRanges(listTokens(preparedModule.tokens)),
           getModule: () => preparedModule.module,
         }
       : readModuleText(text);
-    const tokens = moduleText.tokens;
-    const range = moduleText.ranges.get(getModuleName(tokens) ?? "") ?? { start: 0, end: 0 };
+    const range = moduleText.ranges.get(getModuleName(moduleText.getTokens()) ?? "") ?? {
+      start: 0,
+      end: 0,
+    };
     const file = {
-      tokens,
+      getTokens: moduleText.getTokens,
       ...range,
       isNested: false,
       getModule:
@@ -396,7 +487,7 @@ const createModuleSet = (
     moduleText.ranges.forEach((nestedRange, nestedName) => {
       if (nestedRange.start === range.start || nestedModules.has(nestedName)) return;
       nestedModules.set(nestedName, {
-        tokens,
+        getTokens: moduleText.getTokens,
         ...nestedRange,
         isNested: true,
         getModule: () => findModule(file.getModule().modules, nestedName) ?? file.getModule(),
@@ -445,14 +536,14 @@ const internStrings = (module: Module, intern: (text: string) => void) =>
 
 const createContexts = (getParsed: ModuleSet) => {
   const getUnits = (unit: ParsedModule) => {
-    const tokens = unit.tokens;
     const module = unit.getModule();
+    const tokens = unit.getTokens();
     const units: ModuleUnit[] = [];
     const statementLocations: SourceLocation[] = [];
     const declare = (index: number, kind: SymbolKind) => {
       const names = getDeclarations(tokens, index + 1);
       units.push({
-        location: getLocation(tokens[index]),
+        location: getLocation(tokens, index),
         apply: (table) => names.forEach((name) => table.put(createEntry(name, kind, false))),
       });
     };
@@ -493,37 +584,41 @@ const createContexts = (getParsed: ModuleSet) => {
     }
     let depth = 0;
     for (let index = unit.start; index < unit.end; index++) {
-      const token = tokens[index];
-      if (token.kind === "Separator" && tokens[index + 1]?.text === "MODULE") {
+      const tokenKind = tokens.getKind(index);
+      const text = tokens.getText(index) ?? "";
+      if (tokenKind === "Separator" && tokens.getText(index + 1) === "MODULE") {
         depth++;
         if (depth === 2) {
-          const name = tokens[index + 2].text;
+          const name = tokens.getText(index + 2) ?? "";
           units.push({
-            location: getLocation(token),
+            location: getLocation(tokens, index),
             apply: (table) => table.put(createEntry(name, "module", false)),
           });
         }
         continue;
       }
-      if (token.kind === "ModuleEnd") depth--;
-      if (depth !== 1 || token.kind !== "Keyword") continue;
-      const kind = DECLARATION_KINDS.get(token.text);
-      if (kind !== undefined && declarationKeywords.has(`${token.line}:${token.column}`)) {
+      if (tokenKind === "ModuleEnd") depth--;
+      if (depth !== 1 || tokenKind !== "Keyword") continue;
+      const kind = DECLARATION_KINDS.get(text);
+      if (
+        kind !== undefined &&
+        declarationKeywords.has(`${tokens.getLine(index)}:${tokens.getColumn(index)}`)
+      ) {
         declare(index, kind);
       }
-      if (token.text === "RECURSIVE") {
+      if (text === "RECURSIVE") {
         const names = getDeclarations(tokens, index + 1);
         if (names.every((name) => recursiveNames.has(name))) declare(index, "definition");
       }
       const isNamedTheorem =
-        THEOREM_KEYWORDS.has(token.text) &&
-        tokens[index + 1]?.kind === "Identifier" &&
-        tokens[index + 2]?.text === "==";
+        THEOREM_KEYWORDS.has(text) &&
+        tokens.getKind(index + 1) === "Identifier" &&
+        tokens.getText(index + 2) === "==";
       if (isNamedTheorem) {
-        const name = tokens[index + 1].text;
-        statementLocations.push(getLocation(token));
+        const name = tokens.getText(index + 1) ?? "";
+        statementLocations.push(getLocation(tokens, index));
         units.push({
-          location: getLocation(token),
+          location: getLocation(tokens, index),
           apply: (table) => table.put(createEntry(name, "theorem", false)),
         });
       }
@@ -630,15 +725,15 @@ const getStringOrder = (
   TLC_STARTUP_STRINGS.forEach(intern);
   // A file that is one module, as a prepared module is, is its own unit.
   const getUnitParsedTexts = (name: string | undefined) =>
-    getParsed(name).texts?.parsed ?? getParsedTexts(getUnitTokens(name));
+    getParsed(name).texts?.parsed ?? getTokenTexts(getUnitTokens(name));
   const getUnitStrings = (name: string | undefined) =>
-    getParsed(name).texts?.strings ??
-    getUnitTokens(name).flatMap((token) => (token.kind === "String" ? [token.text] : []));
+    getParsed(name).texts?.strings ?? getStrings(getUnitTokens(name));
   const getUnitTokens = (name: string | undefined) => {
     const unit = getParsed(name);
-    return unit.start === 0 && unit.end === unit.tokens.length
-      ? unit.tokens
-      : unit.tokens.slice(unit.start, unit.end);
+    const tokens = unit.getTokens();
+    return unit.start === 0 && unit.end === tokens.length
+      ? tokens
+      : sliceTokens(tokens, unit.start, unit.end);
   };
   const innerModules = new Map<string, ModuleReferences>();
   const unitReferences = new Map<string | undefined, ModuleReferences>();
@@ -695,7 +790,7 @@ const getStringOrder = (
   // Without source text, only string literals are interned, unlike TLC reading the text.
   if (typeof source !== "string") SANY_NODE_NAMES.forEach(intern);
   getParsed(undefined).getModule();
-  getParsedTexts(getUnitTokens(undefined)).forEach((text, index) => {
+  getTokenTexts(getUnitTokens(undefined)).forEach((text, index) => {
     if (index === 3) SANY_NODE_NAMES.forEach(intern);
     intern(text);
   });
@@ -711,8 +806,8 @@ const getStringOrder = (
     dependencies.set(module.unit, [...(dependencies.get(module.unit) ?? []), name]);
     if (parsedUnits.has(name)) continue;
     parsedUnits.add(name);
-    if (getParsed(name).tokens.length === 0) {
-      const importer = module.unit ?? getModuleName(getParsed(undefined).tokens);
+    if (getParsed(name).getTokens().length === 0) {
+      const importer = module.unit ?? getModuleName(getParsed(undefined).getTokens());
       throw createMissingModuleError(name, importer);
     }
     getParsed(name).getModule();
@@ -738,10 +833,8 @@ const getStringOrder = (
   analyze(undefined);
   runtimeModules.forEach((name) => {
     const tokens = getUnitTokens(name);
-    getParsedTexts(tokens).forEach(intern);
-    tokens.forEach((token) => {
-      if (token.kind === "String") intern(token.text);
-    });
+    getTokenTexts(tokens).forEach(intern);
+    getStrings(tokens).forEach(intern);
   });
   return [...order];
 };
