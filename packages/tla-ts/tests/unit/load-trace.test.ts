@@ -290,13 +290,22 @@ describe("-loadTrace tlc matches TLC", () => {
   });
 
   it.each([
-    ["is cut short", gzip([...DIE_HARDER_PAYLOAD.subarray(0, DIE_HARDER_PAYLOAD.length >> 1)])],
-    ["refers to value 5 before it defines that value", gzip([26, 0, 5])],
+    [
+      "is cut short",
+      "prints an EOFException's stack trace",
+      gzip([...DIE_HARDER_PAYLOAD.subarray(0, DIE_HARDER_PAYLOAD.length >> 1)]),
+    ],
+    [
+      "refers to value 5 before it defines that value",
+      "fails later with a NullPointerException",
+      gzip([26, 0, 5]),
+    ],
     [
       "holds a function from 1..5 with 2 values",
+      "builds a function whose domain and values disagree",
       gzip([9, 0, 2, 0, 0, 0, 0, 1, 0, 0, 0, 5, 1, 0, 0, 0, 1, 1, 0, 0, 0, 2]),
     ],
-  ])("reports a trace file that %s, where TLC leaks a Java exception", async (problem, trace) => {
+  ])("reports a trace file that %s, where TLC %s", async (problem, _behavior, trace) => {
     const result = await loadDieHarder(trace);
     expect(result.failure?.message).toBe(`The trace file ${TRACE_PATH} ${problem}.`);
   });
