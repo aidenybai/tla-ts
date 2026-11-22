@@ -2306,7 +2306,7 @@ export const runSmtlibScript = (
         // get_model_cmd takes any number of indices and keeps the last.
         if (last.kind === "numeral" && BigInt(last.text) > 0n)
           throw new SmtUnsupportedError("the index of get-model");
-        model.compact();
+        if (settings.parameters.get("model.compact") !== "false") model.compact();
         for (const decl of state.reader.getDeclaredFuncs()) {
           const funcDecl = manager.funcDecls[decl];
           if (

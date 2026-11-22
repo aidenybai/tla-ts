@@ -53,6 +53,7 @@ const PORTED_PARAMETERS = new Map([
     "smt",
     "arith.branch_cut_ratio arith.nl.rounds array.extensional auto_config case_split ematching mbqi mbqi.max_iterations phase_selection qi.cost qi.eager_threshold qi.lazy_threshold random_seed relevancy restart_factor restart_strategy",
   ],
+  ["model", "compact"],
   ["nnf", "ignore_labels max_memory mode"],
   ["nlsat", "factor seed shuffle_vars variable_ordering_strategy"],
   [

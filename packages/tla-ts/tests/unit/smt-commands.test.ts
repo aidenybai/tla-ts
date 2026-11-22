@@ -5989,3 +5989,38 @@ describe("smt.restart_strategy and smt.restart_factor, as Z3 5.3.2's inc_limits 
     );
   });
 });
+
+describe("model.compact, as Z3 5.3.2's display_model compresses a model", () => {
+  it("prints the model uncompressed until get-value compresses it", () => {
+    expect(
+      run([
+        "(set-option :model.compact false)",
+        "(declare-fun f (Int) Int)",
+        "(assert (= (f 1) 2))",
+        "(assert (= (f 2) 2))",
+        "(assert (= (f 3) 5))",
+        "(assert (= (f 4) 2))",
+        "(check-sat)",
+        "(get-model)",
+        "(get-value ((f 7)))",
+        "(get-model)",
+      ]),
+    ).toEqual([
+      "sat",
+      "(",
+      "  (define-fun f ((x!0 Int)) Int",
+      "    (ite (= x!0 1) 2",
+      "    (ite (= x!0 2) 2",
+      "    (ite (= x!0 3) 5",
+      "    (ite (= x!0 4) 2",
+      "      2)))))",
+      ")",
+      "(((f 7) 2))",
+      "(",
+      "  (define-fun f ((x!0 Int)) Int",
+      "    (ite (= x!0 3) 5",
+      "      2))",
+      ")",
+    ]);
+  });
+});
