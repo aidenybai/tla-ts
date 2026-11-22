@@ -1,4 +1,5 @@
-import { useEffect, useMemo, useRef, type ReactNode } from "react";
+import { useVirtualizer } from "@tanstack/react-virtual";
+import { useEffect, useMemo, useRef, type ReactNode, type Ref } from "react";
 import { cn } from "cn";
 import { getLineHoveredName } from "@/lib/line-marks";
 import { usePlaygroundView } from "@/lib/playground-view";
@@ -11,14 +12,20 @@ import { Connector } from "@/components/connector";
 import { usePlayground } from "./playground-context";
 import { Resizable } from "@/components/ui/resizable";
 
+// The height of a line of code that fits its pane, and of the pane before it is measured.
+const LINE_HEIGHT_PX = 22;
+const BUILT_PANE_HEIGHT_PX = 900;
+
 interface PaneProps {
   name: string;
+  ref?: Ref<HTMLElement>;
   onFocus?: () => void;
   children: ReactNode;
 }
 
 const Pane = (props: PaneProps) => (
   <section
+    ref={props.ref}
     data-pane={props.name}
     onFocus={props.onFocus}
     translate="no"
@@ -58,7 +65,7 @@ export const PlaygroundSource = () => {
 
 export const PlaygroundOutput = () => {
   const playground = usePlayground();
-  const codeRef = useRef<HTMLElement>(null);
+  const paneRef = useRef<HTMLElement>(null);
   const hoveredName = usePlaygroundView((view) => view.hoveredName);
   const hoverName = usePlaygroundView((view) => view.hoverName);
   const isArrowsShown = usePlaygroundView((view) => view.isArrowsShown);
@@ -67,13 +74,21 @@ export const PlaygroundOutput = () => {
     search,
     usePlaygroundView((view) => view.hoveredStateId),
   );
+  // ESCore's code of a program runs to a thousand lines, so the pane holds only the lines in view.
+  const virtualizer = useVirtualizer({
+    count: playground.outputLines.length,
+    getScrollElement: () => paneRef.current,
+    estimateSize: () => LINE_HEIGHT_PX,
+    overscan: 20,
+    initialRect: { width: 0, height: BUILT_PANE_HEIGHT_PX },
+  });
+  const rows = virtualizer.getVirtualItems();
   useEffect(() => {
-    codeRef.current
-      ?.querySelector(`[data-line="${search?.states.find((found) => found.isFailing)?.line}"]`)
-      ?.scrollIntoView({ block: "center" });
-  }, [search]);
+    const failingLine = search?.states.find((found) => found.isFailing)?.line;
+    if (failingLine !== undefined) virtualizer.scrollToIndex(failingLine - 1, { align: "center" });
+  }, [search, virtualizer]);
   return (
-    <Pane name="output">
+    <Pane name="output" ref={paneRef}>
       {playground.isSkeleton && (
         <span role="status" className="sr-only">
           Compiling
@@ -85,40 +100,48 @@ export const PlaygroundOutput = () => {
         </p>
       )}
       <code
-        ref={codeRef}
         aria-hidden={playground.isSkeleton || undefined}
         data-skeleton={playground.isSkeleton ? "" : undefined}
         onPointerOver={(event) =>
           hoverName(event.target instanceof HTMLElement ? event.target.dataset.region : undefined)
         }
         onPointerLeave={() => hoverName(undefined)}
+        // Each line is placed by its own offset, so a scroll lays out only the lines it brings in.
+        style={{ height: virtualizer.getTotalSize() }}
         className={cn(
-          "@container block font-mono text-[13px]/[1.7] pointer-coarse:text-[16px]/[1.7] transition-opacity duration-150 ease-out",
+          "@container relative block font-mono text-[13px]/[1.7] pointer-coarse:text-[16px]/[1.7] transition-opacity duration-150 ease-out",
           playground.isSkeleton
             ? "animate-pulse text-transparent select-none motion-reduce:animate-none"
             : "text-foreground",
           playground.isOutputStale && "opacity-50 delay-200",
         )}
       >
-        {playground.outputLines
-          .map((tokens, index) => ({ tokens, number: index + 1 }))
+        {rows
+          .map((row) => ({ row, number: row.index + 1, tokens: playground.outputLines[row.index] }))
           .map((line) => (
-            <CodeLine
-              key={line.number}
-              number={line.number}
-              tokens={line.tokens}
-              marks={playground.outputLineMarks[line.number - 1]}
-              hoveredName={getLineHoveredName(
-                playground.outputLineMarks[line.number - 1],
-                hoveredName,
-              )}
-              isHighlighted={isArrowsShown && playground.isWide}
-              colors={playground.colors}
-              note={playground.result?.notes.find((note) => note.line === line.number)}
-              isActive={(steps.at(0)?.line ?? playground.result?.activeLine) === line.number}
-              isDimmed={steps.length > 0 && steps.every((step) => step.line !== line.number)}
-              className="-mr-4 -ml-4 pr-4 pl-4"
-            />
+            <span
+              key={line.row.key}
+              ref={virtualizer.measureElement}
+              data-index={line.row.index}
+              style={{ translate: `0 ${line.row.start}px` }}
+              className="absolute top-0 left-0 block w-full contain-layout"
+            >
+              <CodeLine
+                number={line.number}
+                tokens={line.tokens}
+                marks={playground.outputLineMarks[line.number - 1]}
+                hoveredName={getLineHoveredName(
+                  playground.outputLineMarks[line.number - 1],
+                  hoveredName,
+                )}
+                isHighlighted={isArrowsShown && playground.isWide}
+                colors={playground.colors}
+                note={playground.result?.notes.find((note) => note.line === line.number)}
+                isActive={(steps.at(0)?.line ?? playground.result?.activeLine) === line.number}
+                isDimmed={steps.length > 0 && steps.every((step) => step.line !== line.number)}
+                className="-mr-4 -ml-4 pr-4 pl-4"
+              />
+            </span>
           ))}
       </code>
     </Pane>
