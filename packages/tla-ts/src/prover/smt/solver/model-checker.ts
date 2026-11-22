@@ -4,6 +4,7 @@ import { AssertedFormulas } from "./asserted-formulas";
 import { CS_ACTIVITY } from "./case-split-queue";
 import { Context } from "./context";
 import type { Enode } from "./enode";
+import { getIdentityHash, ObjMap } from "./hashtable";
 import { L_FALSE, L_TRUE } from "./lbool";
 import type { ModelFinder } from "./model-finder";
 import type { ProtoModel } from "./proto-model";
@@ -80,7 +81,7 @@ export class ModelChecker {
   private iterationIndex = 0;
   private newInstances: Instance[] = [];
   private pinnedExprs: RefVector;
-  private root2value = new Map<Enode, number>();
+  private root2value = new ObjMap<number>(getIdentityHash);
   private value2expr: Map<number, number> | null = null;
   private freshExprs: number[] = [];
   private aux: AuxContext | null = null;
@@ -106,7 +107,9 @@ export class ModelChecker {
     if (this.value2expr !== null) return this.value2expr;
     const value2expr = new Map<number, number>();
     for (const entry of this.root2value) {
-      const node = this.getEqEnodeWithMinGen(entry[0]);
+      const root = this.context.getEnode(entry[0]);
+      if (root === undefined) throw new SmtInvariantError("the term was not internalized");
+      const node = this.getEqEnodeWithMinGen(root);
       if (!this.manager.isValue(node.owner)) value2expr.set(entry[1], node.owner);
     }
     this.value2expr = value2expr;
@@ -294,7 +297,7 @@ export class ModelChecker {
     return { isFoundRelevant, numFailures };
   }
 
-  check(model: ProtoModel, root2value: Map<Enode, number>) {
+  check(model: ProtoModel, root2value: ObjMap<number>) {
     this.root2value = root2value;
     if (this.qmanager.quantifiers.length === 0) return true;
     if (this.iterationIndex >= this.context.params.mbqiMaxIterations) return false;
