@@ -24,6 +24,7 @@ export interface KernelParams {
   isEmatching?: boolean;
   relevancyLevel?: number;
   caseSplitStrategy?: number;
+  phaseSelection?: number;
   isCoreMinimizing?: boolean;
   randomSeed?: number;
   intHammerPeriod?: number;
@@ -75,6 +76,7 @@ export const solveGoal = (manager: AstManager, forms: number[], params: KernelPa
     isEmatching: params.isEmatching,
     relevancyLevel: params.relevancyLevel ?? 2,
     caseSplitStrategy: params.caseSplitStrategy,
+    phaseSelection: params.phaseSelection,
     randomSeed: params.randomSeed,
     intHammerPeriod: params.intHammerPeriod,
     isArithPropagatingEqs: params.isArithPropagatingEqs,
@@ -143,6 +145,7 @@ export const solveAssuming = (
     isEmatching: params.isEmatching,
     relevancyLevel: params.relevancyLevel ?? 2,
     caseSplitStrategy: params.caseSplitStrategy,
+    phaseSelection: params.phaseSelection,
     randomSeed: params.randomSeed,
     intHammerPeriod: params.intHammerPeriod,
     isArithPropagatingEqs: params.isArithPropagatingEqs,

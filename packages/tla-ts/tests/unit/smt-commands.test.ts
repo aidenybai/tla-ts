@@ -5804,3 +5804,117 @@ describe("get-option, as Z3 5.3.2's get_option_cmd prints a builtin or leaves it
     expect(run(lines)).toEqual(expected);
   });
 });
+
+describe("smt.phase_selection, as Z3 5.3.2 picks the phase of a decision", () => {
+  const declarations = RESTART_MODEL.map((_, index) => `(declare-const x${index} Bool)`);
+  const assertions = RESTART_CLAUSES.map(
+    (clause) =>
+      `(assert (or ${clause.map((literal) => (literal < 0 ? `(not ${getName(literal)})` : getName(literal))).join(" ")}))`,
+  );
+  const getPhaseLines = (phaseSelection: number) => [
+    "(set-option :smt.auto_config false)",
+    `(set-option :smt.phase_selection ${phaseSelection})`,
+    ...declarations,
+    ...assertions,
+    "(check-sat-using smt)",
+    "(get-info :rlimit)",
+  ];
+
+  it.each([
+    ["always true", 1, 7240],
+    ["phase caching", 2, 7848],
+    ["random", 5, 6440],
+    ["literal occurrences", 6, 7447],
+  ])("decides with %s", (_title, phaseSelection, rlimit) => {
+    expect(run(getPhaseLines(phaseSelection))).toEqual(["sat", `(:rlimit ${rlimit})`]);
+  });
+
+  it("draws the random phase from smt.random_seed", () => {
+    expect(run(["(set-option :smt.random_seed 7)", ...getPhaseLines(5)])).toEqual([
+      "sat",
+      "(:rlimit 6665)",
+    ]);
+  });
+
+  it("lets the setup of auto_config pick its own phase selection", () => {
+    expect(
+      run([
+        "(set-option :smt.phase_selection 1)",
+        ...declarations,
+        ...assertions,
+        "(check-sat-using smt)",
+        "(get-info :rlimit)",
+      ]),
+    ).toEqual(["sat", "(:rlimit 6591)"]);
+  });
+
+  it("reads phase_selection from using-params smt", () => {
+    expect(
+      run([
+        "(set-option :smt.phase_selection 1)",
+        ...declarations,
+        ...assertions,
+        "(check-sat-using (using-params smt :phase_selection 6 :auto_config false))",
+        "(get-info :rlimit)",
+      ]),
+    ).toEqual(["sat", "(:rlimit 7447)"]);
+  });
+
+  it("stops counting the occurrences of a popped clause", () => {
+    expect(
+      run([
+        "(set-option :smt.auto_config false)",
+        "(set-option :smt.phase_selection 6)",
+        ...declarations,
+        ...assertions.slice(0, 60),
+        "(push)",
+        ...assertions.slice(60),
+        "(check-sat)",
+        "(get-info :rlimit)",
+        "(pop)",
+        "(assert (or x0 x1 x2))",
+        "(assert (or (not x3) x4))",
+        "(check-sat)",
+        "(get-info :rlimit)",
+        "(get-value (x0 x1 x2 x3 x4 x5 x6 x7))",
+      ]),
+    ).toEqual([
+      "sat",
+      "(:rlimit 7860)",
+      "sat",
+      "(:rlimit 8359)",
+      "((x0 false)",
+      " (x1 false)",
+      " (x2 true)",
+      " (x3 false)",
+      " (x4 true)",
+      " (x5 false)",
+      " (x6 true)",
+      " (x7 false))",
+    ]);
+  });
+
+  it("reads it again when a set-option comes between two checks", () => {
+    expect(
+      run([
+        "(set-option :smt.auto_config false)",
+        ...declarations,
+        ...assertions.slice(0, 60),
+        "(push)",
+        ...assertions.slice(60),
+        "(check-sat)",
+        "(get-info :rlimit)",
+        "(set-option :smt.phase_selection 6)",
+        "(assert (or x5 x6))",
+        "(check-sat)",
+        "(get-info :rlimit)",
+      ]),
+    ).toEqual(["sat", "(:rlimit 8798)", "unsat", "(:rlimit 9354)"]);
+  });
+
+  it("throws at the set-option of a phase selection Z3 rejects", () => {
+    expect(() => run(["(set-option :smt.phase_selection 8)"])).toThrow(
+      new SmtUnsupportedError("an smt.phase_selection above 7"),
+    );
+  });
+});

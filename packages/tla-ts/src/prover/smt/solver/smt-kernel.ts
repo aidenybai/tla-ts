@@ -1,5 +1,5 @@
 import { type AstManager } from "./ast";
-import type { SmtSetup } from "./smt-setup";
+import { getPhaseSelection, type SmtSetup } from "./smt-setup";
 import { AssertedFormulas } from "./asserted-formulas";
 import { getCaseSplitStrategy } from "./case-split-queue";
 import { Context } from "./context";
@@ -19,6 +19,7 @@ export const getGlobalSmtParams = (
     relevancyLevel,
     parameters.get("smt.auto_config") !== "false" && parameters.get("auto_config") !== "false",
   ),
+  phaseSelection: getPhaseSelection(Number(parameters.get("smt.phase_selection") ?? "3")),
   qiMaxInstances: Number(parameters.get("smt.qi.max_instances") ?? "4294967295"),
   qiMaxEagerMultipatterns: Number(parameters.get("smt.qi.max_multi_patterns") ?? "0"),
   isQiUpdatingGeneration: parameters.get("smt.qi.update_generation") !== "false",
@@ -50,6 +51,7 @@ export class SmtKernel {
       isEmatching: params.isEmatching,
       relevancyLevel: params.relevancyLevel ?? 2,
       caseSplitStrategy: params.caseSplitStrategy,
+      phaseSelection: params.phaseSelection,
       randomSeed: params.randomSeed,
       intHammerPeriod: params.intHammerPeriod,
       isArithPropagatingEqs: params.isArithPropagatingEqs,

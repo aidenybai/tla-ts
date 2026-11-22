@@ -79,8 +79,11 @@ import {
   DEFAULT_CONFIG,
   getSmtConfig,
   PS_ALWAYS_FALSE,
+  PS_ALWAYS_TRUE,
   PS_CACHING_CONSERVATIVE,
   PS_CACHING_CONSERVATIVE2,
+  PS_OCCURRENCE,
+  PS_RANDOM,
   PS_THEORY,
   RS_GEOMETRIC,
   RS_LUBY,
@@ -177,6 +180,7 @@ export interface SmtParams {
   isEmatching?: boolean;
   relevancyLevel: number;
   caseSplitStrategy?: number;
+  phaseSelection?: number;
   randomSeed?: number;
   intHammerPeriod?: number;
   isArithPropagatingEqs?: boolean;
@@ -260,6 +264,7 @@ export class Context extends Internalizer {
     this.qmanager = new DefaultQuantifierManager(this);
     this.config = {
       ...DEFAULT_CONFIG,
+      phaseSelection: params.phaseSelection ?? DEFAULT_CONFIG.phaseSelection,
       isArithPropagatingEqs: params.isArithPropagatingEqs ?? true,
       qiLazyThreshold: params.qiLazyThreshold ?? DEFAULT_CONFIG.qiLazyThreshold,
       qiMaxInstances: params.qiMaxInstances ?? DEFAULT_CONFIG.qiMaxInstances,
@@ -314,10 +319,12 @@ export class Context extends Internalizer {
     this.params.mbqiId = params.mbqiId;
     this.params.isModelValidating = params.isModelValidating;
     this.params.isArrayExtensional = params.isArrayExtensional;
+    this.params.phaseSelection = params.phaseSelection;
     this.params.relevancyLevel = params.relevancyLevel ?? 2;
     this.arith?.updateParams();
     this.config = {
       ...DEFAULT_CONFIG,
+      phaseSelection: params.phaseSelection ?? DEFAULT_CONFIG.phaseSelection,
       isArithPropagatingEqs: params.isArithPropagatingEqs ?? true,
       theories: this.config.theories,
       isFindingMacros: params.isFindingMacros,
@@ -1205,6 +1212,7 @@ export class Context extends Internalizer {
           for (let index = 0; index < 2; index++)
             if (getVar(store.getLiteral(clause, index)) < numBoolVars)
               this.removeWatchLiteral(clause, index);
+          this.removeLitOccs(clause, numBoolVars);
           const isThLemma = store.getKind(clause) === CLS_TH_LEMMA;
           for (let index = 0; index < atoms.length; index++) {
             const atom = atoms[index];
@@ -1217,6 +1225,7 @@ export class Context extends Internalizer {
           store.swapLiterals(clause, 1, this.selectWatchLiteral(clause, 1));
           this.addWatchLiteral(clause, 0);
           this.addWatchLiteral(clause, 1);
+          this.addLitOccs(clause);
           const first = store.getLiteral(clause, 0);
           if (this.assignment[first] === L_FALSE) this.setConflict(clause, null);
           else if (this.assignment[store.getLiteral(clause, 1)] === L_FALSE)
@@ -1281,6 +1290,12 @@ export class Context extends Internalizer {
     if (this.hasBoolVarFlag(boolVar, BV_TRUE_FIRST)) return true;
     const phaseSelection = this.config.phaseSelection;
     if (phaseSelection === PS_ALWAYS_FALSE) return false;
+    if (phaseSelection === PS_ALWAYS_TRUE) return true;
+    if (phaseSelection === PS_RANDOM) return this.getRandomValue() % 2 === 0;
+    if (phaseSelection === PS_OCCURRENCE) {
+      const literal = mkLiteral(boolVar);
+      return this.litOccs[literal] > this.litOccs[negate(literal)];
+    }
     const isPhaseAvailable = this.hasBoolVarFlag(boolVar, BV_PHASE_AVAILABLE);
     if (phaseSelection === PS_THEORY) {
       const phase = this.getTheory(this.getBoolVarTheory(boolVar))?.getPhase(boolVar) ?? L_UNDEF;

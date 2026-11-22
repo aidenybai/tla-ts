@@ -78,7 +78,7 @@ import { KERNEL_REWRITER_OPTIONS, Rewriter } from "./rewriter";
 import { sortNumbers } from "./sort";
 import type { Theory } from "./theory";
 import { setAt, shrink } from "./array";
-import { DEFAULT_CONFIG, IA_RANDOM, IA_RANDOM_WHEN_SEARCHING } from "./smt-setup";
+import { DEFAULT_CONFIG, IA_RANDOM, IA_RANDOM_WHEN_SEARCHING, PS_OCCURRENCE } from "./smt-setup";
 import { StickyGenerations } from "./sticky-generations";
 
 const DEEP_EXPR_THRESHOLD = 1024;
@@ -158,6 +158,7 @@ export abstract class Internalizer {
   justifications: BJustification[] = [];
   activity: number[] = [];
   protected assignment: number[] = [];
+  protected litOccs: number[] = [];
   readonly clauses = new ClauseStore();
   protected watches: (Clause[] | undefined)[] = [];
   private watchMarks = new Uint8Array(1024);
@@ -525,6 +526,8 @@ export abstract class Internalizer {
     this.assignment[literal + 1] = L_UNDEF;
     this.resetWatches(literal);
     this.resetWatches(literal + 1);
+    this.litOccs[literal] = 0;
+    this.litOccs[literal + 1] = 0;
     this.caseSplitQueue.mkVar(boolVar);
     this.trailKinds.push(UNDO_MK_BOOL_VAR);
     return boolVar;
@@ -1346,12 +1349,15 @@ export abstract class Internalizer {
     }
     if (literals.length === 1) {
       this.assign(literals[0], justification ?? "axiom");
+      this.incLitOccs(literals[0]);
       return null;
     }
     const isLemma = kind === CLS_LEARNED || kind === CLS_TH_LEMMA;
     if (literals.length === 2 && this.isUsingBinaryClauseOpt(literals[0], literals[1], isLemma)) {
       const first = literals[0];
       const second = literals[1];
+      this.incLitOccs(first);
+      this.incLitOccs(second);
       (this.binaryWatches[negate(first)] ??= []).push(second);
       (this.binaryWatches[negate(second)] ??= []).push(first);
       if (this.assignment[first] === L_FALSE)
@@ -1387,6 +1393,7 @@ export abstract class Internalizer {
       const isReinit = kind === CLS_TH_LEMMA && isPropagating && this.scopeLevel > this.baseLevel;
       if (isSavingAtoms || isReinit)
         this.markForReinit(clause, isReinit ? this.scopeLevel : iscopeLevel, isSavingAtoms);
+      this.addLitOccs(clause);
       return clause;
     }
     this.auxClauses.push(clause);
@@ -1394,7 +1401,33 @@ export abstract class Internalizer {
     this.addWatchLiteral(clause, 1);
     if (this.assignment[literals[0]] === L_FALSE) this.setConflict(clause, null);
     else if (this.assignment[literals[1]] === L_FALSE) this.assign(literals[0], clause);
+    this.addLitOccs(clause);
     return clause;
+  }
+
+  protected addLitOccs(clause: Clause) {
+    if (this.config.phaseSelection !== PS_OCCURRENCE) return;
+    const store = this.clauses;
+    for (let index = 0; index < store.getNumLiterals(clause); index++)
+      this.incLitOccs(store.getLiteral(clause, index));
+  }
+
+  protected removeLitOccs(clause: Clause, numBoolVars: number) {
+    if (this.config.phaseSelection !== PS_OCCURRENCE) return;
+    const store = this.clauses;
+    for (let index = 0; index < store.getNumLiterals(clause); index++) {
+      const literal = store.getLiteral(clause, index);
+      if (getVar(literal) < numBoolVars) this.decLitOccs(literal);
+    }
+  }
+
+  private decLitOccs(literal: Literal) {
+    if (this.config.phaseSelection === PS_OCCURRENCE && this.litOccs[literal] > 0)
+      this.litOccs[literal]--;
+  }
+
+  private incLitOccs(literal: Literal) {
+    if (this.config.phaseSelection === PS_OCCURRENCE) this.litOccs[literal]++;
   }
 
   protected deleteClause(clause: Clause) {
@@ -1402,6 +1435,7 @@ export abstract class Internalizer {
     if (clauses.isDeleted(clause)) return;
     this.removeWatchLiteral(clause, 0);
     this.removeWatchLiteral(clause, 1);
+    this.removeLitOccs(clause, this.numBoolVars);
     clauses.markAsDeleted(clause);
     clauses.getDelEh(clause)?.();
     if (clauses.isReinternalizeAtoms(clause)) this.releaseAtoms(clause);
@@ -1431,6 +1465,7 @@ export abstract class Internalizer {
     const store = this.clauses;
     for (let index = clauses.length - 1; index >= oldSize; index--) {
       const clause = clauses[index];
+      this.removeLitOccs(clause, this.numBoolVars);
       if (!store.isDeleted(clause)) {
         store.markAsDeleted(clause);
         store.getDelEh(clause)?.();

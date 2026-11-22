@@ -82,7 +82,7 @@ import { purifyArith } from "./purify-arith";
 import { ModelEvaluator } from "./model-evaluator";
 import { FuncInterp, ProtoModel } from "./proto-model";
 import { getGlobalSmtParams, SmtKernel } from "./smt-kernel";
-import { isMbqiByFeatures, type SmtSetup } from "./smt-setup";
+import { getPhaseSelection, isMbqiByFeatures, type SmtSetup } from "./smt-setup";
 import { compileProbe, formatDouble, isQfufbv, type Probe } from "./probes";
 import { runHorn } from "./muz/horn-tactic";
 import { runQe } from "./qe";
@@ -367,6 +367,7 @@ const SMT_DESCRS = getModuleDescrs("smt", [
   "case_split",
   "ematching",
   "mbqi.id",
+  "phase_selection",
   "qi.cost",
   "qi.eager_threshold",
   "qi.lazy_threshold",
@@ -401,6 +402,15 @@ const getSmtCaseSplitStrategy = (environment: TacticEnvironment, params: TacticP
     isAutoConfig(environment, params),
   );
 
+const getSmtPhaseSelection = (environment: TacticEnvironment, params: TacticParams) =>
+  getPhaseSelection(
+    getUint(
+      params,
+      "phase_selection",
+      Number(getParameter(environment, "smt.phase_selection", "3")),
+    ),
+  );
+
 // The dependencies are assertion names, which are Boolean constants, so each one is its own
 // assumption.
 const getKernelParams = (environment: TacticEnvironment, params: TacticParams, goal: Goal) => {
@@ -414,6 +424,7 @@ const getKernelParams = (environment: TacticEnvironment, params: TacticParams, g
     isEmatching: isEmatching(environment, params),
     relevancyLevel: getRelevancyLevel(environment, params),
     caseSplitStrategy: getSmtCaseSplitStrategy(environment, params),
+    phaseSelection: getSmtPhaseSelection(environment, params),
     setup,
     randomSeed: getUint(
       params,
@@ -1011,6 +1022,7 @@ const NAMED_TACTICS = new Map<string, NamedTactic>([
           isEmatching: isEmatching(environment, tacticParams),
           relevancyLevel: getRelevancyLevel(environment, tacticParams),
           caseSplitStrategy: getSmtCaseSplitStrategy(environment, tacticParams),
+          phaseSelection: getSmtPhaseSelection(environment, tacticParams),
           qiCost: tacticParams.has("qi.cost")
             ? String(tacticParams.get("qi.cost"))
             : environment.parameters.get("smt.qi.cost"),

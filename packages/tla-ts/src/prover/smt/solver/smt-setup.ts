@@ -17,7 +17,7 @@ import {
   FAMILY_SEQ,
   FAMILY_SPECIAL_RELATIONS,
 } from "./ast";
-import { SmtDefaultError } from "../../../errors";
+import { SmtDefaultError, SmtUnsupportedError } from "../../../errors";
 import { collectStaticFeatures, isDense, type StaticFeatures } from "./static-features";
 import { Rational } from "./rational";
 
@@ -78,10 +78,18 @@ export const isMbqiByFeatures = (setup: SmtSetup, hasQuantifiers: boolean) =>
     (!STATIC_FEATURE_LOGICS.has(setup.logic ?? "") && hasQuantifiers));
 
 export const PS_ALWAYS_FALSE = 0;
+export const PS_ALWAYS_TRUE = 1;
 const PS_CACHING = 2;
 export const PS_CACHING_CONSERVATIVE = 3;
 export const PS_CACHING_CONSERVATIVE2 = 4;
+export const PS_RANDOM = 5;
+export const PS_OCCURRENCE = 6;
 export const PS_THEORY = 7;
+
+export const getPhaseSelection = (phaseSelection: number) => {
+  if (phaseSelection > PS_THEORY) throw new SmtUnsupportedError("an smt.phase_selection above 7");
+  return phaseSelection;
+};
 
 export const RS_GEOMETRIC = 0;
 const RS_IN_OUT_GEOMETRIC = 1;

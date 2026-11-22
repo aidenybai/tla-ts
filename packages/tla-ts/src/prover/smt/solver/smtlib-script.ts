@@ -56,7 +56,7 @@ import {
 } from "./smtlib-parser";
 import { O_MAXIMIZE, O_MAXSMT, O_MINIMIZE, OptContext, type OptObjective } from "./opt-context";
 import { getLogicStrategy } from "./logic-tactics";
-import { isMbqiByFeatures, isMbqiByLogic } from "./smt-setup";
+import { getPhaseSelection, isMbqiByFeatures, isMbqiByLogic } from "./smt-setup";
 import { isSupportedLogic, logicHasSeq } from "./smt-logics";
 import { getVerdict, solveAssertions, solveAssuming } from "./solver";
 import { getConsequences } from "./smt-consequences";
@@ -1419,6 +1419,7 @@ export const runSmtlibScript = (
       Number(parameterValue) !== Number(defaultValue)
     )
       throw new SmtUnsupportedError(`the option :${name}`);
+    if (name === "smt.phase_selection") getPhaseSelection(Number(parameterValue));
     settings.parameters.set(name, parameterValue);
     const isTrue = parameterValue === "true";
     if (optionName === ":smt.mbqi.max_iterations") settings.mbqiMaxIterations = Number(text);
