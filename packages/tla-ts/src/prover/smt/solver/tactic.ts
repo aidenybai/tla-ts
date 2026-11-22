@@ -12,7 +12,7 @@ import { createAigTactic } from "./aig-tactic";
 import { blastTermIte } from "./blast-term-ite";
 import { card2bv } from "./card2bv";
 import { getCaseSplitStrategy } from "./case-split-queue";
-import { type Context, MBQI_MAX_ITERATIONS } from "./context";
+import type { Context } from "./context";
 import { CtxSimplifier } from "./ctx-simplify";
 import { createCtxSolverSimplify } from "./ctx-solver-simplify";
 import {
@@ -39,7 +39,16 @@ import { runReduceBvSize } from "./reduce-bv-size";
 import { createSatTactic } from "./sat/sat-tactic";
 import { mkThSolver } from "./euf/th-solvers";
 import { getHammerPeriod } from "./lp/lp-settings";
-import { getDoubleParameter } from "./gparams";
+import {
+  getDoubleParameter,
+  getZ3Parameter,
+  isPortedParameter,
+  PARAM_BOOL,
+  PARAM_DOUBLE,
+  PARAM_STRING,
+  PARAM_SYMBOL,
+  PARAM_UINT,
+} from "./gparams";
 import { ObjMap } from "./hashtable";
 import { createFdTactic } from "./fd-solver";
 import { elimUncnstr } from "./elim-uncnstr";
@@ -98,17 +107,13 @@ import { solveParallel } from "./parallel-tactic";
 import { solveAssuming, solveGoal } from "./solver";
 import { tseitinCnf } from "./tseitin-cnf";
 
-const PARAM_BOOL = 0;
-const PARAM_UINT = 1;
-const PARAM_SYMBOL = 2;
-const PARAM_NUMERAL = 3;
-const PARAM_STRING = 4;
-
 export type TacticParam = boolean | number | string;
 export type TacticParams = ReadonlyMap<string, TacticParam>;
 
+const PARAM_NUMERAL = "rational";
+
 interface ParamDescr {
-  kind: number;
+  kind: string;
   module: string;
   defaultValue: TacticParam;
   isPorted: boolean;
@@ -197,7 +202,7 @@ const catchRewriterCancel = (tactic: Tactic) =>
     }
   }, tactic.cleanup);
 
-const getDescrs = (module: string, entries: [string, number, TacticParam, boolean?][]) =>
+const getDescrs = (module: string, entries: [string, string, TacticParam, boolean?][]) =>
   new Map(
     entries.map((entry) => [
       entry[0],
@@ -205,65 +210,88 @@ const getDescrs = (module: string, entries: [string, number, TacticParam, boolea
     ]),
   );
 
+const getModuleDescrs = (module: string, names: string[]) => ({
+  get: (name: string) => {
+    if (!names.includes(name)) return undefined;
+    const parameter = getZ3Parameter(module, name);
+    const kind = parameter.kind;
+    return {
+      kind,
+      module,
+      defaultValue:
+        kind === PARAM_BOOL
+          ? parameter.defaultValue === "true"
+          : kind === PARAM_UINT || kind === PARAM_DOUBLE
+            ? Number(parameter.defaultValue)
+            : parameter.defaultValue,
+      isPorted: isPortedParameter(module, name),
+    };
+  },
+});
+
+const joinDescrs = (first: ParamDescrs, second: ParamDescrs) => ({
+  get: (name: string) => second.get(name) ?? first.get(name),
+});
+
 const UINT_MAX = 4294967295;
 
-const REWRITER_DESCRS = getDescrs("rewriter", [
-  ["ite_extra_rules", PARAM_BOOL, true],
-  ["flat", PARAM_BOOL, true, true],
-  ["flat_and_or", PARAM_BOOL, true, true],
-  ["sort_disjunctions", PARAM_BOOL, true],
-  ["elim_and", PARAM_BOOL, false, true],
-  ["elim_ite", PARAM_BOOL, true],
-  ["local_ctx", PARAM_BOOL, false, true],
-  ["local_ctx_limit", PARAM_UINT, UINT_MAX, true],
-  ["blast_distinct", PARAM_BOOL, false, true],
-  ["blast_distinct_threshold", PARAM_UINT, UINT_MAX, true],
-  ["som", PARAM_BOOL, false, true],
-  ["som_blowup", PARAM_UINT, 10],
-  ["hoist_mul", PARAM_BOOL, false, true],
-  ["hoist_ite", PARAM_BOOL, false, true],
-  ["algebraic_number_evaluator", PARAM_BOOL, true, true],
-  ["mul_to_power", PARAM_BOOL, false],
-  ["expand_power", PARAM_BOOL, false, true],
-  ["expand_tan", PARAM_BOOL, false, true],
-  ["max_degree", PARAM_UINT, 64, true],
-  ["sort_sums", PARAM_BOOL, false, true],
-  ["gcd_rounding", PARAM_BOOL, false, true],
-  ["arith_lhs", PARAM_BOOL, false, true],
-  ["arith_ineq_lhs", PARAM_BOOL, false, true],
-  ["elim_to_real", PARAM_BOOL, false],
-  ["push_to_real", PARAM_BOOL, true],
-  ["eq2ineq", PARAM_BOOL, false],
-  ["elim_rem", PARAM_BOOL, false],
-  ["split_concat_eq", PARAM_BOOL, false, true],
-  ["bit2bool", PARAM_BOOL, true],
-  ["blast_eq_value", PARAM_BOOL, false],
-  ["elim_sign_ext", PARAM_BOOL, true],
-  ["hi_div0", PARAM_BOOL, true, true],
-  ["mul2concat", PARAM_BOOL, false, true],
-  ["bv_sort_ac", PARAM_BOOL, true],
-  ["bv_extract_prop", PARAM_BOOL, false],
-  ["bv_not_simpl", PARAM_BOOL, false],
-  ["bv_ite2id", PARAM_BOOL, false],
-  ["bv_le_extra", PARAM_BOOL, false],
-  ["bv_le2extract", PARAM_BOOL, true],
-  ["expand_select_store", PARAM_BOOL, false],
-  ["blast_select_store", PARAM_BOOL, false],
-  ["expand_nested_stores", PARAM_BOOL, false],
-  ["expand_select_ite", PARAM_BOOL, false],
-  ["expand_store_eq", PARAM_BOOL, false],
-  ["sort_store", PARAM_BOOL, false, true],
-  ["max_memory", PARAM_UINT, UINT_MAX, true],
-  ["max_steps", PARAM_UINT, UINT_MAX],
-  ["push_ite_arith", PARAM_BOOL, false],
-  ["push_ite_bv", PARAM_BOOL, false, true],
-  ["pull_cheap_ite", PARAM_BOOL, false, true],
-  ["bv_ineq_consistency_test_max", PARAM_UINT, 0, true],
-  ["unfold_recursive_functions", PARAM_BOOL, false],
-  ["cache_all", PARAM_BOOL, false],
-  ["enable_der", PARAM_BOOL, true],
-  ["rewrite_patterns", PARAM_BOOL, false],
-  ["ignore_patterns_on_ground_qbody", PARAM_BOOL, true],
+const REWRITER_DESCRS = getModuleDescrs("rewriter", [
+  "ite_extra_rules",
+  "flat",
+  "flat_and_or",
+  "sort_disjunctions",
+  "elim_and",
+  "elim_ite",
+  "local_ctx",
+  "local_ctx_limit",
+  "blast_distinct",
+  "blast_distinct_threshold",
+  "som",
+  "som_blowup",
+  "hoist_mul",
+  "hoist_ite",
+  "algebraic_number_evaluator",
+  "mul_to_power",
+  "expand_power",
+  "expand_tan",
+  "max_degree",
+  "sort_sums",
+  "gcd_rounding",
+  "arith_lhs",
+  "arith_ineq_lhs",
+  "elim_to_real",
+  "push_to_real",
+  "eq2ineq",
+  "elim_rem",
+  "split_concat_eq",
+  "bit2bool",
+  "blast_eq_value",
+  "elim_sign_ext",
+  "hi_div0",
+  "mul2concat",
+  "bv_sort_ac",
+  "bv_extract_prop",
+  "bv_not_simpl",
+  "bv_ite2id",
+  "bv_le_extra",
+  "bv_le2extract",
+  "expand_select_store",
+  "blast_select_store",
+  "expand_nested_stores",
+  "expand_select_ite",
+  "expand_store_eq",
+  "sort_store",
+  "max_memory",
+  "max_steps",
+  "push_ite_arith",
+  "push_ite_bv",
+  "pull_cheap_ite",
+  "bv_ineq_consistency_test_max",
+  "unfold_recursive_functions",
+  "cache_all",
+  "enable_der",
+  "rewrite_patterns",
+  "ignore_patterns_on_ground_qbody",
 ]);
 
 const BOOL_REWRITER_PARAMS = [
@@ -328,27 +356,28 @@ export const getRewriterOptions = (manager: AstManager, params: TacticParams): R
   },
 });
 
-// arith.nl.rounds only bounds arith.solver 2, which the port does not use.
-const SMT_DESCRS = getDescrs("smt", [
-  ["mbqi", PARAM_BOOL, true, true],
-  ["mbqi.max_iterations", PARAM_UINT, MBQI_MAX_ITERATIONS, true],
-  ["arith.nl.rounds", PARAM_UINT, 1024, true],
-  ["arith.branch_cut_ratio", PARAM_UINT, 2, true],
-  ["random_seed", PARAM_UINT, 0, true],
-  ["auto_config", PARAM_BOOL, true, true],
-  ["case_split", PARAM_UINT, 1, true],
-  ["ematching", PARAM_BOOL, true, true],
-  ["mbqi.id", PARAM_STRING, ""],
-  ["qi.cost", PARAM_STRING, "(+ weight generation)", true],
-  ["qi.eager_threshold", PARAM_NUMERAL, "10", true],
-  ["qi.lazy_threshold", PARAM_NUMERAL, "20", true],
-  ["relevancy", PARAM_UINT, 2, true],
+const SMT_DESCRS = getModuleDescrs("smt", [
+  "mbqi",
+  "mbqi.max_iterations",
+  "arith.nl.rounds",
+  "arith.branch_cut_ratio",
+  "random_seed",
+  "auto_config",
+  "case_split",
+  "ematching",
+  "mbqi.id",
+  "qi.cost",
+  "qi.eager_threshold",
+  "qi.lazy_threshold",
+  "relevancy",
 ]);
 
-const getSmtDouble = (environment: TacticEnvironment, params: TacticParams, name: string) =>
-  params.has(name)
-    ? getNumeral(params, name, "0").toDouble()
+const getSmtDouble = (environment: TacticEnvironment, params: TacticParams, name: string) => {
+  const value = params.get(name);
+  return typeof value === "number"
+    ? value
     : getDoubleParameter(environment.parameters, `smt.${name}`);
+};
 
 const isEmatching = (environment: TacticEnvironment, params: TacticParams) =>
   getBool(params, "ematching", getParameter(environment, "smt.ematching", "true") !== "false");
@@ -404,6 +433,7 @@ const getKernelParams = (environment: TacticEnvironment, params: TacticParams, g
     mbqiMaxCexs: Number(getParameter(environment, "smt.mbqi.max_cexs", "1")),
     mbqiForceTemplate: Number(getParameter(environment, "smt.mbqi.force_template", "10")),
     mbqiId: getParameter(environment, "smt.mbqi.id", ""),
+    isModelValidating: environment.parameters.get("model_validate") === "true",
     isProofsEnabled: goal.isProofsEnabled,
   };
 };
@@ -464,6 +494,7 @@ const runSat = (environment: TacticEnvironment, params: TacticParams) => (goal: 
   return createSatTactic(
     environment.manager,
     satParams,
+    environment.parameters.get("model_validate") === "true",
     satParams.get("euf") === true ? mkThSolver(environment.parameters) : null,
   )(goal);
 };
@@ -693,18 +724,13 @@ const NNF_MODES = new Map([
   ["full", NNF_FULL],
 ]);
 
-const NNF_DESCRS = getDescrs("nnf", [
-  ["mode", PARAM_SYMBOL, "skolem", true],
-  ["max_memory", PARAM_UINT, UINT_MAX, true],
-  ["sk_hack", PARAM_BOOL, false],
-  ["ignore_labels", PARAM_BOOL, false, true],
-]);
+const NNF_DESCRS = getModuleDescrs("nnf", ["mode", "max_memory", "sk_hack", "ignore_labels"]);
 
-const NLSAT_DESCRS = getDescrs("nlsat", [
-  ["seed", PARAM_UINT, 0, true],
-  ["factor", PARAM_BOOL, true, true],
-  ["shuffle_vars", PARAM_BOOL, false, true],
-  ["variable_ordering_strategy", PARAM_UINT, 0, true],
+const NLSAT_DESCRS = getModuleDescrs("nlsat", [
+  "seed",
+  "factor",
+  "shuffle_vars",
+  "variable_ordering_strategy",
 ]);
 
 const TSEITIN_DESCRS = getDescrs("", [
@@ -748,137 +774,141 @@ const runNnf = (manager: AstManager, params: TacticParams) => (goal: Goal) => {
   return [goal];
 };
 
-const SAT_DESCRS = getDescrs("sat", [
-  ["max_memory", PARAM_UINT, UINT_MAX, true],
-  ["ite_extra", PARAM_BOOL, true, true],
-  ["learned", PARAM_BOOL, false],
-  ["restart", PARAM_SYMBOL, "ema", true],
-  ["restart.fast", PARAM_BOOL, true, true],
-  ["phase", PARAM_SYMBOL, "caching", true],
-  ["rephase.base", PARAM_UINT, 1000, true],
-  ["search.sat.conflicts", PARAM_UINT, 400, true],
-  ["search.unsat.conflicts", PARAM_UINT, 400, true],
-  ["restart.initial", PARAM_UINT, 2, true],
-  ["restart.max", PARAM_UINT, UINT_MAX, true],
-  ["inprocess.max", PARAM_UINT, UINT_MAX, true],
-  ["random_seed", PARAM_UINT, 0, true],
-  ["burst_search", PARAM_UINT, 100, true],
-  ["enable_pre_simplify", PARAM_BOOL, false, true],
-  ["max_conflicts", PARAM_UINT, UINT_MAX, true],
-  ["simplify.delay", PARAM_UINT, 0, true],
-  ["gc", PARAM_SYMBOL, "glue_psm", true],
-  ["gc.initial", PARAM_UINT, 20000, true],
-  ["gc.increment", PARAM_UINT, 500, true],
-  ["gc.small_lbd", PARAM_UINT, 3, true],
-  ["gc.k", PARAM_UINT, 7, true],
-  ["gc.burst", PARAM_BOOL, false, true],
-  ["gc.defrag", PARAM_BOOL, true, true],
-  ["force_cleanup", PARAM_BOOL, false, true],
-  ["backtrack.scopes", PARAM_UINT, 100, true],
-  ["backtrack.conflicts", PARAM_UINT, 4000, true],
-  ["minimize_lemmas", PARAM_BOOL, true, true],
-  ["dyn_sub_res", PARAM_BOOL, true, true],
-  ["variable_decay", PARAM_UINT, 110, true],
-  ["scc", PARAM_BOOL, true, true],
-  ["scc.tr", PARAM_BOOL, true, true],
-  ["abce", PARAM_BOOL, false, true],
-  ["acce", PARAM_BOOL, false, true],
-  ["ate", PARAM_BOOL, true, true],
-  ["bce", PARAM_BOOL, false, true],
-  ["cce", PARAM_BOOL, false, true],
-  ["bce_at", PARAM_UINT, 2, true],
-  ["bce_delay", PARAM_UINT, 2, true],
-  ["blocked_clause_limit", PARAM_UINT, 100000000, true],
-  ["elim_vars", PARAM_BOOL, true, true],
-  ["subsumption", PARAM_BOOL, true, true],
-  ["subsumption.limit", PARAM_UINT, 100000000, true],
-  ["override_incremental", PARAM_BOOL, false, true],
-  ["resolution.limit", PARAM_UINT, 500000000, true],
-  ["resolution.occ_cutoff", PARAM_UINT, 10, true],
-  ["resolution.occ_cutoff_range1", PARAM_UINT, 8, true],
-  ["resolution.occ_cutoff_range2", PARAM_UINT, 5, true],
-  ["resolution.occ_cutoff_range3", PARAM_UINT, 3, true],
-  ["resolution.lit_cutoff_range1", PARAM_UINT, 700, true],
-  ["resolution.lit_cutoff_range2", PARAM_UINT, 400, true],
-  ["resolution.lit_cutoff_range3", PARAM_UINT, 300, true],
-  ["resolution.cls_cutoff1", PARAM_UINT, 100000000, true],
-  ["resolution.cls_cutoff2", PARAM_UINT, 700000000, true],
-  ["asymm_branch", PARAM_BOOL, true, true],
-  ["asymm_branch.rounds", PARAM_UINT, 2, true],
-  ["asymm_branch.delay", PARAM_UINT, 1, true],
-  ["asymm_branch.sampled", PARAM_BOOL, true, true],
-  ["asymm_branch.limit", PARAM_UINT, 100000000, true],
-  ["asymm_branch.all", PARAM_BOOL, false, true],
-  ["probing", PARAM_BOOL, true, true],
-  ["probing_limit", PARAM_UINT, 5000000, true],
-  ["probing_cache", PARAM_BOOL, true, true],
-  ["probing_cache_limit", PARAM_UINT, 1024, true],
-  ["probing_binary", PARAM_BOOL, true, true],
-  ["local_search", PARAM_BOOL, false],
-  ["threads", PARAM_UINT, 1],
-  ["euf", PARAM_BOOL, false, true],
-  ["cardinality.solver", PARAM_BOOL, true],
-  ["anf", PARAM_BOOL, false],
-  ["anf.delay", PARAM_UINT, 2],
-  ["anf.exlin", PARAM_BOOL, false],
-  ["bca", PARAM_BOOL, false],
-  ["branching.anti_exploration", PARAM_BOOL, false],
-  ["branching.heuristic", PARAM_SYMBOL, "vsids"],
-  ["cardinality.encoding", PARAM_SYMBOL, "grouped"],
-  ["core.minimize", PARAM_BOOL, false],
-  ["core.minimize_partial", PARAM_BOOL, false],
-  ["ddfw.init_clause_weight", PARAM_UINT, 8],
-  ["ddfw.reinit_base", PARAM_UINT, 10000],
-  ["ddfw.restart_base", PARAM_UINT, 100000],
-  ["ddfw.threads", PARAM_UINT, 0],
-  ["ddfw.use_reward_pct", PARAM_UINT, 15],
-  ["ddfw_search", PARAM_BOOL, false],
-  ["dimacs.core", PARAM_BOOL, false],
-  ["drat.activity", PARAM_BOOL, false],
-  ["drat.binary", PARAM_BOOL, false],
-  ["drat.check_sat", PARAM_BOOL, false],
-  ["drat.check_unsat", PARAM_BOOL, false],
-  ["drat.disable", PARAM_BOOL, false],
-  ["drat.file", PARAM_SYMBOL, ""],
-  ["inprocess.out", PARAM_SYMBOL, ""],
-  ["local_search_dbg_flips", PARAM_BOOL, false],
-  ["local_search_mode", PARAM_SYMBOL, "wsat"],
-  ["local_search_threads", PARAM_UINT, 0],
-  ["lookahead.cube.cutoff", PARAM_SYMBOL, "depth"],
-  ["lookahead.cube.depth", PARAM_UINT, 1],
-  ["lookahead.cube.fraction", PARAM_NUMERAL, "0.4"],
-  ["lookahead.cube.freevars", PARAM_NUMERAL, "0.8"],
-  ["lookahead.cube.psat.clause_base", PARAM_NUMERAL, "2"],
-  ["lookahead.cube.psat.trigger", PARAM_NUMERAL, "5"],
-  ["lookahead.cube.psat.var_exp", PARAM_NUMERAL, "1"],
-  ["lookahead.delta_fraction", PARAM_NUMERAL, "1.0"],
-  ["lookahead.double", PARAM_BOOL, true],
-  ["lookahead.global_autarky", PARAM_BOOL, false],
-  ["lookahead.preselect", PARAM_BOOL, false],
-  ["lookahead.reward", PARAM_SYMBOL, "march_cu"],
-  ["lookahead.use_learned", PARAM_BOOL, false],
-  ["lookahead_scores", PARAM_BOOL, false],
-  ["lookahead_simplify", PARAM_BOOL, false],
-  ["lookahead_simplify.bca", PARAM_BOOL, true],
-  ["pb.lemma_format", PARAM_SYMBOL, "cardinality"],
-  ["pb.min_arity", PARAM_UINT, 9],
-  ["pb.resolve", PARAM_SYMBOL, "cardinality"],
-  ["pb.solver", PARAM_SYMBOL, "solver"],
-  ["phase.sticky", PARAM_BOOL, true],
-  ["prob_search", PARAM_BOOL, false],
-  ["propagate.prefetch", PARAM_BOOL, true],
-  ["random_freq", PARAM_NUMERAL, "0.01"],
-  ["reorder.activity_scale", PARAM_UINT, 100],
-  ["reorder.base", PARAM_UINT, UINT_MAX],
-  ["reorder.itau", PARAM_NUMERAL, "4.0"],
-  ["restart.emafastglue", PARAM_NUMERAL, "0.03"],
-  ["restart.emaslowglue", PARAM_NUMERAL, "1e-05"],
-  ["restart.factor", PARAM_NUMERAL, "1.5"],
-  ["restart.margin", PARAM_NUMERAL, "1.1"],
-  ["retain_blocked_clauses", PARAM_BOOL, true],
-  ["smt", PARAM_BOOL, false],
-  ["smt.proof.check", PARAM_BOOL, false],
-]);
+const SAT_DESCRS = joinDescrs(
+  getModuleDescrs("sat", [
+    "max_memory",
+    "restart",
+    "restart.fast",
+    "phase",
+    "rephase.base",
+    "search.sat.conflicts",
+    "search.unsat.conflicts",
+    "restart.initial",
+    "restart.max",
+    "inprocess.max",
+    "random_seed",
+    "burst_search",
+    "enable_pre_simplify",
+    "max_conflicts",
+    "simplify.delay",
+    "gc",
+    "gc.initial",
+    "gc.increment",
+    "gc.small_lbd",
+    "gc.k",
+    "gc.burst",
+    "gc.defrag",
+    "force_cleanup",
+    "backtrack.scopes",
+    "backtrack.conflicts",
+    "minimize_lemmas",
+    "dyn_sub_res",
+    "variable_decay",
+    "scc",
+    "scc.tr",
+    "abce",
+    "acce",
+    "ate",
+    "bce",
+    "cce",
+    "bce_at",
+    "bce_delay",
+    "blocked_clause_limit",
+    "elim_vars",
+    "subsumption",
+    "subsumption.limit",
+    "override_incremental",
+    "resolution.limit",
+    "resolution.occ_cutoff",
+    "resolution.occ_cutoff_range1",
+    "resolution.occ_cutoff_range2",
+    "resolution.occ_cutoff_range3",
+    "resolution.lit_cutoff_range1",
+    "resolution.lit_cutoff_range2",
+    "resolution.lit_cutoff_range3",
+    "resolution.cls_cutoff1",
+    "resolution.cls_cutoff2",
+    "asymm_branch",
+    "asymm_branch.rounds",
+    "asymm_branch.delay",
+    "asymm_branch.sampled",
+    "asymm_branch.limit",
+    "asymm_branch.all",
+    "probing",
+    "probing_limit",
+    "probing_cache",
+    "probing_cache_limit",
+    "probing_binary",
+    "local_search",
+    "threads",
+    "euf",
+    "cardinality.solver",
+    "anf",
+    "anf.delay",
+    "anf.exlin",
+    "bca",
+    "branching.anti_exploration",
+    "branching.heuristic",
+    "cardinality.encoding",
+    "core.minimize",
+    "core.minimize_partial",
+    "ddfw.init_clause_weight",
+    "ddfw.reinit_base",
+    "ddfw.restart_base",
+    "ddfw.threads",
+    "ddfw.use_reward_pct",
+    "ddfw_search",
+    "dimacs.core",
+    "drat.activity",
+    "drat.binary",
+    "drat.check_sat",
+    "drat.check_unsat",
+    "drat.disable",
+    "drat.file",
+    "inprocess.out",
+    "local_search_dbg_flips",
+    "local_search_mode",
+    "local_search_threads",
+    "lookahead.cube.cutoff",
+    "lookahead.cube.depth",
+    "lookahead.cube.fraction",
+    "lookahead.cube.freevars",
+    "lookahead.cube.psat.clause_base",
+    "lookahead.cube.psat.trigger",
+    "lookahead.cube.psat.var_exp",
+    "lookahead.delta_fraction",
+    "lookahead.double",
+    "lookahead.global_autarky",
+    "lookahead.preselect",
+    "lookahead.reward",
+    "lookahead.use_learned",
+    "lookahead_scores",
+    "lookahead_simplify",
+    "lookahead_simplify.bca",
+    "pb.lemma_format",
+    "pb.min_arity",
+    "pb.resolve",
+    "pb.solver",
+    "phase.sticky",
+    "prob_search",
+    "propagate.prefetch",
+    "random_freq",
+    "reorder.activity_scale",
+    "reorder.base",
+    "reorder.itau",
+    "restart.emafastglue",
+    "restart.emaslowglue",
+    "restart.factor",
+    "restart.margin",
+    "retain_blocked_clauses",
+    "smt",
+    "smt.proof.check",
+  ]),
+  getDescrs("sat", [
+    ["ite_extra", PARAM_BOOL, true, true],
+    ["learned", PARAM_BOOL, false],
+  ]),
+);
 
 const NAMED_TACTICS = new Map<string, NamedTactic>([
   [
@@ -912,10 +942,7 @@ const NAMED_TACTICS = new Map<string, NamedTactic>([
     "propagate-values",
     {
       isCatchingRewriterCancel: true,
-      descrs: new Map([
-        ...REWRITER_DESCRS,
-        ...getDescrs("", [["max_rounds", PARAM_UINT, 4, true]]),
-      ]),
+      descrs: joinDescrs(REWRITER_DESCRS, getDescrs("", [["max_rounds", PARAM_UINT, 4, true]])),
       isTrackingDependencies: true,
       build: (environment, params) => {
         const tactic = new PropagateValuesTactic(
@@ -992,6 +1019,7 @@ const NAMED_TACTICS = new Map<string, NamedTactic>([
           mbqiMaxCexs: Number(getParameter(environment, "smt.mbqi.max_cexs", "1")),
           mbqiForceTemplate: Number(getParameter(environment, "smt.mbqi.force_template", "10")),
           mbqiId: getParameter(environment, "smt.mbqi.id", ""),
+          isModelValidating: environment.parameters.get("model_validate") === "true",
         });
         const simplifier = createCtxSolverSimplify(
           environment.manager,
@@ -1011,14 +1039,14 @@ const NAMED_TACTICS = new Map<string, NamedTactic>([
     "purify-arith",
     {
       isCatchingRewriterCancel: true,
-      descrs: new Map([
-        ...REWRITER_DESCRS,
-        ...getDescrs("", [
+      descrs: joinDescrs(
+        REWRITER_DESCRS,
+        getDescrs("", [
           ["complete", PARAM_BOOL, true, true],
           ["elim_root_objects", PARAM_BOOL, true, true],
           ["elim_inverses", PARAM_BOOL, true, true],
         ]),
-      ]),
+      ),
       isTrackingDependencies: true,
       build: (environment, params) => {
         const manager = environment.manager;
@@ -1215,14 +1243,14 @@ const NAMED_TACTICS = new Map<string, NamedTactic>([
     "lia2pb",
     {
       isCatchingRewriterCancel: true,
-      descrs: new Map([
-        ...REWRITER_DESCRS,
-        ...getDescrs("", [
+      descrs: joinDescrs(
+        REWRITER_DESCRS,
+        getDescrs("", [
           ["lia2pb_partial", PARAM_BOOL, false, true],
           ["lia2pb_max_bits", PARAM_UINT, 32, true],
           ["lia2pb_total_bits", PARAM_UINT, 2048, true],
         ]),
-      ]),
+      ),
       isTrackingDependencies: true,
       build: (environment, params) =>
         inPlace((goal) =>
@@ -1238,9 +1266,9 @@ const NAMED_TACTICS = new Map<string, NamedTactic>([
   [
     "pb2bv",
     {
-      descrs: new Map([
-        ...[...REWRITER_DESCRS].filter((entry) => BOOL_REWRITER_PARAMS.includes(entry[0])),
-        ...getDescrs("", [
+      descrs: joinDescrs(
+        getModuleDescrs("rewriter", BOOL_REWRITER_PARAMS),
+        getDescrs("", [
           ["max_memory", PARAM_UINT, UINT_MAX, true],
           ["pb2bv_all_clauses_limit", PARAM_UINT, 8, true],
           ["pb2bv_cardinality_limit", PARAM_UINT, UINT_MAX, true],
@@ -1248,7 +1276,7 @@ const NAMED_TACTICS = new Map<string, NamedTactic>([
           ["pb.solver", PARAM_SYMBOL, "solver", true],
           ["cardinality.encoding", PARAM_SYMBOL, "none", true],
         ]),
-      ]),
+      ),
       isTrackingDependencies: true,
       build: (environment, params) =>
         runPb2Bv(environment.manager, params, getRewriterOptions(environment.manager, params)),
@@ -1269,9 +1297,9 @@ const NAMED_TACTICS = new Map<string, NamedTactic>([
     "fm",
     {
       isTrackingDependencies: true,
-      descrs: new Map([
-        ...REWRITER_DESCRS,
-        ...getDescrs("", [
+      descrs: joinDescrs(
+        REWRITER_DESCRS,
+        getDescrs("", [
           ["produce_models", PARAM_BOOL, false, true],
           ["fm_real_only", PARAM_BOOL, true, true],
           ["fm_occ", PARAM_BOOL, false, true],
@@ -1280,7 +1308,7 @@ const NAMED_TACTICS = new Map<string, NamedTactic>([
           ["fm_cutoff2", PARAM_UINT, 256, true],
           ["fm_extra", PARAM_UINT, 0, true],
         ]),
-      ]),
+      ),
       build: (environment, params) =>
         inPlace((goal) => {
           const manager = environment.manager;
@@ -1636,7 +1664,7 @@ const NAMED_TACTICS = new Map<string, NamedTactic>([
   [
     "qfufbv_ackr",
     {
-      descrs: new Map([...REWRITER_DESCRS, ...SMT_DESCRS]),
+      descrs: joinDescrs(REWRITER_DESCRS, SMT_DESCRS),
       isRejectingUnknown: false,
       build: (environment, params) => {
         const manager = environment.manager;
@@ -1757,7 +1785,11 @@ const NAMED_TACTICS = new Map<string, NamedTactic>([
       descrs: SAT_DESCRS,
       isRejectingUnknown: false,
       build: (environment, params) => (goal) =>
-        createFdTactic(environment.manager, getSatTacticParams(environment, params))(goal),
+        createFdTactic(
+          environment.manager,
+          getSatTacticParams(environment, params),
+          environment.parameters,
+        )(goal),
     },
   ],
   [
@@ -1848,16 +1880,18 @@ const findParam = (descrs: ParamDescrs, name: string) => {
     : undefined;
 };
 
-const parseParamValue = (kind: number, value: SExpr) =>
+const parseParamValue = (kind: string, value: SExpr) =>
   kind === PARAM_BOOL
     ? isSymbol(value, "true") || (isSymbol(value, "false") ? false : undefined)
     : kind === PARAM_UINT
       ? isUnsignedNumeral(value)
         ? Number(value.text)
         : undefined
-      : kind === PARAM_NUMERAL
+      : kind === PARAM_NUMERAL || kind === PARAM_DOUBLE
         ? value.kind === "numeral" || value.kind === "decimal"
-          ? value.text
+          ? kind === PARAM_DOUBLE
+            ? Rational.fromDecimal(value.text).toDouble()
+            : value.text
           : undefined
         : kind === PARAM_STRING
           ? value.kind === "string"
@@ -1932,7 +1966,7 @@ const getParams = (
           ? "invalid parameter value, true or false expected"
           : found.descr.kind === PARAM_UINT
             ? "invalid parameter value, unsigned integer expected"
-            : found.descr.kind === PARAM_NUMERAL
+            : found.descr.kind === PARAM_NUMERAL || found.descr.kind === PARAM_DOUBLE
               ? "invalid parameter value, numeral expected"
               : "invalid parameter value, symbol expected",
         getSexprPosition(value),

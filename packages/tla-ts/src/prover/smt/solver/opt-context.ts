@@ -360,7 +360,11 @@ export class OptContext {
       );
     }
     this.satSolver = this.updateSolver(hard, options)
-      ? new IncSatSolver(manager, getSatParams(this.environment.parameters))
+      ? new IncSatSolver(
+          manager,
+          getSatParams(this.environment.parameters),
+          this.environment.parameters,
+        )
       : null;
     const checkSolver = this.satSolver ?? solver;
     for (const form of hard) checkSolver.assertExpr(form);

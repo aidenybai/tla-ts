@@ -25,6 +25,7 @@ export const getGlobalSmtParams = (
   mbqiMaxCexs: Number(parameters.get("smt.mbqi.max_cexs") ?? "1"),
   mbqiForceTemplate: Number(parameters.get("smt.mbqi.force_template") ?? "10"),
   mbqiId: parameters.get("smt.mbqi.id") ?? "",
+  isModelValidating: parameters.get("model_validate") === "true",
 });
 
 export class SmtKernel {
@@ -60,6 +61,7 @@ export class SmtKernel {
       mbqiMaxCexs: params.mbqiMaxCexs,
       mbqiForceTemplate: params.mbqiForceTemplate,
       mbqiId: params.mbqiId,
+      isModelValidating: params.isModelValidating,
       isProofsEnabled: params.isProofsEnabled,
     });
     this.setup = params.setup;
