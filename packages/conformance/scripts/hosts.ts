@@ -4,6 +4,7 @@ import {
   existsSync,
   mkdirSync,
   mkdtempSync,
+  readFileSync,
   realpathSync,
   rmSync,
   writeFileSync,
@@ -21,7 +22,8 @@ import {
   normalizeTlapmTranscript,
   TLAPM_BINARY,
 } from "./tlapm";
-import { normalizeTranscript } from "./transcript";
+import { normalizeFile, normalizeTranscript } from "./transcript";
+import { getValueFileText } from "./value-file";
 
 const PACKAGE_DIRECTORY = join(import.meta.dirname, "..");
 
@@ -110,6 +112,7 @@ export interface HostResult {
   exit: number;
   transcript: string;
   exceeded?: "time" | "memory";
+  files?: Record<string, string | null>;
 }
 
 export interface Limits {
@@ -189,6 +192,14 @@ const spawnRun = (run: Run) =>
     },
   );
 
+const readOutputFile = (directory: string, path: string) => {
+  const file = join(directory, path);
+  if (!existsSync(file)) return null;
+  return path.endsWith(".bin")
+    ? getValueFileText(readFileSync(file))
+    : normalizeFile(readFileSync(file, "utf8"), directory);
+};
+
 const runTlc = async (
   command: string[],
   test: SuiteTest,
@@ -224,6 +235,7 @@ const runTlc = async (
     directory,
     limits,
   });
+  const files = test.metadata.files;
   return {
     exit: result.exit,
     exceeded: result.exceeded,
@@ -233,6 +245,11 @@ const runTlc = async (
           directory,
           isStateSpaceRelevant: context.name === "model",
         }),
+    ...(files
+      ? {
+          files: Object.fromEntries(files.map((path) => [path, readOutputFile(directory, path)])),
+        }
+      : {}),
   };
 };
 

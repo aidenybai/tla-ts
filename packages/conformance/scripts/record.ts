@@ -36,6 +36,7 @@ await runPool(tests, WORKERS, async (test) => {
     recordings[context.name] = {
       exit: result.exit,
       ...(result.transcript === "" ? {} : { transcript: result.transcript }),
+      ...(result.files ? { files: result.files } : {}),
     };
   }
   refused.push(...refusals);

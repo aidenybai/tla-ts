@@ -36,6 +36,8 @@ export interface TestMetadata {
   config?: string;
   args?: string[];
   includes?: string[];
+  // Exact paths, not globs, of files the run writes, relative to its directory.
+  files?: string[];
   stack?: string;
   correct?: Record<string, Recording>;
 }
@@ -43,6 +45,7 @@ export interface TestMetadata {
 export interface Recording {
   exit: number;
   transcript?: string;
+  files?: Record<string, string | null>;
 }
 
 export interface SuiteTest {
@@ -178,8 +181,17 @@ export const keepCorrection = (
 export const renderTest = (metadata: TestMetadata, moduleText: string) =>
   `(*---\n${formatYaml(metadata)}\n---*)\n${moduleText}`;
 
+export const isSameFiles = (left: Recording, right: Recording) => {
+  const leftFiles = Object.entries(left.files ?? {});
+  const rightFiles = new Map(Object.entries(right.files ?? {}));
+  return (
+    leftFiles.length === rightFiles.size &&
+    leftFiles.every((entry) => rightFiles.get(entry[0]) === entry[1])
+  );
+};
+
 const isSameRecording = (left: Recording, right: Recording) =>
-  left.exit === right.exit && left.transcript === right.transcript;
+  left.exit === right.exit && left.transcript === right.transcript && isSameFiles(left, right);
 
 export const writeRecordings = (test: SuiteTest, recordings: Record<string, Recording>) => {
   const entries = Object.values(recordings);
