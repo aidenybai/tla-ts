@@ -337,6 +337,11 @@
     background-color: var(--tint-fill);
     animation: tint-in 200ms ease-out;
   }
+  /* A pane that holds only its lines in view makes a line anew as it scrolls in, where a fade
+     would run for every tint on each scroll. */
+  [data-index] [data-tint] {
+    animation: none;
+  }
   [data-hovering-name] [data-tint] {
     --tint-fill: color-mix(in srgb, var(--tint) 8%, transparent);
   }
