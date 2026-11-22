@@ -114,6 +114,7 @@ export interface SmtConfig {
   arithPropagationThreshold: number;
   isArithBoundPropagating: boolean;
   qiLazyThreshold: number;
+  qiMaxInstances: number;
   qiMaxEagerMultipatterns: number;
   isQiUpdatingGeneration: boolean;
   arrayLazyIeqDelay: number | undefined;
@@ -156,6 +157,7 @@ export const DEFAULT_CONFIG: SmtConfig = {
   arithPropagationThreshold: Infinity,
   isArithBoundPropagating: true,
   qiLazyThreshold: 20,
+  qiMaxInstances: 4294967295,
   qiMaxEagerMultipatterns: 0,
   isQiUpdatingGeneration: true,
   arrayLazyIeqDelay: undefined,

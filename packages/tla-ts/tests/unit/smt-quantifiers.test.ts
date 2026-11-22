@@ -486,6 +486,62 @@ describe("e-matching, as Z3 5.3.2 counts its steps", () => {
       ),
     ).toEqual(["unsat", "(:rlimit 147)"]);
   });
+
+  it("cancels the search past smt.qi.max_instances", () => {
+    const options = ["(set-option :smt.qi.max_instances 3)"];
+    const reason = '(:reason-unknown "smt tactic failed to show goal to be sat/unsat canceled")';
+    expect(
+      run([...getGroundPatternScript(options, "(check-sat)"), "(get-info :reason-unknown)"]),
+    ).toEqual(["unknown", "(:rlimit 1155)", reason]);
+    expect(
+      run([
+        ...getGroundPatternScript(options, "(check-sat-using smt)"),
+        "(get-info :reason-unknown)",
+      ]),
+    ).toEqual(["unknown", "(:rlimit 857)", reason]);
+  });
+
+  it("counts the instances toward smt.qi.max_instances across the checks of a context", () => {
+    const getOutput = (maxInstances: number) =>
+      run([
+        ...getGroundPatternScript(
+          [`(set-option :smt.qi.max_instances ${maxInstances})`, "(push)"],
+          "(check-sat)",
+        ),
+        "(get-info :reason-unknown)",
+        "(check-sat)",
+        "(get-info :rlimit)",
+        "(get-info :reason-unknown)",
+      ]);
+    expect(getOutput(3)).toEqual([
+      "unknown",
+      "(:rlimit 881)",
+      '(:reason-unknown "canceled")',
+      "unknown",
+      "(:rlimit 935)",
+      '(:reason-unknown "(incomplete quantifiers)")',
+    ]);
+    expect(getOutput(12)).toEqual([
+      "unknown",
+      "(:rlimit 1294)",
+      '(:reason-unknown "canceled")',
+      "unknown",
+      "(:rlimit 1321)",
+      '(:reason-unknown "canceled")',
+    ]);
+  });
+
+  it("stops instantiating past smt.qi.max_instances in sat.euf", () => {
+    expect(
+      run([
+        ...getGroundPatternScript(
+          ["(set-option :sat.euf true)", "(set-option :smt.qi.max_instances 3)"],
+          "(check-sat)",
+        ),
+        "(get-info :reason-unknown)",
+      ]),
+    ).toEqual(["unknown", "(:rlimit 858)", '(:reason-unknown "incomplete theory quant")']);
+  });
 });
 
 const getThresholdScript = (options: string[], check: string, query = "(get-info :rlimit)") => [

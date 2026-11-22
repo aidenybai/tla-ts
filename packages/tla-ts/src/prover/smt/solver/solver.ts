@@ -31,6 +31,7 @@ export interface KernelParams {
   qiCost?: string;
   qiEagerThreshold?: number;
   qiLazyThreshold?: number;
+  qiMaxInstances?: number;
   qiMaxEagerMultipatterns?: number;
   isQiUpdatingGeneration?: boolean;
   isProofsEnabled?: boolean;
@@ -75,6 +76,7 @@ export const solveGoal = (manager: AstManager, forms: number[], params: KernelPa
     qiCost: params.qiCost,
     qiEagerThreshold: params.qiEagerThreshold,
     qiLazyThreshold: params.qiLazyThreshold,
+    qiMaxInstances: params.qiMaxInstances,
     qiMaxEagerMultipatterns: params.qiMaxEagerMultipatterns,
     isQiUpdatingGeneration: params.isQiUpdatingGeneration,
     isProofsEnabled: params.isProofsEnabled,
@@ -137,6 +139,7 @@ export const solveAssuming = (
     qiCost: params.qiCost,
     qiEagerThreshold: params.qiEagerThreshold,
     qiLazyThreshold: params.qiLazyThreshold,
+    qiMaxInstances: params.qiMaxInstances,
     qiMaxEagerMultipatterns: params.qiMaxEagerMultipatterns,
     isQiUpdatingGeneration: params.isQiUpdatingGeneration,
     isProofsEnabled: params.isProofsEnabled,

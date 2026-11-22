@@ -183,6 +183,7 @@ export interface SmtParams {
   qiCost?: string;
   qiEagerThreshold?: number;
   qiLazyThreshold?: number;
+  qiMaxInstances?: number;
   qiMaxEagerMultipatterns?: number;
   isQiUpdatingGeneration?: boolean;
   // The model checker's auxiliary context pretends every array operation is supported.
@@ -238,6 +239,7 @@ export class Context extends Internalizer {
   hasQuantifiers = false;
   private contextRelevancyLevel: number;
   private isSearchFinalized = true;
+  private internalCompleted = L_UNDEF;
 
   constructor(
     manager: AstManager,
@@ -255,6 +257,7 @@ export class Context extends Internalizer {
       ...DEFAULT_CONFIG,
       isArithPropagatingEqs: params.isArithPropagatingEqs ?? true,
       qiLazyThreshold: params.qiLazyThreshold ?? DEFAULT_CONFIG.qiLazyThreshold,
+      qiMaxInstances: params.qiMaxInstances ?? DEFAULT_CONFIG.qiMaxInstances,
       qiMaxEagerMultipatterns:
         params.qiMaxEagerMultipatterns ?? DEFAULT_CONFIG.qiMaxEagerMultipatterns,
       isQiUpdatingGeneration:
@@ -295,6 +298,7 @@ export class Context extends Internalizer {
     this.params.qiCost = params.qiCost;
     this.params.qiEagerThreshold = params.qiEagerThreshold;
     this.params.qiLazyThreshold = params.qiLazyThreshold;
+    this.params.qiMaxInstances = params.qiMaxInstances;
     this.params.qiMaxEagerMultipatterns = params.qiMaxEagerMultipatterns;
     this.params.isQiUpdatingGeneration = params.isQiUpdatingGeneration;
     this.params.relevancyLevel = params.relevancyLevel ?? 2;
@@ -311,6 +315,7 @@ export class Context extends Internalizer {
       isEliminatingBounds: this.config.isEliminatingBounds,
       arithPropagationThreshold: this.config.arithPropagationThreshold,
       qiLazyThreshold: params.qiLazyThreshold ?? DEFAULT_CONFIG.qiLazyThreshold,
+      qiMaxInstances: params.qiMaxInstances ?? DEFAULT_CONFIG.qiMaxInstances,
       qiMaxEagerMultipatterns:
         params.qiMaxEagerMultipatterns ?? DEFAULT_CONFIG.qiMaxEagerMultipatterns,
       isQiUpdatingGeneration:
@@ -377,10 +382,23 @@ export class Context extends Internalizer {
     return family < 0 ? undefined : this.theoryByFamily[family];
   }
 
-  checkCanceled(cost = 1) {
+  checkCanceled() {
+    if (this.internalCompleted === L_TRUE && !this.manager.limit.isSuspended) {
+      this.lastSearchFailure = FAILURE_CANCELED;
+      return true;
+    }
+    return this.checkLimitCanceled();
+  }
+
+  // theory_lra reads only the resource limit, not m_internal_completed.
+  checkLimitCanceled(cost = 1) {
     if (this.manager.limit.inc(cost)) return false;
     this.lastSearchFailure = FAILURE_CANCELED;
     return true;
+  }
+
+  setInternalCompleted() {
+    if (this.internalCompleted === L_UNDEF) this.internalCompleted = L_TRUE;
   }
 
   assign(literal: Literal, justification: BJustification, isDecision = false) {
@@ -1765,7 +1783,9 @@ export class Context extends Internalizer {
 
   private checkFinalize(result: number) {
     this.isSearchFinalized = true;
-    return result === L_TRUE && this.checkCanceled() ? L_UNDEF : result;
+    const finalized = result === L_TRUE && this.checkCanceled() ? L_UNDEF : result;
+    this.internalCompleted = L_FALSE;
+    return finalized;
   }
 
   findMutexes(vars: readonly number[]) {
@@ -1849,6 +1869,7 @@ export class Context extends Internalizer {
     this.lastSearchFailure = FAILURE_OK;
     this.phaseDefault = false;
     this.caseSplitQueue.initSearchEh();
+    this.internalCompleted = L_UNDEF;
     if (this.manager.hasTypeVars) this.registerFamily(FAMILY_POLY);
     this.isSearching = true;
     try {
