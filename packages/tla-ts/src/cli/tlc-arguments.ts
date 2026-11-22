@@ -2,6 +2,7 @@ import { closeSync, openSync } from "node:fs";
 import { availableParallelism } from "node:os";
 import type { ModuleOperator } from "../check";
 import { parseJavaDouble } from "../java-string";
+import type { ActionStatistics } from "../tlc/action-graph";
 import { MAXIMUM_INTEGER } from "../values";
 
 export interface TlcArguments {
@@ -25,6 +26,7 @@ export interface TlcArguments {
   traceDepth: number;
   traceCount: bigint | undefined;
   scheduler: "random" | "rl" | "rlaction";
+  actionStatistics: ActionStatistics | undefined;
   isTool: boolean;
   isContinued: boolean;
   isDeadlockChecked: boolean;
@@ -204,6 +206,7 @@ const createDefaults = (): TlcArguments => ({
   traceDepth: 100,
   traceCount: undefined,
   scheduler: "random",
+  actionStatistics: undefined,
   isTool: false,
   isContinued: false,
   isDeadlockChecked: true,
@@ -490,6 +493,12 @@ export const parseTlcArguments = (args: string[]): TlcArguments | TlcArgumentsEr
         : options.split(",").includes("sched=rlaction")
           ? "rlaction"
           : "random";
+      const statistics = options
+        .split(",")
+        .findLast((option) => option === "stats=basic" || option === "stats=full");
+      if (statistics !== undefined) {
+        parsed.actionStatistics = statistics === "stats=basic" ? "basic" : "full";
+      }
       for (const option of options.split(",").filter((item) => item.startsWith("num="))) {
         const count = option.replace("num=", "");
         parsed.traceCount = parseJavaInteger(count, 64);

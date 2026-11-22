@@ -2324,29 +2324,29 @@ const GENERATED_DATE = /\\\* Generated on .*$/;
 const readTraceSpecFixture = (name: string) =>
   readFileSync(join(TRACE_SPEC_FIXTURES, `${name}_TTrace.tla`), "utf8").replace(GENERATED_DATE, "");
 
-const runTraceSpecFixture = (name: string, module: string, args: string[]) => {
-  const directory = mkdtempSync(join(tmpdir(), "trace-spec-"));
-  copyFileSync(join(TRACE_SPEC_FIXTURES, `${name}.tla`), join(directory, `${name}.tla`));
-  copyFileSync(join(TRACE_SPEC_FIXTURES, `${name}.cfg`), join(directory, `${name}.cfg`));
+const runCopiedFixture = (fixtures: string, name: string, args: string[], output: string) => {
+  const directory = mkdtempSync(join(tmpdir(), "cli-fixture-"));
+  copyFileSync(join(fixtures, `${name}.tla`), join(directory, `${name}.tla`));
+  copyFileSync(join(fixtures, `${name}.cfg`), join(directory, `${name}.cfg`));
   const result = spawnSync(
     process.execPath,
-    [
-      DIST_CLI,
-      `${name}.tla`,
-      ...args,
-      "-fp",
-      "0",
-      "-teSpecOutDir",
-      `${module}.tla`,
-      "-metadir",
-      join(directory, "states"),
-    ],
+    [DIST_CLI, `${name}.tla`, ...args, "-metadir", join(directory, "states")],
     { cwd: directory, encoding: "utf8" },
   );
-  const path = join(directory, `${module}.tla`);
+  const path = join(directory, output);
   const written = existsSync(path) ? readFileSync(path, "utf8") : undefined;
   rmSync(directory, { recursive: true });
-  return { result, written: written?.replace(GENERATED_DATE, "") };
+  return { result, written };
+};
+
+const runTraceSpecFixture = (name: string, module: string, args: string[]) => {
+  const run = runCopiedFixture(
+    TRACE_SPEC_FIXTURES,
+    name,
+    [...args, "-fp", "0", "-teSpecOutDir", `${module}.tla`],
+    `${module}.tla`,
+  );
+  return { result: run.result, written: run.written?.replace(GENERATED_DATE, "") };
 };
 
 describe("the CLI writes the trace exploration spec in every mode, as TLC does", () => {
@@ -2382,5 +2382,21 @@ describe("the CLI writes the spec of the last trace under -continue", () => {
         "",
       ),
     );
+  });
+});
+
+describe("the CLI writes the action graph of -simulate stats=, as TLC does", () => {
+  it.each(["basic", "full"])("writes TLC's %s graph of Mutex's behaviors", (statistics) => {
+    const fixtures = join(FIXTURES, "mutex");
+    const run = runCopiedFixture(
+      fixtures,
+      "Mutex",
+      ["-simulate", `num=5,stats=${statistics}`, "-depth", "10", "-seed", "0"],
+      "Mutex_actions.dot",
+    );
+    expect([run.result.status, run.written]).toEqual([
+      0,
+      readFileSync(join(fixtures, `Mutex_actions_${statistics}.dot`), "utf8"),
+    ]);
   });
 });

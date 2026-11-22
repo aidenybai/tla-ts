@@ -22,6 +22,18 @@ describe("TLC's -simulate arguments", () => {
       error: NUM_REQUIRED,
     });
   });
+
+  it("takes the last of stats=basic and stats=full, as TLC does", () => {
+    expect(parseTlcArguments(["-simulate", "stats=full,stats=basic,num=5", "Spec"])).toMatchObject({
+      actionStatistics: "basic",
+    });
+  });
+
+  it("keeps the stats of an earlier -simulate, which TLC never resets", () => {
+    expect(
+      parseTlcArguments(["-simulate", "num=5,stats=full", "-simulate", "num=5", "Spec"]),
+    ).toMatchObject({ actionStatistics: "full" });
+  });
 });
 
 describe("TLC's integer arguments", () => {

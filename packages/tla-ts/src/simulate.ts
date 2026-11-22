@@ -42,6 +42,7 @@ import {
   withUnexpectedException,
   type FailureMessage,
 } from "./tlc/messages";
+import { getActionFlowGraph, type ActionStatistics } from "./tlc/action-graph";
 import { createJavaRandom, nextPrime, type JavaRandom } from "./tlc/random";
 import { replayInitialStates } from "./tlc/replay";
 import {
@@ -70,6 +71,8 @@ export interface SimulationOptions extends CheckOptions {
   scheduler: "random" | "rl" | "rlaction";
   /** TLC's -difftrace, which also drops the steps of a printed behavior that repeat a fingerprint. */
   isDiffTrace?: boolean;
+  /** TLC's -simulate stats=basic|full, which writes the graph of the actions the behaviors take to <root>_actions.dot through writeFile. */
+  actionStatistics?: ActionStatistics;
   onSimulation: (output: SimulationOutput) => void;
 }
 
@@ -241,14 +244,23 @@ export const simulate = (options: SimulationOptions & CliSettings): number => {
     const report = prepared.getCoverage();
     if (report) output({ kind: "coverage", coverage: report });
   };
-  const printSummary = () => {
-    reportCoverage();
-    output({ kind: "summary", statistics: { ...statistics } });
-  };
   const nodes = new WeakMap<(Value | undefined)[], TraceNode>();
   const description = prepared.getDescription();
   const initActions = description.inits;
   const nextActions = description.actions;
+  const actionFlow = options.actionStatistics && {
+    statistics: options.actionStatistics,
+    actions: [...initActions, ...nextActions],
+    initCount: initActions.length,
+    actionStats: new Float64Array((initActions.length + nextActions.length) ** 2),
+  };
+  const printSummary = () => {
+    reportCoverage();
+    if (actionFlow) {
+      options.writeFile?.(`${specification.rootName}_actions.dot`, getActionFlowGraph(actionFlow));
+    }
+    output({ kind: "summary", statistics: { ...statistics } });
+  };
   const coverage = prepared.coverage;
   const covered = coverage && addActionCoverage(coverage, environment, description);
   let traceCount = 0;
@@ -669,6 +681,7 @@ export const simulate = (options: SimulationOptions & CliSettings): number => {
   };
   const simulateTrace = (): WorkerError | "stopped" | undefined => {
     currentNode = initialStates[Math.floor(workerRandom.nextDouble() * initialStates.length)];
+    let currentActionId = initActions.length - 1;
     for (let depth = 0; depth < traceDepth; depth++) {
       if (runtime.isStopped) return "stopped";
       let actionIndex = scheduler.getNextActionIndex(currentNode);
@@ -691,6 +704,11 @@ export const simulate = (options: SimulationOptions & CliSettings): number => {
       }
       currentNode = successors[Math.floor(workerRandom.nextDouble() * successors.length)];
       currentNode.deferred?.(currentNode.state);
+      if (actionFlow) {
+        const nextActionId = initActions.length + actionIndex;
+        actionFlow.actionStats[currentActionId * actionFlow.actions.length + nextActionId]++;
+        currentActionId = nextActionId;
+      }
     }
     if (runtime.isStopped) return "stopped";
     const violation = getTemporalViolation(currentNode);
