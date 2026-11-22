@@ -1316,6 +1316,21 @@ ASSUME TLCFP(a) = -887695703
     },
   );
 
+  // C's lazy function keeps k, which Init forces first, where nothing is assigned, and ENABLED
+  // forces again under another control, as TLC's LazyValue evaluates again in its context.
+  it("evaluates a LET definition again under ENABLED in its own context after it holds a value", async () => {
+    const result = await check({
+      source:
+        "---- MODULE M ----\nEXTENDS Naturals\nVARIABLE x\nF(p) == LET k == p + 1 IN [i \\in Nat |-> k + i]\nC == F(5)\nInit == x = C[1]\nNext == x < 10 /\\ x' = x + 1 /\\ ENABLED (x' = C[2])\n====",
+      config: "INIT Init\nNEXT Next\nCHECK_DEADLOCK FALSE",
+    });
+    expect([result.status, result.distinctStates, result.generatedStates]).toEqual([
+      "success",
+      4,
+      4,
+    ]);
+  });
+
   it("keeps the tuple of a lazy function whose body names a LET definition when nothing in the spec prints or draws", async () => {
     const result = await check({
       source:

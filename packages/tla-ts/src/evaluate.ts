@@ -1240,15 +1240,15 @@ const forceThunk = (thunk: Thunk, context: Context) => {
     thunk.next = context.next;
     thunk.control = control;
   }
-  // A value cached where no variable is assigned holds in every state, so forcing the thunk never
-  // reads its scope again. A step may still run a thunk it bound by name.
+  // A value cached where no variable is assigned holds in every state. A step may still run a
+  // thunk it bound by name. The thunk keeps its scope, as LazyValue#getValue keeps a value only for
+  // the control it was evaluated under, so another control evaluates the expression again.
   if (
     thunk.cache !== undefined &&
     !thunk.isRebuilt &&
     ((thunk.state === undefined && thunk.next === undefined) ||
       (!thunk.isNamed && isUnassigned(thunk.state) && isUnassigned(thunk.next)))
   ) {
-    thunk.scope = undefined;
     thunk.isReleased = true;
   }
   return value;
