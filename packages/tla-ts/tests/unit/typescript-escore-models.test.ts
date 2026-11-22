@@ -1646,8 +1646,8 @@ describe("checks a module's exported functions as a model on ESCore", () => {
       const slots = new Set<Slot>([1, 2, 3]);
       let held = new Map<Slot, number>([[1, 0], [2, 0]]);
 
-      const isFull = (count: number) => count >= 2;
-      const isLaterFull = (count: number, index: number) => index > 0 && count >= 2;
+      const isFull = (count: number) => count >= 1;
+      const isLaterFull = (count: number, index: number) => index > 0 && count >= 1;
 
       export const fill = (slot: Slot) => {
         const count = held.get(slot);
@@ -1655,7 +1655,7 @@ describe("checks a module's exported functions as a model on ESCore", () => {
           held.set(slot, 0);
           return;
         }
-        if (count >= 2) return;
+        if (count >= 1) return;
         held.set(slot, count + 1);
       };
 
@@ -1666,18 +1666,21 @@ describe("checks a module's exported functions as a model on ESCore", () => {
 
       export const isTyped = () =>
         new Set(held.keys()).isSubsetOf(slots) &&
-        held.values().every((count) => count >= 0 && count <= 2) &&
+        held.values().every((count) => count >= 0 && count <= 1) &&
         held.keys().find(() => true) === 1;
 
       /** @always */
       export const isOrdered = () =>
-        held.values().some(isLaterFull) === (held.get(2) === 2 || held.get(3) === 2) &&
-        held.values().some(isFull) === [1, 2, 3].some((slot) => held.get(slot as Slot) === 2);
+        held.values().some(isLaterFull) === (held.get(2) === 1 || held.get(3) === 1) &&
+        held.values().some(isFull) === [1, 2, 3].some((slot) => held.get(slot as Slot) === 1);
     `;
 
-    it("gives what ESCore gives in every call, as TLC counts", async () => {
+    it("gives what ESCore gives in every call, with Node's states", async () => {
       // Slot 1's count, and slots 2 and 3 each absent or at a count, in the order they were added.
-      const counts = ["success", 75, 285];
+      const explored = await exploreInNode(source, "spec.ts");
+      expect(explored.error).toBeUndefined();
+      const counts = [explored.status, explored.distinctStates, explored.generatedStates];
+      expect(counts).toEqual(["success", 26, 86]);
       expect(getCounts(await checkModel(source, "spec.ts", "native"))).toEqual(counts);
       expect(getCounts(await checkModel(source, "spec.ts", "compared"))).toEqual(counts);
     });
