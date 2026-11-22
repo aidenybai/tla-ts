@@ -25,6 +25,7 @@ import {
   drainChargedSet,
   getCardinality,
   getDomainInterval,
+  getDrawnSet,
   getStreamedElements,
   getValueNode,
   isElementOf,
@@ -32,7 +33,6 @@ import {
   isEmptySet,
   isReducibleSet,
   isSequenceDomain,
-  isTlcEnumerable,
   type FunctionValue,
   type IntervalValue,
   type SetOperationValue,
@@ -1137,9 +1137,6 @@ const getKnownSize = (set: Value): number | undefined => {
       return undefined;
   }
 };
-
-const getDrawnSet = (set: SetOperationValue) =>
-  set.operator === "\\" || isTlcEnumerable(set.left) ? set.left : set.right;
 
 // TLC only tests membership in the other set of S \cap T or S \ T, so sizing it would normalize a set TLC leaves unsorted.
 const hasKnownSize = (set: Value): boolean => {
