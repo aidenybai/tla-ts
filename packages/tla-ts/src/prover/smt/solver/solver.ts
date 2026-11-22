@@ -3,6 +3,7 @@ import {
   isStackOverflow,
   SmtCanceledError,
   SmtDefaultError,
+  SmtMemoryOutError,
   type SmtParseError,
   SmtUnsupportedError,
 } from "../../../errors";
@@ -202,6 +203,7 @@ export const decideSmt = (
     if (
       error instanceof SmtUnsupportedError ||
       error instanceof SmtCanceledError ||
+      error instanceof SmtMemoryOutError ||
       error instanceof SmtDefaultError ||
       isStackOverflow(error)
     )
