@@ -952,6 +952,30 @@ export const frameModel = (
       .some((property) => checker.getTypeOfSymbol(property).getCallSignatures().length > 0);
     return type.flags & ts.TypeFlags.Object && hasMethods ? "an object with methods" : undefined;
   };
+  // The kind of a union's value that TLC compares only with values of its kind.
+  const getValueKind = (type: ts.Type) =>
+    type.flags & ts.TypeFlags.NumberLike
+      ? "number"
+      : type.flags & ts.TypeFlags.StringLike
+        ? "string"
+        : type.flags & ts.TypeFlags.BooleanLike
+          ? "boolean"
+          : checker.isArrayType(type) || checker.isTupleType(type)
+            ? "array"
+            : isSetType(type)
+              ? "Set"
+              : isMapType(type)
+                ? "Map"
+                : "object";
+  // The kinds of the values that a union mixes, beside null and undefined, which TLC compares with
+  // any value.
+  const getMixedKinds = (type: ts.Type) => [
+    ...new Set(
+      (type.isUnion() ? type.types : [type])
+        .filter((member) => getLiteral(member) !== "Null" && getLiteral(member) !== "Undefined")
+        .map(getValueKind),
+    ),
+  ];
   // Why the model calls no exported function: Node runs only a module's top level, so an export
   // runs only where TLC can choose its arguments, which it can't where a parameter takes values
   // that tla-ts can't list, and where a call of it may return.
@@ -961,14 +985,18 @@ export const frameModel = (
     const guarded = isStepExport(definition) ? readGuards(definition, parameters) : new Map();
     const unlisted = parameters.find((parameter) => {
       const domain = findDomain(getType(parameter.node));
-      return !guarded.has(parameter) && isInfinite(domain) && domain.isIncomparable !== true;
+      return !guarded.has(parameter) && isInfinite(domain);
     });
     if (unlisted !== undefined) {
       const type = getType(unlisted.node);
       const kind = getUnlistedKind(type);
       const domain = findDomain(type);
-      return kind !== undefined
-        ? `its parameter ${unlisted.name} is ${kind}, whose values tla-ts can't list`
+      const kinds = getMixedKinds(type);
+      if (kind !== undefined) {
+        return `its parameter ${unlisted.name} is ${kind}, whose values tla-ts can't list`;
+      }
+      return isInfinite(domain) && domain.isIncomparable === true && kinds.length > 1
+        ? `its parameter ${unlisted.name} is a union of ${kinds.slice(0, -1).join(", ")} and ${kinds.at(-1)}, whose values TLC can't compare`
         : `its parameter ${unlisted.name} takes values it can't list: ${isInfinite(domain) ? domain.message : ""}`;
     }
     return definition.node.parameters.length === 0 &&

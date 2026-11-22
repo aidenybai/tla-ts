@@ -158,7 +158,7 @@ TLC tries every value of a parameter's type, so each type needs a finite set of 
 
 An object with an optional property is each object that lacks or holds it. A held property also takes `undefined`, unless the nearest `tsconfig.json` that includes the file sets `exactOptionalPropertyTypes`. A file that no project includes gets TypeScript's default, which leaves it off.
 
-The bounds on `number`, `string`, and arrays keep the search finite, so a check covers only those values. Use a union of literals, such as `0 | 1 | 2`, to check other values. A union of values that TLC can't compare, such as a string and a number, stops the compile.
+The bounds on `number`, `string`, and arrays keep the search finite, so a check covers only those values. Use a union of literals, such as `0 | 1 | 2`, to check other values.
 
 Other types have no finite set of values:
 
@@ -168,7 +168,7 @@ Other types have no finite set of values:
 - A tuple with optional or rest elements.
 - A type that holds itself.
 
-tla-ts calls no exported function with a parameter of such a type, and prints a line that names it and the kind of its type, such as `tla-ts calls no apply: its parameter transform is a function, whose values tla-ts can't list`. The kinds it names are a type parameter, `any` or `unknown`, a function, an instance of a class, and an object with methods, alone or in a union. For any other type, the line gives the reason, as in `its parameter p takes values it can't list: …`. It also calls no exported function without parameters whose every call throws. Where it calls no exported function at all, the compile stops with `tla-ts compiles a script, not a model, to ESCore this way`.
+tla-ts calls no exported function with a parameter of such a type, or of a union of values that TLC can't compare, such as a string and a number, and prints a line that names it and the kind of its type, such as `tla-ts calls no apply: its parameter transform is a function, whose values tla-ts can't list`. The kinds it names are a type parameter, `any` or `unknown`, a function, an instance of a class, and an object with methods, alone or in a union. For a union of values that TLC can't compare, it names their kinds, as in `its parameter value is a union of string and number, whose values TLC can't compare`. For any other type, the line gives the reason, as in `its parameter p takes values it can't list: …`. It also calls no exported function without parameters whose every call throws. Where it calls no exported function at all, the compile stops with `tla-ts compiles a script, not a model, to ESCore this way`.
 
 A state variable of such a type with no initializer starts at `undefined`, as Node starts it, and tla-ts prints a line that names it, such as `tla-ts starts count at undefined, as Node does: …`.
 
