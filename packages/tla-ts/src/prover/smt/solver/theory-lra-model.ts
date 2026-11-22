@@ -124,6 +124,17 @@ export abstract class TheoryLraModel extends TheoryLraPropagate {
     }
   }
 
+  override validateModel(model: ProtoModel) {
+    if (!this.isModelInitialized) return;
+    const manager = this.manager;
+    for (let thVar = 0; thVar < this.getNumVars(); thVar++) {
+      if (this.solver.externalToLocalColumn(thVar) === NULL_LPVAR) continue;
+      const node = this.getEnode(thVar);
+      if (!this.isRelevantAndShared(node)) continue;
+      manager.decRef(model.eval(node.owner, false));
+    }
+  }
+
   mkValue(node: Enode) {
     const thVar = this.getThVar(node);
     if (thVar < 0) return undefined;

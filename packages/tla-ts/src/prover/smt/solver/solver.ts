@@ -37,6 +37,7 @@ export interface KernelParams {
   mbqiMaxCexs?: number;
   mbqiForceTemplate?: number;
   mbqiId?: string;
+  isModelValidating?: boolean;
   isProofsEnabled?: boolean;
   // A kernel without a setup runs as with auto_config false.
   setup?: SmtSetup;
@@ -85,6 +86,7 @@ export const solveGoal = (manager: AstManager, forms: number[], params: KernelPa
     mbqiMaxCexs: params.mbqiMaxCexs,
     mbqiForceTemplate: params.mbqiForceTemplate,
     mbqiId: params.mbqiId,
+    isModelValidating: params.isModelValidating,
     isProofsEnabled: params.isProofsEnabled,
   });
   try {
@@ -151,6 +153,7 @@ export const solveAssuming = (
     mbqiMaxCexs: params.mbqiMaxCexs,
     mbqiForceTemplate: params.mbqiForceTemplate,
     mbqiId: params.mbqiId,
+    isModelValidating: params.isModelValidating,
     isProofsEnabled: params.isProofsEnabled,
   });
   try {
