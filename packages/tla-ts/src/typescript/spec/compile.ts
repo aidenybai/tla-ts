@@ -55,6 +55,14 @@ interface CodeDefinition {
   text: string;
 }
 
+// The most characters of a program's TLA+ code that a check parses and runs within Node's default
+// heap. The heap that a check of Effect's modules took at its peak grew by 47 bytes per character
+// of code past a base of 1.9 GB (Effect.ts, 13.9 million characters, at 2,571 MB, to
+// devtools/index.ts, 43.2 million, at 3,959 MB), where Node 26 gives this machine's heap 4,192 MB
+// (v8.getHeapStatistics().heap_size_limit): 31 million characters keep the peak within 80% of it.
+// Effect's eventlog/EventLogMessage.ts, of 46.1 million, ran out of the heap.
+const MOST_CODE_CHARACTERS = 31_000_000;
+
 // A program's definitions with each one whose text is another's but for its name and the names of
 // definitions merged before it merged into the first, but for the hooks, which the config names,
 // and with each literal sequence of numbers, such as a name's code units, a definition of its own,
@@ -808,6 +816,11 @@ export const compileToEscore = (
     })),
   );
   const code = definitions.map((definition) => definition.text).join("\n");
+  if (code.length > MOST_CODE_CHARACTERS) {
+    throw new TlaTypeScriptError(
+      `tla-ts can't check a program whose TLA+ spec has more than ${MOST_CODE_CHARACTERS} characters: this program's has ${code.length}, which a check would parse and run past Node's default heap`,
+    );
+  }
   const view = runtime.getView(
     `${code}\n${model.steps}\n${model.reads ?? ""}\n${ROOT}\n${CONFIG}`,
     leaves.map((leaf) => leaf.name),

@@ -38,12 +38,15 @@ interface Service {
   // The key of an object in HostIntl's entries but for its requested locales, from the options
   // its constructor read and what its resolvedOptions gives, or undefined where ESCore keeps none.
   getConfig: (bag: Record<string, unknown>, resolved: Record<string, unknown>) => string;
-  // The entries of an object's methods for the arguments the program's literals make.
+  // The entries of an object's methods for the arguments the program's literals make, or
+  // undefined where they're more than most, which HostIntl's table can't hold, so that the rest go
+  // uncomputed.
   getMethods: (
     object: never,
     literals: Literals,
     words: ReadonlySet<string>,
-  ) => Map<string, string>;
+    most: number,
+  ) => Map<string, string> | undefined;
   callers: string[];
   // How ESCore holds an option it read where that isn't as a string's units or a Boolean.
   encoders?: Record<string, (value: unknown) => string | undefined>;
@@ -418,6 +421,10 @@ const getLiterals = (sourceFiles: readonly ts.SourceFile[]) => {
 // gives, with each property that isn't a literal taking each literal that its option takes.
 const getBags = (service: Service, literals: Literals) => {
   const candidates = [...literals.strings, ...literals.numbers.values(), true, false];
+  // The literals that each option may take, which every bag of it reads.
+  const optionCandidates = new Map(
+    Object.entries(service.options).map(([name, isValid]) => [name, candidates.filter(isValid)]),
+  );
   // The options that a property may name: its name, or for a name a program computes, each option
   // that a string of it names.
   const getNames = (name: ts.PropertyName | undefined) =>
@@ -440,10 +447,9 @@ const getBags = (service: Service, literals: Literals) => {
           : undefined;
         const next = made.flatMap((bag) =>
           names.flatMap((name) =>
-            (literal === undefined
-              ? candidates.filter(service.options[name])
-              : [literal.value]
-            ).map((value) => ({ ...bag, [name]: value })),
+            (literal === undefined ? (optionCandidates.get(name) ?? []) : [literal.value]).map(
+              (value) => ({ ...bag, [name]: value }),
+            ),
           ),
         );
         return next.length > MOST_BAGS_PER_LITERAL ? undefined : next;
@@ -634,7 +640,7 @@ const SERVICES: Service[] = [
             resolved.style === "currency" ? String(bag.currencySign ?? "standard") : undefined,
         },
       )}`,
-    getMethods: (format: Intl.NumberFormat, literals, words) => {
+    getMethods: (format: Intl.NumberFormat, literals, words, most) => {
       const values = [
         ...getNumbers(literals).map((value) => ({ value, key: getNumberArgument(value) })),
         ...[...literals.bigints].map((value) => ({
@@ -648,6 +654,7 @@ const SERVICES: Service[] = [
       const methods = new Map<string, string | undefined>();
       if (["format", "formatToParts", "toLocaleString"].some((word) => words.has(word))) {
         for (const value of values) {
+          if (methods.size > most) return undefined;
           methods.set(
             `"formatToParts", <<${value.key}>>`,
             getParts(format.formatToParts(value.value as number)),
@@ -656,7 +663,9 @@ const SERVICES: Service[] = [
       }
       if (words.has("formatRange") || words.has("formatRangeToParts")) {
         for (const start of values) {
+          if (methods.size > most) return undefined;
           for (const end of values) {
+            if (methods.size > most) return undefined;
             methods.set(
               `"formatRangeToParts", <<${start.key}, ${end.key}>>`,
               getAnswer(() =>
@@ -681,17 +690,20 @@ const SERVICES: Service[] = [
     },
     getConfig: (bag, resolved) =>
       `${getTlaValue(String(bag.localeMatcher ?? "best fit"))}, ${getSlots(PLURAL_RULES_SLOTS, resolved)}`,
-    getMethods: (rules: Intl.PluralRules, literals, words) => {
+    getMethods: (rules: Intl.PluralRules, literals, words, most) => {
       const methods = new Map<string, string | undefined>();
       const numbers = getNumbers(literals);
       if (words.has("select")) {
         for (const value of numbers) {
+          if (methods.size > most) return undefined;
           methods.set(`"select", <<${getNumberArgument(value)}>>`, getValue(rules.select(value)));
         }
       }
       if (words.has("selectRange")) {
         for (const start of numbers) {
+          if (methods.size > most) return undefined;
           for (const end of numbers) {
+            if (methods.size > most) return undefined;
             methods.set(
               `"selectRange", <<${getNumberArgument(start)}, ${getNumberArgument(end)}>>`,
               getAnswer(() =>
@@ -717,12 +729,14 @@ const SERVICES: Service[] = [
       ignorePunctuation: isBoolean,
     },
     getConfig: () => "",
-    getMethods: (collator: Intl.Collator, literals, words) => {
+    getMethods: (collator: Intl.Collator, literals, words, most) => {
       const methods = new Map<string, string | undefined>();
       if (words.has("compare") || words.has("localeCompare")) {
         const strings = [...literals.arguments].filter((text) => text.length <= 40);
         for (const left of strings) {
+          if (methods.size > most) return undefined;
           for (const right of strings) {
+            if (methods.size > most) return undefined;
             methods.set(
               `"compare", <<${getUnitsOf(left)}, ${getUnitsOf(right)}>>`,
               getValue(collator.compare(left, right)),
@@ -742,10 +756,11 @@ const SERVICES: Service[] = [
       style: isOneOf("long", "short", "narrow"),
     },
     getConfig: () => "",
-    getMethods: (format: Intl.ListFormat, literals, words) => {
+    getMethods: (format: Intl.ListFormat, literals, words, most) => {
       const methods = new Map<string, string | undefined>();
       if (words.has("format") || words.has("formatToParts")) {
         for (const list of literals.lists) {
+          if (methods.size > most) return undefined;
           methods.set(
             `"formatToParts", <<<<${list.map(getUnitsOf).join(", ")}>>>>`,
             getParts(format.formatToParts(list)),
@@ -765,12 +780,14 @@ const SERVICES: Service[] = [
       numeric: isOneOf("always", "auto"),
     },
     getConfig: () => "",
-    getMethods: (format: Intl.RelativeTimeFormat, literals, words) => {
+    getMethods: (format: Intl.RelativeTimeFormat, literals, words, most) => {
       const methods = new Map<string, string | undefined>();
       if (words.has("format") || words.has("formatToParts")) {
         const units = [...literals.strings].filter((text) => /^[a-z]{3,12}$/.test(text));
         for (const value of getNumbers(literals)) {
+          if (methods.size > most) return undefined;
           for (const unit of units) {
+            if (methods.size > most) return undefined;
             methods.set(
               `"formatToParts", <<${getNumberArgument(value)}, ${getUnitsOf(unit)}>>`,
               getAnswer(() =>
@@ -794,10 +811,11 @@ const SERVICES: Service[] = [
       languageDisplay: isOneOf("dialect", "standard"),
     },
     getConfig: () => "",
-    getMethods: (names: Intl.DisplayNames, literals, words) => {
+    getMethods: (names: Intl.DisplayNames, literals, words, most) => {
       const methods = new Map<string, string | undefined>();
       if (words.has("of")) {
         for (const code of [...literals.strings].filter((text) => text.length <= 40)) {
+          if (methods.size > most) return undefined;
           methods.set(
             `"of", <<${getUnitsOf(code)}>>`,
             getAnswer(() => getValue(names.of(code))),
@@ -860,7 +878,7 @@ const SERVICES: Service[] = [
       fractionalSecondDigits: (value) => String(Math.floor(Number(value))),
     },
     getConfig: () => "",
-    getMethods: (format: Intl.DateTimeFormat, literals, words) => {
+    getMethods: (format: Intl.DateTimeFormat, literals, words, most) => {
       const methods = new Map<string, string | undefined>();
       // ESCore's local time zone is UTC, which the host's must be for a format without one.
       if (new Intl.DateTimeFormat().resolvedOptions().timeZone !== "UTC") return new Map();
@@ -873,6 +891,7 @@ const SERVICES: Service[] = [
       ];
       if (words.has("format") || words.has("formatToParts")) {
         for (const value of values) {
+          if (methods.size > most) return undefined;
           methods.set(
             `"formatToParts", <<${value.key}>>`,
             getAnswer(() => getParts(format.formatToParts(value.value as number))),
@@ -881,7 +900,9 @@ const SERVICES: Service[] = [
       }
       if (words.has("formatRange") || words.has("formatRangeToParts")) {
         for (const start of values) {
+          if (methods.size > most) return undefined;
           for (const end of values) {
+            if (methods.size > most) return undefined;
             methods.set(
               `"formatRangeToParts", <<${start.key}, ${end.key}>>`,
               getAnswer(() =>
@@ -918,12 +939,13 @@ const SERVICES: Service[] = [
       ).join(
         ", ",
       )}>>, ${bag.fractionalDigits === undefined ? "Empty" : String(Math.floor(Number(bag.fractionalDigits)))}`,
-    getMethods: (format: object, literals, words) => {
+    getMethods: (format: object, literals, words, most) => {
       const methods = new Map<string, string | undefined>([
         [`"construct", <<>>`, `[found |-> "value", value |-> True]`],
       ]);
       if (["format", "formatToParts", "toLocaleString"].some((word) => words.has(word))) {
         for (const [key, value] of literals.durations) {
+          if (methods.size > most) return undefined;
           methods.set(
             `"formatToParts", <<${key}>>`,
             getAnswer(() =>
@@ -942,10 +964,11 @@ const SERVICES: Service[] = [
     name: "Segmenter",
     options: { ...MATCHER, granularity: isOneOf("grapheme", "word", "sentence") },
     getConfig: () => "",
-    getMethods: (segmenter: Intl.Segmenter, literals, words) => {
+    getMethods: (segmenter: Intl.Segmenter, literals, words, most) => {
       const methods = new Map<string, string>();
       if (!words.has("segment")) return methods;
       for (const text of [...literals.strings].filter((string) => string.length <= 200)) {
+        if (methods.size > most) return undefined;
         const segments = [...segmenter.segment(text)];
         const isWord = segmenter.resolvedOptions().granularity === "word";
         methods.set(
@@ -1011,6 +1034,8 @@ const getTemporalEntries = (literals: Literals) => {
                 : getTlaValue(String(bag[option])),
           ),
         ];
+        // The table holds no more answers, so none goes computed.
+        if (entries.size > MOST_ENTRIES) break;
         const answer = getAnswer(() =>
           getValue(Reflect.apply(Reflect.get(value, "toLocaleString"), value, [locale, bag])),
         );
@@ -1057,6 +1082,8 @@ const getDateEntries = (literals: Literals, words: ReadonlySet<string>) => {
         const read = getRead(service, bag);
         if (read === undefined) continue;
         for (const time of times) {
+          // The table holds no more answers, so none goes computed.
+          if (entries.size > MOST_ENTRIES) break;
           const answer = getAnswer(() =>
             getValue(
               Reflect.apply(Reflect.get(Date.prototype, method), new Date(time), [locales, bag]),
@@ -1228,10 +1255,11 @@ export const getHostIntl = (sourceFiles: readonly ts.SourceFile[], words: Readon
       locales: unknown,
       options: unknown,
     ) => { resolvedOptions: () => Record<string, unknown> };
+    const bags = getBags(service, literals);
     for (const locales of getLocaleCandidates(service, literals)) {
       const requested = getCanonical(locales);
       if (requested === undefined) continue;
-      for (const bag of getBags(service, literals)) {
+      for (const bag of bags) {
         const object = (() => {
           try {
             return new Constructor(locales, bag);
@@ -1263,17 +1291,17 @@ export const getHostIntl = (sourceFiles: readonly ts.SourceFile[], words: Readon
         );
       }
     }
-    const methods = [...configs].map(([config, object]) => ({
-      config,
-      answers: service.getMethods(object as never, literals, words),
-    }));
     // The answers of each object, in the order of its literals, while the table holds them.
-    for (const method of methods) {
-      if (entries.size + method.answers.size > MOST_ENTRIES) continue;
-      for (const [key, answer] of method.answers) {
-        if (answer !== undefined) {
-          entries.set(`<<"${service.name}", ${method.config}, ${key}>>`, answer);
-        }
+    for (const [config, object] of configs) {
+      const answers = service.getMethods(
+        object as never,
+        literals,
+        words,
+        MOST_ENTRIES - entries.size,
+      );
+      if (answers === undefined || entries.size + answers.size > MOST_ENTRIES) continue;
+      for (const [key, answer] of answers) {
+        if (answer !== undefined) entries.set(`<<"${service.name}", ${config}, ${key}>>`, answer);
       }
     }
   }
@@ -1290,6 +1318,8 @@ export const getHostIntl = (sourceFiles: readonly ts.SourceFile[], words: Readon
       const requested = getCanonical(locales);
       if (requested === undefined || requested.length === 0) continue;
       for (const text of [...literals.strings].filter((string) => string.length <= 200)) {
+        // The table holds no more answers, so none goes computed.
+        if (entries.size > MOST_ENTRIES) break;
         const answer = getValue(
           Reflect.apply(Reflect.get(String.prototype, method), text, [locales]),
         );
