@@ -1275,17 +1275,11 @@ const resolveDefinitions = (
       );
   };
   const resolved = definitions.reduce<LocalName | undefined>((previous, definition) => {
-    const instance = isInstantiated(definition)
-      ? instances.find(
-          (candidate) => candidate.name === definition.name.slice(0, definition.name.indexOf("!")),
-        )
-      : undefined;
-    const current = isKey(definition.name)
+    if (isInstantiated(definition) && !unit.isGenerated) return previous;
+    const isCopy = isKey(definition.name) || isInstantiated(definition);
+    const current = isCopy
       ? previous
-      : resolvePending(
-          previous,
-          (item) => !isBefore((instance ?? definition).location, item.location),
-        );
+      : resolvePending(previous, (item) => !isBefore(definition.location, item.location));
     const local: LocalName = {
       name: definition.name,
       arity: getArity(definition),
@@ -1294,20 +1288,7 @@ const resolveDefinitions = (
       parent: current,
       functionArity: getFunctionArity(definition),
     };
-    if (isInstantiated(definition)) {
-      const instanced = lookupLocal(current, definition.name);
-      return {
-        ...local,
-        kind: instanced?.kind ?? local.kind,
-        range: instanced?.range ?? local.range,
-        sourceRange: instanced?.sourceRange,
-        params: getParamArities(definition),
-        functionArity: instanced?.functionArity,
-        goal: instanced?.goal,
-        isSubstituted: instanced?.isSubstituted,
-      };
-    }
-    if (isKey(definition.name)) return { ...local, params: getParamArities(definition) };
+    if (isCopy) return { ...local, params: getParamArities(definition) };
     const isInstanced = instances.some((instance) => instance.location === definition.location);
     const isGenerated = unit.isGenerated || definition.isLocal;
     const inner = isInstanced

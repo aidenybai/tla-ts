@@ -4730,6 +4730,28 @@ describe("name resolution matches SANY", () => {
       })),
     ],
     [
+      "a LET instance with parameters whose copies conflict with an earlier LET instance's",
+      "---- MODULE Inner ----\nFoo == 2 = 2\nBar(b) == b = 3\nTHEOREM T == 1 = 1\n====\nN == INSTANCE Inner\nF == LET I == INSTANCE Inner\n         G == I!Foo\n         I(a) == INSTANCE Inner\n     IN G",
+      [
+        {
+          location: "line 10, col 10 to line 10, col 31 of module M",
+          message:
+            "Multiply-defined symbol 'I!Bar': this definition or declaration conflicts \nwith the one at line 8, col 10 to line 8, col 28 of module M.",
+        },
+        {
+          location: "line 10, col 10 to line 10, col 31 of module M",
+          message:
+            "Multiply-defined symbol 'I!Foo': this definition or declaration conflicts \nwith the one at line 8, col 10 to line 8, col 28 of module M.",
+        },
+        {
+          location: "line 10, col 10 to line 10, col 31 of module M",
+          message:
+            "Multiply-defined symbol 'I': this definition or declaration conflicts \nwith the one at line 8, col 10 to line 8, col 28 of module M.",
+        },
+      ],
+      [],
+    ],
+    [
       "selections of an instance whose name LET and DEFINE definitions take again",
       "---- MODULE Inner ----\nFoo == 2 = 2\nBar(b) == b = 3\n====\nI == INSTANCE Inner\nF == LET I(a) == a = 1 IN I!Foo\nG == LET J == INSTANCE Inner\n         H == J!Bar(3)\n         J[a \\in {1}] == a = 1\n     IN H\nTHEOREM TRUE\n<1> DEFINE I(a) == a = 1\n<1> QED BY I!Foo",
       [
