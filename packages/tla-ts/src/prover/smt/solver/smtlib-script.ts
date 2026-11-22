@@ -155,7 +155,6 @@ const SILENT_COMMANDS = new Set([
   "pop",
   "reset",
   "reset-assertions",
-  "set-option",
   "set-info",
   "assert-soft",
   "declare-rel",
@@ -241,9 +240,6 @@ const BUILTIN_OPTIONS = new Set([
   ":verbosity",
   ":global-decls",
   ":global-declarations",
-  ":numeral-as-real",
-  ":error-behavior",
-  ":int-real-coercions",
   ":reproducible-resource-limit",
 ]);
 
@@ -1410,6 +1406,143 @@ export const runSmtlibScript = (
     print(`(${core.items.map(format).join(" ")})`);
     core.reset();
   };
+  const setOptionParameter = (keyword: string, text: string, value: SmtToken) => {
+    const name = getParameterName(keyword);
+    const optionName = `:${name}`;
+    const parameterValue = getParameterValue(name, text, value);
+    const defaultValue = UNPORTED_PARAMETER_DEFAULTS.get(name);
+    if (
+      defaultValue !== undefined &&
+      parameterValue !== defaultValue &&
+      Number(parameterValue) !== Number(defaultValue)
+    )
+      throw new SmtUnsupportedError(`the option :${name}`);
+    settings.parameters.set(name, parameterValue);
+    const isTrue = parameterValue === "true";
+    if (optionName === ":smt.mbqi.max_iterations") settings.mbqiMaxIterations = Number(text);
+    if (name === "memory_max_size") state.manager.limit.maxHeapSize = getMaxHeapSize();
+    // Z3 reads the parameters rlimit, model and unsat_core again whenever any parameter is set.
+    const rlimit = settings.parameters.get("rlimit");
+    if (rlimit !== undefined) settings.rlimit = Number(rlimit);
+    const model = settings.parameters.get("model");
+    if (model !== undefined) settings.isProducingModels = model === "true";
+    if (settings.parameters.get("unsat_core") === "true") settings.isProducingUnsatCores = true;
+    if (settings.parameters.get("smtlib2_compliant") === "true") settings.isPrintingSuccess = true;
+    if (optionName === ":smt.mbqi") settings.isMbqi = isTrue;
+    if (optionName === ":smt.macro_finder") settings.isFindingMacros = isTrue;
+    const kernel = state.kernel;
+    if (kernel !== undefined) kernel.updateParams(getKernelParams(kernel.isSetUp));
+    if (optionName === ":rewriter.hi_div0") {
+      settings.isHiDiv0 = isTrue;
+      state.manager.isHiDiv0 = isTrue;
+    }
+    if (optionName === ":encoding") {
+      settings.encoding = ENCODINGS.get(parameterValue) ?? UNICODE_ENCODING;
+      state.manager.maxChar = settings.encoding.maxChar;
+      state.manager.charBits = settings.encoding.charBits;
+    }
+    if (optionName === ":parser.ignore_bad_patterns")
+      settings.parserOptions.isIgnoringBadPatterns = isTrue;
+    const numericOption = NUMERIC_PRINT_OPTIONS.get(optionName);
+    if (numericOption !== undefined) settings.printOptions[numericOption] = Number(parameterValue);
+    const booleanOption = BOOLEAN_PRINT_OPTIONS.get(optionName);
+    if (booleanOption !== undefined) settings.printOptions[booleanOption] = isTrue;
+    if (
+      (optionName.startsWith(":pp.") &&
+        numericOption === undefined &&
+        booleanOption === undefined) ||
+      (optionName.startsWith(":lp.") && optionName !== ":lp.int_hammer_period")
+    )
+      throw new SmtUnsupportedError(`the option ${optionName}`);
+  };
+  const setOptionSymbol = (keyword: string, value: SmtToken) => {
+    const toBool = () => {
+      if (!isSymbol(value, "true") && !isSymbol(value, "false"))
+        throw new SmtParseError("invalid option value, true/false expected", value);
+      return isSymbol(value, "true");
+    };
+    const checkNotInitialized = (name: string) => {
+      if (state.isProofsEnabled !== undefined)
+        throw new SmtParseError(
+          `error setting '${name}', option value cannot be modified after initialization`,
+          value,
+        );
+    };
+    const checkNoAssertions = () => {
+      if (state.assertions.length > 0)
+        throw new SmtParseError(
+          `error setting '${keyword}', option value cannot be modified after assertions have been added`,
+          value,
+        );
+    };
+    if (keyword === ":print-success") settings.isPrintingSuccess = toBool();
+    else if (keyword === ":print-warning") toBool();
+    else if (keyword === ":expand-definitions") return;
+    else if (keyword === ":interactive-mode" || keyword === ":produce-assertions") {
+      checkNotInitialized(":produce-assertions");
+      settings.isInteractive = toBool();
+    } else if (keyword === ":produce-proofs") {
+      checkNoAssertions();
+      settings.isProducingProofs = toBool();
+    } else if (keyword === ":produce-unsat-cores") {
+      checkNoAssertions();
+      settings.isProducingUnsatCores = toBool();
+    } else if (keyword === ":produce-unsat-assumptions") {
+      checkNoAssertions();
+      settings.isProducingUnsatAssumptions = toBool();
+    } else if (keyword === ":produce-models") {
+      const isTrue = toBool();
+      settings.isProducingModels = isTrue;
+      state.isSolverProducingModels = isTrue;
+    } else if (keyword === ":produce-assignments") toBool();
+    else if (keyword === ":global-decls" || keyword === ":global-declarations") {
+      checkNotInitialized(":global-decls");
+      settings.parserOptions.isGlobalDecls = toBool();
+    } else if (keyword === ":numeral-as-real") state.reader.setNumeralAsReal(toBool());
+    else if (keyword === ":int-real-coercions") {
+      if (!toBool()) throw new SmtUnsupportedError("the option :int-real-coercions false");
+    } else if (keyword === ":error-behavior") {
+      if (!isSymbol(value, "immediate-exit") && !isSymbol(value, "continued-execution"))
+        throw new SmtParseError(
+          "error setting :error-behavior, 'immediate-execution' or 'continued-execution' expected",
+          value,
+        );
+      settings.isExitingOnError = isSymbol(value, "immediate-exit");
+    } else if (BUILTIN_OPTIONS.has(keyword))
+      throw new SmtParseError("option value is not a symbol", value);
+    else setOptionParameter(keyword, value.text, value);
+  };
+  const setOptionNumeral = (keyword: string, value: SmtToken) => {
+    // Z3 sets a numeral as the string of its rational, so 2.0 becomes 2 and 1.5 becomes 3/2.
+    const text =
+      value.kind === "decimal"
+        ? Rational.fromDecimal(value.text).toString()
+        : BigInt(value.text.replace("#", "0")).toString();
+    const toUnsigned = () => {
+      if (!/^[0-9]+$/.test(text) || !isUnsigned(text))
+        throw new SmtParseError("option value is too big to fit in a machine integer.", value);
+      return Number(text);
+    };
+    if (keyword === ":random-seed") toUnsigned();
+    else if (keyword === ":reproducible-resource-limit") settings.rlimit = toUnsigned();
+    else if (keyword === ":verbosity") {
+      if (toUnsigned() !== 0) throw new SmtUnsupportedError("the option :verbosity");
+    } else if (BUILTIN_OPTIONS.has(keyword))
+      throw new SmtParseError("option value is not a numeral", value);
+    else setOptionParameter(keyword, text, value);
+  };
+  const setOptionString = (keyword: string, value: SmtToken) => {
+    if (keyword === ":regular-output-channel") {
+      if (value.text !== "stdout")
+        throw new SmtUnsupportedError(`the regular output channel ${value.text}`);
+    } else if (keyword === ":diagnostic-output-channel") {
+      if (value.text !== "stdout" && value.text !== "stderr")
+        throw new SmtUnsupportedError(`the diagnostic output channel ${value.text}`);
+      settings.isDiagnosticOnStdout = value.text === "stdout";
+    } else if (BUILTIN_OPTIONS.has(keyword))
+      throw new SmtParseError("option value is not a string", value);
+    else setOptionParameter(keyword, value.text, value);
+  };
   const runCommand = new Map<string, (list: SmtList) => void>([
     [
       "assert",
@@ -2265,121 +2398,15 @@ export const runSmtlibScript = (
         if (value.kind === "list" || value.kind === "keyword")
           throw new SmtParseError("invalid option value", value);
         const keyword = option.text;
-        const optionName = `:${getParameterName(keyword)}`;
-        const isTrue = isSymbol(value, "true");
-        if (
-          (keyword === ":produce-proofs" ||
-            keyword === ":produce-unsat-cores" ||
-            keyword === ":produce-unsat-assumptions") &&
-          state.assertions.length > 0
-        )
-          throw new SmtParseError(
-            `error setting '${keyword}', option value cannot be modified after assertions have been added`,
-            value,
-          );
-        if (keyword === ":produce-models") {
-          settings.isProducingModels = isTrue;
-          state.isSolverProducingModels = isTrue;
-        }
-        if (keyword === ":produce-unsat-cores") settings.isProducingUnsatCores = isTrue;
-        if (keyword === ":produce-unsat-assumptions") settings.isProducingUnsatAssumptions = isTrue;
-        if (keyword === ":produce-proofs") settings.isProducingProofs = isTrue;
-        if (keyword === ":interactive-mode" || keyword === ":produce-assertions") {
-          if (state.isProofsEnabled !== undefined)
-            throw new SmtParseError(
-              "error setting ':produce-assertions', option value cannot be modified after initialization",
-              value,
-            );
-          settings.isInteractive = isTrue;
-        }
-        if (keyword === ":global-decls" || keyword === ":global-declarations") {
-          if (state.isProofsEnabled !== undefined)
-            throw new SmtParseError(
-              "error setting ':global-decls', option value cannot be modified after initialization",
-              value,
-            );
-          settings.parserOptions.isGlobalDecls = isTrue;
-        }
-        if (keyword === ":numeral-as-real") state.reader.setNumeralAsReal(isTrue);
-        if (keyword === ":diagnostic-output-channel")
-          settings.isDiagnosticOnStdout = value.kind === "string" && value.text === "stdout";
-        if (keyword === ":int-real-coercions" && !isTrue)
-          throw new SmtUnsupportedError("the option :int-real-coercions false");
-        if (keyword === ":verbosity" && value.kind === "numeral" && BigInt(value.text) !== 0n)
-          throw new SmtUnsupportedError("the option :verbosity");
-        if (keyword === ":error-behavior") {
-          if (!isSymbol(value, "immediate-exit") && !isSymbol(value, "continued-execution"))
-            throw new SmtParseError(
-              "error setting :error-behavior, 'immediate-execution' or 'continued-execution' expected",
-              list.end,
-            );
-          settings.isExitingOnError = isSymbol(value, "immediate-exit");
-        }
-        const isParameter = !BUILTIN_OPTIONS.has(keyword);
-        if (isParameter) {
-          // Z3 sets a numeral as the string of its rational, so 2.0 becomes 2 and 1.5 becomes 3/2.
-          const text =
-            value.kind === "decimal"
-              ? Rational.fromDecimal(value.text).toString()
-              : value.kind === "numeral" || value.kind === "bitvector"
-                ? BigInt(value.text.replace("#", "0")).toString()
-                : value.text;
-          const name = getParameterName(keyword);
-          const parameterValue = getParameterValue(name, text, value);
-          const defaultValue = UNPORTED_PARAMETER_DEFAULTS.get(name);
-          if (
-            defaultValue !== undefined &&
-            parameterValue !== defaultValue &&
-            Number(parameterValue) !== Number(defaultValue)
-          )
-            throw new SmtUnsupportedError(`the option :${name}`);
-          settings.parameters.set(name, parameterValue);
-          if (optionName === ":smt.mbqi.max_iterations") settings.mbqiMaxIterations = Number(text);
-          if (optionName === ":rlimit") settings.rlimit = Number(text);
-          if (name === "memory_max_size") state.manager.limit.maxHeapSize = getMaxHeapSize();
-          // Z3 reads the parameters model and unsat_core again whenever any parameter is set.
-          const model = settings.parameters.get("model");
-          if (model !== undefined) settings.isProducingModels = model === "true";
-          if (settings.parameters.get("unsat_core") === "true")
-            settings.isProducingUnsatCores = true;
-        }
-        if (optionName === ":print_success") settings.isPrintingSuccess = isTrue;
-        if (
-          !BUILTIN_OPTIONS.has(keyword) &&
-          settings.parameters.get("smtlib2_compliant") === "true"
-        )
-          settings.isPrintingSuccess = true;
-        if (optionName === ":smt.mbqi") settings.isMbqi = isTrue;
-        if (optionName === ":smt.macro_finder") settings.isFindingMacros = isTrue;
-        const kernel = state.kernel;
-        if (isParameter && kernel !== undefined)
-          kernel.updateParams(getKernelParams(kernel.isSetUp));
-        if (optionName === ":rewriter.hi_div0") {
-          settings.isHiDiv0 = isTrue;
-          state.manager.isHiDiv0 = isTrue;
-        }
-        if (optionName === ":encoding") {
-          settings.encoding = ENCODINGS.get(value.text) ?? UNICODE_ENCODING;
-          state.manager.maxChar = settings.encoding.maxChar;
-          state.manager.charBits = settings.encoding.charBits;
-        }
-        if (optionName === ":parser.ignore_bad_patterns")
-          settings.parserOptions.isIgnoringBadPatterns = isTrue;
-        const numericOption = NUMERIC_PRINT_OPTIONS.get(optionName);
-        if (numericOption !== undefined && value.kind === "numeral")
-          settings.printOptions[numericOption] = Number(value.text);
-        const booleanOption = BOOLEAN_PRINT_OPTIONS.get(optionName);
-        if (booleanOption !== undefined) settings.printOptions[booleanOption] = isTrue;
-        if (
-          (optionName.startsWith(":pp.") &&
-            numericOption === undefined &&
-            booleanOption === undefined) ||
-          (optionName.startsWith(":lp.") &&
-            (optionName !== ":lp.int_hammer_period" || !isParameter))
-        )
-          throw new SmtUnsupportedError(`the option ${optionName}`);
+        if (value.kind === "symbol") setOptionSymbol(keyword, value);
+        else if (value.kind === "string") setOptionString(keyword, value);
+        else setOptionNumeral(keyword, value);
         // parse_ext_cmd sets the option as it reads the value, before it rejects a third argument.
         checkArgumentCount(list, 2);
+        if (keyword === ":expand-definitions" && value.kind === "symbol") {
+          print("unsupported");
+          printDiagnostic(`; ${keyword} line: ${list.line} position: ${list.column}`);
+        } else if (settings.isPrintingSuccess) print("success");
       },
     ],
     [
