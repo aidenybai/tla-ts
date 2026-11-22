@@ -3650,13 +3650,14 @@ const isElementOfSet = (element: Value, set: Value): boolean => {
   return isElementOfAnySet(element, set);
 };
 
-const getSubsetMemberElements = (element: Value, set: SubsetValue) => {
+// SubsetValue#member streams the element and stops at its first element outside the base.
+const isStreamedSubsetMember = (element: Value, set: SubsetValue, isMember: typeof isElementOf) => {
   if (!isSetValue(element) || isOverriddenSet(element)) {
     throw new TlaEvaluationError(
       `Attempted to check if the non-enumerable value\n${prettyPrint(formatValue(element))}\nis element of\n${prettyPrint(formatValue(set))}`,
     );
   }
-  return toFiniteSet(element).elements;
+  return !someStreamedElement(element, (item) => !isMember(item, set.base));
 };
 
 const getFunctionSetMemberRange = (element: Value, set: FunctionSetValue) => {
@@ -3713,19 +3714,24 @@ const isCaughtFilterError = (error: unknown, depth: number) =>
 const describeUndecidedFilterMember = (element: Value, set: FilteredSetValue) =>
   `Cannot decide if element:\n${prettyPrint(formatValue(element))}\n is element of:\n${prettyPrint(formatValue(set.base))}\nand satisfies the predicate ${set.source?.predicate}`;
 
-const getUnionMemberSets = (element: Value, set: UnionValue) => {
-  if (!isTlcEnumerable(set.base)) {
-    throw new TlaEvaluationError(
-      `Attempted to check if:\n ${prettyPrint(formatValue(element))}\nis an element of the non-enumerable set:\n ${prettyPrint(formatUnion(set))}`,
-    );
-  }
-  const sets = toFiniteSet(set.base).elements;
+const getUnionMemberSets = (base: SetValue | MixedSetValue | IntervalValue) => {
+  const sets = toFiniteSet(base).elements;
   if (sets.length > 1) {
     sets.forEach((inner) => {
       if (typeof inner === "object" && inner.kind === "Set") inner.isNormalized = true;
     });
   }
   return sets;
+};
+
+// UnionValue#member streams its set of sets and stops at the first one that holds the element.
+const isStreamedUnionMember = (element: Value, set: UnionValue, isMember: typeof isElementOf) => {
+  if (!isTlcEnumerable(set.base)) {
+    throw new TlaEvaluationError(
+      `Attempted to check if:\n ${prettyPrint(formatValue(element))}\nis an element of the non-enumerable set:\n ${prettyPrint(formatUnion(set))}`,
+    );
+  }
+  return someStreamedElement(set.base, (inner) => isMember(element, inner));
 };
 
 const getSequenceSetMemberElements = (element: Value, set: SequenceSetValue) => {
@@ -3773,7 +3779,9 @@ const isElementOfAnySet = (element: Value, set: Value): boolean => {
       return set.name !== "Nat" || (typeof element === "number" && element >= 0);
     }
     case "Subset":
-      return getSubsetMemberElements(element, set).every((item) => isElementOf(item, set.base));
+      return isReducibleSet(element)
+        ? toFiniteSet(element).elements.every((item) => isElementOf(item, set.base))
+        : isStreamedSubsetMember(element, set, isElementOf);
     case "FunctionSet": {
       const range = getFunctionSetMemberRange(element, set);
       return range !== false && range.every((item) => isElementOf(item, set.range));
@@ -3804,7 +3812,9 @@ const isElementOfAnySet = (element: Value, set: Value): boolean => {
       }
     }
     case "Union":
-      return getUnionMemberSets(element, set).some((inner) => isElementOf(element, inner));
+      return isReducibleSet(set.base)
+        ? getUnionMemberSets(set.base).some((inner) => isElementOf(element, inner))
+        : isStreamedUnionMember(element, set, isElementOf);
     case "SetOperation":
       if (set.operator === "\\cup")
         return isElementOf(element, set.left) || isElementOf(element, set.right);
@@ -3829,7 +3839,9 @@ const isElementOfComponents = (
   if (typeof set !== "object") return isElementOfAnySet(element, set);
   switch (set.kind) {
     case "Subset":
-      return getSubsetMemberElements(element, set).every((item) => isMember(item, set.base));
+      return isReducibleSet(element)
+        ? toFiniteSet(element).elements.every((item) => isMember(item, set.base))
+        : isStreamedSubsetMember(element, set, isMember);
     case "FunctionSet": {
       const range = getFunctionSetMemberRange(element, set);
       return range !== false && range.every((item) => isMember(item, set.range));
@@ -3860,7 +3872,9 @@ const isElementOfComponents = (
       }
     }
     case "Union":
-      return getUnionMemberSets(element, set).some((inner) => isMember(element, inner));
+      return isReducibleSet(set.base)
+        ? getUnionMemberSets(set.base).some((inner) => isMember(element, inner))
+        : isStreamedUnionMember(element, set, isMember);
     case "SetOperation":
       if (set.operator === "\\cup")
         return isMember(element, set.left) || isMember(element, set.right);
