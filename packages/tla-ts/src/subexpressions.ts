@@ -91,13 +91,19 @@ const resolveDefinition = (
   return resolved;
 };
 
-const setDeclaredArities = (declarations: Declaration[], definitions: Definition[]) =>
+const setDeclaredArities = (declarations: Declaration[], definitions: Definition[]) => {
+  // The first recursive definition of each name, which a declaration of the name declares.
+  const recursive = new Map(
+    definitions
+      .filter((definition) => definition.isRecursive)
+      .toReversed()
+      .map((definition) => [definition.name, definition]),
+  );
   declarations.forEach((declaration) => {
-    const definition = definitions.find(
-      (candidate) => candidate.isRecursive && candidate.name === declaration.name,
-    );
+    const definition = recursive.get(declaration.name);
     if (definition) declaredArities.set(definition, declaration.arity);
   });
+};
 
 const getSelectorName = (selector: Selector) => {
   switch (selector.kind) {
