@@ -1,3 +1,5 @@
+import { readFileSync } from "node:fs";
+import { join } from "node:path";
 import { describe, expect, it } from "vite-plus/test";
 import { check, parseModule, TlaSyntaxError, type Module } from "../../src";
 
@@ -377,5 +379,39 @@ describe("parseModule reads proofs like SANY", () => {
     ["a bounded NEW operator", "THEOREM ASSUME NEW P(_) \\in {} PROVE TRUE"],
   ])("rejects %s", (_, proof) => {
     expect(() => parseProof(proof)).toThrow(TlaSyntaxError);
+  });
+});
+
+// A location that a check derives from a node's, with another end, as an error that names part of
+// a conjunction does, reads the node's line and column, and the node's range starts where SANY's
+// does. SANY's XML export of Numbered places Sum's IF at line 5, columns 11 to 45, and its ELSE
+// operand n + Sum(n - 1) at columns 32 to 45, with its own location at the + at column 34.
+describe("parseModule reads a location derived from a node's as SANY places the node", () => {
+  const source = readFileSync(
+    join(import.meta.dirname, "../fixtures/xml-export/Numbered.tla"),
+    "utf8",
+  );
+  const sum = parseModule(source).definitions.find((definition) => definition.name === "Sum");
+  const body = sum?.kind === "Operator" ? sum.body : undefined;
+  const otherwise = body?.kind === "If" ? body.alternative : undefined;
+
+  it("reads the node's range as SANY's", () => {
+    expect(describeRange(body?.location ?? { line: 0, column: 0 })).toBe(
+      "line 5, col 11 to line 5, col 45 of module Numbered",
+    );
+    expect(describeRange(otherwise?.location ?? { line: 0, column: 0 })).toBe(
+      "line 5, col 32 to line 5, col 45 of module Numbered",
+    );
+  });
+
+  it("reads the line, the column, and the start of the derived location as the node's", () => {
+    const location = otherwise?.location;
+    const range = location?.range;
+    const derived = location && range && { ...location, range: { ...range, end: range.start } };
+    expect([derived?.line, derived?.column]).toEqual([location?.line, location?.column]);
+    expect([derived?.line, derived?.column]).toEqual([5, 34]);
+    expect(describeRange(derived ?? { line: 0, column: 0 })).toBe(
+      "line 5, col 32 to line 5, col 32 of module Numbered",
+    );
   });
 });
