@@ -9,6 +9,9 @@ args:
   - -dump
   - dot,colorize,actionlabels,snapshot,constrained,stuttering,strict
   - states
+files:
+  - states.dot
+  - states_snapshot.dot
 ---*)
 ---- MODULE dot_options ----
 EXTENDS Naturals
@@ -29,4 +32,41 @@ all:
     2199:0 4 states generated, 3 distinct states found, 0 states left on queue.
     2194:0 The depth of the complete state graph search is 3.
     2268:0 The average outdegree of the complete state graph is 1 (minimum is 0, the maximum 1 and the 95th percentile is 1).
+  files:
+    states.dot: |-
+      strict digraph DiskGraph {
+      node [shape=box,style=rounded]
+      edge [colorscheme="paired12"]
+      nodesep=0.35;
+      subgraph cluster_graph {
+      color="white";
+      -3406341414084290173 [label="x = 0",style = filled]
+      -3406341414084290173 -> -686636423115914061 [label="Next",color="2",fontcolor="2"];
+      -686636423115914061 [label="x = 1",tooltip="x = 1"];
+      -686636423115914061 -> -7115858903467826205 [label="Next",color="2",fontcolor="2"];
+      -7115858903467826205 [label="x = 2",tooltip="x = 2"];
+      -7115858903467826205 -> -3406341414084290173 [label="Next",color="2",fontcolor="2"];
+      {rank = same; -3406341414084290173;}
+      {rank = same; -686636423115914061;}
+      {rank = same; -7115858903467826205;}
+      }
+      }
+    states_snapshot.dot: |-
+      strict digraph DiskGraph {
+      node [shape=box,style=rounded]
+      edge [colorscheme="paired12"]
+      nodesep=0.35;
+      subgraph cluster_graph {
+      color="white";
+      -3406341414084290173 [label="x = 0",style = filled]
+      -3406341414084290173 -> -686636423115914061 [label="Next",color="2",fontcolor="2"];
+      -686636423115914061 [label="x = 1",tooltip="x = 1"];
+      -686636423115914061 -> -7115858903467826205 [label="Next",color="2",fontcolor="2"];
+      -7115858903467826205 [label="x = 2",tooltip="x = 2"];
+      -7115858903467826205 -> -3406341414084290173 [label="Next",color="2",fontcolor="2"];
+      {rank = same; -3406341414084290173;}
+      {rank = same; -686636423115914061;}
+      {rank = same; -7115858903467826205;}
+      }
+      }
 ---*)
