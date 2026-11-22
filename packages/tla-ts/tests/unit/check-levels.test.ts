@@ -562,6 +562,24 @@ describe("level checking matches SANY", () => {
     },
   );
 
+  it("rejects an argument above the level that the operator parameter it reaches through a definition permits, where SANY drops the constraint", async () => {
+    await expect(
+      check({
+        source:
+          "---- MODULE M ----\nVARIABLE x\nPr(p) == p'\nW(Op(_)) == LET D(p) == Op(p) IN D(x')\nV == W(Pr)\nInit == x = 0\nNext == x' = x\n====",
+        config: "INIT Init\nNEXT Next",
+      }),
+    ).rejects.toThrow(
+      createSanyError([
+        {
+          location: "line 5, col 6 to line 5, col 10 of module M",
+          message:
+            "Level error in applying operator W:\nThe permitted level of argument 1 of the operator argument 1 \nmust be at least 2.",
+        },
+      ]),
+    );
+  });
+
   it("names the builtin operator a level error applies like SANY", async () => {
     await expect(
       check({

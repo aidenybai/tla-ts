@@ -464,7 +464,8 @@ const constrainArguments = (
     });
   });
   operator.argLevelParams.forEach((argLevelParam) => {
-    const argument = getArgument(argLevelParam.op);
+    // Deviation from SANY: OpApplNode#levelCheck looks up alp.op here, which drops the level an argument puts on the operator parameter it is passed to, so x'' passes and TLC crashes.
+    const argument = getArgument(argLevelParam.param);
     if (argument === undefined) return;
     checkLevel(argument, iteration, check);
     putArgLevelConstraint(
