@@ -1731,6 +1731,29 @@ ASSUME TLCFP(a) = -887695703
     ]);
   });
 
+  it("names a permuted set by its configuration name when the spec supplies its own FiniteSets, as TLC does", async () => {
+    const warnings: CheckProgress[] = [];
+    await check({
+      source:
+        "---- MODULE M ----\nEXTENDS TLC\nCONSTANTS A, V, a1, v1\nVARIABLE x\nMCA == {a1}\nMCV == {v1}\nSym == Permutations(MCA) \\cup Permutations(MCV)\nInit == x = 0\nNext == x' = x\n====",
+      config: "CONSTANTS a1 = a1 v1 = v1 A <- MCA V <- MCV\nINIT Init\nNEXT Next\nSYMMETRY Sym",
+      loadModule: (name) =>
+        name === "FiniteSets"
+          ? "---- MODULE FiniteSets ----\nLOCAL INSTANCE Naturals\nLOCAL INSTANCE Sequences\nIsFiniteSet(S) == \\E seq \\in Seq(S) : \\A s \\in S : \\E n \\in 1..Len(seq) : seq[n] = s\nCardinality(S) == LET CS[T \\in SUBSET S] == IF T = {} THEN 0 ELSE 1 + CS[T \\ {CHOOSE x : x \\in T}] IN CS[S]\n===="
+          : undefined,
+      onProgress: (progress) => {
+        if (progress.kind === "warning") warnings.push(progress);
+      },
+    });
+    expect(warnings).toEqual([
+      {
+        kind: "warning",
+        code: 2300,
+        text: "The sets A, and V have been defined to be a symmetry set but contain less than two elements.",
+      },
+    ]);
+  });
+
   it("names a permuted set with fewer than two elements by its source, with the parentheses of its operands, as TLC does", async () => {
     const warnings: CheckProgress[] = [];
     await check({

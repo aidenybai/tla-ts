@@ -106,7 +106,7 @@ const isPermutations = (
   expression: Expression,
 ): expression is Expression & { kind: "Apply"; args: [Expression] } =>
   expression.kind === "Apply" &&
-  expression.operator === "Permutations" &&
+  getKeyName(expression.operator) === "Permutations" &&
   expression.args.length === 1;
 
 export const getSymmetryGroup = (
