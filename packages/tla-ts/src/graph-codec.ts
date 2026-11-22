@@ -1,3 +1,5 @@
+import { TokenLocation, type PositionTable } from "./source-location";
+
 // Writes a graph of plain objects, arrays, maps, sets, and primitives as JSON-ready tables and a
 // stream, and reads it back with the same keys in the same order and the same objects shared, so
 // that a build can prepare a structure once that each process reads rather than computes.
@@ -6,7 +8,8 @@
 // marks one more character. A value is a tag, or a small integer stored as itself plus SMALL_START.
 // SHARED comes before an object the graph holds more than once, which REFERENCE then names by the
 // order in which such objects come. A typed array is its class's tag, its length, and its elements
-// as numbers.
+// as numbers. A node's location is its line, its column, its module's table of positions, and the
+// tokens of its range, each one past its index, as a location without a range has none.
 //
 // A deferred value, which a graph holds once, is DEFERRED and the index of a segment that the
 // stream holds after the graph, which a read of the value's property first decodes. The objects
@@ -30,7 +33,8 @@ const UINT32_ARRAY = 14;
 const UINT8_ARRAY = 15;
 const DEFERRED = 16;
 const LOCAL = 17;
-const SMALL_START = 18;
+const LOCATION = 18;
+const SMALL_START = 19;
 const SMALL_END = 1 << 28;
 
 // The characters of the stream, none of which JSON or a JavaScript string escapes, and each one's
@@ -58,13 +62,15 @@ export interface EncodedGraph {
 type IsDeferred = (holder: object, key: string) => boolean;
 
 const getChildren = (value: object): unknown[] =>
-  Array.isArray(value)
-    ? value
-    : value instanceof Map
-      ? [...value].flat()
-      : value instanceof Set
-        ? [...value]
-        : Object.values(value);
+  value instanceof TokenLocation
+    ? [value.table]
+    : Array.isArray(value)
+      ? value
+      : value instanceof Map
+        ? [...value].flat()
+        : value instanceof Set
+          ? [...value]
+          : Object.values(value);
 
 export const encodeGraph = (root: unknown, isDeferred: IsDeferred = () => false): EncodedGraph => {
   const strings: string[] = [];
@@ -223,6 +229,15 @@ export const encodeGraph = (root: unknown, isDeferred: IsDeferred = () => false)
       for (let index = 0; index < value.length; index++) write(value[index]);
       return;
     }
+    if (value instanceof TokenLocation) {
+      stream.push(LOCATION);
+      write(value.line);
+      write(value.column);
+      write(value.table);
+      write(value.startToken + 1);
+      write(value.endToken + 1);
+      return;
+    }
     if (prototype !== Object.prototype) throw new TypeError("A graph holds only plain objects");
     const keys = Object.keys(value);
     const shape = getShapeId(keys);
@@ -371,8 +386,26 @@ export const decodeGraph = (encoded: EncodedGraph): unknown => {
               ? new Uint32Array(length)
               : new Uint8Array(length);
         if (isShared) local.push(array);
-        for (let index = 0; index < length; index++) array[index] = Number(read());
+        // An element is almost always a small integer, which the loop reads as itself.
+        for (let index = 0; index < length; index++) {
+          const element = next();
+          array[index] = element >= SMALL_START ? element - SMALL_START : numbers[next()];
+        }
         return array;
+      }
+      case LOCATION: {
+        // A location's table, which it reads, comes after it in the order of shared objects.
+        const slots = local;
+        const slot = slots.length;
+        if (isShared) slots.push(undefined);
+        const line = Number(read());
+        const column = Number(read());
+        const table = read() as PositionTable;
+        const location = new TokenLocation(line, column, table);
+        const startToken = Number(read()) - 1;
+        location.setRange(startToken, Number(read()) - 1);
+        if (isShared) slots[slot] = location;
+        return location;
       }
       case OBJECT: {
         const shape = next();
