@@ -117,6 +117,37 @@ const RELATIONS = new Map([
   [ts.SyntaxKind.GreaterThanEqualsToken, ">="],
 ]);
 
+// The plain forms of the operators of two "int" Numbers, and the kind of what each gives.
+const PLAIN_OPERATORS = new Map<ts.SyntaxKind, { name: string; kind: PlainKind }>([
+  [ts.SyntaxKind.PlusToken, { name: "PlainAdd", kind: "int" }],
+  [ts.SyntaxKind.MinusToken, { name: "PlainSub", kind: "int" }],
+  [ts.SyntaxKind.AsteriskToken, { name: "PlainMul", kind: "int" }],
+  [ts.SyntaxKind.PercentToken, { name: "PlainMod", kind: "int" }],
+  [ts.SyntaxKind.AsteriskAsteriskToken, { name: "PlainPow", kind: "int" }],
+  [ts.SyntaxKind.LessThanToken, { name: "PlainLt", kind: "bool" }],
+  [ts.SyntaxKind.LessThanEqualsToken, { name: "PlainLe", kind: "bool" }],
+  [ts.SyntaxKind.GreaterThanToken, { name: "PlainGt", kind: "bool" }],
+  [ts.SyntaxKind.GreaterThanEqualsToken, { name: "PlainGe", kind: "bool" }],
+]);
+
+// ESNumber's IntLimit, within which an "int" Number's integer lies.
+const PLAIN_LIMIT = 2 ** 30;
+
+type PlainKind = "int" | "bool";
+
+interface PlainValue {
+  text: string;
+  kind: PlainKind;
+}
+
+interface PlainFunction {
+  name: string;
+  operator: string;
+  arity: number;
+  kind: PlainKind;
+  isRecursive: boolean;
+}
+
 const getUnits = (text: string) =>
   `<<${Array.from({ length: text.length }, (_, index) => text.charCodeAt(index)).join(", ")}>>`;
 
@@ -1198,6 +1229,230 @@ export const getNativeFunctions = (
 
   // A module function's operator, compiled once, or undefined where its code goes beyond what
   // runs natively.
+  // A module function's plain form, over the integers of "int" Numbers, as a TLA+ operator of
+  // them that gives an integer, 1 or 0 for a boolean, or PlainBail where JavaScript's Numbers would
+  // leave what "int" Numbers hold, which gives the call back to the function's lowered form.
+  const plainCompiled = new Map<string, PlainFunction | undefined>();
+  const plainCompiling: PlainFunction[] = [];
+
+  const compilePlain = (
+    node: ts.Expression,
+    locals: ReadonlyMap<string, string>,
+  ): PlainValue | undefined => {
+    if (
+      ts.isParenthesizedExpression(node) ||
+      ts.isAsExpression(node) ||
+      ts.isNonNullExpression(node) ||
+      ts.isSatisfiesExpression(node)
+    ) {
+      return compilePlain(node.expression, locals);
+    }
+    if (ts.isNumericLiteral(node)) {
+      const value = Number(node.text);
+      return Number.isInteger(value) && value < PLAIN_LIMIT
+        ? { text: String(value), kind: "int" }
+        : undefined;
+    }
+    if (node.kind === ts.SyntaxKind.TrueKeyword) return { text: "1", kind: "bool" };
+    if (node.kind === ts.SyntaxKind.FalseKeyword) return { text: "0", kind: "bool" };
+    if (ts.isIdentifier(node)) {
+      const local = locals.get(node.text);
+      return local === undefined ? undefined : { text: local, kind: "int" };
+    }
+    if (ts.isPrefixUnaryExpression(node)) {
+      const operand = compilePlain(node.operand, locals);
+      if (node.operator === ts.SyntaxKind.MinusToken && operand?.kind === "int") {
+        return { text: `PlainNeg(${operand.text})`, kind: "int" };
+      }
+      return node.operator === ts.SyntaxKind.ExclamationToken && operand?.kind === "bool"
+        ? { text: `PlainNot(${operand.text})`, kind: "bool" }
+        : undefined;
+    }
+    if (ts.isConditionalExpression(node)) {
+      const condition = compilePlain(node.condition, locals);
+      const whenTrue = compilePlain(node.whenTrue, locals);
+      const whenFalse = compilePlain(node.whenFalse, locals);
+      if (
+        condition?.kind !== "bool" ||
+        whenTrue === undefined ||
+        whenTrue.kind !== whenFalse?.kind
+      ) {
+        return undefined;
+      }
+      const name = fresh("pc");
+      return {
+        text: `(LET ${name} == ${condition.text} IN IF ${name} = PlainBail THEN PlainBail ELSE IF ${name} = 1 THEN ${whenTrue.text} ELSE ${whenFalse.text})`,
+        kind: whenTrue.kind,
+      };
+    }
+    if (ts.isBinaryExpression(node)) {
+      const kind = node.operatorToken.kind;
+      const left = compilePlain(node.left, locals);
+      const right = compilePlain(node.right, locals);
+      if (left === undefined || right === undefined) return undefined;
+      const operator = PLAIN_OPERATORS.get(kind);
+      if (operator !== undefined) {
+        return left.kind === "int" && right.kind === "int"
+          ? { text: `${operator.name}(${left.text}, ${right.text})`, kind: operator.kind }
+          : undefined;
+      }
+      if (
+        (kind === ts.SyntaxKind.EqualsEqualsEqualsToken ||
+          kind === ts.SyntaxKind.ExclamationEqualsEqualsToken) &&
+        left.kind === right.kind
+      ) {
+        const equal = `PlainEqual(${left.text}, ${right.text})`;
+        return {
+          text: kind === ts.SyntaxKind.EqualsEqualsEqualsToken ? equal : `PlainNot(${equal})`,
+          kind: "bool",
+        };
+      }
+      if (
+        (kind === ts.SyntaxKind.AmpersandAmpersandToken || kind === ts.SyntaxKind.BarBarToken) &&
+        left.kind === "bool" &&
+        right.kind === "bool"
+      ) {
+        const name = fresh("pc");
+        const stop = kind === ts.SyntaxKind.AmpersandAmpersandToken ? 0 : 1;
+        return {
+          text: `(LET ${name} == ${left.text} IN IF ${name} = PlainBail \\/ ${name} = ${stop} THEN ${name} ELSE ${right.text})`,
+          kind: "bool",
+        };
+      }
+      return undefined;
+    }
+    if (!ts.isCallExpression(node) || node.questionDotToken !== undefined) return undefined;
+    // Math.floor(x / y), where Math is the realm's.
+    const quotient = node.arguments[0];
+    if (
+      ts.isPropertyAccessExpression(node.expression) &&
+      ts.isIdentifier(node.expression.expression) &&
+      node.expression.expression.text === "Math" &&
+      !locals.has("Math") &&
+      !bindings.has("Math") &&
+      !functions.has("Math") &&
+      node.expression.name.text === "floor" &&
+      node.arguments.length === 1 &&
+      quotient !== undefined &&
+      ts.isBinaryExpression(quotient) &&
+      quotient.operatorToken.kind === ts.SyntaxKind.SlashToken
+    ) {
+      const dividend = compilePlain(quotient.left, locals);
+      const divisor = compilePlain(quotient.right, locals);
+      return dividend?.kind === "int" && divisor?.kind === "int"
+        ? { text: `PlainFloorDiv(${dividend.text}, ${divisor.text})`, kind: "int" }
+        : undefined;
+    }
+    const callee = ts.isIdentifier(node.expression) ? node.expression.text : undefined;
+    if (callee === undefined || locals.has(callee) || bindings.has(callee)) return undefined;
+    const plain = compilePlainFunction(callee);
+    const args = node.arguments.map((arg) => compilePlain(arg, locals));
+    return plain === undefined ||
+      args.length !== plain.arity ||
+      args.some((arg) => arg?.kind !== "int")
+      ? undefined
+      : { text: `${plain.operator}(${args.map((arg) => arg?.text).join(", ")})`, kind: plain.kind };
+  };
+
+  // The plain form of a module function whose parameters are "int" Numbers and whose body is an
+  // expression of them, or the returns of its ifs, as compilePlain compiles them.
+  const compilePlainFunction = (name: string): PlainFunction | undefined => {
+    if (plainCompiled.has(name)) return plainCompiled.get(name);
+    const innermost = plainCompiling.at(-1);
+    if (innermost?.name === name) {
+      innermost.isRecursive = true;
+      return innermost;
+    }
+    if (plainCompiling.some((entry) => entry.name === name)) return undefined;
+    const fn = functions.get(name);
+    const body = fn?.body;
+    if (
+      fn === undefined ||
+      body === undefined ||
+      fn.asteriskToken !== undefined ||
+      (ts.getModifiers(fn) ?? []).length > 0 ||
+      fn.parameters.some(
+        (parameter) =>
+          !ts.isIdentifier(parameter.name) ||
+          parameter.initializer !== undefined ||
+          parameter.dotDotDotToken !== undefined ||
+          parameter.questionToken !== undefined,
+      )
+    ) {
+      plainCompiled.set(name, undefined);
+      return undefined;
+    }
+    const params = fn.parameters.map(() => fresh("pp"));
+    const locals = new Map(
+      fn.parameters.map((parameter, index) => [
+        (parameter.name as ts.Identifier).text,
+        params[index],
+      ]),
+    );
+    // A function that calls itself is first taken to give an integer, and then a boolean.
+    for (const kind of ["int", "bool"] as const) {
+      const entry: PlainFunction = {
+        name,
+        operator: fresh("Plain"),
+        arity: params.length,
+        kind,
+        isRecursive: false,
+      };
+      plainCompiling.push(entry);
+      const value = ts.isBlock(body)
+        ? compilePlainReturns(body.statements, locals)
+        : compilePlain(body, locals);
+      plainCompiling.pop();
+      if (value === undefined && !entry.isRecursive) break;
+      if (value === undefined || (entry.isRecursive && value.kind !== kind)) continue;
+      entry.kind = value.kind;
+      if (entry.isRecursive) {
+        definitions.push(`RECURSIVE ${entry.operator}(${params.map(() => "_").join(", ")})`);
+      }
+      definitions.push(`${entry.operator}(${params.join(", ")}) ==\n  ${value.text}`);
+      plainCompiled.set(name, entry);
+      return entry;
+    }
+    plainCompiled.set(name, undefined);
+    return undefined;
+  };
+
+  // The value of statements that each are an if whose branch returns, followed by a return.
+  const compilePlainReturns = (
+    statements: readonly ts.Statement[],
+    locals: ReadonlyMap<string, string>,
+  ): PlainValue | undefined => {
+    const [first, ...rest] = statements;
+    if (first === undefined) return undefined;
+    if (ts.isReturnStatement(first)) {
+      return rest.length === 0 && first.expression !== undefined
+        ? compilePlain(first.expression, locals)
+        : undefined;
+    }
+    if (!ts.isIfStatement(first)) return undefined;
+    const condition = compilePlain(first.expression, locals);
+    const branch = (statement: ts.Statement | undefined) =>
+      statement === undefined
+        ? compilePlainReturns(rest, locals)
+        : compilePlainReturns(ts.isBlock(statement) ? statement.statements : [statement], locals);
+    const whenTrue = branch(first.thenStatement);
+    const whenFalse =
+      first.elseStatement === undefined ? branch(undefined) : branch(first.elseStatement);
+    if (
+      condition?.kind !== "bool" ||
+      whenTrue === undefined ||
+      whenTrue.kind !== whenFalse?.kind ||
+      (first.elseStatement !== undefined && rest.length > 0)
+    ) {
+      return undefined;
+    }
+    const name = fresh("pc");
+    return {
+      text: `(LET ${name} == ${condition.text} IN IF ${name} = PlainBail THEN PlainBail ELSE IF ${name} = 1 THEN ${whenTrue.text} ELSE ${whenFalse.text})`,
+      kind: whenTrue.kind,
+    };
+  };
+
   const compileFunction = (name: string): Compiled | undefined => {
     if (compiled.has(name)) return compiled.get(name);
     // A function that calls itself takes its operator as it compiles, as one that writes nothing,
@@ -1279,9 +1534,17 @@ export const getNativeFunctions = (
       return undefined;
     }
     const formals = ["m", "w", ...params];
+    // A call whose arguments are all "int" Numbers runs the plain form first, and the lowered one
+    // where the plain one bails.
+    const plain = params.length === 0 ? undefined : compilePlainFunction(name);
+    const plainValue = fresh("pv");
+    const plainText =
+      plain === undefined
+        ? text
+        : `LET ${plainValue} == IF ${params.map((param) => `${param}.type = "number" /\\ ${param}.value.k = "int"`).join(" /\\ ")} THEN ${plain.operator}(${params.map((param) => `${param}.value.i`).join(", ")}) ELSE PlainBail IN\n  IF ${plainValue} = PlainBail THEN ${text} ELSE ${result("m", "w", plain.kind === "int" ? `Num(NumIntNum(${plainValue}))` : `IF ${plainValue} = 1 THEN True ELSE False`)}`;
     if (entry.isRecursive)
       definitions.push(`RECURSIVE ${operator}(${formals.map(() => "_").join(", ")})`);
-    definitions.push(`${operator}(${formals.join(", ")}) ==\n  ${text}`);
+    definitions.push(`${operator}(${formals.join(", ")}) ==\n  ${plainText}`);
     const done = { operator, isPure: state.isPure, isFresh: state.isFresh && !entry.isRecursive };
     compiled.set(name, done);
     return done;
