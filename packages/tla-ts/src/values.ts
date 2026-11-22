@@ -3650,13 +3650,14 @@ const isElementOfSet = (element: Value, set: Value): boolean => {
   return isElementOfAnySet(element, set);
 };
 
-const getSubsetMemberElements = (element: Value, set: SubsetValue) => {
+// SubsetValue#member streams the element and stops at its first element outside the base.
+const isStreamedSubsetMember = (element: Value, set: SubsetValue, isMember: typeof isElementOf) => {
   if (!isSetValue(element) || isOverriddenSet(element)) {
     throw new TlaEvaluationError(
       `Attempted to check if the non-enumerable value\n${prettyPrint(formatValue(element))}\nis element of\n${prettyPrint(formatValue(set))}`,
     );
   }
-  return toFiniteSet(element).elements;
+  return !someStreamedElement(element, (item) => !isMember(item, set.base));
 };
 
 const getFunctionSetMemberRange = (element: Value, set: FunctionSetValue) => {
@@ -3713,19 +3714,24 @@ const isCaughtFilterError = (error: unknown, depth: number) =>
 const describeUndecidedFilterMember = (element: Value, set: FilteredSetValue) =>
   `Cannot decide if element:\n${prettyPrint(formatValue(element))}\n is element of:\n${prettyPrint(formatValue(set.base))}\nand satisfies the predicate ${set.source?.predicate}`;
 
-const getUnionMemberSets = (element: Value, set: UnionValue) => {
-  if (!isTlcEnumerable(set.base)) {
-    throw new TlaEvaluationError(
-      `Attempted to check if:\n ${prettyPrint(formatValue(element))}\nis an element of the non-enumerable set:\n ${prettyPrint(formatUnion(set))}`,
-    );
-  }
-  const sets = toFiniteSet(set.base).elements;
+const getUnionMemberSets = (base: SetValue | MixedSetValue | IntervalValue) => {
+  const sets = toFiniteSet(base).elements;
   if (sets.length > 1) {
     sets.forEach((inner) => {
       if (typeof inner === "object" && inner.kind === "Set") inner.isNormalized = true;
     });
   }
   return sets;
+};
+
+// UnionValue#member streams its set of sets and stops at the first one that holds the element.
+const isStreamedUnionMember = (element: Value, set: UnionValue, isMember: typeof isElementOf) => {
+  if (!isTlcEnumerable(set.base)) {
+    throw new TlaEvaluationError(
+      `Attempted to check if:\n ${prettyPrint(formatValue(element))}\nis an element of the non-enumerable set:\n ${prettyPrint(formatUnion(set))}`,
+    );
+  }
+  return someStreamedElement(set.base, (inner) => isMember(element, inner));
 };
 
 const getSequenceSetMemberElements = (element: Value, set: SequenceSetValue) => {
@@ -3773,7 +3779,9 @@ const isElementOfAnySet = (element: Value, set: Value): boolean => {
       return set.name !== "Nat" || (typeof element === "number" && element >= 0);
     }
     case "Subset":
-      return getSubsetMemberElements(element, set).every((item) => isElementOf(item, set.base));
+      return isReducibleSet(element)
+        ? toFiniteSet(element).elements.every((item) => isElementOf(item, set.base))
+        : isStreamedSubsetMember(element, set, isElementOf);
     case "FunctionSet": {
       const range = getFunctionSetMemberRange(element, set);
       return range !== false && range.every((item) => isElementOf(item, set.range));
@@ -3804,7 +3812,9 @@ const isElementOfAnySet = (element: Value, set: Value): boolean => {
       }
     }
     case "Union":
-      return getUnionMemberSets(element, set).some((inner) => isElementOf(element, inner));
+      return isReducibleSet(set.base)
+        ? getUnionMemberSets(set.base).some((inner) => isElementOf(element, inner))
+        : isStreamedUnionMember(element, set, isElementOf);
     case "SetOperation":
       if (set.operator === "\\cup")
         return isElementOf(element, set.left) || isElementOf(element, set.right);
@@ -3829,7 +3839,9 @@ const isElementOfComponents = (
   if (typeof set !== "object") return isElementOfAnySet(element, set);
   switch (set.kind) {
     case "Subset":
-      return getSubsetMemberElements(element, set).every((item) => isMember(item, set.base));
+      return isReducibleSet(element)
+        ? toFiniteSet(element).elements.every((item) => isMember(item, set.base))
+        : isStreamedSubsetMember(element, set, isMember);
     case "FunctionSet": {
       const range = getFunctionSetMemberRange(element, set);
       return range !== false && range.every((item) => isMember(item, set.range));
@@ -3860,7 +3872,9 @@ const isElementOfComponents = (
       }
     }
     case "Union":
-      return getUnionMemberSets(element, set).some((inner) => isMember(element, inner));
+      return isReducibleSet(set.base)
+        ? getUnionMemberSets(set.base).some((inner) => isMember(element, inner))
+        : isStreamedUnionMember(element, set, isMember);
     case "SetOperation":
       if (set.operator === "\\cup")
         return isMember(element, set.left) || isMember(element, set.right);
@@ -4582,27 +4596,139 @@ const getExpandedLazySet = (value: LazySetValue, isStrict: boolean) => {
   }
 };
 
-const formatLazySet = (value: LazySetValue, isStrict: boolean): string => {
-  const format = (inner: Value) => formatValue(inner, isStrict);
+const MAXIMUM_FORMAT_DEPTH = 1000;
+
+interface FormattedValue {
+  kind: "Value";
+  value: Value;
+  isStrict: boolean;
+  isNormalized: boolean;
+}
+
+interface FormattedSetEnd {
+  kind: "SetEnd";
+  sets: Value[] | undefined;
+}
+
+type FormatPart = string | FormattedValue | FormattedSetEnd;
+
+interface ValueWriter {
+  text: string;
+  depth: number;
+  pending: FormatPart[] | undefined;
+}
+
+const writeText = (writer: ValueWriter, text: string) => {
+  if (writer.pending === undefined) writer.text += text;
+  else writer.pending.push(text);
+};
+
+const writeSetEnd = (writer: ValueWriter, sets: Value[] | undefined) => {
+  if (writer.pending === undefined) sets?.pop();
+  else writer.pending.push({ kind: "SetEnd", sets });
+};
+
+const writeDeepValue = (
+  writer: ValueWriter,
+  value: Value,
+  isStrict: boolean,
+  isNormalized: boolean,
+) => {
+  const pending: FormatPart[] = [{ kind: "Value", value, isStrict, isNormalized }];
+  writer.pending = pending;
+  for (let part = pending.pop(); part !== undefined; part = pending.pop()) {
+    if (typeof part === "string") {
+      writer.text += part;
+      continue;
+    }
+    if (part.kind === "SetEnd") {
+      part.sets?.pop();
+      continue;
+    }
+    const start = pending.length;
+    writeValue(writer, part.value, part.isStrict, part.isNormalized);
+    for (let low = start, high = pending.length - 1; low < high; low++, high--) {
+      const written = pending[low];
+      pending[low] = pending[high];
+      pending[high] = written;
+    }
+  }
+  writer.pending = undefined;
+};
+
+const writeInner = (
+  writer: ValueWriter,
+  value: Value,
+  isStrict: boolean,
+  isNormalized: boolean,
+) => {
+  if (writer.pending !== undefined) {
+    writer.pending.push({ kind: "Value", value, isStrict, isNormalized });
+    return;
+  }
+  if (writer.depth === MAXIMUM_FORMAT_DEPTH) {
+    writeDeepValue(writer, value, isStrict, isNormalized);
+    return;
+  }
+  writer.depth++;
+  writeValue(writer, value, isStrict, isNormalized);
+  writer.depth--;
+};
+
+const writeItems = (
+  writer: ValueWriter,
+  items: Value[],
+  separator: string,
+  isStrict: boolean,
+  isNormalized: boolean,
+) => {
+  for (let index = 0; index < items.length; index++) {
+    if (index > 0) writeText(writer, separator);
+    writeInner(writer, items[index], isStrict, isNormalized);
+  }
+};
+
+const writeLazySet = (writer: ValueWriter, value: LazySetValue, isStrict: boolean) => {
   switch (value.kind) {
-    case "Subset":
-      return typeof value.base === "object" && value.base.kind === "Interval"
-        ? `SUBSET (${format(value.base)})`
-        : `SUBSET ${format(value.base)}`;
+    case "Subset": {
+      const isInterval = typeof value.base === "object" && value.base.kind === "Interval";
+      writeText(writer, isInterval ? "SUBSET (" : "SUBSET ");
+      writeInner(writer, value.base, isStrict, false);
+      if (isInterval) writeText(writer, ")");
+      return;
+    }
     case "FunctionSet":
-      return `[${format(value.domain)} -> ${format(value.range)}]`;
+      writeText(writer, "[");
+      writeInner(writer, value.domain, isStrict, false);
+      writeText(writer, " -> ");
+      writeInner(writer, value.range, isStrict, false);
+      return writeText(writer, "]");
     case "RecordSet":
-      return `[${value.names.map((name, index) => `${name}: ${format(value.sets[index])}`).join(", ")}]`;
+      writeText(writer, "[");
+      for (let index = 0; index < value.names.length; index++) {
+        writeText(writer, `${index > 0 ? ", " : ""}${value.names[index]}: `);
+        writeInner(writer, value.sets[index], isStrict, false);
+      }
+      return writeText(writer, "]");
     case "ProductSet":
-      return `(${value.factors.map(format).join(" \\X ")})`;
+      writeText(writer, "(");
+      writeItems(writer, value.factors, " \\X ", isStrict, false);
+      return writeText(writer, ")");
     case "SetOperation":
-      return `${format(value.left)} ${value.operator} ${format(value.right)}`;
+      writeInner(writer, value.left, isStrict, false);
+      writeText(writer, ` ${value.operator} `);
+      return writeInner(writer, value.right, isStrict, false);
     case "FilteredSet":
-      return value.source
-        ? `{${value.source.names} \\in ${format(value.base)} : <expression ${value.source.predicate}> }`
-        : `{x \\in ${format(value.base)} : ...}`;
+      writeText(writer, value.source ? `{${value.source.names} \\in ` : "{x \\in ");
+      writeInner(writer, value.base, isStrict, false);
+      return writeText(
+        writer,
+        value.source ? ` : <expression ${value.source.predicate}> }` : " : ...}",
+      );
     case "Union":
-      return formatUnion(value, isStrict);
+      writeText(writer, "UNION(");
+      writeInner(writer, value.base, isStrict, false);
+      return writeText(writer, ")");
   }
 };
 
@@ -4688,22 +4814,28 @@ export const formatNormalizedCopies = (values: Value[]) => {
   return copies.map((value) => formatValue(value, true, true));
 };
 
-export const formatValue = (value: Value, isStrict = false, isNormalized = false): string => {
-  const format = (inner: Value) => formatValue(inner, isStrict, isNormalized);
-  if (typeof value === "boolean") return value ? "TRUE" : "FALSE";
-  if (typeof value === "number") return String(value);
-  if (typeof value === "string") return formatString(value);
+const writeValue = (
+  writer: ValueWriter,
+  value: Value,
+  isStrict: boolean,
+  isNormalized: boolean,
+): void => {
+  if (typeof value === "boolean") return writeText(writer, value ? "TRUE" : "FALSE");
+  if (typeof value === "number") return writeText(writer, String(value));
+  if (typeof value === "string") return writeText(writer, formatString(value));
   switch (value.kind) {
     case "ModelValue":
-      return value.name;
+      return writeText(writer, value.name);
     case "Set":
-      return `{${value.elements.map(format).join(", ")}}`;
+      writeText(writer, "{");
+      writeItems(writer, value.elements, ", ", isStrict, isNormalized);
+      return writeText(writer, "}");
     case "MixedSet":
-      return format(toFiniteSet(value));
+      return writeInner(writer, toFiniteSet(value), isStrict, isNormalized);
     case "Interval":
-      return value.low <= value.high ? `${value.low}..${value.high}` : "{}";
+      return writeText(writer, value.low <= value.high ? `${value.low}..${value.high}` : "{}");
     case "InfiniteSet":
-      return value.name === "Any" ? "ANY" : value.name;
+      return writeText(writer, value.name === "Any" ? "ANY" : value.name);
     case "Subset":
     case "FunctionSet":
     case "RecordSet":
@@ -4714,13 +4846,15 @@ export const formatValue = (value: Value, isStrict = false, isNormalized = false
       const sets = setTrace.sets;
       sets?.push(value);
       const expanded = printing.isExpanded ? getExpandedLazySet(value, isStrict) : undefined;
-      const formatted = expanded ? format(expanded) : formatLazySet(value, isStrict);
-      sets?.pop();
-      return formatted;
+      if (expanded) writeInner(writer, expanded, isStrict, isNormalized);
+      else writeLazySet(writer, value, isStrict);
+      return writeSetEnd(writer, sets);
     }
 
     case "SequenceSet":
-      return `Seq(${format(value.base)})`;
+      writeText(writer, "Seq(");
+      writeInner(writer, value.base, isStrict, isNormalized);
+      return writeText(writer, ")");
     case "Function":
     case "LazyFunction": {
       const functionValue =
@@ -4731,24 +4865,30 @@ export const formatValue = (value: Value, isStrict = false, isNormalized = false
             : undefined;
       if (functionValue === undefined) {
         const source = value.kind === "LazyFunction" ? value.source : undefined;
-        if (!source) return "<function>";
-        const parameters = source.parameters
-          .map((parameter) => `${parameter.name} \\in ${formatValue(parameter.domain)}`)
-          .join(", ");
-        return `[${parameters} |-> <expression ${source.body}>]`;
+        if (!source) return writeText(writer, "<function>");
+        writeText(writer, "[");
+        for (let index = 0; index < source.parameters.length; index++) {
+          const parameter = source.parameters[index];
+          writeText(writer, `${index > 0 ? ", " : ""}${parameter.name} \\in `);
+          writeInner(writer, parameter.domain, false, false);
+        }
+        return writeText(writer, ` |-> <expression ${source.body}>]`);
       }
       if (
         functionValue.domain.length === 0 &&
         isVersion174 &&
         getFunctionClass(value) !== "tuple"
       ) {
-        return "<< >>";
+        return writeText(writer, "<< >>");
       }
-      const formatRange = (inner: Value) =>
-        formatValue(inner, isStrict, isNormalized && getFunctionClass(value) !== "lambda");
-      if (functionValue.domain.length === 0 && getFunctionClass(value) === "record") return "[]";
+      if (functionValue.domain.length === 0 && getFunctionClass(value) === "record") {
+        return writeText(writer, "[]");
+      }
+      const isRangeNormalized = isNormalized && getFunctionClass(value) !== "lambda";
       if (functionValue.domain.every((key, index) => key === index + 1)) {
-        return `<<${functionValue.range.map(formatRange).join(", ")}>>`;
+        writeText(writer, "<<");
+        writeItems(writer, functionValue.range, ", ", isStrict, isRangeNormalized);
+        return writeText(writer, ">>");
       }
       const pairs = isNormalized
         ? functionValue.domain.map((key, index) => [key, functionValue.range[index]])
@@ -4757,11 +4897,29 @@ export const formatValue = (value: Value, isStrict = false, isNormalized = false
         getFunctionClass(value) === "record" ||
         functionValue.domain.every((key) => typeof key === "string" && isFieldName(key))
       ) {
-        return `[${pairs.map((pair) => `${String(pair[0])} |-> ${formatRange(pair[1])}`).join(", ")}]`;
+        writeText(writer, "[");
+        for (let index = 0; index < pairs.length; index++) {
+          writeText(writer, `${index > 0 ? ", " : ""}${String(pairs[index][0])} |-> `);
+          writeInner(writer, pairs[index][1], isStrict, isRangeNormalized);
+        }
+        return writeText(writer, "]");
       }
-      return `(${pairs.map((pair) => `${format(pair[0])} :> ${formatRange(pair[1])}`).join(" @@ ")})`;
+      writeText(writer, "(");
+      for (let index = 0; index < pairs.length; index++) {
+        if (index > 0) writeText(writer, " @@ ");
+        writeInner(writer, pairs[index][0], isStrict, isNormalized);
+        writeText(writer, " :> ");
+        writeInner(writer, pairs[index][1], isStrict, isRangeNormalized);
+      }
+      return writeText(writer, ")");
     }
   }
+};
+
+export const formatValue = (value: Value, isStrict = false, isNormalized = false): string => {
+  const writer: ValueWriter = { text: "", depth: 0, pending: undefined };
+  writeValue(writer, value, isStrict, isNormalized);
+  return writer.text;
 };
 
 const isUnchanged = (previous: Value | undefined, value: Value) => {
