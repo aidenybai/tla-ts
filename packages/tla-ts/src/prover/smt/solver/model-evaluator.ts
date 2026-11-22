@@ -32,6 +32,7 @@ import {
   SORT_BOOL,
 } from "./ast";
 import type { AstManager } from "./ast";
+import { TACTIC_ARITH_OPTIONS } from "./arith-rewriter";
 import { DEFAULT_BV_OPTIONS } from "./bv-rewriter";
 import { isConsideredUninterpreted } from "./fpa-decl-plugin";
 import { FuncInterp, getManagerSomeValue } from "./proto-model";
@@ -61,15 +62,18 @@ const hasUniqueIndices = (manager: AstManager, store: number[]) => {
 export class ModelEvaluator extends RewriterTpl {
   private rewriter: Rewriter;
   private isModelCompletion = false;
+  private isExpandingArrayEqualities = true;
   private reducedArgs: number[] = [];
 
   constructor(
     manager: AstManager,
     private model: ProtoModel,
+    private readonly maxDegree = TACTIC_ARITH_OPTIONS.maxDegree,
   ) {
     super(manager);
     this.rewriter = new Rewriter(manager, {
       ...TACTIC_REWRITER_OPTIONS,
+      arith: { ...TACTIC_ARITH_OPTIONS, maxDegree },
       bv: { ...DEFAULT_BV_OPTIONS, isHiDiv0: manager.isHiDiv0, isMkbv2num: true },
       isExpandingSelectStores: true,
       isExpandingSelectItes: true,
@@ -87,9 +91,14 @@ export class ModelEvaluator extends RewriterTpl {
     this.isModelCompletion = isModelCompletion;
   }
 
+  setExpandArrayEqualities(isExpandingArrayEqualities: boolean) {
+    this.isExpandingArrayEqualities = isExpandingArrayEqualities;
+  }
+
   mkNested() {
-    const nested = new ModelEvaluator(this.manager, this.model);
+    const nested = new ModelEvaluator(this.manager, this.model, this.maxDegree);
     nested.isModelCompletion = this.isModelCompletion;
+    nested.isExpandingArrayEqualities = this.isExpandingArrayEqualities;
     return nested;
   }
 
@@ -288,6 +297,7 @@ export class ModelEvaluator extends RewriterTpl {
   private mkArrayEq(first: number, second: number): number | Rewrite | undefined {
     const manager = this.manager;
     if (first === second) return manager.trueExpr;
+    if (!this.isExpandingArrayEqualities) return undefined;
     const firstInterp = this.extractArrayFuncInterp(first);
     const secondInterp = this.extractArrayFuncInterp(second);
     if (firstInterp === undefined || secondInterp === undefined) return undefined;

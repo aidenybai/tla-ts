@@ -482,9 +482,10 @@ export class FdSolver {
   constructor(
     private readonly manager: AstManager,
     params: SatParams,
+    parameters: ReadonlyMap<string, string>,
     isIncremental = true,
   ) {
-    this.solver = new IncSatSolver(manager, params, isIncremental);
+    this.solver = new IncSatSolver(manager, params, parameters, isIncremental);
     this.fmls = new SolverFormulas(manager);
     this.state = new FdState(manager, this.fmls);
     this.trail = new ModelTrail(manager);
@@ -717,25 +718,27 @@ export class FdSolver {
   }
 }
 
-export const createFdTactic = (manager: AstManager, params: SatParams) => (goal: Goal) => {
-  const solver = new FdSolver(manager, params, false);
-  try {
-    for (const form of goal.forms.items) solver.assertExpr(form);
-    const result = solver.check();
-    goal.reset();
-    if (result === L_TRUE) {
-      const model = solver.getModel();
-      model?.incRef();
-      if (model !== undefined) goal.model = model;
-    } else if (result === L_FALSE) goal.assert(manager.falseExpr);
-    else {
-      if (!manager.limit.inc()) throw new SmtTacticError("canceled");
-      for (const form of solver.getAssertions()) goal.assert(form);
-      goal.converters = [...goal.converters, ...solver.getConverters()];
+export const createFdTactic =
+  (manager: AstManager, params: SatParams, parameters: ReadonlyMap<string, string>) =>
+  (goal: Goal) => {
+    const solver = new FdSolver(manager, params, parameters, false);
+    try {
+      for (const form of goal.forms.items) solver.assertExpr(form);
+      const result = solver.check();
+      goal.reset();
+      if (result === L_TRUE) {
+        const model = solver.getModel();
+        model?.incRef();
+        if (model !== undefined) goal.model = model;
+      } else if (result === L_FALSE) goal.assert(manager.falseExpr);
+      else {
+        if (!manager.limit.inc()) throw new SmtTacticError("canceled");
+        for (const form of solver.getAssertions()) goal.assert(form);
+        goal.converters = [...goal.converters, ...solver.getConverters()];
+      }
+      goal.depth++;
+      return [goal];
+    } finally {
+      solver.release();
     }
-    goal.depth++;
-    return [goal];
-  } finally {
-    solver.release();
-  }
-};
+  };

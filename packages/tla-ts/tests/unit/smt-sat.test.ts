@@ -183,7 +183,7 @@ describe("sat2goal", () => {
     const [p, q, r] = [0, 1, 2].map(() => manager.mkFreshConst(null, SORT_BOOL));
     for (const atom of [p, q, r]) manager.incRef(atom);
     const negations = [p, q, r].map((atom) => manager.mkNot(atom));
-    const solver = new IncSatSolver(manager, new Map());
+    const solver = new IncSatSolver(manager, new Map(), new Map());
     solver.assertExpr(manager.mkOr([p, q]));
     solver.check();
     solver.assertExpr(manager.mkOr([negations[0], r]));

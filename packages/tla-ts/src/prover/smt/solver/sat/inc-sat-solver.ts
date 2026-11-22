@@ -1,9 +1,10 @@
-import { SmtCanceledError, SmtTacticError } from "../../../../errors";
+import { SmtCanceledError, SmtTacticError, SmtUnsupportedError } from "../../../../errors";
 import { type AstManager, OP_AND, OP_EQ, OP_IMPLIES, OP_NOT, OP_OR, SORT_BOOL } from "../ast";
 import { mkNot } from "../ast-util";
 import { BitBlasterRewriter } from "../bit-blast-tactic";
 import { decConverterRefs, Goal, incConverterRefs, mkDependencyLeaf } from "../goal";
 import { L_FALSE, L_TRUE, L_UNDEF } from "../lbool";
+import { ModelEvaluator } from "../model-evaluator";
 import { ProtoModel } from "../proto-model";
 import { PropagateValuesTactic } from "../propagate-values";
 import { RefVector } from "../ref-vector";
@@ -72,6 +73,7 @@ export class IncSatSolver {
   constructor(
     private readonly manager: AstManager,
     params: SatParams,
+    private readonly parameters: ReadonlyMap<string, string>,
     isIncremental = true,
     mkThSolver: ThSolverFactory | null = null,
   ) {
@@ -414,7 +416,28 @@ export class IncSatSolver {
       else if (value === L_FALSE) model.registerConst(manager.decls[expr], manager.falseExpr);
     }
     if (this.satConverter.entries.length > 0) applyDefinitions(this.satConverter.entries, model);
-    return convertModel(this.converters, euf === null ? model : euf.updateModel(model));
+    const converted = convertModel(this.converters, euf === null ? model : euf.updateModel(model));
+    if (this.parameters.get("model_validate") === "true") this.validateModel(converted);
+    return converted;
+  }
+
+  private validateModel(model: ProtoModel) {
+    const manager = this.manager;
+    const evaluator = new ModelEvaluator(manager, model);
+    evaluator.setModelCompletion(true);
+    let isAllTrue = true;
+    try {
+      for (const form of this.fmls.items) {
+        if (manager.hasQuantifierFlags[form]) continue;
+        const value = evaluator.rewrite(form);
+        manager.decRef(value);
+        if (manager.limit.isExhausted()) return;
+        if (value === manager.falseExpr) isAllTrue = false;
+      }
+    } finally {
+      evaluator.release();
+    }
+    if (!isAllTrue) throw new SmtUnsupportedError("a sat model that fails validation");
   }
 
   getModel() {

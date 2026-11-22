@@ -83,6 +83,7 @@ import type { DatalogContext } from "./muz/dl-context";
 import { createDatalogContext } from "./muz/horn-tactic";
 import { printModel } from "./model-printer";
 import { ModelEvaluator } from "./model-evaluator";
+import { validateModel } from "./validate-model";
 import { FuncInterp, getManagerSomeValue, ProtoModel } from "./proto-model";
 import {
   applyTactic,
@@ -852,21 +853,21 @@ export const runSmtlibScript = (
       state.manager.limit.pop();
     }
   };
-  const getModel = (list: SmtList) => {
+  const findModel = () => {
     const check = state.check;
     if (!settings.isProducingModels || check === undefined || check.status === L_FALSE)
-      throw new SmtParseError("model is not available", list.end);
+      return undefined;
     if (check.model !== undefined) {
       check.model.incRef();
       return check.model;
     }
     if (check.isOptimizing) throw new SmtUnsupportedError("the models of optimization");
-    if (check.context === undefined && check.status !== L_TRUE)
-      throw check.isFromTactic
-        ? new SmtParseError("model is not available", list.end)
-        : new SmtUnsupportedError("the model of a canceled search");
+    if (check.context === undefined && check.status !== L_TRUE) {
+      if (check.isFromTactic) return undefined;
+      throw new SmtUnsupportedError("the model of a canceled search");
+    }
     const satModel = check.satSolver?.getModel();
-    if (satModel === null) throw new SmtParseError("model is not available", list.end);
+    if (satModel === null) return undefined;
     if (satModel !== undefined) return satModel;
     const context = check.context;
     const model =
@@ -875,13 +876,29 @@ export const runSmtlibScript = (
         : context === undefined
           ? new ProtoModel(state.manager)
           : context.getModel();
-    if (model === undefined) throw new SmtParseError("model is not available", list.end);
+    if (model === undefined) return undefined;
     if (check.fdSolver === undefined) {
       model.incRef();
       check.model = model;
     }
     model.incRef();
     return model;
+  };
+  const getModel = (list: SmtList) => {
+    const model = findModel();
+    if (model === undefined) throw new SmtParseError("model is not available", list.end);
+    return model;
+  };
+  const validateCheckModel = (end: SmtToken) => {
+    if (settings.parameters.get("model_validate") !== "true") return;
+    const model = findModel();
+    if (model === undefined) return;
+    try {
+      if (!validateModel(state.manager, model, state.assertions))
+        throw new SmtParseError("an invalid model was generated", end);
+    } finally {
+      model.decRef();
+    }
   };
   const clearCheck = () => {
     const check = state.check;
@@ -972,6 +989,7 @@ export const runSmtlibScript = (
         ? new IncSatSolver(
             state.manager,
             getSatParams(parameters),
+            parameters,
             true,
             isEuf ? mkThSolver(parameters) : null,
           )
@@ -981,7 +999,7 @@ export const runSmtlibScript = (
       !isProofsEnabled &&
       !isParallel &&
       tactic === undefined
-        ? new FdSolver(state.manager, getSatParams(parameters))
+        ? new FdSolver(state.manager, getSatParams(parameters), parameters)
         : undefined;
     dropSolver(old);
   };
@@ -1193,6 +1211,7 @@ export const runSmtlibScript = (
           ),
         );
       checkSat(literals, end);
+      if (state.check?.status === L_TRUE) validateCheckModel(end);
     } finally {
       for (const literal of literals) state.manager.decRef(literal);
     }
@@ -1553,6 +1572,8 @@ export const runSmtlibScript = (
           state.manager.limit.pop();
         }
         validateCheck(list.end);
+        if (state.check?.status === L_TRUE && state.check.model !== undefined)
+          validateCheckModel(list.end);
       },
     ],
     [

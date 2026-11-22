@@ -433,6 +433,7 @@ const getKernelParams = (environment: TacticEnvironment, params: TacticParams, g
     mbqiMaxCexs: Number(getParameter(environment, "smt.mbqi.max_cexs", "1")),
     mbqiForceTemplate: Number(getParameter(environment, "smt.mbqi.force_template", "10")),
     mbqiId: getParameter(environment, "smt.mbqi.id", ""),
+    isModelValidating: environment.parameters.get("model_validate") === "true",
     isProofsEnabled: goal.isProofsEnabled,
   };
 };
@@ -493,6 +494,7 @@ const runSat = (environment: TacticEnvironment, params: TacticParams) => (goal: 
   return createSatTactic(
     environment.manager,
     satParams,
+    environment.parameters.get("model_validate") === "true",
     satParams.get("euf") === true ? mkThSolver(environment.parameters) : null,
   )(goal);
 };
@@ -1017,6 +1019,7 @@ const NAMED_TACTICS = new Map<string, NamedTactic>([
           mbqiMaxCexs: Number(getParameter(environment, "smt.mbqi.max_cexs", "1")),
           mbqiForceTemplate: Number(getParameter(environment, "smt.mbqi.force_template", "10")),
           mbqiId: getParameter(environment, "smt.mbqi.id", ""),
+          isModelValidating: environment.parameters.get("model_validate") === "true",
         });
         const simplifier = createCtxSolverSimplify(
           environment.manager,
@@ -1782,7 +1785,11 @@ const NAMED_TACTICS = new Map<string, NamedTactic>([
       descrs: SAT_DESCRS,
       isRejectingUnknown: false,
       build: (environment, params) => (goal) =>
-        createFdTactic(environment.manager, getSatTacticParams(environment, params))(goal),
+        createFdTactic(
+          environment.manager,
+          getSatTacticParams(environment, params),
+          environment.parameters,
+        )(goal),
     },
   ],
   [
