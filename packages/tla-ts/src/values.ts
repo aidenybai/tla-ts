@@ -6,10 +6,9 @@ import {
   TlaModuleError,
   TlaSetBoundError,
 } from "./errors";
-import { withErrorExitCode } from "./exit-codes";
 import { getJavaHashCode } from "./java-hash";
 import { prettyPrint } from "./pretty-print";
-import { isEvalException, withUnexpectedException } from "./tlc/messages";
+import { isEvalException, withProcessException } from "./tlc/messages";
 import type { TlcVersion } from "./tlc/version";
 
 export interface ModelValue {
@@ -4399,4 +4398,4 @@ export const formatState = (state: Record<string, Value>, previous?: Record<stri
 
 // TLCStateMut#toString evaluates the VIEW under -view, and what that throws while TLC reports an error escapes to TLC#process.
 export const formatErrorState = (state: Record<string, Value>) =>
-  withErrorExitCode(() => withUnexpectedException(() => formatState(state)));
+  withProcessException(() => formatState(state));
