@@ -438,6 +438,7 @@ interface ScriptState {
   tacticConverters: Goal["converters"];
   tacticModel: ProtoModel | undefined;
   lastAssertions: RefVector;
+  isLastAssertionsValid: boolean;
   // The solver takes the flag of models when it is made, and only produce-models changes it.
   isSolverProducingModels: boolean;
 }
@@ -519,6 +520,7 @@ export const runSmtlibScript = (
       tacticConverters: [],
       tacticModel: undefined,
       lastAssertions: new RefVector(manager),
+      isLastAssertionsValid: false,
       isSolverProducingModels: settings.isProducingModels,
     };
   };
@@ -641,6 +643,7 @@ export const runSmtlibScript = (
       if (checked.status === L_UNDEF && state.scopes.length === 0) {
         state.lastAssertions.reset();
         for (const form of goal.forms.items) state.lastAssertions.push(form);
+        state.isLastAssertionsValid = true;
       }
       // tactic2solver keeps the goal's model converter until its next check.
       decConverterRefs(state.manager, state.tacticConverters);
@@ -661,7 +664,7 @@ export const runSmtlibScript = (
   };
   // tactic2solver cleans its tactic before the goal is built and again before it is freed.
   const solveWithStrategy = (strategy: string) => {
-    releaseTacticModel();
+    releaseTacticResult();
     try {
       const tactic = (state.tactic ??= compileInternalTactic(
         getTacticEnvironment(state.tacticDestructors, state.tacticInits),
@@ -733,7 +736,9 @@ export const runSmtlibScript = (
     const behavior = Number(settings.parameters.get("combined_solver.solver2_unknown") ?? 1);
     if (behavior === 0) return false;
     if (behavior === 1)
-      return !state.assertions.some((assertion) => state.manager.hasQuantifierFlags[assertion]);
+      return !(state.isLastAssertionsValid ? state.lastAssertions.items : state.assertions).some(
+        (assertion) => state.manager.hasQuantifierFlags[assertion],
+      );
     if (behavior === 2) return true;
     // Deviation from Z3: use_solver1_when_undef reaches UNREACHABLE on a solver2_unknown above 2.
     throw new SmtParseError(
@@ -872,9 +877,10 @@ export const runSmtlibScript = (
     if (check?.heldSolver !== undefined) releaseSolver(check.heldSolver);
     state.check = undefined;
   };
-  const releaseTacticModel = () => {
+  const releaseTacticResult = () => {
     state.tacticModel?.decRef();
     state.tacticModel = undefined;
+    state.isLastAssertionsValid = false;
   };
   // cmd_context::validate_check_sat_result runs after the answer is printed.
   const validateCheck = (end: SmtToken) => {
@@ -998,6 +1004,7 @@ export const runSmtlibScript = (
     state.tacticConverters = [];
     state.tacticModel = undefined;
     state.lastAssertions = new RefVector(state.manager);
+    state.isLastAssertionsValid = false;
     return parts;
   };
   const dropSolver = (parts: SolverParts) => {
@@ -1402,7 +1409,7 @@ export const runSmtlibScript = (
           manager.incRef(answer);
           state.names.push(answer);
         }
-        releaseTacticModel();
+        releaseTacticResult();
         assertInKernel(assertion.formula, state.names[state.names.length - 1]);
         if (follower !== list.end)
           throw new SmtParseError("invalid assert command, ')' expected", follower);
@@ -1681,7 +1688,7 @@ export const runSmtlibScript = (
           const limit = state.manager.limit;
           limit.push(settings.rlimit);
           try {
-            releaseTacticModel();
+            releaseTacticResult();
             state.kernel?.push();
             useSatSolver((solver) => solver.push());
             state.fdSolver?.push();
@@ -1710,7 +1717,7 @@ export const runSmtlibScript = (
         if (count > 0) {
           state.isIncremental = true;
           const scope = state.scopes[state.scopes.length - count];
-          releaseTacticModel();
+          releaseTacticResult();
           restoreImplications(scope.assertions);
           state.kernel?.pop(count);
           useSatSolver((solver) => solver.pop(count));

@@ -3897,6 +3897,26 @@ describe("combined_solver, as Z3 5.3.2 reads its options", () => {
     ]);
   });
 
+  it("looks for quantifiers in the tactic's last unknown goal", () => {
+    expect(
+      run([
+        "(declare-fun x () Int)",
+        "(declare-fun y () Int)",
+        "(assert (forall ((z Int)) (> (+ z 1) z)))",
+        "(assert (= (^ x y) 8))",
+        "(check-sat)",
+        "(check-sat-assuming (true))",
+        ...CHECK,
+      ]),
+    ).toEqual([
+      "unknown",
+      "unknown",
+      "unknown",
+      '(:reason-unknown "smt tactic failed to show goal to be sat/unsat (incomplete (theory arithmetic))")',
+      "(:rlimit 473)",
+    ]);
+  });
+
   it("answers where Z3 sets no timer for solver2_timeout", () => {
     expect(
       run(["(set-option :combined_solver.solver2_timeout 100000)", ...POWER, ...CHECK]),
