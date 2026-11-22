@@ -39,6 +39,7 @@ import {
   EqRootPropagationJustification,
   MpIffJustification,
 } from "./enode";
+import { ObjMap } from "./hashtable";
 import {
   BV_ENODE,
   BV_EQ,
@@ -182,6 +183,8 @@ export interface SmtParams {
   qiCost?: string;
   qiEagerThreshold?: number;
   qiLazyThreshold?: number;
+  qiMaxEagerMultipatterns?: number;
+  isQiUpdatingGeneration?: boolean;
   // The model checker's auxiliary context pretends every array operation is supported.
   isArrayFakeSupport?: boolean;
   isProofsEnabled?: boolean;
@@ -228,6 +231,8 @@ export class Context extends Internalizer {
   private hasCaseSplit = true;
   private incompleteTheories: Theory[] = [];
   private modelState: ModelState = { kind: "none" };
+  // Z3's model_generator keeps this table, and with it its capacity, from one model to the next.
+  readonly root2value = new ObjMap<number>((expr) => this.manager.hashes[expr]);
   private asserted: AssertedFormulas | undefined;
   macros: MacroManager | undefined;
   hasQuantifiers = false;
@@ -250,6 +255,10 @@ export class Context extends Internalizer {
       ...DEFAULT_CONFIG,
       isArithPropagatingEqs: params.isArithPropagatingEqs ?? true,
       qiLazyThreshold: params.qiLazyThreshold ?? DEFAULT_CONFIG.qiLazyThreshold,
+      qiMaxEagerMultipatterns:
+        params.qiMaxEagerMultipatterns ?? DEFAULT_CONFIG.qiMaxEagerMultipatterns,
+      isQiUpdatingGeneration:
+        params.isQiUpdatingGeneration ?? DEFAULT_CONFIG.isQiUpdatingGeneration,
     };
   }
 
@@ -286,6 +295,8 @@ export class Context extends Internalizer {
     this.params.qiCost = params.qiCost;
     this.params.qiEagerThreshold = params.qiEagerThreshold;
     this.params.qiLazyThreshold = params.qiLazyThreshold;
+    this.params.qiMaxEagerMultipatterns = params.qiMaxEagerMultipatterns;
+    this.params.isQiUpdatingGeneration = params.isQiUpdatingGeneration;
     this.params.relevancyLevel = params.relevancyLevel ?? 2;
     this.arith?.updateParams();
     this.config = {
@@ -300,6 +311,10 @@ export class Context extends Internalizer {
       isEliminatingBounds: this.config.isEliminatingBounds,
       arithPropagationThreshold: this.config.arithPropagationThreshold,
       qiLazyThreshold: params.qiLazyThreshold ?? DEFAULT_CONFIG.qiLazyThreshold,
+      qiMaxEagerMultipatterns:
+        params.qiMaxEagerMultipatterns ?? DEFAULT_CONFIG.qiMaxEagerMultipatterns,
+      isQiUpdatingGeneration:
+        params.isQiUpdatingGeneration ?? DEFAULT_CONFIG.isQiUpdatingGeneration,
       arrayLazyIeqDelay: this.config.arrayLazyIeqDelay,
       isArraySimple: this.config.isArraySimple,
     };

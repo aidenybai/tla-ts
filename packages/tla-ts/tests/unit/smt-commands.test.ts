@@ -4001,3 +4001,76 @@ describe("memory_max_size, as Z3 5.3.2 runs out of memory", () => {
     ).toEqual(["sat"]);
   });
 });
+
+describe("the options that turn on Z3's verbose output, which the port doesn't write", () => {
+  it("throws at smt.qi.profile, whose instance counts Z3 writes to stderr", () => {
+    expect(() => run(["(set-option :smt.qi.profile true)"])).toThrow(
+      new SmtUnsupportedError("the option :smt.qi.profile"),
+    );
+  });
+
+  it("throws at smt.mbqi.trace, whose checks Z3 writes to stderr", () => {
+    expect(() => run(["(set-option :smt.mbqi.trace true)"])).toThrow(
+      new SmtUnsupportedError("the option :smt.mbqi.trace"),
+    );
+  });
+
+  it("throws at a verbose level above 0", () => {
+    expect(() => run(["(set-option :verbose 1)"])).toThrow(
+      new SmtUnsupportedError("the option :verbose"),
+    );
+  });
+
+  it("throws at a verbosity above 0", () => {
+    expect(() => run(["(set-option :verbosity 1)"])).toThrow(
+      new SmtUnsupportedError("the option :verbosity"),
+    );
+  });
+
+  it("accepts them off, where Z3 writes nothing", () => {
+    expect(
+      run([
+        "(set-option :smt.qi.profile false)",
+        "(set-option :smt.mbqi.trace false)",
+        "(set-option :verbose 0)",
+        "(set-option :verbosity 0)",
+        "(declare-fun x () Int)",
+        "(assert (> x 0))",
+        "(check-sat)",
+      ]),
+    ).toEqual(["sat"]);
+  });
+});
+
+describe("the quantifier options the port doesn't port", () => {
+  it("throws at smt.qi.profile_freq, whose instance counts Z3 writes to stderr", () => {
+    expect(() => run(["(set-option :smt.qi.profile_freq 3)"])).toThrow(
+      new SmtUnsupportedError("the option :smt.qi.profile_freq"),
+    );
+  });
+
+  it("throws at smt.qi.max_instances, which cancels Z3's search", () => {
+    expect(() => run(["(set-option :smt.qi.max_instances 3)"])).toThrow(
+      new SmtUnsupportedError("the option :smt.qi.max_instances"),
+    );
+  });
+
+  it("throws at smt.qi.persist_instances, which reasserts instances on a re-search", () => {
+    expect(() => run(["(set-option :smt.qi.persist_instances true)"])).toThrow(
+      new SmtUnsupportedError("the option :smt.qi.persist_instances"),
+    );
+  });
+
+  it("accepts them at Z3's defaults", () => {
+    expect(
+      run([
+        "(set-option :smt.qi.profile_freq 4294967295)",
+        "(set-option :smt.qi.max_instances 4294967295)",
+        "(set-option :smt.qi.persist_instances false)",
+        "(declare-fun x () Int)",
+        "(assert (> x 0))",
+        "(check-sat)",
+      ]),
+    ).toEqual(["sat"]);
+  });
+});
