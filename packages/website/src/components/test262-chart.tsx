@@ -22,15 +22,31 @@ const LINE = TEST262_RUNS.map((run, index) => {
   return `C${middle} ${getY(TEST262_RUNS[index - 1])} ${middle} ${getY(run)} ${getX(index)} ${getY(run)}`;
 }).join(" ");
 
-const TIGHT_TICK_PERCENT = 18;
-// A date whose tick sits close to the next date's is dropped on a phone, where the two overlap.
-const DATE_TICKS = TEST262_RUNS.flatMap((run, index) =>
+// The least room between two dates' ticks, as a share of the chart's width, where it is wide and
+// where it is a phone's.
+const WIDE_GAP_PERCENT = 13;
+const NARROW_GAP_PERCENT = 26;
+
+// The dates whose labels fit: the latest, then each earlier one that is far enough from the one
+// kept after it.
+const getSpacedLabels = (ticks: { label: string; index: number }[], gapPercent: number) =>
+  ticks.reduceRight<{ label: string; index: number }[]>(
+    (kept, tick) =>
+      kept.length === 0 || getX(kept[0].index) - getX(tick.index) >= gapPercent
+        ? [tick, ...kept]
+        : kept,
+    [],
+  );
+
+const FIRST_OF_DATES = TEST262_RUNS.flatMap((run, index) =>
   run.label === TEST262_RUNS[index - 1]?.label ? [] : [{ label: run.label, index }],
-).map((tick, index, ticks) => ({
+);
+const NARROW_LABELS = new Set(
+  getSpacedLabels(FIRST_OF_DATES, NARROW_GAP_PERCENT).map((tick) => tick.label),
+);
+const DATE_TICKS = getSpacedLabels(FIRST_OF_DATES, WIDE_GAP_PERCENT).map((tick) => ({
   ...tick,
-  isTight:
-    index < ticks.length - 1 &&
-    getX(ticks[index + 1].index) - getX(tick.index) < TIGHT_TICK_PERCENT,
+  isTight: !NARROW_LABELS.has(tick.label),
 }));
 
 export const Test262Chart = () => {
