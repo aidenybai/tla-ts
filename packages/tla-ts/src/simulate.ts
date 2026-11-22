@@ -53,6 +53,7 @@ import {
   computeLikeTlcOnFailure,
   createModelValue,
   createRecord,
+  formatErrorState,
   formatState,
   getSetBound,
   markNormalized,
@@ -401,7 +402,7 @@ export const simulate = (options: SimulationOptions & CliSettings): number => {
       return EXIT_STATUS.error;
     }
     const text = getFailureMessage(failure, false);
-    const initial = `While working on the initial state:\n${formatState(toRecord(state))}`;
+    const initial = `While working on the initial state:\n${formatErrorState(toRecord(state))}`;
     reportMessage(
       MESSAGE_CODE.initialState,
       `${text.message}\n${initial}`,

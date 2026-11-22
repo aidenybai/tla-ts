@@ -2216,3 +2216,48 @@ describe("the CLI fails to open a file as TLC does", () => {
     },
   );
 });
+
+describe("the CLI fails to print an initial state through -view as TLC does", () => {
+  const getUnexpected = (exception: string, message: string) =>
+    `Error: TLC threw an unexpected exception.\nThis was probably caused by an error in the spec or model.\nSee the User Output or TLC Console for clues to what happened.\nThe exception was a ${exception}\n: ${message}\n`;
+  const errors: [string, string][] = [
+    ["DivView", getUnexpected("tlc2.tool.EvalException", "The second argument of \\div is 0.")],
+    [
+      "EqualView",
+      getUnexpected(
+        "java.lang.RuntimeException",
+        'Attempted to check equality of integer 0 with non-integer:\n"a"',
+      ),
+    ],
+    [
+      "JsonView",
+      "Error: Attempted to apply the operator overridden by the Java method\npublic static tlc2.value.IValue tlc2.module.Json.deserialize(tlc2.value.impl.StringValue) throws java.io.IOException,\nbut it produced the following error:\nmissing.json (No such file or directory)\n",
+    ],
+  ];
+  const modes = [[], ["-simulate", "num=1"], ["-dfid", "1"]];
+
+  it.each(
+    errors.flatMap((error): [string, string, string[]][] =>
+      modes.map((mode) => [error[0], error[1], mode]),
+    ),
+  )(
+    "reports %s failing on the state that a constraint failed on, under %j",
+    (view, error, mode) => {
+      const directory = mkdtempSync(join(FIXTURES, "view-print-"));
+      writeFileSync(
+        join(directory, "M.tla"),
+        '---- MODULE M ----\nEXTENDS Naturals, TLC, Json\nVARIABLE x\nInit == x = 0\nNext == x\' = x\nBad == x \\in 1\nDivView == 1 \\div x\nEqualView == x = "a"\nJsonView == <<x, JsonDeserialize("missing.json")>>\n====\n',
+      );
+      writeFileSync(
+        join(directory, "M.cfg"),
+        `INIT Init\nNEXT Next\nCONSTRAINT Bad\nVIEW ${view}\n`,
+      );
+      const result = runCliWith(directory, ["-view", ...mode, "M.tla"]);
+      rmSync(directory, { recursive: true });
+      expect([result.status, result.stdout]).toEqual([
+        255,
+        expect.stringContaining(`\n${error}Finished in `),
+      ]);
+    },
+  );
+});

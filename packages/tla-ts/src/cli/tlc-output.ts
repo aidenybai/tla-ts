@@ -20,8 +20,7 @@ import type {
   Violation,
 } from "../check";
 import type { DepthFirstOutput } from "../dfid";
-import { TlaAliasFormatError, TlaEvaluationError, UNEXPECTED_EXCEPTION } from "../errors";
-import { EXIT_STATUS, setExitCode } from "../exit-codes";
+import { TlaAliasFormatError } from "../errors";
 import type { SimulationOutput, SimulationStatistics } from "../simulate";
 import {
   formatProbability,
@@ -40,7 +39,7 @@ import {
   MESSAGE_LEVEL,
   type MessagePrinter,
 } from "../tlc/messages";
-import { formatState, getDiffBase } from "../values";
+import { formatErrorState, formatState, getDiffBase } from "../values";
 import type { SeededArguments } from "./tlc-arguments";
 
 const printInitialStatesProgress = (printer: MessagePrinter, count: number) =>
@@ -553,17 +552,7 @@ export const printResult = (result: CheckResult, printer: MessagePrinter, timing
     if (failure.isCallStackFirst) printCallStack();
     const initialState =
       failure.initialState &&
-      (() => {
-        try {
-          return `While working on the initial state:\n${formatState(failure.initialState)}`;
-        } catch (error) {
-          if (!(error instanceof TlaEvaluationError)) throw error;
-          throw setExitCode(
-            new TlaEvaluationError(`${UNEXPECTED_EXCEPTION}${error.message}`),
-            EXIT_STATUS.error,
-          );
-        }
-      })();
+      `While working on the initial state:\n${formatErrorState(failure.initialState)}`;
     print(
       initialState ? MESSAGE_CODE.initialState : failure.code,
       MESSAGE_LEVEL.error,
