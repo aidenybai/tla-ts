@@ -3945,3 +3945,28 @@ describe("combined_solver, as Z3 5.3.2 reads its options", () => {
     ).toThrow(SmtUnsupportedError);
   });
 });
+
+describe("memory_max_size, as Z3 5.3.2 runs out of memory", () => {
+  const LOOP = [
+    "(set-option :memory_max_size 20)",
+    "(set-option :smt.qi.eager_threshold 100000000.0)",
+    "(declare-fun f (Int) Int)",
+    "(assert (forall ((x Int)) (! (> (f (f x)) 0) :pattern ((f x)))))",
+    "(assert (> (f 0) 0))",
+    '(echo "before")',
+  ];
+
+  it("stops the script once a check fills it", () => {
+    expect(run([...LOOP, "(check-sat)", '(echo "after")'])).toEqual([
+      "before",
+      '(error "out of memory")',
+    ]);
+  });
+
+  it("stops the script once push's propagation, which no rlimit stops, fills it", () => {
+    expect(run([...LOOP, "(push 1)", '(echo "after")'])).toEqual([
+      "before",
+      '(error "out of memory")',
+    ]);
+  });
+});

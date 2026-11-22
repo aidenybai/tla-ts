@@ -333,6 +333,13 @@ export class SmtCanceledError extends TlaError {
   }
 }
 
+export class SmtMemoryOutError extends TlaError {
+  constructor() {
+    super("out of memory");
+    this.name = "SmtMemoryOutError";
+  }
+}
+
 export class SmtRewriterCanceledError extends SmtCanceledError {
   constructor() {
     super();
