@@ -2,6 +2,7 @@ import { CHECK_MODEL_RESTART, CHECK_MODEL_SAT, CHECK_MODEL_UNKNOWN, type Context
 import { FC_CONTINUE, FC_DONE } from "./theory";
 import { Mam } from "./e-matching";
 import type { Enode } from "./enode";
+import type { ObjMap } from "./hashtable";
 import { ModelChecker } from "./model-checker";
 import { ModelFinder } from "./model-finder";
 import type { ProtoModel } from "./proto-model";
@@ -183,7 +184,7 @@ export class DefaultQuantifierManager {
     if (this.context.params.isMbqi) this.finder.fixModel(model);
   }
 
-  checkModel(model: ProtoModel, root2value: Map<Enode, number>) {
+  checkModel(model: ProtoModel, root2value: ObjMap<number>) {
     if (this.quantifiers.length === 0) return CHECK_MODEL_SAT;
     if (!this.context.params.isMbqi) return CHECK_MODEL_UNKNOWN;
     const checker = this.checker;

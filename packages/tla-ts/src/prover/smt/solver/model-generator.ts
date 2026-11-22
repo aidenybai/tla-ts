@@ -1,12 +1,13 @@
 import { FAMILY_BASIC, FAMILY_USER, SORT_BOOL } from "./ast";
 import type { Context } from "./context";
 import { Enode } from "./enode";
+import type { ObjMap } from "./hashtable";
 import { FuncInterp, ProtoModel } from "./proto-model";
 import type { DependentValue, ExtraFreshValue } from "./theory";
 
 export interface GeneratedModel {
   model: ProtoModel;
-  root2value: Map<Enode, number>;
+  root2value: ObjMap<number>;
 }
 
 // include_func_interp: the model interprets uninterpreted functions, the decls that their theory
@@ -102,7 +103,8 @@ export const mkModel = (context: Context): GeneratedModel => {
   for (const freshValue of extraFreshValues) processSource(freshValue);
   for (const root of freshRoots) processSource(root);
   for (const root of roots) processSource(root);
-  const root2value = new Map<Enode, number>();
+  const root2value = context.root2value;
+  root2value.clear();
   for (const source of sortedSources) {
     if (!(source instanceof Enode)) {
       source.value = model.getFreshValue(source.sort) ?? undefined;
@@ -118,16 +120,16 @@ export const mkModel = (context: Context): GeneratedModel => {
         : proc.mkValue(
             proc.dependencies.map((dependency) =>
               dependency instanceof Enode
-                ? (root2value.get(dependency.root) ??
+                ? (root2value.get(dependency.root.owner) ??
                   model.getSomeValue(manager.sorts[dependency.owner]))
                 : (dependency.value ?? model.getSomeValue(dependency.sort)),
             ),
           );
     model.registerValue(value);
-    root2value.set(source, value);
+    root2value.set(expr, value);
   }
   const getValue = (node: Enode) =>
-    root2value.get(node.root) ?? model.getSomeValue(manager.sorts[node.owner]);
+    root2value.get(node.root.owner) ?? model.getSomeValue(manager.sorts[node.owner]);
   for (const node of context.enodes)
     if (manager.isUninterpretedConst(node.owner) && context.isRelevant(node.owner))
       model.registerConst(manager.decls[node.owner], getValue(node));

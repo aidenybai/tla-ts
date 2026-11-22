@@ -714,6 +714,31 @@ describe("the model checker, as Z3 5.3.2 counts its steps", () => {
       ]),
     ).toEqual(["sat", "(:rlimit 4128)"]);
   });
+
+  it("binds a complete counterexample to the root it reads last in hash-table order", () => {
+    expect(
+      run([
+        "(set-option :auto_config false)",
+        "(set-option :smt.mbqi true)",
+        "(set-option :smt.mbqi.max_iterations 4)",
+        "(declare-sort U 0)",
+        "(declare-fun cast (Int) U)",
+        "(declare-fun proj (U) Int)",
+        "(declare-fun f (Int) Int)",
+        "(declare-const a Int)",
+        "(declare-const b Int)",
+        "(declare-const c Int)",
+        "(declare-const d Int)",
+        "(declare-const e Int)",
+        "(assert (forall ((x Int)) (! (=> (< x 0) (= x (proj (cast x)))) :pattern ((cast x)))))",
+        "(assert (= (proj (cast 1)) 1))",
+        "(assert (and (<= (- (f a) (f b)) (- 2)) (not (= (- (f a) (f b)) 7))))",
+        "(assert (and (<= (- (f c) (f d) (f e)) (- 2)) (not (= (- (f c) (f d) (f e)) 7))))",
+        "(check-sat)",
+        "(get-info :rlimit)",
+      ]),
+    ).toEqual(["unknown", "(:rlimit 3291)"]);
+  });
 });
 
 describe("the preprocessing setup_AUFLIA turns on, as Z3 5.3.2 runs it", () => {

@@ -39,6 +39,7 @@ import {
   EqRootPropagationJustification,
   MpIffJustification,
 } from "./enode";
+import { ObjMap } from "./hashtable";
 import {
   BV_ENODE,
   BV_EQ,
@@ -228,6 +229,8 @@ export class Context extends Internalizer {
   private hasCaseSplit = true;
   private incompleteTheories: Theory[] = [];
   private modelState: ModelState = { kind: "none" };
+  // Z3's model_generator keeps this table, and with it its capacity, from one model to the next.
+  readonly root2value = new ObjMap<number>((expr) => this.manager.hashes[expr]);
   private asserted: AssertedFormulas | undefined;
   macros: MacroManager | undefined;
   hasQuantifiers = false;
