@@ -4479,6 +4479,19 @@ describe("name resolution matches SANY", () => {
       [],
     ],
     [
+      "a selection past a constant's name into a definition with too few arguments",
+      "---- MODULE Inner ----\nFoo == 2 = 2\n====\n---- MODULE Base ----\nR(a) == INSTANCE Inner\n====\nINSTANCE Base\nCONSTANT R\nCONSTANT Q\nQ(a) == INSTANCE Inner\nX == R!Foo!1\nY == Q!Foo!1",
+      [
+        [
+          "11, col 1 to line 11, col 22",
+          "Multiply-defined symbol 'Q': this definition or declaration conflicts \nwith the one at line 10, col 10 to line 10, col 10 of module M.",
+        ],
+        ["12, col 6 to line 12, col 6", "Cannot take subexpression of `R'."],
+        ["13, col 6 to line 13, col 6", "Cannot take subexpression of `Q'."],
+      ].map((entry) => ({ location: `line ${entry[0]} of module M`, message: entry[1] })),
+      [],
+    ],
+    [
       "an instance with the wrong number of arguments before a selector that is not a name",
       "---- MODULE Inner ----\nFoo == 1\n====\nI(a) == INSTANCE Inner\nJ == INSTANCE Inner\nX == I!:\nY == J(2)!1\nZ == I!<<\nW == J!:\nTHEOREM TRUE BY I!1",
       [

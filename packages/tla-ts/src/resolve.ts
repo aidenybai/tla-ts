@@ -1664,18 +1664,9 @@ const resolveExpression = (
 ): void => {
   if (selections.has(expression) && !unit.isGenerated) {
     const reference = selections.get(expression);
-    if (reference && isReference(reference)) {
-      const head = getSelectors(reference)[0];
-      const range = reference.selectorRanges?.[0];
-      const declared =
-        head.kind === "Name"
-          ? (lookupLocal(scope, head.name) ?? findSymbol(head.name, unit))
-          : undefined;
-      if (head.kind === "Name" && declared && !SELECTABLE_KINDS.has(declared.kind) && range) {
-        emptyExpressions.add(expression);
-        reportUnselectable(head.name, range, unit);
-        return;
-      }
+    if (reference && isReference(reference) && isUnselectableReported(reference, scope, unit)) {
+      emptyExpressions.add(expression);
+      return;
     }
     const failed = findNullSelection(nullSelections.get(expression));
     if (failed) {
@@ -1953,12 +1944,24 @@ const isPendingSelectionReported = (
   return true;
 };
 
+const isUnselectableReported = (reference: Reference, scope: LocalName | undefined, unit: Unit) => {
+  const head = getSelectors(reference)[0];
+  const range = reference.selectorRanges?.[0];
+  if (head.kind !== "Name" || !range) return false;
+  const local = lookupLocal(scope, head.name);
+  const binding = local ?? findSymbol(head.name, unit);
+  if (!binding || (SELECTABLE_KINDS.has(binding.kind) && !local?.nonFactStep)) return false;
+  reportUnselectable(head.name, range, unit);
+  return true;
+};
+
 const isSubexpressionReported = (
   expression: Expression & { kind: "Subexpression" },
   scope: LocalName | undefined,
   unit: Unit,
 ) => {
   if (
+    isUnselectableReported(expression, scope, unit) ||
     isInstanceArityReported(expression, scope, unit) ||
     isSelectionReported(expression, scope, unit)
   ) {
@@ -2002,8 +2005,7 @@ const isSubexpressionReported = (
     return true;
   }
   if (head.kind === "Name" && range && lastRange) {
-    const local = lookupLocal(scope, head.name);
-    const binding = local ?? findSymbol(head.name, unit);
+    const binding = lookupLocal(scope, head.name) ?? findSymbol(head.name, unit);
     const isUnknown = binding === undefined && !isFact(head.name, unit);
     if (expression.selectors[1].kind !== "Name" && (isUnknown || binding?.kind === "Instance")) {
       unit.errors.push({
@@ -2017,10 +2019,6 @@ const isSubexpressionReported = (
         location: formatRange({ module: range.module, start: range.start, end: lastRange.end }),
         message: `Unknown operator: \`${resolveSynonym(names.join("!"))}'.`,
       });
-      return true;
-    }
-    if (binding && (!SELECTABLE_KINDS.has(binding.kind) || local?.nonFactStep)) {
-      reportUnselectable(head.name, range, unit);
       return true;
     }
   }
