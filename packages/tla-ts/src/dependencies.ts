@@ -3,11 +3,13 @@ import {
   getDefinitionExpressions,
   getReferencedName,
   isLocallyResolved,
+  type Bound,
   type Definition,
   type Expression,
 } from "./ast";
 import type { Environment } from "./evaluate";
 import { ACTION_LEVEL, CONSTANT_LEVEL, TEMPORAL_LEVEL, VARIABLE_LEVEL } from "./levels";
+import { getBoundNames } from "./resolve";
 
 interface DefinitionNames extends Pick<
   Environment,
@@ -33,6 +35,13 @@ export interface DefinitionFacts {
   // The effects of each LET definition in the definitions, which a check reads for each LET of an
   // action it compiles.
   letEffects: Map<Definition, number>;
+  varyingBodies: Set<Expression>;
+}
+
+interface EffectRows {
+  ids: Map<Definition, number>;
+  effects: Uint32Array;
+  words: number;
 }
 
 const NONCONSTANT = 1;
@@ -47,6 +56,10 @@ const RANDOM = 256;
 const ABOVE_CONSTANT_BOUND = 512;
 const TLC_EVAL = 1024;
 const REEVALUATION_SHOWN = 2048;
+
+const PARAMETER_REACH = 1;
+const EFFECT_REACH = 2;
+const OPERATOR_NAME = 4;
 
 const ACTION_KINDS = new Set<Expression["kind"]>([
   "Prime",
@@ -473,6 +486,12 @@ const closeRows = (local: Uint32Array, words: number, edges: EdgeLists, mask: nu
 };
 
 const PURITY_MASK = IMPURE | REPEATED_EFFECT | STREAMED | RANDOM | TLC_EVAL;
+// FcnLambdaValue#apply evaluates the body again at each application, as an uncached LazyValue
+// evaluates its expression again at each reference. Only what a second evaluation shows tells that
+// apart from keeping the first result: output, TLCSet's registers, TLCGet and JavaTime read again,
+// or other random draws. An Assert that holds holds again, and one that fails throws its
+// EvalException the first time, as any error does.
+const EFFECT_MASK = REPEATED_EFFECT | RANDOM;
 // TLC streams a fresh \cup or UNION as it streams the startup value.
 const SHOWN_MASK = IMPURE | REPEATED_EFFECT | RANDOM | TLC_EVAL;
 
@@ -509,6 +528,7 @@ const isEvaluatedOnce = (definition: Definition, flags: number) =>
 
 export const createDefinitionFacts = (
   environment: DefinitionNames,
+  assumptions: Expression[],
   prepared: ReadonlyMap<Definition, PreparedFacts> = new Map(),
 ): DefinitionFacts => {
   const definitions = [...new Set(environment.definitions.values())];
@@ -618,7 +638,18 @@ export const createDefinitionFacts = (
       lets.effects[number],
     ]),
   );
-  return { ids, rows, words, letEffects };
+  const effects = closeRows(localImpurity, words, readEdges, EFFECT_MASK);
+  return {
+    ids,
+    rows,
+    words,
+    letEffects,
+    varyingBodies: collectVaryingBodies(definitions, assumptions, environment, {
+      ids,
+      effects,
+      words,
+    }),
+  };
 };
 
 const getRow = (definition: Definition, environment: Environment): Uint32Array => {
@@ -651,6 +682,180 @@ const getExpressionsRow = (expressions: Expression[], environment: Environment) 
   return row;
 };
 
+const getOuterReach = (expressions: Expression[], scope: ReadonlyMap<string, number>) => {
+  let reach = 0;
+  const visit = (node: Expression) => {
+    const name = getReferencedName(node);
+    if (name !== undefined && (isLocallyResolved(node) || node.kind === "OperatorReference")) {
+      reach |= scope.get(name) ?? 0;
+    }
+    getChildren(node).forEach(visit);
+  };
+  if (scope.size > 0) expressions.forEach(visit);
+  return reach & (PARAMETER_REACH | EFFECT_REACH);
+};
+
+const bindNames = (scope: ReadonlyMap<string, number>, names: string[], reach: number) =>
+  reach === 0
+    ? scope
+    : new Map([...scope, ...names.map((name): [string, number] => [name, reach])]);
+
+const isParameterized = (definition: Definition) =>
+  definition.kind !== "Function" && definition.params.length > 0;
+
+const isOperatorName = (
+  node: Expression,
+  scope: ReadonlyMap<string, number>,
+  environment: DefinitionNames,
+) => {
+  const name = getReferencedName(node);
+  if (name === undefined || node.kind === "Apply") return false;
+  if (isLocallyResolved(node) || scope.has(name)) {
+    return ((scope.get(name) ?? 0) & OPERATOR_NAME) !== 0;
+  }
+  const target = environment.substitutions.get(name) ?? name;
+  const definition = environment.definitions.get(target);
+  return definition === undefined
+    ? (environment.builtins.get(target)?.arity ?? 0) > 0
+    : isParameterized(definition);
+};
+
+const collectVaryingBodies = (
+  definitions: Definition[],
+  assumptions: Expression[],
+  environment: DefinitionNames,
+  effectRows: EffectRows,
+) => {
+  const varyingBodies = new Set<Expression>();
+  const parameterBodies: Expression[] = [];
+  let hasEffectfulValue = false;
+  const words = effectRows.words;
+  const isEffectfulDefinition = (id: number) =>
+    (effectRows.effects[id * words] & EFFECT_MASK) !== 0;
+  const hasEffect = (expressions: Expression[]) => {
+    const facts = collectLocalFacts(expressions, environment, words);
+    return (
+      (facts.row[0] & EFFECT_MASK) !== 0 ||
+      facts.edges.some(
+        (edge) =>
+          !edge.isOverridden && isEffectfulDefinition(effectRows.ids.get(edge.callee) ?? -1),
+      )
+    );
+  };
+  const getReach = (
+    expressions: Expression[],
+    scope: ReadonlyMap<string, number>,
+    isEffectful: boolean,
+  ) =>
+    (isEffectful && hasEffect(expressions) ? EFFECT_REACH : 0) | getOuterReach(expressions, scope);
+  const addValue = (
+    expressions: Expression[],
+    scope: ReadonlyMap<string, number>,
+    isEffectful: boolean,
+  ) => {
+    hasEffectfulValue ||= isEffectful && (getReach(expressions, scope, true) & EFFECT_REACH) !== 0;
+  };
+  const addBody = (
+    expressions: Expression[],
+    body: Expression,
+    scope: ReadonlyMap<string, number>,
+    isEffectful: boolean,
+  ) => {
+    const reach = getOuterReach(expressions, scope);
+    if ((reach & EFFECT_REACH) !== 0) varyingBodies.add(body);
+    else if (reach !== 0) parameterBodies.push(body);
+    addValue(expressions, scope, isEffectful);
+  };
+  const visitBounds = (
+    bounds: Bound[],
+    body: Expression,
+    reach: number,
+    scope: ReadonlyMap<string, number>,
+    isEffectful: boolean,
+  ) => {
+    const sets = bounds.map((bound) => bound.set);
+    sets.forEach((set) => visit(set, scope, isEffectful));
+    const boundReach = reach | getReach(sets, scope, isEffectful);
+    visit(body, bindNames(scope, getBoundNames(bounds), boundReach), isEffectful);
+  };
+  const visitDefinition = (
+    definition: Definition,
+    scope: ReadonlyMap<string, number>,
+    isEffectful: boolean,
+  ) => {
+    if (definition.kind !== "Function") {
+      const params = definition.params.map((param) => param.name);
+      visit(definition.body, bindNames(scope, params, PARAMETER_REACH), isEffectful);
+      return;
+    }
+    const bodyScope = new Map(scope).set(definition.name, 0);
+    addBody([definition.body], definition.body, bodyScope, isEffectful);
+    visitBounds(definition.bounds, definition.body, PARAMETER_REACH, scope, isEffectful);
+  };
+  const visit = (
+    node: Expression,
+    scope: ReadonlyMap<string, number>,
+    isEffectful: boolean,
+  ): void => {
+    if (isEffectful && node.kind === "Apply") {
+      node.args.forEach((arg) => {
+        if (isOperatorName(arg, scope, environment)) addValue([arg], scope, true);
+      });
+    }
+    switch (node.kind) {
+      case "Lambda":
+        addValue([node.body], scope, isEffectful);
+        return visit(node.body, bindNames(scope, node.params, PARAMETER_REACH), isEffectful);
+      case "Let": {
+        const expressions = node.definitions.flatMap(getDefinitionExpressions);
+        const reach = getReach(expressions, scope, isEffectful);
+        const inner =
+          reach === 0
+            ? scope
+            : new Map([
+                ...scope,
+                ...node.definitions.map((definition): [string, number] => [
+                  definition.name,
+                  isParameterized(definition) ? reach | OPERATOR_NAME : reach,
+                ]),
+              ]);
+        node.definitions.forEach((definition) => visitDefinition(definition, inner, isEffectful));
+        return visit(node.body, inner, isEffectful);
+      }
+      case "FunctionConstruction":
+        addBody([node.body], node.body, scope, isEffectful);
+        return visitBounds(node.bounds, node.body, PARAMETER_REACH, scope, isEffectful);
+      case "Forall":
+      case "Exists":
+        return visitBounds(node.bounds, node.body, 0, scope, isEffectful);
+      case "SetMap":
+        return visitBounds(node.bounds, node.expression, 0, scope, isEffectful);
+      case "SetFilter":
+        addBody([node.bound.set, node.predicate], node.predicate, scope, isEffectful);
+        return visitBounds([node.bound], node.predicate, PARAMETER_REACH, scope, isEffectful);
+      case "Choose":
+        return node.set
+          ? visitBounds(
+              [{ pattern: node.pattern, set: node.set }],
+              node.body,
+              0,
+              scope,
+              isEffectful,
+            )
+          : visit(node.body, scope, isEffectful);
+      default:
+        return getChildren(node).forEach((child) => visit(child, scope, isEffectful));
+    }
+  };
+  definitions.forEach((definition, id) => {
+    if (environment.bodyValues.has(definition.body)) return;
+    visitDefinition(definition, new Map(), isEffectfulDefinition(id));
+  });
+  assumptions.forEach((assumption) => visit(assumption, new Map(), hasEffect([assumption])));
+  if (hasEffectfulValue) parameterBodies.forEach((body) => varyingBodies.add(body));
+  return varyingBodies;
+};
+
 export const isConstantLevel = (definition: Definition, environment: Environment) =>
   (getRow(definition, environment)[0] & STARTUP_MASK) === 0;
 
@@ -664,9 +869,12 @@ const EFFECT_FLAGS = {
   any: IMPURE,
   repeated: REPEATED_EFFECT,
   streamed: STREAMED,
-  // What a second evaluation shows: output again, or other random draws.
-  replayed: REPEATED_EFFECT | RANDOM,
-  varying: IMPURE | RANDOM,
+  replayed: EFFECT_MASK,
+  varying: EFFECT_MASK,
+  // An action's LET definition that reaches any effect, an Assert among them, evaluates again at
+  // each reference, as TLC's does. A kept value of one that runs a program on ESCore misses its
+  // cache in the operators it's passed to, which then ran the program again, under KeepLazy.
+  reevaluated: IMPURE | RANDOM,
 };
 
 export const isExpressionImpure = (
@@ -674,6 +882,14 @@ export const isExpressionImpure = (
   environment: Environment,
   effect: keyof typeof EFFECT_FLAGS,
 ) => (getExpressionsRow(expressions, environment)[0] & EFFECT_FLAGS[effect]) !== 0;
+
+export const isBodyVarying = (
+  expressions: Expression[],
+  body: Expression,
+  environment: Environment,
+) =>
+  environment.facts.varyingBodies.has(body) ||
+  isExpressionImpure(expressions, environment, "varying");
 
 export const isImpureDefinition = (
   definition: Definition,

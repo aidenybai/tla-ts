@@ -612,7 +612,7 @@ export const runSmtlibScript = (
         resetOptimizer();
         return false;
       }
-      if (error instanceof SmtDefaultError) {
+      if (error instanceof SmtDefaultError || error instanceof SmtTacticError) {
         setCheck(L_UNDEF, { isFromTactic: true, reasonUnknown: optimizer.getReasonUnknown() });
         throw new SmtParseError(error.message, end);
       }
@@ -2423,7 +2423,7 @@ export const runSmtlibScript = (
     try {
       command(list);
     } catch (error) {
-      if (!(error instanceof SmtDefaultError)) throw error;
+      if (!(error instanceof SmtDefaultError || error instanceof SmtTacticError)) throw error;
       throw new SmtParseError(error.message, list.end);
     }
     if (settings.isPrintingSuccess && SILENT_COMMANDS.has(head.text)) print("success");

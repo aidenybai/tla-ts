@@ -81,8 +81,6 @@ npx tla-ts Counter.tla
 npx tla-ts tlapm Module.tla
 ```
 
-The CLI takes JavaScript and TypeScript files of every kind: `.js`, `.mjs`, `.cjs`, `.jsx`, `.ts`, `.mts`, `.cts`, and `.tsx`. It loads each one as Node does: `.mjs` and `.mts` as ES modules, `.cjs` and `.cts` as CommonJS, and `.js` and `.ts` by the `type` of the nearest `package.json`, or by their syntax where that names no type. Imports resolve as TypeScript resolves them under the project's `tsconfig.json`. JSX compiles as TypeScript emits it under the project's `jsx` setting. Without a `tsconfig.json`, JSX compiles for React's automatic runtime (`react-jsx`), as a bundler does.
-
 For a TLA+ spec, TLA-ts reads `Counter.cfg` from the same folder and takes TLC's options.
 
 ## API

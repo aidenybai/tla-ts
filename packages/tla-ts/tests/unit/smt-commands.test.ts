@@ -1,3 +1,5 @@
+import { readFileSync } from "node:fs";
+import { join } from "node:path";
 import { describe, expect, it } from "vite-plus/test";
 import { runSmtlibScript } from "../../src/prover/smt/solver/smtlib-script";
 
@@ -291,6 +293,48 @@ const MBQI_UNDER_PUSH = [
   "(assert (p a))",
   "(assert (not (= (f a) b)))",
 ];
+
+const MBQI_SUBSET = [
+  "(set-option :auto_config false)",
+  "(set-option :smt.mbqi true)",
+  "(declare-sort U 0)",
+  "(declare-fun mem (U U) Bool)",
+  "(declare-fun s () U)",
+  "(declare-fun t () U)",
+  "(declare-fun e () U)",
+  "(assert (forall ((x U)) (=> (mem x s) (mem x t))))",
+  "(assert (mem e s))",
+  "(assert (not (= s t)))",
+];
+
+const NO_FIXED_POINT = [
+  "(declare-sort U 0)",
+  "(declare-fun g (U) U)",
+  "(declare-fun a () U)",
+  "(declare-fun b () U)",
+  "(push 1)",
+  "(assert (forall ((x U)) (not (= (g x) x))))",
+  "(assert (= (g a) b))",
+  "(assert (not (= a b)))",
+];
+
+const SMT_FIXTURES = join(import.meta.dirname, "../fixtures/smt");
+
+// A tlapm obligation from tlaplus/Examples' MisraReachability, with its goal checked under a push.
+const REACHABLE_PROOFS = readFileSync(join(SMT_FIXTURES, "ReachableProofs-40-push.smt2"), "utf8");
+
+// A tlapm obligation from tlaplus/Examples' CigaretteSmokers at an rlimit that runs out in base-level bcp.
+const CIGARETTE_SMOKERS = readFileSync(
+  join(SMT_FIXTURES, "CigaretteSmokers-base-level.smt2"),
+  "utf8",
+);
+
+// Reduced from a tlapm obligation of tlaplus/Examples' byzpaxos VoteProof, whose push runs out of its
+// rlimit in the reduce that ends propagate_values.
+const VOTE_PROOF = readFileSync(join(SMT_FIXTURES, "VoteProof-push-canceled.smt2"), "utf8");
+
+const readZ3Output = (name: string) =>
+  readFileSync(join(SMT_FIXTURES, name), "utf8").trimEnd().split("\n");
 
 const CHECK_AND_MODEL = [
   "(check-sat)",
@@ -981,6 +1025,44 @@ describe("runSmtlibScript runs its commands as Z3 does", () => {
     ).toEqual(["unknown", '(:reason-unknown "canceled")', "sat", "3", "sat"]);
   });
 
+  it("reports the limit as an error when it stops a push in the model finder", () => {
+    expect(
+      run([
+        "(set-option :rlimit 823)",
+        "(declare-sort U 0)",
+        "(declare-fun h (U U U) U)",
+        "(declare-fun mem (U U) Bool)",
+        "(declare-fun ext (U U) Bool)",
+        "(declare-fun tt () U)",
+        "(assert (forall ((x U) (y U)) (! (=> (forall ((z U)) (= (mem z x) (mem z y))) (= x y)) :pattern ((ext x y)))))",
+        "(declare-fun value () U)",
+        "(declare-fun acceptor () U)",
+        "(declare-fun ballot () U)",
+        "(declare-fun voted (U U U) U)",
+        "(declare-fun inv1 () U)",
+        "(declare-fun inv2 () U)",
+        "(declare-fun inv3 () U)",
+        "(assert (and (and (and (= inv1 tt) (= inv2 tt)) (forall ((a1 U) (a2 U) (b U) (v1 U) (v2 U)) (=> (and (mem a1 acceptor) (mem a2 acceptor) (mem b ballot) (mem v1 value) (mem v2 value)) (and (= (voted a1 b v1) tt) (= (voted a2 b v2) tt))))) (= inv3 tt)))",
+        "(declare-fun self () U)",
+        "(assert (mem self acceptor))",
+        "(declare-fun b () U)",
+        "(assert (mem b ballot))",
+        "(assert (= self tt))",
+        "(declare-fun a1 () U)",
+        "(declare-fun a2 () U)",
+        "(declare-fun c () U)",
+        "(declare-fun v1 () U)",
+        "(declare-fun v2 () U)",
+        "(assert (and true (= (h a2 c v2) tt) (= (voted a1 c v1) tt) (= (voted a2 c v2) tt)))",
+        "(push 1)",
+        "(assert false)",
+        "(check-sat)",
+        "(pop 1)",
+        "(check-sat)",
+      ]),
+    ).toEqual(['(error "line 27 column 7: max. resource limit exceeded")', "unsat", "unsat"]);
+  });
+
   it("bounds push by the rlimit and keeps the scopes that a canceled push leaves", () => {
     expect(
       run([
@@ -1043,6 +1125,265 @@ describe("runSmtlibScript runs its commands as Z3 does", () => {
       "(:rlimit 344)",
       '(error "line 18 column 10: model is not available")',
     ]);
+  });
+
+  it("gives up on a quantifier when the limit stops its evaluation in the model", () => {
+    expect(run(["(set-option :rlimit 4000)", REACHABLE_PROOFS])).toEqual(
+      readZ3Output("ReachableProofs-40-push-4000.z3out"),
+    );
+  });
+
+  it("goes on to the model check when the limit stops the model finder's evaluation", () => {
+    expect(
+      run([
+        ...MBQI_SUBSET,
+        "(set-option :rlimit 370)",
+        "(check-sat)",
+        "(get-info :reason-unknown)",
+        "(get-info :rlimit)",
+      ]),
+    ).toEqual(["unknown", '(:reason-unknown "push canceled")', "(:rlimit 388)"]);
+  });
+
+  it("takes the model as valid when the limit stops its validation's evaluation", () => {
+    expect(
+      run([
+        ...MBQI_SUBSET,
+        "(set-option :rlimit 406)",
+        "(check-sat)",
+        "(get-info :reason-unknown)",
+        "(get-info :rlimit)",
+      ]),
+    ).toEqual(["unknown", '(:reason-unknown "canceled")', "(:rlimit 424)"]);
+  });
+
+  it("stops searching when the model check's push cancels the search", () => {
+    expect(
+      run([
+        "(declare-sort U 0)",
+        "(declare-fun mem (U U) Bool)",
+        "(declare-fun s () U)",
+        "(declare-fun t () U)",
+        "(push 1)",
+        "(assert (forall ((x U)) (=> (mem x s) (mem x t))))",
+        "(assert (not (= s t)))",
+        "(set-option :rlimit 172)",
+        "(check-sat)",
+        "(set-option :rlimit 0)",
+        "(declare-fun p1 () Bool)",
+        "(declare-fun p2 () Bool)",
+        "(declare-fun p3 () Bool)",
+        "(declare-fun p4 () Bool)",
+        "(declare-fun p5 () Bool)",
+        "(assert (or p5 p1 p3))",
+        "(assert (or p2 p3 (not p4)))",
+        "(check-sat)",
+        "(get-info :rlimit)",
+      ]),
+    ).toEqual(["unknown", "sat", "(:rlimit 382)"]);
+  });
+
+  it("frees the smt tactic's context when the model check's push cancels its search", () => {
+    expect(
+      run([
+        ...MBQI_SUBSET,
+        "(set-option :rlimit 370)",
+        "(check-sat)",
+        "(set-option :rlimit 0)",
+        "(check-sat)",
+        "(get-info :rlimit)",
+      ]),
+    ).toEqual(["unknown", "sat", "(:rlimit 816)"]);
+    expect(
+      run([
+        "(set-option :produce-unsat-cores true)",
+        "(declare-sort U 0)",
+        "(declare-fun mem (U U) Bool)",
+        "(declare-fun s () U)",
+        "(declare-fun t () U)",
+        "(declare-fun e () U)",
+        "(assert (! (forall ((x U)) (=> (mem x s) (mem x t))) :named a1))",
+        "(assert (! (mem e s) :named a2))",
+        "(assert (not (= s t)))",
+        "(set-option :rlimit 308)",
+        "(check-sat-using smt)",
+        "(set-option :rlimit 0)",
+        "(check-sat-using smt)",
+        "(get-info :rlimit)",
+      ]),
+    ).toEqual(["unknown", "sat", "(:rlimit 695)"]);
+  });
+
+  it("pops the model check's scope when the limit stops its check", () => {
+    expect(
+      run([
+        ...NO_FIXED_POINT,
+        "(set-option :rlimit 207)",
+        "(check-sat)",
+        "(set-option :rlimit 0)",
+        "(check-sat)",
+        "(get-info :rlimit)",
+      ]),
+    ).toEqual(["unknown", "sat", "(:rlimit 1938)"]);
+  });
+
+  it("frees the model check's instance when the limit stops its substitution", () => {
+    expect(
+      run([
+        ...NO_FIXED_POINT,
+        "(set-option :rlimit 387)",
+        "(check-sat)",
+        "(set-option :rlimit 0)",
+        "(check-sat)",
+        "(get-info :rlimit)",
+      ]),
+    ).toEqual(["unknown", "sat", "(:rlimit 1936)"]);
+  });
+
+  it("frees the simplified formulas when the limit stops a simplification", () => {
+    expect(
+      run([
+        ...NO_FIXED_POINT,
+        "(set-option :rlimit 483)",
+        "(check-sat)",
+        "(set-option :rlimit 0)",
+        "(check-sat)",
+        "(get-info :rlimit)",
+      ]),
+    ).toEqual(["unknown", "sat", "(:rlimit 2047)"]);
+  });
+
+  it("goes on with the model check when the limit leaves its counterexample without a model", () => {
+    expect(
+      run([
+        ...NO_FIXED_POINT,
+        "(set-option :rlimit 302)",
+        "(check-sat)",
+        "(get-info :reason-unknown)",
+        "(get-info :rlimit)",
+      ]),
+    ).toEqual(["unknown", '(:reason-unknown "(incomplete quantifiers)")', "(:rlimit 331)"]);
+  });
+
+  it("finishes base-level propagation past the limit and finds the conflict", () => {
+    expect(run([CIGARETTE_SMOKERS, "(get-info :rlimit)", "(get-info :reason-unknown)"])).toEqual([
+      "unsat",
+      "(:rlimit 5143)",
+      '(:reason-unknown "")',
+    ]);
+  });
+
+  it("reduces the formulas again when a later propagate_values rewrites one", () => {
+    expect(run([VOTE_PROOF, "(get-info :rlimit)", "(get-info :reason-unknown)"])).toEqual([
+      '(error "line 58 column 7: push canceled")',
+      "unknown",
+      "unsat",
+      "(:rlimit 5077)",
+      '(:reason-unknown "canceled")',
+    ]);
+  });
+
+  it("goes on through every theory when the limit stops a final check", () => {
+    expect(
+      run([
+        "(set-option :auto_config false)",
+        "(set-option :rlimit 46)",
+        "(declare-fun x () Int)",
+        "(push 1)",
+        "(assert (> x 0))",
+        "(check-sat)",
+        "(get-info :rlimit)",
+        "(check-sat)",
+        "(get-info :rlimit)",
+      ]),
+    ).toEqual(["unknown", "(:rlimit 63)", "sat", "(:rlimit 90)"]);
+  });
+
+  it("makes a zero dividend's axiom atoms one at a time, so later terms reuse the ids Z3's do", () => {
+    expect(
+      run([
+        "(declare-fun q () Int)",
+        "(declare-fun r () Int)",
+        "(declare-fun f0 () Int)",
+        "(declare-fun f1 () Int)",
+        "(declare-fun f2 () Int)",
+        "(push 1)",
+        "(assert (= r (mod 0 q)))",
+        "(check-sat)",
+        "(pop 1)",
+        "(assert (> f0 10))",
+        "(assert (> f1 11))",
+        "(assert (> f2 12))",
+        "(simplify (or (= (+ r 5) q) (<= (div 2 q) 9)))",
+      ]),
+    ).toEqual(["sat", "(or (<= (div 2 q) 9) (= r (+ (- 5) q)))"]);
+  });
+
+  it("orders a compacted interpretation's disjuncts as Z3 does once its aux functions are gone", () => {
+    expect(run(["(set-option :rlimit 29800)", REACHABLE_PROOFS])).toEqual(
+      readZ3Output("ReachableProofs-40-push-29800.z3out"),
+    );
+  });
+
+  it("keeps the nested ites of an inlined aux function when it compacts the model", () => {
+    expect(
+      run([
+        "(set-option :smt.mbqi true)",
+        "(declare-fun f (Int) Int)",
+        "(declare-fun g (Int) Int)",
+        "(assert (forall ((x Int)) (! (=> (< 0 x) (> (f x) (- 1))) :pattern ((f x)))))",
+        "(assert (forall ((x Int)) (! (= (g x) (f x)) :pattern ((g x)))))",
+        "(assert (= (f 1) 5))",
+        "(assert (= (f 2) 5))",
+        "(assert (= (f 3) 5))",
+        "(assert (= (f 4) 7))",
+        "(assert (= (g 10) 7))",
+        "(check-sat)",
+        "(get-model)",
+      ]),
+    ).toEqual([
+      "sat",
+      "(",
+      "  (define-fun f ((x!0 Int)) Int",
+      "    (let ((a!1 (or (and (<= 2 x!0) (<= 3 x!0) (<= 4 x!0) (<= 10 x!0))",
+      "                   (and (<= 2 x!0) (<= 3 x!0) (<= 4 x!0) (not (<= 10 x!0)))))",
+      "          (a!2 (or (and (<= 2 x!0) (<= 3 x!0) (not (<= 4 x!0)))",
+      "                   (and (<= 2 x!0) (not (<= 3 x!0))))))",
+      "      (ite a!1 7 (ite a!2 5 (ite (<= 2 x!0) 6 5)))))",
+      "  (define-fun g ((x!0 Int)) Int",
+      "    (ite (= x!0 10) 7",
+      "      (f x!0)))",
+      ")",
+    ]);
+  });
+
+  it("frees what a rewriter holds when the limit stops it, before the search goes on", () => {
+    expect(run(["(set-option :rlimit 29600)", REACHABLE_PROOFS])).toEqual(
+      readZ3Output("ReachableProofs-40-push-29600.z3out"),
+    );
+  });
+
+  it("rewrites the next assertion without the substitution that a stopped rewriter dropped", () => {
+    expect(
+      run([
+        "(declare-fun x () Int)",
+        "(declare-fun y () Int)",
+        "(declare-fun f (Int) Int)",
+        "(push 1)",
+        "(assert (= x 5))",
+        "(assert (> (f x) (f y)))",
+        "(check-sat)",
+        "(assert (> (f (+ x y)) 0))",
+        "(assert (or (> (f (+ y 1)) 2) (< (f (+ y 2)) x)))",
+        "(set-option :rlimit 60)",
+        "(check-sat)",
+        "(get-info :reason-unknown)",
+        "(set-option :rlimit 0)",
+        "(assert (< (f (+ x y)) 3))",
+        "(check-sat)",
+        "(get-info :rlimit)",
+      ]),
+    ).toEqual(["sat", "unknown", '(:reason-unknown "canceled")', "sat", "(:rlimit 538)"]);
   });
 
   it("reports the limit that stops a push of ctx-solver-simplify as its reason", () => {
@@ -3251,6 +3592,48 @@ describe("opt, as Z3 5.3.2 sets up its solver", () => {
       ]);
     expect(getRlimit([])).toEqual(["sat", "(:rlimit 1132)"]);
     expect(getRlimit(["(set-option :smt.case_split 0)"])).toEqual(["sat", "(:rlimit 692)"]);
+  });
+
+  it("makes its solver before it normalizes the objectives", () => {
+    expect(
+      run([
+        "(set-option :rlimit 78)",
+        "(declare-const a Bool)",
+        "(declare-const b Bool)",
+        "(declare-const x Int)",
+        "(assert (=> a (> x 3)))",
+        "(assert (=> b (< x 2)))",
+        "(assert-soft a :weight 2)",
+        "(assert-soft b :weight 3)",
+        "(check-sat)",
+        "(get-info :reason-unknown)",
+      ]),
+    ).toEqual([
+      '(error "line 9 column 10: max. resource limit exceeded")',
+      '(:reason-unknown "unknown")',
+    ]);
+  });
+
+  it("reads the sat parameters for its SAT solver and reports their errors", () => {
+    expect(
+      run([
+        "(set-option :sat.phase foo)",
+        "(declare-const a Bool)",
+        "(declare-const b Bool)",
+        "(assert (or a b))",
+        "(assert-soft (not a) :weight 2)",
+        "(assert-soft (not b) :weight 3)",
+        "(check-sat)",
+        "(get-info :reason-unknown)",
+        "(get-objectives)",
+      ]),
+    ).toEqual([
+      '(error "line 7 column 10: invalid phase selection strategy: always_false, always_true, basic_caching, caching, random")',
+      '(:reason-unknown "unknown")',
+      "(objectives",
+      " (  (interval 0 5))",
+      ")",
+    ]);
   });
 });
 

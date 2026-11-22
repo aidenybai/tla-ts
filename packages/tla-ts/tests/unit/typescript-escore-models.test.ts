@@ -109,8 +109,14 @@ const worker = new Worker(
       ).replace("\\nEXTENDS ESRuntime, ESCanonical", spec.mode === "compared" ? "\\nEXTENDS ESRuntime, ESCanonical, ESCanonicalPlain" : "\\nEXTENDS ESRuntime, ESCanonical")
         .replace(/^(EXTENDS .*)$/m, (line) => (isOperators ? line + ", ESNativePlain" : line))
         .replace(/\\n====\\n$/, isOperators ? "\\n" + spec.operators + "\\n====\\n" : "\\n====\\n");
+      // The unprepared mode reads ESCanonical and ESNative as the spec's texts rather than as the
+      // runtime prepared them.
+      const preparedModules = spec.mode === "unprepared"
+        ? compiled.preparedModules.filter((prepared) => prepared.name !== "ESCanonical" && prepared.name !== "ESNative")
+        : compiled.preparedModules;
       const result = await loaded.check({
         ...compiled,
+        preparedModules,
         loadModule: (name) =>
           name === "ProgramCode"
             ? changed
@@ -168,7 +174,14 @@ beforeAll(() => ready, 60_000);
 const checkModel = (
   source: string,
   fileName = "spec.ts",
-  mode: "canonical" | "raw" | "compared" | "lowered" | "native" | "operators" = "canonical",
+  mode:
+    | "canonical"
+    | "raw"
+    | "compared"
+    | "lowered"
+    | "native"
+    | "operators"
+    | "unprepared" = "canonical",
   mutation?: [string, string],
   operators?: string,
 ) =>
@@ -1503,6 +1516,14 @@ describe("checks a module's exported functions as a model on ESCore", () => {
       expect(getCounts(await checkModel(source, "spec.ts", "compared"))).toEqual(counts);
     });
 
+    // The runtime prepares ESCanonical and ESNative once, which a check reads as it would parse
+    // them, with the same states.
+    it("checks alike with ESCanonical and ESNative prepared and parsed", async () => {
+      expect(getCounts(await checkModel(source, "spec.ts"))).toEqual(
+        getCounts(await checkModel(source, "spec.ts", "unprepared")),
+      );
+    });
+
     it("stops where with throws past the end, as Node throws", async () => {
       expect((await exploreInNode(outside, "spec.ts")).status).toBe("error");
       expect((await checkModel(outside, "spec.ts")).message).toContain(
@@ -1552,6 +1573,73 @@ describe("checks a module's exported functions as a model on ESCore", () => {
       const result = await checkModel(source, "spec.ts", "native", [
         "LAMBDA i : LTruthy(rs[i])",
         "LAMBDA i : ~LTruthy(rs[i])",
+      ]);
+      expect(result.message).toContain("the native call differs from ESCore's");
+    });
+  });
+
+  describe("runs a Map's keys and values, and a function passed by name, natively, as ESCore does", () => {
+    const source = `
+      type Slot = 1 | 2 | 3;
+      const slots = new Set<Slot>([1, 2, 3]);
+      let held = new Map<Slot, number>([[1, 0], [2, 0]]);
+
+      const isFull = (count: number) => count >= 2;
+      const isLaterFull = (count: number, index: number) => index > 0 && count >= 2;
+
+      export const fill = (slot: Slot) => {
+        const count = held.get(slot);
+        if (count === undefined) {
+          held.set(slot, 0);
+          return;
+        }
+        if (count >= 2) return;
+        held.set(slot, count + 1);
+      };
+
+      export const drop = (slot: Slot) => {
+        if (slot === 1 || !held.has(slot)) return;
+        held.delete(slot);
+      };
+
+      export const isTyped = () =>
+        new Set(held.keys()).isSubsetOf(slots) &&
+        held.values().every((count) => count >= 0 && count <= 2) &&
+        held.keys().find(() => true) === 1;
+
+      /** @always */
+      export const isOrdered = () =>
+        held.values().some(isLaterFull) === (held.get(2) === 2 || held.get(3) === 2) &&
+        held.values().some(isFull) === [1, 2, 3].some((slot) => held.get(slot as Slot) === 2);
+    `;
+
+    it("gives what ESCore gives in every call, as TLC counts", async () => {
+      // Slot 1's count, and slots 2 and 3 each absent or at a count, in the order they were added.
+      const counts = ["success", 75, 285];
+      expect(getCounts(await checkModel(source, "spec.ts", "native"))).toEqual(counts);
+      expect(getCounts(await checkModel(source, "spec.ts", "compared"))).toEqual(counts);
+    });
+
+    it("tells a native values() of a Map that gives its keys", async () => {
+      const result = await checkModel(source, "spec.ts", "native", [
+        '[] v.type = "lmap" -> [type |-> "larray", elems |-> v.vals]',
+        '[] v.type = "lmap" -> [type |-> "larray", elems |-> v.keys]',
+      ]);
+      expect(result.message).toContain("the native call differs from ESCore's");
+    });
+
+    it("tells a native keys() of a Map that gives its values", async () => {
+      const result = await checkModel(source, "spec.ts", "native", [
+        '[] v.type = "lmap" -> [type |-> "larray", elems |-> v.keys]',
+        '[] v.type = "lmap" -> [type |-> "larray", elems |-> v.vals]',
+      ]);
+      expect(result.message).toContain("the native call differs from ESCore's");
+    });
+
+    it("tells a callback that a native call passes the wrong index", async () => {
+      const result = await checkModel(source, "spec.ts", "native", [
+        "F(elems[i], IntV(i - 1))",
+        "F(elems[i], IntV(i))",
       ]);
       expect(result.message).toContain("the native call differs from ESCore's");
     });

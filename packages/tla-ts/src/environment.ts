@@ -2017,6 +2017,7 @@ export const createEnvironment = (
       builtins,
       variables,
     },
+    assumptions.map((assumption) => assumption.expression),
     preparedFacts,
   );
   const runtimeVariables = RUNTIME_VARIABLES.filter((name) => builtins.has(name));

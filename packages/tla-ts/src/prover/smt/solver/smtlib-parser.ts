@@ -1023,7 +1023,13 @@ export const createSmtlibReader = (
   const unrooted: number[] = [];
   const pending: number[] = [];
 
+  // A pop erases names from the dictionary but keeps its capacity and deleted slots, as Z3's does.
+  const funcNames: string[] = [];
+  const funcNameIndexes = new Map<string, number>();
+  const funcNameCounts: number[] = [];
+  const funcDictionary = new ObjMap<true>((index) => getSymbolHash(funcNames[index]));
   const scopedFuncs: number[] = [];
+  const scopedFuncNames: number[] = [];
   const scopedFuncStarts: number[] = [];
   const scopedMacros: number[] = [];
   const scopedMacroStarts: number[] = [];
@@ -1047,7 +1053,13 @@ export const createSmtlibReader = (
 
   const declareFunc = (name: string, decls: readonly number[], decl: number) => {
     declare(funcs, name, [...decls, decl]);
-    if (!options.isGlobalDecls) scopedFuncs.push(decl);
+    const index = funcNameIndexes.get(name) ?? funcNames.push(name) - 1;
+    funcNameIndexes.set(name, index);
+    funcNameCounts[index] = (funcNameCounts[index] ?? 0) + 1;
+    if (funcNameCounts[index] === 1) funcDictionary.set(index, true);
+    if (options.isGlobalDecls) return;
+    scopedFuncs.push(decl);
+    scopedFuncNames.push(index);
   };
 
   const insertMacro = (name: string, macro: Macro) => {
@@ -3530,9 +3542,11 @@ export const createSmtlibReader = (
   const pop = (count: number) => {
     releasePending();
     const funcStart = scopedFuncStarts.splice(scopedFuncStarts.length - count)[0];
+    const names = scopedFuncNames.splice(funcStart);
     // Z3 frees a popped scope's declarations in the order they were made, not in reverse.
-    for (const decl of scopedFuncs.splice(funcStart)) {
+    for (const [offset, decl] of scopedFuncs.splice(funcStart).entries()) {
       manager.eraseRecFunDef(decl);
+      if (--funcNameCounts[names[offset]] === 0) funcDictionary.delete(names[offset]);
       const family = manager.funcDecls[decl].family;
       if (family === FAMILY_USER || family === FAMILY_RECFUN) manager.decDeclRef(decl);
     }
@@ -3587,11 +3601,10 @@ export const createSmtlibReader = (
   };
 
   // The first declaration of each name, in the slot order of cmd_context's dictionary.
-  const getDeclaredFuncs = () => {
-    const table = new ObjMap<true>((decl) => getSymbolHash(manager.funcDecls[decl].name));
-    for (const decls of funcs.values()) table.set(decls[0], true);
-    return [...table.keys()];
-  };
+  const getDeclaredFuncs = () =>
+    [...funcDictionary.keys()]
+      .map((index) => getFirstFunc(funcNames[index]))
+      .filter((decl) => decl !== undefined);
 
   // Z3 registers each named term and defined function as a recursive function definition.
   const hasDefinitions = () =>

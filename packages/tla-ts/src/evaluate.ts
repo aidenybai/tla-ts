@@ -30,6 +30,7 @@ import { EXIT_STATUS, setExitCode } from "./exit-codes";
 import { generateEvaluator } from "./codegen";
 import {
   chargeContexts,
+  chargeEquality,
   chargeFunctionConstruction,
   chargeSetOperation,
   chargeSetOperationSize,
@@ -53,6 +54,7 @@ import { isEvalException, MESSAGE_CODE } from "./tlc/messages";
 import type { InstanceLevels, SectionMember } from "./levels";
 import { EMPTY_STATE, type CheckerRuntime } from "./runtime";
 import {
+  isBodyVarying,
   isEvaluatedAtStartup,
   isExpressionImpure,
   isImpureDefinition,
@@ -74,7 +76,7 @@ import { getKeyName } from "./resolve";
 import { isEnabled, type Runner } from "./successors";
 import {
   applyFunction,
-  checkLazyArgumentWith,
+  applyFunctionWith,
   describeMissingArgument,
   compareValues,
   createFunction,
@@ -793,8 +795,9 @@ const isKeptLazyFunction = (value: Value): value is KeptLazyFunctionValue =>
 
 const keepLambda = (lambda: LazyFunction) => Object.assign(lambda.value, { lambda });
 
+// Tool#getNextStates runs the body of a FcnLambdaValue as an action only until toFcnRcd builds its record.
 export const getLazyFunction = (value: Value) =>
-  isKeptLazyFunction(value) ? value.lambda : undefined;
+  isKeptLazyFunction(value) && value.enumerated === undefined ? value.lambda : undefined;
 
 // SANY makes the arguments of f[a, b] a $Tuple at the application's location, which TLC's call stack holds while they evaluate.
 export const getArgumentTuple = (
@@ -1036,7 +1039,7 @@ const compileDefinitionBody = (definition: Definition, environment: Environment)
   if (definition.kind !== "Function") return getEntryEvaluator(definition.body, environment);
   const construction = getFunctionConstruction(definition);
   if (!definition.isSelfReferential) return getEntryEvaluator(construction, environment);
-  const isVaryingBody = isExpressionImpure([definition.body], environment, "varying");
+  const isVaryingBody = isBodyVarying([definition.body], definition.body, environment);
   const evaluator: Evaluator = (context) =>
     createRecursiveFunction(
       definition,
@@ -2003,10 +2006,11 @@ export const getReevaluatedDefinitions = (
 ): ReevaluatedDefinitions => ({
   impure: new Set(
     definitions.filter(
-      // TLC evaluates a LET definition at each reference; caching a pure one shows only in coverage.
+      // TLC evaluates a LET definition at each reference; caching one that reaches no effect shows
+      // only in coverage.
       (definition) =>
         environment.coverage !== undefined ||
-        isImpureDefinition(definition, environment, "varying"),
+        isImpureDefinition(definition, environment, "reevaluated"),
     ),
   ),
   streamed: new Set(
@@ -2116,7 +2120,15 @@ const traceEvaluator =
     setTrace.callStack = callStack;
     try {
       const computed = evaluator(context);
-      const value = isRebindable(computed) ? computed.rebind(environment) : computed;
+      // CallStackTool#eval hands out each FcnLambdaValue as a copy, so a record that one reference
+      // builds never reaches the next, which shows only where an application shows.
+      const value = isRebindable(computed)
+        ? computed.rebind(environment)
+        : typeof computed === "object" &&
+            computed.kind === "LazyFunction" &&
+            computed.isApplicationObserved
+          ? { ...computed }
+          : computed;
       callStack.values.set(expression, value);
       if (typeof value === "object" && value.kind !== "FilteredSet" && isSourced(expression)) {
         callStack.sources.set(value, expression);
@@ -2256,6 +2268,8 @@ const getTaggedValueTest = (expression: Expression): ((value: Value) => boolean)
     case "Tuple":
     case "Record":
       return () => true;
+    case "FunctionConstruction":
+      return (value) => typeof value === "object" && value.kind === "Function";
     case "SetMap":
       return isReducibleSet;
     case "SetFilter":
@@ -2693,6 +2707,24 @@ const compileApply = (
     };
   }
   const coverage = environment.coverage;
+  const combine = global?.kind === "Builtin" ? global.evaluateBinary : undefined;
+  if (
+    coverage &&
+    combine &&
+    (expression.operator === "=" || expression.operator === "#") &&
+    args.length === 2 &&
+    isValueArgument(args[0], environment) &&
+    isValueArgument(args[1], environment)
+  ) {
+    const left = getEvaluator(args[0], environment);
+    const right = getEvaluator(args[1], environment);
+    return (context) => {
+      const leftValue = left(context);
+      const rightValue = right(context);
+      if (typeof leftValue === "object") chargeEquality(coverage, leftValue, rightValue);
+      return combine(leftValue, rightValue);
+    };
+  }
   if (
     coverage &&
     global?.kind === "Builtin" &&
@@ -2740,7 +2772,6 @@ const compileApply = (
       };
     };
   }
-  const combine = global?.kind === "Builtin" ? global.evaluateBinary : undefined;
   if (coverage && combine && SET_OPERATORS.has(expression.operator) && args.length === 2) {
     const left = getEvaluator(args[0], environment);
     const right = getEvaluator(args[1], environment);
@@ -2898,7 +2929,7 @@ export const getFunctionBuilder = (
   environment: Environment,
 ) => {
   const isLazy = isKeptLazy(expression) || isRecursiveConstruction(expression);
-  const isVaryingBody = isExpressionImpure([expression.body], environment, "varying");
+  const isVaryingBody = isBodyVarying([expression.body], expression.body, environment);
   const body = getEvaluator(expression.body, environment);
   const bounds = expression.bounds;
   const bound = bounds[0];
@@ -3019,8 +3050,7 @@ const compileExcept = (
   expression: Expression & { kind: "Except" },
   environment: Environment,
 ): Evaluator => {
-  const isKeptLazyExpression = keptLazyExpressions.has(expression);
-  if (isKeptLazyExpression) keepLazy(expression.function);
+  if (keptLazyExpressions.has(expression)) keepLazy(expression.function);
   const evaluateFunction = getEvaluator(expression.function, environment);
   const updates = expression.updates.map((update) => ({
     path: update.path.map((step): CompiledStep =>
@@ -3049,11 +3079,8 @@ const compileExcept = (
     if (depth === path.length) {
       return value(withScope(context, bindValue(context.scope, EXCEPT_AT, current)));
     }
-    return updateFunction(
-      current,
-      getKey(path[depth], context),
-      (previous) => update(previous, path, depth + 1, context, value),
-      isKeptLazyExpression && depth === 0,
+    return updateFunction(current, getKey(path[depth], context), (previous) =>
+      update(previous, path, depth + 1, context, value),
     );
   };
   return (context) => {
@@ -3075,13 +3102,6 @@ const compileExcept = (
   };
 };
 
-const hasOuterLocalName = (expression: Expression, names: string[]): boolean => {
-  if (expression.kind === "OperatorReference") return true;
-  const name = getReferencedName(expression);
-  if (name !== undefined && isLocallyResolved(expression) && !names.includes(name)) return true;
-  return getChildren(expression).some((child) => hasOuterLocalName(child, names));
-};
-
 export const getLazyFilter = (
   expression: Expression & { kind: "SetFilter" },
   environment: Environment,
@@ -3095,12 +3115,11 @@ export const getLazyFilter = (
   };
   const coverage = environment.coverage;
   const isTestObserved =
-    isExpressionImpure([expression.predicate], environment, "varying") ||
-    hasOuterLocalName(
+    isBodyVarying(
+      [expression.bound.set, expression.predicate],
       expression.predicate,
-      pattern.kind === "Name" ? [pattern.name] : pattern.names,
-    ) ||
-    coverage !== undefined;
+      environment,
+    ) || coverage !== undefined;
   const createFiltered = (
     base: Value,
     context: Context,
@@ -3533,19 +3552,13 @@ const compile = (expression: Expression, environment: Environment): Evaluator =>
                 countArgumentTuple(coverage, coverage.current, expression);
                 return createTuple(args.map((arg) => arg(context)));
               });
-        return (context) => {
-          const functionValue = evaluateFunction(context);
-          const argument = getArgument(context);
-          if (
-            typeof functionValue !== "object" ||
-            functionValue.kind !== "LazyFunction" ||
-            functionValue.enumerated !== undefined
-          ) {
-            return applyFunction(functionValue, argument, describeMissing);
-          }
-          checkLazyArgumentWith(functionValue, argument, coverage.isMember);
-          return functionValue.apply(argument);
-        };
+        return (context) =>
+          applyFunctionWith(
+            evaluateFunction(context),
+            getArgument(context),
+            describeMissing,
+            coverage.isMember,
+          );
       }
       if (args.length === 1) {
         const argument = args[0];
