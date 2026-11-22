@@ -284,6 +284,8 @@ export const compileModelToEscore = (
   library?: Library,
   // Whether the state may lower out of ESCore's heap, which a test turns off to check the heap.
   isLowerable = true,
+  // The most values that TLC puts in a set, as its -maxSetSize sets it.
+  setBound?: number,
 ): EscoreModel | EscoreScript => {
   // The module's text with its JSX the calls it compiles to, which the steps run.
   const text = getJsxText(fileName, source);
@@ -316,7 +318,7 @@ export const compileModelToEscore = (
   // CommonJS module that Node loads, in Node's wrapper, whose scope its functions close over.
   const commonJsExports = getCommonJsExports(file);
   const isCommonJs = commonJsExports.size > 0 && getModuleFormat(fileName, text) === "commonjs";
-  const today = frameModel(source, fileName, library, runtime.names);
+  const today = frameModel(source, fileName, library, runtime.names, setBound);
   if (today.isScript) return { isScript: true, notes: today.notes };
   const module = today.source;
   const config = parseConfig(today.config);

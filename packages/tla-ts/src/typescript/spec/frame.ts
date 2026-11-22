@@ -300,6 +300,8 @@ export const frameModel = (
   fileName: string,
   library?: Library,
   reserved: ReadonlySet<string> = new Set(),
+  // The most values that TLC puts in a set, as its -maxSetSize sets it.
+  setBound = getSetBound(),
 ) => {
   const program = createProgram(source, fileName.replaceAll("\\", "/"), library);
   const sourceFile = program.sourceFile;
@@ -826,8 +828,8 @@ export const frameModel = (
   const findDomain = (type: ts.Type): string | Infinite => {
     const domain = findSizedDomain(type, []);
     if (isUnlisted(domain)) return domain;
-    return domain.size > getSetBound()
-      ? getInfinite(type, `it has more than ${getSetBound()} values, which TLC lists at most`)
+    return domain.size > setBound
+      ? getInfinite(type, `it has more than ${setBound} values, which TLC lists at most`)
       : domain.text;
   };
   const getType = (node: ts.ParameterDeclaration | ts.VariableDeclaration) =>
@@ -998,6 +1000,17 @@ export const frameModel = (
       const domain = findDomain(getType(parameter.node));
       return !guarded.has(parameter) && isInfinite(domain);
     });
+    // A call's argument lists, every combination of its parameters' values, which the model lists
+    // only where they're at most as many as TLC puts in a set, as it lists one parameter's values.
+    const count = parameters
+      .filter((parameter) => !guarded.has(parameter))
+      .reduce((product, parameter) => {
+        const domain = findSizedDomain(getType(parameter.node), []);
+        return isUnlisted(domain) ? product : product * BigInt(domain.size);
+      }, 1n);
+    if (unlisted === undefined && count > BigInt(setBound)) {
+      return `its parameters make ${count.toLocaleString("en-US")} argument lists, more than the ${setBound.toLocaleString("en-US")} it lists`;
+    }
     if (unlisted !== undefined) {
       const type = getType(unlisted.node);
       const kind = getUnlistedKind(type);
