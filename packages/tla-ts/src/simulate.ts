@@ -15,7 +15,7 @@ import {
 } from "./errors";
 import type { State } from "./evaluate";
 import { EXIT_STATUS, getMessageExitStatus, withLivenessChecksExitCode } from "./exit-codes";
-import { getHashMapOrder } from "./java-hash";
+import { getHashMapOrder, getJavaHashCode } from "./java-hash";
 import { createLivenessChecks } from "./liveness-checker";
 import {
   addActionCoverage,
@@ -283,10 +283,9 @@ export const simulate = (options: SimulationOptions & CliSettings): number => {
           actions.set(step.action.name, (actions.get(step.action.name) ?? 0) + 1);
         }
         // TLC's SimulationWorker counts the actions of a behavior in a HashMap.
-        const counts = getHashMapOrder([...actions.keys()]).map((name): [string, Value] => [
-          name,
-          actions.get(name) ?? 0,
-        ]);
+        const counts = getHashMapOrder([...actions.keys()], getJavaHashCode).map(
+          (name): [string, Value] => [name, actions.get(name) ?? 0],
+        );
         return createTlcRecord([
           ["traces", statistics.traces],
           ["duration", Math.floor((Date.now() - runtime.startedAt) / 1000)],

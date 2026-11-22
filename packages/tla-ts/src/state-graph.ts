@@ -1,4 +1,4 @@
-import { getJavaHashCode } from "./java-hash";
+import { getHashMapOrder, getJavaHashCode } from "./java-hash";
 import type { TlcVersion } from "./tlc/version";
 import { formatState, type Value } from "./values";
 
@@ -49,23 +49,6 @@ export interface StateWriter {
 type WriteFile = ((path: string, content: string) => void) | undefined;
 
 const COLOR_SCHEME = "paired12";
-const LOAD_FACTOR = 0.75;
-const INITIAL_CAPACITY = 16;
-
-const getCapacity = (size: number, capacity = INITIAL_CAPACITY): number =>
-  size <= capacity * LOAD_FACTOR ? capacity : getCapacity(size, capacity * 2);
-
-const getJavaHashOrder = <Key>(keys: Key[], getHash: (key: Key) => number) => {
-  const mask = getCapacity(keys.length) - 1;
-  const getBucket = (key: Key) => {
-    const hash = getHash(key);
-    return (hash ^ (hash >>> 16)) & mask;
-  };
-  return keys
-    .map((key, position) => ({ key, position, bucket: getBucket(key) }))
-    .sort((left, right) => left.bucket - right.bucket || left.position - right.position)
-    .map((entry) => entry.key);
-};
 
 const getLongHash = (value: bigint) =>
   Number(BigInt.asIntN(32, value ^ (BigInt.asUintN(64, value) >> 32n)));
@@ -144,16 +127,16 @@ const createDotWriter = (
     [
       `subgraph cluster_legend {graph[style=bold];label = "Next State Actions" style="solid"\n`,
       `node [ labeljust="l",colorscheme="${COLOR_SCHEME}",style=filled,shape=record ]\n`,
-      ...getJavaHashOrder([...colors.keys()], getJavaHashCode).map(
+      ...getHashMapOrder([...colors.keys()], getJavaHashCode).map(
         (name) => `${name.replaceAll("!", ":")} [label="${name}",fillcolor=${colors.get(name)}]\n`,
       ),
       "}",
     ].join("");
   const getEnding = () =>
     [
-      ...getJavaHashOrder([...ranks], (rank) => rank[0]).map(
+      ...getHashMapOrder([...ranks], (rank) => rank[0]).map(
         (rank) =>
-          `{rank = same; ${getJavaHashOrder([...rank[1]], getLongHash)
+          `{rank = same; ${getHashMapOrder([...rank[1]], getLongHash)
             .map((fingerprint) => `${fingerprint};`)
             .join("")}}\n`,
       ),

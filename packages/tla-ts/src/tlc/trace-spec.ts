@@ -1,4 +1,4 @@
-import { getHashMapOrder } from "../java-hash";
+import { getHashMapOrder, getJavaHashCode } from "../java-hash";
 import { formatValue, type Value } from "../values";
 import { zeroPad } from "./messages";
 
@@ -88,7 +88,7 @@ ${examples}`;
 export const writeTraceSpec = (input: TraceSpecInput) => {
   const loopStart = input.loopStart;
   const states = input.states.map((state) =>
-    getHashMapOrder(Object.keys(state)).map((name): [string, string] => [
+    getHashMapOrder(Object.keys(state), getJavaHashCode).map((name): [string, string] => [
       name,
       formatValue(state[name]),
     ]),
@@ -114,18 +114,14 @@ export const writeTraceSpec = (input: TraceSpecInput) => {
     ...(isLasso ? [LASSO_START, LASSO_END] : []),
   ];
   const teConstantsModule = `${specName}_TEConstants`;
-  const constantModules = getHashMapOrder([
-    "TLC",
-    ...(teConstants.length > 0 ? [teConstantsModule] : []),
-  ]);
-  const extendedModules = getHashMapOrder([
-    "Toolbox",
-    "TLCExt",
-    "Naturals",
-    "Sequences",
-    ...constantModules,
-    specName,
-  ]);
+  const constantModules = getHashMapOrder(
+    ["TLC", ...(teConstants.length > 0 ? [teConstantsModule] : [])],
+    getJavaHashCode,
+  );
+  const extendedModules = getHashMapOrder(
+    ["Toolbox", "TLCExt", "Naturals", "Sequences", ...constantModules, specName],
+    getJavaHashCode,
+  );
   const expressionModule = `${specName}_TEExpression`;
   const traceModule = `${specName}_TETrace`;
 
@@ -174,7 +170,7 @@ ${lassoStep}${variables
         definition: `\n_view ==\n${INDENT}<<${variables.join(", ")}, IF TLCGet("level") = ${LASSO_END} + 1 THEN ${LASSO_START} ELSE TLCGet("level")>>\n`,
       }
     : { config: "", definition: "" };
-  const deserializedTrace = `\n${getPrimer(traceModule, getHashMapOrder(["IOUtils", ...constantModules, specName]))}trace == IODeserialize("${input.module}.bin", TRUE)\n\n${CLOSING_TAG}`;
+  const deserializedTrace = `\n${getPrimer(traceModule, getHashMapOrder(["IOUtils", ...constantModules, specName], getJavaHashCode))}trace == IODeserialize("${input.module}.bin", TRUE)\n\n${CLOSING_TAG}`;
   const traceFunction = `${INDENT}<<\n${states
     .map(
       (state) =>
@@ -205,7 +201,7 @@ ${lassoStep}${variables
     " In this case, it is advised to uncomment the module below to deserialize the\n",
     " trace from a generated binary file.\n",
     `\n\\*${deserializedTrace.replaceAll("\n", "\n\\*")}\n\n`,
-    getPrimer(traceModule, getHashMapOrder([...constantModules, specName])),
+    getPrimer(traceModule, getHashMapOrder([...constantModules, specName], getJavaHashCode)),
     `trace == \n${traceFunction}\n`,
     ...(teConstants.length > 0
       ? [
