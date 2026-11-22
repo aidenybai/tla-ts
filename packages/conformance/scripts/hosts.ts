@@ -4,12 +4,13 @@ import {
   existsSync,
   mkdirSync,
   mkdtempSync,
+  readFileSync,
   realpathSync,
   rmSync,
   writeFileSync,
 } from "node:fs";
 import { availableParallelism, tmpdir } from "node:os";
-import { basename, dirname, join } from "node:path";
+import { basename, delimiter, dirname, isAbsolute, join } from "node:path";
 import { getBackendInput, type SuiteTest, type TestContext } from "./test-file";
 import {
   getBackend,
@@ -21,7 +22,8 @@ import {
   normalizeTlapmTranscript,
   TLAPM_BINARY,
 } from "./tlapm";
-import { normalizeTranscript } from "./transcript";
+import { normalizeFile, normalizeTranscript } from "./transcript";
+import { getValueFileText } from "./value-file";
 
 const PACKAGE_DIRECTORY = join(import.meta.dirname, "..");
 
@@ -43,12 +45,22 @@ const DETERMINISTIC_ARGUMENTS = [
   "-noGenerateSpecTE",
 ];
 
-const TLA_TS = [
-  "node",
-  "--stack-size=8000",
-  "--max-old-space-size=2048",
-  join(PACKAGE_DIRECTORY, "../tla-ts/dist/cli.js"),
-];
+const TLA_TS_CLI = join(PACKAGE_DIRECTORY, "../tla-ts/dist/cli.js");
+
+const TLA_TS = ["node", "--stack-size=8000", "--max-old-space-size=2048", TLA_TS_CLI];
+
+const SETUP_COMMANDS = new Map([
+  [TLC_JAR, "pnpm --filter @tla-ts/conformance fetch-tlc"],
+  [TLAPM_BINARY, "pnpm --filter @tla-ts/conformance fetch-tlapm"],
+  [TLA_TS_CLI, "pnpm --filter tla-ts build"],
+]);
+
+export class MissingHostFileError extends Error {
+  constructor(path: string, command: string | undefined) {
+    super(command ? `${path} doesn't exist. Run \`${command}\` first.` : `${path} doesn't exist.`);
+    this.name = "MissingHostFileError";
+  }
+}
 
 export interface Host {
   tlc?: string[];
@@ -57,48 +69,62 @@ export interface Host {
   backend?: string[] | "oracle";
 }
 
-export const HOSTS: Record<string, Host> = {
-  tlc: {
-    tlc: [
-      "java",
-      "-XX:+UseSerialGC",
-      "-XX:TieredStopAtLevel=1",
-      "-XX:-UsePerfData",
-      "-Xmx1g",
-      // The recordings come from macOS arm64, whose default thread stack is 2 MB.
-      "-Xss2m",
-      "-cp",
-      TLC_JAR,
-      "tlc2.TLC",
-    ],
-  },
-  tlapm: { tlapm: [TLAPM_BINARY], backend: "oracle" },
-  "tla-ts": {
-    tlc: TLA_TS,
-    tlapm: [...TLA_TS, "tlapm"],
-    backend: ["node", join(PACKAGE_DIRECTORY, ".scripts/tla-ts-backend.js")],
-  },
-};
+export const HOSTS = new Map<string, Host>([
+  [
+    "tlc",
+    {
+      tlc: [
+        "java",
+        "-XX:+UseSerialGC",
+        "-XX:TieredStopAtLevel=1",
+        "-XX:-UsePerfData",
+        "-Xmx1g",
+        // The recordings come from macOS arm64, whose default thread stack is 2 MB.
+        "-Xss2m",
+        "-cp",
+        TLC_JAR,
+        "tlc2.TLC",
+      ],
+    },
+  ],
+  ["tlapm", { tlapm: [TLAPM_BINARY], backend: "oracle" }],
+  [
+    "tla-ts",
+    {
+      tlc: TLA_TS,
+      tlapm: [...TLA_TS, "tlapm"],
+      backend: ["node", join(PACKAGE_DIRECTORY, ".scripts/tla-ts-backend.js")],
+    },
+  ],
+]);
+
+export class UnknownHostError extends Error {
+  constructor(name: string) {
+    super(
+      `Unknown host "${name}": it names none of ${[...HOSTS.keys()].join(", ")} and no program on PATH.`,
+    );
+    this.name = "UnknownHostError";
+  }
+}
 
 const QUOTED = /"([^"]*)"|'([^']*)'/g;
 const ARGUMENT = /(?:"[^"]*"|'[^']*'|[^\s"'])+/g;
 
 export const getHost = (name: string): Host => {
-  const host = HOSTS[name];
-  if (!host) {
-    const command = (name.match(ARGUMENT) ?? []).map((part) => part.replace(QUOTED, "$1$2"));
-    return { tlc: command, tlapm: command, backend: command };
-  }
-  const missing = [
-    ...(host.tlc === HOSTS.tlc.tlc && !existsSync(TLC_JAR) ? ["`pnpm fetch-tlc`"] : []),
-    ...(host.tlapm && host.tlapm === HOSTS.tlapm.tlapm && !existsSync(TLAPM_BINARY)
-      ? ["`pnpm fetch-tlapm`"]
-      : []),
-  ];
-  if (missing.length > 0) {
-    console.error(`Run ${missing.join(" and ")} first`);
-    process.exit(1);
-  }
+  const command = (name.match(ARGUMENT) ?? []).map((part) => part.replace(QUOTED, "$1$2"));
+  const namedHost = HOSTS.get(name);
+  const isProgramFound =
+    command.length > 0 &&
+    (isAbsolute(command[0]) ||
+      (process.env.PATH ?? "")
+        .split(delimiter)
+        .some((directory) => existsSync(join(directory, command[0]))));
+  if (!namedHost && !isProgramFound) throw new UnknownHostError(name);
+  const host = namedHost ?? { tlc: command, tlapm: command, backend: command };
+  const missing = [host.tlc, host.tlapm, host.backend]
+    .flatMap((hostCommand) => (Array.isArray(hostCommand) ? hostCommand : []))
+    .find((argument) => isAbsolute(argument) && !existsSync(argument));
+  if (missing !== undefined) throw new MissingHostFileError(missing, SETUP_COMMANDS.get(missing));
   return host;
 };
 
@@ -110,6 +136,7 @@ export interface HostResult {
   exit: number;
   transcript: string;
   exceeded?: "time" | "memory";
+  files?: Record<string, string | null>;
 }
 
 export interface Limits {
@@ -189,6 +216,14 @@ const spawnRun = (run: Run) =>
     },
   );
 
+const readOutputFile = (directory: string, path: string) => {
+  const file = join(directory, path);
+  if (!existsSync(file)) return null;
+  return path.endsWith(".bin")
+    ? getValueFileText(readFileSync(file))
+    : normalizeFile(readFileSync(file, "utf8"), directory);
+};
+
 const runTlc = async (
   command: string[],
   test: SuiteTest,
@@ -224,6 +259,7 @@ const runTlc = async (
     directory,
     limits,
   });
+  const files = test.metadata.files;
   return {
     exit: result.exit,
     exceeded: result.exceeded,
@@ -233,6 +269,11 @@ const runTlc = async (
           directory,
           isStateSpaceRelevant: context.name === "model",
         }),
+    ...(files
+      ? {
+          files: Object.fromEntries(files.map((path) => [path, readOutputFile(directory, path)])),
+        }
+      : {}),
   };
 };
 
