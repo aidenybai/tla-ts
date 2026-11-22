@@ -924,6 +924,40 @@ describe("the CLI with TypeScript files", () => {
     expect(result.stdout).toContain("tla-ts can't give the source text of the host's function");
   });
 
+  // A program whose TLA+ code passes the most that a check parses and runs within Node's default
+  // heap stops before the check reads it, as one of 126,000 numbers does, where a check would run out
+  // of memory, as one of Effect's modules did.
+  describe("checks a program within the TLA+ code that Node's default heap holds", () => {
+    const getScript = (count: number, expected: number) =>
+      `const values = [${Array.from({ length: count }, (_, index) => `${index}.5`).join(", ")}];\nif (values.length !== ${expected}) throw new RangeError("length " + values.length);\n`;
+
+    it("agrees with Node", () => {
+      const directory = copyFixtures("passing");
+      writeFileSync(join(directory, "values.mjs"), getScript(10, 10));
+      expect(runNode(directory, "values.mjs").status).toBe(0);
+      expect(getExit(runCli(directory, ["values.mjs"]))).toEqual([0, ""]);
+    });
+
+    it("rejects another result", () => {
+      const directory = copyFixtures("passing");
+      writeFileSync(join(directory, "values.mjs"), getScript(10, 11));
+      const result = runCli(directory, ["values.mjs"]);
+      expect(getExit(result)).toEqual(getExit(runNode(directory, "values.mjs")));
+      expect(result.status).toBe(1);
+    });
+
+    it("stops at a program whose TLA+ code passes the bound", () => {
+      const directory = copyFixtures("passing");
+      writeFileSync(join(directory, "values.mjs"), getScript(126_000, 126_000));
+      expect(runNode(directory, "values.mjs").status).toBe(0);
+      const result = runCli(directory, ["values.mjs"]);
+      expect([0, 1]).not.toContain(result.status);
+      expect(result.stderr).toContain(
+        "tla-ts can't check a program whose TLA+ spec has more than 31000000 characters",
+      );
+    });
+  });
+
   // A module reads Node's performance, as React's server builds do, whose now gives the time,
   // which each run reads anew, so the check stops where a program reads the time it gives.
   describe("reads Node's performance as Node does", () => {
