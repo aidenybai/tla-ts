@@ -371,6 +371,20 @@ describe("compile a program on a browser's worker, which has no files", () => {
     });
   });
 
+  it("stops at a require of a file it lacks, as Node fails to load it", async () => {
+    const source =
+      'const { limit } = require("./limit.cjs");\nif (limit !== 3) throw new Error("limit");\n';
+    expect(runNode({ "main.cjs": source }, "main.cjs").stderr).toContain("MODULE_NOT_FOUND");
+    expect(
+      runNode({ "main.cjs": source, "limit.cjs": "exports.limit = 3;\n" }, "main.cjs").status,
+    ).toBe(0);
+    expect((await getBrowserOutcome(source, "main.cjs", true)).error).toEqual({
+      name: "TlaTypeScriptError",
+      isTlaError: true,
+      message: "main.cjs:1:27 tla-ts can't load the module ./limit.cjs",
+    });
+  });
+
   // TypeScript reads its declaration files through its file system, so a host without one passes
   // their texts.
   it("stops at a model's types without TypeScript's declaration files", async () => {

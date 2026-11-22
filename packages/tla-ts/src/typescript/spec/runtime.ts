@@ -674,8 +674,9 @@ const DEFINITIONS = [
   ELSE IF id \\in {SV("node:util"), SV("util")} THEN BuiltinModule(s, -1, N("util"), <<[trap |-> SV("get"), method |-> "utilGet"]>>, FALSE)
   ELSE IF id \\in {SV("node:crypto"), SV("crypto")} THEN BuiltinModule(s, -2, N("crypto"), <<>>, FALSE)
   ELSE IF id \\in {SV("node:stream"), SV("stream")} THEN BuiltinModule(s, -3, N("stream"), <<>>, TRUE)
-  ELSE IF ~IsString(id) \\/ id.value \\notin DOMAIN ModuleNode(referrer).targets
-  THEN Assert(FALSE, "tla-ts can't require a module other than a file that a string names")
+  ELSE IF ~IsString(id) THEN Assert(FALSE, "tla-ts can't require a module other than a file that a string names")
+  ELSE IF id.value \\notin DOMAIN ModuleNode(referrer).targets
+  THEN Assert(FALSE, "tla-ts can't load the module " \\o UnitsText(id.value))
   ELSE RequireFile(s, ModuleNode(referrer).targets[id.value])`,
   // A part of ECMAScript that ESCore leaves out, by the reason that ESCore gives after
   // "Unsupported: ", or none.
