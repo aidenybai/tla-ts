@@ -403,6 +403,8 @@ if (depth(1000) !== 1000) throw new Error("wrong depth");
 TlaStackLimitError: tla-ts can't check this program within the stack: its check overflowed its 8 MB stack at depth 0
 ```
 
+The thread's heap is the one Node gives the process, which `--max-old-space-size` sets. A program whose check runs out of it stops with a `TlaHeapLimitError`, with the same exit code, such as `TlaHeapLimitError: tla-ts can't check this program within Node's default heap of 4192 MB`.
+
 ESCore's realm starts once a process. The package's build holds the realm prepared for the host that built it. On a host whose realm differs, such as one with another time zone or locale, tla-ts starts the realm itself.
 
 Starting the realm takes a deeper stack than Node's main thread has, and the CLI's thread has it. Where you call `compile` on Node's main thread, run Node with a deeper stack, as with `node --stack-size=4000`. Otherwise tla-ts throws a `TlaError`: `tla-ts can't start ESCore's realm, whose evaluation ran out of stack: run Node with a deeper stack, as with --stack-size=4000`.

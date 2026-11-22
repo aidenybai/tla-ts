@@ -156,6 +156,15 @@ export class TlaStackLimitError extends TlaError {
   }
 }
 
+// A program whose check needs more heap than Node gives a process by default, though Node may run
+// it, as the check's thread ran out of its heap.
+export class TlaHeapLimitError extends TlaError {
+  constructor(heapMb: number) {
+    super(`tla-ts can't check this program within Node's default heap of ${heapMb} MB`);
+    this.name = "TlaHeapLimitError";
+  }
+}
+
 export class TlaUncodedError extends TlaEvaluationError {}
 
 export class TlaIncompleteSuccessorError extends TlaEvaluationError {
