@@ -27,6 +27,11 @@ import {
 
 const DIST = join(import.meta.dirname, "../../dist/index.js");
 
+const createFileReader = (files: Map<string, string>) => (path: string) => {
+  const text = files.get(path);
+  return text === undefined ? undefined : new TextEncoder().encode(text);
+};
+
 const getCoverageCounts = async (definitions: string, config: string) => {
   const result = await check({
     source: `---- MODULE M ----\nEXTENDS Integers\nVARIABLE x\n${definitions}\n====`,
@@ -935,7 +940,7 @@ ASSUME TLCFP(a) = -887695703
         '---- MODULE M ----\nEXTENDS Naturals, TLC, Json\nVARIABLE x\nJ == ToJson(<<PrintT("j")>>)\nA == ToJsonArray(<<PrintT("a")>>)\nO == ToJsonObject([k |-> PrintT("o")])\nS == JsonSerialize("s.json", <<PrintT("s")>>)\nN == ndJsonSerialize("n.json", <<PrintT("n")>>)\nD == JsonDeserialize("s.json")\nE == ndJsonDeserialize("n.json")\nInit == x = 0\nNext == x < 2 /\\ PrintT(<<J, A, O, S, N, D, E>>) /\\ x\' = x + 1\n====',
       config: "INIT Init\nNEXT Next\nCHECK_DEADLOCK FALSE",
       onPrint: (text) => printed.push(text),
-      readFile: (path) => files.get(path),
+      readFile: createFileReader(files),
       writeFile: (path, content) => files.set(path, String(content)),
     });
     const tuple = '<<"[true]", "[true]", "{\\"k\\":true}", TRUE, TRUE, <<TRUE>>, <<TRUE>>>>';
@@ -981,7 +986,7 @@ ASSUME TLCFP(a) = -887695703
           name === "IOUtils"
             ? "---- MODULE IOUtils ----\nLOCAL INSTANCE Integers\nSerialize(value, dest, options) ==\n  CHOOSE r \\in [exitValue : Int, stdout : STRING, stderr : STRING] : TRUE\n===="
             : undefined,
-        readFile: (path) => files.get(path),
+        readFile: createFileReader(files),
         writeFile: (path, content) => files.set(path, String(content)),
       });
       expect(files.get("old.json")).toBe(content);
@@ -1004,7 +1009,7 @@ ASSUME TLCFP(a) = -887695703
         name === "IOUtils"
           ? "---- MODULE IOUtils ----\nLOCAL INSTANCE Integers\nSerialize(value, dest, options) ==\n  CHOOSE r \\in [exitValue : Int, stdout : STRING, stderr : STRING] : TRUE\n===="
           : undefined,
-      readFile: (path) => files.get(path),
+      readFile: createFileReader(files),
       writeFile: (path, content) => files.set(path, String(content)),
     });
 
@@ -1089,7 +1094,7 @@ ASSUME TLCFP(a) = -887695703
         '---- MODULE M ----\nEXTENDS Naturals, TLC, Json\nVARIABLE x\nInit == x = 0 /\\ JsonSerialize("f.json", <<0>>)\nNext == /\\ x < 2\n        /\\ LET d == JsonDeserialize("f.json")\n               w == JsonSerialize("f.json", <<x>>)\n           IN /\\ w\n              /\\ PrintT(d)\n              /\\ JsonSerialize("f.json", <<99>>)\n              /\\ PrintT(d)\n              /\\ w\n              /\\ PrintT(JsonDeserialize("f.json"))\n        /\\ x\' = x + 1\n====',
       config: "INIT Init\nNEXT Next\nCHECK_DEADLOCK FALSE",
       onPrint: (text) => printed.push(text),
-      readFile: (path) => files.get(path),
+      readFile: createFileReader(files),
       writeFile: (path, content) => files.set(path, String(content)),
     });
     expect(printed).toEqual(["<<0>>", "<<99>>", "<<0>>", "<<1>>", "<<99>>", "<<1>>"]);
@@ -1103,7 +1108,7 @@ ASSUME TLCFP(a) = -887695703
         '---- MODULE M ----\nEXTENDS Naturals, TLC, Json\nVARIABLE x\nW == JsonSerialize("f.json", <<0>>)\nD == JsonDeserialize("f.json")\nInit == x = 0 /\\ W\nNext == x < 2 /\\ JsonSerialize("f.json", <<x + 10>>) /\\ PrintT(D) /\\ PrintT(JsonDeserialize("f.json")) /\\ x\' = x + 1\n====',
       config: "INIT Init\nNEXT Next\nCHECK_DEADLOCK FALSE",
       onPrint: (text) => printed.push(text),
-      readFile: (path) => files.get(path),
+      readFile: createFileReader(files),
       writeFile: (path, content) => files.set(path, String(content)),
     });
     expect(printed).toEqual(["<<0>>", "<<10>>", "<<0>>", "<<11>>"]);
@@ -1121,7 +1126,7 @@ ASSUME TLCFP(a) = -887695703
       const result = await check({
         source: `---- MODULE M ----\nEXTENDS Naturals, TLC, Json\nVARIABLE x\nInit == x = 0 /\\ ${expression}\nNext == x' = x\n====`,
         config: "INIT Init\nNEXT Next",
-        readFile: (path) => files.get(path),
+        readFile: createFileReader(files),
         writeFile: (path, content) => files.set(path, String(content)),
       });
       expect([result.status, files.get(path)]).toEqual(["error", contents]);

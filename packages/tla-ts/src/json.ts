@@ -30,7 +30,7 @@ import {
 } from "./values";
 
 export interface FileSystem {
-  readFile: ((path: string) => string | undefined) | undefined;
+  readFile: ((path: string) => Uint8Array | undefined) | undefined;
   writeFile: ((path: string, content: string | Uint8Array) => void) | undefined;
   makeDirectory: ((path: string) => void) | undefined;
 }
@@ -49,6 +49,13 @@ const OPEN_OPTIONS = new Set([
 ]);
 
 const UTF_8_NAMES = new Set(["utf-8", "utf8", "unicode-1-1-utf-8"]);
+
+const UTF_8_DECODER = new TextDecoder("utf-8", { ignoreBOM: true });
+
+const readUtf8 = (files: FileSystem, path: string) => {
+  const bytes = files.readFile?.(path);
+  return bytes === undefined ? undefined : UTF_8_DECODER.decode(bytes);
+};
 
 const STANDARD_CHARSETS = new Set(["us-ascii", "iso-8859-1", "utf-16", "utf-16be", "utf-16le"]);
 
@@ -244,7 +251,7 @@ const serializeWithOptions = (
   if (options.has("DELETE_ON_CLOSE")) {
     throw new TlaUnsupportedError("IOUtils!Serialize does not support DELETE_ON_CLOSE");
   }
-  const existing = openLikeNio(() => files.readFile?.(path));
+  const existing = openLikeNio(() => readUtf8(files, path));
   if (existing === undefined && !options.has("CREATE") && !options.has("CREATE_NEW")) {
     throw new TlaEvaluationError(`java.nio.file.NoSuchFileException: ${path}`);
   }
@@ -276,7 +283,7 @@ const makeParentDirectory = (files: FileSystem, path: string) => {
 };
 
 const readText = (files: FileSystem, path: string) => {
-  const text = files.readFile?.(path);
+  const text = readUtf8(files, path);
   if (text === undefined) throw new TlaEvaluationError(`${path} (No such file or directory)`);
   return text;
 };

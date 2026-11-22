@@ -44,7 +44,7 @@ const checkModel = async (specPath: string, configPath: string): Promise<ModelOu
     },
     readFile: (path) => {
       const filePath = join(directory, path);
-      return existsSync(filePath) ? readFileSync(filePath, "utf8") : undefined;
+      return existsSync(filePath) ? readFileSync(filePath) : undefined;
     },
     onPrint: () => {},
     seed: TLC_SEED,

@@ -9,11 +9,10 @@ const checkJson = async (name: string) => {
   const written = new Map<string, string>();
   const result = await checkFixture("json", name, name, {
     readFile: (path) => {
+      const text = written.get(path);
+      if (text !== undefined) return new TextEncoder().encode(text);
       const fixturePath = join(DIRECTORY, path);
-      return (
-        written.get(path) ??
-        (existsSync(fixturePath) ? readFileSync(fixturePath, "utf8") : undefined)
-      );
+      return existsSync(fixturePath) ? readFileSync(fixturePath) : undefined;
     },
     writeFile: (path, content) => written.set(path, String(content)),
   });
