@@ -38,6 +38,7 @@ import {
   compareLocations,
   getArity,
   getBinder,
+  getBoundNames,
   getNameSelectors,
   getOperandIndex,
   getOperands,
@@ -84,7 +85,7 @@ const declaredArities = new WeakMap<Definition, number>();
 
 const resolveDefinition = (
   definition: Definition,
-  resolve: (expression: Expression) => Expression,
+  resolve: (expression: Expression, bound: string[]) => Expression,
 ) => {
   const resolved = mapDefinition(definition, resolve);
   const arity = declaredArities.get(definition);
@@ -775,6 +776,21 @@ const createLocalScope = (outer: Lookup, isOuterBound: (name: string) => boolean
   return { lookup, isBound, bind, isDefined: (name: string) => defined.has(name) };
 };
 
+const addBound = (isBound: (name: string) => boolean, names: string[]) =>
+  names.length === 0 ? isBound : (name: string) => names.includes(name) || isBound(name);
+
+const getNewNames = (statement: Expression | AssumeProve) =>
+  statement.kind === "AssumeProve"
+    ? statement.assumptions.flatMap((assumption) =>
+        assumption.kind === "NewSymbol" ? [assumption.name] : [],
+      )
+    : [];
+
+const getPickedNames = (body: { names: string[]; bounds: Bound[] }) => [
+  ...body.names,
+  ...getBoundNames(body.bounds),
+];
+
 const resolveSubexpressions = (
   expression: Expression,
   lookup: Lookup,
@@ -802,14 +818,14 @@ const resolveSubexpressions = (
     };
     const isLocalGoal = (name: string) => !scope.isDefined(name) && isGoal(name);
     const definitions = expression.definitions.map((definition) => {
-      const result = resolveDefinition(definition, (child) =>
+      const result = resolveDefinition(definition, (child, bound) =>
         resolveSubexpressions(
           child,
           local,
           getStandardDefinition,
           records,
           isLocalGoal,
-          scope.isBound,
+          addBound(scope.isBound, bound),
         ),
       );
       resolved.set(definition, result);
@@ -892,8 +908,15 @@ const resolveSubexpressions = (
                 : selector,
             ),
           }
-        : mapChildren(expression, (child) =>
-            resolveSubexpressions(child, lookup, getStandardDefinition, records, isGoal, isBound),
+        : mapChildren(expression, (child, bound) =>
+            resolveSubexpressions(
+              child,
+              lookup,
+              getStandardDefinition,
+              records,
+              isGoal,
+              addBound(isBound, bound),
+            ),
           );
   const children = getChildren(expression);
   const mapped = getChildren(rebuilt).every((child, index) => child === children[index])
@@ -1021,7 +1044,11 @@ export const createModuleSubexpressions = (
   };
   const goals = new Set(
     module.theorems.flatMap((theorem) =>
-      theorem.name !== undefined && theorem.statement.kind === "AssumeProve" ? [theorem.name] : [],
+      theorem.name !== undefined &&
+      theorem.statement.kind === "AssumeProve" &&
+      !isBoundBefore(theorem.name, theorem.location)
+        ? [theorem.name]
+        : [],
     ),
   );
   const clauses = module.theorems.flatMap((theorem): Definition[] => {
@@ -1078,32 +1105,35 @@ export const createModuleSubexpressions = (
   const getOwnDefinition = createLookup(module.definitions);
   const getModuleDefinition = createLookup(ordered.map((entry) => entry.definition));
   const proofLookup: Lookup = (name) => {
+    // SANY's Generator#selectorToNode stops at a theorem's name, so no name it prefixes is reachable.
+    if (name.includes("!") && goals.has(name.split("!")[0])) return undefined;
     const definition = getOwnDefinition(name) ?? getAvailable(name);
     return definition?.kind === "Operator" && getAssumeProveBody(definition.body)
       ? undefined
       : definition;
   };
   const definitionLookup: Lookup = (name) => getModuleDefinition(name) ?? getAvailable(name);
-  const resolve = (expression: Expression, location: SourceLocation) =>
+  const resolve = (expression: Expression, location: SourceLocation, bound: string[]) =>
     resolveSubexpressions(
       expression,
       getVisibleLookup(definitionLookup, location),
       getStandardDefinition,
       records,
       () => false,
-      (name) => isBoundBefore(name, location),
+      addBound((name) => isBoundBefore(name, location), bound),
     );
   const createProofResolver = (lookup: Lookup, isBound: (name: string) => boolean) => {
     const isProofGoal = (name: string) => goals.has(name) || !lookup(name);
-    const resolveInProof = (expression: Expression) =>
+    const resolveBound = (expression: Expression, bound: string[]) =>
       resolveSubexpressions(
         expression,
         lookup,
         getStandardDefinition,
         records,
         isProofGoal,
-        isBound,
+        addBound(isBound, bound),
       );
+    const resolveInProof = (expression: Expression) => resolveBound(expression, []);
     const resolveFacts = (facts: Fact[]) => {
       const resolved = facts.map((fact) =>
         fact.kind === "ModuleFact" ? fact : resolveInProof(fact),
@@ -1129,18 +1159,22 @@ export const createModuleSubexpressions = (
       });
     const resolveBounds = (bounds: Bound[]) =>
       bounds.map((bound) => ({ ...bound, set: resolveInProof(bound.set) }));
-    const resolveStatement = (statement: Expression | AssumeProve): Expression | AssumeProve =>
-      statement.kind === "AssumeProve"
-        ? {
-            ...statement,
-            assumptions: statement.assumptions.map((assumption) =>
-              assumption.kind === "NewSymbol"
-                ? { ...assumption, set: assumption.set && resolveInProof(assumption.set) }
-                : resolveStatement(assumption),
-            ),
-            conclusion: resolveInProof(statement.conclusion),
-          }
-        : resolveInProof(statement);
+    const resolveStatement = (statement: Expression | AssumeProve): Expression | AssumeProve => {
+      if (statement.kind !== "AssumeProve") return resolveInProof(statement);
+      let names: string[] = [];
+      const assumptions = statement.assumptions.map((assumption) => {
+        if (assumption.kind !== "NewSymbol") {
+          return createProofResolver(lookup, addBound(isBound, names)).resolveStatement(assumption);
+        }
+        const resolved = {
+          ...assumption,
+          set: assumption.set && resolveBound(assumption.set, names),
+        };
+        names = [...names, assumption.name];
+        return resolved;
+      });
+      return { ...statement, assumptions, conclusion: resolveBound(statement.conclusion, names) };
+    };
     const resolveStep = (body: StepBody): StepBody => {
       switch (body.kind) {
         case "Use":
@@ -1171,7 +1205,7 @@ export const createModuleSubexpressions = (
                       local.isProofGoal,
                       local.isBound,
                     )
-                  : resolveDefinition(definition, local.resolveInProof);
+                  : resolveDefinition(definition, local.resolveBound);
               scope.bind(resolved);
               return resolved;
             }),
@@ -1185,7 +1219,11 @@ export const createModuleSubexpressions = (
         case "Take":
           return { ...body, bounds: resolveBounds(body.bounds) };
         case "Pick":
-          return { ...body, bounds: resolveBounds(body.bounds), body: resolveInProof(body.body) };
+          return {
+            ...body,
+            bounds: resolveBounds(body.bounds),
+            body: resolveBound(body.body, getPickedNames(body)),
+          };
         case "Assert":
           return { ...body, statement: resolveStatement(body.statement) };
         default:
@@ -1220,11 +1258,27 @@ export const createModuleSubexpressions = (
               location: step.location,
             });
           }
-          const resolved = { ...step, body, proof: resolver.resolveProof(step.proof) };
+          const proofResolver =
+            body.kind === "Assert" && !body.isSuffices
+              ? createProofResolver(
+                  resolver.lookup,
+                  addBound(resolver.isBound, getNewNames(body.statement)),
+                )
+              : resolver;
+          const resolved = { ...step, body, proof: proofResolver.resolveProof(step.proof) };
           if (resolved.body.kind === "Define") {
             const scope = createLocalScope(resolver.lookup, resolver.isBound);
             resolved.body.definitions.forEach(scope.bind);
             resolver = createProofResolver(scope.lookup, scope.isBound);
+          }
+          const names =
+            body.kind === "Take" || body.kind === "Pick"
+              ? getPickedNames(body)
+              : body.kind === "Assert" && body.isSuffices
+                ? getNewNames(body.statement)
+                : [];
+          if (names.length > 0) {
+            resolver = createProofResolver(resolver.lookup, addBound(resolver.isBound, names));
           }
           return resolved;
         }),
@@ -1234,6 +1288,7 @@ export const createModuleSubexpressions = (
       lookup,
       isBound,
       isProofGoal,
+      resolveBound,
       resolveInProof,
       resolveFacts,
       resolveDefs,
@@ -1242,9 +1297,10 @@ export const createModuleSubexpressions = (
       resolveProof,
     };
   };
-  const createModuleProofResolver = (location: SourceLocation) =>
-    createProofResolver(getVisibleLookup(proofLookup, location), (name) =>
-      isBoundBefore(name, location),
+  const createModuleProofResolver = (location: SourceLocation, bound: string[]) =>
+    createProofResolver(
+      getVisibleLookup(proofLookup, location),
+      addBound((name) => isBoundBefore(name, location), bound),
     );
   const isMapped = (expression: Expression) =>
     containsReference(expression) || (expand !== undefined && hasLetInstance(expression));
@@ -1257,8 +1313,12 @@ export const createModuleSubexpressions = (
       if (!getDefinitionExpressions(definition).some(isMapped)) continue;
       resolvedDefinitions.set(
         definition,
-        resolveDefinition(definition, (expression) =>
-          resolve(entry.isClause ? expression : getExpanded(expression), definition.location),
+        resolveDefinition(definition, (expression, bound) =>
+          resolve(
+            entry.isClause ? expression : getExpanded(expression),
+            definition.location,
+            bound,
+          ),
         ),
       );
     }
@@ -1292,7 +1352,7 @@ export const createModuleSubexpressions = (
             isMapped(assumption.expression)
               ? {
                   ...assumption,
-                  expression: resolve(getExpanded(assumption.expression), assumption.location),
+                  expression: resolve(getExpanded(assumption.expression), assumption.location, []),
                 }
               : assumption,
           ];
@@ -1300,7 +1360,7 @@ export const createModuleSubexpressions = (
       );
       const theorems = new Map(
         module.theorems.map((theorem) => {
-          const resolver = createModuleProofResolver(theorem.location);
+          const resolver = createModuleProofResolver(theorem.location, []);
           const statement = theorem.statement;
           return [
             theorem,
@@ -1313,7 +1373,10 @@ export const createModuleSubexpressions = (
                   : resolver.resolveStatement(getExpanded(statement))),
               proof:
                 theorem.proof &&
-                createModuleProofResolver(theorem.proof.location).resolveProof(theorem.proof),
+                createModuleProofResolver(
+                  theorem.proof.location,
+                  getNewNames(statement),
+                ).resolveProof(theorem.proof),
             },
           ];
         }),
@@ -1338,7 +1401,7 @@ export const createModuleSubexpressions = (
         assumptions: [...assumptions.values()],
         theorems: [...theorems.values()],
         uses: module.uses.map((use) => {
-          const resolver = createModuleProofResolver(use.location);
+          const resolver = createModuleProofResolver(use.location, []);
           return {
             ...use,
             facts: resolver.resolveFacts(use.facts),
