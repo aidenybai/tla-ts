@@ -1858,6 +1858,52 @@ describe("checks a module's exported functions as a model on ESCore", () => {
     });
   });
 
+  // A function that changes, or gives back, the object that a field of its parameter holds, which
+  // the state holds too, runs as ESCore runs it, whose object the state shares.
+  describe("runs a call that changes or gives back a field's object as ESCore does", () => {
+    const source = `
+      let cells = [false, false];
+      let sizes = [0];
+
+      const grow = (s: { cells: boolean[] }) => {
+        s.cells.push(true);
+        return s.cells.length;
+      };
+
+      const set = (s: { cells: boolean[] }) => {
+        s.cells[0] = !s.cells[0];
+        return s.cells[0];
+      };
+
+      export const tick = () => {
+        if (cells.length >= 4) return;
+        sizes = [...sizes, grow({ cells })];
+      };
+
+      const pick = (s: { cells: boolean[] }) => s.cells;
+
+      export const extend = () => {
+        if (cells.length >= 4) return;
+        const picked = pick({ cells });
+        picked.push(false);
+      };
+
+      export const toggle = () => {
+        if (sizes.length >= 3) return;
+        sizes = [...sizes, set({ cells }) ? 1 : 0];
+      };
+    `;
+
+    it("gives what ESCore gives in every call, with Node's states", async () => {
+      const explored = await exploreInNode(source, "spec.ts");
+      expect(explored.error).toBeUndefined();
+      const counts = [explored.status, explored.distinctStates, explored.generatedStates];
+      expect(getCounts(await checkModel(source, "spec.ts"))).toEqual(counts);
+      expect(getCounts(await checkModel(source, "spec.ts", "native"))).toEqual(counts);
+      expect(getCounts(await checkModel(source, "spec.ts", "compared"))).toEqual(counts);
+    });
+  });
+
   describe("runs a Map's keys and values, and a function passed by name, natively, as ESCore does", () => {
     const source = `
       type Slot = 1 | 2 | 3;
