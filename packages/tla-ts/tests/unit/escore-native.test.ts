@@ -96,7 +96,43 @@ const NUMERIC_STRINGS = [
   "Infinityx",
 ];
 
+// Lists and values of each kind KeyIndex meets: entries of every type, Empty, a value found twice,
+// whose first index wins, -0 against +0 and NaN against NaN, which SameValueZero finds equal, a
+// Number that isn't an integer, and entries it can't compare before and after the one it finds.
+const KEY_LIST =
+  "<<Str(<<97>>), IntV(1), Empty, Obj(1), Sym(1), True, Undefined, Null, Str(<<98>>), IntV(1), Num(NegZero), Num(NaN), Num(PosInf)>>";
+const KEY_INDEX_CALLS = [
+  ...[
+    "Str(<<97>>)",
+    "IntV(1)",
+    "IntV(2)",
+    "Obj(1)",
+    "Obj(2)",
+    "Sym(1)",
+    "True",
+    "False",
+    "Undefined",
+    "Null",
+    "Str(<<98>>)",
+    "Str(<<>>)",
+    "Num(PosZero)",
+    "Num(NegZero)",
+    "Num(NaN)",
+    "Num(PosInf)",
+  ].map((value) => `KeyIndex(${KEY_LIST}, ${value})`),
+  "KeyIndex(<<>>, IntV(1))",
+  "KeyIndex(<<IntV(1), Str(<<97>>), Empty, IntV(1), Str(<<97>>)>>, IntV(1))",
+  "KeyIndex(<<IntV(1), Str(<<97>>), Empty, IntV(1), Str(<<97>>)>>, Str(<<97>>))",
+  "KeyIndex(<<Num(PosZero)>>, Num(NegZero))",
+  "KeyIndex(<<Num(NaN), IntV(3)>>, IntV(3))",
+  "KeyIndex(<<IntV(3), Num(NaN)>>, IntV(3))",
+  "KeyIndex(<<Empty, Empty>>, IntV(3))",
+];
+
 const getChecks = () => [
+  ...KEY_INDEX_CALLS.map(
+    (call) => `${call} = Plain!${call} /\\ ToString(${call}) = ToString(Plain!${call})`,
+  ),
   ...NUMERIC_STRINGS.map((text) => {
     const call = `CanonicalNumericIndexString(${getUnits(text)})`;
     return `${call} = Plain!${call} /\\ ToString(${call}) = ToString(Plain!${call})`;
