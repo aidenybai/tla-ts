@@ -6,6 +6,9 @@ export const getJavaHashCode = (text: string): number => {
   return hash;
 };
 
+export const getLongHash = (value: bigint) =>
+  Number(BigInt.asIntN(32, value ^ (BigInt.asUintN(64, value) >> 32n)));
+
 export const getHashMapOrder = <Key>(keys: Key[], getHashCode: (key: Key) => number) => {
   const unique = [...new Set(keys)];
   const capacity = 2 ** Math.max(4, Math.ceil(Math.log2(unique.length / 0.75)));

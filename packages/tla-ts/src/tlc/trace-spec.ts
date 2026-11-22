@@ -1,5 +1,6 @@
-import { getHashMapOrder, getJavaHashCode } from "../java-hash";
-import { formatValue, type Value } from "../values";
+import { getHashMapOrder, getJavaHashCode, getLongHash } from "../java-hash";
+import { formatValue, type ModelValue, type Value } from "../values";
+import { getTlcFingerprint } from "./fingerprint";
 import { zeroPad } from "./messages";
 
 interface TraceSpecInput {
@@ -8,7 +9,7 @@ interface TraceSpecInput {
   rawConstants: string[];
   states: Record<string, Value>[];
   loopStart: number | undefined;
-  modelValues: string[];
+  modelValues: ModelValue[];
   isDefined: (name: string) => boolean;
 }
 
@@ -103,14 +104,14 @@ export const writeTraceSpec = (input: TraceSpecInput) => {
   const declaredNames = new Set(input.rawConstants.map((line) => line.split(" = ")[0]));
   const constantLines = [
     ...input.rawConstants.map((line) => indent(line, 1)),
-    // Deviation from TLC: TraceExplorationSpec#generate drops its filter's result and lists ModelValue.mvs in HashSet order, so TLC repeats a model value the configuration assigns.
-    ...input.modelValues
-      .filter((name) => !declaredNames.has(name))
-      .map((name) => indent(`${name} = ${name}`, 1)),
+    // Deviation from TLC: TraceExplorationSpec#generate drops its filter's result, so TLC repeats a model value the configuration assigns.
+    ...getHashMapOrder(input.modelValues, (value) => getLongHash(getTlcFingerprint([value])))
+      .filter((value) => !declaredNames.has(value.name))
+      .map((value) => indent(`${value.name} = ${value.name}`, 1)),
     ...(isLasso ? [`${LASSO_START} = ${loopStart + 1}`, `${LASSO_END} = ${states.length}`] : []),
   ];
   const teConstants = [
-    ...input.modelValues.filter((name) => !input.isDefined(name)),
+    ...input.modelValues.filter((value) => !input.isDefined(value.name)).map((value) => value.name),
     ...(isLasso ? [LASSO_START, LASSO_END] : []),
   ];
   const teConstantsModule = `${specName}_TEConstants`;

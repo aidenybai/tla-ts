@@ -1,4 +1,4 @@
-import { getHashMapOrder, getJavaHashCode } from "./java-hash";
+import { getHashMapOrder, getJavaHashCode, getLongHash } from "./java-hash";
 import type { TlcVersion } from "./tlc/version";
 import { formatState, type Value } from "./values";
 
@@ -49,9 +49,6 @@ export interface StateWriter {
 type WriteFile = ((path: string, content: string) => void) | undefined;
 
 const COLOR_SCHEME = "paired12";
-
-const getLongHash = (value: bigint) =>
-  Number(BigInt.asIntN(32, value ^ (BigInt.asUintN(64, value) >> 32n)));
 
 const escapeDotString = (text: string) =>
   text.replaceAll("\\", "\\\\").replaceAll('"', '\\"').trim();
