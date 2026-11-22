@@ -294,6 +294,67 @@ describe("check matches TLC", () => {
 
   it.each([
     [
+      "fails as TLC does to build an enumerated set it filters by a predicate that can't fail",
+      "{<<1, 0>>}",
+      "{<<1 \\div x, x>>, <<1, x>>}",
+      ["error", "The second argument of \\div is 0.", 1, 1],
+    ],
+    [
+      "tests membership in a filter by a predicate that can't fail as TLC does",
+      "{<<1, 0>>, <<1, 1>>}",
+      "{<<0, x>>, <<1, x>>}",
+      ["deadlock", undefined, 3, 3],
+    ],
+  ])("%s", async (_title, edges, set, expected) => {
+    const result = await check({
+      source: `---- MODULE M ----\nEXTENDS Integers\nVARIABLES x, y\nInit == x = 0 /\\ y = ${edges}\nNext == x' = (x + 1) % 3 /\\ y' = y /\\ <<1, x>> \\in {t \\in ${set} : t \\in y}\n====`,
+      config: "INIT Init\nNEXT Next",
+    });
+    expect([
+      result.status,
+      result.failure?.message,
+      result.generatedStates,
+      result.distinctStates,
+    ]).toEqual(expected);
+  });
+
+  it("fails as TLC does to compare model values of two types in a filter's membership test", async () => {
+    const result = await check({
+      source:
+        "---- MODULE M ----\nEXTENDS Integers\nCONSTANTS a, b, m\nVARIABLES x, y\nInit == x = 0 /\\ y = {b, m}\nNext == x' = (x + 1) % 3 /\\ y' = y /\\ m \\in {t \\in {m, a} : t \\in y}\n====",
+      config: "INIT Init\nNEXT Next\nCONSTANTS\na = A_a\nb = B_b\nm = m",
+    });
+    expect([
+      result.status,
+      result.failure?.message,
+      result.generatedStates,
+      result.distinctStates,
+    ]).toEqual([
+      "error",
+      `${UNEXPECTED_EXCEPTION}Attempted to compare the differently-typed model values A_a and B_b`,
+      1,
+      1,
+    ]);
+  });
+
+  it("checks a membership in a filter whose predicate nests 19 more as TLC does", async () => {
+    let predicate = "t20 \\in y";
+    for (let level = 20; level >= 2; level--) {
+      predicate = `t${level - 1} \\in {t${level} \\in 0..0 : ${predicate}}`;
+    }
+    const result = await check({
+      source: `---- MODULE M ----\nEXTENDS Integers\nVARIABLES x, y\nInit == x = 0 /\\ y = {0, 1, 2}\nNext == x' = x /\\ y' = y /\\ x \\in {t1 \\in 0..0 : ${predicate}}\n====`,
+      config: "INIT Init\nNEXT Next",
+    });
+    expect([result.status, result.generatedStates, result.distinctStates]).toEqual([
+      "success",
+      2,
+      1,
+    ]);
+  });
+
+  it.each([
+    [
       "a member of SUBSET S",
       6,
       "({t \\in (0..2) \\X {1} : TLCSet(1, TLCGet(1) + 1)} \\in SUBSET ((1..2) \\X {1})) \\in BOOLEAN",
