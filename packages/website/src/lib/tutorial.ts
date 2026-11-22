@@ -311,27 +311,12 @@ Area(w) ==
     ],
   },
   {
-    title: "What TLA-ts writes",
+    title: "Skip the TLA+",
     blocks: [
-      "TLA-ts writes all of this for you.",
+      "TLA-ts checks the TypeScript file itself.",
       { language: "shellscript", code: "npx tla-ts likes.ts" },
-      {
-        language: "tlaplus",
-        code: String.raw`---- MODULE Likes ----
-EXTENDS Integers, Sequences, FiniteSets, TLC
-VARIABLES likes
-vars == <<likes>>
-Init == likes = 0
-like == likes' = likes + 1
-unlike == likes' = likes - 1
-Next == \/ like
-        \/ unlike
-Spec == /\ Init
-        /\ [][Next]_vars
-neverNegative == likes >= 0
-====`,
-      },
-      "Two lines are new. `vars` lists the variables. `Spec` says to start at `Init`, then keep taking `Next` steps.",
+      "It finds the same bug: likes is -1 after one unlike.",
+      "It writes TLA+ to do it, but of JavaScript running your code, so its module is far longer than ours.",
     ],
   },
 ];

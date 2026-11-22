@@ -19,7 +19,7 @@ import {
 } from "./runtime";
 import { parseCommonJs } from "./cjs-lexer";
 import { NODE_IMPORT } from "./node-import";
-import { getNumber, type ProgramFile, specialize } from "./specialize";
+import { getNumber, type ProgramFile, type ProgramRegion, specialize } from "./specialize";
 import { stripTypes } from "./strip-types";
 import { getHostIntl } from "./intl";
 import { suspendDefinitions } from "./suspend";
@@ -35,6 +35,7 @@ export interface EscoreSpec {
   name: string;
   source: string;
   config: string;
+  regions: ProgramRegion[];
   loadModule: (name: string) => string | undefined;
   preparedModules: PreparedModule[];
 }
@@ -852,6 +853,7 @@ export const compileToEscore = (
     config: [CONFIG, ...stubs.map((stub) => `CONSTANT ${stub.name} <- Stub${stub.name}`), ""].join(
       "\n",
     ),
+    regions: program.regions,
     loadModule: (name) => (name === "ProgramCode" ? module : undefined),
     preparedModules: [...runtime.modules, view],
   };

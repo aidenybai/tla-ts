@@ -17,6 +17,7 @@ interface Outcome {
   trace?: Record<string, string>[];
   actions?: string[];
   message?: string;
+  regions?: { name: string; start: number; end: number; definitions: string[] }[];
   error?: { name: string; isTlaError: boolean; message: string };
 }
 
@@ -98,6 +99,7 @@ const createApi = (stackSizeMb: number, isBrowser = false) => {
           ),
           actions: result.violation?.trace.slice(1).map((step) => step.label?.split(" ")[0]),
           message: result.failure?.message,
+          regions: spec.regions,
         },
       });
     } catch (error) {
@@ -322,6 +324,27 @@ describe("compile and check a model whose actions Node runs", () => {
 
 // A browser prepares ESCore's runtime from a realm that Node recorded, which holds no functions of
 // the host, so the spec is Node's but where the program asks the host about a locale tag.
+describe("map a file's declarations to the program's code", () => {
+  it("gives each top-level declaration its text and the definitions it compiles to", async () => {
+    const source =
+      "let likes = 0;\n\nexport const like = () => {\n  if (likes < 2) likes += 1;\n};\n\nexport function reset() {\n  likes = 0;\n}\n\nexport const neverNegative = () => likes >= 0;\n";
+    const regions = (await getOutcome(source, "likes.ts", true)).regions ?? [];
+    expect(
+      Object.fromEntries(
+        regions.map((region) => [region.name, source.slice(region.start, region.end)]),
+      ),
+    ).toEqual({
+      likes: "let likes = 0;",
+      like: "export const like = () => {\n  if (likes < 2) likes += 1;\n};",
+      reset: "export function reset() {\n  likes = 0;\n}",
+      neverNegative: "export const neverNegative = () => likes >= 0;",
+    });
+    expect(regions.every((region) => region.definitions.length > 0)).toBe(true);
+    const names = regions.flatMap((region) => region.definitions);
+    expect(new Set(names).size).toBe(names.length);
+  });
+});
+
 describe("compile on ESCore from a recorded realm as from Node's", () => {
   describe("give the spec and the result that Node's realm gives", () => {
     const getSource = (expected: string) =>
