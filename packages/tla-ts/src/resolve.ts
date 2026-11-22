@@ -1017,10 +1017,6 @@ const getSymbolArity = (
     });
     return undefined;
   }
-  if (local && expression.kind !== "OperatorReference") {
-    expression.resolution = local.isSelf ? SELF_RESOLUTION : LOCAL_RESOLUTION;
-  }
-  if (local) return local.arity;
   const prefix = name.includes("!") ? name.slice(0, name.indexOf("!")) : "";
   const selected =
     prefix === "" ? undefined : (lookupLocal(scope, prefix) ?? findSymbol(prefix, unit));
@@ -1035,21 +1031,6 @@ const getSymbolArity = (
       unit,
     );
     return undefined;
-  }
-  const binding = unit.bindings.get(name);
-  if (binding?.goal?.statement.kind === "AssumeProve" && !binding.isSubstituted) {
-    return binding.arity;
-  }
-  const symbol = findSymbol(name, unit);
-  if (symbol) {
-    if (symbol.kind === "Theorem") unit.linkTheorem(symbol.key);
-    if (expression.kind === "Identifier") expression.name = symbol.key;
-    else expression.operator = symbol.key;
-    operandApplications.get(expression)?.forEach((application) => {
-      application.operator = symbol.key;
-    });
-    renamedArities.set(expression, symbol.arity);
-    return symbol.arity;
   }
   if (
     expression.kind !== "OperatorReference" &&
@@ -1066,6 +1047,25 @@ const getSymbolArity = (
     )
   ) {
     return undefined;
+  }
+  if (local && expression.kind !== "OperatorReference") {
+    expression.resolution = local.isSelf ? SELF_RESOLUTION : LOCAL_RESOLUTION;
+  }
+  if (local) return local.arity;
+  const binding = unit.bindings.get(name);
+  if (binding?.goal?.statement.kind === "AssumeProve" && !binding.isSubstituted) {
+    return binding.arity;
+  }
+  const symbol = findSymbol(name, unit);
+  if (symbol) {
+    if (symbol.kind === "Theorem") unit.linkTheorem(symbol.key);
+    if (expression.kind === "Identifier") expression.name = symbol.key;
+    else expression.operator = symbol.key;
+    operandApplications.get(expression)?.forEach((application) => {
+      application.operator = symbol.key;
+    });
+    renamedArities.set(expression, symbol.arity);
+    return symbol.arity;
   }
   const parts = name.split("!");
   const isSelectedInto = parts.slice(1).some((_part, index) => {
@@ -1663,7 +1663,7 @@ const resolveExpression = (
 ): void => {
   if (selections.has(expression) && !unit.isGenerated) {
     const reference = selections.get(expression);
-    if (reference && isReference(reference) && isUnselectableReported(reference, scope, unit)) {
+    if (reference && isReference(reference) && isHeadReported(reference, false, scope, unit)) {
       emptyExpressions.add(expression);
       return;
     }
@@ -1920,7 +1920,7 @@ const resolveExpression = (
 
 const isPendingSelectionReported = (
   name: string,
-  args: Expression[],
+  args: Expression[] | undefined,
   selectorRange: SourceRange | undefined,
   argumentsRange: SourceRange | undefined,
   scope: LocalName | undefined,
@@ -1928,14 +1928,14 @@ const isPendingSelectionReported = (
 ) => {
   const pending = lookupLocal(scope, name) ?? getModuleBinding(name, unit, undefined);
   if (!pending?.isPending || !selectorRange || !argumentsRange) return false;
-  if (args.length !== pending.arity) {
+  if (args && args.length !== pending.arity) {
     unit.errors.push({
       location: formatRange(argumentsRange),
       message: `The operator ${name} requires ${pending.arity} arguments.`,
     });
     return true;
   }
-  args.forEach((arg) => resolveExpression(arg, scope, unit));
+  args?.forEach((arg) => resolveExpression(arg, scope, unit));
   unit.errors.push({
     location: formatRange(selectorRange),
     message: `Subexpression of  \`${name}' used inside the operator's definition.`,
@@ -1954,13 +1954,47 @@ const isUnselectableReported = (reference: Reference, scope: LocalName | undefin
   return true;
 };
 
+// SANY's Generator#selectorToNode stops at a selection's first name when it names a symbol other than an instance.
+const isStoppedAtHead = (reference: Reference, scope: LocalName | undefined, unit: Unit) => {
+  const head = getSelectors(reference)[0];
+  const range = reference.selectorRanges?.[0];
+  if (head.kind !== "Name" || !range) return false;
+  const binding =
+    lookupLocal(scope, head.name) ??
+    findSymbol(head.name, unit) ??
+    getModuleBinding(head.name, unit, range);
+  return binding !== undefined && binding.kind !== "Instance";
+};
+
+const isHeadReported = (
+  reference: Reference,
+  isDefEntry: boolean,
+  scope: LocalName | undefined,
+  unit: Unit,
+) => {
+  if (isUnselectableReported(reference, scope, unit)) return true;
+  const head = getSelectors(reference)[0];
+  return (
+    head.kind === "Name" &&
+    isPendingSelectionReported(
+      head.name,
+      isDefEntry ? undefined : head.args,
+      reference.selectorRanges?.[0],
+      (reference.kind === "Identifier" ? undefined : reference.argumentRanges?.[0]) ??
+        reference.location.range,
+      scope,
+      unit,
+    )
+  );
+};
+
 const isSubexpressionReported = (
   expression: Expression & { kind: "Subexpression" },
   scope: LocalName | undefined,
   unit: Unit,
 ) => {
   if (
-    isUnselectableReported(expression, scope, unit) ||
+    isHeadReported(expression, false, scope, unit) ||
     isInstanceArityReported(expression, scope, unit) ||
     isSelectionReported(expression, scope, unit)
   ) {
@@ -1972,12 +2006,14 @@ const isSubexpressionReported = (
   const names = expression.selectors
     .slice(0, nameCount)
     .flatMap((selector) => (selector.kind === "Name" ? [selector.name] : []));
-  const symbolIndex = names.findIndex(
-    (_name, index) =>
-      index > 0 &&
-      (findBinding(names.slice(0, index + 1).join("!"), scope, unit)?.kind ?? "Instance") !==
-        "Instance",
-  );
+  const symbolIndex = isStoppedAtHead(expression, scope, unit)
+    ? -1
+    : names.findIndex(
+        (_name, index) =>
+          index > 0 &&
+          (findBinding(names.slice(0, index + 1).join("!"), scope, unit)?.kind ?? "Instance") !==
+            "Instance",
+      );
   const isInstance =
     names.length > 1 &&
     (lookupLocal(scope, names[0]) ?? getModuleBinding(names[0], unit, undefined))?.kind ===
@@ -2021,19 +2057,6 @@ const isSubexpressionReported = (
       return true;
     }
   }
-  if (
-    head.kind === "Name" &&
-    isPendingSelectionReported(
-      head.name,
-      head.args,
-      range,
-      expression.argumentRanges?.[0] ?? expression.location.range,
-      scope,
-      unit,
-    )
-  ) {
-    return true;
-  }
   expression.selectors
     .flatMap((selector) => ("args" in selector ? selector.args : []))
     .forEach((arg) => resolveArgument(arg, scope, unit));
@@ -2063,6 +2086,14 @@ const checkFact = (fact: Fact, reference: Fact, scope: LocalName | undefined, un
       location: formatRange(fact.location.range),
       message: "Unknown operator: `@'.",
     });
+    return BUILTIN_LOCATION;
+  }
+  if (
+    reference.kind !== "ModuleFact" &&
+    isReference(reference) &&
+    (isHeadReported(reference, false, scope, unit) ||
+      (isStoppedAtHead(reference, scope, unit) && isSelectionReported(fact, scope, unit)))
+  ) {
     return BUILTIN_LOCATION;
   }
   const hidden = getHiddenExpressionLocation(fact, reference, scope, unit);
@@ -2143,7 +2174,9 @@ const isDefinitionEntry = (def: Fact, scope: LocalName | undefined, unit: Unit) 
   const isDefined =
     isReference(reference) &&
     getSelectors(reference).length > 1 &&
-    (binding === undefined || getSelectorArgumentError(reference, true))
+    (binding === undefined ||
+      getSelectorArgumentError(reference, true) ||
+      isStoppedAtHead(reference, scope, unit))
       ? isDefinitionSelected(def, reference, scope, unit)
       : name === "" || isDefinitionName(name, local, binding, range, unit);
   if (isDefined) return true;
@@ -2189,18 +2222,11 @@ const isDefinitionSelected = (
   };
   const argumentError = getSelectorArgumentError(reference, true);
   if (argumentError?.index === 0) return report(argumentError.range, argumentError.message);
+  if (isHeadReported(reference, true, scope, unit)) return false;
   const selectors = getSelectors(reference);
   const ranges = reference.selectorRanges;
   const failed = selectionErrors.get(def);
   if (!failed && !selections.has(def)) {
-    const head = selectors[0];
-    const name = head.kind === "Name" ? head.name : "";
-    const local = lookupLocal(scope, name);
-    const binding = local ?? findSymbol(name, unit);
-    if (binding && (!SELECTABLE_KINDS.has(binding.kind) || local?.nonFactStep) && ranges?.[0]) {
-      reportUnselectable(name, ranges[0], unit);
-      return false;
-    }
     if (argumentError) return report(argumentError.range, argumentError.message);
     if (checkReference(reference, scope, unit, "Definition")) return false;
     const first = ranges?.[0];

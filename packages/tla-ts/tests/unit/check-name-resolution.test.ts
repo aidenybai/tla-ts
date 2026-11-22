@@ -4891,6 +4891,147 @@ describe("name resolution matches SANY", () => {
       ],
       [],
     ],
+    [
+      "facts, DEF entries and steps that select through an instance whose name a CONSTANT or NEW took",
+      "---- MODULE Inner ----\nCONSTANT c\nFoo == l :: c = 1\nTHEOREM T == c = c\n====\nCONSTANT I\nI == INSTANCE Inner WITH c <- 1\nTHEOREM TRUE\n  BY I!T\nTHEOREM TRUE\n  BY DEF I!Foo\nHIDE I!Foo\nTHEOREM ASSUME NEW J PROVE TRUE\n<1> J == INSTANCE Inner WITH c <- 1\n<1>1. J!Foo\n  OBVIOUS\n<1> QED",
+      [
+        {
+          location: "line 8, col 1 to line 8, col 31 of module M",
+          message:
+            "Multiply-defined symbol 'I': this definition or declaration conflicts \nwith the one at line 7, col 10 to line 7, col 10 of module M.",
+        },
+        {
+          location: "line 10, col 6 to line 10, col 6 of module M",
+          message: "Cannot take subexpression of `I'.",
+        },
+        {
+          location: "line 12, col 10 to line 12, col 10 of module M",
+          message: "Cannot take subexpression of `I'.",
+        },
+        {
+          location: "line 12, col 10 to line 12, col 14 of module M",
+          message: "DEF clause entry should describe a defined operator.",
+        },
+        { location: "line 12, col 3 to line 12, col 14 of module M", message: "Empty BY" },
+        {
+          location: "line 13, col 6 to line 13, col 6 of module M",
+          message: "Cannot take subexpression of `I'.",
+        },
+        {
+          location: "In module --TLA+ BUILTINS--",
+          message:
+            "The only expression allowed as a fact in a HIDE is \nthe name of a theorem, assumption, or step.",
+        },
+        {
+          location: "line 15, col 5 to line 15, col 35 of module M",
+          message:
+            "Multiply-defined symbol 'J': this definition or declaration conflicts \nwith the one at line 14, col 20 to line 14, col 20 of module M.",
+        },
+        {
+          location: "line 16, col 7 to line 16, col 7 of module M",
+          message: "Cannot take subexpression of `J'.",
+        },
+      ],
+      [],
+    ],
+    [
+      "selections through an instance whose name a RECURSIVE declaration took",
+      "---- MODULE Inner ----\nCONSTANT c\nFoo == l :: c = 1\nTHEOREM T == c = c\n====\nRECURSIVE R(_)\nR == INSTANCE Inner WITH c <- 1\nF == R!Foo\nUSE R!T\nUSE DEF R!Foo",
+      [
+        {
+          location: "line 8, col 1 to line 8, col 31 of module M",
+          message:
+            "Multiply-defined symbol 'R': this definition or declaration conflicts \nwith the one at line 7, col 11 to line 7, col 14 of module M.",
+        },
+        {
+          location: "line 9, col 6 to line 9, col 10 of module M",
+          message: "The operator R requires 1 arguments.",
+        },
+        {
+          location: "line 10, col 1 to line 10, col 7 of module M",
+          message: "A USE or HIDE may not appear within a recursive definition section.",
+        },
+        {
+          location: "line 10, col 5 to line 10, col 7 of module M",
+          message: "The operator R requires 1 arguments.",
+        },
+        {
+          location: "line 11, col 1 to line 11, col 13 of module M",
+          message: "A USE or HIDE may not appear within a recursive definition section.",
+        },
+        {
+          location: "line 11, col 9 to line 11, col 9 of module M",
+          message: "Subexpression of  `R' used inside the operator's definition.",
+        },
+        {
+          location: "line 11, col 9 to line 11, col 13 of module M",
+          message: "DEF clause entry should describe a defined operator.",
+        },
+        {
+          location: "line 11, col 1 to line 11, col 13 of module M",
+          message: "Empty USE or HIDE statement.",
+        },
+        {
+          location: "line 12, col 1 to line 12, col 10 of module M",
+          message: "A VARIABLE declaration may not appear within a recursive definition section.",
+        },
+        {
+          location: "line 7, col 11 to line 7, col 14 of module M",
+          message: "Symbol R declared in RECURSIVE statement but not defined.",
+        },
+      ],
+      [],
+    ],
+    [
+      "facts, DEF entries and steps that select through an instance whose name a definition or theorem took",
+      "---- MODULE Inner ----\nCONSTANT c\nFoo == l :: c = 1\nTHEOREM T == c = c\n====\nD == 1 = 1\nD == INSTANCE Inner WITH c <- 1\nTHEOREM G == ASSUME NEW q PROVE q = q\nG == INSTANCE Inner WITH c <- 1\nTHEOREM TRUE\n  BY D!T\nTHEOREM TRUE\n  BY DEF D!Foo\nTHEOREM TRUE\n<1>1. G!Foo!1\n  OBVIOUS\n<1> QED",
+      [
+        {
+          location: "line 8, col 1 to line 8, col 31 of module M",
+          message:
+            "Multiply-defined symbol 'D': this definition or declaration conflicts \nwith the one at line 7, col 1 to line 7, col 10 of module M.",
+        },
+        {
+          location: "line 10, col 1 to line 10, col 31 of module M",
+          message:
+            "Multiply-defined symbol 'G': this definition or declaration conflicts \nwith the one at line 9, col 1 to line 9, col 37 of module M.",
+        },
+        {
+          location: "line 12, col 8 to line 12, col 8 of module M",
+          message: "Cannot find label `T'.",
+        },
+        {
+          location: "line 14, col 12 to line 14, col 14 of module M",
+          message: "Cannot find label `Foo'.",
+        },
+        {
+          location: "line 14, col 10 to line 14, col 14 of module M",
+          message: "DEF clause entry should describe a defined operator.",
+        },
+        { location: "line 14, col 3 to line 14, col 14 of module M", message: "Empty BY" },
+        {
+          location: "line 16, col 9 to line 16, col 11 of module M",
+          message: "Cannot find label `Foo'.",
+        },
+      ],
+      [],
+    ],
+    [
+      "a step and a fact that select through an instance that keeps its name from a later theorem",
+      "---- MODULE Inner ----\nCONSTANT c\nFoo == l :: c = 1\nTHEOREM T == c = c\n====\nG == INSTANCE Inner WITH c <- 1\nTHEOREM G == ASSUME NEW q PROVE q = q\nTHEOREM TRUE\n<1>1. G!Foo!3\n  OBVIOUS\n<1> QED\nTHEOREM TRUE\n  BY G!Foo!l!3",
+      [
+        {
+          location: "line 8, col 1 to line 8, col 37 of module M",
+          message:
+            "Multiply-defined symbol 'G': this definition or declaration conflicts \nwith the one at line 7, col 1 to line 7, col 31 of module M.",
+        },
+        ...["line 10, col 13", "line 14, col 14"].map((start) => ({
+          location: `${start} to ${start} of module M`,
+          message: "Nonexistent operand specified by `argument selector 3'.",
+        })),
+      ],
+      [],
+    ],
   ])("rejects %s like SANY", async (_title, source, errors, warnings) => {
     await expect(checkNames(source)).rejects.toMatchObject({ sany: { errors, warnings } });
   });

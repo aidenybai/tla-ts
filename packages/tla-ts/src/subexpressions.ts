@@ -1044,7 +1044,11 @@ export const createModuleSubexpressions = (
   };
   const goals = new Set(
     module.theorems.flatMap((theorem) =>
-      theorem.name !== undefined && theorem.statement.kind === "AssumeProve" ? [theorem.name] : [],
+      theorem.name !== undefined &&
+      theorem.statement.kind === "AssumeProve" &&
+      !isBoundBefore(theorem.name, theorem.location)
+        ? [theorem.name]
+        : [],
     ),
   );
   const clauses = module.theorems.flatMap((theorem): Definition[] => {
@@ -1101,6 +1105,8 @@ export const createModuleSubexpressions = (
   const getOwnDefinition = createLookup(module.definitions);
   const getModuleDefinition = createLookup(ordered.map((entry) => entry.definition));
   const proofLookup: Lookup = (name) => {
+    // SANY's Generator#selectorToNode stops at a theorem's name, so no name it prefixes is reachable.
+    if (name.includes("!") && goals.has(name.split("!")[0])) return undefined;
     const definition = getOwnDefinition(name) ?? getAvailable(name);
     return definition?.kind === "Operator" && getAssumeProveBody(definition.body)
       ? undefined
