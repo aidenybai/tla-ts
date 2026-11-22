@@ -44,7 +44,7 @@ import {
   getZ3Parameter,
   isPortedParameter,
   PARAM_BOOL,
-  PARAM_NUMERAL,
+  PARAM_DOUBLE,
   PARAM_STRING,
   PARAM_SYMBOL,
   PARAM_UINT,
@@ -109,6 +109,8 @@ import { tseitinCnf } from "./tseitin-cnf";
 
 export type TacticParam = boolean | number | string;
 export type TacticParams = ReadonlyMap<string, TacticParam>;
+
+const PARAM_NUMERAL = "rational";
 
 interface ParamDescr {
   kind: string;
@@ -219,7 +221,7 @@ const getModuleDescrs = (module: string, names: string[]) => ({
       defaultValue:
         kind === PARAM_BOOL
           ? parameter.defaultValue === "true"
-          : kind === PARAM_UINT
+          : kind === PARAM_UINT || kind === PARAM_DOUBLE
             ? Number(parameter.defaultValue)
             : parameter.defaultValue,
       isPorted: isPortedParameter(module, name),
@@ -370,10 +372,12 @@ const SMT_DESCRS = getModuleDescrs("smt", [
   "relevancy",
 ]);
 
-const getSmtDouble = (environment: TacticEnvironment, params: TacticParams, name: string) =>
-  params.has(name)
-    ? getNumeral(params, name, "0").toDouble()
+const getSmtDouble = (environment: TacticEnvironment, params: TacticParams, name: string) => {
+  const value = params.get(name);
+  return typeof value === "number"
+    ? value
     : getDoubleParameter(environment.parameters, `smt.${name}`);
+};
 
 const isEmatching = (environment: TacticEnvironment, params: TacticParams) =>
   getBool(params, "ematching", getParameter(environment, "smt.ematching", "true") !== "false");
@@ -1876,9 +1880,11 @@ const parseParamValue = (kind: string, value: SExpr) =>
       ? isUnsignedNumeral(value)
         ? Number(value.text)
         : undefined
-      : kind === PARAM_NUMERAL
+      : kind === PARAM_NUMERAL || kind === PARAM_DOUBLE
         ? value.kind === "numeral" || value.kind === "decimal"
-          ? value.text
+          ? kind === PARAM_DOUBLE
+            ? Rational.fromDecimal(value.text).toDouble()
+            : value.text
           : undefined
         : kind === PARAM_STRING
           ? value.kind === "string"
@@ -1953,7 +1959,7 @@ const getParams = (
           ? "invalid parameter value, true or false expected"
           : found.descr.kind === PARAM_UINT
             ? "invalid parameter value, unsigned integer expected"
-            : found.descr.kind === PARAM_NUMERAL
+            : found.descr.kind === PARAM_NUMERAL || found.descr.kind === PARAM_DOUBLE
               ? "invalid parameter value, numeral expected"
               : "invalid parameter value, symbol expected",
         getSexprPosition(value),

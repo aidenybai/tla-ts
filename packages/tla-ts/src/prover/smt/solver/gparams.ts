@@ -6,7 +6,7 @@ import { Z3_PARAMETERS } from "./z3-parameters-text";
 export const PARAM_BOOL = "bool";
 export const PARAM_UINT = "unsigned int";
 export const PARAM_SYMBOL = "symbol";
-export const PARAM_NUMERAL = "double";
+export const PARAM_DOUBLE = "double";
 export const PARAM_STRING = "string";
 
 interface Z3Parameter {
@@ -57,7 +57,7 @@ const PORTED_PARAMETERS = new Map([
   ["nlsat", "factor seed shuffle_vars variable_ordering_strategy"],
   [
     "sat",
-    "abce acce asymm_branch asymm_branch.all asymm_branch.delay asymm_branch.limit asymm_branch.rounds asymm_branch.sampled ate backtrack.conflicts backtrack.scopes bce bce_at bce_delay blocked_clause_limit burst_search cce dyn_sub_res elim_vars enable_pre_simplify euf force_cleanup gc gc.burst gc.defrag gc.increment gc.initial gc.k gc.small_lbd inprocess.max max_conflicts max_memory minimize_lemmas override_incremental phase probing probing_binary probing_cache probing_cache_limit probing_limit random_seed rephase.base resolution.cls_cutoff1 resolution.cls_cutoff2 resolution.limit resolution.lit_cutoff_range1 resolution.lit_cutoff_range2 resolution.lit_cutoff_range3 resolution.occ_cutoff resolution.occ_cutoff_range1 resolution.occ_cutoff_range2 resolution.occ_cutoff_range3 restart restart.fast restart.initial restart.max scc scc.tr search.sat.conflicts search.unsat.conflicts simplify.delay subsumption subsumption.limit variable_decay",
+    "abce acce asymm_branch asymm_branch.all asymm_branch.delay asymm_branch.limit asymm_branch.rounds asymm_branch.sampled ate backtrack.conflicts backtrack.scopes bce bce_at bce_delay blocked_clause_limit burst_search cce dyn_sub_res elim_vars enable_pre_simplify euf force_cleanup gc gc.burst gc.defrag gc.increment gc.initial gc.k gc.small_lbd inprocess.max max_conflicts max_memory minimize_lemmas override_incremental phase probing probing_binary probing_cache probing_cache_limit probing_limit random_freq random_seed rephase.base resolution.cls_cutoff1 resolution.cls_cutoff2 resolution.limit resolution.lit_cutoff_range1 resolution.lit_cutoff_range2 resolution.lit_cutoff_range3 resolution.occ_cutoff resolution.occ_cutoff_range1 resolution.occ_cutoff_range2 resolution.occ_cutoff_range3 restart restart.emafastglue restart.emaslowglue restart.factor restart.fast restart.initial restart.margin restart.max scc scc.tr search.sat.conflicts search.unsat.conflicts simplify.delay subsumption subsumption.limit variable_decay",
   ],
 ]);
 
@@ -85,7 +85,7 @@ export const isPortedParameter = (moduleName: string, parameterName: string) =>
 
 export const isDoubleParameter = (name: string) => {
   const split = splitParameterName(name);
-  return findZ3Parameter(split.moduleName, split.parameterName)?.kind === PARAM_NUMERAL;
+  return findZ3Parameter(split.moduleName, split.parameterName)?.kind === PARAM_DOUBLE;
 };
 
 export const getDoubleParameter = (parameters: ReadonlyMap<string, string>, name: string) => {
@@ -157,7 +157,7 @@ export const getParameterValue = (name: string, value: string, token: SExpr) => 
       `Expected values for parameter ${parameter} are 'true' or 'false'. It was given argument '${value}'`,
       token,
     );
-  if (kind !== PARAM_NUMERAL) return value;
+  if (kind !== PARAM_DOUBLE) return value;
   if (!/^[0-9./-]*$/.test(value))
     throw new SmtParseError(
       `Expected values for parameter ${parameter} is a double. It was given argument '${value}'`,

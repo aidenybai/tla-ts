@@ -65,23 +65,83 @@ const RESTART_MODEL =
   "x48 -x28 x10 -x37 x47 x51 -x31 -x25 x7 x49 x8 x38 x21 -x44 x23 -x20 -x35 x24 -x17 -x11 -x6 " +
   "x29 -x5 x18 -x46 -x52 x13 -x33 -x26 x4 -x16 x3 -x39";
 
+const getModelOutput = (model: string) =>
+  [
+    "sat",
+    "(",
+    ...model
+      .split(" ")
+      .flatMap((entry) => [
+        `  (define-fun ${entry.replace("-", "")} () Bool`,
+        `    ${!entry.startsWith("-")})`,
+      ]),
+    ")",
+  ].join("\n");
+
 describe("sat simplifier", () => {
   it.each(["luby", "geometric", "static"])(
     "finds Z3's model when a %s restart ends the burst search and the simplifier runs",
     (restart) => {
       expect(run(getScript(`(check-sat-using (using-params sat :restart ${restart}))`))).toBe(
-        [
-          "sat",
-          "(",
-          ...RESTART_MODEL.split(" ").flatMap((entry) => [
-            `  (define-fun ${entry.replace("-", "")} () Bool`,
-            `    ${!entry.startsWith("-")})`,
-          ]),
-          ")",
-        ].join("\n"),
+        getModelOutput(RESTART_MODEL),
       );
     },
   );
+});
+
+describe("sat parameters", () => {
+  it.each([
+    [
+      ":restart geometric :restart.factor 3.0",
+      "x34 -x42 -x30 x53 -x15 -x12 x36 -x19 -x2 x27 x0 -x40 -x14 -x45 x43 x32 x9 -x41 x1 -x22 x50 " +
+        "x48 -x28 x10 -x37 x47 x51 -x31 -x25 x7 x49 x8 x38 x21 -x44 x23 -x20 -x35 x24 -x17 -x11 -x6 " +
+        "x29 -x5 x18 x46 -x52 x13 -x33 -x26 x4 -x16 x3 -x39",
+    ],
+    [
+      ":random_freq 0.5",
+      "-x34 -x42 -x30 -x53 -x15 -x12 x36 -x19 -x2 x27 x0 -x40 -x14 -x45 x43 x32 x9 -x41 x1 -x22 x50 " +
+        "x48 -x28 x10 -x37 x47 -x51 x31 -x25 x7 x49 x8 x38 x21 -x44 -x23 -x20 -x35 x24 -x17 -x11 -x6 " +
+        "-x29 -x5 x18 -x46 -x52 x13 -x33 -x26 x4 -x16 x3 x39",
+    ],
+    [
+      ":restart.margin 0.5",
+      "-x34 -x42 -x30 -x53 -x15 -x12 x36 -x19 -x2 -x27 x0 -x40 -x14 -x45 x43 x32 x9 -x41 x1 -x22 x50 " +
+        "x48 -x28 x10 -x37 x47 -x51 x31 -x25 x7 x49 x8 x38 x21 -x44 -x23 -x20 -x35 x24 -x17 -x11 -x6 " +
+        "-x29 -x5 x18 -x46 -x52 x13 -x33 -x26 x4 -x16 x3 x39",
+    ],
+    [
+      ":restart.margin 0.5 :restart.emafastglue 0.5",
+      "-x34 -x42 -x30 x53 -x15 -x12 x36 -x19 x2 x27 -x0 -x40 -x14 -x45 x43 x32 x9 -x41 x1 -x22 x50 " +
+        "x48 -x28 x10 -x37 x47 x51 -x31 -x25 x7 x49 x8 x38 x21 -x44 x23 -x20 -x35 x24 -x17 -x11 -x6 " +
+        "x29 -x5 x18 x46 -x52 x13 -x33 -x26 x4 -x16 x3 -x39",
+    ],
+    [
+      ":restart.margin 0.5 :restart.emafastglue 0.5 :restart.emaslowglue 0.5",
+      "-x34 -x42 -x30 x53 -x15 -x12 x36 -x19 x2 x27 -x0 -x40 -x14 -x45 x43 x32 -x9 -x41 x1 -x22 x50 " +
+        "x48 -x28 x10 -x37 x47 x51 -x31 -x25 x7 x49 x8 x38 x21 -x44 x23 -x20 -x35 x24 -x17 -x11 -x6 " +
+        "x29 -x5 x18 -x46 -x52 x13 -x33 -x26 x4 -x16 x3 -x39",
+    ],
+  ])("finds Z3's model when using-params sets the doubles %s", (params, model) => {
+    expect(run(getScript(`(check-sat-using (using-params sat ${params}))`))).toBe(
+      getModelOutput(model),
+    );
+  });
+
+  it("reads a double of using-params over the global one set-option gave", () => {
+    expect(
+      run(
+        getScript(
+          "(set-option :sat.random_freq 0.5)\n(check-sat-using (using-params sat :random_freq 0.3))",
+        ),
+      ),
+    ).toBe(
+      getModelOutput(
+        "x34 -x42 -x30 -x53 -x15 -x12 x36 -x19 x2 x27 x0 -x40 -x14 -x45 x43 x32 x9 -x41 x1 -x22 x50 " +
+          "x48 -x28 x10 -x37 x47 x51 -x31 -x25 x7 x49 x8 x38 x21 -x44 x23 -x20 -x35 x24 -x17 -x11 -x6 " +
+          "x29 -x5 x18 -x46 -x52 x13 -x33 -x26 x4 -x16 x3 -x39",
+      ),
+    );
+  });
 });
 
 describe("sat2goal", () => {
