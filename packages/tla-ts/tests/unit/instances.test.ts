@@ -480,6 +480,36 @@ describe("INSTANCE matches TLC", () => {
     ]);
   });
 
+  it.each([
+    [
+      "the LET's body",
+      "F == LET I == INSTANCE Inner WITH c <- 1\n     IN LET I == INSTANCE Inner WITH c <- 2\n        IN I!Foo",
+      "line 9, col 13 to line 9, col 43",
+    ],
+    [
+      "a later LET definition",
+      "F == LET I == INSTANCE Inner WITH c <- 1\n         G == LET I == INSTANCE Inner WITH c <- 2 IN I!Foo\n     IN G",
+      "line 9, col 19 to line 9, col 49",
+    ],
+  ])(
+    "evaluates a nested LET INSTANCE's copy in %s that the enclosing LET INSTANCE already defines as the enclosing copy, as TLC does",
+    async (_title, definition, location) => {
+      const prints: string[] = [];
+      const result = await check({
+        source: `---- MODULE M ----\nEXTENDS TLC\n---- MODULE Inner ----\nCONSTANT c\nFoo == c\n====\nN == INSTANCE Inner WITH c <- 0\n${definition}\nASSUME PrintT(F)\nVARIABLE x\nInit == x = 0\nNext == x' = x\n====`,
+        config: "INIT Init\nNEXT Next",
+        onPrint: (text) => prints.push(text),
+      });
+      expect([result.status, prints]).toEqual([
+        "success",
+        [
+          `*** Warnings: 2\n\n${location} of module M\n\nMultiple declarations or definitions for symbol I!Foo.  \nThis duplicates the one at line 8, col 10 to line 8, col 40 of module M.\n\n\n\n${location} of module M\n\nMultiple declarations or definitions for symbol I.  \nThis duplicates the one at line 8, col 10 to line 8, col 40 of module M.\n\n\n`,
+          "1",
+        ],
+      ]);
+    },
+  );
+
   it("parses a prefix operator followed by an operand as an expression", () => {
     const module = parseModule(
       "---- MODULE M ----\nI == INSTANCE N WITH a <- - b, c <- SUBSET d, e <- -\n====",

@@ -32,9 +32,9 @@ export interface DefinitionFacts {
   ids: Map<Definition, number>;
   rows: Uint32Array;
   words: number;
-  // The effects of each LET definition in the definitions, which a check reads for each LET of an
+  // The effects of a LET definition in the definitions, which a check reads for each LET of an
   // action it compiles.
-  letEffects: Map<Definition, number>;
+  getLetEffects: (definition: Definition) => number | undefined;
   varyingBodies: Set<Expression>;
 }
 
@@ -351,7 +351,6 @@ export interface PreparedFacts {
   // The LEVEL_EDGE and BOUND_EDGE bits of each reference.
   edgeFlags: Uint8Array;
   owners: Int32Array;
-  lets: Definition[];
   letParents: Int32Array;
   letEffects: Uint32Array;
   isWide: boolean;
@@ -374,7 +373,6 @@ export const getPreparedFacts = (
     names: local.edges.map((edge) => edge.name),
     edgeFlags: Uint8Array.from(local.edges, getEdgeFlags),
     owners: Int32Array.from(local.edges, (edge) => edge.owner),
-    lets: [...lets.numbers.keys()],
     letParents: Int32Array.from(lets.parents),
     letEffects: Uint32Array.from(lets.effects),
     isWide: isWideDefinition(definition, new Set()),
@@ -383,7 +381,7 @@ export const getPreparedFacts = (
 
 // The local row of a prepared definition in a check, whose edges go to addEdge with the
 // definitions that its names resolve to there, and whose LET definitions are numbered after those
-// already in lets.
+// already in lets, in the order the walk of its expressions meets them.
 const readPreparedFacts = (
   prepared: PreparedFacts,
   environment: DefinitionNames,
@@ -391,9 +389,8 @@ const readPreparedFacts = (
   addEdge: (callee: Definition, flags: number, owner: number) => void,
 ) => {
   const base = lets.parents.length;
-  prepared.lets.forEach((definition, index) => {
-    lets.numbers.set(definition, base + index);
-    lets.parents.push(prepared.letParents[index] === -1 ? -1 : base + prepared.letParents[index]);
+  prepared.letParents.forEach((parent, index) => {
+    lets.parents.push(parent === -1 ? -1 : base + parent);
     lets.effects.push(prepared.letEffects[index]);
   });
   prepared.names.forEach((name, index) => {
@@ -526,6 +523,40 @@ const STARTUP_MASK = NONCONSTANT | ABOVE_CONSTANT_BOUND;
 const isEvaluatedOnce = (definition: Definition, flags: number) =>
   definition.kind === "Operator" && definition.params.length === 0 && (flags & STARTUP_MASK) === 0;
 
+// The definition of a prepared module whose body holds each LET definition, which a graph notes as
+// it decodes the body, so that the facts of a check number its LET definitions only where it asks
+// for one, and a graph holds the LET definitions only in their bodies.
+const letOwners = new WeakMap<Definition, Definition>();
+
+export const noteLetOwners = (definition: Definition) => {
+  const visit = (node: Expression): void => {
+    if (node.kind === "Let") {
+      node.definitions.forEach((inner) => {
+        letOwners.set(inner, definition);
+        getDefinitionExpressions(inner).forEach(visit);
+      });
+    }
+    getChildren(node).forEach(visit);
+  };
+  getDefinitionExpressions(definition).forEach(visit);
+};
+
+// A definition's LET definitions at the numbers from 0 that the walk of its expressions gives them,
+// as the walk of a build numbered them.
+const collectLetDefinitions = (
+  definition: Definition,
+  environment: DefinitionNames,
+  words: number,
+) => {
+  const lets: LetColumns = { numbers: new Map(), parents: [], effects: [] };
+  collectLocalFacts(getFactExpressions(definition, environment), environment, words, lets);
+  const numbered: (Definition | undefined)[] = Array.from({ length: lets.parents.length });
+  lets.numbers.forEach((number, inner) => {
+    numbered[number] = inner;
+  });
+  return numbered;
+};
+
 export const createDefinitionFacts = (
   environment: DefinitionNames,
   assumptions: Expression[],
@@ -537,6 +568,9 @@ export const createDefinitionFacts = (
   const local = new Uint32Array(definitions.length * words);
   const localImpurity = new Uint32Array(definitions.length * words);
   const lets: LetColumns = { numbers: new Map(), parents: [], effects: [] };
+  // Where the LET numbers of each prepared definition start, or -1 for a definition this walk
+  // numbers itself.
+  const letStarts = new Int32Array(definitions.length).fill(-1);
   // Each reference from a definition, from edgeStarts[id] on: the callee's id, whether a constant
   // overrides it, it counts toward the level and toward the level bound, and the LET definition
   // around it.
@@ -552,10 +586,11 @@ export const createDefinitionFacts = (
   definitions.forEach((definition, id) => {
     edgeStarts[id] = callees.length;
     const preparedFacts = prepared.get(definition);
-    const row =
-      preparedFacts !== undefined && preparedFacts.row.length === words
-        ? readPreparedFacts(preparedFacts, environment, lets, addEdge)
-        : collectEdges(definition, environment, words, lets, addEdge);
+    const isPrepared = preparedFacts !== undefined && preparedFacts.row.length === words;
+    if (isPrepared) letStarts[id] = lets.parents.length;
+    const row = isPrepared
+      ? readPreparedFacts(preparedFacts, environment, lets, addEdge)
+      : collectEdges(definition, environment, words, lets, addEdge);
     local.set(row, id * words);
     localImpurity[id * words] = row[0] & PURITY_MASK;
   });
@@ -632,18 +667,29 @@ export const createDefinitionFacts = (
     const parent = lets.parents[number];
     if (parent !== -1) lets.effects[parent] |= lets.effects[number];
   }
-  const letEffects = new Map(
-    [...lets.numbers].map(([definition, number]): [Definition, number] => [
-      definition,
-      lets.effects[number],
-    ]),
-  );
+  // The LET definitions of each prepared definition at the numbers its walk gives them, which a
+  // check walks again where it first asks for one of them, once the definition's body is decoded.
+  const preparedLets: ((Definition | undefined)[] | undefined)[] = [];
+  const getPreparedLetNumber = (definition: Definition) => {
+    const owner = letOwners.get(definition);
+    const id = owner === undefined ? undefined : ids.get(owner);
+    if (owner === undefined || id === undefined || letStarts[id] === -1) return undefined;
+    const position = (preparedLets[id] ??= collectLetDefinitions(
+      owner,
+      environment,
+      words,
+    )).indexOf(definition);
+    return position === -1 ? undefined : letStarts[id] + position;
+  };
   const effects = closeRows(localImpurity, words, readEdges, EFFECT_MASK);
   return {
     ids,
     rows,
     words,
-    letEffects,
+    getLetEffects: (definition) => {
+      const number = lets.numbers.get(definition) ?? getPreparedLetNumber(definition);
+      return number === undefined ? undefined : lets.effects[number];
+    },
     varyingBodies: collectVaryingBodies(definitions, assumptions, environment, {
       ids,
       effects,
@@ -906,7 +952,7 @@ export const isImpureDefinition = (
   environment: Environment,
   effect: keyof typeof EFFECT_FLAGS = "any",
 ) =>
-  ((environment.facts.letEffects.get(definition) ?? getRow(definition, environment)[0]) &
+  ((environment.facts.getLetEffects(definition) ?? getRow(definition, environment)[0]) &
     EFFECT_FLAGS[effect]) !==
   0;
 

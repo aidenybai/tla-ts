@@ -248,6 +248,27 @@ Spec == Init /\\ [][Next]_x
     );
   });
 
+  it("rejects an argument above the level that the operator parameter it reaches through a definition permits, where SANY drops the constraint", () => {
+    const report = getReport({
+      M: "---- MODULE M ----\nVARIABLE x\nPr(p) == p'\nW(Op(_)) == LET D(p) == Op(p) IN D(x')\nV == W(Pr)\n====\n",
+    });
+    expect(report.text).toBe(
+      joinLines([
+        "Semantic errors:",
+        "",
+        "*** Errors: 1",
+        "",
+        "line 5, col 6 to line 5, col 10 of module M",
+        "",
+        "Level error in applying operator W:",
+        "The permitted level of argument 1 of the operator argument 1 ",
+        "must be at least 2.",
+        "",
+        "",
+      ]),
+    );
+  });
+
   it("locates the tuple of an EXCEPT path at the part of its update SANY picks", () => {
     const report = getReport({
       M: "---- MODULE M ----\nVARIABLE x\nf == [v \\in {1} |-> v]\nB == [f EXCEPT ![1][[]x, 2] = 1]\nC == [f EXCEPT ![1][2][[]x, 3] = ((1))]\n====\n",
