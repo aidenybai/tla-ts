@@ -13,6 +13,7 @@ import {
   createContext,
   type ExprNode,
   type ExprOrOpArgNode,
+  type FormalParamNode,
   formatSanyLocation,
   getContextSymbol,
   getHashtableValues,
@@ -441,6 +442,16 @@ const substituteBody = (
   return undefined;
 };
 
+// SANY's ThmOrAssumpDefNode constructor calls addSymbol before it sets the node's params, so the symbol table compares arity 0.
+const addThmOrAssumpDef = (
+  generation: ModuleGeneration,
+  node: ThmOrAssumpDefNode,
+  params: FormalParamNode[],
+) => {
+  addSymbol(generation, node);
+  node.params = params;
+};
+
 export const processModuleDefinition = (
   generation: ModuleGeneration,
   instance: Instance,
@@ -511,7 +522,7 @@ export const processModuleDefinition = (
       name: `${name}!${symbol.name}`,
       isTheorem: symbol.isTheorem,
       body,
-      params: [...args, ...symbol.params],
+      params: [],
       isLocal: instance.isLocal,
       location,
       module: generation.currentModule,
@@ -524,7 +535,7 @@ export const processModuleDefinition = (
       weights: [],
       minMaxLevel: [],
     };
-    addSymbol(generation, node);
+    addThmOrAssumpDef(generation, node, [...args, ...symbol.params]);
     (definitions ?? generation.currentModule.definitions).push(node);
   });
   const instanceNode: InstanceNode = {
@@ -610,8 +621,9 @@ export const generateInstance = (
         location,
         module,
         source: symbol.source ?? symbol,
+        params: [],
       };
-      addSymbol(generation, node);
+      addThmOrAssumpDef(generation, node, symbol.params);
       return node;
     };
     const node = !isInstanceeParameterFree
