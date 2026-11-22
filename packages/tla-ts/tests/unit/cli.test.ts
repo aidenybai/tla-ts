@@ -2237,12 +2237,12 @@ describe("the CLI fails to print an initial state through -view as TLC does", ()
   const modes = [[], ["-simulate", "num=1"], ["-dfid", "1"]];
 
   it.each(
-    errors.flatMap((error): [string, string, string[]][] =>
-      modes.map((mode) => [error[0], error[1], mode]),
+    errors.flatMap((error): [string, string[], string][] =>
+      modes.map((mode) => [error[0], mode, error[1]]),
     ),
   )(
     "reports %s failing on the state that a constraint failed on, under %j",
-    (view, error, mode) => {
+    (view, mode, error) => {
       const directory = mkdtempSync(join(FIXTURES, "view-print-"));
       writeFileSync(
         join(directory, "M.tla"),
