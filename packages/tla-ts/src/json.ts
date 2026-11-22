@@ -10,7 +10,7 @@ import {
 } from "./builtins";
 import { TlaEvaluationError, TlaFileError, TlaSetBoundError, TlaUnsupportedError } from "./errors";
 import type { Builtin, BuiltinArgument, Context } from "./evaluate";
-import { trimJava } from "./java-string";
+import { decodeJavaUtf8, trimJava } from "./java-string";
 import { readJson, type JsonElement } from "./json-reader";
 import { isEvalException } from "./tlc/messages";
 import {
@@ -50,11 +50,9 @@ const OPEN_OPTIONS = new Set([
 
 const UTF_8_NAMES = new Set(["utf-8", "utf8", "unicode-1-1-utf-8"]);
 
-const UTF_8_DECODER = new TextDecoder("utf-8", { ignoreBOM: true });
-
 const readUtf8 = (files: FileSystem, path: string) => {
   const bytes = files.readFile?.(path);
-  return bytes === undefined ? undefined : UTF_8_DECODER.decode(bytes);
+  return bytes === undefined ? undefined : decodeJavaUtf8(bytes);
 };
 
 const STANDARD_CHARSETS = new Set(["us-ascii", "iso-8859-1", "utf-16", "utf-16be", "utf-16le"]);

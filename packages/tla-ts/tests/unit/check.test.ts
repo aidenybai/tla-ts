@@ -1114,6 +1114,46 @@ ASSUME TLCFP(a) = -887695703
     expect(printed).toEqual(["<<0>>", "<<10>>", "<<0>>", "<<11>>"]);
   });
 
+  it("replaces malformed UTF-8 in a Json file as Java's FileReader does", async () => {
+    const encoder = new TextEncoder();
+    const contents = [
+      [0xc3, 0x28],
+      [0xe2, 0x82],
+      [0xf0, 0x9f, 0x98],
+      [0xed, 0xa0, 0x80],
+      [0xc0, 0xaf],
+      [0xf4, 0x90, 0x80, 0x80],
+      [0xff],
+      [0x80, 0xbf],
+      [0xe0, 0x80, 0xaf],
+      [0xf8, 0x88, 0x80, 0x80, 0x80],
+      [0xed, 0xa0],
+      [0xf0, 0x9f, 0x98, 0x80],
+      [0xe2, 0x82, 0xac],
+      [0xc3, 0xa9],
+    ].map((sequence) => [...encoder.encode('{"k":"<'), ...sequence, ...encoder.encode('>"}')]);
+    const files = new Map([
+      ...contents.map((content, index): [string, Uint8Array] => [
+        `bad${index}.json`,
+        Uint8Array.from(content),
+      ]),
+      ["lines.ndjson", Uint8Array.from(contents.flatMap((content) => [...content, 0x0a]))],
+    ]);
+    const reads = contents.map((_content, index) => `JsonDeserialize("bad${index}.json").k`);
+    const printed: string[] = [];
+    await check({
+      source: `---- MODULE M ----\nEXTENDS Json, Sequences, TLC\nS == << ${reads.join(",\n  ")} >>\nN == ndJsonDeserialize("lines.ndjson")\nASSUME PrintT(S)\nASSUME PrintT([i \\in DOMAIN S |-> Len(S[i])])\nASSUME PrintT([i \\in DOMAIN N |-> N[i].k = S[i]])\n====\n`,
+      config: "",
+      onPrint: (text) => printed.push(text),
+      readFile: (path) => files.get(path),
+    });
+    expect(printed).toEqual([
+      '<< "<�(>",\n   "<�>",\n   "<�>",\n   "<�>",\n   "<��>",\n   "<����>",\n   "<�>",\n   "<��>",\n   "<���>",\n   "<�����>",\n   "<�>",\n   "<😀>",\n   "<€>",\n   "<é>" >>',
+      "<<4, 3, 3, 3, 4, 6, 3, 4, 5, 7, 3, 4, 3, 3>>",
+      `<< ${Array(14).fill("TRUE").join(",\n   ")} >>`,
+    ]);
+  });
+
   it.each([
     ['JsonSerialize("old.json", <<[s \\in SUBSET {1} |-> 1 \\div 0]>>)', "old.json", ""],
     ['ndJsonSerialize("old.json", <<1, [s \\in SUBSET {1} |-> 1 \\div 0], 2>>)', "old.json", "1\n"],
