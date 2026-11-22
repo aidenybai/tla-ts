@@ -66,6 +66,8 @@ describe("the CLI with TypeScript files", () => {
     },
   );
 
+  // The input stays as long as the one that overflowed the stack, whose throw string.ts checks in
+  // about 24 s.
   it.each(["string.ts", "array.ts"] as const)(
     "exits with Node's code and stderr where %s, which loops over a long input, throws",
     (file) => {
@@ -75,6 +77,7 @@ describe("the CLI with TypeScript files", () => {
       expect(getExit(result)).toEqual(getExit(runNode(directory, file)));
       expect(result.status).toBe(1);
     },
+    120_000,
   );
 
   it("checks a TypeScript file without writing the TLA+ spec and config it compiles to", () => {
