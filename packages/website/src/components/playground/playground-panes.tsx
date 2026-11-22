@@ -106,10 +106,14 @@ export const PlaygroundOutput = () => {
           hoverName(event.target instanceof HTMLElement ? event.target.dataset.region : undefined)
         }
         onPointerLeave={() => hoverName(undefined)}
-        // Each line is placed by its own offset, so a scroll lays out only the lines it brings in.
-        style={{ height: virtualizer.getTotalSize() }}
+        // The lines in view flow as the page lays them out, so a line that wraps is as tall on the
+        // built page as it is once the pane has measured it. Padding stands for the rest.
+        style={{
+          paddingTop: rows.at(0)?.start ?? 0,
+          paddingBottom: virtualizer.getTotalSize() - (rows.at(-1)?.end ?? 0),
+        }}
         className={cn(
-          "@container relative block font-mono text-[13px]/[1.7] pointer-coarse:text-[16px]/[1.7] transition-opacity duration-150 ease-out",
+          "@container block font-mono text-[13px]/[1.7] pointer-coarse:text-[16px]/[1.7] transition-opacity duration-150 ease-out",
           playground.isSkeleton
             ? "animate-pulse text-transparent select-none motion-reduce:animate-none"
             : "text-foreground",
@@ -123,8 +127,7 @@ export const PlaygroundOutput = () => {
               key={line.row.key}
               ref={virtualizer.measureElement}
               data-index={line.row.index}
-              style={{ translate: `0 ${line.row.start}px` }}
-              className="absolute top-0 left-0 block w-full contain-layout"
+              className="block"
             >
               <CodeLine
                 number={line.number}

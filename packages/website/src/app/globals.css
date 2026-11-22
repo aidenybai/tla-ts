@@ -1,6 +1,22 @@
 @import "tailwindcss";
 @import "allo-font/friendly";
 @import "@fontsource-variable/geist-mono";
+
+/* System fonts sized to the width of Geist Mono's letters, so that code wraps at the same words
+   before Geist Mono loads as after. */
+@font-face {
+  font-family: "Geist Mono Fallback";
+  /* A browser finds a local font by its full name, not its family's. */
+  src:
+    local("Menlo Regular"), local("Menlo-Regular"), local("DejaVu Sans Mono Book"),
+    local("DejaVu Sans Mono");
+  size-adjust: 99.69%;
+}
+@font-face {
+  font-family: "Geist Mono Fallback Consolas";
+  src: local("Consolas");
+  size-adjust: 109.16%;
+}
 @import "@fontsource/caveat/600.css";
 @import "../generated/fonts.css";
 
@@ -70,7 +86,9 @@
 @theme inline {
   --font-sans: "Allo", ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
   --font-hand: "Caveat", cursive;
-  --font-mono: "Geist Mono Variable", ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  --font-mono:
+    "Geist Mono Variable", "Geist Mono Fallback", "Geist Mono Fallback Consolas", ui-monospace,
+    SFMono-Regular, Menlo, Consolas, monospace;
   /* Shrinks on a phone so that the home example's longest line, 46 characters, stays on one line. */
   --text-code: clamp(10px, calc((100vw - 80px) / 27.9), 13px);
   --color-background: var(--background);
