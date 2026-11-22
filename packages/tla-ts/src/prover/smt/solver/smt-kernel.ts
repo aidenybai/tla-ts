@@ -1,5 +1,6 @@
 import { type AstManager } from "./ast";
-import { getPhaseSelection, type SmtSetup } from "./smt-setup";
+import { getDoubleParameter } from "./gparams";
+import { getPhaseSelection, getRestartStrategy, type SmtSetup } from "./smt-setup";
 import { AssertedFormulas } from "./asserted-formulas";
 import { getCaseSplitStrategy } from "./case-split-queue";
 import { Context } from "./context";
@@ -20,6 +21,8 @@ export const getGlobalSmtParams = (
     parameters.get("smt.auto_config") !== "false" && parameters.get("auto_config") !== "false",
   ),
   phaseSelection: getPhaseSelection(Number(parameters.get("smt.phase_selection") ?? "3")),
+  restartStrategy: getRestartStrategy(Number(parameters.get("smt.restart_strategy") ?? "1")),
+  restartFactor: getDoubleParameter(parameters, "smt.restart_factor"),
   qiMaxInstances: Number(parameters.get("smt.qi.max_instances") ?? "4294967295"),
   qiMaxEagerMultipatterns: Number(parameters.get("smt.qi.max_multi_patterns") ?? "0"),
   isQiUpdatingGeneration: parameters.get("smt.qi.update_generation") !== "false",
@@ -52,6 +55,8 @@ export class SmtKernel {
       relevancyLevel: params.relevancyLevel ?? 2,
       caseSplitStrategy: params.caseSplitStrategy,
       phaseSelection: params.phaseSelection,
+      restartStrategy: params.restartStrategy,
+      restartFactor: params.restartFactor,
       randomSeed: params.randomSeed,
       intHammerPeriod: params.intHammerPeriod,
       isArithPropagatingEqs: params.isArithPropagatingEqs,

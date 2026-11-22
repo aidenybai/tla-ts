@@ -92,8 +92,15 @@ export const getPhaseSelection = (phaseSelection: number) => {
 };
 
 export const RS_GEOMETRIC = 0;
-const RS_IN_OUT_GEOMETRIC = 1;
+export const RS_IN_OUT_GEOMETRIC = 1;
 export const RS_LUBY = 2;
+export const RS_ARITHMETIC = 4;
+
+export const getRestartStrategy = (restartStrategy: number) => {
+  if (restartStrategy > RS_ARITHMETIC)
+    throw new SmtUnsupportedError("an smt.restart_strategy above 4");
+  return restartStrategy;
+};
 
 const IA_ZERO = 0;
 export const IA_RANDOM_WHEN_SEARCHING = 1;

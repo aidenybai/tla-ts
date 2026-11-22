@@ -5918,3 +5918,74 @@ describe("smt.phase_selection, as Z3 5.3.2 picks the phase of a decision", () =>
     );
   });
 });
+
+describe("smt.restart_strategy and smt.restart_factor, as Z3 5.3.2's inc_limits grows the restart threshold", () => {
+  const getRestartLines = (options: string[]) => [
+    "(set-option :smt.auto_config false)",
+    ...options,
+    ...getPigeonholeLines(6),
+    "(check-sat-using smt)",
+    "(get-info :rlimit)",
+  ];
+
+  it.each([
+    ["inner-outer geometric, the default", [], 17952],
+    ["geometric", ["(set-option :smt.restart_strategy 0)"], 18197],
+    ["luby", ["(set-option :smt.restart_strategy 2)"], 17301],
+    ["fixed", ["(set-option :smt.restart_strategy 3)"], 17537],
+    ["arithmetic", ["(set-option :smt.restart_strategy 4)"], 18800],
+    [
+      "geometric by 2.0",
+      ["(set-option :smt.restart_strategy 0)", "(set-option :smt.restart_factor 2.0)"],
+      16894,
+    ],
+    [
+      "inner-outer geometric by 2.0",
+      ["(set-option :smt.restart_strategy 1)", "(set-option :smt.restart_factor 2.0)"],
+      17301,
+    ],
+    [
+      "arithmetic by 2.0",
+      ["(set-option :smt.restart_strategy 4)", "(set-option :smt.restart_factor 2.0)"],
+      17517,
+    ],
+    [
+      "arithmetic by 3",
+      ["(set-option :smt.restart_strategy 4)", "(set-option :smt.restart_factor 3)"],
+      18503,
+    ],
+    ["inner-outer geometric by 1.5", ["(set-option :smt.restart_factor 1.5)"], 17031],
+  ])("restarts by %s", (_title, options, rlimit) => {
+    expect(run(getRestartLines(options))).toEqual(["unsat", `(:rlimit ${rlimit})`]);
+  });
+
+  it.each([
+    ["restart_strategy", ":restart_strategy 3", 17537],
+    ["restart_factor", ":restart_factor 2.0", 17301],
+  ])("reads %s from using-params smt", (_title, option, rlimit) => {
+    expect(
+      run([
+        ...getPigeonholeLines(6),
+        `(check-sat-using (using-params smt ${option} :auto_config false))`,
+        "(get-info :rlimit)",
+      ]),
+    ).toEqual(["unsat", `(:rlimit ${rlimit})`]);
+  });
+
+  it("lets the setup of auto_config pick its own restart strategy", () => {
+    expect(
+      run([
+        "(set-option :smt.restart_strategy 3)",
+        ...getPigeonholeLines(6),
+        "(check-sat-using smt)",
+        "(get-info :rlimit)",
+      ]),
+    ).toEqual(["unsat", "(:rlimit 24974)"]);
+  });
+
+  it("throws at the set-option of a restart strategy Z3 rejects", () => {
+    expect(() => run(["(set-option :smt.restart_strategy 5)"])).toThrow(
+      new SmtUnsupportedError("an smt.restart_strategy above 4"),
+    );
+  });
+});

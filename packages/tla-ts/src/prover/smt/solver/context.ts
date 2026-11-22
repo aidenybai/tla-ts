@@ -85,7 +85,9 @@ import {
   PS_OCCURRENCE,
   PS_RANDOM,
   PS_THEORY,
+  RS_ARITHMETIC,
   RS_GEOMETRIC,
+  RS_IN_OUT_GEOMETRIC,
   RS_LUBY,
   type SmtSetup,
 } from "./smt-setup";
@@ -181,6 +183,8 @@ export interface SmtParams {
   relevancyLevel: number;
   caseSplitStrategy?: number;
   phaseSelection?: number;
+  restartStrategy?: number;
+  restartFactor?: number;
   randomSeed?: number;
   intHammerPeriod?: number;
   isArithPropagatingEqs?: boolean;
@@ -265,6 +269,8 @@ export class Context extends Internalizer {
     this.config = {
       ...DEFAULT_CONFIG,
       phaseSelection: params.phaseSelection ?? DEFAULT_CONFIG.phaseSelection,
+      restartStrategy: params.restartStrategy ?? DEFAULT_CONFIG.restartStrategy,
+      restartFactor: params.restartFactor ?? DEFAULT_CONFIG.restartFactor,
       isArithPropagatingEqs: params.isArithPropagatingEqs ?? true,
       qiLazyThreshold: params.qiLazyThreshold ?? DEFAULT_CONFIG.qiLazyThreshold,
       qiMaxInstances: params.qiMaxInstances ?? DEFAULT_CONFIG.qiMaxInstances,
@@ -320,11 +326,15 @@ export class Context extends Internalizer {
     this.params.isModelValidating = params.isModelValidating;
     this.params.isArrayExtensional = params.isArrayExtensional;
     this.params.phaseSelection = params.phaseSelection;
+    this.params.restartStrategy = params.restartStrategy;
+    this.params.restartFactor = params.restartFactor;
     this.params.relevancyLevel = params.relevancyLevel ?? 2;
     this.arith?.updateParams();
     this.config = {
       ...DEFAULT_CONFIG,
       phaseSelection: params.phaseSelection ?? DEFAULT_CONFIG.phaseSelection,
+      restartStrategy: params.restartStrategy ?? DEFAULT_CONFIG.restartStrategy,
+      restartFactor: params.restartFactor ?? DEFAULT_CONFIG.restartFactor,
       isArithPropagatingEqs: params.isArithPropagatingEqs ?? true,
       theories: this.config.theories,
       isFindingMacros: params.isFindingMacros,
@@ -1608,20 +1618,26 @@ export class Context extends Internalizer {
   incLimits() {
     const config = this.config;
     if (this.numConflictsSinceRestart >= this.restartThreshold) {
-      if (config.restartStrategy === RS_LUBY) {
-        this.lubyIndex++;
-        this.restartThreshold = getLuby(this.lubyIndex) * RESTART_INITIAL;
-      } else {
-        this.restartThreshold = Math.trunc(this.restartThreshold * config.restartFactor);
-        if (
-          config.restartStrategy !== RS_GEOMETRIC &&
-          this.restartThreshold > this.restartOuterThreshold
-        ) {
-          this.restartThreshold = RESTART_INITIAL;
-          this.restartOuterThreshold = Math.trunc(
-            this.restartOuterThreshold * config.restartFactor,
-          );
-        }
+      switch (config.restartStrategy) {
+        case RS_GEOMETRIC:
+          this.restartThreshold = Math.trunc(this.restartThreshold * config.restartFactor);
+          break;
+        case RS_IN_OUT_GEOMETRIC:
+          this.restartThreshold = Math.trunc(this.restartThreshold * config.restartFactor);
+          if (this.restartThreshold > this.restartOuterThreshold) {
+            this.restartThreshold = RESTART_INITIAL;
+            this.restartOuterThreshold = Math.trunc(
+              this.restartOuterThreshold * config.restartFactor,
+            );
+          }
+          break;
+        case RS_LUBY:
+          this.lubyIndex++;
+          this.restartThreshold = getLuby(this.lubyIndex) * RESTART_INITIAL;
+          break;
+        case RS_ARITHMETIC:
+          this.restartThreshold = Math.trunc(this.restartThreshold + config.restartFactor);
+          break;
       }
     }
     this.numConflictsSinceRestart = 0;

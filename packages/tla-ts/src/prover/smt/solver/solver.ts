@@ -25,6 +25,8 @@ export interface KernelParams {
   relevancyLevel?: number;
   caseSplitStrategy?: number;
   phaseSelection?: number;
+  restartStrategy?: number;
+  restartFactor?: number;
   isCoreMinimizing?: boolean;
   randomSeed?: number;
   intHammerPeriod?: number;
@@ -77,6 +79,8 @@ export const solveGoal = (manager: AstManager, forms: number[], params: KernelPa
     relevancyLevel: params.relevancyLevel ?? 2,
     caseSplitStrategy: params.caseSplitStrategy,
     phaseSelection: params.phaseSelection,
+    restartStrategy: params.restartStrategy,
+    restartFactor: params.restartFactor,
     randomSeed: params.randomSeed,
     intHammerPeriod: params.intHammerPeriod,
     isArithPropagatingEqs: params.isArithPropagatingEqs,
@@ -146,6 +150,8 @@ export const solveAssuming = (
     relevancyLevel: params.relevancyLevel ?? 2,
     caseSplitStrategy: params.caseSplitStrategy,
     phaseSelection: params.phaseSelection,
+    restartStrategy: params.restartStrategy,
+    restartFactor: params.restartFactor,
     randomSeed: params.randomSeed,
     intHammerPeriod: params.intHammerPeriod,
     isArithPropagatingEqs: params.isArithPropagatingEqs,

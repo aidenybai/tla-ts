@@ -82,7 +82,12 @@ import { purifyArith } from "./purify-arith";
 import { ModelEvaluator } from "./model-evaluator";
 import { FuncInterp, ProtoModel } from "./proto-model";
 import { getGlobalSmtParams, SmtKernel } from "./smt-kernel";
-import { getPhaseSelection, isMbqiByFeatures, type SmtSetup } from "./smt-setup";
+import {
+  getPhaseSelection,
+  getRestartStrategy,
+  isMbqiByFeatures,
+  type SmtSetup,
+} from "./smt-setup";
 import { compileProbe, formatDouble, isQfufbv, type Probe } from "./probes";
 import { runHorn } from "./muz/horn-tactic";
 import { runQe } from "./qe";
@@ -372,6 +377,8 @@ const SMT_DESCRS = getModuleDescrs("smt", [
   "qi.eager_threshold",
   "qi.lazy_threshold",
   "relevancy",
+  "restart_factor",
+  "restart_strategy",
 ]);
 
 const getSmtDouble = (environment: TacticEnvironment, params: TacticParams, name: string) => {
@@ -411,6 +418,15 @@ const getSmtPhaseSelection = (environment: TacticEnvironment, params: TacticPara
     ),
   );
 
+const getSmtRestartStrategy = (environment: TacticEnvironment, params: TacticParams) =>
+  getRestartStrategy(
+    getUint(
+      params,
+      "restart_strategy",
+      Number(getParameter(environment, "smt.restart_strategy", "1")),
+    ),
+  );
+
 // The dependencies are assertion names, which are Boolean constants, so each one is its own
 // assumption.
 const getKernelParams = (environment: TacticEnvironment, params: TacticParams, goal: Goal) => {
@@ -425,6 +441,8 @@ const getKernelParams = (environment: TacticEnvironment, params: TacticParams, g
     relevancyLevel: getRelevancyLevel(environment, params),
     caseSplitStrategy: getSmtCaseSplitStrategy(environment, params),
     phaseSelection: getSmtPhaseSelection(environment, params),
+    restartStrategy: getSmtRestartStrategy(environment, params),
+    restartFactor: getSmtDouble(environment, params, "restart_factor"),
     setup,
     randomSeed: getUint(
       params,
@@ -1023,6 +1041,8 @@ const NAMED_TACTICS = new Map<string, NamedTactic>([
           relevancyLevel: getRelevancyLevel(environment, tacticParams),
           caseSplitStrategy: getSmtCaseSplitStrategy(environment, tacticParams),
           phaseSelection: getSmtPhaseSelection(environment, tacticParams),
+          restartStrategy: getSmtRestartStrategy(environment, tacticParams),
+          restartFactor: getSmtDouble(environment, tacticParams, "restart_factor"),
           qiCost: tacticParams.has("qi.cost")
             ? String(tacticParams.get("qi.cost"))
             : environment.parameters.get("smt.qi.cost"),
