@@ -632,6 +632,7 @@ export const getJavaOverrides = (
   runtime: CheckerRuntime,
   files: FileSystem,
   evaluateReplaced: (name: string, args: BuiltinArgument[], context: Context | undefined) => Value,
+  getVariableNames: () => string[],
 ) => {
   if (name === "TransitiveClosure") return TRANSITIVE_CLOSURE_OPERATORS;
   if (name === "AnySet") {
@@ -644,7 +645,7 @@ export const getJavaOverrides = (
   }
   if (name === "IOUtils") return createIoUtilsOperators(files, evaluateReplaced);
   if (name === "_TLCTrace") {
-    return [...createTlcTraceOperators(files), createTraceStateOperator(runtime)];
+    return [...createTlcTraceOperators(files, getVariableNames), createTraceStateOperator(runtime)];
   }
   if (name === "_JsonTrace") return [createTraceStateOperator(runtime)];
   if (!getSanyStandardModules(runtime.version).has(name)) return undefined;

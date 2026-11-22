@@ -469,6 +469,19 @@ describe("printing matches TLC", () => {
       'Evaluating invariant Inv failed.\nAttempted to compare string "a" with non-string:\n2',
     );
   });
+
+  it.each([
+    ["<<", ">>", "<<>>", "<<  >>"],
+    ["{", "}", "{}", "{  }"],
+  ])("PrintT prints %s nested 6,000 deep", async (open, close, empty, printedEmpty) => {
+    const run = await checkPrinting(
+      `VARIABLES x, y\nInit == x = ${empty} /\\ y = 0\nNext == y < 60 /\\ y' = y + 1 /\\ x' = ${`${open} `.repeat(100)}x${` ${close}`.repeat(100)}\nInv == y = 60 => PrintT(x)`,
+      "INIT Init\nNEXT Next\nINVARIANT Inv\nCHECK_DEADLOCK FALSE\n",
+    );
+    expect(run.printed).toEqual([
+      `${`${open} `.repeat(6000)}${printedEmpty}${` ${close}`.repeat(6000)}`,
+    ]);
+  });
 });
 
 const NESTED_TUPLE_LINES = Array.from({ length: 10 }, () => "<<1, 2, 3, 4, 5, 6, 7, 8, 9, 10>>");

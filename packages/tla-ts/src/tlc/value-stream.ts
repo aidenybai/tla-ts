@@ -120,7 +120,7 @@ const TAGS = {
   handle: 26,
 };
 
-const serializeValue = (value: Value) => {
+const serializeValue = (value: Value, variableNames: string[]) => {
   const bytes: number[] = [];
   const objectHandles = new Map<object, number>();
   const nameHandles = new Map<string, number>();
@@ -139,7 +139,8 @@ const serializeValue = (value: Value) => {
   const writeString = (text: string) => {
     writeByte(TAGS.string);
     writeInt(0);
-    writeInt(-1);
+    // UniqueString#getVarLoc gives the index of a root module variable's name, and -1 for any other string.
+    writeInt(variableNames.indexOf(text));
     writeInt(text.length);
     text.split("").forEach((unit) => writeByte(unit.charCodeAt(0)));
   };
@@ -601,7 +602,10 @@ const deserializeValue = (bytes: Uint8Array, path: string) => {
   }
 };
 
-export const createTlcTraceOperators = (files: FileSystem): Builtin[] => [
+export const createTlcTraceOperators = (
+  files: FileSystem,
+  getVariableNames: () => string[],
+): Builtin[] => [
   overrideWithJava(
     defineOperator("_TLCTraceDeserialize", 1, (args) => {
       const path = getPath(getValue(args, 0, "_TLCTraceDeserialize"));
@@ -613,7 +617,10 @@ export const createTlcTraceOperators = (files: FileSystem): Builtin[] => [
   overrideWithJava(
     defineStateOperator("_TLCTraceSerialize", 2, (args) => {
       const path = getPath(getValue(args, 1, "_TLCTraceSerialize"));
-      files.writeFile?.(path, serializeValue(getValue(args, 0, "_TLCTraceSerialize")));
+      files.writeFile?.(
+        path,
+        serializeValue(getValue(args, 0, "_TLCTraceSerialize"), getVariableNames()),
+      );
       return true;
     }),
     "public static final tlc2.value.IValue tlc2.module._TLCTrace.ioSerialize(tlc2.value.IValue,tlc2.value.impl.StringValue) throws java.io.IOException",
