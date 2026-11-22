@@ -488,11 +488,12 @@ export const parseTlcArguments = (args: string[]): TlcArguments | TlcArgumentsEr
       }
       argumentIndex++;
       const hasFile = options.split(",").some((option) => option.startsWith("file="));
-      parsed.scheduler = options.split(",").includes("sched=rl")
-        ? "rl"
-        : options.split(",").includes("sched=rlaction")
-          ? "rlaction"
-          : "random";
+      // TLC sets a system property for each sched= and never clears it, and its Simulator takes rl over rlaction.
+      if (options.split(",").includes("sched=rl")) {
+        parsed.scheduler = "rl";
+      } else if (options.split(",").includes("sched=rlaction") && parsed.scheduler !== "rl") {
+        parsed.scheduler = "rlaction";
+      }
       const statistics = options
         .split(",")
         .findLast((option) => option === "stats=basic" || option === "stats=full");
@@ -500,7 +501,7 @@ export const parseTlcArguments = (args: string[]): TlcArguments | TlcArgumentsEr
         parsed.actionStatistics = statistics === "stats=basic" ? "basic" : "full";
       }
       for (const option of options.split(",").filter((item) => item.startsWith("num="))) {
-        const count = option.replace("num=", "");
+        const count = option.replaceAll("num=", "");
         parsed.traceCount = parseJavaInteger(count, 64);
         if (parsed.traceCount === undefined) {
           return {

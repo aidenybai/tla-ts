@@ -29,6 +29,25 @@ describe("TLC's -simulate arguments", () => {
     });
   });
 
+  it("strips every num= from a count, as Java's String#replace does", () => {
+    expect(parseTlcArguments(["-simulate", "num=3num=", "Spec"])).toMatchObject({
+      traceCount: 3n,
+    });
+  });
+
+  it.each([
+    [["sched=rl", "num=2"], "rl"],
+    [["sched=rlaction", "num=2"], "rlaction"],
+    [["sched=rl", "sched=rlaction,num=2"], "rl"],
+  ])(
+    "keeps the scheduler of an earlier -simulate and prefers rl, as TLC does (%j)",
+    (options, scheduler) => {
+      expect(
+        parseTlcArguments([...options.flatMap((option) => ["-simulate", option]), "Spec"]),
+      ).toMatchObject({ scheduler });
+    },
+  );
+
   it("keeps the stats of an earlier -simulate, which TLC never resets", () => {
     expect(
       parseTlcArguments(["-simulate", "num=5,stats=full", "-simulate", "num=5", "Spec"]),
