@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vite-plus/test";
 import { check, TlaSyntaxError } from "../../src";
-import { createSanyError } from "../../src/errors";
+import { createSanyError, type SanyError } from "../../src/errors";
 
 describe("name resolution matches SANY", () => {
   const checkNames = (source: string) =>
@@ -129,6 +129,27 @@ describe("name resolution matches SANY", () => {
       [
         ["line 3, col 6 to line 3, col 9 of module A", "Unknown operator: `Nope'."],
         ["line 3, col 6 to line 3, col 10 of module M", "Unknown operator: `Nope3'."],
+      ],
+    ],
+    [
+      "the definitions of two instances of one name with different arities, keeping the first",
+      "I == INSTANCE Inner\nI(a) == INSTANCE Inner\nX == I!Bar(3)",
+      { Inner: "Foo == 2 = 2\nBar(b) == b = 3" },
+      ["I!Foo", "I!Bar", "I"].map((name): [string, string] => [
+        "line 3, col 1 to line 3, col 22 of module M",
+        `Multiply-defined symbol '${name}': this definition or declaration conflicts \nwith the one at line 2, col 1 to line 2, col 19 of module M.`,
+      ]),
+    ],
+    [
+      "a definition between two LET instances of one name before the second instance's conflicts",
+      "F == LET I(a) == INSTANCE Inner WITH c <- a\n         G == I!Foo\n         I == INSTANCE Inner WITH c <- 1\n     IN G",
+      { Inner: "CONSTANT c\nFoo == c = 2\nBar(b) == b = c\nTHEOREM T == c = c" },
+      [
+        ["line 3, col 15 to line 3, col 19 of module M", "The operator I requires 1 arguments."],
+        ...["I!Foo", "I!Bar", "I!T", "I"].map((name): [string, string] => [
+          "line 4, col 10 to line 4, col 40 of module M",
+          `Multiply-defined symbol '${name}': this definition or declaration conflicts \nwith the one at line 2, col 10 to line 2, col 43 of module M.`,
+        ]),
       ],
     ],
     ...[
@@ -4422,6 +4443,421 @@ describe("name resolution matches SANY", () => {
         {
           location: "line 8, col 6 to line 8, col 6 of module M",
           message: "The operator G requires 1 arguments.",
+        },
+      ],
+      [],
+    ],
+    [
+      "selections whose first name SANY binds before an instance of that name",
+      "---- MODULE Inner ----\nFoo == 2 = 2\n====\nI == 1 = 1\nI == INSTANCE Inner\nASSUME J == 1 = 1\nJ == INSTANCE Inner\nCONSTANT K\nK == INSTANCE Inner\nL == INSTANCE Inner\nASSUME L == 1 = 1\nN == 1 = 1\nN(a) == INSTANCE Inner\nO == INSTANCE Inner\nCONSTANT O\nA == I!Foo\nB == J!Foo\nC == K!Foo\nD == L!Foo\nE == L!1!1\nG == O!Foo\nTHEOREM TRUE BY N(2)!Foo, O!Foo",
+      [
+        ...[
+          ["I", "6, col 1 to line 6, col 19", "5, col 1 to line 5, col 10"],
+          ["J", "8, col 1 to line 8, col 19", "7, col 1 to line 7, col 17"],
+          ["K", "10, col 1 to line 10, col 19", "9, col 10 to line 9, col 10"],
+          ["L", "12, col 1 to line 12, col 17", "11, col 1 to line 11, col 19"],
+          ["N", "14, col 1 to line 14, col 22", "13, col 1 to line 13, col 10"],
+          ["O", "16, col 10 to line 16, col 10", "15, col 1 to line 15, col 19"],
+        ].map((entry) => ({
+          location: `line ${entry[1]} of module M`,
+          message: `Multiply-defined symbol '${entry[0]}': this definition or declaration conflicts \nwith the one at line ${entry[2]} of module M.`,
+        })),
+        ...[
+          ["17, col 8 to line 17, col 10", "Cannot find label `Foo'."],
+          ["18, col 8 to line 18, col 10", "Cannot find label `Foo'."],
+          ["19, col 6 to line 19, col 6", "Cannot take subexpression of `K'."],
+          ["21, col 6 to line 21, col 6", "Unknown operator: `L'."],
+          ["23, col 18 to line 23, col 20", "The operator N requires 0 arguments."],
+        ].map((entry) => ({ location: `line ${entry[0]} of module M`, message: entry[1] })),
+      ],
+      [],
+    ],
+    [
+      "selections whose first name is a constant, where an unnamed instance imports the whole name",
+      "---- MODULE Inner ----\nFoo == 2 = 2\n====\n---- MODULE Base ----\nP == INSTANCE Inner\n====\nINSTANCE Base\nCONSTANT P\nF == P!Foo\nTHEOREM TRUE BY P!Foo",
+      ["10, col 6 to line 10, col 6", "11, col 17 to line 11, col 17"].map((range) => ({
+        location: `line ${range} of module M`,
+        message: "Cannot take subexpression of `P'.",
+      })),
+      [],
+    ],
+    [
+      "a selection past a constant's name into a definition that an unnamed instance imports",
+      "---- MODULE Inner ----\nFoo == 2 = 2\n====\n---- MODULE Base ----\nP == INSTANCE Inner\n====\nINSTANCE Base\nCONSTANT P\nF == P!Foo!1\nTHEOREM TRUE BY P!Foo!1",
+      ["10, col 6 to line 10, col 6", "11, col 17 to line 11, col 17"].map((range) => ({
+        location: `line ${range} of module M`,
+        message: "Cannot take subexpression of `P'.",
+      })),
+      [],
+    ],
+    [
+      "a selection past a constant's name into a definition with too few arguments",
+      "---- MODULE Inner ----\nFoo == 2 = 2\n====\n---- MODULE Base ----\nR(a) == INSTANCE Inner\n====\nINSTANCE Base\nCONSTANT R\nCONSTANT Q\nQ(a) == INSTANCE Inner\nX == R!Foo!1\nY == Q!Foo!1",
+      [
+        [
+          "11, col 1 to line 11, col 22",
+          "Multiply-defined symbol 'Q': this definition or declaration conflicts \nwith the one at line 10, col 10 to line 10, col 10 of module M.",
+        ],
+        ["12, col 6 to line 12, col 6", "Cannot take subexpression of `R'."],
+        ["13, col 6 to line 13, col 6", "Cannot take subexpression of `Q'."],
+      ].map((entry) => ({ location: `line ${entry[0]} of module M`, message: entry[1] })),
+      [],
+    ],
+    [
+      "an instance with the wrong number of arguments before a selector that is not a name",
+      "---- MODULE Inner ----\nFoo == 1\n====\nI(a) == INSTANCE Inner\nJ == INSTANCE Inner\nX == I!:\nY == J(2)!1\nZ == I!<<\nW == J!:\nTHEOREM TRUE BY I!1",
+      [
+        ["line 7, col 6 to line 7, col 8", "The operator I requires 1 arguments."],
+        ["line 8, col 7 to line 8, col 9", "The operator J requires 0 arguments."],
+        ["line 9, col 6 to line 9, col 9", "The operator I requires 1 arguments."],
+        ["line 10, col 6 to line 10, col 6", "Unknown operator: `J'."],
+        ["line 11, col 17 to line 11, col 19", "The operator I requires 1 arguments."],
+      ].map((entry) => ({ location: `${entry[0]} of module M`, message: entry[1] })),
+      [],
+    ],
+    [
+      "an instance with parameters used as a fact without arguments",
+      "---- MODULE Inner ----\nFoo == 2 = 2\n---- MODULE Deep ----\n====\nK(b) == INSTANCE Deep\n====\nI(a) == INSTANCE Inner\nJ == INSTANCE Inner\nTHEOREM TRUE BY I, J\nUSE I, J!K",
+      [
+        ["10, col 17 to line 10, col 17", "I"],
+        ["11, col 5 to line 11, col 5", "I"],
+        ["11, col 8 to line 11, col 10", "J!K"],
+      ].map((entry) => ({
+        location: `line ${entry[0]} of module M`,
+        message: `The operator ${entry[1]} requires 1 arguments.`,
+      })),
+      [],
+    ],
+    [
+      "arguments to a theorem used as a fact",
+      "ASSUME I == 1 = 1\nTHEOREM J == 1 = 1\nTHEOREM TRUE BY I(2), J(1, 2)\nLEMMA TRUE BY I",
+      [
+        ["I", 18, 20],
+        ["J", 24, 29],
+      ].map((entry) => ({
+        location: `line 4, col ${entry[1]} to line 4, col ${entry[2]} of module M`,
+        message: `The operator ${entry[0]} requires 0 arguments.`,
+      })),
+      [],
+    ],
+    [
+      "an instance named in a DEF clause that a later constant of its name conflicts with",
+      "---- MODULE Inner ----\nFoo == 2 = 2\n====\nI(a) == INSTANCE Inner\nCONSTANT I\nTHEOREM TRUE BY DEF I",
+      [
+        {
+          location: "line 6, col 10 to line 6, col 10 of module M",
+          message:
+            "Multiply-defined symbol 'I': this definition or declaration conflicts \nwith the one at line 5, col 1 to line 5, col 22 of module M.",
+        },
+      ],
+      [],
+    ],
+    [
+      "the definitions of instances that two modules share, warning only for a module with parameters",
+      "---- MODULE Inner ----\nFoo == 1\n====\n---- MODULE P ----\nCONSTANT c\nFoo == c\n====\n---- MODULE A ----\nI == INSTANCE Inner\nJ == INSTANCE P WITH c <- 1\n====\n---- MODULE B ----\nI == INSTANCE Inner\nJ == INSTANCE P WITH c <- 1\n====\n---- MODULE C ----\nEXTENDS A, B\n====\n---- MODULE D ----\nK(a) == INSTANCE Inner\n====\nINSTANCE D\nK(a) == INSTANCE Inner\nZ == U",
+      [
+        {
+          location: "line 25, col 6 to line 25, col 6 of module M",
+          message: "Unknown operator: `U'.",
+        },
+      ],
+      [
+        ["I", 14, 19, 10],
+        ["J!Foo", 15, 27, 11],
+        ["J", 15, 27, 11],
+      ].map((entry) => ({
+        location: `line ${entry[1]}, col 1 to line ${entry[1]}, col ${entry[2]} of module M`,
+        message: `Warning: the definition of '${entry[0]}' conflicts with \nits definition at line ${entry[3]}, col 1 to line ${entry[3]}, col ${entry[2]} of module M.`,
+      })),
+    ],
+    ...[
+      ["a second instance", "INSTANCE L WITH c <- 2", 13, 1, 22, 14],
+      ["a proof-step instance", "THEOREM TRUE\n<1> INSTANCE L WITH c <- 2\n<1> QED", 14, 5, 26, 16],
+    ].map((entry): [string, string, SanyError[], SanyError[]] => [
+      `the definitions that ${entry[0]} imports again, in the order of SANY's symbol table`,
+      `---- MODULE L ----\nEXTENDS Naturals\nCONSTANT c\nCop(q) == q\nA == c\nB == c\nD(p) == p\nAXIOM X == c = c\nTHEOREM T == c = c\n====\nINSTANCE L WITH c <- 1\n${entry[1]}\nZ == U`,
+      [
+        {
+          location: `line ${entry[5]}, col 6 to line ${entry[5]}, col 6 of module M`,
+          message: "Unknown operator: `U'.",
+        },
+      ],
+      ["Cop", "D", "B", "A", "X", "T"].map((name) => ({
+        location: `line ${entry[2]}, col ${entry[3]} to line ${entry[2]}, col ${entry[4]} of module M`,
+        message: `Multiple declarations or definitions for symbol ${name}.  \nThis duplicates the one at line 12, col 1 to line 12, col 22 of module M.`,
+      })),
+    ]),
+    [
+      "definitions that conflict with what an instance imports, in the order of SANY's symbol table",
+      "---- MODULE L ----\nEXTENDS Naturals\nCONSTANT c\nCop(q) == q\nA == c\nB == c\nD(p) == p\nAXIOM X == c = c\nTHEOREM T == c = c\n====\nA(a) == a\nB(a) == a\nD == 1\nCop == 1\nINSTANCE L WITH c <- 1",
+      [
+        ["Cop", 15, 8],
+        ["D", 14, 6],
+        ["B", 13, 9],
+        ["A", 12, 9],
+      ].map((entry) => ({
+        location: "line 16, col 1 to line 16, col 22 of module M",
+        message: `Multiply-defined symbol '${entry[0]}': this definition or declaration conflicts \nwith the one at line ${entry[1]}, col 1 to line ${entry[1]}, col ${entry[2]} of module M.`,
+      })),
+      [],
+    ],
+    [
+      "two instances with parameters that copy a theorem, which SANY adds before it sets the copy's arity",
+      "---- MODULE L ----\nCONSTANT c\nA == c\nTHEOREM T == c = c\n====\nI(p) == INSTANCE L WITH c <- p\nI(p) == INSTANCE L WITH c <- p\nZ == U",
+      [
+        {
+          location: "line 8, col 1 to line 8, col 30 of module M",
+          message:
+            "Multiply-defined symbol 'I!T': this definition or declaration conflicts \nwith the one at line 7, col 1 to line 7, col 30 of module M.",
+        },
+        {
+          location: "line 9, col 6 to line 9, col 6 of module M",
+          message: "Unknown operator: `U'.",
+        },
+      ],
+      ["I!A", "I"].map((name) => ({
+        location: "line 8, col 1 to line 8, col 30 of module M",
+        message: `Multiple declarations or definitions for symbol ${name}.  \nThis duplicates the one at line 7, col 1 to line 7, col 30 of module M.`,
+      })),
+    ],
+    [
+      "an instance with parameters after one without, whose theorem copy SANY compares with arity 0",
+      "---- MODULE L ----\nCONSTANT c\nA == c\nTHEOREM T == c = c\n====\nI == INSTANCE L WITH c <- 1\nI(p) == INSTANCE L WITH c <- p\nZ == U",
+      [
+        ...["I!A", "I"].map((name) => ({
+          location: "line 8, col 1 to line 8, col 30 of module M",
+          message: `Multiply-defined symbol '${name}': this definition or declaration conflicts \nwith the one at line 7, col 1 to line 7, col 27 of module M.`,
+        })),
+        {
+          location: "line 9, col 6 to line 9, col 6 of module M",
+          message: "Unknown operator: `U'.",
+        },
+      ],
+      [
+        {
+          location: "line 8, col 1 to line 8, col 30 of module M",
+          message:
+            "Multiple declarations or definitions for symbol I!T.  \nThis duplicates the one at line 7, col 1 to line 7, col 27 of module M.",
+        },
+      ],
+    ],
+    [
+      "two proof-step instances with parameters that copy a theorem",
+      "---- MODULE L ----\nCONSTANT c\nA == c\nTHEOREM T == c = c\n====\nN == INSTANCE L WITH c <- 1\nTHEOREM TRUE\n<1> I(p) == INSTANCE L WITH c <- p\n<1> I(p) == INSTANCE L WITH c <- p\n<1> QED\nZ == U",
+      [
+        {
+          location: "line 10, col 5 to line 10, col 34 of module M",
+          message:
+            "Multiply-defined symbol 'I!T': this definition or declaration conflicts \nwith the one at line 9, col 5 to line 9, col 34 of module M.",
+        },
+        {
+          location: "line 12, col 6 to line 12, col 6 of module M",
+          message: "Unknown operator: `U'.",
+        },
+      ],
+      ["I!A", "I"].map((name) => ({
+        location: "line 10, col 5 to line 10, col 34 of module M",
+        message: `Multiple declarations or definitions for symbol ${name}.  \nThis duplicates the one at line 9, col 5 to line 9, col 34 of module M.`,
+      })),
+    ],
+    ...[
+      ["two unnamed instances", "INSTANCE L WITH c <- 2", 10, 1, 22, 11],
+      [
+        "a module-level and a proof-step instance",
+        "THEOREM TRUE\n<1> INSTANCE L WITH c <- 2\n<1> QED",
+        11,
+        5,
+        26,
+        13,
+      ],
+    ].map((entry): [string, string, SanyError[], SanyError[]] => [
+      `${entry[0]} that copy a theorem from an instance with parameters`,
+      `---- MODULE K ----\nTHEOREM T == TRUE\n====\n---- MODULE L ----\nCONSTANT c\nJ(p) == INSTANCE K\n====\nINSTANCE L WITH c <- 1\n${entry[1]}\nZ == U`,
+      [
+        {
+          location: `line ${entry[2]}, col ${entry[3]} to line ${entry[2]}, col ${entry[4]} of module M`,
+          message:
+            "Multiply-defined symbol 'J!T': this definition or declaration conflicts \nwith the one at line 9, col 1 to line 9, col 22 of module M.",
+        },
+        {
+          location: `line ${entry[5]}, col 6 to line ${entry[5]}, col 6 of module M`,
+          message: "Unknown operator: `U'.",
+        },
+      ],
+      [],
+    ]),
+    [
+      "two instances of a module with parameters that defines an instance with parameters",
+      "---- MODULE K ----\nTHEOREM T == TRUE\n====\n---- MODULE L ----\nCONSTANT c\nJ(p) == INSTANCE K\n====\nI == INSTANCE L WITH c <- 1\nI == INSTANCE L WITH c <- 2\nZ == U",
+      [
+        {
+          location: "line 10, col 1 to line 10, col 27 of module M",
+          message:
+            "Multiply-defined symbol 'I!J!T': this definition or declaration conflicts \nwith the one at line 9, col 1 to line 9, col 27 of module M.",
+        },
+        {
+          location: "line 11, col 6 to line 11, col 6 of module M",
+          message: "Unknown operator: `U'.",
+        },
+      ],
+      ["I!J", "I"].map((name) => ({
+        location: "line 10, col 1 to line 10, col 27 of module M",
+        message: `Multiple declarations or definitions for symbol ${name}.  \nThis duplicates the one at line 9, col 1 to line 9, col 27 of module M.`,
+      })),
+    ],
+    [
+      "two instances of a module without parameters that defines an instance with parameters",
+      "---- MODULE K ----\nTHEOREM T == TRUE\n====\n---- MODULE L ----\nJ(p) == INSTANCE K\n====\nI == INSTANCE L\nI == INSTANCE L\nZ == U",
+      [
+        {
+          location: "line 9, col 1 to line 9, col 15 of module M",
+          message:
+            "Multiply-defined symbol 'I!J!T': this definition or declaration conflicts \nwith the one at line 8, col 1 to line 8, col 15 of module M.",
+        },
+        {
+          location: "line 10, col 6 to line 10, col 6 of module M",
+          message: "Unknown operator: `U'.",
+        },
+      ],
+      [
+        {
+          location: "line 9, col 1 to line 9, col 15 of module M",
+          message:
+            "Multiple declarations or definitions for symbol I.  \nThis duplicates the one at line 8, col 1 to line 8, col 15 of module M.",
+        },
+      ],
+    ],
+    [
+      "the definitions that a second LET instance imports again, citing the first instance",
+      "---- MODULE L ----\nCONSTANT c\nA == c\nTHEOREM T == c = c\n====\nN == INSTANCE L WITH c <- 1\nF == LET I == INSTANCE L WITH c <- 1\n         I == INSTANCE L WITH c <- 2\n     IN 1\nZ == U",
+      [
+        {
+          location: "line 11, col 6 to line 11, col 6 of module M",
+          message: "Unknown operator: `U'.",
+        },
+      ],
+      ["I!A", "I!T", "I"].map((name) => ({
+        location: "line 9, col 10 to line 9, col 36 of module M",
+        message: `Multiple declarations or definitions for symbol ${name}.  \nThis duplicates the one at line 8, col 10 to line 8, col 36 of module M.`,
+      })),
+    ],
+    [
+      "a LET instance with parameters whose copies conflict with an earlier LET instance's",
+      "---- MODULE Inner ----\nFoo == 2 = 2\nBar(b) == b = 3\nTHEOREM T == 1 = 1\n====\nN == INSTANCE Inner\nF == LET I == INSTANCE Inner\n         G == I!Foo\n         I(a) == INSTANCE Inner\n     IN G",
+      [
+        {
+          location: "line 10, col 10 to line 10, col 31 of module M",
+          message:
+            "Multiply-defined symbol 'I!Bar': this definition or declaration conflicts \nwith the one at line 8, col 10 to line 8, col 28 of module M.",
+        },
+        {
+          location: "line 10, col 10 to line 10, col 31 of module M",
+          message:
+            "Multiply-defined symbol 'I!Foo': this definition or declaration conflicts \nwith the one at line 8, col 10 to line 8, col 28 of module M.",
+        },
+        {
+          location: "line 10, col 10 to line 10, col 31 of module M",
+          message:
+            "Multiply-defined symbol 'I': this definition or declaration conflicts \nwith the one at line 8, col 10 to line 8, col 28 of module M.",
+        },
+      ],
+      [],
+    ],
+    [
+      "selections of an instance whose name LET and DEFINE definitions take again",
+      "---- MODULE Inner ----\nFoo == 2 = 2\nBar(b) == b = 3\n====\nI == INSTANCE Inner\nF == LET I(a) == a = 1 IN I!Foo\nG == LET J == INSTANCE Inner\n         H == J!Bar(3)\n         J[a \\in {1}] == a = 1\n     IN H\nTHEOREM TRUE\n<1> DEFINE I(a) == a = 1\n<1> QED BY I!Foo",
+      [
+        {
+          location: "line 7, col 10 to line 7, col 22 of module M",
+          message: "Operator I already defined or declared.",
+        },
+        {
+          location: "line 7, col 10 to line 7, col 22 of module M",
+          message:
+            "Multiply-defined symbol 'I': this definition or declaration conflicts \nwith the one at line 6, col 1 to line 6, col 19 of module M.",
+        },
+        {
+          location: "line 10, col 10 to line 10, col 30 of module M",
+          message: "Function name `J' already defined or declared.",
+        },
+        {
+          location: "line 13, col 12 to line 13, col 24 of module M",
+          message: "Operator I already defined or declared.",
+        },
+        {
+          location: "line 13, col 12 to line 13, col 24 of module M",
+          message:
+            "Multiply-defined symbol 'I': this definition or declaration conflicts \nwith the one at line 6, col 1 to line 6, col 19 of module M.",
+        },
+      ],
+      [],
+    ],
+    [
+      "selections past a definition whose name LET and proof-step instances take again",
+      "---- MODULE K ----\nBaz == 1 = 1\n====\n---- MODULE Inner ----\nCONSTANT c\nJ(p) == INSTANCE K\n====\nN == INSTANCE Inner WITH c <- 1\nI == 1 = 1\nF == LET I(a) == INSTANCE Inner WITH c <- a IN I!J(1)!Baz\nTHEOREM TRUE\n<1> I == INSTANCE Inner WITH c <- 1\n<1> QED BY I!J!Baz",
+      [
+        {
+          location: "line 11, col 10 to line 11, col 43 of module M",
+          message:
+            "Multiply-defined symbol 'I': this definition or declaration conflicts \nwith the one at line 10, col 1 to line 10, col 10 of module M.",
+        },
+        {
+          location: "line 11, col 50 to line 11, col 50 of module M",
+          message: "Cannot find label `J'.",
+        },
+        {
+          location: "line 13, col 5 to line 13, col 35 of module M",
+          message:
+            "Multiply-defined symbol 'I': this definition or declaration conflicts \nwith the one at line 10, col 1 to line 10, col 10 of module M.",
+        },
+        {
+          location: "line 14, col 14 to line 14, col 14 of module M",
+          message: "Cannot find label `J'.",
+        },
+      ],
+      [],
+    ],
+    [
+      "selections of names that LET and proof-step instances do not define",
+      "---- MODULE Inner ----\nFoo == 2 = 2\nTHEOREM T == t :: 1 = 1\n====\nN == INSTANCE Inner\nF == LET I == INSTANCE Inner IN I!Nope\nG == LET I == INSTANCE Inner IN I!T!t\nTHEOREM TRUE\n<1> I == INSTANCE Inner\n<1>1. I!T!t\n  OBVIOUS\n<1> QED BY I!J!Baz",
+      [
+        {
+          location: "line 7, col 33 to line 7, col 38 of module M",
+          message: "Unknown operator: `I!Nope'.",
+        },
+        {
+          location: "line 13, col 12 to line 13, col 18 of module M",
+          message: "Unknown operator: `I!J!Baz'.",
+        },
+      ],
+      [],
+    ],
+    [
+      "two LET instances with parameters that copy a theorem",
+      "---- MODULE L ----\nCONSTANT c\nA == c\nTHEOREM T == c = c\n====\nN == INSTANCE L WITH c <- 1\nF == LET I(p) == INSTANCE L WITH c <- p\n         I(p) == INSTANCE L WITH c <- p\n     IN 1\nZ == U",
+      [
+        {
+          location: "line 9, col 10 to line 9, col 39 of module M",
+          message:
+            "Multiply-defined symbol 'I!T': this definition or declaration conflicts \nwith the one at line 8, col 10 to line 8, col 39 of module M.",
+        },
+        {
+          location: "line 11, col 6 to line 11, col 6 of module M",
+          message: "Unknown operator: `U'.",
+        },
+      ],
+      ["I!A", "I"].map((name) => ({
+        location: "line 9, col 10 to line 9, col 39 of module M",
+        message: `Multiple declarations or definitions for symbol ${name}.  \nThis duplicates the one at line 8, col 10 to line 8, col 39 of module M.`,
+      })),
+    ],
+    [
+      "two unnamed instances of modules without parameters that reuse a theorem from an instance with parameters",
+      "---- MODULE K ----\nTHEOREM T == TRUE\n====\n---- MODULE L ----\nJ(p) == INSTANCE K\n====\n---- MODULE L2 ----\nJ(p) == INSTANCE K\n====\nINSTANCE L\nINSTANCE L2\nZ == U",
+      [
+        {
+          location: "line 13, col 6 to line 13, col 6 of module M",
+          message: "Unknown operator: `U'.",
         },
       ],
       [],

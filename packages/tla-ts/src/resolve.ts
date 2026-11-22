@@ -48,6 +48,7 @@ interface Binding {
   isSubstituted?: boolean;
   sourceRange?: SourceRange;
   nonFactStep?: "Use" | "Hide" | "Instance" | "Define";
+  isCopiedTheorem?: boolean;
 }
 
 export interface ModuleSymbol extends Binding {
@@ -225,7 +226,7 @@ export const getArity = (definition: Definition) =>
 export const getParamArities = (definition: Definition) =>
   definition.kind === "Operator" ? definition.params.map((param) => param.arity) : [];
 
-const isInstantiated = (definition: Definition) => definition.name.includes("!");
+export const isInstantiated = (definition: Definition) => definition.name.includes("!");
 
 export const getFunctionArity = (definition: Definition) =>
   definition.kind === "Function" && !isInstantiated(definition)
@@ -253,7 +254,13 @@ const isSameRange = (left: SourceRange | undefined, right: SourceRange | undefin
 
 const isBindable = (name: string, current: Binding | undefined, added: Binding, unit: Unit) => {
   if (current === undefined) return true;
-  if (isSameRange(current.sourceRange ?? current.range, added.sourceRange ?? added.range)) {
+  // SANY's ThmOrAssumpDefNode constructor adds a theorem's copy to the symbol table before it sets the copy's arity.
+  const addedArity = added.isCopiedTheorem ? 0 : added.arity;
+  if (
+    isSameRange(current.sourceRange ?? current.range, added.sourceRange ?? added.range) &&
+    current.kind === added.kind &&
+    current.arity === addedArity
+  ) {
     return false;
   }
   const range = added.range;
@@ -270,7 +277,7 @@ const isBindable = (name: string, current: Binding | undefined, added: Binding, 
   } else if (
     added.kind === "Parameter" ||
     current.kind !== added.kind ||
-    current.arity !== added.arity ||
+    current.arity !== addedArity ||
     (current.nonFactStep === undefined) !== (added.nonFactStep === undefined)
   ) {
     unit.errors.push({
@@ -377,7 +384,7 @@ const findSymbol = (name: string, unit: Unit): ModuleSymbol | undefined => {
     return { key: name, arity: binding.arity, params: binding.params, kind: binding.kind };
   }
   if (hasKey(binding)) return binding;
-  return binding ? unit.imported.get(name) : undefined;
+  return binding && binding.kind !== "Instance" ? unit.imported.get(name) : undefined;
 };
 
 const isFact = (name: string, unit: Unit) => unit.bindings.get(name)?.kind === "Theorem";
@@ -1014,21 +1021,6 @@ const getSymbolArity = (
     expression.resolution = local.isSelf ? SELF_RESOLUTION : LOCAL_RESOLUTION;
   }
   if (local) return local.arity;
-  const binding = unit.bindings.get(name);
-  if (binding?.goal?.statement.kind === "AssumeProve" && !binding.isSubstituted) {
-    return binding.arity;
-  }
-  const symbol = findSymbol(name, unit);
-  if (symbol) {
-    if (symbol.kind === "Theorem") unit.linkTheorem(symbol.key);
-    if (expression.kind === "Identifier") expression.name = symbol.key;
-    else expression.operator = symbol.key;
-    operandApplications.get(expression)?.forEach((application) => {
-      application.operator = symbol.key;
-    });
-    renamedArities.set(expression, symbol.arity);
-    return symbol.arity;
-  }
   const prefix = name.includes("!") ? name.slice(0, name.indexOf("!")) : "";
   const selected =
     prefix === "" ? undefined : (lookupLocal(scope, prefix) ?? findSymbol(prefix, unit));
@@ -1043,6 +1035,21 @@ const getSymbolArity = (
       unit,
     );
     return undefined;
+  }
+  const binding = unit.bindings.get(name);
+  if (binding?.goal?.statement.kind === "AssumeProve" && !binding.isSubstituted) {
+    return binding.arity;
+  }
+  const symbol = findSymbol(name, unit);
+  if (symbol) {
+    if (symbol.kind === "Theorem") unit.linkTheorem(symbol.key);
+    if (expression.kind === "Identifier") expression.name = symbol.key;
+    else expression.operator = symbol.key;
+    operandApplications.get(expression)?.forEach((application) => {
+      application.operator = symbol.key;
+    });
+    renamedArities.set(expression, symbol.arity);
+    return symbol.arity;
   }
   if (
     expression.kind !== "OperatorReference" &&
@@ -1060,7 +1067,13 @@ const getSymbolArity = (
   ) {
     return undefined;
   }
-  if (selected || (prefix !== "" && isFact(prefix, unit))) {
+  const parts = name.split("!");
+  const isSelectedInto = parts.slice(1).some((_part, index) => {
+    const head = parts.slice(0, index + 1).join("!");
+    const headBinding = lookupLocal(scope, head) ?? findSymbol(head, unit);
+    return headBinding !== undefined && headBinding.kind !== "Instance";
+  });
+  if ((selected && isSelectedInto) || (prefix !== "" && isFact(prefix, unit))) {
     return expression.kind === "Apply" ? expression.args.length : 0;
   }
   const fixity = getFixity(expression);
@@ -1262,7 +1275,9 @@ const resolveDefinitions = (
       );
   };
   const resolved = definitions.reduce<LocalName | undefined>((previous, definition) => {
-    const current = isKey(definition.name)
+    if (isInstantiated(definition) && !unit.isGenerated) return previous;
+    const isCopy = isKey(definition.name) || isInstantiated(definition);
+    const current = isCopy
       ? previous
       : resolvePending(previous, (item) => !isBefore(definition.location, item.location));
     const local: LocalName = {
@@ -1273,17 +1288,7 @@ const resolveDefinitions = (
       parent: current,
       functionArity: getFunctionArity(definition),
     };
-    if (isInstantiated(definition)) {
-      const instanced = lookupLocal(current, definition.name);
-      return {
-        ...local,
-        params: getParamArities(definition),
-        functionArity: instanced?.functionArity,
-        goal: instanced?.goal,
-        isSubstituted: instanced?.isSubstituted,
-      };
-    }
-    if (isKey(definition.name)) return { ...local, params: getParamArities(definition) };
+    if (isCopy) return { ...local, params: getParamArities(definition) };
     const isInstanced = instances.some((instance) => instance.location === definition.location);
     const isGenerated = unit.isGenerated || definition.isLocal;
     const inner = isInstanced
@@ -1308,14 +1313,25 @@ const resolveDefinitions = (
   return resolvedScope;
 };
 
-const getInstances = (names: string[], scope: LocalName | undefined, unit: Unit) =>
-  names.slice(0, -1).map((_name, index) => {
-    const prefix = names.slice(0, index + 1).join("!");
-    const binding = lookupLocal(scope, prefix) ?? getModuleBinding(prefix, unit, undefined);
-    return binding?.kind === "Instance"
-      ? { name: prefix, arity: binding.arity, range: binding.range }
-      : undefined;
-  });
+const getInstances = (
+  names: string[],
+  scope: LocalName | undefined,
+  unit: Unit,
+  prefixCount = names.length - 1,
+) => {
+  const prefixes = names
+    .slice(0, prefixCount)
+    .map((_name, index) => names.slice(0, index + 1).join("!"));
+  const bindings = prefixes.map(
+    (prefix) => lookupLocal(scope, prefix) ?? getModuleBinding(prefix, unit, undefined),
+  );
+  const end = bindings.findIndex((binding) => binding !== undefined && binding.kind !== "Instance");
+  return bindings.map((binding, index) =>
+    binding?.kind === "Instance" && (end === -1 || index < end)
+      ? { name: prefixes[index], arity: binding.arity, range: binding.range }
+      : undefined,
+  );
+};
 
 const findInstance = (name: string, scope: LocalName | undefined, unit: Unit) =>
   getInstances(name.split("!"), scope, unit)[0];
@@ -1343,6 +1359,7 @@ const isInstanceArityReported = (
     names.map((name) => name.name),
     scope,
     unit,
+    nameCount === -1 ? names.length - 1 : names.length,
   );
   const index = instances.findIndex(
     (instance, position) =>
@@ -1521,6 +1538,18 @@ const matchArgument = (
   return argArity === expected && argParams.every((param) => param === 0);
 };
 
+const reportApplyArity = (
+  expression: Expression & { kind: "Apply" },
+  operator: string,
+  arity: number,
+  scope: LocalName | undefined,
+  unit: Unit,
+) =>
+  unit.errors.push({
+    location: formatRange(expression.argumentsRange ?? getSpelledNameRange(expression, operator)),
+    message: `The operator ${resolveSynonym(operator)} requires ${arity - (getInstances(operator.split("!"), scope, unit).findLast((instance) => instance !== undefined)?.arity ?? 0)} arguments.`,
+  });
+
 const resolveApply = (
   expression: Expression & { kind: "Apply" },
   scope: LocalName | undefined,
@@ -1532,10 +1561,7 @@ const resolveApply = (
     ? undefined
     : getSymbolArity(expression, operator, scope, unit);
   if (arity !== undefined && arity !== expression.args.length) {
-    unit.errors.push({
-      location: formatRange(expression.argumentsRange ?? getSpelledNameRange(expression, operator)),
-      message: `The operator ${resolveSynonym(operator)} requires ${arity - (getInstances(operator.split("!"), scope, unit).findLast((instance) => instance !== undefined)?.arity ?? 0)} arguments.`,
-    });
+    reportApplyArity(expression, operator, arity, scope, unit);
   }
   if (arity !== expression.args.length) {
     emptyExpressions.add(expression);
@@ -1644,6 +1670,11 @@ const resolveExpression = (
   unit: Unit,
 ): void => {
   if (selections.has(expression) && !unit.isGenerated) {
+    const reference = selections.get(expression);
+    if (reference && isReference(reference) && isUnselectableReported(reference, scope, unit)) {
+      emptyExpressions.add(expression);
+      return;
+    }
     const failed = findNullSelection(nullSelections.get(expression));
     if (failed) {
       emptyExpressions.add(expression);
@@ -1920,12 +1951,24 @@ const isPendingSelectionReported = (
   return true;
 };
 
+const isUnselectableReported = (reference: Reference, scope: LocalName | undefined, unit: Unit) => {
+  const head = getSelectors(reference)[0];
+  const range = reference.selectorRanges?.[0];
+  if (head.kind !== "Name" || !range) return false;
+  const local = lookupLocal(scope, head.name);
+  const binding = local ?? findSymbol(head.name, unit);
+  if (!binding || (SELECTABLE_KINDS.has(binding.kind) && !local?.nonFactStep)) return false;
+  reportUnselectable(head.name, range, unit);
+  return true;
+};
+
 const isSubexpressionReported = (
   expression: Expression & { kind: "Subexpression" },
   scope: LocalName | undefined,
   unit: Unit,
 ) => {
   if (
+    isUnselectableReported(expression, scope, unit) ||
     isInstanceArityReported(expression, scope, unit) ||
     isSelectionReported(expression, scope, unit)
   ) {
@@ -1969,8 +2012,7 @@ const isSubexpressionReported = (
     return true;
   }
   if (head.kind === "Name" && range && lastRange) {
-    const local = lookupLocal(scope, head.name);
-    const binding = local ?? findSymbol(head.name, unit);
+    const binding = lookupLocal(scope, head.name) ?? findSymbol(head.name, unit);
     const isUnknown = binding === undefined && !isFact(head.name, unit);
     if (expression.selectors[1].kind !== "Name" && (isUnknown || binding?.kind === "Instance")) {
       unit.errors.push({
@@ -1984,10 +2026,6 @@ const isSubexpressionReported = (
         location: formatRange({ module: range.module, start: range.start, end: lastRange.end }),
         message: `Unknown operator: \`${resolveSynonym(names.join("!"))}'.`,
       });
-      return true;
-    }
-    if (binding && (!SELECTABLE_KINDS.has(binding.kind) || local?.nonFactStep)) {
-      reportUnselectable(head.name, range, unit);
       return true;
     }
   }
@@ -2057,6 +2095,19 @@ const checkFact = (fact: Fact, reference: Fact, scope: LocalName | undefined, un
     unit.errors.push({
       location: formatRange(getSpelledNameRange(fact, name)),
       message: "Step number of non-fact used as a fact",
+    });
+    return BUILTIN_LOCATION;
+  }
+  const theorem = unit.bindings.get(name);
+  if (fact.kind === "Apply" && theorem?.kind === "Theorem" && theorem.arity !== fact.args.length) {
+    reportApplyArity(fact, name, theorem.arity, scope, unit);
+    return BUILTIN_LOCATION;
+  }
+  const instance = lookupLocal(scope, name) ?? getModuleBinding(name, unit, undefined);
+  if (fact.kind === "Identifier" && instance?.kind === "Instance" && instance.arity !== 0) {
+    unit.errors.push({
+      location: formatRange(getSpelledNameRange(fact, name)),
+      message: `The operator ${name} requires ${instance.arity} arguments.`,
     });
     return BUILTIN_LOCATION;
   }

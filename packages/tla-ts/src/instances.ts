@@ -24,6 +24,7 @@ import {
   getPatternNames,
   hasNoOperands,
   isBefore,
+  isInstantiated,
   LOCAL_RESOLUTION,
 } from "./resolve";
 
@@ -1157,15 +1158,15 @@ const expandLetInstances = (
       : mapped;
   }
   const definitions = mapped.instances.reduce((current, instance) => {
-    const position = current.findIndex((definition) =>
+    const next = mapped.definitions.find((definition) =>
       isBefore(instance.location, definition.location),
     );
-    const index = position === -1 ? current.length : position;
-    return [
-      ...current.slice(0, index),
-      ...instantiate(instance, visibleLets),
-      ...current.slice(index),
-    ];
+    const index = next === undefined ? current.length : current.indexOf(next);
+    const copies = instantiate(instance, visibleLets).filter(
+      (copy) =>
+        !isInstantiated(copy) || current.every((definition) => definition.name !== copy.name),
+    );
+    return [...current.slice(0, index), ...copies, ...current.slice(index)];
   }, mapped.definitions);
   return { ...mapped, definitions };
 };

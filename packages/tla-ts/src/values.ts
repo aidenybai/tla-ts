@@ -160,6 +160,7 @@ interface LazyFunctionCopy extends LazyFunctionValue {
   original: LazyFunctionValue;
   replacedKey: Value;
   replacement: Value;
+  isLastPathStep: boolean;
   applyBody: (argument: Value) => Value;
 }
 
@@ -4142,6 +4143,19 @@ export const getLazyFunctionNode = (value: LazyFunctionValue) =>
 const isLazyFunctionCopy = (value: LazyFunctionValue): value is LazyFunctionCopy =>
   "original" in value;
 
+// FcnLambdaValue#apply and #select take the value of an EXCEPT that ends at the argument without
+// checking the domain, matching each EXCEPT from the newest until one does.
+const hasReplacedKey = (copy: LazyFunctionCopy, argument: Value) => {
+  for (
+    let current: LazyFunctionValue = copy;
+    isLazyFunctionCopy(current);
+    current = current.original
+  ) {
+    if (isEqualLikeTlc(current.replacedKey, argument) && current.isLastPathStep) return true;
+  }
+  return false;
+};
+
 // FcnLambdaValue#toFcnRcd evaluates the body at every key of an EXCEPT copy, then applies its EXCEPTs.
 const getCopiedValue = (copy: LazyFunctionCopy, key: Value) => {
   const value = copy.applyBody(key);
@@ -4413,6 +4427,9 @@ export const applyFunction = (
     if (functionValue.enumerated) {
       return applyFunction(functionValue.enumerated, argument, describeMissing);
     }
+    if (isLazyFunctionCopy(functionValue) && hasReplacedKey(functionValue, argument)) {
+      return functionValue.apply(argument);
+    }
     const tupleLengths = functionValue.boundTupleLengths;
     if (tupleLengths !== undefined) {
       checkBoundArguments(functionValue, tupleLengths, argument);
@@ -4447,7 +4464,9 @@ export const applyFunctionWith = (
   ) {
     return applyFunction(functionValue, argument, describeMissing);
   }
-  checkLazyArgumentWith(functionValue, argument, isMember);
+  if (!isLazyFunctionCopy(functionValue) || !hasReplacedKey(functionValue, argument)) {
+    checkLazyArgumentWith(functionValue, argument, isMember);
+  }
   return functionValue.apply(argument);
 };
 
@@ -4479,19 +4498,22 @@ export const updateFunction = (
   functionValue: Value,
   argument: Value,
   update: (previous: Value) => Value,
+  isLastPathStep: boolean,
 ): Value => {
   if (
     typeof functionValue === "object" &&
     functionValue.kind === "LazyFunction" &&
     functionValue.enumerated === undefined
   ) {
-    if (
-      functionValue.boundTupleLengths !== undefined &&
-      getSequenceElements(argument) === undefined
-    ) {
-      throw createArgumentListError(functionValue, argument);
+    if (!isLazyFunctionCopy(functionValue) || !hasReplacedKey(functionValue, argument)) {
+      if (
+        functionValue.boundTupleLengths !== undefined &&
+        getSequenceElements(argument) === undefined
+      ) {
+        throw createArgumentListError(functionValue, argument);
+      }
+      if (!isElementOf(argument, functionValue.domain)) return functionValue;
     }
-    if (!isElementOf(argument, functionValue.domain)) return functionValue;
     const updated = update(functionValue.apply(argument));
     // Deviation from TLC: FcnLambdaValue#takeExcept builds its copy with new FcnLambdaValue(this), which drops cm, so the EXCEPT copy counts nothing.
     const copy: LazyFunctionCopy = {
@@ -4504,6 +4526,7 @@ export const updateFunction = (
       original: functionValue,
       replacedKey: argument,
       replacement: updated,
+      isLastPathStep,
       applyBody: isLazyFunctionCopy(functionValue) ? functionValue.applyBody : functionValue.apply,
     };
     return isCountedLazyFunction(functionValue)
