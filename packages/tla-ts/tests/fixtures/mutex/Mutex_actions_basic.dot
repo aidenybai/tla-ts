@@ -1,0 +1,30 @@
+digraph ActionGraph {
+nodesep=0.35;
+subgraph cluster_legend {
+label = "Coverage";
+node [shape=point] {
+d0 [style = invis];
+d1 [style = invis];
+p0 [style = invis];
+p0 [style = invis];
+}
+d0 -> d1 [label=unseen, color="green", style=dotted]
+p0 -> p1 [label=seen]
+}
+0 [shape=box,label="Init",style = filled]
+1 [shape=box,label="Request"]
+2 [shape=box,label="Enter"]
+3 [shape=box,label="Exit"]
+0 -> 1[penwidth=0.25];
+0 -> 2[color="green",style=dotted];
+0 -> 3[color="green",style=dotted];
+1 -> 1[penwidth=0.23];
+1 -> 2[penwidth=0.29];
+1 -> 3[penwidth=0.27];
+2 -> 1[penwidth=0.27];
+2 -> 2[color="green",style=dotted];
+2 -> 3[penwidth=0.3];
+3 -> 1[penwidth=0.25];
+3 -> 2[penwidth=0.28];
+3 -> 3[color="green",style=dotted];
+}

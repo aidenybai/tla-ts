@@ -3,6 +3,9 @@ import { join } from "node:path";
 import { gunzipSync } from "node:zlib";
 import { describe, expect, it } from "vite-plus/test";
 import { check } from "../../src";
+import { checkDepthFirst } from "../../src/dfid";
+import { simulate } from "../../src/simulate";
+import { formatState } from "../../src/values";
 
 const DIRECTORY = join(import.meta.dirname, "../fixtures/trace-spec");
 
@@ -24,6 +27,41 @@ const checkFixture = async (name: string, module: string, traceFile?: string) =>
   return { ...result, written };
 };
 
+const simulateFixture = (name: string, module: string, traceDepth: number, isDiffTrace = false) => {
+  const traceSpecs: string[] = [];
+  simulate({
+    source: readFixture(`${name}.tla`),
+    config: readFixture(`${name}.cfg`),
+    onPrint: () => {},
+    traceSpec: { module },
+    traceDepth,
+    traceCount: undefined,
+    aril: 0n,
+    isGenerating: false,
+    scheduler: "random",
+    isDiffTrace,
+    onSimulation: (output) => {
+      if (output.kind === "trace-spec") traceSpecs.push(output.text);
+    },
+  });
+  return traceSpecs.map(stripDate);
+};
+
+const searchDepthFirst = (source: string, config: string, module: string) => {
+  const traceSpecs: string[] = [];
+  checkDepthFirst({
+    source,
+    config,
+    maxDepth: 5,
+    onPrint: () => {},
+    traceSpec: { module },
+    onOutput: (output) => {
+      if (output.kind === "trace-spec") traceSpecs.push(output.text);
+    },
+  });
+  return traceSpecs.map(stripDate);
+};
+
 describe("trace exploration spec", () => {
   it.each([
     ["Safety", "te_out"],
@@ -32,6 +70,25 @@ describe("trace exploration spec", () => {
   ])("writes the spec TLC writes for %s", async (name, module) => {
     const result = await checkFixture(name, module);
     expect(stripDate(result.traceSpec)).toBe(stripDate(readFixture(`${name}_TTrace.tla`)));
+  });
+
+  it("prints and writes a trace whose last state nests 6,000 tuples", async () => {
+    const result = await check({
+      source: `---- MODULE M ----\nEXTENDS Naturals\nVARIABLES x, y\nInit == x = 0 /\\ y = 0\nNext == y' = y + 1 /\\ x' = ${"<< ".repeat(100)}x${" >>".repeat(100)}\nInv == y < 60\n====\n`,
+      config: "INIT Init\nNEXT Next\nINVARIANT Inv\n",
+      traceSpec: { module: "M_TTrace" },
+    });
+    expect(result.status).toBe("invariant-violation");
+    expect(result.violation?.trace.map((step) => formatState(step.state))).toEqual(
+      Array.from(
+        { length: 61 },
+        (_value, index) =>
+          `/\\ x = ${"<< ".repeat(100 * index)}0${" >>".repeat(100 * index)}\n/\\ y = ${index}\n`,
+      ),
+    );
+    expect(result.traceSpec?.split("\n").find((line) => line.endsWith(",y |-> 60])"))).toBe(
+      `    ([x |-> ${"<<".repeat(6000)}0${">>".repeat(6000)},y |-> 60])`,
+    );
   });
 
   it("records the trace in TLC's binary format through _TLCTrace", async () => {
@@ -107,5 +164,57 @@ describe("trace exploration spec", () => {
     const result = await checkFixture("Safety", "te_out");
     expect(result.written.size).toBe(0);
     expect(result.traceSpec).toBeDefined();
+  });
+
+  it.each([
+    ["Safety", "te_out"],
+    ["Stuttering", "te"],
+    ["Live", "te"],
+  ])("writes the spec TLC writes for %s under -simulate", (name, module) => {
+    expect(simulateFixture(name, module, 10)).toEqual([
+      stripDate(readFixture(`${name}_TTrace.tla`)),
+    ]);
+  });
+
+  it("leaves the states -difftrace omits under -simulate out of the spec, as TLC does", () => {
+    expect(simulateFixture("View", "te", 10, true)).toEqual([
+      stripDate(readFixture("View_TTrace.tla")),
+    ]);
+  });
+
+  it("writes no spec under -simulate -depth -1, where TLC prints only the error state", () => {
+    expect(simulateFixture("Safety", "te_out", -1)).toEqual([]);
+  });
+
+  it("writes the spec of the last trace under -continue, where TLC's appends every trace it prints", async () => {
+    const result = await check({
+      source: readFixture("Continue.tla"),
+      config: readFixture("Continue.cfg"),
+      isContinued: true,
+      onPrint: () => {},
+      traceSpec: { module: "te" },
+    });
+    expect(stripDate(result.traceSpec)).toBe(
+      stripDate(readFixture("Continue_TTrace.tla"))?.replace(
+        "    ([x |-> 0]),\n    ([x |-> 2]),\n    ([x |-> 1]),\n    ([x |-> 3]),\n    ([x |-> 0]),\n    ([x |-> 2]),\n    ([x |-> 4]),\n",
+        "",
+      ),
+    );
+  });
+
+  it("writes the spec TLC writes for Safety under -dfid", () => {
+    expect(
+      searchDepthFirst(readFixture("Safety.tla"), readFixture("Safety.cfg"), "te_out"),
+    ).toEqual([stripDate(readFixture("Safety_TTrace.tla"))]);
+  });
+
+  it("writes no spec for a deadlock under -dfid, whose trace TLC prints without recording it", () => {
+    expect(
+      searchDepthFirst(
+        "---- MODULE M ----\nEXTENDS Naturals, TLC\nVARIABLE x\nInit == x = 0\nNext == x < 3 /\\ x' = x + 1\nInv == x < 3\nLive == <>(x = 3)\nCheck == x <= 3\n====\n",
+        "INIT Init\nNEXT Next\n",
+        "M_TTrace",
+      ),
+    ).toEqual([]);
   });
 });

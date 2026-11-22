@@ -2,6 +2,7 @@ import { expect, it } from "vite-plus/test";
 import { formatValue } from "../../src";
 import type { TraceStep } from "../../src/check";
 import { simulate } from "../../src/simulate";
+import { MESSAGE_LEVEL } from "../../src/tlc/messages";
 
 const SAFETY_CONFIG = "INIT Init\nNEXT Next\nINVARIANT Inv";
 
@@ -50,7 +51,8 @@ it.each(["[a : {0}, b : {1}]", '[{"a", "b"} -> {1}]'])(
       isGenerating: false,
       scheduler: "random",
       onSimulation: (output) => {
-        if (output.kind === "message" && output.isError) messages.push(output.message);
+        if (output.kind === "message" && output.level === MESSAGE_LEVEL.error)
+          messages.push(output.message);
       },
     });
     expect(messages).toEqual([
@@ -149,7 +151,7 @@ it.each([
       isGenerating: false,
       scheduler: "random",
       onSimulation: (output) => {
-        if (output.kind === "message" && output.isError) {
+        if (output.kind === "message" && output.level === MESSAGE_LEVEL.error) {
           messages.push([output.code, output.message]);
         }
       },
@@ -171,7 +173,7 @@ it("reports an implied initial predicate that an initial state violates, which T
     isGenerating: false,
     scheduler: "random",
     onSimulation: (output) => {
-      if (output.kind === "message" && output.isError) {
+      if (output.kind === "message" && output.level === MESSAGE_LEVEL.error) {
         messages.push([output.code, output.message]);
       }
     },
@@ -237,7 +239,7 @@ it("rejects a constant postcondition after a violation, as TLC's Simulator does"
       isGenerating: false,
       scheduler: "random",
       onSimulation: (output) => {
-        if (output.kind === "message" && output.isError) {
+        if (output.kind === "message" && output.level === MESSAGE_LEVEL.error) {
           messages.push([output.code, output.message]);
         }
       },
@@ -501,7 +503,8 @@ it("reports each property it fails to evaluate on the lasso before the propertie
     isGenerating: false,
     scheduler: "random",
     onSimulation: (output) => {
-      if (output.kind === "message" && output.isError) reported.push(output.message);
+      if (output.kind === "message" && output.level === MESSAGE_LEVEL.error)
+        reported.push(output.message);
     },
     onProgress: (progress) => {
       if (progress.kind === "violation") reported.push(...(progress.violation.properties ?? []));
@@ -604,7 +607,10 @@ const getDiffTraceOutputs = (definitions: string, isDiffTrace: boolean) => {
     scheduler: "random",
     isDiffTrace,
     onSimulation: (output) => {
-      if (output.kind === "message" && (output.isError || output.code === 1000)) {
+      if (
+        output.kind === "message" &&
+        (output.level === MESSAGE_LEVEL.error || output.code === 1000)
+      ) {
         outputs.push(output.message);
       }
       if (output.kind === "behavior") {
@@ -666,7 +672,8 @@ it("prints a state whose function the RL scheduler fails to fingerprint, where T
     isGenerating: false,
     scheduler: "rl",
     onSimulation: (output) => {
-      if (output.kind === "message" && output.isError) outputs.push(output.message);
+      if (output.kind === "message" && output.level === MESSAGE_LEVEL.error)
+        outputs.push(output.message);
       if (output.kind === "behavior") {
         output.trace.forEach((step) => outputs.push(formatValue(step.state.x)));
       }
@@ -697,7 +704,8 @@ it.each([false, true])(
       scheduler: "random",
       maxSetSize: 4,
       onSimulation: (output) => {
-        if (output.kind === "message" && output.isError) outputs.push(output.message);
+        if (output.kind === "message" && output.level === MESSAGE_LEVEL.error)
+          outputs.push(output.message);
         if (output.kind === "behavior") outputs.push("behavior");
         if (output.kind === "summary") outputs.push("summary");
       },
@@ -743,7 +751,8 @@ it("reports an initial conjunct it evaluates whole at the instance that holds it
     isGenerating: false,
     scheduler: "random",
     onSimulation: (output) => {
-      if (output.kind === "message" && output.isError) messages.push(output.message);
+      if (output.kind === "message" && output.level === MESSAGE_LEVEL.error)
+        messages.push(output.message);
     },
   });
   expect(messages).toEqual([

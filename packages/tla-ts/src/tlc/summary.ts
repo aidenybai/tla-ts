@@ -7,7 +7,7 @@ const ACTUAL_PROBABILITY_THRESHOLD = 1e-10;
 
 const withDecimalPoint = (text: string) => (text.includes(".") ? text : `${text}.0`);
 
-const toJavaString = (value: number) => {
+export const toJavaString = (value: number) => {
   const magnitude = Math.abs(value);
   if (magnitude >= 1e-3 && magnitude < 1e7) return withDecimalPoint(String(value));
   const [mantissa, exponent] = value.toExponential().split("e");

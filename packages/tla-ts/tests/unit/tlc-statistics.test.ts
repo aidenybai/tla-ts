@@ -3,6 +3,7 @@ import { join } from "node:path";
 import { expect, it } from "vite-plus/test";
 import { check, formatValue } from "../../src";
 import { simulate } from "../../src/simulate";
+import { MESSAGE_LEVEL } from "../../src/tlc/messages";
 import { checkFixture } from "./check-harness";
 
 const DIRECTORY = join(import.meta.dirname, "../fixtures/tlc-statistics");
@@ -299,7 +300,8 @@ it("prints the statistics of a simulation in the order TLC writes them", () => {
     isGenerating: false,
     scheduler: "random",
     onSimulation: (output) => {
-      if (output.kind === "message" && output.isError) messages.push(output.message);
+      if (output.kind === "message" && output.level === MESSAGE_LEVEL.error)
+        messages.push(output.message);
     },
   });
   expect(messages[0]).toBe(

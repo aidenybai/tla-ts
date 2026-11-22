@@ -1,8 +1,10 @@
 import type { CheckOptions, TraceStep, Violation } from "./check";
 import type { CoverageOutput } from "./coverage";
 import {
+  FILE_NOT_FOUND_EXCEPTION,
   isStackOverflow,
   TlaEvaluationError,
+  TlaFileError,
   TlaIncompleteSuccessorError,
   TlaModuleError,
   TlaStackOverflowError,
@@ -26,6 +28,7 @@ import {
   STOP_WALK,
   walkCoveredSuccessors,
   type CliSettings,
+  type TraceSpecOutput,
 } from "./search";
 import { getActionLabel, toActionValue, type SpecAction } from "./spec-description";
 import { forEachInitialState, forEachSuccessor, type Successor } from "./successors";
@@ -38,9 +41,12 @@ import {
   isEvalException,
   isHeadedError,
   MESSAGE_CODE,
+  MESSAGE_LEVEL,
   withUnexpectedException,
   type FailureMessage,
+  type MessageLevel,
 } from "./tlc/messages";
+import { getActionFlowGraph, type ActionStatistics } from "./tlc/action-graph";
 import { createJavaRandom, nextPrime, type JavaRandom } from "./tlc/random";
 import { replayInitialStates } from "./tlc/replay";
 import {
@@ -69,6 +75,10 @@ export interface SimulationOptions extends CheckOptions {
   scheduler: "random" | "rl" | "rlaction";
   /** TLC's -difftrace, which also drops the steps of a printed behavior that repeat a fingerprint. */
   isDiffTrace?: boolean;
+  /** TLC's -simulate stats=basic|full, which writes the graph of the actions the behaviors take to <root>_actions.dot through writeFile. */
+  actionStatistics?: ActionStatistics;
+  /** TLC's -simulate file=, which writes each behavior that ends without an error to <file>_0_<n> through writeFile. */
+  behaviorFile?: string;
   onSimulation: (output: SimulationOutput) => void;
 }
 
@@ -82,9 +92,10 @@ export interface SimulationStatistics {
 }
 
 export type SimulationOutput =
-  | { kind: "message"; code: number; isError: boolean; message: string; toolMessage: string }
+  | { kind: "message"; code: number; level: MessageLevel; message: string; toolMessage: string }
   | { kind: "behavior"; trace: TraceStep[]; levels: number[]; isLastStateOnly: boolean }
   | CoverageOutput
+  | TraceSpecOutput
   | { kind: "progress"; statistics: SimulationStatistics }
   | { kind: "summary"; statistics: SimulationStatistics };
 
@@ -107,6 +118,7 @@ interface WorkerError {
   violation?: Violation;
   failures?: FailureMessage[];
   counterExample?: Value;
+  traceSpec?: string;
 }
 
 const FATAL_CODES = new Set<number>([
@@ -232,20 +244,56 @@ export const simulate = (options: SimulationOptions & CliSettings): number => {
     seed,
     aril: options.aril,
   };
-  const reportMessage = (code: number, text: string, toolText = text, isError = true) =>
-    output({ kind: "message", code, isError, message: text, toolMessage: toolText });
+  const reportMessage = (
+    code: number,
+    text: string,
+    toolText = text,
+    level: MessageLevel = MESSAGE_LEVEL.error,
+  ) => output({ kind: "message", code, level, message: text, toolMessage: toolText });
   const reportCoverage = () => {
     const report = prepared.getCoverage();
     if (report) output({ kind: "coverage", coverage: report });
-  };
-  const printSummary = () => {
-    reportCoverage();
-    output({ kind: "summary", statistics: { ...statistics } });
   };
   const nodes = new WeakMap<(Value | undefined)[], TraceNode>();
   const description = prepared.getDescription();
   const initActions = description.inits;
   const nextActions = description.actions;
+  const actionFlow = options.actionStatistics && {
+    statistics: options.actionStatistics,
+    actions: [...initActions, ...nextActions],
+    initCount: initActions.length,
+    actionStats: new Float64Array((initActions.length + nextActions.length) ** 2),
+  };
+  // TLC opens both files with FileUtil#newBFOS, which prints a failure before it rethrows it.
+  const writeOutputFile = (path: string, content: string) => {
+    try {
+      options.writeFile?.(path, content);
+    } catch (error) {
+      if (error instanceof TlaFileError) {
+        (options.onPrint ?? console.log)(`Error: Unable to write to file ${path}`);
+      }
+      throw error;
+    }
+  };
+  const writeActionFlowGraph = () => {
+    if (!actionFlow) return;
+    try {
+      writeOutputFile(`${specification.rootName}_actions.dot`, getActionFlowGraph(actionFlow));
+    } catch (error) {
+      if (!(error instanceof TlaFileError)) throw error;
+      reportMessage(
+        MESSAGE_CODE.reporterDied,
+        "Progress report thread died.",
+        undefined,
+        MESSAGE_LEVEL.tlcBug,
+      );
+    }
+  };
+  const printSummary = () => {
+    reportCoverage();
+    writeActionFlowGraph();
+    output({ kind: "summary", statistics: { ...statistics } });
+  };
   const coverage = prepared.coverage;
   const covered = coverage && addActionCoverage(coverage, environment, description);
   let traceCount = 0;
@@ -440,7 +488,7 @@ export const simulate = (options: SimulationOptions & CliSettings): number => {
     MESSAGE_CODE.computingInitProgress,
     `Computed ${generated.length} initial states...`,
     undefined,
-    false,
+    MESSAGE_LEVEL.none,
   );
   const generatedNodes: TraceNode[] = [];
   for (const state of generated) {
@@ -509,7 +557,7 @@ export const simulate = (options: SimulationOptions & CliSettings): number => {
     MESSAGE_CODE.initGenerated1,
     `Finished computing initial states: ${initialStates.length} distinct state generated at ${formatTlcDate(new Date())}.`,
     undefined,
-    false,
+    MESSAGE_LEVEL.none,
   );
   // TLC's Simulator deep-normalizes the initial states, which sorts their records.
   initialStates.forEach((node) => node.state.forEach(markNormalized));
@@ -658,10 +706,15 @@ export const simulate = (options: SimulationOptions & CliSettings): number => {
       },
       failures: found.failures.map((failure) => toException(failure, last)),
       counterExample: getCounterExample(lasso, steps, { start: loopStart, action: loopAction }),
+      traceSpec: prepared.getTraceSpec(
+        lasso.map((node) => toRecord(node.state)),
+        loopStart,
+      ),
     };
   };
   const simulateTrace = (): WorkerError | "stopped" | undefined => {
     currentNode = initialStates[Math.floor(workerRandom.nextDouble() * initialStates.length)];
+    let currentActionId = initActions.length - 1;
     for (let depth = 0; depth < traceDepth; depth++) {
       if (runtime.isStopped) return "stopped";
       let actionIndex = scheduler.getNextActionIndex(currentNode);
@@ -684,6 +737,11 @@ export const simulate = (options: SimulationOptions & CliSettings): number => {
       }
       currentNode = successors[Math.floor(workerRandom.nextDouble() * successors.length)];
       currentNode.deferred?.(currentNode.state);
+      if (actionFlow) {
+        const nextActionId = initActions.length + actionIndex;
+        actionFlow.actionStats[currentActionId * actionFlow.actions.length + nextActionId]++;
+        currentActionId = nextActionId;
+      }
     }
     if (runtime.isStopped) return "stopped";
     const violation = getTemporalViolation(currentNode);
@@ -692,7 +750,19 @@ export const simulate = (options: SimulationOptions & CliSettings): number => {
     const delta = length - statistics.levelMean;
     statistics.levelMean += Math.trunc(delta / Math.max(statistics.traces, 1));
     statistics.levelM2 += delta * (length - statistics.levelMean);
+    // Deviation from TLC: it learns after file= drops the stuttering steps, and RLSimulationWorker#postTrace then walks past the initial state into a NullPointerException.
     if (options.scheduler === "rl") scheduler.learnTrace(currentNode);
+    if (options.behaviorFile !== undefined) {
+      const fileName = `${options.behaviorFile}_0_${traceCount}`;
+      const states = getTrace(currentNode, search.getTlcOrder()).map(
+        (node, index) =>
+          `\\* <${getActionLabel(node.action, options.version)}>\nSTATE_${index + 1} == \n${formatState(toRecord(node.state))}\n\n`,
+      );
+      writeOutputFile(
+        fileName,
+        `---------------- MODULE ${fileName} -----------------\n${states.join("")}=================================================\n`,
+      );
+    }
     return undefined;
   };
   const toException = (error: unknown, node: TraceNode): WorkerError => {
@@ -786,6 +856,7 @@ export const simulate = (options: SimulationOptions & CliSettings): number => {
         violation: error.violation,
       });
       printSummary();
+      if (error.traceSpec !== undefined) output({ kind: "trace-spec", text: error.traceSpec });
       continue;
     }
     reportMessage(error.code, error.message, error.toolMessage);
@@ -810,6 +881,13 @@ export const simulate = (options: SimulationOptions & CliSettings): number => {
       levels: shown.positions.map((position) => trace[position].level),
       isLastStateOnly,
     });
+    const traceSpec = isLastStateOnly
+      ? undefined
+      : prepared.getTraceSpec(
+          shown.positions.map((position) => toRecord(trace[position].state)),
+          undefined,
+        );
+    if (traceSpec !== undefined) output({ kind: "trace-spec", text: traceSpec });
     const failure = shown.failure;
     if (failure) {
       reportMessage(failure.code, failure.message, failure.toolMessage);
@@ -821,7 +899,7 @@ export const simulate = (options: SimulationOptions & CliSettings): number => {
         MESSAGE_CODE.general,
         `difftrace requested: Shortened behavior by omitting finite stuttering (${omitted} states), which is an artifact of simulation mode.\n`,
         undefined,
-        false,
+        MESSAGE_LEVEL.none,
       );
     }
     if (error.isSummarized) printSummary();
@@ -840,6 +918,7 @@ export const simulate = (options: SimulationOptions & CliSettings): number => {
   output({ kind: "progress", statistics: { ...statistics } });
   // TLC's ProgressReport prints the coverage again with its last progress unless -coverage spans more progress reports.
   if (options.coverage !== undefined && options.coverage <= 1) reportCoverage();
+  writeActionFlowGraph();
   if (status === EXIT_STATUS.success) printSummary();
   return status;
 };
@@ -855,4 +934,6 @@ const getUnexpectedPrefix = (error: TlaEvaluationError) =>
     ? UNEXPECTED_EVAL_EXCEPTION
     : error instanceof TlaSetBoundError
       ? WRONG_INVOCATION_EXCEPTION
-      : UNEXPECTED_EXCEPTION;
+      : error instanceof TlaFileError
+        ? FILE_NOT_FOUND_EXCEPTION
+        : UNEXPECTED_EXCEPTION;
