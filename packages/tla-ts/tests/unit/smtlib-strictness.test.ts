@@ -1,5 +1,7 @@
+import { createHash } from "node:crypto";
 import { describe, expect, it } from "vite-plus/test";
 import { runSmtlibScript } from "../../src/prover/smt/solver/smtlib-script";
+import { Z3_PARAMETERS } from "../../src/prover/smt/solver/z3-parameters-text";
 
 const run = (lines: string[]) => {
   const output: string[] = [];
@@ -896,6 +898,74 @@ describe("messages of the reader, as Z3 5.3.2 prints them", () => {
       `(error "line 6 column 27: Expected values for parameter relevancy is an unsigned integer. It was given argument '3/2'")`,
       `(error "line 7 column 30: Expected values for parameter completion are 'true' or 'false'. It was given argument '1'")`,
       `(error "line 8 column 21: Expected values for parameter timeout is an unsigned integer. It was given argument 'none'")`,
+      "sat",
+    ]);
+  });
+
+  it("holds the parameters z3 -p lists, each module's rows as gparams' errors list them", () => {
+    expect(createHash("sha256").update(Z3_PARAMETERS).digest("hex")).toBe(
+      "45061de5d4eae302337b58f9fe1ac510660922e5429d252d564d477427b95659",
+    );
+  });
+
+  it("names a parameter Z3 doesn't have, as gparams does, and goes on", () => {
+    expect(
+      run([
+        "(set-option :print_success true)",
+        "(set-option :nnf.foo 1)",
+        "(set-option :mbqi true)",
+        "(set-option :pp_decimal true)",
+        "(set-option :random_seed 1)",
+        "(set-option :core.minimize true)",
+        "(set-option :Smt.Random-Seed 3)",
+        "(get-option :smt.random_seed)",
+        "(declare-const x Int)",
+        "(assert (> x 0))",
+        "(check-sat)",
+      ]),
+    ).toEqual([
+      [
+        `(error "line 1 column 28: unknown parameter 'print_success'`,
+        "Legal parameters are:",
+        "  auto_config (bool) (default: true)",
+        "  ctrl_c (bool) (default: true)",
+        "  debug_ref_count (bool) (default: false)",
+        "  dot_proof_file (string) (default: proof.dot)",
+        "  dump_models (bool) (default: false)",
+        "  encoding (string) (default: unicode)",
+        "  memory_high_watermark (unsigned int) (default: 0)",
+        "  memory_high_watermark_mb (unsigned int) (default: 0)",
+        "  memory_max_alloc_count (unsigned int) (default: 0)",
+        "  memory_max_size (unsigned int) (default: 0)",
+        "  model (bool) (default: true)",
+        "  model_validate (bool) (default: false)",
+        "  proof (bool) (default: false)",
+        "  rlimit (unsigned int) (default: 0)",
+        "  smtlib2_compliant (bool) (default: false)",
+        "  stats (bool) (default: false)",
+        "  suppress_platform_verbose (bool) (default: false)",
+        "  timeout (unsigned int) (default: 4294967295)",
+        "  trace (bool) (default: false)",
+        "  trace_file_name (string) (default: z3.log)",
+        "  type_check (bool) (default: true)",
+        "  unsat_core (bool) (default: false)",
+        "  verbose (unsigned int) (default: 0)",
+        "  warning (bool) (default: true)",
+        `  well_sorted_check (bool) (default: false)")`,
+      ].join("\n"),
+      [
+        `(error "line 2 column 21: unknown parameter 'foo' at module 'nnf'`,
+        "Legal parameters are:",
+        "  ignore_labels (bool) (default: false)",
+        "  max_memory (unsigned int) (default: 4294967295)",
+        "  mode (symbol) (default: skolem)",
+        `  sk_hack (bool) (default: false)")`,
+      ].join("\n"),
+      `(error "line 3 column 18: the parameter 'mbqi', invoke 'z3 -p' to obtain the new parameter list, and 'z3 -pp:smt.mbqi' for the full description of the parameter")`,
+      `(error "line 4 column 24: the parameter 'pp_decimal', invoke 'z3 -p' to obtain the new parameter list, and 'z3 -pp:pp.decimal' for the full description of the parameter")`,
+      `(error "line 5 column 25: unknown parameter 'random_seed', this is an old parameter name, invoke 'z3 -p' to obtain the new parameter list")`,
+      `(error "line 6 column 27: invalid parameter, unknown module 'core'")`,
+      "3",
       "sat",
     ]);
   });
