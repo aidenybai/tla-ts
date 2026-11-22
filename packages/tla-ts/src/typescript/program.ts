@@ -198,9 +198,10 @@ const resolveLiteral = (
   };
 };
 
-// The project of the nearest tsconfig.json, where it holds the file, as an editor finds it.
+// The project of the nearest tsconfig.json, where it holds the file, as an editor finds it. A host
+// without a file system, such as a browser, has none.
 const getProject = (path: string) => {
-  if (!ts.sys.fileExists(path)) return undefined;
+  if (ts.sys?.fileExists(path) !== true) return undefined;
   const file = ts.sys.resolvePath(path).replaceAll("\\", "/");
   const configPath = ts.findConfigFile(file.slice(0, file.lastIndexOf("/")), ts.sys.fileExists);
   const project =
@@ -252,7 +253,12 @@ export const getJsxText = (path: string, text: string) => {
     project === undefined
       ? { ...COMPILER_OPTIONS, jsx: ts.JsxEmit.ReactJSX }
       : getProjectOptions(project.options);
-  return rewriteJsx(path, text, options, ts.createCompilerHost(options));
+  return rewriteJsx(
+    path,
+    text,
+    options,
+    ts.sys === undefined ? createLibraryHost(new Map()) : ts.createCompilerHost(options),
+  );
 };
 
 // TypeScript's program of a model's file and the files it imports, whose checker gives the types
@@ -261,6 +267,11 @@ export const createProgram = (source: string, path: string, library: Library = D
   const libraries = library.texts;
   const project = libraries === undefined ? getProject(path) : undefined;
   const options = project === undefined ? COMPILER_OPTIONS : getProjectOptions(project.options);
+  if (libraries === undefined && ts.sys === undefined) {
+    throw new TlaTypeScriptError(
+      "tla-ts can't read TypeScript's declaration files without a file system, so a host without one passes their texts",
+    );
+  }
   const host =
     libraries === undefined ? ts.createCompilerHost(options) : createLibraryHost(libraries);
   const programHost: ts.CompilerHost & SourceRedirectingHost = {

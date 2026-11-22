@@ -37,7 +37,8 @@ const getLibraries = (fileName: string, libraries: Map<string, string>) => {
 // stack, or with 8 MB, as the CLI's thread has. A request compiles with the public compile, or on
 // ESCore from a realm that Node recorded and that went through JSON, as a browser reads it, and, as
 // in a browser, without Node's built-in modules, which a browser's process, where it has one, lacks.
-// On a browser's worker, TypeScript also has no system to read files through.
+// On a browser's worker, TypeScript also has no system to read files through, and the compile has
+// no Node's process at all.
 const createApi = (stackSizeMb: number, isBrowser = false) => {
   const worker = new Worker(
     `const { register } = require("node:module");
@@ -73,7 +74,9 @@ const createApi = (stackSizeMb: number, isBrowser = false) => {
     const modules = await loading;
     const [compile, parallel, values, errors, api, , , , program] = modules;
     const options = { source: request.source, fileName: request.fileName };
+    const host = process;
     const getBuiltinModule = process.getBuiltinModule;
+    const setProcess = (value) => Object.defineProperty(globalThis, "process", { value, configurable: true, writable: true });
     try {
       // HACK: a browser has no Node to parse a file for its early errors, which tla-ts reaches
       // through process.getBuiltinModule.
@@ -84,9 +87,11 @@ const createApi = (stackSizeMb: number, isBrowser = false) => {
       if (workerData.isBrowser && browserLibrary === undefined) {
         browserLibrary = program.createLibrary(new Map(workerData.libraries));
       }
+      if (workerData.isBrowser) setProcess(undefined);
       const spec = request.isRecorded
-        ? api.compileEscore(options, runtime, browserLibrary)
+        ? api.compileEscore(options, runtime, request.isLibraryPassed ? browserLibrary : undefined)
         : await compile.compile(options);
+      setProcess(host);
       process.getBuiltinModule = getBuiltinModule;
       const result = await parallel.check({ ...spec, onPrint: () => {} });
       parentPort.postMessage({
@@ -103,6 +108,7 @@ const createApi = (stackSizeMb: number, isBrowser = false) => {
         },
       });
     } catch (error) {
+      setProcess(host);
       process.getBuiltinModule = getBuiltinModule;
       parentPort.postMessage({
         id: request.id,
@@ -127,9 +133,9 @@ const createApi = (stackSizeMb: number, isBrowser = false) => {
   worker.on("message", (response: { id: number; outcome: Outcome }) =>
     pending[response.id](response.outcome),
   );
-  return (source: string, fileName: string, isRecorded = false) =>
+  return (source: string, fileName: string, isRecorded = false, isLibraryPassed = true) =>
     new Promise<Outcome>((resolve) => {
-      worker.postMessage({ id: pending.length, source, fileName, isRecorded });
+      worker.postMessage({ id: pending.length, source, fileName, isRecorded, isLibraryPassed });
       pending.push(resolve);
     });
 };
@@ -318,6 +324,75 @@ describe("compile and check a model whose actions Node runs", () => {
   it("rejects another result on a browser's worker", async () => {
     expect(await getBrowserOutcome(getSource(2), "counter.ts", true)).toMatchObject({
       status: "success",
+    });
+  });
+});
+
+// A browser has no file system, so TypeScript reads a JavaScript model's types, and a module's
+// imports resolve, from the one file the page has.
+describe("compile a program on a browser's worker, which has no files", () => {
+  const getSource = (limit: string) =>
+    `${limit}\n\nlet count = 0;\n\nexport const increment = () => {\n  if (count < limit) count += 1;\n};\n\nexport const reset = () => {\n  count = 0;\n};\n\nexport const bounded = () => count <= 2;\n`;
+
+  it("checks a JavaScript model as Node runs it", async () => {
+    const source = getSource("const limit = 3;");
+    const outcome = await getBrowserOutcome(source, "counter.js", true);
+    expect(outcome).toMatchObject({
+      status: "invariant-violation",
+      name: "bounded",
+      trace: [{ count: "0" }, { count: "1" }, { count: "2" }, { count: "3" }],
+    });
+    const replay = `import * as model from "./counter.js";\nconst held = [model.bounded()];\nfor (const action of ${JSON.stringify(outcome.actions)}) {\n  model[action]();\n  held.push(model.bounded());\n}\nconsole.log(JSON.stringify(held));\n`;
+    expect(
+      JSON.parse(runNode({ "counter.js": source, "replay.mjs": replay }, "replay.mjs").stdout),
+    ).toEqual([true, true, true, false]);
+  });
+
+  it("rejects another result of a JavaScript model", async () => {
+    expect(
+      await getBrowserOutcome(getSource("const limit = 2;"), "counter.js", true),
+    ).toMatchObject({ status: "success" });
+  });
+
+  // Node fails to load a module whose import names a file it lacks, and tla-ts stops there.
+  it("stops at an import of a file it lacks, as Node fails to load it", async () => {
+    const source = getSource('import { limit } from "./limit.ts";');
+    expect(runNode({ "counter.ts": source }, "counter.ts").stderr).toContain(
+      "ERR_MODULE_NOT_FOUND",
+    );
+    expect(
+      runNode({ "counter.ts": source, "limit.ts": "export const limit = 3;\n" }, "counter.ts")
+        .status,
+    ).toBe(0);
+    expect((await getBrowserOutcome(source, "counter.ts", true)).error).toEqual({
+      name: "TlaTypeScriptError",
+      isTlaError: true,
+      message: "counter.js:1:1 tla-ts can't load the module ./limit.ts",
+    });
+  });
+
+  // TypeScript reads its declaration files through its file system, so a host without one passes
+  // their texts.
+  it("stops at a model's types without TypeScript's declaration files", async () => {
+    const source = getSource("const limit = 3;");
+    expect((await getBrowserOutcome(source, "counter.ts", true, false)).error).toEqual({
+      name: "TlaTypeScriptError",
+      isTlaError: true,
+      message:
+        "tla-ts can't read TypeScript's declaration files without a file system, so a host without one passes their texts",
+    });
+    expect(await getBrowserOutcome(source, "counter.ts", true)).toMatchObject({
+      status: "invariant-violation",
+    });
+  });
+
+  it("stops at the import that JSX's calls make", async () => {
+    expect(
+      (await getBrowserOutcome("export const view = () => <p>hi</p>;\n", "view.tsx", true)).error,
+    ).toEqual({
+      name: "TlaTypeScriptError",
+      isTlaError: true,
+      message: "view.js:1:1 tla-ts can't load the module react/jsx-runtime",
     });
   });
 });

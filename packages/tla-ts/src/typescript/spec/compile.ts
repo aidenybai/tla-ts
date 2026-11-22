@@ -25,11 +25,16 @@ import { getHostIntl } from "./intl";
 import { suspendDefinitions } from "./suspend";
 
 // Node's files and paths, which only a program of files reads, so that a host without them, such as
-// a browser, compiles a script without loading them.
+// a browser, compiles a script without loading them, and a program of the one file it has, whose
+// path it takes from the root.
 const readFileSync = (path: string, encoding: "utf8") =>
   process.getBuiltinModule("node:fs").readFileSync(path, encoding);
-const resolve = (path: string) => process.getBuiltinModule("node:path").resolve(path);
-const pathToFileURL = (path: string) => process.getBuiltinModule("node:url").pathToFileURL(path);
+const resolve = (path: string) =>
+  globalThis.process?.getBuiltinModule?.("node:path").resolve(path) ??
+  decodeURIComponent(new URL(path, "file:///").pathname);
+const pathToFileURL = (path: string) =>
+  globalThis.process?.getBuiltinModule?.("node:url").pathToFileURL(path) ??
+  new URL(path, "file:///");
 
 export interface EscoreSpec {
   name: string;
@@ -461,8 +466,8 @@ const loadFiles = (
     }
     return resolved.file;
   };
-  const getRealPath = (path: string) => ts.sys.realpath?.(ts.sys.resolvePath(path)) ?? path;
-  const entry = ts.sys.fileExists(fileName) ? getRealPath(fileName) : fileName;
+  const getRealPath = (path: string) => ts.sys?.realpath?.(ts.sys.resolvePath(path)) ?? path;
+  const entry = ts.sys?.fileExists(fileName) === true ? getRealPath(fileName) : fileName;
   // Each file's number, by its path, in the order the program finds them.
   const numbers = new Map([[entry, 1]]);
   const files: ProgramFile[] = [];
@@ -532,7 +537,7 @@ const loadFiles = (
           ? getKind(path, text)
           : isScript
             ? "script"
-            : ts.sys.fileExists(entry)
+            : ts.sys?.fileExists(entry) === true
               ? getKind(path, text)
               : "module";
     const written = getSpecifiers(

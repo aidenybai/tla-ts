@@ -77,9 +77,10 @@ const IMPORT_CONDITIONS = new Set(["node", "import", "module-sync", "default"]);
 const REQUIRE_CONDITIONS = new Set(["node", "require", "module-sync", "default"]);
 
 // The directory that holds a path, which Node finds from the absolute path, as it resolves a relative
-// one from the working directory.
+// one from the working directory, which a host without a file system, such as a browser, takes as
+// the root.
 const getDirectory = (path: string) => {
-  const absolute = ts.sys.resolvePath(path).replaceAll("\\", "/");
+  const absolute = (ts.sys?.resolvePath(path) ?? joinPath("/", path)).replaceAll("\\", "/");
   return absolute.slice(0, Math.max(absolute.lastIndexOf("/"), 1));
 };
 
@@ -101,14 +102,14 @@ const isObject = (value: unknown): value is Record<string, unknown> =>
   typeof value === "object" && value !== null && !Array.isArray(value);
 
 const readPackage = (directory: string): Record<string, unknown> | undefined => {
-  const text = ts.sys.readFile(`${directory}/package.json`);
+  const text = ts.sys?.readFile(`${directory}/package.json`);
   const parsed: unknown = text === undefined ? undefined : JSON.parse(text);
   return isObject(parsed) ? parsed : undefined;
 };
 
-const getRealPath = (path: string) => ts.sys.realpath?.(path) ?? path;
+const getRealPath = (path: string) => ts.sys?.realpath?.(path) ?? path;
 
-const isFile = (path: string) => ts.sys.fileExists(path);
+const isFile = (path: string) => ts.sys?.fileExists(path) === true;
 
 // PACKAGE_TARGET_RESOLVE of Node's resolver: a target of a package's exports, with what a pattern
 // matched in place of each star.
