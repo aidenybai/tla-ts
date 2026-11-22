@@ -4436,6 +4436,18 @@ describe("name resolution matches SANY", () => {
       [],
     ],
     [
+      "an instance with the wrong number of arguments before a selector that is not a name",
+      "---- MODULE Inner ----\nFoo == 1\n====\nI(a) == INSTANCE Inner\nJ == INSTANCE Inner\nX == I!:\nY == J(2)!1\nZ == I!<<\nW == J!:\nTHEOREM TRUE BY I!1",
+      [
+        ["line 7, col 6 to line 7, col 8", "The operator I requires 1 arguments."],
+        ["line 8, col 7 to line 8, col 9", "The operator J requires 0 arguments."],
+        ["line 9, col 6 to line 9, col 9", "The operator I requires 1 arguments."],
+        ["line 10, col 6 to line 10, col 6", "Unknown operator: `J'."],
+        ["line 11, col 17 to line 11, col 19", "The operator I requires 1 arguments."],
+      ].map((entry) => ({ location: `${entry[0]} of module M`, message: entry[1] })),
+      [],
+    ],
+    [
       "arguments to a theorem used as a fact",
       "ASSUME I == 1 = 1\nTHEOREM J == 1 = 1\nTHEOREM TRUE BY I(2), J(1, 2)\nLEMMA TRUE BY I",
       [

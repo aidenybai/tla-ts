@@ -1320,8 +1320,13 @@ const resolveDefinitions = (
   return resolvedScope;
 };
 
-const getInstances = (names: string[], scope: LocalName | undefined, unit: Unit) =>
-  names.slice(0, -1).map((_name, index) => {
+const getInstances = (
+  names: string[],
+  scope: LocalName | undefined,
+  unit: Unit,
+  prefixCount = names.length - 1,
+) =>
+  names.slice(0, prefixCount).map((_name, index) => {
     const prefix = names.slice(0, index + 1).join("!");
     const binding = lookupLocal(scope, prefix) ?? getModuleBinding(prefix, unit, undefined);
     return binding?.kind === "Instance"
@@ -1347,6 +1352,7 @@ const isInstanceArityReported = (
     names.map((name) => name.name),
     scope,
     unit,
+    nameCount === -1 ? names.length - 1 : names.length,
   );
   const index = instances.findIndex(
     (instance, position) =>
