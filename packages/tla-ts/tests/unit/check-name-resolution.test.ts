@@ -4833,6 +4833,35 @@ describe("name resolution matches SANY", () => {
       [],
     ],
     [
+      "selections past a LET or DEFINE definition of a name that a parameter, bound variable, NEW, TAKE or SUFFICES takes",
+      "F(a) == LET a(b) == l :: b = 1 IN a!l(2)\nG == \\A a \\in {1} : LET a(b) == l :: b = 1 IN a!l(2)\nTHEOREM ASSUME NEW a PROVE LET a(b) == l :: b = 1 IN a!l(2)\nTHEOREM TRUE\n<1> TAKE a \\in {1}\n<1> DEFINE a(b) == l :: b = 1\n<1>1. a!l(2)\n  OBVIOUS\n<1> QED\nTHEOREM TRUE\n<1> SUFFICES ASSUME NEW a PROVE TRUE\n  OBVIOUS\n<1> DEFINE a(b) == l :: b = 1\n<1>2. a!l(2)\n  OBVIOUS\n<1> QED",
+      [
+        ["line 2, col 13 to line 2, col 30", "line 2, col 3 to line 2, col 3", "line 2, col 35"],
+        ["line 3, col 25 to line 3, col 42", "line 3, col 9 to line 3, col 9", "line 3, col 47"],
+        ["line 4, col 32 to line 4, col 49", "line 4, col 20 to line 4, col 20", "line 4, col 54"],
+        ["line 7, col 12 to line 7, col 29", "line 6, col 10 to line 6, col 10", "line 8, col 7"],
+        [
+          "line 14, col 12 to line 14, col 29",
+          "line 12, col 25 to line 12, col 25",
+          "line 15, col 7",
+        ],
+      ].flatMap((entry) => [
+        {
+          location: `${entry[0]} of module M`,
+          message: "Operator a already defined or declared.",
+        },
+        {
+          location: `${entry[0]} of module M`,
+          message: `Multiply-defined symbol 'a': this definition or declaration conflicts \nwith the one at ${entry[1]} of module M.`,
+        },
+        {
+          location: `${entry[2]} to ${entry[2]} of module M`,
+          message: "Cannot take subexpression of `a'.",
+        },
+      ]),
+      [],
+    ],
+    [
       "two LET instances with parameters that copy a theorem",
       "---- MODULE L ----\nCONSTANT c\nA == c\nTHEOREM T == c = c\n====\nN == INSTANCE L WITH c <- 1\nF == LET I(p) == INSTANCE L WITH c <- p\n         I(p) == INSTANCE L WITH c <- p\n     IN 1\nZ == U",
       [
