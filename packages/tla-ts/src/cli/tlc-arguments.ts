@@ -1,4 +1,3 @@
-import { randomBytes, randomInt } from "node:crypto";
 import { closeSync, openSync } from "node:fs";
 import { availableParallelism } from "node:os";
 import type { ModuleOperator } from "../check";
@@ -665,10 +664,12 @@ export const parseTlcArguments = (args: string[]): TlcArguments | TlcArgumentsEr
   return parsed;
 };
 
+const drawUint32 = () => BigInt(Math.floor(Math.random() * 2 ** 32));
+
 export const drawSeeds = (args: TlcArguments): SeededArguments => ({
   ...args,
-  fingerprintIndex: args.fingerprintIndex ?? randomInt(FINGERPRINT_POLYNOMIALS),
-  seed: args.seed ?? randomBytes(8).readBigInt64LE(),
+  fingerprintIndex: args.fingerprintIndex ?? Math.floor(Math.random() * FINGERPRINT_POLYNOMIALS),
+  seed: args.seed ?? BigInt.asIntN(64, (drawUint32() << 32n) | drawUint32()),
   // TLC seeds the simulator it draws a seed for without -aril.
   aril: args.seed === undefined ? 0n : args.aril,
 });
