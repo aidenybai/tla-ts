@@ -180,7 +180,10 @@ type Type =
 interface Compiled {
   type: Type;
   emit: () => string;
+  isInfallible?: () => boolean;
 }
+
+const isInfallible = (compiled: Compiled) => compiled.isInfallible?.() === true;
 
 interface CodeBinding {
   kind: "Code";
@@ -1418,12 +1421,14 @@ interface Frame {
 const getVariableCodes = (program: Program) =>
   program.variableTypes.map((_value, index) => `v${index}`);
 
+const UNASSIGNED_CODE = "H.deopt()";
+
 // An expression primed as a whole reads every variable in the next state, where priming again is an
 // error. A variable the action hasn't assigned yet has no value there, and TLC fails on it.
 const getNextFrame = (frame: Frame): Frame => ({
   scope: frame.scope,
   primed: frame.primed.map(() => undefined),
-  variables: frame.primed.map((code) => code ?? "H.deopt()"),
+  variables: frame.primed.map((code) => code ?? UNASSIGNED_CODE),
   isNext: true,
 });
 
@@ -1450,7 +1455,7 @@ const isBuiltin = (frame: Frame, operator: string, name: string) =>
 const bindCode = (scope: TierScope, name: string, type: Type, code: string) =>
   withBinding(scope, name, {
     kind: "Code",
-    compiled: { type, emit: () => code },
+    compiled: { type, emit: () => code, isInfallible: () => true },
     source: undefined,
   });
 
@@ -1691,7 +1696,11 @@ const compileIdentifier = (program: Program, name: string, frame: Frame): Compil
   }
   const global = findGlobalName(name, program.environment);
   if (global?.kind === "Variable") {
-    return { type: program.variableTypes[global.index], emit: () => frame.variables[global.index] };
+    return {
+      type: program.variableTypes[global.index],
+      emit: () => frame.variables[global.index],
+      isInfallible: () => frame.variables[global.index] !== UNASSIGNED_CODE,
+    };
   }
   if (global?.kind === "Value") return compileConstant(program, global.value);
   if (global?.kind === "Definition") {
@@ -1736,6 +1745,7 @@ const expectBool = (compiled: Compiled): Compiled => {
     type: compiled.type,
     emit: () =>
       resolveType(compiled.type).kind === "Opt" ? `H.bool(${compiled.emit()})` : compiled.emit(),
+    isInfallible: () => resolveType(compiled.type).kind !== "Opt" && isInfallible(compiled),
   };
 };
 
@@ -2186,29 +2196,18 @@ const compileMembership = (
       );
     }
   }
-  // TLC tests membership in a lazy {x \in S : P} as membership in S, then P of the element.
   if (
     setExpression.kind === "SetFilter" &&
     setExpression.bound.pattern.kind === "Name" &&
     isStructural(program, setExpression, frame)
   ) {
-    const name = getName(program, "e");
-    const isInSet = compileMembership(
+    return compileFilterTest(
       program,
-      { type: element.type, emit: () => name },
-      setExpression.bound.set,
+      element,
+      setExpression,
+      setExpression.bound.pattern.name,
       frame,
-    );
-    const predicate = expectBool(
-      compileValue(program, setExpression.predicate, {
-        ...frame,
-        scope: bindCode(frame.scope, setExpression.bound.pattern.name, element.type, name),
-      }),
-    );
-    return {
-      type: createBool(),
-      emit: () => `((${name}) => ${isInSet.emit()} && ${predicate.emit()})(${element.emit()})`,
-    };
+    ).test;
   }
   // TLC tests membership in a union, or in UNION of a literal of one set, in each of its sets. It
   // sorts the sets of a longer literal, which enumerates each.
@@ -2464,7 +2463,87 @@ const compileMembership = (
       },
     };
   }
-  return compileSetMembership(program, element, compileValue(program, setExpression, frame));
+  const built = compileSetMembership(program, element, compileValue(program, setExpression, frame));
+  const filter = isFilter(program, setExpression, frame)
+    ? compileFilter(program, element, setExpression, frame)
+    : undefined;
+  // TLC builds a filter of an enumerated set, which differs from testing the element only where the
+  // predicate can fail.
+  return filter
+    ? {
+        type: createBool(),
+        emit: () => (isInfallible(filter.predicate) ? filter.test : built).emit(),
+      }
+    : built;
+};
+
+interface FilterTest {
+  test: Compiled;
+  predicate: Compiled;
+}
+
+// TLC tests membership in a lazy {x \in S : P} as membership in S, then P of the element.
+const compileFilterTest = (
+  program: Program,
+  element: Compiled,
+  filter: Expression & { kind: "SetFilter" },
+  variable: string,
+  frame: Frame,
+): FilterTest => {
+  const name = getName(program, "e");
+  const isInSet = compileMembership(
+    program,
+    { type: element.type, emit: () => name },
+    filter.bound.set,
+    frame,
+  );
+  const predicate = expectBool(
+    compileValue(program, filter.predicate, {
+      ...frame,
+      scope: bindCode(frame.scope, variable, element.type, name),
+    }),
+  );
+  return {
+    test: {
+      type: createBool(),
+      emit: () => `((${name}) => ${isInSet.emit()} && ${predicate.emit()})(${element.emit()})`,
+    },
+    predicate,
+  };
+};
+
+const isFilter = (program: Program, expression: Expression, frame: Frame): boolean => {
+  const applied = getApplied(program, expression, frame);
+  const body =
+    getDefinitionBody(program, expression, frame) ??
+    (applied?.isRecursive ? undefined : applied?.body);
+  if (body) return isFilter(program, body, { ...frame, scope: new Map() });
+  return expression.kind === "SetFilter" && expression.bound.pattern.kind === "Name";
+};
+
+const compileFilter = (
+  program: Program,
+  element: Compiled,
+  setExpression: Expression,
+  frame: Frame,
+): FilterTest | undefined => {
+  const body = getDefinitionBody(program, setExpression, frame);
+  if (body) return compileFilter(program, element, body, { ...frame, scope: new Map() });
+  const expansion =
+    setExpression.kind === "Apply" && getApplied(program, setExpression, frame)
+      ? getExpansion(program, setExpression, frame)
+      : undefined;
+  if (expansion) {
+    return inline(program, expansion.definition, () =>
+      compileFilter(program, element, expansion.definition.body, {
+        ...frame,
+        scope: expansion.scope,
+      }),
+    );
+  }
+  return setExpression.kind === "SetFilter" && setExpression.bound.pattern.kind === "Name"
+    ? compileFilterTest(program, element, setExpression, setExpression.bound.pattern.name, frame)
+    : undefined;
 };
 
 // TLC builds each of the sets that isn't lazy before it tests membership in any of them.
@@ -2508,6 +2587,7 @@ const compileSetMembership = (program: Program, element: Compiled, set: Compiled
       isMask(set.type, program.plains)
         ? `H.has(${set.emit()}, ${element.emit()})`
         : `H.isMember(${getComparerCode(program, element.type)}, ${set.emit()}, ${element.emit()})`,
+    isInfallible: () => isInfallible(element) && isInfallible(set),
   };
 };
 
@@ -2890,7 +2970,13 @@ const compileBuiltin = (
   if (global?.kind === "Value") return compileConstant(program, global.value);
   if (args.length === 2 && (operator === "\\in" || operator === "\\notin")) {
     const test = compileMembership(program, compileValue(program, args[0], frame), args[1], frame);
-    return operator === "\\in" ? test : { type: createBool(), emit: () => `!(${test.emit()})` };
+    return operator === "\\in"
+      ? test
+      : {
+          type: createBool(),
+          emit: () => `!(${test.emit()})`,
+          isInfallible: () => isInfallible(test),
+        };
   }
   // The size of a domain doesn't depend on whether its function is a sequence, a sparse function or
   // a record, which an empty function may not yet show.
@@ -3545,6 +3631,7 @@ const compileValue = (program: Program, expression: Expression, frame: Frame): C
               ? "H.EMPTY"
               : `[${elements.map((inner) => inner.emit()).join(", ")}]`,
           ),
+        isInfallible: () => getMap(type) === undefined && elements.every(isInfallible),
       };
     }
     case "Record": {
@@ -3609,6 +3696,7 @@ const compileValue = (program: Program, expression: Expression, frame: Frame): C
             resolveType(target.type).kind === "Tup"
               ? `(${target.emit()})[${position.value - 1}]`
               : `H.at(${readSequence(program, target.type, target.emit())}, ${position.value - 1})`,
+          isInfallible: () => resolveType(target.type).kind === "Tup" && isInfallible(target),
         };
       }
       return compileApplication(
