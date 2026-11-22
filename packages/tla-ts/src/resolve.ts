@@ -226,7 +226,7 @@ export const getArity = (definition: Definition) =>
 export const getParamArities = (definition: Definition) =>
   definition.kind === "Operator" ? definition.params.map((param) => param.arity) : [];
 
-const isInstantiated = (definition: Definition) => definition.name.includes("!");
+export const isInstantiated = (definition: Definition) => definition.name.includes("!");
 
 export const getFunctionArity = (definition: Definition) =>
   definition.kind === "Function" && !isInstantiated(definition)

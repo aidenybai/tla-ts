@@ -4730,6 +4730,35 @@ describe("name resolution matches SANY", () => {
       })),
     ],
     [
+      "selections of an instance whose name LET and DEFINE definitions take again",
+      "---- MODULE Inner ----\nFoo == 2 = 2\nBar(b) == b = 3\n====\nI == INSTANCE Inner\nF == LET I(a) == a = 1 IN I!Foo\nG == LET J == INSTANCE Inner\n         H == J!Bar(3)\n         J[a \\in {1}] == a = 1\n     IN H\nTHEOREM TRUE\n<1> DEFINE I(a) == a = 1\n<1> QED BY I!Foo",
+      [
+        {
+          location: "line 7, col 10 to line 7, col 22 of module M",
+          message: "Operator I already defined or declared.",
+        },
+        {
+          location: "line 7, col 10 to line 7, col 22 of module M",
+          message:
+            "Multiply-defined symbol 'I': this definition or declaration conflicts \nwith the one at line 6, col 1 to line 6, col 19 of module M.",
+        },
+        {
+          location: "line 10, col 10 to line 10, col 30 of module M",
+          message: "Function name `J' already defined or declared.",
+        },
+        {
+          location: "line 13, col 12 to line 13, col 24 of module M",
+          message: "Operator I already defined or declared.",
+        },
+        {
+          location: "line 13, col 12 to line 13, col 24 of module M",
+          message:
+            "Multiply-defined symbol 'I': this definition or declaration conflicts \nwith the one at line 6, col 1 to line 6, col 19 of module M.",
+        },
+      ],
+      [],
+    ],
+    [
       "selections past a definition whose name LET and proof-step instances take again",
       "---- MODULE K ----\nBaz == 1 = 1\n====\n---- MODULE Inner ----\nCONSTANT c\nJ(p) == INSTANCE K\n====\nN == INSTANCE Inner WITH c <- 1\nI == 1 = 1\nF == LET I(a) == INSTANCE Inner WITH c <- a IN I!J(1)!Baz\nTHEOREM TRUE\n<1> I == INSTANCE Inner WITH c <- 1\n<1> QED BY I!J!Baz",
       [

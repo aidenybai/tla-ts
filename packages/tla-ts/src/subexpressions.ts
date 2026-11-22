@@ -43,6 +43,7 @@ import {
   getOperands,
   getParamArities,
   isBefore,
+  isInstantiated,
   LOCAL_RESOLUTION,
   nullSelections,
   operandApplications,
@@ -756,47 +757,88 @@ const containsReference = (expression: Expression): boolean =>
   (expression.kind === "Apply" && expression.operator.includes("!")) ||
   getChildren(expression).some(containsReference);
 
+// SANY's SymbolTable#addSymbol never rebinds a name, so a local definition whose name is taken stays out of scope.
+const createLocalScope = (outer: Lookup, isOuterBound: (name: string) => boolean) => {
+  const defined = new Map<string, Definition>();
+  const instanceNames = new Set<string>();
+  const lookup: Lookup = (name) => defined.get(name) ?? outer(name);
+  const isBound = (name: string) => instanceNames.has(name) || isOuterBound(name);
+  const bind = (definition: Definition | Instance) => {
+    if (definition.kind === "Instance") {
+      if (definition.name !== undefined) instanceNames.add(definition.name);
+      return;
+    }
+    if (!lookup(definition.name) && !isBound(definition.name)) {
+      defined.set(definition.name, definition);
+    }
+  };
+  return { lookup, isBound, bind, isDefined: (name: string) => defined.has(name) };
+};
+
 const resolveSubexpressions = (
   expression: Expression,
   lookup: Lookup,
   getStandardDefinition: Lookup,
   records: SubexpressionRecords,
   isGoal: (name: string) => boolean,
+  isBound: (name: string) => boolean,
   isOperator = false,
 ): Expression => {
   if (!containsReference(expression)) return expression;
   if (expression.kind === "Let") {
     if (expression.recursive) setDeclaredArities(expression.recursive, expression.definitions);
-    const resolved: Definition[] = [];
-    const local: Lookup = (name) =>
-      resolved.find((definition) => definition.name === name) ??
-      expression.definitions.find((definition) => definition.name === name) ??
-      lookup(name);
-    const isLocalGoal = (name: string) =>
-      !expression.definitions.some((definition) => definition.name === name) && isGoal(name);
-    expression.definitions.forEach((definition) =>
-      resolved.push(
-        resolveDefinition(definition, (child) =>
-          resolveSubexpressions(child, local, getStandardDefinition, records, isLocalGoal),
+    const scope = createLocalScope(lookup, isBound);
+    [
+      ...expression.definitions.filter((definition) => !isInstantiated(definition)),
+      ...(expression.instances ?? []),
+    ]
+      .toSorted((left, right) => compareLocations(left.location, right.location))
+      .forEach(scope.bind);
+    expression.definitions.filter(isInstantiated).forEach(scope.bind);
+    const resolved = new Map<Definition, Definition>();
+    const local: Lookup = (name) => {
+      const definition = scope.lookup(name);
+      return definition && (resolved.get(definition) ?? definition);
+    };
+    const isLocalGoal = (name: string) => !scope.isDefined(name) && isGoal(name);
+    const definitions = expression.definitions.map((definition) => {
+      const result = resolveDefinition(definition, (child) =>
+        resolveSubexpressions(
+          child,
+          local,
+          getStandardDefinition,
+          records,
+          isLocalGoal,
+          scope.isBound,
         ),
-      ),
-    );
+      );
+      resolved.set(definition, result);
+      return result;
+    });
     const mapped = {
       ...expression,
-      definitions: resolved,
+      definitions,
       body: resolveSubexpressions(
         expression.body,
         local,
         getStandardDefinition,
         records,
         isLocalGoal,
+        scope.isBound,
       ),
     };
     return mapped.instances
       ? {
           ...mapped,
           instances: mapped.instances.map((instance) =>
-            resolveInstance(instance, local, getStandardDefinition, records, isLocalGoal),
+            resolveInstance(
+              instance,
+              local,
+              getStandardDefinition,
+              records,
+              isLocalGoal,
+              scope.isBound,
+            ),
           ),
         }
       : mapped;
@@ -809,6 +851,7 @@ const resolveSubexpressions = (
         getStandardDefinition,
         records,
         isGoal,
+        isBound,
         params !== undefined && params[index]?.arity !== 0,
       ),
     );
@@ -850,7 +893,7 @@ const resolveSubexpressions = (
             ),
           }
         : mapChildren(expression, (child) =>
-            resolveSubexpressions(child, lookup, getStandardDefinition, records, isGoal),
+            resolveSubexpressions(child, lookup, getStandardDefinition, records, isGoal, isBound),
           );
   const children = getChildren(expression);
   const mapped = getChildren(rebuilt).every((child, index) => child === children[index])
@@ -919,6 +962,7 @@ const resolveInstance = (
   getStandardDefinition: Lookup,
   records: SubexpressionRecords,
   isGoal: (name: string) => boolean,
+  isBound: (name: string) => boolean,
 ): Instance => {
   const substitutions = instance.substitutions.map((substitution) => ({
     ...substitution,
@@ -928,6 +972,7 @@ const resolveInstance = (
       getStandardDefinition,
       records,
       isGoal,
+      isBound,
       true,
     ),
   }));
@@ -953,6 +998,7 @@ export const resolveInstanceSubexpressions = (
     (name) => module.definitions.find((definition) => definition.name === name),
     () => undefined,
     records,
+    () => false,
     () => false,
   );
 
@@ -1045,11 +1091,19 @@ export const createModuleSubexpressions = (
       getStandardDefinition,
       records,
       () => false,
+      (name) => isBoundBefore(name, location),
     );
-  const createProofResolver = (lookup: Lookup) => {
+  const createProofResolver = (lookup: Lookup, isBound: (name: string) => boolean) => {
     const isProofGoal = (name: string) => goals.has(name) || !lookup(name);
     const resolveInProof = (expression: Expression) =>
-      resolveSubexpressions(expression, lookup, getStandardDefinition, records, isProofGoal);
+      resolveSubexpressions(
+        expression,
+        lookup,
+        getStandardDefinition,
+        records,
+        isProofGoal,
+        isBound,
+      );
     const resolveFacts = (facts: Fact[]) => {
       const resolved = facts.map((fact) =>
         fact.kind === "ModuleFact" ? fact : resolveInProof(fact),
@@ -1066,6 +1120,7 @@ export const createModuleSubexpressions = (
           getStandardDefinition,
           records,
           isProofGoal,
+          isBound,
           true,
         );
         const errors = defEntryErrors.get(def);
@@ -1092,26 +1147,32 @@ export const createModuleSubexpressions = (
         case "Hide":
           return { ...body, facts: resolveFacts(body.facts), defs: resolveDefs(body.defs) };
         case "Instance":
-          return resolveInstance(body, lookup, getStandardDefinition, records, isProofGoal);
-        case "Define": {
-          const defined: Definition[] = [];
-          const local = createProofResolver(
-            (name) => defined.find((definition) => definition.name === name) ?? lookup(name),
+          return resolveInstance(
+            body,
+            lookup,
+            getStandardDefinition,
+            records,
+            isProofGoal,
+            isBound,
           );
+        case "Define": {
+          const scope = createLocalScope(lookup, isBound);
+          const local = createProofResolver(scope.lookup, scope.isBound);
           return {
             ...body,
             definitions: body.definitions.map((definition) => {
-              if (definition.kind === "Instance") {
-                return resolveInstance(
-                  definition,
-                  local.lookup,
-                  getStandardDefinition,
-                  records,
-                  local.isProofGoal,
-                );
-              }
-              const resolved = resolveDefinition(definition, local.resolveInProof);
-              defined.push(resolved);
+              const resolved =
+                definition.kind === "Instance"
+                  ? resolveInstance(
+                      definition,
+                      local.lookup,
+                      getStandardDefinition,
+                      records,
+                      local.isProofGoal,
+                      local.isBound,
+                    )
+                  : resolveDefinition(definition, local.resolveInProof);
+              scope.bind(resolved);
               return resolved;
             }),
           };
@@ -1137,7 +1198,7 @@ export const createModuleSubexpressions = (
       }
       if (proof?.kind !== "Steps") return proof;
       const statements = new Map<string, Definition>();
-      let resolver = createProofResolver((name) => statements.get(name) ?? lookup(name));
+      let resolver = createProofResolver((name) => statements.get(name) ?? lookup(name), isBound);
       return {
         ...proof,
         steps: proof.steps.map((step) => {
@@ -1161,13 +1222,9 @@ export const createModuleSubexpressions = (
           }
           const resolved = { ...step, body, proof: resolver.resolveProof(step.proof) };
           if (resolved.body.kind === "Define") {
-            const definitions = resolved.body.definitions.flatMap((definition) =>
-              definition.kind === "Instance" ? [] : [definition],
-            );
-            const outer = resolver.lookup;
-            resolver = createProofResolver(
-              (name) => definitions.find((definition) => definition.name === name) ?? outer(name),
-            );
+            const scope = createLocalScope(resolver.lookup, resolver.isBound);
+            resolved.body.definitions.forEach(scope.bind);
+            resolver = createProofResolver(scope.lookup, scope.isBound);
           }
           return resolved;
         }),
@@ -1175,6 +1232,7 @@ export const createModuleSubexpressions = (
     };
     return {
       lookup,
+      isBound,
       isProofGoal,
       resolveInProof,
       resolveFacts,
@@ -1184,6 +1242,10 @@ export const createModuleSubexpressions = (
       resolveProof,
     };
   };
+  const createModuleProofResolver = (location: SourceLocation) =>
+    createProofResolver(getVisibleLookup(proofLookup, location), (name) =>
+      isBoundBefore(name, location),
+    );
   const isMapped = (expression: Expression) =>
     containsReference(expression) || (expand !== undefined && hasLetInstance(expression));
   let resolvedCount = 0;
@@ -1238,7 +1300,7 @@ export const createModuleSubexpressions = (
       );
       const theorems = new Map(
         module.theorems.map((theorem) => {
-          const resolver = createProofResolver(getVisibleLookup(proofLookup, theorem.location));
+          const resolver = createModuleProofResolver(theorem.location);
           const statement = theorem.statement;
           return [
             theorem,
@@ -1251,9 +1313,7 @@ export const createModuleSubexpressions = (
                   : resolver.resolveStatement(getExpanded(statement))),
               proof:
                 theorem.proof &&
-                createProofResolver(
-                  getVisibleLookup(proofLookup, theorem.proof.location),
-                ).resolveProof(theorem.proof),
+                createModuleProofResolver(theorem.proof.location).resolveProof(theorem.proof),
             },
           ];
         }),
@@ -1278,7 +1338,7 @@ export const createModuleSubexpressions = (
         assumptions: [...assumptions.values()],
         theorems: [...theorems.values()],
         uses: module.uses.map((use) => {
-          const resolver = createProofResolver(getVisibleLookup(proofLookup, use.location));
+          const resolver = createModuleProofResolver(use.location);
           return {
             ...use,
             facts: resolver.resolveFacts(use.facts),
