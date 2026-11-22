@@ -10,6 +10,8 @@ config: |
 args:
   - -dump
   - states
+files:
+  - states.dump
 ---*)
 ---- MODULE dump_state_liveness ----
 EXTENDS Naturals
@@ -34,4 +36,24 @@ all:
     2199:0 3 states generated, 3 distinct states found, 0 states left on queue.
     2194:0 The depth of the complete state graph search is 3.
     2268:0 The average outdegree of the complete state graph is 1 (minimum is 0, the maximum 1 and the 95th percentile is 1).
+  files:
+    states.dump: |+
+      State 1:
+      x = 0
+
+      State 2:
+      x = 1
+
+      State 3:
+      x = 0
+
+      State 4:
+      x = 2
+
+      State 5:
+      x = 1
+
+      State 6:
+      x = 2
+
 ---*)
