@@ -151,13 +151,12 @@ const getModuleOrder = (module: LinkedModule, visited: Set<LinkedModule>): Linke
   return [...module.extended.flatMap((extended) => getModuleOrder(extended, visited)), module];
 };
 
-const createModelValues = (value: ConfigValue): void => {
+const createModelValues = (value: ConfigValue) => {
   if (value.kind === "ModelValue") createModelValue(value.name);
   if (value.kind === "Set") value.elements.forEach(createModelValues);
 };
 
 export const applyConfig = (config: ModelConfig, linked: LinkedSpecification): AppliedConfig => {
-  // TLC numbers model values as ModelConfig#parseValue makes them, before it applies any constant.
   config.constants.forEach((assignment) => {
     assignment.args?.forEach(createModelValues);
     createModelValues(assignment.value);
