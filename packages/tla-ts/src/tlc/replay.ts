@@ -12,7 +12,6 @@ import {
   createChargedEnumerator,
   enterFrames,
   exitFrames,
-  getChargedBound,
   getCoverageNode,
   getEnteredFrames,
   hideFrames,
@@ -32,6 +31,7 @@ import {
   forEachBoundElement,
   freezeCallStack,
   getArgumentTuple,
+  getChargedBounds,
   getContextElements,
   getLazyFunction,
   getMissingArgumentDescriber,
@@ -836,14 +836,12 @@ const getBindings = (
   const version = replay.environment.runtime.version;
   const coverage = replay.coverage;
   const bounded = runAt(replay, node, () =>
-    mapBoundSets(expression.bounds, (set): ChargedBound => {
-      const value = evaluate(set, context);
-      return coverage
-        ? getChargedBound(coverage, value, version !== "1.7.4", () =>
-            getQuantifierElements(value, set, version),
-          )
-        : { kind: "Listed", value, elements: getQuantifierElements(value, set, version) };
-    }),
+    coverage
+      ? getChargedBounds(expression.bounds, context, coverage, version)
+      : mapBoundSets(expression.bounds, (set): ChargedBound => {
+          const value = evaluate(set, context);
+          return { kind: "Listed", value, elements: getQuantifierElements(value, set, version) };
+        }),
   );
   const sets = bounded.map((item) => item.elements);
   forEachBoundElement(expression.bounds, sets, context.scope, (bound) => {

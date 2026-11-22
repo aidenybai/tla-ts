@@ -704,19 +704,26 @@ export const forEachBinding = (
   visit: (scope: Scope | undefined) => boolean,
 ) => forEachBoundElement(bounds, getBoundElements(bounds, context), context.scope, visit);
 
+export const getChargedBounds = (
+  bounds: Bound[],
+  context: Context,
+  coverage: Coverage,
+  version: TlcVersion,
+) =>
+  mapBoundSets(bounds, (set) => {
+    const value = evaluate(set, context);
+    return getChargedBound(coverage, value, version !== "1.7.4", () =>
+      getQuantifierElements(value, set, version),
+    );
+  });
+
 const forEachChargedBinding = (
   bounds: Bound[],
   context: Context,
   coverage: Coverage,
   visit: (scope: Scope | undefined) => boolean,
 ) => {
-  const version = context.environment.runtime.version;
-  const bounded = mapBoundSets(bounds, (set) => {
-    const value = evaluate(set, context);
-    return getChargedBound(coverage, value, version !== "1.7.4", () =>
-      getQuantifierElements(value, set, version),
-    );
-  });
+  const bounded = getChargedBounds(bounds, context, coverage, context.environment.runtime.version);
   const charge = chargeContexts(coverage, bounded);
   const sets = bounded.map((item) => item.elements);
   return forEachBoundElement(bounds, sets, context.scope, (scope) => {
