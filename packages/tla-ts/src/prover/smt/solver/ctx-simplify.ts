@@ -9,7 +9,7 @@ interface CachedResult {
   level: number;
 }
 
-class CtxSimplifier {
+export class CtxSimplifier {
   private occs = new Map<number, number>();
   private pinned: RefVector;
   private assertions = new Map<number, number>();
@@ -33,7 +33,12 @@ class CtxSimplifier {
 
   apply(goal: Goal) {
     if (goal.isInconsistent) return;
+    // Deviation from Z3: a run drops the facts that a canceled run left, from which Z3 answers sat on unsat goals.
+    this.pop(this.scopes.length);
+    this.occs.clear();
+    this.pinned.reset();
     this.countOccurrences(goal);
+    this.numSteps = 0;
     const size = goal.forms.size;
     if (goal.isProofsEnabled) {
       for (let index = 0; !goal.isInconsistent && index < size; index++)
@@ -68,6 +73,7 @@ class CtxSimplifier {
   }
 
   release() {
+    this.pop(this.scopes.length);
     this.restoreCache(0);
     this.pinned.reset();
   }
