@@ -1,4 +1,5 @@
 import {
+  createClassCastError,
   createModuleArgumentError,
   defineLazyOperator,
   defineOperator,
@@ -10,7 +11,7 @@ import {
 } from "./builtins";
 import { TlaEvaluationError, TlaFileError, TlaSetBoundError, TlaUnsupportedError } from "./errors";
 import type { Builtin, BuiltinArgument, Context } from "./evaluate";
-import { trimJava } from "./java-string";
+import { decodeJavaUtf8, trimJava } from "./java-string";
 import { readJson, type JsonElement } from "./json-reader";
 import { isEvalException } from "./tlc/messages";
 import {
@@ -30,7 +31,7 @@ import {
 } from "./values";
 
 export interface FileSystem {
-  readFile: ((path: string) => string | undefined) | undefined;
+  readFile: ((path: string) => Uint8Array | undefined) | undefined;
   writeFile: ((path: string, content: string | Uint8Array) => void) | undefined;
   makeDirectory: ((path: string) => void) | undefined;
 }
@@ -50,6 +51,11 @@ const OPEN_OPTIONS = new Set([
 
 const UTF_8_NAMES = new Set(["utf-8", "utf8", "unicode-1-1-utf-8"]);
 
+const readUtf8 = (files: FileSystem, path: string) => {
+  const bytes = files.readFile?.(path);
+  return bytes === undefined ? undefined : decodeJavaUtf8(bytes);
+};
+
 const STANDARD_CHARSETS = new Set(["us-ascii", "iso-8859-1", "utf-16", "utf-16be", "utf-16le"]);
 
 const toRecord = (value: Value) => {
@@ -61,13 +67,11 @@ const toRecord = (value: Value) => {
   return fields.length === functionValue.domain.length ? createRecord(fields) : undefined;
 };
 
-const createClassCastError = (value: Value, javaClass: string) => {
-  const valueClass = `tlc2.value.impl.${getJavaClassName(value)}`;
-  const targetClass = `tlc2.value.impl.${javaClass}`;
-  return new TlaEvaluationError(
-    `class ${valueClass} cannot be cast to class ${targetClass} (${valueClass} and ${targetClass} are in unnamed module of loader 'app')`,
+const createValueCastError = (value: Value, javaClass: string) =>
+  createClassCastError(
+    `tlc2.value.impl.${getJavaClassName(value)}`,
+    `tlc2.value.impl.${javaClass}`,
   );
-};
 
 const createUnsupportedError = (value: Value) =>
   new TlaEvaluationError(
@@ -177,7 +181,7 @@ export const getPath = (value: Value) => {
 
 const getStringOption = (options: Value, field: string) => {
   const value = applyFunction(options, field);
-  if (typeof value !== "string") throw createClassCastError(value, "StringValue");
+  if (typeof value !== "string") throw createValueCastError(value, "StringValue");
   return value;
 };
 
@@ -244,7 +248,7 @@ const serializeWithOptions = (
   if (options.has("DELETE_ON_CLOSE")) {
     throw new TlaUnsupportedError("IOUtils!Serialize does not support DELETE_ON_CLOSE");
   }
-  const existing = openLikeNio(() => files.readFile?.(path));
+  const existing = openLikeNio(() => readUtf8(files, path));
   if (existing === undefined && !options.has("CREATE") && !options.has("CREATE_NEW")) {
     throw new TlaEvaluationError(`java.nio.file.NoSuchFileException: ${path}`);
   }
@@ -276,7 +280,7 @@ const makeParentDirectory = (files: FileSystem, path: string) => {
 };
 
 const readText = (files: FileSystem, path: string) => {
-  const text = files.readFile?.(path);
+  const text = readUtf8(files, path);
   if (text === undefined) throw new TlaEvaluationError(`${path} (No such file or directory)`);
   return text;
 };
@@ -368,11 +372,11 @@ export const createIoUtilsOperators = (
         }
         const openOptions = applyFunction(options, "openOptions");
         if (getJavaClassName(openOptions) !== "TupleValue") {
-          throw createClassCastError(openOptions, "TupleValue");
+          throw createValueCastError(openOptions, "TupleValue");
         }
         const charset = getStringOption(options, "charset");
         const names = toFiniteFunction(openOptions).range.map((option) => {
-          if (typeof option !== "string") throw createClassCastError(option, "StringValue");
+          if (typeof option !== "string") throw createValueCastError(option, "StringValue");
           return option;
         });
         checkCharset(charset);

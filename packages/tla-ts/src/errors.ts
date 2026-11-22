@@ -207,6 +207,12 @@ export class TlaEndOfInputError extends TlaUncodedError {
   }
 }
 
+export class TlaCorruptTraceError extends TlaUncodedError {
+  constructor(path: string, problem: string) {
+    super(`The trace file ${path} ${problem}.`);
+  }
+}
+
 export class TlaMissingCheckpointError extends TlaEvaluationError {
   constructor(directory: string) {
     super(`The directory ${directory} holds no checkpoint to recover from.`);
@@ -343,6 +349,13 @@ export class SmtCanceledError extends TlaError {
   constructor() {
     super("the SMT solver was canceled");
     this.name = "SmtCanceledError";
+  }
+}
+
+export class SmtMemoryOutError extends TlaError {
+  constructor() {
+    super("out of memory");
+    this.name = "SmtMemoryOutError";
   }
 }
 

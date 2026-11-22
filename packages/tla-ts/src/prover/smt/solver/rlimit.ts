@@ -1,5 +1,5 @@
 import type { GCProfiler } from "node:v8";
-import { SmtCanceledError } from "../../../errors";
+import { SmtCanceledError, SmtMemoryOutError } from "../../../errors";
 
 export class ResourceLimit {
   count = 0;
@@ -8,6 +8,7 @@ export class ResourceLimit {
   private limit = Infinity;
   private limits: number[] = [];
   private profiler: GCProfiler | null = null;
+  maxHeapSize = 0;
 
   constructor(
     private deadline: number,
@@ -16,13 +17,14 @@ export class ResourceLimit {
 
   inc(offset = 1) {
     this.count += offset;
-    if (
-      !this.isCanceled &&
-      (this.count & CLOCK_CHECK_MASK) < offset &&
-      (Date.now() > this.deadline || this.signal?.aborted === true || this.isHeapNearlyFull())
-    ) {
-      this.isCanceled = true;
-      this.release();
+    if (!this.isCanceled && (this.count & CLOCK_CHECK_MASK) < offset) {
+      if (Date.now() > this.deadline || this.signal?.aborted === true) {
+        this.isCanceled = true;
+        this.release();
+      } else if (this.isHeapNearlyFull()) {
+        // Z3's memory::allocate throws out_of_memory_error under scoped_suspend_rlimit too.
+        throw new SmtMemoryOutError();
+      }
     }
     return this.isSuspended || (!this.isCanceled && this.count <= this.limit);
   }
@@ -52,6 +54,7 @@ export class ResourceLimit {
     child.count = 0;
     child.deadline = this.deadline;
     child.signal = this.signal;
+    child.maxHeapSize = this.maxHeapSize;
   }
 
   popChild(child: ResourceLimit) {
@@ -72,6 +75,7 @@ export class ResourceLimit {
   private isHeapNearlyFull() {
     if (v8 === undefined) return false;
     const statistics = v8.getHeapStatistics();
+    if (this.maxHeapSize > 0) return statistics.used_heap_size > this.maxHeapSize;
     const threshold = HEAP_FRACTION * (statistics.used_heap_size + statistics.total_available_size);
     if (statistics.used_heap_size <= threshold) {
       this.release();

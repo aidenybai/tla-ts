@@ -103,6 +103,7 @@ export const writeTraceSpec = (input: TraceSpecInput) => {
   const declaredNames = new Set(input.rawConstants.map((line) => line.split(" = ")[0]));
   const constantLines = [
     ...input.rawConstants.map((line) => indent(line, 1)),
+    // Deviation from TLC: TraceExplorationSpec#generate drops its filter's result and lists ModelValue.mvs in HashSet order, so TLC repeats a model value the configuration assigns.
     ...input.modelValues
       .filter((name) => !declaredNames.has(name))
       .map((name) => indent(`${name} = ${name}`, 1)),
