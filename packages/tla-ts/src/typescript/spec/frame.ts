@@ -300,6 +300,8 @@ export const frameModel = (
   fileName: string,
   library?: Library,
   reserved: ReadonlySet<string> = new Set(),
+  // The most values that TLC puts in a set, as its -maxSetSize sets it.
+  setBound = getSetBound(),
 ) => {
   const program = createProgram(source, fileName.replaceAll("\\", "/"), library);
   const sourceFile = program.sourceFile;
@@ -419,9 +421,26 @@ export const frameModel = (
       )
     );
   };
+  // The bindings of the module by the names that TLA+ gives them, where those differ.
+  const bindings = new Map<string, string>();
   // ESCore reads a state variable and calls an exported function by its binding's name, which
-  // TLA+ must take too.
+  // TLA+ must take too, but for a state variable whose name TLA+ can't spell, as $ or _ are, which
+  // takes a name that no binding of the module has.
   const getName = (declared: Declared, kind: string) => {
+    if (
+      kind === "state variable" &&
+      /^[\w$]+$/.test(declared.name) &&
+      !/^\w*[A-Za-z]\w*$/.test(declared.name)
+    ) {
+      const taken = new Set(declarations.map((other) => other.name));
+      const getRenamed = (): string => {
+        const candidate = names.getFresh(declared.name);
+        return taken.has(candidate) ? getRenamed() : candidate;
+      };
+      const renamed = getRenamed();
+      bindings.set(renamed, declared.name);
+      return renamed;
+    }
     const name = (kind === "state variable" ? fieldNames : names).getFresh(declared.name);
     if (name !== declared.name) {
       throw new TlaTypeScriptError(
@@ -524,7 +543,6 @@ export const frameModel = (
   });
   // An exported function whose name TLA+ takes for its own gets a name of its own, which a step
   // calls the function's binding by.
-  const bindings = new Map<string, string>();
   exported.forEach((definition) => {
     const name = names.getFresh(definition.name);
     if (name !== definition.name) bindings.set(name, definition.name);
@@ -826,8 +844,8 @@ export const frameModel = (
   const findDomain = (type: ts.Type): string | Infinite => {
     const domain = findSizedDomain(type, []);
     if (isUnlisted(domain)) return domain;
-    return domain.size > getSetBound()
-      ? getInfinite(type, `it has more than ${getSetBound()} values, which TLC lists at most`)
+    return domain.size > setBound
+      ? getInfinite(type, `it has more than ${setBound} values, which TLC lists at most`)
       : domain.text;
   };
   const getType = (node: ts.ParameterDeclaration | ts.VariableDeclaration) =>
@@ -998,6 +1016,17 @@ export const frameModel = (
       const domain = findDomain(getType(parameter.node));
       return !guarded.has(parameter) && isInfinite(domain);
     });
+    // A call's argument lists, every combination of its parameters' values, which the model lists
+    // only where they're at most as many as TLC puts in a set, as it lists one parameter's values.
+    const count = parameters
+      .filter((parameter) => !guarded.has(parameter))
+      .reduce((product, parameter) => {
+        const domain = findSizedDomain(getType(parameter.node), []);
+        return isUnlisted(domain) ? product : product * BigInt(domain.size);
+      }, 1n);
+    if (unlisted === undefined && count > BigInt(setBound)) {
+      return `its parameters make ${count.toLocaleString("en-US")} argument lists, more than the ${setBound.toLocaleString("en-US")} it lists`;
+    }
     if (unlisted !== undefined) {
       const type = getType(unlisted.node);
       const kind = getUnlistedKind(type);

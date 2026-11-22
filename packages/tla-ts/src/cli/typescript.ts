@@ -294,7 +294,7 @@ Next == UNCHANGED programDone`;
 // and a model as compileModelToEscore compiles one. Node says where a script's throw statement
 // threw by the file's URL, as it runs a TypeScript file, and an ES module's at its own code, but
 // for a throw in a function, which a timer might have called.
-const compileEscoreEntry = async (path: string): Promise<CompiledInput> => {
+const compileEscoreEntry = async (path: string, setBound?: number): Promise<CompiledInput> => {
   // The TypeScript compiler takes a while to load, so only a TypeScript or JavaScript input loads
   // it.
   const ts = (await import("@typescript/typescript6")).default;
@@ -367,7 +367,9 @@ const compileEscoreEntry = async (path: string): Promise<CompiledInput> => {
   const awaited = awaits.length === 1 ? getLocation(awaits[0]) : undefined;
   const unsettledText = awaited === undefined ? undefined : `${UNSETTLED_AWAIT_WARNING}${awaited}`;
   // A module whose exported functions the model calls none of runs as a script.
-  const model = isScript(sourceFile) ? undefined : compileModelToEscore(source, path, runtime);
+  const model = isScript(sourceFile)
+    ? undefined
+    : compileModelToEscore(source, path, runtime, undefined, true, setBound);
   const isScriptFile = model === undefined || model.isScript;
   const spec =
     model !== undefined && !model.isScript
@@ -441,7 +443,7 @@ const compileRejection = async (path: string, error: TlaStrippingError) => {
 
 // A TypeScript or JavaScript file compiled by specializing ESCore (see compileEscoreEntry), or,
 // where Node's type stripping rejects it, a program that fails as Node does.
-export const compileTypeScriptFile = (path: string): Promise<CompiledInput> =>
-  compileEscoreEntry(path).catch((error: unknown) =>
+export const compileTypeScriptFile = (path: string, setBound?: number): Promise<CompiledInput> =>
+  compileEscoreEntry(path, setBound).catch((error: unknown) =>
     error instanceof TlaStrippingError ? compileRejection(path, error) : Promise.reject(error),
   );

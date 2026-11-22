@@ -2433,6 +2433,31 @@ describe("the CLI reports a stack overflow while it prints a trace and keeps the
   });
 });
 
+describe("the CLI checks deeply nested values, as TLC does", () => {
+  it("checks a variable that holds sets nested 2,000 deep", () => {
+    const directory = mkdtempSync(join(tmpdir(), "deep-set-"));
+    writeFileSync(
+      join(directory, "DeepSet.tla"),
+      "---- MODULE DeepSet ----\nEXTENDS Naturals\nCONSTANT C\nVARIABLES x, y\nInit == x = C /\\ y = 0\nNext == y' = y + 1 /\\ UNCHANGED x\nInv == y < 1\n====\n",
+    );
+    writeFileSync(
+      join(directory, "DeepSet.cfg"),
+      `CONSTANT C = ${"{".repeat(2000)}1${"}".repeat(2000)}\nINIT Init\nNEXT Next\nINVARIANT Inv\n`,
+    );
+    const result = spawnSync(
+      process.execPath,
+      [DIST_CLI, "DeepSet.tla", "-noGenerateSpecTE", "-metadir", join(directory, "states")],
+      { cwd: directory, encoding: "utf8" },
+    );
+    rmSync(directory, { recursive: true });
+    expect([result.status, result.stderr]).toEqual([12, ""]);
+    expect(result.stdout).toContain("\nError: Invariant Inv is violated.\n");
+    expect(result.stdout).toContain(
+      "\n2 states generated, 2 distinct states found, 0 states left on queue.\n",
+    );
+  });
+});
+
 const TRACE_SPEC_FIXTURES = join(FIXTURES, "trace-spec");
 
 const GENERATED_DATE = /\\\* Generated on .*$/;
@@ -2501,6 +2526,64 @@ describe("the CLI writes the spec of the last trace under -continue", () => {
       ),
     );
   });
+});
+
+describe("the CLI ends -simulate -continue with the status of its violations", () => {
+  it.each([
+    [
+      "trace-spec",
+      "Continue",
+      "num=2",
+      ["-depth", "10", "-seed", "1"],
+      12,
+      "Progress: 5 states checked, 2 traces generated (trace length: mean=0, var(x)=0, sd=0)",
+    ],
+    [
+      "behavior-file",
+      "Behaviors",
+      "num=6",
+      ["-depth", "8", "-seed", "3"],
+      11,
+      "Progress: 26 states checked, 6 traces generated (trace length: mean=3, var(x)=11, sd=3)",
+    ],
+  ])(
+    "exits with the status of %s/%s's violations and prints no second summary, where TLC exits 0 and repeats it",
+    (directory, name, count, args, status, progress) => {
+      const run = runCopiedFixture(
+        join(FIXTURES, directory),
+        name,
+        ["-simulate", count, ...args, "-continue", "-noGenerateSpecTE"],
+        [],
+      );
+      const lines = getSteadyLines(run.result.stdout);
+      const end = lines.indexOf(progress);
+      expect([run.result.status, lines.slice(end)]).toEqual([
+        status,
+        [progress, "Finished in _ at (_)", ""],
+      ]);
+    },
+  );
+
+  const invariant = "Error: Invariant Inv is violated.";
+  const deadlock = "Error: Deadlock reached.";
+  it.each([
+    ["1", [invariant, deadlock, deadlock], 12],
+    ["2", [deadlock, deadlock, invariant], 11],
+  ])(
+    "exits with the status of the first violation under seed %s, as the model checker does",
+    (seed, errors, status) => {
+      const run = runCopiedFixture(
+        join(FIXTURES, "tlc-continue"),
+        "MixedErrors",
+        ["-simulate", "num=3", "-depth", "5", "-seed", seed, "-continue", "-noGenerateSpecTE"],
+        [],
+      );
+      expect([
+        run.result.status,
+        run.result.stdout.split("\n").filter((line) => line === invariant || line === deadlock),
+      ]).toEqual([status, errors]);
+    },
+  );
 });
 
 describe("the CLI writes the action graph of -simulate stats=, as TLC does", () => {

@@ -700,7 +700,9 @@ export const checkSpecs = async (args: string[], java: JavaProperties) => {
         }
         // A stack overflow that nothing caught ends the check as one that the check caught does.
         try {
-          const compiled = isTypeScript ? await compileTypeScriptFile(path) : undefined;
+          const compiled = isTypeScript
+            ? await compileTypeScriptFile(path, parsed.maxSetSize)
+            : undefined;
           compiled?.notes.forEach((note) => console.log(note));
           return await checkSpec(
             compiled?.specPath ?? path,

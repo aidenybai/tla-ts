@@ -1,5 +1,7 @@
+import { createHash } from "node:crypto";
 import { describe, expect, it } from "vite-plus/test";
 import { runSmtlibScript } from "../../src/prover/smt/solver/smtlib-script";
+import { Z3_PARAMETERS } from "../../src/prover/smt/solver/z3-parameters-text";
 
 const run = (lines: string[]) => {
   const output: string[] = [];
@@ -897,6 +899,157 @@ describe("messages of the reader, as Z3 5.3.2 prints them", () => {
       `(error "line 7 column 30: Expected values for parameter completion are 'true' or 'false'. It was given argument '1'")`,
       `(error "line 8 column 21: Expected values for parameter timeout is an unsigned integer. It was given argument 'none'")`,
       "sat",
+    ]);
+  });
+
+  it("holds the parameters z3 -p lists, each module's rows as gparams' errors list them", () => {
+    expect(createHash("sha256").update(Z3_PARAMETERS).digest("hex")).toBe(
+      "45061de5d4eae302337b58f9fe1ac510660922e5429d252d564d477427b95659",
+    );
+  });
+
+  it("names a parameter Z3 doesn't have, as gparams does, and goes on", () => {
+    expect(
+      run([
+        "(set-option :print_success true)",
+        "(set-option :nnf.foo 1)",
+        "(set-option :mbqi true)",
+        "(set-option :pp_decimal true)",
+        "(set-option :random_seed 1)",
+        "(set-option :core.minimize true)",
+        "(set-option :Smt.Random-Seed 3)",
+        "(get-option :smt.random_seed)",
+        "(declare-const x Int)",
+        "(assert (> x 0))",
+        "(check-sat)",
+      ]),
+    ).toEqual([
+      [
+        `(error "line 1 column 28: unknown parameter 'print_success'`,
+        "Legal parameters are:",
+        "  auto_config (bool) (default: true)",
+        "  ctrl_c (bool) (default: true)",
+        "  debug_ref_count (bool) (default: false)",
+        "  dot_proof_file (string) (default: proof.dot)",
+        "  dump_models (bool) (default: false)",
+        "  encoding (string) (default: unicode)",
+        "  memory_high_watermark (unsigned int) (default: 0)",
+        "  memory_high_watermark_mb (unsigned int) (default: 0)",
+        "  memory_max_alloc_count (unsigned int) (default: 0)",
+        "  memory_max_size (unsigned int) (default: 0)",
+        "  model (bool) (default: true)",
+        "  model_validate (bool) (default: false)",
+        "  proof (bool) (default: false)",
+        "  rlimit (unsigned int) (default: 0)",
+        "  smtlib2_compliant (bool) (default: false)",
+        "  stats (bool) (default: false)",
+        "  suppress_platform_verbose (bool) (default: false)",
+        "  timeout (unsigned int) (default: 4294967295)",
+        "  trace (bool) (default: false)",
+        "  trace_file_name (string) (default: z3.log)",
+        "  type_check (bool) (default: true)",
+        "  unsat_core (bool) (default: false)",
+        "  verbose (unsigned int) (default: 0)",
+        "  warning (bool) (default: true)",
+        `  well_sorted_check (bool) (default: false)")`,
+      ].join("\n"),
+      [
+        `(error "line 2 column 21: unknown parameter 'foo' at module 'nnf'`,
+        "Legal parameters are:",
+        "  ignore_labels (bool) (default: false)",
+        "  max_memory (unsigned int) (default: 4294967295)",
+        "  mode (symbol) (default: skolem)",
+        `  sk_hack (bool) (default: false)")`,
+      ].join("\n"),
+      `(error "line 3 column 18: the parameter 'mbqi', invoke 'z3 -p' to obtain the new parameter list, and 'z3 -pp:smt.mbqi' for the full description of the parameter")`,
+      `(error "line 4 column 24: the parameter 'pp_decimal', invoke 'z3 -p' to obtain the new parameter list, and 'z3 -pp:pp.decimal' for the full description of the parameter")`,
+      `(error "line 5 column 25: unknown parameter 'random_seed', this is an old parameter name, invoke 'z3 -p' to obtain the new parameter list")`,
+      `(error "line 6 column 27: invalid parameter, unknown module 'core'")`,
+      "3",
+      "sat",
+    ]);
+  });
+
+  it("gets a parameter set-option left unset as its default in Z3's registry", () => {
+    expect(
+      run([
+        "(get-option :smt.logic)",
+        "(get-option :smt.arith.nl.transcendental_tolerance)",
+        "(get-option :foo)",
+        "(get-option :bogus.x)",
+        "(get-option :smt.foo)",
+        "(get-option :sat.restart.factor)",
+        "(set-option :sat.restart.factor 2.5)",
+        "(get-option :sat.restart.factor)",
+        "(get-option :mbqi)",
+        "(get-option :model_validate)",
+        "(get-option :Smt.Random-Seed)",
+        "(get-option :timeout)",
+        "(get-option :smt.qi.cost)",
+      ]),
+    ).toEqual([
+      "default",
+      "0.0000001",
+      "unsupported",
+      "; :foo line: 3 position: 0",
+      "unsupported",
+      "; :bogus.x line: 4 position: 0",
+      "unsupported",
+      "; :smt.foo line: 5 position: 0",
+      "1.5",
+      "2.5",
+      "unsupported",
+      "; :mbqi line: 9 position: 0",
+      "false",
+      "0",
+      "4294967295",
+      "(+ weight generation)",
+    ]);
+  });
+
+  it("checks the arguments of set-option as parse_ext_cmd reads them", () => {
+    expect(
+      run([
+        "(set-option :print-success true)",
+        "(set-option :rlimit (1 2))",
+        "(set-option :produce-models (true))",
+        "(set-option :timeout :foo)",
+        "(set-option :produce-models)",
+        "(set-option)",
+        "(set-option foo 1)",
+        "(set-option 1 2)",
+        '(set-option "s" 1)',
+        "(set-option :smt.random_seed #x3)",
+        "(set-option :sat.random_seed 5 6)",
+        "(get-option :rlimit)",
+        "(get-option :produce-models)",
+        "(get-option :smt.random_seed)",
+        "(get-option :sat.random_seed)",
+        "(declare-const x Int)",
+        "(assert (> x 2))",
+        "(check-sat)",
+        "(get-value (x))",
+      ]),
+    ).toEqual([
+      "success",
+      '(error "line 2 column 20: invalid option value")',
+      '(error "line 3 column 28: invalid option value")',
+      '(error "line 4 column 21: invalid option value")',
+      '(error "line 5 column 27: invalid command, argument(s) missing")',
+      '(error "line 6 column 11: invalid command, argument(s) missing")',
+      '(error "line 7 column 12: invalid command argument, keyword expected")',
+      '(error "line 8 column 12: invalid command argument, keyword expected")',
+      '(error "line 9 column 12: invalid command argument, keyword expected")',
+      "success",
+      '(error "line 11 column 31: invalid command, too many arguments")',
+      "0",
+      "true",
+      "3",
+      "5",
+      "success",
+      "success",
+      "sat",
+      "((x 3))",
     ]);
   });
 

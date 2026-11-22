@@ -158,6 +158,92 @@ describe("check matches TLC", () => {
     expect(result.generatedStates).toBe(85);
   });
 
+  it.each([
+    [
+      "a member of SUBSET S",
+      "({t \\in (0..2) \\X {1} : PrintT(t)} \\in SUBSET ((1..2) \\X {1})) \\in BOOLEAN",
+      ["<<0, 1>>"],
+    ],
+    [
+      "membership in UNION S",
+      "<<1, 1>> \\in UNION {s \\in SUBSET ((0..2) \\X {1}) : PrintT(s)}",
+      ["{}", "{<<0, 1>>}", "{<<1, 1>>}"],
+    ],
+    [
+      "SUBSET A \\subseteq SUBSET B",
+      "(SUBSET {t \\in (0..2) \\X {1} : PrintT(t)} \\subseteq SUBSET ((1..2) \\X {1})) \\in BOOLEAN",
+      ["<<0, 1>>"],
+    ],
+  ])(
+    "streams the set that decides %s only up to the deciding element, as TLC's member does",
+    async (_membership, membership, expected) => {
+      const prints: string[] = [];
+      const result = await check({
+        source: `---- MODULE M ----\nEXTENDS Integers, TLC\nVARIABLE x\nInit == x = 0\nNext == x' = 0 /\\ ${membership}\n====`,
+        config: "INIT Init\nNEXT Next",
+        onPrint: (text) => prints.push(text),
+      });
+      expect(prints).toEqual(expected);
+      expect([result.status, result.generatedStates, result.distinctStates]).toEqual([
+        "success",
+        2,
+        1,
+      ]);
+    },
+  );
+
+  it.each([
+    [
+      "a member of SUBSET S",
+      "~({t \\in (0..2) \\X {x} : 1 \\div (2 - t[1]) >= 0} \\in SUBSET ((1..2) \\X {x}))",
+    ],
+    [
+      "membership in UNION S",
+      "<<0, x>> \\in UNION {s \\in SUBSET ((0..2) \\X {x}) : 1 \\div (3 - Cardinality(s)) >= 0}",
+    ],
+    [
+      "SUBSET A \\subseteq SUBSET B",
+      "~(SUBSET {t \\in (0..2) \\X {x} : 1 \\div (2 - t[1]) >= 0} \\subseteq SUBSET ((1..2) \\X {x}))",
+    ],
+  ])(
+    "never evaluates a filter past the element that decides %s, as TLC's member does",
+    async (_membership, membership) => {
+      const result = await check({
+        source: `---- MODULE M ----\nEXTENDS Integers, FiniteSets\nVARIABLE x\nInit == x = 0\nNext == x' = (x + 1) % 3 /\\ ${membership}\n====`,
+        config: "INIT Init\nNEXT Next",
+      });
+      expect([result.status, result.generatedStates, result.distinctStates]).toEqual([
+        "success",
+        4,
+        3,
+      ]);
+    },
+  );
+
+  it.each([
+    [
+      "a member of SUBSET S",
+      6,
+      "({t \\in (0..2) \\X {1} : TLCSet(1, TLCGet(1) + 1)} \\in SUBSET ((1..2) \\X {1})) \\in BOOLEAN",
+      7,
+    ],
+    [
+      "membership in UNION S",
+      9,
+      "<<0, 1>> \\in UNION {s \\in SUBSET ((0..2) \\X {1}) : TLCSet(1, TLCGet(1) + 1)}",
+      6,
+    ],
+  ])(
+    "counts the predicate's effects only up to the element that decides %s, as TLC's member does",
+    async (_membership, bound, membership, distinctStates) => {
+      const result = await check({
+        source: `---- MODULE M ----\nEXTENDS Integers, TLC\nVARIABLE x\nInit == x = 0 /\\ TLCSet(1, 0)\nNext == x < ${bound} /\\ ${membership} /\\ x' = TLCGet(1)\n====`,
+        config: "INIT Init\nNEXT Next",
+      });
+      expect([result.status, result.distinctStates]).toEqual(["deadlock", distinctStates]);
+    },
+  );
+
   it("decides sets of functions, records, and tuples from an empty argument", async () => {
     const result = await checkFixture("empty-sets", "EmptySets");
     expect(result.violation?.message).toBeUndefined();
@@ -8461,6 +8547,22 @@ ASSUME TLCFP(a) = -887695703
         "|line 5, col 28 to line 5, col 33 of module M: 1:3",
       ],
     ],
+    [
+      "a lazy filter in SUBSET S",
+      "x' = 0 /\\ ({t \\in (0..2) \\X {1} : PrintT(t)} \\in SUBSET ((1..2) \\X {1})) \\in BOOLEAN",
+      [
+        "line 5, col 9 to line 5, col 14 of module M: 1",
+        "line 5, col 19 to line 5, col 92 of module M: 1",
+        "|line 5, col 20 to line 5, col 79 of module M: 1",
+        "||line 5, col 20 to line 5, col 52 of module M: 1:1",
+        "|||line 5, col 43 to line 5, col 51 of module M: 1",
+        "|||line 5, col 27 to line 5, col 39 of module M: 1:2",
+        "||||line 5, col 28 to line 5, col 31 of module M: 1",
+        "||||line 5, col 37 to line 5, col 39 of module M: 1:3",
+        "||line 5, col 58 to line 5, col 79 of module M: 1",
+        "|line 5, col 86 to line 5, col 92 of module M: 1",
+      ],
+    ],
   ])(
     "draws a set for SUBSET S and UNION S membership through TLC's enumerator until it decides under -coverage, for %s",
     async (_site, next, expected) => {
@@ -11662,6 +11764,10 @@ describe("check without code generation from strings", () => {
     [
       "a filter's membership whose base fails after framing the failure",
       "EXTENDS Naturals\nVARIABLE x\nInit == x = 0\nNext == x' = x /\\ <<1, x>> \\notin {e \\in ({} \\cup Nat) : e # x}\nInv == TRUE",
+    ],
+    [
+      "a member of SUBSET S that would fail the filter past its first element outside S",
+      "EXTENDS Integers\nVARIABLE x\nInit == x = 0\nNext == x' = (x + 1) % 3 /\\ ~({t \\in (0..2) \\X {x} : 1 \\div (2 - t[1]) >= 0} \\in SUBSET ((1..2) \\X {x}))\nInv == TRUE",
     ],
     [
       "the domain of a converted function over SUBSET",

@@ -3876,13 +3876,14 @@ const isElementOfSet = (element: Value, set: Value): boolean => {
   return isElementOfAnySet(element, set);
 };
 
-const getSubsetMemberElements = (element: Value, set: SubsetValue) => {
+// SubsetValue#member streams the element and stops at its first element outside the base.
+const isStreamedSubsetMember = (element: Value, set: SubsetValue, isMember: typeof isElementOf) => {
   if (!isSetValue(element) || isOverriddenSet(element)) {
     throw new TlaEvaluationError(
       `Attempted to check if the non-enumerable value\n${prettyPrint(formatValue(element))}\nis element of\n${prettyPrint(formatValue(set))}`,
     );
   }
-  return toFiniteSet(element).elements;
+  return !someStreamedElement(element, (item) => !isMember(item, set.base));
 };
 
 const getFunctionSetMemberRange = (element: Value, set: FunctionSetValue) => {
@@ -3939,19 +3940,24 @@ const isCaughtFilterError = (error: unknown, depth: number) =>
 const describeUndecidedFilterMember = (element: Value, set: FilteredSetValue) =>
   `Cannot decide if element:\n${prettyPrint(formatValue(element))}\n is element of:\n${prettyPrint(formatValue(set.base))}\nand satisfies the predicate ${set.source?.predicate}`;
 
-const getUnionMemberSets = (element: Value, set: UnionValue) => {
-  if (!isTlcEnumerable(set.base)) {
-    throw new TlaEvaluationError(
-      `Attempted to check if:\n ${prettyPrint(formatValue(element))}\nis an element of the non-enumerable set:\n ${prettyPrint(formatUnion(set))}`,
-    );
-  }
-  const sets = toFiniteSet(set.base).elements;
+const getUnionMemberSets = (base: SetValue | MixedSetValue | IntervalValue) => {
+  const sets = toFiniteSet(base).elements;
   if (sets.length > 1) {
     sets.forEach((inner) => {
       if (typeof inner === "object" && inner.kind === "Set") inner.flags |= VALUE_NORMALIZED;
     });
   }
   return sets;
+};
+
+// UnionValue#member streams its set of sets and stops at the first one that holds the element.
+const isStreamedUnionMember = (element: Value, set: UnionValue, isMember: typeof isElementOf) => {
+  if (!isTlcEnumerable(set.base)) {
+    throw new TlaEvaluationError(
+      `Attempted to check if:\n ${prettyPrint(formatValue(element))}\nis an element of the non-enumerable set:\n ${prettyPrint(formatUnion(set))}`,
+    );
+  }
+  return someStreamedElement(set.base, (inner) => isMember(element, inner));
 };
 
 const getSequenceSetMemberElements = (element: Value, set: SequenceSetValue) => {
@@ -3999,7 +4005,9 @@ const isElementOfAnySet = (element: Value, set: Value): boolean => {
       return set.name !== "Nat" || (typeof element === "number" && element >= 0);
     }
     case "Subset":
-      return getSubsetMemberElements(element, set).every((item) => isElementOf(item, set.base));
+      return isReducibleSet(element)
+        ? toFiniteSet(element).elements.every((item) => isElementOf(item, set.base))
+        : isStreamedSubsetMember(element, set, isElementOf);
     case "FunctionSet": {
       const range = getFunctionSetMemberRange(element, set);
       return range !== false && range.every((item) => isElementOf(item, set.range));
@@ -4030,7 +4038,9 @@ const isElementOfAnySet = (element: Value, set: Value): boolean => {
       }
     }
     case "Union":
-      return getUnionMemberSets(element, set).some((inner) => isElementOf(element, inner));
+      return isReducibleSet(set.base)
+        ? getUnionMemberSets(set.base).some((inner) => isElementOf(element, inner))
+        : isStreamedUnionMember(element, set, isElementOf);
     case "SetOperation":
       if (set.operator === "\\cup")
         return isElementOf(element, set.left) || isElementOf(element, set.right);
@@ -4055,7 +4065,9 @@ const isElementOfComponents = (
   if (typeof set !== "object") return isElementOfAnySet(element, set);
   switch (set.kind) {
     case "Subset":
-      return getSubsetMemberElements(element, set).every((item) => isMember(item, set.base));
+      return isReducibleSet(element)
+        ? toFiniteSet(element).elements.every((item) => isMember(item, set.base))
+        : isStreamedSubsetMember(element, set, isMember);
     case "FunctionSet": {
       const range = getFunctionSetMemberRange(element, set);
       return range !== false && range.every((item) => isMember(item, set.range));
@@ -4086,7 +4098,9 @@ const isElementOfComponents = (
       }
     }
     case "Union":
-      return getUnionMemberSets(element, set).some((inner) => isMember(element, inner));
+      return isReducibleSet(set.base)
+        ? getUnionMemberSets(set.base).some((inner) => isMember(element, inner))
+        : isStreamedUnionMember(element, set, isMember);
     case "SetOperation":
       if (set.operator === "\\cup")
         return isMember(element, set.left) || isMember(element, set.right);
@@ -4971,69 +4985,191 @@ const toPrintedFunction = (value: LazyFunctionValue) => {
   }
 };
 
-export const formatNormalizedCopies = (values: Value[]) => {
-  // TLC prints a deep copy, which copies functions but shares sets, so a set and the functions inside it stay normalized and cached.
-  const copy = (value: Value, isWrittenOrderKept: boolean, isCopied: boolean): Value => {
-    if (typeof value !== "object") return value;
-    const normalizeInner = (inner: Value) => {
-      copy(inner, isWrittenOrderKept, false);
-    };
+const MAXIMUM_COPY_DEPTH = 1000;
+
+interface CopiedValue {
+  kind: "Value";
+  value: Value;
+  isWrittenOrderKept: boolean;
+  isCopied: boolean;
+}
+
+interface CopiedSetEnd {
+  kind: "SetEnd";
+  value: SetValue | MixedSetValue;
+  isCopied: boolean;
+}
+
+interface CopiedFunctionEnd {
+  kind: "FunctionEnd";
+  value: FunctionValue;
+  lazy: LazyFunctionValue | undefined;
+  isWrittenOrderKept: boolean;
+  isCopied: boolean;
+}
+
+type CopyPart = CopiedValue | CopiedSetEnd | CopiedFunctionEnd;
+
+interface ValueCopier {
+  depth: number;
+  pending: CopyPart[] | undefined;
+  copies: Value[];
+}
+
+const finishSetCopy = (copier: ValueCopier, value: SetValue | MixedSetValue, isCopied: boolean) => {
+  if (value.kind === "Set") setNormalized(value, true);
+  else toFiniteSet(value);
+  if (isCopied) copier.copies.push(value);
+};
+
+const finishFunctionCopy = (
+  copier: ValueCopier,
+  value: FunctionValue,
+  lazy: LazyFunctionValue | undefined,
+  isWrittenOrderKept: boolean,
+  isCopied: boolean,
+) => {
+  const writtenKeys = isWrittenOrderKept ? value.writtenKeys : undefined;
+  if (!isCopied) {
+    value.writtenKeys = writtenKeys;
+    return;
+  }
+  const range = copier.copies.splice(copier.copies.length - value.range.length);
+  const copied = { ...value, range, writtenKeys };
+  copier.copies.push(lazy ? { ...lazy, enumerated: copied } : copied);
+};
+
+const endSetCopy = (copier: ValueCopier, value: SetValue | MixedSetValue, isCopied: boolean) => {
+  if (copier.pending === undefined) finishSetCopy(copier, value, isCopied);
+  else copier.pending.push({ kind: "SetEnd", value, isCopied });
+};
+
+const endFunctionCopy = (
+  copier: ValueCopier,
+  value: FunctionValue,
+  lazy: LazyFunctionValue | undefined,
+  isWrittenOrderKept: boolean,
+  isCopied: boolean,
+) => {
+  if (copier.pending === undefined) {
+    finishFunctionCopy(copier, value, lazy, isWrittenOrderKept, isCopied);
+    return;
+  }
+  copier.pending.push({ kind: "FunctionEnd", value, lazy, isWrittenOrderKept, isCopied });
+};
+
+const copyDeepValue = (
+  copier: ValueCopier,
+  value: Value,
+  isWrittenOrderKept: boolean,
+  isCopied: boolean,
+) => {
+  const pending: CopyPart[] = [{ kind: "Value", value, isWrittenOrderKept, isCopied }];
+  copier.pending = pending;
+  for (let part = pending.pop(); part !== undefined; part = pending.pop()) {
+    if (part.kind === "SetEnd") {
+      finishSetCopy(copier, part.value, part.isCopied);
+      continue;
+    }
+    if (part.kind === "FunctionEnd") {
+      finishFunctionCopy(copier, part.value, part.lazy, part.isWrittenOrderKept, part.isCopied);
+      continue;
+    }
+    const start = pending.length;
+    copyValue(copier, part.value, part.isWrittenOrderKept, part.isCopied);
+    for (let low = start, high = pending.length - 1; low < high; low++, high--) {
+      const copied = pending[low];
+      pending[low] = pending[high];
+      pending[high] = copied;
+    }
+  }
+  copier.pending = undefined;
+};
+
+const copyInner = (
+  copier: ValueCopier,
+  value: Value,
+  isWrittenOrderKept: boolean,
+  isCopied: boolean,
+) => {
+  if (copier.pending !== undefined) {
+    copier.pending.push({ kind: "Value", value, isWrittenOrderKept, isCopied });
+    return;
+  }
+  if (copier.depth === MAXIMUM_COPY_DEPTH) {
+    copyDeepValue(copier, value, isWrittenOrderKept, isCopied);
+    return;
+  }
+  copier.depth++;
+  copyValue(copier, value, isWrittenOrderKept, isCopied);
+  copier.depth--;
+};
+
+const copyItems = (
+  copier: ValueCopier,
+  items: Value[],
+  isWrittenOrderKept: boolean,
+  isCopied: boolean,
+) => {
+  for (let index = 0; index < items.length; index++) {
+    copyInner(copier, items[index], isWrittenOrderKept, isCopied);
+  }
+};
+
+const copyValue = (
+  copier: ValueCopier,
+  value: Value,
+  isWrittenOrderKept: boolean,
+  isCopied: boolean,
+): void => {
+  if (typeof value === "object") {
     switch (value.kind) {
       case "Set":
-        value.elements.forEach(normalizeInner);
-        value.flags |= VALUE_NORMALIZED;
-        return value;
       case "MixedSet":
-        value.elements.forEach(normalizeInner);
-        toFiniteSet(value);
-        return value;
+        copyItems(copier, value.elements, isWrittenOrderKept, false);
+        return endSetCopy(copier, value, isCopied);
       case "Function":
-        return copyFunction(value, isWrittenOrderKept, isCopied);
+        copyItems(copier, value.range, isWrittenOrderKept, isCopied);
+        return endFunctionCopy(copier, value, undefined, isWrittenOrderKept, isCopied);
       case "LazyFunction":
         if (value.enumerated) {
-          const enumerated = copyFunction(value.enumerated, true, isCopied);
-          return isCopied ? { ...value, enumerated } : value;
+          copyItems(copier, value.enumerated.range, true, isCopied);
+          return endFunctionCopy(copier, value.enumerated, value, true, isCopied);
         }
-        normalizeInner(value.domain);
+        copyInner(copier, value.domain, isWrittenOrderKept, false);
         // Deviation from TLC: FcnLambdaValue#deepCopy builds its copy with new FcnLambdaValue(this), which drops cm, so PrintT's copy counts nothing.
-        return isCopied ? { ...value } : value;
+        if (isCopied) copier.copies.push({ ...value });
+        return;
       case "SetOperation":
-        normalizeInner(value.left);
-        normalizeInner(value.right);
-        return value;
+        copyInner(copier, value.left, isWrittenOrderKept, false);
+        copyInner(copier, value.right, isWrittenOrderKept, false);
+        break;
       case "FunctionSet":
-        normalizeInner(value.domain);
-        normalizeInner(value.range);
-        return value;
+        copyInner(copier, value.domain, isWrittenOrderKept, false);
+        copyInner(copier, value.range, isWrittenOrderKept, false);
+        break;
       case "RecordSet":
-        value.sets.forEach(normalizeInner);
-        return value;
+        copyItems(copier, value.sets, isWrittenOrderKept, false);
+        break;
       case "ProductSet":
-        value.factors.forEach(normalizeInner);
-        return value;
+        copyItems(copier, value.factors, isWrittenOrderKept, false);
+        break;
       case "Subset":
       case "Union":
       case "FilteredSet":
       case "SequenceSet":
-        normalizeInner(value.base);
-        return value;
-      default:
-        return value;
+        copyInner(copier, value.base, isWrittenOrderKept, false);
+        break;
     }
-  };
-  const copyFunction = (
-    value: FunctionValue,
-    isWrittenOrderKept: boolean,
-    isCopied: boolean,
-  ): FunctionValue => {
-    const range = value.range.map((inner) => copy(inner, isWrittenOrderKept, isCopied));
-    const writtenKeys = isWrittenOrderKept ? value.writtenKeys : undefined;
-    if (isCopied) return { ...value, range, writtenKeys };
-    value.writtenKeys = writtenKeys;
-    return value;
-  };
-  const copies = values.map((value) => copy(value, false, true));
-  return copies.map((value) => formatValue(value, true, true));
+  }
+  if (isCopied) copier.copies.push(value);
+};
+
+export const formatNormalizedCopies = (values: Value[]) => {
+  // TLC prints a deep copy, which copies functions but shares sets, so a set and the functions inside it stay normalized and cached.
+  const copier: ValueCopier = { depth: 0, pending: undefined, copies: [] };
+  values.forEach((value) => copyValue(copier, value, false, true));
+  return copier.copies.map((value) => formatValue(value, true, true));
 };
 
 const writeValue = (

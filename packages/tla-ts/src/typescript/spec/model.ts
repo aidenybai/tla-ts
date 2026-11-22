@@ -284,6 +284,8 @@ export const compileModelToEscore = (
   library?: Library,
   // Whether the state may lower out of ESCore's heap, which a test turns off to check the heap.
   isLowerable = true,
+  // The most values that TLC puts in a set, as its -maxSetSize sets it.
+  setBound?: number,
 ): EscoreModel | EscoreScript => {
   // The module's text with its JSX the calls it compiles to, which the steps run.
   const text = getJsxText(fileName, source);
@@ -316,7 +318,7 @@ export const compileModelToEscore = (
   // CommonJS module that Node loads, in Node's wrapper, whose scope its functions close over.
   const commonJsExports = getCommonJsExports(file);
   const isCommonJs = commonJsExports.size > 0 && getModuleFormat(fileName, text) === "commonjs";
-  const today = frameModel(source, fileName, library, runtime.names);
+  const today = frameModel(source, fileName, library, runtime.names, setBound);
   if (today.isScript) return { isScript: true, notes: today.notes };
   const module = today.source;
   const config = parseConfig(today.config);
@@ -418,6 +420,7 @@ export const compileModelToEscore = (
   // The name that a CommonJS module exports one of its functions as.
   const commonJsExported = [...commonJsExports].find((entry) => exported.has(entry[1]))?.[0] ?? "";
   bindings.forEach((binding, name) => {
+    if (today.variables.some((stateVariable) => stateVariable.name === name)) return;
     const found = exported.get(binding);
     if (found === undefined) {
       throw new TlaTypeScriptError(`tla-ts can't find the exported function ${binding}`);
@@ -1056,8 +1059,11 @@ export const compileModelToEscore = (
   // The bindings that the state lowers out of ESCore's heap, where the module lets it (see
   // lowered.ts), whose variable model holds them, and otherwise the variable heap holds ESCore's
   // state. A step's or a check's ESCore state is what the variable's value gives.
+  // A state variable that TLA+ names otherwise than its binding keeps its state on the heap, whose
+  // steps read it by the binding's name.
+  const isRenamed = today.variables.some((stateVariable) => bindings.has(stateVariable.name));
   const lowered =
-    isAsync || isModule || isCommonJs || !isLowerable
+    isAsync || isModule || isCommonJs || !isLowerable || isRenamed
       ? undefined
       : getLoweredBindings(file, new Set(choices.map((choice) => choice.name)));
   const variable = lowered === undefined ? "heap" : "model";
@@ -1254,7 +1260,7 @@ export const compileModelToEscore = (
     const operator = define(
       "StepCheck",
       (operatorName) =>
-        `${operatorName}(a) ==\n  LET before == ${lowered === undefined ? `BeforeOf(a[2], a[1], <<${shownNames.map(getUnits).join(", ")}>>)` : `MaterializeValue(ModelState(a[2]), LObj(<<${shownNames.map(getUnits).join(", ")}>>, <<${shownNames.map((shownName) => `a[1].${shownName}`).join(", ")}>>))`}\n  IN HoldsOf(before.s, ${getUnits(name)}, <<before.v>>)`,
+        `${operatorName}(a) ==\n  LET before == ${lowered === undefined ? `BeforeOf(a[2], a[1], <<${shownNames.map(getBinding).join(", ")}>>)` : `MaterializeValue(ModelState(a[2]), LObj(<<${shownNames.map(getUnits).join(", ")}>>, <<${shownNames.map((shownName) => `a[1].${shownName}`).join(", ")}>>))`}\n  IN HoldsOf(before.s, ${getUnits(name)}, <<before.v>>)`,
     );
     // A function of no parameters, which ignores the state before, runs on the state after alone.
     const arity = exported.get(name)?.parameters.length;
@@ -1402,11 +1408,27 @@ export const compileModelToEscore = (
     );
     steps.push(`${view} == ApplyTo(${operator}, ${variable})`);
   }
-  const shown = today.variables.map((variable) => variable.name);
+  // A trace shows each state variable by its binding's name, as a function of the names where TLA+
+  // can't spell one as a record's field, whose fields TLC shows in the order of its names, as
+  // FcnRcdValue.toRcd normalizes the function.
+  const shown = today.variables.map((variable) => bindings.get(variable.name) ?? variable.name);
+  const isSpelled = shown.every((shownName) => /^\w*[A-Za-z]\w*$/.test(shownName));
   const alias = define(
     "Shown",
     (name) =>
-      `${name}(m) == LET s == ${getState("m")} IN [${shown.map((shownName) => `${shownName} |-> ShownBinding(s, ${getUnits(shownName)})`).join(", ") || "heap |-> s.objs.size"}]`,
+      `${name}(m) == LET s == ${getState("m")} IN ${
+        shown.length === 0
+          ? "[heap |-> s.objs.size]"
+          : isSpelled
+            ? `[${shown.map((shownName) => `${shownName} |-> ShownBinding(s, ${getUnits(shownName)})`).join(", ")}]`
+            : shown
+                .toSorted()
+                .map(
+                  (shownName) =>
+                    `(${JSON.stringify(shownName)} :> ShownBinding(s, ${getUnits(shownName)}))`,
+                )
+                .join(" @@ ")
+      }`,
   );
   // The declarations of the state variables that start at every value of their type, which read
   // their values from $tlaTsInitial.
@@ -1433,7 +1455,7 @@ export const compileModelToEscore = (
       const declaration = declarations.find(
         (candidate) =>
           ts.isIdentifier(candidate.name) &&
-          candidate.name.text === choice.name &&
+          candidate.name.text === (bindings.get(choice.name) ?? choice.name) &&
           candidate.initializer === undefined,
       );
       if (declaration === undefined) {
@@ -1442,7 +1464,7 @@ export const compileModelToEscore = (
       return {
         start: declaration.getStart(),
         end: declaration.getEnd(),
-        text: `${choice.name} = ${INITIAL}[${index}]`,
+        text: `${bindings.get(choice.name) ?? choice.name} = ${INITIAL}[${index}]`,
       };
     })
     .concat(exports)

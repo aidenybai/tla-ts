@@ -109,6 +109,70 @@ describe("the CLI with TypeScript files", () => {
 
   // A model whose top level throws stops at the check that its module runs, with the message that
   // Node throws, before any call of its functions.
+  // A call's argument lists are every combination of its parameters' values, which the model lists
+  // only where they're at most as many as TLC puts in a set, as -maxSetSize sets it. Under a bound
+  // of 100, pair's 10 by 10 values are called, and triple's 5 by 5 by 5 aren't, though each of its
+  // parameters has fewer values than the bound, so a bound on each parameter alone calls triple,
+  // which throws.
+  describe("calls an export only where its argument lists fit in a set", () => {
+    const getModel = (last: number) =>
+      `type Digit = 0 | 1 | 2 | 3 | 4 | 5 | 6 | 7 | 8 | 9;\ntype Small = 0 | 1 | 2 | 3 | 4;\nexport const pair = (a: Digit, b: Digit) => {\n  if (a === 9 && b === ${last}) throw new Error("pair " + a + b);\n  return a + b;\n};\nexport const triple = (a: Small, b: Small, c: Small) => {\n  throw new Error("triple " + a + b + c);\n};\n`;
+    const NOTE =
+      "tla-ts calls no triple: its parameters make 125 argument lists, more than the 100 it lists";
+
+    it("agrees with Node", () => {
+      const directory = copyFixtures("passing");
+      writeFileSync(join(directory, "bound.ts"), getModel(10));
+      expect(runNode(directory, "bound.ts").status).toBe(0);
+      const result = runCli(directory, ["-maxSetSize", "100", "bound.ts"]);
+      expect(result.status).toBe(0);
+      expect(result.stdout).toContain(NOTE);
+      expect(result.stdout).toContain("Model checking completed. No error has been found.");
+    });
+
+    it("rejects another result", () => {
+      const directory = copyFixtures("passing");
+      writeFileSync(join(directory, "bound.ts"), getModel(9));
+      const node = spawnSync(
+        process.execPath,
+        ["--input-type=module", "--eval", 'import { pair } from "./bound.ts"; pair(9, 9);'],
+        { cwd: directory, encoding: "utf8" },
+      );
+      expect(node.stderr).toContain("Error: pair 99");
+      const result = runCli(directory, ["-maxSetSize", "100", "bound.ts"]);
+      expect(result.status).not.toBe(0);
+      expect(result.stdout).toContain(NOTE);
+      expect(result.stdout).toContain('the second argument was:\n"pair 99"');
+    });
+  });
+
+  // A state variable whose name TLA+ can't spell, as $ and _, takes a name of its own in TLA+, and
+  // the trace shows it by its binding's name, in the order of the names, as TLC shows a function.
+  // The model deadlocks where bump changes nothing, after $ reaches 2.
+  describe("checks state variables whose names TLA+ can't spell, as $ and _", () => {
+    const getModel = (check: string) =>
+      `let b = 0;\nlet $ = 0;\nlet _ = 10;\nexport const bump = () => {\n  if ($ >= 2) return;\n  $ += 1;\n  _ -= 1;\n};\nexport const isKept = () => ${check};\n`;
+
+    it("agrees with Node", () => {
+      const directory = copyFixtures("passing");
+      writeFileSync(join(directory, "names.ts"), getModel("$ + _ === 10 && b === 0"));
+      expect(runNode(directory, "names.ts").status).toBe(0);
+      const result = runCli(directory, ["names.ts"]);
+      expect(result.status).toBe(11);
+      expect(result.stdout).toContain("Error: Deadlock reached.");
+      expect(result.stdout).toContain("/\\ $ = 2\n/\\ _ = 8\n/\\ b = 0");
+    });
+
+    it("rejects another result", () => {
+      const directory = copyFixtures("passing");
+      writeFileSync(join(directory, "names.ts"), getModel("$ < 2"));
+      const result = runCli(directory, ["names.ts"]);
+      expect(result.status).toBe(12);
+      expect(result.stdout).toContain("Invariant isKept is violated.");
+      expect(result.stdout).toContain("/\\ $ = 2\n/\\ _ = 8\n/\\ b = 0");
+    });
+  });
+
   describe("checks a model whose top level throws as Node throws", () => {
     const getModel = (statement: string) =>
       `export const twice = (n: 0 | 1) => n * 2;\n${statement}\n`;

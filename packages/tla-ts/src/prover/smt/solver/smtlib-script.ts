@@ -61,7 +61,12 @@ import { isSupportedLogic, logicHasSeq } from "./smt-logics";
 import { getVerdict, solveAssertions, solveAssuming } from "./solver";
 import { getConsequences } from "./smt-consequences";
 import { FdSolver } from "./fd-solver";
-import { getDoubleParameter, getParameterValue, isDoubleParameter } from "./gparams";
+import {
+  getDoubleParameter,
+  getParameterDefault,
+  getParameterValue,
+  isDoubleParameter,
+} from "./gparams";
 import { formatDouble } from "./probes";
 import { getGlobalSmtParams, SmtKernel } from "./smt-kernel";
 import { RefVector } from "./ref-vector";
@@ -78,6 +83,7 @@ import type { DatalogContext } from "./muz/dl-context";
 import { createDatalogContext } from "./muz/horn-tactic";
 import { printModel } from "./model-printer";
 import { ModelEvaluator } from "./model-evaluator";
+import { validateModel } from "./validate-model";
 import { FuncInterp, getManagerSomeValue, ProtoModel } from "./proto-model";
 import {
   applyTactic,
@@ -205,14 +211,6 @@ const SIMPLIFY_UINT_PARAMETERS = new Set([
   "max_degree",
   "local_ctx_limit",
   "blast_distinct_threshold",
-]);
-
-const PARAMETER_DEFAULTS = new Map([
-  ["auto_config", "true"],
-  ["smt.relevancy", "2"],
-  ["smt.mbqi", "true"],
-  ["rlimit", "0"],
-  ["rewriter.hi_div0", "true"],
 ]);
 
 const UNPORTED_PARAMETER_DEFAULTS = new Map([
@@ -855,21 +853,21 @@ export const runSmtlibScript = (
       state.manager.limit.pop();
     }
   };
-  const getModel = (list: SmtList) => {
+  const findModel = () => {
     const check = state.check;
     if (!settings.isProducingModels || check === undefined || check.status === L_FALSE)
-      throw new SmtParseError("model is not available", list.end);
+      return undefined;
     if (check.model !== undefined) {
       check.model.incRef();
       return check.model;
     }
     if (check.isOptimizing) throw new SmtUnsupportedError("the models of optimization");
-    if (check.context === undefined && check.status !== L_TRUE)
-      throw check.isFromTactic
-        ? new SmtParseError("model is not available", list.end)
-        : new SmtUnsupportedError("the model of a canceled search");
+    if (check.context === undefined && check.status !== L_TRUE) {
+      if (check.isFromTactic) return undefined;
+      throw new SmtUnsupportedError("the model of a canceled search");
+    }
     const satModel = check.satSolver?.getModel();
-    if (satModel === null) throw new SmtParseError("model is not available", list.end);
+    if (satModel === null) return undefined;
     if (satModel !== undefined) return satModel;
     const context = check.context;
     const model =
@@ -878,13 +876,29 @@ export const runSmtlibScript = (
         : context === undefined
           ? new ProtoModel(state.manager)
           : context.getModel();
-    if (model === undefined) throw new SmtParseError("model is not available", list.end);
+    if (model === undefined) return undefined;
     if (check.fdSolver === undefined) {
       model.incRef();
       check.model = model;
     }
     model.incRef();
     return model;
+  };
+  const getModel = (list: SmtList) => {
+    const model = findModel();
+    if (model === undefined) throw new SmtParseError("model is not available", list.end);
+    return model;
+  };
+  const validateCheckModel = (end: SmtToken) => {
+    if (settings.parameters.get("model_validate") !== "true") return;
+    const model = findModel();
+    if (model === undefined) return;
+    try {
+      if (!validateModel(state.manager, model, state.assertions))
+        throw new SmtParseError("an invalid model was generated", end);
+    } finally {
+      model.decRef();
+    }
   };
   const clearCheck = () => {
     const check = state.check;
@@ -975,6 +989,7 @@ export const runSmtlibScript = (
         ? new IncSatSolver(
             state.manager,
             getSatParams(parameters),
+            parameters,
             true,
             isEuf ? mkThSolver(parameters) : null,
           )
@@ -984,7 +999,7 @@ export const runSmtlibScript = (
       !isProofsEnabled &&
       !isParallel &&
       tactic === undefined
-        ? new FdSolver(state.manager, getSatParams(parameters))
+        ? new FdSolver(state.manager, getSatParams(parameters), parameters)
         : undefined;
     dropSolver(old);
   };
@@ -1196,6 +1211,7 @@ export const runSmtlibScript = (
           ),
         );
       checkSat(literals, end);
+      if (state.check?.status === L_TRUE) validateCheckModel(end);
     } finally {
       for (const literal of literals) state.manager.decRef(literal);
     }
@@ -1556,6 +1572,8 @@ export const runSmtlibScript = (
           state.manager.limit.pop();
         }
         validateCheck(list.end);
+        if (state.check?.status === L_TRUE && state.check.model !== undefined)
+          validateCheckModel(list.end);
       },
     ],
     [
@@ -2238,10 +2256,16 @@ export const runSmtlibScript = (
     [
       "set-option",
       (list) => {
-        const option = list.items[1];
-        const keyword = option?.kind === "keyword" ? option.text : "";
-        const optionName = `:${getParameterName(keyword)}`;
+        const option = getFirstArgument(list);
+        if (option.kind !== "keyword")
+          throw new SmtParseError("invalid command argument, keyword expected", option);
         const value = list.items[2];
+        if (value === undefined)
+          throw new SmtParseError("invalid command, argument(s) missing", list.end);
+        if (value.kind === "list" || value.kind === "keyword")
+          throw new SmtParseError("invalid option value", value);
+        const keyword = option.text;
+        const optionName = `:${getParameterName(keyword)}`;
         const isTrue = isSymbol(value, "true");
         if (
           (keyword === ":produce-proofs" ||
@@ -2251,7 +2275,7 @@ export const runSmtlibScript = (
         )
           throw new SmtParseError(
             `error setting '${keyword}', option value cannot be modified after assertions have been added`,
-            value ?? list.end,
+            value,
           );
         if (keyword === ":produce-models") {
           settings.isProducingModels = isTrue;
@@ -2264,7 +2288,7 @@ export const runSmtlibScript = (
           if (state.isProofsEnabled !== undefined)
             throw new SmtParseError(
               "error setting ':produce-assertions', option value cannot be modified after initialization",
-              value ?? list.end,
+              value,
             );
           settings.isInteractive = isTrue;
         }
@@ -2272,15 +2296,15 @@ export const runSmtlibScript = (
           if (state.isProofsEnabled !== undefined)
             throw new SmtParseError(
               "error setting ':global-decls', option value cannot be modified after initialization",
-              value ?? list.end,
+              value,
             );
           settings.parserOptions.isGlobalDecls = isTrue;
         }
         if (keyword === ":diagnostic-output-channel")
-          settings.isDiagnosticOnStdout = value?.kind === "string" && value.text === "stdout";
+          settings.isDiagnosticOnStdout = value.kind === "string" && value.text === "stdout";
         if (keyword === ":int-real-coercions" && !isTrue)
           throw new SmtUnsupportedError("the option :int-real-coercions false");
-        if (keyword === ":verbosity" && value?.kind === "numeral" && BigInt(value.text) !== 0n)
+        if (keyword === ":verbosity" && value.kind === "numeral" && BigInt(value.text) !== 0n)
           throw new SmtUnsupportedError("the option :verbosity");
         if (keyword === ":error-behavior") {
           if (!isSymbol(value, "immediate-exit") && !isSymbol(value, "continued-execution"))
@@ -2290,11 +2314,7 @@ export const runSmtlibScript = (
             );
           settings.isExitingOnError = isSymbol(value, "immediate-exit");
         }
-        const isParameter =
-          keyword !== "" &&
-          !BUILTIN_OPTIONS.has(keyword) &&
-          value !== undefined &&
-          value.kind !== "list";
+        const isParameter = !BUILTIN_OPTIONS.has(keyword);
         if (isParameter) {
           // Z3 sets a numeral as the string of its rational, so 2.0 becomes 2 and 1.5 becomes 3/2.
           const text =
@@ -2337,7 +2357,7 @@ export const runSmtlibScript = (
           settings.isHiDiv0 = isTrue;
           state.manager.isHiDiv0 = isTrue;
         }
-        if (optionName === ":encoding" && value !== undefined && value.kind !== "list") {
+        if (optionName === ":encoding") {
           settings.encoding = ENCODINGS.get(value.text) ?? UNICODE_ENCODING;
           state.manager.maxChar = settings.encoding.maxChar;
           state.manager.charBits = settings.encoding.charBits;
@@ -2345,7 +2365,7 @@ export const runSmtlibScript = (
         if (optionName === ":parser.ignore_bad_patterns")
           settings.parserOptions.isIgnoringBadPatterns = isTrue;
         const numericOption = NUMERIC_PRINT_OPTIONS.get(optionName);
-        if (numericOption !== undefined && value?.kind === "numeral")
+        if (numericOption !== undefined && value.kind === "numeral")
           settings.printOptions[numericOption] = Number(value.text);
         const booleanOption = BOOLEAN_PRINT_OPTIONS.get(optionName);
         if (booleanOption !== undefined) settings.printOptions[booleanOption] = isTrue;
@@ -2357,6 +2377,7 @@ export const runSmtlibScript = (
             (optionName !== ":lp.int_hammer_period" || !isParameter))
         )
           throw new SmtUnsupportedError(`the option ${optionName}`);
+        // parse_ext_cmd sets the option as it reads the value, before it rejects a third argument.
         checkArgumentCount(list, 2);
       },
     ],
@@ -2379,13 +2400,21 @@ export const runSmtlibScript = (
           [":error-behavior", settings.isExitingOnError ? "immediate-exit" : "continued-execution"],
         ]);
         const name = getParameterName(option.text);
+        const isBuiltin = BUILTIN_OPTIONS.has(option.text);
         const value =
-          builtinValues.get(option.text) ??
-          (BUILTIN_OPTIONS.has(option.text)
-            ? undefined
-            : (settings.parameters.get(name) ?? PARAMETER_DEFAULTS.get(name)));
-        if (value === undefined) throw new SmtUnsupportedError(`the option ${option.text}`);
-        print(isDoubleParameter(name) ? formatDouble(Number(value)) : String(value));
+          builtinValues.get(option.text) ?? (isBuiltin ? undefined : settings.parameters.get(name));
+        if (value !== undefined) {
+          print(isDoubleParameter(name) ? formatDouble(Number(value)) : String(value));
+          return;
+        }
+        if (isBuiltin) throw new SmtUnsupportedError(`the option ${option.text}`);
+        const defaultValue = getParameterDefault(name);
+        if (defaultValue !== undefined) {
+          print(defaultValue);
+          return;
+        }
+        print("unsupported");
+        printDiagnostic(`; ${option.text} line: ${list.line} position: ${list.column}`);
       },
     ],
     [

@@ -607,6 +607,8 @@ const isRecursive = (record: RecType) => {
   return record.shapes.length > 1 && getInnerTypes(record).some(isReaching);
 };
 
+const MAXIMUM_TYPE_DEPTH = 100;
+
 // A type left open, such as the element of a set that is always empty, holds no values. A type
 // holds itself only through a record that can, and closing stops there.
 const closeType = (type: Type, path: Type[] = []): Type => {
@@ -630,6 +632,8 @@ const closeType = (type: Type, path: Type[] = []): Type => {
       ? resolved
       : unsupported();
   }
+  // V8 compiles the code nested as deep as a type in time quadratic in its depth, and overflows its stack near 1,000 levels.
+  if (path.length === MAXIMUM_TYPE_DEPTH) return unsupported();
   path.push(resolved);
   getInnerTypes(resolved).forEach((inner) => closeType(inner, path));
   path.pop();
