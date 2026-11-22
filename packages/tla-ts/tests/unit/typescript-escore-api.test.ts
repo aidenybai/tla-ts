@@ -1,9 +1,10 @@
 import { spawnSync } from "node:child_process";
-import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import { pathToFileURL } from "node:url";
 import { Worker } from "node:worker_threads";
+import ts from "@typescript/typescript6";
 import { afterAll, beforeAll, describe, expect, it } from "vite-plus/test";
 import { createLibrary, readEscoreFiles } from "../../src/typescript/spec/library";
 import { recordHostRealm } from "../../src/typescript/spec/realm";
@@ -19,14 +20,29 @@ interface Outcome {
   error?: { name: string; isTlaError: boolean; message: string };
 }
 
+// The texts of TypeScript's declaration files that a file's, by name, references, with its own, as
+// the website bundles them.
+const getLibraries = (fileName: string, libraries: Map<string, string>) => {
+  if (libraries.has(fileName)) return libraries;
+  const text = readFileSync(join(dirname(ts.getDefaultLibFilePath({})), fileName), "utf8");
+  libraries.set(fileName, text);
+  for (const match of text.matchAll(/<reference lib="([^"]+)"/g)) {
+    getLibraries(`lib.${match[1]}.d.ts`, libraries);
+  }
+  return libraries;
+};
+
 // ESCore's evaluation nests deeper than a test's stack, so the API runs on a worker with a 256 MB
 // stack, or with 8 MB, as the CLI's thread has. A request compiles with the public compile, or on
 // ESCore from a realm that Node recorded and that went through JSON, as a browser reads it, and, as
 // in a browser, without Node's built-in modules, which a browser's process, where it has one, lacks.
-const createApi = (stackSizeMb: number) => {
+// On a browser's worker, TypeScript also has no system to read files through.
+const createApi = (stackSizeMb: number, isBrowser = false) => {
   const worker = new Worker(
     `const { register } = require("node:module");
   const { parentPort, workerData } = require("node:worker_threads");
+  // HACK: TypeScript leaves out ts.sys where process.browser is set, as in a browser's bundle.
+  if (workerData.isBrowser) process.browser = true;
   // HACK: Node strips the types of tla-ts's sources, whose imports leave out the extension.
   register("data:text/javascript," + encodeURIComponent(\`export const resolve = (specifier, context, next) =>
     next(specifier, context).catch((error) => (specifier.startsWith(".") ? next(specifier + ".ts", context) : Promise.reject(error)));\`));
@@ -39,8 +55,10 @@ const createApi = (stackSizeMb: number) => {
     import(workerData.source + "/typescript/spec/library.ts"),
     import(workerData.source + "/typescript/spec/prepare.ts"),
     import(workerData.source + "/typescript/spec/realm.ts"),
+    import(workerData.source + "/typescript/program.ts"),
   ]);
   let recorded;
+  let browserLibrary;
   const getRecorded = (modules) => {
     const [, , , , , library, prepare, realm] = modules;
     if (recorded === undefined) {
@@ -52,7 +70,7 @@ const createApi = (stackSizeMb: number) => {
   };
   parentPort.on("message", async (request) => {
     const modules = await loading;
-    const [compile, parallel, values, errors, api] = modules;
+    const [compile, parallel, values, errors, api, , , , program] = modules;
     const options = { source: request.source, fileName: request.fileName };
     const getBuiltinModule = process.getBuiltinModule;
     try {
@@ -60,8 +78,13 @@ const createApi = (stackSizeMb: number) => {
       // through process.getBuiltinModule.
       const runtime = request.isRecorded ? getRecorded(modules) : undefined;
       if (request.isRecorded) process.getBuiltinModule = undefined;
+      // A browser has no file system to read TypeScript's declaration files from, so the website
+      // passes their texts.
+      if (workerData.isBrowser && browserLibrary === undefined) {
+        browserLibrary = program.createLibrary(new Map(workerData.libraries));
+      }
       const spec = request.isRecorded
-        ? api.compileEscore(options, runtime)
+        ? api.compileEscore(options, runtime, browserLibrary)
         : await compile.compile(options);
       process.getBuiltinModule = getBuiltinModule;
       const result = await parallel.check({ ...spec, onPrint: () => {} });
@@ -90,6 +113,8 @@ const createApi = (stackSizeMb: number) => {
       workerData: {
         source: pathToFileURL(join(import.meta.dirname, "../../src")).href,
         directory: join(import.meta.dirname, "../../ecmascript"),
+        isBrowser,
+        libraries: isBrowser ? [...getLibraries("lib.esnext.d.ts", new Map())] : [],
       },
       resourceLimits: { stackSizeMb },
     },
@@ -111,9 +136,16 @@ const getOutcome = createApi(256);
 
 const getCliStackOutcome = createApi(8);
 
+const getBrowserOutcome = createApi(256, true);
+
 // The worker prepares ESCore's runtime before the first check, which takes longer than a check.
 beforeAll(
-  () => Promise.all([getOutcome("", "empty.ts"), getOutcome("", "empty.ts", true)]),
+  () =>
+    Promise.all([
+      getOutcome("", "empty.ts"),
+      getOutcome("", "empty.ts", true),
+      getBrowserOutcome("", "empty.ts", true),
+    ]),
   120_000,
 );
 
@@ -149,6 +181,18 @@ describe("compile and check a script as Node runs it", () => {
       const outcome = await getOutcome(getSource("2,4,7"), "sorted.ts");
       expect(outcome.error?.isTlaError).toBe(true);
       expect(getFailure(outcome)).toContain('"2,4,6"');
+    });
+
+    it("agrees with Node on a browser's worker", async () => {
+      expect(await getBrowserOutcome(getSource("2,4,6"), "sorted.ts", true)).toMatchObject({
+        status: "success",
+      });
+    });
+
+    it("rejects another result on a browser's worker", async () => {
+      expect(getFailure(await getBrowserOutcome(getSource("2,4,7"), "sorted.ts", true))).toContain(
+        '"2,4,6"',
+      );
     });
   });
 
@@ -260,6 +304,19 @@ describe("compile and check a model whose actions Node runs", () => {
       true,
       true,
     ]);
+  });
+
+  // The website compiles on a browser's worker, where TypeScript has no system.
+  it("agrees with Node on a browser's worker", async () => {
+    const outcome = await getBrowserOutcome(getSource(3), "counter.ts", true);
+    expect(outcome).toEqual(await getOutcome(getSource(3), "counter.ts"));
+    expect(replay(getSource(3), outcome.actions ?? [])).toEqual([true, true, true, false]);
+  });
+
+  it("rejects another result on a browser's worker", async () => {
+    expect(await getBrowserOutcome(getSource(2), "counter.ts", true)).toMatchObject({
+      status: "success",
+    });
   });
 });
 
