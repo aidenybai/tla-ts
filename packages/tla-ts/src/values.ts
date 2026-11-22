@@ -136,7 +136,7 @@ export interface LazyFunctionSource {
 export interface CostModel {
   secondary: number[];
   node: number;
-  chargeConversion: () => void;
+  startConversion: () => () => void;
 }
 
 export interface LazyFunctionValue {
@@ -2454,6 +2454,459 @@ const somePulledElement = (stream: ElementStream, visit: (element: Value) => boo
   return false;
 };
 
+export interface ChargeTable {
+  values: WeakMap<object, number>;
+  secondary: number[];
+  isMember: typeof isElementOf;
+}
+
+interface PlainStream {
+  kind: "Plain";
+  part: ElementStream;
+}
+
+interface ChargedLeafStream {
+  kind: "ChargedLeaf";
+  node: number;
+  part: ElementStream;
+}
+
+interface ChargedProductStream {
+  kind: "ChargedProduct";
+  node: number;
+  set: FunctionSetValue | RecordSetValue | ProductSetValue;
+  domain: Value[];
+  parts: ChargedStream[];
+  current: Value[];
+  isDone: boolean;
+}
+
+interface ChargedUnionStream {
+  kind: "ChargedUnion";
+  node: number;
+  left: ChargedStream;
+  right: ChargedStream;
+}
+
+interface ChargedSelectedStream {
+  kind: "ChargedSelected";
+  base: ChargedStream;
+  other: Value;
+  isIntersection: boolean;
+}
+
+interface ChargedFilterStream {
+  kind: "ChargedFilter";
+  node: number;
+  set: FilteredSetValue;
+  base: ChargedStream;
+}
+
+type ChargedStream =
+  | PlainStream
+  | ChargedLeafStream
+  | ChargedProductStream
+  | ChargedUnionStream
+  | ChargedSelectedStream
+  | ChargedFilterStream;
+
+const EMPTY_CHARGED_STREAM: PlainStream = { kind: "Plain", part: EMPTY_STREAM };
+
+export const getValueNode = (charges: ChargeTable, value: Value) =>
+  typeof value !== "object"
+    ? undefined
+    : (charges.values.get(value) ?? (value.kind === "Set" ? value.costNode : undefined));
+
+const getChargedProduct = (charges: ChargeTable, value: Value) => {
+  if (typeof value !== "object") return undefined;
+  const product = getPredicatedProduct(value);
+  if (product === undefined) return undefined;
+  if (product.kind === "FunctionSet") {
+    return isChargedPart(charges, product.range) ? product : undefined;
+  }
+  const sets = product.kind === "RecordSet" ? product.sets : product.factors;
+  for (let index = 0; index < sets.length; index++) {
+    if (!isChargedPart(charges, sets[index])) return undefined;
+  }
+  return product;
+};
+
+const isChargedUnion = (charges: ChargeTable, value: SetOperationValue): boolean =>
+  value.operator === "\\cup" &&
+  value.enumerated === undefined &&
+  isPredicated(value) &&
+  getValueNode(charges, value) !== undefined &&
+  isTlcEnumerable(value.left) &&
+  isTlcEnumerable(value.right) &&
+  !isBeyondSetBound(value.left) &&
+  !isBeyondSetBound(value.right) &&
+  isChargedPart(charges, value.left) &&
+  isChargedPart(charges, value.right);
+
+export const getDrawnSet = (value: SetOperationValue) =>
+  value.operator === "\\" || isTlcEnumerable(value.left) ? value.left : value.right;
+
+const isChargedSelection = (charges: ChargeTable, value: SetOperationValue): boolean =>
+  value.enumerated === undefined &&
+  isPredicated(value) &&
+  isTlcEnumerable(getDrawnSet(value)) &&
+  isChargedPart(charges, getDrawnSet(value));
+
+const isChargedOperation = (charges: ChargeTable, value: SetOperationValue) =>
+  value.operator === "\\cup" ? isChargedUnion(charges, value) : isChargedSelection(charges, value);
+
+const isChargedPart = (charges: ChargeTable, value: Value): boolean => {
+  if (typeof value !== "object") return true;
+  if (value.kind === "SetOperation") return isChargedOperation(charges, value);
+  if (value.kind !== "FunctionSet" && value.kind !== "RecordSet" && value.kind !== "ProductSet") {
+    return true;
+  }
+  return (
+    getValueNode(charges, value) === undefined || getChargedProduct(charges, value) !== undefined
+  );
+};
+
+const isChargedBase = (charges: ChargeTable, value: Value) =>
+  typeof value === "object" &&
+  (value.kind === "FilteredSet" ||
+    value.kind === "Subset" ||
+    (value.kind === "SetOperation"
+      ? isChargedOperation(charges, value)
+      : getChargedProduct(charges, value) !== undefined));
+
+const getChargedFilterNode = (charges: ChargeTable, value: FilteredSetValue) =>
+  isCachedSet(value) || !isChargedBase(charges, value.base)
+    ? undefined
+    : getValueNode(charges, value);
+
+const openChargedPart = (charges: ChargeTable, value: Value): ChargedStream => {
+  const node =
+    typeof value !== "object" || value.kind === "FilteredSet" || value.kind === "Subset"
+      ? undefined
+      : getValueNode(charges, value);
+  const sets = setTrace.sets;
+  if (typeof value === "object" && value.kind === "FilteredSet") {
+    const filterNode = getChargedFilterNode(charges, value);
+    if (filterNode === undefined) return { kind: "Plain", part: openPart(value) };
+    sets?.push(value);
+    if (!isTlcEnumerable(value.base)) toFiniteSet(value);
+    const stream: ChargedFilterStream = {
+      kind: "ChargedFilter",
+      node: filterNode,
+      set: value,
+      base: openChargedPart(charges, value.base),
+    };
+    sets?.pop();
+    return stream;
+  }
+  if (typeof value === "object" && value.kind === "SetOperation" && value.operator !== "\\cup") {
+    sets?.push(value);
+    const drawn = getDrawnSet(value);
+    const stream: ChargedSelectedStream = {
+      kind: "ChargedSelected",
+      base: openChargedPart(charges, drawn),
+      other: drawn === value.left ? value.right : value.left,
+      isIntersection: value.operator === "\\cap",
+    };
+    sets?.pop();
+    return stream;
+  }
+  if (node !== undefined && typeof value === "object" && value.kind === "SetOperation") {
+    sets?.push(value);
+    const stream: ChargedUnionStream = {
+      kind: "ChargedUnion",
+      node,
+      left: openChargedPart(charges, value.left),
+      right: openChargedPart(charges, value.right),
+    };
+    sets?.pop();
+    return stream;
+  }
+  const product =
+    node === undefined || typeof value !== "object" ? undefined : getPredicatedProduct(value);
+  if (node !== undefined && product !== undefined) {
+    sets?.push(product);
+    const stream = openChargedProduct(charges, product, node);
+    sets?.pop();
+    return stream;
+  }
+  const part = openPart(value);
+  return node === undefined ? { kind: "Plain", part } : { kind: "ChargedLeaf", node, part };
+};
+
+// TLC's isEmpty asks S \cup T, S \cap T, S \ T or { x \in S : p(x) } for its first element, which opens its enumerator.
+const isChargedEmpty = (charges: ChargeTable, value: Value): boolean => {
+  if (
+    typeof value !== "object" ||
+    (value.kind !== "SetOperation" &&
+      value.kind !== "FilteredSet" &&
+      value.kind !== "FunctionSet" &&
+      value.kind !== "RecordSet" &&
+      value.kind !== "ProductSet") ||
+    (value.kind === "FilteredSet"
+      ? getChargedFilterNode(charges, value) === undefined
+      : (value.kind !== "SetOperation" || value.operator === "\\cup") &&
+        getValueNode(charges, value) === undefined)
+  ) {
+    return isEmptySet(value);
+  }
+  const sets = setTrace.sets;
+  sets?.push(value);
+  const isEmpty =
+    value.kind === "SetOperation" || value.kind === "FilteredSet"
+      ? getNextChargedElement(charges, openChargedPart(charges, value)) === undefined
+      : value.kind === "FunctionSet"
+        ? !isEmptySet(value.domain) && isChargedEmpty(charges, value.range)
+        : hasChargedEmptySet(charges, value.kind === "RecordSet" ? value.sets : value.factors);
+  sets?.pop();
+  return isEmpty;
+};
+
+const hasChargedEmptySet = (charges: ChargeTable, sets: Value[]) => {
+  for (let index = 0; index < sets.length; index++) {
+    if (isChargedEmpty(charges, sets[index])) return true;
+  }
+  return false;
+};
+
+const openChargedProduct = (
+  charges: ChargeTable,
+  value: FunctionSetValue | RecordSetValue | ProductSetValue,
+  node: number,
+): ChargedStream => {
+  if (!isVersion174 && isChargedEmpty(charges, value)) return EMPTY_CHARGED_STREAM;
+  const stream: ChargedProductStream = {
+    kind: "ChargedProduct",
+    node,
+    set: value,
+    domain: [],
+    parts: [],
+    current: [],
+    isDone: false,
+  };
+  if (value.kind === "FunctionSet") {
+    openOperandStream(value.domain, true);
+    if (isOverriddenSet(value.domain)) {
+      throw new TlaEvaluationError(describeUnenumerableFunctionSet("domain D", value.domain));
+    }
+    stream.domain = getFunctionDomain(value.domain);
+    if ((stream.domain.length > 0 || isVersion174) && isOverriddenSet(value.range)) {
+      throw new TlaEvaluationError(describeUnenumerableFunctionSet("range R", value.range));
+    }
+  }
+  const sets =
+    value.kind === "FunctionSet"
+      ? stream.domain.map(() => value.range)
+      : value.kind === "RecordSet"
+        ? value.sets
+        : value.factors;
+  for (let index = 0; index < sets.length; index++) {
+    if (value.kind !== "FunctionSet" && isOverriddenSet(sets[index])) {
+      throw new TlaEvaluationError(describeUnenumerableComponent(value, index));
+    }
+    const part = openChargedPart(charges, sets[index]);
+    const element = getNextChargedElement(charges, part);
+    if (element === undefined) return EMPTY_CHARGED_STREAM;
+    stream.parts.push(part);
+    stream.current.push(element);
+  }
+  return stream;
+};
+
+const restartChargedPart = (charges: ChargeTable, stream: ChargedProductStream, index: number) => {
+  resetChargedStream(charges, stream.parts[index]);
+  const element = getNextChargedElement(charges, stream.parts[index]);
+  if (element === undefined) stream.isDone = true;
+  else stream.current[index] = element;
+};
+
+const resetChargedStream = (charges: ChargeTable, stream: ChargedStream): void => {
+  switch (stream.kind) {
+    case "Plain":
+    case "ChargedLeaf":
+      resetStream(stream.part);
+      return;
+    case "ChargedProduct":
+      stream.isDone = false;
+      for (let index = 0; index < stream.parts.length; index++)
+        restartChargedPart(charges, stream, index);
+      return;
+    case "ChargedUnion":
+      resetChargedStream(charges, stream.left);
+      resetChargedStream(charges, stream.right);
+      return;
+    case "ChargedSelected":
+    case "ChargedFilter":
+      resetChargedStream(charges, stream.base);
+  }
+};
+
+const getNextChargedElement = (charges: ChargeTable, stream: ChargedStream): Value | undefined => {
+  switch (stream.kind) {
+    case "Plain":
+      return getNextElement(stream.part);
+    case "ChargedLeaf":
+      charges.secondary[stream.node]++;
+      return getNextElement(stream.part);
+    case "ChargedProduct": {
+      if (stream.isDone) return undefined;
+      const elements = [...stream.current];
+      charges.secondary[stream.node] += Math.max(stream.parts.length, 1);
+      stream.isDone = stream.parts.length === 0;
+      for (let index = stream.parts.length - 1; index >= 0 && !stream.isDone; index--) {
+        const element = getNextChargedElement(charges, stream.parts[index]);
+        if (element !== undefined) {
+          stream.current[index] = element;
+          break;
+        }
+        if (index === 0) stream.isDone = true;
+        else restartChargedPart(charges, stream, index);
+      }
+      const set = stream.set;
+      return set.kind === "FunctionSet"
+        ? createSortedFunction(stream.domain, elements)
+        : set.kind === "RecordSet"
+          ? createRecord(set.names.map((name, index): [string, Value] => [name, elements[index]]))
+          : createTuple(elements);
+    }
+    case "ChargedUnion":
+      charges.secondary[stream.node]++;
+      return (
+        getNextChargedElement(charges, stream.left) ?? getNextChargedElement(charges, stream.right)
+      );
+    case "ChargedSelected":
+      return getNextSelectedElement(charges, stream);
+    case "ChargedFilter":
+      return getNextFilteredElement(charges, stream);
+  }
+};
+
+// V8 runs getNextChargedElement about 0.8% slower on PS under -coverage with this loop inline.
+const getNextSelectedElement = (charges: ChargeTable, stream: ChargedSelectedStream) => {
+  for (
+    let element = getNextChargedElement(charges, stream.base);
+    element !== undefined;
+    element = getNextChargedElement(charges, stream.base)
+  ) {
+    if (charges.isMember(element, stream.other) === stream.isIntersection) return element;
+  }
+  return undefined;
+};
+
+const getNextFilteredElement = (charges: ChargeTable, stream: ChargedFilterStream) => {
+  for (
+    let element = getNextChargedElement(charges, stream.base);
+    element !== undefined;
+    element = getNextChargedElement(charges, stream.base)
+  ) {
+    charges.secondary[stream.node]++;
+    if (stream.set.test(element, false)) return element;
+  }
+  return undefined;
+};
+
+const drainChargedStream = (charges: ChargeTable, stream: ChargedStream, isBounded: boolean) => {
+  const elements: Value[] = [];
+  for (
+    let element = getNextChargedElement(charges, stream);
+    element !== undefined;
+    element = getNextChargedElement(charges, stream)
+  ) {
+    if (isBounded) addBoundedElement(elements, element);
+    else elements.push(element);
+  }
+  return elements;
+};
+
+const drainChargedFilter = (charges: ChargeTable, value: FilteredSetValue) => {
+  const node = getChargedFilterNode(charges, value);
+  if (node === undefined || value.enumerated || !isTlcEnumerable(value.base) || isSortingLiteral) {
+    return undefined;
+  }
+  const sets = setTrace.sets;
+  sets?.push(value);
+  const elements = drainChargedStream(
+    charges,
+    { kind: "ChargedFilter", node, set: value, base: openChargedPart(charges, value.base) },
+    true,
+  );
+  sets?.pop();
+  charges.secondary[node] += elements.length;
+  const set = createSortedSet(toFiniteSet(createEnumeratedSet(elements)).elements);
+  value.enumerated = set;
+  return set.elements;
+};
+
+const hasChargedStream = (charges: ChargeTable, value: ObjectValue) =>
+  value.kind === "FilteredSet"
+    ? !value.enumerated &&
+      isTlcEnumerable(value.base) &&
+      getChargedFilterNode(charges, value) !== undefined
+    : value.kind === "SetOperation"
+      ? isChargedOperation(charges, value)
+      : getChargedProduct(charges, value) !== undefined &&
+        getValueNode(charges, value) !== undefined;
+
+// TLC's x' \in S draws S through its enumerator, which charges its draws, and keeps nothing.
+export const streamChargedSet = (charges: ChargeTable, value: Value) =>
+  typeof value === "object" && hasChargedStream(charges, value)
+    ? drainChargedStream(charges, openChargedPart(charges, value), false)
+    : undefined;
+
+export const isChargedMember = (
+  charges: ChargeTable,
+  element: Value,
+  set: SubsetValue | UnionValue,
+) => {
+  const isSubset = set.kind === "Subset";
+  const drawn = isSubset ? element : set.base;
+  if (typeof drawn !== "object" || !hasChargedStream(charges, drawn)) return undefined;
+  const sets = setTrace.sets;
+  sets?.push(set);
+  const stream = openChargedPart(charges, drawn);
+  let isDecided = false;
+  for (
+    let item = getNextChargedElement(charges, stream);
+    item !== undefined;
+    item = getNextChargedElement(charges, stream)
+  ) {
+    if (isSubset ? !charges.isMember(item, set.base) : charges.isMember(element, item)) {
+      isDecided = true;
+      break;
+    }
+  }
+  sets?.pop();
+  return isSubset !== isDecided;
+};
+
+// TLC's toSetEnum drains the enumerator of [S -> T], [a : S], S \X T, S \cup T, S \cap T, S \ T or { x \in S : p(x) }, which charges its draws, then charges the set its size.
+export const drainChargedSet = (charges: ChargeTable, value: Value) => {
+  if (typeof value !== "object") return undefined;
+  if (value.kind === "FilteredSet") return drainChargedFilter(charges, value);
+  const node = getValueNode(charges, value);
+  const drained =
+    value.kind === "SetOperation"
+      ? isChargedOperation(charges, value)
+        ? value
+        : undefined
+      : node === undefined
+        ? undefined
+        : getChargedProduct(charges, value);
+  if (drained === undefined) return undefined;
+  const elements = drainChargedStream(charges, openChargedPart(charges, drained), true);
+  if (node !== undefined) charges.secondary[node] += elements.length;
+  const sorted =
+    drained.kind !== "SetOperation" && isStreamedApart(drained) ? sortLikeTlc(elements) : elements;
+  const set =
+    drained.kind === "SetOperation"
+      ? createSortedSet(toFiniteSet(createEnumeratedSet(elements)).elements)
+      : drained.kind === "RecordSet"
+        ? createSet(sorted)
+        : createSortedSet(sorted);
+  drained.enumerated = set;
+  return set.elements;
+};
+
 const getProductStream = (
   value: FunctionSetValue | RecordSetValue | ProductSetValue,
   opened: OpenedStream | undefined,
@@ -3467,6 +3920,9 @@ export const toFiniteFunction = (value: Value): FunctionValue => {
   if (typeof value === "object" && value.kind === "LazyFunction") {
     if (value.enumerated) return value.enumerated;
     if (isSortingLiteral) throw new TlaEvaluationError("The set literal holds a lazy function");
+    const finishConversion = isCountedLazyFunction(value)
+      ? value.costModel.startConversion()
+      : undefined;
     // TLC's FcnLambdaValue#toFcnRcd sizes its domain, which enumerates a filter under -maxSetSize, and then streams it.
     getCardinality(value.domain);
     if (!isSetValue(value.domain)) {
@@ -3479,7 +3935,7 @@ export const toFiniteFunction = (value: Value): FunctionValue => {
         ? domain.map((key) => getCopiedValue(value, key))
         : domain.map((key) => value.apply(key)),
     );
-    if (isCountedLazyFunction(value)) value.costModel.chargeConversion();
+    finishConversion?.();
     return value.enumerated;
   }
   throw new TlaEvaluationError(`Expected a function but found ${formatValue(value)}`);

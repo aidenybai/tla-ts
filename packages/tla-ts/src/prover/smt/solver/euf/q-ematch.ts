@@ -398,6 +398,8 @@ export class Ematch {
   private subst: VarSubst;
   readonly isEnabled: boolean;
   private readonly maxEagerMultipatterns: number;
+  private readonly maxInstances: number;
+  private numInstantiations = 0;
 
   constructor(
     private ctx: EufSolver,
@@ -413,6 +415,7 @@ export class Ematch {
     this.subst = new VarSubst(manager, true);
     this.isEnabled = parameters.get("smt.ematching") !== "false";
     this.maxEagerMultipatterns = Number(parameters.get("smt.qi.max_multi_patterns") ?? "0");
+    this.maxInstances = Number(parameters.get("smt.qi.max_instances") ?? "4294967295");
     if (this.isEnabled) {
       ctx.egraph.onMerge.push((root, other) => this.onMerge(root, other));
       ctx.egraph.onMake = (node) => this.mam.addNode(node, false);
@@ -601,6 +604,12 @@ export class Ematch {
     return true;
   }
 
+  private instantiate(binding: Binding) {
+    if (this.numInstantiations > this.maxInstances) return;
+    this.numInstantiations++;
+    this.queue.insert(binding);
+  }
+
   addInstantiation(clause: Clause, binding: Binding, lit: number) {
     this.evidence = [];
     this.ctx.propagate(lit, this.mkJustification(binding.maxGeneration, clause, binding.nodes));
@@ -786,7 +795,7 @@ export class Ematch {
       isPropagated ||= result.isPropagated;
       if (result.isDone) toRemove.push(binding);
       else if (isFlushing) {
-        this.queue.insert(binding);
+        this.instantiate(binding);
         toRemove.push(binding);
         isPropagated = true;
       }
