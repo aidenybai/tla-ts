@@ -381,7 +381,7 @@ const findSymbol = (name: string, unit: Unit): ModuleSymbol | undefined => {
     return { key: name, arity: binding.arity, params: binding.params, kind: binding.kind };
   }
   if (hasKey(binding)) return binding;
-  return binding ? unit.imported.get(name) : undefined;
+  return binding && binding.kind !== "Instance" ? unit.imported.get(name) : undefined;
 };
 
 const isFact = (name: string, unit: Unit) => unit.bindings.get(name)?.kind === "Theorem";

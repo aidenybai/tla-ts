@@ -4460,6 +4460,18 @@ describe("name resolution matches SANY", () => {
       [],
     ],
     [
+      "an instance named in a DEF clause that a later constant of its name conflicts with",
+      "---- MODULE Inner ----\nFoo == 2 = 2\n====\nI(a) == INSTANCE Inner\nCONSTANT I\nTHEOREM TRUE BY DEF I",
+      [
+        {
+          location: "line 6, col 10 to line 6, col 10 of module M",
+          message:
+            "Multiply-defined symbol 'I': this definition or declaration conflicts \nwith the one at line 5, col 1 to line 5, col 22 of module M.",
+        },
+      ],
+      [],
+    ],
+    [
       "the definitions of instances that two modules share, warning only for a module with parameters",
       "---- MODULE Inner ----\nFoo == 1\n====\n---- MODULE P ----\nCONSTANT c\nFoo == c\n====\n---- MODULE A ----\nI == INSTANCE Inner\nJ == INSTANCE P WITH c <- 1\n====\n---- MODULE B ----\nI == INSTANCE Inner\nJ == INSTANCE P WITH c <- 1\n====\n---- MODULE C ----\nEXTENDS A, B\n====\n---- MODULE D ----\nK(a) == INSTANCE Inner\n====\nINSTANCE D\nK(a) == INSTANCE Inner\nZ == U",
       [
