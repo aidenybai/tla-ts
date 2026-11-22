@@ -7,7 +7,7 @@ import { decideIsabelle } from "../../src/prover/isabelle/decide";
 import { parseTheory } from "../../src/prover/isabelle/isar/theory";
 import { runTheory } from "../../src/prover/isabelle/isar/toplevel";
 import { loadLogic } from "../../src/prover/isabelle/tla/logic";
-import { CLI } from "./cli-harness";
+import { DIST_CLI } from "./cli-harness";
 
 const directories: string[] = [];
 
@@ -23,7 +23,7 @@ const writeModule = (name: string, source: string) => {
 };
 
 const runTlapm = (directory: string, args: string[], env: Record<string, string> = {}) =>
-  spawnSync("bun", [CLI, "tlapm", ...args], {
+  spawnSync(process.execPath, [DIST_CLI, "tlapm", ...args], {
     cwd: directory,
     encoding: "utf8",
     env: { ...process.env, ...env },

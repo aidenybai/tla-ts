@@ -4,7 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterAll, describe, expect, it } from "vite-plus/test";
 import { parseOcamlFloat } from "../../src/prover/prep/methods";
-import { CLI } from "./cli-harness";
+import { DIST_CLI } from "./cli-harness";
 
 const directories: string[] = [];
 
@@ -20,7 +20,7 @@ const writeModule = (name: string, source: string) => {
 };
 
 const runTlapm = (directory: string, args: string[]) =>
-  spawnSync("bun", [CLI, "tlapm", ...args], { cwd: directory, encoding: "utf8" });
+  spawnSync(process.execPath, [DIST_CLI, "tlapm", ...args], { cwd: directory, encoding: "utf8" });
 
 const PRINT_OBLIGATIONS = ["-N", "--toolbox", "0", "0", "--printallobs"];
 const PROVE = ["--toolbox", "0", "0", "--threads", "1"];
