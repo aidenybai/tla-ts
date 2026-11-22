@@ -1308,6 +1308,7 @@ export abstract class Internalizer {
   }
 
   private isUsingBinaryClauseOpt(first: Literal, second: Literal, isLemma: boolean) {
+    if (this.isProofsEnabled) return false;
     if (isLemma && this.relevancyLevel >= 2) return false;
     if (this.baseLevel > 0) return false;
     if (!isLemma && this.scopeLevel > 0) return false;

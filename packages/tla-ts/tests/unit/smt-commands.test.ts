@@ -6065,3 +6065,54 @@ describe("model.compact, as Z3 5.3.2's display_model compresses a model", () => 
     ]);
   });
 });
+
+describe("produce-proofs, as Z3 5.3.2's binary_clause_opt_enabled turns off binary clauses", () => {
+  it("keeps a two-literal clause in the clause database", () => {
+    const clauses = [
+      "(or (not x1) (not x6) (not x0))",
+      "(or x0 x3 x4)",
+      "(or (not x4) (not x3) (not x0))",
+      "(or x2 (not x7) x0)",
+      "(or (not x6) x7 x0)",
+      "(or (not x0) (not x7) x6)",
+      "(or x4 x2 x1)",
+      "(or (not x3) (not x6) x1)",
+      "(or (not x7) x4)",
+      "(or x7 (not x0) (not x6))",
+      "(or x0 (not x2))",
+      "(or x1 (not x0))",
+      "(or (not x3) x7 x0)",
+      "(or (not x7) x0 (not x1))",
+      "(or x3 (not x6) x0)",
+      "(or (not x2) (not x1) (not x6))",
+      "(or (not x3) x4 (not x7))",
+      "(or (not x2) x1 x6)",
+      "(or x4 (not x1) x2)",
+      "(or x4 (not x7) x6)",
+      "(or (not x1) (not x6) (not x4))",
+      "(or (not x1) (not x2) (not x6))",
+      "(or (not x6) x1 x3)",
+      "(or (not x5) (not x3) x2)",
+      "(or x0 x3)",
+      "(or x4 (not x3) x1)",
+      "(or x0 (not x6) (not x7))",
+      "(or x5 x2 x3)",
+      "(or x2 x7 x3)",
+      "(or x0 (not x1) x5)",
+      "(or x7 x6)",
+      "(or (not x6) x7)",
+      "(or (not x3) (not x1) x0)",
+      "(or (not x5) (not x7) (not x1))",
+    ];
+    expect(
+      run([
+        "(set-option :produce-proofs true)",
+        "(set-option :smt.auto_config false)",
+        ...Array.from({ length: 8 }, (_value, index) => `(declare-const x${index} Bool)`),
+        ...clauses.map((innerClause) => `(assert ${innerClause})`),
+        "(check-sat)",
+        "(get-info :rlimit)",
+      ]),
+    ).toEqual(["unsat", "(:rlimit 1128)"]);
+  });
+});
