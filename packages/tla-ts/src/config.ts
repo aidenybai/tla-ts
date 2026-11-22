@@ -176,7 +176,7 @@ export const parseConfig = (source: string, version: TlcVersion = "master"): Mod
     return token;
   };
 
-  const parseValue = (token: ConfigToken): ConfigValue => {
+  const parseLeaf = (token: ConfigToken): ConfigValue => {
     if (token.kind === "Number" && token.text.startsWith("\\")) {
       throw setExitCode(
         new TlaConfigError(
@@ -194,24 +194,40 @@ export const parseConfig = (source: string, version: TlcVersion = "master"): Mod
     if (token.kind === "String") return { kind: "String", value: token.text.slice(1, -1) };
     if (token.text === "TRUE" || token.text === "FALSE")
       return { kind: "Boolean", value: token.text === "TRUE" };
-    if (token.text === "{") {
-      const elements: ConfigValue[] = [];
-      let element = advance();
-      if (element.text !== "}") {
-        while (true) {
-          elements.push(parseValue(element));
-          element = advance();
-          if (element.text !== ",") break;
-          element = advance();
-        }
-      }
-      if (element.text !== "}") {
-        throw createSyntaxError(element.line, "It was expecting }, but did not find it.");
-      }
-      return { kind: "Set", elements };
-    }
     if (token.kind !== "End") return { kind: "ModelValue", name: token.text };
     throw createSyntaxError(token.line, "It was expecting a value, but did not find it.");
+  };
+
+  const parseValue = (first: ConfigToken): ConfigValue => {
+    const sets: ConfigValue[][] = [];
+    let token = first;
+    while (true) {
+      if (token.text === "{") {
+        const element = advance();
+        if (element.text !== "}") {
+          sets.push([]);
+          token = element;
+          continue;
+        }
+      }
+      let value: ConfigValue =
+        token.text === "{" ? { kind: "Set", elements: [] } : parseLeaf(token);
+      while (true) {
+        const elements = sets.at(-1);
+        if (elements === undefined) return value;
+        elements.push(value);
+        const separator = advance();
+        if (separator.text === ",") {
+          token = advance();
+          break;
+        }
+        if (separator.text !== "}") {
+          throw createSyntaxError(separator.line, "It was expecting }, but did not find it.");
+        }
+        sets.pop();
+        value = { kind: "Set", elements };
+      }
+    }
   };
 
   const parseModuleScope = (operator: string) => {
