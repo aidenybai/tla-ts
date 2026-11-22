@@ -109,6 +109,33 @@ describe("the CLI with TypeScript files", () => {
 
   // A model whose top level throws stops at the check that its module runs, with the message that
   // Node throws, before any call of its functions.
+  // A state variable whose name TLA+ can't spell, as $ and _, takes a name of its own in TLA+, and
+  // the trace shows it by its binding's name, in the order of the names, as TLC shows a function.
+  // The model deadlocks where bump changes nothing, after $ reaches 2.
+  describe("checks state variables whose names TLA+ can't spell, as $ and _", () => {
+    const getModel = (check: string) =>
+      `let b = 0;\nlet $ = 0;\nlet _ = 10;\nexport const bump = () => {\n  if ($ >= 2) return;\n  $ += 1;\n  _ -= 1;\n};\nexport const isKept = () => ${check};\n`;
+
+    it("agrees with Node", () => {
+      const directory = copyFixtures("passing");
+      writeFileSync(join(directory, "names.ts"), getModel("$ + _ === 10 && b === 0"));
+      expect(runNode(directory, "names.ts").status).toBe(0);
+      const result = runCli(directory, ["names.ts"]);
+      expect(result.status).toBe(11);
+      expect(result.stdout).toContain("Error: Deadlock reached.");
+      expect(result.stdout).toContain("/\\ $ = 2\n/\\ _ = 8\n/\\ b = 0");
+    });
+
+    it("rejects another result", () => {
+      const directory = copyFixtures("passing");
+      writeFileSync(join(directory, "names.ts"), getModel("$ < 2"));
+      const result = runCli(directory, ["names.ts"]);
+      expect(result.status).toBe(12);
+      expect(result.stdout).toContain("Invariant isKept is violated.");
+      expect(result.stdout).toContain("/\\ $ = 2\n/\\ _ = 8\n/\\ b = 0");
+    });
+  });
+
   describe("checks a model whose top level throws as Node throws", () => {
     const getModel = (statement: string) =>
       `export const twice = (n: 0 | 1) => n * 2;\n${statement}\n`;
