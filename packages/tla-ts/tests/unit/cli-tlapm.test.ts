@@ -5,7 +5,7 @@ import { join } from "node:path";
 import { afterAll, describe, expect, it } from "vite-plus/test";
 import { readMarshaled } from "../../src/prover/tlapm/ocaml-marshal";
 import { FIXTURES } from "./check-harness";
-import { CLI } from "./cli-harness";
+import { runTlapmIn } from "./cli-harness";
 
 const copies: string[] = [];
 
@@ -17,9 +17,6 @@ const copyFixtures = (directory: string) => {
   cpSync(join(FIXTURES, directory), copy, { recursive: true });
   return copy;
 };
-
-const runTlapmIn = (directory: string, args: string[]) =>
-  spawnSync("bun", [CLI, "tlapm", ...args], { cwd: directory, encoding: "utf8" });
 
 const runTlapm = (directory: string, args: string[]) => runTlapmIn(copyFixtures(directory), args);
 

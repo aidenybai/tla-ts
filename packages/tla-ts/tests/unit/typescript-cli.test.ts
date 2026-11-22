@@ -13,12 +13,9 @@ import { tmpdir } from "node:os";
 import { basename, dirname, join } from "node:path";
 import { pathToFileURL } from "node:url";
 import { afterAll, describe, expect, it } from "vite-plus/test";
+import { DIST_CLI } from "./cli-harness";
 
 const FIXTURES = join(import.meta.dirname, "../fixtures/typescript/cli");
-
-// The built CLI, which the tests' setup builds, run on the Node that runs the tests, as the CLI
-// records the host it runs on, which only Node can be.
-const CLI = join(import.meta.dirname, "../../dist/cli.js");
 
 const SOURCE_CLI = join(import.meta.dirname, "../../src/cli.ts");
 
@@ -35,7 +32,7 @@ const copyFixtures = (directory: string) => {
 };
 
 const runCli = (directory: string, args: string[]) =>
-  spawnSync(process.execPath, [CLI, ...args], { cwd: directory, encoding: "utf8" });
+  spawnSync(process.execPath, [DIST_CLI, ...args], { cwd: directory, encoding: "utf8" });
 
 // The code and stderr of a run, without the stack frames that Node prints and tla-ts doesn't, or
 // the version of Node.
