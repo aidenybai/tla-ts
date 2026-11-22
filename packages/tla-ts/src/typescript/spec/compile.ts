@@ -41,7 +41,8 @@ export interface EscoreSpec {
 }
 
 export interface EscoreSteps {
-  steps: string;
+  // The steps, or what makes them of the program's files, numbered from 1 as its code numbers them.
+  steps: string | ((files: readonly ProgramFile[]) => string);
   entries: readonly string[];
   // The text of other modules the steps extend, whose reads of the runtime the spec keeps.
   reads?: string;
@@ -829,8 +830,9 @@ export const compileToEscore = (
       `tla-ts can't check a program whose TLA+ spec has more than ${MOST_CODE_CHARACTERS} characters: this program's has ${code.length}, which a check would parse and run past Node's default heap`,
     );
   }
+  const steps = typeof model.steps === "string" ? model.steps : model.steps(files);
   const view = runtime.getView(
-    `${code}\n${model.steps}\n${model.reads ?? ""}\n${ROOT}\n${CONFIG}`,
+    `${code}\n${steps}\n${model.reads ?? ""}\n${ROOT}\n${CONFIG}`,
     leaves.map((leaf) => leaf.name),
   );
   const viewed = new Set(view.module.definitions.map((definition) => definition.name));
@@ -850,7 +852,7 @@ export const compileToEscore = (
       (stub) =>
         `Stub${stub.name}(${Array.from({ length: stub.arity }, (_, index) => `p${index + 1}`).join(", ")}) == Assert(FALSE, "tla-ts can't run ${stub.name}, which this program's spec leaves out of ESCore")`,
     ),
-    model.steps,
+    steps,
     "====",
     "",
   ].join("\n");
