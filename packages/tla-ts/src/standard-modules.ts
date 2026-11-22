@@ -494,7 +494,7 @@ const createSequencesOperators = (version: TlcVersion) =>
               ? getValue(args, 0, "\\o")
               : undefined;
         if (kept !== undefined && getFunctionClass(kept) === "tuple") return kept;
-        return createTuple([...left, ...right]);
+        return createTuple(left.concat(right));
       }
       const right = getValue(args, 1, "\\o");
       if (typeof right !== "string") {
@@ -504,15 +504,16 @@ const createSequencesOperators = (version: TlcVersion) =>
       }
       return rankString(left + right);
     }),
+    // A copy by concat, which builds the long sequences of a loop that appends to one several times
+    // faster than a spread.
     defineOperator("Append", 2, (args) =>
-      createTuple([
-        ...getSequenceArgument(
+      createTuple(
+        getSequenceArgument(
           args,
           0,
           getEvaluatingMessage(version === "1.7.4" ? "Append(v, s)" : "Append(s, v)", "sequence"),
-        ),
-        getValue(args, 1, "Append"),
-      ]),
+        ).concat([getValue(args, 1, "Append")]),
+      ),
     ),
     defineOperator("Head", 1, (args) => {
       const elements = getSequenceArgument(args, 0, getSequenceMessage("", "Head"));

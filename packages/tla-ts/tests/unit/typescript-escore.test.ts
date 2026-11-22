@@ -2092,6 +2092,51 @@ describe("compiles scripts by specializing ESCore", () => {
     },
   );
 
+  // The host's answers for many locales and options, as Effect's DateTime records them, repeat the
+  // same options and the same answers, which the table names once each, and a lookup of any of them
+  // gives Node's answer.
+  describe.runIf(Reflect.has(globalThis, "Temporal"))(
+    "answers each locale and options of a DateTimeFormat as Node does, from a shared table",
+    () => {
+      const getSource = (expected: string) => `
+      const locales = ["en-US", "en-GB", "de", "fr", "ja"];
+      const options = [{}, { hour: "numeric" }, { timeZone: "UTC" }, { hour12: false, timeZone: "UTC" }] as const;
+      const result = locales
+        .flatMap((locale) =>
+          options.map((option) => {
+            const resolved = new Intl.DateTimeFormat(locale, option).resolvedOptions();
+            return [resolved.locale, resolved.hourCycle ?? "-", resolved.timeZone].join(" ");
+          }),
+        )
+        .join("|");
+      if (result !== "${expected}") throw new Error(result);
+    `;
+      const getExpected = () =>
+        ["en-US", "en-GB", "de", "fr", "ja"]
+          .flatMap((locale) =>
+            [{}, { hour: "numeric" }, { timeZone: "UTC" }, { hour12: false, timeZone: "UTC" }].map(
+              (option) => {
+                const resolved = new Intl.DateTimeFormat(
+                  locale,
+                  option as Intl.DateTimeFormatOptions,
+                ).resolvedOptions();
+                return [resolved.locale, resolved.hourCycle ?? "-", resolved.timeZone].join(" ");
+              },
+            ),
+          )
+          .join("|");
+
+      it("agrees with Node", async () => {
+        expect((await checkScript(getSource(getExpected()))).message).toBeUndefined();
+      });
+
+      it("rejects another result", async () => {
+        const expected = getExpected().replace("en-GB", "en-AU");
+        expect((await checkScript(getSource(expected))).message).toContain(THREW);
+      });
+    },
+  );
+
   describe.runIf(Reflect.has(globalThis, "Temporal"))(
     "runs the locale-sensitive methods of arrays and strings as ECMA-402 does",
     () => {
