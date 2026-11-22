@@ -24,6 +24,7 @@ import {
   getPatternNames,
   hasNoOperands,
   isBefore,
+  isInstantiated,
   LOCAL_RESOLUTION,
 } from "./resolve";
 
@@ -1145,10 +1146,15 @@ const expandLetInstances = (
   expression: Expression,
   instantiate: (instance: Instance, lets: Definition[]) => Definition[],
   lets: Definition[],
+  outerInstances: Instance[],
 ): Expression => {
   const visibleLets = expression.kind === "Let" ? [...lets, ...expression.definitions] : lets;
+  const ownInstances = expression.kind === "Let" ? (expression.instances ?? []) : [];
   const mapped = mapChildren(expression, (child) =>
-    expandLetInstances(child, instantiate, visibleLets),
+    expandLetInstances(child, instantiate, visibleLets, [
+      ...outerInstances,
+      ...ownInstances.filter((instance) => isBefore(instance.location, child.location)),
+    ]),
   );
   if (mapped.kind !== "Let" || !mapped.instances) {
     const children = getChildren(expression);
@@ -1157,15 +1163,19 @@ const expandLetInstances = (
       : mapped;
   }
   const definitions = mapped.instances.reduce((current, instance) => {
-    const position = current.findIndex((definition) =>
+    const next = mapped.definitions.find((definition) =>
       isBefore(instance.location, definition.location),
     );
-    const index = position === -1 ? current.length : position;
-    return [
-      ...current.slice(0, index),
-      ...instantiate(instance, visibleLets),
-      ...current.slice(index),
-    ];
+    const index = next === undefined ? current.length : current.indexOf(next);
+    const isTaken = outerInstances.some(
+      (outer) => outer.name === instance.name && outer.module === instance.module,
+    );
+    const copies = instantiate(instance, visibleLets).filter(
+      (copy) =>
+        !isInstantiated(copy) ||
+        (!isTaken && current.every((definition) => definition.name !== copy.name)),
+    );
+    return [...current.slice(0, index), ...copies, ...current.slice(index)];
   }, mapped.definitions);
   return { ...mapped, definitions };
 };
@@ -1187,6 +1197,6 @@ export const getLetInstanceExpansion = (
       return statement !== undefined && hasLetInstance(statement);
     });
   return hasLetInstances
-    ? (expression: Expression) => expandLetInstances(expression, instantiate, [])
+    ? (expression: Expression) => expandLetInstances(expression, instantiate, [], [])
     : undefined;
 };

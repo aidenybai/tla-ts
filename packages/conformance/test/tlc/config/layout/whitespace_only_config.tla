@@ -2,7 +2,7 @@
 description: A configuration of blank lines and tabs is equal to an empty one.
 ref: tlc2/tool/impl/ModelConfig.java#parse
 outcome: success
-config: |+
+config: "\n\t\n\n\t\t\n\n"
 ---*)
 ---- MODULE whitespace_only_config ----
 ASSUME TRUE

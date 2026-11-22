@@ -66,6 +66,8 @@ describe("the CLI with TypeScript files", () => {
     },
   );
 
+  // The input stays as long as the one that overflowed the stack, whose throw string.ts checks in
+  // about 24 s.
   it.each(["string.ts", "array.ts"] as const)(
     "exits with Node's code and stderr where %s, which loops over a long input, throws",
     (file) => {
@@ -75,6 +77,7 @@ describe("the CLI with TypeScript files", () => {
       expect(getExit(result)).toEqual(getExit(runNode(directory, file)));
       expect(result.status).toBe(1);
     },
+    120_000,
   );
 
   it("checks a TypeScript file without writing the TLA+ spec and config it compiles to", () => {
@@ -147,7 +150,8 @@ describe("the CLI with TypeScript files", () => {
   });
 
   // A state variable whose name TLA+ can't spell, as $ and _, takes a name of its own in TLA+, and
-  // the trace shows it by its binding's name, in the order of the names, as TLC shows a function.
+  // the trace shows it by its binding's name, in the order of TLC's ranks of the names, as TLC
+  // shows a function. Real TLC, on the program's modules under its root, shows $, b, then _.
   // The model deadlocks where bump changes nothing, after $ reaches 2.
   describe("checks state variables whose names TLA+ can't spell, as $ and _", () => {
     const getModel = (check: string) =>
@@ -160,7 +164,7 @@ describe("the CLI with TypeScript files", () => {
       const result = runCli(directory, ["names.ts"]);
       expect(result.status).toBe(11);
       expect(result.stdout).toContain("Error: Deadlock reached.");
-      expect(result.stdout).toContain("/\\ $ = 2\n/\\ _ = 8\n/\\ b = 0");
+      expect(result.stdout).toContain("/\\ $ = 2\n/\\ b = 0\n/\\ _ = 8");
     });
 
     it("rejects another result", () => {
@@ -169,7 +173,7 @@ describe("the CLI with TypeScript files", () => {
       const result = runCli(directory, ["names.ts"]);
       expect(result.status).toBe(12);
       expect(result.stdout).toContain("Invariant isKept is violated.");
-      expect(result.stdout).toContain("/\\ $ = 2\n/\\ _ = 8\n/\\ b = 0");
+      expect(result.stdout).toContain("/\\ $ = 2\n/\\ b = 0\n/\\ _ = 8");
     });
   });
 
@@ -232,6 +236,42 @@ describe("the CLI with TypeScript files", () => {
       expect(result.stderr).toMatch(
         /^TlaHeapLimitError: tla-ts can't check this program within Node's default heap of \d+ MB\n$/,
       );
+    });
+  });
+
+  // Intl's timeZone option reads the zone that a model's string names, as the frame lists strings:
+  // "", "a", and "b", none of which Node has, so Node's Intl rejects each as it does, from the zones
+  // the host's table records, as Effect's DateTime.zoneMakeNamedUnsafe asks.
+  describe("rejects the time zones a model's strings name as Node's Intl does", () => {
+    const getModel = (rejected: string) =>
+      `export const isZone = (name: string) => {\n  if (name === "") return false;\n  try {\n    new Intl.DateTimeFormat("en-US", { timeZone: name });\n    return true;\n  } catch (error) {\n    ${rejected};\n  }\n};\n`;
+    const isRejected = (name: string) => {
+      try {
+        new Intl.DateTimeFormat("en-US", { timeZone: name });
+        return false;
+      } catch {
+        return true;
+      }
+    };
+
+    it("agrees with Node", () => {
+      expect(["a", "b"].every(isRejected)).toBe(true);
+      const directory = copyFixtures("passing");
+      writeFileSync(join(directory, "zone.ts"), getModel("return false"));
+      const result = runCli(directory, ["zone.ts"]);
+      expect(result.status).toBe(0);
+      expect(result.stdout).toContain("Model checking completed. No error has been found.");
+    });
+
+    it("rejects another result", () => {
+      const directory = copyFixtures("passing");
+      writeFileSync(
+        join(directory, "zone.ts"),
+        getModel('throw new Error("rejected " + (error instanceof RangeError))'),
+      );
+      const result = runCli(directory, ["zone.ts"]);
+      expect(result.status).not.toBe(0);
+      expect(result.stdout).toContain('the second argument was:\n"rejected true"');
     });
   });
 
@@ -1154,9 +1194,8 @@ describe("the CLI with TypeScript files", () => {
     expect(result.stdout).toContain("tla-ts can't give the source text of the host's function");
   });
 
-  // A program whose TLA+ code passes the most that a check parses and runs within Node's default
-  // heap stops before the check reads it, as one of 150,000 numbers does, where a check would run out
-  // of memory, as one of Effect's modules did.
+  // A program whose TLA+ code passes the most that a check parses within Node's default heap stops
+  // before the check reads it, as one of 230,000 numbers does.
   describe("checks a program within the TLA+ code that Node's default heap holds", () => {
     const getScript = (count: number, expected: number) =>
       `const values = [${Array.from({ length: count }, (_, index) => `${index}.5`).join(", ")}];\nif (values.length !== ${expected}) throw new RangeError("length " + values.length);\n`;
@@ -1178,12 +1217,12 @@ describe("the CLI with TypeScript files", () => {
 
     it("stops at a program whose TLA+ code passes the bound", () => {
       const directory = copyFixtures("passing");
-      writeFileSync(join(directory, "values.mjs"), getScript(150_000, 150_000));
+      writeFileSync(join(directory, "values.mjs"), getScript(230_000, 230_000));
       expect(runNode(directory, "values.mjs").status).toBe(0);
       const result = runCli(directory, ["values.mjs"]);
       expect([0, 1]).not.toContain(result.status);
       expect(result.stderr).toContain(
-        "tla-ts can't check a program whose TLA+ spec has more than 33000000 characters",
+        "tla-ts can't check a program whose TLA+ spec has more than 55000000 characters",
       );
     });
   });

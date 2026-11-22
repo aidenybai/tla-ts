@@ -248,6 +248,27 @@ Spec == Init /\\ [][Next]_x
     );
   });
 
+  it("rejects an argument above the level that the operator parameter it reaches through a definition permits, where SANY drops the constraint", () => {
+    const report = getReport({
+      M: "---- MODULE M ----\nVARIABLE x\nPr(p) == p'\nW(Op(_)) == LET D(p) == Op(p) IN D(x')\nV == W(Pr)\n====\n",
+    });
+    expect(report.text).toBe(
+      joinLines([
+        "Semantic errors:",
+        "",
+        "*** Errors: 1",
+        "",
+        "line 5, col 6 to line 5, col 10 of module M",
+        "",
+        "Level error in applying operator W:",
+        "The permitted level of argument 1 of the operator argument 1 ",
+        "must be at least 2.",
+        "",
+        "",
+      ]),
+    );
+  });
+
   it("locates the tuple of an EXCEPT path at the part of its update SANY picks", () => {
     const report = getReport({
       M: "---- MODULE M ----\nVARIABLE x\nf == [v \\in {1} |-> v]\nB == [f EXCEPT ![1][[]x, 2] = 1]\nC == [f EXCEPT ![1][2][[]x, 3] = ((1))]\n====\n",
@@ -1403,6 +1424,37 @@ Spec == Init /\\ [][Next]_x
         "line 3, col 1 to line 3, col 7 of module Twice",
         "",
         "Operator Op already defined or declared.",
+        "",
+        "",
+      ]),
+    );
+  });
+
+  it("reports a theorem that two instances with parameters copy as multiply defined", () => {
+    const report = getReport({
+      M: "---- MODULE M ----\n---- MODULE L ----\nCONSTANT c\nA == c\nTHEOREM T == c = c\n====\nI(p) == INSTANCE L WITH c <- p\nI(p) == INSTANCE L WITH c <- p\n====\n",
+    });
+    expect(report.text).toBe(
+      joinLines([
+        "*** Warnings: 2",
+        "",
+        ...["I!A", "I"].flatMap((name) => [
+          "line 8, col 1 to line 8, col 30 of module M",
+          "",
+          `Multiple declarations or definitions for symbol ${name}.  `,
+          "This duplicates the one at line 7, col 1 to line 7, col 30 of module M.",
+          "",
+          "",
+          "",
+        ]),
+        "Semantic errors:",
+        "",
+        "*** Errors: 1",
+        "",
+        "line 8, col 1 to line 8, col 30 of module M",
+        "",
+        "Multiply-defined symbol 'I!T': this definition or declaration conflicts ",
+        "with the one at line 7, col 1 to line 7, col 30 of module M.",
         "",
         "",
       ]),

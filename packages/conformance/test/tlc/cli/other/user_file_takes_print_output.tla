@@ -6,6 +6,8 @@ config: ""
 args:
   - -userFile
   - out.txt
+files:
+  - out.txt
 ---*)
 ---- MODULE user_file_takes_print_output ----
 EXTENDS TLC
@@ -23,4 +25,7 @@ all:
       calculated (optimistic):  val = 0.0
     2199:0 0 states generated, 0 distinct states found, 0 states left on queue.
     2194:0 The depth of the complete state graph search is 0.
+  files:
+    out.txt: |
+      "to the user file"
 ---*)

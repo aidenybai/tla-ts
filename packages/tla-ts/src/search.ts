@@ -908,9 +908,15 @@ export interface Search {
   findPostconditionViolation: (isAfterViolation?: boolean) => Postcondition | undefined;
 }
 
+// An ALIAS's fields, of a record in the order it was written, and of another function in the order
+// of its domain, as FcnRcdValue.toRcd normalizes the function before it names the fields.
 const toAliasRecord = (value: Value) => {
   if (!isFunctionValue(value)) return undefined;
-  const pairs = getWrittenPairs(toFiniteFunction(value));
+  const fn = toFiniteFunction(value);
+  const pairs =
+    fn.functionClass === "record"
+      ? getWrittenPairs(fn)
+      : fn.domain.map((key, index): [Value, Value] => [key, fn.range[index]]);
   if (!pairs.every((pair) => typeof pair[0] === "string")) return undefined;
   return Object.fromEntries(pairs.map((pair) => [String(pair[0]), pair[1]]));
 };
