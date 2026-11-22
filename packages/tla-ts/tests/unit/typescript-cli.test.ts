@@ -204,6 +204,37 @@ describe("the CLI with TypeScript files", () => {
     });
   });
 
+  // A check runs on a thread whose heap is the one Node gives the process, here 300 MB of old
+  // space, and stops where it runs out of it, though Node runs the script in less, as a script of
+  // 20,000 numbers does, where one of 10 checks.
+  describe("stops a check that runs out of the heap that Node gives it", () => {
+    const getScript = (count: number) =>
+      `const values = [${Array.from({ length: count }, (_, index) => `${index}.5`).join(", ")}];\nif (values.length !== ${count}) throw new RangeError("length " + values.length);\n`;
+    const runLimited = (directory: string, file: string) =>
+      spawnSync(process.execPath, ["--max-old-space-size=300", DIST_CLI, file], {
+        cwd: directory,
+        encoding: "utf8",
+      });
+
+    it("agrees with Node", () => {
+      const directory = copyFixtures("passing");
+      writeFileSync(join(directory, "values.mjs"), getScript(10));
+      expect(runNode(directory, "values.mjs").status).toBe(0);
+      expect(getExit(runLimited(directory, "values.mjs"))).toEqual([0, ""]);
+    });
+
+    it("rejects another result", () => {
+      const directory = copyFixtures("passing");
+      writeFileSync(join(directory, "values.mjs"), getScript(20_000));
+      expect(runNode(directory, "values.mjs").status).toBe(0);
+      const result = runLimited(directory, "values.mjs");
+      expect(result.status).toBe(255);
+      expect(result.stderr).toMatch(
+        /^TlaHeapLimitError: tla-ts can't check this program within Node's default heap of \d+ MB\n$/,
+      );
+    });
+  });
+
   describe("checks a model whose top level throws as Node throws", () => {
     const getModel = (statement: string) =>
       `export const twice = (n: 0 | 1) => n * 2;\n${statement}\n`;
