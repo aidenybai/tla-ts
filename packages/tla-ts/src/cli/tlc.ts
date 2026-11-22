@@ -447,38 +447,13 @@ const checkSpec = async (
       writeFile: writeJavaFile,
       makeDirectory: makeJavaDirectory,
     };
-    if (args.mode !== "model-check") {
-      const status = simulate({
-        ...options,
-        traceDepth: args.traceDepth,
-        traceCount: args.traceCount,
-        aril: args.aril,
-        isGenerating: args.mode === "generate",
-        scheduler: args.scheduler,
-        isDiffTrace: args.isDiffTrace,
-        onSimulation: (output) => printSimulation(printer, output, timing.startTime),
-      });
-      printFinished();
-      return status;
-    }
-    if (args.dfidDepth !== undefined) {
-      const status = checkDepthFirst({
-        ...options,
-        maxDepth: args.dfidDepth,
-        onOutput: (output) => printDepthFirst(printer, output, timing.startTime),
-      });
-      printFinished();
-      return status;
-    }
-    const result = await check(options);
-    printResult(result, printer, timing);
-    printFinished();
-    if (traceSpec && result.traceSpec !== undefined) {
+    const writeTraceExplorationSpec = (text: string | undefined) => {
+      if (!traceSpec || text === undefined) return;
       const path = resolveJavaPath(traceSpec.directory, `${traceSpec.module}.tla`);
       makeJavaDirectory(traceSpec.directory);
       const failure = (() => {
         try {
-          writeJavaFile(path, result.traceSpec);
+          writeJavaFile(path, text);
           return undefined;
         } catch (error) {
           if (!(error instanceof TlaEvaluationError)) throw error;
@@ -492,7 +467,43 @@ const checkSpec = async (
           ? `Failed to generate trace exploration spec; error message: ${failure.message}`
           : `Trace exploration spec path: ${path}`,
       );
+    };
+    let recordedTraceSpec: string | undefined;
+    if (args.mode !== "model-check") {
+      const status = simulate({
+        ...options,
+        traceDepth: args.traceDepth,
+        traceCount: args.traceCount,
+        aril: args.aril,
+        isGenerating: args.mode === "generate",
+        scheduler: args.scheduler,
+        isDiffTrace: args.isDiffTrace,
+        onSimulation: (output) => {
+          if (output.kind === "trace-spec") recordedTraceSpec = output.text;
+          else printSimulation(printer, output, timing.startTime);
+        },
+      });
+      printFinished();
+      writeTraceExplorationSpec(recordedTraceSpec);
+      return status;
     }
+    if (args.dfidDepth !== undefined) {
+      const status = checkDepthFirst({
+        ...options,
+        maxDepth: args.dfidDepth,
+        onOutput: (output) => {
+          if (output.kind === "trace-spec") recordedTraceSpec = output.text;
+          else printDepthFirst(printer, output, timing.startTime);
+        },
+      });
+      printFinished();
+      writeTraceExplorationSpec(recordedTraceSpec);
+      return status;
+    }
+    const result = await check(options);
+    printResult(result, printer, timing);
+    printFinished();
+    writeTraceExplorationSpec(result.traceSpec);
     return result.failure?.exitCode ?? EXIT_CODES[result.status];
   } catch (caught) {
     const error = isStackOverflow(caught) ? createStackOverflowError() : caught;

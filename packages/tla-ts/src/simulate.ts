@@ -26,6 +26,7 @@ import {
   STOP_WALK,
   walkCoveredSuccessors,
   type CliSettings,
+  type TraceSpecOutput,
 } from "./search";
 import { getActionLabel, toActionValue, type SpecAction } from "./spec-description";
 import { forEachInitialState, forEachSuccessor, type Successor } from "./successors";
@@ -85,6 +86,7 @@ export type SimulationOutput =
   | { kind: "message"; code: number; isError: boolean; message: string; toolMessage: string }
   | { kind: "behavior"; trace: TraceStep[]; levels: number[]; isLastStateOnly: boolean }
   | CoverageOutput
+  | TraceSpecOutput
   | { kind: "progress"; statistics: SimulationStatistics }
   | { kind: "summary"; statistics: SimulationStatistics };
 
@@ -107,6 +109,7 @@ interface WorkerError {
   violation?: Violation;
   failures?: FailureMessage[];
   counterExample?: Value;
+  traceSpec?: string;
 }
 
 const FATAL_CODES = new Set<number>([
@@ -658,6 +661,10 @@ export const simulate = (options: SimulationOptions & CliSettings): number => {
       },
       failures: found.failures.map((failure) => toException(failure, last)),
       counterExample: getCounterExample(lasso, steps, { start: loopStart, action: loopAction }),
+      traceSpec: prepared.getTraceSpec(
+        lasso.map((node) => toRecord(node.state)),
+        loopStart,
+      ),
     };
   };
   const simulateTrace = (): WorkerError | "stopped" | undefined => {
@@ -786,6 +793,7 @@ export const simulate = (options: SimulationOptions & CliSettings): number => {
         violation: error.violation,
       });
       printSummary();
+      if (error.traceSpec !== undefined) output({ kind: "trace-spec", text: error.traceSpec });
       continue;
     }
     reportMessage(error.code, error.message, error.toolMessage);
@@ -810,6 +818,13 @@ export const simulate = (options: SimulationOptions & CliSettings): number => {
       levels: shown.positions.map((position) => trace[position].level),
       isLastStateOnly,
     });
+    const traceSpec = isLastStateOnly
+      ? undefined
+      : prepared.getTraceSpec(
+          shown.positions.map((position) => toRecord(trace[position].state)),
+          undefined,
+        );
+    if (traceSpec !== undefined) output({ kind: "trace-spec", text: traceSpec });
     const failure = shown.failure;
     if (failure) {
       reportMessage(failure.code, failure.message, failure.toolMessage);

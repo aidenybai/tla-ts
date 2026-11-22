@@ -1,5 +1,14 @@
 import { spawnSync } from "node:child_process";
-import { mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from "node:fs";
+import {
+  copyFileSync,
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  realpathSync,
+  rmSync,
+  writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it } from "vite-plus/test";
@@ -2304,6 +2313,47 @@ describe("the CLI reports a stack overflow while it prints a trace and keeps the
     expect(result.stdout).toContain("\nError: This was a Java StackOverflowError.");
     expect(result.stdout).toContain(
       "\n31 states generated, 31 distinct states found, 0 states left on queue.\nThe depth of the complete state graph search is 31.\n",
+    );
+  });
+});
+
+describe("the CLI writes the trace exploration spec in every mode, as TLC does", () => {
+  it.each([
+    ["-simulate", ["-simulate", "-depth", "10"]],
+    ["-generate", ["-generate", "-depth", "10"]],
+    ["-dfid", ["-dfid", "5"]],
+  ])("writes TLC's spec for Safety under %s and prints its path last", (_mode, args) => {
+    const fixtures = join(FIXTURES, "trace-spec");
+    const directory = mkdtempSync(join(tmpdir(), "trace-spec-"));
+    copyFileSync(join(fixtures, "Safety.tla"), join(directory, "Safety.tla"));
+    copyFileSync(join(fixtures, "Safety.cfg"), join(directory, "Safety.cfg"));
+    const result = spawnSync(
+      process.execPath,
+      [
+        DIST_CLI,
+        "Safety.tla",
+        ...args,
+        "-fp",
+        "0",
+        "-seed",
+        "0",
+        "-teSpecOutDir",
+        "te_out.tla",
+        "-metadir",
+        join(directory, "states"),
+      ],
+      { cwd: directory, encoding: "utf8" },
+    );
+    const path = join(directory, "te_out.tla");
+    const written = existsSync(path) ? readFileSync(path, "utf8") : undefined;
+    rmSync(directory, { recursive: true });
+    const date = /\\\* Generated on .*$/;
+    expect([result.status, result.stdout.split("\n").slice(-2)]).toEqual([
+      12,
+      ["Trace exploration spec path: ./te_out.tla", ""],
+    ]);
+    expect(written?.replace(date, "")).toBe(
+      readFileSync(join(fixtures, "Safety_TTrace.tla"), "utf8").replace(date, ""),
     );
   });
 });

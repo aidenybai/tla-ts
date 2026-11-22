@@ -18,6 +18,7 @@ import {
   getIncompleteSuccessorMessage,
   prepareSearch,
   reportAssumptionViolation,
+  type TraceSpecOutput,
 } from "./search";
 import { createLivenessDump, createStateWriter } from "./state-graph";
 import { forEachInitialState, forEachSuccessor, getSuccessors, type Successor } from "./successors";
@@ -53,6 +54,7 @@ export type DepthFirstOutput =
   | { kind: "behavior"; states: Record<string, Value>[]; isInvariant: boolean }
   | { kind: "nested-expressions"; callStack: Expression[] }
   | CoverageOutput
+  | TraceSpecOutput
   | { kind: "success"; optimistic: number; actual: number };
 
 interface StateEntry {
@@ -444,11 +446,11 @@ export const checkDepthFirst = (options: DepthFirstOptions): number => {
       ...stack.slice(0, depth + 1).map((entry) => entry.state),
       ...(successor ? [successor] : []),
     ];
-    output({
-      kind: "behavior",
-      states: states.map(toRecord),
-      isInvariant: code === MESSAGE_CODE.invariantViolatedBehavior,
-    });
+    const records = states.map(toRecord);
+    const isInvariant = code === MESSAGE_CODE.invariantViolatedBehavior;
+    output({ kind: "behavior", states: records, isInvariant });
+    const traceSpec = isInvariant ? prepared.getTraceSpec(records, undefined) : undefined;
+    if (traceSpec !== undefined) output({ kind: "trace-spec", text: traceSpec });
   };
   const expandState = (depth: number, isLeaf: boolean, successors: StateEntry[]) => {
     const entry = stack[depth];
