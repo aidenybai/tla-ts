@@ -1450,7 +1450,13 @@ const searchStates = (
           if (error !== STOP_WALK) throw error;
         }
       } else {
-        forEachInitialState(spec.init, environment, onInitialState, spec.scope);
+        forEachInitialState(
+          spec.init,
+          environment,
+          onInitialState,
+          spec.scope,
+          spec.initPredicates,
+        );
       }
       if (overflowState) {
         outcome = reportInitialFailure(createStackOverflowError(), overflowState);
@@ -1782,6 +1788,7 @@ const searchStates = (
           { outDegrees: getFailureOutDegrees() },
         );
       }
+      // Deviation from TLC: ModelChecker#doNextFailed prints no message for the FingerprintException that TupleValue#equals throws when Worker#doNextCheckLiveness compares a subscript, where tla-ts reports the comparison's error.
       const replay = getReplayFailure(environment, (tracing) =>
         liveness?.addState(index, state, liveSuccessors, tracing),
       );

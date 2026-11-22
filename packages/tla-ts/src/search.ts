@@ -87,7 +87,12 @@ import {
 import { getLiveExpressions } from "./liveness-checker";
 import { prettyPrint, prettyPrintT } from "./pretty-print";
 import { parenthesizedRanges } from "./parser";
-import { getOperatorDefinition, getSubstitutedName, substitutionFrames } from "./instances";
+import {
+  getActionPredicate,
+  getOperatorDefinition,
+  getSubstitutedName,
+  substitutionFrames,
+} from "./instances";
 import { getPossibleCounts, type CheckerRuntime } from "./runtime";
 import { createIncompleteSuccessorError, type SuccessorGenerator } from "./successors";
 import {
@@ -199,6 +204,7 @@ interface ActionProperty {
 
 interface Specification {
   init: Expression | undefined;
+  initPredicates: ReadonlyMap<Expression, Expression>;
   next: Expression | undefined;
   scope: Scope | undefined;
   temporals: ScopedExpression[];
@@ -437,6 +443,7 @@ const getSpecification = (
     };
     return {
       init: getOperator(config.init, "initial predicate"),
+      initPredicates: new Map(),
       next: getOperator(config.next, "next state action"),
       scope: undefined,
       temporals: [],
@@ -448,7 +455,7 @@ const getSpecification = (
       "The configuration file cannot specify both INIT/NEXT and SPECIFICATION fields.",
     );
   }
-  const initConjuncts: ScopedExpression[] = [];
+  const initConjuncts: (ScopedExpression & { predicate: Expression })[] = [];
   const nextActions: ScopedExpression[] = [];
   const temporals: ScopedExpression[] = [];
   const specificationKey = getRootKey(config.specification, environment);
@@ -497,6 +504,7 @@ const getSpecification = (
       );
     }
     if (conjunct.kind === "Always" && conjunct.expression.kind === "BoxAction") {
+      // Deviation from TLC: SpecProcessor's SubscriptCollector binds each enclosing instance's substitutes in the context outside them all, so it misses a variable two instances down and warns the subscript lacks it.
       const variables = getSubscriptVariables(
         conjunct.expression.subscript,
         item.scope,
@@ -567,6 +575,7 @@ const getSpecification = (
               scope: item.scope,
               state: undefined,
               next: undefined,
+              control: "Clear",
               cache: undefined,
               isStreamed: false,
               isRebuilt: false,
@@ -585,11 +594,15 @@ const getSpecification = (
           location: item.expression.location,
           resolution: { kind: "Local" },
         };
+  const operands = initConjuncts.map(getReference);
   return {
-    init:
-      initConjuncts.length === 0
-        ? undefined
-        : { kind: "And", operands: initConjuncts.map(getReference), location: START },
+    init: operands.length === 0 ? undefined : { kind: "And", operands, location: START },
+    initPredicates: new Map(
+      initConjuncts.map((item, index): [Expression, Expression] => [
+        operands[index],
+        item.predicate,
+      ]),
+    ),
     next: nextActions.length === 0 ? undefined : getReference(nextActions[0], initConjuncts.length),
     scope,
     temporals,
@@ -943,7 +956,8 @@ const getExpectedValue = (kind: string, expression: Expression, environment: Env
       : undefined;
   const body = definition ? getOpDefBody(definition) : expression;
   const range = definition?.kind === "Operator" ? definition.bodyRange : undefined;
-  const location = range && body.kind !== "Number" ? formatRange(range) : describeNode(body);
+  const location =
+    range && body.kind !== "Number" ? formatRange(range) : describeNode(getActionPredicate(body));
   return `TLC expected a ${kind} value, but did not find one. ${location}`;
 };
 

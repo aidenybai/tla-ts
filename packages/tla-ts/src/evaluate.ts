@@ -182,6 +182,9 @@ const createCodeSite = (expression: Expression): CodeSite => ({
   tail: undefined,
 });
 
+// LazyValue#getCachedValue ignores TLC's KeepLazy, Init and Const flags.
+export type EvalControl = "Clear" | "Enabled" | "Primed";
+
 export interface Thunk {
   kind: "Thunk";
   expression: Expression;
@@ -189,6 +192,7 @@ export interface Thunk {
   scope: Scope | undefined;
   state: State | undefined;
   next: State | undefined;
+  control: EvalControl;
   cache: Value | undefined;
   isStreamed: boolean;
   isRebuilt: boolean;
@@ -1200,9 +1204,11 @@ const forceThunk = (thunk: Thunk, context: Context) => {
   // Under a prime TLC evaluates with no next state, where a LazyValue neither reads nor keeps its
   // cache (Tool.eval). A released thunk keeps the value that holds in every state.
   const isUncached = context.isPrimed === true && !thunk.isReleased;
+  const control = context.environment.runtime.evalControl;
   const isCached =
     !isUncached &&
     cache !== undefined &&
+    thunk.control === control &&
     isStateWithin(context.state, thunk.state) &&
     isStateWithin(context.next, thunk.next) &&
     // TLC builds the function again at each reference, and outside KeepLazy evaluates each element.
@@ -1232,6 +1238,7 @@ const forceThunk = (thunk: Thunk, context: Context) => {
     thunk.cache = value;
     thunk.state = context.state;
     thunk.next = context.next;
+    thunk.control = control;
   }
   // A value cached where no variable is assigned holds in every state, so forcing the thunk never
   // reads its scope again. A step may still run a thunk it bound by name.
@@ -1397,6 +1404,7 @@ const createThunk = (
   scope: context.scope,
   state: context.state,
   next: context.next,
+  control: "Clear",
   cache: undefined,
   isStreamed: false,
   isRebuilt: false,
@@ -1949,6 +1957,7 @@ export const bindDefinitions = (
           scope: ownScope,
           state: context.state,
           next: context.next,
+          control: "Clear",
           cache: undefined,
           isStreamed:
             definition.kind === "Operator" && (reevaluated?.streamed.has(definition) ?? false),
@@ -2450,17 +2459,15 @@ const compileIdentifier = (
   }
   const coverage = environment.coverage;
   if (!coverage) return (context) => evaluateLocalIdentifier(name, expression, context);
-  // TLC's Tool#evalAppl evaluates a LazyValue afresh where s1 is TLCState.Null, and LazyValue#getValue reuses a value only under the EvalControl it computed it under.
+  // TLC's Tool#evalAppl evaluates a LazyValue afresh where s1 is TLCState.Null.
   return (context) => {
     const binding = lookupScope(context.scope, name);
     if (binding?.kind !== "Thunk" || binding.isReleased) {
       return evaluateLocalIdentifier(name, expression, context);
     }
-    if (context.next === NULL_STATE) return evaluateCoveredThunk(binding, context, coverage);
-    if (coverage.cachedInEnabled.get(binding) !== coverage.isEnabled) binding.cache = undefined;
-    const value = forceThunk(binding, context);
-    coverage.cachedInEnabled.set(binding, coverage.isEnabled);
-    return value;
+    return context.next === NULL_STATE
+      ? evaluateCoveredThunk(binding, context, coverage)
+      : forceThunk(binding, context);
   };
 };
 
@@ -3525,7 +3532,10 @@ const compile = (expression: Expression, environment: Environment): Evaluator =>
       const index = environment.variableIndex.get(name) ?? -1;
       const substitution = getChildEvaluator(expression.substitution);
       return (context) => {
-        if (context.next !== NULL_STATE) return substitution(context);
+        // Tool#lookup stops at ENABLED's context branch under EvalControl.Primed, which Tool#enabledUnchanged passes with s1 as TLCState.Empty.
+        if (context.next !== NULL_STATE && context.environment.runtime.evalControl !== "Primed") {
+          return substitution(context);
+        }
         const value = context.state?.[index];
         if (value === undefined) throw createUnassignedError(name, expression);
         return value;

@@ -725,3 +725,28 @@ it("keeps the incomplete step of a successor error under -difftrace, where TLC's
     "difftrace requested: Shortened behavior by omitting finite stuttering (1 states), which is an artifact of simulation mode.\n",
   ]);
 });
+
+it("reports an initial conjunct it evaluates whole at the instance that holds it, as TLC's Tool does", () => {
+  const messages: string[] = [];
+  simulate({
+    source:
+      "---- MODULE M ----\nEXTENDS Naturals\nVARIABLES x, y\nI(j) == INSTANCE N WITH k <- j\nSpec == I(0)!Init /\\ I(0)!Sum /\\ [][UNCHANGED <<x, y>>]_<<x, y>>\n====\n",
+    config: "SPECIFICATION Spec\n",
+    loadModule: (name) =>
+      name === "N"
+        ? "---- MODULE N ----\nEXTENDS Naturals\nCONSTANT k\nVARIABLES x, y\nSum == 1 + 1\nBad == x + 1\nInit == x = k /\\ y = 0\n====\n"
+        : undefined,
+    seed: 4n,
+    traceDepth: 3,
+    traceCount: 1n,
+    aril: 0n,
+    isGenerating: false,
+    scheduler: "random",
+    onSimulation: (output) => {
+      if (output.kind === "message" && output.isError) messages.push(output.message);
+    },
+  });
+  expect(messages).toEqual([
+    "TLC threw an unexpected exception.\nThis was probably caused by an error in the spec or model.\nSee the User Output or TLC Console for clues to what happened.\nThe exception was a java.lang.RuntimeException\n: In computing initial states, TLC expected a boolean expression,\nbut instead found 2.\nline 4, col 1 to line 4, col 30 of module M",
+  ]);
+});
