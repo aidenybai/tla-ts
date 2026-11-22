@@ -140,6 +140,18 @@ describe("name resolution matches SANY", () => {
         `Multiply-defined symbol '${name}': this definition or declaration conflicts \nwith the one at line 2, col 1 to line 2, col 19 of module M.`,
       ]),
     ],
+    [
+      "a definition between two LET instances of one name before the second instance's conflicts",
+      "F == LET I(a) == INSTANCE Inner WITH c <- a\n         G == I!Foo\n         I == INSTANCE Inner WITH c <- 1\n     IN G",
+      { Inner: "CONSTANT c\nFoo == c = 2\nBar(b) == b = c\nTHEOREM T == c = c" },
+      [
+        ["line 3, col 15 to line 3, col 19 of module M", "The operator I requires 1 arguments."],
+        ...["I!Foo", "I!Bar", "I!T", "I"].map((name): [string, string] => [
+          "line 4, col 10 to line 4, col 40 of module M",
+          `Multiply-defined symbol '${name}': this definition or declaration conflicts \nwith the one at line 2, col 10 to line 2, col 43 of module M.`,
+        ]),
+      ],
+    ],
     ...[
       ["EXTENDS Naturals", "Naturals", 36],
       ["EXTENDS Sequences", "Sequences", 66],

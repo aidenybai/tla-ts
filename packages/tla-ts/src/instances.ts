@@ -1157,10 +1157,10 @@ const expandLetInstances = (
       : mapped;
   }
   const definitions = mapped.instances.reduce((current, instance) => {
-    const position = current.findIndex((definition) =>
+    const next = mapped.definitions.find((definition) =>
       isBefore(instance.location, definition.location),
     );
-    const index = position === -1 ? current.length : position;
+    const index = next === undefined ? current.length : current.indexOf(next);
     return [
       ...current.slice(0, index),
       ...instantiate(instance, visibleLets),
