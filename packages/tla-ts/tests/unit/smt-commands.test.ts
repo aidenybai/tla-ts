@@ -1,7 +1,7 @@
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { describe, expect, it } from "vite-plus/test";
-import { SmtInvariantError, SmtUnsupportedError } from "../../src/errors";
+import { SmtUnsupportedError } from "../../src/errors";
 import { runSmtlibScript } from "../../src/prover/smt/solver/smtlib-script";
 
 const run = (lines: string[], timeLimitMs = 5000) => {
@@ -3834,10 +3834,12 @@ describe("combined_solver, as Z3 5.3.2 reads its options", () => {
     ).toEqual(["sat", '(:reason-unknown "")', "(:rlimit 345)"]);
   });
 
-  it("stops where Z3 exits on a solver2_unknown above 2", () => {
-    expect(() =>
-      run(["(set-option :combined_solver.solver2_unknown 3)", ...POWER, "(push 1)", ...CHECK]),
-    ).toThrow(SmtInvariantError);
+  it("rejects a solver2_unknown above 2 at the check where Z3 exits", () => {
+    expect(
+      run(["(set-option :combined_solver.solver2_unknown 3)", ...POWER, "(push 1)", "(check-sat)"]),
+    ).toEqual([
+      `(error "line 6 column 10: invalid value '3' for parameter 'solver2_unknown', expected 0, 1 or 2")`,
+    ]);
   });
 
   it("checks with the incremental solver alone under ignore_solver1, and stays incremental", () => {

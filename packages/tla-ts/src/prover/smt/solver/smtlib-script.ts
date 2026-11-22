@@ -4,7 +4,6 @@ import {
   SmtCanceledError,
   SmtParseError,
   SmtDefaultError,
-  SmtInvariantError,
   SmtTacticError,
   SmtUnsupportedError,
 } from "../../../errors";
@@ -733,13 +732,17 @@ export const runSmtlibScript = (
       reasonUnknown: fdSolver.reasonUnknown,
     };
   };
-  const useSolver1WhenUndef = () => {
+  const useSolver1WhenUndef = (end: SmtToken) => {
     const behavior = Number(settings.parameters.get("combined_solver.solver2_unknown") ?? 1);
     if (behavior === 0) return false;
     if (behavior === 1)
       return !state.assertions.some((assertion) => state.manager.hasQuantifierFlags[assertion]);
     if (behavior === 2) return true;
-    throw new SmtInvariantError("combined_solver.solver2_unknown is not 0, 1 or 2");
+    // Deviation from Z3: use_solver1_when_undef reaches UNREACHABLE on a solver2_unknown above 2.
+    throw new SmtParseError(
+      `invalid value '${behavior}' for parameter 'solver2_unknown', expected 0, 1 or 2`,
+      end,
+    );
   };
   const checkSat = (extra: number[], end: SmtToken) => {
     clearCheck();
@@ -780,7 +783,7 @@ export const runSmtlibScript = (
         kernel === undefined ||
         (!isSolver2Only &&
           kernel.result === L_UNDEF &&
-          useSolver1WhenUndef() &&
+          useSolver1WhenUndef(end) &&
           manager.limit.inc());
       const solved =
         fdSolver !== undefined
