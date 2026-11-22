@@ -68,6 +68,14 @@ const formatCoverage = (result: Awaited<ReturnType<typeof check>>) =>
 const getCoverageLines = async (source: string, config: string) =>
   formatCoverage(await check({ source, config, coverage: 1 }));
 
+const getNextCoverageLines = async (next: string) =>
+  (
+    await getCoverageLines(
+      `---- MODULE M ----\nEXTENDS Integers, FiniteSets, TLC\nVARIABLE x\nInit == x = 0\nNext == ${next}\nInv == TRUE\n====`,
+      "INIT Init\nNEXT Next\nINVARIANT Inv",
+    )
+  )?.at(-1);
+
 describe("check matches TLC", () => {
   it("evaluates every assumption in the semantics fixture", async () => {
     const result = await checkFixture("semantics", "Semantics");
@@ -7590,11 +7598,7 @@ ASSUME TLCFP(a) = -887695703
   ])(
     "charges a product of two filters as TLC's enumerator drains it under -coverage, for %s",
     async (_site, next, expected) => {
-      const lines = await getCoverageLines(
-        `---- MODULE M ----\nEXTENDS Integers, FiniteSets, TLC\nVARIABLE x\nInit == x = 0\nNext == ${next}\nInv == TRUE\n====`,
-        "INIT Init\nNEXT Next\nINVARIANT Inv",
-      );
-      expect(lines?.at(-1)).toEqual(expected);
+      expect(await getNextCoverageLines(next)).toEqual(expected);
     },
   );
 
@@ -7731,11 +7735,7 @@ ASSUME TLCFP(a) = -887695703
   ])(
     "charges S \\cup T as TLC's enumerator drains it under -coverage, for %s",
     async (_site, next, expected) => {
-      const lines = await getCoverageLines(
-        `---- MODULE M ----\nEXTENDS Integers, FiniteSets, TLC\nVARIABLE x\nInit == x = 0\nNext == ${next}\nInv == TRUE\n====`,
-        "INIT Init\nNEXT Next\nINVARIANT Inv",
-      );
-      expect(lines?.at(-1)).toEqual(expected);
+      expect(await getNextCoverageLines(next)).toEqual(expected);
     },
   );
 
@@ -7860,11 +7860,7 @@ ASSUME TLCFP(a) = -887695703
   ])(
     "charges S \\cap T and S \\ T as TLC's enumerator drains them under -coverage, for %s",
     async (_site, next, expected) => {
-      const lines = await getCoverageLines(
-        `---- MODULE M ----\nEXTENDS Integers, FiniteSets, TLC\nVARIABLE x\nInit == x = 0\nNext == ${next}\nInv == TRUE\n====`,
-        "INIT Init\nNEXT Next\nINVARIANT Inv",
-      );
-      expect(lines?.at(-1)).toEqual(expected);
+      expect(await getNextCoverageLines(next)).toEqual(expected);
     },
   );
 
@@ -8013,11 +8009,7 @@ ASSUME TLCFP(a) = -887695703
   ])(
     "charges a filter's set as TLC's enumerator draws it under -coverage, for %s",
     async (_site, next, expected) => {
-      const lines = await getCoverageLines(
-        `---- MODULE M ----\nEXTENDS Integers, FiniteSets, TLC\nVARIABLE x\nInit == x = 0\nNext == ${next}\nInv == TRUE\n====`,
-        "INIT Init\nNEXT Next\nINVARIANT Inv",
-      );
-      expect(lines?.at(-1)).toEqual(expected);
+      expect(await getNextCoverageLines(next)).toEqual(expected);
     },
   );
 
@@ -8071,11 +8063,7 @@ ASSUME TLCFP(a) = -887695703
   ])(
     "draws x' \\in S through TLC's enumerator under -coverage, for %s",
     async (_site, next, expected) => {
-      const lines = await getCoverageLines(
-        `---- MODULE M ----\nEXTENDS Integers, FiniteSets, TLC\nVARIABLE x\nInit == x = 0\nNext == ${next}\nInv == TRUE\n====`,
-        "INIT Init\nNEXT Next\nINVARIANT Inv",
-      );
-      expect(lines?.at(-1)).toEqual(expected);
+      expect(await getNextCoverageLines(next)).toEqual(expected);
     },
   );
 
@@ -8154,11 +8142,7 @@ ASSUME TLCFP(a) = -887695703
   ])(
     "charges a function's domain as TLC's FcnLambdaValue#toFcnRcd converts it under -coverage, for %s",
     async (_site, next, expected) => {
-      const lines = await getCoverageLines(
-        `---- MODULE M ----\nEXTENDS Integers, FiniteSets, TLC\nVARIABLE x\nInit == x = 0\nNext == ${next}\nInv == TRUE\n====`,
-        "INIT Init\nNEXT Next\nINVARIANT Inv",
-      );
-      expect(lines?.at(-1)).toEqual(expected);
+      expect(await getNextCoverageLines(next)).toEqual(expected);
     },
   );
 
@@ -8250,11 +8234,7 @@ ASSUME TLCFP(a) = -887695703
   ])(
     "draws a set for SUBSET S and UNION S membership through TLC's enumerator until it decides under -coverage, for %s",
     async (_site, next, expected) => {
-      const lines = await getCoverageLines(
-        `---- MODULE M ----\nEXTENDS Integers, FiniteSets, TLC\nVARIABLE x\nInit == x = 0\nNext == ${next}\nInv == TRUE\n====`,
-        "INIT Init\nNEXT Next\nINVARIANT Inv",
-      );
-      expect(lines?.at(-1)).toEqual(expected);
+      expect(await getNextCoverageLines(next)).toEqual(expected);
     },
   );
 
