@@ -887,6 +887,25 @@ export const frameModel = (
       (returnType.flags & (ts.TypeFlags.Void | ts.TypeFlags.Undefined)) !== 0
     );
   };
+  // The kind of a type that no domain lists, as a note names it, where it's one of the kinds that a
+  // program's code most often gives a parameter: a type parameter, any or unknown, a function, a
+  // class's instance, or an object with methods, alone or in a union.
+  const getUnlistedKind = (type: ts.Type): string | undefined => {
+    if (type.flags & ts.TypeFlags.TypeParameter) return "a type parameter";
+    if (type.flags & ts.TypeFlags.Any) return "any, as an untyped parameter is";
+    if (type.flags & ts.TypeFlags.Unknown) return "unknown";
+    if (type.isUnion()) {
+      const kind = type.types.map(getUnlistedKind).find((inner) => inner !== undefined);
+      return kind === undefined ? undefined : `a union with ${kind}`;
+    }
+    if (type.getCallSignatures().length > 0) return "a function";
+    const declaration = type.getSymbol()?.valueDeclaration;
+    if (declaration !== undefined && ts.isClassLike(declaration)) return "an instance of a class";
+    const hasMethods = type
+      .getProperties()
+      .some((property) => checker.getTypeOfSymbol(property).getCallSignatures().length > 0);
+    return type.flags & ts.TypeFlags.Object && hasMethods ? "an object with methods" : undefined;
+  };
   // Why the model calls no exported function: Node runs only a module's top level, so an export
   // runs only where TLC can choose its arguments, which it can't where a parameter takes values
   // that tla-ts can't list, and where a call of it may return.
@@ -899,7 +918,12 @@ export const frameModel = (
       return !guarded.has(parameter) && isInfinite(domain) && domain.isIncomparable !== true;
     });
     if (unlisted !== undefined) {
-      return `its parameter ${unlisted.name} takes values it can't list`;
+      const type = getType(unlisted.node);
+      const kind = getUnlistedKind(type);
+      const domain = findDomain(type);
+      return kind !== undefined
+        ? `its parameter ${unlisted.name} is ${kind}, whose values tla-ts can't list`
+        : `its parameter ${unlisted.name} takes values it can't list: ${isInfinite(domain) ? domain.message : ""}`;
     }
     return definition.node.parameters.length === 0 &&
       !ts.isFunctionTypeNode(definition.node) &&
