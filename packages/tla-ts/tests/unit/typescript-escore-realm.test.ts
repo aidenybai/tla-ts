@@ -411,3 +411,47 @@ describe("reads each body of the recorded graph as the live runtime parsed it", 
     expect(compared.count).toBeGreaterThan(2500);
   }, 600_000);
 });
+
+// A check reads the facts of each prepared definition's LET definitions by where they come in its
+// body, which the graph notes as it decodes the body: each LET definition of every definition the
+// check links has the effects that a walk of every definition, as a check numbers them without
+// prepared facts, gives it.
+describe("numbers the LET definitions of the recorded graph by where they come in their bodies", () => {
+  it("gives each LET definition the effects a walk of every definition gives it", async () => {
+    const host = await recordHost();
+    const comparer = new Worker(
+      `${REGISTER}
+      const { parentPort, workerData } = require("node:worker_threads");
+      Promise.all(["/typescript/spec/prepare.ts", "/typescript/spec/compile.ts", "/search.ts", "/config.ts", "/dependencies.ts", "/ast.ts"].map((path) => import(workerData.source + path))).then(([prepare, compile, search, config, dependencies, ast]) => {
+        const runtime = prepare.prepareHostRuntime(JSON.parse(workerData.host));
+        const spec = compile.compileToEscore("let count = 1;\\ncount += 1;\\n", "spec.ts", runtime);
+        const environment = search.createCheckEnvironment(config.parseConfig(spec.config), { ...spec, onPrint: () => {} }, () => {}).specification.environment;
+        const walked = dependencies.createDefinitionFacts(environment, [], new Map());
+        let count = 0;
+        const different = [];
+        const visit = (node) => {
+          if (node.kind === "Let") {
+            node.definitions.forEach((inner) => {
+              count += 1;
+              if (environment.facts.getLetEffects(inner) !== walked.getLetEffects(inner)) different.push(inner.name);
+              ast.getDefinitionExpressions(inner).forEach(visit);
+            });
+          }
+          ast.getChildren(node).forEach(visit);
+        };
+        for (const definition of environment.facts.ids.keys()) ast.getDefinitionExpressions(definition).forEach(visit);
+        parentPort.postMessage({ count, different });
+      });`,
+      { eval: true, workerData: { source, host }, resourceLimits: { stackSizeMb: 256 } },
+    );
+    const compared = await new Promise<{ count: number; different: string[] }>(
+      (resolve, reject) => {
+        comparer.once("message", resolve);
+        comparer.once("error", reject);
+      },
+    );
+    await comparer.terminate();
+    expect(compared.different).toEqual([]);
+    expect(compared.count).toBeGreaterThan(1500);
+  }, 600_000);
+});
