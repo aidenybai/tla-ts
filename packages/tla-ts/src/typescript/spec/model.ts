@@ -1409,8 +1409,7 @@ export const compileModelToEscore = (
     steps.push(`${view} == ApplyTo(${operator}, ${variable})`);
   }
   // A trace shows each state variable by its binding's name, as a function of the names where TLA+
-  // can't spell one as a record's field, whose fields TLC shows in the order of its names, as
-  // FcnRcdValue.toRcd normalizes the function.
+  // can't spell one as a record's field, whose fields TLC shows in the order of its domain.
   const shown = today.variables.map((variable) => bindings.get(variable.name) ?? variable.name);
   const isSpelled = shown.every((shownName) => /^\w*[A-Za-z]\w*$/.test(shownName));
   const alias = define(
@@ -1422,7 +1421,6 @@ export const compileModelToEscore = (
           : isSpelled
             ? `[${shown.map((shownName) => `${shownName} |-> ShownBinding(s, ${getUnits(shownName)})`).join(", ")}]`
             : shown
-                .toSorted()
                 .map(
                   (shownName) =>
                     `(${JSON.stringify(shownName)} :> ShownBinding(s, ${getUnits(shownName)}))`,

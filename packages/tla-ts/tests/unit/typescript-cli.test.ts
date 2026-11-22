@@ -147,7 +147,8 @@ describe("the CLI with TypeScript files", () => {
   });
 
   // A state variable whose name TLA+ can't spell, as $ and _, takes a name of its own in TLA+, and
-  // the trace shows it by its binding's name, in the order of the names, as TLC shows a function.
+  // the trace shows it by its binding's name, in the order of TLC's ranks of the names, as TLC
+  // shows a function. Real TLC, on the program's modules under its root, shows $, b, then _.
   // The model deadlocks where bump changes nothing, after $ reaches 2.
   describe("checks state variables whose names TLA+ can't spell, as $ and _", () => {
     const getModel = (check: string) =>
@@ -160,7 +161,7 @@ describe("the CLI with TypeScript files", () => {
       const result = runCli(directory, ["names.ts"]);
       expect(result.status).toBe(11);
       expect(result.stdout).toContain("Error: Deadlock reached.");
-      expect(result.stdout).toContain("/\\ $ = 2\n/\\ _ = 8\n/\\ b = 0");
+      expect(result.stdout).toContain("/\\ $ = 2\n/\\ b = 0\n/\\ _ = 8");
     });
 
     it("rejects another result", () => {
@@ -169,7 +170,7 @@ describe("the CLI with TypeScript files", () => {
       const result = runCli(directory, ["names.ts"]);
       expect(result.status).toBe(12);
       expect(result.stdout).toContain("Invariant isKept is violated.");
-      expect(result.stdout).toContain("/\\ $ = 2\n/\\ _ = 8\n/\\ b = 0");
+      expect(result.stdout).toContain("/\\ $ = 2\n/\\ b = 0\n/\\ _ = 8");
     });
   });
 
