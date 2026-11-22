@@ -138,7 +138,7 @@ export interface CheckOptions {
   loadClass?: (name: string) => Uint8Array | undefined;
   onPrint?: (text: string) => void;
   onPause?: () => void;
-  readFile?: (path: string) => string | undefined;
+  readFile?: (path: string) => Uint8Array | undefined;
   writeFile?: (path: string, content: string | Uint8Array) => void;
   makeDirectory?: (path: string) => void;
   seed?: bigint;

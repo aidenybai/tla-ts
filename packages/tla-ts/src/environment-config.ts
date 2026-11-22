@@ -151,7 +151,16 @@ const getModuleOrder = (module: LinkedModule, visited: Set<LinkedModule>): Linke
   return [...module.extended.flatMap((extended) => getModuleOrder(extended, visited)), module];
 };
 
+const createModelValues = (value: ConfigValue) => {
+  if (value.kind === "ModelValue") createModelValue(value.name);
+  if (value.kind === "Set") value.elements.forEach(createModelValues);
+};
+
 export const applyConfig = (config: ModelConfig, linked: LinkedSpecification): AppliedConfig => {
+  config.constants.forEach((assignment) => {
+    assignment.args?.forEach(createModelValues);
+    createModelValues(assignment.value);
+  });
   const getRootKey = (name: string) => linked.rootKeys.get(name) ?? name;
   const declaredConstants = new Set(linked.root.constants.map((constant) => constant.name));
   const getScopedSymbol = (item: ConfigName) => {

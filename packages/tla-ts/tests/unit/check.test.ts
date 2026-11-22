@@ -27,6 +27,11 @@ import {
 
 const DIST = join(import.meta.dirname, "../../dist/index.js");
 
+const createFileReader = (files: Map<string, string>) => (path: string) => {
+  const text = files.get(path);
+  return text === undefined ? undefined : new TextEncoder().encode(text);
+};
+
 const getCoverageCounts = async (definitions: string, config: string) => {
   const result = await check({
     source: `---- MODULE M ----\nEXTENDS Integers\nVARIABLE x\n${definitions}\n====`,
@@ -935,7 +940,7 @@ ASSUME TLCFP(a) = -887695703
         '---- MODULE M ----\nEXTENDS Naturals, TLC, Json\nVARIABLE x\nJ == ToJson(<<PrintT("j")>>)\nA == ToJsonArray(<<PrintT("a")>>)\nO == ToJsonObject([k |-> PrintT("o")])\nS == JsonSerialize("s.json", <<PrintT("s")>>)\nN == ndJsonSerialize("n.json", <<PrintT("n")>>)\nD == JsonDeserialize("s.json")\nE == ndJsonDeserialize("n.json")\nInit == x = 0\nNext == x < 2 /\\ PrintT(<<J, A, O, S, N, D, E>>) /\\ x\' = x + 1\n====',
       config: "INIT Init\nNEXT Next\nCHECK_DEADLOCK FALSE",
       onPrint: (text) => printed.push(text),
-      readFile: (path) => files.get(path),
+      readFile: createFileReader(files),
       writeFile: (path, content) => files.set(path, String(content)),
     });
     const tuple = '<<"[true]", "[true]", "{\\"k\\":true}", TRUE, TRUE, <<TRUE>>, <<TRUE>>>>';
@@ -981,7 +986,7 @@ ASSUME TLCFP(a) = -887695703
           name === "IOUtils"
             ? "---- MODULE IOUtils ----\nLOCAL INSTANCE Integers\nSerialize(value, dest, options) ==\n  CHOOSE r \\in [exitValue : Int, stdout : STRING, stderr : STRING] : TRUE\n===="
             : undefined,
-        readFile: (path) => files.get(path),
+        readFile: createFileReader(files),
         writeFile: (path, content) => files.set(path, String(content)),
       });
       expect(files.get("old.json")).toBe(content);
@@ -1004,7 +1009,7 @@ ASSUME TLCFP(a) = -887695703
         name === "IOUtils"
           ? "---- MODULE IOUtils ----\nLOCAL INSTANCE Integers\nSerialize(value, dest, options) ==\n  CHOOSE r \\in [exitValue : Int, stdout : STRING, stderr : STRING] : TRUE\n===="
           : undefined,
-      readFile: (path) => files.get(path),
+      readFile: createFileReader(files),
       writeFile: (path, content) => files.set(path, String(content)),
     });
 
@@ -1089,7 +1094,7 @@ ASSUME TLCFP(a) = -887695703
         '---- MODULE M ----\nEXTENDS Naturals, TLC, Json\nVARIABLE x\nInit == x = 0 /\\ JsonSerialize("f.json", <<0>>)\nNext == /\\ x < 2\n        /\\ LET d == JsonDeserialize("f.json")\n               w == JsonSerialize("f.json", <<x>>)\n           IN /\\ w\n              /\\ PrintT(d)\n              /\\ JsonSerialize("f.json", <<99>>)\n              /\\ PrintT(d)\n              /\\ w\n              /\\ PrintT(JsonDeserialize("f.json"))\n        /\\ x\' = x + 1\n====',
       config: "INIT Init\nNEXT Next\nCHECK_DEADLOCK FALSE",
       onPrint: (text) => printed.push(text),
-      readFile: (path) => files.get(path),
+      readFile: createFileReader(files),
       writeFile: (path, content) => files.set(path, String(content)),
     });
     expect(printed).toEqual(["<<0>>", "<<99>>", "<<0>>", "<<1>>", "<<99>>", "<<1>>"]);
@@ -1103,10 +1108,50 @@ ASSUME TLCFP(a) = -887695703
         '---- MODULE M ----\nEXTENDS Naturals, TLC, Json\nVARIABLE x\nW == JsonSerialize("f.json", <<0>>)\nD == JsonDeserialize("f.json")\nInit == x = 0 /\\ W\nNext == x < 2 /\\ JsonSerialize("f.json", <<x + 10>>) /\\ PrintT(D) /\\ PrintT(JsonDeserialize("f.json")) /\\ x\' = x + 1\n====',
       config: "INIT Init\nNEXT Next\nCHECK_DEADLOCK FALSE",
       onPrint: (text) => printed.push(text),
-      readFile: (path) => files.get(path),
+      readFile: createFileReader(files),
       writeFile: (path, content) => files.set(path, String(content)),
     });
     expect(printed).toEqual(["<<0>>", "<<10>>", "<<0>>", "<<11>>"]);
+  });
+
+  it("replaces malformed UTF-8 in a Json file as Java's FileReader does", async () => {
+    const encoder = new TextEncoder();
+    const contents = [
+      [0xc3, 0x28],
+      [0xe2, 0x82],
+      [0xf0, 0x9f, 0x98],
+      [0xed, 0xa0, 0x80],
+      [0xc0, 0xaf],
+      [0xf4, 0x90, 0x80, 0x80],
+      [0xff],
+      [0x80, 0xbf],
+      [0xe0, 0x80, 0xaf],
+      [0xf8, 0x88, 0x80, 0x80, 0x80],
+      [0xed, 0xa0],
+      [0xf0, 0x9f, 0x98, 0x80],
+      [0xe2, 0x82, 0xac],
+      [0xc3, 0xa9],
+    ].map((sequence) => [...encoder.encode('{"k":"<'), ...sequence, ...encoder.encode('>"}')]);
+    const files = new Map([
+      ...contents.map((content, index): [string, Uint8Array] => [
+        `bad${index}.json`,
+        Uint8Array.from(content),
+      ]),
+      ["lines.ndjson", Uint8Array.from(contents.flatMap((content) => [...content, 0x0a]))],
+    ]);
+    const reads = contents.map((_content, index) => `JsonDeserialize("bad${index}.json").k`);
+    const printed: string[] = [];
+    await check({
+      source: `---- MODULE M ----\nEXTENDS Json, Sequences, TLC\nS == << ${reads.join(",\n  ")} >>\nN == ndJsonDeserialize("lines.ndjson")\nASSUME PrintT(S)\nASSUME PrintT([i \\in DOMAIN S |-> Len(S[i])])\nASSUME PrintT([i \\in DOMAIN N |-> N[i].k = S[i]])\n====\n`,
+      config: "",
+      onPrint: (text) => printed.push(text),
+      readFile: (path) => files.get(path),
+    });
+    expect(printed).toEqual([
+      '<< "<�(>",\n   "<�>",\n   "<�>",\n   "<�>",\n   "<��>",\n   "<����>",\n   "<�>",\n   "<��>",\n   "<���>",\n   "<�����>",\n   "<�>",\n   "<😀>",\n   "<€>",\n   "<é>" >>',
+      "<<4, 3, 3, 3, 4, 6, 3, 4, 5, 7, 3, 4, 3, 3>>",
+      `<< ${Array(14).fill("TRUE").join(",\n   ")} >>`,
+    ]);
   });
 
   it.each([
@@ -1121,7 +1166,7 @@ ASSUME TLCFP(a) = -887695703
       const result = await check({
         source: `---- MODULE M ----\nEXTENDS Naturals, TLC, Json\nVARIABLE x\nInit == x = 0 /\\ ${expression}\nNext == x' = x\n====`,
         config: "INIT Init\nNEXT Next",
-        readFile: (path) => files.get(path),
+        readFile: createFileReader(files),
         writeFile: (path, content) => files.set(path, String(content)),
       });
       expect([result.status, files.get(path)]).toEqual(["error", contents]);
@@ -2744,6 +2789,178 @@ ASSUME TLCFP(a) = -887695703
     );
     expect(reads.printed).toEqual(["<<773>>", "<<768>>", "<<484>>", "<<730>>"]);
   });
+
+  const SUBSCRIPTED_NEXT =
+    "VARIABLES y, z\nInit == y = 0 /\\ z = 0\nNext == \\/ /\\ <<y' = (y + 1) % 3>>_<<y, y + 1>>\n           /\\ <<z' = 1 - z>>_z\n        \\/ <<y' = y /\\ z' = z>>_<<y, z>>";
+  const SUBSCRIPTED_NEXT_STEPS = [
+    "line 7, col 14 to line 7, col 19 of module M: 0",
+    "|line 7, col 19 to line 7, col 19 of module M: 6",
+    "line 7, col 24 to line 7, col 29 of module M: 0",
+    "|line 7, col 29 to line 7, col 29 of module M: 6",
+    "line 7, col 33 to line 7, col 40 of module M: 12",
+  ];
+
+  it.each([
+    [
+      "VARIABLE y\nInit == y = 0\nNext == <<y' = (y + 1) % 3>>_y",
+      false,
+      [
+        ["line 4, col 9 to line 4, col 13 of module M: 1"],
+        [
+          "line 5, col 11 to line 5, col 26 of module M: 3",
+          "line 5, col 30 to line 5, col 30 of module M: 9",
+        ],
+      ],
+    ],
+    [
+      SUBSCRIPTED_NEXT,
+      false,
+      [
+        ["line 4, col 9 to line 4, col 22 of module M: 1"],
+        [
+          "line 5, col 17 to line 5, col 32 of module M: 6",
+          "line 5, col 36 to line 5, col 47 of module M: 18",
+          "|line 5, col 38 to line 5, col 38 of module M: 12",
+          "|line 5, col 41 to line 5, col 45 of module M: 12",
+          "line 6, col 17 to line 6, col 26 of module M: 6",
+          "line 6, col 30 to line 6, col 30 of module M: 18",
+        ],
+        SUBSCRIPTED_NEXT_STEPS,
+      ],
+    ],
+    [
+      SUBSCRIPTED_NEXT,
+      true,
+      [
+        ["line 4, col 9 to line 4, col 22 of module M: 1"],
+        [
+          "line 5, col 17 to line 5, col 32 of module M: 6",
+          "line 5, col 36 to line 5, col 47 of module M: 18",
+          "|line 5, col 38 to line 5, col 38 of module M: 12",
+          "|line 5, col 41 to line 5, col 45 of module M: 12",
+          "line 6, col 17 to line 6, col 26 of module M: 6",
+          "line 6, col 30 to line 6, col 30 of module M: 12",
+        ],
+        SUBSCRIPTED_NEXT_STEPS,
+      ],
+    ],
+    [
+      "VARIABLE y\nInit == y = 0\nNext == /\\ ENABLED <<y' = (y + 1) % 3>>_<<y, y + 1>>\n        /\\ y' = (y + 1) % 3",
+      false,
+      [
+        ["line 4, col 9 to line 4, col 13 of module M: 1"],
+        [
+          "line 5, col 12 to line 5, col 52 of module M: 6",
+          "|line 5, col 22 to line 5, col 37 of module M: 3",
+          "|line 5, col 41 to line 5, col 52 of module M: 6",
+          "line 6, col 12 to line 6, col 27 of module M: 3",
+        ],
+      ],
+    ],
+  ])(
+    "counts e of <<A>>_e in the next-state relation %j with warnings on (%s) at e, for each evaluation and each successor it lets through, as TLC's Tool#getNextStates conses e with its own cost model",
+    async (definitions, isWarningEnabled, lines) => {
+      const result = await check({
+        source: `---- MODULE M ----\nEXTENDS Naturals\n${definitions}\n====\n`,
+        config: "INIT Init\nNEXT Next\n",
+        coverage: 1,
+        isWarningEnabled,
+      });
+      expect(formatCoverage(result)).toEqual(lines);
+    },
+  );
+
+  const INSTANCE_OP2_LINES = [
+    "line 5, col 8 to line 5, col 12 of module Q: 4",
+    "|line 5, col 8 to line 5, col 8 of module Q: 2",
+    "|line 5, col 12 to line 5, col 12 of module Q: 2",
+    "line 5, col 17 to line 5, col 21 of module Q: 4",
+    "|line 5, col 17 to line 5, col 17 of module Q: 2",
+    "|line 5, col 21 to line 5, col 21 of module Q: 2",
+  ];
+  const INSTANCE_A2_LINES = [
+    "line 7, col 7 to line 7, col 11 of module Q: 4",
+    "|line 7, col 7 to line 7, col 7 of module Q: 2",
+    "|line 7, col 11 to line 7, col 11 of module Q: 2",
+    "line 7, col 16 to line 7, col 31 of module Q: 2",
+  ];
+
+  it.each([
+    [
+      "Next == J!Op2 /\\ <<Step>>_<<y, J!Op2>> /\\ J!Op2",
+      true,
+      10,
+      [
+        ...INSTANCE_OP2_LINES,
+        "line 8, col 20 to line 8, col 23 of module M: 2",
+        "line 8, col 27 to line 8, col 38 of module M: 4",
+        "line 8, col 43 to line 8, col 47 of module M: 2",
+        "|line 4, col 27 to line 4, col 37 of module M: 10",
+        "|line 4, col 45 to line 4, col 45 of module M: 10",
+        "|line 5, col 8 to line 5, col 21 of module Q: 2",
+      ],
+    ],
+    [
+      "Next == J!Op2 /\\ <<Step>>_<<y, J!Op2>> /\\ J!Op2",
+      false,
+      12,
+      [
+        ...INSTANCE_OP2_LINES,
+        "line 8, col 20 to line 8, col 23 of module M: 2",
+        "line 8, col 27 to line 8, col 38 of module M: 6",
+        "|line 8, col 29 to line 8, col 29 of module M: 4",
+        "|line 8, col 32 to line 8, col 36 of module M: 4",
+        "line 4, col 27 to line 4, col 37 of module M: 12",
+        "line 4, col 45 to line 4, col 45 of module M: 12",
+        ...INSTANCE_OP2_LINES,
+      ],
+    ],
+    [
+      "Next == J!Op2 /\\ <<Step>>_<<y, J!Op2>>",
+      false,
+      8,
+      [
+        ...INSTANCE_OP2_LINES,
+        "line 8, col 20 to line 8, col 23 of module M: 2",
+        "line 8, col 27 to line 8, col 38 of module M: 6",
+        "|line 8, col 29 to line 8, col 29 of module M: 4",
+        "|line 8, col 32 to line 8, col 36 of module M: 4",
+        "||line 4, col 27 to line 4, col 37 of module M: 8",
+        "||line 4, col 45 to line 4, col 45 of module M: 8",
+        "||line 5, col 8 to line 5, col 21 of module Q: 4",
+      ],
+    ],
+    [
+      "Next == J!A2 /\\ J!Op2",
+      true,
+      6,
+      [
+        ...INSTANCE_A2_LINES,
+        "line 8, col 17 to line 8, col 21 of module M: 2",
+        "|line 4, col 27 to line 4, col 37 of module M: 6",
+        "|line 4, col 45 to line 4, col 45 of module M: 4",
+        "|line 5, col 8 to line 5, col 21 of module Q: 2",
+      ],
+    ],
+    [
+      "Next == J!A1",
+      true,
+      8,
+      [
+        "line 4, col 27 to line 4, col 37 of module M: 8",
+        "line 4, col 45 to line 4, col 45 of module M: 6",
+        ...INSTANCE_A2_LINES,
+        "line 8, col 13 to line 8, col 14 of module Q: 2",
+      ],
+    ],
+  ])(
+    "counts J's substitutes in a conjunct of the next-state relation %j with warnings on (%s) as TLC does, which evaluates a conjunct after J!Op2 or J!A2 in the context it was consed with, outside J's substitutions",
+    async (definitions, isWarningEnabled, prints, lines) => {
+      expect(
+        await getLazyReads(definitions, NEXT_CHECK, { coverage: 1, isWarningEnabled }),
+      ).toEqual({ printed: getPrints('"d"', prints), lines });
+    },
+  );
 
   it("records the nested instance a call from one instanced definition to another enters, as TLC does", async () => {
     const result = await check(getInnerCallCheck(EXPLICIT, "I!YErr", NESTED_CALLS));
