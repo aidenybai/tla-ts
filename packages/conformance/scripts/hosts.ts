@@ -10,7 +10,7 @@ import {
   writeFileSync,
 } from "node:fs";
 import { availableParallelism, tmpdir } from "node:os";
-import { basename, dirname, join } from "node:path";
+import { basename, dirname, isAbsolute, join } from "node:path";
 import { getBackendInput, type SuiteTest, type TestContext } from "./test-file";
 import {
   getBackend,
@@ -45,12 +45,22 @@ const DETERMINISTIC_ARGUMENTS = [
   "-noGenerateSpecTE",
 ];
 
-const TLA_TS = [
-  "node",
-  "--stack-size=8000",
-  "--max-old-space-size=2048",
-  join(PACKAGE_DIRECTORY, "../tla-ts/dist/cli.js"),
-];
+const TLA_TS_CLI = join(PACKAGE_DIRECTORY, "../tla-ts/dist/cli.js");
+
+const TLA_TS = ["node", "--stack-size=8000", "--max-old-space-size=2048", TLA_TS_CLI];
+
+const SETUP_COMMANDS = new Map([
+  [TLC_JAR, "pnpm --filter @tla-ts/conformance fetch-tlc"],
+  [TLAPM_BINARY, "pnpm --filter @tla-ts/conformance fetch-tlapm"],
+  [TLA_TS_CLI, "pnpm --filter tla-ts build"],
+]);
+
+export class MissingHostFileError extends Error {
+  constructor(path: string, command: string | undefined) {
+    super(command ? `${path} doesn't exist. Run \`${command}\` first.` : `${path} doesn't exist.`);
+    this.name = "MissingHostFileError";
+  }
+}
 
 export interface Host {
   tlc?: string[];
@@ -86,21 +96,12 @@ const QUOTED = /"([^"]*)"|'([^']*)'/g;
 const ARGUMENT = /(?:"[^"]*"|'[^']*'|[^\s"'])+/g;
 
 export const getHost = (name: string): Host => {
-  const host = HOSTS[name];
-  if (!host) {
-    const command = (name.match(ARGUMENT) ?? []).map((part) => part.replace(QUOTED, "$1$2"));
-    return { tlc: command, tlapm: command, backend: command };
-  }
-  const missing = [
-    ...(host.tlc === HOSTS.tlc.tlc && !existsSync(TLC_JAR) ? ["`pnpm fetch-tlc`"] : []),
-    ...(host.tlapm && host.tlapm === HOSTS.tlapm.tlapm && !existsSync(TLAPM_BINARY)
-      ? ["`pnpm fetch-tlapm`"]
-      : []),
-  ];
-  if (missing.length > 0) {
-    console.error(`Run ${missing.join(" and ")} first`);
-    process.exit(1);
-  }
+  const command = (name.match(ARGUMENT) ?? []).map((part) => part.replace(QUOTED, "$1$2"));
+  const host = HOSTS[name] ?? { tlc: command, tlapm: command, backend: command };
+  const missing = [host.tlc, host.tlapm, host.backend]
+    .flatMap((hostCommand) => (Array.isArray(hostCommand) ? hostCommand : []))
+    .find((argument) => isAbsolute(argument) && !existsSync(argument));
+  if (missing !== undefined) throw new MissingHostFileError(missing, SETUP_COMMANDS.get(missing));
   return host;
 };
 

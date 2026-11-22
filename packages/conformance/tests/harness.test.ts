@@ -1,9 +1,9 @@
 import { afterAll, describe, expect, it } from "vite-plus/test";
-import { mkdtempSync, readFileSync, rmSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import { gunzipSync, gzipSync } from "node:zlib";
-import { createProgress, getHost, runTest } from "../scripts/hosts";
+import { createProgress, getHost, MissingHostFileError, runTest } from "../scripts/hosts";
 import {
   getContexts,
   getCorrection,
@@ -233,13 +233,27 @@ describe("getHost", () => {
     });
   });
 
+  const directory = mkdtempSync(join(tmpdir(), "conformance-host-"));
+  afterAll(() => rmSync(directory, { recursive: true, force: true }));
+
   it("keeps a quoted path with a space as one argument", () => {
-    expect(getHost(`node "/my tools/cli.js" --library='/a b'  -deadlock`).tlc).toEqual([
+    const cli = join(directory, "my tools/cli.js");
+    mkdirSync(dirname(cli));
+    writeFileSync(cli, "");
+    expect(getHost(`node "${cli}" --library='/a b'  -deadlock`).tlc).toEqual([
       "node",
-      "/my tools/cli.js",
+      cli,
       "--library=/a b",
       "-deadlock",
     ]);
+  });
+
+  it("names a host's missing CLI before it runs any test", () => {
+    const cli = join(directory, "missing/dist/cli.js");
+    expect(() => getHost(`node --stack-size=8000 ${cli}`)).toThrow(
+      new MissingHostFileError(cli, undefined),
+    );
+    expect(() => getHost(`node --stack-size=8000 ${cli}`)).toThrow(MissingHostFileError);
   });
 });
 
