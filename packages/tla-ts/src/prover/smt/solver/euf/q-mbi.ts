@@ -28,7 +28,6 @@ const UINT_MAX = 4294967295;
 const MAX_QUICK_CHECK_ROUNDS = 100;
 const MAX_UNBOUNDED_EQUALITIES = 10;
 const MAX_CHOOSE_CANDIDATES = 10;
-const MBQI_MAX_CEXS = 1;
 
 // The families of the arith, datatype and array project plugins of mbqi.
 const PLUGIN_FAMILIES = new Set([FAMILY_ARITH, FAMILY_DATATYPE, FAMILY_ARRAY]);
@@ -60,14 +59,21 @@ export class Mbqi {
   private generationMax = UINT_MAX;
   private instantiations: Instantiation[] = [];
   private readonly pinned: RefVector;
+  private readonly mbqiMaxCexs: number;
 
   constructor(
     private readonly ctx: EufSolver,
     private readonly qs: QSolver,
+    parameters: ReadonlyMap<string, string>,
   ) {
     this.manager = ctx.manager;
-    this.modelFixer = new ModelFixer(ctx, qs);
+    this.modelFixer = new ModelFixer(
+      ctx,
+      qs,
+      Number(parameters.get("smt.mbqi.force_template") ?? "10"),
+    );
     this.pinned = new RefVector(ctx.manager);
+    this.mbqiMaxCexs = Number(parameters.get("smt.mbqi.max_cexs") ?? "1");
   }
 
   private pin(expr: number) {
@@ -113,7 +119,7 @@ export class Mbqi {
       if (checked === L_FALSE) result = L_FALSE;
       else if (checked === L_UNDEF && result === L_TRUE) result = L_UNDEF;
     }
-    this.maxCex += MBQI_MAX_CEXS;
+    this.maxCex += this.mbqiMaxCexs;
     for (const instantiation of this.instantiations) {
       const generation = ctx.generation;
       ctx.generation = instantiation.generation + 1;
@@ -582,7 +588,7 @@ export class Mbqi {
   }
 
   initSearch() {
-    this.maxCex = MBQI_MAX_CEXS;
+    this.maxCex = this.mbqiMaxCexs;
   }
 
   finalizeModel(model: ProtoModel) {

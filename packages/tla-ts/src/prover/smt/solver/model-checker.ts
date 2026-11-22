@@ -12,8 +12,6 @@ import type { DefaultQuantifierManager } from "./quantifier-manager";
 import { RefVector } from "./ref-vector";
 import { VarSubst } from "./var-subst";
 
-const MBQI_MAX_CEXS = 1;
-
 interface Instance {
   quantifier: number;
   offset: number;
@@ -77,7 +75,7 @@ class AuxContext {
 }
 
 export class ModelChecker {
-  private maxCexs = MBQI_MAX_CEXS;
+  private maxCexs = 1;
   private iterationIndex = 0;
   private newInstances: Instance[] = [];
   private pinnedExprs: RefVector;
@@ -286,11 +284,15 @@ export class ModelChecker {
     let isFoundRelevant = false;
     let numFailures = 0;
     for (const quantifier of this.qmanager.quantifiers) {
+      const isMbqiEnabled = this.qmanager.isMbqiEnabled(quantifier);
       if (
+        !isMbqiEnabled ||
         !context.isRelevant(quantifier) ||
         context.getAssignment(context.getLiteral(quantifier)) !== L_TRUE
-      )
+      ) {
+        if (!isMbqiEnabled) numFailures++;
         continue;
+      }
       isFoundRelevant = true;
       if (!this.checkQuantifier(aux, quantifier, model)) numFailures++;
     }
@@ -307,7 +309,7 @@ export class ModelChecker {
     this.aux = aux;
     const first = this.checkQuantifiers(aux, model);
     if (first.isFoundRelevant) this.iterationIndex++;
-    this.maxCexs += MBQI_MAX_CEXS;
+    this.maxCexs += this.context.config.mbqiMaxCexs;
     let numFailures = first.numFailures;
     if (numFailures === 0 && !this.context.validateModel(model))
       numFailures = 1 + this.checkQuantifiers(aux, model).numFailures;
@@ -316,7 +318,7 @@ export class ModelChecker {
   }
 
   initSearchEh() {
-    this.maxCexs = MBQI_MAX_CEXS;
+    this.maxCexs = this.context.config.mbqiMaxCexs;
     this.iterationIndex = 0;
   }
 

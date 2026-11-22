@@ -31,8 +31,12 @@ export interface KernelParams {
   qiCost?: string;
   qiEagerThreshold?: number;
   qiLazyThreshold?: number;
+  qiMaxInstances?: number;
   qiMaxEagerMultipatterns?: number;
   isQiUpdatingGeneration?: boolean;
+  mbqiMaxCexs?: number;
+  mbqiForceTemplate?: number;
+  mbqiId?: string;
   isProofsEnabled?: boolean;
   // A kernel without a setup runs as with auto_config false.
   setup?: SmtSetup;
@@ -75,8 +79,12 @@ export const solveGoal = (manager: AstManager, forms: number[], params: KernelPa
     qiCost: params.qiCost,
     qiEagerThreshold: params.qiEagerThreshold,
     qiLazyThreshold: params.qiLazyThreshold,
+    qiMaxInstances: params.qiMaxInstances,
     qiMaxEagerMultipatterns: params.qiMaxEagerMultipatterns,
     isQiUpdatingGeneration: params.isQiUpdatingGeneration,
+    mbqiMaxCexs: params.mbqiMaxCexs,
+    mbqiForceTemplate: params.mbqiForceTemplate,
+    mbqiId: params.mbqiId,
     isProofsEnabled: params.isProofsEnabled,
   });
   try {
@@ -137,8 +145,12 @@ export const solveAssuming = (
     qiCost: params.qiCost,
     qiEagerThreshold: params.qiEagerThreshold,
     qiLazyThreshold: params.qiLazyThreshold,
+    qiMaxInstances: params.qiMaxInstances,
     qiMaxEagerMultipatterns: params.qiMaxEagerMultipatterns,
     isQiUpdatingGeneration: params.isQiUpdatingGeneration,
+    mbqiMaxCexs: params.mbqiMaxCexs,
+    mbqiForceTemplate: params.mbqiForceTemplate,
+    mbqiId: params.mbqiId,
     isProofsEnabled: params.isProofsEnabled,
   });
   try {

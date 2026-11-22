@@ -37,16 +37,17 @@ import {
   costCoverage,
   countArgumentTuple,
   countCoverage,
-  createChargedEnumerator,
+  createBoundEnumerator,
   createProductSetEnumerator,
   enterFrames,
   exitFrames,
+  getChargedBound,
   getCoverageFrames,
   getCoverageNode,
   getSubstitutionNode,
-  getValueNode,
   runAtCoverageNode,
   runInCoverageFrames,
+  type ChargedEnumerator,
   type Coverage,
   type NextStateMode,
 } from "./coverage";
@@ -94,6 +95,7 @@ import {
   createNormalizedSet,
   createWrittenRecord,
   createTuple,
+  drainChargedSet,
   formatValue,
   getCardinality,
   getDomain,
@@ -101,6 +103,7 @@ import {
   getIntervalElements,
   getLazySubsets,
   getStreamedElements,
+  getValueNode,
   normalizeShallowly,
   getFunctionClass,
   getNormalizedSetElements,
@@ -745,25 +748,28 @@ export const forEachBinding = (
   visit: (scope: Scope | undefined) => boolean,
 ) => forEachBoundElement(bounds, getBoundElements(bounds, context), context.scope, visit);
 
+export const getChargedBounds = (
+  bounds: Bound[],
+  context: Context,
+  coverage: Coverage,
+  version: TlcVersion,
+) =>
+  mapBoundSets(bounds, (set) => {
+    const value = evaluate(set, context);
+    return getChargedBound(coverage, value, version !== "1.7.4", () =>
+      getQuantifierElements(value, set, version),
+    );
+  });
+
 const forEachChargedBinding = (
   bounds: Bound[],
   context: Context,
   coverage: Coverage,
   visit: (scope: Scope | undefined) => boolean,
 ) => {
-  const bounded = mapBoundSets(bounds, (set) => {
-    const value = evaluate(set, context);
-    return {
-      value,
-      elements: getQuantifierElements(value, set, context.environment.runtime.version),
-    };
-  });
+  const bounded = getChargedBounds(bounds, context, coverage, context.environment.runtime.version);
+  const charge = chargeContexts(coverage, bounded);
   const sets = bounded.map((item) => item.elements);
-  const charge = chargeContexts(
-    coverage,
-    bounded.map((item) => item.value),
-    sets,
-  );
   return forEachBoundElement(bounds, sets, context.scope, (scope) => {
     charge();
     return visit(scope);
@@ -956,8 +962,16 @@ const getCostModel = (
     ? {
         secondary: coverage.secondary,
         node,
-        chargeConversion: () =>
-          chargeFunctionConstruction(coverage, node, getBoundSets(bounds, domain)),
+        startConversion: () => {
+          const sets = getBoundSets(bounds, domain);
+          const isDrained = sets.map(
+            (set) =>
+              typeof set === "object" &&
+              (set.kind === "FilteredSet" || set.kind === "SetOperation") &&
+              drainChargedSet(coverage, set) !== undefined,
+          );
+          return () => chargeFunctionConstruction(coverage, node, sets, isDrained);
+        },
       }
     : undefined;
 
@@ -3215,18 +3229,22 @@ export const expectFilterPredicate = (
   return value;
 };
 
-export const getChoiceElements = (
-  base: Value,
-  expression: Expression & { kind: "Choose" },
-  set: Expression,
-  version: TlcVersion,
-) => {
+const normalizeChoices = (base: Value, expression: Expression & { kind: "Choose" }) => {
   if (!isSetValue(base) || isOverriddenSet(base)) {
     throw new TlaEvaluationError(
       `Attempted to compute the value of an expression of\nform CHOOSE x \\in S: P, but S was not enumerable.\n${describeRange(expression)}`,
     );
   }
   normalizeShallowly(base);
+};
+
+export const getChoiceElements = (
+  base: Value,
+  expression: Expression & { kind: "Choose" },
+  set: Expression,
+  version: TlcVersion,
+) => {
+  normalizeChoices(base, expression);
   return getNormalizedElements(base, set, version);
 };
 
@@ -3287,10 +3305,11 @@ const compileSetComprehension = (
   const body = getEvaluator(expression.body, environment);
   const evaluateSet = getEvaluator(set, environment);
   const coverage = environment.coverage;
-  return (context) => {
-    const base = evaluateSet(context);
-    const elements = getChoiceElements(base, expression, set, context.environment.runtime.version);
-    const enumerator = coverage && createChargedEnumerator(coverage, base, elements, true);
+  const choose = (
+    context: Context,
+    elements: ReturnType<typeof getQuantifierElements>,
+    enumerator: ChargedEnumerator | undefined,
+  ) => {
     let chosen: Value | undefined;
     const pattern = expression.pattern;
     someElement(elements, (element) => {
@@ -3312,6 +3331,22 @@ const compileSetComprehension = (
     enumerator?.next();
     throw createNoChoiceError(expression);
   };
+  if (coverage) {
+    return (context) => {
+      const base = evaluateSet(context);
+      normalizeChoices(base, expression);
+      const bound = getChargedBound(coverage, base, true, () =>
+        getNormalizedElements(base, set, context.environment.runtime.version),
+      );
+      return choose(context, bound.elements, createBoundEnumerator(coverage, bound));
+    };
+  }
+  return (context) =>
+    choose(
+      context,
+      getChoiceElements(evaluateSet(context), expression, set, context.environment.runtime.version),
+      undefined,
+    );
 };
 
 export const getSortedFields = (fields: RecordField[]) =>

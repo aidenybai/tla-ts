@@ -70,8 +70,12 @@ export class ModelFinder {
     );
     if (quantifiers.length === 0) return;
     for (const quantifier of quantifiers) this.getQuantifierInfo(quantifier).resetTheOne();
-    const residue = solveMacros(this.manager, model, quantifiers, (quantifier) =>
-      this.getQuantifierInfo(quantifier),
+    const residue = solveMacros(
+      this.manager,
+      model,
+      quantifiers,
+      (quantifier) => this.getQuantifierInfo(quantifier),
+      context.config.mbqiForceTemplate,
     );
     const solver = this.aufSolver;
     solver.reset();

@@ -63,7 +63,7 @@ export abstract class TheoryLraPropagate extends TheoryLraBounds {
       ;
       this.delayIneqsQhead < this.delayIneqs.length &&
       !context.isInconsistent() &&
-      !context.checkCanceled();
+      !context.checkLimitCanceled();
       this.delayIneqsQhead++
     ) {
       const saved = this.delayIneqsQhead;
@@ -88,7 +88,7 @@ export abstract class TheoryLraPropagate extends TheoryLraBounds {
     while (
       this.assertedQhead < this.assertedAtoms.length &&
       !context.isInconsistent() &&
-      !context.checkCanceled()
+      !context.checkLimitCanceled()
     ) {
       const atom = this.assertedAtoms[this.assertedQhead];
       const bound = this.boolVarToBound[atom.boolVar];
@@ -100,7 +100,7 @@ export abstract class TheoryLraPropagate extends TheoryLraBounds {
     }
     if (context.isInconsistent()) return true;
     const status = this.makeFeasible();
-    if (context.checkCanceled()) return true;
+    if (context.checkLimitCanceled()) return true;
     if (status === L_FALSE) this.setInfeasibilityConflict();
     else if (status === L_TRUE) {
       this.propagateNla(true);
@@ -309,7 +309,7 @@ export abstract class TheoryLraPropagate extends TheoryLraBounds {
       return;
     this.bp.init();
     this.bp.propagateBoundsForTouchedRows();
-    if (this.context.checkCanceled()) return;
+    if (this.context.checkLimitCanceled()) return;
     if (this.solver.status === LP_INFEASIBLE) {
       this.setInfeasibilityConflict();
       return;

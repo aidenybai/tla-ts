@@ -83,6 +83,7 @@ export class ModelFixer {
   constructor(
     private readonly ctx: EufSolver,
     private readonly qs: QSolver,
+    private readonly forceTemplate: number,
   ) {
     this.manager = ctx.manager;
     this.macroRewriter = new Rewriter(ctx.manager, TACTIC_REWRITER_OPTIONS);
@@ -94,7 +95,13 @@ export class ModelFixer {
     const univ = this.qs.universal.map((lit) => this.ctx.boolVar2expr(lit >> 1) as number);
     if (univ.length === 0) return;
     this.resetProjectionData();
-    const qs = solveMacros(manager, model, univ, (quantifier) => this.getInfo(quantifier));
+    const qs = solveMacros(
+      manager,
+      model,
+      univ,
+      (quantifier) => this.getInfo(quantifier),
+      this.forceTemplate,
+    );
     this.addProjectionFunctions(model, qs);
     const decls = model.getFuncDecls();
     for (let index = decls.length; index-- > 0;) {

@@ -22,15 +22,18 @@ import { describeNode, getRootKey, type Environment, type Scope } from "./evalua
 import { getJavaHashCode } from "./java-hash";
 import { getTlcFingerprint } from "./tlc/fingerprint";
 import {
+  drainChargedSet,
   getCardinality,
   getDomainInterval,
+  getDrawnSet,
   getStreamedElements,
+  getValueNode,
+  isChargedMember,
   isElementOf,
   isElementOfWith,
   isEmptySet,
   isReducibleSet,
   isSequenceDomain,
-  isTlcEnumerable,
   type FunctionValue,
   type IntervalValue,
   type SetOperationValue,
@@ -906,11 +909,6 @@ export const getSubstitutionNode = (
   return substitutionNode;
 };
 
-export const getValueNode = (coverage: Coverage, value: Value) =>
-  typeof value !== "object"
-    ? undefined
-    : (coverage.values.get(value) ?? (value.kind === "Set" ? value.costNode : undefined));
-
 export const costCoverage = (coverage: Coverage, value: Value, cost: number) => {
   const node = getValueNode(coverage, value);
   if (node !== undefined) coverage.secondary[node] += cost;
@@ -1000,7 +998,7 @@ export const chargeSetOperation = (
   return charged;
 };
 
-interface ChargedEnumerator {
+export interface ChargedEnumerator {
   next: () => boolean;
   reset: () => void;
 }
@@ -1140,9 +1138,6 @@ const getKnownSize = (set: Value): number | undefined => {
       return undefined;
   }
 };
-
-const getDrawnSet = (set: SetOperationValue) =>
-  set.operator === "\\" || isTlcEnumerable(set.left) ? set.left : set.right;
 
 // TLC only tests membership in the other set of S \cap T or S \ T, so sizing it would normalize a set TLC leaves unsorted.
 const hasKnownSize = (set: Value): boolean => {
@@ -1310,26 +1305,58 @@ const chargeBindings = (enumerators: ChargedEnumerator[]) => {
   };
 };
 
-export const chargeContexts = (
-  coverage: Coverage,
-  sets: Value[],
-  lists: (Value[] | IntervalValue)[],
-) =>
-  chargeBindings(
-    sets.map((set, index) => createChargedEnumerator(coverage, set, lists[index], true)),
-  );
+interface ListedBound {
+  kind: "Listed";
+  value: Value;
+  elements: Value[] | IntervalValue;
+}
 
-export const chargeFunctionConstruction = (coverage: Coverage, node: number, sets: Value[]) => {
+interface DrainedBound {
+  kind: "Drained";
+  value: Value;
+  elements: Value[];
+}
+
+export type ChargedBound = ListedBound | DrainedBound;
+
+export const getChargedBound = (
+  coverage: Coverage,
+  value: Value,
+  isNormalized: boolean,
+  getElements: () => Value[] | IntervalValue,
+): ChargedBound => {
+  const drained = isNormalized ? drainChargedSet(coverage, value) : undefined;
+  return drained === undefined
+    ? { kind: "Listed", value, elements: getElements() }
+    : { kind: "Drained", value, elements: drained };
+};
+
+export const createBoundEnumerator = (coverage: Coverage, bound: ChargedBound) =>
+  bound.kind === "Drained"
+    ? createListEnumerator(coverage, getValueNode(coverage, bound.value), bound.elements.length)
+    : createChargedEnumerator(coverage, bound.value, bound.elements, true);
+
+export const chargeContexts = (coverage: Coverage, bounds: ChargedBound[]) =>
+  chargeBindings(bounds.map((bound) => createBoundEnumerator(coverage, bound)));
+
+export const chargeFunctionConstruction = (
+  coverage: Coverage,
+  node: number,
+  sets: Value[],
+  isDrained?: boolean[],
+) => {
   const sizes = sets.map((set) => getCardinality(set));
   // Sizing a filter converts it, as SetPredValue#size does.
   const advance = chargeBindings(
     sets.map((set, index) =>
-      createEnumerator(
-        coverage,
-        set,
-        sizes[index],
-        typeof set === "object" && set.kind === "FilteredSet",
-      ),
+      isDrained?.[index]
+        ? createListEnumerator(coverage, getValueNode(coverage, set), sizes[index])
+        : createEnumerator(
+            coverage,
+            set,
+            sizes[index],
+            typeof set === "object" && set.kind === "FilteredSet",
+          ),
     ),
   );
   const size = sizes.reduce((product, setSize) => product * setSize, 1);
@@ -1364,6 +1391,8 @@ const createChargedMembership = (coverage: Coverage) => {
         ? isElementOfWith(element, set, isMember)
         : isElementOf(element, set);
     }
+    const isDrawnMember = isChargedMember(coverage, element, set);
+    if (isDrawnMember !== undefined) return isDrawnMember;
     const isSubset = set.kind === "Subset";
     let drawn = 0;
     let isElement: boolean | undefined;

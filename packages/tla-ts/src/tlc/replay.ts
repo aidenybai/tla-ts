@@ -18,6 +18,7 @@ import {
   restoreFrames,
   runAtCoverageNode,
   runReportedInto,
+  type ChargedBound,
   type Coverage,
 } from "../coverage";
 import {
@@ -30,6 +31,7 @@ import {
   forEachBoundElement,
   freezeCallStack,
   getArgumentTuple,
+  getChargedBounds,
   getContextElements,
   getLazyFunction,
   getMissingArgumentDescriber,
@@ -60,6 +62,7 @@ import {
   isFunctionValue,
   isTlcEnumerable,
   setTrace,
+  streamChargedSet,
   type Value,
 } from "../values";
 import {
@@ -767,8 +770,10 @@ const visitAssignment = (
   }
   if (!isTlcEnumerable(set))
     throw new TlaEvaluationError("The right side of \\IN is not enumerable.");
-  const elements = getStreamedElements(set);
   const generator = replay.generator;
+  const streamed =
+    replay.coverage && !generator ? streamChargedSet(replay.coverage, set) : undefined;
+  const elements = streamed ?? getStreamedElements(set);
   if (generator) {
     const order = getRandomOrder(replay, set, elements);
     for (let position = 0; position < order.length; position++) {
@@ -777,7 +782,9 @@ const visitAssignment = (
     }
   }
   const enumerator =
-    replay.coverage && createChargedEnumerator(replay.coverage, set, elements, false);
+    replay.coverage && streamed === undefined
+      ? createChargedEnumerator(replay.coverage, set, elements, false)
+      : undefined;
   const isProduced = elements.reduce<boolean>((isProduced, element) => {
     enumerator?.next();
     return proceed(replay, items, assign(partial, index, element), node) || isProduced;
@@ -833,25 +840,21 @@ const getBindings = (
 ) => {
   const bindings: (Scope | undefined)[] = [];
   const version = replay.environment.runtime.version;
+  const coverage = replay.coverage;
   const bounded = runAt(replay, node, () =>
-    mapBoundSets(expression.bounds, (set) => {
-      const value = evaluate(set, context);
-      return { value, elements: getQuantifierElements(value, set, version) };
-    }),
+    coverage
+      ? getChargedBounds(expression.bounds, context, coverage, version)
+      : mapBoundSets(expression.bounds, (set): ChargedBound => {
+          const value = evaluate(set, context);
+          return { kind: "Listed", value, elements: getQuantifierElements(value, set, version) };
+        }),
   );
   const sets = bounded.map((item) => item.elements);
   forEachBoundElement(expression.bounds, sets, context.scope, (bound) => {
     bindings.push(bound);
     return false;
   });
-  const coverage = replay.coverage;
-  const charge =
-    coverage &&
-    chargeContexts(
-      coverage,
-      bounded.map((item) => item.value),
-      sets,
-    );
+  const charge = coverage && chargeContexts(coverage, bounded);
   return { bindings, charge };
 };
 
