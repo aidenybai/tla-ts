@@ -73,7 +73,6 @@ import { EXIT_STATUS, setExitCode } from "./exit-codes";
 import type { JavaOverride } from "./java-overrides";
 import { ACTION_LEVEL, CONSTANT_LEVEL, TEMPORAL_LEVEL, VARIABLE_LEVEL } from "./levels";
 import {
-  createSanyAnalyzer,
   expandTemporal,
   getLevel,
   getLevelBound,
@@ -337,12 +336,11 @@ export const reportStartup = (
   });
 };
 
-const getInvariants = (names: string[], environment: Environment) => {
-  const analyzer = createSanyAnalyzer(environment);
-  return names.flatMap((name) => {
+const getInvariants = (names: string[], environment: Environment) =>
+  names.flatMap((name) => {
     const definition = getConfigPredicate("invariant", name, environment);
     if (!definition) return [];
-    const levels = analyzer.analyzeDefinition(definition, new Map());
+    const levels = environment.sanyLevels.analyzeDefinition(definition, new Map());
     if (levels.level >= ACTION_LEVEL) {
       const note =
         (levels.params?.size ?? 0) === 0
@@ -357,7 +355,6 @@ const getInvariants = (names: string[], environment: Environment) => {
     }
     return [createNamedIdentifier(name, environment)];
   });
-};
 
 const getConjuncts = (expression: Expression, environment: Environment): Expression[] => {
   if (expression.kind === "And")

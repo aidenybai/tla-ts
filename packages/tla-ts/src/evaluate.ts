@@ -51,7 +51,7 @@ import {
   type NextStateMode,
 } from "./coverage";
 import { isEvalException, MESSAGE_CODE } from "./tlc/messages";
-import type { InstanceLevels, SectionMember } from "./levels";
+import type { InstanceLevels, LevelAnalyzer, SectionMember } from "./levels";
 import { EMPTY_STATE, type CheckerRuntime } from "./runtime";
 import {
   isBodyVarying,
@@ -249,6 +249,9 @@ export interface Environment {
   getOperatorLevels: (name: string) => OperatorLevels | undefined;
   // The levels that a prepared module gives a global operator, where they hold in this check.
   getPreparedLevels: (name: string) => OperatorLevels | undefined;
+  // SANY's analysis of the levels of the spec's definitions and expressions, as TLC reads them,
+  // which a check runs once and every reader of a level shares.
+  sanyLevels: LevelAnalyzer;
   instances: InstanceLevels;
   recursiveSections: WeakMap<Definition, SectionMember[]>;
   // The modules of ESCore's runtime, whose recursions are tla-ts's own rather than a spec's.

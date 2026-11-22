@@ -1669,6 +1669,22 @@ ASSUME TLCFP(a) = -887695703
     ]);
   });
 
+  // Tool#getActionsAppl splits an action at the values of arguments that SANY gives constant level,
+  // each LET definition at the level of its own body, though the two LETs name the same k.
+  it.each([
+    ["x # 1", "A(1) line 4, col 9 to line 4, col 14 of module M"],
+    ["x < 2", "A line 6, col 28 to line 6, col 31 of module M"],
+  ])(
+    "labels a step whose argument a LET binds at its own level, with %s, like TLC",
+    async (invariant, label) => {
+      const result = await check({
+        source: `---- MODULE M ----\nEXTENDS Naturals\nVARIABLE x\nA(n) == x' = n\nInit == x = 0\nNext == (LET k == x + 2 IN A(k)) \\/ (LET k == 1 IN A(k))\nInv == ${invariant}\n====`,
+        config: "INIT Init\nNEXT Next\nINVARIANT Inv",
+      });
+      expect(result.violation?.trace.map((step) => step.label)).toEqual([undefined, label]);
+    },
+  );
+
   it("counts the states left on the queue when a violation stops the search", async () => {
     const result = await checkFixture("water-jugs", "WaterJugs");
     expect(result.queuedStates).toBe(1);

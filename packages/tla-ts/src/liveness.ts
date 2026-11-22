@@ -59,7 +59,6 @@ import {
   ACTION_LEVEL,
   CONSTANT_LEVEL,
   createBoundScope,
-  createLevelAnalyzer,
   TEMPORAL_LEVEL,
   VARIABLE_LEVEL,
 } from "./levels";
@@ -181,16 +180,6 @@ const createCannotHandleError = (expression: Expression, inner?: string) =>
     `TLC cannot handle the temporal formula ${describeRange(expression)}${inner === undefined ? "" : `:\n${inner}`}`,
   );
 
-export const createSanyAnalyzer = (environment: Environment) =>
-  createLevelAnalyzer({
-    constants: new Map([...environment.constants.keys()].map((key) => [key, 0])),
-    variables: new Set(environment.variables),
-    getDefinition: (name) => environment.definitions.get(name),
-    getPreparedLevels: environment.getPreparedLevels,
-    instances: environment.instances,
-    recursiveSections: environment.recursiveSections,
-  });
-
 // TLC reads the level SANY gives a node, which counts a formal parameter as a constant whatever its argument.
 export const getSanyLevel = (
   expression: Expression,
@@ -201,7 +190,7 @@ export const getSanyLevel = (
   for (let node = scope; node; node = node.parent) {
     bindings.unshift([node.name, letDefinitions.get(node)]);
   }
-  return createSanyAnalyzer(environment).analyze(expression, createBoundScope(bindings)).level;
+  return environment.sanyLevels.analyze(expression, createBoundScope(bindings)).level;
 };
 
 // The level that SANY gives an expression, with the levels of what its scope binds read in, as
