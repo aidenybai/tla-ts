@@ -426,6 +426,40 @@ describe("INSTANCE matches TLC", () => {
     ]);
   });
 
+  it("evaluates a LET INSTANCE's copy that a module-level instance already defines as the module-level copy, as TLC does", async () => {
+    const prints: string[] = [];
+    const result = await check({
+      source:
+        "---- MODULE M ----\nEXTENDS TLC\n---- MODULE Inner ----\nCONSTANT c\nFoo == c\n====\nI == INSTANCE Inner WITH c <- 2\nF == LET I == INSTANCE Inner WITH c <- 1 IN I!Foo\nASSUME PrintT(F)\nVARIABLE x\nInit == x = 0\nNext == x' = x\n====",
+      config: "INIT Init\nNEXT Next",
+      onPrint: (text) => prints.push(text),
+    });
+    expect([result.status, prints]).toEqual([
+      "success",
+      [
+        "*** Warnings: 2\n\nline 8, col 10 to line 8, col 40 of module M\n\nMultiple declarations or definitions for symbol I!Foo.  \nThis duplicates the one at line 7, col 1 to line 7, col 31 of module M.\n\n\n\nline 8, col 10 to line 8, col 40 of module M\n\nMultiple declarations or definitions for symbol I.  \nThis duplicates the one at line 7, col 1 to line 7, col 31 of module M.\n\n\n",
+        "2",
+      ],
+    ]);
+  });
+
+  it("evaluates a LET INSTANCE's copy that an earlier LET INSTANCE already defines as the earlier copy, as TLC does", async () => {
+    const prints: string[] = [];
+    const result = await check({
+      source:
+        "---- MODULE M ----\nEXTENDS TLC\n---- MODULE Inner ----\nCONSTANT c\nFoo == c\n====\nN == INSTANCE Inner WITH c <- 0\nF == LET I == INSTANCE Inner WITH c <- 1\n         I == INSTANCE Inner WITH c <- 2\n     IN I!Foo\nASSUME PrintT(F)\nVARIABLE x\nInit == x = 0\nNext == x' = x\n====",
+      config: "INIT Init\nNEXT Next",
+      onPrint: (text) => prints.push(text),
+    });
+    expect([result.status, prints]).toEqual([
+      "success",
+      [
+        "*** Warnings: 2\n\nline 9, col 10 to line 9, col 40 of module M\n\nMultiple declarations or definitions for symbol I!Foo.  \nThis duplicates the one at line 8, col 10 to line 8, col 40 of module M.\n\n\n\nline 9, col 10 to line 9, col 40 of module M\n\nMultiple declarations or definitions for symbol I.  \nThis duplicates the one at line 8, col 10 to line 8, col 40 of module M.\n\n\n",
+        "1",
+      ],
+    ]);
+  });
+
   it("parses a prefix operator followed by an operand as an expression", () => {
     const module = parseModule(
       "---- MODULE M ----\nI == INSTANCE N WITH a <- - b, c <- SUBSET d, e <- -\n====",

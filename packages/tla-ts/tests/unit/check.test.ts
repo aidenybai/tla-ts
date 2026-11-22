@@ -193,6 +193,50 @@ describe("check matches TLC", () => {
   );
 
   it.each([
+    ["![k] = v, applied at k", "0", "[f EXCEPT ![<<1, 1>>] = 5][<<1, 1>>] = 5", ["<<1, 1>>"]],
+    [
+      "![k] = v twice, applied at k",
+      "0",
+      "[[f EXCEPT ![<<1, 1>>] = 5] EXCEPT ![<<1, 1>>] = @ + 1][<<1, 1>>] = 6",
+      ["<<1, 1>>"],
+    ],
+    [
+      "![k] = v and ![j] = w, applied at k",
+      "0",
+      "[[f EXCEPT ![<<1, 1>>] = 5] EXCEPT ![<<2, 1>>] = 6][<<1, 1>>] = 5",
+      ["<<1, 1>>", "<<2, 1>>"],
+    ],
+    [
+      "![k].c = v and then ![k] = w, applied at k",
+      "[c |-> 0]",
+      "[[f EXCEPT ![<<1, 1>>].c = 5] EXCEPT ![<<1, 1>>] = [c |-> 6]][<<1, 1>>].c = 6",
+      ["<<1, 1>>", "<<1, 1>>"],
+    ],
+    [
+      "![k] = v and then ![k].c = w, applied at k",
+      "[c |-> 0]",
+      "[[f EXCEPT ![<<1, 1>>] = [c |-> 1]] EXCEPT ![<<1, 1>>].c = 5][<<1, 1>>].c = 5",
+      ["<<1, 1>>"],
+    ],
+  ])(
+    "checks a lazy function's domain only where TLC does after EXCEPT %s",
+    async (_except, body, application, expected) => {
+      const prints: string[] = [];
+      const result = await check({
+        source: `---- MODULE M ----\nEXTENDS Integers, TLC\nVARIABLE x\nInit == x = 0\nNext == x' = 0 /\\ LET f == [t \\in {u \\in (0..2) \\X {1} : PrintT(u)} |-> ${body}] IN ${application}\n====`,
+        config: "INIT Init\nNEXT Next",
+        onPrint: (text) => prints.push(text),
+      });
+      expect(prints).toEqual(expected);
+      expect([result.status, result.generatedStates, result.distinctStates]).toEqual([
+        "success",
+        2,
+        1,
+      ]);
+    },
+  );
+
+  it.each([
     [
       "a member of SUBSET S",
       "~({t \\in (0..2) \\X {x} : 1 \\div (2 - t[1]) >= 0} \\in SUBSET ((1..2) \\X {x}))",
@@ -269,6 +313,89 @@ describe("check matches TLC", () => {
   });
 
   it.each([
+    [
+      "a set of records whose first field misses",
+      "[a |-> 1, b |-> 0] \\notin [a : {0}, b : {1 \\div x}]",
+    ],
+    [
+      "a set of records whose first field is Nat",
+      "[a |-> -1, b |-> 0] \\notin [a : Nat, b : {1 \\div x}]",
+    ],
+    [
+      "a set of records with a set of records as a field",
+      "[a |-> 1, b |-> [c |-> 0]] \\notin [a : {0}, b : [c : {1 \\div x}]]",
+    ],
+    [
+      "a set of records with SUBSET as a field",
+      "[a |-> 1, b |-> {}] \\notin [a : {0}, b : SUBSET {1 \\div x}]",
+    ],
+    [
+      "a set of records with Seq as a field",
+      "[a |-> 1, b |-> <<>>] \\notin [a : {0}, b : Seq({1 \\div x})]",
+    ],
+    [
+      "a set of records with a filter of a set literal as a field",
+      "[a |-> 1, b |-> 0] \\notin [a : {0}, b : {t \\in {1 \\div x} : TRUE}]",
+    ],
+    [
+      "a set of records with a filter of an interval as a field",
+      "[a |-> 1, b |-> 0] \\notin [a : {0}, b : {t \\in 0..2 : t # 1 \\div x}]",
+    ],
+    [
+      "a set of records with a set difference as a field",
+      "[a |-> 1, b |-> 0] \\notin [a : {0}, b : {0} \\ {1 \\div x}]",
+    ],
+    [
+      "a set of records with DOMAIN as a field",
+      "[a |-> 1, b |-> 0] \\notin [a : {0}, b : DOMAIN [t \\in {1 \\div x} |-> 0]]",
+    ],
+    [
+      "a set of records with a set of functions on an interval as a field",
+      "[a |-> 1, b |-> <<>>] \\notin [a : {0}, b : [1..(1 \\div x) -> {0}]]",
+    ],
+    ["a set of functions whose domain misses", "[t \\in {1} |-> 0] \\notin [{2} -> {1 \\div x}]"],
+    ["a set of functions on an interval that is empty", "<<>> \\in [1..x -> {1 \\div x}]"],
+    [
+      "a set of functions with SUBSET of a constant as its range",
+      "[t \\in {1} |-> {}] \\notin [{2} -> SUBSET {1 \\div 0}]",
+    ],
+    [
+      "a set of records with SUBSET of a constant as a field",
+      "[a |-> 1, b |-> {}] \\notin [a : {0}, b : SUBSET {1 \\div 0}]",
+    ],
+    ["Seq of a set literal", "<<>> \\in Seq({1 \\div x})"],
+    ["Seq of a set of records", "<<[a |-> 1, b |-> 0]>> \\notin Seq([a : {0}, b : {1 \\div x}])"],
+    ["SUBSET of a set of records", "{} \\in SUBSET [a : {1 \\div x}]"],
+    ["a union of two sets of records", "[a |-> 0] \\in [a : {0}] \\cup [a : {1 \\div x}]"],
+    [
+      "a union nested in a union",
+      "[a |-> 0] \\in {[a |-> 0]} \\cup ({[a |-> 1 \\div x]} \\cup [a : {0}])",
+    ],
+    ["UNION of a literal of a union", "[a |-> 0] \\in UNION {[a : {0}] \\cup [a : {1 \\div x}]}"],
+    [
+      "a lazy filter of a set of records",
+      "[a |-> 1, b |-> 0] \\notin {r \\in [a : {0}, b : {1 \\div x}] : TRUE}",
+    ],
+    ["a set of records less a set", "[a |-> 1, b |-> 0] \\notin [a : {0}, b : {1 \\div x}] \\ {}"],
+    ["the domain of a tuple", "0 \\notin DOMAIN <<1 \\div x>>"],
+    ["the domain of a sequence", "0 \\notin DOMAIN Append(<<>>, 1 \\div x)"],
+  ])(
+    "fails as TLC does to build the parts of %s before it tests membership in it",
+    async (_set, membership) => {
+      const result = await check({
+        source: `---- MODULE M ----\nEXTENDS Integers, Sequences\nVARIABLE x\nInit == x = 0\nNext == x' = (x + 1) % 3 /\\ ${membership}\n====`,
+        config: "INIT Init\nNEXT Next",
+      });
+      expect([
+        result.status,
+        result.failure?.message,
+        result.generatedStates,
+        result.distinctStates,
+      ]).toEqual(["error", "The second argument of \\div is 0.", 1, 1]);
+    },
+  );
+
+  it.each([
     ["{0}", "1 \\in UNION {Nat, {x}}"],
     ["{1}", "1 \\in UNION {Nat, {1}}"],
   ])(
@@ -291,6 +418,67 @@ describe("check matches TLC", () => {
       ]);
     },
   );
+
+  it.each([
+    [
+      "fails as TLC does to build an enumerated set it filters by a predicate that can't fail",
+      "{<<1, 0>>}",
+      "{<<1 \\div x, x>>, <<1, x>>}",
+      ["error", "The second argument of \\div is 0.", 1, 1],
+    ],
+    [
+      "tests membership in a filter by a predicate that can't fail as TLC does",
+      "{<<1, 0>>, <<1, 1>>}",
+      "{<<0, x>>, <<1, x>>}",
+      ["deadlock", undefined, 3, 3],
+    ],
+  ])("%s", async (_title, edges, set, expected) => {
+    const result = await check({
+      source: `---- MODULE M ----\nEXTENDS Integers\nVARIABLES x, y\nInit == x = 0 /\\ y = ${edges}\nNext == x' = (x + 1) % 3 /\\ y' = y /\\ <<1, x>> \\in {t \\in ${set} : t \\in y}\n====`,
+      config: "INIT Init\nNEXT Next",
+    });
+    expect([
+      result.status,
+      result.failure?.message,
+      result.generatedStates,
+      result.distinctStates,
+    ]).toEqual(expected);
+  });
+
+  it("fails as TLC does to compare model values of two types in a filter's membership test", async () => {
+    const result = await check({
+      source:
+        "---- MODULE M ----\nEXTENDS Integers\nCONSTANTS a, b, m\nVARIABLES x, y\nInit == x = 0 /\\ y = {b, m}\nNext == x' = (x + 1) % 3 /\\ y' = y /\\ m \\in {t \\in {m, a} : t \\in y}\n====",
+      config: "INIT Init\nNEXT Next\nCONSTANTS\na = A_a\nb = B_b\nm = m",
+    });
+    expect([
+      result.status,
+      result.failure?.message,
+      result.generatedStates,
+      result.distinctStates,
+    ]).toEqual([
+      "error",
+      `${UNEXPECTED_EXCEPTION}Attempted to compare the differently-typed model values A_a and B_b`,
+      1,
+      1,
+    ]);
+  });
+
+  it("checks a membership in a filter whose predicate nests 19 more as TLC does", async () => {
+    let predicate = "t20 \\in y";
+    for (let level = 20; level >= 2; level--) {
+      predicate = `t${level - 1} \\in {t${level} \\in 0..0 : ${predicate}}`;
+    }
+    const result = await check({
+      source: `---- MODULE M ----\nEXTENDS Integers\nVARIABLES x, y\nInit == x = 0 /\\ y = {0, 1, 2}\nNext == x' = x /\\ y' = y /\\ x \\in {t1 \\in 0..0 : ${predicate}}\n====`,
+      config: "INIT Init\nNEXT Next",
+    });
+    expect([result.status, result.generatedStates, result.distinctStates]).toEqual([
+      "success",
+      2,
+      1,
+    ]);
+  });
 
   it.each([
     [

@@ -114,6 +114,7 @@ import {
 import { createInstanceChecker, type KeyedDeclaration } from "./substitution-levels";
 import { formatPrompt } from "./tlc/messages";
 import { createDefinitionFacts, isReevaluationShown } from "./dependencies";
+import { resolveSynonym } from "./tlc/jar-data";
 import { createTlcOrder, type TlcOrder } from "./tlc/order";
 import { isTlcInteger, type Value } from "./values";
 import type { TlcVersion } from "./tlc/version";
@@ -726,6 +727,14 @@ export const createEnvironment = (
     );
   };
 
+  // SANY adds an instanced module's definitions, then its theorems, in its symbol table's hash order.
+  const getSymbolTableSymbols = (instance: Instance, symbols: Symbols) => {
+    const names = order.getInstanceDefinitions(instance.module);
+    const prefixLength = instance.name === undefined ? 0 : instance.name.length + 1;
+    const getIndex = (name: string) => names.indexOf(resolveSynonym(name.slice(prefixLength)));
+    return new Map([...symbols].toSorted((left, right) => getIndex(left[0]) - getIndex(right[0])));
+  };
+
   // SANY infers a substitution for each declaration the instancing module resolves, in the order of the instanced module's symbol table, and appends the others.
   const setFrameSubstitutions = (
     frame: Expression,
@@ -1000,13 +1009,17 @@ export const createEnvironment = (
                     : entry[1].range,
                 // SANY copies what a LOCAL INSTANCE imports to the instance, but a copy from a module without parameters stays the same definition.
                 sourceRange:
-                  instance.isLocal && parameterized.get(entry[1].key) !== true
+                  entry[1].sourceRange ??
+                  (instance.isLocal && parameterized.get(entry[1].key) !== true
                     ? entry[1].range
-                    : undefined,
+                    : undefined),
                 functionArity:
                   parameterized.get(entry[1].key) === true ? undefined : entry[1].functionArity,
                 goal: entry[1].goal,
                 isSubstituted,
+                isCopiedTheorem:
+                  entry[1].kind === "Theorem" &&
+                  (instance.isLocal || parameterized.get(entry[1].key) === true),
               },
             ];
           }
@@ -1021,9 +1034,14 @@ export const createEnvironment = (
                 ...entry[1].params,
               ],
               kind: entry[1].kind,
+              range: instance.location.range,
+              sourceRange:
+                entry[1].sourceRange ??
+                (parameterized.get(entry[1].key) === true ? undefined : entry[1].range),
               functionArity: declarations.length > 0 ? undefined : entry[1].functionArity,
               goal: entry[1].goal,
               isSubstituted,
+              isCopiedTheorem: entry[1].kind === "Theorem",
             },
           ];
         }),
@@ -1282,7 +1300,8 @@ export const createEnvironment = (
         if (
           !current.range ||
           !symbol.range ||
-          formatRange(current.range) === formatRange(symbol.range)
+          formatRange(current.sourceRange ?? current.range) ===
+            formatRange(symbol.sourceRange ?? symbol.range)
         ) {
           return;
         }
@@ -1446,11 +1465,14 @@ export const createEnvironment = (
         const linked = nested ?? getLinkedModule(instance.module, parsed.name);
         return {
           declarations: getSymbolTableOrdered(instance.module, linked.declarations),
-          symbols: getInstanceSymbols(
+          symbols: getSymbolTableSymbols(
             instance,
-            linked.exported,
-            linked.declarations,
-            (symbol) => symbol.key,
+            getInstanceSymbols(
+              instance,
+              linked.exported,
+              linked.declarations,
+              (symbol) => symbol.key,
+            ),
           ),
           instancer: parsed.name,
           getSubstitutionErrors: (substitutionCount) =>
@@ -1540,7 +1562,8 @@ export const createEnvironment = (
         bound.has(name) ||
         parsed.instances.some(
           (instance) =>
-            isBefore(instance.location, location) && instanced.get(instance)?.has(name) === true,
+            isBefore(instance.location, location) &&
+            (instance.name === name || instanced.get(instance)?.has(name) === true),
         ) ||
         declarations.some(
           (declaration) => declaration.name === name && isBefore(declaration.location, location),
@@ -1640,7 +1663,7 @@ export const createEnvironment = (
             getVisibleModules().get(instance.module),
             new Map(symbolsBefore),
           );
-          instanced.set(instance, symbols);
+          instanced.set(instance, getSymbolTableSymbols(instance, symbols));
           symbols.forEach((symbol, name) => {
             if (symbolsBefore.has(name)) return;
             visible.set(name, symbol);
@@ -1651,7 +1674,9 @@ export const createEnvironment = (
             !instance.isLocal &&
             !symbolsBefore.has(instance.name)
           ) {
-            exported.set(instance.name, getInstanceSymbol(instance, instance.name));
+            const symbol = getInstanceSymbol(instance, instance.name);
+            parameterized.set(symbol.key, !isParameterFree);
+            exported.set(instance.name, symbol);
           }
           if (instance.name !== undefined) {
             bindBefore(
