@@ -32,6 +32,10 @@ const createFileReader = (files: Map<string, string>) => (path: string) => {
   return text === undefined ? undefined : new TextEncoder().encode(text);
 };
 
+const createFileWriter =
+  (files: Map<string, string>) => (path: string, content: string | Uint8Array) =>
+    files.set(path, typeof content === "string" ? content : new TextDecoder().decode(content));
+
 const getCoverageCounts = async (definitions: string, config: string) => {
   const result = await check({
     source: `---- MODULE M ----\nEXTENDS Integers\nVARIABLE x\n${definitions}\n====`,
@@ -987,7 +991,7 @@ ASSUME TLCFP(a) = -887695703
             ? "---- MODULE IOUtils ----\nLOCAL INSTANCE Integers\nSerialize(value, dest, options) ==\n  CHOOSE r \\in [exitValue : Int, stdout : STRING, stderr : STRING] : TRUE\n===="
             : undefined,
         readFile: createFileReader(files),
-        writeFile: (path, content) => files.set(path, String(content)),
+        writeFile: createFileWriter(files),
       });
       expect(files.get("old.json")).toBe(content);
     },
@@ -1010,7 +1014,7 @@ ASSUME TLCFP(a) = -887695703
           ? "---- MODULE IOUtils ----\nLOCAL INSTANCE Integers\nSerialize(value, dest, options) ==\n  CHOOSE r \\in [exitValue : Int, stdout : STRING, stderr : STRING] : TRUE\n===="
           : undefined,
       readFile: createFileReader(files),
-      writeFile: (path, content) => files.set(path, String(content)),
+      writeFile: createFileWriter(files),
     });
 
   const getSerializeError = (result: CheckResult) => {
@@ -1083,6 +1087,35 @@ ASSUME TLCFP(a) = -887695703
       const files = new Map([["old.json", "abcdefghij\n"]]);
       await checkSerialize("1, {<<>>, 0}", path, openOptions, files);
       expect(files.get(path)).toBe(content);
+    },
+  );
+
+  it.each([
+    ["1", '"WRITE"', "c3a9c3a9c3a9", "310ac3a9c3a9"],
+    ["12", '"WRITE"', "c3a9c3a9c3a9", "31320aa9c3a9"],
+    ["1, 2", '"WRITE"', "c3a9c3a9c3a9", "310a320ac3a9"],
+    ['"abcdefg"', '"WRITE"', "c3a9c3a9c3a9", "2261626364656667220a"],
+    ["1", '"APPEND"', "c3a9c3a9c3a9", "c3a9c3a9c3a9310a"],
+    ["1", '"APPEND"', "ff", "ff310a"],
+    ["1", '"WRITE"', "ffffffff", "310affff"],
+    ["1", '"WRITE", "TRUNCATE_EXISTING"', "c3a9c3a9c3a9", "310a"],
+  ])(
+    "writes the lines of <<%s>> with <<%s>> to a file of bytes %s byte by byte, as TLC's textSerialize does",
+    async (payload, openOptions, existing, expected) => {
+      let written = "";
+      await check({
+        source: `---- MODULE M ----\nEXTENDS Integers, TLC, IOUtils\nVARIABLE x\nInit == x = 0 /\\ Serialize(<<${payload}>>, "out.txt", [format |-> "NDJSON", charset |-> "UTF-8", openOptions |-> <<${openOptions}>>])\nNext == x' = x\n====`,
+        config: "INIT Init\nNEXT Next",
+        loadModule: (name) =>
+          name === "IOUtils"
+            ? "---- MODULE IOUtils ----\nLOCAL INSTANCE Integers\nSerialize(value, dest, options) ==\n  CHOOSE r \\in [exitValue : Int, stdout : STRING, stderr : STRING] : TRUE\n===="
+            : undefined,
+        readFile: () => Buffer.from(existing, "hex"),
+        writeFile: (_path, content) => {
+          written = Buffer.from(content).toString("hex");
+        },
+      });
+      expect(written).toBe(expected);
     },
   );
 
