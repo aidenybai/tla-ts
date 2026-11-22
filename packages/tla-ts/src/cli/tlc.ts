@@ -258,6 +258,9 @@ const checkSpec = async (
         )
       : new TlaMissingCheckpointError(recoverDirectory);
   }
+  if (args.isCheckpointRequested) {
+    throw new TlaFeatureUnsupportedError("tla-ts doesn't write checkpoints.");
+  }
   printStartupBanner(printer, args);
   const configPath = args.configPath ?? specPath.replace(/\.tla$/, ".cfg");
   if (!existsSync(configPath)) {

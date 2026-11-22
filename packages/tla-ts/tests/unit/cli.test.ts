@@ -2261,3 +2261,24 @@ describe("the CLI fails to print an initial state through -view as TLC does", ()
     },
   );
 });
+
+describe("the CLI takes -checkpoint only where it writes no checkpoint", () => {
+  it.each(["5", "30"])("rejects -checkpoint %s, as tla-ts doesn't write checkpoints", (minutes) => {
+    const result = runCli("counter", "Counter", ["-noGenerateSpecTE", "-checkpoint", minutes]);
+    expect([result.status, result.stdout]).toEqual([
+      255,
+      expect.stringContaining("\nError: tla-ts doesn't write checkpoints.\n"),
+    ]);
+  });
+
+  it.each(["0", "134217728"])(
+    "takes -checkpoint %s, whose interval of 0 milliseconds turns TLC's checkpoints off",
+    (minutes) => {
+      const result = runCli("counter", "Counter", ["-noGenerateSpecTE", "-checkpoint", minutes]);
+      expect([result.status, result.stdout]).toEqual([
+        11,
+        expect.stringContaining("\nError: Deadlock reached.\n"),
+      ]);
+    },
+  );
+});

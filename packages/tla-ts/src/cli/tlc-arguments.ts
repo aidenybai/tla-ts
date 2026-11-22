@@ -19,6 +19,7 @@ export interface TlcArguments {
   isViewPrinted: boolean;
   metadir: string | undefined;
   recoverDirectory: string | undefined;
+  isCheckpointRequested: boolean;
   mode: "model-check" | "simulate" | "generate";
   dfidDepth: number | undefined;
   traceDepth: number;
@@ -197,6 +198,7 @@ const createDefaults = (): TlcArguments => ({
   isViewPrinted: false,
   metadir: undefined,
   recoverDirectory: undefined,
+  isCheckpointRequested: false,
   mode: "model-check",
   dfidDepth: undefined,
   traceDepth: 100,
@@ -322,7 +324,9 @@ const VALUE_FLAGS: Record<string, ValueFlag> = {
     "checkpoint",
     "Error: checkpoint interval required.",
     "Error: An integer for checkpoint interval is required.",
-    () => {},
+    (parsed, minutes) => {
+      parsed.isCheckpointRequested = minutes > 0;
+    },
   ),
   "-depth": {
     missing: "Error: trace length required.",
