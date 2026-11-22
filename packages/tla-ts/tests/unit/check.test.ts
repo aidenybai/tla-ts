@@ -313,6 +313,89 @@ describe("check matches TLC", () => {
   });
 
   it.each([
+    [
+      "a set of records whose first field misses",
+      "[a |-> 1, b |-> 0] \\notin [a : {0}, b : {1 \\div x}]",
+    ],
+    [
+      "a set of records whose first field is Nat",
+      "[a |-> -1, b |-> 0] \\notin [a : Nat, b : {1 \\div x}]",
+    ],
+    [
+      "a set of records with a set of records as a field",
+      "[a |-> 1, b |-> [c |-> 0]] \\notin [a : {0}, b : [c : {1 \\div x}]]",
+    ],
+    [
+      "a set of records with SUBSET as a field",
+      "[a |-> 1, b |-> {}] \\notin [a : {0}, b : SUBSET {1 \\div x}]",
+    ],
+    [
+      "a set of records with Seq as a field",
+      "[a |-> 1, b |-> <<>>] \\notin [a : {0}, b : Seq({1 \\div x})]",
+    ],
+    [
+      "a set of records with a filter of a set literal as a field",
+      "[a |-> 1, b |-> 0] \\notin [a : {0}, b : {t \\in {1 \\div x} : TRUE}]",
+    ],
+    [
+      "a set of records with a filter of an interval as a field",
+      "[a |-> 1, b |-> 0] \\notin [a : {0}, b : {t \\in 0..2 : t # 1 \\div x}]",
+    ],
+    [
+      "a set of records with a set difference as a field",
+      "[a |-> 1, b |-> 0] \\notin [a : {0}, b : {0} \\ {1 \\div x}]",
+    ],
+    [
+      "a set of records with DOMAIN as a field",
+      "[a |-> 1, b |-> 0] \\notin [a : {0}, b : DOMAIN [t \\in {1 \\div x} |-> 0]]",
+    ],
+    [
+      "a set of records with a set of functions on an interval as a field",
+      "[a |-> 1, b |-> <<>>] \\notin [a : {0}, b : [1..(1 \\div x) -> {0}]]",
+    ],
+    ["a set of functions whose domain misses", "[t \\in {1} |-> 0] \\notin [{2} -> {1 \\div x}]"],
+    ["a set of functions on an interval that is empty", "<<>> \\in [1..x -> {1 \\div x}]"],
+    [
+      "a set of functions with SUBSET of a constant as its range",
+      "[t \\in {1} |-> {}] \\notin [{2} -> SUBSET {1 \\div 0}]",
+    ],
+    [
+      "a set of records with SUBSET of a constant as a field",
+      "[a |-> 1, b |-> {}] \\notin [a : {0}, b : SUBSET {1 \\div 0}]",
+    ],
+    ["Seq of a set literal", "<<>> \\in Seq({1 \\div x})"],
+    ["Seq of a set of records", "<<[a |-> 1, b |-> 0]>> \\notin Seq([a : {0}, b : {1 \\div x}])"],
+    ["SUBSET of a set of records", "{} \\in SUBSET [a : {1 \\div x}]"],
+    ["a union of two sets of records", "[a |-> 0] \\in [a : {0}] \\cup [a : {1 \\div x}]"],
+    [
+      "a union nested in a union",
+      "[a |-> 0] \\in {[a |-> 0]} \\cup ({[a |-> 1 \\div x]} \\cup [a : {0}])",
+    ],
+    ["UNION of a literal of a union", "[a |-> 0] \\in UNION {[a : {0}] \\cup [a : {1 \\div x}]}"],
+    [
+      "a lazy filter of a set of records",
+      "[a |-> 1, b |-> 0] \\notin {r \\in [a : {0}, b : {1 \\div x}] : TRUE}",
+    ],
+    ["a set of records less a set", "[a |-> 1, b |-> 0] \\notin [a : {0}, b : {1 \\div x}] \\ {}"],
+    ["the domain of a tuple", "0 \\notin DOMAIN <<1 \\div x>>"],
+    ["the domain of a sequence", "0 \\notin DOMAIN Append(<<>>, 1 \\div x)"],
+  ])(
+    "fails as TLC does to build the parts of %s before it tests membership in it",
+    async (_set, membership) => {
+      const result = await check({
+        source: `---- MODULE M ----\nEXTENDS Integers, Sequences\nVARIABLE x\nInit == x = 0\nNext == x' = (x + 1) % 3 /\\ ${membership}\n====`,
+        config: "INIT Init\nNEXT Next",
+      });
+      expect([
+        result.status,
+        result.failure?.message,
+        result.generatedStates,
+        result.distinctStates,
+      ]).toEqual(["error", "The second argument of \\div is 0.", 1, 1]);
+    },
+  );
+
+  it.each([
     ["{0}", "1 \\in UNION {Nat, {x}}"],
     ["{1}", "1 \\in UNION {Nat, {1}}"],
   ])(
