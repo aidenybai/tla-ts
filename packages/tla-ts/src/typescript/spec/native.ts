@@ -165,6 +165,9 @@ interface Scope {
   body: ts.Node;
   // The TLA+ names of the constants that hold an object or array that nothing else holds.
   fresh: ReadonlySet<string>;
+  // The TLA+ names of the fields that a function's twin takes in place of a parameter it only reads
+  // fields of, by the parameter's name and the field's.
+  fields?: ReadonlyMap<string, ReadonlyMap<string, string>>;
 }
 
 interface Value {
@@ -177,6 +180,14 @@ interface Value {
 type Rest = (m: string, w: string) => string | undefined;
 
 type FunctionNode = ts.FunctionDeclaration | ts.ArrowFunction | ts.FunctionExpression;
+
+// A function's twin: its operator, and the fields it takes of each parameter it reads only fields
+// of, in place of the object.
+interface Twin {
+  operator: string;
+  fields: (string[] | undefined)[];
+  isFresh: boolean;
+}
 
 interface Compiled {
   operator: string;
@@ -301,6 +312,56 @@ export const getNativeFunctions = (
       (ts.isPropertyAccessExpression(parent) && parent.name === node) ||
       (ts.isPropertyAssignment(parent) && parent.name === node) ||
       (ts.isMethodDeclaration(parent) && parent.name === node)
+    );
+  };
+  // The fields a function reads of a read-only parameter whose every use is `p.name`, read as a
+  // value, in the order it first reads them, or undefined where it uses the parameter otherwise.
+  const getFieldReads = (fn: FunctionNode, index: number): string[] | undefined => {
+    const param = fn.parameters[index];
+    if (param === undefined || !ts.isIdentifier(param.name) || !isReadOnlyParameter(fn, index)) {
+      return undefined;
+    }
+    const name = param.name.text;
+    const fields: string[] = [];
+    let isFieldsOnly = true;
+    const visit = (node: ts.Node, isNested: boolean) => {
+      if (!isFieldsOnly) return;
+      if (ts.isIdentifier(node) && node.text === name && node !== param.name && !isNameOnly(node)) {
+        const access = node.parent;
+        if (
+          isNested ||
+          !ts.isPropertyAccessExpression(access) ||
+          access.expression !== node ||
+          access.questionDotToken !== undefined ||
+          !ts.isIdentifier(access.name) ||
+          !isValueRead(access)
+        ) {
+          isFieldsOnly = false;
+          return;
+        }
+        if (!fields.includes(access.name.text)) fields.push(access.name.text);
+      }
+      ts.forEachChild(node, (child) => visit(child, isNested || ts.isFunctionLike(child)));
+    };
+    if (fn.body !== undefined) visit(fn.body, false);
+    return isFieldsOnly && fields.length > 0 ? fields : undefined;
+  };
+  // Whether an expression is read as a value: not assigned, updated, deleted, or called.
+  const isValueRead = (node: ts.Expression): boolean => {
+    const parent = node.parent;
+    if (ts.isParenthesizedExpression(parent)) return isValueRead(parent);
+    return !(
+      (ts.isBinaryExpression(parent) &&
+        parent.left === node &&
+        parent.operatorToken.kind >= ts.SyntaxKind.FirstAssignment &&
+        parent.operatorToken.kind <= ts.SyntaxKind.LastAssignment) ||
+      ts.isPostfixUnaryExpression(parent) ||
+      (ts.isPrefixUnaryExpression(parent) &&
+        (parent.operator === ts.SyntaxKind.PlusPlusToken ||
+          parent.operator === ts.SyntaxKind.MinusMinusToken)) ||
+      ts.isDeleteExpression(parent) ||
+      (ts.isCallExpression(parent) && parent.expression === node) ||
+      ts.isTaggedTemplateExpression(parent)
     );
   };
   // Whether a use of a read-only parameter, followed through the reads it makes, only reads.
@@ -483,6 +544,66 @@ export const getNativeFunctions = (
         };
   };
 
+  // A call whose argument for each parameter that the callee's twin takes fields of is an object
+  // literal, of properties and shorthands with plain keys, that sets each field the twin reads: the
+  // literal's values in source order, the last of a key's, and the twin's call where none bails, or
+  // the callee's own call with the literal built of them, as LPut bails on it, where one does.
+  const compileTwinCall = (
+    node: ts.CallExpression,
+    fn: FunctionNode,
+    callee: Compiled,
+    padded: string[],
+    scope: Scope,
+  ): Value | undefined => {
+    const twin = getTwin((node.expression as ts.Identifier).text);
+    if (twin === undefined) return undefined;
+    const lets: string[] = [];
+    const bails: string[] = [];
+    const calleeArgs = [...padded];
+    const twinArgs: string[] = [];
+    for (let index = 0; index < fn.parameters.length; index++) {
+      const read = twin.fields[index];
+      const arg = node.arguments[index];
+      if (read === undefined) {
+        twinArgs.push(padded[index]);
+        continue;
+      }
+      if (arg === undefined || !ts.isObjectLiteralExpression(arg)) return undefined;
+      const locals = new Map<string, string>();
+      let literal = "LEmptyObject";
+      for (const property of arg.properties) {
+        const isPlain =
+          ts.isPropertyAssignment(property) ||
+          (ts.isShorthandPropertyAssignment(property) &&
+            property.objectAssignmentInitializer === undefined);
+        const key =
+          isPlain && (ts.isIdentifier(property.name) || ts.isStringLiteral(property.name))
+            ? property.name.text
+            : undefined;
+        if (key === undefined || key === "__proto__" || isIndexKey(key)) return undefined;
+        const value = ts.isPropertyAssignment(property)
+          ? compileExpression(property.initializer, scope)
+          : ts.isShorthandPropertyAssignment(property)
+            ? compileExpression(property.name, scope)
+            : undefined;
+        if (value === undefined) return undefined;
+        const local = fresh("f");
+        lets.push(`LET ${local} == ${value.text} IN`);
+        bails.push(`${local}.type = "bail"`);
+        literal = `LPut(${literal}, ${getUnits(key)}, ${local})`;
+        locals.set(key, local);
+      }
+      const fields = read.map((field) => locals.get(field));
+      if (fields.some((field) => field === undefined)) return undefined;
+      calleeArgs[index] = literal;
+      twinArgs.push(...fields.map((field) => field ?? ""));
+    }
+    return {
+      text: `(${lets.join(" ")} IF ${bails.join(" \\/ ")} THEN LValue(${callee.operator}(${[scope.m, scope.w, ...calleeArgs].join(", ")})) ELSE LValue(${twin.operator}(${[scope.m, scope.w, ...twinArgs].join(", ")})))`,
+      isFresh: callee.isFresh && twin.isFresh,
+    };
+  };
+
   // A call of a module function that writes nothing, whose parameters it's given in order.
   const compileCall = (node: ts.CallExpression, scope: Scope): Value | undefined => {
     const callee = getCallee(node.expression, scope);
@@ -499,10 +620,12 @@ export const getNativeFunctions = (
       if (!callee.isPure || args === undefined || fn === undefined) return undefined;
       if (args.length > fn.parameters.length) return undefined;
       const padded = [...args, ...fn.parameters.slice(args.length).map(() => "Undefined")];
-      return {
-        text: `LValue(${callee.operator}(${[scope.m, scope.w, ...padded].join(", ")}))`,
-        isFresh: callee.isFresh,
-      };
+      return (
+        compileTwinCall(node, fn, callee, padded, scope) ?? {
+          text: `LValue(${callee.operator}(${[scope.m, scope.w, ...padded].join(", ")}))`,
+          isFresh: callee.isFresh,
+        }
+      );
     }
     // Array.from({ length }, callback), where Array is the realm's.
     const source = node.arguments[0];
@@ -695,6 +818,11 @@ export const getNativeFunctions = (
         : undefined;
     }
     if (ts.isPropertyAccessExpression(node)) {
+      const field =
+        ts.isIdentifier(node.expression) && node.questionDotToken === undefined
+          ? scope.fields?.get(node.expression.text)?.get(node.name.text)
+          : undefined;
+      if (field !== undefined) return { text: field, isFresh: false };
       const object = compileExpression(node.expression, scope);
       return node.questionDotToken !== undefined ||
         !ts.isIdentifier(node.name) ||
@@ -1453,6 +1581,91 @@ export const getNativeFunctions = (
     };
   };
 
+  // A function's code, as the TLA+ of what a call of it gives, noting in state whether it writes
+  // and whether it gives a composite of its own.
+  const compileBody = (
+    fn: FunctionNode,
+    scope: Scope,
+    state: { isPure: boolean; isFresh: boolean },
+  ) => {
+    const body = fn.body;
+    if (body === undefined) return undefined;
+    if (ts.isBlock(body)) {
+      return compileStatements(
+        body.statements,
+        scope,
+        (m, w) => {
+          // A path that runs to the end returns undefined, which isn't what the body made.
+          state.isFresh = false;
+          return result(m, w, "Undefined");
+        },
+        state,
+      );
+    }
+    const value = compileExpression(body, scope);
+    const v = fresh("v");
+    if (value?.isFresh !== true) state.isFresh = false;
+    return value === undefined
+      ? undefined
+      : `LET ${v} == ${value.text} IN IF ${v}.type = "bail" THEN LBail ELSE ${result("m", "w", v)}`;
+  };
+
+  // A function's twin, which takes the fields it reads of each parameter that it only reads fields
+  // of in place of the object, so that a call that passes an object literal there passes the
+  // literal's values and builds no object. It writes nothing, as a call in an expression must not.
+  const twins = new Map<string, Twin | undefined>();
+  const getTwin = (name: string): Twin | undefined => {
+    if (twins.has(name)) return twins.get(name);
+    twins.set(name, undefined);
+    const fn = functions.get(name);
+    const generic = compiled.get(name);
+    if (
+      fn === undefined ||
+      generic === undefined ||
+      compiling.some((entry) => entry.name === name)
+    ) {
+      return undefined;
+    }
+    const fields = fn.parameters.map((_parameter, index) => getFieldReads(fn, index));
+    if (fields.every((read) => read === undefined)) return undefined;
+    const formals = fn.parameters.map((_parameter, index) =>
+      (fields[index] ?? [undefined]).map(() => fresh("p")),
+    );
+    const names = fn.parameters.map((parameter) => (parameter.name as ts.Identifier).text);
+    const scope: Scope = {
+      m: "m",
+      w: "w",
+      body: fn,
+      fresh: new Set(),
+      locals: new Map(
+        names.flatMap((paramName, index) =>
+          fields[index] === undefined ? [[paramName, formals[index][0]]] : [],
+        ),
+      ),
+      fields: new Map(
+        names.flatMap((paramName, index) => {
+          const read = fields[index];
+          return read === undefined
+            ? []
+            : [
+                [
+                  paramName,
+                  new Map(read.map((field, position) => [field, formals[index][position]])),
+                ],
+              ];
+        }),
+      ),
+    };
+    const state = { isPure: true, isFresh: true };
+    const text = compileBody(fn, scope, state);
+    if (text === undefined || !state.isPure) return undefined;
+    const operator = `${generic.operator}Fields`;
+    definitions.push(`${operator}(${["m", "w", ...formals.flat()].join(", ")}) ==\n  ${text}`);
+    const twin = { operator, fields, isFresh: state.isFresh };
+    twins.set(name, twin);
+    return twin;
+  };
+
   const compileFunction = (name: string): Compiled | undefined => {
     if (compiled.has(name)) return compiled.get(name);
     // A function that calls itself takes its operator as it compiles, as one that writes nothing,
@@ -1505,29 +1718,7 @@ export const getNativeFunctions = (
       ),
     };
     const state = { isPure: true, isFresh: true };
-    const body = fn.body;
-    const text =
-      body === undefined
-        ? undefined
-        : ts.isBlock(body)
-          ? compileStatements(
-              body.statements,
-              scope,
-              (m, w) => {
-                // A path that runs to the end returns undefined, which isn't what the body made.
-                state.isFresh = false;
-                return result(m, w, "Undefined");
-              },
-              state,
-            )
-          : (() => {
-              const value = compileExpression(body, scope);
-              const v = fresh("v");
-              if (value?.isFresh !== true) state.isFresh = false;
-              return value === undefined
-                ? undefined
-                : `LET ${v} == ${value.text} IN IF ${v}.type = "bail" THEN LBail ELSE ${result("m", "w", v)}`;
-            })();
+    const text = compileBody(fn, scope, state);
     compiling.pop();
     if (text === undefined || (entry.isRecursive && !state.isPure)) {
       compiled.set(name, undefined);

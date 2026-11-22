@@ -1716,6 +1716,111 @@ describe("checks a module's exported functions as a model on ESCore", () => {
     });
   });
 
+  // A function that only reads fields of an object parameter runs as a twin that takes the fields,
+  // where a call passes an object literal of them, which then builds no object: of shorthands, in
+  // another order, with a string key, and with a key written twice.
+  describe("passes the fields of an object literal to a function that only reads them", () => {
+    const source = `
+      type Slot = 0 | 1 | 2;
+      let cells = [false, false, false];
+      let turn = 0;
+      let mark = "a";
+
+      const isDone = (s: { cells: boolean[]; turn: number; limit: number; mark: string }) =>
+        s.turn >= s.limit && s.mark === "b" && s.cells[0] === true;
+
+      export const flip = (index: Slot) => {
+        // A key written twice holds its last value.
+        if (isDone({ cells, turn: 9, limit: 2, mark, turn })) return;
+        cells = cells.map((cell, at) => (at === index ? !cell : cell));
+        turn = (turn + 1) % 3;
+        mark = mark === "a" ? "b" : "a";
+      };
+
+      /** @always */
+      export const isBounded = () =>
+        isDone({ mark: "b", limit: 2, turn: turn + 2, cells: [true] }) === (true as boolean) &&
+        !isDone({ cells: cells.map((cell) => !cell), turn: 0, "mark": mark, limit: 1 });
+    `;
+
+    it("gives what ESCore gives in every call, with Node's states", async () => {
+      const explored = await exploreInNode(source, "spec.ts");
+      expect(explored.error).toBeUndefined();
+      const counts = [explored.status, explored.distinctStates, explored.generatedStates];
+      expect(getCounts(await checkModel(source, "spec.ts"))).toEqual(counts);
+      expect(getCounts(await checkModel(source, "spec.ts", "native"))).toEqual(counts);
+      expect(getCounts(await checkModel(source, "spec.ts", "compared"))).toEqual(counts);
+    });
+  });
+
+  // A field that the twin doesn't read still runs, so a read that throws where the box is null
+  // throws, as Node does, rather than the twin giving a value without it.
+  describe("evaluates every field of an object literal passed to a twin", () => {
+    const source = `
+      let box: { n: number } | null = { n: 1 };
+      let turn = 0;
+
+      const isLate = (s: { turn: number; extra: number }) => s.turn >= 2;
+
+      export const tick = () => {
+        if (isLate({ turn, extra: box!.n })) return;
+        turn += 1;
+      };
+
+      export const drop = () => {
+        box = null;
+      };
+    `;
+
+    it("gives what ESCore gives in every call, with Node's states", async () => {
+      const explored = await exploreInNode(source, "spec.ts");
+      const counts = [explored.status, explored.distinctStates, explored.generatedStates];
+      expect(counts[0]).toBe("error");
+      // The native mode runs ESCore's step before each native one, so only the model run as it
+      // runs by default stops on the twin's call alone.
+      const run = await checkModel(source, "spec.ts");
+      const compared = await checkModel(source, "spec.ts", "compared");
+      expect(getCounts(run)).toEqual(counts);
+      expect(getCounts(await checkModel(source, "spec.ts", "native"))).toEqual(counts);
+      expect(getCounts(compared)).toEqual(counts);
+      expect(run.message).toBe(compared.message);
+    });
+  });
+
+  // An object literal with a getter, a method, or a computed key, or a parameter passed on or
+  // returned, makes no twin's call, and each call runs as ESCore runs it.
+  describe("runs a call of a literal or a parameter that a twin can't take as ESCore does", () => {
+    const source = `
+      let turn = 0;
+      const key = "turn";
+
+      const isLate = (s: { turn: number }) => s.turn >= 2;
+      const passOn = (s: { turn: number }) => isLate(s);
+      const self = (s: { turn: number }) => (s.turn >= 0 ? s : s);
+
+      export const tick = () => {
+        if (turn >= 3) return;
+        turn += 1;
+      };
+
+      export const isTyped = () =>
+        isLate({ get turn() { return turn; } }) === turn >= 2 &&
+        isLate({ turn, size() { return 1; } }) === turn >= 2 &&
+        isLate({ [key]: turn }) === turn >= 2;
+
+      export const isPassed = () => passOn({ turn }) === turn >= 2 && self({ turn }).turn === turn;
+    `;
+
+    it("gives what ESCore gives in every call, with Node's states", async () => {
+      const explored = await exploreInNode(source, "spec.ts");
+      expect(explored.error).toBeUndefined();
+      const counts = [explored.status, explored.distinctStates, explored.generatedStates];
+      expect(getCounts(await checkModel(source, "spec.ts"))).toEqual(counts);
+      expect(getCounts(await checkModel(source, "spec.ts", "native"))).toEqual(counts);
+      expect(getCounts(await checkModel(source, "spec.ts", "compared"))).toEqual(counts);
+    });
+  });
+
   describe("runs a Map's keys and values, and a function passed by name, natively, as ESCore does", () => {
     const source = `
       type Slot = 1 | 2 | 3;
