@@ -174,6 +174,8 @@ export abstract class Theory {
 
   finalizeModel() {}
 
+  validateModel(_model: ProtoModel) {}
+
   addTheoryAssumptions(_assumptions: number[]) {}
 
   shouldResearch(_unsatCore: readonly number[]) {

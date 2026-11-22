@@ -189,6 +189,7 @@ export interface SmtParams {
   mbqiMaxCexs?: number;
   mbqiForceTemplate?: number;
   mbqiId?: string;
+  isModelValidating?: boolean;
   // The model checker's auxiliary context pretends every array operation is supported.
   isArrayFakeSupport?: boolean;
   isProofsEnabled?: boolean;
@@ -310,6 +311,7 @@ export class Context extends Internalizer {
     this.params.mbqiMaxCexs = params.mbqiMaxCexs;
     this.params.mbqiForceTemplate = params.mbqiForceTemplate;
     this.params.mbqiId = params.mbqiId;
+    this.params.isModelValidating = params.isModelValidating;
     this.params.relevancyLevel = params.relevancyLevel ?? 2;
     this.arith?.updateParams();
     this.config = {
@@ -1797,6 +1799,14 @@ export class Context extends Internalizer {
     this.isSearchFinalized = true;
     const finalized = result === L_TRUE && this.checkCanceled() ? L_UNDEF : result;
     this.internalCompleted = L_FALSE;
+    const state = this.modelState;
+    if (
+      finalized === L_TRUE &&
+      this.params.isModelValidating === true &&
+      this.manager.recFunDefs.size === 0 &&
+      (state.kind === "proto" || state.kind === "final")
+    )
+      for (const theory of this.theories) theory.validateModel(state.generated.model);
     return finalized;
   }
 

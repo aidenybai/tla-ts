@@ -64,7 +64,7 @@ export class Mbqi {
   constructor(
     private readonly ctx: EufSolver,
     private readonly qs: QSolver,
-    parameters: ReadonlyMap<string, string>,
+    private readonly parameters: ReadonlyMap<string, string>,
   ) {
     this.manager = ctx.manager;
     this.modelFixer = new ModelFixer(
@@ -583,7 +583,13 @@ export class Mbqi {
   // init_solver: mk_smt2_solver gives the incremental sat solver of sat.euf.
   private initSolver() {
     const ctx = this.ctx;
-    this.solver ??= new IncSatSolver(ctx.manager, ctx.s.params, true, ctx.mkThSolver);
+    this.solver ??= new IncSatSolver(
+      ctx.manager,
+      ctx.s.params,
+      this.parameters,
+      true,
+      ctx.mkThSolver,
+    );
     return this.solver;
   }
 
