@@ -314,55 +314,28 @@ export const getNativeFunctions = (
       (ts.isMethodDeclaration(parent) && parent.name === node)
     );
   };
-  // The fields a function reads of a read-only parameter whose every use is `p.name`, read as a
-  // value, in the order it first reads them, or undefined where it uses the parameter otherwise.
+  // The fields a function reads of a parameter as `p.name`, in the order it first reads them. A
+  // twin binds no name for the parameter, so another use of it compiles to no twin, and owns what it
+  // keeps of a field as it owns what it keeps of a parameter.
   const getFieldReads = (fn: FunctionNode, index: number): string[] | undefined => {
     const param = fn.parameters[index];
-    if (param === undefined || !ts.isIdentifier(param.name) || !isReadOnlyParameter(fn, index)) {
-      return undefined;
-    }
+    if (param === undefined || !ts.isIdentifier(param.name)) return undefined;
     const name = param.name.text;
     const fields: string[] = [];
-    let isFieldsOnly = true;
-    const visit = (node: ts.Node, isNested: boolean) => {
-      if (!isFieldsOnly) return;
-      if (ts.isIdentifier(node) && node.text === name && node !== param.name && !isNameOnly(node)) {
-        const access = node.parent;
-        if (
-          isNested ||
-          !ts.isPropertyAccessExpression(access) ||
-          access.expression !== node ||
-          access.questionDotToken !== undefined ||
-          !ts.isIdentifier(access.name) ||
-          !isValueRead(access)
-        ) {
-          isFieldsOnly = false;
-          return;
-        }
-        if (!fields.includes(access.name.text)) fields.push(access.name.text);
+    const visit = (node: ts.Node) => {
+      if (
+        ts.isPropertyAccessExpression(node) &&
+        ts.isIdentifier(node.expression) &&
+        node.expression.text === name &&
+        ts.isIdentifier(node.name) &&
+        !fields.includes(node.name.text)
+      ) {
+        fields.push(node.name.text);
       }
-      ts.forEachChild(node, (child) => visit(child, isNested || ts.isFunctionLike(child)));
+      ts.forEachChild(node, visit);
     };
-    if (fn.body !== undefined) visit(fn.body, false);
-    return isFieldsOnly && fields.length > 0 ? fields : undefined;
-  };
-  // Whether an expression is read as a value: not assigned, updated, deleted, or called.
-  const isValueRead = (node: ts.Expression): boolean => {
-    const parent = node.parent;
-    if (ts.isParenthesizedExpression(parent)) return isValueRead(parent);
-    return !(
-      (ts.isBinaryExpression(parent) &&
-        parent.left === node &&
-        parent.operatorToken.kind >= ts.SyntaxKind.FirstAssignment &&
-        parent.operatorToken.kind <= ts.SyntaxKind.LastAssignment) ||
-      ts.isPostfixUnaryExpression(parent) ||
-      (ts.isPrefixUnaryExpression(parent) &&
-        (parent.operator === ts.SyntaxKind.PlusPlusToken ||
-          parent.operator === ts.SyntaxKind.MinusMinusToken)) ||
-      ts.isDeleteExpression(parent) ||
-      (ts.isCallExpression(parent) && parent.expression === node) ||
-      ts.isTaggedTemplateExpression(parent)
-    );
+    if (fn.body !== undefined) visit(fn.body);
+    return fields.length > 0 ? fields : undefined;
   };
   // Whether a use of a read-only parameter, followed through the reads it makes, only reads.
   const isReadUse = (node: ts.Expression, visiting: Set<FunctionNode>): boolean => {
