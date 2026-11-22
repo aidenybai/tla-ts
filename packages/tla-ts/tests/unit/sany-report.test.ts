@@ -1409,6 +1409,37 @@ Spec == Init /\\ [][Next]_x
     );
   });
 
+  it("reports a theorem that two instances with parameters copy as multiply defined", () => {
+    const report = getReport({
+      M: "---- MODULE M ----\n---- MODULE L ----\nCONSTANT c\nA == c\nTHEOREM T == c = c\n====\nI(p) == INSTANCE L WITH c <- p\nI(p) == INSTANCE L WITH c <- p\n====\n",
+    });
+    expect(report.text).toBe(
+      joinLines([
+        "*** Warnings: 2",
+        "",
+        ...["I!A", "I"].flatMap((name) => [
+          "line 8, col 1 to line 8, col 30 of module M",
+          "",
+          `Multiple declarations or definitions for symbol ${name}.  `,
+          "This duplicates the one at line 7, col 1 to line 7, col 30 of module M.",
+          "",
+          "",
+          "",
+        ]),
+        "Semantic errors:",
+        "",
+        "*** Errors: 1",
+        "",
+        "line 8, col 1 to line 8, col 30 of module M",
+        "",
+        "Multiply-defined symbol 'I!T': this definition or declaration conflicts ",
+        "with the one at line 7, col 1 to line 7, col 30 of module M.",
+        "",
+        "",
+      ]),
+    );
+  });
+
   it.each([
     ["<>", "<>"],
     ["~", "\\lnot"],

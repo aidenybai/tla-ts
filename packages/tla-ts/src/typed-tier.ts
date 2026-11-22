@@ -181,7 +181,10 @@ type Type =
 interface Compiled {
   type: Type;
   emit: () => string;
+  isInfallible?: () => boolean;
 }
+
+const isInfallible = (compiled: Compiled) => compiled.isInfallible?.() === true;
 
 interface CodeBinding {
   kind: "Code";
@@ -1422,18 +1425,24 @@ interface Frame {
   isNext: boolean;
   // Whether the expression is a constraint or an invariant, whose state's level the search knows.
   isLevelKnown?: boolean;
+  // Whether a membership in a filter compiles the expression twice, so that one inside it compiles
+  // once and each level of nesting costs the same.
+  isCompiledTwice?: boolean;
 }
 
 const getVariableCodes = (program: Program) =>
   program.variableTypes.map((_value, index) => `v${index}`);
+
+const UNASSIGNED_CODE = "H.deopt()";
 
 // An expression primed as a whole reads every variable in the next state, where priming again is an
 // error. A variable the action hasn't assigned yet has no value there, and TLC fails on it.
 const getNextFrame = (frame: Frame): Frame => ({
   scope: frame.scope,
   primed: frame.primed.map(() => undefined),
-  variables: frame.primed.map((code) => code ?? "H.deopt()"),
+  variables: frame.primed.map((code) => code ?? UNASSIGNED_CODE),
   isNext: true,
+  isCompiledTwice: frame.isCompiledTwice,
 });
 
 const withBinding = (scope: TierScope, name: string, binding: Binding): TierScope =>
@@ -1459,7 +1468,7 @@ const isBuiltin = (frame: Frame, operator: string, name: string) =>
 const bindCode = (scope: TierScope, name: string, type: Type, code: string) =>
   withBinding(scope, name, {
     kind: "Code",
-    compiled: { type, emit: () => code },
+    compiled: { type, emit: () => code, isInfallible: () => true },
     source: undefined,
   });
 
@@ -1703,7 +1712,11 @@ const compileIdentifier = (program: Program, name: string, frame: Frame): Compil
   }
   const global = findGlobalName(name, program.environment);
   if (global?.kind === "Variable") {
-    return { type: program.variableTypes[global.index], emit: () => frame.variables[global.index] };
+    return {
+      type: program.variableTypes[global.index],
+      emit: () => frame.variables[global.index],
+      isInfallible: () => frame.variables[global.index] !== UNASSIGNED_CODE,
+    };
   }
   if (global?.kind === "Value") return compileConstant(program, global.value);
   if (global?.kind === "Definition") {
@@ -1748,6 +1761,7 @@ const expectBool = (compiled: Compiled): Compiled => {
     type: compiled.type,
     emit: () =>
       resolveType(compiled.type).kind === "Opt" ? `H.bool(${compiled.emit()})` : compiled.emit(),
+    isInfallible: () => resolveType(compiled.type).kind !== "Opt" && isInfallible(compiled),
   };
 };
 
@@ -2173,11 +2187,52 @@ const isStructural = (program: Program, expression: Expression, frame: Frame): b
   );
 };
 
+interface HoistedValue {
+  name: string;
+  value: Compiled;
+}
+
+// TLC builds a set's parts with the set, so a part whose test may be skipped is built up front.
+const hoistValue = (
+  program: Program,
+  value: Compiled,
+  expression: Expression,
+  frame: Frame,
+  hoisted: HoistedValue[] | undefined,
+): Compiled => {
+  if (!hoisted) return value;
+  if (isConstantExpression(program, expression, frame.scope)) {
+    // A constant that fails to build fails the compile, so the tier declines it.
+    evaluateConstant(program, expression);
+    return value;
+  }
+  const name = getName(program, "s");
+  hoisted.push({ name, value });
+  return { type: value.type, emit: () => name, isInfallible: () => true };
+};
+
+const compileHoisting = (
+  hoisted: HoistedValue[] | undefined,
+  compile: (inner: HoistedValue[]) => Compiled,
+): Compiled => {
+  if (hoisted) return compile(hoisted);
+  const values: HoistedValue[] = [];
+  const test = compile(values);
+  return values.length === 0
+    ? test
+    : {
+        type: createBool(),
+        emit: () =>
+          `((${values.map((value) => value.name).join(", ")}) => ${test.emit()})(${values.map((value) => value.value.emit()).join(", ")})`,
+      };
+};
+
 const compileMembership = (
   program: Program,
   element: Compiled,
   setExpression: Expression,
   frame: Frame,
+  hoisted?: HoistedValue[],
 ): Compiled => {
   if (
     setExpression.kind === "FunctionSet" &&
@@ -2187,23 +2242,28 @@ const compileMembership = (
     if (domain.kind !== "Apply" || !isBuiltin(frame, domain.operator, "..")) {
       return unsupported();
     }
-    const [low, high] = domain.args.map((arg) => expectInt(compileValue(program, arg, frame)));
+    const [low, high] = domain.args.map((arg) =>
+      expectInt(hoistValue(program, compileValue(program, arg, frame), arg, frame, hoisted)),
+    );
     const range: Type = createVar();
     unify(element.type, { kind: "Seq", element: range });
     const name = getName(program, "e");
     const [sequence, first, last] = ["s", "l", "h"].map((prefix) => getName(program, prefix));
-    const inner = compileMembership(
-      program,
-      { type: range, emit: () => name },
-      setExpression.range,
-      frame,
-    );
-    // A sequence has the domain 1..Len(s), which an empty interval equals only when s is empty.
-    return {
-      type: createBool(),
-      emit: () =>
-        `((${sequence}, ${first}, ${last}) => (${last} < ${first} ? ${sequence}.length === 0 : ${first} === 1 && ${sequence}.length === ${last}) && ${sequence}.every((${name}) => ${inner.emit()}))(${readSequence(program, element.type, element.emit())}, ${low.emit()}, ${high.emit()})`,
-    };
+    return compileHoisting(hoisted, (values) => {
+      const inner = compileMembership(
+        program,
+        { type: range, emit: () => name },
+        setExpression.range,
+        frame,
+        values,
+      );
+      // A sequence has the domain 1..Len(s), which an empty interval equals only when s is empty.
+      return {
+        type: createBool(),
+        emit: () =>
+          `((${sequence}, ${first}, ${last}) => (${last} < ${first} ? ${sequence}.length === 0 : ${first} === 1 && ${sequence}.length === ${last}) && ${sequence}.every((${name}) => ${inner.emit()}))(${readSequence(program, element.type, element.emit())}, ${low.emit()}, ${high.emit()})`,
+      };
+    });
   }
   if (setExpression.kind === "FunctionSet") {
     const range: Type = createVar();
@@ -2211,25 +2271,28 @@ const compileMembership = (
     if (domain.length === 0) return unsupported();
     unify(element.type, createFnType(domain, range, program.plains));
     const name = getName(program, "e");
-    const inner = compileMembership(
-      program,
-      { type: range, emit: () => name },
-      setExpression.range,
-      frame,
-    );
-    return {
-      type: createBool(),
-      emit: () => {
-        const map = getMap(element.type);
-        if (!map) return `${element.emit()}.every((${name}) => ${inner.emit()})`;
-        const pair = getName(program, "p");
-        return `((${pair}) => H.same(${pair}[0], ${getDomainCode(program, map, domain)}) && ${pair}[1].every((${name}) => ${inner.emit()}))(${element.emit()})`;
-      },
-    };
+    return compileHoisting(hoisted, (values) => {
+      const inner = compileMembership(
+        program,
+        { type: range, emit: () => name },
+        setExpression.range,
+        frame,
+        values,
+      );
+      return {
+        type: createBool(),
+        emit: () => {
+          const map = getMap(element.type);
+          if (!map) return `${element.emit()}.every((${name}) => ${inner.emit()})`;
+          const pair = getName(program, "p");
+          return `((${pair}) => H.same(${pair}[0], ${getDomainCode(program, map, domain)}) && ${pair}[1].every((${name}) => ${inner.emit()}))(${element.emit()})`;
+        },
+      };
+    });
   }
   const body = getDefinitionBody(program, setExpression, frame);
   if (body && isStructural(program, body, { ...frame, scope: new Map() })) {
-    return compileMembership(program, element, body, { ...frame, scope: new Map() });
+    return compileMembership(program, element, body, { ...frame, scope: new Map() }, hoisted);
   }
   const applied = getApplied(program, setExpression, frame);
   if (
@@ -2240,36 +2303,29 @@ const compileMembership = (
     const expansion = getExpansion(program, setExpression, frame);
     if (expansion) {
       return inline(program, expansion.definition, () =>
-        compileMembership(program, element, expansion.definition.body, {
-          ...frame,
-          scope: expansion.scope,
-        }),
+        compileMembership(
+          program,
+          element,
+          expansion.definition.body,
+          { ...frame, scope: expansion.scope },
+          hoisted,
+        ),
       );
     }
   }
-  // TLC tests membership in a lazy {x \in S : P} as membership in S, then P of the element.
   if (
     setExpression.kind === "SetFilter" &&
     setExpression.bound.pattern.kind === "Name" &&
     isStructural(program, setExpression, frame)
   ) {
-    const name = getName(program, "e");
-    const isInSet = compileMembership(
+    return compileFilterTest(
       program,
-      { type: element.type, emit: () => name },
-      setExpression.bound.set,
+      element,
+      setExpression,
+      setExpression.bound.pattern.name,
       frame,
-    );
-    const predicate = expectBool(
-      compileValue(program, setExpression.predicate, {
-        ...frame,
-        scope: bindCode(frame.scope, setExpression.bound.pattern.name, element.type, name),
-      }),
-    );
-    return {
-      type: createBool(),
-      emit: () => `((${name}) => ${isInSet.emit()} && ${predicate.emit()})(${element.emit()})`,
-    };
+      hoisted,
+    ).test;
   }
   // TLC tests membership in a union, or in UNION of a literal of one set, in each of its sets. It
   // sorts the sets of a longer literal, which enumerates each.
@@ -2287,8 +2343,13 @@ const compileMembership = (
           ? setExpression.args[0].elements
           : undefined;
   if (sets) {
-    return compileMemberships(program, element, sets, frame, (tests) =>
-      tests.length === 0 ? "false" : tests.join(" || "),
+    return compileMemberships(
+      program,
+      element,
+      sets,
+      frame,
+      (tests) => (tests.length === 0 ? "false" : tests.join(" || ")),
+      hoisted,
     );
   }
   // TLC tests membership in a set less another in the first set, then in the other.
@@ -2305,6 +2366,7 @@ const compileMembership = (
       setExpression.args,
       frame,
       (tests) => `${tests[0]} && !${tests[1]}`,
+      hoisted,
     );
   }
   // TLC tests membership in a set of records field by field, without enumerating it.
@@ -2320,33 +2382,36 @@ const compileMembership = (
       const resolved = resolveType(element.type);
       return resolved.kind === "Rec" ? resolved : unsupported();
     };
-    const tests = fields.map((field, index) =>
-      compileMembership(
-        program,
-        {
-          type: types[index],
-          emit: () => {
-            const resolved = getShape();
-            const offset = resolved.shapes.length === 1 ? 0 : 1;
-            return `${record}[${resolved.shapes[getShapeIndex(resolved, names)].indexOf(field.name) + offset}]`;
+    return compileHoisting(hoisted, (values) => {
+      const tests = fields.map((field, index) =>
+        compileMembership(
+          program,
+          {
+            type: types[index],
+            emit: () => {
+              const resolved = getShape();
+              const offset = resolved.shapes.length === 1 ? 0 : 1;
+              return `${record}[${resolved.shapes[getShapeIndex(resolved, names)].indexOf(field.name) + offset}]`;
+            },
           },
+          field.value,
+          frame,
+          values,
+        ),
+      );
+      return {
+        type: createBool(),
+        emit: () => {
+          const resolved = getShape();
+          const isShape =
+            resolved.shapes.length === 1
+              ? []
+              : [`${record}[0] === ${getShapeIndex(resolved, names)}`];
+          const checks = [...isShape, ...tests.map((test) => test.emit())];
+          return `((${record}) => ${checks.join(" && ")})(${element.emit()})`;
         },
-        field.value,
-        frame,
-      ),
-    );
-    return {
-      type: createBool(),
-      emit: () => {
-        const resolved = getShape();
-        const isShape =
-          resolved.shapes.length === 1
-            ? []
-            : [`${record}[0] === ${getShapeIndex(resolved, names)}`];
-        const checks = [...isShape, ...tests.map((test) => test.emit())];
-        return `((${record}) => ${checks.join(" && ")})(${element.emit()})`;
-      },
-    };
+      };
+    });
   }
   if (setExpression.kind === "Apply" && setExpression.args.length === 1) {
     const operator = setExpression.operator;
@@ -2355,22 +2420,30 @@ const compileMembership = (
       const inner: Type = createVar();
       unify(element.type, { kind: "Seq", element: inner });
       const name = getName(program, "e");
-      const test = compileMembership(
-        program,
-        { type: inner, emit: () => name },
-        setExpression.args[0],
-        frame,
-      );
-      return {
-        type: createBool(),
-        emit: () =>
-          `${readSequence(program, element.type, element.emit())}.every((${name}) => ${test.emit()})`,
-      };
+      return compileHoisting(hoisted, (values) => {
+        const test = compileMembership(
+          program,
+          { type: inner, emit: () => name },
+          setExpression.args[0],
+          frame,
+          values,
+        );
+        return {
+          type: createBool(),
+          emit: () =>
+            `${readSequence(program, element.type, element.emit())}.every((${name}) => ${test.emit()})`,
+        };
+      });
     }
     if (isBuiltin && operator === "DOMAIN") {
       const target = compileValue(program, setExpression.args[0], frame);
       const keys = compileKeys(target);
-      if (keys) return compileSetMembership(program, element, keys);
+      if (keys)
+        return compileSetMembership(
+          program,
+          element,
+          hoistValue(program, keys, setExpression.args[0], frame, hoisted),
+        );
       const type = resolveType(target.type);
       const name = getName(program, "e");
       if (type.kind === "Seq") {
@@ -2378,13 +2451,16 @@ const compileMembership = (
         // maps keys.
         if (!["Var", "Int", "Mix"].includes(resolveType(element.type).kind)) throw SPARSE;
         const index = expectInt(element);
+        const sequence = hoistValue(program, target, setExpression.args[0], frame, hoisted);
         return {
           type: createBool(),
           emit: () => {
-            const bound = getBinding(program, "e", index.emit());
-            return bound.wrap(
-              `${bound.name} >= 1 && ${bound.name} <= (${readSequence(program, target.type, target.emit())}).length`,
-            );
+            const code = readSequence(program, target.type, sequence.emit());
+            if (isInfallible(sequence)) {
+              const bound = getBinding(program, "e", index.emit());
+              return bound.wrap(`${bound.name} >= 1 && ${bound.name} <= (${code}).length`);
+            }
+            return `((${name}, ${name}s) => ${name} >= 1 && ${name} <= ${name}s.length)(${index.emit()}, ${code})`;
           },
         };
       }
@@ -2392,11 +2468,12 @@ const compileMembership = (
       const known = resolveType(element.type);
       if (type.kind === "Var" && (known.kind !== "Str" || !known.hasString)) {
         guessFunction(program, type);
-        return compileMembership(program, element, setExpression, frame);
+        return compileMembership(program, element, setExpression, frame, hoisted);
       }
       expectRecord(type);
       const atom = createStr();
       unify(element.type, atom);
+      const recordValue = hoistValue(program, target, setExpression.args[0], frame, hoisted);
       return {
         type: createBool(),
         emit: () => {
@@ -2413,7 +2490,7 @@ const compileMembership = (
           // TLC fails to take the domain of a model value.
           const tag = getShapeIndex(record, [NULL_FIELD]);
           const guarded = tag === -1 ? test : `${shape} === ${tag} ? H.deopt() : ${test}`;
-          return `((${name}r, ${name}) => ${guarded})(${target.emit()}, ${element.emit()})`;
+          return `((${name}r, ${name}) => ${guarded})(${recordValue.emit()}, ${element.emit()})`;
         },
       };
     }
@@ -2422,22 +2499,31 @@ const compileMembership = (
       const inner: Type = createVar();
       unify(element.type, { kind: "Set", element: inner });
       const name = getName(program, "e");
-      const test = compileMembership(
-        program,
-        { type: inner, emit: () => name },
-        setExpression.args[0],
-        frame,
-      );
-      return {
-        type: createBool(),
-        emit: () =>
-          isMask(element.type, program.plains)
-            ? unsupported()
-            : `${element.emit()}.every((${name}) => ${test.emit()})`,
-      };
+      return compileHoisting(hoisted, (values) => {
+        const test = compileMembership(
+          program,
+          { type: inner, emit: () => name },
+          setExpression.args[0],
+          frame,
+          values,
+        );
+        return {
+          type: createBool(),
+          emit: () =>
+            isMask(element.type, program.plains)
+              ? unsupported()
+              : `${element.emit()}.every((${name}) => ${test.emit()})`,
+        };
+      });
     }
     if (isBuiltin && operator === "SUBSET") {
-      const base = compileValue(program, setExpression.args[0], frame);
+      const base = hoistValue(
+        program,
+        compileValue(program, setExpression.args[0], frame),
+        setExpression.args[0],
+        frame,
+        hoisted,
+      );
       getSetElement(base);
       unify(element.type, base.type);
       return compileSubset(program, element, base);
@@ -2525,7 +2611,101 @@ const compileMembership = (
       },
     };
   }
-  return compileSetMembership(program, element, compileValue(program, setExpression, frame));
+  if (hoisted || frame.isCompiledTwice || !isFilter(program, setExpression, frame)) {
+    return compileSetMembership(
+      program,
+      element,
+      hoistValue(
+        program,
+        compileValue(program, setExpression, frame),
+        setExpression,
+        frame,
+        hoisted,
+      ),
+    );
+  }
+  const twice = { ...frame, isCompiledTwice: true };
+  const built = compileSetMembership(program, element, compileValue(program, setExpression, twice));
+  const filter = compileFilter(program, element, setExpression, twice);
+  // TLC builds a filter of an enumerated set, which differs from testing the element only where the
+  // predicate can fail.
+  return filter
+    ? {
+        type: createBool(),
+        emit: () => (isInfallible(filter.predicate) ? filter.test : built).emit(),
+      }
+    : built;
+};
+
+interface FilterTest {
+  test: Compiled;
+  predicate: Compiled;
+}
+
+// TLC tests membership in a lazy {x \in S : P} as membership in S, then P of the element.
+const compileFilterTest = (
+  program: Program,
+  element: Compiled,
+  filter: Expression & { kind: "SetFilter" },
+  variable: string,
+  frame: Frame,
+  hoisted?: HoistedValue[],
+): FilterTest => {
+  const name = getName(program, "e");
+  const isInSet = compileMembership(
+    program,
+    { type: element.type, emit: () => name },
+    filter.bound.set,
+    frame,
+    hoisted,
+  );
+  const predicate = expectBool(
+    compileValue(program, filter.predicate, {
+      ...frame,
+      scope: bindCode(frame.scope, variable, element.type, name),
+    }),
+  );
+  return {
+    test: {
+      type: createBool(),
+      emit: () => `((${name}) => ${isInSet.emit()} && ${predicate.emit()})(${element.emit()})`,
+    },
+    predicate,
+  };
+};
+
+const isFilter = (program: Program, expression: Expression, frame: Frame): boolean => {
+  const applied = getApplied(program, expression, frame);
+  const body =
+    getDefinitionBody(program, expression, frame) ??
+    (applied?.isRecursive ? undefined : applied?.body);
+  if (body) return isFilter(program, body, { ...frame, scope: new Map() });
+  return expression.kind === "SetFilter" && expression.bound.pattern.kind === "Name";
+};
+
+const compileFilter = (
+  program: Program,
+  element: Compiled,
+  setExpression: Expression,
+  frame: Frame,
+): FilterTest | undefined => {
+  const body = getDefinitionBody(program, setExpression, frame);
+  if (body) return compileFilter(program, element, body, { ...frame, scope: new Map() });
+  const expansion =
+    setExpression.kind === "Apply" && getApplied(program, setExpression, frame)
+      ? getExpansion(program, setExpression, frame)
+      : undefined;
+  if (expansion) {
+    return inline(program, expansion.definition, () =>
+      compileFilter(program, element, expansion.definition.body, {
+        ...frame,
+        scope: expansion.scope,
+      }),
+    );
+  }
+  return setExpression.kind === "SetFilter" && setExpression.bound.pattern.kind === "Name"
+    ? compileFilterTest(program, element, setExpression, setExpression.bound.pattern.name, frame)
+    : undefined;
 };
 
 // TLC builds each of the sets that isn't lazy before it tests membership in any of them.
@@ -2535,28 +2715,27 @@ const compileMemberships = (
   sets: Expression[],
   frame: Frame,
   format: (tests: string[]) => string,
+  hoisted?: HoistedValue[],
 ): Compiled => {
   const name = getName(program, "e");
   const named = { type: element.type, emit: () => name };
-  const parts = sets.map((set) => {
-    if (isStructural(program, set, frame) || isConstantExpression(program, set, frame.scope)) {
-      return { test: compileMembership(program, named, set, frame), built: undefined };
-    }
-    const built = { name: getName(program, "s"), set: compileValue(program, set, frame) };
-    const test = compileSetMembership(program, named, {
-      type: built.set.type,
-      emit: () => built.name,
-    });
-    return { test, built };
-  });
+  const built: HoistedValue[] = [];
+  const values = hoisted ?? built;
+  const tests = sets.map((set) =>
+    isStructural(program, set, frame) || isConstantExpression(program, set, frame.scope)
+      ? compileMembership(program, named, set, frame, values)
+      : compileSetMembership(
+          program,
+          named,
+          hoistValue(program, compileValue(program, set, frame), set, frame, values),
+        ),
+  );
   return {
     type: createBool(),
     emit: () => {
-      const tests = format(parts.map((part) => part.test.emit()));
-      const builtSets = parts.flatMap((part) => (part.built ? [part.built] : []));
-      const parameters = [name, ...builtSets.map((built) => built.name)];
-      const values = [element.emit(), ...builtSets.map((built) => built.set.emit())];
-      return `((${parameters.join(", ")}) => ${tests})(${values.join(", ")})`;
+      const parameters = [name, ...built.map((value) => value.name)];
+      const codes = [element.emit(), ...built.map((value) => value.value.emit())];
+      return `((${parameters.join(", ")}) => ${format(tests.map((test) => test.emit()))})(${codes.join(", ")})`;
     },
   };
 };
@@ -2569,6 +2748,7 @@ const compileSetMembership = (program: Program, element: Compiled, set: Compiled
       isMask(set.type, program.plains)
         ? `H.has(${set.emit()}, ${element.emit()})`
         : `H.isMember(${getComparerCode(program, element.type)}, ${set.emit()}, ${element.emit()})`,
+    isInfallible: () => isInfallible(element) && isInfallible(set),
   };
 };
 
@@ -2955,7 +3135,13 @@ const compileBuiltin = (
   }
   if (args.length === 2 && (operator === "\\in" || operator === "\\notin")) {
     const test = compileMembership(program, compileValue(program, args[0], frame), args[1], frame);
-    return operator === "\\in" ? test : { type: createBool(), emit: () => `!(${test.emit()})` };
+    return operator === "\\in"
+      ? test
+      : {
+          type: createBool(),
+          emit: () => `!(${test.emit()})`,
+          isInfallible: () => isInfallible(test),
+        };
   }
   // The size of a domain doesn't depend on whether its function is a sequence, a sparse function or
   // a record, which an empty function may not yet show.
@@ -3624,6 +3810,7 @@ const compileValue = (program: Program, expression: Expression, frame: Frame): C
               ? "H.EMPTY"
               : `[${elements.map((inner) => inner.emit()).join(", ")}]`,
           ),
+        isInfallible: () => getMap(type) === undefined && elements.every(isInfallible),
       };
     }
     case "Record": {
@@ -3688,6 +3875,7 @@ const compileValue = (program: Program, expression: Expression, frame: Frame): C
             resolveType(target.type).kind === "Tup"
               ? `(${target.emit()})[${position.value - 1}]`
               : `H.at(${readSequence(program, target.type, target.emit())}, ${position.value - 1})`,
+          isInfallible: () => resolveType(target.type).kind === "Tup" && isInfallible(target),
         };
       }
       return compileApplication(

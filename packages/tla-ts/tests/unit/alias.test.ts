@@ -226,6 +226,22 @@ describe("ALIAS matches TLC", () => {
     );
   });
 
+  // TLC names the fields of an ALIAS that is a function, not a record, as FcnRcdValue.toRcd
+  // normalizes it, in the order of its strings, which TLC ranks by when it first read each, as
+  // Names reads "alpha" before Alias reads "zeta". It names a record's in the order it was written.
+  // Real TLC prints alpha = 10 before zeta = 0 for the function, and zeta = 0 before alpha = 10
+  // for the record.
+  it.each([
+    ['("zeta" :> x) @@ ("alpha" :> x + 10)', ["alpha = 10", "zeta = 0"]],
+    ["[zeta |-> x, alpha |-> x + 10]", ["zeta = 0", "alpha = 10"]],
+  ])("names the fields of the alias %s in TLC's order", async (alias, fields) => {
+    const result = await check({
+      source: `---- MODULE M ----\nEXTENDS Naturals, TLC\nVARIABLE x\nNames == {"alpha"}\nInit == x = 0\nNext == x < 2 /\\ x' = x + 1\nInv == x < 1\nAlias == ${alias}\n====`,
+      config: "INIT Init\nNEXT Next\nINVARIANT Inv\nALIAS Alias",
+    });
+    expect(formatTrace(result.violation?.trace)[0]).toEqual(fields);
+  });
+
   it("keeps the state when the alias is not a record", async () => {
     const result = await checkModule(
       "Next == x < 1 /\\ x' = x + 1\nAlias == x + 100",
