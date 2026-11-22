@@ -1,4 +1,4 @@
-import { SmtCanceledError, SmtTacticError } from "../../../../errors";
+import { SmtCanceledError, SmtTacticError, SmtUnsupportedError } from "../../../../errors";
 import type { AstManager } from "../ast";
 import type { ThSolverFactory } from "../euf/euf-solver";
 import { joinDependencies, mkDependencyLeaf, OVER, type Dependency, type Goal } from "../goal";
@@ -12,12 +12,19 @@ import { Solver } from "./solver";
 
 // With a theory factory, the sat solver runs the euf solver of sat.euf as its extension.
 export const createSatTactic =
-  (manager: AstManager, params: SatParams, mkThSolver: ThSolverFactory | null = null) =>
+  (
+    manager: AstManager,
+    params: SatParams,
+    isModelValidating: boolean,
+    mkThSolver: ThSolverFactory | null = null,
+  ) =>
   (goal: Goal) => {
     if (goal.isProofsEnabled) throw new SmtTacticError("sat does not support proof production");
     goal.elimRedundancies();
     const solver = new Solver(params, manager.limit);
     const goal2sat = new Goal2Sat(manager, solver, params.get("ite_extra") !== false, mkThSolver);
+    const formsToValidate = isModelValidating ? [...goal.forms.items] : [];
+    for (const form of formsToValidate) manager.incRef(form);
     try {
       const dep2asm = new ObjMap<number>((expr) => manager.hashes[expr]);
       goal2sat.runGoal(goal, dep2asm);
@@ -53,6 +60,13 @@ export const createSatTactic =
             if (value === L_TRUE) model.registerConst(manager.decls[expr], manager.trueExpr);
             else if (value === L_FALSE) model.registerConst(manager.decls[expr], manager.falseExpr);
           }
+          if (mkThSolver === null)
+            for (const form of formsToValidate) {
+              const value = model.eval(form, false);
+              manager.decRef(value);
+              if (value === manager.falseExpr)
+                throw new SmtUnsupportedError("a sat model that fails validation");
+            }
           const euf = goal2sat.euf;
           goal.model = euf?.updateModel(model) ?? model;
           euf?.validateModel(goal.model);
@@ -67,6 +81,7 @@ export const createSatTactic =
       goal.depth++;
       return [goal];
     } finally {
+      for (const form of formsToValidate) manager.decRef(form);
       goal2sat.release();
     }
   };

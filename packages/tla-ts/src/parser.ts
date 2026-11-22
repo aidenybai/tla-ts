@@ -21,10 +21,11 @@ import type {
   StepBody,
   UseOrHide,
 } from "./ast";
-import { TlaSyntaxError } from "./errors";
+import { TlaError, TlaSyntaxError } from "./errors";
 import { getNumeralValue, readAtAsIdentifier, tokenize, type Token } from "./lexer";
 import { getDefEntryErrors, type DefEntryError } from "./sany/generator-def-entries";
 import { getSanyParseError } from "./sany/parse-error";
+import { TokenLocation } from "./source-location";
 import { createSourceFile } from "./sany/source";
 
 interface Precedence {
@@ -575,11 +576,27 @@ const parse = (
 
   const isRecursiveName = (name: string) => recursiveScopes[recursiveScopes.length - 1].has(name);
 
-  const getLocation = (token: Token): SourceLocation => ({
-    line: token.line,
-    column: isTlapm && token.kind === "String" ? token.endColumn : token.column,
-    range: undefined,
-  });
+  // The module's name, which its header gives, and its tokens' positions, which its nodes'
+  // locations read their ranges from.
+  const table = {
+    module: "",
+    lines: new Int32Array(tokens.length),
+    columns: new Int32Array(tokens.length),
+    endColumns: new Int32Array(tokens.length),
+  };
+  for (let index = 0; index < tokens.length; index++) {
+    const token = tokens[index];
+    table.lines[index] = token.line;
+    table.columns[index] = isTlapm && token.kind === "String" ? token.endColumn : token.column;
+    table.endColumns[index] = token.endColumn;
+  }
+
+  const getLocation = (token: Token) =>
+    new TokenLocation(
+      token.line,
+      isTlapm && token.kind === "String" ? token.endColumn : token.column,
+      table,
+    );
 
   // Dense, as an array written at scattered indices turns into a dictionary that reads slowly.
   const tokenStarts = Array.from<SourceLocation | undefined>({ length: tokens.length });
@@ -589,18 +606,32 @@ const parse = (
   const getRange = (startIndex: number, endIndex = cursor - 1) => {
     const cached = startIndex === endIndex ? tokenRanges[startIndex] : undefined;
     if (cached) return cached;
-    const last = tokens[endIndex];
     const range = {
-      module: openModules[0].name,
-      start: (tokenStarts[startIndex] ??= getLocation(tokens[startIndex])),
-      end: (tokenEnds[endIndex] ??= { line: last.line, column: last.endColumn }),
+      module: table.module,
+      start: (tokenStarts[startIndex] ??= {
+        line: table.lines[startIndex],
+        column: table.columns[startIndex],
+      }),
+      end: (tokenEnds[endIndex] ??= {
+        line: table.lines[endIndex],
+        column: table.endColumns[endIndex],
+      }),
     };
     if (startIndex === endIndex) tokenRanges[startIndex] = range;
     return range;
   };
 
+  // A location that the parser made, whose range runs from the token at startIndex to the one at
+  // endIndex, as every location that it gives a range does.
+  const setRange = (location: SourceLocation, startIndex: number, endIndex = cursor - 1) => {
+    if (!(location instanceof TokenLocation)) {
+      throw new TlaError("The parser gives a range only to a location that it made");
+    }
+    location.setRange(startIndex, endIndex);
+  };
+
   const withRange = <Node extends { location: SourceLocation }>(node: Node, startIndex: number) => {
-    node.location.range = getRange(startIndex);
+    setRange(node.location, startIndex);
     return node;
   };
 
@@ -887,7 +918,9 @@ const parse = (
       const start = cursor;
       const names: string[] = [];
       const selectorRanges: SourceRange[] = [];
+      let lastSelector = cursor;
       const parseElement = (isApplicable: boolean) => {
+        lastSelector = cursor;
         selectorRanges.push(getRange(cursor, cursor));
         names.push(expectIdentifier());
         return isApplicable && isAt("(") ? parseArguments() : [];
@@ -902,9 +935,7 @@ const parse = (
       const appliedArgs = isHooked ? elementArgs : [...elementArgs.slice(0, -1), []];
       const argumentCounts = appliedArgs.map((args) => args.length);
       const location = getLocation(token);
-      location.range = isHooked
-        ? getRange(start)
-        : { ...getRange(start), end: selectorRanges[selectorRanges.length - 1].end };
+      setRange(location, start, isHooked ? cursor - 1 : lastSelector);
       const name = names.join("!");
       const subscript: Expression = argumentCounts.every((count) => count === 0)
         ? { kind: "Identifier", name, location }
@@ -1090,7 +1121,7 @@ const parse = (
           const fieldStart = cursor;
           const fieldLocation = getLocation(peek());
           const name = readName();
-          fieldLocation.range = getRange(fieldStart);
+          setRange(fieldLocation, fieldStart);
           expect(isRecord ? "|->" : ":");
           return { name, value: parseExpression(), location: fieldLocation };
         };
@@ -1859,7 +1890,7 @@ const parse = (
     if (nonfix) return getTlapmOperand(nonfix, start);
     const nonfixPostfix = parseTlapmNonfixPostfix(token);
     if (nonfixPostfix) {
-      nonfixPostfix.expression.location.range = getRange(start, nonfixPostfix.end);
+      setRange(nonfixPostfix.expression.location, start, nonfixPostfix.end);
       return { start, end: nonfixPostfix.end, expression: nonfixPostfix.expression };
     }
     const prefix = isOperator ? TLAPM_PREFIX_OPERATORS.get(token.text) : undefined;
@@ -1888,7 +1919,7 @@ const parse = (
     const start = Math.min(operator.start, operands[0].start);
     const end = Math.max(operator.end, operands[operands.length - 1].end);
     const expression = operator.apply(operands);
-    expression.location.range = getRange(start, end);
+    setRange(expression.location, start, end);
     return { start, end, expression, joinedBy: operator.joins };
   };
 
@@ -1962,11 +1993,9 @@ const parse = (
   };
 
   const parseBody = () => {
-    const start = getLocation(peek());
+    const start = cursor;
     const body = parseExpression();
-    const last = tokens[cursor - 1];
-    const end = { line: last.line, column: last.endColumn };
-    return { body, bodyRange: { module: openModules[0].name, start, end } };
+    return { body, bodyRange: getRange(start) };
   };
 
   const parseDefinition = (isLocal: boolean): Definition | Instance => {
@@ -2599,10 +2628,8 @@ const parse = (
       return { proof: item.proof, span: item.span, next: index + 1, end: item.end };
     const nested = nestSteps(items, index, level, levelSpan, true);
     if (!nested) return { proof: undefined, span: levelSpan, next: index, end: undefined };
-    const location = {
-      ...getLocation(tokens[item.first]),
-      range: getRange(item.first, nested.end),
-    };
+    const location = getLocation(tokens[item.first]);
+    setRange(location, item.first, nested.end);
     return {
       proof: { kind: "Steps", level: nested.level, steps: nested.steps, location },
       span: nested.span,
@@ -2655,6 +2682,8 @@ const parse = (
       ? nestProof(items, index + 1, stepLevel + 1, item.span)
       : { proof: undefined, span: item.span, next: index + 1, end: undefined };
     const end = proof.end ?? item.end;
+    const location = getLocation(item.token);
+    setRange(location, item.start, end);
     const step: ProofStep = {
       name: getStepName(item.token),
       token: item.token.text,
@@ -2662,7 +2691,7 @@ const parse = (
       head: item.head,
       statement: item.statement,
       proof: proof.proof,
-      location: { ...getLocation(item.token), range: getRange(item.start, end) },
+      location,
     };
     const span = mergeSpans(item.span, proof.span);
     if (item.body.kind === "Qed") {
@@ -2767,6 +2796,7 @@ const parse = (
   };
 
   const parseModuleBody = (): Module => {
+    const moduleStart = cursor;
     const location = getLocation(expect("----"));
     expect("MODULE");
     const name = expectModuleName();
@@ -2787,6 +2817,7 @@ const parse = (
       units: [],
       hasRecursiveLet: false,
     };
+    if (openModules.length === 0) table.module = name;
     openModules.push(module);
     recursiveScopes.push(new Set());
     if (accept("EXTENDS")) {
@@ -2800,11 +2831,7 @@ const parse = (
       const tokenIndex = cursor;
       const token = peek();
       if (token.kind === "ModuleEnd") {
-        location.range = {
-          module: openModules[0].name,
-          start: { line: location.line, column: location.column },
-          end: { line: token.line, column: token.endColumn },
-        };
+        setRange(location, moduleStart, tokenIndex);
         openModules.pop();
         recursiveScopes.pop();
         return module;
@@ -2826,7 +2853,7 @@ const parse = (
           const unitLocation = getLocation(advance());
           const declarations = parseDeclarations();
           module.constants.push(...declarations);
-          unitLocation.range = getRange(tokenIndex);
+          setRange(unitLocation, tokenIndex);
           module.units.push({ kind: "Constants", declarations, location: unitLocation });
           continue;
         }
@@ -2839,7 +2866,7 @@ const parse = (
             return withRange({ name: expectIdentifier(), arity: 0, location }, start);
           });
           module.variables.push(...declarations);
-          unitLocation.range = getRange(tokenIndex);
+          setRange(unitLocation, tokenIndex);
           module.units.push({ kind: "Variables", declarations, location: unitLocation });
           continue;
         }
@@ -2867,7 +2894,7 @@ const parse = (
         case "RECURSIVE": {
           const unitLocation = getLocation(advance());
           const declarations = declareRecursive();
-          unitLocation.range = getRange(tokenIndex);
+          setRange(unitLocation, tokenIndex);
           module.units.push({ kind: "Recursive", declarations, location: unitLocation });
           continue;
         }

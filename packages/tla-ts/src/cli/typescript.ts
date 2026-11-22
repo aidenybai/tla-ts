@@ -1,6 +1,6 @@
-import type { Node, ThrowStatement } from "@typescript/typescript6";
+import type { Node, SourceFile, ThrowStatement } from "@typescript/typescript6";
 import type { PreparedModule } from "../tlc/order";
-import { readFileSync, realpathSync } from "node:fs";
+import { existsSync, readFileSync, realpathSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { pathToFileURL } from "node:url";
 import type { Module } from "../ast";
@@ -18,6 +18,7 @@ import { getEscoreRuntime } from "../compile";
 import { TlaStrippingError } from "../errors";
 import { parseModule } from "../parser";
 import { foldNames } from "../typescript/spec/library";
+import type { ProgramFile } from "../typescript/spec/specialize";
 
 // A spec tla-ts compiled from the TypeScript file at path. specPath is where its module would be
 // if it were a file, though tla-ts checks it without writing one.
@@ -66,7 +67,7 @@ const getTlaString = (text: string) =>
 // What Node writes to stderr and the code it exits with, for the script at path whose spec fails an
 // Assert with what Node reports: a top-level await that never settles, or a throw or a rejection
 // that nothing handles.
-export const getNodeExit = (message: string, path: string) => {
+export const getNodeExit = (message: string) => {
   const quoted = message
     .split('The first argument of Assert evaluated to FALSE; the second argument was:\n"')
     .at(1);
@@ -77,10 +78,12 @@ export const getNodeExit = (message: string, path: string) => {
   if (text.startsWith(UNSETTLED_AWAIT_WARNING)) {
     return { code: UNSETTLED_AWAIT_EXIT_CODE, stderr: `Warning: ${text}\n\n\n\n` };
   }
-  const realPath = realpathSync(path);
-  return [`${realPath}:`, `${pathToFileURL(realPath).href}:`, "node:internal/"].some((prefix) =>
-    text.replace(/^\n/, "").startsWith(prefix),
-  )
+  // Node's text starts where it says the exception is, in a file of the program, by its path or
+  // its URL, or in Node's own code.
+  const isNodeLocation = /^(?:file:\/\/|\/|[A-Za-z]:\\|node:internal\/)[^\n]*:\d+\n/.test(
+    text.replace(/^\n/, ""),
+  );
+  return isNodeLocation
     ? { code: UNCAUGHT_EXCEPTION_EXIT_CODE, stderr: `${text}\n\nNode.js ${process.version}\n` }
     : undefined;
 };
@@ -116,6 +119,15 @@ const WELL_KNOWN_PROTOTYPES = [
 // properties are data and whose own keys Node hides, or Empty where tla-ts can't tell what Node
 // prints. An error's stack that no read wrote yet is its header and, where V8 captured a frame, a
 // frame, which is all that Node's inspect reads of it but for the frames.
+// What Node shows of a file of a program: its number in the program, its URL, its lines by number,
+// and the location of each of its throw statements by its number, from 1, in the file's order.
+interface NodeFile {
+  number: number;
+  url: string;
+  lines: ReadonlyMap<number, string>;
+  sites: ReadonlyMap<number, string>;
+}
+
 const ERROR_TEXT = String.raw`NodeStartsWith(u, p) == Len(u) >= Len(p) /\ SubSeq(u, 1, Len(p)) = p
 NodeEndsWith(u, p) == Len(u) >= Len(p) /\ SubSeq(u, Len(u) - Len(p) + 1, Len(u)) = p
 NodeIncludes(u, p) == StringIndexOf(u, p, 0) # -1
@@ -194,18 +206,22 @@ NodeErrorText(s, v) ==
       start == StringIndexOf(improved, N("\n    at"), pos)
   IN IF start = -1 THEN <<91>> \o improved \o <<93>> ELSE SubSeq(improved, 1, start)
 \* Where Node says an error that a promise rejected with, or that an ES module threw, was made: the
-\* first frame of its stack, in the entry's code, or Empty.
+\* first frame of its stack, in a line of a file's code that FileLines holds, or Empty.
 NodeErrorSource(s, v) ==
   LET o == O(s, v) IN
   IF "trace" \notin DOMAIN o.slots \/ "dropped" \in DOMAIN o.slots.trace \/ o.slots.trace.limit < 1 THEN Empty ELSE
   LET w == WalkFrames(s, [o.slots.trace EXCEPT !.limit = 1], o.slots.trace.callers, <<>>, [NoFrames EXCEPT !.isText = FALSE]) IN
-  IF w.count # 1 \/ w.positions[1] = <<>> \/ w.positions[1][1] # 1 \/ w.positions[1][2] > Len(EntryLines) THEN Empty ELSE
-  LET n == w.positions[1][2]
-      line == EntryLines[n]
+  IF w.count # 1 \/ w.positions[1] = <<>> \/ w.positions[1][1] \notin DOMAIN FileLines
+     \/ FileLines[w.positions[1][1]] = Empty \/ w.positions[1][2] \notin DOMAIN FileLines[w.positions[1][1]]
+     \/ FileLines[w.positions[1][1]][w.positions[1][2]] = Empty THEN Empty ELSE
+  LET f == w.positions[1][1]
+      n == w.positions[1][2]
+      line == FileLines[f][n]
+      pad == FilePads[f][n]
       column == w.positions[1][3]
   IN IF column > Len(line) + 1 THEN Empty
-     ELSE EntryUrl \o <<58>> \o NumToString(NumFromInt(n)) \o <<10>> \o line \o <<10>>
-          \o [i \in 1..(column - 1) |-> IF n \in DOMAIN EntryPads THEN EntryPads[n][i] ELSE IF line[i] = 9 THEN 9 ELSE 32] \o <<94>>`;
+     ELSE FileUrls[f] \o <<58>> \o NumToString(NumFromInt(n)) \o <<10>> \o line \o <<10>>
+          \o [i \in 1..(column - 1) |-> IF pad # Empty THEN pad[i] ELSE IF line[i] = 9 THEN 9 ELSE 32] \o <<94>>`;
 
 // The steps of a script's spec as the CLI checks it on ESCore: where the script leaves an exception
 // uncaught, Init fails with what Node prints, as getNodeExit reads it, for an error or a primitive
@@ -214,44 +230,59 @@ NodeErrorSource(s, v) ==
 // error, and Node's warning where the entry module's top-level await never settles,
 // unsettledText, where it has one. It stops at a throw that Node says it threw in code that
 // siteLocations leaves out, at an await it can't tell, and at an object whose text it can't tell.
-const getEscoreScriptSteps = (
-  siteLocations: ReadonlyMap<number, string>,
-  unsettledText: string | undefined,
-  url: string,
-  lines: readonly string[],
-) => {
+const getEscoreScriptSteps = (files: readonly NodeFile[], unsettledText: string | undefined) => {
   const getUnits = (text: string) =>
     `<<${Array.from({ length: text.length }, (_, index) => text.charCodeAt(index)).join(", ")}>>`;
   const getFunction = (pairs: string[]) =>
     pairs.length === 0 ? "[key \\in {} |-> Empty]" : pairs.join(" @@ ");
   const stop = getTlaString("tla-ts can't print what Node prints for this uncaught exception");
   // The characters that Node's text may hold: a tab, a line feed, the printable ASCII, and the
-  // characters of the entry's code, by code unit, or by the pair of surrogates of one past U+FFFF.
+  // characters of the files' code, by code unit, or by the pair of surrogates of one past U+FFFF.
   const characters = [
     ...new Set([
       "\t",
       "\n",
       ...Array.from({ length: 95 }, (_, index) => String.fromCharCode(index + 32)),
-      ...lines.join(""),
+      ...files.flatMap((file) => [...[...file.lines.values(), ...file.sites.values()].join("")]),
     ]),
   ].filter(isNodeText);
-  // A line where a tab's place in its UTF-8 isn't its place in its code units, whose padding Node
-  // writes with a tab where the UTF-8 has one.
-  const pads = lines.flatMap((line, index) => {
+  // A line's padding, which has a tab where the line's UTF-8 has one, where a tab's place in its
+  // UTF-8 isn't its place in its code units, or Empty.
+  const getPad = (line: string) => {
     const bytes = Buffer.from(line, "utf8");
     const pad = Array.from({ length: line.length }, (_, position) =>
       bytes[position] === 9 ? 9 : 32,
     );
     return pad.some((unit, position) => (unit === 9) !== (line.charCodeAt(position) === 9))
-      ? [`${index + 1} :> <<${pad.join(", ")}>>`]
-      : [];
-  });
+      ? `<<${pad.join(", ")}>>`
+      : "Empty";
+  };
+  // The files' texts by number, and each file's lines' by number, with Empty where a number names
+  // no file of code or a line that FileLines leaves out, as sequences, which TLA+ reads without
+  // nesting as deep as a file is long.
+  const numbered = new Map(files.map((file) => [file.number, file]));
+  const getByFile = (text: (file: NodeFile) => string) =>
+    `<<${Array.from(
+      { length: [...numbered.keys()].reduce((most, number) => Math.max(most, number), 0) },
+      (_, index) => {
+        const file = numbered.get(index + 1);
+        return file === undefined ? "Empty" : text(file);
+      },
+    ).join(", ")}>>`;
+  const getByLine = (file: NodeFile, text: (line: string) => string) =>
+    `<<${Array.from(
+      { length: [...file.lines.keys()].reduce((most, number) => Math.max(most, number), 0) },
+      (_, index) => {
+        const line = file.lines.get(index + 1);
+        return line === undefined ? "Empty" : text(line);
+      },
+    ).join(", ")}>>`;
   return `VARIABLE programDone
 ThrowSiteLocation(site) ==
-  CASE ${[...siteLocations].map(([index, text]) => `site = <<1, ${index}>> -> ${getTlaString(text)}\n    [] `).join("")}OTHER -> Empty
-EntryUrl == ${getUnits(url)}
-EntryLines == <<${lines.map(getUnits).join(", ")}>>
-EntryPads == ${getFunction(pads)}
+  CASE ${files.flatMap((file) => [...file.sites].map(([index, text]) => `site = <<${file.number}, ${index}>> -> ${getTlaString(text)}\n    [] `)).join("")}OTHER -> Empty
+FileUrls == ${getByFile((file) => getUnits(file.url))}
+FileLines == ${getByFile((file) => getByLine(file, getUnits))}
+FilePads == ${getByFile((file) => getByLine(file, getPad))}
 UnitCharacters == ${getFunction(characters.filter((character) => character.length === 1).map((character) => `${character.charCodeAt(0)} :> ${getTlaString(character)}`))}
 PairCharacters == ${getFunction(characters.filter((character) => character.length === 2).map((character) => `<<${character.charCodeAt(0)}, ${character.charCodeAt(1)}>> :> ${getTlaString(character)}`))}
 RECURSIVE UnitsToText(_)
@@ -294,7 +325,7 @@ Next == UNCHANGED programDone`;
 // and a model as compileModelToEscore compiles one. Node says where a script's throw statement
 // threw by the file's URL, as it runs a TypeScript file, and an ES module's at its own code, but
 // for a throw in a function, which a timer might have called.
-const compileEscoreEntry = async (path: string): Promise<CompiledInput> => {
+const compileEscoreEntry = async (path: string, setBound?: number): Promise<CompiledInput> => {
   // The TypeScript compiler takes a while to load, so only a TypeScript or JavaScript input loads
   // it.
   const ts = (await import("@typescript/typescript6")).default;
@@ -324,30 +355,68 @@ const compileEscoreEntry = async (path: string): Promise<CompiledInput> => {
   // Where Node says code is: the file's URL and the line, then the line, with a caret under the
   // node, whose padding has a tab where the line's UTF-8 has one (GetErrorSource of
   // src/node_errors.cc).
-  const getLocation = (node: Node) => {
-    const start = sourceFile.getLineAndCharacterOfPosition(node.getStart());
-    const bytes = Buffer.from(lines[start.line], "utf8");
-    const padding = Array.from({ length: start.character }, (_, index) =>
-      bytes[index] === 9 ? "\t" : " ",
-    ).join("");
-    const location = `${url}:${start.line + 1}\n${lines[start.line]}\n${padding}^`;
-    return isNodeText(location) ? location : undefined;
+  const getLocationIn =
+    (fileUrl: string, fileLines: readonly string[], file: SourceFile) => (node: Node) => {
+      const start = file.getLineAndCharacterOfPosition(node.getStart());
+      const bytes = Buffer.from(fileLines[start.line], "utf8");
+      const padding = Array.from({ length: start.character }, (_, index) =>
+        bytes[index] === 9 ? "\t" : " ",
+      ).join("");
+      const location = `${fileUrl}:${start.line + 1}\n${fileLines[start.line]}\n${padding}^`;
+      return isNodeText(location) ? location : undefined;
+    };
+  const getLocation = getLocationIn(url, lines, sourceFile);
+  // What Node shows of a file of the program, the entry first: its URL, the lines where it may say
+  // an error was made, every line of the entry's and those of another file's that name an error,
+  // and where each throw statement of a script or a CommonJS file threw, as Node says, where an ES
+  // module's error was made instead.
+  const getNodeFile = (file: ProgramFile, index: number): NodeFile[] => {
+    const isEntry = index === 0;
+    if (!isEntry && (file.kind === "json" || file.kind === "host" || !existsSync(file.path))) {
+      return [];
+    }
+    const fileText = isEntry ? text : getJsxText(file.path, readFileSync(file.path, "utf8"));
+    const fileCode = /\.[cm]?tsx?$/.test(file.path)
+      ? stripTypes(
+          ts.createSourceFile(file.path, fileText, ts.ScriptTarget.ESNext, true, ts.ScriptKind.TS),
+        )
+      : fileText;
+    const fileLines = isEntry ? lines : fileCode.split(/\r\n|[\n\r\u2028\u2029]/);
+    const fileUrl = isEntry
+      ? url
+      : file.kind === "module" || /\.[cm]?tsx?$/.test(file.path)
+        ? pathToFileURL(realpathSync(file.path)).href
+        : realpathSync(file.path);
+    const parsed = isEntry
+      ? sourceFile
+      : ts.createSourceFile(file.path, fileText, ts.ScriptTarget.ESNext, true);
+    const throws: ThrowStatement[] = [];
+    const collect = (node: Node): void => {
+      if (ts.isThrowStatement(node)) throws.push(node);
+      ts.forEachChild(node, collect);
+    };
+    collect(parsed);
+    const getFileLocation = getLocationIn(fileUrl, fileLines, parsed);
+    return [
+      {
+        number: index + 1,
+        url: fileUrl,
+        lines: new Map(
+          fileLines.flatMap((line, position) =>
+            isEntry || line.includes("Error") ? [[position + 1, line] as const] : [],
+          ),
+        ),
+        sites: new Map(
+          (isEntry ? isModule : file.kind === "module")
+            ? []
+            : throws.flatMap((statement, position) => {
+                const location = getFileLocation(statement);
+                return location === undefined ? [] : [[position + 1, location] as const];
+              }),
+        ),
+      },
+    ];
   };
-  const throws: ThrowStatement[] = [];
-  const collect = (node: Node): void => {
-    if (ts.isThrowStatement(node)) throws.push(node);
-    ts.forEachChild(node, collect);
-  };
-  collect(sourceFile);
-  // Node says where a script's throw threw, and an ES module's where its error was made.
-  const siteLocations = new Map(
-    isModule
-      ? []
-      : throws.flatMap((statement, index) => {
-          const location = getLocation(statement);
-          return location === undefined ? [] : [[index + 1, location] as const];
-        }),
-  );
   // Node says where the entry module awaits once nothing is left to run, which tla-ts tells where
   // its top level awaits at one place.
   const awaits: Node[] = [];
@@ -367,13 +436,15 @@ const compileEscoreEntry = async (path: string): Promise<CompiledInput> => {
   const awaited = awaits.length === 1 ? getLocation(awaits[0]) : undefined;
   const unsettledText = awaited === undefined ? undefined : `${UNSETTLED_AWAIT_WARNING}${awaited}`;
   // A module whose exported functions the model calls none of runs as a script.
-  const model = isScript(sourceFile) ? undefined : compileModelToEscore(source, path, runtime);
+  const model = isScript(sourceFile)
+    ? undefined
+    : compileModelToEscore(source, path, runtime, undefined, true, setBound);
   const isScriptFile = model === undefined || model.isScript;
   const spec =
     model !== undefined && !model.isScript
       ? model
       : compileToEscore(source, path, runtime, true, {
-          steps: getEscoreScriptSteps(siteLocations, unsettledText, url, lines),
+          steps: (files) => getEscoreScriptSteps(files.flatMap(getNodeFile), unsettledText),
           entries: [],
         });
   return {
@@ -441,7 +512,7 @@ const compileRejection = async (path: string, error: TlaStrippingError) => {
 
 // A TypeScript or JavaScript file compiled by specializing ESCore (see compileEscoreEntry), or,
 // where Node's type stripping rejects it, a program that fails as Node does.
-export const compileTypeScriptFile = (path: string): Promise<CompiledInput> =>
-  compileEscoreEntry(path).catch((error: unknown) =>
+export const compileTypeScriptFile = (path: string, setBound?: number): Promise<CompiledInput> =>
+  compileEscoreEntry(path, setBound).catch((error: unknown) =>
     error instanceof TlaStrippingError ? compileRejection(path, error) : Promise.reject(error),
   );

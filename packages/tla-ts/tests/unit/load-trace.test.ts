@@ -453,6 +453,45 @@ describe("-loadTrace tlc matches TLC", () => {
   });
 });
 
+const getStringLocation = (payload: Uint8Array, text: string) => {
+  const pattern = [
+    0,
+    0,
+    0,
+    text.length,
+    ...Array.from(text, (character) => character.charCodeAt(0)),
+  ];
+  const start = payload.findIndex((_byte, index) =>
+    pattern.every((byte, offset) => payload[index + offset] === byte),
+  );
+  return new DataView(payload.buffer, payload.byteOffset, payload.byteLength).getInt32(start - 4);
+};
+
+describe("-dumpTrace tlc writes each string's location as TLC does", () => {
+  it.each([
+    [
+      "load-trace/MCDieHarder",
+      "load-trace/MCDieHarder.bin",
+      ["contents", "vars", "counterexample"],
+    ],
+    [
+      "typescript/examples/missionaries-and-cannibals/MissionariesAndCannibals",
+      "load-trace/MissionariesAndCannibals.bin",
+      ["bank_of_boat", "who_is_on_bank", "vars", "counterexample"],
+    ],
+  ])(
+    "gives each root variable of %s its index, and any other string -1",
+    async (spec, tlcTrace, texts) => {
+      const trace = await dumpTrace(readText(`${spec}.tla`), readText(`${spec}.cfg`));
+      if (trace === undefined) throw new Error("expected a trace");
+      const tlcPayload = gunzipSync(readFixture(tlcTrace));
+      expect(texts.map((text) => getStringLocation(gunzipSync(trace), text))).toEqual(
+        texts.map((text) => getStringLocation(tlcPayload, text)),
+      );
+    },
+  );
+});
+
 describe("-loadTrace's _TLCState matches TLC", () => {
   const LONG_SOURCE =
     "---- MODULE Long ----\nEXTENDS Naturals\nVARIABLE x\nInit == x = 0\nNext == x' = x + 1\nInv == x < 300\n====";

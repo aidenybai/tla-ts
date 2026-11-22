@@ -93,9 +93,6 @@ import {
 import type { TlcVersion } from "./tlc/version";
 import { getSanyStandardModules } from "./sany/modules";
 
-const isSubsetOf = (left: Value[], right: Value) =>
-  left.every((element) => isElementOf(element, right));
-
 const BOOLEAN_SET = createSet([false, true]);
 markNormalized(BOOLEAN_SET);
 
@@ -225,8 +222,9 @@ export const CORE_OPERATORS: Builtin[] = [
       typeof right === "object" &&
       right.kind === "Subset" &&
       isEnumerable(left.base);
-    if (isPowerSets) return isSubsetOf(toFiniteSet(left.base).elements, right.base);
-    return !someStreamedElement(left, (element) => !isElementOf(element, right));
+    const streamed = isPowerSets ? left.base : left;
+    const superset = isPowerSets ? right.base : right;
+    return !someStreamedElement(streamed, (element) => !isElementOf(element, superset));
   }),
   ...SET_OPERATORS.map((operator) =>
     defineOperator(operator, 2, (args) => {
@@ -642,6 +640,7 @@ export const getJavaOverrides = (
   runtime: CheckerRuntime,
   files: FileSystem,
   evaluateReplaced: (name: string, args: BuiltinArgument[], context: Context | undefined) => Value,
+  getVariableNames: () => string[],
 ) => {
   if (name === "TransitiveClosure") return TRANSITIVE_CLOSURE_OPERATORS;
   if (name === "ESCanonical") return ESCORE_CANONICAL_OPERATORS;
@@ -659,7 +658,7 @@ export const getJavaOverrides = (
   }
   if (name === "IOUtils") return createIoUtilsOperators(files, evaluateReplaced);
   if (name === "_TLCTrace") {
-    return [...createTlcTraceOperators(files), createTraceStateOperator(runtime)];
+    return [...createTlcTraceOperators(files, getVariableNames), createTraceStateOperator(runtime)];
   }
   if (name === "_JsonTrace") return [createTraceStateOperator(runtime)];
   if (!getSanyStandardModules(runtime.version).has(name)) return undefined;

@@ -306,7 +306,7 @@ const checkSpec = async (
     );
   // A script that fails as Node would run it exits as Node does.
   const getScriptExit = (message: string) => {
-    const nodeExit = compiled?.isScript ? getNodeExit(message, compiled.path) : undefined;
+    const nodeExit = compiled?.isScript ? getNodeExit(message) : undefined;
     if (nodeExit === undefined) return undefined;
     process.stderr.write(nodeExit.stderr);
     printFinished();
@@ -700,7 +700,9 @@ export const checkSpecs = async (args: string[], java: JavaProperties) => {
         }
         // A stack overflow that nothing caught ends the check as one that the check caught does.
         try {
-          const compiled = isTypeScript ? await compileTypeScriptFile(path) : undefined;
+          const compiled = isTypeScript
+            ? await compileTypeScriptFile(path, parsed.maxSetSize)
+            : undefined;
           compiled?.notes.forEach((note) => console.log(note));
           return await checkSpec(
             compiled?.specPath ?? path,

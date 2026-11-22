@@ -261,7 +261,7 @@ const parsePrinted = (text: string) => {
   return tree && isComposite(tree) ? parseComposite(tree, 0) : tree;
 };
 
-// Deviation from TLC: tlc2.pprint's Parse and Format recurse once per nesting level, so a default TLC run overflows printing a value about 1,700 levels deep and drops the rest of the trace.
+// Deviation from TLC: tlc2.pprint's Parse and Format recurse once per nesting level, so TLC at its default stack can overflow printing a value about 1,700 levels deep, at a depth its JIT decides, and drops the rest of the trace.
 export const prettyPrint = (text: string) => {
   const tree = text.length === 0 ? undefined : parsePrinted(text);
   if (!tree || tree.last < text.length - 1) return text;

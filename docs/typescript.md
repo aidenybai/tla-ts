@@ -137,7 +137,7 @@ A model without state runs its top level as an assumption too, so a throw there 
 
 A collection that a helper changes in place through its parameter, as `add(line, lengths)` changes `lengths`, isn't a state variable. The check counts its value in the state, but a trace doesn't show it.
 
-The name of each state variable and exported function must be a name that TLA+ doesn't reserve. TLA+'s keywords, such as `CHOOSE`, and the model's own names, such as `Init`, `Next`, and `vars`, aren't, so the compile stops: `tla-ts can't name the state variable vars in TLA+, which takes the name for its own`.
+The name of each state variable and exported function must be a name that TLA+ doesn't reserve. TLA+'s keywords, such as `CHOOSE`, and the model's own names, such as `Init`, `Next`, and `vars`, aren't, so the compile stops: `tla-ts can't name the state variable vars in TLA+, which takes the name for its own`. A state variable whose name TLA+ can't spell, such as `$` or `_`, takes a name of its own in TLA+, and a trace shows it by its JavaScript name.
 
 ### Values of a type
 
@@ -169,7 +169,7 @@ Other types have no finite set of values:
 - A tuple with optional or rest elements.
 - A type that holds itself.
 
-tla-ts calls no exported function with a parameter of such a type, or of a union of values that TLC can't compare, such as a string and a number, and prints a line that names it and the kind of its type, such as `tla-ts calls no apply: its parameter transform is a function, whose values tla-ts can't list`. The kinds it names are a type parameter, `any` or `unknown`, a function, an instance of a class, and an object with methods, alone or in a union. For a union of values that TLC can't compare, it names their kinds, as in `its parameter value is a union of string and number, whose values TLC can't compare`. For any other type, the line gives the reason, as in `its parameter p takes values it can't list: …`. It also calls no exported function without parameters whose every call throws. Where it calls no exported function at all, the compile stops with `tla-ts compiles a script, not a model, to ESCore this way`.
+tla-ts calls no exported function with a parameter of such a type, or of a union of values that TLC can't compare, such as a string and a number, and prints a line that names it and the kind of its type, such as `tla-ts calls no apply: its parameter transform is a function, whose values tla-ts can't list`. The kinds it names are a type parameter, `any` or `unknown`, a function, an instance of a class, and an object with methods, alone or in a union. For a union of values that TLC can't compare, it names their kinds, as in `its parameter value is a union of string and number, whose values TLC can't compare`. For any other type, the line gives the reason, as in `its parameter p takes values it can't list: …`. It calls no exported function whose parameters make more argument lists, every combination of their values, than TLC puts in a set, 1,000,000 unless `-maxSetSize` sets it, and the line gives the count, as in `its parameters make 18,892,923 argument lists, more than the 1,000,000 it lists`. It also calls no exported function without parameters whose every call throws. Where it calls no exported function at all, the compile stops with `tla-ts compiles a script, not a model, to ESCore this way`.
 
 A state variable of such a type with no initializer starts at `undefined`, as Node starts it, and tla-ts prints a line that names it, such as `tla-ts starts count at undefined, as Node does: …`.
 
@@ -402,6 +402,8 @@ if (depth(1000) !== 1000) throw new Error("wrong depth");
 ```
 TlaStackLimitError: tla-ts can't check this program within the stack: its check overflowed its 8 MB stack at depth 0
 ```
+
+The thread's heap is the one Node gives the process, which `--max-old-space-size` sets. A program whose check runs out of it stops with a `TlaHeapLimitError`, with the same exit code, such as `TlaHeapLimitError: tla-ts can't check this program within Node's default heap of 4192 MB`.
 
 ESCore's realm starts once a process. The package's build holds the realm prepared for the host that built it. On a host whose realm differs, such as one with another time zone or locale, tla-ts starts the realm itself.
 

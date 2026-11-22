@@ -607,6 +607,8 @@ const isRecursive = (record: RecType) => {
   return record.shapes.length > 1 && getInnerTypes(record).some(isReaching);
 };
 
+const MAXIMUM_TYPE_DEPTH = 100;
+
 // A type left open, such as the element of a set that is always empty, holds no values. A type
 // holds itself only through a record that can, and closing stops there.
 const closeType = (type: Type, path: Type[] = []): Type => {
@@ -630,6 +632,8 @@ const closeType = (type: Type, path: Type[] = []): Type => {
       ? resolved
       : unsupported();
   }
+  // V8 compiles the code nested as deep as a type in time quadratic in its depth, and overflows its stack near 1,000 levels.
+  if (path.length === MAXIMUM_TYPE_DEPTH) return unsupported();
   path.push(resolved);
   getInnerTypes(resolved).forEach((inner) => closeType(inner, path));
   path.pop();
@@ -2128,6 +2132,12 @@ const getApplied = (program: Program, expression: Expression, frame: Frame) =>
     ? resolveDefinition(program, expression.operator)
     : undefined;
 
+const isInfiniteConstant = (program: Program, expression: Expression, frame: Frame) => {
+  if (!isConstantExpression(program, expression, frame.scope)) return false;
+  const value = evaluateConstant(program, expression);
+  return typeof value === "object" && value.kind === "InfiniteSet";
+};
+
 // Whether membership in a set is tested on its parts rather than by enumerating it.
 const isStructural = (program: Program, expression: Expression, frame: Frame): boolean => {
   const body =
@@ -2135,6 +2145,15 @@ const isStructural = (program: Program, expression: Expression, frame: Frame): b
   if (body) return isStructural(program, body, { ...frame, scope: new Map() });
   if (expression.kind === "Apply" && isUnion(expression, frame)) {
     return expression.args.some((set) => isStructural(program, set, frame));
+  }
+  // TLC filters an enumerated set as it builds the filter, and any other set lazily.
+  if (expression.kind === "SetFilter") {
+    const base = expression.bound.set;
+    return (
+      isStructural(program, base, frame) ||
+      base.kind === "Product" ||
+      isInfiniteConstant(program, base, frame)
+    );
   }
   if (
     expression.kind === "Apply" &&
@@ -2149,7 +2168,6 @@ const isStructural = (program: Program, expression: Expression, frame: Frame): b
   return (
     expression.kind === "RecordSet" ||
     expression.kind === "FunctionSet" ||
-    expression.kind === "SetFilter" ||
     (expression.kind === "Apply" &&
       (expression.operator === "SUBSET" || expression.operator === "Seq"))
   );
@@ -2229,8 +2247,12 @@ const compileMembership = (
       );
     }
   }
-  // TLC tests membership in {x \in S : P} as membership in S, then P of the element.
-  if (setExpression.kind === "SetFilter" && setExpression.bound.pattern.kind === "Name") {
+  // TLC tests membership in a lazy {x \in S : P} as membership in S, then P of the element.
+  if (
+    setExpression.kind === "SetFilter" &&
+    setExpression.bound.pattern.kind === "Name" &&
+    isStructural(program, setExpression, frame)
+  ) {
     const name = getName(program, "e");
     const isInSet = compileMembership(
       program,
@@ -2249,60 +2271,41 @@ const compileMembership = (
       emit: () => `((${name}) => ${isInSet.emit()} && ${predicate.emit()})(${element.emit()})`,
     };
   }
-  // TLC tests membership in a union, or in UNION of a set literal, in each of its sets.
+  // TLC tests membership in a union, or in UNION of a literal of one set, in each of its sets. It
+  // sorts the sets of a longer literal, which enumerates each.
   const sets =
     setExpression.kind !== "Apply"
       ? undefined
       : isUnion(setExpression, frame) &&
           (isStructural(program, setExpression, frame) ||
-            setExpression.args.some((set) => {
-              if (!isConstantExpression(program, set, frame.scope)) return false;
-              const value = evaluateConstant(program, set);
-              return typeof value === "object" && value.kind === "InfiniteSet";
-            }))
+            setExpression.args.some((set) => isInfiniteConstant(program, set, frame)))
         ? setExpression.args
         : setExpression.args.length === 1 &&
             isBuiltin(frame, setExpression.operator, "UNION") &&
-            setExpression.args[0].kind === "SetEnumeration"
+            setExpression.args[0].kind === "SetEnumeration" &&
+            setExpression.args[0].elements.length < 2
           ? setExpression.args[0].elements
           : undefined;
   if (sets) {
-    const name = getName(program, "e");
-    const tests = sets.map((set) =>
-      compileMembership(program, { type: element.type, emit: () => name }, set, frame),
+    return compileMemberships(program, element, sets, frame, (tests) =>
+      tests.length === 0 ? "false" : tests.join(" || "),
     );
-    return {
-      type: createBool(),
-      emit: () =>
-        `((${name}) => ${tests.length === 0 ? "false" : tests.map((test) => test.emit()).join(" || ")})(${element.emit()})`,
-    };
   }
-  // TLC tests membership in a set less another in the first set, then in the other, though it
-  // evaluates both. So the tier skips the other only where evaluating it can't fail, or where it
-  // can't build the first, an infinite set.
+  // TLC tests membership in a set less another in the first set, then in the other.
   if (
     setExpression.kind === "Apply" &&
     setExpression.args.length === 2 &&
-    isBuiltin(frame, setExpression.operator, "\\")
+    isBuiltin(frame, setExpression.operator, "\\") &&
+    (isConstantExpression(program, setExpression.args[1], frame.scope) ||
+      isInfiniteConstant(program, setExpression.args[0], frame))
   ) {
-    const [kept, removed] = setExpression.args;
-    const isInfinite = () => {
-      const value = evaluateConstant(program, kept);
-      return typeof value === "object" && value.kind === "InfiniteSet";
-    };
-    if (
-      isConstantExpression(program, removed, frame.scope) ||
-      (isConstantExpression(program, kept, frame.scope) && isInfinite())
-    ) {
-      const name = getName(program, "e");
-      const named = { type: element.type, emit: () => name };
-      const isKept = compileMembership(program, named, kept, frame);
-      const isRemoved = compileMembership(program, named, removed, frame);
-      return {
-        type: createBool(),
-        emit: () => `((${name}) => ${isKept.emit()} && !${isRemoved.emit()})(${element.emit()})`,
-      };
-    }
+    return compileMemberships(
+      program,
+      element,
+      setExpression.args,
+      frame,
+      (tests) => `${tests[0]} && !${tests[1]}`,
+    );
   }
   // TLC tests membership in a set of records field by field, without enumerating it.
   if (setExpression.kind === "RecordSet") {
@@ -2523,6 +2526,39 @@ const compileMembership = (
     };
   }
   return compileSetMembership(program, element, compileValue(program, setExpression, frame));
+};
+
+// TLC builds each of the sets that isn't lazy before it tests membership in any of them.
+const compileMemberships = (
+  program: Program,
+  element: Compiled,
+  sets: Expression[],
+  frame: Frame,
+  format: (tests: string[]) => string,
+): Compiled => {
+  const name = getName(program, "e");
+  const named = { type: element.type, emit: () => name };
+  const parts = sets.map((set) => {
+    if (isStructural(program, set, frame) || isConstantExpression(program, set, frame.scope)) {
+      return { test: compileMembership(program, named, set, frame), built: undefined };
+    }
+    const built = { name: getName(program, "s"), set: compileValue(program, set, frame) };
+    const test = compileSetMembership(program, named, {
+      type: built.set.type,
+      emit: () => built.name,
+    });
+    return { test, built };
+  });
+  return {
+    type: createBool(),
+    emit: () => {
+      const tests = format(parts.map((part) => part.test.emit()));
+      const builtSets = parts.flatMap((part) => (part.built ? [part.built] : []));
+      const parameters = [name, ...builtSets.map((built) => built.name)];
+      const values = [element.emit(), ...builtSets.map((built) => built.set.emit())];
+      return `((${parameters.join(", ")}) => ${tests})(${values.join(", ")})`;
+    },
+  };
 };
 
 const compileSetMembership = (program: Program, element: Compiled, set: Compiled): Compiled => {
