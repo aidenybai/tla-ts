@@ -489,21 +489,22 @@ export const parseTlcArguments = (args: string[]): TlcArguments | TlcArgumentsEr
         continue;
       }
       argumentIndex++;
-      const file = options.split(",").findLast((option) => option.startsWith("file="));
+      const simulateOptions = options.split(",");
+      const file = simulateOptions.findLast((option) => option.startsWith("file="));
       if (file !== undefined) parsed.behaviorFile = file.replaceAll("file=", "");
       // TLC sets a system property for each sched= and never clears it, and its Simulator takes rl over rlaction.
-      if (options.split(",").includes("sched=rl")) {
+      if (simulateOptions.includes("sched=rl")) {
         parsed.scheduler = "rl";
-      } else if (options.split(",").includes("sched=rlaction") && parsed.scheduler !== "rl") {
+      } else if (simulateOptions.includes("sched=rlaction") && parsed.scheduler !== "rl") {
         parsed.scheduler = "rlaction";
       }
-      const statistics = options
-        .split(",")
-        .findLast((option) => option === "stats=basic" || option === "stats=full");
+      const statistics = simulateOptions.findLast(
+        (option) => option === "stats=basic" || option === "stats=full",
+      );
       if (statistics !== undefined) {
         parsed.actionStatistics = statistics === "stats=basic" ? "basic" : "full";
       }
-      for (const option of options.split(",").filter((item) => item.startsWith("num="))) {
+      for (const option of simulateOptions.filter((item) => item.startsWith("num="))) {
         const count = option.replaceAll("num=", "");
         parsed.traceCount = parseJavaInteger(count, 64);
         if (parsed.traceCount === undefined) {
