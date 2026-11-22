@@ -318,6 +318,25 @@ describe("check matches TLC", () => {
     ]).toEqual(expected);
   });
 
+  it("fails as TLC does to compare model values of two types in a filter's membership test", async () => {
+    const result = await check({
+      source:
+        "---- MODULE M ----\nEXTENDS Integers\nCONSTANTS a, b, m\nVARIABLES x, y\nInit == x = 0 /\\ y = {b, m}\nNext == x' = (x + 1) % 3 /\\ y' = y /\\ m \\in {t \\in {m, a} : t \\in y}\n====",
+      config: "INIT Init\nNEXT Next\nCONSTANTS\na = A_a\nb = B_b\nm = m",
+    });
+    expect([
+      result.status,
+      result.failure?.message,
+      result.generatedStates,
+      result.distinctStates,
+    ]).toEqual([
+      "error",
+      `${UNEXPECTED_EXCEPTION}Attempted to compare the differently-typed model values A_a and B_b`,
+      1,
+      1,
+    ]);
+  });
+
   it("checks a membership in a filter whose predicate nests 19 more as TLC does", async () => {
     let predicate = "t20 \\in y";
     for (let level = 20; level >= 2; level--) {
