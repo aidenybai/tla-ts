@@ -41,7 +41,7 @@ import {
   type MessagePrinter,
 } from "../tlc/messages";
 import { formatState, getDiffBase } from "../values";
-import type { TlcArguments } from "./tlc-arguments";
+import type { SeededArguments } from "./tlc-arguments";
 
 const printInitialStatesProgress = (printer: MessagePrinter, count: number) =>
   printer.print(
@@ -627,7 +627,7 @@ export const printCommandLineError = (isTool: boolean, version: TlcVersion, mess
 };
 
 // TLC prints the JVM's default direct memory limit and its default fingerprint set and state queue.
-export const printStartupBanner = (printer: MessagePrinter, args: TlcArguments) => {
+export const printStartupBanner = (printer: MessagePrinter, args: SeededArguments) => {
   const workers = `${args.workers} worker${args.workers === 1 ? "" : "s"} on ${availableParallelism()} cores with ${Math.floor(getHeapStatistics().heap_size_limit / 1024 / 1024)}MB heap and 64MB offheap memory [pid: ${process.pid}] (${type()} ${release()} ${arch()}, Node.js ${process.versions.node} ${process.arch.endsWith("64") ? 64 : 32}bit`;
   if (args.mode === "model-check" && args.dfidDepth !== undefined) {
     printer.print(

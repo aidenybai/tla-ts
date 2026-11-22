@@ -808,7 +808,7 @@ describe("the CLI reports results like TLC", () => {
   });
 
   it("prints the counterexample before it fails to rebuild the step back of a lasso under a VIEW like TLC", () => {
-    const result = runCli("view", "Recover");
+    const result = runCli("view", "Recover", ["-fp", "0"]);
     expect(result.status).toBe(1);
     expect(getSteadyLines(result.stdout)).toEqual([
       "Starting... (_)",
@@ -971,6 +971,8 @@ describe("the CLI reports results like TLC", () => {
       "2",
       "-seed",
       "7",
+      "-fp",
+      "0",
       "Success",
     ];
     const result = runCliWith("cli-output", args);
@@ -1024,9 +1026,28 @@ describe("the CLI reports results like TLC", () => {
     ).toMatch(
       /^Running Random Simulation with seed 7 with 1 worker on \d+ cores with \d+MB heap and 64MB offheap memory \[pid: \d+\] \(.+, Node\.js .+\)\.$/,
     );
-    expect(runCliWith("cli-output", ["-dfid", "3", "Success"]).stdout.split("\n")[1]).toMatch(
+    expect(
+      runCliWith("cli-output", ["-dfid", "3", "-fp", "0", "-seed", "0", "Success"]).stdout.split(
+        "\n",
+      )[1],
+    ).toMatch(
       /^Running depth-first search Model-Checking with fp 0 and seed 0 with 1 worker on \d+ cores with \d+MB heap and 64MB offheap memory \[pid: \d+\] \(.+, Node\.js .+\)\.$/,
     );
+  });
+
+  it("simulates with the seed it draws without -seed and without -aril, as TLC does", () => {
+    const stdout = runCliWith("cli-output", ["-simulate", "num=1", "-aril", "5", "Success"]).stdout;
+    const seed = stdout.match(/^Running Random Simulation with seed (-?\d+) /m)?.[1];
+    expect(stdout).toContain(`\nSimulation using seed ${seed} and aril 0\n`);
+  });
+
+  it("draws a polynomial and a seed for each spec it checks without -fp and -seed, as each TLC run does", () => {
+    const banners = [
+      ...runCliWith("tlc-spec", ["*.tla"]).stdout.matchAll(/ with fp (\d+) and seed (-?\d+) /g),
+    ];
+    expect(banners).toHaveLength(5);
+    expect(new Set(banners.map((banner) => banner[1])).size).toBeGreaterThan(1);
+    expect(new Set(banners.map((banner) => banner[2])).size).toBe(5);
   });
 
   it("reports the coverage of a simulation, again with its last progress, and of a depth-first search", () => {

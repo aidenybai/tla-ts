@@ -1,3 +1,4 @@
+import { randomBytes, randomInt } from "node:crypto";
 import { closeSync, openSync } from "node:fs";
 import { availableParallelism } from "node:os";
 import type { ModuleOperator } from "../check";
@@ -6,13 +7,13 @@ import { MAXIMUM_INTEGER } from "../values";
 export interface TlcArguments {
   specs: string[];
   configPath: string | undefined;
-  seed: bigint;
+  seed: bigint | undefined;
   aril: bigint;
   workers: number;
   coverage: number | undefined;
   livenessCheck: string;
   dump: string[] | undefined;
-  fingerprintIndex: number;
+  fingerprintIndex: number | undefined;
   maxSetSize: number | undefined;
   isLazyValueExpanded: boolean;
   isViewPrinted: boolean;
@@ -37,6 +38,11 @@ export interface TlcArguments {
   userFile: string | undefined;
   invariants: RuntimeInvariantTemplate[];
   moduleOperators: ModuleOperator[];
+}
+
+export interface SeededArguments extends TlcArguments {
+  seed: bigint;
+  fingerprintIndex: number;
 }
 
 export interface RuntimeInvariantTemplate {
@@ -172,13 +178,13 @@ const parseJavaDouble = (text: string) =>
 const createDefaults = (): TlcArguments => ({
   specs: [],
   configPath: undefined,
-  seed: 0n,
+  seed: undefined,
   aril: 0n,
   workers: 1,
   coverage: undefined,
   livenessCheck: "default",
   dump: undefined,
-  fingerprintIndex: 0,
+  fingerprintIndex: undefined,
   maxSetSize: undefined,
   isLazyValueExpanded: true,
   isViewPrinted: false,
@@ -650,3 +656,11 @@ export const parseTlcArguments = (args: string[]): TlcArguments | TlcArgumentsEr
   parsed.errorCodes = [...errorCodes.tlc, ...errorCodes.sany];
   return parsed;
 };
+
+export const drawSeeds = (args: TlcArguments): SeededArguments => ({
+  ...args,
+  fingerprintIndex: args.fingerprintIndex ?? randomInt(FINGERPRINT_POLYNOMIALS),
+  seed: args.seed ?? randomBytes(8).readBigInt64LE(),
+  // TLC seeds the simulator it draws a seed for without -aril.
+  aril: args.seed === undefined ? 0n : args.aril,
+});
