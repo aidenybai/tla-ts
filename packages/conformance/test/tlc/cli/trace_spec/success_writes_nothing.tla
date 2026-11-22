@@ -9,6 +9,9 @@ args:
   - -generateSpecTE
   - -teSpecOutDir
   - te_out.tla
+files:
+  - te_out.tla
+  - te_out.bin
 ---*)
 ---- MODULE success_writes_nothing ----
 EXTENDS Naturals
@@ -29,4 +32,7 @@ all:
     2199:0 4 states generated, 3 distinct states found, 0 states left on queue.
     2194:0 The depth of the complete state graph search is 3.
     2268:0 The average outdegree of the complete state graph is 1 (minimum is 0, the maximum 1 and the 95th percentile is 1).
+  files:
+    te_out.tla: null
+    te_out.bin: null
 ---*)

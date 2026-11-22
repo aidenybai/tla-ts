@@ -201,9 +201,10 @@ pnpm --filter tla-ts conformance:fetch
 pnpm --filter tla-ts conformance
 ```
 
-Run the TLC and tlapm conformance suites in `packages/conformance`:
+Run the TLC and tlapm conformance suites in `packages/conformance` against the built CLI:
 
 ```shell
+pnpm build
 pnpm --filter @tla-ts/conformance fetch-tlc
 pnpm --filter @tla-ts/conformance fetch-tlapm
 pnpm --filter @tla-ts/conformance conformance

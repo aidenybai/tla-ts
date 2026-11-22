@@ -66,6 +66,8 @@ describe("the CLI with TypeScript files", () => {
     },
   );
 
+  // The input stays as long as the one that overflowed the stack, whose throw string.ts checks in
+  // about 24 s.
   it.each(["string.ts", "array.ts"] as const)(
     "exits with Node's code and stderr where %s, which loops over a long input, throws",
     (file) => {
@@ -75,6 +77,7 @@ describe("the CLI with TypeScript files", () => {
       expect(getExit(result)).toEqual(getExit(runNode(directory, file)));
       expect(result.status).toBe(1);
     },
+    120_000,
   );
 
   it("checks a TypeScript file without writing the TLA+ spec and config it compiles to", () => {
@@ -979,6 +982,43 @@ describe("the CLI with TypeScript files", () => {
     const result = runCli(directory, ["lib/main.js"]);
     expect(getExit(result)).toEqual(getExit(runNode(directory, "lib/main.js")));
     expect(result.status).toBe(1);
+  });
+
+  // An ES module imports Node's async_hooks, as Solid's web storage does: a name of it, which is the
+  // property of the one object that process.getBuiltinModule gives, and that object as the default.
+  // An import of a name that tla-ts doesn't model stops, though Node runs it.
+  describe("imports Node's async_hooks as Node does", () => {
+    const getModule = (operator: string) =>
+      `import { AsyncLocalStorage, AsyncResource as Resource } from "node:async_hooks";\nimport hooks from "async_hooks";\nconst isSame = hooks === process.getBuiltinModule("async_hooks") && hooks.AsyncLocalStorage === AsyncLocalStorage && hooks.AsyncResource === Resource;\nif ((isSame && typeof AsyncLocalStorage === "function") ${operator} true) throw new Error("hooks");\n`;
+
+    it("agrees with Node", () => {
+      const directory = copyFixtures("passing");
+      writeFileSync(join(directory, "hooks.mjs"), getModule("!=="));
+      expect(runNode(directory, "hooks.mjs").status).toBe(0);
+      expect(getExit(runCli(directory, ["hooks.mjs"]))).toEqual([0, ""]);
+    });
+
+    it("rejects another result", () => {
+      const directory = copyFixtures("passing");
+      writeFileSync(join(directory, "hooks.mjs"), getModule("==="));
+      const result = runCli(directory, ["hooks.mjs"]);
+      expect(getExit(result)).toEqual(getExit(runNode(directory, "hooks.mjs")));
+      expect(result.status).toBe(1);
+    });
+
+    it("stops at an import of a name that it doesn't model", () => {
+      const directory = copyFixtures("passing");
+      writeFileSync(
+        join(directory, "hooks.mjs"),
+        'import { createHook } from "node:async_hooks";\nconsole.log(typeof createHook);\n',
+      );
+      expect(runNode(directory, "hooks.mjs").status).toBe(0);
+      const result = runCli(directory, ["hooks.mjs"]);
+      expect(result.status).not.toBe(0);
+      expect(result.stderr).toContain(
+        "tla-ts can't import createHook of node:async_hooks, of which it models AsyncLocalStorage and AsyncResource",
+      );
+    });
   });
 
   // A CommonJS module requires Node's async_hooks, as Solid's web storage does, and gets the one

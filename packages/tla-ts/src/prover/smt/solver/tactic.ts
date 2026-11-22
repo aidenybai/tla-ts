@@ -2564,6 +2564,7 @@ export const applyDefinitions = (definitions: readonly Definition[], model: Prot
   const universes = new ObjMap<number[]>((sort) => manager.getSortHash(sort));
   let evaluator = new ModelEvaluator(manager, model);
   evaluator.setModelCompletion(true);
+  evaluator.setExpandArrayEqualities(false);
   for (let index = definitions.length - 1; index >= 0; index--) {
     const definition = definitions[index];
     if (definition.def === -1) {
@@ -2587,6 +2588,7 @@ export const applyDefinitions = (definitions: readonly Definition[], model: Prot
         evaluator.release();
         evaluator = new ModelEvaluator(manager, model);
         evaluator.setModelCompletion(true);
+        evaluator.setExpandArrayEqualities(false);
       }
       continue;
     }
@@ -2603,6 +2605,7 @@ export const applyDefinitions = (definitions: readonly Definition[], model: Prot
       evaluator.release();
       evaluator = new ModelEvaluator(manager, model);
       evaluator.setModelCompletion(true);
+      evaluator.setExpandArrayEqualities(false);
     }
   }
   evaluator.release();
