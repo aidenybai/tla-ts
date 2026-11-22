@@ -2399,4 +2399,18 @@ describe("the CLI writes the action graph of -simulate stats=, as TLC does", () 
       readFileSync(join(fixtures, `Mutex_actions_${statistics}.dot`), "utf8"),
     ]);
   });
+
+  it("labels an unnamed action by its location and leaves an unnamed initial predicate unfilled", () => {
+    const fixtures = join(FIXTURES, "action-graph");
+    const run = runCopiedFixture(
+      fixtures,
+      "UnnamedActions",
+      ["-simulate", "num=4,stats=basic", "-depth", "6", "-seed", "2"],
+      "UnnamedActions_actions.dot",
+    );
+    expect([run.result.status, run.written]).toEqual([
+      0,
+      readFileSync(join(fixtures, "UnnamedActions_actions_basic.dot"), "utf8"),
+    ]);
+  });
 });

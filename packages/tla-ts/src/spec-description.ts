@@ -833,6 +833,8 @@ const formatParameters = (action: SpecAction) =>
 export const getActionLabel = (action: SpecAction, version?: TlcVersion, isInitial = false) =>
   `${action.name === UNNAMED_ACTION ? (isInitial ? "Initial predicate" : "Action") : action.name}${version === "1.7.4" ? "" : formatParameters(action)} ${formatRange(action.location.range ?? BUILTIN_RANGE)}`;
 
+export const isNamedAction = (action: SpecAction) => action.name !== UNNAMED_ACTION;
+
 export const getActionSignature = (action: SpecAction) =>
   `${action.name}${formatParameters(action)}`;
 

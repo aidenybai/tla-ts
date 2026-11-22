@@ -1,6 +1,6 @@
 import { formatRange } from "../errors";
 import { getHashMapOrder, getJavaHashCode } from "../java-hash";
-import type { SpecAction } from "../spec-description";
+import { getActionLabel, isNamedAction, type SpecAction } from "../spec-description";
 import { formatValue, type Value } from "../values";
 import { toJavaString } from "./summary";
 
@@ -27,8 +27,11 @@ interface ActionFlowGraphSnapshot {
 const DOT_HEADER =
   'digraph ActionGraph {\nnodesep=0.35;\nsubgraph cluster_legend {\nlabel = "Coverage";\nnode [shape=point] {\nd0 [style = invis];\nd1 [style = invis];\np0 [style = invis];\np0 [style = invis];\n}\nd0 -> d1 [label=unseen, color="green", style=dotted]\np0 -> p1 [label=seen]\n}\n';
 
+const getNameOfDefault = (action: SpecAction) =>
+  isNamedAction(action) ? action.name : `<${getActionLabel(action)}>`;
+
 const writeAction = (vertex: ActionVertex, id: number) =>
-  `${id} [shape=box,label="${vertex.action.name}${vertex.isInitPredicate ? '",style = filled]' : '"]'}\n`;
+  `${id} [shape=box,label="${getNameOfDefault(vertex.action)}${vertex.isInitPredicate ? '",style = filled]' : '"]'}\n`;
 
 // BigDecimal#valueOf rounds the shortest decimal form of a double, not its binary value.
 const roundHalfUp = (weight: number) => {
@@ -66,7 +69,8 @@ const getActionFlowGraphSnapshot = (
 ): ActionFlowGraphSnapshot => {
   const vertices = flow.actions.map((action, id) => ({
     action,
-    isInitPredicate: id < flow.initCount,
+    // SpecProcessor#processConfigSpec marks an initial predicate as one only when it has a name.
+    isInitPredicate: id < flow.initCount && isNamedAction(action),
   }));
   if (contexts === "keep") return { vertices, actionStats: flow.actionStats };
   const reduced: ActionVertex[] = [];
