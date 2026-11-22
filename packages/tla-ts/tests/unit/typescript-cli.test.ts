@@ -994,7 +994,7 @@ describe("the CLI with TypeScript files", () => {
       const result = runCli(directory, ["values.mjs"]);
       expect([0, 1]).not.toContain(result.status);
       expect(result.stderr).toContain(
-        "tla-ts can't check a program whose TLA+ spec has more than 37000000 characters",
+        "tla-ts can't check a program whose TLA+ spec has more than 33000000 characters",
       );
     });
   });
