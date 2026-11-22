@@ -34,6 +34,9 @@ export interface KernelParams {
   qiMaxInstances?: number;
   qiMaxEagerMultipatterns?: number;
   isQiUpdatingGeneration?: boolean;
+  mbqiMaxCexs?: number;
+  mbqiForceTemplate?: number;
+  mbqiId?: string;
   isProofsEnabled?: boolean;
   // A kernel without a setup runs as with auto_config false.
   setup?: SmtSetup;
@@ -79,6 +82,9 @@ export const solveGoal = (manager: AstManager, forms: number[], params: KernelPa
     qiMaxInstances: params.qiMaxInstances,
     qiMaxEagerMultipatterns: params.qiMaxEagerMultipatterns,
     isQiUpdatingGeneration: params.isQiUpdatingGeneration,
+    mbqiMaxCexs: params.mbqiMaxCexs,
+    mbqiForceTemplate: params.mbqiForceTemplate,
+    mbqiId: params.mbqiId,
     isProofsEnabled: params.isProofsEnabled,
   });
   try {
@@ -142,6 +148,9 @@ export const solveAssuming = (
     qiMaxInstances: params.qiMaxInstances,
     qiMaxEagerMultipatterns: params.qiMaxEagerMultipatterns,
     isQiUpdatingGeneration: params.isQiUpdatingGeneration,
+    mbqiMaxCexs: params.mbqiMaxCexs,
+    mbqiForceTemplate: params.mbqiForceTemplate,
+    mbqiId: params.mbqiId,
     isProofsEnabled: params.isProofsEnabled,
   });
   try {

@@ -186,6 +186,9 @@ export interface SmtParams {
   qiMaxInstances?: number;
   qiMaxEagerMultipatterns?: number;
   isQiUpdatingGeneration?: boolean;
+  mbqiMaxCexs?: number;
+  mbqiForceTemplate?: number;
+  mbqiId?: string;
   // The model checker's auxiliary context pretends every array operation is supported.
   isArrayFakeSupport?: boolean;
   isProofsEnabled?: boolean;
@@ -262,6 +265,9 @@ export class Context extends Internalizer {
         params.qiMaxEagerMultipatterns ?? DEFAULT_CONFIG.qiMaxEagerMultipatterns,
       isQiUpdatingGeneration:
         params.isQiUpdatingGeneration ?? DEFAULT_CONFIG.isQiUpdatingGeneration,
+      mbqiMaxCexs: params.mbqiMaxCexs ?? DEFAULT_CONFIG.mbqiMaxCexs,
+      mbqiForceTemplate: params.mbqiForceTemplate ?? DEFAULT_CONFIG.mbqiForceTemplate,
+      mbqiId: params.mbqiId ?? DEFAULT_CONFIG.mbqiId,
     };
   }
 
@@ -301,6 +307,9 @@ export class Context extends Internalizer {
     this.params.qiMaxInstances = params.qiMaxInstances;
     this.params.qiMaxEagerMultipatterns = params.qiMaxEagerMultipatterns;
     this.params.isQiUpdatingGeneration = params.isQiUpdatingGeneration;
+    this.params.mbqiMaxCexs = params.mbqiMaxCexs;
+    this.params.mbqiForceTemplate = params.mbqiForceTemplate;
+    this.params.mbqiId = params.mbqiId;
     this.params.relevancyLevel = params.relevancyLevel ?? 2;
     this.arith?.updateParams();
     this.config = {
@@ -320,6 +329,9 @@ export class Context extends Internalizer {
         params.qiMaxEagerMultipatterns ?? DEFAULT_CONFIG.qiMaxEagerMultipatterns,
       isQiUpdatingGeneration:
         params.isQiUpdatingGeneration ?? DEFAULT_CONFIG.isQiUpdatingGeneration,
+      mbqiMaxCexs: params.mbqiMaxCexs ?? DEFAULT_CONFIG.mbqiMaxCexs,
+      mbqiForceTemplate: params.mbqiForceTemplate ?? DEFAULT_CONFIG.mbqiForceTemplate,
+      mbqiId: params.mbqiId ?? DEFAULT_CONFIG.mbqiId,
       arrayLazyIeqDelay: this.config.arrayLazyIeqDelay,
       isArraySimple: this.config.isArraySimple,
     };

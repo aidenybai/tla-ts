@@ -401,6 +401,9 @@ const getKernelParams = (environment: TacticEnvironment, params: TacticParams, g
     qiMaxEagerMultipatterns: Number(getParameter(environment, "smt.qi.max_multi_patterns", "0")),
     isQiUpdatingGeneration:
       getParameter(environment, "smt.qi.update_generation", "true") !== "false",
+    mbqiMaxCexs: Number(getParameter(environment, "smt.mbqi.max_cexs", "1")),
+    mbqiForceTemplate: Number(getParameter(environment, "smt.mbqi.force_template", "10")),
+    mbqiId: getParameter(environment, "smt.mbqi.id", ""),
     isProofsEnabled: goal.isProofsEnabled,
   };
 };
@@ -986,6 +989,9 @@ const NAMED_TACTICS = new Map<string, NamedTactic>([
           ),
           isQiUpdatingGeneration:
             getParameter(environment, "smt.qi.update_generation", "true") !== "false",
+          mbqiMaxCexs: Number(getParameter(environment, "smt.mbqi.max_cexs", "1")),
+          mbqiForceTemplate: Number(getParameter(environment, "smt.mbqi.force_template", "10")),
+          mbqiId: getParameter(environment, "smt.mbqi.id", ""),
         });
         const simplifier = createCtxSolverSimplify(
           environment.manager,

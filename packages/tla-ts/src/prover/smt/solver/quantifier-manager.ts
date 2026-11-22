@@ -45,7 +45,14 @@ export class DefaultQuantifierManager {
   add(quantifier: number, generation: number) {
     this.quantifiers.push(quantifier);
     this.generations.set(quantifier, generation);
-    if (this.context.params.isMbqi) this.finder.registerQuantifier(quantifier);
+    if (this.context.params.isMbqi && this.isMbqiEnabled(quantifier))
+      this.finder.registerQuantifier(quantifier);
+  }
+
+  isMbqiEnabled(quantifier: number) {
+    return this.context.manager
+      .getQuantifier(quantifier)
+      .qid.startsWith(this.context.config.mbqiId);
   }
 
   del(quantifier: number) {

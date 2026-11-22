@@ -876,7 +876,86 @@ describe("the model checker, as Z3 5.3.2 counts its steps", () => {
       ]),
     ).toEqual(["unknown", "(:rlimit 3291)"]);
   });
+
+  it("adds smt.mbqi.max_cexs counterexamples more each round", () => {
+    const queries = ["(get-info :rlimit)", "(get-value ((f 0) (f 10)))"];
+    expect(run(getMaxCexsScript([], queries))).toEqual([
+      "sat",
+      "(:rlimit 32090)",
+      "(((f 0) 0)",
+      " ((f 10) (- 10)))",
+    ]);
+    expect(run(getMaxCexsScript(["(set-option :smt.mbqi.max_cexs 3)"], queries))).toEqual([
+      "sat",
+      "(:rlimit 33156)",
+      "(((f 0) 1)",
+      " ((f 10) (- 9)))",
+    ]);
+  });
+
+  it("adds smt.mbqi.max_cexs counterexamples more each round in sat.euf", () => {
+    const options = ["(set-option :sat.euf true)"];
+    const queries = ["(get-value ((f 0) (f 10)))"];
+    expect(run(getMaxCexsScript(options, queries))).toEqual([
+      "sat",
+      "(((f 0) 264333)",
+      " ((f 10) (- 53500)))",
+    ]);
+    expect(
+      run(getMaxCexsScript([...options, "(set-option :smt.mbqi.max_cexs 3)"], queries)),
+    ).toEqual(["sat", "(((f 0) 369270)", " ((f 10) (- 282194)))"]);
+  });
+
+  it("takes a macro of the AUF fragment as a template from smt.mbqi.force_template", () => {
+    const script = [
+      "(set-option :auto_config false)",
+      "(set-option :smt.ematching false)",
+      "(declare-fun f (Int) Int)",
+      "(declare-fun g (Int) Int)",
+      "(declare-fun p (Int) Bool)",
+      "(declare-const a Int)",
+      "(assert (forall ((x Int)) (= (f x) (g 5))))",
+      "(assert (forall ((x Int)) (=> (p x) (> (f x) a))))",
+      "(assert (p 3))",
+      "(check-sat)",
+      "(get-info :rlimit)",
+    ];
+    expect(run(script)).toEqual(["sat", "(:rlimit 948)"]);
+    expect(run(["(set-option :smt.mbqi.force_template 1)", ...script])).toEqual([
+      "sat",
+      "(:rlimit 1128)",
+    ]);
+  });
+
+  it("checks only the quantifiers whose qid starts with smt.mbqi.id", () => {
+    const getOutput = (attribute: string) =>
+      run([
+        "(set-option :auto_config false)",
+        "(set-option :smt.ematching false)",
+        '(set-option :smt.mbqi.id "a")',
+        "(declare-fun f (Int) Int)",
+        `(assert (forall ((x Int)) (! (> (f x) 0)${attribute})))`,
+        "(check-sat)",
+        "(get-info :rlimit)",
+        "(get-info :reason-unknown)",
+      ]);
+    const incomplete =
+      '(:reason-unknown "smt tactic failed to show goal to be sat/unsat (incomplete quantifiers)")';
+    expect(getOutput(" :qid ab")).toEqual(["sat", "(:rlimit 182)", '(:reason-unknown "")']);
+    expect(getOutput(" :qid b")).toEqual(["unknown", "(:rlimit 155)", incomplete]);
+    expect(getOutput("")).toEqual(["unknown", "(:rlimit 155)", incomplete]);
+  });
 });
+
+const getMaxCexsScript = (options: string[], queries: string[]) => [
+  "(set-option :auto_config false)",
+  "(set-option :smt.ematching false)",
+  ...options,
+  "(declare-fun f (Int) Int)",
+  "(assert (forall ((x Int)) (=> (and (<= 0 x) (<= x 9)) (> (f x) (f (+ x 1))))))",
+  "(check-sat)",
+  ...queries,
+];
 
 describe("the preprocessing setup_AUFLIA turns on, as Z3 5.3.2 runs it", () => {
   it("lifts the one term if-then-else out of each application with a bound variable", () => {

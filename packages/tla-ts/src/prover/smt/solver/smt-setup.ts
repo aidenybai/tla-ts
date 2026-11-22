@@ -117,6 +117,9 @@ export interface SmtConfig {
   qiMaxInstances: number;
   qiMaxEagerMultipatterns: number;
   isQiUpdatingGeneration: boolean;
+  mbqiMaxCexs: number;
+  mbqiForceTemplate: number;
+  mbqiId: string;
   arrayLazyIeqDelay: number | undefined;
   isArraySimple: boolean;
 }
@@ -160,6 +163,9 @@ export const DEFAULT_CONFIG: SmtConfig = {
   qiMaxInstances: 4294967295,
   qiMaxEagerMultipatterns: 0,
   isQiUpdatingGeneration: true,
+  mbqiMaxCexs: 1,
+  mbqiForceTemplate: 10,
+  mbqiId: "",
   arrayLazyIeqDelay: undefined,
   isArraySimple: false,
 };
