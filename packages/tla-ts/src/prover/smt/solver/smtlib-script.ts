@@ -4,6 +4,7 @@ import {
   SmtCanceledError,
   SmtParseError,
   SmtDefaultError,
+  SmtMemoryOutError,
   SmtTacticError,
   SmtUnsupportedError,
 } from "../../../errors";
@@ -212,6 +213,12 @@ const PARAMETER_DEFAULTS = new Map([
   ["smt.mbqi", "true"],
   ["rlimit", "0"],
   ["rewriter.hi_div0", "true"],
+]);
+
+const ALLOCATION_PARAMETERS = new Set([
+  "memory_max_alloc_count",
+  "memory_high_watermark",
+  "memory_high_watermark_mb",
 ]);
 
 const BUILTIN_OPTIONS = new Set([
@@ -487,8 +494,11 @@ export const runSmtlibScript = (
     // Z3 keeps set-info's :status across reset.
     status: L_UNDEF,
   };
+  const getMaxHeapSize = () =>
+    Number(settings.parameters.get("memory_max_size") ?? 0) * 1024 * 1024;
   const createState = (): ScriptState => {
     const manager = new AstManager(new ResourceLimit(Infinity, options.signal));
+    manager.limit.maxHeapSize = getMaxHeapSize();
     manager.isHiDiv0 = settings.isHiDiv0;
     manager.maxChar = settings.encoding.maxChar;
     manager.charBits = settings.encoding.charBits;
@@ -692,7 +702,7 @@ export const runSmtlibScript = (
       };
     }
   };
-  // Deviation from Z3: the heap guard and a stack overflow, which Z3 lacks, read as an exhausted rlimit.
+  // Deviation from Z3: a stack overflow, which Z3 lacks, reads as an exhausted rlimit.
   const getCancelMessage = (deadline: number) =>
     Date.now() > deadline || options.signal?.aborted === true
       ? "canceled"
@@ -2287,9 +2297,13 @@ export const runSmtlibScript = (
                 ? BigInt(value.text.replace("#", "0")).toString()
                 : value.text;
           const name = getParameterName(keyword);
-          settings.parameters.set(name, getParameterValue(name, text, value));
+          const parameterValue = getParameterValue(name, text, value);
+          if (ALLOCATION_PARAMETERS.has(name) && Number(parameterValue) !== 0)
+            throw new SmtUnsupportedError(`the option :${name}`);
+          settings.parameters.set(name, parameterValue);
           if (optionName === ":smt.mbqi.max_iterations") settings.mbqiMaxIterations = Number(text);
           if (optionName === ":rlimit") settings.rlimit = Number(text);
+          if (name === "memory_max_size") state.manager.limit.maxHeapSize = getMaxHeapSize();
           // Z3 reads the parameters model and unsat_core again whenever any parameter is set.
           const model = settings.parameters.get("model");
           if (model !== undefined) settings.isProducingModels = model === "true";
@@ -2467,6 +2481,10 @@ export const runSmtlibScript = (
       }
       run(list);
     } catch (error) {
+      if (error instanceof SmtMemoryOutError) {
+        printLine('(error "out of memory")', true);
+        break;
+      }
       if (!(error instanceof SmtParseError)) throw error;
       report(error);
       if (settings.isExitingOnError) break;
