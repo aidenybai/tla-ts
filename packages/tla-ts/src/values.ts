@@ -2471,12 +2471,20 @@ interface ChargedSelectedStream {
   isIntersection: boolean;
 }
 
+interface ChargedFilterStream {
+  kind: "ChargedFilter";
+  node: number;
+  set: FilteredSetValue;
+  base: ChargedStream;
+}
+
 type ChargedStream =
   | PlainStream
   | ChargedLeafStream
   | ChargedProductStream
   | ChargedUnionStream
-  | ChargedSelectedStream;
+  | ChargedSelectedStream
+  | ChargedFilterStream;
 
 const EMPTY_CHARGED_STREAM: PlainStream = { kind: "Plain", part: EMPTY_STREAM };
 
@@ -2529,12 +2537,39 @@ const isChargedPart = (charges: ChargeTable, value: Value): boolean => {
   );
 };
 
+const isChargedBase = (charges: ChargeTable, value: Value) =>
+  typeof value === "object" &&
+  (value.kind === "FilteredSet" ||
+    value.kind === "Subset" ||
+    (value.kind === "SetOperation"
+      ? isChargedOperation(charges, value)
+      : getChargedProduct(charges, value) !== undefined));
+
+const getChargedFilterNode = (charges: ChargeTable, value: FilteredSetValue) =>
+  isCachedSet(value) || !isChargedBase(charges, value.base)
+    ? undefined
+    : getValueNode(charges, value);
+
 const openChargedPart = (charges: ChargeTable, value: Value): ChargedStream => {
   const node =
     typeof value !== "object" || value.kind === "FilteredSet" || value.kind === "Subset"
       ? undefined
       : getValueNode(charges, value);
   const sets = setTrace.sets;
+  if (typeof value === "object" && value.kind === "FilteredSet") {
+    const filterNode = getChargedFilterNode(charges, value);
+    if (filterNode === undefined) return { kind: "Plain", part: openPart(value) };
+    sets?.push(value);
+    if (!isTlcEnumerable(value.base)) toFiniteSet(value);
+    const stream: ChargedFilterStream = {
+      kind: "ChargedFilter",
+      node: filterNode,
+      set: value,
+      base: openChargedPart(charges, value.base),
+    };
+    sets?.pop();
+    return stream;
+  }
   if (typeof value === "object" && value.kind === "SetOperation" && value.operator !== "\\cup") {
     sets?.push(value);
     const drawn = getDrawnSet(value);
@@ -2570,23 +2605,26 @@ const openChargedPart = (charges: ChargeTable, value: Value): ChargedStream => {
   return node === undefined ? { kind: "Plain", part } : { kind: "ChargedLeaf", node, part };
 };
 
-// TLC's isEmpty asks S \cup T, S \cap T or S \ T for its first element, which opens its enumerator.
+// TLC's isEmpty asks S \cup T, S \cap T, S \ T or { x \in S : p(x) } for its first element, which opens its enumerator.
 const isChargedEmpty = (charges: ChargeTable, value: Value): boolean => {
   if (
     typeof value !== "object" ||
     (value.kind !== "SetOperation" &&
+      value.kind !== "FilteredSet" &&
       value.kind !== "FunctionSet" &&
       value.kind !== "RecordSet" &&
       value.kind !== "ProductSet") ||
-    ((value.kind !== "SetOperation" || value.operator === "\\cup") &&
-      getValueNode(charges, value) === undefined)
+    (value.kind === "FilteredSet"
+      ? getChargedFilterNode(charges, value) === undefined
+      : (value.kind !== "SetOperation" || value.operator === "\\cup") &&
+        getValueNode(charges, value) === undefined)
   ) {
     return isEmptySet(value);
   }
   const sets = setTrace.sets;
   sets?.push(value);
   const isEmpty =
-    value.kind === "SetOperation"
+    value.kind === "SetOperation" || value.kind === "FilteredSet"
       ? getNextChargedElement(charges, openChargedPart(charges, value)) === undefined
       : value.kind === "FunctionSet"
         ? !isEmptySet(value.domain) && isChargedEmpty(charges, value.range)
@@ -2664,6 +2702,7 @@ const resetChargedStream = (charges: ChargeTable, stream: ChargedStream): void =
       resetChargedStream(charges, stream.right);
       return;
     case "ChargedSelected":
+    case "ChargedFilter":
       resetChargedStream(charges, stream.base);
   }
 };
@@ -2703,6 +2742,8 @@ const getNextChargedElement = (charges: ChargeTable, stream: ChargedStream): Val
       );
     case "ChargedSelected":
       return getNextSelectedElement(charges, stream);
+    case "ChargedFilter":
+      return getNextFilteredElement(charges, stream);
   }
 };
 
@@ -2718,10 +2759,55 @@ const getNextSelectedElement = (charges: ChargeTable, stream: ChargedSelectedStr
   return undefined;
 };
 
-// TLC's toSetEnum drains the enumerator of [S -> T], [a : S], S \X T, S \cup T, S \cap T or S \ T, which charges its draws, then charges the set its size.
+const getNextFilteredElement = (charges: ChargeTable, stream: ChargedFilterStream) => {
+  for (
+    let element = getNextChargedElement(charges, stream.base);
+    element !== undefined;
+    element = getNextChargedElement(charges, stream.base)
+  ) {
+    charges.secondary[stream.node]++;
+    if (stream.set.test(element, false)) return element;
+  }
+  return undefined;
+};
+
+const drainChargedStream = (charges: ChargeTable, stream: ChargedStream) => {
+  const elements: Value[] = [];
+  for (
+    let element = getNextChargedElement(charges, stream);
+    element !== undefined;
+    element = getNextChargedElement(charges, stream)
+  ) {
+    addBoundedElement(elements, element);
+  }
+  return elements;
+};
+
+const drainChargedFilter = (charges: ChargeTable, value: FilteredSetValue) => {
+  const node = getChargedFilterNode(charges, value);
+  if (node === undefined || value.enumerated || !isTlcEnumerable(value.base) || isSortingLiteral) {
+    return undefined;
+  }
+  const sets = setTrace.sets;
+  sets?.push(value);
+  const elements = drainChargedStream(charges, {
+    kind: "ChargedFilter",
+    node,
+    set: value,
+    base: openChargedPart(charges, value.base),
+  });
+  sets?.pop();
+  charges.secondary[node] += elements.length;
+  const set = createSortedSet(toFiniteSet(createEnumeratedSet(elements)).elements);
+  value.enumerated = set;
+  return set.elements;
+};
+
+// TLC's toSetEnum drains the enumerator of [S -> T], [a : S], S \X T, S \cup T, S \cap T, S \ T or { x \in S : p(x) }, which charges its draws, then charges the set its size.
 export const drainChargedSet = (charges: ChargeTable, value: Value) => {
-  const node = getValueNode(charges, value);
   if (typeof value !== "object") return undefined;
+  if (value.kind === "FilteredSet") return drainChargedFilter(charges, value);
+  const node = getValueNode(charges, value);
   const drained =
     value.kind === "SetOperation"
       ? isChargedOperation(charges, value)
@@ -2731,15 +2817,7 @@ export const drainChargedSet = (charges: ChargeTable, value: Value) => {
         ? undefined
         : getChargedProduct(charges, value);
   if (drained === undefined) return undefined;
-  const stream = openChargedPart(charges, drained);
-  const elements: Value[] = [];
-  for (
-    let element = getNextChargedElement(charges, stream);
-    element !== undefined;
-    element = getNextChargedElement(charges, stream)
-  ) {
-    addBoundedElement(elements, element);
-  }
+  const elements = drainChargedStream(charges, openChargedPart(charges, drained));
   if (node !== undefined) charges.secondary[node] += elements.length;
   const sorted =
     drained.kind !== "SetOperation" && isStreamedApart(drained) ? sortLikeTlc(elements) : elements;
