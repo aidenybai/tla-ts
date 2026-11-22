@@ -239,6 +239,42 @@ describe("the CLI with TypeScript files", () => {
     });
   });
 
+  // Intl's timeZone option reads the zone that a model's string names, as the frame lists strings:
+  // "", "a", and "b", none of which Node has, so Node's Intl rejects each as it does, from the zones
+  // the host's table records, as Effect's DateTime.zoneMakeNamedUnsafe asks.
+  describe("rejects the time zones a model's strings name as Node's Intl does", () => {
+    const getModel = (rejected: string) =>
+      `export const isZone = (name: string) => {\n  if (name === "") return false;\n  try {\n    new Intl.DateTimeFormat("en-US", { timeZone: name });\n    return true;\n  } catch (error) {\n    ${rejected};\n  }\n};\n`;
+    const isRejected = (name: string) => {
+      try {
+        new Intl.DateTimeFormat("en-US", { timeZone: name });
+        return false;
+      } catch {
+        return true;
+      }
+    };
+
+    it("agrees with Node", () => {
+      expect(["a", "b"].every(isRejected)).toBe(true);
+      const directory = copyFixtures("passing");
+      writeFileSync(join(directory, "zone.ts"), getModel("return false"));
+      const result = runCli(directory, ["zone.ts"]);
+      expect(result.status).toBe(0);
+      expect(result.stdout).toContain("Model checking completed. No error has been found.");
+    });
+
+    it("rejects another result", () => {
+      const directory = copyFixtures("passing");
+      writeFileSync(
+        join(directory, "zone.ts"),
+        getModel('throw new Error("rejected " + (error instanceof RangeError))'),
+      );
+      const result = runCli(directory, ["zone.ts"]);
+      expect(result.status).not.toBe(0);
+      expect(result.stdout).toContain('the second argument was:\n"rejected true"');
+    });
+  });
+
   describe("checks a model whose top level throws as Node throws", () => {
     const getModel = (statement: string) =>
       `export const twice = (n: 0 | 1) => n * 2;\n${statement}\n`;
