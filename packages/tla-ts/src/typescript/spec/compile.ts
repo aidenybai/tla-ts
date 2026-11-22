@@ -41,7 +41,8 @@ export interface EscoreSpec {
 }
 
 export interface EscoreSteps {
-  steps: string;
+  // The steps, or what makes them of the program's files, numbered from 1 as its code numbers them.
+  steps: string | ((files: readonly ProgramFile[]) => string);
   entries: readonly string[];
   // The text of other modules the steps extend, whose reads of the runtime the spec keeps.
   reads?: string;
@@ -368,6 +369,39 @@ const getWrapperNames = (names: ReadonlySet<string>) => [
 // A program's files: the script, or the module and each file that its imports and requires load,
 // as the model's resolver finds them, each once, by path. A require of a file that Node reads as
 // other than code, such as JSON, loads none.
+// Node's async_hooks as an ES module imports it: the module of the names that tla-ts models, which
+// Node's builtin module exports as the properties of the object that process.getBuiltinModule
+// gives, and that object as its default export.
+const ASYNC_HOOKS = "node:async_hooks";
+const ASYNC_HOOKS_NAMES = ["AsyncLocalStorage", "AsyncResource"];
+const ASYNC_HOOKS_FACADE = `const hooks = process.getBuiltinModule(${JSON.stringify(ASYNC_HOOKS)});\n${ASYNC_HOOKS_NAMES.map((name) => `export const ${name} = hooks.${name};\n`).join("")}export default hooks;\n`;
+
+// The specifier of Node's async_hooks that an ES module's import or export statement names, which
+// stops where the statement reads a name that tla-ts doesn't model, or every name.
+const getAsyncHooksSpecifier = (literal: ts.StringLiteralLike) => {
+  if (literal.text !== ASYNC_HOOKS && literal.text !== "async_hooks") return undefined;
+  const statement = literal.parent;
+  const clause = ts.isImportDeclaration(statement) ? statement.importClause : undefined;
+  const bindings = clause?.namedBindings;
+  const exported = ts.isExportDeclaration(statement) ? statement.exportClause : undefined;
+  const names = [
+    ...(bindings !== undefined && ts.isNamedImports(bindings) ? bindings.elements : []),
+    ...(exported !== undefined && ts.isNamedExports(exported) ? exported.elements : []),
+  ].map((element) => (element.propertyName ?? element.name).text);
+  const isEvery =
+    (bindings !== undefined && ts.isNamespaceImport(bindings)) ||
+    (ts.isExportDeclaration(statement) && exported === undefined) ||
+    (exported !== undefined && ts.isNamespaceExport(exported));
+  const unmodeled = names.find((name) => name !== "default" && !ASYNC_HOOKS_NAMES.includes(name));
+  if (isEvery || unmodeled !== undefined) {
+    throw new TlaTypeScriptError(
+      `tla-ts can't import ${unmodeled ?? "every export"} of ${literal.text}, of which it models ${ASYNC_HOOKS_NAMES.join(" and ")}`,
+      literal,
+    );
+  }
+  return ASYNC_HOOKS;
+};
+
 const loadFiles = (
   source: string,
   fileName: string,
@@ -469,9 +503,11 @@ const loadFiles = (
   for (const path of numbers.keys()) {
     const original = facades.get(path);
     const text =
-      original !== undefined
-        ? `export * from ${JSON.stringify(original)};\nexport { default } from ${JSON.stringify(original)};\nexport const __esModule = true;\n`
-        : getJsxText(path, path === entry ? source : readFileSync(path, "utf8"));
+      path === ASYNC_HOOKS
+        ? ASYNC_HOOKS_FACADE
+        : original !== undefined
+          ? `export * from ${JSON.stringify(original)};\nexport { default } from ${JSON.stringify(original)};\nexport const __esModule = true;\n`
+          : getJsxText(path, path === entry ? source : readFileSync(path, "utf8"));
     if (path.endsWith(".json")) {
       files.push({
         sourceFile: ts.createSourceFile(path, "", ts.ScriptTarget.ESNext),
@@ -486,13 +522,15 @@ const loadFiles = (
     // A module entry that no file holds runs as an ES module, as no package's type or syntax
     // makes it CommonJS for Node.
     const kind =
-      path !== entry
-        ? getKind(path, text)
-        : isScript
-          ? "script"
-          : ts.sys.fileExists(entry)
-            ? getKind(path, text)
-            : "module";
+      path === ASYNC_HOOKS
+        ? "module"
+        : path !== entry
+          ? getKind(path, text)
+          : isScript
+            ? "script"
+            : ts.sys.fileExists(entry)
+              ? getKind(path, text)
+              : "module";
     const written = getSpecifiers(
       ts.createSourceFile(path, text, ts.ScriptTarget.ESNext, true),
       kind,
@@ -510,6 +548,14 @@ const loadFiles = (
     const targets = new Map(
       [...(isRejected ? [] : getSpecifiers(sourceFile, kind).keys())].flatMap((specifier) => {
         const literal = written.get(specifier);
+        const builtin =
+          literal !== undefined && kind === "module" && !ts.isCallExpression(literal.parent)
+            ? getAsyncHooksSpecifier(literal)
+            : undefined;
+        if (builtin !== undefined) {
+          if (!numbers.has(builtin)) numbers.set(builtin, numbers.size + 1);
+          return [[specifier, numbers.get(builtin) ?? 0] as const];
+        }
         const found = literal === undefined ? undefined : resolve(literal);
         if (found === undefined || !/\.([cm]?[jt]sx?|json)$/.test(found)) return [];
         const target = getRealPath(found);
@@ -829,8 +875,9 @@ export const compileToEscore = (
       `tla-ts can't check a program whose TLA+ spec has more than ${MOST_CODE_CHARACTERS} characters: this program's has ${code.length}, which a check would parse and run past Node's default heap`,
     );
   }
+  const steps = typeof model.steps === "string" ? model.steps : model.steps(files);
   const view = runtime.getView(
-    `${code}\n${model.steps}\n${model.reads ?? ""}\n${ROOT}\n${CONFIG}`,
+    `${code}\n${steps}\n${model.reads ?? ""}\n${ROOT}\n${CONFIG}`,
     leaves.map((leaf) => leaf.name),
   );
   const viewed = new Set(view.module.definitions.map((definition) => definition.name));
@@ -850,7 +897,7 @@ export const compileToEscore = (
       (stub) =>
         `Stub${stub.name}(${Array.from({ length: stub.arity }, (_, index) => `p${index + 1}`).join(", ")}) == Assert(FALSE, "tla-ts can't run ${stub.name}, which this program's spec leaves out of ESCore")`,
     ),
-    model.steps,
+    steps,
     "====",
     "",
   ].join("\n");

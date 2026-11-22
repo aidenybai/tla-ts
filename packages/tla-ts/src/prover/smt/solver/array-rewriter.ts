@@ -11,6 +11,7 @@ import {
   OP_OR,
   OP_SELECT,
   OP_STORE,
+  QUANTIFIER_FORALL,
   SORT_SIZE_INFINITE,
   SORT_SIZE_VERY_BIG,
   SORT_BOOL,
@@ -408,11 +409,36 @@ export class ArrayRewriter {
 
   mkEqCore(inputLhs: number, inputRhs: number): Rewrite | undefined {
     const manager = this.manager;
-    const isSwapped = this.isOp(inputRhs, OP_CONST_ARRAY) && this.isOp(inputLhs, OP_STORE);
+    const isSwapped =
+      this.isOp(inputRhs, OP_CONST_ARRAY) &&
+      (manager.isLambda(inputLhs) || this.isOp(inputLhs, OP_STORE));
     const lhs = isSwapped ? inputRhs : inputLhs;
     const rhs = isSwapped ? inputLhs : inputRhs;
     if (this.isOp(lhs, OP_CONST_ARRAY) && this.isOp(rhs, OP_CONST_ARRAY))
       return { expr: manager.mkEq(manager.getArg(lhs, 0), manager.getArg(rhs, 0)), depth: 1 };
+    if (this.isOp(lhs, OP_CONST_ARRAY) && manager.isLambda(rhs)) {
+      const lambda = manager.getQuantifier(rhs);
+      const shifter = new VarShifter(manager);
+      const value = shifter.shift(manager.getArg(lhs, 0), 0, lambda.sorts.length, 0);
+      shifter.release();
+      manager.releaseLater(value);
+      const body = manager.mkEq(lambda.body, value);
+      return { expr: manager.mkQuantifier({ ...lambda, kind: QUANTIFIER_FORALL, body }), depth: 2 };
+    }
+    if (manager.isLambda(lhs) && manager.isLambda(rhs)) {
+      const first = manager.getQuantifier(lhs);
+      const second = manager.getQuantifier(rhs);
+      let isSame = first.sorts.length === second.sorts.length;
+      for (let index = 0; isSame && index < first.sorts.length; index++)
+        isSame = first.sorts[index] === second.sorts[index];
+      if (isSame) {
+        const body = manager.mkEq(first.body, second.body);
+        return {
+          expr: manager.mkQuantifier({ ...first, kind: QUANTIFIER_FORALL, body }),
+          depth: 2,
+        };
+      }
+    }
     const left = this.getStoreBase(lhs);
     const right = this.getStoreBase(rhs);
     const sort = manager.sorts[lhs];

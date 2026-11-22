@@ -1255,6 +1255,41 @@ describe("the CLI reports results like TLC", () => {
   });
 });
 
+// TLC prints its banner, the files it parses, and the start of its search before it searches, so
+// a search that never ends, of x' = x + 1, still shows them where the run is stopped, as real TLC
+// shows them before its first progress line. The CLI's thread writes them as it prints them,
+// though the search holds the thread's event loop.
+describe("the CLI prints the start of a search that never ends as TLC does", () => {
+  const getRun = (next: string) => {
+    const directory = mkdtempSync(join(tmpdir(), "endless-"));
+    writeFileSync(
+      join(directory, "Endless.tla"),
+      `---- MODULE Endless ----\nEXTENDS Naturals\nVARIABLE x\nInit == x = 0\nNext == ${next}\n====\n`,
+    );
+    writeFileSync(join(directory, "Endless.cfg"), "INIT Init\nNEXT Next\n");
+    const result = spawnSync(process.execPath, [DIST_CLI, "-noGenerateSpecTE", "Endless.tla"], {
+      cwd: directory,
+      encoding: "utf8",
+      timeout: 8000,
+    });
+    rmSync(directory, { recursive: true });
+    return result;
+  };
+
+  it("prints the start before the run stops", () => {
+    const result = getRun("x' = x + 1");
+    expect(result.signal).toBe("SIGTERM");
+    expect(result.stdout).toContain("Semantic processing of module Endless\n");
+    expect(result.stdout).toMatch(/\nStarting\.\.\. \(.*\)\nComputing initial states\.\.\.\n/);
+  });
+
+  it("prints the end of a search that ends", () => {
+    const result = getRun("x < 3 /\\ x' = x + 1");
+    expect(result.status).toBe(11);
+    expect(result.stdout).toContain("Error: Deadlock reached.");
+  });
+});
+
 describe("the CLI answers PickSuccessor from standard input like TLC", () => {
   const getPickLines = (output: string) => {
     const lines = output.split("\n");

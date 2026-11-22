@@ -43,7 +43,7 @@ A module entry, or a script that calls `import()`, loads the files it imports an
 - A JSON file loads for an `import` with `with { type: "json" }` and for a `require`, and both get the same value.
 - An ES module gets the names that Node's lexer finds a CommonJS module exports, and a `require` of an ES module gets its namespace, as Node gives them.
 
-Each import and require loads the file that Node resolves it to: a `require` by `require`'s resolution, and an `import` by Node's ESM resolution, with a package's `exports` and `imports` and their conditions. Where Node finds no file, tla-ts loads none either, so `import { STEP } from "./step"` stops the compile with `tla-ts can't load the module ./step` where Node throws `ERR_MODULE_NOT_FOUND`, and a `require` that Node can't resolve stops where it runs. TypeScript reads the types of the file that it resolves a specifier to, with the nearest `tsconfig.json` that includes the file, and where that's another file than Node's, as for a `.js` specifier beside a `.ts` file of its name, the compile stops with `tla-ts can't read the types of a module that Node loads from another file than TypeScript reads`. Where no Node is at hand, as on the website, a specifier loads the file that TypeScript resolves it to only where it names that file by a relative path, and else stops.
+Each import and require loads the file that Node resolves it to: a `require` by `require`'s resolution, and an `import` by Node's ESM resolution, with a package's `exports` and `imports` and their conditions. Where Node finds no file, tla-ts loads none either, so `import { STEP } from "./step"` stops the compile with `tla-ts can't load the module ./step` where Node throws `ERR_MODULE_NOT_FOUND`, and a `require` that Node can't resolve stops where it runs. TypeScript reads the types of the file that it resolves a specifier to, with the nearest `tsconfig.json` that includes the file, and where that's another file than Node's, as for a `.js` specifier beside a `.ts` file of its name, the compile stops with `tla-ts can't read the types of a module that Node loads from another file than TypeScript reads`. Where no Node is at hand, as on the website, a specifier loads the file that TypeScript resolves it to only where it names that file by a relative path, and else stops. An ES module may import Node's `async_hooks`, by `node:async_hooks` or `async_hooks`: its `AsyncLocalStorage` and `AsyncResource`, and the module itself as the default. An import of another of its names, or of all of them, stops with `tla-ts can't import createHook of node:async_hooks, of which it models AsyncLocalStorage and AsyncResource`.
 
 A built-in module, such as `node:fs`, stops the compile, as in `TlaTypeScriptError: /work/builtin.js:1:1 tla-ts can't load the module node:fs`.
 
@@ -402,6 +402,8 @@ if (depth(1000) !== 1000) throw new Error("wrong depth");
 ```
 TlaStackLimitError: tla-ts can't check this program within the stack: its check overflowed its 8 MB stack at depth 0
 ```
+
+The thread's heap is the one Node gives the process, which `--max-old-space-size` sets. A program whose check runs out of it stops with a `TlaHeapLimitError`, with the same exit code, such as `TlaHeapLimitError: tla-ts can't check this program within Node's default heap of 4192 MB`.
 
 ESCore's realm starts once a process. The package's build holds the realm prepared for the host that built it. On a host whose realm differs, such as one with another time zone or locale, tla-ts starts the realm itself.
 

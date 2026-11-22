@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vite-plus/test";
+import { parseModule } from "../../src";
 import { decodeGraph, encodeGraph } from "../../src/graph-codec";
 import {
   createTuple,
@@ -59,6 +60,25 @@ describe("graphs", () => {
     expect(decoded.first.body).toBe(decoded.first.body);
     decoded.second.body = { shared, nested: { name: "d", body: [] } };
     expect(decoded.second.body.nested.name).toBe("d");
+  });
+
+  it("read back a module's locations, with the module's positions once", () => {
+    const module = parseModule("---- MODULE M ----\nA == 1 + 2\nB == <<A, A>>\n====\n");
+    const encoded = encodeGraph(module);
+    const read = decodeGraph(JSON.parse(JSON.stringify(encoded))) as typeof module;
+    const getPlace = (location: (typeof module)["location"]) => [
+      location.line,
+      location.column,
+      location.range,
+    ];
+    module.definitions.forEach((definition, index) => {
+      const readDefinition = read.definitions[index];
+      expect(getPlace(readDefinition.location)).toEqual(getPlace(definition.location));
+      if (definition.kind === "Operator" && readDefinition.kind === "Operator") {
+        expect(getPlace(readDefinition.body.location)).toEqual(getPlace(definition.body.location));
+      }
+    });
+    expect(encoded.tables[1].filter((keys) => keys.includes("endColumns"))).toHaveLength(1);
   });
 
   it("reject what JSON can't hold", () => {

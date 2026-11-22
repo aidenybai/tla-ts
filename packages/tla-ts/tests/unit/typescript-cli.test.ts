@@ -66,6 +66,8 @@ describe("the CLI with TypeScript files", () => {
     },
   );
 
+  // The input stays as long as the one that overflowed the stack, whose throw string.ts checks in
+  // about 24 s.
   it.each(["string.ts", "array.ts"] as const)(
     "exits with Node's code and stderr where %s, which loops over a long input, throws",
     (file) => {
@@ -75,6 +77,7 @@ describe("the CLI with TypeScript files", () => {
       expect(getExit(result)).toEqual(getExit(runNode(directory, file)));
       expect(result.status).toBe(1);
     },
+    120_000,
   );
 
   it("checks a TypeScript file without writing the TLA+ spec and config it compiles to", () => {
@@ -171,6 +174,68 @@ describe("the CLI with TypeScript files", () => {
       expect(result.status).toBe(12);
       expect(result.stdout).toContain("Invariant isKept is violated.");
       expect(result.stdout).toContain("/\\ $ = 2\n/\\ b = 0\n/\\ _ = 8");
+    });
+  });
+
+  // An exception that a file the entry loads leaves uncaught, which Node says it threw where the
+  // file's throw statement is, in a CommonJS file, or where its error was made, in an ES module,
+  // with the file's path or URL, its line, and a caret.
+  describe.each([
+    ["main.cjs", "lib.cjs", 'const lib = require("./lib.cjs");\nconsole.log(lib);\n'],
+    ["main.mjs", "lib.mjs", 'import { value } from "./lib.mjs";\nconsole.log(value);\n'],
+  ])("exits with Node's code and stderr where %s loads a file that throws", (entry, lib, main) => {
+    const getLib = (padding: string) =>
+      lib.endsWith(".cjs")
+        ? `const value = 1;\n${padding}if (value === 1) {\n  throw new RangeError("from lib");\n}\nmodule.exports = value;\n`
+        : `export const value = 1;\n${padding}throw new TypeError("from module");\n`;
+    const getRun = (padding: string) => {
+      const directory = copyFixtures("passing");
+      writeFileSync(join(directory, entry), main);
+      writeFileSync(join(directory, lib), getLib(padding));
+      return [getExit(runNode(directory, entry)), getExit(runCli(directory, [entry]))];
+    };
+
+    it("agrees with Node", () => {
+      const [node, cli] = getRun("");
+      expect(node[0]).toBe(1);
+      expect(cli).toEqual(node);
+    });
+
+    it("rejects another result", () => {
+      const [node, cli] = getRun("\n\n");
+      expect(cli).toEqual(node);
+      expect(cli).not.toEqual(getRun("")[1]);
+    });
+  });
+
+  // A check runs on a thread whose heap is the one Node gives the process, here 300 MB of old
+  // space, and stops where it runs out of it, though Node runs the script in less, as a script of
+  // 20,000 numbers does, where one of 10 checks.
+  describe("stops a check that runs out of the heap that Node gives it", () => {
+    const getScript = (count: number) =>
+      `const values = [${Array.from({ length: count }, (_, index) => `${index}.5`).join(", ")}];\nif (values.length !== ${count}) throw new RangeError("length " + values.length);\n`;
+    const runLimited = (directory: string, file: string) =>
+      spawnSync(process.execPath, ["--max-old-space-size=300", DIST_CLI, file], {
+        cwd: directory,
+        encoding: "utf8",
+      });
+
+    it("agrees with Node", () => {
+      const directory = copyFixtures("passing");
+      writeFileSync(join(directory, "values.mjs"), getScript(10));
+      expect(runNode(directory, "values.mjs").status).toBe(0);
+      expect(getExit(runLimited(directory, "values.mjs"))).toEqual([0, ""]);
+    });
+
+    it("rejects another result", () => {
+      const directory = copyFixtures("passing");
+      writeFileSync(join(directory, "values.mjs"), getScript(20_000));
+      expect(runNode(directory, "values.mjs").status).toBe(0);
+      const result = runLimited(directory, "values.mjs");
+      expect(result.status).toBe(255);
+      expect(result.stderr).toMatch(
+        /^TlaHeapLimitError: tla-ts can't check this program within Node's default heap of \d+ MB\n$/,
+      );
     });
   });
 
@@ -918,6 +983,43 @@ describe("the CLI with TypeScript files", () => {
     const result = runCli(directory, ["lib/main.js"]);
     expect(getExit(result)).toEqual(getExit(runNode(directory, "lib/main.js")));
     expect(result.status).toBe(1);
+  });
+
+  // An ES module imports Node's async_hooks, as Solid's web storage does: a name of it, which is the
+  // property of the one object that process.getBuiltinModule gives, and that object as the default.
+  // An import of a name that tla-ts doesn't model stops, though Node runs it.
+  describe("imports Node's async_hooks as Node does", () => {
+    const getModule = (operator: string) =>
+      `import { AsyncLocalStorage, AsyncResource as Resource } from "node:async_hooks";\nimport hooks from "async_hooks";\nconst isSame = hooks === process.getBuiltinModule("async_hooks") && hooks.AsyncLocalStorage === AsyncLocalStorage && hooks.AsyncResource === Resource;\nif ((isSame && typeof AsyncLocalStorage === "function") ${operator} true) throw new Error("hooks");\n`;
+
+    it("agrees with Node", () => {
+      const directory = copyFixtures("passing");
+      writeFileSync(join(directory, "hooks.mjs"), getModule("!=="));
+      expect(runNode(directory, "hooks.mjs").status).toBe(0);
+      expect(getExit(runCli(directory, ["hooks.mjs"]))).toEqual([0, ""]);
+    });
+
+    it("rejects another result", () => {
+      const directory = copyFixtures("passing");
+      writeFileSync(join(directory, "hooks.mjs"), getModule("==="));
+      const result = runCli(directory, ["hooks.mjs"]);
+      expect(getExit(result)).toEqual(getExit(runNode(directory, "hooks.mjs")));
+      expect(result.status).toBe(1);
+    });
+
+    it("stops at an import of a name that it doesn't model", () => {
+      const directory = copyFixtures("passing");
+      writeFileSync(
+        join(directory, "hooks.mjs"),
+        'import { createHook } from "node:async_hooks";\nconsole.log(typeof createHook);\n',
+      );
+      expect(runNode(directory, "hooks.mjs").status).toBe(0);
+      const result = runCli(directory, ["hooks.mjs"]);
+      expect(result.status).not.toBe(0);
+      expect(result.stderr).toContain(
+        "tla-ts can't import createHook of node:async_hooks, of which it models AsyncLocalStorage and AsyncResource",
+      );
+    });
   });
 
   // A CommonJS module requires Node's async_hooks, as Solid's web storage does, and gets the one

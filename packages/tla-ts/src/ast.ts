@@ -4,9 +4,9 @@ interface LocalResolution {
 }
 
 export interface SourceLocation {
-  line: number;
-  column: number;
-  range?: SourceRange;
+  readonly line: number;
+  readonly column: number;
+  readonly range?: SourceRange;
 }
 
 export interface SourceRange {
