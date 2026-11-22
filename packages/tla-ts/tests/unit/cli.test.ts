@@ -13,9 +13,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it } from "vite-plus/test";
 import { FIXTURES } from "./check-harness";
-import { getToolSequence, runCliWith } from "./cli-harness";
-
-const DIST_CLI = join(import.meta.dirname, "../../dist/cli.js");
+import { DIST_CLI, getToolSequence, runCliWith } from "./cli-harness";
 
 const runCli = (directory: string, name: string, args: string[] = []) =>
   runCliWith(directory, [`${name}.tla`, ...args]);

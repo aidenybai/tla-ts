@@ -6,6 +6,8 @@ import { FIXTURES } from "./check-harness";
 
 export const CLI = join(import.meta.dirname, "../../src/cli.ts");
 
+export const DIST_CLI = join(import.meta.dirname, "../../dist/cli.js");
+
 export const JAR_174 = join(FIXTURES, "xml-export", "tla2tools-1.7.4.jar");
 
 afterAll(() =>
