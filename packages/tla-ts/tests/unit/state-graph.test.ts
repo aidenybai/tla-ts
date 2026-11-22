@@ -238,7 +238,7 @@ describe("check dumps the state graph like TLC's -dump", () => {
   });
 });
 
-const runCli = (args: string[]) => runCliWith("counter", ["Counter.tla", ...args]);
+const runCli = (args: string[]) => runCliWith("counter", ["Counter.tla", "-fp", "0", ...args]);
 
 const directories: string[] = [];
 
@@ -297,6 +297,8 @@ describe("the CLI takes TLC's -dump flag", () => {
     const directory = createDirectory();
     runCliWith("state-graph", [
       "Changes.tla",
+      "-fp",
+      "0",
       "-difftrace",
       "-dump",
       "dot",
@@ -307,7 +309,14 @@ describe("the CLI takes TLC's -dump flag", () => {
 
   it("names the liveness graph after the dot file", () => {
     const directory = createDirectory();
-    runCliWith("state-graph", ["LeadsTo.tla", "-dump", "dot", join(directory, "LeadsTo")]);
+    runCliWith("state-graph", [
+      "LeadsTo.tla",
+      "-fp",
+      "0",
+      "-dump",
+      "dot",
+      join(directory, "LeadsTo"),
+    ]);
     expect(readFileSync(join(directory, "LeadsTo_liveness.dot"), "utf8")).toBe(
       readTlcDump("LeadsTo_liveness.dot"),
     );

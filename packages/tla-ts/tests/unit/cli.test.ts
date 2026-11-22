@@ -808,7 +808,7 @@ describe("the CLI reports results like TLC", () => {
   });
 
   it("prints the counterexample before it fails to rebuild the step back of a lasso under a VIEW like TLC", () => {
-    const result = runCli("view", "Recover");
+    const result = runCli("view", "Recover", ["-fp", "0"]);
     expect(result.status).toBe(1);
     expect(getSteadyLines(result.stdout)).toEqual([
       "Starting... (_)",
@@ -971,6 +971,8 @@ describe("the CLI reports results like TLC", () => {
       "2",
       "-seed",
       "7",
+      "-fp",
+      "0",
       "Success",
     ];
     const result = runCliWith("cli-output", args);
@@ -1024,9 +1026,28 @@ describe("the CLI reports results like TLC", () => {
     ).toMatch(
       /^Running Random Simulation with seed 7 with 1 worker on \d+ cores with \d+MB heap and 64MB offheap memory \[pid: \d+\] \(.+, Node\.js .+\)\.$/,
     );
-    expect(runCliWith("cli-output", ["-dfid", "3", "Success"]).stdout.split("\n")[1]).toMatch(
+    expect(
+      runCliWith("cli-output", ["-dfid", "3", "-fp", "0", "-seed", "0", "Success"]).stdout.split(
+        "\n",
+      )[1],
+    ).toMatch(
       /^Running depth-first search Model-Checking with fp 0 and seed 0 with 1 worker on \d+ cores with \d+MB heap and 64MB offheap memory \[pid: \d+\] \(.+, Node\.js .+\)\.$/,
     );
+  });
+
+  it("simulates with the seed it draws without -seed and without -aril, as TLC does", () => {
+    const stdout = runCliWith("cli-output", ["-simulate", "num=1", "-aril", "5", "Success"]).stdout;
+    const seed = stdout.match(/^Running Random Simulation with seed (-?\d+) /m)?.[1];
+    expect(stdout).toContain(`\nSimulation using seed ${seed} and aril 0\n`);
+  });
+
+  it("draws a polynomial and a seed for each spec it checks without -fp and -seed, as each TLC run does", () => {
+    const banners = [
+      ...runCliWith("tlc-spec", ["*.tla"]).stdout.matchAll(/ with fp (\d+) and seed (-?\d+) /g),
+    ];
+    expect(banners).toHaveLength(5);
+    expect(new Set(banners.map((banner) => banner[1])).size).toBeGreaterThan(1);
+    expect(new Set(banners.map((banner) => banner[2])).size).toBe(5);
   });
 
   it("reports the coverage of a simulation, again with its last progress, and of a depth-first search", () => {
@@ -2191,6 +2212,51 @@ describe("the CLI fails to open a file as TLC does", () => {
         10,
         false,
         expect.stringContaining("error:\nd2 (Is a directory)\n"),
+      ]);
+    },
+  );
+});
+
+describe("the CLI fails to print an initial state through -view as TLC does", () => {
+  const getUnexpected = (exception: string, message: string) =>
+    `Error: TLC threw an unexpected exception.\nThis was probably caused by an error in the spec or model.\nSee the User Output or TLC Console for clues to what happened.\nThe exception was a ${exception}\n: ${message}\n`;
+  const errors: [string, string][] = [
+    ["DivView", getUnexpected("tlc2.tool.EvalException", "The second argument of \\div is 0.")],
+    [
+      "EqualView",
+      getUnexpected(
+        "java.lang.RuntimeException",
+        'Attempted to check equality of integer 0 with non-integer:\n"a"',
+      ),
+    ],
+    [
+      "JsonView",
+      "Error: Attempted to apply the operator overridden by the Java method\npublic static tlc2.value.IValue tlc2.module.Json.deserialize(tlc2.value.impl.StringValue) throws java.io.IOException,\nbut it produced the following error:\nmissing.json (No such file or directory)\n",
+    ],
+  ];
+  const modes = [[], ["-simulate", "num=1"], ["-dfid", "1"]];
+
+  it.each(
+    errors.flatMap((error): [string, string[], string][] =>
+      modes.map((mode) => [error[0], mode, error[1]]),
+    ),
+  )(
+    "reports %s failing on the state that a constraint failed on, under %j",
+    (view, mode, error) => {
+      const directory = mkdtempSync(join(FIXTURES, "view-print-"));
+      writeFileSync(
+        join(directory, "M.tla"),
+        '---- MODULE M ----\nEXTENDS Naturals, TLC, Json\nVARIABLE x\nInit == x = 0\nNext == x\' = x\nBad == x \\in 1\nDivView == 1 \\div x\nEqualView == x = "a"\nJsonView == <<x, JsonDeserialize("missing.json")>>\n====\n',
+      );
+      writeFileSync(
+        join(directory, "M.cfg"),
+        `INIT Init\nNEXT Next\nCONSTRAINT Bad\nVIEW ${view}\n`,
+      );
+      const result = runCliWith(directory, ["-view", ...mode, "M.tla"]);
+      rmSync(directory, { recursive: true });
+      expect([result.status, result.stdout]).toEqual([
+        255,
+        expect.stringContaining(`\n${error}Finished in `),
       ]);
     },
   );

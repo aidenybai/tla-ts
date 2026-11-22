@@ -52,7 +52,11 @@ const runTlc = async (directory: string, specFile: string) => {
 };
 
 const runTlaTs = (directory: string, specFile: string) =>
-  measure(process.execPath, ["--max-old-space-size=6144", CLI_PATH, specFile], directory);
+  measure(
+    process.execPath,
+    ["--max-old-space-size=6144", CLI_PATH, "-fp", "0", "-seed", "0", specFile],
+    directory,
+  );
 
 const getMedianRun = async (run: () => Promise<Measurement>) => {
   const measurements: Measurement[] = [];

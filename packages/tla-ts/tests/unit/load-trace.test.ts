@@ -24,6 +24,7 @@ const loadTrace = (
   config: string,
   trace: Uint8Array | undefined,
   module: TraceModule = "_TLCTrace",
+  onRead = () => {},
 ) => {
   const constants = { [`${module}InputFile`]: TRACE_PATH };
   return check({
@@ -34,7 +35,10 @@ const loadTrace = (
       { kind: "constraint", module, operator: `${module}Constraint`, constants },
       { kind: "view", module, operator: `${module}View`, constants },
     ],
-    readFile: (path) => (path === TRACE_PATH ? trace : undefined),
+    readFile: (path) => {
+      onRead();
+      return path === TRACE_PATH ? trace : undefined;
+    },
   });
 };
 
@@ -144,6 +148,33 @@ const getNestedTrace = (depth: number) =>
       ],
       ["vars", EMPTY_SET],
       ["deep", [...Array(depth).fill([7, 0, 1]).flat(), 1, 0, 0, 0, 1]],
+    ]),
+  );
+
+const getIntegerBytes = (value: number) => [1, 0, 0, 0, value];
+
+const getSetBytes = (elements: number[]) =>
+  [5, 0, 0, 0, elements.length].concat(...elements.map(getIntegerBytes));
+
+const getFunctionBytes = (info: number, keys: number[]) =>
+  [9, 0, keys.length, info].concat(
+    ...keys.map((key) => [...getIntegerBytes(key), ...getIntegerBytes(1)]),
+  );
+
+const getStateTrace = (value: number[]) =>
+  gzip(
+    getRecordBytes([
+      [
+        "counterexample",
+        getRecordBytes([
+          [
+            "state",
+            [5, 0, 0, 0, 1, 7, 0, 2, ...getIntegerBytes(1), ...getRecordBytes([["x", value]])],
+          ],
+          ["action", EMPTY_SET],
+        ]),
+      ],
+      ["vars", [5, 0, 0, 0, 1, ...getStringBytes("x")]],
     ]),
   );
 
@@ -317,6 +348,66 @@ describe("-loadTrace tlc matches TLC", () => {
     expect(result.failure?.message).toBe(`The trace file ${TRACE_PATH} is cut short.`);
   });
 
+  it.each([
+    [
+      "a record that repeats a field",
+      "prints the record",
+      getRecordBytes([
+        ["a", getIntegerBytes(1)],
+        ["c", getIntegerBytes(1)],
+        ["c", getIntegerBytes(1)],
+        ["b", getIntegerBytes(1)],
+        ["b", getIntegerBytes(1)],
+      ]),
+      "Field name c occurs multiple times in record.",
+    ],
+    [
+      "a function marked normalized that repeats a key",
+      "prints the function",
+      getRecordBytes([["f", getFunctionBytes(1, [1, 1])]]),
+      "The value\n1\noccurs multiple times in the function domain.",
+    ],
+    [
+      "a function marked unnormalized that repeats a key",
+      "reports it only where it first sorts the function",
+      getRecordBytes([["f", getFunctionBytes(2, [1, 3, 3, 2, 2])]]),
+      "The value\n3\noccurs multiple times in the function domain.",
+    ],
+  ])("reports %s as it reads the trace, where TLC %s", async (_name, _behavior, bytes, message) => {
+    const result = await loadDieHarder(gzip(bytes));
+    expect(result.failure?.message).toBe(message);
+  });
+
+  const SET_SOURCE =
+    "---- MODULE T ----\nVARIABLE x\nInit == x \\in {{1, 2}, {1}, {2}}\nNext == UNCHANGED x\n====";
+
+  const FUNCTION_SOURCE =
+    "---- MODULE T ----\nEXTENDS TLC\nVARIABLE x\nInit == x \\in {(1 :> 1 @@ 2 :> 1), (1 :> 1)}\nNext == UNCHANGED x\n====";
+
+  it.each([
+    ["a set marked normalized but written out of order", SET_SOURCE, getSetBytes([2, 1]), 5],
+    [
+      "a set marked normalized but written with a repeated element",
+      SET_SOURCE,
+      getSetBytes([1, 1]),
+      5,
+    ],
+    [
+      "a function marked normalized but written out of order",
+      FUNCTION_SOURCE,
+      getFunctionBytes(1, [2, 1]),
+      4,
+    ],
+  ])("replays %s, where TLC matches no state", async (_name, source, value, generated) => {
+    const result = await loadTrace(source, SINGLE_STATE_CONFIG, getStateTrace(value));
+    expect(getOutcome(result)).toEqual({
+      status: "success",
+      violation: undefined,
+      generated,
+      distinct: 2,
+    });
+  });
+
   it("reads a string's bytes as Latin-1, where TLC sign-extends them", async () => {
     const result = await loadDieHarder(
       gzip([4, 0, 0, 0, 1, ...STRING_A, ...STRING_A.slice(0, -1), 0xe9]),
@@ -346,13 +437,18 @@ describe("-loadTrace tlc matches TLC", () => {
   it.each([
     [5000, "as TLC does"],
     [10000, "where TLC overflows its stack"],
-  ])("loads a trace that nests %i tuples, %s", async (depth) => {
-    const result = await loadTrace(SINGLE_STATE_SOURCE, SINGLE_STATE_CONFIG, getNestedTrace(depth));
-    expect(getOutcome(result)).toEqual({
-      status: "success",
-      violation: undefined,
-      generated: 2,
-      distinct: 1,
+  ])("loads a trace that nests %i tuples once, %s", async (depth) => {
+    let reads = 0;
+    const result = await loadTrace(
+      SINGLE_STATE_SOURCE,
+      SINGLE_STATE_CONFIG,
+      getNestedTrace(depth),
+      "_TLCTrace",
+      () => reads++,
+    );
+    expect({ outcome: getOutcome(result), reads }).toEqual({
+      outcome: { status: "success", violation: undefined, generated: 2, distinct: 1 },
+      reads: 1,
     });
   });
 });
