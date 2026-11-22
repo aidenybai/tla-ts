@@ -12,6 +12,42 @@ import { foldNames } from "./library";
 export const NATIVE_MODULE = foldNames(String.raw`---- MODULE ESNative ----
 EXTENDS ESRuntime
 LBail == [type |-> "bail"]
+\* A lowered function's plain form computes on the integers of "int" Numbers, strictly within
+\* IntLimit, and on a boolean as 1 or 0. Each operation gives what JavaScript's gives, or PlainBail
+\* where that isn't an "int" Number, such as -0 or a result past IntLimit, which passes the call on
+\* to the function's lowered form.
+PlainBail == -IntLimit
+PlainInt(r) == IF -IntLimit < r /\ r < IntLimit THEN r ELSE PlainBail
+PlainAdd(a, b) == IF a = PlainBail \/ b = PlainBail THEN PlainBail ELSE PlainInt(a + b)
+PlainSub(a, b) == IF a = PlainBail \/ b = PlainBail THEN PlainBail ELSE PlainInt(a - b)
+\* A product of operands within 2^15, which stays within IntLimit as TLC computes it, and which is
+\* -0 where an operand is 0 and the other negative.
+PlainMul(a, b) ==
+  IF a = PlainBail \/ b = PlainBail \/ ~(-32768 < a /\ a < 32768 /\ -32768 < b /\ b < 32768) \/
+     ((a = 0 \/ b = 0) /\ (a < 0 \/ b < 0))
+  THEN PlainBail ELSE a * b
+\* The remainder of a dividend that isn't negative by a positive divisor, as JavaScript's takes the
+\* dividend's sign.
+PlainMod(a, b) == IF a = PlainBail \/ b = PlainBail \/ a < 0 \/ b <= 0 THEN PlainBail ELSE a % b
+\* Math.floor(a / b) for a positive divisor. Where a / b isn't an integer it's at least 1/b from
+\* each integer, and the double nearest it is within |a / b| * 2^-53 < 2^-23 / b of it, so the
+\* double's floor is the quotient's.
+PlainFloorDiv(a, b) == IF a = PlainBail \/ b = PlainBail \/ b <= 0 THEN PlainBail ELSE a \div b
+\* The greatest base whose power of each exponent from 1 to 29 is within IntLimit.
+PlainPowerBound == <<1073741823, 32767, 1023, 181, 63, 31, 19, 13, 10, 7, 6, 5, 4, 4, 3, 3, 3, 3,
+                     2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2>>
+PlainPow(a, b) ==
+  IF a = PlainBail \/ b = PlainBail \/ b < 0 THEN PlainBail
+  ELSE IF b = 0 THEN 1
+  ELSE IF a \in -1..1 \/ (b <= 29 /\ -PlainPowerBound[b] <= a /\ a <= PlainPowerBound[b]) THEN a ^ b
+  ELSE PlainBail
+PlainNeg(a) == IF a = PlainBail \/ a = 0 THEN PlainBail ELSE -a
+PlainNot(a) == IF a = PlainBail THEN PlainBail ELSE 1 - a
+PlainEqual(a, b) == IF a = PlainBail \/ b = PlainBail THEN PlainBail ELSE IF a = b THEN 1 ELSE 0
+PlainLt(a, b) == IF a = PlainBail \/ b = PlainBail THEN PlainBail ELSE IF a < b THEN 1 ELSE 0
+PlainLe(a, b) == IF a = PlainBail \/ b = PlainBail THEN PlainBail ELSE IF a <= b THEN 1 ELSE 0
+PlainGt(a, b) == IF a = PlainBail \/ b = PlainBail THEN PlainBail ELSE IF a > b THEN 1 ELSE 0
+PlainGe(a, b) == IF a = PlainBail \/ b = PlainBail THEN PlainBail ELSE IF a >= b THEN 1 ELSE 0
 IsLComposite(v) == v.type \in {"lobject", "larray", "lset", "lmap"}
 LIsPrimitive(v) == v.type \in {"undefined", "null", "boolean", "number", "string"}
 \* A value that a call stores or passes, which mustn't be an object the state holds.
