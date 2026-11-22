@@ -48,6 +48,7 @@ interface Binding {
   isSubstituted?: boolean;
   sourceRange?: SourceRange;
   nonFactStep?: "Use" | "Hide" | "Instance" | "Define";
+  isCopiedTheorem?: boolean;
 }
 
 export interface ModuleSymbol extends Binding {
@@ -253,10 +254,12 @@ const isSameRange = (left: SourceRange | undefined, right: SourceRange | undefin
 
 const isBindable = (name: string, current: Binding | undefined, added: Binding, unit: Unit) => {
   if (current === undefined) return true;
+  // SANY's ThmOrAssumpDefNode constructor adds a theorem's copy to the symbol table before it sets the copy's arity.
+  const addedArity = added.isCopiedTheorem ? 0 : added.arity;
   if (
     isSameRange(current.sourceRange ?? current.range, added.sourceRange ?? added.range) &&
     current.kind === added.kind &&
-    current.arity === added.arity
+    current.arity === addedArity
   ) {
     return false;
   }
@@ -274,7 +277,7 @@ const isBindable = (name: string, current: Binding | undefined, added: Binding, 
   } else if (
     added.kind === "Parameter" ||
     current.kind !== added.kind ||
-    current.arity !== added.arity ||
+    current.arity !== addedArity ||
     (current.nonFactStep === undefined) !== (added.nonFactStep === undefined)
   ) {
     unit.errors.push({

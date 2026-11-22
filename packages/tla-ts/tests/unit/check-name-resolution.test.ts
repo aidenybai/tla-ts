@@ -4589,6 +4589,102 @@ describe("name resolution matches SANY", () => {
       })),
       [],
     ],
+    [
+      "two instances with parameters that copy a theorem, which SANY adds before it sets the copy's arity",
+      "---- MODULE L ----\nCONSTANT c\nA == c\nTHEOREM T == c = c\n====\nI(p) == INSTANCE L WITH c <- p\nI(p) == INSTANCE L WITH c <- p\nZ == U",
+      [
+        {
+          location: "line 8, col 1 to line 8, col 30 of module M",
+          message:
+            "Multiply-defined symbol 'I!T': this definition or declaration conflicts \nwith the one at line 7, col 1 to line 7, col 30 of module M.",
+        },
+        {
+          location: "line 9, col 6 to line 9, col 6 of module M",
+          message: "Unknown operator: `U'.",
+        },
+      ],
+      ["I!A", "I"].map((name) => ({
+        location: "line 8, col 1 to line 8, col 30 of module M",
+        message: `Multiple declarations or definitions for symbol ${name}.  \nThis duplicates the one at line 7, col 1 to line 7, col 30 of module M.`,
+      })),
+    ],
+    [
+      "an instance with parameters after one without, whose theorem copy SANY compares with arity 0",
+      "---- MODULE L ----\nCONSTANT c\nA == c\nTHEOREM T == c = c\n====\nI == INSTANCE L WITH c <- 1\nI(p) == INSTANCE L WITH c <- p\nZ == U",
+      [
+        ...["I!A", "I"].map((name) => ({
+          location: "line 8, col 1 to line 8, col 30 of module M",
+          message: `Multiply-defined symbol '${name}': this definition or declaration conflicts \nwith the one at line 7, col 1 to line 7, col 27 of module M.`,
+        })),
+        {
+          location: "line 9, col 6 to line 9, col 6 of module M",
+          message: "Unknown operator: `U'.",
+        },
+      ],
+      [
+        {
+          location: "line 8, col 1 to line 8, col 30 of module M",
+          message:
+            "Multiple declarations or definitions for symbol I!T.  \nThis duplicates the one at line 7, col 1 to line 7, col 27 of module M.",
+        },
+      ],
+    ],
+    [
+      "two proof-step instances with parameters that copy a theorem",
+      "---- MODULE L ----\nCONSTANT c\nA == c\nTHEOREM T == c = c\n====\nN == INSTANCE L WITH c <- 1\nTHEOREM TRUE\n<1> I(p) == INSTANCE L WITH c <- p\n<1> I(p) == INSTANCE L WITH c <- p\n<1> QED\nZ == U",
+      [
+        {
+          location: "line 10, col 5 to line 10, col 34 of module M",
+          message:
+            "Multiply-defined symbol 'I!T': this definition or declaration conflicts \nwith the one at line 9, col 5 to line 9, col 34 of module M.",
+        },
+        {
+          location: "line 12, col 6 to line 12, col 6 of module M",
+          message: "Unknown operator: `U'.",
+        },
+      ],
+      ["I!A", "I"].map((name) => ({
+        location: "line 10, col 5 to line 10, col 34 of module M",
+        message: `Multiple declarations or definitions for symbol ${name}.  \nThis duplicates the one at line 9, col 5 to line 9, col 34 of module M.`,
+      })),
+    ],
+    ...[
+      ["two unnamed instances", "INSTANCE L WITH c <- 2", 10, 1, 22, 11],
+      [
+        "a module-level and a proof-step instance",
+        "THEOREM TRUE\n<1> INSTANCE L WITH c <- 2\n<1> QED",
+        11,
+        5,
+        26,
+        13,
+      ],
+    ].map((entry): [string, string, SanyError[], SanyError[]] => [
+      `${entry[0]} that copy a theorem from an instance with parameters`,
+      `---- MODULE K ----\nTHEOREM T == TRUE\n====\n---- MODULE L ----\nCONSTANT c\nJ(p) == INSTANCE K\n====\nINSTANCE L WITH c <- 1\n${entry[1]}\nZ == U`,
+      [
+        {
+          location: `line ${entry[2]}, col ${entry[3]} to line ${entry[2]}, col ${entry[4]} of module M`,
+          message:
+            "Multiply-defined symbol 'J!T': this definition or declaration conflicts \nwith the one at line 9, col 1 to line 9, col 22 of module M.",
+        },
+        {
+          location: `line ${entry[5]}, col 6 to line ${entry[5]}, col 6 of module M`,
+          message: "Unknown operator: `U'.",
+        },
+      ],
+      [],
+    ]),
+    [
+      "two unnamed instances of modules without parameters that reuse a theorem from an instance with parameters",
+      "---- MODULE K ----\nTHEOREM T == TRUE\n====\n---- MODULE L ----\nJ(p) == INSTANCE K\n====\n---- MODULE L2 ----\nJ(p) == INSTANCE K\n====\nINSTANCE L\nINSTANCE L2\nZ == U",
+      [
+        {
+          location: "line 13, col 6 to line 13, col 6 of module M",
+          message: "Unknown operator: `U'.",
+        },
+      ],
+      [],
+    ],
   ])("rejects %s like SANY", async (_title, source, errors, warnings) => {
     await expect(checkNames(source)).rejects.toMatchObject({ sany: { errors, warnings } });
   });

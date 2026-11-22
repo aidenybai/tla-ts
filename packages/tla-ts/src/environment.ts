@@ -1017,6 +1017,9 @@ export const createEnvironment = (
                   parameterized.get(entry[1].key) === true ? undefined : entry[1].functionArity,
                 goal: entry[1].goal,
                 isSubstituted,
+                isCopiedTheorem:
+                  entry[1].kind === "Theorem" &&
+                  (instance.isLocal || parameterized.get(entry[1].key) === true),
               },
             ];
           }
@@ -1038,6 +1041,7 @@ export const createEnvironment = (
               functionArity: declarations.length > 0 ? undefined : entry[1].functionArity,
               goal: entry[1].goal,
               isSubstituted,
+              isCopiedTheorem: entry[1].kind === "Theorem",
             },
           ];
         }),
