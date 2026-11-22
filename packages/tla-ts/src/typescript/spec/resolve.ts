@@ -197,8 +197,14 @@ const hasModuleSyntax = (path: string, text: string) => {
 // The format that Node loads a file in, as TypeScript tells it by the file's extension and its
 // package's type (getImpliedNodeFormatForFile under nodenext), and, where no type says, as Node
 // detects it by the file's syntax. TypeScript finds the package of an absolute path only, so a
-// relative one resolves first.
+// relative one resolves first. Without a file system, as in a browser, no package names a type,
+// so only the file's extension and syntax tell.
 export const getModuleFormat = (path: string, text: string): "module" | "commonjs" => {
+  if (ts.sys === undefined) {
+    return /\.m[jt]s$/.test(path) || (!/\.c[jt]s$/.test(path) && hasModuleSyntax(path, text))
+      ? "module"
+      : "commonjs";
+  }
   const absolute = ts.sys.resolvePath(path);
   return ts.getImpliedNodeFormatForFile(absolute, undefined, ts.sys, NODE_OPTIONS) ===
     ts.ModuleKind.ESNext
