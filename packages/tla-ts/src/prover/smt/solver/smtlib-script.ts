@@ -2498,7 +2498,6 @@ export const runSmtlibScript = (
         if (state.isProofsEnabled === undefined) {
           const isNumeralAsReal = state.reader.isNumeralAsReal();
           state.reader = createSmtlibReader(state.manager, logic.text, settings.parserOptions);
-          // cmd_context::set_logic only ever turns numeral_as_real on.
           if (isNumeralAsReal) state.reader.setNumeralAsReal(true);
         } else {
           state.reader.restrictSorts(logic.text);
