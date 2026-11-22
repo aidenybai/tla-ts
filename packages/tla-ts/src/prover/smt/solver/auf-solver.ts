@@ -168,7 +168,7 @@ export class AufSolver {
   private sort2k = new Map<number, number>();
   private ks: RefVector;
   private model: ProtoModel | null = null;
-  private evalCache = [new Map<number, number>(), new Map<number, number>()];
+  private evalCache = [new Map<number, number | null>(), new Map<number, number | null>()];
   private evalCacheRange: RefVector;
   private rootNodes: Node[] = [];
   private newConstraints: number[] = [];
@@ -284,9 +284,9 @@ export class AufSolver {
     const cache = this.evalCache[isModelCompletion ? 1 : 0];
     const cached = cache.get(expr);
     if (cached !== undefined) return cached;
-    const result = this.getModel().eval(expr, isModelCompletion);
+    const result = this.getModel().tryEval(expr, isModelCompletion) ?? null;
     cache.set(expr, result);
-    this.evalCacheRange.pushOwned(result);
+    if (result !== null) this.evalCacheRange.pushOwned(result);
     return result;
   }
 

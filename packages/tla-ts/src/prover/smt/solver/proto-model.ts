@@ -1,3 +1,4 @@
+import { SmtRewriterCanceledError } from "../../../errors";
 import { TermEnumeration } from "./term-enumeration";
 import {
   type AstManager,
@@ -441,6 +442,15 @@ export class ProtoModel {
     return this.evaluator.rewrite(expr);
   }
 
+  tryEval(expr: number, isModelCompletion: boolean) {
+    try {
+      return this.eval(expr, isModelCompletion);
+    } catch (error) {
+      if (error instanceof SmtRewriterCanceledError) return undefined;
+      throw error;
+    }
+  }
+
   resetEvalCache() {
     this.evaluator.reset();
   }
@@ -784,7 +794,10 @@ export class ProtoModel {
       for (const [decl, value] of this.constInterps)
         if (!manager.recFunDefs.has(decl)) collectDeps(decl, [value]);
       sort.sort();
-      const rewriter = new Rewriter(manager, TACTIC_REWRITER_OPTIONS);
+      const rewriter = new Rewriter(manager, {
+        ...TACTIC_REWRITER_OPTIONS,
+        isEliminatingIte: false,
+      });
       for (const decl of sort.sorted) {
         const partition = sort.partitions.get(decl) as number;
         const cleanup = (expr: number) =>
@@ -809,7 +822,6 @@ export class ProtoModel {
           manager.decRef(cleaned);
         }
       }
-      rewriter.release();
       const occurrences = new Map<number, number>();
       const collectOccs = (expr: number) => {
         const decls = new Set<number>();
@@ -838,6 +850,7 @@ export class ProtoModel {
         (decl) => manager.funcDecls[decl].isSkolem && !occurrences.has(decl),
       );
       for (const decl of removed) this.unregisterDecl(decl);
+      rewriter.release();
       if (removed.length === 0) break;
     }
     this.isCompact = true;

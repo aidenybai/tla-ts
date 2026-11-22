@@ -1,0 +1,84 @@
+unsat
+(:rlimit 630)
+(error "line 57 column 10: model is not available")
+unknown
+(:rlimit 4630)
+(:reason-unknown "(incomplete quantifiers)")
+(
+  ;; universe for Idv:
+  ;;   Idv!val!7 Idv!val!6 Idv!val!4 Idv!val!0 Idv!val!5 Idv!val!1 Idv!val!2 Idv!val!3 
+  ;; -----------
+  ;; definitions for universe elements:
+  (declare-fun Idv!val!7 () Idv)
+  (declare-fun Idv!val!6 () Idv)
+  (declare-fun Idv!val!4 () Idv)
+  (declare-fun Idv!val!0 () Idv)
+  (declare-fun Idv!val!5 () Idv)
+  (declare-fun Idv!val!1 () Idv)
+  (declare-fun Idv!val!2 () Idv)
+  (declare-fun Idv!val!3 () Idv)
+  ;; cardinality constraint:
+  (forall ((x Idv))
+          (or (= x Idv!val!7)
+              (= x Idv!val!6)
+              (= x Idv!val!4)
+              (= x Idv!val!0)
+              (= x Idv!val!5)
+              (= x Idv!val!1)
+              (= x Idv!val!2)
+              (= x Idv!val!3)))
+  ;; -----------
+  (define-fun smt__TLA____StrSet () Idv
+    Idv!val!1)
+  (define-fun smt__TLA____Anon__OPAQUE__h86e88 () Idv
+    Idv!val!1)
+  (define-fun smt__STATE__vars__ () Idv
+    Idv!val!2)
+  (define-fun smt__TLA____Anon__OPAQUE__h01ce2 () Idv
+    Idv!val!1)
+  (define-fun smt__VARIABLE__pc__ () Idv
+    Idv!val!0)
+  (define-fun smt__ACTION__a__ () Idv
+    Idv!val!3)
+  (define-fun smt__STATE__Inv3__ () Idv
+    Idv!val!1)
+  (define-fun smt__STATE__TypeOK__ () Idv
+    Idv!val!1)
+  (define-fun smt__TLA____Anon__OPAQUE__h6fbaa () Idv
+    Idv!val!2)
+  (define-fun smt__TLA____Tt__Idv () Idv
+    Idv!val!1)
+  (define-fun smt__TLA____StrLit__Done () Idv
+    Idv!val!0)
+  (define-fun smt__STATE__Inv2__ () Idv
+    Idv!val!1)
+  (define-fun smt__TLA____Anon__OPAQUE__h15bf9 () Idv
+    Idv!val!1)
+  (define-fun SetExt () Bool
+    (forall ((smt__x Idv) (smt__y Idv))
+  (! (=> (forall ((smt__z Idv))
+           (= (smt__TLA____Mem smt__z smt__x) (smt__TLA____Mem smt__z smt__y)))
+         (= smt__x smt__y))
+     :pattern ((smt__TLA____SetExtTrigger smt__x smt__y)))))
+  (define-fun |StrLitIsstr Done| () Bool
+    (smt__TLA____Mem smt__TLA____StrLit__Done smt__TLA____StrSet))
+  (define-fun smt__TLA____Mem ((x!0 Idv) (x!1 Idv)) Bool
+    (let ((a!1 (not (and (= x!0 Idv!val!7)
+                         (not (= x!1 Idv!val!1))
+                         (not (= x!1 Idv!val!5))
+                         (not (= x!1 Idv!val!2))
+                         (not (= x!1 Idv!val!3)))))
+          (a!2 (not (and (= x!0 Idv!val!6)
+                         (= x!1 Idv!val!1)
+                         (not (= x!1 Idv!val!5))
+                         (not (= x!1 Idv!val!2))
+                         (not (= x!1 Idv!val!3)))))
+          (a!3 (not (and (= x!0 Idv!val!5)
+                         (= x!1 Idv!val!1)
+                         (not (= x!1 Idv!val!5))
+                         (not (= x!1 Idv!val!2))
+                         (not (= x!1 Idv!val!3))))))
+      (and a!1 a!2 a!3 (not (and (= x!0 Idv!val!4) (= x!1 Idv!val!3))))))
+  (define-fun smt__TLA____SetExtTrigger ((x!0 Idv) (x!1 Idv)) Bool
+    false)
+)

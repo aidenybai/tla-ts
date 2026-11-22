@@ -288,7 +288,7 @@ export class AssertedFormulas {
     this.names.release();
     this.formulas.reset();
     this.macros.release();
-    this.bvSharing.reset();
+    this.bvSharing.resetConfig();
     this.rewriter.reset();
     this.substitution.cleanup();
   }
@@ -537,22 +537,23 @@ export class AssertedFormulas {
   private simplifyFormulas(simplify: (formula: number) => number) {
     const manager = this.manager;
     const formulas = new RefVector(manager);
-    for (let index = this.qhead; index < this.formulas.size; index++) {
-      const formula = this.formulas.items[index];
-      const result = simplify(formula);
-      if (result === formula) formulas.push(formula);
-      else {
-        this.pushAssertion(result, formulas);
-        this.isReducePending = true;
+    try {
+      for (let index = this.qhead; index < this.formulas.size; index++) {
+        const formula = this.formulas.items[index];
+        const result = simplify(formula);
+        if (result === formula) formulas.push(formula);
+        else {
+          this.pushAssertion(result, formulas);
+          this.isReducePending = true;
+        }
+        manager.decRef(result);
+        if (this.isCanceled()) return false;
       }
-      manager.decRef(result);
-      if (this.isCanceled()) {
-        formulas.reset();
-        return false;
-      }
+      this.swapFormulas(formulas);
+      return true;
+    } finally {
+      formulas.reset();
     }
-    this.swapFormulas(formulas);
-    return true;
   }
 
   private reduceAsserted() {
@@ -571,10 +572,13 @@ export class AssertedFormulas {
       const formula = this.formulas.items[index];
       manager.incRef(formula);
       const rewritten = this.rewriter.rewrite(formula);
+      if (rewritten !== formula) {
+        this.isReducePending = true;
+        numPropagated++;
+      }
       this.formulas.set(index, rewritten);
       if (manager.isFalse(rewritten)) this.isInconsistent = true;
       substitution.update(rewritten);
-      if (rewritten !== formula) numPropagated++;
       manager.decRef(rewritten);
       manager.decRef(formula);
     };

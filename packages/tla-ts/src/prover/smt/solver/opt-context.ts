@@ -44,6 +44,7 @@ import {
   compileInternalTactic,
   convertModel,
   destroyTactics,
+  getSatParams,
   type TacticEnvironment,
 } from "./tactic";
 
@@ -253,9 +254,11 @@ export class OptContext {
       return L_FALSE;
     }
     this.release();
+    const solver = new OptSolver(this.manager, this.environment);
+    this.optSolver = solver;
     const normalized = this.normalize(hard, options.isEliminatingZeroOne);
     if (normalized.length === 1 && this.manager.isFalse(normalized[0])) return L_FALSE;
-    return this.execute(normalized, options);
+    return this.execute(solver, normalized, options);
   }
 
   private getMaxsatContext(optSolver: OptSolver, options: OptOptions): MaxsatContext {
@@ -323,13 +326,11 @@ export class OptContext {
     return actual !== undefined && actual.equals(expected);
   }
 
-  private execute(hard: readonly number[], options: OptOptions) {
+  private execute(solver: OptSolver, hard: readonly number[], options: OptOptions) {
     const manager = this.manager;
     this.reasonUnknown = "";
     if (hard.some((form) => manager.hasQuantifierFlags[form]))
       throw new SmtUnsupportedError("optimization with quantified constraints");
-    const solver = new OptSolver(manager, this.environment);
-    this.optSolver = solver;
     const optsmt = new Optsmt(
       manager,
       this.environment,
@@ -358,7 +359,9 @@ export class OptContext {
           : this.pin(manager.mkApp(OP_UMINUS, [term], manager.sorts[term])),
       );
     }
-    this.satSolver = this.updateSolver(hard, options) ? new IncSatSolver(manager, new Map()) : null;
+    this.satSolver = this.updateSolver(hard, options)
+      ? new IncSatSolver(manager, getSatParams(this.environment.parameters))
+      : null;
     const checkSolver = this.satSolver ?? solver;
     for (const form of hard) checkSolver.assertExpr(form);
     const checked = checkSolver.check();

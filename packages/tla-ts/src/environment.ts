@@ -1884,16 +1884,19 @@ export const createEnvironment = (
     variables,
     linkOrder.flatMap((linked) => linked.module.variables.map((variable) => variable.name)),
   );
-  const facts = createDefinitionFacts({
-    definitions,
-    theorems,
-    substitutions,
-    constants,
-    bodyValues,
-    variableIndex,
-    builtins,
-    variables,
-  });
+  const facts = createDefinitionFacts(
+    {
+      definitions,
+      theorems,
+      substitutions,
+      constants,
+      bodyValues,
+      variableIndex,
+      builtins,
+      variables,
+    },
+    assumptions.map((assumption) => assumption.expression),
+  );
   const environment: Environment = {
     runtime,
     definitions,

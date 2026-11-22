@@ -372,6 +372,7 @@ class RewriterEngine extends SubstCore {
   }
 
   reset() {
+    this.config.resetConfig();
     this.resetCore();
     shrink(this.bindings, 0);
     shrink(this.shifts, 0);
@@ -405,10 +406,16 @@ class RewriterEngine extends SubstCore {
       }
       this.root = expr;
       this.numQvars = 0;
-      if (!manager.limit.inc()) throw new SmtRewriterCanceledError();
+      if (!manager.limit.inc()) {
+        this.reset();
+        throw new SmtRewriterCanceledError();
+      }
       if (!this.visit(expr, Infinity))
         while (this.numFrames > 0) {
-          if (!manager.limit.inc()) throw new SmtRewriterCanceledError();
+          if (!manager.limit.inc()) {
+            this.reset();
+            throw new SmtRewriterCanceledError();
+          }
           if (this.isCheckingSteps) this.config.checkMaxSteps();
           const frame = this.frames[this.numFrames - 1];
           const curr = frame.curr;
@@ -810,6 +817,8 @@ export class RewriterTpl {
     return new RewriterTpl(this.manager);
   }
 
+  resetConfig() {}
+
   reset() {
     this.engine.reset();
   }
@@ -875,10 +884,16 @@ export class BetaReducer extends SubstCore {
       }
       this.root = expr;
       this.numQvars = 0;
-      if (!manager.limit.inc()) throw new SmtRewriterCanceledError();
+      if (!manager.limit.inc()) {
+        this.reset();
+        throw new SmtRewriterCanceledError();
+      }
       if (!this.visit(expr))
         while (this.numFrames > 0) {
-          if (!manager.limit.inc()) throw new SmtRewriterCanceledError();
+          if (!manager.limit.inc()) {
+            this.reset();
+            throw new SmtRewriterCanceledError();
+          }
           const top = this.numFrames - 1;
           const curr = this.frameExprs[top];
           if (

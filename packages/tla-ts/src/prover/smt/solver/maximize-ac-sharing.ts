@@ -84,7 +84,7 @@ export class MaxBvSharing extends RewriterTpl {
     );
   }
 
-  reset() {
+  resetConfig() {
     this.pairCache.clear();
   }
 
