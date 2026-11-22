@@ -222,7 +222,6 @@ const UNPORTED_PARAMETER_DEFAULTS = new Map([
   ["verbose", "0"],
   ["smt.qi.profile", "false"],
   ["smt.qi.profile_freq", "4294967295"],
-  ["smt.qi.max_instances", "4294967295"],
   ["smt.qi.persist_instances", "false"],
   ["smt.mbqi.trace", "false"],
 ]);

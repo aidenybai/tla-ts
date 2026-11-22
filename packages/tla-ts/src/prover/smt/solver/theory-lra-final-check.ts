@@ -35,7 +35,7 @@ export abstract class TheoryLraFinalCheck extends TheoryLraModel {
       this.setInfeasibilityConflict();
       return FC_CONTINUE;
     }
-    if (status === L_UNDEF) return context.checkCanceled() ? FC_GIVEUP : FC_CONTINUE;
+    if (status === L_UNDEF) return context.checkLimitCanceled() ? FC_GIVEUP : FC_CONTINUE;
     if (!this.isLiaSat() || !this.checkIdivBounds()) return FC_CONTINUE;
     let result = FC_DONE;
     const nlaStatus = this.checkNla(level);
@@ -86,7 +86,7 @@ export abstract class TheoryLraFinalCheck extends TheoryLraModel {
   }
 
   protected checkNla(level: number) {
-    if (this.context.checkCanceled()) return FC_GIVEUP;
+    if (this.context.checkLimitCanceled()) return FC_GIVEUP;
     const nla = this.nla;
     if (nla === undefined || !nla.hasRelevantMonomial()) return FC_DONE;
     const status = nla.check(level);
@@ -190,7 +190,7 @@ export abstract class TheoryLraFinalCheck extends TheoryLraModel {
   }
 
   private isLiaSat() {
-    if (this.context.checkCanceled()) return false;
+    if (this.context.checkLimitCanceled()) return false;
     const move = this.lia.check();
     if (move.kind === "branch") this.mkBound(this.lia.term, move.offset, !move.isUpper);
     else if (move.kind === "cut") {
