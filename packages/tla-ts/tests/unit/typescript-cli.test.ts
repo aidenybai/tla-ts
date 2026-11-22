@@ -173,6 +173,37 @@ describe("the CLI with TypeScript files", () => {
     });
   });
 
+  // An exception that a file the entry loads leaves uncaught, which Node says it threw where the
+  // file's throw statement is, in a CommonJS file, or where its error was made, in an ES module,
+  // with the file's path or URL, its line, and a caret.
+  describe.each([
+    ["main.cjs", "lib.cjs", 'const lib = require("./lib.cjs");\nconsole.log(lib);\n'],
+    ["main.mjs", "lib.mjs", 'import { value } from "./lib.mjs";\nconsole.log(value);\n'],
+  ])("exits with Node's code and stderr where %s loads a file that throws", (entry, lib, main) => {
+    const getLib = (padding: string) =>
+      lib.endsWith(".cjs")
+        ? `const value = 1;\n${padding}if (value === 1) {\n  throw new RangeError("from lib");\n}\nmodule.exports = value;\n`
+        : `export const value = 1;\n${padding}throw new TypeError("from module");\n`;
+    const getRun = (padding: string) => {
+      const directory = copyFixtures("passing");
+      writeFileSync(join(directory, entry), main);
+      writeFileSync(join(directory, lib), getLib(padding));
+      return [getExit(runNode(directory, entry)), getExit(runCli(directory, [entry]))];
+    };
+
+    it("agrees with Node", () => {
+      const [node, cli] = getRun("");
+      expect(node[0]).toBe(1);
+      expect(cli).toEqual(node);
+    });
+
+    it("rejects another result", () => {
+      const [node, cli] = getRun("\n\n");
+      expect(cli).toEqual(node);
+      expect(cli).not.toEqual(getRun("")[1]);
+    });
+  });
+
   describe("checks a model whose top level throws as Node throws", () => {
     const getModel = (statement: string) =>
       `export const twice = (n: 0 | 1) => n * 2;\n${statement}\n`;
