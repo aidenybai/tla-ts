@@ -3969,4 +3969,35 @@ describe("memory_max_size, as Z3 5.3.2 runs out of memory", () => {
       '(error "out of memory")',
     ]);
   });
+
+  it("throws at a memory_max_alloc_count, since V8 can't count Z3's allocations", () => {
+    expect(() => run(["(set-option :memory_max_alloc_count 1)"])).toThrow(
+      new SmtUnsupportedError("the option :memory_max_alloc_count"),
+    );
+  });
+
+  it("throws at a memory_high_watermark, since V8 can't count Z3's allocations", () => {
+    expect(() => run(["(set-option :memory_high_watermark 1)"])).toThrow(
+      new SmtUnsupportedError("the option :memory_high_watermark"),
+    );
+  });
+
+  it("throws at a memory_high_watermark_mb, since V8 can't count Z3's allocations", () => {
+    expect(() => run(["(set-option :memory_high_watermark_mb 1)"])).toThrow(
+      new SmtUnsupportedError("the option :memory_high_watermark_mb"),
+    );
+  });
+
+  it("accepts the allocation counters at 0, where Z3 counts nothing", () => {
+    expect(
+      run([
+        "(set-option :memory_max_alloc_count 0)",
+        "(set-option :memory_high_watermark 0)",
+        "(set-option :memory_high_watermark_mb 0)",
+        "(declare-fun x () Int)",
+        "(assert (> x 0))",
+        "(check-sat)",
+      ]),
+    ).toEqual(["sat"]);
+  });
 });

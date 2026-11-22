@@ -215,6 +215,12 @@ const PARAMETER_DEFAULTS = new Map([
   ["rewriter.hi_div0", "true"],
 ]);
 
+const ALLOCATION_PARAMETERS = new Set([
+  "memory_max_alloc_count",
+  "memory_high_watermark",
+  "memory_high_watermark_mb",
+]);
+
 const BUILTIN_OPTIONS = new Set([
   ":print-success",
   ":print-warning",
@@ -2291,7 +2297,10 @@ export const runSmtlibScript = (
                 ? BigInt(value.text.replace("#", "0")).toString()
                 : value.text;
           const name = getParameterName(keyword);
-          settings.parameters.set(name, getParameterValue(name, text, value));
+          const parameterValue = getParameterValue(name, text, value);
+          if (ALLOCATION_PARAMETERS.has(name) && Number(parameterValue) !== 0)
+            throw new SmtUnsupportedError(`the option :${name}`);
+          settings.parameters.set(name, parameterValue);
           if (optionName === ":smt.mbqi.max_iterations") settings.mbqiMaxIterations = Number(text);
           if (optionName === ":rlimit") settings.rlimit = Number(text);
           if (name === "memory_max_size") state.manager.limit.maxHeapSize = getMaxHeapSize();
