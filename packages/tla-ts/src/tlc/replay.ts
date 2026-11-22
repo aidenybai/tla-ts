@@ -14,8 +14,9 @@ import {
   exitFrames,
   getCoverageNode,
   getEnteredFrames,
+  hideFrames,
+  restoreFrames,
   runAtCoverageNode,
-  runAtFrameDepth,
   runReportedInto,
   type Coverage,
 } from "../coverage";
@@ -405,9 +406,12 @@ const proceedItems = (
   }
   const coverage = replay.coverage;
   if (coverage && coverage.frames.length > items.frameDepth) {
-    return runAtFrameDepth(coverage, items.frameDepth, () =>
-      proceedItems(replay, items, partial, node),
-    );
+    const hidden = hideFrames(coverage, items.frameDepth);
+    try {
+      return proceedItems(replay, items, partial, node);
+    } finally {
+      restoreFrames(coverage, hidden);
+    }
   }
   if (isComplete(partial) && isAssignedShortcut(replay)) {
     return proceedAssigned(replay, items, partial, node);
@@ -478,9 +482,12 @@ const proceedAssigned = (
   const coverage = replay.coverage;
   for (let item = items; item !== undefined; item = item.rest) {
     if (coverage && coverage.frames.length > item.frameDepth) {
-      return runAtFrameDepth(coverage, item.frameDepth, () =>
-        proceedAssigned(replay, item, partial, node),
-      );
+      const hidden = hideFrames(coverage, item.frameDepth);
+      try {
+        return proceedAssigned(replay, item, partial, node);
+      } finally {
+        restoreFrames(coverage, hidden);
+      }
     }
     if (item.kind === "Unchanged") {
       return visitUnchanged(replay, item.expression, item.rest, item.scope, partial, item.node);

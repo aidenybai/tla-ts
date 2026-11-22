@@ -69,6 +69,7 @@ export interface Coverage {
   relations: CoverageRelation[];
   substitutionNodes: Map<number, Map<Substitution, number>>;
   frames: CoverageFrame[];
+  hiddenFrames: CoverageFrame[];
   nextState: NextStateMode;
   isMember: typeof isElementOf;
 }
@@ -172,6 +173,7 @@ export const createCoverage = (variableCount: number): Coverage => {
     relations: [],
     substitutionNodes: new Map(),
     frames: [],
+    hiddenFrames: [],
     nextState: "given",
     isMember: isElementOf,
   };
@@ -867,13 +869,21 @@ export const runInCoverageFrames = <Result>(
   }
 };
 
-export const runAtFrameDepth = <Result>(coverage: Coverage, depth: number, run: () => Result) => {
-  const hidden = coverage.frames.splice(depth);
-  try {
-    return run();
-  } finally {
-    coverage.frames.push(...hidden);
+export const hideFrames = (coverage: Coverage, depth: number) => {
+  const frames = coverage.frames;
+  const hidden = frames.length - depth;
+  for (let index = depth; index < frames.length; index++) coverage.hiddenFrames.push(frames[index]);
+  frames.length = depth;
+  return hidden;
+};
+
+export const restoreFrames = (coverage: Coverage, hidden: number) => {
+  const hiddenFrames = coverage.hiddenFrames;
+  const start = hiddenFrames.length - hidden;
+  for (let index = start; index < hiddenFrames.length; index++) {
+    coverage.frames.push(hiddenFrames[index]);
   }
+  hiddenFrames.length = start;
 };
 
 export const getSubstitutionNode = (
