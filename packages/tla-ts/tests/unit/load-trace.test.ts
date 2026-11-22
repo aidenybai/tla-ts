@@ -24,6 +24,7 @@ const loadTrace = (
   config: string,
   trace: Uint8Array | undefined,
   module: TraceModule = "_TLCTrace",
+  onRead = () => {},
 ) => {
   const constants = { [`${module}InputFile`]: TRACE_PATH };
   return check({
@@ -34,7 +35,10 @@ const loadTrace = (
       { kind: "constraint", module, operator: `${module}Constraint`, constants },
       { kind: "view", module, operator: `${module}View`, constants },
     ],
-    readFile: (path) => (path === TRACE_PATH ? trace : undefined),
+    readFile: (path) => {
+      onRead();
+      return path === TRACE_PATH ? trace : undefined;
+    },
   });
 };
 
@@ -346,13 +350,18 @@ describe("-loadTrace tlc matches TLC", () => {
   it.each([
     [5000, "as TLC does"],
     [10000, "where TLC overflows its stack"],
-  ])("loads a trace that nests %i tuples, %s", async (depth) => {
-    const result = await loadTrace(SINGLE_STATE_SOURCE, SINGLE_STATE_CONFIG, getNestedTrace(depth));
-    expect(getOutcome(result)).toEqual({
-      status: "success",
-      violation: undefined,
-      generated: 2,
-      distinct: 1,
+  ])("loads a trace that nests %i tuples once, %s", async (depth) => {
+    let reads = 0;
+    const result = await loadTrace(
+      SINGLE_STATE_SOURCE,
+      SINGLE_STATE_CONFIG,
+      getNestedTrace(depth),
+      "_TLCTrace",
+      () => reads++,
+    );
+    expect({ outcome: getOutcome(result), reads }).toEqual({
+      outcome: { status: "success", violation: undefined, generated: 2, distinct: 1 },
+      reads: 1,
     });
   });
 });

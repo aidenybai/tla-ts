@@ -1245,14 +1245,21 @@ export const getWrittenElements = (set: SetValue | MixedSetValue) =>
 
 export const markNormalized = (value: Value): void => {
   if (typeof value !== "object") return;
-  if (value.kind === "Set") {
-    value.isNormalized = true;
-    value.elements.forEach(markNormalized);
-  }
-  if (value.kind === "Function") {
-    value.writtenKeys = undefined;
-    value.domain.forEach(markNormalized);
-    value.range.forEach(markNormalized);
+  const pending: Value[] = [value];
+  for (let inner = pending.pop(); inner !== undefined; inner = pending.pop()) {
+    if (typeof inner !== "object") continue;
+    if (inner.kind === "Set") {
+      inner.isNormalized = true;
+      for (let index = 0; index < inner.elements.length; index++) {
+        pending.push(inner.elements[index]);
+      }
+    }
+    if (inner.kind === "Function") {
+      inner.writtenKeys = undefined;
+      for (let index = 0; index < inner.domain.length; index++) {
+        pending.push(inner.domain[index], inner.range[index]);
+      }
+    }
   }
 };
 
