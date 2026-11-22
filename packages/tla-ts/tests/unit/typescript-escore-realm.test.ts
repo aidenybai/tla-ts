@@ -367,10 +367,11 @@ describe("reads each body of the recorded graph as the live runtime parsed it", 
         const live = getModules(liveRuntime);
         const read = getModules(readRuntime);
         // A view that the recorded tables give is the one the live runtime's text gives.
-        const getViewShape = (runtime) => {
-          const view = runtime.getView("ToString(x) Completed(x) HeapGet(h, i)", []);
-          return [view.text, view.tokens.map((token) => [token.kind, token.text, token.line, token.column]), view.texts];
-        };
+        const getViewShape = (runtime) =>
+          ["ToString(x) Completed(x) HeapGet(h, i)", [...runtime.names].join("\\n")].map((text) => {
+            const view = runtime.getView(text, []);
+            return [view.text, view.tokens, view.texts];
+          });
         const pairs = live.flatMap((module, index) =>
           module.definitions.map((definition, position) => [definition, read[index].definitions[position]]));
         parentPort.postMessage({

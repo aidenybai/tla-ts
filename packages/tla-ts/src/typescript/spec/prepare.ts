@@ -395,7 +395,8 @@ const readPreparedModules = (
   let position = 0;
   return graph.modules.map((prepared, index) => ({
     ...prepared,
-    tokens: tokenize(prepared.text),
+    // A module whose views the graph records lexes each unit a view keeps, as the view keeps it.
+    tokens: prepared.viewTables === undefined ? tokenize(prepared.text) : [],
     values: new Map(entries[index].map((entry) => [entry[0], values[position++]])),
   }));
 };

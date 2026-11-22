@@ -1,5 +1,5 @@
 import type { Definition, Expression, Module, ModuleUnit, SourceLocation } from "./ast";
-import type { Token } from "./lexer";
+import { tokenize, type Token } from "./lexer";
 import { parseModule } from "./parser";
 import { getParsedTexts, type ModuleTexts, type PreparedModule } from "./tlc/order";
 
@@ -20,6 +20,23 @@ const withBody = (definition: Definition, body: Expression): Definition =>
       ),
     ),
   ) as Definition;
+
+// The tokens of a unit's lines that start at a line of a module, as lexing the module gives them:
+// the lines lexed within a module of their own, each token on the module's line. The unit that
+// closes the module holds the module's end; any other is closed after its last line.
+const lexUnit = (lines: string[], start: number): Token[] => {
+  const isClosing = lines.some((line) => line.startsWith("===="));
+  const header = start === 0 ? [] : [UNIT_HEADER];
+  const tokens = tokenize([...header, ...lines, ...(isClosing ? [] : ["===="])].join("\n"));
+  const own = isClosing ? tokens : tokens.slice(0, -2);
+  return start === 0
+    ? own
+    : own
+        .filter((token) => token.line > 1)
+        .map((token) => ({ ...token, line: token.line + start - 1 }));
+};
+
+const UNIT_HEADER = "---- MODULE Unit ----";
 
 // Characters and operators whose presence in a definition changes how TLC fingerprints strings.
 const WIDE_TOKEN = /[\u0100-\uffff]|^(?:nd)?JsonDeserialize$/;
@@ -229,17 +246,21 @@ const readModule = (prepared: PreparedModule) => {
   };
   const values = prepared.values ?? new Map();
   const viewValues = new Map([...values].map((entry) => [getStandIn(entry[0]), entry[1]]));
-  // The tokens of each unit, which a view keeps, but for those of a definition it stands in.
+  // The tokens of each unit, which a view keeps, but for those of a definition it stands in: the
+  // module's own where it was lexed, and otherwise the unit's text lexed as the first a view keeps
+  // it, which starts at a line where no comment or string is open.
   const unitTokenStarts = tables.unitTokenStarts;
   const moduleLines = prepared.text.split("\n");
   const unitLines = Array.from(tables.unitStarts, (start, unit) =>
     moduleLines.slice(start, tables.unitStarts[unit + 1]),
   );
-  const unitTokens = unitLines.map((_lines, unit) =>
+  const unitTokens: (Token[] | undefined)[] = Array.from({ length: unitLines.length });
+  const getUnitTokens = (unit: number) =>
     isStoodIn[unit] === 1
       ? []
-      : prepared.tokens.slice(unitTokenStarts[unit], unitTokenStarts[unit + 1]),
-  );
+      : prepared.tokens.length > 0
+        ? prepared.tokens.slice(unitTokenStarts[unit], unitTokenStarts[unit + 1])
+        : (unitTokens[unit] ??= lexUnit(unitLines[unit], tables.unitStarts[unit]));
   return {
     nameIds: tables.nameIds,
     nameUnits: tables.nameUnits,
@@ -250,7 +271,7 @@ const readModule = (prepared: PreparedModule) => {
     unitTexts: unitLines.map((lines) => lines.join("\n")),
     unitBlanks: unitLines.map((lines) => "\n".repeat(lines.length - 1)),
     unitTextsInOrder,
-    unitTokens,
+    getUnitTokens,
     module,
     values: viewValues,
     facts: prepared.facts,
@@ -293,7 +314,7 @@ export const createModuleView = (prepared: PreparedModule) => {
     const tokens: Token[] = [];
     keptUnits.forEach((isUnitKept, unit) => {
       if (isUnitKept === 0) return;
-      for (const token of tables.unitTokens[unit]) tokens.push(token);
+      for (const token of tables.getUnitTokens(unit)) tokens.push(token);
     });
     return {
       name: tables.name,
