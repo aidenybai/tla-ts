@@ -12,6 +12,7 @@ import { getPlainValues, getRankedStrings, readPlainValues, type Value } from ".
 import { getPreparedFacts } from "../../dependencies";
 import { decodeGraph, encodeGraph, type EncodedGraph } from "../../graph-codec";
 import { createModuleView } from "../../module-view";
+import { getLetInstanceExpansion } from "../../instances";
 import {
   assembleRuntime,
   createLibrary,
@@ -272,7 +273,11 @@ const prepareModules = (
           valued.module.definitions.map((definition) => definition.name).join(" "),
         ).module.definitions
       : valued.module.definitions;
-    return { ...valued, facts: getFacts(definitions) };
+    return {
+      ...valued,
+      facts: getFacts(definitions),
+      hasLetInstances: getLetInstanceExpansion(valued.module, () => []) !== undefined,
+    };
   });
 };
 
@@ -296,9 +301,13 @@ const encodePreparedModules = (modules: readonly PreparedModule[]) => {
       texts: prepared.texts,
       values: new Map(entries[index].map((entry) => [entry[0], plain[position++]])),
       facts: prepared.facts,
+      hasLetInstances: prepared.hasLetInstances,
     })),
   };
-  return encodeGraph(graph);
+  // Each module definition's body is a segment of its own, which a check decodes as it first reads
+  // it.
+  const definitions = new Set<object>(modules.flatMap((prepared) => prepared.module.definitions));
+  return encodeGraph(graph, (holder, key) => key === "body" && definitions.has(holder));
 };
 
 // The graphs of the runtime of ESCore's texts for a realm and of the modules a model's spec extends

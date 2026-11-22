@@ -81,6 +81,8 @@ export interface PreparedModule {
   values?: ReadonlyMap<Definition, Value>;
   /** @internal */
   facts?: ReadonlyMap<string, PreparedFacts>;
+  /** @internal Whether a LET of the module instantiates a module, as the build found. */
+  hasLetInstances?: boolean;
 }
 
 interface ModuleUnit {

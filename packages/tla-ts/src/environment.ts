@@ -1559,13 +1559,20 @@ export const createEnvironment = (
       const boundLocation = boundLocations.get(name);
       return bound.has(name) || (boundLocation !== undefined && isBefore(boundLocation, location));
     };
+    // A prepared module that the build found no LET instance in needs no walk of its bodies.
+    const isPreparedWithoutLetInstances =
+      parsed === unlinked &&
+      acceptedModules.has(unlinked) &&
+      order.getPreparedModule(parsed.name)?.hasLetInstances === false;
     const subexpressions = createModuleSubexpressions(
       parsed,
-      getLetInstanceExpansion(parsed, (instance, lets) =>
-        instantiateLocally(instance, lets, parsed.name, getLetModule(instance), (name) =>
-          isBoundBefore(name, instance.location),
-        ),
-      ),
+      isPreparedWithoutLetInstances
+        ? undefined
+        : getLetInstanceExpansion(parsed, (instance, lets) =>
+            instantiateLocally(instance, lets, parsed.name, getLetModule(instance), (name) =>
+              isBoundBefore(name, instance.location),
+            ),
+          ),
       (name) => {
         const symbol = visible.get(name);
         const definition =
@@ -1801,7 +1808,12 @@ export const createEnvironment = (
       const levels = definitionLevels?.get(definition);
       if (levels) preparedLevels.set(key, levels);
       parameterized.set(key, !isParameterFree);
-      if (definition.kind === "Operator" && isUnresolved(definition.body)) {
+      // SANY's checks resolved every body of a module they accepted.
+      if (
+        definition.kind === "Operator" &&
+        accepted === undefined &&
+        isUnresolved(definition.body)
+      ) {
         unresolvedBodyKeys.add(key);
       }
     });

@@ -1,4 +1,4 @@
-import type { Definition, Module, ModuleUnit, SourceLocation } from "./ast";
+import type { Definition, Expression, Module, ModuleUnit, SourceLocation } from "./ast";
 import type { Token } from "./lexer";
 import { parseModule } from "./parser";
 import { getParsedTexts, type PreparedModule } from "./tlc/order";
@@ -8,6 +8,18 @@ import { getParsedTexts, type PreparedModule } from "./tlc/order";
 const STAND_IN_BODY = parseModule(
   "---- MODULE StandIn ----\nStandIn == CHOOSE value \\in {} : TRUE\n====",
 ).definitions[0].body;
+
+// A copy of a definition with another body, which reads no other property's value, so a body that
+// a prepared graph decodes as it's first read stays unread.
+const withBody = (definition: Definition, body: Expression): Definition =>
+  Object.defineProperties(
+    { body },
+    Object.fromEntries(
+      Object.entries(Object.getOwnPropertyDescriptors(definition)).filter(
+        (entry) => entry[0] !== "body",
+      ),
+    ),
+  ) as Definition;
 
 // Characters and operators whose presence in a definition changes how TLC fingerprints strings.
 const WIDE_TOKEN = /[\u0100-\uffff]|^(?:nd)?JsonDeserialize$/;
@@ -160,7 +172,7 @@ const readModule = (prepared: PreparedModule) => {
   const standIns = new Map<Definition, Definition>(
     prepared.module.definitions.flatMap((definition) =>
       definition.kind === "Operator" && isStoodIn[lineUnits[definition.location.line - 1]]
-        ? [[definition, { ...definition, body: STAND_IN_BODY }]]
+        ? [[definition, withBody(definition, STAND_IN_BODY)]]
         : [],
     ),
   );
@@ -207,6 +219,7 @@ const readModule = (prepared: PreparedModule) => {
     hasValues,
     name,
     levels,
+    hasLetInstances: prepared.hasLetInstances,
   };
 };
 
@@ -265,6 +278,7 @@ export const createModuleView = (prepared: PreparedModule) => {
       ),
       values: tables.values,
       facts: tables.facts,
+      hasLetInstances: tables.hasLetInstances,
     };
   };
 };

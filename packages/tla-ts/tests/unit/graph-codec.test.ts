@@ -42,6 +42,25 @@ describe("graphs", () => {
     expect(decodeGraph(JSON.parse(JSON.stringify(encodeGraph(graph))))).toStrictEqual(graph);
   });
 
+  it("read back a deferred value as its property is first read, sharing what the rest holds", () => {
+    const shared = { line: 1 };
+    const inner = { shared, list: [shared] };
+    const first = { name: "a", body: { inner, own: [inner] } };
+    const second = { name: "b", body: { shared, nested: { name: "c", body: [shared] } } };
+    const graph = { first, second, kept: shared };
+    const isDeferred = (_holder: object, key: string) => key === "body";
+    const encoded = JSON.parse(JSON.stringify(encodeGraph(graph, isDeferred)));
+    expect(encoded.tables[3]).toHaveLength(3);
+    const decoded = decodeGraph(encoded) as typeof graph;
+    expect(decoded).toStrictEqual(graph);
+    expect(decoded.first.body.inner.shared).toBe(decoded.kept);
+    expect(decoded.first.body.own[0]).toBe(decoded.first.body.inner);
+    expect(decoded.second.body.nested.body[0]).toBe(decoded.kept);
+    expect(decoded.first.body).toBe(decoded.first.body);
+    decoded.second.body = { shared, nested: { name: "d", body: [] } };
+    expect(decoded.second.body.nested.name).toBe("d");
+  });
+
   it("reject what JSON can't hold", () => {
     expect(() => encodeGraph({ value: Number.NaN })).toThrow(TypeError);
     expect(() => encodeGraph({ value: new Date(0) })).toThrow(TypeError);

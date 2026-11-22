@@ -847,12 +847,22 @@ const collectVaryingBodies = (
         return getChildren(node).forEach((child) => visit(child, scope, isEffectful));
     }
   };
+  // A definition that reaches no effect makes no body vary but one that reaches a parameter, which
+  // varies only where an effectful value exists, so its body is walked only then.
+  const visitBody = (definition: Definition, isEffectful: boolean) => {
+    if (!environment.bodyValues.has(definition.body)) {
+      visitDefinition(definition, new Map(), isEffectful);
+    }
+  };
   definitions.forEach((definition, id) => {
-    if (environment.bodyValues.has(definition.body)) return;
-    visitDefinition(definition, new Map(), isEffectfulDefinition(id));
+    if (isEffectfulDefinition(id)) visitBody(definition, true);
   });
   assumptions.forEach((assumption) => visit(assumption, new Map(), hasEffect([assumption])));
-  if (hasEffectfulValue) parameterBodies.forEach((body) => varyingBodies.add(body));
+  if (!hasEffectfulValue) return varyingBodies;
+  definitions.forEach((definition, id) => {
+    if (!isEffectfulDefinition(id)) visitBody(definition, false);
+  });
+  parameterBodies.forEach((body) => varyingBodies.add(body));
   return varyingBodies;
 };
 
