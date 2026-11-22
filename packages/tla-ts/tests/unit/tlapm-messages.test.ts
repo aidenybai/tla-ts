@@ -1,4 +1,3 @@
-import { spawnSync } from "node:child_process";
 import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -7,7 +6,7 @@ import { decideIsabelle } from "../../src/prover/isabelle/decide";
 import { parseTheory } from "../../src/prover/isabelle/isar/theory";
 import { runTheory } from "../../src/prover/isabelle/isar/toplevel";
 import { loadLogic } from "../../src/prover/isabelle/tla/logic";
-import { DIST_CLI } from "./cli-harness";
+import { runTlapmIn } from "./cli-harness";
 
 const directories: string[] = [];
 
@@ -21,13 +20,6 @@ const writeModule = (name: string, source: string) => {
   writeFileSync(join(directory, `${name}.tla`), source);
   return directory;
 };
-
-const runTlapm = (directory: string, args: string[], env: Record<string, string> = {}) =>
-  spawnSync(process.execPath, [DIST_CLI, "tlapm", ...args], {
-    cwd: directory,
-    encoding: "utf8",
-    env: { ...process.env, ...env },
-  });
 
 const TLAPM_USAGE = [
   "Usage: tla-ts tlapm <options> FILE ...",
@@ -126,7 +118,7 @@ describe("tlapm rejects an argument as OCaml's Arg does", () => {
       "wrong argument 'x'; option '--threads' expects an integer",
     ],
   ])("%j", (args, message) => {
-    const result = runTlapm(directory, args);
+    const result = runTlapmIn(directory, args);
     expect(result.stderr).toBe(`tla-ts tlapm: ${message}.\n${TLAPM_USAGE}`);
     expect(result.stdout).toBe("");
     expect(result.status).toBe(2);
@@ -140,11 +132,11 @@ describe("tlapm rejects an argument as OCaml's Arg does", () => {
     ["--line", "-4611686018427387904"],
     ["--line", "0x7fffffffffffffff"],
   ])("accepts %s %s", (option, value) => {
-    expect(runTlapm(directory, [option, value, "-N", "Empty.tla"]).status).toBe(0);
+    expect(runTlapmIn(directory, [option, value, "-N", "Empty.tla"]).status).toBe(0);
   });
 
   it("stops reading the arguments at --version", () => {
-    const result = runTlapm(directory, ["--version", "--bogus"]);
+    const result = runTlapmIn(directory, ["--version", "--bogus"]);
     expect(result.stdout).toBe("b91fb6c\n");
     expect(result.status).toBe(0);
   });
@@ -161,7 +153,7 @@ THEOREM ASSUME NEW P, NEW Q, NEW R, (P /\\ Q) /\\ R PROVE (R /\\ Q) /\\ P
 ====
 `,
     );
-    runTlapm(directory, ["--toolbox", "0", "0", "--threads", "1", "Flatten.tla"], env);
+    runTlapmIn(directory, ["--toolbox", "0", "0", "--threads", "1", "Flatten.tla"], env);
     return readFileSync(join(directory, ".tlacache/Flatten.tlaps/Flatten.thy"), "utf8")
       .split("\n")
       .filter((line) => line.startsWith("assumes ")).length;
@@ -189,7 +181,7 @@ const getParseError = (body: string) => {
     "Bad",
     `---- MODULE Bad ----\nEXTENDS Naturals\nVARIABLE x\n${body}\n====\n`,
   );
-  const result = runTlapm(directory, ["-N", "Bad.tla"]);
+  const result = runTlapmIn(directory, ["-N", "Bad.tla"]);
   expect(result.status).toBe(3);
   expect(result.stderr.endsWith(PARSE_FAILURE)).toBe(true);
   return result.stderr.slice(0, -PARSE_FAILURE.length);
@@ -220,7 +212,14 @@ THEOREM A /\\ B = B BY DEF A, B
 ====
 `,
     );
-    const result = runTlapm(directory, ["-N", "--toolbox", "0", "0", "--printallobs", "Infix.tla"]);
+    const result = runTlapmIn(directory, [
+      "-N",
+      "--toolbox",
+      "0",
+      "0",
+      "--printallobs",
+      "Infix.tla",
+    ]);
     expect(result.status).toBe(0);
     expect(result.stderr).toContain(
       [
@@ -285,7 +284,7 @@ describe("tlapm ends the messages p_parser.ml ends with a newline", () => {
       "Steps",
       `---- MODULE Steps ----\nTHEOREM TRUE\n${proof}\n====\n`,
     );
-    const result = runTlapm(directory, ["-N", "--toolbox", "0", "0", "Steps.tla"]);
+    const result = runTlapmIn(directory, ["-N", "--toolbox", "0", "0", "Steps.tla"]);
     expect(result.status).toBe(3);
     return result.stderr;
   };
@@ -361,7 +360,7 @@ THEOREM 4611686018427387904 # 4611686018427387905
     ["with arithmetic", []],
     ["without arithmetic", ["--debug", "disable_arithmetic"]],
   ])("is proved %s", (_name, args) => {
-    const result = runTlapm(directory, ["--threads", "1", "--nofp", ...args, "Literal.tla"]);
+    const result = runTlapmIn(directory, ["--threads", "1", "--nofp", ...args, "Literal.tla"]);
     expect(result.stderr).toBe(
       'File "./Literal.tla", line 1, character 1 to line 5, character 4:\n[INFO]: All 2 obligations proved.\n',
     );
@@ -383,7 +382,7 @@ THEOREM ASSUME FALSE PROVE 1 + 1 = 2
 ====
 `,
     );
-    const result = runTlapm(directory, ["--toolbox", "0", "0", "--threads", "1", "Trivial.tla"]);
+    const result = runTlapmIn(directory, ["--toolbox", "0", "0", "--threads", "1", "Trivial.tla"]);
     const results = result.stderr.slice(result.stderr.indexOf("@!!type:obligationsnumber"));
     expect(
       results.split("\n").filter((line) => /^(@!!(id|status|prover|already):|\[)/.test(line)),

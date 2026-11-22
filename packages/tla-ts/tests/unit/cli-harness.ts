@@ -21,6 +21,13 @@ export const runCliWith = (directory: string, args: string[], input?: string) =>
     input,
   });
 
+export const runTlapmIn = (directory: string, args: string[], env: Record<string, string> = {}) =>
+  spawnSync(process.execPath, [DIST_CLI, "tlapm", ...args], {
+    cwd: directory,
+    encoding: "utf8",
+    env: { ...process.env, ...env },
+  });
+
 export const getToolSequence = (output: string) =>
   output
     .split("\n")

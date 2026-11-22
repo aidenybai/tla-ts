@@ -1,10 +1,9 @@
-import { spawnSync } from "node:child_process";
 import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterAll, describe, expect, it } from "vite-plus/test";
 import { parseOcamlFloat } from "../../src/prover/prep/methods";
-import { DIST_CLI } from "./cli-harness";
+import { runTlapmIn } from "./cli-harness";
 
 const directories: string[] = [];
 
@@ -18,9 +17,6 @@ const writeModule = (name: string, source: string) => {
   writeFileSync(join(directory, `${name}.tla`), source);
   return directory;
 };
-
-const runTlapm = (directory: string, args: string[]) =>
-  spawnSync(process.execPath, [DIST_CLI, "tlapm", ...args], { cwd: directory, encoding: "utf8" });
 
 const PRINT_OBLIGATIONS = ["-N", "--toolbox", "0", "0", "--printallobs"];
 const PROVE = ["--toolbox", "0", "0", "--threads", "1"];
@@ -61,7 +57,7 @@ THEOREM A /\\ B /\\ C /\\ D /\\ E BY DEF A, B, C, D, E
 ====
 `,
     );
-    const result = runTlapm(directory, [...PRINT_OBLIGATIONS, "Nonfix.tla"]);
+    const result = runTlapmIn(directory, [...PRINT_OBLIGATIONS, "Nonfix.tla"]);
     expect(result.stderr).toBe(`@!!BEGIN
 @!!type:obligation
 @!!id:1
@@ -96,7 +92,7 @@ A == x '(x)
 ====
 `,
     );
-    const result = runTlapm(directory, [...PRINT_OBLIGATIONS, "Juxtaposed.tla"]);
+    const result = runTlapmIn(directory, [...PRINT_OBLIGATIONS, "Juxtaposed.tla"]);
     expect(result.stderr).toBe(`File "./Juxtaposed.tla", line 3, character 7
 Unexpected operator '
 @!!BEGIN
@@ -157,7 +153,7 @@ describe("tlapm reads a float as OCaml's float_of_string does", () => {
   it("rejects an empty --stretch and one Arg.Float rejects", () => {
     const directory = writeModule("Empty", "---- MODULE Empty ----\n====\n");
     ["", "0b11"].forEach((stretch) => {
-      const result = runTlapm(directory, ["--stretch", stretch, "-N", "Empty.tla"]);
+      const result = runTlapmIn(directory, ["--stretch", stretch, "-N", "Empty.tla"]);
       expect(result.stderr).toMatch(
         new RegExp(
           `^tla-ts tlapm: wrong argument '${stretch}'; option '--stretch' expects a float\\.\nUsage: `,
@@ -169,7 +165,7 @@ describe("tlapm reads a float as OCaml's float_of_string does", () => {
 
   it("accepts a --stretch with underscores", () => {
     const directory = writeModule("Empty", "---- MODULE Empty ----\n====\n");
-    expect(runTlapm(directory, ["--stretch", "1_0", "-N", "Empty.tla"]).status).toBe(0);
+    expect(runTlapmIn(directory, ["--stretch", "1_0", "-N", "Empty.tla"]).status).toBe(0);
   });
 });
 
@@ -179,7 +175,7 @@ describe("tlapm computes a method from a pragma", () => {
       "Cooper",
       getMethodModule("Cooper", 'prover:"cooper"; timeout:5'),
     );
-    expect(getResultLines(runTlapm(directory, [...PROVE, "Cooper.tla"]).stderr)).toEqual([
+    expect(getResultLines(runTlapmIn(directory, [...PROVE, "Cooper.tla"]).stderr)).toEqual([
       "@!!status:to be proved",
       "@!!status:to be proved",
       "@!!status:failed",
@@ -199,7 +195,7 @@ describe("tlapm computes a method from a pragma", () => {
       "Budget",
       getMethodModule("Budget", 'prover:"smt"; timeout:"r1_0"'),
     );
-    expect(getResultLines(runTlapm(directory, [...PROVE, "Budget.tla"]).stderr)).toEqual([
+    expect(getResultLines(runTlapmIn(directory, [...PROVE, "Budget.tla"]).stderr)).toEqual([
       "@!!status:to be proved",
       "@!!status:to be proved",
       "@!!status:proved",
@@ -218,7 +214,7 @@ describe("tlapm computes a method from a pragma", () => {
       "BinaryBudget",
       getMethodModule("BinaryBudget", 'prover:"smt"; timeout:"r0b11"'),
     );
-    expect(getResultLines(runTlapm(directory, [...PROVE, "BinaryBudget.tla"]).stderr)).toEqual([
+    expect(getResultLines(runTlapmIn(directory, [...PROVE, "BinaryBudget.tla"]).stderr)).toEqual([
       "@!!status:to be proved",
       "@!!status:to be proved",
       'Invalid SMT budget "r0b11": expected a number of seconds (wall-clock timeout), or a deterministic Z3 rlimit budget of the form "rN" (e.g. "r5").',
@@ -247,9 +243,9 @@ THEOREM ENABLED A => 1 + 1 = 2
 ====
 `;
     const directory = writeModule("Stored", source);
-    runTlapm(directory, [...PROVE, "Stored.tla"]);
+    runTlapmIn(directory, [...PROVE, "Stored.tla"]);
     writeFileSync(join(directory, "Stored.tla"), source.replace("A == x = 1", "A == x' = 1"));
-    const result = runTlapm(directory, [...PROVE, "Stored.tla"]);
+    const result = runTlapmIn(directory, [...PROVE, "Stored.tla"]);
     expect(getResultLines(result.stderr)).toEqual([
       "@!!status:to be proved",
       "@!!status:to be proved",
@@ -293,7 +289,7 @@ THEOREM ASSUME NEW P, NEW Q, NEW R, (P /\\ Q) /\\ R PROVE (R /\\ Q) /\\ P
 ====
 `,
     );
-    runTlapm(directory, [...PROVE, "--noflatten", "Unflattened.tla"]);
+    runTlapmIn(directory, [...PROVE, "--noflatten", "Unflattened.tla"]);
     expect(
       readFileSync(join(directory, ".tlacache/Unflattened.tlaps/Unflattened.thy"), "utf8")
         .split("\n")
