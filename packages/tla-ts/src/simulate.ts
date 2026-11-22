@@ -423,7 +423,14 @@ export const simulate = (options: SimulationOptions & CliSettings): number => {
         addGenerated([...partial]),
       );
     } else if (init) {
-      forEachInitialState(init, environment, addGenerated, search.spec.scope, addGenerated);
+      forEachInitialState(
+        init,
+        environment,
+        addGenerated,
+        search.spec.scope,
+        search.spec.initPredicates,
+        addGenerated,
+      );
     }
   } catch (error) {
     return reportInitialException(error, undefined);

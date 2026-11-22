@@ -1,6 +1,7 @@
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { describe, expect, it } from "vite-plus/test";
+import { SmtUnsupportedError } from "../../src/errors";
 import { runSmtlibScript } from "../../src/prover/smt/solver/smtlib-script";
 
 const run = (lines: string[], timeLimitMs = 5000) => {
@@ -1251,6 +1252,69 @@ describe("runSmtlibScript runs its commands as Z3 does", () => {
         "(get-info :rlimit)",
       ]),
     ).toEqual(["unknown", "sat", "(:rlimit 2047)"]);
+  });
+
+  it("goes on from the cache that the limit leaves in ctx-simplify at the next check", () => {
+    expect(
+      run([
+        "(declare-fun c () Bool)",
+        "(declare-fun u () Int)",
+        "(declare-fun v () Int)",
+        "(assert (> (ite c u v) 5))",
+        "(assert (< (ite c u v) 100))",
+        "(set-option :rlimit 30)",
+        "(check-sat)",
+        "(set-option :rlimit 0)",
+        "(check-sat)",
+        "(get-info :rlimit)",
+      ]),
+    ).toEqual(["unknown", "sat", "(:rlimit 364)"]);
+  });
+
+  // Deviation from Z3: it answers sat at the second check, and its model fails model_validate.
+  it("drops the facts that the limit leaves in ctx-simplify at the next check", () => {
+    expect(
+      run([
+        "(declare-fun c () Bool)",
+        "(declare-fun u () Int)",
+        "(declare-fun v () Int)",
+        "(assert (> (ite c u v) 5))",
+        "(assert (< (ite c u v) 3))",
+        "(set-option :rlimit 40)",
+        "(check-sat)",
+        "(set-option :rlimit 0)",
+        "(check-sat)",
+        "(get-info :rlimit)",
+      ]),
+    ).toEqual(["unknown", "unsat", "(:rlimit 258)"]);
+  });
+
+  // Deviation from Z3: it answers unsat at the second check, though a = b = false, z = -1, x = 2 and y = 3 satisfy it.
+  it("drops the facts that the limit leaves in ctx-simplify across a pop", () => {
+    expect(
+      run([
+        "(declare-fun x () Int)",
+        "(declare-fun y () Int)",
+        "(declare-fun z () Int)",
+        "(declare-fun a () Bool)",
+        "(declare-fun b () Bool)",
+        "(assert (= (^ x y) 8))",
+        "(assert (=> (or a b) (> z 0)))",
+        "(push 1)",
+        "(assert (or a b))",
+        "(set-option :rlimit 144)",
+        "(check-sat)",
+        "(pop 1)",
+        "(assert (< z 0))",
+        "(set-option :rlimit 0)",
+        "(check-sat)",
+        "(get-info :reason-unknown)",
+      ]),
+    ).toEqual([
+      "unknown",
+      "unknown",
+      '(:reason-unknown "smt tactic failed to show goal to be sat/unsat (incomplete (theory arithmetic))")',
+    ]);
   });
 
   it("goes on with the model check when the limit leaves its counterexample without a model", () => {
@@ -3762,5 +3826,122 @@ describe("case splits, as Z3 5.3.2 reads smt.case_split", () => {
       " (y 2437)",
       " (z 0))",
     ]);
+  });
+});
+
+describe("combined_solver, as Z3 5.3.2 reads its options", () => {
+  const POWER = ["(declare-fun x () Int)", "(declare-fun y () Int)", "(assert (= (^ x y) 8))"];
+  const QUANTIFIED = [
+    "(set-option :smt.mbqi false)",
+    "(declare-fun f (Int) Int)",
+    "(assert (forall ((x Int)) (> (f x) 0)))",
+  ];
+  const CHECK = ["(check-sat)", "(get-info :reason-unknown)", "(get-info :rlimit)"];
+
+  it("keeps the incremental solver's unknown under solver2_unknown 0", () => {
+    expect(
+      run(["(set-option :combined_solver.solver2_unknown 0)", ...POWER, "(push 1)", ...CHECK]),
+    ).toEqual(["unknown", '(:reason-unknown "(incomplete (theory arithmetic))")', "(:rlimit 117)"]);
+  });
+
+  it("retries a quantified problem with the tactic under solver2_unknown 2", () => {
+    expect(
+      run(["(set-option :combined_solver.solver2_unknown 2)", ...QUANTIFIED, "(push 1)", ...CHECK]),
+    ).toEqual(["sat", '(:reason-unknown "")', "(:rlimit 345)"]);
+  });
+
+  it("rejects a solver2_unknown above 2 at the check where Z3 exits", () => {
+    expect(
+      run(["(set-option :combined_solver.solver2_unknown 3)", ...POWER, "(push 1)", "(check-sat)"]),
+    ).toEqual([
+      `(error "line 6 column 10: invalid value '3' for parameter 'solver2_unknown', expected 0, 1 or 2")`,
+    ]);
+  });
+
+  it("checks with the incremental solver alone under ignore_solver1, and stays incremental", () => {
+    expect(
+      run([
+        ...POWER,
+        "(set-option :combined_solver.ignore_solver1 true)",
+        "(check-sat)",
+        "(get-info :reason-unknown)",
+        "(set-option :combined_solver.ignore_solver1 false)",
+        ...CHECK,
+      ]),
+    ).toEqual([
+      "unknown",
+      '(:reason-unknown "(incomplete (theory arithmetic))")',
+      "unknown",
+      '(:reason-unknown "smt tactic failed to show goal to be sat/unsat (incomplete (theory arithmetic))")',
+      "(:rlimit 295)",
+    ]);
+  });
+
+  it("never retries with the tactic under ignore_solver1, whatever solver2_unknown says", () => {
+    expect(
+      run([
+        "(set-option :combined_solver.ignore_solver1 true)",
+        "(set-option :combined_solver.solver2_unknown 2)",
+        ...QUANTIFIED,
+        ...CHECK,
+        "(set-option :combined_solver.ignore_solver1 false)",
+        ...CHECK,
+      ]),
+    ).toEqual([
+      "unknown",
+      '(:reason-unknown "(incomplete quantifiers)")',
+      "(:rlimit 122)",
+      "sat",
+      '(:reason-unknown "")',
+      "(:rlimit 368)",
+    ]);
+  });
+
+  it("looks for quantifiers in the tactic's last unknown goal", () => {
+    expect(
+      run([
+        "(declare-fun x () Int)",
+        "(declare-fun y () Int)",
+        "(assert (forall ((z Int)) (> (+ z 1) z)))",
+        "(assert (= (^ x y) 8))",
+        "(check-sat)",
+        "(check-sat-assuming (true))",
+        ...CHECK,
+      ]),
+    ).toEqual([
+      "unknown",
+      "unknown",
+      "unknown",
+      '(:reason-unknown "smt tactic failed to show goal to be sat/unsat (incomplete (theory arithmetic))")',
+      "(:rlimit 473)",
+    ]);
+  });
+
+  it("answers where Z3 sets no timer for solver2_timeout", () => {
+    expect(
+      run(["(set-option :combined_solver.solver2_timeout 100000)", ...POWER, ...CHECK]),
+    ).toEqual([
+      "unknown",
+      '(:reason-unknown "smt tactic failed to show goal to be sat/unsat (incomplete (theory arithmetic))")',
+      "(:rlimit 144)",
+    ]);
+    expect(
+      run([
+        "(set-option :combined_solver.solver2_timeout 4294967295)",
+        ...POWER,
+        "(push 1)",
+        ...CHECK,
+      ]),
+    ).toEqual([
+      "unknown",
+      '(:reason-unknown "smt tactic failed to show goal to be sat/unsat (incomplete (theory arithmetic))")',
+      "(:rlimit 254)",
+    ]);
+  });
+
+  it("throws at an incremental check that Z3 would run under a solver2_timeout timer", () => {
+    expect(() =>
+      run(["(set-option :combined_solver.solver2_timeout 100000)", ...POWER, "(push 1)", ...CHECK]),
+    ).toThrow(SmtUnsupportedError);
   });
 });

@@ -27,9 +27,11 @@ import type { InstanceAction } from "./environment";
 import { formatRange, TlaError, TlaEvaluationError, UNEXPECTED_EXCEPTION } from "./errors";
 import {
   bindOperatorArguments,
+  bindUncachedArguments,
   describeNode,
   evaluate,
   forEachBinding,
+  getBodyLiteral,
   getDefinition,
   getRootKey,
   getStartupValue,
@@ -551,12 +553,18 @@ const describeSpecification = (
       (!substitutionFrame || isVariableBound(called.body, environment, new Set()))
     ) {
       const name = isLocallyResolved(expression) ? undefined : getOperatorName(expression);
+      const written =
+        expression.kind === "Identifier" || expression.kind === "Apply"
+          ? instanceActions.get(expression.writtenKey ?? "")
+          : undefined;
       description.inits.push({
         ...createConjunct(called.name, called.body, calledScope),
         ...(name === undefined
           ? getDefinitionRanges(letDefinition)
           : substitutionFrame
-            ? getDefinitionRanges(getDefinition(name, environment))
+            ? written
+              ? { name: written.name, head: written.head, body: written.body }
+              : getDefinitionRanges(getDefinition(name, environment))
             : instanceActions.get(name)),
       });
       return;
@@ -570,11 +578,12 @@ const describeSpecification = (
     !isTlc174 &&
     !substitutionFrame &&
     expression.kind === "Apply" &&
-    called.params.length === expression.args.length
+    called.params.length === expression.args.length &&
+    getBodyLiteral(called.body, environment) === undefined
   ) {
     recurse(
       called.body,
-      bindOperatorArguments(called, expression.args, getConstantContext(environment, scope)),
+      bindUncachedArguments(called, expression.args, getConstantContext(environment, scope)),
       calledFrames,
     );
     return;
@@ -623,7 +632,11 @@ const describeProperty = (
   }
   const called = resolveClosure(expression, scope, environment);
   if (called && isConstantDefinition(called, environment)) return;
-  if (called && called.params.length === getArguments(expression).length) {
+  if (
+    called &&
+    called.params.length === getArguments(expression).length &&
+    getBodyLiteral(called.body, environment) === undefined
+  ) {
     recurse(called.body, getCallScope(called, expression, scope, environment));
     return;
   }

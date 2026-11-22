@@ -13,7 +13,7 @@ import { blastTermIte } from "./blast-term-ite";
 import { card2bv } from "./card2bv";
 import { getCaseSplitStrategy } from "./case-split-queue";
 import { type Context, MBQI_MAX_ITERATIONS } from "./context";
-import { ctxSimplify } from "./ctx-simplify";
+import { CtxSimplifier } from "./ctx-simplify";
 import { createCtxSolverSimplify } from "./ctx-solver-simplify";
 import {
   type Definition,
@@ -934,15 +934,24 @@ const NAMED_TACTICS = new Map<string, NamedTactic>([
         ["propagate_eq", PARAM_BOOL, false],
       ]),
       isTrackingDependencies: true,
-      build: (environment, params) =>
-        inPlace((goal) =>
-          ctxSimplify(
+      build: (environment, params) => {
+        const createSimplifier = () =>
+          new CtxSimplifier(
             environment.manager,
-            goal,
             getUint(params, "max_depth", 1024),
             getUint(params, "max_steps", UINT_MAX),
-          ),
-        ),
+          );
+        let simplifier = createSimplifier();
+        environment.destructors.push(() => simplifier.release());
+        return inPlace((goal) => {
+          simplifier.apply(goal);
+          goal.depth++;
+          // Z3's clean() renews the simplifier only after a run returns, never from tactic2solver.
+          const cleaned = createSimplifier();
+          simplifier.release();
+          simplifier = cleaned;
+        });
+      },
     },
   ],
   [

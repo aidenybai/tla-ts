@@ -10,6 +10,7 @@ import {
 import { formatRange } from "./errors";
 import {
   frameSubstitutions,
+  getActionPredicate,
   isSubstitutionDefinition,
   substitutedExpressions,
   substitutionFrames,
@@ -17,7 +18,7 @@ import {
   type Substitution,
 } from "./instances";
 import { SELECTION_NAME } from "./resolve";
-import { getRootKey, type Environment, type Scope } from "./evaluate";
+import { describeNode, getRootKey, type Environment, type Scope } from "./evaluate";
 import { getJavaHashCode } from "./java-hash";
 import { getTlcFingerprint } from "./tlc/fingerprint";
 import {
@@ -69,8 +70,6 @@ export interface Coverage {
   substitutionNodes: Map<number, Map<Substitution, number>>;
   frames: CoverageFrame[];
   nextState: NextStateMode;
-  isEnabled: boolean;
-  cachedInEnabled: WeakMap<object, boolean>;
   isMember: typeof isElementOf;
 }
 
@@ -174,8 +173,6 @@ export const createCoverage = (variableCount: number): Coverage => {
     substitutionNodes: new Map(),
     frames: [],
     nextState: "given",
-    isEnabled: false,
-    cachedInEnabled: new WeakMap(),
     isMember: isElementOf,
   };
   coverage.isMember = createChargedMembership(coverage);
@@ -268,10 +265,8 @@ const isSameRange = (left: SourceRange | undefined, right: SourceRange | undefin
   left.end.line === right.end.line &&
   left.end.column === right.end.column;
 
-// TLC's Action#pred for an instance's action is the SubstInNode, which SANY locates at the instance's definition.
 const getPredicateRange = (expression: Expression) =>
-  (substitutionFrames.get(expression) ?? []).find((frame) => frameSubstitutions.has(frame))
-    ?.location.range ?? expression.location.range;
+  getActionPredicate(expression).location.range ?? expression.location.range;
 
 export const getCoverageLabel = (
   name: string | undefined,
@@ -289,6 +284,9 @@ export const getCoverageLabel = (
   const actual = getPredicateRange(expression) ?? range;
   const label = actionHead ? name : definition?.name;
   if (label === undefined || !head) {
+    const predicate = getActionPredicate(expression);
+    // ActionWrapper prints an undeclared Action by Action#toString, which gives a NumeralNode as its image.
+    if (predicate.kind === "Number") return `Action ${describeNode(predicate)}`;
     return `Action ${actual ? formatRange(actual) : "Unknown location"}`;
   }
   const isBody = actionHead
@@ -785,6 +783,39 @@ export const runAtCoverageNode = <Result>(
     return run();
   } finally {
     coverage.current = outer;
+  }
+};
+
+// Deviation from TLC: OpApplNodeWrapper#get also warns (2776) on each lookup these counts stand for, a lookup bug it asks users to report.
+export const runReportedInto = <Result>(
+  coverage: Coverage,
+  node: number,
+  run: () => Result,
+): Result => {
+  const substitutions = new Set(coverage.substitutionNodes.get(coverage.roots[node])?.values());
+  const snapshot: number[] = [];
+  for (let index = -3; index < snapshot.length; index += 3) {
+    const parent = index === -3 ? node : snapshot[index];
+    for (
+      let child = coverage.firstChild[parent];
+      child !== -1;
+      child = coverage.nextSibling[child]
+    ) {
+      if (!substitutions.has(child)) {
+        snapshot.push(child, coverage.primary[child], coverage.secondary[child]);
+      }
+    }
+  }
+  try {
+    return run();
+  } finally {
+    for (let index = 0; index < snapshot.length; index += 3) {
+      const descendant = snapshot[index];
+      coverage.primary[node] += coverage.primary[descendant] - snapshot[index + 1];
+      coverage.secondary[node] += coverage.secondary[descendant] - snapshot[index + 2];
+      coverage.primary[descendant] = snapshot[index + 1];
+      coverage.secondary[descendant] = snapshot[index + 2];
+    }
   }
 };
 
