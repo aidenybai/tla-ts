@@ -3,10 +3,9 @@ import { cpSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:f
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterAll, describe, expect, it } from "vite-plus/test";
+import { DIST_CLI } from "./cli-harness";
 
 const FIXTURES = join(import.meta.dirname, "../fixtures/typescript/cli");
-
-const CLI = join(import.meta.dirname, "../../src/cli.ts");
 
 const copies: string[] = [];
 
@@ -20,7 +19,7 @@ const copyFixtures = (directory: string) => {
 };
 
 const runCli = (directory: string, args: string[]) =>
-  spawnSync("bun", [CLI, ...args], { cwd: directory, encoding: "utf8" });
+  spawnSync(process.execPath, [DIST_CLI, ...args], { cwd: directory, encoding: "utf8" });
 
 describe("the CLI with TypeScript files", () => {
   it("checks a TypeScript file and writes the TLA+ spec and config it compiles to", () => {

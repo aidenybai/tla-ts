@@ -1,6 +1,5 @@
 import { execFile } from "node:child_process";
 import { readFileSync, rmSync } from "node:fs";
-import { join } from "node:path";
 import { afterAll, describe, expect, it } from "vite-plus/test";
 import {
   getDumpPath,
@@ -9,14 +8,13 @@ import {
   readExpected,
   readStatechartCalls,
 } from "../../scripts/statechart-calls";
-
-const CLI = join(import.meta.dirname, "../../dist/cli.js");
+import { DIST_CLI } from "./cli-harness";
 
 const runCli = (args: string[], cwd: string) =>
   new Promise<{ output: string; status: number }>((resolve) => {
     execFile(
       process.execPath,
-      [CLI, ...args],
+      [DIST_CLI, ...args],
       { cwd, maxBuffer: 1 << 30 },
       (error, stdout, stderr) =>
         resolve({ output: stdout + stderr, status: error ? Number(error.code) : 0 }),
