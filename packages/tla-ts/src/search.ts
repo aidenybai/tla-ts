@@ -14,6 +14,7 @@ import type {
   ModuleOperator,
   OutputLine,
   Postcondition,
+  TraceSpecOptions,
   Violation,
 } from "./check";
 import { parseConfig, type ConfigValue, type ModelConfig } from "./config";
@@ -114,6 +115,7 @@ import {
 import { createTlcOrder } from "./tlc/order";
 import { getPrimedRanges, walkSuccessors } from "./tlc/replay";
 import { getTlcFingerprint, getTlcFingerprints, setFingerprintPolynomial } from "./tlc/fingerprint";
+import { writeTraceSpec } from "./tlc/trace-spec";
 import type { TlcVersion } from "./tlc/version";
 import type { GraphState } from "./state-graph";
 import {
@@ -121,6 +123,7 @@ import {
   createModelValue,
   formatValue,
   freezeStringOrder,
+  getModelValues,
   getWrittenPairs,
   isFunctionValue,
   isUpdatedElementOf,
@@ -1094,6 +1097,33 @@ export const createOutputCapture = (onPrint: (text: string) => void) => {
   };
 };
 
+export interface TraceSpecOutput {
+  kind: "trace-spec";
+  text: string;
+}
+
+export const createTraceSpecWriter =
+  (
+    traceSpec: TraceSpecOptions | undefined,
+    specName: string,
+    config: ModelConfig,
+    environment: Environment,
+  ) =>
+  (states: Record<string, Value>[], loopStart: number | undefined) =>
+    traceSpec &&
+    writeTraceSpec({
+      module: traceSpec.module,
+      specName,
+      rawConstants: config.rawConstants,
+      states,
+      loopStart,
+      modelValues: getModelValues(),
+      isDefined: (name) =>
+        [...environment.constants.keys(), ...environment.definitions.keys()].some(
+          (key) => getKeyName(key) === name,
+        ),
+    });
+
 export const prepareSearch = (options: CheckOptions) => {
   const config =
     typeof options.config === "string"
@@ -1124,7 +1154,21 @@ export const prepareSearch = (options: CheckOptions) => {
   );
   const getCoverage = () =>
     coverage && getCoverageReport(coverage, environment, search?.getTlcOrder() ?? []);
-  return { config, specification, environment, search, getDescription, coverage, getCoverage };
+  return {
+    config,
+    specification,
+    environment,
+    search,
+    getDescription,
+    coverage,
+    getCoverage,
+    getTraceSpec: createTraceSpecWriter(
+      options.traceSpec,
+      specification.rootName,
+      config,
+      environment,
+    ),
+  };
 };
 
 export interface CoveredAction extends SpecAction {

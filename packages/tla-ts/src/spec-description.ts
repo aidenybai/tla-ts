@@ -65,6 +65,7 @@ export interface SpecAction {
   head?: SourceRange;
   body?: SourceRange;
   parameters: [string, Value][];
+  context: [string, Value][];
   expression: Expression;
   scope: Scope | undefined;
 }
@@ -126,6 +127,7 @@ const createAction = (name: string, expression: Expression, scope?: Scope): Spec
   name,
   location: expression.location,
   parameters: [],
+  context: [],
   expression,
   scope,
 });
@@ -248,15 +250,21 @@ const getCallScope = (
     ? bindOperatorArguments(called, expression.args, getConstantContext(environment, scope))
     : called.scope;
 
-const getParameters = (closure: Closure | undefined, scope: Scope | undefined) =>
-  (closure?.params ?? []).flatMap((param): [string, Value][] => {
-    const binding = lookupScope(scope, param.name);
-    return binding?.kind === "Value" ? [[param.name, binding.value]] : [];
+const getBoundValues = (names: string[], scope: Scope | undefined) =>
+  names.flatMap((name): [string, Value][] => {
+    const binding = lookupScope(scope, name);
+    return binding?.kind === "Value" ? [[name, binding.value]] : [];
   });
 
 // The operator whose body an action splits from, which names a step that calls no other.
 export const getStepName = (action: SpecAction) =>
   action.name === UNNAMED_ACTION ? undefined : action.name;
+
+const getParameters = (closure: Closure | undefined, scope: Scope | undefined) =>
+  getBoundValues(
+    (closure?.params ?? []).map((param) => param.name),
+    scope,
+  );
 
 const tryCollect = <Result>(collect: () => Result, fallback: () => Result) => {
   try {
@@ -273,25 +281,37 @@ const getInstanceActions = (
   scope: Scope | undefined,
   called: Closure | undefined,
   environment: Environment,
+  context: [string, Value][],
 ): SpecAction[] => {
   const args = getArguments(expression);
   const callAction = (): SpecAction[] => [
-    { name: instanceAction.name, location: expression.location, parameters: [], expression, scope },
+    {
+      name: instanceAction.name,
+      location: expression.location,
+      parameters: [],
+      context,
+      expression,
+      scope,
+    },
   ];
   if (called && args.length === 0) {
-    return [{ ...instanceAction, parameters: [], expression: called.body, scope: called.scope }];
+    return [
+      { ...instanceAction, parameters: [], context, expression: called.body, scope: called.scope },
+    ];
   }
-  if (!called) return [{ ...instanceAction, parameters: [], expression, scope }];
+  if (!called) return [{ ...instanceAction, parameters: [], context, expression, scope }];
   if (!hasConstantArguments(args, scope, environment)) return callAction();
   return tryCollect(() => {
     const values = args.map((arg) => evaluate(arg, getSplitContext(environment, scope)));
+    const parameters = values.map((value, index): [string, Value] => [
+      called.params[index].name.replace(/#\d+$/, ""),
+      value,
+    ]);
     return [
       {
         ...instanceAction,
-        parameters: values.map((value, index): [string, Value] => [
-          called.params[index].name.replace(/#\d+$/, ""),
-          value,
-        ]),
+        parameters,
+        context: [...context, ...parameters],
         expression: called.body,
         scope: values.reduce<Scope | undefined>(
           (current, value, index) => ({
@@ -320,6 +340,7 @@ const getActions = (
   closure: Closure | undefined,
   environment: Environment,
   instanceActions: Map<string, InstanceAction>,
+  context: [string, Value][],
   definition?: Definition,
 ): SpecAction[] => {
   const createSplitAction = (): SpecAction => ({
@@ -327,6 +348,7 @@ const getActions = (
     location: expression.location,
     ...getDefinitionRanges(definition),
     parameters: getParameters(closure, scope),
+    context,
     expression,
     scope,
   });
@@ -339,10 +361,19 @@ const getActions = (
         closure,
         environment,
         instanceActions,
+        context,
         definition,
       );
     case "Label":
-      return getActions(expression.body, scope, closure, environment, instanceActions, definition);
+      return getActions(
+        expression.body,
+        scope,
+        closure,
+        environment,
+        instanceActions,
+        context,
+        definition,
+      );
     case "Selection":
       // TLC's Tool#getActions takes SANY's $Nop as an action of its own.
       return expression.location.range === undefined
@@ -352,17 +383,21 @@ const getActions = (
             closure,
             environment,
             instanceActions,
+            context,
             definition,
           )
         : [createSplitAction()];
     case "Or":
       return expression.operands.flatMap((operand) =>
-        getActions(operand, scope, closure, environment, instanceActions, definition),
+        getActions(operand, scope, closure, environment, instanceActions, context, definition),
       );
     case "Exists":
       return tryCollect(
         () => {
           const actions: SpecAction[] = [];
+          const names = expression.bounds.flatMap((bound) =>
+            bound.pattern.kind === "Name" ? [bound.pattern.name] : bound.pattern.names,
+          );
           forEachBinding(expression.bounds, getSplitContext(environment, scope), (boundScope) => {
             actions.push(
               ...getActions(
@@ -371,6 +406,7 @@ const getActions = (
                 closure,
                 environment,
                 instanceActions,
+                [...context, ...getBoundValues(names, boundScope)],
                 definition,
               ),
             );
@@ -389,7 +425,7 @@ const getActions = (
   // Deviation from TLC: Tool#getActionsAppl casts a theorem to an OpDefNode, and the ClassCastException crashes TLC unless an enclosing \E or operator catches it.
   if (theorem) throw createRelationError(theorem);
   if (instanceAction)
-    return getInstanceActions(instanceAction, expression, scope, called, environment);
+    return getInstanceActions(instanceAction, expression, scope, called, environment, context);
   const letDefinition = getLocalDefinition(expression, scope);
   const thunk = letDefinition?.kind === "Operator" ? getThunk(expression, scope) : undefined;
   if (letDefinition && thunk) {
@@ -406,6 +442,7 @@ const getActions = (
       },
       environment,
       instanceActions,
+      context,
       letDefinition,
     );
   }
@@ -430,6 +467,7 @@ const getActions = (
       location: expression.location,
       ...getDefinitionRanges(letDefinition),
       parameters: [],
+      context,
       expression,
       scope,
     },
@@ -454,6 +492,7 @@ const getActions = (
       { ...called, name: calledName },
       environment,
       instanceActions,
+      [...context, ...getParameters(called, boundScope)],
       letDefinition,
     );
   }, callAction);
@@ -712,11 +751,12 @@ export const getSpecDescription = (
                 name: UNNAMED_ACTION,
                 location: item.frames[0].location,
                 parameters: [],
+                context: [],
                 expression: withSubstitutionFrames(item.expression, item.frames),
                 scope: item.scope,
               },
             ]
-          : getActions(item.expression, item.scope, undefined, environment, instanceActions)),
+          : getActions(item.expression, item.scope, undefined, environment, instanceActions, [])),
       ),
     );
   }
@@ -737,6 +777,7 @@ export const getSpecDescription = (
         nextOperator,
         environment,
         instanceActions,
+        [],
       ),
     );
   }
@@ -797,6 +838,8 @@ const formatParameters = (action: SpecAction) =>
 
 export const getActionLabel = (action: SpecAction, version?: TlcVersion, isInitial = false) =>
   `${action.name === UNNAMED_ACTION ? (isInitial ? "Initial predicate" : "Action") : action.name}${version === "1.7.4" ? "" : formatParameters(action)} ${formatRange(action.location.range ?? BUILTIN_RANGE)}`;
+
+export const isNamedAction = (action: SpecAction) => action.name !== UNNAMED_ACTION;
 
 export const getActionSignature = (action: SpecAction) =>
   `${action.name}${formatParameters(action)}`;

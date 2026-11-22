@@ -14,6 +14,8 @@ export const UNEXPECTED_EVAL_EXCEPTION = getUnexpectedException("tlc2.tool.EvalE
 
 export const WRONG_INVOCATION_EXCEPTION = getUnexpectedException("util.WrongInvocationException");
 
+export const FILE_NOT_FOUND_EXCEPTION = getUnexpectedException("java.io.FileNotFoundException");
+
 // V8 words an overflow of the stack without the period that JavaScriptCore, which Bun runs on,
 // ends it with.
 export const isStackOverflow = (error: unknown) =>

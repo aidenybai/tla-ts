@@ -22,6 +22,43 @@ describe("TLC's -simulate arguments", () => {
       error: NUM_REQUIRED,
     });
   });
+
+  it("takes the last of stats=basic and stats=full, as TLC does", () => {
+    expect(parseTlcArguments(["-simulate", "stats=full,stats=basic,num=5", "Spec"])).toMatchObject({
+      actionStatistics: "basic",
+    });
+  });
+
+  it("strips every file= from a path, as Java's String#replace does", () => {
+    expect(parseTlcArguments(["-simulate", "num=4,file=trfile=", "Spec"])).toMatchObject({
+      behaviorFile: "tr",
+    });
+  });
+
+  it("strips every num= from a count, as Java's String#replace does", () => {
+    expect(parseTlcArguments(["-simulate", "num=3num=", "Spec"])).toMatchObject({
+      traceCount: 3n,
+    });
+  });
+
+  it.each([
+    [["sched=rl", "num=2"], "rl"],
+    [["sched=rlaction", "num=2"], "rlaction"],
+    [["sched=rl", "sched=rlaction,num=2"], "rl"],
+  ])(
+    "keeps the scheduler of an earlier -simulate and prefers rl, as TLC does (%j)",
+    (options, scheduler) => {
+      expect(
+        parseTlcArguments([...options.flatMap((option) => ["-simulate", option]), "Spec"]),
+      ).toMatchObject({ scheduler });
+    },
+  );
+
+  it("keeps the stats of an earlier -simulate, which TLC never resets", () => {
+    expect(
+      parseTlcArguments(["-simulate", "num=5,stats=full", "-simulate", "num=5", "Spec"]),
+    ).toMatchObject({ actionStatistics: "full" });
+  });
 });
 
 describe("TLC's integer arguments", () => {

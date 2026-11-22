@@ -1,0 +1,75 @@
+digraph ActionGraph {
+nodesep=0.35;
+subgraph cluster_legend {
+label = "Coverage";
+node [shape=point] {
+d0 [style = invis];
+d1 [style = invis];
+p0 [style = invis];
+p0 [style = invis];
+}
+d0 -> d1 [label=unseen, color="green", style=dotted]
+p0 -> p1 [label=seen]
+}
+subgraph cluster_2914 {
+color="white"
+label="[]"
+0 [shape=box,label="Init",style = filled]
+}
+subgraph cluster_1843212302 {
+color="white"
+label="[process->0, process->0]"
+1 [shape=box,label="Request"]
+2 [shape=box,label="Enter"]
+3 [shape=box,label="Exit"]
+}
+subgraph cluster_1337653708 {
+color="white"
+label="[process->1, process->1]"
+4 [shape=box,label="Request"]
+5 [shape=box,label="Enter"]
+6 [shape=box,label="Exit"]
+}
+0 -> 1[penwidth=0.17];
+0 -> 2[color="green",style=dotted];
+0 -> 3[color="green",style=dotted];
+0 -> 4[penwidth=0.2];
+0 -> 5[color="green",style=dotted];
+0 -> 6[color="green",style=dotted];
+1 -> 1[color="green",style=dotted];
+1 -> 2[penwidth=0.17];
+1 -> 3[color="green",style=dotted];
+1 -> 4[penwidth=0.17];
+1 -> 5[penwidth=0.17];
+1 -> 6[penwidth=0.17];
+2 -> 1[color="green",style=dotted];
+2 -> 2[color="green",style=dotted];
+2 -> 3[penwidth=0.23];
+2 -> 4[penwidth=0.23];
+2 -> 5[color="green",style=dotted];
+2 -> 6[color="green",style=dotted];
+3 -> 1[penwidth=0.11];
+3 -> 2[color="green",style=dotted];
+3 -> 3[color="green",style=dotted];
+3 -> 4[color="green",style=dotted];
+3 -> 5[penwidth=0.23];
+3 -> 6[color="green",style=dotted];
+4 -> 1[penwidth=0.17];
+4 -> 2[penwidth=0.2];
+4 -> 3[penwidth=0.23];
+4 -> 4[color="green",style=dotted];
+4 -> 5[penwidth=0.11];
+4 -> 6[color="green",style=dotted];
+5 -> 1[penwidth=0.17];
+5 -> 2[color="green",style=dotted];
+5 -> 3[color="green",style=dotted];
+5 -> 4[color="green",style=dotted];
+5 -> 5[color="green",style=dotted];
+5 -> 6[penwidth=0.25];
+6 -> 1[penwidth=0.17];
+6 -> 2[penwidth=0.2];
+6 -> 3[color="green",style=dotted];
+6 -> 4[penwidth=0.17];
+6 -> 5[color="green",style=dotted];
+6 -> 6[color="green",style=dotted];
+}

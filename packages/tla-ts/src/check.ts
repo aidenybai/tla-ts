@@ -66,6 +66,7 @@ import {
   createMissingOperatorError,
   createOutputCapture,
   createSearch,
+  createTraceSpecWriter,
   getIncompleteSuccessorMessage,
   findAssumptionViolation,
   reportInitialStatesProgress,
@@ -113,8 +114,6 @@ import {
   type FailureMessage,
 } from "./tlc/messages";
 import { createTautologyError } from "./liveness";
-import { getKeyName } from "./resolve";
-import { writeTraceSpec } from "./tlc/trace-spec";
 import { replayInitialStates, replaySuccessors, walkSuccessors } from "./tlc/replay";
 import { getFingerprintDistance, OUT_DEGREE_BUCKETS } from "./tlc/summary";
 import {
@@ -129,7 +128,6 @@ import {
   createCanonicalizer,
   createModelValue,
   getFingerprintError,
-  getModelValues,
   isSameValue,
   markFingerprinted,
   type Value,
@@ -422,31 +420,26 @@ const searchStates = (
   runtime.getSpecification = () => getSpecificationValue(getDescription(), config, environment);
   let searchDepth = 0;
   let computedInitialStates: InitialStates | undefined;
-  const getTraceSpec = (trace: TraceStep[], loopStart: number | undefined) =>
-    options.traceSpec &&
-    writeTraceSpec({
-      module: options.traceSpec.module,
-      specName: specification.rootName,
-      rawConstants: config.rawConstants,
-      states: trace.map((step) => getStepState(step)),
-      loopStart,
-      modelValues: getModelValues(),
-      isDefined: (name) =>
-        [...environment.constants.keys(), ...environment.definitions.keys()].some(
-          (key) => getKeyName(key) === name,
-        ),
-    });
+  const getTraceSpec = createTraceSpecWriter(
+    options.traceSpec,
+    specification.rootName,
+    config,
+    environment,
+  );
   const getCoverage = () =>
     coverage?.relations.some((relation) => relation.kind === "next")
       ? getCoverageReport(coverage, environment, search?.getTlcOrder() ?? [])
       : undefined;
+  // Deviation from TLC: under -continue, its recorder appends every trace it prints to one trace spec, which is no behavior of the spec, so tla-ts writes the last trace's.
+  let continuedTrace: TraceStep[] = [];
   const createResult = (
     status: CheckStatus,
     violation?: ReportedViolation,
     failure?: EvaluationFailure,
   ): CheckResult => {
+    const trace = violation?.trace ?? failure?.trace ?? [];
     const traceSpec = getTraceSpec(
-      violation?.trace ?? failure?.trace ?? [],
+      (trace.length > 0 ? trace : continuedTrace).map((step) => getStepState(step)),
       status === "property-violation" ? undefined : violation?.loopStart,
     );
     return {
@@ -581,6 +574,7 @@ const searchStates = (
     violation: Omit<Violation, "loopStart">,
   ) => {
     continuedStatus ??= status;
+    continuedTrace = violation.trace;
     options.onProgress?.({
       kind: "violation",
       status,
