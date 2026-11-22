@@ -1338,17 +1338,24 @@ export const createBoundEnumerator = (coverage: Coverage, bound: ChargedBound) =
 export const chargeContexts = (coverage: Coverage, bounds: ChargedBound[]) =>
   chargeBindings(bounds.map((bound) => createBoundEnumerator(coverage, bound)));
 
-export const chargeFunctionConstruction = (coverage: Coverage, node: number, sets: Value[]) => {
+export const chargeFunctionConstruction = (
+  coverage: Coverage,
+  node: number,
+  sets: Value[],
+  isDrained?: boolean[],
+) => {
   const sizes = sets.map((set) => getCardinality(set));
   // Sizing a filter converts it, as SetPredValue#size does.
   const advance = chargeBindings(
     sets.map((set, index) =>
-      createEnumerator(
-        coverage,
-        set,
-        sizes[index],
-        typeof set === "object" && set.kind === "FilteredSet",
-      ),
+      isDrained?.[index]
+        ? createListEnumerator(coverage, getValueNode(coverage, set), sizes[index])
+        : createEnumerator(
+            coverage,
+            set,
+            sizes[index],
+            typeof set === "object" && set.kind === "FilteredSet",
+          ),
     ),
   );
   const size = sizes.reduce((product, setSize) => product * setSize, 1);

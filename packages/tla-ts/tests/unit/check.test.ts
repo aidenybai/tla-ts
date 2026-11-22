@@ -8023,6 +8023,147 @@ ASSUME TLCFP(a) = -887695703
 
   it.each([
     [
+      "a filter of S \\cup T",
+      "x' \\in {t \\in {u \\in (1..3) \\X {0} : TRUE} \\cup {<<5, 0>>} : t[1] > 1}",
+      [
+        "line 5, col 9 to line 5, col 78 of module M: 12",
+        "|line 5, col 16 to line 5, col 78 of module M: 4:16",
+        "||line 5, col 70 to line 5, col 77 of module M: 16",
+        "||line 5, col 23 to line 5, col 66 of module M: 4",
+        "|||line 5, col 23 to line 5, col 50 of module M: 4:12",
+        "||||line 5, col 46 to line 5, col 49 of module M: 12",
+        "||||line 5, col 30 to line 5, col 42 of module M: 4:24",
+        "|||||line 5, col 31 to line 5, col 34 of module M: 4",
+        "|||||line 5, col 40 to line 5, col 42 of module M: 4:28",
+        "|||line 5, col 57 to line 5, col 66 of module M: 4:40",
+        "||||line 5, col 58 to line 5, col 65 of module M: 4",
+      ],
+    ],
+    [
+      "S \\cap T of sets of records",
+      "x' \\in [a : {u \\in (1..2) \\X {0} : TRUE}] \\cap [a : {u \\in (1..3) \\X {0} : u[1] > 1}]",
+      [
+        "line 5, col 9 to line 5, col 93 of module M: 2",
+        "|line 5, col 16 to line 5, col 93 of module M: 2",
+        "||line 5, col 16 to line 5, col 49 of module M: 2:4",
+        "|||line 5, col 21 to line 5, col 48 of module M: 2:6",
+        "||||line 5, col 44 to line 5, col 47 of module M: 6",
+        "||||line 5, col 28 to line 5, col 40 of module M: 2:12",
+        "|||||line 5, col 29 to line 5, col 32 of module M: 2",
+        "|||||line 5, col 38 to line 5, col 40 of module M: 2:16",
+        "||line 5, col 56 to line 5, col 93 of module M: 2",
+      ],
+    ],
+    [
+      "a filter of a product of a filter",
+      "x' \\in {t \\in {u \\in SUBSET {1, 2} : TRUE} \\X {0} : PrintT(t)}",
+      [
+        "line 5, col 9 to line 5, col 70 of module M: 20",
+        "|line 5, col 16 to line 5, col 70 of module M: 5:20",
+        "||line 5, col 61 to line 5, col 69 of module M: 20",
+        "||line 5, col 23 to line 5, col 57 of module M: 5:40",
+        "|||line 5, col 23 to line 5, col 50 of module M: 5:25",
+        "||||line 5, col 46 to line 5, col 49 of module M: 25",
+        "||||line 5, col 30 to line 5, col 42 of module M: 5",
+        "|||line 5, col 55 to line 5, col 57 of module M: 5:45",
+      ],
+    ],
+  ])(
+    "draws x' \\in S through TLC's enumerator under -coverage, for %s",
+    async (_site, next, expected) => {
+      const lines = await getCoverageLines(
+        `---- MODULE M ----\nEXTENDS Integers, FiniteSets, TLC\nVARIABLE x\nInit == x = 0\nNext == ${next}\nInv == TRUE\n====`,
+        "INIT Init\nNEXT Next\nINVARIANT Inv",
+      );
+      expect(lines?.at(-1)).toEqual(expected);
+    },
+  );
+
+  it.each([
+    [
+      "S \\cup T of a filter",
+      "x' = [t \\in {u \\in (1..3) \\X {0} : u[1] > 1} \\cup {<<5, 0>>} |-> 0]",
+      [
+        "line 5, col 9 to line 5, col 75 of module M: 2",
+        "|line 5, col 14 to line 5, col 75 of module M: 2:6",
+        "||line 5, col 21 to line 5, col 68 of module M: 2",
+        "|||line 5, col 21 to line 5, col 52 of module M: 2:6",
+        "||||line 5, col 44 to line 5, col 51 of module M: 6",
+        "||||line 5, col 28 to line 5, col 40 of module M: 2:12",
+        "|||||line 5, col 29 to line 5, col 32 of module M: 2",
+        "|||||line 5, col 38 to line 5, col 40 of module M: 2:14",
+        "|||line 5, col 59 to line 5, col 68 of module M: 2:30",
+        "||||line 5, col 60 to line 5, col 67 of module M: 2",
+      ],
+    ],
+    [
+      "a filter of S \\cup T",
+      "x' = [t \\in {u \\in {v \\in (1..3) \\X {0} : TRUE} \\cup {<<5, 0>>} : u[1] > 1} |-> 0]",
+      [
+        "line 5, col 9 to line 5, col 90 of module M: 2",
+        "|line 5, col 14 to line 5, col 90 of module M: 2:6",
+        "||line 5, col 21 to line 5, col 83 of module M: 2:22",
+        "|||line 5, col 75 to line 5, col 82 of module M: 8",
+        "|||line 5, col 28 to line 5, col 71 of module M: 2",
+        "||||line 5, col 28 to line 5, col 55 of module M: 2:6",
+        "|||||line 5, col 51 to line 5, col 54 of module M: 6",
+        "|||||line 5, col 35 to line 5, col 47 of module M: 2:12",
+        "||||||line 5, col 36 to line 5, col 39 of module M: 2",
+        "||||||line 5, col 45 to line 5, col 47 of module M: 2:14",
+        "||||line 5, col 62 to line 5, col 71 of module M: 2:20",
+        "|||||line 5, col 63 to line 5, col 70 of module M: 2",
+      ],
+    ],
+    [
+      "S \\cap T of sets of records",
+      "x' = [t \\in [a : {u \\in (1..2) \\X {0} : TRUE}] \\cap [a : {u \\in (1..3) \\X {0} : u[1] > 1}] |-> 0]",
+      [
+        "line 5, col 9 to line 5, col 105 of module M: 2",
+        "|line 5, col 14 to line 5, col 105 of module M: 2:2",
+        "||line 5, col 21 to line 5, col 98 of module M: 2",
+        "|||line 5, col 21 to line 5, col 54 of module M: 2:4",
+        "||||line 5, col 26 to line 5, col 53 of module M: 2:6",
+        "|||||line 5, col 49 to line 5, col 52 of module M: 6",
+        "|||||line 5, col 33 to line 5, col 45 of module M: 2:12",
+        "||||||line 5, col 34 to line 5, col 37 of module M: 2",
+        "||||||line 5, col 43 to line 5, col 45 of module M: 2:16",
+        "|||line 5, col 61 to line 5, col 98 of module M: 2",
+      ],
+    ],
+    [
+      "two domains",
+      "x' = [s \\in {u \\in 1..2 : u > 0} \\cup {9}, t \\in {v \\in (1..2) \\X {0} : TRUE} \\cup {<<7, 0>>} |-> 0]",
+      [
+        "line 5, col 9 to line 5, col 108 of module M: 2",
+        "|line 5, col 14 to line 5, col 108 of module M: 2:18",
+        "||line 5, col 21 to line 5, col 49 of module M: 2",
+        "|||line 5, col 21 to line 5, col 40 of module M: 2",
+        "||||line 5, col 35 to line 5, col 39 of module M: 4",
+        "||||line 5, col 28 to line 5, col 31 of module M: 2",
+        "|||line 5, col 47 to line 5, col 49 of module M: 2:4",
+        "||line 5, col 58 to line 5, col 101 of module M: 2",
+        "|||line 5, col 58 to line 5, col 85 of module M: 2:4",
+        "||||line 5, col 81 to line 5, col 84 of module M: 4",
+        "||||line 5, col 65 to line 5, col 77 of module M: 2:8",
+        "|||||line 5, col 66 to line 5, col 69 of module M: 2",
+        "|||||line 5, col 75 to line 5, col 77 of module M: 2:10",
+        "|||line 5, col 92 to line 5, col 101 of module M: 2:30",
+        "||||line 5, col 93 to line 5, col 100 of module M: 2",
+      ],
+    ],
+  ])(
+    "charges a function's domain as TLC's FcnLambdaValue#toFcnRcd converts it under -coverage, for %s",
+    async (_site, next, expected) => {
+      const lines = await getCoverageLines(
+        `---- MODULE M ----\nEXTENDS Integers, FiniteSets, TLC\nVARIABLE x\nInit == x = 0\nNext == ${next}\nInv == TRUE\n====`,
+        "INIT Init\nNEXT Next\nINVARIANT Inv",
+      );
+      expect(lines?.at(-1)).toEqual(expected);
+    },
+  );
+
+  it.each([
+    [
       "a non-function",
       "x = 0 /\\ f = 0",
       "x < 1 /\\ f' = 0 /\\ (IF PrintT(\"e\") THEN 0 ELSE 0)[{}] /\\ x' = 1",

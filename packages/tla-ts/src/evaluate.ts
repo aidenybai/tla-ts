@@ -95,6 +95,7 @@ import {
   createNormalizedSet,
   createWrittenRecord,
   createTuple,
+  drainChargedSet,
   formatValue,
   getCardinality,
   getDomain,
@@ -910,8 +911,16 @@ const getCostModel = (
     ? {
         secondary: coverage.secondary,
         node,
-        chargeConversion: () =>
-          chargeFunctionConstruction(coverage, node, getBoundSets(bounds, domain)),
+        startConversion: () => {
+          const sets = getBoundSets(bounds, domain);
+          const isDrained = sets.map(
+            (set) =>
+              typeof set === "object" &&
+              (set.kind === "FilteredSet" || set.kind === "SetOperation") &&
+              drainChargedSet(coverage, set) !== undefined,
+          );
+          return () => chargeFunctionConstruction(coverage, node, sets, isDrained);
+        },
       }
     : undefined;
 

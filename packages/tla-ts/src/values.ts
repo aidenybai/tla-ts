@@ -136,7 +136,7 @@ export interface LazyFunctionSource {
 export interface CostModel {
   secondary: number[];
   node: number;
-  chargeConversion: () => void;
+  startConversion: () => () => void;
 }
 
 export interface LazyFunctionValue {
@@ -2771,14 +2771,15 @@ const getNextFilteredElement = (charges: ChargeTable, stream: ChargedFilterStrea
   return undefined;
 };
 
-const drainChargedStream = (charges: ChargeTable, stream: ChargedStream) => {
+const drainChargedStream = (charges: ChargeTable, stream: ChargedStream, isBounded: boolean) => {
   const elements: Value[] = [];
   for (
     let element = getNextChargedElement(charges, stream);
     element !== undefined;
     element = getNextChargedElement(charges, stream)
   ) {
-    addBoundedElement(elements, element);
+    if (isBounded) addBoundedElement(elements, element);
+    else elements.push(element);
   }
   return elements;
 };
@@ -2790,17 +2791,33 @@ const drainChargedFilter = (charges: ChargeTable, value: FilteredSetValue) => {
   }
   const sets = setTrace.sets;
   sets?.push(value);
-  const elements = drainChargedStream(charges, {
-    kind: "ChargedFilter",
-    node,
-    set: value,
-    base: openChargedPart(charges, value.base),
-  });
+  const elements = drainChargedStream(
+    charges,
+    { kind: "ChargedFilter", node, set: value, base: openChargedPart(charges, value.base) },
+    true,
+  );
   sets?.pop();
   charges.secondary[node] += elements.length;
   const set = createSortedSet(toFiniteSet(createEnumeratedSet(elements)).elements);
   value.enumerated = set;
   return set.elements;
+};
+
+// TLC's x' \in S draws S through its enumerator, which charges its draws, and keeps nothing.
+export const streamChargedSet = (charges: ChargeTable, value: Value) => {
+  if (typeof value !== "object") return undefined;
+  const isCharged =
+    value.kind === "FilteredSet"
+      ? !value.enumerated &&
+        isTlcEnumerable(value.base) &&
+        getChargedFilterNode(charges, value) !== undefined
+      : value.kind === "SetOperation"
+        ? isChargedOperation(charges, value)
+        : getChargedProduct(charges, value) !== undefined &&
+          getValueNode(charges, value) !== undefined;
+  return isCharged
+    ? drainChargedStream(charges, openChargedPart(charges, value), false)
+    : undefined;
 };
 
 // TLC's toSetEnum drains the enumerator of [S -> T], [a : S], S \X T, S \cup T, S \cap T, S \ T or { x \in S : p(x) }, which charges its draws, then charges the set its size.
@@ -2817,7 +2834,7 @@ export const drainChargedSet = (charges: ChargeTable, value: Value) => {
         ? undefined
         : getChargedProduct(charges, value);
   if (drained === undefined) return undefined;
-  const elements = drainChargedStream(charges, openChargedPart(charges, drained));
+  const elements = drainChargedStream(charges, openChargedPart(charges, drained), true);
   if (node !== undefined) charges.secondary[node] += elements.length;
   const sorted =
     drained.kind !== "SetOperation" && isStreamedApart(drained) ? sortLikeTlc(elements) : elements;
@@ -3844,6 +3861,9 @@ export const toFiniteFunction = (value: Value): FunctionValue => {
   if (typeof value === "object" && value.kind === "LazyFunction") {
     if (value.enumerated) return value.enumerated;
     if (isSortingLiteral) throw new TlaEvaluationError("The set literal holds a lazy function");
+    const finishConversion = isCountedLazyFunction(value)
+      ? value.costModel.startConversion()
+      : undefined;
     // TLC's FcnLambdaValue#toFcnRcd sizes its domain, which enumerates a filter under -maxSetSize, and then streams it.
     getCardinality(value.domain);
     if (!isSetValue(value.domain)) {
@@ -3856,7 +3876,7 @@ export const toFiniteFunction = (value: Value): FunctionValue => {
         ? domain.map((key) => getCopiedValue(value, key))
         : domain.map((key) => value.apply(key)),
     );
-    if (isCountedLazyFunction(value)) value.costModel.chargeConversion();
+    finishConversion?.();
     return value.enumerated;
   }
   throw new TlaEvaluationError(`Expected a function but found ${formatValue(value)}`);
