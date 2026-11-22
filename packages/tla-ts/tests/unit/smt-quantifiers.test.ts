@@ -405,6 +405,33 @@ describe("e-matching, as Z3 5.3.2 counts its steps", () => {
       ]),
     ).toEqual(["sat", "(:rlimit 848)"]);
   });
+
+  it("lowers a ground pattern term to the generation of its quantifier", () => {
+    expect(
+      run([
+        "(set-option :auto_config false)",
+        "(set-option :smt.mbqi false)",
+        "(set-option :smt.qi.lazy_threshold 10.0)",
+        "(declare-fun p (Int) Bool)",
+        "(declare-fun q (Int) Bool)",
+        "(declare-fun r (Int) Bool)",
+        "(declare-fun s (Int) Bool)",
+        "(declare-fun a (Int) Bool)",
+        "(declare-fun w (Int) Bool)",
+        "(declare-fun h (Int) Int)",
+        "(declare-fun m (Int Int) Int)",
+        "(assert (p 0))",
+        "(assert (a 0))",
+        "(assert (s 9))",
+        "(assert (not (q 100)))",
+        "(assert (forall ((x Int)) (! (=> (p x) (and (p (+ x 1)) (r x) (q (h x)))) :pattern ((p x)))))",
+        "(assert (forall ((y Int)) (! (or (not (a y)) (not (r 9)) (forall ((z Int)) (! (w z) :pattern ((m z (h 9)))))) :pattern ((a y)))))",
+        "(assert (forall ((x Int)) (! (=> (s x) (= (h x) 100)) :pattern ((h x)))))",
+        "(check-sat)",
+        "(get-info :rlimit)",
+      ]),
+    ).toEqual(["unsat", "(:rlimit 1893)"]);
+  });
 });
 
 const getThresholdScript = (options: string[], check: string, query = "(get-info :rlimit)") => [
