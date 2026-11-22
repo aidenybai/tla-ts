@@ -131,6 +131,15 @@ describe("name resolution matches SANY", () => {
         ["line 3, col 6 to line 3, col 10 of module M", "Unknown operator: `Nope3'."],
       ],
     ],
+    [
+      "the definitions of two instances of one name with different arities, keeping the first",
+      "I == INSTANCE Inner\nI(a) == INSTANCE Inner\nX == I!Bar(3)",
+      { Inner: "Foo == 2 = 2\nBar(b) == b = 3" },
+      ["I!Foo", "I!Bar", "I"].map((name): [string, string] => [
+        "line 3, col 1 to line 3, col 22 of module M",
+        `Multiply-defined symbol '${name}': this definition or declaration conflicts \nwith the one at line 2, col 1 to line 2, col 19 of module M.`,
+      ]),
+    ],
     ...[
       ["EXTENDS Naturals", "Naturals", 36],
       ["EXTENDS Sequences", "Sequences", 66],
@@ -4425,6 +4434,24 @@ describe("name resolution matches SANY", () => {
         },
       ],
       [],
+    ],
+    [
+      "the definitions of instances that two modules share, warning only for a module with parameters",
+      "---- MODULE Inner ----\nFoo == 1\n====\n---- MODULE P ----\nCONSTANT c\nFoo == c\n====\n---- MODULE A ----\nI == INSTANCE Inner\nJ == INSTANCE P WITH c <- 1\n====\n---- MODULE B ----\nI == INSTANCE Inner\nJ == INSTANCE P WITH c <- 1\n====\n---- MODULE C ----\nEXTENDS A, B\n====\n---- MODULE D ----\nK(a) == INSTANCE Inner\n====\nINSTANCE D\nK(a) == INSTANCE Inner\nZ == U",
+      [
+        {
+          location: "line 25, col 6 to line 25, col 6 of module M",
+          message: "Unknown operator: `U'.",
+        },
+      ],
+      [
+        ["I", 14, 19, 10],
+        ["J!Foo", 15, 27, 11],
+        ["J", 15, 27, 11],
+      ].map((entry) => ({
+        location: `line ${entry[1]}, col 1 to line ${entry[1]}, col ${entry[2]} of module M`,
+        message: `Warning: the definition of '${entry[0]}' conflicts with \nits definition at line ${entry[3]}, col 1 to line ${entry[3]}, col ${entry[2]} of module M.`,
+      })),
     ],
   ])("rejects %s like SANY", async (_title, source, errors, warnings) => {
     await expect(checkNames(source)).rejects.toMatchObject({ sany: { errors, warnings } });

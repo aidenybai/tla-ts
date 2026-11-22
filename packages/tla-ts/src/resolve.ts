@@ -253,7 +253,11 @@ const isSameRange = (left: SourceRange | undefined, right: SourceRange | undefin
 
 const isBindable = (name: string, current: Binding | undefined, added: Binding, unit: Unit) => {
   if (current === undefined) return true;
-  if (isSameRange(current.sourceRange ?? current.range, added.sourceRange ?? added.range)) {
+  if (
+    isSameRange(current.sourceRange ?? current.range, added.sourceRange ?? added.range) &&
+    current.kind === added.kind &&
+    current.arity === added.arity
+  ) {
     return false;
   }
   const range = added.range;
@@ -1262,9 +1266,17 @@ const resolveDefinitions = (
       );
   };
   const resolved = definitions.reduce<LocalName | undefined>((previous, definition) => {
+    const instance = isInstantiated(definition)
+      ? instances.find(
+          (candidate) => candidate.name === definition.name.slice(0, definition.name.indexOf("!")),
+        )
+      : undefined;
     const current = isKey(definition.name)
       ? previous
-      : resolvePending(previous, (item) => !isBefore(definition.location, item.location));
+      : resolvePending(
+          previous,
+          (item) => !isBefore((instance ?? definition).location, item.location),
+        );
     const local: LocalName = {
       name: definition.name,
       arity: getArity(definition),

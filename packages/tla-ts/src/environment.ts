@@ -1000,9 +1000,10 @@ export const createEnvironment = (
                     : entry[1].range,
                 // SANY copies what a LOCAL INSTANCE imports to the instance, but a copy from a module without parameters stays the same definition.
                 sourceRange:
-                  instance.isLocal && parameterized.get(entry[1].key) !== true
+                  entry[1].sourceRange ??
+                  (instance.isLocal && parameterized.get(entry[1].key) !== true
                     ? entry[1].range
-                    : undefined,
+                    : undefined),
                 functionArity:
                   parameterized.get(entry[1].key) === true ? undefined : entry[1].functionArity,
                 goal: entry[1].goal,
@@ -1021,6 +1022,10 @@ export const createEnvironment = (
                 ...entry[1].params,
               ],
               kind: entry[1].kind,
+              range: instance.location.range,
+              sourceRange:
+                entry[1].sourceRange ??
+                (parameterized.get(entry[1].key) === true ? undefined : entry[1].range),
               functionArity: declarations.length > 0 ? undefined : entry[1].functionArity,
               goal: entry[1].goal,
               isSubstituted,
@@ -1282,7 +1287,8 @@ export const createEnvironment = (
         if (
           !current.range ||
           !symbol.range ||
-          formatRange(current.range) === formatRange(symbol.range)
+          formatRange(current.sourceRange ?? current.range) ===
+            formatRange(symbol.sourceRange ?? symbol.range)
         ) {
           return;
         }
