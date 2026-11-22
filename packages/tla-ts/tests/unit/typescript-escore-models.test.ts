@@ -1314,6 +1314,80 @@ describe("checks a module's exported functions as a model on ESCore", () => {
     });
   });
 
+  // A function's result that its body just made, which a step stores in the state, a Map's value,
+  // or a Set's element, and then changes there, natively. A function that returns its parameter
+  // gives the caller the object it was passed, which the state would then hold in two places, as
+  // Node holds it, where the check stops rather than keep a copy.
+  describe("owns a function's fresh result, and keeps no copy of a returned parameter", () => {
+    const source = `
+      let current = [0];
+      let groups = new Map<number, number[]>();
+      let bags = new Set<number[]>();
+      const make = (n: number) => [n, n + 1];
+      export const reset = (n: 0 | 1) => {
+        if (current.length > 2) return;
+        current = make(n);
+      };
+      export const bump = () => {
+        if (current.length >= 3) return;
+        current.push(7);
+      };
+      export const group = (key: 0 | 1) => {
+        if (groups.has(key)) return;
+        groups.set(key, make(key));
+      };
+      export const bag = () => {
+        if (bags.size >= 2) return;
+        bags.add([1]);
+      };
+      export const isBounded = () => current.length <= 3 && bags.size <= 2;
+    `;
+    const aliased = `
+      let current = [0];
+      let shadow: number[] = [];
+      const identity = (list: number[]) => list;
+      export const alias = () => {
+        if (shadow.length > 0) return;
+        shadow = identity(current);
+      };
+      export const bump = () => {
+        if (current.length >= 3) return;
+        current.push(7);
+      };
+      export const isBounded = () => current.length <= 3;
+    `;
+    const SHARED =
+      "tla-ts can't keep an object that two places hold in a model's lowered state yet";
+
+    it("gives what ESCore gives in every call, with Node's states", async () => {
+      const explored = await exploreInNode(source, "spec.ts");
+      expect(explored.error).toBeUndefined();
+      const counts = [explored.status, explored.distinctStates, explored.generatedStates];
+      expect(getCounts(await checkModel(source, "spec.ts", "native"))).toEqual(counts);
+      expect(getCounts(await checkModel(source, "spec.ts", "compared"))).toEqual(counts);
+    });
+
+    it("tells a native Set that merges two arrays made apart", async () => {
+      const result = await checkModel(source, "spec.ts", "native", [
+        'm = "addOwned" -> [c |-> [c EXCEPT !.elems = Append(@, a)], v |-> c]',
+        'm = "addOwned" -> [c |-> IF KeyIndex(c.elems, a) # 0 THEN c ELSE [c EXCEPT !.elems = Append(@, a)], v |-> c]',
+      ]);
+      expect(result.message).toContain("the native call differs from ESCore's");
+    });
+
+    it("stops where the state would hold a returned parameter twice", async () => {
+      expect((await checkModel(aliased, "spec.ts")).message).toContain(SHARED);
+    });
+
+    it("tells a native step that copies the returned parameter", async () => {
+      const result = await checkModel(aliased, "spec.ts", "canonical", [
+        "LOwn(LValue(",
+        "(LValue(",
+      ]);
+      expect(result.message ?? "").not.toContain(SHARED);
+    });
+  });
+
   // Array.prototype.sort of an array the step just made, which tla-ts runs natively as LSort by
   // a - b, b - a, or no comparator: the one result of a stable sort, as ESCore and Node give it,
   // with -0 before or after 0 as they came, and NaN, where a - b isn't consistent, on ESCore.

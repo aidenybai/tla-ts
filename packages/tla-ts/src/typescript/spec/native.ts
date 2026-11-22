@@ -82,11 +82,16 @@ LAssign(c, k, v) ==
     [] c.type = "larray" /\ LIsIndex(c, k, Len(c.elems) + 1) ->
          IF k.value.i = Len(c.elems) THEN [c EXCEPT !.elems = Append(@, v)] ELSE [c EXCEPT !.elems[k.value.i + 1] = v]
     [] OTHER -> LBail
+\* Whether a method takes its argument at an index as a composite: push its elements, a Map's set
+\* its value and a Set's add its element where the lowering knows the composite just made, which
+\* the collection then owns, and is distinct from every element it holds.
+LIsOwnedArgument(m, i) == m = "push" \/ (m = "setOwned" /\ i = 2) \/ m = "addOwned"
 \* The built-in methods on a lowered receiver, as [c, v]: the receiver after the call and its result,
 \* each LBail where the call bails.
 LMethod(c, m, args) ==
   LET a == IF args = <<>> THEN Undefined ELSE args[1] IN
-  CASE \E i \in DOMAIN args : args[i].type = "bail" \/ (IsLComposite(args[i]) /\ m # "push") -> [c |-> LBail, v |-> LBail]
+  CASE \E i \in DOMAIN args : args[i].type = "bail" \/ (IsLComposite(args[i]) /\ ~LIsOwnedArgument(m, i)) -> [c |-> LBail, v |-> LBail]
+    [] c.type = "lset" /\ m = "addOwned" -> [c |-> [c EXCEPT !.elems = Append(@, a)], v |-> c]
     [] c.type = "larray" /\ m = "push" -> [c |-> [c EXCEPT !.elems = @ \o args], v |-> IntV(Len(c.elems) + Len(args))]
     [] c.type = "larray" /\ m = "pop" ->
          IF c.elems = <<>> THEN [c |-> c, v |-> Undefined] ELSE [c |-> [c EXCEPT !.elems = SubSeq(@, 1, Len(@) - 1)], v |-> c.elems[Len(c.elems)]]
@@ -102,7 +107,7 @@ LMethod(c, m, args) ==
          ELSE [c |-> [c EXCEPT !.elems = SubSeq(@, 1, i - 1) \o SubSeq(@, i + 1, Len(@))], v |-> True]
     [] c.type = "lmap" /\ m = "has" -> [c |-> c, v |-> Bool(KeyIndex(c.keys, a) # 0)]
     [] c.type = "lmap" /\ m = "get" -> LET i == KeyIndex(c.keys, a) IN [c |-> c, v |-> IF i = 0 THEN Undefined ELSE c.vals[i]]
-    [] c.type = "lmap" /\ m = "set" ->
+    [] c.type = "lmap" /\ m \in {"set", "setOwned"} ->
          LET i == KeyIndex(c.keys, a)
              value == IF Len(args) < 2 THEN Undefined ELSE args[2]
          IN [c |-> IF i # 0 THEN [c EXCEPT !.vals[i] = value]
@@ -381,6 +386,9 @@ interface Compiled {
   operator: string;
   // Whether a call writes nothing, so that an expression may call it.
   isPure: boolean;
+  // Whether every return gives a composite that the function's own body just made, which nothing
+  // else holds, so that a caller may own the result.
+  isFresh: boolean;
 }
 
 export interface NativeFunctions {
@@ -613,7 +621,7 @@ export const getNativeFunctions = (
       locals.set((parameter.name as ts.Identifier).text, params[index]),
     );
     const inner = { ...scope, locals };
-    const state = { isPure: true };
+    const state = { isPure: true, isFresh: true };
     const body = ts.isBlock(node.body)
       ? (() => {
           const text = compileStatements(
@@ -683,7 +691,7 @@ export const getNativeFunctions = (
       const padded = [...args, ...fn.parameters.slice(args.length).map(() => "Undefined")];
       return {
         text: `LValue(${callee.operator}(${[scope.m, scope.w, ...padded].join(", ")}))`,
-        isFresh: false,
+        isFresh: callee.isFresh,
       };
     }
     // Array.from({ length }, callback), where Array is the realm's.
@@ -1178,7 +1186,7 @@ export const getNativeFunctions = (
     statements: readonly ts.Statement[],
     scope: Scope,
     rest: Rest,
-    state: { isPure: boolean },
+    state: { isPure: boolean; isFresh: boolean },
   ): string | undefined => {
     if (statements.length === 0) return rest(scope.m, scope.w);
     const statement = statements[0];
@@ -1191,6 +1199,13 @@ export const getNativeFunctions = (
           ? { text: "Undefined", isFresh: false }
           : compileExpression(statement.expression, scope);
       if (value === undefined) return undefined;
+      // A constant that holds what the body just made gives it, as a store of it before the
+      // return, which reads it again, owns a copy.
+      const local =
+        statement.expression !== undefined && ts.isIdentifier(statement.expression)
+          ? scope.locals.get(statement.expression.text)
+          : undefined;
+      if (!value.isFresh && (local === undefined || !scope.fresh.has(local))) state.isFresh = false;
       const name = fresh("v");
       return `LET ${name} == ${value.text} IN IF ${name}.type = "bail" THEN LBail ELSE ${result(scope.m, scope.w, name)}`;
     }
@@ -1273,7 +1288,7 @@ export const getNativeFunctions = (
     node: ts.Expression,
     scope: Scope,
     next: Rest,
-    state: { isPure: boolean },
+    state: { isPure: boolean; isFresh: boolean },
   ): string | undefined => {
     const written = (m: string) => {
       state.isPure = false;
@@ -1370,12 +1385,24 @@ export const getNativeFunctions = (
       if (ts.isPropertyAccessExpression(node.expression) && ts.isIdentifier(node.expression.name)) {
         const method = node.expression.name.text;
         const path = getPath(node.expression.expression, scope);
-        const args = compileArguments(node.arguments, scope, true);
+        const values = node.arguments.map((arg) => compileExpression(arg, scope));
+        const args = values.some((value) => value === undefined)
+          ? undefined
+          : values.map((value) =>
+              value === undefined || value.isFresh ? (value?.text ?? "") : `LOwn(${value.text})`,
+            );
+        // A composite that the expression just made becomes a Map's value or a Set's element,
+        // which the collection then owns; a key stays a primitive.
+        const owned =
+          (method === "set" && values.length === 2 && values[1]?.isFresh === true) ||
+          (method === "add" && values.length === 1 && values[0]?.isFresh === true)
+            ? `${method}Owned`
+            : method;
         if (MUTATORS.has(method) && path !== undefined && args !== undefined) {
           return updatePath(
             path,
             scope,
-            (object) => `LMethod(${object}, "${method}", <<${args.join(", ")}>>)`,
+            (object) => `LMethod(${object}, "${owned}", <<${args.join(", ")}>>)`,
             (m) => written(m),
           );
         }
@@ -1399,7 +1426,7 @@ export const getNativeFunctions = (
     const innermost = compiling.at(-1);
     if (innermost?.name === name) {
       innermost.isRecursive = true;
-      return { operator: innermost.operator, isPure: true };
+      return { operator: innermost.operator, isPure: true, isFresh: false };
     }
     if (compiling.some((entry) => entry.name === name)) return undefined;
     const fn = functions.get(name);
@@ -1443,16 +1470,26 @@ export const getNativeFunctions = (
         ]),
       ),
     };
-    const state = { isPure: true };
+    const state = { isPure: true, isFresh: true };
     const body = fn.body;
     const text =
       body === undefined
         ? undefined
         : ts.isBlock(body)
-          ? compileStatements(body.statements, scope, (m, w) => result(m, w, "Undefined"), state)
+          ? compileStatements(
+              body.statements,
+              scope,
+              (m, w) => {
+                // A path that runs to the end returns undefined, which isn't what the body made.
+                state.isFresh = false;
+                return result(m, w, "Undefined");
+              },
+              state,
+            )
           : (() => {
               const value = compileExpression(body, scope);
               const v = fresh("v");
+              if (value?.isFresh !== true) state.isFresh = false;
               return value === undefined
                 ? undefined
                 : `LET ${v} == ${value.text} IN IF ${v}.type = "bail" THEN LBail ELSE ${result("m", "w", v)}`;
@@ -1466,7 +1503,7 @@ export const getNativeFunctions = (
     if (entry.isRecursive)
       definitions.push(`RECURSIVE ${operator}(${formals.map(() => "_").join(", ")})`);
     definitions.push(`${operator}(${formals.join(", ")}) ==\n  ${text}`);
-    const done = { operator, isPure: state.isPure };
+    const done = { operator, isPure: state.isPure, isFresh: state.isFresh && !entry.isRecursive };
     compiled.set(name, done);
     return done;
   };
