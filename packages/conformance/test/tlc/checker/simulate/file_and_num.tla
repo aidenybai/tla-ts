@@ -10,6 +10,9 @@ args:
   - num=2,file=trace
   - -depth
   - "2"
+files:
+  - trace_0_0
+  - trace_0_1
 ---*)
 ---- MODULE file_and_num ----
 EXTENDS Naturals, TLC
@@ -28,4 +31,41 @@ all:
     2209:0 Progress(2) at <date>: 5 states generated, -1 distinct states found, -1 states left on queue.
     2210:0 The number of states generated: 5
     Simulation using seed 4 and aril 0
+  files:
+    trace_0_0: |
+      ---------------- MODULE trace_0_0 -----------------
+      \* <Init line 20, col 9 to line 20, col 13 of module file_and_num>
+      STATE_1 == 
+      x = 0
+
+
+      \* <Next line 21, col 9 to line 21, col 24 of module file_and_num>
+      STATE_2 == 
+      x = 1
+
+
+      \* <Next line 21, col 9 to line 21, col 24 of module file_and_num>
+      STATE_3 == 
+      x = 2
+
+
+      =================================================
+    trace_0_1: |
+      ---------------- MODULE trace_0_1 -----------------
+      \* <Init line 20, col 9 to line 20, col 13 of module file_and_num>
+      STATE_1 == 
+      x = 0
+
+
+      \* <Next line 21, col 9 to line 21, col 24 of module file_and_num>
+      STATE_2 == 
+      x = 1
+
+
+      \* <Next line 21, col 9 to line 21, col 24 of module file_and_num>
+      STATE_3 == 
+      x = 2
+
+
+      =================================================
 ---*)

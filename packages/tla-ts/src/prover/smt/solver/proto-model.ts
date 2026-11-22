@@ -357,7 +357,10 @@ export class ProtoModel {
   private seqFactory: SeqFactory | undefined;
   private charFactory: CharFactory | undefined;
 
-  constructor(readonly manager: AstManager) {
+  constructor(
+    readonly manager: AstManager,
+    isProto = false,
+  ) {
     this.boolRandom = new RandomGen(manager.getNumAsts());
     this.constInterps = new ObjMap((decl) => manager.getDeclHash(decl));
     this.funcInterps = new ObjMap((decl) => manager.getDeclHash(decl));
@@ -369,6 +372,8 @@ export class ProtoModel {
     this.enumeratedTerms = new RefVector(manager);
     this.auxDecls = new ObjHashtable((decl) => manager.getDeclHash(decl));
     this.evaluator = new ModelEvaluator(manager, this);
+    // proto_model::eval leaves array equalities unexpanded, where a model's evaluator expands them.
+    if (isProto) this.evaluator.setExpandArrayEqualities(false);
     this.rewriter = new Rewriter(manager, TACTIC_REWRITER_OPTIONS);
   }
 

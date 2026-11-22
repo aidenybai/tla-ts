@@ -10,6 +10,8 @@ config: |
 args:
   - -dump
   - states
+files:
+  - states.dump
 ---*)
 ---- MODULE with_symmetry ----
 EXTENDS TLC
@@ -32,4 +34,9 @@ all:
     2199:0 3 states generated, 1 distinct states found, 0 states left on queue.
     2194:0 The depth of the complete state graph search is 1.
     2268:0 The average outdegree of the complete state graph is 0 (minimum is 0, the maximum 0 and the 95th percentile is 0).
+  files:
+    states.dump: |+
+      State 1:
+      x = a
+
 ---*)
