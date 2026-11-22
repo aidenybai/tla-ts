@@ -312,5 +312,5 @@ export const createProgram = (source: string, path: string, library: Library = D
   });
   const sourceFile = program.getSourceFile(path);
   if (sourceFile === undefined) throw new TlaTypeScriptError(`Can't read ${path}`);
-  return { sourceFile, checker: program.getTypeChecker() };
+  return { sourceFile, checker: program.getTypeChecker(), options: program.getCompilerOptions() };
 };

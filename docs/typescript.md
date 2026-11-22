@@ -148,6 +148,7 @@ TLC tries every value of a parameter's type, so each type needs a finite set of 
 | `"a" \| "b"`, `1 \| 2`         | Each literal                                      |
 | `boolean`, `null`, `undefined` | `true` and `false`, `null`, `undefined`           |
 | `{ x: 0 \| 1; y: boolean }`    | Every object of those properties                  |
+| `{ x?: 0 \| 1 }`               | `{}`, and every object of `x`'s values            |
 | `[0 \| 1, boolean]`            | Every array of those elements                     |
 | `Set<T>`                       | A `Set` of every subset of `T`'s values           |
 | `Map<K, V>`                    | A `Map` of every partial function from `K` to `V` |
@@ -155,13 +156,15 @@ TLC tries every value of a parameter's type, so each type needs a finite set of 
 | `string`                       | `""`, `"a"`, and `"b"`                            |
 | `T[]`                          | Every array of `T`s up to 3 long                  |
 
+An object with an optional property is each object that lacks or holds it. A held property also takes `undefined`, unless the nearest `tsconfig.json` that includes the file sets `exactOptionalPropertyTypes`. A file that no project includes gets TypeScript's default, which leaves it off.
+
 The bounds on `number`, `string`, and arrays keep the search finite, so a check covers only those values. Use a union of literals, such as `0 | 1 | 2`, to check other values. A union of values that TLC can't compare, such as a string and a number, stops the compile.
 
 Other types have no finite set of values:
 
 - A function, or an object with an index signature, such as `Record<string, number>`.
 - A class's instances.
-- An object with an optional property, or a property that TLA+ can't name.
+- An object with a property that TLA+ can't name, or with an optional property and a numeric key.
 - A tuple with optional or rest elements.
 - A type that holds itself.
 

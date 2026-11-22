@@ -569,6 +569,18 @@ export const compileModelToEscore = (
         ? createConverter(definition.body)
         : unsupported(domain, type);
     }
+    // The empty object, as the empty function stands for it, which a domain of an object whose
+    // fields are all optional holds.
+    if (
+      domain.kind === "SetEnumeration" &&
+      domain.elements.length === 1 &&
+      domain.elements[0].kind === "FunctionConstruction"
+    ) {
+      return lowerAs(
+        define("Convert", (name) => `${name}(s, x) == NewRecord(s, <<>>)`),
+        `[type |-> "lobject", keys |-> <<>>, vals |-> <<>>]`,
+      );
+    }
     if (domain.kind === "SetEnumeration") {
       const primitives = domain.elements.flatMap((element) =>
         element.kind === "Identifier" && MODEL_VALUES.has(element.name)

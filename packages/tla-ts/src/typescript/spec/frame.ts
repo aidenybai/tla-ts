@@ -534,10 +534,14 @@ export const frameModel = (
     [...definition.tags.keys()].find((candidate) => VALUE_TAGS.has(candidate));
 
   // The first type that has no end, or the domains of every type.
-  const findDomains = (types: readonly ts.Type[], path: readonly ts.Type[]) =>
-    types.reduce<Domain[] | Infinite>((domains, type) => {
+  const findDomains = (
+    types: readonly ts.Type[],
+    path: readonly ts.Type[],
+    isHeldOptional: (position: number) => boolean = () => false,
+  ) =>
+    types.reduce<Domain[] | Infinite>((domains, type, position) => {
       if (!Array.isArray(domains)) return domains;
-      const domain = findSizedDomain(type, path);
+      const domain = findSizedDomain(type, path, isHeldOptional(position));
       return isUnlisted(domain) ? domain : [...domains, domain];
     }, []);
   const getLiteral = (type: ts.Type): string | undefined => {
@@ -639,20 +643,34 @@ export const frameModel = (
   // The set of every value that a finite type allows, which TLC enumerates, as TLA+, with how many
   // values it has. outer holds the types around this one, so a type that holds itself, such as a
   // tree, has no end.
-  const findSizedDomain = (type: ts.Type, outer: readonly ts.Type[]): Domain | Infinite => {
+  // A held optional field's type, where the program's options make optional fields exact, holds the
+  // missing type, which TypeScript adds to it beside any undefined that it declares, and which no
+  // value of the field is, as removeMissingType tells.
+  const isMissing = (type: ts.Type) =>
+    program.options.exactOptionalPropertyTypes === true &&
+    (type.flags & ts.TypeFlags.Undefined) !== 0 &&
+    type !== checker.getUndefinedType();
+  const findSizedDomain = (
+    type: ts.Type,
+    outer: readonly ts.Type[],
+    isHeldOptional = false,
+  ): Domain | Infinite => {
     if (outer.includes(type)) {
       return { message: `${checker.typeToString(type)} holds itself, so it has no end` };
     }
     const path = [...outer, type];
     if (type.flags & ts.TypeFlags.Boolean) return { text: "BOOLEAN", size: 2 };
     if (type.isUnion()) {
-      const literalTypes = type.types
+      const members = isHeldOptional
+        ? type.types.filter((member) => !isMissing(member))
+        : type.types;
+      const literalTypes = members
         .filter((member) => getLiteral(member) !== undefined)
         .toSorted((left, right) =>
           left.isNumberLiteral() && right.isNumberLiteral() ? left.value - right.value : 0,
         );
       const others = findDomains(
-        type.types.filter((member) => !literalTypes.includes(member)),
+        members.filter((member) => !literalTypes.includes(member)),
         path,
       );
       if (!Array.isArray(others)) return others;
@@ -739,16 +757,44 @@ export const frameModel = (
     if (declaration !== undefined && ts.isClassLike(declaration)) {
       return getInfinite(type, "tla-ts can't list the instances of a class");
     }
-    const optional = properties.find((property) => property.flags & ts.SymbolFlags.Optional);
-    if (optional !== undefined) {
-      return getInfinite(type, `the optional field ${optional.name} may be missing`);
-    }
     const fieldTypes = properties.map((property) => checker.getTypeOfSymbol(property));
-    const fields = findDomains(fieldTypes, path);
+    const fields = findDomains(
+      fieldTypes,
+      path,
+      (position) => (properties[position].flags & ts.SymbolFlags.Optional) !== 0,
+    );
     if (!Array.isArray(fields)) return fields;
     const keys = properties.map((property) => property.name);
     const unnamed = keys.find((key) => !isNumericKey(key) && !isFieldName(key));
     if (unnamed !== undefined) return getInfinite(type, `TLA+ can't name the field ${unnamed}`);
+    const optional = properties.flatMap((property, position) =>
+      property.flags & ts.SymbolFlags.Optional ? [position] : [],
+    );
+    if (optional.length > 0 && keys.some(isNumericKey)) {
+      return getInfinite(type, `the optional field ${properties[optional[0]].name} may be missing`);
+    }
+    // An object with optional fields is the record of each set of them that it holds, with its
+    // other fields: a field that it holds takes the values of its type, and one that it lacks is
+    // missing, as the in operator tells. An object that holds no field is the empty function, which a record of no
+    // fields is.
+    if (optional.length > 0) {
+      const parts = Array.from({ length: 2 ** optional.length }, (_, mask) => {
+        const held = keys.flatMap((_, position) => {
+          const bit = optional.indexOf(position);
+          return bit === -1 || mask & (1 << bit) ? [position] : [];
+        });
+        return held.length === 0
+          ? { text: `{[${names.getFresh("field")} \\in {} |-> TRUE]}`, size: 1 }
+          : {
+              text: `[${held.map((position) => `${keys[position]} : (${fields[position].text})`).join(", ")}]`,
+              size: held.reduce((product, position) => product * fields[position].size, 1),
+            };
+      });
+      return {
+        text: parts.map((part) => `(${part.text})`).join(" \\cup "),
+        size: parts.reduce((sum, part) => sum + part.size, 0),
+      };
+    }
     const size = fields.reduce((product, field) => product * field.size, 1);
     if (!keys.some(isNumericKey)) {
       return {
