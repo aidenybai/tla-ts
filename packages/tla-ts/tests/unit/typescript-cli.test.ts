@@ -105,9 +105,44 @@ describe("the CLI with TypeScript files", () => {
     const result = runCli(copyFixtures("passing"), ["library.ts"]);
     expect(result.status).toBe(0);
     expect(result.stdout).toContain(
-      "tla-ts calls no apply: its parameter transform takes values it can't list",
+      "tla-ts calls no apply: its parameter transform is a function, whose values tla-ts can't list",
     );
     expect(result.stdout).toContain("Model checking completed. No error has been found.");
+  });
+
+  // A note names the kind of a parameter's type that keeps tla-ts from calling an export, beside the
+  // check of the exports that it calls.
+  describe("names the kind of each parameter that it can't list the values of", () => {
+    const getModel = (check: string) =>
+      `class Box {\n  size = 1;\n}\ninterface Shape {\n  name: string;\n  area(): number;\n}\nconst count = [1, 2].length;\nexport const isSmall = () => ${check};\nexport const identity = <T,>(value: T) => value;\nexport const apply = (transform: (value: number) => number) => transform(count);\nexport const measure = (shape: Shape) => shape.area();\nexport const open = (box: Box) => box.size;\nexport const name = (shape: Shape | undefined) => shape?.name;\nexport const echo = (value: unknown) => value;\nexport const loose = (value: any) => value;\n`;
+
+    it("agrees with Node", () => {
+      const directory = copyFixtures("passing");
+      writeFileSync(join(directory, "kinds.ts"), getModel("count <= 2"));
+      expect(runNode(directory, "kinds.ts").status).toBe(0);
+      const result = runCli(directory, ["kinds.ts"]);
+      expect(result.status).toBe(0);
+      expect(result.stdout).toContain("Model checking completed. No error has been found.");
+      [
+        "identity: its parameter value is a type parameter",
+        "apply: its parameter transform is a function",
+        "measure: its parameter shape is an object with methods",
+        "open: its parameter box is an instance of a class",
+        "name: its parameter shape is a union with an object with methods",
+        "echo: its parameter value is unknown",
+        "loose: its parameter value is any, as an untyped parameter is",
+      ].forEach((note) =>
+        expect(result.stdout).toContain(`tla-ts calls no ${note}, whose values tla-ts can't list`),
+      );
+    });
+
+    it("rejects another result", () => {
+      const directory = copyFixtures("passing");
+      writeFileSync(join(directory, "kinds.ts"), getModel("count < 2"));
+      const result = runCli(directory, ["kinds.ts"]);
+      expect(result.status).not.toBe(0);
+      expect(result.stdout).toContain("The invariant of isSmall is equal to FALSE");
+    });
   });
 
   // Skipped until ESCore prints what Node prints for an error that nothing catches, whose stack V8
