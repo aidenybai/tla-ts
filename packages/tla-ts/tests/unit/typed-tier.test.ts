@@ -62,6 +62,7 @@ describe("typed tier matches TLC", () => {
     ["FlattenChunks", 293],
     ["FilteredMembership", 280],
     ["RecordBounds", 215],
+    ["RecordFieldOrder", 11],
     ["SparseHistory", 79],
     ["StringFields", 97],
     ["PrimedLets", 69],

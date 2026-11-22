@@ -1812,7 +1812,7 @@ const compileBound = (
       compileBound(program, expansion.definition.body, { ...frame, scope: expansion.scope }),
     );
   }
-  // TLC enumerates a set of records with its fields sorted, the last one varying fastest.
+  // TLC enumerates a set of records with its fields in TLC's order of names, the last one varying fastest.
   if (setExpression.kind === "RecordSet") {
     const fields = [...setExpression.fields].sort((left, right) =>
       left.name < right.name ? -1 : 1,
@@ -1826,6 +1826,9 @@ const compileBound = (
       names,
       loops.map((loop) => loop.element),
     );
+    const nested = names
+      .toSorted((left, right) => compareValues(left, right))
+      .map((name) => loops[names.indexOf(name)]);
     return {
       element,
       header: (name) => {
@@ -1835,7 +1838,7 @@ const compileBound = (
         const values = resolved.shapes[shape].map((field) => loops[names.indexOf(field)].name);
         const record = resolved.shapes.length === 1 ? values : [shape, ...values];
         const once = getName(program, "o");
-        return `${loops.map((loop) => loop.header(loop.name)).join(" ")} for (let ${name} = [${record.join(", ")}], ${once} = true; ${once}; ${once} = false)`;
+        return `${nested.map((loop) => loop.header(loop.name)).join(" ")} for (let ${name} = [${record.join(", ")}], ${once} = true; ${once}; ${once} = false)`;
       },
     };
   }
