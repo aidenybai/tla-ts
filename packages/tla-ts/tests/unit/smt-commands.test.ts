@@ -4813,3 +4813,109 @@ describe("smt.array.extensional, as Z3 5.3.2 skips the extensionality axiom of a
     expect(run(lines)).toEqual(expected);
   });
 });
+
+describe(":numeral-as-real, as Z3 5.3.2's cmd_context reads an integer literal", () => {
+  it.each([
+    [
+      "reads an integer literal as a real",
+      [
+        "(set-option :numeral-as-real true)",
+        "(declare-const r Real)",
+        "(assert (= r (/ 1 3)))",
+        "(check-sat)",
+        "(get-value (r 2 (+ 1 2)))",
+        "(simplify (/ 1 2))",
+        "(simplify (div 7 2))",
+      ],
+      ["sat", "((r (/ 1.0 3.0))", " (2 2.0)", " ((+ 1 2) 3.0))", "(/ 1.0 2.0)", "3"],
+    ],
+    [
+      "reads it as an integer once it is false again",
+      [
+        "(set-option :numeral-as-real true)",
+        "(set-option :numeral-as-real false)",
+        "(declare-const r Real)",
+        "(assert (= r (/ 1 3)))",
+        "(check-sat)",
+        "(get-value (r 2 (+ 1 2)))",
+        "(simplify (/ 1 2))",
+        "(simplify (div 7 2))",
+      ],
+      ["sat", "((r (/ 1.0 3.0))", " (2 2)", " ((+ 1 2) 3))", "(/ 1.0 2.0)", "3"],
+    ],
+    [
+      "takes effect after a declaration",
+      [
+        "(declare-const y Int)",
+        "(simplify (+ y 1))",
+        "(set-option :numeral-as-real true)",
+        "(simplify 3)",
+        "(declare-const r Real)",
+        "(assert (= r (/ 1 3)))",
+        "(check-sat)",
+        "(get-value (r 2 (+ 1 2)))",
+        "(simplify (/ 1 2))",
+        "(simplify (div 7 2))",
+      ],
+      [
+        "(+ 1 y)",
+        "3.0",
+        "sat",
+        "((r (/ 1.0 3.0))",
+        " (2 2.0)",
+        " ((+ 1 2) 3.0))",
+        "(/ 1.0 2.0)",
+        "3",
+      ],
+    ],
+    [
+      "is false after a reals-only logic",
+      [
+        "(set-logic QF_LRA)",
+        "(set-option :numeral-as-real false)",
+        "(simplify 3)",
+        "(simplify (/ 1 2))",
+      ],
+      ["3", "(/ 1.0 2.0)"],
+    ],
+    [
+      "stays true under a logic with integers",
+      [
+        "(set-option :numeral-as-real true)",
+        "(set-logic QF_NIA)",
+        "(simplify 3)",
+        "(simplify (div 7 2))",
+      ],
+      ["3.0", "3"],
+    ],
+    [
+      "is true after a reals-only logic",
+      ["(set-option :numeral-as-real false)", "(set-logic QF_LRA)", "(simplify 3)"],
+      ["3.0"],
+    ],
+    [
+      "is false after reset",
+      ["(set-option :numeral-as-real true)", "(simplify 3)", "(reset)", "(simplify 3)"],
+      ["3.0", "3"],
+    ],
+    [
+      "is false after reset following a reals-only logic",
+      ["(set-logic QF_LRA)", "(simplify 3)", "(reset)", "(simplify 3)"],
+      ["3.0", "3"],
+    ],
+    [
+      "coerces an integer constant",
+      [
+        "(set-option :numeral-as-real true)",
+        "(declare-const x Int)",
+        "(assert (> x 2))",
+        "(assert (< x 4))",
+        "(check-sat)",
+        "(get-value (x (+ x 1)))",
+      ],
+      ["sat", "((x 3)", " ((+ x 1) 4.0))"],
+    ],
+  ])("%s", (_title, lines, expected) => {
+    expect(run(lines)).toEqual(expected);
+  });
+});

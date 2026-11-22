@@ -2300,6 +2300,7 @@ export const runSmtlibScript = (
             );
           settings.parserOptions.isGlobalDecls = isTrue;
         }
+        if (keyword === ":numeral-as-real") state.reader.setNumeralAsReal(isTrue);
         if (keyword === ":diagnostic-output-channel")
           settings.isDiagnosticOnStdout = value.kind === "string" && value.text === "stdout";
         if (keyword === ":int-real-coercions" && !isTrue)
@@ -2448,9 +2449,12 @@ export const runSmtlibScript = (
           return;
         }
         state.logic = logic.text;
-        if (state.isProofsEnabled === undefined)
+        if (state.isProofsEnabled === undefined) {
+          const isNumeralAsReal = state.reader.isNumeralAsReal();
           state.reader = createSmtlibReader(state.manager, logic.text, settings.parserOptions);
-        else {
+          // cmd_context::set_logic only ever turns numeral_as_real on.
+          if (isNumeralAsReal) state.reader.setNumeralAsReal(true);
+        } else {
           state.reader.restrictSorts(logic.text);
           // Deviation from Z3: its new solver starts without the open scopes, so it ignores their pop and keeps what they asserted.
           resetKernel();
