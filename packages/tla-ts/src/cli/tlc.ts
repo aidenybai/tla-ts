@@ -20,7 +20,9 @@ import {
   TlaFileError,
   TlaMissingCheckpointError,
   TlaSyntaxError,
+  createStackOverflowError,
   getUnexpectedException,
+  isStackOverflow,
   TlaSanyFatalError,
 } from "../errors";
 import { EXIT_STATUS } from "../exit-codes";
@@ -492,7 +494,8 @@ const checkSpec = async (
       );
     }
     return result.failure?.exitCode ?? EXIT_CODES[result.status];
-  } catch (error) {
+  } catch (caught) {
+    const error = isStackOverflow(caught) ? createStackOverflowError() : caught;
     if (!(error instanceof TlaError)) throw error;
     if (error instanceof TlaSyntaxError) console.log(formatSanyErrors(error, fileName));
     if (!timing.isParsed) printCheckProgress(printer, { kind: "parsed" }, timing, directory);

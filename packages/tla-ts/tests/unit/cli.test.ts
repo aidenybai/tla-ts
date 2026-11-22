@@ -1,9 +1,12 @@
+import { spawnSync } from "node:child_process";
 import { mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it } from "vite-plus/test";
 import { FIXTURES } from "./check-harness";
 import { getToolSequence, runCliWith } from "./cli-harness";
+
+const DIST_CLI = join(import.meta.dirname, "../../dist/cli.js");
 
 const runCli = (directory: string, name: string, args: string[] = []) =>
   runCliWith(directory, [`${name}.tla`, ...args]);
@@ -2281,4 +2284,23 @@ describe("the CLI takes -checkpoint only where it writes no checkpoint", () => {
       ]);
     },
   );
+});
+
+describe("the CLI reports a stack overflow outside the model check as TLC's StackOverflowError", () => {
+  it("reports one while -difftrace compares the states of a trace nested 15,000 tuples deep", () => {
+    const directory = mkdtempSync(join(tmpdir(), "deep-difftrace-"));
+    writeFileSync(
+      join(directory, "M.tla"),
+      `---- MODULE M ----\nEXTENDS Naturals\nVARIABLES x, y\nInit == x = 0 /\\ y = 0\nNext == y' = y + 1 /\\ x' = ${"<< ".repeat(500)}x${" >>".repeat(500)}\nInv == y < 30\n====\n`,
+    );
+    writeFileSync(join(directory, "M.cfg"), "INIT Init\nNEXT Next\nINVARIANT Inv\n");
+    const result = spawnSync(
+      process.execPath,
+      [DIST_CLI, "M.tla", "-difftrace", "-noGenerateSpecTE", "-metadir", join(directory, "states")],
+      { cwd: directory, encoding: "utf8" },
+    );
+    rmSync(directory, { recursive: true });
+    expect([result.status, result.stderr]).toEqual([255, ""]);
+    expect(result.stdout).toContain("\nError: This was a Java StackOverflowError.");
+  });
 });
