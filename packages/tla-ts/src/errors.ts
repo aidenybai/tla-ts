@@ -194,6 +194,12 @@ export class TlaEndOfInputError extends TlaUncodedError {
   }
 }
 
+export class TlaCorruptTraceError extends TlaUncodedError {
+  constructor(path: string, problem: string) {
+    super(`The trace file ${path} ${problem}.`);
+  }
+}
+
 export class TlaMissingCheckpointError extends TlaEvaluationError {
   constructor(directory: string) {
     super(`The directory ${directory} holds no checkpoint to recover from.`);

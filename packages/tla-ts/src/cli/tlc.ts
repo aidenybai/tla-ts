@@ -205,7 +205,7 @@ const toJavaFileError = (path: string, error: unknown) => {
 
 const readJavaFile = (path: string) => {
   try {
-    return readFileSync(path, "utf8");
+    return readFileSync(path);
   } catch (error) {
     if (getErrorCode(error) === "ENOENT") return undefined;
     throw toJavaFileError(path, error);

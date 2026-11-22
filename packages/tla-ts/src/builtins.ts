@@ -1,4 +1,9 @@
-import { TlaEndOfInputError, TlaEvaluationError, TlaModuleError } from "./errors";
+import {
+  TlaCorruptTraceError,
+  TlaEndOfInputError,
+  TlaEvaluationError,
+  TlaModuleError,
+} from "./errors";
 import type { Builtin, BuiltinArgument, Context, OperatorValue } from "./evaluate";
 import { prettyPrint } from "./pretty-print";
 import {
@@ -220,6 +225,11 @@ export const getJavaClassName = (value: Value) => {
 
 export const getKindString = (value: Value) => KIND_STRINGS[getJavaClassName(value)];
 
+export const createClassCastError = (valueClass: string, targetClass: string) =>
+  new TlaEvaluationError(
+    `class ${valueClass} cannot be cast to class ${targetClass} (${valueClass} and ${targetClass} are in unnamed module of loader 'app')`,
+  );
+
 const createJavaOverrideError = (signature: string, message: string) =>
   new TlaEvaluationError(
     `Attempted to apply the operator overridden by the Java method\n${signature},\nbut it produced the following error:\n${message}`,
@@ -254,7 +264,11 @@ export const overrideWithJava = (builtin: Builtin, signature: string): Builtin =
       try {
         return compute(...args);
       } catch (error) {
-        if (!(error instanceof TlaEvaluationError) || error instanceof TlaEndOfInputError) {
+        if (
+          !(error instanceof TlaEvaluationError) ||
+          error instanceof TlaEndOfInputError ||
+          error instanceof TlaCorruptTraceError
+        ) {
           throw error;
         }
         const isFingerprinted = isFingerprintedSince(depth);
