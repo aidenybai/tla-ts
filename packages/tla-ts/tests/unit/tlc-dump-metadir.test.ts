@@ -3,8 +3,7 @@ import { cpSync, existsSync, mkdtempSync, readdirSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterAll, describe, expect, it } from "vite-plus/test";
-
-const CLI = join(import.meta.dirname, "../../src/cli.ts");
+import { DIST_CLI } from "./cli-harness";
 
 const copies: string[] = [];
 
@@ -14,10 +13,11 @@ const runDump = (dump: string[]) => {
   const directory = mkdtempSync(join(tmpdir(), "tla-ts-metadir-"));
   copies.push(directory);
   cpSync(join(import.meta.dirname, "../fixtures/counter"), directory, { recursive: true });
-  const result = spawnSync("bun", [CLI, "Counter.tla", "-metadir", "meta", "-dump", ...dump], {
-    cwd: directory,
-    encoding: "utf8",
-  });
+  const result = spawnSync(
+    process.execPath,
+    [DIST_CLI, "Counter.tla", "-metadir", "meta", "-dump", ...dump],
+    { cwd: directory, encoding: "utf8" },
+  );
   return { directory, stdout: result.stdout };
 };
 
