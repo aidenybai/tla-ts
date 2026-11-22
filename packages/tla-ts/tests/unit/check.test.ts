@@ -193,6 +193,50 @@ describe("check matches TLC", () => {
   );
 
   it.each([
+    ["![k] = v, applied at k", "0", "[f EXCEPT ![<<1, 1>>] = 5][<<1, 1>>] = 5", ["<<1, 1>>"]],
+    [
+      "![k] = v twice, applied at k",
+      "0",
+      "[[f EXCEPT ![<<1, 1>>] = 5] EXCEPT ![<<1, 1>>] = @ + 1][<<1, 1>>] = 6",
+      ["<<1, 1>>"],
+    ],
+    [
+      "![k] = v and ![j] = w, applied at k",
+      "0",
+      "[[f EXCEPT ![<<1, 1>>] = 5] EXCEPT ![<<2, 1>>] = 6][<<1, 1>>] = 5",
+      ["<<1, 1>>", "<<2, 1>>"],
+    ],
+    [
+      "![k].c = v and then ![k] = w, applied at k",
+      "[c |-> 0]",
+      "[[f EXCEPT ![<<1, 1>>].c = 5] EXCEPT ![<<1, 1>>] = [c |-> 6]][<<1, 1>>].c = 6",
+      ["<<1, 1>>", "<<1, 1>>"],
+    ],
+    [
+      "![k] = v and then ![k].c = w, applied at k",
+      "[c |-> 0]",
+      "[[f EXCEPT ![<<1, 1>>] = [c |-> 1]] EXCEPT ![<<1, 1>>].c = 5][<<1, 1>>].c = 5",
+      ["<<1, 1>>"],
+    ],
+  ])(
+    "checks a lazy function's domain only where TLC does after EXCEPT %s",
+    async (_except, body, application, expected) => {
+      const prints: string[] = [];
+      const result = await check({
+        source: `---- MODULE M ----\nEXTENDS Integers, TLC\nVARIABLE x\nInit == x = 0\nNext == x' = 0 /\\ LET f == [t \\in {u \\in (0..2) \\X {1} : PrintT(u)} |-> ${body}] IN ${application}\n====`,
+        config: "INIT Init\nNEXT Next",
+        onPrint: (text) => prints.push(text),
+      });
+      expect(prints).toEqual(expected);
+      expect([result.status, result.generatedStates, result.distinctStates]).toEqual([
+        "success",
+        2,
+        1,
+      ]);
+    },
+  );
+
+  it.each([
     [
       "a member of SUBSET S",
       "~({t \\in (0..2) \\X {x} : 1 \\div (2 - t[1]) >= 0} \\in SUBSET ((1..2) \\X {x}))",
