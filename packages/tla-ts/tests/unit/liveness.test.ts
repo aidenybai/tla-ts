@@ -565,6 +565,22 @@ describe("a fair action that Next splits into matches TLC", () => {
     ]);
   });
 
+  // A and B step from y = a to states that the symmetry or the view merges, so the step of B
+  // reaches A's state without being A's step.
+  it.each([
+    ["SYMMETRY Perms", 5, 2],
+    ["VIEW OnlyZ", 5, 2],
+  ])(
+    "evaluates a fair action on the steps of states that %s merges",
+    async (setting, generated, distinct) => {
+      const result = await checkFair(
+        "CONSTANT S\nVARIABLES y, z\nA == z = 0 /\\ z' = 1 /\\ y' = y\nB == z = 0 /\\ z' = 1 /\\ y' = CHOOSE o \\in S : o # y\nC == z = 1 /\\ z' = 0 /\\ y' = y\nNext == A \\/ B \\/ C\nSpec == y \\in S /\\ z = 0 /\\ [][Next]_<<y, z>> /\\ SF_z(A) /\\ WF_z(C)\nProp == []<><<A>>_<<y, z>>\nPerms == Permutations(S)\nOnlyZ == z",
+        `CONSTANT S = {a, b}\n${setting}\nSPECIFICATION Spec\nPROPERTY Prop`,
+      );
+      expect(getRun(result)).toEqual(["success", undefined, undefined, generated, distinct]);
+    },
+  );
+
   it("evaluates ENABLED again where an invariant stops Next before the fair action, as TLC does", async () => {
     const result = await checkFair(
       "VARIABLE x\nA == x' = x + 1 /\\ Assert(x > 0, \"A at zero\")\nB == x' = x + 10\nNext == B \\/ A\nSpec == x = 0 /\\ [][Next]_x /\\ WF_x(A)\nProp == []<>(x = 0)\nInv == x < 10",
