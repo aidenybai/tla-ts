@@ -2317,6 +2317,31 @@ describe("the CLI reports a stack overflow while it prints a trace and keeps the
   });
 });
 
+describe("the CLI checks deeply nested values, as TLC does", () => {
+  it("checks a variable that holds sets nested 2,000 deep", () => {
+    const directory = mkdtempSync(join(tmpdir(), "deep-set-"));
+    writeFileSync(
+      join(directory, "DeepSet.tla"),
+      "---- MODULE DeepSet ----\nEXTENDS Naturals\nCONSTANT C\nVARIABLES x, y\nInit == x = C /\\ y = 0\nNext == y' = y + 1 /\\ UNCHANGED x\nInv == y < 1\n====\n",
+    );
+    writeFileSync(
+      join(directory, "DeepSet.cfg"),
+      `CONSTANT C = ${"{".repeat(2000)}1${"}".repeat(2000)}\nINIT Init\nNEXT Next\nINVARIANT Inv\n`,
+    );
+    const result = spawnSync(
+      process.execPath,
+      [DIST_CLI, "DeepSet.tla", "-noGenerateSpecTE", "-metadir", join(directory, "states")],
+      { cwd: directory, encoding: "utf8" },
+    );
+    rmSync(directory, { recursive: true });
+    expect([result.status, result.stderr]).toEqual([12, ""]);
+    expect(result.stdout).toContain("\nError: Invariant Inv is violated.\n");
+    expect(result.stdout).toContain(
+      "\n2 states generated, 2 distinct states found, 0 states left on queue.\n",
+    );
+  });
+});
+
 const TRACE_SPEC_FIXTURES = join(FIXTURES, "trace-spec");
 
 const GENERATED_DATE = /\\\* Generated on .*$/;
