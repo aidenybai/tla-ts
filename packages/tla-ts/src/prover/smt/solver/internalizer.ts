@@ -162,7 +162,7 @@ export abstract class Internalizer {
   readonly clauses = new ClauseStore();
   protected watches: (Clause[] | undefined)[] = [];
   private watchMarks = new Uint8Array(1024);
-  private removedLiterals: Literal[] = [];
+  protected removedLiterals: Literal[] = [];
   private gateBuffer: Literal[] = [];
   private gateLiterals: Literal[] = [];
   protected binaryWatches: (Literal[] | undefined)[] = [];
@@ -198,7 +198,7 @@ export abstract class Internalizer {
     readonly manager: AstManager,
     protected relevancyLevel: number,
     caseSplitStrategy: number,
-    private isProofsEnabled: boolean,
+    protected isProofsEnabled: boolean,
   ) {
     this.rewriter = new Rewriter(manager, KERNEL_REWRITER_OPTIONS);
     this.relevancy = new RelevancyPropagator(

@@ -217,7 +217,6 @@ export class Context extends Internalizer {
   private qhead = 0;
   private simpQhead = 0;
   private simpCounter = 0;
-  private simpLits: Literal[] = [];
   private scopeAssignedLimits: number[] = [];
   private scopeAuxClauseLimits: number[] = [];
   private scopeTrailLimits: number[] = [];
@@ -1661,15 +1660,15 @@ export class Context extends Internalizer {
     )
       return true;
     const numLiterals = store.getNumLiterals(clause);
-    const simpLits = this.simpLits;
-    shrink(simpLits, 0);
+    const removed = this.removedLiterals;
+    shrink(removed, 0);
     let kept = 2;
     let isTautology = false;
     for (let index = 2; index < numLiterals; index++) {
       const literal = store.getLiteral(clause, index);
       const value = this.assignment[literal];
       if (value === L_FALSE) {
-        if (this.params.isProofsEnabled === true) simpLits.push(negate(literal));
+        if (this.isProofsEnabled) removed.push(negate(literal));
         this.decLitOccs(literal);
         continue;
       }
@@ -1679,10 +1678,10 @@ export class Context extends Internalizer {
     }
     if (kept < numLiterals) store.setNumLiterals(clause, kept);
     if (isTautology) return true;
-    if (simpLits.length > 0)
+    if (removed.length > 0)
       store.setJustification(
         clause,
-        new UnitResolutionJustification(store.getJustification(clause), simpLits.slice()),
+        new UnitResolutionJustification(store.getJustification(clause), removed.slice()),
       );
     return false;
   }
@@ -1704,16 +1703,17 @@ export class Context extends Internalizer {
       for (let position = 0; position < 2; position++) {
         const boolVar = getVar(store.getLiteral(clause, position));
         if (this.justifications[boolVar] !== clause) continue;
-        if (this.params.isProofsEnabled !== true) {
+        if (!this.isProofsEnabled) {
           this.justifications[boolVar] = "axiom";
           continue;
         }
-        const simpLits: Literal[] = [];
-        for (let index = 0; index < store.getNumLiterals(clause); index++)
-          if (index !== position) simpLits.push(negate(store.getLiteral(clause, index)));
+        const literals: Literal[] = [];
+        for (let literalIndex = 0; literalIndex < store.getNumLiterals(clause); literalIndex++)
+          if (literalIndex !== position)
+            literals.push(negate(store.getLiteral(clause, literalIndex)));
         this.justifications[boolVar] = new UnitResolutionJustification(
           store.getJustification(clause),
-          simpLits,
+          literals,
         );
       }
       this.deleteClause(clause);

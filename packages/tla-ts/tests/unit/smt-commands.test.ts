@@ -5806,7 +5806,7 @@ describe("get-option, as Z3 5.3.2's get_option_cmd prints a builtin or leaves it
 });
 
 describe("smt.phase_selection, as Z3 5.3.2 picks the phase of a decision", () => {
-  const declarations = RESTART_MODEL.map((_, index) => `(declare-const x${index} Bool)`);
+  const declarations = RESTART_MODEL.map((_value, index) => `(declare-const x${index} Bool)`);
   const assertions = RESTART_CLAUSES.map(
     (clause) =>
       `(assert (or ${clause.map((literal) => (literal < 0 ? `(not ${getName(literal)})` : getName(literal))).join(" ")}))`,
