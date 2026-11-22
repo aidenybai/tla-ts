@@ -355,7 +355,7 @@ describe("reads each body of the recorded graph as the live runtime parsed it", 
       `${REGISTER}
       const { parentPort, workerData } = require("node:worker_threads");
       const { isDeepStrictEqual } = require("node:util");
-      import(workerData.source + "/typescript/spec/prepare.ts").then((prepare) => {
+      Promise.all(["/typescript/spec/prepare.ts", "/tlc/order.ts", "/config.ts"].map((path) => import(workerData.source + path))).then(([prepare, order, config]) => {
         const getModules = (runtime) => [
           ...runtime.modules,
           runtime.getView([...runtime.names].join("\\n"), []),
@@ -366,11 +366,26 @@ describe("reads each body of the recorded graph as the live runtime parsed it", 
         const readRuntime = prepare.prepareHostRuntime(JSON.parse(workerData.host));
         const live = getModules(liveRuntime);
         const read = getModules(readRuntime);
-        // A view that the recorded tables give is the one the live runtime's text gives.
+        // A view that the recorded tables give is the one the live runtime's text gives, and TLC's
+        // orders of a spec that extends it are the ones the live runtime's lexed view gives.
         const getViewShape = (runtime) =>
           ["ToString(x) Completed(x) HeapGet(h, i)", [...runtime.names].join("\\n")].map((text) => {
             const view = runtime.getView(text, []);
-            return [view.text, view.tokens, view.texts];
+            const tlcOrder = order.createTlcOrder(
+              "---- MODULE Root ----\\nEXTENDS ESRuntime\\n====",
+              () => undefined,
+              [...runtime.modules, view],
+            );
+            return [
+              view.text,
+              view.texts,
+              tlcOrder.getStringOrder(config.parseConfig(""), [], []),
+              tlcOrder.getDeclarationOrder("constant"),
+              tlcOrder.getDeclarationOrder("variable"),
+              tlcOrder.getDefinitionOrder(undefined),
+              tlcOrder.getInstanceDeclarations("ESRuntime"),
+              tlcOrder.getInnerModuleOrder(undefined),
+            ];
           });
         const pairs = live.flatMap((module, index) =>
           module.definitions.map((definition, position) => [definition, read[index].definitions[position]]));
