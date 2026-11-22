@@ -2496,10 +2496,15 @@ export const getValueNode = (charges: ChargeTable, value: Value) =>
 const getChargedProduct = (charges: ChargeTable, value: Value) => {
   if (typeof value !== "object") return undefined;
   const product = getPredicatedProduct(value);
-  return product !== undefined &&
-    getCombinedSets(product)?.every((set) => isChargedPart(charges, set)) === true
-    ? product
-    : undefined;
+  if (product === undefined) return undefined;
+  if (product.kind === "FunctionSet") {
+    return isChargedPart(charges, product.range) ? product : undefined;
+  }
+  const sets = product.kind === "RecordSet" ? product.sets : product.factors;
+  for (let index = 0; index < sets.length; index++) {
+    if (!isChargedPart(charges, sets[index])) return undefined;
+  }
+  return product;
 };
 
 const isChargedUnion = (charges: ChargeTable, value: SetOperationValue): boolean =>
@@ -2628,11 +2633,16 @@ const isChargedEmpty = (charges: ChargeTable, value: Value): boolean => {
       ? getNextChargedElement(charges, openChargedPart(charges, value)) === undefined
       : value.kind === "FunctionSet"
         ? !isEmptySet(value.domain) && isChargedEmpty(charges, value.range)
-        : (value.kind === "RecordSet" ? value.sets : value.factors).some((set) =>
-            isChargedEmpty(charges, set),
-          );
+        : hasChargedEmptySet(charges, value.kind === "RecordSet" ? value.sets : value.factors);
   sets?.pop();
   return isEmpty;
+};
+
+const hasChargedEmptySet = (charges: ChargeTable, sets: Value[]) => {
+  for (let index = 0; index < sets.length; index++) {
+    if (isChargedEmpty(charges, sets[index])) return true;
+  }
+  return false;
 };
 
 const openChargedProduct = (
