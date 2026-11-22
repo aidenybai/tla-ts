@@ -904,6 +904,7 @@ export const simulate = (options: SimulationOptions & CliSettings): number => {
     }
     if (error.isSummarized) printSummary();
   }
+  // Deviation from TLC: under -continue, Simulator#simulate keeps the worker's last result, a success, so TLC exits 0 after a violation and prints the summary again.
   const last = reported[reported.length - 1];
   const errorStatus = last ? getMessageExitStatus(last.code) : EXIT_STATUS.success;
   if (last) {

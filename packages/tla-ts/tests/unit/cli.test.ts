@@ -2387,6 +2387,43 @@ describe("the CLI writes the spec of the last trace under -continue", () => {
   });
 });
 
+describe("the CLI ends -simulate -continue with the status of its violations", () => {
+  it.each([
+    [
+      "trace-spec",
+      "Continue",
+      "num=2",
+      ["-depth", "10", "-seed", "1"],
+      12,
+      "Progress: 5 states checked, 2 traces generated (trace length: mean=0, var(x)=0, sd=0)",
+    ],
+    [
+      "behavior-file",
+      "Behaviors",
+      "num=6",
+      ["-depth", "8", "-seed", "3"],
+      11,
+      "Progress: 26 states checked, 6 traces generated (trace length: mean=3, var(x)=11, sd=3)",
+    ],
+  ])(
+    "exits with the status of %s/%s's violations and prints no second summary, where TLC exits 0 and repeats it",
+    (directory, name, count, args, status, progress) => {
+      const run = runCopiedFixture(
+        join(FIXTURES, directory),
+        name,
+        ["-simulate", count, ...args, "-continue", "-noGenerateSpecTE"],
+        [],
+      );
+      const lines = getSteadyLines(run.result.stdout);
+      const end = lines.indexOf(progress);
+      expect([run.result.status, lines.slice(end)]).toEqual([
+        status,
+        [progress, "Finished in _ at (_)", ""],
+      ]);
+    },
+  );
+});
+
 describe("the CLI writes the action graph of -simulate stats=, as TLC does", () => {
   it.each(["basic", "full"])("writes TLC's %s graph of Mutex's behaviors", (statistics) => {
     const fixtures = join(FIXTURES, "mutex");
