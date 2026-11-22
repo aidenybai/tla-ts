@@ -5017,6 +5017,19 @@ describe("name resolution matches SANY", () => {
       [],
     ],
     [
+      "facts and steps that pass arguments to a theorem they select from",
+      "---- MODULE Inner ----\nCONSTANT c\nTHEOREM U == ASSUME NEW z PROVE z = c\n====\nK == INSTANCE Inner WITH c <- 1\nTHEOREM T == ASSUME NEW q PROVE q = q\nTHEOREM TRUE\n  BY T(1)!1\nUSE K!U(1)!1\nTHEOREM TRUE\n<1>1. T(1, 2)!<<\n  OBVIOUS\n<1> QED",
+      [
+        ["line 9, col 7 to line 9, col 9", "T"],
+        ["line 10, col 8 to line 10, col 10", "K!U"],
+        ["line 12, col 8 to line 12, col 13", "T"],
+      ].map((entry) => ({
+        location: `${entry[0]} of module M`,
+        message: `The operator ${entry[1]} requires 0 arguments.`,
+      })),
+      [],
+    ],
+    [
       "a step and a fact that select through an instance that keeps its name from a later theorem",
       "---- MODULE Inner ----\nCONSTANT c\nFoo == l :: c = 1\nTHEOREM T == c = c\n====\nG == INSTANCE Inner WITH c <- 1\nTHEOREM G == ASSUME NEW q PROVE q = q\nTHEOREM TRUE\n<1>1. G!Foo!3\n  OBVIOUS\n<1> QED\nTHEOREM TRUE\n  BY G!Foo!l!3",
       [

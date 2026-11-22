@@ -919,12 +919,27 @@ const checkReference = (
   if (!isReference(expression)) return false;
   const selectors = getSelectors(expression);
   let name = "";
+  let argumentCount = 0;
   for (let nameLength = 1; nameLength < selectors.length; nameLength++) {
     const selector = selectors[nameLength - 1];
     if (selector.kind !== "Name") return undefined;
     name = nameLength === 1 ? selector.name : `${name}!${selector.name}`;
+    argumentCount += selector.args.length;
     const goal = lookupLocal(scope, name)?.goal ?? getGoal(name, unit);
     if (goal) {
+      const arity = (lookupLocal(scope, name) ?? unit.bindings.get(name))?.arity ?? 0;
+      const range =
+        (expression.kind === "Identifier"
+          ? undefined
+          : expression.argumentRanges?.[nameLength - 1]) ?? expression.location.range;
+      if (use !== "Definition" && argumentCount !== arity && range) {
+        unit.errors.push({
+          location: formatRange(range),
+          message: `The operator ${name} requires ${arity - argumentCount + selector.args.length} arguments.`,
+        });
+        emptyExpressions.add(expression);
+        return { node: undefined };
+      }
       const formals: string[] = [];
       const node = checkSelection(expression, selectors, nameLength, goal, unit, use, formals);
       if (!node) emptyExpressions.add(expression);
