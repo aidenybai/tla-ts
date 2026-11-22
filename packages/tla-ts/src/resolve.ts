@@ -1525,6 +1525,18 @@ const matchArgument = (
   return argArity === expected && argParams.every((param) => param === 0);
 };
 
+const reportApplyArity = (
+  expression: Expression & { kind: "Apply" },
+  operator: string,
+  arity: number,
+  scope: LocalName | undefined,
+  unit: Unit,
+) =>
+  unit.errors.push({
+    location: formatRange(expression.argumentsRange ?? getSpelledNameRange(expression, operator)),
+    message: `The operator ${resolveSynonym(operator)} requires ${arity - (getInstances(operator.split("!"), scope, unit).findLast((instance) => instance !== undefined)?.arity ?? 0)} arguments.`,
+  });
+
 const resolveApply = (
   expression: Expression & { kind: "Apply" },
   scope: LocalName | undefined,
@@ -1536,10 +1548,7 @@ const resolveApply = (
     ? undefined
     : getSymbolArity(expression, operator, scope, unit);
   if (arity !== undefined && arity !== expression.args.length) {
-    unit.errors.push({
-      location: formatRange(expression.argumentsRange ?? getSpelledNameRange(expression, operator)),
-      message: `The operator ${resolveSynonym(operator)} requires ${arity - (getInstances(operator.split("!"), scope, unit).findLast((instance) => instance !== undefined)?.arity ?? 0)} arguments.`,
-    });
+    reportApplyArity(expression, operator, arity, scope, unit);
   }
   if (arity !== expression.args.length) {
     emptyExpressions.add(expression);
@@ -2062,6 +2071,11 @@ const checkFact = (fact: Fact, reference: Fact, scope: LocalName | undefined, un
       location: formatRange(getSpelledNameRange(fact, name)),
       message: "Step number of non-fact used as a fact",
     });
+    return BUILTIN_LOCATION;
+  }
+  const theorem = unit.bindings.get(name);
+  if (fact.kind === "Apply" && theorem?.kind === "Theorem" && theorem.arity !== fact.args.length) {
+    reportApplyArity(fact, name, theorem.arity, scope, unit);
     return BUILTIN_LOCATION;
   }
   if (

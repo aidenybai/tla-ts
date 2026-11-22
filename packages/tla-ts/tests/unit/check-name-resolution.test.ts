@@ -4436,6 +4436,18 @@ describe("name resolution matches SANY", () => {
       [],
     ],
     [
+      "arguments to a theorem used as a fact",
+      "ASSUME I == 1 = 1\nTHEOREM J == 1 = 1\nTHEOREM TRUE BY I(2), J(1, 2)\nLEMMA TRUE BY I",
+      [
+        ["I", 18, 20],
+        ["J", 24, 29],
+      ].map((entry) => ({
+        location: `line 4, col ${entry[1]} to line 4, col ${entry[2]} of module M`,
+        message: `The operator ${entry[0]} requires 0 arguments.`,
+      })),
+      [],
+    ],
+    [
       "the definitions of instances that two modules share, warning only for a module with parameters",
       "---- MODULE Inner ----\nFoo == 1\n====\n---- MODULE P ----\nCONSTANT c\nFoo == c\n====\n---- MODULE A ----\nI == INSTANCE Inner\nJ == INSTANCE P WITH c <- 1\n====\n---- MODULE B ----\nI == INSTANCE Inner\nJ == INSTANCE P WITH c <- 1\n====\n---- MODULE C ----\nEXTENDS A, B\n====\n---- MODULE D ----\nK(a) == INSTANCE Inner\n====\nINSTANCE D\nK(a) == INSTANCE Inner\nZ == U",
       [
