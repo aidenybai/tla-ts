@@ -970,6 +970,52 @@ describe("messages of the reader, as Z3 5.3.2 prints them", () => {
     ]);
   });
 
+  it("checks the arguments of set-option as parse_ext_cmd reads them", () => {
+    expect(
+      run([
+        "(set-option :print-success true)",
+        "(set-option :rlimit (1 2))",
+        "(set-option :produce-models (true))",
+        "(set-option :timeout :foo)",
+        "(set-option :produce-models)",
+        "(set-option)",
+        "(set-option foo 1)",
+        "(set-option 1 2)",
+        '(set-option "s" 1)',
+        "(set-option :smt.random_seed #x3)",
+        "(set-option :sat.random_seed 5 6)",
+        "(get-option :rlimit)",
+        "(get-option :produce-models)",
+        "(get-option :smt.random_seed)",
+        "(get-option :sat.random_seed)",
+        "(declare-const x Int)",
+        "(assert (> x 2))",
+        "(check-sat)",
+        "(get-value (x))",
+      ]),
+    ).toEqual([
+      "success",
+      '(error "line 2 column 20: invalid option value")',
+      '(error "line 3 column 28: invalid option value")',
+      '(error "line 4 column 21: invalid option value")',
+      '(error "line 5 column 27: invalid command, argument(s) missing")',
+      '(error "line 6 column 11: invalid command, argument(s) missing")',
+      '(error "line 7 column 12: invalid command argument, keyword expected")',
+      '(error "line 8 column 12: invalid command argument, keyword expected")',
+      '(error "line 9 column 12: invalid command argument, keyword expected")',
+      "success",
+      '(error "line 11 column 31: invalid command, too many arguments")',
+      "0",
+      "true",
+      "3",
+      "5",
+      "success",
+      "success",
+      "sat",
+      "((x 3))",
+    ]);
+  });
+
   it("sets a whole decimal as an integer", () => {
     expect(
       run([

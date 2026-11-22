@@ -2238,10 +2238,16 @@ export const runSmtlibScript = (
     [
       "set-option",
       (list) => {
-        const option = list.items[1];
-        const keyword = option?.kind === "keyword" ? option.text : "";
-        const optionName = `:${getParameterName(keyword)}`;
+        const option = getFirstArgument(list);
+        if (option.kind !== "keyword")
+          throw new SmtParseError("invalid command argument, keyword expected", option);
         const value = list.items[2];
+        if (value === undefined)
+          throw new SmtParseError("invalid command, argument(s) missing", list.end);
+        if (value.kind === "list" || value.kind === "keyword")
+          throw new SmtParseError("invalid option value", value);
+        const keyword = option.text;
+        const optionName = `:${getParameterName(keyword)}`;
         const isTrue = isSymbol(value, "true");
         if (
           (keyword === ":produce-proofs" ||
@@ -2251,7 +2257,7 @@ export const runSmtlibScript = (
         )
           throw new SmtParseError(
             `error setting '${keyword}', option value cannot be modified after assertions have been added`,
-            value ?? list.end,
+            value,
           );
         if (keyword === ":produce-models") {
           settings.isProducingModels = isTrue;
@@ -2264,7 +2270,7 @@ export const runSmtlibScript = (
           if (state.isProofsEnabled !== undefined)
             throw new SmtParseError(
               "error setting ':produce-assertions', option value cannot be modified after initialization",
-              value ?? list.end,
+              value,
             );
           settings.isInteractive = isTrue;
         }
@@ -2272,15 +2278,15 @@ export const runSmtlibScript = (
           if (state.isProofsEnabled !== undefined)
             throw new SmtParseError(
               "error setting ':global-decls', option value cannot be modified after initialization",
-              value ?? list.end,
+              value,
             );
           settings.parserOptions.isGlobalDecls = isTrue;
         }
         if (keyword === ":diagnostic-output-channel")
-          settings.isDiagnosticOnStdout = value?.kind === "string" && value.text === "stdout";
+          settings.isDiagnosticOnStdout = value.kind === "string" && value.text === "stdout";
         if (keyword === ":int-real-coercions" && !isTrue)
           throw new SmtUnsupportedError("the option :int-real-coercions false");
-        if (keyword === ":verbosity" && value?.kind === "numeral" && BigInt(value.text) !== 0n)
+        if (keyword === ":verbosity" && value.kind === "numeral" && BigInt(value.text) !== 0n)
           throw new SmtUnsupportedError("the option :verbosity");
         if (keyword === ":error-behavior") {
           if (!isSymbol(value, "immediate-exit") && !isSymbol(value, "continued-execution"))
@@ -2290,11 +2296,7 @@ export const runSmtlibScript = (
             );
           settings.isExitingOnError = isSymbol(value, "immediate-exit");
         }
-        const isParameter =
-          keyword !== "" &&
-          !BUILTIN_OPTIONS.has(keyword) &&
-          value !== undefined &&
-          value.kind !== "list";
+        const isParameter = !BUILTIN_OPTIONS.has(keyword);
         if (isParameter) {
           // Z3 sets a numeral as the string of its rational, so 2.0 becomes 2 and 1.5 becomes 3/2.
           const text =
@@ -2337,7 +2339,7 @@ export const runSmtlibScript = (
           settings.isHiDiv0 = isTrue;
           state.manager.isHiDiv0 = isTrue;
         }
-        if (optionName === ":encoding" && value !== undefined && value.kind !== "list") {
+        if (optionName === ":encoding") {
           settings.encoding = ENCODINGS.get(value.text) ?? UNICODE_ENCODING;
           state.manager.maxChar = settings.encoding.maxChar;
           state.manager.charBits = settings.encoding.charBits;
@@ -2345,7 +2347,7 @@ export const runSmtlibScript = (
         if (optionName === ":parser.ignore_bad_patterns")
           settings.parserOptions.isIgnoringBadPatterns = isTrue;
         const numericOption = NUMERIC_PRINT_OPTIONS.get(optionName);
-        if (numericOption !== undefined && value?.kind === "numeral")
+        if (numericOption !== undefined && value.kind === "numeral")
           settings.printOptions[numericOption] = Number(value.text);
         const booleanOption = BOOLEAN_PRINT_OPTIONS.get(optionName);
         if (booleanOption !== undefined) settings.printOptions[booleanOption] = isTrue;
@@ -2357,6 +2359,7 @@ export const runSmtlibScript = (
             (optionName !== ":lp.int_hammer_period" || !isParameter))
         )
           throw new SmtUnsupportedError(`the option ${optionName}`);
+        // parse_ext_cmd sets the option as it reads the value, before it rejects a third argument.
         checkArgumentCount(list, 2);
       },
     ],
