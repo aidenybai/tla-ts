@@ -157,6 +157,8 @@ const ExampleHint = () => {
 };
 
 const VIEW_ITEM_CLASS_NAME = "h-7 rounded-md px-2 text-xs";
+// ESCore's code of a program runs to hundreds of lines, so the page shows its start.
+const PREVIEW_LINES = 16;
 
 const ExampleSource = () => {
   const state = exampleContext.useParts();
@@ -172,7 +174,7 @@ const ExampleSource = () => {
       onMorphEnd={state.finishMorph}
     >
       {/* A new example is other code, not this code in another language, so it does not morph. */}
-      <Code.Content key={state.example.fileName} />
+      <Code.Content key={state.example.fileName} limit={PREVIEW_LINES} />
       <Code.Actions>
         <Tooltip.Root>
           <Tooltip.Trigger
