@@ -15,7 +15,7 @@ export abstract class TheoryLraModel extends TheoryLraPropagate {
 
   protected initVariableValues() {
     this.isModelInitialized = false;
-    if (this.context.checkCanceled() || this.getNumVars() === 0) return;
+    if (this.context.checkLimitCanceled() || this.getNumVars() === 0) return;
     this.context.pushTrail(() => {
       this.isModelInitialized = false;
     });

@@ -284,6 +284,11 @@ export class QiQueue {
     let sinceLastCheck = 0;
     for (const entry of entries) {
       if (context.checkCanceled()) break;
+      if (this.numInstances > context.config.qiMaxInstances) {
+        context.reasonUnknown = "maximum number of quantifier instances was reached";
+        context.setInternalCompleted();
+        break;
+      }
       if (entry.cost <= this.eagerCostThreshold) this.instantiateEntry(entry);
       else if (
         this.checker.isUnsat(context.manager.getQuantifier(entry.quantifier).body, entry.bindings)

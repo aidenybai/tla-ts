@@ -40,7 +40,7 @@ export class QSolver extends ThSolver {
   constructor(ctx: EufSolver, parameters: ReadonlyMap<string, string>) {
     super(ctx, "quant", FAMILY_QUANT);
     this.isMbqi = parameters.get("smt.mbqi") !== "false";
-    this.mbqi = new Mbqi(ctx, this);
+    this.mbqi = new Mbqi(ctx, this, parameters);
     this.ematch = new Ematch(ctx, this, parameters);
     this.expanded = new RefVector(ctx.manager);
     this.der = new DerRewriter(ctx.manager);

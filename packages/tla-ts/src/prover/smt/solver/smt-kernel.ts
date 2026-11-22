@@ -19,8 +19,12 @@ export const getGlobalSmtParams = (
     relevancyLevel,
     parameters.get("smt.auto_config") !== "false" && parameters.get("auto_config") !== "false",
   ),
+  qiMaxInstances: Number(parameters.get("smt.qi.max_instances") ?? "4294967295"),
   qiMaxEagerMultipatterns: Number(parameters.get("smt.qi.max_multi_patterns") ?? "0"),
   isQiUpdatingGeneration: parameters.get("smt.qi.update_generation") !== "false",
+  mbqiMaxCexs: Number(parameters.get("smt.mbqi.max_cexs") ?? "1"),
+  mbqiForceTemplate: Number(parameters.get("smt.mbqi.force_template") ?? "10"),
+  mbqiId: parameters.get("smt.mbqi.id") ?? "",
 });
 
 export class SmtKernel {
@@ -50,8 +54,12 @@ export class SmtKernel {
       qiCost: params.qiCost,
       qiEagerThreshold: params.qiEagerThreshold,
       qiLazyThreshold: params.qiLazyThreshold,
+      qiMaxInstances: params.qiMaxInstances,
       qiMaxEagerMultipatterns: params.qiMaxEagerMultipatterns,
       isQiUpdatingGeneration: params.isQiUpdatingGeneration,
+      mbqiMaxCexs: params.mbqiMaxCexs,
+      mbqiForceTemplate: params.mbqiForceTemplate,
+      mbqiId: params.mbqiId,
       isProofsEnabled: params.isProofsEnabled,
     });
     this.setup = params.setup;

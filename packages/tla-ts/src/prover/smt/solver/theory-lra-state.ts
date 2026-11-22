@@ -10,7 +10,7 @@ export abstract class TheoryLraState extends Theory {
 
   constructor(context: Context) {
     super(context, FAMILY_ARITH);
-    this.solver = new LarSolver((cost) => context.checkCanceled(cost));
+    this.solver = new LarSolver((cost) => context.checkLimitCanceled(cost));
     this.updateParams();
   }
 
