@@ -1674,7 +1674,9 @@ export const createEnvironment = (
             !instance.isLocal &&
             !symbolsBefore.has(instance.name)
           ) {
-            exported.set(instance.name, getInstanceSymbol(instance, instance.name));
+            const symbol = getInstanceSymbol(instance, instance.name);
+            parameterized.set(symbol.key, !isParameterFree);
+            exported.set(instance.name, symbol);
           }
           if (instance.name !== undefined) {
             bindBefore(

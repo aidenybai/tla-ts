@@ -4675,6 +4675,47 @@ describe("name resolution matches SANY", () => {
       [],
     ]),
     [
+      "two instances of a module with parameters that defines an instance with parameters",
+      "---- MODULE K ----\nTHEOREM T == TRUE\n====\n---- MODULE L ----\nCONSTANT c\nJ(p) == INSTANCE K\n====\nI == INSTANCE L WITH c <- 1\nI == INSTANCE L WITH c <- 2\nZ == U",
+      [
+        {
+          location: "line 10, col 1 to line 10, col 27 of module M",
+          message:
+            "Multiply-defined symbol 'I!J!T': this definition or declaration conflicts \nwith the one at line 9, col 1 to line 9, col 27 of module M.",
+        },
+        {
+          location: "line 11, col 6 to line 11, col 6 of module M",
+          message: "Unknown operator: `U'.",
+        },
+      ],
+      ["I!J", "I"].map((name) => ({
+        location: "line 10, col 1 to line 10, col 27 of module M",
+        message: `Multiple declarations or definitions for symbol ${name}.  \nThis duplicates the one at line 9, col 1 to line 9, col 27 of module M.`,
+      })),
+    ],
+    [
+      "two instances of a module without parameters that defines an instance with parameters",
+      "---- MODULE K ----\nTHEOREM T == TRUE\n====\n---- MODULE L ----\nJ(p) == INSTANCE K\n====\nI == INSTANCE L\nI == INSTANCE L\nZ == U",
+      [
+        {
+          location: "line 9, col 1 to line 9, col 15 of module M",
+          message:
+            "Multiply-defined symbol 'I!J!T': this definition or declaration conflicts \nwith the one at line 8, col 1 to line 8, col 15 of module M.",
+        },
+        {
+          location: "line 10, col 6 to line 10, col 6 of module M",
+          message: "Unknown operator: `U'.",
+        },
+      ],
+      [
+        {
+          location: "line 9, col 1 to line 9, col 15 of module M",
+          message:
+            "Multiple declarations or definitions for symbol I.  \nThis duplicates the one at line 8, col 1 to line 8, col 15 of module M.",
+        },
+      ],
+    ],
+    [
       "two unnamed instances of modules without parameters that reuse a theorem from an instance with parameters",
       "---- MODULE K ----\nTHEOREM T == TRUE\n====\n---- MODULE L ----\nJ(p) == INSTANCE K\n====\n---- MODULE L2 ----\nJ(p) == INSTANCE K\n====\nINSTANCE L\nINSTANCE L2\nZ == U",
       [
