@@ -2666,8 +2666,11 @@ const compileExcept = (
     if (depth === path.length) {
       return value(withScope(context, bindValue(context.scope, EXCEPT_AT, current)));
     }
-    return updateFunction(current, getKey(path[depth], context), (previous) =>
-      update(previous, path, depth + 1, context, value),
+    return updateFunction(
+      current,
+      getKey(path[depth], context),
+      (previous) => update(previous, path, depth + 1, context, value),
+      depth + 1 === path.length,
     );
   };
   return (context) => {
