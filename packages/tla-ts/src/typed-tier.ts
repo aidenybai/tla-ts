@@ -215,7 +215,20 @@ interface TypedActionProperty {
   subscript: Expression;
 }
 
+// The statistics of the search so far: the states generated and distinct, those left to expand, and
+// the depth.
+export interface TypedProgress {
+  generated: number;
+  distinct: number;
+  queued: number;
+  depth: number;
+}
+
 export interface TypedCheck {
+  // What the search reports as it goes, as the interpreter's does: its initial states once it has
+  // them, and its statistics from time to time, which the check prints where TLC does.
+  onInitialStates?: (initialStates: { generated: number; distinct: number }) => void;
+  onProgress?: (progress: TypedProgress) => void;
   invariants: Expression[];
   constraints: Expression[];
   // The interpreter checks the initial predicates, in the scopes of the properties they come from.
@@ -6649,6 +6662,7 @@ const search = (environment: Environment, check: TypedCheck, plains: Plains): Ty
     initialStarts.data = new Int32Array(0);
   }
   const initialStates = { generated: statistics.generated, distinct: statistics.distinct };
+  check.onInitialStates?.(initialStates);
   const level = { depth: 1, end: statistics.distinct };
   // The search finds the states of each depth one after another, so the end of each depth's states
   // gives the depth of any state.
@@ -6719,6 +6733,14 @@ const search = (environment: Environment, check: TypedCheck, plains: Plains): Ty
       depthEnds.push(level.end);
       level.depth++;
       level.end = statistics.distinct;
+    }
+    if ((index & 255) === 0) {
+      check.onProgress?.({
+        generated: statistics.generated,
+        distinct: statistics.distinct,
+        queued: statistics.distinct - index,
+        depth: statistics.depth,
+      });
     }
     const state = readState();
     expanding.state = state;

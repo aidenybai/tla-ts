@@ -1260,11 +1260,11 @@ describe("the CLI reports results like TLC", () => {
 // shows them before its first progress line. The CLI's thread writes them as it prints them,
 // though the search holds the thread's event loop.
 describe("the CLI prints the start of a search that never ends as TLC does", () => {
-  const getRun = (next: string) => {
+  const getRun = (next: string, variables = "x", init = "x = 0") => {
     const directory = mkdtempSync(join(tmpdir(), "endless-"));
     writeFileSync(
       join(directory, "Endless.tla"),
-      `---- MODULE Endless ----\nEXTENDS Naturals\nVARIABLE x\nInit == x = 0\nNext == ${next}\n====\n`,
+      `---- MODULE Endless ----\nEXTENDS Naturals\nVARIABLES ${variables}\nInit == ${init}\nNext == ${next}\n====\n`,
     );
     writeFileSync(join(directory, "Endless.cfg"), "INIT Init\nNEXT Next\n");
     const result = spawnSync(process.execPath, [DIST_CLI, "-noGenerateSpecTE", "Endless.tla"], {
@@ -1281,6 +1281,27 @@ describe("the CLI prints the start of a search that never ends as TLC does", () 
     expect(result.signal).toBe("SIGTERM");
     expect(result.stdout).toContain("Semantic processing of module Endless\n");
     expect(result.stdout).toMatch(/\nStarting\.\.\. \(.*\)\nComputing initial states\.\.\.\n/);
+  });
+
+  // The typed tier searches the 27 billion states of three counters faster than the interpreter,
+  // and prints its initial states, and its progress three seconds in, as TLC does.
+  it("prints the initial states and the progress of a long search on the typed tier", () => {
+    const result = getRun(
+      [
+        "\\/ x' = (x + 1) % 3000 /\\ UNCHANGED <<y, z>>",
+        "\\/ y' = (y + 1) % 3000 /\\ UNCHANGED <<x, z>>",
+        "\\/ z' = (z + 1) % 3000 /\\ UNCHANGED <<x, y>>",
+      ].join("\n        "),
+      "x, y, z",
+      "x = 0 /\\ y = 0 /\\ z = 0",
+    );
+    expect(result.signal).toBe("SIGTERM");
+    expect(result.stdout).toMatch(
+      /\nFinished computing initial states: 1 distinct state generated at \S+ \S+\.\n/,
+    );
+    expect(result.stdout).toMatch(
+      /\nProgress\(\d+\) at \S+ \S+: [\d,]+ states generated \([\d,]+ s\/min\), [\d,]+ distinct states found \([\d,]+ ds\/min\), [\d,]+ states left on queue\.\n/,
+    );
   });
 
   it("prints the end of a search that ends", () => {

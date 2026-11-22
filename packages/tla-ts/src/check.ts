@@ -1354,6 +1354,18 @@ const searchStates = (
     isTypedSearchable
       ? search.getTypedChecks(liveness?.solutions)
       : undefined;
+  // The typed tier reports its initial states as it has them, and its progress at TLC's intervals,
+  // so that a long search shows them as TLC does; the interpreter then reports none of them again.
+  let isInitialReported = false;
+  const reportInitialStates = (initialStates: InitialStates) => {
+    if (isInitialReported) return;
+    isInitialReported = true;
+    for (let count = 2; count < initialStates.generated; count *= 2) {
+      reportInitialStatesProgress(count, options.onProgress);
+    }
+    options.onProgress?.({ kind: "initial-states-computed", initialStates });
+  };
+  const typedProgress = { at: performance.now() + PERIODIC_START };
   const typed =
     typedChecks &&
     runTypedSearch(environment, {
@@ -1361,12 +1373,27 @@ const searchStates = (
       isDeadlockChecked: config.checkDeadlock,
       isFingerprinted: !options.isFingerprintDistanceSkipped,
       livenessCheck: options.livenessCheck ?? "default",
+      onInitialStates: (initialStates) => {
+        computedInitialStates = initialStates;
+        reportInitialStates(initialStates);
+      },
+      onProgress: (progress) => {
+        if (options.onProgress === undefined || performance.now() < typedProgress.at) return;
+        typedProgress.at = performance.now() + PROGRESS_INTERVAL;
+        options.onProgress({
+          kind: "progress",
+          statistics: {
+            ...createResult("success"),
+            generatedStates: progress.generated,
+            distinctStates: progress.distinct,
+            queuedStates: progress.queued,
+            depth: Math.max(progress.depth, 1),
+          },
+        });
+      },
     });
   if (typed && !typed.deadlock && !typed.violation && !typed.lasso) {
-    for (let count = 2; count < typed.initialStates.generated; count *= 2) {
-      reportInitialStatesProgress(count, options.onProgress);
-    }
-    options.onProgress?.({ kind: "initial-states-computed", initialStates: typed.initialStates });
+    reportInitialStates(typed.initialStates);
     const statistics = {
       ...createResult("success"),
       generatedStates: typed.generatedStates,
@@ -1417,7 +1444,8 @@ const searchStates = (
     };
     try {
       const onInitialState = (state: Value[]) => {
-        reportInitialStatesProgress(runtime.initialStates, options.onProgress);
+        if (!isInitialReported)
+          reportInitialStatesProgress(runtime.initialStates, options.onProgress);
         if (overflowState) {
           runtime.generatedStates++;
           runtime.initialStates++;
@@ -1458,7 +1486,8 @@ const searchStates = (
       }
     } catch (error) {
       if (error instanceof TlaIllegalStateError) {
-        reportInitialStatesProgress(runtime.initialStates, options.onProgress);
+        if (!isInitialReported)
+          reportInitialStatesProgress(runtime.initialStates, options.onProgress);
         runtime.generatedStates++;
         runtime.initialStates++;
         const state = error.state.map((value) => value ?? createModelValue("null"));
@@ -1496,10 +1525,9 @@ const searchStates = (
     generated: runtime.initialStates,
     distinct: runtime.distinctStates,
   };
-  options.onProgress?.({
-    kind: "initial-states-computed",
-    initialStates: computedInitialStates,
-  });
+  if (!isInitialReported) {
+    options.onProgress?.({ kind: "initial-states-computed", initialStates: computedInitialStates });
+  }
 
   const next = spec.next;
   if (next === undefined) {
