@@ -1578,6 +1578,73 @@ describe("checks a module's exported functions as a model on ESCore", () => {
     });
   });
 
+  describe("runs a Map's keys and values, and a function passed by name, natively, as ESCore does", () => {
+    const source = `
+      type Slot = 1 | 2 | 3;
+      const slots = new Set<Slot>([1, 2, 3]);
+      let held = new Map<Slot, number>([[1, 0], [2, 0]]);
+
+      const isFull = (count: number) => count >= 2;
+      const isLaterFull = (count: number, index: number) => index > 0 && count >= 2;
+
+      export const fill = (slot: Slot) => {
+        const count = held.get(slot);
+        if (count === undefined) {
+          held.set(slot, 0);
+          return;
+        }
+        if (count >= 2) return;
+        held.set(slot, count + 1);
+      };
+
+      export const drop = (slot: Slot) => {
+        if (slot === 1 || !held.has(slot)) return;
+        held.delete(slot);
+      };
+
+      export const isTyped = () =>
+        new Set(held.keys()).isSubsetOf(slots) &&
+        held.values().every((count) => count >= 0 && count <= 2) &&
+        held.keys().find(() => true) === 1;
+
+      /** @always */
+      export const isOrdered = () =>
+        held.values().some(isLaterFull) === (held.get(2) === 2 || held.get(3) === 2) &&
+        held.values().some(isFull) === [1, 2, 3].some((slot) => held.get(slot as Slot) === 2);
+    `;
+
+    it("gives what ESCore gives in every call, as TLC counts", async () => {
+      // Slot 1's count, and slots 2 and 3 each absent or at a count, in the order they were added.
+      const counts = ["success", 75, 285];
+      expect(getCounts(await checkModel(source, "spec.ts", "native"))).toEqual(counts);
+      expect(getCounts(await checkModel(source, "spec.ts", "compared"))).toEqual(counts);
+    });
+
+    it("tells a native values() of a Map that gives its keys", async () => {
+      const result = await checkModel(source, "spec.ts", "native", [
+        '[] v.type = "lmap" -> [type |-> "larray", elems |-> v.vals]',
+        '[] v.type = "lmap" -> [type |-> "larray", elems |-> v.keys]',
+      ]);
+      expect(result.message).toContain("the native call differs from ESCore's");
+    });
+
+    it("tells a native keys() of a Map that gives its values", async () => {
+      const result = await checkModel(source, "spec.ts", "native", [
+        '[] v.type = "lmap" -> [type |-> "larray", elems |-> v.keys]',
+        '[] v.type = "lmap" -> [type |-> "larray", elems |-> v.vals]',
+      ]);
+      expect(result.message).toContain("the native call differs from ESCore's");
+    });
+
+    it("tells a callback that a native call passes the wrong index", async () => {
+      const result = await checkModel(source, "spec.ts", "native", [
+        "F(elems[i], IntV(i - 1))",
+        "F(elems[i], IntV(i))",
+      ]);
+      expect(result.message).toContain("the native call differs from ESCore's");
+    });
+  });
+
   // TypeScript's type of a parameter gives the values that a step passes it, as docs/typescript.md
   // lists them. A step keeps the key of the value it was passed, so the model has one state for
   // each value besides the initial one, and an invariant holds where each key is one that the

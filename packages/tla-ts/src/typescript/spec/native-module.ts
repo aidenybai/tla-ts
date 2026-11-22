@@ -194,9 +194,16 @@ LFind(c, F(_, _)) ==
   LET rs == LResults(c.elems, F)
       i == LFirst(rs, LAMBDA r : ~LTruthy(r))
   IN IF i = 0 THEN Undefined ELSE IF rs[i].type = "bail" THEN LBail ELSE c.elems[i]
-\* The values that a Set's or an array's values() iterator gives, as an array, which only iterator
-\* helpers and new Set read.
-LValues(v) == IF v.type \in {"larray", "lset"} THEN [type |-> "larray", elems |-> v.elems] ELSE LBail
+\* The values that a Set's, an array's or a Map's values() iterator gives, and the keys that a Set's
+\* or a Map's keys() iterator gives, as an array, which only iterator helpers and new Set read.
+LValues(v) ==
+  CASE v.type \in {"larray", "lset"} -> [type |-> "larray", elems |-> v.elems]
+    [] v.type = "lmap" -> [type |-> "larray", elems |-> v.vals]
+    [] OTHER -> LBail
+LKeys(v) ==
+  CASE v.type = "lset" -> [type |-> "larray", elems |-> v.elems]
+    [] v.type = "lmap" -> [type |-> "larray", elems |-> v.keys]
+    [] OTHER -> LBail
 \* A Math function of one Number, which ToNumber gives back as it is.
 LMath(m, a) == IF LNumber(a) THEN Num(MathOf(m, a.value)) ELSE LBail
 \* Object.values of an ordinary object: its data properties' values in its keys' order.

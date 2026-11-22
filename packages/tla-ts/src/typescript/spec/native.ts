@@ -44,6 +44,7 @@ const READING_METHODS = new Set([
   "get",
   "with",
   "values",
+  "keys",
 ]);
 
 // The binary operators that read their operands and give a new value.
@@ -358,13 +359,24 @@ export const getNativeFunctions = (
         );
   };
 
-  // An arrow function that a method calls on each element and its index, as a TLA+ LAMBDA of
-  // them that gives its result, owned where the method keeps it, and writes nothing.
+  // An arrow function or a module function that a method calls on each element and its index, as
+  // a TLA+ LAMBDA of them that gives its result, owned where the method keeps it, and writes
+  // nothing. A module function reads as many of them as it has parameters.
   const compileCallback = (
     node: ts.Expression | undefined,
     scope: Scope,
     isOwned: boolean,
   ): string | undefined => {
+    if (node !== undefined && ts.isIdentifier(node)) {
+      const callee = getCallee(node, scope);
+      const fn = functions.get(node.text);
+      if (callee === undefined || fn === undefined || !callee.isPure || fn.parameters.length > 2) {
+        return undefined;
+      }
+      const params = [fresh("p"), fresh("p")];
+      const call = `LValue(${callee.operator}(${[scope.m, scope.w, ...params.slice(0, fn.parameters.length)].join(", ")}))`;
+      return `LAMBDA ${params.join(", ")} : ${isOwned && !callee.isFresh ? `LOwn(${call})` : call}`;
+    }
     if (
       node === undefined ||
       !ts.isArrowFunction(node) ||
@@ -406,9 +418,9 @@ export const getNativeFunctions = (
   const isRealmGlobal = (name: string, scope: Scope) =>
     !scope.locals.has(name) && !bindings.has(name) && !functions.has(name);
 
-  // The values an iterator gives, as an array, where it's a Set's or an array's values() or an
-  // iterator helper's filter or map of one, which calls its callback on each value and its index in
-  // turn, as the iterator that reads it asks.
+  // The values an iterator gives, as an array, where it's a Set's, an array's or a Map's values(), a
+  // Set's or a Map's keys(), or an iterator helper's filter or map of one, which calls its callback
+  // on each value and its index in turn, as the iterator that reads it asks.
   const compileIterator = (node: ts.Expression, scope: Scope): Value | undefined => {
     if (
       !ts.isCallExpression(node) ||
@@ -420,11 +432,14 @@ export const getNativeFunctions = (
       return undefined;
     }
     const method = node.expression.name.text;
-    if (method === "values" && node.arguments.length === 0) {
+    if ((method === "values" || method === "keys") && node.arguments.length === 0) {
       const receiver = compileExpression(node.expression.expression, scope);
       return receiver === undefined
         ? undefined
-        : { text: `LValues(${receiver.text})`, isFresh: false };
+        : {
+            text: `${method === "values" ? "LValues" : "LKeys"}(${receiver.text})`,
+            isFresh: false,
+          };
     }
     if ((method !== "filter" && method !== "map") || node.arguments.length !== 1) return undefined;
     const iterator = compileIterator(node.expression.expression, scope);
