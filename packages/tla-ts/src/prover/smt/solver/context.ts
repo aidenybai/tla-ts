@@ -38,6 +38,7 @@ import {
   EqPropagationJustification,
   EqRootPropagationJustification,
   MpIffJustification,
+  UnitResolutionJustification,
 } from "./enode";
 import { ObjMap } from "./hashtable";
 import {
@@ -214,11 +215,15 @@ export class Context extends Internalizer {
   readonly conflictResolution: ConflictResolution = new ConflictResolution(this);
   private readonly dynAck = new DynAckManager(this);
   private qhead = 0;
+  private simpQhead = 0;
+  private simpCounter = 0;
+  private simpLits: Literal[] = [];
   private scopeAssignedLimits: number[] = [];
   private scopeAuxClauseLimits: number[] = [];
   private scopeTrailLimits: number[] = [];
   private baseScopeLemmaLimits: number[] = [];
   private isBaseScopeInconsistent: boolean[] = [];
+  private baseScopeSimpQheadLimits: number[] = [];
   private atomPropagationQueue: Literal[] = [];
   private thEqQueue: number[] = [];
   private thDiseqQueue: number[] = [];
@@ -469,6 +474,7 @@ export class Context extends Internalizer {
       if (this.checkCanceled()) return true;
       const literal = this.assignedLiterals[this.qhead];
       this.qhead++;
+      this.simpCounter--;
       const notLiteral = negate(literal);
       const binary = this.binaryWatches[literal];
       if (binary !== undefined && binary.length > 0) {
@@ -1171,8 +1177,10 @@ export class Context extends Internalizer {
     if (newLevel >= this.baseLevel || !this.isBaseScopeInconsistent[newLevel]) this.conflict = null;
     if (newLevel < this.baseLevel) {
       this.deleteClauses(this.lemmas, this.baseScopeLemmaLimits[newLevel]);
+      this.simpQhead = this.baseScopeSimpQheadLimits[newLevel];
       shrink(this.baseScopeLemmaLimits, newLevel);
       shrink(this.isBaseScopeInconsistent, newLevel);
+      shrink(this.baseScopeSimpQheadLimits, newLevel);
     }
     this.deleteClauses(this.auxClauses, this.scopeAuxClauseLimits[newLevel]);
     this.relevancy.pop(numScopes);
@@ -1453,6 +1461,7 @@ export class Context extends Internalizer {
       }
       if (this.isResourceLimitExceeded() && !this.isInconsistent()) return L_UNDEF;
       if (this.checkCanceled()) return L_UNDEF;
+      if (this.baseLevel === this.scopeLevel) this.simplifyClauses();
       if (!this.decide()) {
         if (this.isInconsistent()) return L_FALSE;
         const status = this.finalCheck();
@@ -1612,6 +1621,7 @@ export class Context extends Internalizer {
         return L_FALSE;
       }
     }
+    this.simplifyClauses();
     return undefined;
   }
 
@@ -1641,6 +1651,90 @@ export class Context extends Internalizer {
       }
     }
     this.numConflictsSinceRestart = 0;
+  }
+
+  private simplifyClause(clause: Clause) {
+    const store = this.clauses;
+    if (
+      this.assignment[store.getLiteral(clause, 0)] === L_TRUE ||
+      this.assignment[store.getLiteral(clause, 1)] === L_TRUE
+    )
+      return true;
+    const numLiterals = store.getNumLiterals(clause);
+    const simpLits = this.simpLits;
+    shrink(simpLits, 0);
+    let kept = 2;
+    let isTautology = false;
+    for (let index = 2; index < numLiterals; index++) {
+      const literal = store.getLiteral(clause, index);
+      const value = this.assignment[literal];
+      if (value === L_FALSE) {
+        if (this.params.isProofsEnabled === true) simpLits.push(negate(literal));
+        this.decLitOccs(literal);
+        continue;
+      }
+      if (value === L_TRUE) isTautology = true;
+      if (index !== kept) store.swapLiterals(clause, index, kept);
+      kept++;
+    }
+    if (kept < numLiterals) store.setNumLiterals(clause, kept);
+    if (isTautology) return true;
+    if (simpLits.length > 0)
+      store.setJustification(
+        clause,
+        new UnitResolutionJustification(store.getJustification(clause), simpLits.slice()),
+      );
+    return false;
+  }
+
+  private simplifyClausesFrom(clauses: Clause[], startingAt: number) {
+    const store = this.clauses;
+    let kept = startingAt;
+    for (let index = startingAt; index < clauses.length; index++) {
+      const clause = clauses[index];
+      if (store.isDeleted(clause)) {
+        this.deleteClause(clause);
+        continue;
+      }
+      if (!this.simplifyClause(clause)) {
+        clauses[kept++] = clause;
+        this.simpCounter += store.getNumLiterals(clause);
+        continue;
+      }
+      for (let position = 0; position < 2; position++) {
+        const boolVar = getVar(store.getLiteral(clause, position));
+        if (this.justifications[boolVar] !== clause) continue;
+        if (this.params.isProofsEnabled !== true) {
+          this.justifications[boolVar] = "axiom";
+          continue;
+        }
+        const simpLits: Literal[] = [];
+        for (let index = 0; index < store.getNumLiterals(clause); index++)
+          if (index !== position) simpLits.push(negate(store.getLiteral(clause, index)));
+        this.justifications[boolVar] = new UnitResolutionJustification(
+          store.getJustification(clause),
+          simpLits,
+        );
+      }
+      this.deleteClause(clause);
+    }
+    shrink(clauses, kept);
+  }
+
+  private simplifyClauses() {
+    if (this.scopeLevel > this.baseLevel) return;
+    const size = this.assignedLiterals.length;
+    if (this.simpQhead === size || this.simpCounter > 0) return;
+    if (this.auxClauses.length === 0 && this.lemmas.length === 0) return;
+    this.simpCounter = 0;
+    this.simpQhead = size;
+    if (this.baseLevel === 0) {
+      this.simplifyClausesFrom(this.auxClauses, 0);
+      this.simplifyClausesFrom(this.lemmas, 0);
+      return;
+    }
+    this.simplifyClausesFrom(this.auxClauses, this.scopeAuxClauseLimits[this.baseLevel - 1]);
+    this.simplifyClausesFrom(this.lemmas, this.baseScopeLemmaLimits[this.baseLevel - 1]);
   }
 
   private isDeletable(clause: Clause) {
@@ -1693,6 +1787,7 @@ export class Context extends Internalizer {
     this.pushScope();
     this.baseScopeLemmaLimits.push(this.lemmas.length);
     this.isBaseScopeInconsistent.push(this.isInconsistent());
+    this.baseScopeSimpQheadLimits.push(this.simpQhead);
     this.baseLevel++;
     this.searchLevel++;
   }

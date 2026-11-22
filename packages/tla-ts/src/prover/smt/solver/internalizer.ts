@@ -1373,7 +1373,14 @@ export abstract class Internalizer {
       : null;
     for (const atom of atoms ?? []) this.manager.incRef(atom);
     const clauses = this.clauses;
-    const clause = clauses.mk(literals, kind, justification, delEh, atoms);
+    const clause = clauses.mk(
+      literals,
+      kind,
+      justification,
+      delEh,
+      atoms,
+      justification !== null || this.isProofsEnabled,
+    );
     if (isLemma) {
       if (kind === CLS_LEARNED)
         clauses.swapLiterals(clause, 1, this.selectLearnedWatchLiteral(clause));
@@ -1421,7 +1428,7 @@ export abstract class Internalizer {
     }
   }
 
-  private decLitOccs(literal: Literal) {
+  protected decLitOccs(literal: Literal) {
     if (this.config.phaseSelection === PS_OCCURRENCE && this.litOccs[literal] > 0)
       this.litOccs[literal]--;
   }

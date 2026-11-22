@@ -5912,6 +5912,47 @@ describe("smt.phase_selection, as Z3 5.3.2 picks the phase of a decision", () =>
     ).toEqual(["sat", "(:rlimit 8798)", "unsat", "(:rlimit 9354)"]);
   });
 
+  it("stops counting a literal that simplify_clauses drops at the base level", () => {
+    expect(
+      run([
+        "(set-option :smt.auto_config false)",
+        ...declarations,
+        ...assertions,
+        "(check-sat)",
+        "(get-info :rlimit)",
+        "(set-option :smt.phase_selection 1)",
+        "(check-sat)",
+        "(get-info :rlimit)",
+        "(set-option :smt.phase_selection 6)",
+        "(assert (or x5 x6))",
+        "(check-sat)",
+        "(get-info :rlimit)",
+      ]),
+    ).toEqual(["sat", "(:rlimit 7363)", "sat", "(:rlimit 13865)", "unsat", "(:rlimit 19493)"]);
+  });
+
+  it("simplifies the clauses of a push from its base level, and starts over after the pop", () => {
+    expect(
+      run([
+        "(set-option :smt.auto_config false)",
+        "(set-option :smt.phase_selection 6)",
+        ...declarations,
+        ...assertions.slice(0, 100),
+        "(push)",
+        ...assertions.slice(100),
+        "(assert (or x5 x6))",
+        "(check-sat)",
+        "(get-info :rlimit)",
+        "(assert (or (not x7) x8))",
+        "(check-sat)",
+        "(get-info :rlimit)",
+        "(pop)",
+        "(check-sat)",
+        "(get-info :rlimit)",
+      ]),
+    ).toEqual(["unsat", "(:rlimit 7545)", "unsat", "(:rlimit 7582)", "sat", "(:rlimit 7965)"]);
+  });
+
   it("throws at the set-option of a phase selection Z3 rejects", () => {
     expect(() => run(["(set-option :smt.phase_selection 8)"])).toThrow(
       new SmtUnsupportedError("an smt.phase_selection above 7"),
