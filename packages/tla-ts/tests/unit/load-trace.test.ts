@@ -108,7 +108,39 @@ const withBadBlock = (size: number) =>
 
 const KIND_99 = "ValueInputStream: Can not unpickle a value of kind 99";
 
-const STRING_A = [3, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 0x61];
+const getStringBytes = (text: string) =>
+  [3, ...Array(11).fill(0), text.length].concat(
+    Array.from(text, (character) => character.charCodeAt(0)),
+  );
+
+const STRING_A = getStringBytes("a");
+
+const getRecordBytes = (fields: [string, number[]][]) =>
+  [4, 0, 0, 0, fields.length].concat(
+    ...fields.map((field) => [...getStringBytes(field[0]), ...field[1]]),
+  );
+
+const EMPTY_SET = [5, 0, 0, 0, 0];
+
+const getNestedTrace = (depth: number) =>
+  gzip(
+    getRecordBytes([
+      [
+        "counterexample",
+        getRecordBytes([
+          ["state", EMPTY_SET],
+          ["action", EMPTY_SET],
+        ]),
+      ],
+      ["vars", EMPTY_SET],
+      ["deep", [...Array(depth).fill([7, 0, 1]).flat(), 1, 0, 0, 0, 1]],
+    ]),
+  );
+
+const SINGLE_STATE_SOURCE =
+  "---- MODULE T ----\nVARIABLE x\nInit == x = 0\nNext == UNCHANGED x\n====";
+
+const SINGLE_STATE_CONFIG = "INIT Init\nNEXT Next";
 
 describe("-loadTrace tlc matches TLC", () => {
   it("loads TLC's trace of MCDieHarder", async () => {
@@ -280,6 +312,19 @@ describe("-loadTrace tlc matches TLC", () => {
       expect(getOutcome(await loadTrace(source, LATIN_CONFIG, trace))).toEqual(outcome);
     },
   );
+
+  it.each([
+    [5000, "as TLC does"],
+    [10000, "where TLC overflows its stack"],
+  ])("loads a trace that nests %i tuples, %s", async (depth) => {
+    const result = await loadTrace(SINGLE_STATE_SOURCE, SINGLE_STATE_CONFIG, getNestedTrace(depth));
+    expect(getOutcome(result)).toEqual({
+      status: "success",
+      violation: undefined,
+      generated: 2,
+      distinct: 1,
+    });
+  });
 });
 
 describe("-loadTrace's _TLCState matches TLC", () => {

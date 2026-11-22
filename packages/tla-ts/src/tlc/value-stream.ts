@@ -67,6 +67,34 @@ interface ValueHandle {
 
 type Handle = NameHandle | ValueHandle;
 
+interface CompositeFrame {
+  index: number;
+  length: number;
+  values: Value[];
+}
+
+interface RecordFrame extends CompositeFrame {
+  kind: "Record";
+  names: string[];
+}
+
+interface FunctionFrame extends CompositeFrame {
+  kind: "Function";
+  domain: Value[];
+}
+
+interface IntervalFrame extends CompositeFrame {
+  kind: "Interval";
+  low: number;
+  high: number;
+}
+
+interface ElementFrame extends CompositeFrame {
+  kind: "Set" | "Tuple";
+}
+
+type Frame = RecordFrame | FunctionFrame | IntervalFrame | ElementFrame;
+
 const GZIP_MAGIC = 0x8b1f;
 
 const GZIP_FLAGS = { headerCrc: 2, extra: 4, name: 8, comment: 16 };
@@ -355,6 +383,7 @@ const deserializeValue = (bytes: Uint8Array, path: string) => {
   if (failure !== undefined && failureEnd === 0) throw failure;
   const modelValues = getModelValues();
   const handles: (Handle | undefined)[] = [];
+  const frames: Frame[] = [];
   let capacity = HANDLE_TABLE_SIZE;
   let position = 0;
   const readUnsignedByte = () => {
@@ -400,7 +429,23 @@ const deserializeValue = (bytes: Uint8Array, path: string) => {
     for (let index = 0; index < length; index++) text += String.fromCharCode(readUnsignedByte());
     return rankString(text);
   };
-  const readExternal = (): Value => {
+  const readFieldName = () => {
+    if (readByte() === TAGS.handle) {
+      const handle = getHandle(readNat());
+      if (handle.kind === "Value") {
+        throw createClassCastError(
+          `tlc2.value.impl.${getJavaClassName(handle.value)}`,
+          "util.UniqueString",
+        );
+      }
+      return handle.name;
+    }
+    const index = getIndex();
+    const name = readUniqueString();
+    handles[index] = { kind: "Name", name };
+    return name;
+  };
+  const openValue = (): Value | undefined => {
     const kind = readByte();
     if (kind === TAGS.boolean) return readByte() !== 0;
     if (kind === TAGS.integer) return readInt();
@@ -422,73 +467,34 @@ const deserializeValue = (bytes: Uint8Array, path: string) => {
     if (kind === TAGS.record) {
       const index = getIndex();
       const length = checkLength(Math.abs(readInt()) | 0);
-      const fields: [string, Value][] = [];
-      for (let field = 0; field < length; field++) {
-        if (readByte() === TAGS.handle) {
-          const handle = getHandle(readNat());
-          if (handle.kind === "Value") {
-            throw createClassCastError(
-              `tlc2.value.impl.${getJavaClassName(handle.value)}`,
-              "util.UniqueString",
-            );
-          }
-          fields.push([handle.name, readExternal()]);
-        } else {
-          const nameIndex = getIndex();
-          const name = readUniqueString();
-          handles[nameIndex] = { kind: "Name", name };
-          fields.push([name, readExternal()]);
-        }
-      }
-      const record = createRecord(fields);
-      handles[index] = { kind: "Value", value: record };
-      return record;
+      frames.push({ kind: "Record", index, length, names: [], values: [] });
+      return undefined;
     }
     if (kind === TAGS.function) {
       const index = getIndex();
       const nat = readNat();
       const isInterval = readByte() === 0;
       const length = checkLength(nat);
-      const pairs: [Value, Value][] = [];
-      if (isInterval) {
-        const low = readInt();
-        const high = readInt();
-        for (let element = 0; element < length; element++) {
-          pairs.push([low + element, readExternal()]);
-        }
-        // Deviation from TLC: FcnRcdValue#createFromExternal pairs an interval domain with however many values follow it.
-        if (high - low + 1 !== length) {
-          throw new TlaCorruptTraceError(
-            path,
-            `holds a function from ${low}..${high} with ${length} values`,
-          );
-        }
-      } else {
-        for (let element = 0; element < length; element++) {
-          pairs.push([readExternal(), readExternal()]);
-        }
+      if (!isInterval) {
+        frames.push({ kind: "Function", index, length, domain: [], values: [] });
+        return undefined;
       }
-      const functionValue = createFunction(pairs);
-      handles[index] = { kind: "Value", value: functionValue };
-      return functionValue;
+      const low = readInt();
+      const high = readInt();
+      frames.push({ kind: "Interval", index, length, low, high, values: [] });
+      return undefined;
     }
     if (kind === TAGS.set) {
       const index = getIndex();
       const length = checkLength(Math.abs(readInt()) | 0);
-      const elements: Value[] = [];
-      for (let element = 0; element < length; element++) elements.push(readExternal());
-      const set = createSet(elements);
-      handles[index] = { kind: "Value", value: set };
-      return set;
+      frames.push({ kind: "Set", index, length, values: [] });
+      return undefined;
     }
     if (kind === TAGS.tuple) {
       const index = getIndex();
       const length = checkLength(readNat());
-      const elements: Value[] = [];
-      for (let element = 0; element < length; element++) elements.push(readExternal());
-      const tuple = createTuple(elements);
-      handles[index] = { kind: "Value", value: tuple };
-      return tuple;
+      frames.push({ kind: "Tuple", index, length, values: [] });
+      return undefined;
     }
     if (kind === TAGS.handle) {
       const handle = getHandle(readNat());
@@ -499,7 +505,55 @@ const deserializeValue = (bytes: Uint8Array, path: string) => {
     }
     throw new TlaEvaluationError(`ValueInputStream: Can not unpickle a value of kind ${kind}`);
   };
-  return readExternal();
+  const createComposite = (frame: Frame) => {
+    if (frame.kind === "Record") {
+      return createRecord(
+        frame.names.map((name, offset): [string, Value] => [name, frame.values[offset]]),
+      );
+    }
+    if (frame.kind === "Function") {
+      return createFunction(
+        frame.domain.map((key, offset): [Value, Value] => [key, frame.values[offset]]),
+      );
+    }
+    if (frame.kind === "Interval") {
+      // Deviation from TLC: FcnRcdValue#createFromExternal pairs an interval domain with however many values follow it.
+      if (frame.high - frame.low + 1 !== frame.length) {
+        throw new TlaCorruptTraceError(
+          path,
+          `holds a function from ${frame.low}..${frame.high} with ${frame.length} values`,
+        );
+      }
+      return createFunction(
+        frame.values.map((value, offset): [Value, Value] => [frame.low + offset, value]),
+      );
+    }
+    return frame.kind === "Set" ? createSet(frame.values) : createTuple(frame.values);
+  };
+  const addValue = (frame: Frame, value: Value) => {
+    if (frame.kind === "Function" && frame.domain.length === frame.values.length) {
+      frame.domain.push(value);
+      return;
+    }
+    frame.values.push(value);
+  };
+  // Deviation from TLC: ValueInputStream#readExternal recurses into each nested value, so a trace nested 10,000 deep overflows TLC's stack and leaks the StackOverflowError's stack trace.
+  const value = openValue();
+  if (value !== undefined) return value;
+  while (true) {
+    const frame = frames[frames.length - 1];
+    if (frame.values.length < frame.length) {
+      if (frame.kind === "Record") frame.names.push(readFieldName());
+      const element = openValue();
+      if (element !== undefined) addValue(frame, element);
+      continue;
+    }
+    frames.pop();
+    const composite = createComposite(frame);
+    handles[frame.index] = { kind: "Value", value: composite };
+    if (frames.length === 0) return composite;
+    addValue(frames[frames.length - 1], composite);
+  }
 };
 
 export const createTlcTraceOperators = (files: FileSystem): Builtin[] => [
