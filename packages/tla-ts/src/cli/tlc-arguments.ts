@@ -2,6 +2,7 @@ import { randomBytes, randomInt } from "node:crypto";
 import { closeSync, openSync } from "node:fs";
 import { availableParallelism } from "node:os";
 import type { ModuleOperator } from "../check";
+import { parseJavaDouble } from "../java-string";
 import { MAXIMUM_INTEGER } from "../values";
 
 export interface TlcArguments {
@@ -169,11 +170,6 @@ const parseJavaInteger = (text: string, bits: 32 | 64) => {
   const value = BigInt(text);
   return BigInt.asIntN(bits, value) === value ? value : undefined;
 };
-
-const parseJavaDouble = (text: string) =>
-  /^[+-]?(NaN|Infinity|(\d+\.?\d*|\.\d+)([eE][+-]?\d+)?[fFdD]?)$/.test(text.trim())
-    ? Number.parseFloat(text.trim().replace(/[fFdD]$/, ""))
-    : undefined;
 
 const createDefaults = (): TlcArguments => ({
   specs: [],
@@ -394,7 +390,7 @@ const VALUE_FLAGS: Record<string, ValueFlag> = {
     missing: "Error: fpset memory size required.",
     apply: (_parsed, text) => {
       const size = parseJavaDouble(text);
-      if (size === undefined || size < 0) {
+      if (size === undefined || size < 0 || Number.isNaN(size)) {
         return `Error: An positive integer or a fraction for fpset memory size/percentage required. But encountered ${text}`;
       }
       if (size > 1) {

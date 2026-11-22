@@ -23,3 +23,22 @@ describe("TLC's -simulate arguments", () => {
     });
   });
 });
+
+describe("TLC's -fpmem argument", () => {
+  it.each(["0x1p-1", "0x.8p0", "\t0.5", "-0.0", "1e-400"])(
+    "reads %j as Double.parseDouble does",
+    (text) => {
+      expect(parseTlcArguments(["-fpmem", text, "Spec"])).toMatchObject({ specs: ["Spec"] });
+    },
+  );
+
+  it.each(["NaN", "-NaN", "0.5 ", "-Infinity"])(
+    "rejects %j, which Double.parseDouble or FPSetConfiguration#setRatio rejects",
+    (text) => {
+      expect(parseTlcArguments(["-fpmem", text, "Spec"])).toMatchObject({
+        kind: "command-line",
+        error: `Error: An positive integer or a fraction for fpset memory size/percentage required. But encountered ${text}`,
+      });
+    },
+  );
+});
