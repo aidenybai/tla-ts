@@ -2324,7 +2324,7 @@ const GENERATED_DATE = /\\\* Generated on .*$/;
 const readTraceSpecFixture = (name: string) =>
   readFileSync(join(TRACE_SPEC_FIXTURES, `${name}_TTrace.tla`), "utf8").replace(GENERATED_DATE, "");
 
-const runCopiedFixture = (fixtures: string, name: string, args: string[], output: string) => {
+const runCopiedFixture = (fixtures: string, name: string, args: string[], outputs: string[]) => {
   const directory = mkdtempSync(join(tmpdir(), "cli-fixture-"));
   copyFileSync(join(fixtures, `${name}.tla`), join(directory, `${name}.tla`));
   copyFileSync(join(fixtures, `${name}.cfg`), join(directory, `${name}.cfg`));
@@ -2333,8 +2333,10 @@ const runCopiedFixture = (fixtures: string, name: string, args: string[], output
     [DIST_CLI, `${name}.tla`, ...args, "-metadir", join(directory, "states")],
     { cwd: directory, encoding: "utf8" },
   );
-  const path = join(directory, output);
-  const written = existsSync(path) ? readFileSync(path, "utf8") : undefined;
+  const written = outputs.map((output) => {
+    const path = join(directory, output);
+    return existsSync(path) ? readFileSync(path, "utf8") : undefined;
+  });
   rmSync(directory, { recursive: true });
   return { result, written };
 };
@@ -2344,9 +2346,9 @@ const runTraceSpecFixture = (name: string, module: string, args: string[]) => {
     TRACE_SPEC_FIXTURES,
     name,
     [...args, "-fp", "0", "-teSpecOutDir", `${module}.tla`],
-    `${module}.tla`,
+    [`${module}.tla`],
   );
-  return { result: run.result, written: run.written?.replace(GENERATED_DATE, "") };
+  return { result: run.result, written: run.written[0]?.replace(GENERATED_DATE, "") };
 };
 
 describe("the CLI writes the trace exploration spec in every mode, as TLC does", () => {
@@ -2392,9 +2394,9 @@ describe("the CLI writes the action graph of -simulate stats=, as TLC does", () 
       fixtures,
       "Mutex",
       ["-simulate", `num=5,stats=${statistics}`, "-depth", "10", "-seed", "0"],
-      "Mutex_actions.dot",
+      ["Mutex_actions.dot"],
     );
-    expect([run.result.status, run.written]).toEqual([
+    expect([run.result.status, ...run.written]).toEqual([
       0,
       readFileSync(join(fixtures, `Mutex_actions_${statistics}.dot`), "utf8"),
     ]);
@@ -2406,9 +2408,9 @@ describe("the CLI writes the action graph of -simulate stats=, as TLC does", () 
       fixtures,
       "UnnamedActions",
       ["-simulate", "num=4,stats=basic", "-depth", "6", "-seed", "2"],
-      "UnnamedActions_actions.dot",
+      ["UnnamedActions_actions.dot"],
     );
-    expect([run.result.status, run.written]).toEqual([
+    expect([run.result.status, ...run.written]).toEqual([
       0,
       readFileSync(join(fixtures, "UnnamedActions_actions_basic.dot"), "utf8"),
     ]);
@@ -2465,4 +2467,64 @@ describe("the CLI writes the action graph of -simulate stats=, as TLC does", () 
       expect([result.status, lines.slice(start, start + expected.length)]).toEqual([0, expected]);
     },
   );
+});
+
+describe("the CLI writes the behaviors of -simulate file=, as TLC does", () => {
+  it("writes each behavior that ends without an error, numbered among all behaviors and without stuttering", () => {
+    const behaviors = ["t_0_0", "t_0_1", "t_0_2", "t_0_3", "t_0_4", "t_0_5"];
+    const run = runCopiedFixture(
+      join(FIXTURES, "behavior-file"),
+      "Behaviors",
+      ["-simulate", "num=6,file=t", "-depth", "8", "-seed", "3", "-continue"],
+      behaviors,
+    );
+    expect(run.written).toEqual(
+      behaviors.map((behavior) =>
+        behavior === "t_0_2" || behavior === "t_0_5"
+          ? `---------------- MODULE ${behavior} -----------------\n\\* <Init line 4, col 9 to line 4, col 20 of module Behaviors>\nSTATE_1 == \nx = 1\n\n\n\\* <Next line 6, col 12 to line 6, col 26 of module Behaviors>\nSTATE_2 == \nx = 5\n\n\n=================================================\n`
+          : undefined,
+      ),
+    );
+  });
+
+  it("learns from each whole behavior under sched=rl, where TLC's RLSimulationWorker throws a NullPointerException", () => {
+    const run = runCopiedFixture(
+      join(FIXTURES, "behavior-file"),
+      "Learning",
+      ["-simulate", "sched=rl,num=8,file=t", "-depth", "8", "-seed", "1"],
+      ["t_0_0"],
+    );
+    expect([
+      run.result.status,
+      run.result.stdout.split("\n").findLast((line) => line.startsWith("Progress: ")),
+      ...run.written,
+    ]).toEqual([
+      0,
+      "Progress: 54 states checked, 8 traces generated (trace length: mean=6, var(x)=3, sd=2)",
+      "---------------- MODULE t_0_0 -----------------\n\\* <Init line 4, col 9 to line 4, col 13 of module Learning>\nSTATE_1 == \nx = 0\n\n\n\\* <Next line 6, col 12 to line 6, col 30 of module Learning>\nSTATE_2 == \nx = 1\n\n\n=================================================\n",
+    ]);
+  });
+
+  it("reports a behavior it can't write as TLC's FileNotFoundException", () => {
+    const run = runCopiedFixture(
+      join(FIXTURES, "mutex"),
+      "Mutex",
+      ["-simulate", "num=2,file=nodir/tr", "-depth", "2", "-seed", "0"],
+      [],
+    );
+    const lines = run.result.stdout.split("\n");
+    const start = lines.indexOf("Error: Unable to write to file nodir/tr_0_0");
+    expect([run.result.status, lines.slice(start, start + 7)]).toEqual([
+      255,
+      [
+        "Error: Unable to write to file nodir/tr_0_0",
+        "Error: TLC threw an unexpected exception.",
+        "This was probably caused by an error in the spec or model.",
+        "See the User Output or TLC Console for clues to what happened.",
+        "The exception was a java.io.FileNotFoundException",
+        ": nodir/tr_0_0 (No such file or directory)",
+        "Error: The behavior up to this point is:",
+      ],
+    ]);
+  });
 });

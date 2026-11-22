@@ -480,6 +480,7 @@ const checkSpec = async (
         scheduler: args.scheduler,
         isDiffTrace: args.isDiffTrace,
         actionStatistics: args.actionStatistics,
+        behaviorFile: args.behaviorFile,
         onSimulation: (output) => {
           if (output.kind === "trace-spec") recordedTraceSpec = output.text;
           else printSimulation(printer, output, timing.startTime);

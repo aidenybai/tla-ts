@@ -27,6 +27,7 @@ export interface TlcArguments {
   traceCount: bigint | undefined;
   scheduler: "random" | "rl" | "rlaction";
   actionStatistics: ActionStatistics | undefined;
+  behaviorFile: string | undefined;
   isTool: boolean;
   isContinued: boolean;
   isDeadlockChecked: boolean;
@@ -207,6 +208,7 @@ const createDefaults = (): TlcArguments => ({
   traceCount: undefined,
   scheduler: "random",
   actionStatistics: undefined,
+  behaviorFile: undefined,
   isTool: false,
   isContinued: false,
   isDeadlockChecked: true,
@@ -487,7 +489,8 @@ export const parseTlcArguments = (args: string[]): TlcArguments | TlcArgumentsEr
         continue;
       }
       argumentIndex++;
-      const hasFile = options.split(",").some((option) => option.startsWith("file="));
+      const file = options.split(",").findLast((option) => option.startsWith("file="));
+      if (file !== undefined) parsed.behaviorFile = file.replaceAll("file=", "");
       // TLC sets a system property for each sched= and never clears it, and its Simulator takes rl over rlaction.
       if (options.split(",").includes("sched=rl")) {
         parsed.scheduler = "rl";
@@ -512,7 +515,10 @@ export const parseTlcArguments = (args: string[]): TlcArguments | TlcArgumentsEr
         }
       }
       // TLC's default trace count is Long.MAX_VALUE, so it takes that num for a missing one.
-      if ((parsed.traceCount ?? MAXIMUM_LONG) === MAXIMUM_LONG && hasFile) {
+      if (
+        (parsed.traceCount ?? MAXIMUM_LONG) === MAXIMUM_LONG &&
+        parsed.behaviorFile !== undefined
+      ) {
         return reject(
           `Error: You need to specify a 'num' argument when using the 'file' argument, for example: '"num=5,file=test.txt"'.`,
         );

@@ -29,6 +29,12 @@ describe("TLC's -simulate arguments", () => {
     });
   });
 
+  it("strips every file= from a path, as Java's String#replace does", () => {
+    expect(parseTlcArguments(["-simulate", "num=4,file=trfile=", "Spec"])).toMatchObject({
+      behaviorFile: "tr",
+    });
+  });
+
   it("strips every num= from a count, as Java's String#replace does", () => {
     expect(parseTlcArguments(["-simulate", "num=3num=", "Spec"])).toMatchObject({
       traceCount: 3n,

@@ -1,6 +1,7 @@
 import type { CheckOptions, TraceStep, Violation } from "./check";
 import type { CoverageOutput } from "./coverage";
 import {
+  FILE_NOT_FOUND_EXCEPTION,
   isStackOverflow,
   TlaEvaluationError,
   TlaFileError,
@@ -76,6 +77,8 @@ export interface SimulationOptions extends CheckOptions {
   isDiffTrace?: boolean;
   /** TLC's -simulate stats=basic|full, which writes the graph of the actions the behaviors take to <root>_actions.dot through writeFile. */
   actionStatistics?: ActionStatistics;
+  /** TLC's -simulate file=, which writes each behavior that ends without an error to <file>_0_<n> through writeFile. */
+  behaviorFile?: string;
   onSimulation: (output: SimulationOutput) => void;
 }
 
@@ -261,14 +264,23 @@ export const simulate = (options: SimulationOptions & CliSettings): number => {
     initCount: initActions.length,
     actionStats: new Float64Array((initActions.length + nextActions.length) ** 2),
   };
+  // TLC opens both files with FileUtil#newBFOS, which prints a failure before it rethrows it.
+  const writeOutputFile = (path: string, content: string) => {
+    try {
+      options.writeFile?.(path, content);
+    } catch (error) {
+      if (error instanceof TlaFileError) {
+        (options.onPrint ?? console.log)(`Error: Unable to write to file ${path}`);
+      }
+      throw error;
+    }
+  };
   const writeActionFlowGraph = () => {
     if (!actionFlow) return;
-    const path = `${specification.rootName}_actions.dot`;
     try {
-      options.writeFile?.(path, getActionFlowGraph(actionFlow));
+      writeOutputFile(`${specification.rootName}_actions.dot`, getActionFlowGraph(actionFlow));
     } catch (error) {
       if (!(error instanceof TlaFileError)) throw error;
-      (options.onPrint ?? console.log)(`Error: Unable to write to file ${path}`);
       reportMessage(
         MESSAGE_CODE.reporterDied,
         "Progress report thread died.",
@@ -738,7 +750,19 @@ export const simulate = (options: SimulationOptions & CliSettings): number => {
     const delta = length - statistics.levelMean;
     statistics.levelMean += Math.trunc(delta / Math.max(statistics.traces, 1));
     statistics.levelM2 += delta * (length - statistics.levelMean);
+    // Deviation from TLC: it learns after file= drops the stuttering steps, and RLSimulationWorker#postTrace then walks past the initial state into a NullPointerException.
     if (options.scheduler === "rl") scheduler.learnTrace(currentNode);
+    if (options.behaviorFile !== undefined) {
+      const fileName = `${options.behaviorFile}_0_${traceCount}`;
+      const states = getTrace(currentNode, search.getTlcOrder()).map(
+        (node, index) =>
+          `\\* <${getActionLabel(node.action, options.version)}>\nSTATE_${index + 1} == \n${formatState(toRecord(node.state))}\n\n`,
+      );
+      writeOutputFile(
+        fileName,
+        `---------------- MODULE ${fileName} -----------------\n${states.join("")}=================================================\n`,
+      );
+    }
     return undefined;
   };
   const toException = (error: unknown, node: TraceNode): WorkerError => {
@@ -910,4 +934,6 @@ const getUnexpectedPrefix = (error: TlaEvaluationError) =>
     ? UNEXPECTED_EVAL_EXCEPTION
     : error instanceof TlaSetBoundError
       ? WRONG_INVOCATION_EXCEPTION
-      : UNEXPECTED_EXCEPTION;
+      : error instanceof TlaFileError
+        ? FILE_NOT_FOUND_EXCEPTION
+        : UNEXPECTED_EXCEPTION;
