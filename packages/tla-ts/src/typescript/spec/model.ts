@@ -563,11 +563,31 @@ export const compileModelToEscore = (
         : undefined;
     if (domain.kind === "Identifier" && domain.name === "BOOLEAN") return plain("Bool(x)");
     if (domain.kind === "Apply" && domain.operator === "..") return plain("IntV(x)");
+    if (
+      domain.kind === "SetMap" &&
+      domain.expression.kind === "Record" &&
+      domain.expression.fields.length === 1 &&
+      domain.expression.fields[0].name === "bigint"
+    ) {
+      return plain("BigInt(BigIntFromInt(x.bigint))");
+    }
     if (domain.kind === "Identifier") {
       const definition = definitions.get(domain.name);
       return definition?.kind === "Operator" && definition.params.length === 0
         ? createConverter(definition.body)
         : unsupported(domain, type);
+    }
+    // The empty object, as the empty function stands for it, which a domain of an object whose
+    // fields are all optional holds.
+    if (
+      domain.kind === "SetEnumeration" &&
+      domain.elements.length === 1 &&
+      domain.elements[0].kind === "FunctionConstruction"
+    ) {
+      return lowerAs(
+        define("Convert", (name) => `${name}(s, x) == NewRecord(s, <<>>)`),
+        `[type |-> "lobject", keys |-> <<>>, vals |-> <<>>]`,
+      );
     }
     if (domain.kind === "SetEnumeration") {
       const primitives = domain.elements.flatMap((element) =>

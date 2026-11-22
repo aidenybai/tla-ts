@@ -110,11 +110,11 @@ describe("the CLI with TypeScript files", () => {
     expect(result.stdout).toContain("Model checking completed. No error has been found.");
   });
 
-  // A note names the kind of a parameter's type that keeps tla-ts from calling an export, beside the
-  // check of the exports that it calls.
+  // A note names the kind of a parameter's type that keeps tla-ts from calling an export, or the
+  // kinds of a union's values that TLC can't compare, beside the check of the exports that it calls.
   describe("names the kind of each parameter that it can't list the values of", () => {
     const getModel = (check: string) =>
-      `class Box {\n  size = 1;\n}\ninterface Shape {\n  name: string;\n  area(): number;\n}\nconst count = [1, 2].length;\nexport const isSmall = () => ${check};\nexport const identity = <T,>(value: T) => value;\nexport const apply = (transform: (value: number) => number) => transform(count);\nexport const measure = (shape: Shape) => shape.area();\nexport const open = (box: Box) => box.size;\nexport const name = (shape: Shape | undefined) => shape?.name;\nexport const echo = (value: unknown) => value;\nexport const loose = (value: any) => value;\n`;
+      `class Box {\n  size = 1;\n}\ninterface Shape {\n  name: string;\n  area(): number;\n}\nconst count = [1, 2].length;\nexport const isSmall = () => ${check};\nexport const identity = <T,>(value: T) => value;\nexport const apply = (transform: (value: number) => number) => transform(count);\nexport const measure = (shape: Shape) => shape.area();\nexport const open = (box: Box) => box.size;\nexport const name = (shape: Shape | undefined) => shape?.name;\nexport const echo = (value: unknown) => value;\nexport const loose = (value: any) => value;\nexport const either = (value: string | number) => value;\nexport const mixed = (value: bigint | number) => value;\n`;
 
     it("agrees with Node", () => {
       const directory = copyFixtures("passing");
@@ -133,6 +133,12 @@ describe("the CLI with TypeScript files", () => {
         "loose: its parameter value is any, as an untyped parameter is",
       ].forEach((note) =>
         expect(result.stdout).toContain(`tla-ts calls no ${note}, whose values tla-ts can't list`),
+      );
+      expect(result.stdout).toContain(
+        "tla-ts calls no either: its parameter value is a union of string and number, whose values TLC can't compare",
+      );
+      expect(result.stdout).toContain(
+        "tla-ts calls no mixed: its parameter value is a union of number and bigint, whose values TLC can't compare",
       );
     });
 
@@ -988,7 +994,7 @@ describe("the CLI with TypeScript files", () => {
       const result = runCli(directory, ["values.mjs"]);
       expect([0, 1]).not.toContain(result.status);
       expect(result.stderr).toContain(
-        "tla-ts can't check a program whose TLA+ spec has more than 37000000 characters",
+        "tla-ts can't check a program whose TLA+ spec has more than 33000000 characters",
       );
     });
   });

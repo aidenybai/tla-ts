@@ -48,7 +48,7 @@ interface Infinite {
 // function's keys and values, as a tuple, an array, a record, or a map is a function. Undefined and
 // null are model values, which TLC compares with any value.
 interface Shape {
-  kind: "model" | "boolean" | "number" | "string" | "set" | "function";
+  kind: "model" | "boolean" | "number" | "bigint" | "string" | "set" | "function";
   keys?: Shape;
   values?: ReadonlyMap<string, Shape>;
   rest?: Shape;
@@ -534,10 +534,14 @@ export const frameModel = (
     [...definition.tags.keys()].find((candidate) => VALUE_TAGS.has(candidate));
 
   // The first type that has no end, or the domains of every type.
-  const findDomains = (types: readonly ts.Type[], path: readonly ts.Type[]) =>
-    types.reduce<Domain[] | Infinite>((domains, type) => {
+  const findDomains = (
+    types: readonly ts.Type[],
+    path: readonly ts.Type[],
+    isHeldOptional: (position: number) => boolean = () => false,
+  ) =>
+    types.reduce<Domain[] | Infinite>((domains, type, position) => {
       if (!Array.isArray(domains)) return domains;
-      const domain = findSizedDomain(type, path);
+      const domain = findSizedDomain(type, path, isHeldOptional(position));
       return isUnlisted(domain) ? domain : [...domains, domain];
     }, []);
   const getLiteral = (type: ts.Type): string | undefined => {
@@ -562,6 +566,7 @@ export const frameModel = (
     }
     if (type.flags & ts.TypeFlags.BooleanLike) return { kind: "boolean" };
     if (type.flags & ts.TypeFlags.NumberLike) return { kind: "number" };
+    if (type.flags & ts.TypeFlags.BigIntLike) return { kind: "bigint" };
     if (type.flags & ts.TypeFlags.StringLike) return { kind: "string" };
     const typeArguments = isTypeReference(type) ? checker.getTypeArguments(type) : [];
     if (isSetType(type)) {
@@ -639,20 +644,34 @@ export const frameModel = (
   // The set of every value that a finite type allows, which TLC enumerates, as TLA+, with how many
   // values it has. outer holds the types around this one, so a type that holds itself, such as a
   // tree, has no end.
-  const findSizedDomain = (type: ts.Type, outer: readonly ts.Type[]): Domain | Infinite => {
+  // A held optional field's type, where the program's options make optional fields exact, holds the
+  // missing type, which TypeScript adds to it beside any undefined that it declares, and which no
+  // value of the field is, as removeMissingType tells.
+  const isMissing = (type: ts.Type) =>
+    program.options.exactOptionalPropertyTypes === true &&
+    (type.flags & ts.TypeFlags.Undefined) !== 0 &&
+    type !== checker.getUndefinedType();
+  const findSizedDomain = (
+    type: ts.Type,
+    outer: readonly ts.Type[],
+    isHeldOptional = false,
+  ): Domain | Infinite => {
     if (outer.includes(type)) {
       return { message: `${checker.typeToString(type)} holds itself, so it has no end` };
     }
     const path = [...outer, type];
     if (type.flags & ts.TypeFlags.Boolean) return { text: "BOOLEAN", size: 2 };
     if (type.isUnion()) {
-      const literalTypes = type.types
+      const members = isHeldOptional
+        ? type.types.filter((member) => !isMissing(member))
+        : type.types;
+      const literalTypes = members
         .filter((member) => getLiteral(member) !== undefined)
         .toSorted((left, right) =>
           left.isNumberLiteral() && right.isNumberLiteral() ? left.value - right.value : 0,
         );
       const others = findDomains(
-        type.types.filter((member) => !literalTypes.includes(member)),
+        members.filter((member) => !literalTypes.includes(member)),
         path,
       );
       if (!Array.isArray(others)) return others;
@@ -676,6 +695,11 @@ export const frameModel = (
     const literal = getLiteral(type);
     if (literal !== undefined) return { text: `{${literal}}`, size: 1 };
     if (type.flags & ts.TypeFlags.Number) return { text: "-3..3", size: 7 };
+    // A BigInt from -3n to 3n, as the record of its integer, which no number's integer is.
+    if (type.flags & ts.TypeFlags.BigInt) {
+      const integer = names.getFresh("integer");
+      return { text: `{[bigint |-> ${integer}] : ${integer} \\in -3..3}`, size: 7 };
+    }
     if (type.flags & ts.TypeFlags.String) return { text: '{"", "a", "b"}', size: 3 };
     // A subclass's instances are objects, which no domain lists.
     if (
@@ -739,16 +763,44 @@ export const frameModel = (
     if (declaration !== undefined && ts.isClassLike(declaration)) {
       return getInfinite(type, "tla-ts can't list the instances of a class");
     }
-    const optional = properties.find((property) => property.flags & ts.SymbolFlags.Optional);
-    if (optional !== undefined) {
-      return getInfinite(type, `the optional field ${optional.name} may be missing`);
-    }
     const fieldTypes = properties.map((property) => checker.getTypeOfSymbol(property));
-    const fields = findDomains(fieldTypes, path);
+    const fields = findDomains(
+      fieldTypes,
+      path,
+      (position) => (properties[position].flags & ts.SymbolFlags.Optional) !== 0,
+    );
     if (!Array.isArray(fields)) return fields;
     const keys = properties.map((property) => property.name);
     const unnamed = keys.find((key) => !isNumericKey(key) && !isFieldName(key));
     if (unnamed !== undefined) return getInfinite(type, `TLA+ can't name the field ${unnamed}`);
+    const optional = properties.flatMap((property, position) =>
+      property.flags & ts.SymbolFlags.Optional ? [position] : [],
+    );
+    if (optional.length > 0 && keys.some(isNumericKey)) {
+      return getInfinite(type, `the optional field ${properties[optional[0]].name} may be missing`);
+    }
+    // An object with optional fields is the record of each set of them that it holds, with its
+    // other fields: a field that it holds takes the values of its type, and one that it lacks is
+    // missing, as the in operator tells. An object that holds no field is the empty function, which a record of no
+    // fields is.
+    if (optional.length > 0) {
+      const parts = Array.from({ length: 2 ** optional.length }, (_, mask) => {
+        const held = keys.flatMap((_, position) => {
+          const bit = optional.indexOf(position);
+          return bit === -1 || mask & (1 << bit) ? [position] : [];
+        });
+        return held.length === 0
+          ? { text: `{[${names.getFresh("field")} \\in {} |-> TRUE]}`, size: 1 }
+          : {
+              text: `[${held.map((position) => `${keys[position]} : (${fields[position].text})`).join(", ")}]`,
+              size: held.reduce((product, position) => product * fields[position].size, 1),
+            };
+      });
+      return {
+        text: parts.map((part) => `(${part.text})`).join(" \\cup "),
+        size: parts.reduce((sum, part) => sum + part.size, 0),
+      };
+    }
     const size = fields.reduce((product, field) => product * field.size, 1);
     if (!keys.some(isNumericKey)) {
       return {
@@ -859,7 +911,10 @@ export const frameModel = (
   const isExact = (type: ts.Type): boolean => {
     if (type.isUnion()) return type.types.every(isExact);
     if (getLiteral(type) !== undefined || type.flags & ts.TypeFlags.Boolean) return true;
-    if (type.flags & (ts.TypeFlags.Number | ts.TypeFlags.String) || checker.isArrayType(type)) {
+    if (
+      type.flags & (ts.TypeFlags.Number | ts.TypeFlags.BigInt | ts.TypeFlags.String) ||
+      checker.isArrayType(type)
+    ) {
       return false;
     }
     const typeArguments = isTypeReference(type) ? checker.getTypeArguments(type) : [];
@@ -906,6 +961,32 @@ export const frameModel = (
       .some((property) => checker.getTypeOfSymbol(property).getCallSignatures().length > 0);
     return type.flags & ts.TypeFlags.Object && hasMethods ? "an object with methods" : undefined;
   };
+  // The kind of a union's value that TLC compares only with values of its kind.
+  const getValueKind = (type: ts.Type) =>
+    type.flags & ts.TypeFlags.NumberLike
+      ? "number"
+      : type.flags & ts.TypeFlags.BigIntLike
+        ? "bigint"
+        : type.flags & ts.TypeFlags.StringLike
+          ? "string"
+          : type.flags & ts.TypeFlags.BooleanLike
+            ? "boolean"
+            : checker.isArrayType(type) || checker.isTupleType(type)
+              ? "array"
+              : isSetType(type)
+                ? "Set"
+                : isMapType(type)
+                  ? "Map"
+                  : "object";
+  // The kinds of the values that a union mixes, beside null and undefined, which TLC compares with
+  // any value.
+  const getMixedKinds = (type: ts.Type) => [
+    ...new Set(
+      (type.isUnion() ? type.types : [type])
+        .filter((member) => getLiteral(member) !== "Null" && getLiteral(member) !== "Undefined")
+        .map(getValueKind),
+    ),
+  ];
   // Why the model calls no exported function: Node runs only a module's top level, so an export
   // runs only where TLC can choose its arguments, which it can't where a parameter takes values
   // that tla-ts can't list, and where a call of it may return.
@@ -915,14 +996,18 @@ export const frameModel = (
     const guarded = isStepExport(definition) ? readGuards(definition, parameters) : new Map();
     const unlisted = parameters.find((parameter) => {
       const domain = findDomain(getType(parameter.node));
-      return !guarded.has(parameter) && isInfinite(domain) && domain.isIncomparable !== true;
+      return !guarded.has(parameter) && isInfinite(domain);
     });
     if (unlisted !== undefined) {
       const type = getType(unlisted.node);
       const kind = getUnlistedKind(type);
       const domain = findDomain(type);
-      return kind !== undefined
-        ? `its parameter ${unlisted.name} is ${kind}, whose values tla-ts can't list`
+      const kinds = getMixedKinds(type);
+      if (kind !== undefined) {
+        return `its parameter ${unlisted.name} is ${kind}, whose values tla-ts can't list`;
+      }
+      return isInfinite(domain) && domain.isIncomparable === true && kinds.length > 1
+        ? `its parameter ${unlisted.name} is a union of ${kinds.slice(0, -1).join(", ")} and ${kinds.at(-1)}, whose values TLC can't compare`
         : `its parameter ${unlisted.name} takes values it can't list: ${isInfinite(domain) ? domain.message : ""}`;
     }
     return definition.node.parameters.length === 0 &&

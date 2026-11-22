@@ -1,4 +1,4 @@
-import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { pathToFileURL } from "node:url";
@@ -238,6 +238,82 @@ describe("checks a module's exported functions as a model on ESCore", () => {
 
     it("rejects another result", async () => {
       expect((await checkModel(getSource(1))).status).toBe("assumption-violation");
+    });
+  });
+
+  // An object's optional field may be missing or held, which the in operator tells apart: the
+  // check calls a function with each record of the fields it may hold, where a held field takes
+  // undefined too unless the program's options make optional fields exact, as TypeScript reads
+  // them, so that a call with { size: undefined } is one Node may make.
+  describe("calls a function with each set of an object's optional fields", () => {
+    const directory = mkdtempSync(join(tmpdir(), "tla-ts-escore-optional-"));
+    afterAll(() => rmSync(directory, { recursive: true, force: true }));
+    // A call that throws is one Node's call would throw too, which the check finds.
+    const getSource = (most: number) =>
+      `export const hold = (options: { size?: 1 | 2; label?: "a" }) => {\n  if (Object.keys(options).length > ${most}) throw new Error("held");\n  return options.label ?? "none";\n};\nexport const size = (options: { size?: 1 | 2 }) => {\n  if ("size" in options && options.size === undefined) throw new Error("undefined");\n  return "size" in options;\n};\n`;
+    const check = (most: number, isExact: boolean) => {
+      const project = join(directory, isExact ? "exact" : "loose");
+      mkdirSync(project, { recursive: true });
+      writeFileSync(
+        join(project, "tsconfig.json"),
+        JSON.stringify({ compilerOptions: { strict: true, exactOptionalPropertyTypes: isExact } }),
+      );
+      const path = join(project, `options-${most}.ts`);
+      const source = getSource(most);
+      writeFileSync(path, source);
+      return checkModel(source, path);
+    };
+
+    it("agrees with Node where optional fields are exact", async () => {
+      expect(getCounts(await check(2, true))).toEqual(["success", 0, 0]);
+    });
+
+    it("rejects another result", async () => {
+      expect((await check(1, true)).status).toBe("assumption-violation");
+    });
+
+    it("calls the function with a field held as undefined where they aren't exact", async () => {
+      const result = await check(2, false);
+      expect(result.status).toBe("assumption-violation");
+      expect(result.message).toContain('"undefined"');
+    });
+  });
+
+  // A BigInt parameter or state variable takes each BigInt from -3n to 3n, none of which is a
+  // number, so a check tells 1n from 1. A parameter of BigInts and numbers mixes values that TLC
+  // can't compare, so the check calls no function that takes one, and checks the rest.
+  describe("calls a function with each BigInt from -3n to 3n", () => {
+    const STATE = `let count!: bigint;\nexport const bump = () => {\n  if (count >= 3n) return;\n  count = count + 1n;\n};\nexport const isSmall = () => typeof count === "bigint" && count <= 3n;\n`;
+    const getSource = (thrown: string) =>
+      `export const half = (n: bigint) => {\n  if ((n as unknown) === 1 || typeof n !== "bigint" || n === ${thrown}) throw new Error("thrown");\n  return n / 2n;\n};\nexport const either = (n: bigint | number) => {\n  throw new Error("called");\n};\n`;
+
+    it("agrees with Node", async () => {
+      expect(getCounts(await checkModel(getSource("4n")))).toEqual(["success", 0, 0]);
+    });
+
+    it("keeps a BigInt in the state, lowered or not", async () => {
+      expect(getCounts(await checkModel(STATE))).toEqual(["deadlock", 7, 10]);
+      expect(getCounts(await checkModel(STATE, "spec.ts", "lowered"))).toEqual(["deadlock", 7, 10]);
+    });
+
+    it("tells a lowered converter that flips a BigInt", async () => {
+      const result = await checkModel(STATE, "spec.ts", "lowered", [
+        "(x) == BigInt(BigIntFromInt(x.bigint))",
+        "(x) == BigInt(BigIntFromInt(-x.bigint))",
+      ]);
+      expect(result.message).toContain("the lowered converter differs");
+    });
+
+    it("rejects another result", async () => {
+      expect((await checkModel(getSource("-3n"))).status).toBe("assumption-violation");
+    });
+
+    it("rejects a number in a BigInt's place", async () => {
+      const result = await checkModel(getSource("4n"), "spec.ts", "canonical", [
+        "BigInt(BigIntFromInt(x.bigint))",
+        "IntV(x.bigint)",
+      ]);
+      expect(result.status).toBe("assumption-violation");
     });
   });
 
