@@ -4730,6 +4730,21 @@ describe("name resolution matches SANY", () => {
       })),
     ],
     [
+      "selections of names that LET and proof-step instances do not define",
+      "---- MODULE Inner ----\nFoo == 2 = 2\nTHEOREM T == t :: 1 = 1\n====\nN == INSTANCE Inner\nF == LET I == INSTANCE Inner IN I!Nope\nG == LET I == INSTANCE Inner IN I!T!t\nTHEOREM TRUE\n<1> I == INSTANCE Inner\n<1>1. I!T!t\n  OBVIOUS\n<1> QED BY I!J!Baz",
+      [
+        {
+          location: "line 7, col 33 to line 7, col 38 of module M",
+          message: "Unknown operator: `I!Nope'.",
+        },
+        {
+          location: "line 13, col 12 to line 13, col 18 of module M",
+          message: "Unknown operator: `I!J!Baz'.",
+        },
+      ],
+      [],
+    ],
+    [
       "two LET instances with parameters that copy a theorem",
       "---- MODULE L ----\nCONSTANT c\nA == c\nTHEOREM T == c = c\n====\nN == INSTANCE L WITH c <- 1\nF == LET I(p) == INSTANCE L WITH c <- p\n         I(p) == INSTANCE L WITH c <- p\n     IN 1\nZ == U",
       [

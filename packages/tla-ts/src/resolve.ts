@@ -1067,7 +1067,13 @@ const getSymbolArity = (
   ) {
     return undefined;
   }
-  if (selected || (prefix !== "" && isFact(prefix, unit))) {
+  const parts = name.split("!");
+  const isSelectedInto = parts.slice(1).some((_part, index) => {
+    const head = parts.slice(0, index + 1).join("!");
+    const headBinding = lookupLocal(scope, head) ?? findSymbol(head, unit);
+    return headBinding !== undefined && headBinding.kind !== "Instance";
+  });
+  if ((selected && isSelectedInto) || (prefix !== "" && isFact(prefix, unit))) {
     return expression.kind === "Apply" ? expression.args.length : 0;
   }
   const fixity = getFixity(expression);
