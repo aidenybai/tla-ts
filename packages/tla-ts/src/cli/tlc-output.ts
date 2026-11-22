@@ -654,11 +654,7 @@ export const printSimulation = (
   const print = printer.print;
   switch (output.kind) {
     case "message":
-      print(
-        output.code,
-        output.isError ? MESSAGE_LEVEL.error : MESSAGE_LEVEL.none,
-        printer.isTool ? output.toolMessage : output.message,
-      );
+      print(output.code, output.level, printer.isTool ? output.toolMessage : output.message);
       return;
     case "coverage":
       printCoverage(printer, output.coverage, startTime);

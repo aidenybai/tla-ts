@@ -2413,4 +2413,56 @@ describe("the CLI writes the action graph of -simulate stats=, as TLC does", () 
       readFileSync(join(fixtures, "UnnamedActions_actions_basic.dot"), "utf8"),
     ]);
   });
+
+  const unwritable = "Error: Unable to write to file Mutex_actions.dot";
+  const reporterDied = [
+    "@!@!@STARTMSG 2124:2 @!@!@",
+    "Progress report thread died.",
+    "@!@!@ENDMSG 2124 @!@!@",
+  ];
+  it.each([
+    [
+      "num=5,stats=basic",
+      [],
+      [
+        "Progress: 52 states checked, 5 traces generated (trace length: mean=10, var(x)=0, sd=0)",
+        unwritable,
+        "TLC Bug: Progress report thread died.",
+        unwritable,
+        "TLC Bug: Progress report thread died.",
+        "The number of states generated: 52",
+      ],
+    ],
+    ["num=5,stats=full", ["-tool"], [unwritable, ...reporterDied, unwritable, ...reporterDied]],
+  ])(
+    "reports both failed writes under %s %j and goes on, as TLC does",
+    (options, mode, expected) => {
+      const fixtures = join(FIXTURES, "mutex");
+      const directory = mkdtempSync(join(tmpdir(), "action-graph-"));
+      copyFileSync(join(fixtures, "Mutex.tla"), join(directory, "Mutex.tla"));
+      copyFileSync(join(fixtures, "Mutex.cfg"), join(directory, "Mutex.cfg"));
+      mkdirSync(join(directory, "Mutex_actions.dot"));
+      const result = spawnSync(
+        process.execPath,
+        [
+          DIST_CLI,
+          "Mutex.tla",
+          "-simulate",
+          options,
+          "-depth",
+          "10",
+          "-seed",
+          "0",
+          ...mode,
+          "-metadir",
+          join(directory, "states"),
+        ],
+        { cwd: directory, encoding: "utf8" },
+      );
+      rmSync(directory, { recursive: true });
+      const lines = result.stdout.split("\n");
+      const start = lines.indexOf(expected[0]);
+      expect([result.status, lines.slice(start, start + expected.length)]).toEqual([0, expected]);
+    },
+  );
 });

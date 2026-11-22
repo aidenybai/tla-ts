@@ -3,6 +3,7 @@ import type { CoverageOutput } from "./coverage";
 import {
   isStackOverflow,
   TlaEvaluationError,
+  TlaFileError,
   TlaIncompleteSuccessorError,
   TlaModuleError,
   TlaStackOverflowError,
@@ -39,8 +40,10 @@ import {
   isEvalException,
   isHeadedError,
   MESSAGE_CODE,
+  MESSAGE_LEVEL,
   withUnexpectedException,
   type FailureMessage,
+  type MessageLevel,
 } from "./tlc/messages";
 import { getActionFlowGraph, type ActionStatistics } from "./tlc/action-graph";
 import { createJavaRandom, nextPrime, type JavaRandom } from "./tlc/random";
@@ -86,7 +89,7 @@ export interface SimulationStatistics {
 }
 
 export type SimulationOutput =
-  | { kind: "message"; code: number; isError: boolean; message: string; toolMessage: string }
+  | { kind: "message"; code: number; level: MessageLevel; message: string; toolMessage: string }
   | { kind: "behavior"; trace: TraceStep[]; levels: number[]; isLastStateOnly: boolean }
   | CoverageOutput
   | TraceSpecOutput
@@ -238,8 +241,12 @@ export const simulate = (options: SimulationOptions & CliSettings): number => {
     seed,
     aril: options.aril,
   };
-  const reportMessage = (code: number, text: string, toolText = text, isError = true) =>
-    output({ kind: "message", code, isError, message: text, toolMessage: toolText });
+  const reportMessage = (
+    code: number,
+    text: string,
+    toolText = text,
+    level: MessageLevel = MESSAGE_LEVEL.error,
+  ) => output({ kind: "message", code, level, message: text, toolMessage: toolText });
   const reportCoverage = () => {
     const report = prepared.getCoverage();
     if (report) output({ kind: "coverage", coverage: report });
@@ -254,11 +261,25 @@ export const simulate = (options: SimulationOptions & CliSettings): number => {
     initCount: initActions.length,
     actionStats: new Float64Array((initActions.length + nextActions.length) ** 2),
   };
+  const writeActionFlowGraph = () => {
+    if (!actionFlow) return;
+    const path = `${specification.rootName}_actions.dot`;
+    try {
+      options.writeFile?.(path, getActionFlowGraph(actionFlow));
+    } catch (error) {
+      if (!(error instanceof TlaFileError)) throw error;
+      (options.onPrint ?? console.log)(`Error: Unable to write to file ${path}`);
+      reportMessage(
+        MESSAGE_CODE.reporterDied,
+        "Progress report thread died.",
+        undefined,
+        MESSAGE_LEVEL.tlcBug,
+      );
+    }
+  };
   const printSummary = () => {
     reportCoverage();
-    if (actionFlow) {
-      options.writeFile?.(`${specification.rootName}_actions.dot`, getActionFlowGraph(actionFlow));
-    }
+    writeActionFlowGraph();
     output({ kind: "summary", statistics: { ...statistics } });
   };
   const coverage = prepared.coverage;
@@ -455,7 +476,7 @@ export const simulate = (options: SimulationOptions & CliSettings): number => {
     MESSAGE_CODE.computingInitProgress,
     `Computed ${generated.length} initial states...`,
     undefined,
-    false,
+    MESSAGE_LEVEL.none,
   );
   const generatedNodes: TraceNode[] = [];
   for (const state of generated) {
@@ -524,7 +545,7 @@ export const simulate = (options: SimulationOptions & CliSettings): number => {
     MESSAGE_CODE.initGenerated1,
     `Finished computing initial states: ${initialStates.length} distinct state generated at ${formatTlcDate(new Date())}.`,
     undefined,
-    false,
+    MESSAGE_LEVEL.none,
   );
   // TLC's Simulator deep-normalizes the initial states, which sorts their records.
   initialStates.forEach((node) => node.state.forEach(markNormalized));
@@ -854,7 +875,7 @@ export const simulate = (options: SimulationOptions & CliSettings): number => {
         MESSAGE_CODE.general,
         `difftrace requested: Shortened behavior by omitting finite stuttering (${omitted} states), which is an artifact of simulation mode.\n`,
         undefined,
-        false,
+        MESSAGE_LEVEL.none,
       );
     }
     if (error.isSummarized) printSummary();
@@ -873,6 +894,7 @@ export const simulate = (options: SimulationOptions & CliSettings): number => {
   output({ kind: "progress", statistics: { ...statistics } });
   // TLC's ProgressReport prints the coverage again with its last progress unless -coverage spans more progress reports.
   if (options.coverage !== undefined && options.coverage <= 1) reportCoverage();
+  writeActionFlowGraph();
   if (status === EXIT_STATUS.success) printSummary();
   return status;
 };
