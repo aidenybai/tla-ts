@@ -221,6 +221,78 @@ describe("check matches TLC", () => {
   );
 
   it.each([
+    ["a filter of an enumerated set", "1 \\in {t \\in 0..2 : 1 \\div t > 0}"],
+    [
+      "a union with a filter of an enumerated set",
+      "1 \\in {1} \\cup {t \\in 0..2 : 1 \\div t > 0}",
+    ],
+    ["Nat and a filter of an enumerated set", "1 \\in Nat \\cup {t \\in 0..2 : 1 \\div t > 0}"],
+    [
+      "a set of records and a filter of an enumerated set",
+      "[a |-> 1] \\in [a : {1}] \\cup {t \\in {[a |-> x]} : 1 \\div t.a > 0}",
+    ],
+    [
+      "UNION of a literal with a filter of an enumerated set",
+      "1 \\in UNION {{1}, {t \\in 0..2 : 1 \\div t > 0}}",
+    ],
+    [
+      "UNION of a literal of a filter of an enumerated set",
+      "1 \\in UNION {{t \\in 0..2 : 1 \\div t > 0}}",
+    ],
+    ["a filter of an enumerated set less a set", "1 \\in {t \\in 0..2 : 1 \\div t > 0} \\ {5}"],
+    [
+      "SUBSET of a filter of an enumerated set",
+      "{<<1, x>>} \\in SUBSET {t \\in {<<0, x>>, <<1, x>>} : 1 \\div t[1] > 0}",
+    ],
+    [
+      "UNION of a literal with a lazy filter after the set that holds the element",
+      "<<1, x>> \\in UNION {{<<1, x>>}, {t \\in (0..2) \\X {x} : 1 \\div t[1] > 0}}",
+    ],
+    [
+      "UNION of a literal with a lazy filter before the set that holds the element",
+      "<<1, x>> \\in UNION {{t \\in (0..2) \\X {x} : 1 \\div t[1] > 0}, {<<1, x>>}}",
+    ],
+    ["a set of records and a set literal", "[a |-> 1] \\in [a : {1}] \\cup {[a |-> 1 \\div x]}"],
+    ["UNION of a literal of set literals", "1 \\in UNION {{1}, {1 \\div x}}"],
+    ["Nat less a set literal", "-1 \\notin Nat \\ {1 \\div x}"],
+  ])("fails as TLC does on a set it builds to test membership in %s", async (_set, membership) => {
+    const result = await check({
+      source: `---- MODULE M ----\nEXTENDS Integers\nVARIABLE x\nInit == x = 0\nNext == x' = (x + 1) % 3 /\\ ${membership}\n====`,
+      config: "INIT Init\nNEXT Next",
+    });
+    expect([
+      result.status,
+      result.failure?.message,
+      result.generatedStates,
+      result.distinctStates,
+    ]).toEqual(["error", "The second argument of \\div is 0.", 1, 1]);
+  });
+
+  it.each([
+    ["{0}", "1 \\in UNION {Nat, {x}}"],
+    ["{1}", "1 \\in UNION {Nat, {1}}"],
+  ])(
+    "fails as TLC does to compare Nat with %s as it sorts the sets of UNION of a literal",
+    async (set, membership) => {
+      const result = await check({
+        source: `---- MODULE M ----\nEXTENDS Integers\nVARIABLE x\nInit == x = 0\nNext == x' = (x + 1) % 3 /\\ ${membership}\n====`,
+        config: "INIT Init\nNEXT Next",
+      });
+      expect([
+        result.status,
+        result.failure?.message,
+        result.generatedStates,
+        result.distinctStates,
+      ]).toEqual([
+        "error",
+        `${UNEXPECTED_EXCEPTION}Attempted to compare the set ${set} with the value:\nNat`,
+        1,
+        1,
+      ]);
+    },
+  );
+
+  it.each([
     [
       "a member of SUBSET S",
       6,
