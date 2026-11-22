@@ -57,20 +57,24 @@ interface CodeDefinition {
   text: string;
 }
 
-// The most characters of a program's TLA+ code that a check parses and runs within Node's default
-// heap, which Node 26 gives this machine as 4,192 MB (v8.getHeapStatistics().heap_size_limit), so
-// that the heap that a check uses stays within 80% of it, 3,354 MB. The CLI's peaks on Effect's
-// modules, by the characters of their code, as --trace-gc gives the heap used before each
-// collection and the heap left after the largest, at a load of 30 on 16 cores:
+// The most characters of a program's TLA+ code that a check parses, past which parsing alone would
+// pass 80% of Node's default heap, which Node 26 gives this machine as 4,192 MB
+// (v8.getHeapStatistics().heap_size_limit), 3,354 MB. A check that runs out of the heap within the
+// bound stops with a TlaHeapLimitError (see cli.ts), so the bound only stops early a program whose
+// parse would. The heap that compiling Effect's modules and parsing their code use before a
+// collection, as --trace-gc gives it, and the heap left after the largest, at a load of 30:
 //
-//                              characters   used       left       resident
-//   Effect.ts                  13.9 million  2,649 MB   1,162 MB   3,146 MB
-//   Schema.ts                  36.3 million  3,382 MB   2,612 MB   4,400 MB
-//   devtools/DevToolsSchema.ts 36.4 million  3,443 MB   2,743 MB   4,349 MB
+//                           characters   used       left
+//   Effect.ts               13.9 million    847 MB     618 MB
+//   Schema.ts               36.4 million  2,016 MB     982 MB
+//   Arbitrary.ts            40.0 million  2,360 MB   1,218 MB
+//   Config.ts               44.4 million  2,477 MB   1,476 MB
+//   RequestResolver.ts      47.3 million  2,551 MB   1,219 MB
+//   index.ts                61.9 million  3,644 MB   3,456 MB
 //
-// The heap used grows 35 MB a million characters past Effect.ts's, as DevToolsSchema.ts's does,
-// which reaches 3,354 MB at 33.9 million.
-const MOST_CODE_CHARACTERS = 33_000_000;
+// The heap used grows 75 MB a million characters past RequestResolver.ts's, as index.ts's does,
+// which reaches 3,354 MB at 58 million.
+const MOST_CODE_CHARACTERS = 55_000_000;
 
 // A program's definitions with each one whose text is another's but for its name and the names of
 // definitions merged before it merged into the first, but for the hooks, which the config names,
