@@ -1,7 +1,7 @@
 import ts from "@typescript/typescript6";
 import type { CompiledSpec, CompileOptions } from "../../compile";
 import { parseModule } from "../../parser";
-import { isModuleFile, isScript } from "../context";
+import { isScript } from "../context";
 import { isEsModule } from "../exceptions";
 import { createLibrary } from "../program";
 import { compileToEscore } from "./compile";
@@ -50,7 +50,8 @@ export interface EscoreCompiled extends CompiledSpec {
 // What compile gives on ESCore: a script's spec, which runs it as Node does, or a model's, whose
 // steps call its exported functions, whose frame TypeScript's types give with its declaration
 // files, parsed once in library by a host that compiles many models. A host without a file
-// system, such as a browser, runs a file as an ES module only where its own syntax makes it one.
+// system, such as a browser, has no package.json to name a file's type, so it loads the file as
+// Node loads one without: an ES module or CommonJS by its extension, and else by its syntax.
 export const compileEscore = (
   options: CompileOptions,
   runtime: EscoreRuntime,
@@ -70,7 +71,7 @@ export const compileEscore = (
           options.source,
           fileName,
           runtime,
-          ts.sys === undefined ? isModuleFile(sourceFile) : isEsModule(sourceFile),
+          ts.sys === undefined || isEsModule(sourceFile),
           { steps: SCRIPT_STEPS, entries: [] },
         );
   return {

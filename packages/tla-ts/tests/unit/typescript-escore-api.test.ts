@@ -397,6 +397,33 @@ describe("compile a program on a browser's worker, which has no files", () => {
   });
 });
 
+// A browser has no package.json to name a file's type, so a file loads as Node loads one without:
+// a .mjs file as an ES module, a .cjs file as CommonJS, and another by its syntax.
+describe("load a file on a browser's worker as Node does without a package.json", () => {
+  const COMMON_JS =
+    'if (typeof module === "undefined" || this !== module.exports) throw new Error("not CommonJS");\n';
+  const MODULE = 'if (this !== undefined) throw new Error("not a module");\n';
+
+  it.each([
+    ["format.cjs", COMMON_JS],
+    ["format.js", COMMON_JS],
+    ["format.ts", COMMON_JS],
+    ["format.mjs", MODULE],
+    ["format.js", `${MODULE}export {};\n`],
+  ])("loads %s as Node does", async (fileName, source) => {
+    expect(runNode({ [fileName]: source }, fileName).status).toBe(0);
+    expect(await getBrowserOutcome(source, fileName, true)).toMatchObject({ status: "success" });
+  });
+
+  it.each([
+    ["format.mjs", COMMON_JS, "not CommonJS"],
+    ["format.js", MODULE, "not a module"],
+  ])("rejects another format of %s", async (fileName, source, message) => {
+    expect(runNode({ [fileName]: source }, fileName).stderr).toContain(`Error: ${message}`);
+    expect(getFailure(await getBrowserOutcome(source, fileName, true))).toContain(message);
+  });
+});
+
 // A browser prepares ESCore's runtime from a realm that Node recorded, which holds no functions of
 // the host, so the spec is Node's but where the program asks the host about a locale tag.
 describe("map a file's declarations to the program's code", () => {

@@ -529,7 +529,8 @@ const loadFiles = (
       continue;
     }
     // A module entry that no file holds runs as an ES module, as no package's type or syntax
-    // makes it CommonJS for Node.
+    // makes it CommonJS for Node, but for a host without a file system, whose one file Node
+    // would load by its extension and syntax.
     const kind =
       path === ASYNC_HOOKS
         ? "module"
@@ -537,7 +538,7 @@ const loadFiles = (
           ? getKind(path, text)
           : isScript
             ? "script"
-            : ts.sys?.fileExists(entry) === true
+            : ts.sys === undefined || ts.sys.fileExists(entry)
               ? getKind(path, text)
               : "module";
     const written = getSpecifiers(
