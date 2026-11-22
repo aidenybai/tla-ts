@@ -4716,6 +4716,39 @@ describe("name resolution matches SANY", () => {
       ],
     ],
     [
+      "the definitions that a second LET instance imports again, citing the first instance",
+      "---- MODULE L ----\nCONSTANT c\nA == c\nTHEOREM T == c = c\n====\nN == INSTANCE L WITH c <- 1\nF == LET I == INSTANCE L WITH c <- 1\n         I == INSTANCE L WITH c <- 2\n     IN 1\nZ == U",
+      [
+        {
+          location: "line 11, col 6 to line 11, col 6 of module M",
+          message: "Unknown operator: `U'.",
+        },
+      ],
+      ["I!A", "I!T", "I"].map((name) => ({
+        location: "line 9, col 10 to line 9, col 36 of module M",
+        message: `Multiple declarations or definitions for symbol ${name}.  \nThis duplicates the one at line 8, col 10 to line 8, col 36 of module M.`,
+      })),
+    ],
+    [
+      "two LET instances with parameters that copy a theorem",
+      "---- MODULE L ----\nCONSTANT c\nA == c\nTHEOREM T == c = c\n====\nN == INSTANCE L WITH c <- 1\nF == LET I(p) == INSTANCE L WITH c <- p\n         I(p) == INSTANCE L WITH c <- p\n     IN 1\nZ == U",
+      [
+        {
+          location: "line 9, col 10 to line 9, col 39 of module M",
+          message:
+            "Multiply-defined symbol 'I!T': this definition or declaration conflicts \nwith the one at line 8, col 10 to line 8, col 39 of module M.",
+        },
+        {
+          location: "line 11, col 6 to line 11, col 6 of module M",
+          message: "Unknown operator: `U'.",
+        },
+      ],
+      ["I!A", "I"].map((name) => ({
+        location: "line 9, col 10 to line 9, col 39 of module M",
+        message: `Multiple declarations or definitions for symbol ${name}.  \nThis duplicates the one at line 8, col 10 to line 8, col 39 of module M.`,
+      })),
+    ],
+    [
       "two unnamed instances of modules without parameters that reuse a theorem from an instance with parameters",
       "---- MODULE K ----\nTHEOREM T == TRUE\n====\n---- MODULE L ----\nJ(p) == INSTANCE K\n====\n---- MODULE L2 ----\nJ(p) == INSTANCE K\n====\nINSTANCE L\nINSTANCE L2\nZ == U",
       [

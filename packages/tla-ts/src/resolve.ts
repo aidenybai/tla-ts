@@ -1292,6 +1292,9 @@ const resolveDefinitions = (
       const instanced = lookupLocal(current, definition.name);
       return {
         ...local,
+        kind: instanced?.kind ?? local.kind,
+        range: instanced?.range ?? local.range,
+        sourceRange: instanced?.sourceRange,
         params: getParamArities(definition),
         functionArity: instanced?.functionArity,
         goal: instanced?.goal,
