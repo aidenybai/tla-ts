@@ -2286,8 +2286,8 @@ describe("the CLI takes -checkpoint only where it writes no checkpoint", () => {
   );
 });
 
-describe("the CLI reports a stack overflow outside the model check as TLC's StackOverflowError", () => {
-  it("reports one while -difftrace compares the states of a trace nested 15,000 tuples deep", () => {
+describe("the CLI reports a stack overflow while it prints a trace and keeps the verdict, as TLC does", () => {
+  it("prints the counts and exits 12 when -difftrace overflows comparing states nested 15,000 tuples deep", () => {
     const directory = mkdtempSync(join(tmpdir(), "deep-difftrace-"));
     writeFileSync(
       join(directory, "M.tla"),
@@ -2300,7 +2300,10 @@ describe("the CLI reports a stack overflow outside the model check as TLC's Stac
       { cwd: directory, encoding: "utf8" },
     );
     rmSync(directory, { recursive: true });
-    expect([result.status, result.stderr]).toEqual([255, ""]);
+    expect([result.status, result.stderr]).toEqual([12, ""]);
     expect(result.stdout).toContain("\nError: This was a Java StackOverflowError.");
+    expect(result.stdout).toContain(
+      "\n31 states generated, 31 distinct states found, 0 states left on queue.\nThe depth of the complete state graph search is 31.\n",
+    );
   });
 });
