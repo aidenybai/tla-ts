@@ -2098,6 +2098,14 @@ const checkFact = (fact: Fact, reference: Fact, scope: LocalName | undefined, un
     reportApplyArity(fact, name, theorem.arity, scope, unit);
     return BUILTIN_LOCATION;
   }
+  const instance = lookupLocal(scope, name) ?? getModuleBinding(name, unit, undefined);
+  if (fact.kind === "Identifier" && instance?.kind === "Instance" && instance.arity !== 0) {
+    unit.errors.push({
+      location: formatRange(getSpelledNameRange(fact, name)),
+      message: `The operator ${name} requires ${instance.arity} arguments.`,
+    });
+    return BUILTIN_LOCATION;
+  }
   if (
     !isFact(name, unit) &&
     !lookupLocal(scope, name)?.goal &&

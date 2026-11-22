@@ -4491,6 +4491,19 @@ describe("name resolution matches SANY", () => {
       [],
     ],
     [
+      "an instance with parameters used as a fact without arguments",
+      "---- MODULE Inner ----\nFoo == 2 = 2\n---- MODULE Deep ----\n====\nK(b) == INSTANCE Deep\n====\nI(a) == INSTANCE Inner\nJ == INSTANCE Inner\nTHEOREM TRUE BY I, J\nUSE I, J!K",
+      [
+        ["10, col 17 to line 10, col 17", "I"],
+        ["11, col 5 to line 11, col 5", "I"],
+        ["11, col 8 to line 11, col 10", "J!K"],
+      ].map((entry) => ({
+        location: `line ${entry[0]} of module M`,
+        message: `The operator ${entry[1]} requires 1 arguments.`,
+      })),
+      [],
+    ],
+    [
       "arguments to a theorem used as a fact",
       "ASSUME I == 1 = 1\nTHEOREM J == 1 = 1\nTHEOREM TRUE BY I(2), J(1, 2)\nLEMMA TRUE BY I",
       [
