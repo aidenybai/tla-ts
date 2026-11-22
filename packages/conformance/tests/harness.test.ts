@@ -1,5 +1,6 @@
-import { describe, expect, it } from "vite-plus/test";
-import { readFileSync } from "node:fs";
+import { afterAll, describe, expect, it } from "vite-plus/test";
+import { mkdtempSync, readFileSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { gunzipSync, gzipSync } from "node:zlib";
 import { createProgress, getHost, runTest } from "../scripts/hosts";
@@ -10,7 +11,9 @@ import {
   isSameFiles,
   keepCorrection,
   parseTest,
+  renderTest,
   SUITE_DIRECTORY,
+  writeRecordings,
 } from "../scripts/test-file";
 import { getMessageCodes, normalizeFile, normalizeTranscript } from "../scripts/transcript";
 import { getValueFileText } from "../scripts/value-file";
@@ -177,6 +180,28 @@ describe("isSameFiles", () => {
       isSameAs({}),
     ]).toEqual([true, false, false, false]);
     expect(isSameFiles({ exit: 0 }, { exit: 0, files: {} })).toBe(true);
+  });
+});
+
+describe("writeRecordings and renderTest", () => {
+  const directory = mkdtempSync(join(tmpdir(), "conformance-harness-"));
+  afterAll(() => rmSync(directory, { recursive: true, force: true }));
+
+  it("keep the blank lines that end a recording's last file", () => {
+    const path = join(directory, "sample.tla");
+    const test = parseTest(path, SOURCE);
+    if (!test) throw new Error("expected a test");
+    const files = { "states.dump": "State 1:\nx = 0\n\n" };
+    writeRecordings(test, { model: { exit: 0, files } });
+    expect(parseTest(path, readFileSync(path, "utf8"))?.recordings).toEqual({
+      all: { exit: 0, files },
+    });
+  });
+
+  it("keep the blank lines that end a header's last field", () => {
+    const metadata = { description: "A test.", outcome: "success", config: "INIT Init\n\n" };
+    const module = "---- MODULE sample ----\n====\n";
+    expect(parseSample(renderTest(metadata, module)).metadata).toEqual(metadata);
   });
 });
 

@@ -67,8 +67,8 @@ export interface TestContext {
   config: string;
 }
 
-const HEADER = /^\(\*---\n([\s\S]*?)\n---\*\)\n/;
-const RECORDING = /\n\(\*--- recorded\n([\s\S]*?)\n---\*\)\n$/;
+const HEADER = /^\(\*---\n([\s\S]*?\n)---\*\)\n/;
+const RECORDING = /\n\(\*--- recorded\n([\s\S]*?\n)---\*\)\n$/;
 const MODULE_END = /^={4,}[ \t]*$/m;
 
 const STATE = "conformance_state";
@@ -161,7 +161,7 @@ export const getShard = <Item>(items: Item[], shard: string | undefined) => {
 
 const ALL_CONTEXTS = "all";
 
-const formatYaml = (value: unknown) => dump(value, { lineWidth: -1, noRefs: true }).trimEnd();
+const formatYaml = (value: unknown) => dump(value, { lineWidth: -1, noRefs: true });
 
 export const getRecording = (test: SuiteTest, context: string) =>
   test.recordings?.[context] ?? test.recordings?.[ALL_CONTEXTS];
@@ -179,7 +179,7 @@ export const keepCorrection = (
     : metadata;
 
 export const renderTest = (metadata: TestMetadata, moduleText: string) =>
-  `(*---\n${formatYaml(metadata)}\n---*)\n${moduleText}`;
+  `(*---\n${formatYaml(metadata)}---*)\n${moduleText}`;
 
 export const isSameFiles = (left: Recording, right: Recording) => {
   const leftFiles = Object.entries(left.files ?? {});
@@ -197,5 +197,5 @@ export const writeRecordings = (test: SuiteTest, recordings: Record<string, Reco
   const entries = Object.values(recordings);
   const isUniform = entries.every((entry) => isSameRecording(entry, entries[0]));
   const stored = isUniform ? { [ALL_CONTEXTS]: entries[0] } : recordings;
-  writeFileSync(test.path, `${test.source}\n(*--- recorded\n${formatYaml(stored)}\n---*)\n`);
+  writeFileSync(test.path, `${test.source}\n(*--- recorded\n${formatYaml(stored)}---*)\n`);
 };
