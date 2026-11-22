@@ -87,6 +87,12 @@ const DIGITS = {
 const MOST_BAGS_PER_LITERAL = 256;
 const MOST_ENTRIES = 5000;
 const TABLE_SIZE = 200;
+// A tuple of five or more plain elements in an entry's key, as a service's options, each a constant,
+// a number, or a string's code units, and the shortest answer, that a table shares where its
+// entries repeat them.
+const TUPLE_ELEMENT = String.raw`(?:Empty|TRUE|FALSE|True|False|-?\d+|<<[\d, ]*>>|Str\(<<[\d, ]*>>\))`;
+const REPEATED_TUPLE = new RegExp(String.raw`<<${TUPLE_ELEMENT}(?:, ${TUPLE_ELEMENT}){4,}>>`, "g");
+const SHARED_LENGTH = 40;
 
 const getNumberKey = (value: number) => (Object.is(value, -0) ? "-0" : String(value));
 
@@ -1351,10 +1357,31 @@ export const getHostIntl = (sourceFiles: readonly ts.SourceFile[], words: Readon
   if (words.has("toLocaleString") && literals.temporals.size > 0) {
     for (const [key, answer] of getTemporalEntries(literals)) entries.set(key, answer);
   }
+  // The parts that the entries repeat, an answer or a long tuple of a key, each a definition of its
+  // own that the entries name, which a check evaluates to the same value, so that the code holds
+  // each part once.
+  const counts = new Map<string, number>();
+  const count = (part: string) => counts.set(part, (counts.get(part) ?? 0) + 1);
+  for (const [key, answer] of entries) {
+    for (const tuple of key.match(REPEATED_TUPLE) ?? []) count(tuple);
+    if (answer.length >= SHARED_LENGTH) count(answer);
+  }
+  const parts = new Map(
+    [...counts]
+      .filter((entry) => entry[1] > 1)
+      .map((entry, index) => [entry[0], `IntlShared${index + 1}`] as const),
+  );
+  const shared = [...entries].map(
+    ([key, answer]) =>
+      [
+        key.replace(REPEATED_TUPLE, (tuple) => parts.get(tuple) ?? tuple),
+        parts.get(answer) ?? answer,
+      ] as const,
+  );
   // Tables of a few entries each, as a check evaluates an expression of fewer parts.
-  const tables = Array.from({ length: Math.ceil(entries.size / TABLE_SIZE) }, (_, index) => ({
+  const tables = Array.from({ length: Math.ceil(shared.length / TABLE_SIZE) }, (_, index) => ({
     name: `IntlTable${index + 1}`,
-    entries: [...entries].slice(index * TABLE_SIZE, (index + 1) * TABLE_SIZE),
+    entries: shared.slice(index * TABLE_SIZE, (index + 1) * TABLE_SIZE),
   }));
   // The strings of the host's answers, which a program may pass back as locales.
   const strings = new Set(
@@ -1365,6 +1392,7 @@ export const getHostIntl = (sourceFiles: readonly ts.SourceFile[], words: Readon
     ),
   );
   const definitions = [
+    ...[...parts].map(([part, name]) => ({ name, arity: 0, text: `${name} == ${part}` })),
     ...tables.map((table) => ({
       name: table.name,
       arity: 0,
