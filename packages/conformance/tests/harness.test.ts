@@ -1,15 +1,28 @@
-import { describe, expect, it } from "vite-plus/test";
-import { join } from "node:path";
-import { createProgress, getHost, runTest } from "../scripts/hosts";
+import { afterAll, describe, expect, it } from "vite-plus/test";
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { dirname, join } from "node:path";
+import { gunzipSync, gzipSync } from "node:zlib";
+import {
+  createProgress,
+  getHost,
+  MissingHostFileError,
+  runTest,
+  UnknownHostError,
+} from "../scripts/hosts";
 import {
   getContexts,
   getCorrection,
   getRecording,
+  isSameFiles,
   keepCorrection,
   parseTest,
+  renderTest,
   SUITE_DIRECTORY,
+  writeRecordings,
 } from "../scripts/test-file";
-import { getMessageCodes, normalizeTranscript } from "../scripts/transcript";
+import { getMessageCodes, normalizeFile, normalizeTranscript } from "../scripts/transcript";
+import { getValueFileText } from "../scripts/value-file";
 
 const SOURCE = `(*---
 description: A test.
@@ -123,6 +136,93 @@ describe("normalizeTranscript", () => {
   });
 });
 
+describe("normalizeFile", () => {
+  it("drops the run directory and the date a trace spec was generated on", () => {
+    expect(
+      normalizeFile(
+        'IODeserialize("/tmp/run/te_out.bin", TRUE)\n\\* Generated on Sat Nov 21 17:09:57 PST 2026\n',
+        "/tmp/run",
+      ),
+    ).toBe('IODeserialize("te_out.bin", TRUE)\n\\* Generated on <date>\n');
+  });
+});
+
+describe("getValueFileText", () => {
+  const tlcTrace = readFileSync(
+    join(import.meta.dirname, "../../tla-ts/tests/fixtures/load-trace/MCDieHarder.bin"),
+  );
+
+  it("reads each value with the variable location of every string it holds", () => {
+    const lines = getValueFileText(tlcTrace).split("\n");
+    expect(lines[0]).toBe("values: 1");
+    expect(lines[1]).toContain(
+      '<<6, [contents |-> ("j1" :> 2 @@ "j2" :> 5)]>>, [name |-> "JugToJug", location |-> [beginLine |-> 62, beginColumn |-> 7, endLine |-> 63, endColumn |-> 59, module |-> "DieHarder"], context |-> [j |-> "j2", k |-> "j1"], parameters |-> <<"j", "k">>], <<7, [contents |-> ("j1" :> 3 @@ "j2" :> 4)]>>',
+    );
+    expect(lines.slice(2, 5)).toEqual(["strings:", '"vars" loc -1', '"contents" loc 0']);
+  });
+
+  it("counts every value the file holds", () => {
+    const data = gunzipSync(tlcTrace);
+    const lines = getValueFileText(gzipSync(Buffer.concat([data, data]))).split("\n");
+    expect([lines[0], lines[2]]).toEqual(["values: 2", lines[1]]);
+  });
+
+  it("reports a file cut short", () => {
+    expect(getValueFileText(gzipSync(gunzipSync(tlcTrace).subarray(0, 100)))).toMatch(
+      /^undecodable: /,
+    );
+  });
+});
+
+describe("isSameFiles", () => {
+  it("tells recordings apart by the text of any file, or by whether it was written", () => {
+    const recording = { exit: 0, files: { "states.dot": "digraph", "te_out.bin": null } };
+    const isSameAs = (files: Record<string, string | null>) =>
+      isSameFiles(recording, { exit: 0, files });
+    expect([
+      isSameAs({ "te_out.bin": null, "states.dot": "digraph" }),
+      isSameAs({ "states.dot": "digraph", "te_out.bin": "values: 1" }),
+      isSameAs({ "states.dot": "digraph" }),
+      isSameAs({}),
+    ]).toEqual([true, false, false, false]);
+    expect(isSameFiles({ exit: 0 }, { exit: 0, files: {} })).toBe(true);
+  });
+});
+
+describe("writeRecordings and renderTest", () => {
+  const directory = mkdtempSync(join(tmpdir(), "conformance-harness-"));
+  afterAll(() => rmSync(directory, { recursive: true, force: true }));
+
+  it("keep the blank lines that end a recording's last file", () => {
+    const path = join(directory, "sample.tla");
+    const test = parseTest(path, SOURCE);
+    if (!test) throw new Error("expected a test");
+    const files = { "states.dump": "State 1:\nx = 0\n\n" };
+    writeRecordings(test, { model: { exit: 0, files } });
+    expect(parseTest(path, readFileSync(path, "utf8"))?.recordings).toEqual({
+      all: { exit: 0, files },
+    });
+  });
+
+  it("keep the blank lines that end a header's last field", () => {
+    const metadata = { description: "A test.", outcome: "success", config: "INIT Init\n\n" };
+    const module = "---- MODULE sample ----\n====\n";
+    expect(parseSample(renderTest(metadata, module)).metadata).toEqual(metadata);
+  });
+});
+
+describe("runTest on a module that lists files", () => {
+  const test = parseSample(
+    "(*---\ndescription: A test.\noutcome: success\nfiles: [out.txt, missing.txt]\n---*)\n---- MODULE sample ----\n====\n",
+  );
+
+  it("records each file the run writes, and null for one it doesn't", async () => {
+    const script = 'require("fs").writeFileSync("out.txt", process.cwd() + "/sample.tla")';
+    const result = await runTest({ tlc: ["node", "-e", script, "--"] }, test, getContexts(test)[0]);
+    expect(result.files).toEqual({ "out.txt": "sample.tla", "missing.txt": null });
+  });
+});
+
 describe("getMessageCodes", () => {
   it("ignores printed lines and message text", () => {
     expect(getMessageCodes("| 2190:0 printed\n2190:0 a\nb\n2199:0 c")).toBe("2190 2199");
@@ -139,13 +239,32 @@ describe("getHost", () => {
     });
   });
 
+  const directory = mkdtempSync(join(tmpdir(), "conformance-host-"));
+  afterAll(() => rmSync(directory, { recursive: true, force: true }));
+
   it("keeps a quoted path with a space as one argument", () => {
-    expect(getHost(`node "/my tools/cli.js" --library='/a b'  -deadlock`).tlc).toEqual([
+    const cli = join(directory, "my tools/cli.js");
+    mkdirSync(dirname(cli));
+    writeFileSync(cli, "");
+    expect(getHost(`node "${cli}" --library='/a b'  -deadlock`).tlc).toEqual([
       "node",
-      "/my tools/cli.js",
+      cli,
       "--library=/a b",
       "-deadlock",
     ]);
+  });
+
+  it("names a host's missing CLI before it runs any test", () => {
+    const cli = join(directory, "missing/dist/cli.js");
+    expect(() => getHost(`node --stack-size=8000 ${cli}`)).toThrow(
+      new MissingHostFileError(cli, undefined),
+    );
+    expect(() => getHost(`node --stack-size=8000 ${cli}`)).toThrow(MissingHostFileError);
+  });
+
+  it("rejects a host that names neither a host nor a program", () => {
+    expect(() => getHost("constructor")).toThrow(new UnknownHostError("constructor"));
+    expect(() => getHost("constructor")).toThrow(UnknownHostError);
   });
 });
 

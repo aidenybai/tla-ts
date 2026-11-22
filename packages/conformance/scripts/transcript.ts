@@ -10,6 +10,7 @@ const DURATION = /\b(in) (\d+h )?(\d+min )?\d+(s|ms)\b/g;
 const OBJECT_IDENTITY = /\b([\w.$]+)@[0-9a-f]{5,8}\b/g;
 const GENERATED_NAME = /\b(__DebuggerExpr__|__DebuggerModule__|_PossibleModule_|neg_prop_)\d+/g;
 const INSTALL_FIELD = /install \|->\s+"[^"]*"/g;
+const GENERATION_DATE = /^(\\\* Generated on ).+$/;
 
 const STATE_SPACE_CODES = new Set([2190, 2192, 2193, 2194, 2199, 2267, 2268]);
 
@@ -17,6 +18,8 @@ export interface TranscriptOptions {
   directory: string;
   isStateSpaceRelevant: boolean;
 }
+
+const getDirectories = (directory: string) => [directory, directory.replace(/^\/private/, "")];
 
 const cleanLine = (line: string, directories: string[]) =>
   directories
@@ -26,6 +29,14 @@ const cleanLine = (line: string, directories: string[]) =>
     .replace(DURATION, "$1 <time>")
     .replace(GENERATED_NAME, "$1<id>")
     .replace(OBJECT_IDENTITY, "$1@<id>");
+
+export const normalizeFile = (text: string, directory: string) => {
+  const directories = getDirectories(directory);
+  return text
+    .split("\n")
+    .map((line) => cleanLine(line, directories).replace(GENERATION_DATE, "$1<date>"))
+    .join("\n");
+};
 
 interface OpenMessage {
   code: number;
@@ -50,7 +61,7 @@ const splitAtMarkers = (line: string) =>
   );
 
 export const normalizeTranscript = (output: string, options: TranscriptOptions) => {
-  const directories = [options.directory, options.directory.replace(/^\/private/, "")];
+  const directories = getDirectories(options.directory);
   const kept: (string | undefined)[] = [];
   const open: OpenMessage[] = [];
   const addText = (text: string) => {

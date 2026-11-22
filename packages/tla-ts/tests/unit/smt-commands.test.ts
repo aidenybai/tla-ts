@@ -4430,3 +4430,231 @@ describe("model_validate, as Z3 5.3.2 validates a model", () => {
     ]);
   });
 });
+
+describe("the model converter, as Z3 5.3.2 leaves its array equalities unexpanded", () => {
+  it.each([
+    [
+      "a constant array's equality that solve-eqs defines",
+      [
+        "(set-option :produce-models true)",
+        "(declare-const a (Array Int Int))",
+        "(declare-const b (Array Int Int))",
+        "(declare-const p Bool)",
+        "(declare-const q Bool)",
+        "(assert (= p (= a b)))",
+        "(assert (= (select a 0) 1))",
+        "(assert (= (select b 0) 2))",
+        "(check-sat-using (then solve-eqs smt))",
+        "(get-info :rlimit)",
+        "(get-model)",
+        "(get-info :rlimit)",
+        "(get-value (p))",
+        "(get-info :rlimit)",
+      ],
+      [
+        "sat",
+        "(:rlimit 193)",
+        "(",
+        "  (define-fun a () (Array Int Int)",
+        "    ((as const (Array Int Int)) 1))",
+        "  (define-fun b () (Array Int Int)",
+        "    ((as const (Array Int Int)) 2))",
+        "  (define-fun p () Bool",
+        "    false)",
+        "  (define-fun q () Bool",
+        "    false)",
+        ")",
+        "(:rlimit 205)",
+        "((p false))",
+        "(:rlimit 206)",
+      ],
+    ],
+    [
+      "two equalities that solve-eqs defines",
+      [
+        "(set-option :produce-models true)",
+        "(declare-const a (Array Int Int))",
+        "(declare-const b (Array Int Int))",
+        "(declare-const p Bool)",
+        "(declare-const q Bool)",
+        "(assert (= p (= a b)))",
+        "(assert (= q (= a (store b 1 3))))",
+        "(assert (not (= (select a 0) (select b 0))))",
+        "(check-sat-using (then solve-eqs smt))",
+        "(get-info :rlimit)",
+        "(get-model)",
+        "(get-info :rlimit)",
+      ],
+      [
+        "sat",
+        "(:rlimit 216)",
+        "(",
+        "  (define-fun a () (Array Int Int)",
+        "    ((as const (Array Int Int)) 2))",
+        "  (define-fun b () (Array Int Int)",
+        "    ((as const (Array Int Int)) 3))",
+        "  (define-fun p () Bool",
+        "    false)",
+        "  (define-fun q () Bool",
+        "    false)",
+        ")",
+        "(:rlimit 230)",
+      ],
+    ],
+    [
+      "the equalities the default tactic defines",
+      [
+        "(set-option :produce-models true)",
+        "(declare-const a (Array Int Int))",
+        "(declare-const b (Array Int Int))",
+        "(declare-const p Bool)",
+        "(declare-const q Bool)",
+        "(assert (= p (= a b)))",
+        "(assert (= q (= a (store b 1 3))))",
+        "(assert (not (= (select a 0) (select b 0))))",
+        "(check-sat)",
+        "(get-info :rlimit)",
+        "(get-model)",
+        "(get-info :rlimit)",
+      ],
+      [
+        "sat",
+        "(:rlimit 279)",
+        "(",
+        "  (define-fun a () (Array Int Int)",
+        "    ((as const (Array Int Int)) 1))",
+        "  (define-fun b () (Array Int Int)",
+        "    ((as const (Array Int Int)) 0))",
+        "  (define-fun p () Bool",
+        "    false)",
+        "  (define-fun q () Bool",
+        "    false)",
+        ")",
+        "(:rlimit 285)",
+      ],
+    ],
+    [
+      "an equality of store chains",
+      [
+        "(set-option :produce-models true)",
+        "(declare-const a (Array Int Int))",
+        "(declare-const b (Array Int Int))",
+        "(declare-const p Bool)",
+        "(declare-const q Bool)",
+        "(assert (= p (= (store (store a 1 2) 3 4) (store (store b 3 4) 1 2))))",
+        "(assert (= (select a 0) (select b 0)))",
+        "(assert (not (= (select a 5) (select b 5))))",
+        "(check-sat-using (then solve-eqs smt))",
+        "(get-info :rlimit)",
+        "(get-model)",
+        "(get-info :rlimit)",
+      ],
+      [
+        "sat",
+        "(:rlimit 297)",
+        "(",
+        "  (define-fun a () (Array Int Int)",
+        "    (store ((as const (Array Int Int)) 2) 5 3))",
+        "  (define-fun b () (Array Int Int)",
+        "    (store ((as const (Array Int Int)) 2) 5 4))",
+        "  (define-fun p () Bool",
+        "    false)",
+        "  (define-fun q () Bool",
+        "    false)",
+        ")",
+        "(:rlimit 317)",
+      ],
+    ],
+  ])("evaluates %s", (_title, lines, expected) => {
+    expect(run(lines)).toEqual(expected);
+  });
+});
+
+describe("the array rewriter, as Z3 5.3.2 rewrites an equality with a lambda", () => {
+  it("rewrites an equality of lambdas or of a constant array and a lambda to a forall", () => {
+    expect(
+      run([
+        "(simplify (= (lambda ((x Int)) (* 2 x)) (lambda ((x Int)) (+ x 1))))",
+        "(simplify (= ((as const (Array Int Int)) 1) (lambda ((x Int)) x)))",
+        "(simplify (= (lambda ((x Int)) x) ((as const (Array Int Int)) 1)))",
+        "(simplify (= (lambda ((x Int) (y Int)) x) (lambda ((x Int) (y Int)) y)))",
+        "(simplify (= (lambda ((x Int)) (+ x 1)) (lambda ((y Int)) (+ 1 y))))",
+        "(declare-const a (Array Int Int))",
+        "(simplify (= (lambda ((x Int)) (select a x)) (lambda ((x Int)) (+ x 1))))",
+        "(simplify (= a (lambda ((x Int)) (+ x 1))))",
+      ]),
+    ).toEqual([
+      "(forall ((x Int)) (= x 1))",
+      "(forall ((x Int)) (= x 1))",
+      "(forall ((x Int)) (= x 1))",
+      "(forall ((x Int) (y Int)) (= x y))",
+      "true",
+      "(= a (lambda ((x Int)) (+ 1 x)))",
+      "(= a (lambda ((x Int)) (+ 1 x)))",
+    ]);
+  });
+
+  it("falls back to the array rewriter when a model's lambdas give no interpretation", () => {
+    expect(
+      run([
+        "(declare-const a (Array Int Int))",
+        "(declare-const b (Array Int Int))",
+        "(declare-const c (Array Int Int))",
+        "(assert (forall ((x Int)) (= (select a x) (* 2 x))))",
+        "(assert (forall ((x Int)) (= (select b x) (+ x 1))))",
+        "(assert (forall ((x Int)) (= (select c x) (+ x x))))",
+        "(check-sat)",
+        "(get-info :rlimit)",
+        "(eval (= a b))",
+        "(eval (= a c))",
+        "(eval (= a ((as const (Array Int Int)) 0)))",
+        "(eval (= ((as const (Array Int Int)) 0) b))",
+        "(eval (= a (store b 0 0)))",
+        "(get-value ((= a b) (= b c)))",
+        "(get-info :rlimit)",
+      ]),
+    ).toEqual([
+      "sat",
+      "(:rlimit 226)",
+      "(forall ((x Int)) (= x 1))",
+      "true",
+      "(forall ((x Int)) (= x 0))",
+      "(forall ((x Int)) (= x (- 1)))",
+      "(= (lambda ((x Int)) (* 2 x)) (store (lambda ((x Int)) (+ 1 x)) 0 0))",
+      "(((= a b) (forall ((x Int)) (= x 1)))",
+      " ((= b c) (forall ((x Int)) (= x 1))))",
+      "(:rlimit 278)",
+    ]);
+  });
+
+  it("rewrites the equality of lambdas that solve-eqs defines in the model", () => {
+    expect(
+      run([
+        "(set-option :produce-models true)",
+        "(declare-const a (Array Int Int))",
+        "(declare-const b (Array Int Int))",
+        "(declare-const p Bool)",
+        "(declare-const q Bool)",
+        "(assert (forall ((x Int)) (= (select a x) (* 2 x))))",
+        "(assert (forall ((x Int)) (= (select b x) (+ x 1))))",
+        "(assert (= p (= a b)))",
+        "(check-sat-using (then solve-eqs smt))",
+        "(get-model)",
+        "(get-value (p))",
+      ]),
+    ).toEqual([
+      "sat",
+      "(",
+      "  (define-fun p () Bool",
+      "    (forall ((x Int)) (= x 1)))",
+      "  (define-fun b () (Array Int Int)",
+      "    (lambda ((x Int)) (+ 1 x)))",
+      "  (define-fun a () (Array Int Int)",
+      "    (lambda ((x Int)) (* 2 x)))",
+      "  (define-fun q () Bool",
+      "    false)",
+      ")",
+      "((p (forall ((x Int)) (= x 1))))",
+    ]);
+  });
+});

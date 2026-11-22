@@ -25,7 +25,7 @@ const BLACK = 2;
 
 export const mkModel = (context: Context): GeneratedModel => {
   const manager = context.manager;
-  const model = new ProtoModel(manager);
+  const model = new ProtoModel(manager, true);
   for (const theory of context.theories) theory.initModel(model);
   for (const node of context.enodes)
     if (node.root === node && context.isRelevant(node.owner) && manager.isModelValue(node.owner))

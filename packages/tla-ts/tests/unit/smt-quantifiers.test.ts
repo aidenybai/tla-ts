@@ -1123,3 +1123,50 @@ describe("qsat, as Z3 5.3.2 counts its steps", () => {
     ]);
   });
 });
+
+describe("the proto model, as Z3 5.3.2 leaves its array equalities unexpanded", () => {
+  const ARRAYS = [
+    "(declare-const a (Array Int Int))",
+    "(declare-const b (Array Int Int))",
+    "(declare-fun p (Int) Bool)",
+    "(declare-fun f (Int) Int)",
+  ];
+  const CHECK = ["(check-sat)", "(get-info :rlimit)", "(get-value ((select a 0) (select b 0)))"];
+
+  it("evaluates a quantifier body with an array equality in the model checker", () => {
+    expect(
+      run([
+        ...ARRAYS,
+        "(assert (forall ((x Int)) (=> (p x) (= (store a x 1) b))))",
+        "(assert (p 2))",
+        "(assert (not (= a b)))",
+        ...CHECK,
+      ]),
+    ).toEqual(["sat", "(:rlimit 1073)", "(((select a 0) 3)", " ((select b 0) 3))"]);
+  });
+
+  it("evaluates an array disequality as it validates the model after mbqi", () => {
+    expect(
+      run([
+        ...ARRAYS,
+        "(assert (forall ((x Int)) (> (f x) 0)))",
+        "(assert (not (= a b)))",
+        "(assert (= (select a 1) (select b 1)))",
+        ...CHECK,
+      ]),
+    ).toEqual(["sat", "(:rlimit 503)", "(((select a 0) 2)", " ((select b 0) 2))"]);
+  });
+
+  it("evaluates an equality of a function's array value", () => {
+    expect(
+      run([
+        ...ARRAYS,
+        "(declare-fun g (Int) (Array Int Int))",
+        "(assert (forall ((x Int)) (or (= (g x) a) (= (g x) b))))",
+        "(assert (not (= a b)))",
+        "(assert (= (select (g 1) 0) 7))",
+        ...CHECK,
+      ]),
+    ).toEqual(["sat", "(:rlimit 577)", "(((select a 0) 7)", " ((select b 0) 4))"]);
+  });
+});

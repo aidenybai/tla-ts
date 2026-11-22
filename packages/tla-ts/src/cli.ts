@@ -1,4 +1,5 @@
 #!/usr/bin/env node
+import { writeSync } from "node:fs";
 import { enableCompileCache } from "node:module";
 import { join } from "node:path";
 import { getHeapStatistics } from "node:v8";
@@ -34,5 +35,26 @@ if (isMainThread) {
       if (!isOutOfHeap) process.exitCode = code;
     });
 } else {
+  // A worker's stdout and stderr reach the process only as the worker's event loop turns, which a
+  // check holds for as long as its search runs, so the thread writes each to the process's own
+  // descriptor as it prints, as TLC does, and waits out a pipe that's full.
+  const getWrite =
+    (descriptor: number) =>
+    (chunk: string | Uint8Array, ...rest: unknown[]): boolean => {
+      const bytes = typeof chunk === "string" ? Buffer.from(chunk) : chunk;
+      let written = 0;
+      while (written < bytes.length) {
+        try {
+          written += writeSync(descriptor, bytes, written);
+        } catch (error) {
+          if ((error as NodeJS.ErrnoException).code !== "EAGAIN") throw error;
+        }
+      }
+      const callback = rest.find((argument) => typeof argument === "function");
+      if (typeof callback === "function") callback();
+      return true;
+    };
+  process.stdout.write = getWrite(1);
+  process.stderr.write = getWrite(2);
   void import("./cli/run").then((module) => module.runCli());
 }
