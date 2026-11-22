@@ -318,6 +318,22 @@ describe("check matches TLC", () => {
     ]).toEqual(expected);
   });
 
+  it("checks a membership in a filter whose predicate nests 19 more as TLC does", async () => {
+    let predicate = "t20 \\in y";
+    for (let level = 20; level >= 2; level--) {
+      predicate = `t${level - 1} \\in {t${level} \\in 0..0 : ${predicate}}`;
+    }
+    const result = await check({
+      source: `---- MODULE M ----\nEXTENDS Integers\nVARIABLES x, y\nInit == x = 0 /\\ y = {0, 1, 2}\nNext == x' = x /\\ y' = y /\\ x \\in {t1 \\in 0..0 : ${predicate}}\n====`,
+      config: "INIT Init\nNEXT Next",
+    });
+    expect([result.status, result.generatedStates, result.distinctStates]).toEqual([
+      "success",
+      2,
+      1,
+    ]);
+  });
+
   it.each([
     [
       "a member of SUBSET S",

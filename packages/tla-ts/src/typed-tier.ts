@@ -1416,6 +1416,9 @@ interface Frame {
   // Whether the expression is primed as a whole, where TLC evaluates a LET definition or an argument
   // again in the next state.
   isNext: boolean;
+  // Whether a membership in a filter compiles the expression twice, so that one inside it compiles
+  // once and each level of nesting costs the same.
+  isCompiledTwice?: boolean;
 }
 
 const getVariableCodes = (program: Program) =>
@@ -1430,6 +1433,7 @@ const getNextFrame = (frame: Frame): Frame => ({
   primed: frame.primed.map(() => undefined),
   variables: frame.primed.map((code) => code ?? UNASSIGNED_CODE),
   isNext: true,
+  isCompiledTwice: frame.isCompiledTwice,
 });
 
 const withBinding = (scope: TierScope, name: string, binding: Binding): TierScope =>
@@ -2463,10 +2467,12 @@ const compileMembership = (
       },
     };
   }
-  const built = compileSetMembership(program, element, compileValue(program, setExpression, frame));
-  const filter = isFilter(program, setExpression, frame)
-    ? compileFilter(program, element, setExpression, frame)
-    : undefined;
+  if (frame.isCompiledTwice || !isFilter(program, setExpression, frame)) {
+    return compileSetMembership(program, element, compileValue(program, setExpression, frame));
+  }
+  const twice = { ...frame, isCompiledTwice: true };
+  const built = compileSetMembership(program, element, compileValue(program, setExpression, twice));
+  const filter = compileFilter(program, element, setExpression, twice);
   // TLC builds a filter of an enumerated set, which differs from testing the element only where the
   // predicate can fail.
   return filter
