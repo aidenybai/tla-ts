@@ -190,6 +190,7 @@ export interface SmtParams {
   mbqiForceTemplate?: number;
   mbqiId?: string;
   isModelValidating?: boolean;
+  isArrayExtensional?: boolean;
   // The model checker's auxiliary context pretends every array operation is supported.
   isArrayFakeSupport?: boolean;
   isProofsEnabled?: boolean;
@@ -312,6 +313,7 @@ export class Context extends Internalizer {
     this.params.mbqiForceTemplate = params.mbqiForceTemplate;
     this.params.mbqiId = params.mbqiId;
     this.params.isModelValidating = params.isModelValidating;
+    this.params.isArrayExtensional = params.isArrayExtensional;
     this.params.relevancyLevel = params.relevancyLevel ?? 2;
     this.arith?.updateParams();
     this.config = {

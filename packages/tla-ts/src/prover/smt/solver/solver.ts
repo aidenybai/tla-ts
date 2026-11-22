@@ -38,6 +38,7 @@ export interface KernelParams {
   mbqiForceTemplate?: number;
   mbqiId?: string;
   isModelValidating?: boolean;
+  isArrayExtensional?: boolean;
   isProofsEnabled?: boolean;
   // A kernel without a setup runs as with auto_config false.
   setup?: SmtSetup;
@@ -87,6 +88,7 @@ export const solveGoal = (manager: AstManager, forms: number[], params: KernelPa
     mbqiForceTemplate: params.mbqiForceTemplate,
     mbqiId: params.mbqiId,
     isModelValidating: params.isModelValidating,
+    isArrayExtensional: params.isArrayExtensional,
     isProofsEnabled: params.isProofsEnabled,
   });
   try {
@@ -154,6 +156,7 @@ export const solveAssuming = (
     mbqiForceTemplate: params.mbqiForceTemplate,
     mbqiId: params.mbqiId,
     isModelValidating: params.isModelValidating,
+    isArrayExtensional: params.isArrayExtensional,
     isProofsEnabled: params.isProofsEnabled,
   });
   try {

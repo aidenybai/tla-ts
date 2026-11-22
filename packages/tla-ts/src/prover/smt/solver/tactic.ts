@@ -361,6 +361,7 @@ const SMT_DESCRS = getModuleDescrs("smt", [
   "mbqi.max_iterations",
   "arith.nl.rounds",
   "arith.branch_cut_ratio",
+  "array.extensional",
   "random_seed",
   "auto_config",
   "case_split",
@@ -434,6 +435,11 @@ const getKernelParams = (environment: TacticEnvironment, params: TacticParams, g
     mbqiForceTemplate: Number(getParameter(environment, "smt.mbqi.force_template", "10")),
     mbqiId: getParameter(environment, "smt.mbqi.id", ""),
     isModelValidating: environment.parameters.get("model_validate") === "true",
+    isArrayExtensional: getBool(
+      params,
+      "array.extensional",
+      getParameter(environment, "smt.array.extensional", "true") !== "false",
+    ),
     isProofsEnabled: goal.isProofsEnabled,
   };
 };
@@ -1020,6 +1026,11 @@ const NAMED_TACTICS = new Map<string, NamedTactic>([
           mbqiForceTemplate: Number(getParameter(environment, "smt.mbqi.force_template", "10")),
           mbqiId: getParameter(environment, "smt.mbqi.id", ""),
           isModelValidating: environment.parameters.get("model_validate") === "true",
+          isArrayExtensional: getBool(
+            tacticParams,
+            "array.extensional",
+            getParameter(environment, "smt.array.extensional", "true") !== "false",
+          ),
         });
         const simplifier = createCtxSolverSimplify(
           environment.manager,

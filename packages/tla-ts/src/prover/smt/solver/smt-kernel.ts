@@ -26,6 +26,7 @@ export const getGlobalSmtParams = (
   mbqiForceTemplate: Number(parameters.get("smt.mbqi.force_template") ?? "10"),
   mbqiId: parameters.get("smt.mbqi.id") ?? "",
   isModelValidating: parameters.get("model_validate") === "true",
+  isArrayExtensional: parameters.get("smt.array.extensional") !== "false",
 });
 
 export class SmtKernel {
@@ -62,6 +63,7 @@ export class SmtKernel {
       mbqiForceTemplate: params.mbqiForceTemplate,
       mbqiId: params.mbqiId,
       isModelValidating: params.isModelValidating,
+      isArrayExtensional: params.isArrayExtensional,
       isProofsEnabled: params.isProofsEnabled,
     });
     this.setup = params.setup;
