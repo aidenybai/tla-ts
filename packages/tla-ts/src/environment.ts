@@ -674,17 +674,17 @@ export const createEnvironment = (
         isKeepLazy: context.isKeepLazy,
       });
     };
-    getJavaOverrides(name, options.print, runtime, options.files, evaluateReplaced)?.forEach(
-      (operator) => {
-        const symbol = top.linked.visible.get(operator.name);
-        if (symbol?.kind !== "Definition") return;
-        if (symbol.arity !== operator.arity && ANNOTATED_OVERRIDE_MODULES.has(name)) return;
-        const definition = definitions.get(symbol.key);
-        if (definition) replacedDefinitions.set(symbol.key, definition);
-        builtins.set(symbol.key, operator);
-        definitions.delete(symbol.key);
-      },
-    );
+    getJavaOverrides(name, options.print, runtime, options.files, evaluateReplaced, () =>
+      order.getDeclarationOrder("variable"),
+    )?.forEach((operator) => {
+      const symbol = top.linked.visible.get(operator.name);
+      if (symbol?.kind !== "Definition") return;
+      if (symbol.arity !== operator.arity && ANNOTATED_OVERRIDE_MODULES.has(name)) return;
+      const definition = definitions.get(symbol.key);
+      if (definition) replacedDefinitions.set(symbol.key, definition);
+      builtins.set(symbol.key, operator);
+      definitions.delete(symbol.key);
+    });
     return top;
   };
 
