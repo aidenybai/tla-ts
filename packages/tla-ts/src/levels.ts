@@ -853,7 +853,8 @@ export const createLevelAnalyzer = (context: LevelContext) => {
       );
     });
     operator.argParams.forEach((parameter) => {
-      const argument = getOperand(parameter.operator);
+      // Deviation from SANY: OpApplNode#levelCheck looks up alp.op here, which drops the level an argument puts on the operator parameter it is passed to, so x'' passes and TLC crashes.
+      const argument = getOperand(parameter.param);
       if (argument) {
         putArgConstraint(
           data.argConstraints,

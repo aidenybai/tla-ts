@@ -1228,8 +1228,9 @@ export const createEnvironment = (
       substitutions: new Map(
         declarations.map((declaration): [string, Expression] => [
           declaration.key,
-          (declaration.arity > 0 ? explicitSubstitutions.get(declaration.name) : undefined) ??
-            createLocalSubstitution(declaration),
+          declaration.arity > 0
+            ? getReplacement(declaration)
+            : createLocalSubstitution(declaration),
         ]),
       ),
     };
