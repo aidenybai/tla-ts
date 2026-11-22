@@ -165,9 +165,22 @@ const getOverlap = (suppressed: number[], errors: number[]) =>
     (left, right) => left - right,
   );
 
+const DECIMAL_DIGIT = /\p{Nd}/u;
+
+// Character.digit reads a decimal digit in any script, and Unicode encodes each script's digits in runs of ten from 0 to 9.
+const getDigitValue = (code: number) => {
+  let offset = 0;
+  while (DECIMAL_DIGIT.test(String.fromCharCode(code - offset - 1))) offset++;
+  return offset % 10;
+};
+
+// Integer.parseInt and Long.parseLong read one UTF-16 unit at a time, so they reject a digit outside the BMP.
 const parseJavaInteger = (text: string, bits: 32 | 64) => {
-  if (!/^[+-]?\d+$/.test(text)) return undefined;
-  const value = BigInt(text);
+  const digits = text.replace(/\p{Nd}/gu, (digit) =>
+    digit.length === 1 ? String(getDigitValue(digit.charCodeAt(0))) : digit,
+  );
+  if (!/^[+-]?\d+$/.test(digits)) return undefined;
+  const value = BigInt(digits);
   return BigInt.asIntN(bits, value) === value ? value : undefined;
 };
 

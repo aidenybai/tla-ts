@@ -24,6 +24,43 @@ describe("TLC's -simulate arguments", () => {
   });
 });
 
+describe("TLC's integer arguments", () => {
+  it.each([
+    ["Arabic-Indic", "٣", 3],
+    ["Arabic-Indic", "+٣", 3],
+    ["Extended Arabic-Indic", "۱۲", 12],
+    ["fullwidth", "１２", 12],
+    ["NKo", "߁", 1],
+    ["Devanagari", "३", 3],
+    ["Tamil", "௧", 1],
+  ])("reads %s digits %j as Integer.parseInt and Long.parseLong do", (_script, text, value) => {
+    expect(parseTlcArguments(["-fp", text, "-seed", text, "Spec"])).toMatchObject({
+      fingerprintIndex: value,
+      seed: BigInt(value),
+    });
+  });
+
+  it("reads a minus sign before Arabic-Indic digits", () => {
+    expect(parseTlcArguments(["-fp", "-٣", "Spec"])).toMatchObject({
+      kind: "command-line",
+      error: "Error: The number for -fp must be between 0 and 130 (inclusive).",
+    });
+  });
+
+  it.each([
+    ["a supplementary digit", "𝟑"],
+    ["a digit before a letter", "٣x"],
+    ["a superscript", "²"],
+    ["a Roman numeral", "Ⅳ"],
+    ["an ideographic zero", "〇"],
+  ])("rejects %s, %j, as Character.digit does", (_name, text) => {
+    expect(parseTlcArguments(["-fp", text, "Spec"])).toMatchObject({
+      kind: "command-line",
+      error: `Error: A number for -fp is required. But encountered ${text}`,
+    });
+  });
+});
+
 describe("TLC's -fpmem argument", () => {
   it.each(["0x1p-1", "0x.8p0", "\t0.5", "-0.0", "1e-400"])(
     "reads %j as Double.parseDouble does",
