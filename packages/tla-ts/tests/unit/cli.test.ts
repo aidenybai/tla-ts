@@ -2317,43 +2317,70 @@ describe("the CLI reports a stack overflow while it prints a trace and keeps the
   });
 });
 
+const TRACE_SPEC_FIXTURES = join(FIXTURES, "trace-spec");
+
+const GENERATED_DATE = /\\\* Generated on .*$/;
+
+const readTraceSpecFixture = (name: string) =>
+  readFileSync(join(TRACE_SPEC_FIXTURES, `${name}_TTrace.tla`), "utf8").replace(GENERATED_DATE, "");
+
+const runTraceSpecFixture = (name: string, module: string, args: string[]) => {
+  const directory = mkdtempSync(join(tmpdir(), "trace-spec-"));
+  copyFileSync(join(TRACE_SPEC_FIXTURES, `${name}.tla`), join(directory, `${name}.tla`));
+  copyFileSync(join(TRACE_SPEC_FIXTURES, `${name}.cfg`), join(directory, `${name}.cfg`));
+  const result = spawnSync(
+    process.execPath,
+    [
+      DIST_CLI,
+      `${name}.tla`,
+      ...args,
+      "-fp",
+      "0",
+      "-teSpecOutDir",
+      `${module}.tla`,
+      "-metadir",
+      join(directory, "states"),
+    ],
+    { cwd: directory, encoding: "utf8" },
+  );
+  const path = join(directory, `${module}.tla`);
+  const written = existsSync(path) ? readFileSync(path, "utf8") : undefined;
+  rmSync(directory, { recursive: true });
+  return { result, written: written?.replace(GENERATED_DATE, "") };
+};
+
 describe("the CLI writes the trace exploration spec in every mode, as TLC does", () => {
   it.each([
     ["-simulate", ["-simulate", "-depth", "10"]],
     ["-generate", ["-generate", "-depth", "10"]],
     ["-dfid", ["-dfid", "5"]],
   ])("writes TLC's spec for Safety under %s and prints its path last", (_mode, args) => {
-    const fixtures = join(FIXTURES, "trace-spec");
-    const directory = mkdtempSync(join(tmpdir(), "trace-spec-"));
-    copyFileSync(join(fixtures, "Safety.tla"), join(directory, "Safety.tla"));
-    copyFileSync(join(fixtures, "Safety.cfg"), join(directory, "Safety.cfg"));
-    const result = spawnSync(
-      process.execPath,
-      [
-        DIST_CLI,
-        "Safety.tla",
-        ...args,
-        "-fp",
-        "0",
-        "-seed",
-        "0",
-        "-teSpecOutDir",
-        "te_out.tla",
-        "-metadir",
-        join(directory, "states"),
-      ],
-      { cwd: directory, encoding: "utf8" },
-    );
-    const path = join(directory, "te_out.tla");
-    const written = existsSync(path) ? readFileSync(path, "utf8") : undefined;
-    rmSync(directory, { recursive: true });
-    const date = /\\\* Generated on .*$/;
-    expect([result.status, result.stdout.split("\n").slice(-2)]).toEqual([
+    const run = runTraceSpecFixture("Safety", "te_out", [...args, "-seed", "0"]);
+    expect([run.result.status, run.result.stdout.split("\n").slice(-2)]).toEqual([
       12,
       ["Trace exploration spec path: ./te_out.tla", ""],
     ]);
-    expect(written?.replace(date, "")).toBe(
-      readFileSync(join(fixtures, "Safety_TTrace.tla"), "utf8").replace(date, ""),
+    expect(run.written).toBe(readTraceSpecFixture("Safety"));
+  });
+});
+
+describe("the CLI writes the spec of the last trace under -continue", () => {
+  it("writes the last of two simulated traces, where TLC's spec appends both", () => {
+    const run = runTraceSpecFixture("Continue", "te", [
+      "-simulate",
+      "num=2",
+      "-depth",
+      "10",
+      "-continue",
+      "-generateSpecTE",
+      "-seed",
+      "1",
+    ]);
+    expect(run.written).toBe(
+      readTraceSpecFixture("ContinueSimulation").replace(
+        "    ([x |-> 0]),\n    ([x |-> 2]),\n",
+        "",
+      ),
     );
   });
 });

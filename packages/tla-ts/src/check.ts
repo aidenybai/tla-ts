@@ -424,13 +424,16 @@ const searchStates = (
     coverage?.relations.some((relation) => relation.kind === "next")
       ? getCoverageReport(coverage, environment, search?.getTlcOrder() ?? [])
       : undefined;
+  // Deviation from TLC: under -continue, its recorder appends every trace it prints to one trace spec, which is no behavior of the spec, so tla-ts writes the last trace's.
+  let continuedTrace: TraceStep[] = [];
   const createResult = (
     status: CheckStatus,
     violation?: ReportedViolation,
     failure?: EvaluationFailure,
   ): CheckResult => {
+    const trace = violation?.trace ?? failure?.trace ?? [];
     const traceSpec = getTraceSpec(
-      (violation?.trace ?? failure?.trace ?? []).map((step) => getStepState(step)),
+      (trace.length > 0 ? trace : continuedTrace).map((step) => getStepState(step)),
       status === "property-violation" ? undefined : violation?.loopStart,
     );
     return {
@@ -562,6 +565,7 @@ const searchStates = (
     violation: Omit<Violation, "loopStart">,
   ) => {
     continuedStatus ??= status;
+    continuedTrace = violation.trace;
     options.onProgress?.({
       kind: "violation",
       status,

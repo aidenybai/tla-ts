@@ -186,6 +186,22 @@ describe("trace exploration spec", () => {
     expect(simulateFixture("Safety", "te_out", -1)).toEqual([]);
   });
 
+  it("writes the spec of the last trace under -continue, where TLC's appends every trace it prints", async () => {
+    const result = await check({
+      source: readFixture("Continue.tla"),
+      config: readFixture("Continue.cfg"),
+      isContinued: true,
+      onPrint: () => {},
+      traceSpec: { module: "te" },
+    });
+    expect(stripDate(result.traceSpec)).toBe(
+      stripDate(readFixture("Continue_TTrace.tla"))?.replace(
+        "    ([x |-> 0]),\n    ([x |-> 2]),\n    ([x |-> 1]),\n    ([x |-> 3]),\n    ([x |-> 0]),\n    ([x |-> 2]),\n    ([x |-> 4]),\n",
+        "",
+      ),
+    );
+  });
+
   it("writes the spec TLC writes for Safety under -dfid", () => {
     expect(
       searchDepthFirst(readFixture("Safety.tla"), readFixture("Safety.cfg"), "te_out"),
