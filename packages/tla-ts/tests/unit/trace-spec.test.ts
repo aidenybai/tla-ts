@@ -3,6 +3,7 @@ import { join } from "node:path";
 import { gunzipSync } from "node:zlib";
 import { describe, expect, it } from "vite-plus/test";
 import { check } from "../../src";
+import { formatState } from "../../src/values";
 
 const DIRECTORY = join(import.meta.dirname, "../fixtures/trace-spec");
 
@@ -34,13 +35,20 @@ describe("trace exploration spec", () => {
     expect(stripDate(result.traceSpec)).toBe(stripDate(readFixture(`${name}_TTrace.tla`)));
   });
 
-  it("writes a trace whose last state nests 6,000 tuples", async () => {
+  it("prints and writes a trace whose last state nests 6,000 tuples", async () => {
     const result = await check({
       source: `---- MODULE M ----\nEXTENDS Naturals\nVARIABLES x, y\nInit == x = 0 /\\ y = 0\nNext == y' = y + 1 /\\ x' = ${"<< ".repeat(100)}x${" >>".repeat(100)}\nInv == y < 60\n====\n`,
       config: "INIT Init\nNEXT Next\nINVARIANT Inv\n",
       traceSpec: { module: "M_TTrace" },
     });
     expect(result.status).toBe("invariant-violation");
+    expect(result.violation?.trace.map((step) => formatState(step.state))).toEqual(
+      Array.from(
+        { length: 61 },
+        (_value, index) =>
+          `/\\ x = ${"<< ".repeat(100 * index)}0${" >>".repeat(100 * index)}\n/\\ y = ${index}\n`,
+      ),
+    );
     expect(result.traceSpec?.split("\n").find((line) => line.endsWith(",y |-> 60])"))).toBe(
       `    ([x |-> ${"<<".repeat(6000)}0${">>".repeat(6000)},y |-> 60])`,
     );

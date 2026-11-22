@@ -63,47 +63,110 @@ const isDigit = (character: string | undefined) =>
 const isLetterOrDigit = (character: string | undefined) =>
   character !== undefined && /^[\p{L}\p{Nd}]$/u.test(character);
 
+interface ParseFrame {
+  kind: "Set" | "Sequence" | "Record" | "RecordPair" | "Function" | "Subset" | "FunctionPair";
+  node: PrintedNode;
+  last: number;
+}
+
+const PARSED = "Parsed";
+
+interface FormatFrame {
+  node: PrintedNode;
+  columnWidth: number;
+  trailerWidth: number;
+  leftPad: string;
+}
+
+type FormatPart = string | FormatFrame;
+
 const parsePrinted = (text: string) => {
   const skipWhitespace = (index: number) => {
     const end = skipWhile(text, index, isWhitespace);
     return text[end] === undefined ? undefined : end;
   };
 
-  const parseItems = (
-    kind: PrintedNode["kind"],
+  const openFrame = (
+    kind: ParseFrame["kind"],
+    nodeKind: PrintedNode["kind"],
     first: number,
-    start: number,
+    last: number,
+  ): ParseFrame => ({ kind, node: { kind: nodeKind, first, last: first, children: [] }, last });
+
+  const resumeItems = (
+    frame: ParseFrame,
+    item: PrintedNode | undefined,
     close: string,
-    parseItem: (index: number) => PrintedNode | undefined,
+    parseItem: (index: number) => PrintedNode | ParseFrame | undefined,
     separator: string,
   ) => {
-    const node: PrintedNode = { kind, first, last: first, children: [] };
-    let position = skipWhitespace(start);
-    while (position !== undefined && text[position] !== close) {
-      const item = parseItem(position);
-      if (!item) return undefined;
-      node.children.push(item);
+    if (item) {
+      frame.node.children.push(item);
       const afterItem = skipWhitespace(item.last + 1);
       if (afterItem === undefined) return undefined;
-      const afterSeparator = text.startsWith(separator, afterItem)
-        ? afterItem + separator.length
-        : afterItem;
-      position = skipWhitespace(afterSeparator);
+      frame.last = text.startsWith(separator, afterItem) ? afterItem + separator.length : afterItem;
     }
+    const position = skipWhitespace(frame.last);
     if (position === undefined) return undefined;
-    node.last = position;
-    return node;
+    if (text[position] !== close) return parseItem(position);
+    frame.node.last = position;
+    return PARSED;
   };
 
-  const parsePair = (index: number, divider: string): PrintedNode | undefined => {
-    const left = parse(index);
-    if (!left) return undefined;
-    const dividerIndex = skipWhitespace(left.last + 1);
+  const resumePair = (frame: ParseFrame, part: PrintedNode | undefined, divider: string) => {
+    if (!part) return parse(frame.last);
+    frame.node.children.push(part);
+    if (frame.node.children.length === 2) {
+      frame.node.last = part.last;
+      return PARSED;
+    }
+    const dividerIndex = skipWhitespace(part.last + 1);
     if (dividerIndex === undefined || !text.startsWith(divider, dividerIndex)) return undefined;
     const rightIndex = skipWhitespace(dividerIndex + divider.length);
-    const right = rightIndex === undefined ? undefined : parse(rightIndex);
-    if (!right) return undefined;
-    return { kind: "Pair", first: index, last: right.last, children: [left, right] };
+    return rightIndex === undefined ? undefined : parse(rightIndex);
+  };
+
+  const resume = (frame: ParseFrame, child: PrintedNode | undefined) => {
+    switch (frame.kind) {
+      case "Set":
+        return resumeItems(frame, child, "}", parse, ",");
+      case "Sequence": {
+        const step = resumeItems(frame, child, ">", parse, ",");
+        if (step !== PARSED) return step;
+        if (frame.node.last + 1 >= text.length) return undefined;
+        frame.node.last++;
+        return PARSED;
+      }
+      case "Record":
+        return resumeItems(
+          frame,
+          child,
+          "]",
+          (item) => openFrame("RecordPair", "Pair", item, item),
+          ",",
+        );
+      case "RecordPair":
+        return resumePair(frame, child, "|->");
+      case "Function":
+        return resumeItems(
+          frame,
+          child,
+          ")",
+          (item) => openFrame("FunctionPair", "Pair", item, item),
+          "@@",
+        );
+      case "Subset": {
+        if (child) {
+          frame.node.children.push(child);
+          frame.node.last = child.last;
+          return PARSED;
+        }
+        const elementIndex = skipWhitespace(frame.last);
+        return elementIndex === undefined ? undefined : parse(elementIndex);
+      }
+      case "FunctionPair":
+        return resumePair(frame, child, ":>");
+    }
   };
 
   const parseInterval = (first: number): PrintedNode | undefined => {
@@ -143,35 +206,47 @@ const parsePrinted = (text: string) => {
     };
   };
 
-  const parse = (index: number): PrintedNode | undefined => {
+  const parse = (index: number): PrintedNode | ParseFrame | undefined => {
     const first = skipWhitespace(index);
     if (first === undefined) return undefined;
     switch (text[first]) {
       case "{":
-        return parseItems("Set", first, first + 1, "}", parse, ",");
-      case "<": {
-        const node = parseItems("Sequence", first, first + 2, ">", parse, ",");
-        if (!node || node.last + 1 >= text.length) return undefined;
-        return { ...node, last: node.last + 1 };
-      }
+        return openFrame("Set", "Set", first, first + 1);
+      case "<":
+        return openFrame("Sequence", "Sequence", first, first + 2);
       case "[":
-        return parseItems("Record", first, first + 1, "]", (item) => parsePair(item, "|->"), ",");
+        return openFrame("Record", "Record", first, first + 1);
       case "(":
-        return parseItems("Function", first, first + 1, ")", (item) => parsePair(item, ":>"), "@@");
-      default: {
-        if (!text.startsWith("SUBSET", first)) return parseConstant(first);
-        const elementIndex = skipWhitespace(first + 6);
-        const element = elementIndex === undefined ? undefined : parse(elementIndex);
-        return element
-          ? { kind: "Subset", first, last: element.last, children: [element] }
-          : undefined;
-      }
+        return openFrame("Function", "Function", first, first + 1);
+      default:
+        return text.startsWith("SUBSET", first)
+          ? openFrame("Subset", "Subset", first, first + 6)
+          : parseConstant(first);
     }
   };
 
-  return parse(0);
+  const frames: ParseFrame[] = [];
+  let opened = parse(0);
+  while (opened !== undefined) {
+    let child: PrintedNode | undefined;
+    if ("node" in opened) frames.push(opened);
+    else child = opened;
+    while (true) {
+      const frame = frames.at(-1);
+      if (frame === undefined) return child;
+      const step = resume(frame, child);
+      if (step !== PARSED) {
+        opened = step;
+        break;
+      }
+      frames.pop();
+      child = frame.node;
+    }
+  }
+  return undefined;
 };
 
+// Deviation from TLC: tlc2.pprint's Parse and Format recurse once per nesting level, so a default TLC run overflows printing a value about 1,700 levels deep and drops the rest of the trace.
 export const prettyPrint = (text: string) => {
   const tree = text.length === 0 ? undefined : parsePrinted(text);
   if (!tree || tree.last < text.length - 1) return text;
@@ -184,9 +259,9 @@ export const prettyPrint = (text: string) => {
     columnWidth: number,
     trailerWidth: number,
     leftPad: string,
-  ): string | undefined => {
+  ): FormatPart[] | undefined => {
     if (getLength(node) <= columnWidth - trailerWidth || node.kind === "Constant") {
-      return getText(node);
+      return [getText(node)];
     }
     if (node.kind === "Pair") return undefined;
     const delimiters = DELIMITERS[node.kind];
@@ -197,7 +272,7 @@ export const prettyPrint = (text: string) => {
       node.kind === "Function" || node.kind === "Record"
         ? formatPairs(node.children, innerWidth, innerTrailer, innerPad, delimiters)
         : formatItems(node.children, innerWidth, innerTrailer, innerPad, delimiters.separator);
-    return inner === undefined ? undefined : delimiters.open + inner + delimiters.close;
+    return [delimiters.open, ...inner, delimiters.close];
   };
 
   const formatItems = (
@@ -206,19 +281,17 @@ export const prettyPrint = (text: string) => {
     trailerWidth: number,
     leftPad: string,
     separator: string,
-  ) => {
-    const parts = items.map((item, index) => {
+  ) =>
+    items.flatMap((item, index): FormatPart[] => {
       const isLast = index === items.length - 1;
-      const formatted = format(
-        item,
+      const formatted = {
+        node: item,
         columnWidth,
-        isLast ? trailerWidth : separator.length,
+        trailerWidth: isLast ? trailerWidth : separator.length,
         leftPad,
-      );
-      return formatted === undefined || isLast ? formatted : `${formatted}${separator}\n${leftPad}`;
+      };
+      return isLast ? [formatted] : [formatted, `${separator}\n${leftPad}`];
     });
-    return parts.includes(undefined) ? undefined : parts.join("");
-  };
 
   const formatPairs = (
     pairs: PrintedNode[],
@@ -226,8 +299,8 @@ export const prettyPrint = (text: string) => {
     trailerWidth: number,
     leftPad: string,
     delimiters: Delimiters,
-  ) => {
-    const parts = pairs.map((pair, index) => {
+  ) =>
+    pairs.flatMap((pair, index): FormatPart[] => {
       const isLast = index === pairs.length - 1;
       const left = pair.children[0];
       const right = pair.children[1];
@@ -236,25 +309,43 @@ export const prettyPrint = (text: string) => {
       const fitsOnOneLine = isLast
         ? pairLength <= columnWidth - trailerWidth
         : pairLength + delimiters.separator.length <= columnWidth;
-      if (fitsOnOneLine) return `${getText(left)}${delimiters.divider} ${getText(right)}${ending}`;
+      if (fitsOnOneLine)
+        return [`${getText(left)}${delimiters.divider} ${getText(right)}${ending}`];
       const formattedLeft =
         getLength(left) + delimiters.divider.length <= columnWidth
           ? getText(left)
-          : format(left, columnWidth, trailerWidth + delimiters.divider.length, leftPad);
-      const formattedRight = format(
-        right,
-        columnWidth - delimiters.dividerPad.length,
-        isLast ? trailerWidth : delimiters.separator.length,
-        leftPad + delimiters.dividerPad,
-      );
-      return formattedLeft === undefined || formattedRight === undefined
-        ? undefined
-        : `${formattedLeft}${delimiters.divider}\n${leftPad}${delimiters.dividerPad}${formattedRight}${ending}`;
+          : {
+              node: left,
+              columnWidth,
+              trailerWidth: trailerWidth + delimiters.divider.length,
+              leftPad,
+            };
+      const formattedRight = {
+        node: right,
+        columnWidth: columnWidth - delimiters.dividerPad.length,
+        trailerWidth: isLast ? trailerWidth : delimiters.separator.length,
+        leftPad: leftPad + delimiters.dividerPad,
+      };
+      return [
+        formattedLeft,
+        `${delimiters.divider}\n${leftPad}${delimiters.dividerPad}`,
+        formattedRight,
+        ending,
+      ];
     });
-    return parts.includes(undefined) ? undefined : parts.join("");
-  };
 
-  return format(tree, WIDTH, 0, "") ?? text;
+  let formatted = "";
+  const pending: FormatPart[] = [{ node: tree, columnWidth: WIDTH, trailerWidth: 0, leftPad: "" }];
+  for (let part = pending.pop(); part !== undefined; part = pending.pop()) {
+    if (typeof part === "string") {
+      formatted += part;
+      continue;
+    }
+    const parts = format(part.node, part.columnWidth, part.trailerWidth, part.leftPad);
+    if (parts === undefined) return text;
+    for (let index = parts.length - 1; index >= 0; index--) pending.push(parts[index]);
+  }
+  return formatted;
 };
 
 // TLC writes the value of PrintT to -userFile with a line break, which PrettyPrint#mypp leaves unformatted.
