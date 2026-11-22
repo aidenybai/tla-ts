@@ -2422,6 +2422,27 @@ describe("the CLI ends -simulate -continue with the status of its violations", (
       ]);
     },
   );
+
+  const invariant = "Error: Invariant Inv is violated.";
+  const deadlock = "Error: Deadlock reached.";
+  it.each([
+    ["1", [invariant, deadlock, deadlock], 12],
+    ["2", [deadlock, deadlock, invariant], 11],
+  ])(
+    "exits with the status of the first violation under seed %s, as the model checker does",
+    (seed, errors, status) => {
+      const run = runCopiedFixture(
+        join(FIXTURES, "tlc-continue"),
+        "MixedErrors",
+        ["-simulate", "num=3", "-depth", "5", "-seed", seed, "-continue", "-noGenerateSpecTE"],
+        [],
+      );
+      expect([
+        run.result.status,
+        run.result.stdout.split("\n").filter((line) => line === invariant || line === deadlock),
+      ]).toEqual([status, errors]);
+    },
+  );
 });
 
 describe("the CLI writes the action graph of -simulate stats=, as TLC does", () => {
