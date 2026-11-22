@@ -153,6 +153,13 @@ export const PlaygroundArrows = () => {
   const playground = usePlayground();
   const hoveredName = usePlaygroundView((view) => view.hoveredName);
   const isArrowsShown = usePlaygroundView((view) => view.isArrowsShown);
+  const outputLines = useMemo(() => {
+    const lines: Record<string, number> = {};
+    playground.outputLineMarks.forEach((marks, index) => {
+      for (const mark of marks) lines[mark.name] ??= index + 1;
+    });
+    return lines;
+  }, [playground.outputLineMarks]);
   return (
     <Connector
       names={
@@ -164,6 +171,7 @@ export const PlaygroundArrows = () => {
       }
       hoveredName={hoveredName}
       colors={playground.colors}
+      outputLines={outputLines}
       className="max-md:hidden"
     />
   );
