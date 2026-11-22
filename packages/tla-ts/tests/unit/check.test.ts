@@ -8164,6 +8164,102 @@ ASSUME TLCFP(a) = -887695703
 
   it.each([
     [
+      "S \\cup T in SUBSET S, up to its first element outside",
+      "x' = 0 /\\ ({u \\in (1..2) \\X {0} : u[1] > 1} \\cup {<<5, 0>>} \\in SUBSET ((1..3) \\X {0})) \\in BOOLEAN",
+      [
+        "line 5, col 9 to line 5, col 14 of module M: 1",
+        "line 5, col 19 to line 5, col 107 of module M: 1",
+        "|line 5, col 20 to line 5, col 94 of module M: 1",
+        "||line 5, col 20 to line 5, col 67 of module M: 1",
+        "|||line 5, col 20 to line 5, col 51 of module M: 1",
+        "||||line 5, col 27 to line 5, col 39 of module M: 1",
+        "|||||line 5, col 28 to line 5, col 31 of module M: 1",
+        "|||||line 5, col 37 to line 5, col 39 of module M: 1:1",
+        "|||line 5, col 58 to line 5, col 67 of module M: 1:2",
+        "||||line 5, col 59 to line 5, col 66 of module M: 1",
+        "||line 5, col 73 to line 5, col 94 of module M: 1",
+        "|line 5, col 101 to line 5, col 107 of module M: 1",
+      ],
+    ],
+    [
+      "a filter of S \\cup T in SUBSET S",
+      "x' = 0 /\\ ({t \\in {u \\in (1..3) \\X {0} : TRUE} \\cup {<<5, 0>>} : t[1] > 1} \\in SUBSET ((1..3) \\X {0})) \\in BOOLEAN",
+      [
+        "line 5, col 9 to line 5, col 14 of module M: 1",
+        "line 5, col 19 to line 5, col 122 of module M: 1",
+        "|line 5, col 20 to line 5, col 109 of module M: 1",
+        "||line 5, col 20 to line 5, col 82 of module M: 1:1",
+        "|||line 5, col 74 to line 5, col 81 of module M: 1",
+        "|||line 5, col 27 to line 5, col 70 of module M: 1",
+        "||||line 5, col 27 to line 5, col 54 of module M: 1",
+        "|||||line 5, col 34 to line 5, col 46 of module M: 1",
+        "||||||line 5, col 35 to line 5, col 38 of module M: 1",
+        "||||||line 5, col 44 to line 5, col 46 of module M: 1:1",
+        "||||line 5, col 61 to line 5, col 70 of module M: 1:2",
+        "|||||line 5, col 62 to line 5, col 69 of module M: 1",
+        "||line 5, col 88 to line 5, col 109 of module M: 1",
+        "|line 5, col 116 to line 5, col 122 of module M: 1",
+      ],
+    ],
+    [
+      "S \\cap T of sets of records in SUBSET S",
+      "x' = 0 /\\ [a : {u \\in (1..2) \\X {0} : TRUE}] \\cap [a : {u \\in (1..3) \\X {0} : u[1] > 1}] \\in SUBSET [a : (1..3) \\X {0}]",
+      [
+        "line 5, col 9 to line 5, col 14 of module M: 1",
+        "line 5, col 19 to line 5, col 127 of module M: 1",
+        "|line 5, col 19 to line 5, col 96 of module M: 1",
+        "||line 5, col 19 to line 5, col 52 of module M: 1:2",
+        "|||line 5, col 24 to line 5, col 51 of module M: 1:3",
+        "||||line 5, col 47 to line 5, col 50 of module M: 3",
+        "||||line 5, col 31 to line 5, col 43 of module M: 1:6",
+        "|||||line 5, col 32 to line 5, col 35 of module M: 1",
+        "|||||line 5, col 41 to line 5, col 43 of module M: 1:8",
+        "||line 5, col 59 to line 5, col 96 of module M: 1",
+        "|line 5, col 102 to line 5, col 127 of module M: 1",
+      ],
+    ],
+    [
+      "UNION of a filter of SUBSET S without the element",
+      "x' = 0 /\\ (7 \\in UNION {s \\in SUBSET {1, 2} : PrintT(s)}) \\in BOOLEAN",
+      [
+        "line 5, col 9 to line 5, col 14 of module M: 1",
+        "line 5, col 19 to line 5, col 77 of module M: 1",
+        "|line 5, col 20 to line 5, col 64 of module M: 1",
+        "||line 5, col 26 to line 5, col 64 of module M: 1",
+        "|||line 5, col 32 to line 5, col 64 of module M: 1:4",
+        "||||line 5, col 55 to line 5, col 63 of module M: 4",
+        "||||line 5, col 39 to line 5, col 51 of module M: 1",
+        "|line 5, col 71 to line 5, col 77 of module M: 1",
+      ],
+    ],
+    [
+      "UNION of a filter of SUBSET S for each element",
+      "x' = 0 /\\ \\A e \\in {1, 2} : e \\in UNION {s \\in SUBSET {1, 2} : PrintT(s)}",
+      [
+        "line 5, col 9 to line 5, col 14 of module M: 1",
+        "line 5, col 19 to line 5, col 81 of module M: 1",
+        "|line 5, col 37 to line 5, col 81 of module M: 2",
+        "||line 5, col 37 to line 5, col 37 of module M: 2",
+        "||line 5, col 43 to line 5, col 81 of module M: 2",
+        "|||line 5, col 49 to line 5, col 81 of module M: 2:5",
+        "||||line 5, col 72 to line 5, col 80 of module M: 5",
+        "||||line 5, col 56 to line 5, col 68 of module M: 2",
+        "|line 5, col 28 to line 5, col 33 of module M: 1:3",
+      ],
+    ],
+  ])(
+    "draws a set for SUBSET S and UNION S membership through TLC's enumerator until it decides under -coverage, for %s",
+    async (_site, next, expected) => {
+      const lines = await getCoverageLines(
+        `---- MODULE M ----\nEXTENDS Integers, FiniteSets, TLC\nVARIABLE x\nInit == x = 0\nNext == ${next}\nInv == TRUE\n====`,
+        "INIT Init\nNEXT Next\nINVARIANT Inv",
+      );
+      expect(lines?.at(-1)).toEqual(expected);
+    },
+  );
+
+  it.each([
+    [
       "a non-function",
       "x = 0 /\\ f = 0",
       "x < 1 /\\ f' = 0 /\\ (IF PrintT(\"e\") THEN 0 ELSE 0)[{}] /\\ x' = 1",

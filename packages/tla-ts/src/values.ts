@@ -2803,21 +2803,47 @@ const drainChargedFilter = (charges: ChargeTable, value: FilteredSetValue) => {
   return set.elements;
 };
 
+const hasChargedStream = (charges: ChargeTable, value: ObjectValue) =>
+  value.kind === "FilteredSet"
+    ? !value.enumerated &&
+      isTlcEnumerable(value.base) &&
+      getChargedFilterNode(charges, value) !== undefined
+    : value.kind === "SetOperation"
+      ? isChargedOperation(charges, value)
+      : getChargedProduct(charges, value) !== undefined &&
+        getValueNode(charges, value) !== undefined;
+
 // TLC's x' \in S draws S through its enumerator, which charges its draws, and keeps nothing.
-export const streamChargedSet = (charges: ChargeTable, value: Value) => {
-  if (typeof value !== "object") return undefined;
-  const isCharged =
-    value.kind === "FilteredSet"
-      ? !value.enumerated &&
-        isTlcEnumerable(value.base) &&
-        getChargedFilterNode(charges, value) !== undefined
-      : value.kind === "SetOperation"
-        ? isChargedOperation(charges, value)
-        : getChargedProduct(charges, value) !== undefined &&
-          getValueNode(charges, value) !== undefined;
-  return isCharged
+export const streamChargedSet = (charges: ChargeTable, value: Value) =>
+  typeof value === "object" && hasChargedStream(charges, value)
     ? drainChargedStream(charges, openChargedPart(charges, value), false)
     : undefined;
+
+export const isChargedMember = (
+  charges: ChargeTable,
+  element: Value,
+  set: SubsetValue | UnionValue,
+  isMember: typeof isElementOf,
+) => {
+  const isSubset = set.kind === "Subset";
+  const drawn = isSubset ? element : set.base;
+  if (typeof drawn !== "object" || !hasChargedStream(charges, drawn)) return undefined;
+  const sets = setTrace.sets;
+  sets?.push(set);
+  const stream = openChargedPart(charges, drawn);
+  let isDecided = false;
+  for (
+    let item = getNextChargedElement(charges, stream);
+    item !== undefined;
+    item = getNextChargedElement(charges, stream)
+  ) {
+    if (isSubset ? !isMember(item, set.base) : isMember(element, item)) {
+      isDecided = true;
+      break;
+    }
+  }
+  sets?.pop();
+  return isSubset !== isDecided;
 };
 
 // TLC's toSetEnum drains the enumerator of [S -> T], [a : S], S \X T, S \cup T, S \cap T, S \ T or { x \in S : p(x) }, which charges its draws, then charges the set its size.

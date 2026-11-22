@@ -28,6 +28,7 @@ import {
   getDrawnSet,
   getStreamedElements,
   getValueNode,
+  isChargedMember,
   isElementOf,
   isElementOfWith,
   isEmptySet,
@@ -1390,6 +1391,8 @@ const createChargedMembership = (coverage: Coverage) => {
         ? isElementOfWith(element, set, isMember)
         : isElementOf(element, set);
     }
+    const isStreamed = isChargedMember(coverage, element, set, isMember);
+    if (isStreamed !== undefined) return isStreamed;
     const isSubset = set.kind === "Subset";
     let drawn = 0;
     let isElement: boolean | undefined;
