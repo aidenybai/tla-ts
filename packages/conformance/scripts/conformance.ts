@@ -17,6 +17,7 @@ import {
   getCorrection,
   getRecording,
   getShard,
+  isSameFiles,
   type Recording,
   type SuiteTest,
 } from "./test-file";
@@ -25,6 +26,7 @@ import { getMessageCodes } from "./transcript";
 
 type Verdict =
   | "pass"
+  | "file-mismatch"
   | "text-mismatch"
   | "message-mismatch"
   | "exit-mismatch"
@@ -61,7 +63,7 @@ const limits = {
 };
 const isUpdatingBaseline = hasFlag("--update-baseline");
 const isVerbose = hasFlag("--verbose");
-const hostLabel = hostName in HOSTS ? hostName : "custom";
+const hostLabel = HOSTS.has(hostName) ? hostName : "custom";
 const baselinePath = join(import.meta.dirname, "../baselines", `${hostLabel}.json`);
 const baseline: Record<string, Verdict> = existsSync(baselinePath)
   ? JSON.parse(readFileSync(baselinePath, "utf8"))
@@ -84,7 +86,8 @@ const getVerdict = (
   const expectedTranscript = expected.transcript ?? "";
   if (getMessages(test, actual.transcript) !== getMessages(test, expectedTranscript))
     return "message-mismatch";
-  return actual.transcript === expectedTranscript ? "pass" : "text-mismatch";
+  if (actual.transcript !== expectedTranscript) return "text-mismatch";
+  return isSameFiles(actual, expected) ? "pass" : "file-mismatch";
 };
 
 const host = getHost(hostName);
@@ -147,10 +150,15 @@ const changed = failures.filter(
 );
 const fixed = results.filter((result) => result.verdict === "pass" && result.id in baseline);
 
+const formatFiles = (recording: Recording | undefined) =>
+  Object.entries(recording?.files ?? {})
+    .map((entry) => `\n${entry[0]}:\n${entry[1] ?? "(not written)"}`)
+    .join("");
+
 if (isVerbose) {
   failures.forEach((result) =>
     console.log(
-      `\n--- ${result.id}: ${result.verdict}\nexpected exit ${result.expected?.exit}\n${result.expected?.transcript ?? ""}\nactual exit ${result.actual.exit}\n${result.actual.transcript}`,
+      `\n--- ${result.id}: ${result.verdict}\nexpected exit ${result.expected?.exit}\n${result.expected?.transcript ?? ""}${formatFiles(result.expected)}\nactual exit ${result.actual.exit}\n${result.actual.transcript}${formatFiles(result.actual)}`,
     ),
   );
 }
