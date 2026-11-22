@@ -3702,6 +3702,16 @@ const compileValue = (program: Program, expression: Expression, frame: Frame): C
         },
       };
     }
+    case "RecordSet": {
+      const bound = compileBound(program, expression, frame);
+      const record = getName(program, "x");
+      const result = getName(program, "r");
+      return {
+        type: { kind: "Set", element: bound.element },
+        emit: () =>
+          `(() => { const ${result} = []; ${bound.header(record)} { ${result}.push(${record}); } return H.normalize(${getComparerCode(program, bound.element)}, ${result}); })()`,
+      };
+    }
     case "Tuple": {
       if (expression.elements.length === 0 && program.plains.isSparse) {
         const type: Type = { kind: "Empty", target: undefined };
