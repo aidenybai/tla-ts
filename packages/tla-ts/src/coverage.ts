@@ -1391,8 +1391,8 @@ const createChargedMembership = (coverage: Coverage) => {
         ? isElementOfWith(element, set, isMember)
         : isElementOf(element, set);
     }
-    const isStreamed = isChargedMember(coverage, element, set, isMember);
-    if (isStreamed !== undefined) return isStreamed;
+    const isDrawnMember = isChargedMember(coverage, element, set);
+    if (isDrawnMember !== undefined) return isDrawnMember;
     const isSubset = set.kind === "Subset";
     let drawn = 0;
     let isElement: boolean | undefined;

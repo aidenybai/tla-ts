@@ -2833,7 +2833,6 @@ export const isChargedMember = (
   charges: ChargeTable,
   element: Value,
   set: SubsetValue | UnionValue,
-  isMember: typeof isElementOf,
 ) => {
   const isSubset = set.kind === "Subset";
   const drawn = isSubset ? element : set.base;
@@ -2847,7 +2846,7 @@ export const isChargedMember = (
     item !== undefined;
     item = getNextChargedElement(charges, stream)
   ) {
-    if (isSubset ? !isMember(item, set.base) : isMember(element, item)) {
+    if (isSubset ? !charges.isMember(item, set.base) : charges.isMember(element, item)) {
       isDecided = true;
       break;
     }

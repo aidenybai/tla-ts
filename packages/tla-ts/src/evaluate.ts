@@ -2811,17 +2811,6 @@ export const getChoiceElements = (
   return getNormalizedElements(base, set, version);
 };
 
-const getChargedChoices = (
-  coverage: Coverage,
-  base: Value,
-  expression: Expression & { kind: "Choose" },
-  set: Expression,
-  version: TlcVersion,
-) => {
-  normalizeChoices(base, expression);
-  return getChargedBound(coverage, base, true, () => getNormalizedElements(base, set, version));
-};
-
 export const createNoChoiceError = (expression: Expression & { kind: "Choose" }) =>
   new TlaEvaluationError(
     `Attempted to compute the value of an expression of form\nCHOOSE x \\in S: P, but no element of S satisfied P.\n${describeRange(expression)}`,
@@ -2907,12 +2896,10 @@ const compileSetComprehension = (
   };
   if (coverage) {
     return (context) => {
-      const bound = getChargedChoices(
-        coverage,
-        evaluateSet(context),
-        expression,
-        set,
-        context.environment.runtime.version,
+      const base = evaluateSet(context);
+      normalizeChoices(base, expression);
+      const bound = getChargedBound(coverage, base, true, () =>
+        getNormalizedElements(base, set, context.environment.runtime.version),
       );
       return choose(context, bound.elements, createBoundEnumerator(coverage, bound));
     };
