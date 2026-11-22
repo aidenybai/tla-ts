@@ -153,6 +153,7 @@ TLC tries every value of a parameter's type, so each type needs a finite set of 
 | `Set<T>`                       | A `Set` of every subset of `T`'s values           |
 | `Map<K, V>`                    | A `Map` of every partial function from `K` to `V` |
 | `number`                       | The integers from -3 to 3                         |
+| `bigint`                       | The BigInts from `-3n` to `3n`                    |
 | `string`                       | `""`, `"a"`, and `"b"`                            |
 | `T[]`                          | Every array of `T`s up to 3 long                  |
 

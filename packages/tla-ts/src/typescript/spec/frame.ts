@@ -48,7 +48,7 @@ interface Infinite {
 // function's keys and values, as a tuple, an array, a record, or a map is a function. Undefined and
 // null are model values, which TLC compares with any value.
 interface Shape {
-  kind: "model" | "boolean" | "number" | "string" | "set" | "function";
+  kind: "model" | "boolean" | "number" | "bigint" | "string" | "set" | "function";
   keys?: Shape;
   values?: ReadonlyMap<string, Shape>;
   rest?: Shape;
@@ -566,6 +566,7 @@ export const frameModel = (
     }
     if (type.flags & ts.TypeFlags.BooleanLike) return { kind: "boolean" };
     if (type.flags & ts.TypeFlags.NumberLike) return { kind: "number" };
+    if (type.flags & ts.TypeFlags.BigIntLike) return { kind: "bigint" };
     if (type.flags & ts.TypeFlags.StringLike) return { kind: "string" };
     const typeArguments = isTypeReference(type) ? checker.getTypeArguments(type) : [];
     if (isSetType(type)) {
@@ -694,6 +695,11 @@ export const frameModel = (
     const literal = getLiteral(type);
     if (literal !== undefined) return { text: `{${literal}}`, size: 1 };
     if (type.flags & ts.TypeFlags.Number) return { text: "-3..3", size: 7 };
+    // A BigInt from -3n to 3n, as the record of its integer, which no number's integer is.
+    if (type.flags & ts.TypeFlags.BigInt) {
+      const integer = names.getFresh("integer");
+      return { text: `{[bigint |-> ${integer}] : ${integer} \\in -3..3}`, size: 7 };
+    }
     if (type.flags & ts.TypeFlags.String) return { text: '{"", "a", "b"}', size: 3 };
     // A subclass's instances are objects, which no domain lists.
     if (
@@ -905,7 +911,10 @@ export const frameModel = (
   const isExact = (type: ts.Type): boolean => {
     if (type.isUnion()) return type.types.every(isExact);
     if (getLiteral(type) !== undefined || type.flags & ts.TypeFlags.Boolean) return true;
-    if (type.flags & (ts.TypeFlags.Number | ts.TypeFlags.String) || checker.isArrayType(type)) {
+    if (
+      type.flags & (ts.TypeFlags.Number | ts.TypeFlags.BigInt | ts.TypeFlags.String) ||
+      checker.isArrayType(type)
+    ) {
       return false;
     }
     const typeArguments = isTypeReference(type) ? checker.getTypeArguments(type) : [];
@@ -956,17 +965,19 @@ export const frameModel = (
   const getValueKind = (type: ts.Type) =>
     type.flags & ts.TypeFlags.NumberLike
       ? "number"
-      : type.flags & ts.TypeFlags.StringLike
-        ? "string"
-        : type.flags & ts.TypeFlags.BooleanLike
-          ? "boolean"
-          : checker.isArrayType(type) || checker.isTupleType(type)
-            ? "array"
-            : isSetType(type)
-              ? "Set"
-              : isMapType(type)
-                ? "Map"
-                : "object";
+      : type.flags & ts.TypeFlags.BigIntLike
+        ? "bigint"
+        : type.flags & ts.TypeFlags.StringLike
+          ? "string"
+          : type.flags & ts.TypeFlags.BooleanLike
+            ? "boolean"
+            : checker.isArrayType(type) || checker.isTupleType(type)
+              ? "array"
+              : isSetType(type)
+                ? "Set"
+                : isMapType(type)
+                  ? "Map"
+                  : "object";
   // The kinds of the values that a union mixes, beside null and undefined, which TLC compares with
   // any value.
   const getMixedKinds = (type: ts.Type) => [

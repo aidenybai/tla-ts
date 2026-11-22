@@ -114,7 +114,7 @@ describe("the CLI with TypeScript files", () => {
   // kinds of a union's values that TLC can't compare, beside the check of the exports that it calls.
   describe("names the kind of each parameter that it can't list the values of", () => {
     const getModel = (check: string) =>
-      `class Box {\n  size = 1;\n}\ninterface Shape {\n  name: string;\n  area(): number;\n}\nconst count = [1, 2].length;\nexport const isSmall = () => ${check};\nexport const identity = <T,>(value: T) => value;\nexport const apply = (transform: (value: number) => number) => transform(count);\nexport const measure = (shape: Shape) => shape.area();\nexport const open = (box: Box) => box.size;\nexport const name = (shape: Shape | undefined) => shape?.name;\nexport const echo = (value: unknown) => value;\nexport const loose = (value: any) => value;\nexport const either = (value: string | number) => value;\n`;
+      `class Box {\n  size = 1;\n}\ninterface Shape {\n  name: string;\n  area(): number;\n}\nconst count = [1, 2].length;\nexport const isSmall = () => ${check};\nexport const identity = <T,>(value: T) => value;\nexport const apply = (transform: (value: number) => number) => transform(count);\nexport const measure = (shape: Shape) => shape.area();\nexport const open = (box: Box) => box.size;\nexport const name = (shape: Shape | undefined) => shape?.name;\nexport const echo = (value: unknown) => value;\nexport const loose = (value: any) => value;\nexport const either = (value: string | number) => value;\nexport const mixed = (value: bigint | number) => value;\n`;
 
     it("agrees with Node", () => {
       const directory = copyFixtures("passing");
@@ -136,6 +136,9 @@ describe("the CLI with TypeScript files", () => {
       );
       expect(result.stdout).toContain(
         "tla-ts calls no either: its parameter value is a union of string and number, whose values TLC can't compare",
+      );
+      expect(result.stdout).toContain(
+        "tla-ts calls no mixed: its parameter value is a union of number and bigint, whose values TLC can't compare",
       );
     });
 

@@ -279,6 +279,44 @@ describe("checks a module's exported functions as a model on ESCore", () => {
     });
   });
 
+  // A BigInt parameter or state variable takes each BigInt from -3n to 3n, none of which is a
+  // number, so a check tells 1n from 1. A parameter of BigInts and numbers mixes values that TLC
+  // can't compare, so the check calls no function that takes one, and checks the rest.
+  describe("calls a function with each BigInt from -3n to 3n", () => {
+    const STATE = `let count!: bigint;\nexport const bump = () => {\n  if (count >= 3n) return;\n  count = count + 1n;\n};\nexport const isSmall = () => typeof count === "bigint" && count <= 3n;\n`;
+    const getSource = (thrown: string) =>
+      `export const half = (n: bigint) => {\n  if ((n as unknown) === 1 || typeof n !== "bigint" || n === ${thrown}) throw new Error("thrown");\n  return n / 2n;\n};\nexport const either = (n: bigint | number) => {\n  throw new Error("called");\n};\n`;
+
+    it("agrees with Node", async () => {
+      expect(getCounts(await checkModel(getSource("4n")))).toEqual(["success", 0, 0]);
+    });
+
+    it("keeps a BigInt in the state, lowered or not", async () => {
+      expect(getCounts(await checkModel(STATE))).toEqual(["deadlock", 7, 10]);
+      expect(getCounts(await checkModel(STATE, "spec.ts", "lowered"))).toEqual(["deadlock", 7, 10]);
+    });
+
+    it("tells a lowered converter that flips a BigInt", async () => {
+      const result = await checkModel(STATE, "spec.ts", "lowered", [
+        "(x) == BigInt(BigIntFromInt(x.bigint))",
+        "(x) == BigInt(BigIntFromInt(-x.bigint))",
+      ]);
+      expect(result.message).toContain("the lowered converter differs");
+    });
+
+    it("rejects another result", async () => {
+      expect((await checkModel(getSource("-3n"))).status).toBe("assumption-violation");
+    });
+
+    it("rejects a number in a BigInt's place", async () => {
+      const result = await checkModel(getSource("4n"), "spec.ts", "canonical", [
+        "BigInt(BigIntFromInt(x.bigint))",
+        "IntV(x.bigint)",
+      ]);
+      expect(result.status).toBe("assumption-violation");
+    });
+  });
+
   // A WeakMap in the state keeps the entries whose keys a step can still read, and drops the rest,
   // as the host's collector may, so a step that adds an entry no code can read leaves the state as
   // it was, as bippy's cache of component frames does.

@@ -563,6 +563,14 @@ export const compileModelToEscore = (
         : undefined;
     if (domain.kind === "Identifier" && domain.name === "BOOLEAN") return plain("Bool(x)");
     if (domain.kind === "Apply" && domain.operator === "..") return plain("IntV(x)");
+    if (
+      domain.kind === "SetMap" &&
+      domain.expression.kind === "Record" &&
+      domain.expression.fields.length === 1 &&
+      domain.expression.fields[0].name === "bigint"
+    ) {
+      return plain("BigInt(BigIntFromInt(x.bigint))");
+    }
     if (domain.kind === "Identifier") {
       const definition = definitions.get(domain.name);
       return definition?.kind === "Operator" && definition.params.length === 0
