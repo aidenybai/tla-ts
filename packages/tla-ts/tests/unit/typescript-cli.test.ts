@@ -925,7 +925,7 @@ describe("the CLI with TypeScript files", () => {
   });
 
   // A program whose TLA+ code passes the most that a check parses and runs within Node's default
-  // heap stops before the check reads it, as one of 126,000 numbers does, where a check would run out
+  // heap stops before the check reads it, as one of 150,000 numbers does, where a check would run out
   // of memory, as one of Effect's modules did.
   describe("checks a program within the TLA+ code that Node's default heap holds", () => {
     const getScript = (count: number, expected: number) =>
@@ -948,12 +948,12 @@ describe("the CLI with TypeScript files", () => {
 
     it("stops at a program whose TLA+ code passes the bound", () => {
       const directory = copyFixtures("passing");
-      writeFileSync(join(directory, "values.mjs"), getScript(126_000, 126_000));
+      writeFileSync(join(directory, "values.mjs"), getScript(150_000, 150_000));
       expect(runNode(directory, "values.mjs").status).toBe(0);
       const result = runCli(directory, ["values.mjs"]);
       expect([0, 1]).not.toContain(result.status);
       expect(result.stderr).toContain(
-        "tla-ts can't check a program whose TLA+ spec has more than 31000000 characters",
+        "tla-ts can't check a program whose TLA+ spec has more than 37000000 characters",
       );
     });
   });
