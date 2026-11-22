@@ -1,6 +1,6 @@
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
-import { gunzipSync, gzipSync } from "node:zlib";
+import { constants, deflateRawSync, gunzipSync, gzipSync } from "node:zlib";
 import { describe, expect, it } from "vite-plus/test";
 import { check, type CheckResult } from "../../src";
 import { getModuleLoader } from "./check-harness";
@@ -103,6 +103,16 @@ const withBadBlock = (size: number) =>
     ~size & 0xff,
     (~size >> 8) & 0xff,
     ...getKind99Payload(size),
+    0x07,
+  ]);
+
+const withBadSecondMember = (size: number) =>
+  Uint8Array.from([...gzip([99]), ...withBadBlock(size)]);
+
+const withDenseBadBlock = (size: number) =>
+  Uint8Array.from([
+    ...GZIP_HEADER,
+    ...deflateRawSync(getKind99Payload(size), { finishFlush: constants.Z_SYNC_FLUSH }),
     0x07,
   ]);
 
@@ -263,6 +273,17 @@ describe("-loadTrace tlc matches TLC", () => {
     ["a bad CRC after 8193 bytes", withBadCrc(8193), KIND_99],
     ["a bad deflate block after 8698 bytes", withBadBlock(8698), "invalid block type"],
     ["a bad deflate block after 8699 bytes", withBadBlock(8699), KIND_99],
+    [
+      "a bad deflate block after 8677 bytes of a second member",
+      withBadSecondMember(8677),
+      "invalid block type",
+    ],
+    ["a bad deflate block after 8678 bytes of a second member", withBadSecondMember(8678), KIND_99],
+    [
+      "a bad deflate block after 12000 bytes inflated from one input buffer",
+      withDenseBadBlock(12000),
+      "invalid block type",
+    ],
   ])("reports %s as TLC does", async (_name, trace, message) => {
     const result = await loadDieHarder(trace);
     expect(result.failure?.message).toBe(getJavaError(message));
