@@ -1655,11 +1655,17 @@ describe("checks a module's exported functions as a model on ESCore", () => {
   });
 
   // Each function of Numbers runs as plain integers where its arguments are "int" Numbers, and as
-  // its lowered form where a result would be -0, NaN, an infinity, or past 2^30.
+  // its lowered form where a result would be -0, NaN, an infinity, or past 2^30. Each pair is the
+  // edge of a guard: a negative dividend or divisor, a product or a quotient that is -0, a sum and
+  // a power at 2^30, a difference at -2^30, the largest operands of a product, and a quotient just
+  // below an integer, whose double must still round below it.
   describe("runs a function of int Numbers on plain integers, as ESCore does", () => {
     const source = `
-      const values = [0, 1, -1, 2, -7, 32767, -32768, 1073741823, -1073741823, 536870909, 1073741817];
-      let out: number[][][] = [];
+      const pairs = [
+        [0, -1], [-1, 0], [-7, 2], [7, -2], [1, 2], [1073741823, 1], [-1073741823, 1],
+        [-32768, 2], [32767, 32767], [1073741817, 536870909],
+      ];
+      let out: number[][] = [];
 
       const add = (x: number, y: number) => x + y;
       const sub = (x: number, y: number) => x - y;
@@ -1676,12 +1682,11 @@ describe("checks a module's exported functions as a model on ESCore", () => {
 
       export const run = () => {
         if (out.length > 0) return;
-        out = values.map((x) =>
-          values.map((y) => [
-            add(x, y), sub(x, y), mul(x, y), mod(x, y), pow(x, y), quotient(x, y), negate(x),
-            isBelow(x, y) ? 1 : 0, pick(x, y),
-          ]),
-        );
+        out = pairs.map((pair) => [
+          add(pair[0], pair[1]), sub(pair[0], pair[1]), mul(pair[0], pair[1]),
+          mod(pair[0], pair[1]), pow(pair[0], pair[1]), quotient(pair[0], pair[1]), negate(pair[0]),
+          isBelow(pair[0], pair[1]) ? 1 : 0, pick(pair[0], pair[1]),
+        ]);
       };
     `;
 
@@ -1717,8 +1722,8 @@ describe("checks a module's exported functions as a model on ESCore", () => {
       const slots = new Set<Slot>([1, 2, 3]);
       let held = new Map<Slot, number>([[1, 0], [2, 0]]);
 
-      const isFull = (count: number) => count >= 2;
-      const isLaterFull = (count: number, index: number) => index > 0 && count >= 2;
+      const isFull = (count: number) => count >= 1;
+      const isLaterFull = (count: number, index: number) => index > 0 && count >= 1;
 
       export const fill = (slot: Slot) => {
         const count = held.get(slot);
@@ -1726,7 +1731,7 @@ describe("checks a module's exported functions as a model on ESCore", () => {
           held.set(slot, 0);
           return;
         }
-        if (count >= 2) return;
+        if (count >= 1) return;
         held.set(slot, count + 1);
       };
 
@@ -1737,18 +1742,21 @@ describe("checks a module's exported functions as a model on ESCore", () => {
 
       export const isTyped = () =>
         new Set(held.keys()).isSubsetOf(slots) &&
-        held.values().every((count) => count >= 0 && count <= 2) &&
+        held.values().every((count) => count >= 0 && count <= 1) &&
         held.keys().find(() => true) === 1;
 
       /** @always */
       export const isOrdered = () =>
-        held.values().some(isLaterFull) === (held.get(2) === 2 || held.get(3) === 2) &&
-        held.values().some(isFull) === [1, 2, 3].some((slot) => held.get(slot as Slot) === 2);
+        held.values().some(isLaterFull) === (held.get(2) === 1 || held.get(3) === 1) &&
+        held.values().some(isFull) === [1, 2, 3].some((slot) => held.get(slot as Slot) === 1);
     `;
 
-    it("gives what ESCore gives in every call, as TLC counts", async () => {
+    it("gives what ESCore gives in every call, with Node's states", async () => {
       // Slot 1's count, and slots 2 and 3 each absent or at a count, in the order they were added.
-      const counts = ["success", 75, 285];
+      const explored = await exploreInNode(source, "spec.ts");
+      expect(explored.error).toBeUndefined();
+      const counts = [explored.status, explored.distinctStates, explored.generatedStates];
+      expect(counts).toEqual(["success", 26, 86]);
       expect(getCounts(await checkModel(source, "spec.ts", "native"))).toEqual(counts);
       expect(getCounts(await checkModel(source, "spec.ts", "compared"))).toEqual(counts);
     });

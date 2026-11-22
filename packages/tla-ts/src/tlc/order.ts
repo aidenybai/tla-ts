@@ -47,6 +47,8 @@ interface ParsedModule {
   start: number;
   end: number;
   isNested: boolean;
+  // Whether the module comes as a syntax tree without tokens, from which TLC's orders read it.
+  isTreeOnly: boolean;
   getModule: () => Module;
   texts?: ModuleTexts;
 }
@@ -444,6 +446,7 @@ const createModuleSet = (
         start: 0,
         end: 0,
         isNested: false,
+        isTreeOnly: true,
         getModule: () => source,
         text: undefined,
         loaded: undefined,
@@ -475,6 +478,7 @@ const createModuleSet = (
       getTokens: moduleText.getTokens,
       ...range,
       isNested: false,
+      isTreeOnly: preparedModule !== undefined && preparedModule.tokens.length === 0,
       getModule:
         preparedModule || name === undefined || text === undefined
           ? moduleText.getModule
@@ -490,6 +494,7 @@ const createModuleSet = (
         getTokens: moduleText.getTokens,
         ...nestedRange,
         isNested: true,
+        isTreeOnly: false,
         getModule: () => findModule(file.getModule().modules, nestedName) ?? file.getModule(),
       });
     });
@@ -740,17 +745,18 @@ const getStringOrder = (
   const getUnitReferences = (name: string | undefined) => {
     const cached = unitReferences.get(name);
     if (cached) return cached;
-    const references =
-      name === undefined && typeof source !== "string"
-        ? {
-            key: "",
-            unit: undefined,
-            extends: source.extends,
-            instances: source.instances.map((instance) => instance.module),
-            inner: [],
-            allExtends: new Set(source.extends),
-          }
-        : getModuleReferences(getUnitTokens(name), name, innerModules);
+    const unit = getParsed(name);
+    const module = unit.isTreeOnly ? unit.getModule() : undefined;
+    const references = module
+      ? {
+          key: name ?? "",
+          unit: name,
+          extends: module.extends,
+          instances: module.instances.map((instance) => instance.module),
+          inner: [],
+          allExtends: new Set(module.extends),
+        }
+      : getModuleReferences(getUnitTokens(name), name, innerModules);
     unitReferences.set(name, references);
     return references;
   };
@@ -806,7 +812,7 @@ const getStringOrder = (
     dependencies.set(module.unit, [...(dependencies.get(module.unit) ?? []), name]);
     if (parsedUnits.has(name)) continue;
     parsedUnits.add(name);
-    if (getParsed(name).getTokens().length === 0) {
+    if (getParsed(name).getTokens().length === 0 && !getParsed(name).isTreeOnly) {
       const importer = module.unit ?? getModuleName(getParsed(undefined).getTokens());
       throw createMissingModuleError(name, importer);
     }
