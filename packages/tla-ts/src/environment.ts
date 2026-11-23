@@ -920,7 +920,7 @@ export const createEnvironment = (
         const created = create(key);
         const definition =
           instance.name !== undefined && declarations.length === 0 && created.kind === "Operator"
-            ? { ...created, head: instance.head ?? instance.location.range }
+            ? { ...created, head: instance.head }
             : created;
         definitions.set(key, definition);
         if (theorems.has(source)) theorems.set(key, getInstanceRange(instance));
