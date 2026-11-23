@@ -32,6 +32,7 @@ import {
 import type { SatParams } from "./config";
 import { Goal2Sat } from "./goal2sat";
 import { getConsequences } from "./consequences";
+import { getLitValue } from "./model-converter";
 import { isLiteral, Sat2GoalConverter, sat2goal } from "./sat2goal";
 import { Solver } from "./solver";
 
@@ -332,8 +333,7 @@ export class IncSatSolver {
   private checkAssumptions() {
     const model = this.solver.model;
     for (const lit of this.dep2asm.values())
-      if (((lit & 1) === 1 ? -model[lit >> 1] : model[lit >> 1]) !== L_TRUE)
-        throw new SmtDefaultError("bad state");
+      if (getLitValue(lit, model) !== L_TRUE) throw new SmtDefaultError("bad state");
   }
 
   // internalize_var: the variables of a constant's bits, undefined for a bit the solver lacks.

@@ -65,9 +65,8 @@ export class RecfunSolver extends ThSolver {
     const def = manager.recFunDefs.get(manager.decls[lhs]) as RecFunDef;
     const rhs = this.applyArgs(manager.getArgs(lhs), def.rhs);
     const ctx = this.ctx;
-    const generation = Math.max(ctx.getMaxGeneration(lhs), ctx.getMaxGeneration(rhs));
     const oldGeneration = ctx.generation;
-    ctx.generation = generation + 1;
+    ctx.generation = Math.max(ctx.getMaxGeneration(lhs), ctx.getMaxGeneration(rhs)) + 1;
     this.addUnit(this.eqInternalize(lhs, rhs));
     ctx.generation = oldGeneration;
   }
@@ -96,8 +95,8 @@ export class RecfunSolver extends ThSolver {
   }
 
   private assertGuard(predApplied: number, guards: readonly number[]) {
-    const lguards = guards.map((guard) => this.mkLiteral(guard));
-    this.addEquivAnd(this.mkLiteral(predApplied), lguards);
+    const guardLiterals = guards.map((guard) => this.mkLiteral(guard));
+    this.addEquivAnd(this.mkLiteral(predApplied), guardLiterals);
   }
 
   private blockCore(core: readonly number[]) {
@@ -167,12 +166,8 @@ export class RecfunSolver extends ThSolver {
   // Z3's propagation_item holds no reference to a guard, and an expansion holds its arguments too.
   private pushProp(kind: number, exprs: number[]) {
     const manager = this.manager;
-    const held =
-      kind === ITEM_GUARD
-        ? []
-        : kind === ITEM_CORE
-          ? exprs
-          : [...manager.getArgs(exprs[0]), exprs[0]];
+    const held = kind === ITEM_GUARD ? [] : kind === ITEM_CORE ? exprs : manager.getArgs(exprs[0]);
+    if (kind === ITEM_CASE || kind === ITEM_BODY) held.push(exprs[0]);
     for (const expr of held) manager.incRef(expr);
     this.propagationQueue.push({ kind, exprs });
     this.ctx.trail.push(() => {
