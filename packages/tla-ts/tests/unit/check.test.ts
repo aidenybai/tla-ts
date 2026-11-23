@@ -9360,6 +9360,34 @@ ASSUME TLCFP(a) = -887695703
   );
 
   it.each([
+    ["once", "Cardinality(s) = 3", "line 5, col 65 to line 5, col 82 of module M: 1"],
+    [
+      "twice",
+      "Cardinality(s) + Cardinality(s) = 6",
+      "line 5, col 65 to line 5, col 99 of module M: 1",
+    ],
+  ])(
+    "charges UNION S to its set's cost model when Cardinality sizes it %s, as TLC's UnionValue#size converts with convertAndCache",
+    async (_name, body, row) => {
+      expect(
+        await getNextCoverageLines(
+          `x' = 0 /\\ LET s == UNION {{<<5, 5>>}, (0..1) \\X {1}} IN ${body}`,
+        ),
+      ).toEqual([
+        "line 5, col 9 to line 5, col 14 of module M: 1",
+        "line 5, col 28 to line 5, col 60 of module M: 1",
+        "|line 5, col 34 to line 5, col 60 of module M: 1:10",
+        "||line 5, col 35 to line 5, col 44 of module M: 1:2",
+        "|||line 5, col 36 to line 5, col 43 of module M: 1",
+        "||line 5, col 47 to line 5, col 59 of module M: 1:9",
+        "|||line 5, col 48 to line 5, col 51 of module M: 1",
+        "|||line 5, col 57 to line 5, col 59 of module M: 1:5",
+        row,
+      ]);
+    },
+  );
+
+  it.each([
     [
       "S \\cup T",
       "PrintT(((0..1) \\X {1}) \\cup {<<5, 5>>})",

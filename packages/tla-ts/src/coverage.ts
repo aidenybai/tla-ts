@@ -1374,9 +1374,9 @@ const chargeSetEnumeration = (coverage: Coverage, set: Value) => {
   if (node !== undefined) coverage.secondary[node] += size;
 };
 
-// SetCupValue#size, SetCapValue#size and SetDiffValue#size convert with convertAndCache.
+// SetCupValue#size, SetCapValue#size, SetDiffValue#size and UnionValue#size convert with convertAndCache.
 export const chargeSetOperationSize = (coverage: Coverage, set: Value) => {
-  if (typeof set !== "object" || set.kind !== "SetOperation") return;
+  if (typeof set !== "object" || (set.kind !== "SetOperation" && set.kind !== "Union")) return;
   chargeSetEnumeration(coverage, set);
   if (set.cost) set.cost.charges = undefined;
 };
