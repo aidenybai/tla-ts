@@ -944,6 +944,25 @@ describe("a canceled rewrite, as Z3 5.3.2 reports it", () => {
   });
 });
 
+const FM_PROBLEM = [
+  "(set-logic QF_LRA)",
+  "(declare-const x Real)",
+  "(declare-const y Real)",
+  "(declare-const z Real)",
+  "(declare-const w Real)",
+  "(declare-const v Real)",
+  "(declare-const p Bool)",
+  "(assert (<= (* 2.0 x) (+ y z)))",
+  "(assert (<= (+ y (* 3.0 z)) 7.0))",
+  "(assert (>= (+ x w) 0.5))",
+  "(assert (or p (< (+ z (* 2.0 v)) 10.0)))",
+  "(assert (or (not p) (< (+ z v) 20.0)))",
+  "(assert (< (+ w (* 3.0 v)) 3.0))",
+  "(assert (> (+ w v) 1.0))",
+  "(assert (> (+ v z) (- 1.0)))",
+  "(assert (<= (+ y (* 5.0 w)) 15.0))",
+];
+
 describe("the resource limit, as the simplifiers of Z3 5.3.2 stop at it", () => {
   it("stops qe-light between formulas without failing", () => {
     expect(
@@ -968,22 +987,7 @@ describe("the resource limit, as the simplifiers of Z3 5.3.2 stop at it", () => 
   it("fails check-sat-using with the limit that stops fm's model converter", () => {
     expect(
       run([
-        "(set-logic QF_LRA)",
-        "(declare-const x Real)",
-        "(declare-const y Real)",
-        "(declare-const z Real)",
-        "(declare-const w Real)",
-        "(declare-const v Real)",
-        "(declare-const p Bool)",
-        "(assert (<= (* 2.0 x) (+ y z)))",
-        "(assert (<= (+ y (* 3.0 z)) 7.0))",
-        "(assert (>= (+ x w) 0.5))",
-        "(assert (or p (< (+ z (* 2.0 v)) 10.0)))",
-        "(assert (or (not p) (< (+ z v) 20.0)))",
-        "(assert (< (+ w (* 3.0 v)) 3.0))",
-        "(assert (> (+ w v) 1.0))",
-        "(assert (> (+ v z) (- 1.0)))",
-        "(assert (<= (+ y (* 5.0 w)) 15.0))",
+        ...FM_PROBLEM,
         "(set-option :rlimit 453)",
         "(check-sat-using (then fm smt))",
         "(get-info :reason-unknown)",
@@ -1830,6 +1834,37 @@ describe("if-no-models, as Z3 5.3.2 runs it", () => {
 });
 
 describe("the models check-sat-using leaves, as Z3 5.3.2 makes them", () => {
+  it("puts the completion back after fm's model converter, so get-value evaluates each term afresh", () => {
+    expect(
+      run([
+        ...FM_PROBLEM,
+        "(check-sat-using (then fm smt))",
+        "(get-value ((* 2.0 (+ x y)) (* 3.0 (+ x y)) (+ (* 2.0 (+ x y)) z)))",
+        "(get-info :rlimit)",
+      ]),
+    ).toEqual([
+      "sat",
+      "(((* 2.0 (+ x y)) 1.0)\n ((* 3.0 (+ x y)) (/ 3.0 2.0))\n ((+ (* 2.0 (+ x y)) z) 1.0))",
+      "(:rlimit 588)",
+    ]);
+  });
+
+  it("puts the completion back when the limit stops fm's model converter", () => {
+    expect(
+      run([
+        ...FM_PROBLEM,
+        "(set-option :rlimit 461)",
+        "(check-sat-using (then fm smt))",
+        "(get-value ((* 2.0 (+ x y)) (* 3.0 (+ x y)) (+ (* 2.0 (+ x y)) z)))",
+        "(get-info :rlimit)",
+      ]),
+    ).toEqual([
+      '(error "tactic failed: max. resource limit exceeded")',
+      "(((* 2.0 (+ x y)) 0.0)\n ((* 3.0 (+ x y)) 0.0)\n ((+ (* 2.0 (+ x y)) z) 0.0))",
+      "(:rlimit 562)",
+    ]);
+  });
+
   it("converts a model for an undecided goal that has a model converter", () => {
     expect(
       run([
