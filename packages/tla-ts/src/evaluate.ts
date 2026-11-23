@@ -2659,6 +2659,7 @@ const compileExcept = (
   return (context) => {
     let current = evaluateFunction(context);
     for (const item of updates) {
+      // eslint-disable-next-line unicorn/no-new-array
       const keys = new Array<Value>(item.path.length);
       for (let index = 0; index < keys.length; index++) {
         keys[index] = getKey(item.path[index], context);
