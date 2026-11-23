@@ -386,6 +386,35 @@ Spec == Init /\\ [][Next]_x
     );
   });
 
+  it("rejects a non-Leibniz operator argument that reaches a definition between a RECURSIVE declaration and its definition through a LAMBDA or an INSTANCE, which SANY accepts", () => {
+    const report = getReport({
+      M: "---- MODULE M ----\nVARIABLE x\n---- MODULE Lifted ----\nCONSTANT Op(_)\nD == Op(1)\n====\n---- MODULE Other ----\nCONSTANT Op(_)\n====\nRECURSIVE R(_)\nG(n) == R(1)\nR(m) == G(m)\nP(Q(_)) == Q(1)\nH(K(_)) == P(LAMBDA y : G(K(y)))\nL(K(_)) == INSTANCE Lifted WITH Op <- LAMBDA y : G(K(y))\nB(a) == INSTANCE Between WITH Op <- LAMBDA b : a'\nF1(a) == H(LAMBDA b : a')\nF2(a) == L(LAMBDA b : a')!D\nF3(a) == B(a)!T\nINSTANCE Other WITH Op <- F1\nINSTANCE Other WITH Op <- F2\nINSTANCE Other WITH Op <- F3\nINSTANCE Other WITH Op <- B!D\n====\n",
+      Between:
+        "---- MODULE Between ----\nCONSTANT Op(_)\nRECURSIVE R(_)\nG(n) == R(1)\nR(m) == G(m)\nD == G(Op(1))\nTHEOREM T == G(Op(1)) = 0\n====\n",
+    });
+    expect(report.text).toBe(
+      joinLines([
+        "Semantic errors:",
+        "",
+        "*** Errors: 4",
+        "",
+        ...[
+          ["20", "28"],
+          ["21", "28"],
+          ["22", "28"],
+          ["23", "29"],
+        ].flatMap((entry) => [
+          `line ${entry[0]}, col 1 to line ${entry[0]}, col ${entry[1]} of module M`,
+          "",
+          "Error in instantiating module 'Other':",
+          " A non-Leibniz operator substituted for 'Op'.",
+          "",
+          "",
+        ]),
+      ]),
+    );
+  });
+
   it("rejects a non-Leibniz instanced theorem substituted for an operator constant, which SANY accepts", () => {
     const report = getReport({
       M: "---- MODULE M ----\nVARIABLE x\n---- MODULE Inner ----\nCONSTANT c\nVARIABLE w\nTHEOREM T == ENABLED (w' = c)\n====\n---- MODULE Other ----\nCONSTANT Op(_)\n====\nI(a) == INSTANCE Inner WITH c <- a, w <- x\nF(a) == I(a)!T\nINSTANCE Other WITH Op <- F\nINSTANCE Other WITH Op <- I!T\n====\n",

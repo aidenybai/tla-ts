@@ -1175,6 +1175,8 @@ const INNER_MODULES: Record<string, string> = {
   LiftedUnused: "CONSTANT Op(_)\nU(K(_)) == 1\nD == U(Op)",
   Recursed: "CONSTANT Op(_)\nRECURSIVE R(_)\nR(n) == 0\nD == R(Op(1))",
   RecursedApplies: "CONSTANT Op(_)\nRECURSIVE R(_)\nR(n) == Op(n)\nD == R(1)",
+  Between:
+    "CONSTANT Op(_)\nRECURSIVE R(_)\nG(n) == R(1)\nR(m) == G(m)\nD == G(Op(1))\nTHEOREM T == G(Op(1)) = 0",
   Proved: "CONSTANT c\nVARIABLE w\nTHEOREM T == ENABLED (w' = c)",
   Stepped: "CONSTANT c\nVARIABLE w\nTHEOREM T == w' = c",
   Reset: "VARIABLE w\nTHEOREM T == w' = 0",
@@ -1443,6 +1445,10 @@ describe("Leibniz checks where tla-ts deviates from SANY", () => {
     "H(K(_)) == LET RECURSIVE R(_)\n               G(n) == R(1)\n               R(m) == G(m)\n           IN G(K(1))\nF(a) == H(LAMBDA b : a')\nI == INSTANCE Pure WITH c <- 1, Op <- F",
     "H(K(_)) == LET RECURSIVE A(_), B(_)\n               A(n) == B(n)\n               D(n) == K(n)\n               B(n) == A(n)\n           IN A(1)\nF(a) == H(LAMBDA b : a')\nI == INSTANCE Pure WITH c <- 1, Op <- F",
     "RECURSIVE R(_)\nG(n) == R(1)\nR(m) == G(m)\nH(K(_)) == G(K(1))\nF(a) == H(LAMBDA b : a')\nI == INSTANCE Pure WITH c <- 1, Op <- F",
+    "RECURSIVE R(_)\nG(n) == R(1)\nR(m) == G(m)\nP(Q(_)) == Q(1)\nH(K(_)) == P(LAMBDA y : G(K(y)))\nF(a) == H(LAMBDA b : a')\nI == INSTANCE Pure WITH c <- 1, Op <- F",
+    "RECURSIVE R(_)\nG(n) == R(1)\nR(m) == G(m)\nL(K(_)) == INSTANCE Lifted WITH Op <- LAMBDA y : G(K(y))\nF(a) == L(LAMBDA b : a')!D\nI == INSTANCE Pure WITH c <- 1, Op <- F",
+    "B(a) == INSTANCE Between WITH Op <- LAMBDA b : a'\nF(a) == B(a)!T\nI == INSTANCE Pure WITH c <- 1, Op <- F",
+    "B(a) == INSTANCE Between WITH Op <- LAMBDA b : a'\nI == INSTANCE Pure WITH c <- 1, Op <- B!D",
   ])(
     "rejects %s, where tla-ts cannot show a recursive operator ignores the operator argument",
     async (body) => {
