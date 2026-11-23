@@ -38,7 +38,7 @@ const getLibraries = (fileName: string, libraries: Map<string, string>) => {
 // ESCore from a realm that Node recorded and that went through JSON, as a browser reads it, and, as
 // in a browser, without Node's built-in modules, which a browser's process, where it has one, lacks.
 // On a browser's worker, TypeScript also has no system to read files through, and the compile has
-// no Node's process at all.
+// none of Node's own globals: its process, Buffer, global, and setImmediate.
 const createApi = (stackSizeMb: number, isBrowser = false) => {
   const worker = new Worker(
     `const { register } = require("node:module");
@@ -74,9 +74,9 @@ const createApi = (stackSizeMb: number, isBrowser = false) => {
     const modules = await loading;
     const [compile, parallel, values, errors, api, , , , program] = modules;
     const options = { source: request.source, fileName: request.fileName };
-    const host = process;
     const getBuiltinModule = process.getBuiltinModule;
-    const setProcess = (value) => Object.defineProperty(globalThis, "process", { value, configurable: true, writable: true });
+    const nodeGlobals = Object.fromEntries(["process", "Buffer", "global", "setImmediate", "clearImmediate"].map((name) => [name, globalThis[name]]));
+    const setNodeGlobals = (values) => Object.entries(values).forEach(([name, value]) => Object.defineProperty(globalThis, name, { value, configurable: true, writable: true }));
     try {
       // HACK: a browser has no Node to parse a file for its early errors, which tla-ts reaches
       // through process.getBuiltinModule.
@@ -87,11 +87,11 @@ const createApi = (stackSizeMb: number, isBrowser = false) => {
       if (workerData.isBrowser && browserLibrary === undefined) {
         browserLibrary = program.createLibrary(new Map(workerData.libraries));
       }
-      if (workerData.isBrowser) setProcess(undefined);
+      if (workerData.isBrowser) setNodeGlobals(Object.fromEntries(Object.keys(nodeGlobals).map((name) => [name, undefined])));
       const spec = request.isRecorded
         ? api.compileEscore(options, runtime, request.isLibraryPassed ? browserLibrary : undefined)
         : await compile.compile(options);
-      setProcess(host);
+      setNodeGlobals(nodeGlobals);
       process.getBuiltinModule = getBuiltinModule;
       const result = await parallel.check({ ...spec, onPrint: () => {} });
       parentPort.postMessage({
@@ -108,7 +108,7 @@ const createApi = (stackSizeMb: number, isBrowser = false) => {
         },
       });
     } catch (error) {
-      setProcess(host);
+      setNodeGlobals(nodeGlobals);
       process.getBuiltinModule = getBuiltinModule;
       parentPort.postMessage({
         id: request.id,

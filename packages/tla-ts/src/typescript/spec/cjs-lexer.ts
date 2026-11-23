@@ -63,7 +63,11 @@ const getHexDigit = (byte: number) =>
         ? byte - code("A") + 10
         : -1;
 
-const getUtf8 = (codePoint: number) => [...Buffer.from(String.fromCodePoint(codePoint), "utf8")];
+// UTF-8, which a browser encodes and decodes as Node does, without Node's Buffer.
+const ENCODER = new TextEncoder();
+const DECODER = new TextDecoder();
+
+const getUtf8 = (codePoint: number) => [...ENCODER.encode(String.fromCodePoint(codePoint))];
 
 // unescapeJsString: the bytes of a name with its escapes read, or undefined for an invalid one,
 // such as a lone surrogate.
@@ -178,7 +182,7 @@ export interface CommonJsAnalysis {
 // parse_commonjs: the module's export names and re-exported specifiers, as Node's binding turns
 // them into strings, or no names where the lexer finds an error.
 export const parseCommonJs = (text: string): CommonJsAnalysis => {
-  const source = Buffer.from(text, "utf8");
+  const source = ENCODER.encode(text);
   const end = source.length;
   // The byte at an index, which is 0 outside the source, as the binding's terminated buffer gives.
   const at = (index: number) => (index >= 0 && index < end ? source[index] : 0);
@@ -1290,7 +1294,7 @@ export const parseCommonJs = (text: string): CommonJsAnalysis => {
     }
     return templateDepth === NO_TEMPLATE && openTokenDepth === 0 && !hasError;
   })();
-  const decode = (bytes: number[]) => Buffer.from(bytes).toString("utf8");
+  const decode = (bytes: number[]) => DECODER.decode(Uint8Array.from(bytes));
   return isAnalyzed === true
     ? { exports: exports.map(decode), reexports: reexports.map(decode) }
     : { exports: [], reexports: [] };
