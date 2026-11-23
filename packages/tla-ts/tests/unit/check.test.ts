@@ -238,6 +238,52 @@ describe("check matches TLC", () => {
 
   it.each([
     [
+      "a record at a non-string key",
+      "[[a |-> 1] EXCEPT ![1][1 \\div 0] = 2] = 0",
+      [],
+      "The second argument of \\div is 0.",
+    ],
+    [
+      "a function at an argument outside its domain",
+      "[[i \\in 1..2 |-> <<1>>] EXCEPT ![5][1 \\div 0] = 2] = 0",
+      [],
+      "The second argument of \\div is 0.",
+    ],
+    [
+      "a function the typed tier builds, at an argument outside its domain",
+      "[[i \\in 1..2 |-> <<x, x>>] EXCEPT ![x + 3][1 \\div x] = 1][1][1] = 0",
+      [],
+      "The second argument of \\div is 0.",
+    ],
+    [
+      "a record at keys that print",
+      '[[a |-> 1] EXCEPT ![PrintT("k1")][PrintT("k2")] = 2] = 0',
+      ['"k1"', '"k2"'],
+      "Attempted to access record by a non-string argument: TRUE",
+    ],
+    [
+      "a lazy function whose domain prints",
+      'LET h == [t \\in {u \\in Nat : PrintT(<<"m", u>>)} |-> [v \\in 0..1 |-> 0]] IN [h EXCEPT ![1][IF PrintT("k2") THEN 1 ELSE 0] = 5][1][1] = 5',
+      ['"k2"', '<<"m", 1>>', '<<"m", 1>>'],
+      undefined,
+    ],
+  ])(
+    "evaluates the whole path of an EXCEPT on %s before it applies the function, as TLC does",
+    async (_value, except, expected, message) => {
+      const prints: string[] = [];
+      const result = await check({
+        source: `---- MODULE M ----\nEXTENDS Integers, TLC\nVARIABLE x\nInit == x = 0\nNext == x' = 0 /\\ ${except}\n====`,
+        config: "INIT Init\nNEXT Next",
+        onPrint: (text) => prints.push(text),
+      });
+      expect(prints).toEqual(expected);
+      if (message === undefined) expect(result.status).toBe("success");
+      else expect(result.failure?.message).toContain(message);
+    },
+  );
+
+  it.each([
+    [
       "a member of SUBSET S",
       "~({t \\in (0..2) \\X {x} : 1 \\div (2 - t[1]) >= 0} \\in SUBSET ((1..2) \\X {x}))",
     ],

@@ -2658,26 +2658,31 @@ const compileExcept = (
   };
   const update = (
     current: Value,
-    path: CompiledStep[],
+    keys: Value[],
     depth: number,
     context: Context,
     value: Evaluator,
   ): Value => {
-    if (depth === path.length) {
+    if (depth === keys.length) {
       return value(withScope(context, bindValue(context.scope, EXCEPT_AT, current)));
     }
     return updateFunction(
       current,
-      getKey(path[depth], context),
-      (previous) => update(previous, path, depth + 1, context, value),
-      depth + 1 === path.length,
+      keys[depth],
+      (previous) => update(previous, keys, depth + 1, context, value),
+      depth + 1 === keys.length,
     );
   };
   return (context) => {
     let current = evaluateFunction(context);
     for (const item of updates) {
+      // TLC's Tool evaluates every key of the path before it applies the function to any of them.
+      const keys = new Array<Value>(item.path.length);
+      for (let index = 0; index < keys.length; index++) {
+        keys[index] = getKey(item.path[index], context);
+      }
       let isFound = false;
-      current = update(current, item.path, 0, context, (inner) => {
+      current = update(current, keys, 0, context, (inner) => {
         isFound = true;
         return item.value(inner);
       });
