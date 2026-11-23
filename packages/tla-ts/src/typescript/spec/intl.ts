@@ -554,6 +554,12 @@ const getAnswer = (answer: () => string | undefined) => {
 
 const getNumbers = (literals: Literals) => [...literals.numbers.values()];
 
+// The entries of a method's answers for count values, each of a key of its own, where it answers
+// for each value and for each pair of values. A getMethods whose entries are more than its most
+// gives none, as getHostIntl drops them, before it computes any.
+const getEntryCount = (count: number, isEach: boolean, isPairs: boolean) =>
+  (isEach ? count : 0) + (isPairs ? count ** 2 : 0);
+
 // TimeClip, whose -0 is +0, as a DateTimeFormat reads a time value.
 const getTimeClip = (time: number) =>
   !Number.isFinite(time) || Math.abs(time) > 8.64e15 ? Number.NaN : Math.trunc(time) + 0;
@@ -647,31 +653,35 @@ const SERVICES: Service[] = [
         },
       )}`,
     getMethods: (format: Intl.NumberFormat, literals, words, most) => {
+      const strings = [...literals.strings].filter(
+        (text) => text.length <= 40 && /\d|Infinity/.test(text),
+      );
+      const isFormat = ["format", "formatToParts", "toLocaleString"].some((word) =>
+        words.has(word),
+      );
+      const isRange = words.has("formatRange") || words.has("formatRangeToParts");
+      const count = literals.numbers.size + literals.bigints.size + strings.length;
+      if (getEntryCount(count, isFormat, isRange) > most) return undefined;
       const values = [
         ...getNumbers(literals).map((value) => ({ value, key: getNumberArgument(value) })),
         ...[...literals.bigints].map((value) => ({
           value: BigInt(value),
           key: `<<"bigint", ${getUnitsOf(value)}>>`,
         })),
-        ...[...literals.strings]
-          .filter((text) => text.length <= 40 && /\d|Infinity/.test(text))
-          .map((value) => ({ value, key: `<<"string", ${getUnitsOf(value)}>>` })),
+        ...strings.map((value) => ({ value, key: `<<"string", ${getUnitsOf(value)}>>` })),
       ];
       const methods = new Map<string, string | undefined>();
-      if (["format", "formatToParts", "toLocaleString"].some((word) => words.has(word))) {
+      if (isFormat) {
         for (const value of values) {
-          if (methods.size > most) return undefined;
           methods.set(
             `"formatToParts", <<${value.key}>>`,
             getParts(format.formatToParts(value.value as number)),
           );
         }
       }
-      if (words.has("formatRange") || words.has("formatRangeToParts")) {
+      if (isRange) {
         for (const start of values) {
-          if (methods.size > most) return undefined;
           for (const end of values) {
-            if (methods.size > most) return undefined;
             methods.set(
               `"formatRangeToParts", <<${start.key}, ${end.key}>>`,
               getAnswer(() =>
@@ -697,19 +707,19 @@ const SERVICES: Service[] = [
     getConfig: (bag, resolved) =>
       `${getTlaValue(String(bag.localeMatcher ?? "best fit"))}, ${getSlots(PLURAL_RULES_SLOTS, resolved)}`,
     getMethods: (rules: Intl.PluralRules, literals, words, most) => {
-      const methods = new Map<string, string | undefined>();
       const numbers = getNumbers(literals);
+      if (getEntryCount(numbers.length, words.has("select"), words.has("selectRange")) > most) {
+        return undefined;
+      }
+      const methods = new Map<string, string | undefined>();
       if (words.has("select")) {
         for (const value of numbers) {
-          if (methods.size > most) return undefined;
           methods.set(`"select", <<${getNumberArgument(value)}>>`, getValue(rules.select(value)));
         }
       }
       if (words.has("selectRange")) {
         for (const start of numbers) {
-          if (methods.size > most) return undefined;
           for (const end of numbers) {
-            if (methods.size > most) return undefined;
             methods.set(
               `"selectRange", <<${getNumberArgument(start)}, ${getNumberArgument(end)}>>`,
               getAnswer(() =>
@@ -739,13 +749,13 @@ const SERVICES: Service[] = [
       const methods = new Map<string, string | undefined>();
       if (words.has("compare") || words.has("localeCompare")) {
         const strings = [...literals.arguments].filter((text) => text.length <= 40);
-        for (const left of strings) {
-          if (methods.size > most) return undefined;
-          for (const right of strings) {
-            if (methods.size > most) return undefined;
+        if (getEntryCount(strings.length, false, true) > most) return undefined;
+        const values = strings.map((value) => ({ value, key: getUnitsOf(value) }));
+        for (const left of values) {
+          for (const right of values) {
             methods.set(
-              `"compare", <<${getUnitsOf(left)}, ${getUnitsOf(right)}>>`,
-              getValue(collator.compare(left, right)),
+              `"compare", <<${left.key}, ${right.key}>>`,
+              getValue(collator.compare(left.value, right.value)),
             );
           }
         }
@@ -765,11 +775,16 @@ const SERVICES: Service[] = [
     getMethods: (format: Intl.ListFormat, literals, words, most) => {
       const methods = new Map<string, string | undefined>();
       if (words.has("format") || words.has("formatToParts")) {
-        for (const list of literals.lists) {
-          if (methods.size > most) return undefined;
+        const values = literals.lists.map((value) => ({
+          value,
+          key: `<<${value.map(getUnitsOf).join(", ")}>>`,
+        }));
+        // Two lists of the same strings are one entry.
+        if (new Set(values.map((value) => value.key)).size > most) return undefined;
+        for (const list of values) {
           methods.set(
-            `"formatToParts", <<<<${list.map(getUnitsOf).join(", ")}>>>>`,
-            getParts(format.formatToParts(list)),
+            `"formatToParts", <<${list.key}>>`,
+            getParts(format.formatToParts(list.value)),
           );
         }
       }
@@ -790,10 +805,11 @@ const SERVICES: Service[] = [
       const methods = new Map<string, string | undefined>();
       if (words.has("format") || words.has("formatToParts")) {
         const units = [...literals.strings].filter((text) => /^[a-z]{3,12}$/.test(text));
-        for (const value of getNumbers(literals)) {
-          if (methods.size > most) return undefined;
+        const numbers = getNumbers(literals);
+        // Each pair of a number and a unit is an entry of its own.
+        if (numbers.length * units.length > most) return undefined;
+        for (const value of numbers) {
           for (const unit of units) {
-            if (methods.size > most) return undefined;
             methods.set(
               `"formatToParts", <<${getNumberArgument(value)}, ${getUnitsOf(unit)}>>`,
               getAnswer(() =>
@@ -820,8 +836,9 @@ const SERVICES: Service[] = [
     getMethods: (names: Intl.DisplayNames, literals, words, most) => {
       const methods = new Map<string, string | undefined>();
       if (words.has("of")) {
-        for (const code of [...literals.strings].filter((text) => text.length <= 40)) {
-          if (methods.size > most) return undefined;
+        const codes = [...literals.strings].filter((text) => text.length <= 40);
+        if (codes.length > most) return undefined;
+        for (const code of codes) {
           methods.set(
             `"of", <<${getUnitsOf(code)}>>`,
             getAnswer(() => getValue(names.of(code))),
@@ -888,27 +905,27 @@ const SERVICES: Service[] = [
       const methods = new Map<string, string | undefined>();
       // ESCore's local time zone is UTC, which the host's must be for a format without one.
       if (new Intl.DateTimeFormat().resolvedOptions().timeZone !== "UTC") return new Map();
+      // NaN, which a range with a Temporal object meets after its TypeError.
+      const times = [...new Set([...getNumbers(literals), ...literals.times].map(getTimeClip))];
+      const isFormat = words.has("format") || words.has("formatToParts");
+      const isRange = words.has("formatRange") || words.has("formatRangeToParts");
+      const count = times.length + literals.temporals.size;
+      if (getEntryCount(count, isFormat, isRange) > most) return undefined;
       const values = [
-        // NaN, which a range with a Temporal object meets after its TypeError.
-        ...[...new Set([...getNumbers(literals), ...literals.times].map(getTimeClip))].map(
-          (time) => ({ key: getNumberArgument(time), value: time as unknown }),
-        ),
+        ...times.map((time) => ({ key: getNumberArgument(time), value: time as unknown })),
         ...[...literals.temporals].map(([key, value]) => ({ key, value: value as unknown })),
       ];
-      if (words.has("format") || words.has("formatToParts")) {
+      if (isFormat) {
         for (const value of values) {
-          if (methods.size > most) return undefined;
           methods.set(
             `"formatToParts", <<${value.key}>>`,
             getAnswer(() => getParts(format.formatToParts(value.value as number))),
           );
         }
       }
-      if (words.has("formatRange") || words.has("formatRangeToParts")) {
+      if (isRange) {
         for (const start of values) {
-          if (methods.size > most) return undefined;
           for (const end of values) {
-            if (methods.size > most) return undefined;
             methods.set(
               `"formatRangeToParts", <<${start.key}, ${end.key}>>`,
               getAnswer(() =>
@@ -950,8 +967,9 @@ const SERVICES: Service[] = [
         [`"construct", <<>>`, `[found |-> "value", value |-> True]`],
       ]);
       if (["format", "formatToParts", "toLocaleString"].some((word) => words.has(word))) {
+        // Each duration is an entry of its own, after construct's.
+        if (methods.size + literals.durations.size > most) return undefined;
         for (const [key, value] of literals.durations) {
-          if (methods.size > most) return undefined;
           methods.set(
             `"formatToParts", <<${key}>>`,
             getAnswer(() =>
@@ -973,8 +991,9 @@ const SERVICES: Service[] = [
     getMethods: (segmenter: Intl.Segmenter, literals, words, most) => {
       const methods = new Map<string, string>();
       if (!words.has("segment")) return methods;
-      for (const text of [...literals.strings].filter((string) => string.length <= 200)) {
-        if (methods.size > most) return undefined;
+      const texts = [...literals.strings].filter((string) => string.length <= 200);
+      if (texts.length > most) return undefined;
+      for (const text of texts) {
         const segments = [...segmenter.segment(text)];
         const isWord = segmenter.resolvedOptions().granularity === "word";
         methods.set(
