@@ -102,6 +102,8 @@ export const STANDARD_LEVELS = new Map(
       minMaxLevels: signature[5] ?? [],
       conditions: new Set(signature[6]),
       nonLeibniz: new Set(),
+      allParams: new Set(),
+      nonLeibnizParams: new Set(),
     },
   ]),
 );
