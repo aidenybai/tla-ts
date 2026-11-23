@@ -156,6 +156,27 @@ const createModelValues = (value: ConfigValue) => {
   if (value.kind === "Set") value.elements.forEach(createModelValues);
 };
 
+export const createScopedOverrides = (
+  config: ModelConfig,
+  getSymbols: (module: string) => Symbols | undefined,
+  copySources: Map<string, CopySource>,
+) => {
+  const scopedKeys = new Set(
+    [...config.constants, ...config.substitutions].flatMap((item) => {
+      const symbol =
+        item.module === undefined ? undefined : getSymbols(item.module)?.get(item.name);
+      return symbol?.kind === "Definition" ? [symbol.key] : [];
+    }),
+  );
+  // Deviation from TLC: a copy passes an override its instance's arguments too, and the ArrayIndexOutOfBoundsException crashes TLC.
+  const getOverride = (key: string, prefix: number): CopySource | undefined => {
+    if (scopedKeys.has(key)) return { source: key, prefix };
+    const copy = copySources.get(key);
+    return copy && getOverride(copy.source, prefix + copy.prefix);
+  };
+  return getOverride;
+};
+
 export const applyConfig = (config: ModelConfig, linked: LinkedSpecification): AppliedConfig => {
   config.constants.forEach((assignment) => {
     assignment.args?.forEach(createModelValues);
@@ -421,19 +442,11 @@ export const applyConfig = (config: ModelConfig, linked: LinkedSpecification): A
       });
     });
   [...substitutions.keys()].forEach((key) => constants.delete(key));
-  const scopedKeys = new Set(
-    [...config.constants, ...config.substitutions]
-      .filter((item) => item.module !== undefined)
-      .flatMap(getScopedKeys),
+  const getOverride = createScopedOverrides(
+    config,
+    (module) => linked.moduleSymbols.get(module),
+    linked.copySources,
   );
-  const getOverride = (
-    key: string,
-    prefix: number,
-  ): { key: string; prefix: number } | undefined => {
-    if (scopedKeys.has(key)) return { key, prefix };
-    const copy = linked.copySources.get(key);
-    return copy && getOverride(copy.source, prefix + copy.prefix);
-  };
   linked.copySources.forEach((copy, key) => {
     const override = getOverride(copy.source, copy.prefix);
     const definition = linked.definitions.get(key);
@@ -441,7 +454,7 @@ export const applyConfig = (config: ModelConfig, linked: LinkedSpecification): A
     const params = definition.kind === "Operator" ? definition.params : [];
     const alias = createLocalAlias(
       key,
-      override.key,
+      override.source,
       params,
       params.slice(override.prefix),
       definition.location,

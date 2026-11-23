@@ -17,7 +17,7 @@ import {
 } from "./ast";
 import type { ModuleOperator } from "./check";
 import type { ModelConfig } from "./config";
-import { applyConfig, type CopySource } from "./environment-config";
+import { applyConfig, createScopedOverrides, type CopySource } from "./environment-config";
 import type { FileSystem } from "./json";
 import {
   createSanyError,
@@ -1160,6 +1160,11 @@ export const createEnvironment = (
       });
     }
     const linked = nested ?? getLinkedModule(instance.module, instancer);
+    const getOverride = createScopedOverrides(
+      config,
+      (module) => linkedModules.get(module)?.visible,
+      copySources,
+    );
     const suffix = `#${copyCount++}`;
     const declarations = linked.declarations;
     const operatorSubstitutions = resolveInstanceSubexpressions(
@@ -1269,8 +1274,17 @@ export const createEnvironment = (
       addDefinition: (source, name, create) => {
         const key = `${name}${KEY_SEPARATOR}${instance.module}${suffix}.${copies.length}`;
         const definition = create(key);
-        const copy =
-          definition.kind === "Operator"
+        const override = getOverride(source, instance.params.length);
+        const params = definition.kind === "Operator" ? definition.params : [];
+        const copy = override
+          ? createLocalAlias(
+              key,
+              override.source,
+              params,
+              params.slice(override.prefix),
+              definition.location,
+            )
+          : definition.kind === "Operator"
             ? { ...definition, name: key }
             : createLocalFunction(definition, key);
         const isTheorem = theorems.has(source);
@@ -1312,11 +1326,20 @@ export const createEnvironment = (
             ? localCopies.get(key)
             : createInstanceCopy(key, instance.module, substitutes);
           if (instanceCopy) localCopies.set(name, instanceCopy);
+          const override = getOverride(entry[1].key, instance.params.length);
           return {
             ...operator,
             name,
             head: instance.head,
-            body: withSubstitutionFrames(operator.body, frame ? [frame] : []),
+            body: override
+              ? createLocalAlias(
+                  name,
+                  override.source,
+                  operator.params,
+                  operator.params.slice(override.prefix),
+                  location,
+                ).body
+              : withSubstitutionFrames(operator.body, frame ? [frame] : []),
             theoremRange: theorems.has(key) ? getInstanceRange(instance) : undefined,
           };
         }

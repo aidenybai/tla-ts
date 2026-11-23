@@ -3262,6 +3262,173 @@ describe("evaluation errors match TLC", () => {
     ]);
   });
 
+  const SCOPED_MODULES = new Map([
+    [
+      "Q",
+      "---- MODULE Q ----\nEXTENDS Naturals\nCONSTANT c\nD(a) == a + c\nG(a) == D(a)\nLim == 1\nUse == 10 \\div Lim\n====",
+    ],
+    [
+      "R",
+      "---- MODULE R ----\nEXTENDS Naturals\nVARIABLE v\nNG == LET L == INSTANCE Q WITH c <- 1 IN v' = L!G(1)\nNU == LET L == INSTANCE Q WITH c <- 1 IN v' = L!Use\n====",
+    ],
+    [
+      "Q2",
+      "---- MODULE Q2 ----\nEXTENDS Naturals\nCONSTANT e\nK == INSTANCE Q WITH c <- e\nH(a) == K!G(a)\n====",
+    ],
+  ]);
+
+  const checkScopedOverride = (definition: string, next: string, override: string) =>
+    check({
+      source: `---- MODULE M ----\nEXTENDS Naturals, TLC\nVARIABLE x\nDiv(a) == a \\div 0\n${definition}\nInit == x = 0\nNext == ${next}\n====`,
+      config: `INIT Init\nNEXT Next\nCONSTANT ${override}`,
+      loadModule: (name) => SCOPED_MODULES.get(name),
+    });
+
+  it.each([
+    [
+      "Pad == 0",
+      "LET L == INSTANCE Q WITH c <- 1 IN x' = L!G(1)",
+      "D <- [Q] Div",
+      [
+        "Line 7, column 44 to line 7, column 54 in M",
+        "Line 7, column 49 to line 7, column 54 in M",
+        "Line 7, column 13 to line 7, column 39 in M",
+        "Line 5, column 9 to line 5, column 12 in Q",
+        "Line 4, column 11 to line 4, column 18 in M",
+      ],
+    ],
+    [
+      "Pad == 0",
+      "LET L == INSTANCE Q WITH c <- 1 IN x' = L!D(1)",
+      "D <- [Q] Div",
+      [
+        "Line 7, column 44 to line 7, column 54 in M",
+        "Line 7, column 49 to line 7, column 54 in M",
+        "Line 4, column 11 to line 4, column 18 in M",
+      ],
+    ],
+    [
+      "Pad == 0",
+      "LET L(w) == INSTANCE Q WITH c <- w IN x' = L(1)!G(1)",
+      "D <- [Q] Div",
+      [
+        "Line 7, column 47 to line 7, column 60 in M",
+        "Line 7, column 52 to line 7, column 60 in M",
+        "Line 7, column 13 to line 7, column 42 in M",
+        "Line 5, column 9 to line 5, column 12 in Q",
+        "Line 4, column 11 to line 4, column 18 in M",
+      ],
+    ],
+    [
+      "I == INSTANCE R WITH v <- x",
+      "I!NG",
+      "D <- [Q] Div",
+      [
+        "Line 5, column 1 to line 5, column 27 in M",
+        "Line 4, column 7 to line 4, column 52 in R",
+        "Line 4, column 42 to line 4, column 52 in R",
+        "Line 4, column 47 to line 4, column 52 in R",
+        "Line 4, column 11 to line 4, column 37 in R",
+        "Line 5, column 9 to line 5, column 12 in Q",
+        "Line 4, column 11 to line 4, column 18 in M",
+      ],
+    ],
+    [
+      "Pad == 0",
+      "LET L == INSTANCE Q2 WITH e <- 1 IN x' = L!H(1)",
+      "D <- [Q] Div",
+      [
+        "Line 7, column 45 to line 7, column 55 in M",
+        "Line 7, column 50 to line 7, column 55 in M",
+        "Line 7, column 13 to line 7, column 40 in M",
+        "Line 5, column 9 to line 5, column 14 in Q2",
+        "Line 4, column 1 to line 4, column 27 in Q2",
+        "Line 5, column 9 to line 5, column 12 in Q",
+        "Line 4, column 11 to line 4, column 18 in M",
+      ],
+    ],
+    [
+      "Pad == 0",
+      "LET L == INSTANCE Q WITH c <- 1 IN x' = L!Use",
+      "Lim = [Q] 0",
+      [
+        "Line 7, column 44 to line 7, column 53 in M",
+        "Line 7, column 49 to line 7, column 53 in M",
+        "Line 7, column 13 to line 7, column 39 in M",
+        "Line 7, column 8 to line 7, column 18 in Q",
+      ],
+    ],
+    [
+      "Pad == 0",
+      "LET L(w) == INSTANCE Q WITH c <- w IN x' = L(1)!Use",
+      "Lim = [Q] 0",
+      [
+        "Line 7, column 47 to line 7, column 59 in M",
+        "Line 7, column 52 to line 7, column 59 in M",
+        "Line 7, column 13 to line 7, column 42 in M",
+        "Line 7, column 8 to line 7, column 18 in Q",
+      ],
+    ],
+    [
+      "I == INSTANCE R WITH v <- x",
+      "I!NU",
+      "Lim = [Q] 0",
+      [
+        "Line 5, column 1 to line 5, column 27 in M",
+        "Line 5, column 7 to line 5, column 51 in R",
+        "Line 5, column 42 to line 5, column 51 in R",
+        "Line 5, column 47 to line 5, column 51 in R",
+        "Line 5, column 11 to line 5, column 37 in R",
+        "Line 7, column 8 to line 7, column 18 in Q",
+      ],
+    ],
+  ])(
+    "applies a scoped override to the copy a LET instance makes, through %s and %s, as TLC's lookup finds it under the SubstInNode",
+    async (definition, next, override, expected) => {
+      const result = await checkScopedOverride(definition, next, override);
+      expect([
+        result.failure?.message,
+        formatCallStackLines(result)?.filter((line) => line !== ""),
+      ]).toEqual(["The second argument of \\div is 0.", expected]);
+    },
+  );
+
+  it("passes a scoped override only the arguments of its own definition through an instance with parameters, where TLC crashes", async () => {
+    const moduleResult = await checkScopedOverride(
+      "L(w) == INSTANCE Q WITH c <- w",
+      "x' = L(1)!D(1)",
+      "D <- [Q] Div",
+    );
+    const letResult = await checkScopedOverride(
+      "Pad == 0",
+      "LET L(w) == INSTANCE Q WITH c <- w IN x' = L(1)!D(1)",
+      "D <- [Q] Div",
+    );
+    expect(
+      [moduleResult, letResult].map((result) => [
+        result.failure?.message,
+        formatCallStackLines(result)?.filter((line) => line !== ""),
+      ]),
+    ).toEqual([
+      [
+        "The second argument of \\div is 0.",
+        [
+          "Line 7, column 9 to line 7, column 22 in M",
+          "Line 7, column 14 to line 7, column 22 in M",
+          "Line 4, column 11 to line 4, column 18 in M",
+        ],
+      ],
+      [
+        "The second argument of \\div is 0.",
+        [
+          "Line 7, column 47 to line 7, column 60 in M",
+          "Line 7, column 52 to line 7, column 60 in M",
+          "Line 4, column 11 to line 4, column 18 in M",
+        ],
+      ],
+    ]);
+  });
+
   it("records no frame for a selected operator argument in the action it assigns, as TLC has none", async () => {
     const result = await check({
       source:
