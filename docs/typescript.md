@@ -353,7 +353,7 @@ The package's `compile` runs in Node only. Elsewhere, it throws `TlaTypeScriptEr
 
 ## Files with other specs
 
-Pass TypeScript, JavaScript, and TLA+ files in one command, as in `npx tla-ts bank.ts HourClock.tla`. tla-ts prints `Checking bank.ts` before each file and exits with the first code that isn't 0. TLC's options, such as `-workers` and `-deadlock`, apply to all of them.
+Pass TypeScript, JavaScript, and TLA+ files in one command, as in `npx tla-ts bank.ts HourClock.tla`. tla-ts prints `Checking bank.ts` before each file and exits with the first code that isn't 0. TLC's options, such as `-workers` and `-deadlock`, apply to all of them. The programs of the files share the TypeScript files that they parse, so one command over a package's files runs faster than a command for each.
 
 `-frame`, another tla-ts extension, prints a model's [frame](#the-models-frame) before its check: the spec of its state variables, the functions it calls and the values it calls them with, then its config. It comes after the `tla-ts calls no` lines. A script prints none. Another tool can read the frame with `parseModule` to call the same functions in Node.
 

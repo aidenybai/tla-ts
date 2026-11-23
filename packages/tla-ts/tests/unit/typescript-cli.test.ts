@@ -851,6 +851,41 @@ describe("the CLI with TypeScript files", () => {
     expect(result.stdout).toContain("Checking overdraft.ts");
   });
 
+  // A check's output but for what differs between runs: its seed, its process, and its times.
+  const getStableOutput = (stdout: string) =>
+    stdout
+      .split("\n")
+      .filter((line) => !/seed|^Starting|^Finished|\d{4}-\d\d-\d\d \d\d:/.test(line))
+      .join("\n");
+
+  it("checks files that import the same module, in one run, as it checks each alone", () => {
+    const directory = copyFixtures("passing");
+    writeFileSync(
+      join(directory, "shared.ts"),
+      "export const limits = { low: 0, high: 3 };\nexport const clamp = (value: number) => Math.min(Math.max(value, limits.low), limits.high);\n",
+    );
+    writeFileSync(
+      join(directory, "rising.ts"),
+      'import { clamp, limits } from "./shared.ts";\nlet level = 0;\nexport const rise = () => {\n  level = clamp(level + 1);\n};\nexport const isWithin = () => level <= limits.high;\n',
+    );
+    writeFileSync(
+      join(directory, "falling.ts"),
+      'import { clamp, limits } from "./shared.ts";\nlet level = 3;\nexport const fall = () => {\n  level = clamp(level - 2);\n};\nexport const isAbove = () => level > limits.low;\n',
+    );
+    const options = ["-noGenerateSpecTE", "-fp", "0"];
+    const together = runCli(directory, [...options, "rising.ts", "falling.ts"]);
+    const rising = runCli(directory, [...options, "rising.ts"]);
+    const falling = runCli(directory, [...options, "falling.ts"]);
+    expect(rising.status).toBe(0);
+    expect(falling.status).toBe(12);
+    expect(together.status).toBe(12);
+    expect(getStableOutput(together.stdout)).toBe(
+      getStableOutput(
+        `Checking rising.ts\n${rising.stdout}\nChecking falling.ts\n${falling.stdout}`,
+      ),
+    );
+  });
+
   it("reports a file that doesn't compile and checks the rest", () => {
     const directory = copyFixtures("failing");
     writeFileSync(join(directory, "evaluated.ts"), 'const total = eval("1 + 1");\n');
