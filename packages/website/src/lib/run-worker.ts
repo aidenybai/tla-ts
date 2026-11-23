@@ -1,4 +1,10 @@
 import { check, formatValue, parseModule, TlaError, type CheckResult, type Value } from "tla-ts";
+import {
+  isStackOverflow,
+  STACK_OVERFLOW_MESSAGE,
+  TlaStackLimitError,
+  TlaStackOverflowError,
+} from "../../../tla-ts/src/errors";
 import type { EscoreHost } from "../../../tla-ts/src/typescript/spec/prepare";
 import type { CompileResponse, EscoreRequest, EscoreResponse } from "./escore-worker";
 import { getErrorResult } from "./run-error";
@@ -155,6 +161,9 @@ const getCheckResult = async (request: RunRequest): Promise<RunResult> => {
     },
   );
   const result = checked.result;
+  if (request.typescript !== undefined && result.failure?.message === STACK_OVERFLOW_MESSAGE) {
+    throw new TlaStackLimitError(WORKER_STACK, result.depth);
+  }
   const graphs = checked.graphs;
   const lastStep = result.violation?.trace.at(-1);
   const module = parseModule(run.shown);
@@ -195,12 +204,21 @@ const getCheckResult = async (request: RunRequest): Promise<RunResult> => {
   };
 };
 
-// The message that the page shows of an error: a stop's, as tla-ts gives it, or another error's,
-// which a bug throws, by its name, so that the page reports it rather than wait for an answer.
-const getErrorMessage = (error: unknown) =>
-  error instanceof TlaError
-    ? error.message
-    : `tla-ts failed: ${error instanceof Error ? `${error.name}: ${error.message}` : String(error)}`;
+// The stack that a browser gives its worker, about half of Node's, whose size it doesn't tell.
+const WORKER_STACK = "the browser worker's stack";
+
+// The message that the page shows of an error: an overflow of the worker's stack, which for a
+// TypeScript program tla-ts can't check, as the CLI says, and is TLC's verdict only on a spec of
+// TLA+; a stop's, as tla-ts gives it; or another error's, which a bug throws, by its name, so that
+// the page reports it rather than wait for an answer.
+const getErrorMessage = (error: unknown, isTypeScript: boolean) =>
+  isStackOverflow(error) || error instanceof TlaStackOverflowError
+    ? isTypeScript
+      ? new TlaStackLimitError(WORKER_STACK).message
+      : STACK_OVERFLOW_MESSAGE
+    : error instanceof TlaError
+      ? error.message
+      : `tla-ts failed: ${error instanceof Error ? `${error.name}: ${error.message}` : String(error)}`;
 
 const getCompiled = async (source: string, fileName: string): Promise<CompileResponse> => {
   try {
@@ -209,7 +227,7 @@ const getCompiled = async (source: string, fileName: string): Promise<CompileRes
     checkCodeLength(compilation.tla);
     return { source, fileName, compilation };
   } catch (error) {
-    return { source, fileName, error: getErrorMessage(error) };
+    return { source, fileName, error: getErrorMessage(error, true) };
   }
 };
 
@@ -224,11 +242,11 @@ self.onmessage = async (event: MessageEvent<EscoreRequest>) => {
   try {
     self.postMessage(await getCheckResult(request));
   } catch (error) {
-    self.postMessage(getErrorResult(getErrorMessage(error)));
+    self.postMessage(getErrorResult(getErrorMessage(error, request.typescript !== undefined)));
   }
 };
 
 // A promise that rejects with no handler answers nothing, so it fails what the page waits for.
 self.addEventListener("unhandledrejection", (event) => {
-  self.postMessage({ failed: getErrorMessage(event.reason) } satisfies EscoreResponse);
+  self.postMessage({ failed: getErrorMessage(event.reason, true) } satisfies EscoreResponse);
 });
