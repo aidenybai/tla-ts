@@ -9173,6 +9173,411 @@ ASSUME TLCFP(a) = -887695703
 
   it.each([
     [
+      "a Cartesian product",
+      "PrintT((0..2) \\X {1})",
+      [
+        "line 5, col 9 to line 5, col 14 of module M: 1",
+        "line 5, col 19 to line 5, col 39 of module M: 1",
+        "|line 5, col 26 to line 5, col 38 of module M: 1:9",
+        "||line 5, col 27 to line 5, col 30 of module M: 1",
+        "||line 5, col 36 to line 5, col 38 of module M: 1:7",
+      ],
+    ],
+    [
+      "a set of functions",
+      "PrintT([{1, 2} -> {3, 4}])",
+      [
+        "line 5, col 9 to line 5, col 14 of module M: 1",
+        "line 5, col 19 to line 5, col 44 of module M: 1",
+        "|line 5, col 26 to line 5, col 43 of module M: 1:12",
+        "||line 5, col 27 to line 5, col 32 of module M: 1",
+        "||line 5, col 37 to line 5, col 42 of module M: 1:10",
+      ],
+    ],
+    [
+      "a set of records",
+      "PrintT([a : {1, 2}, b : {3}])",
+      [
+        "line 5, col 9 to line 5, col 14 of module M: 1",
+        "line 5, col 19 to line 5, col 47 of module M: 1",
+        "|line 5, col 26 to line 5, col 46 of module M: 1:6",
+        "||line 5, col 27 to line 5, col 36 of module M: 1:3",
+        "||line 5, col 39 to line 5, col 45 of module M: 1:5",
+      ],
+    ],
+    [
+      "a tuple that holds a Cartesian product",
+      "PrintT(<<(0..1) \\X {1}>>)",
+      [
+        "line 5, col 9 to line 5, col 14 of module M: 1",
+        "line 5, col 19 to line 5, col 43 of module M: 1",
+        "|line 5, col 26 to line 5, col 42 of module M: 1",
+        "||line 5, col 28 to line 5, col 40 of module M: 1:6",
+        "|||line 5, col 29 to line 5, col 32 of module M: 1",
+        "|||line 5, col 38 to line 5, col 40 of module M: 1:5",
+      ],
+    ],
+    [
+      "a Cartesian product of a variable",
+      "PrintT({x} \\X {1})",
+      [
+        "line 5, col 9 to line 5, col 14 of module M: 1",
+        "line 5, col 19 to line 5, col 36 of module M: 1",
+        "|line 5, col 26 to line 5, col 35 of module M: 1:3",
+        "||line 5, col 26 to line 5, col 28 of module M: 1:2",
+        "|||line 5, col 27 to line 5, col 27 of module M: 1",
+        "||line 5, col 33 to line 5, col 35 of module M: 1:3",
+      ],
+    ],
+    [
+      "a Cartesian product with a variable",
+      "PrintT((0..2) \\X {x})",
+      [
+        "line 5, col 9 to line 5, col 14 of module M: 1",
+        "line 5, col 19 to line 5, col 39 of module M: 1",
+        "|line 5, col 26 to line 5, col 38 of module M: 1:9",
+        "||line 5, col 27 to line 5, col 30 of module M: 1",
+        "||line 5, col 36 to line 5, col 38 of module M: 1:7",
+        "|||line 5, col 37 to line 5, col 37 of module M: 1",
+      ],
+    ],
+    [
+      "a union with a Cartesian product",
+      "PrintT({<<1, 1>>} \\cup ((0..2) \\X {1}))",
+      [
+        "line 5, col 9 to line 5, col 14 of module M: 1",
+        "line 5, col 19 to line 5, col 57 of module M: 1",
+        "|line 5, col 26 to line 5, col 56 of module M: 1",
+        "||line 5, col 26 to line 5, col 35 of module M: 1:14",
+        "|||line 5, col 27 to line 5, col 34 of module M: 1",
+        "||line 5, col 43 to line 5, col 55 of module M: 1:6",
+        "|||line 5, col 44 to line 5, col 47 of module M: 1",
+        "|||line 5, col 53 to line 5, col 55 of module M: 1:7",
+      ],
+    ],
+    [
+      "a tuple whose second element is a Cartesian product",
+      "PrintT(<<1, (0..2) \\X {1}>>)",
+      [
+        "line 5, col 9 to line 5, col 14 of module M: 1",
+        "line 5, col 19 to line 5, col 46 of module M: 1",
+        "|line 5, col 26 to line 5, col 45 of module M: 1",
+        "||line 5, col 31 to line 5, col 43 of module M: 1:9",
+        "|||line 5, col 32 to line 5, col 35 of module M: 1",
+        "|||line 5, col 41 to line 5, col 43 of module M: 1:7",
+      ],
+    ],
+    [
+      "an Assert message",
+      "Assert(FALSE, (0..1) \\X {1})",
+      [
+        "line 5, col 9 to line 5, col 14 of module M: 0",
+        "line 5, col 19 to line 5, col 46 of module M: 2",
+        "|line 5, col 26 to line 5, col 30 of module M: 2",
+        "|line 5, col 33 to line 5, col 45 of module M: 2:12",
+        "||line 5, col 34 to line 5, col 37 of module M: 2",
+        "||line 5, col 43 to line 5, col 45 of module M: 2:10",
+      ],
+    ],
+  ])(
+    "charges %s that TLC prints to the lazy set's own cost model, as its toString converts the set",
+    async (_name, body, rows) => {
+      expect(await getNextCoverageLines(`x' = 0 /\\ ${body}`)).toEqual(rows);
+    },
+  );
+
+  it.each([
+    [
+      "an equality",
+      "((0..1) \\X {1}) = {1}",
+      [
+        "line 5, col 9 to line 5, col 14 of module M: 0",
+        "line 5, col 19 to line 5, col 39 of module M: 1",
+        "|line 5, col 20 to line 5, col 32 of module M: 1:6",
+        "||line 5, col 21 to line 5, col 24 of module M: 1",
+        "||line 5, col 30 to line 5, col 32 of module M: 1:5",
+        "|line 5, col 37 to line 5, col 39 of module M: 1",
+      ],
+    ],
+    [
+      "an equality after a print",
+      "LET s == (0..1) \\X {1} IN PrintT(s) /\\ s = {}",
+      [
+        "line 5, col 9 to line 5, col 14 of module M: 0",
+        "line 5, col 28 to line 5, col 40 of module M: 1:12",
+        "|line 5, col 29 to line 5, col 32 of module M: 1",
+        "|line 5, col 38 to line 5, col 40 of module M: 1:10",
+        "line 5, col 45 to line 5, col 63 of module M: 1",
+      ],
+    ],
+    [
+      "an equality of a union before a print",
+      "LET s == ((0..1) \\X {1}) \\cup {<<5, 5>>} IN (s = {}) \\/ PrintT(s)",
+      [
+        "line 5, col 9 to line 5, col 14 of module M: 1",
+        "line 5, col 28 to line 5, col 58 of module M: 1",
+        "|line 5, col 29 to line 5, col 41 of module M: 1:4",
+        "||line 5, col 30 to line 5, col 33 of module M: 1",
+        "||line 5, col 39 to line 5, col 41 of module M: 1:5",
+        "|line 5, col 49 to line 5, col 58 of module M: 1:11",
+        "||line 5, col 50 to line 5, col 57 of module M: 1",
+        "line 5, col 63 to line 5, col 83 of module M: 1",
+      ],
+    ],
+    [
+      "an equality of a union before an enumeration",
+      "LET s == ((0..1) \\X {1}) \\cup {<<5, 5>>} IN (s = {}) \\/ \\E u \\in s : PrintT(u)",
+      [
+        "line 5, col 9 to line 5, col 14 of module M: 1",
+        "line 5, col 28 to line 5, col 58 of module M: 1",
+        "|line 5, col 29 to line 5, col 41 of module M: 1:4",
+        "||line 5, col 30 to line 5, col 33 of module M: 1",
+        "||line 5, col 39 to line 5, col 41 of module M: 1:5",
+        "|line 5, col 49 to line 5, col 58 of module M: 1:13",
+        "||line 5, col 50 to line 5, col 57 of module M: 1",
+        "line 5, col 63 to line 5, col 96 of module M: 1",
+      ],
+    ],
+    [
+      "two cardinalities",
+      "LET s == ((0..1) \\X {1}) \\cup {<<5, 5>>} IN Cardinality(s) + Cardinality(s) = 6",
+      [
+        "line 5, col 9 to line 5, col 14 of module M: 1",
+        "line 5, col 28 to line 5, col 58 of module M: 1",
+        "|line 5, col 29 to line 5, col 41 of module M: 1:4",
+        "||line 5, col 30 to line 5, col 33 of module M: 1",
+        "||line 5, col 39 to line 5, col 41 of module M: 1:5",
+        "|line 5, col 49 to line 5, col 58 of module M: 1:11",
+        "||line 5, col 50 to line 5, col 57 of module M: 1",
+        "line 5, col 63 to line 5, col 97 of module M: 1",
+      ],
+    ],
+  ])(
+    "charges %s of a lazy set to the set's own cost model, which TLC's convertAndCache charges once",
+    async (_name, body, rows) => {
+      expect(await getNextCoverageLines(`x' = 0 /\\ ${body}`)).toEqual(rows);
+    },
+  );
+
+  it.each([
+    [
+      "S \\cup T",
+      "PrintT(((0..1) \\X {1}) \\cup {<<5, 5>>})",
+      [
+        "line 5, col 9 to line 5, col 14 of module M: 1",
+        "line 5, col 19 to line 5, col 57 of module M: 1",
+        "|line 5, col 26 to line 5, col 56 of module M: 1",
+        "||line 5, col 27 to line 5, col 39 of module M: 1:4",
+        "|||line 5, col 28 to line 5, col 31 of module M: 1",
+        "|||line 5, col 37 to line 5, col 39 of module M: 1:5",
+        "||line 5, col 47 to line 5, col 56 of module M: 1:11",
+        "|||line 5, col 48 to line 5, col 55 of module M: 1",
+      ],
+    ],
+    [
+      "UNION S",
+      "PrintT(UNION {{<<5, 5>>}, (0..1) \\X {1}})",
+      [
+        "line 5, col 9 to line 5, col 14 of module M: 1",
+        "line 5, col 19 to line 5, col 59 of module M: 1",
+        "|line 5, col 26 to line 5, col 58 of module M: 1",
+        "||line 5, col 32 to line 5, col 58 of module M: 1:10",
+        "|||line 5, col 33 to line 5, col 42 of module M: 1:2",
+        "||||line 5, col 34 to line 5, col 41 of module M: 1",
+        "|||line 5, col 45 to line 5, col 57 of module M: 1:9",
+        "||||line 5, col 46 to line 5, col 49 of module M: 1",
+        "||||line 5, col 55 to line 5, col 57 of module M: 1:5",
+      ],
+    ],
+    [
+      "S \\ T",
+      "PrintT(((0..1) \\X {1}) \\ {<<0, 1>>})",
+      [
+        "line 5, col 9 to line 5, col 14 of module M: 1",
+        "line 5, col 19 to line 5, col 54 of module M: 1",
+        "|line 5, col 26 to line 5, col 53 of module M: 1",
+        "||line 5, col 27 to line 5, col 39 of module M: 1:4",
+        "|||line 5, col 28 to line 5, col 31 of module M: 1",
+        "|||line 5, col 37 to line 5, col 39 of module M: 1:5",
+        "||line 5, col 44 to line 5, col 53 of module M: 1",
+      ],
+    ],
+    [
+      "S \\cap T",
+      "PrintT(((0..1) \\X {1}) \\cap ((0..2) \\X {1}))",
+      [
+        "line 5, col 9 to line 5, col 14 of module M: 1",
+        "line 5, col 19 to line 5, col 62 of module M: 1",
+        "|line 5, col 26 to line 5, col 61 of module M: 1",
+        "||line 5, col 27 to line 5, col 39 of module M: 1:4",
+        "|||line 5, col 28 to line 5, col 31 of module M: 1",
+        "|||line 5, col 37 to line 5, col 39 of module M: 1:5",
+        "||line 5, col 48 to line 5, col 60 of module M: 1",
+      ],
+    ],
+    [
+      "UNION S with an empty set last",
+      "PrintT(UNION {{<<5, 5>>}, (0..1) \\X {1}, {}})",
+      [
+        "line 5, col 9 to line 5, col 14 of module M: 1",
+        "line 5, col 19 to line 5, col 63 of module M: 1",
+        "|line 5, col 26 to line 5, col 62 of module M: 1",
+        "||line 5, col 32 to line 5, col 62 of module M: 1:12",
+        "|||line 5, col 33 to line 5, col 42 of module M: 1:2",
+        "||||line 5, col 34 to line 5, col 41 of module M: 1",
+        "|||line 5, col 45 to line 5, col 57 of module M: 1:9",
+        "||||line 5, col 46 to line 5, col 49 of module M: 1",
+        "||||line 5, col 55 to line 5, col 57 of module M: 1:5",
+        "|||line 5, col 60 to line 5, col 61 of module M: 1:1",
+      ],
+    ],
+    [
+      "S \\cup T printed twice",
+      "LET s == ((0..1) \\X {1}) \\cup {<<5, 5>>} IN PrintT(s) /\\ PrintT(s)",
+      [
+        "line 5, col 9 to line 5, col 14 of module M: 1",
+        "line 5, col 28 to line 5, col 58 of module M: 1",
+        "|line 5, col 29 to line 5, col 41 of module M: 1:8",
+        "||line 5, col 30 to line 5, col 33 of module M: 1",
+        "||line 5, col 39 to line 5, col 41 of module M: 1:10",
+        "|line 5, col 49 to line 5, col 58 of module M: 1:22",
+        "||line 5, col 50 to line 5, col 57 of module M: 1",
+        "line 5, col 63 to line 5, col 84 of module M: 1",
+      ],
+    ],
+  ])(
+    "charges the sets that TLC's enumerator of %s draws as it prints the set",
+    async (_name, body, rows) => {
+      expect(await getNextCoverageLines(`x' = 0 /\\ ${body}`)).toEqual(rows);
+    },
+  );
+
+  it.each([
+    [
+      "a function application",
+      "LET f == [t \\in {u \\in (0..2) \\X {1} : PrintT(u)} |-> 0] IN f[1] = 0",
+      [
+        "line 5, col 9 to line 5, col 14 of module M: 0",
+        "line 5, col 28 to line 5, col 74 of module M: 2",
+        "|line 5, col 35 to line 5, col 67 of module M: 2",
+        "||line 5, col 42 to line 5, col 54 of module M: 2:18",
+        "|||line 5, col 43 to line 5, col 46 of module M: 2",
+        "|||line 5, col 52 to line 5, col 54 of module M: 2:14",
+        "line 5, col 79 to line 5, col 86 of module M: 2",
+      ],
+    ],
+    [
+      "a membership test",
+      "(1 \\in {u \\in (0..2) \\X {1} : PrintT(u)})",
+      [
+        "line 5, col 9 to line 5, col 14 of module M: 0",
+        "line 5, col 20 to line 5, col 58 of module M: 2",
+        "|line 5, col 26 to line 5, col 58 of module M: 2",
+        "||line 5, col 33 to line 5, col 45 of module M: 2:18",
+        "|||line 5, col 34 to line 5, col 37 of module M: 2",
+        "|||line 5, col 43 to line 5, col 45 of module M: 2:14",
+      ],
+    ],
+    [
+      "a function comparison",
+      "LET f == [t \\in {u \\in (0..2) \\X {1} : PrintT(u)} |-> 0] IN [f EXCEPT ![1] = 5] = f",
+      [
+        "line 5, col 9 to line 5, col 14 of module M: 0",
+        "line 5, col 28 to line 5, col 74 of module M: 2",
+        "|line 5, col 35 to line 5, col 67 of module M: 2",
+        "||line 5, col 42 to line 5, col 54 of module M: 2:18",
+        "|||line 5, col 43 to line 5, col 46 of module M: 2",
+        "|||line 5, col 52 to line 5, col 54 of module M: 2:14",
+        "line 5, col 79 to line 5, col 101 of module M: 2",
+      ],
+    ],
+    [
+      "a membership test in a LET set",
+      "LET s == {u \\in (0..2) \\X {1} : PrintT(u)} IN 1 \\in s",
+      [
+        "line 5, col 9 to line 5, col 14 of module M: 0",
+        "line 5, col 28 to line 5, col 60 of module M: 2",
+        "|line 5, col 35 to line 5, col 47 of module M: 2:18",
+        "||line 5, col 36 to line 5, col 39 of module M: 2",
+        "||line 5, col 45 to line 5, col 47 of module M: 2:14",
+        "line 5, col 65 to line 5, col 71 of module M: 2",
+      ],
+    ],
+    [
+      "an EXCEPT of the function",
+      "LET f == [t \\in {u \\in (0..2) \\X {1} : PrintT(u)} |-> 0] IN [f EXCEPT ![1] = 5][<<1, 1>>] = 0",
+      [
+        "line 5, col 9 to line 5, col 14 of module M: 0",
+        "line 5, col 28 to line 5, col 74 of module M: 2",
+        "|line 5, col 35 to line 5, col 67 of module M: 2",
+        "||line 5, col 42 to line 5, col 54 of module M: 2:18",
+        "|||line 5, col 43 to line 5, col 46 of module M: 2",
+        "|||line 5, col 52 to line 5, col 54 of module M: 2:14",
+        "line 5, col 79 to line 5, col 111 of module M: 2",
+      ],
+    ],
+  ])(
+    "charges the Cartesian product under a filter that TLC prints in the error of %s",
+    async (_name, body, rows) => {
+      expect(await getNextCoverageLines(`x' = 0 /\\ ${body}`)).toEqual(rows);
+    },
+  );
+
+  it("charges the base of a SUBSET domain that TLC prints in the error of a function application", async () => {
+    expect(
+      await getNextCoverageLines(`x' = 0 /\\ [t \\in SUBSET ((0..1) \\X {1}) |-> 0][7] = 0`),
+    ).toEqual([
+      "line 5, col 9 to line 5, col 14 of module M: 0",
+      "line 5, col 19 to line 5, col 61 of module M: 2",
+      "|line 5, col 19 to line 5, col 57 of module M: 2",
+      "||line 5, col 19 to line 5, col 54 of module M: 2",
+      "|||line 5, col 26 to line 5, col 47 of module M: 2:8",
+      "||||line 5, col 34 to line 5, col 46 of module M: 2:12",
+      "|||||line 5, col 35 to line 5, col 38 of module M: 2",
+      "|||||line 5, col 44 to line 5, col 46 of module M: 2:10",
+    ]);
+  });
+
+  it("charges each draw of a filter from a converted Cartesian product, as TLC's SetOfTuplesValue enumerates the SetEnumValue it keeps", async () => {
+    expect(
+      await getNextCoverageLines(
+        `x' = 0 /\\ LET t == (0..1) \\X {1} IN (t = {}) \\/ PrintT({u \\in t : TRUE})`,
+      ),
+    ).toEqual([
+      "line 5, col 9 to line 5, col 14 of module M: 1",
+      "line 5, col 28 to line 5, col 40 of module M: 1:9",
+      "|line 5, col 29 to line 5, col 32 of module M: 1",
+      "|line 5, col 38 to line 5, col 40 of module M: 1:5",
+      "line 5, col 45 to line 5, col 80 of module M: 1",
+      "|line 5, col 46 to line 5, col 51 of module M: 1",
+      "|line 5, col 57 to line 5, col 80 of module M: 1",
+      "||line 5, col 64 to line 5, col 79 of module M: 1:4",
+      "|||line 5, col 75 to line 5, col 78 of module M: 2",
+      "|||line 5, col 71 to line 5, col 71 of module M: 1",
+    ]);
+  });
+
+  it("charges the conversion of a lazy function's EXCEPT copy in the replay, since the copy keeps the cost model that TLC's FcnLambdaValue#takeExcept drops", async () => {
+    expect(
+      await getNextCoverageLines(
+        `x' = 0 /\\ [[t \\in (0..2) \\X {1} |-> 0] EXCEPT ![<<1, 1>>] = 5][<<7, 1>>] = 0`,
+      ),
+    ).toEqual([
+      "line 5, col 9 to line 5, col 14 of module M: 0",
+      "line 5, col 19 to line 5, col 84 of module M: 2",
+      "|line 5, col 19 to line 5, col 80 of module M: 2",
+      "||line 5, col 19 to line 5, col 70 of module M: 2",
+      "|||line 5, col 20 to line 5, col 46 of module M: 2:3",
+      "||||line 5, col 27 to line 5, col 39 of module M: 2:12",
+      "|||||line 5, col 28 to line 5, col 31 of module M: 2",
+      "|||||line 5, col 37 to line 5, col 39 of module M: 2:14",
+      "|||line 5, col 55 to line 5, col 69 of module M: 2",
+      "||line 5, col 72 to line 5, col 79 of module M: 2",
+    ]);
+  });
+
+  it.each([
+    [
       "CHOOSE",
       "CHOOSE y \\in s : y[1] > 5",
       [

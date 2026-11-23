@@ -22,6 +22,7 @@ import { describeNode, getRootKey, type Environment, type Scope } from "./evalua
 import { getJavaHashCode } from "./java-hash";
 import { getTlcFingerprint } from "./tlc/fingerprint";
 import {
+  createSetOperation,
   drainChargedSet,
   getCardinality,
   getDomainInterval,
@@ -32,11 +33,14 @@ import {
   isElementOf,
   isElementOfWith,
   isEmptySet,
+  isCostedSet,
   isReducibleSet,
   isSequenceDomain,
+  markStreamedSet,
   type FunctionValue,
   type IntervalValue,
   type SetOperationValue,
+  type UnionValue,
   type Value,
 } from "./values";
 
@@ -75,6 +79,7 @@ export interface Coverage {
   hiddenFrames: CoverageFrame[];
   nextState: NextStateMode;
   isMember: typeof isElementOf;
+  chargeSetEnumeration: (set: Value) => void;
 }
 
 export interface CoverageFrame {
@@ -179,8 +184,10 @@ export const createCoverage = (variableCount: number): Coverage => {
     hiddenFrames: [],
     nextState: "given",
     isMember: isElementOf,
+    chargeSetEnumeration: () => {},
   };
   coverage.isMember = createChargedMembership(coverage);
+  coverage.chargeSetEnumeration = (set) => chargeSetEnumeration(coverage, set);
   return coverage;
 };
 
@@ -972,10 +979,17 @@ export const chargeSetOperation = (
       : undefined;
   if (typeof result !== "object") return result;
   if (receiver === undefined) {
-    if (operator === "\\cup" && node !== undefined && result.kind === "SetOperation") {
-      coverage.values.set(result, node);
-    }
-    return result;
+    // TLC builds S \cap T and S \ T without a cost model, though their enumerators charge S's and T's.
+    const costNode = operator === "\\cup" ? node : undefined;
+    return result.kind === "SetOperation" &&
+      (costNode !== undefined || isCostedSet(left) || isCostedSet(right))
+      ? markStreamedSet(
+          createSetOperation(result.operator, result.left, result.right, {
+            node: costNode,
+            charges: coverage,
+          }),
+        )
+      : result;
   }
   const other = receiver === left ? right : left;
   if (operator === "\\cup") {
@@ -983,8 +997,14 @@ export const chargeSetOperation = (
     if (!isReducibleSet(other)) {
       // IntervalValue#cup and SetEnumValue#cup give a union they can't reduce the receiver's cost model.
       const unionNode = getValueNode(coverage, receiver);
-      if (unionNode !== undefined) coverage.values.set(result, unionNode);
-      return result;
+      return result.kind === "SetOperation" && (unionNode !== undefined || isCostedSet(other))
+        ? markStreamedSet(
+            createSetOperation(result.operator, result.left, result.right, {
+              node: unionNode,
+              charges: coverage,
+            }),
+          )
+        : result;
     }
     const otherNode = getValueNode(coverage, other);
     if (otherNode !== undefined) coverage.secondary[otherNode] += getCardinality(other) + 1;
@@ -1081,23 +1101,41 @@ const getComponentSizes = (sets: Value[], size: number | undefined) => {
   return sizes;
 };
 
-export const createProductSetEnumerator = (
-  coverage: Coverage,
-  set: Value,
-  size: number | undefined,
-) => {
-  const node = typeof set === "object" ? coverage.values.get(set) : undefined;
+const createProductSetEnumerator = (coverage: Coverage, set: Value, size: number | undefined) => {
+  const node = getValueNode(coverage, set);
   if (node === undefined || typeof set !== "object") return undefined;
+  if (set.kind !== "RecordSet" && set.kind !== "ProductSet" && set.kind !== "FunctionSet") {
+    return undefined;
+  }
+  // A set that convertAndCache converted enumerates the SetEnumValue it keeps.
+  if (set.cost?.charges === undefined) return undefined;
   const sets =
     set.kind === "RecordSet"
       ? set.sets
       : set.kind === "ProductSet"
         ? set.factors
-        : set.kind === "FunctionSet"
-          ? Array.from({ length: getCardinality(set.domain) }, () => set.range)
-          : undefined;
-  const sizes = sets && getComponentSizes(sets, size);
-  return sets && sizes && createProductEnumerator(coverage, node, sets, sizes);
+        : Array.from({ length: getCardinality(set.domain) }, () => set.range);
+  const sizes = getComponentSizes(sets, size);
+  return sizes && createProductEnumerator(coverage, node, sets, sizes);
+};
+
+// A pass that converts the filter draws its base to the end, and the SetEnumValue a converted set keeps charges that last call too.
+export const createFilterBaseEnumerator = (
+  coverage: Coverage,
+  set: Value,
+  isMaterialized: boolean,
+) => {
+  const node = getValueNode(coverage, set);
+  if (
+    node === undefined ||
+    typeof set !== "object" ||
+    (set.kind !== "RecordSet" && set.kind !== "ProductSet" && set.kind !== "FunctionSet") ||
+    set.cost?.charges !== undefined
+  ) {
+    return createProductSetEnumerator(coverage, set, undefined);
+  }
+  if (isMaterialized) coverage.secondary[node]++;
+  return createListEnumerator(coverage, node, getCardinality(set));
 };
 
 const getKnownSize = (set: Value): number | undefined => {
@@ -1122,7 +1160,7 @@ const getKnownSize = (set: Value): number | undefined => {
       return getCardinality(set);
     }
     case "SetOperation": {
-      if (set.isCached) return undefined;
+      if (set.cost?.charges === undefined) return undefined;
       if (set.operator !== "\\cup") {
         const drawn = getDrawnSet(set);
         return getKnownSize(drawn) !== undefined &&
@@ -1133,6 +1171,17 @@ const getKnownSize = (set: Value): number | undefined => {
       const leftSize = getKnownSize(set.left);
       const rightSize = getKnownSize(set.right);
       return leftSize === undefined || rightSize === undefined ? undefined : leftSize + rightSize;
+    }
+    case "Union": {
+      if (set.cost?.charges === undefined || getKnownSize(set.base) === undefined) return undefined;
+      const sets = getStreamedElements(set.base);
+      let size = 0;
+      for (let index = 0; index < sets.length; index++) {
+        const known = getKnownSize(sets[index]);
+        if (known === undefined) return undefined;
+        size += known;
+      }
+      return size;
     }
     default:
       return undefined;
@@ -1173,7 +1222,7 @@ const createUnionEnumerator = (
   size: number,
   isNormalized: boolean,
 ): ChargedEnumerator | undefined => {
-  if (set.isCached) return undefined;
+  if (set.cost?.charges === undefined) return undefined;
   const knownLeft = getKnownSize(set.left);
   const knownRight = getKnownSize(set.right);
   if (isNormalized && (knownLeft === undefined || knownRight === undefined)) return undefined;
@@ -1193,11 +1242,54 @@ const createUnionEnumerator = (
   };
 };
 
+const createUnionOfSetsEnumerator = (
+  coverage: Coverage,
+  set: UnionValue,
+  node: number | undefined,
+): ChargedEnumerator | undefined => {
+  const baseSize = getKnownSize(set.base);
+  if (set.cost?.charges === undefined || baseSize === undefined) return undefined;
+  const sets = getStreamedElements(set.base);
+  // eslint-disable-next-line unicorn/no-new-array
+  const sizes = new Array<number>(sets.length);
+  for (let index = 0; index < sets.length; index++) {
+    const known = getKnownSize(sets[index]);
+    if (known === undefined) return undefined;
+    sizes[index] = known;
+  }
+  const outer = createEnumerator(coverage, set.base, baseSize, false);
+  let position = 0;
+  let inner = outer.next() ? createEnumerator(coverage, sets[0], sizes[0], false) : undefined;
+  return {
+    next: () => {
+      // UnionValue's enumerator recurses into the next set and charges once per frame.
+      let frames = 0;
+      let isDrawn = false;
+      while (inner !== undefined && !isDrawn) {
+        isDrawn = inner.next();
+        if (isDrawn) frames++;
+        else if (outer.next()) {
+          position++;
+          inner = createEnumerator(coverage, sets[position], sizes[position], false);
+          frames++;
+        } else inner = undefined;
+      }
+      if (node !== undefined) coverage.secondary[node] += frames;
+      return isDrawn;
+    },
+    reset: () => {
+      outer.reset();
+      position = 0;
+      inner = outer.next() ? createEnumerator(coverage, sets[0], sizes[0], false) : undefined;
+    },
+  };
+};
+
 const createIntersectionEnumerator = (
   coverage: Coverage,
   set: SetOperationValue,
 ): ChargedEnumerator | undefined => {
-  if (set.isCached || isReducibleSet(set.left)) return undefined;
+  if (set.cost?.charges === undefined || isReducibleSet(set.left)) return undefined;
   const isDifference = set.operator === "\\";
   if (!isDifference && isReducibleSet(set.right)) return undefined;
   const drawn = getDrawnSet(set);
@@ -1239,7 +1331,9 @@ const createEnumerator = (
       ? set.operator === "\\cup"
         ? createUnionEnumerator(coverage, set, node, size, isNormalized)
         : createIntersectionEnumerator(coverage, set)
-      : undefined;
+      : typeof set === "object" && set.kind === "Union"
+        ? createUnionOfSetsEnumerator(coverage, set, node)
+        : undefined;
   const elements = operation ?? createProductSetEnumerator(coverage, set, size);
   if (!elements || (node === undefined && !operation))
     return createListEnumerator(coverage, node, size);
@@ -1267,18 +1361,25 @@ export const chargeRandomOrder = (coverage: Coverage, set: Value, size: number) 
     for (let position = 0; position <= size; position++) enumerator.next();
     return;
   }
-  const node = coverage.values.get(set);
+  const node = set.cost?.node;
   if (node !== undefined) coverage.secondary[node] += size;
 };
 
-export const chargeSetOperationSize = (coverage: Coverage, set: Value) => {
-  if (typeof set !== "object" || set.kind !== "SetOperation") return;
+// TLC's toSetEnum draws a set through its enumerator, which charges its draws, then charges the set its size.
+const chargeSetEnumeration = (coverage: Coverage, set: Value) => {
   const size = getKnownSize(set);
   if (size === undefined) return;
   const enumerator = createEnumerator(coverage, set, size, false);
   for (let position = 0; position <= size; position++) enumerator.next();
   const node = getValueNode(coverage, set);
   if (node !== undefined) coverage.secondary[node] += size;
+};
+
+// SetCupValue#size, SetCapValue#size and SetDiffValue#size convert with convertAndCache.
+export const chargeSetOperationSize = (coverage: Coverage, set: Value) => {
+  if (typeof set !== "object" || set.kind !== "SetOperation") return;
+  chargeSetEnumeration(coverage, set);
+  if (set.cost) set.cost.charges = undefined;
 };
 
 export const createChargedEnumerator = (
