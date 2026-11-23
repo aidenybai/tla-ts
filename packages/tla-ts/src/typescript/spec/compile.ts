@@ -304,6 +304,27 @@ const hasEarlyError = (sourceFile: ts.SourceFile) => {
   }
 };
 
+const isImportCall = (node: ts.Node): node is ts.CallExpression =>
+  ts.isCallExpression(node) && node.expression.kind === ts.SyntaxKind.ImportKeyword;
+
+// Whether a file requests a specifier only by import(), and not by an import or an export of a
+// module, or a require.
+const isOnlyImportCalled = (sourceFile: ts.SourceFile, specifier: string) => {
+  const isRequested = (node: ts.Node): boolean =>
+    ((ts.isImportDeclaration(node) || ts.isExportDeclaration(node)) &&
+      node.moduleSpecifier !== undefined &&
+      ts.isStringLiteralLike(node.moduleSpecifier) &&
+      node.moduleSpecifier.text === specifier) ||
+    (ts.isCallExpression(node) &&
+      ts.isIdentifier(node.expression) &&
+      node.expression.text === "require" &&
+      node.arguments.some(
+        (argument) => ts.isStringLiteralLike(argument) && argument.text === specifier,
+      )) ||
+    (ts.forEachChild(node, isRequested) ?? false);
+  return !isRequested(sourceFile);
+};
+
 // The specifier of each import and export of a module, or each require of a string of a CommonJS
 // module, with the literal that names it.
 const getSpecifiers = (sourceFile: ts.SourceFile, kind: ProgramFile["kind"]) => {
@@ -312,7 +333,7 @@ const getSpecifiers = (sourceFile: ts.SourceFile, kind: ProgramFile["kind"]) => 
     const literal =
       (ts.isImportDeclaration(node) || ts.isExportDeclaration(node)) && kind === "module"
         ? node.moduleSpecifier
-        : ts.isCallExpression(node) && node.expression.kind === ts.SyntaxKind.ImportKeyword
+        : isImportCall(node)
           ? node.arguments[0]
           : ts.isCallExpression(node) &&
               kind === "commonjs" &&
@@ -603,6 +624,17 @@ const loadFiles = (
         ) {
           throw new TlaTypeScriptError(`tla-ts can't load the module ${literal.text}`, parsed);
         }
+        // An import() of a string that Node's resolution rejects, which the file requests no
+        // other way, has the target 0, at which the host rejects the call as Node does.
+        if (
+          found === undefined &&
+          literal !== undefined &&
+          isImportCall(literal.parent) &&
+          isOnlyImportCalled(sourceFile, specifier) &&
+          resolveModule(literal.text, literal.getSourceFile().fileName, false).isMissing
+        ) {
+          return [[specifier, 0] as const];
+        }
         if (found === undefined || !/\.([cm]?[jt]sx?|json)$/.test(found)) return [];
         const target = getRealPath(found);
         if (!numbers.has(target)) numbers.set(target, numbers.size + 1);
@@ -635,8 +667,7 @@ const loadFiles = (
   // A program that calls import() runs Node's code for it.
   const isImporting = files.some((file) => {
     const visit = (node: ts.Node): boolean =>
-      (ts.isCallExpression(node) && node.expression.kind === ts.SyntaxKind.ImportKeyword) ||
-      (ts.forEachChild(node, visit) ?? false);
+      isImportCall(node) || (ts.forEachChild(node, visit) ?? false);
     return visit(file.sourceFile);
   });
   return isImporting

@@ -1590,6 +1590,11 @@ const HOST_PATCHES = [
          LET referrer == ModuleNode(NumToSmallInt(Arg(args, 1).value))
              specifier == Arg(args, 2).value
          IN IF specifier \\notin DOMAIN referrer.targets THEN Assert(FALSE, "tla-ts can't import a module other than a file that a string names") ELSE
+         IF referrer.targets[specifier] = 0 THEN
+           LET target == OrdinaryObjectCreate(s, Null)
+               error == StoppingProxy(target.s, Val(target), N("error of an import that it finds no module for"), <<>>)
+           IN ThrowValue(error.s, Val(error))
+         ELSE
          LET node == ModuleNode(referrer.targets[specifier]) IN
          IF (node.kind = "json") # (Arg(args, 3) = SV("json")) \\/ Arg(args, 3) \\notin {Undefined, SV("json")}
          THEN Assert(FALSE, "tla-ts can't import a module of another type than its attributes', where Node's error names it") ELSE
