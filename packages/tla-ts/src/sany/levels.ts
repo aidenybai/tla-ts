@@ -1370,6 +1370,8 @@ const checkLevel = (node: SemanticNode, iteration: number, check: LevelCheck): b
         addError(check, node.location, "Level error:\nTemporal formula used as set.");
       }
       shareLevels(node, node.set);
+      // Deviation from SANY: tla-ts keeps a NEW symbol's set's nonLeibnizParams, which NewSymbNode#levelCheck drops, so SANY accepts F(a) == I(a)!T for THEOREM T == ASSUME NEW b \in {w'} PROVE TRUE and w <- a.
+      node.nonLeibnizParams = node.set.nonLeibnizParams;
       return node.levelCorrect;
     }
     case "AssumeProve": {
@@ -1384,7 +1386,17 @@ const checkLevel = (node: SemanticNode, iteration: number, check: LevelCheck): b
         (level, assumption) => Math.max(level, assumption.level),
         node.goal.level,
       );
-      [node.goal, ...node.assumptions].forEach((part) => mergeLevels(node, part));
+      const parts = [node.goal, ...node.assumptions];
+      parts.forEach((part) => {
+        mergeLevels(node, part);
+        // Deviation from SANY: tla-ts keeps an ASSUME/PROVE's nonLeibnizParams, which AssumeProveNode#levelCheck drops, so SANY accepts F(a) == I(a)!T for THEOREM T == ASSUME TRUE PROVE w' = 0 and w <- a.
+        addAll(node.nonLeibnizParams, part.nonLeibnizParams);
+      });
+      if (parts.some(hasAppliedParams)) {
+        const applied = new Set<SymbolNode>();
+        parts.forEach((part) => addAll(applied, part.appliedParams ?? part.levelParams));
+        node.appliedParams = applied;
+      }
       if (node.levelCorrect) {
         node.levelParams.forEach((param) => {
           if (param.kind === "OpDecl" && param.declKind === CONSTANT_DECL_KIND) {

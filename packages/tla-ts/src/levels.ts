@@ -2251,8 +2251,7 @@ export const analyzeAssumeProve = (
   analyzer: LevelAnalyzer,
 ): LevelData => {
   const inner = new Map(scope);
-  const data = createData();
-  assumeProve.assumptions.forEach((assumption) => {
+  const parts = assumeProve.assumptions.map((assumption) => {
     if (assumption.kind === "NewSymbol") {
       const set = assumption.set && analyzer.analyze(assumption.set, inner);
       const range = assumption.location.range;
@@ -2264,17 +2263,28 @@ export const analyzeAssumeProve = (
       }
       const level = NEW_SYMBOL_LEVELS[assumption.level];
       inner.set(assumption.name, { kind: "Formal", arity: assumption.arity, level });
-      mergeLevels(data, set ?? createData(level));
-      return;
+      return set ?? createData(level);
     }
-    mergeLevels(
-      data,
-      assumption.kind === "AssumeProve"
-        ? analyzeAssumeProve(assumption, inner, analyzer)
-        : analyzer.analyze(assumption, inner),
-    );
+    return assumption.kind === "AssumeProve"
+      ? analyzeAssumeProve(assumption, inner, analyzer)
+      : analyzer.analyze(assumption, inner);
   });
-  mergeLevels(data, analyzer.analyze(assumeProve.conclusion, inner));
+  parts.push(analyzer.analyze(assumeProve.conclusion, inner));
+  const data = createData();
+  parts.forEach((part) => mergeLevels(data, part));
+  const getParams = (getPartParams: (part: LevelData) => ReadonlySet<string>) => {
+    const params = new Set(parts.flatMap((part) => [...getPartParams(part)]));
+    assumeProve.assumptions.forEach((assumption) => {
+      if (assumption.kind === "NewSymbol") params.delete(assumption.name);
+    });
+    return params;
+  };
+  data.allParams = getParams((part) => part.allParams);
+  // Deviation from SANY: tla-ts keeps an ASSUME/PROVE's nonLeibnizParams, which AssumeProveNode#levelCheck and NewSymbNode#levelCheck drop, so SANY accepts F(a) == I(a)!T for THEOREM T == ASSUME TRUE PROVE w' = 0 and w <- a.
+  data.nonLeibnizParams = getParams((part) => part.nonLeibnizParams);
+  if (parts.some(hasAppliedParams)) {
+    data.appliedParams = getParams((part) => part.appliedParams ?? part.params);
+  }
   constrainConstants(data, analyzer);
   return data;
 };

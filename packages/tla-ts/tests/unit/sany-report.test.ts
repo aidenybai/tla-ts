@@ -465,6 +465,55 @@ Spec == Init /\\ [][Next]_x
     );
   });
 
+  it("rejects an instanced ASSUME/PROVE theorem that primes its instance parameter, substituted for an operator constant, which SANY accepts", () => {
+    const report = getReport({
+      M: "---- MODULE M ----\nVARIABLE x\n---- MODULE Inner ----\nVARIABLE w\nTHEOREM T == ASSUME TRUE PROVE w' = 0\nTHEOREM U == ASSUME w' = 0 PROVE TRUE\nTHEOREM V == ASSUME NEW b \\in {w'} PROVE TRUE\n====\n---- MODULE Other ----\nCONSTANT Op(_)\n====\nI(a) == INSTANCE Inner WITH w <- a\nF(a) == I(a)!T\nG(a) == I(a)!U\nH(a) == I(a)!V\nINSTANCE Other WITH Op <- F\nINSTANCE Other WITH Op <- G\nINSTANCE Other WITH Op <- H\nINSTANCE Other WITH Op <- I!T\n====\n",
+    });
+    expect(report.text).toBe(
+      joinLines([
+        "Semantic errors:",
+        "",
+        "*** Errors: 4",
+        "",
+        ...[
+          ["16", "27"],
+          ["17", "27"],
+          ["18", "27"],
+          ["19", "29"],
+        ].flatMap((entry) => [
+          `line ${entry[0]}, col 1 to line ${entry[0]}, col ${entry[1]} of module M`,
+          "",
+          "Error in instantiating module 'Other':",
+          " A non-Leibniz operator substituted for 'Op'.",
+          "",
+          "",
+        ]),
+      ]),
+    );
+  });
+
+  it("rejects a non-Leibniz operator argument that reaches a definition between a RECURSIVE declaration and its definition through an instanced ASSUME/PROVE theorem, which SANY accepts", () => {
+    const report = getReport({
+      M: "---- MODULE M ----\nVARIABLE x\n---- MODULE Other ----\nCONSTANT Op(_)\n====\nB(a) == INSTANCE BetweenAssumed WITH Op <- LAMBDA b : a'\nF(a) == B(a)!T\nINSTANCE Other WITH Op <- F\n====\n",
+      BetweenAssumed:
+        "---- MODULE BetweenAssumed ----\nCONSTANT Op(_)\nRECURSIVE R(_)\nG(n) == R(1)\nR(m) == G(m)\nTHEOREM T == ASSUME TRUE PROVE G(Op(1)) = 0\n====\n",
+    });
+    expect(report.text).toBe(
+      joinLines([
+        "Semantic errors:",
+        "",
+        "*** Errors: 1",
+        "",
+        "line 8, col 1 to line 8, col 27 of module M",
+        "",
+        "Error in instantiating module 'Other':",
+        " A non-Leibniz operator substituted for 'Op'.",
+        "",
+        "",
+      ]),
+    );
+  });
+
   it("rejects a non-Leibniz operator passed for an operator parameter an instance substitutes, which SANY accepts", () => {
     const report = getReport({
       M: "---- MODULE M ----\nVARIABLE x\nF(a) == a'\n---- MODULE Pure ----\nCONSTANT c, Op(_)\nUse == Op(c)\n====\nP(G(_)) == INSTANCE Pure WITH c <- 1, Op <- G\nUse == P(F)!Use\n====\n",
