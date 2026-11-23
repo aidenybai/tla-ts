@@ -173,6 +173,13 @@ describe("datalog queries", () => {
     ]);
   });
 
+  it("answers the next query after a query that failed with its output predicate", () => {
+    expect(run(getLimitedCounterQuery("bmc", 22))).toEqual([
+      ...getFailedQuery("max. resource limit exceeded"),
+      "sat",
+    ]);
+  });
+
   it("prints the rules of a query canceled between two transformations", () => {
     expect(run(getLimitedCounterQuery("bmc", 30))).toEqual([
       ...getFailedQuery("max. resource limit exceeded"),

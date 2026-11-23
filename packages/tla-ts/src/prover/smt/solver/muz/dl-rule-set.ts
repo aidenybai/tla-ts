@@ -144,12 +144,14 @@ export class RuleSet {
   private head2rules = new Map<number, Rule[]>();
   readonly deps: RuleDependencies;
   private stratifier: RuleStratifier | undefined;
-  outputPredicates = new Set<number>();
+  readonly outputPredicates: ObjHashtable;
   private orig2pred = new Map<number, number>();
   private pred2orig = new Map<number, number>();
 
   constructor(readonly context: DatalogContext) {
     this.deps = new RuleDependencies(context);
+    const manager = context.manager;
+    this.outputPredicates = new ObjHashtable((decl) => manager.getDeclHash(decl));
   }
 
   static copy(other: RuleSet) {
@@ -169,7 +171,7 @@ export class RuleSet {
     this.head2rules.clear();
     this.deps.reset();
     this.stratifier = undefined;
-    this.outputPredicates = new Set();
+    this.outputPredicates.clear();
     this.orig2pred.clear();
     this.pred2orig.clear();
   }
@@ -278,15 +280,14 @@ export class RuleSet {
   }
 
   getOutputPredicate() {
-    return this.outputPredicates.values().next().value as number;
+    const [predicate] = this.outputPredicates;
+    return predicate;
   }
 
   display() {
     const manager = this.manager;
-    const outputs = new ObjHashtable((decl) => manager.getDeclHash(decl));
-    for (const predicate of this.outputPredicates) outputs.add(predicate);
     let text = `; rule count: ${this.rules.length}\n; predicate count: ${this.head2rules.size}\n`;
-    for (const predicate of outputs)
+    for (const predicate of this.outputPredicates)
       text += `; output: ${getSymbolName(manager.funcDecls[predicate].name)}\n`;
     for (const predicate of this.getGroupedPredicates())
       for (const rule of this.getPredicateRules(predicate)) text += rule.display(this.context);
