@@ -10908,6 +10908,38 @@ ASSUME TLCFP(a) = -887695703
     },
   );
 
+  it.each([
+    [
+      "a filter",
+      "LET F == {u \\in (0..1) \\X {1} : PrintT(u)} IN PrintT(F = F) /\\ PrintT(<<1, 1>> \\in F)",
+      ["<<0, 1>>", "<<1, 1>>", "TRUE", "TRUE"],
+    ],
+    [
+      "a product of a filter",
+      "LET F == {u \\in (0..1) \\X {1} : PrintT(u)} IN LET P == F \\X {1} IN PrintT(P = P) /\\ PrintT(<<<<1, 1>>, 1>> \\in P)",
+      ["<<0, 1>>", "<<0, 1>>", "<<0, 1>>", "<<1, 1>>", "TRUE", "TRUE"],
+    ],
+    [
+      "a filter in a set literal",
+      "LET F == {u \\in SUBSET {1, 2} : PrintT(u)} IN PrintT({F} = {F}) /\\ PrintT({1} \\in F)",
+      ["{}", "{1}", "{2}", "{1, 2}", "TRUE", "TRUE"],
+    ],
+  ])(
+    "tests membership in %s that equality converts without the filter's predicate",
+    async (_name, body, printed) => {
+      for (const coverage of [undefined, 1]) {
+        const prints: string[] = [];
+        await check({
+          source: `---- MODULE M ----\nEXTENDS Integers, TLC\nVARIABLE x\nInit == x = 0\nNext == x' = 0 /\\ ${body}\n====`,
+          config: "INIT Init\nNEXT Next",
+          coverage,
+          onPrint: (text) => prints.push(text),
+        });
+        expect(prints).toEqual(printed);
+      }
+    },
+  );
+
   it("counts an operator argument that a filter's membership test forces", async () => {
     expect(
       await getNextCoverageLines(

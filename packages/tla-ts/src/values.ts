@@ -3985,6 +3985,7 @@ const isElementOfAnySet = (element: Value, set: Value): boolean => {
       );
     }
     case "FilteredSet": {
+      if (set.isCached) return isElementOf(element, toFiniteSet(set));
       const depth = setTrace.sets?.length ?? 0;
       try {
         return isElementOf(element, set.base) && set.test(element, true);
@@ -4045,6 +4046,7 @@ const isElementOfComponents = (
       );
     }
     case "FilteredSet": {
+      if (set.isCached) return isMember(element, toFiniteSet(set));
       const depth = setTrace.sets?.length ?? 0;
       try {
         return isMember(element, set.base) && set.test(element, true);
