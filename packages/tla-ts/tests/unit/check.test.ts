@@ -320,6 +320,88 @@ describe("check matches TLC", () => {
     ]);
   });
 
+  const printingLazy = 'h == [i \\in (1..2) \\X {1} |-> PrintT(<<"h", i>>)]';
+  it.each([
+    [
+      "a lazy function in a record",
+      "[c |-> 0]",
+      `LET ${printingLazy} IN DOMAIN [x EXCEPT !.c = h]["c"] = (1..2) \\X {1} /\\ x' = x`,
+      [],
+      [2, 1],
+    ],
+    [
+      "a lazy function in a new tuple",
+      "[c |-> 0]",
+      `LET ${printingLazy} IN DOMAIN [x EXCEPT !.c = <<h>>]["c"][1] = (1..2) \\X {1} /\\ x' = x`,
+      [],
+      [2, 1],
+    ],
+    [
+      "a lazy function in the sequence @ appends to",
+      "[c |-> <<0>>]",
+      `LET ${printingLazy} IN DOMAIN [x EXCEPT !.c = Append(@, h)]["c"] = 1..2 /\\ x' = x`,
+      [],
+      [2, 1],
+    ],
+    [
+      "a lazy function in a function",
+      "[k \\in 1..2 |-> 0]",
+      `LET ${printingLazy} IN DOMAIN [x EXCEPT ![1] = h][1] = (1..2) \\X {1} /\\ x' = x`,
+      [],
+      [2, 1],
+    ],
+    [
+      "a lazy filter in a record",
+      "[c |-> 0]",
+      `LET s == {u \\in (1..2) \\X {1} : PrintT(<<"s", u>>)} IN DOMAIN [x EXCEPT !.c = s] = {"c"} /\\ x' = x`,
+      [],
+      [2, 1],
+    ],
+    [
+      "a lazy function whose body fails",
+      "[c |-> 0]",
+      `LET h == [i \\in (1..2) \\X {1} |-> 1 \\div 0] IN DOMAIN [x EXCEPT !.c = h] = {"c"} /\\ x' = x`,
+      [],
+      [2, 1],
+    ],
+    [
+      "a lazy function applied at one key",
+      "[c |-> 0]",
+      `LET ${printingLazy} IN [x EXCEPT !.c = h].c[<<1, 1>>] /\\ x' = x`,
+      ['<<"h", <<1, 1>>>>'],
+      [2, 1],
+    ],
+    [
+      "a lazy function in the next state",
+      "[c |-> 0]",
+      `LET ${printingLazy} IN x' = [x EXCEPT !.c = h] /\\ PrintT("after")`,
+      [
+        '"after"',
+        '<<"h", <<1, 1>>>>',
+        '<<"h", <<2, 1>>>>',
+        '"after"',
+        '<<"h", <<1, 1>>>>',
+        '<<"h", <<2, 1>>>>',
+      ],
+      [3, 2],
+    ],
+  ])(
+    "evaluates nothing of %s that EXCEPT stores in a fingerprinted value before TLC would",
+    async (_value, init, next, expected, states) => {
+      const prints: string[] = [];
+      const result = await check({
+        source: `---- MODULE M ----\nEXTENDS Integers, Sequences, TLC\nVARIABLE x\nInit == x = ${init}\nNext == ${next}\n====`,
+        config: "INIT Init\nNEXT Next",
+        onPrint: (text) => prints.push(text),
+      });
+      expect(prints).toEqual(expected);
+      expect([result.status, result.generatedStates, result.distinctStates]).toEqual([
+        "success",
+        ...states,
+      ]);
+    },
+  );
+
   it.each([
     [
       "a record at a non-string key",

@@ -447,6 +447,16 @@ describe("printing matches TLC", () => {
       "x' = [x EXCEPT ![1] = {2, 1}] /\\ \"a\" \\in x'[1]",
       'Attempted to check equality of integer 2 with non-integer:\n"a"',
     ],
+    [
+      "x = <<<<{}>>>>",
+      "x' = [x EXCEPT ![1] = <<{2, 1}>>] /\\ \"a\" \\in x'[1][1]",
+      'Attempted to check equality of integer 2 with non-integer:\n"a"',
+    ],
+    [
+      "x = <<[c |-> {}]>>",
+      "x' = [x EXCEPT ![1] = [c |-> {2, 1}]] /\\ \"a\" \\in x'[1].c",
+      'Attempted to check equality of integer 2 with non-integer:\n"a"',
+    ],
   ])(
     "searches the set in %s, %s as TLC does, which sorts a set literal in place as it fingerprints or prints it",
     async (init, next, message) => {
