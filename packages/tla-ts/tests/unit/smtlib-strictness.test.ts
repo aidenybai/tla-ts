@@ -2081,3 +2081,56 @@ describe("the sort names of cmd_context's printer, as Z3 5.3.2's pdecl_manager s
     expect(run(lines).join("\n")).toBe(expected);
   });
 });
+
+describe("the terms that Z3 5.3.2 prints with its default printer, which knows no declarations", () => {
+  it.each([
+    [
+      "the consequences of get-consequences",
+      [
+        "(declare-const x (=> Int Int))",
+        "(declare-const b Bool)",
+        "(assert (=> b (= x ((as const (=> Int Int)) 0))))",
+        "(get-consequences (b) (x))",
+      ],
+      "sat\n\n(=> b (= x ((as const (Array Int Int)) 0)))",
+    ],
+    [
+      "the objectives of get-objectives",
+      [
+        "(declare-const x Int)",
+        "(minimize (+ x (select ((as const (=> Int Int)) 3) 0)))",
+        "(assert (>= x 0))",
+        "(check-sat)",
+        "(get-objectives)",
+      ],
+      "sat\n(objectives\n ((+ x (select ((as const (Array Int Int)) 3) 0)) 3)\n)",
+    ],
+    [
+      "an overloaded name in an unsat core",
+      [
+        "(set-option :produce-unsat-cores true)",
+        "(declare-fun a () bool)",
+        "(declare-fun a () Int)",
+        "(check-sat-assuming ((as a bool) (not (as a bool))))",
+        "(get-unsat-core)",
+      ],
+      "unsat\n(a (not a))",
+    ],
+    [
+      "the arguments in the reader's messages",
+      [
+        "(declare-fun a () Bool)",
+        "(declare-fun a () Int)",
+        "(assert (not (as a Bool) (as a Bool)))",
+        "(declare-fun b () (_ BitVec 4))",
+        "(declare-fun b () Int)",
+        "(assert (= #b000 (bvadd #b000 (as b (_ BitVec 4)))))",
+        "(declare-fun x () Int)",
+        "(assert (not (forall ((x Int)) (> x 0)) true))",
+      ],
+      '(error "line 3 column 36: Wrong number of arguments (2) passed to function (declare-fun not (Bool) Bool) \narg: a\n\narg: a")\n(error "line 6 column 49: Argument b at position 1 has sort (_ BitVec 4) it does not match declaration (declare-fun bvadd ((_ BitVec 3) (_ BitVec 3)) (_ BitVec 3))")\n(error "line 8 column 44: Wrong number of arguments (2) passed to function (declare-fun not (Bool) Bool) \narg: (forall ((x Int)) (> x 0))\n\narg: true")',
+    ],
+  ])("prints %s", (_title, lines, expected) => {
+    expect(run(lines).join("\n")).toBe(expected);
+  });
+});

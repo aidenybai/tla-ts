@@ -131,7 +131,7 @@ import {
   isSupportedLogic,
 } from "./smt-logics";
 import { setRecFunDefinition } from "./recfun-decl-plugin";
-import { DEFAULT_PRINT_OPTIONS, NO_SORT_INFOS, printExpr, type SortInfo } from "./smt2-printer";
+import { DEFAULT_PRINT_ENVIRONMENT, printExpr, type SortInfo } from "./smt2-printer";
 import { InvVarShifter } from "./rewriter-tpl";
 import { replaceFreeVars, VarSubst } from "./var-subst";
 import { UpolynomialManager } from "./nlsat/upolynomial";
@@ -1580,16 +1580,10 @@ export const createSmtlibReader = (
       ((!isLeftAssociative && !isRightAssociative && !isChainable) ||
         (args.length < 2 && manager.funcDecls[decl].family === FAMILY_BASIC && !isAssociative))
     ) {
-      const environment = {
-        options: DEFAULT_PRINT_OPTIONS,
-        isUsed,
-        isClashing,
-        sortInfos: NO_SORT_INFOS,
-      };
       // Z3 prints an error without the newlines that end it.
       throw new SmtParseError(
         `Wrong number of arguments (${args.length}) passed to function ${formatDecl(decl, args.length, domainSort)} ${args
-          .map((arg) => `\narg: ${printExpr(manager, environment, arg)}\n`)
+          .map((arg) => `\narg: ${printExpr(manager, DEFAULT_PRINT_ENVIRONMENT, arg)}\n`)
           .join("")}`.replace(/\n+$/, ""),
         at,
       );
@@ -1745,7 +1739,7 @@ export const createSmtlibReader = (
     const mismatched = getMismatchedArgument(signature, argSorts);
     if (mismatched !== -1)
       throw new SmtParseError(
-        `Argument ${printExpr(manager, { options: DEFAULT_PRINT_OPTIONS, isUsed, isClashing, sortInfos: NO_SORT_INFOS }, args[mismatched])} at position ${mismatched} has sort ${manager.getSortName(argSorts[mismatched])} it does not match declaration (declare-fun ${signature.name} (${signature.domain.map((sort) => manager.getSortName(sort)).join(" ")}) ${manager.getSortName(signature.range)})`,
+        `Argument ${printExpr(manager, DEFAULT_PRINT_ENVIRONMENT, args[mismatched])} at position ${mismatched} has sort ${manager.getSortName(argSorts[mismatched])} it does not match declaration (declare-fun ${signature.name} (${signature.domain.map((sort) => manager.getSortName(sort)).join(" ")}) ${manager.getSortName(signature.range)})`,
         at,
       );
     const decl = manager.mkBvDecl(op, signature.name, indices, signature.domain, signature.range);

@@ -32,6 +32,7 @@ import { Rational } from "./rational";
 import { Rewriter } from "./rewriter";
 import { ResourceLimit } from "./rlimit";
 import {
+  DEFAULT_PRINT_ENVIRONMENT,
   DEFAULT_PRINT_OPTIONS,
   formatSort,
   getQuotedName,
@@ -550,6 +551,12 @@ export const runSmtlibScript = (
   });
   const format = (expr: number) => printExpr(state.manager, getPrintEnvironment(), expr);
   const display = (expr: number) => print(format(expr));
+  const formatWithoutDeclarations = (expr: number) =>
+    printExpr(
+      state.manager,
+      { ...DEFAULT_PRINT_ENVIRONMENT, options: settings.printOptions },
+      expr,
+    );
   const report = (error: SmtParseError) =>
     print(`(error "line ${error.line} column ${error.column}: ${error.message}")`);
   const getNamedAssertions = () =>
@@ -1432,13 +1439,13 @@ export const runSmtlibScript = (
       throw new SmtUnsupportedError("the unsat core of a tactic that drops dependencies");
     const kernel = state.kernel;
     if (kernel === undefined || check.context !== kernel.context) {
-      print(`(${check.core.map(format).join(" ")})`);
+      print(`(${check.core.map(formatWithoutDeclarations).join(" ")})`);
       return;
     }
     state.manager.limit.restart(Date.now() + options.timeLimitMs);
     const core = new RefVector(state.manager);
     kernel.getUnsatCore(core);
-    print(`(${core.items.map(format).join(" ")})`);
+    print(`(${core.items.map(formatWithoutDeclarations).join(" ")})`);
     core.reset();
   };
   const setOptionParameter = (keyword: string, text: string, value: SmtToken) => {
@@ -1803,7 +1810,8 @@ export const runSmtlibScript = (
         const printConsequences = (result: number, consequences: RefVector) => {
           print(getVerdict(result));
           print("");
-          for (const consequence of consequences.items) display(consequence);
+          for (const consequence of consequences.items)
+            print(formatWithoutDeclarations(consequence));
           consequences.reset();
         };
         try {
@@ -2339,7 +2347,7 @@ export const runSmtlibScript = (
         }
         const optimizer = state.optimizer;
         if (optimizer === undefined) throw new SmtUnsupportedError("the command get-objectives");
-        print(optimizer.getObjectives(format));
+        print(optimizer.getObjectives(formatWithoutDeclarations));
       },
     ],
     [
