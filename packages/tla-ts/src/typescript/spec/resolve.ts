@@ -88,7 +88,8 @@ const resolveImport = (
 
 // The file that Node loads for a specifier of the file containingFile, by require's resolution
 // (Module._resolveFilename) or the ESM loader's, or undefined where Node finds no file, as for a
-// built-in module. An error of the resolution but Node's own for a missing file propagates.
+// built-in module, and whether Node's resolution rejects the specifier as one it finds no file
+// for. An error of the resolution but Node's own for a missing file propagates.
 const resolveWithNode = (
   module: NonNullable<ReturnType<typeof getNodeModule>>,
   specifier: string,
@@ -99,10 +100,16 @@ const resolveWithNode = (
   try {
     if (isRequire) {
       const found = module.createRequire(containingFile).resolve(specifier);
-      return process.getBuiltinModule("node:path").isAbsolute(found) ? found : undefined;
+      return {
+        file: process.getBuiltinModule("node:path").isAbsolute(found) ? found : undefined,
+        isMissing: false,
+      };
     }
     const found = resolveImport(module, specifier, containingFile);
-    return found?.startsWith("file:") === true ? url.fileURLToPath(found) : undefined;
+    return {
+      file: found?.startsWith("file:") === true ? url.fileURLToPath(found) : undefined,
+      isMissing: false,
+    };
   } catch (error) {
     if (
       typeof error === "object" &&
@@ -110,7 +117,7 @@ const resolveWithNode = (
       "code" in error &&
       RESOLUTION_ERRORS.has(String(error.code))
     ) {
-      return undefined;
+      return { file: undefined, isMissing: true };
     }
     throw error;
   }
@@ -131,7 +138,7 @@ const isNodeFile = (specifier: string, containingFile: string, file: string, isR
 // than the declaration files that type it, which maps an import of a .js file to the TypeScript
 // beside it, as Node doesn't. A require resolves in CommonJS's mode, and an import in an ES
 // module's. Where Node isn't at hand, as in a browser, a specifier loads TypeScript's file where
-// Node would load it too, and else none.
+// Node would load it too, and else none, and is missing only where Node's resolution rejects it.
 export const createModuleResolver = (entry: string) => {
   const options: ts.CompilerOptions = {
     ...(getProjectCompilerOptions(entry) ?? NODE_OPTIONS),
@@ -157,14 +164,18 @@ export const createModuleResolver = (entry: string) => {
       undefined,
       isRequire ? ts.ModuleKind.CommonJS : ts.ModuleKind.ESNext,
     ).resolvedModule?.resolvedFileName;
+    const node =
+      module === undefined
+        ? undefined
+        : resolveWithNode(module, specifier, containingFile, isRequire);
     const file =
-      module !== undefined
-        ? resolveWithNode(module, specifier, containingFile, isRequire)
+      node !== undefined
+        ? node.file
         : typeScriptFile !== undefined &&
             isNodeFile(specifier, containingFile, typeScriptFile, isRequire)
           ? typeScriptFile
           : undefined;
-    return { file, typeScriptFile };
+    return { file, typeScriptFile, isMissing: node?.isMissing === true };
   };
 };
 

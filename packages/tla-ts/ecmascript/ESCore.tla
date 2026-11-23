@@ -884,6 +884,8 @@ RECURSIVE CreateGlobalVars(_, _, _)
 RECURSIVE HoistFunctions(_, _, _, _, _, _)
 RECURSIVE ScriptEvaluation(_, _)
 RECURSIVE RunScripts(_, _)
+RECURSIVE ThrownName(_, _)
+RECURSIVE ThrownNameUnits(_)
 RECURSIVE DescribeThrown(_, _)
 RECURSIVE HarnessResult(_, _)
 RECURSIVE RunFrom(_, _, _, _, _)
@@ -12099,12 +12101,17 @@ RunScripts(s, scripts) ==
        IF IsAbrupt(r) THEN r ELSE
        LET j == RunJobs(r.s) IN
        IF IsAbrupt(j) THEN j ELSE RunScripts(j.s, Tail(scripts))
+\* The completion of reading a thrown value's constructor's name, which may run its getters.
+ThrownName(s, v) ==
+  LET ctor == IF IsObject(v) THEN Get(s, v, SV("constructor")) ELSE Ok(s, Undefined)
+  IN IF ~IsAbrupt(ctor) /\ IsObject(Val(ctor)) THEN Get(ctor.s, Val(ctor), SV("name")) ELSE Ok(s, Undefined)
+\* The code units of a ThrownName that read a string, and otherwise none.
+ThrownNameUnits(name) == IF ~IsAbrupt(name) /\ IsString(Val(name)) THEN Val(name).value ELSE <<>>
 \* A thrown value's constructor name and string, as code units, for the runner to report.
 DescribeThrown(s, v) ==
-  LET ctor == IF IsObject(v) THEN Get(s, v, SV("constructor")) ELSE Ok(s, Undefined)
-      name == IF ~IsAbrupt(ctor) /\ IsObject(Val(ctor)) THEN Get(ctor.s, Val(ctor), SV("name")) ELSE Ok(s, Undefined)
+  LET name == ThrownName(s, v)
       text == IF IsAbrupt(name) THEN ToStr(s, v) ELSE ToStr(name.s, v)
-  IN [name |-> IF ~IsAbrupt(name) /\ IsString(Val(name)) THEN Val(name).value ELSE <<>>,
+  IN [name |-> ThrownNameUnits(name),
       message |-> IF ~IsAbrupt(text) /\ IsString(Val(text)) THEN Val(text).value ELSE <<>>]
 \* The result of running the harness scripts in a new realm with the host's parses, for RunFrom.
 HarnessResult(scripts, parses) == RunScripts([InitialState EXCEPT !.parses = parses], scripts)

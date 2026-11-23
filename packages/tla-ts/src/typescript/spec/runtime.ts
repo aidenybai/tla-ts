@@ -422,6 +422,14 @@ const DEFINITIONS = [
                    <<Val(str), IntV(file), IF N("type") \\in DOMAIN Val(attributes) THEN Str(Val(attributes)[N("type")]) ELSE Undefined>>)
       resolved == IF IsAbrupt(host) THEN host ELSE Call(host.s, Val(cap).resolve, Undefined, <<Val(host)>>)
   IN IF IsAbrupt(resolved) THEN resolved ELSE Ok(resolved.s, Val(cap).promise)`,
+  // EvaluateImportCall of an import.source() call, as HostImportCall runs it until the host loads
+  // the module: a throw of the specifier's string rejects the call's promise, and Node has the
+  // source of none of the modules it loads.
+  `HostImportSourceCall(s, specifier) ==
+  LET cap == NewPromiseCapability(s, Intrinsic(s, "Promise"))
+      str == ToStr(cap.s, specifier)
+  IN IF IsAbrupt(str) THEN RejectWith(str, Val(cap))
+     ELSE Assert(FALSE, "tla-ts can't import a module's source, which Node rejects")`,
   // The attributes of import()'s options, as V8 reads them, where each is type, which Node's loader
   // supports and rejects others of later.
   `NodeImportAttributes(s, options) ==
@@ -1582,6 +1590,11 @@ const HOST_PATCHES = [
          LET referrer == ModuleNode(NumToSmallInt(Arg(args, 1).value))
              specifier == Arg(args, 2).value
          IN IF specifier \\notin DOMAIN referrer.targets THEN Assert(FALSE, "tla-ts can't import a module other than a file that a string names") ELSE
+         IF referrer.targets[specifier] = 0 THEN
+           LET target == OrdinaryObjectCreate(s, Null)
+               error == StoppingProxy(target.s, Val(target), N("error of an import that it finds no module for"), <<>>)
+           IN ThrowValue(error.s, Val(error))
+         ELSE
          LET node == ModuleNode(referrer.targets[specifier]) IN
          IF (node.kind = "json") # (Arg(args, 3) = SV("json")) \\/ Arg(args, 3) \\notin {Undefined, SV("json")}
          THEN Assert(FALSE, "tla-ts can't import a module of another type than its attributes', where Node's error names it") ELSE

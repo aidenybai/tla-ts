@@ -3,7 +3,7 @@
 // parser rejects are skipped, not blamed on the compiler.
 // Usage: bun scripts/run.ts test262 [--verbose] [test path prefixes]
 
-import { spawnSync } from "node:child_process";
+import { spawnSync, type SpawnSyncReturns } from "node:child_process";
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join, relative } from "node:path";
@@ -11,6 +11,7 @@ import { constants, createContext, runInContext, Script } from "node:vm";
 import ts from "@typescript/typescript6";
 import { TlaTypeScriptError } from "../src/errors";
 import { check } from "../src/parallel";
+import type { CheckResult } from "../src/check";
 import { compileToEscore } from "../src/typescript/spec/compile";
 import { prepareRuntime, SCRIPT_STEPS } from "../src/typescript/spec/prepare";
 import { CONFORMANCE_DIRECTORY, listTest262Files, TEST262_DIRECTORY } from "./corpora";
@@ -28,7 +29,17 @@ interface Metadata {
   flags: string[];
   isNegative: boolean;
   isSyntaxError: boolean;
+  // The name of the constructor of the value that a negative test expects its run or its
+  // resolution of modules to throw.
+  thrownType: string | undefined;
   isModule: boolean;
+}
+
+// How Node fails a test: the line it reports, and the name of the constructor of the value that it
+// left uncaught, where that value is an object whose constructor has a name.
+interface NodeFailure {
+  reason: string;
+  thrownType: string | undefined;
 }
 
 // tla-ts takes local time to be UTC, so Node's Date must too.
@@ -186,6 +197,9 @@ const getMetadata = (source: string): Metadata => {
     isSyntaxError: /^negative:\s*\n\s*phase:\s*(parse|early)\s*\n\s*type:\s*SyntaxError\s*$/m.test(
       frontmatter,
     ),
+    thrownType: /^negative:\s*\n\s*phase:\s*(?:runtime|resolution)\s*\n\s*type:\s*(\w+)\s*$/m.exec(
+      frontmatter,
+    )?.[1],
     isModule: flags.includes("module"),
   };
 };
@@ -200,7 +214,9 @@ const NODE_CRASHES = new Set([
 ]);
 
 const getSkipReason = (metadata: Metadata) => {
-  if (metadata.isNegative && !metadata.isSyntaxError) return "negative test";
+  if (metadata.isNegative && !metadata.isSyntaxError && metadata.thrownType === undefined) {
+    return "negative test";
+  }
   const flag = metadata.flags.find((candidate) => SKIPPED_FLAGS.has(candidate));
   if (flag !== undefined) return `flag ${flag}`;
   const includes = metadata.includes.filter(
@@ -225,14 +241,27 @@ const getNodeError = (source: string, isSloppy: boolean) =>
       compilerOptions: {
         module: ts.ModuleKind.CommonJS,
         target: ts.ScriptTarget.ESNext,
-        moduleDetection: isSloppy ? ts.ModuleDetectionKind.Legacy : ts.ModuleDetectionKind.Force,
+        // A script, as tla-ts compiles it, where await may name a binding.
+        moduleDetection: ts.ModuleDetectionKind.Legacy,
         alwaysStrict: !isSloppy,
       },
     }).outputText,
   ]);
 
+const isObject = (value: unknown): value is object =>
+  (typeof value === "object" && value !== null) || typeof value === "function";
+
+// The name of the constructor of a thrown value, as ESCore's ThrownName reads it.
+const getThrownType = (value: unknown) => {
+  const constructor: unknown = isObject(value) ? Reflect.get(value, "constructor") : undefined;
+  const name: unknown = isObject(constructor) ? Reflect.get(constructor, "name") : undefined;
+  return typeof name === "string" ? name : undefined;
+};
+
 // Runs scripts in turn in one global object, as a page runs its scripts.
-const getNodeScriptsError = async (scripts: readonly string[]) => {
+const getNodeScriptsError = async (
+  scripts: readonly string[],
+): Promise<NodeFailure | undefined> => {
   const timers: (() => void)[] = [];
   try {
     const global = Object.assign(createContext(constants.DONT_CONTEXTIFY), {
@@ -249,38 +278,60 @@ const getNodeScriptsError = async (scripts: readonly string[]) => {
     await new Promise((resolve) => {
       setImmediate(resolve);
     });
-    return rejections.length > 0 ? `Unhandled rejection: ${String(rejections[0])}` : undefined;
+    return rejections.length > 0
+      ? { reason: `Unhandled rejection: ${String(rejections[0])}`, thrownType: undefined }
+      : undefined;
   } catch (error) {
-    return String(error);
+    return { reason: String(error), thrownType: getThrownType(error) };
   } finally {
     rejections.length = 0;
   }
 };
 
 // Runs a module test in a Node of its own, as a module's body can await. Node reports a rejected
-// body as it reports an uncaught error, and a body that never settles with its own exit.
+// body as it reports an uncaught error, and a body that never settles with its own exit. A module
+// keeps each import as it's written, as one whose bindings it never reads still links and runs.
 const transpileModule = (source: string) =>
   ts.transpileModule(source, {
-    compilerOptions: { module: ts.ModuleKind.ESNext, target: ts.ScriptTarget.ESNext },
+    compilerOptions: {
+      module: ts.ModuleKind.ESNext,
+      target: ts.ScriptTarget.ESNext,
+      verbatimModuleSyntax: true,
+    },
   }).outputText;
+
+// How a Node of its own failed, from the line of the error it reports and the line that THROWN_PATH
+// writes.
+const getProcessFailure = (run: SpawnSyncReturns<string>): NodeFailure | undefined => {
+  if (run.status === 0) return undefined;
+  const lines = run.stderr.split("\n");
+  return {
+    reason: lines.find((line) => /^\w*Error\b/.test(line)) ?? `exit ${run.status}`,
+    thrownType: lines.find((line) => line.startsWith(THROWN_LINE))?.slice(THROWN_LINE.length),
+  };
+};
 
 // Runs a module in Node, from the path of a test that imports fixtures, which Node runs from files.
 const getModuleError = (source: string, path?: string) => {
   const output = transpileModule(source);
   if (path !== undefined) writeFileSync(path, output);
-  const run =
+  return getProcessFailure(
     path === undefined
-      ? spawnSync(process.execPath, ["--input-type=module", "-"], {
+      ? spawnSync(process.execPath, ["--require", THROWN_PATH, "--input-type=module", "-"], {
           input: output,
           encoding: "utf8",
         })
       : spawnSync(
           process.execPath,
-          hasImportCall(source) ? ["--require", TIMERS_PATH, path] : [path],
+          [
+            "--require",
+            THROWN_PATH,
+            ...(hasImportCall(source) ? ["--require", TIMERS_PATH] : []),
+            path,
+          ],
           { encoding: "utf8" },
-        );
-  if (run.status === 0) return undefined;
-  return run.stderr.split("\n").find((line) => /^\w*Error\b/.test(line)) ?? `exit ${run.status}`;
+        ),
+  );
 };
 
 const getFirstLine = (text: string) => text.split("\n")[0];
@@ -500,6 +551,21 @@ process.on("beforeExit", () => { timers.splice(0).forEach((callback) => callback
 `,
 );
 
+// Writes the name of the constructor of a value that a Node of its own leaves uncaught, as
+// getThrownType reads it, which Node then reports as it does without it.
+const THROWN_PATH = join(MODULE_DIRECTORY, "thrown.cjs");
+const THROWN_LINE = "test262 thrown: ";
+writeFileSync(
+  THROWN_PATH,
+  `const isObject = (value) => (typeof value === "object" && value !== null) || typeof value === "function";
+process.on("uncaughtExceptionMonitor", (error) => {
+  const constructor = isObject(error) ? error.constructor : undefined;
+  const name = isObject(constructor) ? constructor.name : undefined;
+  if (typeof name === "string") process.stderr.write(${JSON.stringify(THROWN_LINE)} + name + "\\n");
+});
+`,
+);
+
 // Runs a script that imports in Node, from its path, where import() finds the fixtures, with the
 // global object of the modules it loads.
 const SCRIPT_RUNNER = `const vm = require("node:vm");
@@ -511,9 +577,9 @@ vm.runInThisContext(require("node:fs").readFileSync(path, "utf8"), {
 
 const getModulePath = (path: string) => join(MODULE_DIRECTORY, relative(TEST262_DIRECTORY, path));
 
-// The fixtures that a test imports, by path, each through a static import of a relative path or
-// an import() of one, or undefined where a file imports statically another way, such as with
-// attributes.
+// The fixtures that a test imports, by path, each a JavaScript or JSON file that a static import
+// of a relative path or an import() of one names, with or without attributes, which Node and
+// tla-ts check, or undefined where a file imports statically another way.
 const getFixtures = (path: string) => {
   const fixtures = new Map<string, string>();
   const isLinked = (file: string, text: string): boolean => {
@@ -522,13 +588,15 @@ const getFixtures = (path: string) => {
       ts.isStringLiteralLike(specifier) && /^\.\.?\//.test(specifier.text)
         ? join(dirname(file), specifier.text)
         : undefined;
+    const isModuleFile = (imported: string) =>
+      /\.(js|json)$/.test(imported) && existsSync(imported);
     const link = (imported: string) => {
       if (imported === path || fixtures.has(imported)) return true;
       const importedText = readFileSync(imported, "utf8");
       fixtures.set(imported, importedText);
-      return isLinked(imported, importedText);
+      return imported.endsWith(".json") || isLinked(imported, importedText);
     };
-    // An import() of a JavaScript file that exists links it, and Node rejects any other.
+    // An import() of a JavaScript or JSON file that exists links it, and Node rejects any other.
     const linksCalls = (node: ts.Node): boolean => {
       const specifier =
         ts.isCallExpression(node) && node.expression.kind === ts.SyntaxKind.ImportKeyword
@@ -536,10 +604,7 @@ const getFixtures = (path: string) => {
           : undefined;
       const imported = specifier && getImported(specifier);
       return (
-        (imported === undefined ||
-          !imported.endsWith(".js") ||
-          !existsSync(imported) ||
-          link(imported)) &&
+        (imported === undefined || !isModuleFile(imported) || link(imported)) &&
         (ts.forEachChild(node, (child) => (linksCalls(child) ? undefined : false)) ?? true)
       );
     };
@@ -552,8 +617,7 @@ const getFixtures = (path: string) => {
         const imported = getImported(specifier);
         return (
           imported !== undefined &&
-          existsSync(imported) &&
-          statement.attributes === undefined &&
+          isModuleFile(imported) &&
           !(
             ts.isImportDeclaration(statement) &&
             statement.importClause?.phaseModifier === ts.SyntaxKind.DeferKeyword
@@ -579,13 +643,22 @@ const getScriptError = (source: string, path: string, isSloppy: boolean) => {
       },
     }).outputText,
   );
-  const run = spawnSync(
-    process.execPath,
-    ["--no-warnings", "--require", TIMERS_PATH, "--eval", SCRIPT_RUNNER, path],
-    { encoding: "utf8" },
+  return getProcessFailure(
+    spawnSync(
+      process.execPath,
+      [
+        "--no-warnings",
+        "--require",
+        THROWN_PATH,
+        "--require",
+        TIMERS_PATH,
+        "--eval",
+        SCRIPT_RUNNER,
+        path,
+      ],
+      { encoding: "utf8" },
+    ),
   );
-  if (run.status === 0) return undefined;
-  return run.stderr.split("\n").find((line) => /^\w*Error\b/.test(line)) ?? `exit ${run.status}`;
 };
 
 // ESCore's runtime, which the runner prepares once for every test it compiles. TLA_TS_STATS=1
@@ -600,6 +673,7 @@ const getEmitted = (program: string, isModule: boolean) => {
       target: ts.ScriptTarget.ESNext,
       module: isModule ? ts.ModuleKind.ESNext : ts.ModuleKind.Preserve,
       moduleDetection: isModule ? ts.ModuleDetectionKind.Force : ts.ModuleDetectionKind.Legacy,
+      verbatimModuleSyntax: isModule,
       alwaysStrict: false,
       ignoreDeprecations: "6.0",
     },
@@ -636,18 +710,51 @@ const compileProgram = (program: string, path: string, isModule: boolean) => {
   });
 };
 
+// The assertion that fails where a test's script or module throws, after it prints DescribeResult,
+// whose name is the code units of the name of the thrown value's constructor, as ThrownName reads
+// it, or none.
+const THREW = "the script threw an exception";
+
+// The run of a negative test, which passes where the program throws a value whose constructor has
+// the name that the test expects.
+const getThrownRun = (
+  id: string,
+  thrownType: string,
+  isEnded: boolean,
+  result: CheckResult,
+  prints: readonly string[],
+): TestRun => {
+  if (isEnded) return { id, outcome: "wrong", reason: `tla-ts throws nothing, not ${thrownType}` };
+  const message = result.failure?.message ?? result.status;
+  if (!message.includes(THREW)) return getFailedRun(id, message);
+  const units = /^\[\s*name \|->\s*<<([^>]*)>>/.exec(prints.at(-1) ?? "")?.[1] ?? "";
+  const name = String.fromCharCode(...(units.match(/\d+/g) ?? []).map(Number));
+  return name === thrownType
+    ? { id, outcome: "pass", reason: "" }
+    : name === ""
+      ? { id, outcome: "skipped", reason: "tla-ts throws a value of no constructor name" }
+      : { id, outcome: "wrong", reason: `tla-ts throws ${name}, not ${thrownType}` };
+};
+
 // Compiles a program and checks it.
 const checkProgram = async (
   id: string,
   program: string,
   path: string,
   isModule: boolean,
+  thrownType?: string,
 ): Promise<TestRun> => {
   try {
     const start = performance.now();
     const spec = compileProgram(program, path, isModule);
     const compiled = performance.now();
-    const result = await check({ ...spec, onPrint: () => {} });
+    const prints: string[] = [];
+    const result = await check({
+      ...spec,
+      onPrint: (text) => {
+        prints.push(text);
+      },
+    });
     if (process.env.TLA_TS_STATS !== undefined) {
       // The spec is its root module and the program's code.
       const size = spec.source.length + (spec.loadModule("ProgramCode")?.length ?? 0);
@@ -655,9 +762,9 @@ const checkProgram = async (
         `STATS ${id} compile=${Math.round(compiled - start)} check=${Math.round(performance.now() - compiled)} size=${size}`,
       );
     }
-    if (result.status === "success" || result.status === "deadlock") {
-      return { id, outcome: "pass", reason: "" };
-    }
+    const isEnded = result.status === "success" || result.status === "deadlock";
+    if (thrownType !== undefined) return getThrownRun(id, thrownType, isEnded, result, prints);
+    if (isEnded) return { id, outcome: "pass", reason: "" };
     return getFailedRun(id, result.failure?.message ?? result.status);
   } catch (error) {
     if (!(error instanceof TlaTypeScriptError)) return getFailedRun(id, String(error));
@@ -719,7 +826,7 @@ const runTest = async (path: string): Promise<TestRun> => {
   fixtures.forEach((text, fixture) => {
     const modulePath = getModulePath(fixture);
     mkdirSync(dirname(modulePath), { recursive: true });
-    writeFileSync(modulePath, transpileModule(text));
+    writeFileSync(modulePath, fixture.endsWith(".json") ? text : transpileModule(text));
   });
   const programPath = isLinked ? getModulePath(path) : PROGRAM_PATH;
   if (isLinked) mkdirSync(dirname(programPath), { recursive: true });
@@ -729,11 +836,12 @@ const runTest = async (path: string): Promise<TestRun> => {
   // Node runs it as a module.
   const program = isSloppy ? body : `"use strict"; ${body}`;
   // A program that TypeScript's parser rejects is one that TypeScript's emitter may fail to print
-  // for Node, and that tla-ts doesn't compile. The harness is TypeScript, so it parses as such.
+  // for Node, and that tla-ts doesn't compile. The harness is TypeScript, so it parses as such. A
+  // script parses as one, as tla-ts compiles it.
   const parseError = getParseError(
     program,
     isLinked ? programPath.replace(/\.js$/, ".ts") : "test262.ts",
-    ts.ModuleDetectionKind.Force,
+    metadata.isModule || isLinked ? ts.ModuleDetectionKind.Force : ts.ModuleDetectionKind.Legacy,
   );
   if (parseError !== undefined) {
     return {
@@ -747,12 +855,29 @@ const runTest = async (path: string): Promise<TestRun> => {
     : isImporting
       ? getScriptError(body, programPath, isSloppy)
       : await getNodeError(body, isSloppy);
-  if (nodeError !== undefined) {
-    return { id, outcome: "skipped", reason: `Node fails: ${getFirstLine(nodeError)}` };
+  // A negative test passes where Node throws what it expects, and so does tla-ts.
+  if (metadata.thrownType !== undefined && nodeError?.thrownType !== metadata.thrownType) {
+    return {
+      id,
+      outcome: "skipped",
+      reason:
+        nodeError === undefined
+          ? `Node throws nothing, not ${metadata.thrownType}`
+          : `Node throws ${nodeError.thrownType ?? "a value of no constructor name"}, not ${metadata.thrownType}`,
+    };
+  }
+  if (nodeError !== undefined && metadata.thrownType === undefined) {
+    return { id, outcome: "skipped", reason: `Node fails: ${getFirstLine(nodeError.reason)}` };
   }
   // A test runs as the JavaScript that TypeScript emits, which a linked test's own file holds, as
   // Node loads it, and which type stripping never reads.
-  return checkProgram(id, program, isLinked ? programPath : "test262.js", metadata.isModule);
+  return checkProgram(
+    id,
+    program,
+    isLinked ? programPath : "test262.js",
+    metadata.isModule,
+    metadata.thrownType,
+  );
 };
 
 const getReasonKind = (reason: string) =>
