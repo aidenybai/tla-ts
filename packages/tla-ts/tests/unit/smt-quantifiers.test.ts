@@ -873,6 +873,15 @@ describe("the sub-solver of sat.euf's mbqi, as Z3 5.3.2's mk_smt2_solver picks i
     expect(getOutput([], "(check-sat-using (using-params sat :euf true))")).toEqual(getModel(357));
   });
 
+  it("seeds the smt kernel from the global smt.random_seed", () => {
+    expect(
+      getOutput(
+        ["(set-option :smt.random_seed 5)"],
+        "(check-sat-using (using-params sat :euf true))",
+      ),
+    ).toEqual(getModel(356));
+  });
+
   it("reads the global sat parameters, not the tactic's", () => {
     expect(
       getOutput(
