@@ -933,6 +933,23 @@ export class EufSolver implements SatExtension {
     for (const solver of this.solvers) solver.preSimplify();
   }
 
+  shouldResearch(core: readonly number[]) {
+    let isResearching = false;
+    for (const solver of this.solvers) if (solver.shouldResearch(core)) isResearching = true;
+    return isResearching;
+  }
+
+  addAssumptions(assumptions: Set<number>) {
+    for (const solver of this.solvers) solver.addAssumptions(assumptions);
+  }
+
+  trackingAssumptions() {
+    const solvers = this.solvers;
+    for (let index = 0; index < solvers.length; index++)
+      if (solvers[index].trackingAssumptions()) return true;
+    return false;
+  }
+
   simplify() {
     for (const solver of this.solvers) solver.simplify();
   }

@@ -10,21 +10,16 @@ import {
 import type { Context } from "./context";
 import type { Enode } from "./enode";
 import { type BoolVar, FALSE_LITERAL, type Literal, negate, TRUE_LITERAL } from "./literal";
-import { getSubterms } from "./recfun-decl-plugin";
+import {
+  getSubterms,
+  ITEM_BODY,
+  ITEM_CASE,
+  ITEM_CORE,
+  ITEM_GUARD,
+  type PropagationItem,
+} from "./recfun-decl-plugin";
 import { FC_CONTINUE, FC_DONE, Theory } from "./theory";
 import { VarSubst } from "./var-subst";
-
-const ITEM_GUARD = 0;
-const ITEM_CORE = 1;
-const ITEM_CASE = 2;
-const ITEM_BODY = 3;
-
-// A guard and a body expansion hold their case predicate, a case expansion its application of the
-// defined function, and a core its expressions.
-interface PropagationItem {
-  kind: number;
-  exprs: number[];
-}
 
 export class TheoryRecfun extends Theory {
   readonly name = "recfun";

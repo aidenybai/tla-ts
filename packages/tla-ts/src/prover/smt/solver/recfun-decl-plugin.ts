@@ -11,6 +11,18 @@ import {
 import { ExprSafeReplace } from "./expr-safe-replace";
 import { ObjMap } from "./hashtable";
 
+export const ITEM_GUARD = 0;
+export const ITEM_CORE = 1;
+export const ITEM_CASE = 2;
+export const ITEM_BODY = 3;
+
+// A guard and a body expansion hold their case predicate, a case expansion its application of the
+// defined function, and a core its expressions.
+export interface PropagationItem {
+  kind: number;
+  exprs: number[];
+}
+
 const getChildren = (manager: AstManager, expr: number, isUnderQuantifiers: boolean) =>
   manager.kinds[expr] === KIND_QUANTIFIER
     ? isUnderQuantifiers

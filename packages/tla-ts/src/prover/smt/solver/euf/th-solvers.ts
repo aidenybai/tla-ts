@@ -18,6 +18,7 @@ import { DtSolver } from "./dt-solver";
 import { FpaSolver } from "./fpa-solver";
 import type { EufSolver } from "./euf-solver";
 import { QSolver } from "./q-solver";
+import { RecfunSolver } from "./recfun-solver";
 import type { ThSolver } from "./th-solver";
 
 // euf::solver::get_solver: the theory solver of a family, or of quantifiers for family -1. A goal
@@ -31,12 +32,8 @@ export const mkThSolver =
     if (family === FAMILY_BV) return new BvSolver(ctx, family);
     if (family === FAMILY_DATATYPE) return new DtSolver(ctx, family);
     if (family === FAMILY_FPA) return new FpaSolver(ctx, family);
-    if (
-      family === FAMILY_PB ||
-      family === FAMILY_RECFUN ||
-      family === FAMILY_FF ||
-      family === FAMILY_SPECIAL_RELATIONS
-    )
+    if (family === FAMILY_RECFUN) return new RecfunSolver(ctx);
+    if (family === FAMILY_PB || family === FAMILY_FF || family === FAMILY_SPECIAL_RELATIONS)
       throw new SmtUnsupportedError(`sat.euf theory of family ${family}`);
     return null;
   };

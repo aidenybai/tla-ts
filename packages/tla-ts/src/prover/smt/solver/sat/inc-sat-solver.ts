@@ -1,4 +1,9 @@
-import { SmtCanceledError, SmtTacticError, SmtUnsupportedError } from "../../../../errors";
+import {
+  SmtCanceledError,
+  SmtDefaultError,
+  SmtTacticError,
+  SmtUnsupportedError,
+} from "../../../../errors";
 import { type AstManager, OP_AND, OP_EQ, OP_IMPLIES, OP_NOT, OP_OR, SORT_BOOL } from "../ast";
 import { mkNot } from "../ast-util";
 import { BitBlasterRewriter } from "../bit-blast-tactic";
@@ -316,10 +321,18 @@ export class IncSatSolver {
       this.reasonUnknown = "(sat.giveup has-uninterpreted)";
       return L_UNDEF;
     }
+    if (result === L_TRUE && assumptions.length > 0) this.checkAssumptions();
     if (result === L_FALSE && this.asms.length > 0) this.extractCore(asm2fml);
     if (result === L_UNDEF) this.reasonUnknown = this.solver.reasonUnknown;
     if (result !== L_FALSE) this.core.reset();
     return result;
+  }
+
+  private checkAssumptions() {
+    const model = this.solver.model;
+    for (const lit of this.dep2asm.values())
+      if (((lit & 1) === 1 ? -model[lit >> 1] : model[lit >> 1]) !== L_TRUE)
+        throw new SmtDefaultError("bad state");
   }
 
   // internalize_var: the variables of a constant's bits, undefined for a bit the solver lacks.
