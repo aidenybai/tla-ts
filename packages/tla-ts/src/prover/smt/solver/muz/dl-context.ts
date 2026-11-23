@@ -21,7 +21,7 @@ import { RuleProperties } from "./rule-properties";
 
 export const ENGINE_DATALOG = 0;
 export const ENGINE_SPACER = 1;
-const ENGINE_BMC = 2;
+export const ENGINE_BMC = 2;
 const ENGINE_QBMC = 3;
 const ENGINE_TAB = 4;
 const ENGINE_CLP = 5;
@@ -65,7 +65,7 @@ export type ModelConverter = (model: ProtoModel) => ProtoModel;
 
 export interface Engine {
   query(query: number): number;
-  getModel(): ProtoModel;
+  getModel(): ProtoModel | undefined;
 }
 
 type EngineFactory = (context: DatalogContext, engine: number) => Engine;

@@ -1,5 +1,6 @@
 import { SmtTacticError } from "../../../../errors";
 import { type AstManager, KIND_APP, KIND_QUANTIFIER } from "../ast";
+import { ObjHashtable } from "../hashtable";
 import type { DatalogContext } from "./dl-context";
 import type { Rule } from "./dl-rule";
 
@@ -247,8 +248,17 @@ export class RuleSet {
     return this.head2rules.get(predicate) ?? [];
   }
 
-  getHeadPredicates() {
-    return this.head2rules.keys();
+  // Z3 walks the grouped rules in the slot order of a table of their heads.
+  getGroupedPredicates() {
+    const manager = this.manager;
+    const heads = new ObjHashtable((decl) => manager.getDeclHash(decl));
+    for (const predicate of this.head2rules.keys()) heads.add(predicate);
+    return heads;
+  }
+
+  isFiniteDomain() {
+    for (const rule of this.rules) if (!this.context.ruleManager.isFiniteDomain(rule)) return false;
+    return true;
   }
 
   getStrats() {

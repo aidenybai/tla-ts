@@ -178,6 +178,107 @@ describe("horn tactic", () => {
     ).toEqual(["unsat", "unsat", "unsat"]);
   });
 
+  it("unrolls a linear system with bmc until it reaches the query", () => {
+    expect(
+      run([
+        "(set-option :fp.engine bmc)",
+        "(declare-fun P (Int) Bool)",
+        "(assert (forall ((x Int)) (=> (= x 0) (P x))))",
+        "(assert (forall ((x Int)) (=> (and (P x) (< x 3)) (P (+ x 1)))))",
+        "(assert (forall ((x Int)) (=> (P x) (< x 2))))",
+        "(check-sat-using horn)",
+      ]),
+    ).toEqual(["unsat"]);
+  });
+
+  it("unrolls two predicates with bmc", () => {
+    expect(
+      run([
+        "(set-option :fp.engine bmc)",
+        "(declare-fun P (Int) Bool)",
+        "(declare-fun Q (Int Int) Bool)",
+        "(assert (forall ((x Int)) (=> (= x 0) (P x))))",
+        "(assert (forall ((x Int) (y Int)) (=> (and (P x) (= y (* 2 x))) (Q x y))))",
+        "(assert (forall ((x Int) (y Int)) (=> (and (Q x y) (< y 7)) (P (+ y 1)))))",
+        "(assert (forall ((x Int) (y Int)) (=> (Q x y) (< y 5))))",
+        "(check-sat-using horn)",
+      ]),
+    ).toEqual(["unsat"]);
+  });
+
+  it("unrolls a bit-vector system with bmc's finite domain solver", () => {
+    expect(
+      run([
+        "(set-option :fp.engine bmc)",
+        "(declare-fun P ((_ BitVec 4)) Bool)",
+        "(assert (forall ((x (_ BitVec 4))) (=> (= x #x0) (P x))))",
+        "(assert (forall ((x (_ BitVec 4))) (=> (and (P x) (bvult x #x3)) (P (bvadd x #x1)))))",
+        "(assert (forall ((x (_ BitVec 4))) (=> (P x) (not (= x #x2)))))",
+        "(check-sat-using horn)",
+      ]),
+    ).toEqual(["unsat"]);
+  });
+
+  it("stops bmc at its unrolling depth", () => {
+    expect(
+      run([
+        "(set-logic HORN)",
+        "(set-option :fp.engine bmc)",
+        "(set-option :fp.bmc.linear_unrolling_depth 2)",
+        "(declare-fun P (Int) Bool)",
+        "(assert (forall ((x Int)) (=> (= x 0) (P x))))",
+        "(assert (forall ((x Int)) (=> (and (P x) (< x 3)) (P (+ x 1)))))",
+        "(assert (forall ((x Int)) (=> (P x) (< x 2))))",
+        "(check-sat)",
+        "(get-info :reason-unknown)",
+      ]),
+    ).toEqual(["unknown", '(:reason-unknown "unknown")']);
+  });
+
+  it("answers a query command with bmc", () => {
+    expect(
+      run([
+        "(set-option :fp.engine bmc)",
+        "(declare-rel P (Int))",
+        "(declare-var x Int)",
+        "(rule (=> (= x 0) (P x)))",
+        "(rule (=> (and (P x) (< x 3)) (P (+ x 1))))",
+        "(declare-rel Bad ())",
+        "(rule (=> (and (P x) (>= x 2)) Bad))",
+        "(query Bad)",
+      ]),
+    ).toEqual(["sat"]);
+  });
+
+  // bmc has no model of its own, so the declared predicates take some value.
+  it("answers sat with bmc when no rule reaches the query", () => {
+    expect(
+      run([
+        "(set-logic HORN)",
+        "(set-option :fp.engine bmc)",
+        "(declare-fun P (Int) Bool)",
+        "(assert (forall ((x Int)) (=> (= x 0) (P x))))",
+        "(check-sat)",
+        "(get-model)",
+      ]),
+    ).toEqual(["sat", ["(", "  (define-fun P ((x!0 Int)) Bool", "    false)", ")"].join("\n")]);
+  });
+
+  // Z3 warns that nonlinear bmc is highly inefficient and unrolls the rules as a tree.
+  it("rejects a nonlinear system with bmc", () => {
+    expect(() =>
+      run([
+        "(set-logic HORN)",
+        "(set-option :fp.engine bmc)",
+        "(declare-fun P (Int) Bool)",
+        "(assert (forall ((x Int)) (=> (= x 0) (P x))))",
+        "(assert (forall ((x Int) (y Int)) (=> (and (P x) (P y)) (P (+ x y 1)))))",
+        "(assert (forall ((x Int)) (=> (P x) (< x 3))))",
+        "(check-sat-using horn)",
+      ]),
+    ).toThrow(new SmtUnsupportedError("the nonlinear bmc engine"));
+  });
+
   it("answers a nonlinear system", () => {
     expect(
       run([

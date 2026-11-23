@@ -17,7 +17,8 @@ import { L_FALSE, L_TRUE } from "../lbool";
 import { RefVector } from "../ref-vector";
 import type { RewriterOptions } from "../rewriter";
 import { getFreeVarSorts } from "../var-subst";
-import { DatalogContext, ENGINE_DATALOG, ENGINE_SPACER, FpParams } from "./dl-context";
+import { Bmc } from "./dl-bmc-engine";
+import { DatalogContext, ENGINE_BMC, ENGINE_DATALOG, FpParams } from "./dl-context";
 import { mkForall, mkPp } from "./dl-rule";
 import { SpacerDlInterface } from "./spacer-dl-interface";
 
@@ -40,8 +41,7 @@ export const createDatalogContext = (
           throw new SmtUnsupportedError("the datalog engine");
         },
       };
-    if (engine !== ENGINE_SPACER) throw new SmtUnsupportedError("the bmc engine");
-    return new SpacerDlInterface(context);
+    return engine === ENGINE_BMC ? new Bmc(context) : new SpacerDlInterface(context);
   });
 
 const UNSUPPORTED_PARAMETERS: [string, boolean][] = [
@@ -192,17 +192,19 @@ class HornTactic {
     if (reachable === L_TRUE && context.isMonotone()) goal.assert(manager.falseExpr);
     if (reachable === L_FALSE) {
       goal.reset();
-      // model2model_converter: the interpretations go to the goal's model in table order.
       const found = context.getModel();
-      found.incRef();
-      goal.addModelConversion(
-        (model) => {
-          for (const [decl, value] of found.constInterps) model.registerConst(decl, value);
-          for (const [decl, interp] of found.funcInterps) model.registerFunc(decl, interp.copy());
-          return model;
-        },
-        () => found.decRef(),
-      );
+      // model2model_converter: the interpretations go to the goal's model in table order.
+      if (found !== undefined) {
+        found.incRef();
+        goal.addModelConversion(
+          (model) => {
+            for (const [decl, value] of found.constInterps) model.registerConst(decl, value);
+            for (const [decl, interp] of found.funcInterps) model.registerFunc(decl, interp.copy());
+            return model;
+          },
+          () => found.decRef(),
+        );
+      }
     }
     return [goal];
   }
