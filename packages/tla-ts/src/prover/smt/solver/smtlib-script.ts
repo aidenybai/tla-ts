@@ -458,8 +458,7 @@ interface ScriptState {
   isSolverProducingModels: boolean;
 }
 
-// The commands that make the manager as their parse starts, at their first argument.
-const PREPARED_COMMANDS = new Set([
+const MANAGER_AT_START_COMMANDS = new Set([
   "check-sat",
   "check-sat-assuming",
   "get-value",
@@ -468,8 +467,7 @@ const PREPARED_COMMANDS = new Set([
   "query",
 ]);
 
-// The commands whose first argument, a sort or a list of terms, makes the manager.
-const ARGUMENT_COMMANDS = new Set(["get-consequences", "dbg-some-value"]);
+const MANAGER_AT_ARGUMENT_COMMANDS = new Set(["get-consequences", "dbg-some-value"]);
 
 export const runSmtlibScript = (
   text: string,
@@ -2603,8 +2601,8 @@ export const runSmtlibScript = (
     // Z3's scoped_timer ends with the command that set it, so a command starts without one.
     state.manager.limit.restart(Infinity);
     const argument = list.items[1];
-    if (PREPARED_COMMANDS.has(head.text)) useManager(argument ?? list.end);
-    if (ARGUMENT_COMMANDS.has(head.text) && argument !== undefined) useManager(argument);
+    if (MANAGER_AT_START_COMMANDS.has(head.text)) useManager(argument ?? list.end);
+    if (MANAGER_AT_ARGUMENT_COMMANDS.has(head.text) && argument !== undefined) useManager(argument);
     try {
       command(list);
     } catch (error) {
