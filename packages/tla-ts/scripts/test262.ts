@@ -4,7 +4,15 @@
 // Usage: bun scripts/run.ts test262 [--verbose] [test path prefixes]
 
 import { spawnSync, type SpawnSyncReturns } from "node:child_process";
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import {
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readdirSync,
+  readFileSync,
+  rmSync,
+  writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join, relative } from "node:path";
 import { constants, createContext, runInContext, Script } from "node:vm";
@@ -583,8 +591,14 @@ const getModulePath = (path: string) => join(TEST_DIRECTORY, relative(TEST262_DI
 // The fixtures that a test imports, by path, each a JavaScript or JSON file that a static import
 // of a relative path or an import() of one names, with or without attributes, which Node and
 // tla-ts check, or undefined where a file imports statically another way.
-const getFixtures = (path: string) => {
+const getFixtures = (path: string, candidates: readonly string[]) => {
   const fixtures = new Map<string, string>();
+  const link = (imported: string) => {
+    if (imported === path || fixtures.has(imported)) return true;
+    const importedText = readFileSync(imported, "utf8");
+    fixtures.set(imported, importedText);
+    return imported.endsWith(".json") || isLinked(imported, importedText);
+  };
   const isLinked = (file: string, text: string): boolean => {
     const sourceFile = ts.createSourceFile(file, text, ts.ScriptTarget.Latest, true);
     const getImported = (specifier: ts.Expression) =>
@@ -593,12 +607,6 @@ const getFixtures = (path: string) => {
         : undefined;
     const isModuleFile = (imported: string) =>
       /\.(js|json)$/.test(imported) && existsSync(imported);
-    const link = (imported: string) => {
-      if (imported === path || fixtures.has(imported)) return true;
-      const importedText = readFileSync(imported, "utf8");
-      fixtures.set(imported, importedText);
-      return imported.endsWith(".json") || isLinked(imported, importedText);
-    };
     // An import() of a JavaScript or JSON file that exists links it, and Node rejects any other.
     const linksCalls = (node: ts.Node): boolean => {
       const specifier =
@@ -630,7 +638,26 @@ const getFixtures = (path: string) => {
       })
     );
   };
-  return isLinked(path, readFileSync(path, "utf8")) ? fixtures : undefined;
+  return isLinked(path, readFileSync(path, "utf8")) && candidates.every(link)
+    ? fixtures
+    : undefined;
+};
+
+// The fixtures that an import() of a computed string in a test may load: every JavaScript fixture
+// in the test's directory. INTERPRETING.md says only that "they are intended to be referenced by
+// test files"; that a test's are in its own directory is the corpus's layout, where each fixture
+// that a test names is "./" and its name, and a host that runs a test in place has them all."
+const getCandidates = (path: string, source: string) => {
+  const visit = (node: ts.Node): boolean =>
+    (ts.isCallExpression(node) &&
+      node.expression.kind === ts.SyntaxKind.ImportKeyword &&
+      !(node.arguments.length > 0 && ts.isStringLiteralLike(node.arguments[0]))) ||
+    ts.forEachChild(node, visit) === true;
+  return visit(ts.createSourceFile(PROGRAM_PATH, source, ts.ScriptTarget.Latest))
+    ? readdirSync(dirname(path))
+        .filter((name) => name.endsWith("_FIXTURE.js"))
+        .map((name) => join(dirname(path), name))
+    : [];
 };
 
 // Runs a script that imports in Node, which reports an uncaught error or rejection as it ends.
@@ -702,7 +729,12 @@ const getEmitted = (program: string, isModule: boolean) => {
 // functions, which Node's type stripping rejects, so the program runs as the JavaScript that
 // TypeScript emits for it, as Node runs it here, which a linked test's own file holds too, for an
 // import of it.
-const compileProgram = (program: string, path: string, isModule: boolean) => {
+const compileProgram = (
+  program: string,
+  path: string,
+  isModule: boolean,
+  candidates: readonly string[],
+) => {
   const emitted = getEmitted(program, isModule);
   if (existsSync(path)) writeFileSync(path, emitted);
   // test262's host loads every file of code as an ES module.
@@ -710,6 +742,7 @@ const compileProgram = (program: string, path: string, isModule: boolean) => {
     steps: SCRIPT_STEPS,
     entries: [],
     isModuleHost: true,
+    candidates,
   });
 };
 
@@ -746,10 +779,11 @@ const checkProgram = async (
   path: string,
   isModule: boolean,
   thrownType?: string,
+  candidates: readonly string[] = [],
 ): Promise<TestRun> => {
   try {
     const start = performance.now();
-    const spec = compileProgram(program, path, isModule);
+    const spec = compileProgram(program, path, isModule, candidates);
     const compiled = performance.now();
     const prints: string[] = [];
     const result = await check({
@@ -820,7 +854,8 @@ const runTest = async (path: string): Promise<TestRun> => {
   const isImporting = hasImportCall(source);
   const isLinked =
     isImporting || (metadata.isModule && LINKED_MODULE.test(source.slice(source.indexOf("---*/"))));
-  const fixtures = isLinked ? getFixtures(path) : new Map<string, string>();
+  const candidates = isImporting ? getCandidates(path, source) : [];
+  const fixtures = isLinked ? getFixtures(path, candidates) : new Map<string, string>();
   if (fixtures === undefined) {
     return { id, outcome: "skipped", reason: "a test that imports other than from a fixture" };
   }
@@ -884,6 +919,7 @@ const runTest = async (path: string): Promise<TestRun> => {
     isLinked ? programPath : "test262.js",
     metadata.isModule,
     metadata.thrownType,
+    candidates.map(getModulePath),
   );
 };
 

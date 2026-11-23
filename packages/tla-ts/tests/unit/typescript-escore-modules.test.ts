@@ -28,12 +28,14 @@ const worker = new Worker(
     check: parallel.check,
     compileToEscore: compile.compileToEscore,
     runtime: prepare.prepareRuntime(workerData.directory),
+    steps: prepare.SCRIPT_STEPS,
   }));
   loading.then(() => parentPort.postMessage({ id: -1 }));
   parentPort.on("message", async (spec) => {
     const loaded = await loading;
     try {
-      const compiled = loaded.compileToEscore(readFileSync(spec.path, "utf8"), spec.path, loaded.runtime, spec.isModule);
+      const model = spec.candidates === undefined ? undefined : { steps: loaded.steps, entries: [], candidates: spec.candidates };
+      const compiled = loaded.compileToEscore(readFileSync(spec.path, "utf8"), spec.path, loaded.runtime, spec.isModule, model);
       const result = await loaded.check({ ...compiled, workers: 1, onPrint: () => {} });
       parentPort.postMessage({ id: spec.id, status: result.status, message: result.failure?.message });
     } catch (error) {
@@ -94,6 +96,27 @@ const checkEntry = (files: Record<string, string>, entry: string) => {
       id: pending.length,
       path: join(directory, entry),
       isModule: true,
+    });
+    pending.push((result) => resolve({ ...result, node }));
+  });
+};
+
+// Writes a program's files into a directory of their own, and checks the program from main.js with
+// the files of candidates, which an import() of a computed string may load, as test262 gives a
+// test its fixtures, with the status that Node exits with.
+const checkCandidates = (files: Record<string, string>, candidates: readonly string[]) => {
+  const directory = mkdtempSync(join(tmpdir(), "escore-candidates-"));
+  directories.push(directory);
+  Object.entries(files).forEach((file) => writeFileSync(join(directory, file[0]), file[1]));
+  const node = spawnSync(process.execPath, [join(directory, "main.js")], {
+    encoding: "utf8",
+  }).status;
+  return new Promise<ModuleResult & { node: number | null }>((resolve) => {
+    worker.postMessage({
+      id: pending.length,
+      path: join(directory, "main.js"),
+      isModule: true,
+      candidates: candidates.map((candidate) => join(directory, candidate)),
     });
     pending.push((result) => resolve({ ...result, node }));
   });
@@ -510,6 +533,46 @@ describe("compiles modules by specializing ESCore", () => {
           "tla-ts can't run the host's error of an import that it finds no module for",
         ),
       ]);
+    });
+  });
+
+  // An import() of a computed string loads a candidate that "./" and its name names, as Node's
+  // resolution finds it, and rejects one of a name that no file of the directory has.
+  describe("loads a candidate that an import() of a computed string names, as Node does", () => {
+    const getFiles = (expected: string, missing = "./c_FIXTURE.js") => ({
+      "package.json": '{ "type": "module" }',
+      "a_FIXTURE.js": 'export default "a";',
+      "b_FIXTURE.js": 'export default "b";',
+      "main.js": `const log = [];
+        let tick = 0;
+        const spin = () => { if (tick < 40) { tick++; Promise.resolve().then(spin); } };
+        spin();
+        const names = { a: "./a_FIXTURE.js", b: "./b_FIXTURE.js", missing: "${missing}" };
+        const load = (key) => import(names[key]).then((ns) => log.push(key + "@" + tick + ":" + ns.default), (error) => log.push(key + "@" + tick + ":" + typeof error));
+        load("b");
+        load("a");
+        load("missing");
+        setTimeout(() => { if (log.join() !== "${expected}") throw new Error(log.join()); });`,
+    });
+    const candidates = ["a_FIXTURE.js", "b_FIXTURE.js"];
+
+    it("agrees with Node", async () => {
+      const result = await checkCandidates(getFiles("missing@6:object,b@12:b,a@12:a"), candidates);
+      expect([result.node, result.message]).toEqual([0, undefined]);
+    });
+
+    it("rejects another result", async () => {
+      const result = await checkCandidates(getFiles("missing@6:object,b@12:a,a@12:b"), candidates);
+      expect([result.node, result.message]).toEqual([1, expect.stringContaining(THREW)]);
+    });
+
+    it("stops at a string it can't resolve exactly", async () => {
+      for (const missing of ["no-such-package", "./main.js", "./sub/../c_FIXTURE.js"]) {
+        const result = await checkCandidates(getFiles("", missing), candidates);
+        expect(result.message).toContain(
+          "tla-ts can't import a module other than a file that a string names",
+        );
+      }
     });
   });
 
