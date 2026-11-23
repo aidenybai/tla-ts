@@ -372,6 +372,24 @@ describe("INSTANCE matches TLC", () => {
     ]);
   });
 
+  it("keeps a tuple that a LET instance substitutes with its parameters unchanged", async () => {
+    const result = await check({
+      source:
+        "---- MODULE M ----\nEXTENDS Naturals\nVARIABLES x, y\nInit == x = 0 /\\ y = 0\nNext == LET L(w) == INSTANCE C WITH v <- <<w, y>>\n            K(w) == INSTANCE C WITH v <- <<w>>\n        IN \\/ x < 2 /\\ x' = x + 1 /\\ L(y)!Stay\n           \\/ L(x)!StayAll\n           \\/ y = 0 /\\ y' = 1 /\\ K(x)!Stay\n====",
+      config: "INIT Init\nNEXT Next",
+      loadModule: (name) =>
+        name === "C"
+          ? "---- MODULE C ----\nVARIABLE v\nStay == UNCHANGED v\nStayAll == UNCHANGED <<v>>\n===="
+          : undefined,
+    });
+    expect([result.status, result.generatedStates, result.distinctStates, result.depth]).toEqual([
+      "success",
+      14,
+      6,
+      4,
+    ]);
+  });
+
   it("keeps the parameters of a LET instance apart from the arguments it passes its operators", async () => {
     const prints: string[] = [];
     const result = await check({

@@ -439,6 +439,16 @@ export const lookupScope = (scope: Scope | undefined, name: string): Binding | u
   return undefined;
 };
 
+export const getSubstituteClosure = (
+  expression: Expression & { kind: "Apply" },
+  scope: Scope | undefined,
+) => {
+  const binding = lookupScope(scope, expression.operator);
+  return binding?.kind === "Operator" && binding.operator.kind === "Closure"
+    ? binding.operator
+    : undefined;
+};
+
 export const bindValue = (scope: Scope | undefined, name: string, value: Value): Scope => ({
   name,
   binding: { kind: "Value", value },
