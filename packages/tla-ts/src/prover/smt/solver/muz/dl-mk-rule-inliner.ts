@@ -461,11 +461,8 @@ export class MkRuleInliner implements RuleTransformerPlugin {
 
   private delRule(rule: Rule, position: number) {
     this.headVisitor.delPosition(rule.head, position);
-    this.headIndex.erase(rule.head);
-    for (let index = 0; index < rule.uninterpretedSize; index++) {
+    for (let index = 0; index < rule.uninterpretedSize; index++)
       this.tailVisitor.delPosition(rule.tail[index], position);
-      this.tailIndex.erase(rule.tail[index]);
-    }
   }
 
   private getUnifiers(index: SubstitutionTree, visitor: Visitor, expr: number) {

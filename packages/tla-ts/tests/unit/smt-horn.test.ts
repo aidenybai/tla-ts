@@ -414,6 +414,17 @@ describe("horn tactic", () => {
     ]);
   });
 
+  it("keeps a replaced rule's literals in the linear inliner's indexes", () => {
+    expect(
+      run([
+        "(set-option :fp.engine bmc)",
+        "(set-option :fp.xform.inline_eager false)",
+        "(set-option :fp.bmc.linear_unrolling_depth 6)",
+        ...MUTUAL_COUNTER_QUERY,
+      ]),
+    ).toEqual(["sat", "(:rlimit 2832)"]);
+  });
+
   it("answers a query command with bmc", () => {
     expect(
       run([
