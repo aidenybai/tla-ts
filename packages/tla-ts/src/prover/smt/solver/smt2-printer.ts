@@ -120,6 +120,13 @@ export interface PrintEnvironment {
   sortInfos: ReadonlyMap<number, SortInfo>;
 }
 
+export const DEFAULT_PRINT_ENVIRONMENT: PrintEnvironment = {
+  options: DEFAULT_PRINT_OPTIONS,
+  isUsed: () => false,
+  isClashing: () => false,
+  sortInfos: NO_SORT_INFOS,
+};
+
 export const LINE_BREAK: LineBreakFormat = { kind: "line-break" };
 const SMALL_INDENT = 2;
 const MAX_INDENT = 16;

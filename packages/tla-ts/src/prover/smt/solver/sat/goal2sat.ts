@@ -24,17 +24,10 @@ import {
 import { getDependencyValues, type Goal } from "../goal";
 import type { ObjMap } from "../hashtable";
 import { RefVector } from "../ref-vector";
-import { DEFAULT_PRINT_OPTIONS, NO_SORT_INFOS, printExpr } from "../smt2-printer";
+import { DEFAULT_PRINT_ENVIRONMENT, printExpr } from "../smt2-printer";
 import { NULL_LITERAL } from "./clause";
 import { PbSolver, type SatInternalizer } from "./pb-solver";
 import type { Solver } from "./solver";
-
-const PRINT_ENVIRONMENT = {
-  options: DEFAULT_PRINT_OPTIONS,
-  isUsed: () => false,
-  isClashing: () => false,
-  sortInfos: NO_SORT_INFOS,
-};
 
 interface Frame {
   expr: number;
@@ -191,7 +184,7 @@ export class Goal2Sat implements SatInternalizer, EufInternalizer {
 
   private throwOpNotHandled(expr: number) {
     throw new SmtTacticError(
-      `operator ${printExpr(this.manager, PRINT_ENVIRONMENT, expr)} not supported, apply simplifier before invoking translator`,
+      `operator ${printExpr(this.manager, DEFAULT_PRINT_ENVIRONMENT, expr)} not supported, apply simplifier before invoking translator`,
     );
   }
 
@@ -407,7 +400,7 @@ export class Goal2Sat implements SatInternalizer, EufInternalizer {
     const manager = this.manager;
     if (manager.getNumArgs(expr) !== 2)
       throw new SmtTacticError(
-        `unexpected number of arguments to ${printExpr(manager, PRINT_ENVIRONMENT, expr)}`,
+        `unexpected number of arguments to ${printExpr(manager, DEFAULT_PRINT_ENVIRONMENT, expr)}`,
       );
     const results = this.results;
     const isXor = manager.getOp(expr) === OP_XOR;

@@ -15,7 +15,7 @@ import { flattenAndVector, forEachExpr } from "../ast-util";
 import { assign, assignOwned, release } from "../expr-ref";
 import { LabelRewriter } from "../label-rewriter";
 import { RefVector } from "../ref-vector";
-import { DEFAULT_PRINT_OPTIONS, NO_SORT_INFOS, printExpr } from "../smt2-printer";
+import { DEFAULT_PRINT_ENVIRONMENT, printExpr } from "../smt2-printer";
 import { getFreeVarSorts, VarSubst } from "../var-subst";
 import { simplifyQuantifiers } from "../qe";
 import { QuantifierHoister } from "../quant-hoist";
@@ -23,15 +23,8 @@ import type { DatalogContext } from "./dl-context";
 import { Hnf } from "./hnf";
 import type { RuleSet } from "./dl-rule-set";
 
-const PRINT_ENVIRONMENT = {
-  options: DEFAULT_PRINT_OPTIONS,
-  isUsed: () => false,
-  isClashing: () => false,
-  sortInfos: NO_SORT_INFOS,
-};
-
 export const mkPp = (manager: AstManager, expr: number) =>
-  printExpr(manager, PRINT_ENVIRONMENT, expr);
+  printExpr(manager, DEFAULT_PRINT_ENVIRONMENT, expr);
 
 // output_predicate of src/muz/base/dl_util.cpp.
 const outputPredicate = (manager: AstManager, predicate: number) =>
