@@ -44,7 +44,7 @@ class ElimStar extends RewriterTpl {
   }
 }
 
-class QeLite {
+export class QeLite {
   private der: EqDer;
   private fm: Fm;
   private elimStar: ElimStar;
@@ -337,18 +337,6 @@ class QeLite {
     return result;
   }
 }
-
-// qe_lite over a vector of conjuncts, with the variables isVariableIndex picks as the eliminable
-// ones.
-export const applyQeLiteToConjuncts = (
-  manager: AstManager,
-  isVariableIndex: (index: number) => boolean,
-  conjs: RefVector,
-) => {
-  const qe = new QeLite(manager, false);
-  qe.reduceConjs(isVariableIndex, conjs);
-  qe.release();
-};
 
 export const applyQeLite = (manager: AstManager, goal: Goal) => {
   const qe = new QeLite(manager, true);

@@ -75,6 +75,23 @@ const getUnrolledCounter = (depth: number) => [
   "(get-info :rlimit)",
 ];
 
+const MUTUAL_COUNTER_QUERY = [
+  "(declare-rel P (Int))",
+  "(declare-rel Q (Int))",
+  "(declare-rel S (Int))",
+  "(declare-rel bad ())",
+  "(declare-var x Int)",
+  "(declare-var y Int)",
+  "(declare-var z Int)",
+  "(rule (=> (= x 0) (P x)))",
+  "(rule (=> (and (Q y) (= x (+ y 1))) (P x)))",
+  "(rule (=> (and (P z) (= y (+ z 1))) (Q y)))",
+  "(rule (=> (and (Q y) (= x (+ y 2))) (S x)))",
+  "(rule (=> (and (S x) (> x 4)) bad))",
+  "(query bad)",
+  "(get-info :rlimit)",
+];
+
 const COUNTER_PROFILE = [
   "canceled",
   "",
@@ -388,6 +405,13 @@ describe("horn tactic", () => {
 
   it("leaves the array step out of the qe_lite that fixes a resolvent's unbound variables", () => {
     expect(run(getUnrolledCounter(4))).toEqual(["unsat", "(:rlimit 2355)"]);
+  });
+
+  it("keeps the rule manager's qe_lite and its terms from one rule to the next", () => {
+    expect(run(["(set-option :fp.engine bmc)", ...MUTUAL_COUNTER_QUERY])).toEqual([
+      "sat",
+      "(:rlimit 1363)",
+    ]);
   });
 
   it("answers a query command with bmc", () => {

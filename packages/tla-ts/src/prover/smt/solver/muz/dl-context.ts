@@ -13,7 +13,7 @@ import type { Definition } from "../goal";
 import type { ProtoModel } from "../proto-model";
 import { type RewriterOptions, Rewriter } from "../rewriter";
 import { RefVector } from "../ref-vector";
-import { applyQeLiteToConjuncts } from "../qe-lite";
+import { QeLite } from "../qe-lite";
 import { applyDefinitions } from "../tactic";
 import { BindVariables, mkExists, type Rule, RuleManager, getUsedVars } from "./dl-rule";
 import { RuleSet } from "./dl-rule-set";
@@ -74,6 +74,7 @@ type EngineFactory = (context: DatalogContext, engine: number) => Engine;
 
 export class DatalogContext {
   readonly ruleManager: RuleManager;
+  private qe: QeLite;
   private ruleProperties: RuleProperties;
   private preds = new Set<number>();
   private bindVariables: BindVariables;
@@ -101,6 +102,7 @@ export class DatalogContext {
   ) {
     this.params = new FpParams(parameters);
     this.ruleManager = new RuleManager(manager, this);
+    this.qe = new QeLite(manager, false);
     this.ruleProperties = new RuleProperties(this);
     this.bindVariables = new BindVariables(manager);
     this.ruleSet = new RuleSet(this);
@@ -395,7 +397,7 @@ export class DatalogContext {
     });
     const conjs = new RefVector(manager);
     for (const literal of rule.tail.slice(rule.uninterpretedSize)) conjs.push(literal);
-    applyQeLiteToConjuncts(manager, (index) => !indexSet.has(index), conjs);
+    this.qe.reduceConjs((index) => !indexSet.has(index), conjs);
     const interpreted = rule.tail.slice(rule.uninterpretedSize);
     const isChanged =
       conjs.size !== interpreted.length ||
