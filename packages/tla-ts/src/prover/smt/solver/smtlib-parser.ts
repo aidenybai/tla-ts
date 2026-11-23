@@ -1355,8 +1355,12 @@ export const createSmtlibReader = (
       const name = sexpr.items[1];
       if (!isSymbol(name))
         throw new SmtParseError("invalid indexed sort, symbol expected", name ?? sexpr.end);
-      if (name.text === "FiniteField") throw new SmtUnsupportedError("the sort FiniteField");
       const indices = sexpr.items.slice(2);
+      if (name.text === "FiniteField") {
+        if (!restricted.hasFf)
+          throw new SmtParseError("logic does not support finite fields", indices[0] ?? sexpr.end);
+        throw new SmtUnsupportedError("the sort FiniteField");
+      }
       const decl = sortDecls.get(name.text);
       if (decl === undefined)
         throw new SmtParseError(`unknown sort '${name.text}'`, indices[0] ?? sexpr.end);

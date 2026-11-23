@@ -1777,4 +1777,23 @@ describe("the builtin sorts, as Z3 5.3.2's plugins make them", () => {
       "sat",
     ]);
   });
+
+  it("rejects a finite field sort in a logic without finite fields", () => {
+    expect(
+      run([
+        "(set-logic QF_LIA)",
+        "(declare-const x (_ FiniteField 7))",
+        "(declare-const y (_ FiniteField))",
+        "(define-sort T () (Array Int (_ FiniteField 7)))",
+        "(declare-datatype D ((d (f (_ FiniteField 7)))))",
+        "(check-sat)",
+      ]),
+    ).toEqual([
+      '(error "line 2 column 32: logic does not support finite fields")',
+      '(error "line 3 column 31: logic does not support finite fields")',
+      `(error "line 4 column 19: unknown sort 'Array'")`,
+      '(error "line 5 column 42: logic does not support finite fields")',
+      "sat",
+    ]);
+  });
 });
