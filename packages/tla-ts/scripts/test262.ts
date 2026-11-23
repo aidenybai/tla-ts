@@ -225,7 +225,8 @@ const getNodeError = (source: string, isSloppy: boolean) =>
       compilerOptions: {
         module: ts.ModuleKind.CommonJS,
         target: ts.ScriptTarget.ESNext,
-        moduleDetection: isSloppy ? ts.ModuleDetectionKind.Legacy : ts.ModuleDetectionKind.Force,
+        // A script, as tla-ts compiles it, where await may name a binding.
+        moduleDetection: ts.ModuleDetectionKind.Legacy,
         alwaysStrict: !isSloppy,
       },
     }).outputText,
@@ -729,11 +730,12 @@ const runTest = async (path: string): Promise<TestRun> => {
   // Node runs it as a module.
   const program = isSloppy ? body : `"use strict"; ${body}`;
   // A program that TypeScript's parser rejects is one that TypeScript's emitter may fail to print
-  // for Node, and that tla-ts doesn't compile. The harness is TypeScript, so it parses as such.
+  // for Node, and that tla-ts doesn't compile. The harness is TypeScript, so it parses as such. A
+  // script parses as one, as tla-ts compiles it.
   const parseError = getParseError(
     program,
     isLinked ? programPath.replace(/\.js$/, ".ts") : "test262.ts",
-    ts.ModuleDetectionKind.Force,
+    metadata.isModule || isLinked ? ts.ModuleDetectionKind.Force : ts.ModuleDetectionKind.Legacy,
   );
   if (parseError !== undefined) {
     return {
