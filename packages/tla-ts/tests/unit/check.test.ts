@@ -11357,6 +11357,23 @@ ASSUME TLCFP(a) = -887695703
     expect(prints).toEqual(["{}", "{1}", "{}", "{1}"]);
   });
 
+  it.each([
+    ["an enumeration", "<<F \\cup Nat>> = <<{1}>>"],
+    ["a filter's enumeration", "<<{y \\in F \\cup Nat : TRUE}>> = <<{1}>>"],
+    ["a comparison of overridden sets", "<<Seq(F)>> = <<Nat>>"],
+  ])(
+    "formats the message of %s that fails inside a comparison once, as TLC does",
+    async (_name, comparison) => {
+      const prints: string[] = [];
+      await check({
+        source: `---- MODULE M ----\nEXTENDS Naturals, Sequences, TLC\nASSUME LET F == {s \\in SUBSET {1} : PrintT(s)} IN ${comparison}\n====`,
+        config: "",
+        onPrint: (text) => prints.push(text),
+      });
+      expect(prints).toEqual(["{}", "{1}"]);
+    },
+  );
+
   it("formats an error's message as it throws in a check after a comparison failed", async () => {
     await check({
       source:

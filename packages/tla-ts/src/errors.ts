@@ -188,7 +188,7 @@ export class TlaUnassignedError extends TlaEvaluationError {
 export class TlaModuleError extends TlaEvaluationError {
   exitCode: number;
 
-  constructor(message: string, exitCode: number = EXIT_STATUS.error) {
+  constructor(message: string | (() => string), exitCode: number = EXIT_STATUS.error) {
     super(message);
     this.exitCode = exitCode;
   }
