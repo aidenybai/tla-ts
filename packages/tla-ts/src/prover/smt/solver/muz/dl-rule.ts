@@ -1,4 +1,4 @@
-import { SmtTacticError, SmtUnsupportedError } from "../../../../errors";
+import { SmtTacticError } from "../../../../errors";
 import {
   type AstManager,
   getSymbolName,
@@ -12,6 +12,7 @@ import {
   QUANTIFIER_FORALL,
 } from "../ast";
 import { flattenAndVector, forEachExpr } from "../ast-util";
+import { LabelRewriter } from "../label-rewriter";
 import { RefVector } from "../ref-vector";
 import { DEFAULT_PRINT_OPTIONS, printExpr } from "../smt2-printer";
 import { getFreeVarSorts, VarSubst } from "../var-subst";
@@ -216,12 +217,14 @@ export class BindVariables {
 
 export class RuleManager {
   private hnf: Hnf;
+  private labelRewriter: LabelRewriter;
 
   constructor(
     readonly manager: AstManager,
     private context: DatalogContext,
   ) {
     this.hnf = new Hnf(manager);
+    this.labelRewriter = new LabelRewriter(manager);
   }
 
   private pin(expr: number) {
@@ -231,8 +234,7 @@ export class RuleManager {
 
   mkRule(fml: number, rules: RuleSet, name?: string) {
     const bound = this.context.bindVars(fml, true);
-    if (this.manager.hasLabelFlags[bound]) throw new SmtUnsupportedError("labels in Horn rules");
-    this.mkRuleCore(bound, rules, name);
+    this.mkRuleCore(this.labelRewriter.rewrite(bound), rules, name);
   }
 
   private mkRuleCore(fml: number, rules: RuleSet, name: string | undefined) {

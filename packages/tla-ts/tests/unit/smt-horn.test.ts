@@ -279,6 +279,18 @@ describe("horn tactic", () => {
     ).toThrow(new SmtUnsupportedError("the nonlinear bmc engine"));
   });
 
+  it("removes the labels of a Horn rule", () => {
+    expect(
+      run([
+        "(set-option :fp.engine bmc)",
+        "(declare-fun P (Int) Bool)",
+        "(assert (forall ((x Int)) (=> (! (> x 0) :lblpos L) (P x))))",
+        "(check-sat-using horn)",
+        "(get-model)",
+      ]),
+    ).toEqual(["sat", ["(", "  (define-fun P ((x!0 Int)) Bool", "    false)", ")"].join("\n")]);
+  });
+
   it("answers a nonlinear system", () => {
     expect(
       run([
