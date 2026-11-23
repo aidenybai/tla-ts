@@ -1176,7 +1176,7 @@ const getKnownSize = (set: Value): number | undefined => {
       return getCardinality(set);
     }
     case "SetOperation": {
-      if (set.cost?.charges === undefined) return undefined;
+      if (set.cost?.charges === undefined) return set.enumerated?.elements.length;
       if (set.operator !== "\\cup") {
         const drawn = getDrawnSet(set);
         return getKnownSize(drawn) !== undefined &&
@@ -1189,7 +1189,8 @@ const getKnownSize = (set: Value): number | undefined => {
       return leftSize === undefined || rightSize === undefined ? undefined : leftSize + rightSize;
     }
     case "Union": {
-      if (set.cost?.charges === undefined || getKnownSize(set.base) === undefined) return undefined;
+      if (set.cost?.charges === undefined) return set.enumerated?.elements.length;
+      if (getKnownSize(set.base) === undefined) return undefined;
       const sets = getStreamedElements(set.base);
       let size = 0;
       for (let index = 0; index < sets.length; index++) {
@@ -1423,8 +1424,7 @@ const chargeIsEmpty = (coverage: Coverage, set: Value): boolean | undefined => {
     }
     case "SetOperation":
     case "Union": {
-      const size =
-        set.cost?.charges === undefined ? set.enumerated?.elements.length : getKnownSize(set);
+      const size = getKnownSize(set);
       if (size === undefined) return undefined;
       createEnumerator(coverage, set, size, false).next();
       return size === 0;

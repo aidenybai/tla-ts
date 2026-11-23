@@ -9934,6 +9934,29 @@ ASSUME TLCFP(a) = -887695703
     },
   );
 
+  it("charges the conversion of a product after sizing it converts its union", async () => {
+    expect(
+      await getNextCoverageLines(
+        "x' = 0 /\\ LET S == UNION { [proc : {p}, idx : 1..1] : p \\in {1, 2} } IN \\E R \\in SUBSET (S \\X S) : Cardinality(R) = 2",
+      ),
+    ).toEqual([
+      "line 5, col 9 to line 5, col 14 of module M: 1",
+      "line 5, col 28 to line 5, col 76 of module M: 1",
+      "|line 5, col 34 to line 5, col 76 of module M: 1:24",
+      "||line 5, col 36 to line 5, col 59 of module M: 2:14",
+      "|||line 5, col 44 to line 5, col 46 of module M: 2:10",
+      "||||line 5, col 45 to line 5, col 45 of module M: 2",
+      "|||line 5, col 49 to line 5, col 58 of module M: 2",
+      "||line 5, col 69 to line 5, col 74 of module M: 1:3",
+      "line 5, col 81 to line 5, col 125 of module M: 1",
+      "|line 5, col 108 to line 5, col 125 of module M: 6",
+      "|line 5, col 90 to line 5, col 104 of module M: 1",
+      "||line 5, col 98 to line 5, col 103 of module M: 1:12",
+      "|||line 5, col 98 to line 5, col 98 of module M: 1",
+      "|||line 5, col 103 to line 5, col 103 of module M: 1",
+    ]);
+  });
+
   it("enumerates the subsets a state keeps without charging their base again", async () => {
     expect(
       await getCoverageLines(
