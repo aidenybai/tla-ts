@@ -105,7 +105,11 @@ import {
   STANDARD_EXTENDS,
 } from "./standard-modules";
 import { getStandardModule, getStandardRange, STANDARD_LEVELS } from "./standard-definitions";
-import { createModuleSubexpressions, resolveInstanceSubexpressions } from "./subexpressions";
+import {
+  createModuleSubexpressions,
+  type Lookup,
+  resolveInstanceSubexpressions,
+} from "./subexpressions";
 import {
   checkModuleLevels,
   type InstanceCopy,
@@ -820,7 +824,13 @@ export const createEnvironment = (
     const suffix = `#${copyCount++}`;
     const renamed = new Map(instance.params.map((param) => [param.name, `${param.name}${suffix}`]));
     const substitutions = resolveSubstitutions(
-      resolveInstanceSubexpressions(instance, module, subexpressionRecords),
+      resolveInstanceSubexpressions(
+        instance,
+        (name) =>
+          module.definitions.find((definition) => definition.name === name) ??
+          getLinkedDefinition(resolved.get(name)?.key ?? name),
+        subexpressionRecords,
+      ),
       getSymbolTableOrdered(instance.module, declarations),
       resolved,
       module.name,
@@ -1120,6 +1130,7 @@ export const createEnvironment = (
   const instantiateLocally = (
     instance: Instance,
     lets: Definition[],
+    lookup: Lookup,
     instancer: string,
     nested: LinkedModule | undefined,
     isResolved: (name: string) => boolean,
@@ -1141,10 +1152,25 @@ export const createEnvironment = (
     }
     const linked = nested ?? getLinkedModule(instance.module, instancer);
     const suffix = `#${copyCount++}`;
-    const explicitSubstitutions = new Map(
-      instance.substitutions.map((item) => [item.name, item.expression]),
-    );
     const declarations = linked.declarations;
+    const operatorSubstitutions = resolveInstanceSubexpressions(
+      {
+        ...instance,
+        substitutions: instance.substitutions.filter((item) =>
+          declarations.some(
+            (declaration) => declaration.name === item.name && declaration.arity > 0,
+          ),
+        ),
+      },
+      (name) => lets.find((definition) => definition.name === name) ?? lookup(name),
+      subexpressionRecords,
+    ).substitutions;
+    const explicitSubstitutions = new Map(
+      [...instance.substitutions, ...operatorSubstitutions].map((item) => [
+        item.name,
+        item.expression,
+      ]),
+    );
     const getReplacement = (declaration: OperatorParam): Expression =>
       explicitSubstitutions.get(declaration.name) ?? {
         kind: "Identifier",
@@ -1570,8 +1596,8 @@ export const createEnvironment = (
     };
     const subexpressions = createModuleSubexpressions(
       parsed,
-      getLetInstanceExpansion(parsed, (instance, lets) =>
-        instantiateLocally(instance, lets, parsed.name, getLetModule(instance), (name) =>
+      getLetInstanceExpansion(parsed, (instance, lets, lookup) =>
+        instantiateLocally(instance, lets, lookup, parsed.name, getLetModule(instance), (name) =>
           isBoundBefore(name, instance.location),
         ),
       ),

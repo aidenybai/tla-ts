@@ -28,6 +28,7 @@ import {
   isInstantiated,
   LOCAL_RESOLUTION,
 } from "./resolve";
+import type { Lookup } from "./subexpressions";
 
 export const contextualApplications = new WeakSet<Expression>();
 
@@ -1216,7 +1217,7 @@ const getUnnamedStatement = (theorem: Theorem) =>
 
 export const getLetInstanceExpansion = (
   module: Module,
-  instantiate: (instance: Instance, lets: Definition[]) => Definition[],
+  instantiate: (instance: Instance, lets: Definition[], lookup: Lookup) => Definition[],
 ) => {
   const hasLetInstances =
     module.definitions.some((definition) => hasLetInstance(definition.body)) ||
@@ -1226,6 +1227,12 @@ export const getLetInstanceExpansion = (
       return statement !== undefined && hasLetInstance(statement);
     });
   return hasLetInstances
-    ? (expression: Expression) => expandLetInstances(expression, instantiate, [], [])
+    ? (expression: Expression, lookup: Lookup) =>
+        expandLetInstances(
+          expression,
+          (instance, lets) => instantiate(instance, lets, lookup),
+          [],
+          [],
+        )
     : undefined;
 };

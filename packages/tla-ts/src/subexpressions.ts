@@ -62,7 +62,7 @@ import {
   type SubexpressionRecords,
 } from "./resolve";
 
-type Lookup = (name: string) => Definition | undefined;
+export type Lookup = (name: string) => Definition | undefined;
 
 interface FoundLabel {
   label: Expression & { kind: "Label" };
@@ -1037,12 +1037,12 @@ const resolveInstance = (
 
 export const resolveInstanceSubexpressions = (
   instance: Instance,
-  module: Module,
+  lookup: Lookup,
   records: SubexpressionRecords,
 ): Instance =>
   resolveInstance(
     instance,
-    (name) => module.definitions.find((definition) => definition.name === name),
+    lookup,
     () => undefined,
     records,
     () => false,
@@ -1051,7 +1051,7 @@ export const resolveInstanceSubexpressions = (
 
 export const createModuleSubexpressions = (
   module: Module,
-  expand: ((expression: Expression) => Expression) | undefined,
+  expand: ((expression: Expression, lookup: Lookup) => Expression) | undefined,
   getAvailable: Lookup,
   getStandardDefinition: Lookup,
   records: SubexpressionRecords,
@@ -1119,7 +1119,8 @@ export const createModuleSubexpressions = (
       }
       return resolvedDefinitions.get(definition) ?? definition;
     };
-  const getExpanded = (expression: Expression) => (expand ? expand(expression) : expression);
+  const getExpanded = (expression: Expression, lookup: Lookup) =>
+    expand ? expand(expression, lookup) : expression;
   const ordered = [
     ...module.definitions.map((definition) => ({ definition, isClause: false })),
     ...clauses.map((definition) => ({ definition, isClause: true })),
@@ -1339,7 +1340,9 @@ export const createModuleSubexpressions = (
         definition,
         resolveDefinition(definition, (expression, bound) =>
           resolve(
-            entry.isClause ? expression : getExpanded(expression),
+            entry.isClause
+              ? expression
+              : getExpanded(expression, getVisibleLookup(definitionLookup, definition.location)),
             definition.location,
             bound,
           ),
@@ -1376,7 +1379,14 @@ export const createModuleSubexpressions = (
             isMapped(assumption.expression)
               ? {
                   ...assumption,
-                  expression: resolve(getExpanded(assumption.expression), assumption.location, []),
+                  expression: resolve(
+                    getExpanded(
+                      assumption.expression,
+                      getVisibleLookup(definitionLookup, assumption.location),
+                    ),
+                    assumption.location,
+                    [],
+                  ),
                 }
               : assumption,
           ];
@@ -1394,7 +1404,9 @@ export const createModuleSubexpressions = (
                 getSharedBody(statement) ??
                 (statement.kind === "AssumeProve"
                   ? resolver.resolveStatement(statement)
-                  : resolver.resolveStatement(getExpanded(statement))),
+                  : resolver.resolveStatement(
+                      getExpanded(statement, getVisibleLookup(proofLookup, theorem.location)),
+                    )),
               proof:
                 theorem.proof &&
                 createModuleProofResolver(
