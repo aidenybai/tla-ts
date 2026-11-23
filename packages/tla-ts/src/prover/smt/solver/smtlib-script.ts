@@ -1071,8 +1071,7 @@ export const runSmtlibScript = (
     parts.lastAssertions.reset();
     parts.assertions.reset();
   };
-  // init_manager marks the manager made before it makes the solver, so a failure leaves no solver
-  // and no logic check.
+  // init_manager marks the manager made before the solver, so a failure leaves no solver or logic check.
   const useManager = (at: SExpr) => {
     if (state.isProofsEnabled !== undefined) return;
     state.isProofsEnabled = settings.parameters.get("proof") === "true";
