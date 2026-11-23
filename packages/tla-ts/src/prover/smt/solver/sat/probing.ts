@@ -9,10 +9,10 @@ export class Probing {
   private assignedLits: number[] = [];
   private toAssert: number[] = [];
   private counter = 0;
-  private isEnabled: boolean;
-  private limit: number;
-  private isCaching: boolean;
-  private isBinary: boolean;
+  private isEnabled = false;
+  private limit = 0;
+  private isCaching = false;
+  private isBinary = false;
   private numAssigned = 0;
   private cachedBins: (number[] | undefined)[] = [];
   private big: Big;
@@ -22,6 +22,10 @@ export class Probing {
     params: SatParams,
   ) {
     this.big = new Big(solver.rand);
+    this.updateParams(params);
+  }
+
+  updateParams(params: SatParams) {
     this.isEnabled = getBool(params, "probing", true);
     this.limit = getNumber(params, "probing_limit", 5000000);
     this.isCaching = getBool(params, "probing_cache", true);

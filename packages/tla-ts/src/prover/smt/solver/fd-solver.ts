@@ -506,6 +506,10 @@ export class FdSolver {
     return this.solver.reasonUnknown;
   }
 
+  updateParams(params: SatParams) {
+    this.solver.updateParams(params);
+  }
+
   assertExpr(form: number, name = -1) {
     this.clearModel();
     this.fmls.forms.push(form);

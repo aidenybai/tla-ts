@@ -225,7 +225,7 @@ export class Solver {
   private lemmaMinStack: number[] = [];
 
   constructor(
-    readonly params: SatParams,
+    public params: SatParams,
     readonly limit: ResourceLimit,
     isIncremental = false,
   ) {
@@ -238,11 +238,17 @@ export class Solver {
     this.scc = new Scc(this, this.config);
     this.asymmBranch = new AsymmBranch(this, params);
     this.probing = new Probing(this, params);
-    this.updateParams();
+    this.updateParams(params);
     this.mkVar(false);
   }
 
-  private updateParams() {
+  updateParams(params: SatParams) {
+    this.params = new Map([...this.params, ...params]);
+    this.config.updateParams(params);
+    this.simplifier.updateParams(params);
+    this.asymmBranch.updateParams(params);
+    this.probing.updateParams(params);
+    this.rand.setSeed(this.config.randomSeed);
     this.fastGlueAvg.setAlpha(this.config.fastGlueAvg);
     this.slowGlueAvg.setAlpha(this.config.slowGlueAvg);
     this.fastGlueBackup.setAlpha(this.config.fastGlueAvg);

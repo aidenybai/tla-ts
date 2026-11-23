@@ -10,12 +10,12 @@ export class AsymmBranch {
   private rand = new RandomGen(0);
   private calls = 0;
   private touchIndex = 0;
-  private isEnabled: boolean;
-  private rounds: number;
-  private delay: number;
-  private isSampled: boolean;
-  private isAll: boolean;
-  private limit: number;
+  private isEnabled = false;
+  private rounds = 0;
+  private delay = 0;
+  private isSampled = false;
+  private isAll = false;
+  private limit = 0;
   private elimLiterals = 0;
   private tr = 0;
   private pos: number[] = [];
@@ -27,6 +27,10 @@ export class AsymmBranch {
     private solver: Solver,
     params: SatParams,
   ) {
+    this.updateParams(params);
+  }
+
+  updateParams(params: SatParams) {
     this.isEnabled = getBool(params, "asymm_branch", true);
     this.rounds = getNumber(params, "asymm_branch.rounds", 2);
     this.delay = getNumber(params, "asymm_branch.delay", 1);

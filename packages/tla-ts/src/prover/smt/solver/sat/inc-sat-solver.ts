@@ -47,6 +47,12 @@ const BIT_BLAST_PARAMS = {
   isBlastingFull: false,
 };
 
+const getCardinalityParams = (params: SatParams) =>
+  new Map<string, TacticParam>([
+    ["keep_cardinality_constraints", params.get("cardinality.solver") !== false],
+    ["pb.solver", params.get("pb.solver") ?? "solver"],
+  ]);
+
 interface Scope {
   readonly converters: Goal["converters"];
   readonly fmlsSize: number;
@@ -78,7 +84,7 @@ export class IncSatSolver {
   private scopes: Scope[] = [];
   reasonUnknown = "no reason given";
   wasUnknown = false;
-  private readonly cardinalityParams: TacticParams;
+  private cardinalityParams: TacticParams;
 
   // A theory factory runs the solver in sat.euf mode, with the euf solver as its extension.
   constructor(
@@ -104,10 +110,15 @@ export class IncSatSolver {
     this.satConverter = new Sat2GoalConverter(manager);
     this.internalized = new RefVector(manager);
     this.propagator = new PropagateValuesTactic(manager);
-    this.cardinalityParams = new Map<string, TacticParam>([
-      ["keep_cardinality_constraints", params.get("cardinality.solver") !== false],
-      ["pb.solver", params.get("pb.solver") ?? "solver"],
-    ]);
+    this.cardinalityParams = getCardinalityParams(params);
+  }
+
+  updateParams(params: SatParams) {
+    this.cardinalityParams = getCardinalityParams(params);
+    this.solver.updateParams(params);
+    // Deviation from Z3: its fd solver crashes when sat.euf is set after the sat solver starts.
+    if (params.get("euf") === true && this.goal2sat.euf === null)
+      throw new SmtUnsupportedError("the option :sat.euf after the sat solver starts");
   }
 
   private isClause(expr: number): boolean {

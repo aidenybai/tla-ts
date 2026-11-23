@@ -679,28 +679,28 @@ export class Simplifier {
   private subCounter = 0;
   private elimCounter = 0;
   private resolventLit = NULL_LITERAL;
-  private isAbce: boolean;
-  private isCce: boolean;
-  private isAcce: boolean;
-  private bceDelay: number;
-  private isBce: boolean;
-  private isAte: boolean;
-  private bceAt: number;
-  private blockedClauseLimit: number;
-  readonly isIncrementalMode: boolean;
-  private resLimit: number;
-  private resOccCutoff: number;
-  private resOccCutoff1: number;
-  private resOccCutoff2: number;
-  private resOccCutoff3: number;
-  private resLitCutoff1: number;
-  private resLitCutoff2: number;
-  private resLitCutoff3: number;
-  private resClsCutoff1: number;
-  private resClsCutoff2: number;
-  private isSubsumption: boolean;
-  private subsumptionLimit: number;
-  readonly isElimVars: boolean;
+  private isAbce = false;
+  private isCce = false;
+  private isAcce = false;
+  private bceDelay = 0;
+  private isBce = false;
+  private isAte = false;
+  private bceAt = 0;
+  private blockedClauseLimit = 0;
+  isIncrementalMode = false;
+  private resLimit = 0;
+  private resOccCutoff = 0;
+  private resOccCutoff1 = 0;
+  private resOccCutoff2 = 0;
+  private resOccCutoff3 = 0;
+  private resLitCutoff1 = 0;
+  private resLitCutoff2 = 0;
+  private resLitCutoff3 = 0;
+  private resClsCutoff1 = 0;
+  private resClsCutoff2 = 0;
+  private isSubsumption = false;
+  private subsumptionLimit = 0;
+  isElimVars = false;
   numElimVars = 0;
   private isLearnedInUseLists = false;
   private oldNumElimVars = 0;
@@ -715,6 +715,10 @@ export class Simplifier {
     params: SatParams,
   ) {
     this.useList = new UseList(solver.arena, 0);
+    this.updateParams(params);
+  }
+
+  updateParams(params: SatParams) {
     this.isCce = getBool(params, "cce", false);
     this.isAcce = getBool(params, "acce", false);
     this.isAbce = getBool(params, "abce", false);
@@ -737,7 +741,7 @@ export class Simplifier {
     this.subsumptionLimit = getNumber(params, "subsumption.limit", 100000000);
     this.isElimVars = getBool(params, "elim_vars", true);
     this.isIncrementalMode =
-      solver.isIncremental() && !getBool(params, "override_incremental", false);
+      this.solver.isIncremental() && !getBool(params, "override_incremental", false);
   }
 
   isExternal(boolVar: number) {

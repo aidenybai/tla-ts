@@ -1021,10 +1021,10 @@ export const runSmtlibScript = (
     state.fdSolver = fdSolver;
     dropSolver(old);
   };
-  // A solver that fails to start fails the command at the parser's token, and Z3 keeps the old one.
-  const resetSolverAt = (at: SExpr) => {
+  // Z3 reports an error of the sat config at the token its parser is on.
+  const runAt = (at: SExpr, action: () => void) => {
     try {
-      resetKernel();
+      action();
     } catch (error) {
       if (!(error instanceof SmtDefaultError)) throw error;
       throw new SmtParseError(error.message, at);
@@ -1088,7 +1088,7 @@ export const runSmtlibScript = (
     if (state.logic === undefined || logicHasSeq(state.logic)) state.manager.initSeqPlugin();
     if (state.logic === undefined) state.reader.registerList();
     try {
-      resetSolverAt(at);
+      runAt(at, resetKernel);
     } finally {
       state.manager.dropStartupExprs();
     }
@@ -1495,6 +1495,11 @@ export const runSmtlibScript = (
       (optionName.startsWith(":lp.") && optionName !== ":lp.int_hammer_period")
     )
       throw new SmtUnsupportedError(`the option ${optionName}`);
+    const satParams = getSatParams(settings.parameters);
+    runAt(value, () => {
+      state.satSolver?.updateParams(satParams);
+      state.fdSolver?.updateParams(satParams);
+    });
   };
   const setOptionSymbol = (keyword: string, value: SmtToken) => {
     const toBool = () => {
@@ -1970,7 +1975,7 @@ export const runSmtlibScript = (
         releaseObjectives(0, 0);
         if (state.strategy !== undefined) {
           dropSolver(detachSolver());
-          resetSolverAt(list.end);
+          runAt(list.end, resetKernel);
         }
         restoreImplications(0);
         restoreAssertions(0);
@@ -2552,7 +2557,7 @@ export const runSmtlibScript = (
         } else {
           state.reader.restrictSorts(logic.text);
           if (state.strategy !== undefined) {
-            resetSolverAt(logic);
+            runAt(logic, resetKernel);
             // Deviation from Z3: its new solver starts without the open scopes, so it ignores their pop and keeps what they asserted.
             pushSolver();
           }

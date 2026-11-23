@@ -2224,3 +2224,92 @@ describe("the manager, as Z3 5.3.2 makes it and its solver at their first use", 
     },
   );
 });
+
+describe("the sat solver, as Z3 5.3.2 updates its parameters at each set-option", () => {
+  const getChecked = (prefix: string[], commands: string[]) =>
+    run([...prefix, ...getScript("(check-sat)").slice(0, -1), ...commands]);
+  const QF_FD = ["(set-logic QF_FD)"];
+  const SAT_TACTIC = ["(set-option :tactic.default_tactic sat)"];
+  const PB_SOLVER =
+    "invalid PB solver: solver, totalizer, circuit, sorting, segmented, binary_merge";
+
+  it.each([
+    [QF_FD, [], "(or x1 x2 x3)", "sat", 5389],
+    [QF_FD, ["(set-option :smt.random_seed 7)"], "(or x1 x2 x3)", "sat", 5387],
+    [QF_FD, ["(set-option :sat.restart luby)"], "(or x1 x2 x3)", "sat", 5387],
+    [QF_FD, ["(set-option :sat.phase always_true)"], "(or x1 x2 x3)", "sat", 5451],
+    [
+      QF_FD,
+      ["(set-option :sat.cardinality.solver false)"],
+      "((_ at-most 2) x1 x2 x3 x4)",
+      "unsat",
+      5710,
+    ],
+    [SAT_TACTIC, [], "(or x1 x2 x3)", "sat", 5950],
+    [SAT_TACTIC, ["(set-option :sat.random_seed 7)"], "(or x1 x2 x3)", "sat", 4677],
+  ])(
+    "after %j and a check-sat, sets %j, asserts %s and answers %s at Z3's rlimit %d",
+    (prefix, options, assertion, verdict, rlimit) => {
+      expect(
+        getChecked(prefix, [
+          ...options,
+          `(assert ${assertion})`,
+          "(check-sat)",
+          "(get-info :rlimit)",
+        ]),
+      ).toBe(["sat", verdict, `(:rlimit ${rlimit})`].join("\n"));
+    },
+  );
+
+  it("reports a bad option at its value, again at each later option, and keeps the solver", () => {
+    expect(
+      getChecked(QF_FD, [
+        "(set-option :sat.pb.solver foo)",
+        "(set-option :smt.random_seed 3)",
+        "(assert (or x1 x2 x3))",
+        "(check-sat)",
+        "(get-info :reason-unknown)",
+        "(get-info :rlimit)",
+      ]),
+    ).toBe(
+      [
+        "sat",
+        `(error "line 278 column 27: ${PB_SOLVER}")`,
+        `(error "line 279 column 29: ${PB_SOLVER}")`,
+        "sat",
+        '(:reason-unknown "no reason given")',
+        "(:rlimit 5389)",
+      ].join("\n"),
+    );
+  });
+
+  it("reports a bad option in the solver of the sat tactic", () => {
+    expect(
+      getChecked(SAT_TACTIC, [
+        "(set-option :sat.pb.solver foo)",
+        "(assert (or x1 x2 x3))",
+        "(check-sat)",
+        "(get-info :reason-unknown)",
+        "(get-info :rlimit)",
+      ]),
+    ).toBe(
+      [
+        "sat",
+        `(error "line 278 column 27: ${PB_SOLVER}")`,
+        "sat",
+        '(:reason-unknown "no reason given")',
+        "(:rlimit 5950)",
+      ].join("\n"),
+    );
+  });
+
+  // Deviation from Z3: its fd solver crashes on sat.euf set after the sat solver starts.
+  it.each([[QF_FD], [SAT_TACTIC]])(
+    "leaves sat.euf, set after the sat solver of %j starts, unported",
+    (prefix) => {
+      expect(() => getChecked(prefix, ["(set-option :sat.euf true)", "(check-sat)"])).toThrow(
+        new SmtUnsupportedError("the option :sat.euf after the sat solver starts"),
+      );
+    },
+  );
+});
