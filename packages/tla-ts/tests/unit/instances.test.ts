@@ -1175,6 +1175,7 @@ const INNER_MODULES: Record<string, string> = {
   LiftedUnused: "CONSTANT Op(_)\nU(K(_)) == 1\nD == U(Op)",
   Proved: "CONSTANT c\nVARIABLE w\nTHEOREM T == ENABLED (w' = c)",
   Stepped: "CONSTANT c\nVARIABLE w\nTHEOREM T == w' = c",
+  Reset: "VARIABLE w\nTHEOREM T == w' = 0",
   Outer:
     "EXTENDS Naturals\nCONSTANT c\nN == INSTANCE Twice WITH c <- c, Op <- LAMBDA a, b : a + b\nUse == N!Use",
   Functions:
@@ -1428,6 +1429,8 @@ describe("Leibniz checks where tla-ts deviates from SANY", () => {
   it.each([
     "I(a) == INSTANCE Proved WITH c <- a, w <- x\nF(a) == I(a)!T\nJ == INSTANCE Pure WITH c <- 1, Op <- F",
     "I(a) == INSTANCE Proved WITH c <- a, w <- x\nJ == INSTANCE Pure WITH c <- 1, Op <- I!T",
+    "I(a) == INSTANCE Reset WITH w <- a\nF(a) == I(a)!T\nJ == INSTANCE Pure WITH c <- 1, Op <- F",
+    "I(a) == INSTANCE Reset WITH w <- a\nJ == INSTANCE Pure WITH c <- 1, Op <- I!T",
   ])("reports %s as SANY reports it with the THEOREM made a definition", async (body) => {
     await expect(checkSubstitution(body)).rejects.toThrow(
       getMessagePattern([getLeibnizError("Pure")]),
