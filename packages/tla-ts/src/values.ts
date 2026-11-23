@@ -64,28 +64,36 @@ export interface InfiniteSetValue {
   name: "Nat" | "Int" | "STRING" | "Any";
 }
 
-export interface SubsetValue extends LazySet {
-  kind: "Subset";
-  base: Value;
-  costNode: number | undefined;
-  secondary: number[] | undefined;
+interface SetCost {
+  node: number | undefined;
+  charges: ChargeTable | undefined;
 }
 
-export interface FunctionSetValue extends LazySet {
+// A sixth field on RecordSetValue cost recset about 1.5% with no V8 mechanism found, so the cost model is one field.
+interface CostedSet {
+  cost: SetCost | undefined;
+}
+
+export interface SubsetValue extends LazySet, CostedSet {
+  kind: "Subset";
+  base: Value;
+}
+
+export interface FunctionSetValue extends LazySet, CostedSet {
   kind: "FunctionSet";
   domain: Value;
   range: Value;
   hasFilter: boolean;
 }
 
-export interface RecordSetValue extends LazySet {
+export interface RecordSetValue extends LazySet, CostedSet {
   kind: "RecordSet";
   names: string[];
   sets: Value[];
   hasFilter: boolean;
 }
 
-export interface ProductSetValue extends LazySet {
+export interface ProductSetValue extends LazySet, CostedSet {
   kind: "ProductSet";
   factors: Value[];
   hasFilter: boolean;
@@ -96,7 +104,7 @@ export interface SequenceSetValue extends LazySet {
   base: Value;
 }
 
-export interface SetOperationValue extends LazySet {
+export interface SetOperationValue extends LazySet, CostedSet {
   kind: "SetOperation";
   operator: "\\cup" | "\\cap" | "\\";
   left: Value;
@@ -118,7 +126,7 @@ export interface FilteredSetValue extends LazySet {
   source?: FilteredSetSource;
 }
 
-export interface UnionValue extends LazySet {
+export interface UnionValue extends LazySet, CostedSet {
   kind: "Union";
   base: Value;
 }
@@ -667,15 +675,11 @@ export const compareValues = (left: Value, right: Value): number => {
       if (difference !== 0) return difference;
     }
     if (isLeftSet) {
+      const leftCharged = leftKind === "Set" ? undefined : getChargedSet(left);
+      const rightCharged = rightKind === "Set" ? undefined : getChargedSet(right);
       return compareSets(
-        leftKind === "Subset" && left.secondary !== undefined
-          ? toChargedSet(left, true)
-          : toFiniteSet(left),
-        rightKind === "Subset" && right.secondary !== undefined
-          ? toChargedSet(right, false)
-          : rightKind === "SetOperation" || rightKind === "Union"
-            ? toOpenedSet(right)
-            : toFiniteSet(right),
+        leftCharged ? toChargedSet(leftCharged, true, toFiniteSet) : toFiniteSet(left),
+        rightCharged ? toChargedSet(rightCharged, false, toComparedSet) : toComparedSet(right),
       );
     }
     return compareFunctions(toFiniteFunction(left), toFiniteFunction(right));
@@ -1132,10 +1136,11 @@ const isComparedByClass = (left: ObjectValue, right: Value) =>
       left.kind === "ProductSet"));
 
 const getSetElementsLikeTlc = (left: SetValue | MixedSetValue, right: Value) => {
+  const charged = getChargedSet(right);
   const other = isEnumeratedSet(right)
     ? right
-    : typeof right === "object" && right.kind === "Subset" && right.secondary !== undefined
-      ? toChargedSet(right, false)
+    : charged
+      ? toChargedSet(charged, false, charged.kind === "Subset" ? toFiniteSet : toArgumentSet)
       : toArgumentSet(right);
   return { elements: toFiniteSet(left).elements, otherElements: toFiniteSet(other).elements };
 };
@@ -1148,19 +1153,20 @@ const compareSetLikeTlc = (left: ObjectValue, right: Value, isEquality: boolean)
     !isEquality &&
     (left.kind === "FunctionSet" || left.kind === "RecordSet" || left.kind === "ProductSet")
   ) {
-    cacheSet(left);
-    return compareSetLikeTlc(toFiniteSet(left), right, false);
+    const charged = getChargedSet(left);
+    return compareSetLikeTlc(
+      charged ? toChargedSet(charged, true, toCachedSet) : toCachedSet(left),
+      right,
+      false,
+    );
   }
   if (isComparedByClass(left, right)) {
     if (!isEquality) return compareValues(left, right);
     return valuesEqual(left, right) ? 0 : 1;
   }
   if (!isEnumeratedSet(left)) {
-    cacheSet(left);
-    const set =
-      left.kind === "Subset" && left.secondary !== undefined
-        ? toChargedSet(left, true)
-        : toFiniteSet(left);
+    const charged = getChargedSet(left);
+    const set = charged ? toChargedSet(charged, true, toCachedSet) : toCachedSet(left);
     return compareSetLikeTlc(set, right, isEquality);
   }
   if (!isSetValue(right)) {
@@ -1724,7 +1730,7 @@ export const getLazySubsets = (value: Value): Value[] | undefined => {
   const base = toFiniteSet(value.base).elements;
   sets?.pop();
   if (base.length <= MAXIMUM_BUILT_SUBSET_BASE) return undefined;
-  const costNode = value.costNode;
+  const costNode = value.cost?.node;
   let cursorIndex = -1;
   let indices = [0];
   const getSubset = (index: number) => {
@@ -1915,7 +1921,7 @@ const enumerateSet = (
       if (base.length > MAXIMUM_ENUMERATED_SUBSET_BASE) {
         throw new TlaEvaluationError(describeOverflow(value));
       }
-      return getSortedSubsets(base, value.costNode);
+      return getSortedSubsets(base, value.cost?.node);
     }
     case "FunctionSet": {
       if (!isVersion174 && isEmptySet(value)) return [];
@@ -2048,16 +2054,80 @@ const toArgumentSet = (value: Value) => {
   return set;
 };
 
-const toChargedSet = (value: SubsetValue, isCached: boolean) => {
-  // TLC's SetEnumValue#member scans an unsorted literal, so a literal whose sort charges a SUBSET stays unsorted.
-  if (isSortingLiteral) throw new TlaEvaluationError("The set literal holds a charged SUBSET");
-  const set = toFiniteSet(value);
-  if (value.secondary !== undefined && value.costNode !== undefined) {
-    value.secondary[value.costNode] += set.elements.length;
+type CostedSetValue =
+  | SubsetValue
+  | FunctionSetValue
+  | RecordSetValue
+  | ProductSetValue
+  | SetOperationValue
+  | UnionValue;
+
+export const getChargedSet = (value: Value): CostedSetValue | undefined => {
+  if (typeof value !== "object") return undefined;
+  switch (value.kind) {
+    case "Subset":
+    case "FunctionSet":
+    case "RecordSet":
+    case "ProductSet":
+    case "SetOperation":
+    case "Union":
+      return value.cost?.charges === undefined ? undefined : value;
+    default:
+      return undefined;
   }
-  if (isCached) value.secondary = undefined;
+};
+
+export const isCostedSet = (value: Value) => {
+  if (typeof value !== "object") return false;
+  switch (value.kind) {
+    case "Subset":
+    case "FunctionSet":
+    case "RecordSet":
+    case "ProductSet":
+    case "SetOperation":
+    case "Union":
+      return (
+        value.cost !== undefined &&
+        (value.cost.node !== undefined || value.cost.charges !== undefined)
+      );
+    default:
+      return false;
+  }
+};
+
+const toCachedSet = (value: Value) => {
+  cacheSet(value);
+  return toFiniteSet(value);
+};
+
+const toChargedSet = (
+  value: CostedSetValue,
+  isCached: boolean,
+  convert: (value: Value) => SetValue,
+) => {
+  // TLC's SetEnumValue#member scans an unsorted literal, so a literal whose sort charges a set stays unsorted.
+  if (isSortingLiteral) throw new TlaEvaluationError("The set literal holds a charged set");
+  const cost = value.cost;
+  const node = cost?.node;
+  const charges = cost?.charges;
+  // SubsetValue#toSetEnum converts its base with toSetEnum, and sizing it first caches S \cup T, S \cap T, S \ T and UNION S.
+  const drawn = value.kind === "Subset" ? getChargedSet(value.base) : value;
+  drawn?.cost?.charges?.chargeSetEnumeration(drawn);
+  if (drawn?.cost && drawn !== value && (drawn.kind === "SetOperation" || drawn.kind === "Union")) {
+    drawn.cost.charges = undefined;
+  }
+  const set = convert(value);
+  if (value.kind === "Subset" && charges !== undefined && node !== undefined) {
+    charges.secondary[node] += set.elements.length;
+  }
+  if (isCached && cost) cost.charges = undefined;
   return set;
 };
+
+const toComparedSet = (value: Value) =>
+  typeof value === "object" && (value.kind === "SetOperation" || value.kind === "Union")
+    ? toOpenedSet(value)
+    : toFiniteSet(value);
 
 interface ListStream {
   kind: "List";
@@ -2193,36 +2263,55 @@ const hasObservedSet = (sets: Value[]) => {
   return false;
 };
 
-export const createFunctionSet = (domain: Value, range: Value): FunctionSetValue => ({
+export const createFunctionSet = (
+  domain: Value,
+  range: Value,
+  cost: SetCost | undefined,
+): FunctionSetValue => ({
   kind: "FunctionSet",
   domain,
   range,
   hasFilter: isPredicated(range),
+  cost,
 });
 
-export const createRecordSet = (names: string[], sets: Value[]): RecordSetValue => ({
+export const createRecordSet = (
+  names: string[],
+  sets: Value[],
+  cost: SetCost | undefined,
+): RecordSetValue => ({
   kind: "RecordSet",
   names,
   sets,
   hasFilter: hasPredicatedSet(sets),
+  cost,
 });
 
-export const createProductSet = (factors: Value[]): ProductSetValue => ({
+export const createProductSet = (factors: Value[], cost: SetCost | undefined): ProductSetValue => ({
   kind: "ProductSet",
   factors,
   hasFilter: hasPredicatedSet(factors),
+  cost,
 });
 
 export const createSetOperation = (
   operator: SetOperationValue["operator"],
   left: Value,
   right: Value,
+  cost: SetCost | undefined,
 ): SetOperationValue => ({
   kind: "SetOperation",
   operator,
   left,
   right,
   hasFilter: isPredicated(left) || isPredicated(right),
+  cost,
+});
+
+export const createUnion = (base: Value, cost: SetCost | undefined): UnionValue => ({
+  kind: "Union",
+  base,
+  cost,
 });
 
 const getPredicatedProduct = (value: ObjectValue) =>
@@ -2459,6 +2548,7 @@ export interface ChargeTable {
   values: WeakMap<object, number>;
   secondary: number[];
   isMember: typeof isElementOf;
+  chargeSetEnumeration: (set: Value) => void;
 }
 
 interface PlainStream {
@@ -2513,10 +2603,22 @@ type ChargedStream =
 
 const EMPTY_CHARGED_STREAM: PlainStream = { kind: "Plain", part: EMPTY_STREAM };
 
-export const getValueNode = (charges: ChargeTable, value: Value) =>
-  typeof value !== "object"
-    ? undefined
-    : (charges.values.get(value) ?? (value.kind === "Set" ? value.costNode : undefined));
+export const getValueNode = (charges: ChargeTable, value: Value) => {
+  if (typeof value !== "object") return undefined;
+  switch (value.kind) {
+    case "Subset":
+    case "FunctionSet":
+    case "RecordSet":
+    case "ProductSet":
+    case "SetOperation":
+    case "Union":
+      return value.cost?.node;
+    case "Set":
+      return charges.values.get(value) ?? value.costNode;
+    default:
+      return charges.values.get(value);
+  }
+};
 
 const getChargedProduct = (charges: ChargeTable, value: Value) => {
   if (typeof value !== "object") return undefined;
@@ -3193,7 +3295,7 @@ const someElementOfStream = (
     value.enumerated === undefined &&
     getCardinality(value.base) > MAXIMUM_BUILT_SUBSET_BASE
   ) {
-    return someSubset(getSubsetBase(value), visit, value.costNode);
+    return someSubset(getSubsetBase(value), visit, value.cost?.node);
   }
   if (value.kind !== "SetOperation") return getUnboundedElements(value).some(visit);
   if (value.operator === "\\cup") {
@@ -3479,7 +3581,7 @@ const getAppliedSequenceElements = (value: LazyFunctionValue) => {
     if (keys[index] !== index + 1) return undefined;
     elements.push(value.apply(keys[index]));
   }
-  if (isCountedLazyFunction(value)) {
+  if (isCountedLazyFunction(value) && value.costModel.node >= 0) {
     value.costModel.secondary[value.costModel.node] += keys.length;
   }
   return elements;
@@ -4583,11 +4685,8 @@ export const getValueHash = (value: Value): number => {
       : UNFINGERPRINTABLE_HASH;
   }
   if (!isEnumerable(value)) return UNFINGERPRINTABLE_HASH;
-  return getValueHash(
-    value.kind === "Subset" && value.secondary !== undefined
-      ? toChargedSet(value, true)
-      : toFiniteSet(value),
-  );
+  const charged = getChargedSet(value);
+  return getValueHash(charged ? toChargedSet(charged, true, toFiniteSet) : toFiniteSet(value));
 };
 
 const finalizeFingerprint = (hash: number) => {
@@ -4686,21 +4785,26 @@ const MAXIMUM_EXPANDED_PRODUCT = 1999;
 const getProductSize = (sets: Value[]) =>
   sets.reduce<number>((size, set) => (size === 0 ? 0 : size * getCardinality(set)), 1);
 
+const toPrintedSet = (value: LazySetValue) => {
+  const charged = getChargedSet(value);
+  return charged ? toChargedSet(charged, false, toFiniteSet) : toFiniteSet(value);
+};
+
 const expandLazySet = (value: LazySetValue) => {
   if (value.kind === "Subset") {
     if (getCardinality(value.base) > MAXIMUM_EXPANDED_SUBSET_BASE) return undefined;
-    return value.secondary !== undefined ? toChargedSet(value, false) : toFiniteSet(value);
+    return toPrintedSet(value);
   }
   if (value.kind === "SetOperation" || value.kind === "FilteredSet" || value.kind === "Union") {
-    return toFiniteSet(value);
+    return toPrintedSet(value);
   }
   if (value.kind === "FunctionSet") {
     const domainSize = isEmptySet(value.domain) ? 0 : getCardinality(value.domain);
     const size = domainSize === 0 ? 1 : getCardinality(value.range) ** domainSize;
-    return size <= MAXIMUM_EXPANDED_PRODUCT ? toFiniteSet(value) : undefined;
+    return size <= MAXIMUM_EXPANDED_PRODUCT ? toPrintedSet(value) : undefined;
   }
   const size = getProductSize(value.kind === "RecordSet" ? value.sets : value.factors);
-  return size <= MAXIMUM_EXPANDED_PRODUCT ? toFiniteSet(value) : undefined;
+  return size <= MAXIMUM_EXPANDED_PRODUCT ? toPrintedSet(value) : undefined;
 };
 
 const getExpandedLazySet = (value: LazySetValue, isStrict: boolean) => {

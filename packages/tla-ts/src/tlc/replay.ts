@@ -750,12 +750,9 @@ const visitAssignment = (
     expression.operator !== "\\subseteq"
       ? value
       : replay.coverage
-        ? { kind: "Subset", base: value, costNode: node, secondary: replay.coverage.secondary }
-        : { kind: "Subset", base: value, costNode: undefined, secondary: undefined };
-  if (typeof set === "object" && set !== value) {
-    replay.callStack?.sources.set(set, source);
-    replay.coverage?.values.set(set, node);
-  }
+        ? { kind: "Subset", base: value, cost: { node, charges: replay.coverage } }
+        : { kind: "Subset", base: value, cost: undefined };
+  if (typeof set === "object" && set !== value) replay.callStack?.sources.set(set, source);
   if (assigned !== undefined) {
     return (
       evaluateAt(replay, node, expression, context) === true &&
