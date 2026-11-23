@@ -1897,12 +1897,14 @@ export const createLevelAnalyzer = (context: LevelContext) => {
     const firstPass = recursive.map((member) => analyzeDefinition(member.definition, member.scope));
     const level = Math.max(CONSTANT_LEVEL, ...firstPass.map((levels) => levels.level));
     const params = firstPass.flatMap((levels) => [...levels.params]);
+    const allParams = firstPass.flatMap((levels) => [...levels.allParams]);
     members.forEach((member) => {
       const levels = analyzeDefinition(member.definition, member.scope);
       definitionLevels.set(member.definition, {
         ...levels,
         level: Math.max(levels.level, level),
         params: new Set([...levels.params, ...params]),
+        allParams: new Set([...levels.allParams, ...allParams]),
       });
       if (member.isRechecked && !member.definition.isRecursive) {
         staleDefinitions.add(member.definition);

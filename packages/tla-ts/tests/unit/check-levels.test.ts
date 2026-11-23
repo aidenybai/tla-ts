@@ -638,6 +638,21 @@ describe("level checking matches SANY", () => {
       "H(Op(_)) == ENABLED Op(1)\nF(b) == H(LAMBDA a : x' = b /\\ a)\n---- MODULE Other ----\nCONSTANT Op(_)\n====\nINSTANCE Other WITH Op <- F",
       "line 9, col 1 to line 9, col 27",
     ],
+    [
+      "the parameters a recursive section shares",
+      "---- MODULE Inner ----\nCONSTANT c\nVARIABLE w\nRECURSIVE A(_), B(_)\nA(n) == IF n = 0 THEN c ELSE A(n - 1)\nB(m) == IF m = 0 THEN 0 ELSE B(m - 1)\nH == ENABLED (B(1) = w')\n====\n---- MODULE Other ----\nCONSTANT Op(_)\n====\nI(q) == INSTANCE Inner WITH c <- q, w <- x\nINSTANCE Other WITH Op <- I!H",
+      "line 16, col 1 to line 16, col 29",
+    ],
+    [
+      "a non-recursive definition in a recursive section",
+      "---- MODULE Inner ----\nCONSTANT c\nVARIABLE w\nRECURSIVE A(_)\nG == w\nA(n) == IF n = 0 THEN c ELSE A(n - 1)\nH == ENABLED (G' = w)\n====\n---- MODULE Other ----\nCONSTANT Op(_)\n====\nI(q) == INSTANCE Inner WITH c <- q, w <- x\nINSTANCE Other WITH Op <- I!H",
+      "line 16, col 1 to line 16, col 29",
+    ],
+    [
+      "a LET's recursive section",
+      "---- MODULE Other ----\nCONSTANT Op(_)\n====\nF(a) == ENABLED (LET RECURSIVE A(_), B(_)\n                     A(n) == IF n = 0 THEN a ELSE A(n - 1)\n                     B(m) == IF m = 0 THEN 0 ELSE B(m - 1)\n                 IN B(1) = x')\nINSTANCE Other WITH Op <- F",
+      "line 11, col 1 to line 11, col 27",
+    ],
   ])(
     "rejects a non-Leibniz operator substituted for an operator constant through %s, as SANY does",
     async (_title, body, location) => {
