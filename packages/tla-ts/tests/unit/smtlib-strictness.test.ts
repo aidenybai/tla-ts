@@ -1471,3 +1471,368 @@ describe("the terms the reader makes and frees, in Z3's order", () => {
     ).toEqual(["sat", "(objectives\n ( 6)\n)"]);
   });
 });
+
+const SORT_NAMES = [
+  "Bool",
+  "bool",
+  "Proof",
+  "Int",
+  "Real",
+  "Complex",
+  "BitVec",
+  "bv",
+  "Array",
+  "=>",
+  "Set",
+  "Unicode",
+  "String",
+  "Float32",
+  "FiniteSet",
+  "FiniteField",
+  "List",
+];
+
+describe("the builtin sort names, as Z3 5.3.2 registers them", () => {
+  it.each([
+    ["no logic", ["(declare-const zz Bool)"], SORT_NAMES.filter((name) => name !== "FiniteField")],
+    [
+      "ALL",
+      ["(set-logic ALL)", "(declare-const zz Bool)"],
+      [
+        "Bool",
+        "Int",
+        "Real",
+        "Complex",
+        "BitVec",
+        "bv",
+        "Array",
+        "=>",
+        "Set",
+        "Unicode",
+        "String",
+        "Float32",
+        "FiniteSet",
+      ],
+    ],
+    [
+      "HO_ALL",
+      ["(set-logic HO_ALL)", "(declare-const zz Bool)"],
+      [
+        "Bool",
+        "Int",
+        "Real",
+        "BitVec",
+        "Array",
+        "=>",
+        "Unicode",
+        "String",
+        "Float32",
+        "FiniteSet",
+        "FiniteField",
+      ],
+    ],
+    [
+      "HORN",
+      ["(set-logic HORN)", "(declare-const zz Bool)"],
+      ["Bool", "Int", "Real", "BitVec", "Array", "=>", "Set"],
+    ],
+    ["QF_NRA", ["(set-logic QF_NRA)", "(declare-const zz Bool)"], ["Bool", "Real"]],
+    ["QF_UF", ["(set-logic QF_UF)", "(declare-const zz Bool)"], ["Bool"]],
+    ["QF_FF", ["(set-logic QF_FF)", "(declare-const zz Bool)"], ["Bool", "FiniteField"]],
+    [
+      "QF_SLIA",
+      ["(set-logic QF_SLIA)", "(declare-const zz Bool)"],
+      ["Bool", "Int", "Real", "Unicode", "String"],
+    ],
+    [
+      "ALL after the manager",
+      ["(declare-const zz Bool)", "(set-logic ALL)"],
+      [
+        "Bool",
+        "Int",
+        "Real",
+        "Complex",
+        "BitVec",
+        "bv",
+        "Array",
+        "=>",
+        "Set",
+        "Unicode",
+        "String",
+        "Float32",
+        "FiniteSet",
+        "List",
+      ],
+    ],
+    [
+      "QF_NRA after the manager",
+      ["(declare-const zz Bool)", "(set-logic QF_NRA)"],
+      [
+        "Bool",
+        "Real",
+        "BitVec",
+        "Array",
+        "=>",
+        "Unicode",
+        "String",
+        "Float32",
+        "FiniteSet",
+        "List",
+      ],
+    ],
+    [
+      "QF_UF after the manager",
+      ["(declare-const zz Bool)", "(set-logic QF_UF)"],
+      [
+        "Bool",
+        "Int",
+        "Real",
+        "BitVec",
+        "Array",
+        "=>",
+        "Unicode",
+        "String",
+        "Float32",
+        "FiniteSet",
+        "List",
+      ],
+    ],
+  ])("rejects a declare-sort of each name registered in %s", (_logic, prefix, registered) => {
+    expect(run([...prefix, ...SORT_NAMES.map((name) => `(declare-sort ${name} 0)`)])).toEqual(
+      registered.map(
+        (name) =>
+          `(error "line ${prefix.length + SORT_NAMES.indexOf(name) + 1} column 14: invalid sort declaration, sort already declared/defined")`,
+      ),
+    );
+  });
+
+  it("reports a builtin sort name where each command first makes the manager", () => {
+    expect(
+      run([
+        "(declare-sort Bool 0)",
+        "(reset)",
+        "(declare-sort Array)",
+        "(reset)",
+        "(define-sort Seq () Bool)",
+        "(reset)",
+        "(declare-datatypes ((Set 1)) ((par (X) ((c)))))",
+        "(reset)",
+        "(declare-datatypes () ((String s)))",
+        "(reset)",
+        "(declare-datatype RegLan ((r)))",
+        "(reset)",
+        "(set-logic QF_UF)",
+        "(declare-sort Array 2)",
+        "(declare-sort BitVec 0)",
+        "(declare-sort Array 2)",
+      ]),
+    ).toEqual([
+      '(error "line 1 column 20: sort already defined Bool")',
+      '(error "line 3 column 19: sort already defined Array")',
+      '(error "line 5 column 24: sort already defined Seq")',
+      '(error "line 7 column 26: sort already defined Set")',
+      '(error "line 9 column 34: sort already defined String")',
+      '(error "line 11 column 26: sort already defined RegLan")',
+      '(error "line 16 column 14: invalid sort declaration, sort already declared/defined")',
+    ]);
+  });
+
+  it("rejects a sort definition or datatype of a builtin sort name after the manager", () => {
+    expect(
+      run([
+        "(declare-const zz Bool)",
+        "(define-sort Float32 () Bool)",
+        "(define-sort bv (X) X)",
+        "(declare-datatypes ((Set 1) (bool 0)) ((par (X) ((c))) ((d))))",
+        "(declare-datatype Unicode ((u)))",
+        "(declare-datatypes () ((Proof p)))",
+        "(declare-sort A 0)",
+        "(declare-sort A 0)",
+        "(define-sort A () Bool)",
+      ]),
+    ).toEqual([
+      '(error "line 2 column 13: invalid sort definition, sort already declared/defined")',
+      '(error "line 3 column 13: invalid sort definition, sort already declared/defined")',
+      '(error "line 4 column 26: sort already defined Set")',
+      '(error "line 5 column 27: sort already defined Unicode")',
+      '(error "line 6 column 33: sort already defined Proof")',
+      '(error "line 8 column 14: invalid sort declaration, sort already declared/defined")',
+      '(error "line 9 column 13: invalid sort definition, sort already declared/defined")',
+    ]);
+  });
+});
+
+describe("the builtin sorts, as Z3 5.3.2's plugins make them", () => {
+  it("applies a builtin sort name to the sorts or indices that its plugin takes", () => {
+    expect(
+      run([
+        "(declare-const a (Bool Int))",
+        "(declare-const b bool)",
+        "(declare-const c (_ Int 3))",
+        "(declare-const d (Real Int Bool))",
+        "(declare-const e bv)",
+        "(declare-const f (_ bv 3))",
+        "(declare-const g =>)",
+        "(declare-const h (_ -> 3))",
+        "(declare-const i Set)",
+        "(declare-const j (_ Set 3))",
+        "(declare-const k (BitVec Int))",
+        "(declare-const l (Unicode Int))",
+        "(declare-const m (_ String 3))",
+        "(declare-const n (RegLan Int))",
+        "(declare-const o (RoundingMode Int))",
+        "(declare-const p (Float32 Bool))",
+        "(declare-const q (_ Seq 3))",
+        "(declare-const r (_ List 3))",
+        "(assert (= f #b101))",
+        "(assert (and a b (= c 1) (= d 1.5)))",
+        "(check-sat)",
+      ]),
+    ).toEqual([
+      '(error "line 5 column 17: expecting one integer parameter to bit-vector sort")',
+      '(error "line 7 column 17: invalid array sort definition, invalid number of parameters")',
+      '(error "line 8 column 24: invalid array sort definition, invalid number of parameters")',
+      '(error "line 9 column 17: invalid array sort definition, invalid number of parameters")',
+      '(error "line 10 column 25: invalid array sort definition, parameter is not a sort")',
+      '(error "line 11 column 28: expecting one integer parameter to bit-vector sort")',
+      '(error "line 17 column 25: invalid sequence sort, parameter is not a sort")',
+      '(error "line 18 column 26: invalid sort application")',
+      "sat",
+    ]);
+  });
+
+  it("reads a datatype field of a builtin sort", () => {
+    expect(
+      run([
+        "(set-option :produce-models true)",
+        "(declare-datatypes ((T 0)) (((t (s String) (r RegLan) (u Unicode) (p Float32) (m RoundingMode)))))",
+        "(declare-const x T)",
+        '(assert (= (s x) "ab"))',
+        "(check-sat)",
+        "(get-value ((s x)))",
+      ]),
+    ).toEqual(["sat", '(((s x) "ab"))']);
+  });
+
+  it("reports a builtin sort of a sort definition or datatype where Z3 makes it", () => {
+    expect(
+      run([
+        "(declare-datatypes ((D1 0)) (((c1 (f1 (Seq)) (g1 Nope)))))",
+        "(declare-datatypes ((D2 0)) (((c2 (f2 (Seq)) (g2 BitVec)))))",
+        "(declare-datatypes ((D3 0)) (((c3 (f3 (Seq)) (g3 Int)))))",
+        "(declare-datatype E ((e (h (Array Int)))))",
+        "(declare-datatypes () ((G (k (m (FloatingPoint Int))))))",
+        "(define-sort A () (Seq))",
+        "(define-sort B () (Array A Int))",
+        "(define-sort C (X) (List (Array X)))",
+        "(declare-const x (C Int))",
+        "(define-sort F () BitVec)",
+        "(check-sat)",
+      ]),
+    ).toEqual([
+      `(error "line 1 column 20: invalid datatype declaration, unknown sort 'Nope'")`,
+      '(error "line 2 column 55: expecting one integer parameter to bit-vector sort")',
+      '(error "line 3 column 56: Invalid sequence sort, expecting one parameter")',
+      '(error "line 4 column 41: invalid array sort definition, invalid number of parameters")',
+      '(error "line 5 column 55: expecting two integer parameters to floating point sort (ebits, sbits)")',
+      '(error "line 7 column 27: Invalid sequence sort, expecting one parameter")',
+      '(error "line 9 column 23: invalid array sort definition, invalid number of parameters")',
+      '(error "line 10 column 24: expecting one integer parameter to bit-vector sort")',
+      "sat",
+    ]);
+  });
+
+  it("finds the names of a sort definition when it is defined, not when it is used", () => {
+    expect(
+      run([
+        "(set-option :produce-models true)",
+        "(define-sort T (X) (Array X Int))",
+        "(declare-sort X 0)",
+        "(define-sort U () (Array Int bool))",
+        "(set-logic QF_AUFLIA)",
+        "(declare-const t (T Bool))",
+        "(declare-const u U)",
+        "(assert (and (= (select t true) 1) (select u 0)))",
+        "(check-sat)",
+        "(get-value ((select t false)))",
+      ]),
+    ).toEqual(["sat", "(((select t false) 1))"]);
+  });
+
+  it("reports a datatype field or sort definition where Z3 parses or commits it", () => {
+    expect(
+      run([
+        "(define-sort S () (Seq Int Int))",
+        "(declare-datatype D ((d (f S))))",
+        "(declare-datatypes ((P 1)) ((par (X Y) ((p (g Y))))))",
+        "(declare-datatypes ((Q 1)) ((par (X Y) ((q (h (Array X Y)))))))",
+        "(define-sort T ())",
+        "(check-sat)",
+      ]),
+    ).toEqual([
+      '(error "line 2 column 28: Invalid sequence sort, expecting one parameter")',
+      '(error "line 3 column 52: type parameter was not declared")',
+      '(error "line 4 column 62: type parameter was not declared")',
+      `(error "line 5 column 17: invalid sort, unexpected ')'")`,
+      "sat",
+    ]);
+  });
+
+  it("rejects a finite field sort in a logic without finite fields", () => {
+    expect(
+      run([
+        "(set-logic QF_LIA)",
+        "(declare-const x (_ FiniteField 7))",
+        "(declare-const y (_ FiniteField))",
+        "(define-sort T () (Array Int (_ FiniteField 7)))",
+        "(declare-datatype D ((d (f (_ FiniteField 7)))))",
+        "(check-sat)",
+      ]),
+    ).toEqual([
+      '(error "line 2 column 32: logic does not support finite fields")',
+      '(error "line 3 column 31: logic does not support finite fields")',
+      `(error "line 4 column 19: unknown sort 'Array'")`,
+      '(error "line 5 column 42: logic does not support finite fields")',
+      "sat",
+    ]);
+  });
+
+  it("counts a repeated sort parameter once, at its last position", () => {
+    expect(
+      run([
+        "(define-sort T (X Y X) (Array Y Int))",
+        "(declare-const t (T Int Bool))",
+        "(declare-const u (T Int Bool Real))",
+        "(define-sort V (X X) (Array X Int))",
+        "(declare-const v (V Int))",
+        "(declare-datatype P (par (X X) ((p (f X)))))",
+        "(declare-datatype Q (par (X Y X) ((q (g Y)))))",
+        "(declare-const w (Q Int Bool))",
+        "(declare-datatypes (X X) ((R (r (h X)))))",
+        "(assert (= (select t true) (g w)))",
+        "(check-sat)",
+      ]),
+    ).toEqual([
+      '(error "line 3 column 33: invalid number of parameters to sort constructor")',
+      '(error "line 5 column 23: type parameter was not declared")',
+      '(error "line 6 column 43: type parameter was not declared")',
+      '(error "line 9 column 40: type parameter was not declared")',
+      "sat",
+    ]);
+  });
+
+  it("gives a datatype without par no sort parameters, unlike Z3", () => {
+    expect(
+      run([
+        "(declare-datatypes ((A 1) (B 0)) ((par (X) ((a (f X)))) ((b (g (Array Int Int))))))",
+        "(declare-datatypes ((C 1) (D 0)) ((par (X) ((c (h X)))) ((d (k X)))))",
+        "(declare-const x B)",
+        "(assert (= (select (g x) 0) 1))",
+        "(check-sat)",
+      ]),
+    ).toEqual([
+      `(error "line 2 column 19: invalid datatype declaration, unknown sort 'X'")`,
+      "sat",
+    ]);
+  });
+});

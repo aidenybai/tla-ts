@@ -48,7 +48,7 @@ const logicHasUf = (logic: string) => logic.includes("UF") || logic === "SMTFD";
 const logicHasDatatype = (logic: string) =>
   logic.includes("DT") || logic === "QF_FD" || isAllLogic(logic) || logic === "HORN";
 
-const logicHasFiniteSets = (logic: string) => logic.includes("FS") || isAllLogic(logic);
+export const logicHasFiniteSets = (logic: string) => logic.includes("FS") || isAllLogic(logic);
 
 export const isSupportedLogic = (logic: string) =>
   isFfLogic(logic) ||

@@ -10,6 +10,8 @@ const DECLARATIONS = [
   "(declare-fun f (Int Real) Int)",
 ];
 
+const SORT_ALREADY_DECLARED = "invalid sort declaration, sort already declared/defined";
+
 const decideAssertion = (assertion: string) =>
   decideSmt([...DECLARATIONS, `(assert ${assertion})`, "(check-sat)"].join("\n"), OPTIONS);
 
@@ -78,6 +80,16 @@ describe("parseSmtlib builtin operators", () => {
         name: "SmtParseError",
         message: "unknown constant f (Int) \ndeclared: (declare-fun f (Int Real) Int) ",
       }),
+    );
+  });
+
+  it.each([
+    [["(declare-sort Array 2)"], "sort already defined Array"],
+    [["(declare-fun z () Int)", "(declare-sort Array 2)"], SORT_ALREADY_DECLARED],
+    [["(declare-sort A 0)", "(declare-sort A 0)"], SORT_ALREADY_DECLARED],
+  ])("rejects a sort declaration of %j as Z3 does", (commands, message) => {
+    expect(() => decideSmt([...commands, "(check-sat)"].join("\n"), OPTIONS)).toThrow(
+      expect.objectContaining({ name: "SmtParseError", message }),
     );
   });
 

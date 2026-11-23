@@ -1076,6 +1076,7 @@ export const runSmtlibScript = (
     if (state.isProofsEnabled !== undefined) return;
     state.isProofsEnabled = settings.parameters.get("proof") === "true";
     if (state.logic === undefined || logicHasSeq(state.logic)) state.manager.initSeqPlugin();
+    state.reader.markManagerMade();
     if (state.logic === undefined) state.reader.registerList();
     try {
       runAt(at, resetKernel);
