@@ -523,7 +523,7 @@ describe("selections into the definitions of an instance with operator parameter
 
 describe("operator arguments selected behind an instance or a definition's parameters", () => {
   const PURE =
-    "---- MODULE Pure ----\nEXTENDS Naturals, Sequences\nCONSTANT c, Op(_)\nE2(z) == Op(z)\nH(K(_)) == K(c)\nH2(K(_, _)) == K(c, c)\nH3(K(_)) == K(<<c>>)\nE9 == H(E2)\nE18 == H(LAMBDA t : E2(t) + c)\nE22 == H2(\\cup)\nE23 == H3(Len)\nE25(y) == H(E2)\n====";
+    "---- MODULE Pure ----\nEXTENDS Naturals, Sequences\nCONSTANT c, Op(_)\nE2(z) == Op(z)\nH(K(_)) == K(c)\nH2(K(_, _)) == K(c, c)\nH3(K(_)) == K(<<c>>)\nE9 == H(E2)\nE11 == H(Op)\nE18 == H(LAMBDA t : E2(t) + c)\nE22 == H2(\\cup)\nE23 == H3(Len)\nE25(y) == H(E2)\n====";
 
   const checkSelections = (definitions: string, onPrint?: (text: string) => void) =>
     check({
@@ -540,6 +540,27 @@ describe("operator arguments selected behind an instance or a definition's param
       (text) => prints.push(text),
     );
     expect([result.status, prints]).toEqual(["success", ["<<6, 13, {1, 2}, 2, 3, 6, 3>>"]]);
+  });
+
+  it("passes on the substitute for a selected operator constant, with the values TLC gives their local twins", async () => {
+    const prints: string[] = [];
+    const result = await checkSelections(
+      "J2 == INSTANCE Pure WITH c <- 7, Op <- LAMBDA a : a * 2\nASSUME PrintT(<<Ap(J!E11!1), LET L == INSTANCE Pure WITH c <- 7, Op <- F IN Ap(L!E11!1), Ap(J2!E11!1), LET L == INSTANCE Pure WITH c <- 7, Op <- LAMBDA a : a * 2 IN Ap(L!E11!1)>>)",
+      (text) => prints.push(text),
+    );
+    expect([result.status, prints]).toEqual(["success", ["<<6, 6, 10, 10>>"]]);
+  });
+
+  it("passes on the substitute for an operator constant selected through an unnamed instance", async () => {
+    const prints: string[] = [];
+    const result = await check({
+      source:
+        "---- MODULE M ----\nEXTENDS Naturals, TLC\nVARIABLE x\nF(a) == a + 1\nAp(K(_)) == K(5)\nINSTANCE Pure WITH c <- 7, Op <- F\nASSUME PrintT(Ap(E11!1))\nInit == x = 0\nNext == x' = x\n====",
+      config: "INIT Init\nNEXT Next",
+      loadModule: (name) => (name === "Pure" ? PURE : undefined),
+      onPrint: (text) => prints.push(text),
+    });
+    expect([result.status, prints]).toEqual(["success", ["6"]]);
   });
 
   it.each([

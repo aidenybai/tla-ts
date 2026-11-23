@@ -239,7 +239,10 @@ const getOperatorArgument = (operand: Expression, arity: number): Expression => 
     ...(operand.kind === "Identifier" && { resolution: operand.resolution }),
   };
   operandApplications.set(operand, [...(operandApplications.get(operand) ?? []), application]);
-  return { kind: "Lambda", params, body: application, operator, location: operand.location };
+  return withSubstitutionFrames(
+    { kind: "Lambda", params, body: application, operator, location: operand.location },
+    substitutionFrames.get(operand) ?? [],
+  );
 };
 
 const getDefinitionBody = (definition: Definition) => {
@@ -719,7 +722,13 @@ const selectSubexpression = (
       ? (substitutionFrames.get(definition.body) ?? [])
       : [],
   );
-  const framed = withSubstitutionFrames(current.kind === "Lambda" ? current.body : current, frames);
+  const framed =
+    current.kind === "Lambda"
+      ? withSubstitutionFrames(current.body, [
+          ...frames,
+          ...(substitutionFrames.get(current) ?? []),
+        ])
+      : withSubstitutionFrames(current, frames);
   if (substitutionFrames.has(framed)) {
     records.selectedDefinitions.set(framed, {
       definition: entered[0],
