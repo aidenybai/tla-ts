@@ -62,7 +62,7 @@ import {
   isMbqiByFeatures,
   isMbqiByLogic,
 } from "./smt-setup";
-import { isSupportedLogic, logicHasSeq } from "./smt-logics";
+import { isSupportedLogic, logicHasRealsOnly, logicHasSeq } from "./smt-logics";
 import { getVerdict, solveAssertions, solveAssuming } from "./solver";
 import { getConsequences } from "./smt-consequences";
 import { FdSolver } from "./fd-solver";
@@ -459,16 +459,18 @@ interface ScriptState {
   isSolverProducingModels: boolean;
 }
 
-// Z3 fixes the proof mode at the first command that needs terms.
-const MANAGERLESS_COMMANDS = new Set([
-  "set-option",
-  "set-info",
-  "set-logic",
-  "get-option",
-  "get-info",
-  "get-assertions",
-  "echo",
+// The commands that make the manager as their parse starts, at their first argument.
+const PREPARED_COMMANDS = new Set([
+  "check-sat",
+  "check-sat-assuming",
+  "get-value",
+  "declare-rel",
+  "declare-var",
+  "query",
 ]);
+
+// The commands whose first argument, a sort or a list of terms, makes the manager.
+const ARGUMENT_COMMANDS = new Set(["get-consequences", "dbg-some-value"]);
 
 export const runSmtlibScript = (
   text: string,
@@ -516,7 +518,9 @@ export const runSmtlibScript = (
     return {
       manager,
       logic: undefined,
-      reader: createSmtlibReader(manager, undefined, settings.parserOptions),
+      reader: createSmtlibReader(manager, undefined, settings.parserOptions, (at) =>
+        useManager(at),
+      ),
       assertions: [],
       names: [],
       implications: [],
@@ -981,19 +985,15 @@ export const runSmtlibScript = (
       parameters.get("tactic.default_tactic") === "sat" ||
       parameters.get("sat.smt") === "true" ||
       isEuf;
-    const old = detachSolver();
-    state.tacticDestructors = destructors;
-    state.tacticInits = inits;
-    state.strategy = getLogicStrategy(logic, isProofsEnabled);
-    state.isSolverProducingModels = settings.isProducingModels;
+    const strategy = getLogicStrategy(logic, isProofsEnabled);
     state.manager.dropStartupExprs();
-    state.tactic =
+    const internalTactic =
       tactic ??
       (isFdSolver
         ? undefined
-        : compileInternalTactic(getTacticEnvironment(destructors, inits), state.strategy));
-    state.kernel = isSatSolver ? undefined : new SmtKernel(state.manager, getKernelParams());
-    state.satSolver =
+        : compileInternalTactic(getTacticEnvironment(destructors, inits), strategy));
+    const kernel = isSatSolver ? undefined : new SmtKernel(state.manager, getKernelParams());
+    const satSolver =
       isSatSolver && !isFdSolver && parameters.get("sat.smt") !== "true"
         ? new IncSatSolver(
             state.manager,
@@ -1003,14 +1003,32 @@ export const runSmtlibScript = (
             isEuf ? mkThSolver(parameters) : null,
           )
         : undefined;
-    state.fdSolver =
+    const fdSolver =
       (logic === "QF_FD" || logic === "SAT") &&
       !isProofsEnabled &&
       !isParallel &&
       tactic === undefined
         ? new FdSolver(state.manager, getSatParams(parameters), parameters)
         : undefined;
+    const old = detachSolver();
+    state.tacticDestructors = destructors;
+    state.tacticInits = inits;
+    state.strategy = strategy;
+    state.isSolverProducingModels = settings.isProducingModels;
+    state.tactic = internalTactic;
+    state.kernel = kernel;
+    state.satSolver = satSolver;
+    state.fdSolver = fdSolver;
     dropSolver(old);
+  };
+  // A solver that fails to start fails the command at the parser's token, and Z3 keeps the old one.
+  const resetSolverAt = (at: SExpr) => {
+    try {
+      resetKernel();
+    } catch (error) {
+      if (!(error instanceof SmtDefaultError)) throw error;
+      throw new SmtParseError(error.message, at);
+    }
   };
   const pushSolver = () => {
     for (let index = 0; index < state.scopes.length; index++) {
@@ -1062,16 +1080,19 @@ export const runSmtlibScript = (
     parts.lastAssertions.reset();
     parts.assertions.reset();
   };
-  const initManager = () => {
+  // init_manager marks the manager made before it makes the solver, so a failure leaves no solver
+  // and no logic check.
+  const useManager = (at: SExpr) => {
     if (state.isProofsEnabled !== undefined) return;
     state.isProofsEnabled = settings.parameters.get("proof") === "true";
     if (state.logic === undefined || logicHasSeq(state.logic)) state.manager.initSeqPlugin();
     if (state.logic === undefined) state.reader.registerList();
     try {
-      resetKernel();
+      resetSolverAt(at);
     } finally {
       state.manager.dropStartupExprs();
     }
+    state.reader.setCheckedLogic(state.logic);
   };
   // The parts of inc_sat_solver that are not ported leave its answers to the smt kernel.
   const useSatSolver = <Result>(action: (solver: IncSatSolver) => Result) => {
@@ -1350,7 +1371,8 @@ export const runSmtlibScript = (
     return found;
   };
   // get_info_cmd prints in set_next_arg, before the parser checks the rest of the command.
-  const printInfo = (list: SmtList, keyword: string) => {
+  const printInfo = (list: SmtList, info: SmtToken) => {
+    const keyword = info.text;
     if (keyword === ":reason-unknown") {
       const check = state.check;
       const reasonUnknown =
@@ -1363,8 +1385,9 @@ export const runSmtlibScript = (
       return;
     }
     if (keyword === ":rlimit") {
-      initManager();
-      print(`(:rlimit ${state.manager.limit.count})`);
+      pendingText += "(:rlimit ";
+      useManager(info);
+      print(`${state.manager.limit.count})`);
       return;
     }
     if (keyword === ":error-behavior") {
@@ -1395,6 +1418,7 @@ export const runSmtlibScript = (
       print(`(:assertion-stack-levels ${state.scopes.length})`);
       return;
     }
+    if (keyword === ":all-statistics") useManager(info);
     if (keyword === ":all-statistics" || keyword === ":parameters")
       throw new SmtUnsupportedError(`the information ${keyword}`);
     if (keyword !== ":?") {
@@ -1701,6 +1725,7 @@ export const runSmtlibScript = (
         const destructors: (() => void)[] = [];
         const inits: (() => void)[] = [];
         const builder = compileTactic(getTacticEnvironment(destructors, inits), list.items[1]);
+        useManager(list.end);
         const tactic = builder.build(params);
         for (const init of inits) init();
         const goal = getCommandGoal(builder.isTrackingDependencies, list.end);
@@ -1868,7 +1893,9 @@ export const runSmtlibScript = (
       "push",
       (list) => {
         clearCheck();
-        for (let index = getScopeCount(list); index > 0; index--) {
+        const count = getScopeCount(list);
+        if (count > 0) useManager(list.items[2] ?? list.end);
+        for (let index = count; index > 0; index--) {
           state.scopes.push({
             assertions: state.assertions.length,
             objectives: state.objectives.length,
@@ -1941,9 +1968,9 @@ export const runSmtlibScript = (
         checkArgumentCount(list, 0);
         resetOptimizer();
         releaseObjectives(0, 0);
-        if (state.isProofsEnabled !== undefined) {
+        if (state.strategy !== undefined) {
           dropSolver(detachSolver());
-          resetKernel();
+          resetSolverAt(list.end);
         }
         restoreImplications(0);
         restoreAssertions(0);
@@ -2035,6 +2062,7 @@ export const runSmtlibScript = (
           },
           list.items[1],
         );
+        useManager(list.end);
         const tactic = builder.build(params);
         for (const init of inits) init();
         const input = getCommandGoal(builder.isTrackingDependencies, list.end);
@@ -2292,6 +2320,7 @@ export const runSmtlibScript = (
     [
       "get-objectives",
       (list) => {
+        useManager(list.end);
         if (state.objectives.length !== state.checkedObjectives)
           throw new SmtParseError("check-sat has not been called with latest objectives", list.end);
         if (state.objectives.length === 0) {
@@ -2487,7 +2516,7 @@ export const runSmtlibScript = (
           throw new SmtParseError("invalid command, argument(s) missing", list.end);
         if (info.kind !== "keyword")
           throw new SmtParseError("invalid command argument, keyword expected", info);
-        printInfo(list, info.text);
+        printInfo(list, info);
         checkArgumentCount(list, 1);
       },
     ],
@@ -2512,13 +2541,21 @@ export const runSmtlibScript = (
         state.logic = logic.text;
         if (state.isProofsEnabled === undefined) {
           const isNumeralAsReal = state.reader.isNumeralAsReal();
-          state.reader = createSmtlibReader(state.manager, logic.text, settings.parserOptions);
+          state.reader = createSmtlibReader(
+            state.manager,
+            logic.text,
+            settings.parserOptions,
+            (at) => useManager(at),
+          );
           if (isNumeralAsReal) state.reader.setNumeralAsReal(true);
         } else {
           state.reader.restrictSorts(logic.text);
-          // Deviation from Z3: its new solver starts without the open scopes, so it ignores their pop and keeps what they asserted.
-          resetKernel();
-          pushSolver();
+          if (state.strategy !== undefined) {
+            resetSolverAt(logic);
+            // Deviation from Z3: its new solver starts without the open scopes, so it ignores their pop and keeps what they asserted.
+            pushSolver();
+          }
+          if (logicHasRealsOnly(logic.text)) state.reader.setNumeralAsReal(true);
         }
         if (settings.isPrintingSuccess) print("success");
         checkArgumentCount(list, 1);
@@ -2566,7 +2603,9 @@ export const runSmtlibScript = (
     }
     // Z3's scoped_timer ends with the command that set it, so a command starts without one.
     state.manager.limit.restart(Infinity);
-    if (!MANAGERLESS_COMMANDS.has(head.text)) initManager();
+    const argument = list.items[1];
+    if (PREPARED_COMMANDS.has(head.text)) useManager(argument ?? list.end);
+    if (ARGUMENT_COMMANDS.has(head.text) && argument !== undefined) useManager(argument);
     try {
       command(list);
     } catch (error) {

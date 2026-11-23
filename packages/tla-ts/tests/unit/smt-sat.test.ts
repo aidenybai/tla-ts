@@ -1834,3 +1834,393 @@ describe("sat config, as Z3 5.3.2 checks the sat solver's parameters", () => {
     ).toBe(["sat", '(:reason-unknown "")', "(:rlimit 30)"].join("\n"));
   });
 });
+
+describe("the manager, as Z3 5.3.2 makes it and its solver at their first use", () => {
+  it.each([
+    [
+      "a declare-fun, at its range",
+      [
+        "(set-logic QF_FD)",
+        "(set-option :sat.pb.solver bv)",
+        "(declare-fun p () Bool)",
+        "(declare-fun q () Bool)",
+        "(assert (or p q))",
+        "(check-sat)",
+        "(get-info :reason-unknown)",
+        "(get-info :rlimit)",
+      ],
+      [
+        '(error "line 3 column 15: invalid PB solver: solver, totalizer, circuit, sorting, segmented, binary_merge")',
+        '(error "line 5 column 12: unknown constant p")',
+        "unknown",
+        '(:reason-unknown "state of the most recent check-sat command is not known")',
+        "(:rlimit 0)",
+      ],
+    ],
+    [
+      "a define-fun, at its parameters",
+      [
+        "(set-logic QF_FD)",
+        "(set-option :sat.pb.solver bv)",
+        "(define-fun f () Bool true)",
+        "(assert f)",
+        "(check-sat)",
+        "(get-info :reason-unknown)",
+        "(get-info :rlimit)",
+      ],
+      [
+        '(error "line 3 column 14: invalid PB solver: solver, totalizer, circuit, sorting, segmented, binary_merge")',
+        '(error "line 4 column 8: unknown constant f")',
+        "unknown",
+        '(:reason-unknown "state of the most recent check-sat command is not known")',
+        "(:rlimit 0)",
+      ],
+    ],
+    [
+      "a declare-datatypes, after the arity of its first sort",
+      [
+        "(set-logic QF_FD)",
+        "(set-option :sat.pb.solver bv)",
+        "(declare-datatypes ((D 0)) (((c) (d))))",
+        "(declare-const x D)",
+        "(check-sat)",
+        "(get-info :reason-unknown)",
+        "(get-info :rlimit)",
+      ],
+      [
+        '(error "line 3 column 24: invalid PB solver: solver, totalizer, circuit, sorting, segmented, binary_merge")',
+        "(error \"line 4 column 17: Invalid constant declaration: unknown sort 'D'\")",
+        "unknown",
+        '(:reason-unknown "state of the most recent check-sat command is not known")',
+        "(:rlimit 0)",
+      ],
+    ],
+    [
+      "a declare-datatypes with parameters, at its bodies",
+      [
+        "(set-logic QF_FD)",
+        "(set-option :sat.pb.solver bv)",
+        "(declare-datatypes (T) ((L (n) (c (h T)))))",
+        "(declare-const zz Bool)",
+        "(check-sat)",
+      ],
+      [
+        '(error "line 3 column 23: invalid PB solver: solver, totalizer, circuit, sorting, segmented, binary_merge")',
+        "unknown",
+      ],
+    ],
+    [
+      "a define-fun-rec, at its name",
+      [
+        "(set-logic QF_FD)",
+        "(set-option :sat.pb.solver bv)",
+        "(define-fun-rec f () Bool true)",
+        "(declare-const zz Bool)",
+        "(check-sat)",
+      ],
+      [
+        '(error "line 3 column 16: invalid PB solver: solver, totalizer, circuit, sorting, segmented, binary_merge")',
+        "unknown",
+      ],
+    ],
+    [
+      "get-info :rlimit, at the keyword after its opening",
+      [
+        "(set-logic QF_FD)",
+        "(set-option :sat.pb.solver bv)",
+        "(get-info :rlimit)",
+        "(check-sat)",
+        "(get-info :reason-unknown)",
+        "(get-info :rlimit)",
+      ],
+      [
+        '(:rlimit (error "line 3 column 10: invalid PB solver: solver, totalizer, circuit, sorting, segmented, binary_merge")',
+        "unknown",
+        '(:reason-unknown "state of the most recent check-sat command is not known")',
+        "(:rlimit 0)",
+      ],
+    ],
+    [
+      "a let, at its first binding",
+      [
+        "(set-logic QF_FD)",
+        "(set-option :sat.pb.solver bv)",
+        "(assert (let ((x true)) x))",
+        "(declare-const zz Bool)",
+        "(check-sat)",
+      ],
+      [
+        '(error "line 3 column 14: invalid PB solver: solver, totalizer, circuit, sorting, segmented, binary_merge")',
+        "unknown",
+      ],
+    ],
+    [
+      "an attribute, at its term",
+      [
+        "(set-logic QF_FD)",
+        "(set-option :sat.pb.solver bv)",
+        "(assert (! true :named a))",
+        "(declare-const zz Bool)",
+        "(check-sat)",
+      ],
+      [
+        '(error "line 3 column 11: invalid PB solver: solver, totalizer, circuit, sorting, segmented, binary_merge")',
+        "unknown",
+      ],
+    ],
+    [
+      "a qualified identifier, at its sort",
+      [
+        "(set-logic QF_FD)",
+        "(set-option :sat.pb.solver bv)",
+        "(assert (as true Bool))",
+        "(declare-const zz Bool)",
+        "(check-sat)",
+      ],
+      [
+        '(error "line 3 column 17: invalid PB solver: solver, totalizer, circuit, sorting, segmented, binary_merge")',
+        "unknown",
+      ],
+    ],
+    [
+      "a root-obj, at the token after it",
+      [
+        "(set-logic QF_FD)",
+        "(set-option :sat.pb.solver bv)",
+        "(assert (= (root-obj (+ x 1) 1) 1))",
+        "(declare-const zz Bool)",
+        "(check-sat)",
+      ],
+      [
+        '(error "line 3 column 9: invalid PB solver: solver, totalizer, circuit, sorting, segmented, binary_merge")',
+        "unknown",
+      ],
+    ],
+    [
+      "a match, at its term",
+      [
+        "(set-logic QF_FD)",
+        "(set-option :sat.pb.solver bv)",
+        "(assert (match true ((x x))))",
+        "(declare-const zz Bool)",
+        "(check-sat)",
+      ],
+      [
+        '(error "line 3 column 15: invalid PB solver: solver, totalizer, circuit, sorting, segmented, binary_merge")',
+        "unknown",
+      ],
+    ],
+    [
+      "a rule, at its term",
+      [
+        "(set-logic QF_FD)",
+        "(set-option :sat.pb.solver bv)",
+        "(rule (and true true))",
+        "(declare-const zz Bool)",
+        "(check-sat)",
+      ],
+      [
+        '(error "line 3 column 7: invalid PB solver: solver, totalizer, circuit, sorting, segmented, binary_merge")',
+        "unknown",
+      ],
+    ],
+    [
+      "check-sat, at its first argument",
+      [
+        "(set-logic QF_FD)",
+        "(set-option :sat.pb.solver bv)",
+        "(check-sat true)",
+        "(declare-const zz Bool)",
+        "(check-sat)",
+      ],
+      [
+        '(error "line 3 column 11: invalid PB solver: solver, totalizer, circuit, sorting, segmented, binary_merge")',
+        "unknown",
+      ],
+    ],
+    [
+      "check-sat-using, at its end",
+      [
+        "(set-logic QF_FD)",
+        "(set-option :sat.pb.solver bv)",
+        "(check-sat-using smt)",
+        "(declare-const zz Bool)",
+        "(check-sat)",
+      ],
+      [
+        '(error "line 3 column 20: invalid PB solver: solver, totalizer, circuit, sorting, segmented, binary_merge")',
+        "unknown",
+      ],
+    ],
+    [
+      "dbg-some-value, at its sort",
+      [
+        "(set-logic QF_FD)",
+        "(set-option :sat.pb.solver bv)",
+        "(dbg-some-value Bool)",
+        "(declare-const zz Bool)",
+        "(check-sat)",
+      ],
+      [
+        '(error "line 3 column 16: invalid PB solver: solver, totalizer, circuit, sorting, segmented, binary_merge")',
+        "unknown",
+      ],
+    ],
+    [
+      "a push of no scope, not at all",
+      [
+        "(set-logic QF_FD)",
+        "(set-option :sat.pb.solver bv)",
+        "(push 0)",
+        "(declare-const zz Bool)",
+        "(check-sat)",
+      ],
+      [
+        '(error "line 4 column 18: invalid PB solver: solver, totalizer, circuit, sorting, segmented, binary_merge")',
+        "unknown",
+      ],
+    ],
+  ])("reports a bad sat parameter in the solver of %s", (_name, lines, expected) => {
+    expect(run(lines)).toBe(expected.join("\n"));
+  });
+
+  it.each([
+    [
+      "the commands after a failure, with no solver",
+      [
+        "(set-logic QF_FD)",
+        "(set-option :sat.pb.solver bv)",
+        "(declare-const p Bool)",
+        "(declare-const p Bool)",
+        "(assert p)",
+        "(set-option :smt.random_seed 3)",
+        "(check-sat)",
+        "(get-info :reason-unknown)",
+        "(get-model)",
+        "(get-value (p))",
+        "(get-assertions)",
+        "(push)",
+        "(pop)",
+        "(check-sat-assuming (p))",
+        "(get-info :rlimit)",
+      ],
+      [
+        '(error "line 3 column 17: invalid PB solver: solver, totalizer, circuit, sorting, segmented, binary_merge")',
+        "unknown",
+        '(:reason-unknown "state of the most recent check-sat command is not known")',
+        '(error "line 9 column 10: model is not available")',
+        '(error "line 10 column 14: model is not available")',
+        '(error "line 11 column 15: command is only available in interactive mode, use command (set-option :interactive-mode true)")',
+        "unknown",
+        "(:rlimit 0)",
+      ],
+    ],
+    [
+      "a set-logic after the first solver, which it keeps",
+      [
+        "(declare-const p Bool)",
+        "(set-option :sat.pb.solver bv)",
+        "(set-logic QF_FD)",
+        "(assert p)",
+        "(check-sat)",
+        "(get-info :reason-unknown)",
+        "(get-info :rlimit)",
+      ],
+      [
+        '(error "line 3 column 11: invalid PB solver: solver, totalizer, circuit, sorting, segmented, binary_merge")',
+        "unknown",
+        '(:reason-unknown "invalid PB solver: solver, totalizer, circuit, sorting, segmented, binary_merge")',
+        "(:rlimit 6)",
+      ],
+    ],
+    [
+      "the declarations after a failure, with no logic check",
+      [
+        "(set-logic QF_FD)",
+        "(set-option :sat.pb.solver bv)",
+        "(declare-const p Bool)",
+        "(declare-fun f (Bool) Bool)",
+        "(assert (f true))",
+        "(assert (forall ((x Bool)) x))",
+        "(check-sat)",
+      ],
+      [
+        '(error "line 3 column 17: invalid PB solver: solver, totalizer, circuit, sorting, segmented, binary_merge")',
+        "unknown",
+      ],
+    ],
+  ])("answers %s as Z3 does", (_name, lines, expected) => {
+    expect(run(lines)).toBe(expected.join("\n"));
+  });
+
+  it.each([
+    [
+      "push 0",
+      [
+        "(push 0)",
+        "(set-option :global-decls true)",
+        "(set-option :produce-assertions true)",
+        "(get-option :global-decls)",
+      ],
+      ["true"],
+    ],
+    [
+      "get-model",
+      [
+        "(get-model)",
+        "(set-option :global-decls true)",
+        "(set-option :produce-assertions true)",
+        "(get-option :global-decls)",
+      ],
+      ['(error "line 1 column 11: model is not available")', "true"],
+    ],
+    [
+      "reset-assertions",
+      [
+        "(reset-assertions)",
+        "(set-option :global-decls true)",
+        "(set-option :produce-assertions true)",
+        "(get-option :global-decls)",
+      ],
+      ["true"],
+    ],
+    [
+      "get-unsat-core",
+      [
+        "(get-unsat-core)",
+        "(set-option :global-decls true)",
+        "(set-option :produce-assertions true)",
+        "(get-option :global-decls)",
+      ],
+      [
+        '(error "line 1 column 16: unsat core construction is not enabled, use command (set-option :produce-unsat-cores true)")',
+        "true",
+      ],
+    ],
+    [
+      "a declare-fun without a name",
+      [
+        "(declare-fun 5 () Bool)",
+        "(set-option :global-decls true)",
+        "(set-option :produce-assertions true)",
+        "(get-option :global-decls)",
+      ],
+      ['(error "line 1 column 14: invalid function declaration, symbol expected")', "true"],
+    ],
+    [
+      "an assert without a term",
+      [
+        "(assert)",
+        "(set-option :global-decls true)",
+        "(set-option :produce-assertions true)",
+        "(get-option :global-decls)",
+      ],
+      ["(error \"line 1 column 8: invalid expression, unexpected ')'\")", "true"],
+    ],
+  ])(
+    "makes no manager in %s, so an option of the manager may still change",
+    (_name, lines, expected) => {
+      expect(run(lines)).toBe(expected.join("\n"));
+    },
+  );
+});

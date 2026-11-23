@@ -981,10 +981,12 @@ export const createSmtlibReader = (
   manager: AstManager,
   logic?: string,
   options: ParserOptions = DEFAULT_PARSER_OPTIONS,
+  // Z3 makes the manager, and with it the solver, where the parser first needs it.
+  useManager: (at: SExpr) => void = () => {},
 ) => {
   const hasArith = logic === undefined || logicHasArith(logic);
   const hasBv = logic === undefined || logicHasBv(logic);
-  const logicChecker = createLogicChecker(manager, logic);
+  let logicChecker = createLogicChecker(manager, undefined);
   const sortDecls = new Map<string, SortDecl>([
     ["Bool", { kind: "sort", sort: SORT_BOOL }],
     ...(hasArith && !(logic !== undefined && INT_FREE_LOGICS.has(logic))
@@ -1869,8 +1871,9 @@ export const createSmtlibReader = (
         `invalid root-obj, ')' expected got ${list.items[3].lastId}`,
         list.items[3],
       );
-    const coeffs = parseUpolynomial(polynomial);
     const follower = list.follower ?? list.end;
+    useManager(follower);
+    const coeffs = parseUpolynomial(polynomial);
     if (coeffs.length === 0)
       throw new SmtParseError(
         "invalid root object, polynomial must not be the zero polynomial",
@@ -1930,6 +1933,7 @@ export const createSmtlibReader = (
         );
       getIndexedName(target);
     }
+    useManager(list.items[2] ?? list.end);
     const sort = parseSort(list.items[2] ?? list.end, "Invalid qualified identifier");
     const extra = list.items[3];
     if (extra !== undefined)
@@ -1944,6 +1948,7 @@ export const createSmtlibReader = (
   // closing parenthesis, where at is.
   const parseIndexedTerm = (list: SmtList, at: SExpr, range?: number) => {
     const name = getIndexedName(list);
+    useManager(at);
     const indices = list.items.slice(2);
     const local = locals.get(name.text);
     if (local !== undefined) {
@@ -2358,6 +2363,7 @@ export const createSmtlibReader = (
   };
 
   const parseLeaf = (sexpr: SmtToken): number => {
+    if (sexpr.kind !== "keyword" && sexpr.kind !== "eof" && sexpr.kind !== ")") useManager(sexpr);
     if (sexpr.kind === "numeral")
       return restricted.isNumeralAsReal
         ? manager.mkRealNumeral(Rational.of(BigInt(sexpr.text), 1n))
@@ -2640,6 +2646,7 @@ export const createSmtlibReader = (
       if (head === undefined || (head.kind !== "symbol" && head.kind !== "list"))
         throw new SmtParseError("invalid expression, '(' or symbol expected", head ?? current.end);
       if (head.kind === "list") {
+        useManager(head);
         // push_app_frame: Z3 reads a head that is neither indexed nor qualified as a term.
         if (isSymbol(head.items[0], "lambda"))
           throw new SmtUnsupportedError("indexed and qualified identifiers");
@@ -2686,6 +2693,7 @@ export const createSmtlibReader = (
             `invalid let declaration, '(' expected got ${(bindings ?? current.end).lastId}`,
             bindings ?? current.end,
           );
+        useManager(bindings.items[0] ?? bindings.end);
         frames.push({
           kind: "let",
           list: current,
@@ -2699,6 +2707,7 @@ export const createSmtlibReader = (
         return;
       }
       if (head.text === "!") {
+        useManager(current.items[1] ?? current.end);
         const parent = frames[frames.length - 1];
         frames.push({
           kind: "attribute",
@@ -2713,6 +2722,7 @@ export const createSmtlibReader = (
       }
       const quantifierKind = QUANTIFIER_KINDS.get(head.text);
       if (quantifierKind === undefined) {
+        useManager(head);
         frames.push({
           kind: "application",
           list: current,
@@ -2725,6 +2735,7 @@ export const createSmtlibReader = (
         return;
       }
       // push_quant_frame.
+      useManager(current.items[1] ?? current.end);
       const start = exprStack.length;
       const bound = bindSortedVars(current.items[1], current.end);
       if (bound.varSorts.length === 0)
@@ -3184,6 +3195,7 @@ export const createSmtlibReader = (
       datatypeIndexes.set(name, index);
       names.push(name);
       arities.push(Number(arity.text));
+      useManager(sortDeclaration.items[2] ?? sortDeclaration.end);
       declareDatatypeSort(
         name,
         Number(arity.text),
@@ -3192,6 +3204,7 @@ export const createSmtlibReader = (
       if (sortDeclaration.items.length > 2)
         throw new SmtParseError("invalid sort declaration, ')' expected", sortDeclaration.items[2]);
     });
+    useManager(list.items[2] ?? list.end);
     const bodies = expectListNext(
       list.items[2] ?? list.end,
       "invalid datatype declaration, '(' expected",
@@ -3264,6 +3277,7 @@ export const createSmtlibReader = (
 
   const declareDatatype = (list: SmtList) => {
     const name = expectSymbol(list.items[1], "unexpected token used as datatype name", list.end);
+    useManager(list.items[2] ?? list.end);
     const missing: string[] = [];
     const body = parseDatatypeBody(
       list.items[2] ?? list.end,
@@ -3348,6 +3362,8 @@ export const createSmtlibReader = (
   const declareCommand = (list: SmtList) => {
     releasePending();
     const name = list.items[0].kind === "list" ? "" : list.items[0].text;
+    if (name === "define-fun-rec" || name === "define-funs-rec")
+      useManager(list.items[1] ?? list.end);
     if (name === "define-fun-rec") {
       const decl = declareRecFun(list.items.slice(1), list.end);
       insertFunc(decl, list.items[4] ?? list.end);
@@ -3426,6 +3442,7 @@ export const createSmtlibReader = (
           "invalid sort declaration, arity (<numeral>) or ')' expected",
           arity,
         );
+      useManager(arity ?? list.end);
       declare(sortDecls, symbol.text, {
         kind: "user",
         name: symbol.text,
@@ -3442,11 +3459,13 @@ export const createSmtlibReader = (
         "invalid sort parameter, symbol or ')' expected",
       );
       const body = list.items[3] ?? list.end;
+      useManager(body);
       checkPsort(body, bindTypeParameters(parameters));
       declare(sortDecls, symbol.text, { kind: "definition", parameters, body });
       expectEnd(list.items[4], "invalid sort definition, ')' expected");
       return;
     }
+    useManager(list.items[2] ?? list.end);
     if (name === "define-fun" || name === "define-const") {
       const isConst = name === "define-const";
       const bound = isConst ? { names: [], varSorts: [] } : bindSortedVars(list.items[2], list.end);
@@ -3584,7 +3603,6 @@ export const createSmtlibReader = (
   // logic lacks, and the declarations and the operators stay.
   const restrictSorts = (name: string) => {
     releasePending();
-    if (logicHasRealsOnly(name)) restricted.isNumeralAsReal = true;
     if (!ARRAY_EXTENSION_LOGICS.has(name)) restricted.hasSetSort = false;
     if (INT_FREE_LOGICS.has(name)) sortDecls.delete("Int");
     restricted.hasFf = FF_LOGICS.has(name);
@@ -3626,7 +3644,10 @@ export const createSmtlibReader = (
     parseSort: (sexpr: SExpr, context: string) => parseSort(sexpr, context),
     parseFormula,
     parseAssertion,
-    getLogicError: logicChecker.checkExpr,
+    getLogicError: (expr: number) => logicChecker.checkExpr(expr),
+    setCheckedLogic: (name: string | undefined) => {
+      logicChecker = createLogicChecker(manager, name);
+    },
     push,
     pop,
     reset,
@@ -3695,8 +3716,13 @@ export const parseSmtlib = (
         throw new SmtParseError("logic must be set before initialization", option);
       if (!isSupportedLogic(option.text)) return;
       state.logic = option.text;
-      if (state.isInUse) state.reader.restrictSorts(option.text);
-      else state.reader = createSmtlibReader(manager, option.text);
+      if (state.isInUse) {
+        state.reader.restrictSorts(option.text);
+        if (logicHasRealsOnly(option.text)) state.reader.setNumeralAsReal(true);
+      } else {
+        state.reader = createSmtlibReader(manager, option.text);
+        state.reader.setCheckedLogic(option.text);
+      }
     } else if (DECLARATIONS.has(name)) {
       state.isInUse = true;
       if (name.startsWith("define-"))
