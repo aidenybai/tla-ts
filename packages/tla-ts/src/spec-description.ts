@@ -283,7 +283,7 @@ const getInstanceActions = (
   const args = getArguments(expression);
   const callAction = (): SpecAction[] => [
     {
-      name: instanceAction.name,
+      ...instanceAction,
       location: expression.location,
       parameters: [],
       context,

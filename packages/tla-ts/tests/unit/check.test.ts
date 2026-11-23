@@ -13224,6 +13224,18 @@ ASSUME TLCFP(a) = -887695703
         "K!Put line 5, col 1 to line 5, col 1 of module M (7 22 7 32)",
       ],
     ],
+    [
+      "L == INSTANCE T WITH c <- 1, v <- x",
+      "L!Same(x + 1)",
+      "L!Same line 6, col 9 to line 6, col 21 of module M",
+      ["L!Same line 4, col 1 to line 4, col 1 of module M (6 9 6 21)"],
+    ],
+    [
+      "I == INSTANCE TV WITH v <- x",
+      "I!K!Bump(x)",
+      "I!K!Bump line 6, col 9 to line 6, col 19 of module M",
+      ["I!K!Bump line 4, col 1 to line 4, col 1 of module M (6 9 6 19)"],
+    ],
   ])(
     "names an action through %j and %s as TLC does, at the instance's SubstInNode where it substitutes and by the instance's left side",
     async (definition, next, label, coverageLabels) => {
@@ -13233,7 +13245,9 @@ ASSUME TLCFP(a) = -887695703
           ? "---- MODULE T ----\nEXTENDS Naturals\nCONSTANT c\nVARIABLE v\nSame(p) == v' = v + p\nInc == v' = v + c\nBoth == Inc \\/ Same(1)\n===="
           : name === "T4"
             ? "---- MODULE T4 ----\nEXTENDS Naturals\nPut(u, n) == u' = n\nBump(u) == u' = u + 1\n===="
-            : undefined;
+            : name === "TV"
+              ? "---- MODULE TV ----\nVARIABLE v\nK == INSTANCE T4\n===="
+              : undefined;
       const violated = await check({
         source,
         config: "INIT Init\nNEXT Next\nINVARIANT Inv",
