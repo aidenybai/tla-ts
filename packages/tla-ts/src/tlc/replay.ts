@@ -36,6 +36,7 @@ import {
   getLazyFunction,
   getMissingArgumentDescriber,
   getQuantifierElements,
+  getSubstituteClosure,
   getUnchangedVariables,
   mapBoundSets,
   NULL_STATE,
@@ -223,6 +224,22 @@ const getVariable = (
       bindLetDefinitions(environment, expression, scope),
       frames,
     );
+  }
+  if (expression.kind === "Apply" && expression.resolution?.isSubstitute) {
+    const closure = getSubstituteClosure(expression, scope);
+    return closure
+      ? getVariable(
+          environment,
+          closure.body,
+          bindOperatorArguments(closure, expression.args, {
+            environment,
+            scope,
+            state: undefined,
+            next: undefined,
+          }),
+          frames,
+        )
+      : undefined;
   }
   const name = getIdentifierName(expression);
   if (name === undefined) {
@@ -1216,6 +1233,18 @@ const visitUnchanged = (
       // Deviation from TLC: Tool#processUnchanged takes the SubstInNode of an instance's definition for an expression and fails on an unassigned variable.
       if (operator?.kind === "Closure" && operator.params.length === 0) {
         return visitUnchanged(replay, operator.body, items, operator.scope, partial, node);
+      }
+    }
+    if (expression.kind === "Apply" && expression.resolution?.isSubstitute) {
+      const closure = getSubstituteClosure(expression, scope);
+      if (closure) {
+        const callScope = bindOperatorArguments(
+          closure,
+          expression.args,
+          getContext(replay, scope, partial),
+        );
+        // Tool#processUnchangedImpl0Arity counts a substitute at its declaration's CostModel, as SANY has no application there.
+        return visitUnchanged(replay, closure.body, items, callScope, partial, parent);
       }
     }
     const before = evaluateAt(replay, node, expression, {

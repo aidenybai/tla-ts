@@ -12124,6 +12124,58 @@ ASSUME TLCFP(a) = -887695703
     ]);
   });
 
+  it("counts the variables a LET instance substitutes with its parameters, which its actions assign and keep unchanged", async () => {
+    const result = await check({
+      source:
+        "---- MODULE M ----\nEXTENDS Naturals\nVARIABLES x, y\nInit == x = 0 /\\ y \\in {0, 1}\nNext == LET L(w) == INSTANCE C WITH v <- w\n            K(w) == INSTANCE C WITH v <- <<w, y>>\n        IN \\/ L(x)!Inc /\\ L(y)!Stay\n           \\/ L(y)!IncIn /\\ L(x)!StayAll\n           \\/ K(x)!Stay /\\ TRUE\nInv == ~(x = 2 /\\ y = 2)\n====",
+      config: "INIT Init\nNEXT Next\nINVARIANT Inv",
+      coverage: 1,
+      loadModule: (name) =>
+        name === "C"
+          ? "---- MODULE C ----\nEXTENDS Naturals\nVARIABLE v\nInc == v' = (v + 1) % 3\nIncIn == v' \\in {(v + 1) % 3}\nStay == UNCHANGED v\nStayAll == UNCHANGED <<v>>\n===="
+          : undefined,
+    });
+    expect([
+      result.status,
+      result.generatedStates,
+      result.distinctStates,
+      formatCoverage(result),
+    ]).toEqual([
+      "invariant-violation",
+      22,
+      9,
+      [
+        [
+          "line 4, col 18 to line 4, col 29 of module M: 6",
+          "|line 4, col 24 to line 4, col 29 of module M: 3:9",
+        ],
+        [
+          "line 7, col 15 to line 7, col 22 of module M: 13",
+          "line 5, col 42 to line 5, col 42 of module M: 13",
+          "line 6, col 9 to line 6, col 19 of module C: 13",
+        ],
+        [
+          "line 5, col 10 to line 5, col 29 of module C: 8",
+          "|line 5, col 17 to line 5, col 29 of module C: 9:17",
+          "||line 5, col 18 to line 5, col 28 of module C: 9",
+          "line 8, col 17 to line 8, col 17 of module M: 9",
+          "line 5, col 42 to line 5, col 42 of module M: 9",
+          "line 7, col 12 to line 7, col 26 of module C: 8",
+        ],
+        [
+          "line 6, col 9 to line 6, col 19 of module C: 12",
+          "line 9, col 28 to line 9, col 31 of module M: 6",
+        ],
+        [
+          "line 10, col 8 to line 10, col 24 of module M: 9",
+          "|line 10, col 10 to line 10, col 23 of module M: 9",
+          "||line 10, col 10 to line 10, col 14 of module M: 9",
+          "||line 10, col 19 to line 10, col 23 of module M: 3",
+        ],
+      ],
+    ]);
+  });
+
   it("counts the substitution a recursive function of an instance reads when it is applied, as its FcnLambdaValue keeps the substitution's LazyValue", async () => {
     const lines = await getCoverageLines(
       "---- MODULE C ----\nEXTENDS Naturals\nVARIABLE x\n---- MODULE Inner ----\nEXTENDS Naturals\nCONSTANT c\nr[n \\in 0..2] == IF n = 0 THEN c ELSE r[n - 1] + 1\n====\nI(p) == INSTANCE Inner WITH c <- p + x\nJ == INSTANCE Inner WITH c <- 1 + x\nInit == x = 0\nNext == x < 2 /\\ x' = I(1)!r[2] + J!r[1] + x\n====",
