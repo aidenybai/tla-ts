@@ -1182,6 +1182,8 @@ const getKnownSize = (set: Value): number | undefined => {
       return getCardinality(set);
     case "Subset":
       return getKnownSize(set.base) === undefined ? undefined : getCardinality(set);
+    case "FilteredSet":
+      return set.isCached ? getCardinality(set) : undefined;
     case "FunctionSet":
       return getKnownSize(set.domain) === undefined || getKnownSize(set.range) === undefined
         ? undefined
@@ -1364,7 +1366,7 @@ const createEnumerator = (
     return createListEnumerator(coverage, undefined, size);
   }
   if (typeof set === "object" && !isNormalized && set.kind === "FilteredSet") {
-    return createListEnumerator(coverage, undefined, size);
+    return createListEnumerator(coverage, set.isCached ? node : undefined, size);
   }
   const operation =
     typeof set === "object" && set.kind === "SetOperation"
@@ -1424,6 +1426,13 @@ const chargeIsEmpty = (coverage: Coverage, set: Value): boolean | undefined => {
       return set.low > set.high;
     case "Subset":
       return false;
+    case "FilteredSet": {
+      // A converted SetPredValue's isEmpty draws from the SetEnumValue it keeps.
+      if (!set.isCached) return undefined;
+      const size = getCardinality(set);
+      createEnumerator(coverage, set, size, false).next();
+      return size === 0;
+    }
     case "RecordSet":
     case "ProductSet": {
       const components = set.kind === "RecordSet" ? set.sets : set.factors;
@@ -1490,7 +1499,7 @@ export const chargeSize = (coverage: Coverage, set: Value): void => {
 const chargeSubsetElements = (coverage: Coverage, set: SubsetValue) => {
   chargeSize(coverage, set.base);
   const base = getChargedSet(set.base);
-  if (base !== undefined) chargeSetEnumeration(coverage, base);
+  if (base !== undefined && getKnownSize(base) !== 0) chargeSetEnumeration(coverage, base);
 };
 
 const chargePrintedSize = (coverage: Coverage, set: Value) => {

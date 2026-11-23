@@ -385,6 +385,24 @@ const compareSets = (left: SetValue, right: SetValue) => {
   return 0;
 };
 
+// SetEnumValue#equals compares its elements with equals, which tests the emptiness and parts of a set of tuples where compareTo would convert it.
+const areSetsEqual = (left: SetValue, right: SetValue) => {
+  const leftElements = left.elements;
+  const rightElements = right.elements;
+  if (leftElements.length !== rightElements.length) return false;
+  if (leftElements === rightElements) return true;
+  for (let index = 0; index < leftElements.length; index++) {
+    const leftElement = leftElements[index];
+    const rightElement = rightElements[index];
+    const isEqual =
+      typeof leftElement === "object" && leftElement.kind !== "Function"
+        ? valuesEqual(leftElement, rightElement)
+        : compareValues(leftElement, rightElement) === 0;
+    if (!isEqual) return false;
+  }
+  return true;
+};
+
 const getModelValueType = (value: Value) => (isModelValue(value) ? value.type : undefined);
 
 const checkModelValueTypes = (left: Value, right: Value, isEquality: boolean) => {
@@ -615,10 +633,12 @@ const compareWithItself = (value: Value, isEquality: boolean): boolean => {
       if (!isEquality) break;
       const charges = value.cost?.charges;
       // SetOfFcnsValue#equals, SetOfRcdsValue#equals and SetOfTuplesValue#equals ask both sides, here one set, about emptiness.
-      charges?.chargeIsEmpty(value.domain);
-      if (isEmptyLikeTlc(charges, value.domain)) return false;
-      charges?.chargeIsEmpty(value.range);
-      if (isEmptyLikeTlc(charges, value.range)) return false;
+      const isUnit = isEmptyLikeTlc(charges, value.domain);
+      const isOtherUnit = isEmptyLikeTlc(charges, value.domain);
+      if (isUnit || isOtherUnit) return false;
+      const isEmpty = isEmptyLikeTlc(charges, value.range);
+      const isOtherEmpty = isEmptyLikeTlc(charges, value.range);
+      if (isEmpty || isOtherEmpty) return false;
       compareWithItself(value.domain, isEquality);
       compareWithItself(value.range, isEquality);
       return false;
@@ -627,8 +647,9 @@ const compareWithItself = (value: Value, isEquality: boolean): boolean => {
     case "ProductSet": {
       if (!isEquality) break;
       const charges = value.cost?.charges;
-      charges?.chargeIsEmpty(value);
-      if (isEmptyLikeTlc(charges, value)) return false;
+      const isEmpty = isEmptyLikeTlc(charges, value);
+      const isOtherEmpty = isEmptyLikeTlc(charges, value);
+      if (isEmpty || isOtherEmpty) return false;
       const parts = value.kind === "RecordSet" ? value.sets : value.factors;
       for (let index = 0; index < parts.length; index++) {
         compareWithItself(parts[index], isEquality);
@@ -644,6 +665,8 @@ const compareWithItself = (value: Value, isEquality: boolean): boolean => {
       : toFiniteSet(value),
     isEquality,
   );
+  // SetPredValue#equals and compareTo keep the set they convert with convertAndCache.
+  if (value.kind === "FilteredSet") value.isCached = true;
   return false;
 };
 
@@ -866,7 +889,7 @@ export const valuesEqual = (left: Value, right: Value): boolean => {
   }
   if (left.kind === "Function" && right.kind === "Function")
     return compareFunctions(left, right) === 0;
-  if (left.kind === "Set" && right.kind === "Set") return compareSets(left, right) === 0;
+  if (left.kind === "Set" && right.kind === "Set") return areSetsEqual(left, right);
   if (left.kind === "Interval" && right.kind === "Set") {
     if (getCardinality(left) !== right.elements.length) return false;
   }
@@ -2664,10 +2687,13 @@ const getChargedProduct = (charges: ChargeTable, value: Value) => {
   return product;
 };
 
+const isConvertedFilter = (value: Value) =>
+  typeof value === "object" && value.kind === "FilteredSet" && value.isCached === true;
+
 const isChargedUnion = (charges: ChargeTable, value: SetOperationValue): boolean =>
   value.operator === "\\cup" &&
   value.enumerated === undefined &&
-  isPredicated(value) &&
+  (isPredicated(value) || isConvertedFilter(value.left) || isConvertedFilter(value.right)) &&
   getValueNode(charges, value) !== undefined &&
   isTlcEnumerable(value.left) &&
   isTlcEnumerable(value.right) &&
@@ -2720,7 +2746,13 @@ const openChargedPart = (charges: ChargeTable, value: Value): ChargedStream => {
   const sets = setTrace.sets;
   if (typeof value === "object" && value.kind === "FilteredSet") {
     const filterNode = getChargedFilterNode(charges, value);
-    if (filterNode === undefined) return { kind: "Plain", part: openPart(value) };
+    if (filterNode === undefined) {
+      // A converted SetPredValue's elements() draws from the SetEnumValue it keeps, which charges the filter.
+      const keptNode = value.isCached ? getValueNode(charges, value) : undefined;
+      return keptNode === undefined
+        ? { kind: "Plain", part: openPart(value) }
+        : { kind: "ChargedLeaf", node: keptNode, part: openPart(value) };
+    }
     sets?.push(value);
     if (!isTlcEnumerable(value.base)) toFiniteSet(value);
     const stream: ChargedFilterStream = {
@@ -3962,6 +3994,7 @@ const isElementOfAnySet = (element: Value, set: Value): boolean => {
       );
     }
     case "FilteredSet": {
+      if (set.isCached) return isElementOf(element, toFiniteSet(set));
       const depth = setTrace.sets?.length ?? 0;
       try {
         return isElementOf(element, set.base) && set.test(element, true);
@@ -4022,6 +4055,7 @@ const isElementOfComponents = (
       );
     }
     case "FilteredSet": {
+      if (set.isCached) return isMember(element, toFiniteSet(set));
       const depth = setTrace.sets?.length ?? 0;
       try {
         return isMember(element, set.base) && set.test(element, true);

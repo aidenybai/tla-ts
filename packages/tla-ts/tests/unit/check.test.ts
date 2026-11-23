@@ -9934,6 +9934,59 @@ ASSUME TLCFP(a) = -887695703
     },
   );
 
+  it.each([
+    [
+      "a union of empty record sets",
+      "\\E s \\in SUBSET ((UNION {[a : {p}, b : {}] : p \\in {1, 2}}) \\X {1}) : TRUE",
+      [
+        "line 5, col 9 to line 5, col 14 of module M: 1",
+        "line 5, col 19 to line 5, col 92 of module M: 1",
+        "|line 5, col 89 to line 5, col 92 of module M: 1",
+        "|line 5, col 28 to line 5, col 85 of module M: 1",
+        "||line 5, col 36 to line 5, col 84 of module M: 1",
+        "|||line 5, col 37 to line 5, col 76 of module M: 1",
+        "||||line 5, col 43 to line 5, col 76 of module M: 1:2",
+        "|||||line 5, col 44 to line 5, col 60 of module M: 2",
+        "|||||line 5, col 70 to line 5, col 75 of module M: 1:3",
+        "|||line 5, col 82 to line 5, col 84 of module M: 1",
+      ],
+    ],
+    [
+      "a union of empty products",
+      "\\E s \\in SUBSET ((UNION {{p} \\X {} : p \\in {1, 2}}) \\X {1}) : TRUE",
+      [
+        "line 5, col 9 to line 5, col 14 of module M: 1",
+        "line 5, col 19 to line 5, col 84 of module M: 1",
+        "|line 5, col 81 to line 5, col 84 of module M: 1",
+        "|line 5, col 28 to line 5, col 77 of module M: 1",
+        "||line 5, col 36 to line 5, col 76 of module M: 1",
+        "|||line 5, col 37 to line 5, col 68 of module M: 1",
+        "||||line 5, col 43 to line 5, col 68 of module M: 1:2",
+        "|||||line 5, col 44 to line 5, col 52 of module M: 2",
+        "|||||line 5, col 62 to line 5, col 67 of module M: 1:3",
+        "|||line 5, col 74 to line 5, col 76 of module M: 1",
+      ],
+    ],
+    [
+      "a union of empty function sets",
+      "\\E s \\in SUBSET ((UNION {[{p} -> {}] : p \\in {1, 2}}) \\X {1}) : TRUE",
+      [
+        "line 5, col 9 to line 5, col 14 of module M: 1",
+        "line 5, col 19 to line 5, col 86 of module M: 1",
+        "|line 5, col 83 to line 5, col 86 of module M: 1",
+        "|line 5, col 28 to line 5, col 79 of module M: 1",
+        "||line 5, col 36 to line 5, col 78 of module M: 1",
+        "|||line 5, col 37 to line 5, col 70 of module M: 1",
+        "||||line 5, col 43 to line 5, col 70 of module M: 1:2",
+        "|||||line 5, col 44 to line 5, col 54 of module M: 2",
+        "|||||line 5, col 64 to line 5, col 69 of module M: 1:3",
+        "|||line 5, col 76 to line 5, col 78 of module M: 1",
+      ],
+    ],
+  ])("doesn't convert an empty product of %s that SUBSET sizes", async (_name, body, rows) => {
+    expect(await getNextCoverageLines(`x' = 0 /\\ ${body}`)).toEqual(rows);
+  });
+
   it("charges the conversion of a product after sizing it converts its union", async () => {
     expect(
       await getNextCoverageLines(
@@ -10305,6 +10358,36 @@ ASSUME TLCFP(a) = -887695703
     ]);
   });
 
+  it("charges the sets a state keeps each time a liveness check enumerates them", async () => {
+    expect(
+      await getCoverageLines(
+        "---- MODULE M ----\nEXTENDS Integers, FiniteSets, TLC\nVARIABLE x, y\nInit == x = 0 /\\ y = {}\nA == x < 2 /\\ x' = x + 1 /\\ y' \\in SUBSET ({1, 2} \\X {3}) /\\ y \\subseteq y'\nB == x = 2 /\\ UNCHANGED <<x, y>>\nNext == A \\/ B\nSpec == Init /\\ [][Next]_<<x, y>> /\\ WF_<<x, y>>(A)\nProp == <>(x = 2)\n====",
+        "SPECIFICATION Spec\nPROPERTY Prop",
+      ),
+    ).toEqual([
+      [
+        "line 4, col 18 to line 4, col 23 of module M: 1",
+        "|line 4, col 22 to line 4, col 23 of module M: 1:13",
+      ],
+      [
+        "line 5, col 6 to line 5, col 10 of module M: 5",
+        "|line 5, col 6 to line 5, col 6 of module M: 9",
+        "line 5, col 15 to line 5, col 24 of module M: 5",
+        "line 5, col 29 to line 5, col 57 of module M: 13",
+        "|line 5, col 36 to line 5, col 57 of module M: 5:107",
+        "||line 5, col 44 to line 5, col 56 of module M: 5:30",
+        "|||line 5, col 44 to line 5, col 49 of module M: 5:15",
+        "|||line 5, col 54 to line 5, col 56 of module M: 5:25",
+        "line 5, col 62 to line 5, col 75 of module M: 20",
+      ],
+      [
+        "line 6, col 6 to line 6, col 10 of module M: 13",
+        "|line 6, col 6 to line 6, col 6 of module M: 9",
+        "line 6, col 15 to line 6, col 32 of module M: 4",
+      ],
+    ]);
+  });
+
   it.each([
     [
       "a union with itself",
@@ -10489,6 +10572,487 @@ ASSUME TLCFP(a) = -887695703
     "converts no set of tuples or records that equality of set literals of %s compares with itself",
     async (_name, body, rows) => {
       expect(await getNextCoverageLines(`x' = 0 /\\ ${body}`)).toEqual(rows);
+    },
+  );
+
+  it.each([
+    [
+      "a product with itself in set literals",
+      "LET S == ((0..1) \\X {1}) \\cup {<<5, 5>>} IN LET P == S \\X {1} IN {P} = {P}",
+      [
+        "line 5, col 9 to line 5, col 14 of module M: 1",
+        "line 5, col 28 to line 5, col 58 of module M: 1",
+        "|line 5, col 29 to line 5, col 41 of module M: 1:4",
+        "||line 5, col 30 to line 5, col 33 of module M: 1",
+        "||line 5, col 39 to line 5, col 41 of module M: 1:7",
+        "|line 5, col 49 to line 5, col 58 of module M: 1:15",
+        "||line 5, col 50 to line 5, col 57 of module M: 1",
+        "line 5, col 72 to line 5, col 79 of module M: 1",
+        "line 5, col 84 to line 5, col 92 of module M: 1",
+      ],
+    ],
+    [
+      "two products in set literals",
+      "LET S == ((0..1) \\X {1}) \\cup {<<5, 5>>} IN {S \\X {1}} = {S \\X {1}}",
+      [
+        "line 5, col 9 to line 5, col 14 of module M: 1",
+        "line 5, col 28 to line 5, col 58 of module M: 1",
+        "|line 5, col 29 to line 5, col 41 of module M: 1:4",
+        "||line 5, col 30 to line 5, col 33 of module M: 1",
+        "||line 5, col 39 to line 5, col 41 of module M: 1:7",
+        "|line 5, col 49 to line 5, col 58 of module M: 1:15",
+        "||line 5, col 50 to line 5, col 57 of module M: 1",
+        "line 5, col 63 to line 5, col 85 of module M: 1",
+      ],
+    ],
+    [
+      "two record sets in set literals",
+      "LET S == ((0..1) \\X {1}) \\cup {<<5, 5>>} IN {[a : S]} = {[a : S]}",
+      [
+        "line 5, col 9 to line 5, col 14 of module M: 1",
+        "line 5, col 28 to line 5, col 58 of module M: 1",
+        "|line 5, col 29 to line 5, col 41 of module M: 1:4",
+        "||line 5, col 30 to line 5, col 33 of module M: 1",
+        "||line 5, col 39 to line 5, col 41 of module M: 1:7",
+        "|line 5, col 49 to line 5, col 58 of module M: 1:15",
+        "||line 5, col 50 to line 5, col 57 of module M: 1",
+        "line 5, col 63 to line 5, col 83 of module M: 1",
+      ],
+    ],
+    [
+      "two function sets in set literals",
+      "LET S == ((0..1) \\X {1}) \\cup {<<5, 5>>} IN {[S -> {1}]} = {[S -> {1}]}",
+      [
+        "line 5, col 9 to line 5, col 14 of module M: 1",
+        "line 5, col 28 to line 5, col 58 of module M: 1",
+        "|line 5, col 29 to line 5, col 41 of module M: 1:4",
+        "||line 5, col 30 to line 5, col 33 of module M: 1",
+        "||line 5, col 39 to line 5, col 41 of module M: 1:7",
+        "|line 5, col 49 to line 5, col 58 of module M: 1:15",
+        "||line 5, col 50 to line 5, col 57 of module M: 1",
+        "line 5, col 63 to line 5, col 89 of module M: 1",
+      ],
+    ],
+  ])("compares %s by their emptiness and parts", async (_name, body, rows) => {
+    expect(await getNextCoverageLines(`x' = 0 /\\ ${body}`)).toEqual(rows);
+  });
+
+  it.each([
+    [
+      "a product",
+      "LET P == {u \\in (0..1) \\X {1} : PrintT(u)} \\X {1} IN PrintT(P = P) /\\ \\A e \\in P : PrintT(e)",
+      [
+        "<<0, 1>>",
+        "<<0, 1>>",
+        "<<0, 1>>",
+        "<<1, 1>>",
+        "TRUE",
+        "<<<<0, 1>>, 1>>",
+        "<<<<1, 1>>, 1>>",
+      ],
+    ],
+    [
+      "a product in set literals",
+      "LET P == {u \\in (0..1) \\X {1} : PrintT(u)} \\X {1} IN PrintT({P} = {P}) /\\ \\A e \\in P : PrintT(e)",
+      [
+        "<<0, 1>>",
+        "<<0, 1>>",
+        "<<0, 1>>",
+        "<<1, 1>>",
+        "TRUE",
+        "<<<<0, 1>>, 1>>",
+        "<<<<1, 1>>, 1>>",
+      ],
+    ],
+    [
+      "a record set",
+      "LET Q == [a : {u \\in (0..1) \\X {1} : PrintT(u)}] IN PrintT(Q = Q) /\\ \\A e \\in Q : PrintT(e)",
+      [
+        "<<0, 1>>",
+        "<<0, 1>>",
+        "<<0, 1>>",
+        "<<1, 1>>",
+        "TRUE",
+        "[a |-> <<0, 1>>]",
+        "[a |-> <<1, 1>>]",
+      ],
+    ],
+    [
+      "a record set in set literals",
+      "LET Q == [a : {u \\in (0..1) \\X {1} : PrintT(u)}] IN PrintT({Q} = {Q}) /\\ \\A e \\in Q : PrintT(e)",
+      [
+        "<<0, 1>>",
+        "<<0, 1>>",
+        "<<0, 1>>",
+        "<<1, 1>>",
+        "TRUE",
+        "[a |-> <<0, 1>>]",
+        "[a |-> <<1, 1>>]",
+      ],
+    ],
+    [
+      "a function set",
+      "LET G == [{1} -> {u \\in (0..1) \\X {1} : PrintT(u)}] IN PrintT(G = G) /\\ \\A e \\in G : PrintT(e)",
+      ["<<0, 1>>", "<<0, 1>>", "<<0, 1>>", "<<1, 1>>", "TRUE", "<<<<0, 1>>>>", "<<<<1, 1>>>>"],
+    ],
+    [
+      "a function set in set literals",
+      "LET G == [{1} -> {u \\in (0..1) \\X {1} : PrintT(u)}] IN PrintT({G} = {G}) /\\ \\A e \\in G : PrintT(e)",
+      ["<<0, 1>>", "<<0, 1>>", "<<0, 1>>", "<<1, 1>>", "TRUE", "<<<<0, 1>>>>", "<<<<1, 1>>>>"],
+    ],
+    [
+      "an empty product",
+      "LET P == {u \\in (0..1) \\X {1} : PrintT(u) /\\ FALSE} \\X {1} IN PrintT(P = P) /\\ \\A e \\in P : PrintT(e)",
+      ["<<0, 1>>", "<<1, 1>>", "<<0, 1>>", "<<1, 1>>", "TRUE", "<<0, 1>>", "<<1, 1>>"],
+    ],
+    [
+      "a function set with an empty domain",
+      "LET G == [{u \\in (0..1) \\X {1} : PrintT(u) /\\ FALSE} -> {1}] IN PrintT(G = G) /\\ \\A e \\in G : PrintT(e)",
+      [
+        "<<0, 1>>",
+        "<<1, 1>>",
+        "<<0, 1>>",
+        "<<1, 1>>",
+        "TRUE",
+        "<<0, 1>>",
+        "<<1, 1>>",
+        "<<0, 1>>",
+        "<<1, 1>>",
+        "<<>>",
+      ],
+    ],
+    [
+      "a filter",
+      "LET T == {u \\in (0..1) \\X {1} : PrintT(u)} IN PrintT(T = T) /\\ \\A e \\in T \\X {1} : PrintT(e)",
+      ["<<0, 1>>", "<<1, 1>>", "TRUE", "<<<<0, 1>>, 1>>", "<<<<1, 1>>, 1>>"],
+    ],
+  ])(
+    "asks %s compared with itself about emptiness twice and keeps the filters it converts",
+    async (_name, body, printed) => {
+      const prints: string[] = [];
+      await check({
+        source: `---- MODULE M ----\nEXTENDS Integers, TLC\nVARIABLE x\nInit == x = 0\nNext == x' = 0 /\\ ${body}\n====`,
+        config: "INIT Init\nNEXT Next",
+        onPrint: (text) => prints.push(text),
+      });
+      expect(prints).toEqual(printed);
+    },
+  );
+
+  it.each([
+    [
+      "a product",
+      "LET P == {u \\in (0..1) \\X {1} : u[1] < 5} \\X {1} IN P = P /\\ \\A e \\in P : e = e",
+      [
+        "line 5, col 9 to line 5, col 14 of module M: 1",
+        "line 5, col 28 to line 5, col 66 of module M: 1:9",
+        "|line 5, col 28 to line 5, col 59 of module M: 1:10",
+        "||line 5, col 51 to line 5, col 58 of module M: 4",
+        "||line 5, col 35 to line 5, col 47 of module M: 1:8",
+        "|||line 5, col 36 to line 5, col 39 of module M: 1",
+        "|||line 5, col 45 to line 5, col 47 of module M: 1:11",
+        "|line 5, col 64 to line 5, col 66 of module M: 1:5",
+        "line 5, col 71 to line 5, col 97 of module M: 1",
+        "|line 5, col 71 to line 5, col 75 of module M: 1",
+        "|line 5, col 80 to line 5, col 97 of module M: 1",
+        "||line 5, col 93 to line 5, col 97 of module M: 2",
+        "||line 5, col 89 to line 5, col 89 of module M: 1",
+      ],
+    ],
+    [
+      "a product in set literals",
+      "LET P == {u \\in (0..1) \\X {1} : u[1] < 5} \\X {1} IN {P} = {P} /\\ \\A e \\in P : e = e",
+      [
+        "line 5, col 9 to line 5, col 14 of module M: 1",
+        "line 5, col 28 to line 5, col 66 of module M: 1:9",
+        "|line 5, col 28 to line 5, col 59 of module M: 1:10",
+        "||line 5, col 51 to line 5, col 58 of module M: 4",
+        "||line 5, col 35 to line 5, col 47 of module M: 1:8",
+        "|||line 5, col 36 to line 5, col 39 of module M: 1",
+        "|||line 5, col 45 to line 5, col 47 of module M: 1:11",
+        "|line 5, col 64 to line 5, col 66 of module M: 1:5",
+        "line 5, col 71 to line 5, col 101 of module M: 1",
+        "|line 5, col 71 to line 5, col 79 of module M: 1",
+        "|line 5, col 84 to line 5, col 101 of module M: 1",
+        "||line 5, col 97 to line 5, col 101 of module M: 2",
+        "||line 5, col 93 to line 5, col 93 of module M: 1",
+      ],
+    ],
+    [
+      "a record set",
+      "LET Q == [a : {u \\in (0..1) \\X {1} : u[1] < 5}] IN Q = Q /\\ \\A e \\in Q : e = e",
+      [
+        "line 5, col 9 to line 5, col 14 of module M: 1",
+        "line 5, col 28 to line 5, col 65 of module M: 1:7",
+        "|line 5, col 33 to line 5, col 64 of module M: 1:10",
+        "||line 5, col 56 to line 5, col 63 of module M: 4",
+        "||line 5, col 40 to line 5, col 52 of module M: 1:8",
+        "|||line 5, col 41 to line 5, col 44 of module M: 1",
+        "|||line 5, col 50 to line 5, col 52 of module M: 1:11",
+        "line 5, col 70 to line 5, col 96 of module M: 1",
+        "|line 5, col 70 to line 5, col 74 of module M: 1",
+        "|line 5, col 79 to line 5, col 96 of module M: 1",
+        "||line 5, col 92 to line 5, col 96 of module M: 2",
+        "||line 5, col 88 to line 5, col 88 of module M: 1",
+      ],
+    ],
+    [
+      "a record set in set literals",
+      "LET Q == [a : {u \\in (0..1) \\X {1} : u[1] < 5}] IN {Q} = {Q} /\\ \\A e \\in Q : e = e",
+      [
+        "line 5, col 9 to line 5, col 14 of module M: 1",
+        "line 5, col 28 to line 5, col 65 of module M: 1:7",
+        "|line 5, col 33 to line 5, col 64 of module M: 1:10",
+        "||line 5, col 56 to line 5, col 63 of module M: 4",
+        "||line 5, col 40 to line 5, col 52 of module M: 1:8",
+        "|||line 5, col 41 to line 5, col 44 of module M: 1",
+        "|||line 5, col 50 to line 5, col 52 of module M: 1:11",
+        "line 5, col 70 to line 5, col 100 of module M: 1",
+        "|line 5, col 70 to line 5, col 78 of module M: 1",
+        "|line 5, col 83 to line 5, col 100 of module M: 1",
+        "||line 5, col 96 to line 5, col 100 of module M: 2",
+        "||line 5, col 92 to line 5, col 92 of module M: 1",
+      ],
+    ],
+    [
+      "a function set",
+      "LET G == [{1} -> {u \\in (0..1) \\X {1} : u[1] < 5}] IN G = G /\\ \\A e \\in G : e = e",
+      [
+        "line 5, col 9 to line 5, col 14 of module M: 1",
+        "line 5, col 28 to line 5, col 68 of module M: 1:7",
+        "|line 5, col 29 to line 5, col 31 of module M: 1",
+        "|line 5, col 36 to line 5, col 67 of module M: 1:10",
+        "||line 5, col 59 to line 5, col 66 of module M: 4",
+        "||line 5, col 43 to line 5, col 55 of module M: 1:8",
+        "|||line 5, col 44 to line 5, col 47 of module M: 1",
+        "|||line 5, col 53 to line 5, col 55 of module M: 1:11",
+        "line 5, col 73 to line 5, col 99 of module M: 1",
+        "|line 5, col 73 to line 5, col 77 of module M: 1",
+        "|line 5, col 82 to line 5, col 99 of module M: 1",
+        "||line 5, col 95 to line 5, col 99 of module M: 2",
+        "||line 5, col 91 to line 5, col 91 of module M: 1",
+      ],
+    ],
+    [
+      "a function set in set literals",
+      "LET G == [{1} -> {u \\in (0..1) \\X {1} : u[1] < 5}] IN {G} = {G} /\\ \\A e \\in G : e = e",
+      [
+        "line 5, col 9 to line 5, col 14 of module M: 1",
+        "line 5, col 28 to line 5, col 68 of module M: 1:7",
+        "|line 5, col 29 to line 5, col 31 of module M: 1",
+        "|line 5, col 36 to line 5, col 67 of module M: 1:10",
+        "||line 5, col 59 to line 5, col 66 of module M: 4",
+        "||line 5, col 43 to line 5, col 55 of module M: 1:8",
+        "|||line 5, col 44 to line 5, col 47 of module M: 1",
+        "|||line 5, col 53 to line 5, col 55 of module M: 1:11",
+        "line 5, col 73 to line 5, col 103 of module M: 1",
+        "|line 5, col 73 to line 5, col 81 of module M: 1",
+        "|line 5, col 86 to line 5, col 103 of module M: 1",
+        "||line 5, col 99 to line 5, col 103 of module M: 2",
+        "||line 5, col 95 to line 5, col 95 of module M: 1",
+      ],
+    ],
+    [
+      "an empty product",
+      "LET P == {u \\in (0..1) \\X {1} : u[1] > 5} \\X {1} IN P = P /\\ \\A e \\in P : e = e",
+      [
+        "line 5, col 9 to line 5, col 14 of module M: 1",
+        "line 5, col 28 to line 5, col 66 of module M: 1:1",
+        "|line 5, col 28 to line 5, col 59 of module M: 1:6",
+        "||line 5, col 51 to line 5, col 58 of module M: 6",
+        "||line 5, col 35 to line 5, col 47 of module M: 1:12",
+        "|||line 5, col 36 to line 5, col 39 of module M: 1",
+        "|||line 5, col 45 to line 5, col 47 of module M: 1:15",
+        "|line 5, col 64 to line 5, col 66 of module M: 1",
+        "line 5, col 71 to line 5, col 97 of module M: 1",
+      ],
+    ],
+    [
+      "a function set with an empty domain",
+      "LET G == [{u \\in (0..1) \\X {1} : u[1] > 5} -> {u \\in (0..1) \\X {1} : u[1] < 5}] IN G = G /\\ \\A e \\in G : e = e",
+      [
+        "line 5, col 9 to line 5, col 14 of module M: 1",
+        "line 5, col 28 to line 5, col 97 of module M: 1:4",
+        "|line 5, col 29 to line 5, col 60 of module M: 1:8",
+        "||line 5, col 52 to line 5, col 59 of module M: 8",
+        "||line 5, col 36 to line 5, col 48 of module M: 1:16",
+        "|||line 5, col 37 to line 5, col 40 of module M: 1",
+        "|||line 5, col 46 to line 5, col 48 of module M: 1:20",
+        "|line 5, col 65 to line 5, col 96 of module M: 1",
+        "line 5, col 102 to line 5, col 128 of module M: 1",
+      ],
+    ],
+    [
+      "a filter",
+      "LET T == {u \\in (0..1) \\X {1} : u[1] < 5} IN T = T /\\ \\A e \\in T \\X {1} : e = e",
+      [
+        "line 5, col 9 to line 5, col 14 of module M: 1",
+        "line 5, col 28 to line 5, col 59 of module M: 1:8",
+        "|line 5, col 51 to line 5, col 58 of module M: 2",
+        "|line 5, col 35 to line 5, col 47 of module M: 1:4",
+        "||line 5, col 36 to line 5, col 39 of module M: 1",
+        "||line 5, col 45 to line 5, col 47 of module M: 1:5",
+        "line 5, col 64 to line 5, col 97 of module M: 1",
+        "|line 5, col 64 to line 5, col 68 of module M: 1",
+        "|line 5, col 73 to line 5, col 97 of module M: 1",
+        "||line 5, col 93 to line 5, col 97 of module M: 2",
+        "||line 5, col 82 to line 5, col 89 of module M: 1:9",
+        "|||line 5, col 82 to line 5, col 82 of module M: 1",
+        "|||line 5, col 87 to line 5, col 89 of module M: 1:5",
+      ],
+    ],
+  ])(
+    "charges %s compared with itself and the filters it converts as TLC does",
+    async (_name, body, rows) => {
+      expect(await getNextCoverageLines(`x' = 0 /\\ ${body}`)).toEqual(rows);
+    },
+  );
+
+  it.each([
+    [
+      "the emptiness of a product",
+      "LET F == {u \\in (0..1) \\X {1} : u[1] < 5} IN F = F /\\ F \\X {2} # {}",
+      [
+        "line 5, col 9 to line 5, col 14 of module M: 1",
+        "line 5, col 28 to line 5, col 59 of module M: 1:8",
+        "|line 5, col 51 to line 5, col 58 of module M: 2",
+        "|line 5, col 35 to line 5, col 47 of module M: 1:4",
+        "||line 5, col 36 to line 5, col 39 of module M: 1",
+        "||line 5, col 45 to line 5, col 47 of module M: 1:5",
+        "line 5, col 64 to line 5, col 85 of module M: 1",
+        "|line 5, col 64 to line 5, col 68 of module M: 1",
+        "|line 5, col 73 to line 5, col 85 of module M: 1",
+        "||line 5, col 73 to line 5, col 80 of module M: 1:6",
+        "|||line 5, col 73 to line 5, col 73 of module M: 1",
+        "|||line 5, col 78 to line 5, col 80 of module M: 1:5",
+        "||line 5, col 84 to line 5, col 85 of module M: 1",
+      ],
+    ],
+    [
+      "the emptiness of a record set",
+      "LET F == {u \\in (0..1) \\X {1} : u[1] < 5} IN F = F /\\ [a : F] # {}",
+      [
+        "line 5, col 9 to line 5, col 14 of module M: 1",
+        "line 5, col 28 to line 5, col 59 of module M: 1:8",
+        "|line 5, col 51 to line 5, col 58 of module M: 2",
+        "|line 5, col 35 to line 5, col 47 of module M: 1:4",
+        "||line 5, col 36 to line 5, col 39 of module M: 1",
+        "||line 5, col 45 to line 5, col 47 of module M: 1:5",
+        "line 5, col 64 to line 5, col 84 of module M: 1",
+        "|line 5, col 64 to line 5, col 68 of module M: 1",
+        "|line 5, col 73 to line 5, col 84 of module M: 1",
+        "||line 5, col 73 to line 5, col 79 of module M: 1:4",
+        "|||line 5, col 74 to line 5, col 78 of module M: 1",
+        "||line 5, col 83 to line 5, col 84 of module M: 1",
+      ],
+    ],
+    [
+      "the subsets of a product",
+      "LET F == {u \\in (0..1) \\X {1} : u[1] < 5} IN F = F /\\ \\E s \\in SUBSET (F \\X {2}) : s = s",
+      [
+        "line 5, col 9 to line 5, col 14 of module M: 1",
+        "line 5, col 28 to line 5, col 59 of module M: 1:9",
+        "|line 5, col 51 to line 5, col 58 of module M: 2",
+        "|line 5, col 35 to line 5, col 47 of module M: 1:4",
+        "||line 5, col 36 to line 5, col 39 of module M: 1",
+        "||line 5, col 45 to line 5, col 47 of module M: 1:5",
+        "line 5, col 64 to line 5, col 106 of module M: 1",
+        "|line 5, col 64 to line 5, col 68 of module M: 1",
+        "|line 5, col 73 to line 5, col 106 of module M: 1",
+        "||line 5, col 102 to line 5, col 106 of module M: 1",
+        "||line 5, col 82 to line 5, col 98 of module M: 1",
+        "|||line 5, col 90 to line 5, col 97 of module M: 1:6",
+        "||||line 5, col 90 to line 5, col 90 of module M: 1",
+        "||||line 5, col 95 to line 5, col 97 of module M: 1:5",
+      ],
+    ],
+    [
+      "a union",
+      "LET F == {u \\in (0..1) \\X {1} : u[1] < 5} IN F = F /\\ \\E t \\in F \\cup {<<5, 1>>} : t = t",
+      [
+        "line 5, col 9 to line 5, col 14 of module M: 1",
+        "line 5, col 28 to line 5, col 59 of module M: 1:7",
+        "|line 5, col 51 to line 5, col 58 of module M: 2",
+        "|line 5, col 35 to line 5, col 47 of module M: 1:4",
+        "||line 5, col 36 to line 5, col 39 of module M: 1",
+        "||line 5, col 45 to line 5, col 47 of module M: 1:5",
+        "line 5, col 64 to line 5, col 106 of module M: 1",
+        "|line 5, col 64 to line 5, col 68 of module M: 1",
+        "|line 5, col 73 to line 5, col 106 of module M: 1",
+        "||line 5, col 102 to line 5, col 106 of module M: 1",
+        "||line 5, col 82 to line 5, col 98 of module M: 1",
+        "|||line 5, col 82 to line 5, col 82 of module M: 1",
+        "|||line 5, col 89 to line 5, col 98 of module M: 1:13",
+        "||||line 5, col 90 to line 5, col 97 of module M: 1",
+      ],
+    ],
+  ])("charges a converted filter in %s as the set it keeps", async (_name, body, rows) => {
+    expect(await getNextCoverageLines(`x' = 0 /\\ ${body}`)).toEqual(rows);
+  });
+
+  it.each([
+    [
+      "a product compared with itself",
+      "LET F == {u \\in (0..1) \\X {1} : u[2] = 1} IN LET P == F \\X {1} IN P = P /\\ \\E t \\in F \\cup {9} : t = t",
+      [
+        "line 5, col 28 to line 5, col 59 of module M: 2:17",
+        "|||line 5, col 110 to line 5, col 112 of module M: 2:22",
+      ],
+    ],
+    [
+      "the filter compared with itself",
+      "LET F == {u \\in (0..1) \\X {1} : u[2] = 1} IN F = F /\\ \\E t \\in F \\cup {9} : t = t",
+      [
+        "line 5, col 28 to line 5, col 59 of module M: 2:17",
+        "|||line 5, col 89 to line 5, col 91 of module M: 2:22",
+      ],
+    ],
+    [
+      "the filter compared with itself, on the right of the union",
+      "LET F == {u \\in (0..1) \\X {1} : u[2] = 1} IN F = F /\\ \\E t \\in {9} \\cup F : t = t",
+      [
+        "line 5, col 28 to line 5, col 59 of module M: 2:17",
+        "|||line 5, col 82 to line 5, col 84 of module M: 2:22",
+      ],
+    ],
+  ])(
+    "charges the draws of a union with a filter converted by %s before sorting it fails",
+    async (_name, body, rows) => {
+      expect(await getNextCoverageLines(`x' = 0 /\\ ${body}`)).toEqual(
+        expect.arrayContaining(rows),
+      );
+    },
+  );
+
+  it.each([
+    [
+      "a filter",
+      "LET F == {u \\in (0..1) \\X {1} : PrintT(u)} IN PrintT(F = F) /\\ PrintT(<<1, 1>> \\in F)",
+      ["<<0, 1>>", "<<1, 1>>", "TRUE", "TRUE"],
+    ],
+    [
+      "a product of a filter",
+      "LET F == {u \\in (0..1) \\X {1} : PrintT(u)} IN LET P == F \\X {1} IN PrintT(P = P) /\\ PrintT(<<<<1, 1>>, 1>> \\in P)",
+      ["<<0, 1>>", "<<0, 1>>", "<<0, 1>>", "<<1, 1>>", "TRUE", "TRUE"],
+    ],
+    [
+      "a filter in a set literal",
+      "LET F == {u \\in SUBSET {1, 2} : PrintT(u)} IN PrintT({F} = {F}) /\\ PrintT({1} \\in F)",
+      ["{}", "{1}", "{2}", "{1, 2}", "TRUE", "TRUE"],
+    ],
+  ])(
+    "tests membership in %s that equality converts without the filter's predicate",
+    async (_name, body, printed) => {
+      for (const coverage of [undefined, 1]) {
+        const prints: string[] = [];
+        await check({
+          source: `---- MODULE M ----\nEXTENDS Integers, TLC\nVARIABLE x\nInit == x = 0\nNext == x' = 0 /\\ ${body}\n====`,
+          config: "INIT Init\nNEXT Next",
+          coverage,
+          onPrint: (text) => prints.push(text),
+        });
+        expect(prints).toEqual(printed);
+      }
     },
   );
 
