@@ -9,7 +9,6 @@ export interface Binding {
 
 const NUM_OFFSETS = 3;
 
-// A variable index or an expression at one of the offsets.
 const getKey = (index: number, offset: number) => NUM_OFFSETS * index + offset;
 
 // Bindings of variables at offsets to expressions at offsets. Applying it renames each unbound

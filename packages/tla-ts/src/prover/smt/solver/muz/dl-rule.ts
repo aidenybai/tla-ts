@@ -329,7 +329,6 @@ export class RuleManager {
     return index;
   }
 
-  // Takes the reference of fml and returns the hoisted literal with one.
   private hoistCompound(index: { value: number }, fml: number, body: RefVector): number {
     const manager = this.manager;
     if (manager.isNot(fml)) {

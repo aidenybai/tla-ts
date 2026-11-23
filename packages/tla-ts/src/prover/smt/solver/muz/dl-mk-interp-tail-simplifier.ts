@@ -293,7 +293,6 @@ export class MkInterpTailSimplifier implements RuleTransformerPlugin {
     return result;
   }
 
-  // The rule comes with a reference.
   private propagateVariableEquivalences(rule: Rule) {
     const context = this.context;
     const manager = context.manager;
@@ -360,7 +359,6 @@ export class MkInterpTailSimplifier implements RuleTransformerPlugin {
     return result;
   }
 
-  // The rule comes with a reference.
   transformRule(original: Rule): KeptRule | DroppedRule {
     const context = this.context;
     const manager = context.manager;

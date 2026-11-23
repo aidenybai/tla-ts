@@ -39,7 +39,6 @@ export class RuleUnifier {
     return isReady;
   }
 
-  // The resolvent comes with a reference.
   apply(target: Rule, tailIndex: number, source: Rule): Resolvent {
     const manager = this.context.manager;
     const head = assign(manager, -1, this.subst.apply(target.head, 0, this.deltas));
@@ -76,7 +75,6 @@ export class RuleUnifier {
     return { rule: resolvent, isSatisfiable };
   }
 
-  // The substitution comes with a reference to each term.
   getRuleSubst(rule: Rule, isTarget: boolean) {
     const manager = this.context.manager;
     const result = new RefVector(manager);
@@ -174,7 +172,6 @@ export class MkRuleInliner implements RuleTransformerPlugin {
     this.pinned = [];
   }
 
-  // The resolvent comes with a reference.
   private tryToInlineRule(target: Rule, source: Rule, tailIndex: number) {
     this.context.ruleManager.normVars(target);
     if (this.context.ruleManager.hasQuantifiers(source)) {
@@ -373,8 +370,7 @@ export class MkRuleInliner implements RuleTransformerPlugin {
     return true;
   }
 
-  // Returns undefined when nothing applies, or the replacement with a reference, where null
-  // deletes the rule.
+  // Returns undefined when nothing applies, or the replacement, where null deletes the rule.
   private doEagerInliningRule(rule: Rule, rules: RuleSet): Rule | null | undefined {
     const manager = this.context.manager;
     if (rule.hasNegation()) return undefined;
@@ -410,7 +406,6 @@ export class MkRuleInliner implements RuleTransformerPlugin {
     return undefined;
   }
 
-  // On success the rules are released, as Z3 replaces the scoped set.
   private doEagerInlining(rules: RuleSet) {
     const ruleManager = this.context.ruleManager;
     const result = new RuleSet(this.context);
@@ -472,7 +467,6 @@ export class MkRuleInliner implements RuleTransformerPlugin {
     return visitor.unifiers;
   }
 
-  // On success the rules are released, as Z3 replaces the scoped set.
   private inlineLinear(rules: RuleSet) {
     const ruleManager = this.context.ruleManager;
     let isDone = false;

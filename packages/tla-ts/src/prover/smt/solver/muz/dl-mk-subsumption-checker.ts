@@ -85,7 +85,7 @@ export class MkSubsumptionChecker implements RuleTransformerPlugin {
     }
   }
 
-  // Undefined drops the rule, and a rule comes with a reference.
+  // Undefined drops the rule.
   private transformRule(rule: Rule, index: RuleSubsumptionIndex): Rule | undefined {
     const manager = this.context.manager;
     const ruleManager = this.context.ruleManager;
