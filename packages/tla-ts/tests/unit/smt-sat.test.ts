@@ -1504,6 +1504,93 @@ describe("card2bv's parameters, as Z3 5.3.2 reads them at each call site", () =>
     );
   });
 
+  it("encodes with a sat.cardinality.encoding set after the finite-domain solver starts", () => {
+    expect(
+      run([
+        "(set-logic QF_FD)",
+        ...[0, 1, 2, 3, 4, 5, 6, 7].map((index) => `(declare-const x${index} Bool)`),
+        "(assert ((_ at-most 2) x0 x1 x2 x3 x4 x5))",
+        "(set-option :sat.cardinality.encoding unate)",
+        "(assert ((_ at-least 3) x2 x3 x4 x5 x6 x7))",
+        "(check-sat)",
+        "(get-model)",
+        "(get-info :rlimit)",
+      ]),
+    ).toBe(
+      [
+        "sat",
+        "(",
+        "  (define-fun x7 () Bool",
+        "    true)",
+        "  (define-fun x3 () Bool",
+        "    false)",
+        "  (define-fun x2 () Bool",
+        "    false)",
+        "  (define-fun x5 () Bool",
+        "    true)",
+        "  (define-fun x4 () Bool",
+        "    true)",
+        "  (define-fun x6 () Bool",
+        "    true)",
+        "  (define-fun x1 () Bool",
+        "    false)",
+        "  (define-fun x0 () Bool",
+        "    false)",
+        ")",
+        "(:rlimit 1003)",
+      ].join("\n"),
+    );
+  });
+
+  it("encodes with a sat.cardinality.encoding set after the incremental sat solver starts", () => {
+    expect(
+      run([
+        "(set-option :tactic.default_tactic sat)",
+        ...[0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11].map((index) => `(declare-const x${index} Bool)`),
+        "(assert (or x0 x1))",
+        "(check-sat)",
+        "(set-option :sat.cardinality.encoding unate)",
+        "(assert ((_ at-most 2) x0 x1 x2 x3 x4 x5))",
+        "(assert ((_ at-least 3) x0 x1 x2 x3 x4 x5 x6 x7 x8 x9))",
+        "(check-sat)",
+        "(get-model)",
+        "(get-info :rlimit)",
+      ]),
+    ).toBe(
+      [
+        "sat",
+        "sat",
+        "(",
+        "  (define-fun x0 () Bool",
+        "    true)",
+        "  (define-fun x1 () Bool",
+        "    false)",
+        "  (define-fun x5 () Bool",
+        "    false)",
+        "  (define-fun x3 () Bool",
+        "    false)",
+        "  (define-fun x2 () Bool",
+        "    false)",
+        "  (define-fun x4 () Bool",
+        "    true)",
+        "  (define-fun x6 () Bool",
+        "    true)",
+        "  (define-fun x7 () Bool",
+        "    false)",
+        "  (define-fun x8 () Bool",
+        "    false)",
+        "  (define-fun x9 () Bool",
+        "    false)",
+        "  (define-fun x10 () Bool",
+        "    false)",
+        "  (define-fun x11 () Bool",
+        "    false)",
+        ")",
+        "(:rlimit 466)",
+      ].join("\n"),
+    );
+  });
+
   for (const pbSolver of ["totalizer", "sorting", "binary_merge"])
     it(`throws at a weighted pseudo-Boolean constraint under sat.pb.solver ${pbSolver}`, () => {
       expect(() =>

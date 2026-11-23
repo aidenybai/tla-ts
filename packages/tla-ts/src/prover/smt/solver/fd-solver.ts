@@ -18,7 +18,7 @@ import { mkThSolver } from "./euf/th-solvers";
 import { BoundManager } from "./bound-manager";
 import { mkBvApp } from "./bv-decl-plugin";
 import { Bv2IntContext, Bv2IntRewriter } from "./bv2int-rewriter";
-import { type CardinalityOptions, createCard2Bv, getCardinalityOptions } from "./card2bv";
+import { createCard2Bv, getCardinalityOptions } from "./card2bv";
 import { DependentExprState } from "./dependent-expr-state";
 import { Enum2BvRewriter } from "./dt2bv-tactic";
 import { assignOwned, release } from "./expr-ref";
@@ -479,12 +479,11 @@ export class FdSolver {
   private readonly scopes: FdScope[] = [];
   private converter: Definition[] = [];
   private model: ProtoModel | undefined;
-  private readonly cardinality: CardinalityOptions;
 
   constructor(
     private readonly manager: AstManager,
     params: SatParams,
-    parameters: ReadonlyMap<string, string>,
+    private readonly parameters: ReadonlyMap<string, string>,
     isIncremental = true,
   ) {
     this.solver = new IncSatSolver(
@@ -501,7 +500,6 @@ export class FdSolver {
     this.enum2bv = new Enum2BvSimplifier(manager);
     this.coreReplace = new ExprSafeReplace(manager);
     this.core = new RefVector(manager);
-    this.cardinality = getCardinalityOptions(new Map(), getSatParams(parameters));
   }
 
   get reasonUnknown() {
@@ -688,7 +686,7 @@ export class FdSolver {
         const simplifier = createCard2Bv(
           manager,
           getRewriterOptions(manager, new Map()),
-          this.cardinality,
+          getCardinalityOptions(new Map(), getSatParams(this.parameters)),
           (decl) => this.trail.hide(decl),
         )(state);
         try {

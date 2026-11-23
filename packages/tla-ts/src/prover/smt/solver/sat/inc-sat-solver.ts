@@ -30,8 +30,9 @@ import {
   mkIncSatEufPreprocess,
   mkIncSatPreprocess,
   type TacticParam,
+  type TacticParams,
 } from "../tactic";
-import { type CardinalityOptions, getCardinalityOptions } from "../card2bv";
+import { getCardinalityOptions } from "../card2bv";
 import type { SatParams } from "./config";
 import { Goal2Sat } from "./goal2sat";
 import { getConsequences } from "./consequences";
@@ -77,7 +78,7 @@ export class IncSatSolver {
   private scopes: Scope[] = [];
   reasonUnknown = "no reason given";
   wasUnknown = false;
-  private readonly cardinality: CardinalityOptions;
+  private readonly cardinalityParams: TacticParams;
 
   // A theory factory runs the solver in sat.euf mode, with the euf solver as its extension.
   constructor(
@@ -103,13 +104,10 @@ export class IncSatSolver {
     this.satConverter = new Sat2GoalConverter(manager);
     this.internalized = new RefVector(manager);
     this.propagator = new PropagateValuesTactic(manager);
-    this.cardinality = getCardinalityOptions(
-      new Map<string, TacticParam>([
-        ["keep_cardinality_constraints", params.get("cardinality.solver") !== false],
-        ["pb.solver", params.get("pb.solver") ?? "solver"],
-      ]),
-      getSatParams(parameters),
-    );
+    this.cardinalityParams = new Map<string, TacticParam>([
+      ["keep_cardinality_constraints", params.get("cardinality.solver") !== false],
+      ["pb.solver", params.get("pb.solver") ?? "solver"],
+    ]);
   }
 
   private isClause(expr: number): boolean {
@@ -229,7 +227,12 @@ export class IncSatSolver {
       try {
         const goals = (
           this.goal2sat.euf === null
-            ? mkIncSatPreprocess(this.manager, bitBlaster, this.propagator, this.cardinality)
+            ? mkIncSatPreprocess(
+                this.manager,
+                bitBlaster,
+                this.propagator,
+                getCardinalityOptions(this.cardinalityParams, getSatParams(this.parameters)),
+              )
             : mkIncSatEufPreprocess(this.manager, this.propagator)
         )(goal);
         this.isCnf = true;
