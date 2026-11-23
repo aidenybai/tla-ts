@@ -122,8 +122,13 @@ export interface FilteredSetValue extends LazySet {
   base: Value;
   test: (element: Value, isMember: boolean) => boolean;
   isTestObserved?: true;
-  startPass?: (isMaterialized: boolean) => (element: Value) => boolean;
+  startPass?: (isMaterialized: boolean) => FilterPass;
   source?: FilteredSetSource;
+}
+
+export interface FilterPass {
+  test: (element: Value) => boolean;
+  end: () => void;
 }
 
 export interface UnionValue extends LazySet, CostedSet {
@@ -1971,7 +1976,7 @@ const enumerateSet = (
           `Attempted to enumerate { x \\in S : p(x) } when S:\n${prettyPrint(formatValue(value.base))}\nis not enumerable`,
         );
       }
-      const test = getPassTest(value, true);
+      const test = value.startPass?.(true).test ?? getPlainTest(value);
       const kept: Value[] = [];
       someOpenedElement(value.base, opened ?? openSetStream(value.base), (element) => {
         if (!test(element)) return false;
@@ -2151,6 +2156,7 @@ interface FilterStream {
   set: FilteredSetValue;
   base: ElementStream;
   test: (element: Value) => boolean;
+  end: (() => void) | undefined;
 }
 
 interface ProductStream {
@@ -2333,8 +2339,7 @@ const getPredicatedProduct = (value: ObjectValue) =>
 
 const EMPTY_STREAM: ListStream = { kind: "List", elements: [], position: 0 };
 
-const getPassTest = (value: FilteredSetValue, isMaterialized: boolean) =>
-  value.startPass?.(isMaterialized) ?? ((element: Value) => value.test(element, false));
+const getPlainTest = (value: FilteredSetValue) => (element: Value) => value.test(element, false);
 
 // TLC's elements() checks that the set has an element and reads the first element of each component, which nextElement continues.
 const openProductStream = (
@@ -2383,11 +2388,14 @@ const openPart = (value: Value): ElementStream => {
   if (typeof value === "object" && value.kind === "FilteredSet" && !isCachedSet(value)) {
     sets?.push(value);
     if (!isTlcEnumerable(value.base)) toFiniteSet(value);
+    const base = openPart(value.base);
+    const pass = value.startPass?.(false);
     const stream: FilterStream = {
       kind: "Filter",
       set: value,
-      base: openPart(value.base),
-      test: getPassTest(value, false),
+      base,
+      test: pass?.test ?? getPlainTest(value),
+      end: pass?.end,
     };
     sets?.pop();
     return stream;
@@ -2462,10 +2470,13 @@ const resetStream = (stream: ElementStream): void => {
     case "List":
       stream.position = 0;
       return;
-    case "Filter":
+    case "Filter": {
       resetStream(stream.base);
-      stream.test = getPassTest(stream.set, false);
+      const pass = stream.set.startPass?.(false);
+      stream.test = pass?.test ?? getPlainTest(stream.set);
+      stream.end = pass?.end;
       return;
+    }
     case "Product":
       stream.isDone = false;
       for (let index = 0; index < stream.parts.length; index++) restartPart(stream, index);
@@ -2498,6 +2509,7 @@ const getNextElement = (stream: ElementStream): Value | undefined => {
       ) {
         if (stream.test(element)) return element;
       }
+      stream.end?.();
       return undefined;
     case "Product": {
       if (stream.isDone) return undefined;
@@ -3297,9 +3309,15 @@ const someElementOfStream = (
     });
   }
   if (value.kind === "FilteredSet" && isTlcEnumerable(value.base)) {
-    const test = value.startPass?.(false);
-    if (test) {
-      return someOpenedElement(value.base, opened, (element) => test(element) && visit(element));
+    const pass = value.startPass?.(false);
+    if (pass) {
+      if (
+        someOpenedElement(value.base, opened, (element) => pass.test(element) && visit(element))
+      ) {
+        return true;
+      }
+      pass.end();
+      return false;
     }
     return someOpenedElement(
       value.base,

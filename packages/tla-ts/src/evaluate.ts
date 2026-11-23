@@ -2768,12 +2768,18 @@ export const getLazyFilter = (
       isTestObserved: true,
       startPass: (isMaterialized) => {
         const draws = createFilterBaseEnumerator(coverage, base, isMaterialized);
-        return (element) => {
-          draws?.next();
-          coverage.secondary[node]++;
-          const value = runAtCoverageNode(coverage, node, () => test(element, false));
-          if (isMaterialized && value) coverage.secondary[node]++;
-          return value;
+        return {
+          test: (element) => {
+            draws?.next();
+            coverage.secondary[node]++;
+            const value = runAtCoverageNode(coverage, node, () => test(element, false));
+            if (isMaterialized && value) coverage.secondary[node]++;
+            return value;
+          },
+          // SetPredValue's enumerator draws the end of its base, which charges a union's set of sets.
+          end: () => {
+            draws?.next();
+          },
         };
       },
       source,

@@ -10474,6 +10474,71 @@ ASSUME TLCFP(a) = -887695703
 
   it.each([
     [
+      "S \\cup T",
+      "\\A o \\in {9} \\cup {u \\in ((0..1) \\X {1}) \\cup {<<5, 5>>} : FALSE} : o # 0",
+      [
+        "line 5, col 9 to line 5, col 14 of module M: 1",
+        "line 5, col 19 to line 5, col 91 of module M: 1",
+        "|line 5, col 87 to line 5, col 91 of module M: 1",
+        "|line 5, col 28 to line 5, col 83 of module M: 1",
+        "||line 5, col 28 to line 5, col 30 of module M: 1:7",
+        "||line 5, col 37 to line 5, col 83 of module M: 1:3",
+        "|||line 5, col 78 to line 5, col 82 of module M: 3",
+        "|||line 5, col 44 to line 5, col 74 of module M: 1",
+        "||||line 5, col 45 to line 5, col 57 of module M: 1:4",
+        "|||||line 5, col 46 to line 5, col 49 of module M: 1",
+        "|||||line 5, col 55 to line 5, col 57 of module M: 1:5",
+        "||||line 5, col 65 to line 5, col 74 of module M: 1:8",
+        "|||||line 5, col 66 to line 5, col 73 of module M: 1",
+      ],
+    ],
+    [
+      "UNION S",
+      "\\A o \\in {u \\in UNION {[a : {p}] : p \\in {1, 2}} : FALSE} \\cup {9} : o # 0",
+      [
+        "line 5, col 9 to line 5, col 14 of module M: 1",
+        "line 5, col 19 to line 5, col 92 of module M: 1",
+        "|line 5, col 88 to line 5, col 92 of module M: 1",
+        "|line 5, col 28 to line 5, col 84 of module M: 1",
+        "||line 5, col 28 to line 5, col 75 of module M: 1:2",
+        "|||line 5, col 70 to line 5, col 74 of module M: 2",
+        "|||line 5, col 35 to line 5, col 66 of module M: 1",
+        "||||line 5, col 41 to line 5, col 66 of module M: 1:6",
+        "|||||line 5, col 42 to line 5, col 50 of module M: 2:7",
+        "||||||line 5, col 47 to line 5, col 49 of module M: 2:6",
+        "|||||||line 5, col 48 to line 5, col 48 of module M: 2",
+        "|||||line 5, col 60 to line 5, col 65 of module M: 1:3",
+        "||line 5, col 82 to line 5, col 84 of module M: 1:7",
+      ],
+    ],
+    [
+      "S \\cup T before the other operand",
+      "\\A o \\in {u \\in ((0..1) \\X {1}) \\cup {<<5, 5>>} : FALSE} \\cup {9} : o # 0",
+      [
+        "line 5, col 9 to line 5, col 14 of module M: 1",
+        "line 5, col 19 to line 5, col 91 of module M: 1",
+        "|line 5, col 87 to line 5, col 91 of module M: 1",
+        "|line 5, col 28 to line 5, col 83 of module M: 1",
+        "||line 5, col 28 to line 5, col 74 of module M: 1:3",
+        "|||line 5, col 69 to line 5, col 73 of module M: 3",
+        "|||line 5, col 35 to line 5, col 65 of module M: 1",
+        "||||line 5, col 36 to line 5, col 48 of module M: 1:4",
+        "|||||line 5, col 37 to line 5, col 40 of module M: 1",
+        "|||||line 5, col 46 to line 5, col 48 of module M: 1:5",
+        "||||line 5, col 56 to line 5, col 65 of module M: 1:8",
+        "|||||line 5, col 57 to line 5, col 64 of module M: 1",
+        "||line 5, col 81 to line 5, col 83 of module M: 1:7",
+      ],
+    ],
+  ])(
+    "charges the draw that finds the end of %s under a filter that a union streams",
+    async (_name, body, rows) => {
+      expect(await getNextCoverageLines(`x' = 0 /\\ ${body}`)).toEqual(rows);
+    },
+  );
+
+  it.each([
+    [
       "CHOOSE",
       "CHOOSE y \\in s : y[1] > 5",
       [
