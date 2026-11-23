@@ -4388,6 +4388,43 @@ export const updateFunction = (
   );
 };
 
+const UNREADY_HASH = 0;
+
+// TLC fingerprints a value only with its state, so EXCEPT hashes what it stores as getValueHash does, but gives up where that would convert a lazy value or sort a set.
+const getReadyHash = (value: Value): number => {
+  if (typeof value !== "object" || value.kind === "ModelValue") return getValueHash(value);
+  if (value.kind === "LazyFunction") {
+    return value.enumerated === undefined ? UNREADY_HASH : getReadyHash(value.enumerated);
+  }
+  if (value.kind === "Set") {
+    if (!value.isNormalized) return UNREADY_HASH;
+    if (value.hash !== 0) return value.hash;
+    const elements = value.elements;
+    let hash = SET_HASH_SEED;
+    for (let index = 0; index < elements.length; index++) {
+      const elementHash = getReadyHash(elements[index]);
+      if (elementHash === UNREADY_HASH || elementHash === UNFINGERPRINTABLE_HASH) {
+        return elementHash;
+      }
+      hash = (hash + getElementContribution(elementHash)) | 0;
+    }
+    value.hash = hash;
+    return hash;
+  }
+  if (value.kind !== "Function") return UNREADY_HASH;
+  if (value.hash !== 0) return value.hash;
+  let hash = FUNCTION_HASH_SEED;
+  for (let index = 0; index < value.domain.length; index++) {
+    const keyHash = getReadyHash(value.domain[index]);
+    if (keyHash === UNREADY_HASH || keyHash === UNFINGERPRINTABLE_HASH) return keyHash;
+    const itemHash = getReadyHash(value.range[index]);
+    if (itemHash === UNREADY_HASH || itemHash === UNFINGERPRINTABLE_HASH) return itemHash;
+    hash = (hash + getEntryContribution(keyHash, itemHash)) | 0;
+  }
+  value.hash = hash;
+  return hash;
+};
+
 const setFunctionValue = (finite: FunctionValue, position: number, next: Value) => {
   const range = [...finite.range];
   const previous = finite.range[position];
@@ -4397,23 +4434,19 @@ const setFunctionValue = (finite: FunctionValue, position: number, next: Value) 
     finite.functionClass,
   );
   updated.writtenKeys = finite.writtenKeys;
-  // Hashing marks a set sorted, and TLC sorts a set that EXCEPT stores only once it fingerprints the function.
-  if (
-    finite.hash !== 0 &&
-    finite.hash !== UNFINGERPRINTABLE_HASH &&
-    !(isEnumeratedSet(next) && !isNormalizedSet(next))
-  ) {
-    const nextHash = getValueHash(next);
-    if (nextHash !== UNFINGERPRINTABLE_HASH) {
-      const keyHash = getValueHash(finite.domain[position]);
-      updated.hash =
-        previous === next
-          ? finite.hash
-          : (finite.hash -
-              getEntryContribution(keyHash, getValueHash(previous)) +
-              getEntryContribution(keyHash, nextHash)) |
-            0;
-    }
+  const isHashed = finite.hash !== 0 && finite.hash !== UNFINGERPRINTABLE_HASH;
+  if (!isHashed && finite.fingerprint === 0) return updated;
+  const nextHash = getReadyHash(next);
+  if (nextHash === UNREADY_HASH || nextHash === UNFINGERPRINTABLE_HASH) return updated;
+  if (isHashed) {
+    const keyHash = getValueHash(finite.domain[position]);
+    updated.hash =
+      previous === next
+        ? finite.hash
+        : (finite.hash -
+            getEntryContribution(keyHash, getValueHash(previous)) +
+            getEntryContribution(keyHash, nextHash)) |
+          0;
   }
   if (finite.fingerprint !== 0) {
     const key = finite.domain[position];
