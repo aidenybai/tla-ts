@@ -123,6 +123,7 @@ import {
   logicHasArith,
   logicHasArray,
   logicHasBv,
+  logicHasFiniteSets,
   logicHasFpa,
   logicHasRealsOnly,
   logicHasSeq,
@@ -675,6 +676,35 @@ const FOLLOWED_HEADS = new Set(["root-obj", "_", "as"]);
 const FF_LITERAL = /^#f-?[0-9]+m[0-9]+$/;
 const FF_LOGICS = new Set(["QF_FF", "QF_FFA", "ALL", "HO_ALL"]);
 
+const getBuiltinSortNames = (logic: string | undefined, isEveryPlugin: boolean) => {
+  const hasPlugin = (hasTheory: (logic: string) => boolean) =>
+    isEveryPlugin || logic === undefined || hasTheory(logic);
+  const isAll = logic === undefined || logic === "ALL";
+  const names = new Set(logic === undefined ? ["bool", "Proof", "Bool"] : ["Bool"]);
+  if (hasPlugin(logicHasArith)) {
+    if (isAll) names.add("Complex");
+    if (logic === undefined || !INT_FREE_LOGICS.has(logic)) names.add("Int");
+    names.add("Real");
+  }
+  if (hasPlugin(logicHasBv)) {
+    if (isAll) names.add("bv");
+    names.add("BitVec");
+  }
+  if (hasPlugin(logicHasArray)) {
+    for (const name of ARRAY_SORT_NAMES) names.add(name);
+    if (logic === undefined || ARRAY_EXTENSION_LOGICS.has(logic)) names.add("Set");
+  }
+  if (hasPlugin(logicHasSeq)) {
+    names.add("Unicode");
+    for (const name of SEQ_SORT_NAMES) names.add(name);
+  }
+  if (hasPlugin(logicHasFpa)) for (const name of FPA_SORT_NAMES.keys()) names.add(name);
+  if (hasPlugin(logicHasFiniteSets)) names.add("FiniteSet");
+  // register_builtin_sorts leaves out FiniteField with no logic and in ALL, where the parser still reads it.
+  if (logic !== undefined && logic !== "ALL" && FF_LOGICS.has(logic)) names.add("FiniteField");
+  return names;
+};
+
 // rational::is_unsigned of a numeral token.
 export const isUnsigned = (numeral: string) =>
   BigInt(numeral) >= 0n && BigInt(numeral) <= 0xffffffffn;
@@ -994,6 +1024,8 @@ export const createSmtlibReader = (
   const hasArith = logic === undefined || logicHasArith(logic);
   const hasBv = logic === undefined || logicHasBv(logic);
   let logicChecker = createLogicChecker(manager, undefined);
+  let builtinSortNames = getBuiltinSortNames(logic, false);
+  let isManagerMade = false;
   const sortDecls = new Map<string, SortDecl>([
     ["Bool", { kind: "sort", sort: SORT_BOOL }],
     ...(hasArith && !(logic !== undefined && INT_FREE_LOGICS.has(logic))
@@ -3157,8 +3189,13 @@ export const createSmtlibReader = (
     });
   };
 
+  // find_psort_decl finds no sort before the manager is made, and the builtin sorts after.
+  const hasSortName = (name: string) =>
+    isManagerMade && (builtinSortNames.has(name) || sortDecls.has(name));
+
   const declareSortDecl = (name: string, decl: SortDecl, at: SExpr) => {
-    if (sortDecls.has(name)) throw new SmtParseError(`sort already defined ${name}`, at);
+    if (sortDecls.has(name) || builtinSortNames.has(name))
+      throw new SmtParseError(`sort already defined ${name}`, at);
     declare(sortDecls, name, decl);
   };
 
@@ -3440,7 +3477,7 @@ export const createSmtlibReader = (
         symbol ?? list.end,
       );
     if (name === "declare-sort") {
-      if (sortDecls.has(symbol.text))
+      if (hasSortName(symbol.text))
         throw new SmtParseError("invalid sort declaration, sort already declared/defined", symbol);
       const arity = list.items[2];
       if (arity !== undefined && arity.kind !== "numeral")
@@ -3449,16 +3486,16 @@ export const createSmtlibReader = (
           arity,
         );
       useManager(arity ?? list.end);
-      declare(sortDecls, symbol.text, {
-        kind: "user",
-        name: symbol.text,
-        arity: arity === undefined ? 0 : Number(arity.text),
-      });
+      declareSortDecl(
+        symbol.text,
+        { kind: "user", name: symbol.text, arity: arity === undefined ? 0 : Number(arity.text) },
+        arity ?? list.end,
+      );
       expectEnd(list.items[3], "invalid sort declaration, ')' expected");
       return;
     }
     if (name === "define-sort") {
-      if (sortDecls.has(symbol.text))
+      if (hasSortName(symbol.text))
         throw new SmtParseError("invalid sort definition, sort already declared/defined", symbol);
       const parameters = parseSortParameters(
         list.items[2] ?? list.end,
@@ -3467,7 +3504,11 @@ export const createSmtlibReader = (
       const body = list.items[3] ?? list.end;
       useManager(body);
       checkPsort(body, bindTypeParameters(parameters));
-      declare(sortDecls, symbol.text, { kind: "definition", parameters, body });
+      declareSortDecl(
+        symbol.text,
+        { kind: "definition", parameters, body },
+        list.items[4] ?? list.end,
+      );
       expectEnd(list.items[4], "invalid sort definition, ')' expected");
       return;
     }
@@ -3612,6 +3653,8 @@ export const createSmtlibReader = (
     if (!ARRAY_EXTENSION_LOGICS.has(name)) restricted.hasSetSort = false;
     if (INT_FREE_LOGICS.has(name)) sortDecls.delete("Int");
     restricted.hasFf = FF_LOGICS.has(name);
+    const allowed = getBuiltinSortNames(name, true);
+    builtinSortNames = new Set([...builtinSortNames].filter((sortName) => allowed.has(sortName)));
   };
 
   const isUsed = (name: string) => funcs.has(name) || BUILTIN_NAMES.has(name);
@@ -3663,6 +3706,9 @@ export const createSmtlibReader = (
       restricted.isNumeralAsReal = isNumeralAsReal;
     },
     registerList,
+    markManagerMade: () => {
+      isManagerMade = true;
+    },
     isUsed,
     isClashing,
     getDeclaredFuncs,
@@ -3697,7 +3743,11 @@ export const parseSmtlib = (
   report: (error: SmtParseError) => void,
 ): SmtProblem => {
   const commands = createCommandReader(text);
-  const state = { reader: createSmtlibReader(manager), logic: "", rlimit: 0, isInUse: false };
+  const createReader = (logic?: string) =>
+    createSmtlibReader(manager, logic, DEFAULT_PARSER_OPTIONS, () =>
+      state.reader.markManagerMade(),
+    );
+  const state = { reader: createReader(), logic: "", rlimit: 0, isInUse: false };
   const assertions: number[] = [];
   const runCommand = (list: SmtList) => {
     const name = expectSymbol(list.items[0], "invalid command, symbol expected", list).text;
@@ -3726,7 +3776,7 @@ export const parseSmtlib = (
         state.reader.restrictSorts(option.text);
         if (logicHasRealsOnly(option.text)) state.reader.setNumeralAsReal(true);
       } else {
-        state.reader = createSmtlibReader(manager, option.text);
+        state.reader = createReader(option.text);
         state.reader.setCheckedLogic(option.text);
       }
     } else if (DECLARATIONS.has(name)) {

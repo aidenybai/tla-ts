@@ -1471,3 +1471,193 @@ describe("the terms the reader makes and frees, in Z3's order", () => {
     ).toEqual(["sat", "(objectives\n ( 6)\n)"]);
   });
 });
+
+const SORT_NAMES = [
+  "Bool",
+  "bool",
+  "Proof",
+  "Int",
+  "Real",
+  "Complex",
+  "BitVec",
+  "bv",
+  "Array",
+  "=>",
+  "Set",
+  "Unicode",
+  "String",
+  "Float32",
+  "FiniteSet",
+  "FiniteField",
+  "List",
+];
+
+describe("the builtin sort names, as Z3 5.3.2 registers them", () => {
+  it.each([
+    ["no logic", ["(declare-const zz Bool)"], SORT_NAMES.filter((name) => name !== "FiniteField")],
+    [
+      "ALL",
+      ["(set-logic ALL)", "(declare-const zz Bool)"],
+      [
+        "Bool",
+        "Int",
+        "Real",
+        "Complex",
+        "BitVec",
+        "bv",
+        "Array",
+        "=>",
+        "Set",
+        "Unicode",
+        "String",
+        "Float32",
+        "FiniteSet",
+      ],
+    ],
+    [
+      "HO_ALL",
+      ["(set-logic HO_ALL)", "(declare-const zz Bool)"],
+      [
+        "Bool",
+        "Int",
+        "Real",
+        "BitVec",
+        "Array",
+        "=>",
+        "Unicode",
+        "String",
+        "Float32",
+        "FiniteSet",
+        "FiniteField",
+      ],
+    ],
+    [
+      "HORN",
+      ["(set-logic HORN)", "(declare-const zz Bool)"],
+      ["Bool", "Int", "Real", "BitVec", "Array", "=>", "Set"],
+    ],
+    ["QF_NRA", ["(set-logic QF_NRA)", "(declare-const zz Bool)"], ["Bool", "Real"]],
+    ["QF_UF", ["(set-logic QF_UF)", "(declare-const zz Bool)"], ["Bool"]],
+    ["QF_FF", ["(set-logic QF_FF)", "(declare-const zz Bool)"], ["Bool", "FiniteField"]],
+    [
+      "QF_SLIA",
+      ["(set-logic QF_SLIA)", "(declare-const zz Bool)"],
+      ["Bool", "Int", "Real", "Unicode", "String"],
+    ],
+    [
+      "ALL after the manager",
+      ["(declare-const zz Bool)", "(set-logic ALL)"],
+      [
+        "Bool",
+        "Int",
+        "Real",
+        "Complex",
+        "BitVec",
+        "bv",
+        "Array",
+        "=>",
+        "Set",
+        "Unicode",
+        "String",
+        "Float32",
+        "FiniteSet",
+        "List",
+      ],
+    ],
+    [
+      "QF_NRA after the manager",
+      ["(declare-const zz Bool)", "(set-logic QF_NRA)"],
+      [
+        "Bool",
+        "Real",
+        "BitVec",
+        "Array",
+        "=>",
+        "Unicode",
+        "String",
+        "Float32",
+        "FiniteSet",
+        "List",
+      ],
+    ],
+    [
+      "QF_UF after the manager",
+      ["(declare-const zz Bool)", "(set-logic QF_UF)"],
+      [
+        "Bool",
+        "Int",
+        "Real",
+        "BitVec",
+        "Array",
+        "=>",
+        "Unicode",
+        "String",
+        "Float32",
+        "FiniteSet",
+        "List",
+      ],
+    ],
+  ])("rejects a declare-sort of each name registered in %s", (_logic, prefix, registered) => {
+    expect(run([...prefix, ...SORT_NAMES.map((name) => `(declare-sort ${name} 0)`)])).toEqual(
+      registered.map(
+        (name) =>
+          `(error "line ${prefix.length + SORT_NAMES.indexOf(name) + 1} column 14: invalid sort declaration, sort already declared/defined")`,
+      ),
+    );
+  });
+
+  it("reports a builtin sort name where each command first makes the manager", () => {
+    expect(
+      run([
+        "(declare-sort Bool 0)",
+        "(reset)",
+        "(declare-sort Array)",
+        "(reset)",
+        "(define-sort Seq () Bool)",
+        "(reset)",
+        "(declare-datatypes ((Set 1)) ((par (X) ((c)))))",
+        "(reset)",
+        "(declare-datatypes () ((String s)))",
+        "(reset)",
+        "(declare-datatype RegLan ((r)))",
+        "(reset)",
+        "(set-logic QF_UF)",
+        "(declare-sort Array 2)",
+        "(declare-sort BitVec 0)",
+        "(declare-sort Array 2)",
+      ]),
+    ).toEqual([
+      '(error "line 1 column 20: sort already defined Bool")',
+      '(error "line 3 column 19: sort already defined Array")',
+      '(error "line 5 column 24: sort already defined Seq")',
+      '(error "line 7 column 26: sort already defined Set")',
+      '(error "line 9 column 34: sort already defined String")',
+      '(error "line 11 column 26: sort already defined RegLan")',
+      '(error "line 16 column 14: invalid sort declaration, sort already declared/defined")',
+    ]);
+  });
+
+  it("rejects a sort definition or datatype of a builtin sort name after the manager", () => {
+    expect(
+      run([
+        "(declare-const zz Bool)",
+        "(define-sort Float32 () Bool)",
+        "(define-sort bv (X) X)",
+        "(declare-datatypes ((Set 1) (bool 0)) ((par (X) ((c))) ((d))))",
+        "(declare-datatype Unicode ((u)))",
+        "(declare-datatypes () ((Proof p)))",
+        "(declare-sort A 0)",
+        "(declare-sort A 0)",
+        "(define-sort A () Bool)",
+      ]),
+    ).toEqual([
+      '(error "line 2 column 13: invalid sort definition, sort already declared/defined")',
+      '(error "line 3 column 13: invalid sort definition, sort already declared/defined")',
+      '(error "line 4 column 26: sort already defined Set")',
+      '(error "line 5 column 27: sort already defined Unicode")',
+      '(error "line 6 column 33: sort already defined Proof")',
+      '(error "line 8 column 14: invalid sort declaration, sort already declared/defined")',
+      '(error "line 9 column 13: invalid sort definition, sort already declared/defined")',
+    ]);
+  });
+});
