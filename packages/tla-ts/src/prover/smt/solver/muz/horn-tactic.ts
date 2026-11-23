@@ -134,11 +134,14 @@ class HornTactic {
         head = arg;
       } else body.push(manager.mkNot(arg));
     }
+    if (head !== -1 && isImplication(manager, formula)) {
+      args.reset();
+      return { isRule: true, formula };
+    }
     const conjunction = manager.mkApp(OP_AND, body, SORT_BOOL);
     manager.incRef(conjunction);
     args.reset();
     if (head === -1) return { isRule: false, formula: conjunction };
-    if (isImplication(manager, formula)) return { isRule: true, formula };
     const rule = manager.mkApp(OP_IMPLIES, [conjunction, head], SORT_BOOL);
     manager.incRef(rule);
     return { isRule: true, formula: rule };
