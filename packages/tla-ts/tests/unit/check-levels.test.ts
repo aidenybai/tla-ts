@@ -24,6 +24,43 @@ describe("level checking matches SANY", () => {
     await expect(checkDefinition(definition)).rejects.toThrow(message);
   });
 
+  it.each([
+    ["[x' EXCEPT ![1] = @']", [["line 3, col 24 to line 3, col 25", "'"]]],
+    ["[x EXCEPT ![1] = x', ![2] = @']", [["line 3, col 34 to line 3, col 35", "'"]]],
+    [
+      "[[](x = 1) EXCEPT ![1] = ENABLED @]",
+      [
+        ["line 3, col 31 to line 3, col 39", "ENABLED"],
+        ["line 3, col 6 to line 3, col 40", "$Except"],
+      ],
+    ],
+  ])(
+    "levels @ in %s at its function and the updates before it, as SANY does",
+    async (definition, errors) => {
+      await expect(checkDefinition(definition)).rejects.toThrow(
+        createSanyError(
+          errors.map((error) => ({
+            location: `${error[0]} of module M`,
+            message: `Level error in applying operator ${error[1]}:\nThe level of argument 1 exceeds the maximum level allowed by the operator.`,
+          })),
+        ),
+      );
+    },
+  );
+
+  it("leaves the updates after @ out of its level and parameters, as SANY does", async () => {
+    expect((await checkDefinition("[x EXCEPT ![1] = @', ![2] = x']")).status).toBe("success");
+    expect(
+      (
+        await check({
+          source:
+            "---- MODULE M ----\nEXTENDS Naturals\nVARIABLE x\nF(a) == [x EXCEPT ![2] = ENABLED (@ = x'), ![a] = 1]\n---- MODULE Other ----\nCONSTANT Op(_)\n====\nINSTANCE Other WITH Op <- F\nInit == x = 0\nNext == x' = x\n====",
+          config: "INIT Init\nNEXT Next",
+        })
+      ).status,
+    ).toBe("success");
+  });
+
   it("checks the range shared by bounded variables once, for the first", async () => {
     await expect(checkDefinition("\\E v, w \\in [](x = 1) : TRUE")).rejects.toThrow(
       createSanyError([
@@ -649,6 +686,16 @@ describe("level checking matches SANY", () => {
       "line 16, col 1 to line 16, col 29",
     ],
     [
+      "@ in an EXCEPT",
+      "F(a) == [a EXCEPT ![1] = ENABLED (@ = x')]\n---- MODULE Other ----\nCONSTANT Op(_)\n====\nINSTANCE Other WITH Op <- F",
+      "line 8, col 1 to line 8, col 27",
+    ],
+    [
+      "@ after an update",
+      "F(a) == [x EXCEPT ![a] = 1, ![2] = ENABLED (@ = x')]\n---- MODULE Other ----\nCONSTANT Op(_)\n====\nINSTANCE Other WITH Op <- F",
+      "line 8, col 1 to line 8, col 27",
+    ],
+    [
       "a LET's recursive section",
       "---- MODULE Other ----\nCONSTANT Op(_)\n====\nF(a) == ENABLED (LET RECURSIVE A(_), B(_)\n                     A(n) == IF n = 0 THEN a ELSE A(n - 1)\n                     B(m) == IF m = 0 THEN 0 ELSE B(m - 1)\n                 IN B(1) = x')\nINSTANCE Other WITH Op <- F",
       "line 11, col 1 to line 11, col 27",
@@ -901,6 +948,23 @@ describe("level checking matches SANY", () => {
         ["line 5, col 21 to line 5, col 35", "union"],
         ["line 5, col 21 to line 5, col 45", "union"],
         ["line 7, col 6 to line 7, col 10", "set"],
+      ],
+    ],
+    [
+      "---- MODULE M ----\nVARIABLE x\nRECURSIVE R(_)\nR(m) == LET RECURSIVE S(_)\n            S(k) == IF k THEN 0 ELSE S(k)\n        IN (x' = S(m)') /\\ R(m)\n====",
+      [
+        ["line 4, col 1 to line 6, col 31", "Argument 1 of recursive operator R is primed"],
+        ["line 6, col 18 to line 6, col 22", "prime"],
+      ],
+    ],
+    [
+      "---- MODULE M ----\nVARIABLE x\nRECURSIVE R(_)\nR(m) == LET RECURSIVE S(_)\n            S(k) == S(k')\n        IN S(m) \\cup R(m)\n====",
+      [
+        ["line 5, col 13 to line 5, col 25", "Argument 1 of recursive operator S is primed"],
+        [
+          "line 5, col 21 to line 5, col 25",
+          "Level error in applying operator S:\nThe level of argument 1 exceeds the maximum level allowed by the operator.",
+        ],
       ],
     ],
     [

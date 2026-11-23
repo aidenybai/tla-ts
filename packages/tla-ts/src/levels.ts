@@ -40,6 +40,7 @@ export interface LevelData {
   argParams: Set<string>;
   allParams: ReadonlySet<string>;
   nonLeibnizParams: ReadonlySet<string>;
+  appliedParams: ReadonlySet<string> | undefined;
 }
 
 export interface OperatorLevels extends LevelData {
@@ -93,6 +94,7 @@ interface SubstitutedBody extends SubstitutedSource {
   params: string[];
   allParams: ReadonlySet<string>;
   nonLeibnizParams: ReadonlySet<string>;
+  appliedParams: ReadonlySet<string> | undefined;
 }
 
 interface Instanced {
@@ -150,7 +152,10 @@ export interface InstanceLevelCheck {
 
 type ScopeEntry =
   | { kind: "Formal"; arity: number; level: number }
-  | { kind: "Let"; definition: Definition; scope: Scope };
+  | { kind: "Let"; definition: Definition; scope: Scope }
+  | { kind: "ExceptAt"; parts: LevelData[] };
+
+const EXCEPT_AT = "@";
 
 export type Scope = Map<string, ScopeEntry>;
 
@@ -244,9 +249,19 @@ const addParams = (target: Set<string> | undefined, params: ReadonlySet<string>)
   return result;
 };
 
-// SANY's OpArgNode#levelCheck takes its operator's allParams but leaves its nonLeibnizParams empty.
-const getNonLeibnizParams = (operand: Operand) =>
-  operand.kind === "Operator" ? EMPTY_PARAMS : operand.data.nonLeibnizParams;
+// Deviation from SANY: tla-ts counts an operator argument's nonLeibnizParams where the receiving operator uses it, which OpArgNode#levelCheck leaves empty, so SANY accepts F(a) == H(LAMBDA b : a') for H(K(_)) == K(1).
+const getNonLeibnizParams = (operand: Operand, isUsed: boolean) =>
+  operand.kind === "Operator" && !isUsed ? EMPTY_PARAMS : operand.data.nonLeibnizParams;
+
+const hasAppliedParams = (data: LevelData) => data.appliedParams !== undefined;
+
+const addAppliedParams = (applied: Set<string>, data: LevelData, formals: OperatorParam[]) =>
+  (data.appliedParams ?? data.params).forEach((param) => {
+    if (!formals.some((formal) => formal.name === param)) applied.add(param);
+  });
+
+const addOperandAppliedParams = (applied: Set<string>, operand: Operand) =>
+  addAppliedParams(applied, operand.data, operand.kind === "Operator" ? operand.data.formals : []);
 
 const createData = (level = 0): LevelData => ({
   level,
@@ -257,6 +272,7 @@ const createData = (level = 0): LevelData => ({
   argParams: new Set(),
   allParams: EMPTY_PARAMS,
   nonLeibnizParams: EMPTY_PARAMS,
+  appliedParams: undefined,
 });
 
 export const putConstraint = (constraints: Map<string, number>, name: string, level: number) =>
@@ -296,6 +312,13 @@ const getWeight = (operator: OperatorLevels, index: number) =>
   operator.formals.length === 0 && operator.weights.length > 0
     ? operator.weights[Math.min(index, operator.weights.length - 1)]
     : (operator.weights[index] ?? 1);
+
+const isApplied = (operator: OperatorLevels, index: number) => {
+  const formal = operator.formals[index];
+  return formal === undefined || operator.appliedParams === undefined
+    ? getWeight(operator, index) === 1
+    : operator.appliedParams.has(formal.name);
+};
 
 const CORE_SIGNATURES = new Map(
   (
@@ -420,6 +443,7 @@ const toOperatorLevels = (name: string, formals: OperatorParam[], data: LevelDat
     ),
     allParams: removeFormals(data.allParams),
     nonLeibnizParams: removeFormals(data.nonLeibnizParams),
+    appliedParams: data.appliedParams,
     maxLevels: formals.map((formal) =>
       Math.min(TEMPORAL_LEVEL, data.constraints.get(formal.name) ?? TEMPORAL_LEVEL),
     ),
@@ -699,10 +723,15 @@ export const createLevelAnalyzer = (context: LevelContext) => {
       putArgConstraint(data.argConstraints, getArgumentKey(name, index), operand.data.level);
       mergeConstraints(data, operand.data);
       operand.data.allParams.forEach((param) => allParams.add(param));
-      nonLeibnizParams = addParams(nonLeibnizParams, getNonLeibnizParams(operand));
+      nonLeibnizParams = addParams(nonLeibnizParams, operand.data.nonLeibnizParams);
     });
     data.allParams = allParams;
     data.nonLeibnizParams = nonLeibnizParams ?? EMPTY_PARAMS;
+    if (operands.some((operand) => hasAppliedParams(operand.data))) {
+      const applied = new Set([name]);
+      operands.forEach((operand) => addOperandAppliedParams(applied, operand));
+      data.appliedParams = applied;
+    }
     return data;
   };
 
@@ -784,12 +813,28 @@ export const createLevelAnalyzer = (context: LevelContext) => {
     });
     ranges.forEach((range) => range.params.forEach((param) => data.params.add(param)));
     bound.forEach((name) => data.params.delete(name));
+    const appliedOperands = operands.filter((_operand, index) => isApplied(operator, index));
+    if (
+      hasAppliedParams(operator) ||
+      ranges.some(hasAppliedParams) ||
+      appliedOperands.some((operand) => hasAppliedParams(operand.data))
+    ) {
+      const applied = new Set<string>();
+      addAppliedParams(applied, operator, operator.formals);
+      ranges.forEach((range) => addAppliedParams(applied, range, []));
+      appliedOperands.forEach((operand) => addOperandAppliedParams(applied, operand));
+      bound.forEach((name) => applied.delete(name));
+      data.appliedParams = applied;
+    }
 
     let allParams = addParams(undefined, operator.allParams);
     let nonLeibnizParams = addParams(undefined, operator.nonLeibnizParams);
     operands.forEach((operand, index) => {
       allParams = addParams(allParams, operand.data.allParams);
-      nonLeibnizParams = addParams(nonLeibnizParams, getNonLeibnizParams(operand));
+      nonLeibnizParams = addParams(
+        nonLeibnizParams,
+        getNonLeibnizParams(operand, isApplied(operator, index)),
+      );
       if (operator.nonLeibniz.has(index)) {
         nonLeibnizParams = addParams(nonLeibnizParams, operand.data.allParams);
       }
@@ -1185,8 +1230,9 @@ export const createLevelAnalyzer = (context: LevelContext) => {
       argConstraints: new Map(body.argConstraints),
       argParams: new Set(body.argParams),
       allParams: body.allParams,
-      // SANY's LetInNode#levelCheck copies its body's allParams but not its nonLeibnizParams.
-      nonLeibnizParams: EMPTY_PARAMS,
+      // Deviation from SANY: tla-ts keeps a LET body's nonLeibnizParams, which LetInNode#levelCheck drops, so SANY accepts F(a) == LET L == 1 IN ENABLED (x' = a) for an operator constant.
+      nonLeibnizParams: body.nonLeibnizParams,
+      appliedParams: body.appliedParams,
     };
     entered.instances?.forEach((instance) =>
       getInstanceArgParams(instance, entered.inner).forEach((key) => data.argParams.add(key)),
@@ -1229,8 +1275,19 @@ export const createLevelAnalyzer = (context: LevelContext) => {
       case "Number":
       case "Decimal":
       case "String":
-      case "ExceptAt":
         return createData();
+      case "ExceptAt": {
+        const data = createData();
+        const entry = scope.get(EXCEPT_AT);
+        if (entry?.kind !== "ExceptAt") return data;
+        let allParams: Set<string> | undefined;
+        entry.parts.forEach((part) => {
+          mergeLevels(data, part);
+          allParams = addParams(allParams, part.allParams);
+        });
+        data.allParams = allParams ?? EMPTY_PARAMS;
+        return data;
+      }
       case "EnabledVariable":
         return createData(VARIABLE_LEVEL);
       case "Identifier": {
@@ -1385,36 +1442,40 @@ export const createLevelAnalyzer = (context: LevelContext) => {
           expression.fields.map((field) => field.value),
           scope,
         );
-      case "Except":
-        return applyDefined(EXCEPT_LEVELS, [
-          toOperand(expression.function, scope),
-          ...expression.updates.map((update): Operand => ({
+      case "Except": {
+        const operands = [toOperand(expression.function, scope)];
+        expression.updates.forEach((update) => {
+          const path: Operand = {
             kind: "Value",
-            data: applyDefined(PAIR_LEVELS, [
-              {
-                kind: "Value",
-                data: reportAt(update.range, () =>
-                  applyDefined(
-                    SEQ_LEVELS,
-                    update.path.map((step): Operand =>
-                      step.kind === "Field"
-                        ? { kind: "Value", data: createData() }
-                        : step.args.length === 1
-                          ? toOperand(step.args[0], scope)
-                          : {
-                              kind: "Value",
-                              data: reportAt(step.tupleRange, () =>
-                                applyBuiltin(TUPLE_LEVELS, step.args, scope),
-                              ),
-                            },
-                    ),
-                  ),
+            data: reportAt(update.range, () =>
+              applyDefined(
+                SEQ_LEVELS,
+                update.path.map((step): Operand =>
+                  step.kind === "Field"
+                    ? { kind: "Value", data: createData() }
+                    : step.args.length === 1
+                      ? toOperand(step.args[0], scope)
+                      : {
+                          kind: "Value",
+                          data: reportAt(step.tupleRange, () =>
+                            applyBuiltin(TUPLE_LEVELS, step.args, scope),
+                          ),
+                        },
                 ),
-              },
-              toOperand(update.value, scope),
-            ]),
-          })),
-        ]);
+              ),
+            ),
+          };
+          const valueScope = new Map(scope).set(EXCEPT_AT, {
+            kind: "ExceptAt",
+            parts: operands.map((operand) => operand.data),
+          });
+          operands.push({
+            kind: "Value",
+            data: applyDefined(PAIR_LEVELS, [path, toOperand(update.value, valueScope)]),
+          });
+        });
+        return applyDefined(EXCEPT_LEVELS, operands);
+      }
       case "FunctionApplication":
         return applyDefined(APPLY_LEVELS, [
           toOperand(expression.function, scope),
@@ -1445,6 +1506,7 @@ export const createLevelAnalyzer = (context: LevelContext) => {
         );
       case "Label": {
         labelChecks++;
+        // Deviation from SANY: tla-ts keeps a labeled body's nonLeibnizParams, which LabelNode drops, so SANY accepts F(a) == lab :: ENABLED (x' = a) for an operator constant.
         const data = analyze(expression.body, scope);
         if (checkedNodes.has(expression)) return { ...data, isCorrect: true };
         checkedNodes.set(expression, true);
@@ -1574,6 +1636,23 @@ export const createLevelAnalyzer = (context: LevelContext) => {
     body.params.forEach((param) =>
       (operands.get(param)?.data.params ?? [param]).forEach((name) => data.params.add(name)),
     );
+    const isBodyApplied = (param: string) =>
+      body.appliedParams === undefined
+        ? body.params.includes(param)
+        : body.appliedParams.has(param);
+    if (
+      body.appliedParams !== undefined ||
+      [...operands.values()].some((operand) => hasAppliedParams(operand.data))
+    ) {
+      const applied = new Set<string>();
+      (body.appliedParams ?? body.params).forEach((param) => {
+        if (!operands.has(param)) applied.add(param);
+      });
+      operands.forEach((operand, param) => {
+        if (isBodyApplied(param)) addOperandAppliedParams(applied, operand);
+      });
+      data.appliedParams = applied;
+    }
     let allParams: Set<string> | undefined;
     let nonLeibnizParams: Set<string> | undefined;
     body.allParams.forEach((param) => {
@@ -1585,7 +1664,10 @@ export const createLevelAnalyzer = (context: LevelContext) => {
         return;
       }
       allParams = addParams(allParams, operand.data.allParams);
-      nonLeibnizParams = addParams(nonLeibnizParams, getNonLeibnizParams(operand));
+      nonLeibnizParams = addParams(
+        nonLeibnizParams,
+        getNonLeibnizParams(operand, isBodyApplied(param)),
+      );
       if (isNonLeibniz) nonLeibnizParams = addParams(nonLeibnizParams, operand.data.allParams);
     });
     data.allParams = allParams ?? EMPTY_PARAMS;
@@ -1640,7 +1722,9 @@ export const createLevelAnalyzer = (context: LevelContext) => {
         isCorrect: source.isCorrect,
         params: [...source.params, ...names.filter((_name, index) => source.weights[index] === 1)],
         allParams: new Set([...source.allParams, ...nonLeibnizNames]),
+        // Deviation from SANY: tla-ts substitutes an instanced theorem's nonLeibnizParams as SubstInNode does, which APSubstInNode omits, so SANY accepts F(a) == I(a)!T for THEOREM T == w' = 0 and w <- a.
         nonLeibnizParams: new Set([...source.nonLeibnizParams, ...nonLeibnizNames]),
+        appliedParams: source.appliedParams && new Set([...source.appliedParams].map(rename)),
         constraints: [
           ...source.constraints,
           ...names.map((name, index): [string, number] => [name, source.maxLevels[index]]),
@@ -1741,6 +1825,7 @@ export const createLevelAnalyzer = (context: LevelContext) => {
         params: [...original.params].map(rename),
         allParams: new Set([...original.allParams].map(rename)),
         nonLeibnizParams: new Set([...original.nonLeibnizParams].map(rename)),
+        appliedParams: original.appliedParams && new Set([...original.appliedParams].map(rename)),
         constraints: [...original.constraints].map((entry): [string, number] => [
           rename(entry[0]),
           entry[1],
@@ -1818,6 +1903,7 @@ export const createLevelAnalyzer = (context: LevelContext) => {
   };
 
   const staleDefinitions = new Set<Definition>();
+  const sectionBodies = new Map<Definition, OperatorLevels | undefined>();
 
   const analyzeStatement = (statement: Expression | AssumeProve): LevelData => {
     const cached = statementLevels.get(statement);
@@ -1831,8 +1917,8 @@ export const createLevelAnalyzer = (context: LevelContext) => {
   };
 
   const analyzeDefinition = (definition: Definition, scope: Scope): OperatorLevels => {
-    const members = definition.isRecursive && context.recursiveSections.get(definition);
-    if (members && !definitionLevels.has(definition)) checkRecursiveSection(members);
+    const members = context.recursiveSections.get(definition);
+    if (members) checkRecursiveSection(members);
     const cached = definitionLevels.get(definition);
     if (cached && !staleDefinitions.delete(definition)) return cached;
     const prior = cached ?? createPlaceholder(definition, TEMPORAL_LEVEL, 0);
@@ -1849,6 +1935,8 @@ export const createLevelAnalyzer = (context: LevelContext) => {
             getDefinitionBody(definition),
             scope,
           );
+    const isInSection = sectionBodies.has(definition);
+    if (isInSection) sectionBodies.set(definition, levels);
     const merged = {
       ...levels,
       level: Math.max(prior.level, levels.level),
@@ -1859,9 +1947,82 @@ export const createLevelAnalyzer = (context: LevelContext) => {
       nonLeibniz: new Set([...prior.nonLeibniz, ...levels.nonLeibniz]),
       allParams: new Set([...prior.allParams, ...levels.allParams]),
       nonLeibnizParams: new Set([...prior.nonLeibnizParams, ...levels.nonLeibnizParams]),
+      appliedParams: isInSection ? undefined : levels.appliedParams,
     };
     definitionLevels.set(definition, merged);
     return merged;
+  };
+
+  const isClosedName = (name: string, bound: string[], scope: Scope) => {
+    if (bound.includes(name)) return true;
+    const entry = scope.get(name);
+    if (entry) return entry.kind === "Formal";
+    return (
+      context.constants.has(name) ||
+      context.variables.has(name) ||
+      (!context.getDefinition(name) && CORE_SIGNATURES.has(name))
+    );
+  };
+
+  const isClosed = (expression: Expression, bound: string[], scope: Scope): boolean => {
+    switch (expression.kind) {
+      case "Identifier":
+        return isClosedName(expression.name, bound, scope);
+      case "OperatorReference":
+        return isClosedName(expression.operator, bound, scope);
+      case "Apply":
+        if (!isClosedName(expression.operator, bound, scope)) return false;
+        break;
+      case "Lambda":
+      case "Let":
+      case "Selection":
+      case "Subexpression":
+      case "EnabledVariable":
+        return false;
+    }
+    let isEveryChildClosed = true;
+    forEachChild(expression, (child, names) => {
+      isEveryChildClosed &&= isClosed(child, [...bound, ...names], scope);
+    });
+    return isEveryChildClosed;
+  };
+
+  const isClosedDefinition = (member: SectionMember) => {
+    const definition = member.definition;
+    return (
+      !("statement" in definition) &&
+      !letCopies.has(definition) &&
+      !context.instances.getCopy(definition) &&
+      isClosed(
+        getDefinitionBody(definition),
+        getFormals(definition).map((formal) => formal.name),
+        member.scope,
+      )
+    );
+  };
+
+  const setSectionAppliedParams = (members: SectionMember[]) => {
+    const allParams = members.flatMap((member) => [
+      ...analyzeDefinition(member.definition, member.scope).allParams,
+    ]);
+    members.forEach((member) => {
+      const body = sectionBodies.get(member.definition);
+      if (body === undefined) return;
+      const stored = analyzeDefinition(member.definition, member.scope);
+      definitionLevels.set(member.definition, {
+        ...stored,
+        appliedParams: new Set(
+          isClosedDefinition(member)
+            ? (body.appliedParams ?? [
+                ...body.params,
+                ...body.formals
+                  .filter((_formal, index) => body.weights[index] === 1)
+                  .map((formal) => formal.name),
+              ])
+            : [...stored.formals.map((formal) => formal.name), ...allParams],
+        ),
+      });
+    });
   };
 
   const checkPrimedArguments = (members: SectionMember[]) =>
@@ -1878,7 +2039,8 @@ export const createLevelAnalyzer = (context: LevelContext) => {
     });
 
   const checkRecursiveSection = (members: SectionMember[]) => {
-    if (members.length === 0 || definitionLevels.has(members[0].definition)) return;
+    if (members.some((member) => sectionBodies.has(member.definition))) return;
+    members.forEach((member) => sectionBodies.set(member.definition, undefined));
     const recursive = members.filter((member) => member.definition.isRecursive);
     recursive.forEach((member) =>
       definitionLevels.set(
@@ -1911,6 +2073,7 @@ export const createLevelAnalyzer = (context: LevelContext) => {
       }
     });
     members.forEach(recheck);
+    setSectionAppliedParams(members);
   };
 
   const analyzer = {

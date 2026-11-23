@@ -177,14 +177,18 @@ describe("SANY XML export", () => {
   it("finds parameters that a higher-order operator makes non-Leibniz", () => {
     const root = generate(HIGHER_ORDER).root;
     expect(
-      ["Apply", "Direct", "Passed", "Indirect", "Let", "Instantiated", "Lambda"].map(
+      ["Apply", "Direct", "Passed", "Indirect", "Instantiated", "Lambda"].map(
         (name) => getDefinition(root, name).isLeibnizArg,
       ),
-    ).toEqual([[true, true], [false], [true, true], [false], [true], [false], [false]]);
+    ).toEqual([[true, true], [false], [true, true], [false], [false], [false]]);
     expect(getDefinition(root, "Apply").opLevelCond).toEqual([
       [[false], [true]],
       [[], []],
     ]);
+  });
+
+  it("finds a parameter that a LET body makes non-Leibniz, which SANY marks Leibniz", () => {
+    expect(getDefinition(generate(HIGHER_ORDER).root, "Let").isLeibnizArg).toEqual([false]);
   });
 
   // SANY's loop over the parameters keeps only the last one's check, so it accepts the first.

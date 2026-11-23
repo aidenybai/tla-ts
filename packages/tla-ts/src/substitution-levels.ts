@@ -224,6 +224,7 @@ export const createInstanceChecker = (
           level: operand.data.level,
           isCorrect: operand.data.isCorrect,
           operator,
+          // Deviation from SANY: tla-ts checks that a substituted theorem is Leibniz, which InstanceNode checks only for an OpDefNode, so SANY accepts Op <- I!T for THEOREM T == w' = 0 and w <- a.
           isLeibniz: operator === undefined || operator.nonLeibniz.size === 0,
         },
       ];
