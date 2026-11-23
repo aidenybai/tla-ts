@@ -289,10 +289,15 @@ const getNodeScriptsError = async (
 };
 
 // Runs a module test in a Node of its own, as a module's body can await. Node reports a rejected
-// body as it reports an uncaught error, and a body that never settles with its own exit.
+// body as it reports an uncaught error, and a body that never settles with its own exit. A module
+// keeps each import as it's written, as one whose bindings it never reads still links and runs.
 const transpileModule = (source: string) =>
   ts.transpileModule(source, {
-    compilerOptions: { module: ts.ModuleKind.ESNext, target: ts.ScriptTarget.ESNext },
+    compilerOptions: {
+      module: ts.ModuleKind.ESNext,
+      target: ts.ScriptTarget.ESNext,
+      verbatimModuleSyntax: true,
+    },
   }).outputText;
 
 // How a Node of its own failed, from the line of the error it reports and the line that THROWN_PATH
@@ -670,6 +675,7 @@ const getEmitted = (program: string, isModule: boolean) => {
       target: ts.ScriptTarget.ESNext,
       module: isModule ? ts.ModuleKind.ESNext : ts.ModuleKind.Preserve,
       moduleDetection: isModule ? ts.ModuleDetectionKind.Force : ts.ModuleDetectionKind.Legacy,
+      verbatimModuleSyntax: isModule,
       alwaysStrict: false,
       ignoreDeprecations: "6.0",
     },
