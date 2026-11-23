@@ -83,7 +83,6 @@ const isPb = (manager: AstManager, first: number, second: number) => {
   );
 };
 
-// The port has no mk_le_ge, so an arithmetic comparison the encoder would rewrite is unsupported.
 export const checkPbFree = (manager: AstManager, form: number) => {
   const visited = new Set<number>();
   const todo = [form];
