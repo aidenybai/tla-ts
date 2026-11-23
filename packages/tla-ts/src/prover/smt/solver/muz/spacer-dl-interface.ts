@@ -44,6 +44,8 @@ export class SpacerDlInterface implements Engine {
     return spacer.solve(params.getUint("spacer.min_level", 0));
   }
 
+  release() {}
+
   getModel() {
     return this.modelConverters.reduceRight(
       (model, convert) => convert(model),

@@ -1780,6 +1780,7 @@ const NAMED_TACTICS = new Map<string, NamedTactic>([
           environment.manager,
           environment.parameters,
           getRewriterOptions(environment.manager, new Map()),
+          environment.destructors,
         ),
     },
   ],

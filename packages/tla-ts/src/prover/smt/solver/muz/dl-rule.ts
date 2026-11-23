@@ -139,6 +139,10 @@ export class BindVariables {
     this.vars.push(variable);
   }
 
+  release() {
+    for (const variable of this.vars) this.manager.decRef(variable);
+  }
+
   apply(fml: number, isForall: boolean) {
     const manager = this.manager;
     if (this.vars.length === 0) return fml;
@@ -234,6 +238,14 @@ export class RuleManager {
     this.labelRewriter = new LabelRewriter(manager);
     this.body = new RefVector(manager);
     this.args = new RefVector(manager);
+  }
+
+  release() {
+    this.labelRewriter.release();
+    this.context.qe.release();
+    this.args.reset();
+    release(this.manager, this.head);
+    this.body.reset();
   }
 
   private pin(expr: number) {
@@ -502,10 +514,11 @@ export class RuleManager {
     const names: string[] = [];
     const sorts: number[] = [];
     const hoister = new QuantifierHoister(manager);
-    let body = assign(
-      manager,
-      -1,
-      hoister.pullQuantifierBound(false, this.context.bindVars(query, false), sorts, names),
+    let body = hoister.pullQuantifierBound(
+      false,
+      this.context.bindVars(query, false),
+      sorts,
+      names,
     );
     hoister.release();
     let vars = getUsedVars(manager, [body]);
