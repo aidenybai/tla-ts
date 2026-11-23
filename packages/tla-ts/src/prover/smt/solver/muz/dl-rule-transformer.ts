@@ -1,4 +1,5 @@
 import { SmtUnsupportedError } from "../../../../errors";
+import type { RefVector } from "../ref-vector";
 import type { DatalogContext } from "./dl-context";
 import { MkBitBlast } from "./dl-mk-bit-blast";
 import { MkCoiFilter } from "./dl-mk-coi-filter";
@@ -11,20 +12,21 @@ import { RuleSet } from "./dl-rule-set";
 export interface RuleTransformerPlugin {
   readonly priority: number;
   apply(source: RuleSet): RuleSet | undefined;
+  release?(): void;
 }
 
-export const removeDuplicateTails = (tail: number[], isNegated: boolean[]) => {
+export const removeDuplicateTails = (tail: RefVector, isNegated: boolean[]) => {
   const seen = [new Set<number>(), new Set<number>()];
   let index = 0;
-  while (index < tail.length) {
+  while (index < tail.size) {
     const set = seen[isNegated[index] ? 1 : 0];
-    if (!set.has(tail[index])) {
-      set.add(tail[index]);
+    if (!set.has(tail.items[index])) {
+      set.add(tail.items[index]);
       index++;
       continue;
     }
-    if (index !== tail.length - 1) {
-      tail[index] = tail[tail.length - 1];
+    if (index !== tail.size - 1) {
+      tail.set(index, tail.items[tail.size - 1]);
       isNegated[index] = isNegated[isNegated.length - 1];
     }
     tail.pop();
@@ -41,19 +43,27 @@ export const transformRules = (context: DatalogContext, plugins: RuleTransformer
         second.plugin.priority - first.plugin.priority || first.index - second.index,
     )
     .map((entry) => entry.plugin);
-  let isModified = false;
-  let rules = RuleSet.copy(context.ruleSet);
-  for (const plugin of ordered) {
-    if (context.isCanceled()) break;
-    const result = plugin.apply(rules);
-    if (result === undefined) continue;
-    isModified = true;
-    rules = result;
-    rules.ensureClosed();
+  try {
+    let isModified = false;
+    let rules = RuleSet.copy(context.ruleSet);
+    try {
+      for (const plugin of ordered) {
+        if (context.isCanceled()) break;
+        const result = plugin.apply(rules);
+        if (result === undefined) continue;
+        isModified = true;
+        rules.reset();
+        rules = result;
+        rules.ensureClosed();
+      }
+      if (isModified) context.ruleSet.replaceRules(rules);
+    } finally {
+      rules.reset();
+    }
+    if (isModified) context.ruleSet.ensureClosed();
+  } finally {
+    for (const plugin of ordered) plugin.release?.();
   }
-  if (!isModified) return;
-  context.ruleSet.replaceRules(rules);
-  context.ruleSet.ensureClosed();
 };
 
 class MkGuard implements RuleTransformerPlugin {

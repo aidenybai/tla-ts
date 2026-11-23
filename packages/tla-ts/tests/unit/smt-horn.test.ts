@@ -382,6 +382,10 @@ describe("horn tactic", () => {
     expect(run(getUnrolledCounter(2))).toEqual(["unknown", "(:rlimit 720)"]);
   });
 
+  it("frees bmc's level terms and Horn rules when Z3 does", () => {
+    expect(run(getUnrolledCounter(3))).toEqual(["unknown", "(:rlimit 1397)"]);
+  });
+
   it("answers a query command with bmc", () => {
     expect(
       run([

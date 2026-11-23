@@ -73,10 +73,13 @@ export class MkBitBlast implements RuleTransformerPlugin {
     for (let index = 0; !context.isCanceled() && index < source.rules.length; index++) {
       const rule = source.rules[index];
       const fml = context.ruleManager.toFormula(rule);
-      const blasted = blaster.rewrite(
-        context.ruleManager.toFormula(this.simplifier.transformRule(rule) ?? rule),
-      );
+      const transformed = this.simplifier.transformRule(rule);
+      const simplified = transformed.isKept
+        ? transformed.rule
+        : context.ruleManager.assignRule(transformed.rule, rule);
+      const blasted = blaster.rewrite(context.ruleManager.toFormula(simplified));
       const expanded = this.expander.rewrite(blasted);
+      context.ruleManager.decRef(simplified);
       if (expanded !== fml) context.ruleManager.mkRule(expanded, result, rule.name);
       else {
         result.addRule(rule);

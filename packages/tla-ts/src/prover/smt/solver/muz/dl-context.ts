@@ -411,7 +411,10 @@ export class DatalogContext {
     const isNegated = tail.map(
       (_value, index) => index < rule.uninterpretedSize && rule.isNegated[index],
     );
-    const reduced = this.ruleManager.mk(rule.head, tail, isNegated, rule.name);
+    const reduced = this.ruleManager.assignRule(
+      rule,
+      this.ruleManager.mk(rule.head, tail, isNegated, rule.name),
+    );
     conjs.reset();
     return reduced;
   }

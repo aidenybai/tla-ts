@@ -1,5 +1,7 @@
 import { SmtUnsupportedError } from "../../../../errors";
+import { assign, release } from "../expr-ref";
 import { L_FALSE, L_UNDEF } from "../lbool";
+import { RefVector } from "../ref-vector";
 import type { DatalogContext } from "./dl-context";
 import { MkInterpTailSimplifier } from "./dl-mk-interp-tail-simplifier";
 import { getRuleVars, type Rule } from "./dl-rule";
@@ -7,6 +9,7 @@ import { RuleSet } from "./dl-rule-set";
 import { removeDuplicateTails, type RuleTransformerPlugin } from "./dl-rule-transformer";
 import { HornSubsumeModelConverter } from "./horn-subsume-model-converter";
 import { Substitution } from "./substitution";
+import { type StVisitor, SubstitutionTree } from "./substitution-tree";
 
 interface Resolvent {
   rule: Rule;
@@ -36,8 +39,11 @@ export class RuleUnifier {
     return isReady;
   }
 
+  // The resolvent comes with a reference.
   apply(target: Rule, tailIndex: number, source: Rule): Resolvent {
-    const tail: number[] = [];
+    const manager = this.context.manager;
+    const head = assign(manager, -1, this.subst.apply(target.head, 0, this.deltas));
+    const tail = new RefVector(manager);
     const isNegated: boolean[] = [];
     target.tail.forEach((literal, index) => {
       if (index === tailIndex) return;
@@ -50,38 +56,63 @@ export class RuleUnifier {
     });
     removeDuplicateTails(tail, isNegated);
     const ruleManager = this.context.ruleManager;
-    const resolvent = ruleManager.fixUnboundVars(
+    const combined = ruleManager.assignRule(
+      undefined,
       ruleManager.mk(
-        this.subst.apply(target.head, 0, this.deltas),
-        tail,
+        head,
+        tail.items,
         isNegated,
         `${target.getNameText()};${source.getNameText()}`,
       ),
-      true,
     );
+    ruleManager.setAccountingParent(combined, target);
+    let resolvent = ruleManager.fixUnboundVars(combined, true);
     const simplified = this.simplifier.transformRule(resolvent);
-    return simplified === undefined
-      ? { rule: resolvent, isSatisfiable: false }
-      : { rule: simplified, isSatisfiable: true };
+    if (simplified.isKept) resolvent = ruleManager.assignRule(resolvent, simplified.rule);
+    if (simplified.rule !== undefined) ruleManager.decRef(simplified.rule);
+    tail.reset();
+    release(manager, head);
+    return { rule: resolvent, isSatisfiable: simplified.isKept };
   }
 
+  // The substitution comes with a reference to each term.
   getRuleSubst(rule: Rule, isTarget: boolean) {
     const manager = this.context.manager;
-    return rule
-      .getVars(manager)
-      .map((sort, index) =>
-        this.subst.apply(manager.mkVar(index, sort), isTarget ? 0 : 1, this.deltas),
-      );
+    const result = new RefVector(manager);
+    let variable = -1;
+    let applied = -1;
+    for (const [index, sort] of rule.getVars(manager).entries()) {
+      variable = assign(manager, variable, manager.mkVar(index, sort));
+      applied = assign(manager, applied, this.subst.apply(variable, isTarget ? 0 : 1, this.deltas));
+      result.push(applied);
+    }
+    release(manager, applied);
+    release(manager, variable);
+    return result;
+  }
+
+  release() {
+    this.subst.reset();
+    this.simplifier.release();
   }
 }
 
 // The rules at a position of a head or tail, and which of them can still be expanded or removed.
-class Visitor {
+class Visitor implements StVisitor {
+  unifiers: number[] = [];
   readonly positions = new Map<number, number[]>();
   canRemove: boolean[] = [];
   canExpand: boolean[] = [];
 
+  constructor(readonly subst: Substitution) {}
+
+  visit(expr: number) {
+    this.unifiers.push(...(this.positions.get(expr) as number[]));
+    return true;
+  }
+
   reset(size: number) {
+    this.unifiers = [];
     this.canRemove = Array.from({ length: size }, () => true);
     this.canExpand = Array.from({ length: size }, () => true);
     this.positions.clear();
@@ -101,6 +132,7 @@ class Visitor {
 }
 
 export class MkRuleInliner implements RuleTransformerPlugin {
+  private pinned: Rule[] = [];
   private unifier: RuleUnifier;
   private headPredCounts = new Map<number, number>();
   private headPredNonEmptyTailCounts = new Map<number, number>();
@@ -108,8 +140,11 @@ export class MkRuleInliner implements RuleTransformerPlugin {
   private predsWithNegOccurrence = new Set<number>();
   private forbiddenPreds = new Set<number>();
   private inlinedRules: RuleSet;
-  private headVisitor = new Visitor();
-  private tailVisitor = new Visitor();
+  private headIndex: SubstitutionTree;
+  private tailIndex: SubstitutionTree;
+  private subst: Substitution;
+  private headVisitor: Visitor;
+  private tailVisitor: Visitor;
   // Z3 throws has_new_quantifier when it would inline a rule that has a quantifier.
   private hasNewQuantifier = false;
   private modelConverter: HornSubsumeModelConverter | undefined;
@@ -120,17 +155,33 @@ export class MkRuleInliner implements RuleTransformerPlugin {
   ) {
     this.unifier = new RuleUnifier(context);
     this.inlinedRules = new RuleSet(context);
+    this.headIndex = new SubstitutionTree(context.manager);
+    this.tailIndex = new SubstitutionTree(context.manager);
+    this.subst = new Substitution(context.manager);
+    this.headVisitor = new Visitor(this.subst);
+    this.tailVisitor = new Visitor(this.subst);
   }
 
-  private tryToInlineRule(target: Rule, source: Rule, tailIndex: number): Rule | undefined {
+  release() {
+    this.subst.reset();
+    this.tailIndex.reset();
+    this.headIndex.reset();
+    this.unifier.release();
+    this.inlinedRules.reset();
+    const ruleManager = this.context.ruleManager;
+    for (const rule of this.pinned) ruleManager.decRef(rule);
+    this.pinned = [];
+  }
+
+  // The resolvent comes with a reference.
+  private tryToInlineRule(target: Rule, source: Rule, tailIndex: number) {
     this.context.ruleManager.normVars(target);
     if (this.context.ruleManager.hasQuantifiers(source)) {
       this.hasNewQuantifier = true;
       return undefined;
     }
     if (!this.unifier.unifyRules(target, tailIndex, source)) return undefined;
-    const resolvent = this.unifier.apply(target, tailIndex, source);
-    return resolvent.isSatisfiable ? resolvent.rule : undefined;
+    return this.unifier.apply(target, tailIndex, source);
   }
 
   private countPredOccurrences(source: RuleSet) {
@@ -225,9 +276,16 @@ export class MkRuleInliner implements RuleTransformerPlugin {
   private planInlining(source: RuleSet) {
     this.countPredOccurrences(source);
     let candidates = this.createAllowedRuleSet(source);
-    while (this.forbidPredsFromCycles(candidates)) candidates = this.createAllowedRuleSet(source);
-    if (this.forbidMultipleMultipliers(source, candidates))
-      candidates = this.createAllowedRuleSet(source);
+    while (this.forbidPredsFromCycles(candidates)) {
+      const allowed = this.createAllowedRuleSet(source);
+      candidates.reset();
+      candidates = allowed;
+    }
+    if (this.forbidMultipleMultipliers(source, candidates)) {
+      const allowed = this.createAllowedRuleSet(source);
+      candidates.reset();
+      candidates = allowed;
+    }
     for (const stratum of candidates.getStrats())
       for (const rule of candidates.getPredicateRules(stratum.values().next().value as number)) {
         this.transformRule(source, rule, this.inlinedRules);
@@ -236,6 +294,7 @@ export class MkRuleInliner implements RuleTransformerPlugin {
           throw new SmtUnsupportedError("inlining a rule with a quantifier");
       }
     for (const rule of this.inlinedRules.rules) this.modelConverter?.delRule(rule, L_UNDEF);
+    candidates.reset();
   }
 
   // Deviation from Z3: transform_rule keeps a rule that has a quantifier without inlining the rest
@@ -243,8 +302,9 @@ export class MkRuleInliner implements RuleTransformerPlugin {
   // a reachable query (dl_mk_rule_inliner.cpp). The rest of the tail is inlined here.
   private transformRule(source: RuleSet, original: Rule, target: RuleSet) {
     const manager = this.context.manager;
+    const ruleManager = this.context.ruleManager;
     let isModified = false;
-    const todo = [original];
+    const todo = [ruleManager.assignRule(undefined, original)];
     for (let rule = todo.pop(); rule !== undefined; rule = todo.pop()) {
       let index = 0;
       while (
@@ -254,14 +314,22 @@ export class MkRuleInliner implements RuleTransformerPlugin {
         index++;
       if (index === rule.positiveSize) {
         target.addRule(rule);
+        ruleManager.decRef(rule);
         continue;
       }
       isModified = true;
       for (const inlined of this.inlinedRules.getPredicateRules(rule.getTailDecl(manager, index))) {
         const result = this.tryToInlineRule(rule, inlined, index);
-        if (this.hasNewQuantifier) return isModified;
-        if (result !== undefined) todo.push(result);
+        if (this.hasNewQuantifier) {
+          ruleManager.decRef(rule);
+          for (const pending of todo) ruleManager.decRef(pending);
+          return isModified;
+        }
+        if (result === undefined) continue;
+        if (result.isSatisfiable) todo.push(ruleManager.assignRule(undefined, result.rule));
+        ruleManager.decRef(result.rule);
       }
+      ruleManager.decRef(rule);
     }
     if (isModified) this.modelConverter?.delRule(original, L_UNDEF);
     return isModified;
@@ -304,7 +372,8 @@ export class MkRuleInliner implements RuleTransformerPlugin {
     return true;
   }
 
-  // Returns undefined when nothing applies, or the replacement, where null deletes the rule.
+  // Returns undefined when nothing applies, or the replacement with a reference, where null
+  // deletes the rule.
   private doEagerInliningRule(rule: Rule, rules: RuleSet): Rule | null | undefined {
     const manager = this.context.manager;
     if (rule.hasNegation()) return undefined;
@@ -332,37 +401,58 @@ export class MkRuleInliner implements RuleTransformerPlugin {
       }
       if (!this.isOrientedRewriter(candidate, rules)) continue;
       const inlined = this.tryToInlineRule(rule, candidate, index);
-      if (inlined !== undefined) return inlined;
+      if (inlined?.isSatisfiable) return inlined.rule;
       this.modelConverter?.delRule(rule, L_FALSE);
+      if (inlined !== undefined) this.context.ruleManager.decRef(inlined.rule);
       return null;
     }
     return undefined;
   }
 
+  // On success the rules are released, as Z3 replaces the scoped set.
   private doEagerInlining(rules: RuleSet) {
+    const ruleManager = this.context.ruleManager;
     const result = new RuleSet(this.context);
     let isDone = false;
     for (const original of rules.rules) {
-      let rule: Rule | null = original;
+      let rule: Rule | null = ruleManager.assignRule(undefined, original);
+      let replacement: Rule | null = null;
       for (;;) {
-        const replacement: Rule | null | undefined = this.doEagerInliningRule(rule, rules);
-        if (replacement === undefined) break;
+        const next: Rule | null | undefined = this.doEagerInliningRule(rule, rules);
+        if (next === undefined) break;
         isDone = true;
-        rule = replacement;
-        if (rule === null) break;
+        if (replacement !== null) ruleManager.decRef(replacement);
+        replacement = next;
+        if (replacement === null) {
+          ruleManager.decRef(rule);
+          rule = null;
+          break;
+        }
+        rule = ruleManager.assignRule(rule, replacement);
       }
       if (rule !== null) result.addRule(rule);
+      if (replacement !== null) ruleManager.decRef(replacement);
+      if (rule !== null) ruleManager.decRef(rule);
     }
-    return isDone ? result : undefined;
+    if (!isDone) {
+      result.reset();
+      return undefined;
+    }
+    rules.reset();
+    return result;
   }
 
   private addRule(source: RuleSet, rule: Rule, position: number) {
     const manager = this.context.manager;
     this.headVisitor.addPosition(rule.head, position);
+    this.headIndex.insert(rule.head);
+    this.pinned.push(this.context.ruleManager.assignRule(undefined, rule));
     if (source.isOutputPredicate(rule.getDecl(manager)))
       this.headVisitor.canRemove[position] = false;
-    for (let index = 0; index < rule.uninterpretedSize; index++)
+    for (let index = 0; index < rule.uninterpretedSize; index++) {
       this.tailVisitor.addPosition(rule.tail[index], position);
+      this.tailIndex.insert(rule.tail[index]);
+    }
     this.headVisitor.canExpand[position] =
       rule.uninterpretedSize === 1 &&
       rule.positiveSize === 1 &&
@@ -371,30 +461,31 @@ export class MkRuleInliner implements RuleTransformerPlugin {
 
   private delRule(rule: Rule, position: number) {
     this.headVisitor.delPosition(rule.head, position);
-    for (let index = 0; index < rule.uninterpretedSize; index++)
+    this.headIndex.erase(rule.head);
+    for (let index = 0; index < rule.uninterpretedSize; index++) {
       this.tailVisitor.delPosition(rule.tail[index], position);
-  }
-
-  // substitution_tree::unify with a visitor that stops after the second unifier.
-  private getUnifiers(visitor: Visitor, expr: number) {
-    const unifiers: number[] = [];
-    const subst = new Substitution(this.context.manager);
-    for (const [indexed, positions] of visitor.positions) {
-      subst.reset();
-      if (!subst.unify(expr, 0, indexed, 1)) continue;
-      unifiers.push(...positions);
-      if (unifiers.length > 1) break;
+      this.tailIndex.erase(rule.tail[index]);
     }
-    return unifiers;
   }
 
+  private getUnifiers(index: SubstitutionTree, visitor: Visitor, expr: number) {
+    visitor.unifiers = [];
+    index.unify(expr, visitor);
+    return visitor.unifiers;
+  }
+
+  // On success the rules are released, as Z3 replaces the scoped set.
   private inlineLinear(rules: RuleSet) {
+    const ruleManager = this.context.ruleManager;
     let isDone = false;
     const size = rules.rules.length;
     this.headVisitor.reset(size);
     this.tailVisitor.reset(size);
-    const accumulated = [...rules.rules];
+    this.headIndex.reset();
+    this.tailIndex.reset();
+    const accumulated = rules.rules.map((rule) => ruleManager.assignRule(undefined, rule));
     for (let index = 0; index < size; index++) this.addRule(rules, accumulated[index], index);
+    this.subst.reset();
     const isValid = Array.from({ length: size }, () => true);
     const isBranching = this.context.params.getBool("xform.inline_linear_branch", false);
     const canRemove = this.headVisitor.canRemove;
@@ -403,31 +494,39 @@ export class MkRuleInliner implements RuleTransformerPlugin {
       for (;;) {
         const rule = accumulated[index];
         if (!isValid[index] || !canExpand[index]) break;
-        const headUnifiers = this.getUnifiers(this.headVisitor, rule.tail[0]);
+        const headUnifiers = this.getUnifiers(this.headIndex, this.headVisitor, rule.tail[0]);
         if (headUnifiers.length !== 1) break;
         const other = headUnifiers[0];
         if (!canRemove[other] || !isValid[other] || index === other) break;
         const otherRule = accumulated[other];
-        const tailUnifiers = this.getUnifiers(this.tailVisitor, otherRule.head);
+        const tailUnifiers = this.getUnifiers(this.tailIndex, this.tailVisitor, otherRule.head);
         if (!isBranching && tailUnifiers.length !== 1) break;
         const result = this.tryToInlineRule(rule, otherRule, 0);
         if (result === undefined) break;
+        if (!result.isSatisfiable) {
+          ruleManager.decRef(result.rule);
+          break;
+        }
         isDone = true;
         this.delRule(rule, index);
-        this.addRule(rules, result, index);
-        accumulated[index] = result;
+        this.addRule(rules, result.rule, index);
+        accumulated[index] = ruleManager.assignRule(accumulated[index], result.rule);
         canExpand[index] = canExpand[other];
         if (tailUnifiers.length === 1) {
           isValid[other] = false;
           this.modelConverter?.delRule(otherRule, L_UNDEF);
           this.delRule(otherRule, other);
         }
+        ruleManager.decRef(result.rule);
       }
-    if (!isDone) return undefined;
-    const result = new RuleSet(this.context);
-    for (let index = 0; index < size; index++)
-      if (isValid[index]) result.addRule(accumulated[index]);
-    result.inheritPredicates(rules);
+    const result = isDone ? new RuleSet(this.context) : undefined;
+    if (result !== undefined) {
+      for (let index = 0; index < size; index++)
+        if (isValid[index]) result.addRule(accumulated[index]);
+      result.inheritPredicates(rules);
+      rules.reset();
+    }
+    for (const rule of accumulated) ruleManager.decRef(rule);
     return result;
   }
 
@@ -446,7 +545,10 @@ export class MkRuleInliner implements RuleTransformerPlugin {
     if (this.context.params.getBool("xform.inline_eager", true)) {
       this.planInlining(source);
       isDone = this.transformRules(source, result);
-      if (this.hasNewQuantifier) return undefined;
+      if (this.hasNewQuantifier) {
+        result.reset();
+        return undefined;
+      }
       result.close();
       const eager = this.doEagerInlining(result);
       if (eager !== undefined) {
@@ -455,7 +557,11 @@ export class MkRuleInliner implements RuleTransformerPlugin {
       }
     }
     if (isDone) result.inheritPredicates(source);
-    else result = RuleSet.copy(source);
+    else {
+      const copied = RuleSet.copy(source);
+      result.reset();
+      result = copied;
+    }
     if (this.context.params.getBool("xform.inline_linear", true)) {
       const linear = this.inlineLinear(result);
       if (linear !== undefined) {
@@ -464,7 +570,10 @@ export class MkRuleInliner implements RuleTransformerPlugin {
       }
     }
     if (this.hasNewQuantifier) throw new SmtUnsupportedError("inlining a rule with a quantifier");
-    if (!isDone) return undefined;
+    if (!isDone) {
+      result.reset();
+      return undefined;
+    }
     if (converter !== undefined)
       this.context.modelConverters?.push((model) => converter.apply(model));
     return result;

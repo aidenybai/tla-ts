@@ -12,6 +12,7 @@ import {
   QUANTIFIER_FORALL,
 } from "../ast";
 import { flattenAndVector, forEachExpr } from "../ast-util";
+import { assign, assignOwned, release } from "../expr-ref";
 import { LabelRewriter } from "../label-rewriter";
 import { RefVector } from "../ref-vector";
 import { DEFAULT_PRINT_OPTIONS, printExpr } from "../smt2-printer";
@@ -42,6 +43,9 @@ const outputPredicate = (manager: AstManager, predicate: number) =>
 
 // The tail lists the positive predicates, then the negated ones, then the interpreted formulas.
 export class Rule {
+  refCount = 0;
+  parent: Rule | undefined;
+
   constructor(
     public head: number,
     readonly tail: number[],
@@ -218,6 +222,9 @@ export class BindVariables {
 export class RuleManager {
   private hnf: Hnf;
   private labelRewriter: LabelRewriter;
+  private head = -1;
+  private body: RefVector;
+  private args: RefVector;
 
   constructor(
     readonly manager: AstManager,
@@ -225,6 +232,8 @@ export class RuleManager {
   ) {
     this.hnf = new Hnf(manager);
     this.labelRewriter = new LabelRewriter(manager);
+    this.body = new RefVector(manager);
+    this.args = new RefVector(manager);
   }
 
   private pin(expr: number) {
@@ -232,9 +241,38 @@ export class RuleManager {
     return expr;
   }
 
+  incRef(rule: Rule) {
+    rule.refCount++;
+  }
+
+  decRef(rule: Rule) {
+    const manager = this.manager;
+    let current: Rule | undefined = rule;
+    while (current !== undefined && --current.refCount === 0) {
+      manager.decRef(current.head);
+      for (const literal of current.tail) manager.decRef(literal);
+      current = current.parent;
+    }
+  }
+
+  setAccountingParent(rule: Rule, parent: Rule) {
+    if (rule.parent !== undefined) this.decRef(rule.parent);
+    rule.parent = parent;
+    parent.refCount++;
+  }
+
+  assignRule(old: Rule | undefined, value: Rule) {
+    value.refCount++;
+    if (old !== undefined) this.decRef(old);
+    return value;
+  }
+
   mkRule(fml: number, rules: RuleSet, name?: string) {
-    const bound = this.context.bindVars(fml, true);
-    this.mkRuleCore(this.labelRewriter.rewrite(bound), rules, name);
+    const manager = this.manager;
+    const bound = assign(manager, -1, this.context.bindVars(fml, true));
+    const unlabeled = assignOwned(manager, bound, this.labelRewriter.rewrite(bound));
+    this.mkRuleCore(unlabeled, rules, name);
+    release(manager, unlabeled);
   }
 
   private mkRuleCore(fml: number, rules: RuleSet, name: string | undefined) {
@@ -242,29 +280,35 @@ export class RuleManager {
     const fmls = this.hnf.apply(fml);
     for (const predicate of this.hnf.freshPredicates) this.context.registerPredicate(predicate);
     for (const horn of fmls) this.mkHornRule(horn, rules, name);
+    for (const horn of fmls) this.manager.decRef(horn);
   }
 
   private mkHornRule(fml: number, rules: RuleSet, name: string | undefined) {
     const manager = this.manager;
-    const body: number[] = [];
-    const extracted = this.extractHorn(fml, body);
-    const index = { value: extracted.index };
-    const head = this.hoistCompound(index, extracted.head, body);
-    const size = body.length;
-    for (let position = 0; position < size; position++)
-      body[position] = this.hoistCompound(index, body[position], body);
-    const isNegated = body.map((literal, position) => {
+    const body = this.body;
+    body.reset();
+    const index = { value: this.extractHorn(fml, body) };
+    this.head = this.hoistCompound(index, this.head, body);
+    const size = body.size;
+    for (let position = 0; position < size; position++) {
+      const hoisted = this.hoistCompound(index, assign(manager, -1, body.items[position]), body);
+      body.set(position, hoisted);
+      release(manager, hoisted);
+    }
+    const isNegated = body.items.map((literal, position) => {
       if (!manager.isNot(literal) || !this.context.isPredicate(manager.getArg(literal, 0)))
         return false;
-      body[position] = manager.getArg(literal, 0);
+      body.set(position, manager.getArg(literal, 0));
       return true;
     });
-    this.checkValidHead(head);
-    const rule = this.mk(head, body, isNegated, name);
-    rules.addRule(this.context.isFixingUnboundVars() ? this.fixUnboundVars(rule, true) : rule);
+    this.checkValidHead(this.head);
+    let rule = this.assignRule(undefined, this.mk(this.head, body.items, isNegated, name));
+    if (this.context.isFixingUnboundVars()) rule = this.fixUnboundVars(rule, true);
+    rules.addRule(rule);
+    this.decRef(rule);
   }
 
-  private extractHorn(fml: number, body: number[]) {
+  private extractHorn(fml: number, body: RefVector) {
     const manager = this.manager;
     const matrix =
       manager.kinds[fml] === KIND_QUANTIFIER &&
@@ -272,27 +316,44 @@ export class RuleManager {
         ? manager.getQuantifier(fml).body
         : fml;
     const index = manager.freeVarBounds[matrix];
-    if (manager.getOp(matrix) !== OP_IMPLIES) return { index, head: this.ensureApp(matrix) };
-    const args = new RefVector(manager);
+    if (manager.getOp(matrix) !== OP_IMPLIES) {
+      this.head = assign(manager, this.head, this.ensureApp(matrix));
+      return index;
+    }
+    const args = this.args;
+    args.reset();
+    this.head = assign(manager, this.head, this.ensureApp(manager.getArg(matrix, 1)));
     args.push(manager.getArg(matrix, 0));
     flattenAndVector(manager, args);
-    for (const arg of args.items) body.push(this.pin(this.ensureApp(arg)));
-    args.reset();
-    return { index, head: this.ensureApp(manager.getArg(matrix, 1)) };
+    for (const arg of args.items) body.push(this.ensureApp(arg));
+    return index;
   }
 
-  private hoistCompound(index: { value: number }, fml: number, body: number[]): number {
+  // Takes the reference of fml and returns the hoisted literal with one.
+  private hoistCompound(index: { value: number }, fml: number, body: RefVector): number {
     const manager = this.manager;
-    if (manager.isNot(fml))
-      return manager.mkNot(this.hoistCompound(index, this.ensureApp(manager.getArg(fml, 0)), body));
+    if (manager.isNot(fml)) {
+      const hoisted = this.hoistCompound(
+        index,
+        assign(manager, fml, this.ensureApp(manager.getArg(fml, 0))),
+        body,
+      );
+      return assign(manager, hoisted, manager.mkNot(hoisted));
+    }
     if (!this.context.isPredicate(fml)) return fml;
-    const args = manager.getArgs(fml).map((arg) => {
-      if (manager.kinds[arg] !== KIND_APP || manager.isValue(arg)) return arg;
+    const args = this.args;
+    args.reset();
+    for (let position = 0; position < manager.getNumArgs(fml); position++) {
+      const arg = manager.getArg(fml, position);
+      if (manager.kinds[arg] !== KIND_APP || manager.isValue(arg)) {
+        args.push(arg);
+        continue;
+      }
       const variable = manager.mkVar(index.value++, manager.sorts[arg]);
-      body.push(this.pin(manager.mkEq(variable, arg)));
-      return variable;
-    });
-    return manager.mkApp(manager.decls[fml], args, SORT_BOOL);
+      args.push(variable);
+      body.push(manager.mkEq(variable, arg));
+    }
+    return assign(manager, fml, manager.mkApp(manager.decls[fml], args.items, SORT_BOOL));
   }
 
   ensureApp(expr: number) {
@@ -360,13 +421,21 @@ export class RuleManager {
     if (used.every((sort) => sort !== undefined)) return;
     let next = 0;
     const substitution = used.map((sort) =>
-      sort === undefined ? -1 : manager.mkVar(next++, sort),
+      sort === undefined ? -1 : assign(manager, -1, manager.mkVar(next++, sort)),
     );
     const subst = new VarSubst(manager, false);
-    rule.head = this.pin(this.ensureApp(subst.apply(rule.head, substitution)));
+    const substitute = (literal: number) => {
+      const applied = subst.apply(literal, substitution);
+      const result = assign(manager, -1, this.ensureApp(applied));
+      release(manager, applied);
+      manager.decRef(literal);
+      return result;
+    };
+    rule.head = substitute(rule.head);
     for (let index = 0; index < rule.tail.length; index++)
-      rule.tail[index] = this.pin(this.ensureApp(subst.apply(rule.tail[index], substitution)));
+      rule.tail[index] = substitute(rule.tail[index]);
     subst.release();
+    for (const variable of substitution) release(manager, variable);
   }
 
   toFormula(rule: Rule) {
@@ -405,7 +474,10 @@ export class RuleManager {
     const head = subst.apply(rule.head, values);
     const tail = rule.tail.map((literal) => subst.apply(literal, values));
     subst.release();
-    return this.mk(head, tail, rule.isNegated, rule.name, false);
+    const result = this.mk(head, tail, rule.isNegated, rule.name, false);
+    for (const literal of tail) this.manager.decRef(literal);
+    this.manager.decRef(head);
+    return result;
   }
 
   isFiniteDomain(rule: Rule) {
@@ -431,7 +503,9 @@ export class RuleManager {
     const names: string[] = [];
     const sorts: number[] = [];
     const hoister = new QuantifierHoister(manager);
-    let body = this.pin(
+    let body = assign(
+      manager,
+      -1,
       hoister.pullQuantifierBound(false, this.context.bindVars(query, false), sorts, names),
     );
     hoister.release();
@@ -442,7 +516,7 @@ export class RuleManager {
         sort === undefined ? manager.mkVar(0, SORT_BOOL) : manager.mkVar(next++, sort),
       );
       const subst = new VarSubst(manager, false);
-      body = this.pin(subst.apply(body, args));
+      body = assignOwned(manager, body, subst.apply(body, args));
       subst.release();
       vars = getUsedVars(manager, [body]);
     }
@@ -453,16 +527,26 @@ export class RuleManager {
     const queryPredicate = this.context.mkFreshHeadPredicate("query", "", domain);
     rules.setOutputPredicate(queryPredicate);
     this.context.addGenericModelConverter([{ decl: queryPredicate, def: -1 }]);
-    const head = manager.mkApp(
-      queryPredicate,
-      domain.map((sort, index) => manager.mkVar(domain.length - index - 1, sort)),
-      SORT_BOOL,
+    const head = assign(
+      manager,
+      -1,
+      manager.mkApp(
+        queryPredicate,
+        domain.map((sort, index) => manager.mkVar(domain.length - index - 1, sort)),
+        SORT_BOOL,
+      ),
     );
-    const implication = manager.mkApp(OP_IMPLIES, [body, head], SORT_BOOL);
-    this.mkRule(
+    const implication = assign(manager, -1, manager.mkApp(OP_IMPLIES, [body, head], SORT_BOOL));
+    const ruleExpr = assign(
+      manager,
+      -1,
       domain.length === 0 ? implication : mkForall(manager, domain, names, implication),
-      rules,
     );
+    this.mkRule(ruleExpr, rules);
+    release(manager, ruleExpr);
+    release(manager, implication);
+    release(manager, head);
+    release(manager, body);
     return queryPredicate;
   }
 
@@ -519,7 +603,10 @@ export class RuleManager {
       tail.push(fixed);
       isNegated.push(false);
     }
-    return this.mk(reduced.head, tail, isNegated, reduced.name);
+    const result = this.assignRule(undefined, this.mk(reduced.head, tail, isNegated, reduced.name));
+    this.setAccountingParent(result, reduced);
+    this.decRef(reduced);
+    return result;
   }
 }
 
