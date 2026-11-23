@@ -591,6 +591,28 @@ describe("operator arguments selected behind an instance or a definition's param
     expect([result.status, prints]).toEqual(["success", ["10"]]);
   });
 
+  it("selects into an instance copy through a LET instance of the module that holds it, with the values TLC gives it and its local twin", async () => {
+    const modules = new Map([
+      [
+        "Inner",
+        "---- MODULE Inner ----\nEXTENDS Naturals\nCONSTANT c, Op(_)\nE2(z) == Op(z)\nH(K(_)) == K(c)\nE9 == H(E2)\nE11 == H(Op)\nE12 == c + 1\n====",
+      ],
+      [
+        "Mid2",
+        "---- MODULE Mid2 ----\nEXTENDS Naturals\nG(a) == a * 2\nJJ2 == INSTANCE Inner WITH c <- 3, Op <- G\n====",
+      ],
+    ]);
+    const prints: string[] = [];
+    const result = await check({
+      source:
+        "---- MODULE M ----\nEXTENDS Naturals, TLC\nVARIABLE x\nAp(K(_)) == K(5)\nASSUME PrintT(LET L2 == INSTANCE Mid2 IN <<L2!JJ2!E12!1, Ap(L2!JJ2!E11!1), Ap(L2!JJ2!E9!1)>>)\nInit == x = 0\nNext == x' = x\n====",
+      config: "INIT Init\nNEXT Next",
+      loadModule: (name) => modules.get(name),
+      onPrint: (text) => prints.push(text),
+    });
+    expect([result.status, prints]).toEqual(["success", ["<<3, 10, 10>>"]]);
+  });
+
   it.each([
     ["J!E25!1", "16"],
     ["D!1", "12"],

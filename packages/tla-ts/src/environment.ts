@@ -1267,8 +1267,10 @@ export const createEnvironment = (
         if (definition) {
           const operator =
             definition.kind === "Operator" ? definition : createLocalFunction(definition, name);
-          const instanceCopy = localCopies.get(key);
-          if (copy && instanceCopy) localCopies.set(name, instanceCopy);
+          const instanceCopy = copy
+            ? localCopies.get(key)
+            : createInstanceCopy(key, instance.module, substitutes);
+          if (instanceCopy) localCopies.set(name, instanceCopy);
           return {
             ...operator,
             name,
