@@ -801,7 +801,7 @@ class FmModelConverter {
       let lowerExpr = -1;
       let upperExpr = -1;
       for (const clause of entry.clauses.items) {
-        if (!manager.limit.inc()) throw new SmtTacticError("canceled");
+        if (!manager.limit.inc()) throw new SmtCanceledError();
         const processed = this.process(model, decl, clause);
         if (processed === undefined) continue;
         const bound = processed.bound;

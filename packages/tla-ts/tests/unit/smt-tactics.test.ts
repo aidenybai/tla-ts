@@ -964,6 +964,35 @@ describe("the resource limit, as the simplifiers of Z3 5.3.2 stop at it", () => 
       '(error "tactic failed: max. resource limit exceeded")',
     ]);
   });
+
+  it("fails check-sat-using with the limit that stops fm's model converter", () => {
+    expect(
+      run([
+        "(set-logic QF_LRA)",
+        "(declare-const x Real)",
+        "(declare-const y Real)",
+        "(declare-const z Real)",
+        "(declare-const w Real)",
+        "(declare-const v Real)",
+        "(declare-const p Bool)",
+        "(assert (<= (* 2.0 x) (+ y z)))",
+        "(assert (<= (+ y (* 3.0 z)) 7.0))",
+        "(assert (>= (+ x w) 0.5))",
+        "(assert (or p (< (+ z (* 2.0 v)) 10.0)))",
+        "(assert (or (not p) (< (+ z v) 20.0)))",
+        "(assert (< (+ w (* 3.0 v)) 3.0))",
+        "(assert (> (+ w v) 1.0))",
+        "(assert (> (+ v z) (- 1.0)))",
+        "(assert (<= (+ y (* 5.0 w)) 15.0))",
+        "(set-option :rlimit 453)",
+        "(check-sat-using (then fm smt))",
+        "(get-info :reason-unknown)",
+      ]),
+    ).toEqual([
+      '(error "tactic failed: max. resource limit exceeded")',
+      '(:reason-unknown "max. resource limit exceeded")',
+    ]);
+  });
 });
 
 describe("the logic check names a theory as Z3 does", () => {

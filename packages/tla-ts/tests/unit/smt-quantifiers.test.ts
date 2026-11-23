@@ -621,6 +621,26 @@ describe("the instantiation thresholds, as Z3 5.3.2 reads them", () => {
     ]);
   });
 
+  it("reports the limit that stops a rewrite inside the sat.euf search as Z3 does", () => {
+    expect(
+      [315, 322, 427, 882, 1100].map((innerRlimit) =>
+        run(
+          getThresholdScript(
+            [`(set-option :rlimit ${innerRlimit})`, "(set-option :sat.euf true)"],
+            "(check-sat)",
+            "(get-info :reason-unknown)",
+          ),
+        ),
+      ),
+    ).toEqual([
+      ["unknown", '(:reason-unknown "canceled")'],
+      ["unknown", '(:reason-unknown "max. resource limit exceeded")'],
+      ["unknown", '(:reason-unknown "max. resource limit exceeded")'],
+      ["unknown", '(:reason-unknown "max. resource limit exceeded")'],
+      ["unknown", '(:reason-unknown "max. resource limit exceeded")'],
+    ]);
+  });
+
   it("puts the lazy threshold back to 20 in setup_AUFLIA", () => {
     expect(
       run([
