@@ -1783,9 +1783,6 @@ export class Solver {
 
   // pop_vars keeps every variable made in the popped scopes: no variable is freed for reuse.
   private popVars(numScopes: number) {
-    // Deviation from Z3: set_extension replays the search scopes without m_vars_lim, so pop_vars reads before its start and crashes.
-    if (numScopes > this.varsLim.length)
-      throw new SmtUnsupportedError("the option :sat.euf after the sat solver searches");
     this.varsToReinit = [];
     const oldNumVars = this.varsLim[this.varsLim.length - numScopes];
     this.varsLim.length -= numScopes;
@@ -1870,7 +1867,11 @@ export class Solver {
   setExtension(ext: SatExtension) {
     this.ext = ext;
     for (let index = this.userScopeLiterals.length; index-- > 0;) ext.userPush?.();
-    for (let index = this.scopeLvl; index-- > 0;) ext.push();
+    // Deviation from Z3: its set_extension replays the search scopes without m_vars_lim, so pop_vars reads before its start and crashes.
+    for (let index = this.scopeLvl; index-- > 0;) {
+      this.varsLim.push(this.activeVars.length);
+      ext.push();
+    }
   }
 
   // user_push: every clause added in the scope is guarded by the scope's literal. Without free

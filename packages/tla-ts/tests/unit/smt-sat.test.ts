@@ -2481,15 +2481,71 @@ describe("the sat solver, as Z3 5.3.2 updates its parameters at each set-option"
     );
   });
 
-  // Deviation from Z3: set_extension replays the search scopes without m_vars_lim, so it crashes at the next pop.
-  it.each([["(check-sat)"], ["(push 1)"]])(
-    "leaves %s unported in a sat solver that sat.euf reaches after it searches",
-    (command) => {
-      expect(() => run([...HALF_EUF, command])).toThrow(
-        new SmtUnsupportedError("the option :sat.euf after the sat solver searches"),
-      );
-    },
-  );
+  // Deviation from Z3: its set_extension replays the search scopes without m_vars_lim, so it crashes at the next pop.
+  it("answers as Z3 does without sat.euf once sat.euf reaches the finite-domain solver after it searches", () => {
+    expect(
+      run([
+        ...HALF_EUF,
+        "(assert (not x1))",
+        "(check-sat)",
+        "(get-model)",
+        "(push 1)",
+        "(assert (not x2))",
+        "(check-sat)",
+        "(pop 1)",
+        "(check-sat)",
+      ]),
+    ).toBe(
+      [
+        "sat",
+        "set",
+        "(",
+        "  (define-fun x0 () Bool",
+        "    false)",
+        "  (define-fun x1 () Bool",
+        "    true)",
+        "  (define-fun x2 () Bool",
+        "    false)",
+        "  (define-fun i () Int",
+        "    0)",
+        ")",
+        "sat",
+        "(",
+        "  (define-fun x0 () Bool",
+        "    true)",
+        "  (define-fun x1 () Bool",
+        "    false)",
+        "  (define-fun x2 () Bool",
+        "    true)",
+        "  (define-fun i () Int",
+        "    0)",
+        ")",
+        "unsat",
+        "sat",
+      ].join("\n"),
+    );
+  });
+
+  // Deviation from Z3: its set_extension replays the search scopes without m_vars_lim, so it crashes at the next pop.
+  it("answers as Z3 does without sat.euf once sat.euf reaches the incremental sat solver after it searches", () => {
+    expect(
+      run([
+        ...SAT_TACTIC,
+        ...BOOLS,
+        "(push 1)",
+        "(assert (or x0 x1))",
+        "(assert (or (not x0) x2))",
+        "(check-sat)",
+        "(set-option :sat.euf true)",
+        '(echo "set")',
+        "(assert false)",
+        "(check-sat)",
+        "(pop 1)",
+        "(check-sat)",
+        "(get-info :rlimit)",
+      ]),
+    ).toBe(["sat", "set", "unsat", "sat", "(:rlimit 19)"].join("\n"));
+  });
 
   it("searches with the euf solver beside a goal2sat made without sat.euf", () => {
     expect(
