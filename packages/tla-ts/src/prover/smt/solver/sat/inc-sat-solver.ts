@@ -22,7 +22,7 @@ import {
   mkText,
   renderFormat,
 } from "../smt2-printer";
-import type { ThSolverFactory } from "../euf/euf-solver";
+import { mkThSolver } from "../euf/th-solvers";
 import {
   applyDefinitions,
   convertModel,
@@ -86,23 +86,22 @@ export class IncSatSolver {
   wasUnknown = false;
   private cardinalityParams: TacticParams;
 
-  // A theory factory runs the solver in sat.euf mode, with the euf solver as its extension.
   constructor(
     private readonly manager: AstManager,
     params: SatParams,
     private readonly parameters: ReadonlyMap<string, string>,
     isIncremental = true,
-    mkThSolver: ThSolverFactory | null = null,
   ) {
     this.solver = new Solver(params, manager.limit, isIncremental);
+    const isEuf = params.get("euf") === true;
     this.goal2sat = new Goal2Sat(
       manager,
       this.solver,
       params.get("ite_extra") !== false,
       parameters.get("smt.arith.ignore_int") === "true",
-      mkThSolver,
+      isEuf ? mkThSolver(parameters) : null,
     );
-    if (mkThSolver !== null) this.goal2sat.ensureEuf();
+    if (isEuf) this.goal2sat.ensureEuf();
     this.fmls = new RefVector(manager);
     this.names = new RefVector(manager);
     this.core = new RefVector(manager);
@@ -236,15 +235,16 @@ export class IncSatSolver {
     const subgoals = (() => {
       if (this.isCnf) return [goal];
       try {
+        const satParams = getSatParams(this.parameters);
         const goals = (
-          this.goal2sat.euf === null
-            ? mkIncSatPreprocess(
+          satParams.get("euf") === true
+            ? mkIncSatEufPreprocess(this.manager, this.propagator)
+            : mkIncSatPreprocess(
                 this.manager,
                 bitBlaster,
                 this.propagator,
-                getCardinalityOptions(this.cardinalityParams, getSatParams(this.parameters)),
+                getCardinalityOptions(this.cardinalityParams, satParams),
               )
-            : mkIncSatEufPreprocess(this.manager, this.propagator)
         )(goal);
         this.isCnf = true;
         return goals;

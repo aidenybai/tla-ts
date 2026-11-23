@@ -77,7 +77,6 @@ import { getGlobalSmtParams, SmtKernel } from "./smt-kernel";
 import { RefVector } from "./ref-vector";
 import { UINT_MAX } from "./sat/clause";
 import { IncSatSolver } from "./sat/inc-sat-solver";
-import { mkThSolver } from "./euf/th-solvers";
 import { getHammerPeriod } from "./lp/lp-settings";
 import { isAstLess } from "./ast-lt";
 import { InvVarShifter } from "./rewriter-tpl";
@@ -995,13 +994,7 @@ export const runSmtlibScript = (
     const kernel = isSatSolver ? undefined : new SmtKernel(state.manager, getKernelParams());
     const satSolver =
       isSatSolver && !isFdSolver && parameters.get("sat.smt") !== "true"
-        ? new IncSatSolver(
-            state.manager,
-            getSatParams(parameters),
-            parameters,
-            true,
-            isEuf ? mkThSolver(parameters) : null,
-          )
+        ? new IncSatSolver(state.manager, getSatParams(parameters), parameters, true)
         : undefined;
     const fdSolver =
       (logic === "QF_FD" || logic === "SAT") &&

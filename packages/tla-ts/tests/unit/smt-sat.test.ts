@@ -2385,3 +2385,72 @@ describe("the sat solver, as Z3 5.3.2 updates its parameters at each set-option"
     },
   );
 });
+
+describe("the sat solver, as Z3 5.3.2 reads sat.euf when it starts and at each preprocessing", () => {
+  it("preprocesses with card2bv once sat.euf is turned off", () => {
+    expect(
+      run([
+        "(set-option :tactic.default_tactic sat)",
+        "(set-option :sat.euf true)",
+        "(declare-const x0 Bool)",
+        "(declare-const x1 Bool)",
+        "(declare-const x2 Bool)",
+        "(declare-const x3 Bool)",
+        "(declare-const v (_ BitVec 3))",
+        "(push 1)",
+        "(assert (or x0 x1))",
+        "(check-sat)",
+        "(set-option :sat.euf false)",
+        "(assert ((_ at-most 1) x0 x1 x2 x3))",
+        "(assert ((_ at-least 1) x2 x3))",
+        "(check-sat)",
+        "(get-model)",
+        "(get-info :rlimit)",
+      ]),
+    ).toBe(
+      ["sat", "unsat", '(error "line 15 column 10: model is not available")', "(:rlimit 195)"].join(
+        "\n",
+      ),
+    );
+  });
+
+  it("starts the sat solver of an optimization in sat.euf", () => {
+    expect(
+      run([
+        "(set-option :sat.euf true)",
+        "(declare-const x0 Bool)",
+        "(declare-const x1 Bool)",
+        "(declare-const x2 Bool)",
+        "(declare-const v (_ BitVec 3))",
+        "(assert (or x0 x1))",
+        "(assert (=> x2 (= (bvadd v #b001) #b100)))",
+        "(assert-soft x2 :weight 2)",
+        "(assert-soft (not x0) :weight 1)",
+        "(assert-soft (not x1) :weight 1)",
+        "(assert-soft (= v #b111) :weight 1)",
+        "(check-sat)",
+        "(get-objectives)",
+        "(get-model)",
+        "(get-info :rlimit)",
+      ]),
+    ).toBe(
+      [
+        "sat",
+        "(objectives",
+        " ( 2)",
+        ")",
+        "(",
+        "  (define-fun x0 () Bool",
+        "    true)",
+        "  (define-fun x1 () Bool",
+        "    false)",
+        "  (define-fun x2 () Bool",
+        "    true)",
+        "  (define-fun v () (_ BitVec 3)",
+        "    #b011)",
+        ")",
+        "(:rlimit 323)",
+      ].join("\n"),
+    );
+  });
+});

@@ -14,7 +14,6 @@ import {
   SORT_INT,
 } from "./ast";
 import { mkNot } from "./ast-util";
-import { mkThSolver } from "./euf/th-solvers";
 import { BoundManager } from "./bound-manager";
 import { mkBvApp } from "./bv-decl-plugin";
 import { Bv2IntContext, Bv2IntRewriter } from "./bv2int-rewriter";
@@ -486,13 +485,7 @@ export class FdSolver {
     private readonly parameters: ReadonlyMap<string, string>,
     isIncremental = true,
   ) {
-    this.solver = new IncSatSolver(
-      manager,
-      params,
-      parameters,
-      isIncremental,
-      params.get("euf") === true ? mkThSolver(parameters) : null,
-    );
+    this.solver = new IncSatSolver(manager, params, parameters, isIncremental);
     this.fmls = new SolverFormulas(manager);
     this.state = new FdState(manager, this.fmls);
     this.trail = new ModelTrail(manager);
