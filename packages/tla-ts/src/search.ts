@@ -256,20 +256,23 @@ const hasLazyPart = (value: Value) => {
   const pending = [value];
   for (let inner = pending.pop(); inner !== undefined; inner = pending.pop()) {
     if (typeof inner !== "object") continue;
-    if (inner.kind === "Set") {
-      for (let index = 0; index < inner.elements.length; index++) {
-        pending.push(inner.elements[index]);
-      }
-    } else if (inner.kind === "Function") {
-      for (let index = 0; index < inner.domain.length; index++) {
-        pending.push(inner.domain[index], inner.range[index]);
-      }
-    } else if (
-      inner.kind !== "ModelValue" &&
-      inner.kind !== "Interval" &&
-      inner.kind !== "InfiniteSet"
-    ) {
-      return true;
+    switch (inner.kind) {
+      case "Set":
+        for (let index = 0; index < inner.elements.length; index++) {
+          pending.push(inner.elements[index]);
+        }
+        break;
+      case "Function":
+        for (let index = 0; index < inner.domain.length; index++) {
+          pending.push(inner.domain[index], inner.range[index]);
+        }
+        break;
+      case "ModelValue":
+      case "Interval":
+      case "InfiniteSet":
+        break;
+      default:
+        return true;
     }
   }
   return false;
