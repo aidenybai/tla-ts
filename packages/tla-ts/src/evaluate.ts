@@ -2370,7 +2370,7 @@ const compileApply = (
     return (context) => {
       const sets = base(context);
       const union = global.evaluate([sets], context);
-      // UnionValue#union gives the union its set's cost model, also when it combines a set of SetEnumValues.
+      // UnionValue#union gives the union its set's cost model.
       const node = getValueNode(coverage, sets);
       if (node === undefined || typeof union !== "object") return union;
       if (union.kind !== "Union") {
@@ -2776,7 +2776,6 @@ export const getLazyFilter = (
             if (isMaterialized && value) coverage.secondary[node]++;
             return value;
           },
-          // SetPredValue's enumerator draws the end of its base, which charges a union's set of sets.
           end: () => {
             draws?.next();
           },

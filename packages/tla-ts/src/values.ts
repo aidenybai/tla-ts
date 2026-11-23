@@ -2763,7 +2763,6 @@ const openChargedPart = (charges: ChargeTable, value: Value): ChargedStream => {
     sets?.pop();
     return stream;
   }
-  // SubsetValue#elements sizes and converts S, unless convertAndCache kept a SetEnumValue, which charges each draw.
   if (typeof value === "object" && value.kind === "Subset" && value.cost?.node !== undefined) {
     if (value.cost.charges === undefined) {
       return { kind: "ChargedLeaf", node: value.cost.node, part: openPart(value) };

@@ -1136,7 +1136,6 @@ const createProductSetEnumerator = (coverage: Coverage, set: Value, size: number
         : Array.from({ length: getCardinality(set.domain) }, () => set.range);
   const sizes = getComponentSizes(sets, size);
   if (sizes === undefined) return undefined;
-  // SetOfFcnsValue#elements, SetOfRcdsValue#elements and SetOfTuplesValue#elements ask isEmpty first.
   chargeIsEmpty(coverage, set);
   // SetOfFcnsValue's enumerator converts a domain that isn't an interval with toSetEnum.
   const domain =
@@ -1151,7 +1150,6 @@ export const createFilterBaseEnumerator = (
   set: Value,
   isMaterialized: boolean,
 ) => {
-  const node = getValueNode(coverage, set);
   if (
     typeof set === "object" &&
     (set.kind === "SetOperation" || set.kind === "Union" || set.kind === "Subset")
@@ -1162,6 +1160,7 @@ export const createFilterBaseEnumerator = (
     if (isMaterialized) draws.next();
     return draws;
   }
+  const node = getValueNode(coverage, set);
   if (
     node === undefined ||
     typeof set !== "object" ||
@@ -1358,7 +1357,6 @@ const createEnumerator = (
 ): ChargedEnumerator => {
   const node = getValueNode(coverage, set);
   if (typeof set === "object" && set.kind === "Subset") {
-    // Once convertAndCache converts SUBSET S, its elements() enumerates the SetEnumValue it keeps.
     if (set.cost !== undefined && set.cost.charges === undefined) {
       return createListEnumerator(coverage, set.cost.node, size);
     }
@@ -1416,7 +1414,6 @@ const chargeSetEnumeration = (coverage: Coverage, set: Value) => {
   if (node !== undefined) coverage.secondary[node] += size;
 };
 
-// TLC's Value#isEmpty asks a union or a set operation for its first element.
 const chargeIsEmpty = (coverage: Coverage, set: Value): boolean | undefined => {
   if (typeof set !== "object") return undefined;
   switch (set.kind) {
@@ -1490,14 +1487,12 @@ export const chargeSize = (coverage: Coverage, set: Value): void => {
   }
 };
 
-// SubsetValue#elementsNormalized sizes S, then converts it with toSetEnum.
 const chargeSubsetElements = (coverage: Coverage, set: SubsetValue) => {
   chargeSize(coverage, set.base);
   const base = getChargedSet(set.base);
   if (base !== undefined) chargeSetEnumeration(coverage, base);
 };
 
-// SetOfTuplesValue#toString, SetOfRcdsValue#toString, SetOfFcnsValue#toString and SubsetValue#toString size their parts, not themselves, before they expand.
 const chargePrintedSize = (coverage: Coverage, set: Value) => {
   if (typeof set !== "object") return;
   switch (set.kind) {
