@@ -711,6 +711,7 @@ export class ArithSolver extends ArithAxioms {
     else result = CR_GIVEUP;
     if (this.assumeEqs()) return CR_CONTINUE;
     if (!this.checkDelayedEqs()) return CR_CONTINUE;
+    if (this.ctx.isArithIgnoringInt && liaStatus === L_UNDEF) return CR_GIVEUP;
     return this.notHandled !== null ? CR_GIVEUP : result;
   }
 
@@ -760,6 +761,7 @@ export class ArithSolver extends ArithAxioms {
     const move = lia.check();
     this.explanation.clear();
     this.explanation.addExplanation(lia.explanation);
+    if (move.kind !== "sat" && this.ctx.isArithIgnoringInt) return L_UNDEF;
     switch (move.kind) {
       case "sat":
         return L_TRUE;
