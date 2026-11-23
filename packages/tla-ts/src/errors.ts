@@ -146,11 +146,13 @@ export const createStackOverflowError = () =>
   setExitCode(new TlaStackOverflowError(), EXIT_STATUS.error);
 
 // A TypeScript program whose check needs more stack than tla-ts gives it, though Node may run it,
-// with the depth of the state graph where the check overflowed, when it got that far.
+// with the depth of the state graph where the check overflowed, when it got that far. The stack is
+// the CLI's, by its size in MB, or one whose size its host doesn't tell, such as a browser worker's,
+// by its name.
 export class TlaStackLimitError extends TlaError {
-  constructor(stackMb: number, depth?: number) {
+  constructor(stack: number | string, depth?: number) {
     super(
-      `tla-ts can't check this program within the stack: its check overflowed its ${stackMb} MB stack${depth === undefined ? "" : ` at depth ${depth}`}`,
+      `tla-ts can't check this program within the stack: its check overflowed ${typeof stack === "number" ? `its ${stack} MB stack` : stack}${depth === undefined ? "" : ` at depth ${depth}`}`,
     );
     this.name = "TlaStackLimitError";
   }
