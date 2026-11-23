@@ -269,6 +269,32 @@ Spec == Init /\\ [][Next]_x
     );
   });
 
+  it("rejects a non-Leibniz operator substituted for an operator constant under a LET, which SANY accepts", () => {
+    const report = getReport({
+      M: "---- MODULE M ----\nVARIABLE x\nF(a) == LET L == 1 IN ENABLED (x' = a)\n---- MODULE Inner ----\nCONSTANT c\nVARIABLE w\nD == LET L == 1 IN ENABLED (w' = c)\n====\n---- MODULE Other ----\nCONSTANT Op(_)\n====\nJ(q) == INSTANCE Inner WITH c <- q, w <- x\nINSTANCE Other WITH Op <- F\nINSTANCE Other WITH Op <- J!D\n====\n",
+    });
+    expect(report.text).toBe(
+      joinLines([
+        "Semantic errors:",
+        "",
+        "*** Errors: 2",
+        "",
+        "line 13, col 1 to line 13, col 27 of module M",
+        "",
+        "Error in instantiating module 'Other':",
+        " A non-Leibniz operator substituted for 'Op'.",
+        "",
+        "",
+        "line 14, col 1 to line 14, col 29 of module M",
+        "",
+        "Error in instantiating module 'Other':",
+        " A non-Leibniz operator substituted for 'Op'.",
+        "",
+        "",
+      ]),
+    );
+  });
+
   it("locates the tuple of an EXCEPT path at the part of its update SANY picks", () => {
     const report = getReport({
       M: "---- MODULE M ----\nVARIABLE x\nf == [v \\in {1} |-> v]\nB == [f EXCEPT ![1][[]x, 2] = 1]\nC == [f EXCEPT ![1][2][[]x, 3] = ((1))]\n====\n",

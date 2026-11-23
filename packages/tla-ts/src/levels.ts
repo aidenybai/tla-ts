@@ -1188,8 +1188,8 @@ export const createLevelAnalyzer = (context: LevelContext) => {
       argConstraints: new Map(body.argConstraints),
       argParams: new Set(body.argParams),
       allParams: body.allParams,
-      // SANY's LetInNode#levelCheck copies its body's allParams but not its nonLeibnizParams.
-      nonLeibnizParams: EMPTY_PARAMS,
+      // Deviation from SANY: LetInNode#levelCheck drops its body's nonLeibnizParams, so SANY accepts a non-Leibniz operator substituted for an operator constant.
+      nonLeibnizParams: body.nonLeibnizParams,
     };
     entered.instances?.forEach((instance) =>
       getInstanceArgParams(instance, entered.inner).forEach((key) => data.argParams.add(key)),

@@ -988,6 +988,8 @@ const checkLevel = (node: SemanticNode, iteration: number, check: LevelCheck): b
       node.level = node.body.level;
       node.levelParams = new Set(node.body.levelParams);
       node.allParams = new Set(node.body.allParams);
+      // Deviation from SANY: LetInNode#levelCheck drops its body's nonLeibnizParams, so SANY accepts a non-Leibniz operator substituted for an operator constant.
+      node.nonLeibnizParams = new Set(node.body.nonLeibnizParams);
       putLevelConstraints(node.levelConstraints, node.body.levelConstraints);
       definitions.forEach((definition) =>
         putLevelConstraints(node.levelConstraints, definition.levelConstraints),
