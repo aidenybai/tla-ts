@@ -865,13 +865,13 @@ export const runSmtlibScript = (
       return check.model;
     }
     if (check.isOptimizing) throw new SmtUnsupportedError("the models of optimization");
+    const satModel = check.satSolver?.getModel();
+    if (satModel === null) return undefined;
+    if (satModel !== undefined) return satModel;
     if (check.context === undefined && check.status !== L_TRUE) {
       if (check.isFromTactic) return undefined;
       throw new SmtUnsupportedError("the model of a canceled search");
     }
-    const satModel = check.satSolver?.getModel();
-    if (satModel === null) return undefined;
-    if (satModel !== undefined) return satModel;
     const context = check.context;
     const model =
       check.fdSolver !== undefined
