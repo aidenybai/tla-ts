@@ -1019,6 +1019,8 @@ const checkLevel = (node: SemanticNode, iteration: number, check: LevelCheck): b
       const isCorrect = checkLevel(node.body, iteration, check);
       node.level = node.body.level;
       shareLevels(node, node.body);
+      // Deviation from SANY: LabelNode returns its body's allParams but not its nonLeibnizParams, so SANY accepts a non-Leibniz operator whose body is labeled.
+      node.nonLeibnizParams = node.body.nonLeibnizParams;
       return isCorrect;
     }
     case "At": {

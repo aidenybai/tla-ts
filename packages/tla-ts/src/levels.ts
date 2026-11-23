@@ -1463,6 +1463,7 @@ export const createLevelAnalyzer = (context: LevelContext) => {
         );
       case "Label": {
         labelChecks++;
+        // Deviation from SANY: LabelNode returns its body's allParams but not its nonLeibnizParams, so SANY accepts a non-Leibniz operator whose body is labeled.
         const data = analyze(expression.body, scope);
         if (checkedNodes.has(expression)) return { ...data, isCorrect: true };
         checkedNodes.set(expression, true);

@@ -1170,6 +1170,7 @@ const INNER_MODULES: Record<string, string> = {
   Passed: "CONSTANT c, Op(_)\nAp(F(_), a) == F(a)\nUse == Ap(Op, c)",
   Handed: "CONSTANT Op(_)\nVARIABLE v\nH(F(_)) == F(v')\nUse == H(Op)",
   Primes: "F(a) == LET G == a' IN G",
+  Labeled: "CONSTANT c\nVARIABLE w\nD == lab :: ENABLED (w' = c)",
   Outer:
     "EXTENDS Naturals\nCONSTANT c\nN == INSTANCE Twice WITH c <- c, Op <- LAMBDA a, b : a + b\nUse == N!Use",
   Functions:
@@ -1392,6 +1393,17 @@ describe("Leibniz checks where tla-ts deviates from SANY", () => {
   ])("reports %s as SANY reports it with the LET inlined", async (body, messages) => {
     await expect(checkSubstitution(body)).rejects.toThrow(TlaSyntaxError);
     await expect(checkSubstitution(body)).rejects.toThrow(getMessagePattern(messages));
+  });
+
+  it.each([
+    "F(a) == lab :: ENABLED (x' = a)\nI == INSTANCE Pure WITH c <- 1, Op <- F",
+    "F(a) == TRUE /\\ lab :: ENABLED (x' = a)\nI == INSTANCE Pure WITH c <- 1, Op <- F",
+    "F(a) == \\A b \\in {1} : lab(b) :: ENABLED (x' = a + b)\nI == INSTANCE Pure WITH c <- 1, Op <- F",
+    "J(q) == INSTANCE Labeled WITH c <- q, w <- x\nI == INSTANCE Pure WITH c <- 1, Op <- J!D",
+  ])("reports %s as SANY reports it with the label removed", async (body) => {
+    await expect(checkSubstitution(body)).rejects.toThrow(
+      getMessagePattern([getLeibnizError("Pure")]),
+    );
   });
 
   it("rejects a non-Leibniz operator substituted for an operator constant under a LET, which SANY accepts", async () => {
