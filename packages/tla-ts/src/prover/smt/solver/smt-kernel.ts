@@ -143,6 +143,12 @@ export class SmtKernel {
     return this.context.checkResearching(this.asserted, assumptions);
   }
 
+  getModel() {
+    const model = this.context.getModel() ?? null;
+    model?.incRef();
+    return model;
+  }
+
   setupAndCheck() {
     this.setupContext(true);
     return this.check();

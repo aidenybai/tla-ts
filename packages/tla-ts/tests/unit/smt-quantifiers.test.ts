@@ -828,6 +828,61 @@ describe("the quantifier solver of sat.euf, as Z3 5.3.2 reads smt.ematching and 
   });
 });
 
+describe("the sub-solver of sat.euf's mbqi, as Z3 5.3.2's mk_smt2_solver picks it", () => {
+  const getOutput = (options: string[], check: string) =>
+    run([
+      "(set-option :produce-models true)",
+      ...options,
+      "(declare-sort U 0)",
+      "(declare-fun f (U) U)",
+      "(declare-const a U)",
+      "(declare-const b U)",
+      "(assert (forall ((x U)) (= (f (f x)) x)))",
+      "(assert (not (= (f a) a)))",
+      "(assert (= (f b) a))",
+      check,
+      "(get-info :rlimit)",
+      "(get-model)",
+    ]);
+  const getModel = (rlimit: number) => [
+    "sat",
+    `(:rlimit ${rlimit})`,
+    "(",
+    "  ;; universe for U:",
+    "  ;;   U!val!0 U!val!1 ",
+    "  ;; -----------",
+    "  ;; definitions for universe elements:",
+    "  (declare-fun U!val!0 () U)",
+    "  (declare-fun U!val!1 () U)",
+    "  ;; cardinality constraint:",
+    "  (forall ((x U)) (or (= x U!val!0) (= x U!val!1)))",
+    "  ;; -----------",
+    "  (define-fun b () U",
+    "    U!val!1)",
+    "  (define-fun x!0 () U",
+    "    U!val!0)",
+    "  (define-fun a () U",
+    "    U!val!0)",
+    "  (define-fun f ((x!0 U)) U",
+    "    (ite (= x!0 U!val!0) U!val!1",
+    "      U!val!0))",
+    ")",
+  ];
+
+  it("is the smt kernel when sat.euf is set only on the tactic", () => {
+    expect(getOutput([], "(check-sat-using (using-params sat :euf true))")).toEqual(getModel(357));
+  });
+
+  it("reads the global sat parameters, not the tactic's", () => {
+    expect(
+      getOutput(
+        ["(set-option :sat.euf true)"],
+        "(check-sat-using (using-params sat :random_seed 7))",
+      ),
+    ).toEqual(getModel(243));
+  });
+});
+
 describe("the model checker, as Z3 5.3.2 counts its steps", () => {
   it("pushes its context as the kernel does", () => {
     expect(
