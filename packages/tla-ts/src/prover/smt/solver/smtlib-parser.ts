@@ -952,11 +952,18 @@ export const expectClosed = (sexpr: SExpr) => {
 export const isSymbol = (sexpr: SExpr | undefined, text?: string): sexpr is SmtToken =>
   sexpr !== undefined && sexpr.kind === "symbol" && (text === undefined || sexpr.text === text);
 
-const isSimpleIndex = (index: SExpr) =>
+const isSimpleIndex = (index: SExpr): index is SmtToken =>
   index.kind === "numeral" ||
   index.kind === "bitvector" ||
   index.kind === "decimal" ||
   index.kind === "keyword";
+
+const isNumberedIndex = (index: SExpr): index is SmtToken =>
+  index.kind === "numeral" || index.kind === "bitvector";
+
+// parse_indexed_identifier_core reads a #b or #x index as the numeral of its value.
+const getIndexDigits = (index: SmtToken) =>
+  index.kind === "bitvector" ? BigInt(`0${index.text.slice(1)}`).toString() : index.text;
 
 const expectList = (sexpr: SExpr | undefined, message: string, at: SExpr): SmtList => {
   if (sexpr?.kind !== "list") throw new SmtParseError(message, sexpr ?? at);
@@ -981,10 +988,12 @@ export const createSmtlibReader = (
   manager: AstManager,
   logic?: string,
   options: ParserOptions = DEFAULT_PARSER_OPTIONS,
+  // Z3 makes the manager, and with it the solver, where the parser first needs it.
+  useManager: (at: SExpr) => void = () => {},
 ) => {
   const hasArith = logic === undefined || logicHasArith(logic);
   const hasBv = logic === undefined || logicHasBv(logic);
-  const logicChecker = createLogicChecker(manager, logic);
+  let logicChecker = createLogicChecker(manager, undefined);
   const sortDecls = new Map<string, SortDecl>([
     ["Bool", { kind: "sort", sort: SORT_BOOL }],
     ...(hasArith && !(logic !== undefined && INT_FREE_LOGICS.has(logic))
@@ -1725,19 +1734,29 @@ export const createSmtlibReader = (
     PB_OP_NAMES.has(name) &&
     (logic === undefined || logic === "QF_FD" || logic === "ALL" || logic === "HORN");
 
-  const mkPbTerm = (name: string, args: number[], parameters: Rational[], at: SExpr) => {
+  const mkPbTerm = (name: string, args: number[], indices: SmtToken[], at: SExpr) => {
     const op = PB_OP_NAMES.get(name) ?? -1;
     if (args.some((arg) => manager.sorts[arg] !== SORT_BOOL))
       throw new SmtParseError("invalid non-Boolean sort applied to Pseudo-Boolean relation", at);
     const isCardinality = op === OP_AT_MOST_K || op === OP_AT_LEAST_K;
+    const bound = indices[0];
     // Deviation from Z3: its parser makes an index from 2^31 to 2^32 a negative int, which fails here and flips the sign of a pble, pbge or pbeq parameter.
-    if (isCardinality && (parameters.length !== 1 || !isUnsigned(parameters[0].num.toString())))
+    if (
+      isCardinality &&
+      (indices.length !== 1 || !isNumberedIndex(bound) || !isUnsigned(getIndexDigits(bound)))
+    )
       throw new SmtParseError("function expects one non-negative integer parameter", at);
-    if (!isCardinality && parameters.length !== 1 + args.length)
+    if (!isCardinality && indices.length !== 1 + args.length)
       throw new SmtParseError("function expects arity+1 rational parameters", at);
+    if (indices.some((index) => index.kind === "keyword"))
+      throw new SmtParseError("functions 'pble/pbge/pbeq' expect arity+1 integer parameters", at);
     const decl = manager.mkPbDecl(
       op,
-      parameters,
+      indices.map((index) =>
+        index.kind === "decimal"
+          ? Rational.fromDecimal(index.text)
+          : Rational.of(BigInt(getIndexDigits(index))),
+      ),
       args.map(() => SORT_BOOL),
     );
     return manager.mkApp(decl, args, SORT_BOOL);
@@ -1869,8 +1888,9 @@ export const createSmtlibReader = (
         `invalid root-obj, ')' expected got ${list.items[3].lastId}`,
         list.items[3],
       );
-    const coeffs = parseUpolynomial(polynomial);
     const follower = list.follower ?? list.end;
+    useManager(follower);
+    const coeffs = parseUpolynomial(polynomial);
     if (coeffs.length === 0)
       throw new SmtParseError(
         "invalid root object, polynomial must not be the zero polynomial",
@@ -1930,6 +1950,7 @@ export const createSmtlibReader = (
         );
       getIndexedName(target);
     }
+    useManager(list.items[2] ?? list.end);
     const sort = parseSort(list.items[2] ?? list.end, "Invalid qualified identifier");
     const extra = list.items[3];
     if (extra !== undefined)
@@ -1944,6 +1965,7 @@ export const createSmtlibReader = (
   // closing parenthesis, where at is.
   const parseIndexedTerm = (list: SmtList, at: SExpr, range?: number) => {
     const name = getIndexedName(list);
+    useManager(at);
     const indices = list.items.slice(2);
     const local = locals.get(name.text);
     if (local !== undefined) {
@@ -1954,33 +1976,26 @@ export const createSmtlibReader = (
     const value = /^bv([0-9]+)$/.exec(name.text);
     if (value !== null) {
       const width = indices[0];
-      const digits =
-        indices.length !== 1
-          ? "-1"
-          : width.kind === "bitvector"
-            ? `0${width.text.slice(1)}`
-            : width.kind === "numeral"
-              ? width.text
-              : "-1";
+      const digits = indices.length !== 1 || !isNumberedIndex(width) ? "-1" : getIndexDigits(width);
       if (!isUnsigned(digits))
         throw new SmtParseError("invalid bit-vector constant, index expected", at);
       if (BigInt(digits) === 0n)
         throw new SmtParseError("bit-vector size must be greater than zero", at);
       return manager.mkBvNumeral(BigInt(value[1]), Number(BigInt(digits)));
     }
-    const isNumbered = indices.every((index) => index.kind === "numeral");
+    const isNumbered = indices.every(isNumberedIndex);
     if (isNumbered && isSeqOpName(name.text))
       return mkSeqTerm(
         name.text,
         [],
-        indices.map((index) => (index.kind === "list" ? 0 : Number(index.text))),
+        indices.map((index) => Number(getIndexDigits(index))),
         at,
       );
     if (isNumbered && isFpaOpName(name.text)) {
       const signature = getFpaSignature(
         manager,
         FPA_OP_NAMES.get(name.text) ?? -1,
-        indices.map((index) => (index.kind === "list" ? 0 : Number(index.text))),
+        indices.map((index) => Number(getIndexDigits(index))),
         [],
       );
       if (typeof signature === "string") throw new SmtParseError(signature, at);
@@ -2358,6 +2373,7 @@ export const createSmtlibReader = (
   };
 
   const parseLeaf = (sexpr: SmtToken): number => {
+    if (sexpr.kind !== "keyword" && sexpr.kind !== "eof" && sexpr.kind !== ")") useManager(sexpr);
     if (sexpr.kind === "numeral")
       return restricted.isNumeralAsReal
         ? manager.mkRealNumeral(Rational.of(BigInt(sexpr.text), 1n))
@@ -2440,21 +2456,17 @@ export const createSmtlibReader = (
             : mkUpdateFieldApp(indexed, args, list.end),
       };
     }
-    const isNumbered = indices.every((index) => index.kind === "numeral");
-    if (isNumbered && isPbOpName(name.text)) {
-      const parameters = indices.map((index) =>
-        Rational.of(BigInt(index.kind === "list" ? 0 : index.text)),
-      );
+    const isNumbered = indices.every(isNumberedIndex);
+    if (isPbOpName(name.text) && indices.every(isSimpleIndex))
       return {
         head: name,
         indices: [],
-        build: (args) => mkPbTerm(name.text, args, parameters, list.end),
+        build: (args) => mkPbTerm(name.text, args, indices, list.end),
       };
-    }
     if (isNumbered && (isBvOpName(name.text) || isFpaOpName(name.text) || isSeqOpName(name.text)))
       return {
         head: name,
-        indices: indices.map((index) => (index.kind === "list" ? 0 : Number(index.text))),
+        indices: indices.map((index) => Number(getIndexDigits(index))),
       };
     // cmd_context::mk_app finds a name that no theory knows among the declarations, whatever its
     // indices are.
@@ -2640,6 +2652,7 @@ export const createSmtlibReader = (
       if (head === undefined || (head.kind !== "symbol" && head.kind !== "list"))
         throw new SmtParseError("invalid expression, '(' or symbol expected", head ?? current.end);
       if (head.kind === "list") {
+        useManager(head);
         // push_app_frame: Z3 reads a head that is neither indexed nor qualified as a term.
         if (isSymbol(head.items[0], "lambda"))
           throw new SmtUnsupportedError("indexed and qualified identifiers");
@@ -2686,6 +2699,7 @@ export const createSmtlibReader = (
             `invalid let declaration, '(' expected got ${(bindings ?? current.end).lastId}`,
             bindings ?? current.end,
           );
+        useManager(bindings.items[0] ?? bindings.end);
         frames.push({
           kind: "let",
           list: current,
@@ -2699,6 +2713,7 @@ export const createSmtlibReader = (
         return;
       }
       if (head.text === "!") {
+        useManager(current.items[1] ?? current.end);
         const parent = frames[frames.length - 1];
         frames.push({
           kind: "attribute",
@@ -2713,6 +2728,7 @@ export const createSmtlibReader = (
       }
       const quantifierKind = QUANTIFIER_KINDS.get(head.text);
       if (quantifierKind === undefined) {
+        useManager(head);
         frames.push({
           kind: "application",
           list: current,
@@ -2725,6 +2741,7 @@ export const createSmtlibReader = (
         return;
       }
       // push_quant_frame.
+      useManager(current.items[1] ?? current.end);
       const start = exprStack.length;
       const bound = bindSortedVars(current.items[1], current.end);
       if (bound.varSorts.length === 0)
@@ -3184,6 +3201,7 @@ export const createSmtlibReader = (
       datatypeIndexes.set(name, index);
       names.push(name);
       arities.push(Number(arity.text));
+      useManager(sortDeclaration.items[2] ?? sortDeclaration.end);
       declareDatatypeSort(
         name,
         Number(arity.text),
@@ -3192,6 +3210,7 @@ export const createSmtlibReader = (
       if (sortDeclaration.items.length > 2)
         throw new SmtParseError("invalid sort declaration, ')' expected", sortDeclaration.items[2]);
     });
+    useManager(list.items[2] ?? list.end);
     const bodies = expectListNext(
       list.items[2] ?? list.end,
       "invalid datatype declaration, '(' expected",
@@ -3264,6 +3283,7 @@ export const createSmtlibReader = (
 
   const declareDatatype = (list: SmtList) => {
     const name = expectSymbol(list.items[1], "unexpected token used as datatype name", list.end);
+    useManager(list.items[2] ?? list.end);
     const missing: string[] = [];
     const body = parseDatatypeBody(
       list.items[2] ?? list.end,
@@ -3348,6 +3368,8 @@ export const createSmtlibReader = (
   const declareCommand = (list: SmtList) => {
     releasePending();
     const name = list.items[0].kind === "list" ? "" : list.items[0].text;
+    if (name === "define-fun-rec" || name === "define-funs-rec")
+      useManager(list.items[1] ?? list.end);
     if (name === "define-fun-rec") {
       const decl = declareRecFun(list.items.slice(1), list.end);
       insertFunc(decl, list.items[4] ?? list.end);
@@ -3426,6 +3448,7 @@ export const createSmtlibReader = (
           "invalid sort declaration, arity (<numeral>) or ')' expected",
           arity,
         );
+      useManager(arity ?? list.end);
       declare(sortDecls, symbol.text, {
         kind: "user",
         name: symbol.text,
@@ -3442,11 +3465,13 @@ export const createSmtlibReader = (
         "invalid sort parameter, symbol or ')' expected",
       );
       const body = list.items[3] ?? list.end;
+      useManager(body);
       checkPsort(body, bindTypeParameters(parameters));
       declare(sortDecls, symbol.text, { kind: "definition", parameters, body });
       expectEnd(list.items[4], "invalid sort definition, ')' expected");
       return;
     }
+    useManager(list.items[2] ?? list.end);
     if (name === "define-fun" || name === "define-const") {
       const isConst = name === "define-const";
       const bound = isConst ? { names: [], varSorts: [] } : bindSortedVars(list.items[2], list.end);
@@ -3584,7 +3609,6 @@ export const createSmtlibReader = (
   // logic lacks, and the declarations and the operators stay.
   const restrictSorts = (name: string) => {
     releasePending();
-    if (logicHasRealsOnly(name)) restricted.isNumeralAsReal = true;
     if (!ARRAY_EXTENSION_LOGICS.has(name)) restricted.hasSetSort = false;
     if (INT_FREE_LOGICS.has(name)) sortDecls.delete("Int");
     restricted.hasFf = FF_LOGICS.has(name);
@@ -3626,7 +3650,10 @@ export const createSmtlibReader = (
     parseSort: (sexpr: SExpr, context: string) => parseSort(sexpr, context),
     parseFormula,
     parseAssertion,
-    getLogicError: logicChecker.checkExpr,
+    getLogicError: (expr: number) => logicChecker.checkExpr(expr),
+    setCheckedLogic: (name: string | undefined) => {
+      logicChecker = createLogicChecker(manager, name);
+    },
     push,
     pop,
     reset,
@@ -3695,8 +3722,13 @@ export const parseSmtlib = (
         throw new SmtParseError("logic must be set before initialization", option);
       if (!isSupportedLogic(option.text)) return;
       state.logic = option.text;
-      if (state.isInUse) state.reader.restrictSorts(option.text);
-      else state.reader = createSmtlibReader(manager, option.text);
+      if (state.isInUse) {
+        state.reader.restrictSorts(option.text);
+        if (logicHasRealsOnly(option.text)) state.reader.setNumeralAsReal(true);
+      } else {
+        state.reader = createSmtlibReader(manager, option.text);
+        state.reader.setCheckedLogic(option.text);
+      }
     } else if (DECLARATIONS.has(name)) {
       state.isInUse = true;
       if (name.startsWith("define-"))

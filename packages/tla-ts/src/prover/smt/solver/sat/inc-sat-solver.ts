@@ -22,7 +22,7 @@ import {
   mkText,
   renderFormat,
 } from "../smt2-printer";
-import type { ThSolverFactory } from "../euf/euf-solver";
+import { mkThSolver } from "../euf/th-solvers";
 import {
   applyDefinitions,
   convertModel,
@@ -46,6 +46,12 @@ const BIT_BLAST_PARAMS = {
   isBlastingQuant: false,
   isBlastingFull: false,
 };
+
+const getCardinalityParams = (params: SatParams) =>
+  new Map<string, TacticParam>([
+    ["keep_cardinality_constraints", params.get("cardinality.solver") !== false],
+    ["pb.solver", params.get("pb.solver") ?? "solver"],
+  ]);
 
 interface Scope {
   readonly converters: Goal["converters"];
@@ -78,15 +84,13 @@ export class IncSatSolver {
   private scopes: Scope[] = [];
   reasonUnknown = "no reason given";
   wasUnknown = false;
-  private readonly cardinalityParams: TacticParams;
+  private cardinalityParams: TacticParams;
 
-  // A theory factory runs the solver in sat.euf mode, with the euf solver as its extension.
   constructor(
     private readonly manager: AstManager,
     params: SatParams,
     private readonly parameters: ReadonlyMap<string, string>,
     isIncremental = true,
-    mkThSolver: ThSolverFactory | null = null,
   ) {
     this.solver = new Solver(params, manager.limit, isIncremental);
     this.goal2sat = new Goal2Sat(
@@ -94,9 +98,8 @@ export class IncSatSolver {
       this.solver,
       params.get("ite_extra") !== false,
       parameters.get("smt.arith.ignore_int") === "true",
-      mkThSolver,
     );
-    if (mkThSolver !== null) this.goal2sat.ensureEuf();
+    if (params.get("euf") === true) this.ensureEuf();
     this.fmls = new RefVector(manager);
     this.names = new RefVector(manager);
     this.core = new RefVector(manager);
@@ -104,10 +107,20 @@ export class IncSatSolver {
     this.satConverter = new Sat2GoalConverter(manager);
     this.internalized = new RefVector(manager);
     this.propagator = new PropagateValuesTactic(manager);
-    this.cardinalityParams = new Map<string, TacticParam>([
-      ["keep_cardinality_constraints", params.get("cardinality.solver") !== false],
-      ["pb.solver", params.get("pb.solver") ?? "solver"],
-    ]);
+    this.cardinalityParams = getCardinalityParams(params);
+  }
+
+  updateParams(params: SatParams) {
+    this.cardinalityParams = getCardinalityParams(params);
+    this.solver.updateParams(params);
+    if (params.get("euf") === true && this.goal2sat.euf === null) this.ensureEuf();
+  }
+
+  // A goal2sat made before sat.euf stays out of euf mode and leaves the euf solver unfed.
+  private ensureEuf() {
+    const factory = mkThSolver(this.parameters);
+    if (!this.goal2sat.isInitialized) this.goal2sat.initEuf(factory);
+    this.goal2sat.ensureEuf(factory);
   }
 
   private isClause(expr: number): boolean {
@@ -225,15 +238,16 @@ export class IncSatSolver {
     const subgoals = (() => {
       if (this.isCnf) return [goal];
       try {
+        const satParams = getSatParams(this.parameters);
         const goals = (
-          this.goal2sat.euf === null
-            ? mkIncSatPreprocess(
+          satParams.get("euf") === true
+            ? mkIncSatEufPreprocess(this.manager, this.propagator)
+            : mkIncSatPreprocess(
                 this.manager,
                 bitBlaster,
                 this.propagator,
-                getCardinalityOptions(this.cardinalityParams, getSatParams(this.parameters)),
+                getCardinalityOptions(this.cardinalityParams, satParams),
               )
-            : mkIncSatEufPreprocess(this.manager, this.propagator)
         )(goal);
         this.isCnf = true;
         return goals;

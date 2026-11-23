@@ -1,4 +1,4 @@
-import { SmtSatCanceledError } from "../../../../errors";
+import { SmtSatCanceledError, SmtUnsupportedError } from "../../../../errors";
 import { L_FALSE, L_TRUE, L_UNDEF } from "../lbool";
 import { RandomGen } from "../random-gen";
 import type { ResourceLimit } from "../rlimit";
@@ -11,17 +11,17 @@ import {
   GC_GLUE_PSM,
   GC_PSM,
   GC_PSM_GLUE,
-  getSatConfig,
   PS_ALWAYS_FALSE,
   PS_ALWAYS_TRUE,
   PS_BASIC_CACHING,
   PS_FROZEN,
+  PS_LOCAL_SEARCH,
   PS_RANDOM,
   PS_SAT_CACHING,
   RS_EMA,
   RS_GEOMETRIC,
   RS_LUBY,
-  type SatConfig,
+  SatConfig,
   type SatParams,
 } from "./config";
 import { MaxCliques } from "../max-cliques";
@@ -225,12 +225,12 @@ export class Solver {
   private lemmaMinStack: number[] = [];
 
   constructor(
-    readonly params: SatParams,
+    public params: SatParams,
     readonly limit: ResourceLimit,
     isIncremental = false,
   ) {
     this.incremental = isIncremental;
-    this.config = getSatConfig(params);
+    this.config = new SatConfig(params);
     this.rand = new RandomGen(this.config.randomSeed);
     this.caseSplitQueue = new VarQueue(this.activity);
     this.cleaner = new Cleaner(this);
@@ -238,11 +238,17 @@ export class Solver {
     this.scc = new Scc(this, this.config);
     this.asymmBranch = new AsymmBranch(this, params);
     this.probing = new Probing(this, params);
-    this.updateParams();
+    this.updateParams(params);
     this.mkVar(false);
   }
 
-  private updateParams() {
+  updateParams(params: SatParams) {
+    this.params = new Map([...this.params, ...params]);
+    this.config.updateParams(params);
+    this.simplifier.updateParams(params);
+    this.asymmBranch.updateParams(params);
+    this.probing.updateParams(params);
+    this.rand.setSeed(this.config.randomSeed);
     this.fastGlueAvg.setAlpha(this.config.fastGlueAvg);
     this.slowGlueAvg.setAlpha(this.config.slowGlueAvg);
     this.fastGlueBackup.setAlpha(this.config.fastGlueAvg);
@@ -904,6 +910,8 @@ export class Solver {
       if (this.checkInconsistent()) return L_FALSE;
     }
     if (this.config.maxConflicts === 0) return L_UNDEF;
+    if (this.config.phase === PS_LOCAL_SEARCH && this.ext !== null)
+      throw new SmtUnsupportedError("the sat solver's local search");
     if (this.config.maxConflicts > 0 && this.config.burstSearch > 0) {
       this.restartThreshold = this.config.burstSearch;
       const result = this.boundedSearch();
@@ -1127,6 +1135,7 @@ export class Solver {
       case PS_FROZEN:
         return this.bestPhase[next];
       case PS_SAT_CACHING:
+      case PS_LOCAL_SEARCH:
         return this.searchState === S_UNSAT ? this.phase[next] : this.bestPhase[next];
       default:
         return this.rand.next() % 2 === 0;
@@ -1484,7 +1493,7 @@ export class Solver {
   }
 
   private isTwoPhase() {
-    return this.config.phase === PS_SAT_CACHING;
+    return this.config.phase === PS_SAT_CACHING || this.config.phase === PS_LOCAL_SEARCH;
   }
 
   private isSatPhase() {
@@ -1565,6 +1574,13 @@ export class Solver {
         break;
       case PS_RANDOM:
         for (let index = 0; index < size; index++) this.setPhase(index, this.rand.next() % 2 === 0);
+        break;
+      case PS_LOCAL_SEARCH:
+        if (this.searchState === S_SAT) {
+          if (this.rand.next() % 2 === 0)
+            throw new SmtUnsupportedError("the sat solver's local search");
+          for (let index = 0; index < size; index++) this.setPhase(index, this.bestPhase[index]);
+        }
         break;
     }
     this.rephaseInc += this.config.rephaseBase;
@@ -1846,6 +1862,16 @@ export class Solver {
     this.resetAssumptions();
     this.pop(this.scopeLvl);
     this.isModelCurrent = false;
+  }
+
+  setExtension(ext: SatExtension) {
+    this.ext = ext;
+    for (let index = this.userScopeLiterals.length; index-- > 0;) ext.userPush?.();
+    // Deviation from Z3: its set_extension replays the search scopes without m_vars_lim, so pop_vars reads before its start and crashes.
+    for (let index = this.scopeLvl; index-- > 0;) {
+      this.varsLim.push(this.activeVars.length);
+      ext.push();
+    }
   }
 
   // user_push: every clause added in the scope is guarded by the scope's literal. Without free

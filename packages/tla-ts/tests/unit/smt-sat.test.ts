@@ -131,6 +131,16 @@ describe("sat parameters", () => {
     );
   });
 
+  it("searches with the local_search phase as with caching when the solver has no extension", () => {
+    expect(run(getScript("(check-sat-using (using-params sat :phase local_search))"))).toBe(
+      getModelOutput(
+        "-x34 -x42 -x30 -x53 -x15 -x12 x36 -x19 x2 x27 -x0 -x40 -x14 -x45 x43 x32 x9 -x41 x1 -x22 " +
+          "x50 x48 -x28 x10 -x37 x47 x51 -x31 -x25 x7 x49 x8 x38 x21 -x44 x23 -x20 -x35 x24 -x17 " +
+          "-x11 -x6 x29 -x5 x18 -x46 -x52 x13 -x33 -x26 x4 -x16 x3 -x39",
+      ),
+    );
+  });
+
   it("reads a double of using-params over the global one set-option gave", () => {
     expect(
       run(
@@ -1749,6 +1759,951 @@ describe("pseudo-Boolean bounds past 2^31, which Z3 5.3.2's int parameters can't
         "  ((_ pble 3000000000 1 1) x!0 y!1)",
         "  :precision precise :depth 1)",
         ")",
+      ].join("\n"),
+    );
+  });
+});
+
+describe("indices, as Z3 5.3.2's parser reads them", () => {
+  const DECLARATIONS = ["(declare-const p Bool)", "(declare-const q Bool)"];
+
+  it("reads a bit-vector index as the numeral of its value", () => {
+    expect(
+      run([
+        "(declare-const x (_ BitVec 8))",
+        "(simplify ((_ extract #b11 #x0) x))",
+        "(simplify ((_ zero_extend #b1) x))",
+        "(simplify ((_ sign_extend #x2) x))",
+        "(simplify ((_ rotate_left #b11) x))",
+        "(simplify ((_ repeat #x2) x))",
+        "(simplify ((_ int2bv #x8) 5))",
+        "(simplify ((_ to_fp #x8 #x18) RNE 1.0))",
+        '(simplify (str.in_re "aa" ((_ re.loop #x1 #x2) (str.to_re "a"))))',
+      ]),
+    ).toBe(
+      [
+        "((_ extract 3 0) x)",
+        "(concat #b0 x)",
+        "(concat ((_ extract 7 7) x) ((_ extract 7 7) x) x)",
+        "(concat ((_ extract 4 0) x) ((_ extract 7 5) x))",
+        "(concat x x)",
+        "#x05",
+        "(fp #b0 #x7f #b00000000000000000000000)",
+        "true",
+      ].join("\n"),
+    );
+  });
+
+  it.each([
+    ["((_ at-most #b1) p q)", "sat", 48],
+    ["((_ pbeq 1 0.5 0.5) p q)", "sat", 30],
+    ["((_ pbge 1.5 0.5 0.5) p q)", "unsat", 6],
+    ["((_ pbge 1500000000 0.5 0.5) p q)", "unsat", 6],
+  ])("asserts %s and answers %s at Z3's rlimit %d", (assertion, verdict, rlimit) => {
+    expect(
+      run([...DECLARATIONS, `(assert ${assertion})`, "(check-sat)", "(get-info :rlimit)"]),
+    ).toBe([verdict, `(:rlimit ${rlimit})`].join("\n"));
+  });
+
+  it("simplifies pseudo-Boolean constraints with bit-vector and decimal indices", () => {
+    expect(
+      run([
+        ...DECLARATIONS,
+        "(simplify ((_ at-most #x1) p q))",
+        "(simplify ((_ pbeq 1 0.5 0.5) p q))",
+        "(simplify ((_ pbge 1500000000 0.5 0.5) p q))",
+      ]),
+    ).toBe(["(or (not p) (not q))", "(and p q)", "false"].join("\n"));
+  });
+
+  it("rejects a decimal or keyword index where pb_decl_plugin wants an int", () => {
+    expect(
+      run([
+        ...DECLARATIONS,
+        "(assert ((_ at-most 2.0) p q))",
+        "(assert ((_ at-most :k) p q))",
+        "(assert ((_ pbge 1 :k 1) p q))",
+        "(check-sat)",
+      ]),
+    ).toBe(
+      [
+        '(error "line 3 column 28: function expects one non-negative integer parameter")',
+        '(error "line 4 column 27: function expects one non-negative integer parameter")',
+        "(error \"line 5 column 28: functions 'pble/pbge/pbeq' expect arity+1 integer parameters\")",
+        "sat",
+      ].join("\n"),
+    );
+  });
+});
+
+describe("sat config, as Z3 5.3.2 checks the sat solver's parameters", () => {
+  const getChecked = (options: string[]) =>
+    run([
+      ...options.map((option) => `(set-option ${option})`),
+      "(declare-const p Bool)",
+      "(declare-const q Bool)",
+      "(assert (or p q))",
+      "(check-sat)",
+      "(get-info :reason-unknown)",
+      "(get-info :rlimit)",
+    ]);
+  const getUnknown = (reason: string) =>
+    ["unknown", `(:reason-unknown "${reason}")`, "(:rlimit 8)"].join("\n");
+  const REWARD =
+    "invalid reward type supplied: accepted heuristics are 'ternary', 'heuleu', 'unit' or 'heule_schur'";
+  const CUTOFF =
+    "invalid cutoff type supplied: accepted cutoffs are 'depth', 'freevars', 'psat', 'adaptive_freevars' and 'adaptive_psat'";
+  const DELTA = "invalid value for delta fraction. It should be a number in the interval 0 to 1";
+  const DRAT =
+    "external DRAT output requires threads=1, local_search_threads=0, ddfw.threads=0, and drat.disable=false";
+  const BRANCHING = "invalid branching heuristic: accepted heuristics are 'vsids' or 'chb'";
+  const PB_SOLVER =
+    "invalid PB solver: solver, totalizer, circuit, sorting, segmented, binary_merge";
+  const PB_RESOLVE = "invalid PB resolve: 'cardinality' or 'rounding' expected";
+
+  it.each([
+    [[":sat.lookahead.reward foo"], REWARD],
+    [[":sat.lookahead.cube.cutoff foo"], CUTOFF],
+    [[":sat.lookahead.delta_fraction 2.0"], DELTA],
+    [[":sat.lookahead.delta_fraction -0.5"], DELTA],
+    [[":sat.drat.file foo.drat", ":sat.threads 2"], DRAT],
+    [[":sat.drat.file foo.drat", ":sat.drat.disable true"], DRAT],
+    [[":sat.drat.file foo.drat", ":sat.local_search_threads 1"], DRAT],
+    [[":sat.drat.file foo.drat", ":sat.ddfw.threads 1"], DRAT],
+    [[":sat.branching.heuristic foo"], BRANCHING],
+    [[":sat.pb.solver foo"], PB_SOLVER],
+    [[":sat.pb.solver 1"], PB_SOLVER],
+    [[":sat.pb.resolve foo"], PB_RESOLVE],
+    [[":sat.pb.lemma_format foo"], "invalid PB lemma format: 'cardinality' or 'pb' expected"],
+  ])("gives up with Z3's reason when the options %j fail the check", (options, reason) => {
+    expect(getChecked(options)).toBe(getUnknown(reason));
+  });
+
+  it.each([
+    [
+      [":sat.lookahead.reward foo", ":sat.phase foo"],
+      "invalid phase selection strategy: always_false, always_true, basic_caching, caching, random",
+    ],
+    [[":sat.lookahead.cube.cutoff foo", ":sat.lookahead.reward foo"], REWARD],
+    [[":sat.lookahead.delta_fraction 2.0", ":sat.lookahead.cube.cutoff foo"], CUTOFF],
+    [[":sat.gc foo", ":sat.lookahead.delta_fraction 2.0"], DELTA],
+    [[":sat.drat.file x", ":sat.threads 3", ":sat.gc foo"], "invalid gc strategy"],
+    [[":sat.branching.heuristic foo", ":sat.drat.file x", ":sat.threads 3"], DRAT],
+    [[":sat.pb.solver foo", ":sat.branching.heuristic foo"], BRANCHING],
+    [[":sat.pb.resolve foo", ":sat.pb.solver foo"], PB_SOLVER],
+    [[":sat.pb.lemma_format foo", ":sat.pb.resolve foo"], PB_RESOLVE],
+  ])("reports the first failure in Z3's order among the options %j", (options, reason) => {
+    expect(getChecked(options)).toBe(getUnknown(reason));
+  });
+
+  it("takes the valid values of the pseudo-Boolean options", () => {
+    expect(
+      getChecked([
+        ":sat.pb.solver totalizer",
+        ":sat.pb.resolve rounding",
+        ":sat.pb.lemma_format pb",
+      ]),
+    ).toBe(["sat", '(:reason-unknown "")', "(:rlimit 30)"].join("\n"));
+  });
+});
+
+describe("the manager, as Z3 5.3.2 makes it and its solver at their first use", () => {
+  it.each([
+    [
+      "a declare-fun, at its range",
+      [
+        "(set-logic QF_FD)",
+        "(set-option :sat.pb.solver bv)",
+        "(declare-fun p () Bool)",
+        "(declare-fun q () Bool)",
+        "(assert (or p q))",
+        "(check-sat)",
+        "(get-info :reason-unknown)",
+        "(get-info :rlimit)",
+      ],
+      [
+        '(error "line 3 column 15: invalid PB solver: solver, totalizer, circuit, sorting, segmented, binary_merge")',
+        '(error "line 5 column 12: unknown constant p")',
+        "unknown",
+        '(:reason-unknown "state of the most recent check-sat command is not known")',
+        "(:rlimit 0)",
+      ],
+    ],
+    [
+      "a define-fun, at its parameters",
+      [
+        "(set-logic QF_FD)",
+        "(set-option :sat.pb.solver bv)",
+        "(define-fun f () Bool true)",
+        "(assert f)",
+        "(check-sat)",
+        "(get-info :reason-unknown)",
+        "(get-info :rlimit)",
+      ],
+      [
+        '(error "line 3 column 14: invalid PB solver: solver, totalizer, circuit, sorting, segmented, binary_merge")',
+        '(error "line 4 column 8: unknown constant f")',
+        "unknown",
+        '(:reason-unknown "state of the most recent check-sat command is not known")',
+        "(:rlimit 0)",
+      ],
+    ],
+    [
+      "a declare-datatypes, after the arity of its first sort",
+      [
+        "(set-logic QF_FD)",
+        "(set-option :sat.pb.solver bv)",
+        "(declare-datatypes ((D 0)) (((c) (d))))",
+        "(declare-const x D)",
+        "(check-sat)",
+        "(get-info :reason-unknown)",
+        "(get-info :rlimit)",
+      ],
+      [
+        '(error "line 3 column 24: invalid PB solver: solver, totalizer, circuit, sorting, segmented, binary_merge")',
+        "(error \"line 4 column 17: Invalid constant declaration: unknown sort 'D'\")",
+        "unknown",
+        '(:reason-unknown "state of the most recent check-sat command is not known")',
+        "(:rlimit 0)",
+      ],
+    ],
+    [
+      "a declare-datatypes with parameters, at its bodies",
+      [
+        "(set-logic QF_FD)",
+        "(set-option :sat.pb.solver bv)",
+        "(declare-datatypes (T) ((L (n) (c (h T)))))",
+        "(declare-const zz Bool)",
+        "(check-sat)",
+      ],
+      [
+        '(error "line 3 column 23: invalid PB solver: solver, totalizer, circuit, sorting, segmented, binary_merge")',
+        "unknown",
+      ],
+    ],
+    [
+      "a define-fun-rec, at its name",
+      [
+        "(set-logic QF_FD)",
+        "(set-option :sat.pb.solver bv)",
+        "(define-fun-rec f () Bool true)",
+        "(declare-const zz Bool)",
+        "(check-sat)",
+      ],
+      [
+        '(error "line 3 column 16: invalid PB solver: solver, totalizer, circuit, sorting, segmented, binary_merge")',
+        "unknown",
+      ],
+    ],
+    [
+      "get-info :rlimit, at the keyword after its opening",
+      [
+        "(set-logic QF_FD)",
+        "(set-option :sat.pb.solver bv)",
+        "(get-info :rlimit)",
+        "(check-sat)",
+        "(get-info :reason-unknown)",
+        "(get-info :rlimit)",
+      ],
+      [
+        '(:rlimit (error "line 3 column 10: invalid PB solver: solver, totalizer, circuit, sorting, segmented, binary_merge")',
+        "unknown",
+        '(:reason-unknown "state of the most recent check-sat command is not known")',
+        "(:rlimit 0)",
+      ],
+    ],
+    [
+      "a let, at its first binding",
+      [
+        "(set-logic QF_FD)",
+        "(set-option :sat.pb.solver bv)",
+        "(assert (let ((x true)) x))",
+        "(declare-const zz Bool)",
+        "(check-sat)",
+      ],
+      [
+        '(error "line 3 column 14: invalid PB solver: solver, totalizer, circuit, sorting, segmented, binary_merge")',
+        "unknown",
+      ],
+    ],
+    [
+      "an attribute, at its term",
+      [
+        "(set-logic QF_FD)",
+        "(set-option :sat.pb.solver bv)",
+        "(assert (! true :named a))",
+        "(declare-const zz Bool)",
+        "(check-sat)",
+      ],
+      [
+        '(error "line 3 column 11: invalid PB solver: solver, totalizer, circuit, sorting, segmented, binary_merge")',
+        "unknown",
+      ],
+    ],
+    [
+      "a qualified identifier, at its sort",
+      [
+        "(set-logic QF_FD)",
+        "(set-option :sat.pb.solver bv)",
+        "(assert (as true Bool))",
+        "(declare-const zz Bool)",
+        "(check-sat)",
+      ],
+      [
+        '(error "line 3 column 17: invalid PB solver: solver, totalizer, circuit, sorting, segmented, binary_merge")',
+        "unknown",
+      ],
+    ],
+    [
+      "a root-obj, at the token after it",
+      [
+        "(set-logic QF_FD)",
+        "(set-option :sat.pb.solver bv)",
+        "(assert (= (root-obj (+ x 1) 1) 1))",
+        "(declare-const zz Bool)",
+        "(check-sat)",
+      ],
+      [
+        '(error "line 3 column 9: invalid PB solver: solver, totalizer, circuit, sorting, segmented, binary_merge")',
+        "unknown",
+      ],
+    ],
+    [
+      "a match, at its term",
+      [
+        "(set-logic QF_FD)",
+        "(set-option :sat.pb.solver bv)",
+        "(assert (match true ((x x))))",
+        "(declare-const zz Bool)",
+        "(check-sat)",
+      ],
+      [
+        '(error "line 3 column 15: invalid PB solver: solver, totalizer, circuit, sorting, segmented, binary_merge")',
+        "unknown",
+      ],
+    ],
+    [
+      "a rule, at its term",
+      [
+        "(set-logic QF_FD)",
+        "(set-option :sat.pb.solver bv)",
+        "(rule (and true true))",
+        "(declare-const zz Bool)",
+        "(check-sat)",
+      ],
+      [
+        '(error "line 3 column 7: invalid PB solver: solver, totalizer, circuit, sorting, segmented, binary_merge")',
+        "unknown",
+      ],
+    ],
+    [
+      "check-sat, at its first argument",
+      [
+        "(set-logic QF_FD)",
+        "(set-option :sat.pb.solver bv)",
+        "(check-sat true)",
+        "(declare-const zz Bool)",
+        "(check-sat)",
+      ],
+      [
+        '(error "line 3 column 11: invalid PB solver: solver, totalizer, circuit, sorting, segmented, binary_merge")',
+        "unknown",
+      ],
+    ],
+    [
+      "check-sat-using, at its end",
+      [
+        "(set-logic QF_FD)",
+        "(set-option :sat.pb.solver bv)",
+        "(check-sat-using smt)",
+        "(declare-const zz Bool)",
+        "(check-sat)",
+      ],
+      [
+        '(error "line 3 column 20: invalid PB solver: solver, totalizer, circuit, sorting, segmented, binary_merge")',
+        "unknown",
+      ],
+    ],
+    [
+      "dbg-some-value, at its sort",
+      [
+        "(set-logic QF_FD)",
+        "(set-option :sat.pb.solver bv)",
+        "(dbg-some-value Bool)",
+        "(declare-const zz Bool)",
+        "(check-sat)",
+      ],
+      [
+        '(error "line 3 column 16: invalid PB solver: solver, totalizer, circuit, sorting, segmented, binary_merge")',
+        "unknown",
+      ],
+    ],
+    [
+      "a push of no scope, not at all",
+      [
+        "(set-logic QF_FD)",
+        "(set-option :sat.pb.solver bv)",
+        "(push 0)",
+        "(declare-const zz Bool)",
+        "(check-sat)",
+      ],
+      [
+        '(error "line 4 column 18: invalid PB solver: solver, totalizer, circuit, sorting, segmented, binary_merge")',
+        "unknown",
+      ],
+    ],
+  ])("reports a bad sat parameter in the solver of %s", (_name, lines, expected) => {
+    expect(run(lines)).toBe(expected.join("\n"));
+  });
+
+  it.each([
+    [
+      "the commands after a failure, with no solver",
+      [
+        "(set-logic QF_FD)",
+        "(set-option :sat.pb.solver bv)",
+        "(declare-const p Bool)",
+        "(declare-const p Bool)",
+        "(assert p)",
+        "(set-option :smt.random_seed 3)",
+        "(check-sat)",
+        "(get-info :reason-unknown)",
+        "(get-model)",
+        "(get-value (p))",
+        "(get-assertions)",
+        "(push)",
+        "(pop)",
+        "(check-sat-assuming (p))",
+        "(get-info :rlimit)",
+      ],
+      [
+        '(error "line 3 column 17: invalid PB solver: solver, totalizer, circuit, sorting, segmented, binary_merge")',
+        "unknown",
+        '(:reason-unknown "state of the most recent check-sat command is not known")',
+        '(error "line 9 column 10: model is not available")',
+        '(error "line 10 column 14: model is not available")',
+        '(error "line 11 column 15: command is only available in interactive mode, use command (set-option :interactive-mode true)")',
+        "unknown",
+        "(:rlimit 0)",
+      ],
+    ],
+    [
+      "a set-logic after the first solver, which it keeps",
+      [
+        "(declare-const p Bool)",
+        "(set-option :sat.pb.solver bv)",
+        "(set-logic QF_FD)",
+        "(assert p)",
+        "(check-sat)",
+        "(get-info :reason-unknown)",
+        "(get-info :rlimit)",
+      ],
+      [
+        '(error "line 3 column 11: invalid PB solver: solver, totalizer, circuit, sorting, segmented, binary_merge")',
+        "unknown",
+        '(:reason-unknown "invalid PB solver: solver, totalizer, circuit, sorting, segmented, binary_merge")',
+        "(:rlimit 6)",
+      ],
+    ],
+    [
+      "the declarations after a failure, with no logic check",
+      [
+        "(set-logic QF_FD)",
+        "(set-option :sat.pb.solver bv)",
+        "(declare-const p Bool)",
+        "(declare-fun f (Bool) Bool)",
+        "(assert (f true))",
+        "(assert (forall ((x Bool)) x))",
+        "(check-sat)",
+      ],
+      [
+        '(error "line 3 column 17: invalid PB solver: solver, totalizer, circuit, sorting, segmented, binary_merge")',
+        "unknown",
+      ],
+    ],
+  ])("answers %s as Z3 does", (_name, lines, expected) => {
+    expect(run(lines)).toBe(expected.join("\n"));
+  });
+
+  it.each([
+    [
+      "push 0",
+      [
+        "(push 0)",
+        "(set-option :global-decls true)",
+        "(set-option :produce-assertions true)",
+        "(get-option :global-decls)",
+      ],
+      ["true"],
+    ],
+    [
+      "get-model",
+      [
+        "(get-model)",
+        "(set-option :global-decls true)",
+        "(set-option :produce-assertions true)",
+        "(get-option :global-decls)",
+      ],
+      ['(error "line 1 column 11: model is not available")', "true"],
+    ],
+    [
+      "reset-assertions",
+      [
+        "(reset-assertions)",
+        "(set-option :global-decls true)",
+        "(set-option :produce-assertions true)",
+        "(get-option :global-decls)",
+      ],
+      ["true"],
+    ],
+    [
+      "get-unsat-core",
+      [
+        "(get-unsat-core)",
+        "(set-option :global-decls true)",
+        "(set-option :produce-assertions true)",
+        "(get-option :global-decls)",
+      ],
+      [
+        '(error "line 1 column 16: unsat core construction is not enabled, use command (set-option :produce-unsat-cores true)")',
+        "true",
+      ],
+    ],
+    [
+      "a declare-fun without a name",
+      [
+        "(declare-fun 5 () Bool)",
+        "(set-option :global-decls true)",
+        "(set-option :produce-assertions true)",
+        "(get-option :global-decls)",
+      ],
+      ['(error "line 1 column 14: invalid function declaration, symbol expected")', "true"],
+    ],
+    [
+      "an assert without a term",
+      [
+        "(assert)",
+        "(set-option :global-decls true)",
+        "(set-option :produce-assertions true)",
+        "(get-option :global-decls)",
+      ],
+      ["(error \"line 1 column 8: invalid expression, unexpected ')'\")", "true"],
+    ],
+  ])(
+    "makes no manager in %s, so an option of the manager may still change",
+    (_name, lines, expected) => {
+      expect(run(lines)).toBe(expected.join("\n"));
+    },
+  );
+});
+
+describe("the sat solver, as Z3 5.3.2 updates its parameters at each set-option", () => {
+  const getChecked = (prefix: string[], commands: string[]) =>
+    run([...prefix, ...getScript("(check-sat)").slice(0, -1), ...commands]);
+  const QF_FD = ["(set-logic QF_FD)"];
+  const SAT_TACTIC = ["(set-option :tactic.default_tactic sat)"];
+  const PB_SOLVER =
+    "invalid PB solver: solver, totalizer, circuit, sorting, segmented, binary_merge";
+
+  it.each([
+    [QF_FD, [], "(or x1 x2 x3)", "sat", 5389],
+    [QF_FD, ["(set-option :smt.random_seed 7)"], "(or x1 x2 x3)", "sat", 5387],
+    [QF_FD, ["(set-option :sat.restart luby)"], "(or x1 x2 x3)", "sat", 5387],
+    [QF_FD, ["(set-option :sat.phase always_true)"], "(or x1 x2 x3)", "sat", 5451],
+    [
+      QF_FD,
+      ["(set-option :sat.cardinality.solver false)"],
+      "((_ at-most 2) x1 x2 x3 x4)",
+      "unsat",
+      5710,
+    ],
+    [SAT_TACTIC, [], "(or x1 x2 x3)", "sat", 5950],
+    [SAT_TACTIC, ["(set-option :sat.random_seed 7)"], "(or x1 x2 x3)", "sat", 4677],
+  ])(
+    "after %j and a check-sat, sets %j, asserts %s and answers %s at Z3's rlimit %d",
+    (prefix, options, assertion, verdict, rlimit) => {
+      expect(
+        getChecked(prefix, [
+          ...options,
+          `(assert ${assertion})`,
+          "(check-sat)",
+          "(get-info :rlimit)",
+        ]),
+      ).toBe(["sat", verdict, `(:rlimit ${rlimit})`].join("\n"));
+    },
+  );
+
+  it("reports a bad option at its value, again at each later option, and keeps the solver", () => {
+    expect(
+      getChecked(QF_FD, [
+        "(set-option :sat.pb.solver foo)",
+        "(set-option :smt.random_seed 3)",
+        "(assert (or x1 x2 x3))",
+        "(check-sat)",
+        "(get-info :reason-unknown)",
+        "(get-info :rlimit)",
+      ]),
+    ).toBe(
+      [
+        "sat",
+        `(error "line 278 column 27: ${PB_SOLVER}")`,
+        `(error "line 279 column 29: ${PB_SOLVER}")`,
+        "sat",
+        '(:reason-unknown "no reason given")',
+        "(:rlimit 5389)",
+      ].join("\n"),
+    );
+  });
+
+  it("reports a bad option in the solver of the sat tactic", () => {
+    expect(
+      getChecked(SAT_TACTIC, [
+        "(set-option :sat.pb.solver foo)",
+        "(assert (or x1 x2 x3))",
+        "(check-sat)",
+        "(get-info :reason-unknown)",
+        "(get-info :rlimit)",
+      ]),
+    ).toBe(
+      [
+        "sat",
+        `(error "line 278 column 27: ${PB_SOLVER}")`,
+        "sat",
+        '(:reason-unknown "no reason given")',
+        "(:rlimit 5950)",
+      ].join("\n"),
+    );
+  });
+
+  const BOOLS = ["(declare-const x0 Bool)", "(declare-const x1 Bool)", "(declare-const x2 Bool)"];
+
+  it("switches the finite-domain solver to sat.euf set before it internalizes", () => {
+    expect(
+      run([
+        ...QF_FD,
+        ...BOOLS,
+        "(assert (or x0 x1))",
+        "(assert (or (not x0) x2))",
+        "(set-option :sat.euf true)",
+        "(check-sat)",
+        "(get-model)",
+        "(get-info :rlimit)",
+      ]),
+    ).toBe(
+      [
+        "sat",
+        "(",
+        "  (define-fun x0 () Bool",
+        "    false)",
+        "  (define-fun x1 () Bool",
+        "    true)",
+        "  (define-fun x2 () Bool",
+        "    false)",
+        ")",
+        "(:rlimit 48)",
+      ].join("\n"),
+    );
+  });
+
+  it("switches the incremental sat solver to sat.euf set before it internalizes", () => {
+    expect(
+      run([
+        ...SAT_TACTIC,
+        ...BOOLS,
+        "(push 1)",
+        "(declare-sort U 0)",
+        "(declare-fun f (U) U)",
+        "(declare-const a U)",
+        "(declare-const b U)",
+        "(set-option :sat.euf true)",
+        "(assert (= a b))",
+        "(assert (not (= (f a) (f b))))",
+        "(check-sat)",
+        "(get-info :rlimit)",
+      ]),
+    ).toBe(["unsat", "(:rlimit 22)"].join("\n"));
+  });
+
+  it("reports that a sat solver with a cardinality extension can't take sat.euf", () => {
+    expect(
+      run([
+        ...QF_FD,
+        "(set-option :sat.cardinality.solver true)",
+        ...Array.from({ length: 10 }, (_value, index) => `(declare-const x${index} Bool)`),
+        "(assert ((_ at-most 2) x0 x1 x2 x3 x4 x5 x6 x7 x8))",
+        "(assert (or x0 x9))",
+        "(check-sat)",
+        "(set-option :sat.euf true)",
+        '(echo "set")',
+        "(assert (or x1 x9))",
+        "(check-sat)",
+        "(get-info :rlimit)",
+      ]),
+    ).toBe(
+      [
+        "sat",
+        '(error "line 16 column 21: cannot convert to euf")',
+        "set",
+        "sat",
+        "(:rlimit 316)",
+      ].join("\n"),
+    );
+  });
+
+  const HALF_EUF = [
+    ...QF_FD,
+    ...BOOLS,
+    "(declare-const i Int)",
+    "(assert (or x0 x1))",
+    "(assert (or (not x0) x2))",
+    "(check-sat)",
+    "(set-option :sat.euf true)",
+    '(echo "set")',
+    "(get-model)",
+  ];
+
+  it("keeps the model of a sat solver that sat.euf reaches after it searches", () => {
+    expect(run(HALF_EUF)).toBe(
+      [
+        "sat",
+        "set",
+        "(",
+        "  (define-fun x0 () Bool",
+        "    false)",
+        "  (define-fun x1 () Bool",
+        "    true)",
+        "  (define-fun x2 () Bool",
+        "    false)",
+        "  (define-fun i () Int",
+        "    0)",
+        ")",
+      ].join("\n"),
+    );
+  });
+
+  // Deviation from Z3: its set_extension replays the search scopes without m_vars_lim, so it crashes at the next pop.
+  it("answers as Z3 does without sat.euf once sat.euf reaches the finite-domain solver after it searches", () => {
+    expect(
+      run([
+        ...HALF_EUF,
+        "(assert (not x1))",
+        "(check-sat)",
+        "(get-model)",
+        "(push 1)",
+        "(assert (not x2))",
+        "(check-sat)",
+        "(pop 1)",
+        "(check-sat)",
+      ]),
+    ).toBe(
+      [
+        "sat",
+        "set",
+        "(",
+        "  (define-fun x0 () Bool",
+        "    false)",
+        "  (define-fun x1 () Bool",
+        "    true)",
+        "  (define-fun x2 () Bool",
+        "    false)",
+        "  (define-fun i () Int",
+        "    0)",
+        ")",
+        "sat",
+        "(",
+        "  (define-fun x0 () Bool",
+        "    true)",
+        "  (define-fun x1 () Bool",
+        "    false)",
+        "  (define-fun x2 () Bool",
+        "    true)",
+        "  (define-fun i () Int",
+        "    0)",
+        ")",
+        "unsat",
+        "sat",
+      ].join("\n"),
+    );
+  });
+
+  // Deviation from Z3: its set_extension replays the search scopes without m_vars_lim, so it crashes at the next pop.
+  it("answers as Z3 does without sat.euf once sat.euf reaches the incremental sat solver after it searches", () => {
+    expect(
+      run([
+        ...SAT_TACTIC,
+        ...BOOLS,
+        "(push 1)",
+        "(assert (or x0 x1))",
+        "(assert (or (not x0) x2))",
+        "(check-sat)",
+        "(set-option :sat.euf true)",
+        '(echo "set")',
+        "(assert false)",
+        "(check-sat)",
+        "(pop 1)",
+        "(check-sat)",
+        "(get-info :rlimit)",
+      ]),
+    ).toBe(["sat", "set", "unsat", "sat", "(:rlimit 19)"].join("\n"));
+  });
+
+  it("searches with the euf solver beside a goal2sat made without sat.euf", () => {
+    expect(
+      run([
+        ...QF_FD,
+        "(declare-const x0 Bool)",
+        "(declare-const x1 Bool)",
+        "(assert (or x0 x1))",
+        "(push 1)",
+        "(set-option :sat.euf true)",
+        "(assert (not x0))",
+        "(check-sat)",
+        "(get-model)",
+        "(pop 1)",
+        "(assert (not x1))",
+        "(check-sat)",
+        "(get-model)",
+        "(get-info :rlimit)",
+      ]),
+    ).toBe(
+      [
+        "sat",
+        "(",
+        "  (define-fun x0 () Bool",
+        "    false)",
+        "  (define-fun x1 () Bool",
+        "    true)",
+        ")",
+        "sat",
+        "(",
+        "  (define-fun x0 () Bool",
+        "    true)",
+        "  (define-fun x1 () Bool",
+        "    false)",
+        ")",
+        "(:rlimit 62)",
+      ].join("\n"),
+    );
+  });
+
+  it("answers after a goal2sat made without sat.euf gives up before the search", () => {
+    expect(
+      run([
+        ...QF_FD,
+        "(declare-const x0 Bool)",
+        "(declare-const x1 Bool)",
+        "(declare-const i Int)",
+        "(push 1)",
+        "(assert (or x0 (<= 0 i)))",
+        "(check-sat)",
+        "(set-option :sat.euf true)",
+        "(pop 1)",
+        "(assert (or x0 x1))",
+        "(assert (or (not x0) (not x1)))",
+        "(check-sat)",
+        "(get-info :rlimit)",
+      ]),
+    ).toBe(["unknown", "sat", "(:rlimit 102)"].join("\n"));
+  });
+
+  it.each([
+    [QF_FD, "(assert (or x0 x1))", "(assert (not x0))", ["sat", "sat", "(:rlimit 44)"]],
+    [
+      SAT_TACTIC,
+      "(assert (and (= a b) (not (= (f a) (f b)))))",
+      "(assert (or x0 (= a b)))",
+      ["unsat", "sat", "(:rlimit 38)"],
+    ],
+  ])(
+    "replays the open scopes into the euf solver of %j, as set_extension does",
+    (prefix, inner, outer, expected) => {
+      expect(
+        run([
+          ...prefix,
+          "(declare-sort U 0)",
+          "(declare-fun f (U) U)",
+          "(declare-const a U)",
+          "(declare-const b U)",
+          "(declare-const x0 Bool)",
+          "(declare-const x1 Bool)",
+          "(push 1)",
+          "(set-option :sat.euf true)",
+          inner,
+          "(check-sat)",
+          "(pop 1)",
+          outer,
+          "(check-sat)",
+          "(get-info :rlimit)",
+        ]),
+      ).toBe(expected.join("\n"));
+    },
+  );
+});
+
+describe("the sat solver, as Z3 5.3.2 reads sat.euf when it starts and at each preprocessing", () => {
+  it("preprocesses with card2bv once sat.euf is turned off", () => {
+    expect(
+      run([
+        "(set-option :tactic.default_tactic sat)",
+        "(set-option :sat.euf true)",
+        "(declare-const x0 Bool)",
+        "(declare-const x1 Bool)",
+        "(declare-const x2 Bool)",
+        "(declare-const x3 Bool)",
+        "(declare-const v (_ BitVec 3))",
+        "(push 1)",
+        "(assert (or x0 x1))",
+        "(check-sat)",
+        "(set-option :sat.euf false)",
+        "(assert ((_ at-most 1) x0 x1 x2 x3))",
+        "(assert ((_ at-least 1) x2 x3))",
+        "(check-sat)",
+        "(get-model)",
+        "(get-info :rlimit)",
+      ]),
+    ).toBe(
+      ["sat", "unsat", '(error "line 15 column 10: model is not available")', "(:rlimit 195)"].join(
+        "\n",
+      ),
+    );
+  });
+
+  it("starts the sat solver of an optimization in sat.euf", () => {
+    expect(
+      run([
+        "(set-option :sat.euf true)",
+        "(declare-const x0 Bool)",
+        "(declare-const x1 Bool)",
+        "(declare-const x2 Bool)",
+        "(declare-const v (_ BitVec 3))",
+        "(assert (or x0 x1))",
+        "(assert (=> x2 (= (bvadd v #b001) #b100)))",
+        "(assert-soft x2 :weight 2)",
+        "(assert-soft (not x0) :weight 1)",
+        "(assert-soft (not x1) :weight 1)",
+        "(assert-soft (= v #b111) :weight 1)",
+        "(check-sat)",
+        "(get-objectives)",
+        "(get-model)",
+        "(get-info :rlimit)",
+      ]),
+    ).toBe(
+      [
+        "sat",
+        "(objectives",
+        " ( 2)",
+        ")",
+        "(",
+        "  (define-fun x0 () Bool",
+        "    true)",
+        "  (define-fun x1 () Bool",
+        "    false)",
+        "  (define-fun x2 () Bool",
+        "    true)",
+        "  (define-fun v () (_ BitVec 3)",
+        "    #b011)",
+        ")",
+        "(:rlimit 323)",
       ].join("\n"),
     );
   });

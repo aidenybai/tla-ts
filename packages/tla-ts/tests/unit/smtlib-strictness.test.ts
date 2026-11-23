@@ -1290,6 +1290,33 @@ describe("the terms the reader makes and frees, in Z3's order", () => {
     ]);
   });
 
+  it("rejects an argument of get-objectives", () => {
+    expect(run(["(declare-const x Int)", "(get-objectives x)", "(get-objectives)"])).toEqual([
+      '(error "line 2 column 16: invalid command, too many arguments")',
+      "(objectives\n)",
+    ]);
+  });
+
+  it("rejects a push or pop count past 2^32 - 1 before it opens or closes a scope", () => {
+    expect(
+      run([
+        "(declare-const x Int)",
+        "(push 4294967296)",
+        "(pop 4294967296)",
+        "(push 18446744073709551616)",
+        "(assert (> x 0))",
+        "(check-sat)",
+        "(get-info :assertion-stack-levels)",
+      ]),
+    ).toEqual([
+      '(error "line 2 column 6: invalid push command, value is too big to fit in an unsigned machine integer")',
+      '(error "line 3 column 5: invalid push command, value is too big to fit in an unsigned machine integer")',
+      '(error "line 4 column 6: invalid push command, value is too big to fit in an unsigned machine integer")',
+      "sat",
+      "(:assertion-stack-levels 0)",
+    ]);
+  });
+
   it("reports a token before the closing parenthesis of push, pop, reset and get-value", () => {
     expect(
       run([
