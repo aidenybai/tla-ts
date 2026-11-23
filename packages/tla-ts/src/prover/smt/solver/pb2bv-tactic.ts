@@ -24,7 +24,7 @@ import {
 } from "./ast";
 import { BoundManager } from "./bound-manager";
 import { mkBvApp } from "./bv-decl-plugin";
-import { CardPbRewriter, checkPbFree } from "./card2bv";
+import { CardPbRewriter, type CardinalityOptions, checkPbFree } from "./card2bv";
 import { type Definition, type Dependency, type Goal, joinDependencies } from "./goal";
 import { ObjMap } from "./hashtable";
 import { getGcd, Rational } from "./rational";
@@ -130,6 +130,7 @@ class Pb2Bv {
     private manager: AstManager,
     params: ReadonlyMap<string, boolean | number | string>,
     options: RewriterOptions,
+    cardinality: CardinalityOptions,
   ) {
     this.bounds = new BoundManager(manager);
     this.boolRewriter = new Rewriter(manager, options);
@@ -143,7 +144,7 @@ class Pb2Bv {
     };
     this.allClausesLimit = getUint("pb2bv_all_clauses_limit", 8);
     this.cardinalityLimit = getUint("pb2bv_cardinality_limit", 4294967295);
-    this.pbRewriter = new CardPbRewriter(manager, false);
+    this.pbRewriter = new CardPbRewriter(manager, cardinality);
   }
 
   private hold(expr: number) {
@@ -569,11 +570,12 @@ export const runPb2Bv =
     manager: AstManager,
     params: ReadonlyMap<string, boolean | number | string>,
     options: RewriterOptions,
+    cardinality: CardinalityOptions,
   ) =>
   (goal: Goal) => {
     if (goal.isProofsEnabled) throw new SmtTacticError("pb2bv does not support proof production");
     if (!goal.isInconsistent) {
-      const converter = new Pb2Bv(manager, params, options);
+      const converter = new Pb2Bv(manager, params, options, cardinality);
       try {
         converter.run(goal);
       } finally {

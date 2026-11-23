@@ -10,7 +10,7 @@ import { type AstManager, OP_DIV0, OP_IDIV0, OP_MOD0, OP_OR, OP_POWER0, SORT_BOO
 import { createQfufbvAckrTactic, runAckermannizeBv } from "./ackermannize-bv-tactic";
 import { createAigTactic } from "./aig-tactic";
 import { blastTermIte } from "./blast-term-ite";
-import { card2bv } from "./card2bv";
+import { card2bv, type CardinalityOptions, getCardinalityOptions } from "./card2bv";
 import { getCaseSplitStrategy } from "./case-split-queue";
 import type { Context } from "./context";
 import { CtxSimplifier } from "./ctx-simplify";
@@ -1253,7 +1253,7 @@ const NAMED_TACTICS = new Map<string, NamedTactic>([
             environment.manager,
             goal,
             getRewriterOptions(environment.manager, params),
-            false,
+            getCardinalityOptions(params, getSatParams(environment.parameters)),
           );
         }),
     },
@@ -1328,7 +1328,12 @@ const NAMED_TACTICS = new Map<string, NamedTactic>([
       ),
       isTrackingDependencies: true,
       build: (environment, params) =>
-        runPb2Bv(environment.manager, params, getRewriterOptions(environment.manager, params)),
+        runPb2Bv(
+          environment.manager,
+          params,
+          getRewriterOptions(environment.manager, params),
+          getCardinalityOptions(params, getSatParams(environment.parameters)),
+        ),
     },
   ],
   [
@@ -2535,11 +2540,12 @@ export const mkIncSatPreprocess = (
   manager: AstManager,
   bitBlaster: BitBlasterRewriter,
   propagator: PropagateValuesTactic,
+  cardinality: CardinalityOptions,
 ) =>
   [
     inPlace((goal) => simplifyGoal(manager, goal, getRewriterOptions(manager, new Map()))),
     inPlace((goal) => propagator.run(goal)),
-    inPlace((goal) => card2bv(manager, goal, getRewriterOptions(manager, new Map()), true)),
+    inPlace((goal) => card2bv(manager, goal, getRewriterOptions(manager, new Map()), cardinality)),
     inPlace((goal) =>
       simplifyGoal(
         manager,

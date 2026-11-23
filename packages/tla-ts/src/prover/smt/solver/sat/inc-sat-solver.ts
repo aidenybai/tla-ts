@@ -26,9 +26,12 @@ import type { ThSolverFactory } from "../euf/euf-solver";
 import {
   applyDefinitions,
   convertModel,
+  getSatParams,
   mkIncSatEufPreprocess,
   mkIncSatPreprocess,
+  type TacticParam,
 } from "../tactic";
+import { type CardinalityOptions, getCardinalityOptions } from "../card2bv";
 import type { SatParams } from "./config";
 import { Goal2Sat } from "./goal2sat";
 import { getConsequences } from "./consequences";
@@ -74,6 +77,7 @@ export class IncSatSolver {
   private scopes: Scope[] = [];
   reasonUnknown = "no reason given";
   wasUnknown = false;
+  private readonly cardinality: CardinalityOptions;
 
   // A theory factory runs the solver in sat.euf mode, with the euf solver as its extension.
   constructor(
@@ -99,6 +103,13 @@ export class IncSatSolver {
     this.satConverter = new Sat2GoalConverter(manager);
     this.internalized = new RefVector(manager);
     this.propagator = new PropagateValuesTactic(manager);
+    this.cardinality = getCardinalityOptions(
+      new Map<string, TacticParam>([
+        ["keep_cardinality_constraints", params.get("cardinality.solver") !== false],
+        ["pb.solver", params.get("pb.solver") ?? "solver"],
+      ]),
+      getSatParams(parameters),
+    );
   }
 
   private isClause(expr: number): boolean {
@@ -218,7 +229,7 @@ export class IncSatSolver {
       try {
         const goals = (
           this.goal2sat.euf === null
-            ? mkIncSatPreprocess(this.manager, bitBlaster, this.propagator)
+            ? mkIncSatPreprocess(this.manager, bitBlaster, this.propagator, this.cardinality)
             : mkIncSatEufPreprocess(this.manager, this.propagator)
         )(goal);
         this.isCnf = true;

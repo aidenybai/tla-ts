@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vite-plus/test";
 import { SmtCanceledError, SmtUnsupportedError } from "../../src/errors";
 import { AstManager, SORT_BOOL } from "../../src/prover/smt/solver/ast";
-import { CardPbRewriter } from "../../src/prover/smt/solver/card2bv";
+import { CardPbRewriter, getCardinalityOptions } from "../../src/prover/smt/solver/card2bv";
 import { L_UNDEF } from "../../src/prover/smt/solver/lbool";
 import { mkPp } from "../../src/prover/smt/solver/muz/dl-rule";
 import { RefVector } from "../../src/prover/smt/solver/ref-vector";
@@ -702,7 +702,7 @@ describe("psort_nw, as Z3 5.3.2's card2bv encodes cardinality constraints", () =
       manager.mkApp(manager.mkFuncDecl(`x${index}`, [], SORT_BOOL), [], SORT_BOOL),
     );
     for (const x of xs) manager.incRef(x);
-    const rewriter = new CardPbRewriter(manager, false);
+    const rewriter = new CardPbRewriter(manager, getCardinalityOptions(new Map(), new Map()));
     const result = encode(new PsortNw(rewriter, encoding), xs, manager);
     const lemmas = new RefVector(manager);
     rewriter.flushSideConstraints(lemmas);
@@ -1120,5 +1120,414 @@ describe("card2bv, as Z3 5.3.2 encodes cardinality constraints", () => {
         "(check-sat)",
       ]),
     ).toThrow(new SmtUnsupportedError("the bit-vector encoding of a pseudo-Boolean constraint"));
+  });
+});
+
+describe("card2bv's parameters, as Z3 5.3.2 reads them at each call site", () => {
+  it("keeps cardinality constraints of 9 or more literals in the finite-domain solver under sat.cardinality.solver", () => {
+    expect(
+      run([
+        "(set-logic QF_FD)",
+        "(set-option :sat.cardinality.solver true)",
+        "(declare-const p0 Bool)",
+        "(declare-const p1 Bool)",
+        "(declare-const p2 Bool)",
+        "(declare-const p3 Bool)",
+        "(declare-const p4 Bool)",
+        "(declare-const p5 Bool)",
+        "(declare-const p6 Bool)",
+        "(declare-const p7 Bool)",
+        "(declare-const p8 Bool)",
+        "(declare-const p9 Bool)",
+        "(assert ((_ at-most 2) p0 p1 p2 p3 p4 p5 p6 p7 p8 p9))",
+        "(check-sat)",
+        "(get-model)",
+        "(get-info :rlimit)",
+      ]),
+    ).toBe(
+      [
+        "sat",
+        "(",
+        "  (define-fun p0 () Bool",
+        "    false)",
+        "  (define-fun p1 () Bool",
+        "    false)",
+        "  (define-fun p2 () Bool",
+        "    false)",
+        "  (define-fun p3 () Bool",
+        "    false)",
+        "  (define-fun p4 () Bool",
+        "    false)",
+        "  (define-fun p5 () Bool",
+        "    false)",
+        "  (define-fun p6 () Bool",
+        "    false)",
+        "  (define-fun p7 () Bool",
+        "    false)",
+        "  (define-fun p8 () Bool",
+        "    false)",
+        "  (define-fun p9 () Bool",
+        "    false)",
+        ")",
+        "(:rlimit 275)",
+      ].join("\n"),
+    );
+  });
+
+  it("keeps cardinality constraints down to sat.pb.min_arity literals under sat.cardinality.solver", () => {
+    expect(
+      run([
+        "(set-logic QF_FD)",
+        "(set-option :sat.cardinality.solver true)",
+        "(set-option :sat.pb.min_arity 3)",
+        "(declare-const p Bool)",
+        "(declare-const q Bool)",
+        "(declare-const r Bool)",
+        "(assert ((_ at-most 1) p q r))",
+        "(check-sat)",
+        "(get-model)",
+        "(get-info :rlimit)",
+      ]),
+    ).toBe(
+      [
+        "sat",
+        "(",
+        "  (define-fun p () Bool",
+        "    false)",
+        "  (define-fun q () Bool",
+        "    false)",
+        "  (define-fun r () Bool",
+        "    false)",
+        ")",
+        "(:rlimit 107)",
+      ].join("\n"),
+    );
+  });
+
+  it("keeps cardinality constraints in the card2bv tactic under keep_cardinality_constraints", () => {
+    expect(
+      run([
+        "(declare-const p Bool)",
+        "(declare-const q Bool)",
+        "(declare-const r Bool)",
+        "(declare-const a0 Bool) (declare-const a1 Bool) (declare-const a2 Bool) (declare-const a3 Bool) (declare-const a4 Bool) (declare-const a5 Bool) (declare-const a6 Bool) (declare-const a7 Bool) (declare-const a8 Bool) (declare-const a9 Bool)",
+        "(assert ((_ at-most 1) p q r))",
+        "(assert ((_ at-most 2) a0 a1 a2 a3 a4 a5 a6 a7 a8 a9))",
+        "(apply (using-params card2bv :keep_cardinality_constraints true))",
+      ]),
+    ).toBe(
+      [
+        "(goals",
+        "(goal",
+        "  at-most-1!0",
+        "  ((_ at-least 8)",
+        "    (not a0)",
+        "    (not a1)",
+        "    (not a2)",
+        "    (not a3)",
+        "    (not a4)",
+        "    (not a5)",
+        "    (not a6)",
+        "    (not a7)",
+        "    (not a8)",
+        "    (not a9))",
+        "  (or (not at-most-1!0) (not p) (not q))",
+        "  (or (not at-most-1!0) (not p) (not r))",
+        "  (or (not at-most-1!0) (not q) (not r))",
+        "  :precision precise :depth 1)",
+        ")",
+      ].join("\n"),
+    );
+  });
+
+  it("encodes with the card2bv tactic's cardinality.encoding", () => {
+    expect(
+      run([
+        "(declare-const p Bool)",
+        "(declare-const q Bool)",
+        "(declare-const r Bool)",
+        "(declare-const s Bool)",
+        "(assert ((_ at-least 2) p q r s))",
+        "(apply (using-params card2bv :cardinality.encoding unate))",
+      ]),
+    ).toBe(
+      [
+        "(goals",
+        "(goal",
+        "  (or (and s (or r (or q p))) (and r (or q p)) (and q p))",
+        "  :precision precise :depth 1)",
+        ")",
+      ].join("\n"),
+    );
+  });
+
+  it("encodes cardinality constraints of 9 or more literals in the incremental sat solver when sat.cardinality.solver is false", () => {
+    expect(
+      run([
+        "(set-option :tactic.default_tactic sat)",
+        "(set-option :sat.cardinality.solver false)",
+        "(declare-const a0 Bool) (declare-const a1 Bool) (declare-const a2 Bool) (declare-const a3 Bool) (declare-const a4 Bool) (declare-const a5 Bool) (declare-const a6 Bool) (declare-const a7 Bool) (declare-const a8 Bool) (declare-const a9 Bool)",
+        "(push)",
+        "(assert ((_ at-most 2) a0 a1 a2 a3 a4 a5 a6 a7 a8 a9))",
+        "(assert ((_ at-most 1) a0 a1 a2))",
+        "(assert (or a0 a1))",
+        "(check-sat)",
+        "(get-model)",
+        "(get-info :rlimit)",
+      ]),
+    ).toBe(
+      [
+        "sat",
+        "(",
+        "  (define-fun a8 () Bool",
+        "    false)",
+        "  (define-fun a9 () Bool",
+        "    false)",
+        "  (define-fun a0 () Bool",
+        "    false)",
+        "  (define-fun a1 () Bool",
+        "    true)",
+        "  (define-fun a7 () Bool",
+        "    false)",
+        "  (define-fun a2 () Bool",
+        "    false)",
+        "  (define-fun a3 () Bool",
+        "    false)",
+        "  (define-fun a4 () Bool",
+        "    false)",
+        "  (define-fun a5 () Bool",
+        "    true)",
+        "  (define-fun a6 () Bool",
+        "    false)",
+        ")",
+        "(:rlimit 1150)",
+      ].join("\n"),
+    );
+  });
+
+  it("keeps cardinality constraints down to sat.pb.min_arity literals in the incremental sat solver", () => {
+    expect(
+      run([
+        "(set-option :tactic.default_tactic sat)",
+        "(set-option :sat.pb.min_arity 3)",
+        "(declare-const a0 Bool) (declare-const a1 Bool) (declare-const a2 Bool) (declare-const a3 Bool) (declare-const a4 Bool) (declare-const a5 Bool) (declare-const a6 Bool) (declare-const a7 Bool) (declare-const a8 Bool) (declare-const a9 Bool)",
+        "(push)",
+        "(assert ((_ at-most 2) a0 a1 a2 a3 a4 a5 a6 a7 a8 a9))",
+        "(assert ((_ at-most 1) a0 a1 a2))",
+        "(assert (or a0 a1))",
+        "(check-sat)",
+        "(get-model)",
+        "(get-info :rlimit)",
+      ]),
+    ).toBe(
+      [
+        "sat",
+        "(",
+        "  (define-fun a0 () Bool",
+        "    true)",
+        "  (define-fun a1 () Bool",
+        "    false)",
+        "  (define-fun a2 () Bool",
+        "    false)",
+        "  (define-fun a3 () Bool",
+        "    false)",
+        "  (define-fun a4 () Bool",
+        "    false)",
+        "  (define-fun a5 () Bool",
+        "    false)",
+        "  (define-fun a6 () Bool",
+        "    false)",
+        "  (define-fun a7 () Bool",
+        "    false)",
+        "  (define-fun a8 () Bool",
+        "    false)",
+        "  (define-fun a9 () Bool",
+        "    false)",
+        ")",
+        "(:rlimit 242)",
+      ].join("\n"),
+    );
+  });
+
+  it("encodes with the pb2bv tactic's cardinality.encoding", () => {
+    expect(
+      run([
+        "(declare-const x Int)",
+        "(declare-const p Bool)",
+        "(declare-const q Bool)",
+        "(declare-const r Bool)",
+        "(declare-const s Bool)",
+        "(assert (<= 0 x 1))",
+        "(assert (or (= x 1) ((_ at-most 2) p q r s)))",
+        "(apply (using-params pb2bv :cardinality.encoding unate))",
+      ]),
+    ).toBe(
+      [
+        "(goals",
+        "(goal",
+        "  true",
+        "  true",
+        "  (let ((a!1 (and s (or (and r (or q p)) (and q p)))))",
+        "  (let ((a!2 (not (or a!1 (and r (and q p))))))",
+        "    (or k!0 a!2)))",
+        "  :precision precise :depth 1)",
+        ")",
+      ].join("\n"),
+    );
+  });
+
+  it("encodes an at-most-1 with the bimander encoding under sat.cardinality.encoding", () => {
+    expect(
+      run([
+        "(set-logic QF_FD)",
+        "(set-option :sat.cardinality.encoding bimander)",
+        "(declare-const x0 Bool)",
+        "(declare-const x1 Bool)",
+        "(declare-const x2 Bool)",
+        "(assert ((_ at-most 1) x0 x1 x2))",
+        "(check-sat)",
+        "(get-model)",
+        "(get-info :rlimit)",
+      ]),
+    ).toBe(
+      [
+        "sat",
+        "(",
+        "  (define-fun x2 () Bool",
+        "    false)",
+        "  (define-fun x0 () Bool",
+        "    false)",
+        "  (define-fun x1 () Bool",
+        "    false)",
+        ")",
+        "(:rlimit 72)",
+      ].join("\n"),
+    );
+  });
+
+  it("encodes an exactly-1 with the ordered encoding under sat.cardinality.encoding", () => {
+    expect(
+      run([
+        "(set-logic QF_FD)",
+        "(set-option :sat.cardinality.encoding ordered)",
+        "(declare-const x0 Bool)",
+        "(declare-const x1 Bool)",
+        "(declare-const x2 Bool)",
+        "(assert ((_ pbeq 1 1 1 1) x0 x1 x2))",
+        "(check-sat)",
+        "(get-model)",
+        "(get-info :rlimit)",
+      ]),
+    ).toBe(
+      [
+        "sat",
+        "(",
+        "  (define-fun x0 () Bool",
+        "    true)",
+        "  (define-fun x1 () Bool",
+        "    false)",
+        "  (define-fun x2 () Bool",
+        "    false)",
+        ")",
+        "(:rlimit 97)",
+      ].join("\n"),
+    );
+  });
+
+  it("encodes an at-least with the unate encoding under sat.cardinality.encoding", () => {
+    expect(
+      run([
+        "(set-logic QF_FD)",
+        "(set-option :sat.cardinality.encoding unate)",
+        "(declare-const x0 Bool)",
+        "(declare-const x1 Bool)",
+        "(declare-const x2 Bool)",
+        "(declare-const x3 Bool)",
+        "(declare-const x4 Bool)",
+        "(assert ((_ at-least 2) x0 x1 x2 x3 x4))",
+        "(check-sat)",
+        "(get-model)",
+        "(get-info :rlimit)",
+      ]),
+    ).toBe(
+      [
+        "sat",
+        "(",
+        "  (define-fun x1 () Bool",
+        "    true)",
+        "  (define-fun x0 () Bool",
+        "    true)",
+        "  (define-fun x4 () Bool",
+        "    true)",
+        "  (define-fun x2 () Bool",
+        "    true)",
+        "  (define-fun x3 () Bool",
+        "    true)",
+        ")",
+        "(:rlimit 301)",
+      ].join("\n"),
+    );
+  });
+
+  it("encodes an at-most with the circuit encoding under sat.cardinality.encoding", () => {
+    expect(
+      run([
+        "(set-logic QF_FD)",
+        "(set-option :sat.cardinality.encoding circuit)",
+        "(declare-const x0 Bool)",
+        "(declare-const x1 Bool)",
+        "(declare-const x2 Bool)",
+        "(declare-const x3 Bool)",
+        "(declare-const x4 Bool)",
+        "(assert ((_ at-most 2) x0 x1 x2 x3 x4))",
+        "(check-sat)",
+        "(get-model)",
+        "(get-info :rlimit)",
+      ]),
+    ).toBe(
+      [
+        "sat",
+        "(",
+        "  (define-fun x0 () Bool",
+        "    false)",
+        "  (define-fun x1 () Bool",
+        "    false)",
+        "  (define-fun x2 () Bool",
+        "    false)",
+        "  (define-fun x4 () Bool",
+        "    false)",
+        "  (define-fun x3 () Bool",
+        "    false)",
+        ")",
+        "(:rlimit 1197)",
+      ].join("\n"),
+    );
+  });
+
+  for (const pbSolver of ["totalizer", "sorting", "segmented", "binary_merge"])
+    it(`throws at a weighted pseudo-Boolean constraint under sat.pb.solver ${pbSolver}`, () => {
+      expect(() =>
+        run([
+          "(set-logic QF_FD)",
+          `(set-option :sat.pb.solver ${pbSolver})`,
+          "(declare-const p Bool)",
+          "(declare-const q Bool)",
+          "(declare-const r Bool)",
+          "(assert ((_ pbge 5 3 4 2) p q r))",
+          "(check-sat)",
+        ]),
+      ).toThrow(new SmtUnsupportedError(`the ${pbSolver} encoding of a pseudo-Boolean constraint`));
+    });
+
+  it("throws at a weighted pseudo-Boolean constraint under the card2bv tactic's pb.solver", () => {
+    expect(() =>
+      run([
+        "(declare-const p Bool)",
+        "(declare-const q Bool)",
+        "(declare-const r Bool)",
+        "(assert ((_ pbge 5 3 4 2) p q r))",
+        "(apply (using-params card2bv :pb.solver totalizer))",
+      ]),
+    ).toThrow(new SmtUnsupportedError("the totalizer encoding of a pseudo-Boolean constraint"));
   });
 });

@@ -31,7 +31,9 @@ import { RefVector } from "./ref-vector";
 import { Rewriter, type RewriterOptions } from "./rewriter";
 import { type DependentExprState, runSimplifier } from "./dependent-expr-state";
 import { RewriterTpl } from "./rewriter-tpl";
-import { type PsortContext, PsortNw } from "./sorting-network";
+import type { SatParams } from "./sat/config";
+import { type CardinalityEncoding, type PsortContext, PsortNw } from "./sorting-network";
+import type { TacticParam, TacticParams } from "./tactic";
 
 interface Bound {
   value: Rational;
@@ -105,7 +107,40 @@ export const checkPbFree = (manager: AstManager, form: number) => {
   }
 };
 
-const MIN_ARITY = 9;
+export interface CardinalityOptions {
+  isKeepingCardinality: boolean;
+  pbSolver: string;
+  encoding: CardinalityEncoding;
+  minArity: number;
+}
+
+const getCardinalityEncoding = (value: TacticParam | undefined): CardinalityEncoding => {
+  switch (value) {
+    case "bimander":
+    case "ordered":
+    case "unate":
+    case "circuit":
+      return value;
+    default:
+      return "grouped";
+  }
+};
+
+export const getCardinalityOptions = (
+  params: TacticParams,
+  satParams: SatParams,
+): CardinalityOptions => ({
+  isKeepingCardinality:
+    params.get("keep_cardinality_constraints") === true ||
+    satParams.get("cardinality.solver") === true,
+  pbSolver: String(params.get("pb.solver") ?? satParams.get("pb.solver") ?? "solver"),
+  encoding: getCardinalityEncoding(
+    params.get("cardinality.encoding") ?? satParams.get("cardinality.encoding"),
+  ),
+  minArity: Number(satParams.get("pb.min_arity") ?? 9),
+});
+
+const PB_ENCODINGS = new Set(["totalizer", "sorting", "segmented", "binary_merge"]);
 
 export class CardPbRewriter extends RewriterTpl implements PsortContext {
   private readonly sort: PsortNw;
@@ -115,10 +150,10 @@ export class CardPbRewriter extends RewriterTpl implements PsortContext {
 
   constructor(
     manager: AstManager,
-    private readonly isKeepingCardinality: boolean,
+    private readonly options: CardinalityOptions,
   ) {
     super(manager);
-    this.sort = new PsortNw(this, "grouped");
+    this.sort = new PsortNw(this, options.encoding);
     this.trail = new RefVector(manager);
     this.lemmas = new RefVector(manager);
   }
@@ -156,7 +191,7 @@ export class CardPbRewriter extends RewriterTpl implements PsortContext {
     const k = getPbK(manager, decl);
     if (this.isOr(op, k)) return manager.mkApp(OP_OR, args, SORT_BOOL);
     const isKUnsigned = isUnsigned(k);
-    const isKept = this.isKeepingCardinality && args.length >= MIN_ARITY;
+    const isKept = this.options.isKeepingCardinality && args.length >= this.options.minArity;
     const bound = Number(k.num);
     if (op === OP_AT_MOST_K && isKUnsigned) return isKept ? -1 : this.sort.le(isFull, bound, args);
     if (op === OP_AT_LEAST_K && isKUnsigned) return isKept ? -1 : this.sort.ge(isFull, bound, args);
@@ -169,10 +204,14 @@ export class CardPbRewriter extends RewriterTpl implements PsortContext {
     if (
       (op === OP_PB_EQ || op === OP_PB_LE || op === OP_PB_GE) &&
       isKUnsigned &&
-      this.hasSmallCoefficients(decl, args.length)
+      this.hasSmallCoefficients(decl, args.length) &&
+      this.options.pbSolver === "solver"
     )
       return -1;
-    throw new SmtUnsupportedError("the bit-vector encoding of a pseudo-Boolean constraint");
+    const pbSolver = this.options.pbSolver;
+    throw new SmtUnsupportedError(
+      `the ${PB_ENCODINGS.has(pbSolver) ? pbSolver : "bit-vector"} encoding of a pseudo-Boolean constraint`,
+    );
   }
 
   private isOr(op: number, k: Rational) {
@@ -245,14 +284,14 @@ export const createCard2Bv =
   (
     manager: AstManager,
     options: RewriterOptions,
-    isKeepingCardinality: boolean,
+    cardinality: CardinalityOptions,
     hide: (decl: number) => void,
   ) =>
   (state: DependentExprState) => ({
     reduce: () => {
       const goal = state.goal;
       const rewriter = new Rewriter(manager, options);
-      const pbRewriter = new CardPbRewriter(manager, isKeepingCardinality);
+      const pbRewriter = new CardPbRewriter(manager, cardinality);
       let simplified = -1;
       let rewritten = -1;
       const sideConstraints = new RefVector(manager);
@@ -282,14 +321,14 @@ export const card2bv = (
   manager: AstManager,
   goal: Goal,
   options: RewriterOptions,
-  isKeepingCardinality: boolean,
+  cardinality: CardinalityOptions,
 ) => {
   const hidden: Definition[] = [];
   try {
     runSimplifier(
       goal,
       false,
-      createCard2Bv(manager, options, isKeepingCardinality, (decl) => {
+      createCard2Bv(manager, options, cardinality, (decl) => {
         manager.incDeclRef(decl);
         hidden.push({ decl, def: -1 });
       }),
