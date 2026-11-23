@@ -4280,7 +4280,7 @@ const copyLazyFunction = (
   newValue: Value,
 ) => {
   const argument = path[depth];
-  // Deviation from TLC: FcnLambdaValue#takeExcept builds its copy with new FcnLambdaValue(this), which drops cm, so the EXCEPT copy counts nothing.
+  // Deviation from TLC: FcnLambdaValue#takeExcept builds its copy with new FcnLambdaValue(this), which drops cm, so TLC counts none of the copy's evaluations of the body, not even the second one at a key whose EXCEPT goes deeper.
   const copy: LazyFunctionCopy = {
     kind: "LazyFunction",
     domain: functionValue.domain,
