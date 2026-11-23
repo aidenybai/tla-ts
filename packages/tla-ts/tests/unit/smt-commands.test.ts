@@ -6201,6 +6201,24 @@ describe("smt.phase_selection, as Z3 5.3.2 picks the phase of a decision", () =>
     ).toEqual(["sat", "unknown", `(:reason-unknown "(sat.giveup ${ILLEGAL_PHASE})")`, "unknown"]);
   });
 
+  it("rejects a phase selection when it makes the smt solver beside a default tactic", () => {
+    expect(
+      run([
+        "(set-option :tactic.default_tactic simplify)",
+        "(set-option :smt.phase_selection 9)",
+        "(declare-const y Int)",
+        "(assert (> y 0))",
+        "(check-sat)",
+        "(get-info :reason-unknown)",
+      ]),
+    ).toEqual([
+      `(error "line 3 column 17: ${ILLEGAL_PHASE}")`,
+      '(error "line 4 column 11: unknown constant y")',
+      "unknown",
+      '(:reason-unknown "state of the most recent check-sat command is not known")',
+    ]);
+  });
+
   it("rejects a phase selection in check-sat-using at the end of the command", () => {
     expect(
       run([
