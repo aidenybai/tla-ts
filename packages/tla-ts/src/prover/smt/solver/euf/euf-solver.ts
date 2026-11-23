@@ -110,6 +110,7 @@ export class EufSolver implements SatExtension {
     readonly si: EufInternalizer,
     readonly s: Solver,
     readonly mkThSolver: ThSolverFactory,
+    private readonly isArithIgnoringInt: boolean,
   ) {
     this.egraph = new Egraph(manager);
     this.egraph.onPropagateLiteral = (node, ante) => this.propagateLiteral(node, ante);
@@ -911,7 +912,7 @@ export class EufSolver implements SatExtension {
     this.reinits = [];
   }
 
-  isRelevant() {
+  isRelevant(_node: Enode) {
     return true;
   }
 
@@ -1002,11 +1003,17 @@ export class EufSolver implements SatExtension {
   // validate_model, for its side effect: evaluating an application of a partial theory function,
   // such as a division by zero, completes its interpretation with some value.
   private validateModel(model: ProtoModel) {
-    if (this.hasUnhandled() || this.solvers.some((solver) => solver.hasUnhandled())) return;
+    if (
+      this.hasUnhandled() ||
+      this.isArithIgnoringInt ||
+      this.solvers.some((solver) => solver.hasUnhandled())
+    )
+      return;
     const manager = this.manager;
     for (const node of this.egraph.nodes) {
       const expr = node.owner;
       if (!manager.isBool(expr) || manager.hasQuantifierFlags[expr] === 1) continue;
+      if (!this.isRelevant(node)) continue;
       if (node.boolVar === NULL_BOOL_VAR) continue;
       const value = model.eval(expr, false);
       const isFalsified =

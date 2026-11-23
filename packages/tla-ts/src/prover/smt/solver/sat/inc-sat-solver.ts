@@ -88,6 +88,7 @@ export class IncSatSolver {
       manager,
       this.solver,
       params.get("ite_extra") !== false,
+      parameters.get("smt.arith.ignore_int") === "true",
       mkThSolver,
     );
     if (mkThSolver !== null) this.goal2sat.ensureEuf();

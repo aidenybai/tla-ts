@@ -530,6 +530,7 @@ const runSat = (environment: TacticEnvironment, params: TacticParams) => (goal: 
     environment.manager,
     satParams,
     environment.parameters.get("model_validate") === "true",
+    environment.parameters.get("smt.arith.ignore_int") === "true",
     satParams.get("euf") === true ? mkThSolver(environment.parameters) : null,
   )(goal);
 };

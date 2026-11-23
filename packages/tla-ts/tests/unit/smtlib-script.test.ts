@@ -1343,6 +1343,42 @@ describe("runSmtlibScript prints what Z3 prints", () => {
     ]);
   });
 
+  it("skips validating the sat.euf model under smt.arith.ignore_int", () => {
+    expect(
+      run([
+        "(set-option :sat.euf true)",
+        "(set-option :tactic.default_tactic smt)",
+        "(set-option :smt.arith.ignore_int true)",
+        "(declare-const x Int)",
+        "(declare-const y Int)",
+        "(declare-const p Bool)",
+        "(assert (=> p (and (> x 3) (< (+ x y) 2))))",
+        "(check-sat-assuming (p))",
+        "(get-info :rlimit)",
+        "(get-model)",
+        "(get-info :rlimit)",
+        "(get-value (p (+ x y)))",
+        "(get-info :rlimit)",
+      ]),
+    ).toEqual([
+      "sat",
+      "(:rlimit 53)",
+      [
+        "(",
+        "  (define-fun p () Bool",
+        "    true)",
+        "  (define-fun x () Int",
+        "    4)",
+        "  (define-fun y () Int",
+        "    (- 21241))",
+        ")",
+      ].join("\n"),
+      "(:rlimit 57)",
+      ["((p true)", " ((+ x y) (- 21237)))"].join("\n"),
+      "(:rlimit 64)",
+    ]);
+  });
+
   it("completes an array-ext interpretation so its witnesses drop from the model", () => {
     expect(
       run([
