@@ -701,7 +701,7 @@ describe("psort_nw, as Z3 5.3.2's card2bv encodes cardinality constraints", () =
     const xs = Array.from({ length: numVars }, (_value, index) =>
       manager.mkApp(manager.mkFuncDecl(`x${index}`, [], SORT_BOOL), [], SORT_BOOL),
     );
-    for (const x of xs) manager.incRef(x);
+    for (const literal of xs) manager.incRef(literal);
     const rewriter = new CardPbRewriter(manager, getCardinalityOptions(new Map(), new Map()));
     const result = encode(new PsortNw(rewriter, encoding), xs, manager);
     const lemmas = new RefVector(manager);
