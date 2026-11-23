@@ -150,7 +150,10 @@ export interface InstanceLevelCheck {
 
 type ScopeEntry =
   | { kind: "Formal"; arity: number; level: number }
-  | { kind: "Let"; definition: Definition; scope: Scope };
+  | { kind: "Let"; definition: Definition; scope: Scope }
+  | { kind: "ExceptAt"; parts: LevelData[] };
+
+const EXCEPT_AT = "@";
 
 export type Scope = Map<string, ScopeEntry>;
 
@@ -1229,8 +1232,19 @@ export const createLevelAnalyzer = (context: LevelContext) => {
       case "Number":
       case "Decimal":
       case "String":
-      case "ExceptAt":
         return createData();
+      case "ExceptAt": {
+        const data = createData();
+        const entry = scope.get(EXCEPT_AT);
+        if (entry?.kind !== "ExceptAt") return data;
+        let allParams: Set<string> | undefined;
+        entry.parts.forEach((part) => {
+          mergeLevels(data, part);
+          allParams = addParams(allParams, part.allParams);
+        });
+        data.allParams = allParams ?? EMPTY_PARAMS;
+        return data;
+      }
       case "EnabledVariable":
         return createData(VARIABLE_LEVEL);
       case "Identifier": {
@@ -1385,36 +1399,40 @@ export const createLevelAnalyzer = (context: LevelContext) => {
           expression.fields.map((field) => field.value),
           scope,
         );
-      case "Except":
-        return applyDefined(EXCEPT_LEVELS, [
-          toOperand(expression.function, scope),
-          ...expression.updates.map((update): Operand => ({
+      case "Except": {
+        const operands = [toOperand(expression.function, scope)];
+        expression.updates.forEach((update) => {
+          const path: Operand = {
             kind: "Value",
-            data: applyDefined(PAIR_LEVELS, [
-              {
-                kind: "Value",
-                data: reportAt(update.range, () =>
-                  applyDefined(
-                    SEQ_LEVELS,
-                    update.path.map((step): Operand =>
-                      step.kind === "Field"
-                        ? { kind: "Value", data: createData() }
-                        : step.args.length === 1
-                          ? toOperand(step.args[0], scope)
-                          : {
-                              kind: "Value",
-                              data: reportAt(step.tupleRange, () =>
-                                applyBuiltin(TUPLE_LEVELS, step.args, scope),
-                              ),
-                            },
-                    ),
-                  ),
+            data: reportAt(update.range, () =>
+              applyDefined(
+                SEQ_LEVELS,
+                update.path.map((step): Operand =>
+                  step.kind === "Field"
+                    ? { kind: "Value", data: createData() }
+                    : step.args.length === 1
+                      ? toOperand(step.args[0], scope)
+                      : {
+                          kind: "Value",
+                          data: reportAt(step.tupleRange, () =>
+                            applyBuiltin(TUPLE_LEVELS, step.args, scope),
+                          ),
+                        },
                 ),
-              },
-              toOperand(update.value, scope),
-            ]),
-          })),
-        ]);
+              ),
+            ),
+          };
+          const valueScope = new Map(scope).set(EXCEPT_AT, {
+            kind: "ExceptAt",
+            parts: operands.map((operand) => operand.data),
+          });
+          operands.push({
+            kind: "Value",
+            data: applyDefined(PAIR_LEVELS, [path, toOperand(update.value, valueScope)]),
+          });
+        });
+        return applyDefined(EXCEPT_LEVELS, operands);
+      }
       case "FunctionApplication":
         return applyDefined(APPLY_LEVELS, [
           toOperand(expression.function, scope),
