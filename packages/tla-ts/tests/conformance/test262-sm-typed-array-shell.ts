@@ -1,5 +1,5 @@
 // test262's harness/sm/non262-TypedArray-shell.js, typed so that tla-ts can compile it.
-/* oxlint-disable no-var -- the include's var declarations, kept as it declares them */
+/* oxlint-disable no-var, eqeqeq, constructor-super -- the include's var declarations, loose comparisons and constructor that returns another array, kept as it writes them */
 
 type TypedArrayConstructor = (new (...args: unknown[]) => ArrayLike<unknown> & {
   buffer: ArrayBufferLike;

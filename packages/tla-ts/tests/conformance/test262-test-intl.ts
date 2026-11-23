@@ -1,6 +1,6 @@
 // test262's harness/testIntl.js as it is, which TypeScript compiles as JavaScript: tla-ts compiles a
 // test's program from the JavaScript that TypeScript emits, which checks no types.
-/* oxlint-disable no-var -- the include's var declarations, kept as it declares them */
+/* oxlint-disable no-var, no-unused-vars -- the include's var declarations and the helpers it defines for tests, kept as it writes them */
 
 // Copyright (C) 2011 2012 Norbert Lindenberg. All rights reserved.
 // Copyright (C) 2012 2013 Mozilla Corporation. All rights reserved.
