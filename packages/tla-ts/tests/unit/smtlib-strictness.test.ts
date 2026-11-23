@@ -1290,6 +1290,13 @@ describe("the terms the reader makes and frees, in Z3's order", () => {
     ]);
   });
 
+  it("rejects an argument of get-objectives", () => {
+    expect(run(["(declare-const x Int)", "(get-objectives x)", "(get-objectives)"])).toEqual([
+      '(error "line 2 column 16: invalid command, too many arguments")',
+      "(objectives\n)",
+    ]);
+  });
+
   it("rejects a push or pop count past 2^32 - 1 before it opens or closes a scope", () => {
     expect(
       run([

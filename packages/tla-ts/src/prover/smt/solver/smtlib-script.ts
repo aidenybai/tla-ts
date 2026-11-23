@@ -2320,6 +2320,7 @@ export const runSmtlibScript = (
     [
       "get-objectives",
       (list) => {
+        checkArgumentCount(list, 0);
         useManager(list.end);
         if (state.objectives.length !== state.checkedObjectives)
           throw new SmtParseError("check-sat has not been called with latest objectives", list.end);
