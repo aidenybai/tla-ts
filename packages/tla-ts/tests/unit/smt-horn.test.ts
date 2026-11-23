@@ -291,6 +291,12 @@ describe("horn tactic", () => {
     ).toEqual(["sat", ["(", "  (define-fun P ((x!0 Int)) Bool", "    false)", ")"].join("\n")]);
   });
 
+  it("counts a step for the karr plugin of the default Horn transformation", () => {
+    expect(
+      run(["(set-logic HORN)", "(set-option :fp.engine bmc)", "(check-sat)", "(get-info :rlimit)"]),
+    ).toEqual(["sat", "(:rlimit 29)"]);
+  });
+
   it("answers a nonlinear system", () => {
     expect(
       run([
