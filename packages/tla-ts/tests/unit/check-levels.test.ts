@@ -548,7 +548,20 @@ describe("level checking matches SANY", () => {
     },
   );
 
-  it("levels a LET instance's definitions through an operator parameter it substitutes like SANY", async () => {
+  const getLetInstanceErrors = (errors: string[][]) =>
+    errors.flatMap((error) => [
+      {
+        location: `${error[0]} of module M`,
+        message: `Level error in applying operator ${error[1]}:\nThe permitted level of argument 1 of the operator argument 1 \nmust be at least 2.`,
+      },
+      {
+        location: `${error[0]} of module M`,
+        message:
+          "Error in instantiating module 'Inner':\n A non-Leibniz operator substituted for 'Op'.",
+      },
+    ]);
+
+  it("levels a LET instance's definitions through an operator parameter it substitutes like SANY, and rejects the non-Leibniz operator passed for it", async () => {
     await expect(
       check({
         source:
@@ -557,13 +570,10 @@ describe("level checking matches SANY", () => {
       }),
     ).rejects.toThrow(
       createSanyError(
-        [
+        getLetInstanceErrors([
           ["line 9, col 61 to line 9, col 67", "L!K"],
           ["line 11, col 6 to line 11, col 10", "W"],
-        ].map((error) => ({
-          location: `${error[0]} of module M`,
-          message: `Level error in applying operator ${error[1]}:\nThe permitted level of argument 1 of the operator argument 1 \nmust be at least 2.`,
-        })),
+        ]),
       ),
     );
   });
@@ -581,21 +591,14 @@ describe("level checking matches SANY", () => {
       [["line 10, col 6 to line 10, col 10", "W"]],
     ],
   ])(
-    "levels a LET instance's definitions through an operator parameter it substitutes implicitly in %j like SANY",
+    "levels a LET instance's definitions through an operator parameter it substitutes implicitly in %j like SANY, and rejects the non-Leibniz operator passed for it",
     async (definitions, errors) => {
       await expect(
         check({
           source: `---- MODULE M ----\nVARIABLE x\n---- MODULE Inner ----\nCONSTANT Op(_), k\nK == Op(k)\n====\nPr(p) == p'\nI == INSTANCE Inner WITH Op <- LAMBDA p : p, k <- 1\n${definitions}\nInit == x = 0\nNext == x' = x\n====`,
           config: "INIT Init\nNEXT Next",
         }),
-      ).rejects.toThrow(
-        createSanyError(
-          errors.map((error) => ({
-            location: `${error[0]} of module M`,
-            message: `Level error in applying operator ${error[1]}:\nThe permitted level of argument 1 of the operator argument 1 \nmust be at least 2.`,
-          })),
-        ),
-      );
+      ).rejects.toThrow(createSanyError(getLetInstanceErrors(errors)));
     },
   );
 
@@ -3154,11 +3157,6 @@ describe("level checking matches SANY", () => {
       13,
     ],
     [
-      "CONSTANT C(_), k\nX == C(k)",
-      "D(C(_), k) == LET I == INSTANCE Inner IN TRUE\nE == D(F, x')",
-      13,
-    ],
-    [
       "CONSTANT C(_, _), k, j\nASSUME C(k, j)",
       "G(p, q) == p' /\\ q\nD(Op(_, _), a, b) == LET I == INSTANCE Inner WITH C <- Op, k <- a, j <- b IN TRUE\nE == D(G, x', x)",
       16,
@@ -3179,11 +3177,38 @@ describe("level checking matches SANY", () => {
     },
   );
 
-  it.each([
-    "D(Op(_), a) == LET I == INSTANCE Inner WITH C <- Op, k <- a IN TRUE\nE == D(F, x)",
-    "D(Op(_), a) == LET I(p) == INSTANCE Inner WITH C <- Op, k <- p IN TRUE\nE == D(F, x')",
-  ])("accepts %j, like SANY", async (definitions) => {
-    const result = await checkLetInstance("CONSTANT C(_), k\nX == C(k)", definitions);
-    expect(result.status).toBe("success");
+  const getLeibnizError = (line: number, end: number) => ({
+    location: `line ${line}, col 6 to line ${line}, col ${end} of module M`,
+    message: "Error in instantiating module 'Inner':\n A non-Leibniz operator substituted for 'C'.",
   });
+
+  it("rejects an argument above the level a LET instance allows in D(C(_), k) == LET I == INSTANCE Inner IN TRUE like SANY, and the non-Leibniz operator passed for C", async () => {
+    await expect(
+      checkLetInstance(
+        "CONSTANT C(_), k\nX == C(k)",
+        "D(C(_), k) == LET I == INSTANCE Inner IN TRUE\nE == D(F, x')",
+      ),
+    ).rejects.toThrow(
+      createSanyError([
+        {
+          location: "line 5, col 6 to line 5, col 13 of module M",
+          message:
+            "Level error in applying operator D:\nThe level of argument 2 exceeds the maximum level allowed by the operator.",
+        },
+        getLeibnizError(5, 13),
+      ]),
+    );
+  });
+
+  it.each([
+    ["D(Op(_), a) == LET I == INSTANCE Inner WITH C <- Op, k <- a IN TRUE\nE == D(F, x)", 12],
+    ["D(Op(_), a) == LET I(p) == INSTANCE Inner WITH C <- Op, k <- p IN TRUE\nE == D(F, x')", 13],
+  ])(
+    "rejects only the non-Leibniz operator passed for C in %j, which SANY accepts",
+    async (definitions, end) => {
+      await expect(checkLetInstance("CONSTANT C(_), k\nX == C(k)", definitions)).rejects.toThrow(
+        createSanyError([getLeibnizError(5, end)]),
+      );
+    },
+  );
 });

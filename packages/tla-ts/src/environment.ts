@@ -946,7 +946,10 @@ export const createEnvironment = (
         instance.name === undefined
           ? instantiation.getKey(key)
           : params.length > 0 && builtins.has(key) && !definitions.has(key)
-            ? addOwnArgumentsAlias(symbol, name, params, module.name, instance.location)
+            ? addOwnArgumentsAlias(symbol, name, params, module.name, instance.location, {
+                ...substitutes,
+                module: instance.module,
+              })
             : instantiation.getQualifiedKey(key);
       setInstanceNames(copy, name);
       if (
@@ -1064,13 +1067,18 @@ export const createEnvironment = (
     params: OperatorParam[],
     instancer: string,
     location: SourceLocation,
+    copy?: Omit<InstanceCopy, "source">,
   ) => {
     const key = createName(`${symbol.key}${KEY_SEPARATOR}${instancer}`);
     const ownParams = createArgumentParams(symbol.arity, symbol.params);
-    definitions.set(
-      key,
-      createLocalAlias(key, symbol.key, [...params, ...ownParams], ownParams, location),
-    );
+    const alias = createLocalAlias(key, symbol.key, [...params, ...ownParams], ownParams, location);
+    definitions.set(key, alias);
+    if (copy) {
+      instanceCopies.set(alias, {
+        ...copy,
+        source: createLocalAlias(key, symbol.key, ownParams, ownParams, location),
+      });
+    }
     builtinAliases.set(key, symbol.key);
     instanceNames.set(key, name);
     return key;
@@ -1247,6 +1255,13 @@ export const createEnvironment = (
           };
         }
         const ownParams = createArgumentParams(entry[1].arity, entry[1].params);
+        if (builtins.has(key)) {
+          localCopies.set(name, {
+            ...substitutes,
+            module: instance.module,
+            source: createLocalAlias(name, key, ownParams, ownParams, location),
+          });
+        }
         return createStandardAlias(
           name,
           key,

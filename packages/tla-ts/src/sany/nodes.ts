@@ -46,6 +46,15 @@ export interface ArgLevelConstraint {
   level: number;
 }
 
+export interface RequiredLeibnizArg {
+  param: SymbolNode;
+  position: number;
+  module: string;
+  constant: string;
+}
+
+export const NO_REQUIRED_LEIBNIZ_ARGS: ReadonlyMap<string, RequiredLeibnizArg> = new Map();
+
 export interface LevelFields {
   id: number;
   levelChecked: number;
@@ -54,6 +63,7 @@ export interface LevelFields {
   allParams: Set<SymbolNode>;
   nonLeibnizParams: Set<SymbolNode>;
   appliedParams: ReadonlySet<SymbolNode> | undefined;
+  requiredLeibnizArgs: ReadonlyMap<string, RequiredLeibnizArg>;
   argLevelParams: Map<string, ArgLevelParam>;
   levelCorrect: boolean;
   levelConstraints: Map<SymbolNode, number>;

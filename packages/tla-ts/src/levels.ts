@@ -23,6 +23,7 @@ import {
   collectSemanticErrors,
   compareLocations,
   getBoundNames,
+  getKeyName,
   getPatternNames,
   isBefore,
   SELECTION_NAME,
@@ -41,6 +42,14 @@ export interface LevelData {
   allParams: ReadonlySet<string>;
   nonLeibnizParams: ReadonlySet<string>;
   appliedParams: ReadonlySet<string> | undefined;
+  requiredLeibnizArgs: ReadonlyMap<string, RequiredLeibnizArg>;
+}
+
+interface RequiredLeibnizArg {
+  param: string;
+  position: number;
+  module: string;
+  constant: string;
 }
 
 export interface OperatorLevels extends LevelData {
@@ -95,6 +104,7 @@ interface SubstitutedBody extends SubstitutedSource {
   allParams: ReadonlySet<string>;
   nonLeibnizParams: ReadonlySet<string>;
   appliedParams: ReadonlySet<string> | undefined;
+  requiredLeibnizArgs: Iterable<RequiredLeibnizArg>;
 }
 
 interface Instanced {
@@ -263,6 +273,46 @@ const addAppliedParams = (applied: Set<string>, data: LevelData, formals: Operat
 const addOperandAppliedParams = (applied: Set<string>, operand: Operand) =>
   addAppliedParams(applied, operand.data, operand.kind === "Operator" ? operand.data.formals : []);
 
+const NO_REQUIRED_LEIBNIZ_ARGS: ReadonlyMap<string, RequiredLeibnizArg> = new Map();
+
+const addRequiredLeibnizArgs = (
+  target: Map<string, RequiredLeibnizArg> | undefined,
+  args: Iterable<RequiredLeibnizArg>,
+) => {
+  let result = target;
+  for (const arg of args) {
+    const key = getArgumentKey(arg.param, arg.position);
+    if (result?.has(key)) continue;
+    result ??= new Map();
+    result.set(key, arg);
+  }
+  return result;
+};
+
+// Deviation from SANY: InstanceNode checks only a defined operator for Leibniz, so SANY accepts P(F)!Use for P(G(_)) == INSTANCE Pure WITH Op <- G.
+const getSubstitutedLeibnizArgs = (
+  module: string,
+  constant: string,
+  operand: Operand,
+): RequiredLeibnizArg[] => {
+  if (operand.kind === "Declared") {
+    return Array.from({ length: operand.declared.arity }, (_value, position) => ({
+      param: operand.declared.name,
+      position,
+      module,
+      constant,
+    }));
+  }
+  if (operand.kind !== "Operator") return [];
+  const formals = operand.data.formals;
+  return [...operand.data.argParams].flatMap((key) => {
+    const parameter = parseArgumentParamKey(key);
+    return formals.some((formal) => formal.name === parameter.param)
+      ? [{ param: parameter.operator, position: parameter.index, module, constant }]
+      : [];
+  });
+};
+
 const createData = (level = 0): LevelData => ({
   level,
   isCorrect: true,
@@ -273,6 +323,7 @@ const createData = (level = 0): LevelData => ({
   allParams: EMPTY_PARAMS,
   nonLeibnizParams: EMPTY_PARAMS,
   appliedParams: undefined,
+  requiredLeibnizArgs: NO_REQUIRED_LEIBNIZ_ARGS,
 });
 
 export const putConstraint = (constraints: Map<string, number>, name: string, level: number) =>
@@ -444,6 +495,7 @@ const toOperatorLevels = (name: string, formals: OperatorParam[], data: LevelDat
     allParams: removeFormals(data.allParams),
     nonLeibnizParams: removeFormals(data.nonLeibnizParams),
     appliedParams: data.appliedParams,
+    requiredLeibnizArgs: data.requiredLeibnizArgs,
     maxLevels: formals.map((formal) =>
       Math.min(TEMPORAL_LEVEL, data.constraints.get(formal.name) ?? TEMPORAL_LEVEL),
     ),
@@ -648,10 +700,9 @@ const getLetUnits = (expression: LetExpression) =>
     .toSorted((left, right) => (isBefore(left.location, right.location) ? -1 : 1))
     .map((entry) => entry.unit);
 
-interface LevelMessage {
-  message: string;
-  code?: string;
-}
+type LevelMessage =
+  | { kind: "Level"; message: string; code?: string }
+  | { kind: "Leibniz"; message: string };
 
 const LOGICAL_OPERATORS = new Set(["/\\", "\\/", "=>", "<=>"]);
 
@@ -715,6 +766,7 @@ export const createLevelAnalyzer = (context: LevelContext) => {
     data.params.add(name);
     const allParams = new Set([name]);
     let nonLeibnizParams: Set<string> | undefined;
+    let requiredLeibnizArgs: Map<string, RequiredLeibnizArg> | undefined;
     operands.forEach((operand, index) => {
       operand.data.params.forEach((param) => {
         data.params.add(param);
@@ -724,6 +776,10 @@ export const createLevelAnalyzer = (context: LevelContext) => {
       mergeConstraints(data, operand.data);
       operand.data.allParams.forEach((param) => allParams.add(param));
       nonLeibnizParams = addParams(nonLeibnizParams, operand.data.nonLeibnizParams);
+      requiredLeibnizArgs = addRequiredLeibnizArgs(
+        requiredLeibnizArgs,
+        operand.data.requiredLeibnizArgs.values(),
+      );
     });
     data.allParams = allParams;
     data.nonLeibnizParams = nonLeibnizParams ?? EMPTY_PARAMS;
@@ -732,6 +788,7 @@ export const createLevelAnalyzer = (context: LevelContext) => {
       operands.forEach((operand) => addOperandAppliedParams(applied, operand));
       data.appliedParams = applied;
     }
+    data.requiredLeibnizArgs = requiredLeibnizArgs ?? NO_REQUIRED_LEIBNIZ_ARGS;
     return data;
   };
 
@@ -753,7 +810,7 @@ export const createLevelAnalyzer = (context: LevelContext) => {
       const operand = operands[index];
       if (operand.data.level > getMaxLevel(operator, index)) {
         if (operator.isCorrect && operand.data.isCorrect) {
-          messages.push({ message: getExceedingError(operator, index) });
+          messages.push({ kind: "Level", message: getExceedingError(operator, index) });
         }
         isLevelCorrect = false;
       }
@@ -765,6 +822,7 @@ export const createLevelAnalyzer = (context: LevelContext) => {
         if (getMaxLevel(argument, position) >= minimum) continue;
         if (operator.isCorrect && argument.isCorrect) {
           messages.push({
+            kind: "Level",
             message: getApplicationError(
               operator,
               `The permitted level of argument ${position + 1} of the operator argument ${index + 1} \nmust be at least ${minimum}`,
@@ -784,6 +842,7 @@ export const createLevelAnalyzer = (context: LevelContext) => {
           }
           if (argument.isCorrect && other.data.isCorrect) {
             messages.push({
+              kind: "Level",
               message: getExceedingError(operator, otherIndex),
               code: "HIGHER_ORDER_OPERATOR_COPARAMETER_LEVEL_CONSTRAINTS_EXCEEDED",
             });
@@ -859,6 +918,43 @@ export const createLevelAnalyzer = (context: LevelContext) => {
     });
     data.allParams = allParams ?? EMPTY_PARAMS;
     data.nonLeibnizParams = nonLeibnizParams ?? EMPTY_PARAMS;
+
+    let requiredLeibnizArgs: Map<string, RequiredLeibnizArg> | undefined;
+    operator.requiredLeibnizArgs.forEach((required) => {
+      const operand = getOperand(required.param);
+      if (!operator.formals.some((formal) => formal.name === required.param)) {
+        requiredLeibnizArgs = addRequiredLeibnizArgs(requiredLeibnizArgs, [required]);
+      } else if (operand?.kind === "Declared") {
+        requiredLeibnizArgs = addRequiredLeibnizArgs(requiredLeibnizArgs, [
+          { ...required, param: operand.declared.name },
+        ]);
+      } else if (operand?.kind === "Operator") {
+        const argument = operand.data;
+        // Deviation from SANY: OpApplNode never checks an operator argument that an INSTANCE substitutes for a constant, so SANY accepts P(F)!Use for F(a) == a'.
+        if (argument.nonLeibniz.has(required.position)) {
+          messages.push({
+            kind: "Leibniz",
+            message: `Error in instantiating module '${required.module}':\n A non-Leibniz operator substituted for '${required.constant}'`,
+          });
+          return;
+        }
+        const param = argument.formals[required.position]?.name;
+        argument.argParams.forEach((key) => {
+          const parameter = parseArgumentParamKey(key);
+          if (parameter.param !== param) return;
+          requiredLeibnizArgs = addRequiredLeibnizArgs(requiredLeibnizArgs, [
+            { ...required, param: parameter.operator, position: parameter.index },
+          ]);
+        });
+      }
+    });
+    [...operands.map((operand) => operand.data), ...ranges].forEach((part) => {
+      requiredLeibnizArgs = addRequiredLeibnizArgs(
+        requiredLeibnizArgs,
+        part.requiredLeibnizArgs.values(),
+      );
+    });
+    data.requiredLeibnizArgs = requiredLeibnizArgs ?? NO_REQUIRED_LEIBNIZ_ARGS;
 
     operator.constraints.forEach((value, key) => putConstraint(data.constraints, key, value));
     operands.forEach((operand) =>
@@ -1051,6 +1147,7 @@ export const createLevelAnalyzer = (context: LevelContext) => {
       const pattern = groups[index].pattern;
       const symbol = pattern.ranges?.[0];
       messages.push({
+        kind: "Level",
         message: `Level error in applying operator ${operator.name}:\nThe level of the range for the bounded variable ${symbol ? formatRange(symbol) : getPatternNames(pattern)[0]} \nexceeds the maximum level allowed by the operator`,
       });
     });
@@ -1073,7 +1170,10 @@ export const createLevelAnalyzer = (context: LevelContext) => {
 
   const checkJunction = (levels: number[], name: string) => {
     if (isMixed(levels)) {
-      messages.push({ message: `${name} has both temporal formula and action as arguments` });
+      messages.push({
+        kind: "Level",
+        message: `${name} has both temporal formula and action as arguments`,
+      });
     }
   };
 
@@ -1081,6 +1181,7 @@ export const createLevelAnalyzer = (context: LevelContext) => {
     const isLeadsTo = expression.operator === "~>" || expression.operator === "-+->";
     if (isLeadsTo && operands.some((operand) => operand.data.level === ACTION_LEVEL)) {
       messages.push({
+        kind: "Level",
         message: "Action used where only temporal formula or state predicate allowed",
       });
     }
@@ -1100,6 +1201,7 @@ export const createLevelAnalyzer = (context: LevelContext) => {
     const form = expression.kind === "Always" ? "BoxAction" : "AngleAction";
     if (level !== ACTION_LEVEL || !isOperatorApplication(operand) || operand.kind === form) return;
     messages.push({
+      kind: "Level",
       message:
         expression.kind === "Always"
           ? "[] followed by action not of form [A]_v"
@@ -1233,6 +1335,17 @@ export const createLevelAnalyzer = (context: LevelContext) => {
       // Deviation from SANY: tla-ts keeps a LET body's nonLeibnizParams, which LetInNode#levelCheck drops, so SANY accepts F(a) == LET L == 1 IN ENABLED (x' = a) for an operator constant.
       nonLeibnizParams: body.nonLeibnizParams,
       appliedParams: body.appliedParams,
+      requiredLeibnizArgs:
+        definitions.reduce(
+          (required, levels) =>
+            addRequiredLeibnizArgs(
+              required,
+              [...levels.requiredLeibnizArgs.values()].filter((arg) =>
+                levels.formals.every((formal) => formal.name !== arg.param),
+              ),
+            ),
+          addRequiredLeibnizArgs(undefined, body.requiredLeibnizArgs.values()),
+        ) ?? NO_REQUIRED_LEIBNIZ_ARGS,
     };
     entered.instances?.forEach((instance) =>
       getInstanceArgParams(instance, entered.inner).forEach((key) => data.argParams.add(key)),
@@ -1243,16 +1356,17 @@ export const createLevelAnalyzer = (context: LevelContext) => {
 
   const reportSince = (start: number, range: SourceRange | undefined, data: LevelData) => {
     if (messages.length === start) return data;
+    const isLevelCorrect = messages.slice(start).every((item) => item.kind === "Leibniz");
     if (range) {
       messages.splice(start).forEach((item) =>
         errors.push({
           location: formatRange(range),
           message: `${item.message}.`,
-          code: item.code,
+          code: item.kind === "Level" ? item.code : undefined,
         }),
       );
     }
-    return { ...data, isCorrect: false };
+    return isLevelCorrect ? data : { ...data, isCorrect: false };
   };
 
   const reportAt = (range: SourceRange | undefined, getData: () => LevelData) => {
@@ -1627,6 +1741,7 @@ export const createLevelAnalyzer = (context: LevelContext) => {
     body: SubstitutedBody,
     operands: Map<string, Operand>,
     instanced: ModuleLevels,
+    module: string,
   ) => {
     const data = createData(
       Math.max(body.level, ...body.params.map((param) => operands.get(param)?.data.level ?? 0)),
@@ -1672,6 +1787,21 @@ export const createLevelAnalyzer = (context: LevelContext) => {
     });
     data.allParams = allParams ?? EMPTY_PARAMS;
     data.nonLeibnizParams = nonLeibnizParams ?? EMPTY_PARAMS;
+    let requiredLeibnizArgs = addRequiredLeibnizArgs(
+      undefined,
+      [...body.requiredLeibnizArgs].filter((required) => !operands.has(required.param)),
+    );
+    operands.forEach((operand, constant) => {
+      requiredLeibnizArgs = addRequiredLeibnizArgs(
+        requiredLeibnizArgs,
+        operand.data.requiredLeibnizArgs.values(),
+      );
+      requiredLeibnizArgs = addRequiredLeibnizArgs(
+        requiredLeibnizArgs,
+        getSubstitutedLeibnizArgs(module, getKeyName(constant), operand),
+      );
+    });
+    data.requiredLeibnizArgs = requiredLeibnizArgs ?? NO_REQUIRED_LEIBNIZ_ARGS;
     addSubstitutedLevels(data, body, operands, instanced);
     return data;
   };
@@ -1725,6 +1855,10 @@ export const createLevelAnalyzer = (context: LevelContext) => {
         // Deviation from SANY: tla-ts substitutes an instanced theorem's nonLeibnizParams as SubstInNode does, which APSubstInNode omits, so SANY accepts F(a) == I(a)!T for THEOREM T == w' = 0 and w <- a.
         nonLeibnizParams: new Set([...source.nonLeibnizParams, ...nonLeibnizNames]),
         appliedParams: source.appliedParams && new Set([...source.appliedParams].map(rename)),
+        requiredLeibnizArgs: [...source.requiredLeibnizArgs.values()].map((required) => ({
+          ...required,
+          param: rename(required.param),
+        })),
         constraints: [
           ...source.constraints,
           ...names.map((name, index): [string, number] => [name, source.maxLevels[index]]),
@@ -1753,6 +1887,7 @@ export const createLevelAnalyzer = (context: LevelContext) => {
       },
       getSubstitutes(copy, scope),
       instanced,
+      copy.module,
     );
     return toOperatorLevels(definition.name, formals, data);
   };
@@ -1826,6 +1961,10 @@ export const createLevelAnalyzer = (context: LevelContext) => {
         allParams: new Set([...original.allParams].map(rename)),
         nonLeibnizParams: new Set([...original.nonLeibnizParams].map(rename)),
         appliedParams: original.appliedParams && new Set([...original.appliedParams].map(rename)),
+        requiredLeibnizArgs: [...original.requiredLeibnizArgs.values()].map((required) => ({
+          ...required,
+          param: rename(required.param),
+        })),
         constraints: [...original.constraints].map((entry): [string, number] => [
           rename(entry[0]),
           entry[1],
@@ -1838,6 +1977,7 @@ export const createLevelAnalyzer = (context: LevelContext) => {
       },
       getSubstitutes(copy, scope),
       instancedLevels,
+      copy.module,
     );
   };
 
