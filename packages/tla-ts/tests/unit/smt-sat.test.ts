@@ -1504,7 +1504,7 @@ describe("card2bv's parameters, as Z3 5.3.2 reads them at each call site", () =>
     );
   });
 
-  for (const pbSolver of ["totalizer", "sorting", "segmented", "binary_merge"])
+  for (const pbSolver of ["totalizer", "sorting", "binary_merge"])
     it(`throws at a weighted pseudo-Boolean constraint under sat.pb.solver ${pbSolver}`, () => {
       expect(() =>
         run([
@@ -1529,6 +1529,48 @@ describe("card2bv's parameters, as Z3 5.3.2 reads them at each call site", () =>
         "(apply (using-params card2bv :pb.solver totalizer))",
       ]),
     ).toThrow(new SmtUnsupportedError("the totalizer encoding of a pseudo-Boolean constraint"));
+  });
+
+  it("answers unknown at a weighted pseudo-Boolean constraint under sat.pb.solver segmented", () => {
+    expect(
+      run([
+        "(set-logic QF_FD)",
+        "(set-option :sat.pb.solver segmented)",
+        "(declare-const p Bool)",
+        "(declare-const q Bool)",
+        "(declare-const r Bool)",
+        "(assert ((_ pbge 5 3 4 2) p q r))",
+        "(check-sat)",
+      ]),
+    ).toBe("unknown");
+  });
+
+  it("encodes a weighted pseudo-Boolean constraint whose bound reduces to 0 or less, and fails on the segmented encoding past it", () => {
+    expect(
+      run([
+        "(declare-const p Bool)",
+        "(declare-const q Bool)",
+        "(declare-const r Bool)",
+        "(assert (or r ((_ pble 1 2 4) p q)))",
+        "(assert ((_ pbge 6 2 4) p q))",
+        "(apply (using-params pb2bv :pb.solver segmented))",
+        "(assert ((_ pble 5 2 4 6) p q r))",
+        "(apply (using-params pb2bv :pb.solver segmented))",
+        "(get-info :rlimit)",
+      ]),
+    ).toBe(
+      [
+        "(goals",
+        "(goal",
+        "  (or r (not (or p q)))",
+        "  p",
+        "  q",
+        "  :precision precise :depth 1)",
+        ")",
+        '(error "line 8 column 48: segmented encoding is disabled, use a different value for pb.solver")',
+        "(:rlimit 66)",
+      ].join("\n"),
+    );
   });
 });
 

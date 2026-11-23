@@ -1,4 +1,4 @@
-import { SmtUnsupportedError } from "../../../errors";
+import { SmtDefaultError, SmtUnsupportedError } from "../../../errors";
 import {
   type AstManager,
   KIND_APP,
@@ -23,10 +23,11 @@ import {
   FAMILY_PB,
   SORT_BOOL,
 } from "./ast";
+import { mkNot } from "./ast-util";
 import { assignOwned, release } from "./expr-ref";
 import type { Definition, Goal } from "./goal";
 import { getPbCoeff, getPbK, hasUnitCoefficients, isUnsigned } from "./pb-rewriter";
-import { Rational } from "./rational";
+import { getGcd, Rational } from "./rational";
 import { RefVector } from "./ref-vector";
 import { Rewriter, type RewriterOptions } from "./rewriter";
 import { type DependentExprState, runSimplifier } from "./dependent-expr-state";
@@ -140,11 +141,26 @@ export const getCardinalityOptions = (
   minArity: Number(satParams.get("pb.min_arity") ?? 9),
 });
 
-const PB_ENCODINGS = new Set(["totalizer", "sorting", "segmented", "binary_merge"]);
+const PB_ENCODINGS = new Set(["totalizer", "sorting", "binary_merge"]);
+
+const reduceGcd = (isEq: boolean, coeffs: Rational[], k: Rational) => {
+  let gcd = 0n;
+  for (let index = 0; index < coeffs.length; index++) {
+    if (!coeffs[index].isInt()) return k;
+    gcd = getGcd(gcd, coeffs[index].num);
+    if (gcd === 1n) return k;
+  }
+  if (gcd === 0n) return k;
+  if (!isEq) return k.div(Rational.of(gcd)).floor();
+  if (!k.isInt()) return k;
+  const kGcd = getGcd(k.num, gcd);
+  return kGcd === 1n || kGcd === 0n ? k : k.div(Rational.of(kGcd));
+};
 
 export class CardPbRewriter extends RewriterTpl implements PsortContext {
   private readonly sort: PsortNw;
   private readonly trail: RefVector;
+  private readonly args: RefVector;
   private readonly lemmas: RefVector;
   readonly freshDecls: number[] = [];
 
@@ -155,6 +171,7 @@ export class CardPbRewriter extends RewriterTpl implements PsortContext {
     super(manager);
     this.sort = new PsortNw(this, options.encoding);
     this.trail = new RefVector(manager);
+    this.args = new RefVector(manager);
     this.lemmas = new RefVector(manager);
   }
 
@@ -208,7 +225,44 @@ export class CardPbRewriter extends RewriterTpl implements PsortContext {
       this.options.pbSolver === "solver"
     )
       return -1;
+    return this.mkBv(decl, args);
+  }
+
+  private mkBv(decl: number, args: number[]) {
+    const manager = this.manager;
+    const op = manager.funcDecls[decl].op;
+    const k = getPbK(manager, decl);
+    const coeffs: Rational[] = [];
+    this.args.reset();
+    for (let index = 0; index < args.length; index++) {
+      coeffs.push(getPbCoeff(manager, decl, index));
+      this.args.push(args[index]);
+    }
+    if (op === OP_PB_GE || op === OP_AT_LEAST_K)
+      return this.mkLeGe(false, coeffs, this.dualize(decl, k));
+    return this.mkLeGe(op === OP_PB_EQ, coeffs, k);
+  }
+
+  private dualize(decl: number, k: Rational) {
+    const manager = this.manager;
+    let dual = k.neg();
+    for (let index = 0; index < this.args.size; index++) {
+      dual = dual.add(getPbCoeff(manager, decl, index));
+      this.args.set(index, mkNot(manager, this.args.items[index]));
+    }
+    return dual;
+  }
+
+  private mkLeGe(isEq: boolean, coeffs: Rational[], k: Rational) {
+    const manager = this.manager;
+    const reduced = reduceGcd(isEq, coeffs, k);
+    if (reduced.isZero()) return manager.mkNot(manager.mkOr(this.args.items));
+    if (reduced.isNegative()) return manager.falseExpr;
     const pbSolver = this.options.pbSolver;
+    if (pbSolver === "segmented")
+      throw new SmtDefaultError(
+        "segmented encoding is disabled, use a different value for pb.solver",
+      );
     throw new SmtUnsupportedError(
       `the ${PB_ENCODINGS.has(pbSolver) ? pbSolver : "bit-vector"} encoding of a pseudo-Boolean constraint`,
     );
@@ -273,6 +327,7 @@ export class CardPbRewriter extends RewriterTpl implements PsortContext {
   }
 
   override release() {
+    this.args.reset();
     this.trail.reset();
     super.release();
     for (const decl of this.freshDecls) this.manager.decDeclRef(decl);
