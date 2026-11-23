@@ -908,13 +908,14 @@ const getBoundSets = (bounds: Bound[], domain: Value) =>
     ? [domain]
     : domain.factors;
 
+// CallStackTool#eval copies a FcnLambdaValue without its cost model, so the replay for a call stack passes node -1, but the sets of its domain keep theirs.
 const getCostModel = (
   coverage: Coverage | undefined,
   node: number,
   bounds: Bound[],
   domain: Value,
 ) =>
-  coverage && node >= 0
+  coverage && coverage.current >= 0
     ? {
         secondary: coverage.secondary,
         node,

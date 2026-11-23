@@ -1361,7 +1361,7 @@ export const chargeFunctionConstruction = (
   );
   const size = sizes.reduce((product, setSize) => product * setSize, 1);
   for (let index = 0; index < size; index++) advance();
-  coverage.secondary[node] += size;
+  if (node >= 0) coverage.secondary[node] += size;
 };
 
 const COMPOSITE_SET_KINDS = new Set<string>([

@@ -9136,6 +9136,43 @@ ASSUME TLCFP(a) = -887695703
 
   it.each([
     [
+      "a function",
+      "[t \\in (0..2) \\X {1} |-> 0][<<7, 1>>] = 0",
+      [
+        "line 5, col 19 to line 5, col 59 of module M: 2",
+        "|line 5, col 19 to line 5, col 55 of module M: 2",
+        "||line 5, col 19 to line 5, col 45 of module M: 2:3",
+        "|||line 5, col 26 to line 5, col 38 of module M: 2:12",
+        "||||line 5, col 27 to line 5, col 30 of module M: 2",
+        "||||line 5, col 36 to line 5, col 38 of module M: 2:14",
+        "||line 5, col 47 to line 5, col 54 of module M: 2",
+      ],
+    ],
+    [
+      "a recursive function",
+      "LET f[n \\in {u \\in (0..2) \\X {1} : TRUE}] == 0 IN f[<<7, 1>>] = 0",
+      [
+        "line 5, col 23 to line 5, col 64 of module M: 2:3",
+        "|line 5, col 31 to line 5, col 58 of module M: 2:20",
+        "||line 5, col 54 to line 5, col 57 of module M: 6",
+        "||line 5, col 38 to line 5, col 50 of module M: 2:12",
+        "|||line 5, col 39 to line 5, col 42 of module M: 2",
+        "|||line 5, col 48 to line 5, col 50 of module M: 2:14",
+        "line 5, col 69 to line 5, col 83 of module M: 2",
+      ],
+    ],
+  ])(
+    "charges the domain of %s that TLC prints in its replay for a call stack, though CallStackTool's copy of the FcnLambdaValue drops its cost model",
+    async (_name, body, rows) => {
+      expect(await getNextCoverageLines(`x' = 0 /\\ ${body}`)).toEqual([
+        "line 5, col 9 to line 5, col 14 of module M: 0",
+        ...rows,
+      ]);
+    },
+  );
+
+  it.each([
+    [
       "CHOOSE",
       "CHOOSE y \\in s : y[1] > 5",
       [

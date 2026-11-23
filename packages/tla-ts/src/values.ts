@@ -3479,7 +3479,7 @@ const getAppliedSequenceElements = (value: LazyFunctionValue) => {
     if (keys[index] !== index + 1) return undefined;
     elements.push(value.apply(keys[index]));
   }
-  if (isCountedLazyFunction(value)) {
+  if (isCountedLazyFunction(value) && value.costModel.node >= 0) {
     value.costModel.secondary[value.costModel.node] += keys.length;
   }
   return elements;
