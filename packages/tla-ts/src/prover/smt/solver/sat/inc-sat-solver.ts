@@ -173,10 +173,11 @@ export class IncSatSolver {
   }
 
   private checkUninterpreted() {
-    if (this.goal2sat.unhandledFuns.length === 0) return L_TRUE;
+    const unhandledFuns = this.goal2sat.euf?.unhandledFunctions ?? this.goal2sat.unhandledFuns;
+    if (unhandledFuns.length === 0) return L_TRUE;
     this.hasUninterpreted = true;
     const manager = this.manager;
-    const funs = this.goal2sat.unhandledFuns.map((fun) => {
+    const funs = unhandledFuns.map((fun) => {
       const declaration = mkSeq1(
         [
           mkText(getQuotedName(manager.funcDecls[fun.decl].name)),
