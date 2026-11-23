@@ -464,7 +464,9 @@ export const createLivenessChecker = (
       !enabled ||
       step?.kind !== "AngleAction" ||
       step.action !== atom.expression ||
-      step.subscript !== atom.subscript
+      step.subscript !== atom.subscript ||
+      // TLC evaluates any other subscript in ENABLED and on each step, and reports its error there.
+      atom.subscriptVariables === undefined
     ) {
       return;
     }
