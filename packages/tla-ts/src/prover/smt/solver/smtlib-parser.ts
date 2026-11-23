@@ -952,11 +952,18 @@ export const expectClosed = (sexpr: SExpr) => {
 export const isSymbol = (sexpr: SExpr | undefined, text?: string): sexpr is SmtToken =>
   sexpr !== undefined && sexpr.kind === "symbol" && (text === undefined || sexpr.text === text);
 
-const isSimpleIndex = (index: SExpr) =>
+const isSimpleIndex = (index: SExpr): index is SmtToken =>
   index.kind === "numeral" ||
   index.kind === "bitvector" ||
   index.kind === "decimal" ||
   index.kind === "keyword";
+
+const isNumberedIndex = (index: SExpr): index is SmtToken =>
+  index.kind === "numeral" || index.kind === "bitvector";
+
+// parse_indexed_identifier_core reads a #b or #x index as the numeral of its value.
+const getIndexDigits = (index: SmtToken) =>
+  index.kind === "bitvector" ? BigInt(`0${index.text.slice(1)}`).toString() : index.text;
 
 const expectList = (sexpr: SExpr | undefined, message: string, at: SExpr): SmtList => {
   if (sexpr?.kind !== "list") throw new SmtParseError(message, sexpr ?? at);
@@ -1727,19 +1734,29 @@ export const createSmtlibReader = (
     PB_OP_NAMES.has(name) &&
     (logic === undefined || logic === "QF_FD" || logic === "ALL" || logic === "HORN");
 
-  const mkPbTerm = (name: string, args: number[], parameters: Rational[], at: SExpr) => {
+  const mkPbTerm = (name: string, args: number[], indices: SmtToken[], at: SExpr) => {
     const op = PB_OP_NAMES.get(name) ?? -1;
     if (args.some((arg) => manager.sorts[arg] !== SORT_BOOL))
       throw new SmtParseError("invalid non-Boolean sort applied to Pseudo-Boolean relation", at);
     const isCardinality = op === OP_AT_MOST_K || op === OP_AT_LEAST_K;
+    const bound = indices[0];
     // Deviation from Z3: its parser makes an index from 2^31 to 2^32 a negative int, which fails here and flips the sign of a pble, pbge or pbeq parameter.
-    if (isCardinality && (parameters.length !== 1 || !isUnsigned(parameters[0].num.toString())))
+    if (
+      isCardinality &&
+      (indices.length !== 1 || !isNumberedIndex(bound) || !isUnsigned(getIndexDigits(bound)))
+    )
       throw new SmtParseError("function expects one non-negative integer parameter", at);
-    if (!isCardinality && parameters.length !== 1 + args.length)
+    if (!isCardinality && indices.length !== 1 + args.length)
       throw new SmtParseError("function expects arity+1 rational parameters", at);
+    if (indices.some((index) => index.kind === "keyword"))
+      throw new SmtParseError("functions 'pble/pbge/pbeq' expect arity+1 integer parameters", at);
     const decl = manager.mkPbDecl(
       op,
-      parameters,
+      indices.map((index) =>
+        index.kind === "decimal"
+          ? Rational.fromDecimal(index.text)
+          : Rational.of(BigInt(getIndexDigits(index))),
+      ),
       args.map(() => SORT_BOOL),
     );
     return manager.mkApp(decl, args, SORT_BOOL);
@@ -1959,33 +1976,26 @@ export const createSmtlibReader = (
     const value = /^bv([0-9]+)$/.exec(name.text);
     if (value !== null) {
       const width = indices[0];
-      const digits =
-        indices.length !== 1
-          ? "-1"
-          : width.kind === "bitvector"
-            ? `0${width.text.slice(1)}`
-            : width.kind === "numeral"
-              ? width.text
-              : "-1";
+      const digits = indices.length !== 1 || !isNumberedIndex(width) ? "-1" : getIndexDigits(width);
       if (!isUnsigned(digits))
         throw new SmtParseError("invalid bit-vector constant, index expected", at);
       if (BigInt(digits) === 0n)
         throw new SmtParseError("bit-vector size must be greater than zero", at);
       return manager.mkBvNumeral(BigInt(value[1]), Number(BigInt(digits)));
     }
-    const isNumbered = indices.every((index) => index.kind === "numeral");
+    const isNumbered = indices.every(isNumberedIndex);
     if (isNumbered && isSeqOpName(name.text))
       return mkSeqTerm(
         name.text,
         [],
-        indices.map((index) => (index.kind === "list" ? 0 : Number(index.text))),
+        indices.map((index) => Number(getIndexDigits(index))),
         at,
       );
     if (isNumbered && isFpaOpName(name.text)) {
       const signature = getFpaSignature(
         manager,
         FPA_OP_NAMES.get(name.text) ?? -1,
-        indices.map((index) => (index.kind === "list" ? 0 : Number(index.text))),
+        indices.map((index) => Number(getIndexDigits(index))),
         [],
       );
       if (typeof signature === "string") throw new SmtParseError(signature, at);
@@ -2446,21 +2456,17 @@ export const createSmtlibReader = (
             : mkUpdateFieldApp(indexed, args, list.end),
       };
     }
-    const isNumbered = indices.every((index) => index.kind === "numeral");
-    if (isNumbered && isPbOpName(name.text)) {
-      const parameters = indices.map((index) =>
-        Rational.of(BigInt(index.kind === "list" ? 0 : index.text)),
-      );
+    const isNumbered = indices.every(isNumberedIndex);
+    if (isPbOpName(name.text) && indices.every(isSimpleIndex))
       return {
         head: name,
         indices: [],
-        build: (args) => mkPbTerm(name.text, args, parameters, list.end),
+        build: (args) => mkPbTerm(name.text, args, indices, list.end),
       };
-    }
     if (isNumbered && (isBvOpName(name.text) || isFpaOpName(name.text) || isSeqOpName(name.text)))
       return {
         head: name,
-        indices: indices.map((index) => (index.kind === "list" ? 0 : Number(index.text))),
+        indices: indices.map((index) => Number(getIndexDigits(index))),
       };
     // cmd_context::mk_app finds a name that no theory knows among the declarations, whatever its
     // indices are.

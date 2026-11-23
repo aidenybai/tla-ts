@@ -1764,6 +1764,78 @@ describe("pseudo-Boolean bounds past 2^31, which Z3 5.3.2's int parameters can't
   });
 });
 
+describe("indices, as Z3 5.3.2's parser reads them", () => {
+  const DECLARATIONS = ["(declare-const p Bool)", "(declare-const q Bool)"];
+
+  it("reads a bit-vector index as the numeral of its value", () => {
+    expect(
+      run([
+        "(declare-const x (_ BitVec 8))",
+        "(simplify ((_ extract #b11 #x0) x))",
+        "(simplify ((_ zero_extend #b1) x))",
+        "(simplify ((_ sign_extend #x2) x))",
+        "(simplify ((_ rotate_left #b11) x))",
+        "(simplify ((_ repeat #x2) x))",
+        "(simplify ((_ int2bv #x8) 5))",
+        "(simplify ((_ to_fp #x8 #x18) RNE 1.0))",
+        '(simplify (str.in_re "aa" ((_ re.loop #x1 #x2) (str.to_re "a"))))',
+      ]),
+    ).toBe(
+      [
+        "((_ extract 3 0) x)",
+        "(concat #b0 x)",
+        "(concat ((_ extract 7 7) x) ((_ extract 7 7) x) x)",
+        "(concat ((_ extract 4 0) x) ((_ extract 7 5) x))",
+        "(concat x x)",
+        "#x05",
+        "(fp #b0 #x7f #b00000000000000000000000)",
+        "true",
+      ].join("\n"),
+    );
+  });
+
+  it.each([
+    ["((_ at-most #b1) p q)", "sat", 48],
+    ["((_ pbeq 1 0.5 0.5) p q)", "sat", 30],
+    ["((_ pbge 1.5 0.5 0.5) p q)", "unsat", 6],
+    ["((_ pbge 1500000000 0.5 0.5) p q)", "unsat", 6],
+  ])("asserts %s and answers %s at Z3's rlimit %d", (assertion, verdict, rlimit) => {
+    expect(
+      run([...DECLARATIONS, `(assert ${assertion})`, "(check-sat)", "(get-info :rlimit)"]),
+    ).toBe([verdict, `(:rlimit ${rlimit})`].join("\n"));
+  });
+
+  it("simplifies pseudo-Boolean constraints with bit-vector and decimal indices", () => {
+    expect(
+      run([
+        ...DECLARATIONS,
+        "(simplify ((_ at-most #x1) p q))",
+        "(simplify ((_ pbeq 1 0.5 0.5) p q))",
+        "(simplify ((_ pbge 1500000000 0.5 0.5) p q))",
+      ]),
+    ).toBe(["(or (not p) (not q))", "(and p q)", "false"].join("\n"));
+  });
+
+  it("rejects a decimal or keyword index where pb_decl_plugin wants an int", () => {
+    expect(
+      run([
+        ...DECLARATIONS,
+        "(assert ((_ at-most 2.0) p q))",
+        "(assert ((_ at-most :k) p q))",
+        "(assert ((_ pbge 1 :k 1) p q))",
+        "(check-sat)",
+      ]),
+    ).toBe(
+      [
+        '(error "line 3 column 28: function expects one non-negative integer parameter")',
+        '(error "line 4 column 27: function expects one non-negative integer parameter")',
+        "(error \"line 5 column 28: functions 'pble/pbge/pbeq' expect arity+1 integer parameters\")",
+        "sat",
+      ].join("\n"),
+    );
+  });
+});
+
 describe("sat config, as Z3 5.3.2 checks the sat solver's parameters", () => {
   const getChecked = (options: string[]) =>
     run([
