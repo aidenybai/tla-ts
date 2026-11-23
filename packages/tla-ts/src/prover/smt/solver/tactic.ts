@@ -1858,9 +1858,9 @@ const NAMED_TACTICS = new Map<string, NamedTactic>([
     {
       descrs: SAT_DESCRS,
       isRejectingUnknown: false,
-      // Under a global sat.euf, the constructor of qffd's inc_sat_solver makes the euf solver.
+      // inc_sat_solver makes the euf solver for a global sat.euf even when using-params turns it off.
       build: (environment, params) => {
-        if (getSatParams(environment.parameters).get("euf") === true)
+        if (environment.parameters.get("sat.euf") === "true" || params.get("euf") === true)
           checkSmtNumerals(environment.parameters);
         return (goal) =>
           createFdTactic(

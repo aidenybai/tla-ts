@@ -6165,6 +6165,23 @@ describe("smt.phase_selection, as Z3 5.3.2 picks the phase of a decision", () =>
     ]);
   });
 
+  it("rejects a phase selection when using-params asks qffd for euf", () => {
+    expect(
+      run([
+        "(declare-const q Bool)",
+        "(declare-const r Bool)",
+        "(assert (or q r))",
+        "(set-option :smt.phase_selection 9)",
+        "(check-sat-using (then simplify (using-params qffd :euf true)))",
+        "(get-info :reason-unknown)",
+      ]),
+    ).toEqual([
+      `(error "line 4 column 33: ${ILLEGAL_PHASE}")`,
+      `(error "line 5 column 62: ${ILLEGAL_PHASE}")`,
+      '(:reason-unknown "state of the most recent check-sat command is not known")',
+    ]);
+  });
+
   it("gives up the sat search when mbqi's sub-solver rejects the phase selection", () => {
     expect(
       run([
