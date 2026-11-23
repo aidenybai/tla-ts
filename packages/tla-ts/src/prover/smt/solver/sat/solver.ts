@@ -1,4 +1,4 @@
-import { SmtCanceledError } from "../../../../errors";
+import { SmtSatCanceledError } from "../../../../errors";
 import { L_FALSE, L_TRUE, L_UNDEF } from "../lbool";
 import { RandomGen } from "../random-gen";
 import type { ResourceLimit } from "../rlimit";
@@ -334,7 +334,7 @@ export class Solver {
     if (!this.limit.inc()) {
       this.isModelCurrent = false;
       this.reasonUnknown = "sat.canceled";
-      throw new SmtCanceledError();
+      throw new SmtSatCanceledError();
     }
   }
 
