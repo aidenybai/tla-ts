@@ -460,6 +460,7 @@ export class PsortNw {
 
   private dualize(k: number, xs: number[]) {
     if (2 * k <= xs.length) return undefined;
+    // eslint-disable-next-line unicorn/no-new-array
     const dual = new Array<number>(xs.length);
     for (let index = 0; index < xs.length; index++) dual[index] = this.mkNot(xs[index]);
     return dual;
