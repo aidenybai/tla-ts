@@ -365,8 +365,15 @@ const selectSubexpression = (
       if (selector.kind !== "Name" && !local) return undefined;
       if (selector.kind === "Name") {
         names.push(selector.name);
-        args.push(...selector.args);
         const name = names.join("!");
+        selector.args.forEach((arg, index) =>
+          selectionArguments.set(arg, {
+            operator: name,
+            index: args.length + index,
+            range: reference.selectorRanges?.[selectorIndex],
+          }),
+        );
+        args.push(...selector.args);
         const definition = local
           ? local.find((candidate) => getSourceName(candidate) === name)
           : (lookup(name) ??
@@ -398,18 +405,17 @@ const selectSubexpression = (
       const message = `The operator ${resolveSynonym(found.name)} requires ${arity - found.earlier} arguments.`;
       if (!isOperator || found.args.length !== 0) {
         generatedArguments += found.earlier;
+        applications.push({
+          operator: found.name,
+          range: reference.selectorRanges?.[selectorIndex],
+          args: found.args.slice(0, found.earlier),
+          params: getParamArities(definition),
+        });
         return report(range, message);
       }
       deferToExpression(range, message);
     }
     generatedArguments += found.args.length;
-    found.args.forEach((arg, index) =>
-      selectionArguments.set(arg, {
-        operator: found.name,
-        index,
-        range: reference.selectorRanges?.[selectorIndex],
-      }),
-    );
     // TLC evaluates the LAMBDA SANY makes of a whole body selected by !: as the body's Java override.
     const isOverride =
       !local &&

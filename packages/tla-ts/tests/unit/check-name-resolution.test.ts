@@ -2078,6 +2078,358 @@ describe("name resolution matches SANY", () => {
     },
   );
 
+  const INSTANCE_PREFIXES = [
+    "EXTENDS Naturals",
+    "F(a) == {a}",
+    "F2(a, b) == {a, b}",
+    "---- MODULE Inner ----",
+    "CONSTANT d, Op2(_)",
+    "THEOREM T3 == Op2(d) = Op2(d)",
+    "E3 == Op2(d)",
+    "====",
+    "---- MODULE Pure ----",
+    "CONSTANT c, Op(_)",
+    "I(H(_)) == INSTANCE Inner WITH d <- c, Op2 <- H",
+    "J == INSTANCE Inner WITH d <- c, Op2 <- Op",
+    "THEOREM T == Op(c) = Op(c)",
+    "E == Op(c)",
+    "E2(z) == Op(z)",
+    "====",
+    "P(G(_)) == INSTANCE Pure WITH c <- 1, Op <- G",
+  ].join("\n");
+
+  it("passes operators to the parameters of an instance whose definitions and subexpressions a spec selects like SANY", async () => {
+    const result = await checkNames(
+      [
+        INSTANCE_PREFIXES,
+        "D1 == P(F)!E",
+        "D2 == P(F)!E2(1)",
+        "D3 == P(F)!I(F)!E3",
+        "D4 == P(F)!T!1",
+        "D5 == P(F)!E!1",
+        "D6 == P(F)!J!T3",
+        "D7 == P(F)!I(F)!E3!1",
+        "THEOREM X == TRUE BY P(F)!T",
+      ].join("\n"),
+    );
+    expect(result.status).toBe("success");
+  });
+
+  it.each([
+    [
+      "D == P(1)!Use",
+      [
+        [
+          "line 19, col 8 to line 19, col 8",
+          "An expression appears as argument number 1 (counting from 1) to operator 'P', in a position an operator is required.",
+        ],
+        ["line 19, col 6 to line 19, col 13", "Unknown operator: `P!Use'."],
+      ],
+    ],
+    [
+      "D == P(F2)!Use",
+      [
+        ["line 19, col 8 to line 19, col 9", "Expected arity 1 but found operator of arity 2."],
+        ["line 19, col 6 to line 19, col 14", "Unknown operator: `P!Use'."],
+      ],
+    ],
+    [
+      "D == P(\\cup)!Use",
+      [
+        [
+          "line 19, col 6 to line 19, col 6",
+          "Operator with incorrect arity passed as argument. \nOperator '\\union' of arity 2 is argument number 1 (counting from 1) to operator `line 18, col 1 to line 18, col 45 of module M', \nbut an operator of arity 1 was expected.",
+        ],
+        ["line 19, col 6 to line 19, col 16", "Unknown operator: `P!Use'."],
+      ],
+    ],
+    [
+      "D == P(F)!I(1)!Nope",
+      [
+        [
+          "line 19, col 13 to line 19, col 13",
+          "An expression appears as argument number 2 (counting from 1) to operator 'P!I', in a position an operator is required.",
+        ],
+        ["line 19, col 6 to line 19, col 19", "Unknown operator: `P!I!Nope'."],
+      ],
+    ],
+    [
+      "THEOREM X == TRUE BY P(1)!Use",
+      [
+        [
+          "line 19, col 24 to line 19, col 24",
+          "An expression appears as argument number 1 (counting from 1) to operator 'P', in a position an operator is required.",
+        ],
+        ["line 19, col 22 to line 19, col 29", "Unknown operator: `P!Use'."],
+      ],
+    ],
+    [
+      "USE P(\\cup)!Use",
+      [
+        [
+          "line 19, col 5 to line 19, col 5",
+          "Operator with incorrect arity passed as argument. \nOperator '\\union' of arity 2 is argument number 1 (counting from 1) to operator `line 18, col 1 to line 18, col 45 of module M', \nbut an operator of arity 1 was expected.",
+        ],
+        ["line 19, col 5 to line 19, col 15", "Unknown operator: `P!Use'."],
+      ],
+    ],
+    [
+      "D == LET L(G(_)) == INSTANCE Pure WITH c <- 1, Op <- G IN L(1)!Use",
+      [
+        [
+          "line 19, col 61 to line 19, col 61",
+          "An expression appears as argument number 1 (counting from 1) to operator 'L', in a position an operator is required.",
+        ],
+        ["line 19, col 59 to line 19, col 66", "Unknown operator: `L!Use'."],
+      ],
+    ],
+    [
+      "D == P(\\cup)!I",
+      [
+        [
+          "line 19, col 6 to line 19, col 6",
+          "Operator with incorrect arity passed as argument. \nOperator '\\union' of arity 2 is argument number 1 (counting from 1) to operator `line 18, col 1 to line 18, col 45 of module M', \nbut an operator of arity 1 was expected.",
+        ],
+        ["line 19, col 6 to line 19, col 14", "The operator P!I requires 1 arguments."],
+      ],
+    ],
+    [
+      "D == P(F)!I",
+      [["line 19, col 6 to line 19, col 11", "The operator P!I requires 1 arguments."]],
+    ],
+    [
+      "D == P(\\cup)!I(F, F)",
+      [
+        [
+          "line 19, col 6 to line 19, col 6",
+          "Operator with incorrect arity passed as argument. \nOperator '\\union' of arity 2 is argument number 1 (counting from 1) to operator `line 18, col 1 to line 18, col 45 of module M', \nbut an operator of arity 1 was expected.",
+        ],
+        ["line 19, col 15 to line 19, col 20", "The operator P!I requires 1 arguments."],
+      ],
+    ],
+    [
+      "USE P(1)!I",
+      [
+        [
+          "line 19, col 7 to line 19, col 7",
+          "An expression appears as argument number 1 (counting from 1) to operator 'P', in a position an operator is required.",
+        ],
+        ["line 19, col 5 to line 19, col 10", "The operator P!I requires 1 arguments."],
+      ],
+    ],
+    [
+      "D == P(\\cup)!I(F)",
+      [
+        [
+          "line 19, col 6 to line 19, col 6",
+          "Operator with incorrect arity passed as argument. \nOperator '\\union' of arity 2 is argument number 1 (counting from 1) to operator `line 18, col 1 to line 18, col 45 of module M', \nbut an operator of arity 1 was expected.",
+        ],
+        ["line 19, col 14 to line 19, col 14", "Operator name P!I is incomplete."],
+      ],
+    ],
+    [
+      "D == P(F)!I(\\cup)",
+      [
+        [
+          "line 19, col 11 to line 19, col 11",
+          "Operator with incorrect arity passed as argument. \nOperator '\\union' of arity 2 is argument number 2 (counting from 1) to operator `line 18, col 1 to line 18, col 45 of module M', \nbut an operator of arity 1 was expected.",
+        ],
+        ["line 19, col 11 to line 19, col 11", "Operator name P!I is incomplete."],
+      ],
+    ],
+    [
+      "D == P(\\cup)!J",
+      [
+        [
+          "line 19, col 6 to line 19, col 6",
+          "Operator with incorrect arity passed as argument. \nOperator '\\union' of arity 2 is argument number 1 (counting from 1) to operator `line 18, col 1 to line 18, col 45 of module M', \nbut an operator of arity 1 was expected.",
+        ],
+        ["line 19, col 14 to line 19, col 14", "Operator name P!J is incomplete."],
+      ],
+    ],
+    [
+      "D == P(\\cup)!I!T3",
+      [
+        [
+          "line 19, col 6 to line 19, col 6",
+          "Operator with incorrect arity passed as argument. \nOperator '\\union' of arity 2 is argument number 1 (counting from 1) to operator `line 18, col 1 to line 18, col 45 of module M', \nbut an operator of arity 1 was expected.",
+        ],
+        ["line 19, col 6 to line 19, col 17", "The operator P!I requires 1 arguments."],
+      ],
+    ],
+    [
+      "D == P(\\cup)!E(1)",
+      [
+        [
+          "line 19, col 6 to line 19, col 6",
+          "Operator with incorrect arity passed as argument. \nOperator '\\union' of arity 2 is argument number 1 (counting from 1) to operator `line 18, col 1 to line 18, col 45 of module M', \nbut an operator of arity 1 was expected.",
+        ],
+        ["line 19, col 15 to line 19, col 17", "The operator P!E requires 0 arguments."],
+      ],
+    ],
+    [
+      "D == P(1)!E2",
+      [
+        [
+          "line 19, col 8 to line 19, col 8",
+          "An expression appears as argument number 1 (counting from 1) to operator 'P', in a position an operator is required.",
+        ],
+        ["line 19, col 6 to line 19, col 12", "The operator P!E2 requires 1 arguments."],
+      ],
+    ],
+    [
+      "THEOREM X == TRUE BY P(\\cup)!T(1)",
+      [
+        [
+          "line 19, col 22 to line 19, col 22",
+          "Operator with incorrect arity passed as argument. \nOperator '\\union' of arity 2 is argument number 1 (counting from 1) to operator `line 18, col 1 to line 18, col 45 of module M', \nbut an operator of arity 1 was expected.",
+        ],
+        ["line 19, col 31 to line 19, col 33", "The operator P!T requires 0 arguments."],
+      ],
+    ],
+    [
+      "D == P(1)!E",
+      [
+        [
+          "line 19, col 8 to line 19, col 8",
+          "An expression appears as argument number 1 (counting from 1) to operator 'P', in a position an operator is required.",
+        ],
+        [
+          "line 19, col 6 to line 19, col 11",
+          "Argument number 1 to operator 'P!E' \nshould be a 1-parameter operator.",
+        ],
+      ],
+    ],
+    [
+      "D == P(\\cup)!E",
+      [
+        [
+          "line 19, col 6 to line 19, col 6",
+          "Operator with incorrect arity passed as argument. \nOperator '\\union' of arity 2 is argument number 1 (counting from 1) to operator `line 18, col 1 to line 18, col 45 of module M', \nbut an operator of arity 1 was expected.",
+        ],
+        [
+          "line 19, col 6 to line 19, col 14",
+          "Argument number 1 to operator 'P!E' \nshould be a 1-parameter operator.",
+        ],
+      ],
+    ],
+    [
+      "D == P(\\cup)!Nope!1",
+      [
+        [
+          "line 19, col 6 to line 19, col 6",
+          "Operator with incorrect arity passed as argument. \nOperator '\\union' of arity 2 is argument number 1 (counting from 1) to operator `line 18, col 1 to line 18, col 45 of module M', \nbut an operator of arity 1 was expected.",
+        ],
+        ["line 19, col 6 to line 19, col 17", "Unknown operator: `P!Nope'."],
+      ],
+    ],
+    [
+      "D == P(1)!E2!1",
+      [
+        [
+          "line 19, col 8 to line 19, col 8",
+          "An expression appears as argument number 1 (counting from 1) to operator 'P', in a position an operator is required.",
+        ],
+        ["line 19, col 6 to line 19, col 14", "The operator P!E2 requires 1 arguments."],
+      ],
+    ],
+    [
+      "D == P(1)!I!E3!1",
+      [
+        [
+          "line 19, col 8 to line 19, col 8",
+          "An expression appears as argument number 1 (counting from 1) to operator 'P', in a position an operator is required.",
+        ],
+        ["line 19, col 6 to line 19, col 16", "The operator P!I requires 1 arguments."],
+      ],
+    ],
+    [
+      "D == P(1)!<<",
+      [
+        [
+          "line 19, col 8 to line 19, col 8",
+          "An expression appears as argument number 1 (counting from 1) to operator 'P', in a position an operator is required.",
+        ],
+        ["line 19, col 6 to line 19, col 6", "Unknown operator: `P'."],
+      ],
+    ],
+    [
+      "D == P(1)!T!1",
+      [
+        [
+          "line 19, col 8 to line 19, col 8",
+          "An expression appears as argument number 1 (counting from 1) to operator 'P', in a position an operator is required.",
+        ],
+        [
+          "line 19, col 6 to line 19, col 13",
+          "Argument number 1 to operator 'LAMBDA' \nshould be a 1-parameter operator.",
+        ],
+      ],
+    ],
+    [
+      "D == P(\\cup)!E!1",
+      [
+        [
+          "line 19, col 6 to line 19, col 6",
+          "Operator with incorrect arity passed as argument. \nOperator '\\union' of arity 2 is argument number 1 (counting from 1) to operator `line 18, col 1 to line 18, col 45 of module M', \nbut an operator of arity 1 was expected.",
+        ],
+        [
+          "line 19, col 6 to line 19, col 16",
+          "Argument number 1 to operator 'LAMBDA' \nshould be a 1-parameter operator.",
+        ],
+      ],
+    ],
+    [
+      "D == P(1)!T!3",
+      [
+        [
+          "line 19, col 8 to line 19, col 8",
+          "An expression appears as argument number 1 (counting from 1) to operator 'P', in a position an operator is required.",
+        ],
+        [
+          "line 19, col 13 to line 19, col 13",
+          "Nonexistent operand specified by `argument selector 3'.",
+        ],
+      ],
+    ],
+    [
+      "D == P(1)!I(\\cup)!E3!2",
+      [
+        [
+          "line 19, col 8 to line 19, col 8",
+          "An expression appears as argument number 1 (counting from 1) to operator 'P', in a position an operator is required.",
+        ],
+        [
+          "line 19, col 11 to line 19, col 11",
+          "Operator with incorrect arity passed as argument. \nOperator '\\union' of arity 2 is argument number 2 (counting from 1) to operator `line 18, col 1 to line 18, col 45 of module M', \nbut an operator of arity 1 was expected.",
+        ],
+        [
+          "line 19, col 22 to line 19, col 22",
+          "Nonexistent operand specified by `argument selector 2'.",
+        ],
+      ],
+    ],
+    [
+      "D == P(1)!E2!:",
+      [
+        [
+          "line 19, col 8 to line 19, col 8",
+          "An expression appears as argument number 1 (counting from 1) to operator 'P', in a position an operator is required.",
+        ],
+        ["line 19, col 6 to line 19, col 14", "The operator P!E2 requires 1 arguments."],
+      ],
+    ],
+  ])(
+    "checks the arguments of each instance in %j before the error after them like SANY",
+    async (uses, errors) => {
+      await expect(checkNames(`${INSTANCE_PREFIXES}\n${uses}`)).rejects.toThrow(
+        createSanyError(
+          errors.map((error) => ({ location: `${error[0]} of module M`, message: error[1] })),
+        ),
+      );
+    },
+  );
+
   it.each([
     [
       "---- MODULE P ----\nCONSTANT ba, ab\nVARIABLE v\n====\nK == INSTANCE P",
