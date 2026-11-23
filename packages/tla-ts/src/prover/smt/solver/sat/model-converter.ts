@@ -15,7 +15,7 @@ export interface McEntry {
   elimStacks: (number[] | undefined)[];
 }
 
-const getLitValue = (lit: number, model: Int8Array) => {
+export const getLitValue = (lit: number, model: Int8Array) => {
   const value = model[lit >> 1];
   return (lit & 1) === 1 ? -value : value;
 };

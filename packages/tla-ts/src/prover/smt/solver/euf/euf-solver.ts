@@ -52,6 +52,12 @@ export interface EufInternalizer {
 // A theory solver for the family of a declaration, created on first use like euf::solver::get_solver.
 export type ThSolverFactory = (ctx: EufSolver, family: number) => ThSolver | null;
 
+export interface UnhandledFun {
+  decl: number;
+  domain: number[];
+  range: number;
+}
+
 const K_CONFLICT = 0;
 const K_EQ = 1;
 const K_LIT = 2;
@@ -83,7 +89,7 @@ export class EufSolver implements SatExtension {
   private varTrail: number[] = [];
   private scopes: number[] = [];
   readonly trail = new TrailStack();
-  readonly unhandledFunctions: number[] = [];
+  readonly unhandledFunctions: UnhandledFun[] = [];
   generation = 0;
   private constraints: Constraint[] = [
     { owner: null, kind: K_CONFLICT, node: null, data: null },
@@ -104,6 +110,7 @@ export class EufSolver implements SatExtension {
     readonly si: EufInternalizer,
     readonly s: Solver,
     readonly mkThSolver: ThSolverFactory,
+    private readonly isArithIgnoringInt: boolean,
   ) {
     this.egraph = new Egraph(manager);
     this.egraph.onPropagateLiteral = (node, ante) => this.propagateLiteral(node, ante);
@@ -174,7 +181,7 @@ export class EufSolver implements SatExtension {
     if (family === FAMILY_BASIC || family === FAMILY_USER) return null;
     const solver = this.mkThSolver(this, family);
     if (solver !== null) this.addSolver(solver);
-    else if (decl !== -1) this.unhandledFunction(decl);
+    else if (decl !== -1) this.unhandledFunction(decl, this.manager.funcDecls[decl].domain);
     return solver;
   }
 
@@ -186,13 +193,14 @@ export class EufSolver implements SatExtension {
     if (solver.useDiseqs()) this.egraph.setThPropagatesDiseqs(solver.id);
   }
 
-  private unhandledFunction(decl: number) {
+  private unhandledFunction(decl: number, domain: number[]) {
+    const funcDecl = this.manager.funcDecls[decl];
     if (
-      this.unhandledFunctions.includes(decl) ||
-      this.manager.funcDecls[decl].family === FAMILY_MODEL_VALUE
+      this.unhandledFunctions.some((fun) => fun.decl === decl) ||
+      funcDecl.family === FAMILY_MODEL_VALUE
     )
       return;
-    this.unhandledFunctions.push(decl);
+    this.unhandledFunctions.push({ decl, domain, range: funcDecl.range });
     this.trail.push(() => this.unhandledFunctions.pop());
   }
 
@@ -306,7 +314,10 @@ export class EufSolver implements SatExtension {
       const sortSolver = this.sort2solver(sort);
       if (sortSolver !== null && sortSolver !== exprSolver) sortSolver.applySortCnstr(node, sort);
       else if (sortSolver === null && exprSolver === null && manager.isApp(expr))
-        this.unhandledFunction(manager.decls[expr]);
+        this.unhandledFunction(
+          manager.decls[expr],
+          manager.getArgs(expr).map((arg) => manager.sorts[arg]),
+        );
     }
     if (manager.getFamily(expr) === FAMILY_BASIC && manager.getOp(expr) === OP_EQ)
       this.sort2solver(manager.sorts[manager.getArg(expr, 0)])?.eqInternalized(node);
@@ -901,7 +912,7 @@ export class EufSolver implements SatExtension {
     this.reinits = [];
   }
 
-  isRelevant() {
+  isRelevant(_node: Enode) {
     return true;
   }
 
@@ -921,6 +932,23 @@ export class EufSolver implements SatExtension {
 
   preSimplify() {
     for (const solver of this.solvers) solver.preSimplify();
+  }
+
+  shouldResearch(core: readonly number[]) {
+    let isResearching = false;
+    for (const solver of this.solvers) if (solver.shouldResearch(core)) isResearching = true;
+    return isResearching;
+  }
+
+  addAssumptions(assumptions: Set<number>) {
+    for (const solver of this.solvers) solver.addAssumptions(assumptions);
+  }
+
+  trackingAssumptions() {
+    const solvers = this.solvers;
+    for (let index = 0; index < solvers.length; index++)
+      if (solvers[index].trackingAssumptions()) return true;
+    return false;
   }
 
   simplify() {
@@ -954,7 +982,7 @@ export class EufSolver implements SatExtension {
     this.qmodel = model;
   }
 
-  updateModel(model: ProtoModel) {
+  updateModel(model: ProtoModel, isValidating: boolean) {
     if (this.qmodel !== null) return this.qmodel;
     model.resetEvalCache();
     for (const solver of this.solvers) solver.initModel();
@@ -968,23 +996,30 @@ export class EufSolver implements SatExtension {
     this.values2model(deps, model);
     for (const solver of this.solvers) solver.finalizeModel(model);
     userSorts.registerWith(model);
+    if (isValidating) this.validateModel(model);
     return model;
   }
 
   // validate_model, for its side effect: evaluating an application of a partial theory function,
   // such as a division by zero, completes its interpretation with some value.
-  validateModel(model: ProtoModel) {
-    if (this.hasUnhandled() || this.solvers.some((solver) => solver.hasUnhandled())) return;
+  private validateModel(model: ProtoModel) {
+    if (
+      this.hasUnhandled() ||
+      this.isArithIgnoringInt ||
+      this.solvers.some((solver) => solver.hasUnhandled())
+    )
+      return;
     const manager = this.manager;
     for (const node of this.egraph.nodes) {
       const expr = node.owner;
       if (!manager.isBool(expr) || manager.hasQuantifierFlags[expr] === 1) continue;
+      if (!this.isRelevant(node)) continue;
       if (node.boolVar === NULL_BOOL_VAR) continue;
       const value = model.eval(expr, false);
-      if (
-        this.s.value(2 * node.boolVar) === L_TRUE ? manager.isFalse(value) : manager.isTrue(value)
-      )
-        throw new SmtInvariantError("the euf model falsifies an assignment");
+      const isFalsified =
+        this.s.value(2 * node.boolVar) === L_TRUE ? manager.isFalse(value) : manager.isTrue(value);
+      manager.decRef(value);
+      if (isFalsified) throw new SmtInvariantError("the euf model falsifies an assignment");
     }
   }
 

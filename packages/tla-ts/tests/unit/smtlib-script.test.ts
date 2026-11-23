@@ -1101,6 +1101,55 @@ describe("runSmtlibScript prints what Z3 prints", () => {
     ]);
   });
 
+  it("gives up on the string terms sat.euf has no solver for", () => {
+    expect(
+      run([
+        "(set-option :auto_config false)",
+        "(set-option :smt.mbqi true)",
+        "(set-option :produce-unsat-cores true)",
+        "(set-option :sat.random_seed 5)",
+        "(set-option :sat.euf true)",
+        "(declare-const s0 String)",
+        "(declare-const s1 String)",
+        "(declare-const s2 String)",
+        "(assert (! (not (not (str.is_digit (str.at s2 (- 1))))) :named a0))",
+        '(assert (! (str.<= (str.from_int (str.indexof s0 s1 2)) (ite (str.is_digit (str.replace_all s0 s1 "")) (str.substr s0 (- 3) (- 3)) (str.from_code 0))) :named a1))',
+        '(assert (! (and (str.in_re (str.replace s0 "00" s1) (re.union (re.range "b" "b") (re.range "b" "c"))) (xor (str.suffixof s1 s0) (str.suffixof (str.at s1 (- 3)) (str.replace s2 s0 "")))) :named a2))',
+        '(assert (not (=> (str.suffixof (str.from_int (- 1)) (str.replace s2 s2 s2)) (distinct (str.replace_all s0 s0 "c") s1))))',
+        "(check-sat)",
+        "(get-model)",
+        "(get-info :reason-unknown)",
+        "(get-model)",
+        "(get-unsat-core)",
+      ]),
+    ).toEqual([
+      "unknown",
+      '(error "line 14 column 10: model is not available")',
+      [
+        '(:reason-unknown "(sat.giveup interpreted functions sent to SAT solver (declare-fun str.is_digit (String) Bool)',
+        "(declare-fun s0 () String)",
+        "(declare-fun s1 () String)",
+        "(declare-fun String () String)",
+        "(declare-fun str.replace_all (String String String) String)",
+        "(declare-fun str.indexof (String String Int) Int)",
+        "(declare-fun str.from_int (Int) String)",
+        "(declare-fun str.< (String String) Bool)",
+        "(declare-fun String () String)",
+        "(declare-fun str.in_re (String (RegEx String)) Bool)",
+        "(declare-fun String () String)",
+        "(declare-fun str.replace (String String String) String)",
+        "(declare-fun String () String)",
+        "(declare-fun String () String)",
+        "(declare-fun re.range (String String) (RegEx String))",
+        "(declare-fun str.suffixof (String String) Bool)",
+        "(declare-fun ite (Bool String String) String)",
+        ')")',
+      ].join("\n"),
+      '(error "line 16 column 10: model is not available")',
+      '(error "line 17 column 15: unsat core is not available")',
+    ]);
+  });
+
   it("answers datatypes with sat.euf's datatype solver", () => {
     const header = ["(set-option :sat.euf true)", "(set-option :tactic.default_tactic smt)"];
     expect(
@@ -1152,6 +1201,181 @@ describe("runSmtlibScript prints what Z3 prints", () => {
         ")",
       ].join("\n"),
       "unsat",
+    ]);
+  });
+
+  // The first case is z3test's regressions/issues/5454.smt2.
+  it("answers recursive functions with sat.euf's recfun solver", () => {
+    const header = ["(set-option :sat.euf true)", "(set-option :tactic.default_tactic smt)"];
+    expect(
+      run([
+        ...header,
+        "(define-funs-rec ((f () Int) (pred ((y Int)) Bool)) (0 (ite (< y 0) false (ite (= y 0) true (pred (- y 2))))))",
+        "(assert (not (pred 5)))",
+        "(check-sat)",
+        "(get-value ((pred 5) (pred 4) (pred 3)))",
+        "(get-info :rlimit)",
+        "(reset)",
+        ...header,
+        "(define-fun-rec len ((n Int)) Int (ite (<= n 0) 0 (+ 1 (len (- n 1)))))",
+        "(declare-const x Int)",
+        "(assert (= (len x) 4))",
+        "(check-sat)",
+        "(get-value (x))",
+        "(get-info :rlimit)",
+        "(reset)",
+        ...header,
+        "(define-fun-rec even ((n Int)) Bool (ite (= n 0) true (ite (= n 1) false (even (- n 2)))))",
+        "(assert (even 7))",
+        "(check-sat)",
+        "(get-info :rlimit)",
+        "(reset)",
+        ...header,
+        "(define-fun-rec f ((n Int)) Int (ite (<= n 0) 1 (* 2 (f (- n 1)))))",
+        "(declare-const x Int)",
+        "(assert (> (f x) 100))",
+        "(assert (< x 10))",
+        "(check-sat)",
+        "(get-value (x (f x)))",
+        "(get-info :rlimit)",
+      ]),
+    ).toEqual([
+      "sat",
+      ["(((pred 5) false)", " ((pred 4) true)", " ((pred 3) false))"].join("\n"),
+      "(:rlimit 603)",
+      "sat",
+      "((x 4))",
+      "(:rlimit 882)",
+      "unsat",
+      "(:rlimit 143)",
+      "sat",
+      ["((x 7)", " ((f x) 128))"].join("\n"),
+      "(:rlimit 1921)",
+    ]);
+  });
+
+  it("answers unknown when sat.euf's recfun research drops the assumptions, as Z3 does", () => {
+    expect(
+      run([
+        "(set-option :sat.euf true)",
+        "(set-option :tactic.default_tactic smt)",
+        "(define-fun-rec len ((n Int)) Int (ite (<= n 0) 0 (+ 1 (len (- n 1)))))",
+        "(declare-const x Int)",
+        "(declare-const p Bool)",
+        "(assert (=> p (= (len x) 3)))",
+        "(check-sat-assuming (p))",
+        "(get-info :rlimit)",
+        "(get-info :reason-unknown)",
+        "(get-model)",
+        "(get-value (p))",
+      ]),
+    ).toEqual([
+      "unknown",
+      "(:rlimit 88)",
+      '(:reason-unknown "no reason given")',
+      [
+        "(",
+        "  (define-fun p () Bool",
+        "    false)",
+        "  (define-fun x () Int",
+        "    (- 8855))",
+        ")",
+      ].join("\n"),
+      "((p false))",
+    ]);
+  });
+
+  it("answers unknown where sat.euf's recfun research drops a named assertion and Z3 answers sat", () => {
+    expect(
+      run([
+        "(set-option :produce-unsat-cores true)",
+        "(set-option :sat.euf true)",
+        "(set-option :tactic.default_tactic smt)",
+        "(define-fun-rec len ((n Int)) Int (ite (<= n 0) 0 (+ 1 (len (- n 1)))))",
+        "(declare-const x Int)",
+        "(assert (! (= (len x) 3) :named a))",
+        "(assert (< x 2))",
+        "(check-sat)",
+        "(get-info :reason-unknown)",
+        "(get-value (a x (len x)))",
+        "(get-info :rlimit)",
+      ]),
+    ).toEqual([
+      "unknown",
+      '(:reason-unknown "no reason given")',
+      ["((a false)", " (x (- 11797))", " ((len x) 0))"].join("\n"),
+      "(:rlimit 170)",
+    ]);
+  });
+
+  it("validates the sat.euf model each time the incremental sat solver builds it", () => {
+    expect(
+      run([
+        "(set-option :sat.euf true)",
+        "(set-option :tactic.default_tactic smt)",
+        "(declare-const x Int)",
+        "(declare-const y Int)",
+        "(declare-const p Bool)",
+        "(assert (=> p (and (> x 3) (< (+ x y) 2))))",
+        "(check-sat-assuming (p))",
+        "(get-info :rlimit)",
+        "(get-model)",
+        "(get-info :rlimit)",
+        "(get-value (p (+ x y)))",
+        "(get-info :rlimit)",
+      ]),
+    ).toEqual([
+      "sat",
+      "(:rlimit 53)",
+      [
+        "(",
+        "  (define-fun p () Bool",
+        "    true)",
+        "  (define-fun x () Int",
+        "    4)",
+        "  (define-fun y () Int",
+        "    (- 21241))",
+        ")",
+      ].join("\n"),
+      "(:rlimit 64)",
+      ["((p true)", " ((+ x y) (- 21237)))"].join("\n"),
+      "(:rlimit 78)",
+    ]);
+  });
+
+  it("skips validating the sat.euf model under smt.arith.ignore_int", () => {
+    expect(
+      run([
+        "(set-option :sat.euf true)",
+        "(set-option :tactic.default_tactic smt)",
+        "(set-option :smt.arith.ignore_int true)",
+        "(declare-const x Int)",
+        "(declare-const y Int)",
+        "(declare-const p Bool)",
+        "(assert (=> p (and (> x 3) (< (+ x y) 2))))",
+        "(check-sat-assuming (p))",
+        "(get-info :rlimit)",
+        "(get-model)",
+        "(get-info :rlimit)",
+        "(get-value (p (+ x y)))",
+        "(get-info :rlimit)",
+      ]),
+    ).toEqual([
+      "sat",
+      "(:rlimit 53)",
+      [
+        "(",
+        "  (define-fun p () Bool",
+        "    true)",
+        "  (define-fun x () Int",
+        "    4)",
+        "  (define-fun y () Int",
+        "    (- 21241))",
+        ")",
+      ].join("\n"),
+      "(:rlimit 57)",
+      ["((p true)", " ((+ x y) (- 21237)))"].join("\n"),
+      "(:rlimit 64)",
     ]);
   });
 

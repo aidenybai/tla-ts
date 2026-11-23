@@ -603,7 +603,7 @@ const compileMembership = (
     const evaluated = evaluate(set, context);
     const value: Value =
       expression.operator === "\\subseteq"
-        ? { kind: "Subset", base: evaluated, costNode: undefined, secondary: undefined }
+        ? { kind: "Subset", base: evaluated, cost: undefined }
         : evaluated;
     if (!isTlcEnumerable(value)) {
       const message = run.isEnabled

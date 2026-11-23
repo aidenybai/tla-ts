@@ -119,7 +119,10 @@ export class MkElimTermIte implements RuleTransformerPlugin {
     const rules = new RuleSet(this.context);
     rules.inheritPredicates(source);
     let isChanged = false;
-    for (const rule of source.rules) if (this.elim(rule, rules)) isChanged = true;
+    for (const rule of source.rules) {
+      if (this.context.isCanceled()) return undefined;
+      if (this.elim(rule, rules)) isChanged = true;
+    }
     return isChanged ? rules : undefined;
   }
 }

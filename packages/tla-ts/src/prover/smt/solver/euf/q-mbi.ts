@@ -577,7 +577,7 @@ export class Mbqi {
     if (this.model !== null) return;
     const model = new ProtoModel(this.manager).mkModel();
     this.setModel(model);
-    this.ctx.updateModel(model);
+    this.ctx.updateModel(model, false);
   }
 
   // init_solver: mk_smt2_solver gives the incremental sat solver of sat.euf.

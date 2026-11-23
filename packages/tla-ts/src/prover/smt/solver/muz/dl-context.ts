@@ -21,7 +21,7 @@ import { RuleProperties } from "./rule-properties";
 
 export const ENGINE_DATALOG = 0;
 export const ENGINE_SPACER = 1;
-const ENGINE_BMC = 2;
+export const ENGINE_BMC = 2;
 const ENGINE_QBMC = 3;
 const ENGINE_TAB = 4;
 const ENGINE_CLP = 5;
@@ -40,7 +40,7 @@ const ENGINE_NAMES = new Map([
 
 // As in Z3, these are copied when the context is made, so a later fp option doesn't apply.
 export class FpParams {
-  readonly parameters: ReadonlyMap<string, string>;
+  private parameters: ReadonlyMap<string, string>;
 
   constructor(parameters: ReadonlyMap<string, string>) {
     this.parameters = new Map(parameters);
@@ -63,9 +63,11 @@ export class FpParams {
 
 export type ModelConverter = (model: ProtoModel) => ProtoModel;
 
+type ExecutionResult = "ok" | "bounded" | "canceled";
+
 export interface Engine {
   query(query: number): number;
-  getModel(): ProtoModel;
+  getModel(): ProtoModel | undefined;
 }
 
 type EngineFactory = (context: DatalogContext, engine: number) => Engine;
@@ -87,19 +89,51 @@ export class DatalogContext {
   readonly rewriter: Rewriter;
   // m_mc: the converters since the last query, or undefined before one.
   modelConverters: ModelConverter[] | undefined;
-  isBounded = false;
+  status: ExecutionResult = "ok";
+  readonly params: FpParams;
+  private transformedRuleSet: RuleSet;
 
   constructor(
     readonly manager: AstManager,
-    readonly params: FpParams,
+    readonly parameters: ReadonlyMap<string, string>,
     readonly rewriterOptions: RewriterOptions,
     private engineFactory: EngineFactory,
   ) {
+    this.params = new FpParams(parameters);
     this.ruleManager = new RuleManager(manager, this);
     this.ruleProperties = new RuleProperties(this);
     this.bindVariables = new BindVariables(manager);
     this.ruleSet = new RuleSet(this);
+    this.transformedRuleSet = new RuleSet(this);
     this.rewriter = new Rewriter(manager, rewriterOptions);
+  }
+
+  isCanceled() {
+    if (this.manager.limit.inc()) return false;
+    this.status = "canceled";
+    return true;
+  }
+
+  cleanup() {
+    this.status = "ok";
+  }
+
+  recordTransformedRules() {
+    this.transformedRuleSet.replaceRules(this.ruleSet);
+  }
+
+  displayProfile() {
+    return `\n---------------\nOriginal rules\n${this.ruleSet.display()}\n---------------\nTransformed rules\n${this.transformedRuleSet.display()}`;
+  }
+
+  reset() {
+    this.ruleSet.reset();
+    this.ruleFmlsHead = 0;
+    for (const fml of this.ruleFmls) this.manager.decRef(fml);
+    this.ruleFmls = [];
+    this.ruleNames = [];
+    this.preds.clear();
+    this.engine = undefined;
   }
 
   // th_rewriter: the result comes with a reference.
@@ -142,9 +176,11 @@ export class DatalogContext {
   withoutBindingVariables<T>(body: () => T) {
     const saved = this.isBindingVariables;
     this.isBindingVariables = false;
-    const result = body();
-    this.isBindingVariables = saved;
-    return result;
+    try {
+      return body();
+    } finally {
+      this.isBindingVariables = saved;
+    }
   }
 
   addRule(fml: number, name?: string) {
@@ -305,7 +341,7 @@ export class DatalogContext {
 
   query(query: number) {
     this.modelConverters = [];
-    this.isBounded = false;
+    this.status = "ok";
     this.getEngine(query);
     this.flushAddRules();
     return this.ensureEngine(query).query(query);

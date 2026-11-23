@@ -1,7 +1,7 @@
 import { SmtTacticError, SmtUnsupportedError } from "../../../../errors";
 import { type AstManager, getSymbolName, KIND_VAR, OP_AND, OP_IMPLIES, SORT_BOOL } from "../ast";
 import { flattenOrVector, pushNotOwned } from "../ast-util";
-import { ObjHashtable, ObjMap } from "../hashtable";
+import { ObjMap } from "../hashtable";
 import { L_FALSE, L_TRUE, L_UNDEF } from "../lbool";
 import { ExprSafeReplace } from "../expr-safe-replace";
 import { FuncInterp, ProtoModel } from "../proto-model";
@@ -445,13 +445,13 @@ class PredTransformer {
     const manager = context.manager;
     this.manager = manager;
     const spacer = context.spacerManager;
-    this.reachSolver = new IucSolver(manager, spacer, context.params.parameters);
+    this.reachSolver = new IucSolver(manager, spacer, context.datalogContext.parameters);
     this.solver = new PropSolver(
       manager,
       spacer,
       this.getHeadName(),
       context.params.getUint("spacer.random_seed", 0),
-      context.params.parameters,
+      context.datalogContext.parameters,
     );
     manager.funcDecls[head].domain.forEach((sort, index) => {
       const decl = spacer.mkFuncDecl(`${this.getHeadName()}_${index}`, [], sort);
@@ -1091,12 +1091,9 @@ export class SpacerContext {
 
   updateRules(rules: RuleSet) {
     const manager = this.manager;
-    // decl2rel and the grouped rules are tables that Z3 walks in slot order.
-    const getHash = (decl: number) => manager.getDeclHash(decl);
-    const heads = new ObjHashtable(getHash);
-    for (const predicate of rules.getHeadPredicates()) heads.add(predicate);
-    const table = new ObjMap<PredTransformer>(getHash);
-    for (const predicate of heads) {
+    // Z3 walks its table of predicate transformers in slot order.
+    const table = new ObjMap<PredTransformer>((decl) => manager.getDeclHash(decl));
+    for (const predicate of rules.getGroupedPredicates()) {
       const pt = new PredTransformer(this, predicate);
       table.set(predicate, pt);
       pt.rules.push(...rules.getPredicateRules(predicate));
@@ -1140,7 +1137,7 @@ export class SpacerContext {
       this.pobQueue.incLevel();
       level = this.pobQueue.maxLevel;
     }
-    this.datalogContext.isBounded = true;
+    this.datalogContext.status = "bounded";
     return L_UNDEF;
   }
 

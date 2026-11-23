@@ -1,5 +1,6 @@
 import { SmtTacticError } from "../../../../errors";
-import { type AstManager, KIND_APP, KIND_QUANTIFIER } from "../ast";
+import { type AstManager, getSymbolName, KIND_APP, KIND_QUANTIFIER } from "../ast";
+import { ObjHashtable } from "../hashtable";
 import type { DatalogContext } from "./dl-context";
 import type { Rule } from "./dl-rule";
 
@@ -143,12 +144,14 @@ export class RuleSet {
   private head2rules = new Map<number, Rule[]>();
   readonly deps: RuleDependencies;
   private stratifier: RuleStratifier | undefined;
-  outputPredicates = new Set<number>();
+  readonly outputPredicates: ObjHashtable;
   private orig2pred = new Map<number, number>();
   private pred2orig = new Map<number, number>();
 
   constructor(readonly context: DatalogContext) {
     this.deps = new RuleDependencies(context);
+    const manager = context.manager;
+    this.outputPredicates = new ObjHashtable((decl) => manager.getDeclHash(decl));
   }
 
   static copy(other: RuleSet) {
@@ -168,7 +171,7 @@ export class RuleSet {
     this.head2rules.clear();
     this.deps.reset();
     this.stratifier = undefined;
-    this.outputPredicates = new Set();
+    this.outputPredicates.clear();
     this.orig2pred.clear();
     this.pred2orig.clear();
   }
@@ -247,8 +250,17 @@ export class RuleSet {
     return this.head2rules.get(predicate) ?? [];
   }
 
-  getHeadPredicates() {
-    return this.head2rules.keys();
+  // Z3 walks the grouped rules in the slot order of a table of their heads.
+  getGroupedPredicates() {
+    const manager = this.manager;
+    const heads = new ObjHashtable((decl) => manager.getDeclHash(decl));
+    for (const predicate of this.head2rules.keys()) heads.add(predicate);
+    return heads;
+  }
+
+  isFiniteDomain() {
+    for (const rule of this.rules) if (!this.context.ruleManager.isFiniteDomain(rule)) return false;
+    return true;
   }
 
   getStrats() {
@@ -268,6 +280,17 @@ export class RuleSet {
   }
 
   getOutputPredicate() {
-    return this.outputPredicates.values().next().value as number;
+    const [predicate] = this.outputPredicates;
+    return predicate;
+  }
+
+  display() {
+    const manager = this.manager;
+    let text = `; rule count: ${this.rules.length}\n; predicate count: ${this.head2rules.size}\n`;
+    for (const predicate of this.outputPredicates)
+      text += `; output: ${getSymbolName(manager.funcDecls[predicate].name)}\n`;
+    for (const predicate of this.getGroupedPredicates())
+      for (const rule of this.getPredicateRules(predicate)) text += rule.display(this.context);
+    return text;
   }
 }

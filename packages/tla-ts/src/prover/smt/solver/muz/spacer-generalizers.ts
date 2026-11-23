@@ -194,7 +194,7 @@ const mkArrayEqGeneralizer =
       isMbqi: true,
       isFindingMacros: false,
       mbqiMaxIterations: MBQI_MAX_ITERATIONS,
-      ...getGlobalSmtParams(context.params.parameters),
+      ...getGlobalSmtParams(context.datalogContext.parameters),
     });
     const lits = [...core];
     let isDirty = false;
