@@ -2338,6 +2338,7 @@ export const getHostLocale = (
   text: string,
   words: ReadonlySet<string>,
   answers: ReadonlySet<string>,
+  literals: ReadonlySet<string>,
   realm: HostRealm,
 ) => {
   if (!["Intl", "toLocaleString", "localeCompare"].some((word) => words.has(word)))
@@ -2346,6 +2347,9 @@ export const getHostLocale = (
   const tags = [
     ...new Set([
       ...[...text.matchAll(/["'`]([A-Za-z0-9_-]{1,60})["'`]/g)].map((match) => match[1]),
+      // A string the program writes that isn't a structurally valid tag, such as "" or "en-ß",
+      // which a program may pass to find out.
+      ...[...literals].filter((literal) => literal.length <= 60),
       realm.locale,
       ...[...answers].filter((answer) => /^[A-Za-z0-9-]{2,60}$/.test(answer)),
     ]),

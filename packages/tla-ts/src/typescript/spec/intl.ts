@@ -1241,7 +1241,11 @@ export const getHostIntl = (sourceFiles: readonly ts.SourceFile[], words: Readon
     "toLocaleDateString",
     "toLocaleTimeString",
   ].some((word) => words.has(word));
-  const literals = getLiterals(services.length === 0 && !isNamed ? [] : sourceFiles);
+  // HostLocale reads the literals too, where the program names Intl or a method that reads it.
+  const isLocaleRead = ["Intl", "toLocaleString", "localeCompare"].some((word) => words.has(word));
+  const literals = getLiterals(
+    services.length === 0 && !isNamed && !isLocaleRead ? [] : sourceFiles,
+  );
   for (const service of services) {
     if (service.name === "NumberFormat") {
       for (const text of literals.strings) {
@@ -1407,5 +1411,5 @@ export const getHostIntl = (sourceFiles: readonly ts.SourceFile[], words: Readon
           : `HostIntl(key) ==\n  CASE ${[...tables.map((table) => `key \\in DOMAIN ${table.name} -> ${table.name}[key]`), `OTHER -> [found |-> "unknown"]`].join("\n    [] ")}`,
     },
   ];
-  return { definitions, strings };
+  return { definitions, strings, literals: literals.strings };
 };

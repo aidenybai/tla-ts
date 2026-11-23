@@ -1887,6 +1887,33 @@ describe("compiles scripts by specializing ESCore", () => {
       const source = 'Intl.getCanonicalLocales(["de", "AT"].join("-"));';
       expect((await checkScript(source)).message).toContain("tla-ts can't");
     });
+
+    // Strings the program writes that aren't structurally valid tags, such as the empty one.
+    describe("rejects a string that isn't a tag as Node does", () => {
+      const getSource = (expected: string) => `
+        let names = "";
+        for (const tag of ["", "en-ß", " en"]) {
+          try {
+            new Intl.Collator(tag);
+          } catch (error) {
+            names += (error as Error).name + ";";
+          }
+        }
+        if (names !== "${expected}") throw new Error(names);
+      `;
+
+      it("agrees with Node", async () => {
+        const expected = "RangeError;RangeError;RangeError;";
+        expect(() => runInNewContext(stripTypeScriptTypes(getSource(expected)))).not.toThrow();
+        expect((await checkScript(getSource(expected))).message).toBeUndefined();
+      });
+
+      it("rejects another error", async () => {
+        const expected = "RangeError;RangeError;TypeError;";
+        expect(() => runInNewContext(stripTypeScriptTypes(getSource(expected)))).toThrow();
+        expect((await checkScript(getSource(expected))).message).toContain(THREW);
+      });
+    });
   });
 
   describe("constructs the Intl objects whose options read no locale data", () => {
