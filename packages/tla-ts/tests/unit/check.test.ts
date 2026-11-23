@@ -13588,6 +13588,126 @@ ASSUME TLCFP(a) = -887695703
       ]).toEqual([[undefined, label], coverageLabels]);
     },
   );
+
+  it.each([
+    [
+      "J == INSTANCE Pure WITH c <- x, Op <- F",
+      "x' = J!E6",
+      [
+        "line 7, col 9 to line 7, col 17 of module M: 3",
+        "|line 7, col 14 to line 7, col 17 of module M: 3",
+        "||line 5, col 30 to line 5, col 30 of module M: 3",
+        "||line 8, col 7 to line 8, col 11 of module Pure: 9",
+        "|||line 8, col 10 to line 8, col 10 of module Pure: 3",
+      ],
+    ],
+    [
+      "J == INSTANCE Pure WITH c <- x, Op <- LAMBDA a : a + 1",
+      "x' = J!E3",
+      [
+        "line 7, col 9 to line 7, col 17 of module M: 2",
+        "|line 7, col 14 to line 7, col 17 of module M: 2",
+        "||line 5, col 30 to line 5, col 30 of module M: 2",
+        "||line 6, col 7 to line 6, col 15 of module Pure: 2",
+        "|||line 6, col 7 to line 6, col 11 of module Pure: 6",
+        "||||line 6, col 10 to line 6, col 10 of module Pure: 2",
+      ],
+    ],
+    [
+      "P(k) == INSTANCE Pure WITH c <- x, Op <- LAMBDA a : a + k",
+      "x' = P(1)!E6",
+      [
+        "line 7, col 9 to line 7, col 20 of module M: 3",
+        "|line 7, col 14 to line 7, col 20 of module M: 3",
+        "||line 5, col 33 to line 5, col 33 of module M: 3",
+        "||line 8, col 7 to line 8, col 11 of module Pure: 12",
+        "|||line 8, col 10 to line 8, col 10 of module Pure: 3",
+      ],
+    ],
+    [
+      "Pad == 0",
+      "LET L == INSTANCE Pure WITH c <- x, Op <- F IN x' = L!E3",
+      [
+        "line 7, col 56 to line 7, col 64 of module M: 2",
+        "|line 7, col 61 to line 7, col 64 of module M: 2",
+        "||line 7, col 42 to line 7, col 42 of module M: 2",
+        "||line 6, col 7 to line 6, col 15 of module Pure: 2",
+        "|||line 6, col 7 to line 6, col 11 of module Pure: 6",
+        "||||line 6, col 10 to line 6, col 10 of module Pure: 2",
+      ],
+    ],
+    [
+      "Pad == 0",
+      "LET L == INSTANCE Pure WITH c <- x, Op <- LAMBDA a : a + 1 IN x' = L!E6",
+      [
+        "line 7, col 71 to line 7, col 79 of module M: 3",
+        "|line 7, col 76 to line 7, col 79 of module M: 3",
+        "||line 7, col 42 to line 7, col 42 of module M: 3",
+        "||line 8, col 7 to line 8, col 11 of module Pure: 9",
+        "|||line 8, col 10 to line 8, col 10 of module Pure: 3",
+      ],
+    ],
+    [
+      "Pad == 0",
+      "LET L == INSTANCE Pure WITH c <- x, Op <- F IN x' = L!E11",
+      [
+        "line 7, col 56 to line 7, col 65 of module M: 3",
+        "|line 7, col 61 to line 7, col 65 of module M: 3",
+        "||line 7, col 42 to line 7, col 42 of module M: 3",
+        "||line 5, col 8 to line 5, col 12 of module Pure: 3",
+        "|||line 4, col 12 to line 4, col 15 of module Pure: 9",
+        "||||line 4, col 14 to line 4, col 14 of module Pure: 3",
+      ],
+    ],
+    [
+      "Pad == 0",
+      "LET L(G(_)) == INSTANCE Pure WITH c <- x, Op <- G IN x' = L(F)!E11",
+      [
+        "line 7, col 62 to line 7, col 74 of module M: 3",
+        "|line 7, col 67 to line 7, col 74 of module M: 3",
+        "||line 7, col 48 to line 7, col 48 of module M: 3",
+        "||line 5, col 8 to line 5, col 12 of module Pure: 3",
+        "|||line 4, col 12 to line 4, col 15 of module Pure: 9",
+        "||||line 4, col 14 to line 4, col 14 of module Pure: 3",
+      ],
+    ],
+    [
+      "Pad == 0",
+      "LET L(G(_)) == INSTANCE Pure WITH c <- x, Op <- G IN x' = L(F)!E6",
+      [
+        "line 7, col 62 to line 7, col 73 of module M: 3",
+        "|line 7, col 67 to line 7, col 73 of module M: 3",
+        "||line 7, col 48 to line 7, col 48 of module M: 3",
+        "||line 8, col 7 to line 8, col 11 of module Pure: 9",
+        "|||line 8, col 10 to line 8, col 10 of module Pure: 3",
+      ],
+    ],
+    [
+      "Pad == 0",
+      "LET L(k) == INSTANCE Pure WITH c <- x, Op <- LAMBDA a : a + k IN x' = L(1)!E6",
+      [
+        "line 7, col 74 to line 7, col 85 of module M: 3",
+        "|line 7, col 79 to line 7, col 85 of module M: 3",
+        "||line 7, col 45 to line 7, col 45 of module M: 3",
+        "||line 8, col 7 to line 8, col 11 of module Pure: 12",
+        "|||line 8, col 10 to line 8, col 10 of module Pure: 3",
+      ],
+    ],
+  ])(
+    "counts the substitute of an operator constant through %j at the application in %s, as TLC's cost model reports a lookup it misses into the application",
+    async (definition, next, lines) => {
+      const result = await check({
+        source: `---- MODULE M ----\nEXTENDS Naturals\nVARIABLE x\nF(a) == a + 1\n${definition}\nInit == x = 0\nNext == ${next}\nBound == x < 3\n====`,
+        config: "INIT Init\nNEXT Next\nCONSTRAINT Bound",
+        coverage: 1,
+        loadModule: (name) =>
+          name === "Pure"
+            ? "---- MODULE Pure ----\nEXTENDS Naturals\nCONSTANT c, Op(_)\nH(K(_)) == K(c)\nE11 == H(Op)\nE3 == Op(c) + 1\nE5 == c + 2\nE6 == Op(c)\n===="
+            : undefined,
+      });
+      expect(formatCoverage(result)?.at(-2)).toEqual(lines);
+    },
+  );
 });
 
 describe("formatValue matches TLC", () => {

@@ -1195,10 +1195,11 @@ export const createEnvironment = (
     const isParameterDependent = (declaration: OperatorParam) =>
       mentionsName(getReplacement(declaration), instanceParamNames);
     const frame = declarations.length > 0 ? getSubstitutionFrame(instance) : undefined;
-    const substitutionBodies = new Map<string, Expression>();
+    const replacements = new Map<string, Expression>();
     const substitutionDefinitions = declarations.map((declaration): Definition => {
-      const substitution = getSubstitutionBody(getReplacement(declaration), declaration, location);
-      if (declaration.arity === 0) substitutionBodies.set(declaration.name, substitution.body);
+      const replacement = getReplacement(declaration);
+      const substitution = getSubstitutionBody(replacement, declaration, location);
+      replacements.set(declaration.name, replacement);
       return {
         kind: "Operator",
         name: `${declaration.name}${suffix}`,
@@ -1302,7 +1303,7 @@ export const createEnvironment = (
       setFrameSubstitutions(
         frame,
         instance.module,
-        substitutionBodies,
+        replacements,
         (name) =>
           !explicitSubstitutions.has(name) ||
           instanceParamNames.has(name) ||

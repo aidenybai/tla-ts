@@ -719,7 +719,7 @@ export const getInstanceOperator = (
   const names = Array.from({ length: arity }, (_value, index) => getArgumentName(index));
   const args = [
     ...createInstanceArguments(params, location, marks.instanceArguments),
-    ...names.map((name) => createLocalIdentifier(name, location)),
+    ...names.map((name) => createSyntheticIdentifier(name, location)),
   ];
   const body: Expression = { kind: "Apply", operator: key, args, location, resolution };
   untracedExpressions.add(body);
@@ -896,6 +896,7 @@ const substituteExpression = (
         operator,
         args,
         resolution: replacement.kind === "Identifier" ? replacement.resolution : undefined,
+        hasSubstitutedOperator: true,
       });
     }
     if (
@@ -908,6 +909,7 @@ const substituteExpression = (
         operator: replacement.body.operator,
         args: [...replacement.body.args.slice(0, -replacement.params.length), ...args],
         resolution: replacement.body.resolution,
+        hasSubstitutedOperator: true,
       });
     }
     if (replacement?.kind === "Lambda") {
@@ -929,6 +931,7 @@ const substituteExpression = (
           operator: LAMBDA_NAME,
           args,
           resolution: LOCAL_RESOLUTION,
+          hasSubstitutedOperator: true,
         },
         location: { line: expression.location.line, column: expression.location.column },
       };

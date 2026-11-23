@@ -57,6 +57,7 @@ export interface ApplyExpression {
   location: SourceLocation;
   resolution?: LocalResolution;
   writtenKey?: string;
+  hasSubstitutedOperator?: boolean;
 }
 
 interface OperatorReferenceExpression {

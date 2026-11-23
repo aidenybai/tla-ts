@@ -17,7 +17,7 @@ import {
   syntheticIdentifiers,
   type Substitution,
 } from "./instances";
-import { SELECTION_NAME } from "./resolve";
+import { SELECTION_NAME, untracedExpressions } from "./resolve";
 import { describeNode, getRootKey, type Environment, type Scope } from "./evaluate";
 import { getJavaHashCode } from "./java-hash";
 import { getTlcFingerprint } from "./tlc/fingerprint";
@@ -602,20 +602,18 @@ export const buildCoverage = (
       }
       case "Apply": {
         const resolved = resolve(expression, expression.operator, locals);
-        enter(
-          expression,
-          range,
-          () => {
-            if (resolved) walkDefinition(resolved);
-            expression.args.forEach((argument, index) => {
-              if (!syntheticIdentifiers.has(argument)) {
-                walkArgument(argument, index, resolved?.definition, locals);
-              }
-            });
-          },
-          false,
-          resolved?.definition,
-        );
+        const isGenerated =
+          untracedExpressions.has(expression) && !expression.resolution?.isSubstitute;
+        const walkApplication = () => {
+          if (resolved && !expression.hasSubstitutedOperator) walkDefinition(resolved);
+          expression.args.forEach((argument, index) => {
+            if (!syntheticIdentifiers.has(argument)) {
+              walkArgument(argument, index, resolved?.definition, locals);
+            }
+          });
+        };
+        if (isGenerated) walkApplication();
+        else enter(expression, range, walkApplication, false, resolved?.definition);
         return;
       }
       case "And":
