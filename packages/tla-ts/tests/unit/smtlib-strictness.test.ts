@@ -1661,3 +1661,84 @@ describe("the builtin sort names, as Z3 5.3.2 registers them", () => {
     ]);
   });
 });
+
+describe("the builtin sorts, as Z3 5.3.2's plugins make them", () => {
+  it("applies a builtin sort name to the sorts or indices that its plugin takes", () => {
+    expect(
+      run([
+        "(declare-const a (Bool Int))",
+        "(declare-const b bool)",
+        "(declare-const c (_ Int 3))",
+        "(declare-const d (Real Int Bool))",
+        "(declare-const e bv)",
+        "(declare-const f (_ bv 3))",
+        "(declare-const g =>)",
+        "(declare-const h (_ -> 3))",
+        "(declare-const i Set)",
+        "(declare-const j (_ Set 3))",
+        "(declare-const k (BitVec Int))",
+        "(declare-const l (Unicode Int))",
+        "(declare-const m (_ String 3))",
+        "(declare-const n (RegLan Int))",
+        "(declare-const o (RoundingMode Int))",
+        "(declare-const p (Float32 Bool))",
+        "(declare-const q (_ Seq 3))",
+        "(declare-const r (_ List 3))",
+        "(assert (= f #b101))",
+        "(assert (and a b (= c 1) (= d 1.5)))",
+        "(check-sat)",
+      ]),
+    ).toEqual([
+      '(error "line 5 column 17: expecting one integer parameter to bit-vector sort")',
+      '(error "line 7 column 17: invalid array sort definition, invalid number of parameters")',
+      '(error "line 8 column 24: invalid array sort definition, invalid number of parameters")',
+      '(error "line 9 column 17: invalid array sort definition, invalid number of parameters")',
+      '(error "line 10 column 25: invalid array sort definition, parameter is not a sort")',
+      '(error "line 11 column 28: expecting one integer parameter to bit-vector sort")',
+      '(error "line 17 column 25: invalid sequence sort, parameter is not a sort")',
+      '(error "line 18 column 26: invalid sort application")',
+      "sat",
+    ]);
+  });
+
+  it("reads a datatype field of a builtin sort", () => {
+    expect(
+      run([
+        "(set-option :produce-models true)",
+        "(declare-datatypes ((T 0)) (((t (s String) (r RegLan) (u Unicode) (p Float32) (m RoundingMode)))))",
+        "(declare-const x T)",
+        '(assert (= (s x) "ab"))',
+        "(check-sat)",
+        "(get-value ((s x)))",
+      ]),
+    ).toEqual(["sat", '(((s x) "ab"))']);
+  });
+
+  it("reports a builtin sort of a sort definition or datatype where Z3 makes it", () => {
+    expect(
+      run([
+        "(declare-datatypes ((D1 0)) (((c1 (f1 (Seq)) (g1 Nope)))))",
+        "(declare-datatypes ((D2 0)) (((c2 (f2 (Seq)) (g2 BitVec)))))",
+        "(declare-datatypes ((D3 0)) (((c3 (f3 (Seq)) (g3 Int)))))",
+        "(declare-datatype E ((e (h (Array Int)))))",
+        "(declare-datatypes () ((G (k (m (FloatingPoint Int))))))",
+        "(define-sort A () (Seq))",
+        "(define-sort B () (Array A Int))",
+        "(define-sort C (X) (List (Array X)))",
+        "(declare-const x (C Int))",
+        "(define-sort F () BitVec)",
+        "(check-sat)",
+      ]),
+    ).toEqual([
+      `(error "line 1 column 20: invalid datatype declaration, unknown sort 'Nope'")`,
+      '(error "line 2 column 55: expecting one integer parameter to bit-vector sort")',
+      '(error "line 3 column 56: Invalid sequence sort, expecting one parameter")',
+      '(error "line 4 column 41: invalid array sort definition, invalid number of parameters")',
+      '(error "line 5 column 55: expecting two integer parameters to floating point sort (ebits, sbits)")',
+      '(error "line 7 column 27: Invalid sequence sort, expecting one parameter")',
+      '(error "line 9 column 23: invalid array sort definition, invalid number of parameters")',
+      '(error "line 10 column 24: expecting one integer parameter to bit-vector sort")',
+      "sat",
+    ]);
+  });
+});

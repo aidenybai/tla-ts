@@ -189,11 +189,6 @@ interface Macro {
   body: number;
 }
 
-interface ConstantSortDecl {
-  kind: "sort";
-  sort: number;
-}
-
 interface UserSortDecl {
   kind: "user";
   name: string;
@@ -219,7 +214,12 @@ interface ListSortDecl {
   kind: "list";
 }
 
-type SortDecl = ConstantSortDecl | UserSortDecl | DatatypeSortDecl | DefinedSortDecl | ListSortDecl;
+interface DatatypeRefs {
+  missing: string[];
+  commitErrors: string[];
+}
+
+type SortDecl = UserSortDecl | DatatypeSortDecl | DefinedSortDecl | ListSortDecl;
 
 const NO_BINDINGS: ReadonlyMap<string, number> = new Map();
 
@@ -408,26 +408,6 @@ const TRANSCENDENTALS = new Set([
 const hasTranscendentals = (logic: string | undefined) =>
   logic === undefined || logic === "ALL" || logic === "QF_NTA";
 
-const THEORY_SORTS = new Set([
-  "BitVec",
-  "Array",
-  "Set",
-  "Seq",
-  "String",
-  "StringSequence",
-  "RegEx",
-  "RegLan",
-  "Unicode",
-  "FloatingPoint",
-  "RoundingMode",
-  "Float16",
-  "Float32",
-  "Float64",
-  "Float128",
-  "FiniteSet",
-  "FiniteField",
-  "Complex",
-]);
 const PB_OP_NAMES = new Map([
   ["at-most", OP_AT_MOST_K],
   ["at-least", OP_AT_LEAST_K],
@@ -1026,14 +1006,9 @@ export const createSmtlibReader = (
   let logicChecker = createLogicChecker(manager, undefined);
   let builtinSortNames = getBuiltinSortNames(logic, false);
   let isManagerMade = false;
-  const sortDecls = new Map<string, SortDecl>([
-    ["Bool", { kind: "sort", sort: SORT_BOOL }],
-    ...(hasArith && !(logic !== undefined && INT_FREE_LOGICS.has(logic))
-      ? [["Int", { kind: "sort", sort: SORT_INT }] as const]
-      : []),
-    ...(hasArith ? [["Real", { kind: "sort", sort: SORT_REAL }] as const] : []),
-    ...(logic === undefined ? [["List", { kind: "list" }] as const] : []),
-  ]);
+  const sortDecls = new Map<string, SortDecl>(
+    logic === undefined ? [["List", { kind: "list" }]] : [],
+  );
   const funcs = new Map<string, readonly number[]>();
   const macros = new Map<string, Macro>();
   // A pop empties the macros of a name but keeps the name in the dictionary.
@@ -1117,7 +1092,6 @@ export const createSmtlibReader = (
   const hasSeq = logic === undefined || logicHasSeq(logic);
   const restricted = {
     isNumeralAsReal: logic !== undefined && logicHasRealsOnly(logic),
-    hasSetSort: hasArrayExtensions,
     hasFf: logic === undefined || FF_LOGICS.has(logic),
   };
 
@@ -1198,13 +1172,7 @@ export const createSmtlibReader = (
   };
 
   const getSortDeclArity = (decl: SortDecl) =>
-    decl.kind === "sort"
-      ? 0
-      : decl.kind === "list"
-        ? 1
-        : decl.kind === "definition"
-          ? decl.parameters.length
-          : decl.arity;
+    decl.kind === "list" ? 1 : decl.kind === "definition" ? decl.parameters.length : decl.arity;
 
   const registerList = () => {
     const element = manager.mkTypeParameter(0);
@@ -1238,14 +1206,13 @@ export const createSmtlibReader = (
   };
 
   const instantiateSort = (decl: SortDecl, parameters: number[], at: SExpr): number => {
-    if (decl.kind === "sort") return decl.sort;
     if (decl.kind === "list") return instantiateSort(registerList(), parameters, at);
     if (decl.kind === "user") return manager.mkUninterpretedSort(decl.name, parameters);
     if (decl.kind === "datatype") return instantiateDatatype(decl, parameters, at);
-    return parseSort(
+    return instantiatePsort(
       decl.body,
-      "",
       new Map(decl.parameters.map((name, index) => [name, parameters[index]])),
+      at.kind === "list" ? at.end : at,
     );
   };
 
@@ -1260,96 +1227,102 @@ export const createSmtlibReader = (
         `${context === "" ? "" : `${context} `}invalid sort, symbol or '_' expected`,
         head ?? sexpr.end,
       );
-    const isArray =
-      ARRAY_SORT_NAMES.has(head.text) || (head.text === "Set" && restricted.hasSetSort);
-    if (isArray && hasArrays) {
-      const parameters = sexpr.items.slice(1).map((item) => parseSort(item, context, bindings));
-      if (head.text === "Set" ? parameters.length !== 1 : parameters.length < 2)
-        throw new SmtParseError(
-          "invalid array sort definition, invalid number of parameters",
-          sexpr.end,
-        );
-      return manager.mkArraySort(head.text === "Set" ? [parameters[0], SORT_BOOL] : parameters);
-    }
     const decl = sortDecls.get(head.text);
-    if (decl === undefined && hasSeq && (head.text === "Seq" || head.text === "RegEx")) {
-      const parameters = sexpr.items.slice(1).map((item) => parseSort(item, context, bindings));
-      if (parameters.length !== 1)
-        throw new SmtParseError(
-          head.text === "Seq"
-            ? "Invalid sequence sort, expecting one parameter"
-            : "Invalid regex sort, expecting one parameter",
-          sexpr.end,
-        );
-      return head.text === "Seq"
-        ? manager.mkSeqSort(parameters[0])
-        : manager.mkReSort(parameters[0]);
-    }
-    if (decl === undefined && hasFpa && FPA_SORT_NAMES.has(head.text)) {
-      const parameters = sexpr.items.slice(1).map((item) => parseSort(item, context, bindings));
-      if (head.text === "FloatingPoint") return mkFloatSort([], sexpr);
-      if (parameters.length > 0)
-        throw new SmtUnsupportedError("parameters on a floating-point sort");
-      return parseSort(head, context, bindings);
-    }
-    if (decl === undefined) {
-      if (THEORY_SORTS.has(head.text) && !isLackingSort(head.text))
-        throw new SmtUnsupportedError(`the sort ${head.text}`);
+    if (decl === undefined && !builtinSortNames.has(head.text))
       throw new SmtParseError(`unknown sort '${head.text}'`, head);
-    }
     const parameters = sexpr.items.slice(1).map((item) => parseSort(item, context, bindings));
+    if (decl === undefined) return mkBuiltinSort(head.text, parameters, false, sexpr.end);
     if (parameters.length !== getSortDeclArity(decl))
       throw new SmtParseError("invalid number of parameters to sort constructor", sexpr.end);
     return instantiateSort(decl, parameters, sexpr);
   };
 
-  // parse_psort: Z3 makes the leaves and the indexed sorts of a sort definition, and an application
-  // of a builtin sort, which takes any number of parameters, only when the definition is used.
-  const checkPsort = (sexpr: SExpr, bindings: ReadonlyMap<string, number>) => {
+  const isBuiltinSortName = (name: string) => !sortDecls.has(name) && builtinSortNames.has(name);
+
+  // Z3 makes a definition's leaves at the next token, and its sort applications where it is used.
+  const checkPsort = (sexpr: SExpr, bindings: ReadonlyMap<string, number>, next: SExpr) => {
     const head = sexpr.kind === "list" ? sexpr.items[0] : undefined;
-    if (
-      head === undefined ||
-      !isSymbol(head) ||
-      head.text === "_" ||
-      sortDecls.has(head.text) ||
-      !isBuiltinParametricSort(head.text)
-    ) {
-      parseSort(sexpr, "", bindings);
+    if (sexpr.kind !== "list" || !isSymbol(head) || head.text === "_") {
+      const decl = isSymbol(sexpr) ? sortDecls.get(sexpr.text) : undefined;
+      if (decl?.kind === "definition" && decl.parameters.length === 0)
+        instantiatePsort(decl.body, NO_BINDINGS, next);
+      else if (isSymbol(sexpr) && isBuiltinSortName(sexpr.text))
+        mkBuiltinSort(sexpr.text, [], false, next);
+      else parseSort(sexpr, "", bindings);
       return;
     }
-    for (const item of (sexpr as SmtList).items.slice(1)) checkPsort(item, bindings);
+    const decl = sortDecls.get(head.text);
+    if (decl === undefined && !builtinSortNames.has(head.text))
+      throw new SmtParseError(`unknown sort '${head.text}'`, head);
+    sexpr.items.forEach((item, index) => {
+      if (index > 0) checkPsort(item, bindings, sexpr.items[index + 1] ?? sexpr.end);
+    });
+    if (decl !== undefined && sexpr.items.length - 1 !== getSortDeclArity(decl))
+      throw new SmtParseError("invalid number of parameters to sort constructor", sexpr.end);
   };
 
-  // Z3 does not know the sorts of a theory that the logic lacks.
-  const isLackingSort = (name: string) =>
-    name === "Set"
-      ? !hasArrays || !restricted.hasSetSort
-      : ARRAY_SORT_NAMES.has(name)
-        ? !hasArrays
-        : name === "BitVec"
-          ? !hasBv
-          : SEQ_SORT_NAMES.has(name) || name === "Unicode"
-            ? !hasSeq
-            : FPA_SORT_NAMES.has(name) && !hasFpa;
+  const instantiatePsort = (
+    sexpr: SExpr,
+    bindings: ReadonlyMap<string, number>,
+    at: SExpr,
+  ): number => {
+    const head = sexpr.kind === "list" ? sexpr.items[0] : undefined;
+    if (sexpr.kind !== "list" || !isSymbol(head) || head.text === "_")
+      return parseSort(sexpr, "", bindings);
+    const parameters = sexpr.items.slice(1).map((item) => instantiatePsort(item, bindings, at));
+    const decl = sortDecls.get(head.text);
+    return decl === undefined
+      ? mkBuiltinSort(head.text, parameters, false, at)
+      : instantiateSort(decl, parameters, at);
+  };
 
-  const isBuiltinParametricSort = (name: string) =>
-    (hasArrays && (ARRAY_SORT_NAMES.has(name) || (name === "Set" && restricted.hasSetSort))) ||
-    (hasSeq && (name === "Seq" || name === "RegEx")) ||
-    (hasFpa && FPA_SORT_NAMES.has(name));
-
-  const mkFloatSort = (indices: SExpr[], at: SExpr) => {
-    const ebitsIndex = indices[0];
-    const sbitsIndex = indices[1];
-    if (indices.length !== 2 || ebitsIndex.kind !== "numeral" || sbitsIndex.kind !== "numeral")
-      throw new SmtParseError(
-        "expecting two integer parameters to floating point sort (ebits, sbits)",
-        at.kind === "list" ? at.end : at,
-      );
-    const ebits = Number(ebitsIndex.text);
-    const sbits = Number(sbitsIndex.text);
-    const error = getFloatSortError(ebits, sbits);
-    if (error !== undefined) throw new SmtParseError(error, at.kind === "list" ? at.end : at);
-    return manager.mkFpSort(ebits, sbits);
+  const mkBuiltinSort = (
+    name: string,
+    parameters: number[],
+    isIndexed: boolean,
+    at: SExpr,
+  ): number => {
+    if (name === "Bool" || name === "bool") return SORT_BOOL;
+    if (name === "Int") return SORT_INT;
+    if (name === "Real") return SORT_REAL;
+    if (name === "BitVec" || name === "bv") {
+      if (!isIndexed || parameters.length !== 1)
+        throw new SmtParseError("expecting one integer parameter to bit-vector sort", at);
+      if (parameters[0] === 0)
+        throw new SmtParseError("bit-vector size must be greater than zero", at);
+      return manager.mkBvSort(parameters[0]);
+    }
+    if (name === "Set" || ARRAY_SORT_NAMES.has(name)) {
+      if (name === "Set" ? parameters.length !== 1 : parameters.length < 2)
+        throw new SmtParseError("invalid array sort definition, invalid number of parameters", at);
+      if (isIndexed)
+        throw new SmtParseError("invalid array sort definition, parameter is not a sort", at);
+      return manager.mkArraySort(name === "Set" ? [parameters[0], SORT_BOOL] : parameters);
+    }
+    if (name === "Seq" || name === "RegEx") {
+      const kind = name === "Seq" ? "sequence" : "regex";
+      if (parameters.length !== 1)
+        throw new SmtParseError(`Invalid ${kind} sort, expecting one parameter`, at);
+      if (isIndexed) throw new SmtParseError(`invalid ${kind} sort, parameter is not a sort`, at);
+      return name === "Seq" ? manager.mkSeqSort(parameters[0]) : manager.mkReSort(parameters[0]);
+    }
+    if (name === "String" || name === "StringSequence") return manager.mkStringSort();
+    if (name === "RegLan") return manager.mkReSort(manager.mkStringSort());
+    if (name === "Unicode") return manager.mkCharSort();
+    if (name === "RoundingMode") return manager.mkRmSort();
+    if (name === "FloatingPoint") {
+      if (!isIndexed || parameters.length !== 2)
+        throw new SmtParseError(
+          "expecting two integer parameters to floating point sort (ebits, sbits)",
+          at,
+        );
+      const error = getFloatSortError(parameters[0], parameters[1]);
+      if (error !== undefined) throw new SmtParseError(error, at);
+      return manager.mkFpSort(parameters[0], parameters[1]);
+    }
+    const bits = FPA_SORT_NAMES.get(name);
+    if (bits !== undefined) return manager.mkFpSort(bits[0], bits[1]);
+    throw new SmtUnsupportedError(`the sort ${name}`);
   };
 
   const parseSort = (
@@ -1365,12 +1338,12 @@ export const createSmtlibReader = (
       const name = sexpr.items[1];
       if (!isSymbol(name))
         throw new SmtParseError("invalid indexed sort, symbol expected", name ?? sexpr.end);
-      if (hasFpa && name.text === "FloatingPoint") return mkFloatSort(sexpr.items.slice(2), sexpr);
+      if (name.text === "FiniteField") throw new SmtUnsupportedError("the sort FiniteField");
       const indices = sexpr.items.slice(2);
-      if (isLackingSort(name.text) || !(THEORY_SORTS.has(name.text) || sortDecls.has(name.text)))
+      const decl = sortDecls.get(name.text);
+      if (decl === undefined && !builtinSortNames.has(name.text))
         throw new SmtParseError(`unknown sort '${name.text}'`, indices[0] ?? sexpr.end);
-      if (name.text !== "BitVec") throw new SmtUnsupportedError("indexed sorts");
-      for (const index of indices) {
+      const parameters = indices.map((index) => {
         if (index.kind !== "numeral")
           throw new SmtParseError("invalid indexed sort, integer or ')' expected", index);
         if (!isUnsigned(index.text))
@@ -1378,13 +1351,10 @@ export const createSmtlibReader = (
             "invalid indexed identifier, index is too big to fit in an unsigned machine integer",
             index,
           );
-      }
-      const width = indices[0];
-      if (indices.length !== 1 || width.kind !== "numeral")
-        throw new SmtParseError("expecting one integer parameter to bit-vector sort", sexpr.end);
-      if (BigInt(width.text) === 0n)
-        throw new SmtParseError("bit-vector size must be greater than zero", sexpr.end);
-      return manager.mkBvSort(Number(width.text));
+        return Number(index.text);
+      });
+      if (decl !== undefined) throw new SmtParseError("invalid sort application", sexpr.end);
+      return mkBuiltinSort(name.text, parameters, true, sexpr.end);
     }
     if (sexpr.kind !== "symbol")
       throw new SmtParseError(
@@ -1397,26 +1367,9 @@ export const createSmtlibReader = (
         throw new SmtParseError("sort constructor expects parameters", sexpr);
       return instantiateSort(decl, [], sexpr);
     }
+    if (builtinSortNames.has(sexpr.text)) return mkBuiltinSort(sexpr.text, [], false, sexpr);
     const bound = bindings.get(sexpr.text);
     if (bound !== undefined) return bound;
-    if (hasSeq && (SEQ_SORT_NAMES.has(sexpr.text) || sexpr.text === "Unicode")) {
-      if (sexpr.text === "String" || sexpr.text === "StringSequence") return manager.mkStringSort();
-      if (sexpr.text === "RegLan") return manager.mkReSort(manager.mkStringSort());
-      if (sexpr.text === "Unicode") return manager.mkCharSort();
-      throw new SmtParseError(
-        sexpr.text === "Seq"
-          ? "Invalid sequence sort, expecting one parameter"
-          : "Invalid regex sort, expecting one parameter",
-        sexpr,
-      );
-    }
-    if (hasFpa && FPA_SORT_NAMES.has(sexpr.text)) {
-      if (sexpr.text === "RoundingMode") return manager.mkRmSort();
-      const bits = FPA_SORT_NAMES.get(sexpr.text);
-      return bits === undefined ? mkFloatSort([], sexpr) : manager.mkFpSort(bits[0], bits[1]);
-    }
-    if (THEORY_SORTS.has(sexpr.text) && !isLackingSort(sexpr.text))
-      throw new SmtUnsupportedError(`the sort ${sexpr.text}`);
     throw new SmtParseError(
       `${context === "" ? "" : `${context}: `}unknown sort '${sexpr.text}'`,
       sexpr,
@@ -3063,20 +3016,32 @@ export const createSmtlibReader = (
     sexpr: SExpr,
     bindings: ReadonlyMap<string, number>,
     datatypeIndexes: ReadonlyMap<string, number>,
-    missing: string[],
+    refs: DatatypeRefs,
+    next: SExpr,
   ) => {
-    if (sexpr.kind === "list") return parseSort(sexpr, "", bindings);
+    if (sexpr.kind === "list") {
+      checkPsort(sexpr, bindings, next);
+      // Z3 applies the sort constructors of an accessor when it commits the datatypes.
+      try {
+        return instantiatePsort(sexpr, bindings, sexpr.end);
+      } catch (error) {
+        if (!(error instanceof SmtParseError)) throw error;
+        refs.commitErrors.push(error.message);
+        return SORT_BOOL;
+      }
+    }
     if (sexpr.kind === ")") throw new SmtParseError("invalid sort, unexpected ')'", sexpr);
     if (sexpr.kind !== "symbol")
       throw new SmtParseError(
         `invalid sort, symbol, '_' or '(' expected got ${sexpr.lastId}`,
         sexpr,
       );
+    if (isBuiltinSortName(sexpr.text)) return mkBuiltinSort(sexpr.text, [], false, next);
     if (sortDecls.has(sexpr.text) || bindings.has(sexpr.text))
       return parseSort(sexpr, "", bindings);
     const index = datatypeIndexes.get(sexpr.text);
     if (index !== undefined) return -1 - index;
-    missing.push(sexpr.text);
+    refs.missing.push(sexpr.text);
     return SORT_BOOL;
   };
 
@@ -3084,7 +3049,7 @@ export const createSmtlibReader = (
     items: SExpr[],
     bindings: ReadonlyMap<string, number>,
     datatypeIndexes: ReadonlyMap<string, number>,
-    missing: string[],
+    refs: DatatypeRefs,
     at: SExpr,
   ): ConstructorDef[] => {
     if (items.length === 0)
@@ -3114,7 +3079,8 @@ export const createSmtlibReader = (
           accessor.items[1] ?? accessor.end,
           bindings,
           datatypeIndexes,
-          missing,
+          refs,
+          accessor.items[2] ?? accessor.end,
         );
         if (accessor.items.length > 2)
           throw new SmtParseError(
@@ -3130,7 +3096,7 @@ export const createSmtlibReader = (
   const parseDatatypeBody = (
     sexpr: SExpr,
     datatypeIndexes: ReadonlyMap<string, number>,
-    missing: string[],
+    refs: DatatypeRefs,
     name?: string,
   ) => {
     const body = expectListNext(sexpr, "invalid datatype declaration, '(' expected");
@@ -3138,7 +3104,7 @@ export const createSmtlibReader = (
       if (name !== undefined) declareDatatypeSort(name, 0, body.items[0] ?? body.end);
       return {
         parameters: [],
-        constructors: parseConstructors(body.items, NO_BINDINGS, datatypeIndexes, missing, body),
+        constructors: parseConstructors(body.items, NO_BINDINGS, datatypeIndexes, refs, body),
       };
     }
     const parameters = parseSortParameters(
@@ -3157,15 +3123,18 @@ export const createSmtlibReader = (
         constructors.items,
         bindTypeParameters(parameters),
         datatypeIndexes,
-        missing,
+        refs,
         constructors,
       ),
     };
   };
 
-  const checkMissingSorts = (missing: string[], at: SExpr) => {
-    if (missing.length > 0)
-      throw new SmtParseError(`invalid datatype declaration, unknown sort '${missing[0]}'`, at);
+  const checkMissingSorts = (refs: DatatypeRefs, at: SExpr) => {
+    if (refs.missing.length > 0)
+      throw new SmtParseError(
+        `invalid datatype declaration, unknown sort '${refs.missing[0]}'`,
+        at,
+      );
   };
 
   const checkDuplicateAccessors = (def: DatatypeDef, at: SExpr) => {
@@ -3180,7 +3149,9 @@ export const createSmtlibReader = (
       );
   };
 
-  const commitDatatypes = (defs: DatatypeDef[], end: SExpr) => {
+  const commitDatatypes = (defs: DatatypeDef[], refs: DatatypeRefs, end: SExpr) => {
+    const commitError = refs.commitErrors[0];
+    if (commitError !== undefined) throw new SmtParseError(commitError, end);
     const sorts = mkDatatypes(manager, defs);
     if (typeof sorts === "string") throw new SmtParseError(sorts, end);
     for (const def of defs) pushUndo(() => removeDatatype(manager, def.name));
@@ -3264,7 +3235,7 @@ export const createSmtlibReader = (
         datatypeIndexes.set(name, index);
         names.push(name);
       });
-    const missing: string[] = [];
+    const refs: DatatypeRefs = { missing: [], commitErrors: [] };
     const typeParameters = parameterNames.map((_name, index) => manager.mkTypeParameter(index));
     const bindings = bindTypeParameters(parameterNames);
     const defs = bodies.items.map((item, index) => {
@@ -3280,7 +3251,7 @@ export const createSmtlibReader = (
           Array.from({ length: arities[index] }, (_unused, parameter) =>
             manager.mkTypeParameter(parameter),
           ),
-          parseDatatypeBody(item, datatypeIndexes, missing).constructors,
+          parseDatatypeBody(item, datatypeIndexes, refs).constructors,
         );
       }
       const datatype = expectListNext(item, "invalid datatype declaration, '(' or ')' expected");
@@ -3288,7 +3259,7 @@ export const createSmtlibReader = (
         manager,
         names[index],
         typeParameters,
-        parseConstructors(datatype.items.slice(1), bindings, datatypeIndexes, missing, datatype),
+        parseConstructors(datatype.items.slice(1), bindings, datatypeIndexes, refs, datatype),
       );
     });
     if (defs.length < arities.length)
@@ -3299,8 +3270,8 @@ export const createSmtlibReader = (
     if (list.items.length > 3)
       throw new SmtParseError("invalid datatype declaration", list.items[3]);
     if (defs.length === 0) return;
-    checkMissingSorts(missing, declaration);
-    commitDatatypes(defs, list.end);
+    checkMissingSorts(refs, declaration);
+    commitDatatypes(defs, refs, list.end);
     for (const def of defs) {
       checkDuplicateAccessors(def, declaration);
       if (!isSmt26)
@@ -3321,17 +3292,17 @@ export const createSmtlibReader = (
   const declareDatatype = (list: SmtList) => {
     const name = expectSymbol(list.items[1], "unexpected token used as datatype name", list.end);
     useManager(list.items[2] ?? list.end);
-    const missing: string[] = [];
+    const refs: DatatypeRefs = { missing: [], commitErrors: [] };
     const body = parseDatatypeBody(
       list.items[2] ?? list.end,
       new Map([[name.text, 0]]),
-      missing,
+      refs,
       name.text,
     );
     const def = mkDatatypeDef(manager, name.text, body.parameters, body.constructors);
-    checkMissingSorts(missing, name);
+    checkMissingSorts(refs, name);
     checkDuplicateAccessors(def, name);
-    commitDatatypes([def], list.items[3] ?? list.end);
+    commitDatatypes([def], refs, list.items[3] ?? list.end);
     expectEnd(list.items[3], "invalid end of datatype declaration, ')' expected");
   };
 
@@ -3503,7 +3474,7 @@ export const createSmtlibReader = (
       );
       const body = list.items[3] ?? list.end;
       useManager(body);
-      checkPsort(body, bindTypeParameters(parameters));
+      checkPsort(body, bindTypeParameters(parameters), list.items[4] ?? list.end);
       declareSortDecl(
         symbol.text,
         { kind: "definition", parameters, body },
@@ -3650,8 +3621,6 @@ export const createSmtlibReader = (
   // logic lacks, and the declarations and the operators stay.
   const restrictSorts = (name: string) => {
     releasePending();
-    if (!ARRAY_EXTENSION_LOGICS.has(name)) restricted.hasSetSort = false;
-    if (INT_FREE_LOGICS.has(name)) sortDecls.delete("Int");
     restricted.hasFf = FF_LOGICS.has(name);
     const allowed = getBuiltinSortNames(name, true);
     builtinSortNames = new Set([...builtinSortNames].filter((sortName) => allowed.has(sortName)));
