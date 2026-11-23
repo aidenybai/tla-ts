@@ -3429,6 +3429,40 @@ describe("evaluation errors match TLC", () => {
     ]);
   });
 
+  it.each([
+    [
+      "L == INSTANCE Q WITH c <- 1",
+      "x' = L!G(1)",
+      [
+        "Line 7, column 9 to line 7, column 19 in M",
+        "Line 7, column 14 to line 7, column 19 in M",
+        "Line 5, column 1 to line 5, column 27 in M",
+        "Line 5, column 9 to line 5, column 12 in Q",
+        "Line 4, column 11 to line 4, column 18 in M",
+      ],
+    ],
+    [
+      "L(w) == INSTANCE Q WITH c <- w",
+      "x' = L(1)!G(1)",
+      [
+        "Line 7, column 9 to line 7, column 22 in M",
+        "Line 7, column 14 to line 7, column 22 in M",
+        "Line 5, column 1 to line 5, column 30 in M",
+        "Line 5, column 9 to line 5, column 12 in Q",
+        "Line 4, column 11 to line 4, column 18 in M",
+      ],
+    ],
+  ])(
+    "records no frame for the alias a scoped override makes of a module-level instance's copy, through %s and %s, as TLC has none",
+    async (definition, next, expected) => {
+      const result = await checkScopedOverride(definition, next, "D <- [Q] Div");
+      expect([
+        result.failure?.message,
+        formatCallStackLines(result)?.filter((line) => line !== ""),
+      ]).toEqual(["The second argument of \\div is 0.", expected]);
+    },
+  );
+
   it("records no frame for a selected operator argument in the action it assigns, as TLC has none", async () => {
     const result = await check({
       source:
