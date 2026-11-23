@@ -10453,6 +10453,25 @@ ASSUME TLCFP(a) = -887695703
     expect(await getNextCoverageLines(`x' = 0 /\\ ${body}`)).toEqual(rows);
   });
 
+  it("counts an operator argument that a filter's membership test forces", async () => {
+    expect(
+      await getNextCoverageLines(
+        "x' = 0 /\\ LET G(a) == {9} \\cup {o \\in Nat : o > 1 /\\ o = a} IN \\A oi \\in {1, 2, 3} : oi \\in G(oi) \\/ TRUE",
+      ),
+    ).toEqual([
+      "line 5, col 9 to line 5, col 14 of module M: 1",
+      "line 5, col 72 to line 5, col 113 of module M: 1",
+      "|line 5, col 94 to line 5, col 113 of module M: 3",
+      "||line 5, col 94 to line 5, col 105 of module M: 3",
+      "|||line 5, col 94 to line 5, col 95 of module M: 3",
+      "|||line 5, col 101 to line 5, col 105 of module M: 3",
+      "||||line 5, col 31 to line 5, col 67 of module M: 3",
+      "||||line 5, col 103 to line 5, col 104 of module M: 2",
+      "||line 5, col 110 to line 5, col 113 of module M: 1",
+      "|line 5, col 82 to line 5, col 90 of module M: 1:4",
+    ]);
+  });
+
   it.each([
     [
       "CHOOSE",

@@ -1191,7 +1191,7 @@ const forceThunk = (thunk: Thunk, context: Context) => {
     );
   if (isCached) return cache;
   const coverage = context.environment.coverage;
-  const node = coverage?.current === -1 ? undefined : coverage?.values.get(thunk);
+  const node = coverage?.values.get(thunk);
   const value =
     coverage && node !== undefined
       ? runAtCoverageNode(coverage, node, () =>
