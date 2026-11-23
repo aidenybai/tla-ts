@@ -1204,6 +1204,181 @@ describe("runSmtlibScript prints what Z3 prints", () => {
     ]);
   });
 
+  // The first case is z3test's regressions/issues/5454.smt2.
+  it("answers recursive functions with sat.euf's recfun solver", () => {
+    const header = ["(set-option :sat.euf true)", "(set-option :tactic.default_tactic smt)"];
+    expect(
+      run([
+        ...header,
+        "(define-funs-rec ((f () Int) (pred ((y Int)) Bool)) (0 (ite (< y 0) false (ite (= y 0) true (pred (- y 2))))))",
+        "(assert (not (pred 5)))",
+        "(check-sat)",
+        "(get-value ((pred 5) (pred 4) (pred 3)))",
+        "(get-info :rlimit)",
+        "(reset)",
+        ...header,
+        "(define-fun-rec len ((n Int)) Int (ite (<= n 0) 0 (+ 1 (len (- n 1)))))",
+        "(declare-const x Int)",
+        "(assert (= (len x) 4))",
+        "(check-sat)",
+        "(get-value (x))",
+        "(get-info :rlimit)",
+        "(reset)",
+        ...header,
+        "(define-fun-rec even ((n Int)) Bool (ite (= n 0) true (ite (= n 1) false (even (- n 2)))))",
+        "(assert (even 7))",
+        "(check-sat)",
+        "(get-info :rlimit)",
+        "(reset)",
+        ...header,
+        "(define-fun-rec f ((n Int)) Int (ite (<= n 0) 1 (* 2 (f (- n 1)))))",
+        "(declare-const x Int)",
+        "(assert (> (f x) 100))",
+        "(assert (< x 10))",
+        "(check-sat)",
+        "(get-value (x (f x)))",
+        "(get-info :rlimit)",
+      ]),
+    ).toEqual([
+      "sat",
+      ["(((pred 5) false)", " ((pred 4) true)", " ((pred 3) false))"].join("\n"),
+      "(:rlimit 603)",
+      "sat",
+      "((x 4))",
+      "(:rlimit 882)",
+      "unsat",
+      "(:rlimit 143)",
+      "sat",
+      ["((x 7)", " ((f x) 128))"].join("\n"),
+      "(:rlimit 1921)",
+    ]);
+  });
+
+  it("answers unknown when sat.euf's recfun research drops the assumptions, as Z3 does", () => {
+    expect(
+      run([
+        "(set-option :sat.euf true)",
+        "(set-option :tactic.default_tactic smt)",
+        "(define-fun-rec len ((n Int)) Int (ite (<= n 0) 0 (+ 1 (len (- n 1)))))",
+        "(declare-const x Int)",
+        "(declare-const p Bool)",
+        "(assert (=> p (= (len x) 3)))",
+        "(check-sat-assuming (p))",
+        "(get-info :rlimit)",
+        "(get-info :reason-unknown)",
+        "(get-model)",
+        "(get-value (p))",
+      ]),
+    ).toEqual([
+      "unknown",
+      "(:rlimit 88)",
+      '(:reason-unknown "no reason given")',
+      [
+        "(",
+        "  (define-fun p () Bool",
+        "    false)",
+        "  (define-fun x () Int",
+        "    (- 8855))",
+        ")",
+      ].join("\n"),
+      "((p false))",
+    ]);
+  });
+
+  it("answers unknown where sat.euf's recfun research drops a named assertion and Z3 answers sat", () => {
+    expect(
+      run([
+        "(set-option :produce-unsat-cores true)",
+        "(set-option :sat.euf true)",
+        "(set-option :tactic.default_tactic smt)",
+        "(define-fun-rec len ((n Int)) Int (ite (<= n 0) 0 (+ 1 (len (- n 1)))))",
+        "(declare-const x Int)",
+        "(assert (! (= (len x) 3) :named a))",
+        "(assert (< x 2))",
+        "(check-sat)",
+        "(get-info :reason-unknown)",
+        "(get-value (a x (len x)))",
+        "(get-info :rlimit)",
+      ]),
+    ).toEqual([
+      "unknown",
+      '(:reason-unknown "no reason given")',
+      ["((a false)", " (x (- 11797))", " ((len x) 0))"].join("\n"),
+      "(:rlimit 170)",
+    ]);
+  });
+
+  it("validates the sat.euf model each time the incremental sat solver builds it", () => {
+    expect(
+      run([
+        "(set-option :sat.euf true)",
+        "(set-option :tactic.default_tactic smt)",
+        "(declare-const x Int)",
+        "(declare-const y Int)",
+        "(declare-const p Bool)",
+        "(assert (=> p (and (> x 3) (< (+ x y) 2))))",
+        "(check-sat-assuming (p))",
+        "(get-info :rlimit)",
+        "(get-model)",
+        "(get-info :rlimit)",
+        "(get-value (p (+ x y)))",
+        "(get-info :rlimit)",
+      ]),
+    ).toEqual([
+      "sat",
+      "(:rlimit 53)",
+      [
+        "(",
+        "  (define-fun p () Bool",
+        "    true)",
+        "  (define-fun x () Int",
+        "    4)",
+        "  (define-fun y () Int",
+        "    (- 21241))",
+        ")",
+      ].join("\n"),
+      "(:rlimit 64)",
+      ["((p true)", " ((+ x y) (- 21237)))"].join("\n"),
+      "(:rlimit 78)",
+    ]);
+  });
+
+  it("skips validating the sat.euf model under smt.arith.ignore_int", () => {
+    expect(
+      run([
+        "(set-option :sat.euf true)",
+        "(set-option :tactic.default_tactic smt)",
+        "(set-option :smt.arith.ignore_int true)",
+        "(declare-const x Int)",
+        "(declare-const y Int)",
+        "(declare-const p Bool)",
+        "(assert (=> p (and (> x 3) (< (+ x y) 2))))",
+        "(check-sat-assuming (p))",
+        "(get-info :rlimit)",
+        "(get-model)",
+        "(get-info :rlimit)",
+        "(get-value (p (+ x y)))",
+        "(get-info :rlimit)",
+      ]),
+    ).toEqual([
+      "sat",
+      "(:rlimit 53)",
+      [
+        "(",
+        "  (define-fun p () Bool",
+        "    true)",
+        "  (define-fun x () Int",
+        "    4)",
+        "  (define-fun y () Int",
+        "    (- 21241))",
+        ")",
+      ].join("\n"),
+      "(:rlimit 57)",
+      ["((p true)", " ((+ x y) (- 21237)))"].join("\n"),
+      "(:rlimit 64)",
+    ]);
+  });
+
   it("completes an array-ext interpretation so its witnesses drop from the model", () => {
     expect(
       run([

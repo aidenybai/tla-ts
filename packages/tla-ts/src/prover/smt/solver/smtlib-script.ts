@@ -844,6 +844,7 @@ export const runSmtlibScript = (
         context,
         isOptimizing,
         isFromTactic: !isKernelChecking,
+        satSolver: isKernelChecking && isSolver2Only ? state.satSolver : undefined,
         reasonUnknown:
           !isKernelChecking && (error instanceof SmtDefaultError || error instanceof SmtTacticError)
             ? (reasonUnknown ?? error.message)

@@ -16,13 +16,20 @@ export const createSatTactic =
     manager: AstManager,
     params: SatParams,
     isModelValidating: boolean,
+    isArithIgnoringInt: boolean,
     mkThSolver: ThSolverFactory | null = null,
   ) =>
   (goal: Goal) => {
     if (goal.isProofsEnabled) throw new SmtTacticError("sat does not support proof production");
     goal.elimRedundancies();
     const solver = new Solver(params, manager.limit);
-    const goal2sat = new Goal2Sat(manager, solver, params.get("ite_extra") !== false, mkThSolver);
+    const goal2sat = new Goal2Sat(
+      manager,
+      solver,
+      params.get("ite_extra") !== false,
+      isArithIgnoringInt,
+      mkThSolver,
+    );
     const formsToValidate = isModelValidating ? [...goal.forms.items] : [];
     for (const form of formsToValidate) manager.incRef(form);
     try {
@@ -67,9 +74,7 @@ export const createSatTactic =
               if (value === manager.falseExpr)
                 throw new SmtUnsupportedError("a sat model that fails validation");
             }
-          const euf = goal2sat.euf;
-          goal.model = euf?.updateModel(model) ?? model;
-          euf?.validateModel(goal.model);
+          goal.model = goal2sat.euf?.updateModel(model, true) ?? model;
         }
       } else {
         solver.popToBaseLevel();

@@ -1,4 +1,9 @@
-import { SmtCanceledError, SmtTacticError, SmtUnsupportedError } from "../../../../errors";
+import {
+  SmtCanceledError,
+  SmtDefaultError,
+  SmtTacticError,
+  SmtUnsupportedError,
+} from "../../../../errors";
 import { type AstManager, OP_AND, OP_EQ, OP_IMPLIES, OP_NOT, OP_OR, SORT_BOOL } from "../ast";
 import { mkNot } from "../ast-util";
 import { BitBlasterRewriter } from "../bit-blast-tactic";
@@ -27,6 +32,7 @@ import {
 import type { SatParams } from "./config";
 import { Goal2Sat } from "./goal2sat";
 import { getConsequences } from "./consequences";
+import { getLitValue } from "./model-converter";
 import { isLiteral, Sat2GoalConverter, sat2goal } from "./sat2goal";
 import { Solver } from "./solver";
 
@@ -82,6 +88,7 @@ export class IncSatSolver {
       manager,
       this.solver,
       params.get("ite_extra") !== false,
+      parameters.get("smt.arith.ignore_int") === "true",
       mkThSolver,
     );
     if (mkThSolver !== null) this.goal2sat.ensureEuf();
@@ -316,10 +323,18 @@ export class IncSatSolver {
       this.reasonUnknown = "(sat.giveup has-uninterpreted)";
       return L_UNDEF;
     }
+    // Deviation from Z3: it checks the assumptions only under check-sat-assuming, so recfun's research answers sat on a model that falsifies a named assertion.
+    if (result === L_TRUE && this.asms.length > 0) this.checkAssumptions();
     if (result === L_FALSE && this.asms.length > 0) this.extractCore(asm2fml);
     if (result === L_UNDEF) this.reasonUnknown = this.solver.reasonUnknown;
     if (result !== L_FALSE) this.core.reset();
     return result;
+  }
+
+  private checkAssumptions() {
+    const model = this.solver.model;
+    for (const lit of this.dep2asm.values())
+      if (getLitValue(lit, model) !== L_TRUE) throw new SmtDefaultError("bad state");
   }
 
   // internalize_var: the variables of a constant's bits, undefined for a bit the solver lacks.
@@ -417,7 +432,10 @@ export class IncSatSolver {
       else if (value === L_FALSE) model.registerConst(manager.decls[expr], manager.falseExpr);
     }
     if (this.satConverter.entries.length > 0) applyDefinitions(this.satConverter.entries, model);
-    const converted = convertModel(this.converters, euf === null ? model : euf.updateModel(model));
+    const converted = convertModel(
+      this.converters,
+      euf === null ? model : euf.updateModel(model, true),
+    );
     if (this.parameters.get("model_validate") === "true") this.validateModel(converted);
     return converted;
   }

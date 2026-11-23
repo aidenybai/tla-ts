@@ -110,6 +110,7 @@ export class EufSolver implements SatExtension {
     readonly si: EufInternalizer,
     readonly s: Solver,
     readonly mkThSolver: ThSolverFactory,
+    private readonly isArithIgnoringInt: boolean,
   ) {
     this.egraph = new Egraph(manager);
     this.egraph.onPropagateLiteral = (node, ante) => this.propagateLiteral(node, ante);
@@ -911,7 +912,7 @@ export class EufSolver implements SatExtension {
     this.reinits = [];
   }
 
-  isRelevant() {
+  isRelevant(_node: Enode) {
     return true;
   }
 
@@ -931,6 +932,23 @@ export class EufSolver implements SatExtension {
 
   preSimplify() {
     for (const solver of this.solvers) solver.preSimplify();
+  }
+
+  shouldResearch(core: readonly number[]) {
+    let isResearching = false;
+    for (const solver of this.solvers) if (solver.shouldResearch(core)) isResearching = true;
+    return isResearching;
+  }
+
+  addAssumptions(assumptions: Set<number>) {
+    for (const solver of this.solvers) solver.addAssumptions(assumptions);
+  }
+
+  trackingAssumptions() {
+    const solvers = this.solvers;
+    for (let index = 0; index < solvers.length; index++)
+      if (solvers[index].trackingAssumptions()) return true;
+    return false;
   }
 
   simplify() {
@@ -964,7 +982,7 @@ export class EufSolver implements SatExtension {
     this.qmodel = model;
   }
 
-  updateModel(model: ProtoModel) {
+  updateModel(model: ProtoModel, isValidating: boolean) {
     if (this.qmodel !== null) return this.qmodel;
     model.resetEvalCache();
     for (const solver of this.solvers) solver.initModel();
@@ -978,23 +996,30 @@ export class EufSolver implements SatExtension {
     this.values2model(deps, model);
     for (const solver of this.solvers) solver.finalizeModel(model);
     userSorts.registerWith(model);
+    if (isValidating) this.validateModel(model);
     return model;
   }
 
   // validate_model, for its side effect: evaluating an application of a partial theory function,
   // such as a division by zero, completes its interpretation with some value.
-  validateModel(model: ProtoModel) {
-    if (this.hasUnhandled() || this.solvers.some((solver) => solver.hasUnhandled())) return;
+  private validateModel(model: ProtoModel) {
+    if (
+      this.hasUnhandled() ||
+      this.isArithIgnoringInt ||
+      this.solvers.some((solver) => solver.hasUnhandled())
+    )
+      return;
     const manager = this.manager;
     for (const node of this.egraph.nodes) {
       const expr = node.owner;
       if (!manager.isBool(expr) || manager.hasQuantifierFlags[expr] === 1) continue;
+      if (!this.isRelevant(node)) continue;
       if (node.boolVar === NULL_BOOL_VAR) continue;
       const value = model.eval(expr, false);
-      if (
-        this.s.value(2 * node.boolVar) === L_TRUE ? manager.isFalse(value) : manager.isTrue(value)
-      )
-        throw new SmtInvariantError("the euf model falsifies an assignment");
+      const isFalsified =
+        this.s.value(2 * node.boolVar) === L_TRUE ? manager.isFalse(value) : manager.isTrue(value);
+      manager.decRef(value);
+      if (isFalsified) throw new SmtInvariantError("the euf model falsifies an assignment");
     }
   }
 
