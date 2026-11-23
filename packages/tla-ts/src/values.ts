@@ -2105,7 +2105,7 @@ const toArgumentSet = (value: Value) => {
   return set;
 };
 
-type CostedSetValue =
+export type CostedSetValue =
   | SubsetValue
   | FunctionSetValue
   | RecordSetValue
@@ -2167,14 +2167,8 @@ const toChargedSet = (
   // TLC's SetEnumValue#member scans an unsorted literal, so a literal whose sort charges a set stays unsorted.
   if (isSortingLiteral) throw new TlaEvaluationError("The set literal holds a charged set");
   const cost = value.cost;
-  const node = cost?.node;
   const charges = cost?.charges;
-  if (value.kind === "Subset") charges?.chargeSubsetConversion(value);
-  else charges?.chargeSetEnumeration(value);
-  const set = convert(value);
-  if (value.kind === "Subset" && charges !== undefined && node !== undefined) {
-    charges.secondary[node] += set.elements.length;
-  }
+  const set = charges ? charges.convertCharged(value, convert) : convert(value);
   if (isCached && cost) cost.charges = undefined;
   return set;
 };
@@ -2607,8 +2601,7 @@ export interface ChargeTable {
   values: WeakMap<object, number>;
   secondary: number[];
   isMember: typeof isElementOf;
-  chargeSetEnumeration: (set: Value) => void;
-  chargeSubsetConversion: (set: SubsetValue) => void;
+  convertCharged: (set: CostedSetValue, convert: (value: Value) => SetValue) => SetValue;
   chargeSubsetElements: (set: SubsetValue) => void;
   chargePrintedSize: (set: Value) => void;
   chargeIsEmpty: (set: Value) => void;

@@ -11151,6 +11151,107 @@ ASSUME TLCFP(a) = -887695703
   });
 
   it.each([
+    [
+      "a product",
+      "{u \\in (0..1) \\X {1} : u[2] = 1} \\X {1}",
+      [
+        "line 4, col 9 to line 4, col 51 of module M: 1",
+        "|line 4, col 13 to line 4, col 51 of module M: 1:6",
+        "||line 4, col 13 to line 4, col 44 of module M: 1:3",
+        "|||line 4, col 36 to line 4, col 43 of module M: 3",
+        "|||line 4, col 20 to line 4, col 32 of module M: 1:6",
+        "||||line 4, col 21 to line 4, col 24 of module M: 1",
+        "||||line 4, col 30 to line 4, col 32 of module M: 1:8",
+        "||line 4, col 49 to line 4, col 51 of module M: 1:5",
+      ],
+    ],
+    [
+      "a product's second factor",
+      "{1} \\X {u \\in (0..1) \\X {1} : u[2] = 1}",
+      [
+        "line 4, col 9 to line 4, col 51 of module M: 1",
+        "|line 4, col 13 to line 4, col 51 of module M: 1:6",
+        "||line 4, col 13 to line 4, col 15 of module M: 1:2",
+        "||line 4, col 20 to line 4, col 51 of module M: 1:4",
+        "|||line 4, col 43 to line 4, col 50 of module M: 4",
+        "|||line 4, col 27 to line 4, col 39 of module M: 1:8",
+        "||||line 4, col 28 to line 4, col 31 of module M: 1",
+        "||||line 4, col 37 to line 4, col 39 of module M: 1:11",
+      ],
+    ],
+    [
+      "a record set",
+      "[a : {u \\in (0..1) \\X {1} : u[2] = 1}]",
+      [
+        "line 4, col 9 to line 4, col 50 of module M: 1",
+        "|line 4, col 13 to line 4, col 50 of module M: 1:4",
+        "||line 4, col 18 to line 4, col 49 of module M: 1:3",
+        "|||line 4, col 41 to line 4, col 48 of module M: 3",
+        "|||line 4, col 25 to line 4, col 37 of module M: 1:6",
+        "||||line 4, col 26 to line 4, col 29 of module M: 1",
+        "||||line 4, col 35 to line 4, col 37 of module M: 1:8",
+      ],
+    ],
+    [
+      "a function set's range",
+      "[{1} -> {u \\in (0..1) \\X {1} : u[2] = 1}]",
+      [
+        "line 4, col 9 to line 4, col 53 of module M: 1",
+        "|line 4, col 13 to line 4, col 53 of module M: 1:4",
+        "||line 4, col 14 to line 4, col 16 of module M: 1",
+        "||line 4, col 21 to line 4, col 52 of module M: 1:3",
+        "|||line 4, col 44 to line 4, col 51 of module M: 3",
+        "|||line 4, col 28 to line 4, col 40 of module M: 1:6",
+        "||||line 4, col 29 to line 4, col 32 of module M: 1",
+        "||||line 4, col 38 to line 4, col 40 of module M: 1:8",
+      ],
+    ],
+  ])(
+    "charges the draws of %s with a filter in it that the initial state holds",
+    async (_name, set, rows) => {
+      const relations = await getCoverageLines(
+        `---- MODULE M ----\nEXTENDS Integers, FiniteSets, TLC\nVARIABLE x\nInit == x = ${set}\nNext == x' = x\nInv == TRUE\n====`,
+        "INIT Init\nNEXT Next\nINVARIANT Inv",
+      );
+      expect(relations?.[0]).toEqual(rows);
+    },
+  );
+
+  it.each([
+    [
+      "the next state holds",
+      "x' = {u \\in (0..1) \\X {1} : u[2] = 1} \\X {1}",
+      [
+        "line 5, col 9 to line 5, col 52 of module M: 2",
+        "|line 5, col 14 to line 5, col 52 of module M: 2:12",
+        "||line 5, col 14 to line 5, col 45 of module M: 2:6",
+        "|||line 5, col 37 to line 5, col 44 of module M: 6",
+        "|||line 5, col 21 to line 5, col 33 of module M: 2:12",
+        "||||line 5, col 22 to line 5, col 25 of module M: 2",
+        "||||line 5, col 31 to line 5, col 33 of module M: 2:16",
+        "||line 5, col 50 to line 5, col 52 of module M: 2:10",
+      ],
+    ],
+    [
+      "a comparison converts",
+      "x' = 0 /\\ LET P == {u \\in (0..1) \\X {1} : u[2] = 1} \\X {1} IN P # {}",
+      [
+        "line 5, col 9 to line 5, col 14 of module M: 1",
+        "line 5, col 28 to line 5, col 66 of module M: 1:6",
+        "|line 5, col 28 to line 5, col 59 of module M: 1:3",
+        "||line 5, col 51 to line 5, col 58 of module M: 3",
+        "||line 5, col 35 to line 5, col 47 of module M: 1:6",
+        "|||line 5, col 36 to line 5, col 39 of module M: 1",
+        "|||line 5, col 45 to line 5, col 47 of module M: 1:8",
+        "|line 5, col 64 to line 5, col 66 of module M: 1:5",
+        "line 5, col 71 to line 5, col 76 of module M: 1",
+      ],
+    ],
+  ])("charges the draws of a product with a filter in it that %s", async (_name, next, rows) => {
+    expect(await getNextCoverageLines(next)).toEqual(rows);
+  });
+
+  it.each([
     ["Cardinality", "Cardinality(F) = 2 /\\ <<0, 1>> \\in F", ["<<0, 1>>", "<<1, 1>>"]],
     [
       "the size of its product",
