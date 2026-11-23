@@ -4063,6 +4063,34 @@ describe("ports test262's harness includes", () => {
     });
   });
 
+  describe("testIntl.js", () => {
+    const port =
+      "class Test262Error extends Error {}\n" +
+      "function assert(value: unknown, message?: string) { if (value !== true) throw new Test262Error(message); }\n" +
+      readPort("test262-test-intl.ts");
+    const uses = `
+      const names: string[] = [];
+      testWithIntlConstructors((Constructor: { name: string }) => names.push(Constructor.name));
+      if (names.slice(0, 3).join() !== "Collator,NumberFormat,DateTimeFormat") throw new Error(names.join());
+      if (!isCanonicalizedStructurallyValidLanguageTag("de-DE")) throw new Error("de-DE");
+      if (isCanonicalizedStructurallyValidLanguageTag("DE-de")) throw new Error("DE-de");
+      if (getLocaleBaseName("en-US-u-va-posix") !== "en-US") throw new Error("baseName");
+      if (getInvalidLanguageTags().indexOf("x-") === -1) throw new Error("invalid");
+    `;
+
+    it("runs a test on each service constructor and tells canonical language tags", async () => {
+      expect(getNodeError(port + uses)).toBeUndefined();
+      expect((await checkScript(port + uses)).message).toBeUndefined();
+    }, 120_000);
+
+    it("rejects a tag that isn't canonical", async () => {
+      const wrong =
+        'if (!isCanonicalizedStructurallyValidLanguageTag("de-de")) throw new Error("de-de");';
+      expect(getNodeError(port + wrong)).toContain("de-de");
+      expect((await checkScript(port + wrong)).message).toContain(THREW);
+    }, 120_000);
+  });
+
   describe("SpiderMonkey's Math shell", () => {
     const port = readPort("test262-sm-math-shell.ts");
     const near = `
