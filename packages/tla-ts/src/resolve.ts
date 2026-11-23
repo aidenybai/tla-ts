@@ -130,6 +130,8 @@ type SelectionUse = "Expression" | "Fact" | "Definition";
 
 export const LOCAL_RESOLUTION = { kind: "Local" } as const;
 
+export const SUBSTITUTE_RESOLUTION = { kind: "Local", isSubstitute: true } as const;
+
 const SELF_RESOLUTION = { kind: "Local", isSelf: true } as const;
 
 // SANY names the operator that a selection with arguments applies LAMBDA.
@@ -170,6 +172,7 @@ export interface SubexpressionRecords {
 export const selections = new WeakMap<Expression, Expression>();
 export const selectionErrors = new WeakMap<Expression, SelectionError>();
 export const operatorSelectionErrors = new WeakMap<Expression, SanyError>();
+export const operatorParamSelections = new WeakSet<Expression>();
 export const factReferences = new WeakMap<Fact[], Fact[]>();
 export const selectionArguments = new WeakMap<Expression, SelectionArgument>();
 export const nullSelections = new WeakMap<Expression, NullSelection[]>();
@@ -1582,7 +1585,7 @@ const matchArgument = (
     } else if (!isMatched && arg.operator !== undefined) {
       reportOperatorArity(arg.operator, arg.params.length);
     }
-    return isMatched;
+    return isMatched && !operatorParamSelections.has(arg);
   }
   if (reference !== arg) {
     const failed = findNullError(nullSelections.get(arg));

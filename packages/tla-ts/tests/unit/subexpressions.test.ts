@@ -46,6 +46,17 @@ describe("subexpression references match TLC", () => {
     expect(result.violation?.trace.map((step) => step.state)).toEqual([{ x: 0 }, { x: 12 }]);
   });
 
+  it("selects a LET operator named like a generated argument as an operator argument", async () => {
+    const prints: string[] = [];
+    const result = await check({
+      source:
+        "---- MODULE M ----\nEXTENDS Naturals, TLC\nVARIABLE x\nH(K(_)) == K(7)\nAp(K(_)) == K(5)\nE == LET argument0(a) == a + 100 IN H(argument0)\nASSUME PrintT(Ap(E!1!1))\nInit == x = 0\nNext == x' = x\n====",
+      config: "INIT Init\nNEXT Next",
+      onPrint: (text) => prints.push(text),
+    });
+    expect([result.status, prints]).toEqual(["success", ["105"]]);
+  });
+
   it("selects an operand that contains a subexpression reference", async () => {
     const result = await check({
       source:
@@ -424,6 +435,15 @@ describe("selections into the definitions of an instance with operator parameter
     expect([result.status, prints]).toEqual(["success", ["<<7, 7, 8, 7, 7>>"]]);
   });
 
+  it("passes an operator constant that a LET instance substitutes with its parameter as an operator argument", async () => {
+    const prints: string[] = [];
+    const result = await checkInstances(
+      `ASSUME PrintT(<<${LET_P} L(F)!E11, LET T(K(_)) == INSTANCE Mid WITH Op3 <- K IN T(F)!M1>>)`,
+      (text) => prints.push(text),
+    );
+    expect([result.status, prints]).toEqual(["success", ["<<8, 8>>"]]);
+  });
+
   it.each([
     ["D == P(F)!E8!1!1", [["16", "16", "Nonexistent operand specified by `argument selector 1'."]]],
     [
@@ -523,7 +543,7 @@ describe("selections into the definitions of an instance with operator parameter
 
 describe("operator arguments selected behind an instance or a definition's parameters", () => {
   const PURE =
-    "---- MODULE Pure ----\nEXTENDS Naturals, Sequences\nCONSTANT c, Op(_)\nE2(z) == Op(z)\nH(K(_)) == K(c)\nH2(K(_, _)) == K(c, c)\nH3(K(_)) == K(<<c>>)\nE9 == H(E2)\nE11 == H(Op)\nE18 == H(LAMBDA t : E2(t) + c)\nE22 == H2(\\cup)\nE23 == H3(Len)\nE25(y) == H(E2)\n====";
+    "---- MODULE Pure ----\nEXTENDS Naturals, Sequences\nCONSTANT c, Op(_)\nE2(z) == Op(z)\nH(K(_)) == K(c)\nH2(K(_, _)) == K(c, c)\nH3(K(_)) == K(<<c>>)\nE9 == H(E2)\nE11 == H(Op)\nE18 == H(LAMBDA t : E2(t) + c)\nE22 == H2(\\cup)\nE23 == H3(Len)\nE25(y) == H(E2)\nE26(G(_)) == H(G)\n====";
 
   const checkSelections = (definitions: string, onPrint?: (text: string) => void) =>
     check({
@@ -582,6 +602,28 @@ describe("operator arguments selected behind an instance or a definition's param
     expect([result.status, prints]).toEqual(["success", ["10"]]);
   });
 
+  it("selects into an instance copy through a LET instance of the module that holds it, with the values TLC gives it and its local twin", async () => {
+    const modules = new Map([
+      [
+        "Inner",
+        "---- MODULE Inner ----\nEXTENDS Naturals\nCONSTANT c, Op(_)\nE2(z) == Op(z)\nH(K(_)) == K(c)\nE9 == H(E2)\nE11 == H(Op)\nE12 == c + 1\n====",
+      ],
+      [
+        "Mid2",
+        "---- MODULE Mid2 ----\nEXTENDS Naturals\nG(a) == a * 2\nJJ2 == INSTANCE Inner WITH c <- 3, Op <- G\n====",
+      ],
+    ]);
+    const prints: string[] = [];
+    const result = await check({
+      source:
+        "---- MODULE M ----\nEXTENDS Naturals, TLC\nVARIABLE x\nAp(K(_)) == K(5)\nASSUME PrintT(LET L2 == INSTANCE Mid2 IN <<L2!JJ2!E12!1, Ap(L2!JJ2!E11!1), Ap(L2!JJ2!E9!1)>>)\nInit == x = 0\nNext == x' = x\n====",
+      config: "INIT Init\nNEXT Next",
+      loadModule: (name) => modules.get(name),
+      onPrint: (text) => prints.push(text),
+    });
+    expect([result.status, prints]).toEqual(["success", ["<<3, 10, 10>>"]]);
+  });
+
   it.each([
     ["J!E25!1", "16"],
     ["D!1", "12"],
@@ -599,6 +641,84 @@ describe("operator arguments selected behind an instance or a definition's param
       ]),
     );
   });
+
+  it.each([
+    [
+      "Ap2(E26!1)",
+      [
+        {
+          location: "line 15, col 7 to line 15, col 16 of module M",
+          message: "Argument number 1 to operator 'Ap2' \nshould be a 2-parameter operator.",
+        },
+      ],
+    ],
+    [
+      "Ap(E26!1)",
+      [
+        {
+          location: "line 15, col 10 to line 15, col 14 of module M",
+          message: "Expected arity 1 but found operator of arity 2.",
+        },
+        {
+          location: "line 15, col 7 to line 15, col 15 of module M",
+          message: "Argument number 1 to operator 'Ap' \nshould be a 1-parameter operator.",
+        },
+      ],
+    ],
+    [
+      "Ap3(E26!1)",
+      [
+        {
+          location: "line 15, col 11 to line 15, col 15 of module M",
+          message: "Expected arity 3 but found operator of arity 2.",
+        },
+        {
+          location: "line 15, col 7 to line 15, col 16 of module M",
+          message: "Argument number 1 to operator 'Ap3' \nshould be a 3-parameter operator.",
+        },
+      ],
+    ],
+    [
+      "Ap3(E27!1)",
+      [
+        {
+          location: "line 15, col 7 to line 15, col 16 of module M",
+          message: "Argument number 1 to operator 'Ap3' \nshould be a 3-parameter operator.",
+        },
+      ],
+    ],
+    [
+      "Ap2(J!E26!1)",
+      [
+        {
+          location: "line 15, col 7 to line 15, col 18 of module M",
+          message: "Argument number 1 to operator 'Ap2' \nshould be a 2-parameter operator.",
+        },
+      ],
+    ],
+    [
+      "Ap(J!E26!1)",
+      [
+        {
+          location: "line 15, col 10 to line 15, col 16 of module M",
+          message: "Expected arity 1 but found operator of arity 2.",
+        },
+        {
+          location: "line 15, col 7 to line 15, col 17 of module M",
+          message: "Argument number 1 to operator 'Ap' \nshould be a 1-parameter operator.",
+        },
+      ],
+    ],
+  ])(
+    "rejects %s, whose parameters include an operator parameter, as SANY does",
+    async (selection, errors) => {
+      await expect(
+        checkSelections(
+          `E26(G(_)) == H(G)\nE27(G(_), y) == H(G)\nAp3(K(_, _, _)) == K(1, 2, 3)\nD2 == ${selection}`,
+        ),
+      ).rejects.toThrow(createSanyError(errors));
+    },
+  );
 });
 
 describe("selections into standard operators match SANY and TLC", () => {

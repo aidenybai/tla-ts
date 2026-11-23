@@ -8,6 +8,7 @@ G == 7 ++ 2
 H == [x \\in {5, 7} |-> x ++ c]
 Apply2(Op(_, _), a, b) == Op(a, b)
 K == Apply2(++, 9, 4)
+Kf[i \\in {1}] == Apply2(++, 9, i)
 ====`;
 
 const checkAssumption = (definitions: string, assumption: string) =>
@@ -38,6 +39,18 @@ Implicit == INSTANCE Inner WITH c <- 2
 Local == LET Q == INSTANCE Inner WITH ++ <- \\div, c <- 2 IN Q!K
 Lambda == INSTANCE Inner WITH ++ <- LAMBDA x, y : x * y, c <- 2`,
       "<<Named!K, Implicit!K, Local, Lambda!K>> = <<1, 113, 2, 36>>",
+    );
+    expect(result.status).toBe("success");
+  });
+
+  it("substitutes a constant operator symbol passed as an operator argument with a substitute that uses a LET instance's parameters", async () => {
+    const result = await checkAssumption(
+      `Op == LET I(_ ** _, d) == INSTANCE Inner WITH ++ <- **, c <- d IN <<I(\\div, 2)!K, I(%, 2)!K, I(-, 2)!Kf[1]>>
+Lambda == LET I(d) == INSTANCE Inner WITH ++ <- LAMBDA x, y : x * y + d, c <- d IN I(1)!K
+Nested == LET I(_ ** _) == INSTANCE Inner WITH ++ <- **, c <- 2
+              J(P(_, _)) == I(P)!K
+          IN <<J(\\div), J(%)>>`,
+      "<<Op, Lambda, Nested>> = <<<<2, 1, 8>>, 37, <<2, 1>>>>",
     );
     expect(result.status).toBe("success");
   });

@@ -21,6 +21,7 @@ import type {
   StepBody,
   UseOrHide,
 } from "./ast";
+import { getArgumentName } from "./ast";
 import { TlaSyntaxError } from "./errors";
 import { getNumeralValue, readAtAsIdentifier, tokenize, type Token } from "./lexer";
 import { getDefEntryErrors, type DefEntryError } from "./sany/generator-def-entries";
@@ -1004,7 +1005,7 @@ const parse = (
           cursor - 1,
         );
       }
-      const argument: Expression = { kind: "Identifier", name: "argument", location };
+      const argument: Expression = { kind: "Identifier", name: getArgumentName(0), location };
       return withRange(
         {
           kind: "Lambda",

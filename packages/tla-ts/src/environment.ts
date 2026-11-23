@@ -1,4 +1,5 @@
 import {
+  getArgumentName,
   getChildren,
   getDefinitionExpressions,
   type AssumeProve,
@@ -48,6 +49,7 @@ import {
   createLocalIdentifier,
   frameSubstitutions,
   getEnabledVariableName,
+  getInstanceOperator,
   getLetInstanceExpansion,
   getOperatorDefinition,
   mentionsName,
@@ -82,6 +84,7 @@ import {
   MODULE_START,
   resolveModule,
   resolveSubstitutions,
+  SUBSTITUTE_RESOLUTION,
   type ModuleReport,
   type ModuleSymbol,
   type ModuleUnit,
@@ -1061,7 +1064,7 @@ export const createEnvironment = (
 
   const createArgumentParams = (arity: number, params: number[] | undefined) =>
     Array.from({ length: arity }, (_value, index) => ({
-      name: `argument${index}`,
+      name: getArgumentName(index),
       arity: params?.[index] ?? 0,
     }));
 
@@ -1175,17 +1178,26 @@ export const createEnvironment = (
     const createLocalSubstitution = (declaration: KeyedDeclaration): Expression =>
       !isParameterDependent(declaration)
         ? createLocalIdentifier(`${declaration.name}${suffix}`, location)
-        : {
-            kind: "Apply",
-            operator: `${declaration.name}${suffix}`,
-            args: createInstanceArguments(
+        : declaration.arity > 0
+          ? getInstanceOperator(
+              `${declaration.name}${suffix}`,
               instance.params,
+              declaration.arity,
               location,
-              subexpressionRecords.instanceArguments,
-            ),
-            location,
-            resolution: LOCAL_RESOLUTION,
-          };
+              LOCAL_RESOLUTION,
+              subexpressionRecords,
+            )
+          : {
+              kind: "Apply",
+              operator: `${declaration.name}${suffix}`,
+              args: createInstanceArguments(
+                instance.params,
+                location,
+                subexpressionRecords.instanceArguments,
+              ),
+              location,
+              resolution: SUBSTITUTE_RESOLUTION,
+            };
     const substitutes = {
       params: instance.params,
       substitutions: new Map(
@@ -1256,8 +1268,10 @@ export const createEnvironment = (
         if (definition) {
           const operator =
             definition.kind === "Operator" ? definition : createLocalFunction(definition, name);
-          const instanceCopy = localCopies.get(key);
-          if (copy && instanceCopy) localCopies.set(name, instanceCopy);
+          const instanceCopy = copy
+            ? localCopies.get(key)
+            : createInstanceCopy(key, instance.module, substitutes);
+          if (instanceCopy) localCopies.set(name, instanceCopy);
           return {
             ...operator,
             name,

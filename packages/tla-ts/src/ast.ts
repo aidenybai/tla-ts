@@ -1,6 +1,7 @@
 interface LocalResolution {
   kind: "Local";
   isSelf?: boolean;
+  isSubstitute?: boolean;
 }
 
 export interface SourceLocation {
@@ -689,6 +690,8 @@ export const getReferencedName = (expression: Expression) => {
 export const isLocallyResolved = (expression: Expression) =>
   (expression.kind === "Identifier" || expression.kind === "Apply") &&
   expression.resolution?.kind === "Local";
+
+export const getArgumentName = (index: number) => `#${index}`;
 
 const ASSUME_PROVE_OPERATOR = "$AssumeProve";
 

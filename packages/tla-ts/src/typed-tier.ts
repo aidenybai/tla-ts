@@ -1,6 +1,7 @@
 // Compiles a spec whose values have static types to JavaScript and searches it. It decides only a
 // search that succeeds, and gives anything else back to the interpreter, which reruns it.
 import {
+  getArgumentName,
   getChildren,
   isRecursiveConstruction,
   type ApplyExpression,
@@ -1608,7 +1609,7 @@ const getOperatorArgument = (
 ): OperatorBinding => {
   // An operator such as \cap applies as an expression that applies it, so a builtin compiles as one.
   if (arg.kind === "OperatorReference") {
-    const names = Array.from({ length: arity }, (_value, index) => `#${index}`);
+    const names = Array.from({ length: arity }, (_value, index) => getArgumentName(index));
     return {
       kind: "Operator",
       definition: {
