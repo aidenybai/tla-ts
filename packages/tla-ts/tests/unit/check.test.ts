@@ -9934,6 +9934,59 @@ ASSUME TLCFP(a) = -887695703
     },
   );
 
+  it.each([
+    [
+      "a union of empty record sets",
+      "\\E s \\in SUBSET ((UNION {[a : {p}, b : {}] : p \\in {1, 2}}) \\X {1}) : TRUE",
+      [
+        "line 5, col 9 to line 5, col 14 of module M: 1",
+        "line 5, col 19 to line 5, col 92 of module M: 1",
+        "|line 5, col 89 to line 5, col 92 of module M: 1",
+        "|line 5, col 28 to line 5, col 85 of module M: 1",
+        "||line 5, col 36 to line 5, col 84 of module M: 1",
+        "|||line 5, col 37 to line 5, col 76 of module M: 1",
+        "||||line 5, col 43 to line 5, col 76 of module M: 1:2",
+        "|||||line 5, col 44 to line 5, col 60 of module M: 2",
+        "|||||line 5, col 70 to line 5, col 75 of module M: 1:3",
+        "|||line 5, col 82 to line 5, col 84 of module M: 1",
+      ],
+    ],
+    [
+      "a union of empty products",
+      "\\E s \\in SUBSET ((UNION {{p} \\X {} : p \\in {1, 2}}) \\X {1}) : TRUE",
+      [
+        "line 5, col 9 to line 5, col 14 of module M: 1",
+        "line 5, col 19 to line 5, col 84 of module M: 1",
+        "|line 5, col 81 to line 5, col 84 of module M: 1",
+        "|line 5, col 28 to line 5, col 77 of module M: 1",
+        "||line 5, col 36 to line 5, col 76 of module M: 1",
+        "|||line 5, col 37 to line 5, col 68 of module M: 1",
+        "||||line 5, col 43 to line 5, col 68 of module M: 1:2",
+        "|||||line 5, col 44 to line 5, col 52 of module M: 2",
+        "|||||line 5, col 62 to line 5, col 67 of module M: 1:3",
+        "|||line 5, col 74 to line 5, col 76 of module M: 1",
+      ],
+    ],
+    [
+      "a union of empty function sets",
+      "\\E s \\in SUBSET ((UNION {[{p} -> {}] : p \\in {1, 2}}) \\X {1}) : TRUE",
+      [
+        "line 5, col 9 to line 5, col 14 of module M: 1",
+        "line 5, col 19 to line 5, col 86 of module M: 1",
+        "|line 5, col 83 to line 5, col 86 of module M: 1",
+        "|line 5, col 28 to line 5, col 79 of module M: 1",
+        "||line 5, col 36 to line 5, col 78 of module M: 1",
+        "|||line 5, col 37 to line 5, col 70 of module M: 1",
+        "||||line 5, col 43 to line 5, col 70 of module M: 1:2",
+        "|||||line 5, col 44 to line 5, col 54 of module M: 2",
+        "|||||line 5, col 64 to line 5, col 69 of module M: 1:3",
+        "|||line 5, col 76 to line 5, col 78 of module M: 1",
+      ],
+    ],
+  ])("doesn't convert an empty product of %s that SUBSET sizes", async (_name, body, rows) => {
+    expect(await getNextCoverageLines(`x' = 0 /\\ ${body}`)).toEqual(rows);
+  });
+
   it("charges the conversion of a product after sizing it converts its union", async () => {
     expect(
       await getNextCoverageLines(

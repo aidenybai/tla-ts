@@ -1490,7 +1490,7 @@ export const chargeSize = (coverage: Coverage, set: Value): void => {
 const chargeSubsetElements = (coverage: Coverage, set: SubsetValue) => {
   chargeSize(coverage, set.base);
   const base = getChargedSet(set.base);
-  if (base !== undefined) chargeSetEnumeration(coverage, base);
+  if (base !== undefined && getKnownSize(base) !== 0) chargeSetEnumeration(coverage, base);
 };
 
 const chargePrintedSize = (coverage: Coverage, set: Value) => {
