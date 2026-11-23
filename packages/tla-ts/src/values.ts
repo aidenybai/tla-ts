@@ -1342,6 +1342,84 @@ export const markNormalized = (value: Value): void => {
   }
 };
 
+const normalizeDeeplyWithin = (
+  value: Value,
+  depth: number,
+  deeper: Value[] | undefined,
+): Value[] | undefined => {
+  if (typeof value !== "object") return deeper;
+  if (depth === MAXIMUM_MARK_DEPTH) {
+    const pending = deeper ?? [];
+    pending.push(value);
+    return pending;
+  }
+  let pending = deeper;
+  switch (value.kind) {
+    case "Set":
+      value.isNormalized = true;
+      for (let index = 0; index < value.elements.length; index++) {
+        pending = normalizeDeeplyWithin(value.elements[index], depth + 1, pending);
+      }
+      return pending;
+    case "MixedSet":
+      for (let index = 0; index < value.elements.length; index++) {
+        pending = normalizeDeeplyWithin(value.elements[index], depth + 1, pending);
+      }
+      toFiniteSet(value);
+      return pending;
+    case "Function":
+      // FcnRcdValue#deepNormalize normalizes its values but only sorts its domain.
+      value.writtenKeys = undefined;
+      for (let index = 0; index < value.domain.length; index++) {
+        markNormalized(value.domain[index]);
+        pending = normalizeDeeplyWithin(value.range[index], depth + 1, pending);
+      }
+      return pending;
+    case "LazyFunction": {
+      if (value.enumerated) return normalizeDeeplyWithin(value.enumerated, depth + 1, pending);
+      const copies: LazyFunctionCopy[] = [];
+      for (let current = value; isLazyFunctionCopy(current); current = current.original) {
+        copies.push(current);
+      }
+      for (let index = copies.length - 1; index >= 0; index--) {
+        const copy = copies[index];
+        pending = normalizeDeeplyWithin(copy.newValue, depth + 1, pending);
+        for (let step = 0; step < copy.path.length; step++) {
+          pending = normalizeDeeplyWithin(copy.path[step], depth + 1, pending);
+        }
+      }
+      return normalizeDeeplyWithin(value.domain, depth + 1, pending);
+    }
+    case "FilteredSet":
+    case "Subset":
+    case "Union":
+      return normalizeDeeplyWithin(value.base, depth + 1, pending);
+    case "SetOperation":
+      pending = normalizeDeeplyWithin(value.left, depth + 1, pending);
+      return normalizeDeeplyWithin(value.right, depth + 1, pending);
+    case "FunctionSet":
+      pending = normalizeDeeplyWithin(value.domain, depth + 1, pending);
+      return normalizeDeeplyWithin(value.range, depth + 1, pending);
+    case "RecordSet":
+    case "ProductSet": {
+      const sets = value.kind === "RecordSet" ? value.sets : value.factors;
+      for (let index = 0; index < sets.length; index++) {
+        pending = normalizeDeeplyWithin(sets[index], depth + 1, pending);
+      }
+      return pending;
+    }
+    default:
+      return pending;
+  }
+};
+
+export const normalizeDeeply = (value: Value): void => {
+  const deeper = normalizeDeeplyWithin(value, 0, undefined);
+  for (let inner = deeper?.pop(); inner !== undefined; inner = deeper?.pop()) {
+    normalizeDeeplyWithin(inner, 0, deeper);
+  }
+};
+
 export const normalizeShallowly = (value: Value): void => {
   if (typeof value !== "object" || isCachedSet(value)) return;
   if (value.kind === "Set") {

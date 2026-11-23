@@ -131,8 +131,8 @@ import {
   type LazyFunctionValue,
   type ObjectValue,
   type Value,
-  markNormalized,
   markStreamedSet,
+  normalizeDeeply,
   setTrace,
 } from "./values";
 import type { TlcVersion } from "./tlc/version";
@@ -1118,10 +1118,14 @@ const evaluateAtStartup = (
 ) => {
   // SpecProcessor#evalConstantDefn evaluates in TLCState.Empty, before any checker exists.
   const context = { environment, scope: undefined, state: EMPTY_STATE, next: undefined };
-  const value = environment.runtime.evaluateAtStartup(() =>
-    toStartupValue(definition, compileDefinitionBody(definition, environment)(context)),
-  );
-  markNormalized(value);
+  const value = environment.runtime.evaluateAtStartup(() => {
+    const startup = toStartupValue(
+      definition,
+      compileDefinitionBody(definition, environment)(context),
+    );
+    normalizeDeeply(startup);
+    return startup;
+  });
   environment.startupValues[definitionId] = value;
 };
 

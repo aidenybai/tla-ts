@@ -11665,6 +11665,36 @@ ASSUME TLCFP(a) = -887695703
   });
 
   it.each([
+    ["a literal that fails to sort", "{<<F, F>>, 1}", ["{}", "{1}", "{}", "{1}", '"n"']],
+    ["a literal", "{F, {9}}", ["{}", "{1}", '"n"']],
+    ["a literal in a literal", "{{F, {9}}, {8}}", ["{}", "{1}", '"n"']],
+    ["a record", "[a |-> 1, b |-> {F, {9}}]", ["{}", "{1}", '"n"']],
+    ["a product", "{F, {9}} \\X {1}", ["{}", "{1}", '"n"']],
+    ["a record set", "[a : {F, {9}}]", ["{}", "{1}", '"n"']],
+    ["a function set", "[{F, {9}} -> {1}]", ["{}", "{1}", '"n"']],
+    ["a set difference", "{F, {9}} \\ {{7}}", ["{}", "{1}", "{}", "{1}", '"n"']],
+    ["a SUBSET", "SUBSET {F, {9}}", ["{}", "{1}", '"n"']],
+    ["a function's domain", "({F, {9}} :> 1)", ['"n"']],
+    ["a Seq", "Seq({F, {9}})", ['"n"']],
+    [
+      "a literal before the assumptions",
+      '{F, {9}}\nASSUME PrintT("assume")',
+      ["{}", "{1}", '"assume"', '"n"'],
+    ],
+  ])(
+    "sorts the literals of a constant definition as TLC starts in %s",
+    async (_name, body, expected) => {
+      const prints: string[] = [];
+      await check({
+        source: `---- MODULE M ----\nEXTENDS Integers, Sequences, TLC\nVARIABLE x\nK == LET F == {s \\in SUBSET {1} : PrintT(s)} IN ${body}\nInit == x = 0\nNext == x' = x /\\ PrintT("n")\n====`,
+        config: "INIT Init\nNEXT Next",
+        onPrint: (text) => prints.push(text),
+      });
+      expect(prints).toEqual(expected);
+    },
+  );
+
+  it.each([
     [
       "a product compared with itself",
       "LET F == {u \\in (0..1) \\X {1} : u[2] = 1} IN LET P == F \\X {1} IN P = P /\\ \\E t \\in F \\cup {9} : t = t",
