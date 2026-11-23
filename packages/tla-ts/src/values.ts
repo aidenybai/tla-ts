@@ -2167,8 +2167,9 @@ const toCachedSet = (value: Value) => {
     value.isCached = true;
     return set;
   }
+  const set = toFiniteSet(value);
   cacheSet(value);
-  return toFiniteSet(value);
+  return set;
 };
 
 const toChargedSet = (

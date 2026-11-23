@@ -11324,6 +11324,38 @@ ASSUME TLCFP(a) = -887695703
       "PrintT(F \\X {1}) /\\ Cardinality(F) = 2",
       ["<<0, 1>>", "<<1, 1>>", "{<<<<0, 1>>, 1>>, <<<<1, 1>>, 1>>}"],
     ],
+    [
+      "a literal's sort compares a record set of it",
+      "LET P == [a : F] IN {{9}, P} # {} /\\ \\A t \\in F : TRUE",
+      ["<<0, 1>>", "<<0, 1>>", "<<1, 1>>", "<<0, 1>>", "<<1, 1>>"],
+    ],
+    [
+      "a literal's sort compares its product",
+      "LET P == F \\X {1} IN {{9}, P} # {} /\\ \\A t \\in F : TRUE",
+      ["<<0, 1>>", "<<0, 1>>", "<<1, 1>>", "<<0, 1>>", "<<1, 1>>"],
+    ],
+    [
+      "a literal's sort compares a record set of it in two fields",
+      "LET P == [a : F, b : F] IN {{9}, P} # {} /\\ \\A t \\in F : TRUE",
+      [
+        "<<0, 1>>",
+        "<<0, 1>>",
+        "<<0, 1>>",
+        "<<0, 1>>",
+        "<<1, 1>>",
+        "<<0, 1>>",
+        "<<1, 1>>",
+        "<<1, 1>>",
+        "<<0, 1>>",
+        "<<0, 1>>",
+        "<<1, 1>>",
+      ],
+    ],
+    [
+      "a literal's sort compares a record set of it with itself",
+      "LET P == [a : F] IN {P, P} # {} /\\ \\A t \\in F : TRUE",
+      ["<<0, 1>>", "<<0, 1>>", "<<1, 1>>", "<<0, 1>>", "<<1, 1>>"],
+    ],
   ])(
     "runs a filter's predicate again after %s only where TLC does",
     async (_name, body, printed) => {
