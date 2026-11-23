@@ -344,6 +344,34 @@ describe("INSTANCE matches TLC", () => {
     ]);
   });
 
+  it("assigns a variable that a LET instance substitutes with its parameters", async () => {
+    const result = await check({
+      source:
+        "---- MODULE M ----\nEXTENDS Naturals\nVARIABLES x, y\nInit == LET L(w) == INSTANCE C WITH v <- w IN L(x)!Start /\\ L(y)!StartIn\nNext == LET L(w) == INSTANCE C WITH v <- w IN (L(x)!Inc /\\ L(y)!Stay) \\/ (L(y)!IncIn /\\ L(x)!StayAll)\nInv == ~(x = 2 /\\ y = 2)\n====",
+      config: "INIT Init\nNEXT Next\nINVARIANT Inv",
+      loadModule: (name) =>
+        name === "C"
+          ? "---- MODULE C ----\nEXTENDS Naturals\nVARIABLE v\nStart == v = 0\nStartIn == v \\in {0, 1}\nInc == v' = (v + 1) % 3\nIncIn == v' \\in {(v + 1) % 3}\nStay == UNCHANGED v\nStayAll == UNCHANGED <<v>>\n===="
+          : undefined,
+    });
+    expect([
+      result.status,
+      result.violation?.trace.map((step) => [step.state.x, step.state.y]),
+      result.generatedStates,
+      result.distinctStates,
+    ]).toEqual([
+      "invariant-violation",
+      [
+        [0, 1],
+        [1, 1],
+        [2, 1],
+        [2, 2],
+      ],
+      16,
+      9,
+    ]);
+  });
+
   it("applies recursive definitions of an instance inside LET without substitutions", async () => {
     const inner =
       "---- MODULE Inner ----\nEXTENDS Naturals\nr[n \\in 0..5] == IF n = 0 THEN 0 ELSE r[n - 1] + 2\nRECURSIVE R(_)\nR(n) == IF n = 0 THEN 0 ELSE R(n - 1) + 3\n====";

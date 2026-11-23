@@ -242,6 +242,18 @@ const getRuntimeVariableIndex = (
     const letScope = bindDefinitions(expression.definitions, getContext(run, scope, partial));
     return getRuntimeVariableIndex(expression.body, letScope, partial, run, isPrimed);
   }
+  // SymbolNodeValueLookupProvider#getVar looks a declaration up through its SubstInNode, which a LET instance with parameters applies as an operator.
+  if (expression.kind === "Apply" && expression.resolution?.isSubstitute) {
+    const binding = lookupScope(scope, expression.operator);
+    if (binding?.kind !== "Operator" || binding.operator.kind !== "Closure") return undefined;
+    const closure = binding.operator;
+    const callScope = bindOperatorArguments(
+      closure,
+      expression.args,
+      getContext(run, scope, partial),
+    );
+    return getRuntimeVariableIndex(closure.body, callScope, partial, run, isPrimed);
+  }
   if (expression.kind !== "Identifier") {
     return expression.kind === "EnabledVariable" && !isPrimed
       ? run.environment.variableIndex.get(expression.name)
@@ -262,6 +274,7 @@ const getRuntimeVariableIndex = (
 const isPossiblyAssignable = (target: Expression, isInit: boolean) =>
   target.kind === "Let" ||
   (target.kind === "Identifier" && (isInit || isLocallyResolved(target))) ||
+  (target.kind === "Apply" && target.resolution?.isSubstitute === true) ||
   (!isInit && target.kind === "Prime");
 
 const ACTION_KINDS = new Set([

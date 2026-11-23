@@ -83,6 +83,7 @@ import {
   MODULE_START,
   resolveModule,
   resolveSubstitutions,
+  SUBSTITUTE_RESOLUTION,
   type ModuleReport,
   type ModuleSymbol,
   type ModuleUnit,
@@ -1194,7 +1195,7 @@ export const createEnvironment = (
                 subexpressionRecords.instanceArguments,
               ),
               location,
-              resolution: LOCAL_RESOLUTION,
+              resolution: SUBSTITUTE_RESOLUTION,
             };
     const substitutes = {
       params: instance.params,

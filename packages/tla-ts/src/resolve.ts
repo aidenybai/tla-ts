@@ -130,6 +130,8 @@ type SelectionUse = "Expression" | "Fact" | "Definition";
 
 export const LOCAL_RESOLUTION = { kind: "Local" } as const;
 
+export const SUBSTITUTE_RESOLUTION = { kind: "Local", isSubstitute: true } as const;
+
 const SELF_RESOLUTION = { kind: "Local", isSelf: true } as const;
 
 // SANY names the operator that a selection with arguments applies LAMBDA.

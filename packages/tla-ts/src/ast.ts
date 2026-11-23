@@ -1,6 +1,7 @@
 interface LocalResolution {
   kind: "Local";
   isSelf?: boolean;
+  isSubstitute?: boolean;
 }
 
 export interface SourceLocation {
