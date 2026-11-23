@@ -375,6 +375,11 @@ const getScopeCount = (list: SmtList) => {
     throw new SmtParseError("invalid push command, integer expected", argument);
   if (argument.text.startsWith("-"))
     throw new SmtParseError("invalid push command, value is negative.", argument);
+  if (!isUnsigned(argument.text))
+    throw new SmtParseError(
+      "invalid push command, value is too big to fit in an unsigned machine integer",
+      argument,
+    );
   return Number(argument.text);
 };
 
