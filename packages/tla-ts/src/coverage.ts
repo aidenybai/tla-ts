@@ -1118,6 +1118,8 @@ const createProductSetEnumerator = (coverage: Coverage, set: Value, size: number
         : Array.from({ length: getCardinality(set.domain) }, () => set.range);
   const sizes = getComponentSizes(sets, size);
   if (sizes === undefined) return undefined;
+  // SetOfFcnsValue#elements, SetOfRcdsValue#elements and SetOfTuplesValue#elements ask isEmpty first.
+  chargeIsEmpty(coverage, set);
   // SetOfFcnsValue's enumerator converts a domain that isn't an interval with toSetEnum.
   const domain =
     set.kind === "FunctionSet" && !sizes.includes(0) ? getChargedSet(set.domain) : undefined;
@@ -1380,11 +1382,75 @@ const chargeSetEnumeration = (coverage: Coverage, set: Value) => {
   if (node !== undefined) coverage.secondary[node] += size;
 };
 
+// TLC's Value#isEmpty asks a union or a set operation for its first element.
+const chargeIsEmpty = (coverage: Coverage, set: Value): boolean | undefined => {
+  if (typeof set !== "object") return undefined;
+  switch (set.kind) {
+    case "Set":
+    case "MixedSet":
+      return set.elements.length === 0;
+    case "Interval":
+      return set.low > set.high;
+    case "Subset":
+      return false;
+    case "RecordSet":
+    case "ProductSet": {
+      const components = set.kind === "RecordSet" ? set.sets : set.factors;
+      for (let index = 0; index < components.length; index++) {
+        const isEmpty = chargeIsEmpty(coverage, components[index]);
+        if (isEmpty !== false) return isEmpty;
+      }
+      return false;
+    }
+    case "FunctionSet": {
+      const isDomainEmpty = chargeIsEmpty(coverage, set.domain);
+      return isDomainEmpty === undefined
+        ? undefined
+        : !isDomainEmpty && chargeIsEmpty(coverage, set.range);
+    }
+    case "SetOperation":
+    case "Union": {
+      const size =
+        set.cost?.charges === undefined ? set.enumerated?.elements.length : getKnownSize(set);
+      if (size === undefined) return undefined;
+      createEnumerator(coverage, set, size, false).next();
+      return size === 0;
+    }
+    default:
+      return undefined;
+  }
+};
+
 // SetCupValue#size, SetCapValue#size, SetDiffValue#size and UnionValue#size convert with convertAndCache.
-export const chargeSetOperationSize = (coverage: Coverage, set: Value) => {
-  if (typeof set !== "object" || (set.kind !== "SetOperation" && set.kind !== "Union")) return;
-  chargeSetEnumeration(coverage, set);
-  if (set.cost) set.cost.charges = undefined;
+export const chargeSize = (coverage: Coverage, set: Value): void => {
+  if (typeof set !== "object") return;
+  switch (set.kind) {
+    case "SetOperation":
+    case "Union":
+      if (set.cost?.charges === undefined) return;
+      chargeSetEnumeration(coverage, set);
+      set.cost.charges = undefined;
+      return;
+    case "RecordSet":
+    case "ProductSet": {
+      if (chargeIsEmpty(coverage, set) !== false) return;
+      const components = set.kind === "RecordSet" ? set.sets : set.factors;
+      for (let index = 0; index < components.length; index++) {
+        chargeSize(coverage, components[index]);
+      }
+      return;
+    }
+    case "FunctionSet":
+      if (chargeIsEmpty(coverage, set.domain) !== false) return;
+      if (chargeIsEmpty(coverage, set.range) !== false) return;
+      chargeSize(coverage, set.range);
+      if (getCardinality(set.range) === 1) return;
+      chargeSize(coverage, set.domain);
+      chargeSize(coverage, set.range);
+      return;
+    case "Subset":
+      chargeSize(coverage, set.base);
+  }
 };
 
 export const createChargedEnumerator = (
