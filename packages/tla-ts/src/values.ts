@@ -157,9 +157,9 @@ interface CountedLazyFunctionValue extends LazyFunctionValue {
 
 interface LazyFunctionCopy extends LazyFunctionValue {
   original: LazyFunctionValue;
-  replacedKey: Value;
-  replacement: Value;
-  isLastPathStep: boolean;
+  path: Value[];
+  depth: number;
+  newValue: Value;
   applyBody: (argument: Value) => Value;
 }
 
@@ -3925,22 +3925,24 @@ const hasReplacedKey = (copy: LazyFunctionCopy, argument: Value) => {
     isLazyFunctionCopy(current);
     current = current.original
   ) {
-    if (isEqualLikeTlc(current.replacedKey, argument) && current.isLastPathStep) return true;
+    if (
+      isEqualLikeTlc(current.path[current.depth], argument) &&
+      current.depth === current.path.length - 1
+    ) {
+      return true;
+    }
   }
   return false;
 };
 
-// FcnLambdaValue#toFcnRcd evaluates the body at every key of an EXCEPT copy, then applies its EXCEPTs.
-const getCopiedValue = (copy: LazyFunctionCopy, key: Value) => {
-  const value = copy.applyBody(key);
-  for (
-    let current: LazyFunctionValue = copy;
-    isLazyFunctionCopy(current);
-    current = current.original
-  ) {
-    if (isEqualLikeTlc(current.replacedKey, key)) return current.replacement;
-  }
-  return value;
+// FcnLambdaValue#toFcnRcd evaluates the body at every key of an EXCEPT copy, then takes its EXCEPTs from the oldest.
+const getCopiedValue = (copy: LazyFunctionCopy, key: Value, value: Value): Value => {
+  const previous = isLazyFunctionCopy(copy.original)
+    ? getCopiedValue(copy.original, key, value)
+    : value;
+  return isEqualLikeTlc(copy.path[copy.depth], key)
+    ? takeExcept(previous, copy.path, copy.depth + 1, copy.newValue)
+    : previous;
 };
 
 export const toFiniteFunction = (value: Value): FunctionValue => {
@@ -3960,7 +3962,7 @@ export const toFiniteFunction = (value: Value): FunctionValue => {
     value.enumerated = createSortedFunction(
       domain,
       isLazyFunctionCopy(value)
-        ? domain.map((key) => getCopiedValue(value, key))
+        ? domain.map((key) => getCopiedValue(value, key, value.applyBody(key)))
         : domain.map((key) => value.apply(key)),
     );
     finishConversion?.();
@@ -4270,12 +4272,76 @@ export const getDomain = (functionValue: Value): Value => {
   return set;
 };
 
+// FcnLambdaValue#apply evaluates the body again at a key whose EXCEPT goes deeper, then takes the rest of the path on it.
+const copyLazyFunction = (
+  functionValue: LazyFunctionValue,
+  path: Value[],
+  depth: number,
+  newValue: Value,
+) => {
+  const argument = path[depth];
+  // Deviation from TLC: FcnLambdaValue#takeExcept builds its copy with new FcnLambdaValue(this), which drops cm, so the EXCEPT copy counts nothing.
+  const copy: LazyFunctionCopy = {
+    kind: "LazyFunction",
+    domain: functionValue.domain,
+    apply:
+      depth === path.length - 1
+        ? (key) => (isEqualLikeTlc(argument, key) ? newValue : functionValue.apply(key))
+        : (key) =>
+            isEqualLikeTlc(argument, key)
+              ? takeExcept(functionValue.apply(key), path, depth + 1, newValue)
+              : functionValue.apply(key),
+    source: functionValue.source,
+    boundTupleLengths: functionValue.boundTupleLengths,
+    isApplicationObserved: functionValue.isApplicationObserved,
+    original: functionValue,
+    path,
+    depth,
+    newValue,
+    applyBody: isLazyFunctionCopy(functionValue) ? functionValue.applyBody : functionValue.apply,
+  };
+  return isCountedLazyFunction(functionValue)
+    ? Object.assign(copy, { costModel: functionValue.costModel })
+    : copy;
+};
+
+const getExceptTarget = (value: Value) => {
+  if (!isFunctionValue(value)) {
+    throw new TlaEvaluationError(
+      `Attempted to apply EXCEPT construct to the value ${prettyPrint(formatValue(value))}.`,
+    );
+  }
+  return toFiniteFunction(value);
+};
+
+// Value#takeExcept sets the value at the rest of the path without applying a lazy function on it.
+const takeExcept = (value: Value, path: Value[], depth: number, newValue: Value): Value => {
+  if (depth === path.length) return newValue;
+  if (
+    typeof value === "object" &&
+    value.kind === "LazyFunction" &&
+    value.enumerated === undefined
+  ) {
+    return copyLazyFunction(value, path, depth, newValue);
+  }
+  const finite = getExceptTarget(value);
+  const position = findKeyIndexLikeTlc(finite, path[depth], describeExceptKey);
+  if (position === -1) return finite;
+  return setFunctionValue(
+    finite,
+    position,
+    takeExcept(finite.range[position], path, depth + 1, newValue),
+  );
+};
+
 export const updateFunction = (
   functionValue: Value,
-  argument: Value,
-  update: (previous: Value) => Value,
-  isLastPathStep: boolean,
+  path: Value[],
+  depth: number,
+  getNewValue: (previous: Value) => Value,
 ): Value => {
+  if (depth === path.length) return getNewValue(functionValue);
+  const argument = path[depth];
   if (
     typeof functionValue === "object" &&
     functionValue.kind === "LazyFunction" &&
@@ -4290,36 +4356,29 @@ export const updateFunction = (
       }
       if (!isElementOf(argument, functionValue.domain)) return functionValue;
     }
-    const updated = update(functionValue.apply(argument));
-    // Deviation from TLC: FcnLambdaValue#takeExcept builds its copy with new FcnLambdaValue(this), which drops cm, so the EXCEPT copy counts nothing.
-    const copy: LazyFunctionCopy = {
-      kind: "LazyFunction",
-      domain: functionValue.domain,
-      apply: (key) => (isEqualLikeTlc(argument, key) ? updated : functionValue.apply(key)),
-      source: functionValue.source,
-      boundTupleLengths: functionValue.boundTupleLengths,
-      isApplicationObserved: functionValue.isApplicationObserved,
-      original: functionValue,
-      replacedKey: argument,
-      replacement: updated,
-      isLastPathStep,
-      applyBody: isLazyFunctionCopy(functionValue) ? functionValue.applyBody : functionValue.apply,
-    };
-    return isCountedLazyFunction(functionValue)
-      ? Object.assign(copy, { costModel: functionValue.costModel })
-      : copy;
+    const previous = functionValue.apply(argument);
+    if (depth === path.length - 1) {
+      return copyLazyFunction(functionValue, path, depth, getNewValue(previous));
+    }
+    let newValue: Value | undefined;
+    updateFunction(previous, path, depth + 1, (selected) => (newValue = getNewValue(selected)));
+    return newValue === undefined
+      ? functionValue
+      : copyLazyFunction(functionValue, path, depth, newValue);
   }
-  if (!isFunctionValue(functionValue)) {
-    throw new TlaEvaluationError(
-      `Attempted to apply EXCEPT construct to the value ${prettyPrint(formatValue(functionValue))}.`,
-    );
-  }
-  const finite = toFiniteFunction(functionValue);
+  const finite = getExceptTarget(functionValue);
   const position = findKeyIndexLikeTlc(finite, argument, describeExceptKey);
   if (position === -1) return finite;
+  return setFunctionValue(
+    finite,
+    position,
+    updateFunction(finite.range[position], path, depth + 1, getNewValue),
+  );
+};
+
+const setFunctionValue = (finite: FunctionValue, position: number, next: Value) => {
   const range = [...finite.range];
   const previous = finite.range[position];
-  const next = update(previous);
   range[position] = next;
   const updated = setFunctionClass(
     createSortedFunction(finite.domain, range),

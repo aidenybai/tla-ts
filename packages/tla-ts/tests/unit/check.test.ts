@@ -236,6 +236,75 @@ describe("check matches TLC", () => {
     },
   );
 
+  const records =
+    'f == [t \\in {u \\in (0..2) \\X {1} : TRUE} |-> [c |-> IF PrintT(<<"b", t>>) THEN 0 ELSE 1, d |-> 0]]';
+  const functions =
+    'g == [t \\in {u \\in 0..2 : TRUE} |-> [v \\in {w \\in 0..3 : PrintT(<<"n", t, w>>)} |-> IF PrintT(<<"b", t, v>>) THEN [e |-> 0] ELSE [e |-> 1]]]';
+  const domain = ['<<"n", 1, 0>>', '<<"n", 1, 1>>', '<<"n", 1, 2>>', '<<"n", 1, 3>>'];
+  it.each([
+    [
+      "![k].c = v, applied at k",
+      records,
+      "[f EXCEPT ![<<1, 1>>].c = 5][<<1, 1>>].c = 5",
+      ['<<"b", <<1, 1>>>>', '<<"b", <<1, 1>>>>'],
+    ],
+    [
+      "![k].c = v and then ![k].d = w, applied at k",
+      records,
+      "[[f EXCEPT ![<<1, 1>>].c = 5] EXCEPT ![<<1, 1>>].d = 6][<<1, 1>>].c = 5",
+      ['<<"b", <<1, 1>>>>', '<<"b", <<1, 1>>>>', '<<"b", <<1, 1>>>>'],
+    ],
+    [
+      "![k].c = v and then ![k] = w, applied at k",
+      records,
+      "[[f EXCEPT ![<<1, 1>>].c = 5] EXCEPT ![<<1, 1>>] = [c |-> 6, d |-> 0]][<<1, 1>>].c = 6",
+      ['<<"b", <<1, 1>>>>', '<<"b", <<1, 1>>>>'],
+    ],
+    [
+      "![k] = v and then ![k].c = w, applied at k",
+      records,
+      "[[f EXCEPT ![<<1, 1>>] = [c |-> 1, d |-> 1]] EXCEPT ![<<1, 1>>].c = 5][<<1, 1>>].c = 5",
+      ['<<"b", <<1, 1>>>>'],
+    ],
+    [
+      "![k][j].e = v on lazy functions of lazy functions, applied at k and j",
+      functions,
+      "[g EXCEPT ![1][2].e = 5][1][2].e = 5",
+      [...domain, '<<"b", 1, 2>>', ...domain, '<<"b", 1, 2>>'],
+    ],
+    [
+      "![k][j].e = v on lazy functions of lazy functions, applied at k and printed",
+      functions,
+      "PrintT([g EXCEPT ![1][2].e = 5][1])",
+      [
+        ...domain,
+        '<<"b", 1, 2>>',
+        ...domain,
+        '<<"b", 1, 0>>',
+        '<<"b", 1, 1>>',
+        '<<"b", 1, 2>>',
+        '<<"b", 1, 3>>',
+        "(0 :> [e |-> 0] @@ 1 :> [e |-> 0] @@ 2 :> [e |-> 5] @@ 3 :> [e |-> 0])",
+      ],
+    ],
+  ])(
+    "evaluates a lazy function's body again where TLC does after EXCEPT %s",
+    async (_except, definition, application, expected) => {
+      const prints: string[] = [];
+      const result = await check({
+        source: `---- MODULE M ----\nEXTENDS Integers, TLC\nVARIABLE x\nInit == x = 0\nNext == x' = 0 /\\ LET ${definition} IN ${application}\n====`,
+        config: "INIT Init\nNEXT Next",
+        onPrint: (text) => prints.push(text),
+      });
+      expect(prints).toEqual(expected);
+      expect([result.status, result.generatedStates, result.distinctStates]).toEqual([
+        "success",
+        2,
+        1,
+      ]);
+    },
+  );
+
   it.each([
     [
       "a record at a non-string key",
@@ -8954,6 +9023,19 @@ ASSUME TLCFP(a) = -887695703
       expect(lines?.[1]).toEqual(expected);
     },
   );
+
+  it("counts the body of a lazy function again where an application takes an EXCEPT that goes deeper, though TLC's FcnLambdaValue#takeExcept drops the copy's cost model", async () => {
+    const lines = await getNextCoverageLines(
+      "x' = 0 /\\ LET f == [t \\in {u \\in (0..2) \\X {1} : TRUE} |-> [c |-> 0]] IN [f EXCEPT ![<<1, 1>>].c = 5][<<1, 1>>].c = 5",
+    );
+    expect(lines).toEqual([
+      "line 5, col 9 to line 5, col 14 of module M: 1",
+      "line 5, col 28 to line 5, col 77 of module M: 1",
+      "|line 5, col 68 to line 5, col 76 of module M: 2",
+      "|line 5, col 35 to line 5, col 62 of module M: 1",
+      "line 5, col 82 to line 5, col 125 of module M: 1",
+    ]);
+  });
 
   it("charges the domain of the copy EXCEPT makes of a recursive function when TLC fingerprints a state holding it, as FcnParams#elements charges each bound set", async () => {
     const lines = await getCoverageLines(

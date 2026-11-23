@@ -2656,23 +2656,6 @@ const compileExcept = (
     if (step.args.length === 1) return step.args[0](context);
     return createTuple(step.args.map((arg) => arg(context)));
   };
-  const update = (
-    current: Value,
-    keys: Value[],
-    depth: number,
-    context: Context,
-    value: Evaluator,
-  ): Value => {
-    if (depth === keys.length) {
-      return value(withScope(context, bindValue(context.scope, EXCEPT_AT, current)));
-    }
-    return updateFunction(
-      current,
-      keys[depth],
-      (previous) => update(previous, keys, depth + 1, context, value),
-      depth + 1 === keys.length,
-    );
-  };
   return (context) => {
     let current = evaluateFunction(context);
     for (const item of updates) {
@@ -2682,9 +2665,9 @@ const compileExcept = (
         keys[index] = getKey(item.path[index], context);
       }
       let isFound = false;
-      current = update(current, keys, 0, context, (inner) => {
+      current = updateFunction(current, keys, 0, (previous) => {
         isFound = true;
-        return item.value(inner);
+        return item.value(withScope(context, bindValue(context.scope, EXCEPT_AT, previous)));
       });
       if (!isFound) {
         context.environment.runtime.warn(
