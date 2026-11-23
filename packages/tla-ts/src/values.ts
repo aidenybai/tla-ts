@@ -665,8 +665,7 @@ const compareWithItself = (value: Value, isEquality: boolean): boolean => {
       : toFiniteSet(value),
     isEquality,
   );
-  // SetPredValue#equals and compareTo keep the set they convert with convertAndCache.
-  if (value.kind === "FilteredSet") value.isCached = true;
+  keepConvertedSet(value);
   return false;
 };
 
@@ -723,8 +722,7 @@ export const compareValues = (left: Value, right: Value): number => {
       const leftSet = leftCharged
         ? toChargedSet(leftCharged, true, toFiniteSet)
         : toFiniteSet(left);
-      // SetPredValue#compareTo and equals keep the set they convert with convertAndCache.
-      if (leftKind === "FilteredSet") left.isCached = true;
+      keepConvertedSet(left);
       return compareSets(
         leftSet,
         rightCharged ? toChargedSet(rightCharged, false, toArgumentSet) : toArgumentSet(right),
@@ -879,8 +877,13 @@ export const markFingerprinted = (value: Value): void => {
   }
 };
 
+// A lazy set's equals and compareTo keep the set they convert with convertAndCache, once they have converted it.
+const keepConvertedSet = (value: ObjectValue) => {
+  if (value.kind === "FilteredSet") value.isCached = true;
+  else cacheSet(value);
+};
+
 export const valuesEqual = (left: Value, right: Value): boolean => {
-  cacheSet(left);
   if (left === right) {
     compareWithItself(left, true);
     return true;
@@ -952,6 +955,7 @@ export const valuesEqual = (left: Value, right: Value): boolean => {
   if (isInfiniteComparison) {
     if (!isOverriddenSet(left)) {
       const elements = toFiniteSet(left);
+      keepConvertedSet(left);
       if (!isOverriddenSet(right)) return compareSets(elements, toFiniteSet(right)) === 0;
     }
     return compareValues(left, right) === 0;

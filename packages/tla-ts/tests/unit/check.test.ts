@@ -11376,6 +11376,63 @@ ASSUME TLCFP(a) = -887695703
     ).toEqual(rows);
   });
 
+  it("keeps no set of a function set compared with itself in a spec with a union", async () => {
+    const relations = await getCoverageLines(
+      "---- MODULE M ----\nEXTENDS Integers, FiniteSets, TLC\nVARIABLE x\nInit == x = 0 /\\ (SUBSET {1}) \\cup (SUBSET {2}) # {}\nNext == x' = 0 /\\ LET G == [{u \\in (0..1) \\X {1} : u[1] > 5} -> {u \\in (0..1) \\X {1} : u[1] < 5}] IN G = G /\\ \\A e \\in G : e = e\nInv == TRUE\n====",
+      "INIT Init\nNEXT Next\nINVARIANT Inv",
+    );
+    expect(relations?.at(-1)).toEqual([
+      "line 5, col 9 to line 5, col 14 of module M: 1",
+      "line 5, col 28 to line 5, col 97 of module M: 1:4",
+      "|line 5, col 29 to line 5, col 60 of module M: 1:8",
+      "||line 5, col 52 to line 5, col 59 of module M: 8",
+      "||line 5, col 36 to line 5, col 48 of module M: 1:16",
+      "|||line 5, col 37 to line 5, col 40 of module M: 1",
+      "|||line 5, col 46 to line 5, col 48 of module M: 1:20",
+      "|line 5, col 65 to line 5, col 96 of module M: 1",
+      "line 5, col 102 to line 5, col 128 of module M: 1",
+    ]);
+  });
+
+  it.each([
+    ["a function set with it as the domain", "[F -> {1}] # {}"],
+    ["its product", "LET P == F \\X {1} IN P # {}"],
+    ["a record set of it", "LET P == [a : F] IN P # {}"],
+  ])(
+    "runs a filter's predicate again after %s is compared with the empty set in a spec with a union",
+    async (_name, comparison) => {
+      const prints: string[] = [];
+      await check({
+        source: `---- MODULE M ----\nEXTENDS Integers, TLC\nVARIABLE x\nInit == x = 0\nNext == x' = 0 /\\ (SUBSET {1}) \\cup (SUBSET {2}) # {} /\\ LET F == {u \\in (0..1) \\X {1} : PrintT(u)} IN ${comparison} /\\ \\A t \\in F : TRUE\n====`,
+        config: "INIT Init\nNEXT Next",
+        onPrint: (text) => prints.push(text),
+      });
+      expect(prints).toEqual(["<<0, 1>>", "<<0, 1>>", "<<1, 1>>", "<<0, 1>>", "<<1, 1>>"]);
+    },
+  );
+
+  it("charges the draws of a product compared with the empty set in a spec with a union", async () => {
+    const relations = await getCoverageLines(
+      "---- MODULE M ----\nEXTENDS Integers, FiniteSets, TLC\nVARIABLE x\nInit == x = 0 /\\ (SUBSET {1}) \\cup (SUBSET {2}) # {}\nNext == x' = 0 /\\ LET P == {u \\in (0..1) \\X {1} : u[2] = 1} \\X {1} IN P # {} /\\ \\A o \\in P : TRUE\nInv == TRUE\n====",
+      "INIT Init\nNEXT Next\nINVARIANT Inv",
+    );
+    expect(relations?.at(-1)).toEqual([
+      "line 5, col 9 to line 5, col 14 of module M: 1",
+      "line 5, col 28 to line 5, col 66 of module M: 1:9",
+      "|line 5, col 28 to line 5, col 59 of module M: 1:3",
+      "||line 5, col 51 to line 5, col 58 of module M: 3",
+      "||line 5, col 35 to line 5, col 47 of module M: 1:6",
+      "|||line 5, col 36 to line 5, col 39 of module M: 1",
+      "|||line 5, col 45 to line 5, col 47 of module M: 1:8",
+      "|line 5, col 64 to line 5, col 66 of module M: 1:5",
+      "line 5, col 71 to line 5, col 97 of module M: 1",
+      "|line 5, col 71 to line 5, col 76 of module M: 1",
+      "|line 5, col 81 to line 5, col 97 of module M: 1",
+      "||line 5, col 94 to line 5, col 97 of module M: 2",
+      "||line 5, col 90 to line 5, col 90 of module M: 1",
+    ]);
+  });
+
   it("charges a filter in a function set's domain on each pass over the function set", async () => {
     expect(
       await getNextCoverageLines(
