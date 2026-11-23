@@ -165,11 +165,13 @@ export class MkCoiFilter implements RuleTransformerPlugin {
         [...prunedPreds].map((decl) => ({
           decl,
           def: manager.mkOr(
-            source
-              .getPredicateRules(decl)
-              .map((rule) =>
-                horn.mkHorn(rule.head, manager.mkAnd(rule.tail.slice(rule.uninterpretedSize))),
-              ),
+            source.getPredicateRules(decl).map((rule) => {
+              const body = manager.mkAnd(rule.tail.slice(rule.uninterpretedSize));
+              manager.incRef(body);
+              const result = horn.mkHorn(rule.head, body);
+              manager.decRef(body);
+              return result;
+            }),
           ),
         })),
       );
