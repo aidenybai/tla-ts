@@ -48,6 +48,7 @@ import {
   createLocalIdentifier,
   frameSubstitutions,
   getEnabledVariableName,
+  getInstanceOperator,
   getLetInstanceExpansion,
   getOperatorDefinition,
   mentionsName,
@@ -1175,17 +1176,26 @@ export const createEnvironment = (
     const createLocalSubstitution = (declaration: KeyedDeclaration): Expression =>
       !isParameterDependent(declaration)
         ? createLocalIdentifier(`${declaration.name}${suffix}`, location)
-        : {
-            kind: "Apply",
-            operator: `${declaration.name}${suffix}`,
-            args: createInstanceArguments(
+        : declaration.arity > 0
+          ? getInstanceOperator(
+              `${declaration.name}${suffix}`,
               instance.params,
+              declaration.arity,
               location,
-              subexpressionRecords.instanceArguments,
-            ),
-            location,
-            resolution: LOCAL_RESOLUTION,
-          };
+              LOCAL_RESOLUTION,
+              subexpressionRecords,
+            )
+          : {
+              kind: "Apply",
+              operator: `${declaration.name}${suffix}`,
+              args: createInstanceArguments(
+                instance.params,
+                location,
+                subexpressionRecords.instanceArguments,
+              ),
+              location,
+              resolution: LOCAL_RESOLUTION,
+            };
     const substitutes = {
       params: instance.params,
       substitutions: new Map(

@@ -424,6 +424,15 @@ describe("selections into the definitions of an instance with operator parameter
     expect([result.status, prints]).toEqual(["success", ["<<7, 7, 8, 7, 7>>"]]);
   });
 
+  it("passes an operator constant that a LET instance substitutes with its parameter as an operator argument", async () => {
+    const prints: string[] = [];
+    const result = await checkInstances(
+      `ASSUME PrintT(<<${LET_P} L(F)!E11, LET T(K(_)) == INSTANCE Mid WITH Op3 <- K IN T(F)!M1>>)`,
+      (text) => prints.push(text),
+    );
+    expect([result.status, prints]).toEqual(["success", ["<<8, 8>>"]]);
+  });
+
   it.each([
     ["D == P(F)!E8!1!1", [["16", "16", "Nonexistent operand specified by `argument selector 1'."]]],
     [

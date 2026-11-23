@@ -704,13 +704,13 @@ export const createLocalAlias = (
   location,
 });
 
-const getInstanceOperator = (
+export const getInstanceOperator = (
   key: string,
   params: OperatorParam[],
   arity: number,
   location: SourceLocation,
   resolution: typeof LOCAL_RESOLUTION | undefined,
-  instanceOperators: WeakSet<Expression>,
+  marks: Pick<Instantiation, "instanceArguments" | "instanceOperators">,
 ): Expression & { kind: "Lambda" } => {
   const names = Array.from({ length: arity }, (_value, index) => `argument${index}`);
   const operator: Expression & { kind: "Lambda" } = {
@@ -720,7 +720,7 @@ const getInstanceOperator = (
       kind: "Apply",
       operator: key,
       args: [
-        ...createLocalArguments(params, location),
+        ...createInstanceArguments(params, location, marks.instanceArguments),
         ...names.map((name) => createLocalIdentifier(name, location)),
       ],
       location,
@@ -728,7 +728,7 @@ const getInstanceOperator = (
     },
     location,
   };
-  instanceOperators.add(operator);
+  marks.instanceOperators.add(operator);
   return operator;
 };
 
@@ -861,7 +861,7 @@ const substituteExpression = (
         getArity(definition),
         expression.location,
         resolution,
-        instantiation.instanceOperators,
+        instantiation,
       );
       markCall(rewrite, expression, operator.body);
       return operator;
@@ -895,12 +895,16 @@ const substituteExpression = (
         resolution: replacement.kind === "Identifier" ? replacement.resolution : undefined,
       });
     }
-    if (replacement?.kind === "Apply") {
+    if (
+      replacement?.kind === "Lambda" &&
+      instantiation.instanceOperators.has(replacement) &&
+      replacement.body.kind === "Apply"
+    ) {
       return markContextual({
         ...expression,
-        operator: replacement.operator,
-        args: [...replacement.args, ...args],
-        resolution: replacement.resolution,
+        operator: replacement.body.operator,
+        args: [...replacement.body.args.slice(0, -replacement.params.length), ...args],
+        resolution: replacement.body.resolution,
       });
     }
     if (replacement?.kind === "Lambda") {
@@ -969,7 +973,7 @@ const substituteExpression = (
         getArity(definition),
         expression.location,
         resolution,
-        instantiation.instanceOperators,
+        instantiation,
       );
       markCall(rewrite, expression, operator.body);
       return operator;
