@@ -367,6 +367,22 @@ describe("horn tactic", () => {
     ).toEqual(["unknown", "unsat"]);
   });
 
+  it("resets the Horn context when a run follows a canceled one", () => {
+    expect(
+      run([
+        "(set-logic HORN)",
+        "(set-option :fp.engine bmc)",
+        "(declare-fun P (Int) Bool)",
+        "(assert (forall ((x Int)) (=> (= x 0) (P x))))",
+        "(assert (forall ((x Int)) (=> (P x) (< x 0))))",
+        "(set-option :rlimit 10)",
+        "(check-sat)",
+        "(set-option :rlimit 0)",
+        "(check-sat)",
+      ]),
+    ).toEqual(["unknown", "unsat"]);
+  });
+
   it("answers a nonlinear system", () => {
     expect(
       run([
