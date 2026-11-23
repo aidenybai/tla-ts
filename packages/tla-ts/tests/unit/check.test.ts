@@ -11296,6 +11296,30 @@ ASSUME TLCFP(a) = -887695703
       ["<<0, 1>>", "<<1, 1>>", "<<{<<0, 1>>, <<1, 1>>}>>", "<<0, 1>>", "<<1, 1>>"],
     ],
     [
+      "a bound over a function set with it as the domain",
+      "LET P == [F -> {1}] IN (\\A o \\in P : TRUE) /\\ (\\A o \\in P : TRUE)",
+      ["<<0, 1>>", "<<0, 1>>", "<<1, 1>>", "<<0, 1>>", "<<0, 1>>", "<<1, 1>>"],
+    ],
+    [
+      "a function set with it as the domain compared with the empty set",
+      "[F -> {1}] # {} /\\ \\A t \\in F : TRUE",
+      ["<<0, 1>>", "<<0, 1>>", "<<1, 1>>", "<<0, 1>>", "<<1, 1>>"],
+    ],
+    [
+      "a bound over a record set of function sets with it as the domain",
+      "(\\A o \\in [a : [F -> {1}]] : TRUE) /\\ (\\A o \\in [a : [F -> {1}]] : TRUE)",
+      [
+        "<<0, 1>>",
+        "<<0, 1>>",
+        "<<0, 1>>",
+        "<<1, 1>>",
+        "<<0, 1>>",
+        "<<0, 1>>",
+        "<<0, 1>>",
+        "<<1, 1>>",
+      ],
+    ],
+    [
       "PrintT of its product, which sizes it",
       "PrintT(F \\X {1}) /\\ Cardinality(F) = 2",
       ["<<0, 1>>", "<<1, 1>>", "{<<<<0, 1>>, 1>>, <<<<1, 1>>, 1>>}"],
@@ -11350,6 +11374,25 @@ ASSUME TLCFP(a) = -887695703
         `x' = 0 /\\ LET F == {u \\in (0..1) \\X {1} : u[2] = 1} IN ${body}`,
       ),
     ).toEqual(rows);
+  });
+
+  it("charges a filter in a function set's domain on each pass over the function set", async () => {
+    expect(
+      await getNextCoverageLines(
+        "x' = 0 /\\ LET F == {u \\in (0..1) \\X {1} : u[2] = 1} IN LET P == [F -> {1}] IN (\\A o \\in P : TRUE) /\\ (\\A o \\in P : TRUE)",
+      ),
+    ).toEqual([
+      "line 5, col 9 to line 5, col 14 of module M: 1",
+      "line 5, col 28 to line 5, col 59 of module M: 1:10",
+      "|line 5, col 51 to line 5, col 58 of module M: 6",
+      "|line 5, col 35 to line 5, col 47 of module M: 1:12",
+      "||line 5, col 36 to line 5, col 39 of module M: 1",
+      "||line 5, col 45 to line 5, col 47 of module M: 1:16",
+      "line 5, col 73 to line 5, col 82 of module M: 1:10",
+      "|line 5, col 74 to line 5, col 74 of module M: 1",
+      "|line 5, col 79 to line 5, col 81 of module M: 1:10",
+      "line 5, col 87 to line 5, col 128 of module M: 1",
+    ]);
   });
 
   it.each([

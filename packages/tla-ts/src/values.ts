@@ -2267,7 +2267,7 @@ const isPredicatedProduct = (value: FunctionSetValue | RecordSetValue | ProductS
   value.isCached !== true &&
   !value.enumerated &&
   (value.kind === "FunctionSet"
-    ? isPredicated(value.range)
+    ? isPredicated(value.domain) || isPredicated(value.range)
     : hasPredicatedSet(value.kind === "RecordSet" ? value.sets : value.factors));
 
 const hasPredicatedSet = (sets: Value[]) => {
@@ -2291,7 +2291,7 @@ const hasObservedFilter = (value: Value): boolean => {
         hasObservedSet(value.base.elements)
       );
     case "FunctionSet":
-      return hasObservedFilter(value.range);
+      return hasObservedFilter(value.domain) || hasObservedFilter(value.range);
     case "RecordSet":
       return hasObservedSet(value.sets);
     case "ProductSet":
@@ -2318,7 +2318,7 @@ export const createFunctionSet = (
   kind: "FunctionSet",
   domain,
   range,
-  hasFilter: isPredicated(range),
+  hasFilter: isPredicated(domain) || isPredicated(range),
   cost,
 });
 
@@ -2371,6 +2371,17 @@ const EMPTY_STREAM: ListStream = { kind: "List", elements: [], position: 0 };
 
 const getPlainTest = (value: FilteredSetValue) => (element: Value) => value.test(element, false);
 
+// SetOfFcnsValue's enumerator converts its domain with toSetEnum, which keeps nothing.
+const getEnumeratedDomain = (domain: Value) => {
+  const repeatedDomain =
+    typeof domain === "object" && isLazySet(domain) && !domain.enumerated && hasObservedPass(domain)
+      ? domain
+      : undefined;
+  const elements = getFunctionDomain(domain);
+  if (repeatedDomain) repeatedDomain.enumerated = undefined;
+  return elements;
+};
+
 // TLC's elements() checks that the set has an element and reads the first element of each component, which nextElement continues.
 const openProductStream = (
   value: FunctionSetValue | RecordSetValue | ProductSetValue,
@@ -2389,7 +2400,7 @@ const openProductStream = (
     if (isOverriddenSet(value.domain)) {
       throw new TlaEvaluationError(describeUnenumerableFunctionSet("domain D", value.domain));
     }
-    stream.domain = getFunctionDomain(value.domain);
+    stream.domain = getEnumeratedDomain(value.domain);
     if ((stream.domain.length > 0 || isVersion174) && isOverriddenSet(value.range)) {
       throw new TlaEvaluationError(describeUnenumerableFunctionSet("range R", value.range));
     }
@@ -2868,7 +2879,7 @@ const openChargedProduct = (
     if (isOverriddenSet(value.domain)) {
       throw new TlaEvaluationError(describeUnenumerableFunctionSet("domain D", value.domain));
     }
-    stream.domain = getFunctionDomain(value.domain);
+    stream.domain = getEnumeratedDomain(value.domain);
     if ((stream.domain.length > 0 || isVersion174) && isOverriddenSet(value.range)) {
       throw new TlaEvaluationError(describeUnenumerableFunctionSet("range R", value.range));
     }
