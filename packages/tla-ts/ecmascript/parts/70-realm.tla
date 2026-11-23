@@ -6,7 +6,7 @@
 \*   globalEnv     the index of the current realm's global environment
 \*   realmId       the index of the current realm in realms
 \*   realms        each realm's [intrinsics, globalEnv], the first the one the host starts with
-\*   privateCount  the number of Private Names made so far
+\*   privateCount  a bound on the ids of the Private Names made so far
 \*   symbolRegistry  the GlobalSymbolRegistry of Symbol.for (§20.4.2.2)
 \*   jobs          the pending jobs, as [kind, ...] records
 \*   out           the lines print wrote

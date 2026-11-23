@@ -1,3 +1,5 @@
+// TLA+ keywords, the operators of the modules every spec extends, and the names tla-ts
+// generates. A TypeScript name that collides with one of these gets a suffix.
 const RESERVED = new Set([
   "ACTION",
   "ASSUME",
@@ -85,8 +87,18 @@ const RESERVED = new Set([
   "Next",
   "Spec",
   "vars",
+  "Ref",
+  "Big",
+  "Limbs",
+  "BuiltIns",
+  "UsedBuiltIns",
+  "ConstantFunctions",
+  "UsedConstantFunctions",
+  "SourceTexts",
+  "UsedSourceTexts",
   "Null",
   "Undefined",
+  "Unresolvable",
   "Perms",
   "Rem",
   "Quot",
@@ -96,17 +108,26 @@ export interface Names {
   getFresh: (base: string) => string;
 }
 
-export const createNames = (): Names => {
+export const createNames = (reserved: ReadonlySet<string>): Names => {
   const used = new Set<string>();
+  // The next index to try for each name, so that many names that sanitize alike stay quick.
+  const nextIndices = new Map<string, number>();
   return {
     getFresh: (base) => {
       const sanitized = base.replace(/[^A-Za-z0-9_]/g, "_");
-      const name = /[A-Za-z]/.test(sanitized) ? sanitized : `v${sanitized}`;
-      const getCandidate = (index: number): string => {
+      // The prelude's TypeOf takes a model value whose name starts with a digit, as a numeric
+      // method's would, for a number or an object.
+      const name =
+        /^[A-Za-z_]/.test(sanitized) && /[A-Za-z]/.test(sanitized) ? sanitized : `v${sanitized}`;
+      const getIndex = (index: number): number => {
         const candidate = index === 0 ? name : `${name}_${index}`;
-        return used.has(candidate) || RESERVED.has(candidate) ? getCandidate(index + 1) : candidate;
+        return used.has(candidate) || RESERVED.has(candidate) || reserved.has(candidate)
+          ? getIndex(index + 1)
+          : index;
       };
-      const fresh = getCandidate(0);
+      const index = getIndex(nextIndices.get(name) ?? 0);
+      const fresh = index === 0 ? name : `${name}_${index}`;
+      nextIndices.set(name, index + 1);
       used.add(fresh);
       return fresh;
     },

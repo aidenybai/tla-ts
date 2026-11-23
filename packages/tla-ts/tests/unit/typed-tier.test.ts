@@ -112,6 +112,7 @@ describe("typed tier matches TLC", () => {
     ["LetFunctionWays", 235],
     ["RecursiveMessages", 481],
     ["SymmetricMessages", 91],
+    ["StreamedSteps", 37],
     ["ConstantFunctions", 20001],
   ])("counts each successor TLC generates in %s", async (name, generatedStates) => {
     const results = await Promise.all([checkFixture(name, false), checkFixture(name, true)]);

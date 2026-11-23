@@ -244,6 +244,49 @@ const createBinaryChecks = (
     expected: getExpected(left, right),
   }));
 
+// What a module that extends the Numbers under a name prints: ESNumber, whose arithmetic tla-ts
+// runs natively where it can, or ESNumberPlain, the same TLA+ under a name tla-ts doesn't know.
+const getPrintedResults = async (module: string, results: string[]) => {
+  const printed: string[] = [];
+  const result = await check({
+    source: `---- MODULE NumberResults ----\nEXTENDS ${module}, TLC\nASSUME PrintT(<<${results.join(",\n")}>>)\n====`,
+    config: "",
+    loadModule: (name) =>
+      name === "ESNumberPlain"
+        ? loadModule("ESNumber")?.replace("MODULE ESNumber", "MODULE ESNumberPlain")
+        : loadModule(name),
+    onPrint: (text) => printed.push(text),
+  });
+  return [result.status, result.violation?.message, ...printed];
+};
+
+// Doubles at the edges that the native arithmetic must keep: subnormals, the largest finite
+// doubles, the integers about 2^53, and the 2^30 bound of an "int" Number.
+const EDGE_VALUES = [
+  2 ** -1060,
+  -(2 ** -1074) * 5,
+  2 ** 1023 * 1.5,
+  Number.MAX_VALUE - 2 ** 970,
+  2 ** 53 + 2,
+  -(2 ** 53) + 1,
+  2 ** 30 + 1,
+  2 ** 29,
+  -(2 ** 29) - 0.5,
+  1073741823.5,
+];
+
+const ARITHMETIC_PAIRS = [...PAIR_VALUES, ...EDGE_VALUES].flatMap((left) =>
+  [...PAIR_VALUES, ...EDGE_VALUES].map((right) => [left, right] as const),
+);
+
+// Bases and exponents whose powers PowFinite computes exactly, and others that fall back.
+const POWER_PAIRS = [...SPECIAL_VALUES.slice(0, 28), 1024, 2 ** 29, 3 ** 20, -2, 0.75].flatMap(
+  (base) =>
+    [1, 2, 3, 5, 10, 31, 52, 53, 100, -1, -2, 0.5, 0, -0].map(
+      (exponent) => [base, exponent] as const,
+    ),
+);
+
 describe("ESNumber matches JavaScript's Number semantics", { timeout: 60_000 }, () => {
   it("encodes constants and integers in the canonical form", async () => {
     const failures = await getFailures([
@@ -490,6 +533,126 @@ describe("ESNumber matches JavaScript's Number semantics", { timeout: 60_000 }, 
     );
     expect(failures).toEqual([]);
   });
+
+  // tla-ts runs StrToNum natively for a string of decimal digits, so it must give the record
+  // StringToNumber builds, printed in the same order of fields.
+  // tla-ts runs ESNumber's arithmetic natively where JavaScript's doubles give a finite nonzero
+  // result of finite nonzero operands, which must be the record the TLA+ builds, printed alike.
+  it("computes the arithmetic natively as its TLA+ does", { timeout: 300_000 }, async () => {
+    const results = [
+      ...["NumAdd", "NumSubtract", "NumMultiply", "NumDivide", "NumRemainder"].flatMap((operator) =>
+        ARITHMETIC_PAIRS.map(
+          ([left, right]) => `ToString(${operator}(${encodeNumber(left)}, ${encodeNumber(right)}))`,
+        ),
+      ),
+      ...POWER_PAIRS.map(
+        ([base, exponent]) =>
+          `ToString(NumExponentiate(${encodeNumber(base)}, ${encodeNumber(exponent)}))`,
+      ),
+      ...[...VALUES, ...EDGE_VALUES].map((value) => `ToString(MathFloor(${encodeNumber(value)}))`),
+    ];
+    const expected = await getPrintedResults("ESNumberPlain", results);
+    expect(expected[0]).toBe("success");
+    expect(await getPrintedResults("ESNumber", results)).toEqual(expected);
+  });
+
+  // A zero result is the TLA+'s constant PosZero or NegZero, which keeps its sign.
+  it("keeps the sign of a zero as its TLA+ does", { timeout: 120_000 }, async () => {
+    const results = (
+      [
+        ["NumMultiply", 3, -0],
+        ["NumMultiply", -3, 0],
+        ["NumMultiply", -Number.MIN_VALUE, 0.5],
+        ["NumRemainder", -0, 1],
+        ["NumRemainder", -5, 5],
+        ["NumRemainder", 5, -5],
+        ["NumDivide", 1, -0],
+        ["NumDivide", -1, Infinity],
+        ["NumDivide", -Number.MIN_VALUE, 2 ** 60],
+        ["NumAdd", -0, -0],
+        ["NumAdd", 2.5, -2.5],
+        ["NumSubtract", -0, 0],
+      ] as const
+    ).map(
+      ([operator, left, right]) =>
+        `ToString(${operator}(${encodeNumber(left)}, ${encodeNumber(right)}))`,
+    );
+    const floors = [-0.5, -0.25, 0.25, -0, -Number.MIN_VALUE].map(
+      (value) => `ToString(MathFloor(${encodeNumber(value)}))`,
+    );
+    const expected = await getPrintedResults("ESNumberPlain", [...results, ...floors]);
+    expect(expected[0]).toBe("success");
+    expect(await getPrintedResults("ESNumber", [...results, ...floors])).toEqual(expected);
+  });
+
+  it("reads strings with StrToNum as StringToNumber does", async () => {
+    const strings = [
+      ...Array.from({ length: 1500 }, (_, index) => String(index)),
+      ...Array.from({ length: 200 }, (_, index) => String(index * 5_368_709)),
+      ...Array.from({ length: 300 }, (_, index) => `-${index * 3_578_183}`),
+      ...Array.from({ length: 100 }, (_, index) => `+${index}`),
+      ...[
+        2 ** 30 - 1,
+        2 ** 30,
+        2 ** 30 + 1,
+        2 ** 31,
+        2 ** 53 - 1,
+        2 ** 53,
+        2 ** 53 + 1,
+        1e10,
+      ].flatMap((value) => [`${value}`, `-${value}`, `+${value}`, `0${value}`]),
+      "-0",
+      "+0",
+      "0",
+      "-00",
+      "00",
+      "007",
+      "-007",
+      "+1",
+      " 1",
+      "1 ",
+      "1e3",
+      "0x10",
+      "",
+      "-",
+      "+",
+      "1.0",
+      ".5",
+      "Infinity",
+      "+-1",
+      "--1",
+      "1-",
+      "\u0661",
+      "\uff10",
+      "1\u0661",
+    ];
+    const failures = await getFailures(
+      strings.map((text) => ({
+        name: `StrToNum(${JSON.stringify(text)})`,
+        actual: `ToString(StrToNum(${encodeString(text)}))`,
+        expected: `ToString(StringToNumber(${encodeString(text)}))`,
+      })),
+    );
+    expect(failures).toEqual([]);
+  });
+
+  // StrToNum reads only a finite function natively, so a lazy one fails as StringToNumber fails.
+  it.each(["[i \\in Nat |-> 49]", "[i \\in Nat |-> CHOOSE x \\in {} : TRUE]"])(
+    "fails in StrToNum as StringToNumber does on %s",
+    async (argument) => {
+      const getError = async (operator: string) =>
+        (
+          await check({
+            source: `---- MODULE StringError ----\nEXTENDS ESNumber, TLC\nF(string) == ${operator}(string)\nASSUME PrintT(F(${argument}))\n====`,
+            config: "",
+            loadModule,
+          })
+        ).violation?.message;
+      const error = await getError("StringToNumber");
+      expect(error).toBeDefined();
+      expect(await getError("StrToNum")).toBe(error);
+    },
+  );
 
   it.each([
     [

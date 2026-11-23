@@ -1,4 +1,3 @@
-import { constants, crc32, gzipSync, inflateRawSync } from "node:zlib";
 import {
   createClassCastError,
   defineOperator,
@@ -221,7 +220,7 @@ const serializeValue = (value: Value, variableNames: string[]) => {
     });
   };
   write(value);
-  return gzipSync(Uint8Array.from(bytes));
+  return process.getBuiltinModule("node:zlib").gzipSync(Uint8Array.from(bytes));
 };
 
 // Deviation from TLC: GZIPInputStream and BufferedDataInputStream throw an EOFException without a message, so TLC prints its stack trace.
@@ -290,7 +289,10 @@ const readGzipHeader = (
   }
   if (flags & GZIP_FLAGS.headerCrc) {
     if (end + 2 > bytes.length) return cutShort;
-    if (readUShort(bytes, end) !== (crc32(bytes.subarray(start, end)) & 0xffff)) {
+    if (
+      readUShort(bytes, end) !==
+      (process.getBuiltinModule("node:zlib").crc32(bytes.subarray(start, end)) & 0xffff)
+    ) {
       return { kind: "Malformed", message: "Corrupt GZIP header" };
     }
     end += 2;
@@ -302,7 +304,9 @@ const isZlibError = (error: unknown, code: string): error is Error =>
   error instanceof Error && "code" in error && error.code === code;
 
 const inflatePrefix = (bytes: Uint8Array, start: number, end: number) =>
-  inflateRawSync(bytes.subarray(start, end), { finishFlush: constants.Z_SYNC_FLUSH });
+  process.getBuiltinModule("node:zlib").inflateRawSync(bytes.subarray(start, end), {
+    finishFlush: process.getBuiltinModule("node:zlib").constants.Z_SYNC_FLUSH,
+  });
 
 const hasDataError = (bytes: Uint8Array, start: number, end: number) => {
   try {
@@ -342,7 +346,7 @@ const inflateMember = (
   bufferStart: number,
 ): CompleteMember | FailedMember => {
   try {
-    const member = inflateRawSync(bytes.subarray(start), {
+    const member = process.getBuiltinModule("node:zlib").inflateRawSync(bytes.subarray(start), {
       info: true,
     }) as unknown as InflatedMember;
     return { kind: "Complete", output: member.buffer, end: start + member.engine.bytesWritten };
@@ -385,7 +389,7 @@ const gunzipLikeJava = (bytes: Uint8Array, path: string) => {
     if (member.kind === "Failed") return finish(member.failure);
     const trailer = member.end;
     if (trailer + 4 > bytes.length) return finish(createCutShortError(path));
-    if (readUInt(bytes, trailer) !== crc32(member.output)) {
+    if (readUInt(bytes, trailer) !== process.getBuiltinModule("node:zlib").crc32(member.output)) {
       return finish(new TlaEvaluationError("Corrupt GZIP trailer"));
     }
     if (trailer + 8 > bytes.length) return finish(createCutShortError(path));

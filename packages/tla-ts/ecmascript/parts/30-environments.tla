@@ -213,8 +213,13 @@ Reference(base, name, strict, this) ==
 EnvBase(e) == [type |-> "env", env |-> e]
 Unresolvable == [type |-> "unresolvable"]
 
+\* A declarative environment's HasBinding reads its names and leaves the state as it is.
 GetIdentifierReference(s, e, name, strict) ==
   IF e = 0 THEN Ok(s, Reference(Unresolvable, Str(name), strict, Empty))
+  ELSE LET env == E(s, e) IN
+  IF IsDeclarativeKind(env.kind) THEN
+    IF name \in DOMAIN env.b THEN Ok(s, Reference(EnvBase(e), Str(name), strict, Empty))
+    ELSE GetIdentifierReference(s, env.outer, name, strict)
   ELSE LET h == HasBinding(s, e, name) IN
        IF IsAbrupt(h) THEN h
        ELSE IF Val(h) = True THEN Ok(h.s, Reference(EnvBase(e), Str(name), strict, Empty))
@@ -245,14 +250,6 @@ GetValue(s, v) ==
     ELSE LET k == IF IsPropertyKey(v.name) THEN Ok(base.s, v.name) ELSE ToPropertyKey(base.s, v.name) IN
          IF IsAbrupt(k) THEN k ELSE GetV(k.s, Val(base), Val(k), GetThisValue(v))
   ELSE GetBindingValue(s, v.base.env, v.name.value, v.strict)
-
-\* Step 3.c of GetValue, which stores the property key it converts in the reference, for an
-\* operator that puts a value to the reference after getting it. A nullish base throws first.
-ToKeyedReference(s, v) ==
-  IF v.type # "reference" \/ ~IsPropertyReference(v) \/ IsNullish(v.base) \/ v.name.type = "private" \/
-     IsPropertyKey(v.name)
-  THEN Ok(s, v)
-  ELSE LET k == ToPropertyKey(s, v.name) IN IF IsAbrupt(k) THEN k ELSE Ok(k.s, [v EXCEPT !.name = Val(k)])
 
 PutValue(s, v, w) ==
   IF v.type # "reference" THEN ThrowError(s, "ReferenceError")

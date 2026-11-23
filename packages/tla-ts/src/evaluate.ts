@@ -52,7 +52,7 @@ import {
   type NextStateMode,
 } from "./coverage";
 import { isEvalException, MESSAGE_CODE } from "./tlc/messages";
-import type { InstanceLevels, SectionMember } from "./levels";
+import type { InstanceLevels, LevelAnalyzer, SectionMember } from "./levels";
 import { EMPTY_STATE, type CheckerRuntime } from "./runtime";
 import {
   isBodyVarying,
@@ -74,7 +74,7 @@ import {
 } from "./instances";
 import { prettyPrint } from "./pretty-print";
 import { getKeyName } from "./resolve";
-import { isEnabled } from "./successors";
+import { isEnabled, type Runner } from "./successors";
 import {
   applyFunction,
   applyFunctionWith,
@@ -134,6 +134,7 @@ import {
   setTrace,
 } from "./values";
 import type { TlcVersion } from "./tlc/version";
+import type { OperatorLevels } from "./levels";
 
 export type State = (Value | undefined)[];
 
@@ -167,9 +168,26 @@ export interface Closure {
   params: OperatorParam[];
   body: Expression;
   scope: Scope | undefined;
+  // Where a LET made the closure of one of its operators.
+  site: CodeSite | undefined;
 }
 
 type Operator = Closure | Builtin | OperatorValue;
+
+// The code of an expression at the place that makes thunks or closures of it, compiled the first
+// time one runs, which a check that neither traces nor counts coverage reads without a lookup.
+export interface CodeSite {
+  expression: Expression;
+  evaluator: Evaluator | undefined;
+  // For a LET operator, the calls in the tail of its body that run as a loop, or null for none.
+  tail: TailStep | null | undefined;
+}
+
+const createCodeSite = (expression: Expression): CodeSite => ({
+  expression,
+  evaluator: undefined,
+  tail: undefined,
+});
 
 // LazyValue#getCachedValue ignores TLC's KeepLazy, Init and Const flags.
 export type EvalControl = "Clear" | "Enabled" | "Primed";
@@ -177,6 +195,7 @@ export type EvalControl = "Clear" | "Enabled" | "Primed";
 export interface Thunk {
   kind: "Thunk";
   expression: Expression;
+  site: CodeSite | undefined;
   scope: Scope | undefined;
   state: State | undefined;
   next: State | undefined;
@@ -186,6 +205,9 @@ export interface Thunk {
   isRebuilt: boolean;
   isUncached: boolean;
   isReleased?: boolean;
+  // Whether a step or a replay of one bound the thunk, so it may run the thunk's expression again in
+  // its scope rather than read the cached value.
+  isNamed?: boolean;
 }
 
 type Binding =
@@ -214,6 +236,8 @@ export interface Environment {
   variableIndex: Map<string, number>;
   variableLocations: SourceLocation[];
   facts: DefinitionFacts;
+  // The definitions that their modules tell hold no wide string nor read a deserializer.
+  narrowDefinitions: ReadonlySet<Definition>;
   startupValues: (Value | undefined)[];
   tlcEvalValues: WeakMap<Expression, Value>;
   substitutedDefinitions: Set<Definition>;
@@ -223,8 +247,22 @@ export interface Environment {
   evaluators: WeakMap<Expression, Evaluator>;
   entryEvaluators: WeakMap<Expression, Evaluator>;
   definitionEvaluators: WeakMap<Definition, Evaluator>;
+  // The runners of the check's actions, kept to the check, as another config of the same parsed
+  // modules compiles them again.
+  initRunners: WeakMap<Expression, Runner>;
+  nextRunners: WeakMap<Expression, Runner>;
+  // The levels that SANY's level checking gives a global operator: its own and the formals whose
+  // arguments' levels it takes.
+  getOperatorLevels: (name: string) => OperatorLevels | undefined;
+  // The levels that a prepared module gives a global operator, where they hold in this check.
+  getPreparedLevels: (name: string) => OperatorLevels | undefined;
+  // SANY's analysis of the levels of the spec's definitions and expressions, as TLC reads them,
+  // which a check runs once and every reader of a level shares.
+  sanyLevels: LevelAnalyzer;
   instances: InstanceLevels;
   recursiveSections: WeakMap<Definition, SectionMember[]>;
+  // The modules of ESCore's runtime, whose recursions are tla-ts's own rather than a spec's.
+  runtimeModules: ReadonlySet<string>;
   callStack?: CallStack;
   coverage?: Coverage;
 }
@@ -281,6 +319,10 @@ export interface Context {
   state: State | undefined;
   next: State | undefined;
   isKeepLazy?: boolean;
+  // Whether a step or a replay of one binds the thunks of this context, which it may run by name.
+  isNaming?: boolean;
+  // Whether the context evaluates a primed expression, which TLC evaluates with no next state.
+  isPrimed?: boolean;
 }
 
 export type Evaluator = (context: Context) => Value;
@@ -480,6 +522,7 @@ export const toKeepLazyContext = (context: Context): Context =>
         state: context.state,
         next: context.next,
         isKeepLazy: true,
+        isPrimed: context.isPrimed,
       };
 
 const withScope = (context: Context, scope: Scope | undefined): Context => ({
@@ -488,6 +531,7 @@ const withScope = (context: Context, scope: Scope | undefined): Context => ({
   state: context.state,
   next: context.next,
   isKeepLazy: context.isKeepLazy,
+  isPrimed: context.isPrimed,
 });
 
 export const expectBoolean = (value: Value, description: string) => {
@@ -1174,10 +1218,17 @@ const evaluateCoveredThunk = (thunk: Thunk, context: Context, coverage: Coverage
       );
 };
 
+const isUnassigned = (state: State | undefined) =>
+  state === undefined || state.every((value) => value === undefined);
+
 const forceThunk = (thunk: Thunk, context: Context) => {
   const cache = thunk.cache;
+  // Under a prime TLC evaluates with no next state, where a LazyValue neither reads nor keeps its
+  // cache (Tool.eval). A released thunk keeps the value that holds in every state.
+  const isUncached = context.isPrimed === true && !thunk.isReleased;
   const control = context.environment.runtime.evalControl;
   const isCached =
+    !isUncached &&
     cache !== undefined &&
     thunk.control === control &&
     isStateWithin(context.state, thunk.state) &&
@@ -1190,27 +1241,36 @@ const forceThunk = (thunk: Thunk, context: Context) => {
       cache.kind === "LazyFunction"
     );
   if (isCached) return cache;
-  const coverage = context.environment.coverage;
+  const environment = context.environment;
+  const coverage = environment.coverage;
   const node = coverage?.values.get(thunk);
+  const site = thunk.site;
   const value =
     coverage && node !== undefined
       ? runAtCoverageNode(coverage, node, () =>
           evaluate(thunk.expression, withScope(context, thunk.scope)),
         )
-      : evaluate(thunk.expression, withScope(context, thunk.scope));
+      : site && !coverage && !environment.callStack
+        ? (site.evaluator ??= getEntryEvaluator(site.expression, environment))(
+            withScope(context, thunk.scope),
+          )
+        : evaluate(thunk.expression, withScope(context, thunk.scope));
+  if (isUncached) return value;
   if (!thunk.isUncached && (!thunk.isStreamed || isSettledValue(value))) {
     thunk.cache = value;
     thunk.state = context.state;
     thunk.next = context.next;
     thunk.control = control;
   }
+  // A value cached where no variable is assigned holds in every state. A step may still run a
+  // thunk it bound by name. The thunk keeps its scope, as LazyValue#getValue keeps a value only for
+  // the control it was evaluated under, so another control evaluates the expression again.
   if (
     thunk.cache !== undefined &&
-    thunk.state === undefined &&
-    thunk.next === undefined &&
-    !thunk.isRebuilt
+    !thunk.isRebuilt &&
+    ((thunk.state === undefined && thunk.next === undefined) ||
+      (!thunk.isNamed && isUnassigned(thunk.state) && isUnassigned(thunk.next)))
   ) {
-    thunk.scope = undefined;
     thunk.isReleased = true;
   }
   return value;
@@ -1222,6 +1282,7 @@ export const getDefinitionClosure = (definition: Definition & { kind: "Operator"
   params: definition.params,
   body: definition.body,
   scope: undefined,
+  site: undefined,
 });
 
 export const resolveGlobalOperator = (
@@ -1262,6 +1323,7 @@ const evaluateOperatorArgument = (expression: Expression, context: Context): Ope
       params: expression.params.map((name) => ({ name, arity: 0 })),
       body: expression.body,
       scope: context.scope,
+      site: undefined,
     };
   }
   const name =
@@ -1281,7 +1343,14 @@ const evaluateOperatorArgument = (expression: Expression, context: Context): Ope
   const called = getCalledBody(expression, operator.body, context.environment);
   return called === undefined
     ? operator
-    : { kind: "Closure", name: operator.name, params: operator.params, body: called, scope };
+    : {
+        kind: "Closure",
+        name: operator.name,
+        params: operator.params,
+        body: called,
+        scope,
+        site: undefined,
+      };
 };
 
 const callOperatorWithValues = (operator: Operator, args: Value[], context: Context): Value => {
@@ -1318,21 +1387,42 @@ const isOperatorArgument = (expression: Expression, context: Context) => {
 };
 
 // Deviation from TLC: SymbolNodeValueLookupProvider#lookup takes an operator whose body is a literal for that literal, so a Java override rejects it as an argument.
+const evaluateBuiltinArgument = (arg: Expression, context: Context) =>
+  isOperatorArgument(arg, context)
+    ? toOperatorValue(evaluateOperatorArgument(arg, context), context)
+    : evaluate(arg, context);
+
 const evaluateBuiltinArguments = (args: Expression[], context: Context) =>
-  args.map((arg) =>
-    isOperatorArgument(arg, context)
-      ? toOperatorValue(evaluateOperatorArgument(arg, context), context)
-      : evaluate(arg, context),
+  args.map((arg) => evaluateBuiltinArgument(arg, context));
+
+// Only a name can be an operator argument whose operator a scope gives, so the code of any other
+// argument is compiled the first time the call runs and read from here after.
+const compileBuiltinArguments = (args: Expression[], environment: Environment) => {
+  const isValue = args.map(
+    (arg) => arg.kind !== "Identifier" && arg.kind !== "Lambda" && arg.kind !== "OperatorReference",
   );
+  const evaluators: (Evaluator | undefined)[] = args.map(() => undefined);
+  return (context: Context): BuiltinArgument[] =>
+    args.map((arg, index) =>
+      isValue[index]
+        ? (evaluators[index] ??= getEntryEvaluator(arg, environment))(context)
+        : evaluateBuiltinArgument(arg, context),
+    );
+};
 
 const createArityError = (closure: Closure, count: number) =>
   new TlaEvaluationError(
     `Operator ${closure.name} expects ${closure.params.length} arguments but received ${count}`,
   );
 
-const createThunk = (expression: Expression, context: Context): Thunk => ({
+const createThunk = (
+  expression: Expression,
+  context: Context,
+  site: CodeSite | undefined,
+): Thunk => ({
   kind: "Thunk",
   expression,
+  site,
   scope: context.scope,
   state: context.state,
   next: context.next,
@@ -1340,6 +1430,7 @@ const createThunk = (expression: Expression, context: Context): Thunk => ({
   cache: undefined,
   isStreamed: false,
   isRebuilt: false,
+  isNamed: context.isNaming === true,
   isUncached: false,
 });
 
@@ -1405,7 +1496,7 @@ const compileArgumentBinder = (argument: Expression, environment: Environment): 
   const coverage = environment.coverage;
   if (coverage) {
     return (context) => {
-      const thunk = createThunk(argument, context);
+      const thunk = createThunk(argument, context, undefined);
       if (coverage.current !== -1) coverage.values.set(thunk, coverage.current);
       return thunk;
     };
@@ -1427,11 +1518,12 @@ const compileArgumentBinder = (argument: Expression, environment: Environment): 
         const binding = lookupScope(context.scope, argument.name);
         return binding?.kind === "Value" || binding?.kind === "Thunk"
           ? binding
-          : createThunk(argument, context);
+          : createThunk(argument, context, undefined);
       };
     }
   }
-  return (context) => createThunk(argument, context);
+  const site = environment.callStack ? undefined : createCodeSite(argument);
+  return (context) => createThunk(argument, context, site);
 };
 
 export const bindOperatorArguments = (
@@ -1453,6 +1545,315 @@ export const bindOperatorArguments = (
   return scope;
 };
 
+const createCaseConditionError = (condition: Expression, value: Value) =>
+  new TlaEvaluationError(
+    `A non-boolean expression (${getKindString(value)}) was used as a condition of a CASE. ${describeNode(condition)}`,
+  );
+
+const createCaseExhaustedError = (expression: Expression) =>
+  new TlaEvaluationError(
+    `Attempted to evaluate a CASE with no conditions true.\n${describeRange(expression)}`,
+  );
+
+// A call of one of ESCore's runtime operators binds each argument that isn't a name or a literal to
+// its value, so that a loop's accumulator doesn't nest a thunk in the last turn's at each turn.
+const bindArgumentValues = (
+  callee: Closure,
+  step: TailStep & { kind: "Call" },
+  context: Context,
+): Scope | undefined => {
+  const args = step.expression.args;
+  if (args.length !== callee.params.length) throw createArityError(callee, args.length);
+  let scope = callee.scope;
+  for (let index = 0; index < args.length; index++) {
+    const param = callee.params[index];
+    const arg = args[index];
+    const binding: Binding =
+      param.arity > 0
+        ? { kind: "Operator", operator: evaluateOperatorArgument(arg, context) }
+        : arg.kind === "Identifier" || arg.kind === "String" || arg.kind === "Number"
+          ? step.binders[index](context)
+          : {
+              kind: "Value",
+              value: (step.values[index] ??= getEntryEvaluator(arg, context.environment))(context),
+            };
+    scope = { name: param.name, binding, parent: scope };
+  }
+  return scope;
+};
+
+// TLC calls an operator in its own body as a nested Java call. A call in the tail of the body runs
+// here as the next turn of a loop instead, so that a deep recursion, such as a loop that tla-ts
+// compiles from TypeScript, needn't fit on the stack. A recursion past this many turns overflows,
+// as it would in TLC.
+const TAIL_CALL_LIMIT = 1 << 20;
+
+// The IFs, LETs and calls of LET operators that lead from a body to the calls in its tail,
+// compiled once.
+export type TailStep =
+  | {
+      kind: "If";
+      expression: Expression;
+      condition: Evaluator;
+      consequent: TailStep;
+      alternative: TailStep;
+    }
+  | {
+      kind: "Case";
+      expression: Expression & { kind: "Case" };
+      arms: { source: Expression; condition: Evaluator; body: TailStep }[];
+      other: TailStep | undefined;
+    }
+  | {
+      kind: "Let";
+      definitions: Definition[];
+      sites: (CodeSite | undefined)[] | undefined;
+      body: TailStep;
+    }
+  | {
+      kind: "Call";
+      expression: Expression & { kind: "Apply" };
+      binders: ArgumentBinder[];
+      // The evaluator of each argument that a call of one of ESCore's runtime operators binds to its
+      // value, compiled at the first such call.
+      values: (Evaluator | undefined)[];
+      evaluator: Evaluator;
+      // The LET operator whose body the call enters, or none for a call of the body's own operator.
+      entered: { body: Expression; step: TailStep } | undefined;
+    }
+  | { kind: "Other"; evaluator: Evaluator };
+
+// The LET operators with parameters that a body's definitions add to those in scope.
+const withLetOperators = (
+  operators: ReadonlyMap<string, Definition>,
+  expression: Expression & { kind: "Let" },
+) =>
+  new Map([
+    ...operators,
+    ...expression.definitions
+      .filter((definition) => definition.kind === "Operator" && definition.params.length > 0)
+      .map((definition): [string, Definition] => [definition.name, definition]),
+  ]);
+
+// The LET operators that a body's tail calls, each with the operators in scope at its first call,
+// after those that its own tail calls, so that each compiles after the operators it enters. A path
+// that calls an operator it's still in doesn't enter it again, so a recursive one isn't.
+const collectTailOperators = (
+  expression: Expression,
+  name: string,
+  operators: ReadonlyMap<string, Definition>,
+  collected: Map<Definition, ReadonlyMap<string, Definition>>,
+  visited: Set<Definition>,
+) => {
+  if (expression.kind === "If") {
+    collectTailOperators(expression.consequent, name, operators, collected, visited);
+    collectTailOperators(expression.alternative, name, operators, collected, visited);
+    return;
+  }
+  if (expression.kind === "Case") {
+    expression.arms.forEach((arm) =>
+      collectTailOperators(arm.body, name, operators, collected, visited),
+    );
+    if (expression.other) {
+      collectTailOperators(expression.other, name, operators, collected, visited);
+    }
+    return;
+  }
+  if (expression.kind === "Let") {
+    if (expression.definitions.some((definition) => definition.name === name)) return;
+    collectTailOperators(
+      expression.body,
+      name,
+      withLetOperators(operators, expression),
+      collected,
+      visited,
+    );
+    return;
+  }
+  const operator = expression.kind === "Apply" ? operators.get(expression.operator) : undefined;
+  if (operator === undefined || visited.has(operator)) return;
+  visited.add(operator);
+  collectTailOperators(operator.body, name, operators, collected, visited);
+  collected.set(operator, operators);
+};
+
+const compileTailStep = (
+  expression: Expression,
+  name: string,
+  operators: ReadonlyMap<string, Definition>,
+  environment: Environment,
+  entries: ReadonlyMap<Definition, TailStep | undefined>,
+  isRuntime: boolean,
+): TailStep | undefined => {
+  if (expression.kind === "If") {
+    const consequent = compileTailStep(
+      expression.consequent,
+      name,
+      operators,
+      environment,
+      entries,
+      isRuntime,
+    );
+    const alternative = compileTailStep(
+      expression.alternative,
+      name,
+      operators,
+      environment,
+      entries,
+      isRuntime,
+    );
+    if (consequent === undefined && alternative === undefined) return undefined;
+    return {
+      kind: "If",
+      expression,
+      condition: getEntryEvaluator(expression.condition, environment),
+      consequent: consequent ?? {
+        kind: "Other",
+        evaluator: getEntryEvaluator(expression.consequent, environment),
+      },
+      alternative: alternative ?? {
+        kind: "Other",
+        evaluator: getEntryEvaluator(expression.alternative, environment),
+      },
+    };
+  }
+  // A spec's CASE recursion nests as TLC's does, and overflows where the stack runs out.
+  if (expression.kind === "Case" && isRuntime) {
+    const compile = (body: Expression) =>
+      compileTailStep(body, name, operators, environment, entries, isRuntime);
+    const arms = expression.arms.map((arm) => compile(arm.body));
+    const other = expression.other && compile(expression.other);
+    if (arms.every((arm) => arm === undefined) && other === undefined) return undefined;
+    const orOther = (step: TailStep | undefined, body: Expression): TailStep =>
+      step ?? { kind: "Other", evaluator: getEntryEvaluator(body, environment) };
+    return {
+      kind: "Case",
+      expression,
+      arms: expression.arms.map((arm, index) => ({
+        source: arm.condition,
+        condition: getEntryEvaluator(arm.condition, environment),
+        body: orOther(arms[index], arm.body),
+      })),
+      other: expression.other && orOther(other, expression.other),
+    };
+  }
+  if (expression.kind === "Let") {
+    if (expression.definitions.some((definition) => definition.name === name)) return undefined;
+    const body = compileTailStep(
+      expression.body,
+      name,
+      withLetOperators(operators, expression),
+      environment,
+      entries,
+      isRuntime,
+    );
+    const definitions = getBoundDefinitions(expression, environment);
+    return body && { kind: "Let", definitions, sites: getLetSites(definitions), body };
+  }
+  if (expression.kind !== "Apply") return undefined;
+  const operator = operators.get(expression.operator);
+  const entered = operator === undefined ? undefined : entries.get(operator);
+  if (getKeyName(expression.operator) !== name && entered === undefined) return undefined;
+  return {
+    kind: "Call",
+    expression,
+    binders: expression.args.map((arg) => compileArgumentBinder(arg, environment)),
+    values: expression.args.map(() => undefined),
+    evaluator: getEntryEvaluator(expression, environment),
+    entered:
+      operator === undefined || entered === undefined
+        ? undefined
+        : { body: operator.body, step: entered },
+  };
+};
+
+// The body of a closure that calls itself in its tail, or undefined for any other body. Each LET
+// operator that the tail enters compiles once, into a table that every path through the body reads,
+// as the branches of a body may all enter one operator.
+const compileTailCalls = (name: string, body: Expression, environment: Environment) => {
+  const isRuntime = isRuntimeBody(body, environment);
+  const collected = new Map<Definition, ReadonlyMap<string, Definition>>();
+  collectTailOperators(body, name, new Map(), collected, new Set());
+  const entries = new Map<Definition, TailStep | undefined>();
+  collected.forEach((operators, operator) =>
+    entries.set(
+      operator,
+      compileTailStep(operator.body, name, operators, environment, entries, isRuntime),
+    ),
+  );
+  return compileTailStep(body, name, new Map(), environment, entries, isRuntime);
+};
+
+// Whether a body is one of ESCore's runtime operators, whose recursions are tla-ts's own.
+const isRuntimeBody = (body: Expression, environment: Environment) =>
+  environment.runtimeModules.has(body.location.range?.module ?? "");
+
+const evaluateTailCalls = (closure: Closure, body: TailStep, bodyContext: Context): Value => {
+  let context = bodyContext;
+  let step = body;
+  // ESCore's runtime loops as long as its JavaScript program does; a spec's recursion overflows.
+  const isRuntime = isRuntimeBody(closure.body, bodyContext.environment);
+  const limit = isRuntime ? Infinity : TAIL_CALL_LIMIT;
+  for (let turn = 0; turn < limit;) {
+    if (step.kind === "If") {
+      const value = step.condition(context);
+      if (typeof value !== "boolean") throw createConditionError(step.expression, value);
+      step = value ? step.consequent : step.alternative;
+    } else if (step.kind === "Case") {
+      const arm = step.arms.find((candidate) => {
+        const value = candidate.condition(context);
+        if (typeof value !== "boolean") throw createCaseConditionError(candidate.source, value);
+        return value;
+      });
+      if (arm) step = arm.body;
+      else if (step.other) step = step.other;
+      else throw createCaseExhaustedError(step.expression);
+    } else if (step.kind === "Let") {
+      context = withScope(
+        context,
+        bindDefinitions(step.definitions, context, undefined, step.sites),
+      );
+      step = step.body;
+    } else if (step.kind === "Call") {
+      const callee = resolveApplyOperator(step.expression, context);
+      const entered = step.entered;
+      // A global operator resolves to a new closure at each call, so the body tells it apart.
+      const isEntered =
+        callee?.kind === "Closure" && callee.body === (entered?.body ?? closure.body);
+      if (!isEntered) return step.evaluator(context);
+      context = withScope(
+        context,
+        isRuntime
+          ? bindArgumentValues(callee, step, context)
+          : bindOperatorArguments(callee, step.expression.args, context, step.binders),
+      );
+      step = entered?.step ?? body;
+      turn += entered === undefined ? 1 : 0;
+    } else {
+      return step.evaluator(context);
+    }
+  }
+  throw new RangeError("Maximum call stack size exceeded");
+};
+
+// A trace or coverage evaluates each call as a nested one, to see every expression it evaluates. A
+// LET operator's closure compiles its tail once at the LET that made it, and a global operator that
+// an operator argument names, the only other closure a call resolves as it runs, at the call.
+const getTailCalls = (closure: Closure, environment: Environment) => {
+  if (environment.callStack || environment.coverage) return undefined;
+  const site = closure.site;
+  if (site) {
+    // null marks a body without tail calls, which compiles once as any other.
+    if (site.tail === undefined) {
+      site.tail = compileTailCalls(closure.name, closure.body, environment) ?? null;
+    }
+    return site.tail ?? undefined;
+  }
+  return closure.scope === undefined && closure.name !== "LAMBDA"
+    ? compileTailCalls(closure.name, closure.body, environment)
+    : undefined;
+};
+
 // SpecProcessor#getOpContext and Liveness#astToLiveAppl bind the arguments of an operator they take apart as uncachable LazyValues.
 export const bindUncachedArguments = (closure: Closure, args: Expression[], context: Context) =>
   bindOperatorArguments(
@@ -1460,7 +1861,7 @@ export const bindUncachedArguments = (closure: Closure, args: Expression[], cont
     args,
     context,
     args.map((arg) => (inner) => {
-      const thunk = createThunk(arg, inner);
+      const thunk = createThunk(arg, inner, undefined);
       thunk.isUncached = true;
       return thunk;
     }),
@@ -1473,10 +1874,11 @@ const callOperator = (
   binders: ArgumentBinder[],
 ) => {
   if (operator.kind === "Closure") {
-    return evaluate(
-      operator.body,
-      withScope(context, bindOperatorArguments(operator, args, context, binders)),
-    );
+    const bodyContext = withScope(context, bindOperatorArguments(operator, args, context, binders));
+    const tail = getTailCalls(operator, context.environment);
+    return tail
+      ? evaluateTailCalls(operator, tail, bodyContext)
+      : evaluate(operator.body, bodyContext);
   }
   if (operator.kind === "Operator") return operator.call(args.map((arg) => evaluate(arg, context)));
   if (operator.isLazy) return operator.evaluate(getLazyArguments(args, context), context);
@@ -1491,6 +1893,14 @@ interface ReevaluatedDefinitions {
 
 const isRecursiveOperator = (definition: Definition) =>
   definition.kind === "Operator" && definition.isRecursive && definition.params.length > 0;
+
+// The code site of each definition of a LET, made where the LET compiles.
+export const getLetSites = (definitions: Definition[]) =>
+  definitions.map((definition) =>
+    createCodeSite(
+      definition.kind === "Function" ? getFunctionConstruction(definition) : definition.body,
+    ),
+  );
 
 // TLC finds a RECURSIVE operator with parameters by its definition, not in its context, so every definition reaches it.
 const chainRecursiveOperatorsFirst = (
@@ -1520,6 +1930,7 @@ export const bindDefinitions = (
   definitions: Definition[],
   context: Context,
   reevaluated?: ReevaluatedDefinitions,
+  sites?: (CodeSite | undefined)[],
 ): Scope | undefined => {
   const nodes = definitions.map((definition): Scope => ({
     name: definition.name,
@@ -1558,11 +1969,13 @@ export const bindDefinitions = (
             params: definition.kind === "Operator" ? definition.params : NO_PARAMS,
             body,
             scope: ownScope,
+            site: sites?.[index],
           },
         }
       : {
           kind: "Thunk",
           expression: body,
+          site: sites?.[index],
           scope: ownScope,
           state: context.state,
           next: context.next,
@@ -1573,6 +1986,7 @@ export const bindDefinitions = (
           isRebuilt:
             (definition.kind === "Operator" || !definition.isSelfReferential) &&
             reevaluated?.isFunctionRebuilt === true,
+          isNamed: context.isNaming === true,
           isUncached: false,
         };
   }
@@ -1623,10 +2037,11 @@ export const getReevaluatedDefinitions = (
 ): ReevaluatedDefinitions => ({
   impure: new Set(
     definitions.filter(
-      // TLC evaluates a LET definition at each reference; caching a pure one shows only in coverage.
+      // TLC evaluates a LET definition at each reference; caching one that reaches no effect shows
+      // only in coverage.
       (definition) =>
         environment.coverage !== undefined ||
-        isImpureDefinition(definition, environment, "varying"),
+        isImpureDefinition(definition, environment, "reevaluated"),
     ),
   ),
   streamed: new Set(
@@ -1667,6 +2082,7 @@ export const toNextContext = (context: Context): Context => ({
   state: context.next,
   next: NULL_STATE,
   isKeepLazy: context.isKeepLazy,
+  isPrimed: true,
 });
 
 // TLC evaluates the first side of UNCHANGED, [A]_e and <A>_e with s1 as TLCState.Empty.
@@ -1735,10 +2151,13 @@ const traceEvaluator =
     setTrace.callStack = callStack;
     try {
       const computed = evaluator(context);
-      // CallStackTool#eval hands out each FcnLambdaValue as a copy, so a record that one reference builds never reaches the next.
+      // CallStackTool#eval hands out each FcnLambdaValue as a copy, so a record that one reference
+      // builds never reaches the next, which shows only where an application shows.
       const value = isRebindable(computed)
         ? computed.rebind(environment)
-        : typeof computed === "object" && computed.kind === "LazyFunction"
+        : typeof computed === "object" &&
+            computed.kind === "LazyFunction" &&
+            computed.isApplicationObserved
           ? { ...computed }
           : computed;
       const coverage = environment.coverage;
@@ -2117,7 +2536,8 @@ const compileBuiltinCall = (
     const right = getEvaluator(args[1], environment);
     return (context) => binary(left(context), right(context));
   }
-  return (context) => builtin.evaluate(evaluateBuiltinArguments(args, context), context);
+  const evaluateArguments = compileBuiltinArguments(args, environment);
+  return (context) => builtin.evaluate(evaluateArguments(context), context);
 };
 
 export const compileArgumentScope = (
@@ -2131,9 +2551,21 @@ export const compileArgumentScope = (
     };
   }
   const params = closure.params;
-  const binders = args.map((arg, index) =>
-    params[index].arity > 0 ? undefined : compileArgumentBinder(arg, environment),
-  );
+  const binders = args.map((arg, index): ArgumentBinder | undefined => {
+    if (params[index].arity === 0) return compileArgumentBinder(arg, environment);
+    if (arg.kind !== "Identifier" || isLocallyResolved(arg)) return undefined;
+    // An operator argument that names a global definition resolves here, once, to a closure whose
+    // code site keeps what its calls compile, but for one whose body runs in its caller's scope.
+    const operator = resolveGlobalOperator(arg.name, environment);
+    if (operator?.kind !== "Closure" || getCalledBody(arg, operator.body, environment)) {
+      return undefined;
+    }
+    const binding: Binding = {
+      kind: "Operator",
+      operator: { ...operator, site: createCodeSite(operator.body) },
+    };
+    return () => binding;
+  });
   return (context, outer = closure.scope) => {
     let scope = outer;
     for (let index = 0; index < args.length; index++) {
@@ -2156,13 +2588,22 @@ const compileClosureCall = (
   const bindArguments = compileArgumentScope(closure, args, environment);
   let body: Evaluator | undefined;
   const call: Evaluator = (context) => {
-    body ??= getEntryEvaluator(closure.body, environment);
+    if (body === undefined) {
+      const tail =
+        environment.callStack || environment.coverage
+          ? undefined
+          : compileTailCalls(closure.name, closure.body, environment);
+      body = tail
+        ? (bodyContext) => evaluateTailCalls(closure, tail, bodyContext)
+        : getEntryEvaluator(closure.body, environment);
+    }
     return body({
       environment,
       scope: bindArguments(context),
       state: context.state,
       next: context.next,
       isKeepLazy: context.isKeepLazy,
+      isPrimed: context.isPrimed,
     });
   };
   if (called === undefined) return call;
@@ -2177,6 +2618,7 @@ const compileClosureCall = (
       state: context.state,
       next: context.next,
       isKeepLazy: context.isKeepLazy,
+      isPrimed: context.isPrimed,
     });
   };
 };
@@ -2508,10 +2950,7 @@ export const keepLazy = (expression: Expression) => {
   }
 };
 
-const scopeNames = new WeakMap<Expression, string[] | undefined>();
-
 const getScopeNames = (expression: Expression) => {
-  if (scopeNames.has(expression)) return scopeNames.get(expression);
   const names = new Set<string>();
   const visit = (node: Expression): boolean => {
     if (node.kind === "Subexpression") return false;
@@ -2520,9 +2959,7 @@ const getScopeNames = (expression: Expression) => {
     if (node.kind === "ExceptAt") names.add(EXCEPT_AT);
     return getChildren(node).every(visit);
   };
-  const result = visit(expression) ? [...names] : undefined;
-  scopeNames.set(expression, result);
-  return result;
+  return visit(expression) ? [...names] : undefined;
 };
 
 const trimScope = (scope: Scope | undefined, names: string[] | undefined) =>
@@ -3066,23 +3503,21 @@ const compile = (expression: Expression, environment: Environment): Evaluator =>
         for (const arm of arms) {
           const value = arm.condition(context);
           if (typeof value !== "boolean") {
-            throw new TlaEvaluationError(
-              `A non-boolean expression (${getKindString(value)}) was used as a condition of a CASE. ${describeNode(arm.source)}`,
-            );
+            throw createCaseConditionError(arm.source, value);
           }
           if (value) return arm.body(context);
         }
         if (other) return other(context);
-        throw new TlaEvaluationError(
-          `Attempted to evaluate a CASE with no conditions true.\n${describeRange(expression)}`,
-        );
+        throw createCaseExhaustedError(expression);
       };
     }
     case "Let": {
       const body = getChildEvaluator(expression.body);
       const definitions = getBoundDefinitions(expression, environment);
       if (definitions.length === 0) return body;
-      return (context) => body(withScope(context, bindDefinitions(definitions, context)));
+      const sites = getLetSites(definitions);
+      return (context) =>
+        body(withScope(context, bindDefinitions(definitions, context, undefined, sites)));
     }
     case "Forall":
     case "Exists":

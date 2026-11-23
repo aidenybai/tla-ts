@@ -31,6 +31,7 @@ import {
   getDefinition,
   getContextElements,
   getEntryEvaluator,
+  getLetSites,
   getMissingArgumentDescriber,
   getReevaluatedDefinitions,
   getStartupValue,
@@ -108,7 +109,7 @@ interface Run {
 
 type Continuation = (partial: State, action: string | undefined) => void;
 
-type Runner = (
+export type Runner = (
   run: Run,
   scope: Scope | undefined,
   partial: State,
@@ -124,13 +125,10 @@ type Conjunct = { expression: Expression } & (
   | { kind: "Branch"; runner: Runner }
 );
 
-const initRunners = new WeakMap<Expression, Runner>();
-const nextRunners = new WeakMap<Expression, Runner>();
-
 const getContext = (run: Run, scope: Scope | undefined, partial: State) =>
   run.isInit
-    ? { environment: run.environment, scope, state: partial, next: undefined }
-    : { environment: run.environment, scope, state: run.current, next: partial };
+    ? { environment: run.environment, scope, state: partial, next: undefined, isNaming: true }
+    : { environment: run.environment, scope, state: run.current, next: partial, isNaming: true };
 
 const assign = (partial: State, index: number, value: Value) => {
   const copy = partial.slice();
@@ -194,7 +192,7 @@ const isAssignmentOperator = (operator: string) =>
   operator === "=" || operator === "\\in" || operator === "\\subseteq";
 
 const getRunner = (expression: Expression, environment: Environment, isInit: boolean): Runner => {
-  const runners = isInit ? initRunners : nextRunners;
+  const runners = isInit ? environment.initRunners : environment.nextRunners;
   const cached = runners.get(expression);
   if (cached) return cached;
   const deterministic = compileAction(expression, environment, isInit);
@@ -344,6 +342,110 @@ export const hasBranches = (
     if (hasBranches(definition.body, environment, visited)) return true;
   }
   return getChildren(expression).some((child) => hasBranches(child, environment, visited));
+};
+
+// Whether a conjunct after the first of some conjunction in an action branches. Once every
+// variable is assigned, Tool#getNextStates evaluates the rest of a conjunction as a boolean, which
+// stops at the first disjunct or witness that holds, where Tool#enabled still tries each branch
+// in turn until one takes a step, so ENABLED reaches code there that Next doesn't. Both evaluate a
+// guard, an assignment, UNCHANGED and the condition of an IF or CASE alike.
+export const hasLateBranches = (expression: Expression, environment: Environment) => {
+  const isValue = (operand: Expression) =>
+    (operand.kind === "Apply" &&
+      operand.operator === "=" &&
+      getAssignableIndex(operand.args[0], environment, false) !== undefined) ||
+    (operand.kind === "Unchanged" &&
+      getUnchangedVariables(operand.expression, environment) !== undefined) ||
+    isGuard(operand, environment, false);
+  const getCalled = (inner: Expression, locals: Map<string, Definition>) => {
+    const name =
+      inner.kind === "Identifier"
+        ? inner.name
+        : inner.kind === "Apply"
+          ? inner.operator
+          : undefined;
+    if (name === undefined || isValue(inner)) return undefined;
+    return isLocallyResolved(inner) ? locals.get(name) : getDefinition(name, environment);
+  };
+  // A LET definition sees the definitions around it, and a module's definition none of them.
+  const getCalledLocals = (inner: Expression, locals: Map<string, Definition>) =>
+    isLocallyResolved(inner) ? locals : new Map<string, Definition>();
+  // The parts of an action that the runner walks as actions themselves.
+  const getParts = (inner: Expression): Expression[] => {
+    switch (inner.kind) {
+      case "And":
+        return inner.operands.filter((operand) => !isValue(operand));
+      case "Or":
+        return inner.operands;
+      case "Exists":
+      case "Forall":
+      case "Let":
+      case "Label":
+        return [inner.body];
+      case "If":
+        return [inner.consequent, inner.alternative];
+      case "Case":
+        return [...inner.arms.map((arm) => arm.body), ...(inner.other ? [inner.other] : [])];
+      case "Selection":
+        return [inner.expression];
+      case "AngleAction":
+      case "BoxAction":
+        return [inner.action];
+      default:
+        return [];
+    }
+  };
+  const getLocals = (inner: Expression, locals: Map<string, Definition>) =>
+    inner.kind === "Let"
+      ? new Map([
+          ...locals,
+          ...inner.definitions.map((definition) => [definition.name, definition] as const),
+        ])
+      : locals;
+  // An operator argument's call and a lazy function's application may branch, unlike a value.
+  const isBranching = (
+    inner: Expression,
+    locals: Map<string, Definition>,
+    seen: Set<Definition>,
+  ): boolean => {
+    if (
+      inner.kind === "Or" ||
+      inner.kind === "Exists" ||
+      inner.kind === "BoxAction" ||
+      inner.kind === "FunctionApplication"
+    ) {
+      return true;
+    }
+    const called = getCalled(inner, locals);
+    if (!called && inner.kind === "Apply" && isLocallyResolved(inner) && !isValue(inner)) {
+      return true;
+    }
+    if (called && !seen.has(called)) {
+      seen.add(called);
+      if (isBranching(called.body, getCalledLocals(inner, locals), seen)) return true;
+    }
+    const innerLocals = getLocals(inner, locals);
+    return getParts(inner).some((part) => isBranching(part, innerLocals, seen));
+  };
+  const visited = new Set<Definition>();
+  const isLate = (inner: Expression, locals: Map<string, Definition>): boolean => {
+    if (
+      inner.kind === "And" &&
+      inner.operands
+        .slice(1)
+        .some((operand) => !isValue(operand) && isBranching(operand, locals, new Set()))
+    ) {
+      return true;
+    }
+    const called = getCalled(inner, locals);
+    if (called && !visited.has(called)) {
+      visited.add(called);
+      if (isLate(called.body, getCalledLocals(inner, locals))) return true;
+    }
+    const innerLocals = getLocals(inner, locals);
+    return getParts(inner).some((part) => isLate(part, innerLocals));
+  };
+  return isLate(expression, new Map());
 };
 
 const toConjunct = (
@@ -1211,6 +1313,7 @@ const compileAction = (
     case "Let": {
       const body = getChildRunner(expression.body);
       const reevaluated = getReevaluatedDefinitions(expression.definitions, environment);
+      const sites = getLetSites(expression.definitions);
       // TLC's Tool#enabled binds a LET's definitions to lazy values it caches, where Tool#getNextStates evaluates them at every use. Both bind an instance's substitutions with getVal(..., false), which caches nothing.
       const cached = environment.boundSubstitutions.lets.has(expression)
         ? reevaluated
@@ -1222,6 +1325,7 @@ const compileAction = (
             expression.definitions,
             getContext(run, scope, partial),
             run.isEnabled ? cached : reevaluated,
+            sites,
           ),
           partial,
           action,
@@ -1452,6 +1556,7 @@ export const forEachSuccessor = (
   generator?: SuccessorGenerator,
   onUnsatisfied?: Run["onUnsatisfied"],
   onIncomplete?: (state: State, action: string | undefined) => void,
+  action?: string,
 ) => {
   const run: Run = {
     environment,
@@ -1468,7 +1573,7 @@ export const forEachSuccessor = (
     run,
     scope,
     getEmptyState(environment),
-    undefined,
+    action,
     false,
     (partial, action) => {
       if (run.isStopped) return;

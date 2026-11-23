@@ -93,13 +93,19 @@ const resolveDefinition = (
   return resolved;
 };
 
-const setDeclaredArities = (declarations: Declaration[], definitions: Definition[]) =>
+const setDeclaredArities = (declarations: Declaration[], definitions: Definition[]) => {
+  // The first recursive definition of each name, which a declaration of the name declares.
+  const recursive = new Map(
+    definitions
+      .filter((definition) => definition.isRecursive)
+      .toReversed()
+      .map((definition) => [definition.name, definition]),
+  );
   declarations.forEach((declaration) => {
-    const definition = definitions.find(
-      (candidate) => candidate.isRecursive && candidate.name === declaration.name,
-    );
+    const definition = recursive.get(declaration.name);
     if (definition) declaredArities.set(definition, declaration.arity);
   });
+};
 
 const getSelectorName = (selector: Selector) => {
   switch (selector.kind) {
@@ -1339,6 +1345,15 @@ export const createModuleSubexpressions = (
     },
     resolve: (): Module => {
       resolveDefinitionsBefore(undefined);
+      // A module with nothing to resolve stays itself, so that a check links a prepared module as it is.
+      if (
+        resolvedDefinitions.size === 0 &&
+        module.theorems.length === 0 &&
+        module.uses.length === 0 &&
+        !module.assumptions.some((assumption) => isMapped(assumption.expression))
+      ) {
+        return module;
+      }
       const getSharedBody = (statement: Expression | AssumeProve) => {
         const definition = module.definitions.find((candidate) => candidate.body === statement);
         return definition && (resolvedDefinitions.get(definition) ?? definition).body;

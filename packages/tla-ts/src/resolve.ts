@@ -1357,6 +1357,14 @@ const isInstanceArityReported = (
   unit: Unit,
 ) => {
   if (!isReference(expression)) return false;
+  // A name without a ! names no instance, so no instance's count of arguments can be wrong.
+  const name =
+    expression.kind === "Subexpression"
+      ? undefined
+      : expression.kind === "Identifier"
+        ? expression.name
+        : expression.operator;
+  if (name !== undefined && !name.includes("!")) return false;
   const selectors = getSelectors(expression);
   const nameCount = selectors.findIndex((selector) => selector.kind !== "Name");
   const names = selectors

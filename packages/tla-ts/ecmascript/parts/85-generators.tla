@@ -269,7 +269,8 @@ CreateAsyncFromSyncIterator(s, it) ==
   IN Ok(next.s, JsIterator(a.v, Val(next)))
 
 \* Rejects the capability with the thrown value of r, and returns its promise (IfAbruptRejectPromise).
-RejectWith(r, cap) == LET c == Call(r.s, cap.reject, Undefined, <<r.c.value>>) IN Ok(c.s, cap.promise)
+RejectWith(r, cap) ==
+  LET c == Call(r.s, cap.reject, Undefined, <<r.c.value>>) IN IF IsAbrupt(c) THEN c ELSE Ok(c.s, cap.promise)
 
 \* %AsyncFromSyncIteratorPrototype% next, return, and throw (§27.1.6.2), and the closures of
 \* AsyncFromSyncIteratorContinuation.

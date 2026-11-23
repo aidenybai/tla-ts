@@ -96,6 +96,26 @@ describe("INSTANCE matches TLC", () => {
     expect([result.status, result.distinctStates]).toEqual(["success", 1]);
   });
 
+  it("reads a definition that an instantiated module of only definitions names", async () => {
+    const getStatus = async (source: string) =>
+      (
+        await check({
+          source,
+          config: "",
+          loadModule: (name) =>
+            name === "Inner" ? "---- MODULE Inner ----\nK == 1\nGet == K\n====" : undefined,
+        })
+      ).status;
+    expect(await getStatus("---- MODULE M ----\nI == INSTANCE Inner\nASSUME I!Get = 1\n====")).toBe(
+      "success",
+    );
+    expect(
+      await getStatus(
+        "---- MODULE M ----\n---- MODULE Nested ----\nK == 1\nGet == K\n====\nI == INSTANCE Nested\nASSUME I!Get = 1\n====",
+      ),
+    ).toBe("success");
+  });
+
   it("evaluates a substitution once each time an instantiated operator is evaluated", async () => {
     const prints: string[] = [];
     const result = await checkFixture("instances", "SubstOnce", "SubstOnce", {

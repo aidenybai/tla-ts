@@ -2,6 +2,7 @@
 // search that succeeds, and gives anything else back to the interpreter, which reruns it.
 import {
   getChildren,
+  isLocallyResolved,
   isRecursiveConstruction,
   type ApplyExpression,
   type Bound,
@@ -217,7 +218,20 @@ interface TypedActionProperty {
   subscript: Expression;
 }
 
+// The statistics of the search so far: the states generated and distinct, those left to expand, and
+// the depth.
+export interface TypedProgress {
+  generated: number;
+  distinct: number;
+  queued: number;
+  depth: number;
+}
+
 export interface TypedCheck {
+  // What the search reports as it goes, as the interpreter's does: its initial states once it has
+  // them, and its statistics from time to time, which the check prints where TLC does.
+  onInitialStates?: (initialStates: { generated: number; distinct: number }) => void;
+  onProgress?: (progress: TypedProgress) => void;
   invariants: Expression[];
   constraints: Expression[];
   // The interpreter checks the initial predicates, in the scopes of the properties they come from.
@@ -1124,6 +1138,8 @@ interface Program {
   // The functions counting the ways the LET functions being compiled hold as actions.
   ways: Map<Definition, string>;
   isGuessing: boolean;
+  // The level of the state that a constraint or an invariant checks, which TLCGet("level") reads.
+  level: { value: number };
 }
 
 // The function a RECURSIVE operator compiles to, which its applications in its own body call.
@@ -1390,6 +1406,10 @@ const isConstantExpression = (program: Program, expression: Expression, scope: T
       if (global?.kind === "Definition") {
         if (!isConstantLevel(global.definition, program.environment)) return false;
       }
+      // A builtin such as TLCGet reads where the search is.
+      if (global === undefined && program.environment.builtins.get(name)?.isStateLevel) {
+        return false;
+      }
     }
     if (
       inner.kind === "Forall" ||
@@ -1416,6 +1436,8 @@ interface Frame {
   // Whether the expression is primed as a whole, where TLC evaluates a LET definition or an argument
   // again in the next state.
   isNext: boolean;
+  // Whether the expression is a constraint or an invariant, whose state's level the search knows.
+  isLevelKnown?: boolean;
   // Whether a membership in a filter compiles the expression twice, so that one inside it compiles
   // once and each level of nesting costs the same.
   isCompiledTwice?: boolean;
@@ -1582,8 +1604,11 @@ const bindArguments = (
       },
       scope: frame.scope,
     };
-    // TLC passes arguments by name, so a disjunct in one branches where the body uses it as an action.
-    if (isBranching(program, arg, frame.scope)) return withBinding(scope, param.name, source);
+    // TLC passes arguments by name, so a disjunct in one branches where the body uses it as an action,
+    // and a variable primed before the step assigns it is one the body may assign.
+    if (isBranching(program, arg, frame.scope) || hasUnassignedPrime(program, arg, frame)) {
+      return withBinding(scope, param.name, source);
+    }
     const value = compileValue(program, arg, frame);
     const current = frame.isNext ? undefined : source;
     if (!names || arg.kind === "Identifier" || arg.kind === "Number" || arg.kind === "String") {
@@ -1968,6 +1993,55 @@ const getSetBound = (program: Program, set: Compiled) => ({
 const compileKeys = (target: Compiled): Compiled | undefined => {
   const map = expectMap(target.type);
   return map && { type: map.keys, emit: () => `(${target.emit()})[0]` };
+};
+
+// Whether a step assigns a variable, before it assigns any other, from a set that reads the state
+// and that TLC streams, which rejectStreamedBound rejects whatever the variables' types: in the
+// first conjunct of a conjunction, each disjunct, an existential's body, and the actions it names.
+const isStreamedFirst = (
+  expression: Expression,
+  environment: Environment,
+  seen: Set<Definition> = new Set(),
+): boolean => {
+  switch (expression.kind) {
+    case "And":
+      return (
+        expression.operands.length > 0 && isStreamedFirst(expression.operands[0], environment, seen)
+      );
+    case "Or":
+      return expression.operands.some((operand) => isStreamedFirst(operand, environment, seen));
+    case "Exists":
+    case "Label":
+      return isStreamedFirst(expression.body, environment, seen);
+    case "Identifier":
+    case "Apply": {
+      const set =
+        expression.kind === "Apply" && expression.operator === "\\in"
+          ? expression.args[1]
+          : undefined;
+      const target = expression.kind === "Apply" ? expression.args[0] : undefined;
+      if (
+        set !== undefined &&
+        target?.kind === "Prime" &&
+        target.expression.kind === "Identifier" &&
+        environment.variableIndex.has(target.expression.name)
+      ) {
+        const isStateful = (node: Expression): boolean =>
+          (node.kind === "Identifier" && environment.variableIndex.has(node.name)) ||
+          getChildren(node).some(isStateful);
+        return isStateful(set) && isExpressionImpure([set], environment, "streamed");
+      }
+      const name = expression.kind === "Identifier" ? expression.name : expression.operator;
+      if (isLocallyResolved(expression)) return false;
+      const global = findGlobalName(name, environment);
+      if (global?.kind !== "Definition" || global.definition.kind !== "Operator") return false;
+      if (seen.has(global.definition)) return false;
+      seen.add(global.definition);
+      return isStreamedFirst(global.definition.body, environment, seen);
+    }
+    default:
+      return false;
+  }
 };
 
 // TLC binds a variable to each element it streams from a set that UNION or \cup builds, duplicates
@@ -3073,6 +3147,10 @@ const compileBuiltin = (
     ? findGlobalName(operator, program.environment)
     : undefined;
   if (global?.kind === "Value") return compileConstant(program, global.value);
+  // TLC's TLCEval enumerates its argument, which the tier's values already are.
+  if (args.length === 1 && isBuiltin(frame, operator, "TLCEval")) {
+    return compileValue(program, args[0], frame);
+  }
   if (args.length === 2 && (operator === "\\in" || operator === "\\notin")) {
     const test = compileMembership(program, compileValue(program, args[0], frame), args[1], frame);
     return operator === "\\in"
@@ -3515,6 +3593,20 @@ const compileValue = (program: Program, expression: Expression, frame: Frame): C
       return compileIdentifier(program, expression.name, frame);
     }
     case "Apply": {
+      // TLCGet("level") reads the level of the state that a constraint or an invariant checks.
+      const [key] = expression.args;
+      if (
+        expression.operator === "TLCGet" &&
+        !isLocallyResolved(expression) &&
+        expression.args.length === 1 &&
+        key.kind === "String" &&
+        key.value === "level"
+      ) {
+        // TLC 1.7.4 reads the level of the state it explores rather than of the one it checks.
+        return frame.isLevelKnown && program.environment.runtime.version !== "1.7.4"
+          ? { type: createInt(), emit: () => "J.value" }
+          : unsupported();
+      }
       const names: LazyDefinition[] = [];
       const expansion = getExpansion(program, expression, frame, names);
       if (!expansion) return compileBuiltin(program, expression, frame);
@@ -3900,6 +3992,36 @@ const compileValue = (program: Program, expression: Expression, frame: Frame): C
         true,
       );
       return { type: createBool(), emit: () => getEnabledCode(step) };
+    }
+    // TLC evaluates [A]_e as A, or else e unchanged, and <<A>>_e as A and e changed.
+    case "BoxAction":
+    case "AngleAction": {
+      const action = expectBool(compileValue(program, expression.action, frame));
+      const unchanged = compileUnchanged(program, expression.subscript, frame);
+      const isBox = expression.kind === "BoxAction";
+      return {
+        type: createBool(),
+        emit: () =>
+          isBox
+            ? `((${action.emit()}) || (${unchanged.emit()}))`
+            : `((${action.emit()}) && !(${unchanged.emit()}))`,
+      };
+    }
+    case "Label":
+      return compileValue(program, expression.body, frame);
+    // A set of functions or records is every element its enumeration gives, in TLC's order of sets.
+    case "FunctionSet":
+    case "RecordSet": {
+      const loop = compileBound(program, expression, frame);
+      const type: Type = { kind: "Set", element: loop.element };
+      const [result, element] = ["r", "e"].map((prefix) => getName(program, prefix));
+      return {
+        type,
+        emit: () =>
+          isMask(type, program.plains)
+            ? `(() => { let ${result} = 0; ${loop.header(element)} { ${result} |= H.bit(${element}); } return ${result}; })()`
+            : `(() => { const ${result} = []; ${loop.header(element)} { ${result}.push(${element}); } return H.normalize(${getComparerCode(program, loop.element)}, ${result}); })()`,
+      };
     }
     default:
       return unsupported();
@@ -4431,6 +4553,41 @@ const compileStep = (
       const body = continueWith(bindings.scope, [expression.body]);
       return () => `{ ${getDeclarations(bindings.names)} ${body()} }`;
     }
+    case "Label":
+      return continueWith(first.scope, [expression.body]);
+    // TLC takes the steps of [A]_e as those of A \/ UNCHANGED e, and the steps of <<A>>_e as those
+    // of A after which e has changed, which it checks once A is done.
+    case "BoxAction":
+      return continueWith(first.scope, [
+        {
+          kind: "Or",
+          operands: [
+            expression.action,
+            {
+              kind: "Unchanged",
+              expression: expression.subscript,
+              location: expression.subscript.location,
+            },
+          ],
+          location: expression.location,
+        },
+      ]);
+    case "AngleAction":
+      return continueWith(first.scope, [
+        expression.action,
+        {
+          kind: "Apply",
+          operator: "~",
+          args: [
+            {
+              kind: "Unchanged",
+              expression: expression.subscript,
+              location: expression.subscript.location,
+            },
+          ],
+          location: expression.subscript.location,
+        },
+      ]);
     case "Identifier": {
       const binding = first.scope.get(expression.name);
       if (binding?.kind === "Operator" && binding.definition.params.length === 0) {
@@ -4513,13 +4670,33 @@ const compileStep = (
   return () => `if (${guard.emit()}) { ${tail()} }`;
 };
 
+// Whether an expression primes a variable, outside an ENABLED, that the step has yet to assign.
+const hasUnassignedPrime = (program: Program, expression: Expression, frame: Frame): boolean => {
+  if (expression.kind === "Enabled") return false;
+  if (expression.kind === "Prime" && expression.expression.kind === "Identifier") {
+    const name = expression.expression.name;
+    const global = frame.scope.has(name) ? undefined : findGlobalName(name, program.environment);
+    return global?.kind === "Variable" && frame.primed[global.index] === undefined;
+  }
+  return getChildren(expression).some((child) => hasUnassignedPrime(program, child, frame));
+};
+
 const hasPrime = (expression: Expression): boolean =>
   expression.kind === "Prime" ||
   expression.kind === "Unchanged" ||
   expression.kind === "Enabled" ||
   getChildren(expression).some(hasPrime);
 
-const getPrimedVariable = (program: Program, expression: Expression, scope: TierScope) => {
+const getPrimedVariable = (
+  program: Program,
+  expression: Expression,
+  scope: TierScope,
+): number | undefined => {
+  // TLC finds the variable that a parameter primes in the argument it stands for.
+  const binding = expression.kind === "Identifier" ? scope.get(expression.name) : undefined;
+  if (binding?.kind === "Operator" && binding.definition.params.length === 0) {
+    return getPrimedVariable(program, binding.definition.body, binding.scope);
+  }
   if (expression.kind !== "Prime" || expression.expression.kind !== "Identifier") return undefined;
   const name = expression.expression.name;
   if (scope.has(name)) return undefined;
@@ -5943,6 +6120,7 @@ const compileSpec = (
         primed: unprimed,
         variables: getVariableCodes(program),
         isNext: false,
+        isLevelKnown: true,
       }),
     );
   const invariants = check.invariants.map(compilePredicate);
@@ -6021,7 +6199,8 @@ const compileSpec = (
         .map((match) => Number(match[1]))
         .filter((index) => index < program.variableTypes.length),
     );
-    const guard = /\b(state|parent)\b/.test(body)
+    // A predicate that reads the level holds of a successor whatever its parent's values are.
+    const guard = /\b(state|parent|J)\b/.test(body)
       ? ""
       : `if (parent !== undefined${[...reads].map((index) => ` && state[${index}] === parent[${index}]`).join("")}) return true;`;
     return `(state, parent) => { ${guard} ${unpack} return ${body}; }`;
@@ -6231,7 +6410,7 @@ const compileSpec = (
     moved,
     ...atoms.map((table) => moved.map((atom) => table.findIndex((image) => image === atom))),
   ];
-  return new Function("K", "S", "B", "R", "D", "L", "A", "Q", "Z", "M", "H", source)(
+  return new Function("K", "S", "B", "R", "D", "L", "A", "Q", "Z", "M", "H", "J", source)(
     program.constants,
     program.constantSets,
     program.bitmaps,
@@ -6243,6 +6422,7 @@ const compileSpec = (
     new Int32Array(program.plains.values.length),
     getFullOrbits(preimages),
     HELPERS,
+    program.level,
   );
 };
 
@@ -6420,9 +6600,12 @@ const search = (environment: Environment, check: TypedCheck, plains: Plains): Ty
     recursions: new Map(),
     ways: new Map(),
     isGuessing: plains.isGuessed,
+    level: { value: 1 },
   };
   // Every variable of such a spec is assigned before TLC branches on the next-state relation.
   if (environment.variables.length === 0) return unsupported();
+  // A step that compileSpec rejects whatever the types rejects the spec before its initial states.
+  if (isStreamedFirst(check.next, environment)) return unsupported();
   // The initial states as bytes, so the interpreter's values for them need not stay alive.
   const initialBytes: Bytes = { data: new Uint8Array(1 << 16), size: 0 };
   const initialStarts = { data: new Int32Array(1 << 10), size: 0 };
@@ -6552,6 +6735,18 @@ const search = (environment: Environment, check: TypedCheck, plains: Plains): Ty
     while (cursor.position < end) addFingerprint(compiled.decode(cursor));
   };
   // Returns the index of a state in the model, or -1 for a state outside it.
+  // TLC's fingerprint of each state stored, by its index, which orders the successors a liveness
+  // check adds.
+  const liveFingerprints = { data: new Int32Array(check.liveness ? 1024 : 0), size: 0 };
+  const addLiveFingerprint = (state: Plain[]) => {
+    if (liveFingerprints.size === liveFingerprints.data.length) {
+      const data = new Int32Array(liveFingerprints.data.length * 2);
+      data.set(liveFingerprints.data);
+      liveFingerprints.data = data;
+    }
+    fingerprinter.fingerprint(state);
+    liveFingerprints.data[liveFingerprints.size++] = fingerprinter.words[0];
+  };
   const visit = (state: Plain[], parent?: Plain[], isUnchanged = false) => {
     statistics.generated++;
     // A step that changes no value leads back to the state it starts from, which is stored already.
@@ -6560,6 +6755,7 @@ const search = (environment: Environment, check: TypedCheck, plains: Plains): Ty
     writeKey(state);
     const found = findState(true);
     if (found !== -1) return found;
+    if (check.liveness) addLiveFingerprint(state);
     if (!isEncoded) {
       keys.size = keys.start;
       compiled.encode(state, keys);
@@ -6598,7 +6794,9 @@ const search = (environment: Environment, check: TypedCheck, plains: Plains): Ty
   };
   // Each state on the path is the first successor of the one before it with its key, as it was found.
   const getPath = (indexes: number[]) => {
+    // The constraints check each state of the path at its level, as the search did.
     const findFirst = (states: (emit: (state: Plain[]) => void) => void, target: number) => {
+      program.level.value = path.length + 1;
       const found: Plain[][] = [];
       states((state) => {
         if (found.length > 0 || !isInModel(state)) return;
@@ -6607,43 +6805,37 @@ const search = (environment: Environment, check: TypedCheck, plains: Plains): Ty
       });
       return found[0];
     };
-    const path = [
+    const path: Plain[][] = [];
+    path.push(
       findFirst((emit) => {
         const cursor: Cursor = { data: initialBytes.data, position: 0 };
         for (let initial = 0; initial < initialStarts.size; initial++) {
           emit(program.variableTypes.map((type) => readPlain(cursor, type, program.plains)));
         }
       }, indexes[0]),
-    ];
+    );
     indexes.slice(1).forEach((target) => {
       path.push(findFirst((emit) => compiled.next(path[path.length - 1], emit), target));
     });
     return path;
   };
-  const holders = new Map(atoms.map((atom, position) => [atom, compiled.liveAtoms[position]]));
-  const holds = (atom: LiveAtom, state: Plain[], next: Plain[]) =>
-    (holders.get(atom) ?? unsupported())(state, next);
-  const liveFingerprints: number[] = [];
   const live =
     check.liveness &&
     createLiveGraph<Plain[]>(
       check.liveness,
       {
-        atoms: { holdsState: (atom, state) => holds(atom, state, state), holdsAction: holds },
+        holds: (position, state, next) => compiled.liveAtoms[position](state, next),
         isShared: true,
         // Without symmetry, a state's index identifies it. With it, states of one class share it.
         isSame: isImaged ? isSame : () => true,
         evaluateFrom: (_source, evaluate) => evaluate(),
       },
       {
-        getFingerprint: (successor) =>
-          (liveFingerprints[successor.index] ??= (() => {
-            fingerprinter.fingerprint(successor.state);
-            return fingerprinter.words[0];
-          })()),
+        getFingerprint: (successor) => liveFingerprints.data[successor.index],
         // The successors of a state the search expanded are all stored.
-        forEachActionSuccessors: (_index, state, onSuccessors) => {
+        forEachActionSuccessors: (index, state, onSuccessors) => {
           const successors: LiveSuccessor<Plain[]>[] = [];
+          program.level.value = getDepth(index) + 1;
           compiled.next(state, (successor) => {
             if (!isInModel(successor)) return;
             writeKey(successor);
@@ -6656,6 +6848,7 @@ const search = (environment: Environment, check: TypedCheck, plains: Plains): Ty
       environment.runtime.version !== "1.7.4",
     );
   const cursor: Cursor = { data: initialBytes.data, position: 0 };
+  program.level.value = 1;
   for (let index = 0; index < initialStarts.size; index++) {
     const state = program.variableTypes.map((type) => readPlain(cursor, type, program.plains));
     const distinct = statistics.distinct;
@@ -6672,7 +6865,16 @@ const search = (environment: Environment, check: TypedCheck, plains: Plains): Ty
     initialStarts.data = new Int32Array(0);
   }
   const initialStates = { generated: statistics.generated, distinct: statistics.distinct };
+  check.onInitialStates?.(initialStates);
   const level = { depth: 1, end: statistics.distinct };
+  // The search finds the states of each depth one after another, so the end of each depth's states
+  // gives the depth of any state.
+  const depthEnds: number[] = [];
+  const getDepth = (index: number) => {
+    let depth = 1;
+    while (depth <= depthEnds.length && index >= depthEnds[depth - 1]) depth++;
+    return depth;
+  };
   const expansion = { successors: 0, newStates: 0 };
   const liveSuccessors: LiveSuccessor<Plain[]>[] = [];
   const liveChecks = { at: 1024 };
@@ -6731,12 +6933,22 @@ const search = (environment: Environment, check: TypedCheck, plains: Plains): Ty
   });
   for (let index = 0; index < statistics.distinct; index++) {
     if (index === level.end) {
+      depthEnds.push(level.end);
       level.depth++;
       level.end = statistics.distinct;
+    }
+    if ((index & 255) === 0) {
+      check.onProgress?.({
+        generated: statistics.generated,
+        distinct: statistics.distinct,
+        queued: statistics.distinct - index,
+        depth: statistics.depth,
+      });
     }
     const state = readState();
     expanding.state = state;
     expanding.index = index;
+    program.level.value = level.depth + 1;
     expansion.successors = 0;
     expansion.newStates = 0;
     liveSuccessors.length = 0;

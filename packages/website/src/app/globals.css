@@ -1,0 +1,375 @@
+@import "tailwindcss";
+@import "allo-font/friendly";
+@import "@fontsource-variable/geist-mono";
+
+/* System fonts sized to the width of Geist Mono's letters, so that code wraps at the same words
+   before Geist Mono loads as after. */
+@font-face {
+  font-family: "Geist Mono Fallback";
+  /* A browser finds a local font by its full name, not its family's. */
+  src:
+    local("Menlo Regular"), local("Menlo-Regular"), local("DejaVu Sans Mono Book"),
+    local("DejaVu Sans Mono");
+  size-adjust: 99.69%;
+}
+@font-face {
+  font-family: "Geist Mono Fallback Consolas";
+  src: local("Consolas");
+  size-adjust: 109.16%;
+}
+@import "@fontsource/caveat/600.css";
+@import "../generated/fonts.css";
+
+@custom-variant dark (&:where(.dark, .dark *));
+
+:root {
+  --background: #fdfdfc;
+  --foreground: #21201c;
+  --card: #fff;
+  --card-foreground: #21201c;
+  --popover: #fff;
+  --popover-foreground: #21201c;
+  --primary: #21201c;
+  --primary-foreground: #fdfdfc;
+  --secondary: #f1f0ef;
+  --secondary-foreground: #21201c;
+  --muted: #f1f0ef;
+  --muted-foreground: #63635e;
+  --accent: #f9f9f8;
+  --accent-foreground: #21201c;
+  --destructive: oklch(57.7% 0.245 27.325);
+  --border: #e9e8e6;
+  --input: #dad9d6;
+  --ring: #bcbbb5;
+  --radius: 0.5rem;
+  --prose: #42413e;
+  --faint: #74746e;
+  --raised: #fff;
+  --success: #22863a;
+  --syntax-number: #005cc5;
+  --syntax-keyword: #6f42c1;
+  --shadow-edge: #0000000f;
+  --shadow-soft: #0000000a;
+  --scrollbar: rgb(0 0 0 / 0.15);
+}
+
+.dark {
+  --background: #111110;
+  --foreground: #eeeeec;
+  --card: #191918;
+  --card-foreground: #eeeeec;
+  --popover: #222221;
+  --popover-foreground: #eeeeec;
+  --primary: #eeeeec;
+  --primary-foreground: #111110;
+  --secondary: #222221;
+  --secondary-foreground: #eeeeec;
+  --muted: #222221;
+  --muted-foreground: #b5b3ad;
+  --accent: #191918;
+  --accent-foreground: #eeeeec;
+  --destructive: oklch(70.4% 0.191 22.216);
+  --border: #2a2a28;
+  --input: #3b3a37;
+  --ring: #62605b;
+  --prose: #cdccc8;
+  --faint: #8a8982;
+  --raised: #3b3a37;
+  --success: #85e89d;
+  --syntax-number: #79b8ff;
+  --syntax-keyword: #b392f0;
+  --shadow-edge: #ffffff17;
+  --shadow-soft: #00000066;
+  --scrollbar: rgb(255 255 255 / 0.2);
+}
+
+@theme inline {
+  --font-sans: "Allo", ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
+  --font-hand: "Caveat", cursive;
+  --font-mono:
+    "Geist Mono Variable", "Geist Mono Fallback", "Geist Mono Fallback Consolas", ui-monospace,
+    SFMono-Regular, Menlo, Consolas, monospace;
+  /* Shrinks on a phone so that the home example's longest line, 46 characters, stays on one line. */
+  --text-code: clamp(10px, calc((100vw - 80px) / 27.9), 13px);
+  --color-background: var(--background);
+  --color-foreground: var(--foreground);
+  --color-card: var(--card);
+  --color-card-foreground: var(--card-foreground);
+  --color-popover: var(--popover);
+  --color-popover-foreground: var(--popover-foreground);
+  --color-primary: var(--primary);
+  --color-primary-foreground: var(--primary-foreground);
+  --color-secondary: var(--secondary);
+  --color-secondary-foreground: var(--secondary-foreground);
+  --color-muted: var(--muted);
+  --color-muted-foreground: var(--muted-foreground);
+  --color-accent: var(--accent);
+  --color-accent-foreground: var(--accent-foreground);
+  --color-destructive: var(--destructive);
+  --color-border: var(--border);
+  --color-input: var(--input);
+  --color-ring: var(--ring);
+  --color-prose: var(--prose);
+  --color-faint: var(--faint);
+  --color-raised: var(--raised);
+  --color-success: var(--success);
+  --color-syntax-number: var(--syntax-number);
+  --color-syntax-keyword: var(--syntax-keyword);
+  --radius-sm: calc(var(--radius) * 0.5);
+  --radius-md: calc(var(--radius) * 0.75);
+  --radius-lg: var(--radius);
+  --radius-xl: calc(var(--radius) * 1.5);
+  --shadow-raised:
+    0 0 0 1px var(--shadow-edge), 0 1px 2px -1px var(--shadow-edge), 0 2px 4px 0 var(--shadow-soft);
+  --animate-line-fade: line-fade 1s linear infinite;
+  --animate-chip-in: chip-in 200ms ease-out backwards;
+  --animate-logo-body: logo-body 1800ms steps(1) infinite;
+  --animate-logo-left-arm: logo-left-arm 1800ms steps(1) infinite;
+  --animate-logo-right-arm: logo-right-arm 1800ms steps(1) infinite;
+  --animate-logo-toe: logo-toe 1800ms steps(1) infinite;
+  --animate-logo-flip-body: logo-flip-body 1000ms steps(1);
+  --animate-logo-flip-left-arm: logo-flip-left-arm 1000ms steps(1);
+  --animate-logo-flip-right-arm: logo-flip-right-arm 1000ms steps(1);
+  --animate-logo-flip-toe: logo-flip-toe 1000ms steps(1);
+
+  /* Eleven steps: crouch, leap, four in the air, fall, land, bounce, settle, rest. */
+  @keyframes logo-flip-body {
+    0%,
+    63.636%,
+    81.818%,
+    90.909% {
+      translate: 0 0;
+      rotate: 0deg;
+    }
+    9.091% {
+      translate: 0 -2px;
+      rotate: 0deg;
+    }
+    18.182% {
+      translate: 0 -4px;
+      rotate: 90deg;
+    }
+    27.273% {
+      translate: 0 -6px;
+      rotate: 180deg;
+    }
+    36.364% {
+      translate: 0 -6px;
+      rotate: 270deg;
+    }
+    45.455% {
+      translate: 0 -4px;
+      rotate: 0deg;
+    }
+    54.545%,
+    72.727% {
+      translate: 0 -1px;
+      rotate: 0deg;
+    }
+  }
+
+  /* Both arms hang at a crouch and a landing, reach up in a leap, and level out in between. */
+  @keyframes logo-flip-left-arm {
+    0%,
+    63.636%,
+    90.909% {
+      translate: 0 0;
+    }
+    9.091%,
+    18.182%,
+    45.455%,
+    72.727%,
+    81.818% {
+      translate: 0 -2px;
+    }
+    27.273%,
+    36.364%,
+    54.545% {
+      translate: 0 -1px;
+    }
+  }
+
+  @keyframes logo-flip-right-arm {
+    0%,
+    63.636% {
+      translate: 0 2px;
+    }
+    9.091%,
+    18.182%,
+    45.455%,
+    72.727%,
+    81.818%,
+    90.909% {
+      translate: 0 0;
+    }
+    27.273%,
+    36.364%,
+    54.545% {
+      translate: 0 1px;
+    }
+  }
+
+  @keyframes logo-flip-toe {
+    0%,
+    63.636% {
+      translate: 0 1px;
+    }
+    9.091%,
+    72.727% {
+      translate: 0 0;
+    }
+  }
+
+  /* Twelve steps: two dances of four steps, then a rest and a three-step flip. */
+  @keyframes logo-body {
+    0%,
+    16.667%,
+    33.333%,
+    50%,
+    66.667% {
+      translate: 0 0;
+      rotate: 0deg;
+    }
+    8.333%,
+    25%,
+    41.667%,
+    58.333% {
+      translate: 0 -1px;
+      rotate: 0deg;
+    }
+    75% {
+      translate: 0 -2px;
+      rotate: 90deg;
+    }
+    83.333% {
+      translate: 0 -4px;
+      rotate: 180deg;
+    }
+    91.667% {
+      translate: 0 -2px;
+      rotate: 270deg;
+    }
+  }
+
+  @keyframes logo-left-arm {
+    0%,
+    33.333%,
+    66.667% {
+      translate: 0 0;
+    }
+    8.333%,
+    25%,
+    41.667%,
+    58.333%,
+    75% {
+      translate: 0 -1px;
+    }
+    16.667%,
+    50% {
+      translate: 0 -2px;
+    }
+  }
+
+  @keyframes logo-right-arm {
+    0%,
+    33.333%,
+    66.667% {
+      translate: 0 0;
+    }
+    8.333%,
+    25%,
+    41.667%,
+    58.333%,
+    75% {
+      translate: 0 1px;
+    }
+    16.667%,
+    50% {
+      translate: 0 2px;
+    }
+  }
+
+  @keyframes logo-toe {
+    0%,
+    16.667%,
+    33.333%,
+    50%,
+    66.667% {
+      translate: 0 0;
+    }
+    8.333%,
+    25%,
+    41.667%,
+    58.333% {
+      translate: 0 1px;
+    }
+  }
+
+  @keyframes chip-in {
+    from {
+      opacity: 0;
+      scale: 0.95;
+    }
+  }
+
+  @keyframes tint-in {
+    from {
+      background-color: transparent;
+      box-shadow: 0 0 0 transparent;
+    }
+  }
+
+  @keyframes line-fade {
+    from {
+      opacity: 1;
+    }
+    to {
+      opacity: 0.15;
+    }
+  }
+}
+
+@layer base {
+  * {
+    @apply border-border outline-ring/50;
+    scrollbar-width: thin;
+    scrollbar-color: var(--scrollbar) transparent;
+  }
+  html {
+    @apply bg-background font-sans text-[16px]/[1.6] text-foreground antialiased;
+    color-scheme: light;
+    -webkit-tap-highlight-color: transparent;
+  }
+  html.dark {
+    color-scheme: dark;
+  }
+  ::selection {
+    @apply bg-foreground/15;
+  }
+  button,
+  a {
+    touch-action: manipulation;
+  }
+  [data-tint] {
+    --tint-fill: color-mix(in srgb, var(--tint) 16%, transparent);
+    background-color: var(--tint-fill);
+    animation: tint-in 200ms ease-out;
+  }
+  /* A pane that holds only its lines in view makes a line anew as it scrolls in, where a fade
+     would run for every tint on each scroll. */
+  [data-index] [data-tint] {
+    animation: none;
+  }
+  [data-hovering-name] [data-tint] {
+    --tint-fill: color-mix(in srgb, var(--tint) 8%, transparent);
+  }
+  [data-skeleton] [data-token] {
+    background: linear-gradient(var(--border), var(--border)) center / 100% 0.85em no-repeat;
+  }
+  [data-shared] :is([data-pane] > *, [data-file-name]) {
+    visibility: hidden;
+  }
+  code {
+    @apply font-mono;
+  }
+}

@@ -19,7 +19,7 @@ import {
   describeNode,
   describeRange,
   bindDefinitions,
-  bindOperatorArguments,
+  getLetSites,
   bindUncachedArguments,
   evaluate,
   forEachBinding,
@@ -59,7 +59,6 @@ import {
   ACTION_LEVEL,
   CONSTANT_LEVEL,
   createBoundScope,
-  createLevelAnalyzer,
   TEMPORAL_LEVEL,
   VARIABLE_LEVEL,
 } from "./levels";
@@ -181,15 +180,6 @@ const createCannotHandleError = (expression: Expression, inner?: string) =>
     `TLC cannot handle the temporal formula ${describeRange(expression)}${inner === undefined ? "" : `:\n${inner}`}`,
   );
 
-export const createSanyAnalyzer = (environment: Environment) =>
-  createLevelAnalyzer({
-    constants: new Map([...environment.constants.keys()].map((key) => [key, 0])),
-    variables: new Set(environment.variables),
-    getDefinition: (name) => environment.definitions.get(name),
-    instances: environment.instances,
-    recursiveSections: environment.recursiveSections,
-  });
-
 // TLC reads the level SANY gives a node, which counts a formal parameter as a constant whatever its argument.
 export const getSanyLevel = (
   expression: Expression,
@@ -200,22 +190,28 @@ export const getSanyLevel = (
   for (let node = scope; node; node = node.parent) {
     bindings.unshift([node.name, letDefinitions.get(node)]);
   }
-  return createSanyAnalyzer(environment).analyze(expression, createBoundScope(bindings)).level;
+  return environment.sanyLevels.analyze(expression, createBoundScope(bindings)).level;
 };
 
+// The level that SANY gives an expression, with the levels of what its scope binds read in, as
+// Specs.getLevel finds it, or with isLevelBound the bound on it that Tool.getLevelBound finds
+// through the definitions the expression calls.
 export const getLevel = (
   expression: Expression,
   scope: Scope | undefined,
   environment: Environment,
   shadowed = new Set<string>(),
-  visiting = new Set<object>(),
+  bindingLevels = new Map<object, number>(),
   isLevelBound = false,
 ): number => {
+  // Specs.getLevel reads each level parameter of an expression once, however often it occurs, and
+  // Tool.getLevelBound reads each definition once.
   const getBodyLevel = (binding: object, body: Expression, bodyScope: Scope | undefined) => {
-    if (visiting.has(binding)) return CONSTANT_LEVEL;
-    visiting.add(binding);
-    const level = getLevel(body, bodyScope, environment, new Set(), visiting, isLevelBound);
-    if (!isLevelBound) visiting.delete(binding);
+    const known = bindingLevels.get(binding);
+    if (known !== undefined) return isLevelBound ? CONSTANT_LEVEL : known;
+    bindingLevels.set(binding, CONSTANT_LEVEL);
+    const level = getLevel(body, bodyScope, environment, new Set(), bindingLevels, isLevelBound);
+    bindingLevels.set(binding, level);
     return level;
   };
   const getBindingLevel = (name: string, isArgument: boolean) => {
@@ -281,7 +277,7 @@ export const getLevel = (
           scope,
           environment,
           bound.length === 0 ? shadowed : new Set([...shadowed, ...bound]),
-          visiting,
+          bindingLevels,
           isLevelBound,
         ),
       );
@@ -313,7 +309,7 @@ export const getLevel = (
           bindLetDefinitions(expression, scope, environment),
           environment,
           shadowed,
-          visiting,
+          bindingLevels,
           isLevelBound,
         );
       }
@@ -333,7 +329,7 @@ export const getLevel = (
           scope,
           environment,
           new Set([...shadowed, ...aliases.map((alias) => alias.name)]),
-          visiting,
+          bindingLevels,
           isLevelBound,
         ),
         ...aliases
@@ -351,24 +347,22 @@ export const getLevel = (
       if (TEMPORAL_OPERATORS.has(expression.operator)) return TEMPORAL_LEVEL;
       if (expression.operator === "\\cdot") return ACTION_LEVEL;
       const operatorLevel = getNameLevel(expression.operator, expression);
-      const level = Math.max(operatorLevel, getChildrenLevel(expression));
-      const operator = isLocallyResolved(expression)
-        ? undefined
-        : resolveGlobalOperator(expression.operator, environment);
-      if (
-        isLevelBound ||
-        level === operatorLevel ||
-        operator?.kind !== "Closure" ||
-        operator.params.length !== expression.args.length ||
-        getDefinition(expression.operator, environment)?.isRecursive
-      ) {
-        return level;
-      }
-      return getBodyLevel(
-        operator,
-        operator.body,
-        bindOperatorArguments(operator, expression.args, getConstantContext(environment, scope)),
+      const argumentLevels = expression.args.map((argument) =>
+        getLevel(argument, scope, environment, shadowed, bindingLevels, isLevelBound),
       );
+      const level = Math.max(operatorLevel, ...argumentLevels);
+      const operator =
+        isLevelBound || isLocallyResolved(expression)
+          ? undefined
+          : environment.getOperatorLevels(expression.operator);
+      if (operator?.formals.length !== expression.args.length) return level;
+      // SANY levels a call by the operator's own level and the levels of the arguments to the
+      // formals that its level reads.
+      let callLevel = operator.level;
+      for (let index = 0; index < argumentLevels.length; index++) {
+        if (operator.weights[index] === 1) callLevel = Math.max(callLevel, argumentLevels[index]);
+      }
+      return callLevel;
     }
     default:
       return getChildrenLevel(expression);
@@ -379,7 +373,7 @@ export const getLevelBound = (
   expression: Expression,
   scope: Scope | undefined,
   environment: Environment,
-) => getLevel(expression, scope, environment, new Set(), new Set(), true);
+) => getLevel(expression, scope, environment, new Set(), new Map(), true);
 
 const getUnrolledElements = (bounds: Bound[], context: Context) => {
   try {
@@ -646,6 +640,7 @@ export const bindLetDefinitions = (
     expression.definitions,
     getConstantContext(environment, scope),
     getReevaluatedDefinitions(expression.definitions, environment),
+    getLetSites(expression.definitions),
   );
   for (let current = bound; current && current !== scope; current = current.parent) {
     if (current.binding.kind === "Thunk") definitionThunks.add(current.binding);
@@ -997,6 +992,28 @@ export interface LiveAtoms<State> {
   holdsAction: (atom: LiveAction, state: State, next: State) => boolean;
 }
 
+// Whether a step leaves the subscript of <<A>>_v unchanged, so that the step doesn't take it.
+export const isUnchangedStep = (
+  atom: LiveAction,
+  state: Value[],
+  next: Value[],
+  environment: Environment,
+) => {
+  const scope = atom.scope;
+  const subscript = atom.subscript;
+  // The tracing replay evaluates the subscript, whose tuple TLC names in the frames.
+  const variables = environment.callStack ? undefined : atom.subscriptVariables;
+  return (
+    subscript !== undefined &&
+    (variables
+      ? isUnchangedState(variables, state, next)
+      : isEqualLikeTlc(
+          evaluate(subscript, { environment, scope, state, next: undefined }),
+          evaluate(subscript, { environment, scope, state: next, next: NULL_STATE }),
+        ))
+  );
+};
+
 export const getInterpretedAtoms = (environment: Environment): LiveAtoms<Value[]> => ({
   holdsState: (atom, state) => {
     const context = { environment, scope: atom.scope, state, next: undefined };
@@ -1008,21 +1025,8 @@ export const getInterpretedAtoms = (environment: Environment): LiveAtoms<Value[]
     return value;
   },
   holdsAction: (atom, state, next) => {
-    const scope = atom.scope;
-    const subscript = atom.subscript;
-    // The tracing replay evaluates the subscript, whose tuple TLC names in the frames.
-    const variables = environment.callStack ? undefined : atom.subscriptVariables;
-    if (
-      subscript &&
-      (variables
-        ? isUnchangedState(variables, state, next)
-        : isEqualLikeTlc(
-            evaluate(subscript, { environment, scope, state, next: undefined }),
-            evaluate(subscript, { environment, scope, state: next, next: NULL_STATE }),
-          ))
-    )
-      return false;
-    const value = evaluate(atom.expression, { environment, scope, state, next });
+    if (isUnchangedStep(atom, state, next, environment)) return false;
+    const value = evaluate(atom.expression, { environment, scope: atom.scope, state, next });
     if (typeof value !== "boolean") {
       throw new TlaEvaluationError("Encountered an action predicate that's not a boolean.");
     }

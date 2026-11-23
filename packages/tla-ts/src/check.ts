@@ -1,4 +1,4 @@
-import type { Expression } from "./ast";
+import type { Expression, Module } from "./ast";
 import { parseConfig, type ModelConfig } from "./config";
 import {
   countCoverageVariables,
@@ -22,8 +22,10 @@ import {
 } from "./errors";
 import {
   describeRange,
+  findGlobalName,
   getDefinition,
   getRootKey,
+  getStartupValue,
   type CallStack,
   type FingerprintFailure,
   type State,
@@ -79,6 +81,7 @@ import {
   getActionLabel,
   getActionSignature,
   getSpecDescription,
+  getStepName,
   getSpecificationValue,
   toActionValue,
   type SpecAction,
@@ -119,6 +122,7 @@ import {
   type CounterExampleLoop,
 } from "./tlc/tlcext-operators";
 import type { TlcVersion } from "./tlc/version";
+import type { PreparedModule } from "./tlc/order";
 import { runTypedSearch, type TypedResult } from "./typed-tier";
 import {
   createCanonicalizer,
@@ -130,9 +134,11 @@ import {
 } from "./values";
 
 export interface CheckOptions {
-  source: string;
+  source: string | Module;
   config: string | ModelConfig;
   loadModule?: (name: string) => string | undefined;
+  /** Modules a compiler already read, such as the JavaScript module of a spec compiled from TypeScript. */
+  preparedModules?: readonly PreparedModule[];
   loadClass?: (name: string) => Uint8Array | undefined;
   onPrint?: (text: string) => void;
   onPause?: () => void;
@@ -506,11 +512,14 @@ const searchStates = (
     });
     return createSuccess();
   }
-  const hasUserPostconditions =
+  const hasPostconditions =
     config.postconditions.length > 0 ||
     config.possible.length > 0 ||
-    (options.moduleOperators ?? []).some((operator) => operator.kind === "postcondition");
-  const hasPostconditions = hasUserPostconditions || options.traceSpec?.traceFile !== undefined;
+    (options.moduleOperators ?? []).some((operator) => operator.kind === "postcondition") ||
+    options.traceSpec?.traceFile !== undefined;
+  // A postcondition reads the statistics and the counterexample once the search ends, which the
+  // tier's search gives as the interpreter's would, but the possible states need every state seen.
+  const isTypedSearchable = config.possible.length === 0;
   const tracedSteps = new WeakMap<TraceStep, TracedStep>();
   const getStepState = (step: TraceStep) => tracedSteps.get(step)?.state ?? step.state;
   // TLC's Worker#doPostCondition and LiveCheck bind CounterExample to the alias of each state, while its initial states and lassos keep the states.
@@ -714,6 +723,12 @@ const searchStates = (
       throw createIncompleteSuccessorError(successor, action, environment);
     }
   };
+  // The steps of Next answer a fair action that Next splits into only where they are the steps
+  // that ENABLED and the action would find again: with no coverage, symmetry or view, and a Next
+  // whose evaluation shows nothing when it runs again. An Assert that would fail there fails in
+  // Next first.
+  const isStepTaken =
+    !coverage && !search.isSymmetric && !search.isViewed && !search.isNextReplayed;
   const liveness = withLivenessExitCode(() =>
     withUnexpectedException(() =>
       createLivenessChecker(
@@ -790,6 +805,7 @@ const searchStates = (
           getGraphState: (index, state) => getGraphState(state, depths[index] ?? 1),
         },
         livenessDump?.createWriter,
+        isStepTaken ? nextActions : undefined,
       ),
     ),
   );
@@ -1211,6 +1227,7 @@ const searchStates = (
     current.candidate = successor.state;
     current.candidateLevel = depths[index] + 1;
     if (isCanonicalizedFirst) canonicalizeState(successor.state);
+    if (action && liveness?.isTakingSteps) liveness.takeStep(state, successor.state, action);
     const found = lookUpSuccessor(state, successor);
     if (source && found.isInModel) {
       stateWriter?.writeSuccessor(
@@ -1236,16 +1253,23 @@ const searchStates = (
     if (found.existing !== -1 && liveness) {
       const stored = states[found.existing];
       const isStored = stored.every((value, position) => value === successor.state[position]);
-      liveSuccessors.push({ index: found.existing, state: isStored ? stored : successor.state });
+      liveSuccessors.push({
+        index: found.existing,
+        state: isStored ? stored : successor.state,
+        action,
+      });
     }
     if (found.isSeen && found.existing === -1 && liveness) {
       liveSuccessors.push({
         index: getPendingIndex(found.hash, found.fingerprintState),
         state: successor.state,
+        action,
       });
     }
     const isNew = found.isInModel && !found.isSeen;
-    if (isNew && liveness) liveSuccessors.push({ index: states.length, state: successor.state });
+    if (isNew && liveness) {
+      liveSuccessors.push({ index: states.length, state: successor.state, action });
+    }
     unstoredFingerprint = isNew ? found.fingerprintState : undefined;
     if (isNew) {
       countDistinctState(depths[index] + 1);
@@ -1303,18 +1327,60 @@ const searchStates = (
   if (liveness) {
     options.onProgress?.({ kind: "liveness-prepared", branches: liveness.branches });
   }
+  const checkFinalPostconditions = () => {
+    const missingPostcondition = specification.moduleOperators.find(
+      (operator) => operator.kind === "postcondition" && operator.key === undefined,
+    );
+    if (missingPostcondition) {
+      return createFailureResult(createMissingOperatorError(missingPostcondition), { trace: [] });
+    }
+    const postcondition = search.findPostconditionViolation();
+    return (
+      postcondition &&
+      createResult("postcondition-violation", {
+        name: postcondition.name,
+        message: postcondition.message,
+        counts: postcondition.counts,
+        trace: [],
+        postcondition,
+      })
+    );
+  };
   const assumptionViolation = findViolatedAssumption();
   if (assumptionViolation) return createResult("assumption-violation", assumptionViolation);
   options.onProgress?.({ kind: "initial-states-started" });
+  // A next-state relation that is the constant FALSE leaves every initial state without a successor,
+  // so with deadlock checked the typed tier, which decides only a search that succeeds, would only
+  // search the initial states for the interpreter to search again. A script compiled from
+  // TypeScript runs in its initial state and has no next-state relation.
+  const global =
+    spec.next?.kind === "Identifier" && spec.scope === undefined
+      ? findGlobalName(spec.next.name, environment)
+      : undefined;
+  const isStepless =
+    (global?.kind === "Value" && global.value === false) ||
+    (global?.kind === "Definition" && getStartupValue(global.definition, environment) === false);
   const typedChecks =
+    !(config.checkDeadlock && isStepless) &&
     !options.isContinued &&
     options.dump === undefined &&
     // A set of small integers on the tier is a 31-bit mask, which a lower bound could overflow.
     options.maxSetSize === undefined &&
-    // The trace spec's _TLCTraceSilent holds without effect while CounterExample.state = {}, as it is after any run the tier decides.
-    !hasUserPostconditions
+    isTypedSearchable
       ? search.getTypedChecks(liveness?.solutions)
       : undefined;
+  // The typed tier reports its initial states as it has them, and its progress at TLC's intervals,
+  // so that a long search shows them as TLC does; the interpreter then reports none of them again.
+  let isInitialReported = false;
+  const reportInitialStates = (initialStates: InitialStates) => {
+    if (isInitialReported) return;
+    isInitialReported = true;
+    for (let count = 2; count < initialStates.generated; count *= 2) {
+      reportInitialStatesProgress(count, options.onProgress);
+    }
+    options.onProgress?.({ kind: "initial-states-computed", initialStates });
+  };
+  const typedProgress = { at: performance.now() + PERIODIC_START };
   const typed =
     typedChecks &&
     runTypedSearch(environment, {
@@ -1322,12 +1388,27 @@ const searchStates = (
       isDeadlockChecked: config.checkDeadlock,
       isFingerprinted: !options.isFingerprintDistanceSkipped,
       livenessCheck: options.livenessCheck ?? "default",
+      onInitialStates: (initialStates) => {
+        computedInitialStates = initialStates;
+        reportInitialStates(initialStates);
+      },
+      onProgress: (progress) => {
+        if (options.onProgress === undefined || performance.now() < typedProgress.at) return;
+        typedProgress.at = performance.now() + PROGRESS_INTERVAL;
+        options.onProgress({
+          kind: "progress",
+          statistics: {
+            ...createResult("success"),
+            generatedStates: progress.generated,
+            distinctStates: progress.distinct,
+            queuedStates: progress.queued,
+            depth: Math.max(progress.depth, 1),
+          },
+        });
+      },
     });
   if (typed && !typed.deadlock && !typed.violation && !typed.lasso) {
-    for (let count = 2; count < typed.initialStates.generated; count *= 2) {
-      reportInitialStatesProgress(count, options.onProgress);
-    }
-    options.onProgress?.({ kind: "initial-states-computed", initialStates: typed.initialStates });
+    reportInitialStates(typed.initialStates);
     const statistics = {
       ...createResult("success"),
       generatedStates: typed.generatedStates,
@@ -1346,6 +1427,14 @@ const searchStates = (
       });
       options.onProgress?.({ kind: "liveness-finished" });
     }
+    runtime.generatedStates = typed.generatedStates;
+    runtime.distinctStates = typed.distinctStates;
+    runtime.initialStates = typed.initialStates.generated;
+    runtime.queueSize = 0;
+    runtime.diameter = typed.depth;
+    searchDepth = typed.depth;
+    const finalPostcondition = checkFinalPostconditions();
+    if (finalPostcondition) return finalPostcondition;
     return {
       ...statistics,
       outDegrees: typed.outDegrees,
@@ -1370,7 +1459,8 @@ const searchStates = (
     };
     try {
       const onInitialState = (state: Value[]) => {
-        reportInitialStatesProgress(runtime.initialStates, options.onProgress);
+        if (!isInitialReported)
+          reportInitialStatesProgress(runtime.initialStates, options.onProgress);
         if (overflowState) {
           runtime.generatedStates++;
           runtime.initialStates++;
@@ -1411,7 +1501,8 @@ const searchStates = (
       }
     } catch (error) {
       if (error instanceof TlaIllegalStateError) {
-        reportInitialStatesProgress(runtime.initialStates, options.onProgress);
+        if (!isInitialReported)
+          reportInitialStatesProgress(runtime.initialStates, options.onProgress);
         runtime.generatedStates++;
         runtime.initialStates++;
         const state = error.state.map((value) => value ?? createModelValue("null"));
@@ -1449,10 +1540,9 @@ const searchStates = (
     generated: runtime.initialStates,
     distinct: runtime.distinctStates,
   };
-  options.onProgress?.({
-    kind: "initial-states-computed",
-    initialStates: computedInitialStates,
-  });
+  if (!isInitialReported) {
+    options.onProgress?.({ kind: "initial-states-computed", initialStates: computedInitialStates });
+  }
 
   const next = spec.next;
   if (next === undefined) {
@@ -1467,7 +1557,7 @@ const searchStates = (
     options.dump?.dot && (options.dump.actionLabels || options.dump.colorize),
   );
   // Tool's constructor evaluates the bounds and arguments it splits Next on once, which shows when they draw, print or read a register.
-  const isNextSplit = isNamingEdges || search.isNextReplayed;
+  const isNextSplit = isNamingEdges || search.isNextReplayed || liveness?.isTakingSteps === true;
   const forEachActionSuccessor = (
     state: Value[],
     onUnsatisfied:
@@ -1518,6 +1608,8 @@ const searchStates = (
           action.scope,
           undefined,
           onUnsatisfied && ((successor, conjunct) => onUnsatisfied(successor, conjunct, action)),
+          undefined,
+          getStepName(action),
         )
       );
     }, 0);
@@ -1589,13 +1681,21 @@ const searchStates = (
       checked.postcondition,
     );
   };
+  // A state is expanded once Next has taken every step from it.
   const addLiveState = (
     index: number,
     liveSuccessors: LiveSuccessor[],
     source: GraphState | undefined,
+    isExpanded: boolean,
   ) => {
     if (liveness && source) stateWriter?.writeStuttering(source);
-    const accepted = liveness?.addState(index, states[index], liveSuccessors);
+    const accepted = liveness?.addState(
+      index,
+      states[index],
+      liveSuccessors,
+      undefined,
+      isExpanded,
+    );
     if (!liveness || !accepted) return undefined;
     // Deviation from TLC: under -continue, TLC's LiveCheck throws an InvariantViolatedException after it reports the property, which its Worker reports as unexpected.
     const steps = traces.getPathSteps(accepted);
@@ -1614,11 +1714,12 @@ const searchStates = (
     index: number,
     liveSuccessors: LiveSuccessor[],
     source: GraphState | undefined,
+    isExpanded: boolean,
   ) =>
     captureOutput(() => {
       try {
         return {
-          additional: addLiveState(index, liveSuccessors, source)?.violation,
+          additional: addLiveState(index, liveSuccessors, source, isExpanded)?.violation,
           isFailed: false,
           callStack: undefined,
         };
@@ -1694,7 +1795,7 @@ const searchStates = (
     current.isExpanding = false;
     const result = outcome;
     if (result?.violation && !is174) {
-      const live = addReportedLiveState(index, liveSuccessors, source);
+      const live = addReportedLiveState(index, liveSuccessors, source, false);
       return {
         ...result,
         violation: appendTraceOutput(result.violation, live.lines),
@@ -1710,7 +1811,7 @@ const searchStates = (
         name: "deadlock",
         ...traces.getStateTrace(index),
       });
-      const live = addReportedLiveState(index, liveSuccessors, source);
+      const live = addReportedLiveState(index, liveSuccessors, source, true);
       const reported = {
         ...deadlock,
         violation: deadlock.violation && appendTraceOutput(deadlock.violation, live.lines),
@@ -1725,7 +1826,7 @@ const searchStates = (
       return live.result.callStack ? { ...counted, liveCallStack: live.result.callStack } : counted;
     }
     try {
-      return addLiveState(index, liveSuccessors, source);
+      return addLiveState(index, liveSuccessors, source, true);
     } catch (error) {
       if (is174 && error instanceof TlaEvaluationError) {
         return createFailureResult(
@@ -2029,21 +2130,8 @@ const searchStates = (
   if (finalLiveness && lasso) return reportLasso(finalLiveness, lasso);
 
   if (finalLiveness) options.onProgress?.({ kind: "liveness-finished" });
-  const missingPostcondition = specification.moduleOperators.find(
-    (operator) => operator.kind === "postcondition" && operator.key === undefined,
+  return (
+    checkFinalPostconditions() ??
+    (continuedStatus ? createResult(continuedStatus) : createSuccess())
   );
-  if (missingPostcondition) {
-    return createFailureResult(createMissingOperatorError(missingPostcondition), { trace: [] });
-  }
-  const postcondition = search.findPostconditionViolation();
-  if (postcondition) {
-    return createResult("postcondition-violation", {
-      name: postcondition.name,
-      message: postcondition.message,
-      counts: postcondition.counts,
-      trace: [],
-      postcondition,
-    });
-  }
-  return continuedStatus ? createResult(continuedStatus) : createSuccess();
 };

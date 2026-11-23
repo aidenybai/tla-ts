@@ -7,6 +7,7 @@ import {
   TlaEvaluationError,
   TlaModuleError,
   UNEXPECTED_EVAL_EXCEPTION,
+  TlaSetBoundError,
 } from "./errors";
 import {
   createTracingEnvironment,
@@ -16,7 +17,13 @@ import {
 } from "./evaluate";
 import { EXIT_STATUS, getExitCode, getMessageExitStatus } from "./exit-codes";
 import { getCodedMessage, getFailureMessage, isEvalException } from "./tlc/messages";
-import { getFingerprintError, getHeldValues, markFingerprinted, type Value } from "./values";
+import {
+  getFingerprintError,
+  getHeldValues,
+  getStreamError,
+  markFingerprinted,
+  type Value,
+} from "./values";
 
 export const getTraceFailure = (error: TlaEvaluationError, output: OutputLine[]): TraceFailure => ({
   ...getFailureMessage(
@@ -108,7 +115,8 @@ export const getReplayFailure = (
 const findFailedSources = (value: Value, sources: CallStack["sources"]): Expression[] => {
   if (typeof value !== "object") return [];
   const source = sources.get(value);
-  const failed = getHeldValues(value).find((held) => getFingerprintError(held) !== undefined);
+  const getError = value.kind === "FilteredSet" ? getStreamError : getFingerprintError;
+  const failed = getHeldValues(value).find((held) => getError(held) !== undefined);
   return [
     ...(source ? [source] : []),
     ...(failed === undefined ? [] : findFailedSources(failed, sources)),
@@ -127,10 +135,12 @@ export const fingerprintReplayed = (
     const sources = callStack
       ? runUncounted(coverage, () => findFailedSources(value, callStack.sources))
       : [];
-    if (callStack && sources.length > 0) {
+    // TLC's call stack keeps no expression for a set past the bound: the WrongInvocationException
+    // isn't one it records, so its stack unwinds before TLC reports it.
+    if (callStack && (sources.length > 0 || error instanceof TlaSetBoundError)) {
       callStack.expressions.length = 0;
       callStack.isFrozen = true;
-      callStack.fingerprint = { sources, reason: error.message };
+      if (sources.length > 0) callStack.fingerprint = { sources, reason: error.message };
     }
     throw error;
   }

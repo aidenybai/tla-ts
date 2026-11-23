@@ -16,8 +16,10 @@ export const WRONG_INVOCATION_EXCEPTION = getUnexpectedException("util.WrongInvo
 
 export const FILE_NOT_FOUND_EXCEPTION = getUnexpectedException("java.io.FileNotFoundException");
 
+// V8 words an overflow of the stack without the period that JavaScriptCore, which Bun runs on,
+// ends it with.
 export const isStackOverflow = (error: unknown) =>
-  (error instanceof RangeError && error.message === "Maximum call stack size exceeded") ||
+  (error instanceof RangeError && /^Maximum call stack size exceeded\.?$/.test(error.message)) ||
   (error instanceof SyntaxError && error.message.endsWith(": Stack overflow"));
 
 export class TlaError extends Error {
@@ -142,6 +144,28 @@ export class TlaStackOverflowError extends TlaEvaluationError {
 
 export const createStackOverflowError = () =>
   setExitCode(new TlaStackOverflowError(), EXIT_STATUS.error);
+
+// A TypeScript program whose check needs more stack than tla-ts gives it, though Node may run it,
+// with the depth of the state graph where the check overflowed, when it got that far. The stack is
+// the CLI's, by its size in MB, or one whose size its host doesn't tell, such as a browser worker's,
+// by its name.
+export class TlaStackLimitError extends TlaError {
+  constructor(stack: number | string, depth?: number) {
+    super(
+      `tla-ts can't check this program within the stack: its check overflowed ${typeof stack === "number" ? `its ${stack} MB stack` : stack}${depth === undefined ? "" : ` at depth ${depth}`}`,
+    );
+    this.name = "TlaStackLimitError";
+  }
+}
+
+// A program whose check needs more heap than Node gives a process by default, though Node may run
+// it, as the check's thread ran out of its heap.
+export class TlaHeapLimitError extends TlaError {
+  constructor(heapMb: number) {
+    super(`tla-ts can't check this program within Node's default heap of ${heapMb} MB`);
+    this.name = "TlaHeapLimitError";
+  }
+}
 
 export class TlaUncodedError extends TlaEvaluationError {}
 
@@ -466,5 +490,24 @@ export class TlaTypeScriptError extends TlaError {
         : `${sourceFile.fileName}:${position.line + 1}:${position.character + 1} ${message}`,
     );
     this.name = "TlaTypeScriptError";
+  }
+}
+
+// Syntax that Node's type stripping rejects, as Node's SyntaxError gives it: its code, its
+// message, and the span of the file's text that it points at.
+export class TlaStrippingError extends TlaTypeScriptError {
+  code: string;
+  reason: string;
+  fileName: string;
+  start: number;
+  end: number;
+  constructor(code: string, reason: string, node: ts.Node, start: number, end: number) {
+    super(`SyntaxError [${code}]: ${reason}`, node);
+    this.name = "TlaStrippingError";
+    this.code = code;
+    this.reason = reason;
+    this.fileName = node.getSourceFile().fileName;
+    this.start = start;
+    this.end = end;
   }
 }

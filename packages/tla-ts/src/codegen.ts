@@ -54,6 +54,7 @@ import {
   createWrittenRecord,
   getCardinality,
   getFunctionDomain,
+  isElementOf,
   isBeyondSetBound,
   isEqualLikeTlc,
   isReducibleSet,
@@ -114,6 +115,12 @@ const createGeneratedHelpers = () => ({
   expectFunction,
   tuple: createTuple,
   set: createEnumeratedSet,
+  // x \in S, or x \notin S where isNegated, for S an enumeration of strings, which holds a string x
+  // where it's one of them, without making S, and of any other x is what the set tells.
+  inStrings: (value: Value, strings: string[], isNegated: boolean) =>
+    (typeof value === "string"
+      ? strings.includes(value)
+      : isElementOf(value, createEnumeratedSet([...strings]))) !== isNegated,
   record: createSortedRecord,
   writtenRecord: createWrittenRecord,
   equal: isEqualLikeTlc,
@@ -145,6 +152,7 @@ const createGeneratedHelpers = () => ({
     state: context.state,
     next: context.next,
     isKeepLazy: context.isKeepLazy,
+    isPrimed: context.isPrimed,
   }),
 });
 
@@ -153,6 +161,10 @@ let generatedHelpers: ReturnType<typeof createGeneratedHelpers> | undefined;
 let isCodeGenerationAllowed: boolean | undefined;
 
 // Hosts such as Cloudflare Workers, or a page whose CSP lacks 'unsafe-eval', throw an EvalError.
+// The most values a generated function takes as its parameters, which the call that makes it
+// spreads on the stack: far below the 65,534 that a function can take.
+const MAX_PARAMETERS = 10_000;
+
 const getIsCodeGenerationAllowed = () => {
   try {
     return Boolean(new Function(""));
@@ -316,6 +328,13 @@ const generateFunctionConstruction = (
     return `const ${domain} = ${set}; ${built} const ${isBeyond} = isBeyondBound(${domain}); const ${keys} = ${isBeyond} ? ${domain} : functionDomain(${domain}); if (${isBeyond}) cardinality(${domain}); const ${values} = []; ${generateLoop(generator, keys, element, store)} return ${isBeyond} ? ${builder}.createLazy(${domain}, ${builtContext}) : sortedFunction(${keys}, ${values});`;
   });
 
+// The strings of a set enumeration of string literals, such as {"a", "b"}, or undefined for any
+// other.
+const getStringLiterals = (elements: Expression[]) =>
+  elements.every((element) => element.kind === "String")
+    ? elements.map((element) => (element.kind === "String" ? element.value : ""))
+    : undefined;
+
 const generateApply = (
   generator: Generator,
   expression: Expression & { kind: "Apply" },
@@ -349,6 +368,17 @@ const generateApply = (
   if (builtin.evaluateUnary && args.length === 1 && isValueArgument(args[0], environment)) {
     const operation = addReference(generator, builtin.evaluateUnary);
     return `${operation}(${generateExpression(generator, args[0], frame)})`;
+  }
+  const strings =
+    (builtin.name === "\\in" || builtin.name === "\\notin") &&
+    args.length === 2 &&
+    args[1].kind === "SetEnumeration" &&
+    isValueArgument(args[0], environment)
+      ? getStringLiterals(args[1].elements)
+      : undefined;
+  if (strings) {
+    const isNegated = builtin.name === "\\notin";
+    return `inStrings(${generateExpression(generator, args[0], frame)}, ${addReference(generator, strings)}, ${isNegated})`;
   }
   const isBinary =
     args.length === 2 &&
@@ -586,9 +616,14 @@ export const generateEvaluator = (
     locals: new Map(),
   };
   const body = generateExpression(generator, expression, frame);
+  generatedHelpers ??= createGeneratedHelpers();
+  // An expression that reads more values than that, such as a tuple of a long string's code
+  // units, the interpreter evaluates.
+  if (Object.keys(generatedHelpers).length + generator.references.length > MAX_PARAMETERS) {
+    return undefined;
+  }
   const referenceNames = generator.references.map((_reference, index) => `reference${index}`);
   const source = `${generator.helpers.join("\n")}\nreturn (context) => { const state = context.state; const next = context.next; let primed;${generator.hasEmptied ? " let emptied;" : ""} let applied; return ${body}; };`;
-  generatedHelpers ??= createGeneratedHelpers();
   const factory = new Function(...Object.keys(generatedHelpers), ...referenceNames, source);
   return factory(...Object.values(generatedHelpers), ...generator.references);
 };

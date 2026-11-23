@@ -10,30 +10,44 @@ let rmState: Record<RM, "working" | "prepared" | "committed" | "aborted"> = {
   r3: "working",
 };
 let tmState: "init" | "committed" | "aborted" = "init";
+// A collection keeps its elements in the order they were added, so each holds them sorted, as
+// TLA+'s sets hold no order.
 let tmPrepared = new Set<RM>();
-let msgs = new Set<Message>();
+// The messages sent, by a key of each, as TLA+'s set of records holds each record once.
+let msgs = new Map<string, Message>();
+
+const getKey = (message: Message) =>
+  message.type === "Prepared" ? `Prepared ${message.rm}` : message.type;
+
+const send = (message: Message) => {
+  msgs = new Map(
+    [...msgs, [getKey(message), message] as const].sort((left, right) =>
+      left[0] < right[0] ? -1 : 1,
+    ),
+  );
+};
 
 export const tmRcvPrepared = (rm: RM) => {
-  if (tmState !== "init" || !msgs.has({ type: "Prepared", rm })) return;
-  tmPrepared.add(rm);
+  if (tmState !== "init" || !msgs.has(getKey({ type: "Prepared", rm }))) return;
+  tmPrepared = new Set([...tmPrepared, rm].sort());
 };
 
 export const tmCommit = () => {
-  if (tmState !== "init" || tmPrepared !== RMs) return;
+  if (tmState !== "init" || !(tmPrepared.isSubsetOf(RMs) && RMs.isSubsetOf(tmPrepared))) return;
   tmState = "committed";
-  msgs.add({ type: "Commit" });
+  send({ type: "Commit" });
 };
 
 export const tmAbort = () => {
   if (tmState !== "init") return;
   tmState = "aborted";
-  msgs.add({ type: "Abort" });
+  send({ type: "Abort" });
 };
 
 export const rmPrepare = (rm: RM) => {
   if (rmState[rm] !== "working") return;
   rmState[rm] = "prepared";
-  msgs.add({ type: "Prepared", rm });
+  send({ type: "Prepared", rm });
 };
 
 export const rmChooseToAbort = (rm: RM) => {
@@ -42,12 +56,12 @@ export const rmChooseToAbort = (rm: RM) => {
 };
 
 export const rmRcvCommitMsg = (rm: RM) => {
-  if (!msgs.has({ type: "Commit" })) return;
+  if (!msgs.has(getKey({ type: "Commit" }))) return;
   rmState[rm] = "committed";
 };
 
 export const rmRcvAbortMsg = (rm: RM) => {
-  if (!msgs.has({ type: "Abort" })) return;
+  if (!msgs.has(getKey({ type: "Abort" }))) return;
   rmState[rm] = "aborted";
 };
 
@@ -58,4 +72,4 @@ export const typeOK = () =>
   ) &&
   (tmState === "init" || tmState === "committed" || tmState === "aborted") &&
   tmPrepared.isSubsetOf(RMs) &&
-  [...msgs].every((message) => message.type !== "Prepared" || RMs.has(message.rm));
+  [...msgs.values()].every((message) => message.type !== "Prepared" || RMs.has(message.rm));

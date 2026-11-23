@@ -539,7 +539,8 @@ PlainTimeBuiltin(s, f, m, this, args, nt) ==
                 ELSE LET precision == ToSecondsStringPrecisionRecord(Val(unit), Val(digits)) IN
                      Ok(unit.s, Str(TimeRecordToString(RoundTime(t, precision.increment, precision.unit, Val(mode)).time,
                                                        precision.precision)))
-           [] m \in {"toLocaleString", "toJSON"} -> Ok(s, Str(TimeRecordToString(t, TPrecisionAuto)))
+           [] m = "toLocaleString" -> TemporalToLocaleString(s, "PlainTime", O(s, this).slots, Arg(args, 1), Arg(args, 2), TimeRecordToString(t, TPrecisionAuto))
+           [] m = "toJSON" -> Ok(s, Str(TimeRecordToString(t, TPrecisionAuto)))
            [] m = "valueOf" -> ThrowTypeError(s)
 
 \* The relativeTo option of Temporal.Duration's round, total, and compare, as [plain, zoned]:
@@ -592,7 +593,8 @@ DurationBuiltin(s, f, m, this, args, nt) ==
                                                                        LargerOfTwoTemporalUnits(DefaultTemporalLargestUnit(d), TUSecond))
                              IN IF ~IsValidDuration(rounded) THEN ThrowError(time.s, "RangeError")
                                 ELSE Ok(time.s, Str(TemporalDurationToString([i \in 1..10 |-> TIFloat(rounded[i])], precision.precision)))
-              [] m \in {"toJSON", "toLocaleString"} -> Ok(s, Str(TemporalDurationToString(d, TPrecisionAuto)))
+              [] m = "toLocaleString" -> TemporalToLocaleString(s, "Duration", [fields |-> d], Arg(args, 1), Arg(args, 2), TemporalDurationToString(d, TPrecisionAuto))
+              [] m = "toJSON" -> Ok(s, Str(TemporalDurationToString(d, TPrecisionAuto)))
               [] m = "valueOf" -> ThrowTypeError(s)
 
 \* Temporal.Duration.compare after its fields differ (steps 6 to 13).
@@ -603,9 +605,9 @@ CompareDurations(s, x, y, relativeTo) ==
       yInternal == ToInternalDurationRecord(y)
   IN IF relativeTo.zoned # Empty /\ (IsDateUnit(xLargest) \/ IsDateUnit(yLargest)) THEN
        LET z == relativeTo.zoned
-           xAfter == AddZonedDateTime(s, z.epochNs, z.timeZone, xInternal, N("constrain")) IN
+           xAfter == AddZonedDateTime(s, z.epochNs, z.timeZone, z.calendar, xInternal, N("constrain")) IN
        IF IsAbrupt(xAfter) THEN xAfter ELSE
-       LET yAfter == AddZonedDateTime(xAfter.s, z.epochNs, z.timeZone, yInternal, N("constrain")) IN
+       LET yAfter == AddZonedDateTime(xAfter.s, z.epochNs, z.timeZone, z.calendar, yInternal, N("constrain")) IN
        IF IsAbrupt(yAfter) THEN yAfter ELSE Ok(yAfter.s, IntV(TICompare(Val(xAfter), Val(yAfter))))
      ELSE LET isCalendar == IsCalendarUnit(xLargest) \/ IsCalendarUnit(yLargest) IN
        IF isCalendar /\ relativeTo.plain = Empty THEN ThrowError(s, "RangeError") ELSE
@@ -645,14 +647,14 @@ DurationRound(s, d, roundToArg) ==
      ELSE IF rel.zoned # Empty THEN
        LET z == rel.zoned
            internal == ToInternalDurationRecord(d)
-           target == AddZonedDateTime(s1, z.epochNs, z.timeZone, internal, N("constrain"))
+           target == AddZonedDateTime(s1, z.epochNs, z.timeZone, z.calendar, internal, N("constrain"))
        IN IF IsAbrupt(target) THEN target ELSE
-       LET r == DifferenceZonedDateTimeWithRounding(target.s, z.epochNs, Val(target), z.timeZone,
+       LET r == DifferenceZonedDateTimeWithRounding(target.s, z.epochNs, Val(target), z.timeZone, z.calendar,
                                                     largest, inc, smallest, rm)
        IN IF IsAbrupt(r) THEN r ELSE TemporalDurationFromInternal(r.s, Val(r), IF IsDateUnit(largest) THEN TUHour ELSE largest)
      ELSE IF rel.plain # Empty THEN
        LET target == RelativePlainTarget(s1, d, rel.plain) IN IF IsAbrupt(target) THEN target ELSE
-       LET r == DifferencePlainDateTimeWithRounding(target.s, Val(target).from, Val(target).to, largest, inc, smallest, rm)
+       LET r == DifferencePlainDateTimeWithRounding(target.s, Val(target).from, Val(target).to, rel.plain.calendar, largest, inc, smallest, rm)
        IN IF IsAbrupt(r) THEN r ELSE TemporalDurationFromInternal(r.s, Val(r), largest)
      ELSE IF IsCalendarUnit(existingLargest) \/ IsCalendarUnit(largest) THEN ThrowError(s1, "RangeError")
      ELSE LET internal == ToInternalDurationRecordWith24HourDays(d) IN
@@ -676,12 +678,12 @@ DurationTotal(s, d, totalOfArg) ==
       total == IF unit = TUAuto THEN ThrowError(s1, "RangeError")
                ELSE IF rel.zoned # Empty THEN
                  LET z == rel.zoned
-                     target == AddZonedDateTime(s1, z.epochNs, z.timeZone, ToInternalDurationRecord(d), N("constrain"))
+                     target == AddZonedDateTime(s1, z.epochNs, z.timeZone, z.calendar, ToInternalDurationRecord(d), N("constrain"))
                  IN IF IsAbrupt(target) THEN target
-                    ELSE DifferenceZonedDateTimeWithTotal(target.s, z.epochNs, Val(target), z.timeZone, unit)
+                    ELSE DifferenceZonedDateTimeWithTotal(target.s, z.epochNs, Val(target), z.timeZone, z.calendar, unit)
                ELSE IF rel.plain # Empty THEN
                  LET target == RelativePlainTarget(s1, d, rel.plain) IN IF IsAbrupt(target) THEN target
-                 ELSE DifferencePlainDateTimeWithTotal(target.s, Val(target).from, Val(target).to, unit)
+                 ELSE DifferencePlainDateTimeWithTotal(target.s, Val(target).from, Val(target).to, rel.plain.calendar, unit)
                ELSE IF IsCalendarUnit(DefaultTemporalLargestUnit(d)) \/ IsCalendarUnit(unit) THEN ThrowError(s1, "RangeError")
                ELSE Ok(s1, RatioToNumber(ToInternalDurationRecordWith24HourDays(d).time, TemporalUnitLength(unit)))
   IN IF IsAbrupt(total) THEN total ELSE Ok(total.s, Num(Val(total)))

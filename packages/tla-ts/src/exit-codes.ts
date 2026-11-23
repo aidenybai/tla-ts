@@ -16,6 +16,24 @@ export const EXIT_STATUS = {
   error: 255,
 } as const;
 
+// Node's exit status for a module whose top-level await never settles, and the start of the warning
+// it prints.
+export const UNSETTLED_AWAIT_EXIT_CODE = 13;
+export const UNSETTLED_AWAIT_WARNING = "Detected unsettled top-level await at ";
+// Node's exit status for a script that throws or rejects with what nothing handles.
+export const UNCAUGHT_EXCEPTION_EXIT_CODE = 1;
+// Where Node 26 says that an ES module threw, and that a promise rejected with what nothing handles,
+// both in its own code, and what it prints after a primitive that nothing catches.
+export const MODULE_UNCAUGHT_LOCATION =
+  "node:internal/modules/run_main:111\n    triggerUncaughtException(\n    ^";
+export const UNHANDLED_REJECTION_LOCATION =
+  "node:internal/process/promises:322\n      new UnhandledPromiseRejection(reason);\n      ^";
+export const UNHANDLED_REJECTION_PREFIX =
+  "UnhandledPromiseRejection: This error originated either by throwing inside of an async function without a catch block, or by rejecting a promise which was not handled with .catch(). The promise rejected with the reason ";
+export const UNHANDLED_REJECTION_SUFFIX = ". {\n  code: 'ERR_UNHANDLED_REJECTION'\n}";
+export const TRACE_UNCAUGHT_HINT =
+  "(Use `node --trace-uncaught ...` to show where the exception was thrown)";
+
 const MESSAGE_EXIT_STATUSES = new Map<number, number>([
   ...[
     ...Array.from({ length: 24 }, (_value, index) => 2222 + index),
@@ -74,8 +92,10 @@ const withCheckerExitCode = (checker: LivenessChecker): LivenessChecker => ({
   branches: checker.branches,
   solutions: checker.solutions,
   addInitialState: checker.addInitialState,
-  addState: (index, state, successors, tracing) =>
-    withErrorExitCode(() => checker.addState(index, state, successors, tracing)),
+  addState: (index, state, successors, tracing, isExpanded) =>
+    withErrorExitCode(() => checker.addState(index, state, successors, tracing, isExpanded)),
+  isTakingSteps: checker.isTakingSteps,
+  takeStep: (state, next, action) => withErrorExitCode(() => checker.takeStep(state, next, action)),
   storeState: checker.storeState,
   getStateCounts: checker.getStateCounts,
   findViolation: () => withErrorExitCode(() => checker.findViolation()),

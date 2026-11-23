@@ -48,6 +48,10 @@ export const deactivate = (node: Node) => {
   active[node] = false;
 };
 
+// Whether two arrays hold the same values in order, as TLA+'s = compares sequences.
+const isSameArray = (left: readonly boolean[], right: readonly boolean[]) =>
+  left.length === right.length && left.every((value, index) => value === right[index]);
+
 const isTerminated = (nodes: State["active"]) => nodes.every((isActive) => !isActive);
 
 const isTerminationDetected = (state: State) =>
@@ -84,17 +88,17 @@ export const tdNext = (before: State) => {
   });
   const isDetected = terminationDetected();
   return (
-    (active === before.active && isDetected === wasDetected) ||
+    (isSameArray(active, before.active) && isDetected === wasDetected) ||
     before.active.some(
       (isActive, node) =>
         isActive &&
-        active === before.active.with(node, false) &&
+        isSameArray(active, before.active.with(node, false)) &&
         (isDetected === wasDetected || isDetected === isTerminated(active)),
     ) ||
     (before.active.some((isActive) => isActive) &&
-      before.active.some((_, node) => active === before.active.with(node, true)) &&
+      before.active.some((_, node) => isSameArray(active, before.active.with(node, true))) &&
       isDetected === wasDetected) ||
-    (isTerminated(before.active) && isDetected && active === before.active)
+    (isTerminated(before.active) && isDetected && isSameArray(active, before.active))
   );
 };
 

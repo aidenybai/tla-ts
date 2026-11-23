@@ -32,6 +32,9 @@ export interface DefinitionFacts {
   ids: Map<Definition, number>;
   rows: Uint32Array;
   words: number;
+  // The effects of a LET definition in the definitions, which a check reads for each LET of an
+  // action it compiles.
+  getLetEffects: (definition: Definition) => number | undefined;
   varyingBodies: Set<Expression>;
 }
 
@@ -103,20 +106,40 @@ const STREAMED_BUILTINS = new Set(["UNION", "\\cup"]);
 const RANDOM_BUILTINS = new Set(["RandomSubset", "RandomSetOfSubsets", "RandomSubsetSet"]);
 
 interface Edge {
+  // The name that the reference reads, which a substitution may give another definition.
+  name: string;
   callee: Definition;
   isOverridden: boolean;
   isLevelCounted: boolean;
   isBoundCounted: boolean;
+  // Spec#lookup gives a substituted constant or definition its substitute's OpDefNode, whose body
+  // Tool#evalAppl evaluates at each reference.
   isSubstitute: boolean;
+  // The innermost LET definition around the reference, or -1.
+  owner: number;
+}
+
+// The LET definitions that the walk of the definitions meets, numbered as it meets them: each
+// one's innermost enclosing LET definition and the effects of the builtins in its expressions.
+interface LetColumns {
+  numbers: Map<Definition, number>;
+  parents: number[];
+  effects: number[];
 }
 
 const collectLocalFacts = (
   expressions: Expression[],
   environment: DefinitionNames,
   words: number,
+  lets?: LetColumns,
 ) => {
   const row = new Uint32Array(words);
   const edges: Edge[] = [];
+  let owner = -1;
+  const addEffects = (effects: number) => {
+    row[0] |= effects;
+    if (owner !== -1 && lets) lets.effects[owner] |= effects;
+  };
   const getOwnLevelFlags = (node: Expression) => {
     const kind = node.kind;
     if (ACTION_KINDS.has(kind) || (kind === "Apply" && node.operator === "\\cdot")) {
@@ -187,6 +210,7 @@ const collectLocalFacts = (
       }
       if (definition) {
         edges.push({
+          name,
           callee: definition,
           isOverridden,
           isLevelCounted: isInnerLevelCounted,
@@ -199,16 +223,25 @@ const collectLocalFacts = (
               definition.params.length > 0) ||
             environment.theorems.has(target)
           ),
-          // Spec#lookup gives a substituted constant or definition its substitute's OpDefNode, whose body Tool#evalAppl evaluates at each reference.
           isSubstitute: target !== name,
+          owner,
         });
       } else {
         const builtinName = builtin?.name ?? target;
         const isImpure = IMPURE_BUILTINS.has(builtinName) || builtin?.isStateLevel === true;
-        if (isImpure) row[0] |= IMPURE | (builtinName === "Assert" ? 0 : REPEATED_EFFECT);
-        if (STREAMED_BUILTINS.has(target)) row[0] |= STREAMED;
-        if (builtin && RANDOM_BUILTINS.has(builtin.name)) row[0] |= RANDOM;
-        if (target === "TLCEval") row[0] |= TLC_EVAL;
+        // Reading the level of the state being checked shows nothing and reads the same again.
+        const isLevelRead =
+          builtinName === "TLCGet" &&
+          node.kind === "Apply" &&
+          node.args.length === 1 &&
+          node.args[0].kind === "String" &&
+          node.args[0].value === "level";
+        if (isImpure) {
+          addEffects(IMPURE | (builtinName === "Assert" || isLevelRead ? 0 : REPEATED_EFFECT));
+        }
+        if (STREAMED_BUILTINS.has(target)) addEffects(STREAMED);
+        if (builtin && RANDOM_BUILTINS.has(builtin.name)) addEffects(RANDOM);
+        if (target === "TLCEval") addEffects(TLC_EVAL);
         if (!isOverridden && isImpure) row[0] |= READS_IMPURE;
         if (
           isInnerLevelCounted &&
@@ -251,16 +284,140 @@ const collectLocalFacts = (
       visit(node.body, isInnerLevelCounted, isOperatorArgument, innerSubstitutes);
       return;
     }
-    getChildren(node).forEach((child) =>
-      visit(child, isInnerLevelCounted, isOperatorArgument || kind === "Lambda", substitutes),
-    );
+    if (node.kind !== "Let" || !lets) {
+      getChildren(node).forEach((child) =>
+        visit(child, isInnerLevelCounted, isOperatorArgument || kind === "Lambda", substitutes),
+      );
+      return;
+    }
+    const outer = owner;
+    node.definitions.forEach((definition) => {
+      owner = lets.parents.push(outer) - 1;
+      lets.effects.push(0);
+      lets.numbers.set(definition, owner);
+      getDefinitionExpressions(definition).forEach((child) =>
+        visit(child, isInnerLevelCounted, isOperatorArgument, substitutes),
+      );
+      owner = outer;
+    });
+    visit(node.body, isInnerLevelCounted, isOperatorArgument, substitutes);
   };
   expressions.forEach((expression) => visit(expression, true, false, undefined));
   return { row, edges };
 };
 
-const closeRows = (local: Uint32Array, words: number, edges: Int32Array[], mask: number) => {
-  const count = edges.length;
+const WIDE_CHARACTER = /[\u0100-\uffff]/;
+
+const DESERIALIZERS = new Set(["JsonDeserialize", "ndJsonDeserialize"]);
+
+export const isWideString = (text: string) => WIDE_CHARACTER.test(text);
+
+export const isDeserializer = (name: string) => DESERIALIZERS.has(name);
+
+const isWideExpression = (expression: Expression, checked: Set<Expression>): boolean => {
+  if (expression.kind === "Selection") {
+    if (checked.has(expression.expression)) return false;
+    checked.add(expression.expression);
+  }
+  return (
+    (expression.kind === "String" && isWideString(expression.value)) ||
+    (expression.kind === "Apply" && isDeserializer(expression.operator)) ||
+    getChildren(expression).some((child) => isWideExpression(child, checked))
+  );
+};
+
+// Whether a definition holds a string with a character above U+00FF or reads a deserializer, for
+// which TLC fingerprints strings by the low byte of each character.
+export const isWideDefinition = (definition: Definition, checked: Set<Expression>) =>
+  isWideExpression(definition.body, checked) ||
+  (definition.kind === "Function" &&
+    definition.bounds.some((bound) => isWideExpression(bound.set, checked)));
+
+const OVERRIDDEN_EDGE = 1;
+const LEVEL_EDGE = 2;
+const BOUND_EDGE = 4;
+const SUBSTITUTE_EDGE = 8;
+
+const getEdgeFlags = (edge: Edge) =>
+  (edge.isLevelCounted ? LEVEL_EDGE : 0) | (edge.isBoundCounted ? BOUND_EDGE : 0);
+
+// What a definition of a prepared module shows of itself: its own row of facts, the names it reads
+// in place of the definitions they resolve to, and its LET definitions, numbered from 0, so that a
+// check that links the definition reads them rather than walk the definition again. They hold for
+// a check whose variables, constants, and builtins are those of the check they were collected in.
+export interface PreparedFacts {
+  row: Uint32Array;
+  names: string[];
+  // The LEVEL_EDGE and BOUND_EDGE bits of each reference.
+  edgeFlags: Uint8Array;
+  owners: Int32Array;
+  letParents: Int32Array;
+  letEffects: Uint32Array;
+  isWide: boolean;
+}
+
+export const getPreparedFacts = (
+  definition: Definition,
+  environment: DefinitionNames,
+  words: number,
+): PreparedFacts => {
+  const lets: LetColumns = { numbers: new Map(), parents: [], effects: [] };
+  const local = collectLocalFacts(
+    getFactExpressions(definition, environment),
+    environment,
+    words,
+    lets,
+  );
+  return {
+    row: local.row,
+    names: local.edges.map((edge) => edge.name),
+    edgeFlags: Uint8Array.from(local.edges, getEdgeFlags),
+    owners: Int32Array.from(local.edges, (edge) => edge.owner),
+    letParents: Int32Array.from(lets.parents),
+    letEffects: Uint32Array.from(lets.effects),
+    isWide: isWideDefinition(definition, new Set()),
+  };
+};
+
+// The local row of a prepared definition in a check, whose edges go to addEdge with the
+// definitions that its names resolve to there, and whose LET definitions are numbered after those
+// already in lets, in the order the walk of its expressions meets them.
+const readPreparedFacts = (
+  prepared: PreparedFacts,
+  environment: DefinitionNames,
+  lets: LetColumns,
+  addEdge: (callee: Definition, flags: number, owner: number) => void,
+) => {
+  const base = lets.parents.length;
+  prepared.letParents.forEach((parent, index) => {
+    lets.parents.push(parent === -1 ? -1 : base + parent);
+    lets.effects.push(prepared.letEffects[index]);
+  });
+  prepared.names.forEach((name, index) => {
+    const callee = environment.definitions.get(environment.substitutions.get(name) ?? name);
+    if (callee === undefined) return;
+    const owner = prepared.owners[index];
+    addEdge(
+      callee,
+      prepared.edgeFlags[index] |
+        (environment.constants.has(name) ? OVERRIDDEN_EDGE : 0) |
+        (environment.substitutions.has(name) ? SUBSTITUTE_EDGE : 0),
+      owner === -1 ? -1 : base + owner,
+    );
+  });
+  return prepared.row;
+};
+
+// The edges of each node, those of node n from targets[starts[n]] up to targets[starts[n + 1]].
+interface EdgeLists {
+  starts: Int32Array;
+  targets: Int32Array;
+}
+
+const closeRows = (local: Uint32Array, words: number, edges: EdgeLists, mask: number) => {
+  const count = edges.starts.length - 1;
+  const starts = edges.starts;
+  const targets = edges.targets;
   const closed = local.slice();
   const index = new Int32Array(count).fill(-1);
   const lowLink = new Int32Array(count);
@@ -286,10 +443,9 @@ const closeRows = (local: Uint32Array, words: number, edges: Int32Array[], mask:
     while (frames.length > 0) {
       const node = frames[frames.length - 2];
       const position = frames[frames.length - 1];
-      const nodeEdges = edges[node];
-      if (position < nodeEdges.length) {
+      if (starts[node] + position < starts[node + 1]) {
         frames[frames.length - 1] = position + 1;
-        const callee = nodeEdges[position];
+        const callee = targets[starts[node] + position];
         if (index[callee] === -1) {
           enter(callee);
         } else if (component[callee] === -1) {
@@ -314,9 +470,9 @@ const closeRows = (local: Uint32Array, words: number, edges: Int32Array[], mask:
       const first = members[0];
       members.forEach((member) => {
         if (member !== first) orRow(first, member);
-        edges[member].forEach((callee) => {
-          if (component[callee] !== component[first]) orRow(first, callee);
-        });
+        for (let edge = starts[member]; edge < starts[member + 1]; edge++) {
+          if (component[targets[edge]] !== component[first]) orRow(first, targets[edge]);
+        }
       });
       members.forEach((member) => {
         if (member !== first) orRow(member, first);
@@ -327,54 +483,147 @@ const closeRows = (local: Uint32Array, words: number, edges: Int32Array[], mask:
 };
 
 const PURITY_MASK = IMPURE | REPEATED_EFFECT | STREAMED | RANDOM | TLC_EVAL;
-const EFFECT_MASK = IMPURE | RANDOM;
+// FcnLambdaValue#apply evaluates the body again at each application, as an uncached LazyValue
+// evaluates its expression again at each reference. Only what a second evaluation shows tells that
+// apart from keeping the first result: output, TLCSet's registers, TLCGet and JavaTime read again,
+// or other random draws. An Assert that holds holds again, and one that fails throws its
+// EvalException the first time, as any error does.
+const EFFECT_MASK = REPEATED_EFFECT | RANDOM;
 // TLC streams a fresh \cup or UNION as it streams the startup value.
 const SHOWN_MASK = IMPURE | REPEATED_EFFECT | RANDOM | TLC_EVAL;
+
+// The local row of a definition, whose edges go to addEdge.
+const collectEdges = (
+  definition: Definition,
+  environment: DefinitionNames,
+  words: number,
+  lets: LetColumns,
+  addEdge: (callee: Definition, flags: number, owner: number) => void,
+) => {
+  const facts = collectLocalFacts(
+    getFactExpressions(definition, environment),
+    environment,
+    words,
+    lets,
+  );
+  facts.edges.forEach((edge) =>
+    addEdge(
+      edge.callee,
+      getEdgeFlags(edge) |
+        (edge.isOverridden ? OVERRIDDEN_EDGE : 0) |
+        (edge.isSubstitute ? SUBSTITUTE_EDGE : 0),
+      edge.owner,
+    ),
+  );
+  return facts.row;
+};
 const READ_MASK = NONCONSTANT | READS_IMPURE;
 const STARTUP_MASK = NONCONSTANT | ABOVE_CONSTANT_BOUND;
 
 const isEvaluatedOnce = (definition: Definition, flags: number) =>
   definition.kind === "Operator" && definition.params.length === 0 && (flags & STARTUP_MASK) === 0;
 
+// The definition of a prepared module whose body holds each LET definition, which a graph notes as
+// it decodes the body, so that the facts of a check number its LET definitions only where it asks
+// for one, and a graph holds the LET definitions only in their bodies.
+const letOwners = new WeakMap<Definition, Definition>();
+
+export const noteLetOwners = (definition: Definition) => {
+  const visit = (node: Expression): void => {
+    if (node.kind === "Let") {
+      node.definitions.forEach((inner) => {
+        letOwners.set(inner, definition);
+        getDefinitionExpressions(inner).forEach(visit);
+      });
+    }
+    getChildren(node).forEach(visit);
+  };
+  getDefinitionExpressions(definition).forEach(visit);
+};
+
+// A definition's LET definitions at the numbers from 0 that the walk of its expressions gives them,
+// as the walk of a build numbered them.
+const collectLetDefinitions = (
+  definition: Definition,
+  environment: DefinitionNames,
+  words: number,
+) => {
+  const lets: LetColumns = { numbers: new Map(), parents: [], effects: [] };
+  collectLocalFacts(getFactExpressions(definition, environment), environment, words, lets);
+  const numbered: (Definition | undefined)[] = Array.from({ length: lets.parents.length });
+  lets.numbers.forEach((number, inner) => {
+    numbered[number] = inner;
+  });
+  return numbered;
+};
+
 export const createDefinitionFacts = (
   environment: DefinitionNames,
   assumptions: Expression[],
+  prepared: ReadonlyMap<Definition, PreparedFacts> = new Map(),
 ): DefinitionFacts => {
   const definitions = [...new Set(environment.definitions.values())];
   const ids = new Map(definitions.map((definition, id) => [definition, id]));
   const words = 1 + ((environment.variables.length + 31) >>> 5);
   const local = new Uint32Array(definitions.length * words);
   const localImpurity = new Uint32Array(definitions.length * words);
-  const edges = definitions.map((definition, id) => {
-    const facts = collectLocalFacts(
-      getFactExpressions(definition, environment),
-      environment,
-      words,
-    );
-    local.set(facts.row, id * words);
-    localImpurity[id * words] = facts.row[0] & PURITY_MASK;
-    return facts.edges;
-  });
-  const getId = (edge: Edge) => ids.get(edge.callee) ?? -1;
-  const readEdges = edges.map(
-    (own) => new Int32Array(own.filter((edge) => !edge.isOverridden).map(getId)),
-  );
-  const reads = closeRows(local, words, readEdges, READ_MASK);
-  const levelEdges = edges.map(
-    (own) =>
-      new Int32Array(own.filter((edge) => !edge.isOverridden && edge.isLevelCounted).map(getId)),
-  );
-  const levels = closeRows(local, words, levelEdges, TEMPORAL_LEVEL_FLAGS);
-  const startupEdges = edges.map(
-    (own) =>
-      new Int32Array(own.filter((edge) => !edge.isOverridden && edge.isBoundCounted).map(getId)),
-  );
-  const startup = closeRows(local, words, startupEdges, ABOVE_CONSTANT_BOUND);
-  const isRecomputed = (edge: Edge) => {
-    const callee = getId(edge);
-    return !isEvaluatedOnce(edge.callee, reads[callee * words] | startup[callee * words]);
+  const lets: LetColumns = { numbers: new Map(), parents: [], effects: [] };
+  // Where the LET numbers of each prepared definition start, or -1 for a definition this walk
+  // numbers itself.
+  const letStarts = new Int32Array(definitions.length).fill(-1);
+  // Each reference from a definition, from edgeStarts[id] on: the callee's id, whether a constant
+  // overrides it, it counts toward the level and toward the level bound, and the LET definition
+  // around it.
+  const edgeStarts = new Int32Array(definitions.length + 1);
+  const callees: number[] = [];
+  const edgeFlags: number[] = [];
+  const owners: number[] = [];
+  const addEdge = (callee: Definition, flags: number, owner: number) => {
+    callees.push(ids.get(callee) ?? -1);
+    edgeFlags.push(flags);
+    owners.push(owner);
   };
-  // SpecProcessor#processConstantDefns evaluates a substitute before it stores the definitions the substitute reads, so their draws and output can show again.
+  definitions.forEach((definition, id) => {
+    edgeStarts[id] = callees.length;
+    const preparedFacts = prepared.get(definition);
+    const isPrepared = preparedFacts !== undefined && preparedFacts.row.length === words;
+    if (isPrepared) letStarts[id] = lets.parents.length;
+    const row = isPrepared
+      ? readPreparedFacts(preparedFacts, environment, lets, addEdge)
+      : collectEdges(definition, environment, words, lets, addEdge);
+    local.set(row, id * words);
+    localImpurity[id * words] = row[0] & PURITY_MASK;
+  });
+  edgeStarts[definitions.length] = callees.length;
+  // The edges for which isIncluded holds, as lists for each definition.
+  const getEdgeLists = (isIncluded: (edge: number) => boolean): EdgeLists => {
+    const starts = new Int32Array(definitions.length + 1);
+    const targets: number[] = [];
+    for (let id = 0; id < definitions.length; id++) {
+      starts[id] = targets.length;
+      for (let edge = edgeStarts[id]; edge < edgeStarts[id + 1]; edge++) {
+        if (isIncluded(edge)) targets.push(callees[edge]);
+      }
+    }
+    starts[definitions.length] = targets.length;
+    return { starts, targets: Int32Array.from(targets) };
+  };
+  const readEdges = getEdgeLists((edge) => (edgeFlags[edge] & OVERRIDDEN_EDGE) === 0);
+  const reads = closeRows(local, words, readEdges, READ_MASK);
+  const levels = closeRows(
+    local,
+    words,
+    getEdgeLists((edge) => (edgeFlags[edge] & (OVERRIDDEN_EDGE | LEVEL_EDGE)) === LEVEL_EDGE),
+    TEMPORAL_LEVEL_FLAGS,
+  );
+  const startup = closeRows(
+    local,
+    words,
+    getEdgeLists((edge) => (edgeFlags[edge] & (OVERRIDDEN_EDGE | BOUND_EDGE)) === BOUND_EDGE),
+    ABOVE_CONSTANT_BOUND,
+  );
+  // SpecProcessor#processConstantDefns evaluates a substitute before it stores the definitions the
+  // substitute reads, so their draws and output can show again.
   const shown =
     environment.substitutions.size > 0
       ? closeRows(localImpurity, words, readEdges, SHOWN_MASK)
@@ -382,17 +631,14 @@ export const createDefinitionFacts = (
   const purity = closeRows(
     localImpurity,
     words,
-    edges.map(
-      (own) =>
-        new Int32Array(
-          own
-            .filter(
-              (edge) =>
-                isRecomputed(edge) ||
-                (edge.isSubstitute && (shown[getId(edge) * words] & SHOWN_MASK) !== 0),
-            )
-            .map(getId),
-        ),
+    getEdgeLists(
+      (edge) =>
+        !isEvaluatedOnce(
+          definitions[callees[edge]],
+          reads[callees[edge] * words] | startup[callees[edge] * words],
+        ) ||
+        ((edgeFlags[edge] & SUBSTITUTE_EDGE) !== 0 &&
+          (shown[callees[edge] * words] & SHOWN_MASK) !== 0),
     ),
     PURITY_MASK,
   );
@@ -405,11 +651,45 @@ export const createDefinitionFacts = (
         ((shown[position] & SHOWN_MASK) === 0 ? 0 : REEVALUATION_SHOWN)
       : word,
   );
+  // A LET definition's effects are those of its builtins and of the definitions it calls, and with
+  // them those of the LET definitions in it, which come after it in the numbering.
+  for (let edge = 0; edge < callees.length; edge++) {
+    if (owners[edge] === -1) continue;
+    const callee = rows[callees[edge] * words];
+    if (
+      !isEvaluatedOnce(definitions[callees[edge]], callee) ||
+      ((edgeFlags[edge] & SUBSTITUTE_EDGE) !== 0 && (callee & REEVALUATION_SHOWN) !== 0)
+    ) {
+      lets.effects[owners[edge]] |= callee & PURITY_MASK;
+    }
+  }
+  for (let number = lets.parents.length - 1; number >= 0; number--) {
+    const parent = lets.parents[number];
+    if (parent !== -1) lets.effects[parent] |= lets.effects[number];
+  }
+  // The LET definitions of each prepared definition at the numbers its walk gives them, which a
+  // check walks again where it first asks for one of them, once the definition's body is decoded.
+  const preparedLets: ((Definition | undefined)[] | undefined)[] = [];
+  const getPreparedLetNumber = (definition: Definition) => {
+    const owner = letOwners.get(definition);
+    const id = owner === undefined ? undefined : ids.get(owner);
+    if (owner === undefined || id === undefined || letStarts[id] === -1) return undefined;
+    const position = (preparedLets[id] ??= collectLetDefinitions(
+      owner,
+      environment,
+      words,
+    )).indexOf(definition);
+    return position === -1 ? undefined : letStarts[id] + position;
+  };
   const effects = closeRows(localImpurity, words, readEdges, EFFECT_MASK);
   return {
     ids,
     rows,
     words,
+    getLetEffects: (definition) => {
+      const number = lets.numbers.get(definition) ?? getPreparedLetNumber(definition);
+      return number === undefined ? undefined : lets.effects[number];
+    },
     varyingBodies: collectVaryingBodies(definitions, assumptions, environment, {
       ids,
       effects,
@@ -613,12 +893,22 @@ const collectVaryingBodies = (
         return getChildren(node).forEach((child) => visit(child, scope, isEffectful));
     }
   };
+  // A definition that reaches no effect makes no body vary but one that reaches a parameter, which
+  // varies only where an effectful value exists, so its body is walked only then.
+  const visitBody = (definition: Definition, isEffectful: boolean) => {
+    if (!environment.bodyValues.has(definition.body)) {
+      visitDefinition(definition, new Map(), isEffectful);
+    }
+  };
   definitions.forEach((definition, id) => {
-    if (environment.bodyValues.has(definition.body)) return;
-    visitDefinition(definition, new Map(), isEffectfulDefinition(id));
+    if (isEffectfulDefinition(id)) visitBody(definition, true);
   });
   assumptions.forEach((assumption) => visit(assumption, new Map(), hasEffect([assumption])));
-  if (hasEffectfulValue) parameterBodies.forEach((body) => varyingBodies.add(body));
+  if (!hasEffectfulValue) return varyingBodies;
+  definitions.forEach((definition, id) => {
+    if (!isEffectfulDefinition(id)) visitBody(definition, false);
+  });
+  parameterBodies.forEach((body) => varyingBodies.add(body));
   return varyingBodies;
 };
 
@@ -635,9 +925,12 @@ const EFFECT_FLAGS = {
   any: IMPURE,
   repeated: REPEATED_EFFECT,
   streamed: STREAMED,
-  // What a second evaluation shows: output again, or other random draws.
-  replayed: REPEATED_EFFECT | RANDOM,
+  replayed: EFFECT_MASK,
   varying: EFFECT_MASK,
+  // An action's LET definition that reaches any effect, an Assert among them, evaluates again at
+  // each reference, as TLC's does. A kept value of one that runs a program on ESCore misses its
+  // cache in the operators it's passed to, which then ran the program again, under KeepLazy.
+  reevaluated: IMPURE | RANDOM,
 };
 
 export const isExpressionImpure = (
@@ -658,7 +951,10 @@ export const isImpureDefinition = (
   definition: Definition,
   environment: Environment,
   effect: keyof typeof EFFECT_FLAGS = "any",
-) => (getRow(definition, environment)[0] & EFFECT_FLAGS[effect]) !== 0;
+) =>
+  ((environment.facts.getLetEffects(definition) ?? getRow(definition, environment)[0]) &
+    EFFECT_FLAGS[effect]) !==
+  0;
 
 export const isTlcEvalReached = (expression: Expression, environment: Environment) =>
   (getExpressionsRow([expression], environment)[0] & TLC_EVAL) !== 0;

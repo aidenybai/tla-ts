@@ -1,4 +1,4 @@
-import { isWithin, LIMIT, type Step } from "./shared";
+import { isWithin, LIMIT, type Step } from "./shared.ts";
 
 let count = 0;
 

@@ -1,3 +1,10 @@
+import { ESCORE_CANONICAL_OPERATORS } from "./escore-canonical";
+import {
+  createEscoreNativeOperators,
+  createEscoreProgramOperators,
+  createEsNumberOperators,
+  createEsRuntimeOperators,
+} from "./escore-native";
 import { TlaEvaluationError, TlaModuleError, TlaSetBoundError } from "./errors";
 import {
   checkJavaArity,
@@ -54,6 +61,7 @@ import {
   getSequenceElements,
   isEmptySet,
   isEnumerable,
+  setNormalized,
   isFiniteSet,
   isFunctionValue,
   isOverriddenSet,
@@ -260,14 +268,14 @@ export const CORE_OPERATORS: Builtin[] = [
               if (written.length + added.length > getMaximumSetSize()) {
                 throw new TlaSetBoundError(getSetBoundMessage());
               }
-              if (isSorted && !leftSet.isNormalized) return merged;
+              if (isSorted && !isNormalizedSet(leftSet)) return merged;
               const union = merged === leftSet ? createSortedSet(merged.elements) : merged;
               if (!isSorted) union.writtenElements = [...written, ...added];
               return union;
             }
             if (merged === finiteLeft) return merged;
-            merged.isNormalized = isNormalizedReducible(finiteLeft);
-            if (leftSet.writtenElements && !leftSet.isNormalized) {
+            setNormalized(merged, isNormalizedReducible(finiteLeft));
+            if (leftSet.writtenElements && !isNormalizedSet(leftSet)) {
               merged.writtenElements = leftSet.writtenElements.filter((element) =>
                 isElementOf(element, merged),
               );
@@ -486,7 +494,7 @@ const createSequencesOperators = (version: TlcVersion) =>
               ? getValue(args, 0, "\\o")
               : undefined;
         if (kept !== undefined && getFunctionClass(kept) === "tuple") return kept;
-        return createTuple([...left, ...right]);
+        return createTuple(left.concat(right));
       }
       const right = getValue(args, 1, "\\o");
       if (typeof right !== "string") {
@@ -496,15 +504,16 @@ const createSequencesOperators = (version: TlcVersion) =>
       }
       return rankString(left + right);
     }),
+    // A copy by concat, which builds the long sequences of a loop that appends to one several times
+    // faster than a spread.
     defineOperator("Append", 2, (args) =>
-      createTuple([
-        ...getSequenceArgument(
+      createTuple(
+        getSequenceArgument(
           args,
           0,
           getEvaluatingMessage(version === "1.7.4" ? "Append(v, s)" : "Append(s, v)", "sequence"),
-        ),
-        getValue(args, 1, "Append"),
-      ]),
+        ).concat([getValue(args, 1, "Append")]),
+      ),
     ),
     defineOperator("Head", 1, (args) => {
       const elements = getSequenceArgument(args, 0, getSequenceMessage("", "Head"));
@@ -635,6 +644,11 @@ export const getJavaOverrides = (
   getVariableNames: () => string[],
 ) => {
   if (name === "TransitiveClosure") return TRANSITIVE_CLOSURE_OPERATORS;
+  if (name === "ESCanonical") return ESCORE_CANONICAL_OPERATORS;
+  if (name === "ESNative") return createEscoreNativeOperators(evaluateReplaced);
+  if (name === "ESNumber") return createEsNumberOperators(evaluateReplaced);
+  if (name === "ESRuntime") return createEsRuntimeOperators(evaluateReplaced);
+  if (name === "ProgramCode") return createEscoreProgramOperators(evaluateReplaced);
   if (name === "AnySet") {
     return [
       overrideWithJava(

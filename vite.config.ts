@@ -17,6 +17,7 @@ export default defineConfig({
     ],
   },
   lint: {
+    jsPlugins: ["@shadcn/lint"],
     rules: {
       "no-unused-vars": [
         "warn",
@@ -30,6 +31,13 @@ export default defineConfig({
       "no-console": "off",
     },
     overrides: [
+      {
+        files: ["packages/website/src/**/*.tsx"],
+        rules: {
+          "shadcn/no-raw-colors": "error",
+          "shadcn/no-unknown-classes": "error",
+        },
+      },
       {
         files: ["packages/tla-ts/tests/fixtures/typescript/**/*.ts"],
         rules: { "no-unassigned-vars": "off", "no-constant-binary-expression": "off" },

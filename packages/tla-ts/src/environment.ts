@@ -29,14 +29,17 @@ import {
 } from "./errors";
 import {
   bindOperatorArguments,
+  bindValue,
   createBigNumberError,
   createRealNumberError,
   evaluate,
+  getDefinition,
   getDefinitionClosure,
   type Builtin,
   type BuiltinArgument,
   type Context,
   type Environment,
+  type Scope,
   type StartupModule,
   type StartupSubstitute,
 } from "./evaluate";
@@ -104,24 +107,31 @@ import { getStandardModule, getStandardRange, STANDARD_LEVELS } from "./standard
 import { createModuleSubexpressions, resolveInstanceSubexpressions } from "./subexpressions";
 import {
   checkModuleLevels,
+  createLevelAnalyzer,
+  getSignatureLevels,
   type InstanceCopy,
   type InstanceLevelCheck,
   type InstanceSubstitutes,
   type LetInstance,
   type LevelData,
+  type OperatorLevels,
   type SectionMember,
 } from "./levels";
+import { checkPlainModule } from "./plain-module";
 import { createInstanceChecker, type KeyedDeclaration } from "./substitution-levels";
 import { formatPrompt } from "./tlc/messages";
-import { createDefinitionFacts, isReevaluationShown } from "./dependencies";
+import { createDefinitionFacts, isReevaluationShown, type PreparedFacts } from "./dependencies";
 import { resolveSynonym } from "./tlc/jar-data";
-import { createTlcOrder, type TlcOrder } from "./tlc/order";
+import { createTlcOrder, type PreparedModule, type TlcOrder } from "./tlc/order";
 import { isTlcInteger, type Value } from "./values";
 import type { TlcVersion } from "./tlc/version";
 
 interface EnvironmentOptions {
-  source: string;
+  source: string | Module;
   loadModule: ((name: string) => string | undefined) | undefined;
+  preparedModules?: readonly PreparedModule[];
+  // Receives the levels SANY's checks found for the definitions of each module they checked.
+  onModuleLevels?: (module: Module, levels: (OperatorLevels | undefined)[]) => void;
   order?: TlcOrder;
   loadClass?: (name: string) => Uint8Array | undefined;
   print: (text: string) => void;
@@ -145,6 +155,9 @@ export interface RuntimeInvariant {
   module: string | undefined;
 }
 
+// The operators that the analysis of a whole spec's levels takes as variables, which no plain module
+// reads.
+const RUNTIME_VARIABLES = ["TLCGet", "Trace", "CounterExample"];
 export interface ResolvedModuleOperator extends ModuleOperator {
   key: string | undefined;
 }
@@ -308,9 +321,21 @@ export const createEnvironment = (
   config: ModelConfig,
   options: EnvironmentOptions,
 ): Specification => {
-  const order = options.order ?? createTlcOrder(options.source, options.loadModule);
-  const root = order.parseModule(options.source);
+  const order =
+    options.order ?? createTlcOrder(options.source, options.loadModule, options.preparedModules);
+  const root =
+    typeof options.source === "string"
+      ? order.getModule(undefined, options.source)
+      : options.source;
   const definitions = new Map<string, Definition>();
+  // The levels of the definitions of the prepared modules that SANY's checks accepted, by key.
+  const preparedLevels = new Map<string, OperatorLevels>();
+  // The texts of the prepared modules whose levels a check links.
+  const preparedTexts: string[] = [];
+  const preparedValues: ReadonlyMap<Definition, Value>[] = [];
+  const preparedFacts = new Map<Definition, PreparedFacts>();
+  // The definitions that hold no wide string nor read a deserializer, as their modules tell.
+  const narrowDefinitions = new Set<Definition>();
   const theorems = new Map<string, SourceRange>();
   const unlinkedTheorems = new Map<string, () => void>();
   const getLinkedDefinition = (key: string) => {
@@ -345,6 +370,12 @@ export const createEnvironment = (
   const standardExports = new Map<string, Symbols>();
   const standardSources = new Map<string, LinkedModule>();
   const replacedDefinitions = new Map<string, Definition>();
+  // The definition that an INSTANCE copies under a key: one that a builtin replaced is copied as its
+  // TLA+ where its module has CONSTANTS or VARIABLES, which the INSTANCE may substitute, as the
+  // builtin can't read the substitutes.
+  const getInstanceDefinition = (key: string) =>
+    getLinkedDefinition(key) ??
+    (parameterized.get(key) === true ? replacedDefinitions.get(key) : undefined);
   const builtinAliases = new Map<string, string>();
   const runtime = createRuntime(config.checkDeadlock, options.seed);
   runtime.isWarningEnabled = options.isWarningEnabled ?? true;
@@ -532,7 +563,7 @@ export const createEnvironment = (
     const dependencies = STANDARD_DEPENDENCIES.get(name) ?? [];
     if (
       SOURCE_STANDARD_MODULES.has(name) ||
-      [name, ...dependencies].some((module) => options.loadModule?.(module) !== undefined)
+      [name, ...dependencies].some((module) => order.getLoadedSource(module) !== undefined)
     )
       return undefined;
     const symbols = addStandardModule(name);
@@ -555,11 +586,19 @@ export const createEnvironment = (
   };
   rejectModuleLiterals(root);
 
+  // The modules read from prepared modules that SANY's checks already accepted, whose names and
+  // levels a check doesn't resolve or check again.
+  const acceptedModules = new Set<Module>();
   const loadModule = (name: string, importer: string) => {
+    const prepared = order.getPreparedModule(name);
+    if (prepared?.levels && runtime.version === "master") {
+      acceptedModules.add(prepared.module);
+      return prepared.module;
+    }
     const source =
-      options.loadModule?.(name) ??
+      order.getLoadedSource(name) ??
       getSanyStandardModules(runtime.version).get(name) ??
-      extractModule(options.source, name);
+      (typeof options.source === "string" ? extractModule(options.source, name) : undefined);
     if (source === undefined) throw createMissingModuleError(name, importer);
     const module = order.parseFile(source, name);
     if (module.name !== name) {
@@ -631,6 +670,9 @@ export const createEnvironment = (
           )
           .map((error) => ({ location: error.location, message: error.message })),
       );
+      if (semanticErrors.length === 0) {
+        levelChecks.forEach((check) => options.onModuleLevels?.(check.module, check.levels));
+      }
     }
     if (linking.length === 0 && semanticErrors.length > 0) {
       throw createSanyError(semanticErrors, false, undefined, warnings);
@@ -664,15 +706,30 @@ export const createEnvironment = (
           ? [arg.expression]
           : [],
       );
-      if (definition?.kind !== "Operator" || !context || expressions.length !== args.length) {
+      if (definition?.kind !== "Operator" || !context || args.length !== definition.params.length) {
         throw new TlaEvaluationError(`No definition of ${operator} to fall back to`);
       }
+      // A lazy builtin falls back with the expressions of its arguments, and any other with the
+      // values and operators it took.
       return evaluate(definition.body, {
         environment: context.environment,
-        scope: bindOperatorArguments(getDefinitionClosure(definition), expressions, context),
+        scope:
+          expressions.length === args.length
+            ? bindOperatorArguments(getDefinitionClosure(definition), expressions, context)
+            : definition.params.reduce<Scope | undefined>((scope, param, index) => {
+                const arg = args[index];
+                return typeof arg === "object" && arg.kind === "Operator"
+                  ? {
+                      name: param.name,
+                      binding: { kind: "Operator", operator: arg },
+                      parent: scope,
+                    }
+                  : bindValue(scope, param.name, arg);
+              }, undefined),
         state: context.state,
         next: context.next,
         isKeepLazy: context.isKeepLazy,
+        isPrimed: context.isPrimed,
       });
     };
     getJavaOverrides(name, options.print, runtime, options.files, evaluateReplaced, () =>
@@ -882,7 +939,7 @@ export const createEnvironment = (
       ),
       enabledSubstitutions,
       boundSubstitutions,
-      getDefinition: getLinkedDefinition,
+      getDefinition: getInstanceDefinition,
       getOuterDefinition: (key) =>
         module.definitions.find((definition) => unit.getKey(definition) === key),
       isSubstitutedConstant: (key) => {
@@ -1191,7 +1248,7 @@ export const createEnvironment = (
       substitutedVariables: new Set(linked.variables),
       enabledSubstitutions,
       boundSubstitutions,
-      getDefinition: getLinkedDefinition,
+      getDefinition: getInstanceDefinition,
       getOuterDefinition: () => undefined,
       isSubstitutedConstant: () => false,
       isParameterized: (key) => parameterized.get(key) === true,
@@ -1528,13 +1585,20 @@ export const createEnvironment = (
       const boundLocation = boundLocations.get(name);
       return bound.has(name) || (boundLocation !== undefined && isBefore(boundLocation, location));
     };
+    // A prepared module that the build found no LET instance in needs no walk of its bodies.
+    const isPreparedWithoutLetInstances =
+      parsed === unlinked &&
+      acceptedModules.has(unlinked) &&
+      order.getPreparedModule(parsed.name)?.hasLetInstances === false;
     const subexpressions = createModuleSubexpressions(
       parsed,
-      getLetInstanceExpansion(parsed, (instance, lets) =>
-        instantiateLocally(instance, lets, parsed.name, getLetModule(instance), (name) =>
-          isBoundBefore(name, instance.location),
-        ),
-      ),
+      isPreparedWithoutLetInstances
+        ? undefined
+        : getLetInstanceExpansion(parsed, (instance, lets) =>
+            instantiateLocally(instance, lets, parsed.name, getLetModule(instance), (name) =>
+              isBoundBefore(name, instance.location),
+            ),
+          ),
       (name) => {
         const symbol = visible.get(name);
         const definition =
@@ -1699,7 +1763,32 @@ export const createEnvironment = (
     ]
       .sort((left, right) => compareLocations(left.location, right.location))
       .forEach((unit) => unit.link());
-    const module = subexpressions.resolve();
+    // SANY's checks found nothing in a module they accepted to instantiate or resolve, nor in a view
+    // of it.
+    const isAccepted =
+      acceptedModules.has(unlinked) && parsed === unlinked && parsed.modules.length === 0;
+    // A plain module, whose names and levels SANY's checks find in one pass, links as it is, where
+    // what it extends conflicts nowhere, which only the full checks report.
+    const plain =
+      isAccepted ||
+      runtime.version !== "master" ||
+      scope.recursiveCount.declarations.length > 0 ||
+      reports.some((report) => report.errors.length > 0 || report.warnings.length > 0)
+        ? undefined
+        : checkPlainModule(parsed, {
+            imported: visible,
+            getKey: (name) => getKey({ name }),
+            getLevels: (name) => {
+              if (RUNTIME_VARIABLES.includes(name)) return undefined;
+              const key = visible.get(name)?.key ?? name;
+              if (definitions.has(key)) return preparedLevels.get(key);
+              return getSignatureLevels(name) ?? "declared";
+            },
+          });
+    const plainLevels = plain?.levels;
+    if (plain && !plain.isWide) parsed.definitions.forEach((item) => narrowDefinitions.add(item));
+    const isLinkedAsIs = isAccepted || plainLevels !== undefined;
+    const module = isLinkedAsIs ? parsed : subexpressions.resolve();
     parsed.theorems
       .flatMap((theorem) => getProofInstances(theorem.proof))
       .filter((instance) => !getVisibleModules().has(instance.module))
@@ -1708,13 +1797,52 @@ export const createEnvironment = (
           getStandardSymbols(instance.module) ?? getLinkedModule(instance.module, parsed.name),
       );
     const unit = getUnit(module);
-    const resolved = resolveModule(module, unit);
+    // A module that SANY's checks accepted, or a plain one, binds each of its definitions, and
+    // leaves no RECURSIVE declaration open.
+    const resolved = isLinkedAsIs
+      ? {
+          errors: [],
+          boundDefinitions: module.definitions.filter(isDefining),
+          boundRecursive: [],
+          boundTheorems: [],
+          recursion: {
+            location: module.location,
+            definitions: [],
+            declarations: [],
+            closed: scope.recursiveCount.closed,
+          },
+        }
+      : resolveModule(module, unit);
     scope.errors.push(...resolved.errors);
+    const accepted = isAccepted ? order.getPreparedModule(parsed.name) : undefined;
+    const acceptedLevels = accepted?.levels ?? plainLevels;
+    if (accepted) preparedTexts.push(accepted.text);
+    if (accepted?.values) preparedValues.push(accepted.values);
+    const acceptedFacts = accepted?.facts;
+    if (acceptedFacts) {
+      module.definitions.forEach((definition) => {
+        const facts = acceptedFacts.get(definition.name);
+        if (facts) preparedFacts.set(definition, facts);
+        if (facts && !facts.isWide) narrowDefinitions.add(definition);
+      });
+    }
+    const definitionLevels =
+      acceptedLevels &&
+      new Map(
+        module.definitions.map((definition, position) => [definition, acceptedLevels[position]]),
+      );
     unit.definitions.forEach((definition) => {
       const key = getKey(definition);
       definitions.set(key, definition);
+      const levels = definitionLevels?.get(definition);
+      if (levels) preparedLevels.set(key, levels);
       parameterized.set(key, !isParameterFree);
-      if (definition.kind === "Operator" && isUnresolved(definition.body)) {
+      // SANY's checks resolved every body of a module they accepted.
+      if (
+        definition.kind === "Operator" &&
+        accepted === undefined &&
+        isUnresolved(definition.body)
+      ) {
         unresolvedBodyKeys.add(key);
       }
     });
@@ -1796,6 +1924,11 @@ export const createEnvironment = (
       recursion: resolved.recursion,
     };
     if (!checkedModules.has(parsed.name)) checkedModules.set(parsed.name, linked);
+    if (isLinkedAsIs && instanceChecks.length === firstCheck) {
+      if (plainLevels) options.onModuleLevels?.(module, plainLevels);
+      if (!scope.isHidden) linkOrder.push(linked);
+      return linked;
+    }
     scope.levelChecks.push(
       checkModuleLevels(
         module,
@@ -1805,6 +1938,7 @@ export const createEnvironment = (
           variables: linked.levelVariables,
           getDefinition: (symbol) => getLinkedDefinition(visible.get(symbol)?.key ?? symbol),
           getQualifiedName: (symbol) => qualifiedNames.get(visible.get(symbol)?.key ?? symbol),
+          getPreparedLevels: (symbol) => preparedLevels.get(visible.get(symbol)?.key ?? symbol),
           instances: instanceLevels.instances,
           recursiveSections,
           checkedNodes,
@@ -1925,7 +2059,26 @@ export const createEnvironment = (
       variables,
     },
     assumptions.map((assumption) => assumption.expression),
+    preparedFacts,
   );
+  const runtimeVariables = RUNTIME_VARIABLES.filter((name) => builtins.has(name));
+  // A prepared module's levels hold here where its text names none of the operators that this
+  // analysis takes as variables. The parsed texts of ESCore's runtime are the strings it ranked,
+  // which name TLC's operators wherever they come.
+  const runtimeVariableName = new RegExp(`\\b(?:${runtimeVariables.join("|")})\\b`);
+  const isPreparedLevelsLinked =
+    runtimeVariables.length === 0 || preparedTexts.every((text) => !runtimeVariableName.test(text));
+  const getPreparedLevels = (name: string) =>
+    isPreparedLevelsLinked ? preparedLevels.get(name) : undefined;
+  const analyzer = createLevelAnalyzer({
+    // TLC's getLevelBound counts a theorem's arguments but not its body.
+    constants: new Map([...constants.keys(), ...theorems.keys()].map((key) => [key, 0])),
+    variables: new Set([...variables, ...runtimeVariables]),
+    getDefinition: (name) => getDefinition(name, environment),
+    getPreparedLevels,
+    instances: instanceLevels.instances,
+    recursiveSections,
+  });
   const environment: Environment = {
     runtime,
     definitions,
@@ -1941,6 +2094,7 @@ export const createEnvironment = (
     variableIndex,
     variableLocations: linkedRoot.variableLocations,
     facts,
+    narrowDefinitions,
     startupValues: Array.from({ length: facts.ids.size }, (): Value | undefined => undefined),
     tlcEvalValues: new WeakMap(),
     substitutedDefinitions,
@@ -1950,9 +2104,28 @@ export const createEnvironment = (
     evaluators: new WeakMap(),
     entryEvaluators: new WeakMap(),
     definitionEvaluators: new WeakMap(),
+    initRunners: new WeakMap(),
+    nextRunners: new WeakMap(),
+    getOperatorLevels: analyzer.getOperatorLevels,
+    getPreparedLevels,
+    sanyLevels: createLevelAnalyzer({
+      constants: new Map([...constants.keys()].map((key) => [key, 0])),
+      variables: new Set(variables),
+      getDefinition: (name) => definitions.get(name),
+      getPreparedLevels,
+      instances: instanceLevels.instances,
+      recursiveSections,
+    }),
     instances: instanceLevels.instances,
     recursiveSections,
+    runtimeModules: new Set(options.preparedModules?.map((prepared) => prepared.name)),
   };
+  preparedValues.forEach((values) =>
+    values.forEach((value, definition) => {
+      const id = facts.ids.get(definition);
+      if (id !== undefined) environment.startupValues[id] = value;
+    }),
+  );
   const getSubstitute = (key: string) => {
     const target = substitutions.get(key);
     const definition = target === undefined ? undefined : definitions.get(target);

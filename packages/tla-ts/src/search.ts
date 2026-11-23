@@ -1,5 +1,4 @@
 import {
-  getChildren,
   getOpDefBody,
   isLocallyResolved,
   type Assumption,
@@ -35,6 +34,8 @@ import {
   isConstantLevel,
   isExpressionImpure,
   isImpureDefinition,
+  isWideDefinition,
+  isWideString,
 } from "./dependencies";
 import {
   createEnvironment,
@@ -73,7 +74,6 @@ import { EXIT_STATUS, setExitCode } from "./exit-codes";
 import type { JavaOverride } from "./java-overrides";
 import { ACTION_LEVEL, CONSTANT_LEVEL, TEMPORAL_LEVEL, VARIABLE_LEVEL } from "./levels";
 import {
-  createSanyAnalyzer,
   expandTemporal,
   getLevel,
   getLevelBound,
@@ -151,6 +151,7 @@ interface EnvironmentSettings
       CheckOptions,
       | "source"
       | "loadModule"
+      | "preparedModules"
       | "loadClass"
       | "readFile"
       | "writeFile"
@@ -338,15 +339,14 @@ export const reportStartup = (
   });
 };
 
-const getInvariants = (names: string[], environment: Environment) => {
-  const analyzer = createSanyAnalyzer(environment);
-  return names.flatMap((name) => {
+const getInvariants = (names: string[], environment: Environment) =>
+  names.flatMap((name) => {
     const definition = getConfigPredicate("invariant", name, environment);
     if (!definition) return [];
-    const levels = analyzer.analyzeDefinition(definition, new Map());
+    const levels = environment.sanyLevels.analyzeDefinition(definition, new Map());
     if (levels.level >= ACTION_LEVEL) {
       const note =
-        levels.params.size === 0
+        (levels.params?.size ?? 0) === 0
           ? ""
           : "\nNote that a bug can cause TLC to incorrectly report this error.\nIf you believe your TLA+ or PlusCal specification to be correct,\nplease check if this bug described in LevelNode.java starting at line 590ff affects you.";
       throw setExitCode(
@@ -358,7 +358,6 @@ const getInvariants = (names: string[], environment: Environment) => {
     }
     return [createNamedIdentifier(name, environment)];
   });
-};
 
 const getConjuncts = (expression: Expression, environment: Environment): Expression[] => {
   if (expression.kind === "And")
@@ -572,6 +571,7 @@ const getSpecification = (
             binding: {
               kind: "Thunk",
               expression: item.expression,
+              site: undefined,
               scope: item.scope,
               state: undefined,
               next: undefined,
@@ -824,26 +824,10 @@ const isUnchangedFor = (stateCheck: StateCheck, state: State, parent: Value[] | 
   return true;
 };
 
-const WIDE_CHARACTER = /[\u0100-\uffff]/;
-
-const DESERIALIZERS = new Set(["JsonDeserialize", "ndJsonDeserialize"]);
-
 const isWideConfigValue = (value: ConfigValue): boolean =>
   value.kind === "String"
-    ? WIDE_CHARACTER.test(value.value)
+    ? isWideString(value.value)
     : value.kind === "Set" && value.elements.some(isWideConfigValue);
-
-const isWideExpression = (expression: Expression, checked: Set<Expression>): boolean => {
-  if (expression.kind === "Selection") {
-    if (checked.has(expression.expression)) return false;
-    checked.add(expression.expression);
-  }
-  return (
-    (expression.kind === "String" && WIDE_CHARACTER.test(expression.value)) ||
-    (expression.kind === "Apply" && DESERIALIZERS.has(expression.operator)) ||
-    getChildren(expression).some((child) => isWideExpression(child, checked))
-  );
-};
 
 // TLC fingerprints a string by the low byte of each character, so it merges states whose strings differ only above U+00FF.
 const hasWideString = (config: ModelConfig, environment: Environment) => {
@@ -855,9 +839,7 @@ const hasWideString = (config: ModelConfig, environment: Environment) => {
     ) ||
     [...environment.definitions.values()].some(
       (definition) =>
-        isWideExpression(definition.body, checked) ||
-        (definition.kind === "Function" &&
-          definition.bounds.some((bound) => isWideExpression(bound.set, checked))),
+        !environment.narrowDefinitions.has(definition) && isWideDefinition(definition, checked),
     )
   );
 };
@@ -882,6 +864,7 @@ export interface Search {
   getStoredFingerprints: (states: Value[][], fingerprintStates: Value[][]) => BigInt64Array;
   getTlcOrder: () => number[];
   isSymmetric: boolean;
+  isViewed: boolean;
   isConstrained: boolean;
   isNextReplayed: boolean;
   isTraceRebuildShown: boolean;
@@ -926,9 +909,15 @@ export interface Search {
   findPostconditionViolation: (isAfterViolation?: boolean) => Postcondition | undefined;
 }
 
+// An ALIAS's fields, of a record in the order it was written, and of another function in the order
+// of its domain, as FcnRcdValue.toRcd normalizes the function before it names the fields.
 const toAliasRecord = (value: Value) => {
   if (!isFunctionValue(value)) return undefined;
-  const pairs = getWrittenPairs(toFiniteFunction(value));
+  const fn = toFiniteFunction(value);
+  const pairs =
+    fn.functionClass === "record"
+      ? getWrittenPairs(fn)
+      : fn.domain.map((key, index): [Value, Value] => [key, fn.range[index]]);
   if (!pairs.every((pair) => typeof pair[0] === "string")) return undefined;
   return Object.fromEntries(pairs.map((pair) => [String(pair[0]), pair[1]]));
 };
@@ -1031,7 +1020,7 @@ export const createCheckEnvironment = (
   print: (text: string) => void,
   isStringOrderFrozen = false,
 ) => {
-  const order = createTlcOrder(options.source, options.loadModule);
+  const order = createTlcOrder(options.source, options.loadModule, options.preparedModules);
   const getOperatorModules = (kind: ModuleOperator["kind"]) =>
     (options.moduleOperators ?? []).flatMap((operator) =>
       operator.kind === kind ? [operator.module] : [],
@@ -1055,6 +1044,7 @@ export const createCheckEnvironment = (
   const specification = createEnvironment(config, {
     source: options.source,
     loadModule: options.loadModule,
+    preparedModules: options.preparedModules,
     order,
     loadClass: options.loadClass,
     print,
@@ -1425,7 +1415,13 @@ export const createSearch = (
       : createIdentifier(getRootKey(config.rlReward, environment));
   if (config.periodic !== undefined) getConfigOperator("periodic", config.periodic, environment);
   const possible = getPossiblePredicates(config.possible, environment);
-  if (environment.variables.length === 0) return undefined;
+  // Tool.getInitStates evaluates the initial predicate of a spec without variables too, so an error
+  // in it fails the check.
+  if (environment.variables.length === 0) {
+    if (spec.init !== undefined)
+      evaluate(spec.init, getContext(environment, [], undefined, spec.scope));
+    return undefined;
+  }
   const symmetryGroup =
     config.symmetry === undefined
       ? undefined
@@ -1444,11 +1440,9 @@ export const createSearch = (
   let tlcOrder: number[] | undefined;
   const getTlcOrder = () => {
     if (tlcOrder) return tlcOrder;
-    const variableOrder = getVariableOrder();
-    const getTlcPosition = (index: number) => {
-      const position = variableOrder.indexOf(environment.variables[index]);
-      return position === -1 ? environment.variables.length : position;
-    };
+    const positions = new Map(getVariableOrder().map((name, position) => [name, position]));
+    const getTlcPosition = (index: number) =>
+      positions.get(environment.variables[index]) ?? environment.variables.length;
     tlcOrder = environment.variables
       .map((_variable, index) => index)
       .sort((left, right) => getTlcPosition(left) - getTlcPosition(right));
@@ -1618,6 +1612,7 @@ export const createSearch = (
           : getAliasRecord(config.alias, state, undefined, isTool),
     }),
     isSymmetric: symmetryGroup !== undefined,
+    isViewed: view !== undefined,
     isConstrained: constraints.length > 0 || actionConstraints.length > 0,
     isNextReplayed:
       spec.next !== undefined &&

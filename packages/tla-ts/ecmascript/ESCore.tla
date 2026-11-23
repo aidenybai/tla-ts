@@ -97,6 +97,7 @@ RECURSIVE DropProp(_, _)
 RECURSIVE IsDigit(_)
 RECURSIVE DigitsBelow(_, _)
 RECURSIVE LexLess(_, _)
+RECURSIVE LexLessFrom(_, _, _)
 RECURSIVE IsArrayIndexUnits(_)
 RECURSIVE IsArrayIndex(_)
 RECURSIVE IndexLess(_, _)
@@ -250,7 +251,6 @@ RECURSIVE IsPropertyReference(_)
 RECURSIVE IsUnresolvableReference(_)
 RECURSIVE GetThisValue(_)
 RECURSIVE GetValue(_, _)
-RECURSIVE ToKeyedReference(_, _)
 RECURSIVE PutValue(_, _, _)
 RECURSIVE InitializeReferencedBinding(_, _, _)
 RECURSIVE Context(_, _, _, _)
@@ -401,6 +401,7 @@ RECURSIVE NumberOperation(_, _, _)
 RECURSIVE PrivateInThen(_, _, _)
 RECURSIVE RelationalLeftThen(_, _, _)
 RECURSIVE RelationalRightThen(_, _, _)
+RECURSIVE NumberRelation(_, _, _)
 RECURSIVE InstanceofOperator(_, _, _)
 RECURSIVE EqualityLeftThen(_, _, _)
 RECURSIVE EqualityRightThen(_, _, _)
@@ -421,6 +422,7 @@ RECURSIVE IfThen(_, _, _)
 RECURSIVE ReturnThen(_, _)
 RECURSIVE ReturnValueThen(_)
 RECURSIVE ThrowThen(_)
+RECURSIVE ThrowAtThen(_, _)
 RECURSIVE WithThen(_, _, _)
 RECURSIVE EvaluateVariableDeclarationList(_, _, _)
 RECURSIVE VariableListThen(_, _, _)
@@ -557,6 +559,7 @@ RECURSIVE DefineMethodProperty(_, _, _, _, _)
 RECURSIVE MethodDefinitionEvaluation(_, _, _, _, _)
 RECURSIVE MethodDefinitionThen(_, _, _, _)
 RECURSIVE NewPrivateEnvironment(_, _, _)
+RECURSIVE FirstIndexes(_, _, _)
 RECURSIVE ResolvePrivateIdentifier(_, _, _)
 RECURSIVE ResolvePrivateIn(_, _)
 RECURSIVE PrivateElementFind(_, _, _)
@@ -761,14 +764,12 @@ RECURSIVE ArrayFrom(_, _, _, _, _)
 RECURSIVE ArrayFromIterator(_, _, _, _, _, _)
 RECURSIVE ArrayFromArrayLike(_, _, _, _, _, _, _)
 RECURSIVE ArrayFromAsync(_, _, _, _, _)
-RECURSIVE FromAsyncReturn(_, _, _)
-RECURSIVE FromAsyncIterator(_, _, _)
-RECURSIVE FromAsyncNextThen(_, _, _)
-RECURSIVE FromAsyncMappedThen(_, _, _)
-RECURSIVE FromAsyncDefineThen(_, _, _)
-RECURSIVE FromAsyncArrayLike(_, _, _)
-RECURSIVE FromAsyncValueThen(_, _, _)
-RECURSIVE FromAsyncStoreThen(_, _, _)
+RECURSIVE FromAsyncStart(_, _, _, _, _, _)
+RECURSIVE FromAsyncBegin(_, _)
+RECURSIVE FromAsyncRun(_, _)
+RECURSIVE FromAsyncAwait(_, _, _, _)
+RECURSIVE FromAsyncClose(_, _)
+RECURSIVE FromAsyncSteps(_, _)
 RECURSIVE ArraySpeciesCreate(_, _, _)
 RECURSIVE ArrayCreateLength(_, _)
 RECURSIVE FillArray(_, _, _)
@@ -781,14 +782,49 @@ RECURSIVE SetElements(_, _, _, _)
 RECURSIVE ReadThrough(_, _, _, _, _, _)
 RECURSIVE FillFrom(_, _, _, _, _)
 RECURSIVE IncludesFrom(_, _, _, _, _)
+RECURSIVE LocaleArguments(_)
 RECURSIVE JoinFrom(_, _, _, _, _, _, _)
 RECURSIVE FindViaPredicate(_, _, _, _, _, _)
 RECURSIVE FindFrom(_, _, _, _, _, _, _)
 RECURSIVE FlattenIntoArray(_, _, _, _, _, _, _, _)
 RECURSIVE ReverseFrom(_, _, _, _, _)
 RECURSIVE SortIndexedProperties(_, _, _, _, _)
-RECURSIVE MergeSort(_, _, _)
-RECURSIVE MergeSorted(_, _, _, _, _)
+RECURSIVE SortItems(_, _, _)
+RECURSIVE TsLess(_, _, _, _)
+RECURSIVE TsSet(_, _, _)
+RECURSIVE TsCopy(_, _, _, _, _)
+RECURSIVE TsMinRun(_, _)
+RECURSIVE TsInsertionSort(_, _, _, _, _, _)
+RECURSIVE TsInsertionPlace(_, _, _, _, _, _)
+RECURSIVE TsCountRun(_, _, _, _, _)
+RECURSIVE TsRunFrom(_, _, _, _, _, _, _)
+RECURSIVE TsRunMade(_, _, _, _)
+RECURSIVE TsCompareAt(_, _, _, _, _, _)
+RECURSIVE TsGallop(_, _, _, _, _, _, _, _)
+RECURSIVE TsGallopOut(_, _, _, _, _, _, _, _, _, _, _)
+RECURSIVE TsGallopLow(_, _, _, _)
+RECURSIVE TsGallopHigh(_, _, _, _)
+RECURSIVE TsGallopIn(_, _, _, _, _, _, _, _)
+RECURSIVE TsMergeAt(_, _, _, _)
+RECURSIVE TsMergeLow(_, _, _, _, _, _, _, _)
+RECURSIVE TsLowSucceed(_)
+RECURSIVE TsLowCopyB(_)
+RECURSIVE TsLowFromB(_)
+RECURSIVE TsLowFromA(_)
+RECURSIVE TsLowOne(_, _, _, _, _)
+RECURSIVE TsLowGallop(_, _, _, _, _, _)
+RECURSIVE TsMergeHigh(_, _, _, _, _, _, _, _)
+RECURSIVE TsHighSucceed(_)
+RECURSIVE TsHighCopyA(_)
+RECURSIVE TsHighFromA(_)
+RECURSIVE TsHighFromB(_)
+RECURSIVE TsHighOne(_, _, _, _, _)
+RECURSIVE TsHighGallop(_, _, _, _, _, _)
+RECURSIVE TsRunLength(_, _)
+RECURSIVE TsInvariant(_, _)
+RECURSIVE TsCollapse(_, _, _)
+RECURSIVE TsForceCollapse(_, _, _)
+RECURSIVE TsMain(_, _, _, _, _, _)
 RECURSIVE CompareArrayElements(_, _, _, _)
 RECURSIVE IndexCandidate(_, _, _, _, _, _)
 RECURSIVE IndexInRange(_, _, _)
@@ -805,7 +841,6 @@ RECURSIVE DeleteIndices(_, _, _, _, _)
 RECURSIVE CreateArrayIterator(_, _, _)
 RECURSIVE ArrayIteratorNext(_, _)
 RECURSIVE ArrayIteratorResume(_, _)
-RECURSIVE ArrayIteratorStep(_, _)
 RECURSIVE ArrayIteratorBuiltin(_, _, _, _, _, _)
 RECURSIVE ProxyCreate(_, _, _)
 RECURSIVE ProxyTrap(_, _, _)
@@ -853,6 +888,12 @@ RECURSIVE DescribeThrown(_, _)
 RECURSIVE HarnessResult(_, _)
 RECURSIVE RunFrom(_, _, _, _, _)
 RECURSIVE RunModuleFrom(_, _, _, _, _)
+RECURSIVE HostTimeZone(_)
+RECURSIVE HostDateFormat(_)
+RECURSIVE HostLocale(_)
+RECURSIVE HostCalendarYear(_)
+RECURSIVE HostCalendarMonthDay(_)
+RECURSIVE HostIntl(_)
 RECURSIVE TestResult(_)
 RECURSIVE HasClass(_, _, _)
 RECURSIVE CanonicalizeKeyedCollectionKey(_)
@@ -1048,6 +1089,21 @@ RECURSIVE RxContinue(_, _, _)
 RECURSIVE RxSequence(_, _, _, _, _)
 RECURSIVE RxMatchAlternatives(_, _, _, _, _)
 RECURSIVE RxRepeatMatcher(_, _, _, _, _, _, _, _, _)
+RECURSIVE RxRepeatSet(_, _, _, _, _, _, _)
+RECURSIVE RxSetAt(_, _, _, _)
+RECURSIVE RxSetRun(_, _, _, _, _)
+RECURSIVE RxAdvanced(_, _, _)
+RECURSIVE RxContinueDown(_, _, _, _, _, _)
+RECURSIVE RxContinueUp(_, _, _, _, _, _)
+RECURSIVE RxStringsLeaf(_, _, _, _, _, _)
+RECURSIVE RxStringsTables(_, _, _, _, _)
+RECURSIVE RxStringsRun(_, _, _, _, _)
+RECURSIVE RxStringsDrive(_, _, _, _, _, _, _, _)
+RECURSIVE RxStringsSearch(_, _, _, _, _, _, _, _)
+RECURSIVE RxStringsStep(_, _, _, _, _, _, _)
+RECURSIVE RxStringsFrame(_, _, _, _)
+RECURSIVE RxStringsEnds(_, _, _, _)
+RECURSIVE RxStringsKey(_, _, _, _)
 RECURSIVE RxSetFound(_, _, _)
 RECURSIVE RxIsWordChar(_, _, _)
 RECURSIVE RxBackreference(_, _, _, _)
@@ -1126,6 +1182,7 @@ RECURSIVE RxContentsMayContainStrings(_)
 RECURSIVE RxOperandMayContainStrings(_)
 RECURSIVE RegExpAlloc(_, _)
 RECURSIVE RegExpInitialize(_, _, _, _)
+RECURSIVE RxFoldedSingles(_, _)
 RECURSIVE RegExpCreate(_, _, _)
 RECURSIVE RegExpCreateLiteral(_, _)
 RECURSIVE RegExpConstructor(_, _, _, _, _)
@@ -1142,6 +1199,7 @@ RECURSIVE RegExpBuiltinExec(_, _, _)
 RECURSIVE LegacyRegExpStatic(_, _)
 RECURSIVE UpdateLegacyRegExpStatics(_, _, _, _, _, _)
 RECURSIVE RxExecFrom(_, _, _, _, _, _)
+RECURSIVE RxExecFirst(_, _, _, _, _, _)
 RECURSIVE RxMatchResult(_, _, _, _, _)
 RECURSIVE GetMatchString(_, _)
 RECURSIVE RxGroupsObject(_, _, _, _)
@@ -1286,7 +1344,7 @@ RECURSIVE StoreFrom(_, _, _, _, _)
 RECURSIVE TypedArrayElements(_, _, _)
 RECURSIVE StrictIndexFrom(_, _, _, _, _, _)
 RECURSIVE JoinElements(_, _, _, _, _)
-RECURSIVE LocaleJoin(_, _, _, _, _)
+RECURSIVE LocaleJoin(_, _, _, _, _, _)
 RECURSIVE CopyBytesUp(_, _, _, _, _, _)
 RECURSIVE CompareTypedArrayElements(_, _, _, _)
 RECURSIVE SortElements(_, _, _)
@@ -1429,6 +1487,9 @@ RECURSIVE GetModuleSource(_, _)
 RECURSIVE IsResolvable(_, _, _)
 RECURSIVE GetModuleNamespace(_, _, _)
 RECURSIVE SortCodeUnits(_)
+RECURSIVE SetToSeqFrom(_, _)
+RECURSIVE SortDistinctUnits(_)
+RECURSIVE MergeCodeUnits(_, _, _)
 RECURSIVE IsSymbolLikeNamespaceKey(_, _, _)
 RECURSIVE NamespaceExports(_, _)
 RECURSIVE NamespaceHasProperty(_, _, _)
@@ -1483,6 +1544,81 @@ RECURSIVE ActiveModule(_, _)
 RECURSIVE EvaluateExportDeclaration(_, _, _)
 RECURSIVE ExportDefaultThen(_, _, _)
 RECURSIVE RunModule(_, _)
+RECURSIVE CanonicalizeCalendar(_, _)
+RECURSIVE CalendarYearOffset(_)
+RECURSIVE RataDie(_)
+RECURSIVE RataDieToISODate(_)
+RECURSIVE CopticEpoch(_)
+RECURSIVE CopticYear(_, _)
+RECURSIVE IslamicEpoch(_)
+RECURSIVE IsUmalquraTable(_, _)
+RECURSIVE UmalquraLong(_, _)
+RECURSIVE IndianStart(_)
+RECURSIVE IndianBefore(_, _)
+RECURSIVE PersianLeap(_)
+RECURSIVE PersianStart(_)
+RECURSIVE PersianYearAt(_, _)
+RECURSIVE HebrewMonthsBefore(_)
+RECURSIVE HebrewElapsed(_)
+RECURSIVE HebrewNewYear(_)
+RECURSIVE HebrewLength(_)
+RECURSIVE LunisolarYear(_, _)
+RECURSIVE LunisolarDays(_, _, _)
+RECURSIVE LunisolarBefore(_, _, _)
+RECURSIVE LunisolarMonthCode(_, _, _)
+RECURSIVE LunisolarOrdinal(_, _, _)
+RECURSIVE ArithmeticLeap(_, _)
+RECURSIVE ArithmeticMonths(_, _)
+RECURSIVE ArithmeticMonthCode(_, _, _)
+RECURSIVE ArithmeticOrdinal(_, _, _)
+RECURSIVE IsValidMonthCodeForCalendar(_, _)
+RECURSIVE YearContainsMonthCode(_, _, _)
+RECURSIVE ConstrainMonthCode(_, _, _)
+RECURSIVE HebrewDays(_, _)
+RECURSIVE ArithmeticDaysInMonth(_, _, _)
+RECURSIVE ArithmeticMostDays(_, _)
+RECURSIVE HebrewBefore(_, _)
+RECURSIVE UmalquraBefore(_, _)
+RECURSIVE ArithmeticRataDie(_, _, _, _)
+RECURSIVE HebrewYearAt(_, _)
+RECURSIVE UmalquraYearAt(_, _)
+RECURSIVE ArithmeticMonthAt(_, _, _, _)
+RECURSIVE ArithmeticDateOf(_, _)
+RECURSIVE MonthIndex(_, _, _)
+RECURSIVE HebrewYearOfIndex(_, _)
+RECURSIVE OfMonthIndex(_, _)
+RECURSIVE LunisolarMonthsFrom(_, _, _)
+RECURSIVE LunisolarAfter(_, _, _, _)
+RECURSIVE MonthsAfter(_, _, _, _)
+RECURSIVE MonthsBetween(_, _, _)
+RECURSIVE ArithmeticYearWithinLimits(_, _)
+RECURSIVE ArithmeticReferenceYear(_)
+RECURSIVE ArithmeticReference(_, _, _, _)
+RECURSIVE CanonicalizeEraInCalendar(_, _)
+RECURSIVE CalendarDateArithmeticYearForEraYear(_, _, _)
+RECURSIVE CalendarDateEra(_, _, _)
+RECURSIVE CalendarHasEras(_)
+RECURSIVE CalendarParts(_, _)
+RECURSIVE CalendarMonthCode(_, _)
+RECURSIVE MonthCodeOf(_)
+RECURSIVE MonthCodeToOrdinal(_, _, _)
+RECURSIVE CalendarDateGetter(_, _, _, _)
+RECURSIVE ISODateToFields(_, _, _)
+RECURSIVE NonISOResolveFields(_, _, _, _)
+RECURSIVE CalendarDateToISO(_, _, _, _, _, _, _)
+RECURSIVE LunisolarReference(_, _, _, _, _)
+RECURSIVE NonISOMonthDayToISOReferenceDate(_, _, _, _)
+RECURSIVE NonISODateAdd(_, _, _, _, _)
+RECURSIVE MonthCodeKey(_)
+RECURSIVE NonISOReached(_, _, _, _, _)
+RECURSIVE NonISODateSurpasses(_, _, _, _, _, _, _)
+RECURSIVE NonISOBackYears(_, _, _, _, _, _)
+RECURSIVE NonISOForeYears(_, _, _, _, _, _)
+RECURSIVE NonISOBackMonths(_, _, _, _, _, _, _)
+RECURSIVE NonISOForeMonths(_, _, _, _, _, _, _)
+RECURSIVE NonISODateUntil(_, _, _, _)
+RECURSIVE OffsetTimeZone(_)
+RECURSIVE IsOffsetTimeZone(_)
 RECURSIVE ISODaysInMonth(_, _)
 RECURSIVE BalanceISOYearMonth(_, _)
 RECURSIVE ISODateToEpochDays(_, _, _)
@@ -1502,9 +1638,9 @@ RECURSIVE EpochNsToISODateTime(_)
 RECURSIVE TIYearInRange(_)
 RECURSIVE TIClamp(_, _, _)
 RECURSIVE RegulateISODate(_, _, _, _, _)
-RECURSIVE CalendarDateAdd(_, _, _, _)
+RECURSIVE CalendarDateAdd(_, _, _, _, _)
 RECURSIVE Surpasses(_, _, _, _, _)
-RECURSIVE CalendarDateUntil(_, _, _)
+RECURSIVE CalendarDateUntil(_, _, _, _)
 RECURSIVE ISODayOfWeek(_)
 RECURSIVE ISODayOfYear(_)
 RECURSIVE ISOWeekOfYear(_)
@@ -1517,58 +1653,84 @@ RECURSIVE ISODateUnits(_)
 RECURSIVE TemporalDateToString(_, _, _)
 RECURSIVE FormatISODateTime(_, _, _, _)
 RECURSIVE GetTemporalShowCalendarNameOption(_, _)
-RECURSIVE CanonicalizeCalendar(_, _)
 RECURSIVE ParseTemporalCalendarString(_, _)
 RECURSIVE ToTemporalCalendarIdentifier(_, _)
 RECURSIVE GetTemporalCalendarIdentifierWithISODefault(_, _)
 RECURSIVE FormatOffsetTimeZoneIdentifier(_, _)
 RECURSIVE ParseTemporalTimeZoneString(_, _)
 RECURSIVE ToTemporalTimeZoneIdentifier(_, _)
+RECURSIVE TimeZoneFromParse(_, _)
 RECURSIVE TimeZoneEquals(_, _)
-RECURSIVE GetOffsetNanosecondsFor(_)
+RECURSIVE TZSecondOf(_)
+RECURSIVE TZTransitionsUpTo(_, _, _, _)
+RECURSIVE TZSecondsNs(_)
+RECURSIVE TZTransitionNs(_, _)
+RECURSIVE TZRuleDay(_, _, _, _)
+RECURSIVE TZRuleStartEnd(_, _)
+RECURSIVE TZRuleTransitions(_, _)
+RECURSIVE TZRule(_)
+RECURSIVE TZRuleOffset(_, _, _)
+RECURSIVE TZEarliestAfter(_, _)
+RECURSIVE TZLatestBefore(_, _)
+RECURSIVE GetOffsetNanosecondsFor(_, _)
 RECURSIVE GetISODateTimeFor(_, _)
-RECURSIVE GetEpochNanosecondsFor(_, _, _)
+RECURSIVE GetNamedTimeZoneNextTransition(_, _)
+RECURSIVE GetNamedTimeZonePreviousTransition(_, _)
+RECURSIVE GetPossibleEpochNanoseconds(_, _, _)
+RECURSIVE DisambiguatePossibleEpochNanoseconds(_, _, _, _, _)
+RECURSIVE GetEpochNanosecondsFor(_, _, _, _)
 RECURSIVE GetStartOfDay(_, _, _)
 RECURSIVE EpochNsOf(_, _, _)
 RECURSIVE FormatUTCOffsetNanoseconds(_)
 RECURSIVE FormatDateTimeUTCOffsetRounded(_)
 RECURSIVE AddEpochNanoseconds(_, _, _)
-RECURSIVE InterpretISODateTimeOffset(_, _, _, _, _, _, _, _)
+RECURSIVE InterpretISODateTimeOffset(_, _, _, _, _, _, _, _, _)
 RECURSIVE ConvertCalendarField(_, _, _)
 RECURSIVE PrepareFrom(_, _, _, _, _, _)
-RECURSIVE PrepareCalendarFields(_, _, _, _)
+RECURSIVE PrepareCalendarFields(_, _, _, _, _)
 RECURSIVE CalendarMergeFields(_, _)
-RECURSIVE ISODateToFields(_, _)
-RECURSIVE CalendarResolveFields(_, _, _)
-RECURSIVE CalendarDateFromFields(_, _, _)
-RECURSIVE CalendarYearMonthFromFields(_, _, _)
-RECURSIVE CalendarMonthDayFromFields(_, _, _)
-RECURSIVE InterpretTemporalDateTimeFields(_, _, _)
+RECURSIVE CalendarResolveFields(_, _, _, _)
+RECURSIVE CalendarDateFromFields(_, _, _, _)
+RECURSIVE CalendarYearMonthFromFields(_, _, _, _)
+RECURSIVE CalendarMonthDayFromFields(_, _, _, _)
+RECURSIVE InterpretTemporalDateTimeFields(_, _, _, _)
 RECURSIVE ZonedDateTimeISODateTime(_, _)
 RECURSIVE DateDurationDays(_, _, _)
 RECURSIVE InternalDurationSign(_)
 RECURSIVE CheckedDateDuration(_, _)
-RECURSIVE ComputeNudgeWindow(_, _, _, _, _, _, _, _, _)
-RECURSIVE NudgeToCalendarUnit(_, _, _, _, _, _, _, _, _, _)
-RECURSIVE NudgeToZonedTime(_, _, _, _, _, _, _, _)
+RECURSIVE ComputeNudgeWindow(_, _, _, _, _, _, _, _, _, _)
+RECURSIVE NudgeToCalendarUnit(_, _, _, _, _, _, _, _, _, _, _)
+RECURSIVE NudgeToZonedTime(_, _, _, _, _, _, _, _, _)
 RECURSIVE NudgeToDayOrTime(_, _, _, _, _, _, _)
 RECURSIVE BubbleUnits(_, _)
-RECURSIVE BubbleFrom(_, _, _, _, _, _, _)
-RECURSIVE BubbleRelativeDuration(_, _, _, _, _, _, _, _)
-RECURSIVE RoundRelativeDuration(_, _, _, _, _, _, _, _, _, _)
-RECURSIVE TotalRelativeDuration(_, _, _, _, _, _, _)
-RECURSIVE DifferenceISODateTime(_, _, _)
-RECURSIVE DifferencePlainDateTimeWithRounding(_, _, _, _, _, _, _)
-RECURSIVE DifferencePlainDateTimeWithTotal(_, _, _, _)
+RECURSIVE BubbleFrom(_, _, _, _, _, _, _, _)
+RECURSIVE BubbleRelativeDuration(_, _, _, _, _, _, _, _, _)
+RECURSIVE RoundRelativeDuration(_, _, _, _, _, _, _, _, _, _, _)
+RECURSIVE TotalRelativeDuration(_, _, _, _, _, _, _, _)
+RECURSIVE DifferenceISODateTime(_, _, _, _)
+RECURSIVE DifferencePlainDateTimeWithRounding(_, _, _, _, _, _, _, _)
+RECURSIVE DifferencePlainDateTimeWithTotal(_, _, _, _, _)
 RECURSIVE DayCorrectionFrom(_, _, _, _, _, _, _, _)
-RECURSIVE DifferenceZonedDateTime(_, _, _, _, _)
+RECURSIVE DifferenceZonedDateTime(_, _, _, _, _, _)
 RECURSIVE DifferenceEpochNanoseconds(_, _, _, _, _, _)
-RECURSIVE DifferenceZonedDateTimeWithRounding(_, _, _, _, _, _, _, _)
-RECURSIVE DifferenceZonedDateTimeWithTotal(_, _, _, _, _)
-RECURSIVE AddZonedDateTime(_, _, _, _, _)
+RECURSIVE DifferenceZonedDateTimeWithRounding(_, _, _, _, _, _, _, _, _)
+RECURSIVE DifferenceZonedDateTimeWithTotal(_, _, _, _, _, _)
+RECURSIVE AddZonedDateTime(_, _, _, _, _, _)
 RECURSIVE RelativePlainTarget(_, _, _)
 RECURSIVE RelativeToFrom(_, _, _, _, _, _, _, _)
 RECURSIVE GetTemporalRelativeToOption(_, _)
+RECURSIVE GetFractionalSecondDigitsOption(_, _)
+RECURSIVE ReadDateTimeFormatOptions(_, _, _, _)
+RECURSIVE DateOptionText(_)
+RECURSIVE DateFormatEntry(_, _)
+RECURSIVE DateFormatEntries(_, _)
+RECURSIVE DateFormatKey(_, _, _, _)
+RECURSIVE NamedField(_, _)
+RECURSIVE NumeralField(_, _)
+RECURSIVE LocaleField(_, _, _, _)
+RECURSIVE LocaleText(_, _, _, _)
+RECURSIVE TemporalFormatKey(_, _)
+RECURSIVE TemporalToLocaleString(_, _, _, _, _, _)
 RECURSIVE TPOk(_, _)
 RECURSIVE TPFull(_, _)
 RECURSIVE TPAt(_, _)
@@ -1627,7 +1789,6 @@ RECURSIVE ParseTemporalDurationString(_, _)
 RECURSIVE CreateTemporalDate(_, _, _, _)
 RECURSIVE ReadOverflowOption(_, _)
 RECURSIVE ToTemporalDateRecord(_, _, _)
-RECURSIVE CalendarDateGetter(_, _, _)
 RECURSIVE DifferenceTemporalPlainDate(_, _, _, _, _)
 RECURSIVE AddDurationToDate(_, _, _, _, _)
 RECURSIVE ToTimeRecordOrMidnight(_, _)
@@ -1636,7 +1797,7 @@ RECURSIVE PlainDateToZonedDateTime(_, _, _)
 RECURSIVE CreateTemporalDateTime(_, _, _, _)
 RECURSIVE ToTemporalDateTimeRecord(_, _, _)
 RECURSIVE RoundISODateTime(_, _, _, _)
-RECURSIVE ISODateTimeToFields(_)
+RECURSIVE ISODateTimeToFields(_, _)
 RECURSIVE SinceFields(_, _)
 RECURSIVE DifferenceTemporalPlainDateTime(_, _, _, _, _)
 RECURSIVE AddDurationToDateTime(_, _, _, _, _)
@@ -1673,10 +1834,10 @@ RECURSIVE CreateTemporalYearMonth(_, _, _, _)
 RECURSIVE ToTemporalYearMonthRecord(_, _, _)
 RECURSIVE TemporalYearMonthToString(_, _)
 RECURSIVE TemporalMonthDayToString(_, _)
-RECURSIVE YearMonthFirstDay(_, _)
+RECURSIVE YearMonthFirstDay(_, _, _)
 RECURSIVE DifferenceTemporalPlainYearMonth(_, _, _, _, _)
 RECURSIVE AddDurationToYearMonth(_, _, _, _, _)
-RECURSIVE MergedPartialFields(_, _, _, _)
+RECURSIVE MergedPartialFields(_, _, _, _, _)
 RECURSIVE MergedPlainDate(_, _, _, _, _)
 RECURSIVE PlainYearMonthBuiltin(_, _, _, _, _, _)
 RECURSIVE CreateTemporalMonthDay(_, _, _, _)
@@ -1775,6 +1936,68 @@ RECURSIVE DurationBuiltin(_, _, _, _, _, _)
 RECURSIVE CompareDurations(_, _, _, _)
 RECURSIVE DurationRound(_, _, _)
 RECURSIVE DurationTotal(_, _, _)
+RECURSIVE IntlServiceOf(_)
+RECURSIVE IntlOption(_, _, _, _)
+RECURSIVE IsAlphaNumeric(_)
+RECURSIVE IsTypeSequenceFrom(_, _, _)
+RECURSIVE ReadIntlOptions(_, _, _, _, _)
+RECURSIVE IntlConstruct(_, _, _, _, _)
+RECURSIVE IsDateTimeFormatConflict(_)
+RECURSIVE CanonicalizeLocaleList(_, _)
+RECURSIVE CanonicalizeLocalesFrom(_, _, _, _, _)
+RECURSIVE CanonicalizeLocale(_, _, _)
+RECURSIVE FilterLocales(_, _, _, _)
+RECURSIVE GetAnyStringOption(_, _, _)
+RECURSIVE DefaultNumberOption(_, _, _, _, _)
+RECURSIVE GetNumberOption(_, _, _, _, _, _)
+RECURSIVE ASCIIUpper(_)
+RECURSIVE IsWellFormedCurrencyCode(_)
+RECURSIVE IsWellFormedUnitIdentifier(_)
+RECURSIVE NumberFormatUnitOptions(_, _)
+RECURSIVE NumberFormatDigitOptions(_, _, _, _, _)
+RECURSIVE NumberFormatConstruct(_, _, _, _)
+RECURSIVE IntlMathematicalKey(_, _)
+RECURSIVE IntlAnswer(_, _, _, _, _)
+RECURSIVE IntlToLocaleString(_, _, _, _)
+RECURSIVE IntlPartObject(_, _)
+RECURSIVE IntlPartObjects(_, _, _, _)
+RECURSIVE IntlPartsText(_, _)
+RECURSIVE IntlOptionsObject(_, _, _, _)
+RECURSIVE IntlResult(_, _, _)
+RECURSIVE NumberFormatMethod(_, _, _, _, _)
+RECURSIVE PluralRulesConstruct(_, _, _, _)
+RECURSIVE IntlConstructedConfig(_, _, _)
+RECURSIVE StringListFrom(_, _, _)
+RECURSIVE StringListFromIterable(_, _)
+RECURSIVE IntlNumberKey(_)
+RECURSIVE IntlMethodArguments(_, _, _)
+RECURSIVE IntlHostMethod(_, _, _, _)
+RECURSIVE IsAlpha(_)
+RECURSIVE IsLanguageSubtag(_)
+RECURSIVE IsScriptSubtag(_)
+RECURSIVE IsRegionSubtag(_)
+RECURSIVE LocaleConstruct(_, _, _, _)
+RECURSIVE LocaleMethod(_, _, _)
+RECURSIVE DateTimeFormatConfig(_, _)
+RECURSIVE DateTimeFormattableKey(_, _)
+RECURSIVE IntlTimeClip(_)
+RECURSIVE DateTimeFormatRead(_, _)
+RECURSIVE DateTimeFormatTarget(_)
+RECURSIVE DateTimeFormatPatternText(_, _)
+RECURSIVE DateTimeFormatMethod(_, _, _, _)
+RECURSIVE SegmentsOf(_, _, _)
+RECURSIVE SegmentAt(_, _, _)
+RECURSIVE SegmentDataObject(_, _, _, _, _)
+RECURSIVE SegmenterMethod(_, _, _, _)
+RECURSIVE DurationUnit(_, _, _, _, _)
+RECURSIVE DurationUnitOptionsFrom(_, _, _, _, _, _)
+RECURSIVE DurationFormatConstruct(_, _, _, _)
+RECURSIVE DurationFormatMethod(_, _, _, _)
+RECURSIVE IntlLocaleCompare(_, _, _, _, _)
+RECURSIVE IntlTransformCase(_, _, _, _, _)
+RECURSIVE IntlFallbackSymbol(_)
+RECURSIVE DateToLocaleString(_, _, _, _, _)
+RECURSIVE IntlBuiltin(_, _, _, _, _, _)
 RECURSIVE Unsupported(_, _)
 RECURSIVE CallBuiltin(_, _, _, _, _, _)
 RECURSIVE ResumeFrame(_, _)
@@ -1989,7 +2212,32 @@ TemporalIntrinsics ==
      IntrinsicFunction("TemporalPlainTime", "FunctionPrototype", <<"PlainTime", "constructor">>, 0, N("PlainTime"), TRUE),
      IntrinsicObject("TemporalDurationPrototype", "ObjectPrototype", "ordinary", [none |-> TRUE]),
      IntrinsicFunction("TemporalDuration", "FunctionPrototype", <<"Duration", "constructor">>, 0, N("Duration"), TRUE) >>
-Intrinsics == CoreIntrinsics \o MathNumberIntrinsics \o JSONIntrinsics \o StringIntrinsics \o ArrayIntrinsics \o ProxyIntrinsics \o ReflectIntrinsics \o CollectionIntrinsics \o DisposableIntrinsics \o IteratorHelperIntrinsics \o ShadowRealmIntrinsics \o SymbolErrorIntrinsics \o DateIntrinsics \o RegExpIntrinsics \o AtomicsIntrinsics \o ArrayBufferIntrinsics \o SharedArrayBufferIntrinsics \o DataViewIntrinsics \o TypedArrayIntrinsics \o GeneratorIntrinsics \o PromiseIntrinsics \o ModuleIntrinsics \o TemporalTypesIntrinsics \o TemporalIntrinsics
+IntlIntrinsics ==
+  <<
+     IntrinsicObject("Intl", "ObjectPrototype", "ordinary", [none |-> TRUE]),
+     IntrinsicFunction("IntlDateTimeFormat", "FunctionPrototype", <<"Intl", "DateTimeFormat">>, 0, N("DateTimeFormat"), TRUE),
+     IntrinsicObject("IntlDateTimeFormatPrototype", "ObjectPrototype", "ordinary", [none |-> TRUE]),
+     IntrinsicFunction("IntlNumberFormat", "FunctionPrototype", <<"Intl", "NumberFormat">>, 0, N("NumberFormat"), TRUE),
+     IntrinsicObject("IntlNumberFormatPrototype", "ObjectPrototype", "ordinary", [none |-> TRUE]),
+     IntrinsicFunction("IntlCollator", "FunctionPrototype", <<"Intl", "Collator">>, 0, N("Collator"), TRUE),
+     IntrinsicObject("IntlCollatorPrototype", "ObjectPrototype", "ordinary", [none |-> TRUE]),
+     IntrinsicFunction("IntlPluralRules", "FunctionPrototype", <<"Intl", "PluralRules">>, 0, N("PluralRules"), TRUE),
+     IntrinsicObject("IntlPluralRulesPrototype", "ObjectPrototype", "ordinary", [none |-> TRUE]),
+     IntrinsicFunction("IntlRelativeTimeFormat", "FunctionPrototype", <<"Intl", "RelativeTimeFormat">>, 0, N("RelativeTimeFormat"), TRUE),
+     IntrinsicObject("IntlRelativeTimeFormatPrototype", "ObjectPrototype", "ordinary", [none |-> TRUE]),
+     IntrinsicFunction("IntlListFormat", "FunctionPrototype", <<"Intl", "ListFormat">>, 0, N("ListFormat"), TRUE),
+     IntrinsicObject("IntlListFormatPrototype", "ObjectPrototype", "ordinary", [none |-> TRUE]),
+     IntrinsicFunction("IntlLocale", "FunctionPrototype", <<"Intl", "Locale">>, 1, N("Locale"), TRUE),
+     IntrinsicObject("IntlLocalePrototype", "ObjectPrototype", "ordinary", [none |-> TRUE]),
+     IntrinsicFunction("IntlDisplayNames", "FunctionPrototype", <<"Intl", "DisplayNames">>, 2, N("DisplayNames"), TRUE),
+     IntrinsicObject("IntlDisplayNamesPrototype", "ObjectPrototype", "ordinary", [none |-> TRUE]),
+     IntrinsicFunction("IntlSegmenter", "FunctionPrototype", <<"Intl", "Segmenter">>, 0, N("Segmenter"), TRUE),
+     IntrinsicObject("IntlSegmenterPrototype", "ObjectPrototype", "ordinary", [none |-> TRUE]),
+     IntrinsicObject("IntlSegmentsPrototype", "ObjectPrototype", "ordinary", [none |-> TRUE]),
+     IntrinsicObject("IntlSegmentIteratorPrototype", "IteratorPrototype", "ordinary", [none |-> TRUE]),
+     IntrinsicFunction("IntlDurationFormat", "FunctionPrototype", <<"Intl", "DurationFormat">>, 0, N("DurationFormat"), TRUE),
+     IntrinsicObject("IntlDurationFormatPrototype", "ObjectPrototype", "ordinary", [none |-> TRUE]) >>
+Intrinsics == CoreIntrinsics \o MathNumberIntrinsics \o JSONIntrinsics \o StringIntrinsics \o ArrayIntrinsics \o ProxyIntrinsics \o ReflectIntrinsics \o CollectionIntrinsics \o DisposableIntrinsics \o IteratorHelperIntrinsics \o ShadowRealmIntrinsics \o SymbolErrorIntrinsics \o DateIntrinsics \o RegExpIntrinsics \o AtomicsIntrinsics \o ArrayBufferIntrinsics \o SharedArrayBufferIntrinsics \o DataViewIntrinsics \o TypedArrayIntrinsics \o GeneratorIntrinsics \o PromiseIntrinsics \o ModuleIntrinsics \o TemporalTypesIntrinsics \o TemporalIntrinsics \o IntlIntrinsics
 IntrinsicIndex == [name \in {Intrinsics[i].name : i \in DOMAIN Intrinsics} |->
                      CHOOSE i \in DOMAIN Intrinsics : Intrinsics[i].name = name]
 CoreProperties ==
@@ -2990,7 +3238,104 @@ TemporalProperties ==
      M("TemporalDurationPrototype", SV("valueOf"), "Duration", "valueOf", 0),
      V("TemporalDurationPrototype", SymToStringTag, SV("Temporal.Duration"), FALSE, FALSE, TRUE),
      GlobalLink("Temporal", N("Temporal")) >>
-RealmProperties == CoreProperties \o LibraryProperties \o MathNumberProperties \o JSONProperties \o StringProperties \o ArrayProperties \o ProxyProperties \o ReflectProperties \o ObjectProperties \o CollectionProperties \o DisposableProperties \o IteratorHelperProperties \o ShadowRealmProperties \o SymbolErrorProperties \o DateProperties \o RegExpProperties \o AtomicsProperties \o ArrayBufferProperties \o SharedArrayBufferProperties \o DataViewProperties \o TypedArrayProperties \o Uint8ArrayProperties \o GeneratorProperties \o PromiseProperties \o ModuleProperties \o TemporalTypesProperties \o TemporalProperties
+IntlProperties ==
+  << M("Intl", SV("getCanonicalLocales"), "Intl", "getCanonicalLocales", 1),
+     M("Intl", SV("supportedValuesOf"), "Intl", "supportedValuesOf", 1),
+     L("Intl", SV("DateTimeFormat"), "IntlDateTimeFormat", TRUE, FALSE, TRUE),
+     L("Intl", SV("NumberFormat"), "IntlNumberFormat", TRUE, FALSE, TRUE),
+     L("Intl", SV("Collator"), "IntlCollator", TRUE, FALSE, TRUE),
+     L("Intl", SV("PluralRules"), "IntlPluralRules", TRUE, FALSE, TRUE),
+     L("Intl", SV("RelativeTimeFormat"), "IntlRelativeTimeFormat", TRUE, FALSE, TRUE),
+     L("Intl", SV("ListFormat"), "IntlListFormat", TRUE, FALSE, TRUE),
+     L("Intl", SV("Locale"), "IntlLocale", TRUE, FALSE, TRUE),
+     L("Intl", SV("DisplayNames"), "IntlDisplayNames", TRUE, FALSE, TRUE),
+     L("Intl", SV("Segmenter"), "IntlSegmenter", TRUE, FALSE, TRUE),
+     L("Intl", SV("DurationFormat"), "IntlDurationFormat", TRUE, FALSE, TRUE),
+     V("Intl", SymToStringTag, SV("Intl"), FALSE, FALSE, TRUE),
+     GlobalLink("Intl", N("Intl")) >>
+  \o Ctor("IntlDateTimeFormat", "IntlDateTimeFormatPrototype") \o
+  << M("IntlDateTimeFormat", SV("supportedLocalesOf"), "Intl", "DateTimeFormat.supportedLocalesOf", 1),
+     M("IntlDateTimeFormatPrototype", SV("resolvedOptions"), "Intl", "DateTimeFormat.resolvedOptions", 0),
+     M("IntlDateTimeFormatPrototype", SV("formatToParts"), "Intl", "DateTimeFormat.formatToParts", 1),
+     G("IntlDateTimeFormatPrototype", SV("format"), "Intl", "DateTimeFormat.format", ""),
+     M("IntlDateTimeFormatPrototype", SV("formatRange"), "Intl", "DateTimeFormat.formatRange", 2),
+     M("IntlDateTimeFormatPrototype", SV("formatRangeToParts"), "Intl", "DateTimeFormat.formatRangeToParts", 2),
+     V("IntlDateTimeFormatPrototype", SymToStringTag, SV("Intl.DateTimeFormat"), FALSE, FALSE, TRUE) >>
+  \o Ctor("IntlNumberFormat", "IntlNumberFormatPrototype") \o
+  << M("IntlNumberFormat", SV("supportedLocalesOf"), "Intl", "NumberFormat.supportedLocalesOf", 1),
+     M("IntlNumberFormatPrototype", SV("resolvedOptions"), "Intl", "NumberFormat.resolvedOptions", 0),
+     M("IntlNumberFormatPrototype", SV("formatToParts"), "Intl", "NumberFormat.formatToParts", 1),
+     G("IntlNumberFormatPrototype", SV("format"), "Intl", "NumberFormat.format", ""),
+     M("IntlNumberFormatPrototype", SV("formatRange"), "Intl", "NumberFormat.formatRange", 2),
+     M("IntlNumberFormatPrototype", SV("formatRangeToParts"), "Intl", "NumberFormat.formatRangeToParts", 2),
+     V("IntlNumberFormatPrototype", SymToStringTag, SV("Intl.NumberFormat"), FALSE, FALSE, TRUE) >>
+  \o Ctor("IntlCollator", "IntlCollatorPrototype") \o
+  << M("IntlCollator", SV("supportedLocalesOf"), "Intl", "Collator.supportedLocalesOf", 1),
+     M("IntlCollatorPrototype", SV("resolvedOptions"), "Intl", "Collator.resolvedOptions", 0),
+     G("IntlCollatorPrototype", SV("compare"), "Intl", "Collator.compare", ""),
+     V("IntlCollatorPrototype", SymToStringTag, SV("Intl.Collator"), FALSE, FALSE, TRUE) >>
+  \o Ctor("IntlPluralRules", "IntlPluralRulesPrototype") \o
+  << M("IntlPluralRules", SV("supportedLocalesOf"), "Intl", "PluralRules.supportedLocalesOf", 1),
+     M("IntlPluralRulesPrototype", SV("resolvedOptions"), "Intl", "PluralRules.resolvedOptions", 0),
+     M("IntlPluralRulesPrototype", SV("select"), "Intl", "PluralRules.select", 1),
+     M("IntlPluralRulesPrototype", SV("selectRange"), "Intl", "PluralRules.selectRange", 2),
+     V("IntlPluralRulesPrototype", SymToStringTag, SV("Intl.PluralRules"), FALSE, FALSE, TRUE) >>
+  \o Ctor("IntlRelativeTimeFormat", "IntlRelativeTimeFormatPrototype") \o
+  << M("IntlRelativeTimeFormat", SV("supportedLocalesOf"), "Intl", "RelativeTimeFormat.supportedLocalesOf", 1),
+     M("IntlRelativeTimeFormatPrototype", SV("resolvedOptions"), "Intl", "RelativeTimeFormat.resolvedOptions", 0),
+     M("IntlRelativeTimeFormatPrototype", SV("format"), "Intl", "RelativeTimeFormat.format", 2),
+     M("IntlRelativeTimeFormatPrototype", SV("formatToParts"), "Intl", "RelativeTimeFormat.formatToParts", 2),
+     V("IntlRelativeTimeFormatPrototype", SymToStringTag, SV("Intl.RelativeTimeFormat"), FALSE, FALSE, TRUE) >>
+  \o Ctor("IntlListFormat", "IntlListFormatPrototype") \o
+  << M("IntlListFormat", SV("supportedLocalesOf"), "Intl", "ListFormat.supportedLocalesOf", 1),
+     M("IntlListFormatPrototype", SV("resolvedOptions"), "Intl", "ListFormat.resolvedOptions", 0),
+     M("IntlListFormatPrototype", SV("format"), "Intl", "ListFormat.format", 1),
+     M("IntlListFormatPrototype", SV("formatToParts"), "Intl", "ListFormat.formatToParts", 1),
+     V("IntlListFormatPrototype", SymToStringTag, SV("Intl.ListFormat"), FALSE, FALSE, TRUE) >>
+  \o Ctor("IntlLocale", "IntlLocalePrototype") \o
+  << M("IntlLocalePrototype", SV("toString"), "Intl", "Locale.toString", 0),
+     M("IntlLocalePrototype", SV("maximize"), "Intl", "Locale.maximize", 0),
+     M("IntlLocalePrototype", SV("minimize"), "Intl", "Locale.minimize", 0),
+     G("IntlLocalePrototype", SV("language"), "Intl", "Locale.language", ""),
+     G("IntlLocalePrototype", SV("script"), "Intl", "Locale.script", ""),
+     G("IntlLocalePrototype", SV("region"), "Intl", "Locale.region", ""),
+     G("IntlLocalePrototype", SV("baseName"), "Intl", "Locale.baseName", ""),
+     G("IntlLocalePrototype", SV("calendar"), "Intl", "Locale.calendar", ""),
+     G("IntlLocalePrototype", SV("caseFirst"), "Intl", "Locale.caseFirst", ""),
+     G("IntlLocalePrototype", SV("collation"), "Intl", "Locale.collation", ""),
+     G("IntlLocalePrototype", SV("firstDayOfWeek"), "Intl", "Locale.firstDayOfWeek", ""),
+     G("IntlLocalePrototype", SV("hourCycle"), "Intl", "Locale.hourCycle", ""),
+     G("IntlLocalePrototype", SV("numeric"), "Intl", "Locale.numeric", ""),
+     G("IntlLocalePrototype", SV("numberingSystem"), "Intl", "Locale.numberingSystem", ""),
+     M("IntlLocalePrototype", SV("getCalendars"), "Intl", "Locale.getCalendars", 0),
+     M("IntlLocalePrototype", SV("getCollations"), "Intl", "Locale.getCollations", 0),
+     M("IntlLocalePrototype", SV("getHourCycles"), "Intl", "Locale.getHourCycles", 0),
+     M("IntlLocalePrototype", SV("getNumberingSystems"), "Intl", "Locale.getNumberingSystems", 0),
+     M("IntlLocalePrototype", SV("getTimeZones"), "Intl", "Locale.getTimeZones", 0),
+     M("IntlLocalePrototype", SV("getTextInfo"), "Intl", "Locale.getTextInfo", 0),
+     M("IntlLocalePrototype", SV("getWeekInfo"), "Intl", "Locale.getWeekInfo", 0),
+     V("IntlLocalePrototype", SymToStringTag, SV("Intl.Locale"), FALSE, FALSE, TRUE) >>
+  \o Ctor("IntlDisplayNames", "IntlDisplayNamesPrototype") \o
+  << M("IntlDisplayNames", SV("supportedLocalesOf"), "Intl", "DisplayNames.supportedLocalesOf", 1),
+     M("IntlDisplayNamesPrototype", SV("resolvedOptions"), "Intl", "DisplayNames.resolvedOptions", 0),
+     M("IntlDisplayNamesPrototype", SV("of"), "Intl", "DisplayNames.of", 1),
+     V("IntlDisplayNamesPrototype", SymToStringTag, SV("Intl.DisplayNames"), FALSE, FALSE, TRUE) >>
+  \o Ctor("IntlSegmenter", "IntlSegmenterPrototype") \o
+  << M("IntlSegmenter", SV("supportedLocalesOf"), "Intl", "Segmenter.supportedLocalesOf", 1),
+     M("IntlSegmenterPrototype", SV("resolvedOptions"), "Intl", "Segmenter.resolvedOptions", 0),
+     M("IntlSegmenterPrototype", SV("segment"), "Intl", "Segmenter.segment", 1),
+     M("IntlSegmentsPrototype", SV("containing"), "Intl", "Segments.containing", 1),
+     M("IntlSegmentsPrototype", SymIterator, "Intl", "Segments.iterator", 0),
+     M("IntlSegmentIteratorPrototype", SV("next"), "Intl", "SegmentIterator.next", 0),
+     V("IntlSegmentIteratorPrototype", SymToStringTag, SV("Segmenter String Iterator"), FALSE, FALSE, TRUE),
+     V("IntlSegmenterPrototype", SymToStringTag, SV("Intl.Segmenter"), FALSE, FALSE, TRUE) >>
+  \o Ctor("IntlDurationFormat", "IntlDurationFormatPrototype") \o
+  << M("IntlDurationFormat", SV("supportedLocalesOf"), "Intl", "DurationFormat.supportedLocalesOf", 1),
+     M("IntlDurationFormatPrototype", SV("resolvedOptions"), "Intl", "DurationFormat.resolvedOptions", 0),
+     M("IntlDurationFormatPrototype", SV("format"), "Intl", "DurationFormat.format", 1),
+     M("IntlDurationFormatPrototype", SV("formatToParts"), "Intl", "DurationFormat.formatToParts", 1),
+     V("IntlDurationFormatPrototype", SymToStringTag, SV("Intl.DurationFormat"), FALSE, FALSE, TRUE) >>
+RealmProperties == CoreProperties \o LibraryProperties \o MathNumberProperties \o JSONProperties \o StringProperties \o ArrayProperties \o ProxyProperties \o ReflectProperties \o ObjectProperties \o CollectionProperties \o DisposableProperties \o IteratorHelperProperties \o ShadowRealmProperties \o SymbolErrorProperties \o DateProperties \o RegExpProperties \o AtomicsProperties \o ArrayBufferProperties \o SharedArrayBufferProperties \o DataViewProperties \o TypedArrayProperties \o Uint8ArrayProperties \o GeneratorProperties \o PromiseProperties \o ModuleProperties \o TemporalTypesProperties \o TemporalProperties \o IntlProperties
 InitialState ==
   LET s0 == [objs |-> HeapOf(IntrinsicObjects(0, 1)),
              envs |-> HeapOf(GlobalEnvironments(0, 0)),
@@ -3024,6 +3369,7 @@ URIUnescaped == Range(N("ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz012
 URIReserved == Range(N(";/?:@&=+$,#"))
 EscapeUnescaped == Range(N("ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789_@*+-./"))
 JSONFail == [ok |-> FALSE]
+SubstitutionUnitsLimit == 2 ^ 22
 UnicodeCombiningClasses ==
   <<
     <<768, 788, 230>>, <<789, 789, 232>>, <<790, 793, 220>>, <<794, 794, 232>>, <<795, 795, 216>>, <<796, 800, 220>>, <<801, 802, 202>>, <<803, 806, 220>>,
@@ -4977,27 +5323,125 @@ Base64UrlDigits == N("ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz012345
 HexDigits == N("0123456789abcdef")
 NoAttributes == [key \in {} |-> <<>>]
 NoResolution == [kind |-> "null"]
+EraCalendars == {N("gregory"), N("buddhist"), N("roc"), N("japanese")}
+CopticCalendars == {N("coptic"), N("ethiopic"), N("ethioaa")}
+IslamicCalendars == {N("islamic-civil"), N("islamic-tbla"), N("islamic-umalqura")}
+LunisolarCalendars == {N("chinese"), N("dangi")}
+ArithmeticCalendars ==
+  CopticCalendars \cup IslamicCalendars \cup LunisolarCalendars \cup {N("indian"), N("persian"), N("hebrew")}
+UmalquraMonths ==
+  <<
+  1365, 683, 2359, 694, 1398, 876, 2901, 2730, 2390, 1182, 2397, 698, 1461, 938, 2891, 2710, 1326,
+  685, 1389, 2906, 1874, 3877, 3722, 3350, 2646, 2741, 1716, 3497, 2962, 2853, 1611, 2715, 858,
+  1753, 1492, 3493, 3402, 2709, 1334, 2421, 756, 1769, 1748, 1705, 1333, 605, 1213, 2490, 948,
+  2921, 2858, 2645, 1197, 2653, 730, 1753, 3754, 3732, 3370, 3158, 1198, 2669, 1386, 3413, 3402,
+  2707, 1323, 2651, 1338, 1717, 3753, 3410, 3369, 2645, 1197, 1389, 2794, 1764, 3793, 3490, 2730,
+  2394, 730, 1465, 2994, 1892, 1737, 1365, 683, 1243, 2746, 1460, 3497, 3410, 2725, 2349, 621,
+  2285, 730, 2773, 2725, 2635, 1175, 2359, 694, 2421, 3433, 3410, 3221, 2347, 603, 1243, 2517,
+  1490, 3493, 3402, 2709, 1357, 2733, 938, 3026, 3012, 2953, 2709, 1325, 1453, 2922, 1748, 3529,
+  3474, 2726, 2390, 686, 1389, 874, 2901, 2730, 2381, 1181, 2397, 698, 1461, 1450, 3413, 2714,
+  2350, 622, 1373, 2778, 1748, 1701, 2855, 2637, 1197, 1389, 2906, 1876, 3913, 3730, 3366, 2646,
+  854, 1717, 2986, 2962, 2853, 1675, 2715, 1370, 2778, 1460, 3497, 2898, 2714, 1334, 630, 1397,
+  2802, 1748, 1705, 1365, 685, 1213, 2490, 1396, 2921, 2898, 2709, 1325, 2653, 1242, 2777, 1714,
+  3733, 3626, 3222, 2350, 2733, 1386, 3429, 3402, 3349, 1579, 3163, 1338, 1717, 3506, 3428, 3369,
+  2645, 1197, 2413, 2794, 1768, 3793, 3492, 3402, 2666, 730, 1465, 2930, 2920, 1745, 1621, 1195,
+  2395, 698, 1461, 3497, 3410, 3238, 2382, 1134, 2397, 1242, 2773, 2730, 2637, 1179, 2359, 1206,
+  2421, 3434, 3410, 2725, 2379, 683, 1371, 2777, 1490, 3525, 3474, 2853, 1365, 2741, 1460, 2985,
+  1954, 1861, 1427, 2731, 1238, 2518, 1490, 2981, 2890, 2709, 1197, 349, 733, 2522, 1460, 1449,
+  1325, 603, 2231, 374, 1389, 2922, 2762, 2710, 1323, 347, 699, 1462, 3498, 2964, 3398, 2701, 1325,
+  2717, 1370, 1877, 1865, 3859, 3658, 2710, 1366, 1717, 2986, 2964
+  >>
+UmalquraStarts ==
+  <<
+  0, 354, 708, 1063, 1417, 1772, 2126, 2481, 2835, 3189, 3543, 3898, 4252, 4607, 4961, 5316, 5670,
+  6024, 6378, 6733, 7088, 7442, 7797, 8151, 8505, 8859, 9214, 9568, 9923, 10277, 10631, 10985,
+  11340, 11694, 12049, 12403, 12758, 13112, 13466, 13820, 14175, 14529, 14884, 15238, 15592, 15946,
+  16300, 16655, 17010, 17364, 17719, 18073, 18427, 18781, 19136, 19490, 19845, 20200, 20554, 20908,
+  21262, 21616, 21971, 22325, 22680, 23034, 23388, 23742, 24097, 24451, 24806, 25161, 25515, 25869,
+  26223, 26577, 26932, 27287, 27641, 27996, 28350, 28704, 29058, 29412, 29767, 30122, 30476, 30830,
+  31184, 31538, 31893, 32248, 32602, 32957, 33311, 33665, 34019, 34373, 34728, 35082, 35437, 35791,
+  36145, 36499, 36854, 37208, 37563, 37918, 38272, 38626, 38980, 39334, 39689, 40044, 40398, 40753,
+  41107, 41461, 41815, 42170, 42524, 42879, 43233, 43587, 43941, 44295, 44650, 45005, 45359, 45714,
+  46068, 46422, 46776, 47130, 47485, 47839, 48194, 48548, 48902, 49256, 49611, 49965, 50320, 50674,
+  51029, 51383, 51737, 52091, 52446, 52801, 53155, 53509, 53864, 54218, 54572, 54927, 55282, 55636,
+  55991, 56345, 56699, 57053, 57407, 57762, 58117, 58471, 58825, 59179, 59534, 59888, 60243, 60597,
+  60952, 61306, 61660, 62014, 62368, 62723, 63078, 63432, 63786, 64140, 64494, 64849, 65204, 65558,
+  65913, 66267, 66621, 66975, 67330, 67684, 68039, 68393, 68748, 69102, 69456, 69810, 70165, 70519,
+  70874, 71228, 71582, 71936, 72291, 72645, 73000, 73355, 73709, 74063, 74417, 74771, 75126, 75481,
+  75835, 76190, 76544, 76898, 77252, 77606, 77961, 78316, 78670, 79024, 79378, 79732, 80087, 80441,
+  80796, 81151, 81505, 81859, 82213, 82567, 82922, 83276, 83631, 83985, 84339, 84693, 85048, 85402,
+  85757, 86112, 86466, 86820, 87174, 87528, 87883, 88238, 88592, 88947, 89301, 89655, 90009, 90364,
+  90718, 91073, 91427, 91781, 92135, 92490, 92844, 93199, 93553, 93908, 94262, 94616, 94970, 95324,
+  95679, 96034, 96388, 96742, 97096, 97450, 97805, 98159, 98514, 98869, 99223, 99577, 99931,
+  100285, 100640, 100995, 101350, 101704, 102058, 102412, 102766, 103121, 103475, 103830, 104184,
+  104539, 104893, 105247, 105601, 105956, 106311, 106665
+  >>
+PersianCorrections ==
+  {1502, 1601, 1634, 1667, 1700, 1733, 1766, 1799, 1832, 1865, 1898, 1931, 1964, 1997, 2030, 2059,
+   2063, 2096, 2129, 2158, 2162, 2191, 2195, 2224, 2228, 2257, 2261, 2290, 2294, 2323, 2327, 2356,
+   2360, 2389, 2393, 2422, 2426, 2455, 2459, 2488, 2492, 2521, 2525, 2554, 2558, 2587, 2591, 2620,
+   2624, 2653, 2657, 2686, 2690, 2719, 2723, 2748, 2752, 2756, 2781, 2785, 2789, 2818, 2822, 2847,
+   2851, 2855, 2880, 2884, 2888, 2913, 2917, 2921, 2946, 2950, 2954, 2979, 2983, 2987}
+JapaneseEras ==
+  <<[name |-> N("meiji"), start |-> [year |-> 1873, month |-> 1, day |-> 1], first |-> 1868],
+    [name |-> N("taisho"), start |-> [year |-> 1912, month |-> 7, day |-> 30], first |-> 1912],
+    [name |-> N("showa"), start |-> [year |-> 1926, month |-> 12, day |-> 25], first |-> 1926],
+    [name |-> N("heisei"), start |-> [year |-> 1989, month |-> 1, day |-> 8], first |-> 1989],
+    [name |-> N("reiwa"), start |-> [year |-> 2019, month |-> 5, day |-> 1], first |-> 2019]>>
+CalendarDateGetters ==
+  {"era", "eraYear", "year", "month", "monthCode", "day", "dayOfWeek", "dayOfYear", "weekOfYear", "yearOfWeek",
+   "daysInWeek", "daysInMonth", "daysInYear", "monthsInYear", "inLeapYear"}
 ISO8601 == N("iso8601")
-UTCTimeZone == [id |-> N("UTC"), offset |-> 0]
+UTCTimeZone == [id |-> N("UTC"), primary |-> N("UTC"), offset |-> 0, zone |-> Empty]
 TINsPerSecond == TI(1000000000)
 TINsPerDay == TIMul(TI(86400), TINsPerSecond)
 TINsMaxInstant == TIMul(TI(100000000), TINsPerDay)
 CalendarClasses == {"temporalDate", "temporalDateTime", "temporalMonthDay", "temporalYearMonth", "temporalZonedDateTime"}
+TZEndDay == 24837
 CalendarFieldNames ==
-  <<"day", "hour", "microsecond", "millisecond", "minute", "month", "monthCode", "nanosecond", "offset", "second",
-    "timeZone", "year">>
+  <<"day", "era", "eraYear", "hour", "microsecond", "millisecond", "minute", "month", "monthCode", "nanosecond",
+    "offset", "second", "timeZone", "year">>
 CalendarFieldKeys ==
-  <<SV("day"), SV("hour"), SV("microsecond"), SV("millisecond"), SV("minute"), SV("month"), SV("monthCode"),
-    SV("nanosecond"), SV("offset"), SV("second"), SV("timeZone"), SV("year")>>
+  <<SV("day"), SV("era"), SV("eraYear"), SV("hour"), SV("microsecond"), SV("millisecond"), SV("minute"), SV("month"),
+    SV("monthCode"), SV("nanosecond"), SV("offset"), SV("second"), SV("timeZone"), SV("year")>>
 CalendarTimeFieldNames == {"hour", "minute", "second", "millisecond", "microsecond", "nanosecond"}
 EmptyCalendarFields == [n \in Range(CalendarFieldNames) |-> Empty]
 DateFieldNames == {"day", "month", "monthCode", "year"}
 YearMonthFieldNames == {"month", "monthCode", "year"}
+DateTimeFormatStyles == {N("full"), N("long"), N("medium"), N("short")}
+DateTimeFormatOptions ==
+  <<[key |-> "weekday", property |-> SV("weekday"), values |-> {N("narrow"), N("short"), N("long")}],
+    [key |-> "era", property |-> SV("era"), values |-> {N("narrow"), N("short"), N("long")}],
+    [key |-> "year", property |-> SV("year"), values |-> {N("2-digit"), N("numeric")}],
+    [key |-> "month", property |-> SV("month"), values |-> {N("2-digit"), N("numeric"), N("narrow"), N("short"), N("long")}],
+    [key |-> "day", property |-> SV("day"), values |-> {N("2-digit"), N("numeric")}],
+    [key |-> "dayPeriod", property |-> SV("dayPeriod"), values |-> {N("narrow"), N("short"), N("long")}],
+    [key |-> "hour", property |-> SV("hour"), values |-> {N("2-digit"), N("numeric")}],
+    [key |-> "minute", property |-> SV("minute"), values |-> {N("2-digit"), N("numeric")}],
+    [key |-> "second", property |-> SV("second"), values |-> {N("2-digit"), N("numeric")}],
+    [key |-> "fractionalSecondDigits", property |-> SV("fractionalSecondDigits"), values |-> {}],
+    [key |-> "timeZoneName", property |-> SV("timeZoneName"),
+     values |-> {N("short"), N("long"), N("shortOffset"), N("longOffset"), N("shortGeneric"), N("longGeneric")}],
+    [key |-> "formatMatcher", property |-> SV("formatMatcher"), values |-> {N("basic"), N("best fit")}],
+    [key |-> "dateStyle", property |-> SV("dateStyle"), values |-> DateTimeFormatStyles],
+    [key |-> "timeStyle", property |-> SV("timeStyle"), values |-> DateTimeFormatStyles]>>
+DateFormatKeyNames ==
+  <<"hourCycle", "weekday", "era", "year", "month", "day", "hour", "minute", "second">>
+DateOptionTexts ==
+  <<[text |-> "2-digit", units |-> N("2-digit")], [text |-> "numeric", units |-> N("numeric")], [text |-> "narrow", units |-> N("narrow")],
+    [text |-> "short", units |-> N("short")], [text |-> "long", units |-> N("long")], [text |-> "full", units |-> N("full")],
+    [text |-> "medium", units |-> N("medium")], [text |-> "h11", units |-> N("h11")], [text |-> "h12", units |-> N("h12")],
+    [text |-> "h23", units |-> N("h23")], [text |-> "h24", units |-> N("h24")]>>
+LongMonthNames ==
+  <<N("January"), N("February"), N("March"), N("April"), N("May"), N("June"), N("July"), N("August"),
+    N("September"), N("October"), N("November"), N("December")>>
+LongWeekdayNames == <<N("Monday"), N("Tuesday"), N("Wednesday"), N("Thursday"), N("Friday"), N("Saturday"), N("Sunday")>>
+TemporalKinds ==
+  ("temporalDate" :> "PlainDate") @@ ("temporalDateTime" :> "PlainDateTime") @@ ("temporalYearMonth" :> "PlainYearMonth") @@
+  ("temporalMonthDay" :> "PlainMonthDay") @@ ("temporalTime" :> "PlainTime") @@ ("temporalZonedDateTime" :> "ZonedDateTime") @@
+  ("temporalInstant" :> "Instant")
 TPFail == [ok |-> FALSE]
 TPNoOffset == [z |-> FALSE, offset |-> Empty]
-CalendarDateGetters ==
-  {"era", "eraYear", "year", "month", "monthCode", "day", "dayOfWeek", "dayOfYear", "weekOfYear", "yearOfWeek",
-   "daysInWeek", "daysInMonth", "daysInYear", "monthsInYear", "inLeapYear"}
 YearMonthGetters == {"era", "eraYear", "year", "month", "monthCode", "daysInYear", "daysInMonth", "monthsInYear", "inLeapYear"}
 TINsPerMinute == TIMul(TI(60), TINsPerSecond)
 TINsPerHour == TIMul(TI(3600), TINsPerSecond)
@@ -5041,6 +5485,140 @@ DurationDesignators == <<89, 77, 87, 68, 72, 77>>
 TimeFieldKeys ==
   <<SV("hour"), SV("minute"), SV("second"), SV("millisecond"), SV("microsecond"), SV("nanosecond")>>
 NoRelativeTo == [plain |-> Empty, zoned |-> Empty]
+IntlCallableConstructors == {"Collator", "DateTimeFormat", "NumberFormat"}
+IntlUnwrappingMethods ==
+  [m \in {"NumberFormat.format", "NumberFormat.resolvedOptions", "DateTimeFormat.format", "DateTimeFormat.resolvedOptions"} |->
+     IF m \in {"NumberFormat.format", "NumberFormat.resolvedOptions"} THEN "IntlNumberFormat" ELSE "IntlDateTimeFormat"]
+IntlConstructors ==
+  {"DateTimeFormat", "NumberFormat", "Collator", "PluralRules", "RelativeTimeFormat", "ListFormat", "Locale",
+   "DisplayNames", "Segmenter", "DurationFormat"}
+IntlSupportedLocalesOf == {c \o ".supportedLocalesOf" : c \in IntlConstructors}
+IntlMethodServices ==
+  ("Collator.compare" :> "Collator")
+  @@ ("Collator.resolvedOptions" :> "Collator")
+  @@ ("DateTimeFormat.format" :> "DateTimeFormat")
+  @@ ("DateTimeFormat.formatRange" :> "DateTimeFormat")
+  @@ ("DateTimeFormat.formatRangeToParts" :> "DateTimeFormat")
+  @@ ("DateTimeFormat.formatToParts" :> "DateTimeFormat")
+  @@ ("DateTimeFormat.resolvedOptions" :> "DateTimeFormat")
+  @@ ("DisplayNames.of" :> "DisplayNames")
+  @@ ("DisplayNames.resolvedOptions" :> "DisplayNames")
+  @@ ("DurationFormat.format" :> "DurationFormat")
+  @@ ("DurationFormat.formatToParts" :> "DurationFormat")
+  @@ ("DurationFormat.resolvedOptions" :> "DurationFormat")
+  @@ ("ListFormat.format" :> "ListFormat")
+  @@ ("ListFormat.formatToParts" :> "ListFormat")
+  @@ ("ListFormat.resolvedOptions" :> "ListFormat")
+  @@ ("Locale.baseName" :> "Locale")
+  @@ ("Locale.calendar" :> "Locale")
+  @@ ("Locale.caseFirst" :> "Locale")
+  @@ ("Locale.collation" :> "Locale")
+  @@ ("Locale.firstDayOfWeek" :> "Locale")
+  @@ ("Locale.getCalendars" :> "Locale")
+  @@ ("Locale.getCollations" :> "Locale")
+  @@ ("Locale.getHourCycles" :> "Locale")
+  @@ ("Locale.getNumberingSystems" :> "Locale")
+  @@ ("Locale.getTextInfo" :> "Locale")
+  @@ ("Locale.getTimeZones" :> "Locale")
+  @@ ("Locale.getWeekInfo" :> "Locale")
+  @@ ("Locale.hourCycle" :> "Locale")
+  @@ ("Locale.language" :> "Locale")
+  @@ ("Locale.maximize" :> "Locale")
+  @@ ("Locale.minimize" :> "Locale")
+  @@ ("Locale.numberingSystem" :> "Locale")
+  @@ ("Locale.numeric" :> "Locale")
+  @@ ("Locale.region" :> "Locale")
+  @@ ("Locale.script" :> "Locale")
+  @@ ("Locale.toString" :> "Locale")
+  @@ ("NumberFormat.format" :> "NumberFormat")
+  @@ ("NumberFormat.formatRange" :> "NumberFormat")
+  @@ ("NumberFormat.formatRangeToParts" :> "NumberFormat")
+  @@ ("NumberFormat.formatToParts" :> "NumberFormat")
+  @@ ("NumberFormat.resolvedOptions" :> "NumberFormat")
+  @@ ("PluralRules.resolvedOptions" :> "PluralRules")
+  @@ ("PluralRules.select" :> "PluralRules")
+  @@ ("PluralRules.selectRange" :> "PluralRules")
+  @@ ("RelativeTimeFormat.format" :> "RelativeTimeFormat")
+  @@ ("RelativeTimeFormat.formatToParts" :> "RelativeTimeFormat")
+  @@ ("RelativeTimeFormat.resolvedOptions" :> "RelativeTimeFormat")
+  @@ ("Segmenter.resolvedOptions" :> "Segmenter")
+  @@ ("Segmenter.segment" :> "Segmenter")
+IntlMatcherOption == IntlOption(SV("localeMatcher"), "string", {N("lookup"), N("best fit")}, FALSE)
+IntlStyleOption == IntlOption(SV("style"), "string", {N("long"), N("short"), N("narrow")}, FALSE)
+IntlConstructorOptions ==
+  [Collator |->
+     <<IntlOption(SV("usage"), "string", {N("sort"), N("search")}, FALSE), IntlMatcherOption,
+       IntlOption(SV("collation"), "type", {}, FALSE), IntlOption(SV("numeric"), "boolean", {}, FALSE),
+       IntlOption(SV("caseFirst"), "string", {N("upper"), N("lower"), N("false")}, FALSE),
+       IntlOption(SV("sensitivity"), "string", {N("base"), N("accent"), N("case"), N("variant")}, FALSE),
+       IntlOption(SV("ignorePunctuation"), "boolean", {}, FALSE)>>,
+   ListFormat |->
+     <<IntlMatcherOption, IntlOption(SV("type"), "string", {N("conjunction"), N("disjunction"), N("unit")}, FALSE),
+       IntlStyleOption>>,
+   Segmenter |-> <<IntlMatcherOption, IntlOption(SV("granularity"), "string", {N("grapheme"), N("word"), N("sentence")}, FALSE)>>,
+   DateTimeFormat |->
+     <<IntlMatcherOption, IntlOption(SV("calendar"), "type", {}, FALSE), IntlOption(SV("numberingSystem"), "type", {}, FALSE),
+       IntlOption(SV("hour12"), "boolean", {}, FALSE),
+       IntlOption(SV("hourCycle"), "string", {N("h11"), N("h12"), N("h23"), N("h24")}, FALSE),
+       IntlOption(SV("timeZone"), "timeZone", {}, FALSE)>> \o
+     [i \in 1..Len(DateTimeFormatOptions) |->
+        IntlOption(DateTimeFormatOptions[i].property,
+                   IF DateTimeFormatOptions[i].key = "fractionalSecondDigits" THEN "digits" ELSE "string",
+                   DateTimeFormatOptions[i].values, FALSE)],
+   RelativeTimeFormat |->
+     <<IntlMatcherOption, IntlOption(SV("numberingSystem"), "type", {}, FALSE), IntlStyleOption,
+       IntlOption(SV("numeric"), "string", {N("always"), N("auto")}, FALSE)>>,
+   DisplayNames |->
+     <<IntlMatcherOption, IntlOption(SV("style"), "string", {N("narrow"), N("short"), N("long")}, FALSE),
+       IntlOption(SV("type"), "string", {N("language"), N("region"), N("script"), N("currency"), N("calendar"), N("dateTimeField")}, TRUE),
+       IntlOption(SV("fallback"), "string", {N("code"), N("none")}, FALSE),
+       IntlOption(SV("languageDisplay"), "string", {N("dialect"), N("standard")}, FALSE)>>]
+SanctionedUnits ==
+  {N("acre"), N("bit"), N("byte"), N("celsius"), N("centimeter"), N("day"), N("degree"), N("fahrenheit"),
+   N("fluid-ounce"), N("foot"), N("gallon"), N("gigabit"), N("gigabyte"), N("gram"), N("hectare"), N("hour"),
+   N("inch"), N("kilobit"), N("kilobyte"), N("kilogram"), N("kilometer"), N("liter"), N("megabit"),
+   N("megabyte"), N("meter"), N("microsecond"), N("mile"), N("mile-scandinavian"), N("milliliter"),
+   N("millimeter"), N("millisecond"), N("minute"), N("month"), N("nanosecond"), N("ounce"), N("percent"),
+   N("petabyte"), N("pound"), N("second"), N("stone"), N("terabit"), N("terabyte"), N("week"), N("yard"),
+   N("year")}
+NumberFormatMethods ==
+  {"NumberFormat.resolvedOptions", "NumberFormat.format", "NumberFormat.formatToParts", "NumberFormat.formatRange",
+   "NumberFormat.formatRangeToParts"}
+IntlHostMethods ==
+  {"Collator.resolvedOptions", "Collator.compare", "ListFormat.format", "ListFormat.formatToParts",
+   "ListFormat.resolvedOptions", "RelativeTimeFormat.format", "RelativeTimeFormat.formatToParts",
+   "RelativeTimeFormat.resolvedOptions", "DisplayNames.of", "DisplayNames.resolvedOptions",
+   "Segmenter.resolvedOptions", "PluralRules.select", "PluralRules.selectRange", "PluralRules.resolvedOptions"}
+LocaleMethods ==
+  {"Locale.baseName", "Locale.calendar", "Locale.caseFirst", "Locale.collation", "Locale.firstDayOfWeek",
+   "Locale.getCalendars", "Locale.getCollations", "Locale.getHourCycles", "Locale.getNumberingSystems",
+   "Locale.getTextInfo", "Locale.getTimeZones", "Locale.getWeekInfo", "Locale.hourCycle", "Locale.language",
+   "Locale.maximize", "Locale.minimize", "Locale.numberingSystem", "Locale.numeric", "Locale.region",
+   "Locale.script", "Locale.toString"}
+DateTimeFormatReadIndex ==
+  [calendar |-> 2, numberingSystem |-> 3, hour12 |-> 4, hourCycle |-> 5, timeZone |-> 6, weekday |-> 7, era |-> 8,
+   year |-> 9, month |-> 10, day |-> 11, dayPeriod |-> 12, hour |-> 13, minute |-> 14, second |-> 15,
+   fractionalSecondDigits |-> 16, timeZoneName |-> 17, formatMatcher |-> 18, dateStyle |-> 19, timeStyle |-> 20]
+DateTimeFormatMethods ==
+  {"DateTimeFormat.resolvedOptions", "DateTimeFormat.format", "DateTimeFormat.formatToParts",
+   "DateTimeFormat.formatRange", "DateTimeFormat.formatRangeToParts"}
+SegmenterClasses ==
+  ("Segmenter.segment" :> "intlSegmenter") @@ ("Segments.containing" :> "intlSegments") @@
+  ("Segments.iterator" :> "intlSegments") @@ ("SegmentIterator.next" :> "intlSegmentIterator")
+DurationDateStyles == {N("long"), N("short"), N("narrow")}
+DurationUnits ==
+  <<DurationUnit("years", SV("years"), SV("yearsDisplay"), DurationDateStyles, N("short")),
+    DurationUnit("months", SV("months"), SV("monthsDisplay"), DurationDateStyles, N("short")),
+    DurationUnit("weeks", SV("weeks"), SV("weeksDisplay"), DurationDateStyles, N("short")),
+    DurationUnit("days", SV("days"), SV("daysDisplay"), DurationDateStyles, N("short")),
+    DurationUnit("hours", SV("hours"), SV("hoursDisplay"), DurationDateStyles \cup {N("numeric"), N("2-digit")}, N("numeric")),
+    DurationUnit("minutes", SV("minutes"), SV("minutesDisplay"), DurationDateStyles \cup {N("numeric"), N("2-digit")}, N("numeric")),
+    DurationUnit("seconds", SV("seconds"), SV("secondsDisplay"), DurationDateStyles \cup {N("numeric"), N("2-digit")}, N("numeric")),
+    DurationUnit("milliseconds", SV("milliseconds"), SV("millisecondsDisplay"), DurationDateStyles \cup {N("numeric")}, N("numeric")),
+    DurationUnit("microseconds", SV("microseconds"), SV("microsecondsDisplay"), DurationDateStyles \cup {N("numeric")}, N("numeric")),
+    DurationUnit("nanoseconds", SV("nanoseconds"), SV("nanosecondsDisplay"), DurationDateStyles \cup {N("numeric")}, N("numeric"))>>
+DurationFormatMethods ==
+  {"DurationFormat.resolvedOptions", "DurationFormat.format", "DurationFormat.formatToParts"}
 
 \* ECMAScript language values (§6.1). A JS string is a sequence of UTF-16 code units, a Number is
 \* the record that ESNumber defines, and an object or symbol is an index into the state.
@@ -5095,7 +5673,11 @@ IndexOf(seq, x) ==
   IN IF found = {} THEN 0 ELSE CHOOSE i \in found : \A j \in found : i <= j
 Remove(seq, x) == SelectSeq(seq, LAMBDA y : y # x)
 Concat(seqs) == FoldLeftSeq(seqs)
-FoldLeftSeq(seqs) == IF seqs = <<>> THEN <<>> ELSE Head(seqs) \o FoldLeftSeq(Tail(seqs))
+\* In halves, so that thousands of sequences nest log n deep rather than n.
+FoldLeftSeq(seqs) ==
+  CASE seqs = <<>> -> <<>>
+    [] Len(seqs) = 1 -> seqs[1]
+    [] OTHER -> FoldLeftSeq(SubSeq(seqs, 1, Len(seqs) \div 2)) \o FoldLeftSeq(SubSeq(seqs, Len(seqs) \div 2 + 1, Len(seqs)))
 Repeat(x, n) == [i \in 1..n |-> x]
 \* A heap of records, indexed from 1, in pages of HeapPageSize. Changing a record copies its page and
 \* the list of pages, about n / HeapPageSize + HeapPageSize entries, rather than all n.
@@ -5288,10 +5870,12 @@ IsDigit(u) == u >= 48 /\ u <= 57
 DigitsBelow(units, limit) ==
   Len(units) < Len(limit) \/
   (Len(units) = Len(limit) /\ LexLess(units, limit))
-LexLess(a, b) ==
-  IF a = <<>> THEN b # <<>>
-  ELSE IF b = <<>> THEN FALSE
-  ELSE IF Head(a) # Head(b) THEN Head(a) < Head(b) ELSE LexLess(Tail(a), Tail(b))
+LexLess(a, b) == LexLessFrom(a, b, 1)
+\* Whether a comes before b, where they agree before index i.
+LexLessFrom(a, b, i) ==
+  IF i > Len(a) THEN i <= Len(b)
+  ELSE IF i > Len(b) THEN FALSE
+  ELSE IF a[i] # b[i] THEN a[i] < b[i] ELSE LexLessFrom(a, b, i + 1)
 IsArrayIndexUnits(units) ==
   /\ units # <<>>
   /\ \A i \in DOMAIN units : IsDigit(units[i])
@@ -5840,7 +6424,12 @@ TestIntegrityLevel(s, v, level) ==
   IF IsAbrupt(e) THEN e
   ELSE IF Val(e) = True THEN Ok(e.s, False)
   ELSE LET ks == OwnPropertyKeys(e.s, v) IN
-  IF IsAbrupt(ks) THEN ks ELSE TestIntegrityKeys(ks.s, v, Val(ks), level)
+  IF IsAbrupt(ks) THEN ks
+  \* V8 tests a typed array's properties but its elements, which leave it sealed but not frozen.
+  ELSE IF O(ks.s, v).class = "typedArray" THEN
+    LET named == SelectSeq(Val(ks), LAMBDA k : ~IsTypedArrayKey(k)) IN
+    IF level = "frozen" /\ Len(named) < Len(Val(ks)) THEN Ok(ks.s, False) ELSE TestIntegrityKeys(ks.s, v, named, level)
+  ELSE TestIntegrityKeys(ks.s, v, Val(ks), level)
 TestIntegrityKeys(s, v, ks, level) ==
   IF ks = <<>> THEN Ok(s, True)
   ELSE LET cur == GetOwnProperty(s, v, Head(ks)) IN
@@ -5959,12 +6548,11 @@ ToPropertyDescriptor(s, v) ==
   ELSE LET r == ReadDescriptorFields(s, v, <<"enumerable", "configurable", "value", "writable", "get", "set">>, EmptyDesc) IN
   IF IsAbrupt(r) THEN r
   ELSE LET d == Val(r) IN
-  IF (d.get # Absent /\ d.get # Undefined /\ ~IsCallable(r.s, d.get)) \/
-     (d.set # Absent /\ d.set # Undefined /\ ~IsCallable(r.s, d.set))
-  THEN ThrowTypeError(r.s)
-  ELSE IF (d.get # Absent \/ d.set # Absent) /\ (d.value # Absent \/ d.writable # Absent)
+  IF (d.get # Absent \/ d.set # Absent) /\ (d.value # Absent \/ d.writable # Absent)
   THEN ThrowTypeError(r.s)
   ELSE r
+\* Reads each field that v has, in order, where a getter or setter that isn't callable throws as it's
+\* read, before the fields after it.
 ReadDescriptorFields(s, v, fields, d) ==
   IF fields = <<>> THEN Ok(s, d)
   ELSE LET f == Head(fields)
@@ -5973,6 +6561,7 @@ ReadDescriptorFields(s, v, fields, d) ==
           ELSE IF Val(h) = False THEN ReadDescriptorFields(h.s, v, Tail(fields), d)
           ELSE LET g == Get(h.s, v, DescriptorKey(f)) IN
           IF IsAbrupt(g) THEN g
+          ELSE IF f \in {"get", "set"} /\ Val(g) # Undefined /\ ~IsCallable(g.s, Val(g)) THEN ThrowTypeError(g.s)
           ELSE ReadDescriptorFields(g.s, v, Tail(fields),
                  [d EXCEPT ![f] = IF f \in {"enumerable", "configurable", "writable"}
                                   THEN ToBoolean(Val(g)) ELSE Val(g)])
@@ -6191,8 +6780,13 @@ CreateGlobalFunctionBinding(s, e, name, value, deletable) ==
 Reference(base, name, strict, this) ==
   [type |-> "reference", base |-> base, name |-> name, strict |-> strict, this |-> this]
 EnvBase(e) == [type |-> "env", env |-> e]
+\* A declarative environment's HasBinding reads its names and leaves the state as it is.
 GetIdentifierReference(s, e, name, strict) ==
   IF e = 0 THEN Ok(s, Reference(Unresolvable, Str(name), strict, Empty))
+  ELSE LET env == E(s, e) IN
+  IF IsDeclarativeKind(env.kind) THEN
+    IF name \in DOMAIN env.b THEN Ok(s, Reference(EnvBase(e), Str(name), strict, Empty))
+    ELSE GetIdentifierReference(s, env.outer, name, strict)
   ELSE LET h == HasBinding(s, e, name) IN
        IF IsAbrupt(h) THEN h
        ELSE IF Val(h) = True THEN Ok(h.s, Reference(EnvBase(e), Str(name), strict, Empty))
@@ -6217,13 +6811,6 @@ GetValue(s, v) ==
     ELSE LET k == IF IsPropertyKey(v.name) THEN Ok(base.s, v.name) ELSE ToPropertyKey(base.s, v.name) IN
          IF IsAbrupt(k) THEN k ELSE GetV(k.s, Val(base), Val(k), GetThisValue(v))
   ELSE GetBindingValue(s, v.base.env, v.name.value, v.strict)
-\* Step 3.c of GetValue, which stores the property key it converts in the reference, for an
-\* operator that puts a value to the reference after getting it. A nullish base throws first.
-ToKeyedReference(s, v) ==
-  IF v.type # "reference" \/ ~IsPropertyReference(v) \/ IsNullish(v.base) \/ v.name.type = "private" \/
-     IsPropertyKey(v.name)
-  THEN Ok(s, v)
-  ELSE LET k == ToPropertyKey(s, v.name) IN IF IsAbrupt(k) THEN k ELSE Ok(k.s, [v EXCEPT !.name = Val(k)])
 PutValue(s, v, w) ==
   IF v.type # "reference" THEN ThrowError(s, "ReferenceError")
   ELSE IF IsUnresolvableReference(v) THEN
@@ -7191,9 +7778,7 @@ UpdateThen(n, r) ==
   IF IsSuspended(r) THEN Pass(r, "UpdateThen", <<n>>) ELSE
   IF IsAbrupt(r) THEN r ELSE
   IF Val(r).type # "reference" THEN ThrowError(r.s, "ReferenceError") ELSE
-  LET ref == ToKeyedReference(r.s, Val(r)) IN
-  IF IsAbrupt(ref) THEN ref ELSE
-  LET old == GetValue(ref.s, Val(ref)) IN
+  LET old == GetValue(r.s, Val(r)) IN
   IF IsAbrupt(old) THEN old ELSE
   LET num == ToNumeric(old.s, Val(old)) IN
   IF IsAbrupt(num) THEN num ELSE
@@ -7201,7 +7786,7 @@ UpdateThen(n, r) ==
       new == IF IsNumber(v)
              THEN Num(IF n.operator = "++" THEN NumAdd(v.value, NumFromInt(1)) ELSE NumSub(v.value, NumFromInt(1)))
              ELSE BigInt(IF n.operator = "++" THEN BigIntAdd(v.value, BigIntFromInt(1)) ELSE BigIntSub(v.value, BigIntFromInt(1)))
-      p == PutValue(num.s, Val(ref), new)
+      p == PutValue(num.s, Val(r), new)
   IN IF IsAbrupt(p) THEN p ELSE Ok(p.s, IF Has(n.LeftHandSideExpression) THEN v ELSE new)
 \* Unary operators (§13.5).
 EvaluateUnaryExpression(s, ctx, n) ==
@@ -7262,8 +7847,10 @@ BinaryLeftThen(ctx, op, right, r) ==
 BinaryRightThen(lval, op, r) ==
   IF IsSuspended(r) THEN Pass(r, "BinaryRightThen", <<lval, op>>) ELSE
   IF IsAbrupt(r) THEN r ELSE ApplyStringOrNumericBinaryOperator(r.s, lval, op, Val(r))
+\* Two Numbers skip the conversions, which give a Number back unchanged and leave the state as it is.
 ApplyStringOrNumericBinaryOperator(s, lval, op, rval) ==
-  IF op = "+" THEN
+  IF IsNumber(lval) /\ IsNumber(rval) THEN Ok(s, Num(NumberOperation(lval.value, op, rval.value)))
+  ELSE IF op = "+" THEN
     LET lp == ToPrimitive(s, lval, "none") IN
     IF IsAbrupt(lp) THEN lp ELSE
     LET rp == ToPrimitive(lp.s, rval, "none") IN
@@ -7286,12 +7873,12 @@ NumericBinary(s, lval, op, rval) ==
      ELSE IF IsNumber(a) THEN Ok(rn.s, Num(NumberOperation(a.value, op, b.value)))
      ELSE BigIntOperationResult(rn.s, a.value, op, b.value)
 NumberOperation(a, op, b) ==
-  CASE op = "**" -> NumExp(a, b)
+  CASE op = "+" -> NumAdd(a, b)
+    [] op = "-" -> NumSub(a, b)
     [] op = "*" -> NumMul(a, b)
     [] op = "/" -> NumDiv(a, b)
     [] op = "%" -> NumRem(a, b)
-    [] op = "+" -> NumAdd(a, b)
-    [] op = "-" -> NumSub(a, b)
+    [] op = "**" -> NumExp(a, b)
     [] op = "<<" -> NumShl(a, b)
     [] op = ">>" -> NumShr(a, b)
     [] op = ">>>" -> NumUShr(a, b)
@@ -7312,7 +7899,8 @@ RelationalRightThen(lv, op, r) ==
   IF IsAbrupt(r) THEN r ELSE
   LET rv == Val(r)
       s1 == r.s
-  IN CASE op = "<" ->
+  IN IF IsNumber(lv) /\ IsNumber(rv) /\ op \in {"<", ">", "<=", ">="} THEN Ok(s1, NumberRelation(lv.value, op, rv.value))
+     ELSE CASE op = "<" ->
             LET c == IsLessThan(s1, lv, rv, TRUE) IN
             IF IsAbrupt(c) THEN c ELSE Ok(c.s, IF Val(c) = Undefined THEN False ELSE Val(c))
        [] op = ">" ->
@@ -7329,6 +7917,10 @@ RelationalRightThen(lv, op, r) ==
             IF ~IsObject(rv) THEN ThrowTypeError(s1)
             ELSE LET k == ToPropertyKey(s1, lv) IN
                  IF IsAbrupt(k) THEN k ELSE HasProperty(k.s, rv, Val(k))
+\* The relation of two Numbers, as IsLessThan gives it once ToPrimitive gives each back unchanged.
+NumberRelation(x, op, y) ==
+  LET c == IF op \in {"<", ">="} THEN NumLessResult(x, y) ELSE NumLessResult(y, x)
+  IN IF op \in {"<", ">"} THEN (IF c = Undefined THEN False ELSE c) ELSE Bool(c = False)
 \* InstanceofOperator (§13.10.2).
 InstanceofOperator(s, v, target) ==
   IF ~IsObject(target) THEN ThrowTypeError(s)
@@ -7373,17 +7965,15 @@ AssignmentTargetThen(ctx, n, target) ==
   IF Val(target).type # "reference" THEN ThrowError(target.s, "ReferenceError") ELSE
   LET op == n.AssignmentOperator IN
   IF op = "=" THEN PutValueThen(Val(target), EvaluateAssigned(target.s, ctx, n)) ELSE
-  LET ref == ToKeyedReference(target.s, Val(target)) IN
-  IF IsAbrupt(ref) THEN ref ELSE
-  LET old == GetValue(ref.s, Val(ref)) IN
+  LET old == GetValue(target.s, Val(target)) IN
   IF IsAbrupt(old) THEN old
   ELSE IF op \in {"&&=", "||=", "??="} THEN
     IF (CASE op = "&&=" -> ~ToBooleanValue(Val(old))
           [] op = "||=" -> ToBooleanValue(Val(old))
           [] op = "??=" -> ~IsNullish(Val(old)))
     THEN old
-    ELSE PutValueThen(Val(ref), EvaluateAssigned(old.s, ctx, n))
-  ELSE CompoundThen(Val(ref), Val(old), SubSeq(op, 1, Len(op) - 1), EvaluateValue(old.s, ctx, n.AssignmentExpression))
+    ELSE PutValueThen(Val(target), EvaluateAssigned(old.s, ctx, n))
+  ELSE CompoundThen(Val(target), Val(old), SubSeq(op, 1, Len(op) - 1), EvaluateValue(old.s, ctx, n.AssignmentExpression))
 \* Assigns the value r gives to the reference, which is the assignment's value.
 PutValueThen(ref, r) ==
   IF IsSuspended(r) THEN Pass(r, "PutValueThen", <<ref>>) ELSE
@@ -7457,6 +8047,11 @@ ReturnValueThen(r) ==
   IF IsSuspended(r) THEN Pass(r, "ReturnValueThen", <<>>) ELSE IF IsAbrupt(r) THEN r ELSE Abrupt(r.s, Completion("return", Val(r), Empty))
 ThrowThen(r) ==
   IF IsSuspended(r) THEN Pass(r, "ThrowThen", <<>>) ELSE IF IsAbrupt(r) THEN r ELSE ThrowValue(r.s, Val(r))
+\* ThrowThen of a throw statement at a site of a compiled program, <<file, throw>>, the numbers of
+\* its file and of the statement among the file's throws, which the completion's target carries, so
+\* that the host can say where an exception that nothing catches was thrown.
+ThrowAtThen(site, r) ==
+  IF IsSuspended(r) THEN Pass(r, "ThrowAtThen", <<site>>) ELSE IF IsAbrupt(r) THEN r ELSE Abrupt(r.s, Completion("throw", Val(r), [kind |-> "throw", site |-> site]))
 \* The with statement (§14.11.2).
 WithThen(ctx, n, r) ==
   IF IsSuspended(r) THEN Pass(r, "WithThen", <<ctx, n>>) ELSE
@@ -8251,13 +8846,16 @@ MethodDefinitionThen(obj, n, enumerable, m) ==
 \* Private environments (§9.2) are values: [outer, names] with names from a private identifier's
 \* name to its Private Name. A Private Name is [type |-> "private", id, description].
 NewPrivateEnvironment(s, outer, names) ==
-  LET ids == [i \in 1..Len(names) |-> s.privateCount + i]
-      distinct == Dedupe(names)
-  IN [s |-> [s EXCEPT !.privateCount = @ + Len(distinct)],
+  LET first == IF names = <<>> THEN <<>> ELSE FirstIndexes(names, 1, Len(names))
+  IN [s |-> [s EXCEPT !.privateCount = @ + Len(names)],
       env |-> [outer |-> outer,
-               names |-> [name \in Range(distinct) |->
-                            [type |-> "private", id |-> s.privateCount + IndexOf(distinct, name),
-                             description |-> <<35>> \o name]]]]
+               names |-> [name \in DOMAIN first |->
+                            [type |-> "private", id |-> s.privateCount + first[name], description |-> <<35>> \o name]]]]
+\* The index in seq of each of its values first from lo to hi, in halves, so that thousands of them
+\* nest log n deep rather than n.
+FirstIndexes(seq, lo, hi) ==
+  IF lo = hi THEN seq[lo] :> lo
+  ELSE FirstIndexes(seq, lo, (lo + hi) \div 2) @@ FirstIndexes(seq, (lo + hi) \div 2 + 1, hi)
 ResolvePrivateIdentifier(s, ctx, name) == ResolvePrivateIn(ctx.priv, name)
 ResolvePrivateIn(env, name) ==
   IF name \in DOMAIN env.names THEN env.names[name] ELSE ResolvePrivateIn(env.outer, name)
@@ -8719,7 +9317,7 @@ SuperCallThen(thisEnv, func, newTarget, args) ==
 \*   globalEnv     the index of the current realm's global environment
 \*   realmId       the index of the current realm in realms
 \*   realms        each realm's [intrinsics, globalEnv], the first the one the host starts with
-\*   privateCount  the number of Private Names made so far
+\*   privateCount  a bound on the ids of the Private Names made so far
 \*   symbolRegistry  the GlobalSymbolRegistry of Symbol.for (§20.4.2.2)
 \*   jobs          the pending jobs, as [kind, ...] records
 \*   out           the lines print wrote
@@ -8947,6 +9545,10 @@ NumberBuiltin(s, f, m, this, args, nt) ==
                     ~NumLess(MaxSafeInteger, NumAbs(a1.value))))
     \* §21.1.3.7
     [] m = "valueOf" -> ThisNumberValue(s, this)
+    \* ECMA-402 §20.2.1, where the host has Intl.
+    [] m = "toLocaleString" /\ HostIntl(<<"none">>).found # "none" ->
+         LET x == ThisNumberValue(s, this) IN IF IsAbrupt(x) THEN x
+         ELSE IntlToLocaleString(x.s, IntlNumberKey(Val(x).value), Arg(args, 1), Arg(args, 2))
     [] OTHER ->
          LET x == ThisNumberValue(s, this) IN IF IsAbrupt(x) THEN x
          ELSE NumberPrototypeMethod(x.s, Val(x).value, m, IF m = "toLocaleString" THEN <<>> ELSE args)
@@ -9362,8 +9964,14 @@ JSONStringify(s, value, replacer, space) ==
       state == [replacer |-> IF IsCallable(s, replacer) THEN replacer ELSE Undefined,
                 list |-> Val(list), gap |-> gap, stack |-> <<>>, indent |-> <<>>]
   IN SerializeJSONProperty(c.s, state, EmptyStr, Val(wrapper))
+\* More than 64 of the replacer's elements run in halves, so that thousands of them nest log n deep
+\* rather than n.
 JSONPropertyList(s, replacer, len, k, list) ==
   IF ~NumLess(k, len) THEN Ok(s, list)
+  ELSE IF NumFitsInt(len) /\ NumToInt(len) - NumToInt(k) > 64 THEN
+       LET middle == NumFromInt((NumToInt(k) + NumToInt(len)) \div 2)
+           first == JSONPropertyList(s, replacer, middle, k, list)
+       IN IF IsAbrupt(first) THEN first ELSE JSONPropertyList(first.s, replacer, len, middle, Val(first))
   ELSE LET v == Get(s, replacer, Index(k)) IN IF IsAbrupt(v) THEN v ELSE
        LET x == Val(v)
            item == CASE IsString(x) -> Ok(v.s, x)
@@ -9432,8 +10040,13 @@ SerializeJSONObject(s, state, stepback, value) ==
   IF IsAbrupt(keys) THEN keys ELSE
   LET partial == SerializeJSONMembers(keys.s, state, value, Val(keys), <<>>) IN
   IF IsAbrupt(partial) THEN partial ELSE Ok(partial.s, Str(JSONJoin(state, stepback, 123, 125, Val(partial))))
+\* More than 64 keys run in halves, so that thousands of them nest log n deep rather than n.
 SerializeJSONMembers(s, state, value, keys, partial) ==
   IF keys = <<>> THEN Ok(s, partial)
+  ELSE IF Len(keys) > 64 THEN
+       LET first == SerializeJSONMembers(s, state, value, SubSeq(keys, 1, Len(keys) \div 2), partial) IN
+       IF IsAbrupt(first) THEN first
+       ELSE SerializeJSONMembers(first.s, state, value, SubSeq(keys, Len(keys) \div 2 + 1, Len(keys)), Val(first))
   ELSE LET str == SerializeJSONProperty(s, state, Head(keys), value) IN IF IsAbrupt(str) THEN str
        ELSE SerializeJSONMembers(str.s, state, value, Tail(keys),
               IF Val(str) = Undefined THEN partial
@@ -9444,8 +10057,13 @@ SerializeJSONArray(s, state, stepback, value) ==
   LET len == LengthOfArrayLike(s, value) IN IF IsAbrupt(len) THEN len ELSE
   LET partial == SerializeJSONElements(len.s, state, value, Val(len).value, PosZero, <<>>) IN
   IF IsAbrupt(partial) THEN partial ELSE Ok(partial.s, Str(JSONJoin(state, stepback, 91, 93, Val(partial))))
+\* More than 64 elements run in halves, so that thousands of them nest log n deep rather than n.
 SerializeJSONElements(s, state, value, len, i, partial) ==
   IF ~NumLess(i, len) THEN Ok(s, partial)
+  ELSE IF NumFitsInt(len) /\ NumToInt(len) - NumToInt(i) > 64 THEN
+       LET middle == NumFromInt((NumToInt(i) + NumToInt(len)) \div 2)
+           first == SerializeJSONElements(s, state, value, middle, i, partial)
+       IN IF IsAbrupt(first) THEN first ELSE SerializeJSONElements(first.s, state, value, len, middle, Val(first))
   ELSE LET str == SerializeJSONProperty(s, state, Index(i), value) IN IF IsAbrupt(str) THEN str
        ELSE SerializeJSONElements(str.s, state, value, len, NumAdd(i, OneNum),
               Append(partial, IF Val(str) = Undefined THEN N("null") ELSE Val(str).value))
@@ -9554,6 +10172,10 @@ StringMethod(s, units, m, args) ==
                          [] OTHER -> NumToSmallInt(NumToIntegerOrInfinity(x))
          IN Ok(n.s, IntV(IF maxStart < 0 THEN -1 ELSE StringLastIndexOf(units, Val(search).value, start)))
     [] m = "isWellFormed" -> Ok(s, Bool(IsStringWellFormedUnicode(units, 0)))
+    \* ECMA-402 §19.1.1, where the host has Intl.
+    [] m = "localeCompare" /\ HostIntl(<<"none">>).found # "none" ->
+         LET that == ToStr(s, a1) IN IF IsAbrupt(that) THEN that
+         ELSE IntlLocaleCompare(that.s, units, Val(that).value, Arg(args, 2), Arg(args, 3))
     [] m = "localeCompare" ->
          LET that == ToStr(s, a1) IN IF IsAbrupt(that) THEN that ELSE
          LET x == Normalize(units, "NFC")
@@ -9724,12 +10346,17 @@ ReplaceAt(s, units, search, positions, replaceValue, endOfLastMatch, acc) ==
        IN IF IsAbrupt(replacement) THEN replacement
           ELSE ReplaceAt(replacement.s, units, search, Tail(positions), replaceValue, p + Len(search),
                          acc \o SubSeq(units, endOfLastMatch + 1, p) \o Val(replacement).value)
+\* The most code units of a string that a replacement builds, past which tla-ts can't hold the
+\* string in the default heap, well short of V8's limit of 2^29 - 24, past which Node throws a
+\* RangeError: a template of n captures makes n copies of a long capture at once.
 \* GetSubstitution (§22.1.3.19.1) over the rest of the template, appending to acc. captures holds
 \* String values or Undefined, and namedCaptures is an object or Undefined.
 GetSubstitution(s, matched, str, position, captures, namedCaptures, rest, acc) ==
   IF rest = <<>> THEN Ok(s, Str(acc))
   ELSE LET Next(n, replacement) ==
-             GetSubstitution(s, matched, str, position, captures, namedCaptures, SubSeq(rest, n + 1, Len(rest)), acc \o replacement)
+             IF Len(acc) + Len(replacement) > SubstitutionUnitsLimit
+             THEN Unsupported(s, N("Unsupported: a replacement longer than tla-ts holds"))
+             ELSE GetSubstitution(s, matched, str, position, captures, namedCaptures, SubSeq(rest, n + 1, Len(rest)), acc \o replacement)
            c == IF Len(rest) >= 2 /\ rest[1] = 36 THEN rest[2] ELSE 0
        IN CASE c = 36 -> Next(2, <<36>>)
             [] c = 96 -> Next(2, SubSeq(str, 1, position))
@@ -9906,12 +10533,13 @@ IsCasedAfter(cps, i) ==
 ArrayBuiltin(s, f, m, this, args, nt) ==
   CASE m = "constructor" -> ArrayConstructor(s, f, args, nt)
     [] m = "from" -> ArrayFrom(s, this, Arg(args, 1), Arg(args, 2), Arg(args, 3))
-    \* Array.fromAsync (§23.1.2.2) is a built-in async function: its closure runs as an async
-    \* function's body would, settling a new promise.
-    [] m = "fromAsync" ->
-         LET cap == NewPromiseCapability(s, Intrinsic(s, "Promise"))
-             settled == AsyncFunctionStep(Val(cap), ArrayFromAsync(cap.s, this, Arg(args, 1), Arg(args, 2), Arg(args, 3)))
-         IN Ok(settled.s, Val(cap).promise)
+    [] m = "fromAsync" -> ArrayFromAsync(s, this, Arg(args, 1), Arg(args, 2), Arg(args, 3))
+    \* The functions that go on with Array.fromAsync's steps where a value that it awaits settles.
+    [] m = "fromAsyncFulfilled" -> FromAsyncRun(SetSlots(s, O(s, f).slots.data, [awaited |-> Arg(args, 1)]), O(s, f).slots.data)
+    [] m = "fromAsyncRejected" ->
+         LET fa == O(s, f).slots.data IN
+         FromAsyncRun(SetSlots(s, fa, [step |-> IF Slots(s, fa).kind = "iterable" THEN "close" ELSE "reject",
+                                       error |-> Arg(args, 1)]), fa)
     [] m = "isArray" -> IsArray(s, Arg(args, 1))
     \* Array.of (§23.1.2.3).
     [] m = "of" ->
@@ -9996,67 +10624,105 @@ ArrayFromArrayLike(s, a, arrayLike, k, len, mapfn, thisArg) ==
        IF IsAbrupt(mapped) THEN mapped ELSE
        LET d == CreateDataPropertyOrThrow(mapped.s, a, Index(k), Val(mapped)) IN
        IF IsAbrupt(d) THEN d ELSE ArrayFromArrayLike(d.s, a, arrayLike, NumAdd(k, OneNum), len, mapfn, thisArg)
-\* The fromAsyncClosure of Array.fromAsync, which returns the array with a return completion.
+\* Array.fromAsync (§23.1.2.2), as V8 runs it (array-from-async.tq): a state machine in a cell,
+\* whose step runs until it awaits a value, through PromiseResolve and the functions that go on
+\* where the value settles, or settles the promise that it gives. Where a step throws or a value it
+\* awaits rejects, an iterator's return runs and its result is awaited before the promise rejects,
+\* even where next threw; where getting or calling return throws, the promise stays pending.
 ArrayFromAsync(s, c, items, mapper, thisArg) ==
+  LET cap == NewPromiseCapability(s, Intrinsic(s, "Promise"))
+      r == FromAsyncStart(cap.s, c, items, mapper, thisArg, Val(cap).promise)
+  IN IF IsAbrupt(r) THEN Ok(RejectPromise(r.s, Val(cap).promise, r.c.value), Val(cap).promise)
+     ELSE Ok(r.s, Val(cap).promise)
+FromAsyncStart(s, c, items, mapper, thisArg, promise) ==
   IF mapper # Undefined /\ ~IsCallable(s, mapper) THEN ThrowTypeError(s)
   ELSE LET usingAsync == GetMethod(s, items, SymAsyncIterator) IN
   IF IsAbrupt(usingAsync) THEN usingAsync
   ELSE LET usingSync == IF Val(usingAsync) # Undefined THEN Ok(usingAsync.s, Undefined) ELSE GetMethod(usingAsync.s, items, SymIterator) IN
   IF IsAbrupt(usingSync) THEN usingSync
-  ELSE IF Val(usingAsync) # Undefined \/ Val(usingSync) # Undefined THEN
+  ELSE LET base == [promise |-> promise, mapper |-> mapper, thisArg |-> thisArg, index |-> PosZero, awaited |-> Undefined,
+                    value |-> Undefined, mapped |-> Undefined, error |-> Undefined] IN
+  IF Val(usingAsync) # Undefined \/ Val(usingSync) # Undefined THEN
     LET it == IF Val(usingAsync) # Undefined THEN GetIteratorFromMethod(usingSync.s, items, Val(usingAsync))
               ELSE LET sync == GetIteratorFromMethod(usingSync.s, items, Val(usingSync)) IN
                    IF IsAbrupt(sync) THEN sync ELSE CreateAsyncFromSyncIterator(sync.s, Val(sync))
     IN IF IsAbrupt(it) THEN it ELSE
     LET a == IF IsConstructor(it.s, c) THEN Construct(it.s, c, <<>>, c) ELSE ArrayCreate(it.s, 0, Intrinsic(it.s, "ArrayPrototype")) IN
     IF IsAbrupt(a) THEN a
-    ELSE FromAsyncIterator(a.s, [a |-> Val(a), it |-> Val(it), mapper |-> mapper, thisArg |-> thisArg], PosZero)
+    ELSE FromAsyncBegin(a.s, base @@
+                             [kind |-> "iterable", step |-> "next", iterator |-> Val(it).iterator, next |-> Val(it).next, a |-> Val(a)])
   ELSE
-    LET arrayLike == ToObject(usingSync.s, items)
-        len == LengthOfArrayLike(arrayLike.s, Val(arrayLike))
-    IN IF IsAbrupt(len) THEN len ELSE
+    LET arrayLike == ToObject(usingSync.s, items) IN IF IsAbrupt(arrayLike) THEN arrayLike ELSE
+    LET len == LengthOfArrayLike(arrayLike.s, Val(arrayLike)) IN IF IsAbrupt(len) THEN len ELSE
     LET a == IF IsConstructor(len.s, c) THEN Construct(len.s, c, <<Val(len)>>, c) ELSE ArrayCreateLength(len.s, Val(len).value) IN
     IF IsAbrupt(a) THEN a
-    ELSE FromAsyncArrayLike(a.s, [a |-> Val(a), arrayLike |-> Val(arrayLike), len |-> Val(len).value, mapper |-> mapper, thisArg |-> thisArg], PosZero)
-FromAsyncReturn(s, a, len) == LET l == SetLength(s, a, len, a) IN IF IsAbrupt(l) THEN l ELSE Abrupt(l.s, Completion("return", a, Empty))
-\* The loop of the fromAsyncClosure over iterator st.it, from index k.
-FromAsyncIterator(s, st, k) ==
-  IF ~NumLess(k, MaxSafeInteger) THEN LET e == ThrowTypeError(s) IN AsyncIteratorClose(e.s, st.it, e.c)
-  ELSE LET next == Call(s, st.it.next, st.it.iterator, <<>>) IN
-       FromAsyncNextThen(st, k, IF IsAbrupt(next) THEN next ELSE Await(next.s, Val(next)))
-FromAsyncNextThen(st, k, r) ==
-  IF IsSuspended(r) THEN Pass(r, "FromAsyncNextThen", <<st, k>>) ELSE
-  IF IsAbrupt(r) THEN r
-  ELSE IF ~IsObject(Val(r)) THEN ThrowTypeError(r.s)
-  ELSE LET done == IteratorComplete(r.s, Val(r)) IN IF IsAbrupt(done) THEN done
-  ELSE IF Val(done) THEN FromAsyncReturn(done.s, st.a, k)
-  ELSE LET v == Get(done.s, Val(r), SV("value")) IN IF IsAbrupt(v) THEN v
-  ELSE IF st.mapper = Undefined THEN FromAsyncDefineThen(st, k, v)
-  ELSE LET mapped == Call(v.s, st.mapper, st.thisArg, <<Val(v), Num(k)>>) IN
-       IF IsAbrupt(mapped) THEN AsyncIteratorClose(mapped.s, st.it, mapped.c)
-       ELSE FromAsyncMappedThen(st, k, Await(mapped.s, Val(mapped)))
-FromAsyncMappedThen(st, k, r) ==
-  IF IsSuspended(r) THEN Pass(r, "FromAsyncMappedThen", <<st, k>>) ELSE IF IsAbrupt(r) THEN AsyncIteratorClose(r.s, st.it, r.c) ELSE FromAsyncDefineThen(st, k, r)
-FromAsyncDefineThen(st, k, r) ==
-  IF IsSuspended(r) THEN Pass(r, "FromAsyncDefineThen", <<st, k>>) ELSE
-  LET d == CreateDataPropertyOrThrow(r.s, st.a, Index(k), Val(r)) IN
-  IF IsAbrupt(d) THEN AsyncIteratorClose(d.s, st.it, d.c) ELSE FromAsyncIterator(d.s, st, NumAdd(k, OneNum))
-\* The loop of the fromAsyncClosure over the array-like st.arrayLike, from index k.
-FromAsyncArrayLike(s, st, k) ==
-  IF ~NumLess(k, st.len) THEN FromAsyncReturn(s, st.a, st.len)
-  ELSE LET v == Get(s, st.arrayLike, Index(k)) IN
-       FromAsyncValueThen(st, k, IF IsAbrupt(v) THEN v ELSE Await(v.s, Val(v)))
-FromAsyncValueThen(st, k, r) ==
-  IF IsSuspended(r) THEN Pass(r, "FromAsyncValueThen", <<st, k>>) ELSE
-  IF IsAbrupt(r) THEN r
-  ELSE IF st.mapper = Undefined THEN FromAsyncStoreThen(st, k, r)
-  ELSE LET mapped == Call(r.s, st.mapper, st.thisArg, <<Val(r), Num(k)>>) IN
-       FromAsyncStoreThen(st, k, IF IsAbrupt(mapped) THEN mapped ELSE Await(mapped.s, Val(mapped)))
-FromAsyncStoreThen(st, k, r) ==
-  IF IsSuspended(r) THEN Pass(r, "FromAsyncStoreThen", <<st, k>>) ELSE
-  IF IsAbrupt(r) THEN r
-  ELSE LET d == CreateDataPropertyOrThrow(r.s, st.a, Index(k), Val(r)) IN
-       IF IsAbrupt(d) THEN d ELSE FromAsyncArrayLike(d.s, st, NumAdd(k, OneNum))
+    ELSE FromAsyncBegin(a.s, base @@ [kind |-> "arrayLike", step |-> "get", arrayLike |-> Val(arrayLike),
+                                       len |-> Val(len).value, a |-> Val(a)])
+FromAsyncBegin(s, slots) ==
+  LET cell == AllocCell(s, slots)
+      fulfilled == CreateBuiltinFunction(cell.s, <<"Array", "fromAsyncFulfilled">>, 1, <<>>, cell.v)
+      rejected == CreateBuiltinFunction(fulfilled.s, <<"Array", "fromAsyncRejected">>, 1, <<>>, cell.v)
+  IN FromAsyncRun(SetSlots(rejected.s, cell.v, [onFulfilled |-> Val(fulfilled), onRejected |-> Val(rejected)]), cell.v)
+\* Runs the steps of the machine fa from its step, where a throw closes its iterator.
+FromAsyncRun(s, fa) ==
+  LET r == FromAsyncSteps(s, fa) IN
+  IF ~IsAbrupt(r) THEN r
+  ELSE LET s1 == SetSlots(r.s, fa, [error |-> r.c.value]) IN
+       IF Slots(s1, fa).kind = "arrayLike" THEN Ok(RejectPromise(s1, Slots(s1, fa).promise, r.c.value), Undefined)
+       ELSE LET closed == FromAsyncClose(s1, fa) IN
+            IF closed.reject THEN Ok(RejectPromise(closed.s, Slots(closed.s, fa).promise, r.c.value), Undefined)
+            ELSE Ok(closed.s, Undefined)
+\* Awaits value: the machine goes on at step where it settles.
+FromAsyncAwait(s, fa, step, value) ==
+  LET s1 == SetSlots(s, fa, [step |-> step])
+      p == PromiseResolve(s1, Intrinsic(s1, "Promise"), value)
+  IN IF IsAbrupt(p) THEN p
+     ELSE LET t == AddPromiseReactions(p.s, Val(p), Slots(p.s, fa).onFulfilled, Slots(p.s, fa).onRejected, Empty) IN
+          Ok(t.s, Undefined)
+\* The iterator's return, whose result the machine awaits with step "reject": reject is whether the
+\* promise rejects now, as where the iterator has none. A throw is swallowed.
+FromAsyncClose(s, fa) ==
+  LET it == Slots(s, fa).iterator
+      method == Get(s, it, SV("return"))
+  IN IF IsAbrupt(method) THEN [s |-> method.s, reject |-> FALSE]
+     ELSE IF Val(method) \in {Undefined, Null} THEN [s |-> method.s, reject |-> TRUE]
+     ELSE LET inner == Call(method.s, Val(method), it, <<>>) IN
+          IF IsAbrupt(inner) THEN [s |-> inner.s, reject |-> FALSE]
+          ELSE [s |-> FromAsyncAwait(inner.s, fa, "reject", Val(inner)).s, reject |-> FALSE]
+FromAsyncSteps(s, fa) ==
+  LET st == Slots(s, fa) IN
+  CASE st.step = "next" ->
+         LET next == Call(s, st.next, st.iterator, <<>>) IN
+         IF IsAbrupt(next) THEN next ELSE FromAsyncAwait(next.s, fa, "check", Val(next))
+    [] st.step = "check" ->
+         IF ~IsObject(st.awaited) THEN ThrowTypeError(s) ELSE
+         LET done == IteratorComplete(s, st.awaited) IN IF IsAbrupt(done) THEN done
+         ELSE IF Val(done) THEN FromAsyncSteps(SetSlots(done.s, fa, [step |-> "done"]), fa)
+         ELSE LET v == Get(done.s, st.awaited, SV("value")) IN IF IsAbrupt(v) THEN v
+         ELSE IF st.mapper # Undefined THEN FromAsyncSteps(SetSlots(v.s, fa, [step |-> "map", value |-> Val(v)]), fa)
+         ELSE FromAsyncSteps(SetSlots(v.s, fa, [step |-> "add", mapped |-> Val(v)]), fa)
+    [] st.step = "map" ->
+         LET r == Call(s, st.mapper, st.thisArg, <<st.value, Num(st.index)>>) IN
+         IF IsAbrupt(r) THEN r ELSE FromAsyncAwait(r.s, fa, "mapped", Val(r))
+    [] st.step = "mapped" -> FromAsyncSteps(SetSlots(s, fa, [step |-> "add", mapped |-> st.awaited]), fa)
+    [] st.step = "add" ->
+         LET d == CreateDataPropertyOrThrow(s, st.a, Index(st.index), st.mapped) IN IF IsAbrupt(d) THEN d
+         ELSE FromAsyncSteps(SetSlots(d.s, fa, [step |-> IF st.kind = "iterable" THEN "next" ELSE "get",
+                                                index |-> NumAdd(st.index, OneNum)]), fa)
+    [] st.step = "get" ->
+         IF ~NumLess(st.index, st.len) THEN FromAsyncSteps(SetSlots(s, fa, [step |-> "done"]), fa)
+         ELSE LET v == Get(s, st.arrayLike, Index(st.index)) IN IF IsAbrupt(v) THEN v ELSE FromAsyncAwait(v.s, fa, "value", Val(v))
+    [] st.step = "value" ->
+         IF st.mapper = Undefined THEN FromAsyncSteps(SetSlots(s, fa, [step |-> "add", mapped |-> st.awaited]), fa)
+         ELSE LET r == Call(s, st.mapper, st.thisArg, <<st.awaited, Num(st.index)>>) IN
+              IF IsAbrupt(r) THEN r ELSE FromAsyncAwait(r.s, fa, "mapped", Val(r))
+    [] st.step = "done" ->
+         LET l == Set(s, st.a, SV("length"), Num(st.index), TRUE) IN IF IsAbrupt(l) THEN l
+         ELSE ResolvePromiseWith(l.s, st.promise, st.a)
+    [] st.step = "close" ->
+         LET closed == FromAsyncClose(SetSlots(s, fa, [step |-> "reject"]), fa) IN
+         IF closed.reject THEN FromAsyncSteps(closed.s, fa) ELSE Ok(closed.s, Undefined)
+    [] st.step = "reject" -> Ok(RejectPromise(s, st.promise, st.error), Undefined)
 \* ArraySpeciesCreate (§10.4.2.3). This port has one realm, so step 5's realm check never applies.
 ArraySpeciesCreate(s, o, length) ==
   LET len == NumAdd(length, PosZero)
@@ -10174,7 +10840,7 @@ ArrayMethod(s, o, len, m, args) ==
     \* Array.prototype.join (§23.1.3.18).
     [] m = "join" ->
          LET sep == IF Arg(args, 1) = Undefined THEN Ok(s, SV(",")) ELSE ToStr(s, Arg(args, 1)) IN
-         IF IsAbrupt(sep) THEN sep ELSE JoinFrom(sep.s, o, len, PosZero, Val(sep).value, <<>>, FALSE)
+         IF IsAbrupt(sep) THEN sep ELSE JoinFrom(sep.s, o, len, PosZero, Val(sep).value, <<>>, Empty)
     \* Array.prototype.lastIndexOf (§23.1.3.20).
     [] m = "lastIndexOf" ->
          IF NumIsZero(len) THEN Ok(s, IntV(-1))
@@ -10267,8 +10933,8 @@ ArrayMethod(s, o, len, m, args) ==
                  [] OTHER -> Ok(al.s, o)
          IN IF IsAbrupt(moved) THEN moved ELSE
             LET w == SetElements(moved.s, o, items, start) IN IF IsAbrupt(w) THEN w ELSE SetLength(w.s, o, newLen, Val(a))
-    \* Array.prototype.toLocaleString (§23.1.3.32), with "," as the list separator.
-    [] m = "toLocaleString" -> JoinFrom(s, o, len, PosZero, N(","), <<>>, TRUE)
+    \* Array.prototype.toLocaleString (§23.1.3.32, ECMA-402 §19.5.1), with "," as the list separator.
+    [] m = "toLocaleString" -> JoinFrom(s, o, len, PosZero, N(","), <<>>, LocaleArguments(args))
     \* Array.prototype.toReversed (§23.1.3.33).
     [] m = "toReversed" ->
          LET a == ArrayCreateLength(s, len) IN IF IsAbrupt(a) THEN a ELSE
@@ -10323,8 +10989,13 @@ ReadThrough(s, o, k, count, dir, acc) ==
   IF ~NumLess(PosZero, count) THEN Ok(s, acc)
   ELSE LET v == Get(s, o, Index(k)) IN
        IF IsAbrupt(v) THEN v ELSE ReadThrough(v.s, o, NumAdd(k, NumFromInt(dir)), NumSub(count, OneNum), dir, Append(acc, Val(v)))
+\* More than 64 indices fill in halves, so that thousands of them nest log n deep rather than n.
 FillFrom(s, o, k, final, value) ==
   IF ~NumLess(k, final) THEN Ok(s, o)
+  ELSE IF NumFitsInt(final) /\ NumToInt(final) - NumToInt(k) > 64 THEN
+       LET middle == NumFromInt((NumToInt(k) + NumToInt(final)) \div 2)
+           first == FillFrom(s, o, k, middle, value)
+       IN IF IsAbrupt(first) THEN first ELSE FillFrom(first.s, o, middle, final, value)
   ELSE LET w == Set(s, o, Index(k), value, TRUE) IN
        IF IsAbrupt(w) THEN w ELSE FillFrom(w.s, o, NumAdd(k, OneNum), final, value)
 \* Array.prototype.includes's loop. An index no object has reads as undefined, so the loop
@@ -10336,16 +11007,25 @@ IncludesFrom(s, o, k, len, target) ==
   ELSE LET v == Get(s, o, Index(k)) IN IF IsAbrupt(v) THEN v
   ELSE IF SameValueZero(target, Val(v)) THEN Ok(v.s, True)
   ELSE IncludesFrom(v.s, o, NumAdd(k, OneNum), len, target)
-\* JoinIndexedProperties: the loop of Array.prototype.join, or of toLocaleString when isLocale.
-JoinFrom(s, o, len, k, sep, acc, isLocale) ==
+\* The arguments that toLocaleString passes each element's: ECMA-402's locales and options where
+\* the host has Intl, else none.
+LocaleArguments(args) == IF HostIntl(<<"none">>).found = "none" THEN <<>> ELSE <<Arg(args, 1), Arg(args, 2)>>
+\* JoinIndexedProperties: the loop of Array.prototype.join, or of toLocaleString, which passes each
+\* element's toLocaleString the arguments locale, where they aren't Empty. More than 64 elements
+\* join in halves, so that thousands of them nest log n deep rather than n.
+JoinFrom(s, o, len, k, sep, acc, locale) ==
   IF ~NumLess(k, len) THEN Ok(s, Str(acc))
+  ELSE IF NumFitsInt(len) /\ NumToInt(len) - NumToInt(k) > 64 THEN
+       LET middle == NumFromInt((NumToInt(k) + NumToInt(len)) \div 2)
+           first == JoinFrom(s, o, middle, k, sep, acc, locale)
+       IN IF IsAbrupt(first) THEN first ELSE JoinFrom(first.s, o, len, middle, sep, Val(first).value, locale)
   ELSE LET e == Get(s, o, Index(k)) IN IF IsAbrupt(e) THEN e ELSE
        LET next == IF IsNullish(Val(e)) THEN Ok(e.s, EmptyStr)
-                   ELSE IF ~isLocale THEN ToStr(e.s, Val(e))
-                   ELSE LET r == Invoke(e.s, Val(e), SV("toLocaleString"), <<>>) IN IF IsAbrupt(r) THEN r ELSE ToStr(r.s, Val(r))
+                   ELSE IF locale = Empty THEN ToStr(e.s, Val(e))
+                   ELSE LET r == Invoke(e.s, Val(e), SV("toLocaleString"), locale) IN IF IsAbrupt(r) THEN r ELSE ToStr(r.s, Val(r))
        IN IF IsAbrupt(next) THEN next
           ELSE JoinFrom(next.s, o, len, NumAdd(k, OneNum), sep,
-                        (IF NumIsZero(k) THEN acc ELSE acc \o sep) \o Val(next).value, isLocale)
+                        (IF NumIsZero(k) THEN acc ELSE acc \o sep) \o Val(next).value, locale)
 \* FindViaPredicate (§23.1.3.12.1), returning [index, value].
 FindViaPredicate(s, o, len, dir, predicate, thisArg) ==
   IF ~IsCallable(s, predicate) THEN ThrowTypeError(s)
@@ -10396,22 +11076,221 @@ SortIndexedProperties(s, o, len, comparefn, skipHoles) ==
   LET items == IF ~skipHoles THEN ReadThrough(s, o, PosZero, len, 1, <<>>)
                ELSE LET r == VisitPresent(s, o, PosZero, len, 1, "collect", [items |-> <<>>]) IN
                     IF IsAbrupt(r) THEN r ELSE Ok(r.s, Val(r).st.items)
-  IN IF IsAbrupt(items) THEN items ELSE MergeSort(items.s, Val(items), comparefn)
-\* The sort itself is implementation-defined; this one is a stable merge sort.
-MergeSort(s, items, comparefn) ==
-  IF Len(items) <= 1 THEN Ok(s, items)
-  ELSE LET half == Len(items) \div 2
-           left == MergeSort(s, SubSeq(items, 1, half), comparefn)
-       IN IF IsAbrupt(left) THEN left ELSE
-          LET right == MergeSort(left.s, SubSeq(items, half + 1, Len(items)), comparefn) IN
-          IF IsAbrupt(right) THEN right ELSE MergeSorted(right.s, Val(left), Val(right), comparefn, <<>>)
-MergeSorted(s, xs, ys, comparefn, acc) ==
-  IF xs = <<>> THEN Ok(s, acc \o ys)
-  ELSE IF ys = <<>> THEN Ok(s, acc \o xs)
-  ELSE LET c == CompareArrayElements(s, Head(ys), Head(xs), comparefn) IN
+  IN IF IsAbrupt(items) THEN items ELSE SortItems(items.s, Val(items), comparefn)
+\* The sort itself is implementation-defined; this one is V8's (array-sort.tq, after CPython's
+\* listsort), as Node 26 calls a comparator: it sorts the values other than undefined, and puts
+\* undefined after them. Fewer than 8 values it inserts each after the first by binary search; more
+\* it sorts by TimSort.
+SortItems(s, items, comparefn) ==
+  LET defined == SelectSeq(items, LAMBDA v : v # Undefined)
+      undefineds == [i \in 1..(Len(items) - Len(defined)) |-> Undefined]
+      sorted == CASE Len(defined) < 2 -> Ok(s, defined)
+                  [] Len(defined) < 8 -> TsInsertionSort(s, defined, comparefn, 0, 1, Len(defined))
+                  [] OTHER -> TsMain(s, comparefn, [w |-> defined, runs |-> <<>>, mg |-> 7], 0, Len(defined),
+                                     TsMinRun(Len(defined), 0))
+  IN IF IsAbrupt(sorted) THEN sorted ELSE Ok(sorted.s, Val(sorted) \o undefineds)
+\* TimSort's steps, on a work array w that they index from 0 as V8 does, with the pending runs, each
+\* [base, length], and minGallop, mg. TsLess is whether the comparator orders x before y.
+TsLess(s, x, y, f) ==
+  LET c == CompareArrayElements(s, x, y, f) IN IF IsAbrupt(c) THEN c ELSE Ok(c.s, NumLess(Val(c).value, PosZero))
+TsSet(w, i, v) == [w EXCEPT ![i + 1] = v]
+\* Copies count values of src from srcPos to dst at dstPos, as memmove does within one array.
+TsCopy(src, srcPos, dst, dstPos, count) ==
+  [j \in DOMAIN dst |-> IF j - 1 >= dstPos /\ j - 1 < dstPos + count THEN src[j - dstPos + srcPos] ELSE dst[j]]
+\* ComputeMinRunLength.
+TsMinRun(n, r) == IF n >= 64 THEN TsMinRun(n \div 2, IF n % 2 = 1 THEN 1 ELSE r) ELSE n + r
+\* BinaryInsertionSort of w from low to before high, whose values from low to before start are sorted.
+TsInsertionSort(s, w, f, low, start, high) ==
+  IF start >= high THEN Ok(s, w)
+  ELSE LET pivot == w[start + 1]
+           left == TsInsertionPlace(s, w, f, pivot, low, start)
+       IN IF IsAbrupt(left) THEN left
+          ELSE TsInsertionSort(left.s,
+                 [j \in DOMAIN w |-> IF j - 1 = Val(left) THEN pivot
+                                     ELSE IF j - 1 > Val(left) /\ j - 1 <= start THEN w[j - 1] ELSE w[j]],
+                 f, low, start + 1, high)
+TsInsertionPlace(s, w, f, pivot, left, right) ==
+  IF left >= right THEN Ok(s, left)
+  ELSE LET mid == left + (right - left) \div 2
+           c == TsLess(s, pivot, w[mid + 1], f)
+       IN IF IsAbrupt(c) THEN c
+          ELSE IF Val(c) THEN TsInsertionPlace(c.s, w, f, pivot, left, mid)
+          ELSE TsInsertionPlace(c.s, w, f, pivot, mid + 1, right)
+\* CountAndMakeRun from low to before high: [w, length], the run made ascending.
+TsCountRun(s, w, f, low, high) ==
+  IF low + 1 = high THEN Ok(s, [w |-> w, length |-> 1])
+  ELSE LET c == TsLess(s, w[low + 2], w[low + 1], f) IN
+       IF IsAbrupt(c) THEN c ELSE TsRunFrom(c.s, w, f, low, high, Val(c), low + 2)
+TsRunFrom(s, w, f, low, high, isDescending, idx) ==
+  IF idx >= high THEN Ok(s, TsRunMade(w, low, idx - low, isDescending))
+  ELSE LET c == TsLess(s, w[idx + 1], w[idx], f) IN
        IF IsAbrupt(c) THEN c
-       ELSE IF NumLess(Val(c).value, PosZero) THEN MergeSorted(c.s, xs, Tail(ys), comparefn, Append(acc, Head(ys)))
-       ELSE MergeSorted(c.s, Tail(xs), ys, comparefn, Append(acc, Head(xs)))
+       ELSE IF Val(c) = isDescending THEN TsRunFrom(c.s, w, f, low, high, isDescending, idx + 1)
+       ELSE Ok(c.s, TsRunMade(w, low, idx - low, isDescending))
+TsRunMade(w, low, length, isDescending) ==
+  [w |-> IF ~isDescending THEN w
+         ELSE [j \in DOMAIN w |-> IF j - 1 >= low /\ j - 1 < low + length THEN w[low + length - (j - 1 - low)] ELSE w[j]],
+   length |-> length]
+\* GallopLeft (~isRight) and GallopRight (isRight) of key in a from base, of length values, from hint.
+TsCompareAt(s, f, a, key, i, isRight) == IF isRight THEN TsLess(s, key, a[i + 1], f) ELSE TsLess(s, a[i + 1], key, f)
+TsGallop(s, f, a, key, base, length, hint, isRight) ==
+  LET first == TsCompareAt(s, f, a, key, base + hint, isRight) IN
+  IF IsAbrupt(first) THEN first
+  ELSE TsGallopOut(first.s, f, a, key, base, length, hint, isRight, Val(first) = isRight, 0, 1)
+\* The exponential search away from hint, toward lower offsets where goesLeft.
+TsGallopOut(s, f, a, key, base, length, hint, isRight, goesLeft, lastOfs, offset) ==
+  LET maxOfs == IF goesLeft THEN hint + 1 ELSE length - hint IN
+  IF offset >= maxOfs THEN TsGallopIn(s, f, a, key, base, isRight, TsGallopLow(hint, goesLeft, lastOfs, maxOfs),
+                                      TsGallopHigh(hint, goesLeft, lastOfs, maxOfs))
+  ELSE LET c == TsCompareAt(s, f, a, key, IF goesLeft THEN base + hint - offset ELSE base + hint + offset, isRight) IN
+       IF IsAbrupt(c) THEN c
+       ELSE IF (IF isRight THEN Val(c) # goesLeft ELSE Val(c) = goesLeft)
+       THEN TsGallopIn(c.s, f, a, key, base, isRight, TsGallopLow(hint, goesLeft, lastOfs, offset),
+                       TsGallopHigh(hint, goesLeft, lastOfs, offset))
+       ELSE TsGallopOut(c.s, f, a, key, base, length, hint, isRight, goesLeft, offset, 2 * offset + 1)
+TsGallopLow(hint, goesLeft, lastOfs, offset) == (IF goesLeft THEN hint - offset ELSE lastOfs + hint) + 1
+TsGallopHigh(hint, goesLeft, lastOfs, offset) == IF goesLeft THEN hint - lastOfs ELSE offset + hint
+\* The binary search between lo and hi.
+TsGallopIn(s, f, a, key, base, isRight, lo, hi) ==
+  IF lo >= hi THEN Ok(s, hi)
+  ELSE LET m == lo + (hi - lo) \div 2
+           c == TsCompareAt(s, f, a, key, base + m, isRight)
+       IN IF IsAbrupt(c) THEN c
+          ELSE IF Val(c) = isRight THEN TsGallopIn(c.s, f, a, key, base, isRight, lo, m)
+          ELSE TsGallopIn(c.s, f, a, key, base, isRight, m + 1, hi)
+\* MergeAt of the pending runs i and i + 1, from 0.
+TsMergeAt(s, f, st, i) ==
+  LET baseA0 == st.runs[i + 1].base
+      lengthA0 == st.runs[i + 1].length
+      baseB == st.runs[i + 2].base
+      lengthB0 == st.runs[i + 2].length
+      runs == SubSeq(st.runs, 1, i) \o <<[base |-> baseA0, length |-> lengthA0 + lengthB0]>> \o SubSeq(st.runs, i + 3, Len(st.runs))
+      k == TsGallop(s, f, st.w, st.w[baseB + 1], baseA0, lengthA0, 0, TRUE)
+  IN IF IsAbrupt(k) THEN k ELSE
+     LET baseA == baseA0 + Val(k)
+         lengthA == lengthA0 - Val(k)
+     IN IF lengthA = 0 THEN Ok(k.s, [st EXCEPT !.runs = runs]) ELSE
+     LET lengthB == TsGallop(k.s, f, st.w, st.w[baseA + lengthA], baseB, lengthB0, lengthB0 - 1, FALSE) IN
+     IF IsAbrupt(lengthB) THEN lengthB
+     ELSE IF Val(lengthB) = 0 THEN Ok(lengthB.s, [st EXCEPT !.runs = runs]) ELSE
+     LET merged == IF lengthA <= Val(lengthB) THEN TsMergeLow(lengthB.s, f, st.w, st.mg, baseA, lengthA, baseB, Val(lengthB))
+                   ELSE TsMergeHigh(lengthB.s, f, st.w, st.mg, baseA, lengthA, baseB, Val(lengthB))
+     IN IF IsAbrupt(merged) THEN merged ELSE Ok(merged.s, [w |-> Val(merged).w, runs |-> runs, mg |-> Val(merged).mg])
+\* MergeLow: a merge state of w, the copy temp of run A, the cursors dest, ct into temp, and cb, the
+\* lengths la and lb left, the minGallop that the sort state holds, mg, and the merge's own, lmg.
+TsMergeLow(s, f, w, mg, baseA, lengthA, baseB, lengthB) ==
+  LET m == [w |-> TsSet(w, baseA, w[baseB + 1]), temp |-> SubSeq(w, baseA + 1, baseA + lengthA), dest |-> baseA + 1,
+            ct |-> 0, cb |-> baseB + 1, la |-> lengthA, lb |-> lengthB - 1, mg |-> mg, lmg |-> mg]
+  IN IF m.lb = 0 THEN Ok(s, TsLowSucceed(m)) ELSE IF m.la = 1 THEN Ok(s, TsLowCopyB(m)) ELSE TsLowOne(s, f, m, 0, 0)
+TsLowSucceed(m) == [w |-> IF m.la > 0 THEN TsCopy(m.temp, m.ct, m.w, m.dest, m.la) ELSE m.w, mg |-> m.mg]
+TsLowCopyB(m) == [w |-> TsSet(TsCopy(m.w, m.cb, m.w, m.dest, m.lb), m.dest + m.lb, m.temp[m.ct + 1]), mg |-> m.mg]
+TsLowFromB(m) == [m EXCEPT !.w = TsSet(m.w, m.dest, m.w[m.cb + 1]), !.dest = @ + 1, !.cb = @ + 1, !.lb = @ - 1]
+TsLowFromA(m) == [m EXCEPT !.w = TsSet(m.w, m.dest, m.temp[m.ct + 1]), !.dest = @ + 1, !.ct = @ + 1, !.la = @ - 1]
+\* One pair at a time, until one run wins lmg times in a row.
+TsLowOne(s, f, m, winsA, winsB) ==
+  LET c == TsLess(s, m.w[m.cb + 1], m.temp[m.ct + 1], f) IN
+  IF IsAbrupt(c) THEN c
+  ELSE IF Val(c) THEN
+    LET n == TsLowFromB(m) IN
+    IF n.lb = 0 THEN Ok(c.s, TsLowSucceed(n))
+    ELSE IF winsB + 1 >= n.lmg THEN TsLowGallop(c.s, f, [n EXCEPT !.lmg = @ + 1], 0, winsB + 1, TRUE)
+    ELSE TsLowOne(c.s, f, n, 0, winsB + 1)
+  ELSE
+    LET n == TsLowFromA(m) IN
+    IF n.la = 1 THEN Ok(c.s, TsLowCopyB(n))
+    ELSE IF winsA + 1 >= n.lmg THEN TsLowGallop(c.s, f, [n EXCEPT !.lmg = @ + 1], winsA + 1, 0, TRUE)
+    ELSE TsLowOne(c.s, f, n, winsA + 1, 0)
+\* Galloping, while either run wins at least kMinGallopWins (7) at once.
+TsLowGallop(s, f, m, winsA, winsB, isFirst) ==
+  IF ~(winsA >= 7 \/ winsB >= 7 \/ isFirst) THEN TsLowOne(s, f, [m EXCEPT !.lmg = @ + 1, !.mg = m.lmg + 1], 0, 0) ELSE
+  LET m1 == [m EXCEPT !.lmg = IF m.lmg - 1 < 1 THEN 1 ELSE m.lmg - 1, !.mg = IF m.lmg - 1 < 1 THEN 1 ELSE m.lmg - 1]
+      ka == TsGallop(s, f, m1.temp, m1.w[m1.cb + 1], m1.ct, m1.la, 0, TRUE)
+  IN IF IsAbrupt(ka) THEN ka ELSE
+  LET a == Val(ka)
+      m2 == IF a > 0 THEN [m1 EXCEPT !.w = TsCopy(m1.temp, m1.ct, m1.w, m1.dest, a), !.dest = @ + a, !.ct = @ + a, !.la = @ - a] ELSE m1
+  IN IF a > 0 /\ m2.la = 1 THEN Ok(ka.s, TsLowCopyB(m2))
+     ELSE IF a > 0 /\ m2.la = 0 THEN Ok(ka.s, TsLowSucceed(m2)) ELSE
+     LET m3 == TsLowFromB(m2) IN
+     IF m3.lb = 0 THEN Ok(ka.s, TsLowSucceed(m3)) ELSE
+     LET kb == TsGallop(ka.s, f, m3.w, m3.temp[m3.ct + 1], m3.cb, m3.lb, 0, FALSE) IN
+     IF IsAbrupt(kb) THEN kb ELSE
+     LET b == Val(kb)
+         m4 == IF b > 0 THEN [m3 EXCEPT !.w = TsCopy(m3.w, m3.cb, m3.w, m3.dest, b), !.dest = @ + b, !.cb = @ + b, !.lb = @ - b] ELSE m3
+     IN IF b > 0 /\ m4.lb = 0 THEN Ok(kb.s, TsLowSucceed(m4)) ELSE
+     LET m5 == TsLowFromA(m4) IN
+     IF m5.la = 1 THEN Ok(kb.s, TsLowCopyB(m5)) ELSE TsLowGallop(kb.s, f, m5, a, b, FALSE)
+\* MergeHigh, from the ends of the runs: temp is the copy of run B, and ca the cursor into run A.
+TsMergeHigh(s, f, w, mg, baseA, lengthA, baseB, lengthB) ==
+  LET m == [w |-> TsSet(w, baseB + lengthB - 1, w[baseA + lengthA]), temp |-> SubSeq(w, baseB + 1, baseB + lengthB),
+            dest |-> baseB + lengthB - 2, ct |-> lengthB - 1, ca |-> baseA + lengthA - 2, la |-> lengthA - 1,
+            lb |-> lengthB, mg |-> mg, lmg |-> mg, baseA |-> baseA]
+  IN IF m.la = 0 THEN Ok(s, TsHighSucceed(m)) ELSE IF m.lb = 1 THEN Ok(s, TsHighCopyA(m)) ELSE TsHighOne(s, f, m, 0, 0)
+TsHighSucceed(m) == [w |-> IF m.lb > 0 THEN TsCopy(m.temp, 0, m.w, m.dest - (m.lb - 1), m.lb) ELSE m.w, mg |-> m.mg]
+TsHighCopyA(m) ==
+  [w |-> TsSet(TsCopy(m.w, m.ca - m.la + 1, m.w, m.dest - m.la + 1, m.la), m.dest - m.la, m.temp[m.ct + 1]), mg |-> m.mg]
+TsHighFromA(m) == [m EXCEPT !.w = TsSet(m.w, m.dest, m.w[m.ca + 1]), !.dest = @ - 1, !.ca = @ - 1, !.la = @ - 1]
+TsHighFromB(m) == [m EXCEPT !.w = TsSet(m.w, m.dest, m.temp[m.ct + 1]), !.dest = @ - 1, !.ct = @ - 1, !.lb = @ - 1]
+TsHighOne(s, f, m, winsA, winsB) ==
+  LET c == TsLess(s, m.temp[m.ct + 1], m.w[m.ca + 1], f) IN
+  IF IsAbrupt(c) THEN c
+  ELSE IF Val(c) THEN
+    LET n == TsHighFromA(m) IN
+    IF n.la = 0 THEN Ok(c.s, TsHighSucceed(n))
+    ELSE IF winsA + 1 >= n.lmg THEN TsHighGallop(c.s, f, [n EXCEPT !.lmg = @ + 1], winsA + 1, 0, TRUE)
+    ELSE TsHighOne(c.s, f, n, winsA + 1, 0)
+  ELSE
+    LET n == TsHighFromB(m) IN
+    IF n.lb = 1 THEN Ok(c.s, TsHighCopyA(n))
+    ELSE IF winsB + 1 >= n.lmg THEN TsHighGallop(c.s, f, [n EXCEPT !.lmg = @ + 1], 0, winsB + 1, TRUE)
+    ELSE TsHighOne(c.s, f, n, 0, winsB + 1)
+TsHighGallop(s, f, m, winsA, winsB, isFirst) ==
+  IF ~(winsA >= 7 \/ winsB >= 7 \/ isFirst) THEN TsHighOne(s, f, [m EXCEPT !.lmg = @ + 1, !.mg = m.lmg + 1], 0, 0) ELSE
+  LET m1 == [m EXCEPT !.lmg = IF m.lmg - 1 < 1 THEN 1 ELSE m.lmg - 1, !.mg = IF m.lmg - 1 < 1 THEN 1 ELSE m.lmg - 1]
+      kr == TsGallop(s, f, m1.w, m1.temp[m1.ct + 1], m1.baseA, m1.la, m1.la - 1, TRUE)
+  IN IF IsAbrupt(kr) THEN kr ELSE
+  LET a == m1.la - Val(kr)
+      m2 == IF a > 0 THEN [m1 EXCEPT !.w = TsCopy(m1.w, m1.ca - a + 1, m1.w, m1.dest - a + 1, a), !.dest = @ - a,
+                                     !.ca = @ - a, !.la = @ - a] ELSE m1
+  IN IF a > 0 /\ m2.la = 0 THEN Ok(kr.s, TsHighSucceed(m2)) ELSE
+     LET m3 == TsHighFromB(m2) IN
+     IF m3.lb = 1 THEN Ok(kr.s, TsHighCopyA(m3)) ELSE
+     LET kl == TsGallop(kr.s, f, m3.temp, m3.w[m3.ca + 1], 0, m3.lb, m3.lb - 1, FALSE) IN
+     IF IsAbrupt(kl) THEN kl ELSE
+     LET b == m3.lb - Val(kl)
+         m4 == IF b > 0 THEN [m3 EXCEPT !.w = TsCopy(m3.temp, m3.ct - b + 1, m3.w, m3.dest - b + 1, b), !.dest = @ - b,
+                                        !.ct = @ - b, !.lb = @ - b] ELSE m3
+     IN IF b > 0 /\ m4.lb = 1 THEN Ok(kl.s, TsHighCopyA(m4))
+        ELSE IF b > 0 /\ m4.lb = 0 THEN Ok(kl.s, TsHighSucceed(m4)) ELSE
+        LET m5 == TsHighFromA(m4) IN
+        IF m5.la = 0 THEN Ok(kl.s, TsHighSucceed(m5)) ELSE TsHighGallop(kl.s, f, m5, a, b, FALSE)
+\* MergeCollapse and MergeForceCollapse.
+TsRunLength(runs, i) == runs[i + 1].length
+TsInvariant(runs, n) == n < 2 \/ TsRunLength(runs, n - 2) > TsRunLength(runs, n - 1) + TsRunLength(runs, n)
+TsCollapse(s, f, st) ==
+  IF Len(st.runs) <= 1 THEN Ok(s, st) ELSE
+  LET n == Len(st.runs) - 2 IN
+  IF ~TsInvariant(st.runs, n + 1) \/ ~TsInvariant(st.runs, n) THEN
+    LET r == TsMergeAt(s, f, st, IF TsRunLength(st.runs, n - 1) < TsRunLength(st.runs, n + 1) THEN n - 1 ELSE n) IN
+    IF IsAbrupt(r) THEN r ELSE TsCollapse(r.s, f, Val(r))
+  ELSE IF TsRunLength(st.runs, n) <= TsRunLength(st.runs, n + 1) THEN
+    LET r == TsMergeAt(s, f, st, n) IN IF IsAbrupt(r) THEN r ELSE TsCollapse(r.s, f, Val(r))
+  ELSE Ok(s, st)
+TsForceCollapse(s, f, st) ==
+  IF Len(st.runs) <= 1 THEN Ok(s, st.w) ELSE
+  LET n == Len(st.runs) - 2
+      r == TsMergeAt(s, f, st, IF n > 0 /\ TsRunLength(st.runs, n - 1) < TsRunLength(st.runs, n + 1) THEN n - 1 ELSE n)
+  IN IF IsAbrupt(r) THEN r ELSE TsForceCollapse(r.s, f, Val(r))
+\* ArrayTimSortImpl from low, with remaining values left.
+TsMain(s, f, st, low, remaining, minRun) ==
+  IF remaining = 0 THEN TsForceCollapse(s, f, st) ELSE
+  LET run == TsCountRun(s, st.w, f, low, low + remaining) IN
+  IF IsAbrupt(run) THEN run ELSE
+  LET runLength == IF Val(run).length >= minRun THEN Val(run).length ELSE IF minRun < remaining THEN minRun ELSE remaining
+      extended == TsInsertionSort(run.s, Val(run).w, f, low, low + Val(run).length, low + runLength)
+  IN IF IsAbrupt(extended) THEN extended ELSE
+  LET collapsed == TsCollapse(extended.s, f, [st EXCEPT !.w = Val(extended), !.runs = Append(@, [base |-> low, length |-> runLength])]) IN
+  IF IsAbrupt(collapsed) THEN collapsed
+  ELSE TsMain(collapsed.s, f, Val(collapsed), low + runLength, remaining - runLength, minRun)
 \* CompareArrayElements (§23.1.3.30.2).
 CompareArrayElements(s, x, y, comparefn) ==
   CASE x = Undefined /\ y = Undefined -> Ok(s, IntV(0))
@@ -10479,9 +11358,14 @@ NearestIndexUnits(keys, kU, dir, best) ==
        IN NearestIndexUnits(Tail(keys), kU, dir, IF isNearer THEN key.value ELSE best)
 \* The loops that read the present indices from k toward bound in direction dir, as HasProperty
 \* and then Get. Each present value goes to the step of method m, which updates the loop's state
-\* st and may stop it. The result is [stop, st].
+\* st and may stop it. The result is [stop, st]. More than 64 indices run in halves, so that
+\* thousands of them nest log n deep rather than n.
 VisitPresent(s, o, k, bound, dir, m, st) ==
   IF ~IndexInRange(k, bound, dir) THEN Ok(s, [stop |-> FALSE, st |-> st])
+  ELSE IF NumFitsInt(k) /\ NumFitsInt(bound) /\ dir * (NumToInt(bound) - NumToInt(k)) > 64 THEN
+       LET middle == NumFromInt((NumToInt(k) + NumToInt(bound)) \div 2)
+           first == VisitPresent(s, o, k, middle, dir, m, st)
+       IN IF IsAbrupt(first) \/ Val(first).stop THEN first ELSE VisitPresent(first.s, o, middle, bound, dir, m, Val(first).st)
   ELSE LET i == IndexCandidate(s, o, k, bound, dir, FALSE) IN
   IF ~NumEqual(i, k) THEN VisitPresent(s, o, i, bound, dir, m, st)
   ELSE LET pk == Index(k)
@@ -10555,8 +11439,9 @@ DeleteIndices(s, o, k, bound, dir) ==
   IF ~NumEqual(i, k) THEN DeleteIndices(s, o, i, bound, dir)
   ELSE LET d == DeletePropertyOrThrow(s, o, Index(k)) IN
        IF IsAbrupt(d) THEN d ELSE DeleteIndices(d.s, o, NumAdd(k, NumFromInt(dir)), bound, dir)
-\* CreateArrayIterator (§23.1.5.1). The closure's state lives in the slots: the object iterated,
-\* the next index, the kind, and the generator state "suspended", "executing", or "completed".
+\* CreateArrayIterator (§23.1.5.1). The iterator's state lives in the slots: the object iterated,
+\* the next index, the kind, and whether it's done, as V8 keeps it (ArrayIteratorPrototypeNext),
+\* where the spec runs a generator's closure.
 CreateArrayIterator(s, array, kind) ==
   LET a == Alloc(s, MakeObject(Intrinsic(s, "ArrayIteratorPrototype"), "arrayIterator",
                                [iterated |-> array, next |-> PosZero, kind |-> kind, state |-> "suspended"]))
@@ -10565,30 +11450,26 @@ CreateArrayIterator(s, array, kind) ==
 ArrayIteratorNext(s, this) ==
   LET r == ArrayIteratorResume(s, this) IN
   IF IsAbrupt(r) THEN r ELSE CreateIterResultObject(r.s, Val(r).value, Val(r).done)
-\* GeneratorResume of the closure, which completes when it returns or throws, as [done, value]
-\* rather than the iterator result object, which IteratorStepValue need not allocate.
+\* A step of the iterator, as [done, value] rather than the iterator result object, which
+\* IteratorStepValue need not allocate. As V8's, it moves the next index on before it reads the
+\* value, and a throw leaves it as it was, where the spec's closure completes: as a typed array's
+\* bounds or an object's length throw, which a later step may read again.
 ArrayIteratorResume(s, this) ==
   IF ~IsObject(this) \/ O(s, this).class # "arrayIterator" THEN ThrowTypeError(s)
   ELSE LET slots == O(s, this).slots IN
-  IF slots.state = "executing" THEN ThrowTypeError(s)
-  ELSE IF slots.state = "completed" THEN Ok(s, [done |-> TRUE, value |-> Undefined])
-  ELSE LET r == ArrayIteratorStep(SetO(s, this, [O(s, this) EXCEPT !.slots.state = "executing"]), slots)
-           isDone == IsAbrupt(r) \/ Val(r) = Empty
-           s1 == SetO(r.s, this, [O(r.s, this) EXCEPT !.slots.state = IF isDone THEN "completed" ELSE "suspended",
-                                                     !.slots.next = IF isDone THEN @ ELSE NumAdd(@, OneNum)])
-       IN IF IsAbrupt(r) THEN Abrupt(s1, r.c)
-          ELSE Ok(s1, [done |-> isDone, value |-> IF isDone THEN Undefined ELSE Val(r)])
-\* One run of the closure of CreateArrayIterator: the value it yields, or Empty when it returns.
-ArrayIteratorStep(s, slots) ==
-  LET len == IF ~IsTypedArray(s, slots.iterated) THEN LengthOfArrayLike(s, slots.iterated)
-             ELSE LET bounds == ValidateTypedArrayBounds(s, slots.iterated) IN
-                  IF IsAbrupt(bounds) THEN bounds ELSE Ok(bounds.s, IntV(Val(bounds)))
+  IF slots.state = "completed" THEN Ok(s, [done |-> TRUE, value |-> Undefined])
+  ELSE LET len == IF ~IsTypedArray(s, slots.iterated) THEN LengthOfArrayLike(s, slots.iterated)
+                  ELSE LET bounds == ValidateTypedArrayBounds(s, slots.iterated) IN
+                       IF IsAbrupt(bounds) THEN bounds ELSE Ok(bounds.s, IntV(Val(bounds)))
   IN IF IsAbrupt(len) THEN len
-  ELSE IF ~NumLess(slots.next, Val(len).value) THEN Ok(len.s, Empty)
-  ELSE IF slots.kind = "key" THEN Ok(len.s, Num(slots.next))
-  ELSE LET v == Get(len.s, slots.iterated, Index(slots.next)) IN IF IsAbrupt(v) THEN v
-  ELSE IF slots.kind = "value" THEN v
-  ELSE CreateArrayFromList(v.s, <<Num(slots.next), Val(v)>>)
+  ELSE IF ~NumLess(slots.next, Val(len).value)
+  THEN Ok(SetO(len.s, this, [O(len.s, this) EXCEPT !.slots.state = "completed"]), [done |-> TRUE, value |-> Undefined])
+  ELSE LET moved == SetO(len.s, this, [O(len.s, this) EXCEPT !.slots.next = NumAdd(@, OneNum)]) IN
+  IF slots.kind = "key" THEN Ok(moved, [done |-> FALSE, value |-> Num(slots.next)])
+  ELSE LET v == Get(moved, slots.iterated, Index(slots.next)) IN
+  IF IsAbrupt(v) THEN v
+  ELSE IF slots.kind = "value" THEN Ok(v.s, [done |-> FALSE, value |-> Val(v)])
+  ELSE LET entry == CreateArrayFromList(v.s, <<Num(slots.next), Val(v)>>) IN Ok(entry.s, [done |-> FALSE, value |-> Val(entry)])
 ArrayIteratorBuiltin(s, f, m, this, args, nt) == ArrayIteratorNext(s, this)
 \* Proxy exotic objects (§10.5). A Proxy object has class "proxy" and slots:
 \*   target, handler  [[ProxyTarget]] and [[ProxyHandler]], both Null once revoked
@@ -11154,10 +12035,15 @@ AnyRestrictedGlobal(s, env, names) ==
   IF names = <<>> THEN Ok(s, FALSE)
   ELSE LET r == HasRestrictedGlobalProperty(s, env, Head(names)) IN
        IF IsAbrupt(r) THEN r ELSE IF Val(r) = True THEN Ok(r.s, TRUE) ELSE AnyRestrictedGlobal(r.s, env, Tail(names))
+\* Each of names in order, in halves, so that thousands of names nest log n deep rather than n.
 CheckGlobalNames(s, env, names, isFunction) ==
-  IF names = <<>> THEN Ok(s, Empty)
-  ELSE LET r == IF isFunction THEN CanDeclareGlobalFunction(s, env, Head(names)) ELSE CanDeclareGlobalVar(s, env, Head(names)) IN
-       IF IsAbrupt(r) THEN r ELSE IF Val(r) = False THEN ThrowTypeError(r.s) ELSE CheckGlobalNames(r.s, env, Tail(names), isFunction)
+  CASE names = <<>> -> Ok(s, Empty)
+    [] Len(names) = 1 ->
+         LET r == IF isFunction THEN CanDeclareGlobalFunction(s, env, names[1]) ELSE CanDeclareGlobalVar(s, env, names[1]) IN
+         IF IsAbrupt(r) THEN r ELSE IF Val(r) = False THEN ThrowTypeError(r.s) ELSE Ok(r.s, Empty)
+    [] OTHER ->
+         LET first == CheckGlobalNames(s, env, SubSeq(names, 1, Len(names) \div 2), isFunction) IN
+         IF IsAbrupt(first) THEN first ELSE CheckGlobalNames(first.s, env, SubSeq(names, Len(names) \div 2 + 1, Len(names)), isFunction)
 CreateGlobalLexicals(s, env, decls) ==
   IF decls = <<>> THEN Ok(s, Empty)
   ELSE LET r == CreateGlobalLexicalNames(s, env, BoundNames(Head(decls)), IsConstantDeclaration(Head(decls))) IN
@@ -11173,9 +12059,11 @@ CreateGlobalFunctions(s, ctx, env, fns) ==
            r == CreateGlobalFunctionBinding(fo.s, env, BoundNames(Head(fns))[1], Val(fo), FALSE)
        IN IF IsAbrupt(r) THEN r ELSE CreateGlobalFunctions(r.s, ctx, env, Tail(fns))
 CreateGlobalVars(s, env, names) ==
-  IF names = <<>> THEN Ok(s, Empty)
-  ELSE LET r == CreateGlobalVarBinding(s, env, Head(names), FALSE) IN
-       IF IsAbrupt(r) THEN r ELSE CreateGlobalVars(r.s, env, Tail(names))
+  CASE names = <<>> -> Ok(s, Empty)
+    [] Len(names) = 1 -> CreateGlobalVarBinding(s, env, names[1], FALSE)
+    [] OTHER ->
+         LET first == CreateGlobalVars(s, env, SubSeq(names, 1, Len(names) \div 2)) IN
+         IF IsAbrupt(first) THEN first ELSE CreateGlobalVars(first.s, env, SubSeq(names, Len(names) \div 2 + 1, Len(names)))
 \* Step 12 of GlobalDeclarationInstantiation and step 13 of EvalDeclarationInstantiation (§B.3.2.2,
 \* §B.3.2.3): var bindings for the block functions fns that sloppy code hoists, which eval makes
 \* deletable. A binding between the code's lexical environment lex and its var environment keeps a
@@ -11232,9 +12120,54 @@ RunModuleFrom(harness, specifier, directory, canSuspend, parses) ==
   TestResult(IF IsAbrupt(harness) THEN harness
              ELSE RunModule([harness.s EXCEPT !.parses = parses, !.directory = directory, !.canSuspend = canSuspend],
                             specifier))
+\* The named time zone that the host has of a lowercase name (AvailableNamedTimeZoneIdentifiers,
+\* §11.1.2): an entry [found, id, primary, offsets, days, seconds, isFinal, rule], whose found is
+\* "zone", with its identifier and its primary identifier as code units, its offsets in seconds, the first before any transition,
+\* the epoch days and the seconds within the day of its transitions before 2038, whether it has no
+\* transition after them, and otherwise the rule of its later transitions: its standard and daylight
+\* offsets in seconds, and the month, week, weekday, and local time in seconds of the start and of
+\* the end of daylight time. Else found is "rejected" where the host has no such time zone, and
+\* "unknown" where it may have one that this table leaves out. engine262 has none but UTC.
+HostTimeZone(key) == [found |-> "rejected"]
+\* HostDateFormat(key): how the host's Intl formats a Temporal object's toLocaleString for a key of
+\* its kind, its calendar, and its options (DateFormatKey): found is "format", with the fields and
+\* styles of an English pattern and whether a time zone option leaves the pattern as it is, or
+\* "error", with the name of the error that it throws. Else found is "unknown" where the host's
+\* table leaves the key out, and "none" where the host has no Intl, as engine262 has none.
+HostDateFormat(key) == [found |-> "none"]
+\* HostLocale(tag): what the host's Intl gives of a locale tag's units. found is "locale", with its
+\* canonical form (CanonicalizeUnicodeLocaleId) and the services whose supportedLocalesOf support it
+\* with the lookup matcher and with the best fit one, and those where the two differ, which the
+\* table leaves out, or "invalid", where it isn't a structurally valid language tag. Else found is
+\* "unknown", as engine262 has no locale data.
+HostLocale(tag) == [found |-> "unknown"]
+\* HostCalendarYear(<<cal, year>>): a year of the Chinese or the Dangi calendar, which the host
+\* computes astronomically: found is "year", with the epoch days of its first day, the ordinal of
+\* its leap month or 0, and its months of 30 days as bits from the first month's. Else found is
+\* "unknown", where the host's table leaves the year out, as engine262 has no such calendar.
+HostCalendarYear(key) == [found |-> "unknown"]
+\* HostCalendarMonthDay(<<cal, month, leap, day>>): the month-day of the Chinese or the Dangi
+\* calendar of a month code's month and leap flag and a day from 1 to 30: found is "monthDay", with
+\* the epoch days of its ISO reference date and whether the month code and the day are kept, which
+\* they aren't where no year that the host searches has them. Else found is "unknown".
+HostCalendarMonthDay(key) == [found |-> "unknown"]
+\* HostIntl(<<service, config, method, args>>): what the host's Intl gives for a method of an object
+\* of a service whose requested locales and options config gives, with arguments args. found is
+\* "options", with the pairs of a property's units and its value that resolvedOptions gives, "parts",
+\* with the parts of a formatted value, each a sequence of a property's units and its value's, or
+\* "error", with the name of the error it throws. <<"currencyDigits", code>> gives "digits", with
+\* the digits of a currency. Else found is "unknown", where the host's table leaves the key out,
+\* and "none" where the host has no Intl, as engine262 has none.
+HostIntl(key) == [found |-> "none"]
+\* A run whose jobs leave a promise rejected that nothing handles fails with the promise's reason, as
+\* Node fails such a script (HostPromiseRejectionTracker, §27.2.1.9).
 TestResult(r) ==
-  LET thrown == IF r.c.type = "throw" THEN DescribeThrown(r.s, r.c.value) ELSE [name |-> <<>>, message |-> <<>>]
-  IN [ok |-> ~IsAbrupt(r), name |-> thrown.name, message |-> thrown.message, out |-> r.s.out]
+  LET rejected == {i \in 1..r.s.objs.size :
+                     LET o == HeapGet(r.s.objs, i) IN o.class = "promise" /\ o.slots.state = "rejected" /\ ~o.slots.isHandled}
+      ended == IF IsAbrupt(r) \/ rejected = {} THEN r
+               ELSE ThrowValue(r.s, HeapGet(r.s.objs, CHOOSE i \in rejected : \A j \in rejected : i <= j).slots.result)
+      thrown == IF ended.c.type = "throw" THEN DescribeThrown(ended.s, ended.c.value) ELSE [name |-> <<>>, message |-> <<>>]
+  IN [ok |-> ~IsAbrupt(ended), name |-> thrown.name, message |-> thrown.message, out |-> ended.s.out]
 \* Keyed collections (§24.1 to §24.4) and weak references (§26.1, §26.2). A [[MapData]] list
 \* holds [key, value] records and a [[SetData]] list holds values, in insertion order, with a
 \* deleted element replaced by Empty, so iteration during mutation sees what the spec says. The
@@ -12330,6 +13263,10 @@ BigIntBuiltin(s, f, m, this, args, nt) ==
          LET a == ToBigInt(bits.s, Arg(args, 2)) IN IF IsAbrupt(a) THEN a ELSE
          BigIntAsN(a.s, m, Val(bits).value, Val(a).value)
     [] m = "valueOf" -> ThisBigIntValue(s, this)
+    \* ECMA-402 §20.3.1, where the host has Intl.
+    [] m = "toLocaleString" /\ HostIntl(<<"none">>).found # "none" ->
+         LET b == ThisBigIntValue(s, this) IN IF IsAbrupt(b) THEN b
+         ELSE IntlToLocaleString(b.s, <<"bigint", BigIntToString(Val(b).value, 10)>>, Arg(args, 1), Arg(args, 2))
     \* toString and, as engine262 has it, toLocaleString.
     [] OTHER ->
          LET b == ThisBigIntValue(s, this) IN IF IsAbrupt(b) THEN b ELSE
@@ -12562,10 +13499,15 @@ ParseUTCStringDate(u) ==
             UnitAt(u, 12) = 32]
 \* The time value of a date string, or NaN when it has none of the formats above or a value out of
 \* range. 24:00 is the end of the day, so only with zero minutes, seconds, and milliseconds.
+\* V8 reads a string of toString's or toUTCString's format with its legacy parser, which reads the
+\* years 0 to 49 as 2000 to 2049, 50 to 99 as 1950 to 1999, and no negative year.
 ParseDate(u) ==
   LET iso == ParseISODate(u)
       toString == ParseToStringDate(u)
-      p == CASE iso.ok -> iso [] toString.ok -> toString [] OTHER -> ParseUTCStringDate(u)
+      written == CASE toString.ok -> toString [] OTHER -> ParseUTCStringDate(u)
+      p == CASE iso.ok -> iso
+             [] written.y < 0 -> [written EXCEPT !.ok = FALSE]
+             [] OTHER -> [written EXCEPT !.y = IF @ < 50 THEN @ + 2000 ELSE IF @ < 100 THEN @ + 1900 ELSE @]
       leap == IF IsLeapYear(p.y) THEN 1 ELSE 0
   IN IF ~p.ok \/ p.mo < 1 \/ p.mo > 12 \/ p.d < 1 \/ p.d > MonthStart(p.mo, leap) - MonthStart(p.mo - 1, leap) \/
         p.mi > 59 \/ p.sec > 59 \/ p.h > 24 \/ (p.h = 24 /\ (p.mi > 0 \/ p.sec > 0 \/ p.ms > 0))
@@ -12581,10 +13523,15 @@ ParseDate(u) ==
 \* A setter converts its first argument and the others present, and then returns NaN for a NaN
 \* time value, except setFullYear and setUTCFullYear, which start from +0. The new time keeps the
 \* fields no argument replaces: MakeDay of the old year, month, and date is Day(t), and MakeTime of
-\* the old hours to milliseconds is TimeWithinDay(t), as the spec's steps use.
+\* the old hours to milliseconds is TimeWithinDay(t), as the spec's steps use. V8 reads the time
+\* value of setFullYear and setUTCFullYear after it converts the year, where the spec reads it first.
 DateSet(s, this, fields, args, isUTC) ==
-  LET t == ThisTimeValue(s, this) IN IF IsAbrupt(t) THEN t ELSE
-  LET n == DateToNumbers(t.s, DateArgs(args, Len(fields)), <<>>) IN IF IsAbrupt(n) THEN n ELSE
+  LET first == ThisTimeValue(s, this) IN IF IsAbrupt(first) THEN first ELSE
+  LET year == IF fields[1] = "year" THEN DateToNumbers(first.s, DateArgs(args, 1), <<>>) ELSE Ok(first.s, <<>>) IN
+  IF IsAbrupt(year) THEN year ELSE
+  LET t == IF fields[1] = "year" THEN ThisTimeValue(year.s, this) ELSE first
+      n == DateToNumbers(year.s, SubSeq(DateArgs(args, Len(fields)), Len(Val(year)) + 1, Len(DateArgs(args, Len(fields)))), Val(year))
+  IN IF IsAbrupt(n) THEN n ELSE
   LET tv == Val(t).value IN
   IF NumIsNaN(tv) /\ fields[1] # "year" THEN Ok(n.s, Num(NaN))
   ELSE
@@ -12639,6 +13586,11 @@ DateBuiltin(s, f, m, this, args, nt) ==
     [] m = "setTime" ->
          LET t == ThisTimeValue(s, this) IN IF IsAbrupt(t) THEN t ELSE
          LET n == ToNumber(t.s, Arg(args, 1)) IN IF IsAbrupt(n) THEN n ELSE SetDateValue(n.s, this, TimeClip(Val(n).value))
+    \* ECMA-402 §20.4.1 to §20.4.3, where the host has Intl.
+    [] m \in {"toLocaleDateString", "toLocaleString", "toLocaleTimeString"} /\ HostIntl(<<"none">>).found # "none" ->
+         LET t == ThisTimeValue(s, this) IN IF IsAbrupt(t) THEN t
+         ELSE IF NumIsNaN(Val(t).value) THEN Ok(t.s, Str(N("Invalid Date")))
+         ELSE DateToLocaleString(t.s, m, Val(t).value, Arg(args, 1), Arg(args, 2))
     \* Date.prototype.toDateString (§21.4.4.35), toString (§21.4.4.41), toTimeString (§21.4.4.42),
     \* toUTCString (§21.4.4.43), and toLocaleDateString, toLocaleString, and toLocaleTimeString
     \* (§21.4.4.38 to §21.4.4.40), which are toString as engine262 has them.
@@ -12905,9 +13857,118 @@ RxRepeatMatcher(env, m, min, max, greedy, x, k, parenIndex, parenCount) ==
       xr == IF parenCount = 0 THEN x
             ELSE [x EXCEPT !.cap = [i \in DOMAIN @ |-> IF i > parenIndex /\ i <= parenIndex + parenCount THEN None ELSE @[i]]]
   IN CASE max = 0 -> RxContinue(env, k, x)
+       [] m.t = "set" -> RxRepeatSet(env, m, min, max, greedy, x, k)
+       [] m.t = "strings" /\ m.dir /\ ~m.hasEmpty /\ greedy ->
+            LET leaf == RxStringsLeaf(env, m, min, max, x, k) IN
+            IF leaf # MatchFailure THEN leaf
+            ELSE RxStringsDrive(env, m, min, max, x, k,
+                                [stack |-> <<RxStringsFrame(env, m, x.e, 0)>>, seen |-> {}, done |-> FALSE, result |-> MatchFailure], 1)
        [] min # 0 -> RxMatch(env, m, xr, d)
        [] ~greedy -> LET z == RxContinue(env, k, x) IN IF z # MatchFailure THEN z ELSE RxMatch(env, m, xr, d)
        [] OTHER -> LET z == RxMatch(env, m, xr, d) IN IF z # MatchFailure THEN z ELSE RxContinue(env, k, x)
+\* RepeatMatcher of a CharacterSetMatcher, which matches one character or none and holds no
+\* groups, so that its iterations match the run of characters it matches from x, as far as max.
+\* Each count of them from the run's length down to min, or up from min when not greedy, is then a
+\* state the continuation runs from, as RepeatMatcher's backtracking tries them. The run and the
+\* counts are searched in halves, so that the depth of the search grows with the logarithm of
+\* the input's length rather than with the length itself.
+RxRepeatSet(env, m, min, max, greedy, x, k) ==
+  LET available == IF m.dir THEN env.len - x.e ELSE x.e
+      limit == IF max = RxInfinity \/ max > available THEN available ELSE max
+      run == RxSetRun(env, m, x.e, 0, limit)
+  IN IF run < min THEN MatchFailure
+     ELSE IF greedy THEN RxContinueDown(env, k, x, m.dir, min, run) ELSE RxContinueUp(env, k, x, m.dir, min, run)
+\* Whether the set matcher m matches the character j after e, or before it when matching backward.
+RxSetAt(env, m, e, j) ==
+  RxSetFound(m.cs, m.cm, env.in[IF m.dir THEN e + j + 1 ELSE e - j]) # m.invert
+\* How many of the characters lo to hi - 1 after e m matches, from lo up to the first it doesn't.
+RxSetRun(env, m, e, lo, hi) ==
+  CASE lo >= hi -> 0
+    [] hi - lo = 1 -> IF RxSetAt(env, m, e, lo) THEN 1 ELSE 0
+    [] OTHER ->
+         LET mid == (lo + hi) \div 2
+             left == RxSetRun(env, m, e, lo, mid)
+         IN IF left < mid - lo THEN left ELSE left + RxSetRun(env, m, e, mid, hi)
+\* The state j characters on from x.
+RxAdvanced(x, dir, j) == [x EXCEPT !.e = IF dir THEN @ + j ELSE @ - j]
+\* The continuation's result from the first of the counts hi down to lo that it matches from.
+RxContinueDown(env, k, x, dir, lo, hi) ==
+  CASE lo > hi -> MatchFailure
+    [] lo = hi -> RxContinue(env, k, RxAdvanced(x, dir, lo))
+    [] OTHER ->
+         LET mid == (lo + hi) \div 2
+             upper == RxContinueDown(env, k, x, dir, mid + 1, hi)
+         IN IF upper # MatchFailure THEN upper ELSE RxContinueDown(env, k, x, dir, lo, mid)
+\* The continuation's result from the first of the counts lo up to hi that it matches from.
+RxContinueUp(env, k, x, dir, lo, hi) ==
+  CASE lo > hi -> MatchFailure
+    [] lo = hi -> RxContinue(env, k, RxAdvanced(x, dir, lo))
+    [] OTHER ->
+         LET mid == (lo + hi) \div 2
+             lower == RxContinueUp(env, k, x, dir, lo, mid)
+         IN IF lower # MatchFailure THEN lower ELSE RxContinueUp(env, k, x, dir, mid + 1, hi)
+\* The first state that a greedy RepeatMatcher of a matcher of strings reaches, whose backtracking
+\* goes on from there where it fails: each iteration takes the first string that matches, the
+\* longest, as far as max, or to where none does, and the continuation runs from there. The
+\* iterations are searched by doubling, as a table of where the first string that matches at each
+\* character ends, so that the depth of the search grows with the logarithm of the input's length
+\* rather than with the number of iterations.
+RxStringsLeaf(env, m, min, max, x, k) ==
+  LET limit == IF max = RxInfinity THEN env.len - x.e + 1 ELSE max
+      first == [e \in x.e..env.len |-> LET ends == RxStringsEnds(env, m, e, 1) IN IF ends = <<>> THEN -1 ELSE ends[1]]
+      tables == RxStringsTables(first, x.e, env.len, limit, <<first>>)
+      run == RxStringsRun(tables, Len(tables), x.e, 0, limit)
+  IN IF run.count < min THEN MatchFailure ELSE RxContinue(env, k, [x EXCEPT !.e = run.e])
+\* The tables of where 1, 2, 4, ... iterations end, from each character from lo to hi, while the
+\* last is below limit.
+RxStringsTables(table, lo, hi, limit, acc) ==
+  IF 2 ^ Len(acc) > limit THEN acc
+  ELSE LET next == [e \in lo..hi |-> IF table[e] = -1 THEN -1 ELSE table[table[e]]] IN
+       RxStringsTables(next, lo, hi, limit, Append(acc, next))
+\* The iterations from e that the tables from the jth take, as far as limit: [e, count].
+RxStringsRun(tables, j, e, count, limit) ==
+  IF j = 0 THEN [e |-> e, count |-> count]
+  ELSE IF count + 2 ^ (j - 1) <= limit /\ tables[j][e] # -1
+  THEN RxStringsRun(tables, j - 1, tables[j][e], count + 2 ^ (j - 1), limit)
+  ELSE RxStringsRun(tables, j - 1, e, count, limit)
+\* The backtracking of a greedy RepeatMatcher of a matcher of strings, where its first state fails,
+\* as a search of the iterations depth first, with the frames of the iterations it's in on a stack:
+\* each frame [e, c, ends, i] is the iteration that starts at e after c of them, where the strings
+\* of m that match there end, longest first, and the next of them to go on from. Once a frame's
+\* iterations have all failed, the continuation runs from its e, as RepeatMatcher does when c is
+\* at least min. m holds no groups, so an iteration's result depends only on where it starts and on
+\* the count, and the search goes on from each of these once. It runs as many steps as n, doubling
+\* n until it's done, each time in halves, so that its depth grows with the logarithm of the
+\* number of steps rather than with the number of iterations.
+RxStringsDrive(env, m, min, max, x, k, search, n) ==
+  LET next == RxStringsSearch(env, m, min, max, x, k, search, n) IN
+  IF next.done THEN next.result ELSE RxStringsDrive(env, m, min, max, x, k, next, 2 * n)
+RxStringsSearch(env, m, min, max, x, k, search, n) ==
+  CASE search.done -> search
+    [] n = 1 -> RxStringsStep(env, m, min, max, x, k, search)
+    [] OTHER ->
+         RxStringsSearch(env, m, min, max, x, k, RxStringsSearch(env, m, min, max, x, k, search, n \div 2), n - n \div 2)
+RxStringsStep(env, m, min, max, x, k, search) ==
+  LET top == Len(search.stack)
+      f == search.stack[top]
+  IN IF f.c < max /\ f.i <= Len(f.ends) THEN
+       LET stack == [search.stack EXCEPT ![top].i = f.i + 1] IN
+       IF RxStringsKey(min, max, f.ends[f.i], f.c + 1) \in search.seen THEN [search EXCEPT !.stack = stack]
+       ELSE [search EXCEPT !.stack = Append(stack, RxStringsFrame(env, m, f.ends[f.i], f.c + 1))]
+     ELSE LET r == IF f.c >= min THEN RxContinue(env, k, [x EXCEPT !.e = f.e]) ELSE MatchFailure IN
+          IF r # MatchFailure \/ top = 1 THEN [search EXCEPT !.done = TRUE, !.result = r]
+          ELSE [search EXCEPT !.stack = SubSeq(@, 1, top - 1), !.seen = @ \cup {RxStringsKey(min, max, f.e, f.c)}]
+RxStringsFrame(env, m, e, c) == [e |-> e, c |-> c, ends |-> RxStringsEnds(env, m, e, 1), i |-> 1]
+\* Where the strings of m from its ith length that match at e end, longest first.
+RxStringsEnds(env, m, e, i) ==
+  IF i > Len(m.byLength) THEN
+    IF e < env.len /\ RxSetFound(m.singles, m.cm, env.in[e + 1]) THEN <<e + 1>> ELSE <<>>
+  ELSE LET length == m.byLength[i][1] IN
+       (IF e + length <= env.len /\ RxCanonicalizeString(m.cm, SubSeq(env.in, e + 1, e + length)) \in m.byLength[i][2]
+        THEN <<e + length>> ELSE <<>>) \o RxStringsEnds(env, m, e, i + 1)
+\* The iterations from e after c of them go on as those after any other count past min do, when
+\* max is infinite.
+RxStringsKey(min, max, e, c) == <<e, IF max = RxInfinity /\ c > min THEN min ELSE c>>
 \* Whether CharacterSetMatcher finds a member of A that canonicalizes to the character c does.
 RxSetFound(cs, cm, c) == IF ~cm.ic THEN RxIn(cs, c) ELSE \E a \in RxPreimage(cm, RxCanonicalize(cm, c)) : RxIn(cs, a)
 \* IsWordChar (§22.2.2.9.2).
@@ -12953,6 +14014,7 @@ RxRun(matcher, input, index, groupCount) ==
 \*           units or None, and the path of Disjunction alternatives the group is in
 \*   path    the alternatives the parser is in, as <<start of the Disjunction, alternative>> pairs
 \*   decs    the numbers of the DecimalEscapes, and refs the GroupNames of \k escapes
+\*   singles the code points that are a whole ClassString of a ClassStringDisjunction
 \*   err     whether the parser found a Syntax Error
 \* Each parse operator returns [p, n]: the state after it and the node it parsed. A parsed character
 \* is its CharacterValue (§22.2.1.8). Outside UnicodeMode, it parses the grammar of §B.1.2.
@@ -12998,10 +14060,10 @@ ParsePattern(units, u, v) ==
                /\ i < j /\ p.groups[i].name # None /\ p.groups[i].name = p.groups[j].name
                /\ RxMightBothParticipate(p.groups[i].path, p.groups[j].path)
      THEN [ok |-> FALSE]
-     ELSE [ok |-> TRUE, pattern |-> [d |-> d.n, groups |-> p.groups]]
+     ELSE [ok |-> TRUE, pattern |-> [d |-> d.n, groups |-> p.groups, singles |-> p.singles]]
 RxParse(units, u, v, named, captures) ==
   RxDisjunction([src |-> units, pos |-> 0, u |-> u \/ v, v |-> v, named |-> named, captures |-> captures,
-                 groups |-> <<>>, path |-> <<>>, decs |-> <<>>, refs |-> <<>>, err |-> FALSE])
+                 groups |-> <<>>, path |-> <<>>, decs |-> <<>>, refs |-> <<>>, singles |-> {}, err |-> FALSE])
 \* MightBothParticipate (§22.2.1.3): two groups can't both participate in a match only when they are
 \* in different alternatives of one Disjunction.
 RxMightBothParticipate(x, y) ==
@@ -13331,7 +14393,10 @@ RxClassSetOperand(p) ==
       class == IF RxIsAt(p, N("\\")) THEN RxCharacterClassEscape(RxSkip(p, 1)) ELSE RxNode(p, None)
       c == RxClassSetCharacter(p)
   IN CASE RxIsAt(p, N("[")) -> RxBracketed(p, "nested")
-       [] RxIsAt(p, N("\\q{")) -> IF strings.p.err THEN strings ELSE RxClose(strings.p, N("}"), [t |-> "strings", strs |-> strings.n])
+       [] RxIsAt(p, N("\\q{")) ->
+            IF strings.p.err THEN strings
+            ELSE RxClose([strings.p EXCEPT !.singles = @ \cup {strings.n[i][1] : i \in {j \in DOMAIN strings.n : Len(strings.n[j]) = 1}}],
+                         N("}"), [t |-> "strings", strs |-> strings.n])
        [] RxIsAt(p, N("\\q")) -> RxError(p)
        [] class.p.err \/ class.n # None -> class
        [] c.p.err -> c
@@ -13387,7 +14452,7 @@ RxOperandMayContainStrings(o) ==
 \* RegExpAlloc (§22.2.3.2), with the legacy RegExp features proposal's [[Realm]] and [[LegacyFeaturesEnabled]].
 RegExpAlloc(s, newTarget) ==
   LET o == OrdinaryCreateFromConstructor(s, newTarget, "RegExpPrototype", "regexp",
-                                         [source |-> <<>>, flags |-> <<>>, matcher |-> None, groups |-> <<>>,
+                                         [source |-> <<>>, flags |-> <<>>, matcher |-> None, groups |-> <<>>, foldedSingles |-> {},
                                           realm |-> s.realmId, legacy |-> newTarget = Intrinsic(s, "RegExp")])
   IN IF IsAbrupt(o) THEN o
      ELSE Ok(SetO(o.s, Val(o), PutProp(O(o.s, Val(o)), SV("lastIndex"), DataDesc(Undefined, TRUE, FALSE, FALSE))), Val(o))
@@ -13402,9 +14467,17 @@ RegExpInitialize(s, obj, pattern, flags) ==
      ELSE LET rer == [ic |-> 105 \in Range(units), multiline |-> 109 \in Range(units), dotAll |-> 115 \in Range(units),
                       u |-> 117 \in Range(units), v |-> 118 \in Range(units), groups |-> parsed.pattern.groups]
               t == SetO(f.s, obj, [O(f.s, obj) EXCEPT !.slots.source = Val(p).value, !.slots.flags = units,
-                                     !.slots.matcher = RxCompilePattern(parsed.pattern, rer), !.slots.groups = parsed.pattern.groups])
+                                     !.slots.matcher = RxCompilePattern(parsed.pattern, rer), !.slots.groups = parsed.pattern.groups,
+                                     !.slots.foldedSingles = RxFoldedSingles(parsed.pattern.singles, rer)])
               r == Set(t, obj, SV("lastIndex"), IntV(0), TRUE)
           IN IF IsAbrupt(r) THEN r ELSE Ok(r.s, obj)
+\* V8 folds a ClassString of one code point under the i and v flags and then matches only the
+\* folded code point, so /[\q{a}]/iv doesn't match "A", where the spec matches every code point
+\* that folds as it does. These are the folded code points of a pattern's ClassStrings of one code
+\* point that another code point folds to, where V8 and the spec can differ.
+RxFoldedSingles(singles, rer) ==
+  IF ~rer.ic \/ ~rer.v THEN {}
+  ELSE {RxScf(c) : c \in {c \in singles : RxScfPreimage(RxScf(c)) # {RxScf(c)}}}
 \* RegExpCreate (§22.2.3.1).
 RegExpCreate(s, P, F) ==
   LET o == RegExpAlloc(s, Intrinsic(s, "RegExp")) IN IF IsAbrupt(o) THEN o ELSE RegExpInitialize(o.s, Val(o), P, F)
@@ -13482,7 +14555,9 @@ RegExpBuiltinExec(s, R, S) ==
       lastIndex == IF ~global /\ ~sticky THEN PosZero ELSE Val(len).value
       found == IF NumLess(NumFromInt(Len(units)), lastIndex) THEN None
                ELSE RxExecFrom(o, units, input, fullUnicode, sticky, NumToSmallInt(lastIndex))
-  IN IF found = None THEN
+  IN IF o.foldedSingles # {} /\ \E c \in Range(input.chars) : c # RxScf(c) /\ RxScf(c) \in o.foldedSingles
+     THEN Unsupported(len.s, N("Unsupported: a code point that folds to a ClassString of one code point under the i and v flags"))
+     ELSE IF found = None THEN
        LET r == IF global \/ sticky THEN Set(len.s, R, SV("lastIndex"), IntV(0), TRUE) ELSE Ok(len.s, Undefined) IN
        IF IsAbrupt(r) THEN r ELSE Ok(r.s, Null)
      ELSE LET e == GetStringIndex(units, input, fullUnicode, found.r.e)
@@ -13518,12 +14593,25 @@ UpdateLegacyRegExpStatics(s, R, units, start, end, captures) ==
                               leftContext |-> SubSeq(units, 1, start), rightContext |-> SubSeq(units, end + 1, Len(units)),
                               parens |-> [i \in 1..9 |-> Capture(i)]]])
 \* The first index at or after lastIndex where the pattern matches, with its MatchState, or None.
+\* After lastIndex, AdvanceStringIndex steps to each next character of the input in turn.
 RxExecFrom(o, units, input, fullUnicode, sticky, lastIndex) ==
   IF lastIndex > Len(units) THEN None ELSE
-  LET r == RxRun(o.matcher, input.chars, RxInputIndex(units, fullUnicode, lastIndex), Len(o.groups)) IN
-  CASE r # MatchFailure -> [index |-> lastIndex, r |-> r]
-    [] sticky -> None
-    [] OTHER -> RxExecFrom(o, units, input, fullUnicode, sticky, RxAdvanceIndex(units, lastIndex, fullUnicode))
+  LET first == RxInputIndex(units, fullUnicode, lastIndex)
+      r == RxRun(o.matcher, input.chars, first, Len(o.groups))
+  IN CASE r # MatchFailure -> [index |-> lastIndex, r |-> r]
+       [] sticky -> None
+       [] OTHER -> RxExecFirst(o, units, input, fullUnicode, first + 1, Len(input.chars))
+\* The first character from lo to hi where the pattern matches, searched in halves so that the
+\* depth of the search grows with the logarithm of the input's length.
+RxExecFirst(o, units, input, fullUnicode, lo, hi) ==
+  CASE lo > hi -> None
+    [] lo = hi ->
+         LET r == RxRun(o.matcher, input.chars, lo, Len(o.groups)) IN
+         IF r = MatchFailure THEN None ELSE [index |-> GetStringIndex(units, input, fullUnicode, lo), r |-> r]
+    [] OTHER ->
+         LET mid == (lo + hi) \div 2
+             left == RxExecFirst(o, units, input, fullUnicode, lo, mid)
+         IN IF left # None THEN left ELSE RxExecFirst(o, units, input, fullUnicode, mid + 1, hi)
 \* The match array of RegExpBuiltinExec from the Match Records of the match and of each capture.
 RxMatchResult(s, o, S, match, captures) ==
   LET values == [i \in DOMAIN captures |-> GetMatchString(S, captures[i])]
@@ -13970,7 +15058,8 @@ AtomicsBuiltin(s, f, m, this, args, nt) ==
   CASE m = "isLockFree" ->
          LET n == ToIntegerOrInfinity(s, a1) IN IF IsAbrupt(n) THEN n
          ELSE Ok(n.s, Bool(\E size \in {1, 2, 4, 8} : Val(n).value = NumFromInt(size)))
-    [] m = "pause" -> Ok(s, Undefined)
+    \* Atomics.pause (§25.4.11), which throws at an N that is neither undefined nor integral.
+    [] m = "pause" -> IF a1 # Undefined /\ ~(IsNumber(a1) /\ NumIsIntegral(a1.value)) THEN ThrowTypeError(s) ELSE Ok(s, Undefined)
     [] m = "compareExchange" ->
          LET byteIndex == ValidateAtomicAccessOnIntegerTypedArray(s, a1, a2, TRUE) IN IF IsAbrupt(byteIndex) THEN byteIndex ELSE
          LET expected == AtomicValue(byteIndex.s, a1, a3) IN IF IsAbrupt(expected) THEN expected ELSE
@@ -14714,14 +15803,14 @@ JoinElements(s, ta, k, len, separator) ==
        IN (IF k > 0 THEN separator ELSE <<>>) \o (IF e = Undefined THEN <<>> ELSE PrimitiveToUnits(e)) \o
           JoinElements(s, ta, k + 1, len, separator)
 \* JoinIndexedProperties with the method "toLocaleString", and "," as the list separator.
-LocaleJoin(s, ta, k, len, acc) ==
+LocaleJoin(s, ta, k, len, acc, args) ==
   IF k >= len THEN Ok(s, Str(acc))
   ELSE LET prefix == IF k > 0 THEN acc \o N(",") ELSE acc
            e == TypedArrayGetElement(s, ta, NumFromInt(k))
-       IN IF e = Undefined THEN LocaleJoin(s, ta, k + 1, len, prefix)
-          ELSE LET r == Invoke(s, e, SV("toLocaleString"), <<>>) IN IF IsAbrupt(r) THEN r ELSE
+       IN IF e = Undefined THEN LocaleJoin(s, ta, k + 1, len, prefix, args)
+          ELSE LET r == Invoke(s, e, SV("toLocaleString"), args) IN IF IsAbrupt(r) THEN r ELSE
                LET str == ToStr(r.s, Val(r)) IN IF IsAbrupt(str) THEN str
-               ELSE LocaleJoin(str.s, ta, k + 1, len, prefix \o Val(str).value)
+               ELSE LocaleJoin(str.s, ta, k + 1, len, prefix \o Val(str).value, args)
 \* Copies count bytes one at a time upward, as slice does between two TypedArrays of a type. That
 \* copies them all at once unless the target starts within the bytes still to copy.
 CopyBytesUp(s, from, fromIndex, to, toIndex, count) ==
@@ -14860,7 +15949,7 @@ TypedArrayMethod(s, ta, len, m, args) ==
          LET r == TypedArrayCreateSameType(s, ta, len) IN IF IsAbrupt(r) THEN r ELSE
          LET sorted == SortElements(r.s, TypedArrayElements(r.s, ta, len), a1) IN IF IsAbrupt(sorted) THEN sorted
          ELSE Ok(StoreElements(sorted.s, Val(r), Val(sorted), 0), Val(r))
-    [] m = "toLocaleString" -> LocaleJoin(s, ta, 0, len, <<>>)
+    [] m = "toLocaleString" -> LocaleJoin(s, ta, 0, len, <<>>, LocaleArguments(args))
     [] m = "toReversed" ->
          LET r == TypedArrayCreateSameType(s, ta, len) IN IF IsAbrupt(r) THEN r
          ELSE Ok(StoreElements(r.s, Val(r), [i \in 1..len |-> TypedArrayGetElement(r.s, ta, NumFromInt(len - i))], 0), Val(r))
@@ -15320,7 +16409,8 @@ CreateAsyncFromSyncIterator(s, it) ==
       next == Get(a.s, a.v, SV("next"))
   IN Ok(next.s, JsIterator(a.v, Val(next)))
 \* Rejects the capability with the thrown value of r, and returns its promise (IfAbruptRejectPromise).
-RejectWith(r, cap) == LET c == Call(r.s, cap.reject, Undefined, <<r.c.value>>) IN Ok(c.s, cap.promise)
+RejectWith(r, cap) ==
+  LET c == Call(r.s, cap.reject, Undefined, <<r.c.value>>) IN IF IsAbrupt(c) THEN c ELSE Ok(c.s, cap.promise)
 \* %AsyncFromSyncIteratorPrototype% next, return, and throw (§27.1.6.2), and the closures of
 \* AsyncFromSyncIteratorContinuation.
 AsyncFromSyncBuiltin(s, f, m, this, args, nt) ==
@@ -16039,14 +17129,29 @@ GetModuleNamespace(s, m, isDeferred) ==
   LET field == IF isDeferred THEN "deferredNamespace" ELSE "namespace" IN
   IF ModuleAt(s, m)[field] # Empty THEN Ok(s, ModuleAt(s, m)[field]) ELSE
   LET names == SelectSeq(GetExportedNames(s, m, {}).names, LAMBDA name : IsResolvable(s, m, name))
-      object == MakeObject(Null, "namespace", [module |-> m, exports |-> SortCodeUnits(Range(names)), deferred |-> isDeferred])
+      object == MakeObject(Null, "namespace", [module |-> m, exports |-> SortDistinctUnits(names), deferred |-> isDeferred])
       tag == IF isDeferred THEN SV("Deferred Module") ELSE SV("Module")
       ns == Alloc(s, PutProp([object EXCEPT !.ext = FALSE], SymToStringTag, DataDesc(tag, FALSE, FALSE, FALSE)))
   IN Ok(SetModule(ns.s, m, [name \in {field} |-> ns.v]), ns.v)
-SortCodeUnits(names) ==
-  IF names = {} THEN <<>>
-  ELSE LET first == CHOOSE name \in names : \A other \in names : name = other \/ CodeUnitLess(name, other)
-       IN <<first>> \o SortCodeUnits(names \ {first})
+\* The names of a set in the order of their code units.
+SortCodeUnits(names) == SortDistinctUnits(SetToSeqFrom(names, <<>>))
+\* The elements of a set after those of done, in the order CHOOSE takes them.
+SetToSeqFrom(set, done) ==
+  IF set = {} THEN done
+  ELSE LET x == CHOOSE x \in set : TRUE IN SetToSeqFrom(set \ {x}, Append(done, x))
+\* The distinct names of a sequence in the order of their code units, by a merge sort.
+SortDistinctUnits(names) ==
+  IF Len(names) <= 1 THEN names
+  ELSE LET half == Len(names) \div 2
+       IN MergeCodeUnits(SortDistinctUnits(SubSeq(names, 1, half)),
+                         SortDistinctUnits(SubSeq(names, half + 1, Len(names))), <<>>)
+\* The distinct names of two sorted sequences of distinct names, after those of done.
+MergeCodeUnits(a, b, done) ==
+  IF a = <<>> THEN done \o b
+  ELSE IF b = <<>> THEN done \o a
+  ELSE IF Head(a) = Head(b) THEN MergeCodeUnits(a, Tail(b), done)
+  ELSE IF CodeUnitLess(Head(a), Head(b)) THEN MergeCodeUnits(Tail(a), b, Append(done, Head(a)))
+  ELSE MergeCodeUnits(a, Tail(b), Append(done, Head(b)))
 \* Module namespace exotic objects (§10.4.6), with slots [module, exports, deferred]. A deferred
 \* namespace evaluates its module before it reads the exports, except for a symbol-like key: a
 \* symbol, or "then" (IsSymbolLikeNamespaceKey and GetModuleExportsList of import-defer).
@@ -16443,12 +17548,490 @@ RunModule(s, specifier) ==
      IN IF IsAbrupt(jobs) THEN jobs
         ELSE IF Slots(jobs.s, Val(evaluated)).state = "rejected" THEN ThrowValue(jobs.s, Slots(jobs.s, Val(evaluated)).result)
         ELSE jobs
+\* The calendars other than ISO 8601 that Temporal takes (Intl era and month code proposal), as
+\* Node 26 runs them. engine262 has none of them. A calendar date is [year, month, day] of TLA+
+\* integers, its month the ordinal in its year, and a month code [month, leap]. The calendars
+\* with eras whose months and days are ISO 8601's count their years from another year; the
+\* others count days arithmetically, as Node does: the Coptic and the two Ethiopian calendars, of
+\* 13 months each, the tabular Islamic calendars, the Indian national calendar, the Persian
+\* calendar, and the Hebrew calendar, whose leap years add a month. The Umm al-Qura calendar is
+\* the civil Islamic calendar outside the years that Node's table of its months covers. Node
+\* computes the Chinese and the Dangi calendars astronomically, so their years and their month-days'
+\* reference dates come from the host's tables (HostCalendarYear, HostCalendarMonthDay), and any
+\* that the tables leave out stops.
+\* CanonicalizeCalendar, with the aliases Node takes.
+CanonicalizeCalendar(s, id) ==
+  LET lower == TPLower(id) IN
+  CASE lower \in {ISO8601} \cup EraCalendars \cup ArithmeticCalendars -> Ok(s, lower)
+    [] lower = N("islamicc") -> Ok(s, N("islamic-civil"))
+    [] lower = N("ethiopic-amete-alem") -> Ok(s, N("ethioaa"))
+    [] OTHER -> ThrowError(s, "RangeError")
+\* What a calendar's arithmetic year adds to the ISO year, where its months are ISO 8601's.
+CalendarYearOffset(cal) == CASE cal = N("buddhist") -> 543 [] cal = N("roc") -> -1911 [] OTHER -> 0
+\* The day of an ISO date counted from day 1 of the proleptic Gregorian calendar, and back.
+RataDie(date) == EpochDays(date) + 719163
+RataDieToISODate(day) == EpochDaysToISODate(day - 719163)
+\* The day before a Coptic or an Ethiopian year 1 starts, and a year in its Amete Mihret count.
+CopticEpoch(cal) == IF cal = N("coptic") THEN 103604 ELSE 2795
+CopticYear(cal, year) == IF cal = N("ethioaa") THEN year - 5500 ELSE year
+\* The day before a tabular Islamic year 1 starts, on its Friday or its Thursday epoch.
+IslamicEpoch(cal) == IF cal = N("islamic-tbla") THEN 227013 ELSE 227014
+\* The years 1300 to 1600 of the Umm al-Qura calendar, as Node's table gives them: each year's 30-day
+\* months as bits, and the days from the start of 1300, which the civil calendar starts on too, to
+\* the start of each year through 1601, where the civil calendar takes over again.
+IsUmalquraTable(cal, year) == cal = N("islamic-umalqura") /\ year >= 1300 /\ year <= 1600
+UmalquraLong(year, month) == (UmalquraMonths[year - 1299] \div 2 ^ (month - 1)) % 2 = 1
+\* The day that an Indian year starts on, in March of its Gregorian year, and the days before a month.
+IndianStart(year) == RataDie([year |-> year + 78, month |-> 3, day |-> IF IsLeapYear(year + 78) THEN 21 ELSE 22])
+IndianBefore(year, month) ==
+  LET first == IF IsLeapYear(year + 78) THEN 31 ELSE 30 IN
+  CASE month = 1 -> 0
+    [] month <= 7 -> first + 31 * (month - 2)
+    [] OTHER -> first + 155 + 30 * (month - 7)
+\* The Persian years that the 33-year rule makes leap years but Node's calendar doesn't, which moves
+\* each one's leap day to the next year.
+PersianLeap(year) ==
+  CASE year \in PersianCorrections -> FALSE
+    [] year - 1 \in PersianCorrections -> TRUE
+    [] OTHER -> (25 * year + 11) % 33 < 8
+\* The rata die that a Persian year starts on, and the Persian year of a rata die, from an estimate
+\* within a year or two.
+PersianStart(year) ==
+  226895 + 365 * (year - 1) + (8 * year + 21) \div 33 - (IF year - 1 \in PersianCorrections THEN 1 ELSE 0)
+PersianYearAt(day, year) ==
+  CASE PersianStart(year) > day -> PersianYearAt(day, year - 1)
+    [] PersianStart(year + 1) <= day -> PersianYearAt(day, year + 1)
+    [] OTHER -> year
+\* The Hebrew months before a year, and the days from its epoch to the year's molad, delayed as the
+\* calendar delays it, which splits the parts of an hour that a TLA+ integer wouldn't hold.
+HebrewMonthsBefore(year) == (235 * year - 234) \div 19
+HebrewElapsed(year) ==
+  LET months == HebrewMonthsBefore(year)
+      days == 29 * months + 13753 * (months \div 25920) + (12084 + 13753 * (months % 25920)) \div 25920
+  IN IF (3 * (days + 1)) % 7 < 3 THEN days + 1 ELSE days
+\* The rata die that a Hebrew year starts on, which the lengths of its neighbours delay.
+HebrewNewYear(year) ==
+  LET before == HebrewElapsed(year - 1)
+      elapsed == HebrewElapsed(year)
+      after == HebrewElapsed(year + 1)
+  IN -1373427 + elapsed + (CASE after - elapsed = 356 -> 2 [] elapsed - before = 382 -> 1 [] OTHER -> 0)
+HebrewLength(year) == HebrewNewYear(year + 1) - HebrewNewYear(year)
+\* A year of the Chinese or the Dangi calendar from the host's table: the epoch days of its first
+\* day, the ordinal of its leap month or 0, and its months of 30 days as bits from the first's.
+LunisolarYear(cal, year) ==
+  LET entry == HostCalendarYear(<<cal, year>>) IN
+  IF entry.found = "year" THEN entry
+  ELSE Assert(FALSE, "tla-ts can't tell the months of a Chinese or Dangi year that the host's table leaves out")
+LunisolarDays(cal, year, month) == IF (LunisolarYear(cal, year).long \div 2 ^ (month - 1)) % 2 = 1 THEN 30 ELSE 29
+LunisolarBefore(cal, year, month) ==
+  IF month = 1 THEN 0 ELSE LunisolarBefore(cal, year, month - 1) + LunisolarDays(cal, year, month - 1)
+\* The month code of a month of a Chinese or Dangi year, whose leap month repeats the month before
+\* it, and the month that a month code the year has is.
+LunisolarMonthCode(cal, year, month) ==
+  LET leap == LunisolarYear(cal, year).leap IN
+  CASE leap = 0 \/ month < leap -> [month |-> month, leap |-> FALSE]
+    [] month = leap -> [month |-> month - 1, leap |-> TRUE]
+    [] OTHER -> [month |-> month - 1, leap |-> FALSE]
+LunisolarOrdinal(cal, year, code) ==
+  LET leap == LunisolarYear(cal, year).leap IN
+  CASE code.leap -> leap
+    [] leap = 0 \/ code.month < leap -> code.month
+    [] OTHER -> code.month + 1
+\* CalendarDateInLeapYear and CalendarMonthsInYear of an arithmetic calendar's year.
+ArithmeticLeap(cal, year) ==
+  CASE cal \in CopticCalendars -> CopticYear(cal, year) % 4 = 3
+    [] cal \in LunisolarCalendars -> LunisolarYear(cal, year).leap # 0
+    [] IsUmalquraTable(cal, year) -> UmalquraStarts[year - 1298] - UmalquraStarts[year - 1299] = 355
+    [] cal \in IslamicCalendars -> (14 + 11 * year) % 30 < 11
+    [] cal = N("hebrew") -> (7 * year + 1) % 19 < 7
+    [] cal = N("persian") -> PersianLeap(year)
+    [] OTHER -> IsLeapYear(year + 78)
+ArithmeticMonths(cal, year) ==
+  CASE cal \in CopticCalendars -> 13
+    [] cal \in LunisolarCalendars \cup {N("hebrew")} -> IF ArithmeticLeap(cal, year) THEN 13 ELSE 12
+    [] OTHER -> 12
+\* The month code of a month of a year, and the month that a month code is in a year that has it.
+\* A Hebrew leap year inserts Adar I, M05L, before Adar, M06.
+ArithmeticMonthCode(cal, year, month) ==
+  CASE cal \in LunisolarCalendars -> LunisolarMonthCode(cal, year, month)
+    [] cal # N("hebrew") \/ ~ArithmeticLeap(cal, year) \/ month <= 5 -> [month |-> month, leap |-> FALSE]
+    [] month = 6 -> [month |-> 5, leap |-> TRUE]
+    [] OTHER -> [month |-> month - 1, leap |-> FALSE]
+ArithmeticOrdinal(cal, year, code) ==
+  CASE cal \in LunisolarCalendars -> LunisolarOrdinal(cal, year, code)
+    [] cal # N("hebrew") \/ ~ArithmeticLeap(cal, year) \/ (code.month <= 5 /\ ~code.leap) -> code.month
+    [] code.leap -> 6
+    [] OTHER -> code.month + 1
+\* IsValidMonthCodeForCalendar, YearContainsMonthCode of an arithmetic calendar, and the month code
+\* that a month code the year lacks is constrained to: a Chinese or Dangi leap month to the month it
+\* would repeat, and the Hebrew Adar I to Adar.
+IsValidMonthCodeForCalendar(cal, code) ==
+  CASE cal = N("hebrew") -> (~code.leap /\ code.month <= 12) \/ (code.leap /\ code.month = 5)
+    [] cal \in CopticCalendars -> ~code.leap /\ code.month <= 13
+    [] cal \in LunisolarCalendars -> code.month >= 1 /\ code.month <= 12
+    [] OTHER -> ~code.leap /\ code.month <= 12
+YearContainsMonthCode(cal, year, code) ==
+  ~code.leap \/ IF cal \in LunisolarCalendars THEN LunisolarYear(cal, year).leap = code.month + 1 ELSE ArithmeticLeap(cal, year)
+ConstrainMonthCode(cal, year, code) ==
+  CASE YearContainsMonthCode(cal, year, code) -> code
+    [] cal \in LunisolarCalendars -> [month |-> code.month, leap |-> FALSE]
+    [] OTHER -> [month |-> 6, leap |-> FALSE]
+\* The days of a month of a Hebrew year, by its code: Heshvan and Kislev give a year its length.
+HebrewDays(year, code) ==
+  CASE code.leap -> 30
+    [] code.month = 2 -> IF HebrewLength(year) % 10 = 5 THEN 30 ELSE 29
+    [] code.month = 3 -> IF HebrewLength(year) % 10 = 3 THEN 29 ELSE 30
+    [] OTHER -> IF code.month % 2 = 1 THEN 30 ELSE 29
+ArithmeticDaysInMonth(cal, year, month) ==
+  CASE cal \in CopticCalendars -> IF month = 13 THEN (IF ArithmeticLeap(cal, year) THEN 6 ELSE 5) ELSE 30
+    [] cal \in LunisolarCalendars -> LunisolarDays(cal, year, month)
+    [] IsUmalquraTable(cal, year) -> IF UmalquraLong(year, month) THEN 30 ELSE 29
+    [] cal \in IslamicCalendars -> IF month % 2 = 1 \/ (month = 12 /\ ArithmeticLeap(cal, year)) THEN 30 ELSE 29
+    [] cal = N("hebrew") -> HebrewDays(year, ArithmeticMonthCode(cal, year, month))
+    [] cal = N("persian") -> CASE month <= 6 -> 31 [] month <= 11 -> 30 [] OTHER -> IF ArithmeticLeap(cal, year) THEN 30 ELSE 29
+    [] month = 1 -> IF ArithmeticLeap(cal, year) THEN 31 ELSE 30
+    [] OTHER -> IF month <= 6 THEN 31 ELSE 30
+\* The days of the month of a code in the year where it's longest.
+ArithmeticMostDays(cal, code) ==
+  CASE cal \in CopticCalendars -> IF code.month = 13 THEN 6 ELSE 30
+    [] cal = N("islamic-umalqura") -> 30
+    [] cal \in IslamicCalendars -> IF code.month % 2 = 1 \/ code.month = 12 THEN 30 ELSE 29
+    [] cal = N("hebrew") -> IF code.month % 2 = 1 \/ code.leap \/ code.month \in {2, 3} THEN 30 ELSE 29
+    [] OTHER -> IF code.month <= 6 THEN 31 ELSE 30
+\* The days of the months of a Hebrew year, or of an Umm al-Qura year in Node's table, before one.
+HebrewBefore(year, month) ==
+  IF month = 1 THEN 0 ELSE HebrewBefore(year, month - 1) + ArithmeticDaysInMonth(N("hebrew"), year, month - 1)
+UmalquraBefore(year, month) ==
+  IF month = 1 THEN 0 ELSE UmalquraBefore(year, month - 1) + IF UmalquraLong(year, month - 1) THEN 30 ELSE 29
+\* The rata die of a valid date of an arithmetic calendar.
+ArithmeticRataDie(cal, year, month, day) ==
+  LET coptic == CopticYear(cal, year) IN
+  CASE cal \in CopticCalendars -> CopticEpoch(cal) + 365 * (coptic - 1) + coptic \div 4 + 30 * (month - 1) + day
+    [] IsUmalquraTable(cal, year) -> 687337 + UmalquraStarts[year - 1299] + UmalquraBefore(year, month) + day - 1
+    [] cal \in IslamicCalendars ->
+         IslamicEpoch(cal) + (year - 1) * 354 + (3 + 11 * year) \div 30 + 29 * (month - 1) + month \div 2 + day
+    [] cal = N("hebrew") -> HebrewNewYear(year) + HebrewBefore(year, month) + day - 1
+    [] cal \in LunisolarCalendars -> LunisolarYear(cal, year).start + 719163 + LunisolarBefore(cal, year, month) + day - 1
+    [] cal = N("persian") ->
+         PersianStart(year) + (IF month <= 7 THEN 31 * (month - 1) ELSE 186 + 30 * (month - 7)) + day - 1
+    [] OTHER -> IndianStart(year) + IndianBefore(year, month) + day - 1
+\* The Hebrew year of a rata die, from an estimate within a few years, and the Umm al-Qura year of
+\* one, from its civil year, which is within a year of it.
+HebrewYearAt(day, year) ==
+  CASE HebrewNewYear(year) > day -> HebrewYearAt(day, year - 1)
+    [] HebrewNewYear(year + 1) <= day -> HebrewYearAt(day, year + 1)
+    [] OTHER -> year
+UmalquraYearAt(day, year) ==
+  CASE ArithmeticRataDie(N("islamic-umalqura"), year, 1, 1) > day -> UmalquraYearAt(day, year - 1)
+    [] ArithmeticRataDie(N("islamic-umalqura"), year + 1, 1, 1) <= day -> UmalquraYearAt(day, year + 1)
+    [] OTHER -> year
+\* The month of a year that a day of the year, counted from 0, is in.
+ArithmeticMonthAt(cal, year, month, within) ==
+  IF within < ArithmeticDaysInMonth(cal, year, month) THEN month
+  ELSE ArithmeticMonthAt(cal, year, month + 1, within - ArithmeticDaysInMonth(cal, year, month))
+\* The date of an arithmetic calendar on a rata die, which splits each product that a TLA+ integer
+\* wouldn't hold.
+ArithmeticDateOf(cal, day) ==
+  LET copticDays == day - CopticEpoch(cal) - 1
+      coptic == 4 * (copticDays \div 1461) + (4 * (copticDays % 1461) + 1463) \div 1461
+      islamicDays == day - IslamicEpoch(cal) - 1
+      islamic == 30 * (islamicDays \div 10631) + (30 * (islamicDays % 10631) + 10646) \div 10631
+      gregorian == RataDieToISODate(day).year
+      year == CASE cal \in CopticCalendars -> IF cal = N("ethioaa") THEN coptic + 5500 ELSE coptic
+                [] cal = N("islamic-umalqura") -> UmalquraYearAt(day, islamic)
+                [] cal \in IslamicCalendars -> islamic
+                [] cal = N("hebrew") -> HebrewYearAt(day, ((day + 1373427) * 19) \div 6940 + 1)
+                [] cal \in LunisolarCalendars -> IF day < ArithmeticRataDie(cal, gregorian, 1, 1) THEN gregorian - 1 ELSE gregorian
+                [] cal = N("persian") ->
+                     PersianYearAt(day, 33 * ((day - 226895) \div 12053) + (33 * ((day - 226895) % 12053)) \div 12053 + 1)
+                [] OTHER -> IF day < IndianStart(gregorian - 78) THEN gregorian - 79 ELSE gregorian - 78
+      within == day - ArithmeticRataDie(cal, year, 1, 1)
+      first == ArithmeticDaysInMonth(cal, year, 1)
+      month == CASE cal \in CopticCalendars -> within \div 30 + 1
+                 [] cal \in LunisolarCalendars \cup {N("hebrew"), N("persian"), N("islamic-umalqura")} ->
+                      ArithmeticMonthAt(cal, year, 1, within)
+                 [] cal \in IslamicCalendars -> (11 * within + 330) \div 325
+                 [] within < first -> 1
+                 [] within < first + 155 -> 2 + (within - first) \div 31
+                 [] OTHER -> 7 + (within - first - 155) \div 30
+  IN [year |-> year, month |-> month, day |-> day - ArithmeticRataDie(cal, year, month, 1) + 1]
+\* The months of an arithmetic calendar before a year's month, and the year and the month of a
+\* count of them.
+MonthIndex(cal, year, month) ==
+  IF cal = N("hebrew") THEN HebrewMonthsBefore(year) + month - 1 ELSE year * ArithmeticMonths(cal, 0) + month - 1
+HebrewYearOfIndex(index, year) ==
+  CASE HebrewMonthsBefore(year) > index -> HebrewYearOfIndex(index, year - 1)
+    [] HebrewMonthsBefore(year + 1) <= index -> HebrewYearOfIndex(index, year + 1)
+    [] OTHER -> year
+OfMonthIndex(cal, index) ==
+  LET count == ArithmeticMonths(cal, 0)
+      year == HebrewYearOfIndex(index, (19 * index + 234) \div 235)
+  IN IF cal = N("hebrew") THEN [year |-> year, month |-> index - HebrewMonthsBefore(year) + 1]
+     ELSE [year |-> index \div count, month |-> (index % count) + 1]
+\* The months of a Chinese or Dangi calendar from an earlier year's first month to a year's, and
+\* the year and the month that a count of months after a year's month reaches, a year at a time.
+LunisolarMonthsFrom(cal, first, year) ==
+  IF year = first THEN 0 ELSE LunisolarMonthsFrom(cal, first, year - 1) + ArithmeticMonths(cal, year - 1)
+LunisolarAfter(cal, year, month, count) ==
+  LET months == ArithmeticMonths(cal, year) IN
+  CASE month + count > months -> LunisolarAfter(cal, year + 1, 1, count - (months - month + 1))
+    [] month + count < 1 -> LunisolarAfter(cal, year - 1, ArithmeticMonths(cal, year - 1), count + month)
+    [] OTHER -> [year |-> year, month |-> month + count]
+\* The year and the month that a count of months after a year's month of an arithmetic calendar
+\* reaches, and the months from one year's month, [year, month], to another's.
+MonthsAfter(cal, year, month, count) ==
+  IF cal \in LunisolarCalendars THEN LunisolarAfter(cal, year, month, count)
+  ELSE OfMonthIndex(cal, MonthIndex(cal, year, month) + count)
+MonthsBetween(cal, one, two) ==
+  LET first == IF one.year < two.year THEN one.year ELSE two.year IN
+  IF cal \in LunisolarCalendars
+  THEN LunisolarMonthsFrom(cal, first, two.year) + two.month - LunisolarMonthsFrom(cal, first, one.year) - one.month
+  ELSE MonthIndex(cal, two.year, two.month) - MonthIndex(cal, one.year, one.month)
+\* Whether a year of an arithmetic calendar has a date within the limits.
+ArithmeticYearWithinLimits(cal, year) ==
+  LET months == ArithmeticMonths(cal, year) IN
+  ArithmeticRataDie(cal, year, 1, 1) - 719163 <= 100000000 /\
+  ArithmeticRataDie(cal, year, months, ArithmeticDaysInMonth(cal, year, months)) - 719163 >= -100000001
+\* The reference date of a month code and a day of an arithmetic calendar: the latest that is in
+\* 1972 or before, from a year of the calendar.
+ArithmeticReferenceYear(cal) == ArithmeticDateOf(cal, RataDie([year |-> 1972, month |-> 12, day |-> 31])).year
+ArithmeticReference(cal, year, code, day) ==
+  LET month == ArithmeticOrdinal(cal, year, code) IN
+  IF YearContainsMonthCode(cal, year, code) /\ day <= ArithmeticDaysInMonth(cal, year, month) /\
+     ArithmeticRataDie(cal, year, month, day) <= RataDie([year |-> 1972, month |-> 12, day |-> 31])
+  THEN RataDieToISODate(ArithmeticRataDie(cal, year, month, day))
+  ELSE ArithmeticReference(cal, year - 1, code, day)
+\* The Japanese calendar's eras from 1873, with the ISO date each starts on and its first year.
+\* CanonicalizeEraInCalendar, or Empty where the calendar has no such era.
+CanonicalizeEraInCalendar(cal, era) ==
+  CASE cal \in {N("coptic"), N("ethiopic"), N("hebrew")} /\ era = N("am") -> era
+    [] cal = N("persian") /\ era = N("ap") -> era
+    [] cal \in {N("ethiopic"), N("ethioaa")} /\ era = N("aa") -> era
+    [] cal = N("indian") /\ era = N("shaka") -> era
+    [] cal \in IslamicCalendars /\ era \in {N("ah"), N("bh")} -> era
+    [] cal \in {N("gregory"), N("japanese")} /\ era \in {N("ce"), N("ad")} -> N("ce")
+    [] cal \in {N("gregory"), N("japanese")} /\ era \in {N("bce"), N("bc")} -> N("bce")
+    [] cal = N("japanese") /\ \E i \in DOMAIN JapaneseEras : JapaneseEras[i].name = era -> era
+    [] cal = N("buddhist") /\ era = N("be") -> era
+    [] cal = N("roc") /\ era \in {N("roc"), N("broc")} -> era
+    [] OTHER -> Empty
+\* CalendarDateArithmeticYearForEraYear, of a BigInt era year: an era of the negative kind counts
+\* back from the year before its epoch, a Japanese era from 1873 counts from the year it starts in,
+\* and the Ethiopian calendar's Amete Alem era counts from 5500 years before its Amete Mihret era.
+CalendarDateArithmeticYearForEraYear(cal, era, eraYear) ==
+  LET japanese == SelectSeq(JapaneseEras, LAMBDA entry : entry.name = era) IN
+  CASE era \in {N("bce"), N("broc"), N("bh")} -> TISub(TI(1), eraYear)
+    [] cal = N("ethiopic") /\ era = N("aa") -> TISub(eraYear, TI(5500))
+    [] japanese # <<>> -> TIAdd(eraYear, TI(Head(japanese).first - 1))
+    [] OTHER -> eraYear
+\* CalendarDateEra and CalendarDateEraYear of an ISO date, of its arithmetic year, as [era, eraYear].
+CalendarDateEra(cal, date, year) ==
+  LET started == SelectSeq(JapaneseEras, LAMBDA entry : CompareISODate(date, entry.start) >= 0) IN
+  CASE cal = N("buddhist") -> [era |-> N("be"), eraYear |-> year]
+    [] cal \in {N("coptic"), N("hebrew")} -> [era |-> N("am"), eraYear |-> year]
+    [] cal = N("ethioaa") -> [era |-> N("aa"), eraYear |-> year]
+    [] cal = N("indian") -> [era |-> N("shaka"), eraYear |-> year]
+    [] cal = N("persian") -> [era |-> N("ap"), eraYear |-> year]
+    [] cal = N("ethiopic") -> IF year >= 1 THEN [era |-> N("am"), eraYear |-> year] ELSE [era |-> N("aa"), eraYear |-> year + 5500]
+    [] cal \in IslamicCalendars -> IF year >= 1 THEN [era |-> N("ah"), eraYear |-> year] ELSE [era |-> N("bh"), eraYear |-> 1 - year]
+    [] cal = N("japanese") /\ started # <<>> ->
+         [era |-> started[Len(started)].name, eraYear |-> year - started[Len(started)].first + 1]
+    [] year >= 1 -> [era |-> IF cal = N("roc") THEN N("roc") ELSE N("ce"), eraYear |-> year]
+    [] OTHER -> [era |-> IF cal = N("roc") THEN N("broc") ELSE N("bce"), eraYear |-> 1 - year]
+\* Whether a calendar has eras, which its dates' era and eraYear give and its fields read.
+CalendarHasEras(cal) == cal \notin {ISO8601} \cup LunisolarCalendars
+\* The calendar date of an ISO date, and its month code.
+CalendarParts(cal, date) ==
+  IF cal \in ArithmeticCalendars THEN ArithmeticDateOf(cal, RataDie(date))
+  ELSE [year |-> date.year + CalendarYearOffset(cal), month |-> date.month, day |-> date.day]
+CalendarMonthCode(cal, parts) ==
+  IF cal \in ArithmeticCalendars THEN ArithmeticMonthCode(cal, parts.year, parts.month) ELSE [month |-> parts.month, leap |-> FALSE]
+\* The month code of a fields record's monthCode units, or Empty.
+MonthCodeOf(units) == IF units = Empty THEN Empty ELSE [month |-> TPInt(units, 2, 3), leap |-> Len(units) = 4]
+\* MonthCodeToOrdinal of a month code that the year has, as ConstrainMonthCode constrains it.
+MonthCodeToOrdinal(cal, year, code) ==
+  IF cal \in ArithmeticCalendars THEN ArithmeticOrdinal(cal, year, ConstrainMonthCode(cal, year, code)) ELSE code.month
+\* CalendarISOToDate's fields that the getters of PlainDate and kin read.
+CalendarDateGetter(s, cal, date, m) ==
+  LET parts == CalendarParts(cal, date)
+      isArithmetic == cal \in ArithmeticCalendars
+  IN CASE m \in {"era", "eraYear"} ->
+            IF ~CalendarHasEras(cal) THEN Ok(s, Undefined)
+            ELSE LET era == CalendarDateEra(cal, date, parts.year) IN
+                 Ok(s, IF m = "era" THEN Str(era.era) ELSE IntV(era.eraYear))
+       [] m = "year" -> Ok(s, IntV(parts.year))
+       [] m = "month" -> Ok(s, IntV(parts.month))
+       [] m = "monthCode" ->
+            LET code == CalendarMonthCode(cal, parts) IN Ok(s, Str(CreateMonthCode(code.month, code.leap)))
+       [] m = "day" -> Ok(s, IntV(parts.day))
+       [] m = "dayOfWeek" -> Ok(s, IntV(ISODayOfWeek(date)))
+       [] m = "dayOfYear" ->
+            Ok(s, IntV(IF isArithmetic THEN RataDie(date) - ArithmeticRataDie(cal, parts.year, 1, 1) + 1 ELSE ISODayOfYear(date)))
+       [] m \in {"weekOfYear", "yearOfWeek"} ->
+            IF cal # ISO8601 THEN Ok(s, Undefined)
+            ELSE Ok(s, IntV(IF m = "weekOfYear" THEN ISOWeekOfYear(date).week ELSE ISOWeekOfYear(date).year))
+       [] m = "daysInWeek" -> Ok(s, IntV(7))
+       [] m = "daysInMonth" ->
+            Ok(s, IntV(IF isArithmetic THEN ArithmeticDaysInMonth(cal, parts.year, parts.month) ELSE ISODaysInMonth(date.year, date.month)))
+       [] m = "daysInYear" ->
+            Ok(s, IntV(CASE cal \in LunisolarCalendars -> LunisolarBefore(cal, parts.year, ArithmeticMonths(cal, parts.year) + 1)
+                         [] isArithmetic -> ArithmeticRataDie(cal, parts.year + 1, 1, 1) - ArithmeticRataDie(cal, parts.year, 1, 1)
+                         [] IsLeapYear(date.year) -> 366
+                         [] OTHER -> 365))
+       [] m = "monthsInYear" -> Ok(s, IntV(IF isArithmetic THEN ArithmeticMonths(cal, parts.year) ELSE 12))
+       [] m = "inLeapYear" -> Ok(s, Bool(IF isArithmetic THEN ArithmeticLeap(cal, parts.year) ELSE IsLeapYear(date.year)))
+\* ISODateToFields, for type "date", "year-month", or "month-day": the calendar year, month code, and
+\* day. It leaves out the month, whose number gives another month code in another Hebrew year.
+ISODateToFields(cal, date, type) ==
+  LET parts == CalendarParts(cal, date)
+      code == CalendarMonthCode(cal, parts)
+  IN [EmptyCalendarFields EXCEPT !.monthCode = CreateMonthCode(code.month, code.leap),
+                                 !.day = IF type \in {"date", "month-day"} THEN TI(parts.day) ELSE Empty,
+                                 !.year = IF type \in {"date", "year-month"} THEN TI(parts.year) ELSE Empty]
+\* CalendarResolveFields of a calendar other than ISO 8601 (NonISOResolveFields): the fields with
+\* year set to the arithmetic year that the year or the era and the era year give, and month to the
+\* month's ordinal.
+NonISOResolveFields(s, cal, fields, type) ==
+  LET code == MonthCodeOf(fields.monthCode)
+      era == IF fields.era = Empty THEN Empty ELSE CanonicalizeEraInCalendar(cal, fields.era)
+      year == IF fields.eraYear = Empty \/ era = Empty THEN fields.year
+              ELSE CalendarDateArithmeticYearForEraYear(cal, era, fields.eraYear)
+      ordinal == IF year = Empty THEN code.month ELSE MonthCodeToOrdinal(cal, TIClamp(year, -1000000, 1000000), code)
+  IN CASE (type \in {"date", "year-month"} \/ code = Empty \/ fields.month # Empty) /\ fields.year = Empty /\
+          (fields.era = Empty \/ fields.eraYear = Empty) -> ThrowTypeError(s)
+       [] (fields.era = Empty) # (fields.eraYear = Empty) -> ThrowTypeError(s)
+       [] type \in {"date", "month-day"} /\ fields.day = Empty -> ThrowTypeError(s)
+       [] fields.month = Empty /\ code = Empty -> ThrowTypeError(s)
+       [] fields.eraYear # Empty /\ era = Empty -> ThrowError(s, "RangeError")
+       [] fields.eraYear # Empty /\ fields.year # Empty /\ fields.year # year -> ThrowError(s, "RangeError")
+       [] code # Empty /\ ~(IF cal \in ArithmeticCalendars THEN IsValidMonthCodeForCalendar(cal, code) ELSE ~code.leap /\ code.month <= 12) ->
+            ThrowError(s, "RangeError")
+       [] year # Empty /\ fields.month # Empty /\ code # Empty /\ fields.month # TI(ordinal) -> ThrowError(s, "RangeError")
+       [] OTHER -> Ok(s, [fields EXCEPT !.year = year, !.month = IF code = Empty THEN fields.month ELSE TI(ordinal)])
+\* CalendarDateToISO of a resolved year and month and a day, BigInts, and the month code that the
+\* fields gave, or Empty. A month code that the year lacks is constrained or rejected.
+CalendarDateToISO(s, cal, year, month, day, code, overflow) ==
+  IF cal \notin ArithmeticCalendars THEN
+    LET iso == TISub(year, TI(CalendarYearOffset(cal))) IN
+    IF ~TIYearInRange(iso) THEN ThrowError(s, "RangeError") ELSE RegulateISODate(s, TIToInt(iso), month, day, overflow)
+  ELSE IF ~TIYearInRange(year) THEN ThrowError(s, "RangeError") ELSE
+  LET y == TIToInt(year)
+      months == ArithmeticMonths(cal, y)
+      m == TIClamp(month, 1, months)
+      days == ArithmeticDaysInMonth(cal, y, m)
+  IN IF overflow = N("reject") /\
+        ((code # Empty /\ ~YearContainsMonthCode(cal, y, code)) \/ BigIntLess(TI(months), month) \/ BigIntLess(TI(days), day))
+     THEN ThrowError(s, "RangeError")
+     ELSE Ok(s, RataDieToISODate(ArithmeticRataDie(cal, y, m, TIClamp(day, 1, days))))
+\* The reference date of a Chinese or Dangi month code and day from the host's table, which gives
+\* the month-day that they're constrained to where no year near 1972 has them.
+LunisolarReference(s, cal, code, day, overflow) ==
+  LET entry == HostCalendarMonthDay(<<cal, code.month, code.leap, day>>) IN
+  CASE entry.found # "monthDay" ->
+         Assert(FALSE, "tla-ts can't tell the reference date of a Chinese or Dangi month-day that the host's table leaves out")
+    [] overflow = N("reject") /\ ~entry.isKept -> ThrowError(s, "RangeError")
+    [] OTHER -> Ok(s, EpochDaysToISODate(entry.days))
+\* CalendarMonthDayToISOReferenceDate of a calendar other than ISO 8601, of resolved fields, whose
+\* year, where they give one, only decides how long the month is, and must be within the limits.
+\* A calendar whose months are ISO 8601's takes 1972 as the reference year.
+NonISOMonthDayToISOReferenceDate(s, cal, fields, overflow) ==
+  IF cal \in LunisolarCalendars /\ fields.year = Empty THEN
+    IF overflow = N("reject") /\ BigIntLess(TI(30), fields.day) THEN ThrowError(s, "RangeError")
+    ELSE LunisolarReference(s, cal, MonthCodeOf(fields.monthCode), TIClamp(fields.day, 1, 30), overflow)
+  ELSE IF cal \notin ArithmeticCalendars THEN
+    LET year == IF fields.year = Empty THEN Empty ELSE TISub(fields.year, TI(CalendarYearOffset(cal))) IN
+    IF year # Empty /\ (BigIntLess(year, TI(-271821)) \/ BigIntLess(TI(275760), year)) THEN ThrowError(s, "RangeError") ELSE
+    LET date == RegulateISODate(s, IF year = Empty THEN 1972 ELSE TIToInt(TIMod(year, TI(400))), fields.month, fields.day, overflow) IN
+    IF IsAbrupt(date) THEN date ELSE Ok(s, [year |-> 1972, month |-> Val(date).month, day |-> Val(date).day])
+  ELSE
+  LET y == IF fields.year = Empty THEN 0 ELSE TIClamp(fields.year, -1000000, 1000000)
+      months == IF fields.year = Empty THEN 13 ELSE ArithmeticMonths(cal, y)
+      month == TIClamp(fields.month, 1, months)
+      given == MonthCodeOf(fields.monthCode)
+      code == CASE fields.year = Empty -> given
+                [] given = Empty -> ArithmeticMonthCode(cal, y, month)
+                [] OTHER -> ConstrainMonthCode(cal, y, given)
+      days == IF fields.year = Empty THEN ArithmeticMostDays(cal, code) ELSE ArithmeticDaysInMonth(cal, y, month)
+  IN IF fields.year # Empty /\ ~(TIYearInRange(fields.year) /\ ArithmeticYearWithinLimits(cal, y)) THEN ThrowError(s, "RangeError")
+     ELSE IF overflow = N("reject") /\
+             ((fields.year # Empty /\ given # Empty /\ ~YearContainsMonthCode(cal, y, given)) \/
+              BigIntLess(TI(months), fields.month) \/ BigIntLess(TI(days), fields.day))
+     THEN ThrowError(s, "RangeError")
+     ELSE IF cal \in LunisolarCalendars THEN LunisolarReference(s, cal, code, TIClamp(fields.day, 1, days), overflow)
+     ELSE Ok(s, ArithmeticReference(cal, ArithmeticReferenceYear(cal), code, TIClamp(fields.day, 1, days)))
+\* NonISODateAdd of an arithmetic calendar, for a date duration, whose fields share a sign. Past
+\* the bounds checked first, every result is out of range.
+NonISODateAdd(s, cal, date, duration, overflow) ==
+  LET days == TIAdd(duration[4], TIMul(TI(7), duration[3])) IN
+  IF BigIntLess(TI(600000), TIAbs(duration[1])) \/ BigIntLess(TI(20000000), TIAbs(duration[2])) \/
+     BigIntLess(TI(250000000), TIAbs(days)) THEN ThrowError(s, "RangeError") ELSE
+  LET parts == CalendarParts(cal, date)
+      code == ArithmeticMonthCode(cal, parts.year, parts.month)
+      year == parts.year + TIToInt(duration[1])
+  IN IF year < -1000000 \/ year > 1000000 THEN ThrowError(s, "RangeError")
+     ELSE IF overflow = N("reject") /\ ~YearContainsMonthCode(cal, year, code) THEN ThrowError(s, "RangeError") ELSE
+  LET to == MonthsAfter(cal, year, MonthCodeToOrdinal(cal, year, code), TIToInt(duration[2])) IN
+  IF to.year < -1000000 \/ to.year > 1000000 THEN ThrowError(s, "RangeError") ELSE
+  LET length == ArithmeticDaysInMonth(cal, to.year, to.month) IN
+  IF overflow = N("reject") /\ parts.day > length THEN ThrowError(s, "RangeError") ELSE
+  LET start == ArithmeticRataDie(cal, to.year, to.month, IF parts.day > length THEN length ELSE parts.day) - 719163
+      total == start + TIToInt(days)
+  IN IF total < -100000001 \/ total > 100000000 THEN ThrowError(s, "RangeError") ELSE
+     LET result == EpochDaysToISODate(total) IN IF ISODateWithinLimits(result) THEN Ok(s, result) ELSE ThrowError(s, "RangeError")
+\* NonISODateUntil of an arithmetic calendar: the most years and then months that don't pass the
+\* later date, as NonISODateSurpasses finds them from a guess that's within one of them, and the
+\* days left. from and to are calendar dates, code from's month code; a month code orders by its
+\* month and then whether it's a leap month.
+MonthCodeKey(code) == code.month * 2 + (IF code.leap THEN 1 ELSE 0)
+NonISOReached(cal, from, code, years, months) ==
+  LET year == from.year + years IN MonthsAfter(cal, year, MonthCodeToOrdinal(cal, year, code), months)
+NonISODateSurpasses(cal, sign, from, code, to, years, months) ==
+  \/ sign * CompareFieldsFrom(<<from.year + years, MonthCodeKey(code), from.day>>,
+                              <<to.year, MonthCodeKey(ArithmeticMonthCode(cal, to.year, to.month)), to.day>>, 1) > 0
+  \/ LET at == NonISOReached(cal, from, code, years, months) IN
+     sign * CompareFieldsFrom(<<at.year, at.month, from.day>>, <<to.year, to.month, to.day>>, 1) > 0
+NonISOBackYears(cal, sign, from, code, to, count) ==
+  IF count = 0 \/ ~NonISODateSurpasses(cal, sign, from, code, to, count, 0) THEN count
+  ELSE NonISOBackYears(cal, sign, from, code, to, count - sign)
+NonISOForeYears(cal, sign, from, code, to, count) ==
+  IF NonISODateSurpasses(cal, sign, from, code, to, count + sign, 0) THEN count
+  ELSE NonISOForeYears(cal, sign, from, code, to, count + sign)
+NonISOBackMonths(cal, sign, from, code, to, years, count) ==
+  IF count = 0 \/ ~NonISODateSurpasses(cal, sign, from, code, to, years, count) THEN count
+  ELSE NonISOBackMonths(cal, sign, from, code, to, years, count - sign)
+NonISOForeMonths(cal, sign, from, code, to, years, count) ==
+  IF NonISODateSurpasses(cal, sign, from, code, to, years, count + sign) THEN count
+  ELSE NonISOForeMonths(cal, sign, from, code, to, years, count + sign)
+NonISODateUntil(cal, one, two, largestUnit) ==
+  LET sign == -CompareISODate(one, two)
+      from == CalendarParts(cal, one)
+      to == CalendarParts(cal, two)
+      code == ArithmeticMonthCode(cal, from.year, from.month)
+      guess(count) == IF sign * count < 0 THEN 0 ELSE count
+      years == IF largestUnit = TUYear
+               THEN NonISOForeYears(cal, sign, from, code, to, NonISOBackYears(cal, sign, from, code, to, guess(to.year - from.year)))
+               ELSE 0
+      start == NonISOReached(cal, from, code, years, 0)
+      months == IF largestUnit \in {TUYear, TUMonth}
+                THEN NonISOForeMonths(cal, sign, from, code, to, years,
+                                      NonISOBackMonths(cal, sign, from, code, to, years,
+                                                       guess(MonthsBetween(cal, start, to))))
+                ELSE 0
+      at == NonISOReached(cal, from, code, years, months)
+      length == ArithmeticDaysInMonth(cal, at.year, at.month)
+      days == RataDie(two) - ArithmeticRataDie(cal, at.year, at.month, IF from.day > length THEN length ELSE from.day)
+      weeks == CASE largestUnit # TUWeek -> 0 [] days < 0 -> -((-days) \div 7) [] OTHER -> days \div 7
+  IN IF sign = 0 THEN ZeroDateDuration ELSE <<TI(years), TI(months), TI(weeks), TI(days - 7 * weeks)>>
 \* Temporal's ISO 8601 calendar (§12), time zones (§11), and relative durations (§7.5). An ISO
 \* date record is [year, month, day] and an ISO date-time record [date, time], of TLA+ integers.
-\* A calendar is "iso8601", the only one engine262 has, and a time zone is [id, offset], its
-\* identifier and its offset in minutes: UTC, the only named time zone engine262 has, or an offset
-\* time zone. Calendar loops over days, months, and years have closed forms here, which give the
-\* loops' results.
+\* A calendar is its identifier: "iso8601", the only one engine262 has, or one of those in
+\* 89-temporal-calendars. A time zone is [id, primary, offset, zone]: its identifier and its
+\* primary identifier, its offset in minutes for UTC or an offset time zone, and for another named
+\* time zone, its HostTimeZone entry, else Empty. Calendar loops over days, months, and years have
+\* closed forms here, which give the loops' results.
+OffsetTimeZone(minutes) ==
+  LET id == FormatOffsetTimeZoneIdentifier(minutes, TRUE) IN [id |-> id, primary |-> id, offset |-> minutes, zone |-> Empty]
+IsOffsetTimeZone(tz) == tz.id[1] \in {43, 45}
 ISODaysInMonth(year, month) ==
   CASE month \in {1, 3, 5, 7, 8, 10, 12} -> 31
     [] month \in {4, 6, 9, 11} -> 30
@@ -16504,8 +18087,9 @@ RegulateISODate(s, year, month, day, overflow) ==
        IF BigIntLess(day, TI(1)) \/ BigIntLess(TI(ISODaysInMonth(year, m)), day) THEN ThrowError(s, "RangeError")
        ELSE Ok(s, [year |-> year, month |-> m, day |-> TIToInt(day)])
 \* CalendarDateAdd for a date duration, whose fields share a sign. Past the bounds checked first,
-\* every result is out of range.
-CalendarDateAdd(s, date, duration, overflow) ==
+\* every result is out of range. A calendar whose months are ISO 8601's adds as ISO 8601 does.
+CalendarDateAdd(s, cal, date, duration, overflow) ==
+  IF cal \in ArithmeticCalendars THEN NonISODateAdd(s, cal, date, duration, overflow) ELSE
   LET days == TIAdd(duration[4], TIMul(TI(7), duration[3])) IN
   IF BigIntLess(TI(600000), TIAbs(duration[1])) \/ BigIntLess(TI(7200000), TIAbs(duration[2])) \/
      BigIntLess(TI(250000000), TIAbs(days)) THEN ThrowError(s, "RangeError")
@@ -16517,10 +18101,11 @@ CalendarDateAdd(s, date, duration, overflow) ==
 \* CompareSurpasses for the ISO calendar, whose month codes order as their months do.
 Surpasses(sign, year, month, day, target) ==
   sign * CompareFieldsFrom(<<year, month, day>>, <<target.year, target.month, target.day>>, 1) > 0
-\* CalendarDateUntil for the ISO calendar. Each of its loops finds the largest count, in the
+\* CalendarDateUntil. For the ISO calendar, each of its loops finds the largest count, in the
 \* direction of sign, that doesn't surpass the target; that count is the difference of the
 \* fields, or one less when the smaller fields surpass the target's.
-CalendarDateUntil(from, to, largestUnit) ==
+CalendarDateUntil(cal, from, to, largestUnit) ==
+  IF cal \in ArithmeticCalendars THEN NonISODateUntil(cal, from, to, largestUnit) ELSE
   LET compared == CompareISODate(from, to) IN
   IF compared = 0 THEN ZeroDateDuration ELSE
   LET sign == -compared
@@ -16575,9 +18160,8 @@ FormatISODateTime(dt, calendar, precision, show) ==
   ISODateUnits(dt.date) \o <<84>> \o TimeRecordToString(dt.time, precision) \o FormatCalendarAnnotation(calendar, show)
 GetTemporalShowCalendarNameOption(s, options) ==
   GetStringOption(s, options, SV("calendarName"), {N("auto"), N("always"), N("never"), N("critical")}, N("auto"))
-\* Calendar identifiers: CanonicalizeCalendar, ParseTemporalCalendarString,
+\* Calendar identifiers: ParseTemporalCalendarString,
 \* ToTemporalCalendarIdentifier, and GetTemporalCalendarIdentifierWithISODefault.
-CanonicalizeCalendar(s, id) == IF TPLower(id) = ISO8601 THEN Ok(s, ISO8601) ELSE ThrowError(s, "RangeError")
 ParseTemporalCalendarString(s, units) ==
   LET r == ParseISODateTime(s, units, "all") IN
   IF ~IsAbrupt(r) THEN Ok(r.s, IF Val(r).calendar = Empty THEN ISO8601 ELSE Val(r).calendar)
@@ -16608,24 +18192,149 @@ ToTemporalTimeZoneIdentifier(s, v) ==
   IF IsObject(v) /\ O(s, v).class = "temporalZonedDateTime" THEN Ok(s, O(s, v).slots.timeZone)
   ELSE IF ~IsString(v) THEN ThrowTypeError(s)
   ELSE LET r == ParseTemporalTimeZoneString(s, v.value) IN IF IsAbrupt(r) THEN r
-  ELSE IF Val(r).offsetMinutes # Empty THEN
-    Ok(r.s, [id |-> FormatOffsetTimeZoneIdentifier(Val(r).offsetMinutes, TRUE), offset |-> Val(r).offsetMinutes])
-  ELSE IF TPLower(Val(r).name) = N("utc") THEN Ok(r.s, UTCTimeZone)
-  ELSE ThrowError(r.s, "RangeError")
-TimeZoneEquals(x, y) == x.id = y.id
-\* GetOffsetNanosecondsFor, GetISODateTimeFor, and GetPossibleEpochNanoseconds, which has one
-\* result for a time zone with a fixed offset, so GetEpochNanosecondsFor and GetStartOfDay need no
-\* disambiguation.
-GetOffsetNanosecondsFor(tz) == TIMul(TI(tz.offset), TINsPerMinute)
-GetISODateTimeFor(tz, ns) == EpochNsToISODateTime(TIAdd(ns, GetOffsetNanosecondsFor(tz)))
-GetEpochNanosecondsFor(s, tz, dt) ==
-  LET balanced == AddNanosecondsToISODateTime(dt, TINeg(GetOffsetNanosecondsFor(tz)))
-      ns == GetUTCEpochNanoseconds(balanced)
-  IN IF (tz # UTCTimeZone /\ ~IsValidISODaysRange(balanced.date)) \/ ~IsWithinEpochNanosecondsInterval(ns)
-     THEN ThrowError(s, "RangeError") ELSE Ok(s, ns)
-GetStartOfDay(s, tz, date) == GetEpochNanosecondsFor(s, tz, [date |-> date, time |-> MidnightTimeRecord])
+  ELSE TimeZoneFromParse(r.s, Val(r))
+\* The time zone of a ParseTimeZoneIdentifier result: an offset time zone, or the named time zone
+\* that GetAvailableNamedTimeZoneIdentifier (§11.1.3) finds, whose name it matches in any case.
+TimeZoneFromParse(s, r) ==
+  IF r.offsetMinutes # Empty THEN Ok(s, OffsetTimeZone(r.offsetMinutes)) ELSE
+  LET key == TPLower(r.name)
+      entry == HostTimeZone(key)
+  IN CASE key = N("utc") -> Ok(s, UTCTimeZone)
+       [] entry.found = "rejected" -> ThrowError(s, "RangeError")
+       [] entry.found = "unknown" -> Unsupported(s, N("Unsupported: a time zone that the host's table leaves out"))
+       [] OTHER -> Ok(s, [id |-> entry.id, primary |-> entry.primary, offset |-> Empty, zone |-> entry])
+\* TimeZoneEquals (§11.1.4): the same identifier, or named time zones of the same primary identifier.
+TimeZoneEquals(x, y) == x.id = y.id \/ (~IsOffsetTimeZone(x) /\ ~IsOffsetTimeZone(y) /\ x.primary = y.primary)
+\* A named time zone's offsets from its HostTimeZone entry: the second of epoch nanoseconds, rounded
+\* down, as its epoch day and its second within the day, and the number of the entry's transitions
+\* at or before it, found by halving the range.
+TZSecondOf(ns) ==
+  LET seconds == TIFloorDiv(ns, TINsPerSecond)
+  IN <<TIToInt(TIFloorDiv(seconds, TI(86400))), TIToInt(TIMod(seconds, TI(86400)))>>
+TZTransitionsUpTo(entry, second, low, high) ==
+  IF low >= high THEN low
+  ELSE LET middle == (low + high + 1) \div 2
+       IN IF entry.days[middle] < second[1] \/ (entry.days[middle] = second[1] /\ entry.seconds[middle] <= second[2])
+          THEN TZTransitionsUpTo(entry, second, middle, high)
+          ELSE TZTransitionsUpTo(entry, second, low, middle - 1)
+TZSecondsNs(seconds) == TIMul(TI(seconds), TINsPerSecond)
+TZTransitionNs(entry, i) == TIAdd(TIMul(TI(entry.days[i]), TINsPerDay), TZSecondsNs(entry.seconds[i]))
+\* The first epoch day of 2038, where an entry's transitions end.
+\* The epoch day of a rule's transition in a year: the week's weekday of the month, where week 5 is
+\* the last, and 1970-01-01 a Thursday.
+TZRuleDay(year, month, week, weekday) ==
+  LET first == ISODateToEpochDays(year, month, 1)
+      day == first + ((weekday - ((first + 4) % 7) + 7) % 7) + 7 * (week - 1)
+  IN IF day - first >= ISODaysInMonth(year, month) THEN day - 7 ELSE day
+\* The epoch nanoseconds of the start and of the end of daylight time in a year under a rule, whose
+\* times are local, in standard time and in daylight time.
+TZRuleStartEnd(rule, year) ==
+  LET at(day, time, offset) == TIAdd(TIMul(TI(day), TINsPerDay), TZSecondsNs(time - offset))
+  IN <<at(TZRuleDay(year, rule[3], rule[4], rule[5]), rule[6], rule[1]),
+       at(TZRuleDay(year, rule[7], rule[8], rule[9]), rule[10], rule[2])>>
+TZRuleTransitions(rule, year) == LET pair == TZRuleStartEnd(rule, year) IN {pair[1], pair[2]}
+\* The rule of an entry past its transitions, which a host's table may not have.
+TZRule(entry) ==
+  IF entry.rule = <<>> THEN Assert(FALSE, "tla-ts can't tell a time zone's offsets after 2037") ELSE entry.rule
+\* An offset under a rule: daylight time from its start in the year to its end, or, south of the
+\* equator, outside its end to its start.
+TZRuleOffset(rule, ns, year) ==
+  LET pair == TZRuleStartEnd(rule, year)
+      isDaylight == IF rule[3] < rule[7] THEN ~BigIntLess(ns, pair[1]) /\ BigIntLess(ns, pair[2])
+                    ELSE BigIntLess(ns, pair[2]) \/ ~BigIntLess(ns, pair[1])
+  IN TZSecondsNs(IF isDaylight THEN rule[2] ELSE rule[1])
+TZEarliestAfter(transitions, ns) ==
+  LET later == {t \in transitions : BigIntLess(ns, t)}
+  IN IF later = {} THEN Empty ELSE CHOOSE t \in later : \A u \in later : ~BigIntLess(u, t)
+TZLatestBefore(transitions, ns) ==
+  LET earlier == {t \in transitions : BigIntLess(t, ns)}
+  IN IF earlier = {} THEN Empty ELSE CHOOSE t \in earlier : \A u \in earlier : ~BigIntLess(t, u)
+\* GetOffsetNanosecondsFor (§11.1.8) and GetISODateTimeFor (§11.1.9).
+GetOffsetNanosecondsFor(tz, ns) ==
+  IF tz.zone = Empty THEN TIMul(TI(tz.offset), TINsPerMinute) ELSE
+  LET entry == tz.zone
+      second == TZSecondOf(ns)
+  IN IF ~entry.isFinal /\ second[1] >= TZEndDay
+     THEN TZRuleOffset(TZRule(entry), ns, EpochDaysToISODate(second[1]).year)
+     ELSE TZSecondsNs(entry.offsets[TZTransitionsUpTo(entry, second, 0, Len(entry.days)) + 1])
+GetISODateTimeFor(tz, ns) == EpochNsToISODateTime(TIAdd(ns, GetOffsetNanosecondsFor(tz, ns)))
+\* GetNamedTimeZoneNextTransition and GetNamedTimeZonePreviousTransition (§11.1.6, §11.1.7), Empty
+\* for none, and for a transition past the limits of epoch nanoseconds.
+GetNamedTimeZoneNextTransition(tz, ns) ==
+  IF tz.zone = Empty THEN Empty ELSE
+  LET entry == tz.zone
+      second == TZSecondOf(ns)
+      count == TZTransitionsUpTo(entry, second, 0, Len(entry.days))
+      year == EpochDaysToISODate(second[1]).year
+  IN CASE count < Len(entry.days) -> TZTransitionNs(entry, count + 1)
+       [] entry.isFinal -> Empty
+       [] OTHER ->
+            LET ruled == TZEarliestAfter(TZRuleTransitions(TZRule(entry), year) \cup TZRuleTransitions(TZRule(entry), year + 1), ns)
+            IN IF ruled # Empty /\ IsWithinEpochNanosecondsInterval(ruled) THEN ruled ELSE Empty
+GetNamedTimeZonePreviousTransition(tz, ns) ==
+  IF tz.zone = Empty THEN Empty ELSE
+  LET entry == tz.zone
+      second == TZSecondOf(TISub(ns, TI(1)))
+      count == TZTransitionsUpTo(entry, second, 0, Len(entry.days))
+      year == EpochDaysToISODate(second[1]).year
+  IN CASE ~entry.isFinal /\ second[1] >= TZEndDay ->
+            LET ruled == TZLatestBefore(TZRuleTransitions(TZRule(entry), year - 1) \cup TZRuleTransitions(TZRule(entry), year), ns)
+            IN IF ruled # Empty /\ IsWithinEpochNanosecondsInterval(ruled) THEN ruled ELSE Empty
+       [] count = 0 -> Empty
+       [] OTHER -> TZTransitionNs(entry, count)
+\* GetPossibleEpochNanoseconds (§11.1.11), earliest first. A named time zone's offsets a day before
+\* and a day after the date-time give the candidates (GetNamedTimeZoneEpochNanoseconds), as its
+\* transitions are more than two days apart.
+GetPossibleEpochNanoseconds(s, tz, dt) ==
+  LET possible ==
+        IF tz.zone = Empty THEN
+          LET balanced == AddNanosecondsToISODateTime(dt, TINeg(GetOffsetNanosecondsFor(tz, TI(0))))
+          IN IF tz # UTCTimeZone /\ ~IsValidISODaysRange(balanced.date) THEN Empty ELSE <<GetUTCEpochNanoseconds(balanced)>>
+        ELSE
+          LET utc == GetUTCEpochNanoseconds(dt)
+              before == GetOffsetNanosecondsFor(tz, TISub(utc, TINsPerDay))
+              after == GetOffsetNanosecondsFor(tz, TIAdd(utc, TINsPerDay))
+              isAt(offset) == GetOffsetNanosecondsFor(tz, TISub(utc, offset)) = offset
+              offsets == CASE before = after -> SelectSeq(<<before>>, isAt)
+                           [] BigIntLess(after, before) -> SelectSeq(<<before, after>>, isAt)
+                           [] OTHER -> SelectSeq(<<after, before>>, isAt)
+          IN [i \in DOMAIN offsets |-> TISub(utc, offsets[i])]
+  IN IF possible = Empty \/ \E i \in DOMAIN possible : ~IsWithinEpochNanosecondsInterval(possible[i])
+     THEN ThrowError(s, "RangeError") ELSE Ok(s, possible)
+\* DisambiguatePossibleEpochNanoseconds (§11.1.10). Where a gap skips the date-time, the change of
+\* offset across it moves the date-time to one that the time zone has.
+DisambiguatePossibleEpochNanoseconds(s, possible, tz, dt, disambiguation) ==
+  LET n == Len(possible) IN
+  IF n = 1 THEN Ok(s, possible[1])
+  ELSE IF n # 0 THEN
+    CASE disambiguation \in {N("earlier"), N("compatible")} -> Ok(s, possible[1])
+      [] disambiguation = N("later") -> Ok(s, possible[n])
+      [] OTHER -> ThrowError(s, "RangeError")
+  ELSE IF disambiguation = N("reject") THEN ThrowError(s, "RangeError") ELSE
+  LET utc == GetUTCEpochNanoseconds(dt)
+      dayBefore == TISub(utc, TINsPerDay)
+      dayAfter == TIAdd(utc, TINsPerDay)
+  IN IF ~IsWithinEpochNanosecondsInterval(dayBefore) \/ ~IsWithinEpochNanosecondsInterval(dayAfter) THEN ThrowError(s, "RangeError") ELSE
+  LET shift == TISub(GetOffsetNanosecondsFor(tz, dayAfter), GetOffsetNanosecondsFor(tz, dayBefore))
+      moved == AddNanosecondsToISODateTime(dt, IF disambiguation = N("earlier") THEN TINeg(shift) ELSE shift)
+      again == GetPossibleEpochNanoseconds(s, tz, moved)
+  IN IF IsAbrupt(again) THEN again
+     ELSE Ok(again.s, IF disambiguation = N("earlier") THEN Val(again)[1] ELSE Val(again)[Len(Val(again))])
+\* GetEpochNanosecondsFor (§11.1.12) and GetStartOfDay (§11.1.13): midnight, or where a gap skips
+\* midnight, the transition that ends the gap.
+GetEpochNanosecondsFor(s, tz, dt, disambiguation) ==
+  LET possible == GetPossibleEpochNanoseconds(s, tz, dt) IN IF IsAbrupt(possible) THEN possible
+  ELSE DisambiguatePossibleEpochNanoseconds(possible.s, Val(possible), tz, dt, disambiguation)
+GetStartOfDay(s, tz, date) ==
+  LET dt == [date |-> date, time |-> MidnightTimeRecord]
+      possible == GetPossibleEpochNanoseconds(s, tz, dt)
+      dayBefore == TISub(GetUTCEpochNanoseconds(dt), TINsPerDay)
+  IN IF IsAbrupt(possible) THEN possible
+     ELSE IF Val(possible) # <<>> THEN Ok(possible.s, Val(possible)[1])
+     ELSE IF ~IsWithinEpochNanosecondsInterval(dayBefore) THEN ThrowError(possible.s, "RangeError")
+     ELSE Ok(possible.s, GetNamedTimeZoneNextTransition(tz, dayBefore))
 \* The epoch nanoseconds of a date-time in a time zone, or as UTC for no time zone (Empty).
-EpochNsOf(s, dt, tz) == IF tz = Empty THEN Ok(s, GetUTCEpochNanoseconds(dt)) ELSE GetEpochNanosecondsFor(s, tz, dt)
+EpochNsOf(s, dt, tz) == IF tz = Empty THEN Ok(s, GetUTCEpochNanoseconds(dt)) ELSE GetEpochNanosecondsFor(s, tz, dt, N("compatible"))
 \* FormatUTCOffsetNanoseconds and FormatDateTimeUTCOffsetRounded.
 FormatUTCOffsetNanoseconds(ns) ==
   LET a == TIAbs(ns)
@@ -16639,32 +18348,39 @@ FormatDateTimeUTCOffsetRounded(ns) ==
 \* AddEpochNanoseconds.
 AddEpochNanoseconds(s, ns, d) ==
   LET r == TIAdd(ns, d) IN IF IsWithinEpochNanosecondsInterval(r) THEN Ok(s, r) ELSE ThrowError(s, "RangeError")
-\* InterpretISODateTimeOffset, for an offset behaviour "option", "exact", or "wall" and a match
-\* behaviour "match-exactly" or "match-minutes". A time of Empty is the start of the day.
-InterpretISODateTimeOffset(s, date, time, offsetBehaviour, offsetNs, tz, offsetOption, matchBehaviour) ==
+\* InterpretISODateTimeOffset (§6.5.2), for an offset behaviour "option", "exact", or "wall" and a
+\* match behaviour "match-exactly" or "match-minutes". A time of Empty is the start of the day.
+InterpretISODateTimeOffset(s, date, time, offsetBehaviour, offsetNs, tz, disambiguation, offsetOption, matchBehaviour) ==
   IF time = Empty THEN GetStartOfDay(s, tz, date) ELSE
   LET dt == [date |-> date, time |-> time] IN
-  IF offsetBehaviour = "wall" \/ (offsetBehaviour = "option" /\ offsetOption = N("ignore")) THEN GetEpochNanosecondsFor(s, tz, dt)
+  IF offsetBehaviour = "wall" \/ (offsetBehaviour = "option" /\ offsetOption = N("ignore"))
+  THEN GetEpochNanosecondsFor(s, tz, dt, disambiguation)
   ELSE IF offsetBehaviour = "exact" \/ (offsetBehaviour = "option" /\ offsetOption = N("use")) THEN
     LET balanced == AddNanosecondsToISODateTime(dt, TINeg(offsetNs))
         ns == GetUTCEpochNanoseconds(balanced)
     IN IF ~IsValidISODaysRange(balanced.date) \/ ~IsWithinEpochNanosecondsInterval(ns) THEN ThrowError(s, "RangeError")
        ELSE Ok(s, ns)
   ELSE IF ~IsValidISODaysRange(date) THEN ThrowError(s, "RangeError")
-  ELSE LET candidate == GetEpochNanosecondsFor(s, tz, dt) IN IF IsAbrupt(candidate) THEN candidate ELSE
-       LET candidateOffset == TISub(GetUTCEpochNanoseconds(dt), Val(candidate)) IN
-       IF candidateOffset = offsetNs \/
-          (matchBehaviour = "match-minutes" /\ RoundNumberToIncrement(candidateOffset, TINsPerMinute, N("halfExpand")) = offsetNs) \/
-          offsetOption # N("reject")
-       THEN candidate ELSE ThrowError(candidate.s, "RangeError")
+  ELSE LET utc == GetUTCEpochNanoseconds(dt)
+           possible == GetPossibleEpochNanoseconds(s, tz, dt)
+       IN IF IsAbrupt(possible) THEN possible ELSE
+       LET isMatch(candidate) ==
+             LET candidateOffset == TISub(utc, candidate)
+             IN candidateOffset = offsetNs \/
+                (matchBehaviour = "match-minutes" /\ RoundNumberToIncrement(candidateOffset, TINsPerMinute, N("halfExpand")) = offsetNs)
+           matching == SelectSeq(Val(possible), isMatch)
+       IN IF matching # <<>> THEN Ok(possible.s, matching[1])
+          ELSE IF offsetOption = N("reject") THEN ThrowError(possible.s, "RangeError")
+          ELSE DisambiguatePossibleEpochNanoseconds(possible.s, Val(possible), tz, dt, disambiguation)
 \* Calendar fields records: the fields below, with Empty for an absent one. Numbers are BigInts,
-\* monthCode and offset are units, and timeZone is a time zone.
+\* era, monthCode, and offset are units, and timeZone is a time zone.
 ConvertCalendarField(s, name, v) ==
   CASE name \in {"month", "day"} ->
          LET n == SnapToInteger(s, v, TRUE) IN
          IF IsAbrupt(n) THEN n ELSE IF BigIntLess(Val(n), TI(1)) THEN ThrowError(n.s, "RangeError") ELSE n
     [] name = "monthCode" ->
          LET p == ParseMonthCode(s, v) IN IF IsAbrupt(p) THEN p ELSE Ok(p.s, CreateMonthCode(Val(p).month, Val(p).leap))
+    [] name = "era" -> LET e == ToStr(s, v) IN IF IsAbrupt(e) THEN e ELSE Ok(e.s, Val(e).value)
     [] name = "timeZone" -> ToTemporalTimeZoneIdentifier(s, v)
     [] name = "offset" ->
          LET p == ToPrimitive(s, v, "string") IN IF IsAbrupt(p) THEN p
@@ -16682,26 +18398,27 @@ PrepareFrom(s, item, order, acc, isAny, required) ==
           ELSE LET c == ConvertCalendarField(v.s, name, Val(v)) IN IF IsAbrupt(c) THEN c
           ELSE PrepareFrom(c.s, item, Tail(order), [acc EXCEPT ![name] = Val(c)], TRUE, required)
 \* PrepareCalendarFields, for the set of field names to read and required "partial",
-\* "time-zone", or "no-required-fields". The fields are read in code unit order.
-PrepareCalendarFields(s, item, names, required) ==
-  PrepareFrom(s, item, SelectSeq([i \in 1..12 |-> i], LAMBDA i : CalendarFieldNames[i] \in names),
+\* "time-zone", or "no-required-fields". The fields are read in code unit order. A calendar with
+\* eras reads an era and an era year with a year (CalendarExtraFields).
+PrepareCalendarFields(s, cal, item, names, required) ==
+  LET read == IF CalendarHasEras(cal) /\ "year" \in names THEN names \cup {"era", "eraYear"} ELSE names IN
+  PrepareFrom(s, item, SelectSeq([i \in 1..14 |-> i], LAMBDA i : CalendarFieldNames[i] \in read),
               [n \in Range(CalendarFieldNames) |->
                  IF required # "partial" /\ n \in CalendarTimeFieldNames THEN TI(0) ELSE Empty],
               FALSE, required)
-\* CalendarMergeFields for the ISO calendar.
+\* CalendarMergeFields, where a month and a month code replace each other, and so do a year and an
+\* era with its era year, which only a calendar other than ISO 8601 reads.
 CalendarMergeFields(fields, additional) ==
   [n \in DOMAIN fields |->
      IF additional[n] # Empty THEN additional[n]
      ELSE IF n \in {"month", "monthCode"} /\ (additional.month # Empty \/ additional.monthCode # Empty) THEN Empty
+     ELSE IF n \in {"era", "eraYear", "year"} /\ (additional.era # Empty \/ additional.eraYear # Empty \/ additional.year # Empty)
+     THEN Empty
      ELSE fields[n]]
-\* ISODateToFields, for type "date", "year-month", or "month-day".
-ISODateToFields(date, type) ==
-  [EmptyCalendarFields EXCEPT !.monthCode = CreateMonthCode(date.month, FALSE),
-                              !.day = IF type \in {"date", "month-day"} THEN TI(date.day) ELSE Empty,
-                              !.year = IF type \in {"date", "year-month"} THEN TI(date.year) ELSE Empty]
-\* CalendarResolveFields for the ISO calendar: the fields with month set from monthCode.
-CalendarResolveFields(s, fields, type) ==
-  IF type \in {"date", "year-month"} /\ fields.year = Empty THEN ThrowTypeError(s)
+\* CalendarResolveFields: for the ISO calendar, the fields with month set from monthCode.
+CalendarResolveFields(s, cal, fields, type) ==
+  IF cal # ISO8601 THEN NonISOResolveFields(s, cal, fields, type)
+  ELSE IF type \in {"date", "year-month"} /\ fields.year = Empty THEN ThrowTypeError(s)
   ELSE IF type \in {"date", "month-day"} /\ fields.day = Empty THEN ThrowTypeError(s)
   ELSE IF fields.month = Empty /\ fields.monthCode = Empty THEN ThrowTypeError(s)
   ELSE IF fields.monthCode = Empty THEN Ok(s, fields)
@@ -16709,26 +18426,25 @@ CalendarResolveFields(s, fields, type) ==
        IF Len(fields.monthCode) = 4 \/ number > 12 \/ (fields.month # Empty /\ fields.month # TI(number))
        THEN ThrowError(s, "RangeError") ELSE Ok(s, [fields EXCEPT !.month = TI(number)])
 \* CalendarDateFromFields, CalendarYearMonthFromFields, and CalendarMonthDayFromFields.
-CalendarDateFromFields(s, fields, overflow) ==
-  LET r == CalendarResolveFields(s, fields, "date") IN IF IsAbrupt(r) THEN r
-  ELSE IF ~TIYearInRange(Val(r).year) THEN ThrowError(s, "RangeError")
-  ELSE LET date == RegulateISODate(s, TIToInt(Val(r).year), Val(r).month, Val(r).day, overflow) IN
-       IF IsAbrupt(date) THEN date ELSE IF ISODateWithinLimits(Val(date)) THEN date ELSE ThrowError(s, "RangeError")
-CalendarYearMonthFromFields(s, fields, overflow) ==
-  LET r == CalendarResolveFields(s, fields, "year-month") IN IF IsAbrupt(r) THEN r
-  ELSE IF ~TIYearInRange(Val(r).year) THEN ThrowError(s, "RangeError")
-  ELSE LET date == RegulateISODate(s, TIToInt(Val(r).year), Val(r).month, TI(1), overflow) IN
-       IF IsAbrupt(date) THEN date ELSE IF ISOYearMonthWithinLimits(Val(date)) THEN date ELSE ThrowError(s, "RangeError")
-\* The reference year 1972; a given year counts only for whether it is a leap year, which repeats
-\* every 400 years.
-CalendarMonthDayFromFields(s, fields, overflow) ==
-  LET r == CalendarResolveFields(s, fields, "month-day") IN IF IsAbrupt(r) THEN r ELSE
+CalendarDateFromFields(s, cal, fields, overflow) ==
+  LET r == CalendarResolveFields(s, cal, fields, "date") IN IF IsAbrupt(r) THEN r ELSE
+  LET date == CalendarDateToISO(s, cal, Val(r).year, Val(r).month, Val(r).day, MonthCodeOf(fields.monthCode), overflow) IN
+  IF IsAbrupt(date) THEN date ELSE IF ISODateWithinLimits(Val(date)) THEN date ELSE ThrowError(s, "RangeError")
+CalendarYearMonthFromFields(s, cal, fields, overflow) ==
+  LET r == CalendarResolveFields(s, cal, fields, "year-month") IN IF IsAbrupt(r) THEN r ELSE
+  LET date == CalendarDateToISO(s, cal, Val(r).year, Val(r).month, TI(1), MonthCodeOf(fields.monthCode), overflow) IN
+  IF IsAbrupt(date) THEN date ELSE IF ISOYearMonthWithinLimits(Val(date)) THEN date ELSE ThrowError(s, "RangeError")
+\* For the ISO calendar, the reference year 1972; a given year counts only for whether it is a leap
+\* year, which repeats every 400 years.
+CalendarMonthDayFromFields(s, cal, fields, overflow) ==
+  LET r == CalendarResolveFields(s, cal, fields, "month-day") IN IF IsAbrupt(r) THEN r
+  ELSE IF cal # ISO8601 THEN NonISOMonthDayToISOReferenceDate(r.s, cal, Val(r), overflow) ELSE
   LET year == IF Val(r).year = Empty THEN 1972 ELSE TIToInt(TIMod(Val(r).year, TI(400)))
       date == RegulateISODate(s, year, Val(r).month, Val(r).day, overflow)
   IN IF IsAbrupt(date) THEN date ELSE Ok(s, [year |-> 1972, month |-> Val(date).month, day |-> Val(date).day])
 \* InterpretTemporalDateTimeFields, as an ISO date-time.
-InterpretTemporalDateTimeFields(s, fields, overflow) ==
-  LET date == CalendarDateFromFields(s, fields, overflow) IN IF IsAbrupt(date) THEN date ELSE
+InterpretTemporalDateTimeFields(s, cal, fields, overflow) ==
+  LET date == CalendarDateFromFields(s, cal, fields, overflow) IN IF IsAbrupt(date) THEN date ELSE
   LET time == RegulateTime(date.s, <<fields.hour, fields.minute, fields.second, fields.millisecond, fields.microsecond,
                                      fields.nanosecond>>, overflow)
   IN IF IsAbrupt(time) THEN time ELSE Ok(time.s, [date |-> Val(date), time |-> Val(time)])
@@ -16739,15 +18455,15 @@ ZonedDateTimeISODateTime(s, v) == GetISODateTimeFor(O(s, v).slots.timeZone, O(s,
 DateDurationDays(s, date, plain) ==
   LET ymw == <<date[1], date[2], date[3], TI(0)>> IN
   IF DurationSign(ymw) = 0 THEN Ok(s, date[4])
-  ELSE LET to == CalendarDateAdd(s, plain.date, ymw, N("constrain")) IN IF IsAbrupt(to) THEN to
+  ELSE LET to == CalendarDateAdd(s, plain.calendar, plain.date, ymw, N("constrain")) IN IF IsAbrupt(to) THEN to
   ELSE Ok(to.s, TIAdd(date[4], TI(EpochDays(Val(to)) - EpochDays(plain.date))))
 InternalDurationSign(d) == LET ds == DurationSign(d.date) IN IF ds # 0 THEN ds ELSE TISign(d.time)
 CheckedDateDuration(s, date) == IF IsValidDateDuration(date) THEN Ok(s, date) ELSE ThrowError(s, "RangeError")
 \* ComputeNudgeWindow, as [inner, outer, startNs, endNs, startDuration, endDuration].
-ComputeNudgeWindow(s, sign, duration, origin, dt, tz, increment, unit, additionalShift) ==
+ComputeNudgeWindow(s, sign, duration, origin, dt, tz, cal, increment, unit, additionalShift) ==
   LET d == duration.date
       step == TI(increment * sign)
-      weeksStart == IF unit = TUWeek THEN CalendarDateAdd(s, dt.date, <<d[1], d[2], TI(0), TI(0)>>, N("constrain")) ELSE Ok(s, Empty)
+      weeksStart == IF unit = TUWeek THEN CalendarDateAdd(s, cal, dt.date, <<d[1], d[2], TI(0), TI(0)>>, N("constrain")) ELSE Ok(s, Empty)
   IN IF IsAbrupt(weeksStart) THEN weeksStart ELSE
   LET inner == CASE unit = TUYear ->
                       LET years == RoundNumberToIncrement(d[1], TI(increment), N("trunc")) IN
@@ -16756,7 +18472,7 @@ ComputeNudgeWindow(s, sign, duration, origin, dt, tz, increment, unit, additiona
                       LET months == RoundNumberToIncrement(d[2], TI(increment), N("trunc")) IN
                       IF additionalShift THEN TIAdd(months, step) ELSE months
                  [] unit = TUWeek ->
-                      RoundNumberToIncrement(TIAdd(d[3], CalendarDateUntil(Val(weeksStart),
+                      RoundNumberToIncrement(TIAdd(d[3], CalendarDateUntil(cal, Val(weeksStart),
                                                                            AddDaysToISODate(Val(weeksStart), TIToInt(d[4])), TUWeek)[3]),
                                              TI(increment), N("trunc"))
                  [] OTHER -> RoundNumberToIncrement(d[4], TI(increment), N("trunc"))
@@ -16768,12 +18484,12 @@ ComputeNudgeWindow(s, sign, duration, origin, dt, tz, increment, unit, additiona
       start == CheckedDateDuration(weeksStart.s, bounded(inner))
   IN IF IsAbrupt(start) THEN start ELSE
   LET end == CheckedDateDuration(start.s, bounded(outer)) IN IF IsAbrupt(end) THEN end ELSE
-  LET startDate == IF DurationSign(Val(start)) = 0 THEN Ok(end.s, Empty) ELSE CalendarDateAdd(end.s, dt.date, Val(start), N("constrain")) IN
+  LET startDate == IF DurationSign(Val(start)) = 0 THEN Ok(end.s, Empty) ELSE CalendarDateAdd(end.s, cal, dt.date, Val(start), N("constrain")) IN
   IF IsAbrupt(startDate) THEN startDate ELSE
   LET startNs == IF Val(startDate) = Empty THEN Ok(startDate.s, origin)
                  ELSE EpochNsOf(startDate.s, [date |-> Val(startDate), time |-> dt.time], tz) IN
   IF IsAbrupt(startNs) THEN startNs ELSE
-  LET endDate == CalendarDateAdd(startNs.s, dt.date, Val(end), N("constrain")) IN IF IsAbrupt(endDate) THEN endDate ELSE
+  LET endDate == CalendarDateAdd(startNs.s, cal, dt.date, Val(end), N("constrain")) IN IF IsAbrupt(endDate) THEN endDate ELSE
   LET endNs == EpochNsOf(endDate.s, [date |-> Val(endDate), time |-> dt.time], tz) IN IF IsAbrupt(endNs) THEN endNs
   ELSE Ok(endNs.s, [inner |-> inner, outer |-> outer, startNs |-> Val(startNs), endNs |-> Val(endNs),
                     startDuration |-> [date |-> Val(start), time |-> TI(0)],
@@ -16782,13 +18498,13 @@ ComputeNudgeWindow(s, sign, duration, origin, dt, tz, increment, unit, additiona
 \* total as a rational [num, den] with den > 0. The progress through the window is
 \* (dest − start) / (end − start), so total is (inner × (end − start) + (dest − start) × increment
 \* × sign) / (end − start).
-NudgeToCalendarUnit(s, sign, duration, origin, dest, dt, tz, increment, unit, mode) ==
-  LET first == ComputeNudgeWindow(s, sign, duration, origin, dt, tz, increment, unit, FALSE) IN
+NudgeToCalendarUnit(s, sign, duration, origin, dest, dt, tz, cal, increment, unit, mode) ==
+  LET first == ComputeNudgeWindow(s, sign, duration, origin, dt, tz, cal, increment, unit, FALSE) IN
   IF IsAbrupt(first) THEN first ELSE
   LET contains(w) == IF sign = 1 THEN ~BigIntLess(dest, w.startNs) /\ ~BigIntLess(w.endNs, dest)
                      ELSE ~BigIntLess(dest, w.endNs) /\ ~BigIntLess(w.startNs, dest)
       window == IF contains(Val(first)) THEN first
-                ELSE ComputeNudgeWindow(first.s, sign, duration, origin, dt, tz, increment, unit, TRUE)
+                ELSE ComputeNudgeWindow(first.s, sign, duration, origin, dt, tz, cal, increment, unit, TRUE)
   IN IF IsAbrupt(window) THEN window ELSE
   LET w == Val(window)
       numer == TISub(dest, w.startNs)
@@ -16812,10 +18528,10 @@ NudgeToCalendarUnit(s, sign, duration, origin, dest, dt, tz, increment, unit, mo
                               expanded |-> ~contains(Val(first)) \/ isOuter],
                    total |-> [num |-> IF denom.neg THEN TINeg(totalNum) ELSE totalNum, den |-> progressDen]])
 \* NudgeToZonedTime.
-NudgeToZonedTime(s, sign, duration, dt, tz, increment, unit, mode) ==
-  LET start == CalendarDateAdd(s, dt.date, duration.date, N("constrain")) IN IF IsAbrupt(start) THEN start ELSE
-  LET startNs == GetEpochNanosecondsFor(start.s, tz, [date |-> Val(start), time |-> dt.time]) IN IF IsAbrupt(startNs) THEN startNs ELSE
-  LET endNs == GetEpochNanosecondsFor(startNs.s, tz, [date |-> AddDaysToISODate(Val(start), sign), time |-> dt.time]) IN
+NudgeToZonedTime(s, sign, duration, dt, tz, cal, increment, unit, mode) ==
+  LET start == CalendarDateAdd(s, cal, dt.date, duration.date, N("constrain")) IN IF IsAbrupt(start) THEN start ELSE
+  LET startNs == GetEpochNanosecondsFor(start.s, tz, [date |-> Val(start), time |-> dt.time], N("compatible")) IN IF IsAbrupt(startNs) THEN startNs ELSE
+  LET endNs == GetEpochNanosecondsFor(startNs.s, tz, [date |-> AddDaysToISODate(Val(start), sign), time |-> dt.time], N("compatible")) IN
   IF IsAbrupt(endNs) THEN endNs ELSE
   LET length == TIMul(TemporalUnitLength(unit), TI(increment))
       rounded == RoundTimeDurationToIncrement(endNs.s, duration.time, length, mode)
@@ -16846,72 +18562,72 @@ BubbleUnits(largestUnit, startUnit) ==
   (IF startUnit = TUDay /\ largestUnit \in {TUYear, TUMonth} THEN <<TUMonth>> ELSE <<>>) \o
   (IF startUnit = TUDay /\ largestUnit = TUWeek THEN <<TUWeek>> ELSE <<>>) \o
   (IF largestUnit = TUYear THEN <<TUYear>> ELSE <<>>)
-BubbleFrom(s, sign, duration, nudged, dt, tz, units) ==
+BubbleFrom(s, sign, duration, nudged, dt, tz, cal, units) ==
   IF units = <<>> THEN Ok(s, duration) ELSE
   LET d == duration.date
       end == CASE Head(units) = TUYear -> <<TIAdd(d[1], TI(sign)), TI(0), TI(0), TI(0)>>
                [] Head(units) = TUMonth -> <<d[1], TIAdd(d[2], TI(sign)), TI(0), TI(0)>>
                [] OTHER -> <<d[1], d[2], TIAdd(d[3], TI(sign)), TI(0)>>
   IN IF ~IsValidDateDuration(end) THEN ThrowError(s, "RangeError") ELSE
-  LET date == CalendarDateAdd(s, dt.date, end, N("constrain")) IN IF IsAbrupt(date) THEN date ELSE
+  LET date == CalendarDateAdd(s, cal, dt.date, end, N("constrain")) IN IF IsAbrupt(date) THEN date ELSE
   LET endNs == EpochNsOf(date.s, [date |-> Val(date), time |-> dt.time], tz) IN IF IsAbrupt(endNs) THEN endNs
   ELSE IF TISign(TISub(nudged, Val(endNs))) = -sign THEN Ok(endNs.s, duration)
-  ELSE BubbleFrom(endNs.s, sign, [date |-> end, time |-> TI(0)], nudged, dt, tz, Tail(units))
-BubbleRelativeDuration(s, sign, duration, nudged, dt, tz, largestUnit, startUnit) ==
+  ELSE BubbleFrom(endNs.s, sign, [date |-> end, time |-> TI(0)], nudged, dt, tz, cal, Tail(units))
+BubbleRelativeDuration(s, sign, duration, nudged, dt, tz, cal, largestUnit, startUnit) ==
   IF LargerOfTwoTemporalUnits(startUnit, largestUnit) = startUnit THEN Ok(s, duration)
-  ELSE BubbleFrom(s, sign, duration, nudged, dt, tz, BubbleUnits(largestUnit, startUnit))
+  ELSE BubbleFrom(s, sign, duration, nudged, dt, tz, cal, BubbleUnits(largestUnit, startUnit))
 \* RoundRelativeDuration and TotalRelativeDuration, for a time zone or Empty.
-RoundRelativeDuration(s, duration, origin, dest, dt, tz, largestUnit, increment, smallestUnit, mode) ==
+RoundRelativeDuration(s, duration, origin, dest, dt, tz, cal, largestUnit, increment, smallestUnit, mode) ==
   LET sign == IF InternalDurationSign(duration) < 0 THEN -1 ELSE 1
       nudge == CASE IsCalendarUnit(smallestUnit) \/ (tz # Empty /\ smallestUnit = TUDay) ->
-                      LET r == NudgeToCalendarUnit(s, sign, duration, origin, dest, dt, tz, increment, smallestUnit, mode) IN
+                      LET r == NudgeToCalendarUnit(s, sign, duration, origin, dest, dt, tz, cal, increment, smallestUnit, mode) IN
                       IF IsAbrupt(r) THEN r ELSE Ok(r.s, Val(r).nudge)
-                 [] tz # Empty -> NudgeToZonedTime(s, sign, duration, dt, tz, increment, smallestUnit, mode)
+                 [] tz # Empty -> NudgeToZonedTime(s, sign, duration, dt, tz, cal, increment, smallestUnit, mode)
                  [] OTHER -> NudgeToDayOrTime(s, duration, dest, largestUnit, increment, smallestUnit, mode)
   IN IF IsAbrupt(nudge) THEN nudge
      ELSE IF Val(nudge).expanded /\ smallestUnit \notin {TUYear, TUWeek} THEN
-       BubbleRelativeDuration(nudge.s, sign, Val(nudge).duration, Val(nudge).nudged, dt, tz, largestUnit,
+       BubbleRelativeDuration(nudge.s, sign, Val(nudge).duration, Val(nudge).nudged, dt, tz, cal, largestUnit,
                               LargerOfTwoTemporalUnits(smallestUnit, TUDay))
      ELSE Ok(nudge.s, Val(nudge).duration)
-TotalRelativeDuration(s, duration, origin, dest, dt, tz, unit) ==
+TotalRelativeDuration(s, duration, origin, dest, dt, tz, cal, unit) ==
   IF IsCalendarUnit(unit) \/ (tz # Empty /\ unit = TUDay) THEN
-    LET r == NudgeToCalendarUnit(s, IF InternalDurationSign(duration) < 0 THEN -1 ELSE 1, duration, origin, dest, dt, tz,
+    LET r == NudgeToCalendarUnit(s, IF InternalDurationSign(duration) < 0 THEN -1 ELSE 1, duration, origin, dest, dt, tz, cal,
                                  1, unit, N("trunc"))
     IN IF IsAbrupt(r) THEN r ELSE Ok(r.s, RatioToNumber(Val(r).total.num, Val(r).total.den))
   ELSE Ok(s, RatioToNumber(TIAdd(duration.time, TIMul(duration.date[4], TINsPerDay)), TemporalUnitLength(unit)))
 \* DifferenceISODateTime, DifferencePlainDateTimeWithRounding, and DifferencePlainDateTimeWithTotal.
-DifferenceISODateTime(x, y, largestUnit) ==
+DifferenceISODateTime(x, y, cal, largestUnit) ==
   LET time0 == DifferenceTime(x.time, y.time)
       timeSign == TISign(time0)
       adjust == timeSign = CompareISODate(x.date, y.date)
       time == IF adjust THEN TISub(time0, TIMul(TI(timeSign), TINsPerDay)) ELSE time0
       dateLargestUnit == LargerOfTwoTemporalUnits(TUDay, largestUnit)
-      diff == CalendarDateUntil(x.date, IF adjust THEN AddDaysToISODate(y.date, timeSign) ELSE y.date, dateLargestUnit)
+      diff == CalendarDateUntil(cal, x.date, IF adjust THEN AddDaysToISODate(y.date, timeSign) ELSE y.date, dateLargestUnit)
   IN IF largestUnit # dateLargestUnit
      THEN [date |-> <<diff[1], diff[2], diff[3], TI(0)>>, time |-> TIAdd(time, TIMul(diff[4], TINsPerDay))]
      ELSE [date |-> diff, time |-> time]
-DifferencePlainDateTimeWithRounding(s, from, to, largestUnit, increment, smallestUnit, mode) ==
+DifferencePlainDateTimeWithRounding(s, from, to, cal, largestUnit, increment, smallestUnit, mode) ==
   IF CompareISODateTime(from, to) = 0 THEN Ok(s, CombineDateAndTimeDuration(ZeroDateDuration, TI(0)))
   ELSE IF ~ISODateTimeWithinLimits(from) \/ ~ISODateTimeWithinLimits(to) THEN ThrowError(s, "RangeError")
-  ELSE LET diff == DifferenceISODateTime(from, to, largestUnit) IN
+  ELSE LET diff == DifferenceISODateTime(from, to, cal, largestUnit) IN
        IF smallestUnit = TUNanosecond /\ increment = 1 THEN Ok(s, diff)
-       ELSE RoundRelativeDuration(s, diff, GetUTCEpochNanoseconds(from), GetUTCEpochNanoseconds(to), from, Empty,
+       ELSE RoundRelativeDuration(s, diff, GetUTCEpochNanoseconds(from), GetUTCEpochNanoseconds(to), from, Empty, cal,
                                   largestUnit, increment, smallestUnit, mode)
-DifferencePlainDateTimeWithTotal(s, from, to, unit) ==
+DifferencePlainDateTimeWithTotal(s, from, to, cal, unit) ==
   IF CompareISODateTime(from, to) = 0 THEN Ok(s, PosZero)
   ELSE IF ~ISODateTimeWithinLimits(from) \/ ~ISODateTimeWithinLimits(to) THEN ThrowError(s, "RangeError")
-  ELSE LET diff == DifferenceISODateTime(from, to, unit) IN
+  ELSE LET diff == DifferenceISODateTime(from, to, cal, unit) IN
        IF unit = TUNanosecond THEN Ok(s, RatioToNumber(diff.time, TI(1)))
-       ELSE TotalRelativeDuration(s, diff, GetUTCEpochNanoseconds(from), GetUTCEpochNanoseconds(to), from, Empty, unit)
+       ELSE TotalRelativeDuration(s, diff, GetUTCEpochNanoseconds(from), GetUTCEpochNanoseconds(to), from, Empty, cal, unit)
 \* DifferenceZonedDateTime, with its loop over day corrections.
 DayCorrectionFrom(s, tz, start, end, to, sign, correction, maxCorrection) ==
   LET intermediate == [date |-> AddDaysToISODate(end.date, correction * sign), time |-> start.time]
-      ns == GetEpochNanosecondsFor(s, tz, intermediate)
+      ns == GetEpochNanosecondsFor(s, tz, intermediate, N("compatible"))
   IN IF IsAbrupt(ns) THEN ns
      ELSE IF TISign(TISub(to, Val(ns))) # sign \/ correction >= maxCorrection
      THEN Ok(ns.s, [date |-> intermediate.date, time |-> TISub(to, Val(ns))])
      ELSE DayCorrectionFrom(ns.s, tz, start, end, to, sign, correction + 1, maxCorrection)
-DifferenceZonedDateTime(s, from, to, tz, largestUnit) ==
+DifferenceZonedDateTime(s, from, to, tz, cal, largestUnit) ==
   IF from = to THEN Ok(s, CombineDateAndTimeDuration(ZeroDateDuration, TI(0))) ELSE
   LET start == GetISODateTimeFor(tz, from)
       end == GetISODateTimeFor(tz, to)
@@ -16922,28 +18638,28 @@ DifferenceZonedDateTime(s, from, to, tz, largestUnit) ==
                                          IF sign = -1 THEN 2 ELSE 1)
           IN IF IsAbrupt(found) THEN found
              ELSE Ok(found.s, CombineDateAndTimeDuration(
-                                CalendarDateUntil(start.date, Val(found).date, LargerOfTwoTemporalUnits(largestUnit, TUDay)),
+                                CalendarDateUntil(cal, start.date, Val(found).date, LargerOfTwoTemporalUnits(largestUnit, TUDay)),
                                 Val(found).time))
 DifferenceEpochNanoseconds(s, from, to, increment, smallestUnit, mode) ==
   LET r == RoundTimeDuration(s, TISub(to, from), increment, smallestUnit, mode) IN
   IF IsAbrupt(r) THEN r ELSE Ok(r.s, CombineDateAndTimeDuration(ZeroDateDuration, Val(r)))
-DifferenceZonedDateTimeWithRounding(s, from, to, tz, largestUnit, increment, smallestUnit, mode) ==
+DifferenceZonedDateTimeWithRounding(s, from, to, tz, cal, largestUnit, increment, smallestUnit, mode) ==
   IF IsTimeUnit(largestUnit) THEN DifferenceEpochNanoseconds(s, from, to, increment, smallestUnit, mode) ELSE
-  LET diff == DifferenceZonedDateTime(s, from, to, tz, largestUnit) IN IF IsAbrupt(diff) THEN diff
+  LET diff == DifferenceZonedDateTime(s, from, to, tz, cal, largestUnit) IN IF IsAbrupt(diff) THEN diff
   ELSE IF smallestUnit = TUNanosecond /\ increment = 1 THEN diff
-  ELSE RoundRelativeDuration(diff.s, Val(diff), from, to, GetISODateTimeFor(tz, from), tz, largestUnit, increment, smallestUnit, mode)
-DifferenceZonedDateTimeWithTotal(s, from, to, tz, unit) ==
+  ELSE RoundRelativeDuration(diff.s, Val(diff), from, to, GetISODateTimeFor(tz, from), tz, cal, largestUnit, increment, smallestUnit, mode)
+DifferenceZonedDateTimeWithTotal(s, from, to, tz, cal, unit) ==
   IF IsTimeUnit(unit) THEN Ok(s, RatioToNumber(TISub(to, from), TemporalUnitLength(unit))) ELSE
-  LET diff == DifferenceZonedDateTime(s, from, to, tz, unit) IN IF IsAbrupt(diff) THEN diff
-  ELSE TotalRelativeDuration(diff.s, Val(diff), from, to, GetISODateTimeFor(tz, from), tz, unit)
+  LET diff == DifferenceZonedDateTime(s, from, to, tz, cal, unit) IN IF IsAbrupt(diff) THEN diff
+  ELSE TotalRelativeDuration(diff.s, Val(diff), from, to, GetISODateTimeFor(tz, from), tz, cal, unit)
 \* AddZonedDateTime.
-AddZonedDateTime(s, ns, tz, duration, overflow) ==
+AddZonedDateTime(s, ns, tz, cal, duration, overflow) ==
   IF DurationSign(duration.date) = 0 THEN AddEpochNanoseconds(s, ns, duration.time) ELSE
   LET dt == GetISODateTimeFor(tz, ns)
-      added == CalendarDateAdd(s, dt.date, duration.date, overflow)
+      added == CalendarDateAdd(s, cal, dt.date, duration.date, overflow)
   IN IF IsAbrupt(added) THEN added
      ELSE IF ~ISODateTimeWithinLimits([date |-> Val(added), time |-> dt.time]) THEN ThrowError(added.s, "RangeError")
-     ELSE LET intermediate == GetEpochNanosecondsFor(added.s, tz, [date |-> Val(added), time |-> dt.time]) IN
+     ELSE LET intermediate == GetEpochNanosecondsFor(added.s, tz, [date |-> Val(added), time |-> dt.time], N("compatible")) IN
           IF IsAbrupt(intermediate) THEN intermediate ELSE AddEpochNanoseconds(intermediate.s, Val(intermediate), duration.time)
 \* The start and end of Temporal.Duration.prototype.round and total relative to a PlainDate
 \* (steps 22 and 13), as [from, to] date-times.
@@ -16952,7 +18668,7 @@ RelativePlainTarget(s, d, plain) ==
       target == AddTime(MidnightTimeRecord, internal.time)
       date == CheckedDateDuration(s, <<internal.date[1], internal.date[2], internal.date[3], target.days>>)
   IN IF IsAbrupt(date) THEN date ELSE
-  LET targetDate == CalendarDateAdd(s, plain.date, Val(date), N("constrain")) IN IF IsAbrupt(targetDate) THEN targetDate
+  LET targetDate == CalendarDateAdd(s, plain.calendar, plain.date, Val(date), N("constrain")) IN IF IsAbrupt(targetDate) THEN targetDate
   ELSE Ok(targetDate.s, [from |-> [date |-> plain.date, time |-> MidnightTimeRecord],
                          to |-> [date |-> Val(targetDate), time |-> target.time]])
 \* GetTemporalRelativeToOption, as a relativeTo record [plain, zoned]: a [date, calendar] record
@@ -16962,7 +18678,7 @@ RelativeToFrom(s, date, time, calendar, tz, offsetBehaviour, offsetString, match
     IF ISODateWithinLimits(date) THEN Ok(s, [plain |-> [date |-> date, calendar |-> calendar], zoned |-> Empty])
     ELSE ThrowError(s, "RangeError")
   ELSE LET offsetNs == IF offsetBehaviour = "option" THEN Val(ParseDateTimeUTCOffset(s, offsetString)) ELSE TI(0)
-           ns == InterpretISODateTimeOffset(s, date, time, offsetBehaviour, offsetNs, tz, N("reject"), matchBehaviour)
+           ns == InterpretISODateTimeOffset(s, date, time, offsetBehaviour, offsetNs, tz, N("compatible"), N("reject"), matchBehaviour)
        IN IF IsAbrupt(ns) THEN ns
           ELSE Ok(ns.s, [plain |-> Empty, zoned |-> [epochNs |-> Val(ns), timeZone |-> tz, calendar |-> calendar]])
 GetTemporalRelativeToOption(s, options) ==
@@ -16978,10 +18694,10 @@ GetTemporalRelativeToOption(s, options) ==
               Ok(s1, [plain |-> [date |-> o.slots.dateTime.date, calendar |-> o.slots.calendar], zoned |-> Empty])
          [] OTHER ->
               LET calendar == GetTemporalCalendarIdentifierWithISODefault(s1, v) IN IF IsAbrupt(calendar) THEN calendar ELSE
-              LET fields == PrepareCalendarFields(calendar.s, v, DateFieldNames \cup CalendarTimeFieldNames \cup {"offset", "timeZone"},
+              LET fields == PrepareCalendarFields(calendar.s, Val(calendar), v, DateFieldNames \cup CalendarTimeFieldNames \cup {"offset", "timeZone"},
                                                   "no-required-fields") IN
               IF IsAbrupt(fields) THEN fields ELSE
-              LET result == InterpretTemporalDateTimeFields(fields.s, Val(fields), N("constrain")) IN IF IsAbrupt(result) THEN result
+              LET result == InterpretTemporalDateTimeFields(fields.s, Val(calendar), Val(fields), N("constrain")) IN IF IsAbrupt(result) THEN result
               ELSE RelativeToFrom(result.s, Val(result).date, Val(result).time, Val(calendar), Val(fields).timeZone,
                                   IF Val(fields).offset = Empty THEN "wall" ELSE "option", Val(fields).offset, "match-exactly")
      ELSE IF ~IsString(v) THEN ThrowTypeError(s1)
@@ -16994,6 +18710,157 @@ GetTemporalRelativeToOption(s, options) ==
           ELSE RelativeToFrom(calendar.s, [year |-> r.year, month |-> r.month, day |-> r.day], r.time, Val(calendar), Val(tz),
                               CASE r.z -> "exact" [] r.offset = Empty -> "wall" [] OTHER -> "option", r.offset,
                               IF r.offset # Empty /\ Len(r.offset) > 6 THEN "match-exactly" ELSE "match-minutes")
+\* Temporal's toLocaleString, with ECMA-402's CreateDateTimeFormat and FormatDateTime. engine262 has
+\* no Intl, so where HostDateFormat says the host has none, toLocaleString gives what toString
+\* gives. Otherwise it reads its options in CreateDateTimeFormat's order, and formats through the
+\* pattern that the host's table holds for the object's kind, its calendar, and the options: an
+\* English pattern of fields, each with its style, where a literal's style is its units. A field's
+\* text is as Node writes it in English, from 1583, before which Node writes the Julian calendar, to
+\* 9999. Where HostIntl answers for the object, its requested locales, and the options it read, it
+\* gives that answer instead. Otherwise it stops at a locale other than English, at a calendar or
+\* numbering system option, and at options whose pattern the table leaves out.
+\* The options that CreateDateTimeFormat reads after the time zone, in its order (ECMA-402 Table 16,
+\* then formatMatcher, dateStyle, and timeStyle), with the values each may take.
+\* GetNumberOption of fractionalSecondDigits, from 1 to 3.
+GetFractionalSecondDigitsOption(s, options) ==
+  LET value == Get(s, options, SV("fractionalSecondDigits")) IN IF IsAbrupt(value) THEN value
+  ELSE IF Val(value) = Undefined THEN Ok(value.s, Empty) ELSE
+  LET n == ToNumber(value.s, Val(value)) IN IF IsAbrupt(n) THEN n ELSE
+  LET x == Val(n).value IN
+  IF ~NumIsFinite(x) \/ NumLessThan(x, NumFromInt(1)) \/ NumLessThan(NumFromInt(3), x) THEN ThrowError(n.s, "RangeError")
+  ELSE Ok(n.s, NumToInt(MathFloor(x)))
+\* The options of DateTimeFormatOptions from the ith on, read into acc, a record of each one's
+\* value, or Empty.
+ReadDateTimeFormatOptions(s, options, i, acc) ==
+  IF i > Len(DateTimeFormatOptions) THEN Ok(s, acc) ELSE
+  LET option == DateTimeFormatOptions[i]
+      value == IF option.key = "fractionalSecondDigits" THEN GetFractionalSecondDigitsOption(s, options)
+               ELSE GetStringOption(s, options, option.property, option.values, Empty)
+  IN IF IsAbrupt(value) THEN value
+     ELSE ReadDateTimeFormatOptions(value.s, options, i + 1, [acc EXCEPT ![option.key] = Val(value)])
+\* The key of the host's table for a kind of object, its calendar, and the options it formats with,
+\* as a TLA+ string: the kind, the calendar, and each option given, in a fixed order.
+DateOptionText(u) == DateOptionTexts[CHOOSE i \in DOMAIN DateOptionTexts : DateOptionTexts[i].units = u].text
+DateFormatEntry(values, name) == IF values[name] = Empty THEN "" ELSE "|" \o name \o "=" \o DateOptionText(values[name])
+DateFormatEntries(values, i) ==
+  IF i > Len(DateFormatKeyNames) THEN "" ELSE DateFormatEntry(values, DateFormatKeyNames[i]) \o DateFormatEntries(values, i + 1)
+DateFormatKey(kind, calendar, hour12, values) ==
+  kind \o "|" \o calendar \o (IF hour12 = Empty THEN "" ELSE "|hour12=" \o IF hour12 THEN "true" ELSE "false") \o
+     DateFormatEntries(values, 1) \o
+     (CASE values.fractionalSecondDigits = Empty -> ""
+        [] values.fractionalSecondDigits = 1 -> "|fractionalSecondDigits=1"
+        [] values.fractionalSecondDigits = 2 -> "|fractionalSecondDigits=2"
+        [] OTHER -> "|fractionalSecondDigits=3") \o
+     DateFormatEntry(values, "dateStyle") \o DateFormatEntry(values, "timeStyle") \o
+     (IF "dayPeriod" \in DOMAIN values THEN DateFormatEntry(values, "dayPeriod") ELSE "")
+\* The text of a field of a pattern for a date [year, month, day] and a time [hour, minute, second,
+\* millisecond], where an hour's style is its cycle and width, as "h12 numeric", and a fraction's
+\* its digits.
+NamedField(name, style) == CASE style = "long" -> name [] style = "short" -> SubSeq(name, 1, 3) [] OTHER -> SubSeq(name, 1, 1)
+NumeralField(value, style) == IF style = "2-digit" THEN TwoDigits(value % 100) ELSE IntUnits(value)
+LocaleField(field, style, date, time) ==
+  LET cycle == SubSeq(style, 1, 3)
+      hour == CASE cycle = "h23" -> time[1]
+                [] cycle = "h24" -> IF time[1] = 0 THEN 24 ELSE time[1]
+                [] cycle = "h11" -> time[1] % 12
+                [] OTHER -> IF time[1] % 12 = 0 THEN 12 ELSE time[1] % 12
+  IN CASE field = "literal" -> style
+       [] field = "year" -> NumeralField(date.year, style)
+       [] field = "month" /\ style \in {"numeric", "2-digit"} -> NumeralField(date.month, style)
+       [] field = "month" -> NamedField(LongMonthNames[date.month], style)
+       [] field = "day" -> NumeralField(date.day, style)
+       [] field = "weekday" -> NamedField(LongWeekdayNames[ISODayOfWeek(date)], style)
+       [] field = "era" -> CASE style = "long" -> N("Anno Domini") [] style = "short" -> N("AD") [] OTHER -> N("A")
+       [] field = "dayPeriod" /\ style \in {"flexible long", "flexible narrow"} ->
+            CASE time[1] < 12 -> N("in the morning")
+              [] time[1] = 12 -> IF style = "flexible narrow" THEN N("n") ELSE N("noon")
+              [] time[1] < 18 -> N("in the afternoon")
+              [] time[1] < 21 -> N("in the evening")
+              [] OTHER -> N("at night")
+       [] field = "dayPeriod" -> IF time[1] < 12 THEN N("AM") ELSE N("PM")
+       [] field = "minute" -> NumeralField(time[2], style)
+       [] field = "second" -> NumeralField(time[3], style)
+       [] field = "fraction" -> SubSeq(PadStart(IntUnits(time[4]), 3), 1, CASE style = "1" -> 1 [] style = "2" -> 2 [] OTHER -> 3)
+       [] OTHER -> IF SubSeq(style, 5, Len(style)) = "2-digit" THEN TwoDigits(hour) ELSE IntUnits(hour)
+LocaleText(format, i, date, time) ==
+  IF i > Len(format.fields) THEN <<>>
+  ELSE LocaleField(format.fields[i], format.styles[i], date, time) \o LocaleText(format, i + 1, date, time)
+\* The key of HostIntl's entries for a Temporal object of a kind with its slots: its ISO fields, its
+\* epoch nanoseconds' units, and its time zone's identifier and its calendar, as it has them.
+TemporalFormatKey(kind, slots) ==
+  CASE kind \in {"PlainDate", "PlainYearMonth", "PlainMonthDay"} ->
+         <<kind, slots.date.year, slots.date.month, slots.date.day, slots.calendar>>
+    [] kind = "PlainDateTime" ->
+         <<kind, slots.dateTime.date.year, slots.dateTime.date.month, slots.dateTime.date.day>> \o
+         TimeFields(slots.dateTime.time) \o <<slots.calendar>>
+    [] kind = "PlainTime" -> <<kind>> \o TimeFields(slots.time)
+    [] kind = "ZonedDateTime" -> <<kind, TIUnits(slots.epochNs), slots.timeZone.id, slots.calendar>>
+    [] OTHER -> <<kind, TIUnits(slots.epochNs)>>
+\* The kind of a Temporal object by its class.
+\* toLocaleString of a Temporal object of a kind ("PlainDate" and the like) with its slots, where
+\* text is what toString gives: what HostIntl answers for its requested locales and the options it
+\* read, or else the host's recorded English pattern, for an English locale.
+TemporalToLocaleString(s, kind, slots, locales, options, text) ==
+  IF HostDateFormat(Empty).found = "none" THEN Ok(s, Str(text))
+  \* Temporal.Duration.prototype.toLocaleString: the format of a new Intl.DurationFormat.
+  ELSE IF kind = "Duration" THEN
+    LET df == DurationFormatConstruct(s, Intrinsic(s, "IntlDurationFormat"), locales, options) IN IF IsAbrupt(df) THEN df ELSE
+    LET answer == IntlAnswer(df.s, "DurationFormat", O(df.s, Val(df)).slots.options, "formatToParts",
+                             <<<<"duration", [i \in 1..10 |-> TIUnits(slots.fields[i])]>>>>)
+    IN IF IsAbrupt(answer) THEN answer ELSE IntlResult(answer.s, "format", Val(answer))
+  ELSE LET requested == CanonicalizeLocaleList(s, locales) IN IF IsAbrupt(requested) THEN requested ELSE
+  LET o == IF options = Undefined THEN OrdinaryObjectCreate(requested.s, Null) ELSE ToObject(requested.s, options) IN IF IsAbrupt(o) THEN o ELSE
+  LET matcher == GetStringOption(o.s, Val(o), SV("localeMatcher"), {N("lookup"), N("best fit")}, Undefined) IN
+  IF IsAbrupt(matcher) THEN matcher ELSE
+  LET calendar == GetAnyStringOption(matcher.s, Val(o), SV("calendar")) IN IF IsAbrupt(calendar) THEN calendar
+  ELSE IF Val(calendar) # Empty /\ ~IsTypeSequenceFrom(Val(calendar), 1, 0) THEN ThrowError(calendar.s, "RangeError")
+  ELSE LET numbering == GetAnyStringOption(calendar.s, Val(o), SV("numberingSystem")) IN IF IsAbrupt(numbering) THEN numbering
+  ELSE IF Val(numbering) # Empty /\ ~IsTypeSequenceFrom(Val(numbering), 1, 0) THEN ThrowError(numbering.s, "RangeError") ELSE
+  LET hour12 == Get(numbering.s, Val(o), SV("hour12")) IN IF IsAbrupt(hour12) THEN hour12 ELSE
+  LET hourCycle == GetStringOption(hour12.s, Val(o), SV("hourCycle"), {N("h11"), N("h12"), N("h23"), N("h24")}, Empty) IN
+  IF IsAbrupt(hourCycle) THEN hourCycle ELSE
+  LET zoneValue == Get(hourCycle.s, Val(o), SV("timeZone")) IN IF IsAbrupt(zoneValue) THEN zoneValue
+  ELSE IF Val(zoneValue) # Undefined /\ kind = "ZonedDateTime" THEN ThrowTypeError(zoneValue.s) ELSE
+  LET zoneText == IF Val(zoneValue) = Undefined THEN Ok(zoneValue.s, Undefined) ELSE ToStr(zoneValue.s, Val(zoneValue)) IN
+  IF IsAbrupt(zoneText) THEN zoneText ELSE
+  LET tz == IF Val(zoneText) = Undefined THEN Ok(zoneText.s, UTCTimeZone) ELSE ZonedConstructorTimeZone(zoneText.s, Val(zoneText)) IN
+  IF IsAbrupt(tz) THEN tz ELSE
+  LET read == ReadDateTimeFormatOptions(tz.s, Val(o), 1, [n \in {DateTimeFormatOptions[i].key : i \in 1..Len(DateTimeFormatOptions)} |-> Empty]) IN
+  IF IsAbrupt(read) THEN read ELSE
+  LET hostKey == <<"Temporal",
+                   <<Val(requested),
+                     <<IF Val(matcher) = Undefined THEN Empty ELSE Val(matcher), Val(calendar), Val(numbering),
+                       IF Val(hour12) = Undefined THEN Empty ELSE ToBooleanValue(Val(hour12)), Val(hourCycle),
+                       IF Val(zoneText) = Undefined THEN Empty ELSE Val(zoneText).value>> \o
+                     [i \in 1..Len(DateTimeFormatOptions) |-> Val(read)[DateTimeFormatOptions[i].key]]>>,
+                   "toLocaleString", <<TemporalFormatKey(kind, slots)>>>>
+      answer == HostIntl(hostKey)
+  IN IF answer.found = "value" THEN Ok(read.s, answer.value)
+  ELSE IF answer.found = "error" THEN ThrowError(read.s, answer.error)
+  ELSE IF Val(calendar) # Empty \/ Val(numbering) # Empty THEN Unsupported(read.s, N("Unsupported: a calendar or numberingSystem option"))
+  ELSE IF ~(locales = Undefined \/ (IsString(locales) /\ TPLower(locales.value) \in {N("en"), N("en-us")}))
+  THEN Unsupported(read.s, N("Unsupported: a locale other than English")) ELSE
+  LET values == Val(read) @@ [hourCycle |-> Val(hourCycle)]
+      key == DateFormatKey(kind, IF kind \in {"PlainTime", "Instant"} \/ slots.calendar = ISO8601 THEN "iso8601" ELSE "gregory",
+                           IF Val(hour12) = Undefined THEN Empty ELSE ToBooleanValue(Val(hour12)), values)
+      format == HostDateFormat(key)
+      local == CASE kind = "Instant" -> GetISODateTimeFor(Val(tz), slots.epochNs)
+                 [] kind = "PlainTime" -> [date |-> [year |-> 1970, month |-> 1, day |-> 1], time |-> slots.time]
+                 [] kind = "PlainDateTime" -> slots.dateTime
+                 [] OTHER -> [date |-> slots.date, time |-> MidnightTimeRecord]
+  IN CASE values.dayPeriod # Empty \/ values.timeZoneName # Empty ->
+            Unsupported(read.s, N("Unsupported: a dayPeriod or timeZoneName option"))
+       [] values.formatMatcher = N("basic") -> Unsupported(read.s, N("Unsupported: the basic format matcher"))
+       [] format.found = "error" -> ThrowError(read.s, format.error)
+       [] format.found # "format" -> Unsupported(read.s, N("Unsupported: options the host's table leaves out"))
+       \* A calendar other than English's, the Gregorian, and ISO 8601 isn't the formatter's.
+       [] kind \notin {"PlainTime", "Instant"} /\ slots.calendar \notin {ISO8601, N("gregory")} -> ThrowError(read.s, "RangeError")
+       [] Val(zoneText) # Undefined /\ ~format.isZoned -> Unsupported(read.s, N("Unsupported: a time zone option"))
+       [] kind # "PlainTime" /\ (local.date.year < 1583 \/ local.date.year > 9999) ->
+            Unsupported(read.s, N("Unsupported: a date that Node writes in the Julian calendar"))
+       [] OTHER ->
+            Ok(read.s, Str(LocaleText(format, 1, local.date,
+                                      <<local.time.hour, local.time.minute, local.time.second, local.time.millisecond>>)))
 \* Temporal's ISO 8601 and RFC 9557 string grammar (Temporal §13.33), parsed as engine262's
 \* DateParser does: by backtracking over code units. A parser takes the units u and the index p of
 \* the next unit and gives TPFail or TPOk(the index after the match, the parse node).
@@ -17323,8 +19190,8 @@ ParseTemporalDurationString(s, units) ==
               TIMul(sign, TPGroupValue(d.hours)), TIMul(sign, minutes), TIMul(sign, seconds),
               TI(d.sign * (subSecond \div 1000000)), TI(d.sign * ((subSecond \div 1000) % 1000)),
               TI(d.sign * (subSecond % 1000)) >>)
-\* The Temporal types (Temporal §3 to §10) and Temporal.Now, on the ISO calendar and the fixed-offset
-\* time zones of 89-temporal-dates.
+\* The Temporal types (Temporal §3 to §10) and Temporal.Now, on the calendars and the time zones of
+\* 89-temporal-dates and 89-temporal-calendars.
 \* A Temporal.PlainDate has class "temporalDate" and slots [date, calendar].
 CreateTemporalDate(s, date, calendar, newTarget) ==
   IF ~ISODateWithinLimits(date) THEN ThrowError(s, "RangeError")
@@ -17344,10 +19211,10 @@ ToTemporalDateRecord(s, item, options) ==
                                   [] OTHER -> ZonedDateTimeISODateTime(s, item).date,
                        calendar |-> o.slots.calendar])
     ELSE LET calendar == GetTemporalCalendarIdentifierWithISODefault(s, item) IN IF IsAbrupt(calendar) THEN calendar ELSE
-         LET fields == PrepareCalendarFields(calendar.s, item, DateFieldNames, "no-required-fields") IN IF IsAbrupt(fields) THEN fields ELSE
+         LET fields == PrepareCalendarFields(calendar.s, Val(calendar), item, DateFieldNames, "no-required-fields") IN IF IsAbrupt(fields) THEN fields ELSE
          LET opts == GetOptionsObject(fields.s, options) IN IF IsAbrupt(opts) THEN opts ELSE
          LET overflow == GetTemporalOverflowOption(opts.s, Val(opts)) IN IF IsAbrupt(overflow) THEN overflow ELSE
-         LET date == CalendarDateFromFields(overflow.s, Val(fields), Val(overflow)) IN
+         LET date == CalendarDateFromFields(overflow.s, Val(calendar), Val(fields), Val(overflow)) IN
          IF IsAbrupt(date) THEN date ELSE Ok(date.s, [date |-> Val(date), calendar |-> Val(calendar)])
   ELSE IF ~IsString(item) THEN ThrowTypeError(s)
   ELSE LET parsed == ParseISODateTime(s, item.value, "plain-date-time") IN IF IsAbrupt(parsed) THEN parsed ELSE
@@ -17356,22 +19223,6 @@ ToTemporalDateRecord(s, item, options) ==
        LET read == ReadOverflowOption(calendar.s, options) IN IF IsAbrupt(read) THEN read ELSE
        LET date == [year |-> Val(parsed).year, month |-> Val(parsed).month, day |-> Val(parsed).day] IN
        IF ISODateWithinLimits(date) THEN Ok(read.s, [date |-> date, calendar |-> Val(calendar)]) ELSE ThrowError(read.s, "RangeError")
-\* The fields a calendar date record (CalendarISOToDate) gives the getters of PlainDate and kin.
-CalendarDateGetter(s, date, m) ==
-  CASE m = "era" \/ m = "eraYear" -> Ok(s, Undefined)
-    [] m = "year" -> Ok(s, IntV(date.year))
-    [] m = "month" -> Ok(s, IntV(date.month))
-    [] m = "monthCode" -> Ok(s, Str(CreateMonthCode(date.month, FALSE)))
-    [] m = "day" -> Ok(s, IntV(date.day))
-    [] m = "dayOfWeek" -> Ok(s, IntV(ISODayOfWeek(date)))
-    [] m = "dayOfYear" -> Ok(s, IntV(ISODayOfYear(date)))
-    [] m = "weekOfYear" -> Ok(s, IntV(ISOWeekOfYear(date).week))
-    [] m = "yearOfWeek" -> Ok(s, IntV(ISOWeekOfYear(date).year))
-    [] m = "daysInWeek" -> Ok(s, IntV(7))
-    [] m = "daysInMonth" -> Ok(s, IntV(ISODaysInMonth(date.year, date.month)))
-    [] m = "daysInYear" -> Ok(s, IntV(IF IsLeapYear(date.year) THEN 366 ELSE 365))
-    [] m = "monthsInYear" -> Ok(s, IntV(12))
-    [] m = "inLeapYear" -> Ok(s, Bool(IsLeapYear(date.year)))
 \* DifferenceTemporalPlainDate.
 DifferenceTemporalPlainDate(s, operation, plain, other, options) ==
   LET o == ToTemporalDateRecord(s, other, Undefined) IN IF IsAbrupt(o) THEN o
@@ -17382,9 +19233,9 @@ DifferenceTemporalPlainDate(s, operation, plain, other, options) ==
   LET st == Val(settings)
       from == [date |-> plain.date, time |-> MidnightTimeRecord]
       to == [date |-> Val(o).date, time |-> MidnightTimeRecord]
-      diff == CombineDateAndTimeDuration(CalendarDateUntil(plain.date, Val(o).date, st.largestUnit), TI(0))
+      diff == CombineDateAndTimeDuration(CalendarDateUntil(plain.calendar, plain.date, Val(o).date, st.largestUnit), TI(0))
       rounded == IF st.smallestUnit = TUDay /\ st.roundingIncrement = 1 THEN Ok(settings.s, diff)
-                 ELSE RoundRelativeDuration(settings.s, diff, GetUTCEpochNanoseconds(from), GetUTCEpochNanoseconds(to), from, Empty,
+                 ELSE RoundRelativeDuration(settings.s, diff, GetUTCEpochNanoseconds(from), GetUTCEpochNanoseconds(to), from, Empty, plain.calendar,
                                             st.largestUnit, st.roundingIncrement, st.smallestUnit, st.roundingMode)
   IN IF IsAbrupt(rounded) THEN rounded ELSE
   LET f == DurationFieldsFromInternal(Val(rounded), TUDay) IN
@@ -17397,7 +19248,7 @@ AddDurationToDate(s, operation, plain, durationLike, options) ==
       opts == GetOptionsObject(d.s, options)
   IN IF IsAbrupt(opts) THEN opts ELSE
   LET overflow == GetTemporalOverflowOption(opts.s, Val(opts)) IN IF IsAbrupt(overflow) THEN overflow ELSE
-  LET result == CalendarDateAdd(overflow.s, plain.date, dateDuration, Val(overflow)) IN
+  LET result == CalendarDateAdd(overflow.s, plain.calendar, plain.date, dateDuration, Val(overflow)) IN
   IF IsAbrupt(result) THEN result ELSE CreateTemporalDate(result.s, Val(result), plain.calendar, Empty)
 \* ToTimeRecordOrMidnight.
 ToTimeRecordOrMidnight(s, item) == IF item = Undefined THEN Ok(s, MidnightTimeRecord) ELSE ToTemporalTimeRecord(s, item, Undefined)
@@ -17424,25 +19275,25 @@ PlainDateBuiltin(s, f, m, this, args, nt) ==
     [] OTHER ->
          LET plain == O(s, this).slots
              date == plain.date
-         IN CASE m \in CalendarDateGetters -> CalendarDateGetter(s, date, m)
+         IN CASE m \in CalendarDateGetters -> CalendarDateGetter(s, plain.calendar, date, m)
               [] m = "calendarId" -> Ok(s, Str(plain.calendar))
               [] m = "toPlainYearMonth" ->
-                   LET ym == CalendarYearMonthFromFields(s, ISODateToFields(date, "date"), N("constrain")) IN
+                   LET ym == CalendarYearMonthFromFields(s, plain.calendar, ISODateToFields(plain.calendar, date, "date"), N("constrain")) IN
                    IF IsAbrupt(ym) THEN ym ELSE CreateTemporalYearMonth(ym.s, Val(ym), plain.calendar, Empty)
               [] m = "toPlainMonthDay" ->
-                   LET md == CalendarMonthDayFromFields(s, ISODateToFields(date, "date"), N("constrain")) IN
+                   LET md == CalendarMonthDayFromFields(s, plain.calendar, ISODateToFields(plain.calendar, date, "date"), N("constrain")) IN
                    IF IsAbrupt(md) THEN md ELSE CreateTemporalMonthDay(md.s, Val(md), plain.calendar, Empty)
               [] m \in {"add", "subtract"} -> AddDurationToDate(s, m, plain, Arg(args, 1), Arg(args, 2))
               [] m = "with" ->
                    LET isPartial == IsPartialTemporalObject(s, Arg(args, 1)) IN IF IsAbrupt(isPartial) THEN isPartial
                    ELSE IF ~Val(isPartial) THEN ThrowTypeError(isPartial.s) ELSE
-                   LET partial == PrepareCalendarFields(isPartial.s, Arg(args, 1), DateFieldNames, "partial") IN
+                   LET partial == PrepareCalendarFields(isPartial.s, plain.calendar, Arg(args, 1), DateFieldNames, "partial") IN
                    IF IsAbrupt(partial) THEN partial ELSE
-                   LET fields == CalendarMergeFields(ISODateToFields(date, "date"), Val(partial))
+                   LET fields == CalendarMergeFields(ISODateToFields(plain.calendar, date, "date"), Val(partial))
                        opts == GetOptionsObject(partial.s, Arg(args, 2))
                    IN IF IsAbrupt(opts) THEN opts ELSE
                    LET overflow == GetTemporalOverflowOption(opts.s, Val(opts)) IN IF IsAbrupt(overflow) THEN overflow ELSE
-                   LET r == CalendarDateFromFields(overflow.s, fields, Val(overflow)) IN
+                   LET r == CalendarDateFromFields(overflow.s, plain.calendar, fields, Val(overflow)) IN
                    IF IsAbrupt(r) THEN r ELSE CreateTemporalDate(r.s, Val(r), plain.calendar, Empty)
               [] m = "withCalendar" ->
                    LET calendar == ToTemporalCalendarIdentifier(s, Arg(args, 1)) IN
@@ -17459,7 +19310,9 @@ PlainDateBuiltin(s, f, m, this, args, nt) ==
                    LET opts == GetOptionsObject(s, Arg(args, 1)) IN IF IsAbrupt(opts) THEN opts ELSE
                    LET show == GetTemporalShowCalendarNameOption(opts.s, Val(opts)) IN IF IsAbrupt(show) THEN show
                    ELSE Ok(show.s, Str(TemporalDateToString(date, plain.calendar, Val(show))))
-              [] m \in {"toLocaleString", "toJSON"} -> Ok(s, Str(TemporalDateToString(date, plain.calendar, N("auto"))))
+              [] m = "toLocaleString" ->
+                   TemporalToLocaleString(s, "PlainDate", plain, Arg(args, 1), Arg(args, 2), TemporalDateToString(date, plain.calendar, N("auto")))
+              [] m = "toJSON" -> Ok(s, Str(TemporalDateToString(date, plain.calendar, N("auto"))))
               [] m = "valueOf" -> ThrowTypeError(s)
 \* Temporal.PlainDate.prototype.toZonedDateTime.
 PlainDateToZonedDateTime(s, plain, item) ==
@@ -17472,7 +19325,7 @@ PlainDateToZonedDateTime(s, plain, item) ==
   LET ns == IF Val(temporalTime) = Undefined THEN GetStartOfDay(temporalTime.s, Val(tz), plain.date)
             ELSE LET time == ToTemporalTimeRecord(temporalTime.s, Val(temporalTime), Undefined) IN IF IsAbrupt(time) THEN time ELSE
                  LET dt == [date |-> plain.date, time |-> Val(time)] IN
-                 IF ~ISODateTimeWithinLimits(dt) THEN ThrowError(time.s, "RangeError") ELSE GetEpochNanosecondsFor(time.s, Val(tz), dt)
+                 IF ~ISODateTimeWithinLimits(dt) THEN ThrowError(time.s, "RangeError") ELSE GetEpochNanosecondsFor(time.s, Val(tz), dt, N("compatible"))
   IN IF IsAbrupt(ns) THEN ns ELSE CreateTemporalZonedDateTime(ns.s, Val(ns), Val(tz), plain.calendar, Empty)
 \* PlainDateTime (Temporal §5). A Temporal.PlainDateTime has class "temporalDateTime" and slots
 \* [dateTime, calendar].
@@ -17491,11 +19344,11 @@ ToTemporalDateTimeRecord(s, item, options) ==
                                       [] OTHER -> ZonedDateTimeISODateTime(s, item),
                        calendar |-> o.slots.calendar])
     ELSE LET calendar == GetTemporalCalendarIdentifierWithISODefault(s, item) IN IF IsAbrupt(calendar) THEN calendar ELSE
-         LET fields == PrepareCalendarFields(calendar.s, item, DateFieldNames \cup CalendarTimeFieldNames, "no-required-fields") IN
+         LET fields == PrepareCalendarFields(calendar.s, Val(calendar), item, DateFieldNames \cup CalendarTimeFieldNames, "no-required-fields") IN
          IF IsAbrupt(fields) THEN fields ELSE
          LET opts == GetOptionsObject(fields.s, options) IN IF IsAbrupt(opts) THEN opts ELSE
          LET overflow == GetTemporalOverflowOption(opts.s, Val(opts)) IN IF IsAbrupt(overflow) THEN overflow ELSE
-         LET dt == InterpretTemporalDateTimeFields(overflow.s, Val(fields), Val(overflow)) IN IF IsAbrupt(dt) THEN dt
+         LET dt == InterpretTemporalDateTimeFields(overflow.s, Val(calendar), Val(fields), Val(overflow)) IN IF IsAbrupt(dt) THEN dt
          ELSE IF ISODateTimeWithinLimits(Val(dt)) THEN Ok(dt.s, [dateTime |-> Val(dt), calendar |-> Val(calendar)])
          ELSE ThrowError(dt.s, "RangeError")
   ELSE IF ~IsString(item) THEN ThrowTypeError(s)
@@ -17512,8 +19365,8 @@ RoundISODateTime(dt, increment, unit, mode) ==
   LET rounded == RoundTime(dt.time, increment, unit, mode) IN
   [date |-> AddDaysToISODate(dt.date, TIToInt(rounded.days)), time |-> rounded.time]
 \* The fields of a date-time, for CalendarMergeFields.
-ISODateTimeToFields(dt) ==
-  [ISODateToFields(dt.date, "date") EXCEPT !.hour = TI(dt.time.hour), !.minute = TI(dt.time.minute),
+ISODateTimeToFields(cal, dt) ==
+  [ISODateToFields(cal, dt.date, "date") EXCEPT !.hour = TI(dt.time.hour), !.minute = TI(dt.time.minute),
                                            !.second = TI(dt.time.second), !.millisecond = TI(dt.time.millisecond),
                                            !.microsecond = TI(dt.time.microsecond), !.nanosecond = TI(dt.time.nanosecond)]
 \* The negation of a duration's fields for "since".
@@ -17527,7 +19380,7 @@ DifferenceTemporalPlainDateTime(s, operation, plain, other, options) ==
   IF IsAbrupt(settings) THEN settings
   ELSE IF CompareISODateTime(plain.dateTime, Val(o).dateTime) = 0 THEN CreateTemporalDuration(settings.s, ZeroDurationFields, Empty) ELSE
   LET st == Val(settings)
-      diff == DifferencePlainDateTimeWithRounding(settings.s, plain.dateTime, Val(o).dateTime, st.largestUnit,
+      diff == DifferencePlainDateTimeWithRounding(settings.s, plain.dateTime, Val(o).dateTime, plain.calendar, st.largestUnit,
                                                   st.roundingIncrement, st.smallestUnit, st.roundingMode)
   IN IF IsAbrupt(diff) THEN diff
      ELSE CreateTemporalDuration(diff.s, SinceFields(operation, DurationFieldsFromInternal(Val(diff), st.largestUnit)), Empty)
@@ -17539,7 +19392,7 @@ AddDurationToDateTime(s, operation, plain, durationLike, options) ==
       timeResult == AddTime(plain.dateTime.time, internal.time)
       dateDuration == CheckedDateDuration(overflow.s, <<internal.date[1], internal.date[2], internal.date[3], timeResult.days>>)
   IN IF IsAbrupt(dateDuration) THEN dateDuration ELSE
-  LET added == CalendarDateAdd(dateDuration.s, plain.dateTime.date, Val(dateDuration), Val(overflow)) IN IF IsAbrupt(added) THEN added
+  LET added == CalendarDateAdd(dateDuration.s, plain.calendar, plain.dateTime.date, Val(dateDuration), Val(overflow)) IN IF IsAbrupt(added) THEN added
   ELSE CreateTemporalDateTime(added.s, [date |-> Val(added), time |-> timeResult.time], plain.calendar, Empty)
 \* The smallestUnit and roundingIncrement of round on PlainDateTime and ZonedDateTime: a time unit
 \* or day, and an increment that divides the next larger unit (or is 1 for day).
@@ -17587,17 +19440,17 @@ PlainDateTimeBuiltin(s, f, m, this, args, nt) ==
     [] OTHER ->
          LET plain == O(s, this).slots
              dt == plain.dateTime
-         IN CASE m \in CalendarDateGetters -> CalendarDateGetter(s, dt.date, m)
+         IN CASE m \in CalendarDateGetters -> CalendarDateGetter(s, plain.calendar, dt.date, m)
               [] m \in {"hour", "minute", "second", "millisecond", "microsecond", "nanosecond"} -> Ok(s, IntV(dt.time[m]))
               [] m = "calendarId" -> Ok(s, Str(plain.calendar))
               [] m = "with" ->
                    LET isPartial == IsPartialTemporalObject(s, Arg(args, 1)) IN IF IsAbrupt(isPartial) THEN isPartial
                    ELSE IF ~Val(isPartial) THEN ThrowTypeError(isPartial.s) ELSE
-                   LET partial == PrepareCalendarFields(isPartial.s, Arg(args, 1), DateFieldNames \cup CalendarTimeFieldNames, "partial") IN
+                   LET partial == PrepareCalendarFields(isPartial.s, plain.calendar, Arg(args, 1), DateFieldNames \cup CalendarTimeFieldNames, "partial") IN
                    IF IsAbrupt(partial) THEN partial ELSE
                    LET opts == GetOptionsObject(partial.s, Arg(args, 2)) IN IF IsAbrupt(opts) THEN opts ELSE
                    LET overflow == GetTemporalOverflowOption(opts.s, Val(opts)) IN IF IsAbrupt(overflow) THEN overflow ELSE
-                   LET r == InterpretTemporalDateTimeFields(overflow.s, CalendarMergeFields(ISODateTimeToFields(dt), Val(partial)), Val(overflow)) IN
+                   LET r == InterpretTemporalDateTimeFields(overflow.s, plain.calendar, CalendarMergeFields(ISODateTimeToFields(plain.calendar, dt), Val(partial)), Val(overflow)) IN
                    IF IsAbrupt(r) THEN r ELSE CreateTemporalDateTime(r.s, Val(r), plain.calendar, Empty)
               [] m = "withPlainTime" ->
                    LET time == ToTimeRecordOrMidnight(s, Arg(args, 1)) IN IF IsAbrupt(time) THEN time
@@ -17622,13 +19475,16 @@ PlainDateTimeBuiltin(s, f, m, this, args, nt) ==
                        result == RoundISODateTime(dt, precision.increment, precision.unit, Val(o).mode)
                    IN IF ~ISODateTimeWithinLimits(result) THEN ThrowError(o.s, "RangeError")
                       ELSE Ok(o.s, Str(FormatISODateTime(result, plain.calendar, precision.precision, Val(show))))
-              [] m \in {"toLocaleString", "toJSON"} -> Ok(s, Str(FormatISODateTime(dt, plain.calendar, TPrecisionAuto, N("auto"))))
+              [] m = "toLocaleString" ->
+                   TemporalToLocaleString(s, "PlainDateTime", plain, Arg(args, 1), Arg(args, 2),
+                                          FormatISODateTime(dt, plain.calendar, TPrecisionAuto, N("auto")))
+              [] m = "toJSON" -> Ok(s, Str(FormatISODateTime(dt, plain.calendar, TPrecisionAuto, N("auto"))))
               [] m = "valueOf" -> ThrowTypeError(s)
               [] m = "toZonedDateTime" ->
                    LET tz == ToTemporalTimeZoneIdentifier(s, Arg(args, 1)) IN IF IsAbrupt(tz) THEN tz ELSE
                    LET opts == GetOptionsObject(tz.s, Arg(args, 2)) IN IF IsAbrupt(opts) THEN opts ELSE
                    LET disambiguation == GetTemporalDisambiguationOption(opts.s, Val(opts)) IN IF IsAbrupt(disambiguation) THEN disambiguation ELSE
-                   LET ns == GetEpochNanosecondsFor(disambiguation.s, Val(tz), dt) IN
+                   LET ns == GetEpochNanosecondsFor(disambiguation.s, Val(tz), dt, Val(disambiguation)) IN
                    IF IsAbrupt(ns) THEN ns ELSE CreateTemporalZonedDateTime(ns.s, Val(ns), Val(tz), plain.calendar, Empty)
               [] m = "toPlainDate" -> CreateTemporalDate(s, dt.date, plain.calendar, Empty)
               [] m = "toPlainTime" -> CreateTemporalTime(s, dt.time, Empty)
@@ -17654,22 +19510,22 @@ GetZonedOptions(s, options, offsetFallback) ==
   LET disambiguation == GetTemporalDisambiguationOption(opts.s, Val(opts)) IN IF IsAbrupt(disambiguation) THEN disambiguation ELSE
   LET offset == GetTemporalOffsetOption(disambiguation.s, Val(opts), offsetFallback) IN IF IsAbrupt(offset) THEN offset ELSE
   LET overflow == GetTemporalOverflowOption(offset.s, Val(opts)) IN IF IsAbrupt(overflow) THEN overflow
-  ELSE Ok(overflow.s, [offset |-> Val(offset), overflow |-> Val(overflow)])
+  ELSE Ok(overflow.s, [disambiguation |-> Val(disambiguation), offset |-> Val(offset), overflow |-> Val(overflow)])
 \* ToTemporalZonedDateTime, as the slots of a ZonedDateTime.
 ToTemporalZonedDateTimeRecord(s, item, options) ==
   IF IsObject(item) THEN
     IF O(s, item).class = "temporalZonedDateTime" THEN
       LET read == GetZonedOptions(s, options, N("reject")) IN IF IsAbrupt(read) THEN read ELSE Ok(read.s, O(s, item).slots)
     ELSE LET calendar == GetTemporalCalendarIdentifierWithISODefault(s, item) IN IF IsAbrupt(calendar) THEN calendar ELSE
-         LET fields == PrepareCalendarFields(calendar.s, item, DateFieldNames \cup CalendarTimeFieldNames \cup {"offset", "timeZone"},
+         LET fields == PrepareCalendarFields(calendar.s, Val(calendar), item, DateFieldNames \cup CalendarTimeFieldNames \cup {"offset", "timeZone"},
                                              "time-zone") IN
          IF IsAbrupt(fields) THEN fields ELSE
          LET o == GetZonedOptions(fields.s, options, N("reject")) IN IF IsAbrupt(o) THEN o ELSE
-         LET dt == InterpretTemporalDateTimeFields(o.s, Val(fields), Val(o).overflow) IN IF IsAbrupt(dt) THEN dt ELSE
+         LET dt == InterpretTemporalDateTimeFields(o.s, Val(calendar), Val(fields), Val(o).overflow) IN IF IsAbrupt(dt) THEN dt ELSE
          LET offsetString == Val(fields).offset
              ns == InterpretISODateTimeOffset(dt.s, Val(dt).date, Val(dt).time, IF offsetString = Empty THEN "wall" ELSE "option",
                                               IF offsetString = Empty THEN TI(0) ELSE Val(ParseDateTimeUTCOffset(dt.s, offsetString)),
-                                              Val(fields).timeZone, Val(o).offset, "match-exactly")
+                                              Val(fields).timeZone, Val(o).disambiguation, Val(o).offset, "match-exactly")
          IN IF IsAbrupt(ns) THEN ns ELSE Ok(ns.s, [epochNs |-> Val(ns), timeZone |-> Val(fields).timeZone, calendar |-> Val(calendar)])
   ELSE IF ~IsString(item) THEN ThrowTypeError(s)
   ELSE LET parsed == ParseISODateTime(s, item.value, "zoned-date-time") IN IF IsAbrupt(parsed) THEN parsed ELSE
@@ -17681,7 +19537,8 @@ ToTemporalZonedDateTimeRecord(s, item, options) ==
        LET behaviour == CASE r.z -> "exact" [] r.offset = Empty -> "wall" [] OTHER -> "option"
            ns == InterpretISODateTimeOffset(o.s, [year |-> r.year, month |-> r.month, day |-> r.day], r.time, behaviour,
                                             IF behaviour = "option" THEN Val(ParseDateTimeUTCOffset(o.s, r.offset)) ELSE TI(0),
-                                            Val(tz), Val(o).offset, IF r.offset # Empty /\ Len(r.offset) > 6 THEN "match-exactly" ELSE "match-minutes")
+                                            Val(tz), Val(o).disambiguation, Val(o).offset,
+                                            IF r.offset # Empty /\ Len(r.offset) > 6 THEN "match-exactly" ELSE "match-minutes")
        IN IF IsAbrupt(ns) THEN ns ELSE Ok(ns.s, [epochNs |-> Val(ns), timeZone |-> Val(tz), calendar |-> Val(calendar)])
 \* RoundEpochNanoseconds: RoundNumberToIncrementAsIfPositive.
 RoundEpochNanoseconds(ns, increment, unit, mode) ==
@@ -17704,7 +19561,7 @@ RoundEpochNanoseconds(ns, increment, unit, mode) ==
 TemporalZonedDateTimeToString(z, precision, showCalendar, showTimeZone, showOffset, increment, unit, mode) ==
   LET ns == RoundEpochNanoseconds(z.epochNs, increment, unit, mode) IN
   FormatISODateTime(GetISODateTimeFor(z.timeZone, ns), ISO8601, precision, N("never")) \o
-  (IF showOffset = N("never") THEN <<>> ELSE FormatDateTimeUTCOffsetRounded(GetOffsetNanosecondsFor(z.timeZone))) \o
+  (IF showOffset = N("never") THEN <<>> ELSE FormatDateTimeUTCOffsetRounded(GetOffsetNanosecondsFor(z.timeZone, ns))) \o
   (IF showTimeZone = N("never") THEN <<>> ELSE <<91>> \o (IF showTimeZone = N("critical") THEN <<33>> ELSE <<>>) \o z.timeZone.id \o <<93>>) \o
   FormatCalendarAnnotation(z.calendar, showCalendar)
 \* DifferenceTemporalZonedDateTime and AddDurationToZonedDateTime.
@@ -17721,7 +19578,7 @@ DifferenceTemporalZonedDateTime(s, operation, z, other, options) ==
     ELSE CreateTemporalDuration(diff.s, SinceFields(operation, DurationFieldsFromInternal(Val(diff), st.largestUnit)), Empty)
   ELSE IF ~TimeZoneEquals(z.timeZone, Val(o).timeZone) THEN ThrowError(settings.s, "RangeError")
   ELSE IF z.epochNs = Val(o).epochNs THEN CreateTemporalDuration(settings.s, ZeroDurationFields, Empty)
-  ELSE LET diff == DifferenceZonedDateTimeWithRounding(settings.s, z.epochNs, Val(o).epochNs, z.timeZone, st.largestUnit,
+  ELSE LET diff == DifferenceZonedDateTimeWithRounding(settings.s, z.epochNs, Val(o).epochNs, z.timeZone, z.calendar, st.largestUnit,
                                                        st.roundingIncrement, st.smallestUnit, st.roundingMode) IN
        IF IsAbrupt(diff) THEN diff
        ELSE CreateTemporalDuration(diff.s, SinceFields(operation, DurationFieldsFromInternal(Val(diff), TUHour)), Empty)
@@ -17729,7 +19586,7 @@ AddDurationToZonedDateTime(s, operation, z, durationLike, options) ==
   LET d == ToTemporalDurationFields(s, durationLike) IN IF IsAbrupt(d) THEN d ELSE
   LET opts == GetOptionsObject(d.s, options) IN IF IsAbrupt(opts) THEN opts ELSE
   LET overflow == GetTemporalOverflowOption(opts.s, Val(opts)) IN IF IsAbrupt(overflow) THEN overflow ELSE
-  LET ns == AddZonedDateTime(overflow.s, z.epochNs, z.timeZone,
+  LET ns == AddZonedDateTime(overflow.s, z.epochNs, z.timeZone, z.calendar,
                              ToInternalDurationRecord(IF operation = "subtract" THEN NegatedDurationFields(Val(d)) ELSE Val(d)),
                              Val(overflow))
   IN IF IsAbrupt(ns) THEN ns ELSE CreateTemporalZonedDateTime(ns.s, Val(ns), z.timeZone, z.calendar, Empty)
@@ -17749,32 +19606,30 @@ RoundZonedDateTime(s, z, roundToArg) ==
        IN IF IsAbrupt(rounded) THEN rounded
           ELSE CreateTemporalZonedDateTime(rounded.s, TIAdd(Val(rounded), Val(start)), z.timeZone, z.calendar, Empty)
      ELSE LET result == RoundISODateTime(dt, o.increment, o.unit, o.mode)
-              ns == InterpretISODateTimeOffset(r.s, result.date, result.time, "option", GetOffsetNanosecondsFor(z.timeZone),
-                                               z.timeZone, N("prefer"), "match-exactly")
+              ns == InterpretISODateTimeOffset(r.s, result.date, result.time, "option", GetOffsetNanosecondsFor(z.timeZone, z.epochNs),
+                                               z.timeZone, N("compatible"), N("prefer"), "match-exactly")
           IN IF IsAbrupt(ns) THEN ns ELSE CreateTemporalZonedDateTime(ns.s, Val(ns), z.timeZone, z.calendar, Empty)
 \* Temporal.ZonedDateTime.prototype.with.
 WithZonedDateTime(s, z, item, options) ==
   LET isPartial == IsPartialTemporalObject(s, item) IN IF IsAbrupt(isPartial) THEN isPartial
   ELSE IF ~Val(isPartial) THEN ThrowTypeError(isPartial.s) ELSE
-  LET partial == PrepareCalendarFields(isPartial.s, item, DateFieldNames \cup CalendarTimeFieldNames \cup {"offset"}, "partial") IN
+  LET partial == PrepareCalendarFields(isPartial.s, z.calendar, item, DateFieldNames \cup CalendarTimeFieldNames \cup {"offset"}, "partial") IN
   IF IsAbrupt(partial) THEN partial ELSE
   LET dt == GetISODateTimeFor(z.timeZone, z.epochNs)
-      fields == CalendarMergeFields([ISODateTimeToFields(dt) EXCEPT !.offset = FormatUTCOffsetNanoseconds(GetOffsetNanosecondsFor(z.timeZone))],
+      fields == CalendarMergeFields([ISODateTimeToFields(z.calendar, dt) EXCEPT !.offset = FormatUTCOffsetNanoseconds(GetOffsetNanosecondsFor(z.timeZone, z.epochNs))],
                                     Val(partial))
       o == GetZonedOptions(partial.s, options, N("prefer"))
   IN IF IsAbrupt(o) THEN o ELSE
-  LET result == InterpretTemporalDateTimeFields(o.s, fields, Val(o).overflow) IN IF IsAbrupt(result) THEN result ELSE
+  LET result == InterpretTemporalDateTimeFields(o.s, z.calendar, fields, Val(o).overflow) IN IF IsAbrupt(result) THEN result ELSE
   LET ns == InterpretISODateTimeOffset(result.s, Val(result).date, Val(result).time, "option",
-                                       Val(ParseDateTimeUTCOffset(result.s, fields.offset)), z.timeZone, Val(o).offset, "match-exactly")
+                                       Val(ParseDateTimeUTCOffset(result.s, fields.offset)), z.timeZone, Val(o).disambiguation,
+                                       Val(o).offset, "match-exactly")
   IN IF IsAbrupt(ns) THEN ns ELSE CreateTemporalZonedDateTime(ns.s, Val(ns), z.timeZone, z.calendar, Empty)
 \* The time zone of a ZonedDateTime constructor's argument.
 ZonedConstructorTimeZone(s, v) ==
   IF ~IsString(v) THEN ThrowTypeError(s)
   ELSE LET r == ParseTimeZoneIdentifier(s, v.value) IN IF IsAbrupt(r) THEN r
-  ELSE IF Val(r).offsetMinutes # Empty THEN
-    Ok(r.s, [id |-> FormatOffsetTimeZoneIdentifier(Val(r).offsetMinutes, TRUE), offset |-> Val(r).offsetMinutes])
-  ELSE IF TPLower(Val(r).name) = N("utc") THEN Ok(r.s, UTCTimeZone)
-  ELSE ThrowError(r.s, "RangeError")
+  ELSE TimeZoneFromParse(r.s, Val(r))
 \* The epoch nanoseconds a constructor or fromEpochNanoseconds argument gives.
 ToEpochNanoseconds(s, v) ==
   LET b == ToBigInt(s, v) IN IF IsAbrupt(b) THEN b
@@ -17798,7 +19653,7 @@ ZonedDateTimeBuiltin(s, f, m, this, args, nt) ==
     [] OTHER ->
          LET z == O(s, this).slots
              dt == GetISODateTimeFor(z.timeZone, z.epochNs)
-         IN CASE m \in CalendarDateGetters -> CalendarDateGetter(s, dt.date, m)
+         IN CASE m \in CalendarDateGetters -> CalendarDateGetter(s, z.calendar, dt.date, m)
               [] m \in {"hour", "minute", "second", "millisecond", "microsecond", "nanosecond"} -> Ok(s, IntV(dt.time[m]))
               [] m = "calendarId" -> Ok(s, Str(z.calendar))
               [] m = "timeZoneId" -> Ok(s, Str(z.timeZone.id))
@@ -17808,13 +19663,13 @@ ZonedDateTimeBuiltin(s, f, m, this, args, nt) ==
                    ELSE Ok(tomorrow.s, Num(RatioToNumber(TISub(Val(tomorrow), Val(today)), TINsPerHour)))
               [] m = "epochMilliseconds" -> Ok(s, TINumber(TIFloorDiv(z.epochNs, TI(1000000))))
               [] m = "epochNanoseconds" -> Ok(s, BigInt(z.epochNs))
-              [] m = "offsetNanoseconds" -> Ok(s, TINumber(GetOffsetNanosecondsFor(z.timeZone)))
-              [] m = "offset" -> Ok(s, Str(FormatUTCOffsetNanoseconds(GetOffsetNanosecondsFor(z.timeZone))))
+              [] m = "offsetNanoseconds" -> Ok(s, TINumber(GetOffsetNanosecondsFor(z.timeZone, z.epochNs)))
+              [] m = "offset" -> Ok(s, Str(FormatUTCOffsetNanoseconds(GetOffsetNanosecondsFor(z.timeZone, z.epochNs))))
               [] m = "with" -> WithZonedDateTime(s, z, Arg(args, 1), Arg(args, 2))
               [] m = "withPlainTime" ->
                    LET ns == IF Arg(args, 1) = Undefined THEN GetStartOfDay(s, z.timeZone, dt.date)
                              ELSE LET time == ToTemporalTimeRecord(s, Arg(args, 1), Undefined) IN IF IsAbrupt(time) THEN time
-                                  ELSE GetEpochNanosecondsFor(time.s, z.timeZone, [date |-> dt.date, time |-> Val(time)])
+                                  ELSE GetEpochNanosecondsFor(time.s, z.timeZone, [date |-> dt.date, time |-> Val(time)], N("compatible"))
                    IN IF IsAbrupt(ns) THEN ns ELSE CreateTemporalZonedDateTime(ns.s, Val(ns), z.timeZone, z.calendar, Empty)
               [] m = "withTimeZone" ->
                    LET tz == ToTemporalTimeZoneIdentifier(s, Arg(args, 1)) IN
@@ -17841,7 +19696,10 @@ ZonedDateTimeBuiltin(s, f, m, this, args, nt) ==
                    LET precision == ToSecondsStringPrecisionRecord(Val(unit), Val(digits)) IN
                    Ok(showTimeZone.s, Str(TemporalZonedDateTimeToString(z, precision.precision, Val(show), Val(showTimeZone), Val(showOffset),
                                                                         precision.increment, precision.unit, Val(mode))))
-              [] m \in {"toLocaleString", "toJSON"} ->
+              [] m = "toLocaleString" ->
+                   TemporalToLocaleString(s, "ZonedDateTime", z, Arg(args, 1), Arg(args, 2),
+                                          TemporalZonedDateTimeToString(z, TPrecisionAuto, N("auto"), N("auto"), N("auto"), 1, TUNanosecond, N("trunc")))
+              [] m = "toJSON" ->
                    Ok(s, Str(TemporalZonedDateTimeToString(z, TPrecisionAuto, N("auto"), N("auto"), N("auto"), 1, TUNanosecond, N("trunc"))))
               [] m = "valueOf" -> ThrowTypeError(s)
               [] m = "startOfDay" ->
@@ -17851,8 +19709,11 @@ ZonedDateTimeBuiltin(s, f, m, this, args, nt) ==
                    LET param == StringOrOptionsObject(s, Arg(args, 1), SV("direction")) IN IF IsAbrupt(param) THEN param ELSE
                    LET direction == GetStringOption(param.s, Val(param), SV("direction"), {N("next"), N("previous")}, Empty) IN
                    IF IsAbrupt(direction) THEN direction
-                   ELSE IF Val(direction) = Empty THEN ThrowError(direction.s, "RangeError")
-                   ELSE Ok(direction.s, Null)
+                   ELSE IF Val(direction) = Empty THEN ThrowError(direction.s, "RangeError") ELSE
+                   LET transition == IF Val(direction) = N("next") THEN GetNamedTimeZoneNextTransition(z.timeZone, z.epochNs)
+                                     ELSE GetNamedTimeZonePreviousTransition(z.timeZone, z.epochNs)
+                   IN IF transition = Empty THEN Ok(direction.s, Null)
+                      ELSE CreateTemporalZonedDateTime(direction.s, transition, z.timeZone, z.calendar, Empty)
               [] m = "toInstant" -> CreateTemporalInstant(s, z.epochNs, Empty)
               [] m = "toPlainDate" -> CreateTemporalDate(s, dt.date, z.calendar, Empty)
               [] m = "toPlainTime" -> CreateTemporalTime(s, dt.time, Empty)
@@ -17877,7 +19738,7 @@ ToTemporalInstantNs(s, item) ==
 \* TemporalInstantToString, for a time zone or Empty.
 TemporalInstantToString(ns, tz, precision) ==
   FormatISODateTime(GetISODateTimeFor(IF tz = Empty THEN UTCTimeZone ELSE tz, ns), ISO8601, precision, N("never")) \o
-  (IF tz = Empty THEN <<90>> ELSE FormatDateTimeUTCOffsetRounded(GetOffsetNanosecondsFor(tz)))
+  (IF tz = Empty THEN <<90>> ELSE FormatDateTimeUTCOffsetRounded(GetOffsetNanosecondsFor(tz, ns)))
 \* DifferenceTemporalInstant and AddDurationToInstant.
 DifferenceTemporalInstant(s, operation, ns, other, options) ==
   LET o == ToTemporalInstantNs(s, other) IN IF IsAbrupt(o) THEN o ELSE
@@ -17936,7 +19797,9 @@ InstantBuiltin(s, f, m, this, args, nt) ==
                 LET precision == ToSecondsStringPrecisionRecord(Val(o).unit, Val(o).digits) IN
                 Ok(tz.s, Str(TemporalInstantToString(RoundEpochNanoseconds(ns, precision.increment, precision.unit, Val(o).mode),
                                                      Val(tz), precision.precision)))
-           [] m \in {"toLocaleString", "toJSON"} -> Ok(s, Str(TemporalInstantToString(ns, Empty, TPrecisionAuto)))
+           [] m = "toLocaleString" ->
+                TemporalToLocaleString(s, "Instant", O(s, this).slots, Arg(args, 1), Arg(args, 2), TemporalInstantToString(ns, Empty, TPrecisionAuto))
+           [] m = "toJSON" -> Ok(s, Str(TemporalInstantToString(ns, Empty, TPrecisionAuto)))
            [] m = "valueOf" -> ThrowTypeError(s)
            [] m = "toZonedDateTimeISO" ->
                 LET tz == ToTemporalTimeZoneIdentifier(s, Arg(args, 1)) IN
@@ -17953,10 +19816,10 @@ ToTemporalYearMonthRecord(s, item, options) ==
     IF O(s, item).class = "temporalYearMonth" THEN
       LET read == ReadOverflowOption(s, options) IN IF IsAbrupt(read) THEN read ELSE Ok(read.s, O(s, item).slots)
     ELSE LET calendar == GetTemporalCalendarIdentifierWithISODefault(s, item) IN IF IsAbrupt(calendar) THEN calendar ELSE
-         LET fields == PrepareCalendarFields(calendar.s, item, YearMonthFieldNames, "no-required-fields") IN IF IsAbrupt(fields) THEN fields ELSE
+         LET fields == PrepareCalendarFields(calendar.s, Val(calendar), item, YearMonthFieldNames, "no-required-fields") IN IF IsAbrupt(fields) THEN fields ELSE
          LET opts == GetOptionsObject(fields.s, options) IN IF IsAbrupt(opts) THEN opts ELSE
          LET overflow == GetTemporalOverflowOption(opts.s, Val(opts)) IN IF IsAbrupt(overflow) THEN overflow ELSE
-         LET date == CalendarYearMonthFromFields(overflow.s, Val(fields), Val(overflow)) IN
+         LET date == CalendarYearMonthFromFields(overflow.s, Val(calendar), Val(fields), Val(overflow)) IN
          IF IsAbrupt(date) THEN date ELSE Ok(date.s, [date |-> Val(date), calendar |-> Val(calendar)])
   ELSE IF ~IsString(item) THEN ThrowTypeError(s)
   ELSE LET parsed == ParseISODateTime(s, item.value, "year-month") IN IF IsAbrupt(parsed) THEN parsed ELSE
@@ -17965,7 +19828,7 @@ ToTemporalYearMonthRecord(s, item, options) ==
        IN IF IsAbrupt(calendar) THEN calendar ELSE
        LET read == ReadOverflowOption(calendar.s, options) IN IF IsAbrupt(read) THEN read
        ELSE IF ~ISOYearMonthWithinLimits([year |-> r.year, month |-> r.month, day |-> r.day]) THEN ThrowError(read.s, "RangeError")
-       ELSE LET date == CalendarYearMonthFromFields(read.s, ISODateToFields([year |-> r.year, month |-> r.month, day |-> r.day], "year-month"),
+       ELSE LET date == CalendarYearMonthFromFields(read.s, Val(calendar), ISODateToFields(Val(calendar), [year |-> r.year, month |-> r.month, day |-> r.day], "year-month"),
                                                     N("constrain")) IN
             IF IsAbrupt(date) THEN date ELSE Ok(date.s, [date |-> Val(date), calendar |-> Val(calendar)])
 \* TemporalYearMonthToString and TemporalMonthDayToString.
@@ -17977,7 +19840,7 @@ TemporalMonthDayToString(md, show) ==
   (IF show \in {N("always"), N("critical")} \/ md.calendar # ISO8601 THEN PadISOYear(md.date.year) \o <<45>> ELSE <<>>) \o
   TwoDigits(md.date.month) \o <<45>> \o TwoDigits(md.date.day) \o FormatCalendarAnnotation(md.calendar, show)
 \* The first day of a year-month, as CalendarDateFromFields gives it.
-YearMonthFirstDay(s, date) == CalendarDateFromFields(s, [ISODateToFields(date, "year-month") EXCEPT !.day = TI(1)], N("constrain"))
+YearMonthFirstDay(s, cal, date) == CalendarDateFromFields(s, cal, [ISODateToFields(cal, date, "year-month") EXCEPT !.day = TI(1)], N("constrain"))
 \* DifferenceTemporalPlainYearMonth and AddDurationToYearMonth.
 DifferenceTemporalPlainYearMonth(s, operation, ym, other, options) ==
   LET o == ToTemporalYearMonthRecord(s, other, Undefined) IN IF IsAbrupt(o) THEN o
@@ -17986,15 +19849,15 @@ DifferenceTemporalPlainYearMonth(s, operation, ym, other, options) ==
   LET settings == GetDifferenceSettings(opts.s, operation, Val(opts), "date", {TUWeek, TUDay}, TUMonth, TUYear) IN
   IF IsAbrupt(settings) THEN settings
   ELSE IF CompareISODate(ym.date, Val(o).date) = 0 THEN CreateTemporalDuration(settings.s, ZeroDurationFields, Empty) ELSE
-  LET thisDate == YearMonthFirstDay(settings.s, ym.date) IN IF IsAbrupt(thisDate) THEN thisDate ELSE
-  LET otherDate == YearMonthFirstDay(thisDate.s, Val(o).date) IN IF IsAbrupt(otherDate) THEN otherDate ELSE
+  LET thisDate == YearMonthFirstDay(settings.s, ym.calendar, ym.date) IN IF IsAbrupt(thisDate) THEN thisDate ELSE
+  LET otherDate == YearMonthFirstDay(thisDate.s, ym.calendar, Val(o).date) IN IF IsAbrupt(otherDate) THEN otherDate ELSE
   LET st == Val(settings)
-      until == CalendarDateUntil(Val(thisDate), Val(otherDate), st.largestUnit)
+      until == CalendarDateUntil(ym.calendar, Val(thisDate), Val(otherDate), st.largestUnit)
       duration == CombineDateAndTimeDuration(<<until[1], until[2], TI(0), TI(0)>>, TI(0))
       from == [date |-> Val(thisDate), time |-> MidnightTimeRecord]
       rounded == IF st.smallestUnit = TUMonth /\ st.roundingIncrement = 1 THEN Ok(otherDate.s, duration)
                  ELSE RoundRelativeDuration(otherDate.s, duration, GetUTCEpochNanoseconds(from),
-                                            GetUTCEpochNanoseconds([date |-> Val(otherDate), time |-> MidnightTimeRecord]), from, Empty,
+                                            GetUTCEpochNanoseconds([date |-> Val(otherDate), time |-> MidnightTimeRecord]), from, Empty, ym.calendar,
                                             st.largestUnit, st.roundingIncrement, st.smallestUnit, st.roundingMode)
   IN IF IsAbrupt(rounded) THEN rounded
      ELSE CreateTemporalDuration(rounded.s, SinceFields(operation, DurationFieldsFromInternal(Val(rounded), TUDay)), Empty)
@@ -18005,23 +19868,23 @@ AddDurationToYearMonth(s, operation, ym, durationLike, options) ==
   IN IF IsAbrupt(opts) THEN opts ELSE
   LET overflow == GetTemporalOverflowOption(opts.s, Val(opts)) IN IF IsAbrupt(overflow) THEN overflow
   ELSE IF internal.date[3].mag # <<>> \/ internal.date[4].mag # <<>> \/ internal.time.mag # <<>> THEN ThrowError(overflow.s, "RangeError") ELSE
-  LET date == YearMonthFirstDay(overflow.s, ym.date) IN IF IsAbrupt(date) THEN date ELSE
-  LET added == CalendarDateAdd(date.s, Val(date), internal.date, Val(overflow)) IN IF IsAbrupt(added) THEN added ELSE
-  LET result == CalendarYearMonthFromFields(added.s, ISODateToFields(Val(added), "year-month"), Val(overflow)) IN
+  LET date == YearMonthFirstDay(overflow.s, ym.calendar, ym.date) IN IF IsAbrupt(date) THEN date ELSE
+  LET added == CalendarDateAdd(date.s, ym.calendar, Val(date), internal.date, Val(overflow)) IN IF IsAbrupt(added) THEN added ELSE
+  LET result == CalendarYearMonthFromFields(added.s, ym.calendar, ISODateToFields(ym.calendar, Val(added), "year-month"), Val(overflow)) IN
   IF IsAbrupt(result) THEN result ELSE CreateTemporalYearMonth(result.s, Val(result), ym.calendar, Empty)
 \* The getters of PlainYearMonth.
 \* The with of PlainYearMonth and PlainMonthDay: the merged fields of a partial object.
-MergedPartialFields(s, fields, item, names) ==
+MergedPartialFields(s, cal, fields, item, names) ==
   LET isPartial == IsPartialTemporalObject(s, item) IN IF IsAbrupt(isPartial) THEN isPartial
   ELSE IF ~Val(isPartial) THEN ThrowTypeError(isPartial.s) ELSE
-  LET partial == PrepareCalendarFields(isPartial.s, item, names, "partial") IN
+  LET partial == PrepareCalendarFields(isPartial.s, cal, item, names, "partial") IN
   IF IsAbrupt(partial) THEN partial ELSE Ok(partial.s, CalendarMergeFields(fields, Val(partial)))
 \* The toPlainDate of PlainYearMonth and PlainMonthDay: the date of the fields merged with the
 \* named fields of an object.
 MergedPlainDate(s, fields, item, names, calendar) ==
   IF ~IsObject(item) THEN ThrowTypeError(s) ELSE
-  LET input == PrepareCalendarFields(s, item, names, "no-required-fields") IN IF IsAbrupt(input) THEN input ELSE
-  LET date == CalendarDateFromFields(input.s, CalendarMergeFields(fields, Val(input)), N("constrain")) IN
+  LET input == PrepareCalendarFields(s, calendar, item, names, "no-required-fields") IN IF IsAbrupt(input) THEN input ELSE
+  LET date == CalendarDateFromFields(input.s, calendar, CalendarMergeFields(fields, Val(input)), N("constrain")) IN
   IF IsAbrupt(date) THEN date ELSE CreateTemporalDate(date.s, Val(date), calendar, Empty)
 PlainYearMonthBuiltin(s, f, m, this, args, nt) ==
   CASE m = "constructor" ->
@@ -18046,14 +19909,14 @@ PlainYearMonthBuiltin(s, f, m, this, args, nt) ==
     [] ~HasClass(s, this, "temporalYearMonth") -> ThrowTypeError(s)
     [] OTHER ->
          LET ym == O(s, this).slots IN
-         CASE m \in YearMonthGetters -> CalendarDateGetter(s, ym.date, m)
+         CASE m \in YearMonthGetters -> CalendarDateGetter(s, ym.calendar, ym.date, m)
            [] m = "calendarId" -> Ok(s, Str(ym.calendar))
            [] m = "with" ->
-                LET fields == MergedPartialFields(s, ISODateToFields(ym.date, "year-month"), Arg(args, 1), YearMonthFieldNames) IN
+                LET fields == MergedPartialFields(s, ym.calendar, ISODateToFields(ym.calendar, ym.date, "year-month"), Arg(args, 1), YearMonthFieldNames) IN
                 IF IsAbrupt(fields) THEN fields ELSE
                 LET opts == GetOptionsObject(fields.s, Arg(args, 2)) IN IF IsAbrupt(opts) THEN opts ELSE
                 LET overflow == GetTemporalOverflowOption(opts.s, Val(opts)) IN IF IsAbrupt(overflow) THEN overflow ELSE
-                LET date == CalendarYearMonthFromFields(overflow.s, Val(fields), Val(overflow)) IN
+                LET date == CalendarYearMonthFromFields(overflow.s, ym.calendar, Val(fields), Val(overflow)) IN
                 IF IsAbrupt(date) THEN date ELSE CreateTemporalYearMonth(date.s, Val(date), ym.calendar, Empty)
            [] m \in {"add", "subtract"} -> AddDurationToYearMonth(s, m, ym, Arg(args, 1), Arg(args, 2))
            [] m \in {"until", "since"} -> DifferenceTemporalPlainYearMonth(s, m, ym, Arg(args, 1), Arg(args, 2))
@@ -18064,9 +19927,10 @@ PlainYearMonthBuiltin(s, f, m, this, args, nt) ==
                 LET opts == GetOptionsObject(s, Arg(args, 1)) IN IF IsAbrupt(opts) THEN opts ELSE
                 LET show == GetTemporalShowCalendarNameOption(opts.s, Val(opts)) IN IF IsAbrupt(show) THEN show
                 ELSE Ok(show.s, Str(TemporalYearMonthToString(ym, Val(show))))
-           [] m \in {"toLocaleString", "toJSON"} -> Ok(s, Str(TemporalYearMonthToString(ym, N("auto"))))
+           [] m = "toLocaleString" -> TemporalToLocaleString(s, "PlainYearMonth", ym, Arg(args, 1), Arg(args, 2), TemporalYearMonthToString(ym, N("auto")))
+           [] m = "toJSON" -> Ok(s, Str(TemporalYearMonthToString(ym, N("auto"))))
            [] m = "valueOf" -> ThrowTypeError(s)
-           [] m = "toPlainDate" -> MergedPlainDate(s, ISODateToFields(ym.date, "year-month"), Arg(args, 1), {"day"}, ym.calendar)
+           [] m = "toPlainDate" -> MergedPlainDate(s, ISODateToFields(ym.calendar, ym.date, "year-month"), Arg(args, 1), {"day"}, ym.calendar)
 \* PlainMonthDay (Temporal §10). A Temporal.PlainMonthDay has class "temporalMonthDay" and slots
 \* [date, calendar], with a reference year.
 CreateTemporalMonthDay(s, date, calendar, newTarget) ==
@@ -18079,10 +19943,10 @@ ToTemporalMonthDayRecord(s, item, options) ==
     IF O(s, item).class = "temporalMonthDay" THEN
       LET read == ReadOverflowOption(s, options) IN IF IsAbrupt(read) THEN read ELSE Ok(read.s, O(s, item).slots)
     ELSE LET calendar == GetTemporalCalendarIdentifierWithISODefault(s, item) IN IF IsAbrupt(calendar) THEN calendar ELSE
-         LET fields == PrepareCalendarFields(calendar.s, item, DateFieldNames, "no-required-fields") IN IF IsAbrupt(fields) THEN fields ELSE
+         LET fields == PrepareCalendarFields(calendar.s, Val(calendar), item, DateFieldNames, "no-required-fields") IN IF IsAbrupt(fields) THEN fields ELSE
          LET opts == GetOptionsObject(fields.s, options) IN IF IsAbrupt(opts) THEN opts ELSE
          LET overflow == GetTemporalOverflowOption(opts.s, Val(opts)) IN IF IsAbrupt(overflow) THEN overflow ELSE
-         LET date == CalendarMonthDayFromFields(overflow.s, Val(fields), Val(overflow)) IN
+         LET date == CalendarMonthDayFromFields(overflow.s, Val(calendar), Val(fields), Val(overflow)) IN
          IF IsAbrupt(date) THEN date ELSE Ok(date.s, [date |-> Val(date), calendar |-> Val(calendar)])
   ELSE IF ~IsString(item) THEN ThrowTypeError(s)
   ELSE LET parsed == ParseISODateTime(s, item.value, "month-day") IN IF IsAbrupt(parsed) THEN parsed ELSE
@@ -18090,7 +19954,11 @@ ToTemporalMonthDayRecord(s, item, options) ==
            calendar == CanonicalizeCalendar(parsed.s, IF r.calendar = Empty THEN ISO8601 ELSE r.calendar)
        IN IF IsAbrupt(calendar) THEN calendar ELSE
        LET read == ReadOverflowOption(calendar.s, options) IN IF IsAbrupt(read) THEN read
-       ELSE Ok(read.s, [date |-> [year |-> 1972, month |-> r.month, day |-> r.day], calendar |-> Val(calendar)])
+       ELSE IF Val(calendar) = ISO8601 THEN Ok(read.s, [date |-> [year |-> 1972, month |-> r.month, day |-> r.day], calendar |-> ISO8601])
+       ELSE LET isoDate == [year |-> r.year, month |-> r.month, day |-> r.day] IN
+            IF ~ISODateWithinLimits(isoDate) THEN ThrowError(read.s, "RangeError") ELSE
+            LET date == CalendarMonthDayFromFields(read.s, Val(calendar), ISODateToFields(Val(calendar), isoDate, "month-day"), N("constrain")) IN
+            IF IsAbrupt(date) THEN date ELSE Ok(date.s, [date |-> Val(date), calendar |-> Val(calendar)])
 PlainMonthDayBuiltin(s, f, m, this, args, nt) ==
   CASE m = "constructor" ->
          IF nt = Undefined THEN ThrowTypeError(s) ELSE
@@ -18110,14 +19978,14 @@ PlainMonthDayBuiltin(s, f, m, this, args, nt) ==
     [] ~HasClass(s, this, "temporalMonthDay") -> ThrowTypeError(s)
     [] OTHER ->
          LET md == O(s, this).slots IN
-         CASE m \in {"monthCode", "day"} -> CalendarDateGetter(s, md.date, m)
+         CASE m \in {"monthCode", "day"} -> CalendarDateGetter(s, md.calendar, md.date, m)
            [] m = "calendarId" -> Ok(s, Str(md.calendar))
            [] m = "with" ->
-                LET fields == MergedPartialFields(s, ISODateToFields(md.date, "month-day"), Arg(args, 1), DateFieldNames) IN
+                LET fields == MergedPartialFields(s, md.calendar, ISODateToFields(md.calendar, md.date, "month-day"), Arg(args, 1), DateFieldNames) IN
                 IF IsAbrupt(fields) THEN fields ELSE
                 LET opts == GetOptionsObject(fields.s, Arg(args, 2)) IN IF IsAbrupt(opts) THEN opts ELSE
                 LET overflow == GetTemporalOverflowOption(opts.s, Val(opts)) IN IF IsAbrupt(overflow) THEN overflow ELSE
-                LET date == CalendarMonthDayFromFields(overflow.s, Val(fields), Val(overflow)) IN
+                LET date == CalendarMonthDayFromFields(overflow.s, md.calendar, Val(fields), Val(overflow)) IN
                 IF IsAbrupt(date) THEN date ELSE CreateTemporalMonthDay(date.s, Val(date), md.calendar, Empty)
            [] m = "equals" ->
                 LET other == ToTemporalMonthDayRecord(s, Arg(args, 1), Undefined) IN IF IsAbrupt(other) THEN other
@@ -18126,9 +19994,10 @@ PlainMonthDayBuiltin(s, f, m, this, args, nt) ==
                 LET opts == GetOptionsObject(s, Arg(args, 1)) IN IF IsAbrupt(opts) THEN opts ELSE
                 LET show == GetTemporalShowCalendarNameOption(opts.s, Val(opts)) IN IF IsAbrupt(show) THEN show
                 ELSE Ok(show.s, Str(TemporalMonthDayToString(md, Val(show))))
-           [] m \in {"toLocaleString", "toJSON"} -> Ok(s, Str(TemporalMonthDayToString(md, N("auto"))))
+           [] m = "toLocaleString" -> TemporalToLocaleString(s, "PlainMonthDay", md, Arg(args, 1), Arg(args, 2), TemporalMonthDayToString(md, N("auto")))
+           [] m = "toJSON" -> Ok(s, Str(TemporalMonthDayToString(md, N("auto"))))
            [] m = "valueOf" -> ThrowTypeError(s)
-           [] m = "toPlainDate" -> MergedPlainDate(s, ISODateToFields(md.date, "month-day"), Arg(args, 1), {"year"}, md.calendar)
+           [] m = "toPlainDate" -> MergedPlainDate(s, ISODateToFields(md.calendar, md.date, "month-day"), Arg(args, 1), {"year"}, md.calendar)
 \* Temporal.Now (Temporal §2). The system time zone is UTC, and the system time is the clock Date
 \* reads, in milliseconds.
 SystemUTCEpochNanoseconds(s) == TIMul(TI(s.clock), TI(1000000))
@@ -18600,7 +20469,8 @@ PlainTimeBuiltin(s, f, m, this, args, nt) ==
                 ELSE LET precision == ToSecondsStringPrecisionRecord(Val(unit), Val(digits)) IN
                      Ok(unit.s, Str(TimeRecordToString(RoundTime(t, precision.increment, precision.unit, Val(mode)).time,
                                                        precision.precision)))
-           [] m \in {"toLocaleString", "toJSON"} -> Ok(s, Str(TimeRecordToString(t, TPrecisionAuto)))
+           [] m = "toLocaleString" -> TemporalToLocaleString(s, "PlainTime", O(s, this).slots, Arg(args, 1), Arg(args, 2), TimeRecordToString(t, TPrecisionAuto))
+           [] m = "toJSON" -> Ok(s, Str(TimeRecordToString(t, TPrecisionAuto)))
            [] m = "valueOf" -> ThrowTypeError(s)
 \* The relativeTo option of Temporal.Duration's round, total, and compare, as [plain, zoned]:
 \* a PlainDate or a ZonedDateTime object, or Empty.
@@ -18650,7 +20520,8 @@ DurationBuiltin(s, f, m, this, args, nt) ==
                                                                        LargerOfTwoTemporalUnits(DefaultTemporalLargestUnit(d), TUSecond))
                              IN IF ~IsValidDuration(rounded) THEN ThrowError(time.s, "RangeError")
                                 ELSE Ok(time.s, Str(TemporalDurationToString([i \in 1..10 |-> TIFloat(rounded[i])], precision.precision)))
-              [] m \in {"toJSON", "toLocaleString"} -> Ok(s, Str(TemporalDurationToString(d, TPrecisionAuto)))
+              [] m = "toLocaleString" -> TemporalToLocaleString(s, "Duration", [fields |-> d], Arg(args, 1), Arg(args, 2), TemporalDurationToString(d, TPrecisionAuto))
+              [] m = "toJSON" -> Ok(s, Str(TemporalDurationToString(d, TPrecisionAuto)))
               [] m = "valueOf" -> ThrowTypeError(s)
 \* Temporal.Duration.compare after its fields differ (steps 6 to 13).
 CompareDurations(s, x, y, relativeTo) ==
@@ -18660,9 +20531,9 @@ CompareDurations(s, x, y, relativeTo) ==
       yInternal == ToInternalDurationRecord(y)
   IN IF relativeTo.zoned # Empty /\ (IsDateUnit(xLargest) \/ IsDateUnit(yLargest)) THEN
        LET z == relativeTo.zoned
-           xAfter == AddZonedDateTime(s, z.epochNs, z.timeZone, xInternal, N("constrain")) IN
+           xAfter == AddZonedDateTime(s, z.epochNs, z.timeZone, z.calendar, xInternal, N("constrain")) IN
        IF IsAbrupt(xAfter) THEN xAfter ELSE
-       LET yAfter == AddZonedDateTime(xAfter.s, z.epochNs, z.timeZone, yInternal, N("constrain")) IN
+       LET yAfter == AddZonedDateTime(xAfter.s, z.epochNs, z.timeZone, z.calendar, yInternal, N("constrain")) IN
        IF IsAbrupt(yAfter) THEN yAfter ELSE Ok(yAfter.s, IntV(TICompare(Val(xAfter), Val(yAfter))))
      ELSE LET isCalendar == IsCalendarUnit(xLargest) \/ IsCalendarUnit(yLargest) IN
        IF isCalendar /\ relativeTo.plain = Empty THEN ThrowError(s, "RangeError") ELSE
@@ -18701,14 +20572,14 @@ DurationRound(s, d, roundToArg) ==
      ELSE IF rel.zoned # Empty THEN
        LET z == rel.zoned
            internal == ToInternalDurationRecord(d)
-           target == AddZonedDateTime(s1, z.epochNs, z.timeZone, internal, N("constrain"))
+           target == AddZonedDateTime(s1, z.epochNs, z.timeZone, z.calendar, internal, N("constrain"))
        IN IF IsAbrupt(target) THEN target ELSE
-       LET r == DifferenceZonedDateTimeWithRounding(target.s, z.epochNs, Val(target), z.timeZone,
+       LET r == DifferenceZonedDateTimeWithRounding(target.s, z.epochNs, Val(target), z.timeZone, z.calendar,
                                                     largest, inc, smallest, rm)
        IN IF IsAbrupt(r) THEN r ELSE TemporalDurationFromInternal(r.s, Val(r), IF IsDateUnit(largest) THEN TUHour ELSE largest)
      ELSE IF rel.plain # Empty THEN
        LET target == RelativePlainTarget(s1, d, rel.plain) IN IF IsAbrupt(target) THEN target ELSE
-       LET r == DifferencePlainDateTimeWithRounding(target.s, Val(target).from, Val(target).to, largest, inc, smallest, rm)
+       LET r == DifferencePlainDateTimeWithRounding(target.s, Val(target).from, Val(target).to, rel.plain.calendar, largest, inc, smallest, rm)
        IN IF IsAbrupt(r) THEN r ELSE TemporalDurationFromInternal(r.s, Val(r), largest)
      ELSE IF IsCalendarUnit(existingLargest) \/ IsCalendarUnit(largest) THEN ThrowError(s1, "RangeError")
      ELSE LET internal == ToInternalDurationRecordWith24HourDays(d) IN
@@ -18731,15 +20602,800 @@ DurationTotal(s, d, totalOfArg) ==
       total == IF unit = TUAuto THEN ThrowError(s1, "RangeError")
                ELSE IF rel.zoned # Empty THEN
                  LET z == rel.zoned
-                     target == AddZonedDateTime(s1, z.epochNs, z.timeZone, ToInternalDurationRecord(d), N("constrain"))
+                     target == AddZonedDateTime(s1, z.epochNs, z.timeZone, z.calendar, ToInternalDurationRecord(d), N("constrain"))
                  IN IF IsAbrupt(target) THEN target
-                    ELSE DifferenceZonedDateTimeWithTotal(target.s, z.epochNs, Val(target), z.timeZone, unit)
+                    ELSE DifferenceZonedDateTimeWithTotal(target.s, z.epochNs, Val(target), z.timeZone, z.calendar, unit)
                ELSE IF rel.plain # Empty THEN
                  LET target == RelativePlainTarget(s1, d, rel.plain) IN IF IsAbrupt(target) THEN target
-                 ELSE DifferencePlainDateTimeWithTotal(target.s, Val(target).from, Val(target).to, unit)
+                 ELSE DifferencePlainDateTimeWithTotal(target.s, Val(target).from, Val(target).to, rel.plain.calendar, unit)
                ELSE IF IsCalendarUnit(DefaultTemporalLargestUnit(d)) \/ IsCalendarUnit(unit) THEN ThrowError(s1, "RangeError")
                ELSE Ok(s1, RatioToNumber(ToInternalDurationRecordWith24HourDays(d).time, TemporalUnitLength(unit)))
   IN IF IsAbrupt(total) THEN total ELSE Ok(total.s, Num(Val(total)))
+\* ECMA-402's Intl, which engine262 lacks, without its locale data: the namespace, its constructors
+\* and their prototypes, as the spec lays them out, and what each of their functions does before it
+\* reads locale data, or with what HostLocale gives of it. The constructors of IntlConstructorOptions,
+\* NumberFormat, PluralRules, and Locale read their options and make an object that holds them; the
+\* others stop. A method of an Intl object reads what it formats, compares, or selects, and gives
+\* what HostIntl answers for the object's key and those arguments, and stops where HostIntl has no
+\* answer; on another value it throws the TypeError of RequireInternalSlot.
+\* The constructors that a call without new constructs too (ECMA-402's normative optional
+\* constructor mode), and the methods that UnwrapNumberFormat and UnwrapDateTimeFormat read their
+\* receiver through, by the constructor's intrinsic.
+IntlServiceOf(m) == CHOOSE c \in IntlConstructors : c \o ".supportedLocalesOf" = m
+\* The service of each method of an Intl prototype.
+\* The options that the constructors of the services below read, in their order, each with its key,
+\* its kind: "string" with the values it may take, "boolean", "type", a string that must be a type
+\* sequence of UTS 35, "timeZone", a time zone's identifier, or "digits", a number from 1 to 3, and
+\* whether the constructor throws a TypeError where it's undefined.
+IntlOption(key, kind, values, required) == [key |-> key, kind |-> kind, values |-> values, required |-> required]
+\* Whether units are a type sequence: alphanumeric runs of 3 to 8, joined by hyphens.
+IsAlphaNumeric(c) == (c >= 48 /\ c <= 57) \/ (c >= 65 /\ c <= 90) \/ (c >= 97 /\ c <= 122)
+IsTypeSequenceFrom(u, i, run) ==
+  CASE i > Len(u) -> run >= 3 /\ run <= 8
+    [] u[i] = 45 -> run >= 3 /\ run <= 8 /\ IsTypeSequenceFrom(u, i + 1, 0)
+    [] OTHER -> IsAlphaNumeric(u[i]) /\ IsTypeSequenceFrom(u, i + 1, run + 1)
+\* GetOption of each option of a list from the ith on, into acc, the value of each by its key, or
+\* Empty where it's undefined.
+ReadIntlOptions(s, options, list, i, acc) ==
+  IF i > Len(list) THEN Ok(s, acc) ELSE
+  LET option == list[i]
+      value == Get(s, options, option.key)
+  IN IF IsAbrupt(value) THEN value
+     ELSE IF Val(value) = Undefined THEN
+       IF option.required THEN ThrowTypeError(value.s) ELSE ReadIntlOptions(value.s, options, list, i + 1, acc @@ (option.key :> Empty))
+     ELSE IF option.kind = "boolean" THEN ReadIntlOptions(value.s, options, list, i + 1, acc @@ (option.key :> ToBooleanValue(Val(value))))
+     ELSE IF option.kind = "digits" THEN
+       LET n == ToNumber(value.s, Val(value)) IN IF IsAbrupt(n) THEN n
+       ELSE IF ~NumIsFinite(Val(n).value) \/ NumLessThan(Val(n).value, NumFromInt(1)) \/ NumLessThan(NumFromInt(3), Val(n).value)
+       THEN ThrowError(n.s, "RangeError")
+       ELSE ReadIntlOptions(n.s, options, list, i + 1, acc @@ (option.key :> NumToInt(MathFloor(Val(n).value))))
+     ELSE LET str == ToStr(value.s, Val(value)) IN IF IsAbrupt(str) THEN str
+     ELSE IF option.kind = "timeZone" THEN
+       LET tz == ZonedConstructorTimeZone(str.s, Val(str)) IN IF IsAbrupt(tz) THEN tz
+       ELSE ReadIntlOptions(tz.s, options, list, i + 1, acc @@ (option.key :> Val(tz)))
+     ELSE IF IF option.kind = "type" THEN ~IsTypeSequenceFrom(Val(str).value, 1, 0) ELSE Val(str).value \notin option.values
+     THEN ThrowError(str.s, "RangeError")
+     ELSE ReadIntlOptions(str.s, options, list, i + 1, acc @@ (option.key :> Val(str).value))
+\* The constructor of a service of IntlConstructorOptions: OrdinaryCreateFromConstructor, then
+\* CanonicalizeLocaleList and the options, which DisplayNames, ListFormat, and Segmenter take as
+\* GetOptionsObject does and the others as CoerceOptionsToObject does. The object holds them, as no method reads them without
+\* the locale data that ResolveLocale reads.
+IntlConstruct(s, service, newTarget, locales, options) ==
+  LET o == OrdinaryCreateFromConstructor(s, newTarget, "Intl" \o service \o "Prototype", "intl" \o service,
+                                         [locales |-> <<>>, options |-> Empty]) IN IF IsAbrupt(o) THEN o ELSE
+  LET requested == CanonicalizeLocaleList(o.s, locales) IN IF IsAbrupt(requested) THEN requested ELSE
+  LET opts == CASE options = Undefined -> OrdinaryObjectCreate(requested.s, Null)
+                [] service \in {"DisplayNames", "ListFormat", "Segmenter"} /\ ~IsObject(options) -> ThrowTypeError(requested.s)
+                [] OTHER -> ToObject(requested.s, options)
+  IN IF IsAbrupt(opts) THEN opts ELSE
+  LET read == ReadIntlOptions(opts.s, Val(opts), IntlConstructorOptions[service], 1, <<>>) IN IF IsAbrupt(read) THEN read
+  ELSE IF service = "DateTimeFormat" /\ IsDateTimeFormatConflict(Val(read)) THEN ThrowTypeError(read.s)
+  ELSE Ok(SetSlots(read.s, Val(o), [locales |-> Val(requested), options |-> Val(read)]), Val(o))
+\* CreateDateTimeFormat's TypeError, where a date or time style comes with an explicit format
+\* component, of options read as IntlConstruct reads them.
+IsDateTimeFormatConflict(read) ==
+  LET styled == read[SV("dateStyle")] # Empty \/ read[SV("timeStyle")] # Empty
+      components == {DateTimeFormatOptions[i].property : i \in 1..11}
+  IN styled /\ \E key \in components : read[key] # Empty
+\* CanonicalizeLocaleList (ECMA-402 §9.2.1), as a list of canonical tags, which reads whether a tag
+\* is valid and its canonical form from HostLocale. A list longer than any a program makes stops,
+\* which would take that many steps to walk.
+CanonicalizeLocaleList(s, locales) ==
+  IF locales = Undefined THEN Ok(s, <<>>)
+  ELSE IF IsString(locales) THEN CanonicalizeLocale(s, locales.value, <<>>)
+  ELSE IF IsObject(locales) /\ O(s, locales).class = "intlLocale" THEN Ok(s, <<O(s, locales).slots.tag>>) ELSE
+  LET o == ToObject(s, locales) IN IF IsAbrupt(o) THEN o ELSE
+  LET len == LengthOfArrayLike(o.s, Val(o)) IN IF IsAbrupt(len) THEN len
+  ELSE IF NumLess(NumFromInt(10000000), Val(len).value) THEN Unsupported(len.s, N("Unsupported: a long list of locales"))
+  ELSE CanonicalizeLocalesFrom(len.s, Val(o), 0, NumToSmallInt(Val(len).value), <<>>)
+CanonicalizeLocalesFrom(s, o, k, len, seen) ==
+  IF k = len THEN Ok(s, seen) ELSE
+  LET key == Str(NumToString(NumFromInt(k)))
+      present == HasProperty(s, o, key)
+  IN IF IsAbrupt(present) THEN present
+     ELSE IF Val(present) = False THEN CanonicalizeLocalesFrom(present.s, o, k + 1, len, seen) ELSE
+     LET value == Get(present.s, o, key) IN IF IsAbrupt(value) THEN value
+     ELSE IF ~IsString(Val(value)) /\ ~IsObject(Val(value)) THEN ThrowTypeError(value.s)
+     \* A Locale's tag is canonical.
+     ELSE IF IsObject(Val(value)) /\ O(value.s, Val(value)).class = "intlLocale" THEN
+       CanonicalizeLocalesFrom(value.s, o, k + 1, len,
+                               IF O(value.s, Val(value)).slots.tag \in Range(seen) THEN seen ELSE Append(seen, O(value.s, Val(value)).slots.tag))
+     ELSE
+     LET tag == ToStr(value.s, Val(value)) IN IF IsAbrupt(tag) THEN tag ELSE
+     LET added == CanonicalizeLocale(tag.s, Val(tag).value, seen) IN IF IsAbrupt(added) THEN added
+     ELSE CanonicalizeLocalesFrom(added.s, o, k + 1, len, Val(added))
+\* A tag's canonical form appended to seen where it isn't there yet: IsStructurallyValidLanguageTag
+\* and CanonicalizeUnicodeLocaleId, as the host answers them.
+CanonicalizeLocale(s, tag, seen) ==
+  LET host == HostLocale(tag) IN
+  CASE host.found = "invalid" -> ThrowError(s, "RangeError")
+    [] host.found = "locale" -> Ok(s, IF host.canonical \in Range(seen) THEN seen ELSE Append(seen, host.canonical))
+    [] OTHER -> Unsupported(s, N("Unsupported: a locale the host's table leaves out"))
+\* The supportedLocalesOf of a constructor, FilterLocales: the requested locales that the host
+\* supports for the constructor's service, by the localeMatcher option.
+FilterLocales(s, service, requested, options) ==
+  LET o == IF options = Undefined THEN OrdinaryObjectCreate(s, Null) ELSE ToObject(s, options) IN IF IsAbrupt(o) THEN o ELSE
+  LET matcher == GetStringOption(o.s, Val(o), SV("localeMatcher"), {N("lookup"), N("best fit")}, N("best fit")) IN
+  IF IsAbrupt(matcher) THEN matcher ELSE
+  LET hosts == [i \in DOMAIN requested |-> HostLocale(requested[i])]
+      supported(i) == service \in (IF Val(matcher) = N("lookup") THEN hosts[i].lookup ELSE hosts[i].bestFit)
+  IN IF \E i \in DOMAIN requested : hosts[i].found # "locale" \/ service \in hosts[i].differs
+     THEN Unsupported(matcher.s, N("Unsupported: a locale the host's table leaves out"))
+     ELSE CreateArrayFromList(matcher.s, [i \in 1..Len(SelectSeq([j \in DOMAIN requested |-> j], supported)) |->
+                                          Str(requested[SelectSeq([j \in DOMAIN requested |-> j], supported)[i]])])
+\* GetOption of a string option that takes any value, as its units, or Empty where it's undefined.
+GetAnyStringOption(s, options, key) ==
+  LET value == Get(s, options, key) IN IF IsAbrupt(value) THEN value
+  ELSE IF Val(value) = Undefined THEN Ok(value.s, Empty)
+  ELSE LET str == ToStr(value.s, Val(value)) IN IF IsAbrupt(str) THEN str ELSE Ok(str.s, Val(str).value)
+\* DefaultNumberOption (§9.2.13) and GetNumberOption (§9.2.14).
+DefaultNumberOption(s, value, minimum, maximum, fallback) ==
+  IF value = Undefined THEN Ok(s, fallback) ELSE
+  LET n == ToNumber(s, value) IN IF IsAbrupt(n) THEN n
+  ELSE IF ~NumIsFinite(Val(n).value) \/ NumLessThan(Val(n).value, NumFromInt(minimum)) \/
+          NumLessThan(NumFromInt(maximum), Val(n).value)
+  THEN ThrowError(n.s, "RangeError") ELSE Ok(n.s, NumToInt(MathFloor(Val(n).value)))
+GetNumberOption(s, options, key, minimum, maximum, fallback) ==
+  LET value == Get(s, options, key) IN IF IsAbrupt(value) THEN value
+  ELSE DefaultNumberOption(value.s, Val(value), minimum, maximum, fallback)
+\* IsWellFormedCurrencyCode (§6.3.1), the ASCII-uppercase of units, and IsWellFormedUnitIdentifier
+\* (§6.6.1) with the single units that Table 2 sanctions.
+ASCIIUpper(u) == [i \in DOMAIN u |-> IF u[i] >= 97 /\ u[i] <= 122 THEN u[i] - 32 ELSE u[i]]
+IsWellFormedCurrencyCode(u) == Len(u) = 3 /\ \A i \in 1..3 : ASCIIUpper(u)[i] >= 65 /\ ASCIIUpper(u)[i] <= 90
+IsWellFormedUnitIdentifier(u) ==
+  \/ u \in SanctionedUnits
+  \/ \E i \in 1..(Len(u) - 4) : SubSeq(u, i, i + 4) = N("-per-") /\ SubSeq(u, 1, i - 1) \in SanctionedUnits /\
+                          SubSeq(u, i + 5, Len(u)) \in SanctionedUnits
+\* SetNumberFormatUnitOptions (§16.1.3): the style, and the currency's and the unit's options, each
+\* Empty where the style doesn't use it.
+NumberFormatUnitOptions(s, options) ==
+  LET style == GetStringOption(s, options, SV("style"), {N("decimal"), N("percent"), N("currency"), N("unit")}, N("decimal")) IN
+  IF IsAbrupt(style) THEN style ELSE
+  LET currency == GetAnyStringOption(style.s, options, SV("currency")) IN IF IsAbrupt(currency) THEN currency
+  ELSE IF Val(currency) = Empty /\ Val(style) = N("currency") THEN ThrowTypeError(currency.s)
+  ELSE IF Val(currency) # Empty /\ ~IsWellFormedCurrencyCode(Val(currency)) THEN ThrowError(currency.s, "RangeError") ELSE
+  LET currencyDisplay == GetStringOption(currency.s, options, SV("currencyDisplay"), {N("code"), N("symbol"), N("narrowSymbol"), N("name")}, N("symbol")) IN
+  IF IsAbrupt(currencyDisplay) THEN currencyDisplay ELSE
+  LET currencySign == GetStringOption(currencyDisplay.s, options, SV("currencySign"), {N("standard"), N("accounting")}, N("standard")) IN
+  IF IsAbrupt(currencySign) THEN currencySign ELSE
+  LET unit == GetAnyStringOption(currencySign.s, options, SV("unit")) IN IF IsAbrupt(unit) THEN unit
+  ELSE IF Val(unit) = Empty /\ Val(style) = N("unit") THEN ThrowTypeError(unit.s)
+  ELSE IF Val(unit) # Empty /\ ~IsWellFormedUnitIdentifier(Val(unit)) THEN ThrowError(unit.s, "RangeError") ELSE
+  LET unitDisplay == GetStringOption(unit.s, options, SV("unitDisplay"), {N("short"), N("narrow"), N("long")}, N("short")) IN
+  IF IsAbrupt(unitDisplay) THEN unitDisplay ELSE
+  LET isCurrency == Val(style) = N("currency")
+      isUnit == Val(style) = N("unit")
+  IN Ok(unitDisplay.s, [style |-> Val(style),
+                        currency |-> IF isCurrency THEN ASCIIUpper(Val(currency)) ELSE Empty,
+                        currencyDisplay |-> IF isCurrency THEN Val(currencyDisplay) ELSE Empty,
+                        currencySign |-> IF isCurrency THEN Val(currencySign) ELSE Empty,
+                        unit |-> IF isUnit THEN Val(unit) ELSE Empty,
+                        unitDisplay |-> IF isUnit THEN Val(unitDisplay) ELSE Empty])
+\* SetNumberFormatDigitOptions (§16.1.2): the digit options, each Empty where it's undefined, with
+\* the rounding priority that resolvedOptions gives.
+NumberFormatDigitOptions(s, options, minDefault, maxDefault, notation) ==
+  LET minInteger == GetNumberOption(s, options, SV("minimumIntegerDigits"), 1, 21, 1) IN IF IsAbrupt(minInteger) THEN minInteger ELSE
+  LET minFD == Get(minInteger.s, options, SV("minimumFractionDigits")) IN IF IsAbrupt(minFD) THEN minFD ELSE
+  LET maxFD == Get(minFD.s, options, SV("maximumFractionDigits")) IN IF IsAbrupt(maxFD) THEN maxFD ELSE
+  LET minSD == Get(maxFD.s, options, SV("minimumSignificantDigits")) IN IF IsAbrupt(minSD) THEN minSD ELSE
+  LET maxSD == Get(minSD.s, options, SV("maximumSignificantDigits")) IN IF IsAbrupt(maxSD) THEN maxSD ELSE
+  LET increment == GetNumberOption(maxSD.s, options, SV("roundingIncrement"), 1, 5000, 1) IN IF IsAbrupt(increment) THEN increment
+  ELSE IF Val(increment) \notin {1, 2, 5, 10, 20, 25, 50, 100, 200, 250, 500, 1000, 2000, 2500, 5000} THEN ThrowError(increment.s, "RangeError") ELSE
+  LET mode == GetStringOption(increment.s, options, SV("roundingMode"),
+                              {N("ceil"), N("floor"), N("expand"), N("trunc"), N("halfCeil"), N("halfFloor"), N("halfExpand"),
+                               N("halfTrunc"), N("halfEven")}, N("halfExpand")) IN IF IsAbrupt(mode) THEN mode ELSE
+  LET priority == GetStringOption(mode.s, options, SV("roundingPriority"), {N("auto"), N("morePrecision"), N("lessPrecision")}, N("auto")) IN
+  IF IsAbrupt(priority) THEN priority ELSE
+  LET trailing == GetStringOption(priority.s, options, SV("trailingZeroDisplay"), {N("auto"), N("stripIfInteger")}, N("auto")) IN
+  IF IsAbrupt(trailing) THEN trailing ELSE
+  LET maxDefaultFD == IF Val(increment) # 1 THEN minDefault ELSE maxDefault
+      hasSD == Val(minSD) # Undefined \/ Val(maxSD) # Undefined
+      hasFD == Val(minFD) # Undefined \/ Val(maxFD) # Undefined
+      isAuto == Val(priority) = N("auto")
+      needSD == ~isAuto \/ hasSD
+      needFD == ~isAuto \/ (~hasSD /\ (hasFD \/ notation # N("compact")))
+      resolvedMinSD == IF needSD /\ hasSD THEN DefaultNumberOption(trailing.s, Val(minSD), 1, 21, 1) ELSE Ok(trailing.s, 1)
+  IN IF IsAbrupt(resolvedMinSD) THEN resolvedMinSD ELSE
+  LET resolvedMaxSD == IF needSD /\ hasSD THEN DefaultNumberOption(resolvedMinSD.s, Val(maxSD), Val(resolvedMinSD), 21, 21)
+                       ELSE Ok(resolvedMinSD.s, 21) IN
+  IF IsAbrupt(resolvedMaxSD) THEN resolvedMaxSD ELSE
+  LET givenMinFD == IF needFD /\ hasFD THEN DefaultNumberOption(resolvedMaxSD.s, Val(minFD), 0, 100, Empty) ELSE Ok(resolvedMaxSD.s, Empty) IN
+  IF IsAbrupt(givenMinFD) THEN givenMinFD ELSE
+  LET givenMaxFD == IF needFD /\ hasFD THEN DefaultNumberOption(givenMinFD.s, Val(maxFD), 0, 100, Empty) ELSE Ok(givenMinFD.s, Empty) IN
+  IF IsAbrupt(givenMaxFD) THEN givenMaxFD ELSE
+  LET lo == Val(givenMinFD)
+      hi == Val(givenMaxFD)
+      fd == CASE ~hasFD -> <<minDefault, maxDefaultFD>>
+              [] lo = Empty -> <<IF minDefault < hi THEN minDefault ELSE hi, hi>>
+              [] hi = Empty -> <<lo, IF maxDefaultFD > lo THEN maxDefaultFD ELSE lo>>
+              [] OTHER -> <<lo, hi>>
+      neither == ~needSD /\ ~needFD
+      type == CASE neither \/ Val(priority) = N("morePrecision") -> "morePrecision"
+                [] Val(priority) = N("lessPrecision") -> "lessPrecision"
+                [] hasSD -> "significantDigits"
+                [] OTHER -> "fractionDigits"
+      result == [minimumIntegerDigits |-> Val(minInteger),
+                 minimumFractionDigits |-> CASE neither -> 0 [] needFD -> fd[1] [] OTHER -> Empty,
+                 maximumFractionDigits |-> CASE neither -> 0 [] needFD -> fd[2] [] OTHER -> Empty,
+                 minimumSignificantDigits |-> CASE neither -> 1 [] needSD -> Val(resolvedMinSD) [] OTHER -> Empty,
+                 maximumSignificantDigits |-> CASE neither -> 2 [] needSD -> Val(resolvedMaxSD) [] OTHER -> Empty,
+                 roundingIncrement |-> Val(increment), roundingMode |-> Val(mode),
+                 roundingPriority |-> CASE type = "morePrecision" -> N("morePrecision") [] type = "lessPrecision" -> N("lessPrecision") [] OTHER -> N("auto"),
+                 trailingZeroDisplay |-> Val(trailing), isNeither |-> neither]
+  IN CASE needFD /\ hasFD /\ lo # Empty /\ hi # Empty /\ lo > hi -> ThrowError(givenMaxFD.s, "RangeError")
+       [] Val(increment) # 1 /\ type # "fractionDigits" -> ThrowTypeError(givenMaxFD.s)
+       [] Val(increment) # 1 /\ result.maximumFractionDigits # result.minimumFractionDigits -> ThrowError(givenMaxFD.s, "RangeError")
+       [] OTHER -> Ok(givenMaxFD.s, result)
+\* The constructor of Intl.NumberFormat (§16.1.1), whose object holds its requested locales and its
+\* options as resolvedOptions gives them but for the locale and the numbering system, which
+\* ResolveLocale reads from locale data: the key of HostIntl's entries for the object.
+NumberFormatConstruct(s, newTarget, locales, options) ==
+  LET o == OrdinaryCreateFromConstructor(s, newTarget, "IntlNumberFormatPrototype", "intlNumberFormat",
+                                         [locales |-> <<>>, options |-> Empty, boundFormat |-> Undefined]) IN IF IsAbrupt(o) THEN o ELSE
+  LET requested == CanonicalizeLocaleList(o.s, locales) IN IF IsAbrupt(requested) THEN requested ELSE
+  LET opts == IF options = Undefined THEN OrdinaryObjectCreate(requested.s, Null) ELSE ToObject(requested.s, options) IN
+  IF IsAbrupt(opts) THEN opts ELSE
+  LET matcher == GetStringOption(opts.s, Val(opts), SV("localeMatcher"), {N("lookup"), N("best fit")}, N("best fit")) IN
+  IF IsAbrupt(matcher) THEN matcher ELSE
+  LET nu == GetAnyStringOption(matcher.s, Val(opts), SV("numberingSystem")) IN IF IsAbrupt(nu) THEN nu
+  ELSE IF Val(nu) # Empty /\ ~IsTypeSequenceFrom(Val(nu), 1, 0) THEN ThrowError(nu.s, "RangeError") ELSE
+  LET units == NumberFormatUnitOptions(nu.s, Val(opts)) IN IF IsAbrupt(units) THEN units ELSE
+  LET notation == GetStringOption(units.s, Val(opts), SV("notation"), {N("standard"), N("scientific"), N("engineering"), N("compact")}, N("standard")) IN
+  IF IsAbrupt(notation) THEN notation ELSE
+  LET style == Val(units).style
+      digits == IF style = N("currency") /\ Val(notation) = N("standard") THEN HostIntl(<<"currencyDigits", Val(units).currency>>) ELSE Empty
+  IN IF digits # Empty /\ digits.found # "digits" THEN Unsupported(notation.s, N("Unsupported: a currency the host's table leaves out")) ELSE
+  LET defaults == CASE digits # Empty -> <<digits.digits, digits.digits>> [] style = N("percent") -> <<0, 0>> [] OTHER -> <<0, 3>>
+      rounding == NumberFormatDigitOptions(notation.s, Val(opts), defaults[1], defaults[2], Val(notation))
+  IN IF IsAbrupt(rounding) THEN rounding ELSE
+  LET compact == GetStringOption(rounding.s, Val(opts), SV("compactDisplay"), {N("short"), N("long")}, N("short")) IN
+  IF IsAbrupt(compact) THEN compact ELSE
+  LET isCompact == Val(notation) = N("compact")
+      groupingDefault == IF isCompact THEN N("min2") ELSE N("auto")
+      grouping == Get(compact.s, Val(opts), SV("useGrouping"))
+  IN IF IsAbrupt(grouping) THEN grouping ELSE
+  LET groupingText == IF Val(grouping) \in {Undefined, True} \/ ~ToBooleanValue(Val(grouping)) THEN Ok(grouping.s, Empty)
+                      ELSE ToStr(grouping.s, Val(grouping)) IN
+  IF IsAbrupt(groupingText) THEN groupingText
+  ELSE IF Val(groupingText) # Empty /\ Val(groupingText).value \notin {N("min2"), N("auto"), N("always"), N("true"), N("false")}
+  THEN ThrowError(groupingText.s, "RangeError") ELSE
+  LET useGrouping == CASE Val(grouping) = Undefined -> groupingDefault
+                       [] Val(grouping) = True -> N("always")
+                       \* false, as units the key tells from the strings that useGrouping may be.
+                       [] ~ToBooleanValue(Val(grouping)) -> N("false")
+                       [] Val(groupingText).value \in {N("true"), N("false")} -> groupingDefault
+                       [] OTHER -> Val(groupingText).value
+      sign == GetStringOption(groupingText.s, Val(opts), SV("signDisplay"), {N("auto"), N("never"), N("always"), N("exceptZero"), N("negative")}, N("auto"))
+  IN IF IsAbrupt(sign) THEN sign ELSE
+  LET u == Val(units)
+      r == Val(rounding)
+      config == <<Val(requested), Val(matcher), Val(nu),
+                  <<u.style, u.currency, u.currencyDisplay, u.currencySign, u.unit, u.unitDisplay, r.minimumIntegerDigits,
+                    r.minimumFractionDigits, r.maximumFractionDigits, r.minimumSignificantDigits, r.maximumSignificantDigits,
+                    useGrouping, Val(notation), IF isCompact THEN Val(compact) ELSE Empty, Val(sign), r.roundingIncrement,
+                    r.roundingMode, r.roundingPriority, r.trailingZeroDisplay>>>>
+  IN Ok(SetSlots(sign.s, Val(o), [locales |-> Val(requested), options |-> config]), Val(o))
+\* ToIntlMathematicalValue (§16.5.16), as the key of the value in HostIntl's entries: a BigInt's
+\* or a string's units, or a Number's, with whether it's -0.
+IntlMathematicalKey(s, value) ==
+  LET p == ToPrimitive(s, value, "number") IN IF IsAbrupt(p) THEN p
+  ELSE IF IsBigInt(Val(p)) THEN LET t == ToStr(p.s, Val(p)) IN IF IsAbrupt(t) THEN t ELSE Ok(t.s, <<"bigint", Val(t).value>>)
+  \* A string that isn't a StringNumericLiteral is NaN, and "Infinity" is infinite, as a Number of them is.
+  ELSE IF IsString(Val(p)) THEN
+    LET n == StringToNumber(Val(p).value) IN
+    Ok(p.s, IF ~NumIsFinite(n) THEN <<"number", NumToString(n), FALSE>> ELSE <<"string", Val(p).value>>)
+  ELSE LET n == ToNumber(p.s, Val(p)) IN IF IsAbrupt(n) THEN n
+  ELSE Ok(n.s, <<"number", NumToString(Val(n).value), Val(n).value.k = "nzero">>)
+\* The answer of HostIntl to a service's method of an object of options config with arguments
+\* args, which stops where the host's table leaves it out.
+IntlAnswer(s, service, config, method, args) ==
+  LET answer == HostIntl(<<service, config, method, args>>) IN
+  CASE answer.found = "error" -> ThrowError(s, answer.error)
+    [] answer.found \in {"options", "parts", "value", "array", "segments"} -> Ok(s, answer)
+    [] OTHER -> Unsupported(s, N("Unsupported: a value the host's Intl table leaves out"))
+\* Number.prototype.toLocaleString and BigInt.prototype.toLocaleString (ECMA-402 §20.2.1, §20.3.1)
+\* of a value's key: the format of a new Intl.NumberFormat.
+IntlToLocaleString(s, key, locales, options) ==
+  LET nf == NumberFormatConstruct(s, Intrinsic(s, "IntlNumberFormat"), locales, options) IN IF IsAbrupt(nf) THEN nf ELSE
+  LET answer == IntlAnswer(nf.s, "NumberFormat", O(nf.s, Val(nf)).slots.options, "formatToParts", <<key>>) IN
+  IF IsAbrupt(answer) THEN answer ELSE IntlResult(answer.s, "format", Val(answer))
+\* An object of the parts of a formatted value, each a sequence of a property's units and its
+\* value's, and an array of them.
+IntlPartObject(s, part) ==
+  LET o == OrdinaryObjectCreate(s, Intrinsic(s, "ObjectPrototype")) IN
+  Ok(SetO(o.s, Val(o), WithDataProps(O(o.s, Val(o)), [i \in DOMAIN part |-> <<Str(part[i][1]), Str(part[i][2])>>])), Val(o))
+IntlPartObjects(s, parts, i, acc) ==
+  IF i > Len(parts) THEN CreateArrayFromList(s, acc)
+  ELSE LET o == IntlPartObject(s, parts[i]) IN IntlPartObjects(o.s, parts, i + 1, Append(acc, Val(o)))
+IntlPartsText(parts, i) ==
+  IF i > Len(parts) THEN <<>>
+  ELSE LET part == parts[i] IN SelectSeq(part, LAMBDA pair : pair[1] = N("value"))[1][2] \o IntlPartsText(parts, i + 1)
+\* An object of resolved options, whose pairs are each a property's units and its value, or a
+\* record of the elements of an array, which pairs holds.
+IntlOptionsObject(s, pairs, i, acc) ==
+  IF i > Len(pairs) THEN
+    LET o == OrdinaryObjectCreate(s, Intrinsic(s, "ObjectPrototype")) IN Ok(SetO(o.s, Val(o), WithDataProps(O(o.s, Val(o)), acc)), Val(o))
+  ELSE IF "elements" \in DOMAIN pairs[i][2] THEN
+    LET a == CreateArrayFromList(s, pairs[i][2].elements) IN
+    IntlOptionsObject(a.s, pairs, i + 1, Append(acc, <<Str(pairs[i][1]), Val(a)>>))
+  ELSE IntlOptionsObject(s, pairs, i + 1, Append(acc, <<Str(pairs[i][1]), pairs[i][2]>>))
+\* An answer as the value that the method returns: a formatted string or its parts, or an object
+\* of resolved options, whose pairs are each a property's units and its value.
+IntlResult(s, method, answer) ==
+  CASE answer.found = "value" -> Ok(s, answer.value)
+    [] answer.found = "array" -> CreateArrayFromList(s, answer.elements)
+    [] answer.found = "options" /\ method # "resolvedOptions" -> IntlOptionsObject(s, answer.pairs, 1, <<>>)
+    [] method = "resolvedOptions" -> IntlOptionsObject(s, answer.pairs, 1, <<>>)
+    [] method \in {"formatToParts", "formatRangeToParts"} -> IntlPartObjects(s, answer.parts, 1, <<>>)
+    [] OTHER -> Ok(s, Str(IntlPartsText(answer.parts, 1)))
+\* The methods of an Intl.NumberFormat, nf, whose format is a function bound to it.
+NumberFormatMethod(s, f, m, nf, args) ==
+  LET config == O(s, nf).slots.options IN
+  CASE m = "NumberFormat.resolvedOptions" ->
+         LET answer == IntlAnswer(s, "NumberFormat", config, "resolvedOptions", <<>>) IN
+         IF IsAbrupt(answer) THEN answer ELSE IntlResult(answer.s, "resolvedOptions", Val(answer))
+    [] m = "NumberFormat.format" ->
+         IF O(s, nf).slots.boundFormat # Undefined THEN Ok(s, O(s, nf).slots.boundFormat) ELSE
+         LET bound == CreateBuiltinFunction(s, <<"Intl", "NumberFormat.boundFormat">>, 1, <<>>, nf) IN
+         Ok(SetSlots(bound.s, nf, [boundFormat |-> Val(bound)]), Val(bound))
+    [] m \in {"NumberFormat.boundFormat", "NumberFormat.formatToParts"} ->
+         LET x == IntlMathematicalKey(s, Arg(args, 1)) IN IF IsAbrupt(x) THEN x ELSE
+         LET method == IF m = "NumberFormat.boundFormat" THEN "format" ELSE "formatToParts"
+             answer == IntlAnswer(x.s, "NumberFormat", config, "formatToParts", <<Val(x)>>)
+         IN IF IsAbrupt(answer) THEN answer ELSE IntlResult(answer.s, method, Val(answer))
+    [] OTHER ->
+         IF Arg(args, 1) = Undefined \/ Arg(args, 2) = Undefined THEN ThrowTypeError(s) ELSE
+         LET x == IntlMathematicalKey(s, Arg(args, 1)) IN IF IsAbrupt(x) THEN x ELSE
+         LET y == IntlMathematicalKey(x.s, Arg(args, 2)) IN IF IsAbrupt(y) THEN y ELSE
+         LET method == IF m = "NumberFormat.formatRange" THEN "formatRange" ELSE "formatRangeToParts"
+             answer == IntlAnswer(y.s, "NumberFormat", config, "formatRangeToParts", <<Val(x), Val(y)>>)
+         IN IF IsAbrupt(answer) THEN answer ELSE IntlResult(answer.s, method, Val(answer))
+\* The constructor of Intl.PluralRules (§17.1.1), whose object holds its requested locales and its
+\* options as a NumberFormat's does, but for the fraction digits of the notation that needs none,
+\* which resolvedOptions leaves out.
+PluralRulesConstruct(s, newTarget, locales, options) ==
+  LET o == OrdinaryCreateFromConstructor(s, newTarget, "IntlPluralRulesPrototype", "intlPluralRules",
+                                         [locales |-> <<>>, options |-> Empty]) IN IF IsAbrupt(o) THEN o ELSE
+  LET requested == CanonicalizeLocaleList(o.s, locales) IN IF IsAbrupt(requested) THEN requested ELSE
+  LET opts == IF options = Undefined THEN OrdinaryObjectCreate(requested.s, Null) ELSE ToObject(requested.s, options) IN
+  IF IsAbrupt(opts) THEN opts ELSE
+  LET matcher == GetStringOption(opts.s, Val(opts), SV("localeMatcher"), {N("lookup"), N("best fit")}, N("best fit")) IN
+  IF IsAbrupt(matcher) THEN matcher ELSE
+  LET type == GetStringOption(matcher.s, Val(opts), SV("type"), {N("cardinal"), N("ordinal")}, N("cardinal")) IN
+  IF IsAbrupt(type) THEN type ELSE
+  LET notation == GetStringOption(type.s, Val(opts), SV("notation"), {N("standard"), N("scientific"), N("engineering"), N("compact")}, N("standard")) IN
+  IF IsAbrupt(notation) THEN notation ELSE
+  LET compact == GetStringOption(notation.s, Val(opts), SV("compactDisplay"), {N("short"), N("long")}, N("short")) IN
+  IF IsAbrupt(compact) THEN compact ELSE
+  LET rounding == NumberFormatDigitOptions(compact.s, Val(opts), 0, 3, Val(notation)) IN IF IsAbrupt(rounding) THEN rounding ELSE
+  LET r == Val(rounding)
+      config == <<Val(requested), Val(matcher),
+                  <<Val(type), Val(notation), IF Val(notation) = N("compact") THEN Val(compact) ELSE Empty, r.minimumIntegerDigits,
+                    IF r.isNeither THEN Empty ELSE r.minimumFractionDigits, IF r.isNeither THEN Empty ELSE r.maximumFractionDigits,
+                    r.minimumSignificantDigits, r.maximumSignificantDigits, r.roundingIncrement, r.roundingMode, r.roundingPriority,
+                    r.trailingZeroDisplay>>>>
+  IN Ok(SetSlots(rounding.s, Val(o), [locales |-> Val(requested), options |-> config]), Val(o))
+\* The key of HostIntl's entries for an Intl object that IntlConstruct made: its requested locales
+\* and each of its options, in the order its constructor reads them.
+IntlConstructedConfig(s, o, service) ==
+  LET slots == O(s, o).slots
+      list == IntlConstructorOptions[service]
+  IN <<slots.locales, [i \in 1..Len(list) |-> slots.options[list[i].key]]>>
+\* StringListFromIterable (§14.5.3), the strings of an iterable, which closes its iterator at a
+\* value that isn't one.
+StringListFrom(s, it, acc) ==
+  LET next == IteratorStepValue(s, it) IN IF IsAbrupt(next) THEN next
+  ELSE IF Val(next).done THEN Ok(next.s, acc)
+  ELSE IF ~IsString(Val(next).value) THEN LET e == ThrowTypeError(next.s) IN IteratorClose(e.s, it, e.c)
+  ELSE StringListFrom(next.s, it, Append(acc, Val(next).value.value))
+StringListFromIterable(s, iterable) ==
+  IF iterable = Undefined THEN Ok(s, <<>>) ELSE
+  LET it == GetIterator(s, iterable, "sync") IN IF IsAbrupt(it) THEN it ELSE StringListFrom(it.s, Val(it), <<>>)
+\* A method's arguments as the key of HostIntl's entries, after the conversions it makes of them.
+IntlNumberKey(n) == <<"number", NumToString(n), n.k = "nzero">>
+IntlMethodArguments(s, m, args) ==
+  CASE m \in {"Collator.boundCompare"} ->
+         LET x == ToStr(s, Arg(args, 1)) IN IF IsAbrupt(x) THEN x ELSE
+         LET y == ToStr(x.s, Arg(args, 2)) IN IF IsAbrupt(y) THEN y ELSE Ok(y.s, <<Val(x).value, Val(y).value>>)
+    [] m \in {"ListFormat.format", "ListFormat.formatToParts"} ->
+         LET list == StringListFromIterable(s, Arg(args, 1)) IN IF IsAbrupt(list) THEN list ELSE Ok(list.s, <<Val(list)>>)
+    [] m \in {"RelativeTimeFormat.format", "RelativeTimeFormat.formatToParts"} ->
+         LET value == ToNumber(s, Arg(args, 1)) IN IF IsAbrupt(value) THEN value ELSE
+         LET unit == ToStr(value.s, Arg(args, 2)) IN IF IsAbrupt(unit) THEN unit
+         ELSE Ok(unit.s, <<IntlNumberKey(Val(value).value), Val(unit).value>>)
+    [] m = "DisplayNames.of" ->
+         LET code == ToStr(s, Arg(args, 1)) IN IF IsAbrupt(code) THEN code ELSE Ok(code.s, <<Val(code).value>>)
+    [] m = "PluralRules.select" ->
+         LET value == ToNumber(s, Arg(args, 1)) IN IF IsAbrupt(value) THEN value ELSE Ok(value.s, <<IntlNumberKey(Val(value).value)>>)
+    [] m = "PluralRules.selectRange" ->
+         IF Arg(args, 1) = Undefined \/ Arg(args, 2) = Undefined THEN ThrowTypeError(s) ELSE
+         LET x == ToNumber(s, Arg(args, 1)) IN IF IsAbrupt(x) THEN x ELSE
+         LET y == ToNumber(x.s, Arg(args, 2)) IN IF IsAbrupt(y) THEN y
+         ELSE Ok(y.s, <<IntlNumberKey(Val(x).value), IntlNumberKey(Val(y).value)>>)
+    [] OTHER -> Ok(s, <<>>)
+\* The methods of the Intl objects other than a NumberFormat that HostIntl answers, of o, whose
+\* Collator's compare is a function bound to it.
+IntlHostMethod(s, m, o, args) ==
+  LET service == IF m = "Collator.boundCompare" THEN "Collator" ELSE IntlMethodServices[m]
+      config == IF service = "PluralRules" THEN O(s, o).slots.options ELSE IntlConstructedConfig(s, o, service)
+      method == CASE m \in {"ListFormat.format", "RelativeTimeFormat.format"} -> "format"
+                  [] m \in {"ListFormat.formatToParts", "RelativeTimeFormat.formatToParts"} -> "formatToParts"
+                  [] m = "DisplayNames.of" -> "of"
+                  [] m = "PluralRules.select" -> "select"
+                  [] m = "PluralRules.selectRange" -> "selectRange"
+                  [] m = "Collator.boundCompare" -> "boundCompare"
+                  [] m = "Collator.compare" -> "compare"
+                  [] OTHER -> "resolvedOptions"
+  IN IF m = "Collator.compare" THEN
+       IF "boundCompare" \in DOMAIN O(s, o).slots THEN Ok(s, O(s, o).slots.boundCompare) ELSE
+       LET bound == CreateBuiltinFunction(s, <<"Intl", "Collator.boundCompare">>, 2, <<>>, o) IN
+       Ok(SetSlots(bound.s, o, [boundCompare |-> Val(bound)]), Val(bound))
+     ELSE
+     LET key == IntlMethodArguments(s, m, args) IN IF IsAbrupt(key) THEN key ELSE
+     LET asked == CASE method \in {"format", "formatToParts"} /\ service # "PluralRules" -> "formatToParts"
+                    [] method = "boundCompare" -> "compare"
+                    [] OTHER -> method
+         answer == IntlAnswer(key.s, service, config, asked, Val(key))
+     IN IF IsAbrupt(answer) THEN answer ELSE IntlResult(answer.s, method, Val(answer))
+\* Whether units are a language, a script, or a region subtag (unicode_language_subtag and kin).
+IsAlpha(c) == (c >= 65 /\ c <= 90) \/ (c >= 97 /\ c <= 122)
+IsLanguageSubtag(u) == Len(u) \in {2, 3, 5, 6, 7, 8} /\ \A i \in DOMAIN u : IsAlpha(u[i])
+IsScriptSubtag(u) == Len(u) = 4 /\ \A i \in DOMAIN u : IsAlpha(u[i])
+IsRegionSubtag(u) ==
+  \/ Len(u) = 2 /\ \A i \in DOMAIN u : IsAlpha(u[i])
+  \/ Len(u) = 3 /\ \A i \in DOMAIN u : u[i] >= 48 /\ u[i] <= 57
+\* The constructor of Intl.Locale (§15.1.1), as Node runs it: it reads the options in the spec's
+\* order, rejects a language, a script, or a region subtag, an hour cycle, or a case first that
+\* isn't one as it reads it, and the others where HostIntl's answer for the tag and the options
+\* read does. The object holds that key and the tag of the locale.
+LocaleConstruct(s, newTarget, tag, options) ==
+  LET o == OrdinaryCreateFromConstructor(s, newTarget, "IntlLocalePrototype", "intlLocale",
+                                         [locales |-> <<>>, options |-> Empty, tag |-> <<>>]) IN IF IsAbrupt(o) THEN o
+  ELSE IF ~IsString(tag) /\ ~IsObject(tag) THEN ThrowTypeError(o.s) ELSE
+  LET text == IF IsObject(tag) /\ O(o.s, tag).class = "intlLocale" THEN Ok(o.s, Str(O(o.s, tag).slots.tag)) ELSE ToStr(o.s, tag) IN
+  IF IsAbrupt(text) THEN text ELSE
+  LET opts == IF options = Undefined THEN OrdinaryObjectCreate(text.s, Null) ELSE ToObject(text.s, options) IN
+  IF IsAbrupt(opts) THEN opts ELSE
+  \* A Locale's tag is a valid one.
+  LET host == IF IsObject(tag) /\ O(o.s, tag).class = "intlLocale" THEN [found |-> "locale"] ELSE HostLocale(Val(text).value) IN
+  IF host.found = "invalid" THEN ThrowError(opts.s, "RangeError")
+  ELSE IF host.found # "locale" THEN Unsupported(opts.s, N("Unsupported: a locale the host's table leaves out")) ELSE
+  LET language == GetAnyStringOption(opts.s, Val(opts), SV("language")) IN IF IsAbrupt(language) THEN language
+  ELSE IF Val(language) # Empty /\ ~IsLanguageSubtag(Val(language)) THEN ThrowError(language.s, "RangeError") ELSE
+  LET script == GetAnyStringOption(language.s, Val(opts), SV("script")) IN IF IsAbrupt(script) THEN script
+  ELSE IF Val(script) # Empty /\ ~IsScriptSubtag(Val(script)) THEN ThrowError(script.s, "RangeError") ELSE
+  LET region == GetAnyStringOption(script.s, Val(opts), SV("region")) IN IF IsAbrupt(region) THEN region
+  ELSE IF Val(region) # Empty /\ ~IsRegionSubtag(Val(region)) THEN ThrowError(region.s, "RangeError") ELSE
+  LET calendar == GetAnyStringOption(region.s, Val(opts), SV("calendar")) IN IF IsAbrupt(calendar) THEN calendar ELSE
+  LET collation == GetAnyStringOption(calendar.s, Val(opts), SV("collation")) IN IF IsAbrupt(collation) THEN collation ELSE
+  LET week == GetAnyStringOption(collation.s, Val(opts), SV("firstDayOfWeek")) IN IF IsAbrupt(week) THEN week ELSE
+  LET cycle == GetStringOption(week.s, Val(opts), SV("hourCycle"), {N("h11"), N("h12"), N("h23"), N("h24")}, Empty) IN
+  IF IsAbrupt(cycle) THEN cycle ELSE
+  LET first == GetStringOption(cycle.s, Val(opts), SV("caseFirst"), {N("upper"), N("lower"), N("false")}, Empty) IN
+  IF IsAbrupt(first) THEN first ELSE
+  LET numeric == Get(first.s, Val(opts), SV("numeric")) IN IF IsAbrupt(numeric) THEN numeric ELSE
+  LET system == GetAnyStringOption(numeric.s, Val(opts), SV("numberingSystem")) IN IF IsAbrupt(system) THEN system ELSE
+  LET config == <<Val(text).value,
+                  <<Val(language), Val(script), Val(region), Val(calendar), Val(collation), Val(week), Val(cycle), Val(first),
+                    IF Val(numeric) = Undefined THEN Empty ELSE ToBooleanValue(Val(numeric)), Val(system)>>>>
+      answer == IntlAnswer(system.s, "Locale", config, "construct", <<>>)
+  IN IF IsAbrupt(answer) THEN answer
+     ELSE Ok(SetSlots(answer.s, Val(o), [options |-> config, tag |-> Val(answer).value.value]), Val(o))
+\* The methods and accessors of an Intl.Locale, l, which HostIntl answers for its key: a value, an
+\* array or an object of values, or for maximize and minimize, the tag of a new Intl.Locale.
+LocaleMethod(s, m, l) ==
+  LET config == O(s, l).slots.options
+      method == CASE m = "Locale.baseName" -> "baseName" [] m = "Locale.calendar" -> "calendar"
+                  [] m = "Locale.caseFirst" -> "caseFirst" [] m = "Locale.collation" -> "collation"
+                  [] m = "Locale.firstDayOfWeek" -> "firstDayOfWeek" [] m = "Locale.getCalendars" -> "getCalendars"
+                  [] m = "Locale.getCollations" -> "getCollations" [] m = "Locale.getHourCycles" -> "getHourCycles"
+                  [] m = "Locale.getNumberingSystems" -> "getNumberingSystems" [] m = "Locale.getTextInfo" -> "getTextInfo"
+                  [] m = "Locale.getTimeZones" -> "getTimeZones" [] m = "Locale.getWeekInfo" -> "getWeekInfo"
+                  [] m = "Locale.hourCycle" -> "hourCycle" [] m = "Locale.language" -> "language"
+                  [] m = "Locale.maximize" -> "maximize" [] m = "Locale.minimize" -> "minimize"
+                  [] m = "Locale.numberingSystem" -> "numberingSystem" [] m = "Locale.numeric" -> "numeric"
+                  [] m = "Locale.region" -> "region" [] OTHER -> "script"
+  IN IF m = "Locale.toString" THEN Ok(s, Str(O(s, l).slots.tag)) ELSE
+     LET answer == IntlAnswer(s, "Locale", config, method, <<>>) IN IF IsAbrupt(answer) THEN answer
+     ELSE IF method \in {"maximize", "minimize"} THEN
+       \* Construct(%Intl.Locale%, « tag »), whose tag is a valid one and whose options are none.
+       LET o == OrdinaryCreateFromConstructor(answer.s, Intrinsic(answer.s, "IntlLocale"), "IntlLocalePrototype", "intlLocale",
+                                              [locales |-> <<>>, options |-> Empty, tag |-> <<>>])
+           made == <<Val(answer).value.value, [i \in 1..10 |-> Empty]>>
+           tag == IntlAnswer(o.s, "Locale", made, "construct", <<>>)
+       IN IF IsAbrupt(tag) THEN tag ELSE Ok(SetSlots(tag.s, Val(o), [options |-> made, tag |-> Val(tag).value.value]), Val(o))
+     ELSE IntlResult(answer.s, method, Val(answer))
+\* The key of HostIntl's entries for an Intl.DateTimeFormat: IntlConstructedConfig's, with its time
+\* zone's identifier for the time zone it read.
+DateTimeFormatConfig(s, o) ==
+  LET config == IntlConstructedConfig(s, o, "DateTimeFormat")
+      read == config[2]
+  IN <<config[1], [i \in DOMAIN read |-> IF IntlConstructorOptions.DateTimeFormat[i].kind = "timeZone" /\ read[i] # Empty
+                                         THEN read[i].id ELSE read[i]]>>
+\* ToDateTimeFormattable (ECMA-402 §11.5.10) as the key of HostIntl's entries: a Temporal object's,
+\* or the Number of another value. undefined, whose time is now, stops.
+DateTimeFormattableKey(s, value) ==
+  IF value = Undefined THEN Unsupported(s, N("Unsupported: the time now"))
+  ELSE IF IsObject(value) /\ O(s, value).class \in DOMAIN TemporalKinds THEN
+    Ok(s, TemporalFormatKey(TemporalKinds[O(s, value).class], O(s, value).slots))
+  ELSE LET n == ToNumber(s, value) IN IF IsAbrupt(n) THEN n ELSE Ok(n.s, IntlNumberKey(IntlTimeClip(Val(n).value)))
+\* TimeClip (§21.4.1.31), whose -0 is +0, as FormatDateTime reads a Number.
+IntlTimeClip(x) == LET t == TimeClip(x) IN IF NumIsZero(t) THEN NumFromInt(0) ELSE t
+\* The text of a DateTimeFormat's format of a time value or a Temporal object, through the host's
+\* recorded English pattern (HostDateFormat) for the options it read, where they are ones the table
+\* records: English, no calendar or numbering system, and UTC, which is ESCore's local time zone, of
+\* a year from 1583 to 9999, or the error that the table records it throws. Else found is "none".
+DateTimeFormatRead(config, name) == config[2][DateTimeFormatReadIndex[name]]
+\* A key of a time value, or of a Temporal object of a kind but an instant's or a zoned one's in the ISO
+\* 8601 or the Gregorian calendar, as the kind its pattern is the host's table's under, its
+\* calendar, and its date and time.
+DateTimeFormatTarget(key) ==
+  LET kind == key[1]
+      hasDate == kind \in {"PlainDate", "PlainDateTime", "PlainYearMonth", "PlainMonthDay"}
+      calendar == key[Len(key)]
+      time == CASE kind = "PlainTime" -> SubSeq(key, 2, 5)
+                [] kind = "PlainDateTime" -> SubSeq(key, 5, 8)
+                [] OTHER -> <<0, 0, 0, 0>>
+  IN CASE kind = "number" ->
+            LET fields == DateFields(StringToNumber(key[2])) IN
+            [found |-> TRUE, kind |-> "DateTimeFormat", calendar |-> "gregory",
+             date |-> [year |-> fields.year, month |-> fields.month + 1, day |-> fields.date],
+             time |-> <<fields.hour, fields.minute, fields.second, fields.ms>>]
+       [] (hasDate /\ calendar \in {N("iso8601"), N("gregory")}) \/ kind = "PlainTime" ->
+            [found |-> TRUE,
+             kind |-> CASE kind = "PlainDate" -> "DateTimeFormat.PlainDate"
+                        [] kind = "PlainDateTime" -> "DateTimeFormat.PlainDateTime"
+                        [] kind = "PlainYearMonth" -> "DateTimeFormat.PlainYearMonth"
+                        [] kind = "PlainMonthDay" -> "DateTimeFormat.PlainMonthDay"
+                        [] OTHER -> "DateTimeFormat.PlainTime",
+             calendar |-> IF hasDate /\ calendar = N("gregory") THEN "gregory" ELSE "iso8601",
+             date |-> IF hasDate THEN [year |-> key[2], month |-> key[3], day |-> key[4]] ELSE [year |-> 1970, month |-> 1, day |-> 1],
+             time |-> time]
+       [] OTHER -> [found |-> FALSE]
+DateTimeFormatPatternText(config, key) ==
+  LET read(name) == DateTimeFormatRead(config, name)
+      target == DateTimeFormatTarget(key)
+      names == {"hourCycle", "weekday", "era", "year", "month", "day", "hour", "minute", "second",
+                "fractionalSecondDigits", "dateStyle", "timeStyle", "dayPeriod"}
+      values == [n \in names |-> read(n)]
+      format == HostDateFormat(DateFormatKey(target.kind, target.calendar, read("hour12"), values))
+  IN IF config[1] \notin {<<>>, <<N("en")>>, <<N("en-US")>>} \/ read("calendar") # Empty \/ read("numberingSystem") # Empty \/
+        ~(read("timeZone") \in {Empty, N("UTC")}) \/ read("timeZoneName") # Empty \/ read("formatMatcher") = N("basic") \/
+        ~target.found \/ format.found \notin {"format", "error"} \/
+        (target.kind # "DateTimeFormat.PlainTime" /\ (target.date.year < 1583 \/ target.date.year > 9999))
+     THEN [found |-> "none"]
+     ELSE IF format.found = "error" THEN format
+     ELSE [found |-> "text", text |-> LocaleText(format, 1, target.date, target.time)]
+\* The methods of an Intl.DateTimeFormat, dtf, whose format is a function bound to it.
+DateTimeFormatMethod(s, m, dtf, args) ==
+  LET config == DateTimeFormatConfig(s, dtf) IN
+  CASE m = "DateTimeFormat.resolvedOptions" ->
+         LET answer == IntlAnswer(s, "DateTimeFormat", config, "resolvedOptions", <<>>) IN
+         IF IsAbrupt(answer) THEN answer ELSE IntlResult(answer.s, "resolvedOptions", Val(answer))
+    [] m = "DateTimeFormat.format" ->
+         IF "boundFormat" \in DOMAIN O(s, dtf).slots THEN Ok(s, O(s, dtf).slots.boundFormat) ELSE
+         LET bound == CreateBuiltinFunction(s, <<"Intl", "DateTimeFormat.boundFormat">>, 1, <<>>, dtf) IN
+         Ok(SetSlots(bound.s, dtf, [boundFormat |-> Val(bound)]), Val(bound))
+    [] m \in {"DateTimeFormat.boundFormat", "DateTimeFormat.formatToParts"} ->
+         LET x == DateTimeFormattableKey(s, Arg(args, 1)) IN IF IsAbrupt(x) THEN x
+         \* FormatDateTime's RangeError for a time value that TimeClip makes NaN.
+         ELSE IF Val(x)[1] = "number" /\ Val(x)[2] = N("NaN") THEN ThrowError(x.s, "RangeError") ELSE
+         LET method == IF m = "DateTimeFormat.boundFormat" THEN "format" ELSE "formatToParts"
+             answer == HostIntl(<<"DateTimeFormat", config, "formatToParts", <<Val(x)>>>>)
+             pattern == IF method = "format" /\ answer.found \notin {"parts", "error"}
+                        THEN DateTimeFormatPatternText(config, Val(x)) ELSE [found |-> "none"]
+         IN IF pattern.found = "text" THEN Ok(x.s, Str(pattern.text))
+            ELSE IF pattern.found = "error" THEN ThrowError(x.s, pattern.error) ELSE
+            LET found == IntlAnswer(x.s, "DateTimeFormat", config, "formatToParts", <<Val(x)>>) IN
+            IF IsAbrupt(found) THEN found ELSE IntlResult(found.s, method, Val(found))
+    [] OTHER ->
+         IF Arg(args, 1) = Undefined \/ Arg(args, 2) = Undefined THEN ThrowTypeError(s) ELSE
+         LET x == DateTimeFormattableKey(s, Arg(args, 1)) IN IF IsAbrupt(x) THEN x ELSE
+         LET y == DateTimeFormattableKey(x.s, Arg(args, 2)) IN IF IsAbrupt(y) THEN y
+         \* Where both are time values, as a Temporal object and another value of another kind throw a
+         \* TypeError first.
+         ELSE IF Val(x)[1] = "number" /\ Val(y)[1] = "number" /\ N("NaN") \in {Val(x)[2], Val(y)[2]}
+         THEN ThrowError(y.s, "RangeError") ELSE
+         LET method == IF m = "DateTimeFormat.formatRange" THEN "formatRange" ELSE "formatRangeToParts"
+             answer == IntlAnswer(y.s, "DateTimeFormat", config, "formatRangeToParts", <<Val(x), Val(y)>>)
+         IN IF IsAbrupt(answer) THEN answer ELSE IntlResult(answer.s, method, Val(answer))
+\* Intl.Segmenter.prototype.segment (§19.3.3), %Segments% (§19.5), and %SegmentIterator% (§19.6), of
+\* the segments that HostIntl gives for a segmenter's key and a string: the index each starts at and,
+\* for word segments, whether it's like a word.
+SegmentsOf(s, segmenter, string) ==
+  IntlAnswer(s, "Segmenter", IntlConstructedConfig(s, segmenter, "Segmenter"), "segment", <<string>>)
+\* The position of the segment of segments that holds index n of string, from the ith on.
+SegmentAt(segments, n, i) ==
+  IF i < Len(segments.starts) /\ segments.starts[i + 1] <= n THEN SegmentAt(segments, n, i + 1) ELSE i
+\* CreateSegmentDataObject (§19.7.1) of the ith segment of segments of string.
+SegmentDataObject(s, segmenter, segments, string, i) ==
+  LET start == segments.starts[i]
+      end == IF i < Len(segments.starts) THEN segments.starts[i + 1] ELSE Len(string)
+      o == OrdinaryObjectCreate(s, Intrinsic(s, "ObjectPrototype"))
+      pairs == <<<<SV("segment"), Str(SubSeq(string, start + 1, end))>>, <<SV("index"), IntV(start)>>, <<SV("input"), Str(string)>>>>
+  IN Ok(SetO(o.s, Val(o), WithDataProps(O(o.s, Val(o)),
+                                        IF segments.words = <<>> THEN pairs ELSE Append(pairs, <<SV("isWordLike"), Bool(segments.words[i])>>))),
+        Val(o))
+SegmenterMethod(s, m, this, args) ==
+  CASE m = "Segmenter.segment" ->
+         LET string == ToStr(s, Arg(args, 1)) IN IF IsAbrupt(string) THEN string ELSE
+         LET a == Alloc(string.s, MakeObject(Intrinsic(string.s, "IntlSegmentsPrototype"), "intlSegments",
+                                             [segmenter |-> this, string |-> Val(string).value]))
+         IN Ok(a.s, a.v)
+    [] m = "Segments.containing" ->
+         LET slots == O(s, this).slots
+             n == ToIntegerOrInfinity(s, Arg(args, 1))
+         IN IF IsAbrupt(n) THEN n
+            ELSE IF NumLess(Val(n).value, NumFromInt(0)) \/ ~NumLess(Val(n).value, NumFromInt(Len(slots.string))) THEN Ok(n.s, Undefined) ELSE
+            LET segments == SegmentsOf(n.s, slots.segmenter, slots.string) IN IF IsAbrupt(segments) THEN segments
+            ELSE SegmentDataObject(segments.s, slots.segmenter, Val(segments), slots.string,
+                                   SegmentAt(Val(segments), NumToInt(Val(n).value), 1))
+    [] m = "Segments.iterator" ->
+         LET slots == O(s, this).slots
+             a == Alloc(s, MakeObject(Intrinsic(s, "IntlSegmentIteratorPrototype"), "intlSegmentIterator",
+                                      [segmenter |-> slots.segmenter, string |-> slots.string, position |-> 0]))
+         IN Ok(a.s, a.v)
+    [] OTHER ->
+         LET slots == O(s, this).slots IN
+         IF slots.position >= Len(slots.string) THEN CreateIterResultObject(s, Undefined, TRUE) ELSE
+         LET segments == SegmentsOf(s, slots.segmenter, slots.string) IN IF IsAbrupt(segments) THEN segments ELSE
+         LET i == SegmentAt(Val(segments), slots.position, 1)
+             end == IF i < Len(Val(segments).starts) THEN Val(segments).starts[i + 1] ELSE Len(slots.string)
+             data == SegmentDataObject(SetSlots(segments.s, this, [position |-> end]), slots.segmenter, Val(segments), slots.string, i)
+         IN IF IsAbrupt(data) THEN data ELSE CreateIterResultObject(data.s, Val(data), FALSE)
+\* The class of the object that each method of a segmenter, its segments, and their iterator takes.
+\* The units of Intl.DurationFormat (Table 20), each with its option, its display option, the styles
+\* it takes, and its digital default.
+DurationUnit(unit, key, display, styles, digital) == [unit |-> unit, key |-> key, display |-> display, styles |-> styles, digital |-> digital]
+\* GetDurationUnitOptions (§13.5.6) of each unit from the ith on, with the previous unit's style,
+\* appending to acc the style and the display that the options give, or Empty. It leaves out the
+\* two-digit hours of a locale's digital format, which only HostIntl knows.
+DurationUnitOptionsFrom(s, options, base, i, prev, acc) ==
+  IF i > Len(DurationUnits) THEN Ok(s, acc) ELSE
+  LET u == DurationUnits[i]
+      given == GetStringOption(s, options, u.key, u.styles, Empty)
+  IN IF IsAbrupt(given) THEN given ELSE
+  LET g == Val(given)
+      isTime == u.unit \in {"hours", "minutes", "seconds"}
+      isMinuteOrSecond == u.unit \in {"minutes", "seconds"}
+      first == CASE g # Empty -> [style |-> g, display |-> N("always")]
+                 [] base = N("digital") -> [style |-> u.digital, display |-> IF isTime THEN N("always") ELSE N("auto")]
+                 [] prev \in {N("fractional"), N("numeric"), N("2-digit")} ->
+                      [style |-> N("numeric"), display |-> IF isMinuteOrSecond THEN N("always") ELSE N("auto")]
+                 [] OTHER -> [style |-> base, display |-> N("auto")]
+      chosen == IF first.style = N("numeric") /\ u.unit \in {"milliseconds", "microseconds", "nanoseconds"}
+                THEN [style |-> N("fractional"), display |-> N("auto")] ELSE first
+      read == GetStringOption(given.s, options, u.display, {N("auto"), N("always")}, Empty)
+  IN IF IsAbrupt(read) THEN read ELSE
+  LET display == IF Val(read) = Empty THEN chosen.display ELSE Val(read)
+      style == IF isMinuteOrSecond /\ prev \in {N("numeric"), N("2-digit")} THEN N("2-digit") ELSE chosen.style
+  IN CASE display = N("always") /\ chosen.style = N("fractional") -> ThrowError(read.s, "RangeError")
+       [] prev = N("fractional") /\ chosen.style # N("fractional") -> ThrowError(read.s, "RangeError")
+       [] prev \in {N("numeric"), N("2-digit")} /\ chosen.style \notin {N("fractional"), N("numeric"), N("2-digit")} ->
+            ThrowError(read.s, "RangeError")
+       [] OTHER ->
+            DurationUnitOptionsFrom(read.s, options, base, i + 1,
+                                    IF u.unit \in {"hours", "minutes", "seconds", "milliseconds", "microseconds"} THEN style ELSE prev,
+                                    acc \o <<g, Val(read)>>)
+\* The constructor of Intl.DurationFormat (§13.1.1), whose object holds its requested locales and the
+\* options it read, and which constructs where HostIntl's answer for them does.
+DurationFormatConstruct(s, newTarget, locales, options) ==
+  LET o == OrdinaryCreateFromConstructor(s, newTarget, "IntlDurationFormatPrototype", "intlDurationFormat",
+                                         [locales |-> <<>>, options |-> Empty]) IN IF IsAbrupt(o) THEN o ELSE
+  LET requested == CanonicalizeLocaleList(o.s, locales) IN IF IsAbrupt(requested) THEN requested ELSE
+  LET opts == CASE options = Undefined -> OrdinaryObjectCreate(requested.s, Null)
+                [] IsObject(options) -> Ok(requested.s, options)
+                [] OTHER -> ThrowTypeError(requested.s)
+  IN IF IsAbrupt(opts) THEN opts ELSE
+  LET matcher == GetStringOption(opts.s, Val(opts), SV("localeMatcher"), {N("lookup"), N("best fit")}, N("best fit")) IN
+  IF IsAbrupt(matcher) THEN matcher ELSE
+  LET nu == GetAnyStringOption(matcher.s, Val(opts), SV("numberingSystem")) IN IF IsAbrupt(nu) THEN nu
+  ELSE IF Val(nu) # Empty /\ ~IsTypeSequenceFrom(Val(nu), 1, 0) THEN ThrowError(nu.s, "RangeError") ELSE
+  LET style == GetStringOption(nu.s, Val(opts), SV("style"), {N("long"), N("short"), N("narrow"), N("digital")}, N("short")) IN
+  IF IsAbrupt(style) THEN style ELSE
+  LET units == DurationUnitOptionsFrom(style.s, Val(opts), Val(style), 1, <<>>, <<>>) IN IF IsAbrupt(units) THEN units ELSE
+  LET digits == GetNumberOption(units.s, Val(opts), SV("fractionalDigits"), 0, 9, Empty) IN IF IsAbrupt(digits) THEN digits ELSE
+  LET config == <<Val(requested), Val(matcher), Val(nu), Val(style), Val(units), Val(digits)>>
+      answer == IntlAnswer(digits.s, "DurationFormat", config, "construct", <<>>)
+  IN IF IsAbrupt(answer) THEN answer ELSE Ok(SetSlots(answer.s, Val(o), [locales |-> Val(requested), options |-> config]), Val(o))
+\* The methods of an Intl.DurationFormat, df: ToDurationRecord, as Temporal reads a duration, whose
+\* fields' units key HostIntl's entries.
+DurationFormatMethod(s, m, df, args) ==
+  LET config == O(s, df).slots.options IN
+  IF m = "DurationFormat.resolvedOptions" THEN
+    LET answer == IntlAnswer(s, "DurationFormat", config, "resolvedOptions", <<>>) IN
+    IF IsAbrupt(answer) THEN answer ELSE IntlResult(answer.s, "resolvedOptions", Val(answer))
+  ELSE IF ~IsObject(Arg(args, 1)) /\ ~IsString(Arg(args, 1)) THEN ThrowTypeError(s) ELSE
+  LET f == ToTemporalDurationFields(s, Arg(args, 1)) IN IF IsAbrupt(f) THEN f ELSE
+  LET method == IF m = "DurationFormat.format" THEN "format" ELSE "formatToParts"
+      answer == IntlAnswer(f.s, "DurationFormat", config, "formatToParts", <<<<"duration", [i \in 1..10 |-> TIUnits(Val(f)[i])]>>>>)
+  IN IF IsAbrupt(answer) THEN answer ELSE IntlResult(answer.s, method, Val(answer))
+\* String.prototype.localeCompare (ECMA-402 §19.1.1): the compare of a new Intl.Collator.
+IntlLocaleCompare(s, x, y, locales, options) ==
+  LET c == IntlConstruct(s, "Collator", Intrinsic(s, "IntlCollator"), locales, options) IN IF IsAbrupt(c) THEN c ELSE
+  LET answer == IntlAnswer(c.s, "Collator", IntlConstructedConfig(c.s, Val(c), "Collator"), "compare", <<x, y>>) IN
+  IF IsAbrupt(answer) THEN answer ELSE IntlResult(answer.s, "compare", Val(answer))
+\* TransformCase (ECMA-402 §19.1.2) of a string's units in the locales given: as ESCore's case
+\* mapping in the host's default locale, where it isn't one that tailors case, and else what
+\* HostIntl answers.
+IntlTransformCase(s, m, units, locales, isTailored) ==
+  LET requested == CanonicalizeLocaleList(s, locales) IN IF IsAbrupt(requested) THEN requested
+  ELSE IF Val(requested) = <<>> THEN
+    IF isTailored THEN Unsupported(requested.s, N("Unsupported: a locale whose case mappings the host tailors"))
+    ELSE Ok(requested.s, Str(IF m = "toLocaleLowerCase" THEN ToLowercase(units) ELSE ToUppercase(units)))
+  ELSE LET answer == IntlAnswer(requested.s, "String", <<Val(requested)>>, m, <<units>>) IN
+       IF IsAbrupt(answer) THEN answer ELSE IntlResult(answer.s, m, Val(answer))
+\* %Intl%.[[FallbackSymbol]], which the realm makes the first time Intl reads it.
+IntlFallbackSymbol(s) ==
+  LET intl == Intrinsic(s, "Intl") IN
+  IF "fallback" \in DOMAIN O(s, intl).slots THEN [s |-> s, v |-> O(s, intl).slots.fallback]
+  ELSE LET made == NewSymbol(s, Str(N("IntlLegacyConstructedSymbol"))) IN
+       [s |-> SetSlots(made.s, intl, [fallback |-> made.v]), v |-> made.v]
+\* Date.prototype.toLocaleString, toLocaleDateString, and toLocaleTimeString (ECMA-402 §20.4) of a
+\* time value that isn't NaN: CreateDateTimeFormat of the locales and the options, which reads them
+\* as Intl.DateTimeFormat does, and the format that HostIntl answers for it.
+DateToLocaleString(s, m, t, locales, options) ==
+  LET d == IntlConstruct(s, "DateTimeFormat", Intrinsic(s, "IntlDateTimeFormat"), locales, options) IN IF IsAbrupt(d) THEN d ELSE
+  LET answer == IntlAnswer(d.s, "Date", DateTimeFormatConfig(d.s, Val(d)), m, <<IntlNumberKey(IntlTimeClip(t))>>) IN
+  IF IsAbrupt(answer) THEN answer ELSE IntlResult(answer.s, m, Val(answer))
+\* Intl's functions. Where a method unwraps its receiver first, an object that inherits from the
+\* constructor's prototype, through which it would read %Intl%.[[FallbackSymbol]], stops.
+IntlBuiltin(s, f, m, this, args, nt) ==
+  CASE m \in IntlConstructors ->
+         IF nt = Undefined /\ m \notin IntlCallableConstructors THEN ThrowTypeError(s)
+         ELSE IF m = "Locale" THEN LocaleConstruct(s, nt, Arg(args, 1), Arg(args, 2))
+         ELSE IF m = "DurationFormat" THEN DurationFormatConstruct(s, nt, Arg(args, 1), Arg(args, 2))
+         ELSE IF m \in DOMAIN IntlConstructorOptions \cup {"NumberFormat", "PluralRules"} THEN
+           LET o == IF m = "NumberFormat" THEN NumberFormatConstruct(s, IF nt = Undefined THEN f ELSE nt, Arg(args, 1), Arg(args, 2))
+                    ELSE IF m = "PluralRules" THEN PluralRulesConstruct(s, nt, Arg(args, 1), Arg(args, 2))
+                    ELSE IntlConstruct(s, m, IF nt = Undefined THEN f ELSE nt, Arg(args, 1), Arg(args, 2)) IN
+           IF IsAbrupt(o) \/ nt # Undefined \/ m \notin {"DateTimeFormat", "NumberFormat"} THEN o ELSE
+           \* ChainDateTimeFormat and ChainNumberFormat, which define %Intl%.[[FallbackSymbol]] on an
+           \* instance that a call without new receives.
+           LET inherits == OrdinaryHasInstance(o.s, f, this) IN IF IsAbrupt(inherits) THEN inherits
+           ELSE IF Val(inherits) = True THEN
+             LET symbol == IntlFallbackSymbol(inherits.s)
+                 defined == DefinePropertyOrThrow(symbol.s, this, symbol.v, DataDesc(Val(o), FALSE, FALSE, FALSE))
+             IN IF IsAbrupt(defined) THEN defined ELSE Ok(defined.s, this)
+           ELSE Ok(inherits.s, Val(o))
+         ELSE Unsupported(s, N("Unsupported: an Intl constructor, which reads locale data"))
+    [] m = "getCanonicalLocales" ->
+         LET list == CanonicalizeLocaleList(s, Arg(args, 1)) IN IF IsAbrupt(list) THEN list
+         ELSE CreateArrayFromList(list.s, [i \in DOMAIN Val(list) |-> Str(Val(list)[i])])
+    [] m = "supportedValuesOf" ->
+         LET key == ToStr(s, Arg(args, 1)) IN IF IsAbrupt(key) THEN key
+         ELSE IF Val(key).value \notin {N("calendar"), N("collation"), N("currency"), N("numberingSystem"), N("timeZone"), N("unit")}
+         THEN ThrowError(key.s, "RangeError")
+         ELSE LET answer == IntlAnswer(key.s, "Intl", <<>>, "supportedValuesOf", <<Val(key).value>>) IN
+              IF IsAbrupt(answer) THEN answer ELSE IntlResult(answer.s, "supportedValuesOf", Val(answer))
+    [] m \in IntlSupportedLocalesOf ->
+         LET list == CanonicalizeLocaleList(s, Arg(args, 1)) IN IF IsAbrupt(list) THEN list
+         ELSE FilterLocales(list.s, IntlServiceOf(m), Val(list), Arg(args, 2))
+    [] m = "NumberFormat.boundFormat" -> NumberFormatMethod(s, f, m, O(s, f).slots.data, args)
+    [] m = "Collator.boundCompare" -> IntlHostMethod(s, m, O(s, f).slots.data, args)
+    [] m \in DOMAIN SegmenterClasses ->
+         IF IsObject(this) /\ O(s, this).class = SegmenterClasses[m] THEN SegmenterMethod(s, m, this, args) ELSE ThrowTypeError(s)
+    [] m = "DateTimeFormat.boundFormat" -> DateTimeFormatMethod(s, m, O(s, f).slots.data, args)
+    [] m \in DurationFormatMethods /\ IsObject(this) /\ O(s, this).class = "intlDurationFormat" -> DurationFormatMethod(s, m, this, args)
+    [] m \in DateTimeFormatMethods /\ IsObject(this) /\ O(s, this).class = "intlDateTimeFormat" -> DateTimeFormatMethod(s, m, this, args)
+    [] m \in LocaleMethods /\ IsObject(this) /\ O(s, this).class = "intlLocale" -> LocaleMethod(s, m, this)
+    [] m \in IntlHostMethods /\ IsObject(this) /\ O(s, this).class = "intl" \o IntlMethodServices[m] -> IntlHostMethod(s, m, this, args)
+    [] m \in NumberFormatMethods /\ IsObject(this) /\ O(s, this).class = "intlNumberFormat" -> NumberFormatMethod(s, f, m, this, args)
+    [] m \in DOMAIN IntlUnwrappingMethods ->
+         IF ~IsObject(this) THEN ThrowTypeError(s) ELSE
+         LET inherits == OrdinaryHasInstance(s, Intrinsic(s, IntlUnwrappingMethods[m]), this) IN IF IsAbrupt(inherits) THEN inherits
+         ELSE IF Val(inherits) = False THEN ThrowTypeError(inherits.s) ELSE
+         \* UnwrapNumberFormat and UnwrapDateTimeFormat, through %Intl%.[[FallbackSymbol]].
+         LET symbol == IntlFallbackSymbol(inherits.s)
+             unwrapped == Get(symbol.s, this, symbol.v)
+             class == IF IntlUnwrappingMethods[m] = "IntlNumberFormat" THEN "intlNumberFormat" ELSE "intlDateTimeFormat"
+         IN IF IsAbrupt(unwrapped) THEN unwrapped
+            ELSE IF ~IsObject(Val(unwrapped)) \/ O(unwrapped.s, Val(unwrapped)).class # class THEN ThrowTypeError(unwrapped.s)
+            ELSE IF class = "intlNumberFormat" THEN NumberFormatMethod(unwrapped.s, f, m, Val(unwrapped), args)
+            ELSE DateTimeFormatMethod(unwrapped.s, m, Val(unwrapped), args)
+    [] IsObject(this) /\ O(s, this).class = "intl" \o IntlMethodServices[m] ->
+         Unsupported(s, N("Unsupported: an Intl object's method, which reads locale data"))
+    [] OTHER -> ThrowTypeError(s)
 \* Features the port doesn't have yet. Each throws a string that names it, which a test reports.
 Unsupported(s, what) == ThrowValue(s, Str(what))
 CallBuiltin(s, f, id, this, args, nt) ==
@@ -18801,6 +21457,7 @@ CallBuiltin(s, f, id, this, args, nt) ==
     [] id[1] = "TemporalNow" -> TemporalNowBuiltin(s, f, id[2], this, args, nt)
     [] id[1] = "PlainTime" -> PlainTimeBuiltin(s, f, id[2], this, args, nt)
     [] id[1] = "Duration" -> DurationBuiltin(s, f, id[2], this, args, nt)
+    [] id[1] = "Intl" -> IntlBuiltin(s, f, id[2], this, args, nt)
     [] OTHER -> Unsupported(s, N("Unsupported: built-in"))
 ResumeFrame(frame, r) ==
   CASE frame.step = "TailCallRunThen" -> TailCallRunThen(frame.args[1], r)
@@ -18853,6 +21510,7 @@ ResumeFrame(frame, r) ==
     [] frame.step = "ReturnThen" -> ReturnThen(frame.args[1], r)
     [] frame.step = "ReturnValueThen" -> ReturnValueThen(r)
     [] frame.step = "ThrowThen" -> ThrowThen(r)
+    [] frame.step = "ThrowAtThen" -> ThrowAtThen(frame.args[1], r)
     [] frame.step = "WithThen" -> WithThen(frame.args[1], frame.args[2], r)
     [] frame.step = "VariableListThen" -> VariableListThen(frame.args[1], frame.args[2], r)
     [] frame.step = "PatternInitializerThen" -> PatternInitializerThen(frame.args[1], frame.args[2], frame.args[3], r)
@@ -18915,11 +21573,6 @@ ResumeFrame(frame, r) ==
     [] frame.step = "DefineElementThen" -> DefineElementThen(frame.args[1], r)
     [] frame.step = "ClassBindingThen" -> ClassBindingThen(frame.args[1], frame.args[2], r)
     [] frame.step = "SuperCallThen" -> SuperCallThen(frame.args[1], frame.args[2], frame.args[3], r)
-    [] frame.step = "FromAsyncNextThen" -> FromAsyncNextThen(frame.args[1], frame.args[2], r)
-    [] frame.step = "FromAsyncMappedThen" -> FromAsyncMappedThen(frame.args[1], frame.args[2], r)
-    [] frame.step = "FromAsyncDefineThen" -> FromAsyncDefineThen(frame.args[1], frame.args[2], r)
-    [] frame.step = "FromAsyncValueThen" -> FromAsyncValueThen(frame.args[1], frame.args[2], r)
-    [] frame.step = "FromAsyncStoreThen" -> FromAsyncStoreThen(frame.args[1], frame.args[2], r)
     [] frame.step = "DisposeThen" -> DisposeThen(frame.args[1], r)
     [] frame.step = "DisposedThen" -> DisposedThen(frame.args[1], r)
     [] frame.step = "DisposeAwaitedThen" -> DisposeAwaitedThen(frame.args[1], frame.args[2], frame.args[3], frame.args[4], r)

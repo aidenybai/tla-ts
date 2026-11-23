@@ -9,33 +9,52 @@ let philosophers = new Map(
 );
 let forks = new Set<number>([1, 2, 3, 4, 5]);
 
+// Whether two sets hold the same forks, as TLA+'s = compares them.
+const isSameSet = (left: ReadonlySet<number>, right: ReadonlySet<number>) =>
+  left.isSubsetOf(right) && right.isSubsetOf(left);
+
 const leftFork = (philosopher: Philosopher) => philosopher;
 const rightFork = (philosopher: Philosopher) => (philosopher % N) + 1;
 
 const canTakeLeft = (philosopher: Philosopher) =>
-  (philosopher % 2 !== 0 || philosophers.get(philosopher)! === new Set([rightFork(philosopher)])) &&
+  (philosopher % 2 !== 0 ||
+    isSameSet(philosophers.get(philosopher)!, new Set([rightFork(philosopher)]))) &&
   forks.has(leftFork(philosopher));
 
 const canTakeRight = (philosopher: Philosopher) =>
-  (philosopher % 2 !== 1 || philosophers.get(philosopher)! === new Set([leftFork(philosopher)])) &&
+  (philosopher % 2 !== 1 ||
+    isSameSet(philosophers.get(philosopher)!, new Set([leftFork(philosopher)]))) &&
   forks.has(rightFork(philosopher));
 
 const canRelease = (philosopher: Philosopher) =>
-  philosophers.get(philosopher)! === new Set([leftFork(philosopher), rightFork(philosopher)]);
+  isSameSet(
+    philosophers.get(philosopher)!,
+    new Set([leftFork(philosopher), rightFork(philosopher)]),
+  );
+
+// A Set keeps its elements in the order they were added, which TLA+'s sets don't have, so each set
+// keeps its forks sorted.
+const getSorted = (values: Iterable<number>) =>
+  new Set([...values].sort((left, right) => left - right));
 
 const takeLeft = (philosopher: Philosopher) => {
   forks.delete(leftFork(philosopher));
-  philosophers.get(philosopher)!.add(leftFork(philosopher));
+  philosophers.set(
+    philosopher,
+    getSorted([...philosophers.get(philosopher)!, leftFork(philosopher)]),
+  );
 };
 
 const takeRight = (philosopher: Philosopher) => {
   forks.delete(rightFork(philosopher));
-  philosophers.get(philosopher)!.add(rightFork(philosopher));
+  philosophers.set(
+    philosopher,
+    getSorted([...philosophers.get(philosopher)!, rightFork(philosopher)]),
+  );
 };
 
 const release = (philosopher: Philosopher) => {
-  forks.add(leftFork(philosopher));
-  forks.add(rightFork(philosopher));
+  forks = getSorted([...forks, leftFork(philosopher), rightFork(philosopher)]);
   philosophers.set(philosopher, new Set());
 };
 
@@ -49,7 +68,7 @@ export const dine = (philosopher: Philosopher) => {
 const isEating = (philosopher: Philosopher) => philosophers.get(philosopher)!.size === 2;
 
 export const typeOK = () =>
-  new Set(philosophers.keys()) === philosopherSet &&
+  isSameSet(new Set(philosophers.keys()), philosopherSet) &&
   philosophers.values().every((held) => held.isSubsetOf(philosopherSet)) &&
   forks.isSubsetOf(philosopherSet);
 

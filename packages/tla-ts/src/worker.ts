@@ -1,4 +1,9 @@
 const WORKER_THREADS_MODULE = "node:worker_threads";
+const V8_MODULE = "node:v8";
+
+// The stack, in MB, of each thread that checks a spec, measured to hold the deepest evaluations
+// of Effect's modules on ESCore with room to spare. Node gives its main thread about 1 MB.
+export const CHECK_STACK_MB = 8;
 const BUN_JSC_MODULE = "bun:jsc";
 
 interface PortEvent {
@@ -43,7 +48,16 @@ export const spawnWorker = async (
   const threads: typeof import("node:worker_threads") = await import(
     /* @vite-ignore */ /* webpackIgnore: true */ WORKER_THREADS_MODULE
   );
-  const worker = new threads.Worker(url);
+  // A worker's heap is its parent's, which a worker would otherwise size by the machine's memory.
+  const v8: typeof import("node:v8") = await import(
+    /* @vite-ignore */ /* webpackIgnore: true */ V8_MODULE
+  );
+  const worker = new threads.Worker(url, {
+    resourceLimits: {
+      stackSizeMb: CHECK_STACK_MB,
+      maxOldGenerationSizeMb: Math.floor(v8.getHeapStatistics().heap_size_limit / 2 ** 20),
+    },
+  });
   worker.on("message", onMessage);
   worker.on("error", onError);
   return {

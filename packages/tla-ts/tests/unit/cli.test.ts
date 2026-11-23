@@ -743,6 +743,101 @@ describe("the CLI reports results like TLC", () => {
     expect(getSteadyLines(result.stdout)).toEqual([...lines, ""]);
   });
 
+  it.each([
+    [
+      "SetBoundRecords",
+      75,
+      [
+        "Starting... (_)",
+        "Computing initial states...",
+        "Error: Attempted to construct a set with too many elements (>100).",
+        "While working on the initial state:",
+        "x = [a: 1..11, b: 1..10]",
+        "",
+        "Error: TLC was unable to fingerprint.",
+        "",
+        "Fingerprint Stack Trace:",
+        "0) line 4, col 13 to line 4, col 34 of module SetBoundRecords",
+        "",
+        "Reason:",
+        "Attempted to construct a set with too many elements (>100).",
+        "1 states generated, 0 distinct states found, 0 states left on queue.",
+        "The depth of the complete state graph search is 1.",
+        "Finished in _ at (_)",
+      ],
+    ],
+    [
+      "SetBoundFilter",
+      75,
+      [
+        "Starting... (_)",
+        "Computing initial states...",
+        "Error: Attempted to construct a set with too many elements (>100).",
+        "While working on the initial state:",
+        "x = {r \\in [a: 1..11, b: 1..10] : <expression line 4, col 45 to line 4, col 48 of module SetBoundFilter> }",
+        "",
+        "Error: The error occurred when TLC was evaluating the nested",
+        "expressions at the following positions:",
+        "    The error call stack is empty.",
+        "",
+        "1 states generated, 0 distinct states found, 0 states left on queue.",
+        "The depth of the complete state graph search is 1.",
+        "Finished in _ at (_)",
+      ],
+    ],
+    [
+      "SetBoundSelection",
+      0,
+      [
+        "Starting... (_)",
+        "Computing initial states...",
+        "Finished computing initial states: 1 distinct state generated at _.",
+        "Model checking completed. No error has been found.",
+        "  Estimates of the probability that TLC did not check all reachable states",
+        "  because two distinct states had the same fingerprint:",
+        "  calculated (optimistic):  val = 5.4E-20",
+        "2 states generated, 1 distinct states found, 0 states left on queue.",
+        "The depth of the complete state graph search is 1.",
+        "The average outdegree of the complete state graph is 0 (minimum is 0, the maximum 0 and the 95th percentile is 0).",
+        "Finished in _ at (_)",
+      ],
+    ],
+    [
+      "SetBoundQuantifier",
+      75,
+      [
+        "Starting... (_)",
+        "Computing initial states...",
+        "Error: Attempted to construct a set with too many elements (>100).",
+        "Error: The error occurred when TLC was evaluating the nested",
+        "expressions at the following positions:",
+        "    The error call stack is empty.",
+        "",
+        "0 states generated, 0 distinct states found, 0 states left on queue.",
+        "The depth of the complete state graph search is 0.",
+        "Finished in _ at (_)",
+      ],
+    ],
+    [
+      "SetBoundUnion",
+      255,
+      [
+        "Starting... (_)",
+        "Computing initial states...",
+        "Error: TLC threw an unexpected exception.",
+        "This was probably caused by an error in the spec or model.",
+        "See the User Output or TLC Console for clues to what happened.",
+        "The exception was a util.WrongInvocationException",
+        ": Attempted to construct a set with too many elements (>100).",
+        "Finished in _ at (_)",
+      ],
+    ],
+  ] as const)("stops %s at TLC's set bound as TLC does", (name, code, lines) => {
+    const result = runCli("set-bound", name, ["-maxSetSize", "100"]);
+    expect(result.status).toBe(code);
+    expect(getSteadyLines(result.stdout)).toEqual([...lines, ""]);
+  });
+
   it("names no temporal property when the counterexample a VIEW merges satisfies them all", () => {
     const result = runCli("cli-output", "ViewLasso");
     expect(result.status).toBe(13);
@@ -1160,6 +1255,62 @@ describe("the CLI reports results like TLC", () => {
   });
 });
 
+// TLC prints its banner, the files it parses, and the start of its search before it searches, so
+// a search that never ends, of x' = x + 1, still shows them where the run is stopped, as real TLC
+// shows them before its first progress line. The CLI's thread writes them as it prints them,
+// though the search holds the thread's event loop.
+describe("the CLI prints the start of a search that never ends as TLC does", () => {
+  const getRun = (next: string, variables = "x", init = "x = 0") => {
+    const directory = mkdtempSync(join(tmpdir(), "endless-"));
+    writeFileSync(
+      join(directory, "Endless.tla"),
+      `---- MODULE Endless ----\nEXTENDS Naturals\nVARIABLES ${variables}\nInit == ${init}\nNext == ${next}\n====\n`,
+    );
+    writeFileSync(join(directory, "Endless.cfg"), "INIT Init\nNEXT Next\n");
+    const result = spawnSync(process.execPath, [DIST_CLI, "-noGenerateSpecTE", "Endless.tla"], {
+      cwd: directory,
+      encoding: "utf8",
+      timeout: 8000,
+    });
+    rmSync(directory, { recursive: true });
+    return result;
+  };
+
+  it("prints the start before the run stops", () => {
+    const result = getRun("x' = x + 1");
+    expect(result.signal).toBe("SIGTERM");
+    expect(result.stdout).toContain("Semantic processing of module Endless\n");
+    expect(result.stdout).toMatch(/\nStarting\.\.\. \(.*\)\nComputing initial states\.\.\.\n/);
+  });
+
+  // The typed tier searches the 27 billion states of three counters faster than the interpreter,
+  // and prints its initial states, and its progress three seconds in, as TLC does.
+  it("prints the initial states and the progress of a long search on the typed tier", () => {
+    const result = getRun(
+      [
+        "\\/ x' = (x + 1) % 3000 /\\ UNCHANGED <<y, z>>",
+        "\\/ y' = (y + 1) % 3000 /\\ UNCHANGED <<x, z>>",
+        "\\/ z' = (z + 1) % 3000 /\\ UNCHANGED <<x, y>>",
+      ].join("\n        "),
+      "x, y, z",
+      "x = 0 /\\ y = 0 /\\ z = 0",
+    );
+    expect(result.signal).toBe("SIGTERM");
+    expect(result.stdout).toMatch(
+      /\nFinished computing initial states: 1 distinct state generated at \S+ \S+\.\n/,
+    );
+    expect(result.stdout).toMatch(
+      /\nProgress\(\d+\) at \S+ \S+: [\d,]+ states generated \([\d,]+ s\/min\), [\d,]+ distinct states found \([\d,]+ ds\/min\), [\d,]+ states left on queue\.\n/,
+    );
+  });
+
+  it("prints the end of a search that ends", () => {
+    const result = getRun("x < 3 /\\ x' = x + 1");
+    expect(result.status).toBe(11);
+    expect(result.stdout).toContain("Error: Deadlock reached.");
+  });
+});
+
 describe("the CLI answers PickSuccessor from standard input like TLC", () => {
   const getPickLines = (output: string) => {
     const lines = output.split("\n");
@@ -1317,6 +1468,8 @@ describe("the CLI answers PickSuccessor from standard input like TLC", () => {
     },
   );
 
+  // The coverage estimates each variable's distinct values from TLC's fingerprints of them, so a
+  // fixed polynomial keeps the estimate from depending on the one the run draws.
   it("counts the successors TLC generates again to find the action of a step in the coverage", () => {
     const result = runCliWith(
       "tlc-ext",
@@ -1342,6 +1495,18 @@ describe("the CLI answers PickSuccessor from standard input like TLC", () => {
       "<Ask line 11, col 1 to line 11, col 3 of module PickAsk>: 7:7",
       "  line 11, col 8 to line 11, col 27 of module PickAsk: 7",
       "  |line 11, col 22 to line 11, col 26 of module PickAsk: 5",
+    ]);
+  });
+
+  it("estimates fewer distinct values of a variable where two of their fingerprints share a register, as TLC does", () => {
+    const result = runCliWith(
+      "tlc-ext",
+      ["PickAsk.tla", "-coverage", "1", "-fp", "39"],
+      "y\n".repeat(7),
+    );
+    expect(getCoverageLines(result.stdout).slice(0, 2)).toEqual([
+      "<x line 4, col 11 to line 4, col 11 of module PickAsk>: 2",
+      "<y line 4, col 14 to line 4, col 14 of module PickAsk>: 1",
     ]);
   });
 
@@ -2157,6 +2322,28 @@ describe("the CLI reads a monolith's configs and modules like TLC", () => {
   });
 });
 
+// Node gives its main thread about 1 MB of stack, which Sum's recursion of 10,000 overflows, so the
+// built CLI, as Node runs it, checks on a thread with a stack of its own.
+describe("the CLI checks on a thread with a deeper stack than Node's main thread", () => {
+  const runBuiltCli = (args: string[]) =>
+    spawnSync(process.execPath, [join(import.meta.dirname, "../../dist/cli.js"), ...args], {
+      cwd: join(FIXTURES, "cli-stack"),
+      encoding: "utf8",
+    });
+
+  it("checks a recursion deeper than Node's main thread holds", () => {
+    const result = runBuiltCli(["Sum.tla"]);
+    expect(result.stdout).toContain("Model checking completed. No error has been found.");
+    expect(result.status).toBe(0);
+  });
+
+  it("reports a recursion deeper than its own stack holds as TLC reports an overflow", () => {
+    const result = runBuiltCli(["Sum.tla", "-config", "Overflow.cfg"]);
+    expect(result.stdout).toContain("Error: This was a Java StackOverflowError.");
+    expect(result.status).toBe(255);
+  });
+});
+
 describe("the CLI fails to open a file as TLC does", () => {
   const getSerialize = (payload: string, path: string, openOptions: string) =>
     `Serialize(<<${payload}>>, "${path}", [format |-> "NDJSON", charset |-> "UTF-8", openOptions |-> <<${openOptions}>>])`;
@@ -2302,11 +2489,12 @@ describe("the CLI takes -checkpoint only where it writes no checkpoint", () => {
 });
 
 describe("the CLI reports a stack overflow while it prints a trace and keeps the verdict, as TLC does", () => {
-  it("prints the counts and exits 12 when -difftrace overflows comparing states nested 15,000 tuples deep", () => {
+  // The CLI checks on a thread with an 8 MB stack, so the states nest 60,000 tuples deep to overflow it.
+  it("prints the counts and exits 12 when -difftrace overflows comparing states nested 60,000 tuples deep", () => {
     const directory = mkdtempSync(join(tmpdir(), "deep-difftrace-"));
     writeFileSync(
       join(directory, "M.tla"),
-      `---- MODULE M ----\nEXTENDS Naturals\nVARIABLES x, y\nInit == x = 0 /\\ y = 0\nNext == y' = y + 1 /\\ x' = ${"<< ".repeat(500)}x${" >>".repeat(500)}\nInv == y < 30\n====\n`,
+      `---- MODULE M ----\nEXTENDS Naturals\nVARIABLES x, y\nInit == x = 0 /\\ y = 0\nNext == y' = y + 1 /\\ x' = ${"<< ".repeat(2000)}x${" >>".repeat(2000)}\nInv == y < 30\n====\n`,
     );
     writeFileSync(join(directory, "M.cfg"), "INIT Init\nNEXT Next\nINVARIANT Inv\n");
     const result = spawnSync(

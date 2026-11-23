@@ -4,6 +4,7 @@ import { hasRepeatedEffects, type Environment } from "./evaluate";
 import {
   evaluateOnLasso,
   getInterpretedAtoms,
+  isUnchangedStep,
   toLiveExpression,
   type LiveAtoms,
   type ScopedExpression,
@@ -22,6 +23,8 @@ import {
   type Solution,
   type Tableau,
 } from "./tableau";
+import { findCallActions, type SpecAction } from "./spec-description";
+import { hasLateBranches } from "./successors";
 import type { GraphState, LivenessWriter } from "./state-graph";
 import { findTraceLasso, type TraceLasso } from "./trace-liveness";
 import { isSameValue, type Value } from "./values";
@@ -29,6 +32,7 @@ import { isSameValue, type Value } from "./values";
 export interface LiveSuccessor<State = Value[]> {
   index: number;
   state: State;
+  action?: SpecAction;
 }
 
 export interface Lasso {
@@ -46,11 +50,30 @@ export interface LivenessChecker {
     state: Value[],
     successors: LiveSuccessor[],
     tracing?: Environment,
+    isExpanded?: boolean,
   ) => number[] | undefined;
+  // Whether some fair action is a call that Next splits into, whose steps each successor names.
+  isTakingSteps: boolean;
+  // Notes a step that Next took through an action, before the state constraints exclude any.
+  takeStep: (state: Value[], next: Value[], action: SpecAction) => void;
   storeState: (pending: number, index: number) => void;
   getStateCounts: () => number[];
   findViolation: () => Lasso | undefined;
   getViolatedProperties: (path: Value[][], cycleStart: number) => string[];
+}
+
+// The steps of the state that the search last expanded, by which the split actions of Next answer
+// the atoms of the fair actions they are calls of.
+interface Expansion {
+  state: Value[] | undefined;
+  isTaken: boolean;
+  enabled: Uint8Array;
+  steps: Map<Value[], SpecAction[]>;
+}
+
+interface EnabledTaker {
+  position: number;
+  atom: LiveAction;
 }
 
 export interface TraceViolation extends TraceLasso {
@@ -95,7 +118,8 @@ interface Tracing {
 }
 
 export interface LiveEvaluation<State> {
-  atoms: LiveAtoms<State>;
+  // Whether the atom at a position of getLiveAtoms holds of a state, or, for an action, of a step.
+  holds: (position: number, state: State, next: State) => boolean;
   // Whether a check's result for a state holds for every step from it.
   isShared: boolean;
   isSame: (left: State, right: State) => boolean;
@@ -417,18 +441,82 @@ export const createLivenessChecker = (
   environment: Environment,
   search: SearchGraph<Value[]>,
   createWriter?: (isTableau: boolean) => LivenessWriter,
+  actions?: SpecAction[],
 ): LivenessChecker | undefined => {
   if (properties.length === 0) return undefined;
   const formula = getLiveFormula(properties, temporals, environment);
   const isShared = isSharingResults(formula, environment);
   const solutions = getSolutions(formula);
   const tracing: Tracing = { atoms: getInterpretedAtoms(environment), replay: undefined };
+  const liveAtoms = getLiveAtoms(solutions);
+  // A fair action <<A>>_v takes a step of the graph that changes v when A is a call that Next
+  // splits into and that call took the step, and ENABLED <<A>>_v holds when it took one from the
+  // state, constrained or not, as its enumeration in Tool#enabled would find it, unless the call
+  // branches where Next stops at the first branch that holds.
+  const takers = liveAtoms.map((): SpecAction[] => []);
+  const enabledTakers = new Map<SpecAction, EnabledTaker[]>();
+  liveAtoms.forEach((atom, position) => {
+    const enabled = atom.kind === "Action" ? atom.enabled : undefined;
+    const step = enabled?.step;
+    if (
+      !actions ||
+      atom.kind !== "Action" ||
+      !enabled ||
+      step?.kind !== "AngleAction" ||
+      step.action !== atom.expression ||
+      step.subscript !== atom.subscript ||
+      // TLC evaluates any other subscript in ENABLED and on each step, and reports its error there.
+      atom.subscriptVariables === undefined
+    ) {
+      return;
+    }
+    const called = findCallActions(atom.expression, atom.scope, actions, environment);
+    const enabledPosition = liveAtoms.indexOf(enabled);
+    takers[position] = called;
+    if (
+      enabledPosition === -1 ||
+      called.some((action) => hasLateBranches(action.expression, environment))
+    ) {
+      return;
+    }
+    takers[enabledPosition] = called;
+    called.forEach((action) =>
+      enabledTakers.set(action, [
+        ...(enabledTakers.get(action) ?? []),
+        { position: enabledPosition, atom },
+      ]),
+    );
+  });
+  const expansion: Expansion = {
+    state: undefined,
+    isTaken: false,
+    enabled: new Uint8Array(liveAtoms.length),
+    steps: new Map(),
+  };
+  const startExpansion = (state: Value[]) => {
+    if (expansion.state === state) return;
+    expansion.state = state;
+    expansion.enabled.fill(0);
+  };
   const graph = createLiveGraph(
     solutions,
     {
-      atoms: {
-        holdsState: (atom, state) => tracing.atoms.holdsState(atom, state),
-        holdsAction: (atom, state, next) => tracing.atoms.holdsAction(atom, state, next),
+      holds: (position, state, next) => {
+        const atom = liveAtoms[position];
+        const taken = takers[position];
+        if (expansion.isTaken && state === expansion.state && taken.length > 0) {
+          if (atom.kind === "Enabled") return expansion.enabled[position] === 1;
+          const steps = expansion.steps.get(next);
+          if (atom.kind === "Action" && steps) {
+            return (
+              !isUnchangedStep(atom, state, next, environment) &&
+              steps.some((action) => taken.includes(action))
+            );
+          }
+        }
+        return atom.kind === "Action"
+          ? tracing.atoms.holdsAction(atom, state, next)
+          : tracing.atoms.holdsState(atom, state);
       },
       isShared,
       isSame: isSameState,
@@ -466,8 +554,42 @@ export const createLivenessChecker = (
     solutions,
     addInitialState: (index, state, replay) =>
       traceWith(replay, () => graph.addInitialState(index, state)),
-    addState: (index, state, successors, replay) =>
-      traceWith(replay, () => graph.addState(index, state, successors, replay !== undefined)),
+    addState: (index, state, successors, replay, isExpanded = false) => {
+      startExpansion(state);
+      // Each step names its action once the search splits Next, unless it stopped part way.
+      expansion.isTaken =
+        isExpanded &&
+        replay === undefined &&
+        successors.every((successor) => successor.action !== undefined);
+      if (expansion.isTaken) {
+        const indexSteps = new Map<number, SpecAction[]>();
+        successors.forEach((successor) => {
+          const steps = indexSteps.get(successor.index) ?? [];
+          indexSteps.set(successor.index, [
+            ...steps,
+            ...(successor.action ? [successor.action] : []),
+          ]);
+        });
+        successors.forEach((successor) =>
+          expansion.steps.set(successor.state, indexSteps.get(successor.index) ?? []),
+        );
+      }
+      const result = traceWith(replay, () =>
+        graph.addState(index, state, successors, replay !== undefined),
+      );
+      expansion.isTaken = false;
+      expansion.steps.clear();
+      return result;
+    },
+    isTakingSteps: takers.some((taken) => taken.length > 0),
+    takeStep: (state, next, action) => {
+      startExpansion(state);
+      enabledTakers.get(action)?.forEach((taker) => {
+        if (!isUnchangedStep(taker.atom, state, next, environment)) {
+          expansion.enabled[taker.position] = 1;
+        }
+      });
+    },
     storeState: graph.storeState,
     getStateCounts: graph.getStateCounts,
     findViolation: graph.findViolation,
@@ -486,14 +608,17 @@ export const createLiveGraph = <State>(
   const actionIds = new Map<string, number>();
   let capacityMultiplier = 1;
   const isShared = evaluation.isShared;
-  const atoms = evaluation.atoms;
+  const holds = evaluation.holds;
   const evaluateFrom = evaluation.evaluateFrom;
+  const positions = new Map(getLiveAtoms(solutions).map((atom, position) => [atom, position]));
+  const getPosition = (atom: LiveAtom) => positions.get(atom) ?? -1;
+  // The state atoms by the id of their cell in a row, with the position of each.
   const stateAtoms = new Map<LiveState | LiveEnabled, number>();
-  const atomsById: (LiveState | LiveEnabled)[] = [];
+  const atomPositions: number[] = [];
   const getAtomId = (atom: LiveState | LiveEnabled) => {
     const id = stateAtoms.get(atom) ?? stateAtoms.size;
     stateAtoms.set(atom, id);
-    atomsById[id] = atom;
+    atomPositions[id] = getPosition(atom);
     return id;
   };
   const getLiterals = (expression: LiveExpression): number[] | undefined => {
@@ -531,19 +656,21 @@ export const createLiveGraph = <State>(
       case "State":
       case "Enabled": {
         const id = getAtomId(expression);
+        const position = getPosition(expression);
         return (state, row, offset) => {
           if (row[offset + id] === -1) {
-            row[offset + id] = atoms.holdsState(expression, state) ? 1 : 0;
+            row[offset + id] = holds(position, state, state) ? 1 : 0;
           }
           return row[offset + id] === 1;
         };
       }
       case "Action": {
         const enabled = expression.enabled && getAtomId(expression.enabled);
+        const position = getPosition(expression);
         return (state, row, offset, next) =>
           !(enabled !== undefined && row[offset + enabled] === 0) &&
           next !== undefined &&
-          atoms.holdsAction(expression, state, next);
+          holds(position, state, next);
       }
       case "Not": {
         const body = compileCheck(expression.body);
@@ -746,7 +873,7 @@ export const createLiveGraph = <State>(
     for (let position = 0; position < checks.length; position++) {
       const literal: number = checks[position];
       const cell = offset + (literal >> 1);
-      if (row[cell] === -1) row[cell] = atoms.holdsState(atomsById[literal >> 1], state) ? 1 : 0;
+      if (row[cell] === -1) row[cell] = holds(atomPositions[literal >> 1], state, state) ? 1 : 0;
       if (row[cell] !== (literal & 1)) return false;
     }
     return true;

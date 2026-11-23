@@ -330,9 +330,7 @@ ChainStep(s, ctx, chain, value, ref) ==
 UpdateThen(n, r) ==
   IF IsAbrupt(r) THEN r ELSE
   IF Val(r).type # "reference" THEN ThrowError(r.s, "ReferenceError") ELSE
-  LET ref == ToKeyedReference(r.s, Val(r)) IN
-  IF IsAbrupt(ref) THEN ref ELSE
-  LET old == GetValue(ref.s, Val(ref)) IN
+  LET old == GetValue(r.s, Val(r)) IN
   IF IsAbrupt(old) THEN old ELSE
   LET num == ToNumeric(old.s, Val(old)) IN
   IF IsAbrupt(num) THEN num ELSE
@@ -340,7 +338,7 @@ UpdateThen(n, r) ==
       new == IF IsNumber(v)
              THEN Num(IF n.operator = "++" THEN NumAdd(v.value, NumFromInt(1)) ELSE NumSub(v.value, NumFromInt(1)))
              ELSE BigInt(IF n.operator = "++" THEN BigIntAdd(v.value, BigIntFromInt(1)) ELSE BigIntSub(v.value, BigIntFromInt(1)))
-      p == PutValue(num.s, Val(ref), new)
+      p == PutValue(num.s, Val(r), new)
   IN IF IsAbrupt(p) THEN p ELSE Ok(p.s, IF Has(n.LeftHandSideExpression) THEN v ELSE new)
 
 \* Unary operators (§13.5).
@@ -402,8 +400,10 @@ BinaryLeftThen(ctx, op, right, r) ==
 BinaryRightThen(lval, op, r) ==
   IF IsAbrupt(r) THEN r ELSE ApplyStringOrNumericBinaryOperator(r.s, lval, op, Val(r))
 
+\* Two Numbers skip the conversions, which give a Number back unchanged and leave the state as it is.
 ApplyStringOrNumericBinaryOperator(s, lval, op, rval) ==
-  IF op = "+" THEN
+  IF IsNumber(lval) /\ IsNumber(rval) THEN Ok(s, Num(NumberOperation(lval.value, op, rval.value)))
+  ELSE IF op = "+" THEN
     LET lp == ToPrimitive(s, lval, "none") IN
     IF IsAbrupt(lp) THEN lp ELSE
     LET rp == ToPrimitive(lp.s, rval, "none") IN
@@ -428,12 +428,12 @@ NumericBinary(s, lval, op, rval) ==
      ELSE BigIntOperationResult(rn.s, a.value, op, b.value)
 
 NumberOperation(a, op, b) ==
-  CASE op = "**" -> NumExp(a, b)
+  CASE op = "+" -> NumAdd(a, b)
+    [] op = "-" -> NumSub(a, b)
     [] op = "*" -> NumMul(a, b)
     [] op = "/" -> NumDiv(a, b)
     [] op = "%" -> NumRem(a, b)
-    [] op = "+" -> NumAdd(a, b)
-    [] op = "-" -> NumSub(a, b)
+    [] op = "**" -> NumExp(a, b)
     [] op = "<<" -> NumShl(a, b)
     [] op = ">>" -> NumShr(a, b)
     [] op = ">>>" -> NumUShr(a, b)
@@ -452,7 +452,8 @@ RelationalRightThen(lv, op, r) ==
   IF IsAbrupt(r) THEN r ELSE
   LET rv == Val(r)
       s1 == r.s
-  IN CASE op = "<" ->
+  IN IF IsNumber(lv) /\ IsNumber(rv) /\ op \in {"<", ">", "<=", ">="} THEN Ok(s1, NumberRelation(lv.value, op, rv.value))
+     ELSE CASE op = "<" ->
             LET c == IsLessThan(s1, lv, rv, TRUE) IN
             IF IsAbrupt(c) THEN c ELSE Ok(c.s, IF Val(c) = Undefined THEN False ELSE Val(c))
        [] op = ">" ->
@@ -469,6 +470,11 @@ RelationalRightThen(lv, op, r) ==
             IF ~IsObject(rv) THEN ThrowTypeError(s1)
             ELSE LET k == ToPropertyKey(s1, lv) IN
                  IF IsAbrupt(k) THEN k ELSE HasProperty(k.s, rv, Val(k))
+
+\* The relation of two Numbers, as IsLessThan gives it once ToPrimitive gives each back unchanged.
+NumberRelation(x, op, y) ==
+  LET c == IF op \in {"<", ">="} THEN NumLessResult(x, y) ELSE NumLessResult(y, x)
+  IN IF op \in {"<", ">"} THEN (IF c = Undefined THEN False ELSE c) ELSE Bool(c = False)
 
 \* InstanceofOperator (§13.10.2).
 InstanceofOperator(s, v, target) ==
@@ -514,17 +520,15 @@ AssignmentTargetThen(ctx, n, target) ==
   IF Val(target).type # "reference" THEN ThrowError(target.s, "ReferenceError") ELSE
   LET op == n.AssignmentOperator IN
   IF op = "=" THEN PutValueThen(Val(target), EvaluateAssigned(target.s, ctx, n)) ELSE
-  LET ref == ToKeyedReference(target.s, Val(target)) IN
-  IF IsAbrupt(ref) THEN ref ELSE
-  LET old == GetValue(ref.s, Val(ref)) IN
+  LET old == GetValue(target.s, Val(target)) IN
   IF IsAbrupt(old) THEN old
   ELSE IF op \in {"&&=", "||=", "??="} THEN
     IF (CASE op = "&&=" -> ~ToBooleanValue(Val(old))
           [] op = "||=" -> ToBooleanValue(Val(old))
           [] op = "??=" -> ~IsNullish(Val(old)))
     THEN old
-    ELSE PutValueThen(Val(ref), EvaluateAssigned(old.s, ctx, n))
-  ELSE CompoundThen(Val(ref), Val(old), SubSeq(op, 1, Len(op) - 1), EvaluateValue(old.s, ctx, n.AssignmentExpression))
+    ELSE PutValueThen(Val(target), EvaluateAssigned(old.s, ctx, n))
+  ELSE CompoundThen(Val(target), Val(old), SubSeq(op, 1, Len(op) - 1), EvaluateValue(old.s, ctx, n.AssignmentExpression))
 
 \* Assigns the value r gives to the reference, which is the assignment's value.
 PutValueThen(ref, r) ==

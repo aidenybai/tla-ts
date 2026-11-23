@@ -49,6 +49,7 @@ import {
   createSet,
   createTuple,
   formatValue,
+  isSameValue,
   rankString,
   type Value,
 } from "./values";
@@ -256,6 +257,10 @@ const getBoundValues = (names: string[], scope: Scope | undefined) =>
     return binding?.kind === "Value" ? [[name, binding.value]] : [];
   });
 
+// The operator whose body an action splits from, which names a step that calls no other.
+export const getStepName = (action: SpecAction) =>
+  action.name === UNNAMED_ACTION ? undefined : action.name;
+
 const getParameters = (closure: Closure | undefined, scope: Scope | undefined) =>
   getBoundValues(
     (closure?.params ?? []).map((param) => param.name),
@@ -434,6 +439,7 @@ const getActions = (
         params: [],
         body: thunk.expression,
         scope: thunk.scope,
+        site: thunk.site,
       },
       environment,
       instanceActions,
@@ -491,6 +497,49 @@ const getActions = (
       letDefinition,
     );
   }, callAction);
+};
+
+// The actions Next splits into that are each the whole body of a call of this operator, to the
+// same constant arguments, so each takes every step that the call takes.
+export const findCallActions = (
+  expression: Expression,
+  scope: Scope | undefined,
+  actions: SpecAction[],
+  environment: Environment,
+) => {
+  const called = isLocallyResolved(expression)
+    ? undefined
+    : resolveClosure(expression, scope, environment);
+  const args = getArguments(expression);
+  if (
+    !called ||
+    called.params.length !== args.length ||
+    !hasConstantArguments(args, scope, environment)
+  ) {
+    return [];
+  }
+  return tryCollect(
+    () => {
+      const values = args.map((arg) => evaluate(arg, getSplitContext(environment, scope)));
+      const isCalled = (action: SpecAction) => {
+        let bound = action.scope;
+        for (let index = values.length - 1; index >= 0; index--) {
+          const binding = bound?.binding;
+          if (
+            bound?.name !== called.params[index].name ||
+            binding?.kind !== "Value" ||
+            !isSameValue(binding.value, values[index])
+          ) {
+            return false;
+          }
+          bound = bound.parent;
+        }
+        return bound === called.scope;
+      };
+      return actions.filter((action) => action.expression === called.body && isCalled(action));
+    },
+    () => [],
+  );
 };
 
 // TLC bounds the level of a definition without the substitutions of its instances, so an instance's declaration counts as a variable only by the name of a root variable.
@@ -568,6 +617,7 @@ const describeSpecification = (
           params: [],
           body: thunk.expression,
           scope: thunk.scope,
+          site: thunk.site,
         }
       : resolveClosure(expression, scope, environment);
   if (called && isConstantDefinition(called, environment)) return;

@@ -318,6 +318,15 @@ describe("liveness matches TLC", () => {
     expect([result.status, result.distinctStates]).toEqual(["success", 1]);
   });
 
+  it("finds the level of a spec whose initial predicate uses a recursive LET constant", async () => {
+    const result = await check({
+      source:
+        "---- MODULE M ----\nVARIABLE x\nInit == LET RECURSIVE Loop\n            Loop == IF FALSE THEN Loop ELSE <<>>\n        IN  \\E loop \\in {Loop} : x = 1\nSpec == Init /\\ [][x' = x]_x\n====",
+      config: "SPECIFICATION Spec",
+    });
+    expect([result.status, result.distinctStates]).toEqual(["success", 1]);
+  });
+
   it("leaves a recursive operator a temporal property calls through an operator argument unexpanded, as TLC does", async () => {
     const result = await check({
       source:
@@ -366,6 +375,56 @@ describe("liveness matches TLC", () => {
       config: "SPECIFICATION Spec\nPROPERTY Live",
     });
     expect([result.status, result.distinctStates]).toEqual(["success", 3]);
+  });
+
+  it("levels a property's conjunct by the bound TLC finds through the operators it calls", async () => {
+    // TLCExt.tla defines PickSuccessor at the constant level, and its Java override at the action
+    // level, which TLC's getLevelBound reads through Test.
+    const getCheck = (property: string) =>
+      check({
+        source: [
+          "---- MODULE M ----",
+          "EXTENDS TLCExt",
+          "VARIABLE x",
+          "Test == PickSuccessor(TRUE)",
+          "Spec == x = TRUE /\\ [][UNCHANGED x]_x",
+          `Prop == ${property}`,
+          "====",
+        ].join("\n"),
+        config: "SPECIFICATION Spec\nPROPERTY Prop",
+      });
+    await expect(getCheck("[](x /\\ Test)")).rejects.toThrow(
+      "Temporal formulas containing actions must be of forms <>[]A or []<>A.",
+    );
+    expect((await getCheck("[](x /\\ TRUE)")).status).toBe("success");
+  });
+
+  it("finds the level of a call from the levels SANY gives its operator, not by expanding it", async () => {
+    // Expanding each call to find its level would read each argument once for each place that
+    // names it, which doubles the work at each of the operators here.
+    const operators = Array.from(
+      { length: 14 },
+      (_, index) => `Op${index + 1}(n) == Op${index}(IF n = 0 THEN n ELSE n)`,
+    );
+    const getStatus = async (fairness: string) =>
+      (
+        await check({
+          source: [
+            "---- MODULE M ----",
+            "EXTENDS Naturals",
+            "VARIABLE x",
+            "Op0(n) == n = 0",
+            ...operators,
+            "Next == x' = 1 - x",
+            `Spec == x = 0 /\\ [][Next]_x${fairness}`,
+            "Live == []<>Op14(x)",
+            "====",
+          ].join("\n"),
+          config: "SPECIFICATION Spec\nPROPERTY Live",
+        })
+      ).status;
+    expect(await getStatus(" /\\ WF_x(Next)")).toBe("success");
+    expect(await getStatus("")).toBe("liveness-violation");
   });
 
   it.each([
@@ -425,5 +484,140 @@ describe("liveness matches TLC", () => {
       result.generatedStates,
       result.distinctStates,
     ]).toEqual(["invariant-violation", 4, 9, 7]);
+  });
+});
+
+// Next takes the steps of a fair action that is a call it splits into, and the checker reads
+// ENABLED and the action from those steps. Each expected result is TLC's.
+describe("a fair action that Next splits into matches TLC", () => {
+  // TLC's default set bound, given explicitly, keeps the search on the interpreter.
+  const checkFair = (definitions: string, config = "SPECIFICATION Spec\nPROPERTY Prop") =>
+    check({
+      source: `---- MODULE M ----\nEXTENDS Naturals, TLC\n${definitions}\n====`,
+      config,
+      maxSetSize: 1_000_000,
+    });
+  const getRun = (result: Awaited<ReturnType<typeof check>>) => [
+    result.status,
+    result.violation?.trace.map((step) => step.state.x),
+    result.violation?.loopStart,
+    result.generatedStates,
+    result.distinctStates,
+  ];
+
+  it("finds the action enabled where a constraint excludes its step, as Tool#enabled ignores the constraint", async () => {
+    const result = await checkFair(
+      "VARIABLE x\nA == x' = x + 1\nB == x = 2 /\\ x' = 0\nNext == A \\/ B\nSpec == x = 0 /\\ [][Next]_x /\\ WF_x(A)\nProp == []<>(x = 0)\nBound == x <= 2",
+      "SPECIFICATION Spec\nPROPERTY Prop\nCONSTRAINT Bound",
+    );
+    expect(getRun(result)).toEqual(["success", undefined, undefined, 5, 3]);
+  });
+
+  it("takes no step of an action whose steps leave the subscript unchanged", async () => {
+    const result = await checkFair(
+      "VARIABLES x, y\nA == x' = x /\\ y' = 1 - y\nSpec == x = 0 /\\ y = 0 /\\ [][A]_<<x, y>> /\\ WF_x(A)\nProp == []<>(y = 1)",
+    );
+    expect(getRun(result)).toEqual(["liveness-violation", [0], 0, 3, 2]);
+  });
+
+  it("takes only the steps of an action that change its subscript", async () => {
+    const result = await checkFair(
+      "VARIABLES x, y\nA == x' \\in {x, 1 - x} /\\ y' = 1 - y\nSpec == x = 0 /\\ y = 0 /\\ [][A]_<<x, y>> /\\ WF_x(A)\nProp == []<>(x = 1)",
+    );
+    expect(getRun(result)).toEqual(["success", undefined, undefined, 9, 4]);
+  });
+
+  it("evaluates a fair call to arguments that Next never splits into beside one it does", async () => {
+    const result = await checkFair(
+      "VARIABLE x\nA(i) == x' = i\nNext == \\E i \\in {1, 2} : A(i)\nSpec == x = 0 /\\ [][Next]_x /\\ WF_x(A(1)) /\\ WF_x(A(3))\nProp == []<>(x = 3)",
+    );
+    expect(getRun(result)).toEqual(["success", undefined, undefined, 7, 3]);
+  });
+
+  it("reads the level of the state that takes the step, as TLC does", async () => {
+    const result = await checkFair(
+      "VARIABLE x\nA == TLCGet(\"level\") < 3 /\\ x' = x + 1\nB == x = 2 /\\ x' = 0\nNext == A \\/ B\nSpec == x = 0 /\\ [][Next]_x /\\ WF_x(A)\nProp == []<>(x = 0)",
+    );
+    expect(getRun(result)).toEqual(["liveness-violation", [0, 1, 2], 2, 4, 3]);
+  });
+
+  it("takes the steps of a fair action that asserts, which Next evaluates first", async () => {
+    const result = await checkFair(
+      "VARIABLE x\nA == x < 3 /\\ x' = x + 1 /\\ Assert(x' # 0, \"A to zero\")\nB == x' = 0\nNext == A \\/ B\nSpec == x = 0 /\\ [][Next]_x /\\ WF_x(A)\nProp == <>(x = 3)",
+    );
+    expect(getRun(result)).toEqual(["liveness-violation", [0, 1], 0, 8, 4]);
+  });
+
+  it("evaluates ENABLED on a fair action whose witness Next stops at once every variable is assigned, as Tool#enabled tries each", async () => {
+    const result = await checkFair(
+      'VARIABLE x\nA == x\' = x /\\ \\E i \\in {1, 2} : Assert(i < 2, "two")\nSpec == x = 0 /\\ [][A]_x /\\ WF_x(A)\nProp == []<>(x = 0)',
+    );
+    expect([
+      result.failure?.message,
+      result.failure?.exitCode,
+      result.generatedStates,
+      result.distinctStates,
+    ]).toEqual([
+      'The first argument of Assert evaluated to FALSE; the second argument was:\n"two"',
+      14,
+      2,
+      1,
+    ]);
+  });
+
+  it("evaluates ENABLED on a fair action whose subscript fails, where TLC reports the subscript's error", async () => {
+    const result = await checkFair(
+      'VARIABLE x\nA == x < 2 /\\ x\' = x + 1\nProp == <>(x = 2)\nSpec == x = 0 /\\ [][A]_x /\\ WF_(x + "a")(A)',
+    );
+    expect([
+      result.failure?.exitCode,
+      result.failure?.callStack?.flatMap((expression, index, stack) => {
+        const range = expression.location.range;
+        return range && expression !== stack[index - 1]
+          ? [`${range.start.line}.${range.start.column}-${range.end.line}.${range.end.column}`]
+          : [];
+      }),
+      result.generatedStates,
+      result.distinctStates,
+    ]).toEqual([255, ["6.42-6.42", "4.6-4.24", "4.6-4.10", "4.15-4.24", "6.33-6.39"], 2, 2]);
+  });
+
+  // A and B step from y = a to states that the symmetry or the view merges, so the step of B
+  // reaches A's state without being A's step.
+  it.each([
+    ["SYMMETRY Perms", 5, 2],
+    ["VIEW OnlyZ", 5, 2],
+  ])(
+    "evaluates a fair action on the steps of states that %s merges",
+    async (setting, generated, distinct) => {
+      const result = await checkFair(
+        "CONSTANT S\nVARIABLES y, z\nA == z = 0 /\\ z' = 1 /\\ y' = y\nB == z = 0 /\\ z' = 1 /\\ y' = CHOOSE o \\in S : o # y\nC == z = 1 /\\ z' = 0 /\\ y' = y\nNext == A \\/ B \\/ C\nSpec == y \\in S /\\ z = 0 /\\ [][Next]_<<y, z>> /\\ SF_z(A) /\\ WF_z(C)\nProp == []<><<A>>_<<y, z>>\nPerms == Permutations(S)\nOnlyZ == z",
+        `CONSTANT S = {a, b}\n${setting}\nSPECIFICATION Spec\nPROPERTY Prop`,
+      );
+      expect(getRun(result)).toEqual(["success", undefined, undefined, generated, distinct]);
+    },
+  );
+
+  it("evaluates ENABLED again where an invariant stops Next before the fair action, as TLC does", async () => {
+    const result = await checkFair(
+      "VARIABLE x\nA == x' = x + 1 /\\ Assert(x > 0, \"A at zero\")\nB == x' = x + 10\nNext == B \\/ A\nSpec == x = 0 /\\ [][Next]_x /\\ WF_x(A)\nProp == []<>(x = 0)\nInv == x < 10",
+      "SPECIFICATION Spec\nPROPERTY Prop\nINVARIANT Inv",
+    );
+    expect([
+      ...getRun(result),
+      result.liveCallStack?.flatMap((expression, index, stack) => {
+        const range = expression.location.range;
+        return range && expression !== stack[index - 1]
+          ? [`${range.start.line}.${range.start.column}-${range.end.line}.${range.end.column}`]
+          : [];
+      }),
+    ]).toEqual([
+      "invariant-violation",
+      [0, 10],
+      undefined,
+      2,
+      2,
+      ["7.37-7.37", "4.6-4.45", "4.6-4.15", "4.20-4.45"],
+    ]);
   });
 });

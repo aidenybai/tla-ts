@@ -27,8 +27,16 @@ jobs:
             command: pnpm run check
           - task: typecheck
             command: pnpm run typecheck
+          # The unit tests of the three largest files run in jobs of their own, so that each job
+          # stays within the time limit.
           - task: test
-            command: pnpm run test
+            command: pnpm --filter tla-ts exec vp test run --exclude tests/unit/typescript-escore-corpus.test.ts --exclude tests/unit/typescript-cli.test.ts --exclude tests/unit/typescript-escore.test.ts && pnpm --filter @tla-ts/conformance test
+          - task: test corpus
+            command: pnpm --filter tla-ts exec vp test run tests/unit/typescript-escore-corpus.test.ts
+          - task: test cli
+            command: pnpm --filter tla-ts exec vp test run tests/unit/typescript-cli.test.ts
+          - task: test escore
+            command: pnpm --filter tla-ts exec vp test run tests/unit/typescript-escore.test.ts
 
     steps:
       - uses: actions/checkout@v4
@@ -36,7 +44,7 @@ jobs:
       - uses: oven-sh/setup-bun@v2
       - uses: actions/setup-node@v4
         with:
-          node-version: 24
+          node-version-file: .node-version
           cache: "pnpm"
       - run: pnpm install --frozen-lockfile
       - run: ${{ matrix.command }}
@@ -58,7 +66,7 @@ jobs:
       - uses: oven-sh/setup-bun@v2
       - uses: actions/setup-node@v4
         with:
-          node-version: 22
+          node-version-file: .node-version
           cache: "pnpm"
       - run: pnpm install --frozen-lockfile
       - run: pnpm run build
