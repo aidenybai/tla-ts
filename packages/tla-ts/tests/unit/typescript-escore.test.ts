@@ -4035,6 +4035,34 @@ describe("ports test262's harness includes", () => {
     });
   });
 
+  describe("SpiderMonkey's TypedArray shell", () => {
+    const port = ASSERT + readPort("test262-sm-typed-array-shell.ts");
+    const uses = `
+      const shared = sharedTypedArrayConstructors[1];
+      const array = new shared([1, 2, 3]);
+      if (!(array.buffer instanceof SharedArrayBuffer) || array[2] !== 3) throw new Error("shared");
+      if (shared.name !== "Uint8Array" || shared.BYTES_PER_ELEMENT !== 1) throw new Error("name");
+      if (anyTypedArrayConstructors.length !== 2 * typedArrayConstructors.length) throw new Error("any");
+      if (!isSharedConstructor(shared) || isSharedConstructor(Uint8Array)) throw new Error("isShared");
+      if (!isUnsignedConstructor(shared) || isFloatConstructor(shared)) throw new Error("kind");
+      if (!isFloatConstructor(Float64Array) || isUnsignedConstructor(Int8Array)) throw new Error("float");
+    `;
+
+    it("makes a shared constructor of each typed array's and tells their kinds", async () => {
+      expect(getNodeError(port + uses)).toBeUndefined();
+      expect((await checkScript(port + uses)).message).toBeUndefined();
+    });
+
+    it("tells that a signed array's constructor isn't unsigned", async () => {
+      const wrong = 'if (isUnsignedConstructor(Int8Array)) throw new Error("unsigned");';
+      expect(getNodeError(port + wrong)).toBeUndefined();
+      expect((await checkScript(port + wrong)).message).toBeUndefined();
+      const asserted = 'if (!isUnsignedConstructor(Int8Array)) throw new Error("signed");';
+      expect(getNodeError(port + asserted)).toContain("signed");
+      expect((await checkScript(port + asserted)).message).toContain(THREW);
+    });
+  });
+
   describe("SpiderMonkey's Math shell", () => {
     const port = readPort("test262-sm-math-shell.ts");
     const near = `
