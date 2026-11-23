@@ -355,22 +355,25 @@ Spec == Init /\\ [][Next]_x
 
   it("rejects a non-Leibniz operator argument that tla-ts cannot show a recursive operator ignores, which SANY accepts", () => {
     const report = getReport({
-      M: "---- MODULE M ----\nEXTENDS Naturals\nVARIABLE x\nH1(K(_)) == LET RECURSIVE R(_) R(n) == K(n) IN R(1)\nH2(K(_)) == LET RECURSIVE R(_, _) R(n, k) == IF n = 0 THEN 0 ELSE R(n - 1, k) IN R(3, K(1))\nH3(K(_)) == LET RECURSIVE A(_), B(_), C(_)\n               A(n) == IF n = 0 THEN 0 ELSE B(n - 1)\n               B(n) == IF n = 0 THEN 0 ELSE C(n - 1)\n               C(n) == IF n = 0 THEN K(1) ELSE A(n - 1)\n           IN A(2)\nH4(K(_)) == LET RECURSIVE A(_), B(_)\n               A(n) == IF n = 0 THEN K(1) ELSE A(n - 1)\n               B(n) == IF n = 0 THEN 0 ELSE B(n - 1)\n           IN B(2)\nH5(K(_)) == LET RECURSIVE A(_), B(_), D(_)\n               A(n) == B(n)\n               B(n) == A(n)\n               D(n) == K(n)\n           IN A(1)\nH6(K(_)) == LET RECURSIVE R(_), S(_)\n               R(n) == S(1)\n               S(m) == S(m)\n           IN R(K(1))\nF1(a) == H1(LAMBDA b : a')\nF2(a) == H2(LAMBDA b : a')\nF3(a) == H3(LAMBDA b : a')\nF4(a) == H4(LAMBDA b : a')\nF5(a) == H5(LAMBDA b : a')\nF6(a) == H6(LAMBDA b : a')\n---- MODULE Recursed ----\nCONSTANT Op(_)\nRECURSIVE R(_)\nR(n) == Op(n)\nD == R(1)\n====\n---- MODULE Other ----\nCONSTANT Op(_)\n====\nP(a) == INSTANCE Recursed WITH Op <- LAMBDA b : a'\nINSTANCE Other WITH Op <- F1\nINSTANCE Other WITH Op <- F2\nINSTANCE Other WITH Op <- F3\nINSTANCE Other WITH Op <- F4\nINSTANCE Other WITH Op <- F5\nINSTANCE Other WITH Op <- F6\nINSTANCE Other WITH Op <- P!D\n====\n",
+      M: "---- MODULE M ----\nEXTENDS Naturals\nVARIABLE x\nH1(K(_)) == LET RECURSIVE R(_) R(n) == K(n) IN R(1)\nH2(K(_)) == LET RECURSIVE R(_, _) R(n, k) == IF n = 0 THEN 0 ELSE R(n - 1, k) IN R(3, K(1))\nH3(K(_)) == LET RECURSIVE A(_), B(_), C(_)\n               A(n) == IF n = 0 THEN 0 ELSE B(n - 1)\n               B(n) == IF n = 0 THEN 0 ELSE C(n - 1)\n               C(n) == IF n = 0 THEN K(1) ELSE A(n - 1)\n           IN A(2)\nH4(K(_)) == LET RECURSIVE A(_), B(_)\n               A(n) == IF n = 0 THEN K(1) ELSE A(n - 1)\n               B(n) == IF n = 0 THEN 0 ELSE B(n - 1)\n           IN B(2)\nH5(K(_)) == LET RECURSIVE A(_), B(_), D(_)\n               A(n) == B(n)\n               B(n) == A(n)\n               D(n) == K(n)\n           IN A(1)\nH6(K(_)) == LET RECURSIVE R(_), S(_)\n               R(n) == S(1)\n               S(m) == S(m)\n           IN R(K(1))\nH7(K(_)) == LET RECURSIVE R(_)\n               G(n) == R(1)\n               R(m) == G(m)\n           IN G(K(1))\nH8(K(_)) == LET RECURSIVE A(_), B(_)\n               A(n) == B(n)\n               D(n) == K(n)\n               B(n) == A(n)\n           IN A(1)\nRECURSIVE T(_)\nW(n) == T(1)\nT(m) == W(m)\nH9(K(_)) == W(K(1))\nF1(a) == H1(LAMBDA b : a')\nF2(a) == H2(LAMBDA b : a')\nF3(a) == H3(LAMBDA b : a')\nF4(a) == H4(LAMBDA b : a')\nF5(a) == H5(LAMBDA b : a')\nF6(a) == H6(LAMBDA b : a')\nF7(a) == H7(LAMBDA b : a')\nF8(a) == H8(LAMBDA b : a')\nF9(a) == H9(LAMBDA b : a')\n---- MODULE Recursed ----\nCONSTANT Op(_)\nRECURSIVE R(_)\nR(n) == Op(n)\nD == R(1)\n====\n---- MODULE Other ----\nCONSTANT Op(_)\n====\nP(a) == INSTANCE Recursed WITH Op <- LAMBDA b : a'\nINSTANCE Other WITH Op <- F1\nINSTANCE Other WITH Op <- F2\nINSTANCE Other WITH Op <- F3\nINSTANCE Other WITH Op <- F4\nINSTANCE Other WITH Op <- F5\nINSTANCE Other WITH Op <- F6\nINSTANCE Other WITH Op <- F7\nINSTANCE Other WITH Op <- F8\nINSTANCE Other WITH Op <- F9\nINSTANCE Other WITH Op <- P!D\n====\n",
     });
     expect(report.text).toBe(
       joinLines([
         "Semantic errors:",
         "",
-        "*** Errors: 7",
+        "*** Errors: 10",
         "",
         ...[
-          ["40", "28"],
-          ["41", "28"],
-          ["42", "28"],
-          ["43", "28"],
-          ["44", "28"],
-          ["45", "28"],
-          ["46", "29"],
+          ["56", "28"],
+          ["57", "28"],
+          ["58", "28"],
+          ["59", "28"],
+          ["60", "28"],
+          ["61", "28"],
+          ["62", "28"],
+          ["63", "28"],
+          ["64", "28"],
+          ["65", "29"],
         ].flatMap((entry) => [
           `line ${entry[0]}, col 1 to line ${entry[0]}, col ${entry[1]} of module M`,
           "",

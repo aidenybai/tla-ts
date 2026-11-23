@@ -40,7 +40,7 @@ export interface LevelData {
   argParams: Set<string>;
   allParams: ReadonlySet<string>;
   nonLeibnizParams: ReadonlySet<string>;
-  unappliedParams: ReadonlySet<string>;
+  appliedParams: ReadonlySet<string> | undefined;
 }
 
 export interface OperatorLevels extends LevelData {
@@ -94,7 +94,7 @@ interface SubstitutedBody extends SubstitutedSource {
   params: string[];
   allParams: ReadonlySet<string>;
   nonLeibnizParams: ReadonlySet<string>;
-  unappliedParams: ReadonlySet<string>;
+  appliedParams: ReadonlySet<string> | undefined;
 }
 
 interface Instanced {
@@ -253,33 +253,15 @@ const addParams = (target: Set<string> | undefined, params: ReadonlySet<string>)
 const getNonLeibnizParams = (operand: Operand, isUsed: boolean) =>
   operand.kind === "Operator" && !isUsed ? EMPTY_PARAMS : operand.data.nonLeibnizParams;
 
-const isAppliedIn = (data: LevelData, param: string) =>
-  data.params.has(param) && !data.unappliedParams.has(param);
+const hasAppliedParams = (data: LevelData) => data.appliedParams !== undefined;
 
-const hasUnappliedParams = (data: LevelData) => data.unappliedParams.size > 0;
+const addAppliedParams = (applied: Set<string>, data: LevelData, formals: OperatorParam[]) =>
+  (data.appliedParams ?? data.params).forEach((param) => {
+    if (!formals.some((formal) => formal.name === param)) applied.add(param);
+  });
 
-const getUnappliedParams = (
-  params: Iterable<string>,
-  isParamApplied: (param: string) => boolean,
-) => {
-  const unapplied = new Set<string>();
-  for (const param of params) {
-    if (!isParamApplied(param)) unapplied.add(param);
-  }
-  return unapplied.size === 0 ? EMPTY_PARAMS : unapplied;
-};
-
-const getApplicationUnappliedParams = (
-  params: ReadonlySet<string>,
-  operator: string,
-  parts: LevelData[],
-) =>
-  parts.some(hasUnappliedParams)
-    ? getUnappliedParams(
-        params,
-        (param) => param === operator || parts.some((part) => isAppliedIn(part, param)),
-      )
-    : EMPTY_PARAMS;
+const addOperandAppliedParams = (applied: Set<string>, operand: Operand) =>
+  addAppliedParams(applied, operand.data, operand.kind === "Operator" ? operand.data.formals : []);
 
 const createData = (level = 0): LevelData => ({
   level,
@@ -290,7 +272,7 @@ const createData = (level = 0): LevelData => ({
   argParams: new Set(),
   allParams: EMPTY_PARAMS,
   nonLeibnizParams: EMPTY_PARAMS,
-  unappliedParams: EMPTY_PARAMS,
+  appliedParams: undefined,
 });
 
 export const putConstraint = (constraints: Map<string, number>, name: string, level: number) =>
@@ -332,9 +314,10 @@ const getWeight = (operator: OperatorLevels, index: number) =>
     : (operator.weights[index] ?? 1);
 
 const isApplied = (operator: OperatorLevels, index: number) => {
-  if (getWeight(operator, index) !== 1) return false;
   const formal = operator.formals[index];
-  return formal === undefined || !operator.unappliedParams.has(formal.name);
+  return formal === undefined || operator.appliedParams === undefined
+    ? getWeight(operator, index) === 1
+    : operator.appliedParams.has(formal.name);
 };
 
 const CORE_SIGNATURES = new Map(
@@ -460,7 +443,7 @@ const toOperatorLevels = (name: string, formals: OperatorParam[], data: LevelDat
     ),
     allParams: removeFormals(data.allParams),
     nonLeibnizParams: removeFormals(data.nonLeibnizParams),
-    unappliedParams: data.unappliedParams,
+    appliedParams: data.appliedParams,
     maxLevels: formals.map((formal) =>
       Math.min(TEMPORAL_LEVEL, data.constraints.get(formal.name) ?? TEMPORAL_LEVEL),
     ),
@@ -744,11 +727,11 @@ export const createLevelAnalyzer = (context: LevelContext) => {
     });
     data.allParams = allParams;
     data.nonLeibnizParams = nonLeibnizParams ?? EMPTY_PARAMS;
-    data.unappliedParams = getApplicationUnappliedParams(
-      data.params,
-      name,
-      operands.map((operand) => operand.data),
-    );
+    if (operands.some((operand) => hasAppliedParams(operand.data))) {
+      const applied = new Set([name]);
+      operands.forEach((operand) => addOperandAppliedParams(applied, operand));
+      data.appliedParams = applied;
+    }
     return data;
   };
 
@@ -830,13 +813,19 @@ export const createLevelAnalyzer = (context: LevelContext) => {
     });
     ranges.forEach((range) => range.params.forEach((param) => data.params.add(param)));
     bound.forEach((name) => data.params.delete(name));
-    data.unappliedParams = getApplicationUnappliedParams(data.params, operator.name, [
-      operator,
-      ...ranges,
-      ...operands
-        .filter((_operand, index) => isApplied(operator, index))
-        .map((operand) => operand.data),
-    ]);
+    const appliedOperands = operands.filter((_operand, index) => isApplied(operator, index));
+    if (
+      hasAppliedParams(operator) ||
+      ranges.some(hasAppliedParams) ||
+      appliedOperands.some((operand) => hasAppliedParams(operand.data))
+    ) {
+      const applied = new Set<string>();
+      addAppliedParams(applied, operator, operator.formals);
+      ranges.forEach((range) => addAppliedParams(applied, range, []));
+      appliedOperands.forEach((operand) => addOperandAppliedParams(applied, operand));
+      bound.forEach((name) => applied.delete(name));
+      data.appliedParams = applied;
+    }
 
     let allParams = addParams(undefined, operator.allParams);
     let nonLeibnizParams = addParams(undefined, operator.nonLeibnizParams);
@@ -1243,7 +1232,7 @@ export const createLevelAnalyzer = (context: LevelContext) => {
       allParams: body.allParams,
       // Deviation from SANY: tla-ts keeps a LET body's nonLeibnizParams, which LetInNode#levelCheck drops, so SANY accepts F(a) == LET L == 1 IN ENABLED (x' = a) for an operator constant.
       nonLeibnizParams: body.nonLeibnizParams,
-      unappliedParams: body.unappliedParams,
+      appliedParams: body.appliedParams,
     };
     entered.instances?.forEach((instance) =>
       getInstanceArgParams(instance, entered.inner).forEach((key) => data.argParams.add(key)),
@@ -1648,19 +1637,21 @@ export const createLevelAnalyzer = (context: LevelContext) => {
       (operands.get(param)?.data.params ?? [param]).forEach((name) => data.params.add(name)),
     );
     const isBodyApplied = (param: string) =>
-      body.params.includes(param) && !body.unappliedParams.has(param);
+      body.appliedParams === undefined
+        ? body.params.includes(param)
+        : body.appliedParams.has(param);
     if (
-      body.unappliedParams.size > 0 ||
-      [...operands.values()].some((operand) => hasUnappliedParams(operand.data))
+      body.appliedParams !== undefined ||
+      [...operands.values()].some((operand) => hasAppliedParams(operand.data))
     ) {
-      data.unappliedParams = getUnappliedParams(
-        data.params,
-        (param) =>
-          (isBodyApplied(param) && !operands.has(param)) ||
-          [...operands].some(
-            (entry) => isBodyApplied(entry[0]) && isAppliedIn(entry[1].data, param),
-          ),
-      );
+      const applied = new Set<string>();
+      (body.appliedParams ?? body.params).forEach((param) => {
+        if (!operands.has(param)) applied.add(param);
+      });
+      operands.forEach((operand, param) => {
+        if (isBodyApplied(param)) addOperandAppliedParams(applied, operand);
+      });
+      data.appliedParams = applied;
     }
     let allParams: Set<string> | undefined;
     let nonLeibnizParams: Set<string> | undefined;
@@ -1733,7 +1724,7 @@ export const createLevelAnalyzer = (context: LevelContext) => {
         allParams: new Set([...source.allParams, ...nonLeibnizNames]),
         // Deviation from SANY: tla-ts substitutes an instanced theorem's nonLeibnizParams as SubstInNode does, which APSubstInNode omits, so SANY accepts F(a) == I(a)!T for THEOREM T == w' = 0 and w <- a.
         nonLeibnizParams: new Set([...source.nonLeibnizParams, ...nonLeibnizNames]),
-        unappliedParams: new Set([...source.unappliedParams].map(rename)),
+        appliedParams: source.appliedParams && new Set([...source.appliedParams].map(rename)),
         constraints: [
           ...source.constraints,
           ...names.map((name, index): [string, number] => [name, source.maxLevels[index]]),
@@ -1834,7 +1825,7 @@ export const createLevelAnalyzer = (context: LevelContext) => {
         params: [...original.params].map(rename),
         allParams: new Set([...original.allParams].map(rename)),
         nonLeibnizParams: new Set([...original.nonLeibnizParams].map(rename)),
-        unappliedParams: new Set([...original.unappliedParams].map(rename)),
+        appliedParams: original.appliedParams && new Set([...original.appliedParams].map(rename)),
         constraints: [...original.constraints].map((entry): [string, number] => [
           rename(entry[0]),
           entry[1],
@@ -1926,8 +1917,8 @@ export const createLevelAnalyzer = (context: LevelContext) => {
   };
 
   const analyzeDefinition = (definition: Definition, scope: Scope): OperatorLevels => {
-    const members = definition.isRecursive && context.recursiveSections.get(definition);
-    if (members && !definitionLevels.has(definition)) checkRecursiveSection(members);
+    const members = context.recursiveSections.get(definition);
+    if (members && !sectionBodies.has(definition)) checkRecursiveSection(members);
     const cached = definitionLevels.get(definition);
     if (cached && !staleDefinitions.delete(definition)) return cached;
     const prior = cached ?? createPlaceholder(definition, TEMPORAL_LEVEL, 0);
@@ -1956,7 +1947,7 @@ export const createLevelAnalyzer = (context: LevelContext) => {
       nonLeibniz: new Set([...prior.nonLeibniz, ...levels.nonLeibniz]),
       allParams: new Set([...prior.allParams, ...levels.allParams]),
       nonLeibnizParams: new Set([...prior.nonLeibnizParams, ...levels.nonLeibnizParams]),
-      unappliedParams: isInSection ? EMPTY_PARAMS : levels.unappliedParams,
+      appliedParams: isInSection ? undefined : levels.appliedParams,
     };
     definitionLevels.set(definition, merged);
     return merged;
@@ -2010,24 +2001,29 @@ export const createLevelAnalyzer = (context: LevelContext) => {
     );
   };
 
-  const setSectionUnappliedParams = (members: SectionMember[]) =>
+  const setSectionAppliedParams = (members: SectionMember[]) => {
+    const allParams = members.flatMap((member) => [
+      ...analyzeDefinition(member.definition, member.scope).allParams,
+    ]);
     members.forEach((member) => {
       const body = sectionBodies.get(member.definition);
-      if (body === undefined || !isClosedDefinition(member)) return;
+      if (body === undefined) return;
       const stored = analyzeDefinition(member.definition, member.scope);
       definitionLevels.set(member.definition, {
         ...stored,
-        unappliedParams: getUnappliedParams(
-          [...stored.params, ...stored.formals.map((formal) => formal.name)],
-          (param) =>
-            !body.unappliedParams.has(param) &&
-            (body.params.has(param) ||
-              body.formals.some(
-                (formal, index) => formal.name === param && body.weights[index] === 1,
-              )),
+        appliedParams: new Set(
+          isClosedDefinition(member)
+            ? (body.appliedParams ?? [
+                ...body.params,
+                ...body.formals
+                  .filter((_formal, index) => body.weights[index] === 1)
+                  .map((formal) => formal.name),
+              ])
+            : [...stored.formals.map((formal) => formal.name), ...allParams],
         ),
       });
     });
+  };
 
   const checkPrimedArguments = (members: SectionMember[]) =>
     members.forEach((member) => {
@@ -2043,7 +2039,6 @@ export const createLevelAnalyzer = (context: LevelContext) => {
     });
 
   const checkRecursiveSection = (members: SectionMember[]) => {
-    if (members.length === 0 || definitionLevels.has(members[0].definition)) return;
     members.forEach((member) => sectionBodies.set(member.definition, undefined));
     const recursive = members.filter((member) => member.definition.isRecursive);
     recursive.forEach((member) =>
@@ -2077,7 +2072,7 @@ export const createLevelAnalyzer = (context: LevelContext) => {
       }
     });
     members.forEach(recheck);
-    setSectionUnappliedParams(members);
+    setSectionAppliedParams(members);
   };
 
   const analyzer = {
