@@ -11129,6 +11129,23 @@ ASSUME TLCFP(a) = -887695703
         "|||line 5, col 111 to line 5, col 111 of module M: 1",
       ],
     ],
+    [
+      "a set literal's sort",
+      "LET F == {u \\in (0..1) \\X {1} : u[2] = 1} IN {{<<0, 1>>}, F} # {} /\\ \\A t \\in F \\ {<<9, 9>>} : t # <<7, 7>>",
+      [
+        "line 5, col 9 to line 5, col 14 of module M: 1",
+        "line 5, col 28 to line 5, col 59 of module M: 1:7",
+        "|line 5, col 51 to line 5, col 58 of module M: 2",
+        "|line 5, col 35 to line 5, col 47 of module M: 1:4",
+        "||line 5, col 36 to line 5, col 39 of module M: 1",
+        "||line 5, col 45 to line 5, col 47 of module M: 1:5",
+        "line 5, col 64 to line 5, col 125 of module M: 1",
+        "|line 5, col 64 to line 5, col 83 of module M: 1",
+        "|line 5, col 88 to line 5, col 125 of module M: 1",
+        "||line 5, col 114 to line 5, col 125 of module M: 2",
+        "||line 5, col 97 to line 5, col 110 of module M: 1",
+      ],
+    ],
   ])("charges a filter that %s converts as the set it keeps", async (_name, body, rows) => {
     expect(await getNextCoverageLines(`x' = 0 /\\ ${body}`)).toEqual(rows);
   });
@@ -11155,6 +11172,12 @@ ASSUME TLCFP(a) = -887695703
       "equality with another filter",
       'LET G == {u \\in (0..1) \\X {1} : PrintT(<<"g", u>>)} IN F = G /\\ <<0, 1>> \\in F /\\ <<0, 1>> \\in G',
       ["<<0, 1>>", "<<1, 1>>", '<<"g", <<0, 1>>>>', '<<"g", <<1, 1>>>>', '<<"g", <<0, 1>>>>'],
+    ],
+    ["a set literal's sort", "{{<<0, 1>>}, F} # {} /\\ <<0, 1>> \\in F", ["<<0, 1>>", "<<1, 1>>"]],
+    [
+      "membership in a set literal that holds it",
+      "{<<0, 1>>, <<1, 1>>} \\in {{}, F} /\\ <<0, 1>> \\in F",
+      ["<<0, 1>>", "<<1, 1>>"],
     ],
   ])(
     "runs a filter's predicate again after %s only where TLC does",

@@ -2149,6 +2149,12 @@ export const isCostedSet = (charges: ChargeTable, value: Value) => {
 };
 
 const toCachedSet = (value: Value) => {
+  if (typeof value === "object" && value.kind === "FilteredSet") {
+    const set = toFiniteSet(value);
+    // SetPredValue#size, equals and compareTo convert with convertAndCache, which keeps the set it converts.
+    value.isCached = true;
+    return set;
+  }
   cacheSet(value);
   return toFiniteSet(value);
 };
@@ -3525,15 +3531,8 @@ export const getCardinality = (value: Value, version?: TlcVersion): number => {
       sets?.pop();
       return size;
     }
-    case "FilteredSet": {
-      const size = toFiniteSet(value).elements.length;
-      // SetPredValue#size converts with convertAndCache, which keeps the set it converts.
-      value.isCached = true;
-      return size;
-    }
     default:
-      cacheSet(value);
-      return toFiniteSet(value).elements.length;
+      return toCachedSet(value).elements.length;
   }
 };
 
