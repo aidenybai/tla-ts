@@ -247,9 +247,9 @@ const addParams = (target: Set<string> | undefined, params: ReadonlySet<string>)
   return result;
 };
 
-// SANY's OpArgNode#levelCheck takes its operator's allParams but leaves its nonLeibnizParams empty.
-const getNonLeibnizParams = (operand: Operand) =>
-  operand.kind === "Operator" ? EMPTY_PARAMS : operand.data.nonLeibnizParams;
+// Deviation from SANY: OpArgNode#levelCheck leaves its nonLeibnizParams empty, so SANY accepts F(a) == H(LAMBDA b : a') for H(K(_)) == K(1).
+const getNonLeibnizParams = (operand: Operand, isUsed: boolean) =>
+  operand.kind === "Operator" && !isUsed ? EMPTY_PARAMS : operand.data.nonLeibnizParams;
 
 const createData = (level = 0): LevelData => ({
   level,
@@ -702,7 +702,7 @@ export const createLevelAnalyzer = (context: LevelContext) => {
       putArgConstraint(data.argConstraints, getArgumentKey(name, index), operand.data.level);
       mergeConstraints(data, operand.data);
       operand.data.allParams.forEach((param) => allParams.add(param));
-      nonLeibnizParams = addParams(nonLeibnizParams, getNonLeibnizParams(operand));
+      nonLeibnizParams = addParams(nonLeibnizParams, operand.data.nonLeibnizParams);
     });
     data.allParams = allParams;
     data.nonLeibnizParams = nonLeibnizParams ?? EMPTY_PARAMS;
@@ -792,7 +792,10 @@ export const createLevelAnalyzer = (context: LevelContext) => {
     let nonLeibnizParams = addParams(undefined, operator.nonLeibnizParams);
     operands.forEach((operand, index) => {
       allParams = addParams(allParams, operand.data.allParams);
-      nonLeibnizParams = addParams(nonLeibnizParams, getNonLeibnizParams(operand));
+      nonLeibnizParams = addParams(
+        nonLeibnizParams,
+        getNonLeibnizParams(operand, getWeight(operator, index) === 1),
+      );
       if (operator.nonLeibniz.has(index)) {
         nonLeibnizParams = addParams(nonLeibnizParams, operand.data.allParams);
       }
@@ -1604,7 +1607,10 @@ export const createLevelAnalyzer = (context: LevelContext) => {
         return;
       }
       allParams = addParams(allParams, operand.data.allParams);
-      nonLeibnizParams = addParams(nonLeibnizParams, getNonLeibnizParams(operand));
+      nonLeibnizParams = addParams(
+        nonLeibnizParams,
+        getNonLeibnizParams(operand, body.params.includes(param)),
+      );
       if (isNonLeibniz) nonLeibnizParams = addParams(nonLeibnizParams, operand.data.allParams);
     });
     data.allParams = allParams ?? EMPTY_PARAMS;

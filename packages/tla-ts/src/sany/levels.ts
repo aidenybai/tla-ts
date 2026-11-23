@@ -152,6 +152,12 @@ const isLeibnizArgument = (definition: AnyDefNode, index: number) =>
     ? (definition.isLeibnizArg?.[getIndex(definition, index)] ?? true)
     : (definition.isLeibnizArg[index] ?? true);
 
+// Deviation from SANY: OpArgNode#levelCheck leaves its nonLeibnizParams empty, so SANY accepts F(a) == H(LAMBDA b : a') for H(K(_)) == K(1).
+const getNonLeibnizParams = (operand: ExprOrOpArgNode, isUsed: boolean) =>
+  operand.kind === "OpArg" && isUsed && operand.op.kind !== "Module"
+    ? operand.op.nonLeibnizParams
+    : operand.nonLeibnizParams;
+
 const getOpLevelCond = (definition: AnyDefNode, operand: number, other: number, index: number) =>
   definition.opLevelCond?.[operand]?.[other]?.[index] ?? false;
 
@@ -611,7 +617,7 @@ const checkApplication = (node: OpApplNode, iteration: number, check: LevelCheck
       if (operand === undefined) return;
       if (getWeight(operator, index) === 1) addAll(node.levelParams, operand.levelParams);
       addAll(node.allParams, operand.allParams);
-      addAll(node.nonLeibnizParams, operand.nonLeibnizParams);
+      addAll(node.nonLeibnizParams, getNonLeibnizParams(operand, getWeight(operator, index) === 1));
       if (!isLeibnizArgument(operator, index)) addAll(node.nonLeibnizParams, operand.allParams);
     });
     node.ranges.forEach((range) => {
@@ -1071,7 +1077,10 @@ const checkLevel = (node: SemanticNode, iteration: number, check: LevelCheck): b
           if (!node.allParams.has(subst.op)) return;
           node.allParams.delete(subst.op);
           addAll(node.allParams, subst.expr.allParams);
-          addAll(node.nonLeibnizParams, subst.expr.nonLeibnizParams);
+          addAll(
+            node.nonLeibnizParams,
+            getNonLeibnizParams(subst.expr, body.levelParams.has(subst.op)),
+          );
           if (node.nonLeibnizParams.has(subst.op)) {
             node.nonLeibnizParams.delete(subst.op);
             addAll(node.nonLeibnizParams, subst.expr.allParams);

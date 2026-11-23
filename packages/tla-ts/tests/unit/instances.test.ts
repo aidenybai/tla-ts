@@ -1171,6 +1171,8 @@ const INNER_MODULES: Record<string, string> = {
   Handed: "CONSTANT Op(_)\nVARIABLE v\nH(F(_)) == F(v')\nUse == H(Op)",
   Primes: "F(a) == LET G == a' IN G",
   Labeled: "CONSTANT c\nVARIABLE w\nD == lab :: ENABLED (w' = c)",
+  Lifted: "CONSTANT Op(_)\nD == Op(1)",
+  LiftedUnused: "CONSTANT Op(_)\nU(K(_)) == 1\nD == U(Op)",
   Outer:
     "EXTENDS Naturals\nCONSTANT c\nN == INSTANCE Twice WITH c <- c, Op <- LAMBDA a, b : a + b\nUse == N!Use",
   Functions:
@@ -1332,7 +1334,10 @@ describe("substitution levels match SANY", () => {
     "Foo == LET k == 1\n           I == INSTANCE Stateful WITH c <- k, Op <- LAMBDA a : a, v <- x IN I!Use",
     "Foo == \\E k \\in {1} : LET I == INSTANCE Stateful WITH c <- k, Op <- LAMBDA a : a, v <- x IN I!Use",
     "F(a) == x' + a\nI == INSTANCE Pure WITH c <- 1, Op <- F",
-    "H(K(_)) == K(1)\nF(a) == H(LAMBDA b : a') + 1\nI == INSTANCE Pure WITH c <- 1, Op <- F",
+    "H(K(_)) == 1\nF(a) == H(LAMBDA b : a')\nI == INSTANCE Pure WITH c <- 1, Op <- F",
+    "H2(J(_)) == 1\nH(K(_)) == H2(K)\nF(a) == H(LAMBDA b : a')\nI == INSTANCE Pure WITH c <- 1, Op <- F",
+    "G(y) == 1\nH(K(_)) == G(K(1))\nF(a) == H(LAMBDA b : a')\nI == INSTANCE Pure WITH c <- 1, Op <- F",
+    "P(a) == INSTANCE LiftedUnused WITH Op <- LAMBDA b : a'\nI == INSTANCE Pure WITH c <- 1, Op <- P!D",
     "P(G(_)) == INSTANCE Pure WITH c <- 1, Op <- G\nF(a) == a'\nUse == P(F)!Use",
     "I == INSTANCE Passed WITH c <- x', Op <- LAMBDA a : a + 1",
     "I == INSTANCE Handed WITH Op <- LAMBDA a : a = 1, v <- x",
@@ -1401,6 +1406,17 @@ describe("Leibniz checks where tla-ts deviates from SANY", () => {
     "F(a) == \\A b \\in {1} : lab(b) :: ENABLED (x' = a + b)\nI == INSTANCE Pure WITH c <- 1, Op <- F",
     "J(q) == INSTANCE Labeled WITH c <- q, w <- x\nI == INSTANCE Pure WITH c <- 1, Op <- J!D",
   ])("reports %s as SANY reports it with the label removed", async (body) => {
+    await expect(checkSubstitution(body)).rejects.toThrow(
+      getMessagePattern([getLeibnizError("Pure")]),
+    );
+  });
+
+  it.each([
+    "H(K(_)) == K(1)\nF(a) == H(LAMBDA b : a') + 1\nI == INSTANCE Pure WITH c <- 1, Op <- F",
+    "H(K(_)) == K(1)\nF(a) == LET G(b) == a' IN H(G) + 1\nI == INSTANCE Pure WITH c <- 1, Op <- F",
+    "G(y) == y + 1\nH(K(_)) == G(K(1))\nF(a) == H(LAMBDA b : a')\nI == INSTANCE Pure WITH c <- 1, Op <- F",
+    "P(a) == INSTANCE Lifted WITH Op <- LAMBDA b : a'\nI == INSTANCE Pure WITH c <- 1, Op <- P!D",
+  ])("reports %s as SANY reports it with the operator argument inlined", async (body) => {
     await expect(checkSubstitution(body)).rejects.toThrow(
       getMessagePattern([getLeibnizError("Pure")]),
     );

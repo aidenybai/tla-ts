@@ -321,6 +321,31 @@ Spec == Init /\\ [][Next]_x
     );
   });
 
+  it("rejects a non-Leibniz operator substituted for an operator constant through an operator argument, which SANY accepts", () => {
+    const report = getReport({
+      M: "---- MODULE M ----\nVARIABLE x\nH(K(_)) == K(1)\nF(a) == H(LAMBDA b : a')\n---- MODULE Lifted ----\nCONSTANT Op(_)\nD == Op(1)\n====\n---- MODULE Other ----\nCONSTANT Op(_)\n====\nP(a) == INSTANCE Lifted WITH Op <- LAMBDA b : a'\nINSTANCE Other WITH Op <- F\nINSTANCE Other WITH Op <- P!D\n====\n",
+    });
+    expect(report.text).toBe(
+      joinLines([
+        "Semantic errors:",
+        "",
+        "*** Errors: 2",
+        "",
+        ...[
+          ["13", "27"],
+          ["14", "29"],
+        ].flatMap((entry) => [
+          `line ${entry[0]}, col 1 to line ${entry[0]}, col ${entry[1]} of module M`,
+          "",
+          "Error in instantiating module 'Other':",
+          " A non-Leibniz operator substituted for 'Op'.",
+          "",
+          "",
+        ]),
+      ]),
+    );
+  });
+
   it("locates the tuple of an EXCEPT path at the part of its update SANY picks", () => {
     const report = getReport({
       M: "---- MODULE M ----\nVARIABLE x\nf == [v \\in {1} |-> v]\nB == [f EXCEPT ![1][[]x, 2] = 1]\nC == [f EXCEPT ![1][2][[]x, 3] = ((1))]\n====\n",
