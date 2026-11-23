@@ -1,6 +1,6 @@
 import { type AstManager } from "./ast";
 import { getDoubleParameter } from "./gparams";
-import type { SmtSetup } from "./smt-setup";
+import { DEFAULT_CONFIG, getPhaseSelection, getRestartStrategy, type SmtSetup } from "./smt-setup";
 import { AssertedFormulas } from "./asserted-formulas";
 import { getCaseSplitStrategy } from "./case-split-queue";
 import { Context } from "./context";
@@ -42,6 +42,8 @@ export class SmtKernel {
   private scopeCount = 0;
 
   constructor(manager: AstManager, params: KernelParams) {
+    getPhaseSelection(params.phaseSelection ?? DEFAULT_CONFIG.phaseSelection);
+    getRestartStrategy(params.restartStrategy ?? DEFAULT_CONFIG.restartStrategy);
     this.asserted = new AssertedFormulas(
       manager,
       params.isFindingMacros,
@@ -51,6 +53,7 @@ export class SmtKernel {
     this.context = new Context(manager, {
       isMbqi: params.isMbqi,
       mbqiMaxIterations: params.mbqiMaxIterations,
+      isFindingMacros: params.isFindingMacros,
       isEmatching: params.isEmatching,
       relevancyLevel: params.relevancyLevel ?? 2,
       caseSplitStrategy: params.caseSplitStrategy,
@@ -82,7 +85,7 @@ export class SmtKernel {
     if (!this.isSetUp) this.setup = params.setup;
     this.isCoreMinimizing = params.isCoreMinimizing ?? false;
     this.context.updateParams(params);
-    this.asserted.updateParams(this.context.config, params.isEmatching);
+    this.asserted.updateParams(this.context.config);
   }
 
   private setupContext(isUsingStaticFeatures: boolean) {

@@ -78,6 +78,8 @@ import { TheoryLra } from "./theory-lra";
 import { shrink } from "./array";
 import {
   DEFAULT_CONFIG,
+  getPhaseSelection,
+  getRestartStrategy,
   getSmtConfig,
   PS_ALWAYS_FALSE,
   PS_ALWAYS_TRUE,
@@ -180,6 +182,7 @@ const isValidAssumption = (manager: AstManager, expr: number) => {
 export interface SmtParams {
   isMbqi: boolean;
   mbqiMaxIterations: number;
+  isFindingMacros?: boolean;
   isEmatching?: boolean;
   relevancyLevel: number;
   caseSplitStrategy?: number;
@@ -275,6 +278,8 @@ export class Context extends Internalizer {
       phaseSelection: params.phaseSelection ?? DEFAULT_CONFIG.phaseSelection,
       restartStrategy: params.restartStrategy ?? DEFAULT_CONFIG.restartStrategy,
       restartFactor: params.restartFactor ?? DEFAULT_CONFIG.restartFactor,
+      isFindingMacros: params.isFindingMacros ?? false,
+      isEmatching: params.isEmatching ?? true,
       isArithPropagatingEqs: params.isArithPropagatingEqs ?? true,
       qiLazyThreshold: params.qiLazyThreshold ?? DEFAULT_CONFIG.qiLazyThreshold,
       qiMaxInstances: params.qiMaxInstances ?? DEFAULT_CONFIG.qiMaxInstances,
@@ -310,57 +315,54 @@ export class Context extends Internalizer {
     asserted.release();
   }
 
-  // As in Z3, rereading the parameters drops the setup's tuning of what smt_params reads, but relevancy stays lower.
+  // As in Z3, rereading drops the setup's tuning but a lower relevancy, and stops after a rejected numeral.
   updateParams(params: KernelParams) {
+    const config = this.config;
+    this.params.isModelValidating = params.isModelValidating;
+    config.isUsingPatternDatabase = DEFAULT_CONFIG.isUsingPatternDatabase;
+    config.isFindingMacros = params.isFindingMacros;
+    config.isLiftingNonGroundIte = DEFAULT_CONFIG.isLiftingNonGroundIte;
     this.params.isMbqi = params.isMbqi;
+    this.params.mbqiMaxCexs = params.mbqiMaxCexs;
+    config.mbqiMaxCexs = params.mbqiMaxCexs ?? DEFAULT_CONFIG.mbqiMaxCexs;
     this.params.mbqiMaxIterations = params.mbqiMaxIterations;
-    this.params.isEmatching = params.isEmatching;
-    this.params.randomSeed = params.randomSeed;
-    this.params.intHammerPeriod = params.intHammerPeriod;
-    this.params.isArithPropagatingEqs = params.isArithPropagatingEqs;
-    this.params.qiCost = params.qiCost;
+    this.params.mbqiForceTemplate = params.mbqiForceTemplate;
+    config.mbqiForceTemplate = params.mbqiForceTemplate ?? DEFAULT_CONFIG.mbqiForceTemplate;
+    this.params.mbqiId = params.mbqiId;
+    config.mbqiId = params.mbqiId ?? DEFAULT_CONFIG.mbqiId;
+    this.params.qiMaxInstances = params.qiMaxInstances;
+    config.qiMaxInstances = params.qiMaxInstances ?? DEFAULT_CONFIG.qiMaxInstances;
     this.params.qiEagerThreshold = params.qiEagerThreshold;
     this.params.qiLazyThreshold = params.qiLazyThreshold;
-    this.params.qiMaxInstances = params.qiMaxInstances;
+    config.qiLazyThreshold = params.qiLazyThreshold ?? DEFAULT_CONFIG.qiLazyThreshold;
+    this.params.qiCost = params.qiCost;
     this.params.qiMaxEagerMultipatterns = params.qiMaxEagerMultipatterns;
+    config.qiMaxEagerMultipatterns =
+      params.qiMaxEagerMultipatterns ?? DEFAULT_CONFIG.qiMaxEagerMultipatterns;
     this.params.isQiUpdatingGeneration = params.isQiUpdatingGeneration;
-    this.params.mbqiMaxCexs = params.mbqiMaxCexs;
-    this.params.mbqiForceTemplate = params.mbqiForceTemplate;
-    this.params.mbqiId = params.mbqiId;
-    this.params.isModelValidating = params.isModelValidating;
-    this.params.isArrayExtensional = params.isArrayExtensional;
-    this.params.phaseSelection = params.phaseSelection;
-    this.params.restartStrategy = params.restartStrategy;
-    this.params.restartFactor = params.restartFactor;
+    config.isQiUpdatingGeneration =
+      params.isQiUpdatingGeneration ?? DEFAULT_CONFIG.isQiUpdatingGeneration;
+    this.params.isArithPropagatingEqs = params.isArithPropagatingEqs;
+    config.isArithPropagatingEqs = params.isArithPropagatingEqs ?? true;
+    config.isArithBoundPropagating = DEFAULT_CONFIG.isArithBoundPropagating;
+    config.isEq2Ineq = DEFAULT_CONFIG.isEq2Ineq;
+    this.params.randomSeed = params.randomSeed;
     this.params.relevancyLevel = params.relevancyLevel ?? 2;
-    this.arith?.updateParams();
-    this.config = {
-      ...DEFAULT_CONFIG,
-      phaseSelection: params.phaseSelection ?? DEFAULT_CONFIG.phaseSelection,
-      restartStrategy: params.restartStrategy ?? DEFAULT_CONFIG.restartStrategy,
-      restartFactor: params.restartFactor ?? DEFAULT_CONFIG.restartFactor,
-      isArithPropagatingEqs: params.isArithPropagatingEqs ?? true,
-      theories: this.config.theories,
-      isFindingMacros: params.isFindingMacros,
-      isNnfCnf: this.config.isNnfCnf,
-      isRestartAdaptive: this.config.isRestartAdaptive,
-      randomInitialActivity: this.config.randomInitialActivity,
-      isEliminatingTermIte: this.config.isEliminatingTermIte,
-      isEliminatingBounds: this.config.isEliminatingBounds,
-      arithPropagationThreshold: this.config.arithPropagationThreshold,
-      qiLazyThreshold: params.qiLazyThreshold ?? DEFAULT_CONFIG.qiLazyThreshold,
-      qiMaxInstances: params.qiMaxInstances ?? DEFAULT_CONFIG.qiMaxInstances,
-      qiMaxEagerMultipatterns:
-        params.qiMaxEagerMultipatterns ?? DEFAULT_CONFIG.qiMaxEagerMultipatterns,
-      isQiUpdatingGeneration:
-        params.isQiUpdatingGeneration ?? DEFAULT_CONFIG.isQiUpdatingGeneration,
-      mbqiMaxCexs: params.mbqiMaxCexs ?? DEFAULT_CONFIG.mbqiMaxCexs,
-      mbqiForceTemplate: params.mbqiForceTemplate ?? DEFAULT_CONFIG.mbqiForceTemplate,
-      mbqiId: params.mbqiId ?? DEFAULT_CONFIG.mbqiId,
-      arrayLazyIeqDelay: this.config.arrayLazyIeqDelay,
-      isArraySimple: this.config.isArraySimple,
-    };
+    config.relevancyLevel = DEFAULT_CONFIG.relevancyLevel;
     this.updateRelevancyLevel();
+    this.params.isEmatching = params.isEmatching;
+    config.isEmatching = params.isEmatching ?? true;
+    this.params.phaseSelection = params.phaseSelection;
+    config.phaseSelection = params.phaseSelection ?? DEFAULT_CONFIG.phaseSelection;
+    getPhaseSelection(config.phaseSelection);
+    this.params.restartStrategy = params.restartStrategy;
+    config.restartStrategy = params.restartStrategy ?? DEFAULT_CONFIG.restartStrategy;
+    getRestartStrategy(config.restartStrategy);
+    this.params.restartFactor = params.restartFactor;
+    config.restartFactor = params.restartFactor ?? DEFAULT_CONFIG.restartFactor;
+    this.params.isArrayExtensional = params.isArrayExtensional;
+    this.params.intHammerPeriod = params.intHammerPeriod;
+    this.arith?.updateParams();
   }
 
   private updateRelevancyLevel() {
@@ -1319,6 +1321,7 @@ export class Context extends Internalizer {
       if (phase !== L_UNDEF) return phase === L_TRUE;
       return isPhaseAvailable ? this.hasBoolVarFlag(boolVar, BV_PHASE) : this.phaseDefault;
     }
+    // Deviation from Z3: it exits at a phase selection it rejected; tla-ts reads the phase cache.
     return this.isPhaseCacheOn && isPhaseAvailable
       ? this.hasBoolVarFlag(boolVar, BV_PHASE)
       : this.phaseDefault;

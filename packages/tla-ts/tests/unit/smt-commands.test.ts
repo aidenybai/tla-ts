@@ -5972,10 +5972,218 @@ describe("smt.phase_selection, as Z3 5.3.2 picks the phase of a decision", () =>
     ).toEqual(["unsat", "(:rlimit 7545)", "unsat", "(:rlimit 7582)", "sat", "(:rlimit 7965)"]);
   });
 
-  it("throws at the set-option of a phase selection Z3 rejects", () => {
-    expect(() => run(["(set-option :smt.phase_selection 8)"])).toThrow(
-      new SmtUnsupportedError("an smt.phase_selection above 7"),
-    );
+  const ILLEGAL_PHASE = "illegal phase selection numeral";
+
+  it("rejects a phase selection at the command that makes the solver, which goes on without one", () => {
+    expect(
+      run([
+        "(set-option :smt.phase_selection 8)",
+        "(declare-const x Int)",
+        "(assert (> x 0))",
+        "(check-sat)",
+        "(get-info :rlimit)",
+        "(check-sat)",
+        '(echo "after")',
+      ]),
+    ).toEqual([
+      `(error "line 2 column 17: ${ILLEGAL_PHASE}")`,
+      '(error "line 3 column 11: unknown constant x")',
+      "unknown",
+      "(:rlimit 0)",
+      "unknown",
+      "after",
+    ]);
+  });
+
+  it("rejects the phase selection again when reset makes the solver again", () => {
+    expect(
+      run([
+        "(set-option :smt.phase_selection 8)",
+        "(check-sat)",
+        "(get-info :reason-unknown)",
+        "(declare-const x Int)",
+        "(check-sat)",
+        "(reset)",
+        "(declare-const y Int)",
+        "(check-sat)",
+      ]),
+    ).toEqual([
+      `(error "line 2 column 10: ${ILLEGAL_PHASE}")`,
+      '(:reason-unknown "state of the most recent check-sat command is not known")',
+      "unknown",
+      `(error "line 7 column 17: ${ILLEGAL_PHASE}")`,
+      "unknown",
+    ]);
+  });
+
+  it("leaves the solvers that keep no smt parameters alone", () => {
+    expect(
+      run([
+        "(set-option :smt.phase_selection 8)",
+        "(set-logic QF_FD)",
+        "(declare-const p Bool)",
+        "(assert p)",
+        "(check-sat)",
+      ]),
+    ).toEqual(["sat"]);
+  });
+
+  it("keeps the solver when set-option rejects a phase selection, and its tactic gives up", () => {
+    expect(
+      run([
+        "(declare-const x Int)",
+        "(assert (> x 0))",
+        "(check-sat)",
+        "(set-option :smt.phase_selection 9)",
+        "(get-info :reason-unknown)",
+        "(check-sat)",
+        "(get-info :reason-unknown)",
+        "(set-option :smt.phase_selection 3)",
+        "(check-sat)",
+      ]),
+    ).toEqual([
+      "sat",
+      `(error "line 4 column 33: ${ILLEGAL_PHASE}")`,
+      '(:reason-unknown "")',
+      "unknown",
+      `(:reason-unknown "${ILLEGAL_PHASE}")`,
+      "sat",
+    ]);
+  });
+
+  it("checks incrementally with a phase selection set-option rejected", () => {
+    expect(
+      run([
+        "(declare-const x Int)",
+        "(assert (> x 0))",
+        "(check-sat)",
+        "(set-option :smt.phase_selection 9)",
+        "(check-sat)",
+        "(push)",
+        "(assert (< x 0))",
+        "(check-sat)",
+        "(pop)",
+        "(check-sat)",
+      ]),
+    ).toEqual(["sat", `(error "line 4 column 33: ${ILLEGAL_PHASE}")`, "unknown", "unsat", "sat"]);
+  });
+
+  // Deviation from Z3: it exits with code 114 at smt_context.cpp:1981 when it decides a literal.
+  it("decides from the phase cache under a phase selection set-option rejected", () => {
+    expect(
+      run([
+        "(declare-const p Bool)",
+        "(declare-const q Bool)",
+        "(assert (or p q))",
+        "(check-sat)",
+        "(set-option :smt.phase_selection 9)",
+        "(push)",
+        "(check-sat)",
+        "(get-model)",
+      ]),
+    ).toEqual([
+      "sat",
+      `(error "line 5 column 33: ${ILLEGAL_PHASE}")`,
+      "sat",
+      "(",
+      "  (define-fun p () Bool",
+      "    true)",
+      "  (define-fun q () Bool",
+      "    false)",
+      ")",
+    ]);
+  });
+
+  it("keeps the parameters set-option reads before the numeral it rejects", () => {
+    expect(
+      run([
+        "(declare-const p Bool)",
+        "(declare-const q Bool)",
+        "(declare-const r Bool)",
+        "(assert (or p q))",
+        "(assert (or (not p) r))",
+        "(push)",
+        "(check-sat)",
+        "(set-option :smt.restart_strategy 7)",
+        "(set-option :smt.phase_selection 1)",
+        "(check-sat)",
+        "(get-model)",
+      ]),
+    ).toEqual([
+      "sat",
+      '(error "line 8 column 34: illegal restart strategy numeral")',
+      '(error "line 9 column 33: illegal restart strategy numeral")',
+      "sat",
+      "(",
+      "  (define-fun r () Bool",
+      "    true)",
+      "  (define-fun q () Bool",
+      "    true)",
+      "  (define-fun p () Bool",
+      "    false)",
+      ")",
+    ]);
+  });
+
+  it.each([
+    ["horn", 21],
+    ["qe", 19],
+    ["psmt", 21],
+  ])("rejects a phase selection when it builds %s", (tactic, column) => {
+    expect(
+      run([
+        "(set-option :smt.phase_selection 9)",
+        "(declare-const x Int)",
+        "(declare-const y Int)",
+        "(assert (> y 0))",
+        `(check-sat-using ${tactic})`,
+        "(get-info :reason-unknown)",
+      ]),
+    ).toEqual([
+      `(error "line 2 column 17: ${ILLEGAL_PHASE}")`,
+      `(error "line 5 column ${column}: ${ILLEGAL_PHASE}")`,
+      '(:reason-unknown "state of the most recent check-sat command is not known")',
+    ]);
+  });
+
+  it("rejects a phase selection when it builds qffd under a global sat.euf", () => {
+    expect(
+      run([
+        "(set-option :sat.euf true)",
+        "(set-option :smt.phase_selection 9)",
+        "(declare-const z Bool)",
+        "(declare-const p Bool)",
+        "(declare-const q Bool)",
+        "(assert (or p q))",
+        "(check-sat-using qffd)",
+        "(check-sat-using (using-params qffd :euf false))",
+      ]),
+    ).toEqual([
+      `(error "line 3 column 17: ${ILLEGAL_PHASE}")`,
+      `(error "line 7 column 21: ${ILLEGAL_PHASE}")`,
+      `(error "line 8 column 47: ${ILLEGAL_PHASE}")`,
+    ]);
+  });
+
+  it("rejects a phase selection in check-sat-using at the end of the command", () => {
+    expect(
+      run([
+        "(declare-const p Bool)",
+        "(declare-const q Bool)",
+        "(assert (or p q))",
+        "(check-sat-using (using-params smt :phase_selection 8))",
+        "(check-sat)",
+        "(set-option :smt.phase_selection 9)",
+        "(check-sat-using sat)",
+        "(check-sat-using smt)",
+      ]),
+    ).toEqual([
+      `(error "line 4 column 54: ${ILLEGAL_PHASE}")`,
+      "sat",
+      `(error "line 6 column 33: ${ILLEGAL_PHASE}")`,
+      "sat",
+      `(error "line 8 column 20: ${ILLEGAL_PHASE}")`,
+    ]);
   });
 });
 
@@ -6043,10 +6251,68 @@ describe("smt.restart_strategy and smt.restart_factor, as Z3 5.3.2's inc_limits 
     ).toEqual(["unsat", "(:rlimit 24974)"]);
   });
 
-  it("throws at the set-option of a restart strategy Z3 rejects", () => {
-    expect(() => run(["(set-option :smt.restart_strategy 5)"])).toThrow(
-      new SmtUnsupportedError("an smt.restart_strategy above 4"),
-    );
+  it.each([
+    [
+      "eq2ineq of QF_LIA",
+      [
+        "(set-logic QF_LIA)",
+        "(declare-const x Int)",
+        "(declare-const y Int)",
+        "(declare-const z Int)",
+        "(assert (or (= x (+ y 1)) (= y (+ z 2))))",
+        "(push)",
+        "(check-sat)",
+        "(set-option :smt.restart_strategy 7)",
+        "(assert (or (= z (+ x 3)) (= (+ x y) 4)))",
+        "(assert (not (= x z)))",
+      ],
+      8,
+      508,
+    ],
+    [
+      "macro_finder of AUFLIRA",
+      [
+        "(set-logic AUFLIRA)",
+        "(declare-fun f (Int) Int)",
+        "(declare-const a Int)",
+        "(push)",
+        "(check-sat)",
+        "(set-option :smt.restart_strategy 7)",
+        "(assert (forall ((x Int)) (= (f x) (+ x 1))))",
+        "(assert (> (f a) 3))",
+      ],
+      6,
+      699,
+    ],
+  ])(
+    "preprocesses without the %s that a rejected set-option reset",
+    (_title, lines, line, rlimit) => {
+      expect(run([...lines, "(check-sat)", "(get-info :rlimit)"])).toEqual([
+        "sat",
+        `(error "line ${line} column 34: illegal restart strategy numeral")`,
+        "sat",
+        `(:rlimit ${rlimit})`,
+      ]);
+    },
+  );
+
+  it("restarts incrementally at a fixed threshold with a restart strategy set-option rejected", () => {
+    expect(
+      run([
+        "(set-option :smt.auto_config false)",
+        "(push)",
+        "(check-sat)",
+        "(set-option :smt.restart_strategy 7)",
+        ...getPigeonholeLines(6),
+        "(check-sat)",
+        "(get-info :rlimit)",
+      ]),
+    ).toEqual([
+      "sat",
+      '(error "line 4 column 34: illegal restart strategy numeral")',
+      "unsat",
+      "(:rlimit 26028)",
+    ]);
   });
 });
 

@@ -83,6 +83,7 @@ import { ModelEvaluator } from "./model-evaluator";
 import { FuncInterp, ProtoModel } from "./proto-model";
 import { getGlobalSmtParams, SmtKernel } from "./smt-kernel";
 import {
+  checkSmtNumerals,
   getPhaseSelection,
   getRestartStrategy,
   isMbqiByFeatures,
@@ -535,47 +536,57 @@ const runSat = (environment: TacticEnvironment, params: TacticParams) => (goal: 
   )(goal);
 };
 
-const runSmt = (environment: TacticEnvironment, params: TacticParams) => (goal: Goal) => {
-  const manager = environment.manager;
-  // mk_smt_tactic: with sat.euf, the smt tactic is the sat tactic.
-  if (environment.parameters.get("sat.euf") === "true") return runSat(environment, params)(goal);
-  const kernelParams = getKernelParams(environment, params, goal);
-  // Without unsat cores, smt_tactic asserts the goal's formulas, which only the goal holds.
-  const extracted = goal.isCoresEnabled
-    ? extractClauses(manager, goal)
-    : { clauses: new RefVector(manager), assumptions: [] };
-  const solved =
-    extracted.assumptions.length === 0
-      ? solveGoal(manager, goal.forms.items, kernelParams)
-      : solveAssuming(manager, extracted.clauses.items, extracted.assumptions, kernelParams);
-  const context = solved.context;
-  const release = () => {
-    extracted.clauses.reset();
-    context.release(solved.asserted);
-  };
-  if (solved.result === L_UNDEF) {
-    const reasonUnknown = solved.reasonUnknown ?? getSmtTacticFailure(context);
-    release();
-    throw new SmtTacticError(reasonUnknown);
+const runSmt = (environment: TacticEnvironment, params: TacticParams) => {
+  // Z3 checks the global numerals when it makes the smt tactic, and the tactic's own at each update.
+  if (environment.parameters.get("sat.euf") !== "true") {
+    checkSmtNumerals(environment.parameters);
+    environment.inits.push(() => {
+      getSmtPhaseSelection(environment, params);
+      getSmtRestartStrategy(environment, params);
+    });
   }
-  goal.reset();
-  if (solved.result === L_FALSE) {
-    goal.assert(environment.manager.falseExpr, mkCoreDependency(context.unsatCore));
+  return (goal: Goal) => {
+    const manager = environment.manager;
+    // mk_smt_tactic: with sat.euf, the smt tactic is the sat tactic.
+    if (environment.parameters.get("sat.euf") === "true") return runSat(environment, params)(goal);
+    const kernelParams = getKernelParams(environment, params, goal);
+    // Without unsat cores, smt_tactic asserts the goal's formulas, which only the goal holds.
+    const extracted = goal.isCoresEnabled
+      ? extractClauses(manager, goal)
+      : { clauses: new RefVector(manager), assumptions: [] };
+    const solved =
+      extracted.assumptions.length === 0
+        ? solveGoal(manager, goal.forms.items, kernelParams)
+        : solveAssuming(manager, extracted.clauses.items, extracted.assumptions, kernelParams);
+    const context = solved.context;
+    const release = () => {
+      extracted.clauses.reset();
+      context.release(solved.asserted);
+    };
+    if (solved.result === L_UNDEF) {
+      const reasonUnknown = solved.reasonUnknown ?? getSmtTacticFailure(context);
+      release();
+      throw new SmtTacticError(reasonUnknown);
+    }
+    goal.reset();
+    if (solved.result === L_FALSE) {
+      goal.assert(environment.manager.falseExpr, mkCoreDependency(context.unsatCore));
+      release();
+      return [goal];
+    }
+    const model = goal.isModelsEnabled ? context.getModel() : undefined;
+    if (model !== undefined) {
+      model.incRef();
+      goal.addModelConversion(
+        () => model.copy(),
+        () => model.decRef(),
+      );
+    }
+    const isCanceled = context.checkCanceled();
     release();
+    if (isCanceled) throw new SmtTacticError("canceled");
     return [goal];
-  }
-  const model = goal.isModelsEnabled ? context.getModel() : undefined;
-  if (model !== undefined) {
-    model.incRef();
-    goal.addModelConversion(
-      () => model.copy(),
-      () => model.decRef(),
-    );
-  }
-  const isCanceled = context.checkCanceled();
-  release();
-  if (isCanceled) throw new SmtTacticError("canceled");
-  return [goal];
+  };
 };
 
 const getParameter = (environment: TacticEnvironment, name: string, defaultValue: string) =>
@@ -1751,7 +1762,10 @@ const NAMED_TACTICS = new Map<string, NamedTactic>([
     {
       descrs: new Map(),
       isTrackingDependencies: true,
-      build: runParallelSmt,
+      build: (environment) => {
+        checkSmtNumerals(environment.parameters);
+        return runParallelSmt(environment);
+      },
     },
   ],
   [
@@ -1785,13 +1799,15 @@ const NAMED_TACTICS = new Map<string, NamedTactic>([
     {
       descrs: new Map(),
       isRejectingUnknown: false,
-      build: (environment) =>
-        runHorn(
+      build: (environment) => {
+        checkSmtNumerals(environment.parameters);
+        return runHorn(
           environment.manager,
           environment.parameters,
           getRewriterOptions(environment.manager, new Map()),
           environment.destructors,
-        ),
+        );
+      },
     },
   ],
   [
@@ -1799,7 +1815,10 @@ const NAMED_TACTICS = new Map<string, NamedTactic>([
     {
       descrs: new Map(),
       isRejectingUnknown: false,
-      build: (environment) => runQe(environment),
+      build: (environment) => {
+        checkSmtNumerals(environment.parameters);
+        return runQe(environment);
+      },
     },
   ],
   [
@@ -1839,12 +1858,17 @@ const NAMED_TACTICS = new Map<string, NamedTactic>([
     {
       descrs: SAT_DESCRS,
       isRejectingUnknown: false,
-      build: (environment, params) => (goal) =>
-        createFdTactic(
-          environment.manager,
-          getSatTacticParams(environment, params),
-          environment.parameters,
-        )(goal),
+      // Under a global sat.euf, the constructor of qffd's inc_sat_solver makes the euf solver.
+      build: (environment, params) => {
+        if (getSatParams(environment.parameters).get("euf") === true)
+          checkSmtNumerals(environment.parameters);
+        return (goal) =>
+          createFdTactic(
+            environment.manager,
+            getSatTacticParams(environment, params),
+            environment.parameters,
+          )(goal);
+      },
     },
   ],
   [
