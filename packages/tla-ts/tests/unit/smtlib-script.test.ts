@@ -1101,6 +1101,55 @@ describe("runSmtlibScript prints what Z3 prints", () => {
     ]);
   });
 
+  it("gives up on the string terms sat.euf has no solver for", () => {
+    expect(
+      run([
+        "(set-option :auto_config false)",
+        "(set-option :smt.mbqi true)",
+        "(set-option :produce-unsat-cores true)",
+        "(set-option :sat.random_seed 5)",
+        "(set-option :sat.euf true)",
+        "(declare-const s0 String)",
+        "(declare-const s1 String)",
+        "(declare-const s2 String)",
+        "(assert (! (not (not (str.is_digit (str.at s2 (- 1))))) :named a0))",
+        '(assert (! (str.<= (str.from_int (str.indexof s0 s1 2)) (ite (str.is_digit (str.replace_all s0 s1 "")) (str.substr s0 (- 3) (- 3)) (str.from_code 0))) :named a1))',
+        '(assert (! (and (str.in_re (str.replace s0 "00" s1) (re.union (re.range "b" "b") (re.range "b" "c"))) (xor (str.suffixof s1 s0) (str.suffixof (str.at s1 (- 3)) (str.replace s2 s0 "")))) :named a2))',
+        '(assert (not (=> (str.suffixof (str.from_int (- 1)) (str.replace s2 s2 s2)) (distinct (str.replace_all s0 s0 "c") s1))))',
+        "(check-sat)",
+        "(get-model)",
+        "(get-info :reason-unknown)",
+        "(get-model)",
+        "(get-unsat-core)",
+      ]),
+    ).toEqual([
+      "unknown",
+      '(error "line 14 column 10: model is not available")',
+      [
+        '(:reason-unknown "(sat.giveup interpreted functions sent to SAT solver (declare-fun str.is_digit (String) Bool)',
+        "(declare-fun s0 () String)",
+        "(declare-fun s1 () String)",
+        "(declare-fun String () String)",
+        "(declare-fun str.replace_all (String String String) String)",
+        "(declare-fun str.indexof (String String Int) Int)",
+        "(declare-fun str.from_int (Int) String)",
+        "(declare-fun str.< (String String) Bool)",
+        "(declare-fun String () String)",
+        "(declare-fun str.in_re (String (RegEx String)) Bool)",
+        "(declare-fun String () String)",
+        "(declare-fun str.replace (String String String) String)",
+        "(declare-fun String () String)",
+        "(declare-fun String () String)",
+        "(declare-fun re.range (String String) (RegEx String))",
+        "(declare-fun str.suffixof (String String) Bool)",
+        "(declare-fun ite (Bool String String) String)",
+        ')")',
+      ].join("\n"),
+      '(error "line 16 column 10: model is not available")',
+      '(error "line 17 column 15: unsat core is not available")',
+    ]);
+  });
+
   it("answers datatypes with sat.euf's datatype solver", () => {
     const header = ["(set-option :sat.euf true)", "(set-option :tactic.default_tactic smt)"];
     expect(
