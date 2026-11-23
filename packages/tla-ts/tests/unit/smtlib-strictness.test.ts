@@ -1820,4 +1820,19 @@ describe("the builtin sorts, as Z3 5.3.2's plugins make them", () => {
       "sat",
     ]);
   });
+
+  it("gives a datatype without par no sort parameters, unlike Z3", () => {
+    expect(
+      run([
+        "(declare-datatypes ((A 1) (B 0)) ((par (X) ((a (f X)))) ((b (g (Array Int Int))))))",
+        "(declare-datatypes ((C 1) (D 0)) ((par (X) ((c (h X)))) ((d (k X)))))",
+        "(declare-const x B)",
+        "(assert (= (select (g x) 0) 1))",
+        "(check-sat)",
+      ]),
+    ).toEqual([
+      `(error "line 2 column 19: invalid datatype declaration, unknown sort 'X'")`,
+      "sat",
+    ]);
+  });
 });

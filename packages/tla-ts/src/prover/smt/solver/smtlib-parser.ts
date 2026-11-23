@@ -3108,6 +3108,7 @@ export const createSmtlibReader = (
     const body = expectListNext(sexpr, "invalid datatype declaration, '(' expected");
     if (!isSymbol(body.items[0], "par")) {
       if (name !== undefined) declareDatatypeSort(name, 0, body.items[0] ?? body.end);
+      // Deviation from Z3: in declare-datatypes it keeps the parameters of an earlier par here, and fails to commit a sort application.
       return {
         parameters: [],
         constructors: parseConstructors(body.items, NO_BINDINGS, datatypeIndexes, refs, body),
