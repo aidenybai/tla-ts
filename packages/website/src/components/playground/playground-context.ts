@@ -11,6 +11,8 @@ import { useMediaQuery } from "@/hooks/use-media-query";
 import { usePlaygroundFile } from "@/hooks/use-playground-file";
 import { usePlaygroundView } from "@/lib/playground-view";
 import { useRun } from "@/hooks/use-run";
+import { clearCrashNotes, takeCrashNote } from "@/lib/escore-worker";
+import { getErrorResult } from "@/lib/run-error";
 
 const NO_MARKS: Mark[] = [];
 
@@ -18,6 +20,18 @@ export const usePlaygroundState = () => {
   const file = usePlaygroundFile();
   const compiler = useCompile(file.source, file.fileName);
   const runner = useRun(true);
+
+  // A tab that crashed as the worker compiled or checked loads again with the note that the page
+  // left, which it shows as the result. A crash fires no pagehide, which leaving the page does.
+  useEffect(() => {
+    addEventListener("pagehide", clearCrashNotes);
+    const crash = takeCrashNote();
+    if (crash !== undefined) {
+      usePlaygroundView.getState().setIsResultShown(true);
+      runner.show(getErrorResult(crash));
+    }
+    return () => removeEventListener("pagehide", clearCrashNotes);
+  }, []);
   const isWide = useMediaQuery("(min-width: 48rem)");
   const workspaceRef = useRef<HTMLElement>(null);
   const runButtonRef = useRef<HTMLButtonElement>(null);

@@ -21,6 +21,41 @@ export type EscoreRequest = RunRequest | { compile: CompileRequest };
 // it was doing.
 export type EscoreResponse = RunResult | { compiled: CompileResponse } | { failed: string };
 
+// The note that the page leaves in the tab's session while the worker compiles or checks a file,
+// until the page shows the answer. Chromium runs a worker in its page's renderer, so running out of
+// memory, in the page or in the worker, crashes the tab, which keeps the note for the page that
+// loads again to show.
+type CrashPhase = "compile" | "run";
+
+interface CrashNote {
+  fileName: string;
+  characters: number;
+}
+
+const getCrashKey = (phase: CrashPhase) => `tla-ts:${phase}`;
+
+const leaveCrashNote = (phase: CrashPhase, note: CrashNote) =>
+  sessionStorage.setItem(getCrashKey(phase), JSON.stringify(note));
+
+const CRASH_PHASES: CrashPhase[] = ["run", "compile"];
+
+export const clearCrashNote = (phase: CrashPhase) => sessionStorage.removeItem(getCrashKey(phase));
+
+// A page that the visitor leaves, rather than one that crashes, ends what it was doing.
+export const clearCrashNotes = () => CRASH_PHASES.forEach(clearCrashNote);
+
+// The message of a crash that a note tells of, the run's before the compile's, which clears both.
+export const takeCrashNote = () => {
+  const found = CRASH_PHASES.map((phase) => ({
+    phase,
+    text: sessionStorage.getItem(getCrashKey(phase)),
+  })).find((entry) => entry.text !== null);
+  clearCrashNotes();
+  if (found === undefined || found.text === null) return undefined;
+  const note: CrashNote = JSON.parse(found.text);
+  return `The tab crashed as tla-ts ${found.phase === "run" ? "checked" : "compiled"} ${note.fileName}, of ${note.characters.toLocaleString()} characters, most likely out of memory`;
+};
+
 // One worker compiles and checks, so the page loads TypeScript's compiler, fetches the
 // host, and prepares ESCore's runtime once, and keeps the runtime between runs. A run that the page
 // stops ends the worker, and the next request starts another.
@@ -79,11 +114,16 @@ export const listenToCompiles = (listener: (response: CompileResponse) => void) 
 
 export const compileOnEscore = (request: CompileRequest) => {
   lastCompile = request;
+  leaveCrashNote("compile", { fileName: request.fileName, characters: request.source.length });
   getWorker().postMessage({ compile: request } satisfies EscoreRequest);
 };
 
 export const runOnEscore = (request: RunRequest, onResult: (result: RunResult) => void) => {
   runListener = onResult;
+  leaveCrashNote("run", {
+    fileName: request.typescript?.fileName ?? "the spec",
+    characters: (request.typescript?.source ?? request.source).length,
+  });
   getWorker().postMessage(request satisfies EscoreRequest);
 };
 
@@ -91,6 +131,7 @@ export const runOnEscore = (request: RunRequest, onResult: (result: RunResult) =
 export const stopEscoreRun = () => {
   if (runListener === undefined) return;
   runListener = undefined;
+  clearCrashNote("run");
   worker?.terminate();
   worker = undefined;
 };

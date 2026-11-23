@@ -3,6 +3,7 @@ import { compilations, initial } from "virtual:compilations";
 import {
   type CompileRequest,
   type CompileResponse,
+  clearCrashNote,
   compileOnEscore,
   listenToCompiles,
 } from "@/lib/escore-worker";
@@ -41,6 +42,11 @@ export const useCompile = (source: string, fileName: string) => {
       .then((nextHighlight) => setHighlight(() => nextHighlight));
     return listenToCompiles(receive);
   }, [isStarted]);
+
+  // The page showed the compile's answer, so the tab outlived the compile.
+  useEffect(() => {
+    if (state.response !== undefined) clearCrashNote("compile");
+  }, [state.response]);
 
   const isBuilt = built?.source === source;
   // A file that the site built needs no compile.

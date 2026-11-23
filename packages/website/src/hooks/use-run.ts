@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { runOnEscore, startEscoreWorker, stopEscoreRun } from "@/lib/escore-worker";
+import { clearCrashNote, runOnEscore, startEscoreWorker, stopEscoreRun } from "@/lib/escore-worker";
 import type { RunRequest, RunResult } from "@/lib/run-worker";
 
 export const useRun = (isWarm = false) => {
@@ -10,6 +10,11 @@ export const useRun = (isWarm = false) => {
     stopEscoreRun();
     setIsRunning(false);
   };
+
+  // The page showed the run's result, so the tab outlived the run.
+  useEffect(() => {
+    if (result !== undefined) clearCrashNote("run");
+  }, [result]);
 
   // A warm runner loads the checker ahead of the first run, which then starts at once.
   useEffect(() => {
@@ -25,5 +30,5 @@ export const useRun = (isWarm = false) => {
     });
   };
 
-  return { result, isRunning, run, stop, reset: () => setResult(undefined) };
+  return { result, isRunning, run, stop, show: setResult, reset: () => setResult(undefined) };
 };
