@@ -466,6 +466,23 @@ describe("horn tactic", () => {
     ).toEqual(["unknown"]);
   });
 
+  it.each([
+    ["elim_term_ite", "(:rlimit 201)"],
+    ["bit_blast", "(:rlimit 286)"],
+  ])("counts the cancel checks of the %s transformation", (name, rlimit) => {
+    expect(
+      run([
+        "(set-logic HORN)",
+        "(set-option :fp.engine bmc)",
+        `(set-option :fp.xform.${name} true)`,
+        "(set-option :fp.bmc.linear_unrolling_depth 0)",
+        ...counterSystem,
+        "(check-sat)",
+        "(get-info :rlimit)",
+      ]),
+    ).toEqual(["unknown", rlimit]);
+  });
+
   it("answers a Horn query run again after a canceled one, where Z3 segfaults", () => {
     expect(
       run([
