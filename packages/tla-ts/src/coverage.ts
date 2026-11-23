@@ -85,6 +85,7 @@ export interface Coverage {
   chargeSubsetConversion: (set: SubsetValue) => void;
   chargeSubsetElements: (set: SubsetValue) => void;
   chargePrintedSize: (set: Value) => void;
+  chargeIsEmpty: (set: Value) => void;
 }
 
 export interface CoverageFrame {
@@ -193,6 +194,7 @@ export const createCoverage = (variableCount: number): Coverage => {
     chargeSubsetConversion: () => {},
     chargeSubsetElements: () => {},
     chargePrintedSize: () => {},
+    chargeIsEmpty: () => {},
   };
   coverage.isMember = createChargedMembership(coverage);
   coverage.chargeSetEnumeration = (set) => chargeSetEnumeration(coverage, set);
@@ -203,6 +205,7 @@ export const createCoverage = (variableCount: number): Coverage => {
   };
   coverage.chargeSubsetElements = (set) => chargeSubsetElements(coverage, set);
   coverage.chargePrintedSize = (set) => chargePrintedSize(coverage, set);
+  coverage.chargeIsEmpty = (set) => chargeIsEmpty(coverage, set);
   return coverage;
 };
 

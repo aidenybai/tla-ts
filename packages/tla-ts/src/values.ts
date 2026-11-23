@@ -606,16 +606,24 @@ const compareWithItself = (value: Value, isEquality: boolean): boolean => {
     }
     case "Subset":
       return compareWithItself(value.base, isEquality);
-    case "FunctionSet":
+    case "FunctionSet": {
       if (!isEquality) break;
-      if (isEmptySet(value.domain) || isEmptySet(value.range)) return false;
+      const charges = value.cost?.charges;
+      // SetOfFcnsValue#equals, SetOfRcdsValue#equals and SetOfTuplesValue#equals ask both sides, here one set, about emptiness.
+      charges?.chargeIsEmpty(value.domain);
+      if (isEmptyLikeTlc(charges, value.domain)) return false;
+      charges?.chargeIsEmpty(value.range);
+      if (isEmptyLikeTlc(charges, value.range)) return false;
       compareWithItself(value.domain, isEquality);
       compareWithItself(value.range, isEquality);
       return false;
+    }
     case "RecordSet":
     case "ProductSet": {
       if (!isEquality) break;
-      if (isEmptySet(value)) return false;
+      const charges = value.cost?.charges;
+      charges?.chargeIsEmpty(value);
+      if (isEmptyLikeTlc(charges, value)) return false;
       const parts = value.kind === "RecordSet" ? value.sets : value.factors;
       for (let index = 0; index < parts.length; index++) {
         compareWithItself(parts[index], isEquality);
@@ -623,7 +631,11 @@ const compareWithItself = (value: Value, isEquality: boolean): boolean => {
       return false;
     }
   }
-  compareWithItself(toFiniteSet(value), isEquality);
+  const charged = getChargedSet(value);
+  compareWithItself(
+    charged ? toChargedSet(charged, true, toFiniteSet) : toFiniteSet(value),
+    isEquality,
+  );
   return false;
 };
 
@@ -861,17 +873,19 @@ export const valuesEqual = (left: Value, right: Value): boolean => {
   if (left.kind === "Subset" && right.kind === "Subset")
     return isReceiverEqual(left.base, right.base);
   if (left.kind === "FunctionSet" && right.kind === "FunctionSet") {
-    const isUnit = isEmptySet(left.domain);
-    const isOtherUnit = isEmptySet(right.domain);
+    const charges = left.cost?.charges ?? right.cost?.charges;
+    const isUnit = isEmptyLikeTlc(charges, left.domain);
+    const isOtherUnit = isEmptyLikeTlc(charges, right.domain);
     if (isUnit || isOtherUnit) return isUnit === isOtherUnit;
-    const isEmpty = isEmptySet(left.range);
-    const isOtherEmpty = isEmptySet(right.range);
+    const isEmpty = isEmptyLikeTlc(charges, left.range);
+    const isOtherEmpty = isEmptyLikeTlc(charges, right.range);
     if (isEmpty || isOtherEmpty) return isEmpty === isOtherEmpty;
     return isReceiverEqual(left.domain, right.domain) && isReceiverEqual(left.range, right.range);
   }
   if (left.kind === "RecordSet" && right.kind === "RecordSet") {
-    if (isEmptySet(left)) return isEmptySet(right);
-    if (isEmptySet(right)) return false;
+    const charges = left.cost?.charges ?? right.cost?.charges;
+    if (isEmptyLikeTlc(charges, left)) return isEmptyLikeTlc(charges, right);
+    if (isEmptyLikeTlc(charges, right)) return false;
     const getFields = (set: RecordSetValue) =>
       set.names
         .map((name, index): [string, Value] => [name, set.sets[index]])
@@ -886,8 +900,9 @@ export const valuesEqual = (left: Value, right: Value): boolean => {
     );
   }
   if (left.kind === "ProductSet" && right.kind === "ProductSet") {
-    if (isEmptySet(left)) return isEmptySet(right);
-    if (isEmptySet(right)) return false;
+    const charges = left.cost?.charges ?? right.cost?.charges;
+    if (isEmptyLikeTlc(charges, left)) return isEmptyLikeTlc(charges, right);
+    if (isEmptyLikeTlc(charges, right)) return false;
     return (
       left.factors.length === right.factors.length &&
       left.factors.every((factor, index) => isReceiverEqual(factor, right.factors[index]))
@@ -2548,6 +2563,7 @@ export interface ChargeTable {
   chargeSubsetConversion: (set: SubsetValue) => void;
   chargeSubsetElements: (set: SubsetValue) => void;
   chargePrintedSize: (set: Value) => void;
+  chargeIsEmpty: (set: Value) => void;
 }
 
 interface PlainStream {
@@ -2769,6 +2785,11 @@ const isChargedEmpty = (charges: ChargeTable, value: Value): boolean => {
         : hasChargedEmptySet(charges, value.kind === "RecordSet" ? value.sets : value.factors);
   sets?.pop();
   return isEmpty;
+};
+
+const isEmptyLikeTlc = (charges: ChargeTable | undefined, value: Value) => {
+  charges?.chargeIsEmpty(value);
+  return isEmptySet(value);
 };
 
 const hasChargedEmptySet = (charges: ChargeTable, sets: Value[]) => {
