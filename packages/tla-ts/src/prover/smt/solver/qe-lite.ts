@@ -44,13 +44,16 @@ class ElimStar extends RewriterTpl {
   }
 }
 
-class QeLite {
+export class QeLite {
   private der: EqDer;
   private fm: Fm;
   private elimStar: ElimStar;
   private rewriter: Rewriter;
 
-  constructor(private manager: AstManager) {
+  constructor(
+    private manager: AstManager,
+    private isUsingArrayDer: boolean,
+  ) {
     this.der = new EqDer(manager);
     this.fm = new Fm(manager);
     this.elimStar = new ElimStar(manager, (expr, body, patterns) =>
@@ -144,7 +147,8 @@ class QeLite {
     this.der.apply(fmls);
     this.fm.apply(fmls);
     // Z3's ar_der checks the limit for each formula, though tlapm's formulas have no arrays for it to solve.
-    for (let index = 0; index < fmls.size; index++) manager.limit.checkpoint();
+    if (this.isUsingArrayDer)
+      for (let index = 0; index < fmls.size; index++) manager.limit.checkpoint();
   }
 
   private collectNegativeEqualities(
@@ -334,20 +338,8 @@ class QeLite {
   }
 }
 
-// qe_lite over a vector of conjuncts, with the variables isVariableIndex picks as the eliminable
-// ones.
-export const applyQeLiteToConjuncts = (
-  manager: AstManager,
-  isVariableIndex: (index: number) => boolean,
-  conjs: RefVector,
-) => {
-  const qe = new QeLite(manager);
-  qe.reduceConjs(isVariableIndex, conjs);
-  qe.release();
-};
-
 export const applyQeLite = (manager: AstManager, goal: Goal) => {
-  const qe = new QeLite(manager);
+  const qe = new QeLite(manager, true);
   let dep = -1;
   for (const form of goal.forms.items) dep = assign(manager, dep, form);
   if (goal.forms.items.some((form) => manager.hasQuantifierFlags[form])) {

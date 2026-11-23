@@ -123,8 +123,13 @@ export interface FilteredSetValue extends LazySet {
   base: Value;
   test: (element: Value, isMember: boolean) => boolean;
   isTestObserved?: true;
-  startPass?: (isMaterialized: boolean) => (element: Value) => boolean;
+  startPass?: (isMaterialized: boolean) => FilterPass;
   source?: FilteredSetSource;
+}
+
+export interface FilterPass {
+  test: (element: Value) => boolean;
+  end: () => void;
 }
 
 export interface UnionValue extends LazySet, CostedSet {
@@ -633,16 +638,24 @@ const compareWithItself = (value: Value, isEquality: boolean): boolean => {
     }
     case "Subset":
       return compareWithItself(value.base, isEquality);
-    case "FunctionSet":
+    case "FunctionSet": {
       if (!isEquality) break;
-      if (isEmptySet(value.domain) || isEmptySet(value.range)) return false;
+      const charges = value.cost?.charges;
+      // SetOfFcnsValue#equals, SetOfRcdsValue#equals and SetOfTuplesValue#equals ask both sides, here one set, about emptiness.
+      charges?.chargeIsEmpty(value.domain);
+      if (isEmptyLikeTlc(charges, value.domain)) return false;
+      charges?.chargeIsEmpty(value.range);
+      if (isEmptyLikeTlc(charges, value.range)) return false;
       compareWithItself(value.domain, isEquality);
       compareWithItself(value.range, isEquality);
       return false;
+    }
     case "RecordSet":
     case "ProductSet": {
       if (!isEquality) break;
-      if (isEmptySet(value)) return false;
+      const charges = value.cost?.charges;
+      charges?.chargeIsEmpty(value);
+      if (isEmptyLikeTlc(charges, value)) return false;
       const parts = value.kind === "RecordSet" ? value.sets : value.factors;
       for (let index = 0; index < parts.length; index++) {
         compareWithItself(parts[index], isEquality);
@@ -650,7 +663,14 @@ const compareWithItself = (value: Value, isEquality: boolean): boolean => {
       return false;
     }
   }
-  compareWithItself(toFiniteSet(value), isEquality);
+  const charged = getChargedSet(value);
+  // SetOfTuplesValue#equals and the like convert nothing, so of the comparisons with itself only a literal's sort, through compareTo, converts a set of tuples.
+  compareWithItself(
+    charged && (isSortingLiteral || charged.kind === "SetOperation" || charged.kind === "Union")
+      ? toChargedSet(charged, true, toFiniteSet)
+      : toFiniteSet(value),
+    isEquality,
+  );
   return false;
 };
 
@@ -892,17 +912,19 @@ export const valuesEqual = (left: Value, right: Value): boolean => {
   if (left.kind === "Subset" && right.kind === "Subset")
     return isReceiverEqual(left.base, right.base);
   if (left.kind === "FunctionSet" && right.kind === "FunctionSet") {
-    const isUnit = isEmptySet(left.domain);
-    const isOtherUnit = isEmptySet(right.domain);
+    const charges = left.cost?.charges ?? right.cost?.charges;
+    const isUnit = isEmptyLikeTlc(charges, left.domain);
+    const isOtherUnit = isEmptyLikeTlc(charges, right.domain);
     if (isUnit || isOtherUnit) return isUnit === isOtherUnit;
-    const isEmpty = isEmptySet(left.range);
-    const isOtherEmpty = isEmptySet(right.range);
+    const isEmpty = isEmptyLikeTlc(charges, left.range);
+    const isOtherEmpty = isEmptyLikeTlc(charges, right.range);
     if (isEmpty || isOtherEmpty) return isEmpty === isOtherEmpty;
     return isReceiverEqual(left.domain, right.domain) && isReceiverEqual(left.range, right.range);
   }
   if (left.kind === "RecordSet" && right.kind === "RecordSet") {
-    if (isEmptySet(left)) return isEmptySet(right);
-    if (isEmptySet(right)) return false;
+    const charges = left.cost?.charges ?? right.cost?.charges;
+    if (isEmptyLikeTlc(charges, left)) return isEmptyLikeTlc(charges, right);
+    if (isEmptyLikeTlc(charges, right)) return false;
     const getFields = (set: RecordSetValue) =>
       set.names
         .map((name, index): [string, Value] => [name, set.sets[index]])
@@ -917,8 +939,9 @@ export const valuesEqual = (left: Value, right: Value): boolean => {
     );
   }
   if (left.kind === "ProductSet" && right.kind === "ProductSet") {
-    if (isEmptySet(left)) return isEmptySet(right);
-    if (isEmptySet(right)) return false;
+    const charges = left.cost?.charges ?? right.cost?.charges;
+    if (isEmptyLikeTlc(charges, left)) return isEmptyLikeTlc(charges, right);
+    if (isEmptyLikeTlc(charges, right)) return false;
     return (
       left.factors.length === right.factors.length &&
       left.factors.every((factor, index) => isReceiverEqual(factor, right.factors[index]))
@@ -2177,7 +2200,7 @@ const enumerateSet = (
           `Attempted to enumerate { x \\in S : p(x) } when S:\n${prettyPrint(formatValue(value.base))}\nis not enumerable`,
         );
       }
-      const test = getPassTest(value, true);
+      const test = value.startPass?.(true).test ?? getPlainTest(value);
       const kept: Value[] = [];
       someOpenedElement(value.base, opened ?? openSetStream(value.base), (element) => {
         if (!test(element)) return false;
@@ -2331,12 +2354,8 @@ const toChargedSet = (
   const cost = value.cost;
   const node = cost?.node;
   const charges = cost?.charges;
-  // SubsetValue#toSetEnum converts its base with toSetEnum, and sizing it first caches S \cup T, S \cap T, S \ T and UNION S.
-  const drawn = value.kind === "Subset" ? getChargedSet(value.base) : value;
-  drawn?.cost?.charges?.chargeSetEnumeration(drawn);
-  if (drawn?.cost && drawn !== value && (drawn.kind === "SetOperation" || drawn.kind === "Union")) {
-    drawn.cost.charges = undefined;
-  }
+  if (value.kind === "Subset") charges?.chargeSubsetConversion(value);
+  else charges?.chargeSetEnumeration(value);
   const set = convert(value);
   if (value.kind === "Subset" && charges !== undefined && node !== undefined) {
     charges.secondary[node] += set.elements.length;
@@ -2361,6 +2380,7 @@ interface FilterStream {
   set: FilteredSetValue;
   base: ElementStream;
   test: (element: Value) => boolean;
+  end: (() => void) | undefined;
 }
 
 interface ProductStream {
@@ -2543,8 +2563,7 @@ const getPredicatedProduct = (value: ObjectValue) =>
 
 const EMPTY_STREAM: ListStream = { kind: "List", elements: [], position: 0 };
 
-const getPassTest = (value: FilteredSetValue, isMaterialized: boolean) =>
-  value.startPass?.(isMaterialized) ?? ((element: Value) => value.test(element, false));
+const getPlainTest = (value: FilteredSetValue) => (element: Value) => value.test(element, false);
 
 // TLC's elements() checks that the set has an element and reads the first element of each component, which nextElement continues.
 const openProductStream = (
@@ -2593,11 +2612,14 @@ const openPart = (value: Value): ElementStream => {
   if (typeof value === "object" && value.kind === "FilteredSet" && !isCachedSet(value)) {
     sets?.push(value);
     if (!isTlcEnumerable(value.base)) toFiniteSet(value);
+    const base = openPart(value.base);
+    const pass = value.startPass?.(false);
     const stream: FilterStream = {
       kind: "Filter",
       set: value,
-      base: openPart(value.base),
-      test: getPassTest(value, false),
+      base,
+      test: pass?.test ?? getPlainTest(value),
+      end: pass?.end,
     };
     sets?.pop();
     return stream;
@@ -2672,10 +2694,13 @@ const resetStream = (stream: ElementStream): void => {
     case "List":
       stream.position = 0;
       return;
-    case "Filter":
+    case "Filter": {
       resetStream(stream.base);
-      stream.test = getPassTest(stream.set, false);
+      const pass = stream.set.startPass?.(false);
+      stream.test = pass?.test ?? getPlainTest(stream.set);
+      stream.end = pass?.end;
       return;
+    }
     case "Product":
       stream.isDone = false;
       for (let index = 0; index < stream.parts.length; index++) restartPart(stream, index);
@@ -2708,6 +2733,7 @@ const getNextElement = (stream: ElementStream): Value | undefined => {
       ) {
         if (stream.test(element)) return element;
       }
+      stream.end?.();
       return undefined;
     case "Product": {
       if (stream.isDone) return undefined;
@@ -2770,6 +2796,10 @@ export interface ChargeTable {
   secondary: number[];
   isMember: typeof isElementOf;
   chargeSetEnumeration: (set: Value) => void;
+  chargeSubsetConversion: (set: SubsetValue) => void;
+  chargeSubsetElements: (set: SubsetValue) => void;
+  chargePrintedSize: (set: Value) => void;
+  chargeIsEmpty: (set: Value) => void;
 }
 
 interface PlainStream {
@@ -2954,6 +2984,12 @@ const openChargedPart = (charges: ChargeTable, value: Value): ChargedStream => {
     sets?.pop();
     return stream;
   }
+  if (typeof value === "object" && value.kind === "Subset" && value.cost?.node !== undefined) {
+    if (value.cost.charges === undefined) {
+      return { kind: "ChargedLeaf", node: value.cost.node, part: openPart(value) };
+    }
+    charges.chargeSubsetElements(value);
+  }
   const part = openPart(value);
   return node === undefined ? { kind: "Plain", part } : { kind: "ChargedLeaf", node, part };
 };
@@ -2984,6 +3020,11 @@ const isChargedEmpty = (charges: ChargeTable, value: Value): boolean => {
         : hasChargedEmptySet(charges, value.kind === "RecordSet" ? value.sets : value.factors);
   sets?.pop();
   return isEmpty;
+};
+
+const isEmptyLikeTlc = (charges: ChargeTable | undefined, value: Value) => {
+  charges?.chargeIsEmpty(value);
+  return isEmptySet(value);
 };
 
 const hasChargedEmptySet = (charges: ChargeTable, sets: Value[]) => {
@@ -3491,9 +3532,15 @@ const someElementOfStream = (
     });
   }
   if (value.kind === "FilteredSet" && isTlcEnumerable(value.base)) {
-    const test = value.startPass?.(false);
-    if (test) {
-      return someOpenedElement(value.base, opened, (element) => test(element) && visit(element));
+    const pass = value.startPass?.(false);
+    if (pass) {
+      if (
+        someOpenedElement(value.base, opened, (element) => pass.test(element) && visit(element))
+      ) {
+        return true;
+      }
+      pass.end();
+      return false;
     }
     return someOpenedElement(
       value.base,
@@ -3921,6 +3968,15 @@ export const isElementOf = (element: Value, set: Value): boolean => {
   sets.push(set);
   const isElement = isElementOfSet(element, set);
   sets.pop();
+  return isElement;
+};
+
+export const isElementOfSetLikeTlc = (element: Value, set: SetValue): boolean => {
+  const sets = setTrace.sets;
+  sets?.push(set);
+  cacheSet(element);
+  const isElement = isInSortedSetLikeTlc(element, set);
+  sets?.pop();
   return isElement;
 };
 
@@ -5027,11 +5083,12 @@ const toPrintedSet = (value: LazySetValue) => {
 };
 
 const expandLazySet = (value: LazySetValue) => {
-  if (value.kind === "Subset") {
-    if (getCardinality(value.base) > MAXIMUM_EXPANDED_SUBSET_BASE) return undefined;
+  if (value.kind === "SetOperation" || value.kind === "FilteredSet" || value.kind === "Union") {
     return toPrintedSet(value);
   }
-  if (value.kind === "SetOperation" || value.kind === "FilteredSet" || value.kind === "Union") {
+  value.cost?.charges?.chargePrintedSize(value);
+  if (value.kind === "Subset") {
+    if (getCardinality(value.base) > MAXIMUM_EXPANDED_SUBSET_BASE) return undefined;
     return toPrintedSet(value);
   }
   if (value.kind === "FunctionSet") {

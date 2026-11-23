@@ -35,12 +35,14 @@ import {
   isElementOfWith,
   isEmptySet,
   isCostedSet,
+  isElementOfSetLikeTlc,
   isReducibleSet,
   isSequenceDomain,
   markStreamedSet,
   type FunctionValue,
   type IntervalValue,
   type SetOperationValue,
+  type SubsetValue,
   type UnionValue,
   type Value,
 } from "./values";
@@ -81,6 +83,10 @@ export interface Coverage {
   nextState: NextStateMode;
   isMember: typeof isElementOf;
   chargeSetEnumeration: (set: Value) => void;
+  chargeSubsetConversion: (set: SubsetValue) => void;
+  chargeSubsetElements: (set: SubsetValue) => void;
+  chargePrintedSize: (set: Value) => void;
+  chargeIsEmpty: (set: Value) => void;
 }
 
 export interface CoverageFrame {
@@ -186,9 +192,21 @@ export const createCoverage = (variableCount: number): Coverage => {
     nextState: "given",
     isMember: isElementOf,
     chargeSetEnumeration: () => {},
+    chargeSubsetConversion: () => {},
+    chargeSubsetElements: () => {},
+    chargePrintedSize: () => {},
+    chargeIsEmpty: () => {},
   };
   coverage.isMember = createChargedMembership(coverage);
   coverage.chargeSetEnumeration = (set) => chargeSetEnumeration(coverage, set);
+  coverage.chargeSubsetConversion = (set) => {
+    // SubsetValue#toSetEnum sizes SUBSET S before its elements() sizes S again.
+    chargeSize(coverage, set);
+    chargeSubsetElements(coverage, set);
+  };
+  coverage.chargeSubsetElements = (set) => chargeSubsetElements(coverage, set);
+  coverage.chargePrintedSize = (set) => chargePrintedSize(coverage, set);
+  coverage.chargeIsEmpty = (set) => chargeIsEmpty(coverage, set);
   return coverage;
 };
 
@@ -1118,6 +1136,7 @@ const createProductSetEnumerator = (coverage: Coverage, set: Value, size: number
         : Array.from({ length: getCardinality(set.domain) }, () => set.range);
   const sizes = getComponentSizes(sets, size);
   if (sizes === undefined) return undefined;
+  chargeIsEmpty(coverage, set);
   // SetOfFcnsValue's enumerator converts a domain that isn't an interval with toSetEnum.
   const domain =
     set.kind === "FunctionSet" && !sizes.includes(0) ? getChargedSet(set.domain) : undefined;
@@ -1131,6 +1150,16 @@ export const createFilterBaseEnumerator = (
   set: Value,
   isMaterialized: boolean,
 ) => {
+  if (
+    typeof set === "object" &&
+    (set.kind === "SetOperation" || set.kind === "Union" || set.kind === "Subset")
+  ) {
+    const size = getKnownSize(set);
+    if (size === undefined) return undefined;
+    const draws = createEnumerator(coverage, set, size, false);
+    if (isMaterialized) draws.next();
+    return draws;
+  }
   const node = getValueNode(coverage, set);
   if (
     node === undefined ||
@@ -1166,7 +1195,7 @@ const getKnownSize = (set: Value): number | undefined => {
       return getCardinality(set);
     }
     case "SetOperation": {
-      if (set.cost?.charges === undefined) return undefined;
+      if (set.cost?.charges === undefined) return set.enumerated?.elements.length;
       if (set.operator !== "\\cup") {
         const drawn = getDrawnSet(set);
         return getKnownSize(drawn) !== undefined &&
@@ -1179,7 +1208,8 @@ const getKnownSize = (set: Value): number | undefined => {
       return leftSize === undefined || rightSize === undefined ? undefined : leftSize + rightSize;
     }
     case "Union": {
-      if (set.cost?.charges === undefined || getKnownSize(set.base) === undefined) return undefined;
+      if (set.cost?.charges === undefined) return set.enumerated?.elements.length;
+      if (getKnownSize(set.base) === undefined) return undefined;
       const sets = getStreamedElements(set.base);
       let size = 0;
       for (let index = 0; index < sets.length; index++) {
@@ -1326,10 +1356,14 @@ const createEnumerator = (
   isNormalized: boolean,
 ): ChargedEnumerator => {
   const node = getValueNode(coverage, set);
-  if (
-    typeof set === "object" &&
-    (set.kind === "Subset" || (!isNormalized && set.kind === "FilteredSet"))
-  ) {
+  if (typeof set === "object" && set.kind === "Subset") {
+    if (set.cost !== undefined && set.cost.charges === undefined) {
+      return createListEnumerator(coverage, set.cost.node, size);
+    }
+    chargeSubsetElements(coverage, set);
+    return createListEnumerator(coverage, undefined, size);
+  }
+  if (typeof set === "object" && !isNormalized && set.kind === "FilteredSet") {
     return createListEnumerator(coverage, undefined, size);
   }
   const operation =
@@ -1380,11 +1414,105 @@ const chargeSetEnumeration = (coverage: Coverage, set: Value) => {
   if (node !== undefined) coverage.secondary[node] += size;
 };
 
+const chargeIsEmpty = (coverage: Coverage, set: Value): boolean | undefined => {
+  if (typeof set !== "object") return undefined;
+  switch (set.kind) {
+    case "Set":
+    case "MixedSet":
+      return set.elements.length === 0;
+    case "Interval":
+      return set.low > set.high;
+    case "Subset":
+      return false;
+    case "RecordSet":
+    case "ProductSet": {
+      const components = set.kind === "RecordSet" ? set.sets : set.factors;
+      for (let index = 0; index < components.length; index++) {
+        const isEmpty = chargeIsEmpty(coverage, components[index]);
+        if (isEmpty !== false) return isEmpty;
+      }
+      return false;
+    }
+    case "FunctionSet": {
+      const isDomainEmpty = chargeIsEmpty(coverage, set.domain);
+      return isDomainEmpty === undefined
+        ? undefined
+        : !isDomainEmpty && chargeIsEmpty(coverage, set.range);
+    }
+    case "SetOperation":
+    case "Union": {
+      const size = getKnownSize(set);
+      if (size === undefined) return undefined;
+      createEnumerator(coverage, set, size, false).next();
+      return size === 0;
+    }
+    default:
+      return undefined;
+  }
+};
+
 // SetCupValue#size, SetCapValue#size, SetDiffValue#size and UnionValue#size convert with convertAndCache.
-export const chargeSetOperationSize = (coverage: Coverage, set: Value) => {
-  if (typeof set !== "object" || (set.kind !== "SetOperation" && set.kind !== "Union")) return;
-  chargeSetEnumeration(coverage, set);
-  if (set.cost) set.cost.charges = undefined;
+export const chargeSize = (coverage: Coverage, set: Value): void => {
+  if (typeof set !== "object") return;
+  switch (set.kind) {
+    case "SetOperation":
+    case "Union": {
+      if (set.cost?.charges === undefined) return;
+      const isKnown = getKnownSize(set) !== undefined;
+      chargeSetEnumeration(coverage, set);
+      set.cost.charges = undefined;
+      // convertAndCache keeps the SetEnumValue it converts, so a later size() reads it.
+      if (isKnown) getCardinality(set);
+      return;
+    }
+    case "RecordSet":
+    case "ProductSet": {
+      if (chargeIsEmpty(coverage, set) !== false) return;
+      const components = set.kind === "RecordSet" ? set.sets : set.factors;
+      for (let index = 0; index < components.length; index++) {
+        chargeSize(coverage, components[index]);
+      }
+      return;
+    }
+    case "FunctionSet":
+      if (chargeIsEmpty(coverage, set.domain) !== false) return;
+      if (chargeIsEmpty(coverage, set.range) !== false) return;
+      chargeSize(coverage, set.range);
+      if (getCardinality(set.range) === 1) return;
+      chargeSize(coverage, set.domain);
+      chargeSize(coverage, set.range);
+      return;
+    case "Subset":
+      chargeSize(coverage, set.base);
+  }
+};
+
+const chargeSubsetElements = (coverage: Coverage, set: SubsetValue) => {
+  chargeSize(coverage, set.base);
+  const base = getChargedSet(set.base);
+  if (base !== undefined) chargeSetEnumeration(coverage, base);
+};
+
+const chargePrintedSize = (coverage: Coverage, set: Value) => {
+  if (typeof set !== "object") return;
+  switch (set.kind) {
+    case "RecordSet":
+    case "ProductSet": {
+      const components = set.kind === "RecordSet" ? set.sets : set.factors;
+      for (let index = 0; index < components.length; index++) {
+        chargeSize(coverage, components[index]);
+        if (getCardinality(components[index]) === 0) return;
+      }
+      return;
+    }
+    case "FunctionSet":
+      if (chargeIsEmpty(coverage, set.domain) !== false) return;
+      chargeSize(coverage, set.domain);
+      chargeSize(coverage, set.range);
+      return;
+    case "Subset":
+      chargeSize(coverage, set.base);
+  }
 };
 
 export const createChargedEnumerator = (
@@ -1483,6 +1611,8 @@ const COMPOSITE_SET_KINDS = new Set<string>([
 const createChargedMembership = (coverage: Coverage) => {
   const isMember = (element: Value, set: Value): boolean => {
     if (typeof set !== "object") return isElementOf(element, set);
+    // SetEnumValue#member asks an unsorted set's members whether they equal a lazy set, which tests its emptiness and parts instead of converting it.
+    if (set.kind === "Set" && isCostedSet(element)) return isElementOfSetLikeTlc(element, set);
     if (set.kind !== "Subset" && set.kind !== "Union") {
       // SetOfFcnsValue#member converts the element with toFcnRcd, which charges a tuple or record its length.
       if (

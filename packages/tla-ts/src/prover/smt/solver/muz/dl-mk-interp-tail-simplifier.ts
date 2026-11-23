@@ -4,11 +4,15 @@ import {
   KIND_VAR,
   OP_AND,
   OP_EQ,
+  OP_GE,
+  OP_LE,
   OP_NOT,
   OP_OR,
+  OP_SUB,
   SORT_BOOL,
 } from "../ast";
 import { flattenAndVector } from "../ast-util";
+import { assign, assignOwned, release } from "../expr-ref";
 import { RefVector } from "../ref-vector";
 import { type Rewrite, RewriterTpl } from "../rewriter-tpl";
 import type { DatalogContext } from "./dl-context";
@@ -20,11 +24,14 @@ import { Substitution } from "./substitution";
 const compare = (first: number, second: number) => (first > second ? 1 : first === second ? 0 : -1);
 
 class Normalizer extends RewriterTpl {
+  readonly appArgs: RefVector;
+
   constructor(
     manager: AstManager,
     private context: DatalogContext,
   ) {
     super(manager);
+    this.appArgs = new RefVector(manager);
   }
 
   private stripNot(expr: number) {
@@ -135,12 +142,23 @@ class Normalizer extends RewriterTpl {
   reduceApp(decl: number, args: number[], _sort: number): number | Rewrite {
     const manager = this.manager;
     const op = manager.funcDecls[decl].op;
+    const appArgs = this.appArgs;
     if (op === OP_NOT) {
       const argOp = manager.getOp(args[0]);
       if (argOp !== OP_AND && argOp !== OP_OR) return -1;
-      const negated = manager.getArgs(args[0]).map((arg) => this.context.rewriter.mkNot(arg));
-      const result = argOp === OP_AND ? manager.mkOr(negated) : manager.mkAnd(negated);
+      appArgs.reset();
+      let negated = -1;
+      for (let index = 0; index < manager.getNumArgs(args[0]); index++) {
+        negated = assign(
+          manager,
+          negated,
+          this.context.rewriter.mkNot(manager.getArg(args[0], index)),
+        );
+        appArgs.push(negated);
+      }
+      const result = argOp === OP_AND ? manager.mkOr(appArgs.items) : manager.mkAnd(appArgs.items);
       manager.incRef(result);
+      release(manager, negated);
       return { expr: result, depth: 2 };
     }
     if (op !== OP_AND && op !== OP_OR) return -1;
@@ -157,6 +175,8 @@ class Normalizer extends RewriterTpl {
       );
       const unique = sorted.filter((arg, index) => index === 0 || arg !== sorted[index - 1]);
       const isRewritten = this.detectEquivalences(unique, op === OP_OR);
+      appArgs.reset();
+      for (const arg of unique) appArgs.push(arg);
       return {
         expr:
           unique.length === 1
@@ -172,33 +192,122 @@ class Normalizer extends RewriterTpl {
   }
 }
 
+class RuleSubstitution {
+  private subst: Substitution;
+  private head = -1;
+  private tail: RefVector;
+
+  constructor(private context: DatalogContext) {
+    this.subst = new Substitution(context.manager);
+    this.tail = new RefVector(context.manager);
+  }
+
+  reset() {
+    this.subst.reset();
+  }
+
+  unify(first: number, second: number) {
+    const manager = this.context.manager;
+    const subst = this.subst;
+    const firstApplied = assign(manager, -1, subst.apply(first, 0));
+    const secondApplied = assign(manager, -1, subst.apply(second, 0));
+    subst.resetCache();
+    const isUnified = subst.unify(firstApplied, 0, secondApplied, 0);
+    release(manager, secondApplied);
+    release(manager, firstApplied);
+    return isUnified;
+  }
+
+  getResult(rule: Rule) {
+    const context = this.context;
+    const manager = context.manager;
+    const subst = this.subst;
+    this.head = assign(manager, this.head, subst.apply(rule.head, 0));
+    const tail = this.tail;
+    tail.reset();
+    const isNegated: boolean[] = [];
+    for (let index = 0; index < rule.tail.length; index++) {
+      tail.push(subst.apply(rule.tail[index], 0));
+      isNegated.push(rule.isNegated[index]);
+    }
+    removeDuplicateTails(tail, isNegated);
+    const result = context.ruleManager.mk(this.head, tail.items, isNegated, rule.name);
+    context.ruleManager.setAccountingParent(result, rule);
+    context.ruleManager.normVars(result);
+    return result;
+  }
+
+  release() {
+    this.tail.reset();
+    release(this.context.manager, this.head);
+    this.head = -1;
+    this.subst.reset();
+  }
+}
+
+interface KeptRule {
+  kind: "kept";
+  rule: Rule;
+}
+
+interface DroppedRule {
+  kind: "dropped";
+  rule: Rule | undefined;
+}
+
 export class MkInterpTailSimplifier implements RuleTransformerPlugin {
+  private ruleSubst: RuleSubstitution;
+  private tail: RefVector;
+  private interpretedMembers: RefVector;
+  private conjuncts: RefVector;
   private normalizer: Normalizer;
 
   constructor(
     private context: DatalogContext,
     readonly priority = 40000,
   ) {
-    this.normalizer = new Normalizer(context.manager, context);
+    const manager = context.manager;
+    this.ruleSubst = new RuleSubstitution(context);
+    this.tail = new RefVector(manager);
+    this.interpretedMembers = new RefVector(manager);
+    this.conjuncts = new RefVector(manager);
+    this.normalizer = new Normalizer(manager, context);
+  }
+
+  release() {
+    this.normalizer.release();
+    this.normalizer.appArgs.reset();
+    this.conjuncts.reset();
+    this.interpretedMembers.reset();
+    this.tail.reset();
+    this.ruleSubst.release();
   }
 
   private simplifyExpr(expr: number) {
-    const first = this.context.simplify(expr);
+    const context = this.context;
+    const manager = context.manager;
+    const first = context.simplify(expr);
     const normalized = this.normalizer.rewrite(first);
-    return this.context.simplify(normalized);
+    const result = assignOwned(manager, normalized, context.simplify(normalized));
+    release(manager, first);
+    return result;
   }
 
-  private propagateVariableEquivalences(rule: Rule): Rule | undefined {
+  private propagateVariableEquivalences(rule: Rule) {
     const context = this.context;
     const manager = context.manager;
     if (!context.params.getBool("xform.tail_simplifier_pve", true)) return undefined;
     if (rule.uninterpretedSize === rule.tail.length) return undefined;
     const todo = rule.tail.slice(rule.uninterpretedSize);
-    const subst = new Substitution(manager);
+    const ruleSubst = this.ruleSubst;
+    ruleSubst.reset();
+    const trail = new RefVector(manager);
+    let difference = -1;
+    let reversed = -1;
     let isFound = false;
     const isFlex = (expr: number) => manager.kinds[expr] === KIND_VAR || manager.isValue(expr);
     const tryUnify = (first: number, second: number) => {
-      if (subst.unify(subst.apply(first, 0), 0, subst.apply(second, 0), 0)) isFound = true;
+      if (ruleSubst.unify(first, second)) isFound = true;
     };
     for (let current = todo.pop(); current !== undefined; current = todo.pop()) {
       let isNeg = manager.isNot(current);
@@ -232,68 +341,119 @@ export class MkInterpTailSimplifier implements RuleTransformerPlugin {
           tryUnify(first, manager.falseExpr);
         else if (manager.kinds[first] === KIND_VAR && isNeg && manager.isFalse(second))
           tryUnify(first, manager.trueExpr);
+      } else if (!isNeg && (op === OP_LE || op === OP_GE)) {
+        const lower = manager.getArg(term, op === OP_LE ? 0 : 1);
+        const upper = manager.getArg(term, op === OP_LE ? 1 : 0);
+        const sort = manager.sorts[lower];
+        difference = assign(manager, difference, manager.mkApp(OP_SUB, [lower, upper], sort));
+        reversed = assign(manager, reversed, manager.mkApp(OP_SUB, [upper, lower], sort));
+        trail.push(difference);
       }
     }
-    if (!isFound) return undefined;
-    const tail = rule.tail.map((literal) => subst.apply(literal, 0));
-    const isNegated = [...rule.isNegated];
-    removeDuplicateTails(tail, isNegated);
-    const result = context.ruleManager.mk(subst.apply(rule.head, 0), tail, isNegated, rule.name);
-    context.ruleManager.normVars(result);
+    const result = isFound
+      ? context.ruleManager.assignRule(undefined, ruleSubst.getResult(rule))
+      : undefined;
+    release(manager, reversed);
+    release(manager, difference);
+    trail.reset();
     return result;
   }
 
-  // Undefined drops the rule, whose interpreted tail simplified to false.
-  transformRule(original: Rule): Rule | undefined {
+  transformRule(original: Rule): KeptRule | DroppedRule {
     const context = this.context;
     const manager = context.manager;
-    if (context.ruleManager.hasQuantifiers(original)) return original;
-    let rule = original;
+    const ruleManager = context.ruleManager;
+    let rule = ruleManager.assignRule(undefined, original);
+    if (ruleManager.hasQuantifiers(rule)) return { kind: "kept", rule };
+    let result: Rule | undefined;
     for (;;) {
       const uninterpretedSize = rule.uninterpretedSize;
-      if (uninterpretedSize === rule.tail.length) return rule;
-      const tail = rule.tail.slice(0, uninterpretedSize);
-      const isNegated = rule.isNegated.slice(0, uninterpretedSize);
-      const isSingle = uninterpretedSize + 1 === rule.tail.length;
-      const interpretedTail = isSingle
-        ? rule.tail[uninterpretedSize]
-        : manager.mkAnd(rule.tail.slice(uninterpretedSize));
-      const simplified = this.simplifyExpr(interpretedTail);
-      const isModified = !isSingle || interpretedTail !== simplified;
-      if (manager.isFalse(simplified)) return undefined;
-      let result = rule;
+      const size = rule.tail.length;
+      if (uninterpretedSize === size) {
+        result = ruleManager.assignRule(result, rule);
+        ruleManager.decRef(rule);
+        return { kind: "kept", rule: result };
+      }
+      const head = assign(manager, -1, rule.head);
+      const tail = this.tail;
+      tail.reset();
+      const isNegated: boolean[] = [];
+      for (let index = 0; index < uninterpretedSize; index++) {
+        tail.push(rule.tail[index]);
+        isNegated.push(rule.isNegated[index]);
+      }
+      let isModified = false;
+      let interpreted = -1;
+      if (uninterpretedSize + 1 === size)
+        interpreted = assign(manager, -1, rule.tail[uninterpretedSize]);
+      else {
+        const members = this.interpretedMembers;
+        members.reset();
+        for (let index = uninterpretedSize; index < size; index++) members.push(rule.tail[index]);
+        interpreted = assign(manager, -1, manager.mkApp(OP_AND, members.items, SORT_BOOL));
+        isModified = true;
+      }
+      const simplified = this.simplifyExpr(interpreted);
+      isModified ||= interpreted !== simplified;
+      if (manager.isFalse(simplified)) {
+        release(manager, simplified);
+        release(manager, interpreted);
+        release(manager, head);
+        ruleManager.decRef(rule);
+        return { kind: "dropped", rule: result };
+      }
       if (isModified) {
-        const conjs = new RefVector(manager);
-        conjs.push(simplified);
-        flattenAndVector(manager, conjs);
-        for (const conj of conjs.items) {
-          tail.push(context.ruleManager.ensureApp(conj));
+        const conjuncts = this.conjuncts;
+        conjuncts.reset();
+        conjuncts.push(simplified);
+        flattenAndVector(manager, conjuncts);
+        for (const conjunct of conjuncts.items) {
+          tail.push(ruleManager.ensureApp(conjunct));
           isNegated.push(false);
         }
-        conjs.reset();
-        result = context.ruleManager.mk(rule.head, tail, isNegated, rule.name);
-      }
+        result = ruleManager.assignRule(
+          result,
+          ruleManager.mk(head, tail.items, isNegated, rule.name),
+        );
+        ruleManager.setAccountingParent(result, rule);
+      } else result = ruleManager.assignRule(result, rule);
       const propagated = this.propagateVariableEquivalences(result);
-      if (propagated === undefined) return result;
-      rule = propagated;
+      if (propagated !== undefined) {
+        rule = ruleManager.assignRule(rule, propagated);
+        ruleManager.decRef(propagated);
+      }
+      release(manager, simplified);
+      release(manager, interpreted);
+      release(manager, head);
+      if (propagated === undefined) {
+        ruleManager.decRef(rule);
+        return { kind: "kept", rule: result };
+      }
     }
+  }
+
+  private transformRules(source: RuleSet, target: RuleSet) {
+    const ruleManager = this.context.ruleManager;
+    let isModified = false;
+    for (const rule of source.rules) {
+      const transformed = this.transformRule(rule);
+      if (transformed.kind === "kept") {
+        if (transformed.rule !== rule) isModified = true;
+        target.addRule(transformed.rule);
+      } else isModified = true;
+      if (transformed.rule !== undefined) ruleManager.decRef(transformed.rule);
+    }
+    return isModified;
   }
 
   apply(source: RuleSet) {
     if (source.rules.length === 0) return undefined;
     const result = new RuleSet(this.context);
-    let isModified = false;
-    for (const rule of source.rules) {
-      const transformed = this.transformRule(rule);
-      if (transformed === undefined) {
-        isModified = true;
-        continue;
-      }
-      if (transformed !== rule) isModified = true;
-      result.addRule(transformed);
+    if (this.transformRules(source, result)) {
+      result.inheritPredicates(source);
+      return result;
     }
-    if (!isModified) return undefined;
-    result.inheritPredicates(source);
-    return result;
+    result.reset();
+    return undefined;
   }
 }

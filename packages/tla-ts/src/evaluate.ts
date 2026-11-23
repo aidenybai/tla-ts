@@ -33,7 +33,7 @@ import {
   chargeEquality,
   chargeFunctionConstruction,
   chargeSetOperation,
-  chargeSetOperationSize,
+  chargeSize,
   costCoverage,
   countArgumentTuple,
   countCoverage,
@@ -91,6 +91,8 @@ import {
   createProductSet,
   createRecordSet,
   createUnion,
+  createSortedSet,
+  EMPTY_SET,
   createSortedFunction,
   createSortedRecord,
   createNormalizedSet,
@@ -1208,7 +1210,7 @@ const isStateWithin = (state: State | undefined, cached: State | undefined) => {
 
 // forceThunk keeps this code inline, since V8 runs it up to 2% slower on LetInv when it calls a helper.
 const evaluateCoveredThunk = (thunk: Thunk, context: Context, coverage: Coverage) => {
-  const node = coverage.current === -1 ? undefined : coverage.values.get(thunk);
+  const node = coverage.values.get(thunk);
   return node === undefined
     ? evaluate(thunk.expression, withScope(context, thunk.scope))
     : runAtCoverageNode(coverage, node, () =>
@@ -1241,7 +1243,7 @@ const forceThunk = (thunk: Thunk, context: Context) => {
   if (isCached) return cache;
   const environment = context.environment;
   const coverage = environment.coverage;
-  const node = coverage?.current === -1 ? undefined : coverage?.values.get(thunk);
+  const node = coverage?.values.get(thunk);
   const site = thunk.site;
   const value =
     coverage && node !== undefined
@@ -2781,7 +2783,7 @@ const compileApply = (
     const cardinality = global.evaluateUnary;
     return (context) => {
       const value = set(context);
-      chargeSetOperationSize(coverage, value);
+      chargeSize(coverage, value);
       return cardinality(value);
     };
   }
@@ -2808,13 +2810,17 @@ const compileApply = (
   ) {
     const base = getEvaluator(args[0], environment);
     return (context) => {
-      const union = global.evaluate([base(context)], context);
-      if (typeof union !== "object" || union.kind !== "Union") return union;
+      const sets = base(context);
+      const union = global.evaluate([sets], context);
       // UnionValue#union gives the union its set's cost model.
-      const node = getValueNode(coverage, union.base);
-      return node === undefined
-        ? union
-        : markStreamedSet(createUnion(union.base, { node, charges: coverage }));
+      const node = getValueNode(coverage, sets);
+      if (node === undefined || typeof union !== "object") return union;
+      if (union.kind !== "Union") {
+        const set = union === EMPTY_SET ? createSortedSet([]) : union;
+        coverage.values.set(set, node);
+        return set;
+      }
+      return markStreamedSet(createUnion(union.base, { node, charges: coverage }));
     };
   }
   if (coverage && combine && SET_OPERATORS.has(expression.operator) && args.length === 2) {
@@ -3199,12 +3205,17 @@ export const getLazyFilter = (
       isTestObserved: true,
       startPass: (isMaterialized) => {
         const draws = createFilterBaseEnumerator(coverage, base, isMaterialized);
-        return (element) => {
-          draws?.next();
-          coverage.secondary[node]++;
-          const value = runAtCoverageNode(coverage, node, () => test(element, false));
-          if (isMaterialized && value) coverage.secondary[node]++;
-          return value;
+        return {
+          test: (element) => {
+            draws?.next();
+            coverage.secondary[node]++;
+            const value = runAtCoverageNode(coverage, node, () => test(element, false));
+            if (isMaterialized && value) coverage.secondary[node]++;
+            return value;
+          },
+          end: () => {
+            draws?.next();
+          },
         };
       },
       source,

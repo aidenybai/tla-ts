@@ -13,7 +13,7 @@ import type { Definition } from "../goal";
 import type { ProtoModel } from "../proto-model";
 import { type RewriterOptions, Rewriter } from "../rewriter";
 import { RefVector } from "../ref-vector";
-import { applyQeLiteToConjuncts } from "../qe-lite";
+import { QeLite } from "../qe-lite";
 import { applyDefinitions } from "../tactic";
 import { BindVariables, mkExists, type Rule, RuleManager, getUsedVars } from "./dl-rule";
 import { RuleSet } from "./dl-rule-set";
@@ -68,13 +68,16 @@ type ExecutionResult = "ok" | "bounded" | "canceled";
 export interface Engine {
   query(query: number): number;
   getModel(): ProtoModel | undefined;
+  release(): void;
 }
 
 type EngineFactory = (context: DatalogContext, engine: number) => Engine;
 
 export class DatalogContext {
   readonly ruleManager: RuleManager;
+  readonly qe: QeLite;
   private ruleProperties: RuleProperties;
+  private pinned: number[] = [];
   private preds = new Set<number>();
   private bindVariables: BindVariables;
   private isBindingVariables = true;
@@ -101,6 +104,7 @@ export class DatalogContext {
   ) {
     this.params = new FpParams(parameters);
     this.ruleManager = new RuleManager(manager, this);
+    this.qe = new QeLite(manager, false);
     this.ruleProperties = new RuleProperties(this);
     this.bindVariables = new BindVariables(manager);
     this.ruleSet = new RuleSet(this);
@@ -133,7 +137,19 @@ export class DatalogContext {
     this.ruleFmls = [];
     this.ruleNames = [];
     this.preds.clear();
+    this.engine?.release();
     this.engine = undefined;
+  }
+
+  release() {
+    const manager = this.manager;
+    this.reset();
+    for (const expr of this.background) manager.decRef(expr);
+    this.transformedRuleSet.reset();
+    this.bindVariables.release();
+    for (const decl of this.pinned) manager.decDeclRef(decl);
+    this.ruleManager.release();
+    this.rewriter.release();
   }
 
   // th_rewriter: the result comes with a reference.
@@ -148,6 +164,7 @@ export class DatalogContext {
   registerPredicate(decl: number) {
     if (this.preds.has(decl)) return;
     this.manager.incDeclRef(decl);
+    this.pinned.push(decl);
     this.preds.add(decl);
   }
 
@@ -395,7 +412,7 @@ export class DatalogContext {
     });
     const conjs = new RefVector(manager);
     for (const literal of rule.tail.slice(rule.uninterpretedSize)) conjs.push(literal);
-    applyQeLiteToConjuncts(manager, (index) => !indexSet.has(index), conjs);
+    this.qe.reduceConjs((index) => !indexSet.has(index), conjs);
     const interpreted = rule.tail.slice(rule.uninterpretedSize);
     const isChanged =
       conjs.size !== interpreted.length ||
@@ -411,7 +428,10 @@ export class DatalogContext {
     const isNegated = tail.map(
       (_value, index) => index < rule.uninterpretedSize && rule.isNegated[index],
     );
-    const reduced = this.ruleManager.mk(rule.head, tail, isNegated, rule.name);
+    const reduced = this.ruleManager.assignRule(
+      rule,
+      this.ruleManager.mk(rule.head, tail, isNegated, rule.name),
+    );
     conjs.reset();
     return reduced;
   }

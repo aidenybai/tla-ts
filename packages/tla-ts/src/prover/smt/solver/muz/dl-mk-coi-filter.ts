@@ -13,7 +13,10 @@ export class MkCoiFilter implements RuleTransformerPlugin {
 
   apply(source: RuleSet) {
     const topDown = this.topDown(source);
-    return this.bottomUp(topDown ?? source) ?? topDown;
+    const bottomUp = this.bottomUp(topDown ?? source);
+    if (bottomUp === undefined) return topDown;
+    topDown?.reset();
+    return bottomUp;
   }
 
   // dataflow_engine<reachability_info>::run_bottom_up: whether the rules of a predicate can
@@ -93,7 +96,10 @@ export class MkCoiFilter implements RuleTransformerPlugin {
       }
       result.addRule(this.context.ruleManager.mk(rule.head, newTail, newNegated, undefined, false));
     }
-    if (result.rules.length === source.rules.length) return undefined;
+    if (result.rules.length === source.rules.length) {
+      result.reset();
+      return undefined;
+    }
     result.close();
     if (this.context.modelConverters !== undefined) {
       for (const [decl, isReachable] of facts) if (!isReachable) unreachable.add(decl);
@@ -143,21 +149,29 @@ export class MkCoiFilter implements RuleTransformerPlugin {
       if (this.context.modelConverters === undefined) continue;
       for (const pruned of source.getPredicateRules(predicate))
         for (let index = 0; index < pruned.uninterpretedSize; index++)
-          if (pruned.getTailDecl(manager, index) !== predicate) return undefined;
+          if (pruned.getTailDecl(manager, index) !== predicate) {
+            result.reset();
+            return undefined;
+          }
       prunedPreds.add(predicate);
     }
-    if (result.rules.length === source.rules.length) return undefined;
+    if (result.rules.length === source.rules.length) {
+      result.reset();
+      return undefined;
+    }
     if (this.context.modelConverters !== undefined && prunedPreds.size > 0) {
       const horn = new HornSubsumeModelConverter(this.context);
       this.context.addGenericModelConverter(
         [...prunedPreds].map((decl) => ({
           decl,
           def: manager.mkOr(
-            source
-              .getPredicateRules(decl)
-              .map((rule) =>
-                horn.mkHorn(rule.head, manager.mkAnd(rule.tail.slice(rule.uninterpretedSize))),
-              ),
+            source.getPredicateRules(decl).map((rule) => {
+              const body = manager.mkAnd(rule.tail.slice(rule.uninterpretedSize));
+              manager.incRef(body);
+              const result = horn.mkHorn(rule.head, body);
+              manager.decRef(body);
+              return result;
+            }),
           ),
         })),
       );
