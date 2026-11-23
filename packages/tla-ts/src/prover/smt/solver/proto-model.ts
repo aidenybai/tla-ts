@@ -447,6 +447,14 @@ export class ProtoModel {
     return this.evaluator.rewrite(expr);
   }
 
+  evalExpr(expr: number, isModelCompletion: boolean) {
+    const isCompleting = this.evaluator.getModelCompletion();
+    this.evaluator.setModelCompletion(isModelCompletion);
+    const result = this.evaluator.rewrite(expr);
+    this.evaluator.setModelCompletion(isCompleting);
+    return result;
+  }
+
   tryEval(expr: number, isModelCompletion: boolean) {
     try {
       return this.eval(expr, isModelCompletion);

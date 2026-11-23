@@ -614,6 +614,13 @@ describe("the instantiation thresholds, as Z3 5.3.2 reads them", () => {
     ).toEqual(["sat", "(((g c) (- 93511)))"]);
   });
 
+  it("evaluates each quantifier body for mbqi on an empty model cache in sat.euf", () => {
+    expect(run(getThresholdScript(["(set-option :sat.euf true)"], "(check-sat)"))).toEqual([
+      "sat",
+      "(:rlimit 1189)",
+    ]);
+  });
+
   it("puts the lazy threshold back to 20 in setup_AUFLIA", () => {
     expect(
       run([
