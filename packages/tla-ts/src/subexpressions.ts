@@ -176,12 +176,11 @@ const createApplication = (selection: Selection, body: Expression): Expression =
     if (selection.params.some((param) => param.arity > 0)) {
       throw createError("Selected an operator with operator parameters as an argument", location);
     }
-    return {
-      kind: "Lambda",
-      params: selection.params.map((param) => param.name),
-      body,
-      location,
-    };
+    const params = selection.params.map((param) => param.name);
+    // Deviation from SANY: Generator#selectorToNode applies an operator argument selected behind an instance or a definition's parameters to no arguments and rejects it; tla-ts selects it, after those parameters.
+    return body.kind === "Lambda"
+      ? { kind: "Lambda", params: [...params, ...body.params], body: body.body, location }
+      : { kind: "Lambda", params, body, location };
   }
   if (selection.args.length !== selection.params.length) {
     throw createError(
@@ -240,7 +239,10 @@ const getOperatorArgument = (operand: Expression, arity: number): Expression => 
     ...(operand.kind === "Identifier" && { resolution: operand.resolution }),
   };
   operandApplications.set(operand, [...(operandApplications.get(operand) ?? []), application]);
-  return { kind: "Lambda", params, body: application, operator, location: operand.location };
+  return withSubstitutionFrames(
+    { kind: "Lambda", params, body: application, operator, location: operand.location },
+    substitutionFrames.get(operand) ?? [],
+  );
 };
 
 const getDefinitionBody = (definition: Definition) => {
@@ -365,8 +367,15 @@ const selectSubexpression = (
       if (selector.kind !== "Name" && !local) return undefined;
       if (selector.kind === "Name") {
         names.push(selector.name);
-        args.push(...selector.args);
         const name = names.join("!");
+        selector.args.forEach((arg, index) =>
+          selectionArguments.set(arg, {
+            operator: name,
+            index: args.length + index,
+            range: reference.selectorRanges?.[selectorIndex],
+          }),
+        );
+        args.push(...selector.args);
         const definition = local
           ? local.find((candidate) => getSourceName(candidate) === name)
           : (lookup(name) ??
@@ -398,18 +407,17 @@ const selectSubexpression = (
       const message = `The operator ${resolveSynonym(found.name)} requires ${arity - found.earlier} arguments.`;
       if (!isOperator || found.args.length !== 0) {
         generatedArguments += found.earlier;
+        applications.push({
+          operator: found.name,
+          range: reference.selectorRanges?.[selectorIndex],
+          args: found.args.slice(0, found.earlier),
+          params: getParamArities(definition),
+        });
         return report(range, message);
       }
       deferToExpression(range, message);
     }
     generatedArguments += found.args.length;
-    found.args.forEach((arg, index) =>
-      selectionArguments.set(arg, {
-        operator: found.name,
-        index,
-        range: reference.selectorRanges?.[selectorIndex],
-      }),
-    );
     // TLC evaluates the LAMBDA SANY makes of a whole body selected by !: as the body's Java override.
     const isOverride =
       !local &&
@@ -520,7 +528,10 @@ const selectSubexpression = (
       current = current.body;
       return;
     }
-    if (current.kind === "Lambda" && current.operator !== undefined) {
+    if (
+      current.kind === "Lambda" &&
+      (current.operator !== undefined || records.instanceOperators.has(current))
+    ) {
       report(range, "Trying to select subexpression of an operator argument.");
       return;
     }
@@ -606,7 +617,11 @@ const selectSubexpression = (
       report(range, "Selecting subexpression of an EXCEPT not yet implemented.");
       return;
     }
-    const operands = binder ? binder.sets : getOperands(current);
+    const instanceArgumentCount =
+      current.kind === "Apply"
+        ? current.args.filter((arg) => records.instanceArguments.has(arg)).length
+        : 0;
+    const operands = binder ? binder.sets : getOperands(current)?.slice(instanceArgumentCount);
     if (!operands && current.kind !== "Identifier") {
       report(range, "Selecting subexpression of expression that has none.");
       return;
@@ -623,7 +638,8 @@ const selectSubexpression = (
     }
     const arity =
       current.kind === "Apply"
-        ? (getCalleeParams(current, findCallee(current.operator))?.[index]?.arity ?? 0)
+        ? (getCalleeParams(current, findCallee(current.operator))?.[instanceArgumentCount + index]
+            ?.arity ?? 0)
         : 0;
     current = arity > 0 ? getOperatorArgument(operand, arity) : operand;
   };
@@ -706,7 +722,13 @@ const selectSubexpression = (
       ? (substitutionFrames.get(definition.body) ?? [])
       : [],
   );
-  const framed = withSubstitutionFrames(current.kind === "Lambda" ? current.body : current, frames);
+  const framed =
+    current.kind === "Lambda"
+      ? withSubstitutionFrames(current.body, [
+          ...frames,
+          ...(substitutionFrames.get(current) ?? []),
+        ])
+      : withSubstitutionFrames(current, frames);
   if (substitutionFrames.has(framed)) {
     records.selectedDefinitions.set(framed, {
       definition: entered[0],

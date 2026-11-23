@@ -656,12 +656,16 @@ export const createSelectorResolver =
         return generator.addError(location, "Selected operator argument when expression expected.");
       if (params.length + substInPrefix.length > 0) {
         const operator = current.op;
-        params.push(
-          ...Array.from({ length: getSymbolArity(operator) }, (_element, paramIndex) =>
-            generator.createFormalParam(`NewParam${paramIndex}`, 0, undefined),
-          ),
+        const newParams = Array.from({ length: getSymbolArity(operator) }, (_element, paramIndex) =>
+          generator.createFormalParam(`NewParam${paramIndex}`, 0, undefined),
         );
-        current = generator.createOpAppl(operator, walk.definitionArgs, location);
+        params.push(...newParams);
+        // Deviation from SANY: Generator#selectorToNode applies the operator to opDefArgArray, empty here, instead of its new parameters, so it rejects every operator argument selected behind an instance or a definition's parameters.
+        current = generator.createOpAppl(
+          operator,
+          newParams.map((param) => generator.createOpAppl(param, [], location)),
+          location,
+        );
       }
     }
     if (!isFact) {

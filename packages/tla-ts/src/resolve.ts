@@ -148,6 +148,13 @@ interface SelectionArgument {
   range: SourceRange | undefined;
 }
 
+interface InstancePrefix {
+  name: string;
+  arity: number;
+  params: number[] | undefined;
+  range: SourceRange | undefined;
+}
+
 export interface SelectedDefinition {
   definition: Definition;
   params: string[];
@@ -156,6 +163,8 @@ export interface SelectedDefinition {
 export interface SubexpressionRecords {
   selectedDefinitions: WeakMap<Expression, SelectedDefinition>;
   instanceReferences: WeakMap<Instance, Instance>;
+  instanceArguments: WeakSet<Expression>;
+  instanceOperators: WeakSet<Expression>;
 }
 
 export const selections = new WeakMap<Expression, Expression>();
@@ -1003,21 +1012,36 @@ const getSymbolArity = (
   if (isInstanceName(name, scope, unit)) {
     const instance = lookupLocal(scope, name) ?? getModuleBinding(name, unit, undefined);
     const count = expression.kind === "Apply" ? expression.args.length : 0;
+    const names = name.split("!");
     // SANY counts an instance's arguments only where an expression is expected.
     if (!isOperatorArgument && instance?.kind === "Instance" && instance.arity !== count) {
+      const prefixes = getInstances(names, scope, unit);
+      if (expression.kind === "Apply") {
+        matchInstanceArguments(
+          getSelectors(expression),
+          expression.selectorRanges,
+          prefixes,
+          scope,
+          unit,
+        );
+      }
       unit.errors.push({
         location: formatRange(
           (expression.kind === "Apply" && expression.argumentsRange) ||
             getSpelledNameRange(expression, name),
         ),
-        message: `The operator ${name} requires ${instance.arity} arguments.`,
+        message: `The operator ${name} requires ${instance.arity - (prefixes.findLast((prefix) => prefix !== undefined)?.arity ?? 0)} arguments.`,
       });
       return undefined;
     }
     const range = getSpelledNameRange(expression, name);
     if (!isOperatorArgument && expression.kind === "Apply") {
-      expression.args.forEach((arg, index) =>
-        matchArgument(arg, instance?.params?.[index] ?? 0, index, name, range, scope, unit),
+      matchInstanceArguments(
+        getSelectors(expression),
+        expression.selectorRanges,
+        getInstances(names, scope, unit, names.length),
+        scope,
+        unit,
       );
     }
     unit.errors.push({
@@ -1094,6 +1118,15 @@ const getSymbolArity = (
   const fixity = getFixity(expression);
   const isOperatorApplication = expression.kind === "OperatorReference" || fixity !== undefined;
   if (!isOperatorSymbol(name) || isStepName(name) || !isOperatorApplication) {
+    if (!isOperatorArgument && expression.kind === "Apply") {
+      matchInstanceArguments(
+        getSelectors(expression),
+        expression.selectorRanges,
+        getInstances(parts, scope, unit),
+        scope,
+        unit,
+      );
+    }
     unit.errors.push({
       location: formatRange(getSpelledNameRange(expression, name)),
       message: `Unknown operator: \`${resolveSynonym(name)}'.`,
@@ -1343,13 +1376,44 @@ const getInstances = (
   const end = bindings.findIndex((binding) => binding !== undefined && binding.kind !== "Instance");
   return bindings.map((binding, index) =>
     binding?.kind === "Instance" && (end === -1 || index < end)
-      ? { name: prefixes[index], arity: binding.arity, range: binding.range }
+      ? {
+          name: prefixes[index],
+          arity: binding.arity,
+          params: binding.params,
+          range: binding.range,
+        }
       : undefined,
   );
 };
 
-const findInstance = (name: string, scope: LocalName | undefined, unit: Unit) =>
-  getInstances(name.split("!"), scope, unit)[0];
+const matchInstanceArguments = (
+  selectors: Selector[],
+  ranges: SourceRange[] | undefined,
+  instances: (InstancePrefix | undefined)[],
+  scope: LocalName | undefined,
+  unit: Unit,
+) =>
+  instances.flatMap((instance, position) => {
+    const selector = selectors[position];
+    if (!instance || selector.kind !== "Name") return [];
+    const offset = instances[position - 1]?.arity ?? 0;
+    return selector.args.map((arg, index) =>
+      matchArgument(
+        arg,
+        instance.params?.[offset + index] ?? 0,
+        offset + index,
+        instance.name,
+        ranges?.[position],
+        scope,
+        unit,
+      ),
+    );
+  });
+
+const findInstance = (name: string, scope: LocalName | undefined, unit: Unit) => {
+  const names = name.split("!");
+  return getInstances(names, scope, unit, names.length)[0];
+};
 
 const isInstanceArityReported = (
   expression: Expression,
@@ -1375,6 +1439,13 @@ const isInstanceArityReported = (
   );
   const instance = instances[index];
   if (!instance) return false;
+  matchInstanceArguments(
+    selectors,
+    expression.selectorRanges,
+    instances.slice(0, index),
+    scope,
+    unit,
+  );
   const range =
     (expression.kind === "Identifier" ? undefined : expression.argumentRanges?.[index]) ??
     expression.location.range;
@@ -1449,6 +1520,17 @@ const getSelectorArgumentError = (reference: Expression, isDefEntry = false) => 
   };
 };
 
+const isSelectorArgumentReported = (reference: Expression, unit: Unit) => {
+  const argumentError = getSelectorArgumentError(reference);
+  if (argumentError?.range) {
+    unit.errors.push({
+      location: formatRange(argumentError.range),
+      message: argumentError.message,
+    });
+  }
+  return argumentError !== undefined;
+};
+
 const matchArgument = (
   arg: Expression,
   expected: number,
@@ -1484,11 +1566,7 @@ const matchArgument = (
     return false;
   }
   const reference = selections.get(arg) ?? arg;
-  const argumentError = getSelectorArgumentError(reference);
-  if (argumentError) {
-    report(argumentError.range, argumentError.message);
-    return false;
-  }
+  if (isSelectorArgumentReported(reference, unit)) return false;
   if (arg.kind === "Lambda") {
     if (selections.has(arg)) resolveExpression(arg, scope, unit);
     else resolveLambda(arg, scope, unit);
@@ -1526,7 +1604,8 @@ const matchArgument = (
     return false;
   }
   const name = arg.kind === "Identifier" ? arg.name : arg.operator;
-  const argParams = findBinding(name, scope, unit)?.params ?? [];
+  const binding = findBinding(name, scope, unit);
+  const argParams = binding?.kind === "Theorem" ? [] : (binding?.params ?? []);
   const argArity = getSymbolArity(arg, name, scope, unit, true);
   if (arg.kind === "Identifier" && argArity !== undefined && argArity !== expected) {
     report(
@@ -1551,11 +1630,54 @@ const reportApplyArity = (
   arity: number,
   scope: LocalName | undefined,
   unit: Unit,
-) =>
+) => {
+  const instances = getInstances(operator.split("!"), scope, unit);
+  matchInstanceArguments(
+    getNameSelectors(operator, expression.args, expression.argumentCounts),
+    expression.selectorRanges,
+    instances,
+    scope,
+    unit,
+  );
   unit.errors.push({
     location: formatRange(expression.argumentsRange ?? getSpelledNameRange(expression, operator)),
-    message: `The operator ${resolveSynonym(operator)} requires ${arity - (getInstances(operator.split("!"), scope, unit).findLast((instance) => instance !== undefined)?.arity ?? 0)} arguments.`,
+    message: `The operator ${resolveSynonym(operator)} requires ${arity - (instances.findLast((instance) => instance !== undefined)?.arity ?? 0)} arguments.`,
   });
+};
+
+const matchOperatorArguments = (
+  expression: Expression & { kind: "Apply" },
+  operator: string,
+  params: number[],
+  scope: LocalName | undefined,
+  unit: Unit,
+) => {
+  const prefixMatches = matchInstanceArguments(
+    getNameSelectors(operator, expression.args, expression.argumentCounts),
+    expression.selectorRanges,
+    getInstances(operator.split("!"), scope, unit),
+    scope,
+    unit,
+  );
+  const operatorRange =
+    expression.selectorRanges?.at(-1) ?? getSpelledNameRange(expression, operator);
+  return [
+    ...prefixMatches,
+    ...expression.args
+      .slice(prefixMatches.length, params.length)
+      .map((arg, index) =>
+        matchArgument(
+          arg,
+          params[prefixMatches.length + index],
+          prefixMatches.length + index,
+          operator,
+          operatorRange,
+          scope,
+          unit,
+        ),
+      ),
+  ];
+};
 
 const resolveApply = (
   expression: Expression & { kind: "Apply" },
@@ -1575,26 +1697,31 @@ const resolveApply = (
     return;
   }
   const params =
-    callee && (callee.kind === "Definition" ? callee.params : expression.args.map(() => 0));
+    callee &&
+    (callee.kind === "Definition" || callee.kind === "Theorem"
+      ? callee.params
+      : expression.args.map(() => 0));
   if (params === undefined) {
     expression.args.forEach((arg) => resolveArgument(arg, scope, unit));
     return;
   }
-  const operatorRange =
-    expression.selectorRanges?.at(-1) ?? getSpelledNameRange(expression, operator);
-  const isSelection = operator === SELECTION_NAME;
-  const matches = expression.args.slice(0, params.length).map((arg, index) => {
-    const source = isSelection ? selectionArguments.get(arg) : undefined;
-    return matchArgument(
-      arg,
-      params[index],
-      source?.index ?? index,
-      source?.operator ?? operator,
-      source?.range ?? operatorRange,
-      scope,
-      isSelection ? { ...unit, isGenerated: false } : unit,
-    );
-  });
+  const matches =
+    operator === SELECTION_NAME
+      ? expression.args.slice(0, params.length).map((arg, index) => {
+          const source = selectionArguments.get(arg);
+          return matchArgument(
+            arg,
+            params[index],
+            source?.index ?? index,
+            source?.operator ?? operator,
+            source?.range ??
+              expression.selectorRanges?.at(-1) ??
+              getSpelledNameRange(expression, operator),
+            scope,
+            { ...unit, isGenerated: false },
+          );
+        })
+      : matchOperatorArguments(expression, operator, params, scope, unit);
   if (isAssumeProveTheorem(operator, scope, unit) && expression.location.range) {
     unit.errors.push({
       location: formatRange(expression.location.range),
@@ -1613,6 +1740,7 @@ const resolveApply = (
   ) {
     return;
   }
+  if (callee?.kind === "Theorem") return;
   matches.forEach((isMatched, index) => {
     if (!isMatched && expression.location.range) {
       unit.errors.push({
@@ -1634,19 +1762,18 @@ const matchApplications = (
   unit: Unit,
 ) =>
   applications.forEach((application) =>
-    application.args
-      .slice(0, application.params.length)
-      .forEach((arg, index) =>
-        matchArgument(
-          arg,
-          application.params[index],
-          index,
-          application.operator,
-          application.range,
-          scope,
-          unit,
-        ),
-      ),
+    application.args.slice(0, application.params.length).forEach((arg, index) => {
+      const source = selectionArguments.get(arg);
+      matchArgument(
+        arg,
+        application.params[index],
+        source?.index ?? index,
+        source?.operator ?? application.operator,
+        source?.range ?? application.range,
+        scope,
+        unit,
+      );
+    }),
   );
 
 const isSelectionReported = (expression: Expression, scope: LocalName | undefined, unit: Unit) => {
@@ -2035,6 +2162,13 @@ const isSubexpressionReported = (
       "Instance";
   const lastRange = expression.selectorRanges?.[nameCount - 1];
   if (isInstance && symbolIndex === -1 && range && lastRange) {
+    matchInstanceArguments(
+      expression.selectors,
+      expression.selectorRanges,
+      getInstances(names, scope, unit, names.length),
+      scope,
+      unit,
+    );
     unit.errors.push({
       location: formatRange({ module: range.module, start: range.start, end: lastRange.end }),
       message: `Unknown operator: \`${resolveSynonym(names.join("!"))}'.`,
@@ -2060,6 +2194,13 @@ const isSubexpressionReported = (
     const binding = lookupLocal(scope, head.name) ?? findSymbol(head.name, unit);
     const isUnknown = binding === undefined && !isFact(head.name, unit);
     if (expression.selectors[1].kind !== "Name" && (isUnknown || binding?.kind === "Instance")) {
+      matchInstanceArguments(
+        expression.selectors,
+        expression.selectorRanges,
+        getInstances([head.name], scope, unit, 1),
+        scope,
+        unit,
+      );
       unit.errors.push({
         location: formatRange(range),
         message: `Unknown operator: \`${resolveSynonym(head.name)}'.`,
@@ -2142,6 +2283,9 @@ const checkFact = (fact: Fact, reference: Fact, scope: LocalName | undefined, un
   if (fact.kind === "Apply" && theorem?.kind === "Theorem" && theorem.arity !== fact.args.length) {
     reportApplyArity(fact, name, theorem.arity, scope, unit);
     return BUILTIN_LOCATION;
+  }
+  if (fact.kind === "Apply" && theorem?.kind === "Theorem" && theorem.params) {
+    matchOperatorArguments(fact, name, theorem.params, scope, unit);
   }
   const instance = lookupLocal(scope, name) ?? getModuleBinding(name, unit, undefined);
   if (fact.kind === "Identifier" && instance?.kind === "Instance" && instance.arity !== 0) {
@@ -2800,6 +2944,10 @@ const checkSubstitutions = (
     }
     const parenthesized = parenthesizedRanges.get(expression);
     const reference = parenthesized ? undefined : selections.get(expression);
+    if (!parenthesized && isSelectorArgumentReported(reference ?? expression, unit)) {
+      reportArity(declaration, BUILTIN_LOCATION);
+      return;
+    }
     if (reference) {
       const arity = expression.kind === "Lambda" ? expression.params.length : 0;
       const failed = findNullError(nullSelections.get(expression));

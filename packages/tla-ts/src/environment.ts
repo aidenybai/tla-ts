@@ -41,6 +41,7 @@ import {
   type StartupSubstitute,
 } from "./evaluate";
 import {
+  createInstanceArguments,
   createInstantiation,
   createLocalAlias,
   createLocalArguments,
@@ -332,6 +333,8 @@ export const createEnvironment = (
   const subexpressionRecords: SubexpressionRecords = {
     selectedDefinitions: new WeakMap(),
     instanceReferences: new WeakMap(),
+    instanceArguments: new WeakSet(),
+    instanceOperators: new WeakSet(),
   };
   const instanceParams = new Set<OperatorParam>();
   const substitutedNames = new Set(
@@ -882,6 +885,8 @@ export const createEnvironment = (
       ),
       enabledSubstitutions,
       boundSubstitutions,
+      instanceArguments: subexpressionRecords.instanceArguments,
+      instanceOperators: subexpressionRecords.instanceOperators,
       getDefinition: getLinkedDefinition,
       getOuterDefinition: (key) =>
         module.definitions.find((definition) => unit.getKey(definition) === key),
@@ -946,7 +951,10 @@ export const createEnvironment = (
         instance.name === undefined
           ? instantiation.getKey(key)
           : params.length > 0 && builtins.has(key) && !definitions.has(key)
-            ? addOwnArgumentsAlias(symbol, name, params, module.name, instance.location)
+            ? addOwnArgumentsAlias(symbol, name, params, module.name, instance.location, {
+                ...substitutes,
+                module: instance.module,
+              })
             : instantiation.getQualifiedKey(key);
       setInstanceNames(copy, name);
       if (
@@ -1064,13 +1072,18 @@ export const createEnvironment = (
     params: OperatorParam[],
     instancer: string,
     location: SourceLocation,
+    copy?: Omit<InstanceCopy, "source">,
   ) => {
     const key = createName(`${symbol.key}${KEY_SEPARATOR}${instancer}`);
     const ownParams = createArgumentParams(symbol.arity, symbol.params);
-    definitions.set(
-      key,
-      createLocalAlias(key, symbol.key, [...params, ...ownParams], ownParams, location),
-    );
+    const alias = createLocalAlias(key, symbol.key, [...params, ...ownParams], ownParams, location);
+    definitions.set(key, alias);
+    if (copy) {
+      instanceCopies.set(alias, {
+        ...copy,
+        source: createLocalAlias(key, symbol.key, ownParams, ownParams, location),
+      });
+    }
     builtinAliases.set(key, symbol.key);
     instanceNames.set(key, name);
     return key;
@@ -1165,7 +1178,11 @@ export const createEnvironment = (
         : {
             kind: "Apply",
             operator: `${declaration.name}${suffix}`,
-            args: createLocalArguments(instance.params, location),
+            args: createInstanceArguments(
+              instance.params,
+              location,
+              subexpressionRecords.instanceArguments,
+            ),
             location,
             resolution: LOCAL_RESOLUTION,
           };
@@ -1191,6 +1208,8 @@ export const createEnvironment = (
       substitutedVariables: new Set(linked.variables),
       enabledSubstitutions,
       boundSubstitutions,
+      instanceArguments: subexpressionRecords.instanceArguments,
+      instanceOperators: subexpressionRecords.instanceOperators,
       getDefinition: getLinkedDefinition,
       getOuterDefinition: () => undefined,
       isSubstitutedConstant: () => false,
@@ -1247,6 +1266,13 @@ export const createEnvironment = (
           };
         }
         const ownParams = createArgumentParams(entry[1].arity, entry[1].params);
+        if (builtins.has(key)) {
+          localCopies.set(name, {
+            ...substitutes,
+            module: instance.module,
+            source: createLocalAlias(name, key, ownParams, ownParams, location),
+          });
+        }
         return createStandardAlias(
           name,
           key,
@@ -1539,7 +1565,7 @@ export const createEnvironment = (
         const symbol = visible.get(name);
         const definition =
           symbol && !builtinAliases.has(symbol.key) ? getLinkedDefinition(symbol.key) : undefined;
-        if (!definition) return scope.getDefinition(name);
+        if (!definition) return scope.getDefinition(name) ?? getLinkedDefinition(name);
         const named = { ...definition, name };
         const copy = instanceCopies.get(definition);
         if (copy) instanceCopies.set(named, copy);
@@ -1751,6 +1777,7 @@ export const createEnvironment = (
       const symbol: ModuleSymbol = {
         key,
         arity: 0,
+        params: [],
         kind: "Theorem",
         range: theorem.location.range,
         goal: theorem.goal,

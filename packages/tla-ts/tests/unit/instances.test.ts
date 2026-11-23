@@ -1177,9 +1177,19 @@ const INNER_MODULES: Record<string, string> = {
   RecursedApplies: "CONSTANT Op(_)\nRECURSIVE R(_)\nR(n) == Op(n)\nD == R(1)",
   Between:
     "CONSTANT Op(_)\nRECURSIVE R(_)\nG(n) == R(1)\nR(m) == G(m)\nD == G(Op(1))\nTHEOREM T == G(Op(1)) = 0",
+  BetweenAssumed:
+    "CONSTANT Op(_)\nRECURSIVE R(_)\nG(n) == R(1)\nR(m) == G(m)\nTHEOREM T == ASSUME TRUE PROVE G(Op(1)) = 0",
   Proved: "CONSTANT c\nVARIABLE w\nTHEOREM T == ENABLED (w' = c)",
   Stepped: "CONSTANT c\nVARIABLE w\nTHEOREM T == w' = c",
   Reset: "VARIABLE w\nTHEOREM T == w' = 0",
+  ResetGoal: "VARIABLE w\nTHEOREM T == ASSUME TRUE PROVE w' = 0",
+  ResetHypothesis: "VARIABLE w\nTHEOREM T == ASSUME w' = 0 PROVE TRUE",
+  ResetNested: "VARIABLE w\nTHEOREM T == ASSUME ASSUME w' = 0 PROVE TRUE PROVE TRUE",
+  ResetNew: "VARIABLE w\nTHEOREM T == ASSUME NEW b \\in {w'} PROVE TRUE",
+  Renewed: "VARIABLE w\nTHEOREM T == ASSUME NEW a PROVE a' = w",
+  Ignored: "CONSTANT c, Op(_)\nX == c",
+  Wrapper: "P(G(_)) == INSTANCE Pure WITH c <- 1, Op <- G",
+  Holder: "CONSTANT Op(_)\nN == INSTANCE Pure WITH c <- 1, Op <- Op",
   Outer:
     "EXTENDS Naturals\nCONSTANT c\nN == INSTANCE Twice WITH c <- c, Op <- LAMBDA a, b : a + b\nUse == N!Use",
   Functions:
@@ -1350,7 +1360,15 @@ describe("substitution levels match SANY", () => {
     "RECURSIVE R(_)\nR(n) == 0\nG(n) == R(n)\nH(K(_)) == G(K(1))\nF(a) == H(LAMBDA b : a')\nI == INSTANCE Pure WITH c <- 1, Op <- F",
     "P(a) == INSTANCE Recursed WITH Op <- LAMBDA b : a'\nI == INSTANCE Pure WITH c <- 1, Op <- P!D",
     "I(a) == INSTANCE Stepped WITH c <- a, w <- x\nF(a) == I(a)!T\nJ == INSTANCE Pure WITH c <- 1, Op <- F\nK == INSTANCE Pure WITH c <- 1, Op <- I!T",
-    "P(G(_)) == INSTANCE Pure WITH c <- 1, Op <- G\nF(a) == a'\nUse == P(F)!Use",
+    "I(a) == INSTANCE Renewed WITH w <- a\nF(a) == I(a)!T\nJ == INSTANCE Pure WITH c <- 1, Op <- F\nK == INSTANCE Pure WITH c <- 1, Op <- I!T",
+    "B(a) == INSTANCE BetweenAssumed WITH Op <- LAMBDA b : a\nF(a) == B(a)!T\nI == INSTANCE Pure WITH c <- 1, Op <- F",
+    "P(G(_)) == INSTANCE Pure WITH c <- 1, Op <- G\nF(a) == x' + a\nUse == P(F)!Use",
+    "P(G(_)) == INSTANCE Pure WITH c <- 1, Op <- LAMBDA b : G(1) + b\nF(a) == a'\nUse == P(F)!Use",
+    "P(G(_)) == INSTANCE Pure WITH c <- 1, Op <- G\nF(a) == a'\nR(H(_)) == P(LAMBDA b : H(1) + b)!Use\nUse == R(F)",
+    "P(G(_, _)) == INSTANCE Pure WITH c <- 1, Op <- LAMBDA b : G(b, 1)\nF(u, v) == u + v'\nUse == P(F)!Use",
+    "P(G(_)) == INSTANCE Pure WITH c <- 1, Op <- G\nF(a) == {a}\nUse == P(F)!Nat",
+    "P(G(_)) == INSTANCE Pure WITH c <- 1, Op <- G\nF(a) == {a}\nUse == P(F)!+(1, 2)",
+    "F(a) == {a}\nUse == LET P(G(_)) == INSTANCE Pure WITH c <- 1, Op <- G IN P(F)!Nat",
     "I == INSTANCE Passed WITH c <- x', Op <- LAMBDA a : a + 1",
     "I == INSTANCE Handed WITH Op <- LAMBDA a : a = 1, v <- x",
   ])("accepts %s", async (body) => {
@@ -1449,6 +1467,7 @@ describe("Leibniz checks where tla-ts deviates from SANY", () => {
     "RECURSIVE R(_)\nG(n) == R(1)\nR(m) == G(m)\nL(K(_)) == INSTANCE Lifted WITH Op <- LAMBDA y : G(K(y))\nF(a) == L(LAMBDA b : a')!D\nI == INSTANCE Pure WITH c <- 1, Op <- F",
     "B(a) == INSTANCE Between WITH Op <- LAMBDA b : a'\nF(a) == B(a)!T\nI == INSTANCE Pure WITH c <- 1, Op <- F",
     "B(a) == INSTANCE Between WITH Op <- LAMBDA b : a'\nI == INSTANCE Pure WITH c <- 1, Op <- B!D",
+    "B(a) == INSTANCE BetweenAssumed WITH Op <- LAMBDA b : a'\nF(a) == B(a)!T\nI == INSTANCE Pure WITH c <- 1, Op <- F",
   ])(
     "rejects %s, where tla-ts cannot show a recursive operator ignores the operator argument",
     async (body) => {
@@ -1466,6 +1485,60 @@ describe("Leibniz checks where tla-ts deviates from SANY", () => {
   ])("reports %s as SANY reports it with the THEOREM made a definition", async (body) => {
     await expect(checkSubstitution(body)).rejects.toThrow(
       getMessagePattern([getLeibnizError("Pure")]),
+    );
+  });
+
+  it.each([
+    "I(a) == INSTANCE ResetGoal WITH w <- a\nF(a) == I(a)!T\nJ == INSTANCE Pure WITH c <- 1, Op <- F",
+    "I(a) == INSTANCE ResetGoal WITH w <- a\nJ == INSTANCE Pure WITH c <- 1, Op <- I!T",
+    "I(a) == INSTANCE ResetHypothesis WITH w <- a\nF(a) == I(a)!T\nJ == INSTANCE Pure WITH c <- 1, Op <- F",
+    "I(a) == INSTANCE ResetNested WITH w <- a\nF(a) == I(a)!T\nJ == INSTANCE Pure WITH c <- 1, Op <- F",
+    "I(a) == INSTANCE ResetNew WITH w <- a\nF(a) == I(a)!T\nJ == INSTANCE Pure WITH c <- 1, Op <- F",
+  ])(
+    "reports %s as SANY reports it with the ASSUME/PROVE theorem made a definition of its formula",
+    async (body) => {
+      await expect(checkSubstitution(body)).rejects.toThrow(
+        getMessagePattern([getLeibnizError("Pure")]),
+      );
+    },
+  );
+
+  it.each([
+    ["P(G(_)) == INSTANCE Pure WITH c <- 1, Op <- G\nF(a) == a'\nUse == P(F)!Use", "Pure"],
+    [
+      "P(G(_)) == INSTANCE Pure WITH c <- 1, Op <- G\nF(a) == a'\nR(H(_)) == P(H)!Use\nUse == R(F)",
+      "Pure",
+    ],
+    ["P(G(_)) == INSTANCE Pure WITH c <- 1, Op <- G\nUse == P(LAMBDA b : b')!Use", "Pure"],
+    [
+      "P(G(_)) == INSTANCE Pure WITH c <- 1, Op <- G\nF(a) == a'\nR(H(_)) == P(LAMBDA b : H(b))!Use\nUse == R(F)",
+      "Pure",
+    ],
+    [
+      "P(G(_)) == INSTANCE Pure WITH c <- 1, Op <- LAMBDA b : G(b) + 1\nF(a) == a'\nUse == P(F)!Use",
+      "Pure",
+    ],
+    [
+      "P(G(_)) == INSTANCE Pure WITH c <- 1, Op <- G\nF(a) == a'\nR(H(_)) == LET L(y) == P(H)!Use IN 1\nUse == R(F)",
+      "Pure",
+    ],
+    [
+      "P(G(_)) == INSTANCE Pure WITH c <- 1, Op <- G\nF(a) == a'\nR(H(_)) == lab :: P(H)!Use\nUse == R(F)",
+      "Pure",
+    ],
+    ["P(G(_)) == INSTANCE Ignored WITH c <- 1, Op <- G\nF(a) == a'\nUse == P(F)!X", "Ignored"],
+    [
+      "P(G(_, _)) == INSTANCE Twice WITH c <- 1, Op <- G\nF(a, b) == a + b'\nUse == P(F)!Use",
+      "Twice",
+    ],
+    ["W == INSTANCE Wrapper\nF(a) == a'\nUse == W!P(F)!Use", "Pure"],
+    ["R(H(_)) == INSTANCE Holder WITH Op <- H\nF(a) == a'\nUse == R(F)!N!Use", "Holder"],
+    ["P(G(_)) == INSTANCE Pure WITH c <- 1, Op <- G\nF(a) == a'\nUse == P(F)!Nat", "Pure"],
+    ["P(G(_)) == INSTANCE Pure WITH c <- 1, Op <- G\nF(a) == a'\nUse == P(F)!+(1, 2)", "Pure"],
+    ["F(a) == a'\nUse == LET P(G(_)) == INSTANCE Pure WITH c <- 1, Op <- G IN P(F)!Nat", "Pure"],
+  ])("reports %s as SANY reports it with the instance inlined", async (body, module) => {
+    await expect(checkSubstitution(body)).rejects.toThrow(
+      getMessagePattern([getLeibnizError(module)]),
     );
   });
 

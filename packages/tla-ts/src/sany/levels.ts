@@ -20,6 +20,7 @@ import {
   type OpDeclNode,
   type OpDefNode,
   type ProofNode,
+  type RequiredLeibnizArg,
   type SanyLocation,
   type SanyMessage,
   type SemanticNode,
@@ -109,10 +110,22 @@ const putArgLevelConstraints = (
   });
 };
 
+const addRequiredLeibnizArgs = (node: LevelFields, args: Iterable<RequiredLeibnizArg>) => {
+  let required: Map<string, RequiredLeibnizArg> | undefined;
+  for (const arg of args) {
+    const key = getArgLevelConstraintKey(arg.param, arg.position);
+    if ((required ?? node.requiredLeibnizArgs).has(key)) continue;
+    required ??= new Map(node.requiredLeibnizArgs);
+    required.set(key, arg);
+  }
+  if (required) node.requiredLeibnizArgs = required;
+};
+
 const shareLevels = (node: LevelFields, source: LevelFields) => {
   node.levelParams = source.levelParams;
   node.allParams = source.allParams;
   node.appliedParams = source.appliedParams;
+  node.requiredLeibnizArgs = source.requiredLeibnizArgs;
   node.levelConstraints = source.levelConstraints;
   node.argLevelConstraints = source.argLevelConstraints;
   node.argLevelParams = source.argLevelParams;
@@ -272,6 +285,27 @@ const addSubstitutedNonLeibnizParams = (node: LevelFields, body: LevelFields, su
   addAll(node.nonLeibnizParams, subst.expr.allParams);
 };
 
+// Deviation from SANY: InstanceNode checks only a defined operator for Leibniz, so SANY accepts P(F)!Use for P(G(_)) == INSTANCE Pure WITH Op <- G.
+const getSubstitutedLeibnizArgs = (module: ModuleNode, subst: Subst): RequiredLeibnizArg[] => {
+  if (subst.op.arity <= 0 || subst.expr.kind !== "OpArg") return [];
+  const operator = subst.expr.op;
+  const origin = { module: module.name, constant: subst.op.name };
+  if (isParam(operator)) {
+    return Array.from({ length: operator.arity }, (_value, position) => ({
+      ...origin,
+      param: operator,
+      position,
+    }));
+  }
+  if (!isAnyDef(operator)) return [];
+  const params: SymbolNode[] = operator.params ?? [];
+  return [...operator.argLevelParams.values()].flatMap((argLevelParam) =>
+    params.includes(argLevelParam.param) && isParam(argLevelParam.op)
+      ? [{ ...origin, param: argLevelParam.op, position: argLevelParam.index }]
+      : [],
+  );
+};
+
 const getSubstitutedParams = (param: SymbolNode, substs: Subst[], isAll: boolean) => {
   const substitute = getSubstitute(param, substs);
   if (substitute === undefined) return new Set([param]);
@@ -404,6 +438,7 @@ const checkDefinitionBody = (node: AnyDefNode, params: FormalParamNode[], body: 
     if (node.isLeibnizArg) node.isLeibnizArg[index] = false;
     node.isLeibniz = false;
   });
+  addRequiredLeibnizArgs(node, body.requiredLeibnizArgs.values());
   node.levelConstraints = new Map(body.levelConstraints);
   params.forEach((param) => node.levelConstraints.delete(param));
   node.argLevelConstraints = new Map(body.argLevelConstraints);
@@ -628,6 +663,45 @@ const constrainArguments = (
   });
 };
 
+const requireLeibnizArgs = (node: OpApplNode, operator: AnyDefNode, check: LevelCheck) => {
+  const params: SymbolNode[] = operator.params ?? [];
+  operator.requiredLeibnizArgs.forEach((required) => {
+    const index = params.indexOf(required.param);
+    if (index === -1) {
+      addRequiredLeibnizArgs(node, [required]);
+      return;
+    }
+    const operand = node.operands[index];
+    if (operand?.kind !== "OpArg") return;
+    const argument = operand.op;
+    if (isParam(argument)) {
+      addRequiredLeibnizArgs(node, [{ ...required, param: argument }]);
+      return;
+    }
+    if (!isAnyDef(argument)) return;
+    // Deviation from SANY: OpApplNode never checks an operator argument that an INSTANCE substitutes for a constant, so SANY accepts P(F)!Use for F(a) == a'.
+    if (!isLeibnizArgument(argument, required.position)) {
+      addError(
+        check,
+        node.location,
+        `Error in instantiating module '${required.module}':\n A non-Leibniz operator substituted for '${required.constant}'.`,
+      );
+      return;
+    }
+    const param = argument.params?.[required.position];
+    argument.argLevelParams.forEach((argLevelParam) => {
+      if (argLevelParam.param !== param || !isParam(argLevelParam.op)) return;
+      addRequiredLeibnizArgs(node, [
+        { ...required, param: argLevelParam.op, position: argLevelParam.index },
+      ]);
+    });
+  });
+  node.operands.forEach((operand) => {
+    if (operand) addRequiredLeibnizArgs(node, operand.requiredLeibnizArgs.values());
+  });
+  node.ranges.forEach((range) => addRequiredLeibnizArgs(node, range.requiredLeibnizArgs.values()));
+};
+
 const LOGICAL_OPERATOR_NAMES = new Map([
   ["\\land", "\\land"],
   ["\\lor", "\\lor"],
@@ -737,6 +811,7 @@ const checkApplication = (node: OpApplNode, iteration: number, check: LevelCheck
       node.nonLeibnizParams.delete(symbol);
     });
     constrainArguments(node, operator, boundSymbols, iteration, check);
+    requireLeibnizArgs(node, operator, check);
   } else {
     checkLevel(operator, iteration, check);
     node.level = operands.reduce(
@@ -749,6 +824,7 @@ const checkApplication = (node: OpApplNode, iteration: number, check: LevelCheck
       addAll(node.levelParams, operand.levelParams);
       addAll(node.allParams, operand.allParams);
       addAll(node.nonLeibnizParams, operand.nonLeibnizParams);
+      addRequiredLeibnizArgs(node, operand.requiredLeibnizArgs.values());
       putLevelConstraints(node.levelConstraints, operand.levelConstraints);
       putArgLevelConstraint(node.argLevelConstraints, operator, index, operand.level);
       putArgLevelConstraints(node.argLevelConstraints, operand.argLevelConstraints);
@@ -1106,6 +1182,16 @@ const checkLevel = (node: SemanticNode, iteration: number, check: LevelCheck): b
       node.appliedParams = node.body.appliedParams;
       // Deviation from SANY: tla-ts keeps a LET body's nonLeibnizParams, which LetInNode#levelCheck drops, so SANY accepts F(a) == LET L == 1 IN ENABLED (x' = a) for an operator constant.
       node.nonLeibnizParams = new Set(node.body.nonLeibnizParams);
+      addRequiredLeibnizArgs(node, node.body.requiredLeibnizArgs.values());
+      definitions.forEach((definition) => {
+        const params: SymbolNode[] = definition.params ?? [];
+        addRequiredLeibnizArgs(
+          node,
+          [...definition.requiredLeibnizArgs.values()].filter(
+            (required) => !params.includes(required.param),
+          ),
+        );
+      });
       putLevelConstraints(node.levelConstraints, node.body.levelConstraints);
       definitions.forEach((definition) =>
         putLevelConstraints(node.levelConstraints, definition.levelConstraints),
@@ -1196,6 +1282,16 @@ const checkLevel = (node: SemanticNode, iteration: number, check: LevelCheck): b
           addSubstitutedNonLeibnizParams(node, body, subst);
         });
       }
+      addRequiredLeibnizArgs(
+        node,
+        [...body.requiredLeibnizArgs.values()].filter(
+          (required) => getSubstitute(required.param, node.substs) === undefined,
+        ),
+      );
+      node.substs.forEach((subst) => {
+        addRequiredLeibnizArgs(node, subst.expr.requiredLeibnizArgs.values());
+        addRequiredLeibnizArgs(node, getSubstitutedLeibnizArgs(node.instantiatedModule, subst));
+      });
       const isConstant = isConstantModule(node.instantiatedModule, check);
       node.levelConstraints = getSubstitutedLevelConstraints(
         body,
@@ -1274,6 +1370,8 @@ const checkLevel = (node: SemanticNode, iteration: number, check: LevelCheck): b
         addError(check, node.location, "Level error:\nTemporal formula used as set.");
       }
       shareLevels(node, node.set);
+      // Deviation from SANY: tla-ts keeps a NEW symbol's set's nonLeibnizParams, which NewSymbNode#levelCheck drops, so SANY accepts F(a) == I(a)!T for THEOREM T == ASSUME NEW b \in {w'} PROVE TRUE and w <- a.
+      node.nonLeibnizParams = node.set.nonLeibnizParams;
       return node.levelCorrect;
     }
     case "AssumeProve": {
@@ -1288,7 +1386,17 @@ const checkLevel = (node: SemanticNode, iteration: number, check: LevelCheck): b
         (level, assumption) => Math.max(level, assumption.level),
         node.goal.level,
       );
-      [node.goal, ...node.assumptions].forEach((part) => mergeLevels(node, part));
+      const parts = [node.goal, ...node.assumptions];
+      parts.forEach((part) => {
+        mergeLevels(node, part);
+        // Deviation from SANY: tla-ts keeps an ASSUME/PROVE's nonLeibnizParams, which AssumeProveNode#levelCheck drops, so SANY accepts F(a) == I(a)!T for THEOREM T == ASSUME TRUE PROVE w' = 0 and w <- a.
+        addAll(node.nonLeibnizParams, part.nonLeibnizParams);
+      });
+      if (parts.some(hasAppliedParams)) {
+        const applied = new Set<SymbolNode>();
+        parts.forEach((part) => addAll(applied, part.appliedParams ?? part.levelParams));
+        node.appliedParams = applied;
+      }
       if (node.levelCorrect) {
         node.levelParams.forEach((param) => {
           if (param.kind === "OpDecl" && param.declKind === CONSTANT_DECL_KIND) {
