@@ -138,10 +138,10 @@ export class PsortNw {
     const last = cmp === LE || cmp === EQ || cmp === LE_FULL ? k + 1 : k;
     const carry: number[] = [];
     for (let index = 0; index < last; index++) carry.push(this.ctx.mkFalse());
-    for (const x of xs) {
+    for (let xIndex = 0; xIndex < xs.length; xIndex++) {
       for (let index = last; index-- > 0;) {
         const previous = index > 0 ? carry[index - 1] : this.ctx.mkTrue();
-        carry[index] = this.mkOr([this.mkAnd([x, previous]), carry[index]]);
+        carry[index] = this.mkOr([this.mkAnd([xs[xIndex], previous]), carry[index]]);
       }
     }
     switch (cmp) {
@@ -275,9 +275,9 @@ export class PsortNw {
 
   private mkOr(lits: number[]) {
     const ors: number[] = [];
-    for (const lit of lits) {
-      if (this.isTrue(lit)) return lit;
-      if (!this.isFalse(lit)) ors.push(lit);
+    for (let index = 0; index < lits.length; index++) {
+      if (this.isTrue(lits[index])) return lits[index];
+      if (!this.isFalse(lits[index])) ors.push(lits[index]);
     }
     switch (ors.length) {
       case 0:
@@ -305,9 +305,9 @@ export class PsortNw {
 
   private mkAnd(lits: number[]) {
     const ands: number[] = [];
-    for (const lit of lits) {
-      if (this.isFalse(lit)) return lit;
-      if (!this.isTrue(lit)) ands.push(lit);
+    for (let index = 0; index < lits.length; index++) {
+      if (this.isFalse(lits[index])) return lits[index];
+      if (!this.isTrue(lits[index])) ands.push(lits[index]);
     }
     switch (ands.length) {
       case 0:
@@ -460,7 +460,9 @@ export class PsortNw {
 
   private dualize(k: number, xs: number[]) {
     if (2 * k <= xs.length) return undefined;
-    return xs.map((innerX) => this.mkNot(innerX));
+    const dual = new Array<number>(xs.length);
+    for (let index = 0; index < xs.length; index++) dual[index] = this.mkNot(xs[index]);
+    return dual;
   }
 
   private mkMax(first: number, second: number) {
@@ -474,7 +476,7 @@ export class PsortNw {
   }
 
   private addClause(lits: number[]) {
-    for (const lit of lits) if (this.isTrue(lit)) return;
+    for (let index = 0; index < lits.length; index++) if (this.isTrue(lits[index])) return;
     this.ctx.mkClause(lits);
   }
 
