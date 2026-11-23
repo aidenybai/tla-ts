@@ -2659,7 +2659,6 @@ const compileExcept = (
   return (context) => {
     let current = evaluateFunction(context);
     for (const item of updates) {
-      // TLC's Tool evaluates every key of the path before it applies the function to any of them.
       const keys = new Array<Value>(item.path.length);
       for (let index = 0; index < keys.length; index++) {
         keys[index] = getKey(item.path[index], context);

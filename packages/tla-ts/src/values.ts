@@ -3935,7 +3935,7 @@ const hasReplacedKey = (copy: LazyFunctionCopy, argument: Value) => {
   return false;
 };
 
-// FcnLambdaValue#toFcnRcd evaluates the body at every key of an EXCEPT copy, then takes its EXCEPTs from the oldest.
+// FcnLambdaValue#toFcnRcd evaluates the body at every key of an EXCEPT copy, then applies its EXCEPTs.
 const getCopiedValue = (copy: LazyFunctionCopy, key: Value, value: Value): Value => {
   const previous = isLazyFunctionCopy(copy.original)
     ? getCopiedValue(copy.original, key, value)
@@ -4272,7 +4272,6 @@ export const getDomain = (functionValue: Value): Value => {
   return set;
 };
 
-// FcnLambdaValue#apply evaluates the body again at a key whose EXCEPT goes deeper, then takes the rest of the path on it.
 const copyLazyFunction = (
   functionValue: LazyFunctionValue,
   path: Value[],
@@ -4343,7 +4342,6 @@ const selectPath = (value: Value, path: Value[], depth: number) => {
   return selected;
 };
 
-// Value#takeExcept sets the value at the rest of the path without applying a lazy function on it.
 const takeExcept = (value: Value, path: Value[], depth: number, newValue: Value): Value => {
   if (depth === path.length) return newValue;
   if (
