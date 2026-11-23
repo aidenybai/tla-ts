@@ -305,6 +305,21 @@ describe("check matches TLC", () => {
     },
   );
 
+  it("selects the path of an EXCEPT through a lazy function without converting a lazy new value, as TLC's Value#select does", async () => {
+    const prints: string[] = [];
+    const result = await check({
+      source: `---- MODULE M ----\nEXTENDS Integers, TLC\nVARIABLE y\nInit == y = [c |-> 0]\nNext == /\\ LET f == [t \\in {u \\in 1..2 : TRUE} |-> y] h == [i \\in {u \\in 1..2 : TRUE} |-> PrintT(i)] IN DOMAIN [f EXCEPT ![1].c = h][2] = {"c"}\n        /\\ y' = y\n====`,
+      config: "INIT Init\nNEXT Next",
+      onPrint: (text) => prints.push(text),
+    });
+    expect(prints).toEqual([]);
+    expect([result.status, result.generatedStates, result.distinctStates]).toEqual([
+      "success",
+      2,
+      1,
+    ]);
+  });
+
   it.each([
     [
       "a record at a non-string key",

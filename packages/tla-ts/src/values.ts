@@ -4314,6 +4314,35 @@ const getExceptTarget = (value: Value) => {
   return toFiniteFunction(value);
 };
 
+const selectPath = (value: Value, path: Value[], depth: number) => {
+  let selected = value;
+  for (let index = depth; index < path.length; index++) {
+    const argument = path[index];
+    if (
+      typeof selected === "object" &&
+      selected.kind === "LazyFunction" &&
+      selected.enumerated === undefined
+    ) {
+      if (!isLazyFunctionCopy(selected) || !hasReplacedKey(selected, argument)) {
+        if (
+          selected.boundTupleLengths !== undefined &&
+          getSequenceElements(argument) === undefined
+        ) {
+          throw createArgumentListError(selected, argument);
+        }
+        if (!isElementOf(argument, selected.domain)) return undefined;
+      }
+      selected = selected.apply(argument);
+      continue;
+    }
+    const finite = getExceptTarget(selected);
+    const position = findKeyIndexLikeTlc(finite, argument, describeExceptKey);
+    if (position === -1) return undefined;
+    selected = finite.range[position];
+  }
+  return selected;
+};
+
 // Value#takeExcept sets the value at the rest of the path without applying a lazy function on it.
 const takeExcept = (value: Value, path: Value[], depth: number, newValue: Value): Value => {
   if (depth === path.length) return newValue;
@@ -4341,33 +4370,18 @@ export const updateFunction = (
   getNewValue: (previous: Value) => Value,
 ): Value => {
   if (depth === path.length) return getNewValue(functionValue);
-  const argument = path[depth];
   if (
     typeof functionValue === "object" &&
     functionValue.kind === "LazyFunction" &&
     functionValue.enumerated === undefined
   ) {
-    if (!isLazyFunctionCopy(functionValue) || !hasReplacedKey(functionValue, argument)) {
-      if (
-        functionValue.boundTupleLengths !== undefined &&
-        getSequenceElements(argument) === undefined
-      ) {
-        throw createArgumentListError(functionValue, argument);
-      }
-      if (!isElementOf(argument, functionValue.domain)) return functionValue;
-    }
-    const previous = functionValue.apply(argument);
-    if (depth === path.length - 1) {
-      return copyLazyFunction(functionValue, path, depth, getNewValue(previous));
-    }
-    let newValue: Value | undefined;
-    updateFunction(previous, path, depth + 1, (selected) => (newValue = getNewValue(selected)));
-    return newValue === undefined
+    const selected = selectPath(functionValue, path, depth);
+    return selected === undefined
       ? functionValue
-      : copyLazyFunction(functionValue, path, depth, newValue);
+      : copyLazyFunction(functionValue, path, depth, getNewValue(selected));
   }
   const finite = getExceptTarget(functionValue);
-  const position = findKeyIndexLikeTlc(finite, argument, describeExceptKey);
+  const position = findKeyIndexLikeTlc(finite, path[depth], describeExceptKey);
   if (position === -1) return finite;
   return setFunctionValue(
     finite,
