@@ -1,4 +1,5 @@
 import {
+  getArgumentName,
   getChildren,
   getFunctionConstruction,
   getReferencedName,
@@ -712,7 +713,7 @@ export const getInstanceOperator = (
   resolution: typeof LOCAL_RESOLUTION | undefined,
   marks: Pick<Instantiation, "instanceArguments" | "instanceOperators">,
 ): Expression & { kind: "Lambda" } => {
-  const names = Array.from({ length: arity }, (_value, index) => `argument${index}`);
+  const names = Array.from({ length: arity }, (_value, index) => getArgumentName(index));
   const operator: Expression & { kind: "Lambda" } = {
     kind: "Lambda",
     params: names,

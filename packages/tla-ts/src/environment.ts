@@ -1,4 +1,5 @@
 import {
+  getArgumentName,
   getChildren,
   getDefinitionExpressions,
   type AssumeProve,
@@ -1063,7 +1064,7 @@ export const createEnvironment = (
 
   const createArgumentParams = (arity: number, params: number[] | undefined) =>
     Array.from({ length: arity }, (_value, index) => ({
-      name: `argument${index}`,
+      name: getArgumentName(index),
       arity: params?.[index] ?? 0,
     }));
 

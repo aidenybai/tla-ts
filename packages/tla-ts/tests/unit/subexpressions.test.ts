@@ -46,6 +46,17 @@ describe("subexpression references match TLC", () => {
     expect(result.violation?.trace.map((step) => step.state)).toEqual([{ x: 0 }, { x: 12 }]);
   });
 
+  it("selects a LET operator named like a generated argument as an operator argument", async () => {
+    const prints: string[] = [];
+    const result = await check({
+      source:
+        "---- MODULE M ----\nEXTENDS Naturals, TLC\nVARIABLE x\nH(K(_)) == K(7)\nAp(K(_)) == K(5)\nE == LET argument0(a) == a + 100 IN H(argument0)\nASSUME PrintT(Ap(E!1!1))\nInit == x = 0\nNext == x' = x\n====",
+      config: "INIT Init\nNEXT Next",
+      onPrint: (text) => prints.push(text),
+    });
+    expect([result.status, prints]).toEqual(["success", ["105"]]);
+  });
+
   it("selects an operand that contains a subexpression reference", async () => {
     const result = await check({
       source:

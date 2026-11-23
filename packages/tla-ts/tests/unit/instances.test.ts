@@ -372,6 +372,21 @@ describe("INSTANCE matches TLC", () => {
     ]);
   });
 
+  it("keeps the parameters of a LET instance apart from the arguments it passes its operators", async () => {
+    const prints: string[] = [];
+    const result = await check({
+      source:
+        "---- MODULE M ----\nEXTENDS Naturals, TLC\nVARIABLE x\nF(a) == a + 1\nASSUME PrintT(LET L(argument0) == INSTANCE Pure WITH c <- argument0, Op <- F\n                  L2(argument1, argument0) == INSTANCE Pure WITH c <- argument0 + argument1, Op <- F\n                  L3(argument0) == INSTANCE Pure WITH c <- argument0, Op <- LAMBDA a : a + argument0\n              IN <<L(3)!E9d, L(3)!E74, L2(3, 10)!E9d, L3(3)!E75>>)\nInit == x = 0\nNext == x' = x\n====",
+      config: "INIT Init\nNEXT Next",
+      loadModule: (name) =>
+        name === "Pure"
+          ? "---- MODULE Pure ----\nEXTENDS Naturals\nCONSTANT c, Op(_)\nE2c(z) == z + c\nH5(K(_)) == K(1)\nE9d == H5(E2c)\nE74 == LET argument0 == 10 IN H5(E2c) + argument0\nE75 == H5(Op)\n===="
+          : undefined,
+      onPrint: (text) => prints.push(text),
+    });
+    expect([result.status, prints]).toEqual(["success", ["<<4, 14, 14, 4>>"]]);
+  });
+
   it("applies recursive definitions of an instance inside LET without substitutions", async () => {
     const inner =
       "---- MODULE Inner ----\nEXTENDS Naturals\nr[n \\in 0..5] == IF n = 0 THEN 0 ELSE r[n - 1] + 2\nRECURSIVE R(_)\nR(n) == IF n = 0 THEN 0 ELSE R(n - 1) + 3\n====";

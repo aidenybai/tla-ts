@@ -691,6 +691,8 @@ export const isLocallyResolved = (expression: Expression) =>
   (expression.kind === "Identifier" || expression.kind === "Apply") &&
   expression.resolution?.kind === "Local";
 
+export const getArgumentName = (index: number) => `#${index}`;
+
 const ASSUME_PROVE_OPERATOR = "$AssumeProve";
 
 const NEW_DECLARATION = "$New";
