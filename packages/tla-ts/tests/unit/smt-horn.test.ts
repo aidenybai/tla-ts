@@ -435,6 +435,19 @@ describe("horn tactic", () => {
     ]);
   });
 
+  it("keeps a pruned rule's body until its Horn model converter is done with it", () => {
+    expect(
+      run([
+        "(set-option :fp.engine bmc)",
+        "(set-option :fp.bmc.linear_unrolling_depth 0)",
+        "(declare-fun P ((_ BitVec 4)) Bool)",
+        "(assert (forall ((x (_ BitVec 4))) (=> (and (P x) (bvult x #x3)) (P (bvadd x #x1)))))",
+        "(check-sat-using horn)",
+        "(get-info :rlimit)",
+      ]),
+    ).toEqual(["sat", "(:rlimit 138)"]);
+  });
+
   it("answers a query command with bmc", () => {
     expect(
       run([

@@ -10,6 +10,7 @@ import {
 } from "../ast";
 import { L_FALSE, L_TRUE } from "../lbool";
 import { FuncInterp, type ProtoModel } from "../proto-model";
+import { RefVector } from "../ref-vector";
 import { VarSubst } from "../var-subst";
 import type { DatalogContext } from "./dl-context";
 import { getUsedVars, type Rule } from "./dl-rule";
@@ -41,8 +42,9 @@ export class HornSubsumeModelConverter {
       manager.incRef(body);
       return body;
     }
-    const conjs = [body];
-    const subst: number[] = [];
+    const conjs = new RefVector(manager);
+    const subst = new RefVector(manager);
+    conjs.push(body);
     args.forEach((arg, index) => {
       const variable = manager.mkVar(sorts.length + index, manager.sorts[arg]);
       if (manager.kinds[arg] !== KIND_VAR) {
@@ -50,17 +52,21 @@ export class HornSubsumeModelConverter {
         return;
       }
       const argIndex = manager.values[arg];
-      while (subst.length <= argIndex) subst.push(-1);
-      if (subst[argIndex] === -1) subst[argIndex] = variable;
-      else conjs.push(manager.mkEq(variable, subst[argIndex]));
+      if (subst.size <= argIndex) subst.resize(argIndex + 1);
+      if (subst.items[argIndex] === -1) subst.set(argIndex, variable);
+      else conjs.push(manager.mkEq(variable, subst.items[argIndex]));
     });
-    const conjunction = manager.mkApp(OP_AND, conjs, SORT_BOOL);
+    const conjunction = manager.mkApp(OP_AND, conjs.items, SORT_BOOL);
     manager.incRef(conjunction);
     const varSubst = new VarSubst(manager, false);
-    const substituted = varSubst.apply(conjunction, subst);
-    varSubst.release();
+    const substituted = varSubst.apply(conjunction, subst.items);
     manager.decRef(conjunction);
-    if (sorts.length === 0) return substituted;
+    if (sorts.length === 0) {
+      varSubst.release();
+      subst.reset();
+      conjs.reset();
+      return substituted;
+    }
     const quantified = manager.mkQuantifier({
       kind: QUANTIFIER_EXISTS,
       sorts: sorts.reverse(),
@@ -75,6 +81,9 @@ export class HornSubsumeModelConverter {
     manager.decRef(substituted);
     const result = this.context.simplify(quantified);
     manager.decRef(quantified);
+    varSubst.release();
+    subst.reset();
+    conjs.reset();
     return result;
   }
 
