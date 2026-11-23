@@ -176,9 +176,11 @@ export class DatalogContext {
   withoutBindingVariables<T>(body: () => T) {
     const saved = this.isBindingVariables;
     this.isBindingVariables = false;
-    const result = body();
-    this.isBindingVariables = saved;
-    return result;
+    try {
+      return body();
+    } finally {
+      this.isBindingVariables = saved;
+    }
   }
 
   addRule(fml: number, name?: string) {

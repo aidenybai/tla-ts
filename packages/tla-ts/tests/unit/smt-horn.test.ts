@@ -50,7 +50,7 @@ const UNINTERPRETED_RELATION = [
   "(declare-var x Int)",
 ];
 
-const getLimitedCounterQuery = (engine: string, limit: number) => [
+const getLimitedCounterQuery = (engine: string, limit: number, nextLimit = 0) => [
   `(set-option :fp.engine ${engine})`,
   "(declare-rel P (Int))",
   "(declare-rel Q (Int))",
@@ -59,7 +59,7 @@ const getLimitedCounterQuery = (engine: string, limit: number) => [
   "(rule (=> (and (P x) (< x 3)) (P (+ x 1))))",
   `(set-option :rlimit ${limit})`,
   "(query P)",
-  "(set-option :rlimit 0)",
+  `(set-option :rlimit ${nextLimit})`,
   "(rule (=> (and (P x) (> x 1)) (Q x)))",
   "(query Q)",
 ];
@@ -201,6 +201,40 @@ describe("datalog queries", () => {
       "query!0(#0) :- ",
       " P(#0).",
       "sat",
+    ]);
+  });
+
+  it("binds the declared variables again after a query canceled in a transformation", () => {
+    expect(run(getLimitedCounterQuery("bmc", 40, 20))).toEqual([
+      ...getFailedQuery("max. resource limit exceeded"),
+      ...getFailedQuery("max. resource limit exceeded"),
+      "canceled",
+      "",
+      "---------------",
+      "Original rules",
+      "; rule count: 4",
+      "; predicate count: 3",
+      "; output: query!0",
+      "<null>:",
+      "Q(#0) :- ",
+      " P(#0),",
+      " (> (:var 0) 1).",
+      "<null>:",
+      "P(#0) :- ",
+      " (= (:var 0) 0).",
+      "<null>:",
+      "P(#1) :- ",
+      " P(#0),",
+      " (= (:var 1) (+ (:var 0) 1)),",
+      " (< (:var 0) 3).",
+      "<null>:",
+      "query!0(#0) :- ",
+      " P(#0).",
+      "",
+      "---------------",
+      "Transformed rules",
+      "; rule count: 0",
+      "; predicate count: 0",
     ]);
   });
 });
