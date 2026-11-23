@@ -40,13 +40,15 @@ export class Substitution {
   }
 
   popScope() {
-    const oldSize = this.scopes.pop() as number;
+    const level = this.scopes.length - 1;
+    const oldSize = this.scopes[level];
     for (let index = oldSize; index < this.vars.length; index++)
       this.bindings.delete(this.vars[index]);
     this.vars.length = oldSize;
     const manager = this.manager;
     for (let index = oldSize; index < this.refs.length; index++) manager.decRef(this.refs[index]);
     this.refs.length = oldSize;
+    this.scopes.length = level;
     this.resetCache();
   }
 

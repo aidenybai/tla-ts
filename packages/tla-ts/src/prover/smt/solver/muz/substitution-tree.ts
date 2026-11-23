@@ -1,3 +1,4 @@
+import { SmtInvariantError } from "../../../../errors";
 import { type AstManager, KIND_APP, KIND_VAR } from "../ast";
 import type { Binding, Substitution } from "./substitution";
 
@@ -8,6 +9,16 @@ export interface StVisitor {
   visit(expr: number): boolean;
 }
 
+interface Leaf {
+  kind: "leaf";
+  expr: number;
+}
+
+interface Inner {
+  kind: "inner";
+  firstChild: Node;
+}
+
 const IN_OFFSET = 0;
 const ST_OFFSET = 1;
 const REG_OFFSET = 2;
@@ -15,10 +26,8 @@ const REG_OFFSET = 2;
 class Node {
   subst: Subst[] = [];
   nextSibling: Node | undefined;
-  firstChild: Node | undefined;
-  expr = -1;
 
-  constructor(public isLeaf: boolean) {}
+  constructor(public body: Leaf | Inner) {}
 }
 
 export class SubstitutionTree {
@@ -107,12 +116,11 @@ export class SubstitutionTree {
 
   private isSameDecl(input: number, output: number) {
     const manager = this.manager;
-    if (input === -1 || manager.kinds[input] !== KIND_APP) return false;
-    const numArgs = manager.getNumArgs(output);
     return (
+      input !== -1 &&
+      manager.kinds[input] === KIND_APP &&
       manager.decls[input] === manager.decls[output] &&
-      manager.getNumArgs(input) === numArgs &&
-      (numArgs !== 0 || input === output)
+      (manager.getNumArgs(output) !== 0 || input === output)
     );
   }
 
@@ -134,10 +142,14 @@ export class SubstitutionTree {
     return measure;
   }
 
-  private findBestChild(root: Node) {
+  private findBestChild(root: Inner) {
     let bestChild: Node | undefined;
     let maxMeasure = 0;
-    for (let child = root.firstChild; child !== undefined; child = child.nextSibling) {
+    for (
+      let child: Node | undefined = root.firstChild;
+      child !== undefined;
+      child = child.nextSibling
+    ) {
       const measure = this.getCompatibilityMeasure(child.subst);
       if (measure > maxMeasure) {
         bestChild = child;
@@ -154,9 +166,8 @@ export class SubstitutionTree {
   }
 
   private mkNodeFor(newExpr: number) {
-    const node = new Node(true);
+    const node = new Node({ kind: "leaf", expr: newExpr });
     this.linearize(node.subst);
-    node.expr = newExpr;
     this.manager.incRef(newExpr);
     return node;
   }
@@ -212,11 +223,14 @@ export class SubstitutionTree {
           return;
         }
         this.markUsedRegs(root.subst);
-        const bestChild = this.findBestChild(root);
+        const body = root.body;
+        if (body.kind === "leaf")
+          throw new SmtInvariantError("a substitution tree leaf with registers left to match");
+        const bestChild = this.findBestChild(body);
         if (bestChild === undefined) {
           const node = this.mkNodeFor(newExpr);
-          node.nextSibling = root.firstChild;
-          root.firstChild = node;
+          node.nextSibling = body.firstChild;
+          body.firstChild = node;
           this.resetRegisters(0);
           return;
         }
@@ -226,14 +240,10 @@ export class SubstitutionTree {
       this.markUsedRegs(compatible);
       root.subst = compatible;
       const node = this.mkNodeFor(newExpr);
-      const incompatibleNode = new Node(root.isLeaf);
+      const incompatibleNode = new Node(root.body);
       incompatibleNode.subst = incompatible;
-      if (root.isLeaf) {
-        incompatibleNode.expr = root.expr;
-        root.isLeaf = false;
-      } else incompatibleNode.firstChild = root.firstChild;
       incompatibleNode.nextSibling = node;
-      root.firstChild = incompatibleNode;
+      root.body = { kind: "inner", firstChild: incompatibleNode };
       this.resetRegisters(0);
       return;
     }
@@ -247,9 +257,14 @@ export class SubstitutionTree {
         manager.decRef(subst[0]);
         manager.decRef(subst[1]);
       }
-      if (node.isLeaf) manager.decRef(node.expr);
+      const body = node.body;
+      if (body.kind === "leaf") manager.decRef(body.expr);
       else
-        for (let child = node.firstChild; child !== undefined; child = child.nextSibling)
+        for (
+          let child: Node | undefined = body.firstChild;
+          child !== undefined;
+          child = child.nextSibling
+        )
           todo.push(child);
     }
   }
@@ -346,11 +361,12 @@ export class SubstitutionTree {
         if (!this.backtrack(subst)) break;
         continue;
       }
-      if (!node.isLeaf) {
-        this.bstack.push(node.firstChild as Node);
+      const body = node.body;
+      if (body.kind === "inner") {
+        this.bstack.push(body.firstChild);
         continue;
       }
-      if (subst.isAcyclic() && !visitor.visit(node.expr)) {
+      if (subst.isAcyclic() && !visitor.visit(body.expr)) {
         this.clearStack(subst);
         return false;
       }
