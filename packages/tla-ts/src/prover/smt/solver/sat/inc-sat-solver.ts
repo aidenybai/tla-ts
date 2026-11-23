@@ -430,7 +430,10 @@ export class IncSatSolver {
       else if (value === L_FALSE) model.registerConst(manager.decls[expr], manager.falseExpr);
     }
     if (this.satConverter.entries.length > 0) applyDefinitions(this.satConverter.entries, model);
-    const converted = convertModel(this.converters, euf === null ? model : euf.updateModel(model));
+    const converted = convertModel(
+      this.converters,
+      euf === null ? model : euf.updateModel(model, true),
+    );
     if (this.parameters.get("model_validate") === "true") this.validateModel(converted);
     return converted;
   }

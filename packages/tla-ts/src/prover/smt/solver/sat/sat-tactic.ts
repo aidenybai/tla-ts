@@ -67,9 +67,7 @@ export const createSatTactic =
               if (value === manager.falseExpr)
                 throw new SmtUnsupportedError("a sat model that fails validation");
             }
-          const euf = goal2sat.euf;
-          goal.model = euf?.updateModel(model) ?? model;
-          euf?.validateModel(goal.model);
+          goal.model = goal2sat.euf?.updateModel(model, true) ?? model;
         }
       } else {
         solver.popToBaseLevel();
