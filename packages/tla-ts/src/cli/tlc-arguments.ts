@@ -18,6 +18,8 @@ export interface TlcArguments {
   maxSetSize: number | undefined;
   isLazyValueExpanded: boolean;
   isViewPrinted: boolean;
+  // An extension: whether a TypeScript model's check prints its frame.
+  isFramePrinted: boolean;
   metadir: string | undefined;
   recoverDirectory: string | undefined;
   isCheckpointRequested: boolean;
@@ -199,6 +201,7 @@ const createDefaults = (): TlcArguments => ({
   maxSetSize: undefined,
   isLazyValueExpanded: true,
   isViewPrinted: false,
+  isFramePrinted: false,
   metadir: undefined,
   recoverDirectory: undefined,
   isCheckpointRequested: false,
@@ -234,6 +237,9 @@ const SWITCHES: Record<string, (parsed: TlcArguments) => void> = {
     parsed.isDeadlockChecked = false;
   },
   "-cleanup": () => {},
+  "-frame": (parsed) => {
+    parsed.isFramePrinted = true;
+  },
   "-nowarning": (parsed) => {
     parsed.isWarningEnabled = false;
   },

@@ -704,6 +704,7 @@ export const checkSpecs = async (args: string[], java: JavaProperties) => {
             ? await compileTypeScriptFile(path, parsed.maxSetSize)
             : undefined;
           compiled?.notes.forEach((note) => console.log(note));
+          if (parsed.isFramePrinted && compiled?.frame !== undefined) console.log(compiled.frame);
           return await checkSpec(
             compiled?.specPath ?? path,
             drawSeeds(parsed),
