@@ -786,9 +786,12 @@ export const createEnvironment = (
 
   // SANY adds an instanced module's definitions, then its theorems, in its symbol table's hash order.
   const getSymbolTableSymbols = (instance: Instance, symbols: Symbols) => {
-    const names = order.getInstanceDefinitions(instance.module);
+    const indexes = new Map<string, number>();
+    order.getInstanceDefinitions(instance.module).forEach((name, index) => {
+      if (!indexes.has(name)) indexes.set(name, index);
+    });
     const prefixLength = instance.name === undefined ? 0 : instance.name.length + 1;
-    const getIndex = (name: string) => names.indexOf(resolveSynonym(name.slice(prefixLength)));
+    const getIndex = (name: string) => indexes.get(resolveSynonym(name.slice(prefixLength))) ?? -1;
     return new Map([...symbols].toSorted((left, right) => getIndex(left[0]) - getIndex(right[0])));
   };
 

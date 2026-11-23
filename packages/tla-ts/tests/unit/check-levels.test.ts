@@ -580,6 +580,99 @@ describe("level checking matches SANY", () => {
     );
   });
 
+  it("rejects each non-Leibniz operator TLC's Test212 substitutes, as SANY does", async () => {
+    const modules = new Map([
+      ["test212a", "---- MODULE test212a ----\nCONSTANT Op(_) , Op2(_,_)\n===="],
+      [
+        "test212b",
+        "---- MODULE test212b ----\nVARIABLE y\nNoArg == y'\nLeibniz(a4) == <<a4, y>>\nLeibniz2(a44, a45) == <<a44, a45, y>>\nNonLeibniz(a5) == ENABLED a5\nNonLeibniz2(a6, a7) == {a6', a7}\n====",
+      ],
+    ]);
+    await expect(
+      check({
+        source:
+          "--------------------------- MODULE test212 --------------------------\n\\* Test of Leibniz checking\n\\*   Uses the fact that you can't substitute a non-Leibniz operator\n\\*   for a constant operator.\nVARIABLE x\n\nLeibniz(a2) == {a2 , x'}\nNonLeibniz2(a, b) == <<a, b'>>\nL ==  INSTANCE test212b WITH y <- x\n\nNonLeibniz(a1) == a1'\nLeibniz2(a, b) == <<a, b, x'>>\n\nI(a) == INSTANCE test212b WITH y <- a\nLL == INSTANCE test212b WITH y <- ENABLED (x'=x)\nNonL(a) ==INSTANCE test212b WITH y <- ENABLED a\n\n\\* Legal\nL1 == INSTANCE test212a WITH Op <- Leibniz, Op2 <- Leibniz2\nL2 == INSTANCE test212a WITH Op <- LAMBDA a : I(a)!Leibniz(1), \n                             Op2 <- Leibniz2\nL3 == INSTANCE test212a WITH Op <- Leibniz, Op2 <- I!Leibniz\nL4 == INSTANCE test212a WITH Op <- Leibniz, Op2 <- LL!Leibniz2\nL5 == INSTANCE test212a WITH Op <- LL!Leibniz, Op2 <- Leibniz2\n\n\\* Illegal\nI1 == INSTANCE test212a WITH Op <- Leibniz, Op2 <- NonLeibniz2\nI2 == INSTANCE test212a WITH Op <- NonLeibniz, Op2 <- Leibniz2\nI3 == INSTANCE test212a WITH Op <- NonL!NoArg, Op2 <- Leibniz2\nI4 == INSTANCE test212a WITH Op <- Leibniz, Op2 <- L!NonLeibniz2\nI5 == INSTANCE test212a WITH Op <- Leibniz, Op2 <- NonL!Leibniz\nI6 == INSTANCE test212a WITH Op <- Leibniz, Op2 <- I!NonLeibniz\n==================================================================",
+        config: "",
+        loadModule: (name) => modules.get(name),
+      }),
+    ).rejects.toThrow(
+      createSanyError(
+        [
+          ["27", "62", "Op2"],
+          ["28", "62", "Op"],
+          ["29", "62", "Op"],
+          ["30", "64", "Op2"],
+          ["31", "63", "Op2"],
+          ["32", "63", "Op2"],
+        ].map((entry) => ({
+          location: `line ${entry[0]}, col 1 to line ${entry[0]}, col ${entry[1]} of module test212`,
+          message: `Error in instantiating module 'test212a':\n A non-Leibniz operator substituted for '${entry[2]}'.`,
+        })),
+      ),
+    );
+  });
+
+  it.each([
+    [
+      "a substitute for a parameter a LET body uses",
+      "---- MODULE Inner ----\nCONSTANT c\nVARIABLE w\nD == LET L == 1 IN w\n====\n---- MODULE Other ----\nCONSTANT Op(_)\n====\nJ(q) == INSTANCE Inner WITH c <- 1, w <- ENABLED (x' = q)\nINSTANCE Other WITH Op <- J!D",
+      "line 13, col 1 to line 13, col 29",
+    ],
+    [
+      "a nested instance's copy",
+      "---- MODULE Mid ----\nVARIABLE u\n---- MODULE Inner ----\nCONSTANT c\nVARIABLE w\nD == w\n====\nL == INSTANCE Inner WITH c <- 1, w <- u\n====\n---- MODULE Other ----\nCONSTANT Op(_)\n====\nJ(q) == INSTANCE Mid WITH u <- ENABLED (x' = q)\nINSTANCE Other WITH Op <- J!L!D",
+      "line 17, col 1 to line 17, col 31",
+    ],
+    [
+      "an operator argument it passes a parameter to",
+      "H(Op(_), a) == Op(a)\nPr(a) == a'\nF(b) == H(Pr, b)\n---- MODULE Other ----\nCONSTANT Op(_)\n====\nINSTANCE Other WITH Op <- F",
+      "line 10, col 1 to line 10, col 27",
+    ],
+    [
+      "a LET under ENABLED",
+      "F(a) == ENABLED (LET L == 1 IN x' = a)\n---- MODULE Other ----\nCONSTANT Op(_)\n====\nINSTANCE Other WITH Op <- F",
+      "line 8, col 1 to line 8, col 27",
+    ],
+    [
+      "a LAMBDA in a non-Leibniz argument",
+      "H(Op(_)) == ENABLED Op(1)\nF(b) == H(LAMBDA a : x' = b /\\ a)\n---- MODULE Other ----\nCONSTANT Op(_)\n====\nINSTANCE Other WITH Op <- F",
+      "line 9, col 1 to line 9, col 27",
+    ],
+    [
+      "the parameters a recursive section shares",
+      "---- MODULE Inner ----\nCONSTANT c\nVARIABLE w\nRECURSIVE A(_), B(_)\nA(n) == IF n = 0 THEN c ELSE A(n - 1)\nB(m) == IF m = 0 THEN 0 ELSE B(m - 1)\nH == ENABLED (B(1) = w')\n====\n---- MODULE Other ----\nCONSTANT Op(_)\n====\nI(q) == INSTANCE Inner WITH c <- q, w <- x\nINSTANCE Other WITH Op <- I!H",
+      "line 16, col 1 to line 16, col 29",
+    ],
+    [
+      "a non-recursive definition in a recursive section",
+      "---- MODULE Inner ----\nCONSTANT c\nVARIABLE w\nRECURSIVE A(_)\nG == w\nA(n) == IF n = 0 THEN c ELSE A(n - 1)\nH == ENABLED (G' = w)\n====\n---- MODULE Other ----\nCONSTANT Op(_)\n====\nI(q) == INSTANCE Inner WITH c <- q, w <- x\nINSTANCE Other WITH Op <- I!H",
+      "line 16, col 1 to line 16, col 29",
+    ],
+    [
+      "a LET's recursive section",
+      "---- MODULE Other ----\nCONSTANT Op(_)\n====\nF(a) == ENABLED (LET RECURSIVE A(_), B(_)\n                     A(n) == IF n = 0 THEN a ELSE A(n - 1)\n                     B(m) == IF m = 0 THEN 0 ELSE B(m - 1)\n                 IN B(1) = x')\nINSTANCE Other WITH Op <- F",
+      "line 11, col 1 to line 11, col 27",
+    ],
+  ])(
+    "rejects a non-Leibniz operator substituted for an operator constant through %s, as SANY does",
+    async (_title, body, location) => {
+      await expect(
+        check({
+          source: `---- MODULE M ----\nEXTENDS Naturals\nVARIABLE x\n${body}\nInit == x = 0\nNext == x' = x\n====`,
+          config: "INIT Init\nNEXT Next",
+        }),
+      ).rejects.toThrow(
+        createSanyError([
+          {
+            location: `${location} of module M`,
+            message:
+              "Error in instantiating module 'Other':\n A non-Leibniz operator substituted for 'Op'.",
+          },
+        ]),
+      );
+    },
+  );
+
   it("names the builtin operator a level error applies like SANY", async () => {
     await expect(
       check({

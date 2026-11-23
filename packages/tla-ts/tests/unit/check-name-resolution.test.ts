@@ -5030,6 +5030,45 @@ describe("name resolution matches SANY", () => {
       [],
     ],
     [
+      "a step that passes an instance's theorem copy more arguments than the instance's",
+      "---- MODULE Inner ----\nCONSTANT c\nTHEOREM U == ASSUME NEW z PROVE z = c\n====\nJ(p) == INSTANCE Inner WITH c <- p\nTHEOREM TRUE\n<1>1. J(1)!U(2)!1\n  OBVIOUS\n<1> QED",
+      [
+        {
+          location: "line 8, col 13 to line 8, col 15 of module M",
+          message: "The operator J!U requires 0 arguments.",
+        },
+      ],
+      [],
+    ],
+    [
+      "HIDE facts that pass an instance the wrong number of arguments",
+      "---- MODULE Inner ----\nCONSTANT c\nTHEOREM U == ASSUME NEW z PROVE z = c\nTHEOREM V == c = c\n====\nJ(p) == INSTANCE Inner WITH c <- p\nK == INSTANCE Inner WITH c <- 1\nHIDE J!U!1\nHIDE K(1)!U!1\nHIDE J!V\nHIDE J(1, 2)!V",
+      [
+        {
+          location: "line 9, col 6 to line 9, col 10 of module M",
+          message: "The operator J requires 1 arguments.",
+        },
+        {
+          location: "In module --TLA+ BUILTINS--",
+          message:
+            "The only expression allowed as a fact in a HIDE is \nthe name of a theorem, assumption, or step.",
+        },
+        {
+          location: "line 10, col 7 to line 10, col 9 of module M",
+          message: "The operator K requires 0 arguments.",
+        },
+        {
+          location: "line 11, col 6 to line 11, col 8 of module M",
+          message: "The operator J requires 1 arguments.",
+        },
+        {
+          location: "line 12, col 7 to line 12, col 12 of module M",
+          message: "The operator J requires 1 arguments.",
+        },
+      ],
+      [],
+    ],
+    [
       "a step and a fact that select through an instance that keeps its name from a later theorem",
       "---- MODULE Inner ----\nCONSTANT c\nFoo == l :: c = 1\nTHEOREM T == c = c\n====\nG == INSTANCE Inner WITH c <- 1\nTHEOREM G == ASSUME NEW q PROVE q = q\nTHEOREM TRUE\n<1>1. G!Foo!3\n  OBVIOUS\n<1> QED\nTHEOREM TRUE\n  BY G!Foo!l!3",
       [

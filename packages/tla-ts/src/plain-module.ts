@@ -379,6 +379,8 @@ export const checkPlainModule = (
       constraints: new Map(constraints),
       argConstraints: new Map(),
       argParams: new Map(),
+      allParams: new Set(params),
+      nonLeibnizParams: new Set(),
       name: definition.name,
       formals: definition.params,
       maxLevels: formalBits.map((bit) => maxima[bit]),
