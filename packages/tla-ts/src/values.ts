@@ -2157,7 +2157,7 @@ const enumerateSet = (
       if (!isVersion174 && isEmptySet(value)) return [];
       const fields = getComponentElements(value, getElements);
       return getCartesianProduct(fields, isBounded).map((combination) =>
-        createRecord(value.names.map((name, index): [string, Value] => [name, combination[index]])),
+        createSortedRecord(value.names, combination),
       );
     }
     case "ProductSet": {
@@ -2637,7 +2637,7 @@ const getNextElement = (stream: ElementStream): Value | undefined => {
       return set.kind === "FunctionSet"
         ? createSortedFunction(stream.domain, elements)
         : set.kind === "RecordSet"
-          ? createRecord(set.names.map((name, index): [string, Value] => [name, elements[index]]))
+          ? createSortedRecord(set.names, elements)
           : createTuple(elements);
     }
     case "Concatenated":
@@ -2988,7 +2988,7 @@ const getNextChargedElement = (charges: ChargeTable, stream: ChargedStream): Val
       return set.kind === "FunctionSet"
         ? createSortedFunction(stream.domain, elements)
         : set.kind === "RecordSet"
-          ? createRecord(set.names.map((name, index): [string, Value] => [name, elements[index]]))
+          ? createSortedRecord(set.names, elements)
           : createTuple(elements);
     }
     case "ChargedUnion":

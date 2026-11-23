@@ -1837,7 +1837,7 @@ const compileBound = (
       compileBound(program, expansion.definition.body, { ...frame, scope: expansion.scope }),
     );
   }
-  // TLC enumerates a set of records with its fields sorted, the last one varying fastest.
+  // TLC enumerates a set of records with its fields in TLC's order of names, the last one varying fastest.
   if (setExpression.kind === "RecordSet") {
     const fields = [...setExpression.fields].sort((left, right) =>
       left.name < right.name ? -1 : 1,
@@ -1851,6 +1851,9 @@ const compileBound = (
       names,
       loops.map((loop) => loop.element),
     );
+    const nested = names
+      .toSorted((left, right) => compareValues(left, right))
+      .map((name) => loops[names.indexOf(name)]);
     return {
       element,
       header: (name) => {
@@ -1860,7 +1863,7 @@ const compileBound = (
         const values = resolved.shapes[shape].map((field) => loops[names.indexOf(field)].name);
         const record = resolved.shapes.length === 1 ? values : [shape, ...values];
         const once = getName(program, "o");
-        return `${loops.map((loop) => loop.header(loop.name)).join(" ")} for (let ${name} = [${record.join(", ")}], ${once} = true; ${once}; ${once} = false)`;
+        return `${nested.map((loop) => loop.header(loop.name)).join(" ")} for (let ${name} = [${record.join(", ")}], ${once} = true; ${once}; ${once} = false)`;
       },
     };
   }
@@ -2046,6 +2049,8 @@ const isStreamedFirst = (
 const rejectStreamedBound = (program: Program, set: Expression, scope: TierScope) => {
   // compileBound streams a constant set to find its duplicates.
   if (isConstantExpression(program, set, scope)) return;
+  // TLC's SubsetValue#elements normalizes the base before it enumerates subsets, so none repeats.
+  if (set.kind === "Apply" && set.operator === "SUBSET") return;
   const visited = new Set<OperatorDefinition>();
   const check = (root: Expression, inner: TierScope) => {
     if (isExpressionImpure([root], program.environment, "streamed")) unsupported();
@@ -3789,6 +3794,16 @@ const compileValue = (program: Program, expression: Expression, frame: Frame): C
           );
           return `(() => { const ${result} = []; ${headers} { ${result}.push(${code}); } return H.normalize(${getComparerCode(program, tuple)}, ${result}); })()`;
         },
+      };
+    }
+    case "RecordSet": {
+      const bound = compileBound(program, expression, frame);
+      const record = getName(program, "x");
+      const result = getName(program, "r");
+      return {
+        type: { kind: "Set", element: bound.element },
+        emit: () =>
+          `(() => { const ${result} = []; ${bound.header(record)} { ${result}.push(${record}); } return H.normalize(${getComparerCode(program, bound.element)}, ${result}); })()`,
       };
     }
     case "Tuple": {
