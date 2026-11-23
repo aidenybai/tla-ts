@@ -2656,30 +2656,18 @@ const compileExcept = (
     if (step.args.length === 1) return step.args[0](context);
     return createTuple(step.args.map((arg) => arg(context)));
   };
-  const update = (
-    current: Value,
-    path: CompiledStep[],
-    depth: number,
-    context: Context,
-    value: Evaluator,
-  ): Value => {
-    if (depth === path.length) {
-      return value(withScope(context, bindValue(context.scope, EXCEPT_AT, current)));
-    }
-    return updateFunction(
-      current,
-      getKey(path[depth], context),
-      (previous) => update(previous, path, depth + 1, context, value),
-      depth + 1 === path.length,
-    );
-  };
   return (context) => {
     let current = evaluateFunction(context);
     for (const item of updates) {
+      // eslint-disable-next-line unicorn/no-new-array
+      const keys = new Array<Value>(item.path.length);
+      for (let index = 0; index < keys.length; index++) {
+        keys[index] = getKey(item.path[index], context);
+      }
       let isFound = false;
-      current = update(current, item.path, 0, context, (inner) => {
+      current = updateFunction(current, keys, 0, (previous) => {
         isFound = true;
-        return item.value(inner);
+        return item.value(withScope(context, bindValue(context.scope, EXCEPT_AT, previous)));
       });
       if (!isFound) {
         context.environment.runtime.warn(
