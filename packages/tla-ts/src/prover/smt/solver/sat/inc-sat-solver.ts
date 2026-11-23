@@ -337,13 +337,16 @@ export class IncSatSolver {
     if (internalizedAssumptions !== L_TRUE) return internalizedAssumptions;
     this.reasonUnknown = "no reason given";
     this.isInternalizedConverted = false;
+    let isReasonSet = false;
     const result = (() => {
       try {
         return this.solver.check(this.asms);
       } catch (error) {
-        if (!(error instanceof SmtCanceledError)) throw error;
-        // check_sat_core counts a step to see whether the limit stopped the search.
-        manager.limit.inc();
+        if (!(error instanceof SmtCanceledError || error instanceof SmtDefaultError)) throw error;
+        if (manager.limit.inc()) {
+          isReasonSet = true;
+          this.reasonUnknown = `(sat.giveup ${error.message})`;
+        }
         return L_UNDEF;
       }
     })();
@@ -354,7 +357,7 @@ export class IncSatSolver {
     // Deviation from Z3: it checks the assumptions only under check-sat-assuming, so recfun's research answers sat on a model that falsifies a named assertion.
     if (result === L_TRUE && this.asms.length > 0) this.checkAssumptions();
     if (result === L_FALSE && this.asms.length > 0) this.extractCore(asm2fml);
-    if (result === L_UNDEF) this.reasonUnknown = this.solver.reasonUnknown;
+    if (result === L_UNDEF && !isReasonSet) this.reasonUnknown = this.solver.reasonUnknown;
     if (result !== L_FALSE) this.core.reset();
     return result;
   }

@@ -6165,6 +6165,25 @@ describe("smt.phase_selection, as Z3 5.3.2 picks the phase of a decision", () =>
     ]);
   });
 
+  it("gives up the sat search when mbqi's sub-solver rejects the phase selection", () => {
+    expect(
+      run([
+        "(set-option :sat.euf true)",
+        "(declare-sort U 0)",
+        "(declare-fun f (U) U)",
+        "(declare-const a U)",
+        "(assert (forall ((x U)) (= (f (f x)) x)))",
+        "(assert (not (= (f a) a)))",
+        "(check-sat)",
+        "(set-option :smt.phase_selection 9)",
+        "(push)",
+        "(check-sat)",
+        "(get-info :reason-unknown)",
+        "(check-sat)",
+      ]),
+    ).toEqual(["sat", "unknown", `(:reason-unknown "(sat.giveup ${ILLEGAL_PHASE})")`, "unknown"]);
+  });
+
   it("rejects a phase selection in check-sat-using at the end of the command", () => {
     expect(
       run([
