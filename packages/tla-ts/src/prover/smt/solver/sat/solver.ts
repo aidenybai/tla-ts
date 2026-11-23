@@ -1,4 +1,4 @@
-import { SmtSatCanceledError } from "../../../../errors";
+import { SmtSatCanceledError, SmtUnsupportedError } from "../../../../errors";
 import { L_FALSE, L_TRUE, L_UNDEF } from "../lbool";
 import { RandomGen } from "../random-gen";
 import type { ResourceLimit } from "../rlimit";
@@ -16,6 +16,7 @@ import {
   PS_ALWAYS_TRUE,
   PS_BASIC_CACHING,
   PS_FROZEN,
+  PS_LOCAL_SEARCH,
   PS_RANDOM,
   PS_SAT_CACHING,
   RS_EMA,
@@ -904,6 +905,8 @@ export class Solver {
       if (this.checkInconsistent()) return L_FALSE;
     }
     if (this.config.maxConflicts === 0) return L_UNDEF;
+    if (this.config.phase === PS_LOCAL_SEARCH && this.ext !== null)
+      throw new SmtUnsupportedError("the sat solver's local search");
     if (this.config.maxConflicts > 0 && this.config.burstSearch > 0) {
       this.restartThreshold = this.config.burstSearch;
       const result = this.boundedSearch();
@@ -1127,6 +1130,7 @@ export class Solver {
       case PS_FROZEN:
         return this.bestPhase[next];
       case PS_SAT_CACHING:
+      case PS_LOCAL_SEARCH:
         return this.searchState === S_UNSAT ? this.phase[next] : this.bestPhase[next];
       default:
         return this.rand.next() % 2 === 0;
@@ -1484,7 +1488,7 @@ export class Solver {
   }
 
   private isTwoPhase() {
-    return this.config.phase === PS_SAT_CACHING;
+    return this.config.phase === PS_SAT_CACHING || this.config.phase === PS_LOCAL_SEARCH;
   }
 
   private isSatPhase() {
@@ -1565,6 +1569,13 @@ export class Solver {
         break;
       case PS_RANDOM:
         for (let index = 0; index < size; index++) this.setPhase(index, this.rand.next() % 2 === 0);
+        break;
+      case PS_LOCAL_SEARCH:
+        if (this.searchState === S_SAT) {
+          if (this.rand.next() % 2 === 0)
+            throw new SmtUnsupportedError("the sat solver's local search");
+          for (let index = 0; index < size; index++) this.setPhase(index, this.bestPhase[index]);
+        }
         break;
     }
     this.rephaseInc += this.config.rephaseBase;

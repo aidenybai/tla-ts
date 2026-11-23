@@ -5,6 +5,7 @@ export const PS_ALWAYS_TRUE = 0;
 export const PS_ALWAYS_FALSE = 1;
 export const PS_BASIC_CACHING = 2;
 export const PS_SAT_CACHING = 3;
+export const PS_LOCAL_SEARCH = 4;
 export const PS_FROZEN = 5;
 export const PS_RANDOM = 6;
 
@@ -28,6 +29,7 @@ const PHASES = new Map([
   ["caching", PS_SAT_CACHING],
   ["random", PS_RANDOM],
   ["frozen", PS_FROZEN],
+  ["local_search", PS_LOCAL_SEARCH],
 ]);
 
 const RESTARTS = new Map([

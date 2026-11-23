@@ -131,6 +131,16 @@ describe("sat parameters", () => {
     );
   });
 
+  it("searches with the local_search phase as with caching when the solver has no extension", () => {
+    expect(run(getScript("(check-sat-using (using-params sat :phase local_search))"))).toBe(
+      getModelOutput(
+        "-x34 -x42 -x30 -x53 -x15 -x12 x36 -x19 x2 x27 -x0 -x40 -x14 -x45 x43 x32 x9 -x41 x1 -x22 " +
+          "x50 x48 -x28 x10 -x37 x47 x51 -x31 -x25 x7 x49 x8 x38 x21 -x44 x23 -x20 -x35 x24 -x17 " +
+          "-x11 -x6 x29 -x5 x18 -x46 -x52 x13 -x33 -x26 x4 -x16 x3 -x39",
+      ),
+    );
+  });
+
   it("reads a double of using-params over the global one set-option gave", () => {
     expect(
       run(
