@@ -1,3 +1,4 @@
+import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { pathToFileURL } from "node:url";
 import { spawnSync } from "node:child_process";
@@ -3975,4 +3976,47 @@ if (view !== "${expected}") throw new Error(view);
     await shallow.terminate();
     expect(thrown).toEqual({ name: undefined, message: undefined });
   }, 300_000);
+});
+
+// test262's includes that tla-ts compiles from a TypeScript port, run on ESCore in a file that Node
+// loads as a module, as test262's runner loads a test, and in Node, where the port must behave as
+// the include does.
+describe("ports test262's harness includes", () => {
+  const readPort = (name: string) =>
+    readFileSync(join(import.meta.dirname, "../conformance", name), "utf8");
+  const getNodeError = (source: string) => {
+    try {
+      runInNewContext(stripTypeScriptTypes(source));
+      return undefined;
+    } catch (error) {
+      return String(error);
+    }
+  };
+
+  describe("SpiderMonkey's Math shell", () => {
+    const port = readPort("test262-sm-math-shell.ts");
+    const near = `
+      assertNear(Math.cbrt(27), 3);
+      assertNear(-0, 0);
+      assertNear(ONE_PLUS_EPSILON, 1);
+      let isRejected = false;
+      try {
+        assertNear(1.5, 1);
+      } catch (error) {
+        isRejected = String(error).includes("expected a number near 1");
+      }
+      if (!isRejected) throw new Error("assertNear accepted 1.5 near 1");
+    `;
+
+    it("accepts a number near the expected one and rejects one far from it", async () => {
+      expect(getNodeError(port + near)).toBeUndefined();
+      expect((await checkModule(port + near)).message).toBeUndefined();
+    });
+
+    it("rejects a number two representable values away", async () => {
+      const far = "assertNear(1 + 2 * Number.EPSILON, 1);";
+      expect(getNodeError(port + far)).toContain("expected a number near 1");
+      expect((await checkModule(port + far)).message).toContain(THREW);
+    });
+  });
 });
