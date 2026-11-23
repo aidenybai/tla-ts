@@ -68,6 +68,7 @@ export class ClauseStore {
     justification: Justification | null,
     delEh: (() => void) | null,
     atoms: number[] | null,
+    hasJustification = justification !== null,
   ) {
     const numLiterals = literals.length;
     const flags =
@@ -75,7 +76,7 @@ export class ClauseStore {
       (kind << KIND_SHIFT) |
       (atoms !== null ? HAS_ATOMS : 0) |
       (delEh !== null ? HAS_DEL_EH : 0) |
-      (justification !== null ? HAS_JUSTIFICATION : 0);
+      (hasJustification ? HAS_JUSTIFICATION : 0);
     const clause = this.allocate(this.getSize(flags));
     const data = this.data;
     data[clause] = numLiterals;
@@ -85,7 +86,7 @@ export class ClauseStore {
     let extra = clause + HEADER_SIZE + numLiterals;
     if (isLemmaKind(kind)) data[extra++] = 1;
     if (delEh !== null) data[extra++] = this.mkSlot(this.delEhs, this.freeDelEhSlots, delEh);
-    if (justification !== null)
+    if (hasJustification)
       data[extra++] = this.mkSlot(this.justifications, this.freeJustificationSlots, justification);
     if (atoms !== null)
       for (let index = 0; index < numLiterals; index++)
@@ -130,6 +131,10 @@ export class ClauseStore {
 
   getNumLiterals(clause: Clause) {
     return this.data[clause];
+  }
+
+  setNumLiterals(clause: Clause, numLiterals: number) {
+    this.data[clause] = numLiterals;
   }
 
   getLiteral(clause: Clause, index: number) {
@@ -215,6 +220,10 @@ export class ClauseStore {
   getJustification(clause: Clause) {
     if ((this.data[clause + 1] & HAS_JUSTIFICATION) === 0) return null;
     return this.justifications[this.data[this.getSlotAddress(clause, HAS_JUSTIFICATION)]];
+  }
+
+  setJustification(clause: Clause, justification: Justification) {
+    this.justifications[this.data[this.getSlotAddress(clause, HAS_JUSTIFICATION)]] = justification;
   }
 
   private getAtomsAddress(clause: Clause) {
