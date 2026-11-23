@@ -1173,6 +1173,8 @@ const INNER_MODULES: Record<string, string> = {
   Labeled: "CONSTANT c\nVARIABLE w\nD == lab :: ENABLED (w' = c)",
   Lifted: "CONSTANT Op(_)\nD == Op(1)",
   LiftedUnused: "CONSTANT Op(_)\nU(K(_)) == 1\nD == U(Op)",
+  Recursed: "CONSTANT Op(_)\nRECURSIVE R(_)\nR(n) == 0\nD == R(Op(1))",
+  RecursedApplies: "CONSTANT Op(_)\nRECURSIVE R(_)\nR(n) == Op(n)\nD == R(1)",
   Proved: "CONSTANT c\nVARIABLE w\nTHEOREM T == ENABLED (w' = c)",
   Stepped: "CONSTANT c\nVARIABLE w\nTHEOREM T == w' = c",
   Reset: "VARIABLE w\nTHEOREM T == w' = 0",
@@ -1341,6 +1343,10 @@ describe("substitution levels match SANY", () => {
     "H2(J(_)) == 1\nH(K(_)) == H2(K)\nF(a) == H(LAMBDA b : a')\nI == INSTANCE Pure WITH c <- 1, Op <- F",
     "G(y) == 1\nH(K(_)) == G(K(1))\nF(a) == H(LAMBDA b : a')\nI == INSTANCE Pure WITH c <- 1, Op <- F",
     "P(a) == INSTANCE LiftedUnused WITH Op <- LAMBDA b : a'\nI == INSTANCE Pure WITH c <- 1, Op <- P!D",
+    "H(K(_)) == LET RECURSIVE R(_) R(n) == 0 IN R(K(1))\nF(a) == H(LAMBDA b : a')\nI == INSTANCE Pure WITH c <- 1, Op <- F",
+    "H(K(_)) == LET RECURSIVE A(_), R(_)\n               A(n) == IF n = 0 THEN K(1) ELSE A(n - 1)\n               R(n) == 0\n           IN R(2)\nF(a) == H(LAMBDA b : a')\nI == INSTANCE Pure WITH c <- 1, Op <- F",
+    "RECURSIVE R(_)\nR(n) == 0\nG(n) == R(n)\nH(K(_)) == G(K(1))\nF(a) == H(LAMBDA b : a')\nI == INSTANCE Pure WITH c <- 1, Op <- F",
+    "P(a) == INSTANCE Recursed WITH Op <- LAMBDA b : a'\nI == INSTANCE Pure WITH c <- 1, Op <- P!D",
     "I(a) == INSTANCE Stepped WITH c <- a, w <- x\nF(a) == I(a)!T\nJ == INSTANCE Pure WITH c <- 1, Op <- F\nK == INSTANCE Pure WITH c <- 1, Op <- I!T",
     "P(G(_)) == INSTANCE Pure WITH c <- 1, Op <- G\nF(a) == a'\nUse == P(F)!Use",
     "I == INSTANCE Passed WITH c <- x', Op <- LAMBDA a : a + 1",
@@ -1421,6 +1427,19 @@ describe("Leibniz checks where tla-ts deviates from SANY", () => {
     "G(y) == y + 1\nH(K(_)) == G(K(1))\nF(a) == H(LAMBDA b : a')\nI == INSTANCE Pure WITH c <- 1, Op <- F",
     "P(a) == INSTANCE Lifted WITH Op <- LAMBDA b : a'\nI == INSTANCE Pure WITH c <- 1, Op <- P!D",
   ])("reports %s as SANY reports it with the operator argument inlined", async (body) => {
+    await expect(checkSubstitution(body)).rejects.toThrow(
+      getMessagePattern([getLeibnizError("Pure")]),
+    );
+  });
+
+  it.each([
+    "H(K(_)) == LET RECURSIVE R(_) R(n) == K(n) IN R(1)\nF(a) == H(LAMBDA b : a')\nI == INSTANCE Pure WITH c <- 1, Op <- F",
+    "H(K(_)) == LET RECURSIVE R(_, _) R(n, k) == IF n = 0 THEN 0 ELSE R(n - 1, k) IN R(3, K(1))\nF(a) == H(LAMBDA b : a')\nI == INSTANCE Pure WITH c <- 1, Op <- F",
+    "H(K(_)) == LET RECURSIVE A(_), B(_), C(_)\n               A(n) == IF n = 0 THEN 0 ELSE B(n - 1)\n               B(n) == IF n = 0 THEN 0 ELSE C(n - 1)\n               C(n) == IF n = 0 THEN K(1) ELSE A(n - 1)\n           IN A(2)\nF(a) == H(LAMBDA b : a')\nI == INSTANCE Pure WITH c <- 1, Op <- F",
+    "H(K(_)) == LET RECURSIVE A(_), B(_)\n               A(n) == IF n = 0 THEN K(1) ELSE A(n - 1)\n               B(n) == IF n = 0 THEN 0 ELSE B(n - 1)\n           IN B(2)\nF(a) == H(LAMBDA b : a')\nI == INSTANCE Pure WITH c <- 1, Op <- F",
+    "H(K(_)) == LET RECURSIVE A(_), B(_), D(_)\n               A(n) == B(n)\n               B(n) == A(n)\n               D(n) == K(n)\n           IN A(1)\nF(a) == H(LAMBDA b : a')\nI == INSTANCE Pure WITH c <- 1, Op <- F",
+    "P(a) == INSTANCE RecursedApplies WITH Op <- LAMBDA b : a'\nI == INSTANCE Pure WITH c <- 1, Op <- P!D",
+  ])("rejects %s, where a recursive operator may apply the operator argument", async (body) => {
     await expect(checkSubstitution(body)).rejects.toThrow(
       getMessagePattern([getLeibnizError("Pure")]),
     );

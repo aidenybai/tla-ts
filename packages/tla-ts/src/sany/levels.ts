@@ -8,6 +8,7 @@ import {
   getOpDefs,
   getSymbolArity,
   getThmOrAssumpDefs,
+  NO_UNAPPLIED_PARAMS,
   type ArgLevelConstraint,
   type ArgLevelParam,
   type ExprOrOpArgNode,
@@ -23,6 +24,7 @@ import {
   type SanyMessage,
   type SemanticNode,
   type Subst,
+  type SubstInNode,
   type SymbolNode,
   type ThmOrAssumpDefNode,
 } from "./nodes";
@@ -110,6 +112,7 @@ const putArgLevelConstraints = (
 const shareLevels = (node: LevelFields, source: LevelFields) => {
   node.levelParams = source.levelParams;
   node.allParams = source.allParams;
+  node.unappliedParams = source.unappliedParams;
   node.levelConstraints = source.levelConstraints;
   node.argLevelConstraints = source.argLevelConstraints;
   node.argLevelParams = source.argLevelParams;
@@ -152,6 +155,67 @@ const isLeibnizArgument = (definition: AnyDefNode, index: number) =>
     ? (definition.isLeibnizArg?.[getIndex(definition, index)] ?? true)
     : (definition.isLeibnizArg[index] ?? true);
 
+const isApplied = (definition: AnyDefNode, index: number) => {
+  if (getWeight(definition, index) !== 1) return false;
+  const param = definition.params?.[getIndex(definition, index)];
+  return param === undefined || !definition.unappliedParams.has(param);
+};
+
+const isAppliedIn = (node: LevelFields, param: SymbolNode) =>
+  node.levelParams.has(param) && !node.unappliedParams.has(param);
+
+const hasUnappliedParams = (node: LevelFields) => node.unappliedParams.size > 0;
+
+const getUnappliedParams = (
+  params: Iterable<SymbolNode>,
+  isParamApplied: (param: SymbolNode) => boolean,
+) => {
+  const unapplied = new Set<SymbolNode>();
+  for (const param of params) {
+    if (!isParamApplied(param)) unapplied.add(param);
+  }
+  return unapplied.size === 0 ? NO_UNAPPLIED_PARAMS : unapplied;
+};
+
+const setApplicationUnappliedParams = (node: OpApplNode) => {
+  const operator = node.operator;
+  const parts: LevelFields[] = isAnyDef(operator) ? [operator, ...node.ranges] : [...node.ranges];
+  node.operands.forEach((operand, index) => {
+    if (operand !== undefined && (!isAnyDef(operator) || isApplied(operator, index))) {
+      parts.push(operand);
+    }
+  });
+  node.unappliedParams = parts.some(hasUnappliedParams)
+    ? getUnappliedParams(
+        node.levelParams,
+        (param) => param === operator || parts.some((part) => isAppliedIn(part, param)),
+      )
+    : NO_UNAPPLIED_PARAMS;
+};
+
+const getSubstitutedUnappliedParams = (node: SubstInNode) => {
+  const body = node.body;
+  if (!hasUnappliedParams(body) && !node.substs.some((subst) => hasUnappliedParams(subst.expr))) {
+    return NO_UNAPPLIED_PARAMS;
+  }
+  return getUnappliedParams(
+    node.levelParams,
+    (param) =>
+      (isAppliedIn(body, param) && getSubstitute(param, node.substs) === undefined) ||
+      node.substs.some((subst) => isAppliedIn(body, subst.op) && isAppliedIn(subst.expr, param)),
+  );
+};
+
+const setSectionUnappliedParams = (members: OpDefNode[]) =>
+  members.forEach((definition) => {
+    const body = definition.body;
+    if (body === undefined) return;
+    definition.unappliedParams = getUnappliedParams(
+      [...definition.levelParams, ...(definition.params ?? [])],
+      (param) => isAppliedIn(body, param),
+    );
+  });
+
 // Deviation from SANY: tla-ts counts an operator argument's nonLeibnizParams where the receiving operator uses it, which OpArgNode#levelCheck leaves empty, so SANY accepts F(a) == H(LAMBDA b : a') for H(K(_)) == K(1).
 const getNonLeibnizParams = (operand: ExprOrOpArgNode, isUsed: boolean) =>
   operand.kind === "OpArg" && isUsed && operand.op.kind !== "Module"
@@ -170,7 +234,7 @@ const getSubstitute = (symbol: SymbolNode, substs: Subst[]) =>
   substs.find((subst) => subst.op === symbol)?.expr;
 
 const addSubstitutedNonLeibnizParams = (node: LevelFields, body: LevelFields, subst: Subst) => {
-  addAll(node.nonLeibnizParams, getNonLeibnizParams(subst.expr, body.levelParams.has(subst.op)));
+  addAll(node.nonLeibnizParams, getNonLeibnizParams(subst.expr, isAppliedIn(body, subst.op)));
   if (!node.nonLeibnizParams.has(subst.op)) return;
   node.nonLeibnizParams.delete(subst.op);
   addAll(node.nonLeibnizParams, subst.expr.allParams);
@@ -298,6 +362,10 @@ const checkDefinitionBody = (node: AnyDefNode, params: FormalParamNode[], body: 
   addAll(node.levelParams, body.levelParams);
   addAll(node.allParams, body.allParams);
   addAll(node.nonLeibnizParams, body.nonLeibnizParams);
+  node.unappliedParams =
+    node.kind === "OpDef" && node.recursiveSection >= 0
+      ? NO_UNAPPLIED_PARAMS
+      : body.unappliedParams;
   params.forEach((param, index) => {
     node.levelParams.delete(param);
     node.allParams.delete(param);
@@ -624,7 +692,7 @@ const checkApplication = (node: OpApplNode, iteration: number, check: LevelCheck
       if (operand === undefined) return;
       if (getWeight(operator, index) === 1) addAll(node.levelParams, operand.levelParams);
       addAll(node.allParams, operand.allParams);
-      addAll(node.nonLeibnizParams, getNonLeibnizParams(operand, getWeight(operator, index) === 1));
+      addAll(node.nonLeibnizParams, getNonLeibnizParams(operand, isApplied(operator, index)));
       if (!isLeibnizArgument(operator, index)) addAll(node.nonLeibnizParams, operand.allParams);
     });
     node.ranges.forEach((range) => {
@@ -660,6 +728,7 @@ const checkApplication = (node: OpApplNode, iteration: number, check: LevelCheck
       addArgLevelParams(node.argLevelParams, operand.argLevelParams);
     });
   }
+  setApplicationUnappliedParams(node);
   checkTemporalApplication(node, check);
   return node.levelCorrect;
 };
@@ -753,6 +822,7 @@ export const checkModuleLevels = (module: ModuleNode, check: LevelCheck) => {
       if (definition.inRecursive) definition.levelChecked = 1;
       checkDefinition(definition, 2, check);
     });
+    setSectionUnappliedParams(members);
     first = end;
   }
   module.levelCorrect = true;
@@ -1003,6 +1073,7 @@ const checkLevel = (node: SemanticNode, iteration: number, check: LevelCheck): b
       node.level = node.body.level;
       node.levelParams = new Set(node.body.levelParams);
       node.allParams = new Set(node.body.allParams);
+      node.unappliedParams = node.body.unappliedParams;
       // Deviation from SANY: tla-ts keeps a LET body's nonLeibnizParams, which LetInNode#levelCheck drops, so SANY accepts F(a) == LET L == 1 IN ENABLED (x' = a) for an operator constant.
       node.nonLeibnizParams = new Set(node.body.nonLeibnizParams);
       putLevelConstraints(node.levelConstraints, node.body.levelConstraints);
@@ -1075,6 +1146,7 @@ const checkLevel = (node: SemanticNode, iteration: number, check: LevelCheck): b
       body.levelParams.forEach((param) =>
         addAll(node.levelParams, getSubstitutedParams(param, node.substs, false)),
       );
+      node.unappliedParams = getSubstitutedUnappliedParams(node);
       if (node.kind === "APSubstIn") {
         body.allParams.forEach((param) =>
           addAll(node.allParams, getSubstitutedParams(param, node.substs, true)),

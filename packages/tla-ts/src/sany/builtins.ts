@@ -1,4 +1,10 @@
-import type { FormalParamNode, LevelFields, OpDefNode, SanyLocation } from "./nodes";
+import {
+  NO_UNAPPLIED_PARAMS,
+  type FormalParamNode,
+  type LevelFields,
+  type OpDefNode,
+  type SanyLocation,
+} from "./nodes";
 
 const BUILTIN_OPERATORS: [string, number, number, number[] | undefined, number[] | undefined][] = [
   ["STRING", 0, 0, [], []],
@@ -90,6 +96,7 @@ export const createLevelFields = (id: number): LevelFields => ({
   levelParams: new Set(),
   allParams: new Set(),
   nonLeibnizParams: new Set(),
+  unappliedParams: NO_UNAPPLIED_PARAMS,
   argLevelParams: new Map(),
   levelCorrect: true,
   levelConstraints: new Map(),

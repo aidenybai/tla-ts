@@ -346,6 +346,42 @@ Spec == Init /\\ [][Next]_x
     );
   });
 
+  it("accepts an operator argument that a recursive operator never applies, as SANY does", () => {
+    const report = getReport({
+      M: "---- MODULE M ----\nEXTENDS Naturals\nVARIABLE x\nH1(K(_)) == LET RECURSIVE R(_) R(n) == 0 IN R(K(1))\nH2(K(_)) == LET RECURSIVE A(_), R(_)\n               A(n) == IF n = 0 THEN K(1) ELSE A(n - 1)\n               R(n) == 0\n           IN R(2)\nH3(K(_)) == LET RECURSIVE R(_)\n               R(n) == 0\n               G(n) == R(n)\n           IN G(K(1))\nF1(a) == H1(LAMBDA b : a')\nF2(a) == H2(LAMBDA b : a')\nF3(a) == H3(LAMBDA b : a')\n---- MODULE Recursed ----\nCONSTANT Op(_)\nRECURSIVE R(_)\nR(n) == 0\nD == R(Op(1))\n====\n---- MODULE Other ----\nCONSTANT Op(_)\n====\nP(a) == INSTANCE Recursed WITH Op <- LAMBDA b : a'\nINSTANCE Other WITH Op <- F1\nINSTANCE Other WITH Op <- F2\nINSTANCE Other WITH Op <- F3\nINSTANCE Other WITH Op <- P!D\n====\n",
+    });
+    expect(report).toEqual({ text: "", isFailed: false });
+  });
+
+  it("rejects a non-Leibniz operator argument that a recursive operator may apply, which SANY accepts", () => {
+    const report = getReport({
+      M: "---- MODULE M ----\nEXTENDS Naturals\nVARIABLE x\nH1(K(_)) == LET RECURSIVE R(_) R(n) == K(n) IN R(1)\nH2(K(_)) == LET RECURSIVE R(_, _) R(n, k) == IF n = 0 THEN 0 ELSE R(n - 1, k) IN R(3, K(1))\nH3(K(_)) == LET RECURSIVE A(_), B(_), C(_)\n               A(n) == IF n = 0 THEN 0 ELSE B(n - 1)\n               B(n) == IF n = 0 THEN 0 ELSE C(n - 1)\n               C(n) == IF n = 0 THEN K(1) ELSE A(n - 1)\n           IN A(2)\nH4(K(_)) == LET RECURSIVE A(_), B(_)\n               A(n) == IF n = 0 THEN K(1) ELSE A(n - 1)\n               B(n) == IF n = 0 THEN 0 ELSE B(n - 1)\n           IN B(2)\nH5(K(_)) == LET RECURSIVE A(_), B(_), D(_)\n               A(n) == B(n)\n               B(n) == A(n)\n               D(n) == K(n)\n           IN A(1)\nF1(a) == H1(LAMBDA b : a')\nF2(a) == H2(LAMBDA b : a')\nF3(a) == H3(LAMBDA b : a')\nF4(a) == H4(LAMBDA b : a')\nF5(a) == H5(LAMBDA b : a')\n---- MODULE Recursed ----\nCONSTANT Op(_)\nRECURSIVE R(_)\nR(n) == Op(n)\nD == R(1)\n====\n---- MODULE Other ----\nCONSTANT Op(_)\n====\nP(a) == INSTANCE Recursed WITH Op <- LAMBDA b : a'\nINSTANCE Other WITH Op <- F1\nINSTANCE Other WITH Op <- F2\nINSTANCE Other WITH Op <- F3\nINSTANCE Other WITH Op <- F4\nINSTANCE Other WITH Op <- F5\nINSTANCE Other WITH Op <- P!D\n====\n",
+    });
+    expect(report.text).toBe(
+      joinLines([
+        "Semantic errors:",
+        "",
+        "*** Errors: 6",
+        "",
+        ...[
+          ["35", "28"],
+          ["36", "28"],
+          ["37", "28"],
+          ["38", "28"],
+          ["39", "28"],
+          ["40", "29"],
+        ].flatMap((entry) => [
+          `line ${entry[0]}, col 1 to line ${entry[0]}, col ${entry[1]} of module M`,
+          "",
+          "Error in instantiating module 'Other':",
+          " A non-Leibniz operator substituted for 'Op'.",
+          "",
+          "",
+        ]),
+      ]),
+    );
+  });
+
   it("rejects a non-Leibniz instanced theorem substituted for an operator constant, which SANY accepts", () => {
     const report = getReport({
       M: "---- MODULE M ----\nVARIABLE x\n---- MODULE Inner ----\nCONSTANT c\nVARIABLE w\nTHEOREM T == ENABLED (w' = c)\n====\n---- MODULE Other ----\nCONSTANT Op(_)\n====\nI(a) == INSTANCE Inner WITH c <- a, w <- x\nF(a) == I(a)!T\nINSTANCE Other WITH Op <- F\nINSTANCE Other WITH Op <- I!T\n====\n",

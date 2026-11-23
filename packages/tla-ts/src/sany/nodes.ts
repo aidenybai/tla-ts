@@ -53,11 +53,14 @@ export interface LevelFields {
   levelParams: Set<SymbolNode>;
   allParams: Set<SymbolNode>;
   nonLeibnizParams: Set<SymbolNode>;
+  unappliedParams: ReadonlySet<SymbolNode>;
   argLevelParams: Map<string, ArgLevelParam>;
   levelCorrect: boolean;
   levelConstraints: Map<SymbolNode, number>;
   argLevelConstraints: Map<string, ArgLevelConstraint>;
 }
+
+export const NO_UNAPPLIED_PARAMS: ReadonlySet<SymbolNode> = new Set();
 
 export const CONSTANT_DECL_KIND = 2;
 export const VARIABLE_DECL_KIND = 3;
