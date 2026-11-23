@@ -152,7 +152,7 @@ const getProperty = (object: Value, key: Value) => {
 
 // [o EXCEPT !.vals[k] = v] for a key that o's vals has.
 const setProperty = (object: Value, key: Value, value: Value) =>
-  updateFunction(object, "vals", (values) => updateFunction(values, key, () => value, true), false);
+  updateFunction(object, ["vals", key], 0, () => value);
 
 // IsStrictlyEqual of two primitives, or undefined for Numbers other than "int" ones.
 const isStrictlyEqual = (left: Value, right: Value) => {
@@ -448,12 +448,7 @@ export const createEscoreNativeOperators = (callReplaced: CallReplaced): Builtin
         const elements = getList(getField(args[0], "elems"));
         const int = getInt(args[1]);
         return elements !== undefined && int !== undefined && int >= 0 && int < elements.length
-          ? updateFunction(
-              args[0],
-              "elems",
-              (inner) => updateFunction(inner, int + 1, () => args[2], true),
-              false,
-            )
+          ? updateFunction(args[0], ["elems", int + 1], 0, () => args[2])
           : undefined;
       }
       return undefined;

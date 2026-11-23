@@ -65,28 +65,36 @@ export interface InfiniteSetValue {
   name: "Nat" | "Int" | "STRING" | "Any";
 }
 
-export interface SubsetValue extends LazySet {
-  kind: "Subset";
-  base: Value;
-  costNode: number | undefined;
-  secondary: number[] | undefined;
+interface SetCost {
+  node: number | undefined;
+  charges: ChargeTable | undefined;
 }
 
-export interface FunctionSetValue extends LazySet {
+// A sixth field on RecordSetValue cost recset about 1.5% with no V8 mechanism found, so the cost model is one field.
+interface CostedSet {
+  cost: SetCost | undefined;
+}
+
+export interface SubsetValue extends LazySet, CostedSet {
+  kind: "Subset";
+  base: Value;
+}
+
+export interface FunctionSetValue extends LazySet, CostedSet {
   kind: "FunctionSet";
   domain: Value;
   range: Value;
   hasFilter: boolean;
 }
 
-export interface RecordSetValue extends LazySet {
+export interface RecordSetValue extends LazySet, CostedSet {
   kind: "RecordSet";
   names: string[];
   sets: Value[];
   hasFilter: boolean;
 }
 
-export interface ProductSetValue extends LazySet {
+export interface ProductSetValue extends LazySet, CostedSet {
   kind: "ProductSet";
   factors: Value[];
   hasFilter: boolean;
@@ -97,7 +105,7 @@ export interface SequenceSetValue extends LazySet {
   base: Value;
 }
 
-export interface SetOperationValue extends LazySet {
+export interface SetOperationValue extends LazySet, CostedSet {
   kind: "SetOperation";
   operator: "\\cup" | "\\cap" | "\\";
   left: Value;
@@ -119,7 +127,7 @@ export interface FilteredSetValue extends LazySet {
   source?: FilteredSetSource;
 }
 
-export interface UnionValue extends LazySet {
+export interface UnionValue extends LazySet, CostedSet {
   kind: "Union";
   base: Value;
 }
@@ -158,9 +166,9 @@ interface CountedLazyFunctionValue extends LazyFunctionValue {
 
 interface LazyFunctionCopy extends LazyFunctionValue {
   original: LazyFunctionValue;
-  replacedKey: Value;
-  replacement: Value;
-  isLastPathStep: boolean;
+  path: Value[];
+  depth: number;
+  newValue: Value;
   applyBody: (argument: Value) => Value;
 }
 
@@ -694,15 +702,11 @@ export const compareValues = (left: Value, right: Value): number => {
       if (difference !== 0) return difference;
     }
     if (isLeftSet) {
+      const leftCharged = leftKind === "Set" ? undefined : getChargedSet(left);
+      const rightCharged = rightKind === "Set" ? undefined : getChargedSet(right);
       return compareSets(
-        leftKind === "Subset" && left.secondary !== undefined
-          ? toChargedSet(left, true)
-          : toFiniteSet(left),
-        rightKind === "Subset" && right.secondary !== undefined
-          ? toChargedSet(right, false)
-          : rightKind === "SetOperation" || rightKind === "Union"
-            ? toOpenedSet(right)
-            : toFiniteSet(right),
+        leftCharged ? toChargedSet(leftCharged, true, toFiniteSet) : toFiniteSet(left),
+        rightCharged ? toChargedSet(rightCharged, false, toComparedSet) : toComparedSet(right),
       );
     }
     return compareFunctions(toFiniteFunction(left), toFiniteFunction(right));
@@ -1178,10 +1182,11 @@ const isComparedByClass = (left: ObjectValue, right: Value) =>
       left.kind === "ProductSet"));
 
 const getSetElementsLikeTlc = (left: SetValue | MixedSetValue, right: Value) => {
+  const charged = getChargedSet(right);
   const other = isEnumeratedSet(right)
     ? right
-    : typeof right === "object" && right.kind === "Subset" && right.secondary !== undefined
-      ? toChargedSet(right, false)
+    : charged
+      ? toChargedSet(charged, false, charged.kind === "Subset" ? toFiniteSet : toArgumentSet)
       : toArgumentSet(right);
   return { elements: toFiniteSet(left).elements, otherElements: toFiniteSet(other).elements };
 };
@@ -1194,19 +1199,20 @@ const compareSetLikeTlc = (left: ObjectValue, right: Value, isEquality: boolean)
     !isEquality &&
     (left.kind === "FunctionSet" || left.kind === "RecordSet" || left.kind === "ProductSet")
   ) {
-    cacheSet(left);
-    return compareSetLikeTlc(toFiniteSet(left), right, false);
+    const charged = getChargedSet(left);
+    return compareSetLikeTlc(
+      charged ? toChargedSet(charged, true, toCachedSet) : toCachedSet(left),
+      right,
+      false,
+    );
   }
   if (isComparedByClass(left, right)) {
     if (!isEquality) return compareValues(left, right);
     return valuesEqual(left, right) ? 0 : 1;
   }
   if (!isEnumeratedSet(left)) {
-    cacheSet(left);
-    const set =
-      left.kind === "Subset" && left.secondary !== undefined
-        ? toChargedSet(left, true)
-        : toFiniteSet(left);
+    const charged = getChargedSet(left);
+    const set = charged ? toChargedSet(charged, true, toCachedSet) : toCachedSet(left);
     return compareSetLikeTlc(set, right, isEquality);
   }
   if (!isSetValue(right)) {
@@ -1945,7 +1951,7 @@ export const getLazySubsets = (value: Value): Value[] | undefined => {
   const base = toFiniteSet(value.base).elements;
   sets?.pop();
   if (base.length <= MAXIMUM_BUILT_SUBSET_BASE) return undefined;
-  const costNode = value.costNode;
+  const costNode = value.cost?.node;
   let cursorIndex = -1;
   let indices = [0];
   const getSubset = (index: number) => {
@@ -2136,7 +2142,7 @@ const enumerateSet = (
       if (base.length > MAXIMUM_ENUMERATED_SUBSET_BASE) {
         throw new TlaEvaluationError(describeOverflow(value));
       }
-      return getSortedSubsets(base, value.costNode);
+      return getSortedSubsets(base, value.cost?.node);
     }
     case "FunctionSet": {
       if (!isVersion174 && isEmptySet(value)) return [];
@@ -2269,16 +2275,80 @@ const toArgumentSet = (value: Value) => {
   return set;
 };
 
-const toChargedSet = (value: SubsetValue, isCached: boolean) => {
-  // TLC's SetEnumValue#member scans an unsorted literal, so a literal whose sort charges a SUBSET stays unsorted.
-  if (isSortingLiteral) throw new TlaEvaluationError("The set literal holds a charged SUBSET");
-  const set = toFiniteSet(value);
-  if (value.secondary !== undefined && value.costNode !== undefined) {
-    value.secondary[value.costNode] += set.elements.length;
+type CostedSetValue =
+  | SubsetValue
+  | FunctionSetValue
+  | RecordSetValue
+  | ProductSetValue
+  | SetOperationValue
+  | UnionValue;
+
+export const getChargedSet = (value: Value): CostedSetValue | undefined => {
+  if (typeof value !== "object") return undefined;
+  switch (value.kind) {
+    case "Subset":
+    case "FunctionSet":
+    case "RecordSet":
+    case "ProductSet":
+    case "SetOperation":
+    case "Union":
+      return value.cost?.charges === undefined ? undefined : value;
+    default:
+      return undefined;
   }
-  if (isCached) value.secondary = undefined;
+};
+
+export const isCostedSet = (value: Value) => {
+  if (typeof value !== "object") return false;
+  switch (value.kind) {
+    case "Subset":
+    case "FunctionSet":
+    case "RecordSet":
+    case "ProductSet":
+    case "SetOperation":
+    case "Union":
+      return (
+        value.cost !== undefined &&
+        (value.cost.node !== undefined || value.cost.charges !== undefined)
+      );
+    default:
+      return false;
+  }
+};
+
+const toCachedSet = (value: Value) => {
+  cacheSet(value);
+  return toFiniteSet(value);
+};
+
+const toChargedSet = (
+  value: CostedSetValue,
+  isCached: boolean,
+  convert: (value: Value) => SetValue,
+) => {
+  // TLC's SetEnumValue#member scans an unsorted literal, so a literal whose sort charges a set stays unsorted.
+  if (isSortingLiteral) throw new TlaEvaluationError("The set literal holds a charged set");
+  const cost = value.cost;
+  const node = cost?.node;
+  const charges = cost?.charges;
+  // SubsetValue#toSetEnum converts its base with toSetEnum, and sizing it first caches S \cup T, S \cap T, S \ T and UNION S.
+  const drawn = value.kind === "Subset" ? getChargedSet(value.base) : value;
+  drawn?.cost?.charges?.chargeSetEnumeration(drawn);
+  if (drawn?.cost && drawn !== value && (drawn.kind === "SetOperation" || drawn.kind === "Union")) {
+    drawn.cost.charges = undefined;
+  }
+  const set = convert(value);
+  if (value.kind === "Subset" && charges !== undefined && node !== undefined) {
+    charges.secondary[node] += set.elements.length;
+  }
+  if (isCached && cost) cost.charges = undefined;
   return set;
 };
+
+const toComparedSet = (value: Value) =>
+  typeof value === "object" && (value.kind === "SetOperation" || value.kind === "Union")
+    ? toOpenedSet(value)
+    : toFiniteSet(value);
 
 interface ListStream {
   kind: "List";
@@ -2414,36 +2484,55 @@ const hasObservedSet = (sets: Value[]) => {
   return false;
 };
 
-export const createFunctionSet = (domain: Value, range: Value): FunctionSetValue => ({
+export const createFunctionSet = (
+  domain: Value,
+  range: Value,
+  cost: SetCost | undefined,
+): FunctionSetValue => ({
   kind: "FunctionSet",
   domain,
   range,
   hasFilter: isPredicated(range),
+  cost,
 });
 
-export const createRecordSet = (names: string[], sets: Value[]): RecordSetValue => ({
+export const createRecordSet = (
+  names: string[],
+  sets: Value[],
+  cost: SetCost | undefined,
+): RecordSetValue => ({
   kind: "RecordSet",
   names,
   sets,
   hasFilter: hasPredicatedSet(sets),
+  cost,
 });
 
-export const createProductSet = (factors: Value[]): ProductSetValue => ({
+export const createProductSet = (factors: Value[], cost: SetCost | undefined): ProductSetValue => ({
   kind: "ProductSet",
   factors,
   hasFilter: hasPredicatedSet(factors),
+  cost,
 });
 
 export const createSetOperation = (
   operator: SetOperationValue["operator"],
   left: Value,
   right: Value,
+  cost: SetCost | undefined,
 ): SetOperationValue => ({
   kind: "SetOperation",
   operator,
   left,
   right,
   hasFilter: isPredicated(left) || isPredicated(right),
+  cost,
+});
+
+export const createUnion = (base: Value, cost: SetCost | undefined): UnionValue => ({
+  kind: "Union",
+  base,
+  cost,
 });
 
 const getPredicatedProduct = (value: ObjectValue) =>
@@ -2680,6 +2769,7 @@ export interface ChargeTable {
   values: WeakMap<object, number>;
   secondary: number[];
   isMember: typeof isElementOf;
+  chargeSetEnumeration: (set: Value) => void;
 }
 
 interface PlainStream {
@@ -2734,10 +2824,22 @@ type ChargedStream =
 
 const EMPTY_CHARGED_STREAM: PlainStream = { kind: "Plain", part: EMPTY_STREAM };
 
-export const getValueNode = (charges: ChargeTable, value: Value) =>
-  typeof value !== "object"
-    ? undefined
-    : (charges.values.get(value) ?? (value.kind === "Set" ? value.costNode : undefined));
+export const getValueNode = (charges: ChargeTable, value: Value) => {
+  if (typeof value !== "object") return undefined;
+  switch (value.kind) {
+    case "Subset":
+    case "FunctionSet":
+    case "RecordSet":
+    case "ProductSet":
+    case "SetOperation":
+    case "Union":
+      return value.cost?.node;
+    case "Set":
+      return charges.values.get(value) ?? value.costNode;
+    default:
+      return charges.values.get(value);
+  }
+};
 
 const getChargedProduct = (charges: ChargeTable, value: Value) => {
   if (typeof value !== "object") return undefined;
@@ -3414,7 +3516,7 @@ const someElementOfStream = (
     value.enumerated === undefined &&
     getCardinality(value.base) > MAXIMUM_BUILT_SUBSET_BASE
   ) {
-    return someSubset(getSubsetBase(value), visit, value.costNode);
+    return someSubset(getSubsetBase(value), visit, value.cost?.node);
   }
   if (value.kind !== "SetOperation") return getUnboundedElements(value).some(visit);
   if (value.operator === "\\cup") {
@@ -3700,7 +3802,7 @@ const getAppliedSequenceElements = (value: LazyFunctionValue) => {
     if (keys[index] !== index + 1) return undefined;
     elements.push(value.apply(keys[index]));
   }
-  if (isCountedLazyFunction(value)) {
+  if (isCountedLazyFunction(value) && value.costModel.node >= 0) {
     value.costModel.secondary[value.costModel.node] += keys.length;
   }
   return elements;
@@ -4151,22 +4253,24 @@ const hasReplacedKey = (copy: LazyFunctionCopy, argument: Value) => {
     isLazyFunctionCopy(current);
     current = current.original
   ) {
-    if (isEqualLikeTlc(current.replacedKey, argument) && current.isLastPathStep) return true;
+    if (
+      isEqualLikeTlc(current.path[current.depth], argument) &&
+      current.depth === current.path.length - 1
+    ) {
+      return true;
+    }
   }
   return false;
 };
 
 // FcnLambdaValue#toFcnRcd evaluates the body at every key of an EXCEPT copy, then applies its EXCEPTs.
-const getCopiedValue = (copy: LazyFunctionCopy, key: Value) => {
-  const value = copy.applyBody(key);
-  for (
-    let current: LazyFunctionValue = copy;
-    isLazyFunctionCopy(current);
-    current = current.original
-  ) {
-    if (isEqualLikeTlc(current.replacedKey, key)) return current.replacement;
-  }
-  return value;
+const getCopiedValue = (copy: LazyFunctionCopy, key: Value, value: Value): Value => {
+  const previous = isLazyFunctionCopy(copy.original)
+    ? getCopiedValue(copy.original, key, value)
+    : value;
+  return isEqualLikeTlc(copy.path[copy.depth], key)
+    ? takeExcept(previous, copy.path, copy.depth + 1, copy.newValue)
+    : previous;
 };
 
 export const toFiniteFunction = (value: Value): FunctionValue => {
@@ -4186,7 +4290,7 @@ export const toFiniteFunction = (value: Value): FunctionValue => {
     value.enumerated = createSortedFunction(
       domain,
       isLazyFunctionCopy(value)
-        ? domain.map((key) => getCopiedValue(value, key))
+        ? domain.map((key) => getCopiedValue(value, key, value.applyBody(key)))
         : domain.map((key) => value.apply(key)),
     );
     finishConversion?.();
@@ -4494,79 +4598,181 @@ export const getDomain = (functionValue: Value): Value => {
   return set;
 };
 
+const copyLazyFunction = (
+  functionValue: LazyFunctionValue,
+  path: Value[],
+  depth: number,
+  newValue: Value,
+) => {
+  const argument = path[depth];
+  // Deviation from TLC: FcnLambdaValue#takeExcept builds its copy with new FcnLambdaValue(this), which drops cm, so TLC counts none of the copy's evaluations of the body, not even the second one at a key whose EXCEPT goes deeper.
+  const copy: LazyFunctionCopy = {
+    kind: "LazyFunction",
+    domain: functionValue.domain,
+    apply:
+      depth === path.length - 1
+        ? (key) => (isEqualLikeTlc(argument, key) ? newValue : functionValue.apply(key))
+        : (key) =>
+            isEqualLikeTlc(argument, key)
+              ? takeExcept(functionValue.apply(key), path, depth + 1, newValue)
+              : functionValue.apply(key),
+    source: functionValue.source,
+    boundTupleLengths: functionValue.boundTupleLengths,
+    isApplicationObserved: functionValue.isApplicationObserved,
+    original: functionValue,
+    path,
+    depth,
+    newValue,
+    applyBody: isLazyFunctionCopy(functionValue) ? functionValue.applyBody : functionValue.apply,
+  };
+  return isCountedLazyFunction(functionValue)
+    ? Object.assign(copy, { costModel: functionValue.costModel })
+    : copy;
+};
+
+const getExceptTarget = (value: Value) => {
+  if (!isFunctionValue(value)) {
+    throw new TlaEvaluationError(
+      `Attempted to apply EXCEPT construct to the value ${prettyPrint(formatValue(value))}.`,
+    );
+  }
+  return toFiniteFunction(value);
+};
+
+const selectPath = (value: Value, path: Value[], depth: number) => {
+  let selected = value;
+  for (let index = depth; index < path.length; index++) {
+    const argument = path[index];
+    if (
+      typeof selected === "object" &&
+      selected.kind === "LazyFunction" &&
+      selected.enumerated === undefined
+    ) {
+      if (!isLazyFunctionCopy(selected) || !hasReplacedKey(selected, argument)) {
+        if (
+          selected.boundTupleLengths !== undefined &&
+          getSequenceElements(argument) === undefined
+        ) {
+          throw createArgumentListError(selected, argument);
+        }
+        if (!isElementOf(argument, selected.domain)) return undefined;
+      }
+      selected = selected.apply(argument);
+      continue;
+    }
+    const finite = getExceptTarget(selected);
+    const position = findKeyIndexLikeTlc(finite, argument, describeExceptKey);
+    if (position === -1) return undefined;
+    selected = finite.range[position];
+  }
+  return selected;
+};
+
+const takeExcept = (value: Value, path: Value[], depth: number, newValue: Value): Value => {
+  if (depth === path.length) return newValue;
+  if (
+    typeof value === "object" &&
+    value.kind === "LazyFunction" &&
+    value.enumerated === undefined
+  ) {
+    return copyLazyFunction(value, path, depth, newValue);
+  }
+  const finite = getExceptTarget(value);
+  const position = findKeyIndexLikeTlc(finite, path[depth], describeExceptKey);
+  if (position === -1) return finite;
+  return setFunctionValue(
+    finite,
+    position,
+    takeExcept(finite.range[position], path, depth + 1, newValue),
+  );
+};
+
 export const updateFunction = (
   functionValue: Value,
-  argument: Value,
-  update: (previous: Value) => Value,
-  isLastPathStep: boolean,
+  path: Value[],
+  depth: number,
+  getNewValue: (previous: Value) => Value,
 ): Value => {
+  if (depth === path.length) return getNewValue(functionValue);
   if (
     typeof functionValue === "object" &&
     functionValue.kind === "LazyFunction" &&
     functionValue.enumerated === undefined
   ) {
-    if (!isLazyFunctionCopy(functionValue) || !hasReplacedKey(functionValue, argument)) {
-      if (
-        functionValue.boundTupleLengths !== undefined &&
-        getSequenceElements(argument) === undefined
-      ) {
-        throw createArgumentListError(functionValue, argument);
-      }
-      if (!isElementOf(argument, functionValue.domain)) return functionValue;
-    }
-    const updated = update(functionValue.apply(argument));
-    // Deviation from TLC: FcnLambdaValue#takeExcept builds its copy with new FcnLambdaValue(this), which drops cm, so the EXCEPT copy counts nothing.
-    const copy: LazyFunctionCopy = {
-      kind: "LazyFunction",
-      domain: functionValue.domain,
-      apply: (key) => (isEqualLikeTlc(argument, key) ? updated : functionValue.apply(key)),
-      source: functionValue.source,
-      boundTupleLengths: functionValue.boundTupleLengths,
-      isApplicationObserved: functionValue.isApplicationObserved,
-      original: functionValue,
-      replacedKey: argument,
-      replacement: updated,
-      isLastPathStep,
-      applyBody: isLazyFunctionCopy(functionValue) ? functionValue.applyBody : functionValue.apply,
-    };
-    return isCountedLazyFunction(functionValue)
-      ? Object.assign(copy, { costModel: functionValue.costModel })
-      : copy;
+    const selected = selectPath(functionValue, path, depth);
+    return selected === undefined
+      ? functionValue
+      : copyLazyFunction(functionValue, path, depth, getNewValue(selected));
   }
-  if (!isFunctionValue(functionValue)) {
-    throw new TlaEvaluationError(
-      `Attempted to apply EXCEPT construct to the value ${prettyPrint(formatValue(functionValue))}.`,
-    );
-  }
-  const finite = toFiniteFunction(functionValue);
-  const position = findKeyIndexLikeTlc(finite, argument, describeExceptKey);
+  const finite = getExceptTarget(functionValue);
+  const position = findKeyIndexLikeTlc(finite, path[depth], describeExceptKey);
   if (position === -1) return finite;
+  return setFunctionValue(
+    finite,
+    position,
+    updateFunction(finite.range[position], path, depth + 1, getNewValue),
+  );
+};
+
+const UNREADY_HASH = 0;
+
+// TLC fingerprints a value only with its state, so EXCEPT hashes what it stores as getValueHash does, but gives up where that would convert a lazy value or sort a set.
+const getReadyHash = (value: Value): number => {
+  if (typeof value !== "object" || value.kind === "ModelValue") return getValueHash(value);
+  if (value.kind === "LazyFunction") {
+    return value.enumerated === undefined ? UNREADY_HASH : getReadyHash(value.enumerated);
+  }
+  if (value.kind === "Set") {
+    if (!isNormalizedSet(value)) return UNREADY_HASH;
+    if (value.hash !== 0) return value.hash;
+    const elements = value.elements;
+    let hash = SET_HASH_SEED;
+    for (let index = 0; index < elements.length; index++) {
+      const elementHash = getReadyHash(elements[index]);
+      if (elementHash === UNREADY_HASH || elementHash === UNFINGERPRINTABLE_HASH) {
+        return elementHash;
+      }
+      hash = (hash + getElementContribution(elementHash)) | 0;
+    }
+    value.hash = hash;
+    return hash;
+  }
+  if (value.kind !== "Function") return UNREADY_HASH;
+  if (value.hash !== 0) return value.hash;
+  let hash = FUNCTION_HASH_SEED;
+  for (let index = 0; index < value.domain.length; index++) {
+    const keyHash = getReadyHash(value.domain[index]);
+    if (keyHash === UNREADY_HASH || keyHash === UNFINGERPRINTABLE_HASH) return keyHash;
+    const itemHash = getReadyHash(value.range[index]);
+    if (itemHash === UNREADY_HASH || itemHash === UNFINGERPRINTABLE_HASH) return itemHash;
+    hash = (hash + getEntryContribution(keyHash, itemHash)) | 0;
+  }
+  value.hash = hash;
+  return hash;
+};
+
+const setFunctionValue = (finite: FunctionValue, position: number, next: Value) => {
   const range = [...finite.range];
   const previous = finite.range[position];
-  const next = update(previous);
   range[position] = next;
   const updated = setFunctionClass(
     createSortedFunction(finite.domain, range),
     finite.functionClass,
   );
   updated.writtenKeys = finite.writtenKeys;
-  // Hashing marks a set sorted, and TLC sorts a set that EXCEPT stores only once it fingerprints the function.
-  if (
-    finite.hash !== 0 &&
-    finite.hash !== UNFINGERPRINTABLE_HASH &&
-    !(isEnumeratedSet(next) && !isNormalizedSet(next))
-  ) {
-    const nextHash = getValueHash(next);
-    if (nextHash !== UNFINGERPRINTABLE_HASH) {
-      const keyHash = getValueHash(finite.domain[position]);
-      updated.hash =
-        previous === next
-          ? finite.hash
-          : (finite.hash -
-              getEntryContribution(keyHash, getValueHash(previous)) +
-              getEntryContribution(keyHash, nextHash)) |
-            0;
-    }
+  const isHashed = finite.hash !== 0 && finite.hash !== UNFINGERPRINTABLE_HASH;
+  if (!isHashed && finite.fingerprint === 0) return updated;
+  const nextHash = getReadyHash(next);
+  if (nextHash === UNREADY_HASH || nextHash === UNFINGERPRINTABLE_HASH) return updated;
+  if (isHashed) {
+    const keyHash = getValueHash(finite.domain[position]);
+    updated.hash =
+      previous === next
+        ? finite.hash
+        : (finite.hash -
+            getEntryContribution(keyHash, getValueHash(previous)) +
+            getEntryContribution(keyHash, nextHash)) |
+          0;
   }
   if (finite.fingerprint !== 0) {
     const key = finite.domain[position];
@@ -4715,11 +4921,8 @@ export const getValueHash = (value: Value): number => {
       : UNFINGERPRINTABLE_HASH;
   }
   if (!isEnumerable(value)) return UNFINGERPRINTABLE_HASH;
-  return getValueHash(
-    value.kind === "Subset" && value.secondary !== undefined
-      ? toChargedSet(value, true)
-      : toFiniteSet(value),
-  );
+  const charged = getChargedSet(value);
+  return getValueHash(charged ? toChargedSet(charged, true, toFiniteSet) : toFiniteSet(value));
 };
 
 const finalizeFingerprint = (hash: number) => {
@@ -4818,21 +5021,26 @@ const MAXIMUM_EXPANDED_PRODUCT = 1999;
 const getProductSize = (sets: Value[]) =>
   sets.reduce<number>((size, set) => (size === 0 ? 0 : size * getCardinality(set)), 1);
 
+const toPrintedSet = (value: LazySetValue) => {
+  const charged = getChargedSet(value);
+  return charged ? toChargedSet(charged, false, toFiniteSet) : toFiniteSet(value);
+};
+
 const expandLazySet = (value: LazySetValue) => {
   if (value.kind === "Subset") {
     if (getCardinality(value.base) > MAXIMUM_EXPANDED_SUBSET_BASE) return undefined;
-    return value.secondary !== undefined ? toChargedSet(value, false) : toFiniteSet(value);
+    return toPrintedSet(value);
   }
   if (value.kind === "SetOperation" || value.kind === "FilteredSet" || value.kind === "Union") {
-    return toFiniteSet(value);
+    return toPrintedSet(value);
   }
   if (value.kind === "FunctionSet") {
     const domainSize = isEmptySet(value.domain) ? 0 : getCardinality(value.domain);
     const size = domainSize === 0 ? 1 : getCardinality(value.range) ** domainSize;
-    return size <= MAXIMUM_EXPANDED_PRODUCT ? toFiniteSet(value) : undefined;
+    return size <= MAXIMUM_EXPANDED_PRODUCT ? toPrintedSet(value) : undefined;
   }
   const size = getProductSize(value.kind === "RecordSet" ? value.sets : value.factors);
-  return size <= MAXIMUM_EXPANDED_PRODUCT ? toFiniteSet(value) : undefined;
+  return size <= MAXIMUM_EXPANDED_PRODUCT ? toPrintedSet(value) : undefined;
 };
 
 const getExpandedLazySet = (value: LazySetValue, isStrict: boolean) => {

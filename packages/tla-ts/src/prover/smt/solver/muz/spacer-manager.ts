@@ -1,6 +1,6 @@
 import { type AstManager, getSymbolName, KIND_APP } from "../ast";
 import { RewriterTpl } from "../rewriter-tpl";
-import { pin } from "./spacer-util";
+import { NamedDecls, pin } from "./spacer-util";
 
 interface MuxEntry {
   main: number;
@@ -24,28 +24,9 @@ class ShiftRewriter extends RewriterTpl {
   }
 }
 
-// The n (index 0) and o (index i + 1) variants of the predicate signatures and spacer's own
-// constants. Z3's manager hash-conses the declarations by name, so the variants are kept here.
-export class SpacerManager {
-  private decls = new Map<string, number>();
+export class SpacerManager extends NamedDecls {
   private entries = new Map<number, MuxEntry>();
   private muxes = new Map<number, { entry: MuxEntry; index: number }>();
-
-  constructor(readonly manager: AstManager) {}
-
-  mkFuncDecl(name: string, domain: number[], range: number) {
-    const key = `${name}|${domain.join(",")}|${range}`;
-    const existing = this.decls.get(key);
-    if (existing !== undefined) return existing;
-    const decl = this.manager.mkFuncDecl(name, domain, range);
-    this.manager.incDeclRef(decl);
-    this.decls.set(key, decl);
-    return decl;
-  }
-
-  mkConst(name: string, sort: number) {
-    return pin(this.manager, this.manager.mkApp(this.mkFuncDecl(name, [], sort), [], sort));
-  }
 
   constOf(decl: number) {
     return pin(this.manager, this.manager.mkApp(decl, [], this.manager.funcDecls[decl].range));

@@ -54,6 +54,9 @@ export interface SatExtension {
   isExternal?(boolVar: number): boolean;
   setEliminated?(boolVar: number): void;
   getAntecedents(lit: number, index: number, antecedents: number[]): void;
+  shouldResearch?(core: readonly number[]): boolean;
+  addAssumptions?(assumptions: Set<number>): void;
+  trackingAssumptions?(): boolean;
   resolveConflict(): number;
   push(): void;
   pop(numScopes: number): void;
@@ -214,6 +217,7 @@ export class Solver {
   private incremental: boolean;
   private assumptions: number[] = [];
   private assumptionSet = new Set<number>();
+  private extAssumptionSet = new Set<number>();
   readonly userScopeLiterals: number[] = [];
   private diffLevels: boolean[] = [];
   private unmark: number[] = [];
@@ -291,7 +295,9 @@ export class Solver {
   }
 
   private isAssumptionLit(lit: number) {
-    return this.trackingAssumptions() && this.assumptionSet.has(lit);
+    return (
+      this.trackingAssumptions() && (this.assumptionSet.has(lit) || this.extAssumptionSet.has(lit))
+    );
   }
 
   isIncremental() {
@@ -299,7 +305,11 @@ export class Solver {
   }
 
   trackingAssumptions() {
-    return this.assumptions.length > 0 || this.userScopeLiterals.length > 0;
+    return (
+      this.assumptions.length > 0 ||
+      this.userScopeLiterals.length > 0 ||
+      this.ext?.trackingAssumptions?.() === true
+    );
   }
 
   setExternal(boolVar: number) {
@@ -902,7 +912,7 @@ export class Solver {
       this.conflictsSinceRestart = 0;
       this.restartThreshold = this.config.restartInitial;
     }
-    return this.basicSearch();
+    return this.search();
   }
 
   checkInconsistent() {
@@ -938,6 +948,7 @@ export class Solver {
   private resetAssumptions() {
     this.assumptions = [];
     this.assumptionSet.clear();
+    this.extAssumptionSet.clear();
   }
 
   addAssumption(lit: number) {
@@ -958,7 +969,15 @@ export class Solver {
       if (this.isInconsistent) break;
       this.assignScoped(lit);
     }
+    this.initExtAssumptions();
     if (!this.isInconsistent) this.propagate(false);
+  }
+
+  private initExtAssumptions() {
+    const ext = this.ext;
+    if (ext?.trackingAssumptions?.() !== true) return;
+    this.extAssumptionSet.clear();
+    if (!this.isInconsistent) ext.addAssumptions?.(this.extAssumptionSet);
   }
 
   private processAntecedentForUnsatCore(antecedent: number) {
@@ -1126,10 +1145,22 @@ export class Solver {
     this.isSimplifyEnabled = false;
     this.isRestartEnabled = false;
     try {
-      return this.basicSearch();
+      return this.search();
     } finally {
       this.isSimplifyEnabled = true;
       this.isRestartEnabled = true;
+    }
+  }
+
+  private search() {
+    const ext = this.ext;
+    if (ext?.trackingAssumptions?.() !== true) return this.basicSearch();
+    for (;;) {
+      // Z3 quirk: pop_to_base_level drops the user's assumptions, so the model may falsify them.
+      this.popToBaseLevel();
+      this.reinitAssumptions();
+      const result = this.basicSearch();
+      if (result !== L_FALSE || ext.shouldResearch?.(this.core) !== true) return result;
     }
   }
 
@@ -1298,7 +1329,9 @@ export class Solver {
     this.conflictLevel = conflict.level;
     if (
       this.conflictLevel <= 1 &&
-      (this.assumptions.length > 0 || this.userScopeLiterals.length > 0)
+      (this.assumptions.length > 0 ||
+        this.extAssumptionSet.size > 0 ||
+        this.userScopeLiterals.length > 0)
     ) {
       this.resolveConflictForUnsatCore();
       return L_FALSE;

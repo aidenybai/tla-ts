@@ -8,7 +8,12 @@ import { removeDuplicateTails, type RuleTransformerPlugin } from "./dl-rule-tran
 import { HornSubsumeModelConverter } from "./horn-subsume-model-converter";
 import { Substitution } from "./substitution";
 
-class RuleUnifier {
+interface Resolvent {
+  rule: Rule;
+  isSatisfiable: boolean;
+}
+
+export class RuleUnifier {
   private subst: Substitution;
   private deltas = [0, 0];
   private simplifier: MkInterpTailSimplifier;
@@ -31,8 +36,7 @@ class RuleUnifier {
     return isReady;
   }
 
-  // Undefined when the interpreted tail of the resolvent simplifies to false.
-  apply(target: Rule, tailIndex: number, source: Rule): Rule | undefined {
+  apply(target: Rule, tailIndex: number, source: Rule): Resolvent {
     const tail: number[] = [];
     const isNegated: boolean[] = [];
     target.tail.forEach((literal, index) => {
@@ -55,7 +59,19 @@ class RuleUnifier {
       ),
       true,
     );
-    return this.simplifier.transformRule(resolvent);
+    const simplified = this.simplifier.transformRule(resolvent);
+    return simplified === undefined
+      ? { rule: resolvent, isSatisfiable: false }
+      : { rule: simplified, isSatisfiable: true };
+  }
+
+  getRuleSubst(rule: Rule, isTarget: boolean) {
+    const manager = this.context.manager;
+    return rule
+      .getVars(manager)
+      .map((sort, index) =>
+        this.subst.apply(manager.mkVar(index, sort), isTarget ? 0 : 1, this.deltas),
+      );
   }
 }
 
@@ -113,7 +129,8 @@ export class MkRuleInliner implements RuleTransformerPlugin {
       return undefined;
     }
     if (!this.unifier.unifyRules(target, tailIndex, source)) return undefined;
-    return this.unifier.apply(target, tailIndex, source);
+    const resolvent = this.unifier.apply(target, tailIndex, source);
+    return resolvent.isSatisfiable ? resolvent.rule : undefined;
   }
 
   private countPredOccurrences(source: RuleSet) {

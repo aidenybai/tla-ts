@@ -844,6 +844,7 @@ export const runSmtlibScript = (
         context,
         isOptimizing,
         isFromTactic: !isKernelChecking,
+        satSolver: isKernelChecking && isSolver2Only ? state.satSolver : undefined,
         reasonUnknown:
           !isKernelChecking && (error instanceof SmtDefaultError || error instanceof SmtTacticError)
             ? (reasonUnknown ?? error.message)
@@ -865,13 +866,13 @@ export const runSmtlibScript = (
       return check.model;
     }
     if (check.isOptimizing) throw new SmtUnsupportedError("the models of optimization");
+    const satModel = check.satSolver?.getModel();
+    if (satModel === null) return undefined;
+    if (satModel !== undefined) return satModel;
     if (check.context === undefined && check.status !== L_TRUE) {
       if (check.isFromTactic) return undefined;
       throw new SmtUnsupportedError("the model of a canceled search");
     }
-    const satModel = check.satSolver?.getModel();
-    if (satModel === null) return undefined;
-    if (satModel !== undefined) return satModel;
     const context = check.context;
     const model =
       check.fdSolver !== undefined
@@ -1667,13 +1668,22 @@ export const runSmtlibScript = (
         try {
           status = datalog.relQuery(relation);
         } catch (error) {
-          if (!(error instanceof SmtTacticError)) throw error;
-          print(`(error "query failed: ${error.message}")`);
+          if (!(error instanceof SmtTacticError || error instanceof SmtCanceledError)) throw error;
+          const message =
+            error instanceof SmtCanceledError
+              ? state.manager.limit.getCancelMessage()
+              : error.message;
+          print(`(error "query failed: ${message}")`);
         } finally {
           state.manager.limit.pop();
         }
-        print(status === L_UNDEF && datalog.isBounded ? "bounded" : getVerdict(status));
-        datalog.isBounded = false;
+        if (status === L_UNDEF && datalog.status === "bounded") print("bounded");
+        else {
+          print(getVerdict(status));
+          if (status === L_UNDEF && datalog.status === "canceled")
+            write(`canceled\n${datalog.displayProfile()}`, false);
+        }
+        datalog.cleanup();
       },
     ],
     [

@@ -79,6 +79,7 @@ import {
   createEnumeratedSet,
   createNormalizedSet,
   createSetOperation,
+  createUnion,
   EMPTY_SET,
   isEnumeratedSet,
   type IntervalValue,
@@ -128,7 +129,7 @@ const combineReducible = (
   }
   if (isEmptySet(set)) return other;
   if (!isReducibleSet(other)) {
-    return markStreamedSet(createSetOperation(operator, set, other));
+    return markStreamedSet(createSetOperation(operator, set, other, undefined));
   }
   const union: Value[] = [];
   forEachElement(elements, (element) => addBoundedElement(union, element));
@@ -290,21 +291,20 @@ export const CORE_OPERATORS: Builtin[] = [
       if (isReducibleSet(left)) return combineReducible(operator, left, right);
       if (operator !== "\\" && isReducibleSet(right))
         return combineReducible(operator, right, left);
-      return markStreamedSet(createSetOperation(operator, left, right));
+      return markStreamedSet(createSetOperation(operator, left, right, undefined));
     }),
   ),
   defineOperator("SUBSET", 1, (args) => ({
     kind: "Subset",
     base: getValue(args, 0, "SUBSET"),
-    costNode: undefined,
-    secondary: undefined,
+    cost: undefined,
   })),
   defineOperator("UNION", 1, (args) => {
     const outer = getValue(args, 0, "UNION");
     const written = isEnumeratedSet(outer) ? getWrittenElements(outer) : [];
     const sets = written.filter(isEnumeratedSet);
     if (!isEnumeratedSet(outer) || sets.length !== written.length) {
-      return markStreamedSet({ kind: "Union", base: outer });
+      return markStreamedSet(createUnion(outer, undefined));
     }
     const added = sets.flatMap(getWrittenElements);
     const getUnionLikeTlc = () => {

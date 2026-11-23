@@ -15,7 +15,12 @@ import {
   OP_XOR,
   SORT_BOOL,
 } from "../ast";
-import { EufSolver, type EufInternalizer, type ThSolverFactory } from "../euf/euf-solver";
+import {
+  EufSolver,
+  type EufInternalizer,
+  type ThSolverFactory,
+  type UnhandledFun,
+} from "../euf/euf-solver";
 import { getDependencyValues, type Goal } from "../goal";
 import type { ObjMap } from "../hashtable";
 import { RefVector } from "../ref-vector";
@@ -29,12 +34,6 @@ const PRINT_ENVIRONMENT = {
   isUsed: () => false,
   isClashing: () => false,
 };
-
-interface UnhandledFun {
-  decl: number;
-  domain: number[];
-  range: number;
-}
 
 interface Frame {
   expr: number;
@@ -63,6 +62,7 @@ export class Goal2Sat implements SatInternalizer, EufInternalizer {
     private manager: AstManager,
     private solver: Solver,
     private isIteExtra: boolean,
+    private isArithIgnoringInt: boolean,
     private mkThSolver: ThSolverFactory | null = null,
   ) {}
 
@@ -70,7 +70,13 @@ export class Goal2Sat implements SatInternalizer, EufInternalizer {
     if (this.euf !== null) return this.euf;
     const solver = this.solver;
     if (solver.ext !== null) throw new SmtTacticError("cannot convert to euf");
-    const euf = new EufSolver(this.manager, this, solver, this.mkThSolver as ThSolverFactory);
+    const euf = new EufSolver(
+      this.manager,
+      this,
+      solver,
+      this.mkThSolver as ThSolverFactory,
+      this.isArithIgnoringInt,
+    );
     solver.ext = euf;
     this.euf = euf;
     return euf;

@@ -50,6 +50,40 @@ const UNINTERPRETED_RELATION = [
   "(declare-var x Int)",
 ];
 
+const getLimitedCounterQuery = (engine: string, limit: number, nextLimit = 0) => [
+  `(set-option :fp.engine ${engine})`,
+  "(declare-rel P (Int))",
+  "(declare-rel Q (Int))",
+  "(declare-var x Int)",
+  "(rule (=> (= x 0) (P x)))",
+  "(rule (=> (and (P x) (< x 3)) (P (+ x 1))))",
+  `(set-option :rlimit ${limit})`,
+  "(query P)",
+  `(set-option :rlimit ${nextLimit})`,
+  "(rule (=> (and (P x) (> x 1)) (Q x)))",
+  "(query Q)",
+];
+
+const COUNTER_PROFILE = [
+  "canceled",
+  "",
+  "---------------",
+  "Original rules",
+  "; rule count: 2",
+  "; predicate count: 1",
+  "<null>:",
+  "P(#0) :- ",
+  " (= (:var 0) 0).",
+  "<null>:",
+  "P(#1) :- ",
+  " P(#0),",
+  " (= (:var 1) (+ (:var 0) 1)),",
+  " (< (:var 0) 3).",
+  "",
+  "---------------",
+  "Transformed rules",
+];
+
 // The expected values are the output of z3 5.3.2.
 describe("datalog queries", () => {
   it("answers sat for a reachable relation", () => {
@@ -131,6 +165,104 @@ describe("datalog queries", () => {
       ]),
     ).toEqual(["sat"]);
   });
+
+  it("goes on with the script after a query runs out of resources", () => {
+    expect(run(getLimitedCounterQuery("bmc", 5))).toEqual([
+      ...getFailedQuery("max. resource limit exceeded"),
+      "sat",
+    ]);
+  });
+
+  // Deviation from Z3: Z3 answers unsat, having lost the clauses of the disjunction.
+  it("keeps every clause of a rule whose Horn normal form runs out of resources", () => {
+    expect(
+      run([
+        "(set-option :fp.engine bmc)",
+        "(declare-rel P (Int))",
+        "(declare-rel R (Int))",
+        "(declare-rel S (Int))",
+        "(declare-var x Int)",
+        "(rule (P 1))",
+        "(rule (=> (or (P x) (R x)) (S x)))",
+        "(set-option :rlimit 2)",
+        "(query S)",
+        "(set-option :rlimit 0)",
+        "(query S)",
+      ]),
+    ).toEqual([...getFailedQuery("max. resource limit exceeded"), "sat"]);
+  });
+
+  it("answers the next query after a query that failed with its output predicate", () => {
+    expect(run(getLimitedCounterQuery("bmc", 22))).toEqual([
+      ...getFailedQuery("max. resource limit exceeded"),
+      "sat",
+    ]);
+  });
+
+  it("prints the rules of a query canceled between two transformations", () => {
+    expect(run(getLimitedCounterQuery("bmc", 30))).toEqual([
+      ...getFailedQuery("max. resource limit exceeded"),
+      ...COUNTER_PROFILE,
+      "; rule count: 0",
+      "; predicate count: 0",
+      "sat",
+    ]);
+  });
+
+  it("prints the rules spacer was given for a canceled query", () => {
+    expect(run(getLimitedCounterQuery("spacer", 70))).toEqual([
+      ...getFailedQuery("max. resource limit exceeded"),
+      ...COUNTER_PROFILE,
+      "; rule count: 3",
+      "; predicate count: 2",
+      "; output: query!0",
+      "<null>:",
+      "P(0).",
+      "<null>:",
+      "P(#1) :- ",
+      " P(#0),",
+      " (not (<= 3 (:var 0))),",
+      " (= (:var 1) (+ 1 (:var 0))).",
+      "<null>:",
+      "query!0(#0) :- ",
+      " P(#0).",
+      "sat",
+    ]);
+  });
+
+  it("binds the declared variables again after a query canceled in a transformation", () => {
+    expect(run(getLimitedCounterQuery("bmc", 40, 20))).toEqual([
+      ...getFailedQuery("max. resource limit exceeded"),
+      ...getFailedQuery("max. resource limit exceeded"),
+      "canceled",
+      "",
+      "---------------",
+      "Original rules",
+      "; rule count: 4",
+      "; predicate count: 3",
+      "; output: query!0",
+      "<null>:",
+      "Q(#0) :- ",
+      " P(#0),",
+      " (> (:var 0) 1).",
+      "<null>:",
+      "P(#0) :- ",
+      " (= (:var 0) 0).",
+      "<null>:",
+      "P(#1) :- ",
+      " P(#0),",
+      " (= (:var 1) (+ (:var 0) 1)),",
+      " (< (:var 0) 3).",
+      "<null>:",
+      "query!0(#0) :- ",
+      " P(#0).",
+      "",
+      "---------------",
+      "Transformed rules",
+      "; rule count: 0",
+      "; predicate count: 0",
+    ]);
+  });
 });
 
 describe("horn tactic", () => {
@@ -176,6 +308,228 @@ describe("horn tactic", () => {
         "(check-sat-using horn)",
       ]),
     ).toEqual(["unsat", "unsat", "unsat"]);
+  });
+
+  it("unrolls a linear system with bmc until it reaches the query", () => {
+    expect(
+      run([
+        "(set-option :fp.engine bmc)",
+        "(declare-fun P (Int) Bool)",
+        "(assert (forall ((x Int)) (=> (= x 0) (P x))))",
+        "(assert (forall ((x Int)) (=> (and (P x) (< x 3)) (P (+ x 1)))))",
+        "(assert (forall ((x Int)) (=> (P x) (< x 2))))",
+        "(check-sat-using horn)",
+      ]),
+    ).toEqual(["unsat"]);
+  });
+
+  it("unrolls two predicates with bmc", () => {
+    expect(
+      run([
+        "(set-option :fp.engine bmc)",
+        "(declare-fun P (Int) Bool)",
+        "(declare-fun Q (Int Int) Bool)",
+        "(assert (forall ((x Int)) (=> (= x 0) (P x))))",
+        "(assert (forall ((x Int) (y Int)) (=> (and (P x) (= y (* 2 x))) (Q x y))))",
+        "(assert (forall ((x Int) (y Int)) (=> (and (Q x y) (< y 7)) (P (+ y 1)))))",
+        "(assert (forall ((x Int) (y Int)) (=> (Q x y) (< y 5))))",
+        "(check-sat-using horn)",
+      ]),
+    ).toEqual(["unsat"]);
+  });
+
+  it("unrolls a bit-vector system with bmc's finite domain solver", () => {
+    expect(
+      run([
+        "(set-option :fp.engine bmc)",
+        "(declare-fun P ((_ BitVec 4)) Bool)",
+        "(assert (forall ((x (_ BitVec 4))) (=> (= x #x0) (P x))))",
+        "(assert (forall ((x (_ BitVec 4))) (=> (and (P x) (bvult x #x3)) (P (bvadd x #x1)))))",
+        "(assert (forall ((x (_ BitVec 4))) (=> (P x) (not (= x #x2)))))",
+        "(check-sat-using horn)",
+      ]),
+    ).toEqual(["unsat"]);
+  });
+
+  it("stops bmc at its unrolling depth", () => {
+    expect(
+      run([
+        "(set-logic HORN)",
+        "(set-option :fp.engine bmc)",
+        "(set-option :fp.bmc.linear_unrolling_depth 2)",
+        "(declare-fun P (Int) Bool)",
+        "(assert (forall ((x Int)) (=> (= x 0) (P x))))",
+        "(assert (forall ((x Int)) (=> (and (P x) (< x 3)) (P (+ x 1)))))",
+        "(assert (forall ((x Int)) (=> (P x) (< x 2))))",
+        "(check-sat)",
+        "(get-info :reason-unknown)",
+      ]),
+    ).toEqual(["unknown", '(:reason-unknown "unknown")']);
+  });
+
+  it("answers a query command with bmc", () => {
+    expect(
+      run([
+        "(set-option :fp.engine bmc)",
+        "(declare-rel P (Int))",
+        "(declare-var x Int)",
+        "(rule (=> (= x 0) (P x)))",
+        "(rule (=> (and (P x) (< x 3)) (P (+ x 1))))",
+        "(declare-rel Bad ())",
+        "(rule (=> (and (P x) (>= x 2)) Bad))",
+        "(query Bad)",
+      ]),
+    ).toEqual(["sat"]);
+  });
+
+  it("answers sat with bmc when no rule reaches the query", () => {
+    expect(
+      run([
+        "(set-logic HORN)",
+        "(set-option :fp.engine bmc)",
+        "(declare-fun P (Int) Bool)",
+        "(assert (forall ((x Int)) (=> (= x 0) (P x))))",
+        "(check-sat)",
+        "(get-model)",
+      ]),
+    ).toEqual(["sat", ["(", "  (define-fun P ((x!0 Int)) Bool", "    false)", ")"].join("\n")]);
+  });
+
+  it("rejects a nonlinear system with bmc", () => {
+    expect(() =>
+      run([
+        "(set-logic HORN)",
+        "(set-option :fp.engine bmc)",
+        "(declare-fun P (Int) Bool)",
+        "(assert (forall ((x Int)) (=> (= x 0) (P x))))",
+        "(assert (forall ((x Int) (y Int)) (=> (and (P x) (P y)) (P (+ x y 1)))))",
+        "(assert (forall ((x Int)) (=> (P x) (< x 3))))",
+        "(check-sat-using horn)",
+      ]),
+    ).toThrow(new SmtUnsupportedError("the nonlinear bmc engine"));
+  });
+
+  it("removes the labels of a Horn rule", () => {
+    expect(
+      run([
+        "(set-option :fp.engine bmc)",
+        "(declare-fun P (Int) Bool)",
+        "(assert (forall ((x Int)) (=> (! (> x 0) :lblpos L) (P x))))",
+        "(check-sat-using horn)",
+        "(get-model)",
+      ]),
+    ).toEqual(["sat", ["(", "  (define-fun P ((x!0 Int)) Bool", "    false)", ")"].join("\n")]);
+  });
+
+  it("counts a step for the karr plugin of the default Horn transformation", () => {
+    expect(
+      run(["(set-logic HORN)", "(set-option :fp.engine bmc)", "(check-sat)", "(get-info :rlimit)"]),
+    ).toEqual(["sat", "(:rlimit 29)"]);
+  });
+
+  it("keeps the one-argument conjunction of a Horn query", () => {
+    expect(
+      run([
+        "(set-logic HORN)",
+        "(set-option :fp.engine bmc)",
+        "(declare-fun P () Bool)",
+        "(assert (=> P false))",
+        "(check-sat)",
+        "(get-info :rlimit)",
+      ]),
+    ).toEqual(["sat", "(:rlimit 34)"]);
+  });
+
+  const counterSystem = [
+    "(declare-fun P (Int) Bool)",
+    "(assert (forall ((x Int)) (=> (= x 0) (P x))))",
+    "(assert (forall ((x Int)) (=> (and (P x) (< x 3)) (P (+ x 1)))))",
+    "(assert (forall ((x Int)) (=> (P x) (< x 2))))",
+  ];
+
+  it("reads the fp options when the Horn solver is made and again after each run", () => {
+    expect(
+      run([
+        "(set-logic HORN)",
+        "(set-option :fp.engine bmc)",
+        ...counterSystem,
+        "(set-option :fp.bmc.linear_unrolling_depth 0)",
+        "(check-sat)",
+        "(check-sat)",
+      ]),
+    ).toEqual(["unsat", "unknown"]);
+  });
+
+  it("keeps the Horn engine of the fp options from when the solver was made", () => {
+    expect(
+      run([
+        "(set-logic HORN)",
+        counterSystem[0],
+        "(set-option :fp.engine bmc)",
+        "(set-option :fp.bmc.linear_unrolling_depth 0)",
+        ...counterSystem.slice(1),
+        "(check-sat)",
+      ]),
+    ).toEqual(["unsat"]);
+  });
+
+  it("reads the fp options when check-sat-using makes the horn tactic", () => {
+    expect(
+      run([
+        "(set-logic HORN)",
+        "(set-option :fp.engine bmc)",
+        ...counterSystem,
+        "(set-option :fp.bmc.linear_unrolling_depth 0)",
+        "(check-sat-using horn)",
+      ]),
+    ).toEqual(["unknown"]);
+  });
+
+  it.each([
+    ["elim_term_ite", "(:rlimit 201)"],
+    ["bit_blast", "(:rlimit 286)"],
+  ])("counts the cancel checks of the %s transformation", (name, rlimit) => {
+    expect(
+      run([
+        "(set-logic HORN)",
+        "(set-option :fp.engine bmc)",
+        `(set-option :fp.xform.${name} true)`,
+        "(set-option :fp.bmc.linear_unrolling_depth 0)",
+        ...counterSystem,
+        "(check-sat)",
+        "(get-info :rlimit)",
+      ]),
+    ).toEqual(["unknown", rlimit]);
+  });
+
+  it("answers a Horn query run again after a canceled one, where Z3 segfaults", () => {
+    expect(
+      run([
+        "(set-logic HORN)",
+        "(set-option :fp.engine bmc)",
+        ...counterSystem,
+        "(set-option :rlimit 100)",
+        "(check-sat)",
+        "(set-option :rlimit 0)",
+        "(check-sat)",
+      ]),
+    ).toEqual(["unknown", "unsat"]);
+  });
+
+  it("resets the Horn context when a run follows a canceled one", () => {
+    expect(
+      run([
+        "(set-logic HORN)",
+        "(set-option :fp.engine bmc)",
+        "(declare-fun P (Int) Bool)",
+        "(assert (forall ((x Int)) (=> (= x 0) (P x))))",
+        "(assert (forall ((x Int)) (=> (P x) (< x 0))))",
+        "(set-option :rlimit 10)",
+        "(check-sat)",
+        "(set-option :rlimit 0)",
+        "(check-sat)",
+      ]),
+    ).toEqual(["unknown", "unsat"]);
   });
 
   it("answers a nonlinear system", () => {
