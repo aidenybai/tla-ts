@@ -25,11 +25,16 @@ import { getHostIntl } from "./intl";
 import { suspendDefinitions } from "./suspend";
 
 // Node's files and paths, which only a program of files reads, so that a host without them, such as
-// a browser, compiles a script without loading them.
+// a browser, compiles a script without loading them, and a program of the one file it has, whose
+// path it takes from the root.
 const readFileSync = (path: string, encoding: "utf8") =>
   process.getBuiltinModule("node:fs").readFileSync(path, encoding);
-const resolve = (path: string) => process.getBuiltinModule("node:path").resolve(path);
-const pathToFileURL = (path: string) => process.getBuiltinModule("node:url").pathToFileURL(path);
+const resolve = (path: string) =>
+  globalThis.process?.getBuiltinModule?.("node:path").resolve(path) ??
+  decodeURIComponent(new URL(path, "file:///").pathname);
+const pathToFileURL = (path: string) =>
+  globalThis.process?.getBuiltinModule?.("node:url").pathToFileURL(path) ??
+  new URL(path, "file:///");
 
 export interface EscoreSpec {
   name: string;
@@ -325,6 +330,28 @@ const getSpecifiers = (sourceFile: ts.SourceFile, kind: ProgramFile["kind"]) => 
   return specifiers;
 };
 
+// Whether a node runs its children only where something holds, or later, rather than each time it
+// runs: a function or a class, a branch of an if, a conditional, a switch or a short-circuiting
+// operator, a loop, an optional chain, or a try.
+const isConditional = (node: ts.Node) =>
+  ts.isFunctionLike(node) ||
+  ts.isClassLike(node) ||
+  ts.isIfStatement(node) ||
+  ts.isConditionalExpression(node) ||
+  ts.isSwitchStatement(node) ||
+  ts.isIterationStatement(node, false) ||
+  ts.isTryStatement(node) ||
+  ts.isOptionalChain(node) ||
+  (ts.isBinaryExpression(node) &&
+    [
+      ts.SyntaxKind.AmpersandAmpersandToken,
+      ts.SyntaxKind.BarBarToken,
+      ts.SyntaxKind.QuestionQuestionToken,
+      ts.SyntaxKind.AmpersandAmpersandEqualsToken,
+      ts.SyntaxKind.BarBarEqualsToken,
+      ts.SyntaxKind.QuestionQuestionEqualsToken,
+    ].includes(node.operatorToken.kind));
+
 // The function that Node wraps a CommonJS module's code in, as its loader writes it.
 const WRAPPER = ["(function (exports, require, module, __filename, __dirname) { ", "\n});"];
 
@@ -461,8 +488,8 @@ const loadFiles = (
     }
     return resolved.file;
   };
-  const getRealPath = (path: string) => ts.sys.realpath?.(ts.sys.resolvePath(path)) ?? path;
-  const entry = ts.sys.fileExists(fileName) ? getRealPath(fileName) : fileName;
+  const getRealPath = (path: string) => ts.sys?.realpath?.(ts.sys.resolvePath(path)) ?? path;
+  const entry = ts.sys?.fileExists(fileName) === true ? getRealPath(fileName) : fileName;
   // Each file's number, by its path, in the order the program finds them.
   const numbers = new Map([[entry, 1]]);
   const files: ProgramFile[] = [];
@@ -524,7 +551,8 @@ const loadFiles = (
       continue;
     }
     // A module entry that no file holds runs as an ES module, as no package's type or syntax
-    // makes it CommonJS for Node.
+    // makes it CommonJS for Node, but for a host without a file system, whose one file Node
+    // would load by its extension and syntax.
     const kind =
       path === ASYNC_HOOKS
         ? "module"
@@ -532,7 +560,7 @@ const loadFiles = (
           ? getKind(path, text)
           : isScript
             ? "script"
-            : ts.sys.fileExists(entry)
+            : ts.sys === undefined || ts.sys.fileExists(entry)
               ? getKind(path, text)
               : "module";
     const written = getSpecifiers(
@@ -550,7 +578,7 @@ const loadFiles = (
     if (path === entry) rejectEarlyErrors(sourceFile);
     const isRejected = path !== entry && kind !== "script" && hasEarlyError(sourceFile);
     const targets = new Map(
-      [...(isRejected ? [] : getSpecifiers(sourceFile, kind).keys())].flatMap((specifier) => {
+      [...(isRejected ? [] : getSpecifiers(sourceFile, kind))].flatMap(([specifier, parsed]) => {
         const literal = written.get(specifier);
         const builtin =
           literal !== undefined && kind === "module" && !ts.isCallExpression(literal.parent)
@@ -561,6 +589,20 @@ const loadFiles = (
           return [[specifier, numbers.get(builtin) ?? 0] as const];
         }
         const found = literal === undefined ? undefined : resolve(literal);
+        // A CommonJS module's require of a file that isn't there stops as an import of one does,
+        // where the module's code always requires it as it loads, rather than in a function, a
+        // class, a branch, a loop, or a try, which may not run it, at the require in the code that
+        // tla-ts parses, which Node's wrapper holds.
+        if (
+          found === undefined &&
+          literal !== undefined &&
+          kind === "commonjs" &&
+          ts.isCallExpression(literal.parent) &&
+          /^\.\.?\//.test(literal.text) &&
+          ts.findAncestor(literal, isConditional) === undefined
+        ) {
+          throw new TlaTypeScriptError(`tla-ts can't load the module ${literal.text}`, parsed);
+        }
         if (found === undefined || !/\.([cm]?[jt]sx?|json)$/.test(found)) return [];
         const target = getRealPath(found);
         if (!numbers.has(target)) numbers.set(target, numbers.size + 1);

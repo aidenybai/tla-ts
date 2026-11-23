@@ -602,7 +602,21 @@ describe("the CLI with TypeScript files", () => {
         "main.cjs",
         'const two = require("./dep");\nif (two !== 2) throw new Error("two");\n',
         1,
-        "tla-ts can't require a module",
+        "main.cjs:1:21 tla-ts can't load the module ./dep",
+      ],
+      [
+        "a require of a file that isn't there",
+        "main.cjs",
+        'const missing = require("./missing.cjs");\n',
+        1,
+        "main.cjs:1:25 tla-ts can't load the module ./missing.cjs",
+      ],
+      [
+        "a function's require of a file that isn't there, which it runs",
+        "main.cjs",
+        'const load = () => require("./missing.cjs");\nload();\n',
+        1,
+        "tla-ts can't load the module ./missing.cjs",
       ],
       [
         "an extensionless import",
@@ -646,6 +660,23 @@ describe("the CLI with TypeScript files", () => {
       const result = runCli(directory, [name]);
       expect([0, 1]).not.toContain(result.status);
       expect(result.stdout + result.stderr).toContain(stop);
+    });
+
+    // A require runs only where its function or its branch does, as Node loads nothing for it before.
+    it.each([
+      ["a function, which never runs,", 'const load = () => require("./missing.cjs");\n'],
+      [
+        "a branch, which it doesn't take,",
+        'const mode = typeof window === "object" ? require("./missing.cjs") : "node";\n',
+      ],
+      [
+        "a try, which catches nothing,",
+        'try {\n  if (typeof window === "object") require("./missing.cjs");\n} catch {}\n',
+      ],
+    ])("runs a module where %s requires a file that isn't there", (_, source) => {
+      const directory = write("main.cjs", source);
+      expect(runNode(directory, "main.cjs").status).toBe(0);
+      expect(getExit(runCli(directory, ["main.cjs"]))).toEqual([0, ""]);
     });
   });
 

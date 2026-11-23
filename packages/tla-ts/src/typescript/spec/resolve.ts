@@ -31,6 +31,9 @@ const RESOLUTION_ERRORS = new Set([
   "ERR_UNSUPPORTED_RESOLVE_REQUEST",
 ]);
 
+// The files of a host without a file system, such as a browser: none.
+const NO_FILES: ts.ModuleResolutionHost = { fileExists: () => false, readFile: () => undefined };
+
 // Node's module, where Node runs this process, whose resolution the code that runs takes.
 const getNodeModule = () =>
   globalThis.process?.versions?.bun === undefined
@@ -137,8 +140,9 @@ export const createModuleResolver = (entry: string) => {
     allowImportingTsExtensions: true,
     noDtsResolution: true,
   };
+  const host = ts.sys ?? NO_FILES;
   const cache = ts.createModuleResolutionCache(
-    ts.sys.getCurrentDirectory(),
+    ts.sys?.getCurrentDirectory() ?? "/",
     (name) => name,
     options,
   );
@@ -148,7 +152,7 @@ export const createModuleResolver = (entry: string) => {
       specifier,
       containingFile,
       options,
-      ts.sys,
+      host,
       cache,
       undefined,
       isRequire ? ts.ModuleKind.CommonJS : ts.ModuleKind.ESNext,
