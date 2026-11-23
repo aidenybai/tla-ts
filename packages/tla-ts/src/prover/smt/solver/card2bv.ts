@@ -13,12 +13,17 @@ import {
   OP_MUL,
   OP_SUB,
   OP_UMINUS,
+  OP_AND,
+  OP_OR,
+  SORT_BOOL,
 } from "./ast";
 import type { Goal } from "./goal";
 import { Rational } from "./rational";
+import { RefVector } from "./ref-vector";
 import { Rewriter, type RewriterOptions } from "./rewriter";
 import { type DependentExprState, runSimplifier } from "./dependent-expr-state";
 import { RewriterTpl } from "./rewriter-tpl";
+import type { PsortContext } from "./sorting-network";
 
 interface Bound {
   value: Rational;
@@ -92,10 +97,69 @@ export const checkPbFree = (manager: AstManager, form: number) => {
   }
 };
 
-// The port has no encoding to rewrite to, but the walk still counts its steps of the limit.
-export class CardPbRewriter extends RewriterTpl {
+export class CardPbRewriter extends RewriterTpl implements PsortContext {
+  private readonly trail: RefVector;
+  private readonly lemmas: RefVector;
+  readonly freshDecls: number[] = [];
+
+  constructor(manager: AstManager) {
+    super(manager);
+    this.trail = new RefVector(manager);
+    this.lemmas = new RefVector(manager);
+  }
+
   isRewritingPatterns() {
     return false;
+  }
+
+  mkFalse() {
+    return this.manager.falseExpr;
+  }
+
+  mkTrue() {
+    return this.manager.trueExpr;
+  }
+
+  mkMax(lits: number[]) {
+    return this.pushTrail(this.manager.mkApp(OP_OR, lits, SORT_BOOL));
+  }
+
+  mkMin(lits: number[]) {
+    return this.pushTrail(this.manager.mkApp(OP_AND, lits, SORT_BOOL));
+  }
+
+  mkNot(lit: number) {
+    if (this.manager.isNot(lit)) return this.manager.getArg(lit, 0);
+    return this.pushTrail(this.manager.mkNot(lit));
+  }
+
+  fresh(name: string) {
+    const manager = this.manager;
+    const fresh = manager.mkFreshConst(name, SORT_BOOL);
+    manager.incDeclRef(manager.decls[fresh]);
+    this.freshDecls.push(manager.decls[fresh]);
+    return this.pushTrail(fresh);
+  }
+
+  mkClause(lits: number[]) {
+    this.lemmas.push(this.manager.mkOr(lits));
+  }
+
+  flushSideConstraints(sideConstraints: RefVector) {
+    for (const lemma of this.lemmas.items) sideConstraints.push(lemma);
+    this.lemmas.reset();
+  }
+
+  private pushTrail(lit: number) {
+    this.trail.push(lit);
+    return lit;
+  }
+
+  override release() {
+    this.trail.reset();
+    super.release();
+    for (const decl of this.freshDecls) this.manager.decDeclRef(decl);
+    this.lemmas.reset();
   }
 }
 

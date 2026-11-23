@@ -1,11 +1,15 @@
 import { describe, expect, it } from "vite-plus/test";
 import { SmtCanceledError, SmtUnsupportedError } from "../../src/errors";
 import { AstManager, SORT_BOOL } from "../../src/prover/smt/solver/ast";
+import { CardPbRewriter } from "../../src/prover/smt/solver/card2bv";
 import { L_UNDEF } from "../../src/prover/smt/solver/lbool";
+import { mkPp } from "../../src/prover/smt/solver/muz/dl-rule";
+import { RefVector } from "../../src/prover/smt/solver/ref-vector";
 import { ResourceLimit } from "../../src/prover/smt/solver/rlimit";
 import { IncSatSolver } from "../../src/prover/smt/solver/sat/inc-sat-solver";
 import { Solver } from "../../src/prover/smt/solver/sat/solver";
 import { runSmtlibScript } from "../../src/prover/smt/solver/smtlib-script";
+import { type CardinalityEncoding, PsortNw } from "../../src/prover/smt/solver/sorting-network";
 
 const run = (lines: string[]) => {
   const output: string[] = [];
@@ -684,5 +688,136 @@ describe("smt.relevancy, as Z3 5.3.2 turns on euf's relevancy filter above 2", (
         "(:rlimit 554)",
       ].join("\n"),
     );
+  });
+});
+
+describe("psort_nw, as Z3 5.3.2's card2bv encodes cardinality constraints", () => {
+  const getEncoding = (
+    encoding: CardinalityEncoding,
+    numVars: number,
+    encode: (psort: PsortNw, xs: number[], manager: AstManager) => number,
+  ) => {
+    const manager = new AstManager(new ResourceLimit(Infinity));
+    const xs = Array.from({ length: numVars }, (_value, index) =>
+      manager.mkApp(manager.mkFuncDecl(`x${index}`, [], SORT_BOOL), [], SORT_BOOL),
+    );
+    for (const x of xs) manager.incRef(x);
+    const rewriter = new CardPbRewriter(manager);
+    const result = encode(new PsortNw(rewriter, encoding), xs, manager);
+    const lemmas = new RefVector(manager);
+    rewriter.flushSideConstraints(lemmas);
+    const printed = [result, ...lemmas.items].map((expr) => mkPp(manager, expr));
+    lemmas.reset();
+    rewriter.release();
+    return printed;
+  };
+
+  const getNegations = (manager: AstManager, xs: number[]) =>
+    xs.map((innerX) => manager.mkNot(innerX));
+
+  it("encodes an at-most-1 as pairwise clauses under a fresh literal", () => {
+    expect(
+      getEncoding("grouped", 3, (psort, xs, manager) =>
+        psort.ge(false, 2, getNegations(manager, xs)),
+      ),
+    ).toEqual([
+      "at-most-1!0",
+      "(or (not at-most-1!0) (not x0) (not x1))",
+      "(or (not at-most-1!0) (not x0) (not x2))",
+      "(or (not at-most-1!0) (not x1) (not x2))",
+    ]);
+  });
+
+  it("sorts a small at-least directly", () => {
+    expect(getEncoding("grouped", 5, (psort, xs) => psort.ge(false, 2, xs))).toEqual([
+      "dsort!1",
+      "(or (not dsort!0) x0 x1 x2 x3 x4)",
+      "(or (not dsort!1) x0 x1 x2 x3)",
+      "(or (not dsort!1) x0 x1 x2 x4)",
+      "(or (not dsort!1) x0 x1 x3 x4)",
+      "(or (not dsort!1) x0 x2 x3 x4)",
+      "(or (not dsort!1) x1 x2 x3 x4)",
+    ]);
+  });
+
+  it("dualizes an at-least of more than half into an at-most", () => {
+    expect(
+      getEncoding("grouped", 5, (psort, xs, manager) =>
+        psort.ge(false, 3, getNegations(manager, xs)),
+      ),
+    ).toEqual([
+      "(not dsort!2)",
+      "(or dsort!0 (not x0))",
+      "(or dsort!0 (not x1))",
+      "(or dsort!0 (not x2))",
+      "(or dsort!0 (not x3))",
+      "(or dsort!0 (not x4))",
+      "(or dsort!1 (not x0) (not x1))",
+      "(or dsort!1 (not x0) (not x2))",
+      "(or dsort!1 (not x0) (not x3))",
+      "(or dsort!1 (not x0) (not x4))",
+      "(or dsort!1 (not x1) (not x2))",
+      "(or dsort!1 (not x1) (not x3))",
+      "(or dsort!1 (not x1) (not x4))",
+      "(or dsort!1 (not x2) (not x3))",
+      "(or dsort!1 (not x2) (not x4))",
+      "(or dsort!1 (not x3) (not x4))",
+      "(or dsort!2 (not x0) (not x1) (not x2))",
+      "(or dsort!2 (not x0) (not x1) (not x3))",
+      "(or dsort!2 (not x0) (not x1) (not x4))",
+      "(or dsort!2 (not x0) (not x2) (not x3))",
+      "(or dsort!2 (not x0) (not x2) (not x4))",
+      "(or dsort!2 (not x0) (not x3) (not x4))",
+      "(or dsort!2 (not x1) (not x2) (not x3))",
+      "(or dsort!2 (not x1) (not x2) (not x4))",
+      "(or dsort!2 (not x1) (not x3) (not x4))",
+      "(or dsort!2 (not x2) (not x3) (not x4))",
+    ]);
+  });
+
+  it("encodes an exactly-1 as an at-most-1 and a clause for at least one", () => {
+    expect(getEncoding("grouped", 3, (psort, xs) => psort.eq(false, 1, xs))).toEqual([
+      "at-most-1!0",
+      "(or (not at-most-1!0) (not x0) (not x1))",
+      "(or (not at-most-1!0) (not x0) (not x2))",
+      "(or (not at-most-1!0) (not x1) (not x2))",
+      "(or x0 x1 x2 (not at-most-1!0))",
+    ]);
+  });
+
+  it("encodes an at-most-1 with the bimander encoding", () => {
+    expect(
+      getEncoding("bimander", 3, (psort, xs, manager) =>
+        psort.ge(false, 2, getNegations(manager, xs)),
+      ),
+    ).toEqual([
+      "bimander!0",
+      "(or (not bimander!0) (not x0) (not x1))",
+      "(or (not bimander!0) (not (or x0 x1)) (not bit!1))",
+      "(or (not bimander!0) (not x2) bit!1)",
+    ]);
+  });
+
+  it("encodes an exactly-1 with the ordered encoding", () => {
+    expect(getEncoding("ordered", 3, (psort, xs) => psort.eq(false, 1, xs))).toEqual([
+      "ordered!0",
+      "(or (not y!1) y!2)",
+      "(or (not x0) y!1)",
+      "(or (not ordered!0) (not y!1) (not x1))",
+      "(or (not x1) y!2)",
+      "(or (not ordered!0) (not y!2) (not x2))",
+      "(or (not ordered!0) y!2 x2)",
+      "(or (not y!2) x1 y!1)",
+      "(or (not y!1) x0)",
+    ]);
+  });
+
+  it("adds up an at-least with the unate encoding, without fresh literals", () => {
+    expect(getEncoding("unate", 5, (psort, xs) => psort.ge(false, 2, xs))).toEqual([
+      [
+        "(let ((a!1 (and x4 (or x3 (or x2 (or x1 x0))))))",
+        "  (or a!1 (and x3 (or x2 (or x1 x0))) (and x2 (or x1 x0)) (and x1 x0)))",
+      ].join("\n"),
+    ]);
   });
 });
