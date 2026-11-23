@@ -3187,3 +3187,41 @@ describe("level checking matches SANY", () => {
     expect(result.status).toBe("success");
   });
 });
+
+// Tool.getLevelBound reads through every definition that a formula calls, which a check reads once
+// each, those it calls first, so that a long chain of calls takes no deeper stack than one does.
+describe("read the level bound of a long chain of calls, as TLC does", () => {
+  const getChain = (length: number, bound: number) =>
+    [
+      "---- MODULE Chain ----",
+      "EXTENDS Naturals",
+      "VARIABLE x",
+      "D1(a) == a",
+      ...Array.from(
+        { length: length - 1 },
+        (_, index) => `D${index + 2}(a) == IF a = 0 THEN 0 ELSE D${index + 1}(a)`,
+      ),
+      `Init == x = D${length}(0)`,
+      "Next == UNCHANGED x",
+      "Spec == Init /\\ [][Next]_x",
+      `Bounded == x = ${bound}`,
+      "====",
+    ].join("\n");
+  const checkChain = (bound: number) =>
+    check({
+      source: getChain(1000, bound),
+      config: "SPECIFICATION Spec\nINVARIANT Bounded",
+      onPrint: () => {},
+    });
+
+  it("agrees with TLC on a chain of 1,000 calls", async () => {
+    expect(await checkChain(0)).toMatchObject({ status: "success", distinctStates: 1 });
+  });
+
+  it("rejects another result", async () => {
+    expect(await checkChain(1)).toMatchObject({
+      status: "invariant-violation",
+      violation: { name: "Bounded" },
+    });
+  });
+});
