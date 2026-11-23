@@ -2546,6 +2546,7 @@ export interface ChargeTable {
   isMember: typeof isElementOf;
   chargeSetEnumeration: (set: Value) => void;
   chargeSubsetConversion: (set: SubsetValue) => void;
+  chargeSubsetElements: (set: SubsetValue) => void;
   chargePrintedSize: (set: Value) => void;
 }
 
@@ -2730,6 +2731,13 @@ const openChargedPart = (charges: ChargeTable, value: Value): ChargedStream => {
     const stream = openChargedProduct(charges, product, node);
     sets?.pop();
     return stream;
+  }
+  // SubsetValue#elements sizes and converts S, unless convertAndCache kept a SetEnumValue, which charges each draw.
+  if (typeof value === "object" && value.kind === "Subset" && value.cost?.node !== undefined) {
+    if (value.cost.charges === undefined) {
+      return { kind: "ChargedLeaf", node: value.cost.node, part: openPart(value) };
+    }
+    charges.chargeSubsetElements(value);
   }
   const part = openPart(value);
   return node === undefined ? { kind: "Plain", part } : { kind: "ChargedLeaf", node, part };

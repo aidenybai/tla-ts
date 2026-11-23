@@ -83,6 +83,7 @@ export interface Coverage {
   isMember: typeof isElementOf;
   chargeSetEnumeration: (set: Value) => void;
   chargeSubsetConversion: (set: SubsetValue) => void;
+  chargeSubsetElements: (set: SubsetValue) => void;
   chargePrintedSize: (set: Value) => void;
 }
 
@@ -190,6 +191,7 @@ export const createCoverage = (variableCount: number): Coverage => {
     isMember: isElementOf,
     chargeSetEnumeration: () => {},
     chargeSubsetConversion: () => {},
+    chargeSubsetElements: () => {},
     chargePrintedSize: () => {},
   };
   coverage.isMember = createChargedMembership(coverage);
@@ -199,6 +201,7 @@ export const createCoverage = (variableCount: number): Coverage => {
     chargeSize(coverage, set);
     chargeSubsetElements(coverage, set);
   };
+  coverage.chargeSubsetElements = (set) => chargeSubsetElements(coverage, set);
   coverage.chargePrintedSize = (set) => chargePrintedSize(coverage, set);
   return coverage;
 };
@@ -1146,6 +1149,16 @@ export const createFilterBaseEnumerator = (
 ) => {
   const node = getValueNode(coverage, set);
   if (
+    typeof set === "object" &&
+    (set.kind === "SetOperation" || set.kind === "Union" || set.kind === "Subset")
+  ) {
+    const size = getKnownSize(set);
+    if (size === undefined) return undefined;
+    const draws = createEnumerator(coverage, set, size, false);
+    if (isMaterialized) draws.next();
+    return draws;
+  }
+  if (
     node === undefined ||
     typeof set !== "object" ||
     (set.kind !== "RecordSet" && set.kind !== "ProductSet" && set.kind !== "FunctionSet") ||
@@ -1442,11 +1455,15 @@ export const chargeSize = (coverage: Coverage, set: Value): void => {
   if (typeof set !== "object") return;
   switch (set.kind) {
     case "SetOperation":
-    case "Union":
+    case "Union": {
       if (set.cost?.charges === undefined) return;
+      const isKnown = getKnownSize(set) !== undefined;
       chargeSetEnumeration(coverage, set);
       set.cost.charges = undefined;
+      // convertAndCache keeps the SetEnumValue it converts, so a later size() reads it.
+      if (isKnown) getCardinality(set);
       return;
+    }
     case "RecordSet":
     case "ProductSet": {
       if (chargeIsEmpty(coverage, set) !== false) return;
