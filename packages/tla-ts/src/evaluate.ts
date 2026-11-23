@@ -91,6 +91,8 @@ import {
   createProductSet,
   createRecordSet,
   createUnion,
+  createSortedSet,
+  EMPTY_SET,
   createSortedFunction,
   createSortedRecord,
   createNormalizedSet,
@@ -2366,13 +2368,17 @@ const compileApply = (
   ) {
     const base = getEvaluator(args[0], environment);
     return (context) => {
-      const union = global.evaluate([base(context)], context);
-      if (typeof union !== "object" || union.kind !== "Union") return union;
-      // UnionValue#union gives the union its set's cost model.
-      const node = getValueNode(coverage, union.base);
-      return node === undefined
-        ? union
-        : markStreamedSet(createUnion(union.base, { node, charges: coverage }));
+      const sets = base(context);
+      const union = global.evaluate([sets], context);
+      // UnionValue#union gives the union its set's cost model, also when it combines a set of SetEnumValues.
+      const node = getValueNode(coverage, sets);
+      if (node === undefined || typeof union !== "object") return union;
+      if (union.kind !== "Union") {
+        const set = union === EMPTY_SET ? createSortedSet([]) : union;
+        coverage.values.set(set, node);
+        return set;
+      }
+      return markStreamedSet(createUnion(union.base, { node, charges: coverage }));
     };
   }
   if (coverage && combine && SET_OPERATORS.has(expression.operator) && args.length === 2) {

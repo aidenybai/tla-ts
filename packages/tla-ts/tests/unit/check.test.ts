@@ -10066,6 +10066,66 @@ ASSUME TLCFP(a) = -887695703
     expect(await getNextCoverageLines(`x' = 0 /\\ ${body}`)).toEqual(rows);
   });
 
+  it.each([
+    [
+      "a union of set literals",
+      "LET S == UNION {{p, 3} : p \\in {1, 2}} IN \\E s \\in S : \\E t \\in S : TRUE",
+      [
+        "line 5, col 9 to line 5, col 14 of module M: 1",
+        "line 5, col 28 to line 5, col 56 of module M: 1",
+        "|line 5, col 34 to line 5, col 56 of module M: 1:4",
+        "||line 5, col 35 to line 5, col 40 of module M: 2",
+        "||line 5, col 50 to line 5, col 55 of module M: 1:3",
+        "line 5, col 61 to line 5, col 90 of module M: 1",
+      ],
+    ],
+    [
+      "the products of a union of set literals",
+      "LET S == UNION {{p, 3} : p \\in {1, 2}} IN \\E R \\in SUBSET (S \\X S) : TRUE",
+      [
+        "line 5, col 9 to line 5, col 14 of module M: 1",
+        "line 5, col 28 to line 5, col 56 of module M: 1",
+        "|line 5, col 34 to line 5, col 56 of module M: 1:17",
+        "||line 5, col 35 to line 5, col 40 of module M: 2",
+        "||line 5, col 50 to line 5, col 55 of module M: 1:3",
+        "line 5, col 61 to line 5, col 91 of module M: 1",
+        "|line 5, col 88 to line 5, col 91 of module M: 1",
+        "|line 5, col 70 to line 5, col 84 of module M: 1",
+        "||line 5, col 78 to line 5, col 83 of module M: 1:27",
+        "|||line 5, col 78 to line 5, col 78 of module M: 1",
+        "|||line 5, col 83 to line 5, col 83 of module M: 1",
+      ],
+    ],
+    [
+      "an empty union of set literals",
+      "(\\E s \\in UNION {{} : p \\in {1, 2}} : TRUE) = FALSE",
+      [
+        "line 5, col 9 to line 5, col 14 of module M: 1",
+        "line 5, col 19 to line 5, col 69 of module M: 1",
+        "|line 5, col 20 to line 5, col 60 of module M: 1",
+        "||line 5, col 29 to line 5, col 53 of module M: 1",
+        "|||line 5, col 35 to line 5, col 53 of module M: 1:1",
+        "||||line 5, col 36 to line 5, col 37 of module M: 2",
+        "||||line 5, col 47 to line 5, col 52 of module M: 1:3",
+        "|line 5, col 65 to line 5, col 69 of module M: 1",
+      ],
+    ],
+    [
+      "UNION {}",
+      "(\\E s \\in UNION {} : TRUE) = FALSE",
+      [
+        "line 5, col 9 to line 5, col 14 of module M: 1",
+        "line 5, col 19 to line 5, col 52 of module M: 1",
+        "|line 5, col 20 to line 5, col 43 of module M: 1",
+        "||line 5, col 29 to line 5, col 36 of module M: 1",
+        "|||line 5, col 35 to line 5, col 36 of module M: 1:1",
+        "|line 5, col 48 to line 5, col 52 of module M: 1",
+      ],
+    ],
+  ])("charges the enumeration of %s to the set of sets", async (_name, body, rows) => {
+    expect(await getNextCoverageLines(`x' = 0 /\\ ${body}`)).toEqual(rows);
+  });
+
   it("enumerates the subsets a state keeps without charging their base again", async () => {
     expect(
       await getCoverageLines(
