@@ -17,7 +17,12 @@ import {
   type Theorem,
 } from "./ast";
 import { formatRange, TlaSyntaxError, type CodedSanyError, type SanyError } from "./errors";
-import { forEachChild, frameSubstitutions, substitutionFrames } from "./instances";
+import {
+  forEachChild,
+  frameSubstitutions,
+  getSubstitutedOccurrence,
+  substitutionFrames,
+} from "./instances";
 import { parenthesizedRanges } from "./parser";
 import {
   collectSemanticErrors,
@@ -2009,7 +2014,7 @@ export const createLevelAnalyzer = (context: LevelContext) => {
     forEachChild(expression, (child, bound) => {
       found ??= findOriginal(child, target, bindFormals(scope, toFormals(bound)), instanced);
     });
-    return found;
+    return found && getSubstitutedOccurrence(expression) ? { expression, scope, instanced } : found;
   };
 
   const findInDefinition = (

@@ -563,6 +563,25 @@ describe("operator arguments selected behind an instance or a definition's param
     expect([result.status, prints]).toEqual(["success", ["6"]]);
   });
 
+  it("passes on a LAMBDA substituted for a selected operator constant through an instance of a module that instances it", async () => {
+    const modules = new Map([
+      ["Pure", PURE],
+      [
+        "Mid",
+        "---- MODULE Mid ----\nEXTENDS Naturals\nJJ == INSTANCE Pure WITH c <- 3, Op <- LAMBDA a : a * 2\n====",
+      ],
+    ]);
+    const prints: string[] = [];
+    const result = await check({
+      source:
+        "---- MODULE M ----\nEXTENDS Naturals, TLC\nVARIABLE x\nAp(K(_)) == K(5)\nMM == INSTANCE Mid\nASSUME PrintT(Ap(MM!JJ!E11!1))\nInit == x = 0\nNext == x' = x\n====",
+      config: "INIT Init\nNEXT Next",
+      loadModule: (name) => modules.get(name),
+      onPrint: (text) => prints.push(text),
+    });
+    expect([result.status, prints]).toEqual(["success", ["10"]]);
+  });
+
   it.each([
     ["J!E25!1", "16"],
     ["D!1", "12"],
