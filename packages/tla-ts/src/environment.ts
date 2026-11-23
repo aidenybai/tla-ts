@@ -85,6 +85,7 @@ import {
   resolveModule,
   resolveSubstitutions,
   SUBSTITUTE_RESOLUTION,
+  untracedExpressions,
   type ModuleReport,
   type ModuleSymbol,
   type ModuleUnit,
@@ -1121,10 +1122,14 @@ export const createEnvironment = (
         : replacement.kind === "OperatorReference"
           ? replacement.operator
           : declaration.name;
-    return {
-      params,
-      body: { kind: "Apply", operator, args: createLocalArguments(params, location), location },
+    const body: Expression = {
+      kind: "Apply",
+      operator,
+      args: createLocalArguments(params, location),
+      location,
     };
+    untracedExpressions.add(body);
+    return { params, body };
   };
 
   const instantiateLocally = (
@@ -1201,29 +1206,34 @@ export const createEnvironment = (
     });
     const copies: Definition[] = [];
     const localCopies = new Map<string, InstanceCopy>();
-    const createLocalSubstitution = (declaration: KeyedDeclaration): Expression =>
-      !isParameterDependent(declaration)
-        ? createLocalIdentifier(`${declaration.name}${suffix}`, location)
-        : declaration.arity > 0
-          ? getInstanceOperator(
-              `${declaration.name}${suffix}`,
+    const createLocalSubstitution = (declaration: KeyedDeclaration): Expression => {
+      const isDependent = isParameterDependent(declaration);
+      if (isDependent && declaration.arity > 0) {
+        return getInstanceOperator(
+          `${declaration.name}${suffix}`,
+          instance.params,
+          declaration.arity,
+          location,
+          LOCAL_RESOLUTION,
+          subexpressionRecords,
+        );
+      }
+      const substitution: Expression = isDependent
+        ? {
+            kind: "Apply",
+            operator: `${declaration.name}${suffix}`,
+            args: createInstanceArguments(
               instance.params,
-              declaration.arity,
               location,
-              LOCAL_RESOLUTION,
-              subexpressionRecords,
-            )
-          : {
-              kind: "Apply",
-              operator: `${declaration.name}${suffix}`,
-              args: createInstanceArguments(
-                instance.params,
-                location,
-                subexpressionRecords.instanceArguments,
-              ),
-              location,
-              resolution: SUBSTITUTE_RESOLUTION,
-            };
+              subexpressionRecords.instanceArguments,
+            ),
+            location,
+            resolution: SUBSTITUTE_RESOLUTION,
+          }
+        : createLocalIdentifier(`${declaration.name}${suffix}`, location);
+      untracedExpressions.add(substitution);
+      return substitution;
+    };
     const substitutes = {
       params: instance.params,
       substitutions: new Map(

@@ -178,6 +178,7 @@ export const selectionArguments = new WeakMap<Expression, SelectionArgument>();
 export const nullSelections = new WeakMap<Expression, NullSelection[]>();
 export const generatedArgumentCounts = new WeakMap<Expression, number>();
 export const operandApplications = new WeakMap<Expression, ApplyExpression[]>();
+export const untracedExpressions = new WeakSet<Expression>();
 const unresolvedExpressions = new WeakSet<Expression>();
 const emptyExpressions = new WeakSet<Expression>();
 

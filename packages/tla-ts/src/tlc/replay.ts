@@ -73,7 +73,7 @@ import {
   substitutedExpressions,
   substitutionFrames,
 } from "../instances";
-import { getKeyName } from "../resolve";
+import { getKeyName, untracedExpressions } from "../resolve";
 import { CORE_OPERATORS } from "../standard-modules";
 import type { SuccessorGenerator } from "../successors";
 import { MESSAGE_CODE } from "./messages";
@@ -116,7 +116,9 @@ const withFrame = <Result>(replay: Replay, expression: Expression, run: () => Re
   if (!callStack) return run();
   const isEntered = callStack.expressions.at(-1) === expression;
   const frames = (!isEntered && substitutionFrames.get(expression)) || [];
-  callStack.expressions.push(...frames, expression);
+  const isTraced = !untracedExpressions.has(expression);
+  callStack.expressions.push(...frames);
+  if (isTraced) callStack.expressions.push(expression);
   const outerSets = setTrace.sets;
   const sets = outerSets ?? [];
   const depth = sets.length;
@@ -127,7 +129,7 @@ const withFrame = <Result>(replay: Replay, expression: Expression, run: () => Re
     freezeCallStack(callStack, sets.slice(depth), error);
     throw error;
   } finally {
-    if (!callStack.isFrozen) callStack.expressions.length -= frames.length + 1;
+    if (!callStack.isFrozen) callStack.expressions.length -= frames.length + (isTraced ? 1 : 0);
     sets.length = depth;
     setTrace.sets = outerSets;
   }

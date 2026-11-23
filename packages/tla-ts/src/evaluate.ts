@@ -74,7 +74,7 @@ import {
   type Substitution,
 } from "./instances";
 import { prettyPrint } from "./pretty-print";
-import { getKeyName } from "./resolve";
+import { getKeyName, untracedExpressions } from "./resolve";
 import { isEnabled } from "./successors";
 import {
   applyFunction,
@@ -2003,9 +2003,10 @@ export const getEvaluator = (expression: Expression, environment: Environment): 
   const compiled = compile(expression, environment);
   const callStack = environment.callStack;
   const frames = callStack && substitutionFrames.get(expression);
-  const traced = callStack
-    ? traceEvaluator(expression, compiled, environment, callStack)
-    : compiled;
+  const traced =
+    callStack && !untracedExpressions.has(expression)
+      ? traceEvaluator(expression, compiled, environment, callStack)
+      : compiled;
   const framed = callStack && frames ? traceFrames(expression, frames, traced, callStack) : traced;
   const coverage = environment.coverage;
   const evaluator = coverage ? getCoverageEvaluator(expression, framed, coverage) : framed;

@@ -3074,6 +3074,192 @@ describe("evaluation errors match TLC", () => {
 
   it.each([
     [
+      "LET L == INSTANCE Pure WITH c <- 1 \\div 0, Op <- F IN x' = L!E3",
+      [
+        "Line 10, column 63 to line 10, column 71 in M",
+        "Line 10, column 68 to line 10, column 71 in M",
+        "Line 10, column 13 to line 10, column 58 in M",
+        "Line 6, column 7 to line 6, column 11 in Pure",
+        "Line 6, column 7 to line 6, column 7 in Pure",
+        "Line 10, column 42 to line 10, column 49 in M",
+      ],
+    ],
+    [
+      "LET L(w) == INSTANCE Pure WITH c <- w \\div 0, Op <- F IN x' = L(1)!E3",
+      [
+        "Line 10, column 66 to line 10, column 77 in M",
+        "Line 10, column 71 to line 10, column 77 in M",
+        "Line 10, column 13 to line 10, column 61 in M",
+        "Line 6, column 7 to line 6, column 11 in Pure",
+        "Line 6, column 7 to line 6, column 7 in Pure",
+        "Line 10, column 45 to line 10, column 52 in M",
+      ],
+    ],
+    [
+      "LET L(w) == INSTANCE Pure WITH c <- w, Op <- F IN x' = L(Bad(1))!E3",
+      [
+        "Line 10, column 59 to line 10, column 75 in M",
+        "Line 10, column 64 to line 10, column 75 in M",
+        "Line 10, column 13 to line 10, column 54 in M",
+        "Line 6, column 7 to line 6, column 11 in Pure",
+        "Line 6, column 7 to line 6, column 7 in Pure",
+        "Line 10, column 45 to line 10, column 45 in M",
+        "Line 10, column 66 to line 10, column 71 in M",
+        "Line 5, column 11 to line 5, column 18 in M",
+      ],
+    ],
+    [
+      "LET L == INSTANCE Pure WITH c <- 1, Op <- Bad IN x' = L!E",
+      [
+        "Line 10, column 58 to line 10, column 65 in M",
+        "Line 10, column 63 to line 10, column 65 in M",
+        "Line 10, column 13 to line 10, column 53 in M",
+        "Line 5, column 6 to line 5, column 10 in Pure",
+        "Line 5, column 11 to line 5, column 18 in M",
+      ],
+    ],
+    [
+      "LET L(w) == INSTANCE Pure WITH c <- w, Op <- Bad IN x' = L(1)!E",
+      [
+        "Line 10, column 61 to line 10, column 71 in M",
+        "Line 10, column 66 to line 10, column 71 in M",
+        "Line 10, column 13 to line 10, column 56 in M",
+        "Line 5, column 6 to line 5, column 10 in Pure",
+        "Line 5, column 11 to line 5, column 18 in M",
+      ],
+    ],
+    [
+      "x' = Ap(EB!1)",
+      [
+        "Line 10, column 9 to line 10, column 21 in M",
+        "Line 10, column 14 to line 10, column 21 in M",
+        "Line 6, column 13 to line 6, column 16 in M",
+        "Line 5, column 11 to line 5, column 18 in M",
+      ],
+    ],
+    [
+      "x' = LET EL == HB(Bad) IN Ap(EL!1)",
+      [
+        "Line 10, column 9 to line 10, column 42 in M",
+        "Line 10, column 14 to line 10, column 42 in M",
+        "Line 10, column 35 to line 10, column 42 in M",
+        "Line 6, column 13 to line 6, column 16 in M",
+        "Line 5, column 11 to line 5, column 18 in M",
+      ],
+    ],
+    [
+      "LET L(w) == INSTANCE Pure WITH c <- 1, Op <- LAMBDA a : a \\div w IN x' = L(0)!E4",
+      [
+        "Line 10, column 77 to line 10, column 88 in M",
+        "Line 10, column 82 to line 10, column 88 in M",
+        "Line 10, column 13 to line 10, column 72 in M",
+        "Line 7, column 7 to line 7, column 11 in Pure",
+        "Line 4, column 12 to line 4, column 15 in Pure",
+        "Line 10, column 65 to line 10, column 72 in M",
+      ],
+    ],
+  ])(
+    "records no frame for the reference to a LET instance's substitute or a selected operator argument in %s, as TLC has none",
+    async (next, expected) => {
+      const result = await check({
+        source: `---- MODULE M ----\nEXTENDS Naturals, TLC\nVARIABLE x\nF(a) == a + 1\nBad(a) == a \\div 0\nAp(K(_)) == K(5)\nHB(K(_)) == K(7)\nEB == HB(Bad)\nInit == x = 0\nNext == ${next}\n====`,
+        config: "INIT Init\nNEXT Next",
+        loadModule: (name) =>
+          name === "Pure"
+            ? "---- MODULE Pure ----\nEXTENDS Naturals\nCONSTANT c, Op(_)\nH(K(_)) == K(c)\nE == Op(c)\nE3 == c + 1\nE4 == H(Op)\n===="
+            : undefined,
+      });
+      expect(formatCallStackLines(result)?.filter((line) => line !== "")).toEqual(expected);
+    },
+  );
+
+  it.each([
+    [
+      "x' = P(0)!E",
+      [
+        "Line 6, column 9 to line 6, column 19 in M",
+        "Line 6, column 14 to line 6, column 19 in M",
+        "Line 4, column 1 to line 4, column 30 in M",
+        "Line 6, column 6 to line 6, column 9 in Q",
+        "Line 5, column 12 to line 5, column 15 in Q",
+        "Line 4, column 9 to line 4, column 16 in Q",
+      ],
+    ],
+    [
+      "LET L(w) == INSTANCE Q WITH c <- w IN x' = L(0)!E",
+      [
+        "Line 6, column 47 to line 6, column 57 in M",
+        "Line 6, column 52 to line 6, column 57 in M",
+        "Line 6, column 13 to line 6, column 42 in M",
+        "Line 6, column 6 to line 6, column 9 in Q",
+        "Line 5, column 12 to line 5, column 15 in Q",
+        "Line 4, column 9 to line 4, column 16 in Q",
+      ],
+    ],
+  ])(
+    "records no frame for an operator argument of a parameterized instance in %s, as TLC has none",
+    async (next, expected) => {
+      const result = await check({
+        source: `---- MODULE M ----\nEXTENDS Naturals, TLC\nVARIABLE x\nP(w) == INSTANCE Q WITH c <- w\nInit == x = 0\nNext == ${next}\n====`,
+        config: "INIT Init\nNEXT Next",
+        loadModule: (name) =>
+          name === "Q"
+            ? "---- MODULE Q ----\nEXTENDS Naturals\nCONSTANT c\nD(a) == a \\div c\nH(K(_)) == K(5)\nE == H(D)\n===="
+            : undefined,
+      });
+      expect(formatCallStackLines(result)?.filter((line) => line !== "")).toEqual(expected);
+    },
+  );
+
+  it.each([
+    [
+      "LET L == INSTANCE Q WITH c <- 1 IN x' = L!Len(1 \\div 0)",
+      [
+        "Line 5, column 44 to line 5, column 63 in M",
+        "Line 5, column 49 to line 5, column 63 in M",
+        "Line 5, column 55 to line 5, column 62 in M",
+      ],
+    ],
+    [
+      "LET L(w) == INSTANCE Q WITH c <- w IN x' = L(1)!Len(1 \\div 0)",
+      [
+        "Line 5, column 47 to line 5, column 69 in M",
+        "Line 5, column 52 to line 5, column 69 in M",
+        "Line 5, column 61 to line 5, column 68 in M",
+      ],
+    ],
+  ])(
+    "records no frame for the alias of a standard operator in %s, as TLC has none",
+    async (next, expected) => {
+      const result = await check({
+        source: `---- MODULE M ----\nEXTENDS Naturals, TLC\nVARIABLE x\nInit == x = 0\nNext == ${next}\n====`,
+        config: "INIT Init\nNEXT Next",
+        loadModule: (name) =>
+          name === "Q"
+            ? "---- MODULE Q ----\nEXTENDS Sequences\nCONSTANT c\nE == c\n===="
+            : undefined,
+      });
+      expect(formatCallStackLines(result)?.filter((line) => line !== "")).toEqual(expected);
+    },
+  );
+
+  it("records no frame for a selected operator argument in the action it assigns, as TLC has none", async () => {
+    const result = await check({
+      source:
+        "---- MODULE M ----\nEXTENDS Naturals\nVARIABLE x\nAp2(K(_)) == \\E i \\in {1, 2} : K(i)\nBad(i) == x' = i + {1}\nH(K(_)) == K(7)\nEB == H(Bad)\nInit == x = 0\nNext == Ap2(EB!1)\n====",
+      config: "INIT Init\nNEXT Next",
+    });
+    expect(formatCallStackLines(result)?.filter((line) => line !== "")).toEqual([
+      "Line 9, column 9 to line 9, column 17 in M",
+      "Line 4, column 14 to line 4, column 35 in M",
+      "Line 4, column 32 to line 4, column 35 in M",
+      "Line 5, column 11 to line 5, column 22 in M",
+      "Line 5, column 16 to line 5, column 22 in M",
+    ]);
+  });
+
+  it.each([
+    [
       "I == INSTANCE Inner WITH N <- 3",
       "I!f[x + 5]",
       "Attempted to apply function:\n<<2, 4, 6>>\nto argument 5, which is not in the domain of the function.",

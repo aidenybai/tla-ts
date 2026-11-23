@@ -57,6 +57,7 @@ import {
   SELECTION_NAME,
   factReferences,
   generatedArgumentCounts,
+  untracedExpressions,
   type NullSelection,
   type SelectionArguments,
   type SubexpressionRecords,
@@ -228,18 +229,21 @@ const getOperatorArgument = (operand: Expression, arity: number): Expression => 
   if (operand.kind !== "Identifier" && operand.kind !== "OperatorReference") return operand;
   const operator = operand.kind === "Identifier" ? operand.name : operand.operator;
   const params = Array.from({ length: arity }, (_value, index) => getArgumentName(index));
+  const args: Expression[] = params.map((name) => ({
+    kind: "Identifier",
+    name,
+    location: operand.location,
+    resolution: LOCAL_RESOLUTION,
+  }));
   const application: ApplyExpression = {
     kind: "Apply",
     operator,
-    args: params.map((name) => ({
-      kind: "Identifier",
-      name,
-      location: operand.location,
-      resolution: LOCAL_RESOLUTION,
-    })),
+    args,
     location: operand.location,
     ...(operand.kind === "Identifier" && { resolution: operand.resolution }),
   };
+  untracedExpressions.add(application);
+  args.forEach((argument) => untracedExpressions.add(argument));
   operandApplications.set(operand, [...(operandApplications.get(operand) ?? []), application]);
   return withSubstitutionFrames(
     { kind: "Lambda", params, body: application, operator, location: operand.location },
