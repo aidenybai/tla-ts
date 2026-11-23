@@ -1001,7 +1001,7 @@ export const chargeSetOperation = (
     // TLC builds S \cap T and S \ T without a cost model, though their enumerators charge S's and T's.
     const costNode = operator === "\\cup" ? node : undefined;
     return result.kind === "SetOperation" &&
-      (costNode !== undefined || isCostedSet(left) || isCostedSet(right))
+      (costNode !== undefined || isCostedSet(coverage, left) || isCostedSet(coverage, right))
       ? markStreamedSet(
           createSetOperation(result.operator, result.left, result.right, {
             node: costNode,
@@ -1016,7 +1016,8 @@ export const chargeSetOperation = (
     if (!isReducibleSet(other)) {
       // IntervalValue#cup and SetEnumValue#cup give a union they can't reduce the receiver's cost model.
       const unionNode = getValueNode(coverage, receiver);
-      return result.kind === "SetOperation" && (unionNode !== undefined || isCostedSet(other))
+      return result.kind === "SetOperation" &&
+        (unionNode !== undefined || isCostedSet(coverage, other))
         ? markStreamedSet(
             createSetOperation(result.operator, result.left, result.right, {
               node: unionNode,
@@ -1236,6 +1237,8 @@ const hasKnownSize = (set: Value): boolean => {
       return true;
     case "Subset":
       return hasKnownSize(set.base);
+    case "FilteredSet":
+      return set.isCached === true;
     case "FunctionSet":
       return hasKnownSize(set.domain) && hasKnownSize(set.range);
     case "RecordSet":
@@ -1621,7 +1624,8 @@ const createChargedMembership = (coverage: Coverage) => {
   const isMember = (element: Value, set: Value): boolean => {
     if (typeof set !== "object") return isElementOf(element, set);
     // SetEnumValue#member asks an unsorted set's members whether they equal a lazy set, which tests its emptiness and parts instead of converting it.
-    if (set.kind === "Set" && isCostedSet(element)) return isElementOfSetLikeTlc(element, set);
+    if (set.kind === "Set" && isCostedSet(coverage, element))
+      return isElementOfSetLikeTlc(element, set);
     if (set.kind !== "Subset" && set.kind !== "Union") {
       // SetOfFcnsValue#member converts the element with toFcnRcd, which charges a tuple or record its length.
       if (

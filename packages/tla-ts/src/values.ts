@@ -2123,7 +2123,7 @@ export const getChargedSet = (value: Value): CostedSetValue | undefined => {
   }
 };
 
-export const isCostedSet = (value: Value) => {
+export const isCostedSet = (charges: ChargeTable, value: Value) => {
   if (typeof value !== "object") return false;
   switch (value.kind) {
     case "Subset":
@@ -2136,6 +2136,8 @@ export const isCostedSet = (value: Value) => {
         value.cost !== undefined &&
         (value.cost.node !== undefined || value.cost.charges !== undefined)
       );
+    case "FilteredSet":
+      return value.isCached === true && getValueNode(charges, value) !== undefined;
     default:
       return false;
   }
