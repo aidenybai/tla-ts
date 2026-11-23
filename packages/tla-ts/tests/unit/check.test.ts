@@ -11511,6 +11511,63 @@ ASSUME TLCFP(a) = -887695703
 
   it.each([
     [
+      "a pass in each state",
+      "x' = 1 - x /\\ \\A o \\in T : TRUE",
+      ["FIN", "<<0, 1>>", "<<1, 1>>", "<<0, 1>>", "<<1, 1>>"],
+    ],
+    [
+      "passes over a filter of it",
+      "x' = 0 /\\ (\\A o \\in W : TRUE) /\\ (\\A o \\in W : TRUE) /\\ (\\A o \\in T : TRUE)",
+      ["FIN", "<<0, 1>>", "<<1, 1>>", "<<0, 1>>", "<<1, 1>>", "<<0, 1>>", "<<1, 1>>"],
+    ],
+    [
+      "a comparison that keeps it",
+      "x' = 1 - x /\\ T # {} /\\ \\A o \\in T : TRUE",
+      ["FIN", "<<0, 1>>", "<<1, 1>>"],
+    ],
+    [
+      "a tuple that holds one",
+      "x' = 0 /\\ \\A o \\in C[1] : TRUE",
+      ["FIN", "<<0, 1>>", "<<1, 1>>"],
+    ],
+    ["a split of Next on it", "\\E o \\in T : x' = 1 - x", ["<<0, 1>>", "<<1, 1>>", "FIN"]],
+  ])(
+    "runs a constant filter's predicate where TLC does in %s, as SpecProcessor keeps the filter lazy",
+    async (_name, next, expected) => {
+      const prints: string[] = [];
+      await check({
+        source: `---- MODULE M ----\nEXTENDS Integers, TLC\nVARIABLE x\nT == {u \\in (0..1) \\X {1} : PrintT(u)}\nW == {w \\in T : TRUE}\nC == <<{u \\in (0..1) \\X {1} : PrintT(u)}>>\nInit == x = 0\nNext == ${next}\n====`,
+        config: "INIT Init\nNEXT Next",
+        onPrint: (text) => prints.push(text),
+        onProgress: (event) => {
+          if (event.kind === "initial-states-computed") prints.push("FIN");
+        },
+      });
+      expect(prints).toEqual(expected);
+    },
+  );
+
+  it("runs a constant filter's predicate again when it rebuilds the trace, as TLC does", async () => {
+    const prints: string[] = [];
+    const result = await check({
+      source:
+        "---- MODULE M ----\nEXTENDS Integers, TLC\nVARIABLE x\nT == {u \\in (0..1) \\X {1} : PrintT(u)}\nInv == x < 2\nInit == x = 0\nNext == x' = x + 1 /\\ \\A o \\in T : TRUE\n====",
+      config: "INIT Init\nNEXT Next\nINVARIANT Inv",
+      onPrint: (text) => prints.push(text),
+    });
+    expect([
+      prints,
+      result.violation?.trace.map((step) => step.output ?? []),
+      result.violation?.traceOutput,
+    ]).toEqual([
+      ["<<0, 1>>", "<<1, 1>>", "<<0, 1>>", "<<1, 1>>"],
+      [[], ["<<0, 1>>", "<<1, 1>>"], ["<<0, 1>>", "<<1, 1>>"]],
+      ["<<0, 1>>", "<<1, 1>>", "<<0, 1>>", "<<1, 1>>"],
+    ]);
+  });
+
+  it.each([
+    [
       "a product compared with itself",
       "LET F == {u \\in (0..1) \\X {1} : u[2] = 1} IN LET P == F \\X {1} IN P = P /\\ \\E t \\in F \\cup {9} : t = t",
       [
