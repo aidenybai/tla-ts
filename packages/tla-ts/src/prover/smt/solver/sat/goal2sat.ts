@@ -15,7 +15,12 @@ import {
   OP_XOR,
   SORT_BOOL,
 } from "../ast";
-import { EufSolver, type EufInternalizer, type ThSolverFactory } from "../euf/euf-solver";
+import {
+  EufSolver,
+  type EufInternalizer,
+  type ThSolverFactory,
+  type UnhandledFun,
+} from "../euf/euf-solver";
 import { getDependencyValues, type Goal } from "../goal";
 import type { ObjMap } from "../hashtable";
 import { RefVector } from "../ref-vector";
@@ -29,12 +34,6 @@ const PRINT_ENVIRONMENT = {
   isUsed: () => false,
   isClashing: () => false,
 };
-
-interface UnhandledFun {
-  decl: number;
-  domain: number[];
-  range: number;
-}
 
 interface Frame {
   expr: number;

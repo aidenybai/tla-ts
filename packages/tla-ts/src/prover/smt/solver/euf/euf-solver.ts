@@ -52,6 +52,12 @@ export interface EufInternalizer {
 // A theory solver for the family of a declaration, created on first use like euf::solver::get_solver.
 export type ThSolverFactory = (ctx: EufSolver, family: number) => ThSolver | null;
 
+export interface UnhandledFun {
+  decl: number;
+  domain: number[];
+  range: number;
+}
+
 const K_CONFLICT = 0;
 const K_EQ = 1;
 const K_LIT = 2;
@@ -83,7 +89,7 @@ export class EufSolver implements SatExtension {
   private varTrail: number[] = [];
   private scopes: number[] = [];
   readonly trail = new TrailStack();
-  readonly unhandledFunctions: number[] = [];
+  readonly unhandledFunctions: UnhandledFun[] = [];
   generation = 0;
   private constraints: Constraint[] = [
     { owner: null, kind: K_CONFLICT, node: null, data: null },
@@ -174,7 +180,7 @@ export class EufSolver implements SatExtension {
     if (family === FAMILY_BASIC || family === FAMILY_USER) return null;
     const solver = this.mkThSolver(this, family);
     if (solver !== null) this.addSolver(solver);
-    else if (decl !== -1) this.unhandledFunction(decl);
+    else if (decl !== -1) this.unhandledFunction(decl, this.manager.funcDecls[decl].domain);
     return solver;
   }
 
@@ -186,13 +192,14 @@ export class EufSolver implements SatExtension {
     if (solver.useDiseqs()) this.egraph.setThPropagatesDiseqs(solver.id);
   }
 
-  private unhandledFunction(decl: number) {
+  private unhandledFunction(decl: number, domain: number[]) {
+    const funcDecl = this.manager.funcDecls[decl];
     if (
-      this.unhandledFunctions.includes(decl) ||
-      this.manager.funcDecls[decl].family === FAMILY_MODEL_VALUE
+      this.unhandledFunctions.some((fun) => fun.decl === decl) ||
+      funcDecl.family === FAMILY_MODEL_VALUE
     )
       return;
-    this.unhandledFunctions.push(decl);
+    this.unhandledFunctions.push({ decl, domain, range: funcDecl.range });
     this.trail.push(() => this.unhandledFunctions.pop());
   }
 
@@ -306,7 +313,10 @@ export class EufSolver implements SatExtension {
       const sortSolver = this.sort2solver(sort);
       if (sortSolver !== null && sortSolver !== exprSolver) sortSolver.applySortCnstr(node, sort);
       else if (sortSolver === null && exprSolver === null && manager.isApp(expr))
-        this.unhandledFunction(manager.decls[expr]);
+        this.unhandledFunction(
+          manager.decls[expr],
+          manager.getArgs(expr).map((arg) => manager.sorts[arg]),
+        );
     }
     if (manager.getFamily(expr) === FAMILY_BASIC && manager.getOp(expr) === OP_EQ)
       this.sort2solver(manager.sorts[manager.getArg(expr, 0)])?.eqInternalized(node);
