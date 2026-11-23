@@ -385,6 +385,24 @@ const compareSets = (left: SetValue, right: SetValue) => {
   return 0;
 };
 
+// SetEnumValue#equals compares its elements with equals, which tests the emptiness and parts of a set of tuples where compareTo would convert it.
+const areSetsEqual = (left: SetValue, right: SetValue) => {
+  const leftElements = left.elements;
+  const rightElements = right.elements;
+  if (leftElements.length !== rightElements.length) return false;
+  if (leftElements === rightElements) return true;
+  for (let index = 0; index < leftElements.length; index++) {
+    const leftElement = leftElements[index];
+    const rightElement = rightElements[index];
+    const isEqual =
+      typeof leftElement === "object" && leftElement.kind !== "Function"
+        ? valuesEqual(leftElement, rightElement)
+        : compareValues(leftElement, rightElement) === 0;
+    if (!isEqual) return false;
+  }
+  return true;
+};
+
 const getModelValueType = (value: Value) => (isModelValue(value) ? value.type : undefined);
 
 const checkModelValueTypes = (left: Value, right: Value, isEquality: boolean) => {
@@ -866,7 +884,7 @@ export const valuesEqual = (left: Value, right: Value): boolean => {
   }
   if (left.kind === "Function" && right.kind === "Function")
     return compareFunctions(left, right) === 0;
-  if (left.kind === "Set" && right.kind === "Set") return compareSets(left, right) === 0;
+  if (left.kind === "Set" && right.kind === "Set") return areSetsEqual(left, right);
   if (left.kind === "Interval" && right.kind === "Set") {
     if (getCardinality(left) !== right.elements.length) return false;
   }

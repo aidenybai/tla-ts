@@ -10575,6 +10575,68 @@ ASSUME TLCFP(a) = -887695703
     },
   );
 
+  it.each([
+    [
+      "a product with itself in set literals",
+      "LET S == ((0..1) \\X {1}) \\cup {<<5, 5>>} IN LET P == S \\X {1} IN {P} = {P}",
+      [
+        "line 5, col 9 to line 5, col 14 of module M: 1",
+        "line 5, col 28 to line 5, col 58 of module M: 1",
+        "|line 5, col 29 to line 5, col 41 of module M: 1:4",
+        "||line 5, col 30 to line 5, col 33 of module M: 1",
+        "||line 5, col 39 to line 5, col 41 of module M: 1:7",
+        "|line 5, col 49 to line 5, col 58 of module M: 1:15",
+        "||line 5, col 50 to line 5, col 57 of module M: 1",
+        "line 5, col 72 to line 5, col 79 of module M: 1",
+        "line 5, col 84 to line 5, col 92 of module M: 1",
+      ],
+    ],
+    [
+      "two products in set literals",
+      "LET S == ((0..1) \\X {1}) \\cup {<<5, 5>>} IN {S \\X {1}} = {S \\X {1}}",
+      [
+        "line 5, col 9 to line 5, col 14 of module M: 1",
+        "line 5, col 28 to line 5, col 58 of module M: 1",
+        "|line 5, col 29 to line 5, col 41 of module M: 1:4",
+        "||line 5, col 30 to line 5, col 33 of module M: 1",
+        "||line 5, col 39 to line 5, col 41 of module M: 1:7",
+        "|line 5, col 49 to line 5, col 58 of module M: 1:15",
+        "||line 5, col 50 to line 5, col 57 of module M: 1",
+        "line 5, col 63 to line 5, col 85 of module M: 1",
+      ],
+    ],
+    [
+      "two record sets in set literals",
+      "LET S == ((0..1) \\X {1}) \\cup {<<5, 5>>} IN {[a : S]} = {[a : S]}",
+      [
+        "line 5, col 9 to line 5, col 14 of module M: 1",
+        "line 5, col 28 to line 5, col 58 of module M: 1",
+        "|line 5, col 29 to line 5, col 41 of module M: 1:4",
+        "||line 5, col 30 to line 5, col 33 of module M: 1",
+        "||line 5, col 39 to line 5, col 41 of module M: 1:7",
+        "|line 5, col 49 to line 5, col 58 of module M: 1:15",
+        "||line 5, col 50 to line 5, col 57 of module M: 1",
+        "line 5, col 63 to line 5, col 83 of module M: 1",
+      ],
+    ],
+    [
+      "two function sets in set literals",
+      "LET S == ((0..1) \\X {1}) \\cup {<<5, 5>>} IN {[S -> {1}]} = {[S -> {1}]}",
+      [
+        "line 5, col 9 to line 5, col 14 of module M: 1",
+        "line 5, col 28 to line 5, col 58 of module M: 1",
+        "|line 5, col 29 to line 5, col 41 of module M: 1:4",
+        "||line 5, col 30 to line 5, col 33 of module M: 1",
+        "||line 5, col 39 to line 5, col 41 of module M: 1:7",
+        "|line 5, col 49 to line 5, col 58 of module M: 1:15",
+        "||line 5, col 50 to line 5, col 57 of module M: 1",
+        "line 5, col 63 to line 5, col 89 of module M: 1",
+      ],
+    ],
+  ])("compares %s by their emptiness and parts", async (_name, body, rows) => {
+    expect(await getNextCoverageLines(`x' = 0 /\\ ${body}`)).toEqual(rows);
+  });
+
   it("counts an operator argument that a filter's membership test forces", async () => {
     expect(
       await getNextCoverageLines(
