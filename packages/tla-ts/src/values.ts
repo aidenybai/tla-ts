@@ -847,16 +847,15 @@ const STREAMING_KINDS = new Set<ObjectValue["kind"]>([
   "FunctionSet",
 ]);
 
+const isCacheableSet = (value: Value): value is ConvertibleSetValue =>
+  hasStreamedSet &&
+  typeof value === "object" &&
+  isLazySet(value) &&
+  STREAMING_KINDS.has(value.kind);
+
 // TLC's convertAndCache keeps the set a lazy set converts to once it has converted it, so a caller marks a set only after converting it.
 const cacheSet = (value: Value) => {
-  if (
-    hasStreamedSet &&
-    typeof value === "object" &&
-    isLazySet(value) &&
-    STREAMING_KINDS.has(value.kind)
-  ) {
-    value.isCached = true;
-  }
+  if (isCacheableSet(value)) value.isCached = true;
 };
 
 export const markFingerprinted = (value: Value): void => {
@@ -3810,7 +3809,6 @@ export const isElementOf = (element: Value, set: Value): boolean => {
 export const isElementOfSetLikeTlc = (element: Value, set: SetValue): boolean => {
   const sets = setTrace.sets;
   sets?.push(set);
-  cacheSet(element);
   const isElement = isInSortedSetLikeTlc(element, set);
   sets?.pop();
   return isElement;
@@ -3970,9 +3968,8 @@ const isElementOfAnySet = (element: Value, set: Value): boolean => {
   if (!isSetValue(set)) throw new TlaEvaluationError(describeNonSetMembership(element, set));
   switch (set.kind) {
     case "Set":
-      cacheSet(element);
       // TLC's ValueVec#search makes the element the receiver of a sorted set's comparisons, and each member the receiver of an unsorted one's.
-      return isTypedModelValueCreated || isObservedLambda(element)
+      return isTypedModelValueCreated || isObservedLambda(element) || isCacheableSet(element)
         ? isInSortedSetLikeTlc(element, set)
         : computeLikeTlcOnFailure(isInSortedSet, isInSortedSetLikeTlc, element, set);
     case "MixedSet":

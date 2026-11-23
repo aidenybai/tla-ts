@@ -287,6 +287,27 @@ describe("printing matches TLC", () => {
     },
   );
 
+  it.each([
+    ["F \\in {{<<0, 1>>, <<1, 1>>}}", ["<<0, 1>>", "<<1, 1>>", "<<0, 1>>"]],
+    [
+      "F \\in {{}, {<<0, 1>>}, {<<0, 1>>, <<1, 1>>}}",
+      ["<<0, 1>>", "<<1, 1>>", "<<0, 1>>", "<<1, 1>>", "<<0, 1>>", "<<1, 1>>", "<<0, 1>>"],
+    ],
+    ["F \\notin {{}}", ["<<0, 1>>", "<<1, 1>>", "<<0, 1>>"]],
+    ["LET L == {{}, {<<0, 1>>, <<1, 1>>}} IN L = L /\\ F \\in L", ["<<0, 1>>", "<<1, 1>>"]],
+  ])(
+    "keeps the set a filter converts to in %s only where TLC's ValueVec#search makes the filter the receiver",
+    async (membership, printed) => {
+      const lines: string[] = [];
+      await check({
+        source: `---- MODULE M ----\nEXTENDS Integers, TLC\nVARIABLE x\nInit == x = 0\nNext == x' = 0 /\\ LET F == {u \\in (0..1) \\X {1} : PrintT(u)} IN ${membership} /\\ <<0, 1>> \\in F\n====`,
+        config: "INIT Init\nNEXT Next",
+        onPrint: (text) => lines.push(text),
+      });
+      expect(lines).toEqual(printed);
+    },
+  );
+
   it("finds Nat unequal to a typed model value, as TLC's UserValue#compareTo does", async () => {
     const printed: string[] = [];
     await check({
