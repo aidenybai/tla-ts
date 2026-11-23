@@ -3978,9 +3978,10 @@ if (view !== "${expected}") throw new Error(view);
   }, 300_000);
 });
 
-// test262's includes that tla-ts compiles from a TypeScript port, run on ESCore in a file that Node
-// loads as a module, as test262's runner loads a test, and in Node, where the port must behave as
-// the include does.
+// test262's includes that tla-ts compiles from a TypeScript port, run on ESCore and in Node, where
+// the port must behave as the include does. A port that reads its error's stack runs in a module,
+// whose location in a stack Node gives as test262's runner does, and one that passes its global
+// this runs in a script.
 describe("ports test262's harness includes", () => {
   const readPort = (name: string) =>
     readFileSync(join(import.meta.dirname, "../conformance", name), "utf8");
@@ -3992,6 +3993,47 @@ describe("ports test262's harness includes", () => {
       return String(error);
     }
   };
+
+  // The part of test262's assert that the shells call.
+  const ASSERT = `
+    const assert = {
+      sameValue(actual: unknown, expected: unknown, message?: string) {
+        if (!Object.is(actual, expected)) throw new Error(\`\${message ?? ""} \${String(actual)} !== \${String(expected)}\`);
+      },
+    };
+  `;
+
+  describe("SpiderMonkey's Set shell", () => {
+    const port = ASSERT + readPort("test262-sm-set-shell.ts");
+    const uses = `
+      assertSetContainsExactOrderedItems(new Set([3, 1, 2]), [3, 1, 2]);
+      const like = new SetLike([1, 2]);
+      const keys = like.keys();
+      const first = keys.next();
+      if (like.size !== 2 || !like.has(2) || like.has(3) || first.value !== 1) throw new Error("SetLike");
+      const log: unknown[] = [];
+      const logged = LoggingProxy({ a: 1 }, log);
+      if (logged.proxy.a !== 1 || log.join() !== "[[get]],a") throw new Error(log.join());
+      let isRejected = false;
+      try {
+        keys.return();
+      } catch (error) {
+        isRejected = String(error).includes("|return|");
+      }
+      if (!isRejected) throw new Error("return");
+    `;
+
+    it("checks a Set's items in order and logs a proxy's reads", async () => {
+      expect(getNodeError(port + uses)).toBeUndefined();
+      expect((await checkScript(port + uses)).message).toBeUndefined();
+    });
+
+    it("rejects a Set whose items come in another order", async () => {
+      const wrong = "assertSetContainsExactOrderedItems(new Set([1, 2]), [2, 1]);";
+      expect(getNodeError(port + wrong)).toContain("Element at index 0:");
+      expect((await checkScript(port + wrong)).message).toContain(THREW);
+    });
+  });
 
   describe("SpiderMonkey's Math shell", () => {
     const port = readPort("test262-sm-math-shell.ts");
