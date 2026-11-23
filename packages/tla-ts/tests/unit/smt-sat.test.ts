@@ -1763,3 +1763,74 @@ describe("pseudo-Boolean bounds past 2^31, which Z3 5.3.2's int parameters can't
     );
   });
 });
+
+describe("sat config, as Z3 5.3.2 checks the sat solver's parameters", () => {
+  const getChecked = (options: string[]) =>
+    run([
+      ...options.map((option) => `(set-option ${option})`),
+      "(declare-const p Bool)",
+      "(declare-const q Bool)",
+      "(assert (or p q))",
+      "(check-sat)",
+      "(get-info :reason-unknown)",
+      "(get-info :rlimit)",
+    ]);
+  const getUnknown = (reason: string) =>
+    ["unknown", `(:reason-unknown "${reason}")`, "(:rlimit 8)"].join("\n");
+  const REWARD =
+    "invalid reward type supplied: accepted heuristics are 'ternary', 'heuleu', 'unit' or 'heule_schur'";
+  const CUTOFF =
+    "invalid cutoff type supplied: accepted cutoffs are 'depth', 'freevars', 'psat', 'adaptive_freevars' and 'adaptive_psat'";
+  const DELTA = "invalid value for delta fraction. It should be a number in the interval 0 to 1";
+  const DRAT =
+    "external DRAT output requires threads=1, local_search_threads=0, ddfw.threads=0, and drat.disable=false";
+  const BRANCHING = "invalid branching heuristic: accepted heuristics are 'vsids' or 'chb'";
+  const PB_SOLVER =
+    "invalid PB solver: solver, totalizer, circuit, sorting, segmented, binary_merge";
+  const PB_RESOLVE = "invalid PB resolve: 'cardinality' or 'rounding' expected";
+
+  it.each([
+    [[":sat.lookahead.reward foo"], REWARD],
+    [[":sat.lookahead.cube.cutoff foo"], CUTOFF],
+    [[":sat.lookahead.delta_fraction 2.0"], DELTA],
+    [[":sat.lookahead.delta_fraction -0.5"], DELTA],
+    [[":sat.drat.file foo.drat", ":sat.threads 2"], DRAT],
+    [[":sat.drat.file foo.drat", ":sat.drat.disable true"], DRAT],
+    [[":sat.drat.file foo.drat", ":sat.local_search_threads 1"], DRAT],
+    [[":sat.drat.file foo.drat", ":sat.ddfw.threads 1"], DRAT],
+    [[":sat.branching.heuristic foo"], BRANCHING],
+    [[":sat.pb.solver foo"], PB_SOLVER],
+    [[":sat.pb.solver 1"], PB_SOLVER],
+    [[":sat.pb.resolve foo"], PB_RESOLVE],
+    [[":sat.pb.lemma_format foo"], "invalid PB lemma format: 'cardinality' or 'pb' expected"],
+  ])("gives up with Z3's reason when the options %j fail the check", (options, reason) => {
+    expect(getChecked(options)).toBe(getUnknown(reason));
+  });
+
+  it.each([
+    [
+      [":sat.lookahead.reward foo", ":sat.phase foo"],
+      "invalid phase selection strategy: always_false, always_true, basic_caching, caching, random",
+    ],
+    [[":sat.lookahead.cube.cutoff foo", ":sat.lookahead.reward foo"], REWARD],
+    [[":sat.lookahead.delta_fraction 2.0", ":sat.lookahead.cube.cutoff foo"], CUTOFF],
+    [[":sat.gc foo", ":sat.lookahead.delta_fraction 2.0"], DELTA],
+    [[":sat.drat.file x", ":sat.threads 3", ":sat.gc foo"], "invalid gc strategy"],
+    [[":sat.branching.heuristic foo", ":sat.drat.file x", ":sat.threads 3"], DRAT],
+    [[":sat.pb.solver foo", ":sat.branching.heuristic foo"], BRANCHING],
+    [[":sat.pb.resolve foo", ":sat.pb.solver foo"], PB_SOLVER],
+    [[":sat.pb.lemma_format foo", ":sat.pb.resolve foo"], PB_RESOLVE],
+  ])("reports the first failure in Z3's order among the options %j", (options, reason) => {
+    expect(getChecked(options)).toBe(getUnknown(reason));
+  });
+
+  it("takes the valid values of the pseudo-Boolean options", () => {
+    expect(
+      getChecked([
+        ":sat.pb.solver totalizer",
+        ":sat.pb.resolve rounding",
+        ":sat.pb.lemma_format pb",
+      ]),
+    ).toBe(["sat", '(:reason-unknown "")', "(:rlimit 30)"].join("\n"));
+  });
+});

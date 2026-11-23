@@ -11,7 +11,6 @@ import {
   GC_GLUE_PSM,
   GC_PSM,
   GC_PSM_GLUE,
-  getSatConfig,
   PS_ALWAYS_FALSE,
   PS_ALWAYS_TRUE,
   PS_BASIC_CACHING,
@@ -22,7 +21,7 @@ import {
   RS_EMA,
   RS_GEOMETRIC,
   RS_LUBY,
-  type SatConfig,
+  SatConfig,
   type SatParams,
 } from "./config";
 import { MaxCliques } from "../max-cliques";
@@ -231,7 +230,7 @@ export class Solver {
     isIncremental = false,
   ) {
     this.incremental = isIncremental;
-    this.config = getSatConfig(params);
+    this.config = new SatConfig(params);
     this.rand = new RandomGen(this.config.randomSeed);
     this.caseSplitQueue = new VarQueue(this.activity);
     this.cleaner = new Cleaner(this);
