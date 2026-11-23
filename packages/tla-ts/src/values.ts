@@ -637,8 +637,11 @@ const compareWithItself = (value: Value, isEquality: boolean): boolean => {
     }
   }
   const charged = getChargedSet(value);
+  // SetOfTuplesValue#equals and the like convert nothing, so of the comparisons with itself only a literal's sort, through compareTo, converts a set of tuples.
   compareWithItself(
-    charged ? toChargedSet(charged, true, toFiniteSet) : toFiniteSet(value),
+    charged && (isSortingLiteral || charged.kind === "SetOperation" || charged.kind === "Union")
+      ? toChargedSet(charged, true, toFiniteSet)
+      : toFiniteSet(value),
     isEquality,
   );
   return false;

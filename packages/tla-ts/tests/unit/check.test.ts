@@ -10453,6 +10453,45 @@ ASSUME TLCFP(a) = -887695703
     expect(await getNextCoverageLines(`x' = 0 /\\ ${body}`)).toEqual(rows);
   });
 
+  it.each([
+    [
+      "a product",
+      "LET P == ({1, 2} \\X {3}) IN {P} = {P}",
+      ["line 5, col 9 to line 5, col 55 of module M: 1"],
+    ],
+    [
+      "a product and a set equal to it",
+      "LET P == ({1, 2} \\X {3}) IN {P, {<<1, 3>>, <<2, 3>>}} = {P}",
+      [
+        "line 5, col 9 to line 5, col 14 of module M: 1",
+        "line 5, col 29 to line 5, col 41 of module M: 1:6",
+        "|line 5, col 29 to line 5, col 34 of module M: 1:3",
+        "|line 5, col 39 to line 5, col 41 of module M: 1:5",
+        "line 5, col 47 to line 5, col 77 of module M: 1",
+      ],
+    ],
+    [
+      "two equal sets of records",
+      "LET P == [a : {1, 2}] IN {P, [a : {1, 2}]} = {P}",
+      [
+        "line 5, col 9 to line 5, col 14 of module M: 1",
+        "line 5, col 28 to line 5, col 39 of module M: 1:4",
+        "|line 5, col 29 to line 5, col 38 of module M: 1:3",
+        "line 5, col 44 to line 5, col 66 of module M: 1",
+        "|line 5, col 44 to line 5, col 60 of module M: 1",
+        "||line 5, col 45 to line 5, col 45 of module M: 1",
+        "||line 5, col 48 to line 5, col 59 of module M: 1:4",
+        "|||line 5, col 49 to line 5, col 58 of module M: 1:3",
+        "|line 5, col 64 to line 5, col 66 of module M: 1",
+      ],
+    ],
+  ])(
+    "converts no set of tuples or records that equality of set literals of %s compares with itself",
+    async (_name, body, rows) => {
+      expect(await getNextCoverageLines(`x' = 0 /\\ ${body}`)).toEqual(rows);
+    },
+  );
+
   it("counts an operator argument that a filter's membership test forces", async () => {
     expect(
       await getNextCoverageLines(
