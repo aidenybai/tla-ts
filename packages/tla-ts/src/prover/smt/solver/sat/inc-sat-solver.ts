@@ -14,9 +14,9 @@ import { ProtoModel } from "../proto-model";
 import { PropagateValuesTactic } from "../propagate-values";
 import { RefVector } from "../ref-vector";
 import {
+  DEFAULT_PRINT_ENVIRONMENT,
   DEFAULT_PRINT_OPTIONS,
   formatSort,
-  NO_SORT_INFOS,
   getQuotedName,
   mkSeq1,
   mkSeq5,
@@ -211,8 +211,8 @@ export class IncSatSolver {
       const declaration = mkSeq1(
         [
           mkText(getQuotedName(manager.funcDecls[fun.decl].name)),
-          mkSeq5(fun.domain.map((sort) => formatSort(manager, NO_SORT_INFOS, sort))),
-          formatSort(manager, NO_SORT_INFOS, fun.range),
+          mkSeq5(fun.domain.map((sort) => formatSort(manager, DEFAULT_PRINT_ENVIRONMENT, sort))),
+          formatSort(manager, DEFAULT_PRINT_ENVIRONMENT, fun.range),
         ],
         "declare-fun",
       );

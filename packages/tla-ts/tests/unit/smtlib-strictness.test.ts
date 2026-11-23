@@ -2137,7 +2137,49 @@ describe("the terms that Z3 5.3.2 prints with its default printer, which knows n
       ],
       '(error "line 3 column 36: Wrong number of arguments (2) passed to function (declare-fun not (Bool) Bool) \narg: a\n\narg: a")\n(error "line 6 column 49: Argument b at position 1 has sort (_ BitVec 4) it does not match declaration (declare-fun bvadd ((_ BitVec 3) (_ BitVec 3)) (_ BitVec 3))")\n(error "line 8 column 44: Wrong number of arguments (2) passed to function (declare-fun not (Bool) Bool) \narg: (forall ((x Int)) (> x 0))\n\narg: true")',
     ],
+    [
+      "a declared sort without its arguments in the reader's messages",
+      [
+        "(declare-sort U 1)",
+        "(declare-const x (U Int))",
+        "(assert (= (f x) 0))",
+        "(assert (= x 0))",
+        "(declare-datatype P (par (T) ((mk (v T)))))",
+        "(declare-const p (P (U Bool)))",
+        "(assert (= p 1))",
+      ],
+      '(error "line 3 column 15: unknown constant f (U) ")\n(error "line 4 column 14: Sorts U and Int are incompatible")\n(error "line 7 column 14: Sorts (P U) and Int are incompatible")',
+    ],
+    [
+      "a declared sort without its arguments in get-value, where no declaration made it",
+      [
+        "(declare-sort U 1)",
+        "(declare-datatype P (par (T) ((mk (v (Array T (U T)))))))",
+        "(declare-const p (P Int))",
+        "(check-sat)",
+        "(get-value ((v p)))",
+      ],
+      "sat\n(((v p) ((as const (Array Int U)) U!val!0)))",
+    ],
   ])("prints %s", (_title, lines, expected) => {
     expect(run(lines).join("\n")).toBe(expected);
+  });
+
+  it("names apart two instances of a declared sort in a model, which Z3 prints alike, and keeps the bare name in an error", () => {
+    expect(
+      run([
+        "(declare-sort U 1)",
+        "(declare-datatype P (par (T) ((mk (v (U T)) (w (Array T (U T)))))))",
+        "(declare-const p (P Int))",
+        "(declare-const q (P Bool))",
+        "(assert (not (= (v p) (select (w p) 0))))",
+        "(assert (not (= (v q) (select (w q) true))))",
+        "(check-sat)",
+        "(get-model)",
+        "(assert (= (v p) 0))",
+      ]).join("\n"),
+    ).toBe(
+      'sat\n(\n  ;; universe for (U Int):\n  ;;   U!val!0 U!val!1 \n  ;; -----------\n  ;; definitions for universe elements:\n  (declare-fun U!val!0 () (U Int))\n  (declare-fun U!val!1 () (U Int))\n  ;; cardinality constraint:\n  (forall ((x (U Int))) (or (= x U!val!0) (= x U!val!1)))\n  ;; -----------\n  ;; universe for (U Bool):\n  ;;   U!val!0 U!val!1 \n  ;; -----------\n  ;; definitions for universe elements:\n  (declare-fun U!val!0 () (U Bool))\n  (declare-fun U!val!1 () (U Bool))\n  ;; cardinality constraint:\n  (forall ((x (U Bool))) (or (= x U!val!0) (= x U!val!1)))\n  ;; -----------\n  (define-fun p () (P Int)\n    (mk U!val!0 ((as const (Array Int (U Int))) U!val!1)))\n  (define-fun q () (P Bool)\n    (mk U!val!0 ((as const (Array Bool (U Bool))) U!val!1)))\n)\n(error "line 9 column 18: Sorts U and Int are incompatible")',
+    );
   });
 });

@@ -110,21 +110,21 @@ interface IndexedSortInfo {
 
 export type SortInfo = AppSortInfo | IndexedSortInfo;
 
-export const NO_SORT_INFOS: ReadonlyMap<number, SortInfo> = new Map();
-
 export interface PrintEnvironment {
   options: PrintOptions;
   isUsed: (name: string) => boolean;
   // Another declaration of the same name takes the same arguments, so the name needs its sort.
   isClashing: (decl: number) => boolean;
   sortInfos: ReadonlyMap<number, SortInfo>;
+  shouldPrintDeclaredSortArguments: boolean;
 }
 
 export const DEFAULT_PRINT_ENVIRONMENT: PrintEnvironment = {
   options: DEFAULT_PRINT_OPTIONS,
   isUsed: () => false,
   isClashing: () => false,
-  sortInfos: NO_SORT_INFOS,
+  sortInfos: new Map(),
+  shouldPrintDeclaredSortArguments: false,
 };
 
 export const LINE_BREAK: LineBreakFormat = { kind: "line-break" };
@@ -268,17 +268,26 @@ export const getQuotedName = (symbol: SmtSymbol) =>
       ? `|${symbol.replace(/[|\\]/g, "\\$&")}|`
       : symbol;
 
+// Deviation from Z3: a model prints the arguments of a declared sort, which Z3 drops so that two instances print alike.
+const isPrintingSortArguments = (
+  manager: AstManager,
+  environment: PrintEnvironment,
+  sort: number,
+) =>
+  manager.getSortParameters(sort).length > 0 &&
+  (environment.shouldPrintDeclaredSortArguments || !manager.isUninterpretedSort(sort));
+
 export const formatSort = (
   manager: AstManager,
-  sortInfos: ReadonlyMap<number, SortInfo>,
+  environment: PrintEnvironment,
   sort: number,
 ): Format => {
-  const info = sortInfos.get(sort);
+  const info = environment.sortInfos.get(sort);
   if (info?.kind === "app")
     return info.args.length === 0
       ? mkText(getQuotedName(info.name))
       : mkSeq1(
-          info.args.map((arg) => formatSort(manager, sortInfos, arg)),
+          info.args.map((arg) => formatSort(manager, environment, arg)),
           getQuotedName(info.name),
         );
   if (info?.kind === "indexed")
@@ -299,26 +308,22 @@ export const formatSort = (
           ],
           "_",
         )
-      : manager.getSortParameters(sort).length > 0
+      : isPrintingSortArguments(manager, environment, sort)
         ? mkSeq1(
             manager
               .getSortParameters(sort)
-              .map((parameter) => formatSort(manager, sortInfos, parameter)),
+              .map((parameter) => formatSort(manager, environment, parameter)),
             getQuotedName(manager.sortNames[sort]),
           )
         : mkText(getQuotedName(manager.sortNames[sort]));
 };
 
-const getSortText = (
-  manager: AstManager,
-  sortInfos: ReadonlyMap<number, SortInfo>,
-  sort: number,
-): string => {
-  const info = sortInfos.get(sort);
+const getSortText = (manager: AstManager, environment: PrintEnvironment, sort: number): string => {
+  const info = environment.sortInfos.get(sort);
   if (info?.kind === "app")
     return info.args.length === 0
       ? getQuotedName(info.name)
-      : `(${getQuotedName(info.name)} ${info.args.map((arg) => getSortText(manager, sortInfos, arg)).join(" ")})`;
+      : `(${getQuotedName(info.name)} ${info.args.map((arg) => getSortText(manager, environment, arg)).join(" ")})`;
   if (info?.kind === "indexed")
     return info.indices.length === 0
       ? getQuotedName(info.name)
@@ -327,10 +332,10 @@ const getSortText = (
     ? `(_ BitVec ${manager.getBvSize(sort)})`
     : manager.isFpSort(sort)
       ? `(_ FloatingPoint ${manager.getEbits(sort)} ${manager.getSbits(sort)})`
-      : manager.getSortParameters(sort).length > 0
+      : isPrintingSortArguments(manager, environment, sort)
         ? `(${getQuotedName(manager.sortNames[sort])} ${manager
             .getSortParameters(sort)
-            .map((parameter) => getSortText(manager, sortInfos, parameter))
+            .map((parameter) => getSortText(manager, environment, parameter))
             .join(" ")})`
         : getQuotedName(manager.sortNames[sort]);
 };
@@ -387,17 +392,13 @@ const formatFpNumeral = (options: PrintOptions, value: Mpf) => {
   );
 };
 
-const getDeclName = (
-  manager: AstManager,
-  sortInfos: ReadonlyMap<number, SortInfo>,
-  decl: number,
-) => {
+const getDeclName = (manager: AstManager, environment: PrintEnvironment, decl: number) => {
   const funcDecl = manager.funcDecls[decl];
   const name = getQuotedName(funcDecl.name);
   if (funcDecl.family === FAMILY_PB)
     return `(_ ${name} ${manager.getPbParameters(decl).join(" ")})`;
   if (funcDecl.op === OP_CONST_ARRAY || funcDecl.op === OP_SEQ_EMPTY)
-    return `(as ${name} ${getSortText(manager, sortInfos, funcDecl.range)})`;
+    return `(as ${name} ${getSortText(manager, environment, funcDecl.range)})`;
   if (
     funcDecl.op === OP_ARRAY_MAP ||
     funcDecl.op === OP_AS_ARRAY ||
@@ -525,12 +526,12 @@ const createPrinter = (manager: AstManager, environment: PrintEnvironment) => {
     environment.isClashing(decl)
       ? mkSeq1(
           [
-            mkText(getDeclName(manager, environment.sortInfos, decl)),
-            formatSort(manager, environment.sortInfos, manager.funcDecls[decl].range),
+            mkText(getDeclName(manager, environment, decl)),
+            formatSort(manager, environment, manager.funcDecls[decl].range),
           ],
           "as",
         )
-      : mkText(getDeclName(manager, environment.sortInfos, decl));
+      : mkText(getDeclName(manager, environment, decl));
 
   const formatConst = (expr: number) => {
     if (manager.getOp(expr) === OP_NUM) return formatNumeral(manager, options, expr);
@@ -672,7 +673,7 @@ const createPrinter = (manager: AstManager, environment: PrintEnvironment) => {
       const args = formats.slice(frame.start);
       const decl = manager.decls[frame.expr];
       const name = formatDeclName(decl);
-      const declName = getDeclName(manager, environment.sortInfos, decl);
+      const declName = getDeclName(manager, environment, decl);
       const nameLength =
         !environment.isClashing(decl) && declName.startsWith("(") ? Infinity : declName.length;
       const op = manager.getOp(frame.expr);
@@ -754,7 +755,7 @@ const createPrinter = (manager: AstManager, environment: PrintEnvironment) => {
           mkSeq5(
             data.sorts.map((sort, index) =>
               mkSeq1(
-                [formatSort(manager, environment.sortInfos, sort)],
+                [formatSort(manager, environment, sort)],
                 varNames[varNames.length - data.sorts.length + index],
               ),
             ),

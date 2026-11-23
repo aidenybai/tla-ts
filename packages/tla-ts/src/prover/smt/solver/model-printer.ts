@@ -110,10 +110,11 @@ const sortFuncDecls = (manager: AstManager, model: ProtoModel) => {
 
 export const printModel = (
   manager: AstManager,
-  environment: PrintEnvironment,
+  scriptEnvironment: PrintEnvironment,
   model: ProtoModel,
   indent: number,
 ) => {
+  const environment = { ...scriptEnvironment, shouldPrintDeclaredSortArguments: true };
   const options = environment.options;
   const render = (format: Format, amount = 0) => renderFormat(mkIndent(amount, format), options);
   const formatValue = (expr: number) => formatExpr(manager, environment, expr).format;
@@ -125,12 +126,12 @@ export const printModel = (
     const names = universe.map((value) =>
       getQuotedName(manager.funcDecls[manager.decls[value]].name),
     );
-    const header = `universe for ${render(formatSort(manager, environment.sortInfos, sort), 13)}:\n  ${names.map((name) => `${name} `).join("")}\n-----------`;
+    const header = `universe for ${render(formatSort(manager, environment, sort), 13)}:\n  ${names.map((name) => `${name} `).join("")}\n-----------`;
     output.push(`${pad};; ${header.replaceAll("\n", `\n${pad};; `)}\n`);
     output.push(`${pad};; definitions for universe elements:\n`);
     for (const name of names)
       output.push(
-        `${pad}(declare-fun ${name} () ${render(formatSort(manager, environment.sortInfos, sort), indent + name.length + 16)})\n`,
+        `${pad}(declare-fun ${name} () ${render(formatSort(manager, environment, sort), indent + name.length + 16)})\n`,
       );
     output.push(`${pad};; cardinality constraint:\n`);
     const conditions = names.map((name) => mkSeq1([mkText("x"), mkText(name)], "="));
@@ -139,7 +140,7 @@ export const printModel = (
       [
         mkCompose(
           mkText("((x "),
-          mkIndent(4, mkCompose(formatSort(manager, environment.sortInfos, sort), mkText("))"))),
+          mkIndent(4, mkCompose(formatSort(manager, environment, sort), mkText("))"))),
         ),
         condition,
       ],
@@ -152,7 +153,7 @@ export const printModel = (
   for (const decl of model.getConstDecls()) {
     const name = getQuotedName(manager.funcDecls[decl].name);
     const range = render(
-      formatSort(manager, environment.sortInfos, manager.funcDecls[decl].range),
+      formatSort(manager, environment, manager.funcDecls[decl].range),
       indent + name.length + 16,
     );
     const value = render(formatValue(model.constInterps.get(decl) as number));
@@ -179,7 +180,7 @@ export const printModel = (
         : Array.from({ length: interp.arity }, () => funcDecl.range);
     const domain = mkSeq5(
       domainSorts.map((sort, index) =>
-        mkSeq5([varNames[index], formatSort(manager, environment.sortInfos, sort)]),
+        mkSeq5([varNames[index], formatSort(manager, environment, sort)]),
       ),
     );
     const entries = interp.entries.flatMap((entry, index) => {
@@ -209,7 +210,7 @@ export const printModel = (
     const definition = mkCompose(
       mkCompose(
         mkText(`(define-fun ${getQuotedName(funcDecl.name)} `),
-        mkCompose(domain, mkText(" "), formatSort(manager, environment.sortInfos, funcDecl.range)),
+        mkCompose(domain, mkText(" "), formatSort(manager, environment, funcDecl.range)),
       ),
       mkIndent(TAB_SIZE, mkCompose(LINE_BREAK, body, mkText(")"))),
     );

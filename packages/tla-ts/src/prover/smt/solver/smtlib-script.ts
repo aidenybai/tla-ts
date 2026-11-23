@@ -549,6 +549,7 @@ export const runSmtlibScript = (
     isUsed: state.reader.isUsed,
     isClashing: state.reader.isClashing,
     sortInfos: state.reader.sortInfos,
+    shouldPrintDeclaredSortArguments: false,
   });
   const format = (expr: number) => printExpr(state.manager, getPrintEnvironment(), expr);
   const display = (expr: number) => print(format(expr));
@@ -2178,10 +2179,8 @@ export const runSmtlibScript = (
               mkSeq1(
                 [
                   mkText(getQuotedName(funcDecl.name)),
-                  mkSeq5(
-                    funcDecl.domain.map((sort) => formatSort(manager, environment.sortInfos, sort)),
-                  ),
-                  formatSort(manager, environment.sortInfos, funcDecl.range),
+                  mkSeq5(funcDecl.domain.map((sort) => formatSort(manager, environment, sort))),
+                  formatSort(manager, environment, funcDecl.range),
                 ],
                 "declare-fun",
               ),
@@ -2431,7 +2430,7 @@ export const runSmtlibScript = (
         const sorts = getFreeVarSorts(manager, body, manager.freeVarBounds[body]);
         const lines = sorts.map(
           (sort, index) =>
-            `\n  (${String(index).padEnd(6)} ${sort === undefined ? "<not-used>" : renderFormat(mkIndent(10, formatSort(manager, state.reader.sortInfos, sort)), settings.printOptions)})`,
+            `\n  (${String(index).padEnd(6)} ${sort === undefined ? "<not-used>" : renderFormat(mkIndent(10, formatSort(manager, getPrintEnvironment(), sort)), settings.printOptions)})`,
         );
         print(`(vars${lines.join("")})`);
       },
