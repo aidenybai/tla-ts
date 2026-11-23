@@ -1318,7 +1318,11 @@ describe("the CLI answers PickSuccessor from standard input like TLC", () => {
   );
 
   it("counts the successors TLC generates again to find the action of a step in the coverage", () => {
-    const result = runCliWith("tlc-ext", ["PickAsk.tla", "-coverage", "1"], "y\n".repeat(7));
+    const result = runCliWith(
+      "tlc-ext",
+      ["PickAsk.tla", "-coverage", "1", "-fp", "0"],
+      "y\n".repeat(7),
+    );
     expect(result.status).toBe(0);
     expect(getCoverageLines(result.stdout)).toEqual([
       "<x line 4, col 11 to line 4, col 11 of module PickAsk>: 3",
@@ -1342,7 +1346,11 @@ describe("the CLI answers PickSuccessor from standard input like TLC", () => {
   });
 
   it("counts the successors the behavior graph generates again in the coverage, also after a violation", () => {
-    const result = runCliWith("tlc-ext", ["PickExplored.tla", "-coverage", "1"], "y\ny\ny\n");
+    const result = runCliWith(
+      "tlc-ext",
+      ["PickExplored.tla", "-coverage", "1", "-fp", "0"],
+      "y\ny\ny\n",
+    );
     expect(result.status).toBe(12);
     expect(getCoverageLines(result.stdout)).toEqual([
       "<x line 4, col 11 to line 4, col 11 of module PickExplored>: 2",
