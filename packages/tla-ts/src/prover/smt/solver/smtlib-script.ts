@@ -1668,8 +1668,12 @@ export const runSmtlibScript = (
         try {
           status = datalog.relQuery(relation);
         } catch (error) {
-          if (!(error instanceof SmtTacticError)) throw error;
-          print(`(error "query failed: ${error.message}")`);
+          if (!(error instanceof SmtTacticError || error instanceof SmtCanceledError)) throw error;
+          const message =
+            error instanceof SmtCanceledError
+              ? state.manager.limit.getCancelMessage()
+              : error.message;
+          print(`(error "query failed: ${message}")`);
         } finally {
           state.manager.limit.pop();
         }

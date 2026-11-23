@@ -50,6 +50,20 @@ const UNINTERPRETED_RELATION = [
   "(declare-var x Int)",
 ];
 
+const getLimitedCounterQuery = (engine: string, limit: number) => [
+  `(set-option :fp.engine ${engine})`,
+  "(declare-rel P (Int))",
+  "(declare-rel Q (Int))",
+  "(declare-var x Int)",
+  "(rule (=> (= x 0) (P x)))",
+  "(rule (=> (and (P x) (< x 3)) (P (+ x 1))))",
+  `(set-option :rlimit ${limit})`,
+  "(query P)",
+  "(set-option :rlimit 0)",
+  "(rule (=> (and (P x) (> x 1)) (Q x)))",
+  "(query Q)",
+];
+
 // The expected values are the output of z3 5.3.2.
 describe("datalog queries", () => {
   it("answers sat for a reachable relation", () => {
@@ -130,6 +144,13 @@ describe("datalog queries", () => {
         "(query bad)",
       ]),
     ).toEqual(["sat"]);
+  });
+
+  it("goes on with the script after a query runs out of resources", () => {
+    expect(run(getLimitedCounterQuery("bmc", 5))).toEqual([
+      ...getFailedQuery("max. resource limit exceeded"),
+      "sat",
+    ]);
   });
 });
 
