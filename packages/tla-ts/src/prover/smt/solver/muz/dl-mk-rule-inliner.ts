@@ -108,7 +108,7 @@ class Visitor implements StVisitor {
 
   visit(expr: number) {
     this.unifiers.push(...(this.positions.get(expr) as number[]));
-    return true;
+    return this.unifiers.length <= 1;
   }
 
   reset(size: number) {
