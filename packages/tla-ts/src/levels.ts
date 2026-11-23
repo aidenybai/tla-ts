@@ -2028,9 +2028,11 @@ export const createLevelAnalyzer = (context: LevelContext) => {
   };
 
   const setSectionAppliedParams = (members: SectionMember[]) => {
-    const allParams = members.flatMap((member) => [
-      ...analyzeDefinition(member.definition, member.scope).allParams,
-    ]);
+    const allParams = new Set(
+      members.flatMap((member) => [
+        ...analyzeDefinition(member.definition, member.scope).allParams,
+      ]),
+    );
     members.forEach((member) => {
       const body = sectionBodies.get(member.definition);
       if (body === undefined) return;
