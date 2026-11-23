@@ -1962,10 +1962,58 @@ export const createLevelAnalyzer = (context: LevelContext) => {
     return merged;
   };
 
+  const isClosedName = (name: string, bound: string[], scope: Scope) => {
+    if (bound.includes(name)) return true;
+    const entry = scope.get(name);
+    if (entry) return entry.kind === "Formal";
+    return (
+      context.constants.has(name) ||
+      context.variables.has(name) ||
+      (!context.getDefinition(name) && CORE_SIGNATURES.has(name))
+    );
+  };
+
+  const isClosed = (expression: Expression, bound: string[], scope: Scope): boolean => {
+    switch (expression.kind) {
+      case "Identifier":
+        return isClosedName(expression.name, bound, scope);
+      case "OperatorReference":
+        return isClosedName(expression.operator, bound, scope);
+      case "Apply":
+        if (!isClosedName(expression.operator, bound, scope)) return false;
+        break;
+      case "Lambda":
+      case "Let":
+      case "Selection":
+      case "Subexpression":
+      case "EnabledVariable":
+        return false;
+    }
+    let isEveryChildClosed = true;
+    forEachChild(expression, (child, names) => {
+      isEveryChildClosed &&= isClosed(child, [...bound, ...names], scope);
+    });
+    return isEveryChildClosed;
+  };
+
+  const isClosedDefinition = (member: SectionMember) => {
+    const definition = member.definition;
+    return (
+      !("statement" in definition) &&
+      !letCopies.has(definition) &&
+      !context.instances.getCopy(definition) &&
+      isClosed(
+        getDefinitionBody(definition),
+        getFormals(definition).map((formal) => formal.name),
+        member.scope,
+      )
+    );
+  };
+
   const setSectionUnappliedParams = (members: SectionMember[]) =>
     members.forEach((member) => {
       const body = sectionBodies.get(member.definition);
-      if (body === undefined) return;
+      if (body === undefined || !isClosedDefinition(member)) return;
       const stored = analyzeDefinition(member.definition, member.scope);
       definitionLevels.set(member.definition, {
         ...stored,

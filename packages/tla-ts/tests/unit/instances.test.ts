@@ -1438,12 +1438,16 @@ describe("Leibniz checks where tla-ts deviates from SANY", () => {
     "H(K(_)) == LET RECURSIVE A(_), B(_), C(_)\n               A(n) == IF n = 0 THEN 0 ELSE B(n - 1)\n               B(n) == IF n = 0 THEN 0 ELSE C(n - 1)\n               C(n) == IF n = 0 THEN K(1) ELSE A(n - 1)\n           IN A(2)\nF(a) == H(LAMBDA b : a')\nI == INSTANCE Pure WITH c <- 1, Op <- F",
     "H(K(_)) == LET RECURSIVE A(_), B(_)\n               A(n) == IF n = 0 THEN K(1) ELSE A(n - 1)\n               B(n) == IF n = 0 THEN 0 ELSE B(n - 1)\n           IN B(2)\nF(a) == H(LAMBDA b : a')\nI == INSTANCE Pure WITH c <- 1, Op <- F",
     "H(K(_)) == LET RECURSIVE A(_), B(_), D(_)\n               A(n) == B(n)\n               B(n) == A(n)\n               D(n) == K(n)\n           IN A(1)\nF(a) == H(LAMBDA b : a')\nI == INSTANCE Pure WITH c <- 1, Op <- F",
+    "H(K(_)) == LET RECURSIVE R(_), S(_)\n               R(n) == S(1)\n               S(m) == S(m)\n           IN R(K(1))\nF(a) == H(LAMBDA b : a')\nI == INSTANCE Pure WITH c <- 1, Op <- F",
     "P(a) == INSTANCE RecursedApplies WITH Op <- LAMBDA b : a'\nI == INSTANCE Pure WITH c <- 1, Op <- P!D",
-  ])("rejects %s, where a recursive operator may apply the operator argument", async (body) => {
-    await expect(checkSubstitution(body)).rejects.toThrow(
-      getMessagePattern([getLeibnizError("Pure")]),
-    );
-  });
+  ])(
+    "rejects %s, where tla-ts cannot show a recursive operator ignores the operator argument",
+    async (body) => {
+      await expect(checkSubstitution(body)).rejects.toThrow(
+        getMessagePattern([getLeibnizError("Pure")]),
+      );
+    },
+  );
 
   it.each([
     "I(a) == INSTANCE Proved WITH c <- a, w <- x\nF(a) == I(a)!T\nJ == INSTANCE Pure WITH c <- 1, Op <- F",

@@ -15,6 +15,7 @@ import {
   type FormalParamNode,
   type InstanceNode,
   type LevelFields,
+  type LevelNode,
   type ModuleNode,
   type OpApplNode,
   type OpDeclNode,
@@ -206,10 +207,37 @@ const getSubstitutedUnappliedParams = (node: SubstInNode) => {
   );
 };
 
+const isClosedOperator = (operator: SymbolNode) =>
+  operator.kind === "FormalParam" ||
+  operator.kind === "OpDecl" ||
+  (operator.kind === "OpDef" && operator.defKind === "BuiltIn");
+
+const isClosed = (node: LevelNode): boolean => {
+  switch (node.kind) {
+    case "Numeral":
+    case "String":
+    case "Decimal":
+    case "At":
+      return true;
+    case "Label":
+      return isClosed(node.body);
+    case "OpArg":
+      return isClosedOperator(node.op);
+    case "OpAppl":
+      return (
+        isClosedOperator(node.operator) &&
+        node.operands.every((operand) => operand === undefined || isClosed(operand)) &&
+        node.ranges.every(isClosed)
+      );
+    default:
+      return false;
+  }
+};
+
 const setSectionUnappliedParams = (members: OpDefNode[]) =>
   members.forEach((definition) => {
     const body = definition.body;
-    if (body === undefined) return;
+    if (body === undefined || !isClosed(body)) return;
     definition.unappliedParams = getUnappliedParams(
       [...definition.levelParams, ...(definition.params ?? [])],
       (param) => isAppliedIn(body, param),
