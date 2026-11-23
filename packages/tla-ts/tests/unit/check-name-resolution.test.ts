@@ -2508,6 +2508,34 @@ describe("name resolution matches SANY", () => {
   );
 
   it.each([
+    ["c(G(_)) == G(1)\nI == INSTANCE Other", "line 3, col 1 to line 3, col 19"],
+    [
+      "I == LET c(G(_)) == G(1)\n         L == INSTANCE Other\n     IN L!Use",
+      "line 3, col 10 to line 3, col 28",
+    ],
+  ])(
+    "reports only the missing arguments of %j, which implicitly substitutes a definition with an operator parameter for a constant, as SANY does",
+    async (definition, location) => {
+      await expect(
+        check({
+          source: `---- MODULE M ----\n${definition}\nVARIABLE x\nInit == x = 0\nNext == x' = x\n====`,
+          config: "INIT Init\nNEXT Next",
+          loadModule: (name) =>
+            name === "Other" ? "---- MODULE Other ----\nCONSTANT c\nUse == c\n====" : undefined,
+        }),
+      ).rejects.toThrow(
+        createSanyError([
+          {
+            location: `${location} of module M`,
+            message:
+              "Wrong number of arguments (0) given to operator 'c', \nwhich requires 1 arguments.",
+          },
+        ]),
+      );
+    },
+  );
+
+  it.each([
     [
       "---- MODULE P ----\nCONSTANT ba, ab\nVARIABLE v\n====\nK == INSTANCE P",
       6,

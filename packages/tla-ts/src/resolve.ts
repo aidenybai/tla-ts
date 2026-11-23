@@ -3067,7 +3067,8 @@ const checkSubstitutions = (
           ? 0
           : getSymbolArity(item.expression, item.declaration.name, scope, unit);
       if (
-        (arity !== item.declaration.arity || hasOperatorParam(item.declaration.name)) &&
+        (arity !== item.declaration.arity ||
+          (item.declaration.arity > 0 && hasOperatorParam(item.declaration.name))) &&
         instanceRange
       ) {
         reportArity(item.declaration, formatRange(instanceRange));
