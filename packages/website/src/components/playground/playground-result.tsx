@@ -48,6 +48,13 @@ export const PlaygroundResult = () => {
               <Result.Section title={result.isPassed ? "Verdict" : "Issue"}>
                 <Verdict result={result} />
               </Result.Section>
+              {result.graphOmittedPast !== undefined && (
+                <Result.Section title="States">
+                  <p className="text-muted-foreground">
+                    Graph omitted past {result.graphOmittedPast.toLocaleString()} states
+                  </p>
+                </Result.Section>
+              )}
               {search && search.listedStates.length > 0 && (
                 <Result.Section
                   title={result.isPassed ? "States" : "Steps to the failing state"}

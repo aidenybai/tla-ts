@@ -25,7 +25,17 @@ export interface RunResult {
   activeLine: number | undefined;
   notes: LineNote[];
   search?: Search;
+  // The most states of a search that the run kept no graph of, as it passed them.
+  graphOmittedPast?: number;
 }
+
+// The most states whose graph a run keeps. The graph holds the text of every state it reaches, which
+// for a model of a large heap runs to megabytes a state: Solid's solid.js reached 600 states and
+// 2.8 GB in six minutes, and filled the worker's memory in nine. The page lists far fewer.
+const MOST_GRAPH_STATES = 100;
+
+// What stops a check whose graph passed the most states that a run keeps.
+class GraphOmittedError extends Error {}
 
 const getTitle = (result: CheckResult) => {
   const name = result.violation?.name;
@@ -91,16 +101,44 @@ const getRun = async (request: RunRequest) => {
   return { spec, shown: spec.loadModule("ProgramCode") ?? "" };
 };
 
+// A check of the spec, with the graph of its search where it's shown, which the check stops keeping
+// past the most states, as its progress, once a minute, tells.
+const checkRun = async (
+  spec: Awaited<ReturnType<typeof getRun>>["spec"],
+  isSearchShown: boolean,
+) => {
+  const graphs: string[] = [];
+  const result = await check({
+    ...spec,
+    dump: isSearchShown ? { path: "search.dot", dot: true, actionLabels: true } : undefined,
+    writeFile: (_path, content) =>
+      graphs.push(typeof content === "string" ? content : new TextDecoder().decode(content)),
+    onProgress: (progress) => {
+      if (
+        isSearchShown &&
+        progress.kind === "progress" &&
+        progress.statistics.distinctStates > MOST_GRAPH_STATES
+      ) {
+        throw new GraphOmittedError();
+      }
+    },
+  });
+  const isGraphOmitted = isSearchShown && result.distinctStates > MOST_GRAPH_STATES;
+  return { result, graphs: isGraphOmitted ? [] : graphs, isGraphOmitted };
+};
+
 const getCheckResult = async (request: RunRequest): Promise<RunResult> => {
   const run = await getRun(request);
   const config = run.spec.config;
-  const graphs: string[] = [];
-  const result = await check({
-    ...run.spec,
-    dump: request.isSearchShown ? { path: "search.dot", dot: true, actionLabels: true } : undefined,
-    writeFile: (_path, content) =>
-      graphs.push(typeof content === "string" ? content : new TextDecoder().decode(content)),
-  });
+  // A search that passes the most states checks again without its graph.
+  const checked = await checkRun(run.spec, request.isSearchShown === true).catch(
+    (error: unknown) => {
+      if (!(error instanceof GraphOmittedError)) throw error;
+      return checkRun(run.spec, false).then((rerun) => ({ ...rerun, isGraphOmitted: true }));
+    },
+  );
+  const result = checked.result;
+  const graphs = checked.graphs;
   const lastStep = result.violation?.trace.at(-1);
   const module = parseModule(run.shown);
   const getDefinitionLine = (name: string | undefined) =>
@@ -124,8 +162,11 @@ const getCheckResult = async (request: RunRequest): Promise<RunResult> => {
             call === undefined ? initLine : getDefinitionLine(call.replace(/\(.*$/, "")),
           )
         : undefined,
+    graphOmittedPast: checked.isGraphOmitted ? MOST_GRAPH_STATES : undefined,
     notes: [
-      ...(lastStep === undefined || variableLine === undefined || request.isSearchShown
+      ...(lastStep === undefined ||
+      variableLine === undefined ||
+      (request.isSearchShown && !checked.isGraphOmitted)
         ? []
         : [getNote(variableLine, getStateText(lastStep.state), "neutral")]),
       ...(lastStep === undefined || violatedLine === undefined
