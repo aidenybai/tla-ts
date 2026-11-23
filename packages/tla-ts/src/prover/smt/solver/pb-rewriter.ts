@@ -78,6 +78,7 @@ export const mkPbGe = (
   const normalized = normalize(coeffs, k);
   const bound = normalized.k.ceil();
   const isAllOnes = normalized.coeffs.every((coeff) => coeff.equals(Rational.one));
+  // Deviation from Z3: pb_util::mk_ge makes an at-least bound from 2^31 to 2^32 a negative int, which mk_func_decl rejects.
   return isAllOnes && isUnsigned(k)
     ? mkPbApp(manager, OP_AT_LEAST_K, [bound], args)
     : mkPbApp(manager, OP_PB_GE, [bound, ...normalized.coeffs], args);

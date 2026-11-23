@@ -1531,3 +1531,96 @@ describe("card2bv's parameters, as Z3 5.3.2 reads them at each call site", () =>
     ).toThrow(new SmtUnsupportedError("the totalizer encoding of a pseudo-Boolean constraint"));
   });
 });
+
+describe("pseudo-Boolean bounds past 2^31, which Z3 5.3.2's int parameters can't hold", () => {
+  const DECLARATIONS = "abcde".split("").map((name) => `(declare-const ${name} Bool)`);
+  const ATOM =
+    "((_ pbge 2500000000 1000000001 1000000002 1000000003 1000000004 1000000005) a b c d e)";
+
+  // Deviation from Z3: it parses the bound 2500000000 as a negative int and prints true.
+  it("keeps a pbge bound past 2^31 that any three literals reach", () => {
+    expect(run([...DECLARATIONS, `(simplify ${ATOM})`])).toBe("((_ at-least 3) a b c d e)");
+  });
+
+  // Deviation from Z3: it answers sat, though d and e sum to 2000000009.
+  it("answers unsat when only two literals of a pbge bound past 2^31 can hold", () => {
+    expect(
+      run([
+        ...DECLARATIONS,
+        `(assert ${ATOM})`,
+        "(assert (not a))",
+        "(assert (not b))",
+        "(assert (not c))",
+        "(check-sat)",
+      ]),
+    ).toBe("unsat");
+  });
+
+  // Deviation from Z3: it parses the coefficient 3000000000 as a negative int and answers unsat.
+  it("keeps a pbge coefficient past 2^31", () => {
+    expect(
+      run([
+        "(declare-const a Bool)",
+        "(declare-const b Bool)",
+        "(assert ((_ pbge 1 3000000000 1) a b))",
+        "(assert (not b))",
+        "(check-sat)",
+      ]),
+    ).toBe("sat");
+  });
+
+  // Deviation from Z3: it parses the bound 3000000000 as a negative int, rejects the atom and answers sat.
+  it("keeps an at-least bound past 2^31", () => {
+    expect(
+      run([
+        "(declare-const p Bool)",
+        "(declare-const q Bool)",
+        "(assert ((_ at-least 3000000000) p q))",
+        "(check-sat)",
+      ]),
+    ).toBe("unsat");
+  });
+
+  it("rejects an at-most bound past 2^32", () => {
+    expect(
+      run([
+        "(declare-const p Bool)",
+        "(declare-const q Bool)",
+        "(assert ((_ at-most 5000000000) p q))",
+        "(check-sat)",
+      ]),
+    ).toBe(
+      [
+        '(error "line 3 column 35: function expects one non-negative integer parameter")',
+        "sat",
+      ].join("\n"),
+    );
+  });
+
+  // Deviation from Z3: pb_util::mk_ge makes the bound 3000000000 a negative int, and the tactic fails with "function expects one non-negative integer parameter".
+  it("keeps an at-least bound past 2^31 that lia2card makes from an equality", () => {
+    expect(
+      run([
+        "(declare-const x Int)",
+        "(declare-const y Int)",
+        "(assert (<= 0 x 1))",
+        "(assert (<= 0 y 1))",
+        "(assert (= (+ x y) 3000000000))",
+        "(apply (using-params lia2card :compile_equality false))",
+      ]),
+    ).toBe(
+      [
+        "(goals",
+        "(goal",
+        "  true",
+        "  true",
+        "  true",
+        "  true",
+        "  ((_ at-least 3000000000) x!0 y!1)",
+        "  ((_ pble 3000000000 1 1) x!0 y!1)",
+        "  :precision precise :depth 1)",
+        ")",
+      ].join("\n"),
+    );
+  });
+});
