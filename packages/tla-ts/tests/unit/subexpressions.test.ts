@@ -543,7 +543,7 @@ describe("selections into the definitions of an instance with operator parameter
 
 describe("operator arguments selected behind an instance or a definition's parameters", () => {
   const PURE =
-    "---- MODULE Pure ----\nEXTENDS Naturals, Sequences\nCONSTANT c, Op(_)\nE2(z) == Op(z)\nH(K(_)) == K(c)\nH2(K(_, _)) == K(c, c)\nH3(K(_)) == K(<<c>>)\nE9 == H(E2)\nE11 == H(Op)\nE18 == H(LAMBDA t : E2(t) + c)\nE22 == H2(\\cup)\nE23 == H3(Len)\nE25(y) == H(E2)\n====";
+    "---- MODULE Pure ----\nEXTENDS Naturals, Sequences\nCONSTANT c, Op(_)\nE2(z) == Op(z)\nH(K(_)) == K(c)\nH2(K(_, _)) == K(c, c)\nH3(K(_)) == K(<<c>>)\nE9 == H(E2)\nE11 == H(Op)\nE18 == H(LAMBDA t : E2(t) + c)\nE22 == H2(\\cup)\nE23 == H3(Len)\nE25(y) == H(E2)\nE26(G(_)) == H(G)\n====";
 
   const checkSelections = (definitions: string, onPrint?: (text: string) => void) =>
     check({
@@ -641,6 +641,84 @@ describe("operator arguments selected behind an instance or a definition's param
       ]),
     );
   });
+
+  it.each([
+    [
+      "Ap2(E26!1)",
+      [
+        {
+          location: "line 15, col 7 to line 15, col 16 of module M",
+          message: "Argument number 1 to operator 'Ap2' \nshould be a 2-parameter operator.",
+        },
+      ],
+    ],
+    [
+      "Ap(E26!1)",
+      [
+        {
+          location: "line 15, col 10 to line 15, col 14 of module M",
+          message: "Expected arity 1 but found operator of arity 2.",
+        },
+        {
+          location: "line 15, col 7 to line 15, col 15 of module M",
+          message: "Argument number 1 to operator 'Ap' \nshould be a 1-parameter operator.",
+        },
+      ],
+    ],
+    [
+      "Ap3(E26!1)",
+      [
+        {
+          location: "line 15, col 11 to line 15, col 15 of module M",
+          message: "Expected arity 3 but found operator of arity 2.",
+        },
+        {
+          location: "line 15, col 7 to line 15, col 16 of module M",
+          message: "Argument number 1 to operator 'Ap3' \nshould be a 3-parameter operator.",
+        },
+      ],
+    ],
+    [
+      "Ap3(E27!1)",
+      [
+        {
+          location: "line 15, col 7 to line 15, col 16 of module M",
+          message: "Argument number 1 to operator 'Ap3' \nshould be a 3-parameter operator.",
+        },
+      ],
+    ],
+    [
+      "Ap2(J!E26!1)",
+      [
+        {
+          location: "line 15, col 7 to line 15, col 18 of module M",
+          message: "Argument number 1 to operator 'Ap2' \nshould be a 2-parameter operator.",
+        },
+      ],
+    ],
+    [
+      "Ap(J!E26!1)",
+      [
+        {
+          location: "line 15, col 10 to line 15, col 16 of module M",
+          message: "Expected arity 1 but found operator of arity 2.",
+        },
+        {
+          location: "line 15, col 7 to line 15, col 17 of module M",
+          message: "Argument number 1 to operator 'Ap' \nshould be a 1-parameter operator.",
+        },
+      ],
+    ],
+  ])(
+    "rejects %s, whose parameters include an operator parameter, as SANY does",
+    async (selection, errors) => {
+      await expect(
+        checkSelections(
+          `E26(G(_)) == H(G)\nE27(G(_), y) == H(G)\nAp3(K(_, _, _)) == K(1, 2, 3)\nD2 == ${selection}`,
+        ),
+      ).rejects.toThrow(createSanyError(errors));
+    },
+  );
 });
 
 describe("selections into standard operators match SANY and TLC", () => {

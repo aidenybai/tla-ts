@@ -49,6 +49,7 @@ import {
   LOCAL_RESOLUTION,
   nullSelections,
   operandApplications,
+  operatorParamSelections,
   operatorSelectionErrors,
   selectionErrors,
   selectionArguments,
@@ -174,14 +175,14 @@ const createApplication = (selection: Selection, body: Expression): Expression =
   const location = selection.location;
   if (selection.params.length === 0) return body;
   if (selection.args.length === 0) {
-    if (selection.params.some((param) => param.arity > 0)) {
-      throw createError("Selected an operator with operator parameters as an argument", location);
-    }
     const params = selection.params.map((param) => param.name);
     // Deviation from SANY: Generator#selectorToNode applies an operator argument selected behind an instance or a definition's parameters to no arguments and rejects it; tla-ts selects it, after those parameters.
-    return body.kind === "Lambda"
-      ? { kind: "Lambda", params: [...params, ...body.params], body: body.body, location }
-      : { kind: "Lambda", params, body, location };
+    const lambda: Expression =
+      body.kind === "Lambda"
+        ? { kind: "Lambda", params: [...params, ...body.params], body: body.body, location }
+        : { kind: "Lambda", params, body, location };
+    if (selection.params.some((param) => param.arity > 0)) operatorParamSelections.add(lambda);
+    return lambda;
   }
   if (selection.args.length !== selection.params.length) {
     throw createError(
