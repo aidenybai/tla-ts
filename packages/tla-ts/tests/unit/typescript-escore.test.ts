@@ -2081,6 +2081,20 @@ describe("compiles scripts by specializing ESCore", () => {
       const source = 'new Intl.NumberFormat("en-US").format(Math.PI);';
       expect((await checkScript(source)).message).toContain("tla-ts can't");
     });
+
+    // The host's table holds a Collator's compare of each pair of the strings a program writes,
+    // within its 5,000 entries: 40 strings make 1,600 pairs, and 80 make 6,400.
+    const getCompareSource = (count: number) => `
+      const words = [${Array.from({ length: count }, (_, index) => `"w${index}"`).join(", ")}];
+      if (new Intl.Collator("en").compare(words[1], words[2]) !== -1) throw new Error("compare");`;
+
+    it("compares the strings of a program whose pairs the table holds", async () => {
+      expect((await checkScript(getCompareSource(40))).message).toBeUndefined();
+    });
+
+    it("stops at a compare of a program whose pairs the table can't hold", async () => {
+      expect((await checkScript(getCompareSource(80))).message).toContain("tla-ts can't");
+    });
   });
 
   describe.runIf(Reflect.has(globalThis, "Temporal"))(

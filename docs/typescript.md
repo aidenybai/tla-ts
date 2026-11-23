@@ -353,7 +353,9 @@ The package's `compile` runs in Node only. Elsewhere, it throws `TlaTypeScriptEr
 
 ## Files with other specs
 
-Pass TypeScript, JavaScript, and TLA+ files in one command, as in `npx tla-ts bank.ts HourClock.tla`. tla-ts prints `Checking bank.ts` before each file and exits with the first code that isn't 0. TLC's options, such as `-workers` and `-deadlock`, apply to all of them.
+Pass TypeScript, JavaScript, and TLA+ files in one command, as in `npx tla-ts bank.ts HourClock.tla`. tla-ts prints `Checking bank.ts` before each file and exits with the first code that isn't 0. TLC's options, such as `-workers` and `-deadlock`, apply to all of them. The programs of the files share the TypeScript files that they parse, so one command over a package's files runs faster than a command for each.
+
+`-frame`, another tla-ts extension, prints a model's [frame](#the-models-frame) before its check: the spec of its state variables, the functions it calls and the values it calls them with, then its config. It comes after the `tla-ts calls no` lines. A script prints none. Another tool can read the frame with `parseModule` to call the same functions in Node.
 
 `-config` applies to one file. For a program, it replaces the config that tla-ts compiles and keeps the compiled `CONSTANT` lines. A `Bank.tla` or `Bank.cfg` beside `bank.ts` stays as it is, and tla-ts doesn't read it.
 
@@ -361,7 +363,7 @@ Pass TypeScript, JavaScript, and TLA+ files in one command, as in `npx tla-ts ba
 
 tla-ts stops with a `TlaTypeScriptError`, before the check, in these cases:
 
-- Node rejects the file. In Node, tla-ts parses the file's JavaScript with V8 and runs none of it. It uses `vm.Script` for a script, and `node --input-type=module --check` for a module. The message is V8's `SyntaxError`, as in `TlaTypeScriptError: early.js:3:1 SyntaxError: Delete of an unqualified identifier in strict mode.` Elsewhere, such as in a browser, TypeScript's checks of the file stand in for V8's.
+- Node rejects the file. In Node, tla-ts parses the file's JavaScript with V8 and runs none of it. It uses `vm.Script` for a script. It parses a program's modules in one Node process with `vm.SourceTextModule`, which compiles a module as Node's loader does, and parses a module that it rejects again with `node --input-type=module --check`, for the line of the error. The message is V8's `SyntaxError`, as in `TlaTypeScriptError: early.js:3:1 SyntaxError: Delete of an unqualified identifier in strict mode.` Elsewhere, such as in a browser, TypeScript's checks of the file stand in for V8's.
 - Node's type stripping rejects the file, with Node's message.
 - tla-ts can't run what the file does exactly. The message says what it can't do, as in `TlaTypeScriptError: evaluated.js:1:15 tla-ts can't run eval`.
 - tla-ts can't build the model's frame, as [Models](#models) describes.

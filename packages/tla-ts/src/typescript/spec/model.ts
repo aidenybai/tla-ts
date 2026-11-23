@@ -19,6 +19,8 @@ export interface EscoreModel extends EscoreSpec {
   isScript: false;
   variables: StateVariable[];
   notes: string[];
+  // The model's frame, as a spec of its own and its config.
+  frame: string;
 }
 
 // The steps within which the search checks the states of a model whose actions count without end.
@@ -1597,5 +1599,6 @@ export const compileModelToEscore = (
     isScript: false,
     variables: today.variables,
     notes,
+    frame: `${today.text}\n${today.config}`,
   };
 };

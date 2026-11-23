@@ -416,6 +416,40 @@ describe("compiles modules by specializing ESCore", () => {
     });
   });
 
+  // Node parses a CommonJS file in its wrapper, whose function takes a return at the file's top
+  // level, and an ES module as a module, where a return there is a SyntaxError.
+  describe("parses each file in its own goal, as node --check does", () => {
+    const files = {
+      "returns.cjs": "module.exports = 1;\nreturn;\nmodule.exports = 2;",
+      "returns.mjs": "export const value = 1;\nreturn;",
+    };
+    const getFiles = (expected: string) => ({
+      ...files,
+      "main.js": `import value from "./returns.cjs";
+        const log = [value];
+        import("./returns.mjs").catch((error) => log.push(error.name));
+        setTimeout(() => { if (log.join() !== "${expected}") throw new Error(log.join()); });`,
+    });
+
+    it("takes a CommonJS file's top-level return and rejects an ES module's, as node --check does", () => {
+      const directory = mkdtempSync(join(tmpdir(), "escore-goals-"));
+      directories.push(directory);
+      Object.entries(files).forEach((file) => writeFileSync(join(directory, file[0]), file[1]));
+      const getCheck = (file: string) =>
+        spawnSync(process.execPath, ["--check", join(directory, file)], { encoding: "utf8" });
+      expect(getCheck("returns.cjs").status).toBe(0);
+      expect(getCheck("returns.mjs").stderr).toContain("SyntaxError: Illegal return statement");
+    });
+
+    it("agrees with Node", async () => {
+      expect((await checkModules(getFiles("1,SyntaxError"))).message).toBeUndefined();
+    });
+
+    it("rejects another result", async () => {
+      expect((await checkModules(getFiles("2,SyntaxError"))).message).toContain(THREW);
+    });
+  });
+
   describe("runs import() of a script, which loads modules as a module's does", () => {
     const getScript = (expected: string) => ({
       "main.js": `var log = [];

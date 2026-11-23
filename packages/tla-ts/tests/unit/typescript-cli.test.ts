@@ -13,6 +13,7 @@ import { tmpdir } from "node:os";
 import { basename, dirname, join } from "node:path";
 import { pathToFileURL } from "node:url";
 import { afterAll, describe, expect, it } from "vite-plus/test";
+import { parseModule } from "../../src/parser";
 import { DIST_CLI } from "./cli-harness";
 
 const FIXTURES = join(import.meta.dirname, "../fixtures/typescript/cli");
@@ -764,6 +765,83 @@ describe("the CLI with TypeScript files", () => {
     expect(result.stdout).toContain("balances = [alice |-> 6, bob |-> -2]");
   });
 
+  // The frame that -frame prints: its spec, whose Next calls the model's one step, over the values
+  // of its parameters, and the check that its config names.
+  const getFrame = (stdout: string) => {
+    const found = /^(---- MODULE Frame ----\n[\s\S]*?\n====)\n([\s\S]*?)\nTLC2 Version/m.exec(
+      stdout,
+    );
+    if (found === null) throw new Error("no frame");
+    const next = parseModule(found[1]).definitions.find((definition) => definition.name === "Next");
+    const body = next?.kind === "Operator" ? next.body : undefined;
+    const call = body?.kind === "Exists" ? body.body : body;
+    const values = (body?.kind === "Exists" ? body.bounds : []).map((bound) =>
+      bound.set.kind === "SetEnumeration"
+        ? bound.set.elements.map((element) => (element.kind === "String" ? element.value : null))
+        : [],
+    );
+    return {
+      step: call?.kind === "Apply" ? call.operator : call?.kind === "Identifier" ? call.name : "",
+      values,
+      check: found[2].trim().split(/\s+/).at(-1) ?? "",
+    };
+  };
+
+  // Whether Node, calling the frame's step with each of its parameters' values, in each order of at
+  // most depth calls from the module's start, finds a state where the frame's check gives false.
+  const isViolatedInNode = (directory: string, file: string, depth: number, stdout: string) => {
+    const frame = getFrame(stdout);
+    const script = `
+      const frame = ${JSON.stringify(frame)};
+      const url = ${JSON.stringify(pathToFileURL(join(directory, file)).href)};
+      const argumentLists = frame.values.reduce(
+        (lists, values) => lists.flatMap((list) => values.map((value) => [...list, value])),
+        [[]],
+      );
+      let fresh = 0;
+      const isViolated = async (calls) => {
+        const module = await import(url + "?" + fresh++);
+        calls.forEach((list) => module[frame.step](...list));
+        return module[frame.check]() === false;
+      };
+      const search = async (calls) =>
+        (await isViolated(calls)) ||
+        (calls.length < ${depth} &&
+          (await argumentLists.reduce(
+            async (found, list) => (await found) || search([...calls, list]),
+            Promise.resolve(false),
+          )));
+      console.log(await search([]));`;
+    const result = spawnSync(process.execPath, ["--input-type=module", "-e", script], {
+      cwd: directory,
+      encoding: "utf8",
+    });
+    return result.stdout.trim();
+  };
+
+  it("prints a model's frame with -frame, whose calls Node replays without a violation", () => {
+    const directory = copyFixtures("passing");
+    expect(runCli(directory, ["counter.ts"]).stdout).not.toContain("MODULE Frame");
+    const result = runCli(directory, ["-frame", "counter.ts"]);
+    expect(result.status).toBe(0);
+    expect(result.stdout).toContain("No error has been found.");
+    expect(getFrame(result.stdout)).toEqual({ step: "tick", values: [], check: "isBounded" });
+    expect(isViolatedInNode(directory, "counter.ts", 5, result.stdout)).toBe("false");
+  });
+
+  it("prints the frame of a model whose check fails, whose calls Node replays to the violation", () => {
+    const directory = copyFixtures("failing");
+    const result = runCli(directory, ["-frame", "overdraft.ts"]);
+    expect(result.status).toBe(12);
+    expect(result.stdout).toContain("Error: Invariant noOverdraft is violated.");
+    expect(getFrame(result.stdout).values).toEqual([
+      ["alice", "bob"],
+      ["alice", "bob"],
+    ]);
+    expect(isViolatedInNode(directory, "overdraft.ts", 1, result.stdout)).toBe("false");
+    expect(isViolatedInNode(directory, "overdraft.ts", 2, result.stdout)).toBe("true");
+  });
+
   it("checks TypeScript and TLA+ files together", () => {
     const directory = copyFixtures("failing");
     cpSync(join(FIXTURES, "../examples/hour-clock"), directory, { recursive: true });
@@ -771,6 +849,41 @@ describe("the CLI with TypeScript files", () => {
     expect(result.status).toBe(12);
     expect(result.stdout).toContain("Checking HourClock.tla with HourClock.cfg");
     expect(result.stdout).toContain("Checking overdraft.ts");
+  });
+
+  // A check's output but for what differs between runs: its seed, its process, and its times.
+  const getStableOutput = (stdout: string) =>
+    stdout
+      .split("\n")
+      .filter((line) => !/seed|^Starting|^Finished|\d{4}-\d\d-\d\d \d\d:/.test(line))
+      .join("\n");
+
+  it("checks files that import the same module, in one run, as it checks each alone", () => {
+    const directory = copyFixtures("passing");
+    writeFileSync(
+      join(directory, "shared.ts"),
+      "export const limits = { low: 0, high: 3 };\nexport const clamp = (value: number) => Math.min(Math.max(value, limits.low), limits.high);\n",
+    );
+    writeFileSync(
+      join(directory, "rising.ts"),
+      'import { clamp, limits } from "./shared.ts";\nlet level = 0;\nexport const rise = () => {\n  level = clamp(level + 1);\n};\nexport const isWithin = () => level <= limits.high;\n',
+    );
+    writeFileSync(
+      join(directory, "falling.ts"),
+      'import { clamp, limits } from "./shared.ts";\nlet level = 3;\nexport const fall = () => {\n  level = clamp(level - 2);\n};\nexport const isAbove = () => level > limits.low;\n',
+    );
+    const options = ["-noGenerateSpecTE", "-fp", "0"];
+    const together = runCli(directory, [...options, "rising.ts", "falling.ts"]);
+    const rising = runCli(directory, [...options, "rising.ts"]);
+    const falling = runCli(directory, [...options, "falling.ts"]);
+    expect(rising.status).toBe(0);
+    expect(falling.status).toBe(12);
+    expect(together.status).toBe(12);
+    expect(getStableOutput(together.stdout)).toBe(
+      getStableOutput(
+        `Checking rising.ts\n${rising.stdout}\nChecking falling.ts\n${falling.stdout}`,
+      ),
+    );
   });
 
   it("reports a file that doesn't compile and checks the rest", () => {

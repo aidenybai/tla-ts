@@ -261,6 +261,22 @@ export const getJsxText = (path: string, text: string) => {
   );
 };
 
+// The files that a run of several programs parses, by the options they parse with and their path,
+// which each program after the first reads rather than parsing and binding again, as an editor's
+// projects share theirs. A run is the CLI's check of the files it's given; outside one, each
+// program parses its own.
+let runFiles: Map<string, ts.SourceFile> | undefined;
+
+// Runs the programs of a run, which share the files they parse.
+export const shareParsedFiles = async <T>(run: () => Promise<T>) => {
+  runFiles = new Map();
+  try {
+    return await run();
+  } finally {
+    runFiles = undefined;
+  }
+};
+
 // TypeScript's program of a model's file and the files it imports, whose checker gives the types
 // of their code. A file with type errors still runs, as Node runs it, so nothing here rejects one.
 export const createProgram = (source: string, path: string, library: Library = DEFAULT_LIBRARY) => {
@@ -274,20 +290,32 @@ export const createProgram = (source: string, path: string, library: Library = D
   }
   const host =
     libraries === undefined ? ts.createCompilerHost(options) : createLibraryHost(libraries);
+  const getSourceFile = (
+    fileName: string,
+    languageVersion: ts.ScriptTarget | ts.CreateSourceFileOptions,
+  ) => {
+    if (fileName === JSON_DECLARATIONS.path) {
+      return ts.createSourceFile(fileName, JSON_DECLARATIONS.text, languageVersion);
+    }
+    if (fileName === path) return createFile(path, source, languageVersion);
+    const file = library.files.get(fileName) ?? host.getSourceFile(fileName, languageVersion);
+    return file === undefined || file.isDeclarationFile
+      ? file
+      : createFile(fileName, file.text, languageVersion);
+  };
+  const optionsKey = JSON.stringify(options);
   const programHost: ts.CompilerHost & SourceRedirectingHost = {
     ...host,
     // A project that references others compiles their code, as an editor does, rather than the
     // declarations that building them would write.
     useSourceOfProjectReferenceRedirect: () => true,
     getSourceFile: (fileName, languageVersion) => {
-      if (fileName === JSON_DECLARATIONS.path) {
-        return ts.createSourceFile(fileName, JSON_DECLARATIONS.text, languageVersion);
-      }
-      if (fileName === path) return createFile(path, source, languageVersion);
-      const file = library.files.get(fileName) ?? host.getSourceFile(fileName, languageVersion);
-      return file === undefined || file.isDeclarationFile
-        ? file
-        : createFile(fileName, file.text, languageVersion);
+      const key = `${optionsKey}\n${JSON.stringify(languageVersion)}\n${fileName}`;
+      const shared = runFiles?.get(key);
+      if (shared !== undefined && (fileName !== path || shared.text === source)) return shared;
+      const file = getSourceFile(fileName, languageVersion);
+      if (file !== undefined) runFiles?.set(key, file);
+      return file;
     },
     fileExists: (fileName) => fileName === path || host.fileExists(fileName),
     readFile: (fileName) => (fileName === path ? source : host.readFile(fileName)),

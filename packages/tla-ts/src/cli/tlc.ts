@@ -674,51 +674,61 @@ export const checkSpecs = async (args: string[], java: JavaProperties) => {
   const paths = [...new Set(specPaths.map(findSpec))];
   const exitCodes: number[] = [];
   const userFile = parsed.userFile;
-  for (const [index, path] of paths.entries()) {
-    if (index > 0) console.log("");
-    const printer = createMessagePrinter({
-      isTool: parsed.isTool,
-      isWarningEnabled: parsed.isWarningEnabled,
-      isDiffTrace: parsed.isDiffTrace,
-      version,
-      suppressedCodes: parsed.suppressedCodes,
-      errorCodes: parsed.errorCodes,
-      onOutput:
-        userFile === undefined ? undefined : (text) => appendFileSync(userFile, `${text}\n`),
-    });
-    exitCodes.push(
-      await reportErrors(async () => {
-        const isTypeScript = isProgramPath(path);
-        // An extension: TLC refuses more than one spec, and tla-ts checks each one under its name,
-        // before a TypeScript file compiles, so a stop names the file it comes from.
-        if (paths.length > 1) {
-          console.log(
-            isTypeScript
-              ? `Checking ${basename(path)}`
-              : `Checking ${basename(path)} with ${basename(path, ".tla")}.cfg`,
-          );
-        }
-        // A stack overflow that nothing caught ends the check as one that the check caught does.
-        try {
-          const compiled = isTypeScript
-            ? await compileTypeScriptFile(path, parsed.maxSetSize)
-            : undefined;
-          compiled?.notes.forEach((note) => console.log(note));
-          return await checkSpec(
-            compiled?.specPath ?? path,
-            drawSeeds(parsed),
-            dump,
-            java,
-            printer,
-            compiled,
-          );
-        } catch (error) {
-          if (!isStackOverflow(error)) throw error;
-          throw isTypeScript ? new TlaStackLimitError(CHECK_STACK_MB) : createStackOverflowError();
-        }
-      }, printer),
-    );
-  }
+  // The programs of several TypeScript or JavaScript files share the files that they parse.
+  const shareFiles =
+    paths.filter(isProgramPath).length > 1
+      ? (await import("../typescript/program")).shareParsedFiles
+      : <T>(run: () => Promise<T>) => run();
+  await shareFiles(async () => {
+    for (const [index, path] of paths.entries()) {
+      if (index > 0) console.log("");
+      const printer = createMessagePrinter({
+        isTool: parsed.isTool,
+        isWarningEnabled: parsed.isWarningEnabled,
+        isDiffTrace: parsed.isDiffTrace,
+        version,
+        suppressedCodes: parsed.suppressedCodes,
+        errorCodes: parsed.errorCodes,
+        onOutput:
+          userFile === undefined ? undefined : (text) => appendFileSync(userFile, `${text}\n`),
+      });
+      exitCodes.push(
+        await reportErrors(async () => {
+          const isTypeScript = isProgramPath(path);
+          // An extension: TLC refuses more than one spec, and tla-ts checks each one under its name,
+          // before a TypeScript file compiles, so a stop names the file it comes from.
+          if (paths.length > 1) {
+            console.log(
+              isTypeScript
+                ? `Checking ${basename(path)}`
+                : `Checking ${basename(path)} with ${basename(path, ".tla")}.cfg`,
+            );
+          }
+          // A stack overflow that nothing caught ends the check as one that the check caught does.
+          try {
+            const compiled = isTypeScript
+              ? await compileTypeScriptFile(path, parsed.maxSetSize)
+              : undefined;
+            compiled?.notes.forEach((note) => console.log(note));
+            if (parsed.isFramePrinted && compiled?.frame !== undefined) console.log(compiled.frame);
+            return await checkSpec(
+              compiled?.specPath ?? path,
+              drawSeeds(parsed),
+              dump,
+              java,
+              printer,
+              compiled,
+            );
+          } catch (error) {
+            if (!isStackOverflow(error)) throw error;
+            throw isTypeScript
+              ? new TlaStackLimitError(CHECK_STACK_MB)
+              : createStackOverflowError();
+          }
+        }, printer),
+      );
+    }
+  });
   return exitCodes.find((exitCode) => exitCode !== EXIT_STATUS.success) ?? EXIT_STATUS.success;
 };
 

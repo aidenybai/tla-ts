@@ -1306,6 +1306,7 @@ export const frameModel = (
   ].join("\n");
   return {
     isScript: called.length === 0,
+    text,
     source: parseModule(text),
     config,
     variables: stateNames.map((name): StateVariable => ({ name })),

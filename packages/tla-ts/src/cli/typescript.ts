@@ -31,6 +31,8 @@ export interface CompiledInput {
   preparedModules: PreparedModule[];
   isScript: boolean;
   notes: string[];
+  // The frame of a model, which a script has none of.
+  frame?: string;
 }
 
 // Whether a path names a file that Node runs, TypeScript or JavaScript, which tla-ts compiles.
@@ -456,6 +458,7 @@ const compileEscoreEntry = async (path: string, setBound?: number): Promise<Comp
     preparedModules: spec.preparedModules,
     isScript: isScriptFile,
     notes: model?.notes ?? [],
+    frame: model?.isScript === false ? model.frame : undefined,
   };
 };
 
