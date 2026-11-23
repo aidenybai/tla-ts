@@ -361,7 +361,7 @@ Pass TypeScript, JavaScript, and TLA+ files in one command, as in `npx tla-ts ba
 
 tla-ts stops with a `TlaTypeScriptError`, before the check, in these cases:
 
-- Node rejects the file. In Node, tla-ts parses the file's JavaScript with V8 and runs none of it. It uses `vm.Script` for a script, and `node --input-type=module --check` for a module. The message is V8's `SyntaxError`, as in `TlaTypeScriptError: early.js:3:1 SyntaxError: Delete of an unqualified identifier in strict mode.` Elsewhere, such as in a browser, TypeScript's checks of the file stand in for V8's.
+- Node rejects the file. In Node, tla-ts parses the file's JavaScript with V8 and runs none of it. It uses `vm.Script` for a script. It parses a program's modules in one Node process with `vm.SourceTextModule`, which compiles a module as Node's loader does, and parses a module that it rejects again with `node --input-type=module --check`, for the line of the error. The message is V8's `SyntaxError`, as in `TlaTypeScriptError: early.js:3:1 SyntaxError: Delete of an unqualified identifier in strict mode.` Elsewhere, such as in a browser, TypeScript's checks of the file stand in for V8's.
 - Node's type stripping rejects the file, with Node's message.
 - tla-ts can't run what the file does exactly. The message says what it can't do, as in `TlaTypeScriptError: evaluated.js:1:15 tla-ts can't run eval`.
 - tla-ts can't build the model's frame, as [Models](#models) describes.

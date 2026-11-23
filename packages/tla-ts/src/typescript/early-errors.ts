@@ -290,6 +290,26 @@ try {
   process.exit(1);
 }`;
 
+// The program that Node runs to parse modules as its loader does, with vm's SourceTextModule, which
+// compiles a module as the loader's ModuleWrap does and runs nothing of it: it reads their texts,
+// as JSON, and prints whether V8 accepts each one.
+const MODULES_CHECK = `const { SourceTextModule } = require("node:vm");
+const texts = JSON.parse(require("node:fs").readFileSync(0, "utf8"));
+console.log(JSON.stringify(texts.map((text) => {
+  try {
+    new SourceTextModule(text);
+    return true;
+  } catch (error) {
+    if (!(error instanceof SyntaxError)) throw error;
+    return false;
+  }
+})));`;
+
+// Whether a file parses as a script: one of no import or export declaration, which a model's
+// file, whose compile reads it as a script, is not.
+const isScriptFile = (sourceFile: ts.SourceFile) =>
+  sourceFile.impliedNodeFormat !== ts.ModuleKind.ESNext && !ts.isExternalModule(sourceFile);
+
 // V8's parse of a file's JavaScript, as Node parses it as it loads the file, which runs nothing of
 // it: the SyntaxError it throws and its line, or none where it accepts the file, or undefined where
 // no Node is at hand. A module parses through Node's loader, as vm parses modules only under a
@@ -299,10 +319,7 @@ const getNodeParse = (sourceFile: ts.SourceFile) => {
   const vm = host?.getBuiltinModule?.("node:vm");
   if (vm === undefined) return undefined;
   const isBun = host.versions.bun !== undefined;
-  // A file of import and export declarations parses as a module, as a model's file does, which
-  // its compile reads as a script.
-  const isScript =
-    sourceFile.impliedNodeFormat !== ts.ModuleKind.ESNext && !ts.isExternalModule(sourceFile);
+  const isScript = isScriptFile(sourceFile);
   if (isScript && !isBun) {
     try {
       new vm.Script(sourceFile.text, { filename: sourceFile.fileName });
@@ -330,10 +347,34 @@ const getNodeParse = (sourceFile: ts.SourceFile) => {
     : { error: { message: message.slice("SyntaxError: ".length), line: Number(line ?? 1) } };
 };
 
+// V8's parse of each file's JavaScript, as getNodeParse gives it, where one Node parses every module
+// at once, rather than one Node each, and only a module that it rejects parses again on its own,
+// for its SyntaxError and its line, which Node's loader prints.
+export const getNodeParses = (sourceFiles: readonly ts.SourceFile[]) => {
+  const host = globalThis.process;
+  const modules = sourceFiles.filter((sourceFile) => !isScriptFile(sourceFile));
+  const run =
+    host?.getBuiltinModule?.("node:vm") === undefined || modules.length === 0
+      ? undefined
+      : host
+          .getBuiltinModule("node:child_process")
+          .spawnSync(
+            host.versions.bun !== undefined ? "node" : host.execPath,
+            ["--experimental-vm-modules", "--no-warnings", "-e", MODULES_CHECK],
+            { input: JSON.stringify(modules.map((module) => module.text)), encoding: "utf8" },
+          );
+  const accepted: boolean[] =
+    run === undefined || run.error !== undefined || run.status !== 0 ? [] : JSON.parse(run.stdout);
+  return sourceFiles.map((sourceFile) =>
+    accepted[modules.indexOf(sourceFile)] === true
+      ? { error: undefined }
+      : getNodeParse(sourceFile),
+  );
+};
+
 // Rejects programs that JavaScript rejects as it parses, as V8 does where Node is at hand and else
 // where TypeScript's parser accepts them.
-export const rejectEarlyErrors = (sourceFile: ts.SourceFile) => {
-  const parse = getNodeParse(sourceFile);
+export const rejectEarlyErrors = (sourceFile: ts.SourceFile, parse = getNodeParse(sourceFile)) => {
   if (parse === undefined) {
     rejectTypeScriptEarlyErrors(sourceFile);
     return;

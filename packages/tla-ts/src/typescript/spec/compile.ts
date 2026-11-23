@@ -1,6 +1,6 @@
 import ts from "@typescript/typescript6";
 import { TlaStrippingError, TlaTypeScriptError } from "../../errors";
-import { rejectEarlyErrors } from "../early-errors";
+import { getNodeParses, rejectEarlyErrors } from "../early-errors";
 import { getJsxText } from "../program";
 import { createModuleResolver, getModuleFormat } from "./resolve";
 import type { PreparedModule } from "../../tlc/order";
@@ -292,11 +292,23 @@ const parse = (code: string, fileName: string, isModule: boolean): ts.SourceFile
     : ts.createSourceFile(name, `${code}\nexport {};\n`, options, true, ts.ScriptKind.JS);
 };
 
+// What a call gives, or what it throws, which a load throws once it meets it in its order.
+const getOutcome = <T>(run: () => T): { value: T } | { error: unknown } => {
+  try {
+    return { value: run() };
+  } catch (error) {
+    return { error };
+  }
+};
+
 // Whether a file's code has an early error, for which Node throws a SyntaxError where it loads the
 // file, as tla-ts finds a program's.
-const hasEarlyError = (sourceFile: ts.SourceFile) => {
+const hasEarlyError = (
+  sourceFile: ts.SourceFile,
+  nodeParse: ReturnType<typeof getNodeParses>[number],
+) => {
   try {
-    rejectEarlyErrors(sourceFile);
+    rejectEarlyErrors(sourceFile, nodeParse);
     return false;
   } catch (error) {
     if (error instanceof TlaTypeScriptError && / SyntaxError: /.test(error.message)) return true;
@@ -531,7 +543,9 @@ const loadFiles = (
   // createRequiredModuleFacade writes it, whose namespace a require gives where the module exports
   // a default.
   const facades = new Map<string, string>();
-  for (const path of numbers.keys()) {
+  // A file as the program loads it, before its requests: a JSON file's text, or another file's
+  // kind, the specifiers its code writes, and its code's source file.
+  const prepare = (path: string) => {
     const original = facades.get(path);
     const text =
       path === ASYNC_HOOKS
@@ -539,17 +553,7 @@ const loadFiles = (
         : original !== undefined
           ? `export * from ${JSON.stringify(original)};\nexport { default } from ${JSON.stringify(original)};\nexport const __esModule = true;\n`
           : getJsxText(path, path === entry ? source : readFileSync(path, "utf8"));
-    if (path.endsWith(".json")) {
-      files.push({
-        sourceFile: ts.createSourceFile(path, "", ts.ScriptTarget.ESNext),
-        path,
-        kind: "json",
-        targets: new Map(),
-        exportNames: [],
-        json: isJson(text.replace(/^\uFEFF/, "")) ? text : undefined,
-      });
-      continue;
-    }
+    if (path.endsWith(".json")) return { path, text, kind: "json" as const };
     // A module entry that no file holds runs as an ES module, as no package's type or syntax
     // makes it CommonJS for Node, but for a host without a file system, whose one file Node
     // would load by its extension and syntax.
@@ -573,10 +577,31 @@ const loadFiles = (
       kind === "commonjs"
         ? wrap(parse(transpile(code, path, false, WRAPPER), path, false), wrapped)
         : parse(transpile(code, path, kind !== "script"), path, kind !== "script");
-    // Node runs nothing of a program whose entry it fails to parse, and loads none of the requests
-    // of another file that it fails to parse.
-    if (path === entry) rejectEarlyErrors(sourceFile);
-    const isRejected = path !== entry && kind !== "script" && hasEarlyError(sourceFile);
+    return { path, text, kind, written, sourceFile };
+  };
+  // A prepared file's requests, which number the files it loads, and the file itself.
+  const load = (
+    file: ReturnType<typeof prepare>,
+    nodeParse: ReturnType<typeof getNodeParses>[number],
+  ) => {
+    const path = file.path;
+    if (file.kind === "json") {
+      files.push({
+        sourceFile: ts.createSourceFile(path, "", ts.ScriptTarget.ESNext),
+        path,
+        kind: "json",
+        targets: new Map(),
+        exportNames: [],
+        json: isJson(file.text.replace(/^\uFEFF/, "")) ? file.text : undefined,
+      });
+      return;
+    }
+    const text = file.text;
+    const kind = file.kind;
+    const written = file.written;
+    const sourceFile = file.sourceFile;
+    if (path === entry) rejectEarlyErrors(sourceFile, nodeParse);
+    const isRejected = path !== entry && kind !== "script" && hasEarlyError(sourceFile, nodeParse);
     const targets = new Map(
       [...(isRejected ? [] : getSpecifiers(sourceFile, kind))].flatMap(([specifier, parsed]) => {
         const literal = written.get(specifier);
@@ -627,7 +652,38 @@ const loadFiles = (
       exportNames: kind === "commonjs" ? getWrapperNames(preparse(path, text)) : [],
       isRejected,
     });
-  }
+  };
+  // The files in waves, each of the files that the waves before it request: each one prepared,
+  // then parsed by V8 at once, as getNodeParses parses them, then its requests loaded in order,
+  // which number the next wave's files. A file that fails to prepare stops the program where
+  // loading the files before it hasn't stopped it first, as it would one file at a time.
+  const loadWave = (start: number): void => {
+    const wave = [...numbers.keys()].slice(start);
+    if (wave.length === 0) return;
+    const outcomes: ReturnType<typeof getOutcome<ReturnType<typeof prepare>>>[] = [];
+    for (const path of wave) {
+      const outcome = getOutcome(() => prepare(path));
+      outcomes.push(outcome);
+      if ("error" in outcome) break;
+    }
+    // V8 parses the entry, which Node runs nothing of where it fails to parse, and each other file
+    // but a script, whose requests Node loads none of where it fails to parse.
+    const parsed = outcomes.flatMap((outcome) =>
+      "value" in outcome &&
+      outcome.value.kind !== "json" &&
+      (outcome.value.path === entry || outcome.value.kind !== "script")
+        ? [outcome.value.sourceFile]
+        : [],
+    );
+    const nodeParses = getNodeParses(parsed);
+    for (const outcome of outcomes) {
+      if ("error" in outcome) throw outcome.error;
+      const file = outcome.value;
+      load(file, file.kind === "json" ? undefined : nodeParses[parsed.indexOf(file.sourceFile)]);
+    }
+    loadWave(start + wave.length);
+  };
+  loadWave(0);
   const withFacades = files.map((file) => ({
     ...file,
     facade: numbers.get(`${file.path}.facade.mjs`),
