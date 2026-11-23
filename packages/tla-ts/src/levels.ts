@@ -1918,7 +1918,7 @@ export const createLevelAnalyzer = (context: LevelContext) => {
 
   const analyzeDefinition = (definition: Definition, scope: Scope): OperatorLevels => {
     const members = context.recursiveSections.get(definition);
-    if (members && !sectionBodies.has(definition)) checkRecursiveSection(members);
+    if (members) checkRecursiveSection(members);
     const cached = definitionLevels.get(definition);
     if (cached && !staleDefinitions.delete(definition)) return cached;
     const prior = cached ?? createPlaceholder(definition, TEMPORAL_LEVEL, 0);
@@ -2039,6 +2039,7 @@ export const createLevelAnalyzer = (context: LevelContext) => {
     });
 
   const checkRecursiveSection = (members: SectionMember[]) => {
+    if (members.some((member) => sectionBodies.has(member.definition))) return;
     members.forEach((member) => sectionBodies.set(member.definition, undefined));
     const recursive = members.filter((member) => member.definition.isRecursive);
     recursive.forEach((member) =>

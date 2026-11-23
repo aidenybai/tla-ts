@@ -951,6 +951,23 @@ describe("level checking matches SANY", () => {
       ],
     ],
     [
+      "---- MODULE M ----\nVARIABLE x\nRECURSIVE R(_)\nR(m) == LET RECURSIVE S(_)\n            S(k) == IF k THEN 0 ELSE S(k)\n        IN (x' = S(m)') /\\ R(m)\n====",
+      [
+        ["line 4, col 1 to line 6, col 31", "Argument 1 of recursive operator R is primed"],
+        ["line 6, col 18 to line 6, col 22", "prime"],
+      ],
+    ],
+    [
+      "---- MODULE M ----\nVARIABLE x\nRECURSIVE R(_)\nR(m) == LET RECURSIVE S(_)\n            S(k) == S(k')\n        IN S(m) \\cup R(m)\n====",
+      [
+        ["line 5, col 13 to line 5, col 25", "Argument 1 of recursive operator S is primed"],
+        [
+          "line 5, col 21 to line 5, col 25",
+          "Level error in applying operator S:\nThe level of argument 1 exceeds the maximum level allowed by the operator.",
+        ],
+      ],
+    ],
+    [
       "---- MODULE M ----\nVARIABLE x\n---- MODULE Inner ----\nVARIABLE w\nRECURSIVE R(_), S(_)\nR(p) == S(p)\nS(p) == p' = 1 \\/ S(p)\n====\nC == {[]x}\n====",
       [
         ["line 7, col 1 to line 7, col 22", "Argument 1 of recursive operator S is primed"],
