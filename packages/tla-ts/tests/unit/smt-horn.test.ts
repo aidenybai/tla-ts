@@ -173,6 +173,25 @@ describe("datalog queries", () => {
     ]);
   });
 
+  // Deviation from Z3: Z3 answers unsat, having lost the clauses of the disjunction.
+  it("keeps every clause of a rule whose Horn normal form runs out of resources", () => {
+    expect(
+      run([
+        "(set-option :fp.engine bmc)",
+        "(declare-rel P (Int))",
+        "(declare-rel R (Int))",
+        "(declare-rel S (Int))",
+        "(declare-var x Int)",
+        "(rule (P 1))",
+        "(rule (=> (or (P x) (R x)) (S x)))",
+        "(set-option :rlimit 2)",
+        "(query S)",
+        "(set-option :rlimit 0)",
+        "(query S)",
+      ]),
+    ).toEqual([...getFailedQuery("max. resource limit exceeded"), "sat"]);
+  });
+
   it("answers the next query after a query that failed with its output predicate", () => {
     expect(run(getLimitedCounterQuery("bmc", 22))).toEqual([
       ...getFailedQuery("max. resource limit exceeded"),
