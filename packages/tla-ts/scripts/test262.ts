@@ -577,9 +577,9 @@ vm.runInThisContext(require("node:fs").readFileSync(path, "utf8"), {
 
 const getModulePath = (path: string) => join(MODULE_DIRECTORY, relative(TEST262_DIRECTORY, path));
 
-// The fixtures that a test imports, by path, each through a static import of a relative path or
-// an import() of one, or undefined where a file imports statically another way, such as with
-// attributes.
+// The fixtures that a test imports, by path, each a JavaScript or JSON file that a static import
+// of a relative path or an import() of one names, with or without attributes, which Node and
+// tla-ts check, or undefined where a file imports statically another way.
 const getFixtures = (path: string) => {
   const fixtures = new Map<string, string>();
   const isLinked = (file: string, text: string): boolean => {
@@ -588,13 +588,15 @@ const getFixtures = (path: string) => {
       ts.isStringLiteralLike(specifier) && /^\.\.?\//.test(specifier.text)
         ? join(dirname(file), specifier.text)
         : undefined;
+    const isModuleFile = (imported: string) =>
+      /\.(js|json)$/.test(imported) && existsSync(imported);
     const link = (imported: string) => {
       if (imported === path || fixtures.has(imported)) return true;
       const importedText = readFileSync(imported, "utf8");
       fixtures.set(imported, importedText);
-      return isLinked(imported, importedText);
+      return imported.endsWith(".json") || isLinked(imported, importedText);
     };
-    // An import() of a JavaScript file that exists links it, and Node rejects any other.
+    // An import() of a JavaScript or JSON file that exists links it, and Node rejects any other.
     const linksCalls = (node: ts.Node): boolean => {
       const specifier =
         ts.isCallExpression(node) && node.expression.kind === ts.SyntaxKind.ImportKeyword
@@ -602,10 +604,7 @@ const getFixtures = (path: string) => {
           : undefined;
       const imported = specifier && getImported(specifier);
       return (
-        (imported === undefined ||
-          !imported.endsWith(".js") ||
-          !existsSync(imported) ||
-          link(imported)) &&
+        (imported === undefined || !isModuleFile(imported) || link(imported)) &&
         (ts.forEachChild(node, (child) => (linksCalls(child) ? undefined : false)) ?? true)
       );
     };
@@ -618,8 +617,7 @@ const getFixtures = (path: string) => {
         const imported = getImported(specifier);
         return (
           imported !== undefined &&
-          existsSync(imported) &&
-          statement.attributes === undefined &&
+          isModuleFile(imported) &&
           !(
             ts.isImportDeclaration(statement) &&
             statement.importClause?.phaseModifier === ts.SyntaxKind.DeferKeyword
@@ -828,7 +826,7 @@ const runTest = async (path: string): Promise<TestRun> => {
   fixtures.forEach((text, fixture) => {
     const modulePath = getModulePath(fixture);
     mkdirSync(dirname(modulePath), { recursive: true });
-    writeFileSync(modulePath, transpileModule(text));
+    writeFileSync(modulePath, fixture.endsWith(".json") ? text : transpileModule(text));
   });
   const programPath = isLinked ? getModulePath(path) : PROGRAM_PATH;
   if (isLinked) mkdirSync(dirname(programPath), { recursive: true });
