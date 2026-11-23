@@ -37,6 +37,27 @@ export const pin = (manager: AstManager, expr: number) => {
   return expr;
 };
 
+// Z3's manager hash-conses a declaration by its name, domain and range.
+export class NamedDecls {
+  private decls = new Map<string, number>();
+
+  constructor(readonly manager: AstManager) {}
+
+  mkFuncDecl(name: string, domain: number[], range: number) {
+    const key = `${name}|${domain.join(",")}|${range}`;
+    const existing = this.decls.get(key);
+    if (existing !== undefined) return existing;
+    const decl = this.manager.mkFuncDecl(name, domain, range);
+    this.manager.incDeclRef(decl);
+    this.decls.set(key, decl);
+    return decl;
+  }
+
+  mkConst(name: string, sort: number) {
+    return pin(this.manager, this.manager.mkApp(this.mkFuncDecl(name, [], sort), [], sort));
+  }
+}
+
 export const mkAndOf = (manager: AstManager, exprs: readonly number[]) =>
   pin(manager, manager.mkAnd([...exprs]));
 

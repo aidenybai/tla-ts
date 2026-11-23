@@ -17,7 +17,8 @@ import { L_FALSE, L_TRUE } from "../lbool";
 import { RefVector } from "../ref-vector";
 import type { RewriterOptions } from "../rewriter";
 import { getFreeVarSorts } from "../var-subst";
-import { DatalogContext, ENGINE_DATALOG, ENGINE_SPACER, FpParams } from "./dl-context";
+import { Bmc } from "./dl-bmc-engine";
+import { DatalogContext, ENGINE_BMC, ENGINE_DATALOG } from "./dl-context";
 import { mkForall, mkPp } from "./dl-rule";
 import { SpacerDlInterface } from "./spacer-dl-interface";
 
@@ -26,7 +27,7 @@ export const createDatalogContext = (
   parameters: ReadonlyMap<string, string>,
   rewriterOptions: RewriterOptions,
 ) =>
-  new DatalogContext(manager, new FpParams(parameters), rewriterOptions, (context, engine) => {
+  new DatalogContext(manager, parameters, rewriterOptions, (context, engine) => {
     if (engine === ENGINE_DATALOG)
       return {
         // rel_context::query checks the rules with the query's before the saturation the port lacks.
@@ -40,8 +41,7 @@ export const createDatalogContext = (
           throw new SmtUnsupportedError("the datalog engine");
         },
       };
-    if (engine !== ENGINE_SPACER) throw new SmtUnsupportedError("the bmc engine");
-    return new SpacerDlInterface(context);
+    return engine === ENGINE_BMC ? new Bmc(context) : new SpacerDlInterface(context);
   });
 
 const UNSUPPORTED_PARAMETERS: [string, boolean][] = [
@@ -134,11 +134,14 @@ class HornTactic {
         head = arg;
       } else body.push(manager.mkNot(arg));
     }
-    const conjunction = manager.mkAnd(body);
+    if (head !== -1 && isImplication(manager, formula)) {
+      args.reset();
+      return { isRule: true, formula };
+    }
+    const conjunction = manager.mkApp(OP_AND, body, SORT_BOOL);
     manager.incRef(conjunction);
     args.reset();
     if (head === -1) return { isRule: false, formula: conjunction };
-    if (isImplication(manager, formula)) return { isRule: true, formula };
     const rule = manager.mkApp(OP_IMPLIES, [conjunction, head], SORT_BOOL);
     manager.incRef(rule);
     return { isRule: true, formula: rule };
@@ -165,6 +168,8 @@ class HornTactic {
         throw new SmtTacticError(`unsupported parameter ${entry[0]}`);
     if (context.params.getSymbol("engine", "auto-config") === "datalog")
       throw new SmtTacticError("unsupported parameter engine=datalog");
+    // Deviation from Z3: after an rlimit cancels the query inside the engine, Z3 segfaults on the next run.
+    context.reset();
     context.ensureOpened();
     const queries: number[] = [];
     for (const form of goal.forms.items) {
@@ -192,27 +197,33 @@ class HornTactic {
     if (reachable === L_TRUE && context.isMonotone()) goal.assert(manager.falseExpr);
     if (reachable === L_FALSE) {
       goal.reset();
-      // model2model_converter: the interpretations go to the goal's model in table order.
       const found = context.getModel();
-      found.incRef();
-      goal.addModelConversion(
-        (model) => {
-          for (const [decl, value] of found.constInterps) model.registerConst(decl, value);
-          for (const [decl, interp] of found.funcInterps) model.registerFunc(decl, interp.copy());
-          return model;
-        },
-        () => found.decRef(),
-      );
+      if (found !== undefined) {
+        found.incRef();
+        goal.addModelConversion(
+          (model) => {
+            for (const [decl, value] of found.constInterps) model.registerConst(decl, value);
+            for (const [decl, interp] of found.funcInterps) model.registerFunc(decl, interp.copy());
+            return model;
+          },
+          () => found.decRef(),
+        );
+      }
     }
     return [goal];
   }
 }
 
-export const runHorn =
-  (
-    manager: AstManager,
-    parameters: ReadonlyMap<string, string>,
-    rewriterOptions: RewriterOptions,
-  ) =>
-  (goal: Goal) =>
-    new HornTactic(manager, parameters, rewriterOptions).apply(goal);
+// Z3 quirk: the fp options are read when the tactic is made, and clean() renews it only after a run returns.
+export const runHorn = (
+  manager: AstManager,
+  parameters: ReadonlyMap<string, string>,
+  rewriterOptions: RewriterOptions,
+) => {
+  let tactic = new HornTactic(manager, parameters, rewriterOptions);
+  return (goal: Goal) => {
+    const goals = tactic.apply(goal);
+    tactic = new HornTactic(manager, parameters, rewriterOptions);
+    return goals;
+  };
+};

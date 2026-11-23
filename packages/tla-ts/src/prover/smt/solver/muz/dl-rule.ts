@@ -1,4 +1,4 @@
-import { SmtTacticError, SmtUnsupportedError } from "../../../../errors";
+import { SmtTacticError } from "../../../../errors";
 import {
   type AstManager,
   getSymbolName,
@@ -11,7 +11,8 @@ import {
   QUANTIFIER_EXISTS,
   QUANTIFIER_FORALL,
 } from "../ast";
-import { flattenAndVector } from "../ast-util";
+import { flattenAndVector, forEachExpr } from "../ast-util";
+import { LabelRewriter } from "../label-rewriter";
 import { RefVector } from "../ref-vector";
 import { DEFAULT_PRINT_OPTIONS, printExpr } from "../smt2-printer";
 import { getFreeVarSorts, VarSubst } from "../var-subst";
@@ -66,6 +67,11 @@ export class Rule {
 
   getNameText() {
     return this.name ?? "<null>";
+  }
+
+  // Z3 quirk: rule::get_vars gives an unused variable index the Bool sort.
+  getVars(manager: AstManager) {
+    return getRuleVars(manager, this).map((innerSort) => innerSort ?? SORT_BOOL);
   }
 
   display(context: DatalogContext) {
@@ -211,12 +217,14 @@ export class BindVariables {
 
 export class RuleManager {
   private hnf: Hnf;
+  private labelRewriter: LabelRewriter;
 
   constructor(
     readonly manager: AstManager,
     private context: DatalogContext,
   ) {
     this.hnf = new Hnf(manager);
+    this.labelRewriter = new LabelRewriter(manager);
   }
 
   private pin(expr: number) {
@@ -226,8 +234,7 @@ export class RuleManager {
 
   mkRule(fml: number, rules: RuleSet, name?: string) {
     const bound = this.context.bindVars(fml, true);
-    if (this.manager.hasLabelFlags[bound]) throw new SmtUnsupportedError("labels in Horn rules");
-    this.mkRuleCore(bound, rules, name);
+    this.mkRuleCore(this.labelRewriter.rewrite(bound), rules, name);
   }
 
   private mkRuleCore(fml: number, rules: RuleSet, name: string | undefined) {
@@ -391,6 +398,32 @@ export class RuleManager {
     for (let index = rule.uninterpretedSize; index < rule.tail.length; index++)
       if (manager.hasQuantifierFlags[rule.tail[index]]) return true;
     return false;
+  }
+
+  substitute(rule: Rule, values: number[]) {
+    const subst = new VarSubst(this.manager, false);
+    const head = subst.apply(rule.head, values);
+    const tail = rule.tail.map((literal) => subst.apply(literal, values));
+    subst.release();
+    return this.mk(head, tail, rule.isNegated, rule.name, false);
+  }
+
+  isFiniteDomain(rule: Rule) {
+    const manager = this.manager;
+    const visited = new Set<number>();
+    const visit = (expr: number) =>
+      manager.kinds[expr] === KIND_QUANTIFIER ||
+      (manager.sorts[expr] !== SORT_BOOL && !manager.isBvSort(manager.sorts[expr]))
+        ? false
+        : undefined;
+    for (let index = rule.uninterpretedSize; index < rule.tail.length; index++)
+      if (forEachExpr(manager, rule.tail[index], visit, visited) === false) return false;
+    for (let index = 0; index < rule.uninterpretedSize; index++)
+      for (const arg of manager.getArgs(rule.tail[index]))
+        if (forEachExpr(manager, arg, visit, visited) === false) return false;
+    for (const arg of manager.getArgs(rule.head))
+      if (forEachExpr(manager, arg, visit, visited) === false) return false;
+    return true;
   }
 
   mkQuery(query: number, rules: RuleSet) {

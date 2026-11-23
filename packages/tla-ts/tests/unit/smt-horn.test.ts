@@ -178,6 +178,211 @@ describe("horn tactic", () => {
     ).toEqual(["unsat", "unsat", "unsat"]);
   });
 
+  it("unrolls a linear system with bmc until it reaches the query", () => {
+    expect(
+      run([
+        "(set-option :fp.engine bmc)",
+        "(declare-fun P (Int) Bool)",
+        "(assert (forall ((x Int)) (=> (= x 0) (P x))))",
+        "(assert (forall ((x Int)) (=> (and (P x) (< x 3)) (P (+ x 1)))))",
+        "(assert (forall ((x Int)) (=> (P x) (< x 2))))",
+        "(check-sat-using horn)",
+      ]),
+    ).toEqual(["unsat"]);
+  });
+
+  it("unrolls two predicates with bmc", () => {
+    expect(
+      run([
+        "(set-option :fp.engine bmc)",
+        "(declare-fun P (Int) Bool)",
+        "(declare-fun Q (Int Int) Bool)",
+        "(assert (forall ((x Int)) (=> (= x 0) (P x))))",
+        "(assert (forall ((x Int) (y Int)) (=> (and (P x) (= y (* 2 x))) (Q x y))))",
+        "(assert (forall ((x Int) (y Int)) (=> (and (Q x y) (< y 7)) (P (+ y 1)))))",
+        "(assert (forall ((x Int) (y Int)) (=> (Q x y) (< y 5))))",
+        "(check-sat-using horn)",
+      ]),
+    ).toEqual(["unsat"]);
+  });
+
+  it("unrolls a bit-vector system with bmc's finite domain solver", () => {
+    expect(
+      run([
+        "(set-option :fp.engine bmc)",
+        "(declare-fun P ((_ BitVec 4)) Bool)",
+        "(assert (forall ((x (_ BitVec 4))) (=> (= x #x0) (P x))))",
+        "(assert (forall ((x (_ BitVec 4))) (=> (and (P x) (bvult x #x3)) (P (bvadd x #x1)))))",
+        "(assert (forall ((x (_ BitVec 4))) (=> (P x) (not (= x #x2)))))",
+        "(check-sat-using horn)",
+      ]),
+    ).toEqual(["unsat"]);
+  });
+
+  it("stops bmc at its unrolling depth", () => {
+    expect(
+      run([
+        "(set-logic HORN)",
+        "(set-option :fp.engine bmc)",
+        "(set-option :fp.bmc.linear_unrolling_depth 2)",
+        "(declare-fun P (Int) Bool)",
+        "(assert (forall ((x Int)) (=> (= x 0) (P x))))",
+        "(assert (forall ((x Int)) (=> (and (P x) (< x 3)) (P (+ x 1)))))",
+        "(assert (forall ((x Int)) (=> (P x) (< x 2))))",
+        "(check-sat)",
+        "(get-info :reason-unknown)",
+      ]),
+    ).toEqual(["unknown", '(:reason-unknown "unknown")']);
+  });
+
+  it("answers a query command with bmc", () => {
+    expect(
+      run([
+        "(set-option :fp.engine bmc)",
+        "(declare-rel P (Int))",
+        "(declare-var x Int)",
+        "(rule (=> (= x 0) (P x)))",
+        "(rule (=> (and (P x) (< x 3)) (P (+ x 1))))",
+        "(declare-rel Bad ())",
+        "(rule (=> (and (P x) (>= x 2)) Bad))",
+        "(query Bad)",
+      ]),
+    ).toEqual(["sat"]);
+  });
+
+  it("answers sat with bmc when no rule reaches the query", () => {
+    expect(
+      run([
+        "(set-logic HORN)",
+        "(set-option :fp.engine bmc)",
+        "(declare-fun P (Int) Bool)",
+        "(assert (forall ((x Int)) (=> (= x 0) (P x))))",
+        "(check-sat)",
+        "(get-model)",
+      ]),
+    ).toEqual(["sat", ["(", "  (define-fun P ((x!0 Int)) Bool", "    false)", ")"].join("\n")]);
+  });
+
+  it("rejects a nonlinear system with bmc", () => {
+    expect(() =>
+      run([
+        "(set-logic HORN)",
+        "(set-option :fp.engine bmc)",
+        "(declare-fun P (Int) Bool)",
+        "(assert (forall ((x Int)) (=> (= x 0) (P x))))",
+        "(assert (forall ((x Int) (y Int)) (=> (and (P x) (P y)) (P (+ x y 1)))))",
+        "(assert (forall ((x Int)) (=> (P x) (< x 3))))",
+        "(check-sat-using horn)",
+      ]),
+    ).toThrow(new SmtUnsupportedError("the nonlinear bmc engine"));
+  });
+
+  it("removes the labels of a Horn rule", () => {
+    expect(
+      run([
+        "(set-option :fp.engine bmc)",
+        "(declare-fun P (Int) Bool)",
+        "(assert (forall ((x Int)) (=> (! (> x 0) :lblpos L) (P x))))",
+        "(check-sat-using horn)",
+        "(get-model)",
+      ]),
+    ).toEqual(["sat", ["(", "  (define-fun P ((x!0 Int)) Bool", "    false)", ")"].join("\n")]);
+  });
+
+  it("counts a step for the karr plugin of the default Horn transformation", () => {
+    expect(
+      run(["(set-logic HORN)", "(set-option :fp.engine bmc)", "(check-sat)", "(get-info :rlimit)"]),
+    ).toEqual(["sat", "(:rlimit 29)"]);
+  });
+
+  it("keeps the one-argument conjunction of a Horn query", () => {
+    expect(
+      run([
+        "(set-logic HORN)",
+        "(set-option :fp.engine bmc)",
+        "(declare-fun P () Bool)",
+        "(assert (=> P false))",
+        "(check-sat)",
+        "(get-info :rlimit)",
+      ]),
+    ).toEqual(["sat", "(:rlimit 34)"]);
+  });
+
+  const counterSystem = [
+    "(declare-fun P (Int) Bool)",
+    "(assert (forall ((x Int)) (=> (= x 0) (P x))))",
+    "(assert (forall ((x Int)) (=> (and (P x) (< x 3)) (P (+ x 1)))))",
+    "(assert (forall ((x Int)) (=> (P x) (< x 2))))",
+  ];
+
+  it("reads the fp options when the Horn solver is made and again after each run", () => {
+    expect(
+      run([
+        "(set-logic HORN)",
+        "(set-option :fp.engine bmc)",
+        ...counterSystem,
+        "(set-option :fp.bmc.linear_unrolling_depth 0)",
+        "(check-sat)",
+        "(check-sat)",
+      ]),
+    ).toEqual(["unsat", "unknown"]);
+  });
+
+  it("keeps the Horn engine of the fp options from when the solver was made", () => {
+    expect(
+      run([
+        "(set-logic HORN)",
+        counterSystem[0],
+        "(set-option :fp.engine bmc)",
+        "(set-option :fp.bmc.linear_unrolling_depth 0)",
+        ...counterSystem.slice(1),
+        "(check-sat)",
+      ]),
+    ).toEqual(["unsat"]);
+  });
+
+  it("reads the fp options when check-sat-using makes the horn tactic", () => {
+    expect(
+      run([
+        "(set-logic HORN)",
+        "(set-option :fp.engine bmc)",
+        ...counterSystem,
+        "(set-option :fp.bmc.linear_unrolling_depth 0)",
+        "(check-sat-using horn)",
+      ]),
+    ).toEqual(["unknown"]);
+  });
+
+  it("answers a Horn query run again after a canceled one, where Z3 segfaults", () => {
+    expect(
+      run([
+        "(set-logic HORN)",
+        "(set-option :fp.engine bmc)",
+        ...counterSystem,
+        "(set-option :rlimit 100)",
+        "(check-sat)",
+        "(set-option :rlimit 0)",
+        "(check-sat)",
+      ]),
+    ).toEqual(["unknown", "unsat"]);
+  });
+
+  it("resets the Horn context when a run follows a canceled one", () => {
+    expect(
+      run([
+        "(set-logic HORN)",
+        "(set-option :fp.engine bmc)",
+        "(declare-fun P (Int) Bool)",
+        "(assert (forall ((x Int)) (=> (= x 0) (P x))))",
+        "(assert (forall ((x Int)) (=> (P x) (< x 0))))",
+        "(set-option :rlimit 10)",
+        "(check-sat)",
+        "(set-option :rlimit 0)",
+        "(check-sat)",
+      ]),
+    ).toEqual(["unknown", "unsat"]);
+  });
+
   it("answers a nonlinear system", () => {
     expect(
       run([
