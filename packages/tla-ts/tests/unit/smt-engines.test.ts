@@ -365,7 +365,7 @@ describe("the Horn engine reports what Z3 reports", () => {
         manager.mkApp(OP_IMPLIES, [manager.mkEq(numbered, variable), head], SORT_BOOL),
       ),
     );
-    expect(() => runHorn(manager, new Map(), TACTIC_REWRITER_OPTIONS)(goal)).toThrow(
+    expect(() => runHorn(manager, new Map(), TACTIC_REWRITER_OPTIONS, [])(goal)).toThrow(
       new SmtTacticError(
         "Uninterpreted 'k!7' in <null>:\np(#0) :- \n (= (k!7 (:var 0)) (:var 0)).\n",
       ),

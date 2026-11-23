@@ -425,6 +425,16 @@ describe("horn tactic", () => {
     ).toEqual(["sat", "(:rlimit 2832)"]);
   });
 
+  it("frees a Horn query's context before the next query, as Z3 does", () => {
+    const counter = getUnrolledCounter(2);
+    expect(run([...counter, "(reset-assertions)", ...counter.slice(3)])).toEqual([
+      "unknown",
+      "(:rlimit 720)",
+      "unknown",
+      "(:rlimit 1435)",
+    ]);
+  });
+
   it("answers a query command with bmc", () => {
     expect(
       run([

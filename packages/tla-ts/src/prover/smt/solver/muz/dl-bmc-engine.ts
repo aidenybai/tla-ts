@@ -34,7 +34,13 @@ const applySubst = (manager: AstManager, target: RefVector, sub: RefVector) => {
   subst.release();
 };
 
+const releaseBmcSolver = (solver: BmcSolver) => {
+  if (solver.kind === "fd") solver.solver.release();
+  else solver.kernel.release();
+};
+
 export class Bmc implements Engine {
+  private solver: BmcSolver | undefined;
   readonly rules: RuleSet;
   readonly decls: NamedDecls;
   queryPred = -1;
@@ -44,44 +50,54 @@ export class Bmc implements Engine {
     this.decls = new NamedDecls(context.manager);
   }
 
+  release() {
+    this.rules.reset();
+    if (this.solver !== undefined) releaseBmcSolver(this.solver);
+  }
+
   query(query: number) {
     const context = this.context;
+    if (this.solver !== undefined) releaseBmcSolver(this.solver);
+    this.solver = undefined;
     context.ensureOpened();
     this.rules.reset();
     const oldRules = RuleSet.copy(context.getRules());
-    context.ruleManager.mkQuery(query, context.getRules());
-    applyDefaultTransformation(context);
-    if (context.params.getBool("xform.slice", true))
-      transformRules(context, [new MkSlice(context)]);
-    const rules = context.getRules();
-    if (rules.outputPredicates.size === 0) return L_FALSE;
-    this.queryPred = rules.getOutputPredicate();
-    this.rules.replaceRules(rules);
-    this.rules.close();
-    context.reopen();
-    context.replaceRules(oldRules);
-    this.checkpoint();
-    if (this.rules.rules.length === 0) return L_FALSE;
-    if (this.rules.getPredicateRules(this.queryPred).length === 0) return L_FALSE;
-    if (!this.isLinear()) throw new SmtUnsupportedError("the nonlinear bmc engine");
-    const manager = context.manager;
-    const parameters = context.parameters;
+    try {
+      context.ruleManager.mkQuery(query, context.getRules());
+      applyDefaultTransformation(context);
+      if (context.params.getBool("xform.slice", true))
+        transformRules(context, [new MkSlice(context)]);
+      const rules = context.getRules();
+      if (rules.outputPredicates.size === 0) return L_FALSE;
+      this.queryPred = rules.getOutputPredicate();
+      this.rules.replaceRules(rules);
+      this.rules.close();
+      context.reopen();
+      context.replaceRules(oldRules);
+      this.checkpoint();
+      if (this.rules.rules.length === 0) return L_FALSE;
+      if (this.rules.getPredicateRules(this.queryPred).length === 0) return L_FALSE;
+      if (!this.isLinear()) throw new SmtUnsupportedError("the nonlinear bmc engine");
+      const solver = this.mkSolver();
+      this.solver = solver;
+      return new Linear(this, solver).check();
+    } finally {
+      oldRules.reset();
+    }
+  }
+
+  private mkSolver(): BmcSolver {
+    const manager = this.context.manager;
+    const parameters = this.context.parameters;
     if (this.rules.isFiniteDomain())
-      return new Linear(this, {
-        kind: "fd",
-        solver: new FdSolver(manager, getSatParams(parameters), parameters),
-      }).check();
+      return { kind: "fd", solver: new FdSolver(manager, getSatParams(parameters), parameters) };
     const params = {
       isMbqi: true,
       mbqiMaxIterations: MBQI_MAX_ITERATIONS,
       isFindingMacros: false,
       ...getGlobalSmtParams(parameters),
     };
-    return new Linear(this, {
-      kind: "smt",
-      kernel: new SmtKernel(manager, params),
-      params,
-    }).check();
+    return { kind: "smt", kernel: new SmtKernel(manager, params), params };
   }
 
   getModel() {

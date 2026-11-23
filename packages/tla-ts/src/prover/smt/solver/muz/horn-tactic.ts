@@ -12,6 +12,7 @@ import {
   QUANTIFIER_FORALL,
 } from "../ast";
 import { flattenOrVector } from "../ast-util";
+import { assign, assignOwned, release } from "../expr-ref";
 import type { Goal } from "../goal";
 import { L_FALSE, L_TRUE } from "../lbool";
 import { RefVector } from "../ref-vector";
@@ -40,6 +41,7 @@ export const createDatalogContext = (
         getModel: () => {
           throw new SmtUnsupportedError("the datalog engine");
         },
+        release: () => {},
       };
     return engine === ENGINE_BMC ? new Bmc(context) : new SpacerDlInterface(context);
   });
@@ -96,6 +98,10 @@ class HornTactic {
     this.context = createDatalogContext(manager, parameters, rewriterOptions);
   }
 
+  release() {
+    this.context.release();
+  }
+
   private checkPredicate(visited: Set<number>, root: number) {
     const manager = this.manager;
     const todo = [root];
@@ -134,17 +140,16 @@ class HornTactic {
         head = arg;
       } else body.push(manager.mkNot(arg));
     }
-    if (head !== -1 && isImplication(manager, formula)) {
-      args.reset();
-      return { isRule: true, formula };
-    }
-    const conjunction = manager.mkApp(OP_AND, body, SORT_BOOL);
-    manager.incRef(conjunction);
+    const isRule = head !== -1;
+    const result =
+      isRule && isImplication(manager, formula)
+        ? formula
+        : isRule
+          ? manager.mkApp(OP_IMPLIES, [manager.mkApp(OP_AND, body, SORT_BOOL), head], SORT_BOOL)
+          : manager.mkApp(OP_AND, body, SORT_BOOL);
+    manager.incRef(result);
     args.reset();
-    if (head === -1) return { isRule: false, formula: conjunction };
-    const rule = manager.mkApp(OP_IMPLIES, [conjunction, head], SORT_BOOL);
-    manager.incRef(rule);
-    return { isRule: true, formula: rule };
+    return { isRule, formula: result };
   }
 
   private bindVariables(formula: number) {
@@ -155,9 +160,7 @@ class HornTactic {
     if (sorts.length === 0) return formula;
     sorts.reverse();
     const names = sorts.map((_value, index) => String(sorts.length - index - 1));
-    const result = mkForall(manager, sorts, names, formula);
-    manager.incRef(result);
-    return result;
+    return mkForall(manager, sorts, names, formula);
   }
 
   apply(goal: Goal) {
@@ -171,46 +174,56 @@ class HornTactic {
     // Deviation from Z3: after an rlimit cancels the query inside the engine, Z3 segfaults on the next run.
     context.reset();
     context.ensureOpened();
-    const queries: number[] = [];
-    for (const form of goal.forms.items) {
-      const kind = this.getFormulaKind(form);
-      if (kind === undefined)
-        throw new SmtTacticError(`formula is not in Horn fragment: ${mkPp(manager, form)}\n`);
-      if (kind.isRule) context.addRule(kind.formula);
-      else queries.push(kind.formula);
-    }
-    if (queries.length !== 1) {
-      const query = manager.mkFreshConst("query", SORT_BOOL);
-      manager.incRef(query);
-      context.registerPredicate(manager.decls[query]);
-      for (const other of queries) {
-        const rule = manager.mkApp(OP_IMPLIES, [other, query], SORT_BOOL);
-        manager.incRef(rule);
-        context.addRule(this.bindVariables(rule));
+    let query = -1;
+    let formula = -1;
+    const queries = new RefVector(manager);
+    try {
+      for (const form of goal.forms.items) {
+        const kind = this.getFormulaKind(form);
+        if (kind === undefined)
+          throw new SmtTacticError(`formula is not in Horn fragment: ${mkPp(manager, form)}\n`);
+        formula = assignOwned(manager, formula, kind.formula);
+        if (kind.isRule) context.addRule(formula);
+        else queries.push(formula);
       }
-      queries.length = 0;
-      queries.push(query);
-      goal.addConverter(manager.decls[query]);
-    }
-    const reachable = context.query(queries[0]);
-    goal.depth++;
-    if (reachable === L_TRUE && context.isMonotone()) goal.assert(manager.falseExpr);
-    if (reachable === L_FALSE) {
-      goal.reset();
-      const found = context.getModel();
-      if (found !== undefined) {
-        found.incRef();
-        goal.addModelConversion(
-          (model) => {
-            for (const [decl, value] of found.constInterps) model.registerConst(decl, value);
-            for (const [decl, interp] of found.funcInterps) model.registerFunc(decl, interp.copy());
-            return model;
-          },
-          () => found.decRef(),
-        );
+      if (queries.size !== 1) {
+        query = assign(manager, query, manager.mkFreshConst("query", SORT_BOOL));
+        context.registerPredicate(manager.decls[query]);
+        for (const other of queries.items) {
+          formula = assign(manager, formula, manager.mkApp(OP_IMPLIES, [other, query], SORT_BOOL));
+          formula = assign(manager, formula, this.bindVariables(formula));
+          context.addRule(formula);
+        }
+        queries.reset();
+        queries.push(query);
+        goal.addConverter(manager.decls[query]);
       }
+      query = assign(manager, query, queries.items[0]);
+      const reachable = context.query(query);
+      goal.depth++;
+      if (reachable === L_TRUE && context.isMonotone()) goal.assert(manager.falseExpr);
+      if (reachable === L_FALSE) {
+        goal.reset();
+        const found = context.getModel();
+        if (found !== undefined) {
+          found.incRef();
+          goal.addModelConversion(
+            (model) => {
+              for (const [decl, value] of found.constInterps) model.registerConst(decl, value);
+              for (const [decl, interp] of found.funcInterps)
+                model.registerFunc(decl, interp.copy());
+              return model;
+            },
+            () => found.decRef(),
+          );
+        }
+      }
+      return [goal];
+    } finally {
+      queries.reset();
+      release(manager, formula);
+      release(manager, query);
     }
-    return [goal];
   }
 }
 
@@ -219,10 +232,13 @@ export const runHorn = (
   manager: AstManager,
   parameters: ReadonlyMap<string, string>,
   rewriterOptions: RewriterOptions,
+  destructors: (() => void)[],
 ) => {
   let tactic = new HornTactic(manager, parameters, rewriterOptions);
+  destructors.push(() => tactic.release());
   return (goal: Goal) => {
     const goals = tactic.apply(goal);
+    tactic.release();
     tactic = new HornTactic(manager, parameters, rewriterOptions);
     return goals;
   };

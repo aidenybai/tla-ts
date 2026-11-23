@@ -68,14 +68,16 @@ type ExecutionResult = "ok" | "bounded" | "canceled";
 export interface Engine {
   query(query: number): number;
   getModel(): ProtoModel | undefined;
+  release(): void;
 }
 
 type EngineFactory = (context: DatalogContext, engine: number) => Engine;
 
 export class DatalogContext {
   readonly ruleManager: RuleManager;
-  private qe: QeLite;
+  readonly qe: QeLite;
   private ruleProperties: RuleProperties;
+  private pinned: number[] = [];
   private preds = new Set<number>();
   private bindVariables: BindVariables;
   private isBindingVariables = true;
@@ -135,7 +137,19 @@ export class DatalogContext {
     this.ruleFmls = [];
     this.ruleNames = [];
     this.preds.clear();
+    this.engine?.release();
     this.engine = undefined;
+  }
+
+  release() {
+    const manager = this.manager;
+    this.reset();
+    for (const expr of this.background) manager.decRef(expr);
+    this.transformedRuleSet.reset();
+    this.bindVariables.release();
+    for (const decl of this.pinned) manager.decDeclRef(decl);
+    this.ruleManager.release();
+    this.rewriter.release();
   }
 
   // th_rewriter: the result comes with a reference.
@@ -150,6 +164,7 @@ export class DatalogContext {
   registerPredicate(decl: number) {
     if (this.preds.has(decl)) return;
     this.manager.incDeclRef(decl);
+    this.pinned.push(decl);
     this.preds.add(decl);
   }
 
