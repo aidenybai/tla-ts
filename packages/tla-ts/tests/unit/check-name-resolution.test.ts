@@ -2431,6 +2431,50 @@ describe("name resolution matches SANY", () => {
   );
 
   it.each([
+    ["P(F)!E2", "line 22, col 28 to line 22, col 28", "Selector `P' should not have argument(s)."],
+    ["F(1)!1", "line 22, col 28 to line 22, col 28", "Selector `F' should not have argument(s)."],
+    [
+      "P(\\cup)!E2",
+      "line 22, col 28 to line 22, col 28",
+      "Selector `P' should not have argument(s).",
+    ],
+    ["P(1)!Use", "line 22, col 28 to line 22, col 28", "Selector `P' should not have argument(s)."],
+    [
+      "P(F)!I(F)!E3",
+      "line 22, col 28 to line 22, col 28",
+      "Selector `P' should not have argument(s).",
+    ],
+    [
+      "P!I(F)!E3",
+      "line 22, col 30 to line 22, col 30",
+      "Selector `I' should not have argument(s).",
+    ],
+    [
+      "F!(1)",
+      "line 22, col 30 to line 22, col 32",
+      "Selector `!(...)' should not have argument(s).",
+    ],
+    ["P(F)!E!1", "line 22, col 28 to line 22, col 28", "Selector `P' should not have argument(s)."],
+  ])(
+    "reports a selector with arguments in %j, substituted for an operator constant, like SANY",
+    async (substitute, location, message) => {
+      await expect(
+        checkNames(
+          `${INSTANCE_PREFIXES}\n---- MODULE W ----\nCONSTANT K(_)\n====\nWW == INSTANCE W WITH K <- ${substitute}`,
+        ),
+      ).rejects.toThrow(
+        createSanyError([
+          { location: `${location} of module M`, message },
+          {
+            location: "In module --TLA+ BUILTINS--",
+            message: "An operator must be substituted for symbol 'K', and it must have arity 1.",
+          },
+        ]),
+      );
+    },
+  );
+
+  it.each([
     [
       "---- MODULE P ----\nCONSTANT ba, ab\nVARIABLE v\n====\nK == INSTANCE P",
       6,

@@ -1518,6 +1518,17 @@ const getSelectorArgumentError = (reference: Expression, isDefEntry = false) => 
   };
 };
 
+const reportSelectorArgumentError = (reference: Expression, unit: Unit) => {
+  const argumentError = getSelectorArgumentError(reference);
+  if (argumentError?.range) {
+    unit.errors.push({
+      location: formatRange(argumentError.range),
+      message: argumentError.message,
+    });
+  }
+  return argumentError !== undefined;
+};
+
 const matchArgument = (
   arg: Expression,
   expected: number,
@@ -1553,11 +1564,7 @@ const matchArgument = (
     return false;
   }
   const reference = selections.get(arg) ?? arg;
-  const argumentError = getSelectorArgumentError(reference);
-  if (argumentError) {
-    report(argumentError.range, argumentError.message);
-    return false;
-  }
+  if (reportSelectorArgumentError(reference, unit)) return false;
   if (arg.kind === "Lambda") {
     if (selections.has(arg)) resolveExpression(arg, scope, unit);
     else resolveLambda(arg, scope, unit);
@@ -2935,6 +2942,10 @@ const checkSubstitutions = (
     }
     const parenthesized = parenthesizedRanges.get(expression);
     const reference = parenthesized ? undefined : selections.get(expression);
+    if (!parenthesized && reportSelectorArgumentError(reference ?? expression, unit)) {
+      reportArity(declaration, BUILTIN_LOCATION);
+      return;
+    }
     if (reference) {
       const arity = expression.kind === "Lambda" ? expression.params.length : 0;
       const failed = findNullError(nullSelections.get(expression));
