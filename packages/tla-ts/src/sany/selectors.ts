@@ -233,7 +233,7 @@ export const createSelectorResolver =
                 walk.name = newName;
                 walk.nameLocation = extendLocation(walk.nameLocation, getItemLocation());
               }
-              collectedArgs.push(...getArgs(current));
+              getArgs(current).forEach((arg) => collectedArgs.push(arg));
               walk.index++;
             }
           }
@@ -267,7 +267,7 @@ export const createSelectorResolver =
           }
           const nodeArity = getSymbolArity(symbol);
           if (expectedArity === 0) {
-            collectedArgs.push(...getArgs(items[walk.index]));
+            getArgs(items[walk.index]).forEach((arg) => collectedArgs.push(arg));
             if (walk.definitionArityFound + collectedArgs.length !== nodeArity) {
               return generator.addError(
                 items[walk.index].argsLocation ?? location,
@@ -316,7 +316,7 @@ export const createSelectorResolver =
               walk.nameLocation = undefined;
               walk.mode =
                 items[walk.index + 1].op === "Name" ? "FollowingLabels" : "FindingSubExpr";
-              allArgs.push(...walk.definitionArgs);
+              walk.definitionArgs.forEach((arg) => allArgs.push(arg));
               walk.definitionArityFound = 0;
               walk.definitionArgs = [];
               // Deviation from SANY: Generator#selectorToNode throws NullPointerException on an instance's substitutions around a definition whose body failed; tla-ts fails the selection as SANY does without the instance.
@@ -357,7 +357,9 @@ export const createSelectorResolver =
                 `Label \`${item.name}' used with wrong number of arguments.`,
               );
             }
-            allArgs.push(...getArgs(item).map(generator.generateExpression));
+            getArgs(item)
+              .map(generator.generateExpression)
+              .forEach((arg) => allArgs.push(arg));
           }
           params.push(...label.params);
           if (walk.index < items.length - 1 && items[walk.index + 1].op !== "Name")
@@ -471,7 +473,9 @@ export const createSelectorResolver =
                       `Selector with ${getArgs(item).length} argument(s) used for quantifier with ${symbols.length} bound identifier(s).`,
                     );
                   }
-                  allArgs.push(...getArgs(item).map(generator.generateExpression));
+                  getArgs(item)
+                    .map(generator.generateExpression)
+                    .forEach((arg) => allArgs.push(arg));
                 }
                 walk.node = operands[0];
               } else {
@@ -536,7 +540,9 @@ export const createSelectorResolver =
                   `Selector with ${getArgs(item).length} arguments used for LAMBDA expression taking ${lambda.arity} arguments.`,
                 );
               }
-              allArgs.push(...getArgs(item).map(generator.generateExpression));
+              getArgs(item)
+                .map(generator.generateExpression)
+                .forEach((arg) => allArgs.push(arg));
             }
             params.push(...(lambda.params ?? []));
             walk.node = lambda.body;
@@ -641,7 +647,7 @@ export const createSelectorResolver =
           "Internal Error: Found unexpected node kind after FindingOpName",
         );
       }
-      allArgs.push(...walk.definitionArgs);
+      walk.definitionArgs.forEach((arg) => allArgs.push(arg));
       const operands = (current.params ?? []).map((param) => {
         const copy = generator.createFormalParam(param.name, param.arity, param.location);
         params.push(copy);

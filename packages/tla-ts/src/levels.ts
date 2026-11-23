@@ -814,13 +814,12 @@ export const createLevelAnalyzer = (context: LevelContext) => {
         }
       }
     }
+    // A tuple of a long sequence's units has more operands than a call's arguments can spread.
     const data = createData(
-      Math.max(
-        operator.level,
-        ...operands
-          .filter((_operand, index) => getWeight(operator, index) === 1)
-          .map((operand) => operand.data.level),
-        ...ranges.map((range) => range.level),
+      operands.reduce(
+        (level, operand, index) =>
+          getWeight(operator, index) === 1 ? Math.max(level, operand.data.level) : level,
+        ranges.reduce((level, range) => Math.max(level, range.level), operator.level),
       ),
     );
     data.isCorrect =
@@ -1650,7 +1649,10 @@ export const createLevelAnalyzer = (context: LevelContext) => {
     instanced: ModuleLevels,
   ) => {
     const data = createData(
-      Math.max(body.level, ...body.params.map((param) => operands.get(param)?.data.level ?? 0)),
+      body.params.reduce(
+        (level, param) => Math.max(level, operands.get(param)?.data.level ?? 0),
+        body.level,
+      ),
     );
     data.isCorrect =
       body.isCorrect && [...operands.values()].every((operand) => operand.data.isCorrect);
@@ -2085,7 +2087,10 @@ export const createLevelAnalyzer = (context: LevelContext) => {
       checkPrimedArguments([member]);
     });
     const firstPass = recursive.map((member) => analyzeDefinition(member.definition, member.scope));
-    const level = Math.max(CONSTANT_LEVEL, ...firstPass.map((levels) => levels.level));
+    const level = firstPass.reduce(
+      (maximum, levels) => Math.max(maximum, levels.level),
+      CONSTANT_LEVEL,
+    );
     const params = firstPass.flatMap((levels) => [...levels.params]);
     const allParams = firstPass.flatMap((levels) => [...levels.allParams]);
     members.forEach((member) => {

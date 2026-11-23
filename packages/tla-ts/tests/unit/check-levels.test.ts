@@ -48,6 +48,15 @@ describe("level checking matches SANY", () => {
     },
   );
 
+  // A string's code units as a tuple, as a compiled program writes a long one, has more elements
+  // than a call's arguments can spread.
+  it("levels a tuple of half a million elements", async () => {
+    const result = await checkDefinition(
+      `<<${Array.from({ length: 500_000 }, () => "1").join(", ")}>>`,
+    );
+    expect(result.status).toBe("success");
+  });
+
   it("leaves the updates after @ out of its level and parameters, as SANY does", async () => {
     expect((await checkDefinition("[x EXCEPT ![1] = @', ![2] = x']")).status).toBe("success");
     expect(
