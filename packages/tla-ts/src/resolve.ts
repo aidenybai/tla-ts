@@ -1013,9 +1013,9 @@ const getSymbolArity = (
     const instance = lookupLocal(scope, name) ?? getModuleBinding(name, unit, undefined);
     const count = expression.kind === "Apply" ? expression.args.length : 0;
     const names = name.split("!");
-    const prefixes = getInstances(names, scope, unit);
     // SANY counts an instance's arguments only where an expression is expected.
     if (!isOperatorArgument && instance?.kind === "Instance" && instance.arity !== count) {
+      const prefixes = getInstances(names, scope, unit);
       if (expression.kind === "Apply") {
         matchInstanceArguments(
           getSelectors(expression),
@@ -1520,7 +1520,7 @@ const getSelectorArgumentError = (reference: Expression, isDefEntry = false) => 
   };
 };
 
-const reportSelectorArgumentError = (reference: Expression, unit: Unit) => {
+const isSelectorArgumentReported = (reference: Expression, unit: Unit) => {
   const argumentError = getSelectorArgumentError(reference);
   if (argumentError?.range) {
     unit.errors.push({
@@ -1566,7 +1566,7 @@ const matchArgument = (
     return false;
   }
   const reference = selections.get(arg) ?? arg;
-  if (reportSelectorArgumentError(reference, unit)) return false;
+  if (isSelectorArgumentReported(reference, unit)) return false;
   if (arg.kind === "Lambda") {
     if (selections.has(arg)) resolveExpression(arg, scope, unit);
     else resolveLambda(arg, scope, unit);
@@ -2944,7 +2944,7 @@ const checkSubstitutions = (
     }
     const parenthesized = parenthesizedRanges.get(expression);
     const reference = parenthesized ? undefined : selections.get(expression);
-    if (!parenthesized && reportSelectorArgumentError(reference ?? expression, unit)) {
+    if (!parenthesized && isSelectorArgumentReported(reference ?? expression, unit)) {
       reportArity(declaration, BUILTIN_LOCATION);
       return;
     }
