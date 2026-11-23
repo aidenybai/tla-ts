@@ -4723,7 +4723,7 @@ const getReadyHash = (value: Value): number => {
     return value.enumerated === undefined ? UNREADY_HASH : getReadyHash(value.enumerated);
   }
   if (value.kind === "Set") {
-    if (!value.isNormalized) return UNREADY_HASH;
+    if (!isNormalizedSet(value)) return UNREADY_HASH;
     if (value.hash !== 0) return value.hash;
     const elements = value.elements;
     let hash = SET_HASH_SEED;
