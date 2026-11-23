@@ -37,6 +37,21 @@ const MOST_GRAPH_STATES = 100;
 // What stops a check whose graph passed the most states that a run keeps.
 class GraphOmittedError extends Error {}
 
+// The most characters of a program's TLA+ code that the page shows and checks. Chromium's renderer,
+// which the page shares with its worker, ran out of memory to show the code of a script of 35,000
+// numbers, 8.5 million characters, of which 80% is 6.8 million. The worker alone checks up to the
+// CLI's bound.
+const MOST_CODE_CHARACTERS = 6_500_000;
+
+// Stops at a program whose code passes the most characters that the page shows.
+const checkCodeLength = (code: string) => {
+  if (code.length > MOST_CODE_CHARACTERS) {
+    throw new TlaError(
+      `tla-ts can't check a program whose TLA+ spec has more than ${MOST_CODE_CHARACTERS} characters on the website: this program's has ${code.length}, which the page would run out of memory to show`,
+    );
+  }
+};
+
 const getTitle = (result: CheckResult) => {
   const name = result.violation?.name;
   return {
@@ -98,7 +113,9 @@ const getRun = async (request: RunRequest) => {
     };
   }
   const spec = loaded.compile(request.typescript, loaded.runtime, loaded.library);
-  return { spec, shown: spec.loadModule("ProgramCode") ?? "" };
+  const shown = spec.loadModule("ProgramCode") ?? "";
+  checkCodeLength(shown);
+  return { spec, shown };
 };
 
 // A check of the spec, with the graph of its search where it's shown, which the check stops keeping
@@ -188,11 +205,9 @@ const getErrorMessage = (error: unknown) =>
 const getCompiled = async (source: string, fileName: string): Promise<CompileResponse> => {
   try {
     const loaded = await escore;
-    return {
-      source,
-      fileName,
-      compilation: loaded.getCompilation(source, fileName, loaded.runtime, loaded.library),
-    };
+    const compilation = loaded.getCompilation(source, fileName, loaded.runtime, loaded.library);
+    checkCodeLength(compilation.tla);
+    return { source, fileName, compilation };
   } catch (error) {
     return { source, fileName, error: getErrorMessage(error) };
   }
