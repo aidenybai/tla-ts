@@ -193,10 +193,11 @@ const getBaseOverrides = (library: Library, realm: HostRealm) => [
   {
     name: "DescribeResult",
     arity: 1,
-    // A thrown error whose message Node writes is described by nothing that reads it.
+    // A thrown error whose message Node writes is described by its constructor's name alone, as
+    // nothing may read the message.
     text: `DescribeResult(r) ==
   IF IsObject(r.c.value) /\\ O(r.s, r.c.value).class = "error" /\\ "hostMessage" \\in DOMAIN O(r.s, r.c.value).slots
-  THEN [name |-> <<>>, message |-> <<>>]
+  THEN [name |-> ThrownNameUnits(ThrownName(r.s, r.c.value)), message |-> <<>>]
   ELSE DescribeThrown(r.s, r.c.value)`,
   },
 ];

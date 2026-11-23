@@ -10,6 +10,7 @@ import { afterAll, beforeAll, describe, expect, it } from "vite-plus/test";
 interface ScriptResult {
   status: string;
   message: string | undefined;
+  prints: string[];
 }
 
 // ESCore's evaluation nests deeper than a test's stack, so checks run on one worker with the
@@ -35,15 +36,16 @@ const worker = new Worker(
     try {
       const compiled = loaded.compileToEscore(spec.source, spec.fileName, loaded.runtime, spec.isModule);
       const code = compiled.loadModule("ProgramCode").replace("\\n====", "\\n" + spec.appended + "\\n====");
+      const prints = [];
       const result = await loaded.check({
         ...compiled,
         loadModule: (name) => (name === "ProgramCode" ? code : undefined),
         workers: 1,
-        onPrint: () => {},
+        onPrint: (text) => prints.push(text),
       });
-      parentPort.postMessage({ id: spec.id, status: result.status, message: result.failure?.message });
+      parentPort.postMessage({ id: spec.id, status: result.status, message: result.failure?.message, prints });
     } catch (error) {
-      parentPort.postMessage({ id: spec.id, status: "stopped", message: error.message });
+      parentPort.postMessage({ id: spec.id, status: "stopped", message: error.message, prints: [] });
     }
   });`,
   {
@@ -2601,6 +2603,31 @@ describe("compiles scripts by specializing ESCore", () => {
           "tla-ts can't read the message that Node writes for an error it throws",
         );
       }
+    });
+
+    // The runner reports the name of the constructor of an uncaught value, which test262 matches
+    // against a negative test's type, without reading the message.
+    it("names the constructor of such an error left uncaught, as Node does", async () => {
+      const getName = (source: string) => {
+        try {
+          runInNewContext(source);
+          return undefined;
+        } catch (error) {
+          return Object(error).constructor.name;
+        }
+      };
+      const getPrintedName = async (source: string) => {
+        const result = await checkScript(source);
+        expect(result.message).toContain(THREW);
+        const units = /name \|->\s*<<([^>]*)>>/.exec(result.prints.at(-1) ?? "")?.[1] ?? "";
+        return String.fromCharCode(...(units.match(/\d+/g) ?? []).map(Number));
+      };
+      const property = "(null as unknown as Record<string, number>)[{} as unknown as string];";
+      const array = "new Array(-1);";
+      expect(getName(stripTypeScriptTypes(property))).toBe("TypeError");
+      expect(await getPrintedName(property)).toBe("TypeError");
+      expect(getName(array)).toBe("RangeError");
+      expect(await getPrintedName(array)).toBe("RangeError");
     });
   });
 
