@@ -9740,6 +9740,864 @@ ASSUME TLCFP(a) = -887695703
 
   it.each([
     [
+      "the cardinality of a product of unions",
+      "Cardinality(S \\X S) = 4",
+      [
+        "line 5, col 9 to line 5, col 14 of module M: 1",
+        "line 5, col 28 to line 5, col 74 of module M: 1",
+        "|line 5, col 34 to line 5, col 74 of module M: 1:12",
+        "||line 5, col 35 to line 5, col 58 of module M: 2:14",
+        "|||line 5, col 43 to line 5, col 45 of module M: 2:10",
+        "||||line 5, col 44 to line 5, col 44 of module M: 2",
+        "|||line 5, col 48 to line 5, col 57 of module M: 2",
+        "||line 5, col 68 to line 5, col 73 of module M: 1:3",
+        "line 5, col 79 to line 5, col 101 of module M: 1",
+      ],
+    ],
+    [
+      "the cardinality of a set of functions from a union",
+      "Cardinality([S -> {1, 2}]) = 4",
+      [
+        "line 5, col 9 to line 5, col 14 of module M: 1",
+        "line 5, col 28 to line 5, col 74 of module M: 1",
+        "|line 5, col 34 to line 5, col 74 of module M: 1:10",
+        "||line 5, col 35 to line 5, col 58 of module M: 2:12",
+        "|||line 5, col 43 to line 5, col 45 of module M: 2:8",
+        "||||line 5, col 44 to line 5, col 44 of module M: 2",
+        "|||line 5, col 48 to line 5, col 57 of module M: 2",
+        "||line 5, col 68 to line 5, col 73 of module M: 1:3",
+        "line 5, col 79 to line 5, col 108 of module M: 1",
+      ],
+    ],
+    [
+      "the cardinality of the subsets of a union",
+      "Cardinality(SUBSET S) = 4",
+      [
+        "line 5, col 9 to line 5, col 14 of module M: 1",
+        "line 5, col 28 to line 5, col 74 of module M: 1",
+        "|line 5, col 34 to line 5, col 74 of module M: 1:8",
+        "||line 5, col 35 to line 5, col 58 of module M: 2:10",
+        "|||line 5, col 43 to line 5, col 45 of module M: 2:6",
+        "||||line 5, col 44 to line 5, col 44 of module M: 2",
+        "|||line 5, col 48 to line 5, col 57 of module M: 2",
+        "||line 5, col 68 to line 5, col 73 of module M: 1:3",
+        "line 5, col 79 to line 5, col 103 of module M: 1",
+      ],
+    ],
+    [
+      "a bound over a set of functions into a union",
+      "\\E f \\in [{1} -> S] : TRUE",
+      [
+        "line 5, col 9 to line 5, col 14 of module M: 1",
+        "line 5, col 28 to line 5, col 74 of module M: 1",
+        "|line 5, col 34 to line 5, col 74 of module M: 1:8",
+        "||line 5, col 35 to line 5, col 58 of module M: 2:12",
+        "|||line 5, col 43 to line 5, col 45 of module M: 2:8",
+        "||||line 5, col 44 to line 5, col 44 of module M: 2",
+        "|||line 5, col 48 to line 5, col 57 of module M: 2",
+        "||line 5, col 68 to line 5, col 73 of module M: 1:3",
+        "line 5, col 79 to line 5, col 104 of module M: 1",
+        "|line 5, col 101 to line 5, col 104 of module M: 1",
+        "|line 5, col 88 to line 5, col 97 of module M: 1:6",
+        "||line 5, col 89 to line 5, col 91 of module M: 1",
+        "||line 5, col 96 to line 5, col 96 of module M: 1",
+      ],
+    ],
+    [
+      "the cardinality of a product of a union that a cardinality converted",
+      "Cardinality(S) = 2 /\\ Cardinality(S \\X S) = 4",
+      [
+        "line 5, col 9 to line 5, col 14 of module M: 1",
+        "line 5, col 28 to line 5, col 74 of module M: 1",
+        "|line 5, col 34 to line 5, col 74 of module M: 1:10",
+        "||line 5, col 35 to line 5, col 58 of module M: 2:10",
+        "|||line 5, col 43 to line 5, col 45 of module M: 2:6",
+        "||||line 5, col 44 to line 5, col 44 of module M: 2",
+        "|||line 5, col 48 to line 5, col 57 of module M: 2",
+        "||line 5, col 68 to line 5, col 73 of module M: 1:3",
+        "line 5, col 79 to line 5, col 123 of module M: 1",
+      ],
+    ],
+    [
+      "a bound over a product of a union that a cardinality converted",
+      "Cardinality(S) = 2 /\\ \\E t \\in S \\X S : TRUE",
+      [
+        "line 5, col 9 to line 5, col 14 of module M: 1",
+        "line 5, col 28 to line 5, col 74 of module M: 1",
+        "|line 5, col 34 to line 5, col 74 of module M: 1:20",
+        "||line 5, col 35 to line 5, col 58 of module M: 2:10",
+        "|||line 5, col 43 to line 5, col 45 of module M: 2:6",
+        "||||line 5, col 44 to line 5, col 44 of module M: 2",
+        "|||line 5, col 48 to line 5, col 57 of module M: 2",
+        "||line 5, col 68 to line 5, col 73 of module M: 1:3",
+        "line 5, col 79 to line 5, col 122 of module M: 1",
+        "|line 5, col 79 to line 5, col 96 of module M: 1",
+        "|line 5, col 101 to line 5, col 122 of module M: 1",
+        "||line 5, col 119 to line 5, col 122 of module M: 1",
+        "||line 5, col 110 to line 5, col 115 of module M: 1:14",
+        "|||line 5, col 110 to line 5, col 110 of module M: 1",
+        "|||line 5, col 115 to line 5, col 115 of module M: 1",
+      ],
+    ],
+    [
+      "a bound over a product of unions",
+      "\\E t \\in S \\X S : TRUE",
+      [
+        "line 5, col 9 to line 5, col 14 of module M: 1",
+        "line 5, col 28 to line 5, col 74 of module M: 1",
+        "|line 5, col 34 to line 5, col 74 of module M: 1:24",
+        "||line 5, col 35 to line 5, col 58 of module M: 2:24",
+        "|||line 5, col 43 to line 5, col 45 of module M: 2:16",
+        "||||line 5, col 44 to line 5, col 44 of module M: 2",
+        "|||line 5, col 48 to line 5, col 57 of module M: 2",
+        "||line 5, col 68 to line 5, col 73 of module M: 1:3",
+        "line 5, col 79 to line 5, col 100 of module M: 1",
+        "|line 5, col 97 to line 5, col 100 of module M: 1",
+        "|line 5, col 88 to line 5, col 93 of module M: 1:14",
+        "||line 5, col 88 to line 5, col 88 of module M: 1",
+        "||line 5, col 93 to line 5, col 93 of module M: 1",
+      ],
+    ],
+  ])("charges %s to the sets that TLC's size and isEmpty draw", async (_name, body, rows) => {
+    expect(
+      await getNextCoverageLines(
+        `x' = 0 /\\ LET S == UNION {[proc : {p}, idx : 1..1] : p \\in {1, 2}} IN ${body}`,
+      ),
+    ).toEqual(rows);
+  });
+
+  it.each([
+    [
+      "a union",
+      "x' = 0 /\\ LET S == UNION {[proc : {p}, idx : 1..1] : p \\in {1, 2}} IN \\E R \\in SUBSET S : TRUE",
+      [
+        "line 5, col 9 to line 5, col 14 of module M: 1",
+        "line 5, col 28 to line 5, col 74 of module M: 1",
+        "|line 5, col 34 to line 5, col 74 of module M: 1:8",
+        "||line 5, col 35 to line 5, col 58 of module M: 2:10",
+        "|||line 5, col 43 to line 5, col 45 of module M: 2:6",
+        "||||line 5, col 44 to line 5, col 44 of module M: 2",
+        "|||line 5, col 48 to line 5, col 57 of module M: 2",
+        "||line 5, col 68 to line 5, col 73 of module M: 1:3",
+        "line 5, col 79 to line 5, col 102 of module M: 1",
+      ],
+    ],
+    [
+      "a product",
+      "x' = 0 /\\ \\E R \\in SUBSET ({1, 2} \\X {3}) : TRUE",
+      [
+        "line 5, col 9 to line 5, col 14 of module M: 1",
+        "line 5, col 19 to line 5, col 56 of module M: 1",
+        "|line 5, col 53 to line 5, col 56 of module M: 1",
+        "|line 5, col 28 to line 5, col 49 of module M: 1",
+        "||line 5, col 36 to line 5, col 48 of module M: 1:6",
+        "|||line 5, col 36 to line 5, col 41 of module M: 1:3",
+        "|||line 5, col 46 to line 5, col 48 of module M: 1:5",
+      ],
+    ],
+    [
+      "a set of records",
+      "x' = 0 /\\ \\E R \\in SUBSET [a : {1, 2}] : TRUE",
+      [
+        "line 5, col 9 to line 5, col 14 of module M: 1",
+        "line 5, col 19 to line 5, col 53 of module M: 1",
+        "|line 5, col 50 to line 5, col 53 of module M: 1",
+        "|line 5, col 28 to line 5, col 46 of module M: 1",
+        "||line 5, col 35 to line 5, col 46 of module M: 1:4",
+        "|||line 5, col 36 to line 5, col 45 of module M: 1:3",
+      ],
+    ],
+    [
+      "a product after PrintT converts the SUBSET",
+      "LET S == SUBSET ({1, 2} \\X {3}) IN x' = 0 /\\ PrintT(S) /\\ \\E R \\in S : TRUE",
+      [
+        "line 5, col 44 to line 5, col 49 of module M: 1",
+        "line 5, col 54 to line 5, col 62 of module M: 1",
+        "|line 5, col 61 to line 5, col 61 of module M: 1",
+        "||line 5, col 18 to line 5, col 39 of module M: 1:4",
+        "|||line 5, col 26 to line 5, col 38 of module M: 1:6",
+        "||||line 5, col 26 to line 5, col 31 of module M: 1:3",
+        "||||line 5, col 36 to line 5, col 38 of module M: 1:5",
+        "line 5, col 67 to line 5, col 83 of module M: 1",
+        "|line 5, col 80 to line 5, col 83 of module M: 1",
+        "|line 5, col 76 to line 5, col 76 of module M: 1",
+        "||line 5, col 18 to line 5, col 39 of module M: 1",
+        "|||line 5, col 26 to line 5, col 38 of module M: 1:6",
+        "||||line 5, col 26 to line 5, col 31 of module M: 1:3",
+        "||||line 5, col 36 to line 5, col 38 of module M: 1:5",
+      ],
+    ],
+  ])(
+    "charges the subsets of %s to the base that SUBSET sizes and converts",
+    async (_name, next, rows) => {
+      expect(await getNextCoverageLines(next)).toEqual(rows);
+    },
+  );
+
+  it("charges the conversion of a product after sizing it converts its union", async () => {
+    expect(
+      await getNextCoverageLines(
+        "x' = 0 /\\ LET S == UNION { [proc : {p}, idx : 1..1] : p \\in {1, 2} } IN \\E R \\in SUBSET (S \\X S) : Cardinality(R) = 2",
+      ),
+    ).toEqual([
+      "line 5, col 9 to line 5, col 14 of module M: 1",
+      "line 5, col 28 to line 5, col 76 of module M: 1",
+      "|line 5, col 34 to line 5, col 76 of module M: 1:24",
+      "||line 5, col 36 to line 5, col 59 of module M: 2:14",
+      "|||line 5, col 44 to line 5, col 46 of module M: 2:10",
+      "||||line 5, col 45 to line 5, col 45 of module M: 2",
+      "|||line 5, col 49 to line 5, col 58 of module M: 2",
+      "||line 5, col 69 to line 5, col 74 of module M: 1:3",
+      "line 5, col 81 to line 5, col 125 of module M: 1",
+      "|line 5, col 108 to line 5, col 125 of module M: 6",
+      "|line 5, col 90 to line 5, col 104 of module M: 1",
+      "||line 5, col 98 to line 5, col 103 of module M: 1:12",
+      "|||line 5, col 98 to line 5, col 98 of module M: 1",
+      "|||line 5, col 103 to line 5, col 103 of module M: 1",
+    ]);
+  });
+
+  it.each([
+    [
+      "a product of a union",
+      "LET S == UNION {[proc : {p}, idx : 1..1] : p \\in {1, 2}} IN PrintT(S \\X S)",
+      [
+        "line 5, col 9 to line 5, col 14 of module M: 1",
+        "line 5, col 28 to line 5, col 74 of module M: 1",
+        "|line 5, col 34 to line 5, col 74 of module M: 1:20",
+        "||line 5, col 35 to line 5, col 58 of module M: 2:10",
+        "|||line 5, col 43 to line 5, col 45 of module M: 2:6",
+        "||||line 5, col 44 to line 5, col 44 of module M: 2",
+        "|||line 5, col 48 to line 5, col 57 of module M: 2",
+        "||line 5, col 68 to line 5, col 73 of module M: 1:3",
+        "line 5, col 79 to line 5, col 92 of module M: 1",
+        "|line 5, col 86 to line 5, col 91 of module M: 1:12",
+        "||line 5, col 86 to line 5, col 86 of module M: 1",
+        "||line 5, col 91 to line 5, col 91 of module M: 1",
+      ],
+    ],
+    [
+      "a product of S \\cup T twice",
+      "LET S == ((0..1) \\X {1}) \\cup {<<5, 5>>} IN PrintT(S \\X {1}) /\\ PrintT(S \\X {1})",
+      [
+        "line 5, col 9 to line 5, col 14 of module M: 1",
+        "line 5, col 28 to line 5, col 58 of module M: 1",
+        "|line 5, col 29 to line 5, col 41 of module M: 1:4",
+        "||line 5, col 30 to line 5, col 33 of module M: 1",
+        "||line 5, col 39 to line 5, col 41 of module M: 1:5",
+        "|line 5, col 49 to line 5, col 58 of module M: 1:21",
+        "||line 5, col 50 to line 5, col 57 of module M: 1",
+        "line 5, col 63 to line 5, col 98 of module M: 1",
+        "|line 5, col 63 to line 5, col 78 of module M: 1",
+        "||line 5, col 70 to line 5, col 77 of module M: 1:9",
+        "|||line 5, col 70 to line 5, col 70 of module M: 1",
+        "|||line 5, col 75 to line 5, col 77 of module M: 1:7",
+        "|line 5, col 83 to line 5, col 98 of module M: 1",
+        "||line 5, col 90 to line 5, col 97 of module M: 1:9",
+        "|||line 5, col 90 to line 5, col 90 of module M: 1",
+        "|||line 5, col 95 to line 5, col 97 of module M: 1:7",
+      ],
+    ],
+    [
+      "a set of records over S \\cup T",
+      "PrintT([a : ((0..1) \\X {1}) \\cup {<<5, 5>>}])",
+      [
+        "line 5, col 9 to line 5, col 14 of module M: 1",
+        "line 5, col 19 to line 5, col 63 of module M: 1",
+        "|line 5, col 26 to line 5, col 62 of module M: 1:6",
+        "||line 5, col 31 to line 5, col 61 of module M: 1",
+        "|||line 5, col 32 to line 5, col 44 of module M: 1:4",
+        "||||line 5, col 33 to line 5, col 36 of module M: 1",
+        "||||line 5, col 42 to line 5, col 44 of module M: 1:5",
+        "|||line 5, col 52 to line 5, col 61 of module M: 1:16",
+        "||||line 5, col 53 to line 5, col 60 of module M: 1",
+      ],
+    ],
+    [
+      "a set of functions from S \\cup T",
+      "PrintT([((0..1) \\X {1}) \\cup {<<5, 5>>} -> {3}])",
+      [
+        "line 5, col 9 to line 5, col 14 of module M: 1",
+        "line 5, col 19 to line 5, col 66 of module M: 1",
+        "|line 5, col 26 to line 5, col 65 of module M: 1:4",
+        "||line 5, col 27 to line 5, col 57 of module M: 1",
+        "|||line 5, col 28 to line 5, col 40 of module M: 1:4",
+        "||||line 5, col 29 to line 5, col 32 of module M: 1",
+        "||||line 5, col 38 to line 5, col 40 of module M: 1:6",
+        "|||line 5, col 48 to line 5, col 57 of module M: 1:14",
+        "||||line 5, col 49 to line 5, col 56 of module M: 1",
+        "||line 5, col 62 to line 5, col 64 of module M: 1:8",
+      ],
+    ],
+    [
+      "a set of functions into S \\cup T",
+      "PrintT([{1, 2} -> ((0..1) \\X {1}) \\cup {<<5, 5>>}])",
+      [
+        "line 5, col 9 to line 5, col 14 of module M: 1",
+        "line 5, col 19 to line 5, col 69 of module M: 1",
+        "|line 5, col 26 to line 5, col 68 of module M: 1:27",
+        "||line 5, col 27 to line 5, col 32 of module M: 1",
+        "||line 5, col 37 to line 5, col 67 of module M: 1",
+        "|||line 5, col 38 to line 5, col 50 of module M: 1:4",
+        "||||line 5, col 39 to line 5, col 42 of module M: 1",
+        "||||line 5, col 48 to line 5, col 50 of module M: 1:5",
+        "|||line 5, col 58 to line 5, col 67 of module M: 1:29",
+        "||||line 5, col 59 to line 5, col 66 of module M: 1",
+      ],
+    ],
+    [
+      "the subsets of a set of records over S \\cup T",
+      "LET S == ((0..1) \\X {1}) \\cup {<<5, 5>>} IN PrintT(SUBSET [a : S])",
+      [
+        "line 5, col 9 to line 5, col 14 of module M: 1",
+        "line 5, col 28 to line 5, col 58 of module M: 1",
+        "|line 5, col 29 to line 5, col 41 of module M: 1:4",
+        "||line 5, col 30 to line 5, col 33 of module M: 1",
+        "||line 5, col 39 to line 5, col 41 of module M: 1:6",
+        "|line 5, col 49 to line 5, col 58 of module M: 1:20",
+        "||line 5, col 50 to line 5, col 57 of module M: 1",
+        "line 5, col 63 to line 5, col 84 of module M: 1",
+        "|line 5, col 70 to line 5, col 83 of module M: 1:8",
+        "||line 5, col 77 to line 5, col 83 of module M: 1:6",
+        "|||line 5, col 78 to line 5, col 82 of module M: 1",
+      ],
+    ],
+  ])("charges the sets that TLC sizes before it prints %s", async (_name, body, rows) => {
+    expect(await getNextCoverageLines(`x' = 0 /\\ ${body}`)).toEqual(rows);
+  });
+
+  it.each([
+    [
+      "a union of set literals",
+      "LET S == UNION {{p, 3} : p \\in {1, 2}} IN \\E s \\in S : \\E t \\in S : TRUE",
+      [
+        "line 5, col 9 to line 5, col 14 of module M: 1",
+        "line 5, col 28 to line 5, col 56 of module M: 1",
+        "|line 5, col 34 to line 5, col 56 of module M: 1:4",
+        "||line 5, col 35 to line 5, col 40 of module M: 2",
+        "||line 5, col 50 to line 5, col 55 of module M: 1:3",
+        "line 5, col 61 to line 5, col 90 of module M: 1",
+      ],
+    ],
+    [
+      "the products of a union of set literals",
+      "LET S == UNION {{p, 3} : p \\in {1, 2}} IN \\E R \\in SUBSET (S \\X S) : TRUE",
+      [
+        "line 5, col 9 to line 5, col 14 of module M: 1",
+        "line 5, col 28 to line 5, col 56 of module M: 1",
+        "|line 5, col 34 to line 5, col 56 of module M: 1:17",
+        "||line 5, col 35 to line 5, col 40 of module M: 2",
+        "||line 5, col 50 to line 5, col 55 of module M: 1:3",
+        "line 5, col 61 to line 5, col 91 of module M: 1",
+        "|line 5, col 88 to line 5, col 91 of module M: 1",
+        "|line 5, col 70 to line 5, col 84 of module M: 1",
+        "||line 5, col 78 to line 5, col 83 of module M: 1:27",
+        "|||line 5, col 78 to line 5, col 78 of module M: 1",
+        "|||line 5, col 83 to line 5, col 83 of module M: 1",
+      ],
+    ],
+    [
+      "an empty union of set literals",
+      "(\\E s \\in UNION {{} : p \\in {1, 2}} : TRUE) = FALSE",
+      [
+        "line 5, col 9 to line 5, col 14 of module M: 1",
+        "line 5, col 19 to line 5, col 69 of module M: 1",
+        "|line 5, col 20 to line 5, col 60 of module M: 1",
+        "||line 5, col 29 to line 5, col 53 of module M: 1",
+        "|||line 5, col 35 to line 5, col 53 of module M: 1:1",
+        "||||line 5, col 36 to line 5, col 37 of module M: 2",
+        "||||line 5, col 47 to line 5, col 52 of module M: 1:3",
+        "|line 5, col 65 to line 5, col 69 of module M: 1",
+      ],
+    ],
+    [
+      "UNION {}",
+      "(\\E s \\in UNION {} : TRUE) = FALSE",
+      [
+        "line 5, col 9 to line 5, col 14 of module M: 1",
+        "line 5, col 19 to line 5, col 52 of module M: 1",
+        "|line 5, col 20 to line 5, col 43 of module M: 1",
+        "||line 5, col 29 to line 5, col 36 of module M: 1",
+        "|||line 5, col 35 to line 5, col 36 of module M: 1:1",
+        "|line 5, col 48 to line 5, col 52 of module M: 1",
+      ],
+    ],
+  ])("charges the enumeration of %s to the set of sets", async (_name, body, rows) => {
+    expect(await getNextCoverageLines(`x' = 0 /\\ ${body}`)).toEqual(rows);
+  });
+
+  it.each([
+    [
+      "S \\cup T when PrintT converts the filter",
+      "PrintT({u \\in ((0..1) \\X {1}) \\cup {<<5, 5>>} : TRUE})",
+      [
+        "line 5, col 9 to line 5, col 14 of module M: 1",
+        "line 5, col 19 to line 5, col 72 of module M: 1",
+        "|line 5, col 26 to line 5, col 71 of module M: 1:6",
+        "||line 5, col 67 to line 5, col 70 of module M: 3",
+        "||line 5, col 33 to line 5, col 63 of module M: 1",
+        "|||line 5, col 34 to line 5, col 46 of module M: 1:4",
+        "||||line 5, col 35 to line 5, col 38 of module M: 1",
+        "||||line 5, col 44 to line 5, col 46 of module M: 1:5",
+        "|||line 5, col 54 to line 5, col 63 of module M: 1:8",
+        "||||line 5, col 55 to line 5, col 62 of module M: 1",
+      ],
+    ],
+    [
+      "UNION S when a bound converts the filter",
+      "LET S == UNION {[proc : {p}, idx : 1..1] : p \\in {1, 2}} IN \\E u \\in {v \\in S : TRUE} : TRUE",
+      [
+        "line 5, col 9 to line 5, col 14 of module M: 1",
+        "line 5, col 28 to line 5, col 74 of module M: 1",
+        "|line 5, col 34 to line 5, col 74 of module M: 1:6",
+        "||line 5, col 35 to line 5, col 58 of module M: 2:10",
+        "|||line 5, col 43 to line 5, col 45 of module M: 2:6",
+        "||||line 5, col 44 to line 5, col 44 of module M: 2",
+        "|||line 5, col 48 to line 5, col 57 of module M: 2",
+        "||line 5, col 68 to line 5, col 73 of module M: 1:3",
+        "line 5, col 79 to line 5, col 110 of module M: 1",
+        "|line 5, col 107 to line 5, col 110 of module M: 1",
+        "|line 5, col 88 to line 5, col 103 of module M: 1:6",
+        "||line 5, col 99 to line 5, col 102 of module M: 2",
+        "||line 5, col 95 to line 5, col 95 of module M: 1",
+      ],
+    ],
+    [
+      "S \\cup T after Cardinality converts it",
+      "LET S == ((0..1) \\X {1}) \\cup {<<5, 5>>} IN Cardinality(S) = 3 /\\ PrintT({u \\in S : TRUE})",
+      [
+        "line 5, col 9 to line 5, col 14 of module M: 1",
+        "line 5, col 28 to line 5, col 58 of module M: 1",
+        "|line 5, col 29 to line 5, col 41 of module M: 1:4",
+        "||line 5, col 30 to line 5, col 33 of module M: 1",
+        "||line 5, col 39 to line 5, col 41 of module M: 1:5",
+        "|line 5, col 49 to line 5, col 58 of module M: 1:15",
+        "||line 5, col 50 to line 5, col 57 of module M: 1",
+        "line 5, col 63 to line 5, col 108 of module M: 1",
+        "|line 5, col 63 to line 5, col 80 of module M: 1",
+        "|line 5, col 85 to line 5, col 108 of module M: 1",
+        "||line 5, col 92 to line 5, col 107 of module M: 1:6",
+        "|||line 5, col 103 to line 5, col 106 of module M: 3",
+        "|||line 5, col 99 to line 5, col 99 of module M: 1",
+      ],
+    ],
+    [
+      "S \\ T when a bound converts the filter",
+      "\\E u \\in {v \\in ((0..1) \\X {1}) \\ {<<0, 1>>} : TRUE} : TRUE",
+      [
+        "line 5, col 9 to line 5, col 14 of module M: 1",
+        "line 5, col 19 to line 5, col 77 of module M: 1",
+        "|line 5, col 74 to line 5, col 77 of module M: 1",
+        "|line 5, col 28 to line 5, col 70 of module M: 1:4",
+        "||line 5, col 66 to line 5, col 69 of module M: 1",
+        "||line 5, col 35 to line 5, col 62 of module M: 1",
+        "|||line 5, col 36 to line 5, col 48 of module M: 1:4",
+        "||||line 5, col 37 to line 5, col 40 of module M: 1",
+        "||||line 5, col 46 to line 5, col 48 of module M: 1:5",
+        "|||line 5, col 53 to line 5, col 62 of module M: 1",
+      ],
+    ],
+    [
+      "the subsets of a product of a union when a bound converts the filter",
+      "LET S == UNION {[proc : {p}, idx : 1..1] : p \\in {1, 2}} IN \\E R \\in {Q \\in SUBSET (S \\X S) : Cardinality(Q) = 2} : TRUE",
+      [
+        "line 5, col 9 to line 5, col 14 of module M: 1",
+        "line 5, col 28 to line 5, col 74 of module M: 1",
+        "|line 5, col 34 to line 5, col 74 of module M: 1:24",
+        "||line 5, col 35 to line 5, col 58 of module M: 2:14",
+        "|||line 5, col 43 to line 5, col 45 of module M: 2:10",
+        "||||line 5, col 44 to line 5, col 44 of module M: 2",
+        "|||line 5, col 48 to line 5, col 57 of module M: 2",
+        "||line 5, col 68 to line 5, col 73 of module M: 1:3",
+        "line 5, col 79 to line 5, col 138 of module M: 1",
+        "|line 5, col 135 to line 5, col 138 of module M: 1",
+        "|line 5, col 88 to line 5, col 131 of module M: 1:24",
+        "||line 5, col 113 to line 5, col 130 of module M: 16",
+        "||line 5, col 95 to line 5, col 109 of module M: 1",
+        "|||line 5, col 103 to line 5, col 108 of module M: 1:12",
+        "||||line 5, col 103 to line 5, col 103 of module M: 1",
+        "||||line 5, col 108 to line 5, col 108 of module M: 1",
+      ],
+    ],
+    [
+      "the subsets of S \\cup T when PrintT converts the filter",
+      "PrintT({Q \\in SUBSET (((0..1) \\X {1}) \\cup {<<5, 5>>}) : Cardinality(Q) = 1})",
+      [
+        "line 5, col 9 to line 5, col 14 of module M: 1",
+        "line 5, col 19 to line 5, col 95 of module M: 1",
+        "|line 5, col 26 to line 5, col 94 of module M: 1:11",
+        "||line 5, col 76 to line 5, col 93 of module M: 8",
+        "||line 5, col 33 to line 5, col 72 of module M: 1",
+        "|||line 5, col 41 to line 5, col 71 of module M: 1",
+        "||||line 5, col 42 to line 5, col 54 of module M: 1:4",
+        "|||||line 5, col 43 to line 5, col 46 of module M: 1",
+        "|||||line 5, col 52 to line 5, col 54 of module M: 1:5",
+        "||||line 5, col 62 to line 5, col 71 of module M: 1:11",
+        "|||||line 5, col 63 to line 5, col 70 of module M: 1",
+      ],
+    ],
+    [
+      "the subsets of a product when Cardinality converts the filter",
+      "Cardinality({Q \\in SUBSET ((0..1) \\X {1}) : TRUE}) = 4",
+      [
+        "line 5, col 9 to line 5, col 14 of module M: 1",
+        "line 5, col 19 to line 5, col 72 of module M: 1",
+        "|line 5, col 19 to line 5, col 68 of module M: 1",
+        "||line 5, col 31 to line 5, col 67 of module M: 1:8",
+        "|||line 5, col 63 to line 5, col 66 of module M: 4",
+        "|||line 5, col 38 to line 5, col 59 of module M: 1",
+        "||||line 5, col 46 to line 5, col 58 of module M: 1:6",
+        "|||||line 5, col 47 to line 5, col 50 of module M: 1",
+        "|||||line 5, col 56 to line 5, col 58 of module M: 1:5",
+      ],
+    ],
+    [
+      "a SUBSET that PrintT converted",
+      "LET T == SUBSET ({1, 2} \\X {3}) IN PrintT(T) /\\ PrintT({Q \\in T : TRUE})",
+      [
+        "line 5, col 9 to line 5, col 14 of module M: 1",
+        "line 5, col 28 to line 5, col 49 of module M: 1:4",
+        "|line 5, col 36 to line 5, col 48 of module M: 1:12",
+        "||line 5, col 36 to line 5, col 41 of module M: 1:6",
+        "||line 5, col 46 to line 5, col 48 of module M: 1:10",
+        "line 5, col 54 to line 5, col 90 of module M: 1",
+        "|line 5, col 54 to line 5, col 62 of module M: 1",
+        "|line 5, col 67 to line 5, col 90 of module M: 1",
+        "||line 5, col 74 to line 5, col 89 of module M: 1:8",
+        "|||line 5, col 85 to line 5, col 88 of module M: 4",
+        "|||line 5, col 81 to line 5, col 81 of module M: 1",
+      ],
+    ],
+    [
+      "the subsets of a product when an equality converts the filter",
+      "({Q \\in SUBSET ((0..1) \\X {1}) : Cardinality(Q) = 5} = {})",
+      [
+        "line 5, col 9 to line 5, col 14 of module M: 1",
+        "line 5, col 20 to line 5, col 75 of module M: 1",
+        "|line 5, col 20 to line 5, col 70 of module M: 1:4",
+        "||line 5, col 52 to line 5, col 69 of module M: 4",
+        "||line 5, col 27 to line 5, col 48 of module M: 1",
+        "|||line 5, col 35 to line 5, col 47 of module M: 1:6",
+        "||||line 5, col 36 to line 5, col 39 of module M: 1",
+        "||||line 5, col 45 to line 5, col 47 of module M: 1:5",
+        "|line 5, col 74 to line 5, col 75 of module M: 1",
+      ],
+    ],
+  ])("charges the draws a filter takes from %s", async (_name, body, rows) => {
+    expect(await getNextCoverageLines(`x' = 0 /\\ ${body}`)).toEqual(rows);
+  });
+
+  it("enumerates the subsets a state keeps without charging their base again", async () => {
+    expect(
+      await getCoverageLines(
+        "---- MODULE M ----\nEXTENDS Integers, FiniteSets, TLC\nVARIABLE x\nInit == x = SUBSET ({1, 2} \\X {3})\nNext == x' = x /\\ \\E R \\in x : TRUE\nInv == TRUE\n====",
+        "INIT Init\nNEXT Next\nINVARIANT Inv",
+      ),
+    ).toEqual([
+      [
+        "line 4, col 9 to line 4, col 34 of module M: 1",
+        "|line 4, col 13 to line 4, col 34 of module M: 1:6",
+        "||line 4, col 21 to line 4, col 33 of module M: 1:6",
+        "|||line 4, col 21 to line 4, col 26 of module M: 1:3",
+        "|||line 4, col 31 to line 4, col 33 of module M: 1:5",
+      ],
+      ["line 5, col 9 to line 5, col 35 of module M: 1"],
+    ]);
+  });
+
+  it.each([
+    [
+      "a union with itself",
+      "LET S == ((0..1) \\X {1}) \\cup {<<5, 5>>} IN S = S",
+      [
+        "line 5, col 9 to line 5, col 14 of module M: 1",
+        "line 5, col 28 to line 5, col 58 of module M: 1",
+        "|line 5, col 29 to line 5, col 41 of module M: 1:4",
+        "||line 5, col 30 to line 5, col 33 of module M: 1",
+        "||line 5, col 39 to line 5, col 41 of module M: 1:5",
+        "|line 5, col 49 to line 5, col 58 of module M: 1:11",
+        "||line 5, col 50 to line 5, col 57 of module M: 1",
+        "line 5, col 63 to line 5, col 67 of module M: 1",
+      ],
+    ],
+    [
+      "a union with itself in a set literal",
+      "LET S == ((0..1) \\X {1}) \\cup {<<5, 5>>} IN Cardinality({S, S}) = 1",
+      [
+        "line 5, col 9 to line 5, col 14 of module M: 1",
+        "line 5, col 28 to line 5, col 58 of module M: 1",
+        "|line 5, col 29 to line 5, col 41 of module M: 1:4",
+        "||line 5, col 30 to line 5, col 33 of module M: 1",
+        "||line 5, col 39 to line 5, col 41 of module M: 1:5",
+        "|line 5, col 49 to line 5, col 58 of module M: 1:11",
+        "||line 5, col 50 to line 5, col 57 of module M: 1",
+        "line 5, col 63 to line 5, col 85 of module M: 1",
+      ],
+    ],
+    [
+      "two products of a union",
+      "LET S == ((0..1) \\X {1}) \\cup {<<5, 5>>} IN S \\X {1} = S \\X {1}",
+      [
+        "line 5, col 9 to line 5, col 14 of module M: 1",
+        "line 5, col 28 to line 5, col 58 of module M: 1",
+        "|line 5, col 29 to line 5, col 41 of module M: 1:4",
+        "||line 5, col 30 to line 5, col 33 of module M: 1",
+        "||line 5, col 39 to line 5, col 41 of module M: 1:7",
+        "|line 5, col 49 to line 5, col 58 of module M: 1:15",
+        "||line 5, col 50 to line 5, col 57 of module M: 1",
+        "line 5, col 63 to line 5, col 81 of module M: 1",
+      ],
+    ],
+    [
+      "two function sets from a union",
+      "LET S == ((0..1) \\X {1}) \\cup {<<5, 5>>} IN [S -> {1}] = [S -> {1}]",
+      [
+        "line 5, col 9 to line 5, col 14 of module M: 1",
+        "line 5, col 28 to line 5, col 58 of module M: 1",
+        "|line 5, col 29 to line 5, col 41 of module M: 1:4",
+        "||line 5, col 30 to line 5, col 33 of module M: 1",
+        "||line 5, col 39 to line 5, col 41 of module M: 1:7",
+        "|line 5, col 49 to line 5, col 58 of module M: 1:15",
+        "||line 5, col 50 to line 5, col 57 of module M: 1",
+        "line 5, col 63 to line 5, col 85 of module M: 1",
+      ],
+    ],
+    [
+      "two record sets of a union",
+      "LET S == ((0..1) \\X {1}) \\cup {<<5, 5>>} IN [a : S] = [a : S]",
+      [
+        "line 5, col 9 to line 5, col 14 of module M: 1",
+        "line 5, col 28 to line 5, col 58 of module M: 1",
+        "|line 5, col 29 to line 5, col 41 of module M: 1:4",
+        "||line 5, col 30 to line 5, col 33 of module M: 1",
+        "||line 5, col 39 to line 5, col 41 of module M: 1:7",
+        "|line 5, col 49 to line 5, col 58 of module M: 1:15",
+        "||line 5, col 50 to line 5, col 57 of module M: 1",
+        "line 5, col 63 to line 5, col 79 of module M: 1",
+      ],
+    ],
+    [
+      "a product of a union with itself",
+      "LET S == ((0..1) \\X {1}) \\cup {<<5, 5>>} IN LET P == S \\X {1} IN P = P",
+      [
+        "line 5, col 9 to line 5, col 14 of module M: 1",
+        "line 5, col 28 to line 5, col 58 of module M: 1",
+        "|line 5, col 29 to line 5, col 41 of module M: 1:4",
+        "||line 5, col 30 to line 5, col 33 of module M: 1",
+        "||line 5, col 39 to line 5, col 41 of module M: 1:7",
+        "|line 5, col 49 to line 5, col 58 of module M: 1:15",
+        "||line 5, col 50 to line 5, col 57 of module M: 1",
+        "line 5, col 72 to line 5, col 79 of module M: 1",
+        "line 5, col 84 to line 5, col 88 of module M: 1",
+      ],
+    ],
+    [
+      "a record set of a union with itself",
+      "LET S == ((0..1) \\X {1}) \\cup {<<5, 5>>} IN LET Q == [a : S] IN Q = Q",
+      [
+        "line 5, col 9 to line 5, col 14 of module M: 1",
+        "line 5, col 28 to line 5, col 58 of module M: 1",
+        "|line 5, col 29 to line 5, col 41 of module M: 1:4",
+        "||line 5, col 30 to line 5, col 33 of module M: 1",
+        "||line 5, col 39 to line 5, col 41 of module M: 1:7",
+        "|line 5, col 49 to line 5, col 58 of module M: 1:15",
+        "||line 5, col 50 to line 5, col 57 of module M: 1",
+        "line 5, col 72 to line 5, col 78 of module M: 1",
+        "line 5, col 83 to line 5, col 87 of module M: 1",
+      ],
+    ],
+    [
+      "a function set into a union with itself",
+      "LET S == ((0..1) \\X {1}) \\cup {<<5, 5>>} IN LET F == [{1} -> S] IN F = F",
+      [
+        "line 5, col 9 to line 5, col 14 of module M: 1",
+        "line 5, col 28 to line 5, col 58 of module M: 1",
+        "|line 5, col 29 to line 5, col 41 of module M: 1:4",
+        "||line 5, col 30 to line 5, col 33 of module M: 1",
+        "||line 5, col 39 to line 5, col 41 of module M: 1:7",
+        "|line 5, col 49 to line 5, col 58 of module M: 1:15",
+        "||line 5, col 50 to line 5, col 57 of module M: 1",
+        "line 5, col 72 to line 5, col 81 of module M: 1",
+        "line 5, col 86 to line 5, col 90 of module M: 1",
+      ],
+    ],
+  ])(
+    "charges the emptiness tests and conversions that equality of %s takes",
+    async (_name, body, rows) => {
+      expect(await getNextCoverageLines(`x' = 0 /\\ ${body}`)).toEqual(rows);
+    },
+  );
+
+  it.each([
+    [
+      "a SUBSET",
+      "LET S == SUBSET ({1, 2} \\X {3}) IN S \\in {S}",
+      ["line 5, col 9 to line 5, col 62 of module M: 1"],
+    ],
+    [
+      "a product of a union",
+      "LET S == ((0..1) \\X {1}) \\cup {<<5, 5>>} IN LET P == S \\X {1} IN P \\in {P}",
+      [
+        "line 5, col 9 to line 5, col 14 of module M: 1",
+        "line 5, col 28 to line 5, col 58 of module M: 1",
+        "|line 5, col 29 to line 5, col 41 of module M: 1:4",
+        "||line 5, col 30 to line 5, col 33 of module M: 1",
+        "||line 5, col 39 to line 5, col 41 of module M: 1:7",
+        "|line 5, col 49 to line 5, col 58 of module M: 1:15",
+        "||line 5, col 50 to line 5, col 57 of module M: 1",
+        "line 5, col 72 to line 5, col 79 of module M: 1",
+        "line 5, col 84 to line 5, col 92 of module M: 1",
+      ],
+    ],
+  ])("compares %s with the members of a set literal by equality", async (_name, body, rows) => {
+    expect(await getNextCoverageLines(`x' = 0 /\\ ${body}`)).toEqual(rows);
+  });
+
+  it.each([
+    [
+      "a product",
+      "LET P == ({1, 2} \\X {3}) IN {P} = {P}",
+      ["line 5, col 9 to line 5, col 55 of module M: 1"],
+    ],
+    [
+      "a product and a set equal to it",
+      "LET P == ({1, 2} \\X {3}) IN {P, {<<1, 3>>, <<2, 3>>}} = {P}",
+      [
+        "line 5, col 9 to line 5, col 14 of module M: 1",
+        "line 5, col 29 to line 5, col 41 of module M: 1:6",
+        "|line 5, col 29 to line 5, col 34 of module M: 1:3",
+        "|line 5, col 39 to line 5, col 41 of module M: 1:5",
+        "line 5, col 47 to line 5, col 77 of module M: 1",
+      ],
+    ],
+    [
+      "two equal sets of records",
+      "LET P == [a : {1, 2}] IN {P, [a : {1, 2}]} = {P}",
+      [
+        "line 5, col 9 to line 5, col 14 of module M: 1",
+        "line 5, col 28 to line 5, col 39 of module M: 1:4",
+        "|line 5, col 29 to line 5, col 38 of module M: 1:3",
+        "line 5, col 44 to line 5, col 66 of module M: 1",
+        "|line 5, col 44 to line 5, col 60 of module M: 1",
+        "||line 5, col 45 to line 5, col 45 of module M: 1",
+        "||line 5, col 48 to line 5, col 59 of module M: 1:4",
+        "|||line 5, col 49 to line 5, col 58 of module M: 1:3",
+        "|line 5, col 64 to line 5, col 66 of module M: 1",
+      ],
+    ],
+  ])(
+    "converts no set of tuples or records that equality of set literals of %s compares with itself",
+    async (_name, body, rows) => {
+      expect(await getNextCoverageLines(`x' = 0 /\\ ${body}`)).toEqual(rows);
+    },
+  );
+
+  it("counts an operator argument that a filter's membership test forces", async () => {
+    expect(
+      await getNextCoverageLines(
+        "x' = 0 /\\ LET G(a) == {9} \\cup {o \\in Nat : o > 1 /\\ o = a} IN \\A oi \\in {1, 2, 3} : oi \\in G(oi) \\/ TRUE",
+      ),
+    ).toEqual([
+      "line 5, col 9 to line 5, col 14 of module M: 1",
+      "line 5, col 72 to line 5, col 113 of module M: 1",
+      "|line 5, col 94 to line 5, col 113 of module M: 3",
+      "||line 5, col 94 to line 5, col 105 of module M: 3",
+      "|||line 5, col 94 to line 5, col 95 of module M: 3",
+      "|||line 5, col 101 to line 5, col 105 of module M: 3",
+      "||||line 5, col 31 to line 5, col 67 of module M: 3",
+      "||||line 5, col 103 to line 5, col 104 of module M: 2",
+      "||line 5, col 110 to line 5, col 113 of module M: 1",
+      "|line 5, col 82 to line 5, col 90 of module M: 1:4",
+    ]);
+  });
+
+  it("counts an operator argument that a filter's membership test forces under a prime", async () => {
+    expect(
+      await getNextCoverageLines(
+        "x' = 0 /\\ (LET G(a) == {9} \\cup {o \\in Nat : o > 1 /\\ o = a} IN \\A oi \\in {1, 2, 3} : oi \\in G(oi) \\/ TRUE)'",
+      ),
+    ).toEqual([
+      "line 5, col 9 to line 5, col 14 of module M: 1",
+      "line 5, col 19 to line 5, col 116 of module M: 1",
+      "|line 5, col 73 to line 5, col 114 of module M: 1",
+      "||line 5, col 95 to line 5, col 114 of module M: 3",
+      "|||line 5, col 95 to line 5, col 106 of module M: 3",
+      "||||line 5, col 95 to line 5, col 96 of module M: 3",
+      "||||line 5, col 102 to line 5, col 106 of module M: 3",
+      "|||||line 5, col 32 to line 5, col 68 of module M: 3",
+      "|||||line 5, col 104 to line 5, col 105 of module M: 2",
+      "|||line 5, col 111 to line 5, col 114 of module M: 1",
+      "||line 5, col 83 to line 5, col 91 of module M: 1:4",
+    ]);
+  });
+
+  it.each([
+    [
+      "S \\cup T",
+      "\\A o \\in {9} \\cup {u \\in ((0..1) \\X {1}) \\cup {<<5, 5>>} : FALSE} : o # 0",
+      [
+        "line 5, col 9 to line 5, col 14 of module M: 1",
+        "line 5, col 19 to line 5, col 91 of module M: 1",
+        "|line 5, col 87 to line 5, col 91 of module M: 1",
+        "|line 5, col 28 to line 5, col 83 of module M: 1",
+        "||line 5, col 28 to line 5, col 30 of module M: 1:7",
+        "||line 5, col 37 to line 5, col 83 of module M: 1:3",
+        "|||line 5, col 78 to line 5, col 82 of module M: 3",
+        "|||line 5, col 44 to line 5, col 74 of module M: 1",
+        "||||line 5, col 45 to line 5, col 57 of module M: 1:4",
+        "|||||line 5, col 46 to line 5, col 49 of module M: 1",
+        "|||||line 5, col 55 to line 5, col 57 of module M: 1:5",
+        "||||line 5, col 65 to line 5, col 74 of module M: 1:8",
+        "|||||line 5, col 66 to line 5, col 73 of module M: 1",
+      ],
+    ],
+    [
+      "UNION S",
+      "\\A o \\in {u \\in UNION {[a : {p}] : p \\in {1, 2}} : FALSE} \\cup {9} : o # 0",
+      [
+        "line 5, col 9 to line 5, col 14 of module M: 1",
+        "line 5, col 19 to line 5, col 92 of module M: 1",
+        "|line 5, col 88 to line 5, col 92 of module M: 1",
+        "|line 5, col 28 to line 5, col 84 of module M: 1",
+        "||line 5, col 28 to line 5, col 75 of module M: 1:2",
+        "|||line 5, col 70 to line 5, col 74 of module M: 2",
+        "|||line 5, col 35 to line 5, col 66 of module M: 1",
+        "||||line 5, col 41 to line 5, col 66 of module M: 1:6",
+        "|||||line 5, col 42 to line 5, col 50 of module M: 2:7",
+        "||||||line 5, col 47 to line 5, col 49 of module M: 2:6",
+        "|||||||line 5, col 48 to line 5, col 48 of module M: 2",
+        "|||||line 5, col 60 to line 5, col 65 of module M: 1:3",
+        "||line 5, col 82 to line 5, col 84 of module M: 1:7",
+      ],
+    ],
+    [
+      "S \\cup T before the other operand",
+      "\\A o \\in {u \\in ((0..1) \\X {1}) \\cup {<<5, 5>>} : FALSE} \\cup {9} : o # 0",
+      [
+        "line 5, col 9 to line 5, col 14 of module M: 1",
+        "line 5, col 19 to line 5, col 91 of module M: 1",
+        "|line 5, col 87 to line 5, col 91 of module M: 1",
+        "|line 5, col 28 to line 5, col 83 of module M: 1",
+        "||line 5, col 28 to line 5, col 74 of module M: 1:3",
+        "|||line 5, col 69 to line 5, col 73 of module M: 3",
+        "|||line 5, col 35 to line 5, col 65 of module M: 1",
+        "||||line 5, col 36 to line 5, col 48 of module M: 1:4",
+        "|||||line 5, col 37 to line 5, col 40 of module M: 1",
+        "|||||line 5, col 46 to line 5, col 48 of module M: 1:5",
+        "||||line 5, col 56 to line 5, col 65 of module M: 1:8",
+        "|||||line 5, col 57 to line 5, col 64 of module M: 1",
+        "||line 5, col 81 to line 5, col 83 of module M: 1:7",
+      ],
+    ],
+  ])(
+    "charges the draw that finds the end of %s under a filter that a union streams",
+    async (_name, body, rows) => {
+      expect(await getNextCoverageLines(`x' = 0 /\\ ${body}`)).toEqual(rows);
+    },
+  );
+
+  it.each([
+    [
       "CHOOSE",
       "CHOOSE y \\in s : y[1] > 5",
       [
