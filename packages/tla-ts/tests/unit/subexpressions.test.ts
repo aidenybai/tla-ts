@@ -385,7 +385,7 @@ describe("selections into the definitions of an instance with operator parameter
   const MODULES = new Map([
     [
       "Pure",
-      "---- MODULE Pure ----\nEXTENDS Naturals\nCONSTANT c, Op(_)\nE == Op(c)\nE2(z) == Op(z)\nE4 == E2(c)\nE5 == E2(c) + c\nZ == Op(c)\nE8 == Z + 1\nH(K(_)) == K(c)\nE9 == H(E2)\nE10 == c + 1\n====",
+      "---- MODULE Pure ----\nEXTENDS Naturals\nCONSTANT c, Op(_)\nE == Op(c)\nE2(z) == Op(z)\nE4 == E2(c)\nE5 == E2(c) + c\nZ == Op(c)\nE8 == Z + 1\nH(K(_)) == K(c)\nE9 == H(E2)\nE10 == c + 1\nE11 == H(Op)\n====",
     ],
     [
       "Mid",
@@ -469,6 +469,18 @@ describe("selections into the definitions of an instance with operator parameter
       "D == R(F)!P2(F)!E8!1!1",
       [["22", "22", "Nonexistent operand specified by `argument selector 1'."]],
     ],
+    ["D == P(F)!E11!1", [["6", "15", "Selected operator argument when expression expected."]]],
+    [
+      "D == P(F)!E11!1!1",
+      [["17", "17", "Trying to select subexpression of an operator argument."]],
+    ],
+    ["D == Q(F, 3)!E11!1", [["6", "18", "Selected operator argument when expression expected."]]],
+    ["D == R(F)!M1!1", [["6", "14", "Selected operator argument when expression expected."]]],
+    ["D == R(F)!M2!1!1", [["6", "16", "Selected operator argument when expression expected."]]],
+    [
+      "D == R(F)!M2!1!1!1",
+      [["18", "18", "Trying to select subexpression of an operator argument."]],
+    ],
     [
       `D == ${LET_P} L(1)!E!1`,
       [
@@ -490,6 +502,23 @@ describe("selections into the definitions of an instance with operator parameter
       ),
     );
   });
+
+  it.each([
+    ["J!E9!1", "6", "11", "Selected operator argument when expression expected."],
+    ["J!E11!1", "6", "12", "Selected operator argument when expression expected."],
+    ["J!E9!1!1", "13", "13", "Trying to select subexpression of an operator argument."],
+  ])(
+    "reports %s through an instance without parameters as SANY does",
+    async (selection, start, end, message) => {
+      await expect(
+        checkInstances(`J == INSTANCE Pure WITH c <- 7, Op <- F\nD == ${selection}`),
+      ).rejects.toThrow(
+        createSanyError([
+          { location: `line 9, col ${start} to line 9, col ${end} of module M`, message },
+        ]),
+      );
+    },
+  );
 });
 
 describe("selections into standard operators match SANY and TLC", () => {

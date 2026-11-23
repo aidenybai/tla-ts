@@ -1555,7 +1555,7 @@ export const createEnvironment = (
         const symbol = visible.get(name);
         const definition =
           symbol && !builtinAliases.has(symbol.key) ? getLinkedDefinition(symbol.key) : undefined;
-        if (!definition) return scope.getDefinition(name);
+        if (!definition) return scope.getDefinition(name) ?? getLinkedDefinition(name);
         const named = { ...definition, name };
         const copy = instanceCopies.get(definition);
         if (copy) instanceCopies.set(named, copy);
