@@ -1796,4 +1796,28 @@ describe("the builtin sorts, as Z3 5.3.2's plugins make them", () => {
       "sat",
     ]);
   });
+
+  it("counts a repeated sort parameter once, at its last position", () => {
+    expect(
+      run([
+        "(define-sort T (X Y X) (Array Y Int))",
+        "(declare-const t (T Int Bool))",
+        "(declare-const u (T Int Bool Real))",
+        "(define-sort V (X X) (Array X Int))",
+        "(declare-const v (V Int))",
+        "(declare-datatype P (par (X X) ((p (f X)))))",
+        "(declare-datatype Q (par (X Y X) ((q (g Y)))))",
+        "(declare-const w (Q Int Bool))",
+        "(declare-datatypes (X X) ((R (r (h X)))))",
+        "(assert (= (select t true) (g w)))",
+        "(check-sat)",
+      ]),
+    ).toEqual([
+      '(error "line 3 column 33: invalid number of parameters to sort constructor")',
+      '(error "line 5 column 23: type parameter was not declared")',
+      '(error "line 6 column 43: type parameter was not declared")',
+      '(error "line 9 column 40: type parameter was not declared")',
+      "sat",
+    ]);
+  });
 });

@@ -3021,13 +3021,16 @@ export const createSmtlibReader = (
     return expectListNext(sexpr, context).items.map((item) => parseSort(item, context));
   };
 
-  const parseSortParameters = (sexpr: SExpr, message: string) =>
-    expectListNext(sexpr, "invalid sort declaration, parameters missing").items.map(
-      (item) => expectSymbol(item, message, item).text,
-    );
-
+  // Z3 counts a repeated sort parameter once, and binds its name to its last position.
   const bindSortParameters = (names: string[]) =>
     new Map(names.map((name, index) => [name, index]));
+
+  const parseSortParameters = (sexpr: SExpr, message: string) =>
+    bindSortParameters(
+      expectListNext(sexpr, "invalid sort declaration, parameters missing").items.map(
+        (item) => expectSymbol(item, message, item).text,
+      ),
+    );
 
   const parseAccessor = (
     name: string,
@@ -3118,13 +3121,15 @@ export const createSmtlibReader = (
       body.items[2] ?? body.end,
       "invalid constructor declaration after par, '(' expected",
     );
-    if (name !== undefined && parameters.length > 0)
-      declareDatatypeSort(name, parameters.length, constructors.items[0] ?? constructors.end);
+    if (name !== undefined && parameters.size > 0)
+      declareDatatypeSort(name, parameters.size, constructors.items[0] ?? constructors.end);
     return {
-      parameters: parameters.map((_name, index) => manager.mkTypeParameter(index)),
+      parameters: Array.from({ length: parameters.size }, (_unused, index) =>
+        manager.mkTypeParameter(index),
+      ),
       constructors: parseConstructors(
         constructors.items,
-        bindSortParameters(parameters),
+        parameters,
         datatypeIndexes,
         refs,
         constructors,
@@ -3241,8 +3246,10 @@ export const createSmtlibReader = (
         names.push(name);
       });
     const refs: DatatypeRefs = { missing: [], psorts: new Map() };
-    const typeParameters = parameterNames.map((_name, index) => manager.mkTypeParameter(index));
     const bindings = bindSortParameters(parameterNames);
+    const typeParameters = Array.from({ length: bindings.size }, (_unused, index) =>
+      manager.mkTypeParameter(index),
+    );
     const defs = bodies.items.map((item, index) => {
       if (isSmt26) {
         if (index >= names.length)
@@ -3483,8 +3490,8 @@ export const createSmtlibReader = (
         symbol.text,
         {
           kind: "definition",
-          arity: parameters.length,
-          body: parsePsort(body, bindSortParameters(parameters), list.items[4] ?? list.end),
+          arity: parameters.size,
+          body: parsePsort(body, parameters, list.items[4] ?? list.end),
         },
         list.items[4] ?? list.end,
       );
