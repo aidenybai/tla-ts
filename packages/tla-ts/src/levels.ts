@@ -247,7 +247,7 @@ const addParams = (target: Set<string> | undefined, params: ReadonlySet<string>)
   return result;
 };
 
-// Deviation from SANY: OpArgNode#levelCheck leaves its nonLeibnizParams empty, so SANY accepts F(a) == H(LAMBDA b : a') for H(K(_)) == K(1).
+// Deviation from SANY: tla-ts counts an operator argument's nonLeibnizParams where the receiving operator uses it, which OpArgNode#levelCheck leaves empty, so SANY accepts F(a) == H(LAMBDA b : a') for H(K(_)) == K(1).
 const getNonLeibnizParams = (operand: Operand, isUsed: boolean) =>
   operand.kind === "Operator" && !isUsed ? EMPTY_PARAMS : operand.data.nonLeibnizParams;
 
@@ -1191,7 +1191,7 @@ export const createLevelAnalyzer = (context: LevelContext) => {
       argConstraints: new Map(body.argConstraints),
       argParams: new Set(body.argParams),
       allParams: body.allParams,
-      // Deviation from SANY: LetInNode#levelCheck drops its body's nonLeibnizParams, so SANY accepts a non-Leibniz operator substituted for an operator constant.
+      // Deviation from SANY: tla-ts keeps a LET body's nonLeibnizParams, which LetInNode#levelCheck drops, so SANY accepts F(a) == LET L == 1 IN ENABLED (x' = a) for an operator constant.
       nonLeibnizParams: body.nonLeibnizParams,
     };
     entered.instances?.forEach((instance) =>
@@ -1466,7 +1466,7 @@ export const createLevelAnalyzer = (context: LevelContext) => {
         );
       case "Label": {
         labelChecks++;
-        // Deviation from SANY: LabelNode returns its body's allParams but not its nonLeibnizParams, so SANY accepts a non-Leibniz operator whose body is labeled.
+        // Deviation from SANY: tla-ts keeps a labeled body's nonLeibnizParams, which LabelNode drops, so SANY accepts F(a) == lab :: ENABLED (x' = a) for an operator constant.
         const data = analyze(expression.body, scope);
         if (checkedNodes.has(expression)) return { ...data, isCorrect: true };
         checkedNodes.set(expression, true);
@@ -1665,7 +1665,7 @@ export const createLevelAnalyzer = (context: LevelContext) => {
         isCorrect: source.isCorrect,
         params: [...source.params, ...names.filter((_name, index) => source.weights[index] === 1)],
         allParams: new Set([...source.allParams, ...nonLeibnizNames]),
-        // Deviation from SANY: APSubstInNode has no nonLeibnizParams, so SANY accepts F(a) == I(a)!T for THEOREM T == ENABLED (w' = c).
+        // Deviation from SANY: tla-ts substitutes an instanced theorem's nonLeibnizParams as SubstInNode does, which APSubstInNode omits, so SANY accepts F(a) == I(a)!T for THEOREM T == w' = 0 and w <- a.
         nonLeibnizParams: new Set([...source.nonLeibnizParams, ...nonLeibnizNames]),
         constraints: [
           ...source.constraints,

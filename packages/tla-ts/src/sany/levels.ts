@@ -152,7 +152,7 @@ const isLeibnizArgument = (definition: AnyDefNode, index: number) =>
     ? (definition.isLeibnizArg?.[getIndex(definition, index)] ?? true)
     : (definition.isLeibnizArg[index] ?? true);
 
-// Deviation from SANY: OpArgNode#levelCheck leaves its nonLeibnizParams empty, so SANY accepts F(a) == H(LAMBDA b : a') for H(K(_)) == K(1).
+// Deviation from SANY: tla-ts counts an operator argument's nonLeibnizParams where the receiving operator uses it, which OpArgNode#levelCheck leaves empty, so SANY accepts F(a) == H(LAMBDA b : a') for H(K(_)) == K(1).
 const getNonLeibnizParams = (operand: ExprOrOpArgNode, isUsed: boolean) =>
   operand.kind === "OpArg" && isUsed && operand.op.kind !== "Module"
     ? operand.op.nonLeibnizParams
@@ -857,7 +857,7 @@ const checkInstance = (node: InstanceNode, iteration: number, check: LevelCheck)
       subst.expr.kind === "OpArg" &&
       ((subst.expr.op.kind === "OpDef" &&
         (subst.expr.op.defKind === "UserDefined" || subst.expr.op.defKind === "BuiltIn")) ||
-        // Deviation from SANY: InstanceNode checks only OpDefNode substitutes, so SANY accepts Op <- I!T for THEOREM T == ENABLED (w' = c).
+        // Deviation from SANY: tla-ts checks that a substituted theorem is Leibniz, which InstanceNode checks only for an OpDefNode, so SANY accepts Op <- I!T for THEOREM T == w' = 0 and w <- a.
         subst.expr.op.kind === "ThmOrAssumpDef") &&
       !subst.expr.op.isLeibniz
     ) {
@@ -1003,7 +1003,7 @@ const checkLevel = (node: SemanticNode, iteration: number, check: LevelCheck): b
       node.level = node.body.level;
       node.levelParams = new Set(node.body.levelParams);
       node.allParams = new Set(node.body.allParams);
-      // Deviation from SANY: LetInNode#levelCheck drops its body's nonLeibnizParams, so SANY accepts a non-Leibniz operator substituted for an operator constant.
+      // Deviation from SANY: tla-ts keeps a LET body's nonLeibnizParams, which LetInNode#levelCheck drops, so SANY accepts F(a) == LET L == 1 IN ENABLED (x' = a) for an operator constant.
       node.nonLeibnizParams = new Set(node.body.nonLeibnizParams);
       putLevelConstraints(node.levelConstraints, node.body.levelConstraints);
       definitions.forEach((definition) =>
@@ -1034,7 +1034,7 @@ const checkLevel = (node: SemanticNode, iteration: number, check: LevelCheck): b
       const isCorrect = checkLevel(node.body, iteration, check);
       node.level = node.body.level;
       shareLevels(node, node.body);
-      // Deviation from SANY: LabelNode returns its body's allParams but not its nonLeibnizParams, so SANY accepts a non-Leibniz operator whose body is labeled.
+      // Deviation from SANY: tla-ts keeps a labeled body's nonLeibnizParams, which LabelNode drops, so SANY accepts F(a) == lab :: ENABLED (x' = a) for an operator constant.
       node.nonLeibnizParams = node.body.nonLeibnizParams;
       return isCorrect;
     }
@@ -1079,7 +1079,7 @@ const checkLevel = (node: SemanticNode, iteration: number, check: LevelCheck): b
         body.allParams.forEach((param) =>
           addAll(node.allParams, getSubstitutedParams(param, node.substs, true)),
         );
-        // Deviation from SANY: APSubstInNode has no nonLeibnizParams, so SANY accepts F(a) == I(a)!T for THEOREM T == ENABLED (w' = c).
+        // Deviation from SANY: tla-ts substitutes an instanced theorem's nonLeibnizParams as SubstInNode does, which APSubstInNode omits, so SANY accepts F(a) == I(a)!T for THEOREM T == w' = 0 and w <- a.
         node.nonLeibnizParams = new Set(body.nonLeibnizParams);
         node.substs.forEach((subst) => {
           if (body.allParams.has(subst.op)) addSubstitutedNonLeibnizParams(node, body, subst);
