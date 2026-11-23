@@ -634,9 +634,11 @@ const compareWithItself = (value: Value, isEquality: boolean): boolean => {
       const charges = value.cost?.charges;
       // SetOfFcnsValue#equals, SetOfRcdsValue#equals and SetOfTuplesValue#equals ask both sides, here one set, about emptiness.
       const isUnit = isEmptyLikeTlc(charges, value.domain);
-      if (isEmptyLikeTlc(charges, value.domain) || isUnit) return false;
+      const isOtherUnit = isEmptyLikeTlc(charges, value.domain);
+      if (isUnit || isOtherUnit) return false;
       const isEmpty = isEmptyLikeTlc(charges, value.range);
-      if (isEmptyLikeTlc(charges, value.range) || isEmpty) return false;
+      const isOtherEmpty = isEmptyLikeTlc(charges, value.range);
+      if (isEmpty || isOtherEmpty) return false;
       compareWithItself(value.domain, isEquality);
       compareWithItself(value.range, isEquality);
       return false;
@@ -646,7 +648,8 @@ const compareWithItself = (value: Value, isEquality: boolean): boolean => {
       if (!isEquality) break;
       const charges = value.cost?.charges;
       const isEmpty = isEmptyLikeTlc(charges, value);
-      if (isEmptyLikeTlc(charges, value) || isEmpty) return false;
+      const isOtherEmpty = isEmptyLikeTlc(charges, value);
+      if (isEmpty || isOtherEmpty) return false;
       const parts = value.kind === "RecordSet" ? value.sets : value.factors;
       for (let index = 0; index < parts.length; index++) {
         compareWithItself(parts[index], isEquality);
