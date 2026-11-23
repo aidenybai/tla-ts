@@ -1249,7 +1249,12 @@ const NAMED_TACTICS = new Map<string, NamedTactic>([
       build: (environment, params) =>
         inPlace((goal) => {
           checkParams(REWRITER_DESCRS, params);
-          card2bv(environment.manager, goal, getRewriterOptions(environment.manager, params));
+          card2bv(
+            environment.manager,
+            goal,
+            getRewriterOptions(environment.manager, params),
+            false,
+          );
         }),
     },
   ],
@@ -2534,7 +2539,7 @@ export const mkIncSatPreprocess = (
   [
     inPlace((goal) => simplifyGoal(manager, goal, getRewriterOptions(manager, new Map()))),
     inPlace((goal) => propagator.run(goal)),
-    inPlace((goal) => card2bv(manager, goal, getRewriterOptions(manager, new Map()))),
+    inPlace((goal) => card2bv(manager, goal, getRewriterOptions(manager, new Map()), true)),
     inPlace((goal) =>
       simplifyGoal(
         manager,

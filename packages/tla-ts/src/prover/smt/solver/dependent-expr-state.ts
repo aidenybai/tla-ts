@@ -80,12 +80,13 @@ export const runSimplifier = (
   goal: Goal,
   isSupportingProofs: boolean,
   create: (state: DependentExprState) => Simplifier,
+  definitions: Definition[] = [],
 ) => {
   const state = new DependentExprState(goal.manager, goal);
   const simplifier = create(state);
   try {
     if (!goal.isProofsEnabled || isSupportingProofs) simplifier.reduce();
-    finishSimplifier(goal);
+    finishSimplifier(goal, definitions);
   } finally {
     simplifier.release();
     state.release();

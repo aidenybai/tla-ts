@@ -683,7 +683,12 @@ export class FdSolver {
     const simplifiers = [
       () => this.int2bv.reduce(state, this.trail),
       () => {
-        const simplifier = createCard2Bv(manager, getRewriterOptions(manager, new Map()))(state);
+        const simplifier = createCard2Bv(
+          manager,
+          getRewriterOptions(manager, new Map()),
+          false,
+          (decl) => this.trail.hide(decl),
+        )(state);
         try {
           simplifier.reduce();
         } finally {

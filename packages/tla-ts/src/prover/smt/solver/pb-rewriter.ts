@@ -32,7 +32,7 @@ export const hasUnitCoefficients = (manager: AstManager, decl: number) =>
     getPbCoeff(manager, decl, index).equals(Rational.one),
   );
 
-const isUnsigned = (value: Rational) =>
+export const isUnsigned = (value: Rational) =>
   value.isInt() && value.num >= 0n && value.num < 2n * INT32_LIMIT;
 
 const isInt32 = (value: Rational) =>
