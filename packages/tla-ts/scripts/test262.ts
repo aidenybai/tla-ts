@@ -47,8 +47,6 @@ process.env.TZ = "UTC";
 
 const HARNESS = readFileSync(join(CONFORMANCE_DIRECTORY, "test262-harness.ts"), "utf8");
 
-const SKIPPED_FLAGS = new Set(["raw"]);
-
 // A module that imports or exports, which the corpus pairs with fixture files.
 const LINKED_MODULE = /^\s*(?:import|export)\b|\bimport\s*[(.]/m;
 // Includes that the harness already defines, as compareArray.js is now part of assert.js.
@@ -217,8 +215,6 @@ const getSkipReason = (metadata: Metadata) => {
   if (metadata.isNegative && !metadata.isSyntaxError && metadata.thrownType === undefined) {
     return "negative test";
   }
-  const flag = metadata.flags.find((candidate) => SKIPPED_FLAGS.has(candidate));
-  if (flag !== undefined) return `flag ${flag}`;
   const includes = metadata.includes.filter(
     (include) => !HARNESS_INCLUDES.has(include) && !PORTED_INCLUDES.has(include),
   );
@@ -413,8 +409,11 @@ const getSyntaxRun = (id: string, error: unknown): TestRun => {
 
 // A test that expects a SyntaxError passes when tla-ts rejects the program with one.
 const runSyntaxTest = (id: string, source: string, metadata: Metadata): TestRun => {
+  // A raw test runs as it's written, where a hashbang or a directive must come first.
   const strict =
-    metadata.flags.includes("onlyStrict") || metadata.isModule ? '"use strict";\n' : "";
+    !metadata.flags.includes("raw") && (metadata.flags.includes("onlyStrict") || metadata.isModule)
+      ? '"use strict";\n'
+      : "";
   const isRejected = metadata.isModule
     ? isModuleSyntaxError(source)
     : isNodeSyntaxError(`${strict}${source}`);
@@ -835,8 +834,11 @@ const runTest = async (path: string): Promise<TestRun> => {
   });
   const programPath = isLinked ? getModulePath(path) : PROGRAM_PATH;
   if (isLinked) mkdirSync(dirname(programPath), { recursive: true });
-  const body = `${getHarness(metadata, source)}\n${source}`;
-  const isSloppy = metadata.flags.includes("noStrict");
+  // A raw test runs as it's written, without the harness, outside strict mode, where a hashbang
+  // or a directive must come first.
+  const isRaw = metadata.flags.includes("raw");
+  const body = isRaw ? source : `${getHarness(metadata, source)}\n${source}`;
+  const isSloppy = isRaw || metadata.flags.includes("noStrict");
   // A noStrict test runs outside strict mode, as a script, and any other runs in strict mode, as
   // Node runs it as a module.
   const program = isSloppy ? body : `"use strict"; ${body}`;
