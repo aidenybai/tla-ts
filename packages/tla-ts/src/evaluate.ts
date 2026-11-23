@@ -1736,6 +1736,16 @@ const traceEvaluator =
         : typeof computed === "object" && computed.kind === "LazyFunction"
           ? { ...computed }
           : computed;
+      const coverage = environment.coverage;
+      if (
+        coverage &&
+        value !== computed &&
+        typeof value === "object" &&
+        typeof computed === "object"
+      ) {
+        const node = coverage.values.get(computed);
+        if (node !== undefined) coverage.values.set(value, node);
+      }
       callStack.values.set(expression, value);
       if (typeof value === "object" && value.kind !== "FilteredSet" && isSourced(expression)) {
         callStack.sources.set(value, expression);
@@ -2726,7 +2736,7 @@ export const getLazyFilter = (
         base,
         { ...context, environment: tracing },
         getEvaluator(expression.predicate, tracing),
-        -1,
+        node,
       );
     if (!coverage || node < 0) {
       return isTestObserved

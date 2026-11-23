@@ -9134,6 +9134,41 @@ ASSUME TLCFP(a) = -887695703
     ]);
   });
 
+  it.each([
+    [
+      "CHOOSE",
+      "CHOOSE y \\in s : y[1] > 5",
+      [
+        "line 5, col 64 to line 5, col 88 of module M: 2",
+        "|line 5, col 81 to line 5, col 88 of module M: 4",
+        "|line 5, col 77 to line 5, col 77 of module M: 2",
+      ],
+      16,
+    ],
+    [
+      "Cardinality",
+      "1 \\div (Cardinality(s) - 2) = 0",
+      ["line 5, col 64 to line 5, col 94 of module M: 2"],
+      10,
+    ],
+  ])(
+    "counts a filter in TLC's replay of a failed %s for its call stack, as CallStackTool copies a SetPredValue with its cost model",
+    async (_name, body, rows, cost) => {
+      const lines = await getNextCoverageLines(
+        `x' = 0 /\\ LET s == {u \\in (0..2) \\X {1} : u[1] > 0} IN ${body}`,
+      );
+      expect(lines).toEqual([
+        "line 5, col 9 to line 5, col 14 of module M: 0",
+        `line 5, col 28 to line 5, col 59 of module M: 2:${cost}`,
+        "|line 5, col 51 to line 5, col 58 of module M: 6",
+        "|line 5, col 35 to line 5, col 47 of module M: 2:12",
+        "||line 5, col 36 to line 5, col 39 of module M: 2",
+        "||line 5, col 45 to line 5, col 47 of module M: 2:14",
+        ...rows,
+      ]);
+    },
+  );
+
   it("charges the domain of the copy EXCEPT makes of a recursive function when TLC fingerprints a state holding it, as FcnParams#elements charges each bound set", async () => {
     const lines = await getCoverageLines(
       "---- MODULE M ----\nEXTENDS Naturals\nVARIABLES x, y\ng[n \\in {0, 1, 2}] == IF n = 0 THEN x ELSE g[n - 1] + 1\nInit == x = 0 /\\ y = <<>>\nNext == x < 2 /\\ x' = x + 1 /\\ y' = <<[g EXCEPT ![1] = 7]>>\n====",
