@@ -24,7 +24,7 @@ import {
 import { getDependencyValues, type Goal } from "../goal";
 import type { ObjMap } from "../hashtable";
 import { RefVector } from "../ref-vector";
-import { DEFAULT_PRINT_OPTIONS, printExpr } from "../smt2-printer";
+import { DEFAULT_PRINT_OPTIONS, NO_SORT_INFOS, printExpr } from "../smt2-printer";
 import { NULL_LITERAL } from "./clause";
 import { PbSolver, type SatInternalizer } from "./pb-solver";
 import type { Solver } from "./solver";
@@ -33,6 +33,7 @@ const PRINT_ENVIRONMENT = {
   options: DEFAULT_PRINT_OPTIONS,
   isUsed: () => false,
   isClashing: () => false,
+  sortInfos: NO_SORT_INFOS,
 };
 
 interface Frame {

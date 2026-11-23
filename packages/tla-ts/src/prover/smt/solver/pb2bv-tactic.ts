@@ -31,7 +31,7 @@ import { getGcd, Rational } from "./rational";
 import { RefVector } from "./ref-vector";
 import { Rewriter, type RewriterOptions } from "./rewriter";
 import { RewriterTpl } from "./rewriter-tpl";
-import { DEFAULT_PRINT_OPTIONS, printExpr } from "./smt2-printer";
+import { DEFAULT_PRINT_OPTIONS, NO_SORT_INFOS, printExpr } from "./smt2-printer";
 
 const LINEAR_OPS = [OP_LE, OP_GE, OP_LT, OP_GT, OP_ADD, OP_NUM];
 
@@ -39,6 +39,7 @@ const PRINT_ENVIRONMENT = {
   options: DEFAULT_PRINT_OPTIONS,
   isUsed: () => false,
   isClashing: () => false,
+  sortInfos: NO_SORT_INFOS,
 };
 
 // only_01_visitor, which visits each subterm after its arguments: the first expression outside

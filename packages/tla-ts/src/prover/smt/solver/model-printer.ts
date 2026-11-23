@@ -125,19 +125,22 @@ export const printModel = (
     const names = universe.map((value) =>
       getQuotedName(manager.funcDecls[manager.decls[value]].name),
     );
-    const header = `universe for ${render(formatSort(manager, sort), 13)}:\n  ${names.map((name) => `${name} `).join("")}\n-----------`;
+    const header = `universe for ${render(formatSort(manager, environment.sortInfos, sort), 13)}:\n  ${names.map((name) => `${name} `).join("")}\n-----------`;
     output.push(`${pad};; ${header.replaceAll("\n", `\n${pad};; `)}\n`);
     output.push(`${pad};; definitions for universe elements:\n`);
     for (const name of names)
       output.push(
-        `${pad}(declare-fun ${name} () ${render(formatSort(manager, sort), indent + name.length + 16)})\n`,
+        `${pad}(declare-fun ${name} () ${render(formatSort(manager, environment.sortInfos, sort), indent + name.length + 16)})\n`,
       );
     output.push(`${pad};; cardinality constraint:\n`);
     const conditions = names.map((name) => mkSeq1([mkText("x"), mkText(name)], "="));
     const condition = conditions.length > 1 ? mkSeq1(conditions, "or") : conditions[0];
     const cardinality = mkSeq1(
       [
-        mkCompose(mkText("((x "), mkIndent(4, mkCompose(formatSort(manager, sort), mkText("))")))),
+        mkCompose(
+          mkText("((x "),
+          mkIndent(4, mkCompose(formatSort(manager, environment.sortInfos, sort), mkText("))"))),
+        ),
         condition,
       ],
       "forall",
@@ -149,7 +152,7 @@ export const printModel = (
   for (const decl of model.getConstDecls()) {
     const name = getQuotedName(manager.funcDecls[decl].name);
     const range = render(
-      formatSort(manager, manager.funcDecls[decl].range),
+      formatSort(manager, environment.sortInfos, manager.funcDecls[decl].range),
       indent + name.length + 16,
     );
     const value = render(formatValue(model.constInterps.get(decl) as number));
@@ -175,7 +178,9 @@ export const printModel = (
         ? funcDecl.domain
         : Array.from({ length: interp.arity }, () => funcDecl.range);
     const domain = mkSeq5(
-      domainSorts.map((sort, index) => mkSeq5([varNames[index], formatSort(manager, sort)])),
+      domainSorts.map((sort, index) =>
+        mkSeq5([varNames[index], formatSort(manager, environment.sortInfos, sort)]),
+      ),
     );
     const entries = interp.entries.flatMap((entry, index) => {
       const conditions = entry.args.map((arg, argIndex) =>
@@ -204,7 +209,7 @@ export const printModel = (
     const definition = mkCompose(
       mkCompose(
         mkText(`(define-fun ${getQuotedName(funcDecl.name)} `),
-        mkCompose(domain, mkText(" "), formatSort(manager, funcDecl.range)),
+        mkCompose(domain, mkText(" "), formatSort(manager, environment.sortInfos, funcDecl.range)),
       ),
       mkIndent(TAB_SIZE, mkCompose(LINE_BREAK, body, mkText(")"))),
     );

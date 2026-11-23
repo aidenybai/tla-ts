@@ -1836,3 +1836,248 @@ describe("the builtin sorts, as Z3 5.3.2's plugins make them", () => {
     ]);
   });
 });
+
+describe("the sort names of cmd_context's printer, as Z3 5.3.2's pdecl_manager saves the first", () => {
+  it.each([
+    [
+      "a lowercase bool, and every Bool after it",
+      [
+        "(declare-const b bool)",
+        "(declare-const c Bool)",
+        "(assert true)",
+        "(check-sat)",
+        "(get-model)",
+      ],
+      "sat\n(\n  (define-fun b () bool\n    false)\n  (define-fun c () bool\n    false)\n)",
+    ],
+    [
+      "(Bool Int), which Z3 makes as Bool",
+      [
+        "(declare-const b (Bool Int))",
+        "(declare-const c Bool)",
+        "(assert true)",
+        "(check-sat)",
+        "(get-model)",
+      ],
+      "sat\n(\n  (define-fun b () (Bool Int)\n    false)\n  (define-fun c () (Bool Int)\n    false)\n)",
+    ],
+    [
+      "(_ Int 3), which Z3 makes as Int",
+      ["(declare-const a (_ Int 3))", "(assert true)", "(check-sat)", "(get-model)"],
+      "sat\n(\n  (define-fun a () (_ Int 3)\n    0)\n)",
+    ],
+    [
+      "an indexed bv",
+      ["(declare-const x (_ bv 3))", "(assert true)", "(check-sat)", "(get-model)"],
+      "sat\n(\n  (define-fun x () (_ bv 3)\n    #b000)\n)",
+    ],
+    [
+      "an array sort written with =>, in a constant array too",
+      ["(declare-const f (=> Int Bool))", "(assert (select f 0))", "(check-sat)", "(get-model)"],
+      "sat\n(\n  (define-fun f () (=> Int Bool)\n    ((as const (=> Int Bool)) true))\n)",
+    ],
+    [
+      "an array sort written with -> before an Array",
+      [
+        "(declare-const f (-> Int Int))",
+        "(declare-const g (Array Int Int))",
+        "(assert (= (select f 0) (select g 1)))",
+        "(check-sat)",
+        "(get-model)",
+      ],
+      "sat\n(\n  (define-fun f () (-> Int Int)\n    ((as const (-> Int Int)) 0))\n  (define-fun g () (-> Int Int)\n    ((as const (-> Int Int)) 0))\n)",
+    ],
+    [
+      "a Set",
+      ["(declare-const s (Set Int))", "(assert (select s 0))", "(check-sat)", "(get-model)"],
+      "sat\n(\n  (define-fun s () (Set Int)\n    ((as const (Set Int)) true))\n)",
+    ],
+    [
+      "Float32",
+      ["(declare-const x Float32)", "(assert true)", "(check-sat)", "(get-model)"],
+      "sat\n(\n  (define-fun x () Float32\n    (_ NaN 8 24))\n)",
+    ],
+    [
+      "a FloatingPoint before a Float32",
+      [
+        "(declare-const x (_ FloatingPoint 8 24))",
+        "(declare-const y Float32)",
+        "(assert (fp.eq x y))",
+        "(check-sat)",
+        "(get-model)",
+      ],
+      "sat\n(\n  (define-fun x () (_ FloatingPoint 8 24)\n    (_ +zero 8 24))\n  (define-fun y () (_ FloatingPoint 8 24)\n    (_ +zero 8 24))\n)",
+    ],
+    [
+      "(Seq Unicode)",
+      [
+        "(declare-const s (Seq Unicode))",
+        "(assert (= (str.len s) 1))",
+        "(check-sat)",
+        "(get-model)",
+      ],
+      'sat\n(\n  (define-fun s () (Seq Unicode)\n    "A")\n)',
+    ],
+    [
+      "StringSequence",
+      [
+        "(declare-const s StringSequence)",
+        "(assert (= (str.len s) 1))",
+        "(check-sat)",
+        "(get-model)",
+      ],
+      'sat\n(\n  (define-fun s () StringSequence\n    "A")\n)',
+    ],
+    [
+      "a String before (Seq Unicode) and StringSequence",
+      [
+        "(declare-const s String)",
+        "(declare-const t (Seq Unicode))",
+        "(declare-const u StringSequence)",
+        "(assert (= s t u))",
+        "(check-sat)",
+        "(get-model)",
+      ],
+      'sat\n(\n  (define-fun u () String\n    "")\n  (define-fun s () String\n    "")\n  (define-fun t () String\n    "")\n)',
+    ],
+    [
+      "each argument of a sort by its own first name",
+      [
+        "(declare-const a (Array bool (_ bv 2)))",
+        "(assert (= (select a true) #b01))",
+        "(check-sat)",
+        "(get-model)",
+      ],
+      "sat\n(\n  (define-fun a () (Array bool (_ bv 2))\n    ((as const (Array bool (_ bv 2))) #b01))\n)",
+    ],
+    [
+      "the sort of a datatype field",
+      [
+        "(declare-datatype D ((mk (f (=> Int Int)) (g bool))))",
+        "(declare-const d D)",
+        "(check-sat)",
+        "(get-model)",
+      ],
+      "sat\n(\n  (define-fun d () D\n    (mk ((as const (=> Int Int)) 0) false))\n)",
+    ],
+    [
+      "the arguments of a datatype instance",
+      [
+        "(declare-datatype P (par (T) ((mk (v T)))))",
+        "(declare-const p (P bool))",
+        "(declare-const q (P Bool))",
+        "(assert (v q))",
+        "(check-sat)",
+        "(get-model)",
+      ],
+      "sat\n(\n  (define-fun q () (P bool)\n    (mk true))\n  (define-fun p () (P bool)\n    (mk false))\n)",
+    ],
+    [
+      "the arguments of a declared sort in its universe",
+      [
+        "(declare-sort U 1)",
+        "(declare-const x (U bool))",
+        "(declare-const y (U Bool))",
+        "(assert (not (= x y)))",
+        "(check-sat)",
+        "(get-model)",
+      ],
+      "sat\n(\n  ;; universe for (U bool):\n  ;;   U!val!0 U!val!1 \n  ;; -----------\n  ;; definitions for universe elements:\n  (declare-fun U!val!0 () (U bool))\n  (declare-fun U!val!1 () (U bool))\n  ;; cardinality constraint:\n  (forall ((x (U bool))) (or (= x U!val!0) (= x U!val!1)))\n  ;; -----------\n  (define-fun y () (U bool)\n    U!val!1)\n  (define-fun x () (U bool)\n    U!val!0)\n)",
+    ],
+    [
+      "the domain of a function in a model",
+      [
+        "(declare-fun f ((Set Int)) Int)",
+        "(declare-const a (Array Int Bool))",
+        "(assert (> (f a) 3))",
+        "(check-sat)",
+        "(get-model)",
+      ],
+      "sat\n(\n  (define-fun a () (Set Int)\n    ((as const (Set Int)) true))\n  (define-fun f ((x!0 (Set Int))) Int\n    4)\n)",
+    ],
+    [
+      "the declarations of apply's benchmark",
+      [
+        "(declare-fun f (bool (_ bv 3)) (Set Int))",
+        "(declare-const b Bool)",
+        "(assert (select (f b #b000) 0))",
+        "(apply skip :print_benchmark true)",
+      ],
+      "(goals\n(goal\n  (select (f b #b000) 0)\n  :precision precise :depth 0)\n)\n(declare-fun f (bool (_ bv 3)) (Set Int))\n(declare-fun b () bool)\n(assert (select (f b #b000) 0))\n(check-sat)",
+    ],
+    [
+      "a bound variable in a goal",
+      [
+        "(declare-fun f ((_ bv 3)) Int)",
+        "(assert (forall ((x (_ bv 3))) (> (f x) 0)))",
+        "(apply skip)",
+      ],
+      "(goals\n(goal\n  (forall ((x (_ bv 3))) (> (f x) 0))\n  :precision precise :depth 0)\n)",
+    ],
+    [
+      "the sorts of dbg-used-vars",
+      ["(dbg-used-vars (forall ((x bool) (y (_ bv 4))) (and x (= y y))))"],
+      "(vars\n  (0      (_ bv 4))\n  (1      bool))",
+    ],
+    [
+      "a value of get-value and eval",
+      [
+        "(declare-const a (Set Int))",
+        "(assert (select a 1))",
+        "(check-sat)",
+        "(get-value (a))",
+        "(eval a)",
+      ],
+      "sat\n((a ((as const (Set Int)) true)))\n((as const (Set Int)) true)",
+    ],
+    [
+      "a sort as a popped scope wrote it",
+      [
+        "(push)",
+        "(declare-const b bool)",
+        "(pop)",
+        "(declare-const c Bool)",
+        "(assert c)",
+        "(check-sat)",
+        "(get-model)",
+      ],
+      "sat\n(\n  (define-fun c () bool\n    true)\n)",
+    ],
+    [
+      "a sort as Bool again after a reset",
+      [
+        "(declare-const b bool)",
+        "(reset)",
+        "(declare-const c Bool)",
+        "(assert c)",
+        "(check-sat)",
+        "(get-model)",
+      ],
+      "sat\n(\n  (define-fun c () Bool\n    true)\n)",
+    ],
+    [
+      "a sort through the body of a sort definition",
+      [
+        "(define-sort P (X) (=> X X))",
+        "(declare-const c (P Int))",
+        "(assert (= (select c 0) 1))",
+        "(check-sat)",
+        "(get-model)",
+      ],
+      "sat\n(\n  (define-fun c () (=> Int Int)\n    ((as const (=> Int Int)) 1))\n)",
+    ],
+    [
+      "the sorts of the reader's messages by their plugin names",
+      [
+        "(declare-const x (_ Int 3))",
+        "(declare-const y Int)",
+        "(assert (= (f x) y))",
+        "(declare-fun g (Int) Int)",
+        "(assert (= (g x) bool))",
+      ],
+      '(error "line 3 column 15: unknown constant f (Int) ")\n(error "line 5 column 17: unknown constant bool")',
+    ],
+  ])("prints %s", (_title, lines, expected) => {
+    expect(run(lines).join("\n")).toBe(expected);
+  });
+});
