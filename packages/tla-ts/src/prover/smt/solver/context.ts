@@ -38,6 +38,7 @@ import {
   EqPropagationJustification,
   EqRootPropagationJustification,
   MpIffJustification,
+  UnitResolutionJustification,
 } from "./enode";
 import { ObjMap } from "./hashtable";
 import {
@@ -79,10 +80,15 @@ import {
   DEFAULT_CONFIG,
   getSmtConfig,
   PS_ALWAYS_FALSE,
+  PS_ALWAYS_TRUE,
   PS_CACHING_CONSERVATIVE,
   PS_CACHING_CONSERVATIVE2,
+  PS_OCCURRENCE,
+  PS_RANDOM,
   PS_THEORY,
+  RS_ARITHMETIC,
   RS_GEOMETRIC,
+  RS_IN_OUT_GEOMETRIC,
   RS_LUBY,
   type SmtSetup,
 } from "./smt-setup";
@@ -177,6 +183,9 @@ export interface SmtParams {
   isEmatching?: boolean;
   relevancyLevel: number;
   caseSplitStrategy?: number;
+  phaseSelection?: number;
+  restartStrategy?: number;
+  restartFactor?: number;
   randomSeed?: number;
   intHammerPeriod?: number;
   isArithPropagatingEqs?: boolean;
@@ -190,6 +199,7 @@ export interface SmtParams {
   mbqiForceTemplate?: number;
   mbqiId?: string;
   isModelValidating?: boolean;
+  isArrayExtensional?: boolean;
   // The model checker's auxiliary context pretends every array operation is supported.
   isArrayFakeSupport?: boolean;
   isProofsEnabled?: boolean;
@@ -205,11 +215,14 @@ export class Context extends Internalizer {
   readonly conflictResolution: ConflictResolution = new ConflictResolution(this);
   private readonly dynAck = new DynAckManager(this);
   private qhead = 0;
+  private simpQhead = 0;
+  private simpCounter = 0;
   private scopeAssignedLimits: number[] = [];
   private scopeAuxClauseLimits: number[] = [];
   private scopeTrailLimits: number[] = [];
   private baseScopeLemmaLimits: number[] = [];
   private isBaseScopeInconsistent: boolean[] = [];
+  private baseScopeSimpQheadLimits: number[] = [];
   private atomPropagationQueue: Literal[] = [];
   private thEqQueue: number[] = [];
   private thDiseqQueue: number[] = [];
@@ -259,6 +272,9 @@ export class Context extends Internalizer {
     this.qmanager = new DefaultQuantifierManager(this);
     this.config = {
       ...DEFAULT_CONFIG,
+      phaseSelection: params.phaseSelection ?? DEFAULT_CONFIG.phaseSelection,
+      restartStrategy: params.restartStrategy ?? DEFAULT_CONFIG.restartStrategy,
+      restartFactor: params.restartFactor ?? DEFAULT_CONFIG.restartFactor,
       isArithPropagatingEqs: params.isArithPropagatingEqs ?? true,
       qiLazyThreshold: params.qiLazyThreshold ?? DEFAULT_CONFIG.qiLazyThreshold,
       qiMaxInstances: params.qiMaxInstances ?? DEFAULT_CONFIG.qiMaxInstances,
@@ -312,10 +328,17 @@ export class Context extends Internalizer {
     this.params.mbqiForceTemplate = params.mbqiForceTemplate;
     this.params.mbqiId = params.mbqiId;
     this.params.isModelValidating = params.isModelValidating;
+    this.params.isArrayExtensional = params.isArrayExtensional;
+    this.params.phaseSelection = params.phaseSelection;
+    this.params.restartStrategy = params.restartStrategy;
+    this.params.restartFactor = params.restartFactor;
     this.params.relevancyLevel = params.relevancyLevel ?? 2;
     this.arith?.updateParams();
     this.config = {
       ...DEFAULT_CONFIG,
+      phaseSelection: params.phaseSelection ?? DEFAULT_CONFIG.phaseSelection,
+      restartStrategy: params.restartStrategy ?? DEFAULT_CONFIG.restartStrategy,
+      restartFactor: params.restartFactor ?? DEFAULT_CONFIG.restartFactor,
       isArithPropagatingEqs: params.isArithPropagatingEqs ?? true,
       theories: this.config.theories,
       isFindingMacros: params.isFindingMacros,
@@ -450,6 +473,7 @@ export class Context extends Internalizer {
       if (this.checkCanceled()) return true;
       const literal = this.assignedLiterals[this.qhead];
       this.qhead++;
+      this.simpCounter--;
       const notLiteral = negate(literal);
       const binary = this.binaryWatches[literal];
       if (binary !== undefined && binary.length > 0) {
@@ -1152,8 +1176,10 @@ export class Context extends Internalizer {
     if (newLevel >= this.baseLevel || !this.isBaseScopeInconsistent[newLevel]) this.conflict = null;
     if (newLevel < this.baseLevel) {
       this.deleteClauses(this.lemmas, this.baseScopeLemmaLimits[newLevel]);
+      this.simpQhead = this.baseScopeSimpQheadLimits[newLevel];
       shrink(this.baseScopeLemmaLimits, newLevel);
       shrink(this.isBaseScopeInconsistent, newLevel);
+      shrink(this.baseScopeSimpQheadLimits, newLevel);
     }
     this.deleteClauses(this.auxClauses, this.scopeAuxClauseLimits[newLevel]);
     this.relevancy.pop(numScopes);
@@ -1203,6 +1229,7 @@ export class Context extends Internalizer {
           for (let index = 0; index < 2; index++)
             if (getVar(store.getLiteral(clause, index)) < numBoolVars)
               this.removeWatchLiteral(clause, index);
+          this.removeLitOccs(clause, numBoolVars);
           const isThLemma = store.getKind(clause) === CLS_TH_LEMMA;
           for (let index = 0; index < atoms.length; index++) {
             const atom = atoms[index];
@@ -1215,6 +1242,7 @@ export class Context extends Internalizer {
           store.swapLiterals(clause, 1, this.selectWatchLiteral(clause, 1));
           this.addWatchLiteral(clause, 0);
           this.addWatchLiteral(clause, 1);
+          this.addLitOccs(clause);
           const first = store.getLiteral(clause, 0);
           if (this.assignment[first] === L_FALSE) this.setConflict(clause, null);
           else if (this.assignment[store.getLiteral(clause, 1)] === L_FALSE)
@@ -1279,6 +1307,12 @@ export class Context extends Internalizer {
     if (this.hasBoolVarFlag(boolVar, BV_TRUE_FIRST)) return true;
     const phaseSelection = this.config.phaseSelection;
     if (phaseSelection === PS_ALWAYS_FALSE) return false;
+    if (phaseSelection === PS_ALWAYS_TRUE) return true;
+    if (phaseSelection === PS_RANDOM) return this.getRandomValue() % 2 === 0;
+    if (phaseSelection === PS_OCCURRENCE) {
+      const literal = mkLiteral(boolVar);
+      return this.litOccs[literal] > this.litOccs[negate(literal)];
+    }
     const isPhaseAvailable = this.hasBoolVarFlag(boolVar, BV_PHASE_AVAILABLE);
     if (phaseSelection === PS_THEORY) {
       const phase = this.getTheory(this.getBoolVarTheory(boolVar))?.getPhase(boolVar) ?? L_UNDEF;
@@ -1426,6 +1460,7 @@ export class Context extends Internalizer {
       }
       if (this.isResourceLimitExceeded() && !this.isInconsistent()) return L_UNDEF;
       if (this.checkCanceled()) return L_UNDEF;
+      if (this.baseLevel === this.scopeLevel) this.simplifyClauses();
       if (!this.decide()) {
         if (this.isInconsistent()) return L_FALSE;
         const status = this.finalCheck();
@@ -1585,29 +1620,121 @@ export class Context extends Internalizer {
         return L_FALSE;
       }
     }
+    this.simplifyClauses();
     return undefined;
   }
 
   incLimits() {
     const config = this.config;
     if (this.numConflictsSinceRestart >= this.restartThreshold) {
-      if (config.restartStrategy === RS_LUBY) {
-        this.lubyIndex++;
-        this.restartThreshold = getLuby(this.lubyIndex) * RESTART_INITIAL;
-      } else {
-        this.restartThreshold = Math.trunc(this.restartThreshold * config.restartFactor);
-        if (
-          config.restartStrategy !== RS_GEOMETRIC &&
-          this.restartThreshold > this.restartOuterThreshold
-        ) {
-          this.restartThreshold = RESTART_INITIAL;
-          this.restartOuterThreshold = Math.trunc(
-            this.restartOuterThreshold * config.restartFactor,
-          );
-        }
+      switch (config.restartStrategy) {
+        case RS_GEOMETRIC:
+          this.restartThreshold = Math.trunc(this.restartThreshold * config.restartFactor);
+          break;
+        case RS_IN_OUT_GEOMETRIC:
+          this.restartThreshold = Math.trunc(this.restartThreshold * config.restartFactor);
+          if (this.restartThreshold > this.restartOuterThreshold) {
+            this.restartThreshold = RESTART_INITIAL;
+            this.restartOuterThreshold = Math.trunc(
+              this.restartOuterThreshold * config.restartFactor,
+            );
+          }
+          break;
+        case RS_LUBY:
+          this.lubyIndex++;
+          this.restartThreshold = getLuby(this.lubyIndex) * RESTART_INITIAL;
+          break;
+        case RS_ARITHMETIC:
+          this.restartThreshold = Math.trunc(this.restartThreshold + config.restartFactor);
+          break;
       }
     }
     this.numConflictsSinceRestart = 0;
+  }
+
+  private simplifyClause(clause: Clause) {
+    const store = this.clauses;
+    if (
+      this.assignment[store.getLiteral(clause, 0)] === L_TRUE ||
+      this.assignment[store.getLiteral(clause, 1)] === L_TRUE
+    )
+      return true;
+    const numLiterals = store.getNumLiterals(clause);
+    const removed = this.removedLiterals;
+    shrink(removed, 0);
+    let kept = 2;
+    let isTautology = false;
+    for (let index = 2; index < numLiterals; index++) {
+      const literal = store.getLiteral(clause, index);
+      const value = this.assignment[literal];
+      if (value === L_FALSE) {
+        if (this.isProofsEnabled) removed.push(negate(literal));
+        this.decLitOccs(literal);
+        continue;
+      }
+      if (value === L_TRUE) isTautology = true;
+      if (index !== kept) store.swapLiterals(clause, index, kept);
+      kept++;
+    }
+    if (kept < numLiterals) store.setNumLiterals(clause, kept);
+    if (isTautology) return true;
+    if (removed.length > 0)
+      store.setJustification(
+        clause,
+        new UnitResolutionJustification(store.getJustification(clause), removed.slice()),
+      );
+    return false;
+  }
+
+  private simplifyClausesFrom(clauses: Clause[], startingAt: number) {
+    const store = this.clauses;
+    let kept = startingAt;
+    for (let index = startingAt; index < clauses.length; index++) {
+      const clause = clauses[index];
+      if (store.isDeleted(clause)) {
+        this.deleteClause(clause);
+        continue;
+      }
+      if (!this.simplifyClause(clause)) {
+        clauses[kept++] = clause;
+        this.simpCounter += store.getNumLiterals(clause);
+        continue;
+      }
+      for (let position = 0; position < 2; position++) {
+        const boolVar = getVar(store.getLiteral(clause, position));
+        if (this.justifications[boolVar] !== clause) continue;
+        if (!this.isProofsEnabled) {
+          this.justifications[boolVar] = "axiom";
+          continue;
+        }
+        const literals: Literal[] = [];
+        for (let literalIndex = 0; literalIndex < store.getNumLiterals(clause); literalIndex++)
+          if (literalIndex !== position)
+            literals.push(negate(store.getLiteral(clause, literalIndex)));
+        this.justifications[boolVar] = new UnitResolutionJustification(
+          store.getJustification(clause),
+          literals,
+        );
+      }
+      this.deleteClause(clause);
+    }
+    shrink(clauses, kept);
+  }
+
+  private simplifyClauses() {
+    if (this.scopeLevel > this.baseLevel) return;
+    const size = this.assignedLiterals.length;
+    if (this.simpQhead === size || this.simpCounter > 0) return;
+    if (this.auxClauses.length === 0 && this.lemmas.length === 0) return;
+    this.simpCounter = 0;
+    this.simpQhead = size;
+    if (this.baseLevel === 0) {
+      this.simplifyClausesFrom(this.auxClauses, 0);
+      this.simplifyClausesFrom(this.lemmas, 0);
+      return;
+    }
+    this.simplifyClausesFrom(this.auxClauses, this.scopeAuxClauseLimits[this.baseLevel - 1]);
+    this.simplifyClausesFrom(this.lemmas, this.baseScopeLemmaLimits[this.baseLevel - 1]);
   }
 
   private isDeletable(clause: Clause) {
@@ -1660,6 +1787,7 @@ export class Context extends Internalizer {
     this.pushScope();
     this.baseScopeLemmaLimits.push(this.lemmas.length);
     this.isBaseScopeInconsistent.push(this.isInconsistent());
+    this.baseScopeSimpQheadLimits.push(this.simpQhead);
     this.baseLevel++;
     this.searchLevel++;
   }

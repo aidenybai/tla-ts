@@ -24,6 +24,9 @@ export interface KernelParams {
   isEmatching?: boolean;
   relevancyLevel?: number;
   caseSplitStrategy?: number;
+  phaseSelection?: number;
+  restartStrategy?: number;
+  restartFactor?: number;
   isCoreMinimizing?: boolean;
   randomSeed?: number;
   intHammerPeriod?: number;
@@ -38,6 +41,7 @@ export interface KernelParams {
   mbqiForceTemplate?: number;
   mbqiId?: string;
   isModelValidating?: boolean;
+  isArrayExtensional?: boolean;
   isProofsEnabled?: boolean;
   // A kernel without a setup runs as with auto_config false.
   setup?: SmtSetup;
@@ -74,6 +78,9 @@ export const solveGoal = (manager: AstManager, forms: number[], params: KernelPa
     isEmatching: params.isEmatching,
     relevancyLevel: params.relevancyLevel ?? 2,
     caseSplitStrategy: params.caseSplitStrategy,
+    phaseSelection: params.phaseSelection,
+    restartStrategy: params.restartStrategy,
+    restartFactor: params.restartFactor,
     randomSeed: params.randomSeed,
     intHammerPeriod: params.intHammerPeriod,
     isArithPropagatingEqs: params.isArithPropagatingEqs,
@@ -87,6 +94,7 @@ export const solveGoal = (manager: AstManager, forms: number[], params: KernelPa
     mbqiForceTemplate: params.mbqiForceTemplate,
     mbqiId: params.mbqiId,
     isModelValidating: params.isModelValidating,
+    isArrayExtensional: params.isArrayExtensional,
     isProofsEnabled: params.isProofsEnabled,
   });
   try {
@@ -141,6 +149,9 @@ export const solveAssuming = (
     isEmatching: params.isEmatching,
     relevancyLevel: params.relevancyLevel ?? 2,
     caseSplitStrategy: params.caseSplitStrategy,
+    phaseSelection: params.phaseSelection,
+    restartStrategy: params.restartStrategy,
+    restartFactor: params.restartFactor,
     randomSeed: params.randomSeed,
     intHammerPeriod: params.intHammerPeriod,
     isArithPropagatingEqs: params.isArithPropagatingEqs,
@@ -154,6 +165,7 @@ export const solveAssuming = (
     mbqiForceTemplate: params.mbqiForceTemplate,
     mbqiId: params.mbqiId,
     isModelValidating: params.isModelValidating,
+    isArrayExtensional: params.isArrayExtensional,
     isProofsEnabled: params.isProofsEnabled,
   });
   try {
