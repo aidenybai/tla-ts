@@ -9390,6 +9390,70 @@ ASSUME TLCFP(a) = -887695703
   it.each([
     [
       "S \\cup T",
+      "((0..1) \\X {1}) \\cup {<<5, 5>>}",
+      [
+        "line 5, col 9 to line 5, col 14 of module M: 1",
+        "line 5, col 28 to line 5, col 58 of module M: 1",
+        "|line 5, col 29 to line 5, col 41 of module M: 1:4",
+        "||line 5, col 30 to line 5, col 33 of module M: 1",
+        "||line 5, col 39 to line 5, col 41 of module M: 1:5",
+        "|line 5, col 49 to line 5, col 58 of module M: 1:11",
+        "||line 5, col 50 to line 5, col 57 of module M: 1",
+        "line 5, col 63 to line 5, col 91 of module M: 1",
+        "|line 5, col 63 to line 5, col 78 of module M: 1",
+        "||line 5, col 70 to line 5, col 77 of module M: 1:8",
+        "|||line 5, col 77 to line 5, col 77 of module M: 1",
+        "|line 5, col 83 to line 5, col 91 of module M: 1",
+      ],
+    ],
+    [
+      "UNION S",
+      "UNION {{<<5, 5>>}, (0..1) \\X {1}}",
+      [
+        "line 5, col 9 to line 5, col 14 of module M: 1",
+        "line 5, col 28 to line 5, col 60 of module M: 1",
+        "|line 5, col 34 to line 5, col 60 of module M: 1:10",
+        "||line 5, col 35 to line 5, col 44 of module M: 1:2",
+        "|||line 5, col 36 to line 5, col 43 of module M: 1",
+        "||line 5, col 47 to line 5, col 59 of module M: 1:9",
+        "|||line 5, col 48 to line 5, col 51 of module M: 1",
+        "|||line 5, col 57 to line 5, col 59 of module M: 1:5",
+        "line 5, col 65 to line 5, col 93 of module M: 1",
+        "|line 5, col 65 to line 5, col 80 of module M: 1",
+        "||line 5, col 72 to line 5, col 79 of module M: 1:8",
+        "|||line 5, col 79 to line 5, col 79 of module M: 1",
+        "|line 5, col 85 to line 5, col 93 of module M: 1",
+      ],
+    ],
+    [
+      "S \\ T",
+      "((0..1) \\X {1}) \\ {<<0, 1>>}",
+      [
+        "line 5, col 9 to line 5, col 14 of module M: 1",
+        "line 5, col 28 to line 5, col 55 of module M: 1",
+        "|line 5, col 29 to line 5, col 41 of module M: 1:4",
+        "||line 5, col 30 to line 5, col 33 of module M: 1",
+        "||line 5, col 39 to line 5, col 41 of module M: 1:5",
+        "|line 5, col 46 to line 5, col 55 of module M: 1",
+        "line 5, col 60 to line 5, col 88 of module M: 1",
+        "|line 5, col 60 to line 5, col 75 of module M: 1",
+        "||line 5, col 67 to line 5, col 74 of module M: 1:2",
+        "|||line 5, col 74 to line 5, col 74 of module M: 1",
+        "|line 5, col 80 to line 5, col 88 of module M: 1",
+      ],
+    ],
+  ])(
+    "charges %s once when TLC prints SUBSET of it and then the set, as SubsetValue#toSetEnum sizes its base with convertAndCache",
+    async (_name, set, rows) => {
+      expect(
+        await getNextCoverageLines(`x' = 0 /\\ LET s == ${set} IN PrintT(SUBSET s) /\\ PrintT(s)`),
+      ).toEqual(rows);
+    },
+  );
+
+  it.each([
+    [
+      "S \\cup T",
       "PrintT(((0..1) \\X {1}) \\cup {<<5, 5>>})",
       [
         "line 5, col 9 to line 5, col 14 of module M: 1",
