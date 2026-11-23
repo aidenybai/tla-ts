@@ -41,6 +41,7 @@ import {
   type StartupSubstitute,
 } from "./evaluate";
 import {
+  createInstanceArguments,
   createInstantiation,
   createLocalAlias,
   createLocalArguments,
@@ -1173,7 +1174,7 @@ export const createEnvironment = (
         : {
             kind: "Apply",
             operator: `${declaration.name}${suffix}`,
-            args: createLocalArguments(instance.params, location),
+            args: createInstanceArguments(instance.params, location),
             location,
             resolution: LOCAL_RESOLUTION,
           };

@@ -26,6 +26,8 @@ import { formatRange, TlaSyntaxError, type SanyError } from "./errors";
 import {
   getSourceName,
   hasLetInstance,
+  instanceArguments,
+  instanceOperators,
   mapChildren,
   mapDefinition,
   substitutionFrames,
@@ -526,7 +528,10 @@ const selectSubexpression = (
       current = current.body;
       return;
     }
-    if (current.kind === "Lambda" && current.operator !== undefined) {
+    if (
+      current.kind === "Lambda" &&
+      (current.operator !== undefined || instanceOperators.has(current))
+    ) {
       report(range, "Trying to select subexpression of an operator argument.");
       return;
     }
@@ -612,7 +617,11 @@ const selectSubexpression = (
       report(range, "Selecting subexpression of an EXCEPT not yet implemented.");
       return;
     }
-    const operands = binder ? binder.sets : getOperands(current);
+    const instanceArgumentCount =
+      current.kind === "Apply"
+        ? current.args.filter((arg) => instanceArguments.has(arg)).length
+        : 0;
+    const operands = binder ? binder.sets : getOperands(current)?.slice(instanceArgumentCount);
     if (!operands && current.kind !== "Identifier") {
       report(range, "Selecting subexpression of expression that has none.");
       return;
@@ -629,7 +638,8 @@ const selectSubexpression = (
     }
     const arity =
       current.kind === "Apply"
-        ? (getCalleeParams(current, findCallee(current.operator))?.[index]?.arity ?? 0)
+        ? (getCalleeParams(current, findCallee(current.operator))?.[instanceArgumentCount + index]
+            ?.arity ?? 0)
         : 0;
     current = arity > 0 ? getOperatorArgument(operand, arity) : operand;
   };

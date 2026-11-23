@@ -381,6 +381,117 @@ describe("subexpression references match TLC", () => {
   });
 });
 
+describe("selections into the definitions of an instance with operator parameters match SANY and TLC", () => {
+  const MODULES = new Map([
+    [
+      "Pure",
+      "---- MODULE Pure ----\nEXTENDS Naturals\nCONSTANT c, Op(_)\nE == Op(c)\nE2(z) == Op(z)\nE4 == E2(c)\nE5 == E2(c) + c\nZ == Op(c)\nE8 == Z + 1\nH(K(_)) == K(c)\nE9 == H(E2)\nE10 == c + 1\n====",
+    ],
+    [
+      "Mid",
+      "---- MODULE Mid ----\nEXTENDS Naturals\nCONSTANT Op3(_)\nP2(G(_)) == INSTANCE Pure WITH c <- 7, Op <- G\nM1 == P2(Op3)!E4\nM2 == P2(Op3)!E5 + 1\n====",
+    ],
+  ]);
+  const LET_P = "LET L(G(_)) == INSTANCE Pure WITH c <- 7, Op <- G IN";
+  const LET_Q = "LET L(G(_), k) == INSTANCE Pure WITH c <- k, Op <- G IN";
+
+  const checkInstances = (definitions: string, onPrint?: (text: string) => void) =>
+    check({
+      source: `---- MODULE M ----\nEXTENDS Naturals, TLC\nVARIABLE x\nF(a) == a + 1\nP(G(_)) == INSTANCE Pure WITH c <- 7, Op <- G\nQ(G(_), k) == INSTANCE Pure WITH c <- k, Op <- G\nR(K(_)) == INSTANCE Mid WITH Op3 <- K\n${definitions}\nInit == x = 0\nNext == x' = x\n====`,
+      config: "INIT Init\nNEXT Next",
+      loadModule: (name) => MODULES.get(name),
+      onPrint,
+    });
+
+  it("selects the operands a definition is written with, not the parameters the instance passes it", async () => {
+    const prints: string[] = [];
+    const result = await checkInstances(
+      `ASSUME PrintT(<<<<P(F)!E!1, P(F)!E4!1, P(F)!E5!1!1, P(F)!E8!1, Q(F, 3)!E!1, Q(F, 3)!E4!1, Q(F, 3)!E10!1>>, ${LET_P} <<L(F)!E!1, L(F)!E4!1, L(F)!E5!1!1, L(F)!E8!1>>, ${LET_Q} <<L(F, 3)!E!1, L(F, 3)!E4!1, L(F, 3)!E10!1, L(F, 3)!E5!2>>, <<R(F)!M1, R(F)!M2!1>>>>)`,
+      (text) => prints.push(text),
+    );
+    expect([result.status, prints]).toEqual([
+      "success",
+      ["<<<<7, 7, 7, 8, 3, 3, 3>>, <<7, 7, 7, 8>>, <<3, 3, 3, 3>>, <<8, 15>>>>"],
+    ]);
+  });
+
+  it("selects the operands a definition is written with through an instance of a module that instances it", async () => {
+    const prints: string[] = [];
+    const result = await checkInstances(
+      "ASSUME PrintT(<<R(F)!P2(F)!E4!1, R(F)!P2(F)!E5!1!1, R(F)!P2(F)!E8!1, LET T(K(_)) == INSTANCE Mid WITH Op3 <- K IN T(F)!P2(F)!E4!1, LET S(K(_), j) == INSTANCE Mid WITH Op3 <- LAMBDA y : K(y) + j IN S(F, 10)!P2(F)!E4!1>>)",
+      (text) => prints.push(text),
+    );
+    expect([result.status, prints]).toEqual(["success", ["<<7, 7, 8, 7, 7>>"]]);
+  });
+
+  it.each([
+    ["D == P(F)!E8!1!1", [["16", "16", "Nonexistent operand specified by `argument selector 1'."]]],
+    [
+      `D == ${LET_P} L(F)!E8!1!1`,
+      [["69", "69", "Nonexistent operand specified by `argument selector 1'."]],
+    ],
+    [
+      `D == ${LET_Q} L(F, 3)!E!1!1`,
+      [["74", "74", "Nonexistent operand specified by `argument selector 1'."]],
+    ],
+    ["D == P(F)!E9!1", [["6", "14", "Selected operator argument when expression expected."]]],
+    ["D == P(F)!E9!1!1", [["16", "16", "Trying to select subexpression of an operator argument."]]],
+    [
+      "D == P(F)!E9!1!(5)!1",
+      [["16", "18", "Trying to select subexpression of an operator argument."]],
+    ],
+    [
+      `D == ${LET_P} L(F)!E9!1!(5)!1`,
+      [["69", "71", "Trying to select subexpression of an operator argument."]],
+    ],
+    [
+      "D == R(F)!P2(F)!E9!1!1",
+      [["22", "22", "Trying to select subexpression of an operator argument."]],
+    ],
+    [
+      "D == LET T(K(_)) == INSTANCE Mid WITH Op3 <- K IN T(F)!P2(F)!E9!1!(5)",
+      [["67", "69", "Trying to select subexpression of an operator argument."]],
+    ],
+    ["D == P(F)!E4!2", [["14", "14", "Nonexistent operand specified by `argument selector 2'."]]],
+    [
+      `D == ${LET_P} L(F)!E4!2`,
+      [["67", "67", "Nonexistent operand specified by `argument selector 2'."]],
+    ],
+    [
+      "D == Q(F, 3)!E4!2",
+      [["17", "17", "Nonexistent operand specified by `argument selector 2'."]],
+    ],
+    [
+      "D == R(F)!P2(F)!E4!2",
+      [["20", "20", "Nonexistent operand specified by `argument selector 2'."]],
+    ],
+    [
+      "D == R(F)!P2(F)!E8!1!1",
+      [["22", "22", "Nonexistent operand specified by `argument selector 1'."]],
+    ],
+    [
+      `D == ${LET_P} L(1)!E!1`,
+      [
+        [
+          "61",
+          "61",
+          "An expression appears as argument number 1 (counting from 1) to operator 'L', in a position an operator is required.",
+        ],
+        ["59", "66", "Argument number 1 to operator 'LAMBDA' \nshould be a 1-parameter operator."],
+      ],
+    ],
+  ])("reports %s as SANY does", async (definitions, errors) => {
+    await expect(checkInstances(definitions)).rejects.toThrow(
+      createSanyError(
+        errors.map((error) => ({
+          location: `line 8, col ${error[0]} to line 8, col ${error[1]} of module M`,
+          message: error[2],
+        })),
+      ),
+    );
+  });
+});
+
 describe("selections into standard operators match SANY and TLC", () => {
   const checkStandard = (assumption: string, onPrint?: (text: string) => void) =>
     check({
