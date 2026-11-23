@@ -11453,6 +11453,42 @@ ASSUME TLCFP(a) = -887695703
   });
 
   it.each([
+    ["a filter over it", "\\A o \\in {v \\in y : TRUE} : TRUE"],
+    ["membership in it", "<<0, 1>> \\in y"],
+  ])(
+    "runs no predicate of a filter that a state holds again in %s, as TLC's fingerprint keeps the set",
+    async (_name, body) => {
+      const prints: string[] = [];
+      await check({
+        source: `---- MODULE M ----\nEXTENDS Integers, TLC\nVARIABLE x, y\nInit == x = 0 /\\ y = {u \\in (0..1) \\X {1} : PrintT(<<"p", u>>)}\nNext == x' = (x + 1) % 2 /\\ y' = y /\\ PrintT(<<"n", x>>) /\\ ${body}\n====`,
+        config: "INIT Init\nNEXT Next",
+        onPrint: (text) => prints.push(text),
+      });
+      expect(prints).toEqual([
+        '<<"p", <<0, 1>>>>',
+        '<<"p", <<1, 1>>>>',
+        '<<"n", 0>>',
+        '<<"n", 1>>',
+      ]);
+    },
+  );
+
+  it("charges a filter that the initial state holds once, as TLC's fingerprint keeps the set", async () => {
+    const relations = await getCoverageLines(
+      "---- MODULE M ----\nEXTENDS Integers, FiniteSets, TLC\nVARIABLE x\nInit == x = {u \\in (0..1) \\X {1} : u[2] = 1}\nNext == x' = x /\\ (\\A o \\in {v \\in x : TRUE} : TRUE)\nInv == TRUE\n====",
+      "INIT Init\nNEXT Next\nINVARIANT Inv",
+    );
+    expect(relations?.[0]).toEqual([
+      "line 4, col 9 to line 4, col 44 of module M: 1",
+      "|line 4, col 13 to line 4, col 44 of module M: 1:7",
+      "||line 4, col 36 to line 4, col 43 of module M: 2",
+      "||line 4, col 20 to line 4, col 32 of module M: 1:4",
+      "|||line 4, col 21 to line 4, col 24 of module M: 1",
+      "|||line 4, col 30 to line 4, col 32 of module M: 1:5",
+    ]);
+  });
+
+  it.each([
     [
       "a product compared with itself",
       "LET F == {u \\in (0..1) \\X {1} : u[2] = 1} IN LET P == F \\X {1} IN P = P /\\ \\E t \\in F \\cup {9} : t = t",

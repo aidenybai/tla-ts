@@ -665,7 +665,7 @@ const compareWithItself = (value: Value, isEquality: boolean): boolean => {
       : toFiniteSet(value),
     isEquality,
   );
-  keepConvertedSet(value);
+  cacheSet(value);
   return false;
 };
 
@@ -722,7 +722,7 @@ export const compareValues = (left: Value, right: Value): number => {
       const leftSet = leftCharged
         ? toChargedSet(leftCharged, true, toFiniteSet)
         : toFiniteSet(left);
-      keepConvertedSet(left);
+      cacheSet(left);
       return compareSets(
         leftSet,
         rightCharged ? toChargedSet(rightCharged, false, toArgumentSet) : toArgumentSet(right),
@@ -831,7 +831,7 @@ const isCachedSet = (value: ObjectValue) => isLazySet(value) && value.isCached =
 
 let hasStreamedSet = false;
 
-export const markStreamedSet = <Streamed extends UnionValue | SetOperationValue>(
+export const markStreamedSet = <Streamed extends UnionValue | SetOperationValue | FilteredSetValue>(
   value: Streamed,
 ) => {
   hasStreamedSet = true;
@@ -847,6 +847,7 @@ const STREAMING_KINDS = new Set<ObjectValue["kind"]>([
   "FunctionSet",
 ]);
 
+// TLC's convertAndCache keeps the set a lazy set converts to once it has converted it, so a caller marks a set only after converting it.
 const cacheSet = (value: Value) => {
   if (
     hasStreamedSet &&
@@ -875,12 +876,6 @@ export const markFingerprinted = (value: Value): void => {
     cacheSet(value);
     toFiniteSet(value).elements.forEach(markFingerprinted);
   }
-};
-
-// A lazy set's equals and compareTo keep the set they convert with convertAndCache, once they have converted it.
-const keepConvertedSet = (value: ObjectValue) => {
-  if (value.kind === "FilteredSet") value.isCached = true;
-  else cacheSet(value);
 };
 
 export const valuesEqual = (left: Value, right: Value): boolean => {
@@ -955,7 +950,7 @@ export const valuesEqual = (left: Value, right: Value): boolean => {
   if (isInfiniteComparison) {
     if (!isOverriddenSet(left)) {
       const elements = toFiniteSet(left);
-      keepConvertedSet(left);
+      cacheSet(left);
       if (!isOverriddenSet(right)) return compareSets(elements, toFiniteSet(right)) === 0;
     }
     return compareValues(left, right) === 0;
@@ -1431,9 +1426,10 @@ const isAscendingIntegers = (elements: Value[]) => {
 };
 
 export const createSet = (elements: Value[]): SetValue => {
-  for (let index = 1; index < elements.length; index++) cacheSet(elements[index]);
   if (elements.length < 2 || isStrictlySorted(elements)) return createSortedSet(elements);
   const sorted = [...elements].sort(compareValues);
+  // ValueVec#sort makes each element after the first the receiver of a compareTo, which keeps a lazy set it converts.
+  for (let index = 1; index < elements.length; index++) cacheSet(elements[index]);
   const unique = [sorted[0]];
   for (let index = 1; index < sorted.length; index++) {
     if (compareValues(unique[unique.length - 1], sorted[index]) !== 0) unique.push(sorted[index]);

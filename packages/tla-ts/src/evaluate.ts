@@ -2789,7 +2789,7 @@ export const getLazyFilter = (
     };
   };
   return (base: Value, context: Context, node = -1) =>
-    createFiltered(base, context, predicate, node);
+    markStreamedSet(createFiltered(base, context, predicate, node));
 };
 
 const hasLocalName = (expression: Expression): boolean =>
