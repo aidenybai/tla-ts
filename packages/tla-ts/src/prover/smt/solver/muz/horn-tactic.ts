@@ -134,7 +134,7 @@ class HornTactic {
         head = arg;
       } else body.push(manager.mkNot(arg));
     }
-    const conjunction = manager.mkAnd(body);
+    const conjunction = manager.mkApp(OP_AND, body, SORT_BOOL);
     manager.incRef(conjunction);
     args.reset();
     if (head === -1) return { isRule: false, formula: conjunction };

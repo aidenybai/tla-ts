@@ -297,6 +297,19 @@ describe("horn tactic", () => {
     ).toEqual(["sat", "(:rlimit 29)"]);
   });
 
+  it("keeps the one-argument conjunction of a Horn query", () => {
+    expect(
+      run([
+        "(set-logic HORN)",
+        "(set-option :fp.engine bmc)",
+        "(declare-fun P () Bool)",
+        "(assert (=> P false))",
+        "(check-sat)",
+        "(get-info :rlimit)",
+      ]),
+    ).toEqual(["sat", "(:rlimit 34)"]);
+  });
+
   it("answers a nonlinear system", () => {
     expect(
       run([
