@@ -545,4 +545,35 @@ describe("sat solver", () => {
       ].join("\n"),
     );
   });
+
+  it("runs the euf solver in the finite-domain solver under sat.euf", () => {
+    expect(
+      run([
+        "(set-logic QF_FD)",
+        "(set-option :sat.euf true)",
+        "(declare-const a (_ BitVec 4))",
+        "(declare-const b (_ BitVec 4))",
+        "(declare-const p Bool)",
+        "(assert (or p (bvult a b)))",
+        "(assert (=> p (= a (bvadd b #x1))))",
+        "(assert (not (= a #x0)))",
+        "(check-sat)",
+        "(get-model)",
+        "(get-info :rlimit)",
+      ]),
+    ).toBe(
+      [
+        "sat",
+        "(",
+        "  (define-fun p () Bool",
+        "    true)",
+        "  (define-fun b () (_ BitVec 4)",
+        "    #x0)",
+        "  (define-fun a () (_ BitVec 4)",
+        "    #x1)",
+        ")",
+        "(:rlimit 334)",
+      ].join("\n"),
+    );
+  });
 });
