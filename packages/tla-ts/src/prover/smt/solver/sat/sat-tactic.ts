@@ -1,4 +1,4 @@
-import { SmtCanceledError, SmtTacticError, SmtUnsupportedError } from "../../../../errors";
+import { SmtSatCanceledError, SmtTacticError, SmtUnsupportedError } from "../../../../errors";
 import type { AstManager } from "../ast";
 import type { ThSolverFactory } from "../euf/euf-solver";
 import { joinDependencies, mkDependencyLeaf, OVER, type Dependency, type Goal } from "../goal";
@@ -40,7 +40,7 @@ export const createSatTactic =
         try {
           return solver.check([...dep2asm.values()]);
         } catch (error) {
-          if (error instanceof SmtCanceledError) throw new SmtTacticError("canceled");
+          if (error instanceof SmtSatCanceledError) throw new SmtTacticError("canceled");
           throw error;
         }
       })();

@@ -104,6 +104,7 @@ export const STANDARD_LEVELS = new Map(
       nonLeibniz: new Set(),
       allParams: new Set(),
       nonLeibnizParams: new Set(),
+      appliedParams: undefined,
     },
   ]),
 );

@@ -90,6 +90,7 @@ export const createLevelFields = (id: number): LevelFields => ({
   levelParams: new Set(),
   allParams: new Set(),
   nonLeibnizParams: new Set(),
+  appliedParams: undefined,
   argLevelParams: new Map(),
   levelCorrect: true,
   levelConstraints: new Map(),

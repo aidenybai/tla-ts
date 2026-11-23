@@ -375,6 +375,13 @@ export class SmtRewriterCanceledError extends SmtCanceledError {
   }
 }
 
+export class SmtSatCanceledError extends SmtCanceledError {
+  constructor() {
+    super();
+    this.name = "SmtSatCanceledError";
+  }
+}
+
 export class SmtTacticError extends TlaError {
   constructor(message: string) {
     super(message);

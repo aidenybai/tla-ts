@@ -1190,6 +1190,16 @@ const INNER_MODULES: Record<string, string> = {
   Passed: "CONSTANT c, Op(_)\nAp(F(_), a) == F(a)\nUse == Ap(Op, c)",
   Handed: "CONSTANT Op(_)\nVARIABLE v\nH(F(_)) == F(v')\nUse == H(Op)",
   Primes: "F(a) == LET G == a' IN G",
+  Labeled: "CONSTANT c\nVARIABLE w\nD == lab :: ENABLED (w' = c)",
+  Lifted: "CONSTANT Op(_)\nD == Op(1)",
+  LiftedUnused: "CONSTANT Op(_)\nU(K(_)) == 1\nD == U(Op)",
+  Recursed: "CONSTANT Op(_)\nRECURSIVE R(_)\nR(n) == 0\nD == R(Op(1))",
+  RecursedApplies: "CONSTANT Op(_)\nRECURSIVE R(_)\nR(n) == Op(n)\nD == R(1)",
+  Between:
+    "CONSTANT Op(_)\nRECURSIVE R(_)\nG(n) == R(1)\nR(m) == G(m)\nD == G(Op(1))\nTHEOREM T == G(Op(1)) = 0",
+  Proved: "CONSTANT c\nVARIABLE w\nTHEOREM T == ENABLED (w' = c)",
+  Stepped: "CONSTANT c\nVARIABLE w\nTHEOREM T == w' = c",
+  Reset: "VARIABLE w\nTHEOREM T == w' = 0",
   Outer:
     "EXTENDS Naturals\nCONSTANT c\nN == INSTANCE Twice WITH c <- c, Op <- LAMBDA a, b : a + b\nUse == N!Use",
   Functions:
@@ -1264,41 +1274,12 @@ describe("substitution levels match SANY", () => {
       [getArgumentError("Applied", 0, 2)],
     ],
     [
-      "F(a) == LET G == a' IN G\nI == INSTANCE Applied WITH c <- [](x = 1), Op <- F",
-      [getArgumentError("Applied", 0, 1)],
-    ],
-    [
       "I == INSTANCE Twice WITH c <- [](x = 1), Op <- LAMBDA a, b : a + b",
       [getArgumentError("Twice", 0, 2), getArgumentError("Twice", 1, 2)],
     ],
     [
-      "F(a) == LET G == a' IN G\nI == INSTANCE Nested WITH c <- 1, Op <- F, v <- x",
-      [
-        getLevelError("Nested", "Op", 0),
-        "Level error in instantiating module 'Nested':\nThe level of the argument 1 of the operator F \nmust be at least 2.",
-      ],
-    ],
-    [
-      "F(a) == LET G == a' IN G\nI == INSTANCE Passed WITH c <- x', Op <- F",
-      [getArgumentError("Passed", 0, 1)],
-    ],
-    [
       "I == INSTANCE Passed WITH c <- [](x = 1), Op <- LAMBDA a : a + 1",
       [getArgumentError("Passed", 0, 2)],
-    ],
-    [
-      "F(a) == LET G == a' IN G\nI == INSTANCE Handed WITH Op <- F, v <- x",
-      [
-        getLevelError("Handed", "Op", 0),
-        "Level error in instantiating module 'Handed':\nThe level of the argument 1 of the operator F \nmust be at least 2.",
-      ],
-    ],
-    [
-      "Q == INSTANCE Primes\nI == INSTANCE Nested WITH c <- 1, Op <- Q!F, v <- x",
-      [
-        getLevelError("Nested", "Op", 0),
-        "Level error in instantiating module 'Nested':\nThe level of the argument 1 of the operator Q!F \nmust be at least 2.",
-      ],
     ],
     ...["'", "UNCHANGED"].map((operator): [string, string[]] => [
       `I == INSTANCE Nested WITH c <- 1, Op <- ${operator}, v <- x`,
@@ -1380,14 +1361,152 @@ describe("substitution levels match SANY", () => {
     "Foo == LET k == 1\n           I == INSTANCE Stateful WITH c <- k, Op <- LAMBDA a : a, v <- x IN I!Use",
     "Foo == \\E k \\in {1} : LET I == INSTANCE Stateful WITH c <- k, Op <- LAMBDA a : a, v <- x IN I!Use",
     "F(a) == x' + a\nI == INSTANCE Pure WITH c <- 1, Op <- F",
-    "F(a) == LET G == a' IN G\nI == INSTANCE Pure WITH c <- 1, Op <- F",
-    "F(a) == LET G == 1 IN a' + G\nI == INSTANCE Pure WITH c <- 1, Op <- F",
-    "F(a) == LET G(b) == b' IN G(a)\nI == INSTANCE Pure WITH c <- 1, Op <- F",
-    "H(K(_)) == K(1)\nF(a) == H(LAMBDA b : a') + 1\nI == INSTANCE Pure WITH c <- 1, Op <- F",
+    "H(K(_)) == 1\nF(a) == H(LAMBDA b : a')\nI == INSTANCE Pure WITH c <- 1, Op <- F",
+    "H2(J(_)) == 1\nH(K(_)) == H2(K)\nF(a) == H(LAMBDA b : a')\nI == INSTANCE Pure WITH c <- 1, Op <- F",
+    "G(y) == 1\nH(K(_)) == G(K(1))\nF(a) == H(LAMBDA b : a')\nI == INSTANCE Pure WITH c <- 1, Op <- F",
+    "P(a) == INSTANCE LiftedUnused WITH Op <- LAMBDA b : a'\nI == INSTANCE Pure WITH c <- 1, Op <- P!D",
+    "H(K(_)) == LET RECURSIVE R(_) R(n) == 0 IN R(K(1))\nF(a) == H(LAMBDA b : a')\nI == INSTANCE Pure WITH c <- 1, Op <- F",
+    "H(K(_)) == LET RECURSIVE A(_), R(_)\n               A(n) == IF n = 0 THEN K(1) ELSE A(n - 1)\n               R(n) == 0\n           IN R(2)\nF(a) == H(LAMBDA b : a')\nI == INSTANCE Pure WITH c <- 1, Op <- F",
+    "RECURSIVE R(_)\nR(n) == 0\nG(n) == R(n)\nH(K(_)) == G(K(1))\nF(a) == H(LAMBDA b : a')\nI == INSTANCE Pure WITH c <- 1, Op <- F",
+    "P(a) == INSTANCE Recursed WITH Op <- LAMBDA b : a'\nI == INSTANCE Pure WITH c <- 1, Op <- P!D",
+    "I(a) == INSTANCE Stepped WITH c <- a, w <- x\nF(a) == I(a)!T\nJ == INSTANCE Pure WITH c <- 1, Op <- F\nK == INSTANCE Pure WITH c <- 1, Op <- I!T",
     "P(G(_)) == INSTANCE Pure WITH c <- 1, Op <- G\nF(a) == a'\nUse == P(F)!Use",
     "I == INSTANCE Passed WITH c <- x', Op <- LAMBDA a : a + 1",
     "I == INSTANCE Handed WITH Op <- LAMBDA a : a = 1, v <- x",
   ])("accepts %s", async (body) => {
     expect((await checkSubstitution(body)).status).toBe("success");
+  });
+});
+
+describe("Leibniz checks where tla-ts deviates from SANY", () => {
+  const getLowerBoundError = (module: string, operator: string) =>
+    `Level error in instantiating module '${module}':\nThe level of the argument 1 of the operator ${operator} \nmust be at least 2.`;
+
+  it.each([
+    [
+      "F(a) == LET G == a' IN G\nI == INSTANCE Pure WITH c <- 1, Op <- F",
+      [getLeibnizError("Pure")],
+    ],
+    [
+      "F(a) == LET G == 1 IN a' + G\nI == INSTANCE Pure WITH c <- 1, Op <- F",
+      [getLeibnizError("Pure")],
+    ],
+    [
+      "F(a) == LET G(b) == b' IN G(a)\nI == INSTANCE Pure WITH c <- 1, Op <- F",
+      [getLeibnizError("Pure")],
+    ],
+    [
+      "F(a) == LET G == a' IN G\nI == INSTANCE Applied WITH c <- [](x = 1), Op <- F",
+      [getLeibnizError("Applied"), getArgumentError("Applied", 0, 1)],
+    ],
+    [
+      "F(a) == LET G == a' IN G\nI == INSTANCE Nested WITH c <- 1, Op <- F, v <- x",
+      [
+        getLevelError("Nested", "Op", 0),
+        getLeibnizError("Nested"),
+        getLowerBoundError("Nested", "F"),
+      ],
+    ],
+    [
+      "F(a) == LET G == a' IN G\nI == INSTANCE Passed WITH c <- x', Op <- F",
+      [getLeibnizError("Passed"), getArgumentError("Passed", 0, 1)],
+    ],
+    [
+      "F(a) == LET G == a' IN G\nI == INSTANCE Handed WITH Op <- F, v <- x",
+      [
+        getLevelError("Handed", "Op", 0),
+        getLeibnizError("Handed"),
+        getLowerBoundError("Handed", "F"),
+      ],
+    ],
+    [
+      "Q == INSTANCE Primes\nI == INSTANCE Nested WITH c <- 1, Op <- Q!F, v <- x",
+      [
+        getLevelError("Nested", "Op", 0),
+        getLeibnizError("Nested"),
+        getLowerBoundError("Nested", "Q!F"),
+      ],
+    ],
+  ])("reports %s as SANY reports it with the LET inlined", async (body, messages) => {
+    await expect(checkSubstitution(body)).rejects.toThrow(TlaSyntaxError);
+    await expect(checkSubstitution(body)).rejects.toThrow(getMessagePattern(messages));
+  });
+
+  it.each([
+    "F(a) == lab :: ENABLED (x' = a)\nI == INSTANCE Pure WITH c <- 1, Op <- F",
+    "F(a) == TRUE /\\ lab :: ENABLED (x' = a)\nI == INSTANCE Pure WITH c <- 1, Op <- F",
+    "F(a) == \\A b \\in {1} : lab(b) :: ENABLED (x' = a + b)\nI == INSTANCE Pure WITH c <- 1, Op <- F",
+    "J(q) == INSTANCE Labeled WITH c <- q, w <- x\nI == INSTANCE Pure WITH c <- 1, Op <- J!D",
+  ])("reports %s as SANY reports it with the label removed", async (body) => {
+    await expect(checkSubstitution(body)).rejects.toThrow(
+      getMessagePattern([getLeibnizError("Pure")]),
+    );
+  });
+
+  it.each([
+    "H(K(_)) == K(1)\nF(a) == H(LAMBDA b : a') + 1\nI == INSTANCE Pure WITH c <- 1, Op <- F",
+    "H(K(_)) == K(1)\nF(a) == LET G(b) == a' IN H(G) + 1\nI == INSTANCE Pure WITH c <- 1, Op <- F",
+    "G(y) == y + 1\nH(K(_)) == G(K(1))\nF(a) == H(LAMBDA b : a')\nI == INSTANCE Pure WITH c <- 1, Op <- F",
+    "P(a) == INSTANCE Lifted WITH Op <- LAMBDA b : a'\nI == INSTANCE Pure WITH c <- 1, Op <- P!D",
+  ])("reports %s as SANY reports it with the operator argument inlined", async (body) => {
+    await expect(checkSubstitution(body)).rejects.toThrow(
+      getMessagePattern([getLeibnizError("Pure")]),
+    );
+  });
+
+  it.each([
+    "H(K(_)) == LET RECURSIVE R(_) R(n) == K(n) IN R(1)\nF(a) == H(LAMBDA b : a')\nI == INSTANCE Pure WITH c <- 1, Op <- F",
+    "H(K(_)) == LET RECURSIVE R(_, _) R(n, k) == IF n = 0 THEN 0 ELSE R(n - 1, k) IN R(3, K(1))\nF(a) == H(LAMBDA b : a')\nI == INSTANCE Pure WITH c <- 1, Op <- F",
+    "H(K(_)) == LET RECURSIVE A(_), B(_), C(_)\n               A(n) == IF n = 0 THEN 0 ELSE B(n - 1)\n               B(n) == IF n = 0 THEN 0 ELSE C(n - 1)\n               C(n) == IF n = 0 THEN K(1) ELSE A(n - 1)\n           IN A(2)\nF(a) == H(LAMBDA b : a')\nI == INSTANCE Pure WITH c <- 1, Op <- F",
+    "H(K(_)) == LET RECURSIVE A(_), B(_)\n               A(n) == IF n = 0 THEN K(1) ELSE A(n - 1)\n               B(n) == IF n = 0 THEN 0 ELSE B(n - 1)\n           IN B(2)\nF(a) == H(LAMBDA b : a')\nI == INSTANCE Pure WITH c <- 1, Op <- F",
+    "H(K(_)) == LET RECURSIVE A(_), B(_), D(_)\n               A(n) == B(n)\n               B(n) == A(n)\n               D(n) == K(n)\n           IN A(1)\nF(a) == H(LAMBDA b : a')\nI == INSTANCE Pure WITH c <- 1, Op <- F",
+    "H(K(_)) == LET RECURSIVE R(_), S(_)\n               R(n) == S(1)\n               S(m) == S(m)\n           IN R(K(1))\nF(a) == H(LAMBDA b : a')\nI == INSTANCE Pure WITH c <- 1, Op <- F",
+    "P(a) == INSTANCE RecursedApplies WITH Op <- LAMBDA b : a'\nI == INSTANCE Pure WITH c <- 1, Op <- P!D",
+    "H(K(_)) == LET RECURSIVE R(_)\n               G(n) == R(1)\n               R(m) == G(m)\n           IN G(K(1))\nF(a) == H(LAMBDA b : a')\nI == INSTANCE Pure WITH c <- 1, Op <- F",
+    "H(K(_)) == LET RECURSIVE A(_), B(_)\n               A(n) == B(n)\n               D(n) == K(n)\n               B(n) == A(n)\n           IN A(1)\nF(a) == H(LAMBDA b : a')\nI == INSTANCE Pure WITH c <- 1, Op <- F",
+    "RECURSIVE R(_)\nG(n) == R(1)\nR(m) == G(m)\nH(K(_)) == G(K(1))\nF(a) == H(LAMBDA b : a')\nI == INSTANCE Pure WITH c <- 1, Op <- F",
+    "RECURSIVE R(_)\nG(n) == R(1)\nR(m) == G(m)\nP(Q(_)) == Q(1)\nH(K(_)) == P(LAMBDA y : G(K(y)))\nF(a) == H(LAMBDA b : a')\nI == INSTANCE Pure WITH c <- 1, Op <- F",
+    "RECURSIVE R(_)\nG(n) == R(1)\nR(m) == G(m)\nL(K(_)) == INSTANCE Lifted WITH Op <- LAMBDA y : G(K(y))\nF(a) == L(LAMBDA b : a')!D\nI == INSTANCE Pure WITH c <- 1, Op <- F",
+    "B(a) == INSTANCE Between WITH Op <- LAMBDA b : a'\nF(a) == B(a)!T\nI == INSTANCE Pure WITH c <- 1, Op <- F",
+    "B(a) == INSTANCE Between WITH Op <- LAMBDA b : a'\nI == INSTANCE Pure WITH c <- 1, Op <- B!D",
+  ])(
+    "rejects %s, where tla-ts cannot show a recursive operator ignores the operator argument",
+    async (body) => {
+      await expect(checkSubstitution(body)).rejects.toThrow(
+        getMessagePattern([getLeibnizError("Pure")]),
+      );
+    },
+  );
+
+  it.each([
+    "I(a) == INSTANCE Proved WITH c <- a, w <- x\nF(a) == I(a)!T\nJ == INSTANCE Pure WITH c <- 1, Op <- F",
+    "I(a) == INSTANCE Proved WITH c <- a, w <- x\nJ == INSTANCE Pure WITH c <- 1, Op <- I!T",
+    "I(a) == INSTANCE Reset WITH w <- a\nF(a) == I(a)!T\nJ == INSTANCE Pure WITH c <- 1, Op <- F",
+    "I(a) == INSTANCE Reset WITH w <- a\nJ == INSTANCE Pure WITH c <- 1, Op <- I!T",
+  ])("reports %s as SANY reports it with the THEOREM made a definition", async (body) => {
+    await expect(checkSubstitution(body)).rejects.toThrow(
+      getMessagePattern([getLeibnizError("Pure")]),
+    );
+  });
+
+  it("rejects a non-Leibniz operator substituted for an operator constant under a LET, which SANY accepts", async () => {
+    await expect(
+      check({
+        source:
+          "---- MODULE M ----\nVARIABLE x\nF(a) == LET L == 1 IN ENABLED (x' = a)\n---- MODULE Inner ----\nCONSTANT c\nVARIABLE w\nD == LET L == 1 IN ENABLED (w' = c)\n====\n---- MODULE Other ----\nCONSTANT Op(_)\n====\nJ(q) == INSTANCE Inner WITH c <- q, w <- x\nINSTANCE Other WITH Op <- F\nINSTANCE Other WITH Op <- J!D\nInit == x = 0\nNext == x' = x\n====",
+        config: "INIT Init\nNEXT Next",
+      }),
+    ).rejects.toThrow(
+      createSanyError(
+        [
+          ["13", "27"],
+          ["14", "29"],
+        ].map((entry) => ({
+          location: `line ${entry[0]}, col 1 to line ${entry[0]}, col ${entry[1]} of module M`,
+          message:
+            "Error in instantiating module 'Other':\n A non-Leibniz operator substituted for 'Op'.",
+        })),
+      ),
+    );
   });
 });
