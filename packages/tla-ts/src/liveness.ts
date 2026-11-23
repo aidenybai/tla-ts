@@ -193,6 +193,100 @@ export const getSanyLevel = (
   return environment.sanyLevels.analyze(expression, createBoundScope(bindings)).level;
 };
 
+// While a definition's own level bound is read, the definitions that its body reads the bounds of,
+// which the reading takes as constants.
+let calledDefinitions: Set<Definition> | undefined;
+
+// A definition's level bound but for the definitions it calls, and those it calls.
+const readOwnBound = (definition: Definition, environment: Environment) => {
+  const outer = calledDefinitions;
+  const called = new Set<Definition>();
+  calledDefinitions = called;
+  // A read that throws leaves the next read its own definitions.
+  try {
+    const bound = Math.max(
+      ...getDefinitionExpressions(definition).map((item) =>
+        getLevel(item, undefined, environment, new Set(), new Map(), true),
+      ),
+    );
+    return { bound, called: [...called] };
+  } finally {
+    calledDefinitions = outer;
+  }
+};
+
+// Tool.getLevelBound of a definition's body reads the body of each definition it calls, but one that
+// the reading came through, which it takes as a constant, so the bound is the highest level of any
+// definition it reaches. A check reads each definition's bound once: the definitions it reaches, as
+// Tarjan's algorithm orders their cycles of calls without recursion, each cycle after those it
+// calls, as SANY checks the levels of a module's definitions in order. A chain of calls, as a
+// program's nested literals compile to, then takes no deeper stack than one definition does.
+const getDefinitionBound = (definition: Definition, environment: Environment): number => {
+  const known = environment.levelBounds.get(definition);
+  if (known !== undefined) return known;
+  if (calledDefinitions !== undefined) {
+    calledDefinitions.add(definition);
+    return CONSTANT_LEVEL;
+  }
+  const own = new Map<Definition, { bound: number; called: Definition[] }>();
+  const indexes = new Map<Definition, number>();
+  const lowLinks = new Map<Definition, number>();
+  const cycle: Definition[] = [];
+  const onCycle = new Set<Definition>();
+  const pending = [{ definition, next: 0 }];
+  const visit = (entered: Definition) => {
+    indexes.set(entered, indexes.size);
+    lowLinks.set(entered, indexes.get(entered) ?? 0);
+    cycle.push(entered);
+    onCycle.add(entered);
+    own.set(entered, readOwnBound(entered, environment));
+  };
+  visit(definition);
+  while (pending.length > 0) {
+    const frame = pending[pending.length - 1];
+    const called = own.get(frame.definition)?.called ?? [];
+    if (frame.next < called.length) {
+      const callee = called[frame.next++];
+      if (environment.levelBounds.has(callee)) continue;
+      if (!indexes.has(callee)) {
+        visit(callee);
+        pending.push({ definition: callee, next: 0 });
+      } else if (onCycle.has(callee)) {
+        lowLinks.set(
+          frame.definition,
+          Math.min(lowLinks.get(frame.definition) ?? 0, indexes.get(callee) ?? 0),
+        );
+      }
+      continue;
+    }
+    pending.pop();
+    const parent = pending.at(-1);
+    if (parent !== undefined) {
+      lowLinks.set(
+        parent.definition,
+        Math.min(lowLinks.get(parent.definition) ?? 0, lowLinks.get(frame.definition) ?? 0),
+      );
+    }
+    if (lowLinks.get(frame.definition) !== indexes.get(frame.definition)) continue;
+    // A cycle of calls, whose definitions reach each other and so share one bound.
+    const members = cycle.splice(cycle.indexOf(frame.definition));
+    members.forEach((member) => onCycle.delete(member));
+    const bound = Math.max(
+      ...members.flatMap((member) => {
+        const read = own.get(member);
+        return [
+          read?.bound ?? CONSTANT_LEVEL,
+          ...(read?.called ?? []).map(
+            (callee) => environment.levelBounds.get(callee) ?? CONSTANT_LEVEL,
+          ),
+        ];
+      }),
+    );
+    members.forEach((member) => environment.levelBounds.set(member, bound));
+  }
+  return environment.levelBounds.get(definition) ?? CONSTANT_LEVEL;
+};
+
 // The level that SANY gives an expression, with the levels of what its scope binds read in, as
 // Specs.getLevel finds it, or with isLevelBound the bound on it that Tool.getLevelBound finds
 // through the definitions the expression calls.
@@ -242,11 +336,7 @@ export const getLevel = (
     ) {
       return CONSTANT_LEVEL;
     }
-    if (definition && isLevelBound) {
-      return Math.max(
-        ...getDefinitionExpressions(definition).map((item) => getBodyLevel(item, item, undefined)),
-      );
-    }
+    if (definition && isLevelBound) return getDefinitionBound(definition, environment);
     if (definition) return getDefinitionLevel(definition, environment);
     const builtin = environment.builtins.get(environment.substitutions.get(name) ?? name);
     if (!builtin) return undefined;

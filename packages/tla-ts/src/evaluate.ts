@@ -245,6 +245,8 @@ export interface Environment {
   evaluators: WeakMap<Expression, Evaluator>;
   entryEvaluators: WeakMap<Expression, Evaluator>;
   definitionEvaluators: WeakMap<Definition, Evaluator>;
+  // Tool.getLevelBound of each definition that a check has read it of (see getDefinitionBound).
+  levelBounds: WeakMap<Definition, number>;
   // The runners of the check's actions, kept to the check, as another config of the same parsed
   // modules compiles them again.
   initRunners: WeakMap<Expression, Runner>;

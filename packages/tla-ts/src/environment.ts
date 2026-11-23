@@ -2101,6 +2101,7 @@ export const createEnvironment = (
     evaluators: new WeakMap(),
     entryEvaluators: new WeakMap(),
     definitionEvaluators: new WeakMap(),
+    levelBounds: new WeakMap(),
     initRunners: new WeakMap(),
     nextRunners: new WeakMap(),
     getOperatorLevels: analyzer.getOperatorLevels,
