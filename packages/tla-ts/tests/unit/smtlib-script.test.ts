@@ -1285,6 +1285,29 @@ describe("runSmtlibScript prints what Z3 prints", () => {
     ]);
   });
 
+  it("answers unknown where sat.euf's recfun research drops a named assertion and Z3 answers sat", () => {
+    expect(
+      run([
+        "(set-option :produce-unsat-cores true)",
+        "(set-option :sat.euf true)",
+        "(set-option :tactic.default_tactic smt)",
+        "(define-fun-rec len ((n Int)) Int (ite (<= n 0) 0 (+ 1 (len (- n 1)))))",
+        "(declare-const x Int)",
+        "(assert (! (= (len x) 3) :named a))",
+        "(assert (< x 2))",
+        "(check-sat)",
+        "(get-info :reason-unknown)",
+        "(get-value (a x (len x)))",
+        "(get-info :rlimit)",
+      ]),
+    ).toEqual([
+      "unknown",
+      '(:reason-unknown "no reason given")',
+      ["((a false)", " (x (- 11797))", " ((len x) 0))"].join("\n"),
+      "(:rlimit 170)",
+    ]);
+  });
+
   it("validates the sat.euf model each time the incremental sat solver builds it", () => {
     expect(
       run([

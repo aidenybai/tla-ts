@@ -321,7 +321,8 @@ export class IncSatSolver {
       this.reasonUnknown = "(sat.giveup has-uninterpreted)";
       return L_UNDEF;
     }
-    if (result === L_TRUE && assumptions.length > 0) this.checkAssumptions();
+    // Deviation from Z3: it checks the assumptions only under check-sat-assuming, so recfun's research answers sat on a model that falsifies a named assertion.
+    if (result === L_TRUE && this.asms.length > 0) this.checkAssumptions();
     if (result === L_FALSE && this.asms.length > 0) this.extractCore(asm2fml);
     if (result === L_UNDEF) this.reasonUnknown = this.solver.reasonUnknown;
     if (result !== L_FALSE) this.core.reset();
