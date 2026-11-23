@@ -435,11 +435,7 @@ export class Goal2Sat implements SatInternalizer, EufInternalizer {
 
   private convertBa(expr: number, isRoot: boolean, isSign: boolean) {
     const solver = this.solver;
-    if (solver.ext === null) {
-      const ext = new PbSolver(this.manager, this, solver);
-      solver.ext = ext;
-      for (let index = 0; index < solver.scopeLvl; index++) ext.push();
-    }
+    if (solver.ext === null) solver.setExtension(new PbSolver(this.manager, this, solver));
     const lit = (solver.ext as PbSolver).internalize(expr, isSign, isRoot);
     this.results.length -= this.manager.getNumArgs(expr);
     if (lit === NULL_LITERAL) return;
