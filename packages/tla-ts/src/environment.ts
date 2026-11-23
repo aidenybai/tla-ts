@@ -333,6 +333,8 @@ export const createEnvironment = (
   const subexpressionRecords: SubexpressionRecords = {
     selectedDefinitions: new WeakMap(),
     instanceReferences: new WeakMap(),
+    instanceArguments: new WeakSet(),
+    instanceOperators: new WeakSet(),
   };
   const instanceParams = new Set<OperatorParam>();
   const substitutedNames = new Set(
@@ -883,6 +885,8 @@ export const createEnvironment = (
       ),
       enabledSubstitutions,
       boundSubstitutions,
+      instanceArguments: subexpressionRecords.instanceArguments,
+      instanceOperators: subexpressionRecords.instanceOperators,
       getDefinition: getLinkedDefinition,
       getOuterDefinition: (key) =>
         module.definitions.find((definition) => unit.getKey(definition) === key),
@@ -1174,7 +1178,11 @@ export const createEnvironment = (
         : {
             kind: "Apply",
             operator: `${declaration.name}${suffix}`,
-            args: createInstanceArguments(instance.params, location),
+            args: createInstanceArguments(
+              instance.params,
+              location,
+              subexpressionRecords.instanceArguments,
+            ),
             location,
             resolution: LOCAL_RESOLUTION,
           };
@@ -1200,6 +1208,8 @@ export const createEnvironment = (
       substitutedVariables: new Set(linked.variables),
       enabledSubstitutions,
       boundSubstitutions,
+      instanceArguments: subexpressionRecords.instanceArguments,
+      instanceOperators: subexpressionRecords.instanceOperators,
       getDefinition: getLinkedDefinition,
       getOuterDefinition: () => undefined,
       isSubstitutedConstant: () => false,

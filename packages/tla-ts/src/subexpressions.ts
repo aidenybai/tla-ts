@@ -26,8 +26,6 @@ import { formatRange, TlaSyntaxError, type SanyError } from "./errors";
 import {
   getSourceName,
   hasLetInstance,
-  instanceArguments,
-  instanceOperators,
   mapChildren,
   mapDefinition,
   substitutionFrames,
@@ -530,7 +528,7 @@ const selectSubexpression = (
     }
     if (
       current.kind === "Lambda" &&
-      (current.operator !== undefined || instanceOperators.has(current))
+      (current.operator !== undefined || records.instanceOperators.has(current))
     ) {
       report(range, "Trying to select subexpression of an operator argument.");
       return;
@@ -619,7 +617,7 @@ const selectSubexpression = (
     }
     const instanceArgumentCount =
       current.kind === "Apply"
-        ? current.args.filter((arg) => instanceArguments.has(arg)).length
+        ? current.args.filter((arg) => records.instanceArguments.has(arg)).length
         : 0;
     const operands = binder ? binder.sets : getOperands(current)?.slice(instanceArgumentCount);
     if (!operands && current.kind !== "Identifier") {

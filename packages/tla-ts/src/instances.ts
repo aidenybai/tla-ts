@@ -433,6 +433,8 @@ interface Instantiation {
   substitutedVariables: Set<string>;
   enabledSubstitutions: WeakSet<Expression>;
   boundSubstitutions: BoundSubstitutions;
+  instanceArguments: WeakSet<Expression>;
+  instanceOperators: WeakSet<Expression>;
   getDefinition: (key: string) => Definition | undefined;
   getOuterDefinition: (key: string) => Definition | undefined;
   isSubstitutedConstant: (key: string) => boolean;
@@ -668,11 +670,11 @@ const createSyntheticIdentifier = (name: string, location: SourceLocation) => {
 export const createLocalArguments = (params: OperatorParam[], location: SourceLocation) =>
   params.map((param) => createSyntheticIdentifier(param.name, location));
 
-export const instanceArguments = new WeakSet<Expression>();
-
-export const instanceOperators = new WeakSet<Expression>();
-
-export const createInstanceArguments = (params: OperatorParam[], location: SourceLocation) =>
+export const createInstanceArguments = (
+  params: OperatorParam[],
+  location: SourceLocation,
+  instanceArguments: WeakSet<Expression>,
+) =>
   createLocalArguments(params, location).map((argument) => {
     instanceArguments.add(argument);
     return argument;
@@ -708,6 +710,7 @@ const getInstanceOperator = (
   arity: number,
   location: SourceLocation,
   resolution: typeof LOCAL_RESOLUTION | undefined,
+  instanceOperators: WeakSet<Expression>,
 ): Expression & { kind: "Lambda" } => {
   const names = Array.from({ length: arity }, (_value, index) => `argument${index}`);
   const operator: Expression & { kind: "Lambda" } = {
@@ -755,7 +758,9 @@ const substitute = (
   const substituted = substituteExpression(expression, rewrite, bound);
   if (rewrite.mode === "Enabled") rewrite.instantiation.enabledSubstitutions.add(substituted);
   if (syntheticIdentifiers.has(expression)) syntheticIdentifiers.add(substituted);
+  const instanceArguments = rewrite.instantiation.instanceArguments;
   if (instanceArguments.has(expression)) instanceArguments.add(substituted);
+  const instanceOperators = rewrite.instantiation.instanceOperators;
   if (instanceOperators.has(expression)) instanceOperators.add(substituted);
   copyResolution(expression, substituted);
   const substitution = substitutedExpressions.get(expression);
@@ -856,6 +861,7 @@ const substituteExpression = (
         getArity(definition),
         expression.location,
         resolution,
+        instantiation.instanceOperators,
       );
       markCall(rewrite, expression, operator.body);
       return operator;
@@ -863,7 +869,7 @@ const substituteExpression = (
     return markCall(rewrite, expression, {
       kind: "Apply",
       operator: copy,
-      args: createInstanceArguments(params, expression.location),
+      args: createInstanceArguments(params, expression.location, instantiation.instanceArguments),
       location: expression.location,
       resolution,
       writtenKey: expression.writtenKey ?? expression.name,
@@ -936,7 +942,10 @@ const substituteExpression = (
     return markCall(rewrite, expression, {
       ...expression,
       operator: copy,
-      args: [...createInstanceArguments(params, expression.location), ...args],
+      args: [
+        ...createInstanceArguments(params, expression.location, instantiation.instanceArguments),
+        ...args,
+      ],
       resolution,
       writtenKey: expression.writtenKey ?? expression.operator,
     });
@@ -960,6 +969,7 @@ const substituteExpression = (
         getArity(definition),
         expression.location,
         resolution,
+        instantiation.instanceOperators,
       );
       markCall(rewrite, expression, operator.body);
       return operator;

@@ -163,6 +163,8 @@ export interface SelectedDefinition {
 export interface SubexpressionRecords {
   selectedDefinitions: WeakMap<Expression, SelectedDefinition>;
   instanceReferences: WeakMap<Instance, Instance>;
+  instanceArguments: WeakSet<Expression>;
+  instanceOperators: WeakSet<Expression>;
 }
 
 export const selections = new WeakMap<Expression, Expression>();
