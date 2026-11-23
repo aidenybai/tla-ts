@@ -2100,7 +2100,6 @@ const toCachedSet = (value: Value) => {
   return toFiniteSet(value);
 };
 
-// TLC's toSetEnum charges a lazy set's own cost model, and only convertAndCache keeps the set it builds.
 const toChargedSet = (
   value: CostedSetValue,
   isCached: boolean,

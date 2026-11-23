@@ -1365,7 +1365,6 @@ export const chargeRandomOrder = (coverage: Coverage, set: Value, size: number) 
   if (node !== undefined) coverage.secondary[node] += size;
 };
 
-// TLC's toSetEnum draws a set through its enumerator, which charges its draws, then charges the set its size.
 const chargeSetEnumeration = (coverage: Coverage, set: Value) => {
   const size = getKnownSize(set);
   if (size === undefined) return;
