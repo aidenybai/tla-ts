@@ -633,10 +633,10 @@ const compareWithItself = (value: Value, isEquality: boolean): boolean => {
       if (!isEquality) break;
       const charges = value.cost?.charges;
       // SetOfFcnsValue#equals, SetOfRcdsValue#equals and SetOfTuplesValue#equals ask both sides, here one set, about emptiness.
-      charges?.chargeIsEmpty(value.domain);
-      if (isEmptyLikeTlc(charges, value.domain)) return false;
-      charges?.chargeIsEmpty(value.range);
-      if (isEmptyLikeTlc(charges, value.range)) return false;
+      const isUnit = isEmptyLikeTlc(charges, value.domain);
+      if (isEmptyLikeTlc(charges, value.domain) || isUnit) return false;
+      const isEmpty = isEmptyLikeTlc(charges, value.range);
+      if (isEmptyLikeTlc(charges, value.range) || isEmpty) return false;
       compareWithItself(value.domain, isEquality);
       compareWithItself(value.range, isEquality);
       return false;
@@ -645,8 +645,8 @@ const compareWithItself = (value: Value, isEquality: boolean): boolean => {
     case "ProductSet": {
       if (!isEquality) break;
       const charges = value.cost?.charges;
-      charges?.chargeIsEmpty(value);
-      if (isEmptyLikeTlc(charges, value)) return false;
+      const isEmpty = isEmptyLikeTlc(charges, value);
+      if (isEmptyLikeTlc(charges, value) || isEmpty) return false;
       const parts = value.kind === "RecordSet" ? value.sets : value.factors;
       for (let index = 0; index < parts.length; index++) {
         compareWithItself(parts[index], isEquality);
@@ -662,6 +662,8 @@ const compareWithItself = (value: Value, isEquality: boolean): boolean => {
       : toFiniteSet(value),
     isEquality,
   );
+  // SetPredValue#equals and compareTo keep the set they convert with convertAndCache.
+  if (value.kind === "FilteredSet") value.isCached = true;
   return false;
 };
 
